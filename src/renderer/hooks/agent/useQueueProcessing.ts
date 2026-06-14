@@ -20,8 +20,12 @@ import type {
 } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useAgentStore } from '../../stores/agentStore';
-import { getActiveTab } from '../../utils/tabHelpers';
-import { generateId } from '../../utils/ids';
+import { markTabRunningQueuedItem, resolveQueuedItemTarget } from '../../utils/tabHelpers';
+import {
+	hasRunnableQueueItem,
+	nextRunnableQueueItem,
+	takeNextRunnableQueueItem,
+} from '../../utils/executionQueue';
 import { logger } from '../../utils/logger';
 
 // ============================================================================
@@ -100,44 +104,41 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 	// Shared by startup recovery and runtime queue recovery.
 	const dispatchQueuedItem = useCallback(
 		(session: { id: string; executionQueue: QueuedItem[] }) => {
-			const firstItem = session.executionQueue[0];
+			// Skip paused items: dispatch the first runnable one. If all items are
+			// held, there's nothing to do.
+			const firstItem = nextRunnableQueueItem(session.executionQueue);
+			if (!firstItem) return;
 
 			// Set session to busy and remove item from queue
 			setSessions((prev) =>
 				prev.map((s) => {
 					if (s.id !== session.id) return s;
 					// Guard: re-check state to prevent double-dispatch from concurrent triggers
-					if (s.state !== 'idle' || !s.executionQueue?.length) return s;
+					if (s.state !== 'idle') return s;
 
-					const [, ...remainingQueue] = s.executionQueue;
-					const targetTab = s.aiTabs.find((tab) => tab.id === firstItem.tabId) || getActiveTab(s);
+					const { item: runnable, remaining: remainingQueue } = takeNextRunnableQueueItem(
+						s.executionQueue
+					);
+					if (!runnable) return s;
 
-					// Append the user log entry atomically with the dequeue/state-busy
-					// transition for message items. processQueuedItem itself does not
-					// add the log — each call site that dequeues owns it.
-					const userLogEntry =
-						firstItem.type === 'message' && firstItem.text
-							? {
-									id: generateId(),
-									timestamp: Date.now(),
-									source: 'user' as const,
-									text: firstItem.text,
-									images: firstItem.images,
-									...(firstItem.forceParallel && { forceParallel: true }),
-									...(firstItem.readOnlyMode && { readOnly: true }),
-								}
-							: null;
+					// Resolve the item's target tab orphan-aware. A message queued on a
+					// tab the user later closed lives in orphanedThinkingTabs - route its
+					// busy-state + user log THERE (fire-and-forget background send), never
+					// onto whatever tab happens to be active. The user log is appended
+					// atomically with the dequeue here; processQueuedItem does not add it.
+					const target = resolveQueuedItemTarget(s, firstItem);
+					if (!target) return s;
 
 					const updatedAiTabs = s.aiTabs.map((tab) =>
-						tab.id === targetTab?.id
-							? {
-									...tab,
-									state: 'busy' as const,
-									thinkingStartTime: Date.now(),
-									logs: userLogEntry ? [...tab.logs, userLogEntry] : tab.logs,
-								}
-							: tab
+						tab.id === target.tabId ? markTabRunningQueuedItem(tab, firstItem) : tab
 					);
+
+					const updatedOrphans =
+						target.location === 'orphan' && s.orphanedThinkingTabs
+							? s.orphanedThinkingTabs.map((tab) =>
+									tab.id === target.tabId ? markTabRunningQueuedItem(tab, firstItem) : tab
+								)
+							: s.orphanedThinkingTabs;
 
 					return {
 						...s,
@@ -148,6 +149,9 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 						currentCycleBytes: 0,
 						executionQueue: remainingQueue,
 						aiTabs: updatedAiTabs,
+						...(updatedOrphans !== s.orphanedThinkingTabs && {
+							orphanedThinkingTabs: updatedOrphans,
+						}),
 					};
 				})
 			);
@@ -192,7 +196,7 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 		startupRecoveryRan.current = true;
 
 		const sessionsWithQueuedItems = sessions.filter(
-			(s) => s.state === 'idle' && s.executionQueue && s.executionQueue.length > 0
+			(s) => s.state === 'idle' && hasRunnableQueueItem(s.executionQueue ?? [])
 		);
 
 		if (sessionsWithQueuedItems.length > 0) {
@@ -207,8 +211,8 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 						`[QueueProcessing] Startup recovery for session ${session.id.substring(0, 8)}:`,
 						undefined,
 						{
-							id: session.executionQueue[0].id,
-							tabId: session.executionQueue[0].tabId,
+							id: nextRunnableQueueItem(session.executionQueue)?.id,
+							tabId: nextRunnableQueueItem(session.executionQueue)?.tabId,
 							queueLength: session.executionQueue.length,
 						}
 					);
@@ -231,7 +235,7 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 		if (!sessionsLoaded || !startupRecoveryComplete.current) return;
 
 		for (const session of sessions) {
-			if (session.state === 'idle' && session.executionQueue?.length > 0) {
+			if (session.state === 'idle' && hasRunnableQueueItem(session.executionQueue ?? [])) {
 				console.log(
 					`[QueueProcessing] Runtime recovery — dispatching stuck item for session ${session.id.substring(0, 8)}, queue depth: ${session.executionQueue.length}`
 				);

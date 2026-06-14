@@ -196,6 +196,8 @@ export function useSymphonyContribution(
 					documentPaths: data.issue.documentPaths.map((d) => d.path),
 					status: 'running',
 				},
+				claudeInteractive:
+					data.agentType === 'claude-code' ? { mode: 'api', modeReason: 'auto' } : undefined,
 			};
 
 			setSessions((prev) => [...prev, newSession]);

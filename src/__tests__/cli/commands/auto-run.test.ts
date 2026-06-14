@@ -315,9 +315,63 @@ describe('auto-run command', () => {
 			enabled: true,
 			path: '/tmp/wt',
 			branchName: 'feature/auto',
+			baseBranch: '', // --base-branch not supplied in this test
 			createPROnCompletion: true,
 			prTargetBranch: 'main',
 		});
+	});
+
+	it('should send baseBranch when --base-branch is provided', async () => {
+		vi.mocked(existsSync).mockReturnValue(true);
+		vi.mocked(resolveTargetSessionId).mockReturnValue('agent-123');
+
+		let sentMessage: Record<string, unknown> | undefined;
+		vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+			const mockClient = {
+				sendCommand: vi.fn().mockImplementation((msg) => {
+					sentMessage = msg;
+					return Promise.resolve({
+						type: 'configure_auto_run_result',
+						success: true,
+					});
+				}),
+			};
+			return action(mockClient as never);
+		});
+
+		await autoRun(['/path/to/doc.md'], {
+			agent: 'agent-123',
+			launch: true,
+			worktree: true,
+			branch: 'feature-from-rc',
+			baseBranch: 'rc',
+			worktreePath: '/tmp/wt',
+		});
+
+		expect(sentMessage).toBeDefined();
+		const wt = sentMessage!.worktree as Record<string, unknown>;
+		expect(wt.baseBranch).toBe('rc');
+		expect(wt.branchName).toBe('feature-from-rc');
+	});
+
+	it('should reject --base-branch without --worktree', async () => {
+		vi.mocked(existsSync).mockReturnValue(true);
+		vi.mocked(resolveTargetSessionId).mockReturnValue('agent-123');
+		const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
+			throw new Error('process.exit');
+		});
+		const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		await expect(
+			autoRun(['/path/to/doc.md'], {
+				agent: 'agent-123',
+				baseBranch: 'rc',
+			})
+		).rejects.toThrow('process.exit');
+
+		expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('--base-branch'));
+		exitSpy.mockRestore();
+		errSpy.mockRestore();
 	});
 
 	it('should error when --worktree is used without --launch', async () => {

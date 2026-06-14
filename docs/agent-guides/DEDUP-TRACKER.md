@@ -18,7 +18,7 @@ Consolidated tracking of all duplicate/dead code in the Maestro codebase. Grep-v
 - **Shared helpers that now exist in rc (infra ready, migration not done):**
   - `updateSessionWith` exported from `src/renderer/stores/sessionStore.ts:444` (related to finding for Phase 07A)
   - `selectActiveSession` and `selectSessionById` in `src/renderer/stores/sessionStore.ts`
-- **Canonical formatters in rc** (`src/shared/formatters.ts`): `formatSize`, `formatNumber`, `formatTokens`, `formatTokensCompact`, `formatRelativeTime`, `formatActiveTime`, `formatElapsedTime`, `formatCost`, `estimateTokenCount`, `formatElapsedTimeColon`, `truncatePath`, `getParentDir`, `truncateCommand`. **`formatDuration` is in `src/shared/performance-metrics.ts:336`** (not formatters.ts). `formatTime` / `formatTimestamp` NOT YET canonicalized — local copies still present in multiple files.
+- **Canonical formatters in rc** (`src/shared/formatters.ts`): `formatSize`, `formatNumber`, `formatTokens`, `formatTokensCompact`, `formatRelativeTime`, `formatActiveTime`, `formatElapsedTime`, `formatCost`, `estimateTokenCount`, `formatElapsedTimeColon`, `truncatePath`, `getParentDir`, `truncateCommand`. **`formatDuration` is in `src/shared/performance-metrics.ts:336`** (not formatters.ts). `formatTime` / `formatTimestamp` NOT YET canonicalized - local copies still present in multiple files.
 - **NOT in rc** (still genuinely missing): `EmptyState`, `GhostIconButton`, `Spinner` in `src/renderer/components/ui/`; `src/__tests__/helpers/` directory; unified `SpecCommandManager` base (speckit and openspec managers still separate); `spawnGroupChatAgent.ts` helper.
 
 ## Priority Legend

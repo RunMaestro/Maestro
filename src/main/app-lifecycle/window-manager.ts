@@ -3,15 +3,18 @@
  * Handles window state persistence, DevTools, crash detection, and auto-updater initialization.
  */
 
-import { pathToFileURL } from 'url';
-import { BrowserWindow, Menu, ipcMain } from 'electron';
+import { BrowserWindow, Menu, ipcMain, screen } from 'electron';
 import type Store from 'electron-store';
 import type { WindowState } from '../stores/types';
 import { logger } from '../utils/logger';
 import { initAutoUpdater } from '../auto-updater';
 
 const BROWSER_TAB_PARTITION_PREFIX = 'persist:maestro-browser-session-';
-const ALLOWED_BROWSER_TAB_EMBED_PROTOCOLS = new Set(['http:', 'https:']);
+// `file:` is allowed so users can open local HTML they just generated
+// (Plotly dashboards, etc.) inside Maestro instead of bouncing to the system
+// browser. The webview is still hardened (sandbox, no node, webSecurity true)
+// and only renders content the user explicitly opens.
+const ALLOWED_BROWSER_TAB_EMBED_PROTOCOLS = new Set(['http:', 'https:', 'file:']);
 const ALLOWED_BROWSER_TAB_ABOUT_URLS = new Set(['about:blank']);
 const ALLOWED_APP_PERMISSIONS = new Set(['clipboard-read', 'clipboard-sanitized-write']);
 
@@ -51,6 +54,9 @@ interface BrowserTabGuestContents {
 	): void;
 	on(event: string, handler: (...args: any[]) => void): void;
 	executeJavaScript(code: string): Promise<unknown>;
+	// Privileged Electron paste: bypasses the web-facing `clipboard-read`
+	// permission that the permission handler denies to webviews (issue #1063).
+	paste(): void;
 }
 
 function isAllowedBrowserTabUrl(rawUrl: string): boolean {
@@ -132,6 +138,39 @@ async function reportCrashToSentry(
 	}
 }
 
+/**
+ * Resolves the window position to use, dropping saved coordinates that would
+ * place the window off every visible display. Windows reports bounds of
+ * (-32000, -32000) for a minimized window, and unplugging a monitor leaves
+ * stale coordinates pointing at a display that no longer exists. In both cases
+ * the restored window is invisible. When the saved position is unusable we
+ * return undefined x/y so Electron centers the window on the primary display.
+ */
+function resolveVisibleWindowPosition(state: WindowState): { x?: number; y?: number } {
+	if (typeof state.x !== 'number' || typeof state.y !== 'number') {
+		return {};
+	}
+
+	// The window is reachable if the center of its title bar lands inside the
+	// work area of some display, with a bottom margin so the title bar can't sit
+	// below the screen edge where it can't be grabbed.
+	const BOTTOM_MARGIN = 80;
+	const TITLE_BAR_SAMPLE_Y = 16; // approximate title-bar height (px)
+	const titleBar = { x: state.x + state.width / 2, y: state.y + TITLE_BAR_SAMPLE_Y };
+
+	const isOnScreen = screen.getAllDisplays().some((display) => {
+		const { x, y, width, height } = display.workArea;
+		return (
+			titleBar.x >= x &&
+			titleBar.x <= x + width &&
+			titleBar.y >= y &&
+			titleBar.y <= y + height - BOTTOM_MARGIN
+		);
+	});
+
+	return isOnScreen ? { x: state.x, y: state.y } : {};
+}
+
 /** Dependencies for window manager */
 export interface WindowManagerDependencies {
 	/** Store for window state persistence */
@@ -140,8 +179,8 @@ export interface WindowManagerDependencies {
 	isDevelopment: boolean;
 	/** Path to the preload script */
 	preloadPath: string;
-	/** Path to the renderer HTML file (production) */
-	rendererPath: string;
+	/** Custom-protocol URL used to load the production renderer. */
+	rendererProductionUrl: string;
 	/** Development server URL */
 	devServerUrl: string;
 	/** Whether to use the native OS title bar instead of custom title bar */
@@ -173,7 +212,7 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 		windowStateStore,
 		isDevelopment,
 		preloadPath,
-		rendererPath,
+		rendererProductionUrl,
 		devServerUrl,
 		useNativeTitleBar,
 		autoHideMenuBar,
@@ -182,12 +221,15 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 
 	return {
 		createWindow: (): BrowserWindow => {
-			// Restore saved window state
+			// Restore saved window state, discarding off-screen coordinates so the
+			// window can never spawn invisible (saved while minimized -> -32000 on
+			// Windows, or on an unplugged monitor); fall back to a centered window.
 			const savedState = windowStateStore.store;
+			const position = resolveVisibleWindowPosition(savedState);
 
 			const mainWindow = new BrowserWindow({
-				x: savedState.x,
-				y: savedState.y,
+				x: position.x,
+				y: position.y,
 				width: savedState.width,
 				height: savedState.height,
 				minWidth: 1000,
@@ -225,10 +267,13 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 				try {
 					const isMaximized = mainWindow.isMaximized();
 					const isFullScreen = mainWindow.isFullScreen();
+					const isMinimized = mainWindow.isMinimized();
 					const bounds = mainWindow.getBounds();
 
-					// Only save bounds if not maximized/fullscreen (to restore proper size later)
-					if (!isMaximized && !isFullScreen) {
+					// Only save bounds when the window is in its normal state. While
+					// minimized, Windows reports bounds of (-32000, -32000), which would
+					// otherwise persist and make the window spawn off-screen next launch.
+					if (!isMaximized && !isFullScreen && !isMinimized) {
 						windowStateStore.set('x', bounds.x);
 						windowStateStore.set('y', bounds.y);
 						windowStateStore.set('width', bounds.width);
@@ -262,7 +307,7 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 				// DevTools can be opened via Command-K menu instead of automatically on startup
 				logger.info('Loading development server', 'Window');
 			} else {
-				mainWindow.loadFile(rendererPath);
+				mainWindow.loadURL(rendererProductionUrl);
 				logger.info('Loading production build', 'Window');
 				// Open DevTools in production if DEBUG env var is set
 				if (process.env.DEBUG === 'true') {
@@ -312,9 +357,24 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 					if (!input.meta && !input.control && !input.alt) return;
 					if (input.type !== 'keyDown') return;
 					const k = input.key.toLowerCase();
-					// Let standard text-editing shortcuts pass through to the page
+					// Cmd/Ctrl+V: drive paste through the trusted guest webContents API.
+					// Chromium's native paste needs the `clipboard-read` permission, which
+					// the permission handler denies to webviews as a security boundary, so
+					// native paste silently fails inside browser-tab form fields (issue
+					// #1063). guest.paste() is a privileged Electron call that bypasses
+					// that web-facing permission, mirroring the right-click Paste menu
+					// item (issue #1065).
+					const isPaste = (input.meta || input.control) && !input.alt && !input.shift && k === 'v';
+					if (isPaste) {
+						event.preventDefault();
+						guest.paste();
+						return;
+					}
+					// Let the remaining standard text-editing shortcuts pass through to
+					// the page. `f` is intentionally NOT in this list: Cmd+F must reach
+					// the renderer so the in-page find bar can open.
 					const isTextEditing =
-						(input.meta || input.control) && !input.alt && !input.shift && 'acvxzf'.includes(k);
+						(input.meta || input.control) && !input.alt && !input.shift && 'acxz'.includes(k);
 					const isRedo = (input.meta || input.control) && !input.alt && input.shift && k === 'z';
 					if (isTextEditing || isRedo) return;
 					event.preventDefault();
@@ -339,7 +399,7 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 						var hasAlt=e.altKey;
 						if(!hasMod&&!hasAlt)return;
 						var k=e.key.toLowerCase();
-						var te=hasMod&&!hasAlt&&!e.shiftKey&&'acvxzf'.indexOf(k)!==-1;
+						var te=hasMod&&!hasAlt&&!e.shiftKey&&'acxz'.indexOf(k)!==-1;
 						var re=hasMod&&!hasAlt&&e.shiftKey&&k==='z';
 						if(te||re)return;
 						e.preventDefault();
@@ -384,14 +444,26 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 			// file inside the renderer dir through, which meant a stray <a href="foo.md">
 			// in chat output could resolve relative to index.html and unload the app to
 			// a non-existent bundle file.
-			const allowedDevOrigin = isDevelopment ? new URL(devServerUrl).origin : null;
-			const rendererFileUrl = isDevelopment ? null : pathToFileURL(rendererPath).href;
+			// The dev server serves the app at its root. A previous guard allowed the
+			// ENTIRE dev origin through, which let any same-origin path (a game served
+			// by the dev server, or a stray relative <a href="game/"> in chat/markdown
+			// output) unload the app and take over the whole window. Page content
+			// belongs in a <webview> browser tab, never the top-level frame, so the dev
+			// guard is now as strict as production: only the app's own entry document
+			// (origin AND pathname) may load top-level. HMR/full-reloads target the same
+			// root URL and the renderer has no top-level URL routing, so this is safe.
+			const devEntryUrl = isDevelopment ? new URL(devServerUrl) : null;
+			const allowedDevOrigin = devEntryUrl ? devEntryUrl.origin : null;
+			const allowedDevPathname = devEntryUrl ? devEntryUrl.pathname || '/' : null;
+			const allowedProdOrigin = isDevelopment ? null : new URL(rendererProductionUrl).origin;
+			const allowedProdEntryUrl = isDevelopment ? null : rendererProductionUrl;
 			mainWindow.webContents.on('will-navigate', (event, url) => {
 				const parsedUrl = new URL(url);
 				if (isDevelopment) {
-					if (parsedUrl.origin === allowedDevOrigin) return;
+					const pathname = parsedUrl.pathname || '/';
+					if (parsedUrl.origin === allowedDevOrigin && pathname === allowedDevPathname) return;
 				} else {
-					if (parsedUrl.protocol === 'file:' && url === rendererFileUrl) return;
+					if (parsedUrl.origin === allowedProdOrigin && url === allowedProdEntryUrl) return;
 				}
 				event.preventDefault();
 				logger.warn(`Blocked navigation to: ${url}`, 'Window');
@@ -486,11 +558,22 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 					exitCode: details.exitCode,
 				});
 
-				// Report to Sentry from main process (always available)
-				reportCrashToSentry(`Renderer process gone: ${details.reason}`, 'fatal', {
-					reason: details.reason,
-					exitCode: details.exitCode,
-				});
+				// `killed` (signal-terminated, e.g. app quit / OS shutdown / user
+				// force-quit) and `clean-exit` are intentional terminations, not
+				// crashes - the auto-reload guard below already treats them as such.
+				// Reporting them as `fatal` Sentry events is pure noise; genuine
+				// out-of-memory kills surface separately as reason `oom`. Only the
+				// real crash reasons (`crashed`, `oom`, `abnormal-exit`, etc.) are
+				// worth a breadcrumb. Fixes MAESTRO-4X/4Y.
+				const intentionalTermination =
+					details.reason === 'killed' || details.reason === 'clean-exit';
+				if (!intentionalTermination) {
+					// Report to Sentry from main process (always available)
+					reportCrashToSentry(`Renderer process gone: ${details.reason}`, 'fatal', {
+						reason: details.reason,
+						exitCode: details.exitCode,
+					});
+				}
 
 				// Auto-reload unless the process was intentionally killed
 				if (details.reason !== 'killed' && details.reason !== 'clean-exit') {
@@ -516,11 +599,9 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 				logger.info('Window became responsive again', 'Window');
 			});
 
-			// Handle page crashes (less severe than render-process-gone)
-			mainWindow.webContents.on('crashed', (_event, killed) => {
-				logger.error('WebContents crashed', 'Window', { killed });
-				reportCrashToSentry('WebContents crashed', killed ? 'warning' : 'error', { killed });
-			});
+			// Note: the legacy 'crashed' event was removed in Electron 41 and
+			// is now subsumed by 'render-process-gone' above (which reports to
+			// Sentry with full reason/exitCode detail and handles auto-reload).
 
 			// Handle page load failures (network issues, invalid URLs, etc.)
 			mainWindow.webContents.on(

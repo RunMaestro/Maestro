@@ -6,8 +6,11 @@ import React, {
 	useCallback,
 	forwardRef,
 	useImperativeHandle,
+	lazy,
+	Suspense,
 } from 'react';
 import ReactMarkdown from 'react-markdown';
+import { urlTransformAllowingMaestro } from '../../utils/markdownUrlTransform';
 import rehypeRaw from 'rehype-raw';
 import rehypeSlug from 'rehype-slug';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -23,7 +26,7 @@ import {
 } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { captureException } from '../../utils/sentry';
-import { safeClipboardWrite, safeClipboardWriteBlob } from '../../utils/clipboard';
+import { safeClipboardWrite, safeClipboardWriteImage } from '../../utils/clipboard';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { notifyToast } from '../../stores/notificationStore';
@@ -41,6 +44,9 @@ import remarkFrontmatter from 'remark-frontmatter';
 import { remarkFrontmatterTable } from '../../utils/remarkFrontmatterTable';
 import { REMARK_GFM_PLUGINS, createMarkdownComponents } from '../../utils/markdownConfig';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { useSessionStore } from '../../stores/sessionStore';
+import { buildFileDeepLink } from '../../../shared/deep-link-urls';
+import { useUIStore } from '../../stores/uiStore';
 import { openUrl } from '../../utils/openUrl';
 import { isImageFile } from '../../../shared/gitUtils';
 import type { FilePreviewProps, FilePreviewHandle, FileStats } from './types';
@@ -52,18 +58,48 @@ import {
 	countMarkdownTasks,
 	extractHeadings,
 	isReadableTextPreview,
+	isCodeFile,
 	LARGE_FILE_TOKEN_SKIP_THRESHOLD,
 	LARGE_FILE_PREVIEW_LIMIT,
+	pickPreviewTier,
+	scanLineStats,
 } from './filePreviewUtils';
 import { BionifyTextBlock } from '../../utils/bionifyReadingMode';
 import { MarkdownImage } from './MarkdownImage';
 import { remarkHighlight } from './remarkHighlight';
 import { useFilePreviewSearch } from '../../hooks/file';
+import type { FilePreviewSearchAdapter } from './search/types';
 import { FilePreviewHeader } from './FilePreviewHeader';
 import { ImageViewer } from './ImageViewer';
+import { ImageSaveModal } from './ImageSaveModal';
+import { useImageAnnotatorStore } from '../ImageAnnotator/imageAnnotatorStore';
+import { getParentDir, getBasename } from '../../../shared/formatters';
 import { FilePreviewToc } from './FilePreviewToc';
-import { HighlightedCodeEditor } from './HighlightedCodeEditor';
+import { MarkdownEditor } from './markdownEditor';
+import type { MarkdownEditorHandle } from './markdownEditor';
+import {
+	domGetTopLine,
+	domScrollToLine,
+	domGetTopLineByAttr,
+	domScrollToLineByAttr,
+} from './lineSync';
+import { rehypeSourceLine } from './rehypeSourceLine';
 import { logger } from '../../utils/logger';
+
+// Lazy-loaded large-file markdown renderer. Keeping it out of the main bundle
+// means small-file previews don't pay the ~135 KB cost of markdown-it +
+// react-virtuoso + DOMPurify until a large file actually triggers it.
+const MarkdownPreviewFast = lazy(() => import('./markdownFast'));
+
+// Lazy-loaded Fast tier preview for plain text and code files. Same lazy
+// strategy as the markdown Fast tier — small text files don't pay for
+// TanStack Virtual + Shiki until a large file triggers the Fast tier.
+const TextPreviewFast = lazy(() => import('./textFast'));
+
+// Lazy-loaded Giant tier preview (CodeMirror 6). Used for multi-MB / multi-
+// million-line files where even the Fast tiers would struggle to parse +
+// render. CM6 is ~300 KB gz so we keep it well off the main bundle.
+const GiantPreview = lazy(() => import('./giantPreview'));
 
 export const FilePreview = React.memo(
 	forwardRef<FilePreviewHandle, FilePreviewProps>(function FilePreview(
@@ -92,6 +128,7 @@ export const FilePreview = React.memo(
 			onPublishGist,
 			hasGist,
 			onOpenInGraph,
+			onOpenInBrowser,
 			sshRemoteId,
 			externalEditContent,
 			onEditContentChange,
@@ -102,6 +139,12 @@ export const FilePreview = React.memo(
 			isTabMode,
 			lastModified,
 			onReloadFile,
+			previewTierOverride,
+			onPreviewTierChange,
+			htmlRenderMode = false,
+			onHtmlRenderModeChange,
+			pendingScrollToLine,
+			onPendingScrollToLineConsumed,
 		},
 		ref
 	) {
@@ -111,8 +154,10 @@ export const FilePreview = React.memo(
 		const [tokenCount, setTokenCount] = useState<number | null>(null);
 		const [showRemoteImages, setShowRemoteImages] = useState(false);
 		const [showFullContent, setShowFullContent] = useState(false);
-		// Edit mode state - use external content when provided (for file tab persistence)
-		const [internalEditContent, setInternalEditContent] = useState('');
+		// Edit mode state - use external content when provided (for file tab persistence).
+		// Initialize from file.content so hasChanges isn't a false positive on first render
+		// (effect below keeps it in sync when the file changes).
+		const [internalEditContent, setInternalEditContent] = useState(file?.content ?? '');
 		// Computed edit content - prefer external if provided
 		const editContent = externalEditContent ?? internalEditContent;
 		// Wrapper to update both internal state and notify parent
@@ -125,21 +170,50 @@ export const FilePreview = React.memo(
 		);
 		const [isSaving, setIsSaving] = useState(false);
 		const [showUnsavedChangesModal, setShowUnsavedChangesModal] = useState(false);
+		// Image-edit save flow: holds the annotator's composited data URL while the
+		// user picks a save destination (overwrite vs new file). Null when idle.
+		const [imageSaveData, setImageSaveData] = useState<string | null>(null);
+		const [imageSaveBusy, setImageSaveBusy] = useState(false);
+		const openAnnotator = useImageAnnotatorStore((s) => s.openAnnotator);
 		const [searchMode, setSearchMode] = useState<'text' | 'jq'>('text');
 		const [showJqHelp, setShowJqHelp] = useState(false);
 		const [jqError, setJqError] = useState<string | null>(null);
 		const jqHelpRef = useRef<HTMLDivElement>(null);
+		const [lineCtxMenu, setLineCtxMenu] = useState<{
+			lineNumber: number;
+			x: number;
+			y: number;
+		} | null>(null);
 
 		const codeContainerRef = useRef<HTMLDivElement>(null);
 		const contentRef = useRef<HTMLDivElement>(null);
 		const containerRef = useRef<HTMLDivElement>(null);
-		const textareaRef = useRef<HTMLTextAreaElement>(null);
+		// Imperative handle for the CodeMirror-based markdown/text edit editor.
+		// Replaces the raw <textarea> ref the previous implementation passed
+		// around — see ./markdownEditor for the surface this exposes.
+		const editorRef = useRef<MarkdownEditorHandle>(null);
 		const markdownContainerRef = useRef<HTMLDivElement>(null);
 		const layerIdRef = useRef<string>();
 		const cancelButtonRef = useRef<HTMLButtonElement>(null);
 		const scrollSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 		const tocButtonRef = useRef<HTMLButtonElement>(null);
 		const tocOverlayRef = useRef<HTMLDivElement>(null);
+		// Imperative handle for the lazy-loaded Fast tier preview. Used by the
+		// TOC to scroll to a heading via virtuoso.scrollToIndex when in Fast tier.
+		const markdownFastRef = useRef<import('./markdownFast').MarkdownPreviewFastHandle>(null);
+		// Imperative handle for the lazy-loaded text/code Fast tier preview.
+		// Cmd+F search delegates to this handle when in Fast tier non-markdown.
+		const textFastRef = useRef<import('./textFast').TextPreviewFastHandle>(null);
+		// Imperative handle for the lazy-loaded Giant tier preview. Cmd+F in
+		// Giant tier opens CodeMirror's native search panel via this handle.
+		const giantRef = useRef<import('./giantPreview').GiantPreviewHandle>(null);
+		// Top source line of each view, kept fresh by a capture-phase scroll
+		// listener so toggling between preview and edit can re-anchor on the
+		// same line. The conditional render unmounts the outgoing view before
+		// effects run, so we cannot read its scroll position at toggle time -
+		// hence the running refs.
+		const previewTopLineRef = useRef(1);
+		const editorTopLineRef = useRef(1);
 
 		// Reset full content view when file changes
 		useEffect(() => {
@@ -148,17 +222,27 @@ export const FilePreview = React.memo(
 
 		// File change detection state
 		const [fileChangedOnDisk, setFileChangedOnDisk] = useState(false);
+		// True once the file can no longer be stat'd at its cached path (deleted, or
+		// moved/renamed elsewhere). Distinct from fileChangedOnDisk: there is nothing
+		// to reload, so the banner offers only Dismiss.
+		const [fileMissingOnDisk, setFileMissingOnDisk] = useState(false);
 		const lastModifiedRef = useRef(lastModified);
 
 		// Keep ref in sync with prop (reset when parent reloads content with new lastModified)
 		useEffect(() => {
 			lastModifiedRef.current = lastModified;
 			setFileChangedOnDisk(false);
+			setFileMissingOnDisk(false);
 		}, [lastModified]);
+
+		// Reset the missing banner when navigating to a different file.
+		useEffect(() => {
+			setFileMissingOnDisk(false);
+		}, [file?.path]);
 
 		// Poll file stat to detect external changes (every 3s for the active file)
 		useEffect(() => {
-			if (!file?.path || !lastModified || fileChangedOnDisk) return;
+			if (!file?.path || !lastModified || fileChangedOnDisk || fileMissingOnDisk) return;
 
 			const interval = setInterval(async () => {
 				try {
@@ -169,12 +253,15 @@ export const FilePreview = React.memo(
 						setFileChangedOnDisk(true);
 					}
 				} catch {
-					// Silently ignore — file may have been deleted or become inaccessible
+					// stat threw: the file no longer exists at this path. It was deleted
+					// or moved/renamed out from under the open tab. Surface it so the user
+					// knows their edits would no longer save in place.
+					setFileMissingOnDisk(true);
 				}
 			}, 3000);
 
 			return () => clearInterval(interval);
-		}, [file?.path, lastModified, sshRemoteId, fileChangedOnDisk]);
+		}, [file?.path, lastModified, sshRemoteId, fileChangedOnDisk, fileMissingOnDisk]);
 
 		// Handle reload click
 		const handleReloadFile = useCallback(() => {
@@ -193,14 +280,42 @@ export const FilePreview = React.memo(
 			[]
 		);
 
-		// Track if content has been modified
-		const hasChanges = markdownEditMode && editContent !== file?.content;
+		// Track if content has been modified. Not gated on markdownEditMode so the
+		// user can save unsaved edits after toggling back to preview (Cmd+S, etc.).
+		const hasChanges = editContent !== (file?.content ?? '');
+
+		// Deep-link scroll-to-line. Fires when a maestro://file/...#L<n> link
+		// opens this file: flip to edit mode, jump the editor to that line,
+		// then notify the parent so it clears the transient flag (otherwise
+		// we'd re-jump on every render).
+		useEffect(() => {
+			if (!pendingScrollToLine || !file) return;
+			// The editor only exists in edit mode. If we're still in preview,
+			// flip to edit first — the next render lands back here with the
+			// editor mounted and the handle available.
+			if (!markdownEditMode) {
+				setMarkdownEditMode(true);
+				return;
+			}
+			const editor = editorRef.current;
+			if (!editor) return;
+			editor.focus();
+			editor.scrollToLine(pendingScrollToLine);
+			onPendingScrollToLineConsumed?.();
+		}, [
+			pendingScrollToLine,
+			markdownEditMode,
+			setMarkdownEditMode,
+			onPendingScrollToLineConsumed,
+			file,
+		]);
 
 		const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
 
 		// Compute derived values - must be before any early returns but after hooks
 		const language = file ? getLanguageFromFilename(file.name) : '';
 		const isMarkdown = language === 'markdown';
+		const isHtml = file ? /\.html?$/i.test(file.name) : false;
 		const isReadableText = file ? !isMarkdown && isReadableTextPreview(file.name) : false;
 		const isCsv = language === 'csv';
 		const isJsonl = language === 'jsonl';
@@ -226,6 +341,27 @@ export const FilePreview = React.memo(
 			return file.content.length > LARGE_FILE_TOKEN_SKIP_THRESHOLD;
 		}, [file?.content]);
 
+		// Choose preview tier based on file size + line shape. Applies to all
+		// text-like content (markdown, plain text, source code) — binary and
+		// image files always stay in Rich. Tier is memoized on path so
+		// switching tabs and coming back doesn't re-decide.
+		//
+		// `scanLineStats` returns both line count and longest single line in
+		// one pass; the long-line signal pushes pathological files (e.g. a
+		// 488 KB single line) past Fast straight into Giant, where CM6's
+		// `lineWrapping` extension keeps the renderer responsive.
+		const autoTier = useMemo(() => {
+			if (!file?.content || isImage || isBinary) return 'rich' as const;
+			const bytes = file.content.length;
+			const { lines, maxLineLength } = scanLineStats(file.content);
+			return pickPreviewTier(bytes, lines, maxLineLength);
+		}, [file?.path, file?.content, isImage, isBinary]);
+
+		// Effective tier respects the user's per-tab override, falling back to
+		// the auto-picked tier. The PreviewTierChip in the header lets the user
+		// flip between modes; selection is persisted via onPreviewTierChange.
+		const previewTier = previewTierOverride ?? autoTier;
+
 		// For very large files, truncate content for syntax highlighting to prevent freezes
 		const displayContent = useMemo(() => {
 			if (!file?.content) return '';
@@ -240,6 +376,36 @@ export const FilePreview = React.memo(
 			}
 			return file.content;
 		}, [file?.content, isMarkdown, isImage, isBinary, showFullContent]);
+
+		// Tier-aware search adapter, memoized so its identity only changes when
+		// the routing actually flips. useFilePreviewSearch lists searchAdapter
+		// in its effect dependency array, so an unstable identity would re-run
+		// the effect on every render — refs are stable so they don't belong in
+		// the deps even though the callbacks close over them.
+		//   Fast markdown  → markdownFast handle (block-virtualized hit map)
+		//   Fast text/code → textFast handle (page-virtualized hit map)
+		//   Giant any kind → GiantPreview handle (CM6 owns the search panel)
+		const searchAdapter = useMemo<FilePreviewSearchAdapter | undefined>(() => {
+			if (previewTier === 'fast' && isMarkdown) {
+				return {
+					findHits: (q) => markdownFastRef.current?.findInContent(q) ?? [],
+					scrollToMatch: (hit) => markdownFastRef.current?.scrollToMatch(hit),
+				};
+			}
+			if (previewTier === 'fast' && !markdownEditMode && !isImage && !isBinary) {
+				return {
+					findHits: (q) => textFastRef.current?.findInContent(q) ?? [],
+					scrollToMatch: (hit) => textFastRef.current?.scrollToMatch(hit),
+				};
+			}
+			if (previewTier === 'giant' && !markdownEditMode && !isImage && !isBinary) {
+				return {
+					findHits: (q) => giantRef.current?.findInContent(q) ?? [],
+					scrollToMatch: (hit) => giantRef.current?.scrollToMatch(hit),
+				};
+			}
+			return undefined;
+		}, [previewTier, isMarkdown, markdownEditMode, isImage, isBinary]);
 
 		// Search state and effects (code highlighting, markdown CSS Highlight API, edit textarea)
 		const {
@@ -257,7 +423,7 @@ export const FilePreview = React.memo(
 			codeContainerRef,
 			markdownContainerRef,
 			contentRef,
-			textareaRef,
+			editorRef,
 			isMarkdown,
 			isReadableText,
 			isImage,
@@ -273,6 +439,7 @@ export const FilePreview = React.memo(
 			displayedContentLength: displayContent.length,
 			initialSearchQuery,
 			onSearchQueryChange,
+			searchAdapter,
 		});
 
 		// Bionify reading mode follows the global setting; disabled while search highlights are active.
@@ -280,6 +447,10 @@ export const FilePreview = React.memo(
 		const bionifyIntensity = useSettingsStore((s) => s.bionifyIntensity);
 		const bionifyAlgorithm = useSettingsStore((s) => s.bionifyAlgorithm);
 		const spellCheckEnabled = useSettingsStore((s) => s.spellCheck);
+		const fileEditWordWrap = useSettingsStore((s) => s.fileEditWordWrap);
+		const setFileEditWordWrap = useSettingsStore((s) => s.setFileEditWordWrap);
+		const fileEditShowLineNumbers = useSettingsStore((s) => s.fileEditShowLineNumbers);
+		const filePreviewToolbarVisibility = useSettingsStore((s) => s.filePreviewToolbarVisibility);
 		const hasActiveSearch = searchQuery.trim().length > 0;
 		const effectiveBionifyReadingMode = bionifyReadingMode && !hasActiveSearch;
 
@@ -389,8 +560,10 @@ export const FilePreview = React.memo(
 			[fileTree, fileTreeIndices, cwd, homeDir]
 		);
 
-		// Memoize rehypePlugins array to prevent unnecessary re-renders
-		const rehypePlugins = useMemo(() => [rehypeRaw, rehypeSlug], []);
+		// Memoize rehypePlugins array to prevent unnecessary re-renders.
+		// rehypeSourceLine runs first so it reads the original source positions
+		// before rehypeRaw re-parses raw HTML (which discards position info).
+		const rehypePlugins = useMemo(() => [rehypeSourceLine, rehypeRaw, rehypeSlug], []);
 
 		// Memoize ReactMarkdown components to prevent infinite render loops
 		// The img component was causing loops because MarkdownImage useEffect sets state,
@@ -481,11 +654,16 @@ export const FilePreview = React.memo(
 				window.maestro.fs
 					.stat(file.path, sshRemoteId)
 					.then((stats) =>
-						setFileStats({
-							size: stats.size,
-							createdAt: stats.createdAt,
-							modifiedAt: stats.modifiedAt,
-						})
+						// stat returns null for a missing path - clear stats like the catch.
+						setFileStats(
+							stats
+								? {
+										size: stats.size,
+										createdAt: stats.createdAt,
+										modifiedAt: stats.modifiedAt,
+									}
+								: null
+						)
 					)
 					.catch((err) => {
 						logger.error('Failed to get file stats:', undefined, err);
@@ -522,48 +700,149 @@ export const FilePreview = React.memo(
 		}, [file?.content, file?.path, externalEditContent]);
 
 		// Focus appropriate element and sync scroll position when mode changes
+		// Which active preview reports real source lines (vs. percent-only views
+		// like CSV/JSON/HTML/rendered-markdown). Mirrors the render branch order
+		// below so it agrees with what's actually on screen.
+		const previewSyncSource = (): 'giant' | 'text-fast' | 'text-dom' | 'markdown-dom' | null => {
+			if (isHtml && htmlRenderMode) return null;
+			if (isCsv) return null;
+			if (isJsonl || (isJson && searchMode === 'jq')) return null;
+			if (previewTier === 'giant') return 'giant';
+			// Fast-tier markdown scrolls inside its own virtuoso container, which
+			// the data-source-line walk can't target - leave it on percent.
+			if (isMarkdown && previewTier === 'fast') return null;
+			// Rich markdown renders into markdownContainerRef inside contentRef;
+			// rehypeSourceLine tags each block so we can map render ⇄ source line.
+			if (isMarkdown) return 'markdown-dom';
+			if (isReadableText && previewTier === 'fast') return 'text-fast';
+			if (isReadableText) return 'text-dom';
+			return null;
+		};
+
+		// 1-based source line at the top of the active preview, or null when the
+		// active view can't report one.
+		const readPreviewTopLine = (): number | null => {
+			switch (previewSyncSource()) {
+				case 'giant':
+					return giantRef.current?.getTopLine() ?? null;
+				case 'text-fast':
+					return textFastRef.current?.getTopLine() ?? null;
+				case 'text-dom': {
+					const scroller = contentRef.current;
+					const containerEl = markdownContainerRef.current;
+					if (!scroller || !containerEl) return null;
+					return domGetTopLine(scroller, containerEl, displayContent);
+				}
+				case 'markdown-dom': {
+					const scroller = contentRef.current;
+					const containerEl = markdownContainerRef.current;
+					if (!scroller || !containerEl) return null;
+					return domGetTopLineByAttr(scroller, containerEl);
+				}
+				default:
+					return null;
+			}
+		};
+
+		// Scroll the active preview so `line` sits at the top. Returns false when
+		// the active view has no line mapping (caller falls back to percent).
+		const scrollPreviewToLine = (line: number): boolean => {
+			switch (previewSyncSource()) {
+				case 'giant':
+					giantRef.current?.scrollToLine(line);
+					return true;
+				case 'text-fast':
+					textFastRef.current?.scrollToLine(line);
+					return true;
+				case 'text-dom': {
+					const scroller = contentRef.current;
+					const containerEl = markdownContainerRef.current;
+					if (!scroller || !containerEl) return false;
+					domScrollToLine(scroller, containerEl, displayContent, line);
+					return true;
+				}
+				case 'markdown-dom': {
+					const scroller = contentRef.current;
+					const containerEl = markdownContainerRef.current;
+					if (!scroller || !containerEl) return false;
+					return domScrollToLineByAttr(scroller, containerEl, line);
+				}
+				default:
+					return false;
+			}
+		};
+
+		// Capture-phase scroll listener keeps the top-line refs fresh. Stored in a
+		// ref so the listener (attached once) always runs against current state.
+		const captureTopLineRef = useRef<() => void>(() => {});
+		captureTopLineRef.current = () => {
+			if (markdownEditMode) {
+				const line = editorRef.current?.getTopLine();
+				if (line) editorTopLineRef.current = line;
+			} else {
+				const line = readPreviewTopLine();
+				if (line != null) previewTopLineRef.current = line;
+			}
+		};
+
+		useEffect(() => {
+			const root = contentRef.current;
+			if (!root) return;
+			let raf: number | null = null;
+			const onScroll = () => {
+				if (raf != null) return;
+				raf = requestAnimationFrame(() => {
+					raf = null;
+					captureTopLineRef.current();
+				});
+			};
+			// Capture phase so scrolls from the nested tier scrollers (CodeMirror,
+			// the virtualized fast tiers) and the editor all reach this one listener.
+			root.addEventListener('scroll', onScroll, true);
+			return () => {
+				if (raf != null) cancelAnimationFrame(raf);
+				root.removeEventListener('scroll', onScroll, true);
+			};
+		}, [file?.path]);
+
 		const prevMarkdownEditModeRef = useRef(markdownEditMode);
 		useEffect(() => {
 			const wasEditMode = prevMarkdownEditModeRef.current;
 			prevMarkdownEditModeRef.current = markdownEditMode;
+			if (markdownEditMode === wasEditMode) return;
 
-			if (markdownEditMode && textareaRef.current) {
-				// Entering edit mode - focus textarea and sync scroll from preview
-				if (!wasEditMode && contentRef.current) {
-					// Calculate scroll percentage from preview mode
-					const { scrollTop, scrollHeight, clientHeight } = contentRef.current;
-					const maxScroll = scrollHeight - clientHeight;
-					const scrollPercent = maxScroll > 0 ? scrollTop / maxScroll : 0;
-
-					// Apply scroll percentage to textarea after it renders
-					requestAnimationFrame(() => {
-						if (textareaRef.current) {
-							const { scrollHeight: textareaScrollHeight, clientHeight: textareaClientHeight } =
-								textareaRef.current;
-							const textareaMaxScroll = textareaScrollHeight - textareaClientHeight;
-							textareaRef.current.scrollTop = Math.round(scrollPercent * textareaMaxScroll);
-						}
-					});
-				}
-				textareaRef.current.focus();
+			if (markdownEditMode && editorRef.current) {
+				// Entering edit mode - focus the editor and land it on the line that
+				// was at the top of the preview (so the view doesn't jump).
+				const canSyncLine = previewSyncSource() !== null;
+				const line = previewTopLineRef.current;
+				editorTopLineRef.current = line;
+				// Sync scroll one frame in (after the editor lays out).
+				requestAnimationFrame(() => {
+					if (canSyncLine) {
+						editorRef.current?.scrollToLine(line, { select: false });
+					} else if (contentRef.current) {
+						// Percent fallback for views without a 1:1 line map.
+						const { scrollTop, scrollHeight, clientHeight } = contentRef.current;
+						const maxScroll = scrollHeight - clientHeight;
+						editorRef.current?.setScrollPercent(maxScroll > 0 ? scrollTop / maxScroll : 0);
+					}
+				});
+				// Focus must wait until AFTER the freshly-mounted editor has
+				// painted: a rAF callback runs BEFORE the next paint, and calling
+				// focus() on a not-yet-painted contenteditable silently no-ops -
+				// focus falls to <body>, which is what broke the Cmd+E toggle
+				// (the user had to click into the editor before Cmd+E worked
+				// again). setTimeout(0) runs as a macrotask after paint, where
+				// focus reliably sticks.
+				setTimeout(() => editorRef.current?.focus(), 0);
 			} else if (!markdownEditMode && wasEditMode && containerRef.current) {
-				// Exiting edit mode - focus container and sync scroll from textarea
-				if (textareaRef.current && contentRef.current) {
-					// Calculate scroll percentage from edit mode
-					const { scrollTop, scrollHeight, clientHeight } = textareaRef.current;
-					const maxScroll = scrollHeight - clientHeight;
-					const scrollPercent = maxScroll > 0 ? scrollTop / maxScroll : 0;
-
-					// Apply scroll percentage to preview after it renders
-					requestAnimationFrame(() => {
-						if (contentRef.current) {
-							const { scrollHeight: previewScrollHeight, clientHeight: previewClientHeight } =
-								contentRef.current;
-							const previewMaxScroll = previewScrollHeight - previewClientHeight;
-							contentRef.current.scrollTop = Math.round(scrollPercent * previewMaxScroll);
-						}
-					});
-				}
+				// Exiting edit mode - the editor has already unmounted, so use the
+				// scroll-tracked top line to re-anchor the preview.
+				const line = editorTopLineRef.current;
+				requestAnimationFrame(() => {
+					scrollPreviewToLine(line);
+				});
 				containerRef.current.focus();
 			}
 		}, [markdownEditMode]);
@@ -597,6 +876,119 @@ export const FilePreview = React.memo(
 				setIsSaving(false);
 			}
 		}, [file, onSave, hasChanges, isSaving, editContent, sshRemoteId]);
+
+		// Open the previewed image in the annotator. The annotator hands back a
+		// composited data URL via onSave; we stash it and let the user pick a save
+		// destination (overwrite vs new file) before writing to disk.
+		const handleEditImage = useCallback(() => {
+			if (!file || !isImage) return;
+			openAnnotator(file.content, (newDataUrl) => setImageSaveData(newDataUrl));
+		}, [file, isImage, openAnnotator]);
+
+		// Format the annotator exports, derived from its data URL mime
+		// (e.g. "data:image/png;base64,..." -> "png"). The annotator only ever
+		// produces PNG, but we read it from the payload to stay honest.
+		const editedImageExtension = useMemo(() => {
+			if (!imageSaveData) return 'png';
+			const match = /^data:image\/([a-z0-9.+-]+)/i.exec(imageSaveData);
+			const sub = match?.[1]?.toLowerCase();
+			if (!sub) return 'png';
+			if (sub === 'svg+xml') return 'svg';
+			if (sub === 'jpeg') return 'jpg';
+			return sub;
+		}, [imageSaveData]);
+
+		// Original file's normalized extension. Overwrite-in-place is only valid
+		// when it matches the editor's output format; otherwise we'd be writing
+		// (PNG) bytes under a misleading extension.
+		const originalImageExtension = useMemo(() => {
+			if (!file) return '';
+			const ext = (getBasename(file.name).split('.').pop() ?? '').toLowerCase();
+			return ext === 'jpeg' ? 'jpg' : ext;
+		}, [file]);
+
+		const canOverwriteImage = originalImageExtension === editedImageExtension;
+
+		// Sibling name used when the original format can't be reproduced
+		// (e.g. photo.jpg -> photo.png).
+		const imageFallbackName = useMemo(() => {
+			if (!file) return '';
+			const name = getBasename(file.name);
+			const dot = name.lastIndexOf('.');
+			const base = dot > 0 ? name.slice(0, dot) : name;
+			return `${base}.${editedImageExtension}`;
+		}, [file, editedImageExtension]);
+
+		// Build a path for a file sitting next to the previewed one, preserving
+		// the original path's separator style (Windows vs POSIX).
+		const siblingImagePath = useCallback(
+			(name: string): string => {
+				const basePath = file?.path ?? '';
+				const parent = getParentDir(basePath);
+				const sep = basePath.includes('\\') && !basePath.includes('/') ? '\\' : '/';
+				return `${parent}${sep}${name}`;
+			},
+			[file?.path]
+		);
+
+		const writeEditedImage = useCallback(
+			async (targetPath: string, reloadAfter: boolean, flashMessage = 'Image Saved') => {
+				if (!imageSaveData) return;
+				setImageSaveBusy(true);
+				try {
+					await window.maestro.fs.writeImageFile(targetPath, imageSaveData, sshRemoteId);
+					// Keep our own write from tripping the file-change poller.
+					try {
+						const stat = await window.maestro?.fs?.stat(targetPath, sshRemoteId);
+						if (stat?.modifiedAt && reloadAfter) {
+							lastModifiedRef.current = new Date(stat.modifiedAt).getTime();
+						}
+					} catch {
+						// Non-critical - worst case the change banner flashes briefly.
+					}
+					setImageSaveData(null);
+					notifyCenterFlash({ message: flashMessage, color: 'theme' });
+					// Overwrite changes the file we're viewing - refresh so the preview
+					// reflects the edited pixels. A new file leaves the original intact.
+					if (reloadAfter) onReloadFile?.();
+				} catch (err) {
+					logger.error('Failed to save edited image:', undefined, err);
+					notifyToast({
+						type: 'error',
+						title: 'Save Failed',
+						message: err instanceof Error ? err.message : 'Could not save the edited image.',
+					});
+				} finally {
+					setImageSaveBusy(false);
+				}
+			},
+			[imageSaveData, sshRemoteId, onReloadFile]
+		);
+
+		const handleOverwriteImage = useCallback(() => {
+			if (!file) return;
+			if (canOverwriteImage) {
+				void writeEditedImage(file.path, true);
+				return;
+			}
+			// Can't reproduce the original format - write a sibling file in the
+			// editor's format instead and tell the user what landed where.
+			void writeEditedImage(
+				siblingImagePath(imageFallbackName),
+				false,
+				`Saved as ${imageFallbackName}`
+			);
+		}, [file, canOverwriteImage, imageFallbackName, siblingImagePath, writeEditedImage]);
+
+		const handleSaveImageAs = useCallback(
+			(newName: string) => {
+				if (!file) return;
+				const targetPath = siblingImagePath(newName);
+				const isNewPath = getBasename(targetPath) !== getBasename(file.path);
+				void writeEditedImage(targetPath, !isNewPath, `Saved as ${newName}`);
+			},
+			[file, siblingImagePath, writeEditedImage]
+		);
 
 		// Track scroll position to show/hide stats bar and report changes
 		useEffect(() => {
@@ -761,31 +1153,46 @@ export const FilePreview = React.memo(
 			}
 		};
 
-		const copyContentToClipboard = async () => {
-			if (!file) return;
-			if (isImage) {
+		// Copy a maestro:// deep link that points to the current file at a
+		// specific line. Bound to the right-click handler on the editor's line
+		// gutter. The link includes the session ID so it reopens in the same
+		// agent context where it was captured.
+		const copyDeepLinkToLine = useCallback(
+			async (lineNumber: number) => {
+				if (!file) return;
+				const sessionId = useSessionStore.getState().activeSessionId;
+				if (!sessionId) {
+					notifyToast({
+						type: 'error',
+						title: 'No active agent',
+						message: 'Deep links need an active agent to scope the file to. Select one first.',
+					});
+					return;
+				}
+				const url = buildFileDeepLink(sessionId, file.path, lineNumber);
 				try {
-					const response = await fetch(file.content);
-					const blob = await response.blob();
-					const ok = await safeClipboardWriteBlob([new ClipboardItem({ [blob.type]: blob })]);
+					const ok = await safeClipboardWrite(url);
 					if (ok) {
-						flashCopiedToClipboard(undefined, 'Image Copied');
+						flashCopiedToClipboard(url, `Deep Link Copied (L${lineNumber})`);
 					} else {
-						const fallbackOk = await safeClipboardWrite(file.content);
-						if (fallbackOk) {
-							flashCopiedToClipboard(file.content, 'Image URL Copied');
-						} else {
-							failClipboardToast('Failed to Copy Image');
-						}
+						failClipboardToast('Failed to Copy Deep Link');
 					}
 				} catch (err) {
 					captureException(err);
-					const fallbackOk = await safeClipboardWrite(file.content);
-					if (fallbackOk) {
-						flashCopiedToClipboard(file.content, 'Image URL Copied');
-					} else {
-						failClipboardToast('Failed to Copy Image');
-					}
+					failClipboardToast('Failed to Copy Deep Link');
+				}
+			},
+			[file]
+		);
+
+		const copyContentToClipboard = async () => {
+			if (!file) return;
+			if (isImage) {
+				const ok = await safeClipboardWriteImage(file.content);
+				if (ok) {
+					flashCopiedToClipboard(undefined, 'Image Copied');
+				} else {
+					failClipboardToast('Failed to Copy Image');
 				}
 			} else {
 				const ok = await safeClipboardWrite(file.content);
@@ -850,13 +1257,23 @@ export const FilePreview = React.memo(
 				return;
 			}
 
-			if (e.key === 'f' && (e.metaKey || e.ctrlKey)) {
+			if (e.key.toLowerCase() === 'f' && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
 				e.preventDefault();
 				e.stopPropagation();
+				// All three tiers (Rich / Fast / Giant) now share the same search
+				// bar. Giant tier exposes findInContent/scrollToMatch through its
+				// adapter so the count + navigation flow through the same UI.
+				// Cmd+Shift+F is goToFiles — let it bubble to the global handler.
 				setSearchOpen(true);
 				setTimeout(() => searchInputRef.current?.focus(), 0);
-			} else if (e.key === 's' && (e.metaKey || e.ctrlKey) && isEditableText && markdownEditMode) {
-				// Cmd+S to save in edit mode
+			} else if (
+				e.key === 's' &&
+				(e.metaKey || e.ctrlKey) &&
+				isEditableText &&
+				(markdownEditMode || hasChanges)
+			) {
+				// Cmd+S to save — works in edit mode, and also in preview when there
+				// are still unsaved edits from a prior edit session.
 				e.preventDefault();
 				e.stopPropagation();
 				handleSave();
@@ -869,10 +1286,31 @@ export const FilePreview = React.memo(
 				e.preventDefault();
 				e.stopPropagation();
 				setMarkdownEditMode(!markdownEditMode);
+			} else if (
+				isShortcut(e, 'toggleFilePreviewToc') &&
+				isMarkdown &&
+				!markdownEditMode &&
+				tocEntries.length > 0
+			) {
+				e.preventDefault();
+				e.stopPropagation();
+				setShowTocOverlay((v) => {
+					// Restore focus to the preview container when closing so subsequent
+					// shortcuts keep firing (heading button is about to unmount).
+					if (v) containerRef.current?.focus();
+					return !v;
+				});
+				onShortcutUsed?.('toggleFilePreviewToc');
 			} else if (e.key === 'ArrowUp') {
 				// In edit mode, let the textarea handle arrow keys for cursor movement
 				// Only intercept when NOT in edit mode (preview/code view)
 				if (isEditableText && markdownEditMode) return;
+
+				// Don't scroll the preview when logical focus is elsewhere (e.g. the
+				// file panel, where the same arrow keys navigate the file list). The
+				// FilePreview container keeps DOM focus across activeFocus changes
+				// because shortcuts like Cmd+Shift+F move logical focus only.
+				if (useUIStore.getState().activeFocus !== 'main') return;
 
 				e.preventDefault();
 				const container = contentRef.current;
@@ -892,6 +1330,8 @@ export const FilePreview = React.memo(
 				// In edit mode, let the textarea handle arrow keys for cursor movement
 				// Only intercept when NOT in edit mode (preview/code view)
 				if (isEditableText && markdownEditMode) return;
+
+				if (useUIStore.getState().activeFocus !== 'main') return;
 
 				e.preventDefault();
 				const container = contentRef.current;
@@ -1007,11 +1447,30 @@ export const FilePreview = React.memo(
 					onPublishGist={onPublishGist}
 					hasGist={hasGist}
 					onOpenInGraph={onOpenInGraph}
+					onOpenInBrowser={onOpenInBrowser}
 					sshRemoteId={sshRemoteId}
 					copyContentToClipboard={copyContentToClipboard}
 					copyPathToClipboard={copyPathToClipboard}
+					onEditImage={isImage ? handleEditImage : undefined}
 					headerBtnClass={headerBtnClass}
 					headerIconClass={headerIconClass}
+					isHtml={isHtml}
+					htmlRenderMode={htmlRenderMode}
+					setHtmlRenderMode={(v) => onHtmlRenderModeChange?.(v)}
+					showTierChip={
+						!markdownEditMode &&
+						!isImage &&
+						!isBinary &&
+						!(isHtml && htmlRenderMode) &&
+						(isMarkdown || isReadableText || isCodeFile(language)) &&
+						!!file
+					}
+					autoTier={autoTier}
+					previewTierOverride={previewTierOverride}
+					onPreviewTierChange={onPreviewTierChange}
+					wordWrap={fileEditWordWrap}
+					setWordWrap={setFileEditWordWrap}
+					toolbarVisibility={filePreviewToolbarVisibility}
 				/>
 
 				{/* File changed on disk banner */}
@@ -1043,6 +1502,39 @@ export const FilePreview = React.memo(
 							<GhostIconButton onClick={() => setFileChangedOnDisk(false)} title="Dismiss">
 								<X className="w-3 h-3" style={{ color: theme.colors.textDim }} />
 							</GhostIconButton>
+						</div>
+					</div>
+				)}
+
+				{/* File no longer on disk banner (deleted or moved/renamed elsewhere) */}
+				{fileMissingOnDisk && (
+					<div
+						className="flex items-center gap-3 px-6 py-2 border-b shrink-0"
+						style={{
+							backgroundColor: theme.colors.warning + '15',
+							borderColor: theme.colors.warning + '40',
+						}}
+					>
+						<AlertTriangle
+							className="w-3.5 h-3.5 shrink-0"
+							style={{ color: theme.colors.warning }}
+						/>
+						<span className="flex-1 text-xs" style={{ color: theme.colors.textMain }}>
+							This file no longer exists at its original location. It may have been deleted or
+							moved.
+							{hasChanges ? ' Saving will prompt you for a new location.' : ''}
+						</span>
+						<div className="flex items-center gap-2 shrink-0">
+							<button
+								onClick={() => setFileMissingOnDisk(false)}
+								className="px-2 py-1 text-xs font-medium rounded hover:opacity-80 transition-opacity"
+								style={{
+									backgroundColor: theme.colors.warning,
+									color: theme.colors.accentForeground ?? '#000',
+								}}
+							>
+								Dismiss
+							</button>
 						</div>
 					</div>
 				)}
@@ -1292,107 +1784,77 @@ export const FilePreview = React.memo(
 							</div>
 						</div>
 					) : isEditableText && markdownEditMode ? (
-						// Edit mode - syntax-highlighted editor for any text file
-						<HighlightedCodeEditor
-							ref={textareaRef}
+						// Edit mode - CodeMirror 6 editor for any text file.
+						// Key on file path so switching files remounts the editor —
+						// keeps each file's undo history isolated (the previous
+						// textarea-based implementation got that "for free" since
+						// changing value reset the input).
+						<MarkdownEditor
+							key={file.path}
+							ref={editorRef}
 							value={editContent}
 							onChange={setEditContent}
 							language={language}
 							theme={theme}
 							spellCheck={spellCheckEnabled}
+							wrap={fileEditWordWrap}
+							showLineNumbers={fileEditShowLineNumbers}
+							onLineNumberContextMenu={(lineNumber, event) => {
+								setLineCtxMenu({
+									lineNumber,
+									x: event.clientX,
+									y: event.clientY,
+								});
+							}}
 							onKeyDown={(e) => {
-								// Handle Cmd+S for save
+								// CodeMirror's defaultKeymap already binds Cmd/Ctrl+ArrowUp/Down
+								// to doc start/end, PageUp/PageDown for paging, and the usual
+								// selection / word-jump shortcuts — no need to reimplement them
+								// against a textarea ref. We only intercept the app-level
+								// shortcuts (save, exit edit mode, toggle preview/edit).
+								//
+								// `e` here is a native KeyboardEvent forwarded by CodeMirror's
+								// dom handler. isShortcut only reads modifier/key fields that
+								// exist on both native and React events, so the cast is safe.
 								if (e.key === 's' && (e.metaKey || e.ctrlKey)) {
 									e.preventDefault();
 									e.stopPropagation();
 									handleSave();
-								}
-								// Handle Escape to exit edit mode (without save)
-								else if (e.key === 'Escape') {
+								} else if (e.key === 'Escape') {
+									e.preventDefault();
+									e.stopPropagation();
+									setMarkdownEditMode(false);
+								} else if (isShortcut(e as unknown as React.KeyboardEvent, 'toggleMarkdownMode')) {
+									// Handle the toggle here too: while the CodeMirror
+									// contenteditable holds focus, relying on the keydown to
+									// bubble out to the container handler is unreliable, so the
+									// editor → preview direction would silently no-op until the
+									// user clicked elsewhere. Toggling directly keeps Cmd+E
+									// working both ways without a focus round-trip.
 									e.preventDefault();
 									e.stopPropagation();
 									setMarkdownEditMode(false);
 								}
-								// Handle Cmd+Up: Move cursor to beginning (Shift: select to beginning)
-								else if (e.key === 'ArrowUp' && (e.metaKey || e.ctrlKey)) {
-									e.preventDefault();
-									const textarea = e.currentTarget;
-									if (e.shiftKey) {
-										const anchor =
-											textarea.selectionDirection === 'backward'
-												? textarea.selectionEnd
-												: textarea.selectionStart;
-										textarea.setSelectionRange(0, anchor, 'backward');
-									} else {
-										textarea.setSelectionRange(0, 0);
-									}
-									textarea.scrollTop = 0;
-								}
-								// Handle Cmd+Down: Move cursor to end (Shift: select to end)
-								else if (e.key === 'ArrowDown' && (e.metaKey || e.ctrlKey)) {
-									e.preventDefault();
-									const textarea = e.currentTarget;
-									const len = textarea.value.length;
-									if (e.shiftKey) {
-										const anchor =
-											textarea.selectionDirection === 'forward'
-												? textarea.selectionStart
-												: textarea.selectionEnd;
-										textarea.setSelectionRange(anchor, len, 'forward');
-									} else {
-										textarea.setSelectionRange(len, len);
-									}
-									textarea.scrollTop = textarea.scrollHeight;
-								}
-								// Handle Opt+Up: Page up (move cursor up by roughly a page)
-								else if (e.key === 'ArrowUp' && e.altKey) {
-									e.preventDefault();
-									const textarea = e.currentTarget;
-									const lineHeight = parseInt(getComputedStyle(textarea).lineHeight) || 24;
-									const linesPerPage = Math.floor(textarea.clientHeight / lineHeight);
-									const lines = textarea.value.substring(0, textarea.selectionStart).split('\n');
-									const currentLine = lines.length - 1;
-									const targetLine = Math.max(0, currentLine - linesPerPage);
-									// Calculate new cursor position
-									let newPos = 0;
-									for (let i = 0; i < targetLine; i++) {
-										newPos += lines[i].length + 1; // +1 for newline
-									}
-									// Preserve column position if possible
-									const currentCol =
-										lines[currentLine].length -
-										(lines[currentLine].length -
-											(textarea.selectionStart - (newPos - (currentLine > 0 ? 1 : 0))));
-									const targetLineText = textarea.value.split('\n')[targetLine] || '';
-									newPos =
-										textarea.value.split('\n').slice(0, targetLine).join('\n').length +
-										(targetLine > 0 ? 1 : 0);
-									newPos += Math.min(currentCol, targetLineText.length);
-									textarea.setSelectionRange(newPos, newPos);
-									// Scroll to show the cursor
-									textarea.scrollTop -= textarea.clientHeight;
-								}
-								// Handle Opt+Down: Page down (move cursor down by roughly a page)
-								else if (e.key === 'ArrowDown' && e.altKey) {
-									e.preventDefault();
-									const textarea = e.currentTarget;
-									const lineHeight = parseInt(getComputedStyle(textarea).lineHeight) || 24;
-									const linesPerPage = Math.floor(textarea.clientHeight / lineHeight);
-									const allLines = textarea.value.split('\n');
-									const textBeforeCursor = textarea.value.substring(0, textarea.selectionStart);
-									const currentLine = textBeforeCursor.split('\n').length - 1;
-									const targetLine = Math.min(allLines.length - 1, currentLine + linesPerPage);
-									// Calculate column position in current line
-									const linesBeforeCurrent = textBeforeCursor.split('\n');
-									const currentCol = linesBeforeCurrent[linesBeforeCurrent.length - 1].length;
-									// Calculate new cursor position
-									let newPos =
-										allLines.slice(0, targetLine).join('\n').length + (targetLine > 0 ? 1 : 0);
-									newPos += Math.min(currentCol, allLines[targetLine].length);
-									textarea.setSelectionRange(newPos, newPos);
-									// Scroll to show the cursor
-									textarea.scrollTop += textarea.clientHeight;
-								}
+							}}
+						/>
+					) : isHtml && htmlRenderMode && !markdownEditMode ? (
+						// Rendered HTML preview. Feeds file.content into an iframe via
+						// srcDoc so local and SSH-remote files work the same way — the
+						// bytes are already in memory. Sandbox lets scripts/popups/forms
+						// run but withholds same-origin so the page cannot reach the host
+						// renderer.
+						<iframe
+							title={file.name}
+							srcDoc={file.content}
+							sandbox="allow-scripts allow-popups allow-forms"
+							referrerPolicy="no-referrer"
+							data-testid="html-render-iframe"
+							style={{
+								width: '100%',
+								height: '100%',
+								minHeight: '60vh',
+								border: 'none',
+								backgroundColor: '#fff',
 							}}
 						/>
 					) : isCsv && !markdownEditMode ? (
@@ -1413,6 +1875,64 @@ export const FilePreview = React.memo(
 							onMatchCount={searchMode === 'text' ? setMatchCount : undefined}
 							onJqError={setJqError}
 						/>
+					) : previewTier === 'giant' && !markdownEditMode && !isImage && !isBinary ? (
+						<Suspense
+							fallback={
+								<div
+									style={{
+										padding: '24px',
+										color: theme.colors.textDim,
+										fontSize: '13px',
+									}}
+								>
+									Loading giant preview…
+								</div>
+							}
+						>
+							<GiantPreview
+								ref={giantRef}
+								content={file.content}
+								language={language}
+								theme={theme}
+								containerRef={markdownContainerRef}
+								filePath={file.path}
+							/>
+						</Suspense>
+					) : isMarkdown && previewTier === 'fast' && !markdownEditMode ? (
+						<Suspense
+							fallback={
+								<div
+									style={{
+										padding: '24px',
+										color: theme.colors.textDim,
+										fontSize: '13px',
+									}}
+								>
+									Loading fast preview…
+								</div>
+							}
+						>
+							<MarkdownPreviewFast
+								ref={markdownFastRef}
+								content={file.content}
+								theme={theme}
+								markdownContainerRef={markdownContainerRef}
+								fileTreeIndices={fileTreeIndices}
+								cwd={cwd}
+								homeDir={homeDir}
+								filePath={file.path}
+								onFileClick={onFileClick}
+								onExternalLinkClick={(href, opts) => {
+									if (/^file:\/\//.test(href)) {
+										void window.maestro.shell.openPath(href.replace(/^file:\/\//, ''));
+										return;
+									}
+									if (/^https?:\/\/|^mailto:/.test(href)) {
+										openUrl(href, opts);
+									}
+								}}
+							/>
+						</Suspense>
 					) : isMarkdown ? (
 						<div
 							ref={markdownContainerRef}
@@ -1447,11 +1967,35 @@ export const FilePreview = React.memo(
 							<ReactMarkdown
 								remarkPlugins={remarkPlugins}
 								rehypePlugins={rehypePlugins}
+								urlTransform={urlTransformAllowingMaestro}
 								components={markdownComponents}
 							>
 								{file.content}
 							</ReactMarkdown>
 						</div>
+					) : isReadableText && previewTier === 'fast' && !markdownEditMode ? (
+						<Suspense
+							fallback={
+								<div
+									style={{
+										padding: '24px',
+										color: theme.colors.textDim,
+										fontSize: '13px',
+									}}
+								>
+									Loading fast preview…
+								</div>
+							}
+						>
+							<TextPreviewFast
+								ref={textFastRef}
+								content={file.content}
+								language="text"
+								theme={theme}
+								containerRef={markdownContainerRef}
+								filePath={file.path}
+							/>
+						</Suspense>
 					) : isReadableText && !markdownEditMode ? (
 						<div>
 							{/* Large file truncation banner (readable text) */}
@@ -1495,6 +2039,29 @@ export const FilePreview = React.memo(
 								{displayContent}
 							</BionifyTextBlock>
 						</div>
+					) : previewTier === 'fast' && !markdownEditMode && !isImage && !isBinary ? (
+						<Suspense
+							fallback={
+								<div
+									style={{
+										padding: '24px',
+										color: theme.colors.textDim,
+										fontSize: '13px',
+									}}
+								>
+									Loading fast preview…
+								</div>
+							}
+						>
+							<TextPreviewFast
+								ref={textFastRef}
+								content={file.content}
+								language={language}
+								theme={theme}
+								containerRef={markdownContainerRef}
+								filePath={file.path}
+							/>
+						</Suspense>
 					) : (
 						<div ref={codeContainerRef}>
 							{/* Large file truncation banner */}
@@ -1556,10 +2123,31 @@ export const FilePreview = React.memo(
 						tocOverlayRef={tocOverlayRef}
 						isMarkdown={isMarkdown}
 						markdownEditMode={markdownEditMode}
+						onSelectHeading={
+							previewTier === 'fast'
+								? (slug) => markdownFastRef.current?.scrollToHeading(slug) ?? false
+								: undefined
+						}
 					/>
 				</div>
 
 				{/* Copy / save flashes are now rendered globally by <CenterFlash /> */}
+
+				{/* Image-edit save destination modal (overwrite vs new file) */}
+				{imageSaveData && file && (
+					<ImageSaveModal
+						theme={theme}
+						fileName={file.name}
+						outputExtension={editedImageExtension}
+						canOverwrite={canOverwriteImage}
+						fallbackFileName={imageFallbackName}
+						originalExtension={originalImageExtension}
+						onOverwrite={handleOverwriteImage}
+						onSaveAs={handleSaveImageAs}
+						onCancel={() => setImageSaveData(null)}
+						isSaving={imageSaveBusy}
+					/>
+				)}
 
 				{/* Unsaved Changes Confirmation Modal */}
 				{showUnsavedChangesModal && (
@@ -1593,6 +2181,43 @@ export const FilePreview = React.memo(
 							You have unsaved changes. Are you sure you want to close without saving?
 						</p>
 					</Modal>
+				)}
+
+				{/* Line-number gutter right-click menu. Single action: copy a
+				    maestro:// deep link pointing at this exact line. */}
+				{lineCtxMenu && (
+					<>
+						<div
+							className="fixed inset-0 z-40"
+							onClick={() => setLineCtxMenu(null)}
+							onContextMenu={(e) => {
+								e.preventDefault();
+								setLineCtxMenu(null);
+							}}
+						/>
+						<div
+							className="fixed z-50 py-1 rounded-md shadow-xl border whitespace-nowrap"
+							style={{
+								left: lineCtxMenu.x,
+								top: lineCtxMenu.y,
+								backgroundColor: theme.colors.bgSidebar,
+								borderColor: theme.colors.border,
+								minWidth: '14rem',
+							}}
+						>
+							<button
+								type="button"
+								onClick={() => {
+									copyDeepLinkToLine(lineCtxMenu.lineNumber);
+									setLineCtxMenu(null);
+								}}
+								className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors"
+								style={{ color: theme.colors.textMain }}
+							>
+								Copy deep link to line {lineCtxMenu.lineNumber}
+							</button>
+						</div>
+					</>
 				)}
 			</div>
 		);

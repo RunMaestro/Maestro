@@ -79,6 +79,20 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		description: 'Auto Run synopsis generation prompt',
 		category: 'autorun',
 	},
+	{
+		id: 'autorun-per-task',
+		filename: 'autorun-per-task.md',
+		description:
+			'Task-selection block injected into {{TASK_SELECTION_BLOCK}} when Fresh Context Per is set to Task',
+		category: 'autorun',
+	},
+	{
+		id: 'autorun-per-document',
+		filename: 'autorun-per-document.md',
+		description:
+			'Task-selection block injected into {{TASK_SELECTION_BLOCK}} when Fresh Context Per is set to Document',
+		category: 'autorun',
+	},
 	// Commands
 	{
 		id: 'image-only-default',
@@ -91,6 +105,14 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		filename: 'commit-command.md',
 		description: 'Git commit command prompt',
 		category: 'commands',
+	},
+	// Per-agent prompt preambles
+	{
+		id: 'copilot-preamble',
+		filename: 'copilot-preamble.md',
+		description:
+			'Prepended to every Copilot-CLI batch prompt to push back on premature task_complete and produce a richer summary',
+		category: 'agent-preambles',
 	},
 	// System
 	{
@@ -251,9 +273,13 @@ export const PROMPT_IDS = {
 	// AutoRun
 	AUTORUN_DEFAULT: 'autorun-default',
 	AUTORUN_SYNOPSIS: 'autorun-synopsis',
+	AUTORUN_PER_TASK: 'autorun-per-task',
+	AUTORUN_PER_DOCUMENT: 'autorun-per-document',
 	// Commands
 	IMAGE_ONLY_DEFAULT: 'image-only-default',
 	COMMIT_COMMAND: 'commit-command',
+	// Per-agent prompt preambles
+	COPILOT_PREAMBLE: 'copilot-preamble',
 	// System
 	MAESTRO_SYSTEM_PROMPT: 'maestro-system-prompt',
 	// Group Chat

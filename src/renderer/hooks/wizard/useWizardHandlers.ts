@@ -60,6 +60,7 @@ function getAutorunSynopsisPrompt(): string {
 import { formatRelativeTime } from '../../../shared/formatters';
 import { gitService } from '../../services/git';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
+import { isAdaptiveModeDefaultOn } from '../../../shared/agentConstants';
 import { DEFAULT_BATCH_PROMPT } from '../../components/BatchRunnerModal';
 import type { PreviousUIState, UseInlineWizardReturn } from '../batch/useInlineWizard';
 import type { WizardState } from '../../components/Wizard/WizardContext';
@@ -77,8 +78,8 @@ export interface UseWizardHandlersDeps {
 	/** Onboarding wizard context — state, completeWizard, clearResumeState, openWizard, restoreState */
 	wizardContext: {
 		state: WizardState;
-		completeWizard: (sessionId: string | null) => void;
-		clearResumeState: () => void;
+		completeWizard: (sessionId: string | null) => Promise<void>;
+		clearResumeState: () => Promise<void>;
 		openWizard: () => void;
 		restoreState: (state: Partial<WizardState>) => void;
 	};
@@ -150,7 +151,7 @@ export interface UseWizardHandlersReturn {
 	/** Resume wizard from saved state, handling invalid agent/directory redirects */
 	handleWizardResume: (options?: { directoryInvalid?: boolean; agentInvalid?: boolean }) => void;
 	/** Clear saved state and open a fresh wizard */
-	handleWizardStartFresh: () => void;
+	handleWizardStartFresh: () => Promise<void>;
 	/** Close the resume modal without action */
 	handleWizardResumeClose: () => void;
 }
@@ -364,6 +365,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 
 				const newWizardState: SessionWizardState = {
 					isActive: tabWizardState.isActive,
+					isInitializing: tabWizardState.isInitializing,
 					isWaiting: tabWizardState.isWaiting,
 					mode: (tabWizardState.mode === 'ask' ? 'new' : tabWizardState.mode) as WizardMode,
 					goal: tabWizardState.goal ?? undefined,
@@ -1286,6 +1288,11 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				customArgs,
 				customEnvVars,
 				sessionSshRemoteConfig,
+				// New agents default Adaptive Mode on for Claude Code (the wizard has no
+				// toggle, so this is purely the default).
+				enableMaestroP: isAdaptiveModeDefaultOn(selectedAgent) || undefined,
+				claudeInteractive:
+					selectedAgent === 'claude-code' ? { mode: 'api', modeReason: 'auto' } : undefined,
 			};
 
 			setSessions((prev) => [...prev, newSession]);
@@ -1299,8 +1306,8 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				isWorktree: false,
 			});
 
-			clearResumeState();
-			completeWizard(newId);
+			await clearResumeState();
+			await completeWizard(newId);
 			if (autoRunMode !== 'none') {
 				setActiveRightTab('autorun');
 			}
@@ -1401,12 +1408,12 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 		[wizardContext]
 	);
 
-	const handleWizardStartFresh = useCallback(() => {
+	const handleWizardStartFresh = useCallback(async () => {
 		const { setWizardResumeModalOpen, setWizardResumeState } = getModalActions();
 		// Close the resume modal
 		setWizardResumeModalOpen(false);
 		// Clear any saved resume state
-		wizardContext.clearResumeState();
+		await wizardContext.clearResumeState();
 		// Open a fresh wizard
 		wizardContext.openWizard();
 		// Clear the resume state holder

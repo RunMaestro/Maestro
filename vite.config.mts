@@ -54,13 +54,25 @@ export default defineConfig(({ mode }) => ({
 					: path.join(__dirname, 'src/renderer/wdyr.ts'),
 		},
 	},
-	esbuild: {
-		// Strip console.* and debugger in production builds
+	// Vite 8 with Rolldown uses oxc; the older esbuild config is silently
+	// ignored in this path. Express the same drop intent via oxc. JSX Fast
+	// Refresh is handled by @vitejs/plugin-react above (`fastRefresh` option),
+	// so an oxc-level toggle here would be redundant and could double-inject.
+	oxc: {
 		drop: mode === 'production' ? ['console', 'debugger'] : [],
 	},
 	build: {
 		outDir: path.join(__dirname, 'dist/renderer'),
 		emptyOutDir: true,
+		// TODO(vite-css): revisit this pin once one of these is true:
+		//   1) lightningcss tolerates xterm's malformed selectors (see
+		//      `[-:\s|]`-style class on or near style.css line ~2801)
+		//   2) xterm.js fixes its CSS upstream
+		//   3) we pre-process xterm's CSS through a tolerant pass before vite
+		// Vite 8 flipped the default CSS minifier to lightningcss, which is
+		// strict about malformed CSS that esbuild's minifier silently passed
+		// through. esbuild here matches prior (Vite 5-7) behavior.
+		cssMinify: 'esbuild',
 		// Disable modulepreload polyfill — Electron loads from local filesystem
 		modulePreload: false,
 		rollupOptions: {
@@ -78,8 +90,18 @@ export default defineConfig(({ mode }) => ({
 			// regular renderChunk order, then overwrite the final chunk in
 			// generateBundle (which fires after every renderChunk hook,
 			// including the minifier).
+			//
+			// Rolldown caveat: Vite 8 swaps Rollup for Rolldown, which defers
+			// cross-chunk filename placeholder substitution (`name-!~{NNN}~.ext`)
+			// to a finalization pass that runs AFTER renderChunk. The cached
+			// pre-minify code therefore still contains literal `!~{NNN}~`
+			// placeholders. The minified `asset.code` in generateBundle has the
+			// resolved filenames — so we use it as a lookup table to substitute
+			// placeholders in the cached code before writing back. Without this
+			// step the app hangs on splash with `ENOENT rolldown-runtime-!~{001}~.js`.
 			plugins: (() => {
 				const xtermPreMinifyCache = new Map<string, string>();
+				const placeholderRe = /([\w./-]+)-!~\{\d+\}~\.([a-z]+)/g;
 				return [
 					{
 						name: 'skip-xterm-minify',
@@ -91,9 +113,32 @@ export default defineConfig(({ mode }) => ({
 						},
 						generateBundle(_options, bundle) {
 							for (const asset of Object.values(bundle)) {
-								if (asset.type === 'chunk' && xtermPreMinifyCache.has(asset.name)) {
-									asset.code = xtermPreMinifyCache.get(asset.name)!;
+								if (asset.type !== 'chunk' || !xtermPreMinifyCache.has(asset.name)) {
+									continue;
 								}
+								const preMinified = xtermPreMinifyCache.get(asset.name)!;
+								const resolvedSource = asset.code;
+								let fixed = preMinified;
+								const seen = new Set<string>();
+								for (const match of preMinified.matchAll(placeholderRe)) {
+									const placeholder = match[0];
+									if (seen.has(placeholder)) continue;
+									seen.add(placeholder);
+									const prefix = match[1];
+									const ext = match[2];
+									const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+									const resolvedMatch = resolvedSource.match(
+										new RegExp(`${escapedPrefix}-([\\w-]+)\\.${ext}`)
+									);
+									if (!resolvedMatch) {
+										throw new Error(
+											`skip-xterm-minify: could not resolve placeholder ${placeholder} ` +
+												`in ${asset.fileName} — Rolldown internals may have changed.`
+										);
+									}
+									fixed = fixed.split(placeholder).join(`${prefix}-${resolvedMatch[1]}.${ext}`);
+								}
+								asset.code = fixed;
 							}
 							xtermPreMinifyCache.clear();
 						},
@@ -167,8 +212,26 @@ export default defineConfig(({ mode }) => ({
 			},
 		},
 	},
+	// Pre-bundle deps that are ONLY reachable through lazy-loaded components.
+	// Vite's startup dep-scan walks the static import graph from the entry, so
+	// deps behind a dynamic import() (e.g. CueModal -> GitDiffViewer's `diff`,
+	// CuePipelineEditor's `reactflow` and `js-yaml`) are never discovered up
+	// front. The first
+	// time such a component lazy-loads, Vite *discovers* the dep, re-optimizes,
+	// bumps the dep cache hash, and invalidates the page's cached deps - which
+	// 504s ("Outdated Optimize Dep") the dynamic import that's still in flight.
+	// The user sees "Failed to fetch dynamically imported module" and only a
+	// manual reload recovers. Listing them here forces pre-bundling at server
+	// startup, eliminating the mid-import re-optimization. Dev-only; no effect
+	// on the production build.
+	optimizeDeps: {
+		include: ['diff', 'reactflow', 'js-yaml'],
+	},
 	server: {
-		port: process.env.VITE_PORT ? parseInt(process.env.VITE_PORT, 10) : 5173,
+		// Fallback must match DEFAULT_START_PORT in scripts/dev-port.mjs. Never
+		// 5173 (Vite's default): an agent-built dev server on that port would
+		// otherwise hijack the URL Electron loads and replace the app shell.
+		port: process.env.VITE_PORT ? parseInt(process.env.VITE_PORT, 10) : 17173,
 		strictPort: true,
 		hmr: !disableHmr,
 		// Disable file watching entirely when HMR is disabled to prevent any reloads

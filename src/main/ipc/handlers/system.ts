@@ -307,7 +307,14 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 		}
 	});
 
-	// Clipboard operations - copy image to system clipboard via Electron native API
+	// Clipboard operations - copy text/image to system clipboard via Electron native API
+	ipcMain.handle('clipboard:writeText', async (_event, text: string) => {
+		if (typeof text !== 'string') {
+			throw new Error('Invalid clipboard text: must be a string');
+		}
+		clipboard.writeText(text);
+	});
+
 	ipcMain.handle('clipboard:writeImage', async (_event, dataUrl: string) => {
 		if (!dataUrl || typeof dataUrl !== 'string') {
 			throw new Error('Invalid data URL: must be a non-empty string');
@@ -317,6 +324,14 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 			throw new Error('Failed to create image from data URL');
 		}
 		clipboard.writeImage(img);
+	});
+
+	// Read image from system clipboard. Returns a PNG data URL, or null when
+	// the clipboard does not currently hold an image.
+	ipcMain.handle('clipboard:readImage', async (): Promise<string | null> => {
+		const img = clipboard.readImage();
+		if (img.isEmpty()) return null;
+		return img.toDataURL();
 	});
 
 	// ============ Tunnel Handlers (Cloudflare) ============

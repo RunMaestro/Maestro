@@ -14,6 +14,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import * as yaml from 'js-yaml';
 import type { CueConfig, CueEvent, CueRunResult } from '../../../main/cue/cue-types';
 
 // Mock the yaml loader
@@ -75,6 +76,23 @@ vi.mock('../../../main/cue/cue-db', () => ({
 vi.mock('crypto', () => ({
 	randomUUID: vi.fn(() => `uuid-${Math.random().toString(36).slice(2, 8)}`),
 }));
+
+// Mock the cue-config-repository so `setSubscriptionEnabled`'s YAML
+// read/write path can be exercised without touching the real filesystem.
+const mockReadCueConfigFile =
+	vi.fn<(projectRoot: string) => { filePath: string; raw: string } | null>();
+const mockWriteCueConfigFile = vi.fn<(projectRoot: string, content: string) => string>();
+vi.mock('../../../main/cue/config/cue-config-repository', async () => {
+	const actual = await vi.importActual<
+		typeof import('../../../main/cue/config/cue-config-repository')
+	>('../../../main/cue/config/cue-config-repository');
+	return {
+		...actual,
+		readCueConfigFile: (projectRoot: string) => mockReadCueConfigFile(projectRoot),
+		writeCueConfigFile: (projectRoot: string, content: string) =>
+			mockWriteCueConfigFile(projectRoot, content),
+	};
+});
 
 import { CueEngine, type CueEngineDeps } from '../../../main/cue/cue-engine';
 // `calculateNextScheduledTime` moved to triggers/cue-schedule-utils as part of
@@ -955,6 +973,241 @@ describe('CueEngine', () => {
 			expect(limited).toHaveLength(1);
 
 			engine.stop();
+		});
+	});
+
+	describe('setSubscriptionEnabled', () => {
+		// Flips the `enabled` flag on a single subscription in the owning
+		// session's cue.yaml and refreshes the session. Backs the web-server
+		// `setToggleCueSubscriptionCallback` (and the web UI's per-row toggle).
+		// Subscription ids follow `${sessionId}::${pipeline}::${name}` so two
+		// pipelines under one session that share a sub name don't collide.
+		beforeEach(() => {
+			mockReadCueConfigFile.mockReset();
+			mockWriteCueConfigFile.mockReset();
+		});
+
+		it('rejects malformed subscription ids without touching the filesystem', async () => {
+			const engine = new CueEngine(createMockDeps());
+			expect(await engine.setSubscriptionEnabled('no-separator', false)).toBe(false);
+			expect(await engine.setSubscriptionEnabled('only::two', false)).toBe(false);
+			expect(await engine.setSubscriptionEnabled('::empty::session', false)).toBe(false);
+			expect(await engine.setSubscriptionEnabled('sess::::name', false)).toBe(false);
+			expect(await engine.setSubscriptionEnabled('sess::pipeline::', false)).toBe(false);
+			expect(mockReadCueConfigFile).not.toHaveBeenCalled();
+			expect(mockWriteCueConfigFile).not.toHaveBeenCalled();
+		});
+
+		it('returns false when the sessionId does not resolve to a live session', async () => {
+			const deps = createMockDeps({
+				getSessions: vi.fn(() => [createMockSession({ id: 'session-1' })]),
+			});
+			const engine = new CueEngine(deps);
+			expect(
+				await engine.setSubscriptionEnabled('unknown-session::My Pipeline::Digest Script', false)
+			).toBe(false);
+			expect(mockReadCueConfigFile).not.toHaveBeenCalled();
+		});
+
+		it('returns false when no cue.yaml exists for the session', async () => {
+			mockReadCueConfigFile.mockReturnValue(null);
+			const engine = new CueEngine(createMockDeps());
+			expect(
+				await engine.setSubscriptionEnabled('session-1::My Pipeline::Digest Script', false)
+			).toBe(false);
+			expect(mockReadCueConfigFile).toHaveBeenCalledWith('/projects/test');
+			expect(mockWriteCueConfigFile).not.toHaveBeenCalled();
+		});
+
+		it('returns false when the named subscription is absent from the YAML', async () => {
+			mockReadCueConfigFile.mockReturnValue({
+				filePath: '/projects/test/.maestro/cue.yaml',
+				raw: [
+					'subscriptions:',
+					'  - name: Other Script',
+					'    event: time.scheduled',
+					'    enabled: true',
+					'    prompt: ""',
+					'    schedule_times: ["07:00"]',
+					'    pipeline_name: My Pipeline',
+				].join('\n'),
+			});
+			const engine = new CueEngine(createMockDeps());
+			expect(
+				await engine.setSubscriptionEnabled('session-1::My Pipeline::Digest Script', false)
+			).toBe(false);
+			expect(mockWriteCueConfigFile).not.toHaveBeenCalled();
+		});
+
+		it('returns false when the name matches but the pipeline does not (no silent cross-pipeline toggle)', async () => {
+			// CodeRabbit #983 (major): without the pipeline discriminator,
+			// two same-named subs in different pipelines under one session
+			// would have indistinguishable ids and the first-match heuristic
+			// could silently toggle the wrong row. Now the engine requires
+			// BOTH pipeline AND name to match.
+			mockReadCueConfigFile.mockReturnValue({
+				filePath: '/projects/test/.maestro/cue.yaml',
+				raw: [
+					'subscriptions:',
+					'  - name: Foo',
+					'    event: time.heartbeat',
+					'    enabled: true',
+					'    prompt: ""',
+					'    interval_minutes: 5',
+					'    pipeline_name: Pipeline A',
+				].join('\n'),
+			});
+			const engine = new CueEngine(createMockDeps());
+			// Caller asked to toggle a sub in Pipeline B, but only the
+			// Pipeline-A row exists → no match.
+			expect(await engine.setSubscriptionEnabled('session-1::Pipeline B::Foo', false)).toBe(false);
+			expect(mockWriteCueConfigFile).not.toHaveBeenCalled();
+		});
+
+		it('toggles the correct row when two pipelines in one session share a sub name', async () => {
+			mockReadCueConfigFile.mockReturnValue({
+				filePath: '/projects/test/.maestro/cue.yaml',
+				raw: [
+					'subscriptions:',
+					'  - name: Foo',
+					'    event: time.heartbeat',
+					'    enabled: true',
+					'    prompt: ""',
+					'    interval_minutes: 5',
+					'    pipeline_name: Pipeline A',
+					'  - name: Foo',
+					'    event: time.heartbeat',
+					'    enabled: true',
+					'    prompt: ""',
+					'    interval_minutes: 10',
+					'    pipeline_name: Pipeline B',
+				].join('\n'),
+			});
+			mockWriteCueConfigFile.mockReturnValue('/projects/test/.maestro/cue.yaml');
+			mockLoadCueConfig.mockReturnValue(createMockConfig({ subscriptions: [] }));
+
+			const engine = new CueEngine(createMockDeps());
+			expect(await engine.setSubscriptionEnabled('session-1::Pipeline B::Foo', false)).toBe(true);
+			expect(mockWriteCueConfigFile).toHaveBeenCalledTimes(1);
+			const written = mockWriteCueConfigFile.mock.calls[0][1] as string;
+			// Pipeline B's row must be the one flipped to false; Pipeline A
+			// must remain true. Round-trip through js-yaml to verify by
+			// structure rather than regex, since the dumper's field order
+			// is an implementation detail of the library.
+			const reparsed = yaml.load(written) as {
+				subscriptions: Array<{ pipeline_name: string; enabled: boolean }>;
+			};
+			const a = reparsed.subscriptions.find((s) => s.pipeline_name === 'Pipeline A');
+			const b = reparsed.subscriptions.find((s) => s.pipeline_name === 'Pipeline B');
+			expect(a?.enabled).toBe(true);
+			expect(b?.enabled).toBe(false);
+		});
+
+		it('flips the enabled flag, serialises back, and refreshes the session', async () => {
+			mockReadCueConfigFile.mockReturnValue({
+				filePath: '/projects/test/.maestro/cue.yaml',
+				raw: [
+					'subscriptions:',
+					'  - name: Digest Script',
+					'    event: time.scheduled',
+					'    enabled: true',
+					'    prompt: ""',
+					'    schedule_times: ["07:00"]',
+					'    pipeline_name: My Pipeline',
+				].join('\n'),
+			});
+			mockWriteCueConfigFile.mockReturnValue('/projects/test/.maestro/cue.yaml');
+			mockLoadCueConfig.mockReturnValue(
+				createMockConfig({
+					subscriptions: [
+						{
+							name: 'Digest Script',
+							event: 'time.scheduled',
+							enabled: false,
+							prompt: '',
+							schedule_times: ['07:00'],
+							pipeline_name: 'My Pipeline',
+						},
+					],
+				})
+			);
+			const engine = new CueEngine(createMockDeps());
+			engine.start();
+			mockReadCueConfigFile.mockClear();
+			mockWriteCueConfigFile.mockClear();
+			mockReadCueConfigFile.mockReturnValue({
+				filePath: '/projects/test/.maestro/cue.yaml',
+				raw: [
+					'subscriptions:',
+					'  - name: Digest Script',
+					'    event: time.scheduled',
+					'    enabled: true',
+					'    prompt: ""',
+					'    schedule_times: ["07:00"]',
+					'    pipeline_name: My Pipeline',
+				].join('\n'),
+			});
+
+			expect(
+				await engine.setSubscriptionEnabled('session-1::My Pipeline::Digest Script', false)
+			).toBe(true);
+
+			expect(mockWriteCueConfigFile).toHaveBeenCalledTimes(1);
+			const written = mockWriteCueConfigFile.mock.calls[0][1] as string;
+			expect(written).toMatch(/enabled:\s*false/);
+			expect(written).toMatch(/name:\s*Digest Script/);
+		});
+
+		it('serialises concurrent toggles for the same projectRoot (no lost-write race)', async () => {
+			// Greptile #983 P2: the read → mutate → write cycle is not
+			// atomic on the filesystem. Two simultaneous toggles for subs in
+			// the same project would otherwise let whichever write lands
+			// second silently discard the first's `enabled` flip. The engine
+			// now chains pending writes per `projectRoot` so both flips
+			// observe each other and land in order.
+			//
+			// We model this with read-call ordering: the second call must
+			// `readCueConfigFile` AFTER the first call's `writeCueConfigFile`
+			// — i.e. it sees the first toggle's output as input.
+			const callLog: string[] = [];
+			mockReadCueConfigFile.mockImplementation(() => {
+				callLog.push('read');
+				return {
+					filePath: '/projects/test/.maestro/cue.yaml',
+					raw: [
+						'subscriptions:',
+						'  - name: First',
+						'    event: time.heartbeat',
+						'    enabled: true',
+						'    prompt: ""',
+						'    interval_minutes: 5',
+						'    pipeline_name: P',
+						'  - name: Second',
+						'    event: time.heartbeat',
+						'    enabled: true',
+						'    prompt: ""',
+						'    interval_minutes: 5',
+						'    pipeline_name: P',
+					].join('\n'),
+				};
+			});
+			mockWriteCueConfigFile.mockImplementation((_root: string) => {
+				callLog.push('write');
+				return '/projects/test/.maestro/cue.yaml';
+			});
+			mockLoadCueConfig.mockReturnValue(createMockConfig({ subscriptions: [] }));
+
+			const engine = new CueEngine(createMockDeps());
+			const [a, b] = await Promise.all([
+				engine.setSubscriptionEnabled('session-1::P::First', false),
+				engine.setSubscriptionEnabled('session-1::P::Second', false),
+			]);
+			expect(a).toBe(true);
+			expect(b).toBe(true);
+			// Strict alternation — the second read happens AFTER the first
+			// write. Interleaved `read, read, write, write` would surface a
+			// regression of the unguarded race window.
+			expect(callLog).toEqual(['read', 'write', 'read', 'write']);
 		});
 	});
 

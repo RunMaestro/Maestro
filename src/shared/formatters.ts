@@ -8,6 +8,8 @@
  * - formatTokens: Token counts with K/M/B suffixes (~prefix)
  * - formatTokensCompact: Token counts without ~prefix
  * - formatRelativeTime: Relative timestamps ("5m ago", "2h ago")
+ * - formatCacheAge: Cache age labels ("just now", "5m ago", "2h ago")
+ * - formatAgeShort: Compact age badge ("new", "5m", "3h", "5d", "3w", "6mo", "3.5y")
  * - formatActiveTime: Duration display (1D, 2H 30M, <1M)
  * - formatElapsedTime: Precise elapsed time (1h 10m, 30s, 500ms)
  * - formatElapsedTimeColon: Timer-style elapsed time (mm:ss or hh:mm:ss)
@@ -22,6 +24,7 @@
  * - formatTimestamp: Format timestamps in various styles (time, datetime, smart, full)
  * - truncatePath: Truncate file paths for display (.../<parent>/<current>)
  * - truncateCommand: Truncate command text for display with ellipsis
+ * - abbreviateGroupName: Shorten a group name for badge/pill display
  */
 
 /**
@@ -121,6 +124,135 @@ export function formatRelativeTime(
 	if (diffDays < 7) return `${diffDays}d ago`;
 	// Show compact date format (e.g., "Dec 3") for older dates
 	return new Date(timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+/**
+ * Format a cache age duration in milliseconds for compact status labels.
+ *
+ * Unlike `formatRelativeTime`, this receives an elapsed age rather than an
+ * absolute timestamp and intentionally never rolls into days.
+ */
+export function formatCacheAge(cacheAgeMs: number | null): string {
+	if (cacheAgeMs === null || cacheAgeMs === 0) return 'just now';
+
+	const seconds = Math.floor(cacheAgeMs / 1000);
+	const minutes = Math.floor(seconds / 60);
+	const hours = Math.floor(minutes / 60);
+
+	if (hours > 0) return `${hours}h ago`;
+	if (minutes > 0) return `${minutes}m ago`;
+	return 'just now';
+}
+
+/**
+ * Format an age (elapsed time since a creation timestamp) as the most compact
+ * human-readable string that still fits a small badge. Used by the dashboard
+ * agent cards where space is at a premium.
+ *
+ * Output ladder:
+ *   - < 1 minute     → "new"
+ *   - < 1 hour       → "5m"
+ *   - < 1 day        → "3h"
+ *   - < 7 days       → "5d"
+ *   - < 30 days      → "3w"
+ *   - < 365 days     → "6mo"
+ *   - < 10 years     → "3.5y" (one decimal, .0 suffix dropped → "3y" / "3.5y")
+ *   - >= 10 years    → "12y"
+ *
+ * Month = 30 days, year = 365 days - coarse enough that the badge stays stable
+ * across renders without overengineering calendar math.
+ */
+export function formatAgeShort(dateOrTimestamp: Date | number | string): string {
+	let timestamp: number;
+	if (typeof dateOrTimestamp === 'number') {
+		timestamp = dateOrTimestamp;
+	} else if (typeof dateOrTimestamp === 'string') {
+		timestamp = new Date(dateOrTimestamp).getTime();
+	} else {
+		timestamp = dateOrTimestamp.getTime();
+	}
+
+	const diffMs = Math.max(0, Date.now() - timestamp);
+	const minutes = Math.floor(diffMs / 60_000);
+	if (minutes < 1) return 'new';
+	if (minutes < 60) return `${minutes}m`;
+
+	const hours = Math.floor(minutes / 60);
+	if (hours < 24) return `${hours}h`;
+
+	const days = Math.floor(hours / 24);
+	if (days < 7) return `${days}d`;
+	if (days < 30) return `${Math.floor(days / 7)}w`;
+	if (days < 365) return `${Math.floor(days / 30)}mo`;
+
+	const years = days / 365;
+	if (years < 10) {
+		const rounded = Math.round(years * 10) / 10;
+		return Number.isInteger(rounded) ? `${rounded}y` : `${rounded.toFixed(1)}y`;
+	}
+	return `${Math.floor(years)}y`;
+}
+
+/**
+ * Format a future timestamp as a forward-looking relative string.
+ *
+ * `formatRelativeTime` only models the past - every future timestamp collapses
+ * to "just now" because the `diffMins < 1` branch fires on negative diffs. This
+ * helper is the symmetric forward variant for things like quota reset times.
+ *
+ * Output ladder, chosen to mirror Anthropic's `/usage` web panel ("Resets in
+ * 43 min" / "Resets Thu 10:00 AM"):
+ *   - < 1 minute   → "in <1m"
+ *   - < 60 minutes → "in 43m"
+ *   - same calendar day in user's locale → "today at 7:00 PM"
+ *   - within 7 days → "Thu 10:00 AM"
+ *   - beyond a week → "May 22 at 10:00 AM"
+ *
+ * If `timestamp` is already past `now` (sample is older than the reset),
+ * returns "just now" - same calling-site sentinel as `formatRelativeTime`'s
+ * floor so consumers don't need to special-case stale snapshots.
+ */
+export function formatFutureTime(dateOrTimestamp: Date | number | string): string {
+	let timestamp: number;
+	if (typeof dateOrTimestamp === 'number') {
+		timestamp = dateOrTimestamp;
+	} else if (typeof dateOrTimestamp === 'string') {
+		timestamp = new Date(dateOrTimestamp).getTime();
+	} else {
+		timestamp = dateOrTimestamp.getTime();
+	}
+
+	const now = Date.now();
+	const diffMs = timestamp - now;
+	if (diffMs <= 0) return 'just now';
+
+	const diffMins = Math.floor(diffMs / 60000);
+	const diffHours = Math.floor(diffMs / 3_600_000);
+	const diffDays = Math.floor(diffMs / 86_400_000);
+
+	if (diffMins < 1) return 'in <1m';
+	if (diffMins < 60) return `in ${diffMins}m`;
+
+	const target = new Date(timestamp);
+	const nowDate = new Date(now);
+	const sameDay =
+		target.getFullYear() === nowDate.getFullYear() &&
+		target.getMonth() === nowDate.getMonth() &&
+		target.getDate() === nowDate.getDate();
+
+	const timeStr = target.toLocaleTimeString('en-US', {
+		hour: 'numeric',
+		minute: '2-digit',
+	});
+
+	if (sameDay) return `today at ${timeStr}`;
+	if (diffHours < 24) return `in ${diffHours}h`;
+	if (diffDays < 7) {
+		const weekday = target.toLocaleDateString('en-US', { weekday: 'short' });
+		return `${weekday} ${timeStr}`;
+	}
+	const dateStr = target.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+	return `${dateStr} at ${timeStr}`;
 }
 
 /**
@@ -252,6 +384,30 @@ export function truncatePath(path: string, maxLength: number = 35): string {
 export function getParentDir(path: string): string {
 	const parent = path.replace(/[/\\][^/\\]+$/, '');
 	return parent || path;
+}
+
+/**
+ * Returns true if `path` is an absolute filesystem path.
+ *
+ * Matches Unix absolute paths (`/foo`), Windows drive paths (`C:\foo`,
+ * `C:/foo`), and UNC / drive-relative paths starting with a backslash
+ * (`\\server\share`, `\foo`).
+ */
+export function isAbsolutePath(path: string): boolean {
+	if (!path) return false;
+	return /^(\/|\\|[a-zA-Z]:[/\\])/.test(path);
+}
+
+/**
+ * Extract the final path segment (file or folder name) from a path.
+ * Handles both `/` and `\` separators and ignores a trailing separator.
+ * Returns the input unchanged when it contains no separators.
+ */
+export function getBasename(path: string): string {
+	if (!path) return '';
+	const trimmed = path.replace(/[/\\]+$/, '');
+	const parts = trimmed.split(/[/\\]/);
+	return parts[parts.length - 1] || trimmed;
 }
 
 /**
@@ -395,6 +551,80 @@ export function formatDurationDecimal(ms: number): string {
 export function estimateTokensFromLogs(logs: { text: string }[]): number {
 	const totalChars = logs.reduce((sum, log) => sum + (log.text?.length || 0), 0);
 	return Math.ceil(totalChars / 4);
+}
+
+/**
+ * Cleverly shorten a group name so it fits in a small badge/pill.
+ *
+ * Strategy ladder - first rung that meets `max` wins:
+ *   1. Already short enough → return as-is.
+ *   2. Contains "&" or " and " conjunction → acronym joined by "&"
+ *      ("Amini & Conant" → "A&C", "Foo and Bar and Baz" → "F&B&B").
+ *   3. Multi-word (split on whitespace, "_", "-", "/") → initials ("Acme Corp" → "AC").
+ *      Each initial is the word's first letter, so leading numbering/bracket
+ *      tokens drop out ("[1] Aleyemma/Money-Sessions" → "AMS", not "[AMS").
+ *   4. Single long word → strip vowels keeping the first character
+ *      ("Engineering" → "Engnrng", "Documentation" → "Dcmnttn").
+ *   5. Still too long → hard-truncate the devoweled form.
+ *
+ * Aim for `target` chars, accept up to `max`. Defaults match the bookmark
+ * badge in the Left Bar (target 8, allow 10).
+ */
+export function abbreviateGroupName(
+	name: string,
+	options?: { target?: number; max?: number }
+): string {
+	const max = options?.max ?? 10;
+	const trimmed = name.trim();
+	if (!trimmed) return trimmed;
+
+	// Bracketed tag prefix wins: "[ARP] Auditoria Relatório Pessoal" → "ARP".
+	// Users put their preferred short form in brackets. Without this rule the
+	// initials path below would fold the bracketed acronym into the following
+	// words ("[ARP] Auditoria Relatório Pessoal" → "AARP"), so honor the tag
+	// verbatim (issue #1017). Require a letter so pure-numbering prefixes like
+	// "[1]" fall through to the initials path, which drops them ("[1] A/B" → "AB").
+	const tagMatch = trimmed.match(/^\[([^\]]+)\]/);
+	if (tagMatch) {
+		const tag = tagMatch[1].trim();
+		if (tag && /[a-z]/i.test(tag) && tag.length <= max) return tag;
+	}
+
+	if (trimmed.length <= max) return trimmed;
+
+	// First letter of a word, skipping any leading non-letters so numbering or
+	// bracket prefixes drop out entirely ("[1]" → "", "MONEY" → "M").
+	const firstLetter = (word: string): string => {
+		const match = word.match(/[a-z]/i);
+		return match ? match[0].toUpperCase() : '';
+	};
+
+	// Acronym joined by "&" - handles "A & B" and "A and B" forms.
+	const conjunctionParts = trimmed
+		.split(/\s*&\s*|\s+and\s+/i)
+		.map((p) => firstLetter(p))
+		.filter(Boolean);
+	if (conjunctionParts.length >= 2) {
+		const acronym = conjunctionParts.join('&');
+		if (acronym.length <= max) return acronym;
+	}
+
+	// Plain initials for multi-word names.
+	const initials = trimmed
+		.split(/[\s_\-/]+/)
+		.map((w) => firstLetter(w))
+		.filter(Boolean)
+		.join('');
+	if (initials.length >= 2) {
+		if (initials.length <= max) return initials;
+		return initials.slice(0, max);
+	}
+
+	// Single word: drop vowels but preserve the first character so "Amini" → "Amn", not "mn".
+	const first = trimmed.charAt(0);
+	const devoweled = first + trimmed.slice(1).replace(/[aeiouAEIOU]/g, '');
+	if (devoweled.length <= max) return devoweled;
+	return devoweled.slice(0, max);
 }
 
 /**

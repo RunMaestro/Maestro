@@ -17,6 +17,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import '@testing-library/jest-dom';
 import { UsageDashboardModal } from '../../../../renderer/components/UsageDashboard/UsageDashboardModal';
 import { SummaryCards } from '../../../../renderer/components/UsageDashboard/SummaryCards';
+import { useUIStore } from '../../../../renderer/stores/uiStore';
 
 import { mockTheme } from '../../../helpers/mockTheme';
 // Mock lucide-react icons
@@ -53,7 +54,9 @@ vi.mock('lucide-react', () => {
 		Globe: createIcon('globe', '🌐'),
 		Zap: createIcon('zap', '⚡'),
 		PanelTop: createIcon('panel-top', '🔲'),
+		Keyboard: createIcon('keyboard', '⌨️'),
 		Trophy: createIcon('trophy', '🏆'),
+		Sparkles: createIcon('sparkles', '✨'),
 		Briefcase: createIcon('briefcase', '💼'),
 		Coffee: createIcon('coffee', '☕'),
 		Filter: createIcon('filter', '🔍'),
@@ -144,10 +147,23 @@ const mockFs = {
 };
 
 beforeEach(() => {
+	// The dashboard tab is persisted in the shared uiStore singleton across tests
+	// in this file. Reset it so each test starts on 'overview' instead of inheriting
+	// the tab a prior test navigated to (which can mount the Shortcuts panel).
+	useUIStore.setState({ usageDashboardViewMode: 'overview' });
 	(window as any).maestro = {
 		stats: mockStats,
 		dialog: mockDialog,
 		fs: mockFs,
+		// Usage snapshot samplers fired by the dashboard's quota-on-open effect.
+		// Without these the effect throws on `window.maestro.agents` and leaks an
+		// unhandled rejection.
+		agents: {
+			refreshClaudeUsageSnapshots: vi.fn().mockResolvedValue({ refreshed: 0 }),
+			refreshCodexUsageSnapshots: vi.fn().mockResolvedValue({ refreshed: 0 }),
+			getClaudeUsageSnapshots: vi.fn().mockResolvedValue({}),
+			getCodexUsageSnapshots: vi.fn().mockResolvedValue({}),
+		},
 		// Minimum surface needed by `useGlobalAgentStats` (called from the
 		// dashboard's Achievement share image flow).
 		agentSessions: {
@@ -161,6 +177,18 @@ beforeEach(() => {
 		totalQueries: 100,
 		totalDuration: 3600000, // 1 hour
 		avgDuration: 36000,
+		queryDurationPercentiles: { count: 0, min: 0, p50: 0, p75: 0, p90: 0, p95: 0, p99: 0, max: 0 },
+		queryDurationPercentilesByAgent: {},
+		autoRunTaskDurationPercentiles: {
+			count: 0,
+			min: 0,
+			p50: 0,
+			p75: 0,
+			p90: 0,
+			p95: 0,
+			p99: 0,
+			max: 0,
+		},
 		byAgent: {
 			'claude-code': { count: 80, duration: 2880000 },
 			opencode: { count: 20, duration: 720000 },
@@ -277,6 +305,27 @@ describe('Usage Dashboard State Transition Animations', () => {
 			totalQueries: 100,
 			totalDuration: 3600000,
 			avgDuration: 36000,
+			queryDurationPercentiles: {
+				count: 0,
+				min: 0,
+				p50: 0,
+				p75: 0,
+				p90: 0,
+				p95: 0,
+				p99: 0,
+				max: 0,
+			},
+			queryDurationPercentilesByAgent: {},
+			autoRunTaskDurationPercentiles: {
+				count: 0,
+				min: 0,
+				p50: 0,
+				p75: 0,
+				p90: 0,
+				p95: 0,
+				p99: 0,
+				max: 0,
+			},
 			byAgent: { 'claude-code': { count: 100, duration: 3600000 } },
 			bySource: { user: 70, auto: 30 },
 			byLocation: { local: 80, remote: 20 },

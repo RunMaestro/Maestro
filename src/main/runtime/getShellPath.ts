@@ -84,6 +84,16 @@ export async function getShellPath(): Promise<string> {
 	return refreshShellPath();
 }
 
+/**
+ * Synchronously read the cached shell PATH. Returns null when no probe has
+ * completed yet. Callers that can't await (e.g. PATH builders used in hot
+ * spawn paths) use this to opportunistically inherit the user's login-shell
+ * PATH without blocking.
+ */
+export function peekShellPath(): string | null {
+	return cachedPath;
+}
+
 /** Clear the in-memory cache (useful for tests). */
 export function clearShellPathCache(): void {
 	cachedPath = null;

@@ -70,13 +70,13 @@ Based on incomplete work and patterns observed, suggest next steps grouped by pr
 - Include specific details when available (file names, feature names)
 - If there's limited data, acknowledge it and provide what insights you can
 - If a history file cannot be read, note it and continue with available files
-- The lookback period and stats are displayed separately in the UI — do not repeat them in the synopsis
+- The lookback period and stats are displayed separately in the UI - do not repeat them in the synopsis
 
 ## CRITICAL: Output Format Rules
 
-- Your response must start IMMEDIATELY with `### Accomplishments` — no text before it
+- Your response must start IMMEDIATELY with `### Accomplishments` - no text before it
 - Do NOT include ANY thinking, reasoning, or analysis preamble before the synopsis
 - Do NOT narrate your process (e.g., "Let me identify the qualifying entries...", "Now I can generate...", "I see X agents with Y entries...")
 - Do NOT echo timestamps, cutoff values, entry counts, or intermediate calculations
-- Do NOT list which entries qualify or don't qualify — just use them silently
+- Do NOT list which entries qualify or don't qualify - just use them silently
 - Your ENTIRE response must be the formatted synopsis and nothing else

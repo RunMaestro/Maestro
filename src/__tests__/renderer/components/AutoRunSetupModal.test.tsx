@@ -227,7 +227,7 @@ describe('AutoRunSetupModal', () => {
 			});
 
 			// Modal uses inline width style instead of Tailwind class
-			const modalContent = container.querySelector('[style*="width: 520px"]');
+			const modalContent = container.querySelector('[style*="width: min(calc(520px"]');
 			expect(modalContent).toHaveStyle({ backgroundColor: theme.colors.bgSidebar });
 		});
 	});
@@ -1205,7 +1205,7 @@ describe('AutoRunSetupModal', () => {
 			});
 
 			// Modal uses inline width style instead of Tailwind class
-			const modalContent = container.querySelector('[style*="width: 520px"]');
+			const modalContent = container.querySelector('[style*="width: min(calc(520px"]');
 			expect(modalContent).toHaveStyle({ backgroundColor: lightTheme.colors.bgSidebar });
 		});
 

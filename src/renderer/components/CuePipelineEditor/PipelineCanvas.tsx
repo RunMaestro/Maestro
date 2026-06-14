@@ -12,7 +12,7 @@ import ReactFlow, {
 	ConnectionMode,
 	Controls,
 	MiniMap,
-	getBezierPath,
+	getSmoothStepPath,
 	type ConnectionLineComponentProps,
 	type Node,
 	type Edge,
@@ -33,7 +33,7 @@ import type {
 	IncomingAgentEdgeInfo,
 } from '../../../shared/cue-pipeline-types';
 import { CUE_COLOR } from '../../../shared/cue-pipeline-types';
-import { Hand, MousePointer2 } from 'lucide-react';
+import { Hand, MousePointer2, LayoutGrid, Wand2 } from 'lucide-react';
 import { TriggerNode, type TriggerNodeDataProps } from './nodes/TriggerNode';
 import { AgentNode, type AgentNodeDataProps } from './nodes/AgentNode';
 import { CommandNode, type CommandNodeDataProps } from './nodes/CommandNode';
@@ -56,6 +56,10 @@ const nodeTypes = {
 	'pipeline-group': PipelineGroupNode,
 };
 
+// Stable module-scope reference so passing it to ReactFlow doesn't break
+// memoization on every PipelineCanvas re-render.
+const REACT_FLOW_PRO_OPTIONS = { hideAttribution: true } as const;
+
 /**
  * Custom drag-preview component for the connection line.
  *
@@ -66,19 +70,21 @@ const nodeTypes = {
  * bypasses any styling/specificity issues with the default render path
  * entirely — we own the `<path>` element and its attributes.
  *
- * Visual contract: dashed bezier in CUE_COLOR at 2px, matching the look of
- * committed edges (which also use bezier + CUE_COLOR via PipelineEdge.tsx)
- * so the drag → release transition feels continuous.
+ * Visual contract: dashed orthogonal step line in CUE_COLOR at 2px, matching the
+ * look of committed edges (which also use a sharp-cornered smoothstep path +
+ * CUE_COLOR via PipelineEdge.tsx) so the drag → release transition feels
+ * continuous.
  */
 const PipelineConnectionLine = (props: ConnectionLineComponentProps) => {
 	const { fromX, fromY, toX, toY, fromPosition, toPosition } = props;
-	const [path] = getBezierPath({
+	const [path] = getSmoothStepPath({
 		sourceX: fromX,
 		sourceY: fromY,
 		sourcePosition: fromPosition,
 		targetX: toX,
 		targetY: toY,
 		targetPosition: toPosition,
+		borderRadius: 0,
 	});
 	return (
 		<g>
@@ -178,6 +184,16 @@ export interface PipelineCanvasProps {
 	/** Canvas interaction mode: hand pans on left-drag, pointer box-selects. */
 	interactionMode: CanvasInteractionMode;
 	setInteractionMode: React.Dispatch<React.SetStateAction<CanvasInteractionMode>>;
+	/** True when the canvas is locked for editing (drag/select/connect disabled). */
+	isLocked: boolean;
+	setIsLocked: React.Dispatch<React.SetStateAction<boolean>>;
+	/** Open the "Tidy" confirmation: align into columns without reshuffling.
+	 *  Buttons are hidden when there's nothing to arrange (no nodes) or while
+	 *  pipelines are still loading. */
+	onTidy: () => void;
+	/** Open the "Arrange" confirmation: align into columns AND reorder within
+	 *  each column to minimize edge crossings. */
+	onArrange: () => void;
 }
 
 export const PipelineCanvas = React.memo(function PipelineCanvas({
@@ -235,7 +251,16 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 	isLoading = false,
 	interactionMode,
 	setInteractionMode,
+	isLocked,
+	setIsLocked,
+	onTidy,
+	onArrange,
 }: PipelineCanvasProps) {
+	// `isLocked` is lifted to the parent (CuePipelineEditor) so the L keyboard
+	// shortcut can toggle it. We still need to own the bridge to ReactFlow's
+	// internal lock toggle: we pass interactivity as controlled props, which
+	// would otherwise override the store toggle that `<Controls />` flips.
+	// `onInteractiveChange` keeps our state in sync with the button click.
 	// Stabilize ReactFlow child props on `theme`. PipelineCanvas re-renders on
 	// every node drag / pan / zoom (it owns `nodes` and `edges`), so inline
 	// objects/functions here would bust the memoization on MiniMap, Controls,
@@ -255,6 +280,39 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 			transition: 'left 200ms ease',
 		}),
 		[theme.colors.bgActivity, theme.colors.border, triggerDrawerOpen]
+	);
+	// Shared base style for the top-right layout buttons (Tidy / Arrange).
+	const layoutButtonStyle = React.useMemo(
+		() => ({
+			display: 'flex',
+			alignItems: 'center',
+			gap: 5,
+			padding: '5px 9px',
+			backgroundColor: `${theme.colors.bgActivity}f5`,
+			color: theme.colors.textDim,
+			border: `1px solid ${theme.colors.border}`,
+			borderRadius: 6,
+			fontSize: 12,
+			fontWeight: 500,
+			cursor: 'pointer',
+			transition: 'color 0.15s, border-color 0.15s',
+		}),
+		[theme.colors.bgActivity, theme.colors.textDim, theme.colors.border]
+	);
+	// Hover handlers shared by the layout buttons: accent on enter, dim on leave.
+	const onLayoutButtonEnter = React.useCallback(
+		(e: React.MouseEvent<HTMLButtonElement>) => {
+			e.currentTarget.style.color = theme.colors.accent;
+			e.currentTarget.style.borderColor = theme.colors.accent;
+		},
+		[theme.colors.accent]
+	);
+	const onLayoutButtonLeave = React.useCallback(
+		(e: React.MouseEvent<HTMLButtonElement>) => {
+			e.currentTarget.style.color = theme.colors.textDim;
+			e.currentTarget.style.borderColor = theme.colors.border;
+		},
+		[theme.colors.textDim, theme.colors.border]
 	);
 	// Bottom-right minimap: shift left past the agent drawer (240px wide)
 	// so the minimap stays visible when the drawer is open. Overrides
@@ -346,7 +404,7 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 				onDragOver={onDragOver}
 				onDrop={onDrop}
 				connectionMode={ConnectionMode.Loose}
-				connectionLineType={ConnectionLineType.Bezier}
+				connectionLineType={ConnectionLineType.Step}
 				connectionLineStyle={connectionLineStyle}
 				connectionLineComponent={PipelineConnectionLine}
 				minZoom={0.1}
@@ -362,18 +420,29 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 				// drag-preview line also requires nodesConnectable=true to
 				// render, so gating this on mode broke the preview in hand
 				// mode.
-				nodesDraggable={!isReadOnly && interactionMode === 'pointer'}
-				nodesConnectable={!isReadOnly}
-				elementsSelectable={!isReadOnly}
+				nodesDraggable={!isReadOnly && !isLocked && interactionMode === 'pointer'}
+				nodesConnectable={!isReadOnly && !isLocked}
+				elementsSelectable={!isReadOnly && !isLocked}
 				// Hand mode: left-drag pans (ReactFlow default). Pointer mode:
 				// left-drag box-selects, middle/right-drag still pans as an
-				// escape hatch.
-				panOnDrag={interactionMode === 'hand' ? true : [1, 2]}
-				selectionOnDrag={interactionMode === 'pointer' && !isReadOnly}
+				// escape hatch. When locked, force pan-only regardless of the
+				// H/P toggle so box-select can't sneak through.
+				panOnDrag={isLocked || interactionMode === 'hand' ? true : [1, 2]}
+				selectionOnDrag={interactionMode === 'pointer' && !isReadOnly && !isLocked}
+				// Hold Shift to temporarily pan the canvas with left-drag,
+				// regardless of the H/P mode. Overrides ReactFlow's default
+				// of Space (which conflicts with text input in drawers and
+				// is non-obvious for a graph canvas).
+				panActivationKeyCode="Shift"
+				// Hide the "React Flow" attribution badge in the bottom-right.
+				proOptions={REACT_FLOW_PRO_OPTIONS}
 				style={reactFlowStyle}
 			>
 				<Background color={theme.colors.border} gap={20} />
-				<Controls style={controlsStyle} />
+				<Controls
+					style={controlsStyle}
+					onInteractiveChange={(interactive) => setIsLocked(!interactive)}
+				/>
 				<MiniMap
 					pannable
 					zoomable
@@ -429,7 +498,7 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 						{
 							mode: 'pointer' as const,
 							Icon: MousePointer2,
-							title: 'Select — left-drag for bounding box (S)',
+							title: 'Select — left-drag for bounding box (S). Hold Shift to pan.',
 						},
 					] satisfies {
 						mode: CanvasInteractionMode;
@@ -462,6 +531,55 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 					);
 				})}
 			</div>
+
+			{/* Layout buttons — top-right corner. "Tidy" aligns the current layout
+			    into flow columns without reshuffling; "Arrange" also reorders nodes
+			    within each column to minimize crossing edges. In All-Pipelines view
+			    there are no edges between cards to cross, so only "Arrange" shows and
+			    it packs the group cards into a tidy grid. Shifts left past the agent
+			    drawer when it's open. Hidden when there's nothing to arrange or while
+			    pipelines are loading. */}
+			{!isLoading && nodes.length > 0 && (
+				<div
+					style={{
+						position: 'absolute',
+						top: 8,
+						right: agentDrawerOpen ? 250 : 8,
+						zIndex: 21,
+						display: 'flex',
+						alignItems: 'center',
+						gap: 6,
+						transition: 'right 200ms ease',
+					}}
+				>
+					{selectedPipelineId !== null && (
+						<button
+							onClick={onTidy}
+							title="Align nodes into columns, keeping their current order"
+							style={layoutButtonStyle}
+							onMouseEnter={onLayoutButtonEnter}
+							onMouseLeave={onLayoutButtonLeave}
+						>
+							<LayoutGrid size={14} />
+							Tidy
+						</button>
+					)}
+					<button
+						onClick={onArrange}
+						title={
+							selectedPipelineId !== null
+								? 'Align into columns and reorder to minimize crossing edges'
+								: 'Pack pipelines into a tidy grid'
+						}
+						style={layoutButtonStyle}
+						onMouseEnter={onLayoutButtonEnter}
+						onMouseLeave={onLayoutButtonLeave}
+					>
+						<Wand2 size={14} />
+						Arrange
+					</button>
+				</div>
+			)}
 
 			{/* Config panels — suppressed in read-only (All Pipelines) view so
 			    any selection carried over from a previous single-pipeline view

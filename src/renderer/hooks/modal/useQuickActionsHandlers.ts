@@ -15,6 +15,8 @@
 
 import { useCallback } from 'react';
 import { generateId } from '../../utils/ids';
+import { takeNextRunnableQueueItem } from '../../utils/executionQueue';
+import { resolveQueuedItemTarget } from '../../utils/tabHelpers';
 import type { Session, ThinkingMode, UnifiedTabRef } from '../../types';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -58,6 +60,8 @@ export interface UseQuickActionsHandlersDeps {
 export interface UseQuickActionsHandlersReturn {
 	/** Toggle read-only mode on the active tab */
 	handleQuickActionsToggleReadOnlyMode: () => void;
+	/** Toggle enter-to-send mode on the active AI tab (overrides global default) */
+	handleQuickActionsToggleTabEnterToSend: () => void;
 	/** Cycle thinking mode on the active tab */
 	handleQuickActionsToggleTabShowThinking: () => void;
 	/** Refresh git, file tree, and history */
@@ -70,6 +74,8 @@ export interface UseQuickActionsHandlersReturn {
 	handleQuickActionsSummarizeAndContinue: () => void;
 	/** Open Auto Run reset tasks modal */
 	handleQuickActionsAutoRunResetTasks: () => void;
+	/** Toggle the Auto Run Expanded Preview modal */
+	handleQuickActionsToggleAutoRunExpanded: () => void;
 	/** Clear the active terminal xterm buffer */
 	handleQuickActionsClearActiveTerminal: () => void;
 	/** Scroll the active tab header into view and focus it */
@@ -153,6 +159,24 @@ export function useQuickActionsHandlers(
 		}
 	}, [activeSession]);
 
+	const handleQuickActionsToggleTabEnterToSend = useCallback(() => {
+		if (activeSession?.inputMode !== 'ai' || !activeSession.activeTabId) return;
+		const globalDefault = useSettingsStore.getState().enterToSendAI;
+		setSessions((prev) =>
+			prev.map((s) => {
+				if (s.id !== activeSession.id) return s;
+				return {
+					...s,
+					aiTabs: s.aiTabs.map((tab) =>
+						tab.id === s.activeTabId
+							? { ...tab, enterToSend: !(tab.enterToSend ?? globalDefault) }
+							: tab
+					),
+				};
+			})
+		);
+	}, [activeSession]);
+
 	const handleQuickActionsToggleTabShowThinking = useCallback(() => {
 		if (activeSession?.inputMode === 'ai' && activeSession.activeTabId) {
 			// Cycle through: off -> on -> sticky -> off
@@ -195,8 +219,11 @@ export function useQuickActionsHandlers(
 	}, [activeSessionId, refreshGitFileState, refreshWorktreeState]);
 
 	const handleQuickActionsDebugReleaseQueuedItem = useCallback(() => {
-		if (!activeSession || activeSession.executionQueue.length === 0) return;
-		const [nextItem, ...remainingQueue] = activeSession.executionQueue;
+		if (!activeSession) return;
+		const { item: nextItem, remaining: remainingQueue } = takeNextRunnableQueueItem(
+			activeSession.executionQueue
+		);
+		if (!nextItem) return;
 		// Update state to remove item from queue and surface the user log entry
 		// for message items (mirrors what useAgentListeners onExit / useInterruptHandler
 		// do for their dequeue paths). processQueuedItem itself does not add the log.
@@ -206,25 +233,31 @@ export function useQuickActionsHandlers(
 				if (nextItem.type !== 'message' || !nextItem.text) {
 					return { ...s, executionQueue: remainingQueue };
 				}
-				const targetTabId = nextItem.tabId || s.activeTabId;
+				// Route the user log to the item's target tab orphan-aware: a message
+				// queued on a since-closed tab lives in orphanedThinkingTabs, so append
+				// the log there rather than leaking it onto the active tab.
+				const target = resolveQueuedItemTarget(s, nextItem);
+				const logEntry = {
+					id: generateId(),
+					timestamp: Date.now(),
+					source: 'user' as const,
+					text: nextItem.text!,
+					images: nextItem.images,
+					...(nextItem.forceParallel && { forceParallel: true }),
+					...(nextItem.readOnlyMode && { readOnly: true }),
+				};
+				if (target?.location === 'orphan' && s.orphanedThinkingTabs) {
+					return {
+						...s,
+						executionQueue: remainingQueue,
+						orphanedThinkingTabs: s.orphanedThinkingTabs.map((tab) =>
+							tab.id === target.tabId ? { ...tab, logs: [...tab.logs, logEntry] } : tab
+						),
+					};
+				}
+				const targetTabId = target?.tabId ?? s.activeTabId;
 				const updatedAiTabs = s.aiTabs.map((tab) =>
-					tab.id === targetTabId
-						? {
-								...tab,
-								logs: [
-									...tab.logs,
-									{
-										id: generateId(),
-										timestamp: Date.now(),
-										source: 'user' as const,
-										text: nextItem.text!,
-										images: nextItem.images,
-										...(nextItem.forceParallel && { forceParallel: true }),
-										...(nextItem.readOnlyMode && { readOnly: true }),
-									},
-								],
-							}
-						: tab
+					tab.id === targetTabId ? { ...tab, logs: [...tab.logs, logEntry] } : tab
 				);
 				return { ...s, executionQueue: remainingQueue, aiTabs: updatedAiTabs };
 			})
@@ -251,6 +284,10 @@ export function useQuickActionsHandlers(
 
 	const handleQuickActionsAutoRunResetTasks = useCallback(() => {
 		rightPanelRef.current?.openAutoRunResetTasksModal();
+	}, []);
+
+	const handleQuickActionsToggleAutoRunExpanded = useCallback(() => {
+		rightPanelRef.current?.toggleAutoRunExpanded();
 	}, []);
 
 	const handleQuickActionsClearActiveTerminal = useCallback(() => {
@@ -307,12 +344,14 @@ export function useQuickActionsHandlers(
 
 	return {
 		handleQuickActionsToggleReadOnlyMode,
+		handleQuickActionsToggleTabEnterToSend,
 		handleQuickActionsToggleTabShowThinking,
 		handleQuickActionsRefreshGitFileState,
 		handleQuickActionsDebugReleaseQueuedItem,
 		handleQuickActionsToggleMarkdownEditMode,
 		handleQuickActionsSummarizeAndContinue,
 		handleQuickActionsAutoRunResetTasks,
+		handleQuickActionsToggleAutoRunExpanded,
 		handleQuickActionsClearActiveTerminal,
 		handleQuickActionsFocusActiveTab,
 		handleQuickActionsCloseCurrentTab,

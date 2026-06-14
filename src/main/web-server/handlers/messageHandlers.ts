@@ -37,6 +37,9 @@ import fs from 'fs/promises';
 import { WebSocket } from 'ws';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
+import { getStatsDB } from '../../stats/singleton';
+import { runReadonlyStatsQuery } from '../../stats/readonly-query';
+import type { StatsTimeRange } from '../../../shared/stats-types';
 import type {
 	AutoRunDocument,
 	AutoRunState,
@@ -219,6 +222,7 @@ export interface MessageHandlerCallbacks {
 				enabled: boolean;
 				path: string;
 				branchName: string;
+				baseBranch: string;
 				createPROnCompletion: boolean;
 				prTargetBranch: string;
 			};
@@ -284,8 +288,19 @@ export interface MessageHandlerCallbacks {
 		groupId?: string,
 		config?: CreateSessionConfig
 	) => Promise<{ sessionId: string } | null>;
+	createWorktreeSession: (
+		parentSessionId: string,
+		config: {
+			branchName: string;
+			baseBranch?: string;
+		}
+	) => Promise<{ success: boolean; sessionId?: string; error?: string }>;
 	deleteSession: (sessionId: string) => Promise<boolean>;
 	renameSession: (sessionId: string, newName: string) => Promise<boolean>;
+	updateSessionCwd: (
+		sessionId: string,
+		newCwd: string
+	) => Promise<{ success: boolean; error?: string }>;
 	getGitStatus: (sessionId: string) => Promise<GitStatusResult>;
 	getGitDiff: (sessionId: string, filePath?: string) => Promise<GitDiffResult>;
 	getGitBranchesForSession: (sessionId: string) => Promise<GitBranchesResult>;
@@ -508,6 +523,10 @@ export class WebSocketMessageHandler {
 				this.handleConfigureAutoRun(client, message);
 				break;
 
+			case 'create_worktree_session':
+				this.handleCreateWorktreeSession(client, message);
+				break;
+
 			case 'set_auto_run_folder':
 				this.handleSetAutoRunFolder(client, message);
 				break;
@@ -582,6 +601,10 @@ export class WebSocketMessageHandler {
 
 			case 'rename_session':
 				this.handleRenameSession(client, message);
+				break;
+
+			case 'update_session_cwd':
+				this.handleUpdateSessionCwd(client, message);
 				break;
 
 			case 'get_groups':
@@ -694,6 +717,14 @@ export class WebSocketMessageHandler {
 
 			case 'get_achievements':
 				this.handleGetAchievements(client, message);
+				break;
+
+			case 'get_stats_aggregation':
+				this.handleGetStatsAggregation(client, message);
+				break;
+
+			case 'stats_query':
+				this.handleStatsQuery(client, message);
 				break;
 
 			case 'generate_director_notes_synopsis':
@@ -1630,6 +1661,7 @@ export class WebSocketMessageHandler {
 					enabled: boolean;
 					path: string;
 					branchName: string;
+					baseBranch: string;
 					createPROnCompletion: boolean;
 					prTargetBranch: string;
 			  }
@@ -1652,6 +1684,10 @@ export class WebSocketMessageHandler {
 				this.sendError(client, 'worktree.branchName must be a non-empty string');
 				return;
 			}
+			if (w.baseBranch !== undefined && typeof w.baseBranch !== 'string') {
+				this.sendError(client, 'worktree.baseBranch must be a string');
+				return;
+			}
 			if (w.createPROnCompletion !== undefined && typeof w.createPROnCompletion !== 'boolean') {
 				this.sendError(client, 'worktree.createPROnCompletion must be a boolean');
 				return;
@@ -1664,6 +1700,7 @@ export class WebSocketMessageHandler {
 				enabled: w.enabled,
 				path: w.path,
 				branchName: w.branchName,
+				baseBranch: (w.baseBranch as string | undefined) ?? '',
 				createPROnCompletion: Boolean(w.createPROnCompletion),
 				prTargetBranch: (w.prTargetBranch as string | undefined) ?? '',
 			};
@@ -1784,19 +1821,19 @@ export class WebSocketMessageHandler {
 			return;
 		}
 
-		// Path traversal protection: resolve against session root
 		const sessions = this.callbacks.getSessions?.();
 		const session = sessions?.find((s) => s.id === sessionId);
 		if (!session?.cwd) {
 			sendErrorResult('Session not found or has no working directory');
 			return;
 		}
+		// Relative paths resolve against the agent's working directory; absolute
+		// paths are honored as-is. Opening files outside the worktree is
+		// intentionally allowed — a paired client already has shell-level access
+		// (execute_command), so confining preview tabs to the worktree gated
+		// nothing the connection token doesn't already gate.
 		const sessionRoot = path.resolve(session.cwd);
 		const resolved = path.resolve(sessionRoot, filePath);
-		if (!resolved.startsWith(sessionRoot + path.sep) && resolved !== sessionRoot) {
-			sendErrorResult('Invalid file path: path is outside the agent working directory');
-			return;
-		}
 
 		if (!this.callbacks.openFileTab) {
 			sendErrorResult('File tab opening not configured');
@@ -2740,6 +2777,7 @@ export class WebSocketMessageHandler {
 		'colorBlindMode',
 		'conductorProfile',
 		'maxOutputLines',
+		'encoreFeatures',
 	]);
 
 	/**
@@ -2879,6 +2917,57 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
+	 * Handle create_worktree_session message - create a new agent in a git
+	 * worktree branched off an existing parent agent, without an Auto Run
+	 * playbook. The desktop creates the worktree, builds a child session linked
+	 * to the parent, and returns the new agent's session id.
+	 */
+	private handleCreateWorktreeSession(client: WebClient, message: WebClientMessage): void {
+		const parentSessionId = message.parentSessionId as string;
+		const branchName = message.branchName as string;
+
+		if (!parentSessionId || typeof parentSessionId !== 'string') {
+			this.sendError(client, 'Missing or invalid parentSessionId');
+			return;
+		}
+
+		if (!branchName || typeof branchName !== 'string' || branchName.trim() === '') {
+			this.sendError(client, 'Missing or invalid branchName');
+			return;
+		}
+
+		if (message.baseBranch !== undefined && typeof message.baseBranch !== 'string') {
+			this.sendError(client, 'baseBranch must be a string');
+			return;
+		}
+
+		if (!this.callbacks.createWorktreeSession) {
+			this.sendError(client, 'Worktree session creation not configured');
+			return;
+		}
+
+		const config = {
+			branchName: branchName.trim(),
+			baseBranch: (message.baseBranch as string | undefined)?.trim() || undefined,
+		};
+
+		this.callbacks
+			.createWorktreeSession(parentSessionId, config)
+			.then((result) => {
+				this.send(client, {
+					type: 'create_worktree_session_result',
+					success: result.success,
+					sessionId: result.sessionId,
+					error: result.error,
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				this.sendError(client, `Failed to create worktree session: ${error.message}`);
+			});
+	}
+
+	/**
 	 * Handle delete_session message - delete an agent session
 	 */
 	private handleDeleteSession(client: WebClient, message: WebClientMessage): void {
@@ -2949,6 +3038,49 @@ export class WebSocketMessageHandler {
 			})
 			.catch((error) => {
 				this.sendError(client, `Failed to rename session: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle update_session_cwd message - update an agent's working directory.
+	 * The desktop's `projectRoot` (used for provider session storage) is left
+	 * untouched so historical conversations stay addressable; only the UI-facing
+	 * `cwd`/`fullPath` move. Renderer-side validation rejects updates while an
+	 * agent process is alive — the PTY's cwd is fixed at spawn time.
+	 */
+	private handleUpdateSessionCwd(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+		const newCwd = message.newCwd as string;
+
+		if (!sessionId) {
+			this.sendError(client, 'Missing sessionId');
+			return;
+		}
+
+		if (!newCwd || typeof newCwd !== 'string' || newCwd.trim() === '') {
+			this.sendError(client, 'Missing or empty newCwd');
+			return;
+		}
+
+		if (!this.callbacks.updateSessionCwd) {
+			this.sendError(client, 'Session cwd updates not configured');
+			return;
+		}
+
+		this.callbacks
+			.updateSessionCwd(sessionId, newCwd)
+			.then((result) => {
+				this.send(client, {
+					type: 'update_session_cwd_result',
+					success: result.success,
+					error: result.error,
+					sessionId,
+					newCwd,
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				this.sendError(client, `Failed to update session cwd: ${error.message}`);
 			});
 	}
 
@@ -3868,6 +4000,70 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
+	 * Handle get_stats_aggregation message - return the Usage Dashboard's
+	 * aggregated stats (query counts, durations, per-agent/day/hour breakdowns)
+	 * for a time range. Reads the main-process stats singleton directly.
+	 */
+	private handleGetStatsAggregation(client: WebClient, message: WebClientMessage): void {
+		const range = (message.range as string) || 'week';
+		const validRanges = new Set(['day', 'week', 'month', 'quarter', 'year', 'all']);
+
+		if (!validRanges.has(range)) {
+			this.sendError(client, 'Invalid range. Must be one of: day, week, month, quarter, year, all');
+			return;
+		}
+
+		try {
+			const data = getStatsDB().getAggregatedStats(range as StatsTimeRange);
+			this.send(client, {
+				type: 'stats_aggregation',
+				data,
+				requestId: message.requestId,
+				timestamp: Date.now(),
+			});
+		} catch (error) {
+			this.sendError(
+				client,
+				`Failed to get stats aggregation: ${error instanceof Error ? error.message : String(error)}`
+			);
+		}
+	}
+
+	/**
+	 * Handle stats_query message - run a single read-only SQL statement against
+	 * the stats database and return the rows. Read-only enforcement lives in
+	 * runReadonlyStatsQuery (dedicated readonly connection + single-statement +
+	 * stmt.readonly assertion).
+	 */
+	private handleStatsQuery(client: WebClient, message: WebClientMessage): void {
+		const sql = message.sql as string | undefined;
+		const params = Array.isArray(message.params) ? (message.params as unknown[]) : [];
+
+		if (!sql || typeof sql !== 'string') {
+			this.sendError(client, 'Missing required "sql" string for stats_query');
+			return;
+		}
+
+		try {
+			const result = runReadonlyStatsQuery(sql, params);
+			this.send(client, {
+				type: 'stats_query_result',
+				columns: result.columns,
+				rows: result.rows,
+				rowCount: result.rowCount,
+				truncated: result.truncated,
+				requestId: message.requestId,
+				timestamp: Date.now(),
+			});
+		} catch (error) {
+			this.sendError(
+				client,
+				`Stats query failed: ${error instanceof Error ? error.message : String(error)}`
+			);
+		}
+	}
+
+	/**
 	 * Handle get_achievements message - fetch achievement data
 	 */
 	private handleGetAchievements(client: WebClient, message: WebClientMessage): void {
@@ -4009,6 +4205,10 @@ export class WebSocketMessageHandler {
 		const duration = typeof message.duration === 'number' ? message.duration : undefined;
 		const dismissible = message.dismissible === true;
 		const sessionId = typeof message.sessionId === 'string' ? message.sessionId : undefined;
+		const sourceAgent =
+			typeof message.sourceAgent === 'string' && message.sourceAgent.length > 0
+				? message.sourceAgent
+				: undefined;
 		const tabId = typeof message.tabId === 'string' ? message.tabId : undefined;
 		const actionUrl = typeof message.actionUrl === 'string' ? message.actionUrl : undefined;
 		const actionLabel = typeof message.actionLabel === 'string' ? message.actionLabel : undefined;
@@ -4130,6 +4330,7 @@ export class WebSocketMessageHandler {
 				dismissible,
 				duration,
 				sessionId,
+				sourceAgent,
 				tabId,
 				actionUrl,
 				actionLabel,

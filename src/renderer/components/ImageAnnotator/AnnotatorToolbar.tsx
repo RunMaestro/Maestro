@@ -25,14 +25,18 @@ import {
 	Square,
 	SlidersHorizontal,
 	Trash2,
+	Type,
 	Undo2,
 	X,
 	type LucideIcon,
 } from 'lucide-react';
 import type { Theme } from '../../../shared/theme-types';
 import { GhostIconButton } from '../ui/GhostIconButton';
+import { HoverTooltip } from '../ui/HoverTooltip';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
+import { useSettingsStore } from '../../stores/settingsStore';
 import type { AnnotatorTool, UseAnnotatorStateReturn } from './useAnnotatorState';
+import { ANNOTATOR_PALETTE } from './annotatorConstants';
 
 interface AnnotatorToolbarProps {
 	state: UseAnnotatorStateReturn;
@@ -55,10 +59,45 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 	onCopy,
 	onCancel,
 }: AnnotatorToolbarProps) {
-	const { tool, setTool, strokes, shapes, undo, clear } = state;
+	const { tool, setTool, strokes, shapes, texts, undo, clear } = state;
 	const [confirmingClear, setConfirmingClear] = useState(false);
 	const confirmWrapRef = useRef<HTMLDivElement>(null);
-	const hasContent = strokes.length > 0 || shapes.length > 0;
+	const [colorPickerOpen, setColorPickerOpen] = useState(false);
+	const colorWrapRef = useRef<HTMLDivElement>(null);
+	const hasContent = strokes.length > 0 || shapes.length > 0 || texts.length > 0;
+
+	// Current-color swatch. Resolution mirrors AnnotatorSettingsDrawer so the
+	// toolbar always shows (and edits) the same color the drawer would: a
+	// selected text/shape's color wins, otherwise the tool-appropriate default
+	// (text tool → text color, anything else → pen color, since pen color drives
+	// pen + all shapes).
+	const defPenColor = useSettingsStore((s) => s.annotatorPenColor);
+	const defTextColor = useSettingsStore((s) => s.annotatorTextColor);
+	const setDefPenColor = useSettingsStore((s) => s.setAnnotatorPenColor);
+	const setDefTextColor = useSettingsStore((s) => s.setAnnotatorTextColor);
+	const selectedShape = state.selectedShapeId
+		? (shapes.find((s) => s.id === state.selectedShapeId) ?? null)
+		: null;
+	const selectedText = state.selectedTextId
+		? (texts.find((t) => t.id === state.selectedTextId) ?? null)
+		: null;
+	let currentColor: string;
+	let setCurrentColor: (c: string) => void;
+	if (selectedText) {
+		currentColor = selectedText.style.color;
+		setCurrentColor = (c) =>
+			state.updateText(selectedText.id, { style: { ...selectedText.style, color: c } });
+	} else if (selectedShape) {
+		currentColor = selectedShape.style.color;
+		setCurrentColor = (c) =>
+			state.updateShape(selectedShape.id, { style: { ...selectedShape.style, color: c } });
+	} else if (tool === 'text') {
+		currentColor = defTextColor;
+		setCurrentColor = setDefTextColor;
+	} else {
+		currentColor = defPenColor;
+		setCurrentColor = setDefPenColor;
+	}
 
 	// Cmd/Ctrl+Z (undo) and Cmd/Ctrl+S (save+exit) for the annotator.
 	//
@@ -122,6 +161,17 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 		if (!hasContent && confirmingClear) setConfirmingClear(false);
 	}, [hasContent, confirmingClear]);
 
+	useEffect(() => {
+		if (!colorPickerOpen) return;
+		const onMouseDown = (e: MouseEvent) => {
+			if (colorWrapRef.current && !colorWrapRef.current.contains(e.target as Node)) {
+				setColorPickerOpen(false);
+			}
+		};
+		document.addEventListener('mousedown', onMouseDown);
+		return () => document.removeEventListener('mousedown', onMouseDown);
+	}, [colorPickerOpen]);
+
 	const handleConfirmClear = useCallback(() => {
 		clear();
 		setConfirmingClear(false);
@@ -144,19 +194,25 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 	const ICON_CLASS = 'w-5 h-5';
 	const BUTTON_PADDING = 'p-2';
 
-	const renderToolButton = (value: AnnotatorTool, Icon: LucideIcon, label: string) => {
+	const renderToolButton = (
+		value: AnnotatorTool,
+		Icon: LucideIcon,
+		label: string,
+		shortcut: string
+	) => {
 		const active = tool === value;
 		return (
-			<GhostIconButton
-				onClick={() => setTool(value)}
-				ariaLabel={label}
-				title={label}
-				padding={BUTTON_PADDING}
-				color={active ? theme.colors.accent : theme.colors.textMain}
-				style={active ? { backgroundColor: `${theme.colors.accent}26` } : undefined}
-			>
-				<Icon className={ICON_CLASS} />
-			</GhostIconButton>
+			<HoverTooltip label={label} shortcut={shortcut} theme={theme} placement="left">
+				<GhostIconButton
+					onClick={() => setTool(value)}
+					ariaLabel={label}
+					padding={BUTTON_PADDING}
+					color={active ? theme.colors.accent : theme.colors.textMain}
+					style={active ? { backgroundColor: `${theme.colors.accent}26` } : undefined}
+				>
+					<Icon className={ICON_CLASS} />
+				</GhostIconButton>
+			</HoverTooltip>
 		);
 	};
 
@@ -178,7 +234,8 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 	// Slide the toolbar left when the settings drawer opens, so the drawer
 	// can take the right edge without occluding the buttons. The drawer
 	// itself is 320px wide; we leave a 24px gap on either side.
-	const DRAWER_WIDTH = 320;
+	// Keep in sync with `AnnotatorSettingsDrawer`'s aside width.
+	const DRAWER_WIDTH = 360;
 	const EDGE_GAP = 24;
 	const rightOffset = drawerOpen ? DRAWER_WIDTH + EDGE_GAP : EDGE_GAP;
 
@@ -211,43 +268,46 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 			onPointerDown={(e) => e.stopPropagation()}
 			onWheel={(e) => e.stopPropagation()}
 		>
-			{renderToolButton('pen', PenLine, 'Pen')}
-			{renderToolButton('eraser', Eraser, 'Eraser')}
-			{renderToolButton('pan', Move, 'Pan (or hold Shift / Space)')}
+			{renderToolButton('pen', PenLine, 'Draw', 'D')}
+			{renderToolButton('eraser', Eraser, 'Erase', 'E')}
+			{renderToolButton('pan', Move, 'Pan', 'P')}
 
 			{divider}
 
-			{renderToolButton('rect', Square, 'Rectangle')}
-			{renderToolButton('ellipse', Circle, 'Ellipse')}
-			{renderToolButton('arrow', ArrowUpRight, 'Arrow')}
+			{renderToolButton('rect', Square, 'Square', 'S')}
+			{renderToolButton('ellipse', Circle, 'Circle', 'C')}
+			{renderToolButton('arrow', ArrowUpRight, 'Arrow', 'A')}
+			{renderToolButton('text', Type, 'Text', 'T')}
 
 			{divider}
 
-			<GhostIconButton
-				onClick={undo}
-				ariaLabel="Undo"
-				title="Undo (⌘Z)"
-				padding={BUTTON_PADDING}
-				disabled={!canUndo}
-				color={theme.colors.textMain}
-			>
-				<Undo2 className={ICON_CLASS} />
-			</GhostIconButton>
-
-			<div ref={confirmWrapRef} style={{ position: 'relative' }}>
+			<HoverTooltip label="Undo" shortcut="⌘Z" theme={theme} placement="left">
 				<GhostIconButton
-					onClick={() => {
-						if (!canUndo) return;
-						setConfirmingClear((v) => !v);
-					}}
-					ariaLabel="Clear all strokes"
-					title="Clear all strokes"
+					onClick={undo}
+					ariaLabel="Undo"
 					padding={BUTTON_PADDING}
 					disabled={!canUndo}
-					color={theme.colors.error}
+					color={theme.colors.textMain}
 				>
-					<Trash2 className={ICON_CLASS} />
+					<Undo2 className={ICON_CLASS} />
 				</GhostIconButton>
+			</HoverTooltip>
+
+			<div ref={confirmWrapRef} style={{ position: 'relative' }}>
+				<HoverTooltip label="Clear all" theme={theme} placement="left">
+					<GhostIconButton
+						onClick={() => {
+							if (!canUndo) return;
+							setConfirmingClear((v) => !v);
+						}}
+						ariaLabel="Clear all strokes"
+						padding={BUTTON_PADDING}
+						disabled={!canUndo}
+						color={theme.colors.error}
+					>
+						<Trash2 className={ICON_CLASS} />
+					</GhostIconButton>
+				</HoverTooltip>
 				{confirmingClear && (
 					<div
 						role="dialog"
@@ -293,46 +353,117 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 
 			{divider}
 
-			<GhostIconButton
-				onClick={onToggleDrawer}
-				ariaLabel="Drawing settings"
-				title="Drawing settings"
-				padding={BUTTON_PADDING}
-				color={drawerOpen ? theme.colors.accent : theme.colors.textMain}
-				style={drawerOpen ? { backgroundColor: `${theme.colors.accent}26` } : undefined}
-			>
-				<SlidersHorizontal className={ICON_CLASS} />
-			</GhostIconButton>
+			<div ref={colorWrapRef} style={{ position: 'relative' }}>
+				<HoverTooltip label="Color" theme={theme} placement="left" disabled={colorPickerOpen}>
+					<button
+						type="button"
+						onClick={() => setColorPickerOpen((v) => !v)}
+						aria-label="Current drawing color"
+						aria-haspopup="true"
+						aria-expanded={colorPickerOpen}
+						className="rounded hover:bg-white/10 transition-colors cursor-pointer flex items-center justify-center"
+						style={{ padding: 8, lineHeight: 0 }}
+					>
+						<span
+							aria-hidden
+							className="block w-5 h-5 rounded-full"
+							style={{
+								backgroundColor: currentColor,
+								boxShadow: `inset 0 0 0 1px rgba(0, 0, 0, 0.25), 0 0 0 1px ${theme.colors.border}`,
+							}}
+						/>
+					</button>
+				</HoverTooltip>
+				{colorPickerOpen && (
+					<div
+						role="listbox"
+						aria-label="Drawing color"
+						className="absolute flex flex-col gap-1.5 rounded-lg p-2"
+						style={{
+							right: '100%',
+							top: '50%',
+							transform: 'translateY(-50%)',
+							marginRight: 8,
+							backgroundColor: theme.colors.bgMain,
+							border: `1px solid ${theme.colors.border}`,
+							boxShadow: '0 8px 24px -8px rgba(0, 0, 0, 0.5)',
+							zIndex: 1,
+						}}
+					>
+						{ANNOTATOR_PALETTE.map((color) => {
+							const selected = currentColor.toLowerCase() === color.toLowerCase();
+							return (
+								<button
+									key={color}
+									type="button"
+									role="option"
+									aria-selected={selected}
+									onClick={() => {
+										setCurrentColor(color);
+										setColorPickerOpen(false);
+									}}
+									className="rounded-full transition-transform hover:scale-110"
+									style={{
+										width: 22,
+										height: 22,
+										backgroundColor: color,
+										border: selected
+											? `2px solid ${theme.colors.accent}`
+											: `2px solid ${theme.colors.border}`,
+										boxShadow: selected ? `0 0 0 2px ${theme.colors.accent}55` : undefined,
+									}}
+									aria-label={`Set color to ${color}`}
+								/>
+							);
+						})}
+					</div>
+				)}
+			</div>
 
-			<GhostIconButton
-				onClick={() => void handleCopy()}
-				ariaLabel="Copy to clipboard"
-				title="Copy to clipboard"
-				padding={BUTTON_PADDING}
-				color={theme.colors.textMain}
-			>
-				<Copy className={ICON_CLASS} />
-			</GhostIconButton>
+			<HoverTooltip label="Settings" theme={theme} placement="left">
+				<GhostIconButton
+					onClick={onToggleDrawer}
+					ariaLabel="Drawing settings"
+					padding={BUTTON_PADDING}
+					color={drawerOpen ? theme.colors.accent : theme.colors.textMain}
+					style={drawerOpen ? { backgroundColor: `${theme.colors.accent}26` } : undefined}
+				>
+					<SlidersHorizontal className={ICON_CLASS} />
+				</GhostIconButton>
+			</HoverTooltip>
 
-			<GhostIconButton
-				onClick={handleSave}
-				ariaLabel="Save"
-				title="Save (⌘S)"
-				padding={BUTTON_PADDING}
-				color={theme.colors.success}
-			>
-				<Check className={ICON_CLASS} />
-			</GhostIconButton>
+			<HoverTooltip label="Copy" shortcut="⌘C" theme={theme} placement="left">
+				<GhostIconButton
+					onClick={() => void handleCopy()}
+					ariaLabel="Copy to clipboard"
+					padding={BUTTON_PADDING}
+					color={theme.colors.textMain}
+				>
+					<Copy className={ICON_CLASS} />
+				</GhostIconButton>
+			</HoverTooltip>
 
-			<GhostIconButton
-				onClick={onCancel}
-				ariaLabel="Cancel"
-				title="Cancel (Esc)"
-				padding={BUTTON_PADDING}
-				color={theme.colors.textDim}
-			>
-				<X className={ICON_CLASS} />
-			</GhostIconButton>
+			<HoverTooltip label="Save" shortcut="⌘S" theme={theme} placement="left">
+				<GhostIconButton
+					onClick={handleSave}
+					ariaLabel="Save"
+					padding={BUTTON_PADDING}
+					color={theme.colors.success}
+				>
+					<Check className={ICON_CLASS} />
+				</GhostIconButton>
+			</HoverTooltip>
+
+			<HoverTooltip label="Cancel" shortcut="Esc" theme={theme} placement="left">
+				<GhostIconButton
+					onClick={onCancel}
+					ariaLabel="Cancel"
+					padding={BUTTON_PADDING}
+					color={theme.colors.textDim}
+				>
+					<X className={ICON_CLASS} />
+				</GhostIconButton>
+			</HoverTooltip>
 		</div>,
 		document.body
 	);

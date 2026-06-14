@@ -12,6 +12,8 @@ import {
 	Users,
 	File,
 	Folder,
+	Maximize2,
+	Minimize2,
 } from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
 import type { Theme, ThinkingMode, Session, Group } from '../types';
@@ -26,6 +28,7 @@ import {
 } from '../utils/shortcutFormatter';
 import { normalizeMentionName } from '../utils/participantColors';
 import { useAtMentionCompletion } from '../hooks/input/useAtMentionCompletion';
+import { useModalStore } from '../stores/modalStore';
 
 const EMPTY_STAGED_IMAGES: string[] = [];
 
@@ -104,6 +107,10 @@ export function PromptComposerModal({
 	groups,
 }: PromptComposerModalProps) {
 	const [value, setValue] = useState('');
+	// Full-screen state lives in the modal store so the open-composer hotkey can
+	// cycle sizes while the modal is open (see cyclePromptComposer in modalStore).
+	const isFullscreen = useModalStore((s) => s.promptComposerFullscreen);
+	const toggleFullscreen = useModalStore((s) => s.togglePromptComposerFullscreen);
 	const [showMentions, setShowMentions] = useState(false);
 	const [mentionFilter, setMentionFilter] = useState('');
 	const [selectedMentionIndex, setSelectedMentionIndex] = useState(0);
@@ -472,7 +479,11 @@ export function PromptComposerModal({
 				aria-label="Close prompt composer"
 			/>
 			<div
-				className="relative z-10 w-[90vw] h-[80vh] max-w-5xl rounded-xl border shadow-2xl flex flex-col overflow-hidden"
+				className={`relative z-10 shadow-2xl flex flex-col overflow-hidden rounded-xl border ${
+					// Expanded state is capped at the Maestro Cue modal size (90vw x 90vh),
+					// the app-wide max modal footprint. Compact state caps width at max-w-5xl.
+					isFullscreen ? 'w-[90vw] h-[90vh]' : 'w-[90vw] h-[80vh] max-w-5xl'
+				}`}
 				onClick={(e) => e.stopPropagation()}
 				style={{
 					backgroundColor: theme.colors.bgMain,
@@ -493,7 +504,18 @@ export function PromptComposerModal({
 							— {sessionName}
 						</span>
 					</div>
-					<div className="flex items-center gap-3">
+					<div className="flex items-center gap-1">
+						<GhostIconButton
+							onClick={toggleFullscreen}
+							padding="p-1.5"
+							title={isFullscreen ? 'Collapse' : 'Expand to full screen'}
+						>
+							{isFullscreen ? (
+								<Minimize2 className="w-5 h-5" style={{ color: theme.colors.textDim }} />
+							) : (
+								<Maximize2 className="w-5 h-5" style={{ color: theme.colors.textDim }} />
+							)}
+						</GhostIconButton>
 						<GhostIconButton
 							onClick={() => {
 								onSubmit(value);

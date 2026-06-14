@@ -184,7 +184,9 @@ describe('buildAgentArgs', () => {
 	});
 
 	// -- workingDirArgs --
-	it('adds workingDirArgs when cwd provided', () => {
+	it('prepends workingDirArgs when cwd provided', () => {
+		// Codex treats `-C` as a root-level global flag — it must appear before
+		// any subcommand (e.g. `exec`) or it is silently ignored (#959).
 		const agent = makeAgent({
 			workingDirArgs: (dir: string) => ['-C', dir],
 		});
@@ -192,7 +194,21 @@ describe('buildAgentArgs', () => {
 			baseArgs: ['--print'],
 			cwd: '/home/user/project',
 		});
-		expect(result).toEqual(['--print', '-C', '/home/user/project']);
+		expect(result).toEqual(['-C', '/home/user/project', '--print']);
+	});
+
+	it('places workingDirArgs before batchModePrefix subcommand', () => {
+		// Regression: -C must land before `exec` so Codex picks up the cwd.
+		const agent = makeAgent({
+			batchModePrefix: ['exec'],
+			workingDirArgs: (dir: string) => ['-C', dir],
+		});
+		const result = buildAgentArgs(agent, {
+			baseArgs: ['--json'],
+			prompt: 'do stuff',
+			cwd: '/home/user/project',
+		});
+		expect(result).toEqual(['-C', '/home/user/project', 'exec', '--json']);
 	});
 
 	it('does not add workingDirArgs when cwd is not provided', () => {
@@ -335,14 +351,16 @@ describe('buildAgentArgs', () => {
 		});
 
 		// batchModeArgs (--skip-git) is omitted when readOnlyMode is true —
-		// batch mode args grant write/approval permissions that conflict with read-only
+		// batch mode args grant write/approval permissions that conflict with read-only.
+		// workingDirArgs (-C /tmp) is prepended so the directory flag lands before
+		// the batchModePrefix subcommand (#959).
 		expect(result).toEqual([
+			'-C',
+			'/tmp',
 			'run',
 			'--print',
 			'--format',
 			'json',
-			'-C',
-			'/tmp',
 			'--agent',
 			'plan',
 			'--model',

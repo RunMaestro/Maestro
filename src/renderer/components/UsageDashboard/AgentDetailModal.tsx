@@ -20,6 +20,7 @@ import { formatDurationHuman, formatNumber, formatRelativeTime } from '../../../
 import { Modal } from '../ui/Modal';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
+import { computePercentiles } from '../../../shared/percentiles';
 import { logger } from '../../utils/logger';
 import { Sparkline } from './Sparkline';
 
@@ -47,30 +48,6 @@ interface AutoRunSessionRow {
 	duration: number;
 	tasksTotal?: number;
 	tasksCompleted?: number;
-}
-
-interface DurationDistribution {
-	min: number;
-	median: number;
-	p95: number;
-	max: number;
-}
-
-function percentile(sorted: number[], p: number): number {
-	if (sorted.length === 0) return 0;
-	const idx = Math.min(sorted.length - 1, Math.max(0, Math.floor((p / 100) * sorted.length)));
-	return sorted[idx];
-}
-
-function computeDistribution(durations: number[]): DurationDistribution {
-	if (durations.length === 0) return { min: 0, median: 0, p95: 0, max: 0 };
-	const sorted = [...durations].sort((a, b) => a - b);
-	return {
-		min: sorted[0],
-		median: percentile(sorted, 50),
-		p95: percentile(sorted, 95),
-		max: sorted[sorted.length - 1],
-	};
 }
 
 export const AgentDetailModal = memo(function AgentDetailModal({
@@ -142,9 +119,9 @@ export const AgentDetailModal = memo(function AgentDetailModal({
 		return { user, auto };
 	}, [events]);
 
-	const distribution = useMemo<DurationDistribution | null>(() => {
+	const distribution = useMemo(() => {
 		if (!events) return null;
-		return computeDistribution(events.map((e) => e.duration));
+		return computePercentiles(events.map((e) => e.duration));
 	}, [events]);
 
 	const autoRunSummary = useMemo(() => {
@@ -263,7 +240,7 @@ export const AgentDetailModal = memo(function AgentDetailModal({
 						/>
 						<Kpi
 							label="Median"
-							value={distribution ? formatDurationHuman(distribution.median) : '…'}
+							value={distribution ? formatDurationHuman(distribution.p50) : '…'}
 							theme={theme}
 							compact
 						/>

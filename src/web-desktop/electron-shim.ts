@@ -13,6 +13,8 @@
  *     window.maestro with the same factory output the desktop gets.
  */
 
+import { captureException } from './sentry-shim';
+
 type Listener = (event: { senderFrame: null }, ...args: unknown[]) => void;
 
 interface PendingInvoke {
@@ -81,13 +83,16 @@ class BridgeClient {
 			try {
 				msg = JSON.parse(typeof ev.data === 'string' ? ev.data : String(ev.data));
 			} catch (err) {
-				// One malformed frame shouldn't tear down the whole connection
-				// (that would reject every in-flight invoke for one bad payload).
-				// Log it so the failure is visible during debugging and drop the
-				// frame.
 				const raw = typeof ev.data === 'string' ? ev.data : String(ev.data);
 				const preview = raw.length > 200 ? `${raw.slice(0, 200)}…` : raw;
-				console.warn('[bridge] dropping unparseable frame', { error: err, preview });
+				captureException(err, {
+					extra: {
+						component: 'BridgeClient',
+						action: 'message.parse',
+						preview,
+					},
+				});
+				this.ws?.close(1003, 'invalid bridge frame');
 				return;
 			}
 			if (msg.type === 'bridge.response') {
@@ -110,6 +115,13 @@ class BridgeClient {
 						cb(fakeEvent, ...args);
 					} catch (err) {
 						console.error(`[bridge] listener for ${channel} threw`, err);
+						captureException(err, {
+							extra: {
+								component: 'BridgeClient',
+								action: 'listener',
+								channel,
+							},
+						});
 					}
 				}
 			}
@@ -244,4 +256,11 @@ export const webFrame = {
 	getZoomLevel: () => 0,
 };
 
-export default { ipcRenderer, contextBridge, shell, webFrame };
+export const webUtils = {
+	getPathForFile: (file: File): string => {
+		const maybePath = (file as File & { path?: unknown }).path;
+		return typeof maybePath === 'string' ? maybePath : '';
+	},
+};
+
+export default { ipcRenderer, contextBridge, shell, webFrame, webUtils };

@@ -55,9 +55,33 @@ export default defineConfig(({ mode }) => ({
 			input: {
 				main: path.join(__dirname, 'src/web-desktop/index.html'),
 			},
+			output: {
+				manualChunks: (id) => {
+					if (id.includes('node_modules/react-dom')) {
+						return 'vendor-react';
+					}
+					if (id.includes('node_modules/react/') || id.includes('node_modules/react-is')) {
+						return 'vendor-react';
+					}
+					if (id.includes('node_modules/scheduler')) {
+						return 'vendor-react';
+					}
+					// Keep these CJS-heavy libraries isolated. Letting Rollup tuck
+					// their interop helpers into unrelated lazy chunks has produced
+					// production-only boot failures in sibling Vite builds.
+					if (id.includes('node_modules/dayjs')) {
+						return 'vendor-dayjs';
+					}
+					if (id.includes('node_modules/khroma')) {
+						return 'vendor-khroma';
+					}
+					return undefined;
+				},
+			},
 		},
 		target: 'es2020',
 		minify: mode === 'production' ? 'esbuild' : false,
+		cssMinify: 'esbuild',
 	},
 
 	server: {

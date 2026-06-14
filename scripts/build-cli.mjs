@@ -63,7 +63,10 @@ async function build() {
 			sourcemap: true,
 			minify: false, // Keep readable for debugging
 			// Note: shebang is already in src/cli/index.ts, no banner needed
-			external: [],
+			// fsevents is an optional native module (.node) pulled in transitively
+			// by chokidar on macOS. esbuild can't bundle .node files, and chokidar
+			// guards its require() in a try/catch, so mark it external.
+			external: ['fsevents'],
 			plugins: [rawMdPlugin],
 			define: {
 				__MAESTRO_CLI_VERSION__: JSON.stringify(cliVersion),

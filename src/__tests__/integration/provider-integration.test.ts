@@ -372,20 +372,21 @@ const PROVIDERS: ProviderConfig[] = [
 		 */
 		buildInitialArgs: (prompt: string, options?: { images?: string[] }) => {
 			// Codex arg order from process.ts IPC handler:
-			// 1. batchModePrefix: ['exec']
-			// 2. base args: [] (empty for Codex)
-			// 3. batchModeArgs: ['--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check']
-			// 4. jsonOutputArgs: ['--json']
-			// 5. workingDirArgs: ['-C', dir]
+			// 1. workingDirArgs: ['-C', dir] (must precede the `exec` subcommand
+			//    because Codex treats `-C` as a root-level global flag — see #959)
+			// 2. batchModePrefix: ['exec']
+			// 3. base args: [] (empty for Codex)
+			// 4. batchModeArgs: ['--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check']
+			// 5. jsonOutputArgs: ['--json']
 			// 6. prompt via '--' separator (process-manager.ts)
 
 			const args = [
+				'-C',
+				TEST_CWD,
 				'exec',
 				'--dangerously-bypass-approvals-and-sandbox',
 				'--skip-git-repo-check',
 				'--json',
-				'-C',
-				TEST_CWD,
 			];
 
 			// IMPORTANT: This mirrors process-manager.ts logic
@@ -404,12 +405,12 @@ const PROVIDERS: ProviderConfig[] = [
 			return [...args, '--', prompt];
 		},
 		buildResumeArgs: (sessionId: string, prompt: string) => [
+			'-C',
+			TEST_CWD,
 			'exec',
 			'--dangerously-bypass-approvals-and-sandbox',
 			'--skip-git-repo-check',
 			'--json',
-			'-C',
-			TEST_CWD,
 			'resume',
 			sessionId,
 			'--',
@@ -420,20 +421,20 @@ const PROVIDERS: ProviderConfig[] = [
 		 * Codex uses file-based image args (-i) - images decoded on remote via script.
 		 */
 		buildSshArgs: () => [
+			'-C',
+			TEST_CWD,
 			'exec',
 			'--dangerously-bypass-approvals-and-sandbox',
 			'--skip-git-repo-check',
 			'--json',
-			'-C',
-			TEST_CWD,
 		],
 		buildSshResumeArgs: (sessionId: string) => [
+			'-C',
+			TEST_CWD,
 			'exec',
 			'--dangerously-bypass-approvals-and-sandbox',
 			'--skip-git-repo-check',
 			'--json',
-			'-C',
-			TEST_CWD,
 			'resume',
 			sessionId,
 		],
@@ -487,12 +488,12 @@ const PROVIDERS: ProviderConfig[] = [
 		 * Mirrors agent-detector.ts: imageArgs: (imagePath) => ['-i', imagePath]
 		 */
 		buildImageArgs: (prompt: string, imagePath: string) => [
+			'-C',
+			TEST_CWD,
 			'exec',
 			'--dangerously-bypass-approvals-and-sandbox',
 			'--skip-git-repo-check',
 			'--json',
-			'-C',
-			TEST_CWD,
 			'-i',
 			imagePath,
 			'--',
@@ -1610,16 +1611,14 @@ describe.skipIf(SKIP_INTEGRATION)('Provider Integration Tests', () => {
 					console.log(`📋 Session ID: ${sessionId}`);
 					expect(sessionId, `${provider.name} should return session ID`).toBeTruthy();
 
-					// Now request a synopsis (this is what happens when a task completes)
-					const synopsisPrompt = `Provide a brief synopsis of what you just accomplished in this task using this exact format:
-
-**Summary:** [1-2 sentences describing the key outcome]
-
-**Details:** [A paragraph with more specifics about what was done]
-
-Rules:
-- Be specific about what was actually accomplished.
-- Focus only on meaningful work that was done.`;
+					// Now request a synopsis (this is what happens when a task completes).
+					// Use the real, live prompt rather than a hand-copied literal so this
+					// test never drifts from the actual prompt - edit the .md freely and
+					// this test follows automatically.
+					const synopsisPrompt = fs.readFileSync(
+						path.join(__dirname, '../../prompts/autorun-synopsis.md'),
+						'utf-8'
+					);
 
 					const synopsisArgs = provider.buildResumeArgs(sessionId!, synopsisPrompt);
 
@@ -1646,13 +1645,13 @@ Rules:
 					console.log(`   - shortSummary: ${parsed.shortSummary.substring(0, 100)}`);
 					console.log(`   - fullSynopsis length: ${parsed.fullSynopsis.length}`);
 
-					// Verify the summary is NOT a template placeholder
-					const templatePlaceholders = [
-						'[1-2 sentences',
-						'[A paragraph',
-						'... (1-2 sentences)',
-						'... then blank line',
-					];
+					// Verify the summary is NOT a verbatim echo of the template. Derive
+					// the placeholder signatures from the loaded prompt (the leading text
+					// of each `**Summary:**/**Details:** [...]` block) so this check tracks
+					// the prompt instead of hard-coding literals that go stale.
+					const templatePlaceholders = Array.from(
+						synopsisPrompt.matchAll(/\*\*(?:Summary|Details):\*\*\s*(\[[^\].]{5,})/g)
+					).map((m) => m[1].trim().slice(0, 20));
 
 					for (const placeholder of templatePlaceholders) {
 						expect(

@@ -8,8 +8,17 @@ import {
 	countMarkdownTasks,
 	extractHeadings,
 	resolveImagePath,
+	isCodeFile,
 	LARGE_FILE_TOKEN_SKIP_THRESHOLD,
 	LARGE_FILE_PREVIEW_LIMIT,
+	pickPreviewTier,
+	countLines,
+	scanLineStats,
+	FAST_TIER_BYTES,
+	FAST_TIER_LINES,
+	GIANT_TIER_BYTES,
+	GIANT_TIER_LINES,
+	LINE_LENGTH_GIANT_THRESHOLD,
 } from '../../../../renderer/components/FilePreview/filePreviewUtils';
 
 describe('filePreviewUtils', () => {
@@ -294,6 +303,161 @@ describe('filePreviewUtils', () => {
 
 		it('LARGE_FILE_PREVIEW_LIMIT is 100KB', () => {
 			expect(LARGE_FILE_PREVIEW_LIMIT).toBe(100 * 1024);
+		});
+	});
+
+	describe('countLines', () => {
+		it('returns 0 for empty input', () => {
+			expect(countLines('')).toBe(0);
+		});
+
+		it('returns 1 for a single line with no trailing newline', () => {
+			expect(countLines('hello')).toBe(1);
+		});
+
+		it('counts newlines plus one', () => {
+			expect(countLines('a\nb\nc')).toBe(3);
+		});
+
+		it('counts the trailing newline as an extra empty line', () => {
+			expect(countLines('a\n')).toBe(2);
+		});
+	});
+
+	describe('scanLineStats', () => {
+		it('returns zero counts for empty input', () => {
+			expect(scanLineStats('')).toEqual({ lines: 0, maxLineLength: 0 });
+		});
+
+		it('reports a single line with no newline', () => {
+			expect(scanLineStats('hello')).toEqual({ lines: 1, maxLineLength: 5 });
+		});
+
+		it('tracks the longest line across the document', () => {
+			expect(scanLineStats('aa\nbbbb\ncc')).toEqual({ lines: 3, maxLineLength: 4 });
+		});
+
+		it('handles a single pathologically long line', () => {
+			const huge = 'A'.repeat(500_000);
+			expect(scanLineStats(huge)).toEqual({ lines: 1, maxLineLength: 500_000 });
+		});
+
+		it('handles many short lines with one long line at the end', () => {
+			const content = 'a\n'.repeat(10) + 'A'.repeat(50_000);
+			const stats = scanLineStats(content);
+			expect(stats.lines).toBe(11);
+			expect(stats.maxLineLength).toBe(50_000);
+		});
+
+		it('treats a trailing newline as the start of an empty line', () => {
+			expect(scanLineStats('hello\n')).toEqual({ lines: 2, maxLineLength: 5 });
+		});
+
+		it('returns the same line count that countLines would', () => {
+			const samples = ['', 'a', 'a\nb', 'a\n', 'a\n\nb\n'];
+			for (const s of samples) {
+				expect(scanLineStats(s).lines).toBe(countLines(s));
+			}
+		});
+	});
+
+	describe('pickPreviewTier', () => {
+		it('returns rich for small files', () => {
+			expect(pickPreviewTier(1024, 50)).toBe('rich');
+			expect(pickPreviewTier(FAST_TIER_BYTES, FAST_TIER_LINES)).toBe('rich');
+		});
+
+		it('escalates to fast when bytes exceed FAST_TIER_BYTES', () => {
+			expect(pickPreviewTier(FAST_TIER_BYTES + 1, 100)).toBe('fast');
+		});
+
+		it('escalates to fast when lines exceed FAST_TIER_LINES even if bytes are small', () => {
+			expect(pickPreviewTier(1024, FAST_TIER_LINES + 1)).toBe('fast');
+		});
+
+		it('escalates to giant when bytes exceed GIANT_TIER_BYTES', () => {
+			expect(pickPreviewTier(GIANT_TIER_BYTES + 1, 100)).toBe('giant');
+		});
+
+		it('escalates to giant when lines exceed GIANT_TIER_LINES', () => {
+			expect(pickPreviewTier(1024, GIANT_TIER_LINES + 1)).toBe('giant');
+		});
+
+		it('keeps the user-reported 300k-line markdown case in Fast (rendered) tier', () => {
+			// 300k lines × ~20 bytes ≈ 6MB — under the 8MB / 500k-line giant
+			// threshold so rendered markdown still wins. Truly enormous files
+			// (>8MB or >500k lines) fall through to Giant for source view.
+			expect(pickPreviewTier(6 * 1024 * 1024, 300_000)).toBe('fast');
+		});
+
+		it('routes truly enormous files to Giant', () => {
+			expect(pickPreviewTier(20 * 1024 * 1024, 1_000_000)).toBe('giant');
+		});
+
+		describe('pathologically long lines', () => {
+			it('escalates to Giant when maxLineLength exceeds the threshold', () => {
+				// File would otherwise be Rich (small bytes, few lines) but a
+				// single huge line freezes Fast tier's pre-rendered DOM.
+				expect(pickPreviewTier(500_000, 1, LINE_LENGTH_GIANT_THRESHOLD + 1)).toBe('giant');
+			});
+
+			it('does not escalate when maxLineLength equals the threshold (boundary is exclusive)', () => {
+				// File is 500 KB (over Rich's 256 KB threshold) → Fast tier.
+				// Long-line escalation is strictly `>` threshold so equality
+				// does not push it to Giant.
+				expect(pickPreviewTier(500_000, 1, LINE_LENGTH_GIANT_THRESHOLD)).toBe('fast');
+			});
+
+			it('defaults maxLineLength to 0 when omitted (back-compat)', () => {
+				expect(pickPreviewTier(1024, 50)).toBe('rich');
+			});
+
+			it('long-line signal does not downgrade tiers (Giant stays Giant)', () => {
+				expect(pickPreviewTier(20 * 1024 * 1024, 1_000_000, 5_000)).toBe('giant');
+			});
+		});
+	});
+
+	describe('preview tier threshold values', () => {
+		it('FAST_TIER_BYTES is 256KB', () => {
+			expect(FAST_TIER_BYTES).toBe(256 * 1024);
+		});
+
+		it('FAST_TIER_LINES is 5,000', () => {
+			expect(FAST_TIER_LINES).toBe(5_000);
+		});
+
+		it('GIANT_TIER_BYTES is 8MB', () => {
+			expect(GIANT_TIER_BYTES).toBe(8 * 1024 * 1024);
+		});
+
+		it('GIANT_TIER_LINES is 500,000', () => {
+			expect(GIANT_TIER_LINES).toBe(500_000);
+		});
+
+		it('fast threshold is below giant threshold', () => {
+			expect(FAST_TIER_BYTES).toBeLessThan(GIANT_TIER_BYTES);
+			expect(FAST_TIER_LINES).toBeLessThan(GIANT_TIER_LINES);
+		});
+	});
+
+	describe('isCodeFile', () => {
+		it('returns true for source-code languages', () => {
+			for (const lang of ['typescript', 'tsx', 'python', 'rust', 'go', 'json', 'yaml']) {
+				expect(isCodeFile(lang)).toBe(true);
+			}
+		});
+
+		it('returns false for plain text', () => {
+			expect(isCodeFile('text')).toBe(false);
+		});
+
+		it('returns false for markdown (handled by its own Fast tier)', () => {
+			expect(isCodeFile('markdown')).toBe(false);
+		});
+
+		it('returns true for any other non-empty language identifier', () => {
+			expect(isCodeFile('whatever')).toBe(true);
 		});
 	});
 });

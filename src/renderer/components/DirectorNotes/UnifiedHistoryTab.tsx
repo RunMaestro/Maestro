@@ -18,19 +18,21 @@ import {
 	HistoryFilterToggle,
 	HistoryStatsBar,
 	ESTIMATED_ROW_HEIGHT,
-	ESTIMATED_ROW_HEIGHT_SIMPLE,
+	estimateHistoryRowHeight,
 	LOOKBACK_OPTIONS,
 } from '../History';
 import type { GraphBucket } from '../History/ActivityGraph';
 import type { HistoryStats } from '../History';
 import { HistoryDetailModal } from '../HistoryDetailModal';
-import { useListNavigation, useSettings, useThrottledCallback } from '../../hooks';
+import { useListNavigation, useThrottledCallback } from '../../hooks';
 import { useHistoryPagination } from '../../hooks/history/useHistoryPagination';
 import type { PaginatedPage } from '../../hooks/history/useHistoryPagination';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import type { TabFocusHandle } from './OverviewTab';
+import { lookbackHoursToDays } from './lookback';
 import { logger } from '../../utils/logger';
+import { trackShortcutUsage } from '../../utils/shortcutTracking';
 
 /** Page size for progressive loading */
 const PAGE_SIZE = 100;
@@ -59,39 +61,38 @@ interface UnifiedHistoryTabProps {
 	onResumeSession?: (sourceSessionId: string, agentSessionId: string) => void;
 	fileTree?: FileNode[];
 	onFileClick?: (path: string) => void;
-}
-
-/** Convert lookbackHours to lookbackDays for the IPC call. null => 0 (all time). */
-function lookbackHoursToDays(hours: number | null): number {
-	if (hours === null) return 0;
-	return Math.ceil(hours / 24);
-}
-
-/** Find the smallest LOOKBACK_OPTIONS entry that covers the given number of days. 0 => null (All time). */
-function daysToLookbackHours(days: number): number | null {
-	if (days <= 0) return null; // 0 encodes "All time"
-	const targetHours = days * 24;
-	for (const option of LOOKBACK_OPTIONS) {
-		if (option.hours !== null && option.hours >= targetHours) return option.hours;
-	}
-	return null; // all options too small — fall back to "All time"
+	/** Lookback window in hours, lifted to the parent so the modal title can reflect it. null = All time. */
+	lookbackHours: number | null;
+	onLookbackChange: (hours: number | null) => void;
 }
 
 export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabProps>(
-	function UnifiedHistoryTab({ theme, onResumeSession, fileTree, onFileClick }, ref) {
-		const { directorNotesSettings } = useSettings();
+	function UnifiedHistoryTab(
+		{ theme, onResumeSession, fileTree, onFileClick, lookbackHours, onLookbackChange },
+		ref
+	) {
 		const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures.maestroCue);
-		const visibleTypes: HistoryEntryType[] = maestroCueEnabled
-			? ['AUTO', 'USER', 'CUE']
-			: ['AUTO', 'USER'];
+		const visibleTypes = useMemo<HistoryEntryType[]>(
+			() => (maestroCueEnabled ? ['USER', 'AUTO', 'CUE'] : ['USER', 'AUTO']),
+			[maestroCueEnabled]
+		);
 
 		const [activeFilters, setActiveFilters] = useState<Set<HistoryEntryType>>(
-			() => new Set(maestroCueEnabled ? ['AUTO', 'USER', 'CUE'] : ['AUTO', 'USER'])
+			() => new Set(maestroCueEnabled ? ['USER', 'AUTO', 'CUE'] : ['USER', 'AUTO'])
+		);
+
+		// Stable, ordered array of the active types. Pushed to the server so
+		// pagination operates over the *filtered* dataset — otherwise the
+		// 100-entry page can be all one type (e.g. CUE heartbeats), and
+		// deselecting that type would empty the visible list even though
+		// thousands of other-typed entries exist deeper in history. Memoized
+		// so its identity only changes when the selection actually changes,
+		// which is what resets the pagination window below.
+		const activeFilterArray = useMemo<HistoryEntryType[]>(
+			() => visibleTypes.filter((t) => activeFilters.has(t)),
+			[visibleTypes, activeFilters]
 		);
 		const [detailModalEntry, setDetailModalEntry] = useState<HistoryEntry | null>(null);
-		const [lookbackHours, setLookbackHours] = useState<number | null>(() =>
-			daysToLookbackHours(directorNotesSettings.defaultLookbackDays)
-		);
 		const [historyStats, setHistoryStats] = useState<HistoryStats | null>(null);
 		const [searchExpanded, setSearchExpanded] = useState(false);
 		const [searchQuery, setSearchQuery] = useState('');
@@ -121,7 +122,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 			async (offset: number, limit: number): Promise<PaginatedPage<UnifiedHistoryEntry>> => {
 				const result = await window.maestro.directorNotes.getUnifiedHistory({
 					lookbackDays: lookbackHoursToDays(lookbackHours),
-					filter: null,
+					filter: activeFilterArray,
 					limit,
 					offset,
 				});
@@ -134,7 +135,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 					total: result.total,
 				};
 			},
-			[lookbackHours]
+			[lookbackHours, activeFilterArray]
 		);
 
 		const getEntryId = useCallback((entry: UnifiedHistoryEntry) => entry.id, []);
@@ -210,21 +211,24 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 				// actually lands (it only lands when the window is at top).
 				let newAuto = 0;
 				let newUser = 0;
+				let newCue = 0;
 				let prepended = 0;
 				for (const entry of uniqueBatch) {
 					if (entry.type === 'AUTO') newAuto++;
 					else if (entry.type === 'USER') newUser++;
+					else if (entry.type === 'CUE') newCue++;
 					if (prependLiveEntry(entry)) prepended++;
 				}
 
-				if (newAuto > 0 || newUser > 0) {
+				if (newAuto > 0 || newUser > 0 || newCue > 0) {
 					setHistoryStats((prevStats) => {
 						if (!prevStats) return prevStats;
 						return {
 							...prevStats,
 							autoCount: prevStats.autoCount + newAuto,
 							userCount: prevStats.userCount + newUser,
-							totalCount: prevStats.totalCount + newAuto + newUser,
+							cueCount: (prevStats.cueCount ?? 0) + newCue,
+							totalCount: prevStats.totalCount + newAuto + newUser + newCue,
 						};
 					});
 				}
@@ -326,10 +330,13 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 		// when its `loadPage` identity changes (loadPage is memoized on
 		// `lookbackHours`). We just clear stats so the bar reflects the new
 		// scope until the next response lands.
-		const handleLookbackChange = useCallback((hours: number | null) => {
-			setLookbackHours(hours);
-			setHistoryStats(null);
-		}, []);
+		const handleLookbackChange = useCallback(
+			(hours: number | null) => {
+				onLookbackChange(hours);
+				setHistoryStats(null);
+			},
+			[onLookbackChange]
+		);
 
 		// Filter entries client-side
 		const filteredEntries = useMemo(() => {
@@ -373,15 +380,14 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 			});
 		}, []);
 
-		// Virtualization
+		// Virtualization. Use the worst-case-aware estimate so the initial
+		// paint never positions a row higher than its content needs —
+		// adjacent rows would otherwise overlap until ResizeObserver caught up.
 		const estimateSize = useCallback(
 			(index: number) => {
 				const entry = filteredEntries[index];
 				if (!entry) return ESTIMATED_ROW_HEIGHT;
-				const hasFooter =
-					entry.elapsedTimeMs !== undefined ||
-					(entry.usageStats && entry.usageStats.totalCostUsd > 0);
-				return hasFooter ? ESTIMATED_ROW_HEIGHT : ESTIMATED_ROW_HEIGHT_SIMPLE;
+				return estimateHistoryRowHeight(entry);
 			},
 			[filteredEntries]
 		);
@@ -502,7 +508,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 				try {
 					const targetOffset = await window.maestro.directorNotes.getOffsetForTimestamp(
 						bucketEnd - 1,
-						{ lookbackDays: lookbackHoursToDays(lookbackHours), filter: null }
+						{ lookbackDays: lookbackHoursToDays(lookbackHours), filter: activeFilterArray }
 					);
 					await jumpToOffset(targetOffset);
 					// After the window slides, the virtualizer's bookkeeping
@@ -516,7 +522,14 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 					logger.error('Failed to jump to graph bucket:', undefined, error);
 				}
 			},
-			[filteredEntries, lookbackHours, jumpToOffset, setSelectedIndex, virtualizer]
+			[
+				filteredEntries,
+				lookbackHours,
+				activeFilterArray,
+				jumpToOffset,
+				setSelectedIndex,
+				virtualizer,
+			]
 		);
 
 		// Search toggle
@@ -537,6 +550,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 				if ((e.metaKey || e.ctrlKey) && e.key === 'f' && !e.shiftKey) {
 					e.preventDefault();
 					e.stopPropagation();
+					trackShortcutUsage('searchDirectorNotes');
 					if (searchExpanded) {
 						searchInputRef.current?.focus();
 						searchInputRef.current?.select();
@@ -723,11 +737,13 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 						<div className="text-center py-8 text-xs" style={{ color: theme.colors.textDim }}>
 							{searchQuery
 								? `No entries matching "${searchQuery}".`
-								: entries.length === 0
-									? lookbackHours !== null
-										? 'No history entries in this time range. Try expanding the lookback period.'
-										: 'No history entries found across any agents.'
-									: 'No entries match the current filters.'}
+								: activeFilters.size === 0
+									? 'No entry types selected. Enable a filter above.'
+									: entries.length === 0
+										? lookbackHours !== null
+											? 'No history entries in this time range. Try expanding the lookback period.'
+											: 'No history entries found across any agents.'
+										: 'No entries match the current filters.'}
 						</div>
 					) : (
 						<div

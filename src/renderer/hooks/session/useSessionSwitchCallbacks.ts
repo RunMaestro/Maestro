@@ -20,6 +20,10 @@ import type { Session, LogEntry, UsageStats } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useActiveSession } from './useActiveSession';
 import { useUIStore } from '../../stores/uiStore';
+import { useFileExplorerStore } from '../../stores/fileExplorerStore';
+import { aiTabFocusFields } from '../../utils/tabHelpers';
+import { subscribeToInAppDeepLinks } from '../../utils/openMaestroLink';
+import type { ParsedDeepLink } from '../../../shared/types';
 
 /** Helper: update a single session by ID using an updater function */
 function updateSession(sessionId: string, updater: (s: Session) => Session): void {
@@ -37,14 +41,20 @@ function updateSession(sessionId: string, updater: (s: Session) => Session): voi
 export interface UseSessionSwitchCallbacksDeps {
 	/** setActiveSessionId wrapper that also dismisses active group chat */
 	setActiveSessionId: (id: string) => void;
-	/** Resume a provider session, opening as a new tab or switching to existing */
+	/**
+	 * Resume a provider session, opening as a new tab or switching to existing.
+	 * Resolves to `true` when opened/switched, `false` when the session could not
+	 * be loaded (e.g. aged out).
+	 */
 	handleResumeSession: (
 		agentSessionId: string,
 		providedMessages?: LogEntry[],
 		sessionName?: string,
 		starred?: boolean,
-		usageStats?: UsageStats
-	) => Promise<void>;
+		usageStats?: UsageStats,
+		projectPath?: string,
+		opts?: { targetSessionId?: string; suppressUnavailableFlash?: boolean }
+	) => Promise<boolean>;
 	/** Ref to main input textarea (for auto-focus after navigation) */
 	inputRef: React.RefObject<HTMLTextAreaElement | null>;
 }
@@ -69,6 +79,18 @@ export interface UseSessionSwitchCallbacksReturn {
 		sessionName: string,
 		starred?: boolean
 	) => void;
+	/**
+	 * Jump to a starred session from the Left Bar, switching to its owning agent
+	 * and resuming the conversation. Resolves to `false` when the session can no
+	 * longer be loaded (aged out) so the caller can offer to remove the star.
+	 */
+	handleJumpToStarredSession: (
+		agentId: string,
+		projectPath: string,
+		agentSessionId: string,
+		sessionName: string,
+		parentSessionId: string
+	) => Promise<boolean>;
 	/** Switch to an AI tab from utility modals (tab switcher, queue browser, etc.) */
 	handleUtilityTabSelect: (tabId: string) => void;
 	/** Switch to a file tab from utility modals */
@@ -116,18 +138,7 @@ export function useSessionSwitchCallbacks(
 				// this, activeTabId changes but the session still renders its previous non-AI
 				// view (the bug: jumping to an AI tab silently leaves the user on a terminal).
 				setSessions((prev) =>
-					prev.map((s) =>
-						s.id === sessionId
-							? {
-									...s,
-									activeTabId: tabId,
-									activeFileTabId: null,
-									activeTerminalTabId: null,
-									activeBrowserTabId: null,
-									inputMode: 'ai' as const,
-								}
-							: s
-					)
+					prev.map((s) => (s.id === sessionId ? { ...s, ...aiTabFocusFields(tabId) } : s))
 				);
 			}
 		},
@@ -137,31 +148,35 @@ export function useSessionSwitchCallbacks(
 	// Navigate from toast notification to a session/tab
 	const handleToastSessionClick = useCallback(
 		(sessionId: string, tabId?: string) => {
+			// Close the Document Graph if it's open. It's a full-screen modal
+			// overlay (fixed inset-0, z-9999), so without this the graph stays
+			// on top of the agent we just jumped to and swallows clicks meant
+			// for it. The toast jump should always land the user on the agent.
+			if (useFileExplorerStore.getState().isGraphViewOpen) {
+				useFileExplorerStore.getState().closeGraphView();
+			}
 			// Switch to the session
 			setActiveSessionId(sessionId);
-			// Clear file preview and switch to AI tab (with specific tab if provided)
-			// This ensures clicking a toast always shows the AI terminal, not a file preview
+			// Switch to AI tab (with specific tab if provided). Clear file/terminal/browser
+			// active-tab state so the jump actually shows the AI terminal even when the agent
+			// was last viewed on a browser, terminal, or file-preview tab. Without clearing
+			// activeBrowserTabId/activeTerminalTabId, activeTabId changes but the session keeps
+			// rendering its previous non-AI view (the bug: clicking a toast while a browser tab
+			// is active silently leaves the user on the browser tab).
 			updateSession(sessionId, (s) => {
-				// If a specific tab ID is provided, check if it exists
-				if (tabId && !s.aiTabs?.some((t) => t.id === tabId)) {
-					// Tab doesn't exist, just clear file preview
-					return { ...s, activeFileTabId: null, inputMode: 'ai' };
-				}
-				return {
-					...s,
-					...(tabId && { activeTabId: tabId }),
-					activeFileTabId: null,
-					inputMode: 'ai',
-				};
+				// If a specific tab ID is provided but doesn't exist, force the AI view
+				// without changing which AI tab is active.
+				const targetTabId = tabId && s.aiTabs?.some((t) => t.id === tabId) ? tabId : undefined;
+				return { ...s, ...aiTabFocusFields(targetTabId) };
 			});
 		},
 		[setActiveSessionId]
 	);
 
 	// Deep link navigation handler - processes maestro:// URLs from OS notifications,
-	// external apps, and CLI commands
+	// external apps, CLI commands, AND in-renderer markdown link clicks.
 	useEffect(() => {
-		const unsubscribe = window.maestro.app.onDeepLink((deepLink) => {
+		const handleDeepLink = (deepLink: ParsedDeepLink) => {
 			if (deepLink.action === 'focus') {
 				// Window already brought to foreground by main process
 				return;
@@ -184,9 +199,34 @@ export function useSessionSwitchCallbacks(
 				setGroups((prev) =>
 					prev.map((g) => (g.id === deepLink.groupId ? { ...g, collapsed: false } : g))
 				);
+				return;
 			}
-		});
-		return unsubscribe;
+			if (deepLink.action === 'file' && deepLink.sessionId && deepLink.filePath) {
+				// Open the file inside the target session's file-preview tab.
+				// Re-uses the same CustomEvent pipeline the CLI / remote layer
+				// drives so the open path stays unified. The line number is
+				// surfaced via `detail.line` for callers that want to scroll on
+				// mount; older listeners that ignore it still open the file.
+				const sessions = useSessionStore.getState().sessions;
+				const targetExists = sessions.some((s) => s.id === deepLink.sessionId);
+				if (!targetExists) return;
+				window.dispatchEvent(
+					new CustomEvent('maestro:openFileTab', {
+						detail: {
+							sessionId: deepLink.sessionId,
+							filePath: deepLink.filePath,
+							line: deepLink.line,
+						},
+					})
+				);
+			}
+		};
+		const unsubscribeIpc = window.maestro.app.onDeepLink(handleDeepLink);
+		const unsubscribeInApp = subscribeToInAppDeepLinks(handleDeepLink);
+		return () => {
+			unsubscribeIpc();
+			unsubscribeInApp();
+		};
 	}, [handleToastSessionClick, setGroups]);
 
 	// Open a closed named session from the agent session browser
@@ -201,19 +241,45 @@ export function useSessionSwitchCallbacks(
 		[handleResumeSession, setActiveFocus, inputRef]
 	);
 
+	// Jump to a starred session from the Left Bar. Unlike handleNamedSessionSelect,
+	// this can cross agents, so it first switches to the owning agent and resumes
+	// against that explicit target (the active-session closure is stale at this
+	// point). Returns whether the session was actually loaded so the caller can
+	// offer to remove a stale star when it has aged out.
+	const handleJumpToStarredSession = useCallback(
+		async (
+			_agentId: string,
+			projectPath: string,
+			agentSessionId: string,
+			sessionName: string,
+			parentSessionId: string
+		): Promise<boolean> => {
+			setActiveSessionId(parentSessionId);
+			const opened = await handleResumeSession(
+				agentSessionId,
+				[],
+				sessionName,
+				true,
+				undefined,
+				projectPath,
+				{ targetSessionId: parentSessionId, suppressUnavailableFlash: true }
+			);
+			if (opened) {
+				setActiveFocus('main');
+				setTimeout(() => inputRef.current?.focus(), 50);
+			}
+			return opened;
+		},
+		[setActiveSessionId, handleResumeSession, setActiveFocus, inputRef]
+	);
+
 	// Switch to an AI tab from utility modals (tab switcher, queue browser, etc.)
 	const handleUtilityTabSelect = useCallback(
 		(tabId: string) => {
 			if (!activeSession) return;
-			// Clear activeFileTabId and activeTerminalTabId when selecting an AI tab.
-			// Also reset inputMode to 'ai' in case we're coming from terminal mode.
-			updateSession(activeSession.id, (s) => ({
-				...s,
-				activeTabId: tabId,
-				activeFileTabId: null,
-				activeTerminalTabId: null,
-				inputMode: 'ai',
-			}));
+			// Land on the AI tab, clearing any active file/terminal/browser view that
+			// would otherwise outrank it in the render precedence.
+			updateSession(activeSession.id, (s) => ({ ...s, ...aiTabFocusFields(tabId) }));
 		},
 		[activeSession]
 	);
@@ -238,6 +304,7 @@ export function useSessionSwitchCallbacks(
 		handleProcessMonitorNavigateToSession,
 		handleToastSessionClick,
 		handleNamedSessionSelect,
+		handleJumpToStarredSession,
 		handleUtilityTabSelect,
 		handleUtilityFileTabSelect,
 	};

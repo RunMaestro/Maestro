@@ -17,6 +17,58 @@ interface CollapsedSessionPillProps {
 	setActiveSessionId: (id: string) => void;
 }
 
+/** Bounds + default for the configurable "pills per row" Left Bar setting. */
+export const COLLAPSED_PILLS_PER_ROW_MIN = 5;
+export const COLLAPSED_PILLS_PER_ROW_MAX = 50;
+export const COLLAPSED_PILLS_PER_ROW_DEFAULT = 20;
+
+type CollapsedSessionPillRowsProps = Omit<CollapsedSessionPillProps, 'session'> & {
+	sessions: Session[];
+	onContainerClick: () => void;
+	/** Max pills per row before wrapping. Defaults to {@link COLLAPSED_PILLS_PER_ROW_DEFAULT}. */
+	maxPerRow?: number;
+};
+
+export function CollapsedSessionPillRows({
+	sessions,
+	keyPrefix,
+	onContainerClick,
+	maxPerRow = COLLAPSED_PILLS_PER_ROW_DEFAULT,
+	...pillProps
+}: CollapsedSessionPillRowsProps) {
+	const perRow = Math.max(1, Math.floor(maxPerRow) || COLLAPSED_PILLS_PER_ROW_DEFAULT);
+	const rows: Session[][] = [];
+	for (let i = 0; i < sessions.length; i += perRow) {
+		rows.push(sessions.slice(i, i + perRow));
+	}
+	return (
+		<div
+			className="ml-8 mr-3 mt-1 mb-2 flex flex-col gap-1 cursor-pointer"
+			onClick={onContainerClick}
+		>
+			{rows.map((row, rowIdx) => {
+				const padding = rows.length > 1 ? perRow - row.length : 0;
+				return (
+					<div key={`${keyPrefix}-row-${rowIdx}`} className="flex gap-1 h-1.5">
+						{row.map((s) => (
+							<CollapsedSessionPill
+								key={`${keyPrefix}-${s.id}`}
+								session={s}
+								keyPrefix={keyPrefix}
+								{...pillProps}
+							/>
+						))}
+						{padding > 0 &&
+							Array.from({ length: padding }).map((_, i) => (
+								<div key={`${keyPrefix}-row-${rowIdx}-spacer-${i}`} className="flex-1" />
+							))}
+					</div>
+				);
+			})}
+		</div>
+	);
+}
+
 export const CollapsedSessionPill = memo(function CollapsedSessionPill({
 	session,
 	keyPrefix,

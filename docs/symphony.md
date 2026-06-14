@@ -4,7 +4,7 @@ description: Contribute to open source projects by donating AI tokens through Ma
 icon: music
 ---
 
-Maestro Symphony is a community-driven program that connects Maestro users with open source repository maintainers seeking contributions. Think of it like distributed computing for AI-assisted development — instead of donating CPU cycles, users donate LLM tokens to advance open source.
+Maestro Symphony is a community-driven program that connects Maestro users with open source repository maintainers seeking contributions. Think of it like distributed computing for AI-assisted development - instead of donating CPU cycles, users donate LLM tokens to advance open source.
 
 ## Prerequisites
 
@@ -15,7 +15,7 @@ Before starting a Symphony contribution, ensure you have:
 </Warning>
 
 <Warning>
-**Build tools required.** Symphony clones repositories and runs Auto Run documents that may compile code, run tests, and make changes. Make sure you have the project's build tools and dependencies installed (e.g., Node.js, Python, Rust toolchain). Consider cloning the project first and verifying you can build it successfully — without the right toolchain, the contribution will likely fail.
+**Build tools required.** Symphony clones repositories and runs Auto Run documents that may compile code, run tests, and make changes. Make sure you have the project's build tools and dependencies installed (e.g., Node.js, Python, Rust toolchain). Consider cloning the project first and verifying you can build it successfully - without the right toolchain, the contribution will likely fail.
 </Warning>
 
 ## How It Works
@@ -24,8 +24,8 @@ Before starting a Symphony contribution, ensure you have:
 
 1. **Browse available projects** directly within Maestro
 2. **Select a GitHub issue** that matches your interests
-3. **Create a dedicated agent session** — choose your AI provider and model
-4. **Single-click contribution** — Maestro clones the repo, runs Auto Run docs, and creates a PR
+3. **Create a dedicated agent session** - choose your AI provider and model
+4. **Single-click contribution** - Maestro clones the repo, runs Auto Run docs, and creates a PR
 
 ![Maestro Symphony Projects](./screenshots/symphony-list.png)
 
@@ -53,10 +53,10 @@ The Symphony modal has four tabs: **Projects**, **Active**, **History**, and **S
 
 The Projects tab shows registered open source projects in a tiled grid:
 
-- **Category filters** — Filter by AI/ML, Developer Tools, etc.
-- **Search** — Find projects by name, description, or tags
-- **Project tiles** — Click to view available issues
-- **Keyboard navigation** — Use arrow keys to navigate, Enter to select, `/` to focus search
+- **Category filters** - Filter by AI/ML, Developer Tools, etc.
+- **Search** - Find projects by name, description, or tags
+- **Project tiles** - Click to view available issues
+- **Keyboard navigation** - Use arrow keys to navigate, Enter to select, `/` to focus search
 
 ![Symphony Project Details](./screenshots/symphony-details.png)
 
@@ -69,7 +69,7 @@ Select a repository to see its available GitHub issues. Each issue shows:
 
 ### Blocked Issues
 
-Issues with the `blocking` label appear in a separate "Blocked" section, grayed out with a lock icon. These represent work that has unmet prerequisites — the repository maintainer will remove the `blocking` label once dependencies are satisfied. Blocked issues cannot be started but are shown so contributors can see the full scope of planned work.
+Issues with the `blocking` label appear in a separate "Blocked" section, grayed out with a lock icon. These represent work that has unmet prerequisites - the repository maintainer will remove the `blocking` label once dependencies are satisfied. Blocked issues cannot be started but are shown so contributors can see the full scope of planned work.
 
 ## Starting a Contribution
 
@@ -79,9 +79,9 @@ Click **Start Symphony** on an available issue to open the agent creation dialog
 
 Configure your contribution:
 
-- **AI Provider** — Choose Claude Code, Codex, OpenCode, etc.
-- **Session Name** — Pre-filled as "Symphony: owner/repo #123"
-- **Working Directory** — Where the repository will be cloned
+- **AI Provider** - Choose Claude Code, Codex, OpenCode, etc.
+- **Session Name** - Pre-filled as "Symphony: owner/repo #123"
+- **Working Directory** - Where the repository will be cloned
 
 Click **Create Agent** and Maestro will:
 
@@ -101,14 +101,14 @@ View your in-progress Symphony sessions:
 
 Each active contribution shows:
 
-- **Issue title and repository** — The GitHub issue being worked on
-- **Status badge** — Running, Paused, Creating PR, etc.
-- **Progress bar** — Documents completed vs. total
-- **Current document** — The document being processed
-- **Time elapsed** — How long the contribution has been running
-- **Token usage** — Input/output tokens and estimated cost
-- **Draft PR link** — Once created on first commit
-- **Controls** — Pause/Resume, Cancel, Finalize PR
+- **Issue title and repository** - The GitHub issue being worked on
+- **Status badge** - Running, Paused, Creating PR, etc.
+- **Progress bar** - Documents completed vs. total
+- **Current document** - The document being processed
+- **Time elapsed** - How long the contribution has been running
+- **Token usage** - Input/output tokens and estimated cost
+- **Draft PR link** - Once created on first commit
+- **Controls** - Pause/Resume, Cancel, Finalize PR
 
 Click **Check PR Status** to verify your draft PR on GitHub and detect merged/closed PRs.
 
@@ -120,11 +120,11 @@ Review completed contributions with aggregate stats at a glance:
 
 The header shows your totals: PRs created, merged count, tasks completed, tokens used, and dollar value donated. Each contribution card displays:
 
-- **Issue and repository** — What you worked on
-- **Merge status** — Whether the PR was merged
-- **Completion date** — When you finished
-- **PR link** — Direct link to the pull request
-- **Detailed metrics** — Documents processed, tasks completed, tokens used, and cost
+- **Issue and repository** - What you worked on
+- **Merge status** - Whether the PR was merged
+- **Completion date** - When you finished
+- **PR link** - Direct link to the pull request
+- **Detailed metrics** - Documents processed, tasks completed, tokens used, and cost
 
 ### Stats Tab
 
@@ -134,9 +134,9 @@ Track your overall impact and unlock achievements:
 
 **Summary cards** show your cumulative contributions:
 
-- **Tokens Donated** — Total tokens contributed with dollar value
-- **Time Contributed** — Hours spent and repositories helped
-- **Streak** — Current and best contribution streaks
+- **Tokens Donated** - Total tokens contributed with dollar value
+- **Time Contributed** - Hours spent and repositories helped
+- **Streak** - Current and best contribution streaks
 
 **Achievements** reward milestones in your Symphony journey:
 
@@ -159,7 +159,7 @@ Symphony sessions appear in the Left Bar like any other session:
 - Optionally grouped under a "Symphony" group
 - Full access to AI Terminal, Command Terminal, and Auto Run controls
 
-You can interact with Symphony sessions just like regular sessions — pause Auto Run, make manual edits, or switch to the Command Terminal for custom commands.
+You can interact with Symphony sessions just like regular sessions - pause Auto Run, make manual edits, or switch to the Command Terminal for custom commands.
 
 ## Creating Symphony-Ready Issues
 
@@ -245,9 +245,9 @@ Once merged, your project will appear in the Symphony Projects tab (registry cac
 Browse Symphony-ready issues on Maestro itself:
 
 <Card title="Maestro Symphony Issues" icon="github" href="https://github.com/RunMaestro/Maestro/issues?q=is%3Aissue%20label%3Arunmaestro.ai">
-  View all issues labeled `runmaestro.ai` — ready for AI-assisted contribution
+  View all issues labeled `runmaestro.ai` - ready for AI-assisted contribution
 </Card>
 
 ---
 
-**Maestro Symphony — Advancing open source, together.**
+**Maestro Symphony - Advancing open source, together.**

@@ -185,6 +185,81 @@ describe('restoreSession — Migration logic', () => {
 		expect(restored!.fileTreeAutoRefreshInterval).toBe(180);
 	});
 
+	it('backfills createdAt from the earliest tab/log/workLog timestamp when missing', async () => {
+		const oldestTab = 1_700_000_000_000;
+		const oldestLog = 1_690_000_000_000; // older than the tab
+		const session = createMockSession({
+			createdAt: undefined as any,
+			aiTabs: [
+				{
+					id: 'tab-1',
+					agentSessionId: null,
+					name: null,
+					state: 'idle',
+					logs: [
+						{ id: 'l1', timestamp: oldestLog, source: 'system' as const, text: 'first' },
+						{ id: 'l2', timestamp: oldestLog + 1000, source: 'system' as const, text: 'later' },
+					],
+					starred: false,
+					inputValue: '',
+					stagedImages: [],
+					createdAt: oldestTab,
+				},
+			] as any,
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.createdAt).toBe(oldestLog);
+	});
+
+	it('backfills createdAt to Date.now() when no historical timestamps exist', async () => {
+		const before = Date.now();
+		const session = createMockSession({
+			createdAt: undefined as any,
+			aiTabs: [
+				{
+					id: 'tab-1',
+					agentSessionId: null,
+					name: null,
+					state: 'idle',
+					logs: [],
+					starred: false,
+					inputValue: '',
+					stagedImages: [],
+					createdAt: 0,
+				},
+			] as any,
+			workLog: [],
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.createdAt).toBeGreaterThanOrEqual(before);
+		expect(restored!.createdAt).toBeLessThanOrEqual(Date.now());
+	});
+
+	it('leaves an existing createdAt untouched', async () => {
+		const original = 1_650_000_000_000;
+		const session = createMockSession({ createdAt: original });
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.createdAt).toBe(original);
+	});
+
 	it('rehydrates browser tabs with a safe URL, title, and partition', async () => {
 		const session = createMockSession({
 			browserTabs: [
@@ -612,6 +687,7 @@ describe('restoreSession — Runtime state reset', () => {
 					name: null,
 					state: 'busy' as const,
 					thinkingStartTime: 999,
+					isGeneratingName: true,
 					logs: [],
 					starred: false,
 					inputValue: '',
@@ -624,6 +700,7 @@ describe('restoreSession — Runtime state reset', () => {
 					name: null,
 					state: 'error' as const,
 					thinkingStartTime: 888,
+					isGeneratingName: true,
 					logs: [],
 					starred: false,
 					inputValue: '',
@@ -643,6 +720,10 @@ describe('restoreSession — Runtime state reset', () => {
 		expect(restored!.aiTabs[0].thinkingStartTime).toBeUndefined();
 		expect(restored!.aiTabs[1].state).toBe('idle');
 		expect(restored!.aiTabs[1].thinkingStartTime).toBeUndefined();
+		// A naming call interrupted by reload must not leave the flag stranded -
+		// otherwise the namingNotInFlight guard blocks auto-naming retries forever.
+		expect(restored!.aiTabs[0].isGeneratingName).toBe(false);
+		expect(restored!.aiTabs[1].isGeneratingName).toBe(false);
 	});
 
 	it('preserves shellLogs', async () => {
@@ -1249,6 +1330,7 @@ describe('Session & Group loading effect', () => {
 					cwd: '/projects/app',
 					createdAt: Date.now(),
 					state: 'idle' as const,
+					startupCommand: 'npm run dev',
 				},
 			],
 			activeTerminalTabId: 'tt-1',
@@ -1379,6 +1461,7 @@ describe('restoreSession — Terminal tab persistence', () => {
 					cwd: '/projects/myapp',
 					createdAt,
 					state: 'idle' as const,
+					startupCommand: 'npm run dev',
 				},
 			],
 			activeTerminalTabId: 'tt-1',
@@ -1414,6 +1497,7 @@ describe('restoreSession — Terminal tab persistence', () => {
 					createdAt: Date.now(),
 					state: 'busy' as const,
 					exitCode: 1,
+					startupCommand: 'npm run dev',
 				},
 			],
 			activeTerminalTabId: 'tt-1',
@@ -1442,6 +1526,7 @@ describe('restoreSession — Terminal tab persistence', () => {
 					cwd: '/home/user',
 					createdAt: Date.now(),
 					state: 'idle' as const,
+					startupCommand: 'npm run dev',
 				},
 			],
 			activeTerminalTabId: 'tt-active',
@@ -1467,6 +1552,7 @@ describe('restoreSession — Terminal tab persistence', () => {
 					cwd: '/home/user',
 					createdAt: Date.now(),
 					state: 'idle' as const,
+					startupCommand: 'npm run dev',
 				},
 			],
 			activeTerminalTabId: undefined,
@@ -1548,6 +1634,7 @@ describe('restoreSession — Terminal tab persistence', () => {
 					createdAt: Date.now(),
 					state: 'exited' as const,
 					exitCode: 1,
+					startupCommand: 'npm run dev',
 				},
 			],
 			activeTerminalTabId: null,
@@ -1576,6 +1663,7 @@ describe('restoreSession — Terminal tab persistence', () => {
 					cwd: '/projects/backend',
 					createdAt: 1000000,
 					state: 'idle' as const,
+					startupCommand: 'npm run backend',
 				},
 				{
 					id: 'tt-2',
@@ -1586,6 +1674,7 @@ describe('restoreSession — Terminal tab persistence', () => {
 					createdAt: 2000000,
 					state: 'exited' as const,
 					exitCode: 1,
+					startupCommand: 'npm run frontend',
 				},
 			],
 			activeTerminalTabId: 'tt-1',
@@ -1628,6 +1717,7 @@ describe('restoreSession — Terminal tab persistence', () => {
 					state: 'idle' as const,
 					scrollTop: 2000,
 					searchQuery: 'webpack',
+					startupCommand: 'npm run dev',
 				},
 			],
 			activeTerminalTabId: null,
@@ -1642,5 +1732,110 @@ describe('restoreSession — Terminal tab persistence', () => {
 		const termTab = restored!.terminalTabs[0];
 		expect(termTab.scrollTop).toBe(2000);
 		expect(termTab.searchQuery).toBe('webpack');
+	});
+
+	it('drops terminal tabs without a startup command on restart', async () => {
+		const session = createMockSession({
+			terminalTabs: [
+				{
+					id: 'tt-plain',
+					name: 'Scratch',
+					shellType: 'zsh',
+					pid: 0,
+					cwd: '/home/user',
+					createdAt: Date.now(),
+					state: 'idle' as const,
+				},
+			],
+			activeTerminalTabId: 'tt-plain',
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let dropRestored: Session;
+		await act(async () => {
+			dropRestored = await result.current.restoreSession(session);
+		});
+
+		// No startup command => the terminal does not survive an app restart.
+		expect(dropRestored!.terminalTabs).toHaveLength(0);
+		expect(dropRestored!.activeTerminalTabId).toBeNull();
+	});
+
+	it('treats a whitespace-only startup command as no command and drops the tab', async () => {
+		const session = createMockSession({
+			terminalTabs: [
+				{
+					id: 'tt-blank',
+					name: 'Scratch',
+					shellType: 'zsh',
+					pid: 0,
+					cwd: '/home/user',
+					createdAt: Date.now(),
+					state: 'idle' as const,
+					startupCommand: '   ',
+				},
+			],
+			activeTerminalTabId: 'tt-blank',
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let blankRestored: Session;
+		await act(async () => {
+			blankRestored = await result.current.restoreSession(session);
+		});
+
+		expect(blankRestored!.terminalTabs).toHaveLength(0);
+		expect(blankRestored!.activeTerminalTabId).toBeNull();
+	});
+
+	it('keeps startup-command terminals, drops plain ones, and prunes the unified order', async () => {
+		const session = createMockSession({
+			terminalTabs: [
+				{
+					id: 'tt-keep',
+					name: 'Dev Server',
+					shellType: 'zsh',
+					pid: 0,
+					cwd: '/projects/app',
+					createdAt: 1000,
+					state: 'idle' as const,
+					startupCommand: 'npm run dev',
+				},
+				{
+					id: 'tt-drop',
+					name: 'Scratch',
+					shellType: 'zsh',
+					pid: 0,
+					cwd: '/projects/app',
+					createdAt: 2000,
+					state: 'idle' as const,
+				},
+			],
+			activeTerminalTabId: 'tt-drop',
+			inputMode: 'terminal',
+			unifiedTabOrder: [
+				{ type: 'ai' as const, id: 'tab-1' },
+				{ type: 'terminal' as const, id: 'tt-keep' },
+				{ type: 'terminal' as const, id: 'tt-drop' },
+			],
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let mixedRestored: Session;
+		await act(async () => {
+			mixedRestored = await result.current.restoreSession(session);
+		});
+
+		expect(mixedRestored!.terminalTabs).toHaveLength(1);
+		expect(mixedRestored!.terminalTabs[0].id).toBe('tt-keep');
+
+		// The dropped tab's ref is pruned from the unified order; the kept one remains.
+		const termRefs = mixedRestored!.unifiedTabOrder.filter((r) => r.type === 'terminal');
+		expect(termRefs).toEqual([{ type: 'terminal', id: 'tt-keep' }]);
+
+		// Active terminal pointed at the dropped tab, so it clears and the input
+		// mode falls back to AI rather than stranding the user in terminal mode.
+		expect(mixedRestored!.activeTerminalTabId).toBeNull();
+		expect(mixedRestored!.inputMode).toBe('ai');
 	});
 });

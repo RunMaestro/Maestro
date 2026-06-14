@@ -9,7 +9,54 @@
  * Pure / runtime-agnostic — safe to import from main and renderer alike.
  */
 
-import type { CueEvent, CueRunResult } from './contracts';
+import { stripMarkdown } from '../markdown';
+import { stripAnsiCodes } from '../stringUtils';
+import type { CueEvent, CueEventType, CueRunResult } from './contracts';
+
+/**
+ * Canonical, user-facing label for each Cue event type. Single source of truth
+ * shared by main and renderer; the pipeline editor re-exports this as
+ * `EVENT_LABELS`. Keep in sync with the `CueEventType` union in contracts.ts.
+ */
+export const CUE_EVENT_LABELS: Record<CueEventType, string> = {
+	'app.startup': 'App Startup',
+	'time.heartbeat': 'Heartbeat Timer',
+	'time.scheduled': 'Scheduled',
+	'time.once': 'One-Time',
+	'file.changed': 'File Change',
+	'agent.completed': 'Agent Completed',
+	'github.pull_request': 'Pull Request',
+	'github.issue': 'GitHub Issue',
+	'task.pending': 'Pending Task',
+	'cli.trigger': 'CLI Trigger',
+};
+
+/**
+ * Humanize a raw Cue event type string (`time.heartbeat`) into a display label
+ * (`Heartbeat Timer`). Unknown/legacy types are prettified by title-casing the
+ * dotted segments so the UI never surfaces machine jargon. Safe on undefined.
+ */
+export function humanizeCueEventType(type: string | undefined | null): string {
+	if (!type) return 'Trigger';
+	const known = CUE_EVENT_LABELS[type as CueEventType];
+	if (known) return known;
+	return type
+		.split('.')
+		.map((part) => (part ? part[0].toUpperCase() + part.slice(1) : part))
+		.join(' ');
+}
+
+/**
+ * Format a recurring interval (in minutes) as a compact cadence label:
+ * `every 3 min`, `hourly`, `every 2 hr`.
+ */
+function formatCueInterval(minutes: number): string {
+	if (minutes % 60 === 0) {
+		const hours = minutes / 60;
+		return hours === 1 ? 'hourly' : `every ${hours} hr`;
+	}
+	return `every ${minutes} min`;
+}
 
 /**
  * Short, event-type-specific detail extracted from the payload, suitable for
@@ -53,6 +100,13 @@ export function getCueEventDetail(event: CueEvent): string | undefined {
 			if (!prompt) return undefined;
 			const oneLine = String(prompt).replace(/\s+/g, ' ').trim();
 			return oneLine.length > 80 ? `${oneLine.slice(0, 80)}…` : oneLine;
+		}
+
+		case 'time.heartbeat':
+		case 'time.scheduled':
+		case 'time.once': {
+			const mins = Number(payload.interval_minutes ?? payload.intervalMinutes ?? payload.interval);
+			return Number.isFinite(mins) && mins > 0 ? formatCueInterval(mins) : undefined;
 		}
 
 		default:
@@ -130,4 +184,44 @@ export function buildCueRunSummary(result: CueRunResult): string {
 
 	const detail = getCueEventDetail(result.event);
 	return detail ? `${head} — ${detail}` : head;
+}
+
+/**
+ * Extract a short, sentence-aligned excerpt from a Cue run's stdout for use as
+ * the History list-row body. Falls back to `undefined` when the output is
+ * empty, only whitespace, or so structured that no clean sentence boundary
+ * fits within the cap — the caller then substitutes the trigger-label summary.
+ *
+ * Strips ANSI escape codes and markdown, collapses whitespace, then greedily
+ * accumulates up to `maxSentences` complete sentences while staying within
+ * `maxChars`. Sentence boundaries are detected as `.!?` followed by whitespace
+ * and a capital letter or digit — good enough to avoid splitting on filenames
+ * like `2026-05-13-AM.md` or numbers like `2.34M`.
+ */
+export function extractCueOutputExcerpt(
+	stdout: string | undefined | null,
+	opts: { maxChars?: number; maxSentences?: number } = {}
+): string | undefined {
+	if (!stdout) return undefined;
+	const maxChars = opts.maxChars ?? 240;
+	const maxSentences = opts.maxSentences ?? 2;
+
+	const collapsed = stripMarkdown(stripAnsiCodes(stdout)).replace(/\s+/g, ' ').trim();
+	if (!collapsed) return undefined;
+
+	const sentences = collapsed.split(/(?<=[.!?])\s+(?=[A-Z0-9])/);
+
+	let result = '';
+	let count = 0;
+	for (const sentence of sentences) {
+		if (count >= maxSentences) break;
+		const trimmed = sentence.trim();
+		if (!trimmed) continue;
+		const candidate = result ? `${result} ${trimmed}` : trimmed;
+		if (candidate.length > maxChars) break;
+		result = candidate;
+		count++;
+	}
+
+	return result || undefined;
 }

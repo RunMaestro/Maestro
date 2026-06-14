@@ -134,6 +134,22 @@ export interface ToolExecutionEvent {
 	toolCallId?: string;
 }
 
+export interface ProcessUserInputBroadcast {
+	originId: string;
+	sessionId: string;
+	tabId?: string;
+	inputMode: 'ai' | 'terminal';
+	entry: {
+		id: string;
+		timestamp: number;
+		source: 'user';
+		text: string;
+		images?: string[];
+		readOnly?: boolean;
+		forceParallel?: boolean;
+	};
+}
+
 /**
  * SSH remote info
  */
@@ -181,6 +197,9 @@ export function createProcessApi() {
 		write: (sessionId: string, data: string): Promise<boolean> =>
 			ipcRenderer.invoke('process:write', sessionId, data),
 
+		broadcastUserInput: (payload: ProcessUserInputBroadcast): Promise<void> =>
+			ipcRenderer.invoke('process:broadcast-user-input', payload),
+
 		/**
 		 * Send interrupt signal (Ctrl+C) to a process
 		 */
@@ -211,6 +230,13 @@ export function createProcessApi() {
 		getActiveProcesses: (): Promise<ActiveProcess[]> =>
 			ipcRenderer.invoke('process:getActiveProcesses'),
 
+		/**
+		 * Check whether a terminal tab's PTY has a non-shell foreground process
+		 * (i.e. is actively running a command). Returns false if no PTY is found.
+		 */
+		isTerminalBusy: (sessionId: string): Promise<boolean> =>
+			ipcRenderer.invoke('process:isTerminalBusy', sessionId),
+
 		// Event listeners
 
 		/**
@@ -220,6 +246,12 @@ export function createProcessApi() {
 			const handler = (_: unknown, sessionId: string, data: string) => callback(sessionId, data);
 			ipcRenderer.on('process:data', handler);
 			return () => ipcRenderer.removeListener('process:data', handler);
+		},
+
+		onUserInput: (callback: (payload: ProcessUserInputBroadcast) => void): (() => void) => {
+			const handler = (_: unknown, payload: ProcessUserInputBroadcast) => callback(payload);
+			ipcRenderer.on('process:user-input', handler);
+			return () => ipcRenderer.removeListener('process:user-input', handler);
 		},
 
 		/**
@@ -288,6 +320,36 @@ export function createProcessApi() {
 				callback(sessionId, sshRemote);
 			ipcRenderer.on('process:ssh-remote', handler);
 			return () => ipcRenderer.removeListener('process:ssh-remote', handler);
+		},
+
+		/**
+		 * Subscribe to Claude headless-mode resolution.
+		 * Emitted after a Claude Code spawn succeeds, carrying the mode the spawner
+		 * actually picked (`api` vs `interactive`/maestro-p), the reason tag for
+		 * persistence, and the canonical CLAUDE_CONFIG_DIR key the snapshot was
+		 * consulted under. Non-Claude agents and SSH Claude spawns don't fire this.
+		 */
+		onClaudeModeResolved: (
+			callback: (
+				sessionId: string,
+				resolution: {
+					mode: 'interactive' | 'api';
+					reason: 'auto' | 'limit';
+					configDirKey: string;
+				}
+			) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				resolution: {
+					mode: 'interactive' | 'api';
+					reason: 'auto' | 'limit';
+					configDirKey: string;
+				}
+			) => callback(sessionId, resolution);
+			ipcRenderer.on('process:claude-mode-resolved', handler);
+			return () => ipcRenderer.removeListener('process:claude-mode-resolved', handler);
 		},
 
 		/**
@@ -672,6 +734,48 @@ export function createProcessApi() {
 		sendRemoteConfigureAutoRunResponse: (
 			responseChannel: string,
 			result: { success: boolean; playbookId?: string; error?: string }
+		): void => {
+			ipcRenderer.send(responseChannel, result);
+		},
+
+		/**
+		 * Subscribe to remote create-worktree-agent from the CLI. Creates a new
+		 * agent in a git worktree branched off a parent agent, without Auto Run.
+		 */
+		onRemoteCreateWorktreeSession: (
+			callback: (parentSessionId: string, config: any, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				parentSessionId: string,
+				config: any,
+				responseChannel: string
+			) => {
+				try {
+					// callback may return a promise even though typed as void
+					Promise.resolve(callback(parentSessionId, config, responseChannel)).catch((error) => {
+						ipcRenderer.send(responseChannel, {
+							success: false,
+							error: error instanceof Error ? error.message : String(error),
+						});
+					});
+				} catch (error) {
+					ipcRenderer.send(responseChannel, {
+						success: false,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				}
+			};
+			ipcRenderer.on('remote:createWorktreeSession', handler);
+			return () => ipcRenderer.removeListener('remote:createWorktreeSession', handler);
+		},
+
+		/**
+		 * Send response for remote create-worktree-agent
+		 */
+		sendRemoteCreateWorktreeSessionResponse: (
+			responseChannel: string,
+			result: { success: boolean; sessionId?: string; error?: string }
 		): void => {
 			ipcRenderer.send(responseChannel, result);
 		},
@@ -1141,6 +1245,31 @@ export function createProcessApi() {
 		},
 
 		/**
+		 * Subscribe to remote update session cwd from CLI/web.
+		 * Uses request-response pattern with a unique responseChannel; the
+		 * renderer responds with { success, error? } so the caller can surface
+		 * the reason a cwd change was refused (e.g. agent still running).
+		 */
+		onRemoteUpdateSessionCwd: (
+			callback: (sessionId: string, newCwd: string, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, newCwd: string, responseChannel: string) =>
+				callback(sessionId, newCwd, responseChannel);
+			ipcRenderer.on('remote:updateSessionCwd', handler);
+			return () => ipcRenderer.removeListener('remote:updateSessionCwd', handler);
+		},
+
+		/**
+		 * Send response for remote update session cwd
+		 */
+		sendRemoteUpdateSessionCwdResponse: (
+			responseChannel: string,
+			result: { success: boolean; error?: string }
+		): void => {
+			ipcRenderer.send(responseChannel, result);
+		},
+
+		/**
 		 * Subscribe to remote create group from web interface
 		 * Uses request-response pattern with a unique responseChannel
 		 */
@@ -1493,71 +1622,6 @@ export function createProcessApi() {
 			responseChannel: string,
 			result: { success: boolean; gistUrl?: string; error?: string }
 		): void => {
-			ipcRenderer.send(responseChannel, result);
-		},
-
-		/**
-		 * Subscribe to remote get Cue subscriptions from web interface
-		 */
-		onRemoteGetCueSubscriptions: (
-			callback: (sessionId: string | undefined, responseChannel: string) => void
-		): (() => void) => {
-			const handler = (_: unknown, sessionId: string | undefined, responseChannel: string) =>
-				callback(sessionId, responseChannel);
-			ipcRenderer.on('remote:getCueSubscriptions', handler);
-			return () => ipcRenderer.removeListener('remote:getCueSubscriptions', handler);
-		},
-
-		/**
-		 * Send response for remote get Cue subscriptions
-		 */
-		sendRemoteGetCueSubscriptionsResponse: (responseChannel: string, result: unknown): void => {
-			ipcRenderer.send(responseChannel, result);
-		},
-
-		/**
-		 * Subscribe to remote toggle Cue subscription from web interface
-		 */
-		onRemoteToggleCueSubscription: (
-			callback: (subscriptionId: string, enabled: boolean, responseChannel: string) => void
-		): (() => void) => {
-			const handler = (
-				_: unknown,
-				subscriptionId: string,
-				enabled: boolean,
-				responseChannel: string
-			) => callback(subscriptionId, enabled, responseChannel);
-			ipcRenderer.on('remote:toggleCueSubscription', handler);
-			return () => ipcRenderer.removeListener('remote:toggleCueSubscription', handler);
-		},
-
-		/**
-		 * Send response for remote toggle Cue subscription
-		 */
-		sendRemoteToggleCueSubscriptionResponse: (responseChannel: string, success: boolean): void => {
-			ipcRenderer.send(responseChannel, success);
-		},
-
-		/**
-		 * Subscribe to remote get Cue activity from web interface
-		 */
-		onRemoteGetCueActivity: (
-			callback: (sessionId: string | undefined, limit: number, responseChannel: string) => void
-		): (() => void) => {
-			const handler = (
-				_: unknown,
-				sessionId: string | undefined,
-				limit: number,
-				responseChannel: string
-			) => callback(sessionId, limit, responseChannel);
-			ipcRenderer.on('remote:getCueActivity', handler);
-			return () => ipcRenderer.removeListener('remote:getCueActivity', handler);
-		},
-
-		/**
-		 * Send response for remote get Cue activity
-		 */
-		sendRemoteGetCueActivityResponse: (responseChannel: string, result: unknown): void => {
 			ipcRenderer.send(responseChannel, result);
 		},
 

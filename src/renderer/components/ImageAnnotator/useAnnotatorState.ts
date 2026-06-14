@@ -20,7 +20,7 @@
 import { useCallback, useState } from 'react';
 import { generateId } from '../../utils/ids';
 
-export type AnnotatorTool = 'pen' | 'eraser' | 'pan' | 'rect' | 'ellipse' | 'arrow';
+export type AnnotatorTool = 'pen' | 'eraser' | 'pan' | 'rect' | 'ellipse' | 'arrow' | 'text';
 
 export type StrokePoint = [number, number, number];
 
@@ -64,6 +64,28 @@ export interface Shape {
 	style: ShapeStyle;
 }
 
+export interface TextStyle {
+	color: string;
+	size: number;
+	font: string;
+	/** Background fill behind the text. `null` means no background (transparent). */
+	bgColor: string | null;
+}
+
+/**
+ * A text label is anchored at (x, y) in image space (top-left of its bounding
+ * box). `value` is the rendered string; an empty string means the user opened
+ * an editor and then dismissed it without typing — those are filtered out on
+ * commit rather than rendered as ghost selection rectangles.
+ */
+export interface TextBox {
+	id: string;
+	x: number;
+	y: number;
+	value: string;
+	style: TextStyle;
+}
+
 export interface AnnotatorView {
 	x: number;
 	y: number;
@@ -72,7 +94,10 @@ export interface AnnotatorView {
 
 const INITIAL_VIEW: AnnotatorView = { x: 0, y: 0, scale: 1 };
 
-type HistoryEntry = { kind: 'stroke'; id: string } | { kind: 'shape'; id: string };
+type HistoryEntry =
+	| { kind: 'stroke'; id: string }
+	| { kind: 'shape'; id: string }
+	| { kind: 'text'; id: string };
 
 export interface UseAnnotatorStateReturn {
 	strokes: Stroke[];
@@ -80,12 +105,16 @@ export interface UseAnnotatorStateReturn {
 	shapes: Shape[];
 	currentShape: Shape | null;
 	selectedShapeId: string | null;
+	texts: TextBox[];
+	editingTextId: string | null;
+	selectedTextId: string | null;
 	tool: AnnotatorTool;
 	setTool: (tool: AnnotatorTool) => void;
 	view: AnnotatorView;
 	setView: (view: AnnotatorView | ((prev: AnnotatorView) => AnnotatorView)) => void;
 	beginStroke: (point: StrokePoint) => void;
 	extendStroke: (point: StrokePoint) => void;
+	extendStrokeStraight: (point: StrokePoint) => void;
 	endStroke: (style: StrokeStyle) => void;
 	eraseStrokeAt: (index: number) => void;
 	beginShape: (shape: Shape) => void;
@@ -95,6 +124,13 @@ export interface UseAnnotatorStateReturn {
 	updateShape: (id: string, partial: Partial<Shape>) => void;
 	deleteShape: (id: string) => void;
 	selectShape: (id: string | null) => void;
+	beginText: (x: number, y: number, style: TextStyle) => string;
+	updateTextValue: (id: string, value: string) => void;
+	updateText: (id: string, partial: Partial<TextBox>) => void;
+	commitTextEditing: () => void;
+	deleteText: (id: string) => void;
+	selectText: (id: string | null) => void;
+	editText: (id: string | null) => void;
 	undo: () => void;
 	clear: () => void;
 }
@@ -105,6 +141,9 @@ export function useAnnotatorState(): UseAnnotatorStateReturn {
 	const [shapes, setShapes] = useState<Shape[]>([]);
 	const [currentShape, setCurrentShape] = useState<Shape | null>(null);
 	const [selectedShapeId, setSelectedShapeId] = useState<string | null>(null);
+	const [texts, setTexts] = useState<TextBox[]>([]);
+	const [editingTextId, setEditingTextId] = useState<string | null>(null);
+	const [selectedTextId, setSelectedTextId] = useState<string | null>(null);
 	const [tool, setToolInternal] = useState<AnnotatorTool>('pen');
 	const [view, setView] = useState<AnnotatorView>(INITIAL_VIEW);
 	// History is read-only inside `undo` via the setter callback, never as a
@@ -113,11 +152,15 @@ export function useAnnotatorState(): UseAnnotatorStateReturn {
 	const [, setHistory] = useState<HistoryEntry[]>([]);
 
 	// Switching tools deselects any shape so the user gets a clean slate. The
-	// in-progress shape is also cleared if they were mid-draw.
+	// in-progress shape is also cleared if they were mid-draw. Text editing
+	// is committed (not cancelled) so a tool change doesn't silently discard
+	// what the user just typed.
 	const setTool = useCallback((next: AnnotatorTool) => {
 		setToolInternal(next);
 		setSelectedShapeId(null);
 		setCurrentShape(null);
+		setSelectedTextId(null);
+		setEditingTextId(null);
 	}, []);
 
 	const beginStroke = useCallback((point: StrokePoint) => {
@@ -126,6 +169,13 @@ export function useAnnotatorState(): UseAnnotatorStateReturn {
 
 	const extendStroke = useCallback((point: StrokePoint) => {
 		setCurrentPoints((prev) => (prev.length === 0 ? prev : [...prev, point]));
+	}, []);
+
+	// Straight-line variant (shift held while drawing): collapse the stroke to
+	// the anchor (its first point) and the current cursor, so perfect-freehand
+	// renders a clean straight segment instead of the freehand trail.
+	const extendStrokeStraight = useCallback((point: StrokePoint) => {
+		setCurrentPoints((prev) => (prev.length === 0 ? prev : [prev[0], point]));
 	}, []);
 
 	const endStroke = useCallback((style: StrokeStyle) => {
@@ -195,6 +245,65 @@ export function useAnnotatorState(): UseAnnotatorStateReturn {
 		setSelectedShapeId(id);
 	}, []);
 
+	// Create a fresh text box and immediately open it for editing. Returns the
+	// new id so the caller (canvas) can focus the textarea on next paint.
+	const beginText = useCallback((x: number, y: number, style: TextStyle): string => {
+		const id = generateId();
+		setTexts((prev) => [...prev, { id, x, y, value: '', style }]);
+		setHistory((h) => [...h, { kind: 'text', id }]);
+		setEditingTextId(id);
+		setSelectedTextId(id);
+		setSelectedShapeId(null);
+		return id;
+	}, []);
+
+	const updateTextValue = useCallback((id: string, value: string) => {
+		setTexts((prev) => prev.map((t) => (t.id === id ? { ...t, value } : t)));
+	}, []);
+
+	const updateText = useCallback((id: string, partial: Partial<TextBox>) => {
+		setTexts((prev) => prev.map((t) => (t.id === id ? { ...t, ...partial } : t)));
+	}, []);
+
+	// Closing the editor: empty values are discarded along with their history
+	// entry so undo doesn't have to step through phantom commits.
+	const commitTextEditing = useCallback(() => {
+		setEditingTextId((prev) => {
+			if (!prev) return prev;
+			const id = prev;
+			setTexts((ts) => {
+				const target = ts.find((t) => t.id === id);
+				if (target && target.value.trim() === '') {
+					setHistory((h) => h.filter((e) => !(e.kind === 'text' && e.id === id)));
+					setSelectedTextId((sel) => (sel === id ? null : sel));
+					return ts.filter((t) => t.id !== id);
+				}
+				return ts;
+			});
+			return null;
+		});
+	}, []);
+
+	const deleteText = useCallback((id: string) => {
+		setTexts((prev) => prev.filter((t) => t.id !== id));
+		setSelectedTextId((prev) => (prev === id ? null : prev));
+		setEditingTextId((prev) => (prev === id ? null : prev));
+		setHistory((prev) => prev.filter((h) => h.kind !== 'text' || h.id !== id));
+	}, []);
+
+	const selectText = useCallback((id: string | null) => {
+		setSelectedTextId(id);
+		if (id !== null) setSelectedShapeId(null);
+	}, []);
+
+	const editText = useCallback((id: string | null) => {
+		setEditingTextId(id);
+		if (id !== null) {
+			setSelectedTextId(id);
+			setSelectedShapeId(null);
+		}
+	}, []);
+
 	const undo = useCallback(() => {
 		setHistory((prev) => {
 			if (prev.length === 0) return prev;
@@ -203,9 +312,13 @@ export function useAnnotatorState(): UseAnnotatorStateReturn {
 				// Match by id so undo removes the same stroke that history points
 				// at, even if earlier strokes were erased mid-session.
 				setStrokes((s) => s.filter((stroke) => stroke.id !== last.id));
-			} else {
+			} else if (last.kind === 'shape') {
 				setShapes((s) => s.filter((sh) => sh.id !== last.id));
 				setSelectedShapeId((sel) => (sel === last.id ? null : sel));
+			} else {
+				setTexts((ts) => ts.filter((t) => t.id !== last.id));
+				setSelectedTextId((sel) => (sel === last.id ? null : sel));
+				setEditingTextId((cur) => (cur === last.id ? null : cur));
 			}
 			return prev.slice(0, -1);
 		});
@@ -217,6 +330,9 @@ export function useAnnotatorState(): UseAnnotatorStateReturn {
 		setShapes([]);
 		setCurrentShape(null);
 		setSelectedShapeId(null);
+		setTexts([]);
+		setSelectedTextId(null);
+		setEditingTextId(null);
 		setHistory([]);
 	}, []);
 
@@ -226,12 +342,16 @@ export function useAnnotatorState(): UseAnnotatorStateReturn {
 		shapes,
 		currentShape,
 		selectedShapeId,
+		texts,
+		editingTextId,
+		selectedTextId,
 		tool,
 		setTool,
 		view,
 		setView,
 		beginStroke,
 		extendStroke,
+		extendStrokeStraight,
 		endStroke,
 		eraseStrokeAt,
 		beginShape,
@@ -241,6 +361,13 @@ export function useAnnotatorState(): UseAnnotatorStateReturn {
 		updateShape,
 		deleteShape,
 		selectShape,
+		beginText,
+		updateTextValue,
+		updateText,
+		commitTextEditing,
+		deleteText,
+		selectText,
+		editText,
 		undo,
 		clear,
 	};

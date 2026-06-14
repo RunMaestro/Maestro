@@ -511,8 +511,8 @@ export function SshRemoteModal({
 						) : (
 							<XCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
 						)}
-						<div>
-							<div>{testResult.message}</div>
+						<div className="min-w-0">
+							<div className="whitespace-pre-wrap break-words">{testResult.message}</div>
 							{testResult.hostname && (
 								<div className="text-xs mt-1 opacity-80">
 									Remote hostname: {testResult.hostname}

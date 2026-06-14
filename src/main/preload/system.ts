@@ -49,7 +49,9 @@ export function createShellApi() {
 		openPath: (itemPath: string) => ipcRenderer.invoke('shell:openPath', itemPath),
 		trashItem: (itemPath: string) => ipcRenderer.invoke('shell:trashItem', itemPath),
 		showItemInFolder: (itemPath: string) => ipcRenderer.invoke('shell:showItemInFolder', itemPath),
+		copyTextToClipboard: (text: string) => ipcRenderer.invoke('clipboard:writeText', text),
 		copyImageToClipboard: (dataUrl: string) => ipcRenderer.invoke('clipboard:writeImage', dataUrl),
+		readImageFromClipboard: (): Promise<string | null> => ipcRenderer.invoke('clipboard:readImage'),
 	};
 }
 
@@ -139,8 +141,8 @@ export function createUpdatesApi() {
 			releasesUrl: string;
 			error?: string;
 		}> => ipcRenderer.invoke('updates:check', includePrerelease),
-		download: (): Promise<{ success: boolean; error?: string }> =>
-			ipcRenderer.invoke('updates:download'),
+		download: (targetTag?: string): Promise<{ success: boolean; error?: string }> =>
+			ipcRenderer.invoke('updates:download', targetTag),
 		install: (): Promise<void> => ipcRenderer.invoke('updates:install'),
 		getStatus: (): Promise<UpdateStatus> => ipcRenderer.invoke('updates:getStatus'),
 		onStatus: (callback: (status: UpdateStatus) => void) => {
@@ -168,6 +170,14 @@ export function createAppApi() {
 		},
 		cancelQuit: () => {
 			ipcRenderer.send('app:quitCancelled');
+		},
+		/**
+		 * Tell the main process the quit-confirmation modal is now showing and the
+		 * user is deciding. Disarms the dead-renderer safety timeout so the app
+		 * doesn't force-quit while the dialog is open.
+		 */
+		quitConfirmationPending: () => {
+			ipcRenderer.send('app:quitConfirmationPending');
 		},
 		/**
 		 * Listen for system resume event (after sleep/suspend)
@@ -206,6 +216,16 @@ export function createAppApi() {
 			const handler = (_: unknown, deepLink: ParsedDeepLink) => callback(deepLink);
 			ipcRenderer.on('app:deepLink', handler);
 			return () => ipcRenderer.removeListener('app:deepLink', handler);
+		},
+		/**
+		 * Listen for global hotkey registration failures (e.g. another app already
+		 * owns the combo). Renderer should surface this to the user so they pick a
+		 * different key.
+		 */
+		onGlobalHotkeyRegistrationFailed: (callback: (keys: string[]) => void): (() => void) => {
+			const handler = (_: unknown, keys: string[]) => callback(keys);
+			ipcRenderer.on('globalHotkey:registrationFailed', handler);
+			return () => ipcRenderer.removeListener('globalHotkey:registrationFailed', handler);
 		},
 	};
 }

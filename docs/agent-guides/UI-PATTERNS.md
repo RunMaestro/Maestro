@@ -120,6 +120,18 @@ function SettingsModal({ theme, onClose }: Props) {
 
 `<ModalFooter>` provides a standard cancel/confirm button pair with optional `destructive` styling (red confirm button).
 
+### Modal Sizing (max footprint)
+
+**The Maestro Cue modal (`90vw x 90vh`) is the maximum modal size.** No modal should exceed it - not even an "expanded" or "fullscreen" state. The Cue modal (`src/renderer/components/CueModal/CueModal.tsx`) sets `width: '90vw'; height: '90vh'` on its container; treat that as the app-wide ceiling.
+
+Guidance:
+
+- A large, content-heavy modal (dashboards, editors, the expanded Prompt Composer) caps at `w-[90vw] h-[90vh]`.
+- A compact modal that has a roomier "expanded" mode toggles between a capped default (e.g. `w-[90vw] h-[80vh] max-w-5xl`) and the `90vw x 90vh` ceiling - never `w-screen h-screen`. Staying off the screen edges keeps the modal clear of the OS title bar / traffic lights, so no per-platform inset gymnastics are needed.
+- Standard form/dialog modals use the `<Modal>` component's `width` prop (a fixed pixel width) and size their height to content.
+
+The expanded Prompt Composer (`src/renderer/components/PromptComposerModal.tsx`) is the reference implementation of the compact-vs-`90vw x 90vh` toggle.
+
 ### Escape Key Flow
 
 1. `LayerStackProvider` attaches a **capture-phase** `keydown` listener on `window`.
@@ -149,7 +161,7 @@ In development mode, `window.__MAESTRO_DEBUG__.layers` provides:
 
 ### Text Selection in Modals
 
-**Rule:** any modal (or modal subtree) whose primary purpose is _clicking_ — buttons, tabs, list rows, cards, graph nodes, filter chips, toggles, dropdowns — must have `select-none` on its root container. The dashboard-style modals (Cue, Usage Dashboard, Symphony, Playbook Exchange, Settings, Director's Notes list) are all click-driven; native browser drag-to-select highlighting fires accidentally during normal interactions (clicking a tab, dragging a graph node, double-clicking a card) and looks broken.
+**Rule:** any modal (or modal subtree) whose primary purpose is _clicking_ - buttons, tabs, list rows, cards, graph nodes, filter chips, toggles, dropdowns - must have `select-none` on its root container. The dashboard-style modals (Cue, Usage Dashboard, Symphony, Playbook Exchange, Settings, Director's Notes list) are all click-driven; native browser drag-to-select highlighting fires accidentally during normal interactions (clicking a tab, dragging a graph node, double-clicking a card) and looks broken.
 
 ```tsx
 // Click-driven modal: kill text selection at the root
@@ -158,7 +170,7 @@ In development mode, `window.__MAESTRO_DEBUG__.layers` provides:
 
 `select-none` cascades through descendants but Chromium preserves native selection behavior inside `<input>` and `<textarea>`, so search fields and form controls keep working without intervention.
 
-**Carve out content subtrees with `select-text`** when the modal contains regions where copying matters: prose detail views, code/YAML editors, log entry bodies, error messages, file paths, AI chat output. Apply `select-text` directly on the root of that subtree — it overrides the ancestor's `select-none`.
+**Carve out content subtrees with `select-text`** when the modal contains regions where copying matters: prose detail views, code/YAML editors, log entry bodies, error messages, file paths, AI chat output. Apply `select-text` directly on the root of that subtree - it overrides the ancestor's `select-none`.
 
 ```tsx
 // Detail view nested inside a select-none parent: opt back in
@@ -167,7 +179,7 @@ In development mode, `window.__MAESTRO_DEBUG__.layers` provides:
 
 **Skip modals whose primary purpose is reading or editing text:** `CueYamlEditor`, `CueHelpModal`, the wizard chat shell's message bubbles, Director's Notes detail popup, the System Log Viewer (intentionally left selectable), confirmation dialogs with error text. If the user's main interaction is reading or copying, leave selection alone.
 
-**When adding a new modal,** decide first whether it's click-driven or content-driven. If click-driven, add `select-none` to the root in the same commit as the modal itself — retrofitting it later requires hunting down every nested detail view to add `select-text` overrides.
+**When adding a new modal,** decide first whether it's click-driven or content-driven. If click-driven, add `select-none` to the root in the same commit as the modal itself - retrofitting it later requires hunting down every nested detail view to add `select-text` overrides.
 
 ---
 
@@ -376,22 +388,22 @@ notifyToast({
 7. OS desktop notification via `window.maestro.notification.show` (if enabled)
 8. Auto-dismiss timer (skipped for dismissible toasts)
 
-### Firing a Toast (external — `maestro-cli`)
+### Firing a Toast (external - `maestro-cli`)
 
 ```bash
-# Default — themed, auto-dismisses on the app's default schedule.
+# Default - themed, auto-dismisses on the app's default schedule.
 maestro-cli notify toast "Build" "Build succeeded on main"
 
 # Pick a color and a custom duration.
 maestro-cli notify toast "Tests" "All green" --color green --timeout 10
 maestro-cli notify toast "Quota" "Approaching limit" --color orange --timeout 30
 
-# Sticky — user must click to dismiss. Cannot combine with --timeout.
+# Sticky - user must click to dismiss. Cannot combine with --timeout.
 maestro-cli notify toast "Action required" "Approve the PR before EOD" \
     --color red --dismissible
 ```
 
-`--dismissible` is the **only** way external scripts can leave a toast on screen indefinitely. `--timeout 0` is rejected — use `--dismissible` instead. Numeric durations are capped at **60 seconds** (toasts are corner-only and less obtrusive than Center Flash, so the cap is more generous than 5 s).
+`--dismissible` is the **only** way external scripts can leave a toast on screen indefinitely. `--timeout 0` is rejected - use `--dismissible` instead. Numeric durations are capped at **60 seconds** (toasts are corner-only and less obtrusive than Center Flash, so the cap is more generous than 5 s).
 
 ### Toast vs Center Flash: when each fits
 
@@ -414,11 +426,11 @@ maestro-cli notify toast "Action required" "Approve the PR before EOD" \
 | `orange` | Fixed `#f97316` (no theme slot) | Emphatic warning ("Quota at 90%")                        |
 | `red`    | `theme.colors.error`            | Failure / blocking issue ("Sync failed", "Auth expired") |
 
-Same icons as Center Flash: green→Check, yellow→Info, orange→AlertTriangle, red→AlertCircle, theme→Sparkles. **Do not** add a sixth color — keep the design language consistent across both systems.
+Same icons as Center Flash: green→Check, yellow→Info, orange→AlertTriangle, red→AlertCircle, theme→Sparkles. **Do not** add a sixth color - keep the design language consistent across both systems.
 
 ### Dismissible toasts
 
-Set `dismissible: true` (or pass `--dismissible` from the CLI) when the toast is something the user **must** see — a critical error, a required action, a security alert, etc. Behavior:
+Set `dismissible: true` (or pass `--dismissible` from the CLI) when the toast is something the user **must** see - a critical error, a required action, a security alert, etc. Behavior:
 
 - No auto-dismiss timer is set.
 - The progress bar is hidden.
@@ -426,7 +438,7 @@ Set `dismissible: true` (or pass `--dismissible` from the CLI) when the toast is
 - `aria-label` becomes "Dismiss notification" for screen readers.
 - `dismissible` is mutually exclusive with `duration` / `--timeout` (the CLI rejects the combination; in-app, `dismissible: true` overrides any `duration` value).
 
-Use sparingly — every dismissible toast is a tiny piece of homework for the user.
+Use sparingly - every dismissible toast is a tiny piece of homework for the user.
 
 ### Toast Configuration
 
@@ -454,18 +466,18 @@ actions.clearToasts();
 
 Rendered as a portal to `document.body`, positioned fixed at bottom-right. Each `ToastItem` shows:
 
-- Color-coded icon (resolved from `toast.color` — see palette above)
+- Color-coded icon (resolved from `toast.color` - see palette above)
 - Optional group badge, project name, tab name
 - Title and message
 - Optional action link
 - Optional task duration
 - Progress bar for auto-dismiss countdown (hidden for `dismissible` toasts)
 - Slide-in/out animations
-- Close button — emphasized (color-tinted) when `dismissible: true`
+- Close button - emphasized (color-tinted) when `dismissible: true`
 
 ### Back-compat: legacy `type` API (in-app only)
 
-The original API used `type: 'success' | 'info' | 'warning' | 'error'`. It is still accepted **in-app** via `notifyToast({ type })` for back-compat, but **deprecated** — new code should use `color`. The CLI flag `--type` was removed. Mapping:
+The original API used `type: 'success' | 'info' | 'warning' | 'error'`. It is still accepted **in-app** via `notifyToast({ type })` for back-compat, but **deprecated** - new code should use `color`. The CLI flag `--type` was removed. Mapping:
 
 | Legacy type | Maps to color |
 | ----------- | ------------- |
@@ -480,9 +492,9 @@ Existing in-app callers using `type:` continue to work without changes.
 
 ## Center Flash System (rapid temporary notifications)
 
-**Center Flash** is the canonical mechanism for momentary, center-screen acknowledgements of user-initiated actions. It is intentionally distinct from the Toast system — they are **not** interchangeable. Use the decision table below; do not hand-roll a new flash component.
+**Center Flash** is the canonical mechanism for momentary, center-screen acknowledgements of user-initiated actions. It is intentionally distinct from the Toast system - they are **not** interchangeable. Use the decision table below; do not hand-roll a new flash component.
 
-The Center Flash visual is **themed** — every Maestro theme produces a visually distinct flash by default. The card uses the active theme's `bgSidebar` with an accent-tinted overlay; the icon, border, and glow take the resolved color (default: `theme.colors.accent`).
+The Center Flash visual is **themed** - every Maestro theme produces a visually distinct flash by default. The card uses the active theme's `bgSidebar` with an accent-tinted overlay; the icon, border, and glow take the resolved color (default: `theme.colors.accent`).
 
 ### Decision: Center Flash vs Toast
 
@@ -506,7 +518,7 @@ src/renderer/utils/flashCopiedToClipboard.ts - clipboard-ack helper
 src/cli/commands/notify-flash.ts         - `maestro-cli notify flash` command (external trigger)
 ```
 
-Center Flash is **exclusive** — only one is visible at a time. A new flash replaces the previous one (no queue). The component is mounted once in `App.tsx` next to `<ToastContainer />`; do not mount it locally inside features.
+Center Flash is **exclusive** - only one is visible at a time. A new flash replaces the previous one (no queue). The component is mounted once in `App.tsx` next to `<ToastContainer />`; do not mount it locally inside features.
 
 ### Firing a flash (in-app)
 
@@ -521,7 +533,7 @@ notifyCenterFlash({
 });
 ```
 
-Convenience helper for the most common case (clipboard acks — always defaults to `color: 'theme'`):
+Convenience helper for the most common case (clipboard acks - always defaults to `color: 'theme'`):
 
 ```typescript
 import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
@@ -532,10 +544,10 @@ flashCopiedToClipboard(value, 'Session ID Copied'); // custom title
 
 **Always** prefer `flashCopiedToClipboard` for clipboard-success acks so wording, color, and duration stay consistent across the app.
 
-### Firing a flash (external — `maestro-cli`)
+### Firing a flash (external - `maestro-cli`)
 
 ```bash
-# Default — themed, matches the active Maestro theme. Auto-dismisses after 1.5 s.
+# Default - themed, matches the active Maestro theme. Auto-dismisses after 1.5 s.
 maestro-cli notify flash "Build complete"
 
 # Pick an explicit color. One of: green, yellow, orange, red, theme.
@@ -556,7 +568,7 @@ These five colors are the **only** colors the Center Flash will ever render. The
 
 | Color    | Source                          | Icon            | Use for                                                                                                  |
 | -------- | ------------------------------- | --------------- | -------------------------------------------------------------------------------------------------------- |
-| `theme`  | `theme.colors.accent`           | `Sparkles`      | **Default.** Themed acknowledgement with no semantic — clipboard acks, mode toggles, quiet confirmations |
+| `theme`  | `theme.colors.accent`           | `Sparkles`      | **Default.** Themed acknowledgement with no semantic - clipboard acks, mode toggles, quiet confirmations |
 | `green`  | `theme.colors.success`          | `Check`         | Explicit success semantic when the user benefits from "yes it worked" coloring (CLI status, test passes) |
 | `yellow` | `theme.colors.warning`          | `Info`          | Soft heads-up, not a failure ("Commands disabled", "No unread tabs")                                     |
 | `orange` | Fixed `#f97316` (no theme slot) | `AlertTriangle` | More emphatic warning than yellow ("Production deploy starting", "Quota at 90%")                         |
@@ -576,26 +588,26 @@ The component implements one consistent treatment that adapts to color and theme
 - **Entrance:** 180 ms scale (0.94 → 1) + fade. **Exit:** 160 ms reverse. No bounce, no spring, no drop-and-fade.
 - **Z-index:** `100001` (sits above toasts, below modal-stack overlays). `pointer-events: none` (never blocks input).
 - **Theme tokens used:** `bgSidebar`, `textMain`, `textDim`, `border`, plus the resolved color (one of `success`, `warning`, `accent`, `error`, or the fixed orange). No new color tokens needed for flash usage.
-- **A11y:** `role="status"`, `aria-live="polite"`, `aria-atomic="true"`. Do not add a close button — flashes are not interactive.
+- **A11y:** `role="status"`, `aria-live="polite"`, `aria-atomic="true"`. Do not add a close button - flashes are not interactive.
 
 ### Duration guidance
 
 - **Default 1500 ms** is correct for almost everything. Do not pass `duration` unless you have a specific reason.
-- Use a longer duration (`2500`–`3000`) only for `yellow`/`orange`/`red` flashes with longer messages the user must read.
-- Use `duration: 0` (no auto-dismiss) only for the rarest cases — it requires you to call `dismissCenterFlash()` explicitly later, and Center Flash is exclusive, so a non-dismissed flash blocks every subsequent one. **Note:** `0` is rejected for externally-triggered flashes (CLI / web). External callers are also capped at 5000 ms.
+- Use a longer duration (`2500`-`3000`) only for `yellow`/`orange`/`red` flashes with longer messages the user must read.
+- Use `duration: 0` (no auto-dismiss) only for the rarest cases - it requires you to call `dismissCenterFlash()` explicitly later, and Center Flash is exclusive, so a non-dismissed flash blocks every subsequent one. **Note:** `0` is rejected for externally-triggered flashes (CLI / web). External callers are also capped at 5000 ms.
 
 ### Anti-patterns (do not do these)
 
 - ❌ **Do not** create a new center-screen overlay component. Use `notifyCenterFlash`.
 - ❌ **Do not** roll your own `useState` + `setTimeout` for clipboard acks. Use `flashCopiedToClipboard`.
 - ❌ **Do not** use `notifyToast` for clipboard-success acks. Use `flashCopiedToClipboard`.
-- ❌ **Do not** add a sixth color or override the visual treatment. The five-color palette is the design language — extending it would defeat the purpose.
-- ❌ **Do not** add `flashNotification` / `successFlashNotification` state to a store. The legacy `setFlashNotification` and `setSuccessFlashNotification` setters in `uiStore` are compatibility shims that delegate to `notifyCenterFlash`; do not extend them — call `notifyCenterFlash` directly in new code.
+- ❌ **Do not** add a sixth color or override the visual treatment. The five-color palette is the design language - extending it would defeat the purpose.
+- ❌ **Do not** add `flashNotification` / `successFlashNotification` state to a store. The legacy `setFlashNotification` and `setSuccessFlashNotification` setters in `uiStore` are compatibility shims that delegate to `notifyCenterFlash`; do not extend them - call `notifyCenterFlash` directly in new code.
 - ❌ **Do not** stack flashes (queue them). The system is intentionally exclusive; the latest flash wins.
 
 ### Back-compat: legacy `variant` API (in-app only)
 
-The original API used `variant: 'success' | 'info' | 'warning' | 'error'`. It is still accepted **in-app** via `notifyCenterFlash({ variant })` for back-compat, but **deprecated** — new code should use `color`. The CLI flag `--variant` was removed. The mapping is fixed:
+The original API used `variant: 'success' | 'info' | 'warning' | 'error'`. It is still accepted **in-app** via `notifyCenterFlash({ variant })` for back-compat, but **deprecated** - new code should use `color`. The CLI flag `--variant` was removed. The mapping is fixed:
 
 | Legacy variant | Maps to color |
 | -------------- | ------------- |
@@ -604,7 +616,7 @@ The original API used `variant: 'success' | 'info' | 'warning' | 'error'`. It is
 | `warning`      | `yellow`      |
 | `error`        | `red`         |
 
-Pre-existing call sites using `setFlashNotification` / `setSuccessFlashNotification` (via `uiStore` or via `showFlashNotification` / `showSuccessFlash` in `useAgentExecution`) continue to work — they fire `notifyCenterFlash` with `color: 'yellow'` and `color: 'theme'` respectively under the hood.
+Pre-existing call sites using `setFlashNotification` / `setSuccessFlashNotification` (via `uiStore` or via `showFlashNotification` / `showSuccessFlash` in `useAgentExecution`) continue to work - they fire `notifyCenterFlash` with `color: 'yellow'` and `color: 'theme'` respectively under the hood.
 
 ---
 
@@ -670,18 +682,44 @@ React error boundary that catches render errors, reports to Sentry, and shows a 
 
 Default fallback shows error details, component stack trace, and "Try Again" / "Reload App" buttons. Reports to Sentry via `Sentry.captureException`.
 
-### `<MarkdownRenderer>` (`src/renderer/components/MarkdownRenderer.tsx`)
+### `<Markdown>` (`src/renderer/components/Markdown/`)
 
-Full-featured markdown renderer using `react-markdown` with:
+The single, unified react-markdown renderer for the desktop app. Pick a `preset`
+instead of wiring `react-markdown` by hand:
 
-- GFM support (`remark-gfm`)
-- Frontmatter rendering as tables (`remark-frontmatter`)
-- Wiki-link resolution (`remarkFileLinks`)
-- Syntax highlighting (`react-syntax-highlighter` / Prism)
-- Local image loading via IPC with caching
-- HTML sanitization via `DOMPurify`
-- Copy-to-clipboard for code blocks
-- Optional SSH remote file loading
+```tsx
+import { Markdown } from '../Markdown';
+
+<Markdown preset="document" theme={theme} content={md} onExternalLinkClick={openUrl} />;
+```
+
+Presets:
+
+- **`chat`** - richest surface (AI Terminal, Group Chat, History, Feedback,
+  Director's Notes, Document Graph). Shiki code fences with copy button + language
+  picker, file links via `remarkFileLinks`, right-click link/file context menus,
+  IPC-loaded local images, chat line breaks + KaTeX math, Bionify, raw-HTML +
+  DOMPurify. `MarkdownRenderer` is a thin wrapper around `<Markdown preset="chat">`.
+- **`document`** - file/doc preview. Prism highlighting, search highlight, anchor
+  (`#`) links, pluggable `imageRenderer`, `customLanguageRenderers` (mermaid),
+  `extraRemark/RehypePlugins`. Renders bare so callers keep their own scoped prose
+  container. Pass `frontmatter={false}` for GFM-only surfaces.
+- **`wizard-bubble`** / **`release-notes`** - minimal, tightly-styled presets.
+
+Shared internals (do NOT re-implement): plugin selection lives in
+`Markdown/plugins.ts` (`buildMarkdownPlugins`), text preprocessing in
+`Markdown/preprocess.ts` (`preprocessMarkdown`, `fixMarkdownLinkSpaces`), and the
+leaf renderers in `Markdown/components/*` (`MarkdownLink`, `InlineCode`,
+`HexSwatch`, `ShikiCodeBlock`, `PrismCodeBlock`, `LocalImage`). The document
+component map is `createMarkdownComponents()` in `utils/markdownConfig.ts`, which
+`<Markdown preset="document">` uses internally. A few advanced surfaces (AutoRun's
+keystroke-memoized preview, FilePreview's tier selection + from-tree image
+resolution, the Wizard DocumentEditor) consume `createMarkdownComponents()`
+directly rather than the shell, but share the same leaf implementation.
+
+Separate engines, intentionally not part of `<Markdown>`: `MarkdownPreviewFast`
+(markdown-it, virtualized for 64KB+ files) and `MobileMarkdownRenderer` (web
+bundle, no IPC).
 
 ### `<SettingCheckbox>` (`src/renderer/components/SettingCheckbox.tsx`)
 
@@ -709,18 +747,18 @@ Portal-rendered toast notification stack. Rendered in `App.tsx`:
 
 ---
 
-## Menu / Popover Sizing — Use rem, Not px
+## Menu / Popover Sizing - Use rem, Not px
 
-The user's font-size setting (`useSettings.ts` writes `document.documentElement.style.fontSize`) scales **everything sized in `rem`** (including Tailwind's `text-xs`/`text-sm` etc.) but **not values in `px`**. If a context menu, dropdown, or tab overlay menu uses `minWidth: '160px'`, the text grows with the user's font setting but the container does not — so labels like "Create New Group" wrap onto two lines at larger sizes.
+The user's font-size setting (`useSettings.ts` writes `document.documentElement.style.fontSize`) scales **everything sized in `rem`** (including Tailwind's `text-xs`/`text-sm` etc.) but **not values in `px`**. If a context menu, dropdown, or tab overlay menu uses `minWidth: '160px'`, the text grows with the user's font setting but the container does not - so labels like "Create New Group" wrap onto two lines at larger sizes.
 
 **Two-part rule:**
 
 1. **Express dimensions in rem.** For any popover / menu / overlay that contains text content, write `minWidth`, `maxWidth`, and `maxHeight` in **rem** (or `em`), not `px`. Conversion: `Npx → (N/16)rem` (160px → 10rem, 200px → 12.5rem, 220px → 13.75rem, 280px → 17.5rem, 320px → 20rem).
-2. **Add `whitespace-nowrap` to the menu container.** `minWidth` only sets a lower bound — the container won't actually grow past it unless its content forces it to. By default, long text labels (e.g., "Create New Group") will wrap onto multiple lines instead of pushing the container wider. Putting `whitespace-nowrap` on the menu's outermost container makes labels stay on one line and the container expand to fit them.
+2. **Add `whitespace-nowrap` to the menu container.** `minWidth` only sets a lower bound - the container won't actually grow past it unless its content forces it to. By default, long text labels (e.g., "Create New Group") will wrap onto multiple lines instead of pushing the container wider. Putting `whitespace-nowrap` on the menu's outermost container makes labels stay on one line and the container expand to fit them.
 
 The two rules work together: rem keeps the minimum sized correctly across font scales, and `whitespace-nowrap` lets the container grow when individual labels need more room than the minimum allows. Skip rule 2 only when the popover has a `maxWidth` that is intentionally truncating long content (e.g., `BrowserTabItem` clamps URL display with `truncate`).
 
-Existing canonical sites already follow this — see `SessionContextMenu.tsx`, `NodeContextMenu.tsx` (`DocumentGraph/`), `PipelineContextMenu.tsx` (`CuePipelineEditor/`), `FileContextMenu.tsx`, `LinkContextMenu.tsx`, `TerminalSelectionContextMenu.tsx`, `TabBar/AITabOverlayMenu.tsx`, `TabBar/FileTab.tsx`, `TabBar/TerminalTabItem.tsx`, `TabBar/BrowserTabItem.tsx`, `TemplateAutocompleteDropdown.tsx`. When adding a new menu/popover, match this convention so it grows with the user's font size.
+Existing canonical sites already follow this - see `SessionContextMenu.tsx`, `NodeContextMenu.tsx` (`DocumentGraph/`), `PipelineContextMenu.tsx` (`CuePipelineEditor/`), `FileContextMenu.tsx`, `LinkContextMenu.tsx`, `TerminalSelectionContextMenu.tsx`, `TabBar/AITabOverlayMenu.tsx`, `TabBar/FileTab.tsx`, `TabBar/TerminalTabItem.tsx`, `TabBar/BrowserTabItem.tsx`, `TemplateAutocompleteDropdown.tsx`. When adding a new menu/popover, match this convention so it grows with the user's font size.
 
 This rule applies to **content containers** sized to wrap text. It does NOT apply to layout primitives where px is intentional (icon dimensions, fixed-pixel borders, scrollbar widths, viewport-relative positioning).
 
@@ -918,19 +956,19 @@ beforeEach(() => {
 
 ## Key Files Reference
 
-| Pattern           | Primary Files                                                                           |
-| ----------------- | --------------------------------------------------------------------------------------- |
-| Layer stack       | `src/renderer/hooks/ui/useLayerStack.ts`, `src/renderer/contexts/LayerStackContext.tsx` |
-| Modal layer       | `src/renderer/hooks/ui/useModalLayer.ts`                                                |
-| Modal component   | `src/renderer/components/ui/Modal.tsx`                                                  |
-| Modal priorities  | `src/renderer/constants/modalPriorities.ts`                                             |
-| Layer types       | `src/renderer/types/layer.ts`                                                           |
-| Theme definitions | `src/shared/themes.ts`, `src/shared/theme-types.ts`                                     |
-| Shortcuts         | `src/renderer/constants/shortcuts.ts`                                                   |
-| Keyboard handler  | `src/renderer/hooks/keyboard/useMainKeyboardHandler.ts`                                 |
-| Notifications     | `src/renderer/stores/notificationStore.ts`, `src/renderer/components/Toast.tsx`         |
-| Form components   | `src/renderer/components/ui/FormInput.tsx`, `src/renderer/components/ui/Modal.tsx`      |
-| Error boundary    | `src/renderer/components/ErrorBoundary.tsx`                                             |
-| Markdown renderer | `src/renderer/components/MarkdownRenderer.tsx`                                          |
-| Settings hook     | `src/renderer/hooks/settings/useSettings.ts`                                            |
-| Settings store    | `src/renderer/stores/settingsStore.ts`                                                  |
+| Pattern           | Primary Files                                                                                               |
+| ----------------- | ----------------------------------------------------------------------------------------------------------- |
+| Layer stack       | `src/renderer/hooks/ui/useLayerStack.ts`, `src/renderer/contexts/LayerStackContext.tsx`                     |
+| Modal layer       | `src/renderer/hooks/ui/useModalLayer.ts`                                                                    |
+| Modal component   | `src/renderer/components/ui/Modal.tsx`                                                                      |
+| Modal priorities  | `src/renderer/constants/modalPriorities.ts`                                                                 |
+| Layer types       | `src/renderer/types/layer.ts`                                                                               |
+| Theme definitions | `src/shared/themes.ts`, `src/shared/theme-types.ts`                                                         |
+| Shortcuts         | `src/renderer/constants/shortcuts.ts`                                                                       |
+| Keyboard handler  | `src/renderer/hooks/keyboard/useMainKeyboardHandler.ts`                                                     |
+| Notifications     | `src/renderer/stores/notificationStore.ts`, `src/renderer/components/Toast.tsx`                             |
+| Form components   | `src/renderer/components/ui/FormInput.tsx`, `src/renderer/components/ui/Modal.tsx`                          |
+| Error boundary    | `src/renderer/components/ErrorBoundary.tsx`                                                                 |
+| Markdown renderer | `src/renderer/components/Markdown/` (`<Markdown preset=...>`; `MarkdownRenderer.tsx` wraps the chat preset) |
+| Settings hook     | `src/renderer/hooks/settings/useSettings.ts`                                                                |
+| Settings store    | `src/renderer/stores/settingsStore.ts`                                                                      |

@@ -37,7 +37,7 @@ export function LightboxModal({
 	const canDelete = Boolean(onDelete);
 	const canAnnotate = Boolean(onUpdateImage);
 	const layerIdRef = useRef<string>();
-	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
+	const { registerLayer, unregisterLayer, updateLayerHandler, getTopLayer } = useLayerStack();
 	const openAnnotator = useImageAnnotatorStore((state) => state.openAnnotator);
 	const [copied, setCopied] = useState(false);
 	const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -101,11 +101,75 @@ export function LightboxModal({
 		}
 	};
 
+	const openAnnotatorFromLightbox = useCallback(() => {
+		if (!image || !onUpdateImage) return;
+		const oldImage = image;
+		openAnnotator(oldImage, (newDataUrl) => {
+			onUpdateImage(oldImage, newDataUrl);
+			onClose();
+		});
+	}, [image, onUpdateImage, openAnnotator, onClose]);
+
 	// Show delete confirmation modal
 	const promptDelete = useCallback(() => {
 		if (!onDelete) return;
 		setShowDeleteConfirm(true);
 	}, [onDelete]);
+
+	const goToPrevRef = useRef(goToPrev);
+	const goToNextRef = useRef(goToNext);
+	const promptDeleteRef = useRef(promptDelete);
+	const copyImageRef = useRef(copyImageToClipboard);
+	const openAnnotatorRef = useRef(openAnnotatorFromLightbox);
+	goToPrevRef.current = goToPrev;
+	goToNextRef.current = goToNext;
+	promptDeleteRef.current = promptDelete;
+	copyImageRef.current = copyImageToClipboard;
+	openAnnotatorRef.current = openAnnotatorFromLightbox;
+
+	// Window-level keyboard handler. The div-level approach only fires when the
+	// lightbox div has focus, which is lost when the annotator (or any other
+	// transient modal layered above) closes — that leaked Cmd+E to the chat
+	// behind. Capturing on `window` is focus-independent. Guarded by
+	// `getTopLayer` so the lightbox doesn't react while a higher-priority
+	// layer (annotator, etc.) is on top.
+	useEffect(() => {
+		const handler = (e: KeyboardEvent) => {
+			if (showDeleteConfirm) return;
+			const top = getTopLayer();
+			if (!top || top.id !== layerIdRef.current) return;
+
+			let handled = false;
+			if (e.key === 'ArrowLeft') {
+				if (canNavigate) {
+					goToPrevRef.current();
+					handled = true;
+				}
+			} else if (e.key === 'ArrowRight') {
+				if (canNavigate) {
+					goToNextRef.current();
+					handled = true;
+				}
+			} else if ((e.key === 'Delete' || e.key === 'Backspace') && canDelete) {
+				promptDeleteRef.current();
+				handled = true;
+			} else if (e.key === 'c' && (e.metaKey || e.ctrlKey)) {
+				void copyImageRef.current();
+				handled = true;
+			} else if ((e.key === 'e' || e.key === 'E') && (e.metaKey || e.ctrlKey) && canAnnotate) {
+				openAnnotatorRef.current();
+				handled = true;
+			}
+
+			if (handled) {
+				e.preventDefault();
+				e.stopPropagation();
+			}
+		};
+
+		window.addEventListener('keydown', handler, { capture: true });
+		return () => window.removeEventListener('keydown', handler, { capture: true });
+	}, [canNavigate, canDelete, canAnnotate, showDeleteConfirm, getTopLayer]);
 
 	// Handle confirmed deletion
 	const handleDeleteConfirmed = useCallback(() => {
@@ -160,31 +224,6 @@ export function LightboxModal({
 			ref={lightboxRef}
 			className="absolute inset-0 z-[100] bg-black/90 flex items-center justify-center"
 			onClick={onClose}
-			onKeyDown={(e) => {
-				e.stopPropagation();
-				if (e.key === 'ArrowLeft') {
-					e.preventDefault();
-					goToPrev();
-				} else if (e.key === 'ArrowRight') {
-					e.preventDefault();
-					goToNext();
-				} else if ((e.key === 'Delete' || e.key === 'Backspace') && canDelete) {
-					e.preventDefault();
-					promptDelete();
-				} else if (e.key === 'c' && (e.metaKey || e.ctrlKey)) {
-					e.preventDefault();
-					copyImageToClipboard();
-				} else if ((e.key === 'e' || e.key === 'E') && (e.metaKey || e.ctrlKey) && canAnnotate) {
-					e.preventDefault();
-					if (image && onUpdateImage) {
-						const oldImage = image;
-						openAnnotator(oldImage, (newDataUrl) => {
-							onUpdateImage(oldImage, newDataUrl);
-							onClose();
-						});
-					}
-				}
-			}}
 			tabIndex={-1}
 			role="dialog"
 			aria-modal="true"

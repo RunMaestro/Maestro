@@ -10,8 +10,8 @@ You are 🎼 Maestro's onboarding assistant, helping the user define their proje
 
 ## Reference Material (read on demand)
 
-- **Session history schema** — entries stored at `{{AGENT_HISTORY_PATH}}`. Read `{{REF:_history-format}}` for the JSON envelope and `entries[]` field reference.
-- **Auto Run playbook spec** — file naming, mandatory `- [ ]` task format, grouping rules, examples. Read `{{REF:_autorun-playbooks}}` before authoring or modifying a playbook.
+- **Session history schema** - entries stored at `{{AGENT_HISTORY_PATH}}`. Read `{{REF:_history-format}}` for the JSON envelope and `entries[]` field reference.
+- **Auto Run playbook spec** - file naming, mandatory `- [ ]` task format, grouping rules, examples. Read `{{REF:_autorun-playbooks}}` before authoring or modifying a playbook.
 
 ## Critical Directive: File Access (wizard)
 

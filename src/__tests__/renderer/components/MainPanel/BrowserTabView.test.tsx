@@ -29,11 +29,15 @@ class MockResizeObserver {
 type MockWebview = HTMLElement & {
 	canGoBack: ReturnType<typeof vi.fn>;
 	canGoForward: ReturnType<typeof vi.fn>;
+	goBack?: ReturnType<typeof vi.fn>;
+	goForward?: ReturnType<typeof vi.fn>;
 	getURL: ReturnType<typeof vi.fn>;
 	getTitle: ReturnType<typeof vi.fn>;
 	isLoading: ReturnType<typeof vi.fn>;
 	getWebContentsId: ReturnType<typeof vi.fn>;
 	executeJavaScript: ReturnType<typeof vi.fn>;
+	findInPage?: ReturnType<typeof vi.fn>;
+	stopFindInPage?: ReturnType<typeof vi.fn>;
 };
 
 describe('BrowserTabView', () => {
@@ -221,6 +225,67 @@ describe('BrowserTabView', () => {
 					webContentsId: 103,
 				})
 			);
+		});
+	});
+
+	it('keeps webview listeners attached across navigation re-renders so loading clears', async () => {
+		// Regression: the listener effect previously depended on tab.url/tab.title
+		// and the inline onUpdateTab, so each navigation event re-rendered the
+		// parent and tore down/re-registered all listeners mid-flight, resetting
+		// isDomReadyRef. did-stop-loading then bailed out of readWebviewState and
+		// the spinner stayed spinning while the title oscillated.
+		let latestTab: BrowserTab = { ...mockTab, isLoading: false };
+		const Wrapper = () => {
+			const [tab, setTab] = React.useState<BrowserTab>(latestTab);
+			latestTab = tab;
+			// Fresh inline callback every render — mirrors MainPanelContent.
+			return (
+				<BrowserTabView
+					tab={tab}
+					theme={mockTheme}
+					onUpdateTab={(_, updates) => setTab((prev) => ({ ...prev, ...updates }))}
+				/>
+			);
+		};
+
+		render(<Wrapper />);
+		const webview = getWebview();
+		webview.canGoBack = vi.fn(() => true);
+		webview.canGoForward = vi.fn(() => false);
+		webview.getURL = vi.fn(() => 'https://example.com/page-b');
+		webview.getTitle = vi.fn(() => 'Page B');
+		webview.isLoading = vi.fn(() => false);
+		webview.getWebContentsId = vi.fn(() => 55);
+		webview.executeJavaScript = vi.fn().mockResolvedValue(undefined);
+
+		await act(async () => {
+			webview.dispatchEvent(new Event('dom-ready'));
+		});
+
+		// Simulate clicking Back: navigation starts (isLoading true; url/title change
+		// triggers a re-render with new props + a new inline onUpdateTab)...
+		webview.getURL = vi.fn(() => 'https://example.com/page-a');
+		webview.getTitle = vi.fn(() => 'Page A');
+		await act(async () => {
+			webview.dispatchEvent(
+				Object.assign(new Event('did-start-navigation'), {
+					url: 'https://example.com/page-a',
+					isMainFrame: true,
+				})
+			);
+		});
+		expect(latestTab.isLoading).toBe(true);
+
+		// ...then finishes. did-stop-loading must still clear isLoading even though
+		// the parent re-rendered (and dom-ready does not fire again).
+		await act(async () => {
+			webview.dispatchEvent(new Event('did-stop-loading'));
+		});
+
+		await waitFor(() => {
+			expect(latestTab.isLoading).toBe(false);
+			expect(latestTab.url).toBe('https://example.com/page-a');
+			expect(latestTab.title).toBe('Page A');
 		});
 	});
 
@@ -512,6 +577,169 @@ describe('BrowserTabView', () => {
 			render(<BrowserTabView ref={ref} tab={mockTab} theme={mockTheme} onUpdateTab={vi.fn()} />);
 
 			expect(ref.current!.getTabId()).toBe('browser-1');
+		});
+	});
+
+	describe('find in page (Cmd+F)', () => {
+		it('mounts the find bar, runs findInPage on query, and stops on Escape', async () => {
+			const ref = React.createRef<BrowserTabViewHandle>();
+			render(<BrowserTabView ref={ref} tab={mockTab} theme={mockTheme} onUpdateTab={vi.fn()} />);
+
+			const webview = getWebview();
+			const findInPage = vi.fn().mockReturnValue(42);
+			const stopFindInPage = vi.fn();
+			webview.findInPage = findInPage;
+			webview.stopFindInPage = stopFindInPage;
+
+			// Bar is hidden by default
+			expect(screen.queryByTestId('browser-tab-find-bar')).toBeNull();
+
+			act(() => {
+				ref.current!.openFind();
+			});
+
+			const bar = await screen.findByTestId('browser-tab-find-bar');
+			expect(bar).toBeTruthy();
+			const input = bar.querySelector('input') as HTMLInputElement;
+			expect(input).toBeTruthy();
+			// Cmd+F must focus the input so the user can start typing immediately.
+			// The host's focus-stealing-prevention guard must explicitly leave this
+			// input alone; without the carve-out it would re-blur on the next tick.
+			await waitFor(() => expect(document.activeElement).toBe(input));
+
+			// Typing kicks off findInPage
+			await act(async () => {
+				fireEvent.change(input, { target: { value: 'hello' } });
+			});
+			expect(findInPage).toHaveBeenCalledWith('hello');
+
+			// found-in-page result wires up the counter
+			await act(async () => {
+				const event = new Event('found-in-page') as Event & {
+					result?: { requestId: number; activeMatchOrdinal: number; matches: number };
+				};
+				event.result = { requestId: 42, activeMatchOrdinal: 2, matches: 7 };
+				webview.dispatchEvent(event);
+			});
+			expect(bar.textContent).toContain('2/7');
+
+			// Enter advances to next match
+			findInPage.mockClear();
+			await act(async () => {
+				fireEvent.keyDown(input, { key: 'Enter' });
+			});
+			expect(findInPage).toHaveBeenCalledWith('hello', { forward: true, findNext: true });
+
+			// Shift+Enter goes back
+			findInPage.mockClear();
+			await act(async () => {
+				fireEvent.keyDown(input, { key: 'Enter', shiftKey: true });
+			});
+			expect(findInPage).toHaveBeenCalledWith('hello', { forward: false, findNext: true });
+
+			// Escape closes and stops the find
+			stopFindInPage.mockClear();
+			await act(async () => {
+				fireEvent.keyDown(input, { key: 'Escape' });
+			});
+			expect(screen.queryByTestId('browser-tab-find-bar')).toBeNull();
+			expect(stopFindInPage).toHaveBeenCalledWith('clearSelection');
+		});
+
+		it('goBack and goForward delegate to webview, respecting canGoBack/canGoForward', async () => {
+			const ref = React.createRef<BrowserTabViewHandle>();
+			render(<BrowserTabView ref={ref} tab={mockTab} theme={mockTheme} onUpdateTab={vi.fn()} />);
+
+			const webview = getWebview();
+			const goBack = vi.fn();
+			const goForward = vi.fn();
+			webview.goBack = goBack;
+			webview.goForward = goForward;
+			webview.canGoBack = vi.fn(() => false);
+			webview.canGoForward = vi.fn(() => false);
+
+			// No-op when history is empty
+			act(() => ref.current!.goBack());
+			act(() => ref.current!.goForward());
+			expect(goBack).not.toHaveBeenCalled();
+			expect(goForward).not.toHaveBeenCalled();
+
+			webview.canGoBack = vi.fn(() => true);
+			webview.canGoForward = vi.fn(() => true);
+
+			act(() => ref.current!.goBack());
+			act(() => ref.current!.goForward());
+			expect(goBack).toHaveBeenCalledTimes(1);
+			expect(goForward).toHaveBeenCalledTimes(1);
+		});
+
+		it('Escape in the address bar restores URL and focuses the webview', async () => {
+			render(<BrowserTabView tab={mockTab} theme={mockTheme} onUpdateTab={vi.fn()} />);
+
+			const input = document.getElementById(
+				`browser-tab-address-${mockTab.id}`
+			) as HTMLInputElement;
+			expect(input).toBeTruthy();
+
+			const webview = getWebview();
+			const webviewFocus = vi.spyOn(webview, 'focus');
+
+			// Edit the URL, then press Escape
+			await act(async () => {
+				fireEvent.focus(input);
+				fireEvent.change(input, { target: { value: 'edited.com' } });
+			});
+			expect(input.value).toBe('edited.com');
+
+			await act(async () => {
+				fireEvent.keyDown(input, { key: 'Escape' });
+			});
+
+			// Reverted to the tab's actual URL, input lost focus, webview gained focus
+			expect(input.value).toBe(mockTab.url);
+			expect(document.activeElement).not.toBe(input);
+			expect(webviewFocus).toHaveBeenCalled();
+		});
+
+		it('ignores stale found-in-page results from a prior query', async () => {
+			const ref = React.createRef<BrowserTabViewHandle>();
+			render(<BrowserTabView ref={ref} tab={mockTab} theme={mockTheme} onUpdateTab={vi.fn()} />);
+
+			const webview = getWebview();
+			let nextRequestId = 100;
+			webview.findInPage = vi.fn(() => ++nextRequestId);
+			webview.stopFindInPage = vi.fn();
+
+			act(() => {
+				ref.current!.openFind();
+			});
+			const bar = await screen.findByTestId('browser-tab-find-bar');
+			const input = bar.querySelector('input') as HTMLInputElement;
+
+			// Query 1 (requestId 101)
+			await act(async () => {
+				fireEvent.change(input, { target: { value: 'first' } });
+			});
+			// Query 2 (requestId 102)
+			await act(async () => {
+				fireEvent.change(input, { target: { value: 'second' } });
+			});
+
+			// Stale result for query 1 arrives AFTER query 2 fired
+			await act(async () => {
+				const stale = new Event('found-in-page') as Event & { result?: object };
+				stale.result = { requestId: 101, activeMatchOrdinal: 5, matches: 5 };
+				webview.dispatchEvent(stale);
+			});
+			expect(bar.textContent).not.toContain('5/5');
+
+			// Fresh result for query 2 updates the counter
+			await act(async () => {
+				const fresh = new Event('found-in-page') as Event & { result?: object };
+				fresh.result = { requestId: 102, activeMatchOrdinal: 1, matches: 3 };
+				webview.dispatchEvent(fresh);
+			});
+			expect(bar.textContent).toContain('1/3');
 		});
 	});
 });

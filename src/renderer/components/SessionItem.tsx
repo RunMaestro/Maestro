@@ -12,9 +12,11 @@ import {
 import { GhostIconButton } from './ui/GhostIconButton';
 import { WorktreePill } from './ui/WorktreePill';
 import { CueIndicator } from './SessionList/CueIndicator';
+import { StartupCommandIndicator } from './SessionList/StartupCommandIndicator';
 import { WizardIndicator } from './SessionList/WizardIndicator';
 import { useSettingsStore } from '../stores/settingsStore';
 import { COLORBLIND_STATUS_COLORS } from '../constants/colorblindPalettes';
+import { abbreviateGroupName } from '../../shared/formatters';
 import type { Session, Group, Theme } from '../types';
 
 // ============================================================================
@@ -100,6 +102,13 @@ export interface SessionItemProps {
 	isEditing: boolean;
 	leftSidebarOpen: boolean;
 
+	/**
+	 * Stable DOM key for keyboard auto-scroll. Rendered as `data-nav-key` so the
+	 * Left Bar can locate this row and scroll it into view when it becomes the
+	 * keyboard selection. Format: `idx:<navIndex>`.
+	 */
+	navDomKey?: string;
+
 	// Optional data
 	group?: Group; // The group this session belongs to (for bookmark variant to show group badge)
 	groupId?: string; // The group ID context for generating editing key
@@ -111,6 +120,13 @@ export interface SessionItemProps {
 	wizardActive?: boolean; // Inline wizard active on at least one tab of this agent
 	wizardGeneratingDocs?: boolean; // Wizard is generating Auto Run documents (drives pulse)
 	worktreeChildCount?: number; // Number of worktree children (used for collapsed count badge)
+
+	/**
+	 * When true, the row can neither be dragged nor accept drops. Used for the
+	 * Bookmarks section, which is a filtered view: reordering/regrouping there
+	 * would be meaningless (and dropping fell through to "ungroup").
+	 */
+	dragDisabled?: boolean;
 
 	// Handlers
 	onSelect: () => void;
@@ -147,6 +163,7 @@ export const SessionItem = memo(function SessionItem({
 	isDragging,
 	isEditing,
 	leftSidebarOpen,
+	navDomKey,
 	group,
 	groupId,
 	gitFileCount,
@@ -157,6 +174,7 @@ export const SessionItem = memo(function SessionItem({
 	wizardActive = false,
 	wizardGeneratingDocs = false,
 	worktreeChildCount,
+	dragDisabled = false,
 	onSelect,
 	onDragStart,
 	onDragOver,
@@ -169,7 +187,24 @@ export const SessionItem = memo(function SessionItem({
 }: SessionItemProps) {
 	const showWorktreePill = useSettingsStore((s) => s.showWorktreePill);
 	const showWorktreeBranchName = useSettingsStore((s) => s.showWorktreeBranchName);
+	const showLeftPanelLocationPills = useSettingsStore((s) => s.showLeftPanelLocationPills);
+	const showLeftPanelGitIndicator = useSettingsStore((s) => s.showLeftPanelGitIndicator);
+	const showLeftPanelCueIndicator = useSettingsStore((s) => s.showLeftPanelCueIndicator);
+	const showLeftPanelStartupCommandIndicator = useSettingsStore(
+		(s) => s.showLeftPanelStartupCommandIndicator
+	);
+	const showGroupLabelInBookmarks = useSettingsStore((s) => s.showGroupLabelInBookmarks);
+	const showFullGroupLabelInBookmarks = useSettingsStore((s) => s.showFullGroupLabelInBookmarks);
+	const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures.maestroCue);
 	const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
+	const cueIndicatorVisible = maestroCueEnabled && showLeftPanelCueIndicator;
+	const startupCommandTabCount =
+		session.terminalTabs?.reduce(
+			(acc, tab) => (tab.startupCommand && tab.startupCommand.trim().length > 0 ? acc + 1 : acc),
+			0
+		) ?? 0;
+	const startupCommandIndicatorActive =
+		showLeftPanelStartupCommandIndicator && startupCommandTabCount > 0;
 
 	// Parent agents (sessions with worktreeConfig) get an inline chevron toggle.
 	// Default to expanded when worktreesExpanded is undefined to match useSortedSessions.
@@ -180,7 +215,8 @@ export const SessionItem = memo(function SessionItem({
 	// Location pills: SSH indicator always shown (even in bookmarks) since it
 	// signals where prompts will run. GIT/LOCAL are suppressed in the bookmark
 	// variant to keep the row compact.
-	const showLocationPills = variant !== 'worktree' && session.toolType !== 'terminal';
+	const showLocationPills =
+		showLeftPanelLocationPills && variant !== 'worktree' && session.toolType !== 'terminal';
 	const showGitLocalBadge = showLocationPills && variant !== 'bookmark';
 
 	// Status indicator: enhanced color/animation/label, plus hollow signal for
@@ -201,16 +237,19 @@ export const SessionItem = memo(function SessionItem({
 			// Worktree children have extra left padding and smaller text
 			return `pl-8 pr-4 py-1.5 ${base}`;
 		}
-		return `px-4 py-2 ${base}`;
+		// mr-px keeps the active/selected highlight from bleeding into the
+		// sidebar's right divider (border-r / focused inset accent shadow).
+		return `px-4 py-2 mr-px ${base}`;
 	};
 
 	return (
 		<div
 			key={`${variant}-${groupId || ''}-${session.id}`}
-			draggable
-			onDragStart={onDragStart}
-			onDragOver={onDragOver}
-			onDrop={onDrop}
+			data-nav-key={navDomKey}
+			draggable={!dragDisabled}
+			onDragStart={dragDisabled ? undefined : onDragStart}
+			onDragOver={dragDisabled ? undefined : onDragOver}
+			onDrop={dragDisabled ? undefined : onDrop}
 			onClick={onSelect}
 			onContextMenu={onContextMenu}
 			className={getContainerClassName()}
@@ -300,10 +339,19 @@ export const SessionItem = memo(function SessionItem({
 						>
 							{session.name}
 						</span>
-						{/* Maestro Cue indicator: subscriptions registered (and pulsing when running). */}
-						<CueIndicator
-							subscriptionCount={cueSubscriptionCount ?? 0}
-							activeRun={!!cueActiveRun}
+						{/* Maestro Cue indicator: subscriptions registered (and pulsing when running).
+						    Hidden when the Cue Encore Feature is off, or when the user has hidden it. */}
+						{cueIndicatorVisible && (
+							<CueIndicator
+								subscriptionCount={cueSubscriptionCount ?? 0}
+								activeRun={!!cueActiveRun}
+							/>
+						)}
+						{/* Persistent-terminal indicator: agent has at least one terminal tab with
+						    a saved startup command. Hidden when the user disables the setting. */}
+						<StartupCommandIndicator
+							active={startupCommandIndicatorActive}
+							count={startupCommandTabCount}
 						/>
 						{/* Inline wizard indicator: shown while /wizard is in dialog or doc-gen phase. */}
 						<WizardIndicator active={wizardActive} generatingDocs={wizardGeneratingDocs} />
@@ -343,31 +391,41 @@ export const SessionItem = memo(function SessionItem({
 						)}
 						<Activity className="w-3 h-3" /> {session.toolType}
 						{session.sessionSshRemoteConfig?.enabled ? ' (SSH)' : ''}
-						{/* Group badge (only in bookmark variant when session belongs to a group) */}
-						{variant === 'bookmark' && group && (
-							<span
-								className="text-[9px] px-1 py-0.5 rounded"
-								style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-							>
-								{group.name}
-							</span>
-						)}
 					</div>
 				)}
 			</div>
 
 			{/* Right side: Indicators and actions */}
 			<div className="flex items-center gap-2 ml-2">
-				{/* Git Dirty Indicator (only in wide mode) - placed before GIT/LOCAL for vertical alignment */}
-				{leftSidebarOpen && session.isGitRepo && gitFileCount !== undefined && gitFileCount > 0 && (
-					<div
-						className="flex items-center gap-0.5 text-[10px]"
-						style={{ color: theme.colors.warning }}
+				{/* Group badge (only in bookmark variant when session belongs to a group).
+				    Hidden entirely when showGroupLabelInBookmarks is off. Abbreviated by
+				    default; the showFullGroupLabelInBookmarks setting swaps in the full group
+				    name, truncated with the complete value available on hover. */}
+				{variant === 'bookmark' && group && showGroupLabelInBookmarks && (
+					<span
+						className={`text-[9px] px-1 py-0.5 rounded${
+							showFullGroupLabelInBookmarks ? ' max-w-[140px] truncate' : ''
+						}`}
+						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+						title={group.name}
 					>
-						<GitBranch className="w-2.5 h-2.5" />
-						<span>{gitFileCount}</span>
-					</div>
+						{showFullGroupLabelInBookmarks ? group.name : abbreviateGroupName(group.name)}
+					</span>
 				)}
+				{/* Git Dirty Indicator (only in wide mode) - placed before GIT/LOCAL for vertical alignment */}
+				{showLeftPanelGitIndicator &&
+					leftSidebarOpen &&
+					session.isGitRepo &&
+					gitFileCount !== undefined &&
+					gitFileCount > 0 && (
+						<div
+							className="flex items-center gap-0.5 text-[10px]"
+							style={{ color: theme.colors.warning }}
+						>
+							<GitBranch className="w-2.5 h-2.5" />
+							<span>{gitFileCount}</span>
+						</div>
+					)}
 
 				{/* Location Indicator Pills */}
 				{showLocationPills &&
@@ -430,7 +488,7 @@ export const SessionItem = memo(function SessionItem({
 				{/* AUTO Mode Indicator */}
 				{isInBatch && (
 					<div
-						className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase animate-status-pulse"
+						className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
 						style={{
 							backgroundColor: theme.colors.warning + '30',
 							color: theme.colors.warning,
@@ -462,7 +520,7 @@ export const SessionItem = memo(function SessionItem({
 								e.stopPropagation();
 								onToggleBookmark();
 							}}
-							className={`p-0.5 rounded hover:bg-white/10 transition-all ${session.bookmarked ? '' : 'opacity-0 group-hover:opacity-100'}`}
+							className="p-0.5 rounded hover:bg-white/10 transition-all"
 							title={session.bookmarked ? 'Remove bookmark' : 'Add bookmark'}
 						>
 							<Bookmark
@@ -488,8 +546,8 @@ export const SessionItem = memo(function SessionItem({
 						</GhostIconButton>
 					))}
 
-				{/* AI Status Indicator with Unread Badge - ml-auto ensures it aligns to right edge */}
-				<div className="relative ml-auto w-2 h-2">
+				{/* AI Status Indicator with Unread Badge */}
+				<div className="relative w-2 h-2 ml-auto">
 					{/* Pulse ring: only renders for animated states, sits behind the dot */}
 					{statusInfo.animate && (
 						<span

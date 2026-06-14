@@ -18,23 +18,32 @@
  * dangle.
  */
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useSessionStore } from '../../../stores/sessionStore';
+import { useSettingsStore } from '../../../stores/settingsStore';
 import { notifyToast } from '../../../stores/notificationStore';
 import { REGEX_AI_TAB } from '../../../utils/sessionIdParser';
-import { getActiveTab } from '../../../utils/tabHelpers';
+import {
+	getActiveTab,
+	markTabRunningQueuedItem,
+	resolveQueuedItemTarget,
+} from '../../../utils/tabHelpers';
 import { generateId } from '../../../utils/ids';
 import { logger } from '../../../utils/logger';
 import { cleanupExitedTabLogs } from './helpers/exitTabCleanup';
 import { chooseNextQueuedItem } from './helpers/exitDequeue';
+import { takeNextRunnableQueueItem } from '../../../utils/executionQueue';
 import { refreshGitRefsAfterTerminalExit } from './helpers/exitGitRefresh';
 import {
 	runExitSynopsis,
 	shouldRunSynopsisOnExit,
+	turnDidMeaningfulWork,
 	type SynopsisData,
+	type RunExitSynopsisDeps,
 } from './helpers/exitSynopsis';
+import { thinkingLogsRecorded } from './helpers/thinkingLogs';
 import { getAutorunSynopsisPrompt } from './helpers/autorunSynopsisPrompt';
-import type { LogEntry, QueuedItem, SessionState, UsageStats } from '../../../types';
+import type { LogEntry, QueuedItem, Session, SessionState, UsageStats } from '../../../types';
 import type { UseAgentListenersDeps, ToolProgressState } from './types';
 
 export interface UseAgentExitListenerDeps {
@@ -43,17 +52,85 @@ export interface UseAgentExitListenerDeps {
 	addHistoryEntryRef: UseAgentListenersDeps['addHistoryEntryRef'];
 	spawnBackgroundSynopsisRef: UseAgentListenersDeps['spawnBackgroundSynopsisRef'];
 	rightPanelRef: UseAgentListenersDeps['rightPanelRef'];
+	batchedUpdater: UseAgentListenersDeps['batchedUpdater'];
 	activeHiddenToolRef: React.RefObject<
 		Map<string, { toolName: string; toolState?: ToolProgressState }>
 	>;
 }
 
 export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
+	// Pending debounced synopses, keyed by `${sessionId}:${tabId}`. When the
+	// Synopsis Debounce setting is on, each eligible exit (re)arms a timer here
+	// instead of spawning immediately, so rapid-fire turns coalesce into one
+	// synopsis. Flushed on unmount so in-flight work still reaches History.
+	const debounceTimersRef = useRef<
+		Map<string, { timer: ReturnType<typeof setTimeout>; data: SynopsisData; anyWork: boolean }>
+	>(new Map());
+
 	useEffect(() => {
 		const setSessions = useSessionStore.getState().setSessions;
 		const getSessions = () => useSessionStore.getState().sessions;
 		const getGroups = () => useSessionStore.getState().groups;
 		const getActiveSessionId = () => useSessionStore.getState().activeSessionId;
+
+		// Shared deps for every synopsis spawn (immediate or debounced).
+		const runSynopsisDeps: RunExitSynopsisDeps = {
+			spawnBackgroundSynopsisRef: deps.spawnBackgroundSynopsisRef,
+			addHistoryEntryRef: deps.addHistoryEntryRef,
+			rightPanelRef: deps.rightPanelRef,
+			getAutorunSynopsisPrompt,
+			updateLastSynopsisTime: (sId, tId, time) => {
+				setSessions((prev) =>
+					prev.map((s) => {
+						if (s.id !== sId) return s;
+						return {
+							...s,
+							aiTabs: s.aiTabs.map((tab) =>
+								tab.id !== tId ? tab : { ...tab, lastSynopsisTime: time }
+							),
+						};
+					})
+				);
+			},
+		};
+
+		/**
+		 * Route an eligible synopsis through the activity gate and (optionally) the
+		 * debounce window.
+		 *
+		 * - Activity gate (always on): a turn that did no real work - a plain Q&A
+		 *   with no tool use - is dropped. We never pay for a synopsis spawn or a
+		 *   History entry on a turn that produced nothing.
+		 * - Debounce (opt-in via `synopsisDebounceSeconds`): a work-turn arms or
+		 *   resets a per-tab timer; a follow-up turn while one is pending extends
+		 *   it. When it fires, a single synopsis covers everything since the last
+		 *   recorded synopsis. A pure-Q&A turn with nothing pending arms nothing.
+		 */
+		const dispatchSynopsis = (data: SynopsisData, didWork: boolean): void => {
+			const debounceSec = useSettingsStore.getState().synopsisDebounceSeconds || 0;
+
+			if (debounceSec <= 0) {
+				if (didWork) void runExitSynopsis(data, runSynopsisDeps);
+				return;
+			}
+
+			const timers = debounceTimersRef.current;
+			const key = `${data.sessionId}:${data.tabId ?? ''}`;
+			const existing = timers.get(key);
+			const anyWork = (existing?.anyWork ?? false) || didWork;
+			// Don't arm a timer for a conversation that hasn't done any real work yet.
+			if (!anyWork) return;
+
+			if (existing) clearTimeout(existing.timer);
+			const timer = setTimeout(() => {
+				const entry = timers.get(key);
+				timers.delete(key);
+				if (entry?.anyWork) void runExitSynopsis(entry.data, runSynopsisDeps);
+			}, debounceSec * 1000);
+			// Always carry the latest turn's data so the synopsis resumes the most
+			// recent agent session and reports the freshest duration.
+			timers.set(key, { timer, data, anyWork: true });
+		};
 
 		const unsubscribe = window.maestro.process.onExit(async (sessionId: string, code: number) => {
 			if (sessionId.includes('-terminal-')) return;
@@ -128,6 +205,7 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 			} | null = null;
 			let queuedItemToProcess: { sessionId: string; item: QueuedItem } | null = null;
 			let synopsisData: SynopsisData | null = null;
+			let synopsisDidWork = false;
 
 			if (isFromAi) {
 				const currentSession = getSessions().find((s) => s.id === actualSessionId);
@@ -140,17 +218,21 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 						};
 					}
 
+					// Look up the completed tab in aiTabs first, then in orphanedThinkingTabs —
+					// tabs closed mid-thinking land in the orphan list, and their exit still
+					// needs to drive toast/synopsis side-effects.
 					const completedTab = tabIdFromSession
-						? currentSession.aiTabs?.find((tab) => tab.id === tabIdFromSession)
+						? currentSession.aiTabs?.find((tab) => tab.id === tabIdFromSession) ||
+							currentSession.orphanedThinkingTabs?.find((tab) => tab.id === tabIdFromSession)
 						: getActiveTab(currentSession);
 					const logs = completedTab?.logs || [];
 					const lastUserLog = logs.filter((log) => log.source === 'user').pop();
 					const lastAiLog = logs
 						.filter((log) => log.source === 'stdout' || log.source === 'ai')
 						.pop();
-					const completedTabData = currentSession.aiTabs?.find(
-						(tab) => tab.id === tabIdFromSession
-					);
+					const completedTabData =
+						currentSession.aiTabs?.find((tab) => tab.id === tabIdFromSession) ||
+						currentSession.orphanedThinkingTabs?.find((tab) => tab.id === tabIdFromSession);
 					const duration = completedTabData?.thinkingStartTime
 						? Date.now() - completedTabData.thinkingStartTime
 						: currentSession.thinkingStartTime
@@ -225,6 +307,11 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 					};
 
 					if (shouldRunSynopsisOnExit(currentSession, completedTab)) {
+						synopsisDidWork = turnDidMeaningfulWork(
+							logs,
+							!!currentSession.pendingAICommandForSynopsis,
+							thinkingLogsRecorded(completedTab?.showThinking)
+						);
 						synopsisData = {
 							sessionId: actualSessionId,
 							cwd: currentSession.cwd,
@@ -244,6 +331,11 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 								customEnvVars: currentSession.customEnvVars,
 								customModel: currentSession.customModel,
 								customContextWindow: currentSession.customContextWindow,
+								// Carry the agent's Claude token source into the synopsis spawn so
+								// it resolves the same TUI/Dynamic/API mode as a normal turn.
+								enableMaestroP: currentSession.enableMaestroP,
+								maestroPMode: currentSession.maestroPMode,
+								maestroPPath: currentSession.maestroPPath,
 							},
 						};
 					}
@@ -254,6 +346,158 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 			setSessions((prev) =>
 				prev.map((s) => {
 					if (s.id !== actualSessionId) return s;
+
+					// If this exit belongs to a tab the user already closed while it was
+					// still thinking, the tab is no longer in s.aiTabs — it lives in
+					// s.orphanedThinkingTabs purely so the thinking pill can keep
+					// surfacing it. Drop it from orphans and recompute session-level
+					// busy state. Nothing else (queue, logs, synopsis, toast) needs to
+					// touch aiTabs because the tab is gone.
+					const orphanIndex =
+						tabIdFromSession && s.orphanedThinkingTabs
+							? s.orphanedThinkingTabs.findIndex((t) => t.id === tabIdFromSession)
+							: -1;
+					if (isFromAi && orphanIndex !== -1 && s.orphanedThinkingTabs) {
+						// Before retiring the orphan, drain any follow-up the user queued on
+						// it: a message queued on a tab keeps sending in the background after
+						// the tab is closed (fire-and-forget). The orphan stays parked - it
+						// carries the agent session id for continuity and is a valid dispatch
+						// target - until its queued work is gone.
+						const { item: nextItem, remaining: remainingQueue } = takeNextRunnableQueueItem(
+							s.executionQueue
+						);
+						const otherTabsBusy = s.aiTabs?.some((tab) => tab.state === 'busy') ?? false;
+						const runNextOnOrphan =
+							!!nextItem &&
+							nextItem.tabId === tabIdFromSession &&
+							(nextItem.forceParallel || nextItem.readOnlyMode || !otherTabsBusy);
+
+						if (runNextOnOrphan && nextItem) {
+							// Keep the orphan, mark it thinking again, and dequeue the item here
+							// so it is not re-dispatched. processQueuedItem (queuedItemToProcess,
+							// computed above via chooseNextQueuedItem) performs the actual spawn
+							// against this same orphan tab id.
+							const updatedOrphans = s.orphanedThinkingTabs.map((tab, i) => {
+								if (i !== orphanIndex) return tab;
+								const refreshed = {
+									...tab,
+									state: 'busy' as const,
+									thinkingStartTime: Date.now(),
+								};
+								// Record the queued user message on the orphan's own log so a
+								// later restore shows the background conversation. (The streamed
+								// response only routes back to the UI once the tab is restored.)
+								if (nextItem.type === 'message' && nextItem.text) {
+									const logEntry: LogEntry = {
+										id: generateId(),
+										timestamp: Date.now(),
+										source: 'user',
+										text: nextItem.text,
+										images: nextItem.images,
+										...(nextItem.forceParallel && { forceParallel: true }),
+									};
+									refreshed.logs = [...refreshed.logs, logEntry];
+								}
+								return refreshed;
+							});
+							return {
+								...s,
+								orphanedThinkingTabs: updatedOrphans,
+								executionQueue: remainingQueue,
+								state: 'busy' as SessionState,
+								busySource: 'ai',
+								thinkingStartTime: Date.now(),
+								currentCycleTokens: 0,
+								currentCycleBytes: 0,
+							};
+						}
+
+						// Items queued for this orphan that can't run yet (another tab is
+						// busy): keep the orphan parked so it survives to drain once the
+						// others finish. The idle-recovery path in useQueueProcessing then
+						// dispatches it when the session next goes idle.
+						const orphanHasPendingItems = s.executionQueue.some(
+							(item) => item.tabId === tabIdFromSession
+						);
+						if (orphanHasPendingItems) {
+							const updatedOrphans = s.orphanedThinkingTabs.map((tab, i) =>
+								i === orphanIndex
+									? { ...tab, state: 'idle' as const, thinkingStartTime: undefined }
+									: tab
+							);
+							const anyAiTabStillBusy = s.aiTabs?.some((tab) => tab.state === 'busy') ?? false;
+							return {
+								...s,
+								orphanedThinkingTabs: updatedOrphans,
+								state: anyAiTabStillBusy ? s.state : ('idle' as SessionState),
+								busySource: anyAiTabStillBusy ? s.busySource : undefined,
+								thinkingStartTime: anyAiTabStillBusy ? s.thinkingStartTime : undefined,
+							};
+						}
+
+						// This orphan has no queued work of its own, so it's done draining -
+						// retire it. But the queue may still hold a runnable item for ANOTHER
+						// tab that the post-reducer dispatch (queuedItemToProcess, decided above
+						// by chooseNextQueuedItem) is about to spawn. We MUST dequeue that exact
+						// item and mark its target busy here, in lockstep with that spawn.
+						// Otherwise it stays queued and re-dispatches when its own process later
+						// exits (the message runs twice), and no tab shows busy while it runs
+						// (an invisible turn whose reply never routes to a tab). Gating on
+						// queuedItemToProcess keeps the reducer and the spawn perfectly in sync.
+						const orphansWithoutExited = s.orphanedThinkingTabs.filter((_, i) => i !== orphanIndex);
+						const { item: nextRunnable, remaining: remainingAfterNext } = takeNextRunnableQueueItem(
+							s.executionQueue
+						);
+						const dispatchesNext =
+							!!queuedItemToProcess &&
+							!!nextRunnable &&
+							queuedItemToProcess.item.id === nextRunnable.id;
+
+						if (dispatchesNext && nextRunnable) {
+							// Resolve against the session WITHOUT the just-retired orphan so the
+							// target is the item's real owner (another aiTab or another
+							// still-draining orphan); we already know it isn't this orphan.
+							const sessionAfterRetire: Session = {
+								...s,
+								orphanedThinkingTabs: orphansWithoutExited,
+							};
+							const target = resolveQueuedItemTarget(sessionAfterRetire, nextRunnable);
+							if (target) {
+								return {
+									...s,
+									aiTabs: s.aiTabs.map((tab) =>
+										tab.id === target.tabId ? markTabRunningQueuedItem(tab, nextRunnable) : tab
+									),
+									orphanedThinkingTabs:
+										orphansWithoutExited.length > 0
+											? orphansWithoutExited.map((tab) =>
+													tab.id === target.tabId
+														? markTabRunningQueuedItem(tab, nextRunnable)
+														: tab
+												)
+											: undefined,
+									executionQueue: remainingAfterNext,
+									state: 'busy' as SessionState,
+									busySource: 'ai',
+									thinkingStartTime: Date.now(),
+									currentCycleTokens: 0,
+									currentCycleBytes: 0,
+								};
+							}
+						}
+
+						// Nothing to dispatch - retire the orphan and recompute thinking state.
+						const anyAiTabStillBusy = s.aiTabs?.some((tab) => tab.state === 'busy') ?? false;
+						const stillThinking = anyAiTabStillBusy || orphansWithoutExited.length > 0;
+						return {
+							...s,
+							orphanedThinkingTabs:
+								orphansWithoutExited.length > 0 ? orphansWithoutExited : undefined,
+							state: stillThinking ? s.state : ('idle' as SessionState),
+							busySource: stillThinking ? s.busySource : undefined,
+							thinkingStartTime: stillThinking ? s.thinkingStartTime : undefined,
+						};
+					}
 
 					if (isFromAi) {
 						if (s.state === 'error' && s.agentError) {
@@ -295,9 +539,12 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 							};
 						}
 
-						if (s.executionQueue.length > 0) {
-							const nextItem = s.executionQueue[0];
-
+						// Skip paused items: run the first runnable one, holding the rest
+						// (including any paused items ahead of it) in place.
+						const { item: nextItem, remaining: remainingQueue } = takeNextRunnableQueueItem(
+							s.executionQueue
+						);
+						if (nextItem) {
 							// Guard: non-forceParallel, non-readOnly items must wait
 							// until ALL other tabs are idle to prevent write conflicts
 							const otherTabsBusy = s.aiTabs?.some(
@@ -325,12 +572,9 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 								};
 							}
 
-							const [, ...remainingQueue] = s.executionQueue;
+							const target = resolveQueuedItemTarget(s, nextItem);
 
-							const targetTab =
-								s.aiTabs.find((tab) => tab.id === nextItem.tabId) || getActiveTab(s);
-
-							if (!targetTab) {
+							if (!target) {
 								return {
 									...s,
 									state: 'busy' as SessionState,
@@ -342,13 +586,15 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 								};
 							}
 
-							let updatedAiTabs = s.aiTabs.map((tab) => {
-								if (tab.id === targetTab.id) {
-									return {
-										...tab,
-										state: 'busy' as const,
-										thinkingStartTime: Date.now(),
-									};
+							// Route the dequeued item to its target tab. When that tab is an
+							// orphan (the user closed it while this message was still queued),
+							// it lives in orphanedThinkingTabs - keep the send fire-and-forget
+							// and route busy-state + the user log THERE, never onto the
+							// active tab. The aiTabs map then only marks the just-exited tab
+							// idle (its target branch never matches a live aiTab in that case).
+							const updatedAiTabs = s.aiTabs.map((tab) => {
+								if (tab.id === target.tabId) {
+									return markTabRunningQueuedItem(tab, nextItem);
 								}
 								if (tabIdFromSession && tab.id === tabIdFromSession) {
 									return {
@@ -360,30 +606,21 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 								return tab;
 							});
 
-							if (nextItem.type === 'message' && nextItem.text) {
-								const logEntry: LogEntry = {
-									id: generateId(),
-									timestamp: Date.now(),
-									source: 'user',
-									text: nextItem.text,
-									images: nextItem.images,
-									...(nextItem.forceParallel && { forceParallel: true }),
-								};
-								updatedAiTabs = updatedAiTabs.map((tab) =>
-									tab.id === targetTab.id
-										? {
-												...tab,
-												logs: [...tab.logs, logEntry],
-											}
-										: tab
-								);
-							}
+							const updatedOrphans =
+								target.location === 'orphan' && s.orphanedThinkingTabs
+									? s.orphanedThinkingTabs.map((tab) =>
+											tab.id === target.tabId ? markTabRunningQueuedItem(tab, nextItem) : tab
+										)
+									: s.orphanedThinkingTabs;
 
 							return {
 								...s,
 								state: 'busy' as SessionState,
 								busySource: 'ai',
 								aiTabs: updatedAiTabs,
+								...(updatedOrphans !== s.orphanedThinkingTabs && {
+									orphanedThinkingTabs: updatedOrphans,
+								}),
 								executionQueue: remainingQueue,
 								thinkingStartTime: Date.now(),
 								currentCycleTokens: 0,
@@ -521,6 +758,11 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 			}
 
 			if (queuedItemToProcess) {
+				// Flush any pending batched stdout/stderr chunks before the queued
+				// message is dispatched. Otherwise the new user log entry is appended
+				// ahead of the trailing chunks from the response that just finished,
+				// and those chunks merge into the next response's bubble (issue #1022).
+				deps.batchedUpdater.flushNow();
 				setTimeout(() => {
 					deps.processQueuedItemRef.current?.(
 						queuedItemToProcess!.sessionId,
@@ -570,30 +812,20 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 			}
 
 			if (synopsisData) {
-				void runExitSynopsis(synopsisData, {
-					spawnBackgroundSynopsisRef: deps.spawnBackgroundSynopsisRef,
-					addHistoryEntryRef: deps.addHistoryEntryRef,
-					rightPanelRef: deps.rightPanelRef,
-					getAutorunSynopsisPrompt,
-					updateLastSynopsisTime: (sId, tId, time) => {
-						setSessions((prev) =>
-							prev.map((s) => {
-								if (s.id !== sId) return s;
-								return {
-									...s,
-									aiTabs: s.aiTabs.map((tab) =>
-										tab.id !== tId ? tab : { ...tab, lastSynopsisTime: time }
-									),
-								};
-							})
-						);
-					},
-				});
+				dispatchSynopsis(synopsisData, synopsisDidWork);
 			}
 		});
 
 		return () => {
 			unsubscribe();
+			// Flush any pending debounced synopses so finished work still reaches
+			// History when the listener tears down (navigation, reload, quit).
+			const timers = debounceTimersRef.current;
+			for (const entry of timers.values()) {
+				clearTimeout(entry.timer);
+				if (entry.anyWork) void runExitSynopsis(entry.data, runSynopsisDeps);
+			}
+			timers.clear();
 		};
 	}, [
 		deps.activeHiddenToolRef,

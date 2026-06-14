@@ -38,12 +38,12 @@ The Overview tab gives you a high-level summary of your AI usage:
 
 **Summary Cards:**
 
-- **Sessions** — Total number of registered sessions
-- **Total Queries** — Number of messages sent to AI agents
-- **Total Time** — Cumulative time spent waiting for AI responses
-- **Avg Duration** — Average response time per query
-- **Top Agent** — Your most-used AI agent
-- **Interactive %** — Percentage of queries from interactive (non-Auto Run) sessions
+- **Sessions** - Total number of registered sessions
+- **Total Queries** - Number of messages sent to AI agents
+- **Total Time** - Cumulative time spent waiting for AI responses
+- **Avg Duration** - Average response time per query
+- **Top Agent** - Your most-used AI agent
+- **Interactive %** - Percentage of queries from interactive (non-Auto Run) sessions
 
 **Agent Comparison:**
 A horizontal bar chart showing usage distribution across your AI agents. See at a glance which agents you use most, with query counts and time spent per agent.
@@ -51,8 +51,8 @@ A horizontal bar chart showing usage distribution across your AI agents. See at 
 **Source Distribution:**
 A donut chart breaking down your queries by source:
 
-- **Interactive** — Manual queries from AI Terminal conversations
-- **Auto Run** — Automated queries from playbook execution
+- **Interactive** - Manual queries from AI Terminal conversations
+- **Auto Run** - Automated queries from playbook execution
 
 Toggle between **Count** (number of queries) and **Duration** (time spent) views.
 
@@ -60,7 +60,7 @@ Toggle between **Count** (number of queries) and **Duration** (time spent) views
 A donut chart showing the breakdown between local and remote (SSH) queries. Useful for understanding how much work is done locally versus on remote machines.
 
 **Peak Hours:**
-A 24-hour bar chart showing when you're most active. Each bar represents an hour of the day (0–23), with height indicating query count or duration. The peak hour is highlighted. Toggle between Count and Duration views.
+A 24-hour bar chart showing when you're most active. Each bar represents an hour of the day (0-23), with height indicating query count or duration. The peak hour is highlighted. Toggle between Count and Duration views.
 
 **Activity Heatmap:**
 A GitHub-style heatmap showing your activity patterns throughout the week. Each cell represents an hour of the day, with color intensity indicating activity level. Toggle between Count and Duration views to see different perspectives.
@@ -74,10 +74,10 @@ The Agents tab provides detailed per-agent analytics:
 
 **Session Statistics:**
 
-- **Total Sessions** — Count of registered sessions
-- **By Agent** — Breakdown by agent type (Claude Code, Codex, etc.) with color-coded indicators
-- **Git Repos vs Folders** — How many sessions are Git repositories versus plain directories
-- **Remote vs Local** — Sessions running on remote SSH hosts versus local machine
+- **Total Sessions** - Count of registered sessions
+- **By Agent** - Breakdown by agent type (Claude Code, Codex, etc.) with color-coded indicators
+- **Git Repos vs Folders** - How many sessions are Git repositories versus plain directories
+- **Remote vs Local** - Sessions running on remote SSH hosts versus local machine
 
 **Agent Comparison:**
 
@@ -98,12 +98,12 @@ The Auto Run tab focuses specifically on automated playbook execution:
 
 **Metric Cards:**
 
-- **Total Sessions** — Number of Auto Run sessions
-- **Tasks Done** — Total tasks completed (with attempted count)
-- **Avg Tasks/Session** — Average tasks completed per Auto Run session
-- **Success Rate** — Percentage of tasks that completed successfully
-- **Avg Session** — Average duration of an Auto Run session
-- **Avg Task** — Average duration per individual task
+- **Total Sessions** - Number of Auto Run sessions
+- **Tasks Done** - Total tasks completed (with attempted count)
+- **Avg Tasks/Session** - Average tasks completed per Auto Run session
+- **Success Rate** - Percentage of tasks that completed successfully
+- **Avg Session** - Average duration of an Auto Run session
+- **Avg Task** - Average duration per individual task
 
 **Tasks Completed Over Time:**
 A mini bar chart showing task completions by date (last 14 days). Hover over bars to see exact counts and success percentages for each day.
@@ -150,9 +150,9 @@ Use exported data for further analysis in spreadsheet applications or to share u
 
 The Usage Dashboard collects:
 
-- **Query events** — Each message sent to an AI agent, including duration and which agent handled it
-- **Auto Run sessions** — Start/end times of automated playbook runs
-- **Auto Run tasks** — Individual task completions within playbooks
+- **Query events** - Each message sent to an AI agent, including duration and which agent handled it
+- **Auto Run sessions** - Start/end times of automated playbook runs
+- **Auto Run tasks** - Individual task completions within playbooks
 
 ### What's NOT Tracked
 

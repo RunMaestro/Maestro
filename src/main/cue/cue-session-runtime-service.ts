@@ -14,6 +14,8 @@ import type { CueSessionRegistry } from './cue-session-registry';
 import { createTriggerSource } from './triggers/cue-trigger-source-registry';
 import { passesFilter } from './triggers/cue-trigger-filter';
 import type { CueTriggerSource } from './triggers/cue-trigger-source';
+import { removeSubscriptionFromYaml, type SelfDestructResult } from './cue-self-destruct';
+import { captureException } from '../utils/sentry';
 
 /**
  * Why a session is being initialized. Used to gate `app.startup` triggers,
@@ -57,6 +59,14 @@ export interface CueSessionRuntimeServiceDeps {
 	) => number;
 	clearQueue: (sessionId: string, preserveStartup?: boolean) => void;
 	clearFanInState: (sessionId: string) => void;
+	/**
+	 * Remove a subscription from cue.yaml on behalf of a trigger source's
+	 * `requestSelfDestruct` (missed-grace / filtered `time.once`). The engine
+	 * injects a version serialised against its per-root YAML write chain so the
+	 * rewrite can't race a toggle or another self-destruct on the same file.
+	 * When omitted (standalone use / tests), the service writes directly.
+	 */
+	selfDestruct?: (projectRoot: string, subscriptionName: string) => Promise<SelfDestructResult>;
 }
 
 /**
@@ -238,6 +248,47 @@ export function createCueSessionRuntimeService(
 				emit: (event) => {
 					state.lastTriggered = event.timestamp;
 					deps.dispatchSubscription(session.id, sub, event, session.name);
+				},
+				// The trigger source asks for the sub to be consumed (missed-grace,
+				// or — in theory — any other reason it decides not to fire). The
+				// runtime is the sole writer of cue.yaml on this path; the engine's
+				// YAML watcher reloads the config naturally after the rewrite, so
+				// there's no need to refresh the session manually.
+				requestSelfDestruct: (subscriptionName, reason) => {
+					// Prefer the engine-injected serialised writer so this rewrite
+					// can't race a toggle / run-completion self-destruct on the same
+					// cue.yaml; fall back to a direct write when running standalone.
+					const selfDestruct = deps.selfDestruct ?? removeSubscriptionFromYaml;
+					void selfDestruct(session.projectRoot, subscriptionName)
+						.then((result) => {
+							if (result.removed) {
+								deps.onLog(
+									'cue',
+									`[CUE] self-destruct removed "${subscriptionName}" from cue.yaml (${reason})`
+								);
+							} else {
+								deps.onLog(
+									'warn',
+									`[CUE] self-destruct could not remove "${subscriptionName}" (${reason}): ${result.reason ?? 'unknown'}`
+								);
+							}
+						})
+						.catch((err) => {
+							const message = err instanceof Error ? err.message : String(err);
+							deps.onLog(
+								'warn',
+								`[CUE] self-destruct threw for "${subscriptionName}" (${reason}): ${message}`
+							);
+							// Expected file errors come back as a structured
+							// { removed: false } result, so a throw here is unexpected -
+							// report it to Sentry rather than only logging.
+							void captureException(err, {
+								operation: 'cueRequestSelfDestruct',
+								sessionId: session.id,
+								subscriptionName,
+								reason,
+							});
+						});
 				},
 			});
 

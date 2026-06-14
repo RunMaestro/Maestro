@@ -16,6 +16,12 @@ export interface ModeratorConfig {
 	customPath?: string;
 	customArgs?: string;
 	customEnvVars?: Record<string, string>;
+	/** Claude token-source opt-in (Claude Code moderator only). */
+	enableMaestroP?: boolean;
+	/** Refines enableMaestroP: 'interactive' (always TUI) vs 'dynamic' (auto-switch). */
+	maestroPMode?: 'interactive' | 'dynamic';
+	/** Optional maestro-p script override. */
+	maestroPPath?: string;
 }
 
 /**

@@ -40,20 +40,17 @@ Load config from `{project-root}/_bmad/core/config.yaml` and resolve:
 
 ### Paths
 
-- `template_path` = `./template.md`
-- `brain_techniques_path` = `./brain-methods.csv`
 - `brainstorming_session_output_file` = `{output_folder}/brainstorming/brainstorming-session-{{date}}-{{time}}.md` (evaluated once at workflow start)
 
 All steps MUST reference `{brainstorming_session_output_file}` instead of the full path pattern.
 
 - `context_file` = Optional context file path from workflow invocation for project-specific guidance
-- `advancedElicitationTask` = `skill:bmad-advanced-elicitation`
 
 ---
 
 ## EXECUTION
 
-Read fully and follow: `steps/step-01-session-setup.md` to begin the workflow.
+Read fully and follow: `./steps/step-01-session-setup.md` to begin the workflow.
 
 **Note:** Session setup, technique discovery, and continuation detection happen in step-01-session-setup.md.
 
@@ -63,27 +60,7 @@ Read fully and follow: `steps/step-01-session-setup.md` to begin the workflow.
 
 The following upstream BMAD files are embedded so this Maestro prompt remains self-contained.
 
-## src/core/workflows/bmad-brainstorming/template.md
-
-```md
----
-stepsCompleted: []
-inputDocuments: []
-session_topic: ''
-session_goals: ''
-selected_approach: ''
-techniques_used: []
-ideas_generated: []
-context_file: ''
----
-
-# Brainstorming Session Results
-
-**Facilitator:** {{user_name}}
-**Date:** {{date}}
-```
-
-## src/core/workflows/bmad-brainstorming/steps/step-01-session-setup.md
+## src/core/skills/bmad-brainstorming/steps/step-01-session-setup.md
 
 ````md
 # Step 1: Session Setup and Continuation Detection
@@ -136,6 +113,8 @@ If existing session files are found:
   **[2]** Start a new session
   **[3]** See all existing sessions"
 
+**HALT — wait for user selection before proceeding.**
+
 - If user selects **[1]** (continue): Set `{brainstorming_session_output_file}` to that file path and load `./step-01b-continue.md`
 - If user selects **[2]** (new): Generate new filename with current date/time and proceed to step 3
 - If user selects **[3]** (see all): List all session filenames and ask which to continue or if new
@@ -153,7 +132,7 @@ Create the brainstorming session document:
 mkdir -p "$(dirname "{brainstorming_session_output_file}")"
 
 # Initialize from template
-cp "{template_path}" "{brainstorming_session_output_file}"
+cp "../template.md" "{brainstorming_session_output_file}"
 ```
 ````
 
@@ -244,6 +223,8 @@ When user selects approach, append the session overview content directly to `{br
 
 Which approach appeals to you most? (Enter 1-4)"
 
+**HALT — wait for user selection before proceeding.**
+
 ### 4. Handle User Selection and Initial Document Append
 
 #### When user selects approach number:
@@ -300,7 +281,7 @@ Remember: Focus only on setup and routing - don't preload technique information 
 
 ````
 
-## src/core/workflows/bmad-brainstorming/steps/step-01b-continue.md
+## src/core/skills/bmad-brainstorming/steps/step-01b-continue.md
 
 ```md
 # Step 1b: Workflow Continuation
@@ -368,7 +349,9 @@ Based on session analysis, provide appropriate options:
 **Options:**
 [1] Review Results - Go through your documented ideas and insights
 [2] Start New Session - Begin brainstorming on a new topic
-[3) Extend Session - Add more techniques or explore new angles"
+[3] Extend Session - Add more techniques or explore new angles"
+
+**HALT — wait for user selection before proceeding.**
 
 **If Session In Progress:**
 "Let's continue where we left off!
@@ -428,7 +411,7 @@ Route to appropriate workflow step based on user's continuation choice and curre
 
 ````
 
-## src/core/workflows/bmad-brainstorming/steps/step-02a-user-selected.md
+## src/core/skills/bmad-brainstorming/steps/step-02a-user-selected.md
 
 ```md
 # Step 2a: User-Selected Techniques
@@ -473,7 +456,7 @@ Load techniques from CSV on-demand:
 
 **Load CSV and parse:**
 
-- Read `brain-methods.csv`
+- Read `../brain-methods.csv`
 - Parse: category, technique_name, description, facilitation_prompts, best_for, energy_level, typical_duration
 - Organize by categories for browsing
 
@@ -519,6 +502,8 @@ Show available categories with brief descriptions:
 - Includes: Inner Child Conference, Shadow Work Mining, Values Archaeology
 
 **Which category interests you most? Enter 1-7, or tell me what type of thinking you're drawn to.**"
+
+**HALT — wait for user selection before proceeding.**
 
 ### 3. Handle Category Selection
 
@@ -586,6 +571,8 @@ This combination will take approximately [total_time] and focus on [expected out
 **Confirm these choices?**
 [C] Continue - Begin technique execution
 [Back] - Modify technique selection"
+
+**HALT — wait for user selection before proceeding.**
 
 ### 6. Update Frontmatter and Continue
 
@@ -659,7 +646,7 @@ Remember: Your role is to be a knowledgeable librarian, not a recommender. Let t
 
 ````
 
-## src/core/workflows/bmad-brainstorming/steps/step-02b-ai-recommended.md
+## src/core/skills/bmad-brainstorming/steps/step-02b-ai-recommended.md
 
 ```md
 # Step 2b: AI-Recommended Techniques
@@ -711,7 +698,7 @@ Load techniques from CSV for analysis:
 
 **Load CSV and parse:**
 
-- Read `brain-methods.csv`
+- Read `../brain-methods.csv`
 - Parse: category, technique_name, description, facilitation_prompts, best_for, energy_level, typical_duration
 
 ### 2. Context Analysis for Technique Matching
@@ -816,6 +803,8 @@ Provide deeper insight into each recommended technique:
 [Details] - Tell me more about any specific technique
 [Back] - Return to approach selection
 
+**HALT — wait for user selection before proceeding.**
+
 ### 6. Handle User Response
 
 #### If [C] Continue:
@@ -902,7 +891,7 @@ Remember: Your recommendations should demonstrate clear expertise while respecti
 
 ````
 
-## src/core/workflows/bmad-brainstorming/steps/step-02c-random-selection.md
+## src/core/skills/bmad-brainstorming/steps/step-02c-random-selection.md
 
 ```md
 # Step 2c: Random Technique Selection
@@ -954,7 +943,7 @@ Create anticipation for serendipitous technique discovery:
 
 **Load CSV and parse:**
 
-- Read `brain-methods.csv`
+- Read `../brain-methods.csv`
 - Parse: category, technique_name, description, facilitation_prompts, best_for, energy_level, typical_duration
 - Prepare for intelligent random selection
 
@@ -1030,6 +1019,8 @@ You're about to experience brainstorming in a completely new way. These unexpect
 [Shuffle] - Randomize another combination for different adventure
 [Details] - Tell me more about any specific technique
 [Back] - Return to approach selection
+
+**HALT — wait for user selection before proceeding.**
 
 ### 5. Handle User Response
 
@@ -1117,7 +1108,7 @@ Remember: Random selection should feel like opening a creative gift - full of su
 
 ````
 
-## src/core/workflows/bmad-brainstorming/steps/step-02d-progressive-flow.md
+## src/core/skills/bmad-brainstorming/steps/step-02d-progressive-flow.md
 
 ```md
 # Step 2d: Progressive Technique Flow
@@ -1188,7 +1179,7 @@ Explain the value of systematic creative progression:
 
 **Load CSV and parse:**
 
-- Read `brain-methods.csv`
+- Read `../brain-methods.csv`
 - Parse: category, technique_name, description, facilitation_prompts, best_for, energy_level, typical_duration
 - Map techniques to each phase of the creative journey
 
@@ -1297,6 +1288,8 @@ Show the full progressive flow with timing and transitions:
 [Customize] - I'd like to modify any phase techniques
 [Details] - Tell me more about any specific phase or technique
 [Back] - Return to approach selection
+
+**HALT — wait for user selection before proceeding.**
 
 ### 4. Handle Customization Requests
 

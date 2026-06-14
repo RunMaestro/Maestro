@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Bell, Volume2, Clock, Square, Check, AlertCircle, Loader2, Coffee } from 'lucide-react';
 import { Spinner } from './ui/Spinner';
 import type { Theme } from '../types';
+import type { ToastWidth } from '../../shared/toastWidth';
 import { SettingCheckbox } from './SettingCheckbox';
 import { ToggleButtonGroup } from './ToggleButtonGroup';
 import { logger } from '../utils/logger';
@@ -15,6 +16,8 @@ interface NotificationsPanelProps {
 	setAudioFeedbackCommand: (value: string) => void;
 	toastDuration: number;
 	setToastDuration: (value: number) => void;
+	toastWidth: ToastWidth;
+	setToastWidth: (value: ToastWidth) => void;
 	idleNotificationEnabled: boolean;
 	setIdleNotificationEnabled: (value: boolean) => void;
 	idleNotificationCommand: string;
@@ -33,6 +36,8 @@ export function NotificationsPanel({
 	setAudioFeedbackCommand,
 	toastDuration,
 	setToastDuration,
+	toastWidth,
+	setToastWidth,
 	idleNotificationEnabled,
 	setIdleNotificationEnabled,
 	idleNotificationCommand,
@@ -464,6 +469,29 @@ export function NotificationsPanel({
 				<p className="text-xs opacity-50 mt-2">
 					How long toast notifications remain on screen. "Off" disables them entirely. "Never" means
 					they stay until manually dismissed.
+				</p>
+			</div>
+
+			<div data-setting-id="notifications-toast-width">
+				<label className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
+					<Bell className="w-3 h-3" />
+					Toast Notification Width
+				</label>
+				<ToggleButtonGroup
+					options={[
+						{ value: 'small', label: 'Small' },
+						{ value: 'medium', label: 'Medium' },
+						{ value: 'large', label: 'Large' },
+						{ value: 'dynamic', label: 'Dynamic' },
+					]}
+					value={toastWidth}
+					onChange={setToastWidth}
+					theme={theme}
+				/>
+				<p className="text-xs opacity-50 mt-2">
+					How wide toast notifications render in the corner. Small is the default compact size;
+					Large is roughly 1.8&times; wider. Dynamic matches the Right Bar width and tracks it as
+					you resize the panel.
 				</p>
 			</div>
 

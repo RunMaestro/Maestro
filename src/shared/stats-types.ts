@@ -4,6 +4,8 @@
  * These types are shared between main process (stats/) and renderer (dashboard).
  */
 
+import type { DurationPercentiles } from './percentiles';
+
 /**
  * A single AI query event - represents one user/auto message -> AI response cycle
  */
@@ -82,6 +84,12 @@ export interface StatsAggregation {
 	totalQueries: number;
 	totalDuration: number;
 	avgDuration: number;
+	/** Query duration distribution (p50/p75/p90/p95/p99/max) across all queries. */
+	queryDurationPercentiles: DurationPercentiles;
+	/** Per-agent query duration distribution, keyed by agent type. */
+	queryDurationPercentilesByAgent: Record<string, DurationPercentiles>;
+	/** Auto Run task duration distribution (per-task, not per-session). */
+	autoRunTaskDurationPercentiles: DurationPercentiles;
 	byAgent: Record<string, { count: number; duration: number }>;
 	bySource: { user: number; auto: number };
 	byDay: Array<{ date: string; count: number; duration: number }>;

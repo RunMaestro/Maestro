@@ -76,7 +76,7 @@ Key public methods:
 - `stopRun(runId)` / `stopAll()` / `isEnabled()` / `clearQueue()` / `clearFanInState()` / `hasCompletionSubscribers()` - Run/state control
 - `triggerSubscription(subscriptionName)` - Manual "Run Now" by subscription name
 
-Note: per-session `initSession` and central `dispatchSubscription` are not exposed as public `CueEngine` methods — they live on `CueSessionRuntimeService` and `CueDispatchService` respectively, invoked internally by `start()` and by trigger-source callbacks.
+Note: per-session `initSession` and central `dispatchSubscription` are not exposed as public `CueEngine` methods - they live on `CueSessionRuntimeService` and `CueDispatchService` respectively, invoked internally by `start()` and by trigger-source callbacks.
 
 Composed submodules (created in constructor):
 
@@ -186,6 +186,7 @@ Key design:
 - Supports `gh_state` filter: `"open"` (default), `"closed"`, `"merged"` (PRs only), `"all"`
 - 30-day retention on seen records; prunes every 24 hours
 - Has its own `execFileAsync` wrapper (local, not the shared utils version)
+- **Re-trigger on activity** (`retrigger_on_comments: true`): re-fires when an item's `updatedAt` advances past the stored revision. Default off - when on, fetches comments-since-last-fire via `gh pr|issue view --json comments` and attaches them to the event payload as `new_comments` (surfaced as `{{CUE_NEW_COMMENTS}}` template var). Capped per-item by `max_notifications` (default 10, `0` = unlimited). Counter tracks re-fires only - initial discovery is always allowed regardless of cap. Once the cap is hit, the poller stops emitting events but freezes `last_revision` so raising the cap later resumes from the right point rather than replaying stale activity.
 
 ### cue-heartbeat.ts (~52 lines)
 
@@ -320,6 +321,16 @@ Visual pipeline editor using React Flow for drag-and-drop pipeline construction.
 | `panels/`                 | Node and edge configuration panels               |
 | `utils/`                  | Pipeline-to-YAML and YAML-to-pipeline conversion |
 
+#### Layout buttons (Tidy and Arrange)
+
+Two top-right canvas buttons (in `PipelineCanvas.tsx`, props `onTidy` / `onArrange`) drive `handleArrange(mode)` in `CuePipelineEditor.tsx`, where `mode` is `'tidy' | 'untangle'`. Both branch on the active view:
+
+- **Single pipeline, Tidy** - `arrangePipelineNodes` (in `utils/pipelineAutoArrange.ts`) splits the pipeline into weakly-connected components (edges treated as undirected) and lays each one out as its own horizontal band: nodes left-to-right by flow depth (rank = longest path from a root within that component), stacked within each column. Bands are stacked top-to-bottom in current reading order, so independent trigger-to-agent chains keep their own rows instead of being merged into shared columns. Order within a column follows current vertical position, so the existing arrangement is aligned, not reshuffled; crossing edges are left intact. Truly disconnected nodes (no edges) are packed into a grid band beneath the chains.
+- **Single pipeline, Arrange** - `untanglePipelineNodes` uses the same per-component banding and flow-depth columns but reorders nodes within each column to minimize edge crossings (Sugiyama ordering: barycenter sweeps + adjacent-swap transpose refinement, keeping the best of several passes). It is seeded by current vertical order, so it untangles rather than scrambles.
+- **All Pipelines view** - `arrangePipelineGroups` packs the per-pipeline group cards into a balanced grid via `viewOffset`, leaving node positions untouched. No edges cross between cards, so the Tidy button is hidden here and both modes route through this path.
+
+Pressing either opens a `ConfirmModal` (`arrangeConfirmMode` drives its title/label/copy), then `handleArrange` mutates canonical state (flips dirty, undoable via Discard), persists, and re-fits the view. The layout helpers are pure and unit-tested in `pipelineAutoArrange.test.ts`; the crossing-minimizer is verified with a true segment-intersection count, independent of the layout's internal ordering.
+
 #### Visual node identity round-trip (`target_node_key` / `fan_out_node_keys`)
 
 Every agent and command node dropped onto the canvas gets a stable
@@ -329,12 +340,12 @@ subs) or `fan_out_node_keys[i]` (fan-out positions) on the owning
 subscription. On load, `yamlToPipeline.ts`'s `getOrCreateAgentNode` and
 `createCommandNode` resolve these keys via a per-pipeline `nodeKeyToNode`
 map: matching keys collapse to one shared visual node (explicit
-fan-in), distinct keys produce distinct visual nodes — even when both
+fan-in), distinct keys produce distinct visual nodes - even when both
 target the same `agent_id`. Subs with no key fall back to the legacy
 dedup-by-sessionName path (preserves load behavior for hand-written or
 pre-fix YAML). The main-process normalizer
 (`cue-config-normalizer.ts:normalizeSubscription`) must passthrough both
-fields — it allowlists every persisted field, and the renderer
+fields - it allowlists every persisted field, and the renderer
 silently re-merges visual nodes if either field gets dropped there.
 The engine itself ignores these fields entirely.
 

@@ -2,7 +2,7 @@ import { ipcMain, BrowserWindow } from 'electron';
 import fs from 'fs/promises';
 import path from 'path';
 import chokidar, { FSWatcher } from 'chokidar';
-import { execFileNoThrow } from '../../utils/execFile';
+import { execFileNoThrow, execFileBufferNoThrow } from '../../utils/execFile';
 import { execGit } from '../../utils/remote-git';
 import { logger } from '../../utils/logger';
 import { getSshRemoteById } from '../../stores';
@@ -150,6 +150,36 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 					effectiveRemoteCwd
 				);
 				return result.exitCode === 0;
+			}
+		)
+	);
+
+	// Initialize a new git repository at the given directory.
+	// Returns { success, error? }. Used by the agent-create UI to offer
+	// `git init` when a chosen working directory isn't already a repo.
+	ipcMain.handle(
+		'git:init',
+		withIpcErrorLogging(
+			handlerOpts('init'),
+			async (cwd: string, sshRemoteId?: string, remoteCwd?: string) => {
+				const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
+				// Fail fast if an SSH remote was requested but can't be resolved —
+				// otherwise we'd silently `git init` the wrong (local) directory.
+				if (sshRemoteId && !sshRemote) {
+					return {
+						success: false,
+						error: `SSH remote not found: ${sshRemoteId}`,
+					};
+				}
+				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
+				const result = await execGit(['init'], cwd, sshRemote, effectiveRemoteCwd);
+				if (result.exitCode !== 0) {
+					return {
+						success: false,
+						error: result.stderr?.trim() || 'git init failed',
+					};
+				}
+				return { success: true };
 			}
 		)
 	);
@@ -405,17 +435,19 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 				const ext = filePath.split('.').pop()?.toLowerCase() || '';
 
 				if (isImageFile(filePath)) {
-					// For images, we need to get raw binary content
-					// Use spawnSync to capture raw binary output
-					const { spawnSync } = require('child_process');
-					const result = spawnSync('git', ['show', `${ref}:${filePath}`], {
+					// For images we need raw binary content. Use the async,
+					// binary-safe exec helper instead of spawnSync so reading the blob
+					// never blocks the main-process event loop (which would freeze the
+					// entire UI while a large image / cold git object is fetched).
+					const result = await execFileBufferNoThrow(
+						'git',
+						['show', `${ref}:${filePath}`],
 						cwd,
-						encoding: 'buffer',
-						maxBuffer: 50 * 1024 * 1024, // 50MB max
-					});
+						50 * 1024 * 1024 // 50MB max
+					);
 
-					if (result.status !== 0) {
-						return { error: result.stderr?.toString() || 'Failed to read file from git' };
+					if (result.exitCode !== 0) {
+						return { error: result.stderr || 'Failed to read file from git' };
 					}
 
 					const base64 = result.stdout.toString('base64');
@@ -556,7 +588,8 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 				mainRepoCwd: string,
 				worktreePath: string,
 				branchName: string,
-				sshRemoteId?: string
+				sshRemoteId?: string,
+				baseBranch?: string
 			) => {
 				// SSH remote: dispatch to remote git operations
 				if (sshRemoteId) {
@@ -565,14 +598,15 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 						throw new Error(`SSH remote not found: ${sshRemoteId}`);
 					}
 					logger.debug(
-						`${LOG_CONTEXT} worktreeSetup via SSH: ${JSON.stringify({ mainRepoCwd, worktreePath, branchName })}`,
+						`${LOG_CONTEXT} worktreeSetup via SSH: ${JSON.stringify({ mainRepoCwd, worktreePath, branchName, baseBranch })}`,
 						LOG_CONTEXT
 					);
 					const result = await worktreeSetupRemote(
 						mainRepoCwd,
 						worktreePath,
 						branchName,
-						sshConfig
+						sshConfig,
+						baseBranch
 					);
 					if (!result.success) {
 						throw new Error(result.error || 'Remote worktreeSetup failed');
@@ -582,7 +616,7 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 
 				// Local execution (existing code)
 				logger.debug(
-					`worktreeSetup called with: ${JSON.stringify({ mainRepoCwd, worktreePath, branchName })}`,
+					`worktreeSetup called with: ${JSON.stringify({ mainRepoCwd, worktreePath, branchName, baseBranch })}`,
 					LOG_CONTEXT
 				);
 
@@ -697,14 +731,24 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 
 				let createResult;
 				if (branchExists) {
-					// Branch exists, just add worktree pointing to it
+					// Branch exists, just add worktree pointing to it. baseBranch is
+					// ignored here because the existing branch already has its own commit.
 					createResult = await execFileNoThrow(
 						'git',
 						['worktree', 'add', worktreePath, branchName],
 						mainRepoCwd
 					);
+				} else if (baseBranch) {
+					// Branch doesn't exist; create it from the requested base branch.
+					// `git worktree add -b <new> <path> <base>` is the explicit form.
+					createResult = await execFileNoThrow(
+						'git',
+						['worktree', 'add', '-b', branchName, worktreePath, baseBranch],
+						mainRepoCwd
+					);
 				} else {
-					// Branch doesn't exist, create it with -b flag
+					// Branch doesn't exist and no base specified; defaults to current HEAD
+					// of the main repo (preserves pre-baseBranch behavior).
 					createResult = await execFileNoThrow(
 						'git',
 						['worktree', 'add', '-b', branchName, worktreePath],

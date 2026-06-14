@@ -84,6 +84,21 @@ export function ensureSourceOutputVariable(prompt: string): string {
 	return `${SOURCE_OUTPUT_VAR}\n\n${prompt}`;
 }
 
+/**
+ * Extract the per-root `owner_agent_id` from an existing cue.yaml string, or
+ * undefined when absent. Used by the save path to preserve a shared root's
+ * ownership across a full-overwrite write (the editor doesn't manage it).
+ */
+export function readOwnerAgentIdFromYaml(yamlContent: string): string | undefined {
+	try {
+		const parsed = yaml.load(yamlContent) as { settings?: { owner_agent_id?: unknown } } | null;
+		const owner = parsed?.settings?.owner_agent_id;
+		return typeof owner === 'string' && owner.trim() !== '' ? owner.trim() : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 /** Result of converting pipelines to YAML, including external prompt files */
 export interface PipelineYamlResult {
 	yaml: string;
@@ -161,6 +176,18 @@ function applyTriggerEventConfig(sub: CueSubscription, triggerData: TriggerNodeD
 		case 'github.issue':
 			if (triggerData.config.repo) sub.repo = triggerData.config.repo;
 			if (triggerData.config.poll_minutes) sub.poll_minutes = triggerData.config.poll_minutes;
+			if (triggerData.config.retrigger_on_comments === true) {
+				sub.retrigger_on_comments = true;
+				// Only emit the cap when it differs from the default (10) so YAML
+				// stays minimal. `0` (unlimited) is a valid explicit value and
+				// must round-trip — the !== 10 check covers both cases.
+				if (
+					triggerData.config.max_notifications !== undefined &&
+					triggerData.config.max_notifications !== 10
+				) {
+					sub.max_notifications = triggerData.config.max_notifications;
+				}
+			}
 			break;
 		case 'task.pending':
 			sub.watch = triggerData.config.watch ?? '**/*.md';
@@ -204,13 +231,43 @@ function populateTargetWork(
 }
 
 /**
- * Lower-level helper: converts a single pipeline into CueSubscription objects.
+ * Owning agent for an emitted subscription, captured at emission time keyed by
+ * the subscription's object identity (NOT its name). Sub names are not unique —
+ * a command node can be named exactly like the `<pipeline>-chain-N` auto-naming
+ * scheme — so re-deriving the owner via a second name-keyed traversal silently
+ * dropped `agent_id` on a later sub once a collision shifted the chain counter.
+ * Stamping the owner here makes that impossible. See {@link pipelineToYamlSubscriptions}.
  */
-export function pipelineToYamlSubscriptions(pipeline: CuePipeline): CueSubscription[] {
+export interface SubscriptionOwner {
+	/** Owning agent session id → the subscription's `agent_id`. */
+	id: string;
+	/** Owning agent display name → prompt-file paths + name-based resolver fallback. */
+	name: string;
+}
+
+/**
+ * Lower-level helper: converts a single pipeline into CueSubscription objects.
+ *
+ * When `ownerOut` is supplied, each emitted subscription is recorded against
+ * its owning agent (by object identity) so callers don't have to re-walk the
+ * graph to recover `agent_id` — a re-walk that drifted out of sync whenever a
+ * command node's name collided with the `-chain-N` auto-naming sequence.
+ */
+export function pipelineToYamlSubscriptions(
+	pipeline: CuePipeline,
+	ownerOut?: Map<CueSubscription, SubscriptionOwner>
+): CueSubscription[] {
 	const subscriptions: CueSubscription[] = [];
 	const { outgoing, incoming } = buildAdjacency(pipeline);
 	const triggers = findTriggerNodes(pipeline);
 	const nodeMap = new Map(pipeline.nodes.map((n) => [n.id, n]));
+
+	// Record which agent node owns each emitted subscription, keyed by sub
+	// object identity. Collision-proof, unlike a name-keyed map.
+	const recordOwner = (sub: CueSubscription, node: PipelineNode): void => {
+		if (ownerOut)
+			ownerOut.set(sub, { id: getOwningSessionId(node), name: getChainSessionName(node) });
+	};
 
 	// Track visited nodes to avoid duplicates.
 	const visited = new Set<string>();
@@ -280,6 +337,7 @@ export function pipelineToYamlSubscriptions(pipeline: CuePipeline): CueSubscript
 			populateTargetWork(sub, target, subName, triggerOutgoing);
 
 			subscriptions.push(sub);
+			recordOwner(sub, target);
 			visited.add(target.id);
 			addSubNameForNode(target.id, sub.name);
 
@@ -291,7 +349,8 @@ export function pipelineToYamlSubscriptions(pipeline: CuePipeline): CueSubscript
 				incoming,
 				nodeMap,
 				visited,
-				subNamesForNode
+				subNamesForNode,
+				ownerOut
 			);
 			chainIndex = subscriptions.length;
 		} else if (allAgents) {
@@ -380,6 +439,9 @@ export function pipelineToYamlSubscriptions(pipeline: CuePipeline): CueSubscript
 				});
 			}
 			subscriptions.push(sub);
+			// The single fan-out sub is owned by the first agent (its id lands on
+			// `agent_id`); the others participate via `fan_out` / `fan_out_ids`.
+			recordOwner(sub, fanOutAgents[0]);
 
 			for (const agent of fanOutAgents) {
 				visited.add(agent.id);
@@ -396,7 +458,8 @@ export function pipelineToYamlSubscriptions(pipeline: CuePipeline): CueSubscript
 					incoming,
 					nodeMap,
 					visited,
-					subNamesForNode
+					subNamesForNode,
+					ownerOut
 				);
 			}
 			chainIndex = subscriptions.length;
@@ -423,6 +486,7 @@ export function pipelineToYamlSubscriptions(pipeline: CuePipeline): CueSubscript
 				populateTargetWork(branchSub, target, branchName, triggerOutgoing);
 
 				subscriptions.push(branchSub);
+				recordOwner(branchSub, target);
 				visited.add(target.id);
 				addSubNameForNode(target.id, branchSub.name);
 
@@ -434,7 +498,8 @@ export function pipelineToYamlSubscriptions(pipeline: CuePipeline): CueSubscript
 					incoming,
 					nodeMap,
 					visited,
-					subNamesForNode
+					subNamesForNode,
+					ownerOut
 				);
 				chainIndex = subscriptions.length;
 			}
@@ -501,7 +566,8 @@ function buildChain(
 	incoming: Map<string, PipelineEdge[]>,
 	nodeMap: Map<string, PipelineNode>,
 	visited: Set<string>,
-	subNamesForNode: Map<string, Set<string>>
+	subNamesForNode: Map<string, Set<string>>,
+	ownerOut?: Map<CueSubscription, SubscriptionOwner>
 ): void {
 	const fromOutgoing = outgoing.get(fromNode.id) ?? [];
 	if (fromOutgoing.length === 0) return;
@@ -642,6 +708,8 @@ function buildChain(
 		if (targetKey) sub.target_node_key = targetKey;
 
 		subscriptions.push(sub);
+		if (ownerOut)
+			ownerOut.set(sub, { id: getOwningSessionId(target), name: getChainSessionName(target) });
 		// Merge instead of overwrite — a chain agent can be reached from
 		// multiple upstream paths (e.g. TriggerA → Agent1 and TriggerB →
 		// Agent1 → Agent2). If we replace the set, the post-pass that fills
@@ -664,7 +732,8 @@ function buildChain(
 			incoming,
 			nodeMap,
 			visited,
-			subNamesForNode
+			subNamesForNode,
+			ownerOut
 		);
 	}
 }
@@ -684,32 +753,60 @@ export interface PipelineSubscriptionRecords {
 }
 
 /**
+ * Resolves a node's owning agent to a live session id, mirroring the id→name
+ * fallback in `resolveNodeWriteRoot` (see pipelineRoots.ts). Given the node's
+ * own `(sessionId, sessionName)`, return the id the YAML should bind to.
+ *
+ * The default behavior (no resolver) emits the raw `sessionId`. handleSave
+ * passes a resolver backed by the live session maps so that a node bound by
+ * NAME only — empty/stale `sessionId` but a `sessionName` that still matches a
+ * live agent — emits the live agent's id instead of an empty `agent_id`. That
+ * asymmetry (validation resolves by name, emission did not) was the
+ * "Unresolvable agent_id ... (agent_id=<missing>)" save failure on legacy
+ * pipelines whose nodes predate stable session ids.
+ */
+export type OwnerIdResolver = (
+	sessionId: string | undefined,
+	sessionName: string | undefined
+) => string | undefined;
+
+/**
  * Build the intermediate subscription records for a list of pipelines without
  * serializing to YAML. Exposed so the per-owner-cwd emitter can split records
  * by `record.agent_id` → cwd before calling the YAML serializer.
  */
 export function pipelinesToSubscriptionRecords(
-	pipelines: CuePipeline[]
+	pipelines: CuePipeline[],
+	resolveOwnerId?: OwnerIdResolver
 ): PipelineSubscriptionRecords {
 	const allSubscriptions: Array<Record<string, unknown>> = [];
 	const comments: string[] = [];
 	const promptFiles = new Map<string, string>();
 
 	for (const pipeline of pipelines) {
-		const subs = pipelineToYamlSubscriptions(pipeline);
-
-		// Build maps from subscription name to the agent node that owns it
-		const subAgentMap = buildSubAgentMap(pipeline);
-		const subAgentIdMap = buildSubAgentIdMap(pipeline);
+		// Owner (agent_id + display name) is stamped per-subscription during
+		// emission, keyed by object identity. This replaces the previous pair of
+		// name-keyed re-traversals (`buildSubAgentMap` / `buildSubAgentIdMap`),
+		// which drifted out of sync with the emitter whenever a command node's
+		// name collided with the `-chain-N` auto-naming scheme — dropping
+		// `agent_id` on a later sub and failing the save with
+		// "Unresolvable agent_id ... (agent_id=<missing>)".
+		const owners = new Map<CueSubscription, SubscriptionOwner>();
+		const subs = pipelineToYamlSubscriptions(pipeline, owners);
 
 		for (const sub of subs) {
+			const owner = owners.get(sub);
 			const record: Record<string, unknown> = {
 				name: sub.name,
 				event: sub.event,
 			};
 
-			// Bind subscription to its owning agent by session ID
-			const agentId = subAgentIdMap.get(sub.name);
+			// Bind subscription to its owning agent by session ID. When a
+			// resolver is supplied, normalize the raw node id through it (with
+			// the node's session name as the fallback key) so a node bound by
+			// name only still emits a live `agent_id` instead of <missing>.
+			const rawAgentId = owner?.id || undefined;
+			const agentId = resolveOwnerId ? resolveOwnerId(rawAgentId, owner?.name) : rawAgentId;
 			if (agentId) record.agent_id = agentId;
 
 			// Persist the owning pipeline's name and color so they round-trip
@@ -726,6 +823,8 @@ export function pipelinesToSubscriptionRecords(
 			if (sub.watch != null) record.watch = sub.watch;
 			if (sub.repo != null) record.repo = sub.repo;
 			if (sub.poll_minutes != null) record.poll_minutes = sub.poll_minutes;
+			if (sub.retrigger_on_comments === true) record.retrigger_on_comments = true;
+			if (sub.max_notifications != null) record.max_notifications = sub.max_notifications;
 			if (sub.source_session != null) record.source_session = sub.source_session;
 			if (sub.source_session_ids != null) record.source_session_ids = sub.source_session_ids;
 			if (sub.source_sub != null) record.source_sub = sub.source_sub;
@@ -764,7 +863,7 @@ export function pipelinesToSubscriptionRecords(
 			// Save prompts as external files.
 			// Use sub.name as the suffix key so multiple triggers targeting the same agent
 			// get unique file paths (e.g. agent-pipeline.md vs agent-pipeline-chain-1.md).
-			const agentName = subAgentMap.get(sub.name) ?? 'agent';
+			const agentName = owner?.name ?? 'agent';
 			const promptSuffix = sub.name === pipeline.name ? pipeline.name : sub.name;
 
 			// When fan-out targets carry different prompts, each agent's prompt
@@ -919,9 +1018,18 @@ export interface CwdYamlEntry extends PipelineYamlResult {
 export function pipelinesToYamlByOwnerCwd(
 	pipelines: CuePipeline[],
 	settings: Partial<CueSettings> | undefined,
-	sessionsById: ReadonlyMap<string, SessionRootRef>
+	sessionsById: ReadonlyMap<string, SessionRootRef>,
+	resolveOwnerId?: OwnerIdResolver,
+	/**
+	 * Per-cwd `owner_agent_id` to preserve. The editor does NOT manage
+	 * ownership (it's a per-root field, set via Edit YAML for shared roots), but
+	 * the save fully overwrites each cue.yaml — so the existing owner must be
+	 * re-injected into that root's settings here, or it would be silently
+	 * dropped, reverting a shared root to fragile "first agent wins" ownership.
+	 */
+	ownerAgentIdByCwd?: ReadonlyMap<string, string>
 ): { byCwd: Map<string, CwdYamlEntry>; unresolved: Array<{ subName: string; agentId: string }> } {
-	const { records, promptFiles } = pipelinesToSubscriptionRecords(pipelines);
+	const { records, promptFiles } = pipelinesToSubscriptionRecords(pipelines, resolveOwnerId);
 
 	const recordsByCwd = new Map<string, Array<Record<string, unknown>>>();
 	const unresolved: Array<{ subName: string; agentId: string }> = [];
@@ -975,190 +1083,17 @@ export function pipelinesToYamlByOwnerCwd(
 		// engine ignores them) and including the full set in every cwd's
 		// yaml would be misleading. Drop them in per-cwd output; the editor
 		// is the canonical view for cross-agent topology.
+		// Re-attach this root's preserved owner_agent_id (per-root field the
+		// editor doesn't manage) so a full-overwrite save doesn't drop it.
+		const ownerForCwd = ownerAgentIdByCwd?.get(cwd);
+		const cwdSettings =
+			ownerForCwd && settings ? { ...settings, owner_agent_id: ownerForCwd } : settings;
+
 		byCwd.set(cwd, {
-			yaml: recordsToYaml(cwdRecords, settings, []),
+			yaml: recordsToYaml(cwdRecords, cwdSettings, []),
 			promptFiles: cwdPromptFiles,
 		});
 	}
 
 	return { byCwd, unresolved };
-}
-
-/**
- * Builds a map from subscription name to the agent session name that owns it.
- * Used for generating prompt file paths with the agent name.
- */
-function buildSubAgentMap(pipeline: CuePipeline): Map<string, string> {
-	const result = new Map<string, string>();
-	const { outgoing } = buildAdjacency(pipeline);
-	const triggers = findTriggerNodes(pipeline);
-	const nodeMap = new Map(pipeline.nodes.map((n) => [n.id, n]));
-
-	const visited = new Set<string>();
-	let chainIndex = 0;
-
-	const subKeyFor = (target: PipelineNode, fallback: string): string =>
-		target.type === 'command' ? (target.data as CommandNodeData).name || fallback : fallback;
-
-	for (const trigger of triggers) {
-		const triggerOutgoing = outgoing.get(trigger.id) ?? [];
-		if (triggerOutgoing.length === 0) continue;
-
-		const directTargets = triggerOutgoing
-			.map((e) => nodeMap.get(e.target))
-			.filter(Boolean) as PipelineNode[];
-		const agentTargets = directTargets.filter((n) => n.type === 'agent' || n.type === 'command');
-		if (agentTargets.length === 0) continue;
-
-		const subName = chainIndex === 0 ? pipeline.name : `${pipeline.name}-chain-${chainIndex}`;
-		chainIndex++;
-
-		if (agentTargets.length === 1) {
-			result.set(subKeyFor(agentTargets[0], subName), getChainSessionName(agentTargets[0]));
-			visited.add(agentTargets[0].id);
-			buildSubAgentMapChain(agentTargets[0], pipeline.name, result, outgoing, nodeMap, visited);
-			chainIndex = result.size;
-		} else if (agentTargets.every((n) => n.type === 'agent')) {
-			// Fan-out (all agents) — one sub handles N targets; key by first agent.
-			result.set(subKeyFor(agentTargets[0], subName), getChainSessionName(agentTargets[0]));
-			for (const agent of agentTargets) visited.add(agent.id);
-			for (const agent of agentTargets) {
-				buildSubAgentMapChain(agent, pipeline.name, result, outgoing, nodeMap, visited);
-			}
-			chainIndex = result.size;
-		} else {
-			// Per-branch fan-out (mixed or command targets) — one sub per
-			// target, each sub keyed to its own target. Must mirror
-			// `pipelineToYamlSubscriptions`'s per-branch naming so the map
-			// built here stays aligned with the emitted sub names.
-			for (const target of agentTargets) {
-				const branchName =
-					chainIndex === 0 ? pipeline.name : `${pipeline.name}-chain-${chainIndex}`;
-				chainIndex++;
-				result.set(subKeyFor(target, branchName), getChainSessionName(target));
-				visited.add(target.id);
-				buildSubAgentMapChain(target, pipeline.name, result, outgoing, nodeMap, visited);
-				chainIndex = result.size;
-			}
-		}
-	}
-
-	return result;
-}
-
-/**
- * Builds a map from subscription name to the agent session ID that owns it.
- * Used for setting the agent_id field in YAML so subscriptions are bound to specific agents.
- */
-function buildSubAgentIdMap(pipeline: CuePipeline): Map<string, string> {
-	const result = new Map<string, string>();
-	const { outgoing } = buildAdjacency(pipeline);
-	const triggers = findTriggerNodes(pipeline);
-	const nodeMap = new Map(pipeline.nodes.map((n) => [n.id, n]));
-
-	const visited = new Set<string>();
-	let chainIndex = 0;
-
-	const subKeyFor = (target: PipelineNode, fallback: string): string =>
-		target.type === 'command' ? (target.data as CommandNodeData).name || fallback : fallback;
-
-	for (const trigger of triggers) {
-		const triggerOutgoing = outgoing.get(trigger.id) ?? [];
-		if (triggerOutgoing.length === 0) continue;
-
-		const directTargets = triggerOutgoing
-			.map((e) => nodeMap.get(e.target))
-			.filter(Boolean) as PipelineNode[];
-		const agentTargets = directTargets.filter((n) => n.type === 'agent' || n.type === 'command');
-		if (agentTargets.length === 0) continue;
-
-		const subName = chainIndex === 0 ? pipeline.name : `${pipeline.name}-chain-${chainIndex}`;
-		chainIndex++;
-
-		if (agentTargets.length === 1) {
-			result.set(subKeyFor(agentTargets[0], subName), getOwningSessionId(agentTargets[0]));
-			visited.add(agentTargets[0].id);
-			buildSubAgentIdMapChain(agentTargets[0], pipeline.name, result, outgoing, nodeMap, visited);
-			chainIndex = result.size;
-		} else if (agentTargets.every((n) => n.type === 'agent')) {
-			// Fan-out (all agents) — one sub, first agent's id on the
-			// subscription. Downstream chain subs attribute to their own
-			// targets via `buildSubAgentIdMapChain`.
-			result.set(subKeyFor(agentTargets[0], subName), getOwningSessionId(agentTargets[0]));
-			for (const agent of agentTargets) visited.add(agent.id);
-			for (const agent of agentTargets) {
-				buildSubAgentIdMapChain(agent, pipeline.name, result, outgoing, nodeMap, visited);
-			}
-			chainIndex = result.size;
-		} else {
-			// Per-branch fan-out — each branch sub gets its target's owning id
-			// as `agent_id`, matching how `pipelineToYamlSubscriptions` emits
-			// the parallel branch subs.
-			for (const target of agentTargets) {
-				const branchName =
-					chainIndex === 0 ? pipeline.name : `${pipeline.name}-chain-${chainIndex}`;
-				chainIndex++;
-				result.set(subKeyFor(target, branchName), getOwningSessionId(target));
-				visited.add(target.id);
-				buildSubAgentIdMapChain(target, pipeline.name, result, outgoing, nodeMap, visited);
-				chainIndex = result.size;
-			}
-		}
-	}
-
-	return result;
-}
-
-function buildSubAgentIdMapChain(
-	fromNode: PipelineNode,
-	pipelineName: string,
-	result: Map<string, string>,
-	outgoing: Map<string, PipelineEdge[]>,
-	nodeMap: Map<string, PipelineNode>,
-	visited: Set<string>
-): void {
-	const fromOutgoing = outgoing.get(fromNode.id) ?? [];
-	const targets = fromOutgoing
-		.map((e) => nodeMap.get(e.target))
-		.filter((n): n is PipelineNode => n != null && (n.type === 'agent' || n.type === 'command'));
-
-	for (const target of targets) {
-		if (visited.has(target.id)) continue;
-		visited.add(target.id);
-
-		const fallbackName = `${pipelineName}-chain-${result.size}`;
-		const subName =
-			target.type === 'command'
-				? (target.data as CommandNodeData).name || fallbackName
-				: fallbackName;
-		result.set(subName, getOwningSessionId(target));
-		buildSubAgentIdMapChain(target, pipelineName, result, outgoing, nodeMap, visited);
-	}
-}
-
-function buildSubAgentMapChain(
-	fromNode: PipelineNode,
-	pipelineName: string,
-	result: Map<string, string>,
-	outgoing: Map<string, PipelineEdge[]>,
-	nodeMap: Map<string, PipelineNode>,
-	visited: Set<string>
-): void {
-	const fromOutgoing = outgoing.get(fromNode.id) ?? [];
-	const targets = fromOutgoing
-		.map((e) => nodeMap.get(e.target))
-		.filter((n): n is PipelineNode => n != null && (n.type === 'agent' || n.type === 'command'));
-
-	for (const target of targets) {
-		if (visited.has(target.id)) continue;
-		visited.add(target.id);
-
-		const fallbackName = `${pipelineName}-chain-${result.size}`;
-		const subName =
-			target.type === 'command'
-				? (target.data as CommandNodeData).name || fallbackName
-				: fallbackName;
-		result.set(subName, getChainSessionName(target));
-		buildSubAgentMapChain(target, pipelineName, result, outgoing, nodeMap, visited);
-	}
 }

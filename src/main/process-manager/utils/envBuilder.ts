@@ -1,8 +1,9 @@
 import * as os from 'os';
 import * as path from 'path';
 import { STANDARD_UNIX_PATHS } from '../constants';
-import { detectNodeVersionManagerBinPaths, buildExpandedPath } from '../../../shared/pathUtils';
+import { detectNodeVersionManagerBinPaths } from '../../../shared/pathUtils';
 import { isWindows } from '../../../shared/platformDetection';
+import { buildSpawnPath } from '../../utils/spawnPath';
 
 /**
  * Build the base PATH for macOS/Linux with detected Node version manager paths.
@@ -78,11 +79,14 @@ export function buildPtyTerminalEnv(shellEnvVars?: Record<string, string>): Node
 		// Debian, but zsh only sources .zprofile/.zshrc if they exist — users
 		// without those would otherwise see `command not found` for tools like
 		// `claude` and `codex` that live in ~/.local/bin.
+		// Use buildSpawnPath() so the user's cached login-shell PATH is also
+		// included — covers custom node/python installs outside the standard
+		// version-manager paths we hardcode in buildExpandedPath().
 		env = {
 			...process.env,
 			TERM: 'xterm-256color',
 			LANG: process.env.LANG || 'en_US.UTF-8',
-			PATH: buildExpandedPath(),
+			PATH: buildSpawnPath(),
 		};
 		for (const key of STRIPPED_ENV_VARS) {
 			delete env[key];
@@ -135,6 +139,16 @@ const STRIPPED_ENV_VARS = [
 	'CLAUDE_CODE_ENTRYPOINT',
 	'CLAUDE_AGENT_SDK_VERSION',
 	'CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING',
+	// Claude session-identity markers. If Maestro itself was launched from
+	// within a Claude session (e.g. `claude` spawned the app, or a dev shell
+	// inherited them), these leak into spawned claude-code turns and the
+	// maestro-p TUI it drives, making that child claude run as a NESTED session
+	// that never writes its own JSONL transcript. maestro-p reads only the
+	// JSONL, so the run times out with an empty result and no History entry is
+	// recorded. Strip them here so no spawn surface forwards them; maestro-p
+	// also strips them itself as a second line of defense.
+	'CLAUDE_CODE_SESSION_ID',
+	'CLAUDE_CODE_CHILD_SESSION',
 	// Maestro's own NODE_ENV should not leak to agents
 	'NODE_ENV',
 ];
@@ -211,10 +225,46 @@ const STRIPPED_ENV_VARS = [
  * @see STRIPPED_ENV_VARS - List of variables that are always removed
  * @see buildPtyTerminalEnv() - Similar function for PTY terminal environments
  */
+/**
+ * Collect the environment variables that Maestro is explicitly setting on a
+ * spawned process, in the same precedence order as the build* helpers below
+ * (global → session-level, with session overriding global). The MAESTRO_SESSION_RESUMED
+ * marker is included when applicable. Inherited system env vars are deliberately
+ * excluded — this is the set the user can act on (Settings → Shell Configuration
+ * and per-agent / per-session overrides), surfaced in the Process Details modal.
+ *
+ * Applies `~/` path expansion the same way the build helpers do.
+ */
+export function collectMaestroEnvVars(
+	globalShellEnvVars?: Record<string, string>,
+	customEnvVars?: Record<string, string>,
+	isResuming?: boolean
+): Record<string, string> {
+	const home = os.homedir();
+	const expand = (value: string): string =>
+		value.startsWith('~/') ? path.join(home, value.slice(2)) : value;
+	const result: Record<string, string> = {};
+	if (globalShellEnvVars) {
+		for (const [key, value] of Object.entries(globalShellEnvVars)) {
+			result[key] = expand(value);
+		}
+	}
+	if (customEnvVars) {
+		for (const [key, value] of Object.entries(customEnvVars)) {
+			result[key] = expand(value);
+		}
+	}
+	if (isResuming) {
+		result.MAESTRO_SESSION_RESUMED = '1';
+	}
+	return result;
+}
+
 export function buildChildProcessEnv(
 	customEnvVars?: Record<string, string>,
 	isResuming?: boolean,
-	globalShellEnvVars?: Record<string, string>
+	globalShellEnvVars?: Record<string, string>,
+	extraPathDirs?: string[]
 ): NodeJS.ProcessEnv {
 	const env = { ...process.env };
 
@@ -225,8 +275,10 @@ export function buildChildProcessEnv(
 		delete env[key];
 	}
 
-	// Use the shared expanded PATH
-	env.PATH = buildExpandedPath();
+	// Build PATH that merges Maestro's hardcoded paths with the user's cached
+	// login-shell PATH and any caller-supplied dirs (typically the parent dir
+	// of the detected agent binary, so its shebang's interpreter resolves).
+	env.PATH = buildSpawnPath(extraPathDirs);
 
 	if (isResuming) {
 		env.MAESTRO_SESSION_RESUMED = '1';

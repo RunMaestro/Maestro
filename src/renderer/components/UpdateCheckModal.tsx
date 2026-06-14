@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { UpdateStatus } from '../types';
 import {
 	X,
@@ -17,10 +17,9 @@ import { GhostIconButton } from './ui/GhostIconButton';
 import { Spinner } from './ui/Spinner';
 import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
-import ReactMarkdown from 'react-markdown';
 import { Modal } from './ui/Modal';
 import { useSettings } from '../hooks';
-import { createReleaseNotesMarkdownComponents } from '../utils/markdownConfig';
+import { Markdown } from './Markdown';
 import { openUrl } from '../utils/openUrl';
 import { selectIsAnySessionBusy, useSessionStore } from '../stores/sessionStore';
 import { selectHasAnyActiveBatch, useBatchStore } from '../stores/batchStore';
@@ -69,11 +68,6 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 	const isAppActive = anySessionBusy || anyBatchRunning;
 	const restartPending = useRestartPendingStore((s) => s.pending);
 	const setRestartPending = useRestartPendingStore((s) => s.setPending);
-	const releaseNotesMarkdownComponents = useMemo(
-		() => createReleaseNotesMarkdownComponents(theme),
-		[theme]
-	);
-
 	// Check for updates on mount
 	useEffect(() => {
 		checkForUpdates();
@@ -153,7 +147,11 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 			progress: { percent: 0, bytesPerSecond: 0, total: 0, transferred: 0 },
 		});
 
-		const downloadResult = await window.maestro.updates.download();
+		// Hand the main process the exact release tag we're offering so it can fetch
+		// from GitHub's CDN asset path instead of the flaky `releases.atom` feed.
+		// `result.releases` is newest-first, so [0] is the version shown to the user.
+		const targetTag = result?.releases?.[0]?.tag_name;
+		const downloadResult = await window.maestro.updates.download(targetTag);
 		if (!downloadResult.success && downloadResult.error) {
 			setDownloadError(downloadResult.error);
 			setDownloadStatus({ status: 'error', error: downloadResult.error });
@@ -224,7 +222,8 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 			priority={MODAL_PRIORITIES.UPDATE_CHECK}
 			onClose={onClose}
 			customHeader={customHeader}
-			width={625}
+			width={1250}
+			maxWidthCss="50vw"
 			maxHeight="80vh"
 		>
 			<div className="space-y-4 -my-2">
@@ -364,9 +363,11 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 												className="py-3 px-5 border-t text-xs prose prose-sm prose-invert max-w-none"
 												style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
 											>
-												<ReactMarkdown components={releaseNotesMarkdownComponents}>
-													{release.body || 'No release notes available.'}
-												</ReactMarkdown>
+												<Markdown
+													preset="release-notes"
+													theme={theme}
+													content={release.body || 'No release notes available.'}
+												/>
 											</div>
 										)}
 									</div>

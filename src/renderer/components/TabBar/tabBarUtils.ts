@@ -1,4 +1,38 @@
-import type { UnifiedTab } from '../../types';
+import type { Theme, UnifiedTab } from '../../types';
+
+/** The kind of content a tab holds — matches the UnifiedTab discriminant. */
+export type TabKind = UnifiedTab['type'];
+
+/**
+ * Signature color for each tab kind. AI/file/terminal track the active theme
+ * via semantic tokens so the palette adapts to light/dark/vibe themes. Browser
+ * uses a fixed sky blue — there's no "info/blue" semantic token in the theme,
+ * and the obvious fallback (`ansiBlue`) lands on desaturated purples/grays in
+ * several vibe themes (pedurple, winamp, inquest), making the icon read as
+ * gray next to the other kinds. A stable browser-blue keeps the kind visually
+ * distinct from accent/warning/success on every theme.
+ * - ai      → accent  (brand hue)
+ * - browser → sky blue (fixed; universal "browser" color)
+ * - file    → warning (yellow/orange)
+ * - terminal→ success (green) — terminal tabs additionally override with
+ *             their run-state, so this is the idle base.
+ */
+const BROWSER_TAB_COLOR = '#3b82f6';
+
+export function getTabKindColor(kind: TabKind, theme: Theme): string {
+	switch (kind) {
+		case 'ai':
+			return theme.colors.accent;
+		case 'browser':
+			return BROWSER_TAB_COLOR;
+		case 'file':
+			return theme.colors.warning;
+		case 'terminal':
+			return theme.colors.success;
+		default:
+			return theme.colors.textDim;
+	}
+}
 
 /**
  * Determine if a unified tab is currently active, based on tab type and input mode.
@@ -30,14 +64,28 @@ export function isUnifiedTabActive(
 
 /**
  * Compute shortcut hint for a tab at a given position.
- * Returns 1-9 for first 9 tabs, 0 for last tab (Cmd+0), null for others.
+ *
+ * When useCmd0AsLastTab is true (Maestro default): returns 1-9 for the first 9 tabs,
+ * 0 for the last tab (Cmd+0), null for others.
+ *
+ * When useCmd0AsLastTab is false (browser-style): returns 1-8 for the first 8 tabs,
+ * 9 for the last tab (Cmd+9), null for others.
  *
  * Callers pass the tab's index within the currently displayed list (filtered or not) so
  * hints stay aligned with Cmd+N behaviour — the jump shortcuts index into the same
  * filtered list when the unread filter is active.
  */
-export function getShortcutHint(displayedIndex: number, isLastTab: boolean): number | null {
-	if (isLastTab) return 0;
-	if (displayedIndex < 9) return displayedIndex + 1;
+export function getShortcutHint(
+	displayedIndex: number,
+	isLastTab: boolean,
+	useCmd0AsLastTab = true
+): number | null {
+	if (useCmd0AsLastTab) {
+		if (isLastTab) return 0;
+		if (displayedIndex < 9) return displayedIndex + 1;
+		return null;
+	}
+	if (isLastTab) return 9;
+	if (displayedIndex < 8) return displayedIndex + 1;
 	return null;
 }

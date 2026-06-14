@@ -78,13 +78,13 @@ interface AgentConfig {
 	binaryName: string; // Binary to look for (e.g., 'claude', 'codex')
 	command: string; // Default command to execute
 	args: string[]; // Base args always included (excludes batch mode prefix)
-	available: boolean; // (runtime only — not on AgentDefinition)
-	path?: string; // (runtime only — not on AgentDefinition)
+	available: boolean; // (runtime only - not on AgentDefinition)
+	path?: string; // (runtime only - not on AgentDefinition)
 	customPath?: string; // User-specified custom path
 	requiresPty?: boolean; // Whether agent needs pseudo-terminal
 	configOptions?: AgentConfigOption[]; // Agent-specific configuration
 	hidden?: boolean; // Hide from UI (terminal is hidden)
-	capabilities: AgentCapabilities; // (runtime only — not on AgentDefinition)
+	capabilities: AgentCapabilities; // (runtime only - not on AgentDefinition)
 
 	// Argument builders (optional per agent)
 	batchModePrefix?: string[]; // Args added before base args for batch mode (e.g., ['run'] for OpenCode)
@@ -153,7 +153,7 @@ The `argBuilder` function converts the setting value to CLI arguments.
 
 **Claude Code** args: `['--print', '--verbose', '--output-format', 'stream-json', '--dangerously-skip-permissions']`
 
-- No `batchModePrefix` — `--print` is part of base `args`
+- No `batchModePrefix` - `--print` is part of base `args`
 - resumeArgs: `(id) => ['--resume', id]`
 - readOnlyArgs: `['--permission-mode', 'plan']`
 - modelArgs: `(id) => ['--model', id]`
@@ -178,7 +178,7 @@ The `argBuilder` function converts the setting value to CLI arguments.
 - readOnlyArgs: `['--agent', 'plan']`
 - modelArgs: `(id) => ['--model', id]`
 - imageArgs: `(path) => ['-f', path]`
-- Note: No `promptArgs` — prompt is positional. `noPromptSeparator` is NOT set on OpenCode (it uses the default `--` separator; see comment in definitions.ts)
+- Note: No `promptArgs` - prompt is positional. `noPromptSeparator` is NOT set on OpenCode (it uses the default `--` separator; see comment in definitions.ts)
 
 **Factory Droid** args: `[]`
 
@@ -364,7 +364,7 @@ Concretely:
 3. **Final answer text**: Emit non-reasoning text events. The renderer
    appends them as `LogEntry { source: 'stdout' | 'stderr' }`.
 
-The renderer enforces the lifecycle in three coordinated places — parser
+The renderer enforces the lifecycle in three coordinated places - parser
 authors do **not** need to implement clearing logic, only the correct
 `source` tagging:
 
@@ -382,7 +382,7 @@ listener.
 `isReasoning: true` and emits tool-use events through the standard
 `tool_use` ParsedEvent type. Verify the tab transitions to `idle` cleanly
 on exit by spot-checking that thinking cells disappear when
-`showThinking === 'on'` and persist when `showThinking === 'sticky'` —
+`showThinking === 'on'` and persist when `showThinking === 'sticky'` -
 covered by `src/__tests__/renderer/hooks/useAgentListeners.test.ts`.
 
 ### Parser Implementations

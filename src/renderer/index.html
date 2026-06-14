@@ -2,9 +2,21 @@
 <html lang="en">
 	<head>
 		<meta charset="UTF-8" />
+		<!-- 'wasm-unsafe-eval' in script-src is REQUIRED: Shiki's syntax highlighter
+		     compiles an Oniguruma WebAssembly regex engine, which Chromium blocks
+		     under a bare `script-src 'self'`. Removing this token silently breaks all
+		     code-fence highlighting (falls back to plain <pre>). The token permits
+		     WebAssembly compilation only; it does NOT enable dynamic JS evaluation.
+
+		     http://localhost:8097 in script-src permits devtools-connect.js (loaded
+		     below) to inject the standalone React DevTools agent script in dev. The
+		     shim only fires when hostname === 'localhost', so this host is unreachable
+		     in a packaged build and harmless there; connect-src already allows ws: for
+		     the DevTools socket. Remove this token and the dev console logs a CSP
+		     violation whenever the renderer boots under Vite. -->
 		<meta
 			http-equiv="Content-Security-Policy"
-			content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: blob:; connect-src 'self' https: wss: ws:; worker-src 'self' blob:; media-src 'self' blob:;"
+			content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' http://localhost:8097; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: blob:; connect-src 'self' https: wss: ws:; worker-src 'self' blob:; media-src 'self' blob:;"
 		/>
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 		<title>Maestro - Agent Orchestration Command Center</title>

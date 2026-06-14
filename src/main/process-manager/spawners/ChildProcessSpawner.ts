@@ -12,7 +12,7 @@ import type { DataBufferManager } from '../handlers/DataBufferManager';
 import { StdoutHandler } from '../handlers/StdoutHandler';
 import { StderrHandler } from '../handlers/StderrHandler';
 import { ExitHandler } from '../handlers/ExitHandler';
-import { buildChildProcessEnv } from '../utils/envBuilder';
+import { buildChildProcessEnv, collectMaestroEnvVars } from '../utils/envBuilder';
 import { saveImageToTempFile, buildImagePromptPrefix } from '../utils/imageUtils';
 import { buildStreamJsonMessage } from '../utils/streamJsonBuilder';
 import { escapeArgsForShell, isPowerShellShell } from '../utils/shellEscape';
@@ -221,7 +221,12 @@ export class ChildProcessSpawner {
 			const isResuming =
 				args.some((arg) => arg === '--resume' || arg.startsWith('--resume=')) ||
 				args.includes('--session');
-			const env = buildChildProcessEnv(customEnvVars, isResuming, shellEnvVars);
+			const env = buildChildProcessEnv(
+				customEnvVars,
+				isResuming,
+				shellEnvVars,
+				config.extraPathDirs
+			);
 
 			// Log environment variable application for troubleshooting
 			if (shellEnvVars && Object.keys(shellEnvVars).length > 0) {
@@ -244,7 +249,7 @@ export class ChildProcessSpawner {
 			});
 
 			// Handle Windows shell requirements
-			const spawnCommand = command;
+			let spawnCommand = command;
 			let spawnArgs = finalArgs;
 			// Respect explicit request from caller, but also be defensive: if caller
 			// did not set runInShell and we're on Windows with a bare .exe basename,
@@ -260,6 +265,20 @@ export class ChildProcessSpawner {
 				useShell = true;
 				logger.info(
 					'[ProcessManager] Auto-enabling shell for Windows to allow PATH resolution of basename exe',
+					'ProcessManager',
+					{ command: spawnCommand }
+				);
+			}
+
+			// Auto-enable shell for Windows when command is a batch file (.cmd/.bat).
+			// Node.js refuses to spawn .cmd/.bat directly (throws "spawn EINVAL") after
+			// the CVE-2024-27980 fix — they must be launched through a shell. npm-installed
+			// agent CLIs resolve to shims like claude.cmd / codex.cmd / opencode.cmd, which
+			// is exactly what tab naming spawns on Windows. Fixes MAESTRO-Q8.
+			if (isWindows() && !useShell && (commandExt === '.cmd' || commandExt === '.bat')) {
+				useShell = true;
+				logger.info(
+					'[ProcessManager] Auto-enabling shell for Windows to spawn batch-file command',
 					'ProcessManager',
 					{ command: spawnCommand }
 				);
@@ -310,6 +329,22 @@ export class ChildProcessSpawner {
 			let spawnShell: boolean | string = !!useShell;
 			if (useShell && typeof config.shell === 'string' && config.shell.trim()) {
 				spawnShell = config.shell.trim();
+			}
+
+			// When spawning through the default Windows shell (cmd.exe via ComSpec),
+			// Node concatenates the command and args into a single command line without
+			// quoting the command itself. A command path that contains spaces — e.g. an
+			// npm shim under "C:\Users\First Last\AppData\Roaming\npm\claude.cmd" — would
+			// be split by cmd.exe and fail. Quote it defensively. We only do this for the
+			// boolean (cmd.exe) shell path; an explicit shell string carries its own
+			// quoting rules and is the caller's responsibility.
+			if (
+				isWindows() &&
+				spawnShell === true &&
+				/\s/.test(spawnCommand) &&
+				!spawnCommand.startsWith('"')
+			) {
+				spawnCommand = `"${spawnCommand}"`;
 			}
 
 			// Log spawn details
@@ -409,6 +444,21 @@ export class ChildProcessSpawner {
 				projectPath: config.projectPath,
 				sshRemoteId: config.sshRemoteId,
 				sshRemoteHost: config.sshRemoteHost,
+				// Seed from config on resume. Copilot emits `session.resume`
+				// (no sessionId) instead of `session.start` when --resume=<id>
+				// is set, so StdoutHandler can't populate this from the stream
+				// for resumed sessions — without the seed, the post-exit disk
+				// reconciliation (`ExitHandler.awaitCopilotShutdown` →
+				// `readCopilotFinalAnswer` + `readCopilotShutdownUsage`)
+				// short-circuits at its `if (!agentSessionId) return` guard and
+				// the renderer falls back to the streamed commentary deltas
+				// instead of the authoritative task_complete.summary, and the
+				// context-window gauge never receives the on-disk currentTokens
+				// snapshot. The stream-derived assignment in
+				// `StdoutHandler.emitSessionIdIfNeeded` remains the source of
+				// truth for fresh sessions.
+				agentSessionId: config.agentSessionId,
+				maestroEnvVars: collectMaestroEnvVars(shellEnvVars, customEnvVars, isResuming),
 			};
 
 			this.processes.set(sessionId, managedProcess);
@@ -496,7 +546,12 @@ export class ChildProcessSpawner {
 			// emitted near the end of stdout (e.g., tab-naming, batch operations).
 			// The 'close' event guarantees all stdio streams are closed first.
 			childProcess.on('close', (code) => {
-				this.exitHandler.handleExit(sessionId, code || 0);
+				void this.exitHandler.handleExit(sessionId, code || 0).catch((err) => {
+					logger.error('[ProcessManager] handleExit threw', 'ProcessManager', {
+						sessionId,
+						error: String(err),
+					});
+				});
 			});
 
 			// Handle errors

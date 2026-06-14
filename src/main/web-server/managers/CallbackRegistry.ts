@@ -56,9 +56,11 @@ import type {
 	DeleteGroupCallback,
 	MoveSessionToGroupCallback,
 	CreateSessionCallback,
+	CreateWorktreeSessionCallback,
 	CreateSessionConfig,
 	DeleteSessionCallback,
 	RenameSessionCallback,
+	UpdateSessionCwdCallback,
 	WebSettings,
 	SettingValue,
 	GroupData,
@@ -161,8 +163,10 @@ export interface WebServerCallbacks {
 	deleteGroup: DeleteGroupCallback | null;
 	moveSessionToGroup: MoveSessionToGroupCallback | null;
 	createSession: CreateSessionCallback | null;
+	createWorktreeSession: CreateWorktreeSessionCallback | null;
 	deleteSession: DeleteSessionCallback | null;
 	renameSession: RenameSessionCallback | null;
+	updateSessionCwd: UpdateSessionCwdCallback | null;
 	getGitStatus: GetGitStatusCallback | null;
 	getGitDiff: GetGitDiffCallback | null;
 	getGitBranchesForSession: GetGitBranchesForSessionCallback | null;
@@ -241,8 +245,10 @@ export class CallbackRegistry {
 		deleteGroup: null,
 		moveSessionToGroup: null,
 		createSession: null,
+		createWorktreeSession: null,
 		deleteSession: null,
 		renameSession: null,
+		updateSessionCwd: null,
 		getGitStatus: null,
 		getGitDiff: null,
 		getGitBranchesForSession: null,
@@ -566,6 +572,17 @@ export class CallbackRegistry {
 		return this.callbacks.createSession(name, toolType, cwd, groupId, config);
 	}
 
+	async createWorktreeSession(
+		parentSessionId: string,
+		config: {
+			branchName: string;
+			baseBranch?: string;
+		}
+	): Promise<{ success: boolean; sessionId?: string; error?: string }> {
+		if (!this.callbacks.createWorktreeSession) return { success: false, error: 'Not configured' };
+		return this.callbacks.createWorktreeSession(parentSessionId, config);
+	}
+
 	async deleteSession(sessionId: string): Promise<boolean> {
 		if (!this.callbacks.deleteSession) return false;
 		return this.callbacks.deleteSession(sessionId);
@@ -574,6 +591,16 @@ export class CallbackRegistry {
 	async renameSession(sessionId: string, newName: string): Promise<boolean> {
 		if (!this.callbacks.renameSession) return false;
 		return this.callbacks.renameSession(sessionId, newName);
+	}
+
+	async updateSessionCwd(
+		sessionId: string,
+		newCwd: string
+	): Promise<{ success: boolean; error?: string }> {
+		if (!this.callbacks.updateSessionCwd) {
+			return { success: false, error: 'Session cwd updates not configured' };
+		}
+		return this.callbacks.updateSessionCwd(sessionId, newCwd);
 	}
 
 	async getGitStatus(sessionId: string): Promise<GitStatusResult> {
@@ -948,12 +975,20 @@ export class CallbackRegistry {
 		this.callbacks.createSession = callback;
 	}
 
+	setCreateWorktreeSessionCallback(callback: CreateWorktreeSessionCallback): void {
+		this.callbacks.createWorktreeSession = callback;
+	}
+
 	setDeleteSessionCallback(callback: DeleteSessionCallback): void {
 		this.callbacks.deleteSession = callback;
 	}
 
 	setRenameSessionCallback(callback: RenameSessionCallback): void {
 		this.callbacks.renameSession = callback;
+	}
+
+	setUpdateSessionCwdCallback(callback: UpdateSessionCwdCallback): void {
+		this.callbacks.updateSessionCwd = callback;
 	}
 
 	setGetGitStatusCallback(callback: GetGitStatusCallback): void {

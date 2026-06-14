@@ -9,12 +9,14 @@ import {
 	FolderOpen,
 	ChevronsLeft,
 	ChevronsRight,
+	FileText,
 } from 'lucide-react';
 import type { FilePreviewTab, Theme } from '../../types';
 import { getExtensionColor } from '../../utils/extensionColors';
 import { getRevealLabel } from '../../utils/platformUtils';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
+import { getTabKindColor } from './tabBarUtils';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 
@@ -64,6 +66,11 @@ export interface FileTabProps {
 	shortcutHint?: number | null;
 	/** True when the owning agent is running on an SSH remote — hides local-only OS actions */
 	sshRemote?: boolean;
+	/**
+	 * Disambiguated label to show instead of the bare filename, e.g. `ioc/service`
+	 * when another open tab shares the same name. Falls back to `tab.name`.
+	 */
+	displayName?: string;
 }
 
 /**
@@ -101,6 +108,7 @@ export const FileTab = memo(function FileTab({
 	colorBlindMode,
 	shortcutHint,
 	sshRemote,
+	displayName,
 }: FileTabProps) {
 	const [showCopied, setShowCopied] = useState<'path' | 'name' | null>(null);
 	const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -378,12 +386,19 @@ export const FileTab = memo(function FileTab({
 				</span>
 			)}
 
-			{/* Tab name - filename without extension */}
+			{/* Kind icon - identifies this as a file tab, always visible (active or not) */}
+			<FileText
+				className="w-3.5 h-3.5 shrink-0"
+				style={{ color: getTabKindColor('file', theme) }}
+				aria-hidden="true"
+			/>
+
+			{/* Tab name - filename without extension, folder-prefixed when ambiguous */}
 			<span
-				className={`text-xs font-medium ${isActive ? 'whitespace-nowrap' : 'truncate max-w-[120px]'}`}
+				className="text-xs font-medium whitespace-nowrap"
 				style={{ color: isActive ? theme.colors.textMain : theme.colors.textDim }}
 			>
-				{tab.name}
+				{displayName ?? tab.name}
 			</span>
 
 			{/* Extension badge - small rounded pill, uppercase without leading dot */}

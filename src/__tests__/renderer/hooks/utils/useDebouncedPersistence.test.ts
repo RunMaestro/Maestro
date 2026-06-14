@@ -1257,6 +1257,64 @@ describe('useDebouncedPersistence', () => {
 
 				expect(window.maestro.sessions.setAll).not.toHaveBeenCalled();
 			});
+
+			it('should persist a snapshot passed to flushNow even when nothing is pending', async () => {
+				const sessions = [makeSession({ id: 's1' })];
+				const initialLoadRef = makeInitialLoadRef(true);
+
+				const { result } = renderHook(({ s }) => useDebouncedPersistence(s, initialLoadRef), {
+					initialProps: { s: sessions },
+				});
+
+				// Seed the baseline with the initial setAll flush. Await the async
+				// persist so flushingRef settles before the next flush; clear mocks
+				// so the assertion only sees the snapshot-driven flush.
+				await act(async () => {
+					result.current.flushNow();
+					await Promise.resolve();
+				});
+				vi.clearAllMocks();
+
+				// Simulate a synchronous mutation the hook hasn't re-rendered for
+				// yet: a fresh sessions array the rendered `sessions` prop never
+				// carried. Passing it to flushNow must persist it via setMany even
+				// though isPending is false (no render happened).
+				const mutated = [makeSession({ id: 's1', name: 'Renamed Via Snapshot' })];
+				act(() => {
+					result.current.flushNow(mutated);
+				});
+
+				expect(window.maestro.sessions.setMany).toHaveBeenCalledTimes(1);
+				const persisted = vi.mocked(window.maestro.sessions.setMany).mock.calls[0][0] as Session[];
+				expect(persisted).toHaveLength(1);
+				expect(persisted[0].name).toBe('Renamed Via Snapshot');
+			});
+
+			it('should not let a stale sessions ref clobber the snapshot on flush', async () => {
+				// Regression: a startup command set synchronously in an event
+				// handler was lost because flushNow read the pre-render (stale)
+				// sessions ref. The snapshot argument must win.
+				const original = [makeSession({ id: 's1', name: 'Original' })];
+				const initialLoadRef = makeInitialLoadRef(true);
+
+				const { result } = renderHook(({ s }) => useDebouncedPersistence(s, initialLoadRef), {
+					initialProps: { s: original },
+				});
+
+				await act(async () => {
+					result.current.flushNow();
+					await Promise.resolve();
+				});
+				vi.clearAllMocks();
+
+				const fresh = [makeSession({ id: 's1', name: 'Fresh Snapshot' })];
+				act(() => {
+					result.current.flushNow(fresh);
+				});
+
+				const persisted = vi.mocked(window.maestro.sessions.setMany).mock.calls[0][0] as Session[];
+				expect(persisted[0].name).toBe('Fresh Snapshot');
+			});
 		});
 
 		describe('isPending state', () => {

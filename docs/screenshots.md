@@ -14,30 +14,30 @@ For a screenshot example of every option, see [THEMES.md](https://github.com/Run
 
 ### Dark Themes
 
-- **Dracula** — Classic purple-accented dark theme
-- **Monokai** — Vibrant syntax highlighting on dark background
-- **Nord** — Cool, bluish Arctic-inspired palette
-- **Tokyo Night** — Soft neon on deep blue
-- **Catppuccin Mocha** — Soothing pastel dark theme
-- **Gruvbox Dark** — Retro groove with warm earth tones
+- **Dracula** - Classic purple-accented dark theme
+- **Monokai** - Vibrant syntax highlighting on dark background
+- **Nord** - Cool, bluish Arctic-inspired palette
+- **Tokyo Night** - Soft neon on deep blue
+- **Catppuccin Mocha** - Soothing pastel dark theme
+- **Gruvbox Dark** - Retro groove with warm earth tones
 
 ### Light Themes
 
-- **GitHub** — GitHub's clean light mode
-- **Solarized** — Precision colors for readability
-- **One Light** — Atom's light theme with magenta accents
-- **Gruvbox Light** — Retro groove in light mode
-- **Catppuccin Latte** — Soothing pastel light theme
-- **Ayu Light** — Bright, modern light theme
+- **GitHub** - GitHub's clean light mode
+- **Solarized** - Precision colors for readability
+- **One Light** - Atom's light theme with magenta accents
+- **Gruvbox Light** - Retro groove in light mode
+- **Catppuccin Latte** - Soothing pastel light theme
+- **Ayu Light** - Bright, modern light theme
 
 ### Vibe Themes
 
 Custom themes with unique personality:
 
-- **Pedurple** — Deep purple aesthetic (shown in most screenshots)
-- **Maestro's Choice** — Golden accents on midnight blue
-- **Dre Synth** — Cyberpunk cyan and magenta
-- **InQuest** — Minimal black with crimson accents
+- **Pedurple** - Deep purple aesthetic (shown in most screenshots)
+- **Maestro's Choice** - Golden accents on midnight blue
+- **Dre Synth** - Cyberpunk cyan and magenta
+- **InQuest** - Minimal black with crimson accents
 
 ### Custom Theme
 

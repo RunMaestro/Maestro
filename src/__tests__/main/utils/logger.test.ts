@@ -1,4 +1,13 @@
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+vi.mock('../../../shared/platformDetection', () => ({
+	isWindows: () => false,
+	isMacOS: () => false,
+	isLinux: () => true,
+}));
 
 // We need to test the Logger class, not the singleton
 // The module exports both the class structure and a singleton instance
@@ -22,6 +31,12 @@ const getLogger = async () => {
 	return module.logger;
 };
 
+let originalAppData: string | undefined;
+let originalXdgConfigHome: string | undefined;
+let testConfigRoot = '';
+
+const getTestLogsDir = () => path.join(testConfigRoot, 'Maestro', 'logs');
+
 describe('Logger', () => {
 	let logger: Awaited<ReturnType<typeof getLogger>>;
 	let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
@@ -30,6 +45,12 @@ describe('Logger', () => {
 	let consoleLogSpy: ReturnType<typeof vi.spyOn>;
 
 	beforeEach(async () => {
+		originalAppData = process.env.APPDATA;
+		originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
+		testConfigRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-logger-test-'));
+		process.env.XDG_CONFIG_HOME = testConfigRoot;
+		delete process.env.APPDATA;
+
 		// Get a fresh logger instance
 		logger = await getLogger();
 
@@ -49,8 +70,27 @@ describe('Logger', () => {
 		consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 	});
 
-	afterEach(() => {
+	afterEach(async () => {
+		logger.disableFileLogging();
+		await new Promise((resolve) => setTimeout(resolve, 0));
 		vi.restoreAllMocks();
+
+		if (originalAppData === undefined) {
+			delete process.env.APPDATA;
+		} else {
+			process.env.APPDATA = originalAppData;
+		}
+
+		if (originalXdgConfigHome === undefined) {
+			delete process.env.XDG_CONFIG_HOME;
+		} else {
+			process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
+		}
+
+		if (testConfigRoot) {
+			fs.rmSync(testConfigRoot, { recursive: true, force: true });
+			testConfigRoot = '';
+		}
 	});
 
 	describe('Log Level Management', () => {
@@ -799,20 +839,7 @@ describe('Logger', () => {
 		});
 
 		it('should migrate legacy maestro-debug.log on enableFileLogging', async () => {
-			const fs = await import('fs');
-			const path = await import('path');
-			const os = await import('os');
-
-			const platform = process.platform;
-			let appDataDir: string;
-			if (platform === 'win32') {
-				appDataDir = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
-			} else if (platform === 'darwin') {
-				appDataDir = path.join(os.homedir(), 'Library', 'Application Support');
-			} else {
-				appDataDir = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
-			}
-			const logsDir = path.join(appDataDir, 'Maestro', 'logs');
+			const logsDir = getTestLogsDir();
 
 			if (!fs.existsSync(logsDir)) {
 				fs.mkdirSync(logsDir, { recursive: true });
@@ -870,20 +897,7 @@ describe('Logger', () => {
 		});
 
 		it('should delete legacy file if target dated file already exists', async () => {
-			const fs = await import('fs');
-			const path = await import('path');
-			const os = await import('os');
-
-			const platform = process.platform;
-			let appDataDir: string;
-			if (platform === 'win32') {
-				appDataDir = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
-			} else if (platform === 'darwin') {
-				appDataDir = path.join(os.homedir(), 'Library', 'Application Support');
-			} else {
-				appDataDir = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
-			}
-			const logsDir = path.join(appDataDir, 'Maestro', 'logs');
+			const logsDir = getTestLogsDir();
 
 			if (!fs.existsSync(logsDir)) {
 				fs.mkdirSync(logsDir, { recursive: true });
@@ -953,20 +967,7 @@ describe('Logger', () => {
 		});
 
 		it('should call cleanOldLogs during enableFileLogging', async () => {
-			const fs = await import('fs');
-			const path = await import('path');
-			const os = await import('os');
-
-			const platform = process.platform;
-			let appDataDir: string;
-			if (platform === 'win32') {
-				appDataDir = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
-			} else if (platform === 'darwin') {
-				appDataDir = path.join(os.homedir(), 'Library', 'Application Support');
-			} else {
-				appDataDir = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
-			}
-			const logsDir = path.join(appDataDir, 'Maestro', 'logs');
+			const logsDir = getTestLogsDir();
 
 			if (!fs.existsSync(logsDir)) {
 				fs.mkdirSync(logsDir, { recursive: true });
@@ -1000,21 +1001,7 @@ describe('Logger', () => {
 		});
 
 		it('should delete log files older than 7 days during rotation', async () => {
-			const fs = await import('fs');
-			const path = await import('path');
-			const os = await import('os');
-
-			// Determine the logs directory the logger uses
-			const platform = process.platform;
-			let appDataDir: string;
-			if (platform === 'win32') {
-				appDataDir = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
-			} else if (platform === 'darwin') {
-				appDataDir = path.join(os.homedir(), 'Library', 'Application Support');
-			} else {
-				appDataDir = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
-			}
-			const logsDir = path.join(appDataDir, 'Maestro', 'logs');
+			const logsDir = getTestLogsDir();
 
 			// Create the logs directory
 			if (!fs.existsSync(logsDir)) {
@@ -1093,20 +1080,7 @@ describe('Logger', () => {
 		});
 
 		it('should not delete log files that are exactly 7 days old', async () => {
-			const fs = await import('fs');
-			const path = await import('path');
-			const os = await import('os');
-
-			const platform = process.platform;
-			let appDataDir: string;
-			if (platform === 'win32') {
-				appDataDir = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
-			} else if (platform === 'darwin') {
-				appDataDir = path.join(os.homedir(), 'Library', 'Application Support');
-			} else {
-				appDataDir = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
-			}
-			const logsDir = path.join(appDataDir, 'Maestro', 'logs');
+			const logsDir = getTestLogsDir();
 
 			if (!fs.existsSync(logsDir)) {
 				fs.mkdirSync(logsDir, { recursive: true });

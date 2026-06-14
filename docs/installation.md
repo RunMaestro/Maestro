@@ -16,16 +16,16 @@ Download the latest release for your platform from the [Releases](https://github
 ## Requirements
 
 - At least one supported AI coding agent installed and authenticated:
-  - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — Anthropic's AI coding assistant (fully integrated)
-  - [Codex](https://github.com/openai/codex) — OpenAI's coding agent (fully integrated)
-  - [OpenCode](https://github.com/sst/opencode) — Open-source AI coding assistant (fully integrated)
-  - [Factory Droid](https://docs.factory.ai/cli) — Factory's AI coding assistant (fully integrated)
-  - [Copilot-CLI](https://docs.github.com/copilot/how-tos/copilot-cli) — GitHub's terminal coding agent (beta integration, multi-model via [models.dev](https://models.dev))
-  - [Gemini CLI](https://github.com/google-gemini/gemini-cli) — Planned support
+  - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) - Anthropic's AI coding assistant (fully integrated)
+  - [Codex](https://github.com/openai/codex) - OpenAI's coding agent (fully integrated)
+  - [OpenCode](https://github.com/sst/opencode) - Open-source AI coding assistant (fully integrated)
+  - [Factory Droid](https://docs.factory.ai/cli) - Factory's AI coding assistant (fully integrated)
+  - [Copilot-CLI](https://docs.github.com/copilot/how-tos/copilot-cli) - GitHub's terminal coding agent (beta integration, multi-model via [models.dev](https://models.dev))
+  - [Gemini CLI](https://github.com/google-gemini/gemini-cli) - Planned support
 - Git (optional, for git-aware features)
 
 <Note>
-Maestro is a pass-through to your provider. Your MCP tools, custom skills, permissions, and authentication all work in Maestro exactly as they do when running the provider directly—Maestro just orchestrates the conversation flow in batch mode.
+Maestro is a pass-through to your provider. Your MCP tools, custom skills, permissions, and authentication all work in Maestro exactly as they do when running the provider directly - Maestro just orchestrates the conversation flow in batch mode.
 </Note>
 
 ## WSL2 Users (Windows Subsystem for Linux)

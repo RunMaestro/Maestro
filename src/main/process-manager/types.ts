@@ -46,6 +46,22 @@ export interface ProcessConfig {
 	cols?: number;
 	/** PTY terminal height in rows (default 24) */
 	rows?: number;
+	/** Extra directories to prepend to the spawn-time PATH. Typically the
+	 *  parent directory of the detected agent binary, so co-located runtimes
+	 *  (e.g. the `node` next to an npm-installed `codex`) resolve via the
+	 *  script's `#!/usr/bin/env node` shebang. Local spawn only — SSH builds
+	 *  its remote PATH separately. */
+	extraPathDirs?: string[];
+	/** Agent-reported session id when this spawn is resuming a prior session
+	 *  (e.g. Copilot's `--resume=<id>`, Claude's `--resume <id>`). The spawner
+	 *  uses it to seed `ManagedProcess.agentSessionId` so post-exit work that
+	 *  needs to inspect on-disk session state (Copilot's events.jsonl) can run
+	 *  even when the resumed stream never re-announces the sessionId — Copilot
+	 *  in particular emits `session.resume` (no sessionId) on resume rather
+	 *  than `session.start`, so without this seed the disk reconciliation
+	 *  never runs and the renderer falls back to streamed commentary instead
+	 *  of the authoritative final answer / context window snapshot. */
+	agentSessionId?: string;
 }
 
 /**
@@ -67,6 +83,10 @@ export interface ManagedProcess {
 	jsonBufferCorrupted?: boolean;
 	lastCommand?: string;
 	sessionIdEmitted?: boolean;
+	/** Agent-reported session id once extracted from the output stream.
+	 *  Currently only populated for agents whose post-exit lifecycle we
+	 *  need to inspect on disk (Copilot CLI events.jsonl). */
+	agentSessionId?: string;
 	resultEmitted?: boolean;
 	errorEmitted?: boolean;
 	startTime: number;
@@ -88,6 +108,11 @@ export interface ManagedProcess {
 	sshRemoteHost?: string;
 	dataBuffer?: string;
 	dataBufferTimeout?: NodeJS.Timeout;
+	/** Env vars Maestro explicitly set on this process (global + agent + session overrides),
+	 *  with `~/` paths expanded and MAESTRO_SESSION_RESUMED included when applicable.
+	 *  Inherited system env is NOT included — this is the actionable set shown in the
+	 *  Process Details modal. */
+	maestroEnvVars?: Record<string, string>;
 }
 
 export interface UsageTotals {

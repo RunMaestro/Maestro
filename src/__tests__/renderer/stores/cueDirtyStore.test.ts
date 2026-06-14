@@ -6,14 +6,15 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { useCueDirtyStore } from '../../../renderer/stores/cueDirtyStore';
 
 beforeEach(() => {
-	useCueDirtyStore.setState({ pipelineDirty: false, yamlDirty: false });
+	useCueDirtyStore.setState({ pipelineDirty: false, yamlDirty: false, pipelineSaving: false });
 });
 
 describe('useCueDirtyStore', () => {
-	it('has both flags false initially', () => {
-		const { pipelineDirty, yamlDirty } = useCueDirtyStore.getState();
+	it('has all flags false initially', () => {
+		const { pipelineDirty, yamlDirty, pipelineSaving } = useCueDirtyStore.getState();
 		expect(pipelineDirty).toBe(false);
 		expect(yamlDirty).toBe(false);
+		expect(pipelineSaving).toBe(false);
 	});
 
 	it('isAnyDirty() returns false when neither flag is set', () => {
@@ -57,5 +58,33 @@ describe('useCueDirtyStore', () => {
 		useCueDirtyStore.getState().setPipelineDirty(true);
 		useCueDirtyStore.getState().setPipelineDirty(false);
 		expect(useCueDirtyStore.getState().pipelineDirty).toBe(false);
+	});
+
+	describe('pipelineSaving', () => {
+		it('setPipelineSaving(true) sets the saving flag', () => {
+			useCueDirtyStore.getState().setPipelineSaving(true);
+			expect(useCueDirtyStore.getState().pipelineSaving).toBe(true);
+		});
+
+		it('setPipelineSaving(false) clears the saving flag', () => {
+			useCueDirtyStore.getState().setPipelineSaving(true);
+			useCueDirtyStore.getState().setPipelineSaving(false);
+			expect(useCueDirtyStore.getState().pipelineSaving).toBe(false);
+		});
+
+		it('pipelineSaving does not affect isAnyDirty()', () => {
+			useCueDirtyStore.getState().setPipelineSaving(true);
+			expect(useCueDirtyStore.getState().isAnyDirty()).toBe(false);
+		});
+
+		it('resetAll() does NOT clear pipelineSaving (save outlives the modal)', () => {
+			useCueDirtyStore.getState().setPipelineDirty(true);
+			useCueDirtyStore.getState().setPipelineSaving(true);
+
+			useCueDirtyStore.getState().resetAll();
+
+			expect(useCueDirtyStore.getState().pipelineDirty).toBe(false);
+			expect(useCueDirtyStore.getState().pipelineSaving).toBe(true);
+		});
 	});
 });

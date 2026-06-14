@@ -184,8 +184,8 @@ const createMockDeps = (overrides: Partial<UseWizardHandlersDeps> = {}): UseWiza
 			isComplete: false,
 			createdSessionId: null,
 		} as any,
-		completeWizard: vi.fn(),
-		clearResumeState: vi.fn(),
+		completeWizard: vi.fn().mockResolvedValue(undefined),
+		clearResumeState: vi.fn().mockResolvedValue(undefined),
 	},
 	spawnBackgroundSynopsis: vi.fn().mockResolvedValue({
 		success: true,
@@ -1855,8 +1855,8 @@ describe('useWizardHandlers', () => {
 						isComplete: false,
 						createdSessionId: null,
 					} as any,
-					completeWizard: vi.fn(),
-					clearResumeState: vi.fn(),
+					completeWizard: vi.fn().mockResolvedValue(undefined),
+					clearResumeState: vi.fn().mockResolvedValue(undefined),
 				},
 			});
 
@@ -1924,8 +1924,8 @@ describe('useWizardHandlers', () => {
 						isComplete: false,
 						createdSessionId: null,
 					} as any,
-					completeWizard: vi.fn(),
-					clearResumeState: vi.fn(),
+					completeWizard: vi.fn().mockResolvedValue(undefined),
+					clearResumeState: vi.fn().mockResolvedValue(undefined),
 				},
 			});
 
@@ -1986,8 +1986,8 @@ describe('useWizardHandlers', () => {
 						isComplete: false,
 						createdSessionId: null,
 					} as any,
-					completeWizard: vi.fn(),
-					clearResumeState: vi.fn(),
+					completeWizard: vi.fn().mockResolvedValue(undefined),
+					clearResumeState: vi.fn().mockResolvedValue(undefined),
 				},
 			});
 
@@ -2055,8 +2055,8 @@ describe('useWizardHandlers', () => {
 						isComplete: false,
 						createdSessionId: null,
 					} as any,
-					completeWizard: vi.fn(),
-					clearResumeState: vi.fn(),
+					completeWizard: vi.fn().mockResolvedValue(undefined),
+					clearResumeState: vi.fn().mockResolvedValue(undefined),
 				},
 			});
 
@@ -2108,8 +2108,8 @@ describe('useWizardHandlers', () => {
 						isComplete: false,
 						createdSessionId: null,
 					} as any,
-					completeWizard: vi.fn(),
-					clearResumeState: vi.fn(),
+					completeWizard: vi.fn().mockResolvedValue(undefined),
+					clearResumeState: vi.fn().mockResolvedValue(undefined),
 				},
 			});
 
@@ -2140,8 +2140,8 @@ describe('useWizardHandlers', () => {
 						agentName: '',
 						generatedDocuments: [],
 					} as any,
-					completeWizard: vi.fn(),
-					clearResumeState: vi.fn(),
+					completeWizard: vi.fn().mockResolvedValue(undefined),
+					clearResumeState: vi.fn().mockResolvedValue(undefined),
 				},
 			});
 
@@ -2193,8 +2193,8 @@ describe('useWizardHandlers', () => {
 						isComplete: false,
 						createdSessionId: null,
 					} as any,
-					completeWizard: vi.fn(),
-					clearResumeState: vi.fn(),
+					completeWizard: vi.fn().mockResolvedValue(undefined),
+					clearResumeState: vi.fn().mockResolvedValue(undefined),
 				},
 			});
 
@@ -2250,8 +2250,8 @@ describe('useWizardHandlers', () => {
 						isComplete: false,
 						createdSessionId: null,
 					} as any,
-					completeWizard: vi.fn(),
-					clearResumeState: vi.fn(),
+					completeWizard: vi.fn().mockResolvedValue(undefined),
+					clearResumeState: vi.fn().mockResolvedValue(undefined),
 				},
 			});
 
@@ -2300,8 +2300,8 @@ describe('useWizardHandlers', () => {
 						isComplete: false,
 						createdSessionId: null,
 					} as any,
-					completeWizard: vi.fn(),
-					clearResumeState: vi.fn(),
+					completeWizard: vi.fn().mockResolvedValue(undefined),
+					clearResumeState: vi.fn().mockResolvedValue(undefined),
 				},
 			});
 
@@ -2349,8 +2349,8 @@ describe('useWizardHandlers', () => {
 						isComplete: false,
 						createdSessionId: null,
 					} as any,
-					completeWizard: vi.fn(),
-					clearResumeState: vi.fn(),
+					completeWizard: vi.fn().mockResolvedValue(undefined),
+					clearResumeState: vi.fn().mockResolvedValue(undefined),
 				},
 			});
 
@@ -2405,8 +2405,8 @@ describe('useWizardHandlers', () => {
 						customEnvVars: { API_KEY: '123' },
 						sessionSshRemoteConfig: sshConfig,
 					} as any,
-					completeWizard: vi.fn(),
-					clearResumeState: vi.fn(),
+					completeWizard: vi.fn().mockResolvedValue(undefined),
+					clearResumeState: vi.fn().mockResolvedValue(undefined),
 				},
 			});
 
@@ -2459,8 +2459,8 @@ describe('useWizardHandlers', () => {
 						isComplete: false,
 						createdSessionId: null,
 					} as any,
-					completeWizard: vi.fn(),
-					clearResumeState: vi.fn(),
+					completeWizard: vi.fn().mockResolvedValue(undefined),
+					clearResumeState: vi.fn().mockResolvedValue(undefined),
 					openWizard: vi.fn(),
 					restoreState: vi.fn(),
 				},
@@ -2570,26 +2570,26 @@ describe('useWizardHandlers', () => {
 		});
 
 		describe('handleWizardStartFresh', () => {
-			it('clears resume state and opens a fresh wizard', () => {
+			it('clears resume state and opens a fresh wizard', async () => {
 				getModalActions().setWizardResumeModalOpen(true);
 
 				const deps = createResumeDeps();
 				const { result } = renderHook(() => useWizardHandlers(deps));
 
-				act(() => {
-					result.current.handleWizardStartFresh();
+				await act(async () => {
+					await result.current.handleWizardStartFresh();
 				});
 
 				expect(useModalStore.getState().isOpen('wizardResume')).toBe(false);
 				expect(deps.wizardContext.openWizard).toHaveBeenCalled();
 			});
 
-			it('calls clearResumeState on wizard context', () => {
+			it('calls clearResumeState on wizard context', async () => {
 				const deps = createResumeDeps();
 				const { result } = renderHook(() => useWizardHandlers(deps));
 
-				act(() => {
-					result.current.handleWizardStartFresh();
+				await act(async () => {
+					await result.current.handleWizardStartFresh();
 				});
 
 				expect(deps.wizardContext.clearResumeState).toHaveBeenCalled();

@@ -22,7 +22,7 @@ All utilities in Maestro organized by category. Each entry lists the file path, 
 | `AGENT_IDS`               | `src/shared/agentIds.ts`       | `readonly string[]`                       | Both    | Single source of truth: `['terminal', 'claude-code', 'codex', 'gemini-cli', 'qwen3-coder', 'opencode', 'factory-droid', 'copilot-cli']`                  |
 | `AgentId`                 | `src/shared/agentIds.ts`       | Type derived from `AGENT_IDS`             | Both    | Union type of all valid agent IDs.                                                                                                                       |
 | `isValidAgentId`          | `src/shared/agentIds.ts`       | `(id: string) => id is AgentId`           | Both    | Type guard for agent ID validation.                                                                                                                      |
-| `AGENT_DISPLAY_NAMES`     | `src/shared/agentMetadata.ts`  | `Record<AgentId, string>`                 | Both    | Internal constant backing `getAgentDisplayName`. **Prefer `getAgentDisplayName()`** for external use — it falls back to the raw id for unknown agents.   |
+| `AGENT_DISPLAY_NAMES`     | `src/shared/agentMetadata.ts`  | `Record<AgentId, string>`                 | Both    | Internal constant backing `getAgentDisplayName`. **Prefer `getAgentDisplayName()`** for external use - it falls back to the raw id for unknown agents.   |
 | `getAgentDisplayName`     | `src/shared/agentMetadata.ts`  | `(agentId: AgentId \| string) => string`  | Both    | Get display name, falls back to raw id.                                                                                                                  |
 | `BETA_AGENTS`             | `src/shared/agentMetadata.ts`  | `ReadonlySet<AgentId>`                    | Both    | Internal constant backing `isBetaAgent`. Currently contains `opencode`, `factory-droid`, and `copilot-cli`. **Prefer `isBetaAgent()`** for external use. |
 | `isBetaAgent`             | `src/shared/agentMetadata.ts`  | `(agentId: AgentId \| string) => boolean` | Both    | Check if an agent is in beta.                                                                                                                            |
@@ -86,6 +86,13 @@ All utilities in Maestro organized by category. Each entry lists the file path, 
 | ---------------------- | -------------------- | ----------------------------------------------------------------------------------------------------------- |
 | `stripAnsiCodes(text)` | `(string) => string` | Remove ANSI escape codes, OSC sequences, iTerm2/VSCode shell integration sequences. Handles SSH edge cases. |
 
+## JSON Utilities (`src/shared/jsonUtils.ts` - Both)
+
+| Function           | Signature                         | Purpose                                                                   |
+| ------------------ | --------------------------------- | ------------------------------------------------------------------------- |
+| `stripJsonBom`     | `(value: string) => string`       | Remove a leading UTF-8 BOM from JSON text before parsing.                 |
+| `parseJsonWithBom` | `<T = unknown>(value: string): T` | `JSON.parse` wrapper that tolerates a leading BOM in persisted JSON text. |
+
 ### Main Process (`src/main/utils/stripAnsi.ts`)
 
 | Function         | Signature            | Purpose                                                                            |
@@ -96,21 +103,24 @@ All utilities in Maestro organized by category. Each entry lists the file path, 
 
 ## Formatting (`src/shared/formatters.ts` - Both)
 
-| Function                               | Signature                              | Purpose                                                       |
-| -------------------------------------- | -------------------------------------- | ------------------------------------------------------------- |
-| `formatSize(bytes)`                    | `(number) => string`                   | File size: `"1.5 MB"`, `"256 KB"`. Auto-scales B/KB/MB/GB/TB. |
-| `formatNumber(num)`                    | `(number) => string`                   | Large numbers: `"1.5k"`, `"2.3M"`.                            |
-| `formatTokens(tokens)`                 | `(number) => string`                   | Token counts with `~` prefix: `"~1K"`, `"~2M"`.               |
-| `formatTokensCompact(tokens)`          | `(number) => string`                   | Token counts without `~`: `"1.5K"`, `"2.3M"`.                 |
-| `formatRelativeTime(dateOrTimestamp)`  | `(Date \| number \| string) => string` | `"just now"`, `"5m ago"`, `"2h ago"`, `"Dec 3"`.              |
-| `formatActiveTime(ms)`                 | `(number) => string`                   | Duration: `"1D"`, `"2H 30M"`, `"<1M"`.                        |
-| `formatElapsedTime(ms)`                | `(number) => string`                   | Precise: `"500ms"`, `"30s"`, `"5m 12s"`, `"1h 10m"`.          |
-| `formatElapsedTimeColon(seconds)`      | `(number) => string`                   | Timer style: `"5:12"`, `"1:30:45"`.                           |
-| `formatCost(cost)`                     | `(number) => string`                   | USD: `"$1.23"`, `"<$0.01"`, `"$0.00"`.                        |
-| `estimateTokenCount(text)`             | `(string) => number`                   | Estimate at ~4 chars/token.                                   |
-| `truncatePath(path, maxLength?)`       | `(string, number?) => string`          | `".../parent/current"` format. Default max 35 chars.          |
-| `getParentDir(path)`                   | `(string) => string`                   | Return the parent directory segment of a path.                |
-| `truncateCommand(command, maxLength?)` | `(string, number?) => string`          | Single-line with ellipsis. Default max 40 chars.              |
+| Function                               | Signature                              | Purpose                                                                           |
+| -------------------------------------- | -------------------------------------- | --------------------------------------------------------------------------------- |
+| `formatSize(bytes)`                    | `(number) => string`                   | File size: `"1.5 MB"`, `"256 KB"`. Auto-scales B/KB/MB/GB/TB.                     |
+| `formatNumber(num)`                    | `(number) => string`                   | Large numbers: `"1.5k"`, `"2.3M"`.                                                |
+| `formatTokens(tokens)`                 | `(number) => string`                   | Token counts with `~` prefix: `"~1K"`, `"~2M"`.                                   |
+| `formatTokensCompact(tokens)`          | `(number) => string`                   | Token counts without `~`: `"1.5K"`, `"2.3M"`.                                     |
+| `formatRelativeTime(dateOrTimestamp)`  | `(Date \| number \| string) => string` | `"just now"`, `"5m ago"`, `"2h ago"`, `"Dec 3"`.                                  |
+| `formatCacheAge(cacheAgeMs)`           | `(number \| null) => string`           | Cache age labels from elapsed milliseconds: `"just now"`, `"5m ago"`, `"2h ago"`. |
+| `formatActiveTime(ms)`                 | `(number) => string`                   | Duration: `"1D"`, `"2H 30M"`, `"<1M"`.                                            |
+| `formatElapsedTime(ms)`                | `(number) => string`                   | Precise: `"500ms"`, `"30s"`, `"5m 12s"`, `"1h 10m"`.                              |
+| `formatElapsedTimeColon(seconds)`      | `(number) => string`                   | Timer style: `"5:12"`, `"1:30:45"`.                                               |
+| `formatCost(cost)`                     | `(number) => string`                   | USD: `"$1.23"`, `"<$0.01"`, `"$0.00"`.                                            |
+| `estimateTokenCount(text)`             | `(string) => number`                   | Estimate at ~4 chars/token.                                                       |
+| `truncatePath(path, maxLength?)`       | `(string, number?) => string`          | `".../parent/current"` format. Default max 35 chars.                              |
+| `getParentDir(path)`                   | `(string) => string`                   | Return the parent directory segment of a path.                                    |
+| `isAbsolutePath(path)`                 | `(string) => boolean`                  | True for Unix (`/x`), Windows drive (`C:\x`, `C:/x`), UNC paths.                  |
+| `getBasename(path)`                    | `(string) => string`                   | Final path segment; handles `/` and `\`, ignores trailing sep.                    |
+| `truncateCommand(command, maxLength?)` | `(string, number?) => string`          | Single-line with ellipsis. Default max 40 chars.                                  |
 
 ---
 
@@ -321,12 +331,20 @@ Renderer performance integration in `src/renderer/utils/logger.ts`:
 
 ---
 
-## Pricing (`src/main/utils/pricing.ts` - Main)
+## Pricing (`src/shared/modelPricing.ts` - Shared, re-exported by `src/main/utils/pricing.ts`)
 
-| Function                          | Signature                                 | Purpose                                                           |
-| --------------------------------- | ----------------------------------------- | ----------------------------------------------------------------- |
-| `calculateCost(tokens, pricing?)` | `(TokenCounts, PricingConfig?) => number` | Calculate USD cost from token counts. Defaults to CLAUDE_PRICING. |
-| `calculateClaudeCost(...)`        | Individual params version                 | Deprecated. Use `calculateCost()`.                                |
+Per-model token pricing is the single source of truth in `src/shared/modelPricing.ts` (no Electron imports, so the CLI bundles it directly). The main-process `pricing.ts` is a thin re-export kept as a stable import surface. Prefer the model-aware functions for new code.
+
+| Function                                 | Signature                                 | Purpose                                                                                             |
+| ---------------------------------------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `calculateModelCost(tokens, modelId?)`   | `(TokenCounts, string?) => number`        | **Preferred.** USD cost priced for the given model (family fallback, then Sonnet-tier default).     |
+| `computeClaudeUsageCost(jsonl)`          | `(string) => ClaudeUsageBreakdown`        | **Preferred.** Parse a Claude session JSONL into grand-total tokens + per-model-accurate cost.      |
+| `resolveModelPricing(modelId?)`          | `(string?) => PricingConfig`              | Resolve a model string to its `PricingConfig` (exact → family substring → default).                 |
+| `calculateWithPricing(tokens, pricing?)` | `(TokenCounts, PricingConfig?) => number` | USD cost against an explicit pricing config. Defaults to `DEFAULT_MODEL_PRICING` (Sonnet-tier).     |
+| `calculateCost(tokens, pricing?)`        | `(TokenCounts, PricingConfig?) => number` | Back-compat alias of `calculateWithPricing`. Prefer `calculateModelCost()` when the model is known. |
+| `calculateClaudeCost(...)`               | Individual params version                 | Deprecated. Use `calculateModelCost()` with a model ID, or `calculateCost()`.                       |
+
+`MODEL_PRICING` (exact per-model table) and `DEFAULT_MODEL_PRICING` (unknown-model Sonnet-tier fallback) are also exported. `CLAUDE_PRICING` in `src/main/constants.ts` is now a deprecated re-export of `DEFAULT_MODEL_PRICING`.
 
 ---
 

@@ -6,6 +6,7 @@
  */
 
 import type { SshRemoteConfig, Group } from '../../shared/types';
+import type { AgentCapabilitiesSnapshotMap } from '../../shared/agentCapabilities';
 
 // ============================================================================
 // Stored Session Type (minimal interface for main process storage)
@@ -81,6 +82,14 @@ export interface MaestroSettings {
 	lastSelectedPromptId: string | null;
 	// Spell check in input areas
 	spellCheck: boolean;
+	// Usage Dashboard provider quota auto-refresh cadence, keyed by provider id
+	// ('claude-code' | 'codex'); value is the interval in ms (0 = off). Read by
+	// the main-process background scheduler (usage-refresh-scheduler.ts).
+	usageRefreshIntervals: Record<string, number>;
+	// System-wide hotkey to summon the Maestro window (key array, e.g. ['Meta','Shift','M']).
+	// Empty array disables it. Stored in the same format as `shortcuts` so the UI can reuse
+	// the existing capture helpers; converted to an Electron Accelerator at registration time.
+	globalShowHotkey: string[];
 	// Allow dynamic settings keys (electron-store is a key-value store
 	// with many settings not explicitly declared above)
 	[key: string]: any;
@@ -109,6 +118,15 @@ export interface GroupsData {
 
 export interface AgentConfigsData {
 	configs: Record<string, Record<string, any>>; // agentId -> config key-value pairs
+}
+
+// ============================================================================
+// Agent Capabilities Store (per-device snapshot of detected agent state)
+// ============================================================================
+
+export interface AgentCapabilitiesData {
+	/** Map of snapshot key -> snapshot. Key is `agentId` or `agentId:remoteUuid`. */
+	snapshots: AgentCapabilitiesSnapshotMap;
 }
 
 // ============================================================================

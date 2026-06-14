@@ -6,9 +6,12 @@
  */
 
 import type { ToolType } from '../types';
-import { DEFAULT_CONTEXT_WINDOWS, COMBINED_CONTEXT_AGENTS } from '../../shared/agentConstants';
+import { COMBINED_CONTEXT_AGENTS, getContextWindowForAgent } from '../../shared/agentConstants';
+import { useAgentStore } from '../stores/agentStore';
 
-// Re-export for consumers that import from this module
+// Re-export for consumers that import from this module. The local import
+// was dropped on migration to `getContextWindowForAgent` — the re-export
+// resolves directly from the source module without needing a binding.
 export { DEFAULT_CONTEXT_WINDOWS } from '../../shared/agentConstants';
 
 /** Minimum growth percentage per accumulated turn */
@@ -137,17 +140,29 @@ export function estimateContextUsage(
 		cacheCreationInputTokens?: number;
 		contextWindow?: number;
 	},
-	agentId?: ToolType | string
+	agentId?: ToolType | string,
+	/**
+	 * SSH remote UUID when the session is running against a remote host.
+	 * Lets the snapshot lookup pick the per-remote `agentId:remoteId`
+	 * key — otherwise SSH sessions fall back to the local snapshot and
+	 * then the static table, which can be wrong when remote models differ.
+	 */
+	sshRemoteId?: string
 ): number | null {
 	// Calculate total context using agent-specific semantics
 	const totalContextTokens = calculateContextTokens(stats, agentId);
 
-	// Determine effective context window
+	// Determine effective context window: runtime-reported stats win, then
+	// the agent's persisted capability snapshot for this environment
+	// (local OR specific remote), then the static table.
 	const effectiveContextWindow =
 		stats.contextWindow && stats.contextWindow > 0
 			? stats.contextWindow
 			: agentId && agentId !== 'terminal'
-				? DEFAULT_CONTEXT_WINDOWS[agentId as ToolType] || 0
+				? getContextWindowForAgent(
+						agentId,
+						useAgentStore.getState().getCapabilitySnapshot(agentId, sshRemoteId)
+					)
 				: 0;
 
 	if (!effectiveContextWindow || effectiveContextWindow <= 0) {

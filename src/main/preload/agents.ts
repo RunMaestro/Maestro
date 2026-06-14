@@ -10,9 +10,29 @@
 
 import { ipcRenderer } from 'electron';
 import type { AgentCapabilities, AgentConfig } from '../../shared/types';
+import {
+	SNAPSHOT_UPDATED_CHANNEL,
+	type AgentCapabilitiesSnapshot,
+	type AgentCapabilitiesSnapshotMap,
+	type SnapshotUpdatedPayload,
+} from '../../shared/agentCapabilities';
+import type { UsageSnapshot } from '../agents/claude-mode-selector';
+import type { CodexUsageSnapshot } from '../stores/codexUsageStore';
 
-// Re-export for consumers that import from preload
+// Re-export for consumers that import from preload. `AgentStatus` is
+// re-exported only (no local usage in this file); TypeScript's
+// `export type {...}` resolves it transitively from the source module
+// without needing a separate import. Importing it would trip
+// `@typescript-eslint/no-unused-vars` and TS6133.
 export type { AgentCapabilities, AgentConfig } from '../../shared/types';
+export type {
+	AgentCapabilitiesSnapshot,
+	AgentCapabilitiesSnapshotMap,
+	AgentStatus,
+	SnapshotUpdatedPayload,
+} from '../../shared/agentCapabilities';
+export type { UsageSnapshot } from '../agents/claude-mode-selector';
+export type { CodexUsageSnapshot } from '../stores/codexUsageStore';
 
 /**
  * Agent refresh result
@@ -162,6 +182,101 @@ export function createAgentsApi() {
 			sshRemoteId?: string
 		): Promise<{ name: string; prompt?: string; description?: string }[] | null> =>
 			ipcRenderer.invoke('agents:discoverSlashCommands', agentId, cwd, customPath, sshRemoteId),
+
+		/**
+		 * Get the persisted capability snapshot for an agent in a given
+		 * environment (local or per-SSH-remote). Returns null when no
+		 * snapshot exists yet — callers should fall back to detect().
+		 */
+		getSnapshot: (
+			agentId: string,
+			sshRemoteId?: string
+		): Promise<AgentCapabilitiesSnapshot | null> =>
+			ipcRenderer.invoke('agents:getSnapshot', agentId, sshRemoteId),
+
+		/** Read every persisted snapshot — used to hydrate the renderer at startup. */
+		getAllSnapshots: (): Promise<AgentCapabilitiesSnapshotMap> =>
+			ipcRenderer.invoke('agents:getAllSnapshots'),
+
+		/**
+		 * Clear an agent's snapshot and re-run detection. Resolves with the
+		 * post-detection snapshot (or null when nothing was written, e.g.
+		 * the terminal agent or an unknown id).
+		 */
+		reprobe: (agentId: string, sshRemoteId?: string): Promise<AgentCapabilitiesSnapshot | null> =>
+			ipcRenderer.invoke('agents:reprobe', agentId, sshRemoteId),
+
+		/**
+		 * Subscribe to live snapshot mutations. Returns an unsubscribe fn.
+		 * The renderer mirror calls this once at startup and updates state
+		 * in place — no polling needed.
+		 */
+		onSnapshotUpdated: (callback: (payload: SnapshotUpdatedPayload) => void): (() => void) => {
+			const handler = (_: unknown, payload: SnapshotUpdatedPayload) => callback(payload);
+			ipcRenderer.on(SNAPSHOT_UPDATED_CHANNEL, handler);
+			return () => ipcRenderer.removeListener(SNAPSHOT_UPDATED_CHANNEL, handler);
+		},
+
+		/**
+		 * Resolve the auto-detected maestro-p binary path bundled with the app.
+		 * Returns null when no bundled script is present (typical for dev builds
+		 * without an `npm run build` artifact).
+		 */
+		getMaestroPDetectedPath: (): Promise<string | null> =>
+			ipcRenderer.invoke('agents:getMaestroPDetectedPath'),
+
+		/**
+		 * Whether `maestro-p` is on the PATH of an SSH remote (used to disable the
+		 * TUI token-source option when the remote can't run it). Returns a fresh
+		 * cached result or probes on demand; `null` when it can't be determined.
+		 * Pass `force` to bypass the cache and re-probe immediately (Refresh button).
+		 */
+		getRemoteMaestroPAvailable: (sshRemoteId: string, force?: boolean): Promise<boolean | null> =>
+			ipcRenderer.invoke('agents:getRemoteMaestroPAvailable', sshRemoteId, force),
+
+		/**
+		 * Fetch the live Claude plan usage snapshot map keyed by canonical
+		 * `CLAUDE_CONFIG_DIR`. Used by the renderer-side claudeUsageStore to
+		 * mirror main-process state for the mode badge and Usage Dashboard.
+		 */
+		getClaudeUsageSnapshots: (): Promise<Record<string, UsageSnapshot>> =>
+			ipcRenderer.invoke('agents:getClaudeUsageSnapshots'),
+
+		/**
+		 * Discover local Claude account keys that can be sampled for quota status.
+		 */
+		getClaudeUsageAccountKeys: (): Promise<string[]> =>
+			ipcRenderer.invoke('agents:getClaudeUsageAccountKeys'),
+
+		/**
+		 * Fetch sanitized Codex quota snapshots keyed by canonical CODEX_HOME.
+		 * Main owns auth.json reads and quota endpoint calls.
+		 */
+		getCodexUsageSnapshots: (): Promise<Record<string, CodexUsageSnapshot>> =>
+			ipcRenderer.invoke('agents:getCodexUsageSnapshots'),
+
+		/**
+		 * Discover local CODEX_HOME account keys that can be sampled for quota status.
+		 */
+		getCodexUsageAccountKeys: (): Promise<string[]> =>
+			ipcRenderer.invoke('agents:getCodexUsageAccountKeys'),
+
+		/**
+		 * Trigger a fresh `runStartupUsageSampling()` pass on main so every known
+		 * `CLAUDE_CONFIG_DIR` account re-samples `maestro-p --status` and the
+		 * snapshot store is rewritten. The dashboard / settings refresh button
+		 * calls this and then pulls the updated map back into the renderer
+		 * mirror via `claudeUsageStore.refresh()`.
+		 */
+		refreshClaudeUsageSnapshots: (): Promise<{ refreshed: number }> =>
+			ipcRenderer.invoke('claude:usage:refresh-all'),
+
+		/**
+		 * Trigger a fresh Codex quota sampling pass on main, then let renderer
+		 * stores pull the sanitized snapshot map.
+		 */
+		refreshCodexUsageSnapshots: (): Promise<{ refreshed: number }> =>
+			ipcRenderer.invoke('codex:usage:refresh-all'),
 	};
 }
 

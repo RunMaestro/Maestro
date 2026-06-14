@@ -73,6 +73,20 @@ vi.mock('../../../renderer/utils/tabHelpers', () => ({
 		session.tabs?.find((t) => t.id === session.activeTabId) || session.tabs?.[0],
 }));
 
+// Track message-by-message navigation calls
+const mockJumpToMessageEdge = vi.fn().mockReturnValue(true);
+
+vi.mock('../../../renderer/utils/messageScrollNavigation', async () => {
+	const actual = await vi.importActual<
+		typeof import('../../../renderer/utils/messageScrollNavigation')
+	>('../../../renderer/utils/messageScrollNavigation');
+	return {
+		...actual,
+		jumpToMessageEdge: (...args: Parameters<typeof actual.jumpToMessageEdge>) =>
+			mockJumpToMessageEdge(...args),
+	};
+});
+
 // Default theme for testing
 const defaultTheme: Theme = {
 	id: 'test-theme' as any,
@@ -271,6 +285,33 @@ describe('TerminalOutput', () => {
 			expect(screen.queryByTitle('Sent in read-only mode')).not.toBeInTheDocument();
 		});
 
+		it('renders error log entries through the markdown renderer to preserve line breaks', () => {
+			// Issue #775: agent error messages contain status + explanation separated by
+			// newlines; rendering them inside a plain <p> collapsed the whitespace, so
+			// the status and the explanation ended up on a single line in chat.
+			const errorText = 'fatal: not a git repository\n\nhint: run `git init` first.';
+			const logs: LogEntry[] = [createLogEntry({ text: errorText, source: 'error' })];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({ session });
+			render(<TerminalOutput {...props} />);
+
+			// Error badge still shows up next to the icon.
+			expect(screen.getByText('Error')).toBeInTheDocument();
+
+			// The full error text is handed to react-markdown (mocked here as a div with
+			// data-testid="react-markdown"). This guarantees newlines/markdown render
+			// the same way they do for normal AI responses, instead of being flattened.
+			const markdown = screen.getByTestId('react-markdown');
+			expect(markdown).toHaveTextContent('fatal: not a git repository');
+			expect(markdown).toHaveTextContent('hint: run');
+			expect(markdown.textContent).toBe(errorText);
+		});
+
 		it('collapses consecutive AI responses in AI mode', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({ id: 'user-1', text: 'Question', source: 'user' }),
@@ -450,23 +491,23 @@ describe('TerminalOutput', () => {
 	});
 
 	describe('keyboard navigation', () => {
-		it('scrolls up on ArrowUp key', () => {
+		it('nudges scroll up on plain ArrowUp', () => {
 			const props = createDefaultProps();
 			const { container } = render(<TerminalOutput {...props} />);
 
 			const outputDiv = container.firstChild as HTMLElement;
 			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
 
-			// Mock scrollBy
 			const scrollBySpy = vi.fn();
 			scrollContainer.scrollBy = scrollBySpy;
 
 			fireEvent.keyDown(outputDiv, { key: 'ArrowUp' });
 
 			expect(scrollBySpy).toHaveBeenCalledWith({ top: -100 });
+			expect(mockJumpToMessageEdge).not.toHaveBeenCalled();
 		});
 
-		it('scrolls down on ArrowDown key', () => {
+		it('nudges scroll down on plain ArrowDown', () => {
 			const props = createDefaultProps();
 			const { container } = render(<TerminalOutput {...props} />);
 
@@ -479,6 +520,35 @@ describe('TerminalOutput', () => {
 			fireEvent.keyDown(outputDiv, { key: 'ArrowDown' });
 
 			expect(scrollBySpy).toHaveBeenCalledWith({ top: 100 });
+			expect(mockJumpToMessageEdge).not.toHaveBeenCalled();
+		});
+
+		it('jumps to previous message on Shift+ArrowUp', () => {
+			const props = createDefaultProps();
+			const { container } = render(<TerminalOutput {...props} />);
+
+			const outputDiv = container.firstChild as HTMLElement;
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+
+			fireEvent.keyDown(outputDiv, { key: 'ArrowUp', shiftKey: true });
+
+			expect(mockJumpToMessageEdge).toHaveBeenCalledWith(scrollContainer, '[data-log-index]', 'up');
+		});
+
+		it('jumps to next message on Shift+ArrowDown', () => {
+			const props = createDefaultProps();
+			const { container } = render(<TerminalOutput {...props} />);
+
+			const outputDiv = container.firstChild as HTMLElement;
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+
+			fireEvent.keyDown(outputDiv, { key: 'ArrowDown', shiftKey: true });
+
+			expect(mockJumpToMessageEdge).toHaveBeenCalledWith(
+				scrollContainer,
+				'[data-log-index]',
+				'down'
+			);
 		});
 
 		it('scrolls page up on Alt+ArrowUp', () => {
@@ -1391,7 +1461,7 @@ describe('TerminalOutput', () => {
 			expect(setMarkdownEditMode).toHaveBeenCalledWith(false);
 		});
 
-		it('does not show markdown toggle button for user messages', () => {
+		it('shows markdown toggle button for user messages in AI mode (#622 consistency)', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({ text: 'User message with **markdown**', source: 'user' }),
 			];
@@ -1408,8 +1478,10 @@ describe('TerminalOutput', () => {
 
 			render(<TerminalOutput {...props} />);
 
-			expect(screen.queryByTitle(/Show plain text/)).not.toBeInTheDocument();
-			expect(screen.queryByTitle(/Show formatted/)).not.toBeInTheDocument();
+			// Toggle is now exposed on user messages too — consistent with
+			// assistant messages so the user can flip between formatted and
+			// raw text views of their own input.
+			expect(screen.queryByTitle(/Show plain text/)).toBeInTheDocument();
 		});
 
 		it('does not show markdown toggle button in terminal mode', () => {
@@ -2428,6 +2500,146 @@ describe('TerminalOutput', () => {
 			render(<TerminalOutput {...props} />);
 
 			expect(screen.getByText(/日本語テスト.*🎉.*émojis/)).toBeInTheDocument();
+		});
+	});
+
+	describe('mode pill rendering', () => {
+		it('labels TUI and API turns separately when both render styles coexist', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'first prompt', source: 'user' }),
+				createLogEntry({
+					id: 'api-resp',
+					text: 'response from API stream',
+					source: 'stdout',
+					renderStyle: 'structured',
+				}),
+				createLogEntry({ id: 'user-2', text: 'second prompt', source: 'user' }),
+				createLogEntry({
+					id: 'interactive-resp',
+					text: 'response captured from interactive TUI',
+					source: 'stdout',
+					renderStyle: 'text-stream',
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('API')).toBeInTheDocument();
+			expect(screen.getByText('TUI')).toBeInTheDocument();
+		});
+
+		it('uses the "Adaptive" prefix when the session has Adaptive Mode enabled', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'first prompt', source: 'user' }),
+				createLogEntry({
+					id: 'resp-tui',
+					text: 'tui response',
+					source: 'stdout',
+					renderStyle: 'text-stream',
+				}),
+				createLogEntry({ id: 'user-2', text: 'second prompt', source: 'user' }),
+				createLogEntry({
+					id: 'resp-api',
+					text: 'api response',
+					source: 'stdout',
+					renderStyle: 'structured',
+				}),
+			];
+
+			const session = createDefaultSession({
+				enableMaestroP: true,
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('Adaptive TUI')).toBeInTheDocument();
+			expect(screen.getByText('Adaptive API')).toBeInTheDocument();
+			expect(screen.queryByText('TUI')).not.toBeInTheDocument();
+			expect(screen.queryByText('API')).not.toBeInTheDocument();
+		});
+
+		it('omits the "Adaptive" prefix when the session pins maestro-p mode (forced TUI / API)', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'first prompt', source: 'user' }),
+				createLogEntry({
+					id: 'resp-tui',
+					text: 'tui response',
+					source: 'stdout',
+					renderStyle: 'text-stream',
+				}),
+				createLogEntry({ id: 'user-2', text: 'second prompt', source: 'user' }),
+				createLogEntry({
+					id: 'resp-api',
+					text: 'api response',
+					source: 'stdout',
+					renderStyle: 'structured',
+				}),
+			];
+
+			// Forced TUI: enableMaestroP on + maestroPMode 'interactive' is NOT
+			// adaptive — only Dynamic mode auto-switches, so the prefix must drop.
+			const session = createDefaultSession({
+				enableMaestroP: true,
+				maestroPMode: 'interactive',
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('TUI')).toBeInTheDocument();
+			expect(screen.getByText('API')).toBeInTheDocument();
+			expect(screen.queryByText('Adaptive TUI')).not.toBeInTheDocument();
+			expect(screen.queryByText('Adaptive API')).not.toBeInTheDocument();
+		});
+
+		it('does not render the pill on user messages even when tagged text-stream', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					id: 'user-1',
+					text: 'a user prompt',
+					source: 'user',
+					renderStyle: 'text-stream',
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('a user prompt')).toBeInTheDocument();
+			expect(screen.queryByText('TUI')).not.toBeInTheDocument();
+			expect(screen.queryByText('API')).not.toBeInTheDocument();
+		});
+
+		it('does not render the pill on non-Claude agents', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'prompt', source: 'user' }),
+				createLogEntry({ id: 'resp-1', text: 'response', source: 'stdout' }),
+			];
+
+			const session = createDefaultSession({
+				toolType: 'codex',
+				tabs: [{ id: 'tab-1', agentSessionId: 'codex-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.queryByText('TUI')).not.toBeInTheDocument();
+			expect(screen.queryByText('API')).not.toBeInTheDocument();
+			expect(screen.queryByText('Adaptive TUI')).not.toBeInTheDocument();
+			expect(screen.queryByText('Adaptive API')).not.toBeInTheDocument();
 		});
 	});
 });

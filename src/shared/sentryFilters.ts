@@ -130,6 +130,13 @@ export function shouldDropSentryEvent(event: MinimalSentryEvent): boolean {
 	// ---- 5. Network failures (user offline) ----
 
 	if (/MarketplaceFetchError: Network error fetching .*: fetch failed/i.test(haystack)) return true;
+	if (
+		/error connecting to api\.github\.com/i.test(haystack) ||
+		/check your internet connection/i.test(haystack) ||
+		/ENOTFOUND api\.github\.com/i.test(haystack)
+	) {
+		return true;
+	}
 
 	// ---- 6. Shell detection failures ----
 

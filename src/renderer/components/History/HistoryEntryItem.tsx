@@ -5,6 +5,8 @@ import { formatElapsedTime } from '../../utils/formatters';
 import { stripMarkdown } from '../../utils/textProcessing';
 import { DoubleCheck, getPillColor, getEntryIcon } from './historyConstants';
 import { formatTimestamp } from '../../../shared/formatters';
+import { humanizeCueEventType } from '../../../shared/cue/cue-summary';
+import { getTokenSourcePill } from '../../../shared/claudeTokenModeLabel';
 
 const formatTime = (timestamp: number) => formatTimestamp(timestamp, 'smart');
 
@@ -32,6 +34,18 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 }: HistoryEntryItemProps) {
 	const colors = getPillColor(entry.type, theme);
 	const Icon = getEntryIcon(entry.type);
+
+	// Claude-only per-turn token source pill (TUI = maestro-p / Max plan, API =
+	// claude --print). Absent on non-Claude and older entries. Shares its label and
+	// tooltip with the live chat pill so the two can never drift.
+	const tokenPill = entry.tokenSource
+		? getTokenSourcePill({ mode: entry.tokenSource, reason: entry.tokenSourceReason })
+		: null;
+	const tokenPillColor = tokenPill
+		? tokenPill.isTui
+			? theme.colors.accent
+			: (theme.colors.warning ?? theme.colors.accent)
+		: theme.colors.accent;
 
 	const agentName = showAgentName
 		? (entry as HistoryEntry & { agentName?: string }).agentName
@@ -157,14 +171,19 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 
 			{/* CUE metadata subtitle */}
 			{entry.type === 'CUE' && entry.cueEventType && (
-				<p className="text-[10px] mt-1" style={{ color: theme.colors.textDim }}>
-					Triggered by: {entry.cueEventType}
+				<p
+					className="text-[10px] mt-1"
+					style={{ color: theme.colors.textDim }}
+					title={entry.cueEventType}
+				>
+					Triggered by: {humanizeCueEventType(entry.cueEventType)}
 				</p>
 			)}
 
-			{/* Footer Row - Time, Cost, Achievement Action, and Remote Origin */}
+			{/* Footer Row - Time, Cost, Token Source, Achievement Action, and Remote Origin */}
 			{(entry.elapsedTimeMs !== undefined ||
 				(entry.usageStats && entry.usageStats.totalCostUsd > 0) ||
+				tokenPill ||
 				entry.achievementAction ||
 				entry.hostname) && (
 				<div
@@ -191,6 +210,20 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 							}}
 						>
 							${entry.usageStats.totalCostUsd.toFixed(2)}
+						</span>
+					)}
+					{/* Token Source Pill (Claude-only): TUI vs API for this turn */}
+					{tokenPill && (
+						<span
+							className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded-full"
+							style={{
+								backgroundColor: tokenPillColor + '20',
+								color: tokenPillColor,
+								border: `1px solid ${tokenPillColor}40`,
+							}}
+							title={tokenPill.title}
+						>
+							{tokenPill.label}
 						</span>
 					)}
 					{/* Achievement Action Button */}

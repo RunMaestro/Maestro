@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 
@@ -18,14 +18,13 @@ function resetStore() {
 		preFilterActiveTabId: null,
 		preTerminalFileTabId: null,
 		selectedSidebarIndex: 0,
-		outputSearchOpen: false,
-		outputSearchQuery: '',
-		outputSearchRegex: false,
+		outputSearchByKey: {},
 		sessionFilterOpen: false,
 		historySearchFilterOpen: false,
 		draggingSessionId: null,
 		editingGroupId: null,
 		editingSessionId: null,
+		usageDashboardViewMode: 'overview',
 	});
 }
 
@@ -47,14 +46,13 @@ describe('uiStore', () => {
 			expect(state.preFilterActiveTabId).toBeNull();
 			expect(state.preTerminalFileTabId).toBeNull();
 			expect(state.selectedSidebarIndex).toBe(0);
-			expect(state.outputSearchOpen).toBe(false);
-			expect(state.outputSearchQuery).toBe('');
-			expect(state.outputSearchRegex).toBe(false);
+			expect(state.outputSearchByKey).toEqual({});
 			expect(state.sessionFilterOpen).toBe(false);
 			expect(state.historySearchFilterOpen).toBe(false);
 			expect(state.draggingSessionId).toBeNull();
 			expect(state.editingGroupId).toBeNull();
 			expect(state.editingSessionId).toBeNull();
+			expect(state.usageDashboardViewMode).toBe('overview');
 		});
 	});
 
@@ -128,6 +126,17 @@ describe('uiStore', () => {
 			expect(useUIStore.getState().bookmarksCollapsed).toBe(true);
 			useUIStore.getState().toggleBookmarksCollapsed();
 			expect(useUIStore.getState().bookmarksCollapsed).toBe(false);
+		});
+
+		it('persists bookmarks collapse state so it survives restarts', () => {
+			const setSetting = (window as any).maestro.settings.set as ReturnType<typeof vi.fn>;
+			setSetting.mockClear();
+
+			useUIStore.getState().setBookmarksCollapsed(true);
+			expect(setSetting).toHaveBeenCalledWith('bookmarksCollapsed', true);
+
+			useUIStore.getState().toggleBookmarksCollapsed();
+			expect(setSetting).toHaveBeenLastCalledWith('bookmarksCollapsed', false);
 		});
 	});
 
@@ -222,15 +231,29 @@ describe('uiStore', () => {
 		});
 	});
 
-	describe('output search state', () => {
-		it('sets output search open', () => {
-			useUIStore.getState().setOutputSearchOpen(true);
-			expect(useUIStore.getState().outputSearchOpen).toBe(true);
+	describe('output search state (scoped per agent+tab key)', () => {
+		const KEY = 'agent-1::tab-1';
+
+		it('sets output search open for a key', () => {
+			useUIStore.getState().setOutputSearchOpen(KEY, true);
+			expect(useUIStore.getState().outputSearchByKey[KEY]?.open).toBe(true);
 		});
 
-		it('sets output search query', () => {
-			useUIStore.getState().setOutputSearchQuery('find this');
-			expect(useUIStore.getState().outputSearchQuery).toBe('find this');
+		it('sets output search query for a key', () => {
+			useUIStore.getState().setOutputSearchQuery(KEY, 'find this');
+			expect(useUIStore.getState().outputSearchByKey[KEY]?.query).toBe('find this');
+		});
+
+		it('keeps each key independent', () => {
+			useUIStore.getState().setOutputSearchOpen('a::1', true);
+			useUIStore.getState().setOutputSearchQuery('a::1', 'alpha');
+			expect(useUIStore.getState().outputSearchByKey['b::1']).toBeUndefined();
+		});
+
+		it('prunes a slot when closed with an empty query', () => {
+			useUIStore.getState().setOutputSearchOpen(KEY, true);
+			useUIStore.getState().setOutputSearchOpen(KEY, false);
+			expect(useUIStore.getState().outputSearchByKey[KEY]).toBeUndefined();
 		});
 	});
 
@@ -286,6 +309,21 @@ describe('uiStore', () => {
 		});
 	});
 
+	describe('usage dashboard view mode', () => {
+		it('sets the last-selected tab with a value', () => {
+			useUIStore.getState().setUsageDashboardViewMode('cue');
+			expect(useUIStore.getState().usageDashboardViewMode).toBe('cue');
+		});
+
+		it('sets the last-selected tab with an updater', () => {
+			useUIStore.getState().setUsageDashboardViewMode('autorun');
+			useUIStore
+				.getState()
+				.setUsageDashboardViewMode((prev) => (prev === 'autorun' ? 'activity' : 'overview'));
+			expect(useUIStore.getState().usageDashboardViewMode).toBe('activity');
+		});
+	});
+
 	describe('React hook integration', () => {
 		it('provides state to React components via selectors', () => {
 			const { result } = renderHook(() => useUIStore((s) => s.leftSidebarOpen));
@@ -314,7 +352,7 @@ describe('uiStore', () => {
 
 			// Change unrelated state
 			act(() => {
-				useUIStore.getState().setOutputSearchQuery('test');
+				useUIStore.getState().setOutputSearchQuery('k::1', 'test');
 			});
 
 			// Should not have re-rendered (selector isolation)
@@ -344,7 +382,7 @@ describe('uiStore', () => {
 		it('returns stable action references across state changes', () => {
 			const actionsBefore = useUIStore.getState();
 			useUIStore.getState().setLeftSidebarOpen(false);
-			useUIStore.getState().setOutputSearchQuery('changed');
+			useUIStore.getState().setOutputSearchQuery('k::1', 'changed');
 			const actionsAfter = useUIStore.getState();
 
 			// Actions must be the same function references after state mutations.

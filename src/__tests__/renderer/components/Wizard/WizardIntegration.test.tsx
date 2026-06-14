@@ -1018,7 +1018,9 @@ describe('Wizard Integration Tests', () => {
 			fireEvent.click(screen.getByRole('button', { name: /exit.*save progress/i }));
 
 			// Analytics callback should be called
-			expect(onWizardAbandon).toHaveBeenCalled();
+			await waitFor(() => {
+				expect(onWizardAbandon).toHaveBeenCalled();
+			});
 		});
 	});
 

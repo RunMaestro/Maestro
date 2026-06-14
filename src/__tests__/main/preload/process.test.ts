@@ -78,6 +78,28 @@ describe('Process Preload API', () => {
 		});
 	});
 
+	describe('broadcastUserInput', () => {
+		it('should invoke process:broadcast-user-input with payload', async () => {
+			const payload = {
+				originId: 'origin-1',
+				sessionId: 'session-123',
+				tabId: 'tab-1',
+				inputMode: 'ai' as const,
+				entry: {
+					id: 'entry-1',
+					timestamp: 123,
+					source: 'user' as const,
+					text: 'Hello',
+				},
+			};
+			mockInvoke.mockResolvedValue(undefined);
+
+			await api.broadcastUserInput(payload);
+
+			expect(mockInvoke).toHaveBeenCalledWith('process:broadcast-user-input', payload);
+		});
+	});
+
 	describe('interrupt', () => {
 		it('should invoke process:interrupt with sessionId', async () => {
 			mockInvoke.mockResolvedValue(true);
@@ -165,6 +187,17 @@ describe('Process Preload API', () => {
 
 			expect(mockInvoke).toHaveBeenCalledWith('process:getActiveProcesses');
 			expect(result).toEqual(mockProcesses);
+		});
+	});
+
+	describe('isTerminalBusy', () => {
+		it('should invoke process:isTerminalBusy with the session id', async () => {
+			mockInvoke.mockResolvedValue(true);
+
+			const result = await api.isTerminalBusy('session-1-terminal-tab-1');
+
+			expect(mockInvoke).toHaveBeenCalledWith('process:isTerminalBusy', 'session-1-terminal-tab-1');
+			expect(result).toBe(true);
 		});
 	});
 

@@ -65,6 +65,8 @@ interface WizardInputPanelProps {
 	canAttachImages: boolean;
 	/** Whether the session is busy (disable mode toggle during generation) */
 	isBusy: boolean;
+	/** Whether the wizard is performing first-load initialization */
+	isInitializing?: boolean;
 	/** Handler for exiting wizard mode */
 	onExitWizard: () => void;
 	/** Enter to send setting */
@@ -116,6 +118,7 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 	confidence,
 	canAttachImages,
 	isBusy,
+	isInitializing = false,
 	onExitWizard,
 	enterToSend,
 	setEnterToSend,
@@ -263,6 +266,7 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 								theme={theme}
 								onClick={() => setShowExitConfirm(true)}
 								isThinking={isBusy}
+								isInitializing={isInitializing}
 							/>
 							<WizardConfidenceGauge confidence={confidence} theme={theme} />
 						</div>

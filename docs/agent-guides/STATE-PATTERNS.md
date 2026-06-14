@@ -106,22 +106,24 @@ const { setSessions, setActiveSessionId } = getSessionActions();
 
 ### State Slices
 
-| Slice                      | Type             | Default   | Purpose                       |
-| -------------------------- | ---------------- | --------- | ----------------------------- |
-| `leftSidebarOpen`          | `boolean`        | `true`    | Left sidebar visibility       |
-| `rightPanelOpen`           | `boolean`        | `true`    | Right panel visibility        |
-| `activeFocus`              | `FocusArea`      | `'main'`  | Current keyboard focus area   |
-| `activeRightTab`           | `RightPanelTab`  | `'files'` | Active tab in right panel     |
-| `bookmarksCollapsed`       | `boolean`        | `false`   | Bookmarks section collapsed   |
-| `showUnreadOnly`           | `boolean`        | `false`   | Filter session list to unread |
-| `flashNotification`        | `string \| null` | `null`    | Error flash message           |
-| `successFlashNotification` | `string \| null` | `null`    | Success flash message         |
-| `outputSearchOpen`         | `boolean`        | `false`   | Output search bar visible     |
-| `outputSearchQuery`        | `string`         | `''`      | Current search query          |
-| `sessionFilterOpen`        | `boolean`        | `false`   | Sidebar agent filter visible  |
-| `draggingSessionId`        | `string \| null` | `null`    | Session being dragged         |
-| `editingGroupId`           | `string \| null` | `null`    | Group being renamed inline    |
-| `editingSessionId`         | `string \| null` | `null`    | Session being renamed inline  |
+| Slice                      | Type                       | Default      | Purpose                                                                   |
+| -------------------------- | -------------------------- | ------------ | ------------------------------------------------------------------------- |
+| `leftSidebarOpen`          | `boolean`                  | `true`       | Left sidebar visibility                                                   |
+| `rightPanelOpen`           | `boolean`                  | `true`       | Right panel visibility                                                    |
+| `activeFocus`              | `FocusArea`                | `'main'`     | Current keyboard focus area                                               |
+| `activeRightTab`           | `RightPanelTab`            | `'files'`    | Active tab in right panel                                                 |
+| `bookmarksCollapsed`       | `boolean`                  | `false`      | Bookmarks section collapsed                                               |
+| `showUnreadOnly`           | `boolean`                  | `false`      | Filter session list to unread                                             |
+| `flashNotification`        | `string \| null`           | `null`       | Error flash message                                                       |
+| `successFlashNotification` | `string \| null`           | `null`       | Success flash message                                                     |
+| `outputSearchOpen`         | `boolean`                  | `false`      | Output search bar visible                                                 |
+| `outputSearchQuery`        | `string`                   | `''`         | Current search query                                                      |
+| `sessionFilterOpen`        | `boolean`                  | `false`      | Sidebar agent filter visible                                              |
+| `draggingSessionId`        | `string \| null`           | `null`       | Session being dragged                                                     |
+| `editingGroupId`           | `string \| null`           | `null`       | Group being renamed inline                                                |
+| `editingSessionId`         | `string \| null`           | `null`       | Session being renamed inline                                              |
+| `usageDashboardViewMode`   | `UsageDashboardViewMode`   | `'overview'` | Last-selected Usage Dashboard tab (in-memory, resets on restart)          |
+| `hiddenQuotaAccounts`      | `Record<string, string[]>` | `{}`         | Per-provider hidden quota accounts (persisted via settings write-through) |
 
 All actions support functional updaters and have toggle variants where appropriate (e.g., `toggleLeftSidebar`, `toggleRightPanel`, `toggleShowUnreadOnly`).
 
@@ -238,7 +240,7 @@ interface ModalEntry<T = unknown> {
 
 ### ModalId Union
 
-The current union in `src/renderer/stores/modalStore.ts` lists ~55 modal identifiers (exact list grows as features land — check the source):
+The current union in `src/renderer/stores/modalStore.ts` lists ~55 modal identifiers (exact list grows as features land - check the source):
 
 - **Chrome / global:** `settings`, `shortcutsHelp`, `about`, `feedback`, `updateCheck`
 - **Agent lifecycle:** `newAgentChoice`, `newInstance`, `editAgent`, `deleteAgent`, `renameInstance`, `agentError`
@@ -507,4 +509,4 @@ Each AI tab within a session:
 | `hasUnread`      | `boolean?`     | Unread indicator                                                                   |
 | `agentError`     | `AgentError?`  | Per-tab error state                                                                |
 
-**Model/effort resolution chain** (used at user-facing spawn time in `useInputProcessing` and `agentStore.processQueuedItem`): `tab.customModel ?? session.customModel ?? agentConfig.model`. The MainPanel model/effort pill writes to the active tab via `tabStore.setTabModel`/`setTabEffort` — only the Edit Agent modal mutates `session.customModel`/`customEffort`. Programmatic spawns (Auto Run batch, synopsis, Cue, group chat, fork/merge) intentionally read the session value only.
+**Model/effort resolution chain** (used at user-facing spawn time in `useInputProcessing` and `agentStore.processQueuedItem`): `tab.customModel ?? session.customModel ?? agentConfig.model`. The MainPanel model/effort pill writes to the active tab via `tabStore.setTabModel`/`setTabEffort` - only the Edit Agent modal mutates `session.customModel`/`customEffort`. Programmatic spawns (Auto Run batch, synopsis, Cue, group chat, fork/merge) intentionally read the session value only.

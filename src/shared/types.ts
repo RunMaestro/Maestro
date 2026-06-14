@@ -245,6 +245,17 @@ export interface HistoryEntry {
 	cueSourceSession?: string;
 	/** Hostname of the machine that created this entry (for shared history) */
 	hostname?: string;
+	/**
+	 * Claude-only, per-turn: which interface spent the quota for this turn.
+	 * `interactive` = maestro-p TUI (Max plan), `api` = `claude --print` (per-token).
+	 * Captured per entry because a Dynamic-mode agent flips between the two across turns.
+	 */
+	tokenSource?: 'interactive' | 'api';
+	/**
+	 * Claude-only, per-turn: why the token source was chosen. `auto` = user/usage
+	 * selected, `limit` = forced API fallback because the Max plan quota was exhausted.
+	 */
+	tokenSourceReason?: 'auto' | 'limit';
 }
 
 // Document entry within a playbook
@@ -252,6 +263,11 @@ export interface PlaybookDocumentEntry {
 	filename: string;
 	resetOnCompletion: boolean;
 }
+
+// Controls whether each Auto Run agent invocation processes a single task or the
+// whole document. Resolves `{{TASK_SELECTION_BLOCK}}` inside the autorun prompt.
+// Omitted on legacy playbooks → treated as 'task' (the historical behavior).
+export type TaskSelectionMode = 'task' | 'document';
 
 // A saved Playbook configuration
 export interface Playbook {
@@ -263,6 +279,7 @@ export interface Playbook {
 	loopEnabled: boolean;
 	maxLoops?: number | null;
 	prompt: string;
+	taskSelectionMode?: TaskSelectionMode;
 	worktreeSettings?: {
 		branchNameTemplate: string;
 		createPROnCompletion: boolean;
@@ -304,6 +321,7 @@ export interface BatchRunConfig {
 	prompt: string;
 	loopEnabled: boolean;
 	maxLoops?: number | null;
+	taskSelectionMode?: TaskSelectionMode;
 	worktree?: WorktreeConfig;
 	worktreeTarget?: WorktreeRunTarget;
 }
@@ -407,6 +425,13 @@ export interface AgentConfig {
 	capabilities?: AgentCapabilities;
 	yoloModeArgs?: string[];
 	readOnlyCliEnforced?: boolean;
+	/**
+	 * Latest persisted capability snapshot for this agent in the requested
+	 * environment (local or per-SSH-remote). Attached by the IPC handlers
+	 * after stripping non-serializable agent fields. May be absent on first
+	 * boot before any detection has run.
+	 */
+	snapshot?: import('./agentCapabilities').AgentCapabilitiesSnapshot;
 }
 
 // ============================================================================
@@ -425,6 +450,7 @@ export type AgentErrorType =
 	| 'agent_crashed' // Process exited unexpectedly
 	| 'permission_denied' // Agent lacks required permissions
 	| 'session_not_found' // Session was deleted or doesn't exist
+	| 'hitl_gate' // Playbook reached a human-in-the-loop review marker
 	| 'unknown'; // Unrecognized error
 
 /**
@@ -446,6 +472,14 @@ export interface AgentError {
 
 	/** The session ID where the error occurred (if applicable) */
 	sessionId?: string;
+
+	/**
+	 * Stable UUID of the SSH remote this error fired against, when the
+	 * spawning session was an SSH-backed session. Used by listeners (notably
+	 * `capabilitySnapshots.markAuthRequired`) so that per-remote status pills
+	 * flip independently of the local snapshot. Absent on local-spawn errors.
+	 */
+	sshRemoteId?: string;
 
 	/** Timestamp when the error occurred */
 	timestamp: number;
@@ -657,13 +691,17 @@ export interface AgentSshRemoteConfig {
  */
 export interface ParsedDeepLink {
 	/** The type of navigation action */
-	action: 'focus' | 'session' | 'group';
-	/** Maestro session ID (for action: 'session') */
+	action: 'focus' | 'session' | 'group' | 'file';
+	/** Maestro session ID (for action: 'session' and 'file') */
 	sessionId?: string;
 	/** Tab ID within the session (for action: 'session') */
 	tabId?: string;
 	/** Group ID (for action: 'group') */
 	groupId?: string;
+	/** Absolute filesystem path (for action: 'file') */
+	filePath?: string;
+	/** 1-based line number within the file (for action: 'file', optional) */
+	line?: number;
 }
 
 // ============================================================================

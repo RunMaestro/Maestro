@@ -30,10 +30,10 @@ In this example, when `build-agent` finishes, Cue sends the same prompt to three
 
 **Notes:**
 
-- Each fan-out target runs independently — failures in one don't affect others
+- Each fan-out target runs independently - failures in one don't affect others
 - All targets receive the same prompt with the same template variable values
 - Fan-out targets must be agent names visible in the Left Bar
-- Fan-out respects `max_concurrent` — if slots are full, excess runs are queued
+- Fan-out respects `max_concurrent` - if slots are full, excess runs are queued
 
 ## Fan-In
 
@@ -68,7 +68,7 @@ settings:
 
 ## Filtering
 
-Filters let you conditionally trigger subscriptions based on event payload data. All filter conditions are AND'd — every condition must pass for the subscription to fire.
+Filters let you conditionally trigger subscriptions based on event payload data. All filter conditions are AND'd - every condition must pass for the subscription to fire.
 
 ### Filter Syntax
 
@@ -300,7 +300,7 @@ All prompts support `{{VARIABLE}}` syntax. Variables are replaced with event pay
 
 ### Standard Variables
 
-Cue prompts also have access to all standard Maestro template variables (like `{{PROJECT_ROOT}}`, `{{TIMESTAMP}}`, etc.) — the same variables available in Auto Run playbooks and system prompts.
+Cue prompts also have access to all standard Maestro template variables (like `{{PROJECT_ROOT}}`, `{{TIMESTAMP}}`, etc.) - the same variables available in Auto Run playbooks and system prompts.
 
 ## Concurrency Control
 
@@ -315,9 +315,9 @@ settings:
   max_concurrent: 3 # Up to 3 runs at once
 ```
 
-**Range:** 1–10. **Default:** 1 (serial execution).
+**Range:** 1-10. **Default:** 1 (serial execution).
 
-With `max_concurrent: 1` (default), events are processed one at a time in order. This is the safest setting — it prevents agents from receiving overlapping prompts.
+With `max_concurrent: 1` (default), events are processed one at a time in order. This is the safest setting - it prevents agents from receiving overlapping prompts.
 
 Increase `max_concurrent` when your subscriptions are independent and don't conflict with each other (e.g., reviewing different PRs, scanning different files).
 
@@ -330,10 +330,10 @@ settings:
   queue_size: 20 # Buffer up to 20 events
 ```
 
-**Range:** 0–10000. **Default:** 512 (generous buffer; absorbs bursty triggers without overflow toasts).
+**Range:** 0-10000. **Default:** 512 (generous buffer; absorbs bursty triggers without overflow toasts).
 
 - Events beyond the queue limit are **dropped** (and surfaced as a "Cue queue overflow" toast)
-- Set to `0` to disable queuing — events that can't run immediately are discarded
+- Set to `0` to disable queuing - events that can't run immediately are discarded
 - The current queue depth is visible in the Cue Modal's sessions table
 
 ### Timeout
@@ -348,8 +348,8 @@ settings:
 
 **`timeout_on_fail` options:**
 
-- `break` (default) — Timed-out runs are marked as failed. Downstream `agent.completed` subscriptions see the failure.
-- `continue` — Timed-out runs are stopped, but downstream subscriptions still fire with whatever data is available. Useful for fan-in patterns where you'd rather proceed with partial results than block the entire pipeline.
+- `break` (default) - Timed-out runs are marked as failed. Downstream `agent.completed` subscriptions see the failure.
+- `continue` - Timed-out runs are stopped, but downstream subscriptions still fire with whatever data is available. Useful for fan-in patterns where you'd rather proceed with partial results than block the entire pipeline.
 
 ## Sleep/Wake Reconciliation
 
@@ -359,14 +359,14 @@ Cue handles system sleep gracefully:
 - **File watchers** (`file.changed`, `task.pending`) resume monitoring on wake. Changes that occurred during sleep may trigger events depending on the OS file system notification behavior.
 - **GitHub pollers** resume polling on wake. Any PRs/issues created during sleep are detected on the next poll.
 
-The engine uses a heartbeat mechanism to detect sleep periods. This is transparent — no configuration needed.
+The engine uses a heartbeat mechanism to detect sleep periods. This is transparent - no configuration needed.
 
 ## Persistence
 
 Cue persists its state in a local SQLite database:
 
-- **Event journal** — Records all events (completed, failed, timed out) for the Activity Log
-- **GitHub seen tracking** — Remembers which PRs/issues have already triggered events (30-day retention)
-- **Heartbeat** — Tracks engine uptime for sleep/wake detection
+- **Event journal** - Records all events (completed, failed, timed out) for the Activity Log
+- **GitHub seen tracking** - Remembers which PRs/issues have already triggered events (30-day retention)
+- **Heartbeat** - Tracks engine uptime for sleep/wake detection
 
 Events older than 7 days are automatically pruned to keep the database lean.

@@ -19,6 +19,7 @@ import { formatTokensCompact, formatRelativeTime, formatCost } from '../utils/fo
 import { calculateContextDisplay, calculateDisplayInputTokens } from '../utils/contextUsage';
 import { getExtensionColor } from '../utils/extensionColors';
 import { getTabDisplayName } from '../utils/tabHelpers';
+import { getBrowserTabLabel } from '../utils/browserTabPersistence';
 import { logger } from '../utils/logger';
 
 /** Normalize a project path for comparison (strip trailing slashes) */
@@ -341,7 +342,7 @@ export function TabSwitcherModal({
 							: a.type === 'terminal'
 								? (a.tab.name || 'Terminal').toLowerCase()
 								: a.type === 'browser'
-									? (a.tab.title || a.tab.url).toLowerCase()
+									? getBrowserTabLabel(a.tab).toLowerCase()
 									: '';
 				const nameB =
 					b.type === 'open'
@@ -351,7 +352,7 @@ export function TabSwitcherModal({
 							: b.type === 'terminal'
 								? (b.tab.name || 'Terminal').toLowerCase()
 								: b.type === 'browser'
-									? (b.tab.title || b.tab.url).toLowerCase()
+									? getBrowserTabLabel(b.tab).toLowerCase()
 									: '';
 				return nameA.localeCompare(nameB);
 			});
@@ -479,7 +480,7 @@ export function TabSwitcherModal({
 				displayName = item.tab.name || 'Terminal';
 				searchableId = item.tab.shellType + ' ' + item.tab.cwd;
 			} else if (item.type === 'browser') {
-				displayName = item.tab.title || item.tab.url;
+				displayName = getBrowserTabLabel(item.tab);
 				searchableId = item.tab.url;
 			} else {
 				displayName = item.session.sessionName;
@@ -569,6 +570,21 @@ export function TabSwitcherModal({
 				toggleViewMode(e.shiftKey);
 				return;
 			}
+			// Cmd/Ctrl+Shift+[ / ] also cycles the view-mode pills (matches the
+			// app-wide prev/next-tab shortcut). Use e.code so it works regardless
+			// of the brace characters Shift produces on macOS.
+			if ((e.metaKey || e.ctrlKey) && e.shiftKey) {
+				if (e.code === 'BracketRight') {
+					e.preventDefault();
+					toggleViewMode(false);
+					return;
+				}
+				if (e.code === 'BracketLeft') {
+					e.preventDefault();
+					toggleViewMode(true);
+					return;
+				}
+			}
 			// Stop propagation on Enter to prevent parent handlers
 			if (e.key === 'Enter') {
 				e.stopPropagation();
@@ -585,7 +601,7 @@ export function TabSwitcherModal({
 				aria-modal="true"
 				aria-label="Tab Switcher"
 				tabIndex={-1}
-				className="w-[600px] rounded-xl shadow-2xl border overflow-hidden flex flex-col max-h-[700px] outline-none"
+				className="modal-w-md rounded-xl shadow-2xl border overflow-hidden flex flex-col max-h-[700px] outline-none"
 				style={{ backgroundColor: theme.colors.bgActivity, borderColor: theme.colors.border }}
 			>
 				{/* Search Header */}
@@ -970,7 +986,7 @@ export function TabSwitcherModal({
 							// Browser tab
 							const { tab } = item;
 							const isActive = tab.id === activeBrowserTabId;
-							const displayName = tab.title || tab.url;
+							const displayName = getBrowserTabLabel(tab);
 
 							return (
 								<button

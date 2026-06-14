@@ -21,6 +21,7 @@ import {
 import { appendToLog, readLog, saveImage } from './group-chat-log';
 import {
 	type GroupChatMessage,
+	type GroupChatHistoryEntry,
 	mentionMatches,
 	normalizeMentionName,
 } from '../../shared/group-chat-types';
@@ -45,6 +46,7 @@ import { getPrompt } from '../prompt-manager';
 import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
 import { setGetCustomShellPathCallback } from './group-chat-config';
 import { spawnGroupChatAgent } from './spawnGroupChatAgent';
+import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
 
 // Import emitters from IPC handlers (will be populated after handlers are registered)
 import { groupChatEmitters } from '../ipc/handlers/groupChat';
@@ -53,6 +55,14 @@ const LOG_CONTEXT = '[GroupChatRouter]';
 
 // Re-export setGetCustomShellPathCallback for index.ts to use
 export { setGetCustomShellPathCallback };
+
+function isModeratorInactiveAutoAddRace(error: unknown, groupChatId: string): boolean {
+	if (!(error instanceof Error)) return false;
+	return (
+		error.message ===
+		`Moderator must be active before adding participants to group chat: ${groupChatId}`
+	);
+}
 
 /**
  * Session info for matching @mentions to available Maestro sessions.
@@ -65,6 +75,12 @@ export interface GroupChatSessionInfo {
 	customArgs?: string;
 	customEnvVars?: Record<string, string>;
 	customModel?: string;
+	/** Claude token-source opt-in (Claude Code participants only). See getClaudeTokenMode. */
+	enableMaestroP?: boolean;
+	/** Refines enableMaestroP: 'interactive' (always TUI) vs 'dynamic' (auto-switch). */
+	maestroPMode?: 'interactive' | 'dynamic';
+	/** Optional maestro-p script override. */
+	maestroPPath?: string;
 	/** SSH remote name for display in participant card */
 	sshRemoteName?: string;
 	/** Full SSH remote config for remote execution */
@@ -110,6 +126,45 @@ let sshStore: SshRemoteSettingsStore | null = null;
  * Maps groupChatId -> Set<participantName>
  */
 const pendingParticipantResponses = new Map<string, Set<string>>();
+
+/**
+ * Tracks group chats whose next moderator turn is a synthesis round (the moderator
+ * summarizing participant responses). Set when a synthesis process is spawned and
+ * consumed when its output routes back through routeModeratorResponse, so that turn's
+ * history entry is classified as 'synthesis' rather than a regular moderator response.
+ * The moderator runs single-threaded per chat, so a plain groupChatId flag is safe.
+ */
+const pendingSynthesisRounds = new Set<string>();
+
+/**
+ * Writes a group chat history entry and emits it to the renderer. Centralizes the
+ * add + emit + failure-handling pattern shared by the moderator, participant, and
+ * error history-record sites. History logging is best-effort: a failure here is
+ * reported but never thrown, so it can't break the message flow.
+ */
+async function recordGroupChatHistory(
+	groupChatId: string,
+	entry: Omit<GroupChatHistoryEntry, 'id'>
+): Promise<void> {
+	try {
+		const historyEntry = await addGroupChatHistoryEntry(groupChatId, entry);
+		groupChatEmitters.emitHistoryEntry?.(groupChatId, historyEntry);
+		logger.debug(
+			`[GroupChatRouter] Added ${entry.type} history entry for ${entry.participantName}: ${entry.summary.substring(0, 50)}...`
+		);
+	} catch (error) {
+		logger.error(`Failed to add history entry for ${entry.participantName}`, LOG_CONTEXT, {
+			error,
+			groupChatId,
+		});
+		captureException(error, {
+			operation: 'groupChat:addHistory',
+			participantName: entry.participantName,
+			groupChatId,
+		});
+		// Don't throw - history logging failure shouldn't break the message flow
+	}
+}
 
 /**
  * Tracks which participants in each group chat were triggered via !autorun directives.
@@ -620,6 +675,14 @@ export async function routeUserMessage(
 						);
 					}
 				} catch (error) {
+					if (isModeratorInactiveAutoAddRace(error, groupChatId)) {
+						logger.warn(
+							`Skipped auto-adding participant ${mentionedName}: moderator is no longer active`,
+							LOG_CONTEXT,
+							{ groupChatId }
+						);
+						continue;
+					}
 					logger.error(
 						`Failed to auto-add participant ${mentionedName} from user mention`,
 						LOG_CONTEXT,
@@ -833,6 +896,10 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 						getCustomEnvVarsCallback?.(chat.moderatorAgentId),
 					agentConfigValues,
 					sshRemoteConfig: chat.moderatorConfig?.sshRemoteConfig,
+					tokenMode: getClaudeTokenMode(chat.moderatorConfig, {
+						sshEnabled: !!chat.moderatorConfig?.sshRemoteConfig?.enabled,
+					}),
+					maestroPPath: chat.moderatorConfig?.maestroPPath,
 					sshStore,
 					processManager,
 					readOnlyMode: true,
@@ -894,6 +961,10 @@ export async function routeModeratorResponse(
 	);
 	logger.debug(`[GroupChat:Debug] Read-only: ${readOnly ?? false}`);
 
+	// Consume the synthesis flag set by spawnModeratorSynthesis. If set, this moderator
+	// turn is the post-round summary and its history entry is classified as 'synthesis'.
+	const isSynthesisRound = pendingSynthesisRounds.delete(groupChatId);
+
 	const chat = await loadGroupChat(groupChatId);
 	if (!chat) {
 		// Benign race: the group chat was deleted while a moderator process was still
@@ -934,33 +1005,9 @@ export async function routeModeratorResponse(
 		logger.debug(`[GroupChat:Debug] Emitted moderator message to renderer`);
 	}
 
-	// Add history entry for moderator response
-	if (shouldPersistModeratorMessage) {
-		try {
-			const summary = extractFirstSentence(displayMessage);
-			const historyEntry = await addGroupChatHistoryEntry(groupChatId, {
-				timestamp: Date.now(),
-				summary,
-				participantName: 'Moderator',
-				participantColor: '#808080', // Gray for moderator
-				type: 'response',
-				fullResponse: displayMessage,
-			});
-
-			// Emit history entry event to renderer
-			groupChatEmitters.emitHistoryEntry?.(groupChatId, historyEntry);
-			logger.debug(
-				`[GroupChatRouter] Added history entry for Moderator: ${summary.substring(0, 50)}...`
-			);
-		} catch (error) {
-			logger.error('Failed to add history entry for Moderator', LOG_CONTEXT, {
-				error,
-				groupChatId,
-			});
-			captureException(error, { operation: 'groupChat:addModeratorHistory', groupChatId });
-			// Don't throw - history logging failure shouldn't break the message flow
-		}
-	}
+	// The moderator history entry is written at the end of this function, once we know
+	// whether this turn delegated work to participants ('delegation'), was a synthesis
+	// summary ('synthesis'), or was a plain final response ('response').
 
 	// Extract ALL mentions from the message
 	const allMentions = extractAllMentions(message);
@@ -1033,6 +1080,14 @@ export async function routeModeratorResponse(
 						);
 					}
 				} catch (error) {
+					if (isModeratorInactiveAutoAddRace(error, groupChatId)) {
+						logger.warn(
+							`Skipped auto-adding participant ${mentionedName}: moderator is no longer active`,
+							LOG_CONTEXT,
+							{ groupChatId }
+						);
+						continue;
+					}
 					logger.error(`Failed to auto-add participant ${mentionedName}`, LOG_CONTEXT, {
 						error,
 						groupChatId,
@@ -1285,6 +1340,10 @@ export async function routeModeratorResponse(
 						getCustomEnvVarsCallback?.(participant.agentId),
 					agentConfigValues,
 					sshRemoteConfig: matchingSession?.sshRemoteConfig,
+					tokenMode: getClaudeTokenMode(matchingSession, {
+						sshEnabled: !!matchingSession?.sshRemoteConfig?.enabled,
+					}),
+					maestroPPath: matchingSession?.maestroPPath,
 					sshStore,
 					processManager,
 					readOnlyMode: readOnly ?? false, // Propagate read-only mode from caller
@@ -1328,6 +1387,13 @@ export async function routeModeratorResponse(
 					participantName,
 					groupChatId,
 				});
+				await recordGroupChatHistory(groupChatId, {
+					timestamp: Date.now(),
+					summary: `Failed to start ${participantName}.`,
+					participantName,
+					participantColor: participant.color || '#808080',
+					type: 'error',
+				});
 				// Continue with other participants even if one fails
 			}
 		}
@@ -1356,6 +1422,26 @@ export async function routeModeratorResponse(
 		groupChatEmitters.emitStateChange?.(groupChatId, 'idle');
 		logger.debug(`[GroupChat:Debug] Emitted state change: idle`);
 		powerManager.removeBlockReason(`groupchat:${groupChatId}`);
+	}
+
+	// Add history entry for the moderator turn now that delegation is known.
+	// - synthesis round  -> 'synthesis'
+	// - forwarded work to participant(s) -> 'delegation'
+	// - otherwise (plain/final response) -> 'response'
+	if (shouldPersistModeratorMessage) {
+		const moderatorEntryType = isSynthesisRound
+			? 'synthesis'
+			: participantsToRespond.size > 0
+				? 'delegation'
+				: 'response';
+		await recordGroupChatHistory(groupChatId, {
+			timestamp: Date.now(),
+			summary: extractFirstSentence(displayMessage),
+			participantName: 'Moderator',
+			participantColor: '#808080', // Gray for moderator
+			type: moderatorEntryType,
+			fullResponse: displayMessage,
+		});
 	}
 
 	// Log final pending state (registration now happens incrementally per-participant above)
@@ -1454,33 +1540,14 @@ export async function routeAgentResponse(
 	}
 
 	// Add history entry for this response
-	try {
-		const historyEntry = await addGroupChatHistoryEntry(groupChatId, {
-			timestamp: Date.now(),
-			summary,
-			participantName,
-			participantColor: participant.color || '#808080', // Default gray if no color assigned
-			type: 'response',
-			fullResponse: message,
-		});
-
-		// Emit history entry event to renderer
-		groupChatEmitters.emitHistoryEntry?.(groupChatId, historyEntry);
-		logger.debug(
-			`[GroupChatRouter] Added history entry for ${participantName}: ${summary.substring(0, 50)}...`
-		);
-	} catch (error) {
-		logger.error(`Failed to add history entry for ${participantName}`, LOG_CONTEXT, {
-			error,
-			groupChatId,
-		});
-		captureException(error, {
-			operation: 'groupChat:addParticipantHistory',
-			participantName,
-			groupChatId,
-		});
-		// Don't throw - history logging failure shouldn't break the message flow
-	}
+	await recordGroupChatHistory(groupChatId, {
+		timestamp: Date.now(),
+		summary,
+		participantName,
+		participantColor: participant.color || '#808080', // Default gray if no color assigned
+		type: 'response',
+		fullResponse: message,
+	});
 
 	// Note: The moderator runs in batch mode (one-shot per message), so we can't write to it.
 	// Instead, we track pending responses and spawn a synthesis round after all participants respond.
@@ -1643,6 +1710,10 @@ Review the agent responses above. Either:
 		// Start moderator timeout to prevent indefinite hanging
 		setModeratorResponseTimeout(groupChatId);
 
+		// Mark this turn so routeModeratorResponse classifies its history entry as
+		// 'synthesis'. Cleared in the catch below if the spawn never gets off the ground.
+		pendingSynthesisRounds.add(groupChatId);
+
 		const spawnResult = await spawnGroupChatAgent({
 			sessionId,
 			agentId: chat.moderatorAgentId,
@@ -1656,6 +1727,10 @@ Review the agent responses above. Either:
 				getCustomEnvVarsCallback?.(chat.moderatorAgentId),
 			agentConfigValues,
 			sshRemoteConfig: chat.moderatorConfig?.sshRemoteConfig,
+			tokenMode: getClaudeTokenMode(chat.moderatorConfig, {
+				sshEnabled: !!chat.moderatorConfig?.sshRemoteConfig?.enabled,
+			}),
+			maestroPPath: chat.moderatorConfig?.maestroPPath,
 			sshStore,
 			processManager,
 			readOnlyMode: true,
@@ -1670,6 +1745,16 @@ Review the agent responses above. Either:
 	} catch (error) {
 		logger.error(`Failed to spawn moderator synthesis for ${groupChatId}`, LOG_CONTEXT, { error });
 		captureException(error, { operation: 'groupChat:spawnSynthesis', groupChatId });
+		// Spawn failed before producing output, so no synthesis turn will route back -
+		// drop the flag so the next moderator turn isn't mis-tagged as synthesis.
+		pendingSynthesisRounds.delete(groupChatId);
+		await recordGroupChatHistory(groupChatId, {
+			timestamp: Date.now(),
+			summary: 'Synthesis round failed to start.',
+			participantName: 'Moderator',
+			participantColor: '#808080',
+			type: 'error',
+		});
 		groupChatEmitters.emitStateChange?.(groupChatId, 'idle');
 		// Remove power block reason on synthesis error since we're going idle
 		powerManager.removeBlockReason(`groupchat:${groupChatId}`);
@@ -1807,6 +1892,10 @@ export async function respawnParticipantWithRecovery(
 			configResolution.effectiveCustomEnvVars ?? getCustomEnvVarsCallback?.(participant.agentId),
 		agentConfigValues,
 		sshRemoteConfig: matchingSession?.sshRemoteConfig,
+		tokenMode: getClaudeTokenMode(matchingSession, {
+			sshEnabled: !!matchingSession?.sshRemoteConfig?.enabled,
+		}),
+		maestroPPath: matchingSession?.maestroPPath,
 		sshStore,
 		processManager,
 		readOnlyMode: readOnly ?? false,

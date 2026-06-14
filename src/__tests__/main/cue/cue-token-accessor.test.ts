@@ -1,5 +1,5 @@
 /**
- * Phase 02 task #3 — unit tests for `cue-token-accessor.ts`.
+ * Unit tests for `cue-token-accessor.ts`.
  *
  * The accessor wires together two real subsystems we want to keep out of the
  * test environment:
@@ -11,6 +11,12 @@
  *      that read on-disk session files. We register fake storages with
  *      hand-crafted `AgentSessionInfo` rows so we can assert on the exact
  *      mapping into `SessionTokenSummary`.
+ *
+ * Critically, the fixtures keep the two id spaces DISTINCT: `session_lifecycle`
+ * rows are keyed by the Maestro agent id (`m-*`), while `AgentSessionInfo` rows
+ * (what `listSessions` returns) are keyed by the provider session id (`p-*`).
+ * Conflating them is the bug this accessor was rewritten to fix — using the
+ * same id for both would silently pass even if the join were wrong.
  *
  * We exercise the dispatch table (`COVERAGE_BY_AGENT`) and cache via the
  * exported `_resetCueTokenAccessorCache` helper.
@@ -60,6 +66,7 @@ vi.mock('../../../main/utils/sentry', () => ({
 
 import {
 	getSessionTokenSummaries,
+	getAgentTypesForSessions,
 	_resetCueTokenAccessorCache,
 } from '../../../main/cue/stats/cue-token-accessor';
 
@@ -67,7 +74,7 @@ import {
 
 function makeInfo(overrides: Partial<AgentSessionInfo> = {}): AgentSessionInfo {
 	return {
-		sessionId: 'sess-x',
+		sessionId: 'p-x',
 		projectPath: '/proj',
 		timestamp: '2026-04-28T10:00:00.000Z',
 		modifiedAt: '2026-04-28T10:30:00.000Z',
@@ -114,7 +121,7 @@ describe('cue-token-accessor', () => {
 		it('claude-code session reports full coverage with all token + cost fields', async () => {
 			lookupRows = [
 				{
-					session_id: 's-claude',
+					session_id: 'm-claude',
 					agent_type: 'claude-code',
 					project_path: '/proj/a',
 					is_remote: 0,
@@ -122,7 +129,7 @@ describe('cue-token-accessor', () => {
 			];
 			registerFakeStorage('claude-code', [
 				makeInfo({
-					sessionId: 's-claude',
+					sessionId: 'p-claude',
 					projectPath: '/proj/a',
 					inputTokens: 1000,
 					outputTokens: 500,
@@ -134,12 +141,14 @@ describe('cue-token-accessor', () => {
 				}),
 			]);
 
-			const result = await getSessionTokenSummaries(['s-claude']);
+			const result = await getSessionTokenSummaries([
+				{ maestroSessionId: 'm-claude', providerSessionId: 'p-claude' },
+			]);
 
 			expect(result.size).toBe(1);
-			const summary = result.get('s-claude');
+			const summary = result.get('p-claude');
 			expect(summary).toEqual({
-				sessionId: 's-claude',
+				sessionId: 'p-claude',
 				agentType: 'claude-code',
 				inputTokens: 1000,
 				outputTokens: 500,
@@ -155,7 +164,7 @@ describe('cue-token-accessor', () => {
 		it('opencode session reports full coverage with cost', async () => {
 			lookupRows = [
 				{
-					session_id: 's-opencode',
+					session_id: 'm-opencode',
 					agent_type: 'opencode',
 					project_path: '/proj/oc',
 					is_remote: 0,
@@ -163,7 +172,7 @@ describe('cue-token-accessor', () => {
 			];
 			registerFakeStorage('opencode', [
 				makeInfo({
-					sessionId: 's-opencode',
+					sessionId: 'p-opencode',
 					projectPath: '/proj/oc',
 					inputTokens: 2222,
 					outputTokens: 333,
@@ -173,7 +182,11 @@ describe('cue-token-accessor', () => {
 				}),
 			]);
 
-			const summary = (await getSessionTokenSummaries(['s-opencode'])).get('s-opencode');
+			const summary = (
+				await getSessionTokenSummaries([
+					{ maestroSessionId: 'm-opencode', providerSessionId: 'p-opencode' },
+				])
+			).get('p-opencode');
 
 			expect(summary?.coverage).toBe('full');
 			expect(summary?.inputTokens).toBe(2222);
@@ -186,7 +199,7 @@ describe('cue-token-accessor', () => {
 		it('factory-droid session reports full coverage with costUsd === null (no cost field)', async () => {
 			lookupRows = [
 				{
-					session_id: 's-droid',
+					session_id: 'm-droid',
 					agent_type: 'factory-droid',
 					project_path: '/proj/d',
 					is_remote: 0,
@@ -194,7 +207,7 @@ describe('cue-token-accessor', () => {
 			];
 			registerFakeStorage('factory-droid', [
 				makeInfo({
-					sessionId: 's-droid',
+					sessionId: 'p-droid',
 					projectPath: '/proj/d',
 					inputTokens: 700,
 					outputTokens: 300,
@@ -204,7 +217,11 @@ describe('cue-token-accessor', () => {
 				}),
 			]);
 
-			const summary = (await getSessionTokenSummaries(['s-droid'])).get('s-droid');
+			const summary = (
+				await getSessionTokenSummaries([
+					{ maestroSessionId: 'm-droid', providerSessionId: 'p-droid' },
+				])
+			).get('p-droid');
 
 			expect(summary?.coverage).toBe('full');
 			expect(summary?.costUsd).toBeNull();
@@ -214,7 +231,7 @@ describe('cue-token-accessor', () => {
 		it('codex session reports partial coverage (cacheCreation always 0, no cost)', async () => {
 			lookupRows = [
 				{
-					session_id: 's-codex',
+					session_id: 'm-codex',
 					agent_type: 'codex',
 					project_path: '/proj/cx',
 					is_remote: 0,
@@ -222,7 +239,7 @@ describe('cue-token-accessor', () => {
 			];
 			registerFakeStorage('codex', [
 				makeInfo({
-					sessionId: 's-codex',
+					sessionId: 'p-codex',
 					projectPath: '/proj/cx',
 					inputTokens: 800,
 					outputTokens: 400,
@@ -231,7 +248,11 @@ describe('cue-token-accessor', () => {
 				}),
 			]);
 
-			const summary = (await getSessionTokenSummaries(['s-codex'])).get('s-codex');
+			const summary = (
+				await getSessionTokenSummaries([
+					{ maestroSessionId: 'm-codex', providerSessionId: 'p-codex' },
+				])
+			).get('p-codex');
 
 			expect(summary?.coverage).toBe('partial');
 			expect(summary?.inputTokens).toBe(800);
@@ -242,7 +263,7 @@ describe('cue-token-accessor', () => {
 		it('copilot-cli session reports partial coverage', async () => {
 			lookupRows = [
 				{
-					session_id: 's-copilot',
+					session_id: 'm-copilot',
 					agent_type: 'copilot-cli',
 					project_path: '/proj/cp',
 					is_remote: 0,
@@ -250,7 +271,7 @@ describe('cue-token-accessor', () => {
 			];
 			registerFakeStorage('copilot-cli', [
 				makeInfo({
-					sessionId: 's-copilot',
+					sessionId: 'p-copilot',
 					projectPath: '/proj/cp',
 					inputTokens: 1500,
 					outputTokens: 250,
@@ -259,7 +280,11 @@ describe('cue-token-accessor', () => {
 				}),
 			]);
 
-			const summary = (await getSessionTokenSummaries(['s-copilot'])).get('s-copilot');
+			const summary = (
+				await getSessionTokenSummaries([
+					{ maestroSessionId: 'm-copilot', providerSessionId: 'p-copilot' },
+				])
+			).get('p-copilot');
 
 			expect(summary?.coverage).toBe('partial');
 			expect(summary?.inputTokens).toBe(1500);
@@ -267,11 +292,59 @@ describe('cue-token-accessor', () => {
 		});
 	});
 
+	describe('id-space join', () => {
+		it('resolves agent/project by Maestro agent id but matches tokens by provider session id', async () => {
+			// The whole point of the rewrite: the lookup id (Maestro agent id)
+			// and the on-disk session id (provider session id) differ. A naive
+			// `byId.get(maestroId)` would miss and report zeros.
+			lookupRows = [
+				{
+					session_id: 'm-agent',
+					agent_type: 'claude-code',
+					project_path: '/proj/x',
+					is_remote: 0,
+				},
+			];
+			registerFakeStorage('claude-code', [
+				makeInfo({ sessionId: 'p-run', projectPath: '/proj/x', inputTokens: 4242 }),
+			]);
+
+			const result = await getSessionTokenSummaries([
+				{ maestroSessionId: 'm-agent', providerSessionId: 'p-run' },
+			]);
+
+			expect(result.get('p-run')?.inputTokens).toBe(4242);
+		});
+
+		it('provider session not present on disk yields partial zeros (not a miss)', async () => {
+			lookupRows = [
+				{
+					session_id: 'm-agent',
+					agent_type: 'claude-code',
+					project_path: '/proj/x',
+					is_remote: 0,
+				},
+			];
+			registerFakeStorage('claude-code', [
+				makeInfo({ sessionId: 'p-other', projectPath: '/proj/x', inputTokens: 100 }),
+			]);
+
+			const summary = (
+				await getSessionTokenSummaries([
+					{ maestroSessionId: 'm-agent', providerSessionId: 'p-run' },
+				])
+			).get('p-run');
+
+			expect(summary?.coverage).toBe('partial');
+			expect(summary?.inputTokens).toBe(0);
+		});
+	});
+
 	describe('unsupported and missing sessions', () => {
 		it('unknown agent type returns coverage=unsupported with zeros', async () => {
 			lookupRows = [
 				{
-					session_id: 's-unknown',
+					session_id: 'm-unknown',
 					agent_type: 'made-up-agent',
 					project_path: '/proj/u',
 					is_remote: 0,
@@ -279,10 +352,14 @@ describe('cue-token-accessor', () => {
 			];
 			// No storage registered for the unknown agent.
 
-			const summary = (await getSessionTokenSummaries(['s-unknown'])).get('s-unknown');
+			const summary = (
+				await getSessionTokenSummaries([
+					{ maestroSessionId: 'm-unknown', providerSessionId: 'p-unknown' },
+				])
+			).get('p-unknown');
 
 			expect(summary).toEqual({
-				sessionId: 's-unknown',
+				sessionId: 'p-unknown',
 				agentType: 'made-up-agent',
 				inputTokens: 0,
 				outputTokens: 0,
@@ -295,13 +372,15 @@ describe('cue-token-accessor', () => {
 			});
 		});
 
-		it('session absent from session_lifecycle is omitted from the result map', async () => {
+		it('Maestro agent absent from session_lifecycle is omitted from the result map', async () => {
 			lookupRows = []; // DB returns nothing.
 
-			const result = await getSessionTokenSummaries(['s-missing']);
+			const result = await getSessionTokenSummaries([
+				{ maestroSessionId: 'm-missing', providerSessionId: 'p-missing' },
+			]);
 
 			expect(result.size).toBe(0);
-			expect(result.has('s-missing')).toBe(false);
+			expect(result.has('p-missing')).toBe(false);
 		});
 
 		it('empty input returns empty map without touching the DB', async () => {
@@ -315,28 +394,28 @@ describe('cue-token-accessor', () => {
 		it('returns correctly attributed results for sessions across multiple agent types in one call', async () => {
 			lookupRows = [
 				{
-					session_id: 's-claude',
+					session_id: 'm-claude',
 					agent_type: 'claude-code',
 					project_path: '/proj/a',
 					is_remote: 0,
 				},
 				{
-					session_id: 's-codex',
+					session_id: 'm-codex',
 					agent_type: 'codex',
 					project_path: '/proj/b',
 					is_remote: 0,
 				},
 				{
-					session_id: 's-droid',
+					session_id: 'm-droid',
 					agent_type: 'factory-droid',
 					project_path: '/proj/c',
 					is_remote: 0,
 				},
-				// 's-missing' is requested below but absent from the lookup table.
+				// 'm-missing' is requested below but absent from the lookup table.
 			];
 			registerFakeStorage('claude-code', [
 				makeInfo({
-					sessionId: 's-claude',
+					sessionId: 'p-claude',
 					projectPath: '/proj/a',
 					inputTokens: 100,
 					outputTokens: 50,
@@ -347,7 +426,7 @@ describe('cue-token-accessor', () => {
 			]);
 			registerFakeStorage('codex', [
 				makeInfo({
-					sessionId: 's-codex',
+					sessionId: 'p-codex',
 					projectPath: '/proj/b',
 					inputTokens: 200,
 					outputTokens: 75,
@@ -356,7 +435,7 @@ describe('cue-token-accessor', () => {
 			]);
 			registerFakeStorage('factory-droid', [
 				makeInfo({
-					sessionId: 's-droid',
+					sessionId: 'p-droid',
 					projectPath: '/proj/c',
 					inputTokens: 300,
 					outputTokens: 100,
@@ -366,23 +445,23 @@ describe('cue-token-accessor', () => {
 			]);
 
 			const result = await getSessionTokenSummaries([
-				's-claude',
-				's-codex',
-				's-droid',
-				's-missing',
+				{ maestroSessionId: 'm-claude', providerSessionId: 'p-claude' },
+				{ maestroSessionId: 'm-codex', providerSessionId: 'p-codex' },
+				{ maestroSessionId: 'm-droid', providerSessionId: 'p-droid' },
+				{ maestroSessionId: 'm-missing', providerSessionId: 'p-missing' },
 			]);
 
 			expect(result.size).toBe(3);
-			expect(result.get('s-missing')).toBeUndefined();
+			expect(result.get('p-missing')).toBeUndefined();
 
-			expect(result.get('s-claude')).toMatchObject({
+			expect(result.get('p-claude')).toMatchObject({
 				agentType: 'claude-code',
 				inputTokens: 100,
 				outputTokens: 50,
 				costUsd: 0.01,
 				coverage: 'full',
 			});
-			expect(result.get('s-codex')).toMatchObject({
+			expect(result.get('p-codex')).toMatchObject({
 				agentType: 'codex',
 				inputTokens: 200,
 				outputTokens: 75,
@@ -391,7 +470,7 @@ describe('cue-token-accessor', () => {
 				costUsd: null,
 				coverage: 'partial',
 			});
-			expect(result.get('s-droid')).toMatchObject({
+			expect(result.get('p-droid')).toMatchObject({
 				agentType: 'factory-droid',
 				inputTokens: 300,
 				outputTokens: 100,
@@ -405,13 +484,13 @@ describe('cue-token-accessor', () => {
 		it('groups sessions by (agentType, projectPath) so listSessions runs once per group', async () => {
 			lookupRows = [
 				{
-					session_id: 's-claude-1',
+					session_id: 'm-claude-1',
 					agent_type: 'claude-code',
 					project_path: '/proj/shared',
 					is_remote: 0,
 				},
 				{
-					session_id: 's-claude-2',
+					session_id: 'm-claude-2',
 					agent_type: 'claude-code',
 					project_path: '/proj/shared',
 					is_remote: 0,
@@ -419,12 +498,12 @@ describe('cue-token-accessor', () => {
 			];
 			const listSessions = vi.fn(async () => [
 				makeInfo({
-					sessionId: 's-claude-1',
+					sessionId: 'p-claude-1',
 					projectPath: '/proj/shared',
 					inputTokens: 11,
 				}),
 				makeInfo({
-					sessionId: 's-claude-2',
+					sessionId: 'p-claude-2',
 					projectPath: '/proj/shared',
 					inputTokens: 22,
 				}),
@@ -439,19 +518,22 @@ describe('cue-token-accessor', () => {
 				deleteMessagePair: vi.fn() as never,
 			});
 
-			const result = await getSessionTokenSummaries(['s-claude-1', 's-claude-2']);
+			const result = await getSessionTokenSummaries([
+				{ maestroSessionId: 'm-claude-1', providerSessionId: 'p-claude-1' },
+				{ maestroSessionId: 'm-claude-2', providerSessionId: 'p-claude-2' },
+			]);
 
 			expect(listSessions).toHaveBeenCalledTimes(1);
-			expect(result.get('s-claude-1')?.inputTokens).toBe(11);
-			expect(result.get('s-claude-2')?.inputTokens).toBe(22);
+			expect(result.get('p-claude-1')?.inputTokens).toBe(11);
+			expect(result.get('p-claude-2')?.inputTokens).toBe(22);
 		});
 	});
 
 	describe('remote-session safety net', () => {
-		it('marks is_remote=1 sessions partial with zeros (Phase 02 known limitation)', async () => {
+		it('marks is_remote=1 sessions partial with zeros (known limitation)', async () => {
 			lookupRows = [
 				{
-					session_id: 's-remote',
+					session_id: 'm-remote',
 					agent_type: 'claude-code',
 					project_path: '/proj/r',
 					is_remote: 1,
@@ -468,11 +550,36 @@ describe('cue-token-accessor', () => {
 				deleteMessagePair: vi.fn() as never,
 			});
 
-			const summary = (await getSessionTokenSummaries(['s-remote'])).get('s-remote');
+			const summary = (
+				await getSessionTokenSummaries([
+					{ maestroSessionId: 'm-remote', providerSessionId: 'p-remote' },
+				])
+			).get('p-remote');
 
 			expect(summary?.coverage).toBe('partial');
 			expect(summary?.inputTokens).toBe(0);
 			expect(listSessions).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('getAgentTypesForSessions', () => {
+		it('resolves agent type by Maestro agent id from session_lifecycle', async () => {
+			lookupRows = [
+				{ session_id: 'm-a', agent_type: 'claude-code', project_path: '/p', is_remote: 0 },
+				{ session_id: 'm-b', agent_type: 'codex', project_path: '/p', is_remote: 0 },
+			];
+
+			const result = getAgentTypesForSessions(['m-a', 'm-b', 'm-missing']);
+
+			expect(result.get('m-a')).toBe('claude-code');
+			expect(result.get('m-b')).toBe('codex');
+			expect(result.has('m-missing')).toBe(false);
+		});
+
+		it('returns an empty map for empty input without touching the DB', () => {
+			const result = getAgentTypesForSessions([]);
+			expect(result.size).toBe(0);
+			expect(mockPrepare).not.toHaveBeenCalled();
 		});
 	});
 });

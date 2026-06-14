@@ -21,6 +21,34 @@ import type { ConductorBadge } from '../constants/conductorBadges';
 import { logger } from '../utils/logger';
 
 // ============================================================================
+// Prompt Composer full-screen preference (persisted)
+// ============================================================================
+// The Prompt Composer remembers whether the user last left it windowed or
+// full-screen ("expanded-expanded"). The open-composer hotkey cycles between
+// the two while the modal is open, so this lives in the store (shared by the
+// keyboard handler and the modal) rather than as component-local state.
+
+const PROMPT_COMPOSER_FULLSCREEN_KEY = 'maestro.promptComposer.fullscreen';
+
+function readStoredPromptComposerFullscreen(): boolean {
+	if (typeof window === 'undefined') return false;
+	try {
+		return window.localStorage.getItem(PROMPT_COMPOSER_FULLSCREEN_KEY) === 'true';
+	} catch {
+		return false;
+	}
+}
+
+function writeStoredPromptComposerFullscreen(value: boolean): void {
+	if (typeof window === 'undefined') return;
+	try {
+		window.localStorage.setItem(PROMPT_COMPOSER_FULLSCREEN_KEY, String(value));
+	} catch {
+		// Ignore quota / privacy-mode errors — preference just won't persist.
+	}
+}
+
+// ============================================================================
 // Modal Data Types
 // ============================================================================
 
@@ -58,6 +86,8 @@ export interface SettingsModalData {
 /** New instance modal data */
 export interface NewInstanceModalData {
 	duplicatingSessionId: string | null;
+	/** When set, the new agent is created inside this group (ignored if duplicatingSessionId is set — duplicates inherit the source's group). */
+	presetGroupId?: string | null;
 }
 
 /** Edit agent modal data */
@@ -133,9 +163,11 @@ export interface DirectorNotesData {
 	initialTab?: 'overview' | 'history' | 'ai-overview';
 }
 
-/** Cue modal data */
+/** Quit confirmation modal data */
 export interface QuitConfirmModalData {
 	activeTerminalTasks?: string[];
+	activeCueRunCount?: number;
+	activeGroupChatCount?: number;
 	hasFeedbackDraft?: boolean;
 }
 
@@ -176,7 +208,7 @@ export interface KeyboardMasteryData {
 
 /** Batch Runner modal data — used to pre-seed the doc list when opened programmatically (e.g. from the inline wizard's "Start Auto Run" button). */
 export interface BatchRunnerModalData {
-	/** Document filenames (without `.md`) to pre-populate the run list with. When set, overrides the default `[currentDocument]` initialization. */
+	/** Document filenames (without `.md`) to pre-populate the run list with. When omitted, the run list opens empty. */
 	presetDocuments?: string[];
 }
 
@@ -246,6 +278,7 @@ export type ModalId =
 	| 'debugWizard'
 	| 'debugPackage'
 	| 'debugApplicationStats'
+	| 'debugAgentProbe'
 	| 'playground'
 	| 'logViewer'
 	| 'processMonitor'
@@ -321,6 +354,8 @@ interface ModalEntry<T = unknown> {
 
 interface ModalStoreState {
 	modals: Map<ModalId, ModalEntry>;
+	/** Whether the Prompt Composer is in full-screen ("expanded-expanded") mode. */
+	promptComposerFullscreen: boolean;
 }
 
 interface ModalStoreActions {
@@ -360,6 +395,19 @@ interface ModalStoreActions {
 	 * Close all open modals.
 	 */
 	closeAll: () => void;
+
+	/**
+	 * Toggle the Prompt Composer between full-screen and windowed mode.
+	 * Persists the preference so the next open restores the same size.
+	 */
+	togglePromptComposerFullscreen: () => void;
+
+	/**
+	 * Keyboard entry point for the open-composer hotkey. Opens the Prompt
+	 * Composer when it's closed, otherwise cycles it between windowed and
+	 * full-screen — so repeated presses switch sizes instead of doing nothing.
+	 */
+	cyclePromptComposer: () => void;
 }
 
 export type ModalStore = ModalStoreState & ModalStoreActions;
@@ -370,6 +418,7 @@ export type ModalStore = ModalStoreState & ModalStoreActions;
 
 export const useModalStore = create<ModalStore>()((set, get) => ({
 	modals: new Map(),
+	promptComposerFullscreen: readStoredPromptComposerFullscreen(),
 
 	openModal: (id, data) => {
 		set((state) => {
@@ -457,6 +506,23 @@ export const useModalStore = create<ModalStore>()((set, get) => ({
 			});
 			return { modals: newModals };
 		});
+	},
+
+	togglePromptComposerFullscreen: () => {
+		set((state) => {
+			const next = !state.promptComposerFullscreen;
+			writeStoredPromptComposerFullscreen(next);
+			return { promptComposerFullscreen: next };
+		});
+	},
+
+	cyclePromptComposer: () => {
+		const state = get();
+		if (state.modals.get('promptComposer')?.open) {
+			state.togglePromptComposerFullscreen();
+		} else {
+			state.openModal('promptComposer');
+		}
 	},
 }));
 
@@ -624,6 +690,10 @@ export function getModalActions() {
 		setDebugApplicationStatsOpen: (open: boolean) =>
 			open ? openModal('debugApplicationStats') : closeModal('debugApplicationStats'),
 
+		// Debug Agent Probe Modal
+		setDebugAgentProbeOpen: (open: boolean) =>
+			open ? openModal('debugAgentProbe') : closeModal('debugAgentProbe'),
+
 		// Confirmation Modal
 		setConfirmModalOpen: (open: boolean) => (open ? openModal('confirm') : closeModal('confirm')),
 		setConfirmModalMessage: (message: string) => updateModalData('confirm', { message }),
@@ -634,10 +704,8 @@ export function getModalActions() {
 		closeConfirmation: () => closeModal('confirm'),
 
 		// Quit Confirmation Modal
-		setQuitConfirmModalOpen: (
-			open: boolean,
-			data?: { activeTerminalTasks?: string[]; hasFeedbackDraft?: boolean }
-		) => (open ? openModal('quitConfirm', data) : closeModal('quitConfirm')),
+		setQuitConfirmModalOpen: (open: boolean, data?: QuitConfirmModalData) =>
+			open ? openModal('quitConfirm', data) : closeModal('quitConfirm'),
 
 		// Rename Instance Modal
 		setRenameInstanceModalOpen: (open: boolean) => {
@@ -898,6 +966,7 @@ export function useModalActions() {
 	const debugWizardModalOpen = useModalStore(selectModalOpen('debugWizard'));
 	const debugPackageModalOpen = useModalStore(selectModalOpen('debugPackage'));
 	const debugApplicationStatsOpen = useModalStore(selectModalOpen('debugApplicationStats'));
+	const debugAgentProbeOpen = useModalStore(selectModalOpen('debugAgentProbe'));
 	const confirmModalOpen = useModalStore(selectModalOpen('confirm'));
 	const confirmData = useModalStore(selectModalData('confirm'));
 	const quitConfirmModalOpen = useModalStore(selectModalOpen('quitConfirm'));
@@ -961,6 +1030,7 @@ export function useModalActions() {
 		// New Instance Modal
 		newInstanceModalOpen,
 		duplicatingSessionId: newInstanceData?.duplicatingSessionId ?? null,
+		newInstancePresetGroupId: newInstanceData?.presetGroupId ?? null,
 
 		// Edit Agent Modal
 		editAgentModalOpen,
@@ -1020,6 +1090,9 @@ export function useModalActions() {
 
 		// Debug Application Stats Modal
 		debugApplicationStatsOpen,
+
+		// Debug Agent Probe Modal
+		debugAgentProbeOpen,
 
 		// Confirmation Modal
 		confirmModalOpen,

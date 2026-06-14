@@ -1,10 +1,10 @@
 ---
 title: Cue Event Types
-description: Detailed reference for all nine Maestro Cue event types with configuration, payloads, and examples.
+description: Detailed reference for all ten Maestro Cue event types with configuration, payloads, and examples.
 icon: calendar-check
 ---
 
-Cue supports nine event types. Each type watches for a different kind of activity and produces a payload that can be injected into prompts via [template variables](./maestro-cue-advanced#template-variables).
+Cue supports ten event types. Each type watches for a different kind of activity and produces a payload that can be injected into prompts via [template variables](./maestro-cue-advanced#template-variables).
 
 ## app.startup
 
@@ -55,7 +55,7 @@ Fires on a periodic timer. The subscription triggers immediately when the engine
 **Behavior:**
 
 - Fires immediately on engine start (or when the subscription is first loaded)
-- Reconciles missed intervals after system sleep — if your machine sleeps through one or more intervals, Cue fires a catch-up event on wake
+- Reconciles missed intervals after system sleep - if your machine sleeps through one or more intervals, Cue fires a catch-up event on wake
 - The interval resets after each trigger, not after each run completes
 
 **Example:**
@@ -76,7 +76,7 @@ subscriptions:
 
 ## time.scheduled
 
-Fires at specific times and days of the week — a cron-like trigger for precise scheduling.
+Fires at specific times and days of the week - a cron-like trigger for precise scheduling.
 
 **Required fields:**
 
@@ -95,9 +95,9 @@ Fires at specific times and days of the week — a cron-like trigger for precise
 - Checks every 60 seconds if the current time matches any `schedule_times` entry
 - If `schedule_days` is set, the current day must also match
 - Does **not** fire immediately on engine start (unlike `time.heartbeat`)
-- Multiple times per day are supported — add multiple entries to `schedule_times`
+- Multiple times per day are supported - add multiple entries to `schedule_times`
 
-**Example — weekday standup:**
+**Example - weekday standup:**
 
 ```yaml
 subscriptions:
@@ -118,7 +118,7 @@ subscriptions:
       3. Summarize what was accomplished and what's next
 ```
 
-**Example — multiple times daily:**
+**Example - multiple times daily:**
 
 ```yaml
 subscriptions:
@@ -141,6 +141,88 @@ subscriptions:
 
 ---
 
+## time.once
+
+Fires exactly once at a specific wall-clock moment, then deletes itself from `cue.yaml`. This is the subsystem to reach for when a user says "in 20 minutes do X", "tomorrow at 9am email me a summary", "remind me at 4pm to push the rc branch", or "schedule a 1h check-in" - anything that maps to a single action tied to a clock.
+
+**Required fields:**
+
+| Field     | Type              | Description                                                                                                                                                         |
+| --------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fire_at` | string (ISO-8601) | The wall-clock moment to fire. **Must include a timezone offset** (`Z`, `±HH:MM`, or the colon-less `±HHMM`). Anything missing the offset is rejected at load time. |
+
+**Optional fields:**
+
+| Field                      | Type    | Default | Description                                                                                                                                                                                                                                                      |
+| -------------------------- | ------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `grace_minutes`            | number  | `360`   | Missed-fire grace window in minutes. If Maestro is closed when `fire_at` arrives, the sub fires on next startup as long as the current time is within this window of `fire_at`. Past the window, the sub is logged as expired and self-destructs without firing. |
+| `self_destruct_on_failure` | boolean | `true`  | Whether to remove the sub from `cue.yaml` on a `failed` or `timeout` outcome. Set `false` to keep the sub in place for post-mortem inspection.                                                                                                                   |
+
+**Behavior:**
+
+- Poll-based at roughly 30-second granularity
+- Fires once when the wall clock crosses `fire_at`
+- Self-destructs from `cue.yaml` after a successful run (status `completed`)
+- On `failed` or `timeout`, also self-destructs unless `self_destruct_on_failure: false`
+- Supports all standard `action` values: `prompt` (default, runs the configured agent with the rendered prompt), `notify` (surfaces a toast through the owning agent - clicking it jumps there), and `command` (shell or CLI invocation)
+- The CLI command `maestro-cli cue schedule` is the supported way to create `time.once` subs - it handles ISO formatting, timezone offsets, `target_node_key` generation, and writes directly to the owning agent's `.maestro/cue.yaml`. **Do not hand-author `time.once` subscriptions.**
+
+**Example - notify reminder:**
+
+```yaml
+subscriptions:
+  - name: tasks-once-push-rc-reminder
+    pipeline_name: Tasks
+    event: time.once
+    enabled: true
+    fire_at: '2026-05-22T16:00:00-05:00'
+    agent_id: <agent-uuid>
+    action: notify
+    notify:
+      message: 'Push rc branch - review the diff first'
+      sticky: true
+```
+
+**Example - prompt run:**
+
+```yaml
+subscriptions:
+  - name: tasks-once-20m-deploy-check
+    pipeline_name: Tasks
+    event: time.once
+    enabled: true
+    fire_at: '2026-05-22T14:20:00-05:00'
+    agent_id: <agent-uuid>
+    prompt: |
+      Check the status of the deploy I kicked off and summarize the result.
+```
+
+**Payload fields:**
+
+| Variable          | Description                                             | Example                     |
+| ----------------- | ------------------------------------------------------- | --------------------------- |
+| `{{CUE_FIRE_AT}}` | The originally-scheduled `fire_at` timestamp (ISO-8601) | `2026-05-22T16:00:00-05:00` |
+
+The standard `{{CUE_TRIGGER_NAME}}`, `{{CUE_EVENT_TYPE}}`, `{{CUE_EVENT_TIMESTAMP}}`, and `{{CUE_PIPELINE_NAME}}` variables are also available.
+
+**Creating, listing, and cancelling:**
+
+```bash
+# Schedule via relative offset
+maestro-cli cue schedule --in 20m --agent <agent-id> --prompt "Check the deploy status."
+
+# Schedule via absolute timestamp + notify-only
+maestro-cli cue schedule --at "2026-05-22 16:00" --agent <agent-id> --notify --sticky --message "Push rc branch"
+
+# List every pending one-time task across agents
+maestro-cli cue schedule --list
+
+# Cancel a pending task by sub name
+maestro-cli cue schedule --cancel tasks-once-push-rc-reminder
+```
+
+---
+
 ## file.changed
 
 Fires when files matching a glob pattern are created, modified, or deleted.
@@ -154,7 +236,7 @@ Fires when files matching a glob pattern are created, modified, or deleted.
 **Behavior:**
 
 - Monitors for `add`, `change`, and `unlink` (delete) events
-- Debounces by 5 seconds per file — rapid saves to the same file produce a single event
+- Debounces by 5 seconds per file - rapid saves to the same file produce a single event
 - The glob is evaluated relative to the project root
 - Standard glob syntax: `*` matches within a directory, `**` matches across directories
 
@@ -188,7 +270,7 @@ The `changeType` field is also available in [filters](./maestro-cue-advanced#fil
 
 ## agent.completed
 
-Fires when another Maestro agent finishes a task. This is the foundation for agent chaining — building multi-step pipelines where one agent's completion triggers the next.
+Fires when another Maestro agent finishes a task. This is the foundation for agent chaining - building multi-step pipelines where one agent's completion triggers the next.
 
 **Required fields:**
 
@@ -203,7 +285,7 @@ Fires when another Maestro agent finishes a task. This is the foundation for age
 - The source agent's output is captured and available via `{{CUE_SOURCE_OUTPUT}}` (truncated to 5,000 characters)
 - Matches agent names as shown in the Left Bar
 
-**Example — single source:**
+**Example - single source:**
 
 ```yaml
 subscriptions:
@@ -219,7 +301,7 @@ subscriptions:
       Deploy to staging with `npm run deploy:staging`.
 ```
 
-**Example — fan-in (multiple sources):**
+**Example - fan-in (multiple sources):**
 
 ```yaml
 subscriptions:
@@ -317,7 +399,7 @@ Polls GitHub for new pull requests using the GitHub CLI (`gh`).
 **Behavior:**
 
 - Requires the [GitHub CLI](https://cli.github.com/) (`gh`) to be installed and authenticated
-- On first run, seeds the "seen" list with existing PRs — only **new** PRs trigger events
+- On first run, seeds the "seen" list with existing PRs - only **new** PRs trigger events
 - Tracks seen PRs in a local database with 30-day retention
 - Auto-detects the repository from the git remote if `repo` is not specified
 
@@ -377,7 +459,7 @@ Polls GitHub for new issues using the GitHub CLI (`gh`). Behaves identically to 
 
 **Behavior:**
 
-Same as `github.pull_request` — requires GitHub CLI, seeds on first run, tracks seen issues.
+Same as `github.pull_request` - requires GitHub CLI, seeds on first run, tracks seen issues.
 
 **Example:**
 
@@ -417,13 +499,13 @@ The branch-specific variables (`{{CUE_GH_BRANCH}}`, `{{CUE_GH_BASE_BRANCH}}`) ar
 
 ## cli.trigger
 
-Fires only when explicitly triggered from the command line via `maestro-cli cue trigger <name>`. Unlike other event types, `cli.trigger` has no background watcher or poller — it waits for a manual invocation.
+Fires only when explicitly triggered from the command line via `maestro-cli cue trigger <name>`. Unlike other event types, `cli.trigger` has no background watcher or poller - it waits for a manual invocation.
 
-**No additional fields required** — just `name`, `event`, `prompt`, and optionally `enabled`.
+**No additional fields required** - just `name`, `event`, `prompt`, and optionally `enabled`.
 
 **Behavior:**
 
-- Does nothing on its own — only fires when you run `maestro-cli cue trigger <subscription-name>`
+- Does nothing on its own - only fires when you run `maestro-cli cue trigger <subscription-name>`
 - Supports an optional `--prompt` flag to override or supply the prompt at invocation time
 - The override text is available in the prompt template as `{{CUE_CLI_PROMPT}}`
 - Ideal for deployment scripts, CI/CD integration, on-demand reviews, or ad-hoc automation
@@ -444,10 +526,10 @@ subscriptions:
 **Triggering from the command line:**
 
 ```bash
-# Basic trigger — uses the configured prompt as-is
+# Basic trigger - uses the configured prompt as-is
 maestro-cli cue trigger deploy
 
-# With a prompt override — {{CUE_CLI_PROMPT}} receives this text
+# With a prompt override - {{CUE_CLI_PROMPT}} receives this text
 maestro-cli cue trigger deploy --prompt "Deploy to staging only"
 
 # JSON output for scripting

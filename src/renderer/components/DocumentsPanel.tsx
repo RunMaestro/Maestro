@@ -414,7 +414,7 @@ function DocumentSelectorModal({
 				aria-label="Close document selector"
 			/>
 			<div
-				className="relative z-10 w-[850px] max-w-[90vw] max-h-[70vh] border rounded-lg shadow-2xl overflow-hidden flex flex-col"
+				className="relative z-10 modal-w-xl max-h-[70vh] border rounded-lg shadow-2xl overflow-hidden flex flex-col"
 				style={{ backgroundColor: theme.colors.bgSidebar, borderColor: theme.colors.border }}
 				onClick={(e) => e.stopPropagation()}
 			>
@@ -882,7 +882,9 @@ export function DocumentsPanel({
 					{documents.length === 0 ? (
 						<div className="p-4 text-center" style={{ color: theme.colors.textDim }}>
 							<p className="text-sm">No documents selected</p>
-							<p className="text-xs mt-1">Click "+ Add Docs" to select documents to run</p>
+							<p className="text-xs mt-1">
+								Load a playbook or click "+ Add Docs" to select documents to run
+							</p>
 						</div>
 					) : (
 						<div

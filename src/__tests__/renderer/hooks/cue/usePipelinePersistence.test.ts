@@ -58,6 +58,10 @@ vi.mock('../../../../renderer/components/CuePipelineEditor/utils/pipelineToYaml'
 			return { byCwd, unresolved: [] as Array<{ subName: string; agentId: string }> };
 		}
 	),
+	// Owner preservation reads each target root's existing cue.yaml before the
+	// overwrite. Default to "no owner present" so these tests, which don't
+	// exercise shared-root ownership, behave as before.
+	readOwnerAgentIdFromYaml: vi.fn(() => undefined),
 }));
 
 vi.mock('../../../../renderer/components/CuePipelineEditor/utils/yamlToPipeline', () => ({
@@ -626,7 +630,8 @@ describe('usePipelinePersistence', () => {
 
 	describe('handleSave - error paths', () => {
 		it('write-back mismatch: error status, Sentry + toast, refs NOT updated, onSaveSuccess NOT called', async () => {
-			mockReadYaml.mockResolvedValueOnce('DIFFERENT BYTES');
+			// 1st read = owner-preservation pre-read (no owner); 2nd = write-verify.
+			mockReadYaml.mockResolvedValueOnce(null).mockResolvedValueOnce('DIFFERENT BYTES');
 			const onSaveSuccess = vi.fn();
 			const h = setup({
 				pipelines: [
@@ -650,7 +655,8 @@ describe('usePipelinePersistence', () => {
 		});
 
 		it('readYaml returns null → error path', async () => {
-			mockReadYaml.mockResolvedValueOnce(null);
+			// 1st read = owner pre-read; 2nd = write-verify returning null.
+			mockReadYaml.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
 			const h = setup({
 				pipelines: [
 					pipeline(
@@ -703,9 +709,12 @@ describe('usePipelinePersistence', () => {
 				sessions: [{ id: 'session-Alpha', name: 'Alpha', toolType: 'x', projectRoot: '/new' }],
 				previousRoots: new Set(['/old']),
 			});
-			// First readYaml for /new write-verify returns content; second for /old
-			// deletion-verify returns null (confirms file was removed).
-			mockReadYaml.mockResolvedValueOnce('yaml-content').mockResolvedValueOnce(null);
+			// 1st read = /new owner pre-read; 2nd = /new write-verify (content);
+			// 3rd = /old deletion-verify returns null (confirms file removed).
+			mockReadYaml
+				.mockResolvedValueOnce('owner')
+				.mockResolvedValueOnce('yaml-content')
+				.mockResolvedValueOnce(null);
 			await act(async () => {
 				await h.result.current.handleSave();
 			});
@@ -729,8 +738,12 @@ describe('usePipelinePersistence', () => {
 				sessions: [{ id: 'session-Alpha', name: 'Alpha', toolType: 'x', projectRoot: '/new' }],
 				previousRoots: new Set(['/old']),
 			});
-			// /new verify ok; /old deletion-verify returns stale content → triggers error
-			mockReadYaml.mockResolvedValueOnce('yaml-content').mockResolvedValueOnce('STALE');
+			// 1st = /new owner pre-read; 2nd = /new verify ok; 3rd = /old
+			// deletion-verify returns stale content → triggers error.
+			mockReadYaml
+				.mockResolvedValueOnce('owner')
+				.mockResolvedValueOnce('yaml-content')
+				.mockResolvedValueOnce('STALE');
 			await act(async () => {
 				await h.result.current.handleSave();
 			});

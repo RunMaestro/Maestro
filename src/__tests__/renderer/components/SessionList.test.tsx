@@ -63,6 +63,8 @@ vi.mock('lucide-react', () => ({
 	Trophy: () => <span data-testid="icon-trophy" />,
 	Trash2: () => <span data-testid="icon-trash" />,
 	Edit3: () => <span data-testid="icon-edit" />,
+	Smile: () => <span data-testid="icon-smile" />,
+	Fingerprint: () => <span data-testid="icon-fingerprint" />,
 	FolderInput: () => <span data-testid="icon-folder-input" />,
 	FolderPlus: () => <span data-testid="icon-folder-plus" />,
 	Download: () => <span data-testid="icon-download" />,
@@ -132,6 +134,10 @@ const mockModalActions = {
 	setRenameInstanceModalOpen: vi.fn(),
 	setRenameInstanceValue: vi.fn(),
 	setRenameInstanceSessionId: vi.fn(),
+	setRenameGroupModalOpen: vi.fn(),
+	setRenameGroupId: vi.fn(),
+	setRenameGroupValue: vi.fn(),
+	setRenameGroupEmoji: vi.fn(),
 };
 
 vi.mock('../../../renderer/stores/modalStore', async (importActual) => {
@@ -169,7 +175,7 @@ const defaultShortcuts: Record<string, any> = {
 	processMonitor: { keys: ['meta', 'shift', 'p'], description: 'Process monitor' },
 	usageDashboard: { keys: ['alt', 'meta', 'u'], description: 'Usage dashboard' },
 	toggleSidebar: { keys: ['meta', 'b'], description: 'Toggle sidebar' },
-	filterUnreadAgents: { keys: ['meta', 'shift', 'u'], description: 'Filter unread agents' },
+	filterUnreadAgents: { keys: ['alt', 'u'], description: 'Filter unread agents' },
 };
 
 const createMockSession = (overrides: Partial<Session> = {}): Session =>
@@ -203,6 +209,8 @@ const createDefaultProps = (overrides: Partial<Parameters<typeof SessionList>[0]
 	webInterfaceUrl: null,
 	showSessionJumpNumbers: false,
 	visibleSessions: [] as Session[],
+	starredItems: [],
+	activateStarredItem: vi.fn(),
 	toggleGlobalLive: vi.fn(),
 	restartWebServer: vi.fn().mockResolvedValue(null),
 	toggleGroup: vi.fn(),
@@ -244,6 +252,7 @@ describe('SessionList', () => {
 			leftSidebarOpen: true,
 			activeFocus: 'main' as const,
 			selectedSidebarIndex: -1,
+			sidebarExtraSelection: null,
 			editingGroupId: null,
 			editingSessionId: null,
 			draggingSessionId: null,
@@ -868,7 +877,7 @@ describe('SessionList', () => {
 			expect(headerRow?.contains(newGroupButton)).toBe(true);
 		});
 
-		it('shows standalone New Group button when groups exist with no ungrouped sessions', () => {
+		it('hides the Ungrouped Agents header when no ungrouped sessions exist but still shows the New Group button', () => {
 			const createNewGroup = vi.fn();
 			const group = createMockGroup({ id: 'g1', name: 'My Group', sessionIds: ['s1'] });
 			const sessions = [createMockSession({ id: 's1', name: 'Grouped Session', groupId: 'g1' })];
@@ -883,14 +892,136 @@ describe('SessionList', () => {
 			});
 			render(<SessionList {...props} />);
 
-			// New Group button should be visible
-			expect(screen.getByText('New Group')).toBeInTheDocument();
-			// Ungrouped Agents header should NOT be visible (no ungrouped sessions)
+			// With every session in a group, the empty "Ungrouped Agents" folder
+			// header is replaced by a compact drop-zone container + New Group
+			// button — no orphan folder header.
 			expect(screen.queryByText('Ungrouped Agents')).not.toBeInTheDocument();
+			// The New Group button still renders so the user can keep organizing.
+			expect(screen.getByText('New Group')).toBeInTheDocument();
+		});
+	});
 
-			// Button should be standalone (full-width style)
-			const newGroupButton = screen.getByText('New Group').closest('button');
-			expect(newGroupButton).toHaveClass('w-full');
+	// ============================================================================
+	// Group Context Menu Tests
+	// ============================================================================
+
+	describe('Group Context Menu', () => {
+		it('opens context menu on right-click of a group header', () => {
+			const group = createMockGroup({ id: 'g1', name: 'My Group', emoji: '🚀' });
+			const sessions = [createMockSession({ id: 's1', name: 'Session', groupId: 'g1' })];
+			useSessionStore.setState({ sessions, groups: [group] });
+			useUIStore.setState({ leftSidebarOpen: true });
+			const props = createDefaultProps({ sortedSessions: sessions });
+			render(<SessionList {...props} />);
+
+			fireEvent.contextMenu(screen.getByText('My Group'), { clientX: 100, clientY: 100 });
+
+			expect(screen.getByText('Rename Group...')).toBeInTheDocument();
+			expect(screen.getByText('New Agent in Group...')).toBeInTheDocument();
+		});
+
+		it('opens rename group modal when "Rename Group..." is clicked', () => {
+			const group = createMockGroup({ id: 'g1', name: 'My Group', emoji: '🚀' });
+			useSessionStore.setState({ sessions: [], groups: [group] });
+			useUIStore.setState({ leftSidebarOpen: true });
+			const props = createDefaultProps({ sortedSessions: [] });
+			render(<SessionList {...props} />);
+
+			fireEvent.contextMenu(screen.getByText('My Group'), { clientX: 100, clientY: 100 });
+			fireEvent.click(screen.getByText('Rename Group...'));
+
+			expect(mockModalActions.setRenameGroupId).toHaveBeenCalledWith('g1');
+			expect(mockModalActions.setRenameGroupValue).toHaveBeenCalledWith('My Group');
+			expect(mockModalActions.setRenameGroupEmoji).toHaveBeenCalledWith('🚀');
+			expect(mockModalActions.setRenameGroupModalOpen).toHaveBeenCalledWith(true);
+		});
+
+		it('opens newInstance modal with presetGroupId when "New Agent in Group..." is clicked', () => {
+			const group = createMockGroup({ id: 'g1', name: 'My Group' });
+			useSessionStore.setState({ sessions: [], groups: [group] });
+			useUIStore.setState({ leftSidebarOpen: true });
+			const props = createDefaultProps({ sortedSessions: [] });
+			render(<SessionList {...props} />);
+
+			fireEvent.contextMenu(screen.getByText('My Group'), { clientX: 100, clientY: 100 });
+			fireEvent.click(screen.getByText('New Agent in Group...'));
+
+			expect(useModalStore.getState().isOpen('newInstance')).toBe(true);
+			const modalData = useModalStore.getState().getData('newInstance');
+			expect(modalData).toMatchObject({
+				duplicatingSessionId: null,
+				presetGroupId: 'g1',
+			});
+		});
+
+		it('expands a collapsed group when creating a new agent in it', () => {
+			const toggleGroup = vi.fn();
+			const group = createMockGroup({ id: 'g1', name: 'My Group', collapsed: true });
+			useSessionStore.setState({ sessions: [], groups: [group] });
+			useUIStore.setState({ leftSidebarOpen: true });
+			const props = createDefaultProps({ sortedSessions: [], toggleGroup });
+			render(<SessionList {...props} />);
+
+			fireEvent.contextMenu(screen.getByText('My Group'), { clientX: 100, clientY: 100 });
+			fireEvent.click(screen.getByText('New Agent in Group...'));
+
+			expect(toggleGroup).toHaveBeenCalledWith('g1');
+		});
+
+		it('shows Delete Group when the group is empty', () => {
+			const group = createMockGroup({ id: 'g1', name: 'Empty Group' });
+			useSessionStore.setState({ sessions: [], groups: [group] });
+			useUIStore.setState({ leftSidebarOpen: true });
+			const props = createDefaultProps({ sortedSessions: [] });
+			render(<SessionList {...props} />);
+
+			fireEvent.contextMenu(screen.getByText('Empty Group'), { clientX: 100, clientY: 100 });
+
+			expect(screen.getByText('Delete Group')).toBeInTheDocument();
+		});
+
+		it('offers Delete Group (which ungroups agents) for a non-empty non-worktree group', () => {
+			const group = createMockGroup({ id: 'g1', name: 'My Group', emoji: '🚀' });
+			const sessions = [createMockSession({ id: 's1', name: 'Session', groupId: 'g1' })];
+			useSessionStore.setState({ sessions, groups: [group] });
+			useUIStore.setState({ leftSidebarOpen: true });
+			const props = createDefaultProps({ sortedSessions: sessions });
+			render(<SessionList {...props} />);
+
+			fireEvent.contextMenu(screen.getByText('My Group'), { clientX: 100, clientY: 100 });
+
+			// Non-worktree groups use the "Delete Group" label even when populated;
+			// the destructive "Remove Group and Agents" wording is reserved for worktrees.
+			expect(screen.getByText('Delete Group')).toBeInTheDocument();
+			expect(screen.queryByText('Remove Group and Agents')).not.toBeInTheDocument();
+		});
+
+		it('does not show "Change Emoji..." in the group context menu (emoji is changed via Rename)', () => {
+			const group = createMockGroup({ id: 'g1', name: 'My Group', emoji: '🚀' });
+			useSessionStore.setState({ sessions: [], groups: [group] });
+			useUIStore.setState({ leftSidebarOpen: true });
+			const props = createDefaultProps({ sortedSessions: [] });
+			render(<SessionList {...props} />);
+
+			fireEvent.contextMenu(screen.getByText('My Group'), { clientX: 100, clientY: 100 });
+
+			expect(screen.queryByText('Change Emoji...')).not.toBeInTheDocument();
+		});
+
+		it('shows "Remove Group and Agents" for a non-empty worktree group', () => {
+			const group = createMockGroup({ id: 'g1', name: 'Worktree Group', emoji: '🌳' });
+			const sessions = [createMockSession({ id: 's1', name: 'Session', groupId: 'g1' })];
+			useSessionStore.setState({ sessions, groups: [group] });
+			useUIStore.setState({ leftSidebarOpen: true });
+			const props = createDefaultProps({
+				sortedSessions: sessions,
+				onDeleteWorktreeGroup: vi.fn(),
+			});
+			render(<SessionList {...props} />);
+
+			fireEvent.contextMenu(screen.getByText('Worktree Group'), { clientX: 100, clientY: 100 });
+
+			expect(screen.getByText('Remove Group and Agents')).toBeInTheDocument();
 		});
 	});
 
@@ -933,7 +1064,7 @@ describe('SessionList', () => {
 			expect(screen.getByText('Ungrouped Session')).toBeInTheDocument();
 		});
 
-		it('hides Ungrouped Agents folder when all sessions are in groups', () => {
+		it('hides the Ungrouped Agents folder when all sessions are in groups', () => {
 			const group = createMockGroup({ id: 'g1', name: 'My Group', sessionIds: ['s1'] });
 			const sessions = [createMockSession({ id: 's1', name: 'Grouped Session', groupId: 'g1' })];
 			useSessionStore.setState({
@@ -948,7 +1079,8 @@ describe('SessionList', () => {
 
 			// The session should be visible in the group
 			expect(screen.getByText('Grouped Session')).toBeInTheDocument();
-			// But the Ungrouped Agents folder should NOT be visible
+			// No empty "Ungrouped Agents" header — the drop zone / New Group
+			// button takes over that space instead.
 			expect(screen.queryByText('Ungrouped Agents')).not.toBeInTheDocument();
 		});
 
@@ -1048,6 +1180,26 @@ describe('SessionList', () => {
 				expect.stringContaining('Delete Me'),
 				expect.any(Function)
 			);
+		});
+
+		it('copies agent GUID to clipboard from context menu', async () => {
+			const mockClipboard = { writeText: vi.fn().mockResolvedValue(undefined) };
+			Object.assign(navigator, { clipboard: mockClipboard });
+
+			const sessions = [createMockSession({ id: 'agent-guid-1', name: 'Copy GUID Me' })];
+			useSessionStore.setState({ sessions: sessions });
+			useUIStore.setState({ leftSidebarOpen: true });
+			const props = createDefaultProps({
+				sortedSessions: sessions,
+			});
+			render(<SessionList {...props} />);
+
+			// Open context menu
+			fireEvent.contextMenu(screen.getByText('Copy GUID Me'), { clientX: 100, clientY: 100 });
+
+			fireEvent.click(screen.getByText('Copy Agent GUID to Clipboard'));
+
+			expect(mockClipboard.writeText).toHaveBeenCalledWith('agent-guid-1');
 		});
 
 		it('toggles bookmark from context menu', () => {
@@ -1405,7 +1557,7 @@ describe('SessionList', () => {
 			expect(handleDropOnGroup).toHaveBeenCalledWith('g1');
 		});
 
-		it('shows drop zone for ungrouping when dragging and all sessions are grouped', () => {
+		it('shows the compact ungroup drop-zone when dragging and all sessions are grouped', () => {
 			const handleDropOnUngrouped = vi.fn();
 			const group = createMockGroup({ id: 'g1', name: 'My Group', sessionIds: ['s1'] });
 			const sessions = [createMockSession({ id: 's1', name: 'Grouped Session', groupId: 'g1' })];
@@ -1423,11 +1575,13 @@ describe('SessionList', () => {
 			});
 			render(<SessionList {...props} />);
 
-			// Drop zone should be visible when dragging
+			// With no ungrouped sessions the folder header is hidden; a compact
+			// "Drop here to ungroup" placeholder appears while a drag is active.
+			expect(screen.queryByText('Ungrouped Agents')).not.toBeInTheDocument();
 			expect(screen.getByText('Drop here to ungroup')).toBeInTheDocument();
 		});
 
-		it('calls handleDropOnUngrouped when dropping on ungroup zone', () => {
+		it('calls handleDropOnUngrouped when dropping on the compact ungroup drop-zone', () => {
 			const handleDropOnUngrouped = vi.fn();
 			const group = createMockGroup({ id: 'g1', name: 'My Group', sessionIds: ['s1'] });
 			const sessions = [createMockSession({ id: 's1', name: 'Grouped Session', groupId: 'g1' })];
@@ -1445,9 +1599,13 @@ describe('SessionList', () => {
 			});
 			render(<SessionList {...props} />);
 
-			// Find the drop zone and drop on it
-			const dropZone = screen.getByText('Drop here to ungroup');
-			fireEvent.drop(dropZone);
+			// The drop handler lives on the outer container that wraps both the
+			// placeholder and the New Group button. Walk up from the placeholder
+			// text to that container and fire drop there.
+			const placeholder = screen.getByText('Drop here to ungroup');
+			const dropContainer = placeholder.parentElement as HTMLElement | null;
+			expect(dropContainer).not.toBeNull();
+			fireEvent.drop(dropContainer!);
 
 			expect(handleDropOnUngrouped).toHaveBeenCalled();
 		});
@@ -2146,6 +2304,27 @@ describe('SessionList', () => {
 			// Active session should have accent border color
 			const activeSession = screen.getByText('Active Session').closest('[style*="border"]');
 			expect(activeSession).toHaveStyle({ borderColor: defaultTheme.colors.accent });
+		});
+
+		it('suppresses the agent active border while a Starred keyboard cursor is live', () => {
+			// Cycling onto a Starred row activates its parent agent. Without suppression
+			// the agent row would show its (stronger) active border and steal visual
+			// focus from the Starred row the keyboard cursor is actually on.
+			const sessions = [createMockSession({ id: 's1', name: 'Active Session' })];
+			useSessionStore.setState({
+				sessions,
+				activeSessionId: 's1',
+			});
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				sidebarExtraSelection: { kind: 'starred', key: 'open:s1:t1' },
+			});
+			const props = createDefaultProps({ sortedSessions: sessions });
+			const { container } = render(<SessionList {...props} />);
+
+			const agentRow = screen.getByText('Active Session').closest('[style*="border"]');
+			// Border must NOT be the accent color (active styling suppressed).
+			expect(agentRow).not.toHaveStyle({ borderColor: defaultTheme.colors.accent });
 		});
 
 		it('highlights active session in collapsed mode without ring', () => {
@@ -3265,6 +3444,13 @@ describe('SessionList', () => {
 			useUIStore.setState({ leftSidebarOpen: true });
 			useSettingsStore.setState({
 				shortcuts: defaultShortcuts,
+				encoreFeatures: {
+					directorNotes: false,
+					usageStats: true,
+					symphony: true,
+					maestroCue: true,
+				},
+				showLeftPanelCueIndicator: true,
 			});
 
 			// Mock Cue status to return session with subscriptions
@@ -3298,13 +3484,19 @@ describe('SessionList', () => {
 			);
 		});
 
-		it('shows Zap icon even when Encore Feature is disabled (indicator is not gated)', async () => {
+		it('hides Zap icon when the Cue Encore Feature is disabled', async () => {
 			const session = createMockSession({ id: 's1', name: 'Cue Session' });
 			useSessionStore.setState({ sessions: [session] });
 			useUIStore.setState({ leftSidebarOpen: true });
 			useSettingsStore.setState({
 				shortcuts: defaultShortcuts,
-				encoreFeatures: { directorNotes: false, maestroCue: false },
+				encoreFeatures: {
+					directorNotes: false,
+					usageStats: true,
+					symphony: true,
+					maestroCue: false,
+				},
+				showLeftPanelCueIndicator: true,
 			});
 
 			// Mock Cue status to return session with subscriptions
@@ -3326,9 +3518,51 @@ describe('SessionList', () => {
 			const props = createDefaultProps({ sortedSessions: [session] });
 			render(<SessionList {...props} />);
 
-			await waitFor(() => {
-				expect(screen.getByTestId('icon-zap')).toBeInTheDocument();
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 50));
 			});
+
+			expect(screen.queryByTestId('icon-zap')).not.toBeInTheDocument();
+		});
+
+		it('hides Zap icon when the user disables the Cue indicator setting', async () => {
+			const session = createMockSession({ id: 's1', name: 'Cue Session' });
+			useSessionStore.setState({ sessions: [session] });
+			useUIStore.setState({ leftSidebarOpen: true });
+			useSettingsStore.setState({
+				shortcuts: defaultShortcuts,
+				encoreFeatures: {
+					directorNotes: false,
+					usageStats: true,
+					symphony: true,
+					maestroCue: true,
+				},
+				showLeftPanelCueIndicator: false,
+			});
+
+			(window.maestro as Record<string, unknown>).cue = {
+				getStatus: vi.fn().mockResolvedValue([
+					{
+						sessionId: 's1',
+						sessionName: 'Cue Session',
+						subscriptionCount: 4,
+						enabled: true,
+						activeRuns: 0,
+					},
+				]),
+				getActiveRuns: vi.fn().mockResolvedValue([]),
+				getActivityLog: vi.fn().mockResolvedValue([]),
+				onActivityUpdate: vi.fn().mockReturnValue(() => {}),
+			};
+
+			const props = createDefaultProps({ sortedSessions: [session] });
+			render(<SessionList {...props} />);
+
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 50));
+			});
+
+			expect(screen.queryByTestId('icon-zap')).not.toBeInTheDocument();
 		});
 
 		it('does not show Zap icon for sessions without Cue subscriptions', async () => {

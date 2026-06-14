@@ -24,6 +24,8 @@ import { checkBinaryExists, checkCustomPath, getExpandedEnv } from './path-probe
 import { AGENT_DEFINITIONS, type AgentConfig } from './definitions';
 import { discoverModelsFromLocalConfigs } from './opencode-config';
 import { isWindows } from '../../shared/platformDetection';
+import { parseJsonWithBom } from '../../shared/jsonUtils';
+import { capabilitySnapshots } from './capability-snapshot';
 
 const LOG_CONTEXT = 'AgentDetector';
 
@@ -194,6 +196,30 @@ export class AgentDetector {
 				customPath: customPath || undefined,
 				capabilities: getAgentCapabilities(agentDef.id),
 			});
+
+			// Mirror detection into the capability snapshot store so the
+			// renderer has a persisted readiness pill for every agent. Skip
+			// the internal `terminal` agent — it isn't user-facing.
+			//
+			// Each agent is only written when its observed state actually
+			// changed (status differs, or the detected path differs). This
+			// keeps full-detection runs (incl. reprobe-driven ones) from
+			// firing `snapshot-updated` broadcasts for every unchanged agent.
+			if (agentDef.id !== 'terminal') {
+				const existing = capabilitySnapshots.get(agentDef.id);
+				if (detection.exists) {
+					// Preserve any reactive auth_required state set by a recent
+					// spawn failure — detection alone shouldn't clear it. The
+					// next successful spawn (or explicit re-probe) flips it back.
+					if (existing?.status === 'auth_required') {
+						// no-op: leave reactive state intact
+					} else if (existing?.status !== 'ok' || existing.path !== detection.path) {
+						capabilitySnapshots.markOk(agentDef.id, { path: detection.path });
+					}
+				} else if (existing?.status !== 'not_installed') {
+					capabilitySnapshots.markNotInstalled(agentDef.id);
+				}
+			}
 		}
 
 		const availableAgents = agents.filter((a) => a.available);
@@ -318,9 +344,10 @@ export class AgentDetector {
 					// Discover models dynamically from two sources:
 					// 1. Well-known aliases (always valid, resolve to latest in each tier)
 					//    Includes [1m] variants for 1M extended context window
-					//    (requires extra usage enabled at claude.ai/settings/usage)
+					//    (requires extra usage enabled at claude.ai/settings/usage).
+					//    fable has no [1m] variant (Claude Code exposes 1M only for opus/sonnet).
 					// 2. Historical model usage from ~/.claude/stats-cache.json
-					const models: string[] = ['sonnet', 'opus', 'haiku', 'opus[1m]', 'sonnet[1m]'];
+					const models: string[] = ['fable', 'sonnet', 'opus', 'haiku', 'opus[1m]', 'sonnet[1m]'];
 					try {
 						const statsPath = path.join(os.homedir(), '.claude', 'stats-cache.json');
 						const statsContent = fs.readFileSync(statsPath, 'utf8');
@@ -348,13 +375,19 @@ export class AgentDetector {
 						const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
 						const cachePath = path.join(codexHome, 'models_cache.json');
 						const cacheContent = fs.readFileSync(cachePath, 'utf8');
-						const cache = JSON.parse(cacheContent);
+						const cache = parseJsonWithBom<{
+							models?: Array<{ slug?: string; visibility?: string }>;
+						}>(cacheContent);
 						if (Array.isArray(cache.models)) {
 							const models = cache.models
 								.filter(
-									(m: { slug?: string; visibility?: string }) => m.slug && m.visibility !== 'hide'
+									(m: {
+										slug?: string;
+										visibility?: string;
+									}): m is { slug: string; visibility?: string } =>
+										typeof m.slug === 'string' && m.visibility !== 'hide'
 								)
-								.map((m: { slug: string }) => m.slug);
+								.map((m) => m.slug);
 							logger.info(
 								`Discovered ${models.length} models for ${agentId} from models_cache.json`,
 								LOG_CONTEXT,
@@ -488,16 +521,17 @@ export class AgentDetector {
 			switch (agentId) {
 				case 'claude-code': {
 					if (optionKey === 'effort') {
-						// Claude Code: parse --help output to extract effort levels
 						const command =
 							(await this.getAgent(agentId))?.path ||
 							(await this.getAgent(agentId))?.command ||
 							'claude';
 						const env = getExpandedEnv();
-						const result = await execFileNoThrow(command, ['--help'], undefined, env);
-						if (result.exitCode === 0) {
-							// Match: --effort <level>  Effort level ... (low, medium, high, max)
-							const match = result.stdout.match(/--effort\s+<\w+>\s+.*?\(([^)]+)\)/);
+
+						// Primary: parse --help output. Older CLI builds list the levels
+						// inline, e.g. `--effort <level>  Effort level ... (low, medium, high, max)`.
+						const help = await execFileNoThrow(command, ['--help'], undefined, env);
+						if (help.exitCode === 0) {
+							const match = help.stdout.match(/--effort\s+<\w+>\s+.*?\(([^)]+)\)/);
 							if (match) {
 								const levels = match[1]
 									.split(',')
@@ -511,8 +545,47 @@ export class AgentDetector {
 								return ['', ...levels]; // Empty string = use default
 							}
 						}
-						logger.debug('Could not parse effort levels from Claude --help output', LOG_CONTEXT);
-						return [];
+
+						// Fallback: newer CLI builds dropped the parenthetical from --help but
+						// still validate the flag. Probe with an invalid value and read back the
+						// valid set the CLI names. Two known phrasings, depending on the build:
+						//   - commander rejection (non-zero exit):
+						//     `error: option '--effort <level>' argument 'x' is invalid. It must be one of: low, medium, high, xhigh, max`
+						//   - soft warning (exit 0, still runs --version):
+						//     `Warning: Unknown --effort value 'x' - ignoring it and using the default effort. Valid values: low, medium, high, xhigh, max.`
+						const probe = await execFileNoThrow(
+							command,
+							['--effort', '__maestro_probe__', '--version'],
+							undefined,
+							env
+						);
+						const probeOutput = `${probe.stderr}\n${probe.stdout}`;
+						const probeMatch = probeOutput.match(
+							/--effort\b[^\n]*?(?:must be one of|valid values):\s*([^\n]+)/i
+						);
+						if (probeMatch) {
+							const levels = probeMatch[1]
+								.split(',')
+								.map((s) => s.trim().replace(/[.\s]+$/, ''))
+								.filter((s) => s.length > 0);
+							if (levels.length > 0) {
+								logger.info(
+									`Discovered ${levels.length} effort levels for ${agentId} from validation probe`,
+									LOG_CONTEXT,
+									{ levels }
+								);
+								return ['', ...levels]; // Empty string = use default
+							}
+						}
+
+						logger.debug(
+							'Could not discover effort levels for Claude Code; using static fallback',
+							LOG_CONTEXT
+						);
+						// Fall through to the static-options fallback below rather than
+						// returning [] - that keeps the effort pill/dropdown populated even
+						// when the CLI reworded its --help/validation output yet again.
+						break;
 					}
 					break;
 				}
@@ -520,33 +593,46 @@ export class AgentDetector {
 				case 'codex': {
 					if (optionKey === 'reasoningEffort') {
 						// Codex: read reasoning levels from ~/.codex/models_cache.json
-						const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
-						const cachePath = path.join(codexHome, 'models_cache.json');
-						const cacheContent = fs.readFileSync(cachePath, 'utf8');
-						const cache = JSON.parse(cacheContent);
-						if (Array.isArray(cache.models)) {
-							// Collect union of all reasoning levels across visible models
-							const levelSet = new Set<string>();
-							for (const model of cache.models) {
-								if (model.visibility === 'hide') continue;
-								for (const rl of model.supported_reasoning_levels || []) {
-									if (rl.effort) levelSet.add(rl.effort);
+						try {
+							const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
+							const cachePath = path.join(codexHome, 'models_cache.json');
+							const cacheContent = fs.readFileSync(cachePath, 'utf8');
+							const cache = parseJsonWithBom<{
+								models?: Array<{
+									visibility?: string;
+									supported_reasoning_levels?: Array<{ effort?: string }>;
+								}>;
+							}>(cacheContent);
+							if (Array.isArray(cache.models)) {
+								// Collect union of all reasoning levels across visible models
+								const levelSet = new Set<string>();
+								for (const model of cache.models) {
+									if (model.visibility === 'hide') continue;
+									for (const rl of model.supported_reasoning_levels || []) {
+										if (rl.effort) levelSet.add(rl.effort);
+									}
 								}
+								const levels = Array.from(levelSet);
+								// Sort by severity: minimal < low < medium < high < xhigh
+								const order = ['minimal', 'low', 'medium', 'high', 'xhigh'];
+								levels.sort(
+									(a, b) =>
+										(order.indexOf(a) === -1 ? 99 : order.indexOf(a)) -
+										(order.indexOf(b) === -1 ? 99 : order.indexOf(b))
+								);
+								logger.info(
+									`Discovered ${levels.length} reasoning levels for ${agentId} from models_cache.json`,
+									LOG_CONTEXT,
+									{ levels }
+								);
+								return ['', ...levels]; // Empty string = use default
 							}
-							const levels = Array.from(levelSet);
-							// Sort by severity: minimal < low < medium < high < xhigh
-							const order = ['minimal', 'low', 'medium', 'high', 'xhigh'];
-							levels.sort(
-								(a, b) =>
-									(order.indexOf(a) === -1 ? 99 : order.indexOf(a)) -
-									(order.indexOf(b) === -1 ? 99 : order.indexOf(b))
+						} catch {
+							// Fresh Codex installs may not have populated the cache yet.
+							logger.debug(
+								'Could not read Codex models_cache.json for config option discovery',
+								LOG_CONTEXT
 							);
-							logger.info(
-								`Discovered ${levels.length} reasoning levels for ${agentId} from models_cache.json`,
-								LOG_CONTEXT,
-								{ levels }
-							);
-							return ['', ...levels]; // Empty string = use default
 						}
 					}
 					break;

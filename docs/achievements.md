@@ -28,7 +28,7 @@ Maestro features a conductor-themed achievement system that tracks your cumulati
 
 Since Auto Runs can execute in parallel across multiple Maestro sessions, achieving **Titan of the Baton** (Level 11) is technically feasible in less than 10 calendar years. Run 10 agents simultaneously with worktrees and you could theoretically hit that milestone in about a year of real time.
 
-But let's be real — getting to Level 11 is going to take some serious hacking. You'll need a well-orchestrated fleet of agents running around the clock, carefully crafted playbooks that loop indefinitely, and the infrastructure to keep it all humming. It's the ultimate test of your Maestro skills.
+But let's be real - getting to Level 11 is going to take some serious hacking. You'll need a well-orchestrated fleet of agents running around the clock, carefully crafted playbooks that loop indefinitely, and the infrastructure to keep it all humming. It's the ultimate test of your Maestro skills.
 
 The achievement panel shows your current rank, progress to the next level, and total accumulated time. Each rank includes flavor text and information about a legendary conductor who exemplifies that level of mastery.
 
@@ -60,7 +60,7 @@ The share image includes comprehensive usage statistics:
 | **Parallel Queries**  | Peak simultaneous AI queries in flight               |
 | **Queue Depth**       | Peak message queue depth reached                     |
 
-These peak usage stats are tracked automatically and persist across sessions. They represent your high-water marks — evidence of your most intensive Maestro orchestrations.
+These peak usage stats are tracked automatically and persist across sessions. They represent your high-water marks - evidence of your most intensive Maestro orchestrations.
 
 ## Keyboard Mastery
 
@@ -90,3 +90,5 @@ The leaderboard tracks two competitive categories:
 | **Longest Single Auto Run**  | Personal record for longest continuous Auto Run  |
 
 Each entry shows the user's conductor badge level, social links, and ranking. Your stats sync across devices when you're signed in, so your achievements follow you wherever you use Maestro.
+
+Your leaderboard avatar is sourced from GitHub. Link your GitHub profile in the registration form, and update your picture on GitHub to change how it appears on the leaderboard.

@@ -618,6 +618,180 @@ describe('mergePipelinesWithSavedLayout', () => {
 			expect(result.pipelines[0].nodes[0].position).toEqual({ x: 700, y: 800 });
 		});
 
+		it('matches trigger positions by subscriptionName across YAML reorder', () => {
+			// Regression for the "save clean, reload messy" bug: a YAML reorder
+			// (e.g. chain-sub topo-sort in #981) reshuffles trigger creation
+			// order across reload. The legacy `eventType + index` key then
+			// matched triggers to the wrong saved positions, dragging entire
+			// pipeline groups visually into each other. `subscriptionName`
+			// survives the reorder and pins each trigger to its own saved spot.
+			const savedLayout: PipelineLayoutState = {
+				pipelines: [
+					{
+						id: 'pipeline-Maestro',
+						name: 'Maestro',
+						color: '#06b6d4',
+						nodes: [
+							{
+								id: 'trigger-0',
+								type: 'trigger',
+								position: { x: 100, y: 200 },
+								data: {
+									eventType: 'time.scheduled',
+									label: 'Scheduled',
+									config: {},
+									subscriptionName: 'Community Refresh',
+								},
+							},
+							{
+								id: 'trigger-1',
+								type: 'trigger',
+								position: { x: 100, y: 350 },
+								data: {
+									eventType: 'github.pull_request',
+									label: 'PR',
+									config: {},
+									subscriptionName: 'Maestro-chain-3',
+								},
+							},
+						],
+						edges: [],
+					},
+				],
+				selectedPipelineId: 'pipeline-Maestro',
+			};
+			// Live pipeline: same triggers, but YAML reorder put the PR
+			// trigger FIRST. Indices are reversed vs the saved layout.
+			const livePipelines: CuePipeline[] = [
+				{
+					id: 'pipeline-Maestro',
+					name: 'Maestro',
+					color: '#06b6d4',
+					nodes: [
+						{
+							id: 'trigger-0',
+							type: 'trigger',
+							position: { x: 0, y: 0 },
+							data: {
+								eventType: 'github.pull_request',
+								label: 'PR',
+								config: {},
+								subscriptionName: 'Maestro-chain-3',
+							},
+						},
+						{
+							id: 'trigger-1',
+							type: 'trigger',
+							position: { x: 0, y: 0 },
+							data: {
+								eventType: 'time.scheduled',
+								label: 'Scheduled',
+								config: {},
+								subscriptionName: 'Community Refresh',
+							},
+						},
+					],
+					edges: [],
+				},
+			];
+			const result = mergePipelinesWithSavedLayout(livePipelines, savedLayout);
+			const prTrigger = result.pipelines[0].nodes.find(
+				(n) => (n.data as { subscriptionName?: string }).subscriptionName === 'Maestro-chain-3'
+			);
+			const schedTrigger = result.pipelines[0].nodes.find(
+				(n) => (n.data as { subscriptionName?: string }).subscriptionName === 'Community Refresh'
+			);
+			expect(prTrigger?.position).toEqual({ x: 100, y: 350 });
+			expect(schedTrigger?.position).toEqual({ x: 100, y: 200 });
+		});
+
+		it('matches agent positions by nodeKey across YAML reorder', () => {
+			// Same regression as the trigger case, but for agents. When the
+			// same session has multiple instances in a pipeline (forceNew or
+			// fan-in via distinct nodeKeys), the legacy
+			// `sessionKey + sameSessionIndex` key shuffles positions onto the
+			// wrong instance after a YAML reorder. nodeKey (UUID, round-trips
+			// via target_node_key) pins each visual node to its own spot.
+			const savedLayout: PipelineLayoutState = {
+				pipelines: [
+					{
+						id: 'pipeline-p1',
+						name: 'p1',
+						color: '#06b6d4',
+						nodes: [
+							{
+								id: 'agent-rc-0',
+								type: 'agent',
+								position: { x: 400, y: 350 },
+								data: {
+									sessionId: 'sess-rc',
+									sessionName: 'rc',
+									toolType: 'claude-code',
+									nodeKey: 'uuid-A',
+								},
+							},
+							{
+								id: 'agent-rc-1',
+								type: 'agent',
+								position: { x: 400, y: 950 },
+								data: {
+									sessionId: 'sess-rc',
+									sessionName: 'rc',
+									toolType: 'claude-code',
+									nodeKey: 'uuid-B',
+								},
+							},
+						],
+						edges: [],
+					},
+				],
+				selectedPipelineId: 'pipeline-p1',
+			};
+			// Live pipeline: same two agents (same session), but reload put
+			// the uuid-B instance first.
+			const livePipelines: CuePipeline[] = [
+				{
+					id: 'pipeline-p1',
+					name: 'p1',
+					color: '#06b6d4',
+					nodes: [
+						{
+							id: 'agent-rc-0',
+							type: 'agent',
+							position: { x: 0, y: 0 },
+							data: {
+								sessionId: 'sess-rc',
+								sessionName: 'rc',
+								toolType: 'claude-code',
+								nodeKey: 'uuid-B',
+							},
+						},
+						{
+							id: 'agent-rc-1',
+							type: 'agent',
+							position: { x: 0, y: 0 },
+							data: {
+								sessionId: 'sess-rc',
+								sessionName: 'rc',
+								toolType: 'claude-code',
+								nodeKey: 'uuid-A',
+							},
+						},
+					],
+					edges: [],
+				},
+			];
+			const result = mergePipelinesWithSavedLayout(livePipelines, savedLayout);
+			const uuidA = result.pipelines[0].nodes.find(
+				(n) => (n.data as { nodeKey?: string }).nodeKey === 'uuid-A'
+			);
+			const uuidB = result.pipelines[0].nodes.find(
+				(n) => (n.data as { nodeKey?: string }).nodeKey === 'uuid-B'
+			);
+			expect(uuidA?.position).toEqual({ x: 400, y: 350 });
+			expect(uuidB?.position).toEqual({ x: 400, y: 950 });
+		});
+
 		it('falls back to id-based lookup for legacy layouts where ids still match', () => {
 			// Pre-semantic-key layouts: both saved and live pipelines share
 			// node ids (e.g. they were both emitted by yamlToPipeline on

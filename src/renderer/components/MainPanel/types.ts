@@ -10,6 +10,7 @@ import type {
 	AgentError,
 	QueuedItem,
 } from '../../types';
+import type { CopyContextOptions } from '../../hooks/tabs/useTabExportHandlers';
 
 export interface SlashCommand {
 	command: string;
@@ -32,6 +33,12 @@ export interface MainPanelHandle {
 	openTerminalSearch: () => void;
 	/** Focus the browser address bar in the active browser tab */
 	focusBrowserAddressBar: () => void;
+	/** Open the in-page find bar in the active browser tab */
+	openBrowserFind: () => void;
+	/** Navigate back in the active browser tab's history */
+	browserBack: () => void;
+	/** Navigate forward in the active browser tab's history */
+	browserForward: () => void;
 	/** Scroll the active tab header into view and focus it */
 	focusActiveTab: () => void;
 	/** Reload the active browser tab (or stop loading if in progress) */
@@ -128,6 +135,8 @@ export interface MainPanelProps {
 	setActiveSessionId: (id: string) => void;
 	onDeleteLog?: (logId: string) => number | null;
 	onRemoveQueuedItem?: (itemId: string) => void;
+	onTogglePauseQueuedItem?: (itemId: string) => void;
+	onReorderQueuedItem?: (fromIndex: number, toIndex: number, tabId?: string) => void;
 	onForceSendQueuedItem?: (itemId: string) => void;
 	forcedParallelEnabled?: boolean;
 	getForceSendContext?: (
@@ -155,15 +164,16 @@ export interface MainPanelProps {
 	onToggleTabReadOnlyMode?: () => void;
 	onToggleTabSaveToHistory?: () => void;
 	onToggleTabShowThinking?: () => void;
+	onToggleTabEnterToSend?: () => void;
 	onToggleUnreadFilter?: () => void;
 	onOpenTabSearch?: () => void;
 	/** Handler to open output/message search (Cmd+F) */
 	onOpenOutputSearch?: () => void;
 	// Bulk tab close operations
 	onCloseAllTabs?: () => void;
-	onCloseOtherTabs?: () => void;
-	onCloseTabsLeft?: () => void;
-	onCloseTabsRight?: () => void;
+	onCloseOtherTabs?: (pivotTabId?: string) => void;
+	onCloseTabsLeft?: (pivotTabId?: string) => void;
+	onCloseTabsRight?: (pivotTabId?: string) => void;
 
 	// Unified tab system (Phase 4) - file preview tabs integrated with AI tabs
 	unifiedTabs?: UnifiedTab[];
@@ -177,6 +187,8 @@ export interface MainPanelProps {
 	onNewBrowserTab?: () => void;
 	onBrowserTabSelect?: (tabId: string) => void;
 	onBrowserTabClose?: (tabId: string) => void;
+	onBrowserTabRename?: (tabId: string) => void;
+	onBrowserTabResetName?: (tabId: string) => void;
 	onBrowserTabUpdate?: (sessionId: string, tabId: string, updates: Partial<BrowserTab>) => void;
 
 	// Terminal tab callbacks (Phase 8)
@@ -213,6 +225,17 @@ export interface MainPanelProps {
 	// Replay a user message (AI mode)
 	onReplayMessage?: (text: string, images?: string[]) => void;
 	onForkConversation?: (logId: string) => void;
+	// In-place recovery from session_not_found errors. Triggered by the
+	// SessionRecoveryCard inside system log entries that carry a
+	// `recoveryAction` payload.
+	onSessionRecover?: (opts: {
+		sessionId: string;
+		tabId: string;
+		lastUserPrompt: string;
+		groomContext: boolean;
+	}) => void;
+	isRecoveringSession?: boolean;
+	sessionRecoveryError?: string | null;
 	// File tree for linking file references in AI responses
 	fileTree?: import('../../types/fileTree').FileNode[];
 	// Callback when a file link is clicked in AI response
@@ -258,7 +281,7 @@ export interface MainPanelProps {
 	onSummarizeAndContinue?: (tabId: string) => void;
 	onMergeWith?: (tabId: string) => void;
 	onSendToAgent?: (tabId: string) => void;
-	onCopyContext?: (tabId: string) => void;
+	onCopyContext?: (tabId: string, options?: CopyContextOptions) => void;
 	onExportHtml?: (tabId: string) => void;
 	onPublishTabGist?: (tabId: string) => void;
 	/** Copy arbitrary text to the clipboard (wired by MainPanel for terminal buffer actions). */
@@ -297,6 +320,9 @@ export interface MainPanelProps {
 
 	// Document Graph
 	onOpenInGraph?: () => void;
+
+	/** Open the currently previewed file in a new Maestro browser tab. */
+	onOpenInBrowser?: () => void;
 
 	// Wizard document generation callbacks
 	/** Called when wizard document generation completes and user clicks Done */

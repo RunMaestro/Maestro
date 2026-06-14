@@ -12,10 +12,17 @@
 import { IProcessManager } from './group-chat-moderator';
 import { getContextWindowValue } from '../utils/agent-args';
 import { wrapSpawnWithSsh } from '../utils/ssh-spawn-wrapper';
-import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
+import { getSshRemoteConfig, type SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
+import { ensureRemoteMaestroPProbed } from '../agents/probeRemoteMaestroP';
 import { getWindowsSpawnConfig } from './group-chat-config';
 import type { AgentConfig } from '../agents/definitions';
 import type { AgentSshRemoteConfig } from '../../shared/types';
+import {
+	resolveClaudeSpawnMode,
+	applyClaudeSpawnDecision,
+	buildRemoteInteractiveSpawn,
+} from '../agents/resolveClaudeSpawnMode';
+import type { ClaudeTokenMode } from '../../shared/claudeTokenMode';
 
 export interface SpawnGroupChatAgentConfig {
 	/** Stable session id for the process manager */
@@ -40,6 +47,14 @@ export interface SpawnGroupChatAgentConfig {
 	sshRemoteConfig?: AgentSshRemoteConfig | null;
 	/** SSH settings store (required when sshRemoteConfig is active) */
 	sshStore?: SshRemoteSettingsStore | null;
+	/**
+	 * Claude token source for this agent (Claude Code only). Drives the
+	 * maestro-p TUI vs `claude --print` choice. Ignored for non-Claude agents
+	 * and SSH spawns (the TUI wrapper needs the local claude binary).
+	 */
+	tokenMode?: ClaudeTokenMode;
+	/** Optional per-agent maestro-p script override. */
+	maestroPPath?: string;
 	/** Process manager to invoke */
 	processManager: IProcessManager;
 	/** Whether the spawned process is read-only (moderator / synthesis = true) */
@@ -93,6 +108,54 @@ export async function spawnGroupChatAgent(
 	let spawnEnvVars = customEnvVars;
 	let spawnSshStdinScript: string | undefined;
 
+	// Over SSH, warm the remote maestro-p probe BEFORE resolving so a remote TUI
+	// selection falls back to API instead of exiting 127 when maestro-p isn't
+	// installed on the remote (the resolver reads this from the cache).
+	if (sshRemoteConfig?.enabled && sshStore) {
+		const sshRemote = getSshRemoteConfig(sshStore, {
+			sessionSshConfig: sshRemoteConfig,
+		}).config;
+		if (sshRemote) {
+			await ensureRemoteMaestroPProbed(sshRemote);
+		}
+	}
+
+	// Resolve the Claude token source (maestro-p TUI vs `claude --print`) and,
+	// for the interactive/dynamic case, rewrite the spawn to run maestro-p via
+	// process.execPath. The resolver returns API for non-Claude agents and SSH
+	// spawns, so this is a no-op outside the local Claude Code interactive path.
+	// maestro-p reads the prompt the same way claude does (positional after the
+	// args processManager appends), so prompt delivery is unchanged.
+	const claudeDecision = resolveClaudeSpawnMode({
+		agent,
+		tokenMode: config.tokenMode ?? 'api',
+		sshEnabled: !!sshRemoteConfig?.enabled,
+		// Lets the resolver fall a remote TUI spawn back to API when the remote
+		// has no maestro-p on its PATH (avoids exit 127).
+		sshRemoteId: sshRemoteConfig?.remoteId ?? undefined,
+		command: baseCommand,
+		sessionCustomEnvVars: customEnvVars,
+		maestroPPath: config.maestroPPath,
+		now: new Date(),
+	});
+	if (claudeDecision.mode === 'interactive' && claudeDecision.maestroPBinPath) {
+		const applied = applyClaudeSpawnDecision({
+			decision: claudeDecision,
+			interactiveModeArgs: agent.interactiveModeArgs,
+			command: baseCommand,
+			args,
+			customEnvVars,
+		});
+		spawnCommand = applied.command;
+		spawnArgs = applied.args;
+		spawnEnvVars = applied.customEnvVars;
+		if (debugLabel) {
+			console.log(
+				`[GroupChat:Debug] ${debugLabel} resolved to maestro-p (tokenMode=${config.tokenMode})`
+			);
+		}
+	}
+
 	// Apply SSH wrapping if configured
 	if (sshRemoteConfig?.enabled && !sshStore) {
 		throw new Error(
@@ -103,16 +166,31 @@ export async function spawnGroupChatAgent(
 		if (debugLabel) {
 			console.log(`[GroupChat:Debug] Applying SSH wrapping for ${debugLabel}...`);
 		}
+		// Claude interactive/dynamic over SSH runs maestro-p on the remote host
+		// (must be on its PATH) to drive the remote TUI on the Max subscription.
+		// Returns null for the API path, leaving the SSH config untouched.
+		const remoteInteractive = buildRemoteInteractiveSpawn({
+			decision: claudeDecision,
+			interactiveModeArgs: agent.interactiveModeArgs,
+			remoteClaudeBin: claudeDecision.claudeRealBinPath,
+		});
+		if (remoteInteractive && debugLabel) {
+			console.log(
+				`[GroupChat:Debug] ${debugLabel} resolved to remote maestro-p over SSH (tokenMode=${config.tokenMode})`
+			);
+		}
 		const sshWrapped = await wrapSpawnWithSsh(
 			{
 				command: baseCommand,
-				args,
+				args: remoteInteractive ? [...remoteInteractive.prependArgs, ...args] : args,
 				cwd,
 				prompt,
-				customEnvVars,
+				customEnvVars: remoteInteractive
+					? { ...(customEnvVars ?? {}), ...remoteInteractive.env }
+					: customEnvVars,
 				promptArgs: agent.promptArgs,
 				noPromptSeparator: agent.noPromptSeparator,
-				agentBinaryName: agent.binaryName,
+				agentBinaryName: remoteInteractive ? remoteInteractive.command : agent.binaryName,
 			},
 			sshRemoteConfig,
 			sshStore

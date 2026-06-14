@@ -3,7 +3,7 @@ import Store from 'electron-store';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import type { AgentConfigsData } from '../../stores/types';
+import type { AgentConfigsData, SessionsData } from '../../stores/types';
 import {
 	AgentDetector,
 	AGENT_DEFINITIONS,
@@ -13,6 +13,9 @@ import {
 	getOpenCodeConfigPaths,
 	getOpenCodeCommandDirs,
 } from '../../agents';
+import { capabilitySnapshots } from '../../agents/capability-snapshot';
+import type { AgentCapabilitiesSnapshotMap } from '../../../shared/agentCapabilities';
+import { probeRemoteMaestroP, ensureRemoteMaestroPProbed } from '../../agents/probeRemoteMaestroP';
 import { execFileNoThrow } from '../../utils/execFile';
 import { logger } from '../../utils/logger';
 import { getWhichCommand } from '../../../shared/platformDetection';
@@ -26,6 +29,19 @@ import { stripAnsi } from '../../utils/stripAnsi';
 import { SshRemoteConfig } from '../../../shared/types';
 import { MaestroSettings } from './persistence';
 import { captureException } from '../../utils/sentry';
+import {
+	getAllSnapshots as getAllClaudeUsageSnapshots,
+	resolveConfigDirKey,
+} from '../../stores/claudeUsageStore';
+import { getAllCodexUsageSnapshots, resolveCodexHomeKey } from '../../stores/codexUsageStore';
+import type { UsageSnapshot } from '../../agents/claude-mode-selector';
+import type { CodexUsageSnapshot } from '../../stores/codexUsageStore';
+import {
+	runStartupUsageSampling,
+	getMaestroPBinPath,
+	discoverClaudeConfigDirs,
+} from '../../agents/claude-usage-startup';
+import { runCodexUsageSampling, discoverCodexHomes } from '../../agents/codex-usage-startup';
 
 const LOG_CONTEXT = '[AgentDetector]';
 const CONFIG_LOG_CONTEXT = '[AgentConfig]';
@@ -257,6 +273,13 @@ export interface AgentsHandlerDependencies {
 	agentConfigsStore: Store<AgentConfigsData>;
 	/** The settings store (MaestroSettings) - required for SSH remote lookup */
 	settingsStore?: Store<MaestroSettings>;
+	/**
+	 * Sessions store — required for handlers that need to read or persist
+	 * per-session state (e.g. resolving the Batch Mode usage snapshot for a
+	 * specific tab). Optional so registration doesn't break for legacy boot
+	 * paths that wire only the read-only handlers.
+	 */
+	sessionsStore?: Store<SessionsData>;
 }
 
 /**
@@ -289,8 +312,12 @@ function getSshRemoteById(
  * Agent configs can have function properties that cannot be sent over IPC:
  * - argBuilder in configOptions
  * - resumeArgs, modelArgs, workingDirArgs, imageArgs, imagePromptBuilder, promptArgs on the agent config
+ *
+ * Also attaches the current capability snapshot (if any) for the requested
+ * environment so renderer code can render status pills directly from the
+ * detect result.
  */
-function stripAgentFunctions(agent: any) {
+function stripAgentFunctions(agent: any, sshRemoteId?: string) {
 	if (!agent) return null;
 
 	// Destructure to remove function properties from agent config
@@ -304,12 +331,15 @@ function stripAgentFunctions(agent: any) {
 		...serializableAgent
 	} = agent;
 
+	const snapshot = agent.id ? capabilitySnapshots.get(agent.id, sshRemoteId) : undefined;
+
 	return {
 		...serializableAgent,
 		configOptions: agent.configOptions?.map((opt: any) => {
 			const { argBuilder: _argBuilder, ...serializableOpt } = opt;
 			return serializableOpt;
 		}),
+		...(snapshot ? { snapshot } : {}),
 	};
 }
 
@@ -386,6 +416,30 @@ async function detectAgentsRemote(sshRemote: SshRemoteConfig): Promise<any[]> {
 				capabilities: getAgentCapabilities(agentDef.id),
 				error: connectionError,
 			});
+
+			// Mirror remote detection into the snapshot store, keyed by the
+			// stable SSH remote UUID so each host has its own readiness pill.
+			// Skip when the observed state matches the existing snapshot —
+			// otherwise an `agents:reprobe` for a single agent would emit
+			// snapshot-updated broadcasts for every other agent on the host.
+			if (agentDef.id !== 'terminal') {
+				const existing = capabilitySnapshots.get(agentDef.id, sshRemote.id);
+				if (available) {
+					if (existing?.status === 'auth_required') {
+						// no-op: reactive auth_required state stays intact
+					} else if (existing?.status !== 'ok' || existing.path !== path) {
+						capabilitySnapshots.markOk(agentDef.id, { path }, sshRemote.id);
+					}
+				} else if (!connectionError && existing?.status !== 'not_installed') {
+					capabilitySnapshots.markNotInstalled(agentDef.id, sshRemote.id);
+				} else if (connectionError && existing?.status !== 'failed') {
+					// In-band SSH connection failure: stderr matched a connection
+					// error without throwing, so the catch below never runs. Resolve
+					// a pending `probing` snapshot (from an `agents:reprobe`) to
+					// `failed` instead of leaving the status pill spinning forever.
+					capabilitySnapshots.markFailed(agentDef.id, connectionError, sshRemote.id);
+				}
+			}
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : String(error);
 			connectionError = errorMessage;
@@ -399,6 +453,9 @@ async function detectAgentsRemote(sshRemote: SshRemoteConfig): Promise<any[]> {
 				capabilities: getAgentCapabilities(agentDef.id),
 				error: `Failed to connect: ${errorMessage}`,
 			});
+			if (agentDef.id !== 'terminal') {
+				capabilitySnapshots.markFailed(agentDef.id, errorMessage, sshRemote.id);
+			}
 		}
 	}
 
@@ -408,6 +465,15 @@ async function detectAgentsRemote(sshRemote: SshRemoteConfig): Promise<any[]> {
 			`Failed to connect to SSH remote ${sshRemote.host}: ${connectionError}`,
 			LOG_CONTEXT
 		);
+	}
+
+	// Piggyback a maestro-p availability probe on the same connection. The
+	// Token Source selector disables the TUI option, and resolveClaudeSpawnMode
+	// falls a remote TUI spawn back to API, when the remote can't run it. Only
+	// when the connection actually worked - an unreachable host leaves the
+	// availability unknown rather than caching a false.
+	if (connectionSucceeded) {
+		await probeRemoteMaestroP(sshRemote);
 	}
 
 	return agents;
@@ -763,7 +829,7 @@ async function discoverOpenCodeSlashCommandsRemote(
 }
 
 export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
-	const { getAgentDetector, agentConfigsStore, settingsStore } = deps;
+	const { getAgentDetector, agentConfigsStore, settingsStore, sessionsStore } = deps;
 
 	// Detect all available agents (supports SSH remote detection via optional sshRemoteId)
 	ipcMain.handle(
@@ -779,13 +845,16 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 						LOG_CONTEXT
 					);
 					return AGENT_DEFINITIONS.map((agentDef) =>
-						stripAgentFunctions({
-							...agentDef,
-							available: false,
-							path: undefined,
-							capabilities: getAgentCapabilities(agentDef.id),
-							error: `SSH remote configuration not found: ${sshRemoteId}`,
-						})
+						stripAgentFunctions(
+							{
+								...agentDef,
+								available: false,
+								path: undefined,
+								capabilities: getAgentCapabilities(agentDef.id),
+								error: `SSH remote configuration not found: ${sshRemoteId}`,
+							},
+							sshRemoteId
+						)
 					);
 				}
 				logger.info(`Detecting agents on remote host: ${sshConfig.host}`, LOG_CONTEXT);
@@ -797,7 +866,7 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 						agents: agents.map((a: any) => a.id),
 					}
 				);
-				return agents.map(stripAgentFunctions);
+				return agents.map((a) => stripAgentFunctions(a, sshConfig.id));
 			}
 
 			// Local detection
@@ -808,7 +877,7 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 				agents: agents.map((a) => a.id),
 			});
 			// Strip argBuilder functions before sending over IPC
-			return agents.map(stripAgentFunctions);
+			return agents.map((a) => stripAgentFunctions(a));
 		})
 	);
 
@@ -856,13 +925,13 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 				}
 
 				logger.info(`Agent refresh debug info for ${agentId}`, LOG_CONTEXT, debugInfo);
-				return { agents: agents.map(stripAgentFunctions), debugInfo };
+				return { agents: agents.map((a) => stripAgentFunctions(a)), debugInfo };
 			}
 
 			logger.info(`Refreshed agent detection`, LOG_CONTEXT, {
 				agents: agents.map((a) => ({ id: a.id, available: a.available, path: a.path })),
 			});
-			return { agents: agents.map(stripAgentFunctions), debugInfo: null };
+			return { agents: agents.map((a) => stripAgentFunctions(a)), debugInfo: null };
 		})
 	);
 
@@ -882,13 +951,16 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 					if (!agentDef) {
 						throw new Error(`Unknown agent: ${agentId}`);
 					}
-					return stripAgentFunctions({
-						...agentDef,
-						available: false,
-						path: undefined,
-						capabilities: getAgentCapabilities(agentDef.id),
-						error: `SSH remote configuration not found: ${sshRemoteId}`,
-					});
+					return stripAgentFunctions(
+						{
+							...agentDef,
+							available: false,
+							path: undefined,
+							capabilities: getAgentCapabilities(agentDef.id),
+							error: `SSH remote configuration not found: ${sshRemoteId}`,
+						},
+						sshRemoteId
+					);
 				}
 
 				logger.info(`Getting agent ${agentId} on remote host: ${sshConfig.host}`, LOG_CONTEXT);
@@ -961,25 +1033,45 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 						logger.debug(`Agent "${agentDef.name}" not found on remote`, LOG_CONTEXT);
 					}
 
-					return stripAgentFunctions({
-						...agentDef,
-						available,
-						path,
-						capabilities: getAgentCapabilities(agentDef.id),
-						error: connectionError,
-					});
+					if (agentDef.id !== 'terminal') {
+						if (available) {
+							const existing = capabilitySnapshots.get(agentDef.id, sshConfig.id);
+							if (existing?.status !== 'auth_required') {
+								capabilitySnapshots.markOk(agentDef.id, { path }, sshConfig.id);
+							}
+						} else if (!connectionError) {
+							capabilitySnapshots.markNotInstalled(agentDef.id, sshConfig.id);
+						}
+					}
+
+					return stripAgentFunctions(
+						{
+							...agentDef,
+							available,
+							path,
+							capabilities: getAgentCapabilities(agentDef.id),
+							error: connectionError,
+						},
+						sshConfig.id
+					);
 				} catch (error) {
 					const errorMessage = error instanceof Error ? error.message : String(error);
 					logger.warn(
 						`Failed to check agent "${agentDef.name}" on remote: ${errorMessage}`,
 						LOG_CONTEXT
 					);
-					return stripAgentFunctions({
-						...agentDef,
-						available: false,
-						capabilities: getAgentCapabilities(agentDef.id),
-						error: `Failed to connect: ${errorMessage}`,
-					});
+					if (agentDef.id !== 'terminal') {
+						capabilitySnapshots.markFailed(agentDef.id, errorMessage, sshConfig.id);
+					}
+					return stripAgentFunctions(
+						{
+							...agentDef,
+							available: false,
+							capabilities: getAgentCapabilities(agentDef.id),
+							error: `Failed to connect: ${errorMessage}`,
+						},
+						sshConfig.id
+					);
 				}
 			}
 
@@ -1440,6 +1532,236 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 					});
 					return null;
 				}
+			}
+		)
+	);
+
+	// Get the persisted capability snapshot for a single agent in a given
+	// environment (local or per-SSH-remote). Returns null when no snapshot
+	// has been written yet — callers should fall back to detection.
+	ipcMain.handle(
+		'agents:getSnapshot',
+		withIpcErrorLogging(
+			handlerOpts('getSnapshot'),
+			async (agentId: string, sshRemoteId?: string) => {
+				return capabilitySnapshots.get(agentId, sshRemoteId) ?? null;
+			}
+		)
+	);
+
+	// Auto-detected maestro-p binary path (bundled with the app). The renderer's
+	// AgentConfigPanel shows this as helper text for the Batch Mode path override.
+	// Returns null when no bundled script can be located — usually means the user
+	// is running a dev build without `npm run build` having produced
+	// `dist/cli/maestro-p.js`.
+	ipcMain.handle(
+		'agents:getMaestroPDetectedPath',
+		withIpcErrorLogging(
+			handlerOpts('getMaestroPDetectedPath'),
+			async (): Promise<string | null> => {
+				return getMaestroPBinPath();
+			}
+		)
+	);
+
+	// Whether `maestro-p` is on the PATH of an SSH remote. The AgentConfigPanel
+	// uses this to disable the TUI token-source option (and default an
+	// unconfigured remote agent to API) when the remote can't run it. Returns a
+	// fresh cached result, otherwise probes the remote on demand. `null` means
+	// the availability could not be determined (no such remote / unreachable).
+	//
+	// `force` bypasses the TTL cache and re-probes the remote immediately - wired
+	// to the Refresh button next to the Claude Token Source selector, so a user
+	// who just installed maestro-p on the remote can re-check without waiting out
+	// the 5-minute cache window.
+	ipcMain.handle(
+		'agents:getRemoteMaestroPAvailable',
+		withIpcErrorLogging(
+			handlerOpts('getRemoteMaestroPAvailable'),
+			async (sshRemoteId?: string, force?: boolean): Promise<boolean | null> => {
+				if (!sshRemoteId) {
+					return null;
+				}
+				const sshConfig = getSshRemoteById(settingsStore, sshRemoteId);
+				if (!sshConfig) {
+					return null;
+				}
+				if (force) {
+					return (await probeRemoteMaestroP(sshConfig)) ?? null;
+				}
+				return (await ensureRemoteMaestroPProbed(sshConfig)) ?? null;
+			}
+		)
+	);
+
+	// Get every persisted snapshot — used by the renderer at startup to
+	// hydrate the agents store before the first live detection completes.
+	ipcMain.handle(
+		'agents:getAllSnapshots',
+		withIpcErrorLogging(
+			handlerOpts('getAllSnapshots'),
+			async (): Promise<AgentCapabilitiesSnapshotMap> => capabilitySnapshots.getAll()
+		)
+	);
+
+	// Re-probe a single agent: clear its snapshot, then run detection so a
+	// fresh status emits via the snapshot-updated event channel. The
+	// returned snapshot reflects the post-detection state.
+	ipcMain.handle(
+		'agents:reprobe',
+		withIpcErrorLogging(handlerOpts('reprobe'), async (agentId: string, sshRemoteId?: string) => {
+			// `terminal` is internal — detection paths intentionally skip it,
+			// so a probe call would leave the snapshot stuck at `probing` forever.
+			if (agentId === 'terminal') {
+				return null;
+			}
+
+			capabilitySnapshots.clear(agentId, sshRemoteId);
+
+			if (sshRemoteId) {
+				const sshConfig = getSshRemoteById(settingsStore, sshRemoteId);
+				if (!sshConfig) {
+					capabilitySnapshots.markFailed(
+						agentId,
+						`SSH remote not found: ${sshRemoteId}`,
+						sshRemoteId
+					);
+					return capabilitySnapshots.get(agentId, sshRemoteId) ?? null;
+				}
+				capabilitySnapshots.markProbing(agentId, sshRemoteId);
+				// `detectAgentsRemote` enumerates every agent on the remote in
+				// one SSH round-trip per binary. Other agents' snapshots only
+				// flip when their detected state actually changes (see
+				// `markOk` + detector's change-suppression logic) so the
+				// requested agent is the dominant signal.
+				await detectAgentsRemote(sshConfig);
+				return capabilitySnapshots.get(agentId, sshRemoteId) ?? null;
+			}
+
+			const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
+			capabilitySnapshots.markProbing(agentId);
+			agentDetector.clearCache();
+			agentDetector.clearModelCache(agentId);
+			await agentDetector.detectAgents();
+			return capabilitySnapshots.get(agentId) ?? null;
+		})
+	);
+
+	// Snapshot mirror for the renderer: returns every non-expired Claude plan
+	// usage snapshot keyed by canonical CLAUDE_CONFIG_DIR. The renderer's
+	// claudeUsageStore lazily fetches via this handler on first read and re-fetches
+	// whenever `process:claude-mode-resolved` arrives (the only signal that
+	// `sampleUsage()` may have refreshed the on-disk map).
+	ipcMain.handle(
+		'agents:getClaudeUsageSnapshots',
+		withIpcErrorLogging(
+			handlerOpts('getClaudeUsageSnapshots'),
+			async (): Promise<Record<string, UsageSnapshot>> => {
+				return getAllClaudeUsageSnapshots();
+			}
+		)
+	);
+
+	ipcMain.handle(
+		'agents:getClaudeUsageAccountKeys',
+		withIpcErrorLogging(handlerOpts('getClaudeUsageAccountKeys'), async (): Promise<string[]> => {
+			const configDirs = await discoverClaudeConfigDirs();
+			return configDirs.map((configDir) => resolveConfigDirKey({ CLAUDE_CONFIG_DIR: configDir }));
+		})
+	);
+
+	// On-demand re-sampler. Delegates to the same `runStartupUsageSampling()`
+	// the boot path calls, so the dashboard / settings refresh button takes the
+	// exact same code path that populated the store on launch. Returns a count
+	// of how many account snapshots are now in the store after sampling — the
+	// renderer surfaces this in the optimistic spinner state.
+	//
+	// Reports `{ refreshed: 0 }` (rather than throwing) when a required dep is
+	// missing on this boot path — keeps the renderer's optimistic refresh flow
+	// from blowing up in dev/test contexts where the agents handler was wired
+	// without the full main dependency set.
+	ipcMain.handle(
+		'claude:usage:refresh-all',
+		withIpcErrorLogging(
+			handlerOpts('refreshClaudeUsage'),
+			async (): Promise<{ refreshed: number }> => {
+				const agentDetector = getAgentDetector();
+				if (!agentDetector || !sessionsStore || !settingsStore) {
+					logger.warn(
+						'Skipping claude:usage:refresh-all — agents handler missing required deps',
+						LOG_CONTEXT,
+						{
+							hasDetector: !!agentDetector,
+							hasSessionsStore: !!sessionsStore,
+							hasSettingsStore: !!settingsStore,
+						}
+					);
+					return { refreshed: 0 };
+				}
+
+				await runStartupUsageSampling({
+					sessionsStore,
+					agentConfigsStore,
+					settingsStore: settingsStore as unknown as Store<MaestroSettings>,
+					agentDetector,
+					mode: 'manual',
+				});
+
+				const refreshed = Object.keys(getAllClaudeUsageSnapshots()).length;
+				logger.info(`Refreshed Claude usage snapshots`, LOG_CONTEXT, { refreshed });
+				return { refreshed };
+			}
+		)
+	);
+
+	// Snapshot mirror for the renderer: returns every non-expired Codex quota
+	// usage snapshot keyed by canonical CODEX_HOME. The auth-sensitive auth.json
+	// read and ChatGPT metadata request stay in the main process.
+	ipcMain.handle(
+		'agents:getCodexUsageSnapshots',
+		withIpcErrorLogging(
+			handlerOpts('getCodexUsageSnapshots'),
+			async (): Promise<Record<string, CodexUsageSnapshot>> => {
+				return getAllCodexUsageSnapshots();
+			}
+		)
+	);
+
+	ipcMain.handle(
+		'agents:getCodexUsageAccountKeys',
+		withIpcErrorLogging(handlerOpts('getCodexUsageAccountKeys'), async (): Promise<string[]> => {
+			const codexHomes = await discoverCodexHomes();
+			return codexHomes.map((codexHome) => resolveCodexHomeKey({ CODEX_HOME: codexHome }));
+		})
+	);
+
+	ipcMain.handle(
+		'codex:usage:refresh-all',
+		withIpcErrorLogging(
+			handlerOpts('refreshCodexUsage'),
+			async (): Promise<{ refreshed: number }> => {
+				const agentDetector = getAgentDetector();
+				if (!agentDetector || !sessionsStore) {
+					logger.warn(
+						'Skipping codex:usage:refresh-all — agents handler missing required deps',
+						LOG_CONTEXT,
+						{
+							hasDetector: !!agentDetector,
+							hasSessionsStore: !!sessionsStore,
+						}
+					);
+					return { refreshed: 0 };
+				}
+
+				await runCodexUsageSampling({
+					sessionsStore,
+					agentConfigsStore,
+					agentDetector,
+				});
+
+				const refreshed = Object.keys(getAllCodexUsageSnapshots()).length;
+				logger.info(`Refreshed Codex usage snapshots`, LOG_CONTEXT, { refreshed });
+				return { refreshed };
 			}
 		)
 	);

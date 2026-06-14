@@ -13,6 +13,7 @@ import type {
 	SessionsData,
 	GroupsData,
 	AgentConfigsData,
+	AgentCapabilitiesData,
 	WindowState,
 	ClaudeSessionOriginsData,
 	AgentSessionOriginsData,
@@ -74,6 +75,7 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	totalActiveTimeMs: 0,
 	lastSelectedPromptId: null,
 	spellCheck: false,
+	usageRefreshIntervals: {},
 	annotatorPenColor: '#9146FF',
 	annotatorPenSize: 10,
 	annotatorThinning: 0.5,
@@ -81,6 +83,11 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	annotatorStreamline: 0.5,
 	annotatorTaperStart: 0,
 	annotatorTaperEnd: 0,
+	annotatorTextColor: '#9146FF',
+	annotatorTextSize: 24,
+	annotatorTextFont: 'sans-serif',
+	annotatorTextBgColor: '',
+	globalShowHotkey: [],
 };
 
 export const SESSIONS_DEFAULTS: SessionsData = {
@@ -93,6 +100,10 @@ export const GROUPS_DEFAULTS: GroupsData = {
 
 export const AGENT_CONFIGS_DEFAULTS: AgentConfigsData = {
 	configs: {},
+};
+
+export const AGENT_CAPABILITIES_DEFAULTS: AgentCapabilitiesData = {
+	snapshots: {},
 };
 
 export const WINDOW_STATE_DEFAULTS: WindowState = {

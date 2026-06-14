@@ -183,6 +183,26 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				session = { ...session, fileTreeAutoRefreshInterval: 180 };
 			}
 
+			// Migration: backfill createdAt for sessions persisted before the field
+			// existed. Prefer the earliest known timestamp on the session's own
+			// data (oldest tab, oldest log, oldest workLog entry) so the age
+			// reflects something closer to reality than "today". Falls back to
+			// Date.now() only when no historical timestamps are available.
+			if (!session.createdAt) {
+				const candidates: number[] = [];
+				for (const tab of session.aiTabs ?? []) {
+					if (tab.createdAt) candidates.push(tab.createdAt);
+					for (const log of tab.logs ?? []) {
+						if (log.timestamp) candidates.push(log.timestamp);
+					}
+				}
+				for (const item of session.workLog ?? []) {
+					if (item.timestamp) candidates.push(item.timestamp);
+				}
+				const backfill = candidates.length > 0 ? Math.min(...candidates) : Date.now();
+				session = { ...session, createdAt: backfill };
+			}
+
 			// Sessions must have aiTabs - if missing, this is a data corruption issue
 			// Create a default tab to prevent crashes when code calls .find() on aiTabs
 			if (!session.aiTabs || session.aiTabs.length === 0) {
@@ -371,15 +391,25 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				...tab,
 				state: 'idle' as const,
 				thinkingStartTime: undefined,
+				// Clear any stranded naming-in-flight flag. The promise that would
+				// reset it lives in the renderer and cannot survive a reload/restart,
+				// so a tab whose generateTabName() call was interrupted would otherwise
+				// stay isGeneratingName:true forever, permanently blocking the
+				// namingNotInFlight guard in useInputProcessing from ever retrying.
+				isGeneratingName: false,
 			}));
 
-			// Reset terminal tab runtime state - PTY processes don't survive app restart
-			const resetTerminalTabs = (correctedSession.terminalTabs || []).map((tab) => ({
-				...tab,
-				pid: 0,
-				state: 'idle' as const,
-				exitCode: undefined,
-			}));
+			// Terminal tabs don't persist across app restart unless they carry a
+			// startup command - those are intentionally durable so their command
+			// re-runs on relaunch. Drop the rest, then reset PTY runtime state.
+			const resetTerminalTabs = (correctedSession.terminalTabs || [])
+				.filter((tab) => (tab.startupCommand ?? '').trim() !== '')
+				.map((tab) => ({
+					...tab,
+					pid: 0,
+					state: 'idle' as const,
+					exitCode: undefined,
+				}));
 			const resetBrowserTabs = (correctedSession.browserTabs || []).map((tab) =>
 				rehydrateBrowserTab(tab, correctedSession.id)
 			);

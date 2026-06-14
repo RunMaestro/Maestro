@@ -46,6 +46,7 @@ import { getOpenInLabel, isLinuxPlatform } from '../../../utils/platformUtils';
 import { ToggleButtonGroup } from '../../ToggleButtonGroup';
 import { SettingCheckbox } from '../../SettingCheckbox';
 import { ToggleSwitch } from '../../ui/ToggleSwitch';
+import { KeyCaptureButton } from '../../ui/KeyCaptureButton';
 import { logger } from '../../../utils/logger';
 
 export interface GeneralTabProps {
@@ -60,6 +61,9 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 		// Conductor Profile
 		conductorProfile,
 		setConductorProfile,
+		// Global show-Maestro hotkey
+		globalShowHotkey,
+		setGlobalShowHotkey,
 		// Shell settings
 		defaultShell,
 		setDefaultShell,
@@ -79,6 +83,8 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 		setEnterToSendAIExpanded,
 		defaultSaveToHistory,
 		setDefaultSaveToHistory,
+		synopsisDebounceSeconds,
+		setSynopsisDebounceSeconds,
 		defaultShowThinking,
 		setDefaultShowThinking,
 		// Spell check
@@ -100,6 +106,12 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 		setUseSystemBrowser,
 		browserHomeUrl,
 		setBrowserHomeUrl,
+		htmlDoubleClickOpensInBrowser,
+		setHtmlDoubleClickOpensInBrowser,
+		browserTabKeepAlive,
+		setBrowserTabKeepAlive,
+		browserTabKeepAliveLimit,
+		setBrowserTabKeepAliveLimit,
 		// Power management
 		preventSleepEnabled,
 		setPreventSleepEnabled,
@@ -303,6 +315,25 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				>
 					{conductorProfile.length}/5000
 				</div>
+			</div>
+
+			{/* Global Show Hotkey */}
+			<div data-setting-id="general-global-show-hotkey">
+				<div className="block text-xs font-bold opacity-70 uppercase mb-1 flex items-center gap-2">
+					<Keyboard className="w-3 h-3" />
+					Global Hotkey to Show Maestro
+				</div>
+				<p className="text-xs opacity-50 mb-2">
+					System-wide shortcut that brings Maestro to the foreground from any app. Works on macOS,
+					Windows, and Linux. Leave blank to disable. (Tip: pick something with two modifiers, e.g.{' '}
+					{formatShortcutKeys(['Meta', 'Shift', 'M'])}, to avoid clashes.)
+				</p>
+				<KeyCaptureButton
+					theme={theme}
+					keys={globalShowHotkey}
+					onKeysChange={setGlobalShowHotkey}
+					emptyLabel="Click to set hotkey"
+				/>
 			</div>
 
 			{/* Default Shell */}
@@ -732,6 +763,10 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 							? 'Press Enter to send. Use Shift+Enter for new line.'
 							: `Press ${formatMetaKey()}+Enter to send. Enter creates new line.`}
 					</p>
+					<p className="text-[11px] opacity-40 mt-1">
+						Default for new tabs. Toggling the chip in an AI tab (or running &quot;Toggle Enter to
+						Send&quot; from the command palette) overrides this for that tab only.
+					</p>
 				</div>
 
 				{/* Expanded AI Mode Setting (Prompt Composer) */}
@@ -873,6 +908,34 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 					onChange={setDefaultSaveToHistory}
 					theme={theme}
 				/>
+
+				{defaultSaveToHistory && (
+					<div className="mt-3" data-setting-id="general-synopsis-debounce">
+						<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
+							<Clock className="w-3 h-3" />
+							Synopsis Debounce
+						</div>
+						<ToggleButtonGroup
+							options={[
+								{ value: 0, label: 'Off' },
+								{ value: 15, label: '15s' },
+								{ value: 30, label: '30s' },
+								{ value: 60, label: '1 min' },
+								{ value: 120, label: '2 min' },
+							]}
+							value={synopsisDebounceSeconds}
+							onChange={setSynopsisDebounceSeconds}
+							theme={theme}
+						/>
+						<p className="text-xs opacity-50 mt-2">
+							Wait for the agent to be idle this long before generating a History synopsis. Rapid
+							back-to-back completions are coalesced into a single synopsis once the conversation
+							settles, and turns that did no real work (a plain question and answer with no tool
+							use) are skipped entirely. Off generates a synopsis immediately after every
+							completion.
+						</p>
+					</div>
+				)}
 			</div>
 
 			{/* Default Thinking Toggle - Three states: Off, On, Sticky */}
@@ -1312,6 +1375,36 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 					theme={theme}
 				/>
 				<div
+					data-setting-id="general-html-double-click"
+					className="mt-3 flex items-center justify-between p-3 rounded border cursor-pointer hover:bg-opacity-10"
+					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+					onClick={() => setHtmlDoubleClickOpensInBrowser(!htmlDoubleClickOpensInBrowser)}
+					role="button"
+					tabIndex={0}
+					onKeyDown={(e) => {
+						if (e.key === 'Enter' || e.key === ' ') {
+							e.preventDefault();
+							setHtmlDoubleClickOpensInBrowser(!htmlDoubleClickOpensInBrowser);
+						}
+					}}
+				>
+					<div className="flex-1 pr-3">
+						<div className="font-medium" style={{ color: theme.colors.textMain }}>
+							Open HTML files in Maestro Browser on double-click
+						</div>
+						<div className="text-xs opacity-50 mt-0.5" style={{ color: theme.colors.textDim }}>
+							When enabled, double-clicking an HTML file in the file explorer opens it in the
+							Maestro browser instead of the file preview. Right-click for the full menu either way.
+						</div>
+					</div>
+					<ToggleSwitch
+						checked={htmlDoubleClickOpensInBrowser}
+						onChange={setHtmlDoubleClickOpensInBrowser}
+						theme={theme}
+						ariaLabel="Open HTML files in Maestro Browser on double-click"
+					/>
+				</div>
+				<div
 					className="mt-3 p-3 rounded border"
 					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
 				>
@@ -1341,6 +1434,49 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 					<p className="text-xs opacity-40 mt-2">
 						The URL loaded when opening a new browser tab (Cmd+B).
 					</p>
+				</div>
+				{/* Background browser tabs keep-alive */}
+				<div
+					data-setting-id="general-browser-keepalive"
+					className="mt-3 p-3 rounded border"
+					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+				>
+					<div className="font-medium" style={{ color: theme.colors.textMain }}>
+						Background browser tabs
+					</div>
+					<div className="text-xs opacity-50 mt-0.5 mb-2" style={{ color: theme.colors.textDim }}>
+						An inactive browser tab is unloaded by default, so its page reloads and loses any
+						in-memory state when you return. Keep recent or all tabs alive to preserve their state
+						at the cost of memory (each live tab holds a full browser process).
+					</div>
+					<ToggleButtonGroup
+						options={[
+							{ value: 'off' as const, label: 'Unload when inactive' },
+							{ value: 'recent' as const, label: 'Keep recent alive' },
+							{ value: 'all' as const, label: 'Keep all alive' },
+						]}
+						value={browserTabKeepAlive}
+						onChange={setBrowserTabKeepAlive}
+						theme={theme}
+					/>
+					{browserTabKeepAlive === 'recent' && (
+						<div className="mt-3 flex items-center gap-2">
+							<label className="text-xs opacity-60" style={{ color: theme.colors.textDim }}>
+								Keep this many recent tabs alive
+							</label>
+							<input
+								type="number"
+								min={1}
+								max={100}
+								value={browserTabKeepAliveLimit}
+								onChange={(e) =>
+									setBrowserTabKeepAliveLimit(Math.max(1, parseInt(e.target.value, 10) || 1))
+								}
+								className="w-20 p-1.5 rounded border bg-transparent outline-none text-xs"
+								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+							/>
+						</div>
+					)}
 				</div>
 			</div>
 

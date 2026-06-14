@@ -46,6 +46,11 @@ vi.mock('../../../main/utils/ssh-spawn-wrapper', () => ({
 	wrapSpawnWithSsh: (...args: unknown[]) => mockWrapSpawnWithSsh(...args),
 }));
 
+const mockCaptureException = vi.fn();
+vi.mock('../../../main/utils/sentry', () => ({
+	captureException: (...args: unknown[]) => mockCaptureException(...args),
+}));
+
 vi.mock('../../../main/prompt-manager', () => ({
 	getPrompt: vi.fn((id: string) => {
 		const fs = require('fs');
@@ -71,6 +76,7 @@ import {
 	routeUserMessage,
 	routeModeratorResponse,
 	routeAgentResponse,
+	spawnModeratorSynthesis,
 	getGroupChatReadOnlyState,
 	setGetSessionsCallback,
 	setSshStore,
@@ -89,6 +95,7 @@ import {
 	createGroupChat,
 	deleteGroupChat,
 	loadGroupChat,
+	getGroupChatHistory,
 	GroupChatParticipant,
 } from '../../../main/group-chat/group-chat-storage';
 import { readLog } from '../../../main/group-chat/group-chat-log';
@@ -617,6 +624,82 @@ describe('group-chat-router', () => {
 	});
 
 	// ===========================================================================
+	// Test 5.4b: moderator history entries are classified by what the turn did
+	// ===========================================================================
+	describe('moderator history entry classification', () => {
+		it('classifies a turn that forwards work to participants as delegation', async () => {
+			const chat = await createTestChatWithModerator('Delegation Classify Test');
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+
+			await routeModeratorResponse(
+				chat.id,
+				'@Client: Please implement the login form',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			const history = await getGroupChatHistory(chat.id);
+			const moderatorEntry = history.find((e) => e.participantName === 'Moderator');
+			expect(moderatorEntry?.type).toBe('delegation');
+		});
+
+		it('classifies a plain moderator turn with no mentions as response', async () => {
+			const chat = await createTestChatWithModerator('Response Classify Test');
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+
+			await routeModeratorResponse(
+				chat.id,
+				'Here is the final summary for the user.',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			const history = await getGroupChatHistory(chat.id);
+			const moderatorEntry = history.find((e) => e.participantName === 'Moderator');
+			expect(moderatorEntry?.type).toBe('response');
+		});
+
+		it('classifies the post-round summary turn as synthesis', async () => {
+			const chat = await createTestChatWithModerator('Synthesis Classify Test');
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+
+			// Spawning synthesis marks the next moderator turn as a synthesis round.
+			await spawnModeratorSynthesis(chat.id, mockProcessManager, mockAgentDetector);
+
+			await routeModeratorResponse(
+				chat.id,
+				'Synthesizing: the participants agreed on the approach.',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			const history = await getGroupChatHistory(chat.id);
+			const moderatorEntry = history.find((e) => e.participantName === 'Moderator');
+			expect(moderatorEntry?.type).toBe('synthesis');
+		});
+
+		it('records an error entry when a participant fails to spawn', async () => {
+			const chat = await createTestChatWithModerator('Spawn Error Classify Test');
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+
+			// Make the participant spawn throw (moderator was already spawned during setup).
+			mockProcessManager.spawn = vi.fn().mockImplementation(() => {
+				throw new Error('spawn failed');
+			});
+
+			await routeModeratorResponse(
+				chat.id,
+				'@Client: Please implement the login form',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			const history = await getGroupChatHistory(chat.id);
+			expect(history.some((e) => e.type === 'error' && e.participantName === 'Client')).toBe(true);
+		});
+	});
+
+	// ===========================================================================
 	// Test 5.5: routeAgentResponse logs and notifies moderator
 	// ===========================================================================
 	describe('routeAgentResponse', () => {
@@ -860,6 +943,30 @@ describe('group-chat-router', () => {
 				call[0].sessionId?.includes(`group-chat-${chat.id}-participant-Client-`)
 			);
 			expect(participantSpawns).toHaveLength(1);
+		});
+
+		it('does not report auto-add races after the moderator has stopped', async () => {
+			const chat = await createTestChatWithModerator('Auto Add Stopped Moderator Test');
+			clearAllModeratorSessions();
+			mockCaptureException.mockClear();
+			setGetSessionsCallback(() => [
+				{
+					id: 'session-client',
+					name: 'Client',
+					toolType: 'claude-code',
+					cwd: '/tmp/project',
+				},
+			]);
+
+			await routeModeratorResponse(
+				chat.id,
+				'@Client: Please create the requested file',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(mockCaptureException).not.toHaveBeenCalled();
+			expect((await loadGroupChat(chat.id))?.participants).toEqual([]);
 		});
 	});
 

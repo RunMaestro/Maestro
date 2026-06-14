@@ -1,11 +1,14 @@
 import React, { useState, useCallback, useEffect, useRef, memo, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Star, Pencil, Loader2, AlertCircle } from 'lucide-react';
+import { X, Star, Pencil, Loader2, AlertCircle, MessageSquare } from 'lucide-react';
 import type { AITab as AITabType, Theme } from '../../types';
+import type { CopyContextOptions } from '../../hooks/tabs/useTabExportHandlers';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { buildSessionDeepLink } from '../../../shared/deep-link-urls';
 import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
+import { getTabKindColor } from './tabBarUtils';
 import { AITabOverlayMenu } from './AITabOverlayMenu';
+import { WizardIndicator } from '../SessionList/WizardIndicator';
 
 export interface AITabProps {
 	tab: AITabType;
@@ -42,8 +45,8 @@ export interface AITabProps {
 	onSendToAgent?: (tabId: string) => void;
 	/** Stable callback - receives tabId */
 	onSummarizeAndContinue?: (tabId: string) => void;
-	/** Stable callback - receives tabId */
-	onCopyContext?: (tabId: string) => void;
+	/** Stable callback - receives tabId (and optional CopyContextOptions for variants like "with reasoning") */
+	onCopyContext?: (tabId: string, options?: CopyContextOptions) => void;
 	/** Stable callback - receives tabId */
 	onExportHtml?: (tabId: string) => void;
 	/** Stable callback - receives tabId */
@@ -284,6 +287,15 @@ export const AITab = memo(function AITab({
 		[onCopyContext, tabId, setOverlayOpen]
 	);
 
+	const handleCopyContextWithReasoningClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			onCopyContext?.(tabId, { includeThinking: true });
+			setOverlayOpen(false);
+		},
+		[onCopyContext, tabId, setOverlayOpen]
+	);
+
 	const handleExportHtmlClick = useCallback(
 		(e: React.MouseEvent) => {
 			e.stopPropagation();
@@ -375,6 +387,11 @@ export const AITab = memo(function AITab({
 		[tab.name, tab.agentSessionId, sessionAgentSessionId]
 	);
 
+	// Wizard tabs show the purple wand instead of the chat-kind bubble; once the
+	// wizard converts back to a regular chat the wand disappears and the bubble
+	// takes its place (swap, not stacked - avoids two icons crowding the tab).
+	const isWizard = !!(tab.wizardState?.isActive || tab.wizardState?.isGeneratingDocs);
+
 	// Hover background varies by theme mode for proper contrast
 	const hoverBgColor = theme.mode === 'light' ? 'rgba(0, 0, 0, 0.06)' : 'rgba(255, 255, 255, 0.08)';
 
@@ -463,6 +480,9 @@ export const AITab = memo(function AITab({
 				/>
 			)}
 
+			{/* Inline wizard indicator - purple wand (sparkles while generating Auto Run docs) */}
+			<WizardIndicator active={isWizard} generatingDocs={!!tab.wizardState?.isGeneratingDocs} />
+
 			{/* Generating name indicator - spinning loader while tab name is being generated */}
 			{/* Show regardless of busy state since tab naming runs in parallel with the main request */}
 			{tab.isGeneratingName && (
@@ -508,9 +528,20 @@ export const AITab = memo(function AITab({
 				</span>
 			)}
 
-			{/* Tab name - show full name for active tab, truncate inactive tabs */}
+			{/* Kind icon - identifies this as an AI chat tab. Suppressed in wizard mode
+			    since the wand above already marks the tab; it returns (swapping in for
+			    the wand) once the wizard converts to a regular chat. */}
+			{!isWizard && (
+				<MessageSquare
+					className="w-3.5 h-3.5 shrink-0"
+					style={{ color: getTabKindColor('ai', theme) }}
+					aria-hidden="true"
+				/>
+			)}
+
+			{/* Tab name - always show the full name; the bar scrolls when crowded */}
 			<span
-				className={`text-xs font-medium ${isActive ? 'whitespace-nowrap' : 'truncate max-w-[120px]'}`}
+				className="text-xs font-medium whitespace-nowrap"
 				style={{ color: isActive ? theme.colors.textMain : theme.colors.textDim }}
 			>
 				{displayName}
@@ -558,6 +589,7 @@ export const AITab = memo(function AITab({
 							onMarkUnreadClick={handleMarkUnreadClick}
 							onExportHtmlClick={handleExportHtmlClick}
 							onCopyContextClick={handleCopyContextClick}
+							onCopyContextWithReasoningClick={handleCopyContextWithReasoningClick}
 							onSummarizeAndContinueClick={handleSummarizeAndContinueClick}
 							onMergeWithClick={handleMergeWithClick}
 							onSendToAgentClick={handleSendToAgentClick}

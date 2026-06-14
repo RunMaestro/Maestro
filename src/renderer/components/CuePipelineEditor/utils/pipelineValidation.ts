@@ -20,6 +20,7 @@ export const DEFAULT_TRIGGER_LABELS: Record<CueEventType, string> = {
 	'app.startup': 'Startup',
 	'time.heartbeat': 'Heartbeat',
 	'time.scheduled': 'Scheduled',
+	'time.once': 'One-Time',
 	'file.changed': 'File Change',
 	'agent.completed': 'Agent Done',
 	'github.pull_request': 'Pull Request',

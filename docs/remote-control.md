@@ -6,10 +6,10 @@ icon: tower-broadcast
 
 Maestro includes a built-in web server for mobile remote control:
 
-1. **Automatic Security** — Web server runs on a random port with an auto-generated security token (UUID) embedded in the URL
-2. **QR Code Access** — Scan a QR code to connect instantly from your phone
-3. **Live Sessions** — Sessions marked as "live" become accessible through the web interface (protected by the security token)
-4. **Remote Tunneling** — Access Maestro from anywhere via Cloudflare tunnel (requires `cloudflared` CLI)
+1. **Automatic Security** - Web server runs on a random port with an auto-generated security token (UUID) embedded in the URL
+2. **QR Code Access** - Scan a QR code to connect instantly from your phone
+3. **Live Sessions** - Sessions marked as "live" become accessible through the web interface (protected by the security token)
+4. **Remote Tunneling** - Access Maestro from anywhere via Cloudflare tunnel (requires `cloudflared` CLI)
 
 ## Mobile Web Interface
 
@@ -54,7 +54,7 @@ To access Maestro from outside your local network (e.g., on mobile data or from 
 3. Toggle **Remote Control** in the Live overlay panel
 4. A secure Cloudflare tunnel URL (e.g., `https://abc123.trycloudflare.com`) will be generated within ~30 seconds
 5. Use the **Local/Remote** pill selector to switch between QR codes
-6. The tunnel stays active as long as Maestro is running — no time limits, no Cloudflare account required
+6. The tunnel stays active as long as Maestro is running - no time limits, no Cloudflare account required
 
 <Tip>
 The Remote tab automatically activates when the tunnel connects successfully.
@@ -62,13 +62,13 @@ The Remote tab automatically activates when the tunnel connects successfully.
 
 ## Custom Port Configuration
 
-By default, Maestro assigns a **random port** each time the web server starts. This is a security-by-obscurity measure — attackers can't easily guess which port to target.
+By default, Maestro assigns a **random port** each time the web server starts. This is a security-by-obscurity measure - attackers can't easily guess which port to target.
 
 However, if you need a **fixed port** (e.g., for firewall rules, reverse proxies, or persistent tunnel configurations), you can enable custom port mode:
 
 1. Click the **LIVE** button to open the Live overlay panel
 2. Toggle **Custom Port** to enable static port mode
-3. Enter your desired port number (1–65535)
+3. Enter your desired port number (1-65535)
 4. The server restarts automatically on the new port
 
 **Use cases for custom ports:**
@@ -119,5 +119,5 @@ The mobile interface includes robust connection management:
 
 ## Related
 
-- [Configuration](/configuration) — General settings including web interface options
-- [SSH Remote Execution](/ssh-remote-execution) — Running Maestro on remote servers
+- [Configuration](/configuration) - General settings including web interface options
+- [SSH Remote Execution](/ssh-remote-execution) - Running Maestro on remote servers

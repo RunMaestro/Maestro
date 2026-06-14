@@ -10,11 +10,9 @@
 import { useEffect } from 'react';
 import { useSessionStore } from '../../../stores/sessionStore';
 import { parseSessionId } from '../../../utils/sessionIdParser';
-import {
-	estimateContextUsage,
-	estimateAccumulatedGrowth,
-	DEFAULT_CONTEXT_WINDOWS,
-} from '../../../utils/contextUsage';
+import { estimateContextUsage, estimateAccumulatedGrowth } from '../../../utils/contextUsage';
+import { getContextWindowForAgent } from '../../../../shared/agentConstants';
+import { useAgentStore } from '../../../stores/agentStore';
 import type { BatchedUpdater } from './types';
 
 /**
@@ -43,7 +41,13 @@ export function useAgentUsageListener(deps: UseAgentUsageListenerDeps): void {
 			if (!sessionForUsage) return;
 
 			const agentToolType = sessionForUsage.toolType;
-			const contextPercentage = estimateContextUsage(usageStats, agentToolType);
+			// Per-session SSH config wins over the legacy session-wide field;
+			// pass the remote UUID so the snapshot lookup hits the correct
+			// `agentId:remoteId` key instead of falling back to local.
+			const sessionRemoteId = sessionForUsage.sessionSshRemoteConfig?.enabled
+				? (sessionForUsage.sessionSshRemoteConfig.remoteId ?? undefined)
+				: sessionForUsage.sshRemoteId;
+			const contextPercentage = estimateContextUsage(usageStats, agentToolType, sessionRemoteId);
 
 			deps.batchedUpdater.updateUsage(actualSessionId, tabId, usageStats);
 			deps.batchedUpdater.updateUsage(actualSessionId, null, usageStats);
@@ -57,8 +61,10 @@ export function useAgentUsageListener(deps: UseAgentUsageListenerDeps): void {
 						usageStats.contextWindow > 0
 							? usageStats.contextWindow
 							: agentToolType
-								? (DEFAULT_CONTEXT_WINDOWS[agentToolType as keyof typeof DEFAULT_CONTEXT_WINDOWS] ??
-									0)
+								? getContextWindowForAgent(
+										agentToolType,
+										useAgentStore.getState().getCapabilitySnapshot(agentToolType, sessionRemoteId)
+									)
 								: 0;
 					const estimated = estimateAccumulatedGrowth(
 						currentUsage,

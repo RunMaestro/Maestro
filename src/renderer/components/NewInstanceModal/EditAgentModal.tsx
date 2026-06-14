@@ -47,6 +47,16 @@ export function EditAgentModal({
 	const [customPath, setCustomPath] = useState('');
 	const [customArgs, setCustomArgs] = useState('');
 	const [customEnvVars, setCustomEnvVars] = useState<Record<string, string>>({});
+	// Tri-state, NOT coerced to a boolean: undefined = never configured (so the
+	// SSH default - TUI - applies), false = explicit API, true = explicit
+	// maestro-p. Coercing undefined->false here (or false->undefined on save)
+	// erases the distinction, and over SSH that silently reverts an explicit API
+	// choice to the TUI default (which spawns maestro-p on the remote and exits
+	// 127 when it isn't installed there).
+	const [enableMaestroP, setEnableMaestroP] = useState<boolean | undefined>(undefined);
+	const [maestroPMode, setMaestroPMode] = useState<'interactive' | 'dynamic'>('dynamic');
+	const [maestroPPath, setMaestroPPath] = useState('');
+	const [detectedMaestroPPath, setDetectedMaestroPPath] = useState<string | undefined>(undefined);
 	const [editDynamicOptions, setEditDynamicOptions] = useState<Record<string, string[]>>({});
 	const [editLoadingDynamicOptions, setEditLoadingDynamicOptions] = useState(false);
 	const [refreshingAgent, setRefreshingAgent] = useState(false);
@@ -87,6 +97,15 @@ export function EditAgentModal({
 
 	// Track whether provider has been changed from the original
 	const providerChanged = session ? selectedToolType !== session.toolType : false;
+
+	// Resolve the auto-detected maestro-p path so the Batch Mode toggle can show
+	// it as helper text in the path-override input.
+	useEffect(() => {
+		void window.maestro.agents
+			.getMaestroPDetectedPath()
+			.then((p) => setDetectedMaestroPPath(p ?? undefined))
+			.catch(() => setDetectedMaestroPPath(undefined));
+	}, []);
 
 	// Load agent info, config, custom settings, and models when modal opens or provider changes
 	useEffect(() => {
@@ -223,10 +242,18 @@ export function EditAgentModal({
 			setCustomPath('');
 			setCustomArgs('');
 			setCustomEnvVars({});
+			setEnableMaestroP(undefined);
+			setMaestroPMode('dynamic');
+			setMaestroPPath('');
 		} else {
 			setCustomPath(session.customPath ?? '');
 			setCustomArgs(session.customArgs ?? '');
 			setCustomEnvVars(session.customEnvVars ?? {});
+			// Preserve the tri-state (undefined stays undefined) so an unconfigured
+			// SSH agent keeps its "unset" signal instead of looking like explicit API.
+			setEnableMaestroP(session.enableMaestroP);
+			setMaestroPMode(session.maestroPMode ?? 'dynamic');
+			setMaestroPPath(session.maestroPPath ?? '');
 		}
 
 		return () => {
@@ -327,7 +354,12 @@ export function EditAgentModal({
 			Object.keys(customEnvVars).length > 0 ? customEnvVars : undefined,
 			modelValue,
 			contextWindowValue,
-			sessionSshRemoteConfig
+			sessionSshRemoteConfig,
+			// Preserve the explicit tri-state: an explicit `false` (API) must NOT
+			// collapse to `undefined`, or over SSH it reverts to the TUI default.
+			enableMaestroP,
+			enableMaestroP && maestroPPath.trim() ? maestroPPath.trim() : undefined,
+			enableMaestroP ? maestroPMode : undefined
 		);
 		onClose();
 	}, [
@@ -338,6 +370,9 @@ export function EditAgentModal({
 		customPath,
 		customArgs,
 		customEnvVars,
+		enableMaestroP,
+		maestroPMode,
+		maestroPPath,
 		agentConfig,
 		sshRemoteConfig,
 		selectedToolType,
@@ -636,6 +671,18 @@ export function EditAgentModal({
 							refreshingAgent={refreshingAgent}
 							showBuiltInEnvVars
 							isSshEnabled={isSshEnabled}
+							sshRemoteId={sshRemoteConfig?.remoteId ?? undefined}
+							enableMaestroP={enableMaestroP}
+							onEnableMaestroPChange={setEnableMaestroP}
+							maestroPMode={maestroPMode}
+							onMaestroPModeChange={setMaestroPMode}
+							claudeInteractive={session?.claudeInteractive}
+							maestroPPath={maestroPPath}
+							onMaestroPPathChange={setMaestroPPath}
+							onMaestroPPathBlur={() => {
+								/* Saved on modal save */
+							}}
+							detectedMaestroPPath={detectedMaestroPPath}
 						/>
 					</div>
 				)}

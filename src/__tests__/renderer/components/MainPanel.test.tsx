@@ -21,6 +21,23 @@ import {
 
 // Mock child components to simplify testing - must be before MainPanel import
 
+// LayerStack: MainPanelContent reads layerCount to blur the browser webview when a
+// modal/overlay is layered above it. These tests render MainPanel in isolation
+// without a LayerStackProvider, so stub the hook (no layers open => layerCount 0).
+vi.mock('../../../renderer/contexts/LayerStackContext', () => ({
+	useLayerStack: () => ({
+		registerLayer: vi.fn(() => 'layer-test'),
+		unregisterLayer: vi.fn(),
+		updateLayerHandler: vi.fn(),
+		getTopLayer: vi.fn(() => undefined),
+		closeTopLayer: vi.fn(async () => false),
+		getLayers: vi.fn(() => []),
+		hasOpenLayers: vi.fn(() => false),
+		hasOpenModal: vi.fn(() => false),
+		layerCount: 0,
+	}),
+}));
+
 // TerminalView: forwardRef stub that records render calls per session so we can
 // assert persistence (kept mounted) vs destruction (unmounted) across sessions.
 const terminalViewSessions: string[] = [];
@@ -751,13 +768,15 @@ describe('MainPanel', () => {
 			...overrides,
 		});
 
-		it('should render FilePreview when activeFileTab is set', () => {
+		it('should render FilePreview when activeFileTab is set', async () => {
 			const activeFileTab = createFileTab();
 			render(
 				<MainPanel {...defaultProps} activeFileTabId="file-tab-1" activeFileTab={activeFileTab} />
 			);
 
-			expect(screen.getByTestId('file-preview')).toBeInTheDocument();
+			// FilePreview is React.lazy-loaded behind Suspense, so it mounts on a
+			// microtask rather than synchronously - await it the first time.
+			expect(await screen.findByTestId('file-preview')).toBeInTheDocument();
 			expect(screen.getByText('File Preview: test.ts')).toBeInTheDocument();
 		});
 
@@ -1114,8 +1133,7 @@ describe('MainPanel', () => {
 
 			render(<MainPanel {...defaultProps} activeSession={session} />);
 
-			// Target the full "Context Window" label (compact "Context" label is also rendered but hidden via CSS)
-			expect(screen.queryByText('Context Window')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('header-context-widget')).not.toBeInTheDocument();
 		});
 
 		it('should not display context window widget when agent does not support usage stats', () => {
@@ -1142,8 +1160,7 @@ describe('MainPanel', () => {
 
 			render(<MainPanel {...defaultProps} />);
 
-			// Context Window widget should not be present
-			expect(screen.queryByText('Context Window')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('header-context-widget')).not.toBeInTheDocument();
 		});
 	});
 
@@ -2467,7 +2484,7 @@ describe('MainPanel', () => {
 			render(<MainPanel {...defaultProps} activeSession={session} />);
 
 			// Should render without crashing - Context Window widget is hidden when contextWindow is not configured
-			expect(screen.queryByText('Context Window')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('header-context-widget')).not.toBeInTheDocument();
 		});
 
 		it('should handle missing git status from context gracefully', async () => {
@@ -2512,10 +2529,11 @@ describe('MainPanel', () => {
 			expect(screen.queryByText('Copied to Clipboard')).not.toBeInTheDocument();
 		});
 
-		it('should flash a notification when gitDiff has no content', async () => {
+		it('should flash a notification and re-poll git status when gitDiff has no content', async () => {
 			const { gitService } = await import('../../../renderer/services/git');
 			vi.mocked(gitService.getDiff).mockResolvedValue({ diff: '' });
 			useCenterFlashStore.getState().setActive(null);
+			mockRefreshGitStatus.mockClear();
 
 			const setGitDiffPreview = vi.fn();
 			const session = createSession({ isGitRepo: true });
@@ -2535,6 +2553,8 @@ describe('MainPanel', () => {
 				expect(setGitDiffPreview).not.toHaveBeenCalled();
 				// Should flash an informational message instead
 				expect(useCenterFlashStore.getState().active?.message).toBe('No diff to examine');
+				// And re-sync the polling cache so the stale widget clears
+				expect(mockRefreshGitStatus).toHaveBeenCalled();
 			});
 		});
 	});
@@ -2565,7 +2585,7 @@ describe('MainPanel', () => {
 			render(<MainPanel {...defaultProps} activeSession={session} />);
 
 			// Context Window widget should be hidden when contextWindow is 0 (not configured)
-			expect(screen.queryByText('Context Window')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('header-context-widget')).not.toBeInTheDocument();
 		});
 
 		it('should use preserved session.contextUsage when accumulated values exceed window', () => {

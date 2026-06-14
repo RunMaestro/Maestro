@@ -155,6 +155,16 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 							{cloudflaredInstalled === false && (
 								<div className="text-[9px] text-yellow-500 mt-1">Install cloudflared to enable</div>
 							)}
+							{tunnelStatus === 'starting' && (
+								<div
+									className="flex items-center gap-1.5 text-[9px] text-green-400 mt-1"
+									role="status"
+									aria-live="polite"
+								>
+									<div className="w-2 h-2 border border-green-400 border-t-transparent rounded-full animate-spin" />
+									<span>Starting tunnel… (can take up to 30s)</span>
+								</div>
+							)}
 						</div>
 
 						{/* Toggle Switch */}
@@ -162,25 +172,30 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 							type="button"
 							onClick={handleTunnelToggle}
 							disabled={!cloudflaredInstalled || tunnelStatus === 'starting'}
+							aria-busy={tunnelStatus === 'starting'}
 							className={`relative w-10 h-5 rounded-full transition-colors ${
 								tunnelStatus === 'connected'
 									? 'bg-green-500'
-									: cloudflaredInstalled
-										? 'bg-gray-600 hover:bg-gray-500'
-										: 'bg-gray-700 opacity-50 cursor-not-allowed'
+									: tunnelStatus === 'starting'
+										? 'bg-green-500/40 cursor-wait animate-pulse'
+										: cloudflaredInstalled
+											? 'bg-gray-600 hover:bg-gray-500'
+											: 'bg-gray-700 opacity-50 cursor-not-allowed'
 							}`}
 							title={
 								!cloudflaredInstalled
 									? 'cloudflared not installed'
-									: tunnelStatus === 'connected'
-										? 'Disable remote control'
-										: 'Enable remote control'
+									: tunnelStatus === 'starting'
+										? 'Starting tunnel…'
+										: tunnelStatus === 'connected'
+											? 'Disable remote control'
+											: 'Enable remote control'
 							}
 						>
 							<div
 								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
 									tunnelStatus === 'connected' ? 'translate-x-5' : 'translate-x-0.5'
-								}`}
+								} ${tunnelStatus === 'starting' ? 'opacity-0' : ''}`}
 							/>
 							{tunnelStatus === 'starting' && (
 								<div className="absolute inset-0 flex items-center justify-center">

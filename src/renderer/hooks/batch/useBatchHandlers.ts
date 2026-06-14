@@ -24,11 +24,12 @@ import type {
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useSettingsStore, selectIsLeaderboardRegistered } from '../../stores/settingsStore';
 import { useModalStore, getModalActions } from '../../stores/modalStore';
-import { useFeedbackDraftStore } from '../../stores/feedbackDraftStore';
+import { collectActiveOperations } from '../../utils/collectActiveOperations';
 import { notifyToast } from '../../stores/notificationStore';
 import { CONDUCTOR_BADGES, getBadgeForTime } from '../../constants/conductorBadges';
-import { getActiveTab } from '../../utils/tabHelpers';
+import { resolveQueuedItemTarget } from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
+import { takeNextRunnableQueueItem } from '../../utils/executionQueue';
 import { useBatchProcessor } from './useBatchProcessor';
 import { useBatchStore } from '../../stores/batchStore';
 import { consumeGroupChatAutoRun } from '../../utils/groupChatAutoRunRegistry';
@@ -560,15 +561,16 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 		onProcessQueueAfterCompletion: (sessionId) => {
 			const currentSessions = useSessionStore.getState().sessions;
 			const session = currentSessions.find((s) => s.id === sessionId);
-			if (session && session.executionQueue.length > 0 && processQueuedItemRef.current) {
-				const [nextItem, ...remainingQueue] = session.executionQueue;
-
+			const { item: nextItem, remaining: remainingQueue } = session
+				? takeNextRunnableQueueItem(session.executionQueue)
+				: { item: null, remaining: [] };
+			if (session && nextItem && processQueuedItemRef.current) {
 				useSessionStore.getState().setSessions((prev) =>
 					prev.map((s) => {
 						if (s.id !== sessionId) return s;
 
-						const targetTab = s.aiTabs.find((tab) => tab.id === nextItem.tabId) || getActiveTab(s);
-						if (!targetTab) {
+						const target = resolveQueuedItemTarget(s, nextItem);
+						if (!target) {
 							return {
 								...s,
 								state: 'busy' as SessionState,
@@ -578,33 +580,53 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 							};
 						}
 
-						// For message items, add a log entry to the target tab
-						let updatedAiTabs = s.aiTabs;
-						if (nextItem.type === 'message' && nextItem.text) {
-							const logEntry: LogEntry = {
-								id: generateId(),
-								timestamp: Date.now(),
-								source: 'user',
-								text: nextItem.text,
-								images: nextItem.images,
+						const logEntry: LogEntry | null =
+							nextItem.type === 'message' && nextItem.text
+								? {
+										id: generateId(),
+										timestamp: Date.now(),
+										source: 'user',
+										text: nextItem.text,
+										images: nextItem.images,
+									}
+								: null;
+
+						// Orphan target: the user closed this tab while the message was still
+						// queued. Route busy-state + the user log to orphanedThinkingTabs and
+						// leave the active tab untouched - the send is fire-and-forget.
+						if (target.location === 'orphan') {
+							return {
+								...s,
+								state: 'busy' as SessionState,
+								busySource: 'ai',
+								...(logEntry &&
+									s.orphanedThinkingTabs && {
+										orphanedThinkingTabs: s.orphanedThinkingTabs.map((tab) =>
+											tab.id === target.tabId
+												? { ...tab, logs: [...tab.logs, logEntry], state: 'busy' as const }
+												: tab
+										),
+									}),
+								executionQueue: remainingQueue,
+								thinkingStartTime: Date.now(),
 							};
-							updatedAiTabs = s.aiTabs.map((tab) =>
-								tab.id === targetTab.id
-									? {
-											...tab,
-											logs: [...tab.logs, logEntry],
-											state: 'busy' as const,
-										}
-									: tab
-							);
 						}
+
+						// Foreground target: mark it busy, append the user log, bring into view.
+						const updatedAiTabs = logEntry
+							? s.aiTabs.map((tab) =>
+									tab.id === target.tabId
+										? { ...tab, logs: [...tab.logs, logEntry], state: 'busy' as const }
+										: tab
+								)
+							: s.aiTabs;
 
 						return {
 							...s,
 							state: 'busy' as SessionState,
 							busySource: 'ai',
 							aiTabs: updatedAiTabs,
-							activeTabId: targetTab.id,
+							activeTabId: target.tabId,
 							executionQueue: remainingQueue,
 							thinkingStartTime: Date.now(),
 						};
@@ -785,50 +807,22 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 			return;
 		}
 		const unsubscribe = window.maestro.app.onQuitConfirmationRequest(async () => {
-			// Get all busy AI sessions (agents that are actively thinking)
-			const currentSessions = useSessionStore.getState().sessions;
-			const busyAgents = currentSessions.filter(
-				(s) => s.state === 'busy' && s.busySource === 'ai' && s.toolType !== 'terminal'
-			);
+			// Snapshot every active-operation source (busy agents, Auto Run, terminal
+			// tasks, Maestro Cue runs, group chats) plus any unsent feedback draft.
+			const ops = await collectActiveOperations();
 
-			// Check for active auto-runs (batch processor may be between tasks with agent idle)
-			const hasActiveAutoRuns = currentSessions.some((s) => {
-				const batchState = getBatchStateRef.current?.(s.id);
-				return batchState?.isRunning;
-			});
-
-			// Check for terminal processes with active child tasks (e.g., long-running builds, tests)
-			let activeTerminalTasks: string[] = [];
-			try {
-				const activeProcesses = await window.maestro.process.getActiveProcesses();
-				activeTerminalTasks = activeProcesses
-					.filter((p) => p.isTerminal && p.childProcesses && p.childProcesses.length > 0)
-					.flatMap((p) => {
-						const session = currentSessions.find((s) => p.sessionId.startsWith(s.id));
-						const agentName = session?.name ?? 'Terminal';
-						return p.childProcesses!.map((child) => {
-							const cmdBasename = child.command.split('/').pop() || child.command;
-							return `${agentName}: ${cmdBasename}`;
-						});
-					});
-			} catch {
-				// If we can't fetch processes, proceed without terminal task info
-			}
-
-			// Check for an unsent feedback draft so the user doesn't lose typed feedback
-			const hasFeedbackDraft = useFeedbackDraftStore.getState().hasDraft;
-
-			if (
-				busyAgents.length === 0 &&
-				!hasActiveAutoRuns &&
-				activeTerminalTasks.length === 0 &&
-				!hasFeedbackDraft
-			) {
+			if (!ops.hasActiveOperations && !ops.hasFeedbackDraft) {
 				window.maestro.app.confirmQuit();
 			} else {
+				// Tell main the modal is up so it disarms the dead-renderer safety
+				// timeout — otherwise the app force-quits after a few seconds while
+				// the user is still deciding.
+				window.maestro.app.quitConfirmationPending?.();
 				getModalActions().setQuitConfirmModalOpen(true, {
-					activeTerminalTasks,
-					hasFeedbackDraft,
+					activeTerminalTasks: ops.activeTerminalTasks,
+					activeCueRunCount: ops.activeCueRunCount,
+					activeGroupChatCount: ops.activeGroupChatCount,
+					hasFeedbackDraft: ops.hasFeedbackDraft,
 				});
 			}
 		});

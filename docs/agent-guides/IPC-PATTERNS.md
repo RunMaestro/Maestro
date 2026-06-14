@@ -373,7 +373,7 @@ setupLoggerEventForwarding(deps.getMainWindow);
 
 ## Browser Tab Shortcut Forwarding
 
-Electron `<webview>` elements run guest content in a separate Chromium process. When the webview has keyboard focus, keydown events are routed directly to the guest — the host renderer's `window` keydown listener never fires. This requires a dedicated forwarding pipeline for app shortcuts.
+Electron `<webview>` elements run guest content in a separate Chromium process. When the webview has keyboard focus, keydown events are routed directly to the guest - the host renderer's `window` keydown listener never fires. This requires a dedicated forwarding pipeline for app shortcuts.
 
 ### Event Flow
 
@@ -436,7 +436,7 @@ This ensures the webview only captures keyboard input after an explicit user cli
 
 ### Tab Navigation Pitfall
 
-The `showUnreadOnly` filter in `tabHelpers.ts` (`navigateToNextUnifiedTab` / `navigateToPrevUnifiedTab`) handles tab types with explicit branches. Browser tabs must be listed alongside terminal tabs as "always navigable" — if omitted, they fall through to the AI tab lookup, return undefined, and are silently skipped.
+The `showUnreadOnly` filter in `tabHelpers.ts` (`navigateToNextUnifiedTab` / `navigateToPrevUnifiedTab`) handles tab types with explicit branches. Browser tabs must be listed alongside terminal tabs as "always navigable" - if omitted, they fall through to the AI tab lookup, return undefined, and are silently skipped.
 
 ### Key Files
 

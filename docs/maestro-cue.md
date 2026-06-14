@@ -4,23 +4,23 @@ description: Event-driven automation that triggers agent prompts in response to 
 icon: bolt
 ---
 
-Maestro Cue is an event-driven automation engine that watches for things happening in your projects and automatically sends prompts to your agents in response. Instead of manually kicking off tasks, you define **subscriptions** — trigger-prompt pairings — in a YAML file, and Cue handles the rest.
+Maestro Cue is an event-driven automation engine that watches for things happening in your projects and automatically sends prompts to your agents in response. Instead of manually kicking off tasks, you define **subscriptions** - trigger-prompt pairings - in a YAML file, and Cue handles the rest.
 
 <Note>
-Maestro Cue is an **Encore Feature** — it's disabled by default. Enable it in **Settings > Encore Features** to access the shortcut, modal, and automation engine.
+Maestro Cue is an **Encore Feature** - it's disabled by default. Enable it in **Settings > Encore Features** to access the shortcut, modal, and automation engine.
 </Note>
 
 ## What Can Cue Do?
 
 A few examples of what you can automate with Cue:
 
-- **Run linting whenever TypeScript files change** — watch `src/**/*.ts` and prompt an agent to lint on every save
-- **Generate a morning standup** — schedule at 9:00 AM on weekdays to scan recent git activity and draft a report
-- **Chain agents together** — when your build agent finishes, automatically trigger a test agent, then a deploy agent
-- **Triage new GitHub PRs** — poll for new pull requests and prompt an agent to review the diff
-- **Track TODO progress** — scan markdown files for unchecked tasks and prompt an agent to work on the next one
-- **Fan out deployments** — when a build completes, trigger multiple deploy agents simultaneously
-- **Trigger from the CLI** — run `maestro-cli cue trigger` to fire a subscription on demand from scripts, CI/CD, or other agents
+- **Run linting whenever TypeScript files change** - watch `src/**/*.ts` and prompt an agent to lint on every save
+- **Generate a morning standup** - schedule at 9:00 AM on weekdays to scan recent git activity and draft a report
+- **Chain agents together** - when your build agent finishes, automatically trigger a test agent, then a deploy agent
+- **Triage new GitHub PRs** - poll for new pull requests and prompt an agent to review the diff
+- **Track TODO progress** - scan markdown files for unchecked tasks and prompt an agent to work on the next one
+- **Fan out deployments** - when a build completes, trigger multiple deploy agents simultaneously
+- **Trigger from the CLI** - run `maestro-cli cue trigger` to fire a subscription on demand from scripts, CI/CD, or other agents
 
 ## Enabling Cue
 
@@ -28,7 +28,7 @@ A few examples of what you can automate with Cue:
 2. Navigate to the **Encore Features** tab
 3. Toggle **Maestro Cue** on
 
-Once enabled, Maestro automatically scans all your active agents for `.maestro/cue.yaml` files in their project roots. The Cue engine starts immediately — no restart required.
+Once enabled, Maestro automatically scans all your active agents for `.maestro/cue.yaml` files in their project roots. The Cue engine starts immediately - no restart required.
 
 ## Quick Start
 
@@ -59,7 +59,7 @@ Open the Cue modal to monitor and manage all automation activity.
 
 - Press `Cmd+K` / `Ctrl+K` and search for "Maestro Cue"
 
-The modal has three tabs — **Dashboard**, **Pipeline Editor**, and **Activity Log** — plus a **Help** button and an **Enabled** master toggle in the header that starts and stops the engine globally.
+The modal has three tabs - **Dashboard**, **Pipeline Editor**, and **Activity Log** - plus a **Help** button and an **Enabled** master toggle in the header that starts and stops the engine globally.
 
 ## Dashboard
 
@@ -79,31 +79,38 @@ The Dashboard tab summarizes engine state at the top (Pipelines, Total Execution
 
 Each row has three action buttons:
 
-- **Run Now** — Manually trigger a subscription on demand, bypassing its normal event conditions. Useful for testing new subscriptions or re-running a failed automation without waiting for the next event.
-- **Edit YAML** — Open the inline YAML editor for that agent.
-- **View in Pipeline** — Jump to the Pipeline Editor filtered to that agent.
+- **Run Now** - Manually trigger a subscription on demand, bypassing its normal event conditions. Useful for testing new subscriptions or re-running a failed automation without waiting for the next event.
+- **Edit YAML** - Open the inline YAML editor for that agent.
+- **View in Pipeline** - Jump to the Pipeline Editor filtered to that agent.
 
 Below the sessions table, the **Active Runs** section lists subscriptions that are currently executing, with a **Stop** button for each.
 
 ## Pipeline Editor
 
-The Pipeline Editor tab visualizes your Cue subscriptions as a node graph — triggers on the left, agents on the right, with edges showing how events flow through your automation.
+The Pipeline Editor tab visualizes your Cue subscriptions as a node graph - triggers on the left, agents on the right, with edges showing how events flow through your automation.
 
 ![All Pipelines](./screenshots/cue-pipelines.png)
 
 Each pipeline is color-coded and labeled. Trigger nodes show the event type and configuration (glob patterns, schedule times, etc.), while agent nodes show the provider type. Pipelines from all agents are displayed together so you can see cross-agent relationships at a glance.
 
-A pipeline can contain **multiple trigger lines** — for example, a daily scan and a weekly review grouped under a single "Monitoring" pipeline. Use the `# Pipeline:` comment and `-chain-N` naming convention in your YAML to group subscriptions. See [Pipelines](./maestro-cue-configuration#pipelines) in the Configuration Reference for details.
+A pipeline can contain **multiple trigger lines** - for example, a daily scan and a weekly review grouped under a single "Monitoring" pipeline. Use the `# Pipeline:` comment and `-chain-N` naming convention in your YAML to group subscriptions. See [Pipelines](./maestro-cue-configuration#pipelines) in the Configuration Reference for details.
 
 ### Inspecting a Pipeline
 
-Pick a pipeline from the **All Pipelines** dropdown in the top bar, or click any node, to drill into a single pipeline. The **Triggers** drawer (left) and **Agents** drawer (right) toggle from the toolbar and show full configuration details. Selecting a node reveals its details inline at the bottom — including the prompt text for an agent node.
+Pick a pipeline from the **All Pipelines** dropdown in the top bar, or click any node, to drill into a single pipeline. The **Triggers** drawer (left) and **Agents** drawer (right) toggle from the toolbar and show full configuration details. Selecting a node reveals its details inline at the bottom - including the prompt text for an agent node.
 
 ![Pipeline Detail](./screenshots/cue-pipeline.png)
 
 The Triggers drawer lists all event types with their configurations (filter patterns, poll intervals, etc.). The Agents drawer shows all available agents grouped by project with status indicators.
 
 Use the **Switch to Agent** link to jump directly to that agent's workspace.
+
+Two layout buttons in the top-right corner clean up a messy canvas. Both snap nodes onto left-to-right columns by data-flow depth:
+
+- **Tidy** keeps each column's current top-to-bottom order, so it only aligns what you already have and leaves any crossing edges as-is.
+- **Arrange** additionally reorders nodes within each column to untangle crossing edges. Reach for it after importing a pipeline or whenever the wiring looks tangled.
+
+In the **All Pipelines** view there are no edges between pipeline cards to cross, so only **Arrange** appears there and it packs the cards into a balanced grid. Either button previews as a confirmation first, and the result can be undone with **Discard** before you save.
 
 ## Activity Log
 
@@ -118,7 +125,7 @@ Each entry shows:
 - Trigger type (e.g. `(file.changed)`, `(github.pull_request)`)
 - Status (completed in N seconds, failed, timeout, stopped) with a duration
 
-Click any row — or use **Expand all** — to reveal the full event data: payload fields, run ID, exit code, and any captured stdout/stderr. The search box matches against subscription name, pipeline, file paths, PR titles, and the body of run output.
+Click any row - or use **Expand all** - to reveal the full event data: payload fields, run ID, exit code, and any captured stdout/stderr. The search box matches against subscription name, pipeline, file paths, PR titles, and the body of run output.
 
 ![Activity Log Detail](./screenshots/cue-activity-log-detail.png)
 
@@ -126,11 +133,11 @@ For `file.changed` events the payload includes the path, filename, directory, ex
 
 ## YAML Editor
 
-Click **Edit YAML** on any Dashboard row to open the inline editor. The left column offers **pattern templates** (Startup, Heartbeat, Scheduled, Reactive, Sequential Chain, PR Review, Issue Triage, Task Queue, and more) — click one to insert a pre-configured subscription block. An **AI Assist** panel below lets you describe what you want in plain English and have the agent edit the config for you.
+Click **Edit YAML** on any Dashboard row to open the inline editor. The left column offers **pattern templates** (Startup, Heartbeat, Scheduled, Reactive, Sequential Chain, PR Review, Issue Triage, Task Queue, and more) - click one to insert a pre-configured subscription block. An **AI Assist** panel below lets you describe what you want in plain English and have the agent edit the config for you.
 
 ![Cue YAML Editor](./screenshots/cue-yaml-editor.png)
 
-The right side shows your YAML with real-time validation — a green **Valid YAML** indicator appears at the bottom when the config parses correctly. Click **Save** to write the file; the engine hot-reloads automatically.
+The right side shows your YAML with real-time validation - a green **Valid YAML** indicator appears at the bottom when the config parses correctly. Click **Save** to write the file; the engine hot-reloads automatically.
 
 ### AI Assist
 
@@ -146,7 +153,7 @@ The header **?** button opens a built-in quick-reference guide covering Cue's pu
 
 ## Configuration File
 
-Cue is configured via a `.maestro/cue.yaml` file placed inside the `.maestro/` directory at your project root. See the [Configuration Reference](./maestro-cue-configuration) for the complete YAML schema.
+Cue is configured via a `.maestro/cue.yaml` file placed inside the `.maestro/` directory at your project root. Each agent has its **own** cue.yaml under its **own** project root - the engine reads only that file (no parent-directory walk, no shared workspace file). For pipelines that span agents at different roots, see [Multi-root pipelines](./maestro-cue-configuration#multi-root-pipelines-agents-in-different-project-roots) in the Configuration Reference. See the [Configuration Reference](./maestro-cue-configuration) for the complete YAML schema.
 
 ## Event Types
 
@@ -154,7 +161,7 @@ Cue supports nine event types that trigger subscriptions:
 
 | Event Type            | Trigger                             | Key Fields                        |
 | --------------------- | ----------------------------------- | --------------------------------- |
-| `app.startup`         | Maestro launches                    | —                                 |
+| `app.startup`         | Maestro launches                    | -                                 |
 | `time.heartbeat`      | Periodic timer ("every N minutes")  | `interval_minutes`                |
 | `time.scheduled`      | Specific times and days of the week | `schedule_times`, `schedule_days` |
 | `file.changed`        | File created, modified, or deleted  | `watch` (glob pattern)            |
@@ -162,7 +169,7 @@ Cue supports nine event types that trigger subscriptions:
 | `task.pending`        | Unchecked markdown tasks found      | `watch` (glob pattern)            |
 | `github.pull_request` | New PR opened on GitHub             | `repo` (optional)                 |
 | `github.issue`        | New issue opened on GitHub          | `repo` (optional)                 |
-| `cli.trigger`         | Manual trigger via `maestro-cli`    | —                                 |
+| `cli.trigger`         | Manual trigger via `maestro-cli`    | -                                 |
 
 See [Event Types](./maestro-cue-events) for detailed documentation and examples for each type.
 
@@ -186,11 +193,11 @@ See [Advanced Patterns](./maestro-cue-advanced) for the complete template variab
 
 Cue supports sophisticated automation patterns beyond simple trigger-prompt pairings:
 
-- **[Fan-out](./maestro-cue-advanced#fan-out)** — One trigger fires against multiple target agents simultaneously
-- **[Fan-in](./maestro-cue-advanced#fan-in)** — Wait for multiple agents to complete before triggering
-- **[Payload filtering](./maestro-cue-advanced#filtering)** — Conditionally trigger based on event data (glob matching, comparisons, negation)
-- **[Agent chaining](./maestro-cue-advanced#agent-chaining)** — Build multi-step pipelines where each agent's output feeds the next
-- **[Concurrency control](./maestro-cue-advanced#concurrency-control)** — Limit simultaneous runs and queue overflow events
+- **[Fan-out](./maestro-cue-advanced#fan-out)** - One trigger fires against multiple target agents simultaneously
+- **[Fan-in](./maestro-cue-advanced#fan-in)** - Wait for multiple agents to complete before triggering
+- **[Payload filtering](./maestro-cue-advanced#filtering)** - Conditionally trigger based on event data (glob matching, comparisons, negation)
+- **[Agent chaining](./maestro-cue-advanced#agent-chaining)** - Build multi-step pipelines where each agent's output feeds the next
+- **[Concurrency control](./maestro-cue-advanced#concurrency-control)** - Limit simultaneous runs and queue overflow events
 
 See [Advanced Patterns](./maestro-cue-advanced) for full documentation.
 
@@ -213,15 +220,15 @@ Filter by CUE entries in the History panel or in Director's Notes (when both Enc
 
 ## Requirements
 
-- **GitHub CLI (`gh`)** — Required only for `github.pull_request` and `github.issue` events. Must be installed and authenticated (`gh auth login`).
-- **File watching** — `file.changed` and `task.pending` events use filesystem watchers. No additional dependencies required.
-- **CLI triggers** — `cli.trigger` events require `maestro-cli` to be installed. See the [CLI documentation](./cli#cue-automation) for setup.
+- **GitHub CLI (`gh`)** - Required only for `github.pull_request` and `github.issue` events. Must be installed and authenticated (`gh auth login`).
+- **File watching** - `file.changed` and `task.pending` events use filesystem watchers. No additional dependencies required.
+- **CLI triggers** - `cli.trigger` events require `maestro-cli` to be installed. See the [CLI documentation](./cli#cue-automation) for setup.
 
 ## Tips
 
-- **Start simple** — Begin with a single `file.changed` or `time.heartbeat` subscription before building complex chains
-- **Use the YAML editor** — The inline editor validates your config in real-time, catching errors before they reach the engine
-- **Check the Activity Log** — If a subscription isn't firing, the activity log shows failures with error details
-- **Prompt files vs inline** — For complex prompts, point the `prompt` field at a `.md` file instead of inlining YAML
-- **Hot reload** — The engine watches `.maestro/cue.yaml` for changes and reloads automatically — no need to restart Maestro
-- **Template variables** — Use `{{CUE_TRIGGER_NAME}}` in prompts so the agent knows which automation triggered it
+- **Start simple** - Begin with a single `file.changed` or `time.heartbeat` subscription before building complex chains
+- **Use the YAML editor** - The inline editor validates your config in real-time, catching errors before they reach the engine
+- **Check the Activity Log** - If a subscription isn't firing, the activity log shows failures with error details
+- **Prompt files vs inline** - For complex prompts, point the `prompt` field at a `.md` file instead of inlining YAML
+- **Hot reload** - The engine watches `.maestro/cue.yaml` for changes and reloads automatically - no need to restart Maestro
+- **Template variables** - Use `{{CUE_TRIGGER_NAME}}` in prompts so the agent knows which automation triggered it

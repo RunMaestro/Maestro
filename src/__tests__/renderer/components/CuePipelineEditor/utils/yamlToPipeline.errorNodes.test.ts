@@ -251,4 +251,92 @@ describe('yamlToPipeline — error nodes for unresolved agents', () => {
 		expect(summarize(p1.nodes)).toEqual(summarize(p2.nodes));
 		expect(summarizeEdges(p1.nodes, p1.edges)).toEqual(summarizeEdges(p2.nodes, p2.edges));
 	});
+
+	it('emits a missing-source error node when source_sub names an unknown subscription (agent target)', () => {
+		// Greptile #981: locks in the visible-error path when `source_sub`
+		// references a subscription that is NOT in the current pipeline's
+		// `knownSubNames` set. Without this test a future refactor could
+		// silently revert to the session-name fallback and the canvas would
+		// quietly wire to whatever agent happens to share the source name.
+		const subs: CueSubscription[] = [
+			{
+				name: 'pipe',
+				event: 'time.heartbeat',
+				enabled: true,
+				prompt: '',
+				interval_minutes: 5,
+				agent_id: 'sess-up',
+			},
+			{
+				name: 'pipe-chain-1',
+				event: 'agent.completed',
+				enabled: true,
+				prompt: 'follow up',
+				source_session: ['Up'],
+				source_session_ids: ['sess-up'],
+				// References a subscription that does NOT exist in this
+				// pipeline — must produce an error node, NOT a phantom agent.
+				source_sub: ['Stale Ghost Sub'],
+				agent_id: 'sess-down',
+			},
+		];
+		const sessions = makeSessions([
+			['sess-up', 'Up'],
+			['sess-down', 'Down'],
+		]);
+
+		const [pipeline] = subscriptionsToPipelines(subs, sessions);
+		const errs = errorNodes(pipeline.nodes);
+		expect(errs).toHaveLength(1);
+		const data = errs[0].data as ErrorNodeData;
+		expect(data.reason).toBe('missing-source');
+		expect(data.subscriptionName).toBe('pipe-chain-1');
+		expect(data.message).toContain('Stale Ghost Sub');
+		// The downstream target ("Down") must wire to the error node, not to
+		// the "Up" agent that shares the source name. Surfacing the gap on the
+		// canvas is the whole point of this branch.
+		const downstream = pipeline.nodes.find(
+			(n) => n.type === 'agent' && (n.data as { sessionName?: string }).sessionName === 'Down'
+		);
+		expect(downstream).toBeDefined();
+		const incomingToDownstream = pipeline.edges.filter((e) => e.target === downstream!.id);
+		expect(incomingToDownstream).toHaveLength(1);
+		expect(incomingToDownstream[0].source).toBe(errs[0].id);
+	});
+
+	it('emits a missing-source error node for a command-target chain when source_sub is unknown', () => {
+		// Same regression as above for the command-action branch — the new
+		// `!knownSubNames.has(subRef)` guard exists in two places in
+		// `yamlToPipeline.ts` and both should be locked in.
+		const subs: CueSubscription[] = [
+			{
+				name: 'pipe',
+				event: 'time.heartbeat',
+				enabled: true,
+				prompt: '',
+				interval_minutes: 5,
+				agent_id: 'sess-up',
+			},
+			{
+				name: 'pipe-cmd-chain',
+				event: 'agent.completed',
+				enabled: true,
+				prompt: '',
+				source_session: ['Up'],
+				source_session_ids: ['sess-up'],
+				source_sub: ['Stale Ghost Sub'],
+				agent_id: 'sess-up',
+				action: 'command',
+				command: { mode: 'shell', shell: 'echo hi' },
+			},
+		];
+		const sessions = makeSessions([['sess-up', 'Up']]);
+
+		const [pipeline] = subscriptionsToPipelines(subs, sessions);
+		const errs = errorNodes(pipeline.nodes);
+		expect(errs).toHaveLength(1);
+		const data = errs[0].data as ErrorNodeData;
+		expect(data.reason).toBe('missing-source');
+		expect(data.message).toContain('Stale Ghost Sub');
+	});
 });

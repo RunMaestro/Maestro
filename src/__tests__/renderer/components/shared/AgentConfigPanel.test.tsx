@@ -299,4 +299,167 @@ describe('AgentConfigPanel', () => {
 			expect(screen.getByText('Environment Variables (optional)')).toBeInTheDocument();
 		});
 	});
+
+	describe('Claude Token Source selector', () => {
+		it('offers API / TUI / Dynamic for a local claude-code agent', () => {
+			render(<AgentConfigPanel {...createDefaultProps({ onEnableMaestroPChange: vi.fn() })} />);
+
+			expect(screen.getByText('Claude Token Source')).toBeInTheDocument();
+			expect(screen.getByText('API')).toBeInTheDocument();
+			expect(screen.getByText('TUI')).toBeInTheDocument();
+			expect(screen.getByText('Dynamic')).toBeInTheDocument();
+		});
+
+		it('defaults an unconfigured SSH agent to TUI (remote maestro-p), not API', () => {
+			// enableMaestroP left undefined (never configured) + SSH => TUI is the
+			// default selection, and the remote-host hint renders.
+			render(
+				<AgentConfigPanel
+					{...createDefaultProps({ onEnableMaestroPChange: vi.fn(), isSshEnabled: true })}
+				/>
+			);
+
+			const tuiButton = screen.getByText('TUI').closest('button');
+			const apiButton = screen.getByText('API').closest('button');
+			expect(tuiButton?.className).toContain('ring-2');
+			expect(apiButton?.className).not.toContain('ring-2');
+			expect(screen.getByText(/Runs maestro-p on the remote host/)).toBeInTheDocument();
+		});
+
+		it('honors an explicit API choice on an SSH agent (does not force TUI)', () => {
+			render(
+				<AgentConfigPanel
+					{...createDefaultProps({
+						onEnableMaestroPChange: vi.fn(),
+						isSshEnabled: true,
+						enableMaestroP: false,
+					})}
+				/>
+			);
+
+			const apiButton = screen.getByText('API').closest('button');
+			const tuiButton = screen.getByText('TUI').closest('button');
+			expect(apiButton?.className).toContain('ring-2');
+			expect(tuiButton?.className).not.toContain('ring-2');
+		});
+
+		it('disables the TUI option and falls back to API when the remote has no maestro-p', async () => {
+			// The remote probe reports maestro-p is absent: TUI can't run there, so
+			// the option is dropped and an unconfigured agent defaults to API.
+			(
+				window as unknown as {
+					maestro: { agents: { getRemoteMaestroPAvailable: ReturnType<typeof vi.fn> } };
+				}
+			).maestro.agents.getRemoteMaestroPAvailable.mockResolvedValue(false);
+			render(
+				<AgentConfigPanel
+					{...createDefaultProps({
+						onEnableMaestroPChange: vi.fn(),
+						isSshEnabled: true,
+						sshRemoteId: 'remote-without-maestro-p',
+					})}
+				/>
+			);
+
+			// Once the async probe resolves, the warning appears and TUI is gone.
+			await waitFor(() =>
+				expect(screen.getByText(/maestro-p was not found on the remote/)).toBeInTheDocument()
+			);
+			expect(screen.queryByText('TUI')).not.toBeInTheDocument();
+			const apiButton = screen.getByText('API').closest('button');
+			expect(apiButton?.className).toContain('ring-2');
+			(
+				window as unknown as {
+					maestro: { agents: { getRemoteMaestroPAvailable: ReturnType<typeof vi.fn> } };
+				}
+			).maestro.agents.getRemoteMaestroPAvailable.mockResolvedValue(null);
+		});
+
+		it('re-probes the remote with force when the Re-check button is clicked', async () => {
+			const probeFn = (
+				window as unknown as {
+					maestro: { agents: { getRemoteMaestroPAvailable: ReturnType<typeof vi.fn> } };
+				}
+			).maestro.agents.getRemoteMaestroPAvailable;
+			// First probe (mount): maestro-p absent. After the user installs it on the
+			// remote and clicks Re-check, the forced re-probe reports it present.
+			probeFn.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+
+			render(
+				<AgentConfigPanel
+					{...createDefaultProps({
+						onEnableMaestroPChange: vi.fn(),
+						isSshEnabled: true,
+						sshRemoteId: 'remote-just-got-maestro-p',
+					})}
+				/>
+			);
+
+			// Mount probe resolves to absent: TUI option missing, warning shown.
+			await waitFor(() =>
+				expect(screen.getByText(/maestro-p was not found on the remote/)).toBeInTheDocument()
+			);
+			expect(probeFn).toHaveBeenLastCalledWith('remote-just-got-maestro-p', false);
+
+			fireEvent.click(screen.getByText('Re-check'));
+
+			// The refresh forces a cache-bypassing re-probe...
+			await waitFor(() =>
+				expect(probeFn).toHaveBeenLastCalledWith('remote-just-got-maestro-p', true)
+			);
+			// ...which now reports maestro-p present: the warning clears and TUI returns.
+			await waitFor(() =>
+				expect(screen.queryByText(/maestro-p was not found on the remote/)).not.toBeInTheDocument()
+			);
+			expect(screen.getByText('TUI')).toBeInTheDocument();
+
+			probeFn.mockResolvedValue(null);
+		});
+
+		it('renders the selector for SSH agents but drops the Dynamic option', () => {
+			render(
+				<AgentConfigPanel
+					{...createDefaultProps({ onEnableMaestroPChange: vi.fn(), isSshEnabled: true })}
+				/>
+			);
+
+			expect(screen.getByText('Claude Token Source')).toBeInTheDocument();
+			expect(screen.getByText('API')).toBeInTheDocument();
+			expect(screen.getByText('TUI')).toBeInTheDocument();
+			expect(screen.queryByText('Dynamic')).not.toBeInTheDocument();
+		});
+
+		it('hides the local Maestro-P Path override when SSH is enabled and TUI is selected', () => {
+			render(
+				<AgentConfigPanel
+					{...createDefaultProps({
+						onEnableMaestroPChange: vi.fn(),
+						onMaestroPModeChange: vi.fn(),
+						isSshEnabled: true,
+						enableMaestroP: true,
+						maestroPMode: 'interactive',
+					})}
+				/>
+			);
+
+			// The remote TUI hint shows, but the local-script path input does not.
+			expect(screen.getByText(/Runs maestro-p on the remote host/)).toBeInTheDocument();
+			expect(screen.queryByText('Maestro-P Path (optional)')).not.toBeInTheDocument();
+		});
+
+		it('still shows the local Maestro-P Path override for a local TUI agent', () => {
+			render(
+				<AgentConfigPanel
+					{...createDefaultProps({
+						onEnableMaestroPChange: vi.fn(),
+						onMaestroPModeChange: vi.fn(),
+						enableMaestroP: true,
+						maestroPMode: 'interactive',
+					})}
+				/>
+			);
+
+			expect(screen.getByText('Maestro-P Path (optional)')).toBeInTheDocument();
+		});
+	});
 });

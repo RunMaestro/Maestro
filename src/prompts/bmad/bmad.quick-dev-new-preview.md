@@ -24,7 +24,7 @@ A specification should target a **single user-facing goal** within **900–1600 
 - **Single goal**: One cohesive feature, even if it spans multiple layers/files. Multi-goal means >=2 **top-level independent shippable deliverables** — each could be reviewed, tested, and merged as a separate PR without breaking the others. Never count surface verbs, "and" conjunctions, or noun phrases. Never split cross-layer implementation details inside one user goal.
   - Split: "add dark mode toggle AND refactor auth to JWT AND build admin dashboard"
   - Don't split: "add validation and display errors" / "support drag-and-drop AND paste AND retry"
-- **900–1600 tokens**: Optimal range for LLM consumption. Below 900 risks ambiguity; above 1600 risks context-rot in implementation agents.
+- **900���1600 tokens**: Optimal range for LLM consumption. Below 900 risks ambiguity; above 1600 risks context-rot in implementation agents.
 - **Neither limit is a gate.** Both are proposals with user override.
 
 ## WORKFLOW ARCHITECTURE
@@ -68,7 +68,6 @@ YOU MUST ALWAYS SPEAK OUTPUT in your Agent communication style with the config `
 
 ### 2. Paths
 
-- `templateFile` = `./tech-spec-template.md`
 - `wipFile` = `{implementation_artifacts}/tech-spec-wip.md`
 
 ### 3. First Step Execution
@@ -81,113 +80,10 @@ Read fully and follow: `./steps/step-01-clarify-and-route.md` to begin the workf
 
 The following upstream BMAD files are embedded so this Maestro prompt remains self-contained.
 
-## src/bmm/workflows/bmad-quick-flow/bmad-quick-dev-new-preview/tech-spec-template.md
-
-```md
----
-title: '{title}'
-type: 'feature' # feature | bugfix | refactor | chore
-created: '{date}'
-status: 'draft' # draft | ready-for-dev | in-progress | in-review | done
-context: [] # optional: max 3 project-wide standards/docs. NO source code files.
----
-
-<!-- Target: 900–1300 tokens. Above 1600 = high risk of context rot.
-     Never over-specify "how" — use boundaries + examples instead.
-     Cohesive cross-layer stories (DB+BE+UI) stay in ONE file.
-     IMPORTANT: Remove all HTML comments when filling this template. -->
-
-# {title}
-
-<frozen-after-approval reason="human-owned intent — do not modify unless human renegotiates">
-
-## Intent
-
-<!-- What is broken or missing, and why it matters. Then the high-level approach — the "what", not the "how". -->
-
-**Problem:** ONE_TO_TWO_SENTENCES
-
-**Approach:** ONE_TO_TWO_SENTENCES
-
-## Boundaries & Constraints
-
-<!-- Three tiers: Always = invariant rules. Ask First = human-gated decisions. Never = out of scope + forbidden approaches. -->
-
-**Always:** INVARIANT_RULES
-
-**Ask First:** DECISIONS_REQUIRING_HUMAN_APPROVAL
-
-<!-- Agent: if any of these trigger during execution, HALT and ask the user before proceeding. -->
-
-**Never:** NON_GOALS_AND_FORBIDDEN_APPROACHES
-
-## I/O & Edge-Case Matrix
-
-<!-- If no meaningful I/O scenarios exist, DELETE THIS ENTIRE SECTION. Do not write "N/A" or "None". -->
-
-| Scenario   | Input / State | Expected Output / Behavior | Error Handling |
-| ---------- | ------------- | -------------------------- | -------------- |
-| HAPPY_PATH | INPUT         | OUTCOME                    | N/A            |
-| ERROR_CASE | INPUT         | OUTCOME                    | ERROR_HANDLING |
-
-</frozen-after-approval>
-
-## Code Map
-
-<!-- Agent-populated during planning. Annotated paths prevent blind codebase searching. -->
-
-- `FILE` -- ROLE_OR_RELEVANCE
-- `FILE` -- ROLE_OR_RELEVANCE
-
-## Tasks & Acceptance
-
-<!-- Tasks: backtick-quoted file path -- action -- rationale. Prefer one task per file; group tightly-coupled changes when splitting would be artificial. -->
-<!-- If an I/O Matrix is present, include a task to unit-test its edge cases. -->
-<!-- AC covers system-level behaviors not captured by the I/O Matrix. Do not duplicate I/O scenarios here. -->
-
-**Execution:**
-
-- [ ] `FILE` -- ACTION -- RATIONALE
-
-**Acceptance Criteria:**
-
-- Given PRECONDITION, when ACTION, then EXPECTED_RESULT
-
-## Spec Change Log
-
-<!-- Append-only. Populated by step-04 during review loops. Do not modify or delete existing entries.
-     Each entry records: what finding triggered the change, what was amended, what known-bad state
-     the amendment avoids, and any KEEP instructions (what worked well and must survive re-derivation).
-     Empty until the first bad_spec loopback. -->
-
-## Design Notes
-
-<!-- If the approach is straightforward, DELETE THIS ENTIRE SECTION. Do not write "N/A" or "None". -->
-<!-- Design rationale and golden examples only when non-obvious. Keep examples to 5–10 lines. -->
-
-DESIGN_RATIONALE_AND_EXAMPLES
-
-## Verification
-
-<!-- If no build, test, or lint commands apply, DELETE THIS ENTIRE SECTION. Do not write "N/A" or "None". -->
-<!-- How the agent confirms its own work. Prefer CLI commands. When no CLI check applies, state what to inspect manually. -->
-
-**Commands:**
-
-- `COMMAND` -- expected: SUCCESS_CRITERIA
-
-**Manual checks (if no CLI):**
-
-- WHAT_TO_INSPECT_AND_EXPECTED_STATE
-```
-
 ## src/bmm/workflows/bmad-quick-flow/bmad-quick-dev-new-preview/steps/step-01-clarify-and-route.md
 
 ```md
 ---
-name: 'step-01-clarify-and-route'
-description: 'Capture intent, route to execution path'
-
 wipFile: '{implementation_artifacts}/tech-spec-wip.md'
 deferred_work_file: '{implementation_artifacts}/deferred-work.md'
 spec_file: '' # set at runtime before leaving this step
@@ -235,6 +131,83 @@ spec_file: '' # set at runtime before leaving this step
 
 ## NEXT
 
-- One-shot / ready-for-dev: Read fully and follow `./steps/step-03-implement.md`
-- Plan-code-review: Read fully and follow `./steps/step-02-plan.md`
+- One-shot / ready-for-dev: Read fully and follow `./step-03-implement.md`
+- Plan-code-review: Read fully and follow `./step-02-plan.md`
+```
+
+## src/bmm/workflows/bmad-quick-flow/bmad-quick-dev-new-preview/steps/step-03-implement.md
+
+```md
+---
+---
+
+# Step 3: Implement
+
+## RULES
+
+- YOU MUST ALWAYS SPEAK OUTPUT in your Agent communication style with the config `{communication_language}`
+- No push. No remote ops.
+- Sequential execution only.
+- Content inside `<frozen-after-approval>` in `{spec_file}` is read-only. Do not modify.
+
+## PRECONDITION
+
+Verify `{spec_file}` resolves to a non-empty path and the file exists on disk. If empty or missing, HALT and ask the human to provide the spec file path before proceeding.
+
+## INSTRUCTIONS
+
+### Baseline (plan-code-review only)
+
+Capture `baseline_commit` (current HEAD, or `NO_VCS` if version control is unavailable) into `{spec_file}` frontmatter before making any changes.
+
+### Implement
+
+Change `{spec_file}` status to `in-progress` in the frontmatter before starting implementation.
+
+`execution_mode = "one-shot"` or no sub-agents/tasks available: implement the intent.
+
+Otherwise (`execution_mode = "plan-code-review"`): hand `{spec_file}` to a sub-agent/task and let it implement.
+
+## NEXT
+
+Read fully and follow `./step-04-review.md`
+```
+
+## src/bmm/workflows/bmad-quick-flow/bmad-quick-dev-new-preview/steps/step-02-plan.md
+
+```md
+---
+wipFile: '{implementation_artifacts}/tech-spec-wip.md'
+deferred_work_file: '{implementation_artifacts}/deferred-work.md'
+---
+
+# Step 2: Plan
+
+## RULES
+
+- YOU MUST ALWAYS SPEAK OUTPUT in your Agent communication style with the config `{communication_language}`
+- No intermediate approvals.
+
+## INSTRUCTIONS
+
+1. Investigate codebase. _Isolate deep exploration in sub-agents/tasks where available. To prevent context snowballing, instruct subagents to give you distilled summaries only._
+2. Read `../tech-spec-template.md` fully. Fill it out based on the intent and investigation, and write the result to `{wipFile}`.
+3. Self-review against READY FOR DEVELOPMENT standard.
+4. If intent gaps exist, do not fantasize, do not leave open questions, HALT and ask the human.
+5. Token count check (see SCOPE STANDARD). If spec exceeds 1600 tokens:
+   - Show user the token count.
+   - HALT and ask human: `[S] Split — carve off secondary goals` | `[K] Keep full spec — accept the risks`
+   - On **S**: Propose the split — name each secondary goal. Append deferred goals to `{deferred_work_file}`. Rewrite the current spec to cover only the main goal — do not surgically carve sections out; regenerate the spec for the narrowed scope. Continue to checkpoint.
+   - On **K**: Continue to checkpoint with full spec.
+
+### CHECKPOINT 1
+
+Present summary. If token count exceeded 1600 and user chose [K], include the token count and explain why it may be a problem. HALT and ask human: `[A] Approve` | `[E] Edit`
+
+- **A**: Rename `{wipFile}` to `{spec_file}`, set status `ready-for-dev`. Everything inside `<frozen-after-approval>` is now locked — only the human can change it. → Step 3.
+- **E**: Apply changes, then return to CHECKPOINT 1.
+
+## NEXT
+
+Read fully and follow `./step-03-implement.md`
 ```

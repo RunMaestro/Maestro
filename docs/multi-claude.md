@@ -8,11 +8,11 @@ Use two or more Claude Code Max subscriptions (e.g., personal and work accounts)
 
 ## How It Works
 
-Claude Code stores its configuration and auth credentials in `~/.claude` by default. The `CLAUDE_CONFIG_DIR` environment variable overrides this location. By creating a separate config directory per account — each with its own OAuth credentials — and symlinking shared resources back to a canonical source, you get:
+Claude Code stores its configuration and auth credentials in `~/.claude` by default. The `CLAUDE_CONFIG_DIR` environment variable overrides this location. By creating a separate config directory per account - each with its own OAuth credentials - and symlinking shared resources back to a canonical source, you get:
 
 - **Separate billing/authentication** per account
-- **Shared sessions** — resume any session from either account
-- **Shared settings, plugins, commands, plans, and skills** — configure once, use everywhere
+- **Shared sessions** - resume any session from either account
+- **Shared settings, plugins, commands, plans, and skills** - configure once, use everywhere
 
 ## One-Time Setup
 
@@ -122,6 +122,6 @@ This way you can see at a glance which account's quota you're using. When one ac
 
 ## Tips
 
-- **Session resume works cross-account** — because `projects/` is symlinked, you can start a session on one account and resume it on another.
-- **Don't run both on the same project simultaneously** — two Claude instances writing to the same session files can cause contention. Use one at a time per project.
-- **Symlinks may break after Claude Code updates** — if an update recreates a directory, re-run the symlink commands from step 2.
+- **Session resume works cross-account** - because `projects/` is symlinked, you can start a session on one account and resume it on another.
+- **Don't run both on the same project simultaneously** - two Claude instances writing to the same session files can cause contention. Use one at a time per project.
+- **Symlinks may break after Claude Code updates** - if an update recreates a directory, re-run the symlink commands from step 2.

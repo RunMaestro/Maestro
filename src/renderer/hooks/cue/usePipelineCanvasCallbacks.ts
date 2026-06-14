@@ -21,6 +21,7 @@ import {
 	applyNodeChanges,
 	type Node,
 	type NodeChange,
+	type EdgeChange,
 	type OnNodesChange,
 	type OnEdgesChange,
 	type Connection,
@@ -98,23 +99,84 @@ export function usePipelineCanvasCallbacks({
 	const { setPipelineState, persistLayout } = actions;
 	const { setSelectedNodeId, setSelectedEdgeId } = selection;
 
+	// Always-fresh view of displayNodes so dragStart can snapshot child
+	// positions synchronously (the drag callbacks use empty dep arrays, so the
+	// `nodes` closure would otherwise be stale on the first gesture).
+	const displayNodesRef = useRef(nodes);
+	displayNodesRef.current = nodes;
+
 	// Pipeline-group drag tracking. Captured at dragStart, used by onNodeDrag
 	// to translate child nodes alongside the group, and by onNodeDragStop to
 	// commit the cumulative delta into the pipeline's `viewOffset`.
+	// `childStart` holds each content node's position AT DRAG START so onNodeDrag
+	// can place them at start+delta (absolute), which is order-independent.
+	// An incremental per-frame delta breaks: ReactFlow runs onNodesChange (which
+	// moves the group node) BEFORE onNodeDrag, so reading the group's "previous"
+	// position mid-drag already reflects the new spot and yields a zero delta -
+	// the children never move and detach from the card.
 	const groupDragRef = useRef<{
 		groupId: string;
 		pipelineId: string;
 		startGroupPos: { x: number; y: number };
+		childStart: Map<string, { x: number; y: number }>;
 	} | null>(null);
 
 	// Apply ALL node changes (including mid-drag) to the local displayNodes
 	// so ReactFlow can render smooth dragging. Position commits to the
 	// canonical pipelineState happen in onNodeDragStop instead.
+	//
+	// `remove` changes are the exception: box-select (lasso) + Delete routes
+	// through ReactFlow's built-in delete, which emits `remove` changes here.
+	// Updating displayNodes alone makes the nodes vanish visually but they
+	// reappear on the next resync (computedNodes is rebuilt from an unchanged
+	// pipelineState) and the dirty flag never flips. So we ALSO commit removals
+	// to the canonical pipelineState — pruning connected edges, mirroring
+	// onDeleteNode. (Single-node Delete via the keyboard hook / trash icon
+	// already commits via onDeleteNode; this path covers multi-select where no
+	// single node is tracked as selected.)
 	const onNodesChange: OnNodesChange = useCallback(
 		(changes: NodeChange[]) => {
 			setDisplayNodes((nds) => applyNodeChanges(changes, nds));
+
+			// All Pipelines view is read-only — no deletions.
+			if (isAllPipelinesView) return;
+
+			// Group removed node ids by owning pipeline (composite id:
+			// "pipelineId:nodeId"; pipeline ids never contain ':').
+			const removedByPipeline = new Map<string, Set<string>>();
+			for (const change of changes) {
+				if (change.type !== 'remove') continue;
+				const sepIdx = change.id.indexOf(':');
+				if (sepIdx === -1) continue;
+				const pipelineId = change.id.slice(0, sepIdx);
+				const nodeId = change.id.slice(sepIdx + 1);
+				let set = removedByPipeline.get(pipelineId);
+				if (!set) {
+					set = new Set<string>();
+					removedByPipeline.set(pipelineId, set);
+				}
+				set.add(nodeId);
+			}
+			if (removedByPipeline.size === 0) return;
+
+			setPipelineState((prev) => ({
+				...prev,
+				pipelines: prev.pipelines.map((p) => {
+					const removed = removedByPipeline.get(p.id);
+					if (!removed) return p;
+					return {
+						...p,
+						nodes: p.nodes.filter((n) => !removed.has(n.id)),
+						edges: p.edges.filter((e) => !removed.has(e.source) && !removed.has(e.target)),
+					};
+				}),
+			}));
+			// A deleted node may have been the click-selected one driving the
+			// config panel; clear selection so a stale composite id can't linger.
+			setSelectedNodeId(null);
+			setSelectedEdgeId(null);
 		},
-		[setDisplayNodes]
+		[isAllPipelinesView, setDisplayNodes, setPipelineState, setSelectedNodeId, setSelectedEdgeId]
 	);
 
 	// Capture the pipeline-group's start position so we can apply the running
@@ -133,39 +195,49 @@ export function usePipelineCanvasCallbacks({
 				groupDragRef.current = null;
 				return;
 			}
+			// Snapshot every content node's start position (composite id
+			// "pipelineId:nodeId"). The group node's own id is "pipeline-group:…"
+			// and never matches this prefix, so it's correctly excluded.
+			const pipelinePrefix = `${pipelineId}:`;
+			const childStart = new Map<string, { x: number; y: number }>();
+			for (const dn of displayNodesRef.current) {
+				if (dn.id.startsWith(pipelinePrefix)) {
+					childStart.set(dn.id, { x: dn.position.x, y: dn.position.y });
+				}
+			}
 			groupDragRef.current = {
 				groupId: node.id,
 				pipelineId,
 				startGroupPos: { x: node.position.x, y: node.position.y },
+				childStart,
 			};
 		},
 		[]
 	);
 
-	// While dragging the group, translate every child node in displayNodes
-	// by the same delta so visually the entire pipeline moves together.
-	// Children's canonical pipelineState positions are NOT touched here —
-	// the cumulative delta is committed once on drag stop as a viewOffset.
+	// While dragging the group, place every child node at its captured start
+	// position plus the group's TOTAL delta from drag start. Absolute (not
+	// incremental) so it's immune to ReactFlow's event ordering — onNodesChange
+	// moves the group before onNodeDrag fires, which would zero out a per-frame
+	// delta and strand the children. Children's canonical pipelineState
+	// positions are NOT touched here — the delta is committed once on drag stop
+	// as a viewOffset.
 	const onNodeDrag = useCallback(
 		(_event: React.MouseEvent, node: Node, _draggedNodes: Node[]) => {
 			const drag = groupDragRef.current;
 			if (!drag || node.id !== drag.groupId || node.type !== 'pipeline-group') return;
-			const pipelinePrefix = `${drag.pipelineId}:`;
-			setDisplayNodes((prev) => {
-				// Read the group's previous on-screen position from the previous
-				// frame so we apply only the incremental delta this frame.
-				const prevGroup = prev.find((dn) => dn.id === drag.groupId);
-				const prevPos = prevGroup?.position ?? drag.startGroupPos;
-				const dx = node.position.x - prevPos.x;
-				const dy = node.position.y - prevPos.y;
-				if (dx === 0 && dy === 0) return prev;
-				return prev.map((dn) => {
-					if (dn.id.startsWith(pipelinePrefix)) {
-						return { ...dn, position: { x: dn.position.x + dx, y: dn.position.y + dy } };
-					}
-					return dn;
-				});
-			});
+			const dx = node.position.x - drag.startGroupPos.x;
+			const dy = node.position.y - drag.startGroupPos.y;
+			setDisplayNodes((prev) =>
+				prev.map((dn) => {
+					const start = drag.childStart.get(dn.id);
+					if (!start) return dn;
+					const nx = start.x + dx;
+					const ny = start.y + dy;
+					if (dn.position.x === nx && dn.position.y === ny) return dn;
+					return { ...dn, position: { x: nx, y: ny } };
+				})
+			);
 		},
 		[setDisplayNodes]
 	);
@@ -256,7 +328,45 @@ export function usePipelineCanvasCallbacks({
 		[isAllPipelinesView, persistLayout, setPipelineState, stableYOffsetsRef]
 	);
 
-	const onEdgesChange: OnEdgesChange = useCallback(() => {}, []);
+	// Edge dragging is disabled, so the only changes that matter here are
+	// `remove`s emitted by ReactFlow's built-in delete (box-select + Delete, or
+	// deleting a node which cascades to its connected edges). Commit those to
+	// pipelineState so the deletion sticks and the dirty flag flips — without
+	// this, edge removes were silently dropped and the edge reappeared on resync.
+	const onEdgesChange: OnEdgesChange = useCallback(
+		(changes: EdgeChange[]) => {
+			if (isAllPipelinesView) return;
+
+			// Group removed edge ids by owning pipeline (composite id:
+			// "pipelineId:edgeId").
+			const removedByPipeline = new Map<string, Set<string>>();
+			for (const change of changes) {
+				if (change.type !== 'remove') continue;
+				const sepIdx = change.id.indexOf(':');
+				if (sepIdx === -1) continue;
+				const pipelineId = change.id.slice(0, sepIdx);
+				const edgeId = change.id.slice(sepIdx + 1);
+				let set = removedByPipeline.get(pipelineId);
+				if (!set) {
+					set = new Set<string>();
+					removedByPipeline.set(pipelineId, set);
+				}
+				set.add(edgeId);
+			}
+			if (removedByPipeline.size === 0) return;
+
+			setPipelineState((prev) => ({
+				...prev,
+				pipelines: prev.pipelines.map((p) => {
+					const removed = removedByPipeline.get(p.id);
+					if (!removed) return p;
+					return { ...p, edges: p.edges.filter((e) => !removed.has(e.id)) };
+				}),
+			}));
+			setSelectedEdgeId(null);
+		},
+		[isAllPipelinesView, setPipelineState, setSelectedEdgeId]
+	);
 
 	const onConnect = useCallback(
 		(connection: Connection) => {

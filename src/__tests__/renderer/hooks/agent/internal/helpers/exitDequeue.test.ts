@@ -120,4 +120,26 @@ describe('chooseNextQueuedItem', () => {
 		};
 		expect(chooseNextQueuedItem(session, 'tab-1').item?.id).toBe('q1');
 	});
+
+	it('skips a paused head item and dequeues the first runnable one', () => {
+		const session: MinSession = {
+			executionQueue: [item({ id: 'q1', paused: true }), item({ id: 'q2' })],
+			state: 'idle',
+			agentError: undefined,
+			aiTabs: [tab()],
+		};
+		const decision = chooseNextQueuedItem(session, 'tab-1');
+		expect(decision.action).toBe('dequeue');
+		expect(decision.item?.id).toBe('q2');
+	});
+
+	it('returns "none" when every queued item is paused', () => {
+		const session: MinSession = {
+			executionQueue: [item({ id: 'q1', paused: true }), item({ id: 'q2', paused: true })],
+			state: 'idle',
+			agentError: undefined,
+			aiTabs: [tab()],
+		};
+		expect(chooseNextQueuedItem(session, 'tab-1')).toEqual({ action: 'none', item: null });
+	});
 });

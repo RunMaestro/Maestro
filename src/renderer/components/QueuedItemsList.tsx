@@ -1,10 +1,22 @@
 import React, { useState, useCallback, useRef, memo } from 'react';
-import { X, ChevronDown, ChevronUp, GripVertical, Copy, Check, Hammer } from 'lucide-react';
+import { X, ChevronDown, ChevronUp, Copy, Check, Hammer, Pause, Play } from 'lucide-react';
 import type { Theme, QueuedItem } from '../types';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { Modal, ModalFooter } from './ui/Modal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useEventListener } from '../hooks/utils/useEventListener';
+import {
+	useQueueReorder,
+	useQueueRowDrag,
+	QueueDropZone,
+	QueueDragHandle,
+	QueueDragShimmer,
+	queueDragCardStyle,
+} from './queue/queueDrag';
+
+// Single group key: the inline list only ever renders one tab's queue at a time,
+// so a constant identifies its lone drag group for the shared reorder hook.
+const INLINE_QUEUE_KEY = 'inline-queue';
 
 // ============================================================================
 // QueuedItemsList - Displays queued execution items with expand/collapse
@@ -19,6 +31,7 @@ interface QueuedItemsListProps {
 	executionQueue: QueuedItem[];
 	theme: Theme;
 	onRemoveQueuedItem?: (itemId: string) => void;
+	onTogglePauseQueuedItem?: (itemId: string) => void;
 	onReorderItems?: (fromIndex: number, toIndex: number) => void;
 	activeTabId?: string; // If provided, only show queued items for this tab
 	// Force Send support: when forcedParallelExecution is enabled, allow the user
@@ -49,6 +62,7 @@ export const QueuedItemsList = memo(
 		executionQueue,
 		theme,
 		onRemoveQueuedItem,
+		onTogglePauseQueuedItem,
 		onReorderItems,
 		activeTabId,
 		forcedParallelEnabled = false,
@@ -68,10 +82,10 @@ export const QueuedItemsList = memo(
 		// Track which queued messages are expanded (for viewing full content)
 		const [expandedQueuedMessages, setExpandedQueuedMessages] = useState<Set<string>>(new Set());
 
-		// Drag state
-		const [dragIndex, setDragIndex] = useState<number | null>(null);
-		const [dropIndex, setDropIndex] = useState<number | null>(null);
-		const dragItemRef = useRef<number | null>(null);
+		// Drag-to-reorder orchestration, shared with the Execution Queue modal so the
+		// handle, press-to-grab feel, and drop indicator look identical here.
+		const { dragState, dropIndicator, isAnyDragging, startDrag, overDrag, endDrag, cancelDrag } =
+			useQueueReorder((_key, fromIndex, toIndex) => onReorderItems?.(fromIndex, toIndex));
 
 		// Refs for confirm-button focus management in confirmation modals
 		const removeConfirmButtonRef = useRef<HTMLButtonElement>(null);
@@ -126,32 +140,6 @@ export const QueuedItemsList = memo(
 			setForceSendConfirmId(null);
 		}, [onForceSendQueuedItem, forceSendConfirmId]);
 
-		// Drag handlers
-		const handleDragStart = useCallback((index: number) => {
-			dragItemRef.current = index;
-			setDragIndex(index);
-		}, []);
-
-		const handleDragOver = useCallback((e: React.DragEvent, index: number) => {
-			e.preventDefault();
-			if (dragItemRef.current !== null && dragItemRef.current !== index) {
-				setDropIndex(index);
-			}
-		}, []);
-
-		const handleDragEnd = useCallback(() => {
-			if (dragItemRef.current !== null && dropIndex !== null && dragItemRef.current !== dropIndex) {
-				onReorderItems?.(dragItemRef.current, dropIndex);
-			}
-			dragItemRef.current = null;
-			setDragIndex(null);
-			setDropIndex(null);
-		}, [dropIndex, onReorderItems]);
-
-		const handleDragLeave = useCallback(() => {
-			setDropIndex(null);
-		}, []);
-
 		// Keyboard shortcut bridge: when the user hits the Forced Parallel shortcut
 		// with an empty input, useInputKeyDown dispatches this event. We find the
 		// most recent eligible queued item (matching the same visibility rules as
@@ -205,173 +193,70 @@ export const QueuedItemsList = memo(
 					<div className="flex-1 h-px" style={{ backgroundColor: theme.colors.border }} />
 				</div>
 
-				{/* Queued items */}
-				{filteredQueue.map((item, index) => {
-					const displayText = item.type === 'command' ? (item.command ?? '') : (item.text ?? '');
-					const isLongMessage = displayText.length > 200;
-					const isQueuedExpanded = expandedQueuedMessages.has(item.id);
-					const isDragging = dragIndex === index;
-					const isDropTarget = dropIndex === index;
+				{/* Queued items (wrapped so drop-indicator lines align to the cards) */}
+				<div className="mx-6">
+					{filteredQueue.map((item, index) => {
+						// Force Send visibility: setting enabled, item not already forceParallel,
+						// a handler is wired, the target tab is idle (force-parallel only helps
+						// when *this* tab can dispatch), and at least one other tab is busy
+						// (otherwise nothing to bypass).
+						const forceSendContext =
+							forcedParallelEnabled &&
+							onForceSendQueuedItem &&
+							getForceSendContext &&
+							!item.forceParallel
+								? getForceSendContext(item)
+								: null;
+						const showForceSendButton =
+							!!forceSendContext &&
+							!forceSendContext.targetTabBusy &&
+							forceSendContext.otherBusyTabs.length > 0;
 
-					// Force Send visibility: setting enabled, item not already forceParallel,
-					// a handler is wired, the target tab is idle (force-parallel only helps
-					// when *this* tab can dispatch), and at least one other tab is busy
-					// (otherwise nothing to bypass).
-					const forceSendContext =
-						forcedParallelEnabled &&
-						onForceSendQueuedItem &&
-						getForceSendContext &&
-						!item.forceParallel
-							? getForceSendContext(item)
-							: null;
-					const showForceSendButton =
-						!!forceSendContext &&
-						!forceSendContext.targetTabBusy &&
-						forceSendContext.otherBusyTabs.length > 0;
-
-					return (
-						<div
-							key={item.id}
-							draggable={canDrag}
-							onDragStart={() => handleDragStart(index)}
-							onDragOver={(e) => handleDragOver(e, index)}
-							onDragEnd={handleDragEnd}
-							onDragLeave={handleDragLeave}
-							className="mx-6 mb-2 p-3 rounded-lg relative group transition-all flex flex-col"
-							style={{
-								// Reserve enough vertical room for the stacked top-right
-								// Remove (X) and Copy buttons, plus the bottom-right Force
-								// Send button when shown, without overlap.
-								// X+Copy stack: 8 + 24 + 4 + 22 = 58px from top.
-								// Force Send (pushed to bottom via mt-auto): ~28px button.
-								minHeight: showForceSendButton ? '7rem' : '4.25rem',
-								backgroundColor:
-									item.type === 'command'
-										? theme.colors.success + '20'
-										: theme.colors.accent + '20',
-								borderLeft: `3px solid ${item.type === 'command' ? theme.colors.success : theme.colors.accent}`,
-								opacity: isDragging ? 0.4 : 0.6,
-								transform: isDropTarget ? 'translateY(4px)' : 'none',
-								boxShadow: isDropTarget ? `0 -2px 0 0 ${theme.colors.accent}` : 'none',
-								cursor: canDrag ? 'grab' : 'default',
-							}}
-						>
-							{/* Drag handle - only show when draggable */}
-							{canDrag && (
-								<div
-									className="absolute left-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-50 transition-opacity"
-									style={{ color: theme.colors.textDim }}
-								>
-									<GripVertical className="w-4 h-4" />
-								</div>
-							)}
-
-							{/* Top-right: Remove button */}
-							<button
-								onClick={() => setQueueRemoveConfirmId(item.id)}
-								className="absolute top-2 right-2 p-1 rounded hover:bg-black/20 transition-colors opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
-								style={{ color: theme.colors.textDim }}
-								title="Remove from queue"
-							>
-								<X className="w-4 h-4" />
-							</button>
-
-							{/* Copy button - directly under the Remove (X) button */}
-							<button
-								onClick={() => handleCopy(item)}
-								className="absolute top-9 right-2 p-1 rounded hover:bg-black/20 transition-colors opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
-								style={{
-									color: copiedItemId === item.id ? theme.colors.success : theme.colors.textDim,
-								}}
-								title="Copy to clipboard"
-							>
-								{copiedItemId === item.id ? (
-									<Check className="w-3.5 h-3.5" />
-								) : (
-									<Copy className="w-3.5 h-3.5" />
-								)}
-							</button>
-
-							{/* Item content */}
-							<div
-								className={`text-sm pr-8 whitespace-pre-wrap break-words ${canDrag ? 'pl-4' : ''}`}
-								style={{ color: theme.colors.textMain }}
-							>
-								{item.type === 'command' && (
-									<span className="flex items-baseline gap-1 overflow-hidden">
-										<span
-											className="shrink-0"
-											style={{ color: theme.colors.success, fontWeight: 600 }}
-										>
-											{item.command}
-										</span>
-										<span
-											className="truncate min-w-0"
-											style={{
-												color: item.commandArgs ? theme.colors.textMain : theme.colors.textDim,
-											}}
-										>
-											{item.commandArgs || item.commandDescription}
-										</span>
-									</span>
-								)}
-								{item.type === 'message' &&
-									(isLongMessage && !isQueuedExpanded
-										? displayText.substring(0, 200) + '...'
-										: displayText)}
-							</div>
-
-							{/* Show more/less toggle for long messages */}
-							{item.type === 'message' && isLongMessage && (
-								<button
-									onClick={() => toggleExpanded(item.id)}
-									className="flex items-center gap-1 mt-2 text-xs px-2 py-1 rounded hover:opacity-70 transition-opacity"
-									style={{
-										color: theme.colors.accent,
-										backgroundColor: theme.colors.bgActivity,
-									}}
-								>
-									{isQueuedExpanded ? (
-										<>
-											<ChevronUp className="w-3 h-3" />
-											Show less
-										</>
-									) : (
-										<>
-											<ChevronDown className="w-3 h-3" />
-											Show all ({displayText.split('\n').length} lines)
-										</>
-									)}
-								</button>
-							)}
-
-							{/* Images indicator */}
-							{item.images && item.images.length > 0 && (
-								<div className="mt-1 text-xs" style={{ color: theme.colors.textDim }}>
-									{item.images.length} image{item.images.length > 1 ? 's' : ''} attached
-								</div>
-							)}
-
-							{/* Bottom-right: Force Send button (mt-auto pushes to bottom of flex column) */}
-							{showForceSendButton && (
-								<div className="mt-auto pt-2 flex justify-end">
-									<button
-										onClick={() => setForceSendConfirmId(item.id)}
-										className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium hover:opacity-80 transition-opacity"
-										style={{
-											backgroundColor: theme.colors.warning + '33',
-											color: theme.colors.warning,
-										}}
-										title="Force send this message now (skips cross-tab wait)"
-									>
-										<Hammer className="w-3.5 h-3.5" />
-										Force Send
-									</button>
-								</div>
-							)}
-						</div>
-					);
-				})}
+						return (
+							<React.Fragment key={item.id}>
+								{/* Drop indicator before this item */}
+								<QueueDropZone
+									theme={theme}
+									isActive={
+										dropIndicator?.key === INLINE_QUEUE_KEY && dropIndicator?.index === index
+									}
+									onDragOver={() => overDrag(INLINE_QUEUE_KEY, index)}
+								/>
+								<QueuedItemRow
+									item={item}
+									index={index}
+									theme={theme}
+									canDrag={canDrag}
+									isDragging={dragState?.key === INLINE_QUEUE_KEY && dragState?.fromIndex === index}
+									isAnyDragging={isAnyDragging}
+									onDragStart={() => startDrag(INLINE_QUEUE_KEY, index)}
+									onDragEnd={endDrag}
+									onDragCancel={cancelDrag}
+									onDragOver={(gapIndex) => overDrag(INLINE_QUEUE_KEY, gapIndex)}
+									isExpanded={expandedQueuedMessages.has(item.id)}
+									onToggleExpand={() => toggleExpanded(item.id)}
+									isCopied={copiedItemId === item.id}
+									onCopy={() => handleCopy(item)}
+									showForceSendButton={showForceSendButton}
+									onForceSend={() => setForceSendConfirmId(item.id)}
+									onTogglePause={
+										onTogglePauseQueuedItem ? () => onTogglePauseQueuedItem(item.id) : undefined
+									}
+									onRequestRemove={() => setQueueRemoveConfirmId(item.id)}
+								/>
+							</React.Fragment>
+						);
+					})}
+					{/* Final drop zone after all items */}
+					<QueueDropZone
+						theme={theme}
+						isActive={
+							dropIndicator?.key === INLINE_QUEUE_KEY &&
+							dropIndicator?.index === filteredQueue.length
+						}
+						onDragOver={() => overDrag(INLINE_QUEUE_KEY, filteredQueue.length)}
+					/>
+				</div>
 
 				{/* Queue removal confirmation modal */}
 				{queueRemoveConfirmId && (
@@ -456,3 +341,226 @@ export const QueuedItemsList = memo(
 );
 
 QueuedItemsList.displayName = 'QueuedItemsList';
+
+// ============================================================================
+// QueuedItemRow - a single draggable queued item in the inline chat list.
+// Uses the shared queue-drag primitives so the handle, press-to-grab feel, and
+// grabbed visual effect match the Execution Queue modal exactly.
+// ============================================================================
+
+interface QueuedItemRowProps {
+	item: QueuedItem;
+	index: number;
+	theme: Theme;
+	canDrag: boolean;
+	isDragging: boolean;
+	isAnyDragging: boolean;
+	onDragStart: () => void;
+	onDragEnd: () => void;
+	onDragCancel: () => void;
+	onDragOver: (gapIndex: number) => void;
+	isExpanded: boolean;
+	onToggleExpand: () => void;
+	isCopied: boolean;
+	onCopy: () => void;
+	showForceSendButton: boolean;
+	onForceSend: () => void;
+	onTogglePause?: () => void;
+	onRequestRemove: () => void;
+}
+
+function QueuedItemRow({
+	item,
+	index,
+	theme,
+	canDrag,
+	isDragging,
+	isAnyDragging,
+	onDragStart,
+	onDragEnd,
+	onDragCancel,
+	onDragOver,
+	isExpanded,
+	onToggleExpand,
+	isCopied,
+	onCopy,
+	showForceSendButton,
+	onForceSend,
+	onTogglePause,
+	onRequestRemove,
+}: QueuedItemRowProps) {
+	const { rowRef, visual, wrapperHandlers, cardHandlers } = useQueueRowDrag({
+		index,
+		canDrag,
+		isDragging,
+		isAnyDragging,
+		onDragStart,
+		onDragEnd,
+		onDragCancel,
+		onDragOver,
+	});
+	const { showDragReady, showGrabbed, isDimmed } = visual;
+
+	const isCommand = item.type === 'command';
+	const isPaused = !!item.paused;
+	const displayText = isCommand ? (item.command ?? '') : (item.text ?? '');
+	const isLongMessage = displayText.length > 200;
+	const accent = isCommand ? theme.colors.success : theme.colors.accent;
+
+	return (
+		<div
+			ref={rowRef}
+			className="relative mb-2"
+			style={{ zIndex: isDragging ? 50 : 1 }}
+			{...wrapperHandlers}
+		>
+			<div
+				className="p-3 rounded-lg relative group flex flex-col select-none"
+				style={{
+					backgroundColor: accent + '20',
+					borderLeft: `3px solid ${accent}`,
+					cursor: canDrag ? (isDragging ? 'grabbing' : 'grab') : 'default',
+					...queueDragCardStyle(theme, { isDragging, showGrabbed }),
+					// Queued items render dimmed (they're pending); lift the grabbed one and
+					// recede the rest while a drag is in progress.
+					opacity: isDragging ? 0.95 : isPaused ? 0.35 : isDimmed ? 0.3 : 0.6,
+				}}
+				{...cardHandlers}
+			>
+				{/* Drag handle - only show when draggable */}
+				{canDrag && <QueueDragHandle theme={theme} visible={showDragReady || showGrabbed} />}
+
+				{/* HELD badge for paused items */}
+				{isPaused && (
+					<div className={canDrag ? 'pl-4 mb-1.5' : 'mb-1.5'}>
+						<span
+							className="px-1.5 py-0.5 rounded text-[10px] font-bold tracking-wider"
+							style={{
+								backgroundColor: theme.colors.warning + '33',
+								color: theme.colors.warning,
+							}}
+						>
+							HELD
+						</span>
+					</div>
+				)}
+
+				{/* Item content */}
+				<div
+					className={`text-sm whitespace-pre-wrap break-words ${canDrag ? 'pl-4' : ''}`}
+					style={{ color: theme.colors.textMain }}
+				>
+					{isCommand && (
+						<span className="flex items-baseline gap-1 overflow-hidden">
+							<span className="shrink-0" style={{ color: theme.colors.success, fontWeight: 600 }}>
+								{item.command}
+							</span>
+							<span
+								className="truncate min-w-0"
+								style={{
+									color: item.commandArgs ? theme.colors.textMain : theme.colors.textDim,
+								}}
+							>
+								{item.commandArgs || item.commandDescription}
+							</span>
+						</span>
+					)}
+					{!isCommand &&
+						(isLongMessage && !isExpanded ? displayText.substring(0, 200) + '...' : displayText)}
+				</div>
+
+				{/* Show more/less toggle for long messages */}
+				{!isCommand && isLongMessage && (
+					<button
+						onClick={onToggleExpand}
+						className="flex items-center gap-1 mt-2 text-xs px-2 py-1 rounded hover:opacity-70 transition-opacity"
+						style={{
+							color: theme.colors.accent,
+							backgroundColor: theme.colors.bgActivity,
+						}}
+					>
+						{isExpanded ? (
+							<>
+								<ChevronUp className="w-3 h-3" />
+								Show less
+							</>
+						) : (
+							<>
+								<ChevronDown className="w-3 h-3" />
+								Show all ({displayText.split('\n').length} lines)
+							</>
+						)}
+					</button>
+				)}
+
+				{/* Images indicator */}
+				{item.images && item.images.length > 0 && (
+					<div className="mt-1 text-xs" style={{ color: theme.colors.textDim }}>
+						{item.images.length} image{item.images.length > 1 ? 's' : ''} attached
+					</div>
+				)}
+
+				{/* Bottom footer: Force Send anchored bottom-left, control
+				    buttons anchored bottom-right (always visible). mt-auto
+				    pushes the row to the bottom of the flex column. */}
+				<div className="mt-auto pt-2 flex items-center gap-2">
+					{showForceSendButton && (
+						<button
+							onClick={onForceSend}
+							className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium hover:opacity-80 transition-opacity"
+							style={{
+								backgroundColor: theme.colors.warning + '33',
+								color: theme.colors.warning,
+							}}
+							title="Force send this message now (skips cross-tab wait)"
+						>
+							<Hammer className="w-3.5 h-3.5" />
+							Force Send
+						</button>
+					)}
+
+					<div className="ml-auto flex items-center gap-1">
+						{/* Copy button */}
+						<button
+							onClick={onCopy}
+							className="p-1 rounded hover:bg-black/20 transition-colors"
+							style={{ color: isCopied ? theme.colors.success : theme.colors.textDim }}
+							title="Copy to clipboard"
+						>
+							{isCopied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+						</button>
+
+						{/* Hold/Resume button */}
+						{onTogglePause && (
+							<button
+								onClick={onTogglePause}
+								className="p-1 rounded hover:bg-black/20 transition-colors"
+								style={{ color: isPaused ? theme.colors.warning : theme.colors.textDim }}
+								title={
+									isPaused
+										? 'Resume this message (let it run when its turn comes)'
+										: 'Hold this message (skip it until you resume)'
+								}
+							>
+								{isPaused ? <Play className="w-3.5 h-3.5" /> : <Pause className="w-3.5 h-3.5" />}
+							</button>
+						)}
+
+						{/* Remove button */}
+						<button
+							onClick={onRequestRemove}
+							className="p-1 rounded hover:bg-black/20 transition-colors"
+							style={{ color: theme.colors.textDim }}
+							title="Remove from queue"
+						>
+							<X className="w-4 h-4" />
+						</button>
+					</div>
+				</div>
+
+				{/* Shimmer effect when grabbed */}
+				<QueueDragShimmer theme={theme} visible={showGrabbed} />
+			</div>
+		</div>
+	);
+}

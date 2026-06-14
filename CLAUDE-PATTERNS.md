@@ -81,6 +81,8 @@ useEffect(() => {
 }, [isOpen, registerLayer, unregisterLayer]);
 ```
 
+**Max size:** The Maestro Cue modal (`90vw x 90vh`) is the maximum modal footprint - no modal, including "expanded"/"fullscreen" states, should exceed it (never `w-screen h-screen`). See [UI-PATTERNS.md → Modal Sizing](docs/agent-guides/UI-PATTERNS.md#modal-sizing-max-footprint).
+
 ## 5. Theme Colors
 
 Themes have 13 required colors. Use inline styles for theme colors:

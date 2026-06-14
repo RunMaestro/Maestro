@@ -98,9 +98,11 @@ import type {
 	DeleteGroupCallback,
 	MoveSessionToGroupCallback,
 	CreateSessionCallback,
+	CreateWorktreeSessionCallback,
 	CreateSessionConfig,
 	DeleteSessionCallback,
 	RenameSessionCallback,
+	UpdateSessionCwdCallback,
 	GetGitStatusCallback,
 	GetGitDiffCallback,
 	GetGitBranchesForSessionCallback,
@@ -579,12 +581,20 @@ export class WebServer {
 		this.callbackRegistry.setCreateSessionCallback(callback);
 	}
 
+	setCreateWorktreeSessionCallback(callback: CreateWorktreeSessionCallback): void {
+		this.callbackRegistry.setCreateWorktreeSessionCallback(callback);
+	}
+
 	setDeleteSessionCallback(callback: DeleteSessionCallback): void {
 		this.callbackRegistry.setDeleteSessionCallback(callback);
 	}
 
 	setRenameSessionCallback(callback: RenameSessionCallback): void {
 		this.callbackRegistry.setRenameSessionCallback(callback);
+	}
+
+	setUpdateSessionCwdCallback(callback: UpdateSessionCwdCallback): void {
+		this.callbackRegistry.setUpdateSessionCwdCallback(callback);
 	}
 
 	setGetGitStatusCallback(callback: GetGitStatusCallback): void {
@@ -1013,9 +1023,15 @@ export class WebServer {
 				groupId?: string,
 				config?: CreateSessionConfig
 			) => this.callbackRegistry.createSession(name, toolType, cwd, groupId, config),
+			createWorktreeSession: async (
+				parentSessionId: string,
+				config: Parameters<CallbackRegistry['createWorktreeSession']>[1]
+			) => this.callbackRegistry.createWorktreeSession(parentSessionId, config),
 			deleteSession: async (sessionId: string) => this.callbackRegistry.deleteSession(sessionId),
 			renameSession: async (sessionId: string, newName: string) =>
 				this.callbackRegistry.renameSession(sessionId, newName),
+			updateSessionCwd: async (sessionId: string, newCwd: string) =>
+				this.callbackRegistry.updateSessionCwd(sessionId, newCwd),
 			getGitStatus: async (sessionId: string) => this.callbackRegistry.getGitStatus(sessionId),
 			getGitDiff: async (sessionId: string, filePath?: string) =>
 				this.callbackRegistry.getGitDiff(sessionId, filePath),

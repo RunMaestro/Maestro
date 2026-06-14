@@ -561,6 +561,30 @@ describe('error-patterns', () => {
 					expect(result?.type).toBe('agent_crashed');
 				});
 			});
+
+			describe('session_not_found patterns', () => {
+				// Real stderr emitted by `codex exec resume <id>` (codex-cli 0.130.0)
+				// when the rollout file backing the thread is missing. Regression
+				// guard for #1042 — must NOT fall through to agent_crashed.
+				it('should match Codex "no rollout found for thread id" resume failure', () => {
+					const stderr =
+						'Error: thread/resume: thread/resume failed: no rollout found for thread id 019e4aa3-5e01-73e1-9f61-d3961386dafd (code -32600)';
+					const result = matchErrorPattern(CODEX_ERROR_PATTERNS, stderr);
+					expect(result).not.toBeNull();
+					expect(result?.type).toBe('session_not_found');
+					expect(result?.recoverable).toBe(true);
+				});
+
+				it('should match "rollout not found"', () => {
+					const result = matchErrorPattern(CODEX_ERROR_PATTERNS, 'rollout not found');
+					expect(result?.type).toBe('session_not_found');
+				});
+
+				it('should match generic "session not found"', () => {
+					const result = matchErrorPattern(CODEX_ERROR_PATTERNS, 'session not found');
+					expect(result?.type).toBe('session_not_found');
+				});
+			});
 		});
 	});
 

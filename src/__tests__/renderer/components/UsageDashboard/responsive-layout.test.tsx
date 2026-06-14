@@ -16,6 +16,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, act, fireEvent } from '@testing-library/react';
 import { UsageDashboardModal } from '../../../../renderer/components/UsageDashboard/UsageDashboardModal';
+import { useUIStore } from '../../../../renderer/stores/uiStore';
 import type { Theme } from '../../../../renderer/types';
 
 // Mock lucide-react icons
@@ -52,7 +53,9 @@ vi.mock('lucide-react', () => {
 		Globe: createIcon('globe', '🌐'),
 		Zap: createIcon('zap', '⚡'),
 		PanelTop: createIcon('panel-top', '🔲'),
+		Keyboard: createIcon('keyboard', '⌨️'),
 		Trophy: createIcon('trophy', '🏆'),
+		Sparkles: createIcon('sparkles', '✨'),
 		Briefcase: createIcon('briefcase', '💼'),
 		Coffee: createIcon('coffee', '☕'),
 		Filter: createIcon('filter', '🔍'),
@@ -170,6 +173,15 @@ Object.defineProperty(window, 'maestro', {
 		},
 		dialog: { saveFile: mockSaveFile },
 		fs: { writeFile: mockWriteFile },
+		// Usage snapshot samplers fired by the dashboard's quota-on-open effect.
+		// Without these the effect throws on `window.maestro.agents` and leaks an
+		// unhandled rejection.
+		agents: {
+			refreshClaudeUsageSnapshots: vi.fn().mockResolvedValue({ refreshed: 0 }),
+			refreshCodexUsageSnapshots: vi.fn().mockResolvedValue({ refreshed: 0 }),
+			getClaudeUsageSnapshots: vi.fn().mockResolvedValue({}),
+			getCodexUsageSnapshots: vi.fn().mockResolvedValue({}),
+		},
 		// Minimum surface needed by `useGlobalAgentStats` (called from the
 		// dashboard's Achievement share image flow).
 		agentSessions: {
@@ -206,6 +218,18 @@ const createSampleData = () => ({
 	totalQueries: 150,
 	totalDuration: 3600000,
 	avgDuration: 24000,
+	queryDurationPercentiles: { count: 0, min: 0, p50: 0, p75: 0, p90: 0, p95: 0, p99: 0, max: 0 },
+	queryDurationPercentilesByAgent: {},
+	autoRunTaskDurationPercentiles: {
+		count: 0,
+		min: 0,
+		p50: 0,
+		p75: 0,
+		p90: 0,
+		p95: 0,
+		p99: 0,
+		max: 0,
+	},
 	byAgent: {
 		'claude-code': { count: 100, duration: 2400000 },
 		terminal: { count: 50, duration: 1200000 },
@@ -243,6 +267,10 @@ describe('UsageDashboard Responsive Layout', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		// The dashboard tab is persisted in the shared uiStore singleton across
+		// tests in this file. Reset it so each test starts on 'overview' instead of
+		// inheriting the tab a prior test switched to.
+		useUIStore.setState({ usageDashboardViewMode: 'overview' });
 		mockGetAggregation.mockResolvedValue(createSampleData());
 		mockExportCsv.mockResolvedValue('date,count\n2024-01-15,25');
 		mockSaveFile.mockResolvedValue(null);
@@ -765,12 +793,19 @@ describe('UsageDashboard Responsive Layout', () => {
 			});
 		});
 
-		it('activity heatmap has minimum height of 200px', async () => {
+		it('activity heatmap has minimum height of 300px', async () => {
 			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
 
 			await waitFor(() => {
+				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
+			});
+
+			// Activity heatmap lives on the Activity tab - switch to it before checking.
+			fireEvent.click(screen.getByRole('tab', { name: 'Activity' }));
+
+			await waitFor(() => {
 				const heatmapSection = screen.getByTestId('section-activity-heatmap');
-				expect(heatmapSection).toHaveStyle({ minHeight: '200px' });
+				expect(heatmapSection).toHaveStyle({ minHeight: '300px' });
 			});
 		});
 
@@ -781,7 +816,7 @@ describe('UsageDashboard Responsive Layout', () => {
 				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
 			});
 
-			// Duration trends moved to the Activity tab — switch to it before checking.
+			// Duration trends moved to the Activity tab - switch to it before checking.
 			fireEvent.click(screen.getByRole('tab', { name: 'Activity' }));
 
 			await waitFor(() => {
@@ -804,6 +839,13 @@ describe('UsageDashboard Responsive Layout', () => {
 
 		it('activity heatmap has horizontal scroll for year view', async () => {
 			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
+			});
+
+			// Activity heatmap lives on the Activity tab - switch to it before checking.
+			fireEvent.click(screen.getByRole('tab', { name: 'Activity' }));
 
 			await waitFor(() => {
 				const heatmapSection = screen.getByTestId('section-activity-heatmap');

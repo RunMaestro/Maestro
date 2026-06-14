@@ -23,7 +23,8 @@ import { logger } from '../../utils/logger';
 import { withIpcErrorLogging } from '../../utils/ipcHandler';
 import { isWebContentsAvailable } from '../../utils/safe-send';
 import { getSessionStorage, hasSessionStorage, getAllSessionStorages } from '../../agents';
-import { calculateClaudeCost } from '../../utils/pricing';
+import { getSshRemoteById as getSshRemoteByIdFromStore } from '../../stores';
+import { calculateModelCost, computeClaudeUsageCost } from '../../utils/pricing';
 import {
 	loadGlobalStatsCache,
 	saveGlobalStatsCache,
@@ -41,7 +42,6 @@ import type {
 	SessionReadOptions,
 } from '../../agents';
 import type { GlobalAgentStats, ProviderStats, SshRemoteConfig } from '../../../shared/types';
-import type { MaestroSettings } from './persistence';
 import { captureException } from '../../utils/sentry';
 import { getHistoryManager } from '../../history-manager';
 
@@ -70,24 +70,16 @@ export interface AgentSessionOriginsData {
 export interface AgentSessionsHandlerDependencies {
 	getMainWindow: () => BrowserWindow | null;
 	agentSessionOriginsStore?: Store<AgentSessionOriginsData>;
-	/** Settings store for SSH remote configuration lookup */
-	settingsStore?: Store<MaestroSettings>;
 }
 
-// Module-level reference to settings store (set during registration)
-let agentSessionsSettingsStore: Store<MaestroSettings> | undefined;
-
 /**
- * Get SSH remote configuration by ID from the settings store.
- * Returns undefined if not found or store not provided.
+ * Resolve an enabled SSH remote by ID via the shared settings store.
+ * Wrapper around the canonical getter; preserves the `enabled` filter that
+ * this handler used historically so disabled remotes never silently route SSH.
  */
 function getSshRemoteById(sshRemoteId: string): SshRemoteConfig | undefined {
-	if (!agentSessionsSettingsStore) {
-		logger.warn(`${LOG_CONTEXT} Settings store not available for SSH remote lookup`, LOG_CONTEXT);
-		return undefined;
-	}
-	const sshRemotes = agentSessionsSettingsStore.get('sshRemotes', []) as SshRemoteConfig[];
-	return sshRemotes.find((r) => r.id === sshRemoteId && r.enabled);
+	const remote = getSshRemoteByIdFromStore(sshRemoteId);
+	return remote?.enabled ? remote : undefined;
 }
 
 /**
@@ -116,22 +108,8 @@ function parseClaudeSessionContent(
 	const userMessageCount = (content.match(/"type"\s*:\s*"user"/g) || []).length;
 	const assistantMessageCount = (content.match(/"type"\s*:\s*"assistant"/g) || []).length;
 
-	let inputTokens = 0;
-	let outputTokens = 0;
-	let cacheReadTokens = 0;
-	let cacheCreationTokens = 0;
-
-	const inputMatches = content.matchAll(/"input_tokens"\s*:\s*(\d+)/g);
-	for (const m of inputMatches) inputTokens += parseInt(m[1], 10);
-
-	const outputMatches = content.matchAll(/"output_tokens"\s*:\s*(\d+)/g);
-	for (const m of outputMatches) outputTokens += parseInt(m[1], 10);
-
-	const cacheReadMatches = content.matchAll(/"cache_read_input_tokens"\s*:\s*(\d+)/g);
-	for (const m of cacheReadMatches) cacheReadTokens += parseInt(m[1], 10);
-
-	const cacheCreationMatches = content.matchAll(/"cache_creation_input_tokens"\s*:\s*(\d+)/g);
-	for (const m of cacheCreationMatches) cacheCreationTokens += parseInt(m[1], 10);
+	const { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, costUsd } =
+		computeClaudeUsageCost(content);
 
 	return {
 		messages: userMessageCount + assistantMessageCount,
@@ -141,6 +119,7 @@ function parseClaudeSessionContent(
 		cacheCreationTokens,
 		cachedInputTokens: 0,
 		sizeBytes,
+		costUsd,
 	};
 }
 
@@ -340,6 +319,7 @@ function aggregateProviderStats(
 	let totalCacheCreationTokens = 0;
 	let totalCachedInputTokens = 0;
 	let totalSizeBytes = 0;
+	let totalCostUsd = 0;
 
 	for (const stats of Object.values(sessions)) {
 		totalMessages += stats.messages;
@@ -349,16 +329,19 @@ function aggregateProviderStats(
 		totalCacheCreationTokens += stats.cacheCreationTokens;
 		totalCachedInputTokens += stats.cachedInputTokens;
 		totalSizeBytes += stats.sizeBytes;
+		// Prefer the per-model cost stored at parse time; fall back to flat-rate
+		// pricing for cache entries written before per-model cost was tracked.
+		totalCostUsd +=
+			stats.costUsd ??
+			calculateModelCost({
+				inputTokens: stats.inputTokens,
+				outputTokens: stats.outputTokens,
+				cacheReadTokens: stats.cacheReadTokens,
+				cacheCreationTokens: stats.cacheCreationTokens,
+			});
 	}
 
-	const costUsd = hasCostData
-		? calculateClaudeCost(
-				totalInputTokens,
-				totalOutputTokens,
-				totalCacheReadTokens,
-				totalCacheCreationTokens
-			)
-		: 0;
+	const costUsd = hasCostData ? totalCostUsd : 0;
 
 	return {
 		sessions: Object.keys(sessions).length,
@@ -379,9 +362,6 @@ function aggregateProviderStats(
  */
 export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDependencies): void {
 	const getMainWindow = deps?.getMainWindow;
-
-	// Store settings reference for SSH remote lookups
-	agentSessionsSettingsStore = deps?.settingsStore;
 
 	// ============ List Sessions ============
 

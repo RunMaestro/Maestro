@@ -5,6 +5,7 @@ import {
 	selectIsLeaderboardRegistered,
 } from '../../../renderer/stores/settingsStore';
 import type { SettingsStoreState } from '../../../renderer/stores/settingsStore';
+import { useUIStore } from '../../../renderer/stores/uiStore';
 import type { FileExplorerIconTheme } from '../../../renderer/utils/fileExplorerIcons/shared';
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS } from '../../../renderer/constants/shortcuts';
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../../../renderer/constants/themes';
@@ -64,6 +65,7 @@ function resetStore() {
 	useSettingsStore.setState({
 		settingsLoaded: false,
 		conductorProfile: '',
+		globalShowHotkey: [],
 		llmProvider: 'openrouter',
 		modelSlug: 'anthropic/claude-3.5-sonnet',
 		apiKey: '',
@@ -90,7 +92,7 @@ function resetStore() {
 		terminalWidth: 100,
 		logLevel: 'info',
 		maxLogBuffer: 5000,
-		maxOutputLines: 25,
+		maxOutputLines: Infinity,
 		osNotificationsEnabled: true,
 		audioFeedbackEnabled: false,
 		audioFeedbackCommand: 'say',
@@ -194,7 +196,7 @@ describe('settingsStore', () => {
 			expect(state.terminalWidth).toBe(100);
 			expect(state.logLevel).toBe('info');
 			expect(state.maxLogBuffer).toBe(5000);
-			expect(state.maxOutputLines).toBe(25);
+			expect(state.maxOutputLines).toBe(Infinity);
 			expect(state.osNotificationsEnabled).toBe(true);
 			expect(state.audioFeedbackEnabled).toBe(false);
 			expect(state.audioFeedbackCommand).toBe('say');
@@ -211,6 +213,8 @@ describe('settingsStore', () => {
 			expect(state.usageStats).toEqual(DEFAULT_USAGE_STATS);
 			expect(state.ungroupedCollapsed).toBe(false);
 			expect(state.groupChatsExpanded).toBe(true);
+			expect(state.groupChatSortAlphabetical).toBe(false);
+			expect(state.starredSessionsCollapsed).toBe(false);
 			expect(state.tourCompleted).toBe(false);
 			expect(state.firstAutoRunCompleted).toBe(false);
 			expect(state.onboardingStats).toEqual(DEFAULT_ONBOARDING_STATS);
@@ -508,6 +512,18 @@ describe('settingsStore', () => {
 				useSettingsStore.getState().setGroupChatsExpanded(false);
 				expect(useSettingsStore.getState().groupChatsExpanded).toBe(false);
 				expect(window.maestro.settings.set).toHaveBeenCalledWith('groupChatsExpanded', false);
+			});
+
+			it('setGroupChatSortAlphabetical updates state and persists', () => {
+				useSettingsStore.getState().setGroupChatSortAlphabetical(true);
+				expect(useSettingsStore.getState().groupChatSortAlphabetical).toBe(true);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('groupChatSortAlphabetical', true);
+			});
+
+			it('setStarredSessionsCollapsed updates state and persists', () => {
+				useSettingsStore.getState().setStarredSessionsCollapsed(true);
+				expect(useSettingsStore.getState().starredSessionsCollapsed).toBe(true);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('starredSessionsCollapsed', true);
 			});
 
 			it('setTourCompleted updates state and persists', () => {
@@ -1443,6 +1459,27 @@ describe('settingsStore', () => {
 			expect(state.settingsLoaded).toBe(true);
 			expect(state.fontFamily).toBe('Roboto Mono, Menlo, "Courier New", monospace');
 			expect(state.fontSize).toBe(14);
+		});
+
+		it('loads persisted starredSessionsCollapsed into the settings store', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				starredSessionsCollapsed: true,
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().starredSessionsCollapsed).toBe(true);
+		});
+
+		it('hydrates persisted bookmarksCollapsed into the uiStore', async () => {
+			useUIStore.setState({ bookmarksCollapsed: false });
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				bookmarksCollapsed: true,
+			});
+
+			await loadAllSettings();
+
+			expect(useUIStore.getState().bookmarksCollapsed).toBe(true);
 		});
 
 		it('sets settingsLoaded = true on failure', async () => {

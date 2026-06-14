@@ -1,4 +1,4 @@
-import React, { RefObject } from 'react';
+import React, { RefObject, useCallback, useEffect, useRef, useState } from 'react';
 import { List, ChevronUp, ChevronDown } from 'lucide-react';
 import type { TocEntry } from './types';
 
@@ -14,6 +14,13 @@ interface FilePreviewTocProps {
 	tocOverlayRef: RefObject<HTMLDivElement>;
 	isMarkdown: boolean;
 	markdownEditMode: boolean;
+	/**
+	 * Optional scroll-by-slug callback. Used by the Fast tier where headings
+	 * are virtualized and most aren't in the DOM (so a plain querySelector
+	 * fails). Should return true when the scroll was handled; false falls
+	 * back to the default querySelector + scrollIntoView path.
+	 */
+	onSelectHeading?: (slug: string) => boolean;
 }
 
 export const FilePreviewToc = React.memo(function FilePreviewToc({
@@ -28,7 +35,59 @@ export const FilePreviewToc = React.memo(function FilePreviewToc({
 	tocOverlayRef,
 	isMarkdown,
 	markdownEditMode,
+	onSelectHeading,
 }: FilePreviewTocProps) {
+	const headingButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
+	const [activeIndex, setActiveIndex] = useState(0);
+	const prevShowRef = useRef(false);
+
+	// Focus the first heading whenever the overlay opens — supports keyboard-only nav.
+	useEffect(() => {
+		if (showTocOverlay && !prevShowRef.current && tocEntries.length > 0) {
+			setActiveIndex(0);
+			requestAnimationFrame(() => {
+				headingButtonRefs.current[0]?.focus();
+			});
+		}
+		prevShowRef.current = showTocOverlay;
+	}, [showTocOverlay, tocEntries.length]);
+
+	const scrollToHeading = useCallback(
+		(entry: TocEntry, behavior: ScrollBehavior) => {
+			if (onSelectHeading?.(entry.slug)) {
+				return;
+			}
+			const targetElement = markdownContainerRef.current?.querySelector(
+				`#${CSS.escape(entry.slug)}`
+			);
+			if (targetElement) {
+				targetElement.scrollIntoView({ behavior, block: 'start' });
+			}
+		},
+		[markdownContainerRef, onSelectHeading]
+	);
+
+	const handleEntriesKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+		if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Home' && e.key !== 'End') {
+			return;
+		}
+		// Stop propagation so the FilePreview container's arrow-scroll handler
+		// doesn't also fire and scroll the markdown by 40px on each press.
+		e.preventDefault();
+		e.stopPropagation();
+		const last = tocEntries.length - 1;
+		let next = activeIndex;
+		if (e.key === 'ArrowDown') next = Math.min(activeIndex + 1, last);
+		else if (e.key === 'ArrowUp') next = Math.max(activeIndex - 1, 0);
+		else if (e.key === 'Home') next = 0;
+		else if (e.key === 'End') next = last;
+		if (next === activeIndex) return;
+		setActiveIndex(next);
+		headingButtonRefs.current[next]?.focus();
+		// Instant scroll on keyboard nav so rapid arrow presses stay responsive.
+		scrollToHeading(tocEntries[next], 'auto');
+	};
+
 	if (!isMarkdown || markdownEditMode || tocEntries.length === 0) {
 		return null;
 	}
@@ -101,6 +160,7 @@ export const FilePreviewToc = React.memo(function FilePreviewToc({
 						className="overflow-y-auto px-1 py-1 flex-1 min-h-0"
 						style={{ overscrollBehavior: 'contain' }}
 						onWheel={(e) => e.stopPropagation()}
+						onKeyDown={handleEntriesKeyDown}
 					>
 						{tocEntries.map((entry, index) => {
 							// Get color based on heading level (match the prose styles)
@@ -114,27 +174,29 @@ export const FilePreviewToc = React.memo(function FilePreviewToc({
 							};
 							const headingColor = levelColors[entry.level] || theme.colors.textMain;
 
+							const isActive = index === activeIndex;
 							return (
 								<button
 									key={`${entry.slug}-${index}`}
+									ref={(el) => {
+										headingButtonRefs.current[index] = el;
+									}}
 									onClick={() => {
-										// Find and scroll to the heading
-										const targetElement = markdownContainerRef.current?.querySelector(
-											`#${CSS.escape(entry.slug)}`
-										);
-										if (targetElement) {
-											targetElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
-										}
+										setActiveIndex(index);
+										// Click is deliberate — keep smooth scroll for visual continuity.
+										scrollToHeading(entry, 'smooth');
 										// ToC stays open so user can click multiple items
 										// Dismiss with click outside or Escape key
 									}}
-									className="w-full px-2 py-1.5 text-left text-sm rounded hover:bg-white/10 transition-colors flex items-center gap-1"
+									className="w-full px-2 py-1.5 text-left text-sm rounded hover:bg-white/10 transition-colors flex items-center gap-1 focus:outline-none"
 									style={{
 										color: headingColor,
 										paddingLeft: `${(entry.level - 1) * 12 + 8}px`,
 										opacity: entry.level > 3 ? 0.85 : 1,
 										fontSize:
 											entry.level === 1 ? '0.875rem' : entry.level === 2 ? '0.8125rem' : '0.75rem',
+										backgroundColor: isActive ? `${theme.colors.accent}25` : undefined,
+										boxShadow: isActive ? `inset 2px 0 0 ${theme.colors.accent}` : undefined,
 									}}
 									title={entry.text}
 								>

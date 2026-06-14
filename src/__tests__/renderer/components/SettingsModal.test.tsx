@@ -32,6 +32,11 @@ import type {
 	AgentConfig,
 } from '../../../renderer/types';
 
+// __APP_VERSION__ / __COMMIT_HASH__ are injected by the bundler at build time.
+// The About tab renders them, so stub them for the jsdom test environment.
+(globalThis as unknown as { __APP_VERSION__: string }).__APP_VERSION__ = '1.0.0';
+(globalThis as unknown as { __COMMIT_HASH__: string }).__COMMIT_HASH__ = '';
+
 // Mock the LayerStackContext
 vi.mock('../../../renderer/contexts/LayerStackContext', () => ({
 	useLayerStack: vi.fn(() => ({
@@ -214,6 +219,9 @@ vi.mock('../../../renderer/hooks/settings/useSettings', () => ({
 		// Conductor profile settings
 		conductorProfile: '',
 		setConductorProfile: vi.fn(),
+		// Global show-Maestro hotkey
+		globalShowHotkey: [],
+		setGlobalShowHotkey: vi.fn(),
 		// Context management settings
 		contextManagementSettings: {
 			autoGroomContexts: true,
@@ -287,6 +295,27 @@ vi.mock('../../../renderer/hooks/settings/useSettings', () => ({
 		// Symphony registry URLs
 		symphonyRegistryUrls: [],
 		setSymphonyRegistryUrls: vi.fn(),
+		// File Edit & Preview settings
+		fileEditWordWrap: true,
+		setFileEditWordWrap: vi.fn(),
+		fileEditShowLineNumbers: true,
+		setFileEditShowLineNumbers: vi.fn(),
+		filePreviewToolbarVisibility: {
+			save: true,
+			wordWrap: true,
+			remoteImages: true,
+			htmlRender: true,
+			previewTier: true,
+			editToggle: true,
+			editImage: true,
+			copyContent: true,
+			publishGist: true,
+			documentGraph: true,
+			openInBrowser: true,
+			openInDefault: true,
+			copyPath: true,
+		},
+		setFilePreviewToolbarButtonVisibility: vi.fn(),
 		...mockUseSettingsOverrides,
 	}),
 }));
@@ -396,6 +425,12 @@ describe('SettingsModal', () => {
 		(window.maestro as any).agents.getAllCustomPaths = vi.fn().mockResolvedValue({});
 		(window.maestro as any).agents.setCustomPath = vi.fn().mockResolvedValue(undefined);
 		(window.maestro as any).agents.setConfig = vi.fn().mockResolvedValue(undefined);
+		// Generic capability-snapshot stubs so any agentStore call made from
+		// Settings stays inert in tests that don't exercise that pipeline.
+		(window.maestro as any).agents.getAllSnapshots = vi.fn().mockResolvedValue({});
+		(window.maestro as any).agents.getSnapshot = vi.fn().mockResolvedValue(null);
+		(window.maestro as any).agents.reprobe = vi.fn().mockResolvedValue(null);
+		(window.maestro as any).agents.onSnapshotUpdated = vi.fn().mockReturnValue(() => {});
 	});
 
 	afterEach(() => {
@@ -537,11 +572,87 @@ describe('SettingsModal', () => {
 
 			expect(screen.getByPlaceholderText('Filter shortcuts...')).toBeInTheDocument();
 		});
+
+		it('should remember and restore per-tab vertical scroll position', async () => {
+			const { container } = render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			// The scrollable content panel is the one combining .p-6 + .overflow-y-auto
+			// (the sidebar nav uses overflow-y-auto but has no p-6).
+			const getContent = () => container.querySelector<HTMLDivElement>('.p-6.overflow-y-auto');
+			expect(getContent()).toBeTruthy();
+
+			// Scroll General down — simulates the user being deep in a long panel.
+			const general = getContent()!;
+			general.scrollTop = 420;
+			fireEvent.scroll(general);
+
+			// Switch to Shortcuts — never visited, should land at the top.
+			fireEvent.click(screen.getByTitle('Shortcuts'));
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+			expect(getContent()!.scrollTop).toBe(0);
+
+			// Scroll Shortcuts to a different position.
+			const shortcuts = getContent()!;
+			shortcuts.scrollTop = 180;
+			fireEvent.scroll(shortcuts);
+
+			// Back to General — restores 420.
+			fireEvent.click(screen.getByTitle('General'));
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+			expect(getContent()!.scrollTop).toBe(420);
+
+			// Back to Shortcuts — restores 180.
+			fireEvent.click(screen.getByTitle('Shortcuts'));
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+			expect(getContent()!.scrollTop).toBe(180);
+		});
+
+		it('should restore the saved scroll position when the modal is reopened', async () => {
+			const first = render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			fireEvent.click(screen.getByTitle('Display'));
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const getContent = (root: HTMLElement) =>
+				root.querySelector<HTMLDivElement>('.p-6.overflow-y-auto');
+			const display = getContent(first.container)!;
+			display.scrollTop = 300;
+			fireEvent.scroll(display);
+
+			first.unmount();
+
+			// Reopen — last tab AND last scroll position should be restored together.
+			const second = render(<SettingsModal {...createDefaultProps()} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			expect(getContent(second.container)?.scrollTop).toBe(300);
+		});
 	});
 
 	describe('keyboard tab navigation', () => {
-		it('should navigate to next tab with Cmd+Shift+]', async () => {
-			render(<SettingsModal {...createDefaultProps()} />);
+		// Sidebar is alphabetized by label, so the order under no LLM flag is:
+		// About, AI Commands, Display, Encore Features, Environment, General,
+		// Maestro Prompts, Notifications, Shortcuts, SSH Hosts, Themes.
+		it('should navigate to next tab with Cmd+Shift+] from default (general)', async () => {
+			render(<SettingsModal {...createDefaultProps({ initialTab: 'general' })} />);
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
@@ -550,18 +661,18 @@ describe('SettingsModal', () => {
 			// Start on general tab
 			expect(screen.getByText('Default Terminal Shell')).toBeInTheDocument();
 
-			// Press Cmd+Shift+] to go to display
+			// Press Cmd+Shift+] — alphabetically the next tab after General is Maestro Prompts
 			fireEvent.keyDown(window, { key: ']', metaKey: true, shiftKey: true });
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			// Display tab has Font Size
-			expect(screen.getByText('Font Size')).toBeInTheDocument();
+			// Maestro Prompts tab should now be the active sidebar entry
+			expect(screen.getByTitle('Maestro Prompts')).toHaveClass('font-bold');
 		});
 
-		it('should navigate to previous tab with Cmd+Shift+[', async () => {
+		it('should navigate to previous tab with Cmd+Shift+[ from shortcuts', async () => {
 			render(<SettingsModal {...createDefaultProps({ initialTab: 'shortcuts' })} />);
 
 			await act(async () => {
@@ -571,56 +682,54 @@ describe('SettingsModal', () => {
 			// Start on shortcuts tab
 			expect(screen.getByPlaceholderText('Filter shortcuts...')).toBeInTheDocument();
 
-			// Press Cmd+Shift+[ to go back to display
+			// Press Cmd+Shift+[ — alphabetically the prev tab before Shortcuts is Notifications
 			fireEvent.keyDown(window, { key: '[', metaKey: true, shiftKey: true });
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			// Display tab has Font Size
-			expect(screen.getByText('Font Size')).toBeInTheDocument();
+			expect(screen.getByText('Operating System Notifications')).toBeInTheDocument();
 		});
 
-		it('should wrap around when navigating past last tab', async () => {
-			render(<SettingsModal {...createDefaultProps({ initialTab: 'encore' })} />);
+		it('should wrap around when navigating past last tab (Themes)', async () => {
+			render(<SettingsModal {...createDefaultProps({ initialTab: 'theme' })} />);
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			// Start on Encore Features tab (last tab)
-			expect(screen.getByText('Encore Features', { selector: 'h3' })).toBeInTheDocument();
+			// Themes is the last tab alphabetically
+			expect(screen.getByText('dark Mode')).toBeInTheDocument();
 
-			// Press Cmd+Shift+] to wrap to general
+			// Press Cmd+Shift+] to wrap to About (first tab alphabetically)
 			fireEvent.keyDown(window, { key: ']', metaKey: true, shiftKey: true });
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			// General tab has Default Terminal Shell
-			expect(screen.getByText('Default Terminal Shell')).toBeInTheDocument();
+			expect(screen.getByTitle('About')).toHaveClass('font-bold');
 		});
 
-		it('should wrap around when navigating before first tab', async () => {
-			render(<SettingsModal {...createDefaultProps()} />);
+		it('should wrap around when navigating before first tab (About)', async () => {
+			render(<SettingsModal {...createDefaultProps({ initialTab: 'about' })} />);
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			// Start on general tab (first tab)
-			expect(screen.getByText('Default Terminal Shell')).toBeInTheDocument();
+			// About is the first tab alphabetically
+			expect(screen.getByTitle('About')).toHaveClass('font-bold');
 
-			// Press Cmd+Shift+[ to wrap to Encore Features (last tab)
+			// Press Cmd+Shift+[ to wrap to Themes (last tab alphabetically)
 			fireEvent.keyDown(window, { key: '[', metaKey: true, shiftKey: true });
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			expect(screen.getByText('Encore Features', { selector: 'h3' })).toBeInTheDocument();
+			expect(screen.getByText('dark Mode')).toBeInTheDocument();
 		});
 	});
 
@@ -700,7 +809,12 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			fireEvent.click(screen.getByRole('button', { name: 'Small' }));
+			// Scope to the font-size section — the toast-width setting also renders
+			// Small/Medium/Large buttons, so an unscoped query is ambiguous.
+			const fontSizeSection = within(
+				document.querySelector('[data-setting-id="display-font-size"]') as HTMLElement
+			);
+			fireEvent.click(fontSizeSection.getByRole('button', { name: 'Small' }));
 			expect(mockSetFontSize).toHaveBeenCalledWith(12);
 		});
 
@@ -712,7 +826,10 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			fireEvent.click(screen.getByRole('button', { name: 'Medium' }));
+			const fontSizeSection = within(
+				document.querySelector('[data-setting-id="display-font-size"]') as HTMLElement
+			);
+			fireEvent.click(fontSizeSection.getByRole('button', { name: 'Medium' }));
 			expect(mockSetFontSize).toHaveBeenCalledWith(14);
 		});
 
@@ -724,7 +841,10 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			fireEvent.click(screen.getByRole('button', { name: 'Large' }));
+			const fontSizeSection = within(
+				document.querySelector('[data-setting-id="display-font-size"]') as HTMLElement
+			);
+			fireEvent.click(fontSizeSection.getByRole('button', { name: 'Large' }));
 			expect(mockSetFontSize).toHaveBeenCalledWith(16);
 		});
 
@@ -747,7 +867,10 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			const mediumButton = screen.getByText('Medium');
+			const fontSizeSection = within(
+				document.querySelector('[data-setting-id="display-font-size"]') as HTMLElement
+			);
+			const mediumButton = fontSizeSection.getByText('Medium');
 			expect(mediumButton).toHaveClass('ring-2');
 		});
 	});

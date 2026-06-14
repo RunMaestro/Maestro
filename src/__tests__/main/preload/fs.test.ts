@@ -4,12 +4,16 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// Mock electron ipcRenderer
+// Mock electron ipcRenderer + webUtils
 const mockInvoke = vi.fn();
+const mockGetPathForFile = vi.fn();
 
 vi.mock('electron', () => ({
 	ipcRenderer: {
 		invoke: (...args: unknown[]) => mockInvoke(...args),
+	},
+	webUtils: {
+		getPathForFile: (...args: unknown[]) => mockGetPathForFile(...args),
 	},
 }));
 
@@ -246,6 +250,25 @@ describe('Filesystem Preload API', () => {
 		});
 	});
 
+	describe('mkdir', () => {
+		it('should invoke fs:mkdir with dirPath', async () => {
+			mockInvoke.mockResolvedValue({ success: true });
+
+			const result = await api.mkdir('/home/user/newdir');
+
+			expect(mockInvoke).toHaveBeenCalledWith('fs:mkdir', '/home/user/newdir', undefined);
+			expect(result.success).toBe(true);
+		});
+
+		it('should invoke fs:mkdir with SSH remote', async () => {
+			mockInvoke.mockResolvedValue({ success: true });
+
+			await api.mkdir('/home/user/newdir', 'remote-1');
+
+			expect(mockInvoke).toHaveBeenCalledWith('fs:mkdir', '/home/user/newdir', 'remote-1');
+		});
+	});
+
 	describe('delete', () => {
 		it('should invoke fs:delete with targetPath', async () => {
 			mockInvoke.mockResolvedValue({ success: true });
@@ -277,6 +300,53 @@ describe('Filesystem Preload API', () => {
 			expect(mockInvoke).toHaveBeenCalledWith('fs:countItems', '/home/user/project', undefined);
 			expect(result.fileCount).toBe(5);
 			expect(result.folderCount).toBe(2);
+		});
+	});
+
+	describe('copyPath', () => {
+		it('should invoke fs:copyPath with source and destination', async () => {
+			mockInvoke.mockResolvedValue({ success: true });
+
+			const result = await api.copyPath('/external/photo.png', '/project/photo.png');
+
+			expect(mockInvoke).toHaveBeenCalledWith(
+				'fs:copyPath',
+				'/external/photo.png',
+				'/project/photo.png',
+				undefined
+			);
+			expect(result.success).toBe(true);
+		});
+
+		it('should pass the overwrite option through', async () => {
+			mockInvoke.mockResolvedValue({ success: true });
+
+			await api.copyPath('/external/dir', '/project/dir', { overwrite: true });
+
+			expect(mockInvoke).toHaveBeenCalledWith('fs:copyPath', '/external/dir', '/project/dir', {
+				overwrite: true,
+			});
+		});
+	});
+
+	describe('getPathForFile', () => {
+		it('should resolve the absolute path via webUtils', () => {
+			mockGetPathForFile.mockReturnValue('/abs/path/dropped.txt');
+			const file = { name: 'dropped.txt' } as unknown as File;
+
+			const result = api.getPathForFile(file);
+
+			expect(mockGetPathForFile).toHaveBeenCalledWith(file);
+			expect(result).toBe('/abs/path/dropped.txt');
+		});
+
+		it('should return an empty string when webUtils throws', () => {
+			mockGetPathForFile.mockImplementation(() => {
+				throw new Error('no backing path');
+			});
+			const file = { name: 'synthetic.txt' } as unknown as File;
+
+			expect(api.getPathForFile(file)).toBe('');
 		});
 	});
 });

@@ -167,6 +167,7 @@ interface ParsedDocument {
 
 import { PLAYBOOKS_DIR } from '../../../../shared/maestro-paths';
 import { logger } from '../../../utils/logger';
+import { createPlaybookDocumentEmitter } from '../../../services/inlineWizardDocumentGeneration';
 
 /**
  * Sanitize a filename to prevent path traversal attacks.
@@ -579,6 +580,7 @@ class PhaseGenerator {
 	private dataListenerCleanup?: () => void;
 	private exitListenerCleanup?: () => void;
 	private currentWatchPath?: string;
+	private pollIntervalId?: ReturnType<typeof setInterval>;
 
 	/**
 	 * Generate Auto Run documents based on the project discovery conversation
@@ -1024,6 +1026,27 @@ class PhaseGenerator {
 			// Extract sshRemoteId for remote sessions
 			const sshRemoteId = deriveSshRemoteId(config.sshRemoteConfig);
 
+			// Detect new playbook docs as they hit disk and dedupe across two
+			// sources: the chokidar-backed file watcher (fast when it fires) and a
+			// periodic disk poll (backstop for the macOS fsevents cold-start window
+			// where add events get dropped on the freshly-created Initiation folder).
+			// Both feed the same emitter so each doc reaches the wizard UI exactly
+			// once via onFileCreated.
+			const documentEmitter = createPlaybookDocumentEmitter({
+				subfolderPath: autoRunPath,
+				sshRemoteId,
+				onEmit: (doc) => {
+					callbacks?.onFileCreated?.({
+						filename: doc.filename,
+						size: new Blob([doc.content]).size,
+						path: doc.savedPath ?? `${autoRunPath}/${doc.filename}`,
+						timestamp: Date.now(),
+						description: extractDescription(doc.content),
+						taskCount: doc.taskCount,
+					});
+				},
+			});
+
 			// Start watching the folder for file changes
 			window.maestro.autorun
 				.watchFolder(autoRunPath, sshRemoteId)
@@ -1050,65 +1073,18 @@ class PhaseGenerator {
 								resetTimeout();
 								callbacks?.onActivity?.();
 
-								// If a file was created/changed, notify about it
-								// Note: Main process already filters for .md files but strips the extension
-								// when sending the event, so we check for any filename here
+								// Route the change through the shared emitter, which reads
+								// the file (with retry) and notifies onFileCreated exactly
+								// once per document. The main process strips the .md
+								// extension; the emitter re-adds it.
 								if (data.filename && (data.eventType === 'rename' || data.eventType === 'change')) {
-									// Re-add the .md extension since main process strips it
-									const filenameWithExt = data.filename.endsWith('.md')
-										? data.filename
-										: `${data.filename}.md`;
-									const fullPath = `${autoRunPath}/${filenameWithExt}`;
-
-									// Use retry logic since file might still be being written
-									const readWithRetry = async (retries = 3, delayMs = 200): Promise<void> => {
-										for (let attempt = 1; attempt <= retries; attempt++) {
-											try {
-												const content = await window.maestro.fs.readFile(fullPath, sshRemoteId);
-												if (content && typeof content === 'string' && content.length > 0) {
-													logger.info('[PhaseGenerator] File read successful:', undefined, [
-														filenameWithExt,
-														'size:',
-														content.length,
-													]);
-													callbacks?.onFileCreated?.({
-														filename: filenameWithExt,
-														size: new Blob([content]).size,
-														path: fullPath,
-														timestamp: Date.now(),
-														description: extractDescription(content),
-														taskCount: countTasks(content),
-													});
-													return;
-												}
-											} catch (err) {
-												logger.info(
-													`[PhaseGenerator] File read attempt ${attempt}/${retries} failed for ${filenameWithExt}:`,
-													undefined,
-													err
-												);
-											}
-											if (attempt < retries) {
-												await new Promise((r) => setTimeout(r, delayMs));
-											}
-										}
-
-										// Even if we couldn't read content, still notify that file exists
-										// This provides feedback to user that files are being created
-										logger.info(
-											'[PhaseGenerator] Notifying file creation (without size):',
+									documentEmitter.tryEmitFile(data.filename).catch((err) => {
+										logger.warn(
+											'[PhaseGenerator] Emitter error for watcher event:',
 											undefined,
-											filenameWithExt
+											err
 										);
-										callbacks?.onFileCreated?.({
-											filename: filenameWithExt,
-											size: 0, // Unknown size
-											path: fullPath,
-											timestamp: Date.now(),
-										});
-									};
-
-									readWithRetry();
+									});
 								}
 							}
 						});
@@ -1121,6 +1097,17 @@ class PhaseGenerator {
 					logger.warn('[PhaseGenerator] Error setting up folder watcher:', undefined, err);
 					wizardDebugLogger.log('warn', 'Error setting up folder watcher', { error: String(err) });
 				});
+
+			// Periodic backstop: poll the folder every 2s during generation.
+			// Catches files the chokidar add event missed (macOS fsevents
+			// cold-start lag on freshly-created dirs is the common culprit) so
+			// in-progress docs surface to the wizard as fast as disk allows.
+			const POLL_INTERVAL_MS = 2000;
+			this.pollIntervalId = setInterval(() => {
+				documentEmitter.pollAndEmit().catch((err) => {
+					logger.warn('[PhaseGenerator] Periodic poll failed:', undefined, err);
+				});
+			}, POLL_INTERVAL_MS);
 
 			// Initialize the timeout
 			resetTimeout();
@@ -1265,6 +1252,11 @@ class PhaseGenerator {
 	 * Clean up listeners and file watcher
 	 */
 	private cleanup(): void {
+		// Stop the periodic disk-poll backstop for document streaming
+		if (this.pollIntervalId !== undefined) {
+			clearInterval(this.pollIntervalId);
+			this.pollIntervalId = undefined;
+		}
 		if (this.dataListenerCleanup) {
 			this.dataListenerCleanup();
 			this.dataListenerCleanup = undefined;

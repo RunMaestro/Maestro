@@ -71,7 +71,10 @@ export interface UseSessionCrudReturn {
 			workingDirOverride?: string;
 		},
 		customEffort?: string,
-		groupId?: string
+		groupId?: string,
+		enableMaestroP?: boolean,
+		maestroPPath?: string,
+		maestroPMode?: 'interactive' | 'dynamic'
 	) => Promise<void>;
 	/** Opens the delete agent confirmation modal */
 	deleteSession: (id: string) => void;
@@ -147,7 +150,10 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 				workingDirOverride?: string;
 			},
 			customEffort?: string,
-			groupId?: string
+			groupId?: string,
+			enableMaestroP?: boolean,
+			maestroPPath?: string,
+			maestroPMode?: 'interactive' | 'dynamic'
 		) => {
 			try {
 				// Get agent definition to get correct command
@@ -273,6 +279,11 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					sessionSshRemoteConfig,
 					groupId,
 					autoRunFolderPath: `${workingDir}/${PLAYBOOKS_DIR}`,
+					enableMaestroP,
+					maestroPPath,
+					maestroPMode,
+					claudeInteractive:
+						agentId === 'claude-code' ? { mode: 'api', modeReason: 'auto' } : undefined,
 				};
 
 				setSessions((prev) => [...prev, newSession]);
@@ -462,6 +473,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 
 	const handleDragOver = useCallback((e: React.DragEvent) => {
 		e.preventDefault();
+		if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
 	}, []);
 
 	// ========================================================================

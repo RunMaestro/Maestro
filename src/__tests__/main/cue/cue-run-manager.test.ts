@@ -435,7 +435,13 @@ describe('createCueRunManager', () => {
 			manager.execute('session-1', 'prompt', createEvent(), 'test-sub');
 			await vi.advanceTimersByTimeAsync(0);
 
-			expect(updateCueEventStatus).toHaveBeenCalledWith('run-1', 'completed');
+			// Third arg is the run's provider session id (undefined here — the
+			// mocked result sets none). Fourth is the failure diagnostics: a
+			// completed run has no error message but still carries its exit code.
+			expect(updateCueEventStatus).toHaveBeenCalledWith('run-1', 'completed', undefined, {
+				errorMessage: null,
+				exitCode: 0,
+			});
 		});
 
 		it('updates DB status to stopped on manual stop', () => {
@@ -503,7 +509,15 @@ describe('createCueRunManager', () => {
 
 			// DB status MUST be updated to the final result state so the
 			// activity log doesn't show a phantom never-ending run.
-			expect(safeUpdateCueEventStatus).toHaveBeenCalledWith(expect.any(String), 'completed');
+			// Third arg is the run's provider session id (undefined here — the
+			// mocked result sets none); passing it through is what lets Cue stats
+			// attribute token usage.
+			expect(safeUpdateCueEventStatus).toHaveBeenCalledWith(
+				expect.any(String),
+				'completed',
+				undefined,
+				{ errorMessage: null, exitCode: 0 }
+			);
 			// And a log should explain the run was recorded post-stop AND
 			// include the structured runFinished payload so the renderer
 			// observes the transition identically to a normal completion.
@@ -534,7 +548,14 @@ describe('createCueRunManager', () => {
 			resolveRun!(makeResult({ status: 'failed', stderr: 'boom' }));
 			await vi.advanceTimersByTimeAsync(0);
 
-			expect(safeUpdateCueEventStatus).toHaveBeenCalledWith(expect.any(String), 'failed');
+			// Failure diagnostics propagate: stderr becomes error_message and the
+			// exit code is carried so the activity log can explain the failure.
+			expect(safeUpdateCueEventStatus).toHaveBeenCalledWith(
+				expect.any(String),
+				'failed',
+				undefined,
+				{ errorMessage: 'boom', exitCode: 0 }
+			);
 		});
 
 		it('stopAll followed by reset: no spurious onRunCompleted', async () => {
@@ -645,7 +666,15 @@ describe('createCueRunManager', () => {
 			// via safeUpdateCueEventStatus with the main task's status.
 			// Only the parent-side safe call is asserted because that's the
 			// regression we're guarding.
-			expect(safeUpdateCueEventStatus).toHaveBeenCalledWith(expect.any(String), 'completed');
+			// Third arg is the run's provider session id (undefined here — the
+			// mocked result sets none); passing it through is what lets Cue stats
+			// attribute token usage.
+			expect(safeUpdateCueEventStatus).toHaveBeenCalledWith(
+				expect.any(String),
+				'completed',
+				undefined,
+				{ errorMessage: null, exitCode: 0 }
+			);
 			// And the post-stop log MUST include the structured runFinished
 			// payload so renderer listeners observe the transition.
 			expect(deps.onLog).toHaveBeenCalledWith(

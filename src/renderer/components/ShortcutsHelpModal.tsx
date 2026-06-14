@@ -37,7 +37,7 @@ export function ShortcutsHelpModal({
 	const recordingRef = useRef(recordingFilterShortcut);
 	recordingRef.current = recordingFilterShortcut;
 
-	// Block modal close on Escape while recording — instead, cancel the recording.
+	// Block modal close on Escape while recording - instead, cancel the recording.
 	const handleBeforeClose = useCallback(() => {
 		if (recordingRef.current) {
 			setRecordingFilterShortcut(false);

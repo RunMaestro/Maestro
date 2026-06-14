@@ -12,7 +12,7 @@ export interface HistoryFilterToggleProps {
 	compact?: boolean;
 }
 
-const ALL_TYPES: HistoryEntryType[] = ['AUTO', 'USER', 'CUE'];
+const ALL_TYPES: HistoryEntryType[] = ['USER', 'AUTO', 'CUE'];
 
 export const HistoryFilterToggle = memo(function HistoryFilterToggle({
 	activeFilters,

@@ -103,6 +103,51 @@ describe('CopilotOutputParser', () => {
 		);
 	});
 
+	it('does not treat a subagent final_answer (parentToolCallId set) as the parent result', () => {
+		// Subagents reply via the parent's events.jsonl with parentToolCallId set.
+		// If we surfaced them as 'result', StdoutHandler would set resultEmitted on
+		// the FIRST subagent reply and the parent's real conclusion would never
+		// reach the UI. They are downgraded to 'system' instead.
+		const parser = new CopilotOutputParser();
+
+		const event = parser.parseJsonObject({
+			type: 'assistant.message',
+			data: {
+				content: 'main | abc123 fix something | dirty=0',
+				phase: 'final_answer',
+				toolRequests: [],
+				parentToolCallId: 'call_subagent_xyz',
+			},
+		});
+
+		expect(event).toEqual(
+			expect.objectContaining({
+				type: 'system',
+			})
+		);
+		expect(event && parser.isResultMessage(event)).toBe(false);
+	});
+
+	it('does not treat a structural subagent final answer (no phase + parentToolCallId) as the parent result', () => {
+		const parser = new CopilotOutputParser();
+
+		const event = parser.parseJsonObject({
+			type: 'assistant.message',
+			data: {
+				content: 'subagent summary text',
+				toolRequests: [],
+				parentToolCallId: 'call_subagent_xyz',
+			},
+		});
+
+		expect(event).toEqual(
+			expect.objectContaining({
+				type: 'system',
+			})
+		);
+		expect(event && parser.isResultMessage(event)).toBe(false);
+	});
+
 	it('recognizes modern Copilot final messages by structure (no phase field)', () => {
 		// Regression: Copilot CLI ≥ 1.0.35 does not emit `phase: 'final_answer'`.
 		// The final assistant message is identified structurally by non-empty
@@ -177,6 +222,52 @@ describe('CopilotOutputParser', () => {
 				isPartial: true,
 			})
 		);
+	});
+
+	it('drops assistant.message_delta events from delegated subagents (parentToolCallId set)', () => {
+		// Without this filter, subagent deltas race the parent's deltas in the
+		// stdout stream and StdoutHandler's `streamedText` accumulator interleaves
+		// them character-by-character, producing garbled text like "Stri Since the
+		// indexercter" (parent "Strict … indexer" merged with subagent "Since the …").
+		const parser = new CopilotOutputParser();
+
+		const event = parser.parseJsonObject({
+			type: 'assistant.message_delta',
+			data: {
+				deltaContent: 'subagent narration that must not bleed into parent stream',
+				parentToolCallId: 'call_subagent_xyz',
+			},
+		});
+
+		expect(event).toBeNull();
+	});
+
+	it('drops assistant.reasoning_delta events from delegated subagents (parentToolCallId set)', () => {
+		const parser = new CopilotOutputParser();
+
+		const event = parser.parseJsonObject({
+			type: 'assistant.reasoning_delta',
+			data: {
+				deltaContent: 'subagent thinking that must not pollute parent thinking',
+				parentToolCallId: 'call_subagent_xyz',
+			},
+		});
+
+		expect(event).toBeNull();
+	});
+
+	it('drops assistant.reasoning summary events from delegated subagents (parentToolCallId set)', () => {
+		const parser = new CopilotOutputParser();
+
+		const event = parser.parseJsonObject({
+			type: 'assistant.reasoning',
+			data: {
+				content: 'subagent reasoning summary that must not bleed in',
+				parentToolCallId: 'call_subagent_xyz',
+			},
+		});
+
+		expect(event).toBeNull();
 	});
 
 	it('skips assistant reasoning summary when deltas already streamed the content', () => {

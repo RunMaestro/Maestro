@@ -7,9 +7,15 @@ import type {
 	LogEntry,
 	ToolType,
 } from '../../types';
-import { getActiveTab } from '../../utils/tabHelpers';
+import { getActiveTab, resolveQueuedItemTarget } from '../../utils/tabHelpers';
+import { filterYoloArgs } from '../../utils/agentArgs';
 import { getStdinFlags, prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 import { generateId } from '../../utils/ids';
+import {
+	hasRunnableQueueItem,
+	nextRunnableQueueItem,
+	takeNextRunnableQueueItem,
+} from '../../utils/executionQueue';
 import { estimateContextUsage } from '../../utils/contextUsage';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { logger } from '../../utils/logger';
@@ -87,6 +93,9 @@ export interface UseAgentExecutionReturn {
 			customEnvVars?: Record<string, string>;
 			customModel?: string;
 			customContextWindow?: number;
+			enableMaestroP?: boolean;
+			maestroPMode?: 'interactive' | 'dynamic';
+			maestroPPath?: string;
 			sessionSshRemoteConfig?: {
 				enabled: boolean;
 				remoteId: string | null;
@@ -108,6 +117,9 @@ export interface UseAgentExecutionReturn {
 					customEnvVars?: Record<string, string>;
 					customModel?: string;
 					customContextWindow?: number;
+					enableMaestroP?: boolean;
+					maestroPMode?: 'interactive' | 'dynamic';
+					maestroPPath?: string;
 					sessionSshRemoteConfig?: {
 						enabled: boolean;
 						remoteId: string | null;
@@ -339,12 +351,16 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 								// Check for queued items BEFORE updating state (using sessionsRef for latest state)
 								const currentSession = sessionsRef.current.find((s) => s.id === sessionId);
 								let queuedItemToProcess: { sessionId: string; item: QueuedItem } | null = null;
-								const hasQueuedItems = currentSession && currentSession.executionQueue.length > 0;
+								// Skip paused items: only a runnable (non-held) item triggers dispatch.
+								const nextRunnable = currentSession
+									? nextRunnableQueueItem(currentSession.executionQueue)
+									: undefined;
+								const hasQueuedItems = !!nextRunnable;
 
-								if (hasQueuedItems) {
+								if (nextRunnable) {
 									queuedItemToProcess = {
 										sessionId: sessionId,
-										item: currentSession!.executionQueue[0],
+										item: nextRunnable,
 									};
 								}
 
@@ -353,12 +369,13 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 									prev.map((s) => {
 										if (s.id !== sessionId) return s;
 
-										if (s.executionQueue.length > 0) {
-											const [nextItem, ...remainingQueue] = s.executionQueue;
-											const targetTab =
-												s.aiTabs.find((tab) => tab.id === nextItem.tabId) || getActiveTab(s);
+										const { item: nextItem, remaining: remainingQueue } = takeNextRunnableQueueItem(
+											s.executionQueue
+										);
+										if (nextItem) {
+											const target = resolveQueuedItemTarget(s, nextItem);
 
-											if (!targetTab) {
+											if (!target) {
 												// Fallback: no tabs exist
 												return {
 													...s,
@@ -372,27 +389,56 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 												};
 											}
 
-											// For message items, add a log entry to the target tab
-											let updatedAiTabs = s.aiTabs;
-											if (nextItem.type === 'message' && nextItem.text) {
-												const logEntry: LogEntry = {
-													id: generateId(),
-													timestamp: Date.now(),
-													source: 'user',
-													text: nextItem.text,
-													images: nextItem.images,
+											const logEntry: LogEntry | null =
+												nextItem.type === 'message' && nextItem.text
+													? {
+															id: generateId(),
+															timestamp: Date.now(),
+															source: 'user',
+															text: nextItem.text,
+															images: nextItem.images,
+														}
+													: null;
+
+											// Orphan target: the user closed this tab while the message was
+											// still queued. Route the user log to orphanedThinkingTabs and
+											// leave the active tab untouched - the send is fire-and-forget.
+											if (target.location === 'orphan') {
+												return {
+													...s,
+													state: 'busy' as SessionState,
+													busySource: 'ai',
+													...(logEntry &&
+														s.orphanedThinkingTabs && {
+															orphanedThinkingTabs: s.orphanedThinkingTabs.map((tab) =>
+																tab.id === target.tabId
+																	? { ...tab, logs: [...tab.logs, logEntry] }
+																	: tab
+															),
+														}),
+													executionQueue: remainingQueue,
+													thinkingStartTime: Date.now(),
+													currentCycleTokens: 0,
+													currentCycleBytes: 0,
+													pendingAICommandForSynopsis: undefined,
 												};
-												updatedAiTabs = s.aiTabs.map((tab) =>
-													tab.id === targetTab.id ? { ...tab, logs: [...tab.logs, logEntry] } : tab
-												);
 											}
+
+											// Foreground target: append the user log and bring the tab into view.
+											const updatedAiTabs = logEntry
+												? s.aiTabs.map((tab) =>
+														tab.id === target.tabId
+															? { ...tab, logs: [...tab.logs, logEntry] }
+															: tab
+													)
+												: s.aiTabs;
 
 											return {
 												...s,
 												state: 'busy' as SessionState,
 												busySource: 'ai',
 												aiTabs: updatedAiTabs,
-												activeTabId: targetTab.id,
+												activeTabId: target.tabId,
 												executionQueue: remainingQueue,
 												thinkingStartTime: Date.now(),
 												currentCycleTokens: 0,
@@ -447,9 +493,9 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 										if (
 											!checkSession ||
 											checkSession.state === 'idle' ||
-											checkSession.executionQueue.length === 0
+											!hasRunnableQueueItem(checkSession.executionQueue)
 										) {
-											// Queue drained or session idle - safe to continue batch
+											// Queue drained (or only held items left) or session idle - safe to continue batch
 											resolveOnce({
 												success: didExitCleanly,
 												response: responseText,
@@ -586,6 +632,12 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 				customEnvVars?: Record<string, string>;
 				customModel?: string;
 				customContextWindow?: number;
+				// Claude token-source selection. The synopsis spawns under a synthetic
+				// sessionId, so the process:spawn handler can't resolve the token mode
+				// from the persisted session - forward these fields explicitly instead.
+				enableMaestroP?: boolean;
+				maestroPMode?: 'interactive' | 'dynamic';
+				maestroPPath?: string;
 				sessionSshRemoteConfig?: {
 					enabled: boolean;
 					remoteId: string | null;
@@ -697,7 +749,14 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							toolType,
 							cwd,
 							command: commandToUse,
-							args: agent.args || [],
+							// Strip permission-bypass flags (e.g. --dangerously-skip-permissions). A
+							// background synopsis only reads the resumed conversation and emits a text
+							// summary - it must never acquire the agent's workspace lock. Left unfiltered
+							// it holds that lock for its full duration and blocks the NEXT queued send
+							// from spawning until it finishes, stalling background queue processing for
+							// as long as the synopsis runs. Mirrors tab-naming, which filters for the
+							// same reason.
+							args: filterYoloArgs(agent.args || [], agent),
 							prompt,
 							agentSessionId: resumeAgentSessionId, // This triggers the agent's resume mechanism
 							// Per-session config overrides (if set)
@@ -706,6 +765,12 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							sessionCustomEnvVars: sessionConfig?.customEnvVars,
 							sessionCustomModel: sessionConfig?.customModel,
 							sessionCustomContextWindow: sessionConfig?.customContextWindow,
+							// Forward the agent's Claude token source. The synopsis runs under a
+							// synthetic sessionId, so the process:spawn handler can't hydrate the
+							// token mode from the persisted session - it falls back to these.
+							enableMaestroP: sessionConfig?.enableMaestroP,
+							maestroPMode: sessionConfig?.maestroPMode,
+							maestroPPath: sessionConfig?.maestroPPath,
 							// Always use effective SSH remote config if available
 							sessionSshRemoteConfig: effectiveSessionSshRemoteConfig,
 							sendPromptViaStdin,

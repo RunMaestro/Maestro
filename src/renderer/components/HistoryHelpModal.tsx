@@ -37,8 +37,8 @@ export const HistoryHelpModal = memo(function HistoryHelpModal({
 			title="History Panel Guide"
 			priority={MODAL_PRIORITIES.CONFIRM}
 			onClose={onClose}
-			width={672}
-			maxHeight="80vh"
+			width={1008}
+			maxHeight="85vh"
 			closeOnBackdropClick
 			zIndex={50}
 			footer={
@@ -262,7 +262,7 @@ export const HistoryHelpModal = memo(function HistoryHelpModal({
 					<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
 						<p>
 							The bar graph in the header visualizes your activity over a configurable time period.
-							Changing the lookback period filters both the graph and the entry list below it—only
+							Changing the lookback period filters both the graph and the entry list below it - only
 							entries within the selected window are shown.
 						</p>
 						<p className="mt-2">
@@ -322,7 +322,7 @@ export const HistoryHelpModal = memo(function HistoryHelpModal({
 						</p>
 						<p>
 							Each session's history is stored as a JSON file that agents can read to understand
-							completed tasks, decisions made, and work patterns—even from other tabs.
+							completed tasks, decisions made, and work patterns - even from other tabs.
 						</p>
 						<p>
 							<strong style={{ color: theme.colors.warning }}>Note:</strong> Cross-session memory is

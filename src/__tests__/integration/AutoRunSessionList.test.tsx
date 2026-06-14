@@ -387,6 +387,8 @@ const IntegrationTestWrapper = ({
 					sessions={sessions}
 					groups={groups}
 					sortedSessions={sessions}
+					starredItems={[]}
+					activateStarredItem={() => {}}
 					activeSessionId={activeSessionId}
 					leftSidebarOpen={leftSidebarOpen}
 					leftSidebarWidthState={leftSidebarWidth}

@@ -10,6 +10,24 @@ The command palette is your gateway to nearly every action in Maestro. Press `Cm
 
 ![Command palette](./screenshots/cmd-k-1.png)
 
+## System-Wide Hotkey (Summon Maestro)
+
+Configure a single OS-level hotkey that summons Maestro - bringing the window to the foreground and focusing it - from any application on macOS, Windows, or Linux. This is the only shortcut in Maestro that fires while the app is in the background; every other shortcut on this page is in-app.
+
+**To configure:**
+
+1. Open **Settings** (`Cmd+,` / `Ctrl+,`) → **General** tab
+2. Find **Global Hotkey to Show Maestro**
+3. Click the key capture button and press your desired combo
+4. Leave it blank to disable the binding
+
+Tips and gotchas:
+
+- Pick a combo with two modifiers (e.g. `Cmd+Shift+M` / `Win+Shift+M`) to avoid clashing with app shortcuts.
+- If the OS or another app already owns the combo, Maestro will surface a registration failure - pick a different binding.
+- `Meta` maps to **Cmd** on macOS and **Win** (Super) on Windows/Linux automatically.
+- The hotkey works even when Maestro is hidden, minimized, or behind other windows.
+
 ## Global Shortcuts
 
 | Action                      | macOS                 | Windows/Linux          |
@@ -44,6 +62,7 @@ The command palette is your gateway to nearly every action in Maestro. Press `Cm
 | Maestro Symphony            | `Cmd+Shift+Y`         | `Ctrl+Shift+Y`         |
 | Director's Notes            | `Cmd+Shift+O`         | `Ctrl+Shift+O`         |
 | Maestro Cue                 | `Opt+Q`               | `Alt+Q`                |
+| Edit Image from Clipboard   | `Opt+Cmd+E`           | `Alt+Ctrl+E`           |
 | Forced Parallel Send        | `Cmd+Shift+Enter`     | `Ctrl+Shift+Enter`     |
 | Cycle Focus Areas           | `Tab`                 | `Tab`                  |
 | Cycle Focus Backwards       | `Shift+Tab`           | `Shift+Tab`            |
@@ -56,7 +75,8 @@ The command palette is your gateway to nearly every action in Maestro. Press `Cm
 | Go to History Tab              | `Cmd+Shift+H` | `Ctrl+Shift+H` |
 | Go to Auto Run Tab             | `Cmd+Shift+1` | `Ctrl+Shift+1` |
 | Toggle Edit/Preview (Markdown) | `Cmd+E`       | `Ctrl+E`       |
-| Toggle Auto Run Expanded       | `Cmd+Shift+E` | `Ctrl+Shift+E` |
+| Run Auto Run                   | `Cmd+Shift+2` | `Ctrl+Shift+2` |
+| Auto Run Expanded Preview      | `Cmd+Shift+E` | `Ctrl+Shift+E` |
 | Insert Checkbox (Auto Run)     | `Cmd+L`       | `Ctrl+L`       |
 | View Git Diff                  | `Cmd+Shift+D` | `Ctrl+Shift+D` |
 | View Git Log                   | `Cmd+Shift+G` | `Ctrl+Shift+G` |
@@ -72,8 +92,8 @@ These shortcuts work in AI Terminal mode and affect the current tab:
 | Toggle Read-Only Mode  | `Cmd+R`        | `Ctrl+R`        |
 | Toggle Show Thinking   | `Cmd+Shift+K`  | `Ctrl+Shift+K`  |
 | Toggle Tab Star        | `Cmd+Shift+S`  | `Ctrl+Shift+S`  |
-| Toggle Tab Unread      | `Opt+Shift+U`  | `Alt+Shift+U`   |
-| Filter Unread Agents   | `Cmd+Shift+U`  | `Ctrl+Shift+U`  |
+| Toggle Tab Unread      | `Cmd+Shift+U`  | `Ctrl+Shift+U`  |
+| Filter Unread Agents   | `Opt+U`        | `Alt+U`         |
 | Filter Unread Tabs     | `Cmd+U`        | `Ctrl+U`        |
 | Next Unread/Draft Tab  | `Opt+Cmd+Down` | `Alt+Ctrl+Down` |
 | Open Image Carousel    | `Cmd+Y`        | `Ctrl+Y`        |
@@ -90,6 +110,7 @@ Toggle states are saved per-tab. See [Input Toggles](./general-usage#input-toggl
 | New File Tab              | `Opt+N`                 | `Alt+N`                   |
 | New Terminal Tab          | `Ctrl+Shift+` + `` ` `` | `Ctrl+Shift+` + `` ` ``   |
 | Focus Browser Address Bar | `Cmd+L`                 | `Ctrl+L`                  |
+| Find in Browser Tab       | `Cmd+F`                 | `Ctrl+F`                  |
 | Focus Active Tab          | `Opt+Cmd+F`             | `Alt+Ctrl+F`              |
 | Close Tab                 | `Cmd+W`                 | `Ctrl+W`                  |
 | Close All Tabs            | `Cmd+Shift+W`           | `Ctrl+Shift+W`            |
@@ -110,11 +131,11 @@ The Tab Switcher provides fuzzy search across all open tabs with quick navigatio
 
 ![Tab Switcher](./screenshots/tab-search.png)
 
-- **Search** — Type to filter tabs by name or session ID
-- **Quick select** — Press `1-9` to jump directly to a numbered tab
-- **Navigate** — Use `Up/Down Arrow` to move through results
-- **Select** — Press `Enter` to switch to the highlighted tab
-- **Context info** — Each tab shows token count, cost, and context usage
+- **Search** - Type to filter tabs by name or session ID
+- **Quick select** - Press `1-9` to jump directly to a numbered tab
+- **Navigate** - Use `Up/Down Arrow` to move through results
+- **Select** - Press `Enter` to switch to the highlighted tab
+- **Context info** - Each tab shows token count, cost, and context usage
 
 The bulk close operations (Close All, Close Others, Close Left, Close Right) are also available via the [Tab Menu](./context-management#tab-close-operations) hover overlay and Quick Actions (`Cmd+K`).
 
@@ -130,6 +151,7 @@ The bulk close operations (Close All, Close Others, Close Left, Close Right) are
 | Focus Input              | `Esc` while in output                             |
 | Open Output Search       | `Cmd+F` while in output                           |
 | Scroll Output            | `Up/Down Arrow` while in output                   |
+| Prev/Next Message        | `Shift+Up/Down Arrow` while in output             |
 | Page Up/Down             | `Alt+Up/Down Arrow` while in output               |
 | Jump to Top/Bottom       | `Cmd+Up/Down Arrow` while in output               |
 
@@ -190,6 +212,8 @@ In AI mode, use `@` to reference files in your prompts:
 | Select Agent                    | `Enter` while in sidebar           | `Enter` while in sidebar           |
 | Filter Sessions (in Left Panel) | `Cmd+F`                            | `Ctrl+F`                           |
 | Navigate Files                  | `Up/Down Arrow` while in file tree | `Up/Down Arrow` while in file tree |
+| Extend File Selection           | `Shift+Up/Down Arrow` in file tree | `Shift+Up/Down Arrow` in file tree |
+| Multi-select Files              | `Cmd+Click` / `Shift+Click`        | `Ctrl+Click` / `Shift+Click`       |
 | Filter Files (in Files tab)     | `Cmd+F`                            | `Ctrl+F`                           |
 | Filter History (in History tab) | `Cmd+F`                            | `Ctrl+F`                           |
 | Search Output (in Main Window)  | `Cmd+F`                            | `Ctrl+F`                           |
@@ -200,14 +224,15 @@ In AI mode, use `@` to reference files in your prompts:
 
 ## File Preview
 
-| Action         | macOS           | Windows/Linux   |
-| -------------- | --------------- | --------------- |
-| Copy File Path | `Cmd+P`         | `Ctrl+P`        |
-| Open Search    | `Cmd+F`         | `Ctrl+F`        |
-| Go Back        | `Cmd+Left`      | `Ctrl+Left`     |
-| Go Forward     | `Cmd+Right`     | `Ctrl+Right`    |
-| Scroll         | `Up/Down Arrow` | `Up/Down Arrow` |
-| Close          | `Esc`           | `Esc`           |
+| Action                              | macOS           | Windows/Linux   |
+| ----------------------------------- | --------------- | --------------- |
+| Copy File Path                      | `Cmd+P`         | `Ctrl+P`        |
+| Open Search                         | `Cmd+F`         | `Ctrl+F`        |
+| Toggle Table of Contents (Markdown) | `Cmd+\`         | `Ctrl+\`        |
+| Go Back                             | `Cmd+Left`      | `Ctrl+Left`     |
+| Go Forward                          | `Cmd+Right`     | `Ctrl+Right`    |
+| Scroll                              | `Up/Down Arrow` | `Up/Down Arrow` |
+| Close                               | `Esc`           | `Esc`           |
 
 ## Document Graph
 
@@ -234,11 +259,11 @@ Most shortcuts can be remapped to fit your workflow:
 **Tips:**
 
 - Press `Esc` while recording to cancel without changing the shortcut
-- Modifier keys alone (Cmd, Ctrl, Alt, Shift) won't register — you need a final key
+- Modifier keys alone (Cmd, Ctrl, Alt, Shift) won't register - you need a final key
 - Some shortcuts are fixed and cannot be remapped (like `Esc` to close modals)
 - Conflicting shortcuts will override the previous binding
 
-**Resetting shortcuts:** There's currently no "reset to default" button — if you need to restore defaults, you can find the original bindings in this documentation or delete the shortcuts from your settings file.
+**Resetting shortcuts:** There's currently no "reset to default" button - if you need to restore defaults, you can find the original bindings in this documentation or delete the shortcuts from your settings file.
 
 ## Keyboard Mastery
 
@@ -263,6 +288,6 @@ Maestro tracks your keyboard shortcut usage and rewards you for becoming a power
 
 The modal shows all available shortcuts with checkmarks indicating which you've mastered. Use the search bar to find specific shortcuts quickly.
 
-**Why keyboard shortcuts matter:** Using shortcuts keeps you in flow state, reduces context switching, and dramatically speeds up your workflow. Maestro is designed for keyboard-first operation — the less you reach for the mouse, the faster you'll work.
+**Why keyboard shortcuts matter:** Using shortcuts keeps you in flow state, reduces context switching, and dramatically speeds up your workflow. Maestro is designed for keyboard-first operation - the less you reach for the mouse, the faster you'll work.
 
 Keyboard Mastery is separate from [Conductor Ranks](./achievements), which track cumulative Auto Run time. Both systems reward you for mastering different aspects of Maestro.

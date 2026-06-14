@@ -84,6 +84,7 @@ export interface AppModalsProps {
 	onCloseConfirmModal: () => void;
 	onConfirmQuit: () => void;
 	onCancelQuit: () => void;
+	onQuitWhenIdle: () => void;
 	/** Session IDs with active auto-runs (batch processing) */
 	activeBatchSessionIds?: string[];
 
@@ -107,10 +108,14 @@ export interface AppModalsProps {
 			workingDirOverride?: string;
 		},
 		customEffort?: string,
-		groupId?: string
+		groupId?: string,
+		enableMaestroP?: boolean,
+		maestroPPath?: string,
+		maestroPMode?: 'interactive' | 'dynamic'
 	) => void;
 	existingSessions: Session[];
 	duplicatingSessionId?: string | null; // Session ID to duplicate from
+	newInstancePresetGroupId?: string | null; // Group to place the new agent in
 	onCloseEditAgentModal: () => void;
 	onSaveEditAgent: (
 		sessionId: string,
@@ -127,7 +132,10 @@ export interface AppModalsProps {
 			enabled: boolean;
 			remoteId: string | null;
 			workingDirOverride?: string;
-		}
+		},
+		enableMaestroP?: boolean,
+		maestroPPath?: string,
+		maestroPMode?: 'interactive' | 'dynamic'
 	) => void;
 	editAgentSession: Session | null;
 	renameSessionValue: string;
@@ -202,12 +210,13 @@ export interface AppModalsProps {
 	onQuickActionsRenameTab: () => void;
 	onQuickActionsToggleReadOnlyMode: () => void;
 	onQuickActionsToggleTabShowThinking: () => void;
+	onQuickActionsToggleTabEnterToSend: () => void;
 	onQuickActionsOpenTabSwitcher: () => void;
 	// Bulk tab close operations (for QuickActionsModal)
 	onCloseAllTabs?: () => void;
-	onCloseOtherTabs?: () => void;
-	onCloseTabsLeft?: () => void;
-	onCloseTabsRight?: () => void;
+	onCloseOtherTabs?: (pivotTabId?: string) => void;
+	onCloseTabsLeft?: (pivotTabId?: string) => void;
+	onCloseTabsRight?: (pivotTabId?: string) => void;
 	setPlaygroundOpen?: (open: boolean) => void;
 	onQuickActionsRefreshGitFileState: () => Promise<void>;
 	onQuickActionsDebugReleaseQueuedItem: () => void;
@@ -244,6 +253,7 @@ export interface AppModalsProps {
 	autoRunSelectedDocument: string | null;
 	autoRunCompletedTaskCount: number;
 	onAutoRunResetTasks: () => void;
+	onToggleAutoRunExpanded?: () => void;
 	onClearActiveTerminal?: () => void;
 	// Tab-level actions
 	onCloseCurrentTab?: () => void;
@@ -260,6 +270,9 @@ export interface AppModalsProps {
 	// Document Graph - quick re-open last graph
 	lastGraphFocusFile?: string;
 	onOpenLastDocumentGraph?: () => void;
+	// Document Graph - view the active markdown file
+	currentGraphFile?: string;
+	onOpenCurrentFileInGraph?: () => void;
 	lightboxImage: string | null;
 	lightboxImages: string[];
 	stagedImages: string[];
@@ -332,10 +345,22 @@ export interface AppModalsProps {
 	promptSupportsThinking: boolean;
 	promptEnterToSend: boolean;
 	onPromptToggleEnterToSend: () => void;
+	onOpenQueueBrowser: () => void;
 	onCloseQueueBrowser: () => void;
 	onRemoveQueueItem: (sessionId: string, itemId: string) => void;
 	onSwitchQueueSession: (sessionId: string, tabId?: string) => void;
 	onReorderQueueItems: (sessionId: string, fromIndex: number, toIndex: number) => void;
+	onTogglePauseQueueItem: (sessionId: string, itemId: string) => void;
+	// New tab creation (for QuickActionsModal)
+	onQuickActionsNewTab?: () => void;
+	onQuickActionsNewFileTab?: () => void;
+	onQuickActionsNewBrowserTab?: () => void;
+	onQuickActionsNewTerminalTab?: () => void;
+	// Next unread / draft tab navigation (shared with Alt+Cmd+Down)
+	onGoToNextUnread?: () => void;
+	// Session/tab history navigation (shared with Cmd+Shift+, / Cmd+Shift+.)
+	onNavBack?: () => void;
+	onNavForward?: () => void;
 
 	// --- AppGroupChatModals props ---
 	onCloseNewGroupChatModal: () => void;
@@ -441,6 +466,8 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		confirmModalOpen,
 		quitConfirmModalOpen,
 		activeTerminalTasks,
+		activeCueRunCount,
+		activeGroupChatCount,
 		hasFeedbackDraft,
 		newInstanceModalOpen,
 		editAgentModalOpen,
@@ -475,13 +502,45 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 			quitConfirmModalOpen: s.modals.get('quitConfirm')?.open ?? false,
 			activeTerminalTasks: (
 				s.modals.get('quitConfirm')?.data as
-					| { activeTerminalTasks?: string[]; hasFeedbackDraft?: boolean }
+					| {
+							activeTerminalTasks?: string[];
+							activeCueRunCount?: number;
+							activeGroupChatCount?: number;
+							hasFeedbackDraft?: boolean;
+					  }
 					| undefined
 			)?.activeTerminalTasks,
+			activeCueRunCount:
+				(
+					s.modals.get('quitConfirm')?.data as
+						| {
+								activeTerminalTasks?: string[];
+								activeCueRunCount?: number;
+								activeGroupChatCount?: number;
+								hasFeedbackDraft?: boolean;
+						  }
+						| undefined
+				)?.activeCueRunCount ?? 0,
+			activeGroupChatCount:
+				(
+					s.modals.get('quitConfirm')?.data as
+						| {
+								activeTerminalTasks?: string[];
+								activeCueRunCount?: number;
+								activeGroupChatCount?: number;
+								hasFeedbackDraft?: boolean;
+						  }
+						| undefined
+				)?.activeGroupChatCount ?? 0,
 			hasFeedbackDraft:
 				(
 					s.modals.get('quitConfirm')?.data as
-						| { activeTerminalTasks?: string[]; hasFeedbackDraft?: boolean }
+						| {
+								activeTerminalTasks?: string[];
+								activeCueRunCount?: number;
+								activeGroupChatCount?: number;
+								hasFeedbackDraft?: boolean;
+						  }
 						| undefined
 				)?.hasFeedbackDraft ?? false,
 			newInstanceModalOpen: s.modals.get('newInstance')?.open ?? false,
@@ -543,12 +602,14 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onCloseConfirmModal,
 		onConfirmQuit,
 		onCancelQuit,
+		onQuitWhenIdle,
 		activeBatchSessionIds,
 		// Session modals
 		onCloseNewInstanceModal,
 		onCreateSession,
 		existingSessions,
 		duplicatingSessionId,
+		newInstancePresetGroupId,
 		onCloseEditAgentModal,
 		onSaveEditAgent,
 		editAgentSession,
@@ -621,6 +682,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onQuickActionsRenameTab,
 		onQuickActionsToggleReadOnlyMode,
 		onQuickActionsToggleTabShowThinking,
+		onQuickActionsToggleTabEnterToSend,
 		onQuickActionsOpenTabSwitcher,
 		// Bulk tab close operations
 		onCloseAllTabs,
@@ -656,6 +718,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		autoRunSelectedDocument,
 		autoRunCompletedTaskCount,
 		onAutoRunResetTasks,
+		onToggleAutoRunExpanded,
 		onClearActiveTerminal,
 		// Tab-level actions
 		onCloseCurrentTab,
@@ -672,6 +735,9 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		// Document Graph - quick re-open last graph
 		lastGraphFocusFile,
 		onOpenLastDocumentGraph,
+		// Document Graph - view the active markdown file
+		currentGraphFile,
+		onOpenCurrentFileInGraph,
 		lightboxImage,
 		lightboxImages,
 		stagedImages,
@@ -730,10 +796,19 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		promptSupportsThinking,
 		promptEnterToSend,
 		onPromptToggleEnterToSend,
+		onOpenQueueBrowser,
 		onCloseQueueBrowser,
 		onRemoveQueueItem,
 		onSwitchQueueSession,
 		onReorderQueueItems,
+		onTogglePauseQueueItem,
+		onQuickActionsNewTab,
+		onQuickActionsNewFileTab,
+		onQuickActionsNewBrowserTab,
+		onQuickActionsNewTerminalTab,
+		onGoToNextUnread,
+		onNavBack,
+		onNavForward,
 		// Group Chat modals
 		onCloseNewGroupChatModal,
 		onCreateGroupChat,
@@ -830,8 +905,11 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				quitConfirmModalOpen={quitConfirmModalOpen}
 				onConfirmQuit={onConfirmQuit}
 				onCancelQuit={onCancelQuit}
+				onQuitWhenIdle={onQuitWhenIdle}
 				activeBatchSessionIds={activeBatchSessionIds}
 				activeTerminalTasks={activeTerminalTasks ?? []}
+				activeCueRunCount={activeCueRunCount}
+				activeGroupChatCount={activeGroupChatCount}
 				hasFeedbackDraft={hasFeedbackDraft}
 			/>
 
@@ -846,6 +924,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onCreateSession={onCreateSession}
 				existingSessions={existingSessions}
 				sourceSession={sourceSession}
+				newInstancePresetGroupId={newInstancePresetGroupId}
 				editAgentModalOpen={editAgentModalOpen}
 				onCloseEditAgentModal={onCloseEditAgentModal}
 				onSaveEditAgent={onSaveEditAgent}
@@ -956,6 +1035,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onRenameTab={onQuickActionsRenameTab}
 				onToggleReadOnlyMode={onQuickActionsToggleReadOnlyMode}
 				onToggleTabShowThinking={onQuickActionsToggleTabShowThinking}
+				onToggleTabEnterToSend={onQuickActionsToggleTabEnterToSend}
 				onOpenTabSwitcher={onQuickActionsOpenTabSwitcher}
 				onCloseAllTabs={onCloseAllTabs}
 				onCloseOtherTabs={onCloseOtherTabs}
@@ -992,6 +1072,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				autoRunSelectedDocument={autoRunSelectedDocument}
 				autoRunCompletedTaskCount={autoRunCompletedTaskCount}
 				onAutoRunResetTasks={onAutoRunResetTasks}
+				onToggleAutoRunExpanded={onToggleAutoRunExpanded}
 				onClearActiveTerminal={onClearActiveTerminal}
 				onCloseCurrentTab={onCloseCurrentTab}
 				onMoveTabToFirst={onMoveTabToFirst}
@@ -1005,6 +1086,8 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onPublishGist={onPublishGist}
 				lastGraphFocusFile={lastGraphFocusFile}
 				onOpenLastDocumentGraph={onOpenLastDocumentGraph}
+				currentGraphFile={currentGraphFile}
+				onOpenCurrentFileInGraph={onOpenCurrentFileInGraph}
 				onOpenSymphony={onOpenSymphony}
 				onOpenDirectorNotes={onOpenDirectorNotes}
 				onOpenMaestroCue={onOpenMaestroCue}
@@ -1068,10 +1151,19 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				promptEnterToSend={promptEnterToSend}
 				onPromptToggleEnterToSend={onPromptToggleEnterToSend}
 				queueBrowserOpen={queueBrowserOpen}
+				onOpenQueueBrowser={onOpenQueueBrowser}
 				onCloseQueueBrowser={onCloseQueueBrowser}
+				onQuickActionsNewTab={onQuickActionsNewTab}
+				onQuickActionsNewFileTab={onQuickActionsNewFileTab}
+				onQuickActionsNewBrowserTab={onQuickActionsNewBrowserTab}
+				onQuickActionsNewTerminalTab={onQuickActionsNewTerminalTab}
+				onGoToNextUnread={onGoToNextUnread}
+				onNavBack={onNavBack}
+				onNavForward={onNavForward}
 				onRemoveQueueItem={onRemoveQueueItem}
 				onSwitchQueueSession={onSwitchQueueSession}
 				onReorderQueueItems={onReorderQueueItems}
+				onTogglePauseQueueItem={onTogglePauseQueueItem}
 			/>
 
 			{/* Group Chat Modals */}

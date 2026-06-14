@@ -420,6 +420,14 @@ export interface NotifyToastParams {
 	dismissible?: boolean;
 	/** Optional agent/session ID — clicking the toast jumps to it. */
 	sessionId?: string;
+	/**
+	 * Optional explicit source-agent label rendered in the toast header strip.
+	 * Unlike the name resolved from `sessionId` (which requires the agent to be
+	 * loaded in the desktop store), this is store-independent — so cron- and
+	 * watchdog-fired toasts always show who produced them. When set, it wins over
+	 * the resolved session name for display; `sessionId` still drives click-jump.
+	 */
+	sourceAgent?: string;
 	/** Optional AI tab ID within the agent — paired with `sessionId` for jump-to-tab. */
 	tabId?: string;
 	/** Optional inline action link rendered beneath the message body (opens in browser). */
@@ -758,8 +766,24 @@ export type CreateSessionCallback = (
 	groupId?: string,
 	config?: CreateSessionConfig
 ) => Promise<{ sessionId: string } | null>;
+/**
+ * Create a new agent in a git worktree branched off an existing parent agent,
+ * without an Auto Run playbook. The desktop creates the worktree on disk, builds
+ * a child session linked to the parent, and returns the new agent's session id.
+ */
+export type CreateWorktreeSessionCallback = (
+	parentSessionId: string,
+	config: {
+		branchName: string;
+		baseBranch?: string;
+	}
+) => Promise<{ success: boolean; sessionId?: string; error?: string }>;
 export type DeleteSessionCallback = (sessionId: string) => Promise<boolean>;
 export type RenameSessionCallback = (sessionId: string, newName: string) => Promise<boolean>;
+export type UpdateSessionCwdCallback = (
+	sessionId: string,
+	newCwd: string
+) => Promise<{ success: boolean; error?: string }>;
 export type GetAutoRunDocsCallback = (sessionId: string) => Promise<AutoRunDocument[]>;
 export type GetAutoRunDocContentCallback = (sessionId: string, filename: string) => Promise<string>;
 export type SaveAutoRunDocCallback = (

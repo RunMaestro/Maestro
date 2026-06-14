@@ -26,6 +26,11 @@ import type {
 	OpenSpecCommand,
 	BmadCommand,
 } from '../types';
+import type {
+	AgentCapabilitiesSnapshot,
+	AgentCapabilitiesSnapshotMap,
+} from '../../shared/agentCapabilities';
+import { buildSnapshotKey } from '../../shared/agentCapabilities';
 import { createTab, getActiveTab } from '../utils/tabHelpers';
 import { getStdinFlags, prepareMaestroSystemPrompt } from '../utils/spawnHelpers';
 import { generateId } from '../utils/ids';
@@ -45,6 +50,13 @@ export interface AgentStoreState {
 	availableAgents: AgentConfig[];
 	/** Whether agent detection has completed at least once */
 	agentsDetected: boolean;
+	/**
+	 * Persisted capability snapshots mirrored from the main process.
+	 * Key is `agentId` (local) or `agentId:remoteUuid` (SSH).
+	 */
+	capabilitySnapshots: AgentCapabilitiesSnapshotMap;
+	/** True once `loadCapabilitySnapshots()` has fetched the initial map. */
+	capabilitySnapshotsLoaded: boolean;
 }
 
 export interface AgentStoreActions {
@@ -55,6 +67,23 @@ export interface AgentStoreActions {
 
 	/** Look up a cached agent config by ID */
 	getAgentConfig: (agentId: string) => AgentConfig | undefined;
+
+	// === Capability Snapshots (status + version + last probed) ===
+
+	/** Fetch all persisted snapshots from main and start the live subscription. */
+	loadCapabilitySnapshots: () => Promise<void>;
+
+	/** Look up a snapshot by agent id (and optional SSH remote uuid). */
+	getCapabilitySnapshot: (
+		agentId: string,
+		remoteId?: string
+	) => AgentCapabilitiesSnapshot | undefined;
+
+	/** Request a fresh probe for one agent. Updates flow back via the event subscription. */
+	reprobeAgent: (
+		agentId: string,
+		sshRemoteId?: string
+	) => Promise<AgentCapabilitiesSnapshot | null>;
 
 	// === Error Recovery (extracted from App.tsx) ===
 
@@ -148,10 +177,19 @@ function updateSession(sessionId: string, updater: (s: Session) => Session): voi
 // Store Implementation
 // ============================================================================
 
+/**
+ * Holds the unsubscribe handle for the snapshot-updated IPC bridge so we
+ * don't register multiple listeners if `loadCapabilitySnapshots()` runs
+ * more than once (e.g. during hot reload).
+ */
+let snapshotUnsubscribe: (() => void) | null = null;
+
 export const useAgentStore = create<AgentStore>()((set, get) => ({
 	// --- State ---
 	availableAgents: [],
 	agentsDetected: false,
+	capabilitySnapshots: {},
+	capabilitySnapshotsLoaded: false,
 
 	// --- Actions ---
 
@@ -162,6 +200,47 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 
 	getAgentConfig: (agentId) => {
 		return get().availableAgents.find((a) => a.id === agentId);
+	},
+
+	loadCapabilitySnapshots: async () => {
+		// Always flip `loaded` true so the UI never gets stuck on "Loading…"
+		// when the IPC call rejects (renderer disposal, main-process crash).
+		// Errors still bubble up so Sentry / ErrorBoundary can record them.
+		try {
+			const snapshots = await window.maestro.agents.getAllSnapshots();
+			set({ capabilitySnapshots: snapshots, capabilitySnapshotsLoaded: true });
+		} catch (err) {
+			set({ capabilitySnapshotsLoaded: true });
+			throw err;
+		}
+
+		// Wire the live update subscription exactly once. Subsequent calls
+		// (e.g. across hot reloads) reuse the existing listener; calling
+		// `removeListener` from a previous closure handles renderer reloads.
+		if (snapshotUnsubscribe) {
+			snapshotUnsubscribe();
+			snapshotUnsubscribe = null;
+		}
+		snapshotUnsubscribe = window.maestro.agents.onSnapshotUpdated((payload) => {
+			const current = get().capabilitySnapshots;
+			const next = { ...current };
+			if (payload.snapshot === null) {
+				delete next[payload.key];
+			} else {
+				next[payload.key] = payload.snapshot;
+			}
+			set({ capabilitySnapshots: next });
+		});
+	},
+
+	getCapabilitySnapshot: (agentId, remoteId) => {
+		// Delegate to the shared key builder so this never drifts from the
+		// main-process snapshot store's key format.
+		return get().capabilitySnapshots[buildSnapshotKey(agentId, remoteId)];
+	},
+
+	reprobeAgent: async (agentId, sshRemoteId) => {
+		return window.maestro.agents.reprobe(agentId, sshRemoteId);
 	},
 
 	clearAgentError: (sessionId, tabId?) => {
@@ -241,8 +320,13 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		}
 
 		// Find the TARGET tab for this queued item (NOT the active tab!)
-		// The item carries its intended tabId from when it was queued
-		const tabByItemId = session.aiTabs.find((tab) => tab.id === item.tabId);
+		// The item carries its intended tabId from when it was queued. A tab that
+		// was closed while it still had queued work lives on in orphanedThinkingTabs
+		// (fire-and-forget background send), so it is also a valid target - look
+		// there before deciding the tab is truly gone.
+		const tabByItemId =
+			session.aiTabs.find((tab) => tab.id === item.tabId) ||
+			session.orphanedThinkingTabs?.find((tab) => tab.id === item.tabId);
 
 		if (!tabByItemId && item.tabId) {
 			logger.warn(

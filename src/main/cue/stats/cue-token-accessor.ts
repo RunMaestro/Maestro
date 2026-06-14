@@ -2,9 +2,21 @@
  * Cue Token Accessor
  *
  * Unified, agent-agnostic token-usage lookup for Cue dashboard attribution.
- * Resolves `(agentType, projectPath, isRemote)` per `sessionId` from the
- * `session_lifecycle` stats table, then dispatches to the appropriate
- * `AgentSessionStorage` implementation to obtain pre-aggregated token totals.
+ *
+ * Two distinct id spaces are in play and conflating them is what made every
+ * Cue token figure read zero:
+ * - **Maestro agent id** — what `cue_events` / `session_lifecycle` store. Used
+ *   here only to resolve `(agentType, projectPath, isRemote)` from the
+ *   `session_lifecycle` stats table.
+ * - **Provider session id** — Claude's `session_id` etc., the key the agents'
+ *   on-disk session files (and `AgentSessionInfo.sessionId`) use. Used here to
+ *   actually match token totals.
+ *
+ * Callers therefore pass `{ maestroSessionId, providerSessionId }` pairs and
+ * get back a map keyed by **providerSessionId**. Each Cue run spawns a fresh
+ * agent process (no `--resume`), so one provider session == one Cue event ==
+ * one token total; the "credit-the-whole-session" model is exact, not an
+ * over-count, for this caller.
  *
  * Design notes (see `AGENT-TOKEN-AUDIT.md` for the full audit):
  * - All five priority agents already aggregate token data into the uniform
@@ -34,13 +46,14 @@ const LOG_CONTEXT = '[CueTokenAccessor]';
 const CACHE_TTL_MS = 30 * 1000;
 
 /**
- * Aggregated token usage for one Maestro session.
+ * Aggregated token usage for one provider session.
  *
  * `coverage` reports how complete the data is — see audit doc for which
  * agents fall into each bucket. Callers should surface the bucket in the UI
  * so users understand when totals are an undercount.
  */
 export interface SessionTokenSummary {
+	/** Provider session id (e.g. Claude's `session_id`) the totals were read from. */
 	sessionId: string;
 	agentType: string;
 	inputTokens: number;
@@ -75,6 +88,16 @@ const COVERAGE_BY_AGENT: Record<string, 'full' | 'partial'> = {
 	codex: 'partial',
 	'copilot-cli': 'partial',
 };
+
+/**
+ * One unit of work for {@link getSessionTokenSummaries}: the Maestro agent id
+ * (to resolve agent type / project via `session_lifecycle`) paired with the
+ * provider session id the run produced (to match on-disk token totals).
+ */
+export interface SessionTokenLookup {
+	maestroSessionId: string;
+	providerSessionId: string;
+}
 
 interface CacheEntry {
 	summary: SessionTokenSummary;
@@ -178,9 +201,12 @@ function matchesWindow(
 }
 
 /**
- * Resolve token totals for a batch of Maestro session IDs.
+ * Resolve token totals for a batch of `{ maestroSessionId, providerSessionId }`
+ * lookups.
  *
- * @param sessionIds - The Maestro session IDs to look up.
+ * @param lookups - Pairs of Maestro agent id (resolves agent type / project via
+ *   `session_lifecycle`) and the provider session id the run produced (matches
+ *   on-disk token totals). Deduped by `providerSessionId`.
  * @param opts.sinceMs - Optional window lower bound. Sessions whose
  *   `windowEndMs` falls before this are excluded from the result. Token
  *   counts on included sessions are NOT clipped — the simple model credits
@@ -188,38 +214,51 @@ function matchesWindow(
  * @param opts.untilMs - Optional window upper bound. Sessions whose
  *   `windowStartMs` falls after this are excluded from the result. Same
  *   "no clipping" semantics.
- * @returns Map keyed by `sessionId`. Sessions not in `session_lifecycle`
- *   are absent from the map (not zeroed). Sessions for unknown agents are
- *   present with `coverage: 'unsupported'` and zeros.
+ * @returns Map keyed by `providerSessionId`. Provider sessions whose Maestro
+ *   agent id isn't in `session_lifecycle` are absent from the map (not zeroed).
+ *   Sessions for unknown agents are present with `coverage: 'unsupported'` and
+ *   zeros.
  */
 export async function getSessionTokenSummaries(
-	sessionIds: string[],
+	lookups: SessionTokenLookup[],
 	opts?: { sinceMs?: number; untilMs?: number }
 ): Promise<Map<string, SessionTokenSummary>> {
 	const result = new Map<string, SessionTokenSummary>();
-	if (sessionIds.length === 0) return result;
+	if (lookups.length === 0) return result;
 
 	const now = Date.now();
 
-	// First pass — serve from cache, collect uncached IDs.
+	// Dedupe by providerSessionId (globally unique), remembering each one's
+	// Maestro agent id so we can resolve its agent type / project below.
+	const maestroByProvider = new Map<string, string>();
+	for (const { maestroSessionId, providerSessionId } of lookups) {
+		if (!providerSessionId || !maestroSessionId) continue;
+		if (!maestroByProvider.has(providerSessionId)) {
+			maestroByProvider.set(providerSessionId, maestroSessionId);
+		}
+	}
+
+	// First pass — serve from cache, collect uncached provider ids.
 	const uncached: string[] = [];
-	for (const sid of sessionIds) {
-		const entry = cache.get(sid);
+	for (const providerSessionId of maestroByProvider.keys()) {
+		const entry = cache.get(providerSessionId);
 		if (entry && entry.expiresAt > now) {
 			if (matchesWindow(entry.summary, opts)) {
-				result.set(sid, entry.summary);
+				result.set(providerSessionId, entry.summary);
 			}
 			continue;
 		}
-		uncached.push(sid);
+		uncached.push(providerSessionId);
 	}
 	if (uncached.length === 0) return result;
 
-	// Resolve agent type / project / remote flag for the uncached batch.
-	let lookups: Map<string, SessionLookupRow>;
+	// Resolve agent type / project / remote flag for the uncached batch's
+	// Maestro agent ids (that's what `session_lifecycle` is keyed by).
+	let lifecycle: Map<string, SessionLookupRow>;
 	try {
 		const db = getStatsDB().database;
-		lookups = lookupSessions(db, uncached);
+		const maestroIds = Array.from(new Set(uncached.map((p) => maestroByProvider.get(p)!)));
+		lifecycle = lookupSessions(db, maestroIds);
 	} catch (error) {
 		void captureException(error);
 		logger.warn(`Failed to look up sessions in stats DB: ${error}`, LOG_CONTEXT);
@@ -227,28 +266,32 @@ export async function getSessionTokenSummaries(
 	}
 
 	// Group by (agentType, projectPath, isRemote) so we make one
-	// listSessions() call per group instead of one per session.
+	// listSessions() call per group instead of one per session. Each group
+	// carries the provider session ids to match within that project.
 	interface Group {
 		agentType: string;
 		projectPath: string;
 		isRemote: boolean;
-		sessionIds: string[];
+		providerSessionIds: string[];
 	}
 	const groups = new Map<string, Group>();
 
-	for (const sid of uncached) {
-		const row = lookups.get(sid);
+	for (const providerSessionId of uncached) {
+		const maestroId = maestroByProvider.get(providerSessionId)!;
+		const row = lifecycle.get(maestroId);
 		if (!row) {
-			// Spec: "A session that doesn't exist returns nothing in the map."
+			// Maestro agent isn't in session_lifecycle (aged out, or stats were
+			// off when it was created): "a session that doesn't exist returns
+			// nothing in the map."
 			continue;
 		}
 
 		// No project path: we can't call listSessions(). Treat as partial.
 		if (!row.project_path) {
 			const coverage = COVERAGE_BY_AGENT[row.agent_type] ? 'partial' : 'unsupported';
-			const summary = buildEmptySummary(sid, row.agent_type, coverage);
-			result.set(sid, summary);
-			cache.set(sid, { summary, expiresAt: now + CACHE_TTL_MS });
+			const summary = buildEmptySummary(providerSessionId, row.agent_type, coverage);
+			result.set(providerSessionId, summary);
+			cache.set(providerSessionId, { summary, expiresAt: now + CACHE_TTL_MS });
 			continue;
 		}
 
@@ -260,11 +303,11 @@ export async function getSessionTokenSummaries(
 				agentType: row.agent_type,
 				projectPath: row.project_path,
 				isRemote,
-				sessionIds: [],
+				providerSessionIds: [],
 			};
 			groups.set(key, group);
 		}
-		group.sessionIds.push(sid);
+		group.providerSessionIds.push(providerSessionId);
 	}
 
 	await Promise.all(
@@ -273,25 +316,25 @@ export async function getSessionTokenSummaries(
 
 			// Unknown agent — mark unsupported.
 			if (!baseCoverage) {
-				for (const sid of group.sessionIds) {
-					const summary = buildEmptySummary(sid, group.agentType, 'unsupported');
-					cache.set(sid, { summary, expiresAt: now + CACHE_TTL_MS });
-					if (matchesWindow(summary, opts)) result.set(sid, summary);
+				for (const providerSessionId of group.providerSessionIds) {
+					const summary = buildEmptySummary(providerSessionId, group.agentType, 'unsupported');
+					cache.set(providerSessionId, { summary, expiresAt: now + CACHE_TTL_MS });
+					if (matchesWindow(summary, opts)) result.set(providerSessionId, summary);
 				}
 				return;
 			}
 
-			// Remote session token data lives on the remote host. Phase 02
-			// doesn't thread SSH config through; mark partial and warn.
+			// Remote session token data lives on the remote host. We don't thread
+			// SSH config through here; mark partial and warn.
 			if (group.isRemote) {
 				logger.warn(
-					`Skipping token attribution for ${group.sessionIds.length} remote session(s) (agent=${group.agentType}, project=${group.projectPath}); SSH config is not threaded through the Phase 02 accessor`,
+					`Skipping token attribution for ${group.providerSessionIds.length} remote session(s) (agent=${group.agentType}, project=${group.projectPath}); SSH config is not threaded through the token accessor`,
 					LOG_CONTEXT
 				);
-				for (const sid of group.sessionIds) {
-					const summary = buildEmptySummary(sid, group.agentType, 'partial');
-					cache.set(sid, { summary, expiresAt: now + CACHE_TTL_MS });
-					if (matchesWindow(summary, opts)) result.set(sid, summary);
+				for (const providerSessionId of group.providerSessionIds) {
+					const summary = buildEmptySummary(providerSessionId, group.agentType, 'partial');
+					cache.set(providerSessionId, { summary, expiresAt: now + CACHE_TTL_MS });
+					if (matchesWindow(summary, opts)) result.set(providerSessionId, summary);
 				}
 				return;
 			}
@@ -303,10 +346,10 @@ export async function getSessionTokenSummaries(
 					`No session storage registered for agent ${group.agentType}; returning unsupported summaries`,
 					LOG_CONTEXT
 				);
-				for (const sid of group.sessionIds) {
-					const summary = buildEmptySummary(sid, group.agentType, 'unsupported');
-					cache.set(sid, { summary, expiresAt: now + CACHE_TTL_MS });
-					if (matchesWindow(summary, opts)) result.set(sid, summary);
+				for (const providerSessionId of group.providerSessionIds) {
+					const summary = buildEmptySummary(providerSessionId, group.agentType, 'unsupported');
+					cache.set(providerSessionId, { summary, expiresAt: now + CACHE_TTL_MS });
+					if (matchesWindow(summary, opts)) result.set(providerSessionId, summary);
 				}
 				return;
 			}
@@ -325,17 +368,44 @@ export async function getSessionTokenSummaries(
 			const byId = new Map<string, AgentSessionInfo>();
 			for (const session of sessions) byId.set(session.sessionId, session);
 
-			for (const sid of group.sessionIds) {
-				const info = byId.get(sid);
+			for (const providerSessionId of group.providerSessionIds) {
+				const info = byId.get(providerSessionId);
 				const summary = info
-					? buildSummaryFromInfo(sid, group.agentType, info)
-					: buildEmptySummary(sid, group.agentType, 'partial');
-				cache.set(sid, { summary, expiresAt: now + CACHE_TTL_MS });
-				if (matchesWindow(summary, opts)) result.set(sid, summary);
+					? buildSummaryFromInfo(providerSessionId, group.agentType, info)
+					: buildEmptySummary(providerSessionId, group.agentType, 'partial');
+				cache.set(providerSessionId, { summary, expiresAt: now + CACHE_TTL_MS });
+				if (matchesWindow(summary, opts)) result.set(providerSessionId, summary);
 			}
 		})
 	);
 
+	return result;
+}
+
+/**
+ * Resolve `agentType` for a batch of Maestro agent ids from `session_lifecycle`.
+ *
+ * Kept separate from token resolution because agent type is keyed by the
+ * Maestro agent id (what `cue_events` stores) and is available even for events
+ * that never recorded a provider session id — so the dashboard can still label
+ * a run's agent when its token total is unknown. Maestro agent ids absent from
+ * `session_lifecycle` are simply missing from the returned map.
+ */
+export function getAgentTypesForSessions(maestroSessionIds: string[]): Map<string, string> {
+	const result = new Map<string, string>();
+	const unique = Array.from(new Set(maestroSessionIds.filter(Boolean)));
+	if (unique.length === 0) return result;
+
+	try {
+		const db = getStatsDB().database;
+		const rows = lookupSessions(db, unique);
+		for (const [maestroId, row] of rows) {
+			if (row.agent_type) result.set(maestroId, row.agent_type);
+		}
+	} catch (error) {
+		void captureException(error);
+		logger.warn(`Failed to resolve agent types from stats DB: ${error}`, LOG_CONTEXT);
+	}
 	return result;
 }
 

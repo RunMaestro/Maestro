@@ -123,7 +123,7 @@ describe('Chart Accessibility - SourceDistributionChart', () => {
 	it('has descriptive aria-label mentioning session type', () => {
 		render(<SourceDistributionChart data={mockStatsData} theme={mockTheme} />);
 		const figure = screen.getByRole('figure');
-		expect(figure.getAttribute('aria-label')).toContain('Session type');
+		expect(figure.getAttribute('aria-label')).toContain('Session Type');
 	});
 
 	it('has aria-pressed on toggle buttons', () => {

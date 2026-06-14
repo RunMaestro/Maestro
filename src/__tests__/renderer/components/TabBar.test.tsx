@@ -128,6 +128,11 @@ vi.mock('lucide-react', () => ({
 			🕐
 		</span>
 	),
+	MessageSquare: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<span data-testid="message-square-icon" className={className} style={style}>
+			💬
+		</span>
+	),
 }));
 
 // Mock react-dom createPortal
@@ -2195,7 +2200,7 @@ describe('TabBar', () => {
 			expect(screen.getByText('🎵 Music Tab 日本語')).toBeInTheDocument();
 		});
 
-		it('handles very long tab names with truncation for inactive tabs', () => {
+		it('shows full tab names without truncation or a width cap', () => {
 			const longName = 'This is a very long tab name that should be truncated';
 			const tabs = [
 				createTab({ id: 'tab-1', name: 'Active Tab' }),
@@ -2213,18 +2218,20 @@ describe('TabBar', () => {
 				/>
 			);
 
-			// Inactive tab should be truncated
+			// Tabs never compress: the full title renders, no truncation and no width
+			// cap. The bar scrolls when there are too many tabs to fit.
 			const inactiveTabName = screen.getByText(longName);
-			expect(inactiveTabName).toHaveClass('truncate');
-			expect(inactiveTabName).toHaveClass('max-w-[120px]');
+			expect(inactiveTabName).toHaveClass('whitespace-nowrap');
+			expect(inactiveTabName).not.toHaveClass('truncate');
+			expect(inactiveTabName).not.toHaveClass('max-w-[120px]');
 
-			// Active tab should show full name without truncation
+			// Active tab behaves identically - full name, no truncation
 			const activeTabName = screen.getByText('Active Tab');
 			expect(activeTabName).toHaveClass('whitespace-nowrap');
 			expect(activeTabName).not.toHaveClass('truncate');
 		});
 
-		it('truncates browser tab titles for both active and inactive tabs', () => {
+		it('shows full browser tab titles without truncation or a width cap', () => {
 			const longTitle = 'A very very very long browser tab title that should be truncated';
 			const otherLongTitle =
 				'Another extremely long browser tab title that should also be truncated';
@@ -2270,15 +2277,17 @@ describe('TabBar', () => {
 				/>
 			);
 
-			// Active browser tab: still truncated, with a slightly larger max width
+			// Active browser tab: full title, no truncation, no width cap
 			const activeTitle = screen.getByText(longTitle);
-			expect(activeTitle).toHaveClass('truncate');
-			expect(activeTitle).toHaveClass('max-w-[180px]');
+			expect(activeTitle).toHaveClass('whitespace-nowrap');
+			expect(activeTitle).not.toHaveClass('truncate');
+			expect(activeTitle).not.toHaveClass('max-w-[180px]');
 
-			// Inactive browser tab: truncated with the standard max width
+			// Inactive browser tab: behaves identically
 			const inactiveTitle = screen.getByText(otherLongTitle);
-			expect(inactiveTitle).toHaveClass('truncate');
-			expect(inactiveTitle).toHaveClass('max-w-[140px]');
+			expect(inactiveTitle).toHaveClass('whitespace-nowrap');
+			expect(inactiveTitle).not.toHaveClass('truncate');
+			expect(inactiveTitle).not.toHaveClass('max-w-[140px]');
 		});
 
 		it('handles many tabs', () => {
@@ -5484,7 +5493,7 @@ describe('Extension badge styling across themes', () => {
 		expect(badge).toHaveStyle({ backgroundColor: 'rgba(189, 147, 249, 0.3)' });
 	});
 
-	it('renders consistent tab name truncation for file tabs (max-w-[120px])', () => {
+	it('lets inactive file tab names grow to fit, truncating only when crowded', () => {
 		const aiTab = createTab({ id: 'ai-tab-1', name: 'AI Tab' });
 		const fileTab: FilePreviewTab = {
 			id: 'file-tab-1',
@@ -5520,10 +5529,11 @@ describe('Extension badge styling across themes', () => {
 			/>
 		);
 
-		// File tab name span should have truncation class
+		// File tab name span shows the full name, no truncation and no width cap
 		const fileNameSpan = screen.getByText('very-long-filename-that-should-be-truncated');
-		expect(fileNameSpan).toHaveClass('truncate');
-		expect(fileNameSpan).toHaveClass('max-w-[120px]');
+		expect(fileNameSpan).toHaveClass('whitespace-nowrap');
+		expect(fileNameSpan).not.toHaveClass('truncate');
+		expect(fileNameSpan).not.toHaveClass('max-w-[120px]');
 	});
 });
 

@@ -21,6 +21,7 @@ import type { CueEventType } from '../cue-types';
 import { createCueFileWatcherTriggerSource } from './cue-file-watcher-trigger-source';
 import { createCueGitHubPollerTriggerSource } from './cue-github-poller-trigger-source';
 import { createCueHeartbeatTriggerSource } from './cue-heartbeat-trigger-source';
+import { createCueOnceTriggerSource } from './cue-once-trigger-source';
 import { createCueScheduledTriggerSource } from './cue-scheduled-trigger-source';
 import { createCueTaskScannerTriggerSource } from './cue-task-scanner-trigger-source';
 import type { CueTriggerSource, CueTriggerSourceContext } from './cue-trigger-source';
@@ -34,6 +35,8 @@ export function createTriggerSource(
 			return createCueHeartbeatTriggerSource(ctx);
 		case 'time.scheduled':
 			return createCueScheduledTriggerSource(ctx);
+		case 'time.once':
+			return createCueOnceTriggerSource(ctx);
 		case 'file.changed':
 			return createCueFileWatcherTriggerSource(ctx);
 		case 'task.pending':
@@ -44,7 +47,7 @@ export function createTriggerSource(
 		case 'agent.completed':
 		case 'app.startup':
 		case 'cli.trigger':
-			// These are not timer/watcher-driven ��� the runtime handles them
+			// These are not timer/watcher-driven — the runtime handles them
 			// directly via the completion service / startup loop / CLI command.
 			return null;
 		default: {

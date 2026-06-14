@@ -2,6 +2,9 @@ import React, { useState, useCallback, useRef } from 'react';
 import { Palette, Download, Upload, RotateCcw, Check, ChevronDown } from 'lucide-react';
 import type { Theme, ThemeColors, ThemeId } from '../types';
 import { THEMES, DEFAULT_CUSTOM_THEME_COLORS } from '../constants/themes';
+import { ConfirmModal } from './ConfirmModal';
+import { useModalLayer } from '../hooks/ui/useModalLayer';
+import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 
 /**
  * Validates that a string is a valid CSS color value
@@ -291,6 +294,7 @@ export function CustomThemeBuilder({
 	onImportSuccess,
 }: CustomThemeBuilderProps) {
 	const [showBaseSelector, setShowBaseSelector] = useState(false);
+	const [showResetConfirm, setShowResetConfirm] = useState(false);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 
 	// Get all themes except 'custom' for base selection
@@ -304,6 +308,21 @@ export function CustomThemeBuilder({
 			});
 		},
 		[customThemeColors, setCustomThemeColors]
+	);
+
+	// Register the base-theme dropdown as its own layer while open so Escape
+	// closes the dropdown first instead of dismissing the whole Settings modal.
+	const closeBaseSelector = useCallback(() => setShowBaseSelector(false), []);
+	useModalLayer(
+		MODAL_PRIORITIES.CUSTOM_THEME_BASE_SELECTOR,
+		'Base Theme Selector',
+		closeBaseSelector,
+		{
+			enabled: showBaseSelector,
+			blocksLowerLayers: false,
+			capturesFocus: false,
+			focusTrap: 'none',
+		}
 	);
 
 	const handleInitializeFromBase = useCallback(
@@ -543,7 +562,7 @@ export function CustomThemeBuilder({
 
 						{/* Reset */}
 						<button
-							onClick={handleReset}
+							onClick={() => setShowResetConfirm(true)}
 							className="flex items-center justify-center gap-1 px-2 py-1.5 rounded text-xs font-medium border hover:opacity-80"
 							style={{
 								backgroundColor: theme.colors.error + '20',
@@ -584,6 +603,17 @@ export function CustomThemeBuilder({
 					</div>
 				</div>
 			</div>
+
+			{showResetConfirm && (
+				<ConfirmModal
+					theme={theme}
+					title="Reset Custom Theme"
+					message="Reset all custom theme colors to their defaults? This will discard your current customizations."
+					confirmLabel="Reset"
+					onConfirm={handleReset}
+					onClose={() => setShowResetConfirm(false)}
+				/>
+			)}
 		</div>
 	);
 }

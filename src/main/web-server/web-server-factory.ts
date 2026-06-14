@@ -18,7 +18,9 @@ import { execGit } from '../utils/remote-git';
 import { getSshRemoteById } from '../stores';
 import { parseGitBranches } from '../../shared/gitUtils';
 import type { Shortcut } from '../../shared/shortcut-types';
-import type { WebPlaybook } from './types';
+import type { WebPlaybook, CueSubscriptionInfo, CueActivityEntry } from './types';
+import type { CueGraphSession, CueRunResult } from '../../shared/cue/contracts';
+import { composeCueSubscriptionId } from '../../shared/cue/subscription-id';
 import { getDefaultShell } from '../stores/defaults';
 import { buildWebSettingsSnapshot } from './web-settings-snapshot';
 import {
@@ -32,6 +34,39 @@ import {
 /** UUID v4 format regex for validating stored security tokens.
  *  Enforces version nibble (4) and variant bits ([89ab]). */
 const UUID_V4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/** Display-formats a Cue subscription's schedule for `cue list`. Surfaces
+ *  `schedule_times`, `interval_minutes`, and `schedule_days` in a single
+ *  human-readable string so day-pinned schedules don't show up as
+ *  `undefined` in the CLI:
+ *
+ *  - `schedule_times: ['07:00']`                              → `"07:00"`
+ *  - `schedule_times: ['07:00']`, `schedule_days: ['mon','wed']` → `"07:00 (Mon, Wed)"`
+ *  - `interval_minutes: 5`                                    → `"every 5m"`
+ *  - `schedule_days: ['mon','wed']` (no times, no interval)   → `"days: Mon, Wed"`
+ *  - none of the above                                        → `undefined`
+ */
+function formatCueSchedule(sub: {
+	schedule_times?: string[];
+	schedule_days?: string[];
+	interval_minutes?: number;
+}): string | undefined {
+	const days =
+		Array.isArray(sub.schedule_days) && sub.schedule_days.length > 0
+			? sub.schedule_days.map((d) => d.charAt(0).toUpperCase() + d.slice(1)).join(', ')
+			: null;
+	if (Array.isArray(sub.schedule_times) && sub.schedule_times.length > 0) {
+		const base = sub.schedule_times.join(', ');
+		return days ? `${base} (${days})` : base;
+	}
+	if (typeof sub.interval_minutes === 'number') {
+		return `every ${sub.interval_minutes}m`;
+	}
+	if (days) {
+		return `days: ${days}`;
+	}
+	return undefined;
+}
 
 /** Store interface for sessions */
 interface SessionsStore {
@@ -61,6 +96,25 @@ export interface WebServerFactoryDependencies {
 		prompt?: string,
 		sourceAgentId?: string
 	) => boolean;
+	/** Direct CUE graph-data snapshot — bypasses renderer IPC round-trip.
+	 *  Required by `setGetCueSubscriptionsCallback` to answer the CLI's
+	 *  `get_cue_subscriptions` message in-process instead of forwarding it
+	 *  to the renderer (which never registered a listener, so every CLI
+	 *  `cue list` call timed out). */
+	getCueGraphData?: () => CueGraphSession[];
+	/** Direct toggle for a single subscription's `enabled` flag in YAML.
+	 *  `subscriptionId` follows the `${sessionId}::${pipeline}::${name}` shape
+	 *  emitted by `getCueGraphData` flattening (via `composeCueSubscriptionId`)
+	 *  — same dead-bridge fix as `getCueGraphData`. Returns `false` when the
+	 *  id can't be resolved, the YAML can't be parsed, or the named
+	 *  subscription isn't present. Async because the engine serialises
+	 *  per-`projectRoot` writes via a promise chain to keep concurrent
+	 *  toggles from clobbering each other. */
+	setCueSubscriptionEnabled?: (subscriptionId: string, enabled: boolean) => Promise<boolean>;
+	/** Direct CUE activity-log snapshot — bypasses renderer IPC round-trip.
+	 *  Used by `setGetCueActivityCallback` (web UI's activity dashboard).
+	 *  Same dead-bridge fix as `getCueGraphData`. */
+	getCueActivityLog?: () => CueRunResult[];
 }
 
 /**
@@ -180,6 +234,11 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					state: s.state,
 					inputMode: s.inputMode,
 					cwd: s.cwd,
+					// Claude token-source selection, so web-initiated group chat
+					// participants honor the maestro-p TUI / API / dynamic choice.
+					enableMaestroP: s.enableMaestroP,
+					maestroPMode: s.maestroPMode,
+					maestroPPath: s.maestroPPath,
 					groupId: s.groupId || null,
 					groupName: group?.name || null,
 					groupEmoji: group?.emoji || null,
@@ -1319,6 +1378,54 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			});
 		});
 
+		// Set up callback for web server to create a worktree agent off a parent.
+		// Mirrors the createSession bridge: hand off to the renderer (which owns
+		// the worktree-spawn helper) and resolve with the new agent's session id.
+		server.setCreateWorktreeSessionCallback(async (parentSessionId: string, config: any) => {
+			const mainWindow = getMainWindow();
+			if (!mainWindow) {
+				logger.warn('mainWindow is null for createWorktreeSession', 'WebServer');
+				return { success: false, error: 'Main window not available' };
+			}
+
+			return new Promise((resolve) => {
+				const responseChannel = `remote:createWorktreeSession:response:${randomUUID()}`;
+				let resolved = false;
+
+				const handleResponse = (_event: Electron.IpcMainEvent, result: any) => {
+					if (resolved) return;
+					resolved = true;
+					clearTimeout(timeoutId);
+					resolve(result || { success: false, error: 'No response' });
+				};
+
+				ipcMain.once(responseChannel, handleResponse);
+				if (!isWebContentsAvailable(mainWindow)) {
+					logger.warn('webContents is not available for createWorktreeSession', 'WebServer');
+					ipcMain.removeListener(responseChannel, handleResponse);
+					resolve({ success: false, error: 'Web contents not available' });
+					return;
+				}
+				mainWindow.webContents.send(
+					'remote:createWorktreeSession',
+					parentSessionId,
+					config,
+					responseChannel
+				);
+
+				const timeoutId = setTimeout(() => {
+					if (resolved) return;
+					resolved = true;
+					ipcMain.removeListener(responseChannel, handleResponse);
+					logger.warn(
+						`createWorktreeSession callback timed out for parent ${parentSessionId}`,
+						'WebServer'
+					);
+					resolve({ success: false, error: 'Timeout' });
+				}, 30000);
+			});
+		});
+
 		// Set up callback for web server to delete a session
 		// Fire-and-forget pattern
 		server.setDeleteSessionCallback(async (sessionId: string) => {
@@ -1371,6 +1478,53 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					ipcMain.removeListener(responseChannel, handleResponse);
 					logger.warn(`renameSession callback timed out for session ${sessionId}`, 'WebServer');
 					resolve(false);
+				}, 5000);
+			});
+		});
+
+		// Set up callback for web server to update a session's working directory.
+		// Mirrors renameSession's IPC request-response shape but returns a
+		// structured result so the renderer can refuse mid-flight updates (e.g.
+		// while the agent process is alive) without losing the reason.
+		server.setUpdateSessionCwdCallback(async (sessionId: string, newCwd: string) => {
+			const mainWindow = getMainWindow();
+			if (!mainWindow) {
+				logger.warn('mainWindow is null for updateSessionCwd', 'WebServer');
+				return { success: false, error: 'Desktop window unavailable' };
+			}
+
+			return new Promise((resolve) => {
+				const responseChannel = `remote:updateSessionCwd:response:${randomUUID()}`;
+				let resolved = false;
+
+				const handleResponse = (
+					_event: Electron.IpcMainEvent,
+					result: { success?: boolean; error?: string } | undefined
+				) => {
+					if (resolved) return;
+					resolved = true;
+					clearTimeout(timeoutId);
+					resolve({
+						success: Boolean(result?.success),
+						error: result?.error,
+					});
+				};
+
+				ipcMain.once(responseChannel, handleResponse);
+				if (!isWebContentsAvailable(mainWindow)) {
+					logger.warn('webContents is not available for updateSessionCwd', 'WebServer');
+					ipcMain.removeListener(responseChannel, handleResponse);
+					resolve({ success: false, error: 'Desktop renderer unavailable' });
+					return;
+				}
+				mainWindow.webContents.send('remote:updateSessionCwd', sessionId, newCwd, responseChannel);
+
+				const timeoutId = setTimeout(() => {
+					if (resolved) return;
+					resolved = true;
+					ipcMain.removeListener(responseChannel, handleResponse);
+					logger.warn(`updateSessionCwd callback timed out for session ${sessionId}`, 'WebServer');
+					resolve({ success: false, error: 'Renderer did not respond in time' });
 				}, 5000);
 			});
 		});
@@ -2273,131 +2427,122 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 
 		// ============ Cue Automation Callbacks ============
 
-		// Get Cue subscriptions — uses IPC request-response pattern
+		// Get Cue subscriptions — calls engine directly in the main process.
+		// Previous implementation forwarded `remote:getCueSubscriptions` to
+		// the renderer and waited 30 s for a response, but no renderer code
+		// ever registered a handler for that channel. The CLI's 10 s timeout
+		// fired every time, surfacing as `cue list` hanging with
+		// `Command timed out waiting for cue_subscriptions`. Mirrors the same
+		// pattern as `triggerCueSubscription` below — the engine lives in
+		// main process anyway, so the IPC bounce was never needed.
 		server.setGetCueSubscriptionsCallback(async (sessionId?: string) => {
-			const mainWindow = getMainWindow();
-			if (!mainWindow) {
-				logger.warn('mainWindow is null for getCueSubscriptions', 'WebServer');
+			if (!deps.getCueGraphData) {
+				logger.warn('getCueGraphData dependency not available', 'WebServer');
 				return [];
 			}
-
-			return new Promise((resolve) => {
-				const responseChannel = `remote:getCueSubscriptions:response:${randomUUID()}`;
-				let resolved = false;
-
-				const handleResponse = (_event: Electron.IpcMainEvent, result: any) => {
-					if (resolved) return;
-					resolved = true;
-					clearTimeout(timeoutId);
-					resolve(result ?? []);
-				};
-
-				ipcMain.once(responseChannel, handleResponse);
-				if (!isWebContentsAvailable(mainWindow)) {
-					logger.warn('webContents is not available for getCueSubscriptions', 'WebServer');
-					ipcMain.removeListener(responseChannel, handleResponse);
-					resolve([]);
-					return;
+			const graph = deps.getCueGraphData();
+			const filtered =
+				typeof sessionId === 'string' && sessionId.length > 0
+					? graph.filter((gs) => gs.sessionId === sessionId)
+					: graph;
+			const subs: CueSubscriptionInfo[] = [];
+			for (const session of filtered) {
+				for (const sub of session.subscriptions) {
+					subs.push({
+						// No stable per-subscription id in YAML; compose one from
+						// session + pipeline + name. Names are unique within a
+						// pipeline (validator contract), so the pipeline
+						// discriminator is what guarantees the id stays unique
+						// when two pipelines under the same session each define
+						// a sub with the same name. Without it, downstream
+						// resolvers (e.g. `setSubscriptionEnabled` in the
+						// follow-up PR) would match by name only and silently
+						// toggle the wrong row.
+						id: composeCueSubscriptionId(session.sessionId, sub),
+						name: sub.name,
+						eventType: sub.event,
+						pattern: typeof sub.watch === 'string' ? sub.watch : undefined,
+						schedule: formatCueSchedule(sub),
+						sessionId: session.sessionId,
+						sessionName: session.sessionName,
+						enabled: sub.enabled !== false,
+						// Per-subscription last-triggered / count are not yet
+						// tracked by the engine (only per-session). Leave the
+						// numeric fields zero so the CLI renders "never triggered"
+						// rather than fabricating a value.
+						triggerCount: 0,
+					});
 				}
-				mainWindow.webContents.send('remote:getCueSubscriptions', sessionId, responseChannel);
-
-				const timeoutId = setTimeout(() => {
-					if (resolved) return;
-					resolved = true;
-					ipcMain.removeListener(responseChannel, handleResponse);
-					logger.warn('getCueSubscriptions callback timed out', 'WebServer');
-					resolve([]);
-				}, 30000);
-			});
+			}
+			return subs;
 		});
 
-		// Toggle Cue subscription — uses IPC request-response pattern
+		// Toggle Cue subscription — calls engine directly in the main process.
+		// Previous implementation forwarded `remote:toggleCueSubscription` to
+		// the renderer and waited 10 s for a response, but no renderer code
+		// ever registered a handler for that channel. Every web-UI toggle
+		// silently became a no-op after a 10 s stall. Same dead-bridge fix as
+		// `setGetCueSubscriptionsCallback` and `setTriggerCueSubscriptionCallback`.
 		server.setToggleCueSubscriptionCallback(async (subscriptionId: string, enabled: boolean) => {
-			const mainWindow = getMainWindow();
-			if (!mainWindow) {
-				logger.warn('mainWindow is null for toggleCueSubscription', 'WebServer');
+			if (!deps.setCueSubscriptionEnabled) {
+				logger.warn('setCueSubscriptionEnabled dependency not available', 'WebServer');
 				return false;
 			}
-
-			return new Promise((resolve) => {
-				const responseChannel = `remote:toggleCueSubscription:response:${randomUUID()}`;
-				let resolved = false;
-
-				const handleResponse = (_event: Electron.IpcMainEvent, result: any) => {
-					if (resolved) return;
-					resolved = true;
-					clearTimeout(timeoutId);
-					resolve(result ?? false);
-				};
-
-				ipcMain.once(responseChannel, handleResponse);
-				if (!isWebContentsAvailable(mainWindow)) {
-					logger.warn('webContents is not available for toggleCueSubscription', 'WebServer');
-					ipcMain.removeListener(responseChannel, handleResponse);
-					resolve(false);
-					return;
-				}
-				mainWindow.webContents.send(
-					'remote:toggleCueSubscription',
-					subscriptionId,
-					enabled,
-					responseChannel
-				);
-
-				const timeoutId = setTimeout(() => {
-					if (resolved) return;
-					resolved = true;
-					ipcMain.removeListener(responseChannel, handleResponse);
-					logger.warn(
-						`toggleCueSubscription callback timed out for ${subscriptionId}`,
-						'WebServer'
-					);
-					resolve(false);
-				}, 10000);
-			});
+			return deps.setCueSubscriptionEnabled(subscriptionId, enabled);
 		});
 
-		// Get Cue activity log — uses IPC request-response pattern
+		// Get Cue activity log — calls engine directly in the main process.
+		// Previously forwarded to the renderer with no listener registered —
+		// the 30 s timeout fired every time and the web UI's activity tab
+		// always rendered empty. Maps `CueRunResult[]` from the engine into
+		// the web-facing `CueActivityEntry[]` shape and applies the same
+		// optional `sessionId` filter the IPC bounce used to apply renderer-side.
 		server.setGetCueActivityCallback(async (sessionId?: string, limit?: number) => {
-			const mainWindow = getMainWindow();
-			if (!mainWindow) {
-				logger.warn('mainWindow is null for getCueActivity', 'WebServer');
+			if (!deps.getCueActivityLog) {
+				logger.warn('getCueActivityLog dependency not available', 'WebServer');
 				return [];
 			}
-
-			return new Promise((resolve) => {
-				const responseChannel = `remote:getCueActivity:response:${randomUUID()}`;
-				let resolved = false;
-
-				const handleResponse = (_event: Electron.IpcMainEvent, result: any) => {
-					if (resolved) return;
-					resolved = true;
-					clearTimeout(timeoutId);
-					resolve(result ?? []);
-				};
-
-				ipcMain.once(responseChannel, handleResponse);
-				if (!isWebContentsAvailable(mainWindow)) {
-					logger.warn('webContents is not available for getCueActivity', 'WebServer');
-					ipcMain.removeListener(responseChannel, handleResponse);
-					resolve([]);
-					return;
-				}
-				mainWindow.webContents.send(
-					'remote:getCueActivity',
-					sessionId,
-					limit ?? 50,
-					responseChannel
-				);
-
-				const timeoutId = setTimeout(() => {
-					if (resolved) return;
-					resolved = true;
-					ipcMain.removeListener(responseChannel, handleResponse);
-					logger.warn('getCueActivity callback timed out', 'WebServer');
-					resolve([]);
-				}, 30000);
-			});
+			const runs = deps.getCueActivityLog();
+			const filteredBySession =
+				typeof sessionId === 'string' && sessionId.length > 0
+					? runs.filter((r) => r.sessionId === sessionId)
+					: runs;
+			// `limit` is applied after sessionId filtering so the caller gets
+			// `N` matching entries rather than `N` total of which some may be
+			// filtered out — mirroring how `cueEngine.getActivityLog(limit)`
+			// would behave without the per-session filter.
+			const limited =
+				typeof limit === 'number' && limit > 0
+					? filteredBySession.slice(0, limit)
+					: filteredBySession;
+			const entries: CueActivityEntry[] = limited.map((r) => ({
+				id: r.runId,
+				// Same identity contract as the subscriptions list — the
+				// pipeline discriminator falls back to base-name stripping
+				// when the run record has no `pipelineName`, matching how
+				// `getCueGraphData`'s flatten emits ids.
+				subscriptionId: composeCueSubscriptionId(r.sessionId, {
+					name: r.subscriptionName,
+					pipeline_name: r.pipelineName,
+				}),
+				subscriptionName: r.subscriptionName,
+				eventType: r.event.type,
+				sessionId: r.sessionId,
+				timestamp: Date.parse(r.startedAt) || 0,
+				// Map engine-side status (`timeout` / `stopped` are terminal
+				// failure variants) onto the web-facing four-state enum.
+				status:
+					r.status === 'completed'
+						? 'completed'
+						: r.status === 'running'
+							? 'running'
+							: r.status === 'failed' || r.status === 'timeout' || r.status === 'stopped'
+								? 'failed'
+								: 'triggered',
+				result: r.status === 'completed' ? r.stdout || undefined : r.stderr || undefined,
+				duration: r.durationMs,
+			}));
+			return entries;
 		});
 
 		// Trigger a Cue subscription by name — calls engine directly in the main process.
@@ -2530,6 +2675,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				}
 
 				const { groomContext } = await import('../utils/context-groomer');
+				const { buildDirectorNotesSynopsisPrompt } = await import('../utils/director-notes-prompt');
 				const { getPrompt } = await import('../prompt-manager');
 				const { AgentDetector } = await import('../agents');
 				const { getAgentConfigsStore } = await import('../stores');
@@ -2547,8 +2693,6 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				}
 
 				const historyManager = getHistoryManager();
-				const cutoffTime = Date.now() - lookbackDays * 24 * 60 * 60 * 1000;
-				const sessionIds = await historyManager.listSessionsWithHistory();
 
 				// Build session name map
 				const storedSessions = sessionsStore.get('sessions', []) as Array<{
@@ -2560,32 +2704,16 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					if (s.id && s.name) sessionNameMap.set(s.id, s.name);
 				}
 
-				const sessionManifest: Array<{
-					sessionId: string;
-					displayName: string;
-					historyFilePath: string;
-				}> = [];
-				let agentCount = 0;
-				let entryCount = 0;
+				// Scope the manifest to the lookback window so the batch agent only
+				// reads files it needs (see director-notes-prompt for the rationale).
+				const { prompt, agentCount, entryCount } = await buildDirectorNotesSynopsisPrompt({
+					historyManager,
+					sessionNameMap,
+					lookbackDays,
+					basePrompt: getPrompt('director-notes'),
+				});
 
-				for (const sessionId of sessionIds) {
-					const filePath = await historyManager.getHistoryFilePath(sessionId);
-					if (!filePath) continue;
-					const displayName = sessionNameMap.get(sessionId) || sessionId;
-					sessionManifest.push({ sessionId, displayName, historyFilePath: filePath });
-
-					const entries = await historyManager.getEntries(sessionId);
-					let agentHasEntries = false;
-					for (const entry of entries) {
-						if (entry.timestamp >= cutoffTime) {
-							entryCount++;
-							agentHasEntries = true;
-						}
-					}
-					if (agentHasEntries) agentCount++;
-				}
-
-				if (sessionManifest.length === 0) {
+				if (!prompt) {
 					return {
 						success: true,
 						synopsis: `# Director's Notes\n\n*Generated for the past ${lookbackDays} days*\n\nNo history files found.`,
@@ -2593,44 +2721,6 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 						stats: { agentCount: 0, entryCount: 0, durationMs: 0 },
 					};
 				}
-
-				const sanitizeDisplayName = (name: string): string =>
-					name
-						.replace(/[#*_`~\[\]()!|>]/g, '')
-						.replace(/\s+/g, ' ')
-						.trim();
-
-				const manifestLines = sessionManifest
-					.map(
-						(s) =>
-							`- Session "${sanitizeDisplayName(s.displayName)}" (ID: ${s.sessionId}): ${s.historyFilePath}`
-					)
-					.join('\n');
-
-				const cutoffDate = new Date(cutoffTime).toLocaleDateString('en-US', {
-					month: 'short',
-					day: 'numeric',
-					year: 'numeric',
-				});
-				const nowDate = new Date().toLocaleDateString('en-US', {
-					month: 'short',
-					day: 'numeric',
-					year: 'numeric',
-				});
-
-				const prompt = [
-					getPrompt('director-notes'),
-					'',
-					'---',
-					'',
-					'## Session History Files',
-					'',
-					`Lookback period: ${lookbackDays} days (${cutoffDate} – ${nowDate})`,
-					`Timestamp cutoff: ${cutoffTime} (only consider entries with timestamp >= this value)`,
-					`${agentCount} agents had ${entryCount} qualifying entries.`,
-					'',
-					manifestLines,
-				].join('\n');
 
 				try {
 					const allConfigs = agentConfigsStore.get('configs', {});

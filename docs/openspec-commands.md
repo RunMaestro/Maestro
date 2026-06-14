@@ -50,9 +50,9 @@ Create a change proposal before writing any code:
 
 **Creates:** A `openspec/changes/<change-id>/` directory with:
 
-- `proposal.md` — Why and what
-- `tasks.md` — Implementation checklist
-- `specs/<capability>/spec.md` — Spec deltas
+- `proposal.md` - Why and what
+- `tasks.md` - Implementation checklist
+- `specs/<capability>/spec.md` - Spec deltas
 
 ### Stage 2: Apply (`/openspec.apply`)
 
@@ -77,7 +77,7 @@ After deployment, archive the completed change:
 
 ## Maestro-Specific Commands
 
-### `/openspec.implement` — Generate Auto Run Documents
+### `/openspec.implement` - Generate Auto Run Documents
 
 Bridges OpenSpec with Maestro's Auto Run:
 
@@ -85,9 +85,9 @@ Bridges OpenSpec with Maestro's Auto Run:
 2. Converts tasks into Auto Run document format with phases
 3. Saves to `.maestro/playbooks/` with task checkboxes (filename: `OpenSpec-<change-id>-Phase-XX-[Description].md`)
 4. Preserves task IDs (T001, T002, etc.) for traceability
-5. Groups related tasks into logical phases (5–15 tasks each)
+5. Groups related tasks into logical phases (5-15 tasks each)
 
-### `/openspec.help` — Workflow Overview
+### `/openspec.help` - Workflow Overview
 
 Get help with OpenSpec concepts and Maestro integration.
 
@@ -157,10 +157,10 @@ The OpenSpec CLI provides these essential commands:
 
 Access OpenSpec commands via **Settings → AI Commands** tab. Here you can:
 
-- **View all commands** — Click the chevron to expand and see the full prompt
-- **Check for Updates** — Pull the latest workflow from GitHub
-- **Edit prompts** — Customize prompts for your workflow
-- **Reset to default** — Restore modified prompts to bundled version
+- **View all commands** - Click the chevron to expand and see the full prompt
+- **Check for Updates** - Pull the latest workflow from GitHub
+- **Edit prompts** - Customize prompts for your workflow
+- **Reset to default** - Restore modified prompts to bundled version
 
 Commands marked with a **Maestro** badge are Maestro-specific additions to the upstream workflow.
 
@@ -179,10 +179,10 @@ OpenSpec prompts are synced from the [Fission-AI/OpenSpec repository](https://gi
 
 ## Tips for Best Results
 
-- **Proposal first** — Never start implementation without an approved proposal
-- **Keep changes focused** — One logical change per proposal
-- **Use verb-led IDs** — `add-user-auth`, `update-api-schema`, `remove-legacy-handler`
-- **Include scenarios** — Every requirement needs at least one `#### Scenario:` block
-- **Check existing work** — Run `openspec list` before creating proposals to avoid conflicts
-- **Validate early** — Run `openspec validate <change-id> --strict` before sharing
-- **Archive promptly** — Archive changes after deployment to keep `changes/` clean
+- **Proposal first** - Never start implementation without an approved proposal
+- **Keep changes focused** - One logical change per proposal
+- **Use verb-led IDs** - `add-user-auth`, `update-api-schema`, `remove-legacy-handler`
+- **Include scenarios** - Every requirement needs at least one `#### Scenario:` block
+- **Check existing work** - Run `openspec list` before creating proposals to avoid conflicts
+- **Validate early** - Run `openspec validate <change-id> --strict` before sharing
+- **Archive promptly** - Archive changes after deployment to keep `changes/` clean

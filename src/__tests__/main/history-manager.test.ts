@@ -26,6 +26,11 @@ vi.mock('../../main/utils/logger', () => ({
 	},
 }));
 
+// Mock Sentry so we can assert which failures are (and are not) reported.
+vi.mock('../../main/utils/sentry', () => ({
+	captureException: vi.fn(),
+}));
+
 // Mock fs module. PR-C 1.6 — history-manager now uses fs/promises, but the
 // existing assertions are written against the sync mocks. We bridge the
 // async API to the sync mocks below so the test surface stays compact:
@@ -46,8 +51,18 @@ vi.mock('fs', () => ({
 // Bridge fs/promises to the sync mocks above so test setup like
 // `mockReadFileSync.mockReturnValue(...)` still drives the async code path
 // in history-manager.
+//
+// history-manager now writes session files via `atomicWriteJson` (write to
+// `${file}.tmp`, then `rename` over the target). We model that atomicity here
+// so the existing assertions, which expect `writeFileSync` to be called with
+// the FINAL path and content, keep firing unchanged: `.tmp` writes are
+// buffered, and `rename` commits the buffered payload as a single
+// `writeFileSync(finalPath, data)`. Direct, non-`.tmp` writes (the migration
+// marker) flush immediately. `rename` on a real (non-buffered) path is the
+// corrupt-file backup move, which no assertion inspects, so it is a no-op.
 vi.mock('fs/promises', async () => {
 	const fs = await import('fs');
+	const pendingTmpWrites = new Map<string, string>();
 	return {
 		access: vi.fn(async (p: string) => {
 			if (!(fs as { existsSync: (p: string) => boolean }).existsSync(p)) {
@@ -62,13 +77,28 @@ vi.mock('fs/promises', async () => {
 		readFile: vi.fn(async (p: string, enc?: string) =>
 			(fs as { readFileSync: (p: string, e?: string) => string }).readFileSync(p, enc)
 		),
-		writeFile: vi.fn(async (p: string, data: string, enc?: string) =>
+		writeFile: vi.fn(async (p: string, data: string, enc?: string) => {
+			if (p.endsWith('.tmp')) {
+				pendingTmpWrites.set(p, data);
+				return;
+			}
 			(fs as { writeFileSync: (p: string, d: string, e?: string) => void }).writeFileSync(
 				p,
 				data,
 				enc
-			)
-		),
+			);
+		}),
+		rename: vi.fn(async (from: string, to: string) => {
+			if (pendingTmpWrites.has(from)) {
+				const data = pendingTmpWrites.get(from)!;
+				pendingTmpWrites.delete(from);
+				(fs as { writeFileSync: (p: string, d: string, e?: string) => void }).writeFileSync(
+					to,
+					data,
+					'utf-8'
+				);
+			}
+		}),
 		readdir: vi.fn(async (p: string) =>
 			(fs as { readdirSync: (p: string) => string[] }).readdirSync(p)
 		),
@@ -82,6 +112,7 @@ import { logger } from '../../main/utils/logger';
 import { HistoryManager, getHistoryManager } from '../../main/history-manager';
 import { HISTORY_VERSION, MAX_ENTRIES_PER_SESSION, sanitizeSessionId } from '../../shared/history';
 import type { HistoryEntry } from '../../shared/types';
+import { captureException } from '../../main/utils/sentry';
 
 // Type the mocked fs functions
 const mockExistsSync = vi.mocked(fs.existsSync);
@@ -476,6 +507,50 @@ describe('HistoryManager', () => {
 			expect(result[0].id).toBe('e1');
 		});
 
+		it('should parse session files with a leading UTF-8 BOM', async () => {
+			const entries = [createMockEntry({ id: 'bom-entry' })];
+			const filePath = path.join(
+				'/mock/userData',
+				'history',
+				`${sanitizeSessionId('session-1')}.json`
+			);
+
+			mockExistsSync.mockImplementation((p: fs.PathLike) => p.toString() === filePath);
+			mockReadFileSync.mockReturnValue(`\uFEFF${createHistoryFileData('session-1', entries)}`);
+
+			const result = await manager.getEntries('session-1');
+			expect(result).toHaveLength(1);
+			expect(result[0].id).toBe('bom-entry');
+		});
+
+		it('should recover and rewrite the first valid object from concatenated JSON', async () => {
+			const entries = [createMockEntry({ id: 'recovered-entry' })];
+			const firstDocument = createHistoryFileData('session-1', entries);
+			const secondDocument = createHistoryFileData('session-1', [createMockEntry({ id: 'stale' })]);
+			const filePath = path.join(
+				'/mock/userData',
+				'history',
+				`${sanitizeSessionId('session-1')}.json`
+			);
+
+			mockExistsSync.mockImplementation((p: fs.PathLike) => p.toString() === filePath);
+			mockReadFileSync.mockReturnValue(`${firstDocument}${secondDocument}`);
+
+			const result = await manager.getEntries('session-1');
+
+			expect(result).toHaveLength(1);
+			expect(result[0].id).toBe('recovered-entry');
+			expect(mockWriteFileSync).toHaveBeenCalledWith(
+				filePath,
+				JSON.stringify(JSON.parse(firstDocument), null, 2),
+				'utf-8'
+			);
+			expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+				expect.stringContaining('Recovered concatenated history JSON'),
+				expect.any(String)
+			);
+		});
+
 		it('should return empty array if session file does not exist', async () => {
 			mockExistsSync.mockReturnValue(false);
 			const result = await manager.getEntries('nonexistent');
@@ -496,6 +571,11 @@ describe('HistoryManager', () => {
 			const result = await manager.getEntries('session-1');
 			expect(result).toEqual([]);
 			expect(vi.mocked(logger.warn)).toHaveBeenCalled();
+			// A non-JSON read failure is unexpected and should still be reported.
+			expect(vi.mocked(captureException)).toHaveBeenCalledWith(
+				expect.any(Error),
+				expect.objectContaining({ operation: 'history:read', sessionId: 'session-1' })
+			);
 		});
 
 		it('should return empty array when file contains malformed JSON', async () => {
@@ -509,6 +589,26 @@ describe('HistoryManager', () => {
 
 			const result = await manager.getEntries('session-1');
 			expect(result).toEqual([]);
+		});
+
+		it('does not report corrupt/truncated history JSON to Sentry (MAESTRO-QA)', async () => {
+			const filePath = path.join(
+				'/mock/userData',
+				'history',
+				`${sanitizeSessionId('session-1')}.json`
+			);
+			mockExistsSync.mockImplementation((p: fs.PathLike) => p.toString() === filePath);
+			// Simulate a write truncated mid-string (e.g. crash/power loss): the JSON
+			// object is opened but never terminated.
+			mockReadFileSync.mockReturnValue('{"version":1,"entries":[{"id":"e1","prompt":"hel');
+
+			const result = await manager.getEntries('session-1');
+			expect(result).toEqual([]);
+			expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+				expect.stringContaining('corrupt JSON'),
+				expect.any(String)
+			);
+			expect(vi.mocked(captureException)).not.toHaveBeenCalled();
 		});
 	});
 
@@ -610,6 +710,47 @@ describe('HistoryManager', () => {
 			expect(written.entries[0].id).toBe('new-entry');
 		});
 
+		// Regression: a file that parses as valid JSON but has no `entries` array
+		// (legacy/partial write) must not crash with "Cannot read properties of
+		// undefined (reading 'unshift')". (MAESTRO-QK)
+		it('should recover when existing file parses but lacks an entries array', async () => {
+			const filePath = path.join(
+				'/mock/userData',
+				'history',
+				`${sanitizeSessionId('session-1')}.json`
+			);
+			mockExistsSync.mockImplementation((p: fs.PathLike) => p.toString() === filePath);
+			mockReadFileSync.mockReturnValue(
+				JSON.stringify({ version: HISTORY_VERSION, sessionId: 'session-1' })
+			);
+
+			const entry = createMockEntry({ id: 'recovered' });
+			// Should not throw
+			await manager.addEntry('session-1', '/test/project', entry);
+
+			const written = JSON.parse(mockWriteFileSync.mock.calls[0][1] as string);
+			expect(written.entries).toHaveLength(1);
+			expect(written.entries[0].id).toBe('recovered');
+		});
+
+		it('should recover when existing file parses to null or a non-object', async () => {
+			const filePath = path.join(
+				'/mock/userData',
+				'history',
+				`${sanitizeSessionId('session-1')}.json`
+			);
+			mockExistsSync.mockImplementation((p: fs.PathLike) => p.toString() === filePath);
+			mockReadFileSync.mockReturnValue('null');
+
+			const entry = createMockEntry({ id: 'from-null' });
+			// Should not throw "Cannot set/read properties of null"
+			await manager.addEntry('session-1', '/test/project', entry);
+
+			const written = JSON.parse(mockWriteFileSync.mock.calls[0][1] as string);
+			expect(written.entries).toHaveLength(1);
+			expect(written.entries[0].id).toBe('from-null');
+		});
+
 		it('should log error on write failure', async () => {
 			mockExistsSync.mockReturnValue(false);
 			mockWriteFileSync.mockImplementation(() => {
@@ -623,6 +764,35 @@ describe('HistoryManager', () => {
 			expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
 				expect.stringContaining('Failed to write history'),
 				expect.any(String)
+			);
+		});
+
+		it('shrink guard allows a legitimate trim when maxEntries is lowered below file size', async () => {
+			// Realistic scenario: the user lowers their max-log-buffer setting, so a
+			// file with many entries legitimately shrinks to the new cap on the next
+			// add. The shrink tripwire must NOT block this (it keys off
+			// min(priorCount, limit), not priorCount alone).
+			const existingEntries: HistoryEntry[] = [];
+			for (let i = 0; i < 500; i++) existingEntries.push(createMockEntry({ id: `e-${i}` }));
+			const filePath = path.join(
+				'/mock/userData',
+				'history',
+				`${sanitizeSessionId('session-1')}.json`
+			);
+			mockExistsSync.mockImplementation((p: fs.PathLike) => p.toString() === filePath);
+			mockReadFileSync.mockReturnValue(createHistoryFileData('session-1', existingEntries));
+
+			const newEntry = createMockEntry({ id: 'fresh' });
+			await manager.addEntry('session-1', '/test/project', newEntry, 100);
+
+			// Write happened, trimmed to the new cap, newest first - not blocked.
+			expect(mockWriteFileSync).toHaveBeenCalledTimes(1);
+			const written = JSON.parse(mockWriteFileSync.mock.calls[0][1] as string);
+			expect(written.entries).toHaveLength(100);
+			expect(written.entries[0].id).toBe('fresh');
+			expect(vi.mocked(captureException)).not.toHaveBeenCalledWith(
+				expect.anything(),
+				expect.objectContaining({ operation: 'history:shrinkGuard' })
 			);
 		});
 	});

@@ -151,6 +151,11 @@ vi.mock('../../../../renderer/components/CuePipelineEditor/utils/pipelineGraph',
 	convertToReactFlowNodes: vi.fn(() => []),
 	convertToReactFlowEdges: vi.fn(() => []),
 	computePipelineYOffsets: vi.fn(() => new Map()),
+	// Footprint constants read at module-eval time by pipelineAutoArrange
+	// (imported transitively via CuePipelineEditor). Must be present on the mock
+	// or the import throws "No export is defined".
+	NODE_BG_WIDTH: 320,
+	NODE_BG_HEIGHT: 100,
 }));
 
 import { CuePipelineEditor } from '../../../../renderer/components/CuePipelineEditor/CuePipelineEditor';

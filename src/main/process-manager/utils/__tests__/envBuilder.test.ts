@@ -14,7 +14,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { buildChildProcessEnv, buildPtyTerminalEnv } from '../envBuilder';
+import { buildChildProcessEnv, buildPtyTerminalEnv, collectMaestroEnvVars } from '../envBuilder';
 
 describe('envBuilder - Global Environment Variables', () => {
 	let originalProcessEnv: NodeJS.ProcessEnv;
@@ -202,6 +202,13 @@ describe('envBuilder - Global Environment Variables', () => {
 			process.env.CLAUDE_CODE_ENTRYPOINT = '/path/to/entrypoint';
 			process.env.CLAUDE_AGENT_SDK_VERSION = '1.0.0';
 			process.env.CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING = 'true';
+			// Claude session-identity markers: leaking these into a spawned
+			// claude-code turn (or the maestro-p TUI it drives) makes the child
+			// claude run as a nested session that never writes its own JSONL
+			// transcript, breaking maestro-p capture (empty synopsis -> no
+			// History entry).
+			process.env.CLAUDE_CODE_SESSION_ID = 'parent-session-uuid';
+			process.env.CLAUDE_CODE_CHILD_SESSION = '1';
 
 			const env = buildChildProcessEnv();
 
@@ -212,6 +219,8 @@ describe('envBuilder - Global Environment Variables', () => {
 			expect(env.CLAUDE_CODE_ENTRYPOINT).toBeUndefined();
 			expect(env.CLAUDE_AGENT_SDK_VERSION).toBeUndefined();
 			expect(env.CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING).toBeUndefined();
+			expect(env.CLAUDE_CODE_SESSION_ID).toBeUndefined();
+			expect(env.CLAUDE_CODE_CHILD_SESSION).toBeUndefined();
 		});
 
 		it('should preserve non-Electron variables from process env', () => {
@@ -304,6 +313,23 @@ describe('envBuilder - Global Environment Variables', () => {
 			expect(typeof env.PATH).toBe('string');
 			// The actual value depends on the system, but it should exist
 			expect((env.PATH as string).length).toBeGreaterThan(0);
+		});
+
+		it('should prepend extraPathDirs ahead of the expanded PATH', () => {
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: 'darwin' });
+
+			try {
+				const env = buildChildProcessEnv(undefined, false, undefined, ['/Users/me/opt/node/bin']);
+				const parts = (env.PATH as string).split(path.delimiter);
+
+				// extraPathDirs entry must come first
+				expect(parts[0]).toBe('/Users/me/opt/node/bin');
+				// hardcoded expanded paths still present after
+				expect(parts).toContain('/opt/homebrew/bin');
+			} finally {
+				Object.defineProperty(process, 'platform', { value: originalPlatform });
+			}
 		});
 
 		it('should include detected Node version manager bins in PATH', () => {
@@ -624,6 +650,39 @@ describe('envBuilder - Global Environment Variables', () => {
 
 			expect(env2.VAR2).toBe('value2');
 			expect(env2.VAR1).toBeUndefined();
+		});
+	});
+
+	describe('collectMaestroEnvVars', () => {
+		it('returns an empty object when no inputs are provided', () => {
+			expect(collectMaestroEnvVars()).toEqual({});
+		});
+
+		it('merges global and custom env vars with custom taking precedence', () => {
+			const result = collectMaestroEnvVars(
+				{ DEBUG: 'global', PROXY: 'http://global' },
+				{ DEBUG: 'session' }
+			);
+			expect(result).toEqual({ DEBUG: 'session', PROXY: 'http://global' });
+		});
+
+		it('expands ~/ paths in both global and custom values', () => {
+			const result = collectMaestroEnvVars({ WORKSPACE: '~/work' }, { CACHE_DIR: '~/cache' });
+			expect(result.WORKSPACE).toBe(path.join(os.homedir(), 'work'));
+			expect(result.CACHE_DIR).toBe(path.join(os.homedir(), 'cache'));
+		});
+
+		it('includes MAESTRO_SESSION_RESUMED only when isResuming is true', () => {
+			expect(
+				collectMaestroEnvVars(undefined, undefined, false).MAESTRO_SESSION_RESUMED
+			).toBeUndefined();
+			expect(collectMaestroEnvVars(undefined, undefined, true).MAESTRO_SESSION_RESUMED).toBe('1');
+		});
+
+		it('does not include inherited process env', () => {
+			process.env.SOMETHING_INHERITED = 'inherited';
+			const result = collectMaestroEnvVars({ ONLY_GLOBAL: 'g' });
+			expect(result).toEqual({ ONLY_GLOBAL: 'g' });
 		});
 	});
 });

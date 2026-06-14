@@ -7,9 +7,9 @@ import type {
 	CustomAICommand,
 	BatchRunState,
 } from '../../types';
-import { getActiveTab, extractQuickTabName } from '../../utils/tabHelpers';
+import { getActiveTab, getBusyTabs, extractQuickTabName } from '../../utils/tabHelpers';
 import { getStdinFlags, prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
-import { generateId } from '../../utils/ids';
+import { generateId, getInputBroadcastOriginId } from '../../utils/ids';
 import { substituteTemplateVariables } from '../../utils/templateVariables';
 import { filterYoloArgs } from '../../utils/agentArgs';
 import { hasCapabilityCached } from '../agent/useAgentCapabilities';
@@ -464,8 +464,12 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					if (isReadOnlyMode) return false; // Only applies to write commands
 					if (activeSession.state !== 'busy') return false; // Nothing to bypass
 
-					// Check all busy tabs are in read-only mode
-					const busyTabs = activeSession.aiTabs.filter((tab) => tab.state === 'busy');
+					// Check all busy tabs are in read-only mode. Include orphaned
+					// (closed-but-still-thinking) tabs: they keep writing in the background
+					// and hold the single-writer slot just like a visible busy tab. Omitting
+					// them lets a new write spawn concurrently with an orphan (single-writer
+					// violation when a tab is closed mid-send).
+					const busyTabs = getBusyTabs(activeSession, { includeOrphans: true });
 					const allBusyTabsReadOnly = busyTabs.every((tab) => tab.readOnlyMode === true);
 					if (!allBusyTabsReadOnly) return false;
 
@@ -565,7 +569,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				currentBatchState.isRunning && !currentBatchState.worktreeActive && !isForceParallelEntry;
 			const isReadOnlyEntry = activeTabForEntry?.readOnlyMode === true || isAutoRunReadOnly;
 
-			const newEntry: LogEntry = {
+			const newEntry = {
 				id: generateId(),
 				timestamp: Date.now(),
 				source: 'user',
@@ -573,6 +577,13 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				images: [...effectiveImages],
 				...(isReadOnlyEntry && { readOnly: true }),
 				...(isForceParallelEntry && { forceParallel: true }),
+			} satisfies LogEntry;
+			const userInputBroadcast = {
+				originId: getInputBroadcastOriginId(),
+				sessionId: activeSession.id,
+				tabId: activeTabForEntry?.id,
+				inputMode: currentMode,
+				entry: newEntry,
 			};
 
 			// Track shell CWD changes when in terminal mode
@@ -856,6 +867,10 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							agentType: activeSession.toolType,
 							cwd: activeSession.cwd,
 							sessionSshRemoteConfig: activeSession.sessionSshRemoteConfig,
+							// Honor the agent's Claude token source for the naming spawn.
+							enableMaestroP: activeSession.enableMaestroP,
+							maestroPMode: activeSession.maestroPMode,
+							maestroPPath: activeSession.maestroPPath,
 						})
 						.then((generatedName) => {
 							// Clear the generating indicator
@@ -967,6 +982,9 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 
 			// Broadcast user input to web clients so they stay in sync
 			// Use effectiveInputValue (without nudge) since nudge should be hidden from UI
+			window.maestro.process.broadcastUserInput(userInputBroadcast).catch((error) => {
+				logger.error('[processInput] Failed to broadcast user input:', undefined, error);
+			});
 			window.maestro.web.broadcastUserInput(activeSession.id, effectiveInputValue, currentMode);
 
 			setInputValue('');

@@ -154,6 +154,12 @@ export interface CachedSessionStats {
 	cacheCreationTokens: number;
 	cachedInputTokens: number;
 	sizeBytes: number;
+	/**
+	 * Per-model cost (USD) computed at parse time. Optional for backward
+	 * compatibility with cache entries written before per-model pricing; absent
+	 * entries fall back to flat-rate pricing derived from the token counts.
+	 */
+	costUsd?: number;
 	/** File modification time to detect external changes */
 	fileMtimeMs: number;
 	/**

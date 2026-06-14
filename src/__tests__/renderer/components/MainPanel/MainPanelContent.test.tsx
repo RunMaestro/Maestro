@@ -18,6 +18,8 @@ vi.mock('../../../../renderer/stores/settingsStore', () => ({
 				userMessageAlignment: 'right',
 				shortcuts: {},
 				maxOutputLines: 5000,
+				browserTabKeepAlive: 'off',
+				browserTabKeepAliveLimit: 10,
 			})
 		),
 		{ getState: () => ({ setChatRawTextMode: vi.fn(), setEnterToSendAI: vi.fn() }) }
@@ -37,6 +39,15 @@ vi.mock('../../../../renderer/stores/uiStore', () => ({
 			}),
 		}
 	),
+}));
+
+// Mock the layer stack context: MainPanelContent reads layerCount to decide
+// whether the browser webview should hold keyboard focus. Default to no open
+// layers so the browser tab is treated as the focused view; tests flip
+// layerState.count to simulate a modal/overlay opening over the tab.
+const layerState = vi.hoisted(() => ({ count: 0 }));
+vi.mock('../../../../renderer/contexts/LayerStackContext', () => ({
+	useLayerStack: () => ({ layerCount: layerState.count }),
 }));
 
 // Mock child components
@@ -65,7 +76,11 @@ vi.mock('../../../../renderer/components/InlineWizard', () => ({
 }));
 
 vi.mock('../../../../renderer/components/MainPanel/BrowserTabView', () => ({
-	BrowserTabView: (props: any) => React.createElement('div', { 'data-testid': 'browser-tab-view' }),
+	BrowserTabView: (props: any) =>
+		React.createElement('div', {
+			'data-testid': 'browser-tab-view',
+			'data-active': String(props.isActive),
+		}),
 }));
 
 vi.mock('../../../../renderer/components/TerminalView', () => {
@@ -108,7 +123,6 @@ function makeDefaultProps() {
 		activeFileTabId: null as string | null | undefined,
 		activeFileTab: null as FilePreviewTab | null | undefined,
 		activeBrowserTabId: null as string | null | undefined,
-		activeBrowserTab: null as any,
 		memoizedFilePreviewFile: null,
 		filePreviewCwd: '',
 		filePreviewSshRemoteId: undefined,
@@ -169,6 +183,7 @@ function makeDefaultProps() {
 describe('MainPanelContent', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		layerState.count = 0;
 	});
 
 	it('renders TerminalOutput in AI mode', () => {
@@ -195,7 +210,7 @@ describe('MainPanelContent', () => {
 		expect(screen.queryByTestId('input-area')).not.toBeInTheDocument();
 	});
 
-	it('renders FilePreview when file tab is active', () => {
+	it('renders FilePreview when file tab is active', async () => {
 		const props = makeDefaultProps();
 		props.activeFileTabId = 'file-1';
 		props.activeFileTab = {
@@ -208,7 +223,9 @@ describe('MainPanelContent', () => {
 		} as FilePreviewTab;
 		props.memoizedFilePreviewFile = { name: 'test.ts', content: 'hello', path: '/test/test.ts' };
 		render(<MainPanelContent {...props} />);
-		expect(screen.getByTestId('file-preview')).toBeInTheDocument();
+		// FilePreview is lazy-loaded behind a Suspense boundary, so it resolves
+		// asynchronously - await it rather than asserting synchronously.
+		expect(await screen.findByTestId('file-preview')).toBeInTheDocument();
 	});
 
 	it('renders loading spinner when active file tab is in loading state', () => {
@@ -229,9 +246,7 @@ describe('MainPanelContent', () => {
 	});
 
 	it('renders BrowserTabView when browser tab is active', () => {
-		const props = makeDefaultProps();
-		props.activeBrowserTabId = 'browser-1';
-		props.activeBrowserTab = {
+		const browserTab = {
 			id: 'browser-1',
 			url: 'https://example.com/',
 			title: 'Example',
@@ -240,9 +255,63 @@ describe('MainPanelContent', () => {
 			canGoForward: false,
 			isLoading: false,
 		};
+		// Browser tabs live on the session; the keep-alive mount hook reads them from there.
+		const session = makeSession({
+			browserTabs: [browserTab],
+			activeBrowserTabId: 'browser-1',
+		});
+		const props = makeDefaultProps();
+		props.activeSession = session;
+		props.activeBrowserTabId = 'browser-1';
 		render(<MainPanelContent {...props} />);
 		expect(screen.getByTestId('browser-tab-view')).toBeInTheDocument();
 		expect(screen.queryByTestId('input-area')).not.toBeInTheDocument();
+	});
+
+	it('keeps the active browser tab focus-active when no layer is open', () => {
+		const browserTab = {
+			id: 'browser-1',
+			url: 'https://example.com/',
+			title: 'Example',
+			createdAt: Date.now(),
+			canGoBack: false,
+			canGoForward: false,
+			isLoading: false,
+		};
+		const session = makeSession({
+			browserTabs: [browserTab],
+			activeBrowserTabId: 'browser-1',
+		});
+		const props = makeDefaultProps();
+		props.activeSession = session;
+		props.activeBrowserTabId = 'browser-1';
+		render(<MainPanelContent {...props} />);
+		// No modal/overlay open -> the webview holds keyboard focus.
+		expect(screen.getByTestId('browser-tab-view')).toHaveAttribute('data-active', 'true');
+	});
+
+	it('releases browser tab keyboard focus when a layer (e.g. Tab Switcher) is open', () => {
+		// A modal/overlay layered over the browser tab must blur the guest webview
+		// so the modal's own keyboard navigation works (the Tab Switcher bug).
+		layerState.count = 1;
+		const browserTab = {
+			id: 'browser-1',
+			url: 'https://example.com/',
+			title: 'Example',
+			createdAt: Date.now(),
+			canGoBack: false,
+			canGoForward: false,
+			isLoading: false,
+		};
+		const session = makeSession({
+			browserTabs: [browserTab],
+			activeBrowserTabId: 'browser-1',
+		});
+		const props = makeDefaultProps();
+		props.activeSession = session;
+		props.activeBrowserTabId = 'browser-1';
+		render(<MainPanelContent {...props} />);
+		expect(screen.getByTestId('browser-tab-view')).toHaveAttribute('data-active', 'false');
 	});
 
 	it('renders TerminalView for mounted terminal sessions', () => {

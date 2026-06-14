@@ -131,7 +131,14 @@ export function createCueQueryService(deps: CueQueryServiceDeps): CueQueryServic
 
 		getSettings(): CueSettings {
 			for (const [, state] of deps.getSessionStates()) {
-				return { ...state.config.settings };
+				// `owner_agent_id` is per-root: it names an agent that must live at
+				// THAT cue.yaml's projectRoot. Never surface it as a "global"
+				// setting — otherwise the Settings modal reads the first session's
+				// owner and `saveSettings()` writes it into EVERY cue.yaml, flagging
+				// unrelated single-agent projects with a bogus "owner_agent_id does
+				// not match any agent" ownership warning.
+				const { owner_agent_id: _perRootOwner, ...global } = state.config.settings;
+				return { ...global };
 			}
 			return { ...DEFAULT_CUE_SETTINGS };
 		},

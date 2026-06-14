@@ -20,7 +20,10 @@ function ExternalLink({ url, theme }: { url: string; theme: Theme }) {
 				void window.maestro.shell.openExternal(url);
 			}}
 			className="underline hover:opacity-80 cursor-pointer"
-			style={{ color: theme.colors.accent }}
+			// accentText (not accent) so links stay legible against accent-tinted
+			// surfaces like the user-message bubble; on InQuest accent is the same
+			// red as the bubble, so a raw-accent link is invisible there.
+			style={{ color: theme.colors.accentText }}
 		>
 			{url}
 		</a>

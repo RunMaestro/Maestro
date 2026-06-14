@@ -12,14 +12,8 @@
  * gauges in group chats. Without it the gauge is permanently stuck at 0%.
  */
 
-import path from 'path';
-import os from 'os';
-import fs from 'fs/promises';
 import type { SshRemoteConfig } from '../../shared/types';
-import { readFileRemote } from '../utils/remote-fs';
-import { logger } from '../utils/logger';
-
-const LOG_CONTEXT = '[CopilotUsageExtractor]';
+import { readCopilotEventsContent } from '../utils/copilot-events';
 
 export interface CopilotUsageInfo {
 	/** Context window utilization, 0-100 (rounded). */
@@ -55,7 +49,7 @@ export async function extractCopilotUsageFromDisk(
 		return null;
 	}
 
-	const content = await readEventsFile(agentSessionId, sshRemote);
+	const content = await readCopilotEventsContent(agentSessionId, sshRemote);
 	if (!content) return null;
 
 	const latest = findLastShutdown(content);
@@ -70,43 +64,6 @@ export async function extractCopilotUsageFromDisk(
 	const contextUsage = Math.max(0, Math.min(100, Math.round(ratio * 100)));
 
 	return { contextUsage, tokenCount: currentTokens };
-}
-
-async function readEventsFile(
-	agentSessionId: string,
-	sshRemote: SshRemoteConfig | null
-): Promise<string | null> {
-	if (sshRemote) {
-		// Use $HOME so it expands on the remote shell regardless of remote user.
-		const remotePath = `$HOME/.copilot/session-state/${agentSessionId}/events.jsonl`;
-		const result = await readFileRemote(remotePath, sshRemote);
-		if (!result.success || result.data === undefined) {
-			logger.debug('Remote events.jsonl unavailable', LOG_CONTEXT, {
-				error: result.error,
-				agentSessionId,
-				remoteId: sshRemote.id,
-			});
-			return null;
-		}
-		return result.data;
-	}
-
-	const localPath = path.join(
-		process.env.COPILOT_CONFIG_DIR || path.join(os.homedir(), '.copilot'),
-		'session-state',
-		agentSessionId,
-		'events.jsonl'
-	);
-	try {
-		return await fs.readFile(localPath, 'utf8');
-	} catch (err) {
-		logger.debug('Local events.jsonl unavailable', LOG_CONTEXT, {
-			error: String(err),
-			agentSessionId,
-			localPath,
-		});
-		return null;
-	}
 }
 
 /**

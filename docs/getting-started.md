@@ -15,16 +15,16 @@ Follow the [Installation](./installation) instructions for your platform, then l
 Maestro supports **Claude Code**, **Codex** (OpenAI), **OpenCode**, and **Factory Droid** as providers. Make sure at least one is installed and authenticated.
 
 <Note>
-Maestro is a pass-through to your provider. Your MCP tools, custom skills, permissions, and authentication all work in Maestro exactly as they do when running the provider directly. The only difference is batch mode execution—Maestro sends a prompt and receives a response rather than running an interactive session.
+Maestro is a pass-through to your provider. Your MCP tools, custom skills, permissions, and authentication all work in Maestro exactly as they do when running the provider directly. The only difference is batch mode execution - Maestro sends a prompt and receives a response rather than running an interactive session.
 </Note>
 
 Click the **New Agent** button in the bottom-left sidebar (or press `Cmd+N` / `Ctrl+N`). You'll see the **New Agent** selector:
 
 ![New Agent selector](./screenshots/new-agent-selector.png)
 
-**Manual Setup** — Choose your agent, working directory, and configuration options directly. Best for power users who want full control.
+**Manual Setup** - Choose your agent, working directory, and configuration options directly. Best for power users who want full control.
 
-**Guided Setup** (Recommended for new users) — Launches the **Onboarding Wizard**, which walks you through:
+**Guided Setup** (Recommended for new users) - Launches the **Onboarding Wizard**, which walks you through:
 
 1. Selecting an AI provider
 2. Choosing your project directory

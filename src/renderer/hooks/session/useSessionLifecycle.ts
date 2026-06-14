@@ -24,13 +24,35 @@ import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useModalStore } from '../../stores/modalStore';
 import { useUIStore } from '../../stores/uiStore';
 import { notifyToast } from '../../stores/notificationStore';
-import { getActiveTab, extractQuickTabName } from '../../utils/tabHelpers';
+import { aiTabFocusFields, getActiveTab, extractQuickTabName } from '../../utils/tabHelpers';
 import {
 	renameTerminalTab as renameTerminalTabHelper,
 	getTerminalSessionId,
 } from '../../utils/terminalTabHelpers';
-import type { NavHistoryEntry } from './useNavigationHistory';
+import type { NavHistoryEntry, NavTabKind } from './useNavigationHistory';
 import { captureException } from '../../utils/sentry';
+import { persistTabStarred } from '../../utils/starredSessions';
+
+/**
+ * Resolve the active tab of a session into a breadcrumb descriptor (id + kind).
+ * Priority mirrors findActiveUnifiedTabIndex (terminal > file > browser > ai)
+ * so the breadcrumb tracks whichever tab the user actually sees.
+ */
+function resolveActiveNavTab(session: Session): { tabId?: string; tabKind?: NavTabKind } {
+	if (session.activeTerminalTabId) {
+		return { tabId: session.activeTerminalTabId, tabKind: 'terminal' };
+	}
+	if (session.activeFileTabId) {
+		return { tabId: session.activeFileTabId, tabKind: 'file' };
+	}
+	if (session.activeBrowserTabId) {
+		return { tabId: session.activeBrowserTabId, tabKind: 'browser' };
+	}
+	if (session.aiTabs?.length > 0) {
+		return { tabId: session.activeTabId, tabKind: 'ai' };
+	}
+	return {};
+}
 
 // ============================================================================
 // Dependencies interface
@@ -68,7 +90,10 @@ export interface SessionLifecycleReturn {
 			workingDirOverride?: string;
 			syncHistory?: boolean;
 			shareHistoryToProjectDir?: boolean;
-		}
+		},
+		enableMaestroP?: boolean,
+		maestroPPath?: string,
+		maestroPMode?: 'interactive' | 'dynamic'
 	) => void;
 	/** Rename the currently-selected tab (persists to agent session storage + history) */
 	handleRenameTab: (newName: string) => void;
@@ -133,7 +158,10 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 				workingDirOverride?: string;
 				syncHistory?: boolean;
 				shareHistoryToProjectDir?: boolean;
-			}
+			},
+			enableMaestroP?: boolean,
+			maestroPPath?: string,
+			maestroPMode?: 'interactive' | 'dynamic'
 		) => {
 			useSessionStore.getState().setSessions((prev) =>
 				prev.map((s) => {
@@ -149,6 +177,9 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 						customModel,
 						customContextWindow,
 						sessionSshRemoteConfig,
+						enableMaestroP,
+						maestroPPath,
+						maestroPMode,
 					};
 
 					// If provider changed, reset tabs and provider-specific config
@@ -178,6 +209,9 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 							customEnvVars: undefined,
 							customModel: undefined,
 							customContextWindow: undefined,
+							enableMaestroP: undefined,
+							maestroPPath: undefined,
+							maestroPMode: undefined,
 							// Reset file preview tabs and unified tab order
 							filePreviewTabs: [],
 							activeFileTabId: null,
@@ -218,15 +252,19 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 				return;
 			}
 
-			// If this is a browser tab, update its title directly
+			// If this is a browser tab, set a user-assigned name that locks the
+			// displayed label. An empty value clears it, letting the website set the
+			// tab title again. We never touch `title` so the live page title stays
+			// tracked underneath and reappears once the custom name is cleared.
 			if (activeSession.browserTabs?.some((t) => t.id === renameTabId)) {
+				const nextCustomTitle = newName.trim() || undefined;
 				useSessionStore.getState().setSessions((prev) =>
 					prev.map((s) => {
 						if (s.id !== activeSession.id) return s;
 						return {
 							...s,
 							browserTabs: (s.browserTabs || []).map((t) =>
-								t.id === renameTabId ? { ...t, title: newName || t.url } : t
+								t.id === renameTabId ? { ...t, customTitle: nextCustomTitle } : t
 							),
 						};
 					})
@@ -380,6 +418,10 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 				agentType: activeSession.toolType,
 				cwd: activeSession.cwd,
 				sessionSshRemoteConfig: activeSession.sessionSshRemoteConfig,
+				// Honor the agent's Claude token source for the naming spawn.
+				enableMaestroP: activeSession.enableMaestroP,
+				maestroPMode: activeSession.maestroPMode,
+				maestroPPath: activeSession.maestroPPath,
 			})
 			.then((generatedName) => {
 				useSessionStore.getState().setSessions((prev) =>
@@ -515,6 +557,11 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 	const toggleTabStar = useCallback(() => {
 		const session = selectActiveSession(useSessionStore.getState());
 		if (!session) return;
+		// Star toggle only applies when an AI tab is the visible view — not when a
+		// terminal, file preview, or browser tab is focused.
+		if (session.inputMode !== 'ai' || session.activeFileTabId || session.activeBrowserTabId) {
+			return;
+		}
 		const tab = getActiveTab(session);
 		if (!tab) return;
 
@@ -522,37 +569,10 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 		useSessionStore.getState().setSessions((prev) =>
 			prev.map((s) => {
 				if (s.id !== session.id) return s;
-				// Persist starred status to session metadata (async, fire and forget)
-				// Use projectRoot (not cwd) for consistent session storage access
-				if (tab.agentSessionId) {
-					const agentId = s.toolType || 'claude-code';
-					if (agentId === 'claude-code') {
-						window.maestro.claude
-							.updateSessionStarred(s.projectRoot, tab.agentSessionId, newStarred)
-							.catch((err) => {
-								captureException(err, {
-									extra: {
-										sessionId: s.id,
-										agentSessionId: tab.agentSessionId,
-										operation: 'persist-starred-claude',
-									},
-								});
-							});
-					} else {
-						window.maestro.agentSessions
-							.setSessionStarred(agentId, s.projectRoot, tab.agentSessionId, newStarred)
-							.catch((err) => {
-								captureException(err, {
-									extra: {
-										sessionId: s.id,
-										agentSessionId: tab.agentSessionId,
-										agentType: agentId,
-										operation: 'persist-starred-agent',
-									},
-								});
-							});
-					}
-				}
+				// Persist starred status to session metadata (async) and broadcast the
+				// change so the Left Bar's starred-sessions cache refreshes. Uses
+				// projectRoot (not cwd) for consistent session storage access.
+				persistTabStarred(s, tab, newStarred);
 				return {
 					...s,
 					aiTabs: s.aiTabs.map((t) => (t.id === tab.id ? { ...t, starred: newStarred } : t)),
@@ -599,13 +619,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 					useSessionStore.getState().setSessions((prev) =>
 						prev.map((s) => {
 							if (s.id !== session.id) return s;
-							return {
-								...s,
-								activeTabId: preFilterActiveTabId,
-								activeFileTabId: null,
-								activeTerminalTabId: null,
-								inputMode: 'ai' as const,
-							};
+							return { ...s, ...aiTabFocusFields(preFilterActiveTabId) };
 						})
 					);
 				}
@@ -634,17 +648,18 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 		if (activeGroupChatId) {
 			pushNavigation({ groupChatId: activeGroupChatId });
 		} else if (activeSession) {
-			pushNavigation({
-				sessionId: activeSession.id,
-				tabId:
-					activeSession.inputMode === 'ai' && activeSession.aiTabs?.length > 0
-						? activeSession.activeTabId
-						: undefined,
-			});
+			// Resolve the active tab across all kinds using the same priority as
+			// findActiveUnifiedTabIndex (terminal > file > browser > ai) so the
+			// breadcrumb tracks whichever tab the user actually sees.
+			const { tabId, tabKind } = resolveActiveNavTab(activeSession);
+			pushNavigation({ sessionId: activeSession.id, tabId, tabKind });
 		}
 	}, [
 		activeSessionId,
 		activeSession?.activeTabId,
+		activeSession?.activeFileTabId,
+		activeSession?.activeBrowserTabId,
+		activeSession?.activeTerminalTabId,
 		activeSession?.inputMode,
 		activeSession?.aiTabs?.length,
 		activeGroupChatId,

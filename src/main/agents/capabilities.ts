@@ -300,7 +300,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsAppendSystemPrompt: false, // No --append-system-prompt equivalent
 		supportsProjectMemory: false, // No project memory mechanism
 		usesJsonLineOutput: true, // --output-format json produces JSONL
-		usesCombinedContextWindow: false, // Default Copilot model is Claude Sonnet; model-specific behavior varies
+		usesCombinedContextWindow: true, // Copilot's own usage layer reports cumulative input (includes cache) regardless of underlying model, so the gauge math must follow the combined formula
 	},
 };
 

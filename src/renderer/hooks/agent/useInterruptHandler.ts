@@ -15,7 +15,12 @@ import { useCallback } from 'react';
 import type { Session, LogEntry, QueuedItem, SessionState } from '../../types';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { generateId } from '../../utils/ids';
-import { getActiveTab } from '../../utils/tabHelpers';
+import {
+	getActiveTab,
+	markTabRunningQueuedItem,
+	resolveQueuedItemTarget,
+} from '../../utils/tabHelpers';
+import { nextRunnableQueueItem, takeNextRunnableQueueItem } from '../../utils/executionQueue';
 import { logger } from '../../utils/logger';
 
 // ============================================================================
@@ -112,10 +117,13 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 				item: QueuedItem;
 			} | null = null;
 
-			if (currentSession && currentSession.executionQueue.length > 0) {
+			const nextRunnableOnInterrupt = currentSession
+				? nextRunnableQueueItem(currentSession.executionQueue)
+				: undefined;
+			if (nextRunnableOnInterrupt) {
 				queuedItemToProcess = {
 					sessionId: activeSession.id,
-					item: currentSession.executionQueue[0],
+					item: nextRunnableOnInterrupt,
 				};
 			}
 
@@ -135,12 +143,14 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 				prev.map((s) => {
 					if (s.id !== activeSession.id) return s;
 
-					// If there are queued items, start processing the next one
-					if (s.executionQueue.length > 0) {
-						const [nextItem, ...remainingQueue] = s.executionQueue;
-						const targetTab = s.aiTabs.find((tab) => tab.id === nextItem.tabId) || getActiveTab(s);
+					// If there are runnable (non-held) queued items, start the next one
+					const { item: nextItem, remaining: remainingQueue } = takeNextRunnableQueueItem(
+						s.executionQueue
+					);
+					if (nextItem) {
+						const target = resolveQueuedItemTarget(s, nextItem);
 
-						if (!targetTab) {
+						if (!target) {
 							return {
 								...s,
 								state: 'busy' as SessionState,
@@ -152,15 +162,14 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 							};
 						}
 
-						// Set the interrupted tab to idle, and the target tab for queued item to busy
-						// Also add the canceled log to the interrupted tab
-						let updatedAiTabs = s.aiTabs.map((tab) => {
-							if (tab.id === targetTab.id) {
-								return {
-									...tab,
-									state: 'busy' as const,
-									thinkingStartTime: Date.now(),
-								};
+						// Set the interrupted tab(s) to idle (with the canceled log) and the
+						// queued item's target tab to busy. When the target is an orphan (the
+						// user closed it while this message was still queued), it lives in
+						// orphanedThinkingTabs - route busy-state + the user log THERE so the
+						// background send never leaks onto the active tab.
+						const updatedAiTabs = s.aiTabs.map((tab) => {
+							if (tab.id === target.tabId) {
+								return markTabRunningQueuedItem(tab, nextItem);
 							}
 							// Set any other busy tabs to idle (they were interrupted) and add canceled log
 							// Also clear any thinking/tool logs since the process was interrupted
@@ -181,25 +190,21 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 							return tab;
 						});
 
-						// For message items, add a log entry to the target tab
-						if (nextItem.type === 'message' && nextItem.text) {
-							const logEntry: LogEntry = {
-								id: generateId(),
-								timestamp: Date.now(),
-								source: 'user',
-								text: nextItem.text,
-								images: nextItem.images,
-							};
-							updatedAiTabs = updatedAiTabs.map((tab) =>
-								tab.id === targetTab.id ? { ...tab, logs: [...tab.logs, logEntry] } : tab
-							);
-						}
+						const updatedOrphans =
+							target.location === 'orphan' && s.orphanedThinkingTabs
+								? s.orphanedThinkingTabs.map((tab) =>
+										tab.id === target.tabId ? markTabRunningQueuedItem(tab, nextItem) : tab
+									)
+								: s.orphanedThinkingTabs;
 
 						return {
 							...s,
 							state: 'busy' as SessionState,
 							busySource: 'ai',
 							aiTabs: updatedAiTabs,
+							...(updatedOrphans !== s.orphanedThinkingTabs && {
+								orphanedThinkingTabs: updatedOrphans,
+							}),
 							executionQueue: remainingQueue,
 							thinkingStartTime: Date.now(),
 							currentCycleTokens: 0,
@@ -294,10 +299,13 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 						item: QueuedItem;
 					} | null = null;
 
-					if (currentSessionForKill && currentSessionForKill.executionQueue.length > 0) {
+					const nextRunnableAfterKill = currentSessionForKill
+						? nextRunnableQueueItem(currentSessionForKill.executionQueue)
+						: undefined;
+					if (nextRunnableAfterKill) {
 						queuedItemAfterKill = {
 							sessionId: activeSession.id,
-							item: currentSessionForKill.executionQueue[0],
+							item: nextRunnableAfterKill,
 						};
 					}
 
@@ -330,13 +338,14 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 								}
 							}
 
-							// If there are queued items, start processing the next one
-							if (s.executionQueue.length > 0) {
-								const [nextItem, ...remainingQueue] = s.executionQueue;
-								const targetTab =
-									s.aiTabs.find((tab) => tab.id === nextItem.tabId) || getActiveTab(s);
+							// If there are runnable (non-held) queued items, start the next one
+							const { item: nextItem, remaining: remainingQueue } = takeNextRunnableQueueItem(
+								s.executionQueue
+							);
+							if (nextItem) {
+								const target = resolveQueuedItemTarget(updatedSession, nextItem);
 
-								if (!targetTab) {
+								if (!target) {
 									return {
 										...updatedSession,
 										state: 'busy' as SessionState,
@@ -348,14 +357,14 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 									};
 								}
 
-								// Set tabs appropriately and clear thinking/tool logs from interrupted tabs
-								let updatedAiTabs = updatedSession.aiTabs.map((tab) => {
-									if (tab.id === targetTab.id) {
-										return {
-											...tab,
-											state: 'busy' as const,
-											thinkingStartTime: Date.now(),
-										};
+								// Set tabs appropriately and clear thinking/tool logs from interrupted
+								// tabs. When the target is an orphan (the user closed it while this
+								// message was still queued), route busy-state + the user log to
+								// orphanedThinkingTabs so the background send never leaks onto the
+								// active tab.
+								const updatedAiTabs = updatedSession.aiTabs.map((tab) => {
+									if (tab.id === target.tabId) {
+										return markTabRunningQueuedItem(tab, nextItem);
 									}
 									if (tab.state === 'busy') {
 										const logsWithoutThinkingOrTools = tab.logs.filter(
@@ -371,25 +380,21 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 									return tab;
 								});
 
-								// For message items, add a log entry to the target tab
-								if (nextItem.type === 'message' && nextItem.text) {
-									const logEntry: LogEntry = {
-										id: generateId(),
-										timestamp: Date.now(),
-										source: 'user',
-										text: nextItem.text,
-										images: nextItem.images,
-									};
-									updatedAiTabs = updatedAiTabs.map((tab) =>
-										tab.id === targetTab.id ? { ...tab, logs: [...tab.logs, logEntry] } : tab
-									);
-								}
+								const updatedOrphans =
+									target.location === 'orphan' && updatedSession.orphanedThinkingTabs
+										? updatedSession.orphanedThinkingTabs.map((tab) =>
+												tab.id === target.tabId ? markTabRunningQueuedItem(tab, nextItem) : tab
+											)
+										: updatedSession.orphanedThinkingTabs;
 
 								return {
 									...updatedSession,
 									state: 'busy' as SessionState,
 									busySource: 'ai',
 									aiTabs: updatedAiTabs,
+									...(updatedOrphans !== updatedSession.orphanedThinkingTabs && {
+										orphanedThinkingTabs: updatedOrphans,
+									}),
 									executionQueue: remainingQueue,
 									thinkingStartTime: Date.now(),
 									currentCycleTokens: 0,

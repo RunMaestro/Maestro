@@ -20,17 +20,25 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // Hoisted mock references (vi.hoisted runs before vi.mock hoisting)
 const {
 	mockExecFile,
+	mockIsCueDbReady,
 	mockIsGitHubItemSeen,
 	mockMarkGitHubItemSeen,
 	mockHasAnyGitHubSeen,
 	mockPruneGitHubSeen,
+	mockGetGitHubItemState,
+	mockRecordGitHubRetrigger,
 	mockCaptureException,
 } = vi.hoisted(() => ({
 	mockExecFile: vi.fn(),
+	mockIsCueDbReady: vi.fn<() => boolean>().mockReturnValue(true),
 	mockIsGitHubItemSeen: vi.fn<(subId: string, key: string) => boolean>().mockReturnValue(false),
-	mockMarkGitHubItemSeen: vi.fn<(subId: string, key: string) => void>(),
+	mockMarkGitHubItemSeen: vi.fn<(subId: string, key: string, lastRevision?: string) => void>(),
 	mockHasAnyGitHubSeen: vi.fn<(subId: string) => boolean>().mockReturnValue(true),
 	mockPruneGitHubSeen: vi.fn<(olderThanMs: number) => void>(),
+	mockGetGitHubItemState: vi
+		.fn<(subId: string, key: string) => { lastRevision: string | null; fireCount: number } | null>()
+		.mockReturnValue(null),
+	mockRecordGitHubRetrigger: vi.fn<(subId: string, key: string, newRevision: string) => void>(),
 	mockCaptureException: vi.fn(),
 }));
 
@@ -61,14 +69,20 @@ vi.mock('../../../main/utils/cliDetection', () => ({
 
 // Mock cue-db functions
 vi.mock('../../../main/cue/cue-db', () => ({
+	isCueDbReady: () => mockIsCueDbReady(),
 	isGitHubItemSeen: (subId: string, key: string) => mockIsGitHubItemSeen(subId, key),
-	markGitHubItemSeen: (subId: string, key: string) => mockMarkGitHubItemSeen(subId, key),
+	markGitHubItemSeen: (subId: string, key: string, lastRevision?: string) =>
+		mockMarkGitHubItemSeen(subId, key, lastRevision),
 	hasAnyGitHubSeen: (subId: string) => mockHasAnyGitHubSeen(subId),
 	pruneGitHubSeen: (olderThanMs: number) => mockPruneGitHubSeen(olderThanMs),
+	getGitHubItemState: (subId: string, key: string) => mockGetGitHubItemState(subId, key),
+	recordGitHubRetrigger: (subId: string, key: string, newRevision: string) =>
+		mockRecordGitHubRetrigger(subId, key, newRevision),
 }));
 
 import {
 	createCueGitHubPoller,
+	isGitHubConnectivityError,
 	isGitHubRateLimitError,
 	GITHUB_RATE_LIMIT_MAX_BACKOFF_MS,
 	type CueGitHubPollerConfig,
@@ -204,8 +218,31 @@ describe('cue-github-poller', () => {
 		vi.clearAllMocks();
 		vi.useFakeTimers();
 		uuidCounter = 0;
+		mockIsCueDbReady.mockReturnValue(true);
 		mockIsGitHubItemSeen.mockReturnValue(false);
 		mockHasAnyGitHubSeen.mockReturnValue(true); // not first run by default
+		mockGetGitHubItemState.mockReturnValue(null);
+	});
+
+	it('skips polling while Cue DB is not ready', async () => {
+		mockIsCueDbReady.mockReturnValue(false);
+		const config = makeConfig();
+		setupExecFile({
+			'--version': '2.0.0',
+			'pr list': JSON.stringify(samplePRs),
+		});
+
+		const cleanup = createCueGitHubPoller(config);
+		await vi.advanceTimersByTimeAsync(2000);
+
+		expect(config.onLog).toHaveBeenCalledWith(
+			'warn',
+			expect.stringContaining('Cue database not ready')
+		);
+		expect(mockExecFile).not.toHaveBeenCalled();
+		expect(config.onEvent).not.toHaveBeenCalled();
+
+		cleanup();
 	});
 
 	afterEach(() => {
@@ -313,9 +350,21 @@ describe('cue-github-poller', () => {
 		const cleanup = createCueGitHubPoller(config);
 		await vi.advanceTimersByTimeAsync(2000);
 
-		expect(mockMarkGitHubItemSeen).toHaveBeenCalledWith('session-1:test-sub', 'pr:owner/repo:1');
-		expect(mockMarkGitHubItemSeen).toHaveBeenCalledWith('session-1:test-sub', 'pr:owner/repo:2');
-		expect(mockMarkGitHubItemSeen).toHaveBeenCalledWith('session-1:test-sub', 'pr:owner/repo:3');
+		expect(mockMarkGitHubItemSeen).toHaveBeenCalledWith(
+			'session-1:test-sub',
+			'pr:owner/repo:1',
+			'2026-03-02T00:00:00Z'
+		);
+		expect(mockMarkGitHubItemSeen).toHaveBeenCalledWith(
+			'session-1:test-sub',
+			'pr:owner/repo:2',
+			'2026-03-02T12:00:00Z'
+		);
+		expect(mockMarkGitHubItemSeen).toHaveBeenCalledWith(
+			'session-1:test-sub',
+			'pr:owner/repo:3',
+			'2026-03-03T00:00:00Z'
+		);
 
 		cleanup();
 	});
@@ -366,6 +415,9 @@ describe('cue-github-poller', () => {
 			created_at: '2026-03-01T00:00:00Z',
 			updated_at: '2026-03-02T00:00:00Z',
 			merged_at: '',
+			is_retrigger: false,
+			retrigger_count: 0,
+			new_comments: [],
 		});
 
 		cleanup();
@@ -396,6 +448,9 @@ describe('cue-github-poller', () => {
 			repo: 'owner/repo',
 			created_at: '2026-03-01T00:00:00Z',
 			updated_at: '2026-03-02T00:00:00Z',
+			is_retrigger: false,
+			retrigger_count: 0,
+			new_comments: [],
 		});
 
 		cleanup();
@@ -643,7 +698,13 @@ describe('cue-github-poller', () => {
 			const cleanup = createCueGitHubPoller(config);
 			await vi.advanceTimersByTimeAsync(2000);
 
-			expect(mockMarkGitHubItemSeen).toHaveBeenCalledWith('session-1:test-sub', '__seed_marker__');
+			// Seed marker doesn't carry a meaningful revision — the poller passes
+			// the raw item-key API which leaves lastRevision undefined.
+			expect(mockMarkGitHubItemSeen).toHaveBeenCalledWith(
+				'session-1:test-sub',
+				'__seed_marker__',
+				undefined
+			);
 			expect(config.onLog).toHaveBeenCalledWith('info', expect.stringContaining('seed marker set'));
 
 			cleanup();
@@ -849,6 +910,26 @@ describe('cue-github-poller', () => {
 		});
 	});
 
+	describe('connectivity detection (isGitHubConnectivityError)', () => {
+		it('matches GitHub CLI connection failures', () => {
+			expect(
+				isGitHubConnectivityError(
+					new Error(
+						'error connecting to api.github.com\ncheck your internet connection or https://githubstatus.com'
+					)
+				)
+			).toBe(true);
+		});
+
+		it('matches DNS failures', () => {
+			expect(isGitHubConnectivityError(new Error('ENOTFOUND api.github.com'))).toBe(true);
+		});
+
+		it('does not match auth/configuration failures', () => {
+			expect(isGitHubConnectivityError(new Error('gh auth login required'))).toBe(false);
+		});
+	});
+
 	// ─── Phase 12C + 13A: backoff + Sentry behavior ────────────────────────
 	describe('rate-limit backoff and Sentry reporting', () => {
 		it('emits rateLimitBackoff payload on rate-limit error without Sentry', async () => {
@@ -872,9 +953,25 @@ describe('cue-github-poller', () => {
 			cleanup();
 		});
 
-		it('reports non-rate-limit errors to Sentry with cue:github:doPoll tag', async () => {
+		it('does not report GitHub connectivity errors to Sentry', async () => {
 			const config = makeConfig();
 			setupExecFileReject('pr list', 'ENOTFOUND api.github.com');
+			mockExecFile.mockImplementationOnce((_c, _a, _o, cb) => cb(null, '2.0.0', ''));
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+
+			const sentryCalls = mockCaptureException.mock.calls.filter(
+				(c) => (c[1] as { operation: string }).operation === 'cue:github:doPoll'
+			);
+			expect(sentryCalls).toHaveLength(0);
+
+			cleanup();
+		});
+
+		it('reports non-rate-limit/non-connectivity errors to Sentry with cue:github:doPoll tag', async () => {
+			const config = makeConfig();
+			setupExecFileReject('pr list', 'gh auth login required');
 			mockExecFile.mockImplementationOnce((_c, _a, _o, cb) => cb(null, '2.0.0', ''));
 
 			const cleanup = createCueGitHubPoller(config);
@@ -993,6 +1090,252 @@ describe('cue-github-poller', () => {
 
 			expect(mockExecFile).toHaveBeenCalled();
 
+			cleanup();
+		});
+	});
+
+	describe('re-trigger on new activity', () => {
+		const updatedPR = {
+			number: 42,
+			title: 'Discussion PR',
+			author: { login: 'alice' },
+			url: 'https://github.com/owner/repo/pull/42',
+			body: 'Discussion',
+			state: 'OPEN',
+			isDraft: false,
+			labels: [],
+			headRefName: 'discuss',
+			baseRefName: 'main',
+			createdAt: '2026-03-01T00:00:00Z',
+			updatedAt: '2026-03-05T00:00:00Z',
+		};
+
+		it('does NOT re-fire when retriggerOnComments is false even if updatedAt changed', async () => {
+			mockIsGitHubItemSeen.mockReturnValue(true);
+			mockGetGitHubItemState.mockReturnValue({
+				lastRevision: '2026-03-02T00:00:00Z',
+				fireCount: 0,
+			});
+
+			const config = makeConfig({ retriggerOnComments: false });
+			setupExecFile({
+				'--version': '2.0.0',
+				'pr list': JSON.stringify([updatedPR]),
+			});
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+
+			expect(config.onEvent).not.toHaveBeenCalled();
+			expect(mockRecordGitHubRetrigger).not.toHaveBeenCalled();
+			cleanup();
+		});
+
+		it('re-fires once when updatedAt advances and emits new comments in payload', async () => {
+			mockIsGitHubItemSeen.mockReturnValue(true);
+			mockGetGitHubItemState.mockReturnValue({
+				lastRevision: '2026-03-02T00:00:00Z',
+				fireCount: 0,
+			});
+
+			const config = makeConfig({ retriggerOnComments: true });
+			setupExecFile({
+				'--version': '2.0.0',
+				'pr list': JSON.stringify([updatedPR]),
+				'pr view': JSON.stringify({
+					comments: [
+						{
+							author: { login: 'bob' },
+							body: 'LGTM',
+							createdAt: '2026-03-04T00:00:00Z',
+						},
+						{
+							author: { login: 'carol' },
+							body: 'Older comment',
+							createdAt: '2026-03-01T00:00:00Z',
+						},
+					],
+				}),
+			});
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+
+			expect(config.onEvent).toHaveBeenCalledTimes(1);
+			const event = (config.onEvent as ReturnType<typeof vi.fn>).mock.calls[0][0];
+			expect(event.payload.is_retrigger).toBe(true);
+			expect(event.payload.retrigger_count).toBe(1);
+			expect(event.payload.new_comments).toHaveLength(1);
+			expect(event.payload.new_comments[0]).toMatchObject({
+				author: 'bob',
+				body: 'LGTM',
+			});
+			expect(mockRecordGitHubRetrigger).toHaveBeenCalledWith(
+				'session-1:test-sub',
+				'pr:owner/repo:42',
+				'2026-03-05T00:00:00Z'
+			);
+			cleanup();
+		});
+
+		it('skips re-fire when updatedAt is unchanged from last_revision', async () => {
+			mockIsGitHubItemSeen.mockReturnValue(true);
+			mockGetGitHubItemState.mockReturnValue({
+				lastRevision: '2026-03-05T00:00:00Z', // matches PR's updatedAt
+				fireCount: 0,
+			});
+
+			const config = makeConfig({ retriggerOnComments: true });
+			setupExecFile({
+				'--version': '2.0.0',
+				'pr list': JSON.stringify([updatedPR]),
+			});
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+
+			expect(config.onEvent).not.toHaveBeenCalled();
+			expect(mockRecordGitHubRetrigger).not.toHaveBeenCalled();
+			cleanup();
+		});
+
+		it('enforces per-item cap (max=2): blocks fires once fireCount >= cap', async () => {
+			mockIsGitHubItemSeen.mockReturnValue(true);
+			mockGetGitHubItemState.mockReturnValue({
+				lastRevision: '2026-03-02T00:00:00Z',
+				fireCount: 2,
+			});
+
+			const config = makeConfig({ retriggerOnComments: true, maxNotifications: 2 });
+			setupExecFile({
+				'--version': '2.0.0',
+				'pr list': JSON.stringify([updatedPR]),
+			});
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+
+			expect(config.onEvent).not.toHaveBeenCalled();
+			expect(mockRecordGitHubRetrigger).not.toHaveBeenCalled();
+			cleanup();
+		});
+
+		it('treats maxNotifications=0 as unlimited', async () => {
+			mockIsGitHubItemSeen.mockReturnValue(true);
+			mockGetGitHubItemState.mockReturnValue({
+				lastRevision: '2026-03-02T00:00:00Z',
+				fireCount: 9999,
+			});
+
+			const config = makeConfig({ retriggerOnComments: true, maxNotifications: 0 });
+			setupExecFile({
+				'--version': '2.0.0',
+				'pr list': JSON.stringify([updatedPR]),
+				'pr view': JSON.stringify({ comments: [] }),
+			});
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+
+			expect(config.onEvent).toHaveBeenCalledTimes(1);
+			expect(mockRecordGitHubRetrigger).toHaveBeenCalled();
+			cleanup();
+		});
+
+		it('initial discovery fire is NOT subject to cap and does NOT increment fireCount', async () => {
+			mockIsGitHubItemSeen.mockReturnValue(false); // new item
+			mockHasAnyGitHubSeen.mockReturnValue(true); // not first run (other items already seeded)
+
+			const config = makeConfig({ retriggerOnComments: true, maxNotifications: 2 });
+			setupExecFile({
+				'--version': '2.0.0',
+				'pr list': JSON.stringify([updatedPR]),
+			});
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+
+			expect(config.onEvent).toHaveBeenCalledTimes(1);
+			const event = (config.onEvent as ReturnType<typeof vi.fn>).mock.calls[0][0];
+			expect(event.payload.is_retrigger).toBe(false);
+			expect(event.payload.retrigger_count).toBe(0);
+			expect(mockMarkGitHubItemSeen).toHaveBeenCalledWith(
+				'session-1:test-sub',
+				'pr:owner/repo:42',
+				'2026-03-05T00:00:00Z'
+			);
+			expect(mockRecordGitHubRetrigger).not.toHaveBeenCalled();
+			cleanup();
+		});
+
+		it('first-run seeding stores updatedAt as initial revision', async () => {
+			mockIsGitHubItemSeen.mockReturnValue(false);
+			mockHasAnyGitHubSeen.mockReturnValue(false); // first run
+
+			const config = makeConfig({ retriggerOnComments: true });
+			setupExecFile({
+				'--version': '2.0.0',
+				'pr list': JSON.stringify([updatedPR]),
+			});
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+
+			// First run seeds without firing
+			expect(config.onEvent).not.toHaveBeenCalled();
+			expect(mockMarkGitHubItemSeen).toHaveBeenCalledWith(
+				'session-1:test-sub',
+				'pr:owner/repo:42',
+				'2026-03-05T00:00:00Z'
+			);
+			cleanup();
+		});
+
+		it('issue re-fire path works the same as PR path', async () => {
+			const updatedIssue = {
+				number: 7,
+				title: 'Issue',
+				author: { login: 'alice' },
+				url: 'https://github.com/owner/repo/issues/7',
+				body: 'hi',
+				state: 'OPEN',
+				labels: [],
+				assignees: [],
+				createdAt: '2026-03-01T00:00:00Z',
+				updatedAt: '2026-03-05T00:00:00Z',
+			};
+			mockIsGitHubItemSeen.mockReturnValue(true);
+			mockGetGitHubItemState.mockReturnValue({
+				lastRevision: '2026-03-02T00:00:00Z',
+				fireCount: 0,
+			});
+
+			const config = makeConfig({
+				eventType: 'github.issue',
+				retriggerOnComments: true,
+			});
+			setupExecFile({
+				'--version': '2.0.0',
+				'issue list': JSON.stringify([updatedIssue]),
+				'issue view': JSON.stringify({
+					comments: [
+						{
+							author: { login: 'bob' },
+							body: 'reply',
+							createdAt: '2026-03-04T00:00:00Z',
+						},
+					],
+				}),
+			});
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+
+			expect(config.onEvent).toHaveBeenCalledTimes(1);
+			const event = (config.onEvent as ReturnType<typeof vi.fn>).mock.calls[0][0];
+			expect(event.type).toBe('github.issue');
+			expect(event.payload.is_retrigger).toBe(true);
+			expect(event.payload.new_comments).toHaveLength(1);
 			cleanup();
 		});
 	});

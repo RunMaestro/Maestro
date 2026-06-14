@@ -14,6 +14,7 @@
  */
 
 import type { Session, QueuedItem } from '../../../../types';
+import { nextRunnableQueueItem } from '../../../../utils/executionQueue';
 
 export type QueueAction = 'dequeue' | 'wait' | 'none';
 
@@ -26,15 +27,16 @@ export function chooseNextQueuedItem(
 	session: Pick<Session, 'executionQueue' | 'state' | 'agentError' | 'aiTabs'>,
 	exitingTabId: string | undefined
 ): QueueDecision {
-	if (session.executionQueue.length === 0) {
+	// Paused items are held by the user — skip them and run the first runnable
+	// item. If everything is held (or the queue is empty), there's nothing to do.
+	const nextItem = nextRunnableQueueItem(session.executionQueue);
+	if (!nextItem) {
 		return { action: 'none', item: null };
 	}
 
 	if (session.state === 'error' && session.agentError) {
 		return { action: 'none', item: null };
 	}
-
-	const nextItem = session.executionQueue[0];
 	const otherTabsBusy = !!session.aiTabs?.some(
 		(tab) => tab.id !== exitingTabId && tab.state === 'busy'
 	);

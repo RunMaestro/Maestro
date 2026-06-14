@@ -16,12 +16,14 @@ import {
 	Terminal,
 } from 'lucide-react';
 import type { CueEventType } from '../../../shared/cue-pipeline-types';
+import { CUE_EVENT_LABELS } from '../../../shared/cue/cue-summary';
 
 /** Icon component for each event type */
 export const EVENT_ICONS: Record<CueEventType, typeof Clock> = {
 	'app.startup': Power,
 	'time.heartbeat': Clock,
 	'time.scheduled': Clock,
+	'time.once': Clock,
 	'file.changed': FileText,
 	'agent.completed': Zap,
 	'github.pull_request': GitPullRequest,
@@ -30,18 +32,12 @@ export const EVENT_ICONS: Record<CueEventType, typeof Clock> = {
 	'cli.trigger': Terminal,
 };
 
-/** Display label for each event type */
-export const EVENT_LABELS: Record<CueEventType, string> = {
-	'app.startup': 'App Startup',
-	'time.heartbeat': 'Heartbeat Timer',
-	'time.scheduled': 'Scheduled',
-	'file.changed': 'File Change',
-	'agent.completed': 'Agent Completed',
-	'github.pull_request': 'Pull Request',
-	'github.issue': 'GitHub Issue',
-	'task.pending': 'Pending Task',
-	'cli.trigger': 'CLI Trigger',
-};
+/**
+ * Display label for each event type. Re-exported from the shared single source
+ * of truth (`CUE_EVENT_LABELS`) so the pipeline editor, history list, and
+ * detail modal all describe triggers identically.
+ */
+export const EVENT_LABELS = CUE_EVENT_LABELS;
 
 /**
  * Default prompt templates seeded into new trigger→agent edges. Every event
@@ -74,6 +70,7 @@ Labels: {{CUE_GH_LABELS}}
 	'cli.trigger': '{{CUE_CLI_PROMPT}}\n\n',
 	'time.heartbeat': '',
 	'time.scheduled': '',
+	'time.once': '',
 	'app.startup': '',
 };
 
@@ -91,6 +88,7 @@ export const EVENT_COLORS: Record<CueEventType, string> = {
 	'app.startup': '#10b981',
 	'time.heartbeat': '#f59e0b',
 	'time.scheduled': '#8b5cf6',
+	'time.once': '#8b5cf6',
 	'file.changed': '#3b82f6',
 	'agent.completed': '#22c55e',
 	'github.pull_request': '#a855f7',

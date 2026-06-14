@@ -803,18 +803,20 @@ describe('AutoRun', () => {
 			});
 		});
 
-		it('disables Run button when agent is busy', () => {
+		it('shows "Agent is thinking" tooltip on Run when agent is busy but keeps Run clickable', () => {
 			const props = createDefaultProps({ sessionState: 'busy' as SessionState });
 			renderWithProvider(<AutoRun {...props} />);
 
-			expect(screen.getByText('Run').closest('button')).toBeDisabled();
+			expect(screen.getByText('Run').closest('button')).not.toBeDisabled();
+			expect(screen.getByTitle(/Agent is thinking/)).toBeDefined();
 		});
 
-		it('disables Run button when agent is connecting', () => {
+		it('shows "Agent is thinking" tooltip on Run when agent is connecting but keeps Run clickable', () => {
 			const props = createDefaultProps({ sessionState: 'connecting' as SessionState });
 			renderWithProvider(<AutoRun {...props} />);
 
-			expect(screen.getByText('Run').closest('button')).toBeDisabled();
+			expect(screen.getByText('Run').closest('button')).not.toBeDisabled();
+			expect(screen.getByTitle(/Agent is thinking/)).toBeDefined();
 		});
 
 		it('calls onStopBatchRun when clicking Stop', async () => {

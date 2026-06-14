@@ -13,6 +13,7 @@ import { isWindows, isLinux } from '../../shared/platformDetection';
 import Store from 'electron-store';
 import fsSync from 'fs';
 
+import { parseJsonWithBom } from '../../shared/jsonUtils';
 import type { BootstrapSettings } from './types';
 
 // Re-export getDefaultShell from defaults for backward compatibility
@@ -207,6 +208,7 @@ export function getEarlySettings(syncPath: string): {
 	}>({
 		name: 'maestro-settings',
 		cwd: syncPath,
+		deserialize: parseJsonWithBom,
 	});
 
 	// Check if user has explicitly set GPU acceleration preference

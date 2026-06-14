@@ -27,6 +27,8 @@ import {
 	filterTextByLinesHelper,
 	getCachedAnsiHtml,
 } from '../utils/textProcessing';
+import { jumpToMessageEdge, isTextInputTarget } from '../utils/messageScrollNavigation';
+import { JumpToMessageTopButton } from './JumpToMessageTopButton';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { QueuedItemsList } from './QueuedItemsList';
@@ -38,6 +40,10 @@ import { safeClipboardWrite } from '../utils/clipboard';
 import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useMessageGistStore } from '../stores/messageGistStore';
+import { useSessionStore } from '../stores/sessionStore';
+import { SessionRecoveryCard } from './SessionRecoveryCard';
+import { getTokenSourcePill } from '../../shared/claudeTokenModeLabel';
+import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
 
 // ============================================================================
 // Tool display helpers (pure functions, hoisted out of render path)
@@ -132,8 +138,75 @@ const summarizeToolInput = (input: unknown): ToolSummary | null => {
 	return { description, detail: detail ?? '' };
 };
 
+/** Max lines of tool output to preview inline before truncating. */
+const TOOL_OUTPUT_PREVIEW_LINES = 8;
+
+/**
+ * Summarize tool output for inline display. MCP tools (and others) return their
+ * result in `toolState.output`; without this the compact tool log shows only the
+ * name + status icon and drops the result entirely. Strings render as-is, objects
+ * are JSON-stringified. Output is capped to a short preview so large results don't
+ * flood the chat.
+ */
+const summarizeToolOutput = (output: unknown): string | null => {
+	if (output === undefined || output === null) return null;
+	let text: string;
+	if (typeof output === 'string') {
+		text = output;
+	} else {
+		try {
+			text = JSON.stringify(output, null, 2);
+		} catch {
+			return null;
+		}
+	}
+	text = text.trim();
+	if (!text) return null;
+	const lines = text.split('\n');
+	if (lines.length > TOOL_OUTPUT_PREVIEW_LINES) {
+		return lines.slice(0, TOOL_OUTPUT_PREVIEW_LINES).join('\n') + '\n…';
+	}
+	return text;
+};
+
 const isHiddenProgressEntry = (log: LogEntry): boolean =>
 	log.source === 'system' && log.id.startsWith('hidden-progress:');
+
+/**
+ * Connector that reads the live tab from the session store and renders the
+ * SessionRecoveryCard. Keeps LogItem's prop surface narrow (just sessionId)
+ * instead of passing the full Session object through every log entry.
+ */
+function SessionRecoveryCardConnector(props: {
+	theme: Theme;
+	sessionId: string;
+	recoveryAction: NonNullable<LogEntry['recoveryAction']>;
+	isRecovering: boolean;
+	recoveryError: string | null;
+	onRecover: (opts: {
+		sessionId: string;
+		tabId: string;
+		lastUserPrompt: string;
+		groomContext: boolean;
+	}) => void;
+}) {
+	const tab = useSessionStore((s) => {
+		const session = s.sessions.find((sess) => sess.id === props.sessionId);
+		return session?.aiTabs.find((t) => t.id === props.recoveryAction.tabId);
+	});
+	if (!tab) return null;
+	return (
+		<SessionRecoveryCard
+			theme={props.theme}
+			sessionId={props.sessionId}
+			tab={tab}
+			lastUserPrompt={props.recoveryAction.lastUserPrompt}
+			isRecovering={props.isRecovering}
+			recoveryError={props.recoveryError}
+			onRecover={props.onRecover}
+		/>
+	);
+}
 
 // ============================================================================
 // LogItem - Memoized component for individual log entries
@@ -204,6 +277,20 @@ interface LogItemProps {
 	bionifyAlgorithm: string;
 	// Message alignment
 	userMessageAlignment: 'left' | 'right';
+	// Claude mode pill — both passed as primitives so LogItem memo equality stays cheap.
+	isClaudeCode: boolean;
+	isAdaptiveMode: boolean;
+	// Session recovery (session_not_found inline card). Only consumed when
+	// log.recoveryAction is set; otherwise these props are ignored.
+	sessionId: string;
+	onSessionRecover?: (opts: {
+		sessionId: string;
+		tabId: string;
+		lastUserPrompt: string;
+		groomContext: boolean;
+	}) => void;
+	isRecoveringSession?: boolean;
+	sessionRecoveryError?: string | null;
 }
 
 const LogItemComponent = memo(
@@ -249,6 +336,12 @@ const LogItemComponent = memo(
 		bionifyIntensity,
 		bionifyAlgorithm,
 		userMessageAlignment,
+		isClaudeCode,
+		isAdaptiveMode,
+		sessionId,
+		onSessionRecover,
+		isRecoveringSession,
+		sessionRecoveryError,
 	}: LogItemProps) => {
 		// Ref for the log item container - used for scroll-into-view on expand
 		const logItemRef = useRef<HTMLDivElement>(null);
@@ -480,9 +573,19 @@ const LogItemComponent = memo(
 									Error
 								</span>
 							</div>
-							<p className="text-sm" style={{ color: theme.colors.textMain }}>
-								{log.text}
-							</p>
+							<div className="text-sm" style={{ color: theme.colors.textMain }}>
+								<MarkdownRenderer
+									content={log.text}
+									theme={theme}
+									onCopy={copyToClipboard}
+									fileTree={fileTree}
+									cwd={cwd}
+									projectRoot={projectRoot}
+									onFileClick={onFileClick}
+									chatLineBreaks
+									chatMath
+								/>
+							</div>
 							{!!log.agentError?.parsedJson && onShowErrorDetails && (
 								<button
 									onClick={() => onShowErrorDetails(log.agentError!)}
@@ -532,6 +635,8 @@ const LogItemComponent = memo(
 										cwd={cwd}
 										projectRoot={projectRoot}
 										onFileClick={onFileClick}
+										chatLineBreaks
+										chatMath
 									/>
 								) : (
 									log.text
@@ -594,6 +699,14 @@ const LogItemComponent = memo(
 								toolInput !== undefined && toolInput !== null
 									? summarizeToolInput(toolInput)
 									: null;
+							// Show the tool result once it has finished. Without this the
+							// compact tool log drops the output entirely (e.g. MCP calls
+							// like squash_repos that take no args render as a bare name).
+							const toolStatus = log.metadata?.toolState?.status;
+							const outputSummary =
+								toolStatus === 'completed' || toolStatus === 'failed' || toolStatus === 'error'
+									? summarizeToolOutput(log.metadata?.toolState?.output)
+									: null;
 
 							return (
 								<div
@@ -651,6 +764,17 @@ const LogItemComponent = memo(
 											{toolSummary.detail}
 										</div>
 									)}
+									{outputSummary && (
+										<div
+											className="mt-1 ml-1 pl-2 opacity-60 break-words whitespace-pre-wrap border-l"
+											style={{
+												color: theme.colors.textMain,
+												borderColor: `${theme.colors.success}40`,
+											}}
+										>
+											{outputSummary}
+										</div>
+									)}
 								</div>
 							);
 						})()}
@@ -697,6 +821,8 @@ const LogItemComponent = memo(
 											cwd={cwd}
 											projectRoot={projectRoot}
 											onFileClick={onFileClick}
+											chatLineBreaks
+											chatMath
 										/>
 									) : (
 										displayText
@@ -783,6 +909,8 @@ const LogItemComponent = memo(
 											cwd={cwd}
 											projectRoot={projectRoot}
 											onFileClick={onFileClick}
+											chatLineBreaks
+											chatMath
 										/>
 									) : (
 										<div>{filteredText}</div>
@@ -861,6 +989,8 @@ const LogItemComponent = memo(
 										cwd={cwd}
 										projectRoot={projectRoot}
 										onFileClick={onFileClick}
+										chatLineBreaks
+										chatMath
 									/>
 								) : (
 									// Raw markdown source mode (show original text with markdown syntax visible)
@@ -873,13 +1003,58 @@ const LogItemComponent = memo(
 								)}
 							</>
 						))}
+					{/* Session-not-found recovery card. Rendered inline directly
+					    under the system message that announced the dead session. The
+					    card reads the tab from the store so we don't have to pass the
+					    full Session through LogItem (would defeat memoization). */}
+					{log.recoveryAction && (
+						<SessionRecoveryCardConnector
+							theme={theme}
+							sessionId={sessionId}
+							recoveryAction={log.recoveryAction}
+							isRecovering={!!isRecoveringSession}
+							recoveryError={sessionRecoveryError ?? null}
+							onRecover={(opts) => onSessionRecover?.(opts)}
+						/>
+					)}
+					{/* Mode pill — shows which CLI captured this Claude turn (TUI = maestro-p,
+					    API = claude --print). "Adaptive " prefix indicates the session has
+					    Adaptive Mode enabled (auto-switching between the two). */}
+					{isClaudeCode &&
+						log.source !== 'user' &&
+						(() => {
+							const { label, title } = getTokenSourcePill({
+								mode: log.renderStyle === 'text-stream' ? 'interactive' : 'api',
+								adaptive: isAdaptiveMode,
+							});
+							return (
+								<span
+									className="absolute bottom-2 left-1/2 -translate-x-1/2 text-[10px] px-1.5 py-0.5 rounded pointer-events-none select-none"
+									style={{
+										backgroundColor: `${theme.colors.accent}20`,
+										color: theme.colors.accent,
+										opacity: 0.7,
+									}}
+									title={title}
+								>
+									{label}
+								</span>
+							);
+						})()}
+					{/* Jump to top of this message - bottom left corner */}
+					<JumpToMessageTopButton
+						scrollContainerRef={scrollContainerRef}
+						messageRef={logItemRef}
+						theme={theme}
+					/>
 					{/* Action buttons - bottom right corner */}
 					<div
 						className="absolute bottom-2 right-2 flex items-center gap-1"
 						style={{ transition: 'opacity 0.15s ease-in-out' }}
 					>
-						{/* Markdown toggle button for AI responses */}
-						{log.source !== 'user' && isAIMode && (
+						{/* Markdown toggle button — available on both user and assistant
+						    messages in AI mode for consistent UX (#622). */}
+						{isAIMode && (
 							<button
 								onClick={onToggleMarkdownEditMode}
 								className="p-1.5 rounded opacity-0 group-hover:opacity-50 hover:!opacity-100"
@@ -1052,6 +1227,7 @@ const LogItemComponent = memo(
 			prevProps.log.delivered === nextProps.log.delivered &&
 			prevProps.log.readOnly === nextProps.log.readOnly &&
 			prevProps.log.forceParallel === nextProps.log.forceParallel &&
+			prevProps.log.renderStyle === nextProps.log.renderStyle &&
 			prevProps.log.metadata?.hiddenProgress === nextProps.log.metadata?.hiddenProgress &&
 			prevProps.log.metadata?.toolState?.status === nextProps.log.metadata?.toolState?.status &&
 			prevProps.isExpanded === nextProps.isExpanded &&
@@ -1099,6 +1275,8 @@ interface TerminalOutputProps {
 	maxOutputLines: number;
 	onDeleteLog?: (logId: string) => number | null; // Returns the index to scroll to after deletion
 	onRemoveQueuedItem?: (itemId: string) => void; // Callback to remove a queued item from execution queue
+	onTogglePauseQueuedItem?: (itemId: string) => void; // Callback to toggle held/paused state of a queued item
+	onReorderQueuedItem?: (fromIndex: number, toIndex: number, tabId?: string) => void; // Reorder a queued item within the active tab's queue
 	onForceSendQueuedItem?: (itemId: string) => void; // Callback to Force Send a queued item (parallel execution)
 	forcedParallelEnabled?: boolean; // Whether forcedParallelExecution setting is on (gates Force Send button)
 	getForceSendContext?: (
@@ -1127,6 +1305,17 @@ interface TerminalOutputProps {
 		content: string;
 		sshRemoteId?: string;
 	}) => void; // Callback to open saved file in a tab
+	// In-place recovery from session_not_found errors. Invoked by the
+	// SessionRecoveryCard that renders inside system log entries carrying a
+	// `recoveryAction` payload.
+	onSessionRecover?: (opts: {
+		sessionId: string;
+		tabId: string;
+		lastUserPrompt: string;
+		groomContext: boolean;
+	}) => void;
+	isRecoveringSession?: boolean;
+	sessionRecoveryError?: string | null;
 }
 
 // PERFORMANCE: Wrap in React.memo to prevent re-renders when parent re-renders
@@ -1152,6 +1341,8 @@ export const TerminalOutput = memo(
 			maxOutputLines,
 			onDeleteLog,
 			onRemoveQueuedItem,
+			onTogglePauseQueuedItem,
+			onReorderQueuedItem,
 			onForceSendQueuedItem,
 			forcedParallelEnabled,
 			getForceSendContext,
@@ -1173,6 +1364,9 @@ export const TerminalOutput = memo(
 			onOpenInTab,
 			ghCliAvailable,
 			onPublishMessageGist,
+			onSessionRecover,
+			isRecoveringSession,
+			sessionRecoveryError,
 		} = props;
 		const globalBionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
 		const globalBionifyIntensity = useSettingsStore((s) => s.bionifyIntensity);
@@ -1234,6 +1428,11 @@ export const TerminalOutput = memo(
 		isAtBottomRef.current = isAtBottom;
 		// Track whether auto-scroll is paused because user scrolled up (state so button re-renders)
 		const [autoScrollPaused, setAutoScrollPaused] = useState(false);
+		// Ref mirror of autoScrollPaused for the MutationObserver closure so a freshly
+		// restored scroll position can suppress auto-scroll synchronously, before the
+		// state-driven re-render re-runs the observer effect (avoids a one-frame yank).
+		const autoScrollPausedRef = useRef(false);
+		autoScrollPausedRef.current = autoScrollPaused;
 		// Guard flag: prevents the scroll handler from pausing auto-scroll
 		// during programmatic scrollTo() calls from the MutationObserver effect.
 		const isProgrammaticScrollRef = useRef(false);
@@ -1733,7 +1932,7 @@ export const TerminalOutput = memo(
 			const container = scrollContainerRef.current;
 			if (!container) return;
 
-			const shouldAutoScroll = () => !autoScrollPaused || isAtBottomRef.current;
+			const shouldAutoScroll = () => !autoScrollPausedRef.current || isAtBottomRef.current;
 
 			const scrollToBottom = () => {
 				if (!scrollContainerRef.current) return;
@@ -1791,6 +1990,17 @@ export const TerminalOutput = memo(
 						// Clamp to max scrollable area
 						const maxScroll = Math.max(0, scrollHeight - clientHeight);
 						const targetScroll = Math.min(initialScrollTop, maxScroll);
+						// If the saved position is not at the bottom, pause auto-scroll so the
+						// MutationObserver doesn't immediately yank the view back down (uses the
+						// same 50px bottom threshold as handleScrollInner). Flip the refs first
+						// so the observer's live shouldAutoScroll() sees the pause this frame,
+						// before the state update re-renders.
+						if (targetScroll < maxScroll - 50) {
+							autoScrollPausedRef.current = true;
+							isAtBottomRef.current = false;
+							setAutoScrollPaused(true);
+							setIsAtBottom(false);
+						}
 						scrollContainerRef.current.scrollTop = targetScroll;
 					}
 				});
@@ -1864,14 +2074,45 @@ export const TerminalOutput = memo(
 						setActiveFocus('main');
 						return;
 					}
-					// Arrow key scrolling (instant, no smooth behavior)
-					// Plain arrow keys: scroll by ~100px
-					if (e.key === 'ArrowUp' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+					// Shift+Arrow: jump message-by-message. Skip when the user is typing in
+					// an input/textarea inside the region — those handle their own
+					// arrow-key cursor movement.
+					if (
+						(e.key === 'ArrowUp' || e.key === 'ArrowDown') &&
+						e.shiftKey &&
+						!e.metaKey &&
+						!e.ctrlKey &&
+						!e.altKey &&
+						!isTextInputTarget(e.target)
+					) {
+						const container = scrollContainerRef.current;
+						if (container) {
+							e.preventDefault();
+							jumpToMessageEdge(container, '[data-log-index]', e.key === 'ArrowUp' ? 'up' : 'down');
+						}
+						return;
+					}
+					// Plain Arrow keys: nudge scroll by ~100px (instant, no smooth behavior).
+					if (
+						e.key === 'ArrowUp' &&
+						!e.shiftKey &&
+						!e.metaKey &&
+						!e.ctrlKey &&
+						!e.altKey &&
+						!isTextInputTarget(e.target)
+					) {
 						e.preventDefault();
 						scrollContainerRef.current?.scrollBy({ top: -100 });
 						return;
 					}
-					if (e.key === 'ArrowDown' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+					if (
+						e.key === 'ArrowDown' &&
+						!e.shiftKey &&
+						!e.metaKey &&
+						!e.ctrlKey &&
+						!e.altKey &&
+						!isTextInputTarget(e.target)
+					) {
 						e.preventDefault();
 						scrollContainerRef.current?.scrollBy({ top: 100 });
 						return;
@@ -1925,36 +2166,47 @@ export const TerminalOutput = memo(
 						style={{ backgroundColor: theme.colors.bgMain }}
 					>
 						<div className="flex items-center gap-2">
-							<input
-								type="text"
-								value={outputSearchQuery}
-								onChange={(e) => setOutputSearchQuery(e.target.value)}
-								onKeyDown={(e) => {
-									if (e.key === 'Enter' && !e.shiftKey) {
-										e.preventDefault();
-										goToNextMatch();
-									} else if (e.key === 'Enter' && e.shiftKey) {
-										e.preventDefault();
-										goToPrevMatch();
+							<div className="relative flex-1">
+								<input
+									type="text"
+									value={outputSearchQuery}
+									onChange={(e) => setOutputSearchQuery(e.target.value)}
+									onKeyDown={(e) => {
+										if (e.key === 'Enter' && !e.shiftKey) {
+											e.preventDefault();
+											goToNextMatch();
+										} else if (e.key === 'Enter' && e.shiftKey) {
+											e.preventDefault();
+											goToPrevMatch();
+										}
+									}}
+									placeholder={
+										outputSearchRegex
+											? 'Regex search... (Enter: next, Shift+Enter: prev)'
+											: 'Search output... (Enter: next, Shift+Enter: prev)'
 									}
-								}}
-								placeholder={
-									outputSearchRegex
-										? 'Regex search... (Enter: next, Shift+Enter: prev)'
-										: 'Search output... (Enter: next, Shift+Enter: prev)'
-								}
-								className="flex-1 px-3 py-2 rounded border bg-transparent outline-none text-sm"
-								style={{
-									borderColor: regexError ? theme.colors.error : theme.colors.accent,
-									color: theme.colors.textMain,
-									backgroundColor: theme.colors.bgSidebar,
-									fontFamily: outputSearchRegex
-										? 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace'
-										: undefined,
-								}}
-								spellCheck={outputSearchRegex ? false : undefined}
-								autoFocus
-							/>
+									className="w-full pl-3 pr-14 py-2 rounded border bg-transparent outline-none text-sm"
+									style={{
+										borderColor: regexError ? theme.colors.error : theme.colors.accent,
+										color: theme.colors.textMain,
+										backgroundColor: theme.colors.bgSidebar,
+										fontFamily: outputSearchRegex
+											? 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace'
+											: undefined,
+									}}
+									spellCheck={outputSearchRegex ? false : undefined}
+									autoFocus
+								/>
+								<div
+									className="absolute right-2 top-1/2 -translate-y-1/2 px-2 py-0.5 rounded text-xs font-bold pointer-events-none"
+									style={{
+										backgroundColor: theme.colors.bgMain,
+										color: theme.colors.textDim,
+									}}
+								>
+									ESC
+								</div>
+							</div>
 							<button
 								onClick={() => setOutputSearchRegex(!outputSearchRegex)}
 								className="flex items-center justify-center gap-1.5 pl-1 pr-2 rounded border text-xs font-medium whitespace-nowrap transition-colors self-stretch min-w-[7rem]"
@@ -2062,6 +2314,10 @@ export const TerminalOutput = memo(
 							onToggleMarkdownEditMode={toggleMarkdownEditMode}
 							onReplayMessage={onReplayMessage}
 							onForkConversation={onForkConversation}
+							sessionId={session.id}
+							onSessionRecover={onSessionRecover}
+							isRecoveringSession={isRecoveringSession}
+							sessionRecoveryError={sessionRecoveryError}
 							fileTree={fileTree}
 							cwd={cwd}
 							projectRoot={projectRoot}
@@ -2075,6 +2331,8 @@ export const TerminalOutput = memo(
 							bionifyIntensity={globalBionifyIntensity}
 							bionifyAlgorithm={globalBionifyAlgorithm}
 							userMessageAlignment={userMessageAlignment}
+							isClaudeCode={session.toolType === 'claude-code'}
+							isAdaptiveMode={getClaudeTokenMode(session) === 'dynamic'}
 						/>
 					))}
 
@@ -2084,6 +2342,13 @@ export const TerminalOutput = memo(
 							executionQueue={session.executionQueue}
 							theme={theme}
 							onRemoveQueuedItem={onRemoveQueuedItem}
+							onTogglePauseQueuedItem={onTogglePauseQueuedItem}
+							onReorderItems={
+								onReorderQueuedItem
+									? (fromIndex, toIndex) =>
+											onReorderQueuedItem(fromIndex, toIndex, activeTabId || undefined)
+									: undefined
+							}
 							onForceSendQueuedItem={onForceSendQueuedItem}
 							forcedParallelEnabled={forcedParallelEnabled}
 							getForceSendContext={getForceSendContext}

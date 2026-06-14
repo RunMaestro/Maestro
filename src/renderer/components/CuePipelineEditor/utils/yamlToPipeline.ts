@@ -51,7 +51,7 @@ interface GraphSessionInput {
 		include_output_from?: string[];
 		forward_output_from?: string[];
 		cli_output?: { target: string };
-		action?: 'prompt' | 'command';
+		action?: 'prompt' | 'command' | 'notify';
 		command?: CueCommand;
 		target_node_key?: string;
 		fan_out_node_keys?: string[];
@@ -299,6 +299,8 @@ function triggerGroupKey(sub: CueSubscription): string {
 		repo: sub.repo ?? null,
 		poll_minutes: sub.poll_minutes ?? null,
 		gh_state: sub.gh_state ?? null,
+		retrigger_on_comments: sub.retrigger_on_comments ?? null,
+		max_notifications: sub.max_notifications ?? null,
 		label: sub.label ?? null,
 		filter,
 	});
@@ -326,6 +328,8 @@ function extractTriggerConfig(sub: CueSubscription): TriggerNodeData['config'] {
 		case 'github.issue':
 			if (sub.repo != null) config.repo = sub.repo;
 			if (sub.poll_minutes != null) config.poll_minutes = sub.poll_minutes;
+			if (sub.retrigger_on_comments === true) config.retrigger_on_comments = true;
+			if (sub.max_notifications != null) config.max_notifications = sub.max_notifications;
 			break;
 		case 'task.pending':
 			if (sub.watch != null) config.watch = sub.watch;
@@ -506,8 +510,18 @@ export function subscriptionsToPipelines(
 		// YAML write order:
 		//   1. Initial triggers first (so agents exist before their chain
 		//      consumers try to reference them).
-		//   2. Within chain subs, sort by chain index (matches the pipeline's
-		//      natural left-to-right flow).
+		//   2. Within chain subs, topologically sort by `source_sub` so a
+		//      chain that references another chain comes AFTER its source.
+		//      Chain index is only a TIE-BREAKER for ready subs and for the
+		//      cycle-fallback path — it does NOT reliably encode dependency
+		//      order. Example: chain-2 fan-in with source_sub=[chain-1,
+		//      chain-4] must come after chain-4 (index 4 > 2) so that
+		//      chain-2's source lookup finds chain-4's already-registered
+		//      target node in subNameToNode. Without that ordering, the
+		//      source lookup falls back to session-name resolution and
+		//      invents a premature agent node — and when chain-4 later
+		//      creates its own keyed target, the canvas ends up with a
+		//      disconnected phantom agent next to the real one.
 		//   3. Break ties on subscription name for total determinism.
 		// Without this, re-saving YAML in a different order used to visually
 		// swap agents that shared a session name — the "two agents swapped"
@@ -523,15 +537,85 @@ export function subscriptionsToPipelines(
 		// `-fanin` suffix as a very high chain index so fan-in always sorts
 		// last among non-initial subs.
 		const isLegacyFanIn = (name: string) => /-fanin$/.test(name);
-		const sorted = [...subs].sort((a, b) => {
-			const aInit = isInitialTrigger(a) ? 0 : 1;
-			const bInit = isInitialTrigger(b) ? 0 : 1;
-			if (aInit !== bInit) return aInit - bInit;
-			const aIdx = isLegacyFanIn(a.name) ? Number.MAX_SAFE_INTEGER : getChainIndex(a.name);
-			const bIdx = isLegacyFanIn(b.name) ? Number.MAX_SAFE_INTEGER : getChainIndex(b.name);
+		const chainPriority = (name: string): number =>
+			isLegacyFanIn(name) ? Number.MAX_SAFE_INTEGER : getChainIndex(name);
+		const tieBreak = (a: CueSubscription, b: CueSubscription): number => {
+			const aIdx = chainPriority(a.name);
+			const bIdx = chainPriority(b.name);
 			if (aIdx !== bIdx) return aIdx - bIdx;
 			return a.name.localeCompare(b.name);
-		});
+		};
+
+		const initialTriggerSubs: CueSubscription[] = [];
+		const chainSubsForSort: CueSubscription[] = [];
+		for (const sub of subs) {
+			if (isInitialTrigger(sub)) initialTriggerSubs.push(sub);
+			else chainSubsForSort.push(sub);
+		}
+		initialTriggerSubs.sort(tieBreak);
+
+		// Kahn's algorithm over chain subs, prioritising lowest chain index
+		// among ready candidates so the chain-index intuition still wins
+		// when it doesn't violate a real source_sub dependency. Only chain
+		// subs participate in the topology — initial-trigger subs (including
+		// command-action triggers) have already been added in the previous
+		// step and their `subNameToNode` entries are created by the trigger
+		// branch below before any chain sub runs.
+		const chainSubNames = new Set(chainSubsForSort.map((s) => s.name));
+		const chainByName = new Map(chainSubsForSort.map((s) => [s.name, s]));
+		const refsOf = (sub: CueSubscription): string[] => {
+			const raw = Array.isArray(sub.source_sub)
+				? sub.source_sub
+				: sub.source_sub
+					? [sub.source_sub]
+					: [];
+			return raw.filter((r): r is string => typeof r === 'string' && chainSubNames.has(r));
+		};
+		const indegree = new Map<string, number>();
+		const dependents = new Map<string, string[]>();
+		for (const sub of chainSubsForSort) {
+			indegree.set(sub.name, refsOf(sub).length);
+		}
+		for (const sub of chainSubsForSort) {
+			for (const ref of refsOf(sub)) {
+				const list = dependents.get(ref) ?? [];
+				list.push(sub.name);
+				dependents.set(ref, list);
+			}
+		}
+		const ready: string[] = chainSubsForSort
+			.filter((s) => (indegree.get(s.name) ?? 0) === 0)
+			.map((s) => s.name);
+		const orderedChainSubs: CueSubscription[] = [];
+		const consumed = new Set<string>();
+		while (ready.length > 0) {
+			// Pick the ready candidate with the lowest tie-break ranking.
+			let bestIdx = 0;
+			for (let i = 1; i < ready.length; i++) {
+				if (tieBreak(chainByName.get(ready[i])!, chainByName.get(ready[bestIdx])!) < 0) {
+					bestIdx = i;
+				}
+			}
+			const [name] = ready.splice(bestIdx, 1);
+			consumed.add(name);
+			orderedChainSubs.push(chainByName.get(name)!);
+			for (const dep of dependents.get(name) ?? []) {
+				const next = (indegree.get(dep) ?? 0) - 1;
+				indegree.set(dep, next);
+				if (next === 0) ready.push(dep);
+			}
+		}
+		// Cycle fallback: if any chain sub never reached indegree=0 (the
+		// YAML contains a self-referential source_sub loop), append the
+		// remaining subs in tie-break order so they still render — the
+		// loader stays lossy-but-visible instead of silently dropping them.
+		if (consumed.size < chainSubsForSort.length) {
+			const leftovers = chainSubsForSort.filter((s) => !consumed.has(s.name));
+			leftovers.sort(tieBreak);
+			orderedChainSubs.push(...leftovers);
+		}
+
+		const sorted: CueSubscription[] = [...initialTriggerSubs, ...orderedChainSubs];
 		const knownSubNames = new Set(sorted.map((s) => s.name));
 
 		let triggerCount = 0;
@@ -755,17 +839,6 @@ export function subscriptionsToPipelines(
 						continue;
 					}
 
-					// Under the legacy (no-key) path, "this sessionName has
-					// already been mapped to a node" was the signal that the
-					// agent was being reused — i.e. multiple triggers feeding
-					// the same node. Under the keyed path that signal is
-					// "this `target_node_key` already resolves to a node"
-					// (multiple subs intentionally pointing at one shared
-					// visual node). Compute reuse BEFORE calling the resolver
-					// so the per-call create-vs-fetch decision is observable.
-					const isReusedAgent = sub.target_node_key
-						? nodeKeyToNode.has(sub.target_node_key)
-						: sessionToNode.has(targetSessionName);
 					const agentNode = getOrCreateAgentNode(
 						targetSessionName,
 						sessions,
@@ -798,19 +871,16 @@ export function subscriptionsToPipelines(
 						prompt: sub.prompt || undefined,
 					});
 
-					if (!isReusedAgent) {
-						// First incoming trigger — mirror the prompt onto the agent
-						// node so AgentConfigPanel's single-trigger textarea shows
-						// it. This node-level mirror is cleared below as soon as a
-						// second trigger arrives, so it cannot leak.
-						if (sub.prompt) {
-							(agentNode.data as AgentNodeData).inputPrompt = sub.prompt;
-						}
-					} else {
-						// Transition to multi-trigger: clear the node-level prompt.
-						// Every incoming trigger's prompt is already on its edge.
-						(agentNode.data as AgentNodeData).inputPrompt = undefined;
-					}
+					// edge.prompt is the single source of truth for trigger→agent
+					// prompts. AgentConfigPanel reads/writes edge.prompt directly
+					// for both single-trigger (main textarea) and multi-trigger
+					// (EdgePromptRow) cases. Mirroring onto the node's
+					// `inputPrompt` caused silent stale saves: the textarea
+					// wrote inputPrompt while `pipelineToYaml` read edge.prompt
+					// first, so user edits were dropped. `inputPrompt` is now
+					// reserved for chain agents (no incoming trigger edge) where
+					// the chain-subscription load path populates it elsewhere.
+					(agentNode.data as AgentNodeData).inputPrompt = undefined;
 				}
 			} else {
 				// Chain subscription (agent.completed): connect source to target.

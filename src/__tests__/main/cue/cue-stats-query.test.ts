@@ -7,14 +7,20 @@
  *      whose native binding is built for Electron's NODE_MODULE_VERSION and
  *      fails to load under vitest (every other Cue test works around this
  *      the same way; see `cue-db.test.ts` and `cue-chain-lineage.test.ts`).
- *   2. `getSessionTokenSummaries()` from the Phase 02 token accessor — which
- *      itself reads `session_lifecycle` and dispatches to per-agent storage.
+ *   2. `getSessionTokenSummaries()` + `getAgentTypesForSessions()` from the
+ *      token accessor — which themselves read `session_lifecycle` and dispatch
+ *      to per-agent storage.
  *
  * We mock both at the module boundary and seed deterministic event lists +
  * token summaries per test, then assert on the aggregation output. This
  * exercises the actual pipeline/agent/subscription rollups, chain forest
  * builder, time-series bucketing, and coverage-warning logic — none of which
  * touch SQL.
+ *
+ * Token attribution joins on the provider session id; these fixtures set each
+ * event's `providerSessionId` equal to its `sessionId` for brevity (the
+ * id-space split is exercised in `cue-token-accessor.test.ts`), and key
+ * `mockSummaries` by that shared id.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -31,11 +37,23 @@ vi.mock('../../../main/cue/cue-db', () => ({
 }));
 
 vi.mock('../../../main/cue/stats/cue-token-accessor', () => ({
-	getSessionTokenSummaries: vi.fn(async (sessionIds: string[]) => {
-		const result = new Map<string, SessionTokenSummary>();
-		for (const sid of sessionIds) {
-			const summary = mockSummaries.get(sid);
-			if (summary) result.set(sid, summary);
+	getSessionTokenSummaries: vi.fn(
+		async (lookups: Array<{ maestroSessionId: string; providerSessionId: string }>) => {
+			const result = new Map<string, SessionTokenSummary>();
+			for (const { providerSessionId } of lookups) {
+				const summary = mockSummaries.get(providerSessionId);
+				if (summary) result.set(providerSessionId, summary);
+			}
+			return result;
+		}
+	),
+	// Agent type is keyed by the Maestro agent id; in these fixtures that equals
+	// the (shared) summary key, so derive the label from the seeded summaries.
+	getAgentTypesForSessions: vi.fn((maestroSessionIds: string[]) => {
+		const result = new Map<string, string>();
+		for (const id of maestroSessionIds) {
+			const agentType = mockSummaries.get(id)?.agentType;
+			if (agentType) result.set(id, agentType);
 		}
 		return result;
 	}),
@@ -47,11 +65,12 @@ import { getCueStatsAggregation } from '../../../main/cue/stats/cue-stats-query'
 
 function makeEvent(overrides: Partial<CueEventRecord> = {}): CueEventRecord {
 	const id = overrides.id ?? 'evt-1';
+	const sessionId = overrides.sessionId ?? 'session-1';
 	return {
 		id,
 		type: 'time.heartbeat',
 		triggerName: 'trigger',
-		sessionId: 'session-1',
+		sessionId,
 		subscriptionName: 'sub-default',
 		status: 'completed',
 		createdAt: Date.now(),
@@ -60,6 +79,9 @@ function makeEvent(overrides: Partial<CueEventRecord> = {}): CueEventRecord {
 		pipelineId: null,
 		chainRootId: id,
 		parentEventId: null,
+		// Default the provider session id to the Maestro session id so token
+		// attribution resolves; tests that care about the distinction override it.
+		providerSessionId: overrides.providerSessionId ?? sessionId,
 		...overrides,
 	};
 }

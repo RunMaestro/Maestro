@@ -4,7 +4,7 @@
  * These tests verify the document parsing and iterate mode functionality.
  */
 
-import { describe, it, expect, vi, beforeAll } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 import {
 	parseGeneratedDocuments,
 	splitIntoPhases,
@@ -13,8 +13,11 @@ import {
 	countTasks,
 	generateDocumentPrompt,
 	loadInlineWizardDocGenPrompts,
+	createPlaybookDocumentEmitter,
 	type DocumentGenerationConfig,
+	type PlaybookDocumentEmitter,
 } from '../../../renderer/services/inlineWizardDocumentGeneration';
+import type { InlineGeneratedDocument } from '../../../renderer/hooks/batch/useInlineWizard';
 
 describe('inlineWizardDocumentGeneration', () => {
 	describe('parseGeneratedDocuments', () => {
@@ -584,6 +587,218 @@ CONTENT:
 			expect(prompt).toContain('Read any file in: `/project/source`');
 			// Write access should reference autorun path
 			expect(prompt).toContain('/external/autorun');
+		});
+	});
+
+	describe('createPlaybookDocumentEmitter', () => {
+		const SUBFOLDER = '/playbooks/2026-05-15-Chat';
+
+		// Per-test backing store for the mocked filesystem.
+		let diskFiles: Map<string, string>;
+		let onEmit: ReturnType<typeof vi.fn>;
+		let readFileMock: ReturnType<typeof vi.fn>;
+		let listDocsMock: ReturnType<typeof vi.fn>;
+		let emitter: PlaybookDocumentEmitter;
+
+		// Factory mirrors production's default retry budget but is overridable
+		// per test so we can verify slow-read behavior without long sleeps.
+		const makeEmitter = (
+			retries: { maxAttempts: number; delayMs: number } = { maxAttempts: 3, delayMs: 1 }
+		): PlaybookDocumentEmitter =>
+			createPlaybookDocumentEmitter({
+				subfolderPath: SUBFOLDER,
+				onEmit: (doc) => onEmit(doc),
+				readRetries: retries,
+			});
+
+		beforeEach(() => {
+			diskFiles = new Map();
+			onEmit = vi.fn();
+			readFileMock = vi.fn((filePath: string) => {
+				const content = diskFiles.get(filePath);
+				if (content === undefined) {
+					return Promise.reject(new Error(`ENOENT: ${filePath}`));
+				}
+				return Promise.resolve(content);
+			});
+			listDocsMock = vi.fn(() => {
+				// listDocs returns filenames WITHOUT the .md extension, matching
+				// the real IPC handler's behavior.
+				const files = [...diskFiles.keys()]
+					.filter((p) => p.startsWith(`${SUBFOLDER}/`))
+					.map((p) => p.slice(SUBFOLDER.length + 1).replace(/\.md$/, ''));
+				return Promise.resolve({ success: true, files });
+			});
+
+			(window as any).maestro = {
+				...(window as any).maestro,
+				fs: { readFile: readFileMock },
+				autorun: {
+					...((window as any).maestro?.autorun || {}),
+					listDocs: listDocsMock,
+				},
+			};
+
+			emitter = makeEmitter();
+		});
+
+		it('emits a doc the first time tryEmitFile sees a readable file', async () => {
+			diskFiles.set(`${SUBFOLDER}/Phase-01-Setup.md`, '# Phase 01\n\n- [ ] one\n- [ ] two');
+
+			const result = await emitter.tryEmitFile('Phase-01-Setup.md');
+
+			expect(result).toBe(true);
+			expect(onEmit).toHaveBeenCalledTimes(1);
+			const doc = onEmit.mock.calls[0][0] as InlineGeneratedDocument;
+			expect(doc.filename).toBe('Phase-01-Setup.md');
+			expect(doc.taskCount).toBe(2);
+			expect(doc.savedPath).toBe(`${SUBFOLDER}/Phase-01-Setup.md`);
+		});
+
+		it('re-appends .md when the watcher strips it', async () => {
+			diskFiles.set(`${SUBFOLDER}/Phase-02-Build.md`, '# Phase 02\n- [ ] task');
+
+			const result = await emitter.tryEmitFile('Phase-02-Build');
+
+			expect(result).toBe(true);
+			expect(onEmit.mock.calls[0][0].filename).toBe('Phase-02-Build.md');
+		});
+
+		it('skips a file that has already been emitted (dedup across calls)', async () => {
+			diskFiles.set(`${SUBFOLDER}/Phase-01-Setup.md`, '# Phase 01');
+
+			await emitter.tryEmitFile('Phase-01-Setup.md');
+			const second = await emitter.tryEmitFile('Phase-01-Setup.md');
+
+			expect(second).toBe(false);
+			expect(onEmit).toHaveBeenCalledTimes(1);
+		});
+
+		it('retries through transient ENOENT then emits when the file lands', async () => {
+			// Simulate the fsevents cold-start race: watcher fires before the
+			// file is readable, but a later retry within the window succeeds.
+			let attempts = 0;
+			readFileMock.mockImplementation(() => {
+				attempts++;
+				if (attempts < 3) return Promise.reject(new Error('ENOENT'));
+				return Promise.resolve('# Phase 01\n- [ ] task');
+			});
+
+			const result = await emitter.tryEmitFile('Phase-01-Setup.md', {
+				maxAttempts: 5,
+				delayMs: 1,
+			});
+
+			expect(result).toBe(true);
+			expect(attempts).toBe(3);
+			expect(onEmit).toHaveBeenCalledTimes(1);
+		});
+
+		it('returns false (without throwing) when retries run out', async () => {
+			readFileMock.mockRejectedValue(new Error('ENOENT'));
+
+			const result = await emitter.tryEmitFile('Missing.md', { maxAttempts: 2, delayMs: 1 });
+
+			expect(result).toBe(false);
+			expect(onEmit).not.toHaveBeenCalled();
+		});
+
+		it('does not emit an empty file (treats empty content as not-yet-flushed)', async () => {
+			diskFiles.set(`${SUBFOLDER}/Phase-01-Setup.md`, '');
+
+			const result = await emitter.tryEmitFile('Phase-01-Setup.md', {
+				maxAttempts: 2,
+				delayMs: 1,
+			});
+
+			expect(result).toBe(false);
+			expect(onEmit).not.toHaveBeenCalled();
+		});
+
+		it('pollAndEmit surfaces every new file the watcher missed', async () => {
+			diskFiles.set(`${SUBFOLDER}/Phase-01-Setup.md`, '# Phase 01\n- [ ] a');
+			diskFiles.set(`${SUBFOLDER}/Phase-02-Build.md`, '# Phase 02\n- [ ] b');
+			diskFiles.set(`${SUBFOLDER}/Phase-03-Ship.md`, '# Phase 03\n- [ ] c');
+
+			const newCount = await emitter.pollAndEmit();
+
+			expect(newCount).toBe(3);
+			expect(onEmit).toHaveBeenCalledTimes(3);
+			expect(
+				emitter
+					.getEmittedDocuments()
+					.map((d) => d.filename)
+					.sort()
+			).toEqual(['Phase-01-Setup.md', 'Phase-02-Build.md', 'Phase-03-Ship.md']);
+		});
+
+		it('pollAndEmit dedupes against files already emitted via tryEmitFile', async () => {
+			diskFiles.set(`${SUBFOLDER}/Phase-01-Setup.md`, '# Phase 01\n- [ ] a');
+			diskFiles.set(`${SUBFOLDER}/Phase-02-Build.md`, '# Phase 02\n- [ ] b');
+
+			// Watcher path emits Phase 01 first.
+			await emitter.tryEmitFile('Phase-01-Setup.md');
+			expect(onEmit).toHaveBeenCalledTimes(1);
+
+			// Poll should pick up only Phase 02; Phase 01 is already known.
+			const newCount = await emitter.pollAndEmit();
+			expect(newCount).toBe(1);
+			expect(onEmit).toHaveBeenCalledTimes(2);
+			expect(onEmit.mock.calls[1][0].filename).toBe('Phase-02-Build.md');
+		});
+
+		it('pollAndEmit is safe to call repeatedly without re-emitting', async () => {
+			diskFiles.set(`${SUBFOLDER}/Phase-01-Setup.md`, '# Phase 01\n- [ ] a');
+
+			const first = await emitter.pollAndEmit();
+			const second = await emitter.pollAndEmit();
+			const third = await emitter.pollAndEmit();
+
+			expect(first).toBe(1);
+			expect(second).toBe(0);
+			expect(third).toBe(0);
+			expect(onEmit).toHaveBeenCalledTimes(1);
+		});
+
+		it('pollAndEmit picks up files added between ticks (steady state)', async () => {
+			diskFiles.set(`${SUBFOLDER}/Phase-01-Setup.md`, '# Phase 01\n- [ ] a');
+
+			await emitter.pollAndEmit();
+			expect(onEmit).toHaveBeenCalledTimes(1);
+
+			// Agent writes the next phase between polls.
+			diskFiles.set(`${SUBFOLDER}/Phase-02-Build.md`, '# Phase 02\n- [ ] b');
+
+			const newCount = await emitter.pollAndEmit();
+			expect(newCount).toBe(1);
+			expect(onEmit).toHaveBeenCalledTimes(2);
+			expect(onEmit.mock.calls[1][0].filename).toBe('Phase-02-Build.md');
+		});
+
+		it('pollAndEmit tolerates listDocs failure without throwing', async () => {
+			listDocsMock.mockResolvedValueOnce({ success: false, error: 'permission denied' });
+
+			const newCount = await emitter.pollAndEmit();
+			expect(newCount).toBe(0);
+			expect(onEmit).not.toHaveBeenCalled();
+		});
+
+		it('counts taskCount correctly on emitted documents', async () => {
+			diskFiles.set(
+				`${SUBFOLDER}/Phase-01-Setup.md`,
+				'# Phase 01\n\n- [ ] task one\n- [ ] task two\n- [x] task three already done\n'
+			);
+
+			await emitter.tryEmitFile('Phase-01-Setup.md');
+
+			expect(onEmit.mock.calls[0][0].taskCount).toBe(3);
+		});
+
+		it('hasEmitted flips to true after the first emission', async () => {
+			expect(emitter.hasEmitted()).toBe(false);
+			diskFiles.set(`${SUBFOLDER}/Phase-01-Setup.md`, '# Phase 01');
+			await emitter.tryEmitFile('Phase-01-Setup.md');
+			expect(emitter.hasEmitted()).toBe(true);
 		});
 	});
 });

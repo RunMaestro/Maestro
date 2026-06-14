@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { buildCueRunSummary, getCueEventDetail } from '../../../shared/cue/cue-summary';
+import {
+	buildCueRunSummary,
+	extractCueOutputExcerpt,
+	getCueEventDetail,
+	humanizeCueEventType,
+} from '../../../shared/cue/cue-summary';
 import type { CueEvent, CueRunResult } from '../../../shared/cue/contracts';
 
 function makeEvent(overrides: Partial<CueEvent> = {}): CueEvent {
@@ -87,6 +92,32 @@ describe('getCueEventDetail', () => {
 		expect(getCueEventDetail(makeEvent({ type: 'time.heartbeat', payload: {} }))).toBeUndefined();
 		expect(getCueEventDetail(makeEvent({ type: 'time.scheduled', payload: {} }))).toBeUndefined();
 		expect(getCueEventDetail(makeEvent({ type: 'github.issue', payload: {} }))).toBeUndefined();
+	});
+
+	it('formats time triggers as a cadence when an interval is present', () => {
+		expect(
+			getCueEventDetail(makeEvent({ type: 'time.heartbeat', payload: { interval_minutes: 3 } }))
+		).toBe('every 3 min');
+		expect(
+			getCueEventDetail(makeEvent({ type: 'time.heartbeat', payload: { interval_minutes: 60 } }))
+		).toBe('hourly');
+		expect(
+			getCueEventDetail(makeEvent({ type: 'time.scheduled', payload: { intervalMinutes: 120 } }))
+		).toBe('every 2 hr');
+	});
+});
+
+describe('humanizeCueEventType', () => {
+	it('maps known event types to their display labels', () => {
+		expect(humanizeCueEventType('time.heartbeat')).toBe('Heartbeat Timer');
+		expect(humanizeCueEventType('github.pull_request')).toBe('Pull Request');
+		expect(humanizeCueEventType('task.pending')).toBe('Pending Task');
+	});
+
+	it('prettifies unknown/legacy types instead of leaking machine jargon', () => {
+		expect(humanizeCueEventType('custom.special_thing')).toBe('Custom Special_thing');
+		expect(humanizeCueEventType(undefined)).toBe('Trigger');
+		expect(humanizeCueEventType('')).toBe('Trigger');
 	});
 
 	it('truncates very long cli.trigger prompts', () => {
@@ -182,5 +213,84 @@ describe('buildCueRunSummary', () => {
 		expect(summary.startsWith('[CUE]')).toBe(false);
 		expect(summary).not.toContain('(github.pull_request)');
 		expect(summary).not.toContain('-chain-');
+	});
+});
+
+describe('extractCueOutputExcerpt', () => {
+	it('returns undefined for empty / whitespace / nullish input', () => {
+		expect(extractCueOutputExcerpt(undefined)).toBeUndefined();
+		expect(extractCueOutputExcerpt(null)).toBeUndefined();
+		expect(extractCueOutputExcerpt('')).toBeUndefined();
+		expect(extractCueOutputExcerpt('   \n\t  ')).toBeUndefined();
+	});
+
+	it('takes up to two complete sentences from the stdout', () => {
+		const stdout =
+			'Briefing written to 2026-05-13-AM.md. Podcast generated at 2026-05-13-Podcast.mp3 (2.3 MB / ~2.34M bytes). Top of the day: Calendar is light.';
+		expect(extractCueOutputExcerpt(stdout)).toBe(
+			'Briefing written to 2026-05-13-AM.md. Podcast generated at 2026-05-13-Podcast.mp3 (2.3 MB / ~2.34M bytes).'
+		);
+	});
+
+	it('does not split inside filenames or decimals', () => {
+		// `.md` followed by lowercase / digits shouldn't terminate a sentence.
+		const stdout = 'Saved to plan.md and updated 2.34M bytes.';
+		expect(extractCueOutputExcerpt(stdout)).toBe('Saved to plan.md and updated 2.34M bytes.');
+	});
+
+	it('drops the second sentence when adding it would exceed the cap', () => {
+		const first = 'First sentence here.';
+		const second = `Word${' word'.repeat(60)}.`; // ~300 chars, starts uppercase so split fires
+		const stdout = `${first} ${second}`;
+		expect(extractCueOutputExcerpt(stdout, { maxChars: 100 })).toBe(first);
+	});
+
+	it('returns the single sentence even when only one fits', () => {
+		const stdout = 'Done. The next sentence is much longer than the cap allows by design.';
+		expect(extractCueOutputExcerpt(stdout, { maxChars: 50 })).toBe('Done.');
+	});
+
+	it('returns undefined when even the first sentence exceeds the cap', () => {
+		const stdout = `${'word '.repeat(80).trim()}.`;
+		expect(extractCueOutputExcerpt(stdout, { maxChars: 50 })).toBeUndefined();
+	});
+
+	it('strips markdown formatting before counting', () => {
+		const stdout = '**Bold lead.** Plain follow-up sentence.';
+		expect(extractCueOutputExcerpt(stdout)).toBe('Bold lead. Plain follow-up sentence.');
+	});
+
+	it('strips ANSI color codes from stdout', () => {
+		const stdout = '\x1b[32mAll green.\x1b[0m Status nominal.';
+		expect(extractCueOutputExcerpt(stdout)).toBe('All green. Status nominal.');
+	});
+
+	it('handles bullet-list output by treating list lines as a single flowed sentence', () => {
+		// stripMarkdown turns "- item" into "- item"; whitespace normalization
+		// joins the lines. Without terminal punctuation, the whole thing reads
+		// as one "sentence" — verify we still return something useful and don't
+		// crash.
+		const stdout = '# Briefing\n\n- Item one\n- Item two\n- Item three';
+		const out = extractCueOutputExcerpt(stdout, { maxChars: 240 });
+		expect(out).toBe('Briefing - Item one - Item two - Item three');
+	});
+
+	it('respects maxSentences=1', () => {
+		const stdout = 'First. Second. Third.';
+		expect(extractCueOutputExcerpt(stdout, { maxSentences: 1 })).toBe('First.');
+	});
+
+	it('drops markdown table grids so they never reach the History summary', () => {
+		const stdout = [
+			'All four steps complete.',
+			'',
+			'| Step | Result |',
+			'|------|--------|',
+			'| 1. Build | Pass |',
+			'| 2. Test | Pass |',
+		].join('\n');
+		const out = extractCueOutputExcerpt(stdout);
+		expect(out).toBe('All four steps complete.');
+		expect(out).not.toContain('|');
 	});
 });

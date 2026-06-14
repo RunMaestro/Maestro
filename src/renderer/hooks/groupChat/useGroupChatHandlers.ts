@@ -20,6 +20,7 @@ import { useAgentErrorRecovery } from '../agent/useAgentErrorRecovery';
 import type { ToolType } from '../../../shared/types';
 import { notifyToast } from '../../stores/notificationStore';
 import { generateId } from '../../utils/ids';
+import { aiTabFocusFields } from '../../utils/tabHelpers';
 import { getAutoRunSessionsForGroupChat } from '../../utils/groupChatAutoRunRegistry';
 import { logger } from '../../utils/logger';
 
@@ -47,6 +48,9 @@ export interface GroupChatHandlersReturn {
 			customArgs?: string;
 			customEnvVars?: Record<string, string>;
 			customModel?: string;
+			enableMaestroP?: boolean;
+			maestroPMode?: 'interactive' | 'dynamic';
+			maestroPPath?: string;
 		}
 	) => Promise<void>;
 	handleDeleteGroupChat: (id: string) => Promise<void>;
@@ -60,6 +64,9 @@ export interface GroupChatHandlersReturn {
 			customPath?: string;
 			customArgs?: string;
 			customEnvVars?: Record<string, string>;
+			enableMaestroP?: boolean;
+			maestroPMode?: 'interactive' | 'dynamic';
+			maestroPPath?: string;
 		}
 	) => Promise<void>;
 	deleteGroupChatWithConfirmation: (id: string) => void;
@@ -474,17 +481,7 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 			const tab = session.aiTabs?.find((t) => t.agentSessionId === moderatorSessionId);
 			if (tab) {
 				setSessions((prev) =>
-					prev.map((s) =>
-						s.id === session.id
-							? {
-									...s,
-									activeTabId: tab.id,
-									activeFileTabId: null,
-									activeTerminalTabId: null,
-									inputMode: 'ai' as const,
-								}
-							: s
-					)
+					prev.map((s) => (s.id === session.id ? { ...s, ...aiTabFocusFields(tab.id) } : s))
 				);
 			}
 		}
@@ -499,6 +496,9 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 				customArgs?: string;
 				customEnvVars?: Record<string, string>;
 				customModel?: string;
+				enableMaestroP?: boolean;
+				maestroPMode?: 'interactive' | 'dynamic';
+				maestroPPath?: string;
 			}
 		) => {
 			const { setGroupChats } = useGroupChatStore.getState();
@@ -570,6 +570,9 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 				customPath?: string;
 				customArgs?: string;
 				customEnvVars?: Record<string, string>;
+				enableMaestroP?: boolean;
+				maestroPMode?: 'interactive' | 'dynamic';
+				maestroPPath?: string;
 			}
 		) => {
 			const { setGroupChats } = useGroupChatStore.getState();

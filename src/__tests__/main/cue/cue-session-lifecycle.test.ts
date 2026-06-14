@@ -652,6 +652,50 @@ describe('CueEngine session lifecycle', () => {
 			expect(clearFanInState).toHaveBeenCalledWith(session.id);
 		});
 
+		it('routes a time.once self-destruct through the injected serialised writer', async () => {
+			// #8: trigger-source self-destructs must go through the engine's
+			// per-root YAML write chain (deps.selfDestruct) so they serialise
+			// against toggles, not write cue.yaml directly. A past-grace
+			// time.once fires `requestSelfDestruct('...', 'missed-grace')` on
+			// start; assert the injected writer is what handles it.
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'once-doomed',
+						event: 'time.once',
+						enabled: true,
+						prompt: 'too late',
+						// Far past + grace 0 → missed-grace self-destruct on start,
+						// deterministic regardless of the fake-timer clock.
+						fire_at: '2000-01-01T00:00:00Z',
+						grace_minutes: 0,
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(config);
+			mockWatchCueYaml.mockReturnValue(vi.fn());
+
+			const registry = createCueSessionRegistry();
+			const selfDestruct = vi.fn().mockResolvedValue({ removed: true });
+			const session = createMockSession();
+
+			const service = createCueSessionRuntimeService({
+				enabled: () => true,
+				getSessions: () => [session],
+				onRefreshRequested: vi.fn(),
+				onLog: vi.fn(),
+				registry,
+				dispatchSubscription: vi.fn(),
+				clearQueue: vi.fn(),
+				clearFanInState: vi.fn(),
+				selfDestruct,
+			});
+
+			service.initSession(session, { reason: 'system-boot' });
+
+			expect(selfDestruct).toHaveBeenCalledWith(session.projectRoot, 'once-doomed');
+		});
+
 		it('initSession idempotency guard — does not double-register the session in the registry', async () => {
 			// NOTE: this test uses an empty `subscriptions: []` config so it does
 			// NOT exercise trigger-source registration directly; it only verifies

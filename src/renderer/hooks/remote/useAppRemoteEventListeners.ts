@@ -48,6 +48,8 @@ export interface UseAppRemoteEventListenersDeps {
 			content: string;
 			sshRemoteId?: string;
 			lastModified?: number;
+			/** Optional 1-based line to jump to once the editor mounts (deep links). */
+			pendingScrollToLine?: number;
 		},
 		options?: { targetSessionId?: string }
 	) => void;
@@ -91,10 +93,13 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 	// Handle remote open file tab events from CLI/web interface
 	useEventListener('maestro:openFileTab', async (e: Event) => {
-		const { sessionId, filePath, switchToAgent } = (e as CustomEvent).detail as {
+		const { sessionId, filePath, switchToAgent, line } = (e as CustomEvent).detail as {
 			sessionId: string;
 			filePath: string;
 			switchToAgent?: boolean;
+			/** Optional 1-based line to jump to once the file is open. Set by
+			 *  maestro://file/...#L<n> deep links. */
+			line?: number;
 		};
 		const session = sessionsRef.current.find((s) => s.id === sessionId);
 		if (!session) {
@@ -123,6 +128,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 						content,
 						lastModified,
 						sshRemoteId,
+						pendingScrollToLine: line,
 					},
 					{ targetSessionId: sessionId }
 				);
@@ -473,12 +479,19 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 					// Build a WorktreeRunTarget from the mobile/web LaunchWorktreeConfig.
 					// Mobile currently only supports create-new; existing-open/closed are
 					// desktop-only flows.
+					//
+					// baseBranch resolution order: explicit `worktree.baseBranch` from the
+					// caller (CLI `--base-branch`, mobile picker) wins. Fall back to
+					// `prTargetBranch` only for older clients that conflated the two, then
+					// to "main" as a final default. This keeps payloads from pre-baseBranch
+					// CLIs working while letting newer callers pick a base independent of
+					// the PR target.
 					const spawnConfig: BatchRunConfig = {
 						...batchConfig,
 						worktreeTarget: {
 							mode: 'create-new',
 							newBranchName: config.worktree.branchName,
-							baseBranch: config.worktree.prTargetBranch || 'main',
+							baseBranch: config.worktree.baseBranch || config.worktree.prTargetBranch || 'main',
 							createPROnCompletion: Boolean(config.worktree.createPROnCompletion),
 						},
 					};
@@ -555,6 +568,69 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			window.maestro.process.sendRemoteConfigureAutoRunResponse(responseChannel, {
 				success: false,
 				error: String(error),
+			});
+		}
+	});
+
+	// Handle remote create-worktree-agent from the CLI. Creates a new agent in a
+	// git worktree branched off a parent agent, without an Auto Run playbook.
+	// Reuses spawnWorktreeAgentAndDispatch (the same helper the Auto Run launch
+	// path uses) but skips the batch dispatch: the new agent is left idle, and
+	// the CLI optionally follows up with `dispatch` to send an initial prompt.
+	useEventListener('maestro:createWorktreeSession', async (e: Event) => {
+		const { parentSessionId, config, responseChannel } = (e as CustomEvent).detail;
+
+		try {
+			const parent = sessionsRef.current.find((s) => s.id === parentSessionId);
+			if (!parent) {
+				window.maestro.process.sendRemoteCreateWorktreeSessionResponse(responseChannel, {
+					success: false,
+					error: `Parent agent ${parentSessionId} not found`,
+				});
+				return;
+			}
+
+			// If the addressed agent is itself a worktree child, resolve to its
+			// parent so the new worktree branches off the main repo (mirrors the
+			// desktop and remote Auto Run launch paths).
+			let parentForSpawn = parent;
+			if (parent.parentSessionId) {
+				const grandparent = selectSessionById(parent.parentSessionId)(useSessionStore.getState());
+				if (grandparent) parentForSpawn = grandparent;
+			}
+
+			const spawnConfig: BatchRunConfig = {
+				documents: [],
+				prompt: '',
+				loopEnabled: false,
+				worktreeTarget: {
+					mode: 'create-new',
+					newBranchName: config.branchName,
+					baseBranch: config.baseBranch || undefined,
+					createPROnCompletion: false,
+				},
+			};
+
+			const newSessionId = await spawnWorktreeAgentAndDispatch(parentForSpawn, spawnConfig);
+			if (!newSessionId) {
+				// spawnWorktreeAgentAndDispatch already surfaced a toast describing why.
+				window.maestro.process.sendRemoteCreateWorktreeSessionResponse(responseChannel, {
+					success: false,
+					error: 'Failed to create worktree agent',
+				});
+				return;
+			}
+
+			window.maestro.process.sendRemoteCreateWorktreeSessionResponse(responseChannel, {
+				success: true,
+				sessionId: newSessionId,
+			});
+		} catch (error) {
+			captureException(error, { extra: { parentSessionId, responseChannel } });
+			logger.error('[Remote] Failed to create worktree agent:', undefined, error);
+			window.maestro.process.sendRemoteCreateWorktreeSessionResponse(responseChannel, {
+				success: false,
+				error: error instanceof Error ? error.message : String(error),
 			});
 		}
 	});
@@ -1008,6 +1084,20 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				isRemote: false,
 			});
 
+			// Persist the new agent to disk synchronously before responding. The
+			// renderer's debounced persistence path (useDebouncedPersistence) is
+			// driven by React render cycles and a 2s timer, so a CLI consumer that
+			// runs `create-agent` and then immediately `list agents` / `send` would
+			// otherwise hit the disk-backed CLI storage layer before the in-memory
+			// session has been flushed — surfacing as `AGENT_NOT_FOUND` (issue #1013).
+			// `setMany` is incremental and idempotent: the debounced flush that
+			// follows simply rewrites the same row.
+			try {
+				await window.maestro.sessions.setMany([newSession], []);
+			} catch (persistErr) {
+				logger.error('[Remote] Failed to persist new CLI-created session:', undefined, persistErr);
+			}
+
 			window.maestro.process.sendRemoteCreateSessionResponse(responseChannel, {
 				sessionId: newId,
 			});
@@ -1050,10 +1140,51 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			}
 			return filtered;
 		});
+
+		// Flush the removal to disk synchronously: useDebouncedPersistence
+		// runs on a 2s timer, so a CLI consumer that hits the disk-backed
+		// session store between this event and the next debounce window
+		// would otherwise read the pre-removal state. setMany is incremental
+		// and idempotent with the subsequent debounced flush.
+		try {
+			await window.maestro.sessions.setMany([], [sessionId]);
+		} catch (persistErr) {
+			logger.error('[Remote] Failed to persist session removal:', undefined, persistErr);
+		}
+	});
+
+	// Handle remote update session cwd from CLI/web. Mutates the UI-facing
+	// cwd/fullPath only; projectRoot is intentionally preserved so historical
+	// provider sessions (stored under the original project root) remain
+	// addressable. The PTY's cwd is fixed at spawn time, so we refuse the
+	// update when an agent process is alive.
+	useEventListener('maestro:remoteUpdateSessionCwd', (e: Event) => {
+		const { sessionId, newCwd, responseChannel } = (e as CustomEvent).detail;
+		const session = sessionsRef.current.find((s) => s.id === sessionId);
+		if (!session) {
+			window.maestro.process.sendRemoteUpdateSessionCwdResponse(responseChannel, {
+				success: false,
+				error: 'Agent not found',
+			});
+			return;
+		}
+		if (session.aiPid && session.aiPid > 0) {
+			window.maestro.process.sendRemoteUpdateSessionCwdResponse(responseChannel, {
+				success: false,
+				error: 'Agent process is running; stop it before changing cwd',
+			});
+			return;
+		}
+		setSessions((prev: Session[]) =>
+			prev.map((s) =>
+				s.id === sessionId ? { ...s, cwd: newCwd, fullPath: newCwd, shellCwd: newCwd } : s
+			)
+		);
+		window.maestro.process.sendRemoteUpdateSessionCwdResponse(responseChannel, { success: true });
 	});
 
 	// Handle remote rename session from web interface
-	useEventListener('maestro:remoteRenameSession', (e: Event) => {
+	useEventListener('maestro:remoteRenameSession', async (e: Event) => {
 		const { sessionId, newName, responseChannel } = (e as CustomEvent).detail;
 		const session = sessionsRef.current.find((s) => s.id === sessionId);
 		if (!session) {
@@ -1083,6 +1214,16 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			}
 			return updated;
 		});
+
+		// Flush the rename to disk before signaling success: the renderer's
+		// 2s debounced persistence path would otherwise let a follow-up CLI
+		// read see the stale name. setMany merges incrementally so the next
+		// debounced flush is idempotent.
+		try {
+			await window.maestro.sessions.setMany([{ ...session, name: newName } as any], []);
+		} catch (persistErr) {
+			logger.error('[Remote] Failed to persist session rename:', undefined, persistErr);
+		}
 
 		window.maestro.process.sendRemoteRenameSessionResponse(responseChannel, true);
 	});

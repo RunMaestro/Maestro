@@ -400,4 +400,26 @@ describe('Agents Preload API', () => {
 			expect(result).toBeNull();
 		});
 	});
+
+	describe('usage quota APIs', () => {
+		it('should invoke agents:getClaudeUsageAccountKeys', async () => {
+			const keys = ['/Users/me/.claude-work'];
+			mockInvoke.mockResolvedValue(keys);
+
+			const result = await api.getClaudeUsageAccountKeys();
+
+			expect(mockInvoke).toHaveBeenCalledWith('agents:getClaudeUsageAccountKeys');
+			expect(result).toEqual(keys);
+		});
+
+		it('should invoke agents:getCodexUsageAccountKeys', async () => {
+			const keys = ['/Users/me/.codex-work'];
+			mockInvoke.mockResolvedValue(keys);
+
+			const result = await api.getCodexUsageAccountKeys();
+
+			expect(mockInvoke).toHaveBeenCalledWith('agents:getCodexUsageAccountKeys');
+			expect(result).toEqual(keys);
+		});
+	});
 });

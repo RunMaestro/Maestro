@@ -85,6 +85,18 @@ const mockDb = {
 				{ name: 'parent_event_id' },
 			];
 		}
+		// cue_github_seen — the GitHub re-trigger feature added `last_revision`
+		// and `fire_count` columns. Returning the full column set keeps the
+		// additive migration a no-op under the mock.
+		if (query.startsWith('table_info(cue_github_seen)')) {
+			return [
+				{ name: 'subscription_id' },
+				{ name: 'item_key' },
+				{ name: 'seen_at' },
+				{ name: 'last_revision' },
+				{ name: 'fire_count' },
+			];
+		}
 		return undefined;
 	}),
 	prepare: vi.fn((sql: string) => {
@@ -452,6 +464,23 @@ describe('cue-db github seen tracking', () => {
 		const cutoff = lastRun[0] as number;
 		expect(cutoff).toBeLessThanOrEqual(before);
 		expect(cutoff).toBeGreaterThan(before - olderThanMs - 1000);
+	});
+
+	it('github seen reads should be conservative when the database is closed', () => {
+		closeCueDb();
+
+		expect(isGitHubItemSeen('sub-1', 'pr:owner/repo:123')).toBe(true);
+		expect(hasAnyGitHubSeen('sub-1')).toBe(true);
+		expect(mockDb.prepare).not.toHaveBeenCalled();
+	});
+
+	it('github seen writes should no-op when the database is closed', () => {
+		closeCueDb();
+
+		markGitHubItemSeen('sub-1', 'pr:owner/repo:123');
+		pruneGitHubSeen(30 * 24 * 60 * 60 * 1000);
+
+		expect(mockDb.prepare).not.toHaveBeenCalled();
 	});
 
 	it('clearGitHubSeenForSubscription should delete all records for a subscription', () => {

@@ -420,6 +420,34 @@ describe('ExecutionQueueBrowser', () => {
 			expect(allButton).toHaveTextContent('(3)');
 		});
 
+		it('should toggle view mode with Cmd+Shift+] / Cmd+Shift+[', () => {
+			const session = createSession({
+				executionQueue: [createQueuedItem()],
+			});
+			render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[session]}
+					activeSessionId="other-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+				/>
+			);
+
+			const allButton = screen.getByText('All Agents').closest('button');
+			const currentButton = screen.getByText('Current Agent').closest('button');
+
+			// Cmd+Shift+] -> global view
+			fireEvent.keyDown(window, { key: ']', code: 'BracketRight', metaKey: true, shiftKey: true });
+			expect(allButton).toHaveStyle({ backgroundColor: theme.colors.accent });
+
+			// Cmd+Shift+[ -> back to current view
+			fireEvent.keyDown(window, { key: '[', code: 'BracketLeft', metaKey: true, shiftKey: true });
+			expect(currentButton).toHaveStyle({ backgroundColor: theme.colors.accent });
+		});
+
 		it('should not show count for current agent when 0 items', () => {
 			const session = createSession({
 				id: 'active-session',
@@ -826,7 +854,9 @@ describe('ExecutionQueueBrowser', () => {
 			expect(screen.getByText('Please fix the bug')).toBeInTheDocument();
 		});
 
-		it('should truncate long message text to 100 characters', () => {
+		it('should render up to 4k characters of message text and rely on CSS line-clamp for visual truncation', () => {
+			// Text shorter than the 4k cap renders in full; CSS line-clamp (not a
+			// JS slice) handles the visual truncation to whatever fits the card.
 			const longText = 'A'.repeat(150);
 			const session = createSession({
 				id: 'active-session',
@@ -849,8 +879,33 @@ describe('ExecutionQueueBrowser', () => {
 				/>
 			);
 
-			const truncated = 'A'.repeat(100) + '...';
-			expect(screen.getByText(truncated)).toBeInTheDocument();
+			expect(screen.getByText(longText)).toBeInTheDocument();
+		});
+
+		it('should cap message text at 4000 characters', () => {
+			const veryLongText = 'A'.repeat(5000);
+			const session = createSession({
+				id: 'active-session',
+				executionQueue: [
+					createQueuedItem({
+						type: 'message',
+						text: veryLongText,
+					}),
+				],
+			});
+			render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[session]}
+					activeSessionId="active-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+				/>
+			);
+
+			expect(screen.getByText('A'.repeat(4000))).toBeInTheDocument();
 		});
 
 		it('should display command description when present', () => {
@@ -1886,7 +1941,7 @@ describe('ExecutionQueueBrowser', () => {
 			expect(wrappers.length).toBe(2);
 		});
 
-		it('does not attach window keydown/mouseup listeners while idle', () => {
+		it('does not attach per-row drag keydown/mouseup listeners while idle', () => {
 			const spies = spyOnListeners(window);
 			const session = createSession({
 				id: 'active-session',
@@ -1906,7 +1961,10 @@ describe('ExecutionQueueBrowser', () => {
 			);
 			const keydownAdds = spies.addSpy.mock.calls.filter(([t]) => t === 'keydown');
 			const mouseupAdds = spies.addSpy.mock.calls.filter(([t]) => t === 'mouseup');
-			expect(keydownAdds).toHaveLength(0);
+			// Exactly one keydown listener — the modal-level Cmd+Shift+[/] tab-cycle
+			// handler. The per-row drag listeners (Escape-to-cancel keydown + mouseup)
+			// stay detached until a drag is actually in progress.
+			expect(keydownAdds).toHaveLength(1);
 			expect(mouseupAdds).toHaveLength(0);
 			spies.restore();
 		});

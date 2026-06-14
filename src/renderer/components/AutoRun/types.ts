@@ -96,4 +96,5 @@ export interface AutoRunHandle {
 	revert: () => void;
 	openResetTasksModal: () => void;
 	getCompletedTaskCount: () => number;
+	openDocumentSelector: () => void;
 }

@@ -1,6 +1,7 @@
 import React, { memo } from 'react';
-import { Layers, Hash, Bot, User, BarChart3, ListOrdered } from 'lucide-react';
+import { Layers, Hash, Bot, User, Zap, BarChart3, ListOrdered } from 'lucide-react';
 import { Spinner } from '../ui/Spinner';
+import { CUE_COLOR } from './historyConstants';
 import type { Theme } from '../../types';
 
 export interface HistoryStats {
@@ -8,6 +9,8 @@ export interface HistoryStats {
 	sessionCount: number;
 	autoCount: number;
 	userCount: number;
+	/** Total CUE entries; only rendered when provided and > 0 (gated by the Maestro Cue encore feature) */
+	cueCount?: number;
 	totalCount: number;
 	/** Number of agents currently in 'busy' state (live indicator) */
 	activeAgentCount?: number;
@@ -89,6 +92,15 @@ export const HistoryStatsBar = memo(function HistoryStatsBar({
 				color={theme.colors.warning}
 				theme={theme}
 			/>
+			{stats.cueCount !== undefined && stats.cueCount > 0 && (
+				<StatItem
+					icon={<Zap className="w-3 h-3" />}
+					label="Cue"
+					value={stats.cueCount}
+					color={CUE_COLOR}
+					theme={theme}
+				/>
+			)}
 			<div className="w-px h-4 flex-shrink-0" style={{ backgroundColor: theme.colors.border }} />
 			<StatItem
 				icon={<BarChart3 className="w-3 h-3" />}

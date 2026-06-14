@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { calculateContextDisplay } from '../../utils/contextUsage';
-import { captureException } from '../../utils/sentry';
+import { resolveConfiguredContextWindow } from '../../utils/contextWindowResolver';
 import type { Session, AITab } from '../../types';
 
 /**
@@ -22,27 +22,8 @@ export function useContextWindow(activeSession: Session | null, activeTab: AITab
 				return;
 			}
 
-			if (
-				typeof activeSession.customContextWindow === 'number' &&
-				activeSession.customContextWindow > 0
-			) {
-				if (isActive) setConfiguredContextWindow(activeSession.customContextWindow);
-				return;
-			}
-
-			try {
-				const config = await window.maestro.agents.getConfig(activeSession.toolType);
-				const value = typeof config?.contextWindow === 'number' ? config.contextWindow : 0;
-				if (isActive) setConfiguredContextWindow(value);
-			} catch (error) {
-				captureException(error, {
-					extra: {
-						message: 'Failed to load agent context window setting',
-						toolType: activeSession.toolType,
-					},
-				});
-				if (isActive) setConfiguredContextWindow(0);
-			}
+			const value = await resolveConfiguredContextWindow(activeSession);
+			if (isActive) setConfiguredContextWindow(value);
 		};
 
 		loadContextWindow();

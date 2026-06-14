@@ -1465,7 +1465,8 @@ describe('useBatchProcessor hook', () => {
 				'/test/path',
 				'/test/worktree',
 				'feature/test',
-				undefined // sshRemoteId (undefined for local sessions)
+				undefined, // sshRemoteId (undefined for local sessions)
+				undefined // baseBranch not specified in this test
 			);
 		});
 
@@ -5607,7 +5608,8 @@ describe('useBatchProcessor hook', () => {
 				'/test/path', // session.cwd
 				'/remote/worktree',
 				'feature/ssh-test',
-				'ssh-worktree-remote' // sshRemoteId should be passed
+				'ssh-worktree-remote', // sshRemoteId should be passed
+				undefined // baseBranch not specified in this test
 			);
 		});
 
@@ -5650,6 +5652,60 @@ describe('useBatchProcessor hook', () => {
 				'/local/path',
 				'tasks.md',
 				undefined // No sshRemoteId for local sessions
+			);
+		});
+
+		it('should pass baseBranch through to worktreeSetup (regression: Auto Run silently used main)', async () => {
+			// Regression for the bug where the user picked a base branch in
+			// the Auto Run worktree picker but the new branch was created
+			// from the main repo's HEAD instead. The fix makes baseBranch a
+			// first-class arg threaded all the way through to the IPC layer.
+			// This is the legacy `config.worktree` path (no worktreeTarget) —
+			// covers the WorktreeManager.setupWorktree branch.
+			const session = createMockSession({
+				sshRemoteId: undefined,
+				sessionSshRemoteConfig: undefined,
+			});
+			const sessions = [session];
+			const groups = [createMockGroup()];
+
+			mockReadDoc.mockResolvedValue({ success: true, content: '- [x] Done' });
+
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+				})
+			);
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+						prompt: 'Test',
+						loopEnabled: false,
+						worktree: {
+							enabled: true,
+							path: '/projects/worktrees/auto-run-rc-0514',
+							branchName: 'auto-run-rc-0514',
+							baseBranch: 'rc',
+						},
+					},
+					'/local/path'
+				);
+			});
+
+			expect(mockWorktreeSetup).toHaveBeenCalledWith(
+				'/test/path',
+				'/projects/worktrees/auto-run-rc-0514',
+				'auto-run-rc-0514',
+				undefined, // sshRemoteId
+				'rc' // baseBranch — must reach IPC, not get dropped
 			);
 		});
 	});

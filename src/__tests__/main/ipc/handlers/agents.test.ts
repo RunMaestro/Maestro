@@ -74,6 +74,9 @@ vi.mock('../../../../main/utils/execFile', () => ({
 // Mock fs
 vi.mock('fs', () => ({
 	existsSync: vi.fn(),
+	readdirSync: vi.fn(),
+	accessSync: vi.fn(),
+	constants: { R_OK: 4 },
 	promises: {
 		readdir: vi.fn(),
 		readFile: vi.fn(),
@@ -113,6 +116,8 @@ describe('agents IPC handlers', () => {
 	beforeEach(() => {
 		// Clear mocks
 		vi.clearAllMocks();
+		vi.mocked(fs.readdirSync).mockReturnValue([] as any);
+		vi.mocked(fs.accessSync).mockImplementation(() => undefined);
 
 		// Create mock agent detector
 		mockAgentDetector = {
@@ -172,6 +177,18 @@ describe('agents IPC handlers', () => {
 				'agents:getModels',
 				'agents:getConfigOptions',
 				'agents:discoverSlashCommands',
+				// Capability snapshot bridge (status pill + reprobe + live events)
+				'agents:getSnapshot',
+				'agents:getAllSnapshots',
+				'agents:reprobe',
+				'agents:getMaestroPDetectedPath',
+				'agents:getRemoteMaestroPAvailable',
+				'agents:getClaudeUsageSnapshots',
+				'agents:getClaudeUsageAccountKeys',
+				'claude:usage:refresh-all',
+				'agents:getCodexUsageSnapshots',
+				'agents:getCodexUsageAccountKeys',
+				'codex:usage:refresh-all',
 			];
 
 			for (const channel of expectedChannels) {
@@ -333,12 +350,25 @@ describe('agents IPC handlers', () => {
 				const handler = handlers.get('agents:detect');
 				await handler!({} as any, 'remote-1');
 
-				// Every probe should invoke 'command -v <binary>', never 'which'.
-				// Asserting one call per AGENT_DEFINITION catches regressions that
-				// silently skip agents instead of just dropping to zero.
+				// The remote detection piggybacks one extra maestro-p launch test
+				// (`maestro-p --version`) on top of the per-agent binary probes, so the
+				// total is AGENT_DEFINITIONS.length + 1.
 				const calls = vi.mocked(buildSshCommand).mock.calls;
-				expect(calls.length).toBe(agentCapabilities.AGENT_DEFINITIONS.length);
-				for (const [, options] of calls) {
+				expect(calls.length).toBe(agentCapabilities.AGENT_DEFINITIONS.length + 1);
+
+				// The maestro-p availability check is a LAUNCH test, not a path check:
+				// it runs `maestro-p --version` (which loads node + node-pty) rather
+				// than `command -v maestro-p`, so a host with no node fails it.
+				const maestroPProbe = calls.find(([, o]) => o.command === 'maestro-p');
+				expect(maestroPProbe).toBeDefined();
+				expect(maestroPProbe![1].args).toEqual(['--version']);
+
+				// Every other (per-agent) probe should invoke 'command -v <binary>',
+				// never 'which'. Asserting one such call per AGENT_DEFINITION catches
+				// regressions that silently skip agents instead of just dropping to zero.
+				const agentProbes = calls.filter(([, o]) => o.command !== 'maestro-p');
+				expect(agentProbes.length).toBe(agentCapabilities.AGENT_DEFINITIONS.length);
+				for (const [, options] of agentProbes) {
 					expect(options.command).toBe('command');
 					expect(options.args[0]).toBe('-v');
 				}
@@ -446,6 +476,15 @@ describe('agents IPC handlers', () => {
 				supportsResultMessages: true,
 				supportsModelSelection: false,
 				supportsStreamJsonInput: true,
+				supportsThinkingDisplay: false,
+				supportsContextMerge: false,
+				supportsContextExport: false,
+				supportsWizard: false,
+				supportsGroupChatModeration: false,
+				usesJsonLineOutput: false,
+				usesCombinedContextWindow: false,
+				supportsAppendSystemPrompt: false,
+				supportsProjectMemory: false,
 			};
 
 			vi.mocked(agentCapabilities.getAgentCapabilities).mockReturnValue(mockCapabilities);
@@ -475,6 +514,15 @@ describe('agents IPC handlers', () => {
 				supportsResultMessages: false,
 				supportsModelSelection: false,
 				supportsStreamJsonInput: false,
+				supportsThinkingDisplay: false,
+				supportsContextMerge: false,
+				supportsContextExport: false,
+				supportsWizard: false,
+				supportsGroupChatModeration: false,
+				usesJsonLineOutput: false,
+				usesCombinedContextWindow: false,
+				supportsAppendSystemPrompt: false,
+				supportsProjectMemory: false,
 			};
 
 			vi.mocked(agentCapabilities.getAgentCapabilities).mockReturnValue(defaultCaps);
@@ -504,6 +552,15 @@ describe('agents IPC handlers', () => {
 				supportsResultMessages: true,
 				supportsModelSelection: true,
 				supportsStreamJsonInput: true,
+				supportsThinkingDisplay: false,
+				supportsContextMerge: false,
+				supportsContextExport: false,
+				supportsWizard: false,
+				supportsGroupChatModeration: false,
+				usesJsonLineOutput: false,
+				usesCombinedContextWindow: false,
+				supportsAppendSystemPrompt: false,
+				supportsProjectMemory: false,
 			};
 
 			vi.mocked(agentCapabilities.getAgentCapabilities).mockReturnValue(mockCapabilities);
@@ -1631,6 +1688,108 @@ describe('agents IPC handlers', () => {
 			const handler = handlers.get('agents:detect');
 
 			await expect(handler!({} as any)).rejects.toThrow('Agent detector');
+		});
+	});
+
+	describe('agents:getClaudeUsageSnapshots', () => {
+		it('returns the full snapshot map from claudeUsageStore', async () => {
+			const claudeUsageStore = await import('../../../../main/stores/claudeUsageStore');
+			const getAllSpy = vi.spyOn(claudeUsageStore, 'getAllSnapshots').mockReturnValue({
+				'/Users/me/.claude': {
+					sampledAt: '2026-05-15T00:00:00.000Z',
+					configDirKey: '/Users/me/.claude',
+					session: { percent: 42, resetsAt: '2026-05-15T05:00:00.000Z' },
+					weekAllModels: { percent: 7, resetsAt: '2026-05-22T00:00:00.000Z' },
+					weekSonnetOnly: { percent: 3, resetsAt: '2026-05-22T00:00:00.000Z' },
+				},
+			});
+
+			const handler = handlers.get('agents:getClaudeUsageSnapshots')!;
+			const result = await handler({} as any);
+
+			expect(getAllSpy).toHaveBeenCalled();
+			expect(result).toHaveProperty('/Users/me/.claude');
+			expect(result['/Users/me/.claude'].session.percent).toBe(42);
+			getAllSpy.mockRestore();
+		});
+
+		it('returns an empty object when no snapshots are cached', async () => {
+			const claudeUsageStore = await import('../../../../main/stores/claudeUsageStore');
+			const getAllSpy = vi.spyOn(claudeUsageStore, 'getAllSnapshots').mockReturnValue({});
+
+			const handler = handlers.get('agents:getClaudeUsageSnapshots')!;
+			const result = await handler({} as any);
+
+			expect(result).toEqual({});
+			getAllSpy.mockRestore();
+		});
+	});
+
+	describe('claude:usage:refresh-all', () => {
+		it('delegates to runStartupUsageSampling and returns the snapshot count', async () => {
+			const claudeUsageStartup = await import('../../../../main/agents/claude-usage-startup');
+			const claudeUsageStore = await import('../../../../main/stores/claudeUsageStore');
+
+			const runSpy = vi
+				.spyOn(claudeUsageStartup, 'runStartupUsageSampling')
+				.mockResolvedValue(undefined);
+			const getAllSpy = vi.spyOn(claudeUsageStore, 'getAllSnapshots').mockReturnValue({
+				'/Users/me/.claude': {
+					sampledAt: '2026-05-15T00:00:00.000Z',
+					configDirKey: '/Users/me/.claude',
+					session: { percent: 50, resetsAt: '2026-05-15T05:00:00.000Z' },
+					weekAllModels: { percent: 7, resetsAt: '2026-05-22T00:00:00.000Z' },
+					weekSonnetOnly: { percent: 3, resetsAt: '2026-05-22T00:00:00.000Z' },
+				},
+				'/Users/me/.claude-gmail': {
+					sampledAt: '2026-05-15T00:00:00.000Z',
+					configDirKey: '/Users/me/.claude-gmail',
+					session: { percent: 20, resetsAt: '2026-05-15T05:00:00.000Z' },
+					weekAllModels: { percent: 5, resetsAt: '2026-05-22T00:00:00.000Z' },
+					weekSonnetOnly: { percent: 1, resetsAt: '2026-05-22T00:00:00.000Z' },
+				},
+			});
+
+			// Re-register with the full dep set so the handler can delegate.
+			handlers.clear();
+			vi.mocked(ipcMain.handle).mockImplementation((channel, handler) => {
+				handlers.set(channel, handler);
+			});
+			registerAgentsHandlers({
+				getAgentDetector: () => mockAgentDetector as any,
+				agentConfigsStore: mockAgentConfigsStore as any,
+				settingsStore: { get: vi.fn(), set: vi.fn() } as any,
+				sessionsStore: { get: vi.fn(), set: vi.fn() } as any,
+			});
+
+			const handler = handlers.get('claude:usage:refresh-all')!;
+			const result = await handler({} as any);
+
+			expect(runSpy).toHaveBeenCalledTimes(1);
+			// Manual refresh must opt into the aggressive sampling path — startup
+			// mode would skip when no maestro-p session exists.
+			expect(runSpy).toHaveBeenCalledWith(expect.objectContaining({ mode: 'manual' }));
+			expect(result).toEqual({ refreshed: 2 });
+
+			runSpy.mockRestore();
+			getAllSpy.mockRestore();
+		});
+
+		it('returns refreshed: 0 without throwing when sessionsStore is missing', async () => {
+			const claudeUsageStartup = await import('../../../../main/agents/claude-usage-startup');
+			const runSpy = vi
+				.spyOn(claudeUsageStartup, 'runStartupUsageSampling')
+				.mockResolvedValue(undefined);
+
+			// The default beforeEach() wires deps WITHOUT sessionsStore/settingsStore,
+			// so the registered handler should fall back to the no-op path.
+			const handler = handlers.get('claude:usage:refresh-all')!;
+			const result = await handler({} as any);
+
+			expect(runSpy).not.toHaveBeenCalled();
+			expect(result).toEqual({ refreshed: 0 });
+
+			runSpy.mockRestore();
 		});
 	});
 });

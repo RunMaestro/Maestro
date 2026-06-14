@@ -24,8 +24,10 @@ import { useAgentUsageListener } from './internal/useAgentUsageListener';
 import { useAgentSessionIdListener } from './internal/useAgentSessionIdListener';
 import { useAgentThinkingListener } from './internal/useAgentThinkingListener';
 import { useAgentSshRemoteListener } from './internal/useAgentSshRemoteListener';
+import { useAgentClaudeModeResolvedListener } from './internal/useAgentClaudeModeResolvedListener';
 import { useAgentToolExecutionListener } from './internal/useAgentToolExecutionListener';
 import { useAgentDataListener } from './internal/useAgentDataListener';
+import { useAgentUserInputListener } from './internal/useAgentUserInputListener';
 import { useAgentErrorListener } from './internal/useAgentErrorListener';
 import { useAgentExitListener } from './internal/useAgentExitListener';
 
@@ -66,12 +68,14 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 	// preserves any cross-listener event ordering the existing tests depend on.
 	// ----------------------------------------------------------------
 	useAgentDataListener({ batchedUpdater: deps.batchedUpdater, activeHiddenToolRef });
+	useAgentUserInputListener();
 	useAgentExitListener({
 		getBatchStateRef: deps.getBatchStateRef,
 		processQueuedItemRef: deps.processQueuedItemRef,
 		addHistoryEntryRef: deps.addHistoryEntryRef,
 		spawnBackgroundSynopsisRef: deps.spawnBackgroundSynopsisRef,
 		rightPanelRef: deps.rightPanelRef,
+		batchedUpdater: deps.batchedUpdater,
 		activeHiddenToolRef,
 	});
 	useAgentSessionIdListener({ batchedUpdater: deps.batchedUpdater });
@@ -90,6 +94,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 	});
 	useAgentThinkingListener();
 	useAgentSshRemoteListener();
+	useAgentClaudeModeResolvedListener();
 	useAgentToolExecutionListener();
 
 	// Coordinator-level cleanup: clear the shared ref Map on unmount so any

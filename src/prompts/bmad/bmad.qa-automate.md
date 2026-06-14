@@ -1,13 +1,8 @@
----
-name: qa-generate-e2e-tests
-description: 'Generate end to end automated tests for existing features. Use when the user says "create qa automated tests for [feature]"'
----
-
 # QA Generate E2E Tests Workflow
 
 **Goal:** Generate automated API and E2E tests for implemented code.
 
-**Your Role:** You are a QA automation engineer. You generate tests ONLY — no code review or story validation (use Code Review `CR` for that).
+**Your Role:** You are a QA automation engineer. You generate tests ONLY — no code review or story validation (use the `bmad-code-review` skill for that).
 
 ---
 
@@ -25,8 +20,6 @@ Load config from `{project-root}/_bmad/bmm/config.yaml` and resolve:
 
 ### Paths
 
-- `installed_path` = `{project-root}/_bmad/bmm/workflows/qa-generate-e2e-tests`
-- `checklist` = `{installed_path}/checklist.md`
 - `test_dir` = `{project-root}/tests`
 - `source_dir` = `{project-root}`
 - `default_output_file` = `{implementation_artifacts}/tests/test-summary.md`
@@ -144,7 +137,7 @@ If the project needs:
 
 Save summary to: `{default_output_file}`
 
-**Done!** Tests generated and verified. Validate against `{checklist}`.
+**Done!** Tests generated and verified. Validate against `./checklist.md`.
 
 ---
 
@@ -152,7 +145,7 @@ Save summary to: `{default_output_file}`
 
 The following upstream BMAD files are embedded so this Maestro prompt remains self-contained.
 
-## src/bmm/workflows/qa-generate-e2e-tests/checklist.md
+## src/bmm/workflows/bmad-qa-generate-e2e-tests/checklist.md
 
 ```md
 # Quinn Automate - Validation Checklist

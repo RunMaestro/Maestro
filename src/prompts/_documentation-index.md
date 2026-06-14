@@ -1,8 +1,8 @@
 <!--
-Curated table of Maestro documentation URLs. Include this where the agent should be reminded to fetch authoritative docs rather than guessing. URLs point to the `.md` (LLM-friendly) versions served by Mintlify — these return plain markdown instead of rendered HTML and are much cheaper for an agent to consume. Keep URLs absolute — bare domains do not render as clickable links in Maestro's markdown viewer.
+Curated table of Maestro documentation URLs. Include this where the agent should be reminded to fetch authoritative docs rather than guessing. URLs point to the `.md` (LLM-friendly) versions served by Mintlify - these return plain markdown instead of rendered HTML and are much cheaper for an agent to consume. Keep URLs absolute - bare domains do not render as clickable links in Maestro's markdown viewer.
 -->
 
-When you need detailed guidance on a Maestro feature, fetch the relevant documentation page. Do NOT guess — look it up. Every URL below points to the `.md` (LLM-friendly) version of the page; a full index of all docs is at https://docs.runmaestro.ai/llms.txt.
+When you need detailed guidance on a Maestro feature, fetch the relevant documentation page. Do NOT guess - look it up. Every URL below points to the `.md` (LLM-friendly) version of the page; a full index of all docs is at https://docs.runmaestro.ai/llms.txt.
 
 | Topic                                                        | URL                                                     |
 | ------------------------------------------------------------ | ------------------------------------------------------- |
@@ -52,4 +52,4 @@ When you need detailed guidance on a Maestro feature, fetch the relevant documen
 | **Performance Profiling**                                    | https://docs.runmaestro.ai/performance-profiling.md     |
 | **Release notes**                                            | https://docs.runmaestro.ai/releases.md                  |
 
-**When to fetch:** Whenever a user asks about configuring, creating, or troubleshooting any of the above features — especially Cue pipelines, playbook authoring, or multi-agent workflows. Fetch the specific page(s) relevant to the question, read them, and use that knowledge to respond accurately. If the topic isn't in the table, start with the `llms.txt` index to find the right page.
+**When to fetch:** Whenever a user asks about configuring, creating, or troubleshooting any of the above features - especially Cue pipelines, playbook authoring, or multi-agent workflows. Fetch the specific page(s) relevant to the question, read them, and use that knowledge to respond accurately. If the topic isn't in the table, start with the `llms.txt` index to find the right page.

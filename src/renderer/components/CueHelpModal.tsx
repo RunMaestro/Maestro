@@ -1,4 +1,5 @@
 import {
+	X,
 	Zap,
 	FileText,
 	Radio,
@@ -10,16 +11,95 @@ import {
 	Filter,
 	GitMerge,
 	ExternalLink,
+	Brain,
+	Megaphone,
+	Keyboard,
+	MousePointer2,
 } from 'lucide-react';
+import { createPortal } from 'react-dom';
 import type { Theme } from '../types';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { DEFAULT_SHORTCUTS } from '../constants/shortcuts';
 import { openUrl } from '../utils/openUrl';
 import { buildMaestroUrl } from '../utils/buildMaestroUrl';
+import { useModalLayer } from '../hooks/ui/useModalLayer';
+import { MODAL_PRIORITIES } from '../constants/modalPriorities';
+import { CUE_COLOR } from '../../shared/cue-pipeline-types';
 
 interface CueHelpContentProps {
 	theme: Theme;
 	cueShortcutKeys?: string[];
+}
+
+export interface CueHelpModalProps {
+	theme: Theme;
+	onClose: () => void;
+	cueShortcutKeys?: string[];
+}
+
+/**
+ * Maestro Cue Guide, rendered as its own narrow modal layered on top of the
+ * Cue modal. Sitting at CUE_HELP (above CUE_MODAL) means Escape closes the
+ * guide first and returns to whatever Cue tab was open underneath - the
+ * narrower width leaves the Cue modal visible on either side so the layering
+ * reads clearly. Width is sized to the text column, not the host modal.
+ */
+export function CueHelpModal({ theme, onClose, cueShortcutKeys }: CueHelpModalProps) {
+	useModalLayer(MODAL_PRIORITIES.CUE_HELP, 'Maestro Cue Guide', onClose);
+
+	return createPortal(
+		<div
+			className="fixed inset-0 flex items-center justify-center"
+			style={{ zIndex: MODAL_PRIORITIES.CUE_HELP }}
+			onClick={(e) => {
+				if (e.target === e.currentTarget) onClose();
+			}}
+		>
+			{/* Lighter backdrop than the host modal so the Cue dashboard stays
+			    visible behind the guide, reinforcing the layered look. */}
+			<div className="absolute inset-0 bg-black/30" />
+
+			<div
+				className="relative rounded-xl shadow-2xl flex flex-col"
+				style={{
+					width: '90vw',
+					maxWidth: 820,
+					height: '85vh',
+					maxHeight: 900,
+					backgroundColor: theme.colors.bgMain,
+					border: `1px solid ${theme.colors.border}`,
+				}}
+			>
+				{/* Header */}
+				<div
+					className="shrink-0 flex items-center justify-between px-5 py-4 border-b"
+					style={{ borderColor: theme.colors.border }}
+				>
+					<div className="flex items-center gap-2">
+						<Zap className="w-5 h-5" style={{ color: CUE_COLOR }} />
+						<h2 className="text-base font-bold" style={{ color: theme.colors.textMain }}>
+							Maestro Cue Guide
+						</h2>
+					</div>
+					<button
+						onClick={onClose}
+						className="p-1.5 rounded-md hover:bg-white/10 transition-colors"
+						style={{ color: theme.colors.textDim }}
+						aria-label="Close"
+						title="Close"
+					>
+						<X className="w-4 h-4" />
+					</button>
+				</div>
+
+				{/* Body */}
+				<div className="flex-1 overflow-y-auto p-6 scrollbar-thin">
+					<CueHelpContent theme={theme} cueShortcutKeys={cueShortcutKeys} />
+				</div>
+			</div>
+		</div>,
+		document.body
+	);
 }
 
 /**
@@ -38,7 +118,7 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 					<p>
 						Maestro Cue is an event-driven automation system. Define triggers in a YAML file, and
 						Maestro automatically executes prompts against your AI agents when events occur. The
-						conductor gives the cue — the agents respond.
+						conductor gives the cue - the agents respond.
 					</p>
 				</div>
 			</section>
@@ -562,144 +642,144 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 						}}
 					>
 						<div>
-							<code style={{ color: theme.colors.accent }}>{'{{CUE_EVENT_TYPE}}'}</code> — Event
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_EVENT_TYPE}}'}</code> - Event
 							type (app.startup, time.heartbeat, time.scheduled, file.changed, agent.completed,
 							github.pull_request, github.issue, task.pending, cli.trigger)
 						</div>
 						<div>
-							<code style={{ color: theme.colors.accent }}>{'{{CUE_EVENT_TIMESTAMP}}'}</code> —
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_EVENT_TIMESTAMP}}'}</code> -
 							Event timestamp
 						</div>
 						<div>
-							<code style={{ color: theme.colors.accent }}>{'{{CUE_TRIGGER_NAME}}'}</code> —
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_TRIGGER_NAME}}'}</code> -
 							Trigger/subscription name
 						</div>
 						<div>
-							<code style={{ color: theme.colors.accent }}>{'{{CUE_RUN_ID}}'}</code> — Run UUID
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_RUN_ID}}'}</code> - Run UUID
 						</div>
 						<div>
-							<code style={{ color: theme.colors.accent }}>{'{{CUE_FILE_PATH}}'}</code> — Changed
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_FILE_PATH}}'}</code> - Changed
 							file path (file.changed)
 						</div>
 						<div>
-							<code style={{ color: theme.colors.accent }}>{'{{CUE_FILE_NAME}}'}</code> — Changed
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_FILE_NAME}}'}</code> - Changed
 							file name
 						</div>
 						<div>
-							<code style={{ color: theme.colors.accent }}>{'{{CUE_FILE_DIR}}'}</code> — Changed
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_FILE_DIR}}'}</code> - Changed
 							file directory
 						</div>
 						<div>
-							<code style={{ color: theme.colors.accent }}>{'{{CUE_FILE_EXT}}'}</code> — Changed
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_FILE_EXT}}'}</code> - Changed
 							file extension
 						</div>
 						<div>
-							<code style={{ color: theme.colors.accent }}>{'{{CUE_FILE_CHANGE_TYPE}}'}</code> —
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_FILE_CHANGE_TYPE}}'}</code> -
 							Change type: add, change, unlink (file.changed)
 						</div>
 						<div>
-							<code style={{ color: theme.colors.accent }}>{'{{CUE_SOURCE_SESSION}}'}</code> —
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_SOURCE_SESSION}}'}</code> -
 							Source session name (agent.completed)
 						</div>
 						<div>
-							<code style={{ color: theme.colors.accent }}>{'{{CUE_SOURCE_OUTPUT}}'}</code> — Source
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_SOURCE_OUTPUT}}'}</code> - Source
 							session output (agent.completed)
 						</div>
 						<div>
-							<code style={{ color: theme.colors.accent }}>{'{{CUE_SOURCE_STATUS}}'}</code> — Source
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_SOURCE_STATUS}}'}</code> - Source
 							run status: completed, failed, timeout (agent.completed)
 						</div>
 						<div>
-							<code style={{ color: theme.colors.accent }}>{'{{CUE_SOURCE_EXIT_CODE}}'}</code> —
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_SOURCE_EXIT_CODE}}'}</code> -
 							Source process exit code (agent.completed)
 						</div>
 						<div>
-							<code style={{ color: theme.colors.accent }}>{'{{CUE_SOURCE_DURATION}}'}</code> —
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_SOURCE_DURATION}}'}</code> -
 							Source run duration in ms (agent.completed)
 						</div>
 						<div>
-							<code style={{ color: theme.colors.accent }}>{'{{CUE_SOURCE_TRIGGERED_BY}}'}</code> —
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_SOURCE_TRIGGERED_BY}}'}</code> -
 							Subscription that triggered the source (agent.completed)
 						</div>
 						<div>
-							<code style={{ color: theme.colors.accent }}>{'{{CUE_FROM_AGENT}}'}</code> —
-							Triggering upstream agent ID — sourceSessionId (agent.completed) or sourceAgentId
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_FROM_AGENT}}'}</code> -
+							Triggering upstream agent ID - sourceSessionId (agent.completed) or sourceAgentId
 							(cli.trigger)
 						</div>
 						<div>
-							<code style={{ color: theme.colors.accent }}>{'{{CUE_TASK_FILE}}'}</code> — File path
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_TASK_FILE}}'}</code> - File path
 							with pending tasks (task.pending)
 						</div>
 						<div>
-							<code style={{ color: theme.colors.accent }}>{'{{CUE_TASK_FILE_NAME}}'}</code> — File
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_TASK_FILE_NAME}}'}</code> - File
 							name with pending tasks (task.pending)
 						</div>
 						<div>
-							<code style={{ color: theme.colors.accent }}>{'{{CUE_TASK_FILE_DIR}}'}</code> —
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_TASK_FILE_DIR}}'}</code> -
 							Directory of file with pending tasks (task.pending)
 						</div>
 						<div>
-							<code style={{ color: theme.colors.accent }}>{'{{CUE_TASK_COUNT}}'}</code> — Number of
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_TASK_COUNT}}'}</code> - Number of
 							pending tasks (task.pending)
 						</div>
 						<div>
-							<code style={{ color: theme.colors.accent }}>{'{{CUE_TASK_LIST}}'}</code> — Formatted
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_TASK_LIST}}'}</code> - Formatted
 							task list with line numbers (task.pending)
 						</div>
 						<div>
-							<code style={{ color: theme.colors.accent }}>{'{{CUE_TASK_CONTENT}}'}</code> — Full
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_TASK_CONTENT}}'}</code> - Full
 							file content, truncated (task.pending)
 						</div>
 						<div>
-							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_TYPE}}'}</code> — GitHub item
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_TYPE}}'}</code> - GitHub item
 							type: "pull_request" or "issue" (github.*)
 						</div>
 						<div>
-							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_NUMBER}}'}</code> — PR/issue
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_NUMBER}}'}</code> - PR/issue
 							number (github.*)
 						</div>
 						<div>
-							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_TITLE}}'}</code> — PR/issue
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_TITLE}}'}</code> - PR/issue
 							title (github.*)
 						</div>
 						<div>
-							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_AUTHOR}}'}</code> — Author
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_AUTHOR}}'}</code> - Author
 							login (github.*)
 						</div>
 						<div>
-							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_URL}}'}</code> — HTML URL
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_URL}}'}</code> - HTML URL
 							(github.*)
 						</div>
 						<div>
-							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_BODY}}'}</code> — PR/issue
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_BODY}}'}</code> - PR/issue
 							body, truncated (github.*)
 						</div>
 						<div>
-							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_LABELS}}'}</code> — Labels,
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_LABELS}}'}</code> - Labels,
 							comma-separated (github.*)
 						</div>
 						<div>
-							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_STATE}}'}</code> — State:
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_STATE}}'}</code> - State:
 							"open" or "closed" (github.*)
 						</div>
 						<div>
-							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_REPO}}'}</code> — Repo
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_REPO}}'}</code> - Repo
 							(owner/repo) (github.*)
 						</div>
 						<div>
-							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_BRANCH}}'}</code> — Head
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_BRANCH}}'}</code> - Head
 							branch (github.pull_request)
 						</div>
 						<div>
-							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_BASE_BRANCH}}'}</code> — Base
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_BASE_BRANCH}}'}</code> - Base
 							branch (github.pull_request)
 						</div>
 						<div>
-							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_ASSIGNEES}}'}</code> —
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_ASSIGNEES}}'}</code> -
 							Comma-separated assignees (github.issue)
 						</div>
 						<div>
-							<code style={{ color: theme.colors.accent }}>{'{{CUE_CLI_PROMPT}}'}</code> — Prompt
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_CLI_PROMPT}}'}</code> - Prompt
 							text passed via{' '}
 							<code
 								className="px-1 rounded text-xs"
@@ -710,7 +790,7 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 							flag (cli.trigger)
 						</div>
 						<div>
-							<code style={{ color: theme.colors.accent }}>{'{{CUE_SOURCE_AGENT_ID}}'}</code> —
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_SOURCE_AGENT_ID}}'}</code> -
 							Source agent ID passed via{' '}
 							<code
 								className="px-1 rounded text-xs"
@@ -921,6 +1001,83 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 							triggers and agents.
 						</span>
 					</div>
+
+					<div
+						className="flex items-start gap-2 px-3 py-2 rounded"
+						style={{ backgroundColor: theme.colors.accent + '15' }}
+					>
+						<Brain
+							className="w-4 h-4 flex-shrink-0 mt-0.5"
+							style={{ color: theme.colors.accent }}
+						/>
+						<span>
+							<strong style={{ color: theme.colors.textMain }}>Case study:</strong> combine{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								agent.completed
+							</code>
+							,{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								time.scheduled
+							</code>
+							, and{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								file.changed
+							</code>{' '}
+							to build a <strong style={{ color: theme.colors.textMain }}>Karpathy Loop</strong> -
+							an agent that scores its own runs, detects drift, and proposes edits to its own
+							program for you to approve.{' '}
+							<button
+								onClick={() =>
+									openUrl(buildMaestroUrl('https://docs.runmaestro.ai/maestro-cue-karpathy-loop'))
+								}
+								className="underline hover:opacity-80 transition-colors"
+								style={{ color: theme.colors.accent }}
+							>
+								Read the case study
+							</button>
+							.
+						</span>
+					</div>
+
+					<div
+						className="flex items-start gap-2 px-3 py-2 rounded"
+						style={{ backgroundColor: theme.colors.accent + '15' }}
+					>
+						<Megaphone
+							className="w-4 h-4 flex-shrink-0 mt-0.5"
+							style={{ color: theme.colors.accent }}
+						/>
+						<span>
+							<strong style={{ color: theme.colors.textMain }}>Case study:</strong> the eight-chain{' '}
+							<strong style={{ color: theme.colors.textMain }}>
+								@RunMaestroAI marketing pipeline
+							</strong>{' '}
+							is a production Karpathy Loop with two-tier evaluation, auto-tunable section markers,
+							two-strikes campaign graduation, and async filesystem handoff between scheduled
+							chains.{' '}
+							<button
+								onClick={() =>
+									openUrl(
+										buildMaestroUrl('https://docs.runmaestro.ai/maestro-cue-marketing-example')
+									)
+								}
+								className="underline hover:opacity-80 transition-colors"
+								style={{ color: theme.colors.accent }}
+							>
+								Read the case study
+							</button>
+							.
+						</span>
+					</div>
 				</div>
 			</section>
 
@@ -1004,14 +1161,14 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 					</p>
 					<ul className="list-disc pl-5 space-y-1">
 						<li>
-							<code>time.heartbeat</code> — fires once with the count of missed intervals.
+							<code>time.heartbeat</code> - fires once with the count of missed intervals.
 						</li>
 						<li>
-							<code>time.scheduled</code> — fires once for the most recent missed slot, even if
+							<code>time.scheduled</code> - fires once for the most recent missed slot, even if
 							several were skipped during a long sleep.
 						</li>
 						<li>
-							<code>github.pull_request</code> / <code>github.issue</code> — polled immediately on
+							<code>github.pull_request</code> / <code>github.issue</code> - polled immediately on
 							wake so new items are detected within seconds instead of waiting for the next
 							scheduled poll.
 						</li>
@@ -1035,7 +1192,7 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 					<Sparkles className="w-5 h-5" style={{ color: theme.colors.accent }} />
 					<h3 className="font-bold">Visual Pipeline Editor</h3>
 				</div>
-				<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
+				<div className="text-sm space-y-3 pl-7" style={{ color: theme.colors.textDim }}>
 					<p>
 						The Pipeline Editor provides a visual canvas for building automation workflows. Drag
 						triggers and agents onto the canvas, connect them with edges, and organize them into
@@ -1049,8 +1206,133 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 						from your sessions
 						<br />
 						<strong style={{ color: theme.colors.textMain }}>Pipeline selector:</strong> Create,
-						rename, and switch between pipelines
+						rename, and switch between pipelines. The{' '}
+						<strong style={{ color: theme.colors.textMain }}>All Pipelines</strong> view shows every
+						pipeline side-by-side and is read-only - switch back to a single pipeline to edit.
 					</p>
+
+					<div className="flex items-center gap-2 mt-4 mb-1">
+						<MousePointer2
+							className="w-4 h-4 flex-shrink-0"
+							style={{ color: theme.colors.accent }}
+						/>
+						<strong style={{ color: theme.colors.textMain }}>Canvas controls</strong>
+					</div>
+					<table className="w-full text-xs border-collapse">
+						<thead>
+							<tr>
+								<th
+									className="text-left py-1 px-2 border-b"
+									style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+								>
+									Action
+								</th>
+								<th
+									className="text-left py-1 px-2 border-b"
+									style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+								>
+									Behavior
+								</th>
+							</tr>
+						</thead>
+						<tbody>
+							{(
+								[
+									['Hand mode - left-drag', 'Pan the canvas'],
+									['Pointer mode - left-drag', 'Box-select nodes and edges'],
+									['Shift + left-drag (any mode)', 'Pan the canvas'],
+									['Middle / right-drag (any mode)', 'Pan the canvas'],
+									['Scroll wheel', 'Zoom in / out'],
+									['Drag from a node handle', 'Create a connection edge'],
+									['Right-click on a node', 'Open the node context menu'],
+									['Click a node or edge', 'Open its config panel'],
+									['Lock toggle', 'Disables drag, select, and connect'],
+									['Tidy', 'Align nodes into flow columns, keeping their current order'],
+									[
+										'Arrange',
+										'Lay out into flow columns and reorder within each column to untangle crossing edges',
+									],
+								] as const
+							).map(([action, behavior], i) => (
+								<tr key={i}>
+									<td
+										className="py-1 px-2 border-b"
+										style={{ borderColor: theme.colors.border + '50' }}
+									>
+										{action}
+									</td>
+									<td
+										className="py-1 px-2 border-b"
+										style={{ borderColor: theme.colors.border + '50' }}
+									>
+										{behavior}
+									</td>
+								</tr>
+							))}
+						</tbody>
+					</table>
+
+					<div className="flex items-center gap-2 mt-4 mb-1">
+						<Keyboard className="w-4 h-4 flex-shrink-0" style={{ color: theme.colors.accent }} />
+						<strong style={{ color: theme.colors.textMain }}>Keyboard shortcuts</strong>
+					</div>
+					<table className="w-full text-xs border-collapse">
+						<thead>
+							<tr>
+								<th
+									className="text-left py-1 px-2 border-b"
+									style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+								>
+									Key
+								</th>
+								<th
+									className="text-left py-1 px-2 border-b"
+									style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+								>
+									Action
+								</th>
+							</tr>
+						</thead>
+						<tbody>
+							{(
+								[
+									['P', 'Switch to Hand (pan) mode'],
+									['S', 'Switch to Pointer (select) mode'],
+									['L', 'Toggle canvas lock'],
+									['F', 'Fit graph to viewport'],
+									['+ / =', 'Zoom in'],
+									['-', 'Zoom out'],
+									['Delete / Backspace', 'Delete the selected node or edge'],
+									['Escape', 'Close open drawer, then clear selection'],
+									['Cmd / Ctrl + S', 'Save the pipeline'],
+								] as const
+							).map(([key, action], i) => (
+								<tr key={i}>
+									<td
+										className="py-1 px-2 border-b"
+										style={{ borderColor: theme.colors.border + '50' }}
+									>
+										<kbd
+											className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold"
+											style={{
+												backgroundColor: theme.colors.bgActivity,
+												border: `1px solid ${theme.colors.border}`,
+											}}
+										>
+											{key}
+										</kbd>
+									</td>
+									<td
+										className="py-1 px-2 border-b"
+										style={{ borderColor: theme.colors.border + '50' }}
+									>
+										{action}
+									</td>
+								</tr>
+							))}
+						</tbody>
+					</table>
+
 					<div
 						className="flex items-center gap-2 px-3 py-2 rounded"
 						style={{ backgroundColor: theme.colors.accent + '15' }}

@@ -15,3 +15,12 @@ export const generateId = (): string => {
 	}
 	return generateUUID();
 };
+
+let inputBroadcastOriginId: string | null = null;
+
+export const getInputBroadcastOriginId = (): string => {
+	if (!inputBroadcastOriginId) {
+		inputBroadcastOriginId = generateId();
+	}
+	return inputBroadcastOriginId;
+};

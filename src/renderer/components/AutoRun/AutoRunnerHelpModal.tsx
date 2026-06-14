@@ -18,6 +18,7 @@ import {
 	ArrowDownToLine,
 	Globe,
 	StopCircle,
+	Layers,
 } from 'lucide-react';
 import type { Theme } from '../../types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
@@ -29,19 +30,25 @@ import { buildMaestroUrl } from '../../utils/buildMaestroUrl';
 interface AutoRunnerHelpModalProps {
 	theme: Theme;
 	onClose: () => void;
+	/**
+	 * Visual stacking z-index. Defaults to 50 for the standalone Auto Run panel.
+	 * When opened on top of another modal (e.g. the Maestro Auto Run config
+	 * modal at z-9999), pass a higher value so the guide renders above it.
+	 */
+	zIndex?: number;
 }
 
-export function AutoRunnerHelpModal({ theme, onClose }: AutoRunnerHelpModalProps) {
+export function AutoRunnerHelpModal({ theme, onClose, zIndex = 50 }: AutoRunnerHelpModalProps) {
 	return (
 		<Modal
 			theme={theme}
 			title="Auto Run Guide"
 			priority={MODAL_PRIORITIES.CONFIRM}
 			onClose={onClose}
-			width={672}
+			width={1008}
 			maxHeight="85vh"
 			closeOnBackdropClick
-			zIndex={50}
+			zIndex={zIndex}
 			footer={
 				<button
 					onClick={onClose}
@@ -61,8 +68,12 @@ export function AutoRunnerHelpModal({ theme, onClose }: AutoRunnerHelpModalProps
 					<p className="text-sm leading-relaxed" style={{ color: theme.colors.textDim }}>
 						Auto Run is a file-system-based document runner that automates AI-driven task execution.
 						Create markdown documents with checkbox tasks, and let AI agents work through them one
-						by one, each with a fresh context window. Run single documents or chain multiple
-						documents together for complex workflows—a collection of Auto Run documents is called a{' '}
+						by one, each with a fresh context window - per task or per document (see{' '}
+						<strong style={{ color: theme.colors.textMain }}>
+							Fresh Context: Task vs Document
+						</strong>{' '}
+						below). Run single documents or chain multiple documents together for complex workflows
+						- a collection of Auto Run documents is called a{' '}
 						<strong style={{ color: theme.colors.textMain }}>Playbook</strong>.
 					</p>
 				</section>
@@ -77,7 +88,7 @@ export function AutoRunnerHelpModal({ theme, onClose }: AutoRunnerHelpModalProps
 						<p>
 							A single Auto Run document handles one phase of work. Group multiple documents
 							together and you have a{' '}
-							<strong style={{ color: theme.colors.textMain }}>Playbook</strong>—a reusable,
+							<strong style={{ color: theme.colors.textMain }}>Playbook</strong> - a reusable,
 							shareable workflow that can be run with one click.
 						</p>
 						<p>
@@ -103,7 +114,7 @@ export function AutoRunnerHelpModal({ theme, onClose }: AutoRunnerHelpModalProps
 							<div className="flex items-start gap-2">
 								<Wand2 className="w-4 h-4 mt-0.5 shrink-0" style={{ color: theme.colors.accent }} />
 								<div>
-									<strong style={{ color: theme.colors.textMain }}>Wizard</strong> — The easiest
+									<strong style={{ color: theme.colors.textMain }}>Wizard</strong> - The easiest
 									path. Click <strong style={{ color: theme.colors.textMain }}>Wizard</strong> in
 									the toolbar to start a guided conversation that discovers your project, then
 									generates a multi-phase playbook tailored to your goals. Great for first-time
@@ -116,7 +127,7 @@ export function AutoRunnerHelpModal({ theme, onClose }: AutoRunnerHelpModalProps
 									style={{ color: theme.colors.accent }}
 								/>
 								<div>
-									<strong style={{ color: theme.colors.textMain }}>Slash Commands</strong> —
+									<strong style={{ color: theme.colors.textMain }}>Slash Commands</strong> -
 									Built-in modules that generate playbooks from structured specifications. Type a
 									command in the AI terminal to kick off planning:
 									<div
@@ -127,15 +138,15 @@ export function AutoRunnerHelpModal({ theme, onClose }: AutoRunnerHelpModalProps
 										}}
 									>
 										<div>
-											<code style={{ color: theme.colors.accent }}>/speckit</code> — Spec-driven
+											<code style={{ color: theme.colors.accent }}>/speckit</code> - Spec-driven
 											development workflow
 										</div>
 										<div>
-											<code style={{ color: theme.colors.accent }}>/openspec</code> — Change
+											<code style={{ color: theme.colors.accent }}>/openspec</code> - Change
 											management workflow
 										</div>
 										<div>
-											<code style={{ color: theme.colors.accent }}>/bmad</code> — Business analysis
+											<code style={{ color: theme.colors.accent }}>/bmad</code> - Business analysis
 											& design method
 										</div>
 									</div>
@@ -147,7 +158,7 @@ export function AutoRunnerHelpModal({ theme, onClose }: AutoRunnerHelpModalProps
 									style={{ color: theme.colors.accent }}
 								/>
 								<div>
-									<strong style={{ color: theme.colors.textMain }}>Manual</strong> — Write markdown
+									<strong style={{ color: theme.colors.textMain }}>Manual</strong> - Write markdown
 									documents directly in your Runner Docs folder. Full control over task structure
 									and ordering. See the sections below for format details.
 								</div>
@@ -155,7 +166,7 @@ export function AutoRunnerHelpModal({ theme, onClose }: AutoRunnerHelpModalProps
 							<div className="flex items-start gap-2">
 								<Globe className="w-4 h-4 mt-0.5 shrink-0" style={{ color: theme.colors.accent }} />
 								<div>
-									<strong style={{ color: theme.colors.textMain }}>PlayBooks</strong> — Browse
+									<strong style={{ color: theme.colors.textMain }}>PlayBooks</strong> - Browse
 									community playbooks and import them as starting points. Customize to fit your
 									project.
 								</div>
@@ -247,8 +258,8 @@ export function AutoRunnerHelpModal({ theme, onClose }: AutoRunnerHelpModalProps
 							</span>
 						</div>
 						<p>
-							Write clear, specific task descriptions. Each task should be independently
-							completable—the AI starts fresh for each one without context from previous tasks.
+							Write clear, specific task descriptions. Each task should be independently completable
+							- the AI starts fresh for each one without context from previous tasks.
 						</p>
 						<p>
 							<strong style={{ color: theme.colors.textMain }}>Tip:</strong> Prefix tasks with
@@ -269,7 +280,7 @@ export function AutoRunnerHelpModal({ theme, onClose }: AutoRunnerHelpModalProps
 							Images are saved to an <code>images/</code> subfolder and linked with relative paths.
 						</p>
 						<p>
-							Use images to provide visual context—screenshots of bugs, UI mockups, diagrams, or
+							Use images to provide visual context - screenshots of bugs, UI mockups, diagrams, or
 							reference materials that help the AI understand the task.
 						</p>
 					</div>
@@ -294,6 +305,60 @@ export function AutoRunnerHelpModal({ theme, onClose }: AutoRunnerHelpModalProps
 						<p>
 							The document is provided to the agent as a file path, giving it direct access to read
 							and modify tasks.
+						</p>
+					</div>
+				</section>
+
+				{/* Fresh Context: Task vs Document */}
+				<section>
+					<div className="flex items-center gap-2 mb-3">
+						<Layers className="w-5 h-5" style={{ color: theme.colors.accent }} />
+						<h3 className="font-bold">Fresh Context: Task vs Document</h3>
+					</div>
+					<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
+						<p>
+							The <strong style={{ color: theme.colors.textMain }}>Fresh context per</strong> toggle
+							in the run configuration controls how context is scoped as the runner works through a
+							document:
+						</p>
+						<div className="space-y-3">
+							<div className="flex items-start gap-2">
+								<CheckSquare
+									className="w-4 h-4 mt-0.5 shrink-0"
+									style={{ color: theme.colors.accent }}
+								/>
+								<div>
+									<strong style={{ color: theme.colors.textMain }}>Task</strong> - A new agent is
+									spawned for each unchecked task with a clean context every time. Maximum
+									isolation; no drift between tasks. Each task must be fully self-contained, since
+									the agent sees nothing from previous tasks except what's written in the document.
+								</div>
+							</div>
+							<div className="flex items-start gap-2">
+								<FileText
+									className="w-4 h-4 mt-0.5 shrink-0"
+									style={{ color: theme.colors.accent }}
+								/>
+								<div>
+									<strong style={{ color: theme.colors.textMain }}>Document</strong> - A single
+									agent walks every unchecked task in the document in one continuous session,
+									carrying context forward between tasks. Best for large-context agents and work
+									where later tasks build on earlier ones.
+								</div>
+							</div>
+						</div>
+						<p>
+							Maestro <strong style={{ color: theme.colors.textMain }}>auto-selects</strong> the
+							mode from the running agent's context window -
+							<strong style={{ color: theme.colors.textMain }}>Document</strong> at 1M tokens or
+							more (e.g. Claude's 1M window),{' '}
+							<strong style={{ color: theme.colors.textMain }}>Task</strong> below that - and you
+							can override it per run. A loaded Playbook's saved mode always takes precedence.
+						</p>
+						<p>
+							<strong style={{ color: theme.colors.textMain }}>Tip:</strong> Author tasks to be
+							self-contained either way. Document mode is an optimization, not a license to write
+							tasks that depend on chat memory.
 						</p>
 					</div>
 				</section>
@@ -356,30 +421,30 @@ export function AutoRunnerHelpModal({ theme, onClose }: AutoRunnerHelpModalProps
 							}}
 						>
 							<div>
-								<code style={{ color: theme.colors.accent }}>{'{{AGENT_NAME}}'}</code> — Agent name
+								<code style={{ color: theme.colors.accent }}>{'{{AGENT_NAME}}'}</code> - Agent name
 							</div>
 							<div>
-								<code style={{ color: theme.colors.accent }}>{'{{AGENT_PATH}}'}</code> — Agent home
+								<code style={{ color: theme.colors.accent }}>{'{{AGENT_PATH}}'}</code> - Agent home
 								directory path
 							</div>
 							<div>
-								<code style={{ color: theme.colors.accent }}>{'{{TAB_NAME}}'}</code> — Custom tab
+								<code style={{ color: theme.colors.accent }}>{'{{TAB_NAME}}'}</code> - Custom tab
 								name
 							</div>
 							<div>
-								<code style={{ color: theme.colors.accent }}>{'{{GIT_BRANCH}}'}</code> — Current git
+								<code style={{ color: theme.colors.accent }}>{'{{GIT_BRANCH}}'}</code> - Current git
 								branch
 							</div>
 							<div>
-								<code style={{ color: theme.colors.accent }}>{'{{DATE}}'}</code> — Current date
+								<code style={{ color: theme.colors.accent }}>{'{{DATE}}'}</code> - Current date
 								(YYYY-MM-DD)
 							</div>
 							<div>
-								<code style={{ color: theme.colors.accent }}>{'{{LOOP_NUMBER}}'}</code> — Current
+								<code style={{ color: theme.colors.accent }}>{'{{LOOP_NUMBER}}'}</code> - Current
 								loop iteration
 							</div>
 							<div>
-								<code style={{ color: theme.colors.accent }}>{'{{DOCUMENT_NAME}}'}</code> — Current
+								<code style={{ color: theme.colors.accent }}>{'{{DOCUMENT_NAME}}'}</code> - Current
 								document name
 							</div>
 							<div style={{ color: theme.colors.textDim }}>...and more</div>
@@ -405,7 +470,7 @@ export function AutoRunnerHelpModal({ theme, onClose }: AutoRunnerHelpModalProps
 							Enable the reset toggle (<RotateCcw className="w-3 h-3 inline" />) on any document to
 							keep it available for repeated runs. When enabled, Auto Run creates a{' '}
 							<strong style={{ color: theme.colors.textMain }}>working copy</strong> in the{' '}
-							<code>Runs/</code> subfolder and processes that copy—
+							<code>Runs/</code> subfolder and processes that copy -
 							<em>the original document is never modified</em>.
 						</p>
 						<p>
@@ -434,7 +499,7 @@ export function AutoRunnerHelpModal({ theme, onClose }: AutoRunnerHelpModalProps
 							through the document queue until all documents have zero tasks remaining.
 						</p>
 						<p>
-							Combined with reset-on-completion, this creates perpetual workflows—perfect for
+							Combined with reset-on-completion, this creates perpetual workflows - perfect for
 							monitoring tasks, recurring maintenance, or continuous integration scenarios.
 						</p>
 					</div>
@@ -455,11 +520,12 @@ export function AutoRunnerHelpModal({ theme, onClose }: AutoRunnerHelpModalProps
 							<li>Document selection and order</li>
 							<li>Reset-on-completion settings per document</li>
 							<li>Loop mode preference</li>
+							<li>Fresh-context mode (Task or Document)</li>
 							<li>Custom agent prompt</li>
 						</ul>
 						<p>
-							Load a saved playbook with one click and modify it as needed—changes can be saved back
-							or discarded.
+							Load a saved playbook with one click and modify it as needed - changes can be saved
+							back or discarded.
 						</p>
 						<p>
 							Export playbooks as ZIP files to share with teammates, or import ZIPs you've received.
@@ -520,8 +586,8 @@ export function AutoRunnerHelpModal({ theme, onClose }: AutoRunnerHelpModalProps
 					<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
 						<p>
 							Click <strong style={{ color: theme.colors.error }}>Stop</strong> in the header or
-							Auto Run panel to gracefully stop. The current task completes before stopping—no work
-							is left incomplete.
+							Auto Run panel to gracefully stop. The current task completes before stopping - no
+							work is left incomplete.
 						</p>
 						<p>Completed tasks remain checked. Resume anytime by clicking Run again.</p>
 					</div>
@@ -536,7 +602,7 @@ export function AutoRunnerHelpModal({ theme, onClose }: AutoRunnerHelpModalProps
 					<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
 						<p>
 							An executing agent can abort an entire playbook mid-flight by writing a halt marker
-							into the current document. Useful for blockers an agent uncovers while working —
+							into the current document. Useful for blockers an agent uncovers while working -
 							missing dependencies, broken preconditions, ambiguous specs, or destructive changes it
 							refuses to make.
 						</p>
@@ -550,12 +616,12 @@ export function AutoRunnerHelpModal({ theme, onClose }: AutoRunnerHelpModalProps
 							{'<!-- maestro:halt: brief reason here -->'}
 						</div>
 						<p>
-							When the engine sees this marker after a task, it stops immediately — no further tasks
+							When the engine sees this marker after a task, it stops immediately - no further tasks
 							in the current document, no further documents in the playbook. The reason is recorded
 							in the History panel and surfaced as a <code>halt</code> event in the JSONL stream.
 						</p>
 						<p>
-							A stale halt marker left in a document will block re-runs until removed — Auto Run
+							A stale halt marker left in a document will block re-runs until removed - Auto Run
 							refuses to start so previously-halted work isn't silently replayed.
 						</p>
 					</div>

@@ -23,6 +23,7 @@ import {
 	CreateHandlerOptions,
 } from '../../utils/ipcHandler';
 import { groomContext } from '../../utils/context-groomer';
+import { buildDirectorNotesSynopsisPrompt } from '../../utils/director-notes-prompt';
 import { getPrompt } from '../../prompt-manager';
 import type { ProcessManager } from '../../process-manager';
 import type { AgentDetector } from '../../agents';
@@ -38,20 +39,16 @@ import type { HistoryGraphData } from './history';
 
 const LOG_CONTEXT = '[DirectorNotes]';
 
-/**
- * Sanitize a session display name for safe embedding in AI prompts.
- * Strips markdown formatting characters and control sequences that could
- * be interpreted as prompt instructions by the AI agent.
- */
-function sanitizeDisplayName(name: string): string {
-	return (
-		name
-			// Strip markdown headers, bold, italic, links, images
-			.replace(/[#*_`~\[\]()!|>]/g, '')
-			// Collapse multiple whitespace/newlines into single space
-			.replace(/\s+/g, ' ')
-			.trim()
-	);
+/** Filter accepted by the unified-history IPCs: a single type, an array of
+ *  types to include, or null/undefined for "all types". An empty array means
+ *  "no types selected" and therefore matches nothing. */
+type UnifiedHistoryFilter = 'AUTO' | 'USER' | 'CUE' | Array<'AUTO' | 'USER' | 'CUE'> | null;
+
+/** Whether an entry's type passes the given filter. */
+function entryPassesFilter(type: HistoryEntry['type'], filter: UnifiedHistoryFilter): boolean {
+	if (filter == null) return true;
+	if (Array.isArray(filter)) return filter.includes(type as 'AUTO' | 'USER' | 'CUE');
+	return type === filter;
 }
 
 // Helper to create handler options with consistent context
@@ -114,7 +111,9 @@ export interface DirectorNotesHandlerDependencies {
 
 export interface UnifiedHistoryOptions {
 	lookbackDays: number;
-	filter?: 'AUTO' | 'USER' | 'CUE' | null; // null = both
+	// A single type, an array of types to include, or null for "all".
+	// An empty array selects nothing.
+	filter?: UnifiedHistoryFilter;
 	/** Number of entries to return per page (default: 100) */
 	limit?: number;
 	/** Number of entries to skip for pagination (default: 0) */
@@ -141,7 +140,8 @@ export interface UnifiedHistoryStats {
 	sessionCount: number; // Distinct provider sessions across all agents
 	autoCount: number; // Total AUTO entries
 	userCount: number; // Total USER entries
-	totalCount: number; // Total entries (autoCount + userCount)
+	cueCount: number; // Total CUE entries
+	totalCount: number; // Total entries (autoCount + userCount + cueCount)
 }
 
 export interface SynopsisOptions {
@@ -207,6 +207,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 				const uniqueAgentSessions = new Set<string>(); // track unique provider sessions
 				let autoCount = 0;
 				let userCount = 0;
+				let cueCount = 0;
 
 				// Pre-compute graph bucketing parameters if requested
 				// For "all time" (cutoffTime=0), we do a two-pass: first find earliest, then bucket
@@ -233,6 +234,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 						agentsWithEntries.add(sessionId);
 						if (entry.type === 'AUTO') autoCount++;
 						else if (entry.type === 'USER') userCount++;
+						else if (entry.type === 'CUE') cueCount++;
 						if (entry.agentSessionId) uniqueAgentSessions.add(entry.agentSessionId);
 
 						// Track earliest for "all time" bucketing
@@ -254,7 +256,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 						}
 
 						// Apply type filter for the result set
-						if (filter && entry.type !== filter) continue;
+						if (!entryPassesFilter(entry.type, filter ?? null)) continue;
 
 						allEntries.push({
 							...entry,
@@ -298,7 +300,8 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 					sessionCount: uniqueAgentSessions.size,
 					autoCount,
 					userCount,
-					totalCount: autoCount + userCount,
+					cueCount,
+					totalCount: autoCount + userCount + cueCount,
 				};
 
 				logger.debug(
@@ -365,7 +368,8 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 							sessionCount,
 							autoCount: hit.autoCount,
 							userCount: hit.userCount,
-							totalCount: hit.autoCount + hit.userCount,
+							cueCount: hit.cueCount,
+							totalCount: hit.autoCount + hit.userCount + hit.cueCount,
 						},
 					};
 				}
@@ -422,7 +426,8 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 						sessionCount: providerSessionSet.size,
 						autoCount: agg.autoCount,
 						userCount: agg.userCount,
-						totalCount: agg.autoCount + agg.userCount,
+						cueCount: agg.cueCount,
+						totalCount: agg.autoCount + agg.userCount + agg.cueCount,
 					},
 				};
 			}
@@ -439,7 +444,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 			handlerOpts('getOffsetForTimestamp'),
 			async (
 				timestamp: number,
-				options?: { lookbackDays?: number; filter?: 'AUTO' | 'USER' | 'CUE' | null }
+				options?: { lookbackDays?: number; filter?: UnifiedHistoryFilter }
 			): Promise<number> => {
 				const sessionIds = await historyManager.listSessionsWithHistory();
 				const lookback = options?.lookbackDays ?? 0;
@@ -453,7 +458,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 				for (const entries of entriesArrays) {
 					for (const e of entries) {
 						if (cutoff > 0 && e.timestamp < cutoff) continue;
-						if (filter && e.type !== filter) continue;
+						if (!entryPassesFilter(e.type, filter)) continue;
 						all.push(e);
 					}
 				}
@@ -493,40 +498,16 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 					};
 				}
 
-				// Build file-path manifest so the agent reads history files directly
-				const cutoffTime = Date.now() - options.lookbackDays * 24 * 60 * 60 * 1000;
-				const sessionIds = await historyManager.listSessionsWithHistory();
-				const sessionNameMap = buildSessionNameMap();
+				// Build the synopsis prompt: a manifest of history file paths scoped
+				// to the lookback window so the agent only reads files it needs.
+				const { prompt, agentCount, entryCount } = await buildDirectorNotesSynopsisPrompt({
+					historyManager,
+					sessionNameMap: buildSessionNameMap(),
+					lookbackDays: options.lookbackDays,
+					basePrompt: getPrompt('director-notes'),
+				});
 
-				const sessionManifest: Array<{
-					sessionId: string;
-					displayName: string;
-					historyFilePath: string;
-				}> = [];
-
-				// Collect stats: agents with entries and total entries within lookback
-				let agentCount = 0;
-				let entryCount = 0;
-
-				for (const sessionId of sessionIds) {
-					const filePath = await historyManager.getHistoryFilePath(sessionId);
-					if (!filePath) continue;
-					const displayName = sessionNameMap.get(sessionId) || sessionId;
-					sessionManifest.push({ sessionId, displayName, historyFilePath: filePath });
-
-					// Count entries in lookback window and track which agents contributed
-					const entries = await historyManager.getEntries(sessionId);
-					let agentHasEntries = false;
-					for (const entry of entries) {
-						if (entry.timestamp >= cutoffTime) {
-							entryCount++;
-							agentHasEntries = true;
-						}
-					}
-					if (agentHasEntries) agentCount++;
-				}
-
-				if (sessionManifest.length === 0) {
+				if (!prompt) {
 					return {
 						success: true,
 						synopsis: `# Director's Notes\n\n*Generated for the past ${options.lookbackDays} days*\n\nNo history files found.`,
@@ -535,44 +516,10 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 					};
 				}
 
-				// Build the prompt with file paths instead of inline data
-				const manifestLines = sessionManifest
-					.map(
-						(s) =>
-							`- Session "${sanitizeDisplayName(s.displayName)}" (ID: ${s.sessionId}): ${s.historyFilePath}`
-					)
-					.join('\n');
-
-				const cutoffDate = new Date(cutoffTime).toLocaleDateString('en-US', {
-					month: 'short',
-					day: 'numeric',
-					year: 'numeric',
+				logger.info(`Generating synopsis from ${agentCount} session files`, LOG_CONTEXT, {
+					promptLength: prompt.length,
+					sessionCount: agentCount,
 				});
-				const nowDate = new Date().toLocaleDateString('en-US', {
-					month: 'short',
-					day: 'numeric',
-					year: 'numeric',
-				});
-
-				const prompt = [
-					getPrompt('director-notes'),
-					'',
-					'---',
-					'',
-					'## Session History Files',
-					'',
-					`Lookback period: ${options.lookbackDays} days (${cutoffDate} – ${nowDate})`,
-					`Timestamp cutoff: ${cutoffTime} (only consider entries with timestamp >= this value)`,
-					`${agentCount} agents had ${entryCount} qualifying entries.`,
-					'',
-					manifestLines,
-				].join('\n');
-
-				logger.info(
-					`Generating synopsis from ${sessionManifest.length} session files`,
-					LOG_CONTEXT,
-					{ promptLength: prompt.length, sessionCount: sessionManifest.length }
-				);
 
 				try {
 					// Look up agent-level config values for override resolution

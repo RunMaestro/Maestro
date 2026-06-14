@@ -449,7 +449,7 @@ export function AgentSessionsModal({
 				aria-modal="true"
 				aria-label="Agent Sessions"
 				tabIndex={-1}
-				className="w-[700px] rounded-xl shadow-2xl border overflow-hidden flex flex-col max-h-[600px] outline-none"
+				className="modal-w-lg rounded-xl shadow-2xl border overflow-hidden flex flex-col max-h-[600px] outline-none"
 				style={{ backgroundColor: theme.colors.bgActivity, borderColor: theme.colors.border }}
 			>
 				{/* Header */}

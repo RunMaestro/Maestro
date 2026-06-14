@@ -174,7 +174,7 @@ Variables populated only when a prompt is rendered as part of a Maestro Cue run.
 
 Template variables are resolved at runtime by `src/shared/templateVariables.ts` (used from both main and renderer):
 
-1. Callers build a `TemplateContext` object with the current session, git info, group name, Auto Run state, conductor profile, history path, and — for Cue prompts — a `cue` sub-object with event metadata.
+1. Callers build a `TemplateContext` object with the current session, git info, group name, Auto Run state, conductor profile, history path, and - for Cue prompts - a `cue` sub-object with event metadata.
 2. `substituteTemplateVariables(template, context)` performs case-insensitive replacement of all `{{...}}` patterns.
 3. Variables not matched are left as-is (no error for unknown variables).
 

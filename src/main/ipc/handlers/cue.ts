@@ -361,15 +361,22 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 					}
 				}
 
-				// Parse the YAML BEFORE writing so we can derive the full
-				// referenced-paths keep-set up front — and so a parse failure
-				// becomes a hard skip on pruning instead of a partial keep-set
-				// that could mass-delete prompt files referenced only inside
-				// options.content (and not duplicated in options.promptFiles).
+				// Parse the YAML ONCE up front and reuse the result for the prune
+				// keep-set, validation, and debug logging below. Parsing is
+				// synchronous and blocks the main process, so the historical
+				// triple-parse added avoidable latency to every save. Deriving the
+				// keep-set up front also means a parse failure becomes a hard skip
+				// on pruning instead of a partial keep-set that could mass-delete
+				// prompt files referenced only inside options.content (and not
+				// duplicated in options.promptFiles).
 				let parseSucceeded = true;
+				let parsed:
+					| { subscriptions?: Array<Record<string, unknown>>; settings?: Record<string, unknown> }
+					| null
+					| undefined;
 				try {
-					const parsed = yaml.load(options.content) as
-						| { subscriptions?: Array<Record<string, unknown>> }
+					parsed = yaml.load(options.content) as
+						| { subscriptions?: Array<Record<string, unknown>>; settings?: Record<string, unknown> }
 						| null
 						| undefined;
 					const subs = parsed?.subscriptions;
@@ -409,11 +416,7 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 				writeCueConfigFile(options.projectRoot, options.content);
 
 				try {
-					const validation = validateCueConfig(yaml.load(options.content));
-					const parsed = yaml.load(options.content) as
-						| { subscriptions?: Array<Record<string, unknown>>; settings?: Record<string, unknown> }
-						| null
-						| undefined;
+					const validation = validateCueConfig(parsed);
 					const subs = Array.isArray(parsed?.subscriptions) ? parsed!.subscriptions! : [];
 					cueDebugLog('main:writeYaml:parsed', {
 						projectRoot: options.projectRoot,

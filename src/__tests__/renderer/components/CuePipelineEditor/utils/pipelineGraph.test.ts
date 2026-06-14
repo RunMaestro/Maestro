@@ -556,12 +556,15 @@ describe('convertToReactFlowNodes', () => {
 		expect(groups).toHaveLength(2);
 		expect(groups.find((g) => g.id === 'pipeline-group:p1')).toBeDefined();
 		expect(groups.find((g) => g.id === 'pipeline-group:p2')).toBeDefined();
-		// Group nodes are not selectable and behind the rest, but ARE draggable
-		// so the user can reposition the entire pipeline by grabbing the card.
+		// In pointer/select mode (the default — no isHandMode flag) the group
+		// card is selectable AND draggable, and sits ABOVE its content nodes so
+		// the whole body is the drag handle. It is never deletable via the
+		// canvas Delete key — removal must go through the toolbar.
 		for (const g of groups) {
-			expect(g.selectable).toBe(false);
+			expect(g.selectable).toBe(true);
 			expect(g.draggable).toBe(true);
-			expect(g.zIndex).toBe(-1);
+			expect(g.deletable).toBe(false);
+			expect(g.zIndex).toBe(5);
 		}
 	});
 
@@ -639,7 +642,7 @@ describe('convertToReactFlowNodes', () => {
 		expect(trigger.position).toEqual({ x: 10, y: 30 });
 	});
 
-	it('pipelines with viewOffset are excluded from auto-stack chain', () => {
+	it('pipelines with viewOffset are excluded from auto-stack chain but anchor its floor', () => {
 		const p1 = makePipeline('p1', {
 			viewOffset: { x: 0, y: 500 },
 			nodes: [makeTrigger('t1', 'time.heartbeat', {}, { x: 0, y: 0 })],
@@ -650,10 +653,12 @@ describe('convertToReactFlowNodes', () => {
 		const nodes = convertToReactFlowNodes([p1, p2], null);
 		const t1 = nodes.find((n) => n.id === 'p1:t1')!;
 		const t2 = nodes.find((n) => n.id === 'p2:t2')!;
-		// p1 honors its viewOffset (y=500); p2 auto-stacks from y=0 since p1
-		// is no longer in the chain.
+		// p1 honors its viewOffset (y=500). p2 auto-stacks BELOW p1's rendered
+		// bottom rather than starting at y=0 — otherwise mixed-mode layouts
+		// (some pipelines dragged, some never moved) would overlap manual
+		// pipelines on first open.
 		expect(t1.position.y).toBe(500);
-		expect(t2.position.y).toBe(0);
+		expect(t2.position.y).toBeGreaterThan(t1.position.y);
 	});
 
 	it('pipeline-group node carries the pipeline color and name', () => {
@@ -1465,6 +1470,65 @@ describe('computePipelineYOffsets', () => {
 		const p2Node = nodes.find((n) => n.id === 'p2:t2')!;
 		expect(p1Node.position.y).toBe(10 + (offsets.get('p1') ?? 0));
 		expect(p2Node.position.y).toBe(20 + (offsets.get('p2') ?? 0));
+	});
+
+	it('auto-stack floor sits below every manually-positioned pipeline (mixed-mode fix)', () => {
+		// Mixed state: one pipeline has a manual viewOffset that places it at
+		// y=300..400; one has none. Pre-fix, the auto-stack subset started at
+		// currentY=0 with zero awareness of where the manual pipeline lived,
+		// so the unstacked pipeline rendered on top of the manual one. The
+		// fix anchors a "manualFloor" so auto-stack starts below every manual
+		// bounding box.
+		const pipelines: CuePipeline[] = [
+			{
+				id: 'p1',
+				name: 'P1',
+				color: '#ef4444',
+				viewOffset: { x: 0, y: 300 },
+				nodes: [makeTrigger('t1', 'time.heartbeat', {}, { x: 0, y: 0 })],
+				edges: [],
+			},
+			{
+				id: 'p2',
+				name: 'P2',
+				color: '#3b82f6',
+				nodes: [makeTrigger('t2', 'file.changed', {}, { x: 0, y: 0 })],
+				edges: [],
+			},
+		];
+		const offsets = computePipelineYOffsets(pipelines, null);
+		// Only the unstacked pipeline appears in the offsets map.
+		expect(offsets.has('p1')).toBe(false);
+		expect(offsets.has('p2')).toBe(true);
+		// p1 renders at y=300 (viewOffset). p2's rendered y must be strictly
+		// greater so the two cannot overlap.
+		const p2RenderedY = 0 + (offsets.get('p2') ?? 0);
+		expect(p2RenderedY).toBeGreaterThan(300);
+	});
+
+	it('auto-stack still starts at y=0 when no pipelines are manually positioned', () => {
+		// Regression guard: the manualFloor anchor must not activate when
+		// every pipeline is auto-stacked. Otherwise fresh layouts would shift
+		// downward for no reason.
+		const pipelines: CuePipeline[] = [
+			{
+				id: 'p1',
+				name: 'P1',
+				color: '#ef4444',
+				nodes: [makeTrigger('t1', 'time.heartbeat', {}, { x: 0, y: 0 })],
+				edges: [],
+			},
+			{
+				id: 'p2',
+				name: 'P2',
+				color: '#3b82f6',
+				nodes: [makeTrigger('t2', 'file.changed', {}, { x: 0, y: 0 })],
+				edges: [],
+			},
+		];
+		const offsets = computePipelineYOffsets(pipelines, null);
+		expect(offsets.get('p1')).toBe(0);
+		expect(offsets.get('p2')).toBeGreaterThan(0);
 	});
 });
 

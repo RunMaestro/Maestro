@@ -164,10 +164,113 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: false,
 		category: 'appearance',
 	},
+	showStarredSessionsSection: {
+		description:
+			'Show a "Starred Sessions" section at the top of the left side bar listing every starred AI tab across all agents.',
+		type: 'boolean',
+		default: true,
+		category: 'appearance',
+	},
+	showLeftPanelGroupMemberCount: {
+		description:
+			'Show a member count in parentheses after each group name in the left side bar (e.g. "UNGROUPED AGENTS (24)").',
+		type: 'boolean',
+		default: false,
+		category: 'appearance',
+	},
+	leftPanelCollapsedPillsPerRow: {
+		description:
+			'Maximum number of collapsed-group activity pills per row in the left side bar before wrapping to a new row. Range: 5-50.',
+		type: 'number',
+		default: 20,
+		category: 'appearance',
+	},
+	showLeftPanelLocationPills: {
+		description:
+			'Show the REMOTE / LOCAL / GIT location pills next to agents in the left side bar.',
+		type: 'boolean',
+		default: true,
+		category: 'appearance',
+	},
+	showLeftPanelGitIndicator: {
+		description:
+			'Show the git change indicator (branch icon + dirty file count) next to agents in the left side bar.',
+		type: 'boolean',
+		default: true,
+		category: 'appearance',
+	},
+	showLeftPanelCueIndicator: {
+		description:
+			'Show the Maestro Cue activity indicator (lightning bolt) next to agents with active Cue subscriptions in the left side bar. Hidden when the Maestro Cue Encore Feature is disabled.',
+		type: 'boolean',
+		default: true,
+		category: 'appearance',
+	},
+	showLeftPanelStartupCommandIndicator: {
+		description:
+			'Show the terminal prompt glyph (>_) next to agents that have at least one terminal tab with a saved startup command.',
+		type: 'boolean',
+		default: true,
+		category: 'appearance',
+	},
+	showGroupLabelInBookmarks: {
+		description:
+			'Show the group badge (e.g. "CCS") next to bookmarked agents in the left side bar. Turn off to hide the group pill entirely.',
+		type: 'boolean',
+		default: true,
+		category: 'appearance',
+	},
+	showFullGroupLabelInBookmarks: {
+		description:
+			'Show the full group name (e.g. "[2] CASE/CONTENT-SYSTEM") instead of the abbreviated badge (e.g. "CCS") next to bookmarked agents in the left side bar. Long names are truncated with the complete value available on hover.',
+		type: 'boolean',
+		default: false,
+		category: 'appearance',
+	},
+	fileEditWordWrap: {
+		description:
+			'Wrap long lines in the file editor at whitespace boundaries instead of scrolling horizontally.',
+		type: 'boolean',
+		default: true,
+		category: 'appearance',
+	},
+	fileEditShowLineNumbers: {
+		description: 'Show the line-number gutter in the file editor.',
+		type: 'boolean',
+		default: true,
+		category: 'appearance',
+	},
+	filePreviewToolbarVisibility: {
+		description:
+			'Per-button visibility map for the file preview / edit toolbar. Keys: save, wordWrap, remoteImages, htmlRender, previewTier, editToggle, copyContent, publishGist, documentGraph, openInBrowser, openInDefault, copyPath.',
+		type: 'object',
+		default: {
+			save: true,
+			wordWrap: true,
+			remoteImages: true,
+			htmlRender: true,
+			previewTier: true,
+			editToggle: true,
+			copyContent: true,
+			publishGist: true,
+			documentGraph: true,
+			openInBrowser: true,
+			openInDefault: true,
+			copyPath: true,
+		},
+		category: 'appearance',
+	},
 	fileExplorerIconTheme: {
 		description: 'Icon theme for the file explorer sidebar. Options: default, material, or none.',
 		type: 'string',
 		default: 'default',
+		category: 'appearance',
+	},
+	toastWidth: {
+		description:
+			'Width of toast notifications. Options: small, medium, large, dynamic (default, matches the Right Bar width).',
+		type: 'string',
+		default: 'dynamic',
 		category: 'appearance',
 	},
 	disableConfetti: {
@@ -221,6 +324,31 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: 0,
 		category: 'appearance',
 	},
+	annotatorTextColor: {
+		description: 'Default text color (hex string) for image annotator text labels.',
+		type: 'string',
+		default: '#9146FF',
+		category: 'appearance',
+	},
+	annotatorTextSize: {
+		description: 'Default text size (in pixels) for image annotator text labels.',
+		type: 'number',
+		default: 24,
+		category: 'appearance',
+	},
+	annotatorTextFont: {
+		description: 'Default font family for image annotator text labels (CSS font-family string).',
+		type: 'string',
+		default: 'sans-serif',
+		category: 'appearance',
+	},
+	annotatorTextBgColor: {
+		description:
+			'Default background color (hex string) behind image annotator text labels. Empty string means no background.',
+		type: 'string',
+		default: '',
+		category: 'appearance',
+	},
 
 	// --- Editor / UI Behavior ---
 	spellCheck: {
@@ -234,6 +362,13 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		type: 'string',
 		default: '',
 		category: 'editor',
+	},
+	globalShowHotkey: {
+		description:
+			'System-wide hotkey to summon (show + focus) the Maestro window from any app. Empty array disables it. Stored as a key array (e.g. ["Meta","Shift","M"]); Meta maps to Cmd on macOS / Win on Windows.',
+		type: 'array',
+		default: [],
+		category: 'accessibility',
 	},
 	enterToSendAI: {
 		description:
@@ -253,6 +388,13 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		description: 'Whether completed tasks are saved to history by default.',
 		type: 'boolean',
 		default: true,
+		category: 'editor',
+	},
+	synopsisDebounceSeconds: {
+		description:
+			'Seconds of idle time to wait after a task completes before generating its History synopsis. Rapid back-to-back completions are coalesced into one synopsis. 0 generates a synopsis immediately after each completion.',
+		type: 'number',
+		default: 0,
 		category: 'editor',
 	},
 	defaultShowThinking: {
@@ -449,7 +591,7 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	maxOutputLines: {
 		description: 'Maximum lines of agent output displayed per message before truncation.',
 		type: 'number',
-		default: 25,
+		default: Infinity,
 		category: 'logging',
 	},
 	logViewerSelectedLevels: {
@@ -769,6 +911,25 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: true,
 		category: 'onboarding',
 	},
+	groupChatSortAlphabetical: {
+		description:
+			'Sort group chats alphabetically (true) instead of by most recent activity (false).',
+		type: 'boolean',
+		default: false,
+		category: 'onboarding',
+	},
+	starredSessionsCollapsed: {
+		description: 'Whether the "Starred Sessions" section in the left bar is collapsed.',
+		type: 'boolean',
+		default: false,
+		category: 'onboarding',
+	},
+	bookmarksCollapsed: {
+		description: 'Whether the "Bookmarks" section in the left bar is collapsed.',
+		type: 'boolean',
+		default: false,
+		category: 'onboarding',
+	},
 
 	// --- Integrations ---
 	wakatimeEnabled: {
@@ -803,6 +964,26 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		description: 'The default URL loaded when opening a new browser tab.',
 		type: 'string',
 		default: 'https://runmaestro.ai/#leaderboard',
+		category: 'editor',
+	},
+	htmlDoubleClickOpensInBrowser: {
+		description:
+			'When enabled, double-clicking an HTML file in the file explorer opens it in the Maestro browser instead of the file preview.',
+		type: 'boolean',
+		default: false,
+		category: 'editor',
+	},
+	browserTabKeepAlive: {
+		description:
+			"How background browser tabs are handled when inactive. 'off' unloads them (lowest memory, page reloads on return); 'recent' keeps the N most-recently-used tabs alive; 'all' keeps every browser tab in the agent alive.",
+		type: 'string',
+		default: 'off',
+		category: 'editor',
+	},
+	browserTabKeepAliveLimit: {
+		description: "How many recent browser tabs to keep alive when browserTabKeepAlive is 'recent'.",
+		type: 'number',
+		default: 10,
 		category: 'editor',
 	},
 

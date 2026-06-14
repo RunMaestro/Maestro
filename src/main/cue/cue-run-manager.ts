@@ -13,8 +13,20 @@
 import * as crypto from 'crypto';
 import type { MainLogLevel } from '../../shared/logger-types';
 import type { CueLogPayload } from '../../shared/cue-log-types';
-import type { CueCommand, CueEvent, CueRunResult, CueSettings, CueSubscription } from './cue-types';
-import { updateCueEventStatus, safeRecordCueEvent, safeUpdateCueEventStatus } from './cue-db';
+import type {
+	CueCommand,
+	CueEvent,
+	CueNotifyConfig,
+	CueRunResult,
+	CueSettings,
+	CueSubscription,
+} from './cue-types';
+import {
+	updateCueEventStatus,
+	safeRecordCueEvent,
+	safeUpdateCueEventStatus,
+	type CueEventFailureInfo,
+} from './cue-db';
 import type { CueQueuePersistence } from './cue-queue-persistence';
 import { SOURCE_OUTPUT_MAX_CHARS } from './cue-fan-in-tracker';
 import { sliceHeadByChars } from './cue-text-utils';
@@ -22,6 +34,28 @@ import { captureException } from '../utils/sentry';
 import { substituteTemplateVariables, type TemplateContext } from '../../shared/templateVariables';
 import { buildCueTemplateContext } from './cue-template-context-builder';
 import { runMaestroCliSend } from './cue-cli-executor';
+
+/** Cap on persisted error_message length — enough to carry an agent error
+ *  envelope / stderr tail without bloating the journal DB. */
+const MAX_CUE_ERROR_MESSAGE_CHARS = 2000;
+
+/**
+ * Map a run result to the failure diagnostics persisted on its `cue_events`
+ * row. `errorMessage` is the trimmed/capped stderr, set only for non-completed
+ * runs (a success has nothing to explain); `exitCode` is always carried so the
+ * activity log can distinguish failure modes — e.g. a maestro-p idle timeout
+ * (3) from a first_byte_timeout (5) from a plain non-zero agent exit.
+ */
+function failureInfoFromResult(
+	result: Pick<CueRunResult, 'status' | 'stderr' | 'exitCode'>
+): CueEventFailureInfo {
+	const trimmed = result.stderr?.trim() ?? '';
+	const errorMessage =
+		result.status !== 'completed' && trimmed
+			? sliceHeadByChars(trimmed, MAX_CUE_ERROR_MESSAGE_CHARS)
+			: null;
+	return { errorMessage, exitCode: result.exitCode ?? null };
+}
 
 /** Phase of a run in the state machine: running → stopping | finished */
 export type RunPhase = 'running' | 'stopping' | 'finished';
@@ -57,6 +91,12 @@ export interface QueuedEvent {
 	cliOutput?: { target: string };
 	action?: CueSubscription['action'];
 	command?: CueCommand;
+	/** Resolved notify config for `action: notify` runs. The dispatcher
+	 *  collapses `subscription.notify` + the message fallback chain into
+	 *  `{ message, sticky? }` before enqueueing so the executor doesn't
+	 *  need to re-derive anything. Optional — non-notify actions leave
+	 *  this undefined. */
+	notify?: CueNotifyConfig;
 	/** Phase 12A — DB row id for the persisted copy, when persistence is enabled. */
 	persistId?: string;
 	/** Phase 01 — chain lineage propagated from the dispatching parent. When
@@ -78,6 +118,7 @@ export interface CueRunManagerDeps {
 		timeoutMs: number;
 		action?: CueSubscription['action'];
 		command?: CueCommand;
+		notify?: CueNotifyConfig;
 	}) => Promise<CueRunResult>;
 	onStopCueRun?: (runId: string) => boolean;
 	onLog: (level: MainLogLevel, message: string, data?: unknown) => void;
@@ -165,7 +206,14 @@ export interface CueRunManager {
 		 * `QueuedEvent` so they survive concurrency-gated buffering.
 		 */
 		chainRootId?: string,
-		parentEventId?: string
+		parentEventId?: string,
+		/**
+		 * Resolved notify config for `action: notify` runs (message already
+		 * collapsed by the dispatch service). Threaded through the queue so
+		 * concurrency-gated notify runs still surface the right toast body
+		 * and sticky flag when they drain.
+		 */
+		notify?: CueNotifyConfig
 	): void;
 	stopRun(runId: string): boolean;
 	stopAll(): void;
@@ -285,7 +333,8 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				entry.action,
 				entry.command,
 				entry.chainRootId,
-				entry.parentEventId
+				entry.parentEventId,
+				entry.notify
 			);
 		}
 
@@ -334,7 +383,8 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 		action?: CueSubscription['action'],
 		command?: CueCommand,
 		incomingChainRootId?: string,
-		parentEventId?: string
+		parentEventId?: string,
+		notify?: CueNotifyConfig
 	): Promise<void> {
 		const sessionName = getSessionName(sessionId);
 		const settings = deps.getSessionSettings(sessionId);
@@ -403,13 +453,19 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				timeoutMs,
 				action,
 				command,
+				notify,
 			});
 			if (!activeRuns.has(runId)) {
 				// Engine was stopped (or run was cleared) while onCueRun was in
 				// flight. The finally block's cleanup is gated on activeRuns
 				// having this run, so without an explicit DB write the row
 				// would stay `running` forever in the activity log.
-				safeUpdateCueEventStatus(runId, runResult.status);
+				safeUpdateCueEventStatus(
+					runId,
+					runResult.status,
+					runResult.providerSessionId,
+					failureInfoFromResult(runResult)
+				);
 				// Emit with the structured runFinished payload so live
 				// listeners (activity log, queue indicators) observe the
 				// transition identically to a normal completion — this is
@@ -431,6 +487,10 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			result.stdout = runResult.stdout;
 			result.stderr = runResult.stderr;
 			result.exitCode = runResult.exitCode;
+			// Carry the main task's provider session id for token attribution.
+			// The output-prompt phase (below) overwrites stdout but NOT this —
+			// it records its own session id on its own event row (outputRunId).
+			result.providerSessionId = runResult.providerSessionId;
 
 			// Execute output prompt if the main task succeeded and an output prompt is configured.
 			// Skipped for `action: command` runs — output_prompt is an AI follow-up, not a
@@ -508,7 +568,12 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 					// as `safeUpdateCueEventStatus`, which is too coarse to
 					// tell this failure mode apart from a normal run update.
 					try {
-						updateCueEventStatus(outputRunId, outputStatus);
+						updateCueEventStatus(
+							outputRunId,
+							outputStatus,
+							outputResult?.providerSessionId,
+							outputResult ? failureInfoFromResult(outputResult) : undefined
+						);
 					} catch (finalizeErr) {
 						captureException(finalizeErr, {
 							operation: 'cue:finalizeOutputRunStatus',
@@ -527,7 +592,12 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 					// false. Finalize it here so the activity log doesn't show a
 					// phantom never-ending run. Mirrors the earlier handling at
 					// line ~245 for the pre-output-prompt case.
-					safeUpdateCueEventStatus(runId, result.status);
+					safeUpdateCueEventStatus(
+						runId,
+						result.status,
+						result.providerSessionId,
+						failureInfoFromResult(result)
+					);
 					deps.onLog(
 						'cue',
 						`[CUE] Run "${subscriptionName}" output phase completed after engine stop — parent status recorded (${result.status}), result discarded`,
@@ -636,7 +706,12 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				drainQueue(sessionId);
 
 				try {
-					updateCueEventStatus(runId, result.status);
+					updateCueEventStatus(
+						runId,
+						result.status,
+						result.providerSessionId,
+						failureInfoFromResult(result)
+					);
 				} catch (err) {
 					deps.onLog('warn', `[CUE] Failed to update DB status for run ${runId}`);
 					captureException(err, {
@@ -678,7 +753,8 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			queuedAtOverride?: number,
 			pipelineName?: string,
 			chainRootId?: string,
-			parentEventId?: string
+			parentEventId?: string,
+			notify?: CueNotifyConfig
 		): void {
 			const settings = deps.getSessionSettings(sessionId);
 			const maxConcurrent = settings?.max_concurrent ?? 1;
@@ -747,6 +823,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 					cliOutput,
 					action,
 					command,
+					notify,
 					persistId,
 					chainRootId,
 					parentEventId,
@@ -793,7 +870,8 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				action,
 				command,
 				chainRootId,
-				parentEventId
+				parentEventId,
+				notify
 			);
 		},
 

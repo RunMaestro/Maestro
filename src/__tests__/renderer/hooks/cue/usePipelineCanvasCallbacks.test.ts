@@ -90,7 +90,7 @@ describe('usePipelineCanvasCallbacks', () => {
 	});
 
 	describe('onNodesChange', () => {
-		it('updates displayNodes only, does not touch pipelineState', () => {
+		it('updates displayNodes only for non-remove changes, does not touch pipelineState', () => {
 			const h = setup({ nodes: [rfNode('p1:t1', 'trigger')] });
 			act(() => {
 				h.result.current.onNodesChange([
@@ -99,6 +99,180 @@ describe('usePipelineCanvasCallbacks', () => {
 			});
 			expect(h.setDisplayNodes).toHaveBeenCalled();
 			expect(h.setPipelineState).not.toHaveBeenCalled();
+		});
+
+		it('commits remove changes (box-select delete) to pipelineState and prunes connected edges', () => {
+			const t1 = {
+				id: 't1',
+				type: 'trigger' as const,
+				position: { x: 0, y: 0 },
+				data: { eventType: 'app.startup' as const, label: 'T', config: {} },
+			};
+			const a1 = {
+				id: 'a1',
+				type: 'agent' as const,
+				position: { x: 0, y: 0 },
+				data: { sessionId: 's1', sessionName: 'A', toolType: 'x' },
+			};
+			const h = setup({
+				pipelines: [
+					pipeline('p1', [t1, a1], [{ id: 'e1', source: 't1', target: 'a1', mode: 'pass' }]),
+				],
+			});
+			act(() => {
+				h.result.current.onNodesChange([
+					{ id: 'p1:t1', type: 'remove' },
+					{ id: 'p1:a1', type: 'remove' },
+				]);
+			});
+			expect(h.getState().pipelines[0].nodes).toHaveLength(0);
+			// Edge connected to the removed nodes is pruned too.
+			expect(h.getState().pipelines[0].edges).toHaveLength(0);
+			// Selection cleared so a stale composite id can't linger.
+			expect(h.setSelectedNodeId).toHaveBeenCalledWith(null);
+			expect(h.setSelectedEdgeId).toHaveBeenCalledWith(null);
+		});
+
+		it('does not commit remove changes in All Pipelines view (read-only)', () => {
+			const t1 = {
+				id: 't1',
+				type: 'trigger' as const,
+				position: { x: 0, y: 0 },
+				data: { eventType: 'app.startup' as const, label: 'T', config: {} },
+			};
+			const h = setup({ pipelines: [pipeline('p1', [t1])], isAllPipelinesView: true });
+			act(() => {
+				h.result.current.onNodesChange([{ id: 'p1:t1', type: 'remove' }]);
+			});
+			expect(h.setPipelineState).not.toHaveBeenCalled();
+			expect(h.getState().pipelines[0].nodes).toHaveLength(1);
+		});
+	});
+
+	describe('onEdgesChange', () => {
+		it('commits edge remove changes to pipelineState', () => {
+			const h = setup({
+				pipelines: [
+					pipeline(
+						'p1',
+						[],
+						[
+							{ id: 'e1', source: 't1', target: 'a1', mode: 'pass' },
+							{ id: 'e2', source: 't1', target: 'a2', mode: 'pass' },
+						]
+					),
+				],
+			});
+			act(() => {
+				h.result.current.onEdgesChange([{ id: 'p1:e1', type: 'remove' }]);
+			});
+			expect(h.getState().pipelines[0].edges).toHaveLength(1);
+			expect(h.getState().pipelines[0].edges[0].id).toBe('e2');
+			expect(h.setSelectedEdgeId).toHaveBeenCalledWith(null);
+		});
+
+		it('no-op for non-remove edge changes', () => {
+			const h = setup({
+				pipelines: [pipeline('p1', [], [{ id: 'e1', source: 't1', target: 'a1', mode: 'pass' }])],
+			});
+			act(() => {
+				h.result.current.onEdgesChange([{ id: 'p1:e1', type: 'select', selected: true }]);
+			});
+			expect(h.setPipelineState).not.toHaveBeenCalled();
+			expect(h.getState().pipelines[0].edges).toHaveLength(1);
+		});
+
+		it('no-op in All Pipelines view (read-only)', () => {
+			const h = setup({
+				pipelines: [pipeline('p1', [], [{ id: 'e1', source: 't1', target: 'a1', mode: 'pass' }])],
+				isAllPipelinesView: true,
+			});
+			act(() => {
+				h.result.current.onEdgesChange([{ id: 'p1:e1', type: 'remove' }]);
+			});
+			expect(h.setPipelineState).not.toHaveBeenCalled();
+			expect(h.getState().pipelines[0].edges).toHaveLength(1);
+		});
+	});
+
+	describe('onNodeDrag (pipeline-group child translation)', () => {
+		// Regression: ReactFlow fires onNodesChange (which moves the group node)
+		// BEFORE onNodeDrag. An incremental per-frame delta read the group's
+		// already-updated position and computed zero, stranding the child nodes
+		// outside the dragged card. The absolute delta (start + total) must keep
+		// children locked to the group regardless of that ordering.
+		it('translates children by the full delta even when the group moved first', () => {
+			const groupId = 'pipeline-group:p1';
+			const group = {
+				id: groupId,
+				type: 'pipeline-group',
+				position: { x: 10, y: 10 },
+				data: {},
+			} as unknown as Node;
+			const child1 = {
+				id: 'p1:t1',
+				type: 'trigger',
+				position: { x: 20, y: 30 },
+				data: {},
+			} as unknown as Node;
+			const child2 = {
+				id: 'p1:a1',
+				type: 'agent',
+				position: { x: 60, y: 80 },
+				data: {},
+			} as unknown as Node;
+			const h = setup({
+				pipelines: [pipeline('p1', [])],
+				selectedPipelineId: null,
+				isAllPipelinesView: true,
+				nodes: [group, child1, child2],
+			});
+
+			// 1) Drag start snapshots child start positions.
+			act(() => {
+				h.result.current.onNodeDragStart({} as React.MouseEvent, group, [group]);
+			});
+			// 2) ReactFlow moves the GROUP node first (the bug trigger).
+			act(() => {
+				h.result.current.onNodesChange([
+					{ id: groupId, type: 'position', position: { x: 50, y: 70 }, dragging: true },
+				]);
+			});
+			// 3) onNodeDrag fires with the group already at its new position.
+			const movedGroup = { ...group, position: { x: 50, y: 70 } } as Node;
+			act(() => {
+				h.result.current.onNodeDrag({} as React.MouseEvent, movedGroup, [movedGroup]);
+			});
+
+			// Delta = (40, 60); children must track it exactly.
+			const dn = h.getDisplayNodes();
+			expect(dn.find((n) => n.id === 'p1:t1')!.position).toEqual({ x: 60, y: 90 });
+			expect(dn.find((n) => n.id === 'p1:a1')!.position).toEqual({ x: 100, y: 140 });
+			// The group node itself is moved by ReactFlow, not this handler.
+			expect(dn.find((n) => n.id === groupId)!.position).toEqual({ x: 50, y: 70 });
+		});
+
+		it('ignores drags that did not originate on a pipeline-group node', () => {
+			const child = {
+				id: 'p1:t1',
+				type: 'trigger',
+				position: { x: 20, y: 30 },
+				data: {},
+			} as unknown as Node;
+			const h = setup({
+				pipelines: [pipeline('p1', [])],
+				selectedPipelineId: null,
+				isAllPipelinesView: true,
+				nodes: [child],
+			});
+			// No dragStart for a group → ref is null → onNodeDrag is a no-op.
+			act(() => {
+				h.result.current.onNodeDrag({} as React.MouseEvent, child, [child]);
+			});
+			expect(h.getDisplayNodes().find((n) => n.id === 'p1:t1')!.position).toEqual({
+				x: 20,
+				y: 30,
+			});
 		});
 	});
 

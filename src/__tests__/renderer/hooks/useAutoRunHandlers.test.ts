@@ -1203,7 +1203,8 @@ describe('useAutoRunHandlers', () => {
 				'/test/project',
 				'/projects/worktrees/auto-run-main-0222',
 				'auto-run-main-0222',
-				undefined // no SSH
+				undefined, // no SSH
+				'main' // baseBranch from worktreeTarget
 			);
 
 			// Should have dispatched batch run to the new session (not the parent)
@@ -1340,7 +1341,8 @@ describe('useAutoRunHandlers', () => {
 				'/test/project',
 				'/test/worktrees/my-branch',
 				'my-branch',
-				undefined
+				undefined,
+				undefined // baseBranch absent → defaults to undefined (HEAD)
 			);
 		});
 

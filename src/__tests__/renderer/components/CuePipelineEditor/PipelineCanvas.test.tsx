@@ -86,6 +86,8 @@ function buildProps(overrides: Partial<PipelineCanvasProps> = {}): PipelineCanva
 		selectedEdgePipelineColor: '#06b6d4',
 		onUpdateEdge: vi.fn(),
 		onDeleteEdge: vi.fn(),
+		onTidy: vi.fn(),
+		onArrange: vi.fn(),
 		...overrides,
 	};
 }

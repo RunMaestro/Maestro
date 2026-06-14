@@ -94,6 +94,8 @@ import { buildSessionDeepLink, buildGroupDeepLink } from './deep-link-urls';
  *   {{CUE_CLI_PROMPT}}      - Prompt text passed via --prompt flag (cli.trigger events)
  *   {{CUE_SOURCE_AGENT_ID}} - Source agent ID passed via --source-agent-id (cli.trigger events)
  *   {{CUE_FROM_AGENT}}      - Triggering upstream agent ID or session ID — populated from sourceSessionId (agent.completed) or sourceAgentId (cli.trigger)
+ *
+ *   {{CUE_FIRE_AT}}         - Originally-scheduled fire timestamp (ISO-8601 with timezone) for time.once events
  */
 
 /**
@@ -202,12 +204,25 @@ export interface TemplateContext {
 		ghBaseBranch?: string;
 		ghAssignees?: string;
 		ghMergedAt?: string;
+		/**
+		 * Comments posted to this PR/issue since the previous Cue fire,
+		 * formatted as a single human-readable block. Empty on the initial
+		 * discovery fire; only populated for re-trigger fires when
+		 * `retrigger_on_comments` is enabled. Surfaced as {{CUE_NEW_COMMENTS}}.
+		 */
+		ghNewComments?: string;
+		/** "true" when this fire is a re-trigger (vs. initial discovery). */
+		ghIsRetrigger?: string;
+		/** Re-trigger fire count for this PR/issue (1-based; 0 on initial). */
+		ghRetriggerCount?: string;
 		// CLI trigger fields (cli.trigger)
 		cliPrompt?: string;
 		sourceAgentId?: string;
 		// Unified upstream-agent session ID — `sourceSessionId` for agent.completed,
 		// `sourceAgentId` for cli.trigger. Surfaced as {{CUE_FROM_AGENT}}.
 		fromAgent?: string;
+		// time.once fields — originally-scheduled fire timestamp (ISO-8601 with TZ).
+		fireAt?: string;
 	};
 }
 
@@ -253,8 +268,24 @@ export const TEMPLATE_VARIABLES = [
 	{ variable: '{{CUE_GH_BASE_BRANCH}}', description: 'PR base branch', cueOnly: true },
 	{ variable: '{{CUE_GH_BODY}}', description: 'PR/issue body (truncated)', cueOnly: true },
 	{ variable: '{{CUE_GH_BRANCH}}', description: 'PR head branch', cueOnly: true },
+	{
+		variable: '{{CUE_GH_IS_RETRIGGER}}',
+		description: '"true" if this fire is a re-trigger (vs. initial discovery)',
+		cueOnly: true,
+	},
 	{ variable: '{{CUE_GH_LABELS}}', description: 'Labels (comma-separated)', cueOnly: true },
 	{ variable: '{{CUE_GH_MERGED_AT}}', description: 'PR merge timestamp', cueOnly: true },
+	{
+		variable: '{{CUE_GH_RETRIGGER_COUNT}}',
+		description: 'Re-trigger fire count for this PR/issue (1-based; 0 on initial)',
+		cueOnly: true,
+	},
+	{
+		variable: '{{CUE_NEW_COMMENTS}}',
+		description:
+			'Comments posted since the previous fire (github.* events with retrigger_on_comments)',
+		cueOnly: true,
+	},
 	{ variable: '{{CUE_GH_NUMBER}}', description: 'PR/issue number', cueOnly: true },
 	{ variable: '{{CUE_GH_REPO}}', description: 'GitHub repo (owner/repo)', cueOnly: true },
 	{ variable: '{{CUE_GH_STATE}}', description: 'PR/issue state', cueOnly: true },
@@ -284,6 +315,11 @@ export const TEMPLATE_VARIABLES = [
 	{ variable: '{{CUE_FILE_EXT}}', description: 'Changed file extension', cueOnly: true },
 	{ variable: '{{CUE_FILE_NAME}}', description: 'Changed file name', cueOnly: true },
 	{ variable: '{{CUE_FILE_PATH}}', description: 'Changed file path', cueOnly: true },
+	{
+		variable: '{{CUE_FIRE_AT}}',
+		description: 'Originally-scheduled fire timestamp (time.once events)',
+		cueOnly: true,
+	},
 	{ variable: '{{CUE_RUN_ID}}', description: 'Cue run UUID', cueOnly: true },
 	{
 		variable: '{{CUE_SOURCE_DURATION}}',
@@ -464,9 +500,15 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		CUE_GH_BASE_BRANCH: context.cue?.ghBaseBranch || '',
 		CUE_GH_ASSIGNEES: context.cue?.ghAssignees || '',
 		CUE_GH_MERGED_AT: context.cue?.ghMergedAt || '',
+		CUE_NEW_COMMENTS: context.cue?.ghNewComments || '',
+		CUE_GH_IS_RETRIGGER: context.cue?.ghIsRetrigger || '',
+		CUE_GH_RETRIGGER_COUNT: context.cue?.ghRetriggerCount || '',
 		CUE_CLI_PROMPT: context.cue?.cliPrompt || '',
 		CUE_SOURCE_AGENT_ID: context.cue?.sourceAgentId || '',
 		CUE_FROM_AGENT: context.cue?.fromAgent || '',
+
+		// Cue time.once variables
+		CUE_FIRE_AT: context.cue?.fireAt || '',
 	};
 
 	// Add dynamic per-source output variables from the Cue context.

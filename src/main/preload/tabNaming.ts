@@ -23,6 +23,10 @@ export interface TabNamingConfig {
 		remoteId: string | null;
 		workingDirOverride?: string;
 	};
+	/** Claude token-source selection, forwarded so tab naming honors TUI/Dynamic/API. */
+	enableMaestroP?: boolean;
+	maestroPMode?: 'interactive' | 'dynamic';
+	maestroPPath?: string;
 }
 
 /**

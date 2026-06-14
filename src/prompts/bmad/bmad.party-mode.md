@@ -195,7 +195,7 @@ If conversation naturally concludes:
 
 The following upstream BMAD files are embedded so this Maestro prompt remains self-contained.
 
-## src/core/workflows/bmad-party-mode/steps/step-02-discussion-orchestration.md
+## src/core/skills/bmad-party-mode/steps/step-02-discussion-orchestration.md
 
 ```md
 # Step 2: Discussion Orchestration and Multi-Agent Conversation
@@ -387,7 +387,7 @@ When user selects 'E' or exit conditions are met, load `./step-03-graceful-exit.
 Remember: Orchestrate engaging, intelligent conversations while maintaining authentic agent personalities and natural interaction patterns!
 ```
 
-## src/core/workflows/bmad-party-mode/steps/step-03-graceful-exit.md
+## src/core/skills/bmad-party-mode/steps/step-03-graceful-exit.md
 
 ````md
 # Step 3: Graceful Exit and Party Mode Conclusion

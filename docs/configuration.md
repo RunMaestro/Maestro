@@ -10,18 +10,18 @@ Open Settings with `Cmd+,` / `Ctrl+,` or via **Quick Actions** (`Cmd+K` / `Ctrl+
 
 Settings are organized into tabs:
 
-| Tab                             | Contents                                                                                                                                                                                                                  |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **General**                     | About Me (conductor profile), shell configuration, input send behavior, default toggles (history, thinking), automatic tab naming, power management, updates, privacy, usage stats, storage location                      |
-| **Display**                     | Font family and size, terminal width, log level and buffer, max output lines per response, document graph settings, context window warnings, [Accessibility](#accessibility) (Color Blind Mode, Bionify reading emphasis) |
-| **Shortcuts**                   | Customize keyboard shortcuts (see [Keyboard Shortcuts](./keyboard-shortcuts))                                                                                                                                             |
-| **Themes**                      | Dark, light, and vibe mode themes, custom theme builder with import/export                                                                                                                                                |
-| **Notifications**               | OS notifications, custom command notifications, toast notification duration                                                                                                                                               |
-| **AI Commands**                 | View and edit slash commands, [Spec-Kit](./speckit-commands), [OpenSpec](./openspec-commands), and [BMAD](./bmad-commands) prompts                                                                                        |
-| **Maestro Prompts**             | Browse and edit the 23 core system prompts (wizard, Auto Run, group chat, context, etc.). Changes take effect immediately; reset to bundled defaults at any time                                                          |
-| **SSH Hosts**                   | Configure remote hosts for [SSH agent execution](./ssh-remote-execution)                                                                                                                                                  |
-| **Environment**                 | Global environment variables that cascade to all agents and terminal sessions                                                                                                                                             |
-| **WakaTime** _(in General tab)_ | WakaTime integration toggle, API key, detailed file tracking                                                                                                                                                              |
+| Tab                             | Contents                                                                                                                                                                                                                                                                                             |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **General**                     | About Me (conductor profile), [system-wide hotkey to summon Maestro](./keyboard-shortcuts#system-wide-hotkey-summon-maestro), shell configuration, input send behavior, default toggles (history, thinking), automatic tab naming, power management, updates, privacy, usage stats, storage location |
+| **Display**                     | Font family and size, terminal width, log level and buffer, max output lines per response, document graph settings, context window warnings, [Accessibility](#accessibility) (Color Blind Mode, Bionify reading emphasis)                                                                            |
+| **Shortcuts**                   | Customize keyboard shortcuts (see [Keyboard Shortcuts](./keyboard-shortcuts))                                                                                                                                                                                                                        |
+| **Themes**                      | Dark, light, and vibe mode themes, custom theme builder with import/export                                                                                                                                                                                                                           |
+| **Notifications**               | OS notifications, custom command notifications, toast notification duration and width                                                                                                                                                                                                                |
+| **AI Commands**                 | View and edit slash commands, [Spec-Kit](./speckit-commands), [OpenSpec](./openspec-commands), and [BMAD](./bmad-commands) prompts                                                                                                                                                                   |
+| **Maestro Prompts**             | Browse and edit the 23 core system prompts (wizard, Auto Run, group chat, context, etc.). Changes take effect immediately; reset to bundled defaults at any time                                                                                                                                     |
+| **SSH Hosts**                   | Configure remote hosts for [SSH agent execution](./ssh-remote-execution)                                                                                                                                                                                                                             |
+| **Environment**                 | Global environment variables that cascade to all agents and terminal sessions                                                                                                                                                                                                                        |
+| **WakaTime** _(in General tab)_ | WakaTime integration toggle, API key, detailed file tracking                                                                                                                                                                                                                                         |
 
 ## Maestro Prompts
 
@@ -32,7 +32,7 @@ Maestro ships with 23 core system prompts that control wizard conversations, Aut
 1. Open **Settings** (`Cmd+,` / `Ctrl+,`) → **Maestro Prompts** tab
 2. Select a prompt from the category list on the left
 3. Edit the content in the editor
-4. Click **Save** — changes take effect immediately (no restart needed)
+4. Click **Save** - changes take effect immediately (no restart needed)
 
 **To reset a prompt:**
 
@@ -54,10 +54,10 @@ The toggle applies across the desktop app:
 
 | Surface                                     | Default                     | Color Blind Mode           |
 | ------------------------------------------- | --------------------------- | -------------------------- |
-| Agent status dot — Ready                    | Theme green                 | Teal (`#009988`)           |
-| Agent status dot — Thinking                 | Theme yellow                | Orange (`#EE7733`)         |
-| Agent status dot — Error                    | Theme red                   | Vermillion (`#CC3311`)     |
-| Agent status dot — Connecting               | Orange `#ff8800`            | Strong Blue (`#0077BB`)    |
+| Agent status dot - Ready                    | Theme green                 | Teal (`#009988`)           |
+| Agent status dot - Thinking                 | Theme yellow                | Orange (`#EE7733`)         |
+| Agent status dot - Error                    | Theme red                   | Vermillion (`#CC3311`)     |
+| Agent status dot - Connecting               | Orange `#ff8800`            | Strong Blue (`#0077BB`)    |
 | Diff viewer add / remove rows               | Green / red tints           | Teal / vermillion tints    |
 | Diff viewer add / remove counts             | `text-green-500/-red-500`   | Teal / vermillion          |
 | File explorer git status icons              | Theme success/error/warning | Teal / vermillion / orange |
@@ -69,10 +69,10 @@ Surfaces that aren't recolored: theme accent itself, file extension labels in pl
 
 ### Bionify Emphasis (Reading Mode)
 
-Bionify-style emphasis bolds the leading fixation portion of each word to make long-form reading easier. It is opt-in and applies **only** to dedicated readers — File Preview and Auto Run document panes. Terminals, logs, chat input, and AI output stay unchanged so they remain easy to copy/paste.
+Bionify-style emphasis bolds the leading fixation portion of each word to make long-form reading easier. It is opt-in and applies **only** to dedicated readers - File Preview and Auto Run document panes. Terminals, logs, chat input, and AI output stay unchanged so they remain easy to copy/paste.
 
-- **Intensity** — Soft / Default / Strong. Controls how aggressive the fixation emphasis is.
-- **Algorithm** — Advanced override of the fixation formula. Format: `[+|-] N1 N2 N3 N4 frac` where `-` skips common English words (`a`, `and`, `the`) and `+` highlights every word. The four integers set how many characters are emphasized for words of length 1–4, and `frac` is the fraction of characters emphasized for longer words (e.g. `0.4` = first 40%). Default: `- 0 1 1 2 0.4`. Click the **info** icon next to the toggle for the in-app reference.
+- **Intensity** - Soft / Default / Strong. Controls how aggressive the fixation emphasis is.
+- **Algorithm** - Advanced override of the fixation formula. Format: `[+|-] N1 N2 N3 N4 frac` where `-` skips common English words (`a`, `and`, `the`) and `+` highlights every word. The four integers set how many characters are emphasized for words of length 1-4, and `frac` is the fraction of characters emphasized for longer words (e.g. `0.4` = first 40%). Default: `- 0 1 1 2 0.4`. Click the **info** icon next to the toggle for the in-app reference.
 
 ## Conductor Profile
 
@@ -240,7 +240,7 @@ Execute a custom command when AI tasks complete. Use any notification method tha
 **To configure:**
 
 1. Toggle **Enable Custom Notification** on
-2. Set the **Command Chain** — the command(s) that accept text via stdin:
+2. Set the **Command Chain** - the command(s) that accept text via stdin:
    - **macOS:** `say` (text-to-speech), `afplay /path/to/sound.wav` (audio file)
    - **Linux:** `notify-send "Maestro"`, `espeak`, `paplay /path/to/sound.wav`
    - **Windows:** PowerShell scripts or third-party tools
@@ -250,10 +250,10 @@ Execute a custom command when AI tasks complete. Use any notification method tha
 
 **Command chaining:** Chain multiple commands together using pipes to mix and match tools. Examples:
 
-- `say` — speak aloud using macOS text-to-speech
-- `tee ~/log.txt | say` — log to a file AND speak aloud
-- `notify-send "Maestro" && espeak` — show desktop notification and speak (Linux)
-- `afplay ~/sounds/done.wav` — play a sound file (macOS)
+- `say` - speak aloud using macOS text-to-speech
+- `tee ~/log.txt | say` - log to a file AND speak aloud
+- `notify-send "Maestro" && espeak` - show desktop notification and speak (Linux)
+- `afplay ~/sounds/done.wav` - play a sound file (macOS)
 
 ### Toast Notifications
 
@@ -264,6 +264,15 @@ In-app toast notifications appear in the corner when events occur. Configure how
 | **Off**                  | Toasts are disabled entirely              |
 | **5s / 10s / 20s / 30s** | Toast disappears after the specified time |
 | **Never**                | Toast stays until manually dismissed      |
+
+You can also set how wide toasts render:
+
+| Width       | Behavior                                                                                  |
+| ----------- | ----------------------------------------------------------------------------------------- |
+| **Small**   | Default compact size                                                                      |
+| **Medium**  | Roughly 1.4x wider than Small                                                             |
+| **Large**   | Roughly 1.8x wider than Small, for longer content                                         |
+| **Dynamic** | Matches the Right Bar width, filling that column and re-sizing live as you drag the panel |
 
 ### When Notifications Trigger
 
@@ -314,7 +323,7 @@ Sleep prevention on Linux uses standard freedesktop.org interfaces:
 3. Some systems may need `gnome-screensaver`, `xscreensaver`, or equivalent
 
 <Info>
-On unsupported Linux configurations, the feature silently does nothing — your system will sleep normally according to its power settings.
+On unsupported Linux configurations, the feature silently does nothing - your system will sleep normally according to its power settings.
 </Info>
 
 ## WakaTime Integration
@@ -329,7 +338,7 @@ Maestro integrates with [WakaTime](https://wakatime.com) to track coding activit
 
 ### What Gets Tracked
 
-By default, Maestro sends **app-level heartbeats** — WakaTime sees time spent in Maestro as a single project entry with language detected from your project's manifest files (e.g., `tsconfig.json` → TypeScript).
+By default, Maestro sends **app-level heartbeats** - WakaTime sees time spent in Maestro as a single project entry with language detected from your project's manifest files (e.g., `tsconfig.json` → TypeScript).
 
 ### Detailed File Tracking
 

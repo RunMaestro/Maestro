@@ -207,6 +207,38 @@ describe('evaluateCustomKeyEvent', () => {
 		expect(evaluateCustomKeyEvent(e)).toBe('passthrough');
 	});
 
+	// Scrollback navigation: Option+Up/Down → scroll one line
+	it('returns scroll action (-1) for Option+Up', () => {
+		const e = makeKeyEvent({ key: 'ArrowUp', altKey: true, type: 'keydown' });
+		expect(evaluateCustomKeyEvent(e)).toEqual({ action: 'scroll', amount: -1 });
+	});
+
+	it('returns scroll action (1) for Option+Down', () => {
+		const e = makeKeyEvent({ key: 'ArrowDown', altKey: true, type: 'keydown' });
+		expect(evaluateCustomKeyEvent(e)).toEqual({ action: 'scroll', amount: 1 });
+	});
+
+	// Scrollback navigation: Cmd+Up/Down → jump to top/bottom
+	it('returns scroll action (top) for Cmd+Up', () => {
+		const e = makeKeyEvent({ key: 'ArrowUp', metaKey: true, type: 'keydown' });
+		expect(evaluateCustomKeyEvent(e)).toEqual({ action: 'scroll', amount: 'top' });
+	});
+
+	it('returns scroll action (bottom) for Cmd+Down', () => {
+		const e = makeKeyEvent({ key: 'ArrowDown', metaKey: true, type: 'keydown' });
+		expect(evaluateCustomKeyEvent(e)).toEqual({ action: 'scroll', amount: 'bottom' });
+	});
+
+	it('does not scroll on keyup for Option+Up', () => {
+		const e = makeKeyEvent({ key: 'ArrowUp', altKey: true, type: 'keyup' });
+		expect(evaluateCustomKeyEvent(e)).toBe('passthrough');
+	});
+
+	it('does not treat Alt+Meta+Up as scroll (lets app shortcut through)', () => {
+		const e = makeKeyEvent({ key: 'ArrowUp', altKey: true, metaKey: true, type: 'keydown' });
+		expect(evaluateCustomKeyEvent(e)).toBe('passthrough');
+	});
+
 	it('returns "handle" for regular character keys', () => {
 		const e = makeKeyEvent({ key: 'a' });
 		expect(evaluateCustomKeyEvent(e)).toBe('handle');

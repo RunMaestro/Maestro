@@ -4,7 +4,7 @@ description: Submit bug reports and feature requests through Maestro's conversat
 icon: message-smile
 ---
 
-Maestro includes a built-in feedback system that uses AI to help you craft well-structured GitHub issues. Instead of filling out a form, you have a short conversation — the AI asks clarifying questions, checks for duplicates, and submits a polished issue on your behalf.
+Maestro includes a built-in feedback system that uses AI to help you craft well-structured GitHub issues. Instead of filling out a form, you have a short conversation - the AI asks clarifying questions, checks for duplicates, and submits a polished issue on your behalf.
 
 ## Prerequisites
 
@@ -31,10 +31,10 @@ Click **Start** to begin.
 
 ### 3. Describe Your Issue
 
-Tell the AI what's on your mind — a bug you hit, a feature you want, or general feedback. The AI classifies your input and asks targeted follow-up questions:
+Tell the AI what's on your mind - a bug you hit, a feature you want, or general feedback. The AI classifies your input and asks targeted follow-up questions:
 
-- **Bug reports** — What happened? What was expected? Steps to reproduce?
-- **Feature requests** — Use case? Desired outcome? Why it matters?
+- **Bug reports** - What happened? What was expected? Steps to reproduce?
+- **Feature requests** - Use case? Desired outcome? Why it matters?
 
 A confidence bar at the top tracks how well the AI understands your issue. As you answer questions, it fills toward 100%.
 
@@ -42,7 +42,7 @@ A confidence bar at the top tracks how well the AI understands your issue. As yo
 
 **Optional attachments:**
 
-- Drag and drop up to 5 screenshots (PNG, JPG, GIF, or WebP — 10 MB each)
+- Drag and drop up to 5 screenshots (PNG, JPG, GIF, or WebP - 10 MB each)
 - Check **Include support package** to attach debug information
 
 ### 4. Review and Submit
@@ -55,8 +55,8 @@ Once understanding reaches **80%**, a green **Submit Feedback** button appears. 
 
 As you describe your issue, Maestro searches existing GitHub issues in the background. If similar issues are found, an inline card appears listing them. You can:
 
-- **Subscribe to an existing issue** — Your context is added as a comment with a +1 reaction
-- **Create a new issue anyway** — Bypasses the match and files a fresh issue
+- **Subscribe to an existing issue** - Your context is added as a comment with a +1 reaction
+- **Create a new issue anyway** - Bypasses the match and files a fresh issue
 
 This prevents duplicate reports while still capturing your unique context.
 

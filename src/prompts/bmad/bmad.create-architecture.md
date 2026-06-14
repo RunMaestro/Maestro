@@ -29,12 +29,6 @@ Load config from `{project-root}/_bmad/bmm/config.yaml` and resolve:
 - `date` as system-generated current datetime
 - ✅ YOU MUST ALWAYS SPEAK OUTPUT In your Agent communication style with the config `{communication_language}`
 
-### Paths
-
-- `installed_path` = `.`
-- `template_path` = `{installed_path}/architecture-decision-template.md`
-- `data_files_path` = `{installed_path}/data/`
-
 ---
 
 ## EXECUTION
@@ -48,23 +42,6 @@ Read fully and follow: `./steps/step-01-init.md` to begin the workflow.
 # Bundled Reference Assets
 
 The following upstream BMAD files are embedded so this Maestro prompt remains self-contained.
-
-## src/bmm/workflows/3-solutioning/bmad-create-architecture/architecture-decision-template.md
-
-```md
----
-stepsCompleted: []
-inputDocuments: []
-workflowType: 'architecture'
-project_name: '{{project_name}}'
-user_name: '{{user_name}}'
-date: '{{date}}'
----
-
-# Architecture Decision Document
-
-_This document builds collaboratively through step-by-step discovery. Sections are appended as we work through each architectural decision together._
-```
 
 ## src/bmm/workflows/3-solutioning/bmad-create-architecture/steps/step-01-init.md
 
@@ -129,8 +106,8 @@ Discover and load context documents using smart discovery. Documents can be in t
 
 - {planning_artifacts}/\*\*
 - {output_folder}/\*\*
-- {product_knowledge}/\*\*
-- docs/\*\*
+- {project_knowledge}/\*\*
+- {project-root}/docs/\*\*
 
 Also - when searching - documents can be a single markdown file, or a folder with an index and multiple files. For Example, if searching for `*foo*.md` and not found, also search for a folder called _foo_/index.md (which indicates sharded content)
 
@@ -140,7 +117,7 @@ Try to discover the following:
 - Product Requirements Document (`*prd*.md`)
 - UX Design (`*ux-design*.md`) and other
 - Research Documents (`*research*.md`)
-- Project Documentation (generally multiple documents might be found for this in the `{product_knowledge}` or `docs` folder.)
+- Project Documentation (generally multiple documents might be found for this in the `{project_knowledge}` or `{project-root}/docs` folder.)
 - Project Context (`**/project-context.md`)
 
 <critical>Confirm what you have found with the user, along with asking if the user wants to provide anything else. Only after this confirmation will you proceed to follow the loading rules</critical>
@@ -168,7 +145,7 @@ Before proceeding, verify we have the essential inputs:
 
 #### C. Create Initial Document
 
-Copy the template from `{installed_path}/architecture-decision-template.md` to `{planning_artifacts}/architecture.md`
+Copy the template from `../architecture-decision-template.md` to `{planning_artifacts}/architecture.md`
 
 #### D. Complete Initialization and Report
 
@@ -405,6 +382,23 @@ Valid step files to load:
 Remember: The goal is smooth, transparent resumption that respects the work already done while giving the user control over how to proceed.
 ```
 
+## src/bmm/workflows/3-solutioning/bmad-create-architecture/architecture-decision-template.md
+
+```md
+---
+stepsCompleted: []
+inputDocuments: []
+workflowType: 'architecture'
+project_name: '{{project_name}}'
+user_name: '{{user_name}}'
+date: '{{date}}'
+---
+
+# Architecture Decision Document
+
+_This document builds collaboratively through step-by-step discovery. Sections are appended as we work through each architectural decision together._
+```
+
 ## src/bmm/workflows/3-solutioning/bmad-create-architecture/steps/step-02-context.md
 
 ````md
@@ -442,7 +436,7 @@ This step will generate content and present choices:
 ## PROTOCOL INTEGRATION:
 
 - When 'A' selected: Invoke the `bmad-advanced-elicitation` skill
-- When 'P' selected: Read fully and follow: {project-root}/\_bmad/core/workflows/bmad-party-mode/workflow.md
+- When 'P' selected: Invoke the `bmad-party-mode` skill
 - PROTOCOLS always return to display this step's A/P/C menu after the A or P have completed
 - User accepts/rejects protocol changes before proceeding
 
@@ -589,7 +583,7 @@ Show the generated content and present choices:
 
 #### If 'P' (Party Mode):
 
-- Read fully and follow: {project-root}/\_bmad/core/workflows/bmad-party-mode/workflow.md with the current project context
+- Invoke the `bmad-party-mode` skill with the current project context
 - Process the collaborative improvements to architectural understanding
 - Ask user: "Accept these changes to the project context analysis? (y/n)"
 - If yes: Update content with improvements, then return to A/P/C menu

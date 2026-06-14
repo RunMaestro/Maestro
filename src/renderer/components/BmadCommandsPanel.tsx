@@ -4,7 +4,7 @@ import {
 	Save,
 	X,
 	RotateCcw,
-	RefreshCw,
+	Lock,
 	ExternalLink,
 	ChevronDown,
 	ChevronRight,
@@ -30,7 +30,6 @@ export function BmadCommandsPanel({ theme, enabled, onEnabledChange }: BmadComma
 	const [commands, setCommands] = useState<BmadCommand[]>([]);
 	const [metadata, setMetadata] = useState<BmadMetadata | null>(null);
 	const [editingCommand, setEditingCommand] = useState<EditingCommand | null>(null);
-	const [isRefreshing, setIsRefreshing] = useState(false);
 	const [expandedCommands, setExpandedCommands] = useState<Set<string>>(new Set());
 	const [isLoading, setIsLoading] = useState(true);
 
@@ -108,24 +107,6 @@ export function BmadCommandsPanel({ theme, enabled, onEnabledChange }: BmadComma
 			}
 		} catch (error) {
 			captureException(error, { extra: { context: 'BmadCommandsPanel.handleReset' } });
-		}
-	};
-
-	const handleRefresh = async () => {
-		setIsRefreshing(true);
-		try {
-			const result = await window.maestro.bmad.refresh();
-			if (result.success && result.metadata) {
-				setMetadata(result.metadata);
-				const promptsResult = await window.maestro.bmad.getPrompts();
-				if (promptsResult.success && promptsResult.commands) {
-					setCommands(promptsResult.commands);
-				}
-			}
-		} catch (error) {
-			captureException(error, { extra: { context: 'BmadCommandsPanel.handleRefresh' } });
-		} finally {
-			setIsRefreshing(false);
 		}
 	};
 
@@ -227,33 +208,40 @@ export function BmadCommandsPanel({ theme, enabled, onEnabledChange }: BmadComma
 
 			{metadata && (
 				<div
-					className="flex items-center justify-between p-3 rounded-lg border"
+					className="p-3 rounded-lg border space-y-2"
 					style={{ backgroundColor: theme.colors.bgMain, borderColor: theme.colors.border }}
 				>
-					<div className="text-xs" style={{ color: theme.colors.textDim }}>
-						<span>Version: </span>
-						<span className="font-mono" style={{ color: theme.colors.textMain }}>
-							{metadata.sourceVersion}
-						</span>
-						<span className="mx-2">•</span>
-						<span>Updated: </span>
-						<span style={{ color: theme.colors.textMain }}>
-							{formatDate(metadata.lastRefreshed)}
+					<div className="flex items-center justify-between">
+						<div className="text-xs" style={{ color: theme.colors.textDim }}>
+							<span>Version: </span>
+							<span className="font-mono" style={{ color: theme.colors.textMain }}>
+								{metadata.sourceVersion}
+							</span>
+							<span className="mx-2">•</span>
+							<span>Updated: </span>
+							<span style={{ color: theme.colors.textMain }}>
+								{formatDate(metadata.lastRefreshed)}
+							</span>
+						</div>
+						<span
+							className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium flex-shrink-0"
+							style={{
+								backgroundColor: theme.colors.bgActivity,
+								color: theme.colors.textDim,
+								border: `1px solid ${theme.colors.border}`,
+							}}
+							title="BMAD updates are intentionally disabled"
+						>
+							<Lock className="w-3 h-3" />
+							Frozen
 						</span>
 					</div>
-					<button
-						onClick={handleRefresh}
-						disabled={isRefreshing}
-						className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-all disabled:opacity-50"
-						style={{
-							backgroundColor: theme.colors.bgActivity,
-							color: theme.colors.textMain,
-							border: `1px solid ${theme.colors.border}`,
-						}}
-					>
-						<RefreshCw className={`w-3 h-3 ${isRefreshing ? 'animate-spin' : ''}`} />
-						{isRefreshing ? 'Checking...' : 'Check for Updates'}
-					</button>
+					<p className="text-xs leading-relaxed" style={{ color: theme.colors.textDim }}>
+						Pinned to v6.2.0, the last BMAD release whose workflows run as standalone slash
+						commands. Newer releases (currently 6.8.0) moved to a skills-based architecture that
+						requires a local install and a resolver script, so they are not compatible with Maestro.
+						Updates are disabled.
+					</p>
 				</div>
 			)}
 

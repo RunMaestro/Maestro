@@ -38,6 +38,7 @@ import {
 	addAiTabToUnifiedHistory,
 	reopenUnifiedClosedTab,
 	setActiveTab,
+	aiTabFocusFields,
 	getWriteModeTab,
 	getBusyTabs,
 	getNavigableTabs,
@@ -46,6 +47,7 @@ import {
 	navigateToTabByIndex,
 	navigateToLastTab,
 	navigateToUnifiedTabByIndex,
+	navigateToUnifiedTabById,
 	navigateToLastUnifiedTab,
 	navigateToNextUnifiedTab,
 	navigateToPrevUnifiedTab,
@@ -57,6 +59,8 @@ import {
 	ensureInUnifiedTabOrder,
 	getRepairedUnifiedTabOrder,
 	findNextUnreadSession,
+	resolveQueuedItemTarget,
+	markTabRunningQueuedItem,
 } from '../../../renderer/utils/tabHelpers';
 import type { LogEntry } from '../../../renderer/types';
 import type {
@@ -65,6 +69,7 @@ import type {
 	ClosedTab,
 	ClosedTabEntry,
 	FilePreviewTab,
+	QueuedItem,
 } from '../../../renderer/types';
 import { createMockAITab as createMockTab, createMockFileTab } from '../../helpers/mockTab';
 import { createMockSession } from '../../helpers/mockSession';
@@ -565,23 +570,29 @@ describe('tabHelpers', () => {
 			expect(result!.session.activeTabId).toBe('tab-1');
 		});
 
-		it('sets session to idle when closing the last busy tab', () => {
+		it('keeps session busy and tracks the closed tab in orphanedThinkingTabs when its agent is still running', () => {
 			const busyTab = createMockTab({ id: 'tab-busy', state: 'busy' });
 			const idleTab = createMockTab({ id: 'tab-idle', state: 'idle' });
+			const thinkingStartTime = Date.now();
 			const session = createMockSession({
 				aiTabs: [busyTab, idleTab],
 				activeTabId: 'tab-busy',
 				state: 'busy',
 				busySource: 'ai',
-				thinkingStartTime: Date.now(),
+				thinkingStartTime,
 			});
 
 			const result = closeTab(session, 'tab-busy');
 
 			expect(result).not.toBeNull();
-			expect(result!.session.state).toBe('idle');
-			expect(result!.session.busySource).toBeUndefined();
-			expect(result!.session.thinkingStartTime).toBeUndefined();
+			// Session stays busy — the underlying agent process is still running
+			// even though the tab is no longer visible.
+			expect(result!.session.state).toBe('busy');
+			expect(result!.session.busySource).toBe('ai');
+			expect(result!.session.thinkingStartTime).toBe(thinkingStartTime);
+			// The closed busy tab is tracked for the thinking pill.
+			expect(result!.session.orphanedThinkingTabs).toHaveLength(1);
+			expect(result!.session.orphanedThinkingTabs![0].id).toBe('tab-busy');
 		});
 
 		it('keeps session busy when another tab is still busy', () => {
@@ -636,14 +647,15 @@ describe('tabHelpers', () => {
 			expect(result!.session.busySource).toBe('terminal');
 		});
 
-		it('clears session busy state when closing busy tab that was the only tab (fresh tab created)', () => {
+		it('keeps session busy via orphanedThinkingTabs when closing the only (busy) tab and replacing it with a fresh idle tab', () => {
 			const busyTab = createMockTab({ id: 'tab-only', state: 'busy' });
+			const thinkingStartTime = Date.now();
 			const session = createMockSession({
 				aiTabs: [busyTab],
 				activeTabId: 'tab-only',
 				state: 'busy',
 				busySource: 'ai',
-				thinkingStartTime: Date.now(),
+				thinkingStartTime,
 			});
 
 			const result = closeTab(session, 'tab-only');
@@ -652,10 +664,104 @@ describe('tabHelpers', () => {
 			// A fresh idle tab was created to replace the closed one
 			expect(result!.session.aiTabs).toHaveLength(1);
 			expect(result!.session.aiTabs[0].state).toBe('idle');
-			// Session should be idle since the new tab is idle
-			expect(result!.session.state).toBe('idle');
-			expect(result!.session.busySource).toBeUndefined();
-			expect(result!.session.thinkingStartTime).toBeUndefined();
+			// Session stays busy — the orphaned tab is still thinking in the background.
+			expect(result!.session.state).toBe('busy');
+			expect(result!.session.busySource).toBe('ai');
+			expect(result!.session.thinkingStartTime).toBe(thinkingStartTime);
+			expect(result!.session.orphanedThinkingTabs).toHaveLength(1);
+			expect(result!.session.orphanedThinkingTabs![0].id).toBe('tab-only');
+		});
+
+		describe('execution queue preservation on close (fire-and-forget)', () => {
+			const makeQueuedItem = (tabId: string, text: string): QueuedItem => ({
+				id: `q-${text}`,
+				timestamp: Date.now(),
+				tabId,
+				type: 'message',
+				text,
+			});
+
+			it('keeps queued items for a closed background tab and orphans the tab so they still send', () => {
+				const tab1 = createMockTab({ id: 'tab-1' });
+				const tab2 = createMockTab({ id: 'tab-2' });
+				const session = createMockSession({
+					aiTabs: [tab1, tab2],
+					activeTabId: 'tab-1',
+					executionQueue: [makeQueuedItem('tab-2', 'build api')],
+				});
+
+				const result = closeTab(session, 'tab-2');
+
+				// The queued message survives the close: it fires in the background
+				// against the now-orphaned tab rather than being discarded.
+				expect(result!.session.executionQueue).toHaveLength(1);
+				expect(result!.session.executionQueue[0].tabId).toBe('tab-2');
+				// The closed tab is orphaned so it stays a valid dispatch target.
+				expect(result!.session.orphanedThinkingTabs).toHaveLength(1);
+				expect(result!.session.orphanedThinkingTabs![0].id).toBe('tab-2');
+			});
+
+			it('keeps the queued item when the only tab is closed and orphans that tab', () => {
+				const tab = createMockTab({ id: 'tab-1' });
+				const session = createMockSession({
+					aiTabs: [tab],
+					activeTabId: 'tab-1',
+					executionQueue: [makeQueuedItem('tab-1', 'deploy')],
+				});
+
+				const result = closeTab(session, 'tab-1');
+
+				// A fresh tab replaces the closed one in the tab bar, but the queued
+				// item still belongs to the orphaned original and fires in the
+				// background.
+				expect(result!.session.executionQueue).toHaveLength(1);
+				expect(result!.session.executionQueue[0].tabId).toBe('tab-1');
+				expect(result!.session.orphanedThinkingTabs).toHaveLength(1);
+				expect(result!.session.orphanedThinkingTabs![0].id).toBe('tab-1');
+			});
+
+			it("preserves each tab's queued items as that tab is closed", () => {
+				const tab1 = createMockTab({ id: 'tab-1' });
+				const tab2 = createMockTab({ id: 'tab-2' });
+				const tab3 = createMockTab({ id: 'tab-3' });
+				let session = createMockSession({
+					aiTabs: [tab1, tab2, tab3],
+					activeTabId: 'tab-1',
+					executionQueue: [makeQueuedItem('tab-2', 'msg-b'), makeQueuedItem('tab-3', 'msg-c')],
+				});
+
+				session = closeTab(session, 'tab-2')!.session;
+				// Closing tab-2 keeps both queued items; tab-2 is orphaned.
+				expect(session.executionQueue).toHaveLength(2);
+				expect(session.orphanedThinkingTabs?.map((t) => t.id)).toContain('tab-2');
+
+				const result = closeTab(session, 'tab-3')!;
+
+				// Closing tab-3 keeps both items; both closed tabs are now orphaned.
+				expect(result.session.executionQueue).toHaveLength(2);
+				expect(result.session.orphanedThinkingTabs?.map((t) => t.id)).toEqual(
+					expect.arrayContaining(['tab-2', 'tab-3'])
+				);
+			});
+
+			it('does not orphan a closed idle tab that has no queued items', () => {
+				const tab1 = createMockTab({ id: 'tab-1' });
+				const tab2 = createMockTab({ id: 'tab-2' });
+				const queue = [makeQueuedItem('tab-1', 'keep me')];
+				const session = createMockSession({
+					aiTabs: [tab1, tab2],
+					activeTabId: 'tab-1',
+					executionQueue: queue,
+				});
+
+				const result = closeTab(session, 'tab-2');
+
+				// tab-2 had no queued work and was idle, so nothing is orphaned and
+				// tab-1's queued item is left untouched.
+				expect(result!.session.executionQueue).toHaveLength(1);
+				expect(result!.session.executionQueue[0].tabId).toBe('tab-1');
+				expect(result!.session.orphanedThinkingTabs ?? []).toHaveLength(0);
+			});
 		});
 	});
 
@@ -858,6 +964,70 @@ describe('tabHelpers', () => {
 			expect(result!.session).not.toBe(session);
 			expect(result!.session.inputMode).toBe('ai');
 		});
+
+		it('clears activeBrowserTabId when selecting an AI tab (regression: browser outranks AI)', () => {
+			// A browser tab was active. Browser outranks AI in the render precedence
+			// (terminal > file > browser > ai), so a lingering activeBrowserTabId would
+			// keep the browser view on screen even though activeTabId points at the AI tab.
+			const tab = createMockTab({ id: 'tab-1' });
+			const session = createMockSession({
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+				activeBrowserTabId: 'browser-tab-1',
+				inputMode: 'ai',
+			});
+
+			const result = setActiveTab(session, 'tab-1');
+
+			expect(result!.session).not.toBe(session);
+			expect(result!.session.activeBrowserTabId).toBeNull();
+			expect(result!.session.activeTabId).toBe('tab-1');
+		});
+	});
+
+	describe('aiTabFocusFields', () => {
+		it('clears all non-AI active-tab ids and forces AI mode', () => {
+			const fields = aiTabFocusFields('tab-1');
+			expect(fields).toEqual({
+				activeTabId: 'tab-1',
+				activeFileTabId: null,
+				activeTerminalTabId: null,
+				activeBrowserTabId: null,
+				inputMode: 'ai',
+			});
+		});
+
+		it('omits activeTabId when no tabId is given (keep current AI tab)', () => {
+			const fields = aiTabFocusFields();
+			expect(fields).not.toHaveProperty('activeTabId');
+			expect(fields).toEqual({
+				activeFileTabId: null,
+				activeTerminalTabId: null,
+				activeBrowserTabId: null,
+				inputMode: 'ai',
+			});
+		});
+
+		it('produces a patch that lands on the AI tab regardless of prior view', () => {
+			// Spreading the patch over a session last viewed on a browser tab must
+			// surface the AI tab, not the browser tab.
+			const session = createMockSession({
+				aiTabs: [createMockTab({ id: 'tab-1' })],
+				activeTabId: 'tab-1',
+				activeFileTabId: 'file-1',
+				activeTerminalTabId: 'term-1',
+				activeBrowserTabId: 'browser-1',
+				inputMode: 'ai',
+			});
+
+			const next = { ...session, ...aiTabFocusFields('tab-1') };
+
+			expect(next.activeFileTabId).toBeNull();
+			expect(next.activeTerminalTabId).toBeNull();
+			expect(next.activeBrowserTabId).toBeNull();
+			expect(next.activeTabId).toBe('tab-1');
+			expect(next.inputMode).toBe('ai');
+		});
 	});
 
 	describe('getWriteModeTab', () => {
@@ -928,6 +1098,47 @@ describe('tabHelpers', () => {
 			expect(result).toHaveLength(2);
 			expect(result).toContain(tab1);
 			expect(result).toContain(tab3);
+		});
+
+		it('ignores busy orphaned tabs by default', () => {
+			const tab1 = createMockTab({ id: 'tab-1', state: 'idle' });
+			const orphan = createMockTab({ id: 'orphan-1', state: 'busy' });
+			const session = createMockSession({
+				aiTabs: [tab1],
+				orphanedThinkingTabs: [orphan],
+			});
+
+			expect(getBusyTabs(session)).toEqual([]);
+		});
+
+		it('includes busy orphaned tabs when includeOrphans is set', () => {
+			const tab1 = createMockTab({ id: 'tab-1', state: 'idle' });
+			const orphan = createMockTab({ id: 'orphan-1', state: 'busy' });
+			const session = createMockSession({
+				aiTabs: [tab1],
+				orphanedThinkingTabs: [orphan],
+			});
+
+			const result = getBusyTabs(session, { includeOrphans: true });
+
+			expect(result).toHaveLength(1);
+			expect(result).toContain(orphan);
+		});
+
+		it('counts an orphan as a busy writer even when the fresh aiTab is idle', () => {
+			// Regression: Cmd+W on a running tab parks it in orphanedThinkingTabs and
+			// leaves a fresh idle aiTab. The orphan is still a live writer, so the
+			// single-writer gate must see it (otherwise a new write spawns concurrently).
+			const freshTab = createMockTab({ id: 'fresh', state: 'idle', readOnlyMode: false });
+			const orphan = createMockTab({ id: 'orphan-1', state: 'busy', readOnlyMode: false });
+			const session = createMockSession({
+				aiTabs: [freshTab],
+				orphanedThinkingTabs: [orphan],
+			});
+
+			const busy = getBusyTabs(session, { includeOrphans: true });
+			expect(busy).toHaveLength(1);
+			expect(busy.every((tab) => tab.readOnlyMode === true)).toBe(false);
 		});
 	});
 
@@ -1652,6 +1863,65 @@ describe('tabHelpers', () => {
 			expect(result!.type).toBe('file');
 			expect(result!.session.inputMode).toBe('ai');
 			expect(result!.session.activeTerminalTabId).toBeNull();
+		});
+	});
+
+	describe('navigateToUnifiedTabById', () => {
+		it('activates a browser tab by id, clearing file/terminal selection', () => {
+			const aiTab = createMockTab({ id: 'ai-1' });
+			const browserTab = createMockBrowserTab({ id: 'browser-1' });
+			const session = createMockSession({
+				aiTabs: [aiTab],
+				browserTabs: [browserTab] as any,
+				activeTabId: 'ai-1',
+				activeFileTabId: null,
+				activeBrowserTabId: null,
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'ai-1' },
+					{ type: 'browser', id: 'browser-1' },
+				],
+			});
+
+			const result = navigateToUnifiedTabById(session, 'browser', 'browser-1');
+
+			expect(result!.type).toBe('browser');
+			expect(result!.id).toBe('browser-1');
+			expect(result!.session.activeBrowserTabId).toBe('browser-1');
+			expect(result!.session.activeFileTabId).toBeNull();
+			expect(result!.session.activeTerminalTabId).toBeNull();
+			expect(result!.session.inputMode).toBe('ai');
+		});
+
+		it('activates a terminal tab by id, setting inputMode to terminal', () => {
+			const aiTab = createMockTab({ id: 'ai-1' });
+			const terminalTab = { id: 'term-1', name: 'Terminal 1' };
+			const session = createMockSession({
+				aiTabs: [aiTab],
+				terminalTabs: [terminalTab] as any,
+				activeTabId: 'ai-1',
+				activeTerminalTabId: null,
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'ai-1' },
+					{ type: 'terminal', id: 'term-1' },
+				],
+			});
+
+			const result = navigateToUnifiedTabById(session, 'terminal', 'term-1');
+
+			expect(result!.type).toBe('terminal');
+			expect(result!.session.activeTerminalTabId).toBe('term-1');
+			expect(result!.session.inputMode).toBe('terminal');
+		});
+
+		it('returns null when the target tab no longer exists', () => {
+			const aiTab = createMockTab({ id: 'ai-1' });
+			const session = createMockSession({
+				aiTabs: [aiTab],
+				activeTabId: 'ai-1',
+				unifiedTabOrder: [{ type: 'ai', id: 'ai-1' }],
+			});
+
+			expect(navigateToUnifiedTabById(session, 'browser', 'gone')).toBeNull();
 		});
 	});
 
@@ -2557,6 +2827,32 @@ describe('tabHelpers', () => {
 			// Should skip the file tab and land on the unread AI tab
 			expect(result!.type).toBe('ai');
 			expect(result!.id).toBe('unread-tab');
+		});
+
+		it('keeps the active file tab visible in showUnreadOnly mode even when file-preview setting is off', () => {
+			useSettingsStore.setState({ showFilePreviewsInUnreadFilter: false });
+			const readTab = createMockTab({ id: 'read-tab', hasUnread: false, inputValue: '' });
+			const activeFile = createMockFileTab({ id: 'file-active' });
+			const otherFile = createMockFileTab({ id: 'file-other' });
+			const session = createMockSession({
+				aiTabs: [readTab],
+				filePreviewTabs: [activeFile, otherFile],
+				activeTabId: 'read-tab',
+				activeFileTabId: 'file-active',
+				unifiedTabOrder: [
+					{ type: 'file', id: 'file-active' },
+					{ type: 'file', id: 'file-other' },
+					{ type: 'ai', id: 'read-tab' },
+				],
+			});
+
+			// From the active file tab, Next should wrap past the hidden non-active file tab
+			// and land back on the AI tab, then on the active file tab again — confirming the
+			// active file is the only file ref in the filtered list.
+			const result = navigateToNextUnifiedTab(session, true);
+
+			expect(result!.type).toBe('ai');
+			expect(result!.id).toBe('read-tab');
 		});
 
 		it('includes browser tabs in showUnreadOnly mode', () => {
@@ -3683,7 +3979,10 @@ describe('tabHelpers', () => {
 			expect(result.targetSessionId).toBe('a');
 		});
 
-		it('returns jumped=false when no other session has unread tabs', () => {
+		it('returns jumped=false when no other session has unread tabs and the only unread is the active tab', () => {
+			// Active tab with hasUnread is unusual but we tolerate it: the
+			// active tab is what the user is looking at, so we don't silently
+			// clear it and don't claim to have "jumped" anywhere.
 			const sessions = [
 				createMockSession({
 					id: 'a',
@@ -3698,6 +3997,48 @@ describe('tabHelpers', () => {
 			];
 			const result = findNextUnreadSession(sessions, 'a');
 			expect(result.jumped).toBe(false);
+			expect(result.clearedCurrent).toBe(false);
+		});
+
+		it('jumps to a non-active unread tab within the current session before searching others', () => {
+			const sessions = [
+				createMockSession({
+					id: 'a',
+					aiTabs: [
+						createMockTab({ id: 'tab-a1', hasUnread: false }),
+						createMockTab({ id: 'tab-a2', hasUnread: true }),
+					],
+					activeTabId: 'tab-a1',
+				}),
+				createMockSession({
+					id: 'b',
+					aiTabs: [createMockTab({ id: 'tab-b', hasUnread: true })],
+					activeTabId: 'tab-b',
+				}),
+			];
+			const result = findNextUnreadSession(sessions, 'a');
+			expect(result.jumped).toBe(true);
+			expect(result.targetSessionId).toBe('a');
+			expect(result.targetTabId).toBe('tab-a2');
+			expect(result.clearedCurrent).toBe(false);
+		});
+
+		it('reports clearedCurrent=true when moving to another session and current has unread', () => {
+			const sessions = [
+				createMockSession({
+					id: 'a',
+					aiTabs: [createMockTab({ id: 'tab-a', hasUnread: true })],
+					activeTabId: 'tab-a',
+				}),
+				createMockSession({
+					id: 'b',
+					aiTabs: [createMockTab({ id: 'tab-b', hasUnread: true })],
+					activeTabId: 'tab-b',
+				}),
+			];
+			const result = findNextUnreadSession(sessions, 'a');
+			expect(result.jumped).toBe(true);
+			expect(result.targetSessionId).toBe('b');
 			expect(result.clearedCurrent).toBe(true);
 		});
 
@@ -3756,7 +4097,9 @@ describe('tabHelpers', () => {
 			expect(result.targetSessionId).toBe('b');
 		});
 
-		it('reports clearedCurrent when current session has draft tabs', () => {
+		it('does not report clearedCurrent when the only draft tab is the active one', () => {
+			// The active tab's draft is what the user is composing — we don't
+			// jump anywhere and we don't clear unread/draft state.
 			const sessions = [
 				createMockSession({
 					id: 'a',
@@ -3766,7 +4109,24 @@ describe('tabHelpers', () => {
 			];
 			const result = findNextUnreadSession(sessions, 'a');
 			expect(result.jumped).toBe(false);
-			expect(result.clearedCurrent).toBe(true);
+			expect(result.clearedCurrent).toBe(false);
+		});
+
+		it('jumps within the current session to a non-active draft tab', () => {
+			const sessions = [
+				createMockSession({
+					id: 'a',
+					aiTabs: [
+						createMockTab({ id: 'tab-a1', hasUnread: false }),
+						createMockTab({ id: 'tab-a2', hasUnread: false, inputValue: 'unsent text' }),
+					],
+					activeTabId: 'tab-a1',
+				}),
+			];
+			const result = findNextUnreadSession(sessions, 'a');
+			expect(result.jumped).toBe(true);
+			expect(result.targetSessionId).toBe('a');
+			expect(result.targetTabId).toBe('tab-a2');
 		});
 
 		it('prefers the next session in order over earlier ones', () => {
@@ -3790,6 +4150,57 @@ describe('tabHelpers', () => {
 			const result = findNextUnreadSession(sessions, 'b');
 			expect(result.jumped).toBe(true);
 			expect(result.targetSessionId).toBe('c');
+		});
+
+		it('treats a tab with an active wizard as actionable and jumps to it', () => {
+			const sessions = [
+				createMockSession({
+					id: 'a',
+					aiTabs: [createMockTab({ id: 'tab-a', hasUnread: false })],
+					activeTabId: 'tab-a',
+				}),
+				createMockSession({
+					id: 'b',
+					aiTabs: [createMockTab({ id: 'tab-b', hasUnread: false })],
+					activeTabId: 'tab-b',
+				}),
+			];
+			const isWizardActive = (tabId: string) => tabId === 'tab-b';
+			const result = findNextUnreadSession(sessions, 'a', isWizardActive);
+			expect(result.jumped).toBe(true);
+			expect(result.targetSessionId).toBe('b');
+		});
+
+		it('jumps within the current session to a non-active wizard tab', () => {
+			const sessions = [
+				createMockSession({
+					id: 'a',
+					aiTabs: [
+						createMockTab({ id: 'tab-a1', hasUnread: false }),
+						createMockTab({ id: 'tab-a2', hasUnread: false }),
+					],
+					activeTabId: 'tab-a1',
+				}),
+			];
+			const isWizardActive = (tabId: string) => tabId === 'tab-a2';
+			const result = findNextUnreadSession(sessions, 'a', isWizardActive);
+			expect(result.jumped).toBe(true);
+			expect(result.targetSessionId).toBe('a');
+			expect(result.targetTabId).toBe('tab-a2');
+		});
+
+		it('does not jump when the only wizard tab is the active one', () => {
+			const sessions = [
+				createMockSession({
+					id: 'a',
+					aiTabs: [createMockTab({ id: 'tab-a', hasUnread: false })],
+					activeTabId: 'tab-a',
+				}),
+			];
+			const isWizardActive = (tabId: string) => tabId === 'tab-a';
+			const result = findNextUnreadSession(sessions, 'a', isWizardActive);
+			expect(result.jumped).toBe(false);
+			expect(result.clearedCurrent).toBe(false);
 		});
 	});
 
@@ -3846,6 +4257,114 @@ describe('tabHelpers', () => {
 			const result = setActiveTab(session, 'ai-1');
 			expect(result?.session.activeBrowserTabId).toBeNull();
 			expect(result?.session.activeFileTabId).toBeNull();
+		});
+	});
+
+	describe('resolveQueuedItemTarget', () => {
+		const msgItem = (tabId: string): QueuedItem => ({
+			id: 'q1',
+			tabId,
+			type: 'message',
+			text: 'hi',
+			timestamp: 1700000000000,
+		});
+
+		it('resolves to a live aiTab when the queued tab is still open', () => {
+			const open = createMockTab({ id: 'tab-open' });
+			const session = createMockSession({ aiTabs: [open], activeTabId: 'tab-open' });
+			expect(resolveQueuedItemTarget(session, msgItem('tab-open'))).toEqual({
+				tabId: 'tab-open',
+				location: 'aiTab',
+			});
+		});
+
+		it('resolves to an orphan when the queued tab was closed (fire-and-forget)', () => {
+			const active = createMockTab({ id: 'tab-active' });
+			const orphan = createMockTab({ id: 'tab-closed' });
+			const session = createMockSession({
+				aiTabs: [active],
+				activeTabId: 'tab-active',
+				orphanedThinkingTabs: [orphan],
+			});
+			// Must NOT fall back to the active tab - that is the bug this guards.
+			expect(resolveQueuedItemTarget(session, msgItem('tab-closed'))).toEqual({
+				tabId: 'tab-closed',
+				location: 'orphan',
+			});
+		});
+
+		it('falls back to the active tab when the tabId is gone entirely', () => {
+			const active = createMockTab({ id: 'tab-active' });
+			const session = createMockSession({ aiTabs: [active], activeTabId: 'tab-active' });
+			expect(resolveQueuedItemTarget(session, msgItem('tab-vanished'))).toEqual({
+				tabId: 'tab-active',
+				location: 'active',
+			});
+		});
+
+		it('prefers a live aiTab over an orphan with the same id', () => {
+			const open = createMockTab({ id: 'dup' });
+			const orphan = createMockTab({ id: 'dup' });
+			const session = createMockSession({
+				aiTabs: [open],
+				activeTabId: 'dup',
+				orphanedThinkingTabs: [orphan],
+			});
+			expect(resolveQueuedItemTarget(session, msgItem('dup'))?.location).toBe('aiTab');
+		});
+
+		it('returns null when the session has no aiTabs to fall back to', () => {
+			const session = createMockSession({ aiTabs: [], activeTabId: '' });
+			expect(resolveQueuedItemTarget(session, msgItem('whatever'))).toBeNull();
+		});
+	});
+
+	describe('markTabRunningQueuedItem', () => {
+		it('marks the tab busy and appends the user log for a message item', () => {
+			const tab = createMockTab({ id: 't1', state: 'idle', logs: [] });
+			const item: QueuedItem = {
+				id: 'q1',
+				tabId: 't1',
+				type: 'message',
+				text: 'run this',
+				timestamp: 1700000000000,
+			};
+			const result = markTabRunningQueuedItem(tab, item);
+			expect(result.state).toBe('busy');
+			expect(result.thinkingStartTime).toBeDefined();
+			expect(result.logs).toHaveLength(1);
+			expect(result.logs[0]).toMatchObject({ source: 'user', text: 'run this' });
+			// Does not mutate the input tab.
+			expect(tab.logs).toHaveLength(0);
+		});
+
+		it('carries forceParallel and readOnly flags onto the log entry', () => {
+			const tab = createMockTab({ id: 't1', logs: [] });
+			const item: QueuedItem = {
+				id: 'q1',
+				tabId: 't1',
+				type: 'message',
+				text: 'parallel read',
+				timestamp: 1700000000000,
+				forceParallel: true,
+				readOnlyMode: true,
+			};
+			const result = markTabRunningQueuedItem(tab, item);
+			expect(result.logs[0]).toMatchObject({ forceParallel: true, readOnly: true });
+		});
+
+		it('marks the tab busy without a log for a command item', () => {
+			const tab = createMockTab({ id: 't1', logs: [] });
+			const item: QueuedItem = {
+				id: 'q1',
+				tabId: 't1',
+				type: 'command',
+				command: '/commit',
+				timestamp: 1700000000000,
+			};
+			const result = markTabRunningQueuedItem(tab, item);
+			expect(result.state).toBe('busy');
+			expect(result.logs).toHaveLength(0);
 		});
 	});
 });

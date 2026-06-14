@@ -20,6 +20,7 @@ import { useEffect, useRef } from 'react';
 import { useSessionStore } from '../../../stores/sessionStore';
 import { REGEX_AI_TAB } from '../../../utils/sessionIdParser';
 import { isLikelyConcatenatedToolNames } from '../../../constants/app';
+import { thinkingLogsRecorded } from './helpers/thinkingLogs';
 import { generateId } from '../../../utils/ids';
 import { logger } from '../../../utils/logger';
 import type { LogEntry } from '../../../types';
@@ -67,6 +68,11 @@ export function useAgentThinkingListener(): void {
 								}
 								if (!hasChanges) return s;
 
+								// Tag thinking entries with `renderStyle: 'text-stream'` when the
+								// session's resolved Claude mode is interactive so the TUI/API
+								// footer pill matches the assistant text in the same turn.
+								const isInteractive = s.claudeInteractive?.mode === 'interactive';
+
 								let updatedTabs = s.aiTabs;
 								for (const [key, bufferedContent] of chunksToProcess) {
 									const [chunkSessionId, chunkTabId] = key.split(':');
@@ -75,7 +81,7 @@ export function useAgentThinkingListener(): void {
 									const targetTab = updatedTabs.find((t) => t.id === chunkTabId);
 									if (!targetTab) continue;
 
-									if (!targetTab.showThinking || targetTab.showThinking === 'off') continue;
+									if (!thinkingLogsRecorded(targetTab.showThinking)) continue;
 
 									if (isLikelyConcatenatedToolNames(bufferedContent)) {
 										logger.warn(
@@ -111,6 +117,7 @@ export function useAgentThinkingListener(): void {
 											timestamp: Date.now(),
 											source: 'thinking',
 											text: bufferedContent,
+											...(isInteractive ? { renderStyle: 'text-stream' as const } : {}),
 										};
 										nextLogs = [...targetTab.logs, newLog];
 									} else {
@@ -119,7 +126,11 @@ export function useAgentThinkingListener(): void {
 											: combinedText;
 										nextLogs = [
 											...targetTab.logs.slice(0, -1),
-											{ ...lastLog, text: replacementText },
+											{
+												...lastLog,
+												text: replacementText,
+												...(isInteractive ? { renderStyle: 'text-stream' as const } : {}),
+											},
 										];
 									}
 

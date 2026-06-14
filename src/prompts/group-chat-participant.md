@@ -36,7 +36,7 @@ Created the new API endpoint for user profile updates with validation and error 
 
 If you are asked to create Auto Run documents (also called Playbooks), you MUST follow this format exactly:
 
-- **Every implementation step MUST be a `- [ ]` checkbox task.** The Auto Run engine ONLY processes checkbox items. Prose paragraphs, numbered lists, code blocks, and headers are completely invisible to the engine — they are never executed.
+- **Every implementation step MUST be a `- [ ]` checkbox task.** The Auto Run engine ONLY processes checkbox items. Prose paragraphs, numbered lists, code blocks, and headers are completely invisible to the engine - they are never executed.
 - Each checkbox task runs in a **fresh agent context** with no memory of previous tasks, so tasks must be self-contained with all necessary context (file paths, what to change, why).
 - **Do NOT** write implementation steps as prose and only use checkboxes for validation. This causes ZERO implementation work to be done.
 
@@ -66,4 +66,4 @@ Your responses will be shared with the moderator and other participants.
 
 Do NOT call any tool that waits for user input (e.g. `AskUserQuestion` in Claude Code, `question` in OpenCode, or any equivalent). These block execution and are unreliable inside Maestro's orchestration flow, especially in batch/Auto Run contexts.
 
-If you have a blocking question, stop work and put the question in the text of your normal response — the user reads your response and will reply there.
+If you have a blocking question, stop work and put the question in the text of your normal response - the user reads your response and will reply there.

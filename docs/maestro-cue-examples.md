@@ -4,17 +4,17 @@ description: Real-world Maestro Cue configurations for common automation workflo
 icon: lightbulb
 ---
 
-Complete, copy-paste-ready `.maestro/cue.yaml` configurations for common workflows. Each example is self-contained — drop it into your project's `.maestro/` directory and adjust agent names to match your Left Bar.
+Complete, copy-paste-ready `.maestro/cue.yaml` configurations for common workflows. Each example is self-contained - drop it into your project's `.maestro/` directory and adjust agent names to match your Left Bar.
 
 ## Pipeline Grouping
 
-Group related automations under a single pipeline — multiple trigger lines appear as one pipeline in the Pipeline Editor instead of cluttering the dropdown.
+Group related automations under a single pipeline - multiple trigger lines appear as one pipeline in the Pipeline Editor instead of cluttering the dropdown.
 
 ```yaml
 # Pipeline: Monitoring (color: #06b6d4)
 
 subscriptions:
-  # Daily scan — runs every morning
+  # Daily scan - runs every morning
   - name: Monitoring
     label: Daily Scan
     event: time.scheduled
@@ -34,7 +34,7 @@ subscriptions:
       2. Compare against yesterday's snapshot
       3. Generate a briefing in journal/{{DATE}}.md
 
-  # Weekly review — runs Sunday mornings
+  # Weekly review - runs Sunday mornings
   - name: Monitoring-chain-1
     label: Weekly Review
     event: time.scheduled
@@ -64,7 +64,7 @@ Both subscriptions appear as trigger lines within a single **Monitoring** pipeli
 
 ## Workspace Initialization
 
-Run setup tasks once when the Maestro application launches — install dependencies, verify environment, run health checks.
+Run setup tasks once when the Maestro application launches - install dependencies, verify environment, run health checks.
 
 **Agents needed:** `setup-agent`
 
@@ -89,6 +89,10 @@ This fires exactly once per application launch. Toggling Cue off and back on doe
 Lint, test, and deploy in sequence. Each step only runs if the previous one succeeded.
 
 **Agents needed:** `linter`, `tester`, `deployer`
+
+<Note>
+This example assumes each agent has its own project root and therefore its own `.maestro/cue.yaml`. The three files below live under three different project roots - that's the supported pattern for multi-root pipelines (the engine reads each agent's own cue.yaml and never aggregates across roots). See [Multi-root pipelines](./maestro-cue-configuration#multi-root-pipelines-agents-in-different-project-roots) for the full rule. If all three agents share one project root, put all three subscriptions in a single `.maestro/cue.yaml` and use `agent_id` (or `settings.owner_agent_id` plus an explicit `agent_id` per sub) to route each one.
+</Note>
 
 The `linter` agent's `.maestro/cue.yaml`:
 
@@ -370,7 +374,7 @@ subscriptions:
       Do NOT work on more than one task at a time.
 
 settings:
-  max_concurrent: 1 # Serial execution — one task at a time
+  max_concurrent: 1 # Serial execution - one task at a time
 ```
 
 ---
@@ -464,7 +468,7 @@ subscriptions:
     prompt: |
       Read {{CUE_FILE_PATH}} and analyze the proposal.
 
-      You are assigned a role — argue from that perspective:
+      You are assigned a role - argue from that perspective:
       - advocate: argue IN FAVOR, highlight benefits and opportunities
       - critic: argue AGAINST, highlight risks and weaknesses
 
@@ -621,3 +625,75 @@ maestro-cli cue trigger deploy --prompt "staging" --json
 # From a release script
 maestro-cli cue trigger deploy --prompt "production"
 ```
+
+---
+
+## One-Time Tasks and Reminders
+
+Schedule a single action tied to a wall-clock moment - "in 20 minutes do X", "tomorrow at 9am email me a summary", "remind me at 4pm to push the rc branch". These are authored exclusively through `maestro-cli cue schedule` (the CLI handles ISO formatting, timezone offsets, and writes directly to the owning agent's `.maestro/cue.yaml`). The subscriptions self-destruct from the YAML after they fire.
+
+See [time.once event reference](./maestro-cue-events#time-once) for the full schema.
+
+**Schedule an agent run 20 minutes from now:**
+
+```bash
+maestro-cli cue schedule \
+  --in 20m \
+  --agent <agent-id> \
+  --prompt "Check the status of the deploy I kicked off and summarize the result."
+```
+
+Resulting subscription (the CLI writes this into the agent's `.maestro/cue.yaml`):
+
+```yaml
+subscriptions:
+  - name: tasks-once-20m-deploy-check
+    pipeline_name: Tasks
+    event: time.once
+    enabled: true
+    fire_at: '2026-05-22T14:20:00-05:00'
+    agent_id: <agent-uuid>
+    prompt: |
+      Check the status of the deploy I kicked off and summarize the result.
+```
+
+**Schedule a sticky reminder toast at 4pm:**
+
+```bash
+maestro-cli cue schedule \
+  --at "2026-05-22 16:00" \
+  --agent <agent-id> \
+  --notify \
+  --sticky \
+  --message "Push rc branch - review the diff first"
+```
+
+Resulting subscription:
+
+```yaml
+subscriptions:
+  - name: tasks-once-push-rc-reminder
+    pipeline_name: Tasks
+    event: time.once
+    enabled: true
+    fire_at: '2026-05-22T16:00:00-05:00'
+    agent_id: <agent-uuid>
+    action: notify
+    notify:
+      message: 'Push rc branch - review the diff first'
+      sticky: true
+```
+
+`--notify` switches the dispatched action to `notify`. `--sticky` marks the toast as `dismissible` so it stays on screen until the user clicks it. Clicking the toast jumps to the owning agent.
+
+**Listing and cancelling pending one-time tasks:**
+
+```bash
+# List every pending one-time task across agents
+maestro-cli cue schedule --list
+
+# Cancel a pending task by sub name
+maestro-cli cue schedule --cancel tasks-once-push-rc-reminder
+```
+
+`--list` only shows enabled, unfired `time.once` subs - completed and expired ones have already self-destructed. `--cancel` deletes the sub from `cue.yaml` in place.

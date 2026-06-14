@@ -28,12 +28,14 @@ import { useTabStore } from '../../stores/tabStore';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useAgentStore } from '../../stores/agentStore';
 import { useFeedbackDraftStore } from '../../stores/feedbackDraftStore';
+import { useQuitWhenIdleStore } from '../../stores/quitWhenIdleStore';
 import { useAgentErrorRecovery } from '../agent/useAgentErrorRecovery';
-import { getInitialRenameValue } from '../../utils/tabHelpers';
+import { aiTabFocusFields, getInitialRenameValue } from '../../utils/tabHelpers';
 import { CONDUCTOR_BADGES } from '../../constants/conductorBadges';
 import { gitService } from '../../services/git';
 import { cueService } from '../../services/cue';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
+import { useGitDetail } from '../../contexts/GitStatusContext';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -75,6 +77,7 @@ export interface ModalHandlersReturn {
 	// Quit handlers
 	handleConfirmQuit: () => void;
 	handleCancelQuit: () => void;
+	handleQuitWhenIdle: () => void;
 
 	// Celebration handlers
 	onKeyboardMasteryLevelUp: (level: number) => void;
@@ -291,6 +294,15 @@ export function useModalHandlers(
 		window.maestro.app.cancelQuit();
 	}, []);
 
+	// Defer the quit: close the modal, release this quit attempt so the app keeps
+	// running, and arm the idle watcher (useQuitWhenIdle) to quit once everything
+	// finishes.
+	const handleQuitWhenIdle = useCallback(() => {
+		getModalActions().setQuitConfirmModalOpen(false);
+		useQuitWhenIdleStore.getState().arm();
+		window.maestro.app.cancelQuit();
+	}, []);
+
 	// ====================================================================
 	// Group D: Celebration Handlers
 	// ====================================================================
@@ -325,6 +337,9 @@ export function useModalHandlers(
 			if (result.newLevel !== null) {
 				onKeyboardMasteryLevelUp(result.newLevel);
 			}
+			// Also bump the daily-firings counter so the Usage Dashboard bar
+			// chart includes shortcuts handled inside the System Log Viewer.
+			void window.maestro?.stats?.recordShortcutUsage?.(Date.now());
 		},
 		[onKeyboardMasteryLevelUp]
 	);
@@ -720,7 +735,7 @@ export function useModalHandlers(
 	const handleQuickActionsOpenTabSwitcher = useCallback(() => {
 		const { sessions: currentSessions, activeSessionId } = useSessionStore.getState();
 		const currentSession = currentSessions.find((s) => s.id === activeSessionId);
-		if (currentSession?.inputMode === 'ai' && currentSession.aiTabs) {
+		if (currentSession?.aiTabs) {
 			getModalActions().setTabSwitcherOpen(true);
 		}
 	}, []);
@@ -912,22 +927,20 @@ export function useModalHandlers(
 		if (!errorSession || !failingTabId || isAlreadyOnFailingTab) return undefined;
 		return () => {
 			useSessionStore.getState().setActiveSessionId(errorSession.id);
-			updateSessionWith(errorSession.id, (s) =>
-				s.aiTabs?.some((t) => t.id === failingTabId)
-					? {
-							...s,
-							activeTabId: failingTabId,
-							activeFileTabId: null,
-							inputMode: 'ai' as const,
-						}
-					: { ...s, activeFileTabId: null, inputMode: 'ai' as const }
-			);
+			updateSessionWith(errorSession.id, (s) => ({
+				...s,
+				...aiTabFocusFields(
+					s.aiTabs?.some((t) => t.id === failingTabId) ? failingTabId : undefined
+				),
+			}));
 		};
 	}, [errorSession, failingTabId, isAlreadyOnFailingTab]);
 
 	// ====================================================================
 	// Git Diff Opener (Tier 3C)
 	// ====================================================================
+
+	const { refreshGitStatus } = useGitDetail();
 
 	const handleViewGitDiff = useCallback(async () => {
 		if (!activeSession || !activeSession.isGitRepo) return;
@@ -948,8 +961,12 @@ export function useModalHandlers(
 			getModalActions().setGitDiffPreview(diff.diff);
 		} else {
 			notifyCenterFlash({ message: 'No diff to examine', color: 'theme' });
+			// Polling cache said there were changes but `git diff` is empty —
+			// repo state changed since the last poll. Re-sync so the widget
+			// stops advertising stale stats.
+			void refreshGitStatus();
 		}
-	}, [activeSession]);
+	}, [activeSession, refreshGitStatus]);
 
 	// ====================================================================
 	// Director's Notes Session Navigation (Tier 3C)
@@ -1021,6 +1038,7 @@ export function useModalHandlers(
 		// Quit handlers
 		handleConfirmQuit,
 		handleCancelQuit,
+		handleQuitWhenIdle,
 
 		// Celebration handlers
 		onKeyboardMasteryLevelUp,

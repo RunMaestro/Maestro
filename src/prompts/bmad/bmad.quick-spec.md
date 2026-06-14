@@ -1,11 +1,5 @@
 ---
-name: quick-spec
-description: 'Very quick process to create implementation-ready quick specs for small changes or features. Use when the user says "create a quick spec" or "generate a quick tech spec"'
 main_config: '{project-root}/_bmad/bmm/config.yaml'
-
-# Checkpoint handler references
-advanced_elicitation: 'skill:bmad-advanced-elicitation'
-party_mode_exec: '{project-root}/_bmad/core/workflows/bmad-party-mode/workflow.md'
 ---
 
 # Quick-Spec Workflow
@@ -75,7 +69,7 @@ Load and read full config from `{main_config}` and resolve:
 
 ### 2. First Step Execution
 
-Read fully and follow: `{project-root}/_bmad/bmm/workflows/bmad-quick-flow/quick-spec/steps/step-01-understand.md` to begin the workflow.
+Read fully and follow: `./steps/step-01-understand.md` to begin the workflow.
 
 ---
 
@@ -83,14 +77,10 @@ Read fully and follow: `{project-root}/_bmad/bmm/workflows/bmad-quick-flow/quick
 
 The following upstream BMAD files are embedded so this Maestro prompt remains self-contained.
 
-## src/bmm/workflows/bmad-quick-flow/quick-spec/steps/step-01-understand.md
+## src/bmm/workflows/bmad-quick-flow/bmad-quick-spec/steps/step-01-understand.md
 
 ```md
 ---
-name: 'step-01-understand'
-description: 'Analyze the requirement delta between current state and what user wants to build'
-
-templateFile: '../tech-spec-template.md'
 wipFile: '{implementation_artifacts}/tech-spec-wip.md'
 ---
 
@@ -143,9 +133,9 @@ a) **Menu Handling:**
 
 - **[Y] Continue existing:**
   - Jump directly to the appropriate step based on `stepsCompleted`:
-    - `[1]` → Read fully and follow: `{project-root}/_bmad/bmm/workflows/bmad-quick-flow/quick-spec/steps/step-02-investigate.md` (Step 2)
-    - `[1, 2]` → Read fully and follow: `{project-root}/_bmad/bmm/workflows/bmad-quick-flow/quick-spec/steps/step-03-generate.md` (Step 3)
-    - `[1, 2, 3]` → Read fully and follow: `{project-root}/_bmad/bmm/workflows/bmad-quick-flow/quick-spec/steps/step-04-review.md` (Step 4)
+    - `[1]` → Read fully and follow: `./step-02-investigate.md` (Step 2)
+    - `[1, 2]` → Read fully and follow: `./step-03-generate.md` (Step 3)
+    - `[1, 2, 3]` → Read fully and follow: `./step-04-review.md` (Step 4)
 - **[N] Archive and start fresh:**
   - Rename `{wipFile}` to `{implementation_artifacts}/tech-spec-{slug}-archived-{date}.md`
 
@@ -214,7 +204,7 @@ b) **Ask the user to confirm the captured understanding before proceeding.**
 
 a) **Create the tech-spec WIP file:**
 
-1. Copy template from `{templateFile}`
+1. Copy template from `../tech-spec-template.md`
 2. Write to `{wipFile}`
 3. Update frontmatter with captured values:
    ```yaml
@@ -255,9 +245,9 @@ b) **HALT and wait for user selection.**
 
 #### Menu Handling Logic:
 
-- IF A: Read fully and follow: `{advanced_elicitation}` with current tech-spec content, process enhanced insights, ask user "Accept improvements? (y/n)", if yes update WIP file then redisplay menu, if no keep original then redisplay menu
-- IF P: Read fully and follow: `{party_mode_exec}` with current tech-spec content, process collaborative insights, ask user "Accept changes? (y/n)", if yes update WIP file then redisplay menu, if no keep original then redisplay menu
-- IF C: Verify `{wipFile}` has `stepsCompleted: [1]`, then read fully and follow: `{project-root}/_bmad/bmm/workflows/bmad-quick-flow/quick-spec/steps/step-02-investigate.md`
+- IF A: Invoke the `bmad-advanced-elicitation` skill with current tech-spec content, process enhanced insights, ask user "Accept improvements? (y/n)", if yes update WIP file then redisplay menu, if no keep original then redisplay menu
+- IF P: Invoke the `bmad-party-mode` skill with current tech-spec content, process collaborative insights, ask user "Accept changes? (y/n)", if yes update WIP file then redisplay menu, if no keep original then redisplay menu
+- IF C: Verify `{wipFile}` has `stepsCompleted: [1]`, then read fully and follow: `./step-02-investigate.md`
 - IF Any other comments or queries: respond helpfully then redisplay menu
 
 #### EXECUTION RULES:
@@ -280,13 +270,10 @@ b) **HALT and wait for user selection.**
 
 ````
 
-## src/bmm/workflows/bmad-quick-flow/quick-spec/steps/step-02-investigate.md
+## src/bmm/workflows/bmad-quick-flow/bmad-quick-spec/steps/step-02-investigate.md
 
 ```md
 ---
-name: 'step-02-investigate'
-description: 'Map technical constraints and anchor points within the codebase'
-
 wipFile: '{implementation_artifacts}/tech-spec-wip.md'
 ---
 
@@ -404,9 +391,9 @@ Display: "**Select:** [A] Advanced Elicitation [P] Party Mode [C] Continue to Ge
 
 #### Menu Handling Logic:
 
-- IF A: Read fully and follow: `{advanced_elicitation}` with current tech-spec content, process enhanced insights, ask user "Accept improvements? (y/n)", if yes update WIP file then redisplay menu, if no keep original then redisplay menu
-- IF P: Read fully and follow: `{party_mode_exec}` with current tech-spec content, process collaborative insights, ask user "Accept changes? (y/n)", if yes update WIP file then redisplay menu, if no keep original then redisplay menu
-- IF C: Verify frontmatter updated with `stepsCompleted: [1, 2]`, then read fully and follow: `{project-root}/_bmad/bmm/workflows/bmad-quick-flow/quick-spec/steps/step-03-generate.md`
+- IF A: Invoke the `bmad-advanced-elicitation` skill with current tech-spec content, process enhanced insights, ask user "Accept improvements? (y/n)", if yes update WIP file then redisplay menu, if no keep original then redisplay menu
+- IF P: Invoke the `bmad-party-mode` skill with current tech-spec content, process collaborative insights, ask user "Accept changes? (y/n)", if yes update WIP file then redisplay menu, if no keep original then redisplay menu
+- IF C: Verify frontmatter updated with `stepsCompleted: [1, 2]`, then read fully and follow: `./step-03-generate.md`
 - IF Any other comments or queries: respond helpfully then redisplay menu
 
 #### EXECUTION RULES:
@@ -429,13 +416,10 @@ Display: "**Select:** [A] Advanced Elicitation [P] Party Mode [C] Continue to Ge
 
 ````
 
-## src/bmm/workflows/bmad-quick-flow/quick-spec/steps/step-03-generate.md
+## src/bmm/workflows/bmad-quick-flow/bmad-quick-spec/steps/step-03-generate.md
 
 ```md
 ---
-name: 'step-03-generate'
-description: 'Build the implementation plan based on the technical mapping of constraints'
-
 wipFile: '{implementation_artifacts}/tech-spec-wip.md'
 ---
 
@@ -546,7 +530,7 @@ stepsCompleted: [1, 2, 3]
 ---
 ```
 
-c) **Read fully and follow: `{project-root}/_bmad/bmm/workflows/bmad-quick-flow/quick-spec/steps/step-04-review.md` (Step 4)**
+c) **Read fully and follow: `./step-04-review.md` (Step 4)**
 
 ## REQUIRED OUTPUTS:
 
@@ -561,13 +545,10 @@ c) **Read fully and follow: `{project-root}/_bmad/bmm/workflows/bmad-quick-flow/
 
 ````
 
-## src/bmm/workflows/bmad-quick-flow/quick-spec/steps/step-04-review.md
+## src/bmm/workflows/bmad-quick-flow/bmad-quick-spec/steps/step-04-review.md
 
 ```md
 ---
-name: 'step-04-review'
-description: 'Review and finalize the tech-spec'
-
 wipFile: '{implementation_artifacts}/tech-spec-wip.md'
 ---
 
@@ -617,8 +598,8 @@ Display: "**Select:** [C] Continue [E] Edit [Q] Questions [A] Advanced Elicitati
 - IF C: Proceed to Section 3 (Finalize the Spec)
 - IF E: Proceed to Section 2 (Handle Review Feedback), then return here and redisplay menu
 - IF Q: Answer questions, then redisplay this menu
-- IF A: Read fully and follow: `{advanced_elicitation}` with current spec content, process enhanced insights, ask user "Accept improvements? (y/n)", if yes update spec then redisplay menu, if no keep original then redisplay menu
-- IF P: Read fully and follow: `{party_mode_exec}` with current spec content, process collaborative insights, ask user "Accept changes? (y/n)", if yes update spec then redisplay menu, if no keep original then redisplay menu
+- IF A: Invoke the `bmad-advanced-elicitation` skill with current spec content, process enhanced insights, ask user "Accept improvements? (y/n)", if yes update spec then redisplay menu, if no keep original then redisplay menu
+- IF P: Invoke the `bmad-party-mode` skill with current spec content, process collaborative insights, ask user "Accept changes? (y/n)", if yes update spec then redisplay menu, if no keep original then redisplay menu
 - IF Any other comments or queries: respond helpfully then redisplay menu
 
 #### EXECUTION RULES:
@@ -704,10 +685,10 @@ b) **HALT and wait for user selection.**
 
 #### Menu Handling Logic:
 
-- IF A: Read fully and follow: `{advanced_elicitation}` with current spec content, process enhanced insights, ask user "Accept improvements? (y/n)", if yes update spec then redisplay menu, if no keep original then redisplay menu
+- IF A: Invoke the `bmad-advanced-elicitation` skill with current spec content, process enhanced insights, ask user "Accept improvements? (y/n)", if yes update spec then redisplay menu, if no keep original then redisplay menu
 - IF B: Invoke the `bmad-quick-dev` skill with `{finalFile}` in a fresh context if possible (warn: fresh context is better)
 - IF D: Exit workflow - display final confirmation and path to spec
-- IF P: Read fully and follow: `{party_mode_exec}` with current spec content, process collaborative insights, ask user "Accept changes? (y/n)", if yes update spec then redisplay menu, if no keep original then redisplay menu
+- IF P: Invoke the `bmad-party-mode` skill with current spec content, process collaborative insights, ask user "Accept changes? (y/n)", if yes update spec then redisplay menu, if no keep original then redisplay menu
 - IF R: Execute Adversarial Review (see below)
 - IF Any other comments or queries: respond helpfully then redisplay menu
 
@@ -731,7 +712,7 @@ b) **HALT and wait for user selection.**
    > DO NOT exclude findings based on severity or validity unless explicitly asked to do so.
    > Order findings by severity.
    > Number the ordered findings (F1, F2, F3, etc.).
-   > If TodoWrite or similar tool is available, turn each finding into a TODO, include ID, severity, validity, and description in the TODO; otherwise present findings as a table with columns: ID, Severity, Validity, Description.
+   > If TodoWrite or similar tool is available, turn each finding into a TODO, include ID, severity, validity, and description in the TODO; otherwise present findings as a table with columns: ID, Severity, Validity, Description
 
 3. Return here and redisplay menu.
 
@@ -766,6 +747,83 @@ Ship it!"
 - [ ] Spec verified against **READY FOR DEVELOPMENT** standard.
 - [ ] `stepsCompleted: [1, 2, 3, 4]` set and file renamed.
 
-```
+````
 
-```
+## src/bmm/workflows/bmad-quick-flow/bmad-quick-spec/tech-spec-template.md
+
+```md
+---
+title: '{title}'
+slug: '{slug}'
+created: '{date}'
+status: 'in-progress'
+stepsCompleted: []
+tech_stack: []
+files_to_modify: []
+code_patterns: []
+test_patterns: []
+---
+
+# Tech-Spec: {title}
+
+**Created:** {date}
+
+## Overview
+
+### Problem Statement
+
+{problem_statement}
+
+### Solution
+
+{solution}
+
+### Scope
+
+**In Scope:**
+{in_scope}
+
+**Out of Scope:**
+{out_of_scope}
+
+## Context for Development
+
+### Codebase Patterns
+
+{codebase_patterns}
+
+### Files to Reference
+
+| File | Purpose |
+| ---- | ------- |
+
+{files_table}
+
+### Technical Decisions
+
+{technical_decisions}
+
+## Implementation Plan
+
+### Tasks
+
+{tasks}
+
+### Acceptance Criteria
+
+{acceptance_criteria}
+
+## Additional Context
+
+### Dependencies
+
+{dependencies}
+
+### Testing Strategy
+
+{testing_strategy}
+
+### Notes
+
+{notes}
+````

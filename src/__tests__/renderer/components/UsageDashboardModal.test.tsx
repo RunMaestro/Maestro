@@ -8,6 +8,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { UsageDashboardModal } from '../../../renderer/components/UsageDashboard/UsageDashboardModal';
+import { useUIStore } from '../../../renderer/stores/uiStore';
 import type { Theme } from '../../../renderer/types';
 
 // Mock lucide-react icons - include all icons used by modal and its child components
@@ -113,6 +114,15 @@ const mockMaestro = {
 	fs: {
 		writeFile: mockWriteFile,
 	},
+	// Usage snapshot samplers fired by the dashboard's quota-on-open effect.
+	// Without these the effect throws on `window.maestro.agents` and leaks an
+	// unhandled rejection.
+	agents: {
+		refreshClaudeUsageSnapshots: vi.fn().mockResolvedValue({ refreshed: 0 }),
+		refreshCodexUsageSnapshots: vi.fn().mockResolvedValue({ refreshed: 0 }),
+		getClaudeUsageSnapshots: vi.fn().mockResolvedValue({}),
+		getCodexUsageSnapshots: vi.fn().mockResolvedValue({}),
+	},
 	// Minimum surface needed by `useGlobalAgentStats` (called from the
 	// dashboard's Achievement share image flow).
 	agentSessions: {
@@ -153,6 +163,18 @@ const createSampleData = () => ({
 	totalQueries: 150,
 	totalDuration: 3600000, // 1 hour in ms
 	avgDuration: 24000, // 24 seconds
+	queryDurationPercentiles: { count: 0, min: 0, p50: 0, p75: 0, p90: 0, p95: 0, p99: 0, max: 0 },
+	queryDurationPercentilesByAgent: {},
+	autoRunTaskDurationPercentiles: {
+		count: 0,
+		min: 0,
+		p50: 0,
+		p75: 0,
+		p90: 0,
+		p95: 0,
+		p99: 0,
+		max: 0,
+	},
 	byAgent: {
 		'claude-code': { count: 100, duration: 2400000 },
 		terminal: { count: 50, duration: 1200000 },
@@ -191,6 +213,11 @@ describe('UsageDashboardModal', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		// The dashboard tab is now persisted in the shared uiStore singleton, which
+		// survives across tests in this file. Reset it so each test starts on the
+		// default 'overview' tab instead of inheriting whatever a prior tab-switching
+		// test left behind.
+		useUIStore.setState({ usageDashboardViewMode: 'overview' });
 		mockGetAggregation.mockResolvedValue(createSampleData());
 		mockExportCsv.mockResolvedValue('date,count\n2024-01-15,25');
 		mockSaveFile.mockResolvedValue(null); // User cancels by default
@@ -354,6 +381,27 @@ describe('UsageDashboardModal', () => {
 				totalQueries: 0,
 				totalDuration: 0,
 				avgDuration: 0,
+				queryDurationPercentiles: {
+					count: 0,
+					min: 0,
+					p50: 0,
+					p75: 0,
+					p90: 0,
+					p95: 0,
+					p99: 0,
+					max: 0,
+				},
+				queryDurationPercentilesByAgent: {},
+				autoRunTaskDurationPercentiles: {
+					count: 0,
+					min: 0,
+					p50: 0,
+					p75: 0,
+					p90: 0,
+					p95: 0,
+					p99: 0,
+					max: 0,
+				},
 				byAgent: {},
 				bySource: { user: 0, auto: 0 },
 				byDay: [],
@@ -1688,8 +1736,8 @@ describe('UsageDashboardModal', () => {
 			});
 
 			// Overview retains summary cards, provider comparison, the two
-			// distribution donuts, the radial activity chart, and the activity
-			// heatmap. Duration trends moved to the Activity tab.
+			// distribution donuts, and the radial activity chart. The activity
+			// heatmap and duration trends moved to the Activity tab.
 			expect(screen.getByTestId('section-summary-cards')).toHaveAttribute('tabIndex', '0');
 			expect(screen.getByTestId('section-summary-cards')).toHaveAttribute('role', 'region');
 			expect(screen.getByTestId('section-summary-cards')).toHaveAttribute(
@@ -1709,10 +1757,10 @@ describe('UsageDashboardModal', () => {
 				'Session Type Chart'
 			);
 
-			expect(screen.getByTestId('section-activity-heatmap')).toHaveAttribute('tabIndex', '0');
-			expect(screen.getByTestId('section-activity-heatmap')).toHaveAttribute(
+			expect(screen.getByTestId('section-radial-activity')).toHaveAttribute('tabIndex', '0');
+			expect(screen.getByTestId('section-radial-activity')).toHaveAttribute(
 				'aria-label',
-				'Activity Heatmap'
+				'Activity by Hour and Day of Week'
 			);
 		});
 
@@ -1758,9 +1806,10 @@ describe('UsageDashboardModal', () => {
 			summarySection.focus();
 			fireEvent.keyDown(summarySection, { key: 'ArrowDown' });
 
-			// Should focus agent comparison (next section)
+			// Should focus Query Duration Percentiles (next section, inserted
+			// between summary cards and provider comparison).
 			await waitFor(() => {
-				expect(document.activeElement).toBe(screen.getByTestId('section-agent-comparison'));
+				expect(document.activeElement).toBe(screen.getByTestId('section-query-percentiles'));
 			});
 		});
 
@@ -1771,11 +1820,11 @@ describe('UsageDashboardModal', () => {
 				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
 			});
 
-			const agentSection = screen.getByTestId('section-agent-comparison');
+			const percentilesSection = screen.getByTestId('section-query-percentiles');
 
-			// Focus agent comparison and press ArrowUp
-			agentSection.focus();
-			fireEvent.keyDown(agentSection, { key: 'ArrowUp' });
+			// Focus Query Duration Percentiles and press ArrowUp
+			percentilesSection.focus();
+			fireEvent.keyDown(percentilesSection, { key: 'ArrowUp' });
 
 			// Should focus summary cards (previous section)
 			await waitFor(() => {
@@ -1790,13 +1839,13 @@ describe('UsageDashboardModal', () => {
 				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
 			});
 
-			// Use the Activity Heatmap — last section in overview view (after
-			// duration trends moved to the Activity tab).
-			const heatmapSection = screen.getByTestId('section-activity-heatmap');
+			// Use the radial activity chart - last section in overview view
+			// (after the activity heatmap moved to the Activity tab).
+			const lastSection = screen.getByTestId('section-radial-activity');
 
 			// Focus last section and press Home
-			heatmapSection.focus();
-			fireEvent.keyDown(heatmapSection, { key: 'Home' });
+			lastSection.focus();
+			fireEvent.keyDown(lastSection, { key: 'Home' });
 
 			// Should focus first section (year-in-pixels — added as the new hero strip)
 			await waitFor(() => {
@@ -1814,12 +1863,13 @@ describe('UsageDashboardModal', () => {
 			const summarySection = screen.getByTestId('section-summary-cards');
 
 			// Focus first section and press End. Last section in overview is
-			// the Activity Heatmap (duration-trends moved to the Activity tab).
+			// the radial activity chart (the activity heatmap moved to the
+			// Activity tab).
 			summarySection.focus();
 			fireEvent.keyDown(summarySection, { key: 'End' });
 
 			await waitFor(() => {
-				expect(document.activeElement).toBe(screen.getByTestId('section-activity-heatmap'));
+				expect(document.activeElement).toBe(screen.getByTestId('section-radial-activity'));
 			});
 		});
 
@@ -1975,7 +2025,7 @@ describe('UsageDashboardModal', () => {
 			fireEvent.keyDown(summarySection, { key: 'ArrowDown' });
 
 			await waitFor(() => {
-				expect(document.activeElement).toBe(screen.getByTestId('section-agent-comparison'));
+				expect(document.activeElement).toBe(screen.getByTestId('section-query-percentiles'));
 			});
 
 			// Switch to Agents view by name (its index drifted when "Agent

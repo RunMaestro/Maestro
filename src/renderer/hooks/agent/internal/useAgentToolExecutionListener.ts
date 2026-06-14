@@ -18,6 +18,7 @@
 import { useEffect } from 'react';
 import { useSessionStore } from '../../../stores/sessionStore';
 import { REGEX_AI_TAB } from '../../../utils/sessionIdParser';
+import { thinkingLogsRecorded } from './helpers/thinkingLogs';
 import type { LogEntry } from '../../../types';
 
 export function useAgentToolExecutionListener(): void {
@@ -53,11 +54,16 @@ export function useAgentToolExecutionListener(): void {
 
 						const targetTab = s.aiTabs.find((t) => t.id === tabId);
 						if (!targetTab) return s;
-						if (!targetTab.showThinking || targetTab.showThinking === 'off') return s;
+						if (!thinkingLogsRecorded(targetTab.showThinking)) return s;
 
 						const newState = toolEvent.state as
 							| NonNullable<LogEntry['metadata']>['toolState']
 							| undefined;
+
+						// Tag tool entries with `renderStyle: 'text-stream'` when the
+						// session's resolved Claude mode is interactive so the TUI/API
+						// footer pill matches the assistant text in the same turn.
+						const isInteractive = s.claudeInteractive?.mode === 'interactive';
 
 						const isFinalizing =
 							newState?.status === 'completed' ||
@@ -92,6 +98,7 @@ export function useAgentToolExecutionListener(): void {
 							const mergedLog: LogEntry = {
 								...existing,
 								metadata: { ...existing.metadata, toolState: mergedState },
+								...(isInteractive ? { renderStyle: 'text-stream' as const } : {}),
 							};
 							updatedLogs = [
 								...targetTab.logs.slice(0, existingIdx),
@@ -105,6 +112,7 @@ export function useAgentToolExecutionListener(): void {
 								source: 'tool',
 								text: toolEvent.toolName,
 								metadata: { toolState: newState },
+								...(isInteractive ? { renderStyle: 'text-stream' as const } : {}),
 							};
 							updatedLogs = [...targetTab.logs, toolLog];
 						}
