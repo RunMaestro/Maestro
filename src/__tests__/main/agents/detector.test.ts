@@ -4,6 +4,7 @@ import {
 	AgentConfig,
 	AgentConfigOption,
 	AgentCapabilities,
+	getAgentIds,
 } from '../../../main/agents';
 
 // Mock dependencies
@@ -322,8 +323,7 @@ describe('agent-detector', () => {
 
 			const agents = await detector.detectAgents();
 
-			// Should have all 8 agents (terminal, claude-code, codex, gemini-cli, qwen3-coder, opencode, factory-droid, copilot-cli)
-			expect(agents.length).toBe(8);
+			expect(agents.length).toBe(getAgentIds().length);
 
 			const agentIds = agents.map((a) => a.id);
 			expect(agentIds).toContain('terminal');
@@ -331,6 +331,8 @@ describe('agent-detector', () => {
 			expect(agentIds).toContain('codex');
 			expect(agentIds).toContain('gemini-cli');
 			expect(agentIds).toContain('qwen3-coder');
+			expect(agentIds).toContain('hermes');
+			expect(agentIds).toContain('pi');
 			expect(agentIds).toContain('opencode');
 			expect(agentIds).toContain('factory-droid');
 			expect(agentIds).toContain('copilot-cli');
@@ -364,7 +366,7 @@ describe('agent-detector', () => {
 			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
 				const binaryName = args[0];
 				const terminalBinary = process.platform === 'win32' ? 'powershell.exe' : 'bash';
-				if (binaryName === terminalBinary || binaryName === 'claude') {
+				if (binaryName === terminalBinary || binaryName === 'claude' || binaryName === 'hermes') {
 					return { stdout: `/usr/bin/${binaryName}\n`, stderr: '', exitCode: 0 };
 				}
 				return { stdout: '', stderr: 'not found', exitCode: 1 };
@@ -374,7 +376,56 @@ describe('agent-detector', () => {
 
 			expect(agents.find((a) => a.id === 'terminal')?.available).toBe(true);
 			expect(agents.find((a) => a.id === 'claude-code')?.available).toBe(true);
+			expect(agents.find((a) => a.id === 'hermes')?.available).toBe(true);
 			expect(agents.find((a) => a.id === 'codex')?.available).toBe(false);
+			expect(agents.find((a) => a.id === 'pi')?.available).toBe(false);
+		});
+
+		it('should detect Hermes using the shared CLI metadata', async () => {
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				const binaryName = args[0];
+				if (binaryName === 'hermes') {
+					return { stdout: '/usr/local/bin/hermes\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: 'not found', exitCode: 1 };
+			});
+
+			const agents = await detector.detectAgents();
+			const hermesAgent = agents.find((a) => a.id === 'hermes');
+
+			expect(hermesAgent?.available).toBe(true);
+			expect(hermesAgent?.path).toBe('/usr/local/bin/hermes');
+			expect(hermesAgent?.name).toBe('Hermes');
+			expect(hermesAgent?.binaryName).toBe('hermes');
+		});
+
+		it('should keep Pi unavailable when its binary is missing', async () => {
+			mockExecFileNoThrow.mockResolvedValue({ stdout: '', stderr: 'not found', exitCode: 1 });
+
+			const agents = await detector.detectAgents();
+			const piAgent = agents.find((a) => a.id === 'pi');
+
+			expect(piAgent?.available).toBe(false);
+			expect(piAgent?.path).toBeUndefined();
+			expect(piAgent?.name).toBe('Pi');
+			expect(piAgent?.binaryName).toBe('pi');
+		});
+
+		it('should detect Pi using the shared CLI metadata', async () => {
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				if (args[0] === 'pi') {
+					return { stdout: '/usr/local/bin/pi\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: 'not found', exitCode: 1 };
+			});
+
+			const agents = await detector.detectAgents();
+			const piAgent = agents.find((a) => a.id === 'pi');
+
+			expect(piAgent?.available).toBe(true);
+			expect(piAgent?.path).toBe('/usr/local/bin/pi');
+			expect(piAgent?.name).toBe('Pi');
+			expect(piAgent?.binaryName).toBe('pi');
 		});
 
 		it('should use deduplication for parallel calls', async () => {
@@ -968,8 +1019,8 @@ describe('agent-detector', () => {
 
 			const result = await detectPromise;
 			expect(result).toBeDefined();
-			// Should have all 8 agents (terminal, claude-code, codex, gemini-cli, qwen3-coder, opencode, factory-droid, copilot-cli)
-			expect(result.length).toBe(8);
+			// Should stay aligned with the live agent catalog, even as new agents are added.
+			expect(result.length).toBe(getAgentIds().length);
 		});
 
 		it('should handle very long PATH', async () => {

@@ -26,6 +26,8 @@ describe('agent-definitions', () => {
 			expect(agentIds).toContain('gemini-cli');
 			expect(agentIds).toContain('qwen3-coder');
 			expect(agentIds).toContain('copilot-cli');
+			expect(agentIds).toContain('hermes');
+			expect(agentIds).toContain('pi');
 		});
 
 		it('should have required properties on all definitions', () => {
@@ -82,6 +84,31 @@ describe('agent-definitions', () => {
 				'--no-ask-user',
 			]);
 			expect(copilot?.readOnlyCliEnforced).toBe(true);
+		});
+
+		it('should configure Pi for documented JSONL batch output', () => {
+			const pi = AGENT_DEFINITIONS.find((def) => def.id === 'pi');
+			expect(pi?.batchModePrefix).toEqual(['-p']);
+			expect(pi?.jsonOutputArgs).toEqual(['--mode', 'json']);
+			expect(pi?.noPromptSeparator).toBe(true);
+			expect(pi?.resumeArgs?.('pi-session-1')).toEqual(['--session', 'pi-session-1']);
+			expect(pi?.readOnlyArgs).toEqual(['--tools', 'read,grep,find,ls']);
+			expect(pi?.readOnlyCliEnforced).toBe(true);
+			expect(pi?.noToolsArgs).toEqual(['--no-tools']);
+			expect(pi?.modelArgs?.('anthropic/claude-sonnet-4')).toEqual([
+				'--model',
+				'anthropic/claude-sonnet-4',
+			]);
+			expect(pi?.imageArgs?.('/tmp/image.png')).toEqual(['@/tmp/image.png']);
+		});
+
+		it('should keep Hermes on the documented plain-text batch path', () => {
+			const hermes = AGENT_DEFINITIONS.find((def) => def.id === 'hermes');
+			expect(hermes?.batchModePrefix).toEqual(['chat']);
+			expect(hermes?.batchModeArgs).toEqual(['-Q', '--yolo']);
+			expect(hermes?.jsonOutputArgs).toBeUndefined();
+			expect(hermes?.resumeArgs).toBeUndefined();
+			expect(hermes?.promptArgs?.('hello')).toEqual(['-q', 'hello']);
 		});
 
 		it('should have opencode with default env vars for YOLO mode and disabled question tool', () => {

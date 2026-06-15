@@ -156,6 +156,21 @@ describe('agent-capabilities', () => {
 			expect(capabilities.supportsGroupChatModeration).toBe(true);
 		});
 
+		it('should expose Pi capabilities backed by its documented CLI contract', () => {
+			const capabilities = AGENT_CAPABILITIES.pi;
+
+			expect(capabilities.supportsResume).toBe(true);
+			expect(capabilities.supportsReadOnlyMode).toBe(true);
+			expect(capabilities.supportsJsonOutput).toBe(true);
+			expect(capabilities.supportsSessionId).toBe(true);
+			expect(capabilities.supportsImageInputOnResume).toBe(true);
+			expect(capabilities.supportsCostTracking).toBe(true);
+			expect(capabilities.supportsUsageStats).toBe(true);
+			expect(capabilities.supportsResultMessages).toBe(true);
+			expect(capabilities.supportsThinkingDisplay).toBe(true);
+			expect(capabilities.usesJsonLineOutput).toBe(true);
+		});
+
 		it('should define capabilities for all known agents', () => {
 			const knownAgents = [
 				'claude-code',

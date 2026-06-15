@@ -9,6 +9,7 @@ import {
 	OpenCodeOutputParser,
 	CodexOutputParser,
 	CopilotOutputParser,
+	PiOutputParser,
 } from '../../../main/parsers';
 
 describe('parsers/index', () => {
@@ -57,21 +58,29 @@ describe('parsers/index', () => {
 			expect(hasOutputParser('copilot-cli')).toBe(true);
 		});
 
-		it('should register exactly 5 parsers', () => {
+		it('should register Pi parser', () => {
+			expect(hasOutputParser('pi')).toBe(false);
+
+			initializeOutputParsers();
+
+			expect(hasOutputParser('pi')).toBe(true);
+		});
+
+		it('should register exactly 6 parsers', () => {
 			initializeOutputParsers();
 
 			const parsers = getAllOutputParsers();
-			expect(parsers.length).toBe(5); // Claude, OpenCode, Codex, Factory Droid, Copilot
+			expect(parsers.length).toBe(6);
 		});
 
 		it('should clear existing parsers before registering', () => {
 			// First initialization
 			initializeOutputParsers();
-			expect(getAllOutputParsers().length).toBe(5);
+			expect(getAllOutputParsers().length).toBe(6);
 
 			// Second initialization should still have exactly 5
 			initializeOutputParsers();
-			expect(getAllOutputParsers().length).toBe(5);
+			expect(getAllOutputParsers().length).toBe(6);
 		});
 	});
 
@@ -113,6 +122,12 @@ describe('parsers/index', () => {
 			expect(parser).not.toBeNull();
 			expect(parser).toBeInstanceOf(CopilotOutputParser);
 		});
+
+		it('should return PiOutputParser for pi', () => {
+			const parser = getOutputParser('pi');
+			expect(parser).not.toBeNull();
+			expect(parser).toBeInstanceOf(PiOutputParser);
+		});
 	});
 
 	describe('parser exports', () => {
@@ -134,6 +149,11 @@ describe('parsers/index', () => {
 		it('should export CopilotOutputParser class', () => {
 			const parser = new CopilotOutputParser();
 			expect(parser.agentId).toBe('copilot-cli');
+		});
+
+		it('should export PiOutputParser class', () => {
+			const parser = new PiOutputParser();
+			expect(parser.agentId).toBe('pi');
 		});
 	});
 

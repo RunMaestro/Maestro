@@ -200,6 +200,72 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 	},
 
 	/**
+	 * Hermes - plain-text batch integration based on documented CLI behavior.
+	 * Structured output and session features remain gated because Hermes does not
+	 * expose a stable protocol Maestro can consume.
+	 */
+	hermes: {
+		supportsResume: false,
+		supportsReadOnlyMode: false,
+		supportsJsonOutput: false,
+		supportsSessionId: false,
+		supportsImageInput: true,
+		supportsImageInputOnResume: false,
+		supportsSlashCommands: false,
+		supportsSessionStorage: false,
+		supportsCostTracking: false,
+		supportsUsageStats: false,
+		supportsBatchMode: true,
+		requiresPromptToStart: true,
+		supportsStreaming: true,
+		supportsResultMessages: false,
+		supportsModelSelection: true,
+		supportsStreamJsonInput: false,
+		supportsThinkingDisplay: false,
+		supportsContextMerge: true,
+		supportsContextExport: false,
+		supportsWizard: false,
+		supportsGroupChatModeration: false,
+		usesJsonLineOutput: false,
+		usesCombinedContextWindow: false,
+		supportsAppendSystemPrompt: false,
+		supportsProjectMemory: false,
+	},
+
+	/**
+	 * Pi - JSONL batch integration based on the documented `--mode json` protocol.
+	 * Pi emits session IDs, message deltas, tool events, and usage statistics.
+	 * Pi accepts session IDs through `--session` and enforces read-only mode with a tool allowlist.
+	 */
+	pi: {
+		supportsResume: true,
+		supportsReadOnlyMode: true,
+		supportsJsonOutput: true,
+		supportsSessionId: true,
+		supportsImageInput: true,
+		supportsImageInputOnResume: true,
+		supportsSlashCommands: false,
+		supportsSessionStorage: false,
+		supportsCostTracking: true,
+		supportsUsageStats: true,
+		supportsBatchMode: true,
+		requiresPromptToStart: true,
+		supportsStreaming: true,
+		supportsResultMessages: true,
+		supportsModelSelection: true,
+		supportsStreamJsonInput: false,
+		supportsThinkingDisplay: true,
+		supportsContextMerge: true,
+		supportsContextExport: false,
+		supportsWizard: false,
+		supportsGroupChatModeration: false,
+		usesJsonLineOutput: true,
+		usesCombinedContextWindow: false,
+		supportsAppendSystemPrompt: false,
+		supportsProjectMemory: false,
+	},
+
+	/**
 	 * OpenCode - Open source coding assistant
 	 * https://github.com/opencode-ai/opencode
 	 *
