@@ -5,7 +5,7 @@
  * config overrides, SSH wrapping, and prompt appending.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { CueExecutionConfig } from '../../../main/cue/cue-executor';
 import type { CueEvent, CueSubscription } from '../../../main/cue/cue-types';
 import type { SessionInfo } from '../../../shared/types';
@@ -132,6 +132,15 @@ describe('cue-spawn-builder', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		mockGetAgentDefinition.mockReturnValue(defaultAgentDef);
+		// The spec env spreads process.env, so an ambient MAESTRO_CLAUDE_BIN
+		// (leaked when these tests run inside a maestro/claude agent) would bleed
+		// into specs and trip the "maestro-p disabled -> undefined" assertion.
+		// Clear it so the suite asserts only what the builder itself injects.
+		vi.stubEnv('MAESTRO_CLAUDE_BIN', undefined as unknown as string);
+	});
+
+	afterEach(() => {
+		vi.unstubAllEnvs();
 	});
 
 	describe('buildSpawnSpec', () => {
