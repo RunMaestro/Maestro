@@ -27,6 +27,7 @@ import {
 } from './internal/useBatchControlActions';
 import { useBatchKillAction } from './internal/useBatchKillAction';
 import { useBatchRunner } from './internal/useBatchRunner';
+import { useGoalRunner } from './internal/useGoalRunner';
 
 export interface BatchCompleteInfo {
 	sessionId: string;
@@ -281,8 +282,8 @@ export function useBatchProcessor({
 	// per-module — keeping the ref in the coordinator is intentional).
 	updateBatchStateAndBroadcastRef.current = updateBatchStateAndBroadcast;
 
-	// Auto Run orchestrator (the main `startBatchRun` callback)
-	const { startBatchRun } = useBatchRunner({
+	// Document/task-driven Auto Run orchestrator.
+	const { startBatchRun: startDocumentBatchRun } = useBatchRunner({
 		sessionsRef,
 		audioFeedbackEnabledRef,
 		audioFeedbackCommandRef,
@@ -307,6 +308,40 @@ export function useBatchProcessor({
 		onPRResult,
 		onProcessQueueAfterCompletion,
 	});
+
+	// Goal-Driven Auto Run orchestrator. Shares the same lifecycle dependency
+	// surface so stop/kill/pause controls and state behavior stay consistent.
+	const { startGoalRun } = useGoalRunner({
+		sessionsRef,
+		audioFeedbackEnabledRef,
+		audioFeedbackCommandRef,
+		autoRunFlushStateRefs,
+		stopRequestedRefs,
+		isMountedRef,
+		updateBatchStateAndBroadcastRef,
+		broadcastAutoRunState,
+		flushDebouncedUpdate,
+		dispatch,
+		timeTracking,
+		groups,
+		onSpawnAgent,
+		onAddHistoryEntry,
+		onComplete,
+		onProcessQueueAfterCompletion,
+	});
+
+	// Single public entry point. The presence of `config.goalConfig` selects goal
+	// mode; otherwise we run the existing document/task loop. The signature is
+	// unchanged so no caller breaks.
+	const startBatchRun = useCallback(
+		(sessionId: string, config: BatchRunConfig, folderPath: string) => {
+			if (config.goalConfig) {
+				return startGoalRun(sessionId, config, folderPath);
+			}
+			return startDocumentBatchRun(sessionId, config, folderPath);
+		},
+		[startGoalRun, startDocumentBatchRun]
+	);
 
 	return {
 		batchRunStates,

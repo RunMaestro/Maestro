@@ -28,6 +28,11 @@ export interface AutoRunState {
 	errorRecoverable?: boolean;
 	errorDocumentIndex?: number;
 	errorTaskDescription?: string;
+	// Goal-Driven mode fields
+	goalMode?: boolean;
+	goalProgress?: number;
+	goalRationale?: string;
+	goalIteration?: number;
 }
 
 /**

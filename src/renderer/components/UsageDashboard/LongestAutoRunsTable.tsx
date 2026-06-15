@@ -19,6 +19,7 @@ import type { Theme } from '../../types';
 import type { StatsTimeRange, AutoRunSession } from '../../../shared/stats-types';
 import { captureException } from '../../utils/sentry';
 import { formatDurationHuman as formatDuration, formatTimestamp } from '../../../shared/formatters';
+import { isGoalRunDocument, goalRunLabel } from '../../../shared/goalDriven/goalRunLabel';
 
 interface LongestAutoRunsTableProps {
 	/** Current time range for filtering */
@@ -176,8 +177,15 @@ export const LongestAutoRunsTable = memo(function LongestAutoRunsTable({
 					</thead>
 					<tbody>
 						{topSessions.map((session, index) => {
-							const tasksLabel =
-								session.tasksTotal != null
+							// Goal runs have no document and no real task count — they record the
+							// goal text (behind a `Goal: ` prefix) as the document path and their
+							// 0–100 progress as tasksCompleted/tasksTotal. Render them with the goal
+							// text + a "Goal" tag and a single percent so they aren't mistaken for
+							// a "100-task" document run.
+							const isGoal = isGoalRunDocument(session.documentPath);
+							const tasksLabel = isGoal
+								? `${session.tasksCompleted ?? 0}%`
+								: session.tasksTotal != null
 									? `${session.tasksCompleted ?? 0} / ${session.tasksTotal}`
 									: '—';
 
@@ -229,9 +237,28 @@ export const LongestAutoRunsTable = memo(function LongestAutoRunsTable({
 									<td
 										className="px-3 py-2 max-w-[200px] truncate"
 										style={{ color: theme.colors.textDim }}
-										title={session.documentPath || undefined}
+										title={
+											isGoal
+												? goalRunLabel(session.documentPath)
+												: session.documentPath || undefined
+										}
 									>
-										{extractFileName(session.documentPath)}
+										{isGoal ? (
+											<span className="inline-flex items-center gap-1.5 min-w-0">
+												<span
+													className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide"
+													style={{
+														backgroundColor: `${theme.colors.accent}20`,
+														color: theme.colors.accent,
+													}}
+												>
+													Goal
+												</span>
+												<span className="truncate">{goalRunLabel(session.documentPath)}</span>
+											</span>
+										) : (
+											extractFileName(session.documentPath)
+										)}
 									</td>
 									<td
 										className="px-3 py-2 whitespace-nowrap font-mono text-xs"

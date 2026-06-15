@@ -19,6 +19,7 @@ import {
 	Globe,
 	StopCircle,
 	Layers,
+	Target,
 } from 'lucide-react';
 import type { Theme } from '../../types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
@@ -380,6 +381,109 @@ export function AutoRunnerHelpModal({ theme, onClose, zIndex = 50 }: AutoRunnerH
 							grip handle to rearrange documents in the queue.
 						</p>
 						<p>Documents with zero unchecked tasks are automatically skipped.</p>
+					</div>
+				</section>
+
+				{/* Goal-Driven Mode */}
+				<section>
+					<div className="flex items-center gap-2 mb-3">
+						<Target className="w-5 h-5" style={{ color: theme.colors.accent }} />
+						<h3 className="font-bold">Goal-Driven Mode</h3>
+					</div>
+					<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
+						<p>
+							Switch to the <strong style={{ color: theme.colors.textMain }}>Goal-Driven</strong>{' '}
+							tab in the Run dialog to chase a free-text objective instead of a document of
+							checkboxes. Each iteration spawns a fresh agent that makes one increment of real
+							progress toward the goal, reports how far along it is, and exits—the next iteration
+							picks up where it left off until the goal is reached or the run stops.
+						</p>
+						<p>
+							<strong style={{ color: theme.colors.textMain }}>
+								Three inputs configure a run:
+							</strong>
+						</p>
+						<ul className="list-disc ml-4 space-y-1">
+							<li>
+								<strong style={{ color: theme.colors.textMain }}>Goal</strong> — what you want
+								accomplished, in plain language.
+							</li>
+							<li>
+								<strong style={{ color: theme.colors.textMain }}>Exit Criteria</strong> — what
+								"done" looks like and when to declare a deadlock. This guides the agent; it isn't
+								matched automatically.
+							</li>
+							<li>
+								<strong style={{ color: theme.colors.textMain }}>Iteration Limit</strong> — a cap on
+								how many iterations may run, or{' '}
+								<strong style={{ color: theme.colors.textMain }}>Infinite</strong> to run until the
+								goal is reached or a deadlock is detected.
+							</li>
+						</ul>
+						<p>
+							<strong style={{ color: theme.colors.textMain }}>Progress marker.</strong> At the end
+							of every iteration the agent reports its honest 0–100 self-assessment on its own line.
+							The engine reads this to drive the progress bar and decide whether to run again:
+						</p>
+						<div
+							className="font-mono text-xs p-2 rounded border"
+							style={{
+								backgroundColor: theme.colors.bgActivity,
+								borderColor: theme.colors.border,
+							}}
+						>
+							{'<!-- maestro:progress 45 | refactored auth, tests still pending -->'}
+						</div>
+						<p>
+							The <code>| rationale</code> note is optional but shows up in the progress UI. A
+							response with <em>no</em> progress marker is treated as zero progress and counts
+							toward a stall.
+						</p>
+						<p>
+							<strong style={{ color: theme.colors.textMain }}>
+								A goal run stops on any of four conditions:
+							</strong>
+						</p>
+						<ul className="list-disc ml-4 space-y-1">
+							<li>
+								<strong style={{ color: theme.colors.textMain }}>Completed</strong> — the agent
+								reports <code>progress 100</code>, or emits the explicit marker:
+								<div
+									className="font-mono text-xs p-2 mt-1.5 rounded border"
+									style={{
+										backgroundColor: theme.colors.bgActivity,
+										borderColor: theme.colors.border,
+									}}
+								>
+									{'<!-- maestro:goal-complete -->'}
+								</div>
+							</li>
+							<li>
+								<strong style={{ color: theme.colors.textMain }}>Deadlock</strong> — the agent hits
+								a true blocker it cannot work around and declares it:
+								<div
+									className="font-mono text-xs p-2 mt-1.5 rounded border"
+									style={{
+										backgroundColor: theme.colors.bgActivity,
+										borderColor: theme.colors.border,
+									}}
+								>
+									{'<!-- maestro:deadlock: brief reason you cannot proceed -->'}
+								</div>
+							</li>
+							<li>
+								<strong style={{ color: theme.colors.textMain }}>Max iterations</strong> — a finite
+								iteration limit is reached.
+							</li>
+							<li>
+								<strong style={{ color: theme.colors.textMain }}>Stalled</strong> — progress doesn't
+								move upward for three iterations in a row, so the run stops instead of spinning.
+							</li>
+						</ul>
+						<p>
+							The stop reason and final progress are recorded in the{' '}
+							<strong style={{ color: theme.colors.textMain }}>History</strong> panel.
+						</p>
 					</div>
 				</section>
 

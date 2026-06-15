@@ -714,15 +714,21 @@ export const RightPanel = memo(
 								className="h-full transition-all duration-500 ease-out"
 								style={{
 									width: `${
-										currentSessionBatchState.totalTasksAcrossAllDocs > 0
-											? (currentSessionBatchState.completedTasksAcrossAllDocs /
-													currentSessionBatchState.totalTasksAcrossAllDocs) *
-												100
-											: currentSessionBatchState.totalTasks > 0
-												? (currentSessionBatchState.completedTasks /
-														currentSessionBatchState.totalTasks) *
+										// Goal mode drives the bar straight from the self-reported percent.
+										// (Phase 02 also mirrors progress into completedTasksAcrossAllDocs/100,
+										// so the task ratio below would coincide — but branch explicitly so
+										// the value is unambiguous and the label below reads "Goal: N%".)
+										currentSessionBatchState.goalMode
+											? Math.min(100, Math.max(0, currentSessionBatchState.goalProgress ?? 0))
+											: currentSessionBatchState.totalTasksAcrossAllDocs > 0
+												? (currentSessionBatchState.completedTasksAcrossAllDocs /
+														currentSessionBatchState.totalTasksAcrossAllDocs) *
 													100
-												: 0
+												: currentSessionBatchState.totalTasks > 0
+													? (currentSessionBatchState.completedTasks /
+															currentSessionBatchState.totalTasks) *
+														100
+													: 0
 									}%`,
 									backgroundColor:
 										currentSessionBatchState.isStopping || errorPaused
@@ -739,14 +745,31 @@ export const RightPanel = memo(
 								style={{
 									color: errorPaused ? theme.colors.error : theme.colors.textDim,
 								}}
+								// Surface the agent's latest rationale on hover so users can see *why*
+								// the goal is at this percent without opening the History panel.
+								title={
+									currentSessionBatchState.goalMode
+										? currentSessionBatchState.goalRationale || undefined
+										: undefined
+								}
 							>
 								{errorPaused
 									? batchError?.message || 'Paused due to error'
 									: currentSessionBatchState.isStopping
 										? 'Waiting for current task to complete before stopping...'
-										: currentSessionBatchState.totalTasksAcrossAllDocs > 0
-											? `${currentSessionBatchState.completedTasksAcrossAllDocs} of ${currentSessionBatchState.totalTasksAcrossAllDocs} tasks completed`
-											: `${currentSessionBatchState.completedTasks} of ${currentSessionBatchState.totalTasks} tasks completed`}
+										: currentSessionBatchState.goalMode
+											? `Goal: ${currentSessionBatchState.goalProgress ?? 0}%${
+													currentSessionBatchState.goalIteration
+														? ` · iteration ${currentSessionBatchState.goalIteration}`
+														: ''
+												}${
+													currentSessionBatchState.goalRationale
+														? ` — ${currentSessionBatchState.goalRationale}`
+														: ''
+												}`
+											: currentSessionBatchState.totalTasksAcrossAllDocs > 0
+												? `${currentSessionBatchState.completedTasksAcrossAllDocs} of ${currentSessionBatchState.totalTasksAcrossAllDocs} tasks completed`
+												: `${currentSessionBatchState.completedTasks} of ${currentSessionBatchState.totalTasks} tasks completed`}
 							</span>
 							{/* Resume/Abort buttons when error-paused */}
 							{errorPaused && (
