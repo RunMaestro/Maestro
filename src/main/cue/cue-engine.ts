@@ -1285,7 +1285,7 @@ export class CueEngine {
 	 */
 	private hydrateActivityLogFromDb(): void {
 		try {
-			const records = getRecentCueEvents(0, 500);
+			const records = getRecentCueEvents(0, 1000);
 			if (records.length === 0) return;
 			const sessionNamesById = new Map(this.deps.getSessions().map((s) => [s.id, s.name]));
 			// getRecentCueEvents returns newest-first; reverse so the ring buffer

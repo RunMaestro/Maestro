@@ -208,6 +208,35 @@ describe('ClaudePlanUsage — multi-account tabs', () => {
 	});
 });
 
+describe('ClaudePlanUsage — case-variant dedup', () => {
+	it('collapses a case-variant CLAUDE_CONFIG_DIR onto the canonical snapshot row', () => {
+		// macOS filesystem is case-insensitive: `/Users/me/.claude-opswat` (the
+		// fs-discovered, snapshot-keyed spelling) and `/users/me/.claude-opswat`
+		// (a lowercase path typed into a session env var) are one directory. The
+		// dashboard must render a single account, not two near-identical rows.
+		seedSnapshots({
+			'/Users/me/.claude-opswat': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				configDirKey: '/Users/me/.claude-opswat',
+				authState: 'authenticated',
+				session: { percent: 12, resetsAt: '2026-05-15T05:00:00.000Z' },
+				weekAllModels: { percent: 8, resetsAt: '2026-05-22T00:00:00.000Z' },
+				weekSonnetOnly: { percent: 1, resetsAt: '2026-05-22T00:00:00.000Z' },
+			},
+		});
+		seedSessions(['/users/me/.claude-opswat']);
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		// Exactly one opswat account row, and it's the canonical-cased one that
+		// carries the snapshot (three bars render, not a pending CTA).
+		expect(screen.getAllByTestId('claude-plan-account-opswat')).toHaveLength(1);
+		expect(screen.getByText('/Users/me/.claude-opswat')).toBeInTheDocument();
+		expect(screen.queryByText('/users/me/.claude-opswat')).toBeNull();
+		expect(screen.getAllByRole('progressbar')).toHaveLength(3);
+	});
+});
+
 describe('ClaudePlanUsage — unauthenticated row', () => {
 	it('renders the "run /login" CTA in place of bars when authState is unauthenticated', () => {
 		seedSnapshots({
