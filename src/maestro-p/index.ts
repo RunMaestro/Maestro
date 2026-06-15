@@ -95,9 +95,27 @@ function resolveConfigDir(): string {
 	return path.join(os.homedir(), '.claude');
 }
 
+/**
+ * True when `p` points at maestro-p itself (by basename), so we never try to
+ * drive maestro-p as if it were the claude TUI.
+ */
+function isMaestroPSelfPath(p: string): boolean {
+	const base = p.replace(/\\/g, '/').split('/').pop() || p;
+	return base === 'maestro-p' || base === 'maestro-p.js' || base === 'maestro-p.exe';
+}
+
 function resolveBinPath(): string {
 	const envBin = process.env.MAESTRO_CLAUDE_BIN;
-	return envBin && envBin.length > 0 ? envBin : 'claude';
+	// Self-reference guard: when an agent's configured binary IS maestro-p (the
+	// supported "maestro-p Path" way to force the TUI), the desktop can pass that
+	// same path through MAESTRO_CLAUDE_BIN. Honoring it would make maestro-p spawn
+	// ITSELF in the PTY instead of claude - the child exits in ~tens of ms and the
+	// turn dies as `tui_exited` (observed on SSH agents whose customPath is
+	// maestro-p). Fall back to `claude` on PATH in that case.
+	if (envBin && envBin.length > 0 && !isMaestroPSelfPath(envBin)) {
+		return envBin;
+	}
+	return 'claude';
 }
 
 // Env vars that mark the CURRENT process as running inside a Claude Code
@@ -491,6 +509,20 @@ async function runMode(args: ParsedArgs): Promise<never> {
 
 	driver.on('limit-hit', () => {
 		limitHit = true;
+		// A quota limit means claude paints the limit line on the TUI and sits —
+		// it won't emit (further) transcript output this turn. Don't wait for the
+		// first-byte / idle timeout (up to 120s) to settle: that long stall is what
+		// makes a Dynamic-mode turn look like it produced "no response" after the
+		// mode-switch banner. Finalize after the same short drain grace used for
+		// end_turn (so any assistant text painted BEFORE the limit still flushes),
+		// then exit. `limitHit` forces exit code 2, which fires the desktop's
+		// interactive→API replay so the user's prompt is promptly re-sent under
+		// `claude --print` and actually gets answered.
+		setTimeout(() => {
+			if (!finalized) {
+				finalize({ isError: false, exitCode: 2 });
+			}
+		}, END_TURN_GRACE_MS);
 	});
 	driver.on('exit', () => {
 		if (finalized) return;

@@ -1633,10 +1633,18 @@ export const TerminalOutput = memo(
 				if (currentResponseGroup.length > 0) {
 					// Combine all response entries into one
 					const combinedText = currentResponseGroup.map((l) => l.text).join('');
+					// The token-source pill keys off `renderStyle === 'text-stream'`
+					// (maestro-p TUI capture). A response group can lead with a
+					// non-stream entry — e.g. the "Adaptive Mode: switched ..." system
+					// banner — and basing the combined entry only on `[0]` would inherit
+					// that entry's missing renderStyle and mislabel an interactive turn
+					// as "API". Preserve text-stream if ANY grouped entry carries it.
+					const hasTextStream = currentResponseGroup.some((l) => l.renderStyle === 'text-stream');
 					result.push({
 						...currentResponseGroup[0],
 						text: combinedText,
 						// Keep the first entry's timestamp and id
+						...(hasTextStream ? { renderStyle: 'text-stream' as const } : {}),
 					});
 					currentResponseGroup = [];
 				}

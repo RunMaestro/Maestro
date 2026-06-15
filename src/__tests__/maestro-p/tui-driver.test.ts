@@ -475,6 +475,59 @@ describe('TuiDriver', () => {
 			feed('weekly status report\n');
 			expect(limitHandler).not.toHaveBeenCalled();
 		});
+
+		// Real Max-plan banners Claude actually paints. The match is ANCHORED to
+		// these literal wordings on purpose (see LIMIT_REGEX comment): the regex
+		// runs against every line of rendered TUI output, so it must catch the
+		// genuine banner without matching the assistant's own prose.
+		it.each([
+			'5-hour limit reached',
+			'Your 5-hour limit exceeded for this account.',
+			'weekly limit reached',
+			'weekly limit exceeded',
+			'Claude Opus weekly limit reached',
+			'Claude AI usage limit reached|1781551200',
+			'Claude usage limit reached',
+		])('fires on a real plan-quota banner: %s', async (msg) => {
+			const driver = await makeDriver();
+			const limitHandler = vi.fn();
+			driver.on('limit-hit', limitHandler);
+			feed(`${msg}\n`);
+			expect(limitHandler).toHaveBeenCalledTimes(1);
+		});
+
+		// CRITICAL false-positive guard. The agent's own conversational text and
+		// tool output stream through the SAME line scanner. A broad "limit +
+		// reached/hit/exceeded" match silently aborts a good turn and swaps it for
+		// an API replay (the user sees a no-response "dead in the water" turn).
+		// This is exactly what regressed when an agent deployed Maestro's own
+		// token-mode feature copy. None of these benign lines may fire limit-hit.
+		it.each([
+			// Assistant prose that merely DISCUSSES limits.
+			'we hit the limit of 4 feature cards, so I trimmed the list',
+			'When your usage limit is reached, Maestro falls back to API.',
+			'Done. The chat interface limit was reached for free-tier users.',
+			'the message "usage limit reached" appears in the feature box',
+			"You've reached your usage limit",
+			// Quota/credit prose that isn't Claude's banner.
+			'Your quota has been exceeded',
+			'You are out of credits',
+			'Monthly limit reached',
+			// Non-quota resource limits: switching the token source wouldn't help.
+			'Maximum token limit reached. Start a new session.',
+			'Context limit exceeded. Start a new session.',
+			'Rate limit exceeded. Please wait.',
+			'Limit reached on disk usage',
+			// Capacity warnings (no reached/exceeded word in the banner form).
+			'Approaching your weekly limit',
+			'Upgrade to raise your usage limit',
+		])('does not fire on benign line: %s', async (msg) => {
+			const driver = await makeDriver();
+			const limitHandler = vi.fn();
+			driver.on('limit-hit', limitHandler);
+			feed(`${msg}\n`);
+			expect(limitHandler).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('send()', () => {

@@ -77,8 +77,26 @@ const ROLLING_BUFFER_CAP = 16 * 1024;
 // covers \r itself, which is what real captures look like.
 const READY_REGEX = /[›❯]\s/;
 
-// Matches both "5-hour limit reached/exceeded" and "weekly limit reached/exceeded".
-const LIMIT_REGEX = /(5-hour|weekly)\s+limit\s+(reached|exceeded)/i;
+// Plan-quota exhaustion banner Claude's TUI paints when the Max subscription's
+// rolling 5-hour / weekly window is spent. A match makes maestro-p exit 2, which
+// fires the desktop's interactive->API replay so the user's prompt is re-sent
+// under `claude --print`.
+//
+// MUST stay tightly ANCHORED to Claude's literal banner wording. This regex is
+// tested against EVERY line of rendered TUI output (see handleData), which
+// includes the assistant's own prose and tool results — so any broad
+// "limit + reached/hit/exceeded" match false-positives the moment the agent
+// merely *discusses* limits (e.g. building Maestro's own token-mode feature copy:
+// "we hit the limit of 4 cards", "when your usage limit is reached…"). A false
+// positive aborts a perfectly good interactive turn and silently swaps it for an
+// API replay, surfacing to the user as a no-response "dead in the water" turn.
+// Robustness against Anthropic rewording is NOT worth buying with broad matching
+// here; if the banner text changes, the maestro-p first-byte/idle timeouts still
+// fail the turn loudly rather than dropping it. Match only the two real Max-plan
+// window banners ("5-hour"/"weekly" limit reached/exceeded) and Claude's exact
+// "Claude [AI] usage limit reached" string.
+const LIMIT_REGEX =
+	/\b(?:5-hour|weekly)\s+limit\s+(?:reached|exceeded)\b|\bClaude(?:\s+AI)?\s+usage\s+limit\s+reached\b/i;
 
 // Claude TUI v2.1.143+ shows a "Quick safety check: Is this a project you
 // created or one you trust?" prompt on first launch in any folder, with

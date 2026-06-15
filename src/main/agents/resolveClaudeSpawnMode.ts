@@ -222,7 +222,15 @@ export function resolveClaudeSpawnMode(input: ResolveClaudeSpawnModeInput): Clau
 				remote: true,
 				// A custom remote claude path, when set, becomes MAESTRO_CLAUDE_BIN on
 				// the remote; otherwise maestro-p defaults to `claude` on the remote PATH.
-				claudeRealBinPath: sessionCustomPath || undefined,
+				// Never forward a maestro-p path here: when the agent's binary IS
+				// maestro-p (the "maestro-p Path" way to force the TUI), using it as
+				// MAESTRO_CLAUDE_BIN makes the remote maestro-p drive ITSELF in the PTY
+				// instead of claude - the child exits instantly and every turn dies as
+				// `tui_exited`. Fall back to the remote's `claude` on PATH instead.
+				claudeRealBinPath:
+					sessionCustomPath && !d.isMaestroPBinaryPath(sessionCustomPath)
+						? sessionCustomPath
+						: undefined,
 				configDirKey: d.resolveConfigDirKey(envForKey),
 			};
 		}
@@ -247,7 +255,14 @@ export function resolveClaudeSpawnMode(input: ResolveClaudeSpawnModeInput): Clau
 	}
 
 	const configDirKey = d.resolveConfigDirKey(envForKey);
-	const claudeRealBinPath = sessionCustomPath || command;
+	// Same self-reference guard as the remote branch: neither the custom path nor
+	// the resolved command may become MAESTRO_CLAUDE_BIN if it points at maestro-p
+	// itself, or maestro-p would spawn itself instead of the claude TUI. Fall back
+	// to `claude` on PATH (undefined) when both are maestro-p.
+	const claudeRealBinPath =
+		(sessionCustomPath && !d.isMaestroPBinaryPath(sessionCustomPath)
+			? sessionCustomPath
+			: undefined) ?? (command && !d.isMaestroPBinaryPath(command) ? command : undefined);
 
 	if (tokenMode === 'interactive') {
 		return {

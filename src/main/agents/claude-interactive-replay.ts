@@ -183,17 +183,24 @@ export function createInteractiveReplayController<TSpawnConfig>(
 		sessionId: string,
 		ctx: InteractiveReplayContext<TSpawnConfig>
 	): Promise<void> {
-		// (a) Refresh snapshot. Best-effort: a thrown error from sampleUsage
-		// shouldn't block the user-visible replay.
-		try {
-			await deps.sampleUsage(ctx.configDirKey);
-		} catch (err) {
-			deps.logger?.warn?.('[ClaudeInteractiveReplay] sampleUsage threw; continuing replay', {
-				sessionId,
-				configDirKey: ctx.configDirKey,
-				error: err instanceof Error ? err.message : String(err),
+		// (a) Refresh the usage snapshot in the BACKGROUND. It only feeds the usage
+		// dashboard and the next turn's resolver — the replay spawn below does not
+		// depend on it. Awaiting it here blocked re-sending the user's prompt on a
+		// `maestro-p --status` spawn (which can take ~30s), so a limit-hit Dynamic
+		// turn looked like it produced no response for half a minute after the
+		// mode-switch banner. Fire-and-forget so the API replay spawns immediately.
+		// Wrapped in Promise.resolve().then() so a SYNCHRONOUS throw from
+		// sampleUsage funnels into the same .catch() as an async rejection — a bare
+		// `sampleUsage().catch()` would let a sync throw escape as an unhandled error.
+		void Promise.resolve()
+			.then(() => deps.sampleUsage(ctx.configDirKey))
+			.catch((err) => {
+				deps.logger?.warn?.('[ClaudeInteractiveReplay] sampleUsage threw (background)', {
+					sessionId,
+					configDirKey: ctx.configDirKey,
+					error: err instanceof Error ? err.message : String(err),
+				});
 			});
-		}
 
 		const update: SessionInteractiveUpdate = {
 			mode: 'api',

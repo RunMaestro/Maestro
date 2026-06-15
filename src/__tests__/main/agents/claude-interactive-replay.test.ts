@@ -155,7 +155,11 @@ describe('createInteractiveReplayController', () => {
 			expect(buildApiSpawnConfig).toHaveBeenCalledWith({ prompt: 'check the schema migration' });
 		});
 
-		it('runs steps in order: sample → update → emit → spawn', async () => {
+		it('re-sends (update → emit → spawn) before the backgrounded usage sample settles', async () => {
+			// The usage sample is fire-and-forget: it must NOT gate the replay spawn,
+			// because sampleUsage runs `maestro-p --status` (~30s) and awaiting it
+			// stalled the user's re-sent prompt long after the mode-switch banner.
+			// So update/emit/spawn run synchronously first; 'sample' settles last.
 			const callOrder: string[] = [];
 			const h = buildHarness({
 				sampleUsage: vi.fn(async () => {
@@ -176,7 +180,7 @@ describe('createInteractiveReplayController', () => {
 			h.emitter.emit('exit', 's1', LIMIT_EXIT_CODE);
 			await flushMicrotasks();
 
-			expect(callOrder).toEqual(['sample', 'update', 'emit', 'spawn']);
+			expect(callOrder).toEqual(['update', 'emit', 'spawn', 'sample']);
 		});
 
 		it('clears the registered context after the replay completes', async () => {

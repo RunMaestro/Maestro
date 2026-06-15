@@ -175,6 +175,54 @@ describe('resolveClaudeSpawnMode', () => {
 		expect(r.claudeRealBinPath).toBe('/remote/bin/claude');
 	});
 
+	it('SSH remote interactive does NOT forward a maestro-p custom path as the real bin (self-spawn guard)', () => {
+		// Regression: when the agent's binary IS maestro-p, forwarding it as
+		// MAESTRO_CLAUDE_BIN makes the remote maestro-p drive itself in the PTY -
+		// the claude child exits instantly and the turn dies as `tui_exited`.
+		const r = resolveClaudeSpawnMode({
+			agent: claudeAgent,
+			tokenMode: 'interactive',
+			sshEnabled: true,
+			command: 'claude',
+			sessionCustomPath: '/usr/local/bin/maestro-p',
+			now: NOW,
+			deps: makeDeps(),
+		});
+		expect(r.remote).toBe(true);
+		// Undefined → remote maestro-p defaults to `claude` on its PATH.
+		expect(r.claudeRealBinPath).toBeUndefined();
+	});
+
+	it('local interactive does NOT use a maestro-p custom path as the real bin (self-spawn guard)', () => {
+		const r = resolveClaudeSpawnMode({
+			agent: claudeAgent,
+			tokenMode: 'interactive',
+			sshEnabled: false,
+			command: 'claude',
+			sessionCustomPath: '/custom/maestro-p',
+			now: NOW,
+			deps: makeDeps(),
+		});
+		expect(r.mode).toBe('interactive');
+		// Falls back to the resolved command (real claude), not the maestro-p path.
+		expect(r.claudeRealBinPath).toBe('claude');
+	});
+
+	it('local interactive with maestro-p as BOTH command and custom path leaves the real bin unset', () => {
+		const r = resolveClaudeSpawnMode({
+			agent: claudeAgent,
+			tokenMode: 'interactive',
+			sshEnabled: false,
+			command: '/custom/maestro-p',
+			sessionCustomPath: '/custom/maestro-p',
+			now: NOW,
+			deps: makeDeps(),
+		});
+		expect(r.mode).toBe('interactive');
+		// Both are maestro-p → undefined so maestro-p defaults to `claude` on PATH.
+		expect(r.claudeRealBinPath).toBeUndefined();
+	});
+
 	it('api mode resolves to api', () => {
 		const r = resolveClaudeSpawnMode({
 			agent: claudeAgent,

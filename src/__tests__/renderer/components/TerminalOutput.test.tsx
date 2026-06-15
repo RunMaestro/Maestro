@@ -2533,6 +2533,38 @@ describe('TerminalOutput', () => {
 			expect(screen.getByText('TUI')).toBeInTheDocument();
 		});
 
+		it('labels an interactive turn as TUI even when a system banner leads its response group', () => {
+			// Regression: Dynamic mode (and, before the fix, plain TUI) inserts an
+			// "Adaptive Mode: switched ..." system entry just before the streamed
+			// response. `collapsedLogs` merges the consecutive non-user entries into
+			// one block; basing the merged entry only on `[0]` inherited the banner's
+			// missing renderStyle and mislabeled the maestro-p turn as "API".
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'prompt', source: 'user' }),
+				createLogEntry({
+					id: 'banner',
+					text: 'Adaptive Mode: switched from API Limits to Time Limits. Quota windows reset.',
+					source: 'system',
+				}),
+				createLogEntry({
+					id: 'interactive-resp',
+					text: 'response captured from interactive TUI',
+					source: 'stdout',
+					renderStyle: 'text-stream',
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('TUI')).toBeInTheDocument();
+			expect(screen.queryByText('API')).not.toBeInTheDocument();
+		});
+
 		it('uses the "Adaptive" prefix when the session has Adaptive Mode enabled', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({ id: 'user-1', text: 'first prompt', source: 'user' }),
