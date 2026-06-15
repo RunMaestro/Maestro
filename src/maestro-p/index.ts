@@ -95,9 +95,27 @@ function resolveConfigDir(): string {
 	return path.join(os.homedir(), '.claude');
 }
 
+/**
+ * True when `p` points at maestro-p itself (by basename), so we never try to
+ * drive maestro-p as if it were the claude TUI.
+ */
+function isMaestroPSelfPath(p: string): boolean {
+	const base = p.replace(/\\/g, '/').split('/').pop() || p;
+	return base === 'maestro-p' || base === 'maestro-p.js' || base === 'maestro-p.exe';
+}
+
 function resolveBinPath(): string {
 	const envBin = process.env.MAESTRO_CLAUDE_BIN;
-	return envBin && envBin.length > 0 ? envBin : 'claude';
+	// Self-reference guard: when an agent's configured binary IS maestro-p (the
+	// supported "maestro-p Path" way to force the TUI), the desktop can pass that
+	// same path through MAESTRO_CLAUDE_BIN. Honoring it would make maestro-p spawn
+	// ITSELF in the PTY instead of claude - the child exits in ~tens of ms and the
+	// turn dies as `tui_exited` (observed on SSH agents whose customPath is
+	// maestro-p). Fall back to `claude` on PATH in that case.
+	if (envBin && envBin.length > 0 && !isMaestroPSelfPath(envBin)) {
+		return envBin;
+	}
+	return 'claude';
 }
 
 // Env vars that mark the CURRENT process as running inside a Claude Code
