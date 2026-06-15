@@ -985,6 +985,37 @@ describe('AboutModal', () => {
 		});
 	});
 
+	describe('Modal width (regression)', () => {
+		// Regression guard: the modal was previously 450px wide, which truncated the
+		// longest achievement title ("Principal Guest Conductor") and forced the stat
+		// cards and Global Statistics labels (e.g. "Output Tokens") to wrap. The modal
+		// must stay wide enough that those fit on one line. See AboutModal.tsx width prop.
+		const MIN_MODAL_WIDTH = 560;
+
+		it('should render the modal card at least as wide as the regression baseline', () => {
+			render(
+				<AboutModal
+					theme={theme}
+					handsOnTimeMs={0}
+					autoRunStats={createAutoRunStats()}
+					onClose={onClose}
+				/>
+			);
+
+			const dialog = screen.getByRole('dialog');
+			const modalCard = dialog.querySelector('div > div') as HTMLElement;
+			expect(modalCard).toBeInTheDocument();
+
+			// Modal applies its baseline width as an inline style on the card element.
+			// The width now scales with the font setting, so the value is a
+			// `min(calc(<baseline>px * var(--font-scale, 1)), 95vw)` expression rather
+			// than a bare pixel value - extract the baseline px to assert against.
+			const baselineMatch = modalCard.style.width.match(/(\d+)px/);
+			const widthPx = baselineMatch ? parseInt(baselineMatch[1], 10) : NaN;
+			expect(widthPx).toBeGreaterThanOrEqual(MIN_MODAL_WIDTH);
+		});
+	});
+
 	describe('Edge cases', () => {
 		it('should handle zero handsOnTimeMs', () => {
 			expect(() => {

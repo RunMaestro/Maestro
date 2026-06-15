@@ -2,7 +2,7 @@ import { ipcMain, BrowserWindow } from 'electron';
 import fs from 'fs/promises';
 import path from 'path';
 import chokidar, { FSWatcher } from 'chokidar';
-import { execFileNoThrow } from '../../utils/execFile';
+import { execFileNoThrow, execFileBufferNoThrow } from '../../utils/execFile';
 import { execGit } from '../../utils/remote-git';
 import { logger } from '../../utils/logger';
 import { getSshRemoteById } from '../../stores';
@@ -435,17 +435,19 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 				const ext = filePath.split('.').pop()?.toLowerCase() || '';
 
 				if (isImageFile(filePath)) {
-					// For images, we need to get raw binary content
-					// Use spawnSync to capture raw binary output
-					const { spawnSync } = require('child_process');
-					const result = spawnSync('git', ['show', `${ref}:${filePath}`], {
+					// For images we need raw binary content. Use the async,
+					// binary-safe exec helper instead of spawnSync so reading the blob
+					// never blocks the main-process event loop (which would freeze the
+					// entire UI while a large image / cold git object is fetched).
+					const result = await execFileBufferNoThrow(
+						'git',
+						['show', `${ref}:${filePath}`],
 						cwd,
-						encoding: 'buffer',
-						maxBuffer: 50 * 1024 * 1024, // 50MB max
-					});
+						50 * 1024 * 1024 // 50MB max
+					);
 
-					if (result.status !== 0) {
-						return { error: result.stderr?.toString() || 'Failed to read file from git' };
+					if (result.exitCode !== 0) {
+						return { error: result.stderr || 'Failed to read file from git' };
 					}
 
 					const base64 = result.stdout.toString('base64');

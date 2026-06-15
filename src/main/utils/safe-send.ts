@@ -5,6 +5,7 @@
 
 import { BrowserWindow } from 'electron';
 import { logger } from './logger';
+import { broadcastBridgeEvent } from '../web-server/handlers/bridgeHandlers';
 
 /** Function type for getting the main window reference */
 export type GetMainWindow = () => BrowserWindow | null;
@@ -21,8 +22,17 @@ export function createSafeSend(getMainWindow: GetMainWindow) {
 	 * Safely send IPC message to renderer.
 	 * Handles cases where the renderer has been disposed (e.g., GPU crash, window closing).
 	 * This prevents "Render frame was disposed before WebFrameMain could be accessed" errors.
+	 *
+	 * Always fans out to web-desktop bridge clients (no-op when the Encore
+	 * Feature is off or no clients are connected). The bridge broadcast runs
+	 * independently of the Electron renderer's liveness so web-desktop users
+	 * receive events even when the desktop window is closed, destroyed, or
+	 * mid-launch — without that, every main→renderer push would silently
+	 * skip the bridge whenever `mainWindow` wasn't immediately available.
 	 */
 	return function safeSend(channel: string, ...args: unknown[]): void {
+		broadcastBridgeEvent(channel, args);
+
 		try {
 			const mainWindow = getMainWindow();
 			if (

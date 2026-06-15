@@ -28,8 +28,9 @@ import { useTabStore } from '../../stores/tabStore';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useAgentStore } from '../../stores/agentStore';
 import { useFeedbackDraftStore } from '../../stores/feedbackDraftStore';
+import { useQuitWhenIdleStore } from '../../stores/quitWhenIdleStore';
 import { useAgentErrorRecovery } from '../agent/useAgentErrorRecovery';
-import { getInitialRenameValue } from '../../utils/tabHelpers';
+import { aiTabFocusFields, getInitialRenameValue } from '../../utils/tabHelpers';
 import { CONDUCTOR_BADGES } from '../../constants/conductorBadges';
 import { gitService } from '../../services/git';
 import { cueService } from '../../services/cue';
@@ -76,6 +77,7 @@ export interface ModalHandlersReturn {
 	// Quit handlers
 	handleConfirmQuit: () => void;
 	handleCancelQuit: () => void;
+	handleQuitWhenIdle: () => void;
 
 	// Celebration handlers
 	onKeyboardMasteryLevelUp: (level: number) => void;
@@ -289,6 +291,15 @@ export function useModalHandlers(
 
 	const handleCancelQuit = useCallback(() => {
 		getModalActions().setQuitConfirmModalOpen(false);
+		window.maestro.app.cancelQuit();
+	}, []);
+
+	// Defer the quit: close the modal, release this quit attempt so the app keeps
+	// running, and arm the idle watcher (useQuitWhenIdle) to quit once everything
+	// finishes.
+	const handleQuitWhenIdle = useCallback(() => {
+		getModalActions().setQuitConfirmModalOpen(false);
+		useQuitWhenIdleStore.getState().arm();
 		window.maestro.app.cancelQuit();
 	}, []);
 
@@ -916,16 +927,12 @@ export function useModalHandlers(
 		if (!errorSession || !failingTabId || isAlreadyOnFailingTab) return undefined;
 		return () => {
 			useSessionStore.getState().setActiveSessionId(errorSession.id);
-			updateSessionWith(errorSession.id, (s) =>
-				s.aiTabs?.some((t) => t.id === failingTabId)
-					? {
-							...s,
-							activeTabId: failingTabId,
-							activeFileTabId: null,
-							inputMode: 'ai' as const,
-						}
-					: { ...s, activeFileTabId: null, inputMode: 'ai' as const }
-			);
+			updateSessionWith(errorSession.id, (s) => ({
+				...s,
+				...aiTabFocusFields(
+					s.aiTabs?.some((t) => t.id === failingTabId) ? failingTabId : undefined
+				),
+			}));
 		};
 	}, [errorSession, failingTabId, isAlreadyOnFailingTab]);
 
@@ -1031,6 +1038,7 @@ export function useModalHandlers(
 		// Quit handlers
 		handleConfirmQuit,
 		handleCancelQuit,
+		handleQuitWhenIdle,
 
 		// Celebration handlers
 		onKeyboardMasteryLevelUp,

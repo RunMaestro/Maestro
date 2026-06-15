@@ -56,7 +56,13 @@ export function collectSystemInfo(): SystemInfo {
 			chromeVersion: process.versions.chrome || 'unknown',
 		},
 		runtime: {
-			uptimeSeconds: Math.round(os.uptime()),
+			uptimeSeconds: (() => {
+				try {
+					return Math.round(os.uptime());
+				} catch {
+					return 0;
+				}
+			})(),
 			appUptimeSeconds: Math.round(process.uptime()),
 		},
 	};

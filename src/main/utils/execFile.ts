@@ -155,6 +155,54 @@ export async function execFileNoThrow(
 	}
 }
 
+export interface ExecBufferResult {
+	/** Raw stdout bytes, binary-safe (not decoded to a string). */
+	stdout: Buffer;
+	stderr: string;
+	exitCode: number | string;
+}
+
+/**
+ * Binary-safe sibling of `execFileNoThrow`: captures stdout as a raw Buffer
+ * instead of a utf8 string. Use this for reading binary blobs (e.g. `git show`
+ * of an image at a ref) where decoding to a string would corrupt the data.
+ *
+ * Crucially this is async (promisified `execFile`), so it does NOT block the
+ * Electron main-process event loop the way `spawnSync` does - a large blob or a
+ * slow git object lookup no longer freezes the whole UI.
+ */
+export async function execFileBufferNoThrow(
+	command: string,
+	args: string[] = [],
+	cwd?: string,
+	maxBuffer: number = EXEC_MAX_BUFFER
+): Promise<ExecBufferResult> {
+	try {
+		const useShell = isWindows() && needsWindowsShell(command);
+
+		const { stdout, stderr } = await execFileAsync(command, args, {
+			cwd,
+			encoding: 'buffer',
+			maxBuffer,
+			shell: useShell,
+		});
+
+		return {
+			// With `encoding: 'buffer'` Node returns Buffers at runtime even though
+			// the promisified type signature still says string.
+			stdout: stdout as unknown as Buffer,
+			stderr: (stderr as unknown as Buffer)?.toString() ?? '',
+			exitCode: 0,
+		};
+	} catch (error: any) {
+		return {
+			stdout: Buffer.isBuffer(error.stdout) ? error.stdout : Buffer.alloc(0),
+			stderr: error.stderr?.toString() || error.message || '',
+			exitCode: error.code ?? 1,
+		};
+	}
+}
+
 /**
  * Execute a command with input written to stdin
  * Uses spawn to allow writing to the process stdin

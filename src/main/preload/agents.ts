@@ -226,6 +226,15 @@ export function createAgentsApi() {
 			ipcRenderer.invoke('agents:getMaestroPDetectedPath'),
 
 		/**
+		 * Whether `maestro-p` is on the PATH of an SSH remote (used to disable the
+		 * TUI token-source option when the remote can't run it). Returns a fresh
+		 * cached result or probes on demand; `null` when it can't be determined.
+		 * Pass `force` to bypass the cache and re-probe immediately (Refresh button).
+		 */
+		getRemoteMaestroPAvailable: (sshRemoteId: string, force?: boolean): Promise<boolean | null> =>
+			ipcRenderer.invoke('agents:getRemoteMaestroPAvailable', sshRemoteId, force),
+
+		/**
 		 * Fetch the live Claude plan usage snapshot map keyed by canonical
 		 * `CLAUDE_CONFIG_DIR`. Used by the renderer-side claudeUsageStore to
 		 * mirror main-process state for the mode badge and Usage Dashboard.

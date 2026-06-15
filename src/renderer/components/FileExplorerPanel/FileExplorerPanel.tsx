@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useEffect, useMemo, useRef } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import {
 	ChevronUp,
@@ -94,6 +94,30 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 	const htmlDoubleClickOpensInBrowser = useSettingsStore((s) => s.htmlDoubleClickOpensInBrowser);
 	const compact = rightPanelWidth < RIGHT_PANEL_COMPACT_THRESHOLD;
 
+	const [isTouchPointer, setIsTouchPointer] = useState<boolean>(() =>
+		typeof window !== 'undefined' && window.matchMedia
+			? window.matchMedia('(pointer: coarse)').matches
+			: false
+	);
+	const longPressTimerRef = useRef<number | null>(null);
+	const longPressFiredRef = useRef(false);
+
+	useEffect(() => {
+		if (typeof window === 'undefined' || !window.matchMedia) return;
+		const mql = window.matchMedia('(pointer: coarse)');
+		const handler = (e: MediaQueryListEvent) => setIsTouchPointer(e.matches);
+		mql.addEventListener?.('change', handler);
+		return () => mql.removeEventListener?.('change', handler);
+	}, []);
+
+	useEffect(() => {
+		return () => {
+			if (longPressTimerRef.current) {
+				window.clearTimeout(longPressTimerRef.current);
+			}
+		};
+	}, []);
+
 	// Live git status comes from GitStatusProvider, which polls per session via
 	// useGitStatusPolling. The legacy session.changedFiles field is never
 	// populated, so consume the context directly here (#611).
@@ -163,18 +187,25 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 	// repopulates). The panel is kept mounted under `display:none` so the
 	// auto-refresh timer survives tab switches (see RightPanel), but while hidden
 	// the scroll element measures 0×0 and the still-running auto-refresh rebuilds
-	// the tree — changing row count/sizes and clamping scrollTop without emitting
-	// a scroll event. TanStack only updates its internal scrollOffset on a real
-	// scroll event, so on show the offset can be stale, painting a blank gap at
-	// the top until the user scrolls. Forcing a measure + offset re-sync repaints
-	// the correct window immediately.
+	// the tree, changing row count and clamping scrollTop without emitting a
+	// scroll event. TanStack only refreshes its cached scrollOffset from a real
+	// scroll event, so on show the offset is stale and it paints a blank gap at
+	// the top until the user scrolls.
+	//
+	// scrollToOffset() can't fix this: it just sets element.scrollTop, and when
+	// that value is unchanged (a short tree already clamped to 0) the browser
+	// emits no scroll event, so the offset never refreshes. Assign scrollOffset
+	// directly to the DOM's (clamped) truth instead - it persists, so the next
+	// range recompute (here via measure(), or a later ResizeObserver tick once
+	// the element has real size) uses the correct offset and repaints the right
+	// window immediately.
 	useEffect(() => {
 		if (activeRightTab !== 'files') return;
 		const el = parentRef.current;
 		if (!el) return;
 		const raf = requestAnimationFrame(() => {
+			virtualizer.scrollOffset = el.scrollTop;
 			virtualizer.measure();
-			virtualizer.scrollToOffset(el.scrollTop);
 		});
 		return () => cancelAnimationFrame(raf);
 	}, [activeRightTab, flattenedTree.length, virtualizer]);
@@ -302,7 +333,9 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		isMultiDeleting,
 		contextMenuRef,
 		contextMenuPos,
+		openContextMenuAt,
 		openContextMenu,
+		openRootContextMenu,
 		handleCopyPath,
 		handleOpenInDefaultApp,
 		handleOpenInMaestroBrowser,
@@ -558,8 +591,26 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 						</div>
 					</button>
 				</div>
-				{/* Path row */}
-				<div className="flex items-center gap-1.5 min-w-0 overflow-hidden justify-center">
+				{/* Path row — doubles as a drop target for the workspace root. The path
+				    points at the root working directory, so dropping a tree item (or an
+				    OS file) here moves/imports it to the root, same as the bottom
+				    receptacle. Uses '' as the destination, mirroring handleFolderDrop. */}
+				<div
+					className="flex items-center gap-1.5 min-w-0 overflow-hidden justify-center rounded transition-colors"
+					onDragEnter={(e) => handleFolderDragEnter(e, '')}
+					onDragOver={(e) => handleFolderDragOver(e, '')}
+					onDragLeave={handleFolderDragLeave}
+					onDrop={(e) => handleFolderDrop(e, '')}
+					style={
+						dragOverFolder === '' && !isExternalDrag
+							? {
+									outline: `1px dashed ${theme.colors.accent}`,
+									outlineOffset: '-2px',
+									backgroundColor: `${theme.colors.accent}20`,
+								}
+							: undefined
+					}
+				>
 					{session.sshRemote && (
 						<span
 							className="flex-shrink-0"
@@ -603,33 +654,6 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					</span>
 				</div>
 			</div>
-
-			{/* Move-to-root receptacle — appears only while an in-tree row is being
-			    dragged, giving items buried in subfolders a target to land back at
-			    the workspace root. Mirrors the Left Bar's "Drop here to ungroup"
-			    zone for UI consistency. Items already at root are rejected by the
-			    drag-over handler (it sets dropEffect 'none'), so the highlight only
-			    lights up for drops that would actually move something. */}
-			{internalDragActive && (
-				<div
-					className="mb-2 px-3 py-2 rounded border-2 border-dashed text-center text-xs flex items-center justify-center gap-1.5 transition-colors"
-					onDragEnter={(e) => handleFolderDragEnter(e, '')}
-					onDragOver={(e) => handleFolderDragOver(e, '')}
-					onDragLeave={handleFolderDragLeave}
-					onDrop={(e) => handleFolderDrop(e, '')}
-					style={{
-						borderColor: theme.colors.accent,
-						color: theme.colors.textDim,
-						backgroundColor:
-							dragOverFolder === '' && !isExternalDrag
-								? `${theme.colors.accent}25`
-								: `${theme.colors.accent}10`,
-					}}
-				>
-					<FolderUp className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
-					Drop here to move to root
-				</div>
-			)}
 
 			{/* File tree content */}
 			{session.fileTreeError ? (
@@ -710,7 +734,10 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					{!session.fileTreeLoading &&
 						(!session.fileTree || session.fileTree.length === 0) &&
 						!fileTreeFilter && (
-							<div className="flex flex-col items-center justify-center gap-2 py-8">
+							<div
+								className="flex flex-col items-center justify-center gap-2 py-8"
+								onContextMenu={openRootContextMenu}
+							>
 								<Folder className="w-8 h-8 opacity-30" style={{ color: theme.colors.textDim }} />
 								<div
 									className="text-xs opacity-50 text-center"
@@ -721,7 +748,12 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 							</div>
 						)}
 					{flattenedTree.length > 0 && (
-						<div ref={parentRef} data-file-list-scroll className="flex-1 min-h-0 overflow-auto">
+						<div
+							ref={parentRef}
+							data-file-list-scroll
+							className="flex-1 min-h-0 overflow-auto"
+							onContextMenu={openRootContextMenu}
+						>
 							<div
 								style={{
 									height: `${virtualizer.getTotalSize()}px`,
@@ -755,9 +787,13 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 											fileTreeFilter={fileTreeFilter}
 											htmlDoubleClickOpensInBrowser={htmlDoubleClickOpensInBrowser}
 											sshRemoteId={sshRemoteId}
+											isTouchPointer={isTouchPointer}
+											longPressTimerRef={longPressTimerRef}
+											longPressFiredRef={longPressFiredRef}
 											lastClickedUnderFilterRef={lastClickedUnderFilterRef}
 											setActiveFocus={setActiveFocus}
 											handleRowSelectionClick={handleRowSelectionClick}
+											openContextMenuAt={openContextMenuAt}
 											handleContextMenu={openContextMenu}
 											handleFolderDragEnter={handleFolderDragEnter}
 											handleFolderDragOver={handleFolderDragOver}
@@ -794,6 +830,33 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					onMouseEnter={handleOverlayMouseEnter}
 					onMouseLeave={handleOverlayMouseLeave}
 				/>
+			)}
+
+			{/* Move-to-root receptacle — appears only while an in-tree row is being
+			    dragged, giving items buried in subfolders a target to land back at
+			    the workspace root. Sits at the bottom of the panel, just above the
+			    stats bar. Mirrors the Left Bar's "Drop here to ungroup" zone for UI
+			    consistency. Items already at root never trigger it (the dragstart
+			    handler suppresses it when every dragged item is already at root). */}
+			{internalDragActive && (
+				<div
+					className="flex-shrink-0 mt-2 px-3 py-2 rounded border-2 border-dashed text-center text-xs flex items-center justify-center gap-1.5 transition-colors"
+					onDragEnter={(e) => handleFolderDragEnter(e, '')}
+					onDragOver={(e) => handleFolderDragOver(e, '')}
+					onDragLeave={handleFolderDragLeave}
+					onDrop={(e) => handleFolderDrop(e, '')}
+					style={{
+						borderColor: theme.colors.accent,
+						color: theme.colors.textDim,
+						backgroundColor:
+							dragOverFolder === '' && !isExternalDrag
+								? `${theme.colors.accent}25`
+								: `${theme.colors.accent}10`,
+					}}
+				>
+					<FolderUp className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+					Drop here to move to root
+				</div>
 			)}
 
 			{/* Status bar */}

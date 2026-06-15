@@ -20,7 +20,7 @@ export const bmadCatalog: BmadCatalogEntry[] = [
 		description:
 			'Get unstuck by showing what workflow steps come next or answering BMad Method questions.',
 		name: 'bmad-help',
-		sourcePath: 'src/core/tasks/bmad-help/workflow.md',
+		sourcePath: 'src/core/skills/bmad-help/workflow.md',
 		isCustom: false,
 	},
 	{
@@ -46,7 +46,7 @@ export const bmadCatalog: BmadCatalogEntry[] = [
 		description:
 			'Anytime: Navigate significant changes. May recommend start over update PRD redo architecture sprint planning or correct epics and stories',
 		name: 'Correct Course',
-		sourcePath: 'src/bmm/workflows/4-implementation/correct-course/workflow.md',
+		sourcePath: 'src/bmm/workflows/4-implementation/bmad-correct-course/workflow.md',
 		isCustom: false,
 	},
 	{
@@ -62,7 +62,7 @@ export const bmadCatalog: BmadCatalogEntry[] = [
 		command: '/bmad-bmm-create-epics-and-stories',
 		description: 'Create the Epics and Stories Listing',
 		name: 'Create Epics and Stories',
-		sourcePath: 'src/bmm/workflows/3-solutioning/create-epics-and-stories/workflow.md',
+		sourcePath: 'src/bmm/workflows/3-solutioning/bmad-create-epics-and-stories/workflow.md',
 		isCustom: false,
 	},
 	{
@@ -70,7 +70,7 @@ export const bmadCatalog: BmadCatalogEntry[] = [
 		command: '/bmad-bmm-create-prd',
 		description: 'Expert led facilitation to produce your Product Requirements Document',
 		name: 'Create PRD',
-		sourcePath: 'src/bmm/workflows/2-plan-workflows/create-prd/workflow-create-prd.md',
+		sourcePath: 'src/core/tasks/bmad-create-prd/workflow.md',
 		isCustom: false,
 	},
 	{
@@ -113,7 +113,7 @@ export const bmadCatalog: BmadCatalogEntry[] = [
 		command: '/bmad-bmm-document-project',
 		description: 'Analyze an existing project to produce useful documentation',
 		name: 'Document Project',
-		sourcePath: 'src/bmm/workflows/document-project/workflow.md',
+		sourcePath: 'src/bmm/workflows/bmad-document-project/workflow.md',
 		isCustom: false,
 	},
 	{
@@ -129,7 +129,7 @@ export const bmadCatalog: BmadCatalogEntry[] = [
 		command: '/bmad-bmm-edit-prd',
 		description: 'Improve and enhance an existing PRD',
 		name: 'Edit PRD',
-		sourcePath: 'src/bmm/workflows/2-plan-workflows/create-prd/workflow-edit-prd.md',
+		sourcePath: 'src/bmm/workflows/2-plan-workflows/bmad-edit-prd/workflow.md',
 		isCustom: false,
 	},
 	{
@@ -138,7 +138,7 @@ export const bmadCatalog: BmadCatalogEntry[] = [
 		description:
 			'Scan existing codebase to generate a lean LLM-optimized project-context.md containing critical implementation rules patterns and conventions for AI agents. Essential for brownfield projects and quick-flow.',
 		name: 'Generate Project Context',
-		sourcePath: 'src/bmm/workflows/generate-project-context/workflow.md',
+		sourcePath: 'src/bmm/workflows/bmad-generate-project-context/workflow.md',
 		isCustom: false,
 	},
 	{
@@ -146,7 +146,7 @@ export const bmadCatalog: BmadCatalogEntry[] = [
 		command: '/bmad-bmm-market-research',
 		description: 'Market analysis competitive landscape customer needs and trends',
 		name: 'Market Research',
-		sourcePath: 'src/bmm/workflows/1-analysis/research/workflow-market-research.md',
+		sourcePath: 'src/bmm/workflows/1-analysis/research/bmad-market-research/workflow.md',
 		isCustom: false,
 	},
 	{
@@ -155,7 +155,7 @@ export const bmadCatalog: BmadCatalogEntry[] = [
 		description:
 			"Generate automated API and E2E tests for implemented code using the project's existing test framework (detects existing well known in use test frameworks). Use after implementation to add test coverage. NOT for code review or story validation - use CR for that.",
 		name: 'QA Automation Test',
-		sourcePath: 'src/bmm/workflows/qa-generate-e2e-tests/workflow.md',
+		sourcePath: 'src/bmm/workflows/bmad-qa-generate-e2e-tests/workflow.md',
 		isCustom: false,
 	},
 	{
@@ -182,7 +182,7 @@ export const bmadCatalog: BmadCatalogEntry[] = [
 		description:
 			'Do not suggest for potentially very complex things unless requested or if the user complains that they do not want to follow the extensive planning of the bmad method. Quick one-off tasks small changes simple apps brownfield additions to well established patterns utilities without extensive planning',
 		name: 'Quick Spec',
-		sourcePath: 'src/bmm/workflows/bmad-quick-flow/quick-spec/workflow.md',
+		sourcePath: 'src/bmm/workflows/bmad-quick-flow/bmad-quick-spec/workflow.md',
 		isCustom: false,
 	},
 	{
@@ -191,7 +191,7 @@ export const bmadCatalog: BmadCatalogEntry[] = [
 		description:
 			'Optional at epic end: Review completed work lessons learned and next epic or if major issues consider CC',
 		name: 'Retrospective',
-		sourcePath: 'src/bmm/workflows/4-implementation/retrospective/workflow.md',
+		sourcePath: 'src/bmm/workflows/4-implementation/bmad-retrospective/workflow.md',
 		isCustom: false,
 	},
 	{
@@ -200,7 +200,7 @@ export const bmadCatalog: BmadCatalogEntry[] = [
 		description:
 			'Generate sprint plan for development tasks - this kicks off the implementation phase by producing a plan the implementation agents will follow in sequence for every story in the plan.',
 		name: 'Sprint Planning',
-		sourcePath: 'src/bmm/workflows/4-implementation/sprint-planning/workflow.md',
+		sourcePath: 'src/bmm/workflows/4-implementation/bmad-sprint-planning/workflow.md',
 		isCustom: false,
 	},
 	{
@@ -208,7 +208,7 @@ export const bmadCatalog: BmadCatalogEntry[] = [
 		command: '/bmad-bmm-sprint-status',
 		description: 'Anytime: Summarize sprint status and route to next workflow',
 		name: 'Sprint Status',
-		sourcePath: 'src/bmm/workflows/4-implementation/sprint-status/workflow.md',
+		sourcePath: 'src/bmm/workflows/4-implementation/bmad-sprint-status/workflow.md',
 		isCustom: false,
 	},
 	{
@@ -216,7 +216,7 @@ export const bmadCatalog: BmadCatalogEntry[] = [
 		command: '/bmad-bmm-technical-research',
 		description: 'Technical feasibility architecture options and implementation approaches',
 		name: 'Technical Research',
-		sourcePath: 'src/bmm/workflows/1-analysis/research/workflow-technical-research.md',
+		sourcePath: 'src/bmm/workflows/1-analysis/research/bmad-technical-research/workflow.md',
 		isCustom: false,
 	},
 	{
@@ -224,7 +224,7 @@ export const bmadCatalog: BmadCatalogEntry[] = [
 		command: '/bmad-bmm-validate-prd',
 		description: 'Validate PRD is comprehensive lean well organized and cohesive',
 		name: 'Validate PRD',
-		sourcePath: 'src/bmm/workflows/2-plan-workflows/create-prd/workflow-validate-prd.md',
+		sourcePath: 'src/bmm/workflows/2-plan-workflows/bmad-validate-prd/workflow.md',
 		isCustom: false,
 	},
 	{
@@ -233,7 +233,7 @@ export const bmadCatalog: BmadCatalogEntry[] = [
 		description:
 			'Generate diverse ideas through interactive techniques. Use early in ideation phase or when stuck generating ideas. Expert Guided Facilitation through a single or multiple techniques',
 		name: 'Brainstorming / Brainstorm Project',
-		sourcePath: 'src/core/workflows/bmad-brainstorming/workflow.md',
+		sourcePath: 'src/core/skills/bmad-brainstorming/workflow.md',
 		isCustom: false,
 	},
 	{
@@ -242,7 +242,7 @@ export const bmadCatalog: BmadCatalogEntry[] = [
 		description:
 			'Review prose for clarity, tone, and communication issues. Use after drafting to polish written content.',
 		name: 'Editorial Review - Prose',
-		sourcePath: 'src/core/tasks/bmad-editorial-review-prose/workflow.md',
+		sourcePath: 'src/core/skills/bmad-editorial-review-prose/workflow.md',
 		isCustom: false,
 	},
 	{
@@ -251,7 +251,7 @@ export const bmadCatalog: BmadCatalogEntry[] = [
 		description:
 			'Propose cuts, reorganization, and simplification while preserving comprehension. Use when doc produced from multiple subprocesses or needs structural improvement.',
 		name: 'Editorial Review - Structure',
-		sourcePath: 'src/core/tasks/bmad-editorial-review-structure/workflow.md',
+		sourcePath: 'src/core/skills/bmad-editorial-review-structure/workflow.md',
 		isCustom: false,
 	},
 	{
@@ -260,7 +260,7 @@ export const bmadCatalog: BmadCatalogEntry[] = [
 		description:
 			'Create lightweight index for quick LLM scanning. Use when LLM needs to understand available docs without loading everything.',
 		name: 'Index Docs',
-		sourcePath: 'src/core/tasks/bmad-index-docs/workflow.md',
+		sourcePath: 'src/core/skills/bmad-index-docs/workflow.md',
 		isCustom: false,
 	},
 	{
@@ -269,7 +269,7 @@ export const bmadCatalog: BmadCatalogEntry[] = [
 		description:
 			'Orchestrate multi-agent discussions. Use when you need multiple agent perspectives or want agents to collaborate.',
 		name: 'Party Mode',
-		sourcePath: 'src/core/workflows/bmad-party-mode/workflow.md',
+		sourcePath: 'src/core/skills/bmad-party-mode/workflow.md',
 		isCustom: false,
 	},
 	{
@@ -278,7 +278,7 @@ export const bmadCatalog: BmadCatalogEntry[] = [
 		description:
 			'Review content critically to find issues and weaknesses. Use for quality assurance or before finalizing deliverables. Code Review in other modules run this automatically, but its useful also for document reviews',
 		name: 'Adversarial Review (General)',
-		sourcePath: 'src/core/tasks/bmad-review-adversarial-general/workflow.md',
+		sourcePath: 'src/core/skills/bmad-review-adversarial-general/workflow.md',
 		isCustom: false,
 	},
 	{
@@ -287,7 +287,7 @@ export const bmadCatalog: BmadCatalogEntry[] = [
 		description:
 			'Walk every branching path and boundary condition in code, report only unhandled edge cases. Use alongside adversarial review for orthogonal coverage - method-driven not attitude-driven.',
 		name: 'Edge Case Hunter Review',
-		sourcePath: 'src/core/tasks/bmad-review-edge-case-hunter/workflow.md',
+		sourcePath: 'src/core/skills/bmad-review-edge-case-hunter/workflow.md',
 		isCustom: false,
 	},
 	{
@@ -296,7 +296,7 @@ export const bmadCatalog: BmadCatalogEntry[] = [
 		description:
 			'Split large documents into smaller files by sections. Use when doc becomes too large (>500 lines) to manage effectively.',
 		name: 'Shard Document',
-		sourcePath: 'src/core/tasks/bmad-shard-doc/workflow.md',
+		sourcePath: 'src/core/skills/bmad-shard-doc/workflow.md',
 		isCustom: false,
 	},
 ];

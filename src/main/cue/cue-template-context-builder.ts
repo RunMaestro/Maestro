@@ -122,6 +122,11 @@ enricherRegistry.set('cli.trigger', (event) => ({
 	sourceAgentId: String(event.payload.sourceAgentId ?? ''),
 }));
 
+/** time.once enricher — surfaces the originally-scheduled fire timestamp. */
+enricherRegistry.set('time.once', (event) => ({
+	fireAt: String(event.payload.fire_at ?? ''),
+}));
+
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 /**

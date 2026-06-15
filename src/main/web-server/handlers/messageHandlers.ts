@@ -172,6 +172,13 @@ export interface LiveSessionInfo {
  * Callbacks required by the message handler
  */
 export interface MessageHandlerCallbacks {
+	/**
+	 * Predicate that gates the optional Web-Desktop Bundle bridge.invoke
+	 * channel. Read on every invocation so toggling the Encore Feature in
+	 * Settings takes effect without a process restart. Defaults to false
+	 * (bridge disabled) — see WebServer.getWebDesktopBundleEnabled.
+	 */
+	getWebDesktopBundleEnabled: () => boolean;
 	getSessionDetail: (sessionId: string) => SessionDetailForHandler | null;
 	executeCommand: (
 		sessionId: string,
@@ -281,6 +288,13 @@ export interface MessageHandlerCallbacks {
 		groupId?: string,
 		config?: CreateSessionConfig
 	) => Promise<{ sessionId: string } | null>;
+	createWorktreeSession: (
+		parentSessionId: string,
+		config: {
+			branchName: string;
+			baseBranch?: string;
+		}
+	) => Promise<{ success: boolean; sessionId?: string; error?: string }>;
 	deleteSession: (sessionId: string) => Promise<boolean>;
 	renameSession: (sessionId: string, newName: string) => Promise<boolean>;
 	updateSessionCwd: (
@@ -507,6 +521,10 @@ export class WebSocketMessageHandler {
 
 			case 'configure_auto_run':
 				this.handleConfigureAutoRun(client, message);
+				break;
+
+			case 'create_worktree_session':
+				this.handleCreateWorktreeSession(client, message);
 				break;
 
 			case 'set_auto_run_folder':
@@ -753,9 +771,44 @@ export class WebSocketMessageHandler {
 				this.handleGetSessionHistory(client, message);
 				break;
 
+			case 'bridge.invoke':
+				void this.handleBridgeInvoke(client, message);
+				break;
+
 			default:
 				this.handleUnknown(client, message);
 		}
+	}
+
+	/**
+	 * Generic IPC bridge — dispatch a bridge.invoke message to the matching
+	 * ipcMain handler and return the result/error as a bridge.response.
+	 *
+	 * Gated on the `encoreFeatures.webDesktopBundle` Encore Feature. When the
+	 * flag is off (the default) we reject the invoke without ever touching
+	 * the ipcMain registry, so adding a new ipcMain handler can't accidentally
+	 * widen the web surface.
+	 */
+	private async handleBridgeInvoke(client: WebClient, message: WebClientMessage): Promise<void> {
+		const isEnabled = this.callbacks.getWebDesktopBundleEnabled?.() ?? false;
+		if (!isEnabled) {
+			client.socket.send(
+				JSON.stringify({
+					type: 'bridge.response',
+					requestId: (message as { requestId?: string | number }).requestId,
+					ok: false,
+					error:
+						'Web-Desktop Bundle is disabled. Enable it in Settings → Encore Features and restart Maestro.',
+				})
+			);
+			return;
+		}
+		const { handleBridgeInvoke } = await import('./bridgeHandlers');
+		await handleBridgeInvoke(
+			client,
+			message as unknown as Parameters<typeof handleBridgeInvoke>[1],
+			(c, payload) => c.socket.send(JSON.stringify(payload))
+		);
 	}
 
 	/**
@@ -2724,6 +2777,7 @@ export class WebSocketMessageHandler {
 		'colorBlindMode',
 		'conductorProfile',
 		'maxOutputLines',
+		'encoreFeatures',
 	]);
 
 	/**
@@ -2859,6 +2913,57 @@ export class WebSocketMessageHandler {
 			})
 			.catch((error) => {
 				this.sendError(client, `Failed to create session: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle create_worktree_session message - create a new agent in a git
+	 * worktree branched off an existing parent agent, without an Auto Run
+	 * playbook. The desktop creates the worktree, builds a child session linked
+	 * to the parent, and returns the new agent's session id.
+	 */
+	private handleCreateWorktreeSession(client: WebClient, message: WebClientMessage): void {
+		const parentSessionId = message.parentSessionId as string;
+		const branchName = message.branchName as string;
+
+		if (!parentSessionId || typeof parentSessionId !== 'string') {
+			this.sendError(client, 'Missing or invalid parentSessionId');
+			return;
+		}
+
+		if (!branchName || typeof branchName !== 'string' || branchName.trim() === '') {
+			this.sendError(client, 'Missing or invalid branchName');
+			return;
+		}
+
+		if (message.baseBranch !== undefined && typeof message.baseBranch !== 'string') {
+			this.sendError(client, 'baseBranch must be a string');
+			return;
+		}
+
+		if (!this.callbacks.createWorktreeSession) {
+			this.sendError(client, 'Worktree session creation not configured');
+			return;
+		}
+
+		const config = {
+			branchName: branchName.trim(),
+			baseBranch: (message.baseBranch as string | undefined)?.trim() || undefined,
+		};
+
+		this.callbacks
+			.createWorktreeSession(parentSessionId, config)
+			.then((result) => {
+				this.send(client, {
+					type: 'create_worktree_session_result',
+					success: result.success,
+					sessionId: result.sessionId,
+					error: result.error,
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				this.sendError(client, `Failed to create worktree session: ${error.message}`);
 			});
 	}
 

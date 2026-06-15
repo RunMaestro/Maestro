@@ -258,12 +258,17 @@ export function FileSearchModal({
 			.stat(debouncedPath)
 			.then((stat) => {
 				if (cancelled) return;
+				// stat returns null for a path that doesn't exist (ENOENT/ENOTDIR).
+				if (!stat) {
+					setAbsPathState({ status: 'missing' });
+					return;
+				}
 				setAbsPathState(
 					stat.isFile ? { status: 'file', name: getBasename(debouncedPath) } : { status: 'folder' }
 				);
 			})
 			.catch(() => {
-				// stat throws for a path that doesn't exist (or is unreadable).
+				// stat still throws for an unreadable path (permissions, etc.).
 				if (!cancelled) setAbsPathState({ status: 'missing' });
 			});
 		return () => {

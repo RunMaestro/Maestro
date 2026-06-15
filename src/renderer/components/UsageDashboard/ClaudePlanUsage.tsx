@@ -172,9 +172,9 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 	}, []);
 
 	const { isBusy, refreshIntervalMs, setRefreshIntervalMs, handleRefresh } = useQuotaRefresh({
+		providerId: PROVIDER_ID,
 		refreshing,
 		autoRefresh,
-		showRefreshButton,
 		accountCount: configuredAccountKeys.length,
 		snapshotCount,
 		doRefresh,
@@ -235,16 +235,6 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 					<h3 className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
 						Claude Plan Usage
 					</h3>
-					<span
-						className="rounded-full px-2 py-0.5 text-xs"
-						style={{
-							color: theme.colors.textDim,
-							backgroundColor: `${theme.colors.border}55`,
-							border: `1px solid ${theme.colors.border}`,
-						}}
-					>
-						Claude Code
-					</span>
 				</div>
 				<div className="flex flex-wrap items-center justify-end gap-2">
 					{showAllAccounts && hiddenVisibleCount > 0 && (

@@ -167,7 +167,9 @@ describe('GitDiffViewer', () => {
 
 			expect(screen.getByText('No changes to display')).toBeInTheDocument();
 			expect(screen.getByText('Git Diff')).toBeInTheDocument();
-			expect(screen.getByText('Close (Esc)')).toBeInTheDocument();
+			// Close button renders as either "Close (Esc)" (md+) or "×" (narrow);
+			// accessible name from aria-label catches both.
+			expect(screen.getByRole('button', { name: /close diff viewer/i })).toBeInTheDocument();
 		});
 
 		it('renders with dialog role and aria attributes', () => {
@@ -352,7 +354,7 @@ describe('GitDiffViewer', () => {
 				/>
 			);
 
-			fireEvent.click(screen.getByRole('button', { name: 'Close (Esc)' }));
+			fireEvent.click(screen.getByRole('button', { name: /close diff viewer/i }));
 			expect(onClose).toHaveBeenCalled();
 		});
 
@@ -398,7 +400,7 @@ describe('GitDiffViewer', () => {
 
 			render(<GitDiffViewer diffText="" cwd="/test/project" theme={mockTheme} onClose={onClose} />);
 
-			fireEvent.click(screen.getByRole('button', { name: 'Close (Esc)' }));
+			fireEvent.click(screen.getByRole('button', { name: /close diff viewer/i }));
 			expect(onClose).toHaveBeenCalled();
 		});
 	});
@@ -1286,7 +1288,7 @@ describe('GitDiffViewer', () => {
 				/>
 			);
 
-			const closeButton = screen.getByText('Close (Esc)');
+			const closeButton = screen.getByRole('button', { name: /close diff viewer/i });
 			expect(closeButton.tagName).toBe('BUTTON');
 		});
 
@@ -1573,7 +1575,7 @@ describe('GitDiffViewer', () => {
 				/>
 			);
 
-			const closeButton = screen.getByRole('button', { name: 'Close (Esc)' });
+			const closeButton = screen.getByRole('button', { name: /close diff viewer/i });
 
 			act(() => {
 				closeButton.focus();

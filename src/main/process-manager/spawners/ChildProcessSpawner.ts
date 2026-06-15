@@ -444,6 +444,20 @@ export class ChildProcessSpawner {
 				projectPath: config.projectPath,
 				sshRemoteId: config.sshRemoteId,
 				sshRemoteHost: config.sshRemoteHost,
+				// Seed from config on resume. Copilot emits `session.resume`
+				// (no sessionId) instead of `session.start` when --resume=<id>
+				// is set, so StdoutHandler can't populate this from the stream
+				// for resumed sessions — without the seed, the post-exit disk
+				// reconciliation (`ExitHandler.awaitCopilotShutdown` →
+				// `readCopilotFinalAnswer` + `readCopilotShutdownUsage`)
+				// short-circuits at its `if (!agentSessionId) return` guard and
+				// the renderer falls back to the streamed commentary deltas
+				// instead of the authoritative task_complete.summary, and the
+				// context-window gauge never receives the on-disk currentTokens
+				// snapshot. The stream-derived assignment in
+				// `StdoutHandler.emitSessionIdIfNeeded` remains the source of
+				// truth for fresh sessions.
+				agentSessionId: config.agentSessionId,
 				maestroEnvVars: collectMaestroEnvVars(shellEnvVars, customEnvVars, isResuming),
 			};
 

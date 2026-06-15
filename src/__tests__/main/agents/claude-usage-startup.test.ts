@@ -767,6 +767,38 @@ describe('claude-usage-startup → runStartupUsageSampling', () => {
 			expect(sampleUsageMock).not.toHaveBeenCalled();
 		});
 
+		it('does NOT sample a claude-code session that pins no CLAUDE_CONFIG_DIR', async () => {
+			// Scope-to-configured-agents contract: a claude-code session that
+			// declares no account (neither session- nor agent-level
+			// CLAUDE_CONFIG_DIR) is skipped rather than sampled against a guessed
+			// or discovered account. Guards against re-introducing the
+			// filesystem sweep that popped OAuth browsers for stale ~/.claude-*
+			// dirs no agent uses.
+			sampleUsageMock.mockResolvedValue(makeSnapshot());
+
+			const deps = {
+				sessionsStore: makeStore({
+					sessions: [
+						{
+							id: 's-unconfigured',
+							toolType: 'claude-code',
+							cwd: '/var/projects/foo',
+							createdAt: FROZEN_NOW - 60_000,
+							customEnvVars: { SOME_OTHER_VAR: 'x' },
+						},
+					],
+				}) as never,
+				agentConfigsStore: makeStore({ configs: {} }) as never,
+				settingsStore: makeStore({}) as never,
+				agentDetector: makeDetector(FAKE_AGENT) as never,
+				mode: 'manual' as const,
+			};
+
+			await runStartupUsageSampling(deps);
+
+			expect(sampleUsageMock).not.toHaveBeenCalled();
+		});
+
 		it('samples agent-level CLAUDE_CONFIG_DIR when sessions inherit it', async () => {
 			// User has set a project-wide CLAUDE_CONFIG_DIR on the claude-code
 			// agent. Sessions that don't override it inherit. We sample with the

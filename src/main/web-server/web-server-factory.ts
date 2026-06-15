@@ -162,7 +162,17 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			}
 		}
 
-		const server = new WebServer(port, securityToken);
+		const server = new WebServer(port, securityToken, () => {
+			// Opt-in Encore Feature gate for the Web-Desktop Bundle. Read every
+			// time the WebServer asks so toggling the flag in Settings takes
+			// effect on the next server start without redeploying. Guard against
+			// the stored value being null or a non-object (corrupted settings,
+			// hand-edited file, partial migration).
+			const efRaw = settingsStore.get('encoreFeatures', {});
+			if (typeof efRaw !== 'object' || efRaw === null) return false;
+			const ef = efRaw as Record<string, unknown>;
+			return ef.webDesktopBundle === true;
+		});
 
 		// Set up callback for web server to fetch sessions list
 		server.setGetSessionsCallback(() => {
@@ -224,6 +234,11 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					state: s.state,
 					inputMode: s.inputMode,
 					cwd: s.cwd,
+					// Claude token-source selection, so web-initiated group chat
+					// participants honor the maestro-p TUI / API / dynamic choice.
+					enableMaestroP: s.enableMaestroP,
+					maestroPMode: s.maestroPMode,
+					maestroPPath: s.maestroPPath,
 					groupId: s.groupId || null,
 					groupName: group?.name || null,
 					groupEmoji: group?.emoji || null,
@@ -1360,6 +1375,54 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					logger.warn(`createSession callback timed out`, 'WebServer');
 					resolve(null);
 				}, 10000);
+			});
+		});
+
+		// Set up callback for web server to create a worktree agent off a parent.
+		// Mirrors the createSession bridge: hand off to the renderer (which owns
+		// the worktree-spawn helper) and resolve with the new agent's session id.
+		server.setCreateWorktreeSessionCallback(async (parentSessionId: string, config: any) => {
+			const mainWindow = getMainWindow();
+			if (!mainWindow) {
+				logger.warn('mainWindow is null for createWorktreeSession', 'WebServer');
+				return { success: false, error: 'Main window not available' };
+			}
+
+			return new Promise((resolve) => {
+				const responseChannel = `remote:createWorktreeSession:response:${randomUUID()}`;
+				let resolved = false;
+
+				const handleResponse = (_event: Electron.IpcMainEvent, result: any) => {
+					if (resolved) return;
+					resolved = true;
+					clearTimeout(timeoutId);
+					resolve(result || { success: false, error: 'No response' });
+				};
+
+				ipcMain.once(responseChannel, handleResponse);
+				if (!isWebContentsAvailable(mainWindow)) {
+					logger.warn('webContents is not available for createWorktreeSession', 'WebServer');
+					ipcMain.removeListener(responseChannel, handleResponse);
+					resolve({ success: false, error: 'Web contents not available' });
+					return;
+				}
+				mainWindow.webContents.send(
+					'remote:createWorktreeSession',
+					parentSessionId,
+					config,
+					responseChannel
+				);
+
+				const timeoutId = setTimeout(() => {
+					if (resolved) return;
+					resolved = true;
+					ipcMain.removeListener(responseChannel, handleResponse);
+					logger.warn(
+						`createWorktreeSession callback timed out for parent ${parentSessionId}`,
+						'WebServer'
+					);
+					resolve({ success: false, error: 'Timeout' });
+				}, 30000);
 			});
 		});
 

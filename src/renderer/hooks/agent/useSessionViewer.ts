@@ -11,6 +11,8 @@ export interface SessionMessage {
 	timestamp: string;
 	uuid: string;
 	toolUse?: any;
+	/** Base64 data URLs reconstructed from image content blocks in the transcript. */
+	images?: string[];
 }
 
 /**

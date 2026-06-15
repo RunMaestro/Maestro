@@ -18,7 +18,14 @@ import { logger } from './utils/logger';
 
 const LOG_CONTEXT = '[BMAD]';
 const BMAD_REPO_URL = 'https://github.com/bmad-code-org/BMAD-METHOD';
-const BMAD_RAW_BASE = 'https://raw.githubusercontent.com/bmad-code-org/BMAD-METHOD/main';
+// Pinned to v6.2.0: the last BMAD release whose workflows are self-contained
+// `workflow.md` files usable as paste-in slash-command prompts. v6.2.1+ moved to
+// a multi-file "skills" model (SKILL.md + steps + customize.toml) that depends on
+// a local `_bmad/` install and a python resolver, so those prompts cannot run
+// standalone inside Maestro. The bundled catalog.ts source paths only resolve at
+// this ref. Keep this in sync with scripts/refresh-bmad.mjs.
+const BMAD_REF = 'v6.2.0';
+const BMAD_RAW_BASE = `https://raw.githubusercontent.com/bmad-code-org/BMAD-METHOD/${BMAD_REF}`;
 const REFERENCE_TOKEN_REGEX =
 	/`((?:\.\.?\/)?[A-Za-z0-9_./-]+\.md|\{project-root\}\/_bmad\/[^`]+\.md|\{installed_path\}\/[^`]+\.md)`/g;
 
@@ -495,14 +502,14 @@ export async function resetBmadPrompt(id: string): Promise<string> {
 async function getLatestCommitSha(): Promise<string> {
 	try {
 		const response = await fetchWithTimeout(
-			`${BMAD_REPO_URL.replace('https://github.com', 'https://api.github.com/repos')}/commits/main`,
+			`${BMAD_REPO_URL.replace('https://github.com', 'https://api.github.com/repos')}/commits/${BMAD_REF}`,
 			15000
 		);
 		if (!response.ok) {
 			throw new Error(`Failed to fetch latest commit: ${response.statusText}`);
 		}
 		const commit = (await response.json()) as { sha?: string };
-		return commit.sha?.slice(0, 7) ?? 'main';
+		return commit.sha?.slice(0, 7) ?? BMAD_REF;
 	} catch (error) {
 		void captureException(error);
 		logger.warn(`Could not fetch BMAD commit SHA: ${error}`, LOG_CONTEXT);
@@ -512,14 +519,12 @@ async function getLatestCommitSha(): Promise<string> {
 
 async function getLatestVersion(): Promise<string> {
 	try {
-		const response = await fetchWithTimeout(
-			'https://raw.githubusercontent.com/bmad-code-org/BMAD-METHOD/main/package.json'
-		);
+		const response = await fetchWithTimeout(`${BMAD_RAW_BASE}/package.json`);
 		if (!response.ok) {
 			throw new Error(`Failed to fetch package.json: ${response.statusText}`);
 		}
 		const packageJson = (await response.json()) as { version?: string };
-		return packageJson.version ?? 'main';
+		return packageJson.version ?? BMAD_REF;
 	} catch (error) {
 		void captureException(error);
 		logger.warn(`Could not fetch BMAD version: ${error}`, LOG_CONTEXT);

@@ -233,8 +233,10 @@ const mockMaestro = {
 		resize: vi.fn().mockResolvedValue(undefined),
 		getActiveProcesses: vi.fn().mockResolvedValue([]),
 		isTerminalBusy: vi.fn().mockResolvedValue(false),
+		broadcastUserInput: vi.fn().mockResolvedValue(undefined),
 		onOutput: vi.fn().mockReturnValue(() => {}),
 		onExit: vi.fn().mockReturnValue(() => {}),
+		onUserInput: vi.fn().mockReturnValue(() => {}),
 	},
 	feedback: {
 		checkGhAuth: vi.fn().mockResolvedValue({ authenticated: true }),
@@ -337,6 +339,7 @@ const mockMaestro = {
 			supportsContextExport: false,
 		}),
 		getMaestroPDetectedPath: vi.fn().mockResolvedValue(null),
+		getRemoteMaestroPAvailable: vi.fn().mockResolvedValue(null),
 		getClaudeUsageSnapshots: vi.fn().mockResolvedValue({}),
 		getClaudeUsageAccountKeys: vi.fn().mockResolvedValue([]),
 		getCodexUsageSnapshots: vi.fn().mockResolvedValue({}),
@@ -409,6 +412,8 @@ const mockMaestro = {
 	autorun: {
 		readDoc: vi.fn().mockResolvedValue({ success: true, content: '' }),
 		writeDoc: vi.fn().mockResolvedValue({ success: true }),
+		saveImage: vi.fn().mockResolvedValue({ success: true, path: 'images/test.png' }),
+		deleteImage: vi.fn().mockResolvedValue({ success: true }),
 		watchFolder: vi.fn().mockReturnValue(() => {}),
 		unwatchFolder: vi.fn(),
 		readFolder: vi.fn().mockResolvedValue({ success: true, files: [] }),

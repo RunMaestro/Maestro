@@ -201,18 +201,35 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 			ref,
 			() => ({
 				focus() {
-					viewRef.current?.focus();
+					// Focus the contentDOM element directly rather than CM6's
+					// view.focus(). On a view mounted in the same frame (which is
+					// exactly the enter-edit-mode case), view.focus() silently
+					// no-ops and focus falls to <body>, breaking the Cmd+E toggle
+					// until the user clicks in. A plain contentDOM.focus() sticks.
+					const view = viewRef.current;
+					if (!view) return;
+					view.contentDOM.focus({ preventScroll: true });
 				},
-				scrollToLine(line: number) {
+				scrollToLine(line: number, opts?: { select?: boolean }) {
 					const view = viewRef.current;
 					if (!view) return;
 					const totalLines = view.state.doc.lines;
 					const targetLine = Math.min(Math.max(1, Math.floor(line)), totalLines);
 					const lineInfo = view.state.doc.line(targetLine);
+					const select = opts?.select ?? true;
 					view.dispatch({
-						selection: EditorSelection.single(lineInfo.from),
-						effects: EditorView.scrollIntoView(lineInfo.from, { y: 'start', yMargin: 80 }),
+						selection: select ? EditorSelection.single(lineInfo.from) : undefined,
+						effects: EditorView.scrollIntoView(lineInfo.from, {
+							y: 'start',
+							yMargin: select ? 80 : 0,
+						}),
 					});
+				},
+				getTopLine() {
+					const view = viewRef.current;
+					if (!view) return 1;
+					const block = view.lineBlockAtHeight(view.scrollDOM.scrollTop);
+					return view.state.doc.lineAt(block.from).number;
 				},
 				getScrollPercent() {
 					const view = viewRef.current;

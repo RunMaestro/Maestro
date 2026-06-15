@@ -205,6 +205,12 @@ export function registerFilesystemHandlers(): void {
 						result = await readFileRemote(filePath, sshConfig);
 					}
 					if (!result.success) {
+						// Missing remote files mirror the local ENOENT path below: return
+						// null instead of throwing so callers can handle absence cleanly
+						// without surfacing an unhandled IPC rejection. (MAESTRO-MG/MF)
+						if (result.error?.startsWith('File not found:')) {
+							return null;
+						}
 						throw new Error(result.error || 'Failed to read remote file');
 					}
 					// For images over SSH, we'd need to base64 encode on remote and decode here
@@ -303,6 +309,12 @@ export function registerFilesystemHandlers(): void {
 				}
 				const result = await statRemote(filePath, sshConfig);
 				if (!result.success) {
+					// Missing remote paths return null instead of throwing (mirrors the
+					// local ENOENT handling below and fs:readFile) so callers can handle
+					// absence without an unhandled IPC rejection. (MAESTRO-MH/ME)
+					if (result.error?.startsWith('Path not found:')) {
+						return null;
+					}
 					throw new Error(result.error || 'Failed to get remote file stats');
 				}
 				// Map remote stat result to match local format
@@ -326,7 +338,17 @@ export function registerFilesystemHandlers(): void {
 				isDirectory: stats.isDirectory(),
 				isFile: stats.isFile(),
 			};
-		} catch (error) {
+		} catch (error: any) {
+			// Return null for missing files/paths instead of throwing, matching the
+			// fs:readFile handler's ENOENT contract. Callers stat phantom targets
+			// routinely (e.g. the Document Graph following unresolved [[wiki]] links),
+			// and a missing target is an expected, benign condition - not an error.
+			// ENOTDIR covers links that treat a file as a directory (e.g. `[[file.md/sub]]`).
+			// Mirrors fs:readFile so callers avoid an unhandled IPC rejection reaching
+			// Sentry. (MAESTRO-MH/ME)
+			if (error?.code === 'ENOENT' || error?.code === 'ENOTDIR') {
+				return null;
+			}
 			throw new Error(`Failed to get file stats: ${error}`);
 		}
 	});

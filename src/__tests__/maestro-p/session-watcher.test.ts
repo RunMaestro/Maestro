@@ -157,6 +157,68 @@ describe('session-watcher', () => {
 			expect(result.jsonlPath).toBe(firstPath);
 		});
 
+		it('with expectSessionId, returns THAT file even when a sibling appears first (no cross-talk)', async () => {
+			const spawnTimestamp = Date.now();
+			await sleep(5);
+			// A concurrent sibling session writes its transcript FIRST. The legacy
+			// earliest-new heuristic would wrongly attach to this one.
+			writeJsonl('sibling-concurrent-id');
+			await sleep(30);
+			const mineId = 'my-pre-assigned-id';
+			const minePath = writeJsonl(mineId);
+
+			const result = await discoverSessionId({
+				configDir,
+				cwd,
+				spawnTimestamp,
+				expectSessionId: mineId,
+				timeoutMs: 1000,
+				pollIntervalMs: FAST_POLL_MS,
+			});
+
+			// Must resolve to the pre-assigned id, NOT the earlier sibling.
+			expect(result.sessionId).toBe(mineId);
+			expect(result.jsonlPath).toBe(minePath);
+		});
+
+		it('with expectSessionId, waits for the specific file and ignores unrelated ones', async () => {
+			const spawnTimestamp = Date.now();
+			const mineId = 'expected-late-id';
+			const discoveryPromise = discoverSessionId({
+				configDir,
+				cwd,
+				spawnTimestamp,
+				expectSessionId: mineId,
+				timeoutMs: 1500,
+				pollIntervalMs: FAST_POLL_MS,
+			});
+			// An unrelated session appears first; discovery must NOT resolve on it.
+			await sleep(30);
+			writeJsonl('unrelated-id');
+			await sleep(30);
+			const minePath = writeJsonl(mineId);
+
+			const result = await discoveryPromise;
+			expect(result.sessionId).toBe(mineId);
+			expect(result.jsonlPath).toBe(minePath);
+		});
+
+		it('with expectSessionId, rejects with a descriptive error if that file never appears', async () => {
+			const spawnTimestamp = Date.now();
+			// A different session shows up, but never the expected one.
+			writeJsonl('some-other-id');
+			await expect(
+				discoverSessionId({
+					configDir,
+					cwd,
+					spawnTimestamp,
+					expectSessionId: 'never-written-id',
+					timeoutMs: 250,
+					pollIntervalMs: FAST_POLL_MS,
+				})
+			).rejects.toThrow(/never-written-id\.jsonl did not appear/);
+		});
+
 		it('tolerates the projects dir not existing yet — picks up the file once it appears', async () => {
 			const spawnTimestamp = Date.now();
 			// Kick off discovery before the directory exists. Claude lazily

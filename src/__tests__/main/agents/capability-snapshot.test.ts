@@ -26,8 +26,10 @@ function makeFakeStore(initial: AgentCapabilitiesSnapshotMap = {}) {
 // Silence Sentry calls — captureMessage is fire-and-forget so the implementation
 // just `void`-awaits it. Vitest will still log unhandled promise rejections
 // otherwise (the real impl tries to use `electron.app` which is unavailable here).
+// The hoisted handle lets us assert which failures DO and DON'T get reported.
+const { captureMessageMock } = vi.hoisted(() => ({ captureMessageMock: vi.fn() }));
 vi.mock('../../../main/utils/sentry', () => ({
-	captureMessage: vi.fn(),
+	captureMessage: captureMessageMock,
 	captureException: vi.fn(),
 }));
 
@@ -40,6 +42,7 @@ describe('CapabilitySnapshotManager', () => {
 		manager = new CapabilitySnapshotManager();
 		store = makeFakeStore();
 		broadcast = vi.fn();
+		captureMessageMock.mockReset();
 	});
 
 	it('starts empty before init()', () => {
@@ -166,5 +169,31 @@ describe('CapabilitySnapshotManager', () => {
 		const result = manager.markFailed('claude-code', 'boom');
 		expect(result.status).toBe('failed');
 		expect(result.lastError).toBe('boom');
+	});
+
+	it('markFailed reports unexpected probe errors to Sentry', () => {
+		manager.init(store, broadcast);
+		manager.markFailed('claude-code', 'boom');
+		expect(captureMessageMock).toHaveBeenCalledWith(
+			'agent-probe-failed',
+			'warning',
+			expect.objectContaining({ agentId: 'claude-code' })
+		);
+	});
+
+	it('markFailed skips Sentry for expected SSH/network failures but still persists (MAESTRO-RA)', () => {
+		manager.init(store, broadcast);
+		const expectedFailures = [
+			'SSH connection timed out after 10s',
+			'ssh: connect to host example.com port 22: Connection refused',
+			'ssh: Could not resolve hostname badhost',
+			'ssh: connect to host 10.0.0.1 port 22: No route to host',
+		];
+		for (const error of expectedFailures) {
+			const result = manager.markFailed('claude-code', error, 'remote-1');
+			expect(result.status).toBe('failed');
+			expect(result.lastError).toBe(error);
+		}
+		expect(captureMessageMock).not.toHaveBeenCalled();
 	});
 });

@@ -20,8 +20,7 @@ import type {
 } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useAgentStore } from '../../stores/agentStore';
-import { getActiveTab } from '../../utils/tabHelpers';
-import { generateId } from '../../utils/ids';
+import { markTabRunningQueuedItem, resolveQueuedItemTarget } from '../../utils/tabHelpers';
 import {
 	hasRunnableQueueItem,
 	nextRunnableQueueItem,
@@ -121,34 +120,25 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 						s.executionQueue
 					);
 					if (!runnable) return s;
-					const targetTab = s.aiTabs.find((tab) => tab.id === firstItem.tabId) || getActiveTab(s);
 
-					// Append the user log entry atomically with the dequeue/state-busy
-					// transition for message items. processQueuedItem itself does not
-					// add the log — each call site that dequeues owns it.
-					const userLogEntry =
-						firstItem.type === 'message' && firstItem.text
-							? {
-									id: generateId(),
-									timestamp: Date.now(),
-									source: 'user' as const,
-									text: firstItem.text,
-									images: firstItem.images,
-									...(firstItem.forceParallel && { forceParallel: true }),
-									...(firstItem.readOnlyMode && { readOnly: true }),
-								}
-							: null;
+					// Resolve the item's target tab orphan-aware. A message queued on a
+					// tab the user later closed lives in orphanedThinkingTabs - route its
+					// busy-state + user log THERE (fire-and-forget background send), never
+					// onto whatever tab happens to be active. The user log is appended
+					// atomically with the dequeue here; processQueuedItem does not add it.
+					const target = resolveQueuedItemTarget(s, firstItem);
+					if (!target) return s;
 
 					const updatedAiTabs = s.aiTabs.map((tab) =>
-						tab.id === targetTab?.id
-							? {
-									...tab,
-									state: 'busy' as const,
-									thinkingStartTime: Date.now(),
-									logs: userLogEntry ? [...tab.logs, userLogEntry] : tab.logs,
-								}
-							: tab
+						tab.id === target.tabId ? markTabRunningQueuedItem(tab, firstItem) : tab
 					);
+
+					const updatedOrphans =
+						target.location === 'orphan' && s.orphanedThinkingTabs
+							? s.orphanedThinkingTabs.map((tab) =>
+									tab.id === target.tabId ? markTabRunningQueuedItem(tab, firstItem) : tab
+								)
+							: s.orphanedThinkingTabs;
 
 					return {
 						...s,
@@ -159,6 +149,9 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 						currentCycleBytes: 0,
 						executionQueue: remainingQueue,
 						aiTabs: updatedAiTabs,
+						...(updatedOrphans !== s.orphanedThinkingTabs && {
+							orphanedThinkingTabs: updatedOrphans,
+						}),
 					};
 				})
 			);

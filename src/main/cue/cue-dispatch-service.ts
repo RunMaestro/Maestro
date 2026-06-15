@@ -1,6 +1,6 @@
 import * as crypto from 'crypto';
 import type { MainLogLevel } from '../../shared/logger-types';
-import type { CueCommand, CueEvent, CueSubscription } from './cue-types';
+import type { CueCommand, CueEvent, CueNotifyConfig, CueSubscription } from './cue-types';
 import { recordTriggerFired } from './cue-telemetry';
 
 export interface CueDispatchServiceDeps {
@@ -17,9 +17,20 @@ export interface CueDispatchServiceDeps {
 		action?: CueSubscription['action'],
 		command?: CueCommand,
 		chainRootId?: string,
-		parentEventId?: string
+		parentEventId?: string,
+		notify?: CueNotifyConfig
 	) => void;
 	onLog: (level: MainLogLevel, message: string, data?: unknown) => void;
+}
+
+/**
+ * Resolve the toast body for an `action: notify` subscription using the
+ * fallback chain: explicit `notify.message` → `label` → `prompt` → `name`.
+ * `name` is guaranteed by the validator, so the return is always a non-empty
+ * string for a well-formed subscription.
+ */
+function resolveNotifyMessage(sub: CueSubscription): string {
+	return sub.notify?.message?.trim() || sub.label?.trim() || sub.prompt?.trim() || sub.name;
 }
 
 export interface CueDispatchService {
@@ -144,10 +155,21 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 				return dispatched;
 			}
 
-			const prompt = promptOverride ?? sub.prompt;
-			if (!prompt) {
-				deps.onLog('warn', `[CUE] "${sub.name}" has no prompt — skipping dispatch`);
-				return 0;
+			// For `action: notify` the prompt slot carries the resolved toast
+			// body — the validator allows empty `prompt` since the message comes
+			// from the notify config + fallback chain.
+			let prompt: string;
+			let resolvedNotify: CueNotifyConfig | undefined;
+			if (sub.action === 'notify') {
+				const message = resolveNotifyMessage(sub);
+				prompt = message;
+				resolvedNotify = { ...(sub.notify ?? {}), message };
+			} else {
+				prompt = promptOverride ?? sub.prompt;
+				if (!prompt) {
+					deps.onLog('warn', `[CUE] "${sub.name}" has no prompt — skipping dispatch`);
+					return 0;
+				}
 			}
 			deps.executeRun(
 				ownerSessionId,
@@ -161,7 +183,8 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 				sub.action,
 				sub.command,
 				chainRootId,
-				parentEventId
+				parentEventId,
+				resolvedNotify
 			);
 			return 1;
 		},

@@ -3,9 +3,11 @@ import {
 	buildSynopsisPrompt,
 	runExitSynopsis,
 	shouldRunSynopsisOnExit,
+	turnDidMeaningfulWork,
 	type SynopsisData,
 	type RunExitSynopsisDeps,
 } from '../../../../../../renderer/hooks/agent/internal/helpers/exitSynopsis';
+import type { LogEntry } from '../../../../../../renderer/types';
 import { notifyToast } from '../../../../../../renderer/stores/notificationStore';
 import { parseSynopsis } from '../../../../../../shared/synopsis';
 
@@ -128,6 +130,53 @@ describe('buildSynopsisPrompt', () => {
 		const out = buildSynopsisPrompt({ lastSynopsisTime: Date.now() - 5 * 60 * 1000 }, () => 'BASE');
 		expect(out).toContain('BASE');
 		expect(out).toMatch(/Only synopsize work done since the last synopsis/);
+	});
+});
+
+describe('turnDidMeaningfulWork', () => {
+	const log = (source: LogEntry['source']): { source: LogEntry['source'] } => ({ source });
+
+	it('returns true when a tool ran after the last user message', () => {
+		const logs = [log('user'), log('ai'), log('tool'), log('ai')];
+		expect(turnDidMeaningfulWork(logs)).toBe(true);
+	});
+
+	it('returns false for a pure text Q&A turn (no tool use)', () => {
+		const logs = [log('user'), log('thinking'), log('ai')];
+		expect(turnDidMeaningfulWork(logs)).toBe(false);
+	});
+
+	it('only considers logs after the last user message', () => {
+		// Tool use belonged to the PREVIOUS turn; the latest turn was pure Q&A.
+		const logs = [log('user'), log('tool'), log('ai'), log('user'), log('ai')];
+		expect(turnDidMeaningfulWork(logs)).toBe(false);
+	});
+
+	it('counts a tool that ran when there is no user message in the buffer', () => {
+		const logs = [log('tool'), log('ai')];
+		expect(turnDidMeaningfulWork(logs)).toBe(true);
+	});
+
+	it('always counts a custom AI command as meaningful work', () => {
+		const logs = [log('user'), log('ai')];
+		expect(turnDidMeaningfulWork(logs, true)).toBe(true);
+	});
+
+	it('returns false for an empty log buffer', () => {
+		expect(turnDidMeaningfulWork([])).toBe(false);
+	});
+
+	it('records the turn when tool logs are not observable (thinking off)', () => {
+		// Tabs with thinking off never emit `source: 'tool'` logs, so a tool-free
+		// buffer cannot prove the turn was idle - record it rather than drop the
+		// History entry.
+		const logs = [log('user'), log('ai')];
+		expect(turnDidMeaningfulWork(logs, false, false)).toBe(true);
+	});
+
+	it('still requires tool use when tool logs ARE observable (thinking on)', () => {
+		const logs = [log('user'), log('ai')];
+		expect(turnDidMeaningfulWork(logs, false, true)).toBe(false);
 	});
 });
 

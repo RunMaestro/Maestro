@@ -7,12 +7,16 @@ import { aggregateModelUsage } from '../../parsers/usage-aggregator';
 import { cleanupTempFiles } from '../utils/imageUtils';
 import type { ManagedProcess, AgentError } from '../types';
 import type { DataBufferManager } from './DataBufferManager';
+import type { SshRemoteConfig } from '../../../shared/types';
 import { captureException } from '../../utils/sentry';
+import { getSshRemoteById } from '../../stores/getters';
 import {
 	waitForCopilotShutdown,
 	readCopilotFinalAnswer,
+	readCopilotShutdownUsage,
 	type CopilotShutdownWaitResult,
 } from '../CopilotShutdownWaiter';
+import { FALLBACK_CONTEXT_WINDOW } from '../../../shared/agentConstants';
 
 interface ExitHandlerDependencies {
 	processes: Map<string, ManagedProcess>;
@@ -263,21 +267,38 @@ export class ExitHandler {
 	 * so the downstream flush emits Copilot's real conclusion, not the
 	 * possibly-stale text our parent process captured before it died.
 	 *
-	 * No-op for non-Copilot agents and for SSH-remote Copilot sessions
-	 * (we don't have local disk access there — that's a follow-up).
+	 * No-op for non-Copilot agents. For SSH-remote Copilot sessions the
+	 * events file lives on the remote host, so the reads below go over SSH
+	 * (resolved from `sshRemoteId`); without this the remote context gauge
+	 * would stay stuck at 0% since `currentTokens` never appears on stdout.
 	 */
 	private async awaitCopilotShutdown(
 		sessionId: string,
 		managedProcess: ManagedProcess
 	): Promise<void> {
 		if (managedProcess.toolType !== 'copilot-cli') return;
-		if (managedProcess.sshRemoteId) return;
 		const agentSessionId = managedProcess.agentSessionId;
 		if (!agentSessionId) return;
 
+		// Resolve the full SSH config for remote sessions. If the agent was
+		// configured for SSH but the remote can't be resolved, skip rather than
+		// reading a non-existent local file (which would never match).
+		let sshRemote: SshRemoteConfig | null = null;
+		if (managedProcess.sshRemoteId) {
+			sshRemote = getSshRemoteById(managedProcess.sshRemoteId) ?? null;
+			if (!sshRemote) {
+				logger.warn(
+					'[ProcessManager] Copilot SSH remote unresolved; skipping disk reconciliation',
+					'ProcessManager',
+					{ sessionId, agentSessionId, sshRemoteId: managedProcess.sshRemoteId }
+				);
+				return;
+			}
+		}
+
 		let result: CopilotShutdownWaitResult;
 		try {
-			result = await waitForCopilotShutdown(agentSessionId);
+			result = await waitForCopilotShutdown(agentSessionId, { sshRemote });
 		} catch (err) {
 			logger.warn('[ProcessManager] Copilot shutdown wait threw', 'ProcessManager', {
 				sessionId,
@@ -296,12 +317,45 @@ export class ExitHandler {
 		if (result !== 'observed') return;
 
 		try {
-			const finalAnswer = await readCopilotFinalAnswer(agentSessionId);
+			const finalAnswer = await readCopilotFinalAnswer(agentSessionId, undefined, sshRemote);
 			if (finalAnswer && finalAnswer.content) {
 				managedProcess.streamedText = finalAnswer.content;
 			}
 		} catch (err) {
 			logger.warn('[ProcessManager] Failed to read Copilot final answer', 'ProcessManager', {
+				sessionId,
+				agentSessionId,
+				error: String(err),
+			});
+		}
+
+		// Disk-derived usage snapshot. Copilot writes per-turn token counts and
+		// the live `currentTokens` context-window state ONLY into the on-disk
+		// `session.shutdown` event in batch mode; the stdout stream never
+		// carries them, so the streaming usage path emits nothing and the
+		// context gauge stays at 0% for every tab. Read it now and emit a
+		// `usage` event with the same shape the parser would have produced if
+		// session.shutdown had appeared on stdout. See the docstring on
+		// `readCopilotShutdownUsage` for the field-mapping rationale.
+		try {
+			const usage = await readCopilotShutdownUsage(agentSessionId, undefined, sshRemote);
+			if (usage) {
+				const contextWindow =
+					managedProcess.contextWindow && managedProcess.contextWindow > 0
+						? managedProcess.contextWindow
+						: FALLBACK_CONTEXT_WINDOW;
+				this.emitter.emit('usage', sessionId, {
+					inputTokens: usage.inputTokens,
+					outputTokens: usage.outputTokens,
+					cacheReadInputTokens: usage.cacheReadInputTokens,
+					cacheCreationInputTokens: usage.cacheCreationInputTokens,
+					totalCostUsd: 0,
+					contextWindow,
+					reasoningTokens: usage.reasoningTokens,
+				});
+			}
+		} catch (err) {
+			logger.warn('[ProcessManager] Failed to read Copilot disk-derived usage', 'ProcessManager', {
 				sessionId,
 				agentSessionId,
 				error: String(err),

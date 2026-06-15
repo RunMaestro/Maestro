@@ -245,17 +245,19 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 												{/* Test Result */}
 												{testResult && (
 													<div
-														className="mt-2 text-xs flex items-center gap-1"
+														className="mt-2 text-xs flex items-start gap-1"
 														style={{
 															color: testResult.success ? theme.colors.success : theme.colors.error,
 														}}
 													>
 														{testResult.success ? (
-															<CheckCircle className="w-3 h-3" />
+															<CheckCircle className="w-3 h-3 flex-shrink-0 mt-0.5" />
 														) : (
-															<XCircle className="w-3 h-3" />
+															<XCircle className="w-3 h-3 flex-shrink-0 mt-0.5" />
 														)}
-														<span className="truncate">{testResult.message}</span>
+														<span className="whitespace-pre-wrap break-words min-w-0">
+															{testResult.message}
+														</span>
 													</div>
 												)}
 											</div>

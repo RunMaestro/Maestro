@@ -172,6 +172,7 @@ export const AnnotatorCanvas = forwardRef<SVGSVGElement, AnnotatorCanvasProps>(
 			setView,
 			beginStroke,
 			extendStroke,
+			extendStrokeStraight,
 			endStroke,
 			eraseStrokeAt,
 			beginShape,
@@ -208,7 +209,9 @@ export const AnnotatorCanvas = forwardRef<SVGSVGElement, AnnotatorCanvasProps>(
 
 		const [isSpaceHeld, setIsSpaceHeld] = useState(false);
 		const [isShiftHeld, setIsShiftHeld] = useState(false);
-		const panEnabled = isSpaceHeld || isShiftHeld || tool === 'pan';
+		// Shift pans for every tool except the pen — there, shift constrains the
+		// freehand stroke to a straight line (handled in the pointermove path).
+		const panEnabled = isSpaceHeld || tool === 'pan' || (isShiftHeld && tool !== 'pen');
 
 		// Latest view in a ref — the wheel handler is attached imperatively
 		// (see below) and needs the current view without re-binding.
@@ -459,7 +462,11 @@ export const AnnotatorCanvas = forwardRef<SVGSVGElement, AnnotatorCanvasProps>(
 			const interaction = interactionRef.current;
 			if (!interaction) return;
 			if (interaction.kind === 'pen') {
-				extendStroke([pt[0], pt[1], e.pressure || 0.5]);
+				if (isShiftHeld) {
+					extendStrokeStraight([pt[0], pt[1], e.pressure || 0.5]);
+				} else {
+					extendStroke([pt[0], pt[1], e.pressure || 0.5]);
+				}
 				return;
 			}
 			if (interaction.kind === 'shape-draw') {

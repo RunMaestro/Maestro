@@ -10,7 +10,11 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-import { parseArgs, DEFAULT_MAX_WAIT_SECONDS } from '../../maestro-p/args';
+import {
+	parseArgs,
+	DEFAULT_MAX_WAIT_SECONDS,
+	DEFAULT_FIRST_BYTE_TIMEOUT_SECONDS,
+} from '../../maestro-p/args';
 
 describe('parseArgs', () => {
 	let warnSpy: ReturnType<typeof vi.fn<(message: string) => void>>;
@@ -267,6 +271,44 @@ describe('parseArgs', () => {
 			const result = callArgs(['--max-wait', '0', '-p', 'hi']);
 			expect(result.maxWaitSeconds).toBe(DEFAULT_MAX_WAIT_SECONDS);
 			expect(warnSpy).toHaveBeenCalledTimes(1);
+		});
+	});
+
+	describe('--first-byte-timeout', () => {
+		it('parses an integer value and returns it in seconds', () => {
+			const result = callArgs(['--first-byte-timeout', '45', '-p', 'hi']);
+			expect(result.firstByteTimeoutSeconds).toBe(45);
+			expect(result.passThroughArgs).toEqual([]);
+		});
+
+		it('parses --first-byte-timeout=45 (inline form)', () => {
+			const result = callArgs(['--first-byte-timeout=45', '-p', 'hi']);
+			expect(result.firstByteTimeoutSeconds).toBe(45);
+		});
+
+		it('uses the default when missing', () => {
+			const result = callArgs(['-p', 'hi']);
+			expect(result.firstByteTimeoutSeconds).toBe(DEFAULT_FIRST_BYTE_TIMEOUT_SECONDS);
+		});
+
+		it('warns and falls back to the default for non-integer values', () => {
+			const result = callArgs(['--first-byte-timeout', 'nope', '-p', 'hi']);
+			expect(result.firstByteTimeoutSeconds).toBe(DEFAULT_FIRST_BYTE_TIMEOUT_SECONDS);
+			expect(warnSpy).toHaveBeenCalledTimes(1);
+		});
+
+		it('clamps the first-byte budget to --max-wait when the latter is smaller', () => {
+			// A caller with a tight overall budget should not keep waiting for a
+			// first byte past the point it wanted the whole run abandoned.
+			const result = callArgs(['--max-wait', '30', '-p', 'hi']);
+			expect(result.maxWaitSeconds).toBe(30);
+			expect(result.firstByteTimeoutSeconds).toBe(30);
+		});
+
+		it('leaves the first-byte budget untouched when below --max-wait', () => {
+			const result = callArgs(['--max-wait', '600', '--first-byte-timeout', '90', '-p', 'hi']);
+			expect(result.maxWaitSeconds).toBe(600);
+			expect(result.firstByteTimeoutSeconds).toBe(90);
 		});
 	});
 

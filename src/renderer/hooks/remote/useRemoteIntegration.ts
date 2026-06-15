@@ -3,7 +3,7 @@ import { flushSync } from 'react-dom';
 import type { Session, SessionState, ThinkingMode } from '../../types';
 import { cueService } from '../../services/cue';
 import { captureException } from '../../utils/sentry';
-import { createTab, closeTab } from '../../utils/tabHelpers';
+import { aiTabFocusFields, createTab, closeTab } from '../../utils/tabHelpers';
 import { logger } from '../../utils/logger';
 import { persistTabStarred } from '../../utils/starredSessions';
 import { formatLogsForClipboard } from '../../utils/contextExtractor';
@@ -291,13 +291,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 							if (!s.aiTabs.some((t) => t.id === tabId)) {
 								return s;
 							}
-							return {
-								...s,
-								activeTabId: tabId,
-								activeFileTabId: null,
-								activeTerminalTabId: null,
-								inputMode: 'ai' as const,
-							};
+							return { ...s, ...aiTabFocusFields(tabId) };
 						})
 					);
 				}
@@ -322,13 +316,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						if (!s.aiTabs.some((t) => t.id === tabId)) {
 							return s;
 						}
-						return {
-							...s,
-							activeTabId: tabId,
-							activeFileTabId: null,
-							activeTerminalTabId: null,
-							inputMode: 'ai' as const,
-						};
+						return { ...s, ...aiTabFocusFields(tabId) };
 					})
 				);
 			}
@@ -728,6 +716,23 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				window.dispatchEvent(
 					new CustomEvent('maestro:configureAutoRun', {
 						detail: { sessionId, config, responseChannel },
+					})
+				);
+			}
+		);
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Handle remote create-worktree-agent from the CLI. Creates a new agent in a
+	// git worktree branched off a parent agent, without an Auto Run playbook.
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteCreateWorktreeSession(
+			(parentSessionId: string, config: any, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:createWorktreeSession', {
+						detail: { parentSessionId, config, responseChannel },
 					})
 				);
 			}

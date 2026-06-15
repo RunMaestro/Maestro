@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 import type { Theme } from '../../../shared/theme-types';
 import { GhostIconButton } from '../ui/GhostIconButton';
+import { HoverTooltip } from '../ui/HoverTooltip';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import type { AnnotatorTool, UseAnnotatorStateReturn } from './useAnnotatorState';
@@ -193,19 +194,25 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 	const ICON_CLASS = 'w-5 h-5';
 	const BUTTON_PADDING = 'p-2';
 
-	const renderToolButton = (value: AnnotatorTool, Icon: LucideIcon, label: string) => {
+	const renderToolButton = (
+		value: AnnotatorTool,
+		Icon: LucideIcon,
+		label: string,
+		shortcut: string
+	) => {
 		const active = tool === value;
 		return (
-			<GhostIconButton
-				onClick={() => setTool(value)}
-				ariaLabel={label}
-				title={label}
-				padding={BUTTON_PADDING}
-				color={active ? theme.colors.accent : theme.colors.textMain}
-				style={active ? { backgroundColor: `${theme.colors.accent}26` } : undefined}
-			>
-				<Icon className={ICON_CLASS} />
-			</GhostIconButton>
+			<HoverTooltip label={label} shortcut={shortcut} theme={theme} placement="left">
+				<GhostIconButton
+					onClick={() => setTool(value)}
+					ariaLabel={label}
+					padding={BUTTON_PADDING}
+					color={active ? theme.colors.accent : theme.colors.textMain}
+					style={active ? { backgroundColor: `${theme.colors.accent}26` } : undefined}
+				>
+					<Icon className={ICON_CLASS} />
+				</GhostIconButton>
+			</HoverTooltip>
 		);
 	};
 
@@ -261,44 +268,46 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 			onPointerDown={(e) => e.stopPropagation()}
 			onWheel={(e) => e.stopPropagation()}
 		>
-			{renderToolButton('pen', PenLine, 'Pen')}
-			{renderToolButton('eraser', Eraser, 'Eraser')}
-			{renderToolButton('pan', Move, 'Pan (or hold Shift / Space)')}
+			{renderToolButton('pen', PenLine, 'Draw', 'D')}
+			{renderToolButton('eraser', Eraser, 'Erase', 'E')}
+			{renderToolButton('pan', Move, 'Pan', 'P')}
 
 			{divider}
 
-			{renderToolButton('rect', Square, 'Rectangle')}
-			{renderToolButton('ellipse', Circle, 'Ellipse')}
-			{renderToolButton('arrow', ArrowUpRight, 'Arrow')}
-			{renderToolButton('text', Type, 'Text (Aa)')}
+			{renderToolButton('rect', Square, 'Square', 'S')}
+			{renderToolButton('ellipse', Circle, 'Circle', 'C')}
+			{renderToolButton('arrow', ArrowUpRight, 'Arrow', 'A')}
+			{renderToolButton('text', Type, 'Text', 'T')}
 
 			{divider}
 
-			<GhostIconButton
-				onClick={undo}
-				ariaLabel="Undo"
-				title="Undo (⌘Z)"
-				padding={BUTTON_PADDING}
-				disabled={!canUndo}
-				color={theme.colors.textMain}
-			>
-				<Undo2 className={ICON_CLASS} />
-			</GhostIconButton>
-
-			<div ref={confirmWrapRef} style={{ position: 'relative' }}>
+			<HoverTooltip label="Undo" shortcut="⌘Z" theme={theme} placement="left">
 				<GhostIconButton
-					onClick={() => {
-						if (!canUndo) return;
-						setConfirmingClear((v) => !v);
-					}}
-					ariaLabel="Clear all strokes"
-					title="Clear all strokes"
+					onClick={undo}
+					ariaLabel="Undo"
 					padding={BUTTON_PADDING}
 					disabled={!canUndo}
-					color={theme.colors.error}
+					color={theme.colors.textMain}
 				>
-					<Trash2 className={ICON_CLASS} />
+					<Undo2 className={ICON_CLASS} />
 				</GhostIconButton>
+			</HoverTooltip>
+
+			<div ref={confirmWrapRef} style={{ position: 'relative' }}>
+				<HoverTooltip label="Clear all" theme={theme} placement="left">
+					<GhostIconButton
+						onClick={() => {
+							if (!canUndo) return;
+							setConfirmingClear((v) => !v);
+						}}
+						ariaLabel="Clear all strokes"
+						padding={BUTTON_PADDING}
+						disabled={!canUndo}
+						color={theme.colors.error}
+					>
+						<Trash2 className={ICON_CLASS} />
+					</GhostIconButton>
+				</HoverTooltip>
 				{confirmingClear && (
 					<div
 						role="dialog"
@@ -345,25 +354,26 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 			{divider}
 
 			<div ref={colorWrapRef} style={{ position: 'relative' }}>
-				<button
-					type="button"
-					onClick={() => setColorPickerOpen((v) => !v)}
-					title={`Current color (${currentColor}) - click to change`}
-					aria-label="Current drawing color"
-					aria-haspopup="true"
-					aria-expanded={colorPickerOpen}
-					className="rounded hover:bg-white/10 transition-colors cursor-pointer flex items-center justify-center"
-					style={{ padding: 8, lineHeight: 0 }}
-				>
-					<span
-						aria-hidden
-						className="block w-5 h-5 rounded-full"
-						style={{
-							backgroundColor: currentColor,
-							boxShadow: `inset 0 0 0 1px rgba(0, 0, 0, 0.25), 0 0 0 1px ${theme.colors.border}`,
-						}}
-					/>
-				</button>
+				<HoverTooltip label="Color" theme={theme} placement="left" disabled={colorPickerOpen}>
+					<button
+						type="button"
+						onClick={() => setColorPickerOpen((v) => !v)}
+						aria-label="Current drawing color"
+						aria-haspopup="true"
+						aria-expanded={colorPickerOpen}
+						className="rounded hover:bg-white/10 transition-colors cursor-pointer flex items-center justify-center"
+						style={{ padding: 8, lineHeight: 0 }}
+					>
+						<span
+							aria-hidden
+							className="block w-5 h-5 rounded-full"
+							style={{
+								backgroundColor: currentColor,
+								boxShadow: `inset 0 0 0 1px rgba(0, 0, 0, 0.25), 0 0 0 1px ${theme.colors.border}`,
+							}}
+						/>
+					</button>
+				</HoverTooltip>
 				{colorPickerOpen && (
 					<div
 						role="listbox"
@@ -410,46 +420,50 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 				)}
 			</div>
 
-			<GhostIconButton
-				onClick={onToggleDrawer}
-				ariaLabel="Drawing settings"
-				title="Drawing settings"
-				padding={BUTTON_PADDING}
-				color={drawerOpen ? theme.colors.accent : theme.colors.textMain}
-				style={drawerOpen ? { backgroundColor: `${theme.colors.accent}26` } : undefined}
-			>
-				<SlidersHorizontal className={ICON_CLASS} />
-			</GhostIconButton>
+			<HoverTooltip label="Settings" theme={theme} placement="left">
+				<GhostIconButton
+					onClick={onToggleDrawer}
+					ariaLabel="Drawing settings"
+					padding={BUTTON_PADDING}
+					color={drawerOpen ? theme.colors.accent : theme.colors.textMain}
+					style={drawerOpen ? { backgroundColor: `${theme.colors.accent}26` } : undefined}
+				>
+					<SlidersHorizontal className={ICON_CLASS} />
+				</GhostIconButton>
+			</HoverTooltip>
 
-			<GhostIconButton
-				onClick={() => void handleCopy()}
-				ariaLabel="Copy to clipboard"
-				title="Copy to clipboard"
-				padding={BUTTON_PADDING}
-				color={theme.colors.textMain}
-			>
-				<Copy className={ICON_CLASS} />
-			</GhostIconButton>
+			<HoverTooltip label="Copy" shortcut="⌘C" theme={theme} placement="left">
+				<GhostIconButton
+					onClick={() => void handleCopy()}
+					ariaLabel="Copy to clipboard"
+					padding={BUTTON_PADDING}
+					color={theme.colors.textMain}
+				>
+					<Copy className={ICON_CLASS} />
+				</GhostIconButton>
+			</HoverTooltip>
 
-			<GhostIconButton
-				onClick={handleSave}
-				ariaLabel="Save"
-				title="Save (⌘S)"
-				padding={BUTTON_PADDING}
-				color={theme.colors.success}
-			>
-				<Check className={ICON_CLASS} />
-			</GhostIconButton>
+			<HoverTooltip label="Save" shortcut="⌘S" theme={theme} placement="left">
+				<GhostIconButton
+					onClick={handleSave}
+					ariaLabel="Save"
+					padding={BUTTON_PADDING}
+					color={theme.colors.success}
+				>
+					<Check className={ICON_CLASS} />
+				</GhostIconButton>
+			</HoverTooltip>
 
-			<GhostIconButton
-				onClick={onCancel}
-				ariaLabel="Cancel"
-				title="Cancel (Esc)"
-				padding={BUTTON_PADDING}
-				color={theme.colors.textDim}
-			>
-				<X className={ICON_CLASS} />
-			</GhostIconButton>
+			<HoverTooltip label="Cancel" shortcut="Esc" theme={theme} placement="left">
+				<GhostIconButton
+					onClick={onCancel}
+					ariaLabel="Cancel"
+					padding={BUTTON_PADDING}
+					color={theme.colors.textDim}
+				>
+					<X className={ICON_CLASS} />
+				</GhostIconButton>
+			</HoverTooltip>
 		</div>,
 		document.body
 	);

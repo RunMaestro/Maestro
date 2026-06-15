@@ -95,7 +95,10 @@ export function useFilePreviewHandlers({
 				// it's gone, prompt for a destination instead of resurrecting it.
 				let stillExists = true;
 				try {
-					await window.maestro.fs.stat(path, filePreviewSshRemoteId);
+					// stat returns null for a missing path (ENOENT) and throws only on
+					// genuine errors; treat both as "gone" so we never resurrect a ghost.
+					const st = await window.maestro.fs.stat(path, filePreviewSshRemoteId);
+					if (!st) stillExists = false;
 				} catch {
 					stillExists = false;
 				}
@@ -141,6 +144,19 @@ export function useFilePreviewHandlers({
 							};
 						})
 					);
+
+					// A file just landed at a new on-disk location (untitled save, or
+					// redirect after a move/delete). The Files panel won't show it until
+					// its next refresh, so nudge the tree to pick it up now. Reuse the
+					// existing CustomEvent the remote/CLI path already dispatches, so we
+					// avoid prop-drilling refreshFileTree into this deeply-nested hook.
+					if (sessionId) {
+						window.dispatchEvent(
+							new CustomEvent('maestro:refreshFileTree', {
+								detail: { sessionId },
+							})
+						);
+					}
 				} else {
 					onFileTabEditContentChange?.(activeFileTabId, undefined, content);
 				}

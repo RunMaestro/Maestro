@@ -551,6 +551,18 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 	const showRecommendationWarning =
 		userOverrodeMode && recommendedMode !== null && recommendedMode !== taskSelectionMode;
 
+	// Noun for the "sent to the AI agent for each ___ in the queue" helper text.
+	// `taskSelectionMode` always holds a concrete value ('task' default), but a
+	// real selection only exists once the user clicks the toggle OR the
+	// auto-recommendation resolves from actual doc/task counts. Until then the
+	// value is just the un-vetted default, so show the combined "task/document".
+	const hasSelectedMode = userOverrodeMode || recommendedMode !== null;
+	const queueItemNoun = !hasSelectedMode
+		? 'task/document'
+		: taskSelectionMode === 'document'
+			? 'document'
+			: 'task';
+
 	// Human-readable explanation of the dynamic mode choice: average task count
 	// across selected docs + the resolved context window + the threshold that
 	// scales with it. Drives the copy shown above the Task/Document toggle.
@@ -1086,7 +1098,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 								</button>
 							</div>
 							<div className="text-[10px] mb-2" style={{ color: theme.colors.textDim }}>
-								This prompt is sent to the AI agent for each document in the queue.{' '}
+								This prompt is sent to the AI agent for each {queueItemNoun} in the queue.{' '}
 								{isModified && lastModifiedAt && (
 									<span style={{ color: theme.colors.textMain }}>
 										Last modified {formatLastModified(lastModifiedAt)}.

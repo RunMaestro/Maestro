@@ -81,6 +81,12 @@ export interface ModeratorConfig {
 		remoteId: string | null;
 		workingDirOverride?: string;
 	};
+	/** Claude token-source opt-in (Claude Code moderator only). See getClaudeTokenMode. */
+	enableMaestroP?: boolean;
+	/** Refines enableMaestroP: 'interactive' (always TUI) vs 'dynamic' (auto-switch). */
+	maestroPMode?: 'interactive' | 'dynamic';
+	/** Optional maestro-p script override. */
+	maestroPPath?: string;
 }
 
 /**

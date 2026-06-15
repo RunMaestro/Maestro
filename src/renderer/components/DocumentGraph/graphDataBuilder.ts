@@ -1240,7 +1240,10 @@ async function parseFileWithSsh(
 		// Get file stats
 		const stat = await window.maestro.fs.stat(fullPath, sshRemoteId);
 		if (!stat) {
-			logger.warn(`[DocumentGraph] parseFileWithSsh: stat returned null for ${fullPath}`);
+			// Missing target (e.g. an unresolved [[wiki]] link pointing at a note
+			// that doesn't exist yet). This is expected and benign in a vault, so
+			// log at debug level instead of spamming warnings.
+			logger.debug(`[DocumentGraph] parseFileWithSsh: stat returned null for ${fullPath}`);
 			return null;
 		}
 		const fileSize = stat.size ?? 0;

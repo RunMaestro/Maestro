@@ -1,8 +1,3 @@
----
-name: generate-project-context
-description: 'Create project-context.md with AI rules. Use when the user says "generate project context" or "create project context"'
----
-
 # Generate Project Context Workflow
 
 **Goal:** Create a concise, optimized `project-context.md` file containing critical rules, patterns, and guidelines that AI agents must follow when implementing code. This file focuses on unobvious details that LLMs need to be reminded of.
@@ -37,15 +32,13 @@ Load config from `{project-root}/_bmad/bmm/config.yaml` and resolve:
 
 ### Paths
 
-- `installed_path` = `{project-root}/_bmad/bmm/workflows/generate-project-context`
-- `template_path` = `{installed_path}/project-context-template.md`
 - `output_file` = `{output_folder}/project-context.md`
 
 ---
 
 ## EXECUTION
 
-Load and execute `{project-root}/_bmad/bmm/workflows/generate-project-context/steps/step-01-discover.md` to begin the workflow.
+Load and execute `./steps/step-01-discover.md` to begin the workflow.
 
 **Note:** Input document discovery and initialization protocols are handled in step-01-discover.md.
 
@@ -55,33 +48,7 @@ Load and execute `{project-root}/_bmad/bmm/workflows/generate-project-context/st
 
 The following upstream BMAD files are embedded so this Maestro prompt remains self-contained.
 
-## src/bmm/workflows/generate-project-context/project-context-template.md
-
-```md
----
-project_name: '{{project_name}}'
-user_name: '{{user_name}}'
-date: '{{date}}'
-sections_completed: ['technology_stack']
-existing_patterns_found: { { number_of_patterns_discovered } }
----
-
-# Project Context for AI Agents
-
-_This file contains critical rules and patterns that AI agents must follow when implementing code in this project. Focus on unobvious details that agents might otherwise miss._
-
----
-
-## Technology Stack & Versions
-
-_Documented after discovery phase_
-
-## Critical Implementation Rules
-
-_Documented after discovery phase_
-```
-
-## src/bmm/workflows/generate-project-context/steps/step-01-discover.md
+## src/bmm/workflows/bmad-generate-project-context/steps/step-01-discover.md
 
 ```md
 # Step 1: Context Discovery & Initialization
@@ -209,7 +176,7 @@ Based on discovery, create or update the context document:
 
 #### A. Fresh Document Setup (if no existing context)
 
-Copy template from `{installed_path}/project-context-template.md` to `{output_folder}/project-context.md`
+Copy template from `../project-context-template.md` to `{output_folder}/project-context.md`
 Initialize frontmatter fields.
 
 #### B. Existing Document Update
@@ -246,6 +213,8 @@ Ready to create/update your project context. This will help AI agents implement 
 
 [C] Continue to context generation"
 
+**HALT — wait for user selection before proceeding.**
+
 ## SUCCESS METRICS:
 
 ✅ Existing project context properly detected and handled
@@ -265,12 +234,38 @@ Ready to create/update your project context. This will help AI agents implement 
 
 ## NEXT STEP:
 
-After user selects [C] to continue, load `{project-root}/_bmad/bmm/workflows/generate-project-context/steps/step-02-generate.md` to collaboratively generate the specific project context rules.
+After user selects [C] to continue, load `./step-02-generate.md` to collaboratively generate the specific project context rules.
 
 Remember: Do NOT proceed to step-02 until user explicitly selects [C] from the menu and discovery is confirmed and the initial file has been written as directed in this discovery step!
 ```
 
-## src/bmm/workflows/generate-project-context/steps/step-02-generate.md
+## src/bmm/workflows/bmad-generate-project-context/project-context-template.md
+
+```md
+---
+project_name: '{{project_name}}'
+user_name: '{{user_name}}'
+date: '{{date}}'
+sections_completed: ['technology_stack']
+existing_patterns_found: { { number_of_patterns_discovered } }
+---
+
+# Project Context for AI Agents
+
+_This file contains critical rules and patterns that AI agents must follow when implementing code in this project. Focus on unobvious details that agents might otherwise miss._
+
+---
+
+## Technology Stack & Versions
+
+_Documented after discovery phase_
+
+## Critical Implementation Rules
+
+_Documented after discovery phase_
+```
+
+## src/bmm/workflows/bmad-generate-project-context/steps/step-02-generate.md
 
 ````md
 # Step 2: Context Rules Generation
@@ -305,8 +300,8 @@ This step will generate content and present choices for each rule category:
 
 ## PROTOCOL INTEGRATION:
 
-- When 'A' selected: Execute skill:bmad-advanced-elicitation
-- When 'P' selected: Execute {project-root}/\_bmad/core/workflows/bmad-party-mode/workflow.md
+- When 'A' selected: Invoke the `bmad-advanced-elicitation` skill
+- When 'P' selected: Invoke the `bmad-party-mode` skill
 - PROTOCOLS always return to display this step's A/P/C menu after the A or P have completed
 - User accepts/rejects protocol changes before proceeding
 
@@ -540,11 +535,13 @@ After each category, show the generated rules and present choices:
 [P] Party Mode - Review from different implementation perspectives
 [C] Continue - Save these rules and move to next category"
 
+**HALT — wait for user selection before proceeding.**
+
 ### 10. Handle Menu Selection
 
 #### If 'A' (Advanced Elicitation):
 
-- Execute skill:bmad-advanced-elicitation with current category rules
+- Invoke the `bmad-advanced-elicitation` skill with current category rules
 - Process enhanced rules that come back
 - Ask user: "Accept these enhanced rules for {{category}}? (y/n)"
 - If yes: Update content, then return to A/P/C menu
@@ -552,7 +549,7 @@ After each category, show the generated rules and present choices:
 
 #### If 'P' (Party Mode):
 
-- Execute party-mode workflow with category rules context
+- Invoke the `bmad-party-mode` skill with category rules context
 - Process collaborative insights on implementation patterns
 - Ask user: "Accept these changes to {{category}} rules? (y/n)"
 - If yes: Update content, then return to A/P/C menu
@@ -590,7 +587,7 @@ When user selects 'C' for a category, append the content directly to `{output_fo
 
 ## NEXT STEP:
 
-After completing all rule categories and user selects 'C' for the final category, load `{project-root}/_bmad/bmm/workflows/generate-project-context/steps/step-03-complete.md` to finalize the project context file.
+After completing all rule categories and user selects 'C' for the final category, load `./step-03-complete.md` to finalize the project context file.
 
 Remember: Do NOT proceed to step-03 until all categories are complete and user explicitly selects 'C' for each!
 

@@ -283,10 +283,8 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 					<div
 						className="relative rounded-xl shadow-2xl flex flex-col select-none"
 						style={{
-							width: '80vw',
-							maxWidth: 1400,
-							height: '85vh',
-							maxHeight: 900,
+							width: '90vw',
+							height: '90vh',
 							backgroundColor: theme.colors.bgMain,
 							border: `1px solid ${theme.colors.border}`,
 						}}

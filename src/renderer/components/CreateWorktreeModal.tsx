@@ -303,7 +303,7 @@ export function CreateWorktreeModal({
 					{/* Error message */}
 					{error && (
 						<div
-							className="flex items-start gap-2 p-3 rounded border"
+							className="flex items-start gap-2 p-3 rounded border overflow-hidden"
 							style={{
 								backgroundColor: theme.colors.error + '10',
 								borderColor: theme.colors.error,
@@ -313,7 +313,7 @@ export function CreateWorktreeModal({
 								className="w-4 h-4 mt-0.5 shrink-0"
 								style={{ color: theme.colors.error }}
 							/>
-							<p className="text-sm" style={{ color: theme.colors.error }}>
+							<p className="text-sm break-all min-w-0" style={{ color: theme.colors.error }}>
 								{error}
 							</p>
 						</div>

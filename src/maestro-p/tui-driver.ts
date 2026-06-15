@@ -51,6 +51,22 @@ export const QUIT_GRACE_MS = 2000;
 // flushed to disk as "<prompt>\r/quit".
 export const SEND_ENTER_DELAY_MS = 80;
 
+// A single Enter SEND_ENTER_DELAY_MS after the text is not reliable on a cold
+// TUI. maestro-p emits 'ready' as soon as the `[›❯]` input indicator paints,
+// but on claude 2.1.x that indicator shows (as a dimmed placeholder) before
+// the editor can actually accept a *submit*: hooks/MCP servers are still
+// initialising ("running sp hooks 0/2"). An Enter that lands in that window is
+// dropped, leaving the prompt typed-but-parked. Since claude never starts a
+// turn, no session JSONL is ever written and the fresh-session watcher times
+// out - the observed "tab naming / synopsis returns null in TUI mode" bug.
+// Re-tap Enter a few times, spaced out, so a later tap lands once the editor
+// has settled. Pressing Enter on an already-submitted (empty) input is a
+// no-op (see READY_TAP comment), so the extra taps are harmless once the turn
+// has started. Verified against claude 2.1.162: a single Enter ~7s after a
+// cold spawn submits, while an 80ms-only Enter does not.
+export const SUBMIT_ENTER_RETRIES = 4;
+export const SUBMIT_ENTER_RETRY_INTERVAL_MS = 750;
+
 // Rolling buffer cap for unanchored pattern matching. Large enough that a
 // prompt indicator arriving across many chunks still matches; small enough
 // that we don't grow without bound on long-running sessions.
@@ -179,6 +195,17 @@ export class TuiDriver extends EventEmitter {
 			return false;
 		}
 		this.tapsSent += 1;
+		// Drop everything painted up to and including the modal we just
+		// dismissed, so the unanchored READY_REGEX can't match the modal's own
+		// selector glyph (the trust prompt renders `❯ 1. Yes, I trust this
+		// folder`, whose `❯ ` satisfies `[›❯]\s`). Without this, `ready` fires
+		// on the SAME data chunk that paints the modal, the runner sends the
+		// prompt into the still-open modal where it's consumed as menu
+		// keystrokes, the turn never starts, and the run burns its entire
+		// budget waiting for JSONL that never comes. After the tap dismisses
+		// the modal the genuine editor prompt re-paints `❯` into a now-empty
+		// buffer, so `ready` only fires once we're actually at the input box.
+		this.rollingBuffer = '';
 		return true;
 	}
 
@@ -198,14 +225,14 @@ export class TuiDriver extends EventEmitter {
 			throw new Error('TuiDriver.send() called before start()');
 		}
 		if (this.exited) return;
-		// Two writes, not one. See SEND_ENTER_DELAY_MS for the full reason —
-		// claude's multi-line input editor swallows a trailing \r as a literal
-		// newline when it arrives in the same chunk as the text body, leaving
-		// the prompt parked unsubmitted and the watchdog timing out 5 minutes
-		// later with the unsent prompt + any subsequent /quit concatenated in
-		// the input field.
+		// Writes are split, never one chunk. See SEND_ENTER_DELAY_MS for why the
+		// Enter cannot ride in the same write as the text body. See
+		// SUBMIT_ENTER_RETRIES for why a single Enter is not enough on a cold
+		// TUI: the first tap may land before claude's editor can accept a
+		// submit, so we re-tap a few times spaced out until the turn starts.
+		// Extra taps on an already-submitted (empty) input are no-ops.
 		this.ptyProcess.write(text);
-		setTimeout(() => {
+		const sendEnter = () => {
 			if (this.exited) return;
 			try {
 				this.ptyProcess?.write('\r');
@@ -213,7 +240,36 @@ export class TuiDriver extends EventEmitter {
 				// PTY may have torn down between writes; the exit/quit path will
 				// surface it.
 			}
-		}, SEND_ENTER_DELAY_MS);
+		};
+		for (let tap = 0; tap <= SUBMIT_ENTER_RETRIES; tap += 1) {
+			setTimeout(sendEnter, SEND_ENTER_DELAY_MS + tap * SUBMIT_ENTER_RETRY_INTERVAL_MS);
+		}
+	}
+
+	// Re-press Enter only (never re-type the prompt body). send()'s burst of
+	// taps all land within the first ~3s; if claude's editor was still settling
+	// MCP/plugin init then (morning cue contention can push that to 10-40s),
+	// the parked prompt is never submitted and no turn ever starts. The run-mode
+	// flow drives this on an interval until the first transcript byte lands,
+	// spreading submit attempts across the whole first-byte budget. Pressing
+	// Enter on an already-submitted (empty) input is a no-op, so a resubmit that
+	// races a successful turn is harmless. Re-typing the text is deliberately
+	// NOT done here: it would risk a double prompt if the original DID submit.
+	resubmit(): void {
+		if (!this.ptyProcess || this.exited) return;
+		try {
+			this.ptyProcess.write('\r');
+		} catch {
+			// PTY may already be tearing down; exit/quit path will surface it.
+		}
+	}
+
+	// Last `maxBytes` of the ANSI-stripped rolling screen buffer. Used by the
+	// run-mode flow to dump what was on screen at a first_byte_timeout (an
+	// MCP-connecting banner, a modal, or un-submitted prompt text) so the
+	// failure is diagnosable from stderr alone.
+	getScreenTail(maxBytes = 2048): string {
+		return this.rollingBuffer.slice(-maxBytes);
 	}
 
 	async quit(): Promise<void> {

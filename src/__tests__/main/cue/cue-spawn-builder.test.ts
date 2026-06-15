@@ -60,6 +60,26 @@ vi.mock('../../../main/utils/ssh-spawn-wrapper', () => ({
 	wrapSpawnWithSsh: (...args: unknown[]) => mockWrapSpawnWithSsh(...args),
 }));
 
+// Mock the Claude token-source resolver's leaf dependencies so the maestro-p
+// binary reads as present and config-dir resolution is deterministic. The
+// resolver itself (resolveClaudeSpawnMode / applyClaudeSpawnDecision) and
+// getClaudeTokenMode run for real, so these tests exercise the actual
+// command/arg/env rewrite produced inside buildSpawnSpec.
+vi.mock('../../../main/agents/claude-usage-startup', () => ({
+	getMaestroPBinPath: () => '/bundled/maestro-p.js',
+	isMaestroPBinaryPath: (p: string | null | undefined) => !!p && p.includes('maestro-p'),
+}));
+vi.mock('../../../main/stores/claudeUsageStore', () => ({
+	getSnapshot: () => null,
+	resolveConfigDirKey: () => 'test-config-key',
+}));
+vi.mock('fs', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('fs')>();
+	// Make the resolved maestro-p script read as present; leave every other fs
+	// function untouched so the rest of the import graph behaves normally.
+	return { ...actual, existsSync: () => true };
+});
+
 // Must import after mocks
 import { buildSpawnSpec } from '../../../main/cue/cue-spawn-builder';
 
@@ -373,6 +393,107 @@ describe('cue-spawn-builder', () => {
 					const args = result.spec.args;
 					expect(args[args.length - 1]).toBe('Hello world');
 					expect(mockWrapSpawnWithSsh).not.toHaveBeenCalled();
+				}
+			});
+		});
+
+		describe('Claude token-source (maestro-p) rewrite', () => {
+			// A claude-code definition carrying the interactive (maestro-p) wiring
+			// the resolver requires to treat the spawn as a TUI candidate.
+			const claudeInteractiveAgentDef = {
+				...defaultAgentDef,
+				interactiveCommand: 'maestro-p',
+				interactiveModeArgs: ['--dangerously-skip-permissions'],
+				defaultEnvVars: {},
+			};
+
+			it('rewrites a local spawn to maestro-p for interactive token mode, keeping the prompt last', async () => {
+				mockGetAgentDefinition.mockReturnValue(claudeInteractiveAgentDef);
+
+				const result = await buildSpawnSpec(
+					createConfig({ enableMaestroP: true, maestroPMode: 'interactive' }),
+					'Hello world'
+				);
+
+				expect(result.ok).toBe(true);
+				if (result.ok) {
+					const { command, args, env } = result.spec;
+					// maestro-p runs via the Node execPath...
+					expect(command).toBe(process.execPath);
+					// ...with the maestro-p script first, then --max-wait derived from
+					// the run's timeoutMs (30000ms -> 30s), then the interactive flags...
+					expect(args[0]).toBe('/bundled/maestro-p.js');
+					expect(args[1]).toBe('--max-wait');
+					expect(args[2]).toBe('30');
+					expect(args[3]).toBe('--dangerously-skip-permissions');
+					// ...and the substituted prompt still the trailing positional.
+					expect(args[args.length - 1]).toBe('Hello world');
+					// maestro-p is told which real claude binary to drive.
+					expect(env.MAESTRO_CLAUDE_BIN).toBeTruthy();
+				}
+			});
+
+			it('leaves a plain claude batch spec unchanged when maestro-p is disabled', async () => {
+				mockGetAgentDefinition.mockReturnValue(claudeInteractiveAgentDef);
+
+				const result = await buildSpawnSpec(createConfig({ enableMaestroP: false }), 'Hello world');
+
+				expect(result.ok).toBe(true);
+				if (result.ok) {
+					const { command, args, env } = result.spec;
+					expect(command).toBe('claude');
+					expect(args[0]).not.toBe('/bundled/maestro-p.js');
+					expect(args[args.length - 1]).toBe('Hello world');
+					expect(env.MAESTRO_CLAUDE_BIN).toBeUndefined();
+				}
+			});
+
+			it('routes interactive token mode through maestro-p on the remote when SSH is enabled', async () => {
+				mockGetAgentDefinition.mockReturnValue(claudeInteractiveAgentDef);
+				const mockSshStore = { getSshRemotes: vi.fn(() => []) };
+				mockWrapSpawnWithSsh.mockResolvedValue({
+					command: 'ssh',
+					args: ['user@host', 'maestro-p', '--dangerously-skip-permissions', '--', 'Hello world'],
+					cwd: '/Users/test',
+					customEnvVars: undefined,
+					prompt: undefined,
+					sshRemoteUsed: { id: 'r1', name: 'S', host: 'h' },
+				});
+
+				const result = await buildSpawnSpec(
+					createConfig({
+						enableMaestroP: true,
+						maestroPMode: 'interactive',
+						sshRemoteConfig: { enabled: true, remoteId: 'r1' },
+						sshStore: mockSshStore,
+					}),
+					'Hello world'
+				);
+
+				// The SSH wrapper is handed the REMOTE maestro-p command (not the
+				// local execPath rewrite), with --max-wait derived from the run's
+				// timeoutMs (30000ms -> 30s) ahead of the interactive flags, then the
+				// headless arg list (maestro-p strips those on the remote).
+				expect(mockWrapSpawnWithSsh).toHaveBeenCalledWith(
+					expect.objectContaining({
+						agentBinaryName: 'maestro-p',
+						args: expect.arrayContaining(['--max-wait', '30', '--dangerously-skip-permissions']),
+					}),
+					{ enabled: true, remoteId: 'r1' },
+					mockSshStore
+				);
+				const wrapArgs = mockWrapSpawnWithSsh.mock.calls[0][0].args as string[];
+				expect(wrapArgs.slice(0, 3)).toEqual([
+					'--max-wait',
+					'30',
+					'--dangerously-skip-permissions',
+				]);
+
+				expect(result.ok).toBe(true);
+				if (result.ok) {
+					// The local maestro-p execPath rewrite must NOT apply for SSH.
+					expect(result.spec.command).toBe('ssh');
+					expect(result.spec.command).not.toBe(process.execPath);
 				}
 			});
 		});

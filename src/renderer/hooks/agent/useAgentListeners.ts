@@ -27,6 +27,7 @@ import { useAgentSshRemoteListener } from './internal/useAgentSshRemoteListener'
 import { useAgentClaudeModeResolvedListener } from './internal/useAgentClaudeModeResolvedListener';
 import { useAgentToolExecutionListener } from './internal/useAgentToolExecutionListener';
 import { useAgentDataListener } from './internal/useAgentDataListener';
+import { useAgentUserInputListener } from './internal/useAgentUserInputListener';
 import { useAgentErrorListener } from './internal/useAgentErrorListener';
 import { useAgentExitListener } from './internal/useAgentExitListener';
 
@@ -67,6 +68,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 	// preserves any cross-listener event ordering the existing tests depend on.
 	// ----------------------------------------------------------------
 	useAgentDataListener({ batchedUpdater: deps.batchedUpdater, activeHiddenToolRef });
+	useAgentUserInputListener();
 	useAgentExitListener({
 		getBatchStateRef: deps.getBatchStateRef,
 		processQueuedItemRef: deps.processQueuedItemRef,

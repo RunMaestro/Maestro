@@ -114,6 +114,7 @@ export interface UseAnnotatorStateReturn {
 	setView: (view: AnnotatorView | ((prev: AnnotatorView) => AnnotatorView)) => void;
 	beginStroke: (point: StrokePoint) => void;
 	extendStroke: (point: StrokePoint) => void;
+	extendStrokeStraight: (point: StrokePoint) => void;
 	endStroke: (style: StrokeStyle) => void;
 	eraseStrokeAt: (index: number) => void;
 	beginShape: (shape: Shape) => void;
@@ -168,6 +169,13 @@ export function useAnnotatorState(): UseAnnotatorStateReturn {
 
 	const extendStroke = useCallback((point: StrokePoint) => {
 		setCurrentPoints((prev) => (prev.length === 0 ? prev : [...prev, point]));
+	}, []);
+
+	// Straight-line variant (shift held while drawing): collapse the stroke to
+	// the anchor (its first point) and the current cursor, so perfect-freehand
+	// renders a clean straight segment instead of the freehand trail.
+	const extendStrokeStraight = useCallback((point: StrokePoint) => {
+		setCurrentPoints((prev) => (prev.length === 0 ? prev : [prev[0], point]));
 	}, []);
 
 	const endStroke = useCallback((style: StrokeStyle) => {
@@ -343,6 +351,7 @@ export function useAnnotatorState(): UseAnnotatorStateReturn {
 		setView,
 		beginStroke,
 		extendStroke,
+		extendStrokeStraight,
 		endStroke,
 		eraseStrokeAt,
 		beginShape,

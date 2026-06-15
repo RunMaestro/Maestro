@@ -11,7 +11,52 @@
 
 import { stripMarkdown } from '../markdown';
 import { stripAnsiCodes } from '../stringUtils';
-import type { CueEvent, CueRunResult } from './contracts';
+import type { CueEvent, CueEventType, CueRunResult } from './contracts';
+
+/**
+ * Canonical, user-facing label for each Cue event type. Single source of truth
+ * shared by main and renderer; the pipeline editor re-exports this as
+ * `EVENT_LABELS`. Keep in sync with the `CueEventType` union in contracts.ts.
+ */
+export const CUE_EVENT_LABELS: Record<CueEventType, string> = {
+	'app.startup': 'App Startup',
+	'time.heartbeat': 'Heartbeat Timer',
+	'time.scheduled': 'Scheduled',
+	'time.once': 'One-Time',
+	'file.changed': 'File Change',
+	'agent.completed': 'Agent Completed',
+	'github.pull_request': 'Pull Request',
+	'github.issue': 'GitHub Issue',
+	'task.pending': 'Pending Task',
+	'cli.trigger': 'CLI Trigger',
+};
+
+/**
+ * Humanize a raw Cue event type string (`time.heartbeat`) into a display label
+ * (`Heartbeat Timer`). Unknown/legacy types are prettified by title-casing the
+ * dotted segments so the UI never surfaces machine jargon. Safe on undefined.
+ */
+export function humanizeCueEventType(type: string | undefined | null): string {
+	if (!type) return 'Trigger';
+	const known = CUE_EVENT_LABELS[type as CueEventType];
+	if (known) return known;
+	return type
+		.split('.')
+		.map((part) => (part ? part[0].toUpperCase() + part.slice(1) : part))
+		.join(' ');
+}
+
+/**
+ * Format a recurring interval (in minutes) as a compact cadence label:
+ * `every 3 min`, `hourly`, `every 2 hr`.
+ */
+function formatCueInterval(minutes: number): string {
+	if (minutes % 60 === 0) {
+		const hours = minutes / 60;
+		return hours === 1 ? 'hourly' : `every ${hours} hr`;
+	}
+	return `every ${minutes} min`;
+}
 
 /**
  * Short, event-type-specific detail extracted from the payload, suitable for
@@ -55,6 +100,13 @@ export function getCueEventDetail(event: CueEvent): string | undefined {
 			if (!prompt) return undefined;
 			const oneLine = String(prompt).replace(/\s+/g, ' ').trim();
 			return oneLine.length > 80 ? `${oneLine.slice(0, 80)}…` : oneLine;
+		}
+
+		case 'time.heartbeat':
+		case 'time.scheduled':
+		case 'time.once': {
+			const mins = Number(payload.interval_minutes ?? payload.intervalMinutes ?? payload.interval);
+			return Number.isFinite(mins) && mins > 0 ? formatCueInterval(mins) : undefined;
 		}
 
 		default:

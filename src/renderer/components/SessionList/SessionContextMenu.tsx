@@ -12,9 +12,12 @@ import {
 	Trash2,
 	Edit3,
 	Zap,
+	Fingerprint,
 } from 'lucide-react';
 import type { Group, Session, Theme } from '../../types';
 import { useClickOutside, useContextMenuPosition } from '../../hooks';
+import { safeClipboardWrite } from '../../utils/clipboard';
+import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 
 interface SessionContextMenuProps {
 	x: number;
@@ -397,22 +400,36 @@ export function SessionContextMenu({
 				</>
 			)}
 
+			<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+
+			<button
+				type="button"
+				onClick={async () => {
+					if (await safeClipboardWrite(session.id)) {
+						flashCopiedToClipboard(session.id, 'Agent GUID Copied');
+					}
+					onDismiss();
+				}}
+				className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+				style={{ color: theme.colors.textMain }}
+			>
+				<Fingerprint className="w-3.5 h-3.5" />
+				Copy Agent GUID to Clipboard
+			</button>
+
 			{!session.parentSessionId && (
-				<>
-					<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
-					<button
-						type="button"
-						onClick={() => {
-							onDelete();
-							onDismiss();
-						}}
-						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-						style={{ color: theme.colors.error }}
-					>
-						<Trash2 className="w-3.5 h-3.5" />
-						Remove Agent
-					</button>
-				</>
+				<button
+					type="button"
+					onClick={() => {
+						onDelete();
+						onDismiss();
+					}}
+					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+					style={{ color: theme.colors.error }}
+				>
+					<Trash2 className="w-3.5 h-3.5" />
+					Remove Agent
+				</button>
 			)}
 		</div>
 	);

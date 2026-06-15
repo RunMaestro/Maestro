@@ -134,4 +134,34 @@ describe('codex-usage-sampler', () => {
 		expect(snapshot.weekly).toBeUndefined();
 		expect(snapshot.additionalLimits).toEqual([]);
 	});
+
+	it('treats HTTP 401 as unauthenticated without reporting to Sentry (MAESTRO-RR)', async () => {
+		await fs.writeFile(
+			path.join(TEST_ROOT, 'auth.json'),
+			JSON.stringify({ tokens: { access_token: 'expired-token' } })
+		);
+		vi.mocked(globalThis.fetch).mockResolvedValue(new Response('Unauthorized', { status: 401 }));
+
+		const snapshot = await sampleCodexUsage({ codexHome: TEST_ROOT });
+
+		expect(snapshot.authState).toBe('unauthenticated');
+		expect(captureMessageMock).not.toHaveBeenCalled();
+	});
+
+	it('reports unexpected HTTP errors to Sentry (MAESTRO-RR)', async () => {
+		await fs.writeFile(
+			path.join(TEST_ROOT, 'auth.json'),
+			JSON.stringify({ tokens: { access_token: 'redacted-token' } })
+		);
+		vi.mocked(globalThis.fetch).mockResolvedValue(new Response('Server error', { status: 500 }));
+
+		const snapshot = await sampleCodexUsage({ codexHome: TEST_ROOT });
+
+		expect(snapshot.authState).toBe('error');
+		expect(captureMessageMock).toHaveBeenCalledWith(
+			'codex usage sample failed',
+			'warning',
+			expect.objectContaining({ reason: 'http 500' })
+		);
+	});
 });

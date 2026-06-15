@@ -45,6 +45,9 @@ subscriptions:
     interval_minutes: number # Required for time.heartbeat
     schedule_times: list # Required for time.scheduled (HH:MM strings)
     schedule_days: list # Optional for time.scheduled (mon, tue, wed, thu, fri, sat, sun)
+    fire_at: string # Required for time.once. ISO-8601 timestamp with timezone offset (Z, ±HH:MM, or ±HHMM)
+    grace_minutes: number # Optional for time.once. Missed-fire window in minutes (default 360)
+    self_destruct_on_failure: boolean # Optional for time.once. Remove sub on failed/timeout (default true)
     watch: string # Required for file.changed, task.pending (glob pattern)
     source_session: string | list # Required for agent.completed (display name or list of names)
     source_session_ids: string | list # Optional companion to source_session - agent UUID(s). Preferred at runtime; survives renames
@@ -54,6 +57,11 @@ subscriptions:
     filter: object # Optional. Payload field conditions
     repo: string # Optional for github.* (auto-detected if omitted)
     poll_minutes: number # Optional for github.*, task.pending
+
+    # Action-specific fields
+    action: string # Optional. One of "prompt" (default), "notify", "command"
+    notify: object # Optional. Notify payload when action is "notify" (message, sticky, etc.)
+    command: object # Optional. Command spec when action is "command" (mode, shell, cli, etc.)
 
 # Global settings (all optional - sensible defaults applied)
 settings:
@@ -109,7 +117,7 @@ Each subscription is a trigger-prompt pairing. When the trigger fires, Cue sends
 | Field    | Type   | Description                                                                   |
 | -------- | ------ | ----------------------------------------------------------------------------- |
 | `name`   | string | Unique identifier. Used in logs, history, and as a reference in chains        |
-| `event`  | string | One of the nine [event types](./maestro-cue-events)                           |
+| `event`  | string | One of the ten [event types](./maestro-cue-events)                            |
 | `prompt` | string | The prompt to send as inline text. Required unless `prompt_file` is specified |
 
 <Note>
@@ -118,26 +126,32 @@ Either `prompt` or `prompt_file` must be provided. If both are present, `prompt_
 
 ### Optional Fields
 
-| Field                | Type            | Default | Description                                                                                                                                                                                                                               |
-| -------------------- | --------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `enabled`            | boolean         | `true`  | Set to `false` to pause a subscription without removing it                                                                                                                                                                                |
-| `agent_id`           | string (UUID)   | -       | UUID of the target agent. Auto-assigned by the Pipeline Editor                                                                                                                                                                            |
-| `prompt_file`        | string          | -       | Path to a `.md` file containing the prompt (alternative to inline `prompt`)                                                                                                                                                               |
-| `interval_minutes`   | number          | -       | Timer interval. Required for `time.heartbeat`                                                                                                                                                                                             |
-| `schedule_times`     | list of strings | -       | Times in `HH:MM` format. Required for `time.scheduled`                                                                                                                                                                                    |
-| `schedule_days`      | list of strings | -       | Days of week (`mon`-`sun`). Optional for `time.scheduled`                                                                                                                                                                                 |
-| `watch`              | string (glob)   | -       | File glob pattern. Required for `file.changed`, `task.pending`                                                                                                                                                                            |
-| `source_session`     | string or list  | -       | Source agent display name(s). Required for `agent.completed`                                                                                                                                                                              |
-| `source_session_ids` | string or list  | -       | Companion UUID(s) for `source_session`. Same shape (string ↔ string, list ↔ list). Preferred by the dispatcher at lookup time; falls back to `source_session` names when absent. Set this alongside `source_session` for rename stability |
-| `source_sub`         | string or list  | -       | Upstream subscription name(s) that narrow chain matching. **Required** when `action: command` on `agent.completed`. When `source_session` is an array, `source_sub` must be a same-length array (positional pairing)                      |
-| `fan_out`            | list of strings | -       | Target agent display names to fan out to                                                                                                                                                                                                  |
-| `fan_out_ids`        | list of strings | -       | Companion UUID array for `fan_out` (one entry per fan-out target). Preferred by the dispatcher at lookup time; falls back to `fan_out` names when absent. Set this alongside `fan_out` for rename stability                               |
-| `filter`             | object          | -       | Payload conditions (see [Filtering](./maestro-cue-advanced#filtering))                                                                                                                                                                    |
-| `repo`               | string          | -       | GitHub repo (`owner/repo`). Auto-detected from git remote                                                                                                                                                                                 |
-| `poll_minutes`       | number          | varies  | Poll interval for `github.*` (default 5) and `task.pending` (default 1)                                                                                                                                                                   |
-| `output_prompt`      | string          | -       | Follow-up prompt sent after the main run completes successfully                                                                                                                                                                           |
-| `output_prompt_file` | string          | -       | Path to a `.md` file for the output prompt (alternative to inline)                                                                                                                                                                        |
-| `label`              | string          | -       | Human-readable label displayed in the Cue dashboard and pipeline editor                                                                                                                                                                   |
+| Field                      | Type              | Default  | Description                                                                                                                                                                                                                               |
+| -------------------------- | ----------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `enabled`                  | boolean           | `true`   | Set to `false` to pause a subscription without removing it                                                                                                                                                                                |
+| `agent_id`                 | string (UUID)     | -        | UUID of the target agent. Auto-assigned by the Pipeline Editor                                                                                                                                                                            |
+| `prompt_file`              | string            | -        | Path to a `.md` file containing the prompt (alternative to inline `prompt`)                                                                                                                                                               |
+| `interval_minutes`         | number            | -        | Timer interval. Required for `time.heartbeat`                                                                                                                                                                                             |
+| `schedule_times`           | list of strings   | -        | Times in `HH:MM` format. Required for `time.scheduled`                                                                                                                                                                                    |
+| `schedule_days`            | list of strings   | -        | Days of week (`mon`-`sun`). Optional for `time.scheduled`                                                                                                                                                                                 |
+| `fire_at`                  | string (ISO-8601) | -        | Wall-clock fire moment with timezone offset. Required for `time.once`. Authored via `maestro-cli cue schedule`                                                                                                                            |
+| `grace_minutes`            | number            | `360`    | Missed-fire grace window in minutes. Optional for `time.once`                                                                                                                                                                             |
+| `self_destruct_on_failure` | boolean           | `true`   | Whether to remove the sub from `cue.yaml` on a `failed` or `timeout` outcome. Optional for `time.once`                                                                                                                                    |
+| `watch`                    | string (glob)     | -        | File glob pattern. Required for `file.changed`, `task.pending`                                                                                                                                                                            |
+| `source_session`           | string or list    | -        | Source agent display name(s). Required for `agent.completed`                                                                                                                                                                              |
+| `source_session_ids`       | string or list    | -        | Companion UUID(s) for `source_session`. Same shape (string ↔ string, list ↔ list). Preferred by the dispatcher at lookup time; falls back to `source_session` names when absent. Set this alongside `source_session` for rename stability |
+| `source_sub`               | string or list    | -        | Upstream subscription name(s) that narrow chain matching. **Required** when `action: command` on `agent.completed`. When `source_session` is an array, `source_sub` must be a same-length array (positional pairing)                      |
+| `fan_out`                  | list of strings   | -        | Target agent display names to fan out to                                                                                                                                                                                                  |
+| `fan_out_ids`              | list of strings   | -        | Companion UUID array for `fan_out` (one entry per fan-out target). Preferred by the dispatcher at lookup time; falls back to `fan_out` names when absent. Set this alongside `fan_out` for rename stability                               |
+| `filter`                   | object            | -        | Payload conditions (see [Filtering](./maestro-cue-advanced#filtering))                                                                                                                                                                    |
+| `repo`                     | string            | -        | GitHub repo (`owner/repo`). Auto-detected from git remote                                                                                                                                                                                 |
+| `poll_minutes`             | number            | varies   | Poll interval for `github.*` (default 5) and `task.pending` (default 1)                                                                                                                                                                   |
+| `output_prompt`            | string            | -        | Follow-up prompt sent after the main run completes successfully                                                                                                                                                                           |
+| `output_prompt_file`       | string            | -        | Path to a `.md` file for the output prompt (alternative to inline)                                                                                                                                                                        |
+| `label`                    | string            | -        | Human-readable label displayed in the Cue dashboard and pipeline editor                                                                                                                                                                   |
+| `action`                   | string            | `prompt` | Action to dispatch when the event fires: `prompt` (run the agent), `notify` (surface a toast through the owning agent - clicking it jumps there), or `command` (shell/cli call)                                                           |
+| `notify`                   | object            | -        | Notify payload when `action: notify`. Fields: `message` (string, required), `sticky` (boolean), `level` (`info` \| `success` \| `warning` \| `error`). The toast renders through the owning agent; clicking it jumps there                |
+| `command`                  | object            | -        | Command spec when `action: command`. Fields include `mode` (`shell` \| `cli`), `shell`/`cli` invocation, and related options (see [Command Nodes](./maestro-cue-advanced))                                                                |
 
 ### Prompt Field
 
@@ -350,18 +364,20 @@ settings:
 
 The engine validates your YAML on every load. Common validation errors:
 
-| Error                                   | Fix                                                          |
-| --------------------------------------- | ------------------------------------------------------------ |
-| `"name" is required`                    | Every subscription needs a unique `name` field               |
-| `"event" is required`                   | Specify one of the nine event types                          |
-| `"prompt" is required`                  | Provide inline text or a file path                           |
-| `"interval_minutes" is required`        | `time.heartbeat` events must specify a positive interval     |
-| `"schedule_times" is required`          | `time.scheduled` events must have at least one `HH:MM` time  |
-| `"watch" is required`                   | `file.changed` and `task.pending` events need a glob pattern |
-| `"source_session" is required`          | `agent.completed` events need the name of the source agent   |
-| `"max_concurrent" must be between 1-10` | Keep concurrent runs within the allowed range                |
-| `"queue_size" must be between 0-10000`  | Keep queue size within the allowed range                     |
-| `filter key must be string/number/bool` | Filter values only accept primitive types                    |
+| Error                                      | Fix                                                                                                 |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| `"name" is required`                       | Every subscription needs a unique `name` field                                                      |
+| `"event" is required`                      | Specify one of the ten event types                                                                  |
+| `"prompt" is required`                     | Provide inline text or a file path                                                                  |
+| `"interval_minutes" is required`           | `time.heartbeat` events must specify a positive interval                                            |
+| `"schedule_times" is required`             | `time.scheduled` events must have at least one `HH:MM` time                                         |
+| `"fire_at" is required`                    | `time.once` events need an ISO-8601 timestamp with timezone offset (use `maestro-cli cue schedule`) |
+| `"fire_at" must include a timezone offset` | `time.once` `fire_at` must end with `Z`, `±HH:MM`, or `±HHMM`                                       |
+| `"watch" is required`                      | `file.changed` and `task.pending` events need a glob pattern                                        |
+| `"source_session" is required`             | `agent.completed` events need the name of the source agent                                          |
+| `"max_concurrent" must be between 1-10`    | Keep concurrent runs within the allowed range                                                       |
+| `"queue_size" must be between 0-10000`     | Keep queue size within the allowed range                                                            |
+| `filter key must be string/number/bool`    | Filter values only accept primitive types                                                           |
 
 The inline YAML editor in the Cue Modal shows validation errors in real-time as you type. A green **Valid YAML** indicator at the bottom confirms your config parses correctly.
 

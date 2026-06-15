@@ -760,9 +760,9 @@ export const THEMES: Record<ThemeId, Theme> = {
 		mode: 'vibe',
 		colors: {
 			bgMain: '#0a0a0a',
-			bgSidebar: '#050505',
+			bgSidebar: '#252323',
 			bgActivity: '#141414',
-			border: '#2a2a2a',
+			border: '#4a3838',
 			textMain: '#f5f5f5',
 			textDim: '#888888',
 			accent: '#cc0033',

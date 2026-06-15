@@ -50,6 +50,18 @@ const mockMaestro = {
 };
 Object.defineProperty(window, 'maestro', { value: mockMaestro, writable: true });
 
+// Mock openUrl so link-click tests can assert the exact options passed through
+// (specifically the translated `ctrlKey` modifier) without depending on the
+// settings store's useSystemBrowser default or whether an active session
+// exists. See bug #1060: cmd-click (metaKey) on macOS must translate to the
+// same ctrlKey:true inversion as ctrl-click.
+const { mockOpenUrl } = vi.hoisted(() => ({ mockOpenUrl: vi.fn() }));
+vi.mock('../../../renderer/utils/openUrl', () => ({
+	openUrl: mockOpenUrl,
+	openInSystemBrowser: vi.fn(),
+	openInMaestroBrowser: vi.fn(),
+}));
+
 // Mock fileExplorerStore for FileContextMenu's Document Graph action
 vi.mock('../../../renderer/stores/fileExplorerStore', () => ({
 	useFileExplorerStore: {
@@ -364,12 +376,12 @@ describe('MarkdownRenderer', () => {
 			expect(link!.getAttribute('href')).toBe('https://example.com');
 		});
 
-		it('opens external links via shell.openExternal', () => {
-			mockMaestro.shell.openExternal.mockClear();
+		it('opens external links via openUrl', () => {
+			mockOpenUrl.mockClear();
 			const { container } = renderMd('[Link](https://example.com)');
 			const link = container.querySelector('a');
 			fireEvent.click(link!);
-			expect(mockMaestro.shell.openExternal).toHaveBeenCalledWith('https://example.com');
+			expect(mockOpenUrl).toHaveBeenCalledWith('https://example.com', { ctrlKey: false });
 		});
 
 		it('renders link with inline code in label', () => {
@@ -1378,6 +1390,73 @@ describe('MarkdownRenderer', () => {
 			const { container } = render(<MarkdownRenderer {...defaultProps} content={content} />);
 			expect(container.querySelector('.katex')).toBeNull();
 			expect(container.textContent).toContain('$$x + y$$');
+		});
+
+		it('renders multi-line $$...$$ with delimiters hugging content as display math', () => {
+			// remark-math treats `$$` like a code fence: text after the opening
+			// `$$` is discarded as meta and the closing `$$` must be alone on its
+			// line. `normalizeChatDisplayMath` rewrites this common LLM form so it
+			// parses cleanly instead of failing. See #622.
+			const content = '$$\\begin{aligned}\na &= b \\\\\nc &= d\n\\end{aligned}$$';
+			const { container } = render(
+				<MarkdownRenderer {...defaultProps} content={content} chatMath />
+			);
+			expect(container.querySelector('.katex-display')).not.toBeNull();
+		});
+
+		it('does not let an unterminated multi-line $$ block swallow following content', () => {
+			// The regression: a multi-line `$$...$$` whose close hugged content
+			// consumed the rest of the message into one invalid KaTeX blob.
+			const content =
+				'$$\\begin{aligned}\na &= b\n\\end{aligned}$$\n\nThis prose must still render.';
+			const { container } = render(
+				<MarkdownRenderer {...defaultProps} content={content} chatMath />
+			);
+			expect(container.querySelector('.katex-display')).not.toBeNull();
+			expect(container.textContent).toContain('This prose must still render.');
+		});
+
+		it('does not treat $$ inside a fenced code block as math', () => {
+			const content = '```\n$$not math$$\n```';
+			const { container } = render(
+				<MarkdownRenderer {...defaultProps} content={content} chatMath />
+			);
+			expect(container.querySelector('.katex')).toBeNull();
+			expect(container.textContent).toContain('$$not math$$');
+		});
+	});
+
+	// ========================================================================
+	// Cmd/Ctrl-click modifier handling (#1060)
+	// ========================================================================
+	describe('cmd/ctrl-click URL opening (#1060)', () => {
+		// openUrl inverts the default browser choice when ctrlKey is true. On
+		// macOS a Cmd+click sets metaKey (not ctrlKey), so the link handler must
+		// translate `metaKey || ctrlKey` into the ctrlKey option. Otherwise the
+		// modifier is silently dropped on macOS and the URL opens in the wrong
+		// target.
+		it('passes ctrlKey:true when Cmd (metaKey) is held', () => {
+			mockOpenUrl.mockClear();
+			const { container } = renderMd('[Link](https://example.com)');
+			const link = container.querySelector('a');
+			fireEvent.click(link!, { metaKey: true });
+			expect(mockOpenUrl).toHaveBeenCalledWith('https://example.com', { ctrlKey: true });
+		});
+
+		it('passes ctrlKey:true when Ctrl is held', () => {
+			mockOpenUrl.mockClear();
+			const { container } = renderMd('[Link](https://example.com)');
+			const link = container.querySelector('a');
+			fireEvent.click(link!, { ctrlKey: true });
+			expect(mockOpenUrl).toHaveBeenCalledWith('https://example.com', { ctrlKey: true });
+		});
+
+		it('passes ctrlKey:false on a plain click (no modifier)', () => {
+			mockOpenUrl.mockClear();
+			const { container } = renderMd('[Link](https://example.com)');
+			const link = container.querySelector('a');
+			fireEvent.click(link!);
+			expect(mockOpenUrl).toHaveBeenCalledWith('https://example.com', { ctrlKey: false });
 		});
 	});
 });

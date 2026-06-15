@@ -163,9 +163,11 @@ export interface DirectorNotesData {
 	initialTab?: 'overview' | 'history' | 'ai-overview';
 }
 
-/** Cue modal data */
+/** Quit confirmation modal data */
 export interface QuitConfirmModalData {
 	activeTerminalTasks?: string[];
+	activeCueRunCount?: number;
+	activeGroupChatCount?: number;
 	hasFeedbackDraft?: boolean;
 }
 
@@ -702,10 +704,8 @@ export function getModalActions() {
 		closeConfirmation: () => closeModal('confirm'),
 
 		// Quit Confirmation Modal
-		setQuitConfirmModalOpen: (
-			open: boolean,
-			data?: { activeTerminalTasks?: string[]; hasFeedbackDraft?: boolean }
-		) => (open ? openModal('quitConfirm', data) : closeModal('quitConfirm')),
+		setQuitConfirmModalOpen: (open: boolean, data?: QuitConfirmModalData) =>
+			open ? openModal('quitConfirm', data) : closeModal('quitConfirm'),
 
 		// Rename Instance Modal
 		setRenameInstanceModalOpen: (open: boolean) => {

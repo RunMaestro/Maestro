@@ -242,6 +242,10 @@ export function runProcess(
 		const needsStdinWrite = sshRemoteEnabled && (Boolean(sshStdinScript) || Boolean(stdinPrompt));
 		const stdinMode: 'pipe' | 'ignore' = needsStdinWrite ? 'pipe' : 'ignore';
 		try {
+			// maestro-p (interactive token mode) self-allocates its own PTY via
+			// node-pty internally, so plain pipe stdio here is sufficient; no
+			// caller-side TTY is needed. The prompt rides as a CLI positional, so
+			// 'ignore' stdin is fine even in interactive mode.
 			child = spawn(spec.command, spec.args, {
 				cwd: spec.cwd,
 				env: spec.env,

@@ -17,6 +17,7 @@
 
 import { Command } from 'commander';
 import { EventEmitter } from 'node:events';
+import { randomUUID } from 'node:crypto';
 import * as os from 'os';
 import * as path from 'path';
 
@@ -31,6 +32,15 @@ import { VERSION } from './package-info';
 
 // Watchdog tick. Cheap; the real budget lives in args.maxWaitSeconds.
 const WATCHDOG_INTERVAL_MS = 1000;
+
+// Interval between Enter re-submits while waiting for the first transcript
+// byte. send()'s initial burst all lands within ~3s; on agents that load
+// MCP servers/plugins the editor can stay unable to accept a submit for
+// 10-40s under morning IO contention, so we keep re-pressing Enter (text
+// already typed) across the whole first-byte budget until the turn starts.
+// 8s is tight enough to recover within a few seconds of MCP settling, loose
+// enough that a healthy run (first byte in ~1s) never fires a stray tap.
+const RESUBMIT_INTERVAL_MS = 8000;
 // Grace window after an `end_turn` to let trailing tool-result rows flush.
 const END_TURN_GRACE_MS = 600;
 // `/usage` panel paints synchronously but trickles bytes for several hundred ms.
@@ -38,8 +48,16 @@ const STATUS_INITIAL_WAIT_MS = 1500;
 // Then debounce on no-new-lines for this long before declaring the panel done.
 const STATUS_QUIET_DEBOUNCE_MS = 800;
 const STATUS_DEBOUNCE_POLL_MS = 100;
-// Window for the new JSONL file to appear after a fresh-session spawn.
-const DISCOVERY_TIMEOUT_MS = 10000;
+// Floor for how long to wait for the new JSONL file to appear after a
+// fresh-session spawn. This is only a FLOOR: the actual discovery window is
+// raised to the caller's `--max-wait` budget (see the fresh-session path
+// below). A cold claude TUI - first launch, MCP-server handshake, model
+// warmup - routinely needs well over 10s to flush its first session JSONL,
+// so a hardcoded 10s ceiling made every fresh-session spawn (tab naming,
+// background synopsis) flake while resume-based turns, which skip discovery,
+// were unaffected. Discovery still resolves the instant the file appears, so
+// a larger ceiling costs nothing on the happy path.
+const DISCOVERY_TIMEOUT_FLOOR_MS = 10000;
 
 const program = new Command();
 
@@ -52,7 +70,7 @@ program
 			'',
 			'Argument handling:',
 			'  - Prompt-input flags (consumed): -p, --print, --prompt',
-			'  - maestro-p flags (consumed):    --status, --stream-thinking, --max-wait, --help, --version',
+			'  - maestro-p flags (consumed):    --status, --stream-thinking, --max-wait, --first-byte-timeout, --help, --version',
 			'  - Stripped (dropped with warning): --output-format, --input-format, --verbose',
 			'  - Everything else is forwarded verbatim to the spawned `claude` TUI.',
 			'',
@@ -80,6 +98,40 @@ function resolveConfigDir(): string {
 function resolveBinPath(): string {
 	const envBin = process.env.MAESTRO_CLAUDE_BIN;
 	return envBin && envBin.length > 0 ? envBin : 'claude';
+}
+
+// Env vars that mark the CURRENT process as running inside a Claude Code
+// session. When maestro-p is invoked from within a Claude agent (or any
+// process that inherited these), they leak into the claude TUI we spawn and
+// make that child claude believe it is a NESTED/child session: it then runs in
+// an ephemeral mode and never writes its own `<session-id>.jsonl` transcript.
+// Since the JSONL is maestro-p's only source of truth, the run produces no
+// `assistant`/`result` envelopes and times out with `first_byte_timeout` even
+// though the answer rendered on screen - the "synopsis/tab-naming returns
+// empty in TUI mode" bug. Verified by A/B: keeping CLAUDE_CODE_SESSION_ID /
+// CLAUDE_CODE_CHILD_SESSION reproduces the empty-result timeout; stripping both
+// makes the TUI write its transcript and the run succeed. We strip the whole
+// CLAUDE_CODE_* identity family plus the CLAUDECODE marker defensively; auth
+// and config (CLAUDE_CONFIG_DIR, ANTHROPIC_*, MAESTRO_CLAUDE_BIN) are kept.
+const CLAUDE_SESSION_IDENTITY_ENV_VARS = [
+	'CLAUDECODE',
+	'CLAUDE_CODE_SESSION_ID',
+	'CLAUDE_CODE_CHILD_SESSION',
+	'CLAUDE_CODE_ENTRYPOINT',
+] as const;
+
+/**
+ * Return a copy of `process.env` with the Claude session-identity markers
+ * removed, so the claude TUI maestro-p drives starts as a clean top-level
+ * session that persists its own JSONL transcript. See
+ * {@link CLAUDE_SESSION_IDENTITY_ENV_VARS} for the why.
+ */
+function sanitizeChildEnv(): NodeJS.ProcessEnv {
+	const env: NodeJS.ProcessEnv = { ...process.env };
+	for (const key of CLAUDE_SESSION_IDENTITY_ENV_VARS) {
+		delete env[key];
+	}
+	return env;
 }
 
 function waitForEvent(emitter: EventEmitter, event: string): Promise<void> {
@@ -178,11 +230,26 @@ async function runMode(args: ParsedArgs): Promise<never> {
 	const emitter = new JsonEmitter();
 	const startMs = Date.now();
 
+	// Fresh sessions: pre-assign the session id and tell the TUI to use it via
+	// `claude --session-id <uuid>`. The watcher then polls for exactly
+	// `<uuid>.jsonl` instead of guessing "the earliest new file", which is
+	// race-free when several fresh-session TUIs run concurrently in the same
+	// cwd (tab naming for multiple tabs in one project). Resume already knows
+	// its id, so we leave that path untouched. claude 2.1.x honours
+	// `--session-id` in interactive/TUI mode (verified: it writes exactly the
+	// requested `<uuid>.jsonl`).
+	const passThroughArgs = [...args.passThroughArgs];
+	let freshSessionId: string | null = null;
+	if (!args.resumeSessionId) {
+		freshSessionId = randomUUID();
+		passThroughArgs.push('--session-id', freshSessionId);
+	}
+
 	const driver = new TuiDriver({
 		binPath,
-		args: args.passThroughArgs,
+		args: passThroughArgs,
 		cwd,
-		env: process.env,
+		env: sanitizeChildEnv(),
 	});
 
 	if (args.streamThinking) {
@@ -197,6 +264,17 @@ async function runMode(args: ParsedArgs): Promise<never> {
 	let finalized = false;
 	let watchdogTimer: NodeJS.Timeout | null = null;
 	let graceTimer: NodeJS.Timeout | null = null;
+	// Fires if no JSONL entry has arrived within firstByteTimeoutSeconds of the
+	// TUI starting. Distinct from the idle watchdog: this catches a turn that
+	// NEVER produces output (prompt lost to a startup modal, claude wedged
+	// pre-turn), failing fast instead of riding the full idle budget. Cleared
+	// the moment the first entry lands (see handleEntry).
+	let firstByteTimer: NodeJS.Timeout | null = null;
+	// Re-presses Enter on an interval until the first transcript byte lands, so
+	// a prompt parked behind slow MCP/plugin init still gets submitted. Cleared
+	// the instant the turn starts (markFirstEntrySeen) and on any finalize.
+	let resubmitTimer: NodeJS.Timeout | null = null;
+	let firstEntrySeen = false;
 	let limitHit = false;
 	let aggregatedText = '';
 	const usage = emptyUsage();
@@ -214,6 +292,74 @@ async function runMode(args: ParsedArgs): Promise<never> {
 			clearTimeout(graceTimer);
 			graceTimer = null;
 		}
+		if (firstByteTimer) {
+			clearTimeout(firstByteTimer);
+			firstByteTimer = null;
+		}
+		if (resubmitTimer) {
+			clearInterval(resubmitTimer);
+			resubmitTimer = null;
+		}
+	};
+
+	// Cancel the first-byte timer as soon as claude writes anything to the
+	// transcript — any entry (even the prompt-echo user row) proves the turn
+	// started, so from here only the idle watchdog governs the run.
+	const markFirstEntrySeen = (): void => {
+		if (firstEntrySeen) return;
+		firstEntrySeen = true;
+		if (firstByteTimer) {
+			clearTimeout(firstByteTimer);
+			firstByteTimer = null;
+		}
+		if (resubmitTimer) {
+			clearInterval(resubmitTimer);
+			resubmitTimer = null;
+		}
+	};
+
+	// Spread Enter re-submits across the first-byte budget. Each tap is gated on
+	// the turn not having started (and not finalized), so it stops itself the
+	// moment any transcript byte arrives even before cleanupTimers runs.
+	//
+	// TUI-liveness gate: the JSONL "first entry" signal lags the turn — claude
+	// can be demonstrably working (spinner animating, token counter rising) for
+	// a long time before it writes its first transcript line. We must NOT keep
+	// pressing Enter into a turn that has already started: stray taps risk
+	// landing as interrupts or queued submits. So we only re-tap while the TUI
+	// screen is STATIC (the prompt is genuinely parked behind slow MCP/plugin
+	// init) and stop the instant the screen starts painting (proof the turn
+	// began). We deliberately do NOT clear the first-byte timer here: liveness
+	// stops the tapping, but only a real JSONL entry counts as first byte, so a
+	// screen that animates for an unrelated reason degrades to "ride out the
+	// first-byte budget", never a premature success. The tap's own echo is
+	// folded into the baseline after each tap, so a tap never trips its own
+	// gate; a no-op Enter on an already-parked input paints nothing, and a tap
+	// that finally submits the parked prompt starts the spinner we then stop on.
+	const startResubmitLoop = (): void => {
+		if (resubmitTimer) return;
+		let lastScreen: string | null = null;
+		resubmitTimer = setInterval(() => {
+			if (finalized || firstEntrySeen) {
+				if (resubmitTimer) {
+					clearInterval(resubmitTimer);
+					resubmitTimer = null;
+				}
+				return;
+			}
+			if (lastScreen !== null && driver.getScreenTail() !== lastScreen) {
+				// Screen painted since our last tap with no JSONL entry yet — the
+				// working spinner is animating, so the turn has started. Stop
+				// tapping and let the first-byte/idle timers govern from here.
+				if (resubmitTimer) {
+					clearInterval(resubmitTimer);
+					resubmitTimer = null;
+				}
+				return;
+			}
+			driver.resubmit();
+			lastScreen = driver.getScreenTail();
+		}, RESUBMIT_INTERVAL_MS);
 	};
 
 	const finalize = (options: { isError: boolean; error?: string; exitCode: number }): void => {
@@ -325,6 +471,10 @@ async function runMode(args: ParsedArgs): Promise<never> {
 	};
 
 	const handleEntry = (entry: unknown): void => {
+		// Any transcript line means claude started the turn — cancel the
+		// first-byte timer before the init-gating buffer logic so a pre-init
+		// entry still counts as "first byte".
+		markFirstEntrySeen();
 		if (!initEmitted) {
 			pendingEntries.push(entry);
 			return;
@@ -357,6 +507,26 @@ async function runMode(args: ParsedArgs): Promise<never> {
 
 	await driver.start();
 
+	// Arm the first-byte timer the moment the TUI is up. It spans the ready
+	// handshake, session discovery, and the wait for claude's first transcript
+	// entry — any of which stalling indefinitely (a prompt swallowed by a
+	// startup modal is the canonical case) trips it. The ready-timeout (exit 4)
+	// covers a TUI that never reaches its prompt; this covers a TUI that reaches
+	// the prompt but never starts a turn.
+	const firstByteTimeoutMs = args.firstByteTimeoutSeconds * 1000;
+	firstByteTimer = setTimeout(() => {
+		if (finalized || firstEntrySeen) return;
+		// Dump the last screenful so the failure is diagnosable from stderr
+		// alone: an MCP-connecting banner, a blocking modal, or un-submitted
+		// prompt text each point at a different remaining fix.
+		const screenTail = driver.getScreenTail();
+		process.stderr.write(
+			`maestro-p: no transcript output within ${args.firstByteTimeoutSeconds}s of sending the prompt — claude never started the turn (prompt may have been swallowed by a startup modal). Failing with first_byte_timeout.\n` +
+				`maestro-p: last screen at timeout (ANSI-stripped tail):\n${screenTail}\n`
+		);
+		finalize({ isError: true, error: 'first_byte_timeout', exitCode: 5 });
+	}, firstByteTimeoutMs);
+
 	if (args.resumeSessionId) {
 		// Resume path: the JSONL already exists from the prior turn(s); tail
 		// from EOF so we don't replay history to stdout. The wait-for-ready
@@ -376,24 +546,50 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		initEmitted = true;
 		flushPending();
 		driver.send(prompt);
+		startResubmitLoop();
 	} else {
-		// Fresh-session path: spawn-time recorded as startMs (above) so the
-		// session-watcher won't pick up stale files. We start discovery and
-		// send the prompt back-to-back, then attach the tailer once the
-		// session id resolves.
+		// Fresh-session path: we pre-assigned `freshSessionId` and passed it to
+		// the TUI via `--session-id`, so discovery polls for exactly that file
+		// (race-free across concurrent same-cwd spawns). spawnTimestamp is still
+		// passed for the legacy earliest-new fallback, but expectSessionId takes
+		// precedence. We start discovery and send the prompt back-to-back, then
+		// attach the tailer once the file appears.
 		await waitForEvent(driver, 'ready');
 		const discoveryPromise = discoverSessionId({
 			configDir,
 			cwd,
 			spawnTimestamp: startMs,
-			timeoutMs: DISCOVERY_TIMEOUT_MS,
+			expectSessionId: freshSessionId ?? undefined,
+			// Bound discovery by the first-byte budget, not the (much larger)
+			// idle budget. The session file only appears once claude actually
+			// starts the turn, so "file never showed up" is the same failure as
+			// "no first byte" — both should fail fast rather than ride the full
+			// --max-wait window. The FLOOR still covers a slow cold start.
+			timeoutMs: Math.max(DISCOVERY_TIMEOUT_FLOOR_MS, firstByteTimeoutMs),
 		});
 		driver.send(prompt);
-		const { sessionId, jsonlPath } = await discoveryPromise;
-		resolvedSessionId = sessionId;
-		emitter.emitInit({ sessionId, model: null, cwd });
+		startResubmitLoop();
+		let discovered: { sessionId: string; jsonlPath: string };
+		try {
+			discovered = await discoveryPromise;
+		} catch (err) {
+			// Discovery timed out (or failed): claude never wrote a session
+			// transcript, i.e. the turn never started. Finalize with the same
+			// first_byte_timeout contract instead of letting the rejection
+			// bubble to main()'s catch (a bare exit 1 with no result envelope).
+			if (!finalized) {
+				process.stderr.write(
+					`maestro-p: session discovery failed: ${err instanceof Error ? err.message : String(err)}\n` +
+						`maestro-p: last screen at timeout (ANSI-stripped tail):\n${driver.getScreenTail()}\n`
+				);
+				finalize({ isError: true, error: 'first_byte_timeout', exitCode: 5 });
+			}
+			return new Promise<never>(() => undefined);
+		}
+		resolvedSessionId = discovered.sessionId;
+		emitter.emitInit({ sessionId: discovered.sessionId, model: null, cwd });
 		initEmitted = true;
-		tailer = new JsonlTailer({ path: jsonlPath, skipExisting: false });
+		tailer = new JsonlTailer({ path: discovered.jsonlPath, skipExisting: false });
 		tailer.on('entry', handleEntry);
 		tailer.on('parse-error', handleParseError);
 		await tailer.start();
@@ -425,7 +621,7 @@ async function statusMode(args: ParsedArgs): Promise<never> {
 		binPath,
 		args: args.passThroughArgs,
 		cwd,
-		env: process.env,
+		env: sanitizeChildEnv(),
 	});
 
 	const lines: string[] = [];

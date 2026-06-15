@@ -49,6 +49,22 @@ function pipeline(overrides: Partial<CuePipeline> = {}): CuePipeline {
 	};
 }
 
+// Real rendered node heights the layout centers on (mirror pipelineAutoArrange).
+// A node's connection handle sits at its vertical center, so a straight edge
+// requires equal CENTER y, not equal top-left y.
+const TRIGGER_H = 60;
+const AGENT_H = 80;
+const ROW_H = AGENT_H; // tallest node drives the uniform row pitch
+function centerY(pos: { y: number }, type: 'trigger' | 'agent'): number {
+	return pos.y + (type === 'trigger' ? TRIGGER_H : AGENT_H) / 2;
+}
+
+// Horizontal gap between columns (mirror pipelineAutoArrange): NODE_GAP plus an
+// arrowhead allowance so >=25px of straight line shows before the target arrow.
+const NODE_GAP = 25;
+const ARROWHEAD_ALLOWANCE = 20;
+const COLUMN_GAP = NODE_GAP + ARROWHEAD_ALLOWANCE;
+
 describe('arrangePipelineNodes', () => {
 	it('returns nodes unchanged when there is 0 or 1 node', () => {
 		const empty = pipeline();
@@ -72,10 +88,10 @@ describe('arrangePipelineNodes', () => {
 		expect(byId.get('a1')!.x).toBeLessThan(byId.get('a2')!.x);
 	});
 
-	it('snaps a chain onto a grid: exactly 25px of clear space between columns', () => {
-		// Every column pitch = node footprint + 25px gap, so the orthogonal edge
-		// bridging two nodes is exactly 25px and the whole chain reads as one grid.
-		const GAP = 25;
+	it('snaps a chain onto a grid: COLUMN_GAP of clear space between columns', () => {
+		// Every column pitch = node footprint + COLUMN_GAP, leaving room for the
+		// arrowhead plus >=25px of visible straight line, and the chain reads as
+		// one grid.
 		const p = pipeline({
 			nodes: [triggerNode('t', 0, 0), agentNode('a1', 0, 0), agentNode('a2', 0, 0)],
 			edges: [
@@ -84,18 +100,81 @@ describe('arrangePipelineNodes', () => {
 			],
 		});
 		const byId = new Map(arrangePipelineNodes(p).map((n) => [n.id, n.position]));
-		// Gap between a node's right edge and the next node's left edge is 25px.
-		expect(byId.get('a1')!.x - (byId.get('t')!.x + NODE_BG_WIDTH)).toBe(GAP);
-		expect(byId.get('a2')!.x - (byId.get('a1')!.x + NODE_BG_WIDTH)).toBe(GAP);
-		// A linear chain stays on one row ⇒ identical y ⇒ dead-straight edges.
-		expect(byId.get('t')!.y).toBe(byId.get('a1')!.y);
-		expect(byId.get('a1')!.y).toBe(byId.get('a2')!.y);
+		// Gap between a node's right edge and the next node's left edge is COLUMN_GAP.
+		// (No measured widths passed → every node falls back to NODE_BG_WIDTH.)
+		expect(byId.get('a1')!.x - (byId.get('t')!.x + NODE_BG_WIDTH)).toBe(COLUMN_GAP);
+		expect(byId.get('a2')!.x - (byId.get('a1')!.x + NODE_BG_WIDTH)).toBe(COLUMN_GAP);
+		// A linear chain stays on one row. Edges are dead-straight when the node
+		// CENTERS (where the handles are) share a y - the trigger is shorter than
+		// the agents, so its top-left sits lower to bring the centers level.
+		expect(centerY(byId.get('t')!, 'trigger')).toBe(centerY(byId.get('a1')!, 'agent'));
+		expect(centerY(byId.get('a1')!, 'agent')).toBe(centerY(byId.get('a2')!, 'agent'));
 	});
 
-	it('top-aligns columns into a grid with 25px between stacked nodes', () => {
-		// Fan-out: t → a, b, c. The three targets share a column and stack from the
-		// band top (no centering), spaced footprint + 25px apart so rows align on a
-		// single grid. The single trigger sits in row 0, level with the first target.
+	it('spaces columns from MEASURED widths so a wide node never overruns the next column', () => {
+		// Repro of the cramped 3-node chain: a wide command/agent node at rank 1
+		// would, under a fixed column pitch, overlap the rank-2 node. With measured
+		// widths the rank-2 column starts COLUMN_GAP past the rank-1 node's real
+		// right edge, guaranteeing the gap and producing a real third column.
+		const p = pipeline({
+			nodes: [triggerNode('t', 0, 0), agentNode('mid', 0, 0), agentNode('end', 0, 0)],
+			edges: [
+				{ id: 'e1', source: 't', target: 'mid', mode: 'pass' },
+				{ id: 'e2', source: 'mid', target: 'end', mode: 'pass' },
+			],
+		});
+		// Trigger 200px wide, the middle node a fat 560px (long path/name), end 300px.
+		const widths = new Map<string, number>([
+			['t', 200],
+			['mid', 560],
+			['end', 300],
+		]);
+		const byId = new Map(arrangePipelineNodes(p, widths).map((n) => [n.id, n.position]));
+		// Three distinct, strictly increasing columns.
+		expect(byId.get('t')!.x).toBeLessThan(byId.get('mid')!.x);
+		expect(byId.get('mid')!.x).toBeLessThan(byId.get('end')!.x);
+		// Column 1 (mid) starts COLUMN_GAP past the trigger's real 200px right edge.
+		expect(byId.get('mid')!.x - (byId.get('t')!.x + 200)).toBe(COLUMN_GAP);
+		// Column 2 (end) starts COLUMN_GAP past the WIDE mid node's real 560px right
+		// edge - this is the guarantee that was violated with a fixed pitch.
+		expect(byId.get('end')!.x - (byId.get('mid')!.x + 560)).toBe(COLUMN_GAP);
+	});
+
+	it('aligns every component on ONE column grid sized by the widest node per rank', () => {
+		// Two independent chains. The rank-1 column must clear the WIDEST rank-0
+		// node across BOTH chains, so both chains' rank-1 nodes share an x and no
+		// trigger (however wide) overruns its target.
+		const p = pipeline({
+			nodes: [
+				triggerNode('t1', 0, 0),
+				agentNode('a1', 0, 0),
+				triggerNode('t2', 0, 300),
+				agentNode('a2', 0, 300),
+			],
+			edges: [
+				{ id: 'e1', source: 't1', target: 'a1', mode: 'pass' },
+				{ id: 'e2', source: 't2', target: 'a2', mode: 'pass' },
+			],
+		});
+		// t2 is the widest rank-0 node; the shared rank-1 column must clear IT.
+		const widths = new Map<string, number>([
+			['t1', 180],
+			['a1', 300],
+			['t2', 420],
+			['a2', 300],
+		]);
+		const byId = new Map(arrangePipelineNodes(p, widths).map((n) => [n.id, n.position]));
+		// Both chains' agents share the same column x (one global grid).
+		expect(byId.get('a1')!.x).toBe(byId.get('a2')!.x);
+		// That column clears the widest rank-0 node (t2 @ 420) by COLUMN_GAP.
+		expect(byId.get('a1')!.x - (0 + 420)).toBe(COLUMN_GAP);
+	});
+
+	it('centers a fan-out source against its targets and stacks them 25px apart', () => {
+		// Fan-out: t → a, b, c. The three targets share a column and stack
+		// real-height + 25px apart so rows align on a single grid. The single
+		// trigger is CENTERED against the group, so its center is level with the
+		// MIDDLE target (b) and sits between the top (a) and bottom (c) targets.
 		const GAP = 25;
 		const p = pipeline({
 			nodes: [
@@ -111,11 +190,39 @@ describe('arrangePipelineNodes', () => {
 			],
 		});
 		const byId = new Map(arrangePipelineNodes(p).map((n) => [n.id, n.position]));
-		// Column is top-aligned: trigger (row 0) and first target share a row.
-		expect(byId.get('t')!.y).toBe(byId.get('a')!.y);
-		// Stacked nodes are exactly 25px apart edge-to-edge.
-		expect(byId.get('b')!.y - (byId.get('a')!.y + NODE_BG_HEIGHT)).toBe(GAP);
-		expect(byId.get('c')!.y - (byId.get('b')!.y + NODE_BG_HEIGHT)).toBe(GAP);
+		// Trigger center is level with the MIDDLE target (centered fan), and falls
+		// strictly between the first and last targets.
+		expect(centerY(byId.get('t')!, 'trigger')).toBe(centerY(byId.get('b')!, 'agent'));
+		expect(centerY(byId.get('t')!, 'trigger')).toBeGreaterThan(centerY(byId.get('a')!, 'agent'));
+		expect(centerY(byId.get('t')!, 'trigger')).toBeLessThan(centerY(byId.get('c')!, 'agent'));
+		// Stacked same-height nodes are exactly 25px apart edge-to-edge (real height).
+		expect(byId.get('b')!.y - (byId.get('a')!.y + ROW_H)).toBe(GAP);
+		expect(byId.get('c')!.y - (byId.get('b')!.y + ROW_H)).toBe(GAP);
+	});
+
+	it('centers a fan-in sink against its sources', () => {
+		// Fan-in: a, b, c → t. The mirror of the fan-out case. The three sources
+		// stack in the first column; the single sink is centered against them, so
+		// its center is level with the middle source (b).
+		const p = pipeline({
+			nodes: [
+				agentNode('a', 0, 100),
+				agentNode('b', 0, 200),
+				agentNode('c', 0, 300),
+				agentNode('t', 0, 200),
+			],
+			edges: [
+				{ id: 'e1', source: 'a', target: 't', mode: 'pass' },
+				{ id: 'e2', source: 'b', target: 't', mode: 'pass' },
+				{ id: 'e3', source: 'c', target: 't', mode: 'pass' },
+			],
+		});
+		const byId = new Map(arrangePipelineNodes(p).map((n) => [n.id, n.position]));
+		// Sink in its own (later) column, centered on the middle source.
+		expect(byId.get('t')!.x).toBeGreaterThan(byId.get('a')!.x);
+		expect(centerY(byId.get('t')!, 'agent')).toBe(centerY(byId.get('b')!, 'agent'));
+		expect(centerY(byId.get('t')!, 'agent')).toBeGreaterThan(centerY(byId.get('a')!, 'agent'));
+		expect(centerY(byId.get('t')!, 'agent')).toBeLessThan(centerY(byId.get('c')!, 'agent'));
 	});
 
 	it('places fan-out targets in the same column, ordered by current Y', () => {
@@ -163,9 +270,9 @@ describe('arrangePipelineNodes', () => {
 		const chain1MaxY = Math.max(byId.get('t1')!.y, byId.get('a1')!.y);
 		const chain2MinY = Math.min(byId.get('t2')!.y, byId.get('a2')!.y);
 		expect(chain1MaxY).toBeLessThan(chain2MinY);
-		// Within a chain the trigger and its agent are level → straight edge.
-		expect(byId.get('t1')!.y).toBe(byId.get('a1')!.y);
-		expect(byId.get('t2')!.y).toBe(byId.get('a2')!.y);
+		// Within a chain the trigger and its agent centers are level → straight edge.
+		expect(centerY(byId.get('t1')!, 'trigger')).toBe(centerY(byId.get('a1')!, 'agent'));
+		expect(centerY(byId.get('t2')!, 'trigger')).toBe(centerY(byId.get('a2')!, 'agent'));
 	});
 
 	it('grids edge-less nodes into multiple columns instead of one tall stack', () => {
@@ -194,6 +301,31 @@ describe('arrangePipelineNodes', () => {
 			],
 		});
 		expect(() => arrangePipelineNodes(p)).not.toThrow();
+	});
+
+	it('preserves a two-column arrangement instead of collapsing to one tall stack', () => {
+		// Four trigger→agent pairs the user placed in TWO columns: pairs 0,1 on the
+		// left (x≈0), pairs 2,3 on the right (x≈600). Tidy must keep two columns
+		// where they are, not stack all four bands into one column.
+		const nodes: PipelineNode[] = [];
+		const edges: CuePipeline['edges'] = [];
+		for (let i = 0; i < 4; i++) {
+			const colX = i < 2 ? 0 : 600;
+			const rowY = (i % 2) * 200;
+			nodes.push(triggerNode(`t${i}`, colX, rowY));
+			nodes.push(agentNode(`a${i}`, colX + 200, rowY));
+			edges.push({ id: `e${i}`, source: `t${i}`, target: `a${i}`, mode: 'pass' });
+		}
+		const byId = new Map(
+			arrangePipelineNodes(pipeline({ nodes, edges })).map((n) => [n.id, n.position])
+		);
+		// Exactly two distinct trigger columns survive.
+		const triggerXs = new Set([0, 1, 2, 3].map((i) => byId.get(`t${i}`)!.x));
+		expect(triggerXs.size).toBe(2);
+		// Left pairs share the leftmost trigger x; right pairs share a larger x.
+		expect(byId.get('t0')!.x).toBe(byId.get('t1')!.x);
+		expect(byId.get('t2')!.x).toBe(byId.get('t3')!.x);
+		expect(byId.get('t2')!.x).toBeGreaterThan(byId.get('t0')!.x);
 	});
 });
 
@@ -313,6 +445,40 @@ describe('untanglePipelineNodes', () => {
 			],
 		});
 		expect(() => untanglePipelineNodes(p)).not.toThrow();
+	});
+
+	// Ten independent trigger→agent pairs, all stacked in one tall column.
+	function tenPairs(): CuePipeline {
+		const nodes: PipelineNode[] = [];
+		const edges: CuePipeline['edges'] = [];
+		for (let i = 0; i < 10; i++) {
+			nodes.push(triggerNode(`t${i}`, 0, i * 200));
+			nodes.push(agentNode(`a${i}`, 200, i * 200));
+			edges.push({ id: `e${i}`, source: `t${i}`, target: `a${i}`, mode: 'pass' });
+		}
+		return pipeline({ nodes, edges });
+	}
+
+	it('packs independent sub-circuits into multiple columns to fit a wide viewport', () => {
+		// A wide editor canvas: one tall 10-pair column wastes it, so Arrange should
+		// spread the pairs across 2+ side-by-side columns.
+		const arranged = untanglePipelineNodes(tenPairs(), undefined, { width: 1600, height: 600 });
+		const byId = new Map(arranged.map((n) => [n.id, n.position]));
+		const triggerXs = new Set(Array.from({ length: 10 }, (_, i) => byId.get(`t${i}`)!.x));
+		expect(triggerXs.size).toBeGreaterThan(1);
+		// Fitting a wide viewport must be shorter than the one-column stack would be.
+		const maxY = Math.max(...arranged.map((n) => n.position.y));
+		const singleColumnMaxY = Math.max(
+			...untanglePipelineNodes(tenPairs()).map((n) => n.position.y)
+		);
+		expect(maxY).toBeLessThan(singleColumnMaxY);
+	});
+
+	it('keeps a single tall column when no viewport is provided (legacy behavior)', () => {
+		const byId = new Map(untanglePipelineNodes(tenPairs()).map((n) => [n.id, n.position]));
+		// Every trigger stays in the one shared left column.
+		const triggerXs = new Set(Array.from({ length: 10 }, (_, i) => byId.get(`t${i}`)!.x));
+		expect(triggerXs.size).toBe(1);
 	});
 });
 

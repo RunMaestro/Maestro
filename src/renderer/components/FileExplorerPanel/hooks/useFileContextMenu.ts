@@ -40,7 +40,15 @@ interface UseFileContextMenuResult {
 	isMultiDeleting: boolean;
 	contextMenuRef: React.RefObject<HTMLDivElement>;
 	contextMenuPos: { top: number; left: number; ready?: boolean };
+	openContextMenuAt: (
+		x: number,
+		y: number,
+		node: FileNode,
+		path: string,
+		globalIndex: number
+	) => void;
 	openContextMenu: (e: React.MouseEvent, node: FileNode, path: string, globalIndex: number) => void;
+	openRootContextMenu: (e: React.MouseEvent) => void;
 	closeContextMenu: () => void;
 	handleCopyPath: () => void;
 	handleOpenInDefaultApp: () => void;
@@ -114,17 +122,39 @@ export function useFileContextMenu({
 		{ enabled: contextMenu !== null }
 	);
 
-	const openContextMenu = useCallback(
-		(e: React.MouseEvent, node: FileNode, path: string, globalIndex: number) => {
-			e.preventDefault();
-			e.stopPropagation();
+	const openContextMenuAt = useCallback(
+		(x: number, y: number, node: FileNode, path: string, globalIndex: number) => {
 			setSelectedFileIndex(globalIndex);
 			if (selectedPathsRef.current.size > 0 && !selectedPathsRef.current.has(path)) {
 				setSelectedPaths(new Set());
 			}
-			setContextMenu({ x: e.clientX, y: e.clientY, node, path });
+			setContextMenu({ x, y, node, path });
 		},
 		[setSelectedFileIndex, selectedPathsRef, setSelectedPaths]
+	);
+
+	const openContextMenu = useCallback(
+		(e: React.MouseEvent, node: FileNode, path: string, globalIndex: number) => {
+			e.preventDefault();
+			e.stopPropagation();
+			openContextMenuAt(e.clientX, e.clientY, node, path, globalIndex);
+		},
+		[openContextMenuAt]
+	);
+
+	// Right-click on the panel's empty space (no row under the cursor). Opens a
+	// minimal root menu (node === null, path === '') whose only action creates a
+	// folder in the workspace root.
+	const openRootContextMenu = useCallback(
+		(e: React.MouseEvent) => {
+			e.preventDefault();
+			e.stopPropagation();
+			if (selectedPathsRef.current.size > 0) {
+				setSelectedPaths(new Set());
+			}
+			setContextMenu({ x: e.clientX, y: e.clientY, node: null, path: '' });
+		},
+		[selectedPathsRef, setSelectedPaths]
 	);
 
 	const closeContextMenu = useCallback(() => setContextMenu(null), []);
@@ -139,20 +169,20 @@ export function useFileContextMenu({
 	const handlePreviewFile = useCallback(async () => {
 		const menu = contextMenu;
 		try {
-			if (menu && menu.node.type === 'file') {
+			if (menu && menu.node && menu.node.type === 'file') {
 				await handleFileClick(menu.node, menu.path, session);
 			}
 		} catch (error) {
 			if (isMissingFileError(error)) {
-				onShowFlash?.(`File not found: "${menu?.node.name ?? 'Unknown file'}"`);
+				onShowFlash?.(`File not found: "${menu?.node?.name ?? 'Unknown file'}"`);
 				return;
 			}
 			captureException(error, {
 				extra: {
 					action: 'preview',
 					path: menu?.path,
-					nodeName: menu?.node.name,
-					nodeType: menu?.node.type,
+					nodeName: menu?.node?.name,
+					nodeType: menu?.node?.type,
 					sessionId: session.id,
 				},
 			});
@@ -165,7 +195,7 @@ export function useFileContextMenu({
 	const handlePreviewAllInFolder = useCallback(() => {
 		const menu = contextMenu;
 		try {
-			if (!menu || menu.node.type !== 'folder') {
+			if (!menu || !menu.node || menu.node.type !== 'folder') {
 				return;
 			}
 			const folderNode = menu.node;
@@ -392,7 +422,7 @@ export function useFileContextMenu({
 	}, [contextMenu, session.fullPath]);
 
 	const handleOpenInMaestroBrowser = useCallback(() => {
-		if (contextMenu && contextMenu.node.type === 'file' && onOpenBrowserTabAt) {
+		if (contextMenu && contextMenu.node && contextMenu.node.type === 'file' && onOpenBrowserTabAt) {
 			const absolutePath = `${session.fullPath}/${contextMenu.path}`;
 			const normalizedPath = absolutePath.replace(/\\/g, '/');
 			const isWindowsDrivePath = /^[A-Za-z]:/.test(normalizedPath);
@@ -415,31 +445,51 @@ export function useFileContextMenu({
 		setContextMenu(null);
 	}, [contextMenu, session.fullPath]);
 
+	// Resolve the folder that a "New File"/"New Folder" action should target from
+	// the current menu context. A folder row creates inside that folder; a file
+	// row or the empty-space root menu creates alongside it (the parent dir, which
+	// is '' / the workspace root for top-level files and empty space).
+	const resolveCreateParent = useCallback((): {
+		parentPath: string;
+		parentAbsolutePath: string;
+	} | null => {
+		if (!contextMenu) return null;
+		const { node, path } = contextMenu;
+		const parentPath =
+			node && node.type === 'folder'
+				? path
+				: path.includes('/')
+					? path.slice(0, path.lastIndexOf('/'))
+					: '';
+		const parentAbsolutePath = parentPath ? `${session.fullPath}/${parentPath}` : session.fullPath;
+		return { parentPath, parentAbsolutePath };
+	}, [contextMenu, session.fullPath]);
+
 	const handleOpenNewFile = useCallback(() => {
-		if (contextMenu && contextMenu.node.type === 'folder') {
-			const parentFolderAbsolutePath = `${session.fullPath}/${contextMenu.path}`;
-			openNewFileModal(contextMenu.path, parentFolderAbsolutePath);
+		const target = resolveCreateParent();
+		if (target) {
+			openNewFileModal(target.parentPath, target.parentAbsolutePath);
 		}
 		setContextMenu(null);
-	}, [contextMenu, session.fullPath, openNewFileModal]);
+	}, [resolveCreateParent, openNewFileModal]);
 
 	const handleOpenNewFolder = useCallback(() => {
-		if (contextMenu && contextMenu.node.type === 'folder') {
-			const parentFolderAbsolutePath = `${session.fullPath}/${contextMenu.path}`;
-			openNewFolderModal(contextMenu.path, parentFolderAbsolutePath);
+		const target = resolveCreateParent();
+		if (target) {
+			openNewFolderModal(target.parentPath, target.parentAbsolutePath);
 		}
 		setContextMenu(null);
-	}, [contextMenu, session.fullPath, openNewFolderModal]);
+	}, [resolveCreateParent, openNewFolderModal]);
 
 	const handleOpenRename = useCallback(() => {
-		if (contextMenu) {
+		if (contextMenu && contextMenu.node) {
 			openRenameModal(contextMenu.node, contextMenu.path);
 		}
 		setContextMenu(null);
 	}, [contextMenu, openRenameModal]);
 
 	const handleOpenDelete = useCallback(async () => {
-		if (contextMenu) {
+		if (contextMenu && contextMenu.node) {
 			await openDeleteModal(contextMenu.node, contextMenu.path);
 		}
 		setContextMenu(null);
@@ -451,7 +501,9 @@ export function useFileContextMenu({
 		isMultiDeleting,
 		contextMenuRef,
 		contextMenuPos,
+		openContextMenuAt,
 		openContextMenu,
+		openRootContextMenu,
 		closeContextMenu,
 		handleCopyPath,
 		handleOpenInDefaultApp,

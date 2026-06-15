@@ -62,6 +62,21 @@ export interface CueSessionRegistry {
 	 * re-enabling Cue re-fires startup subscriptions for the new engine cycle. */
 	clearAllStartupKeys(): void;
 
+	// ── time.once dedup ──────────────────────────────────────────────────
+	/**
+	 * Atomically check-and-set the fired flag for a `(session, sub, fireAt)`
+	 * time.once tuple. Returns `true` if this is the first time this specific
+	 * scheduled instance has fired within this process lifetime, `false` if it
+	 * was already fired. Used by the `time.once` trigger source to ensure a
+	 * single fire even when poll ticks overlap with hot-reload re-creation of
+	 * the source.
+	 *
+	 * Keying includes `fireAt` so that re-creating a `time.once` with the same
+	 * name but a new `fire_at` (a fresh schedule after the prior one fired or
+	 * self-destructed) is not blocked by the stale key.
+	 */
+	markOnceFired(sessionId: string, subName: string, fireAt: string): boolean;
+
 	/**
 	 * Drop all sessions and clear `time.scheduled` dedup state.
 	 * `app.startup` keys are cleared separately via `clearAllStartupKeys()` when
@@ -81,6 +96,7 @@ export function createCueSessionRegistry(): CueSessionRegistry {
 	const sessions = new Map<string, SessionState>();
 	const scheduledFiredKeys = new Set<string>();
 	const startupFiredKeys = new Set<string>();
+	const onceFiredKeys = new Set<string>();
 
 	function scheduledKey(sessionId: string, subName: string, time: string): string {
 		return `${sessionId}:${subName}:${time}`;
@@ -88,6 +104,10 @@ export function createCueSessionRegistry(): CueSessionRegistry {
 
 	function startupKey(sessionId: string, subName: string): string {
 		return `${sessionId}:${subName}`;
+	}
+
+	function onceKey(sessionId: string, subName: string, fireAt: string): string {
+		return `${sessionId}:${subName}:${fireAt}`;
 	}
 
 	return {
@@ -159,6 +179,13 @@ export function createCueSessionRegistry(): CueSessionRegistry {
 
 		clearAllStartupKeys() {
 			startupFiredKeys.clear();
+		},
+
+		markOnceFired(sessionId, subName, fireAt) {
+			const key = onceKey(sessionId, subName, fireAt);
+			if (onceFiredKeys.has(key)) return false;
+			onceFiredKeys.add(key);
+			return true;
 		},
 
 		clear() {

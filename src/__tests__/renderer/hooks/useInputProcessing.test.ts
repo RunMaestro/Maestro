@@ -94,6 +94,8 @@ describe('useInputProcessing', () => {
 				spawn: vi.fn().mockResolvedValue(undefined),
 				write: vi.fn().mockResolvedValue(undefined),
 				runCommand: vi.fn().mockResolvedValue(undefined),
+				broadcastUserInput: vi.fn().mockResolvedValue(undefined),
+				onUserInput: vi.fn().mockReturnValue(() => {}),
 			},
 			agents: {
 				...window.maestro?.agents,
@@ -949,6 +951,69 @@ describe('useInputProcessing', () => {
 			expect(updatedSessions[0].state).toBe('idle'); // Session stays idle
 			expect(updatedSessions[0].executionQueue.length).toBe(1); // Message is queued
 			expect(updatedSessions[0].executionQueue[0].text).toBe('regular message');
+		});
+	});
+
+	describe('single-writer with orphaned (closed) tabs', () => {
+		// Regression: Cmd+W on a running write tab parks it in orphanedThinkingTabs
+		// and leaves a fresh idle aiTab while keeping the session busy. A new write
+		// message must QUEUE (drain in the background when the orphan finishes), not
+		// bypass the queue and spawn concurrently with the orphan. The bypass gate
+		// previously scanned only aiTabs, so the invisible orphan writer let the new
+		// message run immediately - two writers on one agent.
+		it('queues a write message instead of bypassing while a busy orphan is still writing', async () => {
+			const freshTab = createMockTab({ id: 'fresh', state: 'idle', readOnlyMode: false });
+			const orphan = createMockTab({ id: 'orphan-1', state: 'busy', readOnlyMode: false });
+			const session = createMockSession({
+				state: 'busy',
+				aiTabs: [freshTab],
+				activeTabId: 'fresh',
+				orphanedThinkingTabs: [orphan],
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'regular write message',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			// Must queue, not spawn a concurrent writer.
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			expect(mockSetSessions).toHaveBeenCalled();
+			const setSessionsCall = mockSetSessions.mock.calls[0][0];
+			const updatedSessions = setSessionsCall([session]);
+			expect(updatedSessions[0].executionQueue.length).toBe(1);
+			expect(updatedSessions[0].executionQueue[0].text).toBe('regular write message');
+		});
+
+		it('still bypasses the queue when the only busy orphan is read-only', async () => {
+			// Read-only orphans don't hold the write slot, so a new write may run in
+			// parallel (matches the existing all-busy-tabs-read-only bypass rule).
+			const freshTab = createMockTab({ id: 'fresh', state: 'idle', readOnlyMode: false });
+			const orphan = createMockTab({ id: 'orphan-ro', state: 'busy', readOnlyMode: true });
+			const session = createMockSession({
+				state: 'busy',
+				aiTabs: [freshTab],
+				activeTabId: 'fresh',
+				orphanedThinkingTabs: [orphan],
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'regular write message',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			// Bypass allowed: the write spawns immediately, nothing queued.
+			expect(window.maestro.process.spawn).toHaveBeenCalled();
 		});
 	});
 

@@ -56,6 +56,8 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 	const [name, setName] = useState('');
 	// Track if user has visited/modified the config panel (edit mode only)
 	const [configWasModified, setConfigWasModified] = useState(false);
+	// Auto-detected maestro-p path, shown as helper text in the Claude Token Source selector
+	const [detectedMaestroPPath, setDetectedMaestroPPath] = useState<string | undefined>(undefined);
 
 	const nameInputRef = useRef<HTMLInputElement>(null);
 
@@ -79,7 +81,20 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 		ac.setCustomArgs(groupChat.moderatorConfig?.customArgs || '');
 		ac.setCustomEnvVars(groupChat.moderatorConfig?.customEnvVars || {});
 		ac.setSshRemoteConfig(groupChat.moderatorConfig?.sshRemoteConfig as any);
+		// Claude token source (Claude Code moderator only)
+		ac.setEnableMaestroP(groupChat.moderatorConfig?.enableMaestroP ?? false);
+		ac.setMaestroPMode(groupChat.moderatorConfig?.maestroPMode ?? 'dynamic');
+		ac.setMaestroPPath(groupChat.moderatorConfig?.maestroPPath ?? '');
 	}, [mode, isOpen, groupChat]);
+
+	// Resolve the auto-detected maestro-p path for the Claude Token Source helper text
+	useEffect(() => {
+		if (!isOpen) return;
+		void window.maestro.agents
+			.getMaestroPDetectedPath()
+			.then((p) => setDetectedMaestroPPath(p ?? undefined))
+			.catch(() => setDetectedMaestroPPath(undefined));
+	}, [isOpen]);
 
 	// Focus name input when agents detected
 	useEffect(() => {
@@ -123,12 +138,19 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 	// Build moderator config from state
 	const buildModeratorConfig = useCallback((): ModeratorConfig | undefined => {
 		const customModelValue = ac.agentConfig.model;
+		// Claude token source (maestro-p TUI vs `claude --print` API) only applies to a
+		// Claude Code moderator; mirror NewInstanceModal and store the opt-in (and its
+		// refinements) only when enabled.
+		const tokenSourceEnabled = ac.selectedAgent === 'claude-code' && ac.enableMaestroP;
+		const maestroPPathValue =
+			tokenSourceEnabled && ac.maestroPPath.trim() ? ac.maestroPPath.trim() : undefined;
 		const hasConfig =
 			ac.customPath ||
 			ac.customArgs ||
 			Object.keys(ac.customEnvVars).length > 0 ||
 			customModelValue ||
-			ac.sshRemoteConfig;
+			ac.sshRemoteConfig ||
+			tokenSourceEnabled;
 		if (!hasConfig) return undefined;
 
 		return {
@@ -137,8 +159,21 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 			customEnvVars: Object.keys(ac.customEnvVars).length > 0 ? ac.customEnvVars : undefined,
 			customModel: customModelValue || undefined,
 			sshRemoteConfig: ac.sshRemoteConfig || undefined,
+			enableMaestroP: tokenSourceEnabled || undefined,
+			maestroPMode: tokenSourceEnabled ? ac.maestroPMode : undefined,
+			maestroPPath: maestroPPathValue,
 		};
-	}, [ac.customPath, ac.customArgs, ac.customEnvVars, ac.agentConfig.model, ac.sshRemoteConfig]);
+	}, [
+		ac.customPath,
+		ac.customArgs,
+		ac.customEnvVars,
+		ac.agentConfig.model,
+		ac.sshRemoteConfig,
+		ac.selectedAgent,
+		ac.enableMaestroP,
+		ac.maestroPMode,
+		ac.maestroPPath,
+	]);
 
 	const handleSubmit = useCallback(() => {
 		if (!name.trim() || !ac.selectedAgent) return;
@@ -171,6 +206,17 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 		const originalSshConfig = groupChat.moderatorConfig?.sshRemoteConfig;
 		const sshChanged = JSON.stringify(ac.sshRemoteConfig) !== JSON.stringify(originalSshConfig);
 
+		// Claude token source (Claude Code moderator only) - toggling it marks the config dirty
+		const isClaudeModerator = ac.selectedAgent === 'claude-code';
+		const enableMaestroPChanged =
+			isClaudeModerator &&
+			ac.enableMaestroP !== (groupChat.moderatorConfig?.enableMaestroP ?? false);
+		const maestroPModeChanged =
+			isClaudeModerator &&
+			ac.maestroPMode !== (groupChat.moderatorConfig?.maestroPMode ?? 'dynamic');
+		const maestroPPathChanged =
+			isClaudeModerator && ac.maestroPPath !== (groupChat.moderatorConfig?.maestroPPath ?? '');
+
 		return (
 			nameChanged ||
 			agentChanged ||
@@ -178,6 +224,9 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 			argsChanged ||
 			envVarsChanged ||
 			sshChanged ||
+			enableMaestroPChanged ||
+			maestroPModeChanged ||
+			maestroPPathChanged ||
 			configWasModified
 		);
 	}, [
@@ -188,6 +237,9 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 		ac.customArgs,
 		ac.customEnvVars,
 		ac.sshRemoteConfig,
+		ac.enableMaestroP,
+		ac.maestroPMode,
+		ac.maestroPPath,
 		configWasModified,
 	]);
 
@@ -450,6 +502,16 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 								loadingDynamicOptions={ac.loadingDynamicOptions}
 								onRefreshAgent={ac.refreshAgent}
 								refreshingAgent={ac.refreshingAgent}
+								enableMaestroP={ac.enableMaestroP}
+								onEnableMaestroPChange={ac.setEnableMaestroP}
+								maestroPMode={ac.maestroPMode}
+								onMaestroPModeChange={ac.setMaestroPMode}
+								maestroPPath={ac.maestroPPath}
+								onMaestroPPathChange={ac.setMaestroPPath}
+								onMaestroPPathBlur={() => {
+									/* Local state only */
+								}}
+								detectedMaestroPPath={detectedMaestroPPath}
 								compact
 								showBuiltInEnvVars
 							/>

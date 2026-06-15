@@ -1,10 +1,10 @@
 ---
 title: Cue Event Types
-description: Detailed reference for all nine Maestro Cue event types with configuration, payloads, and examples.
+description: Detailed reference for all ten Maestro Cue event types with configuration, payloads, and examples.
 icon: calendar-check
 ---
 
-Cue supports nine event types. Each type watches for a different kind of activity and produces a payload that can be injected into prompts via [template variables](./maestro-cue-advanced#template-variables).
+Cue supports ten event types. Each type watches for a different kind of activity and produces a payload that can be injected into prompts via [template variables](./maestro-cue-advanced#template-variables).
 
 ## app.startup
 
@@ -138,6 +138,88 @@ subscriptions:
 | -------------- | ------------------------------------- | ------- |
 | `matched_time` | The scheduled time that matched       | `09:00` |
 | `matched_day`  | The day of the week when it triggered | `mon`   |
+
+---
+
+## time.once
+
+Fires exactly once at a specific wall-clock moment, then deletes itself from `cue.yaml`. This is the subsystem to reach for when a user says "in 20 minutes do X", "tomorrow at 9am email me a summary", "remind me at 4pm to push the rc branch", or "schedule a 1h check-in" - anything that maps to a single action tied to a clock.
+
+**Required fields:**
+
+| Field     | Type              | Description                                                                                                                                                         |
+| --------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fire_at` | string (ISO-8601) | The wall-clock moment to fire. **Must include a timezone offset** (`Z`, `±HH:MM`, or the colon-less `±HHMM`). Anything missing the offset is rejected at load time. |
+
+**Optional fields:**
+
+| Field                      | Type    | Default | Description                                                                                                                                                                                                                                                      |
+| -------------------------- | ------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `grace_minutes`            | number  | `360`   | Missed-fire grace window in minutes. If Maestro is closed when `fire_at` arrives, the sub fires on next startup as long as the current time is within this window of `fire_at`. Past the window, the sub is logged as expired and self-destructs without firing. |
+| `self_destruct_on_failure` | boolean | `true`  | Whether to remove the sub from `cue.yaml` on a `failed` or `timeout` outcome. Set `false` to keep the sub in place for post-mortem inspection.                                                                                                                   |
+
+**Behavior:**
+
+- Poll-based at roughly 30-second granularity
+- Fires once when the wall clock crosses `fire_at`
+- Self-destructs from `cue.yaml` after a successful run (status `completed`)
+- On `failed` or `timeout`, also self-destructs unless `self_destruct_on_failure: false`
+- Supports all standard `action` values: `prompt` (default, runs the configured agent with the rendered prompt), `notify` (surfaces a toast through the owning agent - clicking it jumps there), and `command` (shell or CLI invocation)
+- The CLI command `maestro-cli cue schedule` is the supported way to create `time.once` subs - it handles ISO formatting, timezone offsets, `target_node_key` generation, and writes directly to the owning agent's `.maestro/cue.yaml`. **Do not hand-author `time.once` subscriptions.**
+
+**Example - notify reminder:**
+
+```yaml
+subscriptions:
+  - name: tasks-once-push-rc-reminder
+    pipeline_name: Tasks
+    event: time.once
+    enabled: true
+    fire_at: '2026-05-22T16:00:00-05:00'
+    agent_id: <agent-uuid>
+    action: notify
+    notify:
+      message: 'Push rc branch - review the diff first'
+      sticky: true
+```
+
+**Example - prompt run:**
+
+```yaml
+subscriptions:
+  - name: tasks-once-20m-deploy-check
+    pipeline_name: Tasks
+    event: time.once
+    enabled: true
+    fire_at: '2026-05-22T14:20:00-05:00'
+    agent_id: <agent-uuid>
+    prompt: |
+      Check the status of the deploy I kicked off and summarize the result.
+```
+
+**Payload fields:**
+
+| Variable          | Description                                             | Example                     |
+| ----------------- | ------------------------------------------------------- | --------------------------- |
+| `{{CUE_FIRE_AT}}` | The originally-scheduled `fire_at` timestamp (ISO-8601) | `2026-05-22T16:00:00-05:00` |
+
+The standard `{{CUE_TRIGGER_NAME}}`, `{{CUE_EVENT_TYPE}}`, `{{CUE_EVENT_TIMESTAMP}}`, and `{{CUE_PIPELINE_NAME}}` variables are also available.
+
+**Creating, listing, and cancelling:**
+
+```bash
+# Schedule via relative offset
+maestro-cli cue schedule --in 20m --agent <agent-id> --prompt "Check the deploy status."
+
+# Schedule via absolute timestamp + notify-only
+maestro-cli cue schedule --at "2026-05-22 16:00" --agent <agent-id> --notify --sticky --message "Push rc branch"
+
+# List every pending one-time task across agents
+maestro-cli cue schedule --list
+
+# Cancel a pending task by sub name
+maestro-cli cue schedule --cancel tasks-once-push-rc-reminder
+```
 
 ---
 

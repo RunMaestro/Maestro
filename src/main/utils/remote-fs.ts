@@ -58,8 +58,12 @@ export interface RemoteFsResult<T> {
  * Dependencies that can be injected for testing.
  */
 export interface RemoteFsDeps {
-	/** Function to execute SSH commands */
-	execSsh: (command: string, args: string[]) => Promise<ExecResult>;
+	/**
+	 * Function to execute SSH commands. An optional `input` is written to the
+	 * remote command's stdin (forwarded by ssh), letting large payloads bypass
+	 * the OS argv length limit (ARG_MAX) that inline command strings hit.
+	 */
+	execSsh: (command: string, args: string[], input?: string) => Promise<ExecResult>;
 	/** Function to build SSH args from config */
 	buildSshArgs: (config: SshRemoteConfig) => string[];
 }
@@ -68,8 +72,8 @@ export interface RemoteFsDeps {
  * Default dependencies using real implementations.
  */
 const defaultDeps: RemoteFsDeps = {
-	execSsh: (command: string, args: string[]): Promise<ExecResult> => {
-		return execFileNoThrow(command, args, undefined, { timeout: SSH_COMMAND_TIMEOUT_MS });
+	execSsh: (command: string, args: string[], input?: string): Promise<ExecResult> => {
+		return execFileNoThrow(command, args, undefined, { timeout: SSH_COMMAND_TIMEOUT_MS, input });
 	},
 	buildSshArgs: (config: SshRemoteConfig): string[] => {
 		return sshRemoteManager.buildSshArgs(config);
@@ -222,7 +226,8 @@ function getBackoffDelay(attempt: number, baseDelay: number, maxDelay: number): 
 async function execRemoteCommand(
 	config: SshRemoteConfig,
 	remoteCommand: string,
-	deps: RemoteFsDeps = defaultDeps
+	deps: RemoteFsDeps = defaultDeps,
+	input?: string
 ): Promise<ExecResult> {
 	const { maxRetries, baseDelayMs, maxDelayMs } = DEFAULT_RETRY_CONFIG;
 	let lastResult: ExecResult | null = null;
@@ -243,7 +248,7 @@ async function execRemoteCommand(
 			const sshArgs = deps.buildSshArgs(config);
 			sshArgs.push(remoteCommand);
 
-			const result = await deps.execSsh(sshPath, sshArgs);
+			const result = await deps.execSsh(sshPath, sshArgs, input);
 			lastResult = result;
 
 			// Success - return immediately
@@ -619,6 +624,53 @@ export async function readFileRemote(
 }
 
 /**
+ * Read a remote file from a byte offset to EOF via `tail -c +N`.
+ *
+ * Built for incremental polling of an append-only log (e.g. Copilot's
+ * `events.jsonl`): the caller tracks how many bytes it has already consumed
+ * and re-fetches only the new tail each poll, instead of `cat`-ing the whole
+ * file every time. For a long session polled over many minutes that turns
+ * O(file size × poll count) of SSH traffic into O(file size) total.
+ *
+ * `fromByteOffset` is a 0-based byte count of already-consumed bytes; this
+ * function reads everything after it. An offset of 0 returns the whole file.
+ * `tail -c +N` is 1-indexed and POSIX, supported by both GNU and BSD tail.
+ *
+ * @param filePath Path to the file on the remote host
+ * @param sshRemote SSH remote configuration
+ * @param fromByteOffset Number of leading bytes to skip (already consumed)
+ * @param deps Optional dependencies for testing
+ * @returns The bytes from the offset to EOF (empty string when nothing new)
+ */
+export async function readFileTailRemote(
+	filePath: string,
+	sshRemote: SshRemoteConfig,
+	fromByteOffset: number,
+	deps: RemoteFsDeps = defaultDeps
+): Promise<RemoteFsResult<string>> {
+	const escapedPath = shellEscapeRemotePath(filePath);
+	// tail -c +N counts from byte N (1-indexed), so skipping `offset` bytes
+	// means starting at byte offset+1.
+	const startByte = Math.max(0, Math.floor(fromByteOffset)) + 1;
+	const remoteCommand = `tail -c +${startByte} ${escapedPath}`;
+
+	const result = await execRemoteCommand(sshRemote, remoteCommand, deps);
+
+	if (result.exitCode !== 0) {
+		const error = result.stderr || `Failed to read file: ${filePath}`;
+		return {
+			success: false,
+			error: error.includes('No such file') ? `File not found: ${filePath}` : error,
+		};
+	}
+
+	return {
+		success: true,
+		data: result.stdout,
+	};
+}
+
+/**
  * Read a remote file with abort support — used for user-initiated file previews
  * where the user may close the tab mid-load to cancel the SSH read.
  *
@@ -887,10 +939,14 @@ export async function writeFileRemote(
 		? content.toString('base64')
 		: Buffer.from(content, 'utf-8').toString('base64');
 
-	// Decode base64 on remote and write to file
-	const remoteCommand = `echo '${base64Content}' | base64 -d > ${escapedPath}`;
+	// Decode base64 on remote and write to file. The base64 payload is streamed
+	// over the remote command's stdin rather than embedded inline in the command
+	// string: an inline `echo '<base64>'` makes the whole payload a single argv
+	// entry, and large files blow past the OS argv limit (ARG_MAX), failing with
+	// "/bin/bash: Argument list too long". stdin has no such limit.
+	const remoteCommand = `base64 -d > ${escapedPath}`;
 
-	const result = await execRemoteCommand(sshRemote, remoteCommand, deps);
+	const result = await execRemoteCommand(sshRemote, remoteCommand, deps, base64Content);
 
 	if (result.exitCode !== 0) {
 		const error = result.stderr || `Failed to write file: ${filePath}`;

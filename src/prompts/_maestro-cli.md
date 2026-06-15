@@ -174,6 +174,14 @@ Configure and optionally launch an auto-run using documents you've created:
 
 # Clean up orphaned playbook data
 {{MAESTRO_CLI_PATH}} clean playbooks [--dry-run]
+
+# Control a live Auto Run (the launch counterpart is `auto-run --launch` above)
+{{MAESTRO_CLI_PATH}} stop-auto-run -a, --agent <id> [--json]
+{{MAESTRO_CLI_PATH}} resume-auto-run -a, --agent <id> [--json]   # continue after an error pause
+{{MAESTRO_CLI_PATH}} skip-auto-run -a, --agent <id> [--json]     # skip the failing document
+{{MAESTRO_CLI_PATH}} abort-auto-run -a, --agent <id> [--json]    # stop after an error
+{{MAESTRO_CLI_PATH}} reset-auto-run-tasks <filename> -a, --agent <id> [--json]   # revert [x] -> [ ]
+{{MAESTRO_CLI_PATH}} remove-playbook <agent-id> <playbook-id> [--json]
 ```
 
 ### Cue Automation
@@ -307,7 +315,29 @@ Lifecycle management of Maestro agents and remote-execution targets.
     [--custom-args <args>] [--env KEY=VALUE]... [--model <model>] [--effort <level>] \
     [--context-window <size>] [--ssh-remote <id>] [--ssh-cwd <path>] \
     [--auto-run-folder <path>] [--json]
+{{MAESTRO_CLI_PATH}} create-worktree -a, --agent <parent-id> -b, --branch <name> \
+    [--base-branch <ref>] [-m, --message <text>] [--json]
 {{MAESTRO_CLI_PATH}} remove-agent <agent-id> [--json]
+{{MAESTRO_CLI_PATH}} rename-agent <agent-id> <new-name> [--json]
+{{MAESTRO_CLI_PATH}} focus-agent <agent-id> [--tab <tab-id>] [--json]   # select/focus the agent in the UI
+{{MAESTRO_CLI_PATH}} switch-mode <agent-id> <ai|terminal> [--json]
+
+# Groups (use the returned group ID with create-agent -g / update-agent --group)
+{{MAESTRO_CLI_PATH}} create-group <name> [-e, --emoji <emoji>] [--json]
+{{MAESTRO_CLI_PATH}} remove-group <group-id> [-f, --force] [--json]   # agents inside are ungrouped, not deleted; --force required if non-empty
+{{MAESTRO_CLI_PATH}} rename-group <group-id> <new-name> [--json]
+
+# Tabs (mutating verbs take a tab ID - exact or unique prefix - from "session list")
+{{MAESTRO_CLI_PATH}} tab new -a, --agent <id> [-p, --prompt <text>] [--json]
+{{MAESTRO_CLI_PATH}} tab close <tab-id> [--json]
+{{MAESTRO_CLI_PATH}} tab rename <tab-id> <new-name> [--json]
+{{MAESTRO_CLI_PATH}} tab star <tab-id> [--json]
+{{MAESTRO_CLI_PATH}} tab unstar <tab-id> [--json]
+
+# Appearance / experimental features (apply live to the running app)
+{{MAESTRO_CLI_PATH}} set-theme <name|id> [--json]      # or: set-theme --list
+{{MAESTRO_CLI_PATH}} encore list [--json]
+{{MAESTRO_CLI_PATH}} encore enable|disable <feature>   # directorNotes, usageStats, symphony, maestroCue
 
 # SSH remotes (used by agents that execute on a remote host)
 {{MAESTRO_CLI_PATH}} list ssh-remotes [--json]

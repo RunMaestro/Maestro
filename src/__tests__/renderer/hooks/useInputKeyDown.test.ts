@@ -126,11 +126,11 @@ beforeEach(() => {
 	});
 
 	useSessionStore.setState({
-		sessions: [],
-		activeSessionId: '',
+		sessions: [{ id: 'sess-1', activeTabId: 'tab-1' }],
+		activeSessionId: 'sess-1',
 	} as any);
 
-	useUIStore.setState({ outputSearchOpen: false });
+	useUIStore.setState({ outputSearchByKey: {} });
 
 	useSettingsStore.setState({
 		enterToSendAI: true,
@@ -156,7 +156,7 @@ describe('Cmd+F output search', () => {
 		});
 
 		expect(e.preventDefault).toHaveBeenCalled();
-		expect(useUIStore.getState().outputSearchOpen).toBe(true);
+		expect(useUIStore.getState().outputSearchByKey['sess-1::tab-1']?.open).toBe(true);
 	});
 
 	it('opens output search on Ctrl+F', () => {
@@ -169,7 +169,7 @@ describe('Cmd+F output search', () => {
 		});
 
 		expect(e.preventDefault).toHaveBeenCalled();
-		expect(useUIStore.getState().outputSearchOpen).toBe(true);
+		expect(useUIStore.getState().outputSearchByKey['sess-1::tab-1']?.open).toBe(true);
 	});
 });
 

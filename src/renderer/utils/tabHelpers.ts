@@ -14,6 +14,7 @@ import {
 	UsageStats,
 	ToolType,
 	ThinkingMode,
+	QueuedItem,
 } from '../types';
 import { generateId } from './ids';
 import { getAutoRunFolderPath } from './existingDocsDetector';
@@ -437,6 +438,73 @@ export function getActiveTab(session: Session): AITab | undefined {
 }
 
 /**
+ * Where a dequeued execution-queue item should run.
+ *
+ * - `'aiTab'`  - the tab it was queued against is still open (normal foreground send).
+ * - `'orphan'` - the user closed that tab while the message was still queued, so it now
+ *   lives in `orphanedThinkingTabs` and the send is fire-and-forget. Busy state and the
+ *   user log MUST route there, never onto whatever tab happens to be active.
+ * - `'active'` - the item has no resolvable tabId (legacy item, or the tab was
+ *   hard-deleted) so we fall back to the active tab.
+ */
+export interface QueuedItemTarget {
+	tabId: string;
+	location: 'aiTab' | 'orphan' | 'active';
+}
+
+/**
+ * Resolve which tab a dequeued {@link QueuedItem} runs on.
+ *
+ * Every dispatch path (onExit, interrupt, kill, queue recovery, debug release) shares
+ * this resolver so a message queued on a since-closed tab can never leak into the
+ * foreground conversation. The item carries the tabId it was queued against; we look in
+ * `aiTabs` first, then `orphanedThinkingTabs` (closed-but-still-draining tabs), and only
+ * fall back to the active tab when the item truly has nowhere else to go.
+ *
+ * Returns `null` only when the session has no aiTabs at all (caller decides what to do).
+ */
+export function resolveQueuedItemTarget(
+	session: Session,
+	item: Pick<QueuedItem, 'tabId'>
+): QueuedItemTarget | null {
+	if (item.tabId) {
+		if (session.aiTabs?.some((tab) => tab.id === item.tabId)) {
+			return { tabId: item.tabId, location: 'aiTab' };
+		}
+		const orphan = session.orphanedThinkingTabs?.find((tab) => tab.id === item.tabId);
+		if (orphan) {
+			return { tabId: orphan.id, location: 'orphan' };
+		}
+	}
+	const active = getActiveTab(session);
+	return active ? { tabId: active.id, location: 'active' } : null;
+}
+
+/**
+ * Mark a tab as running a dequeued queue item: set it busy/thinking and, for message
+ * items, append the user-visible log entry. Shared by every dispatch path so the
+ * busy-state + log construction stays identical (and lands on the resolved target tab,
+ * which may be an orphan - see {@link resolveQueuedItemTarget}).
+ */
+export function markTabRunningQueuedItem(tab: AITab, item: QueuedItem): AITab {
+	const now = Date.now();
+	const next: AITab = { ...tab, state: 'busy', thinkingStartTime: now };
+	if (item.type === 'message' && item.text) {
+		const logEntry: LogEntry = {
+			id: generateId(),
+			timestamp: now,
+			source: 'user',
+			text: item.text,
+			images: item.images,
+			...(item.forceParallel && { forceParallel: true }),
+			...(item.readOnlyMode && { readOnly: true }),
+		};
+		next.logs = [...tab.logs, logEntry];
+	}
+	return next;
+}
+
+/**
  * Options for creating a new AI tab.
  */
 export interface CreateTabOptions {
@@ -745,13 +813,21 @@ export function closeTab(
 								unifiedTabOrder: finalUnifiedTabOrder,
 							};
 
-	// If the closed tab was busy, keep tracking it in orphanedThinkingTabs so the
-	// thinking pill stays visible until the underlying agent process actually finishes.
-	// The pill picks these up alongside busy aiTabs. The agent exit/error listeners
-	// drop the orphan once the process is gone.
+	// Keep tracking the closed tab in orphanedThinkingTabs when it still has work
+	// in flight, so the thinking pill stays visible and the tab survives as a
+	// dispatch target until that work finishes. Two cases qualify:
+	//   1. It was busy (an agent turn is mid-flight).
+	//   2. It has queued items waiting (a message the user already sent that should
+	//      still fire in the background - fire-and-forget).
+	// The pill picks orphans up alongside busy aiTabs. The agent exit/error
+	// listeners drop the orphan once its process is gone and its queue is drained.
 	const closedTabWasBusy = tabToClose.state === 'busy';
+	const closedTabHasQueuedItems = (session.executionQueue ?? []).some(
+		(item) => item.tabId === tabId
+	);
+	const shouldOrphanClosedTab = closedTabWasBusy || closedTabHasQueuedItems;
 	const anyRemainingTabBusy = updatedTabs.some((tab) => tab.state === 'busy');
-	const updatedOrphans: AITab[] | undefined = closedTabWasBusy
+	const updatedOrphans: AITab[] | undefined = shouldOrphanClosedTab
 		? [...(session.orphanedThinkingTabs ?? []), tabToClose]
 		: session.orphanedThinkingTabs;
 	const hasOrphans = (updatedOrphans?.length ?? 0) > 0;
@@ -774,6 +850,11 @@ export function closeTab(
 				}
 			: sessionWithOrphans;
 
+	// Queued items targeting the just-closed tab are intentionally preserved. A
+	// message the user already sent fires in the background against the now-orphaned
+	// tab (see the orphan-drain path in useAgentExitListener), so closing the tab is
+	// fire-and-forget rather than a discard. The tab survives in orphanedThinkingTabs
+	// to carry its agent session id for continuity and to be a valid dispatch target.
 	return {
 		closedTab,
 		session: finalSession,
@@ -1486,6 +1567,35 @@ export function reopenUnifiedClosedTab(session: Session): ReopenUnifiedClosedTab
 /**
  * Result of setting the active tab.
  */
+/**
+ * The session-state patch that focuses an agent's AI tab area.
+ *
+ * The main window renders exactly one tab type using this precedence:
+ *   terminal (inputMode==='terminal') > file (activeFileTabId) > browser
+ *   (activeBrowserTabId, while inputMode==='ai') > ai (activeTabId).
+ * See findActiveUnifiedTabIndex in unifiedTabOrderUtils.ts. Because browser, file,
+ * and terminal all outrank the AI tab, ANY code that wants to land the user on an
+ * AI tab must clear all three active-tab ids as well as set inputMode:'ai'. Leaving
+ * even one dangling keeps the previous view on screen (e.g. clicking a toast while a
+ * browser tab is active silently leaves the user on the browser tab).
+ *
+ * Spread this into a session update instead of hand-rolling the literal, so the
+ * invariant lives in one place:
+ *   updateSession(id, (s) => ({ ...s, ...aiTabFocusFields(tabId) }))
+ *
+ * @param tabId - The AI tab to activate. Omit to clear the non-AI views and force
+ *                AI mode without changing which AI tab is active.
+ */
+export function aiTabFocusFields(tabId?: string): Partial<Session> {
+	return {
+		...(tabId ? { activeTabId: tabId } : {}),
+		activeFileTabId: null,
+		activeTerminalTabId: null,
+		activeBrowserTabId: null,
+		inputMode: 'ai',
+	};
+}
+
 export interface SetActiveTabResult {
 	tab: AITab; // The newly active tab
 	session: Session; // Updated session with activeTabId changed
@@ -1540,11 +1650,7 @@ export function setActiveTab(session: Session, tabId: string): SetActiveTabResul
 		tab: targetTab,
 		session: {
 			...session,
-			activeTabId: tabId,
-			activeFileTabId: null,
-			activeBrowserTabId: null,
-			activeTerminalTabId: null,
-			inputMode: 'ai' as const,
+			...aiTabFocusFields(tabId),
 		},
 	};
 }
@@ -1580,7 +1686,14 @@ export function getWriteModeTab(session: Session): AITab | undefined {
  * This is useful for the busy tab indicator which needs to show ALL busy tabs,
  * not just the first one found.
  *
+ * Pass `{ includeOrphans: true }` to also count closed-but-still-thinking tabs
+ * (those parked in `orphanedThinkingTabs`). Those tabs keep writing in the
+ * background after the user closes them, so any single-writer gate must treat
+ * them as live writers - excluding them lets a new write spawn concurrently with
+ * an orphan, violating single-writer-per-agent.
+ *
  * @param session - The Maestro session
+ * @param options.includeOrphans - Also include busy orphaned (closed) tabs
  * @returns Array of busy AITabs (empty if none are busy)
  *
  * @example
@@ -1592,12 +1705,16 @@ export function getWriteModeTab(session: Session): AITab | undefined {
  *   });
  * }
  */
-export function getBusyTabs(session: Session): AITab[] {
-	if (!session || !session.aiTabs || session.aiTabs.length === 0) {
+export function getBusyTabs(session: Session, options: { includeOrphans?: boolean } = {}): AITab[] {
+	if (!session) {
 		return [];
 	}
 
-	return session.aiTabs.filter((tab) => tab.state === 'busy');
+	const tabs = options.includeOrphans
+		? [...(session.aiTabs ?? []), ...(session.orphanedThinkingTabs ?? [])]
+		: (session.aiTabs ?? []);
+
+	return tabs.filter((tab) => tab.state === 'busy');
 }
 
 /**

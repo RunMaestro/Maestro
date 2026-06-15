@@ -27,6 +27,21 @@ import { captureMessage } from '../utils/sentry';
 
 const LOG_CONTEXT = 'CapabilitySnapshot';
 
+/**
+ * Connection-level probe failures (SSH timeout, refused, unreachable host,
+ * DNS miss, reset) are expected and recoverable - they just mean a configured
+ * remote is currently offline or unreachable. They fire on every periodic
+ * reprobe of a down host, so reporting each one to Sentry buries genuinely
+ * unexpected probe failures under network noise. We still persist the `failed`
+ * status (red pill) so the UI reflects reality; we just skip the breadcrumb.
+ * Fixes MAESTRO-RA.
+ */
+function isExpectedConnectionFailure(error: string): boolean {
+	return /connection timed out|operation timed out|connection refused|connection reset|connection closed|network is unreachable|no route to host|could not resolve hostname|host key verification failed|timed out after \d+s/i.test(
+		error
+	);
+}
+
 // Re-export so main-process call sites have a single import path.
 export { SNAPSHOT_UPDATED_CHANNEL, type SnapshotUpdatedPayload };
 
@@ -138,11 +153,13 @@ export class CapabilitySnapshotManager {
 	 * Sends a low-volume Sentry breadcrumb so real-world failure modes surface.
 	 */
 	markFailed(agentId: string, error: string, remoteId?: string | null): AgentCapabilitiesSnapshot {
-		void captureMessage('agent-probe-failed', 'warning', {
-			agentId,
-			remoteId: remoteId ?? null,
-			error: error.slice(0, 500), // cap to avoid bloating sentry events
-		});
+		if (!isExpectedConnectionFailure(error)) {
+			void captureMessage('agent-probe-failed', 'warning', {
+				agentId,
+				remoteId: remoteId ?? null,
+				error: error.slice(0, 500), // cap to avoid bloating sentry events
+			});
+		}
 		return this.write(agentId, { status: 'failed', lastError: error }, remoteId);
 	}
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	DEFAULT_BROWSER_TAB_URL,
 	DEFAULT_BROWSER_TAB_TITLE,
+	getBrowserTabLabel,
 	getBrowserTabPartition,
 	getBrowserTabTitle,
 	getSafeBrowserTabPartition,
@@ -9,6 +10,7 @@ import {
 	sanitizeBrowserTabForPersistence,
 	resolveBrowserTabNavigationTarget,
 } from '../../../renderer/utils/browserTabPersistence';
+import type { BrowserTab } from '../../../renderer/types';
 
 describe('browserTabPersistence', () => {
 	describe('resolveBrowserTabNavigationTarget', () => {
@@ -59,6 +61,53 @@ describe('browserTabPersistence', () => {
 
 		it('uses the default new-tab title for about:blank without a page title', () => {
 			expect(getBrowserTabTitle(DEFAULT_BROWSER_TAB_URL, '')).toBe(DEFAULT_BROWSER_TAB_TITLE);
+		});
+
+		describe('getBrowserTabLabel', () => {
+			// Build a BrowserTab with sensible defaults so each case only sets the
+			// fields under test (customTitle / title / url).
+			const makeTab = (overrides: Partial<BrowserTab>): BrowserTab => ({
+				id: 'browser-1',
+				url: 'https://example.com/docs',
+				title: '',
+				createdAt: 1,
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: false,
+				...overrides,
+			});
+
+			it('prefers a user-assigned customTitle over the page title and URL', () => {
+				expect(getBrowserTabLabel(makeTab({ customTitle: 'My Tab', title: 'Page Title' }))).toBe(
+					'My Tab'
+				);
+			});
+
+			it('ignores a blank/whitespace customTitle and falls back to the page title', () => {
+				expect(getBrowserTabLabel(makeTab({ customTitle: '   ', title: 'Page Title' }))).toBe(
+					'Page Title'
+				);
+			});
+
+			it('uses the page title when no customTitle is set', () => {
+				expect(getBrowserTabLabel(makeTab({ title: 'Page Title' }))).toBe('Page Title');
+			});
+
+			it('falls back to the URL host when neither customTitle nor title is set', () => {
+				expect(getBrowserTabLabel(makeTab({ title: '', url: 'https://fallback.com/path' }))).toBe(
+					'fallback.com'
+				);
+			});
+
+			it('uses the default new-tab title for the blank URL with no titles', () => {
+				expect(getBrowserTabLabel(makeTab({ title: '', url: DEFAULT_BROWSER_TAB_URL }))).toBe(
+					DEFAULT_BROWSER_TAB_TITLE
+				);
+			});
+
+			it('returns the raw string when the URL cannot be parsed', () => {
+				expect(getBrowserTabLabel(makeTab({ title: '', url: 'not a url' }))).toBe('not a url');
+			});
 		});
 
 		it('sanitizes session ids when deriving persisted browser partitions', () => {

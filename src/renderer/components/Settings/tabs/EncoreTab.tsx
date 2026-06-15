@@ -13,6 +13,7 @@ import {
 	Settings,
 	Check,
 	Database,
+	Globe,
 	Music,
 	Lock,
 	Plus,
@@ -1253,6 +1254,99 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 								How far back to look when generating notes (can be adjusted per-report)
 							</p>
 						</div>
+					</div>
+				)}
+			</div>
+
+			{/* Web-Desktop Bundle Feature Section */}
+			<div
+				data-setting-id="encore-web-desktop-bundle"
+				className="rounded-lg border"
+				style={{
+					borderColor: encoreFeatures.webDesktopBundle ? theme.colors.accent : theme.colors.border,
+					backgroundColor: encoreFeatures.webDesktopBundle
+						? `${theme.colors.accent}08`
+						: 'transparent',
+				}}
+			>
+				<button
+					className="w-full flex items-center justify-between p-4 text-left"
+					onClick={() =>
+						setEncoreFeatures({
+							...encoreFeatures,
+							webDesktopBundle: !encoreFeatures.webDesktopBundle,
+						})
+					}
+				>
+					<div className="flex items-center gap-3">
+						<Globe
+							className="w-5 h-5"
+							style={{
+								color: encoreFeatures.webDesktopBundle ? theme.colors.accent : theme.colors.textDim,
+							}}
+						/>
+						<div>
+							<div
+								className="text-sm font-bold flex items-center gap-2"
+								style={{ color: theme.colors.textMain }}
+							>
+								Web-Desktop Bundle
+								<span
+									className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
+									style={{
+										backgroundColor: theme.colors.warning + '30',
+										color: theme.colors.warning,
+									}}
+								>
+									Beta
+								</span>
+							</div>
+							<div className="text-xs mt-0.5" style={{ color: theme.colors.textDim }}>
+								Serve the full desktop UI through the browser at{' '}
+								<code className="text-[10px] opacity-80">/&lt;token&gt;/desktop/</code> — control
+								Maestro from your phone, tablet, or another machine over Tailscale
+							</div>
+						</div>
+					</div>
+					<div
+						className={`relative w-10 h-5 rounded-full transition-colors ${encoreFeatures.webDesktopBundle ? '' : 'opacity-50'}`}
+						style={{
+							backgroundColor: encoreFeatures.webDesktopBundle
+								? theme.colors.accent
+								: theme.colors.border,
+						}}
+					>
+						<div
+							className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform"
+							style={{
+								transform: encoreFeatures.webDesktopBundle ? 'translateX(22px)' : 'translateX(2px)',
+							}}
+						/>
+					</div>
+				</button>
+
+				{encoreFeatures.webDesktopBundle && (
+					<div
+						className="px-4 pb-4 space-y-2 border-t"
+						style={{ borderColor: theme.colors.border }}
+					>
+						<p className="text-xs pt-3" style={{ color: theme.colors.textDim }}>
+							When enabled, the web-server exposes the desktop renderer at
+							<code className="mx-1 text-[10px]" style={{ color: theme.colors.textMain }}>
+								http://&lt;host&gt;:&lt;port&gt;/&lt;token&gt;/desktop/
+							</code>
+							alongside the mobile interface. The browser session mirrors the desktop 1:1 via a
+							WebSocket IPC bridge — agent input, output, sessions, and tabs all sync.
+						</p>
+						<p
+							className="text-xs px-3 py-2 rounded"
+							style={{
+								color: theme.colors.warning,
+								backgroundColor: `${theme.colors.warning}10`,
+							}}
+						>
+							⚠️ Restart Maestro after toggling — the bridge installs once at server startup.
+						</p>
 					</div>
 				)}
 			</div>

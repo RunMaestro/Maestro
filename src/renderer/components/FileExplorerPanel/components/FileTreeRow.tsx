@@ -7,6 +7,7 @@ import type { FileNode } from '../../../types/fileTree';
 import type { FileExplorerIconTheme } from '../../../utils/fileExplorerIcons/shared';
 import type { FlattenedNode } from '../types';
 import { FILE_TREE_SINGLE_MIME, FILE_TREE_MULTI_MIME } from '../types';
+import { parentDirOf } from '../utils/pathHelpers';
 
 interface VirtualRow {
 	index: number;
@@ -33,9 +34,19 @@ interface FileTreeRowProps {
 	fileTreeFilter: string;
 	htmlDoubleClickOpensInBrowser: boolean;
 	sshRemoteId: string | undefined;
+	isTouchPointer: boolean;
+	longPressTimerRef: React.MutableRefObject<number | null>;
+	longPressFiredRef: React.MutableRefObject<boolean>;
 	lastClickedUnderFilterRef: React.MutableRefObject<string | null>;
 	setActiveFocus: (focus: FocusArea) => void;
 	handleRowSelectionClick: (e: React.MouseEvent, globalIndex: number, fullPath: string) => void;
+	openContextMenuAt: (
+		x: number,
+		y: number,
+		node: FileNode,
+		path: string,
+		globalIndex: number
+	) => void;
 	handleContextMenu: (
 		e: React.MouseEvent,
 		node: FileNode,
@@ -46,7 +57,7 @@ interface FileTreeRowProps {
 	handleFolderDragOver: (e: React.DragEvent, destFolderRelative: string) => void;
 	handleFolderDragLeave: (e: React.DragEvent) => void;
 	handleFolderDrop: (e: React.DragEvent, destFolderRelative: string) => void;
-	onInternalDragStart: () => void;
+	onInternalDragStart: (showRootReceptacle: boolean) => void;
 	onInternalDragEnd: () => void;
 	toggleFolder: (
 		path: string,
@@ -82,9 +93,13 @@ export const FileTreeRow = memo(function FileTreeRow({
 	fileTreeFilter,
 	htmlDoubleClickOpensInBrowser,
 	sshRemoteId,
+	isTouchPointer,
+	longPressTimerRef,
+	longPressFiredRef,
 	lastClickedUnderFilterRef,
 	setActiveFocus,
 	handleRowSelectionClick,
+	openContextMenuAt,
 	handleContextMenu,
 	handleFolderDragEnter,
 	handleFolderDragOver,
@@ -132,6 +147,20 @@ export const FileTreeRow = memo(function FileTreeRow({
 	const isKeyboardSelected =
 		activeFocus === 'right' && activeRightTab === 'files' && globalIndex === selectedFileIndex;
 	const isMultiSelected = selectedPaths.has(fullPath);
+
+	const openFile = () => {
+		if (isFolder) return;
+		const isHtml = /\.html?$/i.test(node.name);
+		if (htmlDoubleClickOpensInBrowser && isHtml && !sshRemoteId && onOpenBrowserTabAt) {
+			const encodedPath = absolutePath
+				.split('/')
+				.map((seg) => encodeURIComponent(seg))
+				.join('/');
+			onOpenBrowserTabAt(`file://${encodedPath}`, { title: node.name });
+			return;
+		}
+		void handleFileClick(node, fullPath, session);
+	};
 
 	// Generate indent guides for each depth level
 	const indentGuides = [];
@@ -182,23 +211,30 @@ export const FileTreeRow = memo(function FileTreeRow({
 			}}
 			draggable
 			onDragStart={(e) => {
-				// Reveal the "move to root" receptacle for the duration of the drag.
-				onInternalDragStart();
 				// If this row is part of an active multi-selection, drag the whole
 				// group; otherwise drag just this row (and collapse selection so
 				// it visually matches what's being dragged).
 				const currentSelection = selectedPathsRef.current;
 				const isPartOfMultiSelection = currentSelection.size > 1 && currentSelection.has(fullPath);
+				let sources: string[];
 				if (isPartOfMultiSelection) {
 					const paths = Array.from(currentSelection);
+					sources = paths;
 					// Single-path MIME stays populated for the receivers (AI input,
 					// existing drop handlers) that don't yet understand the multi MIME.
 					e.dataTransfer.setData(FILE_TREE_SINGLE_MIME, fullPath);
 					e.dataTransfer.setData(FILE_TREE_MULTI_MIME, JSON.stringify(paths));
 				} else {
 					if (currentSelection.size > 0) setSelectedPaths(new Set());
+					sources = [fullPath];
 					e.dataTransfer.setData(FILE_TREE_SINGLE_MIME, fullPath);
 				}
+				// Reveal the "move to root" receptacle for the duration of the drag -
+				// but only when at least one dragged item lives in a subfolder. Items
+				// already at the root have nowhere to go, so the receptacle would be a
+				// dead target; suppress it so we don't offer a no-op drop.
+				const allSourcesAtRoot = sources.every((p) => parentDirOf(p) === '');
+				onInternalDragStart(!allSourcesAtRoot);
 				// 'copyMove' so folder-row drop targets can choose 'move' (in-tree
 				// reorganisation) while drops on the AI input still default to copy
 				// (insert @mention without moving the source file).
@@ -214,7 +250,53 @@ export const FileTreeRow = memo(function FileTreeRow({
 					e.preventDefault();
 				}
 			}}
+			onTouchStart={(e) => {
+				longPressFiredRef.current = false;
+				if (longPressTimerRef.current) {
+					window.clearTimeout(longPressTimerRef.current);
+				}
+				const touch = e.touches[0];
+				const x = touch.clientX;
+				const y = touch.clientY;
+				longPressTimerRef.current = window.setTimeout(() => {
+					longPressFiredRef.current = true;
+					openContextMenuAt(x, y, node, fullPath, globalIndex);
+					const swallow = (ev: Event) => {
+						ev.stopPropagation();
+						document.removeEventListener('mousedown', swallow, true);
+						document.removeEventListener('click', swallow, true);
+					};
+					document.addEventListener('mousedown', swallow, true);
+					document.addEventListener('click', swallow, true);
+					window.setTimeout(() => {
+						document.removeEventListener('mousedown', swallow, true);
+						document.removeEventListener('click', swallow, true);
+					}, 1000);
+				}, 500);
+			}}
+			onTouchMove={() => {
+				if (longPressTimerRef.current) {
+					window.clearTimeout(longPressTimerRef.current);
+					longPressTimerRef.current = null;
+				}
+			}}
+			onTouchEnd={() => {
+				if (longPressTimerRef.current) {
+					window.clearTimeout(longPressTimerRef.current);
+					longPressTimerRef.current = null;
+				}
+			}}
+			onTouchCancel={() => {
+				if (longPressTimerRef.current) {
+					window.clearTimeout(longPressTimerRef.current);
+					longPressTimerRef.current = null;
+				}
+			}}
 			onClick={(e) => {
+				if (longPressFiredRef.current) {
+					longPressFiredRef.current = false;
+					return;
+				}
 				if (fileTreeFilter.length > 0) {
 					lastClickedUnderFilterRef.current = fullPath;
 				}
@@ -233,24 +315,13 @@ export const FileTreeRow = memo(function FileTreeRow({
 					} else {
 						toggleFolder(fullPath, session.id, setSessions);
 					}
+				} else if (isTouchPointer) {
+					openFile();
 				}
 			}}
 			onDoubleClick={() => {
-				if (isFolder) return;
-				// Optional shortcut: HTML files can default to opening in the
-				// Maestro browser instead of the preview. SSH skips this (file://
-				// can't reach the remote host); the right-click menu still offers
-				// both paths regardless of the setting.
-				const isHtml = /\.html?$/i.test(node.name);
-				if (htmlDoubleClickOpensInBrowser && isHtml && !sshRemoteId && onOpenBrowserTabAt) {
-					const encodedPath = absolutePath
-						.split('/')
-						.map((seg) => encodeURIComponent(seg))
-						.join('/');
-					onOpenBrowserTabAt(`file://${encodedPath}`, { title: node.name });
-					return;
-				}
-				handleFileClick(node, fullPath, session);
+				if (isTouchPointer) return;
+				openFile();
 			}}
 			onContextMenu={(e) => handleContextMenu(e, node, fullPath, globalIndex)}
 		>

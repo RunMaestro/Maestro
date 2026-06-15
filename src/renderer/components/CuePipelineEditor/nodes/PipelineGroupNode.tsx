@@ -12,6 +12,7 @@ export interface PipelineGroupNodeDataProps {
 
 export const PipelineGroupNode = memo(function PipelineGroupNode({
 	data,
+	selected,
 }: NodeProps<PipelineGroupNodeDataProps>) {
 	return (
 		<div
@@ -19,11 +20,15 @@ export const PipelineGroupNode = memo(function PipelineGroupNode({
 				width: data.width,
 				height: data.height,
 				backgroundColor: `${data.color}14`,
-				border: `1px dashed ${data.color}66`,
+				// Selection bumps the border to solid + a soft ring so it's
+				// obvious which pipeline you grabbed before dragging it.
+				border: `1px ${selected ? 'solid' : 'dashed'} ${data.color}${selected ? 'cc' : '66'}`,
+				boxShadow: selected ? `0 0 0 2px ${data.color}55` : 'none',
 				borderRadius: 12,
-				// Pointer events ENABLED — empty area inside the group is the
-				// drag handle. Real pipeline nodes render on top (default
-				// zIndex 0 vs group's -1) so clicks on them still go to them.
+				// Pointer events ENABLED. In pointer/select mode the group sits
+				// above its content nodes (zIndex 5) so the whole body is the
+				// drag handle; in hand mode it drops behind (zIndex -1) so empty
+				// area pans the canvas.
 				position: 'relative',
 				cursor: 'grab',
 			}}

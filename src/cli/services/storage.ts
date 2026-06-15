@@ -66,6 +66,24 @@ function writeStoreFile<T>(filename: string, data: T): void {
 	fs.writeFileSync(filePath, JSON.stringify(data, null, '\t'), 'utf-8');
 }
 
+/**
+ * Atomically write JSON to `filePath` via a temp file + rename. rename() is
+ * atomic on POSIX, so a concurrent reader (the desktop app reads these same
+ * history files) never sees a partial or `}{`-concatenated file. Mirrors the
+ * app-side `atomicWriteJson`; kept local so the CLI bundle stays free of the
+ * main-process import chain.
+ */
+function atomicWriteFileSync(filePath: string, content: string): void {
+	// Safety gate: never rename empty/unparseable content over a good file.
+	if (!content) {
+		throw new Error(`Refusing to write empty content to ${filePath}`);
+	}
+	JSON.parse(content); // throws before touching the file if content isn't valid JSON
+	const tmp = `${filePath}.tmp`;
+	fs.writeFileSync(tmp, content, 'utf-8');
+	fs.renameSync(tmp, filePath);
+}
+
 // Store file structures (as used by Electron Store)
 interface SessionsStore {
 	sessions: SessionInfo[];
@@ -563,6 +581,13 @@ export function addHistoryEntry(entry: HistoryEntry): void {
 				try {
 					data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
 				} catch {
+					// Corrupt history: preserve the bytes aside for recovery
+					// instead of silently overwriting them with a fresh file.
+					try {
+						fs.renameSync(filePath, `${filePath}.corrupt-${Date.now()}`);
+					} catch {
+						// best-effort; fall through to a fresh file either way
+					}
 					data = {
 						version: HISTORY_VERSION,
 						sessionId,
@@ -590,7 +615,7 @@ export function addHistoryEntry(entry: HistoryEntry): void {
 			// Update projectPath if it changed
 			data.projectPath = entry.projectPath;
 
-			fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+			atomicWriteFileSync(filePath, JSON.stringify(data, null, 2));
 		} else {
 			// Use legacy format
 			const filePath = path.posix.join(getConfigDir(), 'maestro-history.json');

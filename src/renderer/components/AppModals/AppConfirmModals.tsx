@@ -24,10 +24,16 @@ export interface AppConfirmModalsProps {
 	quitConfirmModalOpen: boolean;
 	onConfirmQuit: () => void;
 	onCancelQuit: () => void;
+	/** Defer the quit until all operations finish */
+	onQuitWhenIdle: () => void;
 	/** Session IDs with active auto-runs (batch processing) */
 	activeBatchSessionIds?: string[];
 	/** Active terminal tasks (e.g., "rc: npm test") for quit warning */
 	activeTerminalTasks?: string[];
+	/** Number of in-flight Maestro Cue runs */
+	activeCueRunCount?: number;
+	/** Number of active (non-idle) group chats */
+	activeGroupChatCount?: number;
 	/** True when the Feedback modal has an unsent draft */
 	hasFeedbackDraft?: boolean;
 }
@@ -53,8 +59,11 @@ export const AppConfirmModals = memo(function AppConfirmModals({
 	quitConfirmModalOpen,
 	onConfirmQuit,
 	onCancelQuit,
+	onQuitWhenIdle,
 	activeBatchSessionIds = [],
 	activeTerminalTasks = [],
+	activeCueRunCount = 0,
+	activeGroupChatCount = 0,
 	hasFeedbackDraft = false,
 }: AppConfirmModalsProps) {
 	// Compute busy agents for QuitConfirmModal
@@ -96,8 +105,11 @@ export const AppConfirmModals = memo(function AppConfirmModals({
 					busyAgentCount={allActiveAgents.length}
 					busyAgentNames={allActiveNames}
 					activeTerminalTasks={activeTerminalTasks}
+					activeCueRunCount={activeCueRunCount}
+					activeGroupChatCount={activeGroupChatCount}
 					hasFeedbackDraft={hasFeedbackDraft}
 					onConfirmQuit={onConfirmQuit}
+					onQuitWhenIdle={onQuitWhenIdle}
 					onCancel={onCancelQuit}
 				/>
 			)}

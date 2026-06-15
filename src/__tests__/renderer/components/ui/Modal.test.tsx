@@ -209,7 +209,7 @@ describe('Modal', () => {
 	});
 
 	describe('styling', () => {
-		it('should apply custom width', () => {
+		it('should scale custom width with the font by default', () => {
 			const onClose = vi.fn();
 
 			const { container } = render(
@@ -219,8 +219,53 @@ describe('Modal', () => {
 				{ wrapper: TestWrapper }
 			);
 
+			// scaleWidthWithFont defaults to true, so the baseline width is the
+			// font-scaled calc clamped to viewport width (no-op at scale 1).
+			const modalContainer = container.querySelector('.rounded-lg') as HTMLElement;
+			expect(modalContainer.style.width).toBe('min(calc(600px * var(--font-scale, 1)), 95vw)');
+		});
+
+		it('should use a literal px width when scaleWidthWithFont is false', () => {
+			const onClose = vi.fn();
+
+			const { container } = render(
+				<Modal
+					theme={mockTheme}
+					title="Fixed Modal"
+					priority={100}
+					onClose={onClose}
+					width={600}
+					scaleWidthWithFont={false}
+				>
+					<p>Content</p>
+				</Modal>,
+				{ wrapper: TestWrapper }
+			);
+
 			const modalContainer = container.querySelector('.rounded-lg');
 			expect(modalContainer).toHaveStyle({ width: '600px' });
+		});
+
+		it('should scale width with --font-scale when scaleWidthWithFont is set', () => {
+			const onClose = vi.fn();
+
+			const { container } = render(
+				<Modal
+					theme={mockTheme}
+					title="Scaling Modal"
+					priority={100}
+					onClose={onClose}
+					width={680}
+					scaleWidthWithFont
+				>
+					<p>Content</p>
+				</Modal>,
+				{ wrapper: TestWrapper }
+			);
+
+			const modalContainer = container.querySelector('.rounded-lg') as HTMLElement;
+			// Baseline width is the font-scaled calc clamped to viewport width, not a fixed px value.
+			expect(modalContainer.style.width).toBe('min(calc(680px * var(--font-scale, 1)), 95vw)');
 		});
 
 		it('should apply custom maxHeight', () => {

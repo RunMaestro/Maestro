@@ -19,6 +19,11 @@ export const QUOTA_REFRESH_OPTIONS: ReadonlyArray<{ value: number; label: string
 	{ value: 5 * 60_000, label: '5 min' },
 	{ value: 15 * 60_000, label: '15 min' },
 	{ value: 30 * 60_000, label: '30 min' },
+	{ value: 60 * 60_000, label: '1 hr' },
+	{ value: 4 * 60 * 60_000, label: '4 hr' },
+	{ value: 6 * 60 * 60_000, label: '6 hr' },
+	{ value: 12 * 60 * 60_000, label: '12 hr' },
+	{ value: 24 * 60 * 60_000, label: '24 hr' },
 ];
 
 /**

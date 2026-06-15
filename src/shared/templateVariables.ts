@@ -96,6 +96,8 @@ import { buildSessionDeepLink, buildGroupDeepLink } from './deep-link-urls';
  *   {{CUE_CLI_PROMPT}}      - Prompt text passed via --prompt flag (cli.trigger events)
  *   {{CUE_SOURCE_AGENT_ID}} - Source agent ID passed via --source-agent-id (cli.trigger events)
  *   {{CUE_FROM_AGENT}}      - Triggering upstream agent ID or session ID — populated from sourceSessionId (agent.completed) or sourceAgentId (cli.trigger)
+ *
+ *   {{CUE_FIRE_AT}}         - Originally-scheduled fire timestamp (ISO-8601 with timezone) for time.once events
  */
 
 /**
@@ -224,6 +226,8 @@ export interface TemplateContext {
 		// Unified upstream-agent session ID — `sourceSessionId` for agent.completed,
 		// `sourceAgentId` for cli.trigger. Surfaced as {{CUE_FROM_AGENT}}.
 		fromAgent?: string;
+		// time.once fields — originally-scheduled fire timestamp (ISO-8601 with TZ).
+		fireAt?: string;
 	};
 }
 
@@ -316,6 +320,11 @@ export const TEMPLATE_VARIABLES = [
 	{ variable: '{{CUE_FILE_EXT}}', description: 'Changed file extension', cueOnly: true },
 	{ variable: '{{CUE_FILE_NAME}}', description: 'Changed file name', cueOnly: true },
 	{ variable: '{{CUE_FILE_PATH}}', description: 'Changed file path', cueOnly: true },
+	{
+		variable: '{{CUE_FIRE_AT}}',
+		description: 'Originally-scheduled fire timestamp (time.once events)',
+		cueOnly: true,
+	},
 	{ variable: '{{CUE_RUN_ID}}', description: 'Cue run UUID', cueOnly: true },
 	{
 		variable: '{{CUE_SOURCE_DURATION}}',
@@ -526,6 +535,9 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		CUE_CLI_PROMPT: context.cue?.cliPrompt || '',
 		CUE_SOURCE_AGENT_ID: context.cue?.sourceAgentId || '',
 		CUE_FROM_AGENT: context.cue?.fromAgent || '',
+
+		// Cue time.once variables
+		CUE_FIRE_AT: context.cue?.fireAt || '',
 	};
 
 	// Add dynamic per-source output variables from the Cue context.

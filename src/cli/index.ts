@@ -22,6 +22,7 @@ import { status } from './commands/status';
 import { autoRun } from './commands/auto-run';
 import { cueTrigger } from './commands/cue-trigger';
 import { cueList } from './commands/cue-list';
+import { cueSchedule } from './commands/cue-schedule';
 import {
 	cuePipelineAdd,
 	cuePipelineExport,
@@ -31,6 +32,9 @@ import {
 	cuePipelineReplace,
 } from './commands/cue-pipeline';
 import { createAgent } from './commands/create-agent';
+import { createGroup } from './commands/create-group';
+import { removeGroup } from './commands/remove-group';
+import { createWorktree } from './commands/create-worktree';
 import { removeAgent } from './commands/remove-agent';
 import { updateAgent } from './commands/update-agent';
 import { listSshRemotes } from './commands/list-ssh-remotes';
@@ -53,6 +57,20 @@ import { gistCreate } from './commands/gist';
 import { notifyToast } from './commands/notify-toast';
 import { notifyFlash } from './commands/notify-flash';
 import { stats, statsQuery } from './commands/stats';
+import { renameAgent } from './commands/rename-agent';
+import { renameGroup } from './commands/rename-group';
+import {
+	stopAutoRun,
+	resumeAutoRun,
+	skipAutoRun,
+	abortAutoRun,
+	resetAutoRunTasks,
+} from './commands/auto-run-control';
+import { removePlaybook } from './commands/remove-playbook';
+import { focusAgent, switchMode } from './commands/agent-control';
+import { tabNew, tabClose, tabRename, tabStar } from './commands/tab';
+import { setTheme } from './commands/set-theme';
+import { encoreList, encoreSet } from './commands/encore';
 
 // Injected at build time by scripts/build-cli.mjs via esbuild `define`.
 // The typeof guard keeps non-esbuild execution paths (ts-node, plain tsc output) from
@@ -272,6 +290,50 @@ program
 	)
 	.action(autoRun);
 
+// Auto Run control commands - stop a run and recover from an error pause. These
+// complement `auto-run` (which launches) for full lifecycle control.
+program
+	.command('stop-auto-run')
+	.description('Stop the active Auto Run for an agent')
+	.requiredOption('-a, --agent <id>', 'Target agent ID')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => stopAutoRun(options.agent, options));
+
+program
+	.command('resume-auto-run')
+	.description('Resume an Auto Run that paused on an error')
+	.requiredOption('-a, --agent <id>', 'Target agent ID')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => resumeAutoRun(options.agent, options));
+
+program
+	.command('skip-auto-run')
+	.description('Skip the current document of an error-paused Auto Run and continue')
+	.requiredOption('-a, --agent <id>', 'Target agent ID')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => skipAutoRun(options.agent, options));
+
+program
+	.command('abort-auto-run')
+	.description('Abort an error-paused Auto Run')
+	.requiredOption('-a, --agent <id>', 'Target agent ID')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => abortAutoRun(options.agent, options));
+
+program
+	.command('reset-auto-run-tasks <filename>')
+	.description('Reset all completed [x] tasks back to [ ] in an Auto Run document')
+	.requiredOption('-a, --agent <id>', 'Target agent ID')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((filename, options) => resetAutoRunTasks(options.agent, filename, options));
+
+// Remove playbook command - delete a saved playbook from an agent
+program
+	.command('remove-playbook <agent-id> <playbook-id>')
+	.description('Remove a saved playbook from an agent (find IDs via "list playbooks -a <agent>")')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((agentId, playbookId, options) => removePlaybook(agentId, playbookId, options));
+
 // Cue commands - interact with Maestro Cue automation
 const cue = program.command('cue').description('Interact with Maestro Cue automation');
 
@@ -288,6 +350,33 @@ cue
 	.description('List all Cue subscriptions across agents')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(cueList);
+
+// Cue schedule — author / inspect / cancel one-shot `time.once` subscriptions.
+// Primary agent surface for "in 20 minutes do X" or "remind me at 4pm…" — writes
+// directly to the agent's `.maestro/cue.yaml` so it works without the desktop
+// app running. See `cue-schedule.ts` for the full flag matrix.
+cue
+	.command('schedule')
+	.description('Schedule a one-shot Cue task (or --list / --cancel pending tasks)')
+	.option('--in <duration>', 'Fire after a relative delay (e.g. 30s, 20m, 2h, 1d)')
+	.option('--at <timestamp>', 'Fire at ISO-8601 timestamp or "YYYY-MM-DD HH:MM" (local time)')
+	.option('--list', 'List all pending one-shot tasks across agents')
+	.option('--cancel <name>', 'Cancel a pending one-shot task by name')
+	.option('-a, --agent <id-or-name>', 'Target agent (required when creating)')
+	.option('-p, --prompt <text>', 'Prompt to send when the task fires')
+	.option('--notify', 'Show a toast notification when the task fires')
+	.option('--sticky', 'Make the notify toast sticky (requires --notify)')
+	.option('-m, --message <text>', 'Body for the notify toast (defaults to label/prompt)')
+	.option('-n, --name <name>', 'Custom subscription name (auto-generated when omitted)')
+	.option('-l, --label <text>', 'Human-readable label (defaults to truncated prompt)')
+	.option('--pipeline <name>', 'Pipeline name (default: Tasks)')
+	.option('--grace-minutes <n>', 'Override the default 360-minute grace window')
+	.option(
+		'--keep-on-failure',
+		'Keep the subscription on a failed/timed-out run (default: self-destructs on both success and failure)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(cueSchedule);
 
 // Cue pipeline subcommands — manage entries in cue-pipeline-layout.json.
 // Designed for batch scaffolding (e.g. PowerShell scripts that bootstrap
@@ -400,6 +489,57 @@ program
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(createAgent);
 
+// Create group command - create a new group in the Maestro desktop app
+program
+	.command('create-group <name>')
+	.description('Create a new group in the Maestro desktop app')
+	.option('-e, --emoji <emoji>', 'Emoji icon for the group')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(createGroup);
+
+// Remove group command - delete a group from the Maestro desktop app. Agents
+// inside are ungrouped, not deleted. Refuses a non-empty group without --force.
+program
+	.command('remove-group <group-id>')
+	.description(
+		'Remove a group from the Maestro desktop app (agents inside are ungrouped, not deleted)'
+	)
+	.option('-f, --force', 'Delete even if the group still has agents (ungroups them)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(removeGroup);
+
+// Rename group command - change a group's name in the desktop app
+program
+	.command('rename-group <group-id> <new-name>')
+	.description('Rename a group in the Maestro desktop app')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((groupId, newName, options) => renameGroup(groupId, newName, options));
+
+// Create-worktree command - create a new agent in a git worktree off a parent
+// agent, without an Auto Run playbook. The parent agent must already exist in
+// the running desktop app.
+program
+	.command('create-worktree')
+	.description('Create a new agent in a git worktree branched off an existing parent agent')
+	.requiredOption(
+		'-a, --agent <id>',
+		'Parent agent ID the worktree branches from (use "maestro-cli list agents" to find IDs)'
+	)
+	.requiredOption(
+		'-b, --branch <name>',
+		'Branch name for the worktree (created if it does not exist)'
+	)
+	.option(
+		'--base-branch <name>',
+		'Ref the new branch is based on when it does not yet exist (e.g. "rc" or "main"). Defaults to the parent repo HEAD.'
+	)
+	.option(
+		'-m, --message <text>',
+		'Optional initial prompt to dispatch to the new agent after creation'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(createWorktree);
+
 // Remove agent command - remove an agent from the Maestro desktop app
 program
 	.command('remove-agent <agent-id>')
@@ -423,6 +563,63 @@ program
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(updateAgent);
+
+// Rename agent command - change an agent's display name in the desktop app
+program
+	.command('rename-agent <agent-id> <new-name>')
+	.description('Rename an agent in the Maestro desktop app')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((agentId, newName, options) => renameAgent(agentId, newName, options));
+
+// Focus agent command - select/focus an agent (and optionally a tab) in the UI
+program
+	.command('focus-agent <agent-id>')
+	.description('Focus (select) an agent in the Maestro desktop UI')
+	.option('--tab <tab-id>', 'Also focus this tab within the agent')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((agentId, options) => focusAgent(agentId, options));
+
+// Switch mode command - toggle an agent between AI and terminal mode
+program
+	.command('switch-mode <agent-id> <mode>')
+	.description('Switch an agent between "ai" and "terminal" mode')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((agentId, mode, options) => switchMode(agentId, mode, options));
+
+// Tab commands - manage an agent's AI tabs in the desktop app
+const tab = program.command('tab').description("Manage an agent's tabs in the desktop app");
+
+tab
+	.command('new')
+	.description('Open a new tab for an agent (optionally seeded with a prompt)')
+	.requiredOption('-a, --agent <id>', 'Target agent ID')
+	.option('-p, --prompt <text>', 'Seed the new AI tab with this prompt')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => tabNew(options));
+
+tab
+	.command('close <tab-id>')
+	.description('Close a tab (owning agent is resolved automatically)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((tabId, options) => tabClose(tabId, options));
+
+tab
+	.command('rename <tab-id> <new-name>')
+	.description('Rename a tab')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((tabId, newName, options) => tabRename(tabId, newName, options));
+
+tab
+	.command('star <tab-id>')
+	.description('Star a tab')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((tabId, options) => tabStar(tabId, true, options));
+
+tab
+	.command('unstar <tab-id>')
+	.description('Unstar a tab')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((tabId, options) => tabStar(tabId, false, options));
 
 // Create SSH remote command - add a new SSH remote configuration
 program
@@ -519,6 +716,38 @@ agent
 	.description('Remove an agent config key')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(settingsAgentReset);
+
+// Set theme command - switch the active theme live (ergonomic wrapper over the
+// activeThemeId setting with validation + discovery).
+program
+	.command('set-theme [name-or-id]')
+	.description('Switch the active Maestro theme (applies live). Use --list to see options.')
+	.option('-l, --list', 'List available themes')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((nameOrId, options) => setTheme(nameOrId, options));
+
+// Encore commands - list and toggle experimental Encore features (applies live)
+const encore = program
+	.command('encore')
+	.description('List and toggle experimental Encore features');
+
+encore
+	.command('list')
+	.description('List Encore features and whether each is enabled')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => encoreList(options));
+
+encore
+	.command('enable <feature>')
+	.description('Enable an Encore feature (directorNotes, usageStats, symphony, maestroCue)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((feature, options) => encoreSet(feature, true, options));
+
+encore
+	.command('disable <feature>')
+	.description('Disable an Encore feature')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((feature, options) => encoreSet(feature, false, options));
 
 // Prompts command — read Maestro's bundled or user-customized system prompts.
 // Designed for agent self-fetch: parent prompts reference includes via `{{REF:_name}}`

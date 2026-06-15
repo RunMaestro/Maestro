@@ -1,4 +1,3 @@
-import React from 'react';
 import { createPortal } from 'react-dom';
 import { Check } from 'lucide-react';
 import { AUTO_REFRESH_OPTIONS } from '../types';

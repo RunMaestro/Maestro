@@ -1,8 +1,14 @@
 import { useState, useRef, useCallback, useEffect, useLayoutEffect, memo } from 'react';
 import { createPortal } from 'react-dom';
-import { FilePlus, Globe, Plus, Terminal } from 'lucide-react';
+import { FileText, Globe, MessageSquare, Plus, Terminal } from 'lucide-react';
 import type { Theme } from '../../types';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { getTabKindColor } from './tabBarUtils';
+
+// Single source of truth for the popover width. Used both for the overflow
+// math in handleClick (to decide whether to right-align near the viewport
+// edge) and as the rendered minWidth, so the two never drift apart.
+const POPOVER_MIN_WIDTH = 200;
 
 interface NewTabPopoverProps {
 	theme: Theme;
@@ -98,7 +104,15 @@ export const NewTabPopover = memo(function NewTabPopover({
 		const btn = btnRef.current;
 		if (!btn) return;
 		const rect = btn.getBoundingClientRect();
-		setPopoverPos({ top: rect.bottom + 4, left: rect.left });
+		// Right-align the popover when the button is too close to the right edge
+		// so the labels don't get clipped on narrow viewports (iOS Safari).
+		const VIEWPORT_MARGIN = 8;
+		const viewportW = window.innerWidth || document.documentElement.clientWidth;
+		const wouldOverflow = rect.left + POPOVER_MIN_WIDTH > viewportW - VIEWPORT_MARGIN;
+		const left = wouldOverflow
+			? Math.max(VIEWPORT_MARGIN, rect.right - POPOVER_MIN_WIDTH)
+			: rect.left;
+		setPopoverPos({ top: rect.bottom + 4, left });
 		setPopoverOpen((open) => !open);
 	}, [onNewFileTab, onNewBrowserTab, onNewTerminalTab, onNewTab]);
 
@@ -136,7 +150,7 @@ export const NewTabPopover = memo(function NewTabPopover({
 							left: popoverPos.left,
 							backgroundColor: theme.colors.bgSidebar,
 							border: `1px solid ${theme.colors.border}`,
-							minWidth: 180,
+							minWidth: POPOVER_MIN_WIDTH,
 						}}
 						onKeyDown={(e) => {
 							if (e.key === 'Escape') {
@@ -150,7 +164,10 @@ export const NewTabPopover = memo(function NewTabPopover({
 							style={{ color: theme.colors.textMain }}
 							onClick={() => closeAndDo(onNewTab)}
 						>
-							<Plus className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+							<MessageSquare
+								className="w-3.5 h-3.5"
+								style={{ color: getTabKindColor('ai', theme) }}
+							/>
 							New AI Chat
 							<span className="ml-auto text-xs" style={{ color: theme.colors.textDim }}>
 								{formatShortcutKeys(newTabKeys)}
@@ -162,7 +179,10 @@ export const NewTabPopover = memo(function NewTabPopover({
 								style={{ color: theme.colors.textMain }}
 								onClick={() => closeAndDo(onNewFileTab)}
 							>
-								<FilePlus className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+								<FileText
+									className="w-3.5 h-3.5"
+									style={{ color: getTabKindColor('file', theme) }}
+								/>
 								New File
 								<span className="ml-auto text-xs" style={{ color: theme.colors.textDim }}>
 									{formatShortcutKeys(fileTabKeys)}
@@ -175,7 +195,10 @@ export const NewTabPopover = memo(function NewTabPopover({
 								style={{ color: theme.colors.textMain }}
 								onClick={() => closeAndDo(onNewBrowserTab)}
 							>
-								<Globe className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+								<Globe
+									className="w-3.5 h-3.5"
+									style={{ color: getTabKindColor('browser', theme) }}
+								/>
 								New Browser
 								<span className="ml-auto text-xs" style={{ color: theme.colors.textDim }}>
 									{formatShortcutKeys(browserTabKeys)}
@@ -187,7 +210,10 @@ export const NewTabPopover = memo(function NewTabPopover({
 							style={{ color: theme.colors.textMain }}
 							onClick={() => closeAndDo(() => onNewTerminalTab?.())}
 						>
-							<Terminal className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+							<Terminal
+								className="w-3.5 h-3.5"
+								style={{ color: getTabKindColor('terminal', theme) }}
+							/>
 							New Terminal
 							<span className="ml-auto text-xs" style={{ color: theme.colors.textDim }}>
 								{formatShortcutKeys(terminalKeys)}

@@ -1,7 +1,6 @@
 import { renderHook, act, cleanup } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useUnifiedTabHandlers } from '../../../../../renderer/hooks/tabs/internal/useUnifiedTabHandlers';
-import { useModalStore } from '../../../../../renderer/stores/modalStore';
 import {
 	createMockAITab,
 	createMockBrowserTab,
@@ -135,7 +134,26 @@ describe('useUnifiedTabHandlers', () => {
 		});
 	});
 
-	it('shows a draft confirmation for refs to the right', () => {
+	it('preserves tabs with unsent drafts and closes the rest silently', () => {
+		setupSession({
+			aiTabs: [
+				createMockAITab({ id: 'ai-1' }),
+				createMockAITab({ id: 'ai-2', inputValue: 'draft' }),
+				createMockAITab({ id: 'ai-3' }),
+			],
+			activeTabId: 'ai-1',
+		});
+		const { result } = renderHook(() => useUnifiedTabHandlers({ handleCloseFileTab: vi.fn() }));
+
+		act(() => {
+			result.current.handleCloseTabsRight();
+		});
+
+		// ai-2 (draft) survives; ai-3 closes. No confirmation modal is opened.
+		expect(getSession().aiTabs.map((t) => t.id)).toEqual(['ai-1', 'ai-2']);
+	});
+
+	it('does not close anything when the only tab in the set has a draft', () => {
 		setupSession({
 			aiTabs: [
 				createMockAITab({ id: 'ai-1' }),
@@ -149,9 +167,6 @@ describe('useUnifiedTabHandlers', () => {
 			result.current.handleCloseTabsRight();
 		});
 
-		expect(useModalStore.getState().modals.get('confirm')?.data?.message).toBe(
-			'Some tabs have unsent drafts. Are you sure you want to close them?'
-		);
-		expect(getSession().aiTabs).toHaveLength(2);
+		expect(getSession().aiTabs.map((t) => t.id)).toEqual(['ai-1', 'ai-2']);
 	});
 });

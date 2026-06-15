@@ -1736,8 +1736,8 @@ describe('UsageDashboardModal', () => {
 			});
 
 			// Overview retains summary cards, provider comparison, the two
-			// distribution donuts, the radial activity chart, and the activity
-			// heatmap. Duration trends moved to the Activity tab.
+			// distribution donuts, and the radial activity chart. The activity
+			// heatmap and duration trends moved to the Activity tab.
 			expect(screen.getByTestId('section-summary-cards')).toHaveAttribute('tabIndex', '0');
 			expect(screen.getByTestId('section-summary-cards')).toHaveAttribute('role', 'region');
 			expect(screen.getByTestId('section-summary-cards')).toHaveAttribute(
@@ -1757,10 +1757,10 @@ describe('UsageDashboardModal', () => {
 				'Session Type Chart'
 			);
 
-			expect(screen.getByTestId('section-activity-heatmap')).toHaveAttribute('tabIndex', '0');
-			expect(screen.getByTestId('section-activity-heatmap')).toHaveAttribute(
+			expect(screen.getByTestId('section-radial-activity')).toHaveAttribute('tabIndex', '0');
+			expect(screen.getByTestId('section-radial-activity')).toHaveAttribute(
 				'aria-label',
-				'Activity Heatmap'
+				'Activity by Hour and Day of Week'
 			);
 		});
 
@@ -1839,13 +1839,13 @@ describe('UsageDashboardModal', () => {
 				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
 			});
 
-			// Use the Activity Heatmap — last section in overview view (after
-			// duration trends moved to the Activity tab).
-			const heatmapSection = screen.getByTestId('section-activity-heatmap');
+			// Use the radial activity chart - last section in overview view
+			// (after the activity heatmap moved to the Activity tab).
+			const lastSection = screen.getByTestId('section-radial-activity');
 
 			// Focus last section and press Home
-			heatmapSection.focus();
-			fireEvent.keyDown(heatmapSection, { key: 'Home' });
+			lastSection.focus();
+			fireEvent.keyDown(lastSection, { key: 'Home' });
 
 			// Should focus first section (year-in-pixels — added as the new hero strip)
 			await waitFor(() => {
@@ -1863,12 +1863,13 @@ describe('UsageDashboardModal', () => {
 			const summarySection = screen.getByTestId('section-summary-cards');
 
 			// Focus first section and press End. Last section in overview is
-			// the Activity Heatmap (duration-trends moved to the Activity tab).
+			// the radial activity chart (the activity heatmap moved to the
+			// Activity tab).
 			summarySection.focus();
 			fireEvent.keyDown(summarySection, { key: 'End' });
 
 			await waitFor(() => {
-				expect(document.activeElement).toBe(screen.getByTestId('section-activity-heatmap'));
+				expect(document.activeElement).toBe(screen.getByTestId('section-radial-activity'));
 			});
 		});
 

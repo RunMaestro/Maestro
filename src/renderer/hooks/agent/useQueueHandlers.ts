@@ -10,6 +10,7 @@
  */
 
 import { useCallback } from 'react';
+import { aiTabFocusFields } from '../../utils/tabHelpers';
 import { useSessionStore } from '../../stores/sessionStore';
 
 // ============================================================================
@@ -53,13 +54,7 @@ export function useQueueHandlers(): UseQueueHandlersReturn {
 			setSessions((prev) =>
 				prev.map((s) => {
 					if (s.id === sessionId && s.aiTabs?.some((t) => t.id === tabId)) {
-						return {
-							...s,
-							activeTabId: tabId,
-							activeFileTabId: null,
-							activeTerminalTabId: null,
-							inputMode: 'ai' as const,
-						};
+						return { ...s, ...aiTabFocusFields(tabId) };
 					}
 					return s;
 				})

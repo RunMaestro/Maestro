@@ -62,6 +62,38 @@ const mockGetActiveTab = vi.fn();
 
 vi.mock('../../../renderer/utils/tabHelpers', () => ({
 	getActiveTab: (...args: unknown[]) => mockGetActiveTab(...args),
+	// Mirror the real resolver so the dispatch path can be exercised, but route the
+	// active-tab fallback through mockGetActiveTab (tests assert on that call).
+	resolveQueuedItemTarget: (session: any, item: any) => {
+		if (item?.tabId) {
+			if (session?.aiTabs?.some((t: any) => t.id === item.tabId)) {
+				return { tabId: item.tabId, location: 'aiTab' };
+			}
+			const orphan = session?.orphanedThinkingTabs?.find((t: any) => t.id === item.tabId);
+			if (orphan) return { tabId: orphan.id, location: 'orphan' };
+		}
+		const active = mockGetActiveTab(session);
+		return active ? { tabId: active.id, location: 'active' } : null;
+	},
+	markTabRunningQueuedItem: (tab: any, item: any) => {
+		const now = Date.now();
+		const next = { ...tab, state: 'busy', thinkingStartTime: now };
+		if (item?.type === 'message' && item?.text) {
+			next.logs = [
+				...tab.logs,
+				{
+					id: 'mock-log-id',
+					timestamp: now,
+					source: 'user',
+					text: item.text,
+					images: item.images,
+					...(item.forceParallel && { forceParallel: true }),
+					...(item.readOnlyMode && { readOnly: true }),
+				},
+			];
+		}
+		return next;
+	},
 }));
 
 // ============================================================================

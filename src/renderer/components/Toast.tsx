@@ -363,7 +363,7 @@ export const ToastContainer = memo(function ToastContainer({
 
 	return createPortal(
 		<div
-			className="fixed bottom-4 right-4 flex flex-col-reverse"
+			className="fixed bottom-0 right-4 flex flex-col-reverse"
 			style={{ pointerEvents: 'none', zIndex: 100000 }}
 		>
 			<div style={{ pointerEvents: 'auto' }}>

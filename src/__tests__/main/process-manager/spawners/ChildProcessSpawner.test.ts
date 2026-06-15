@@ -873,4 +873,47 @@ describe('ChildProcessSpawner', () => {
 			expect(options.shell).toBe(false);
 		});
 	});
+
+	describe('agentSessionId seeding (for resumed sessions)', () => {
+		// Regression: Copilot CLI emits `session.resume` (no sessionId) instead of
+		// `session.start` when resuming a session, so StdoutHandler.emitSessionIdIfNeeded
+		// can never populate managedProcess.agentSessionId from the stream. Without the
+		// config-time seed, ExitHandler.awaitCopilotShutdown bails at its
+		// `if (!agentSessionId) return` guard, the disk-derived final answer and the
+		// context window snapshot never reach the renderer, and the UI surfaces the
+		// streamed commentary deltas instead of the authoritative task_complete.summary.
+		it('seeds managedProcess.agentSessionId from config when provided (Copilot resume)', () => {
+			const { processes, spawner } = createTestContext();
+
+			spawner.spawn(
+				createBaseConfig({
+					toolType: 'copilot-cli',
+					command: 'copilot',
+					args: ['--output-format', 'json', '--resume=cp-resumed-1'],
+					prompt: 'follow-up question',
+					agentSessionId: 'cp-resumed-1',
+				})
+			);
+
+			const proc = processes.get('test-session');
+			expect(proc?.agentSessionId).toBe('cp-resumed-1');
+		});
+
+		it('leaves managedProcess.agentSessionId undefined for fresh sessions (will be set from stdout later)', () => {
+			const { processes, spawner } = createTestContext();
+
+			spawner.spawn(
+				createBaseConfig({
+					toolType: 'copilot-cli',
+					command: 'copilot',
+					args: ['--output-format', 'json'],
+					prompt: 'first message',
+					// No agentSessionId — fresh session, sessionId will arrive via session.start
+				})
+			);
+
+			const proc = processes.get('test-session');
+			expect(proc?.agentSessionId).toBeUndefined();
+		});
+	});
 });

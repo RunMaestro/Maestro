@@ -28,9 +28,7 @@ import {
 } from '../utils/shortcutFormatter';
 import { normalizeMentionName } from '../utils/participantColors';
 import { useAtMentionCompletion } from '../hooks/input/useAtMentionCompletion';
-import { useSettingsStore } from '../stores/settingsStore';
 import { useModalStore } from '../stores/modalStore';
-import { isMacOSPlatform } from '../utils/platformUtils';
 
 const EMPTY_STAGED_IMAGES: string[] = [];
 
@@ -108,13 +106,6 @@ export function PromptComposerModal({
 	sessions,
 	groups,
 }: PromptComposerModalProps) {
-	const useNativeTitleBar = useSettingsStore((s) => s.useNativeTitleBar);
-	// In fullscreen mode the modal covers the app's custom 40px draggable title
-	// bar. We need to (a) shift the header below macOS traffic lights and (b)
-	// opt the modal out of -webkit-app-region:drag so clicks reach buttons
-	// instead of being swallowed as window-drag gestures.
-	const needsTitleBarInset = !useNativeTitleBar;
-	const isMac = isMacOSPlatform();
 	const [value, setValue] = useState('');
 	// Full-screen state lives in the modal store so the open-composer hotkey can
 	// cycle sizes while the modal is open (see cyclePromptComposer in modalStore).
@@ -488,25 +479,20 @@ export function PromptComposerModal({
 				aria-label="Close prompt composer"
 			/>
 			<div
-				className={`relative z-10 shadow-2xl flex flex-col overflow-hidden ${
-					isFullscreen ? 'w-screen h-screen' : 'w-[90vw] h-[80vh] max-w-5xl rounded-xl border'
+				className={`relative z-10 shadow-2xl flex flex-col overflow-hidden rounded-xl border ${
+					// Expanded state is capped at the Maestro Cue modal size (90vw x 90vh),
+					// the app-wide max modal footprint. Compact state caps width at max-w-5xl.
+					isFullscreen ? 'w-[90vw] h-[90vh]' : 'w-[90vw] h-[80vh] max-w-5xl'
 				}`}
 				onClick={(e) => e.stopPropagation()}
-				style={
-					{
-						backgroundColor: theme.colors.bgMain,
-						borderColor: theme.colors.border,
-						// Opt out of the app's draggable title-bar region in fullscreen so
-						// clicks on header buttons aren't swallowed by window-drag.
-						...(isFullscreen && needsTitleBarInset ? { WebkitAppRegion: 'no-drag' as const } : {}),
-					} as React.CSSProperties
-				}
+				style={{
+					backgroundColor: theme.colors.bgMain,
+					borderColor: theme.colors.border,
+				}}
 			>
 				{/* Header */}
 				<div
-					className={`flex items-center justify-between py-3 border-b ${
-						isFullscreen && needsTitleBarInset ? (isMac ? 'pl-24 pr-4 pt-5' : 'px-4 pt-5') : 'px-4'
-					}`}
+					className="flex items-center justify-between px-4 py-3 border-b"
 					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
 				>
 					<div className="flex items-center gap-2">

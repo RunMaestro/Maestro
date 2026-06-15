@@ -11,6 +11,7 @@ import { TerminalTabItem } from './TerminalTabItem';
 import { NewTabPopover } from './NewTabPopover';
 import { SearchPopover } from './SearchPopover';
 import { isUnifiedTabActive, getShortcutHint } from './tabBarUtils';
+import { buildFileTabDisplayNames } from '../../hooks/tabs/internal/filePreviewTabHelpers';
 import type { TabBarProps } from './types';
 import { logger } from '../../utils/logger';
 
@@ -59,6 +60,8 @@ function TabBarInner({
 	activeBrowserTabId,
 	onBrowserTabSelect,
 	onBrowserTabClose,
+	onBrowserTabRename,
+	onBrowserTabResetName,
 	onUnifiedTabReorder,
 	activeTerminalTabId,
 	inputMode = 'ai',
@@ -291,17 +294,20 @@ function TabBarInner({
 		[tabs, onTabReorder, unifiedTabs, onUnifiedTabReorder]
 	);
 
-	// Close wrappers — adapt (tabId: string) => () signature for TabBar's parameterless close handlers
+	// Close wrappers — forward the clicked tab id as the pivot so the operation
+	// closes relative to the tab whose menu was used, not whatever happens to be
+	// the active tab. Dropping the id here was the cause of catastrophic
+	// wrong-set closes (e.g. "close tabs to right" closing every other tab).
 	const handleTabCloseOther = useCallback(
-		(_tabId: string) => onCloseOtherTabs?.(),
+		(tabId: string) => onCloseOtherTabs?.(tabId),
 		[onCloseOtherTabs]
 	);
 	const handleTabCloseLeft = useCallback(
-		(_tabId: string) => onCloseTabsLeft?.(),
+		(tabId: string) => onCloseTabsLeft?.(tabId),
 		[onCloseTabsLeft]
 	);
 	const handleTabCloseRight = useCallback(
-		(_tabId: string) => onCloseTabsRight?.(),
+		(tabId: string) => onCloseTabsRight?.(tabId),
 		[onCloseTabsRight]
 	);
 
@@ -328,6 +334,14 @@ function TabBarInner({
 		terminals.forEach((t, idx) => map.set(t.id, idx));
 		return map;
 	}, [allTabs]);
+
+	// Folder-disambiguated display names for file tabs that share a filename.
+	// Computed over all file tabs (not just displayed) so labels stay stable when
+	// the unread filter hides siblings.
+	const fileTabDisplayNames = useMemo(
+		() => buildFileTabDisplayNames(allTabs.flatMap((ut) => (ut.type === 'file' ? [ut.data] : []))),
+		[allTabs]
+	);
 
 	/** Render a separator bar between inactive tabs */
 	const separator = (
@@ -537,6 +551,7 @@ function TabBarInner({
 										colorBlindMode={colorBlindMode}
 										shortcutHint={shortcutHint}
 										sshRemote={sshRemote}
+										displayName={fileTabDisplayNames.get(fileTab.id)}
 									/>
 								</React.Fragment>
 							);
@@ -591,6 +606,8 @@ function TabBarInner({
 										theme={theme}
 										onSelect={onBrowserTabSelect || (() => {})}
 										onClose={onBrowserTabClose || (() => {})}
+										onRename={onBrowserTabRename}
+										onResetName={onBrowserTabResetName}
 										onDragStart={handleDragStart}
 										onDragOver={handleDragOver}
 										onDragEnd={handleDragEnd}

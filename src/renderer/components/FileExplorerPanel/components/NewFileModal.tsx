@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import { useRef } from 'react';
 import { Modal, ModalFooter } from '../../ui/Modal';
 import { FormInput } from '../../ui/FormInput';
 import { MODAL_PRIORITIES } from '../../../constants/modalPriorities';

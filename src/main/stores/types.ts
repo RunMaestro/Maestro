@@ -82,6 +82,10 @@ export interface MaestroSettings {
 	lastSelectedPromptId: string | null;
 	// Spell check in input areas
 	spellCheck: boolean;
+	// Usage Dashboard provider quota auto-refresh cadence, keyed by provider id
+	// ('claude-code' | 'codex'); value is the interval in ms (0 = off). Read by
+	// the main-process background scheduler (usage-refresh-scheduler.ts).
+	usageRefreshIntervals: Record<string, number>;
 	// System-wide hotkey to summon the Maestro window (key array, e.g. ['Meta','Shift','M']).
 	// Empty array disables it. Stored in the same format as `shortcuts` so the UI can reuse
 	// the existing capture helpers; converted to an Electron Accelerator at registration time.

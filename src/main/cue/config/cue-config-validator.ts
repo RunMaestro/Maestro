@@ -123,11 +123,12 @@ export function validateSubscription(sub: unknown, prefix: string): string[] {
 	}
 
 	const action = subRecord.action;
-	if (action !== undefined && action !== 'prompt' && action !== 'command') {
-		errors.push(`${prefix}: "action" must be "prompt" or "command" when provided`);
+	if (action !== undefined && action !== 'prompt' && action !== 'command' && action !== 'notify') {
+		errors.push(`${prefix}: "action" must be "prompt", "command", or "notify" when provided`);
 	}
 
 	const isCommand = action === 'command';
+	const isNotify = action === 'notify';
 
 	if (isCommand) {
 		validateCommandField(subRecord.command, prefix, errors);
@@ -137,6 +138,36 @@ export function validateSubscription(sub: unknown, prefix: string): string[] {
 		// this; this guard catches hand-edited YAML).
 		if (Array.isArray(subRecord.fan_out) && subRecord.fan_out.length > 0) {
 			errors.push(`${prefix}: "fan_out" is not supported when action is "command"`);
+		}
+	} else if (isNotify) {
+		// Notify is a toast surfaced through the owning agent — no prompt, no
+		// command, no fan-out. The toast body comes from `notify.message`
+		// (with fallback chain handled by the notify executor).
+		if (
+			!subRecord.notify ||
+			typeof subRecord.notify !== 'object' ||
+			Array.isArray(subRecord.notify)
+		) {
+			errors.push(`${prefix}: "notify" is required and must be an object when action is "notify"`);
+		} else {
+			const notify = subRecord.notify as Record<string, unknown>;
+			if (notify.message !== undefined && typeof notify.message !== 'string') {
+				errors.push(`${prefix}: "notify.message" must be a string when provided`);
+			}
+			if (notify.sticky !== undefined && typeof notify.sticky !== 'boolean') {
+				errors.push(`${prefix}: "notify.sticky" must be a boolean when provided`);
+			}
+		}
+		if (typeof subRecord.agent_id !== 'string' || subRecord.agent_id.trim().length === 0) {
+			errors.push(
+				`${prefix}: "agent_id" is required and must be a non-empty string when action is "notify"`
+			);
+		}
+		if (subRecord.command !== undefined) {
+			errors.push(`${prefix}: "command" is not supported when action is "notify"`);
+		}
+		if (Array.isArray(subRecord.fan_out) && subRecord.fan_out.length > 0) {
+			errors.push(`${prefix}: "fan_out" is not supported when action is "notify"`);
 		}
 	} else {
 		// `fan_out_ids` is the rename-stable id mirror of `fan_out`. When
@@ -298,6 +329,57 @@ function validateEventSpecificFields(
 					}
 				}
 			}
+		}
+	} else if (event === 'time.once') {
+		// One-shot scheduled fire. `fire_at` must be a canonical ISO-8601
+		// timestamp WITH a timezone - naive local times produce surprising
+		// behavior across DST boundaries and SSH-spawned remote runs. We match a
+		// strict subset rather than trusting `Date.parse`, whose acceptance of
+		// non-canonical strings (e.g. a space instead of `T`) is engine-dependent:
+		// ECMAScript only guarantees the Date Time String Format.
+		const fireAtBody = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?/;
+		const fireAtWithTz =
+			/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:?\d{2})$/;
+		if (
+			typeof sub.fire_at !== 'string' ||
+			!fireAtBody.test(sub.fire_at) ||
+			!Number.isFinite(Date.parse(sub.fire_at))
+		) {
+			errors.push(
+				`${prefix}: fire_at is required for time.once events and must be an ISO-8601 timestamp with timezone (e.g. "2026-05-22T14:30:00-05:00")`
+			);
+		} else if (!fireAtWithTz.test(sub.fire_at)) {
+			errors.push(
+				`${prefix}: fire_at must include a timezone offset (Z, ±HH:MM, or ±HHMM) - naive local times produce surprising behavior across DST/SSH boundaries`
+			);
+		}
+		if (sub.grace_minutes !== undefined) {
+			if (
+				typeof sub.grace_minutes !== 'number' ||
+				!Number.isFinite(sub.grace_minutes) ||
+				!Number.isInteger(sub.grace_minutes) ||
+				sub.grace_minutes < 0 ||
+				sub.grace_minutes > 10080
+			) {
+				errors.push(
+					`${prefix}: "grace_minutes" must be a non-negative integer no greater than 10080 (7 days) for time.once events`
+				);
+			}
+		}
+		if (
+			sub.self_destruct_on_failure !== undefined &&
+			typeof sub.self_destruct_on_failure !== 'boolean'
+		) {
+			errors.push(
+				`${prefix}: "self_destruct_on_failure" must be a boolean when provided for time.once events`
+			);
+		}
+		// `time.once` always runs as a specific agent (notify toast or one-shot
+		// prompt for that agent). Override the looser rule on other events.
+		if (typeof sub.agent_id !== 'string' || sub.agent_id.trim().length === 0) {
+			errors.push(
+				`${prefix}: "agent_id" is required and must be a non-empty string for time.once events`
+			);
 		}
 	} else if (event === 'file.changed') {
 		if (!sub.watch || typeof sub.watch !== 'string') {

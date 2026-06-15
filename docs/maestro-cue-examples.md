@@ -625,3 +625,75 @@ maestro-cli cue trigger deploy --prompt "staging" --json
 # From a release script
 maestro-cli cue trigger deploy --prompt "production"
 ```
+
+---
+
+## One-Time Tasks and Reminders
+
+Schedule a single action tied to a wall-clock moment - "in 20 minutes do X", "tomorrow at 9am email me a summary", "remind me at 4pm to push the rc branch". These are authored exclusively through `maestro-cli cue schedule` (the CLI handles ISO formatting, timezone offsets, and writes directly to the owning agent's `.maestro/cue.yaml`). The subscriptions self-destruct from the YAML after they fire.
+
+See [time.once event reference](./maestro-cue-events#time-once) for the full schema.
+
+**Schedule an agent run 20 minutes from now:**
+
+```bash
+maestro-cli cue schedule \
+  --in 20m \
+  --agent <agent-id> \
+  --prompt "Check the status of the deploy I kicked off and summarize the result."
+```
+
+Resulting subscription (the CLI writes this into the agent's `.maestro/cue.yaml`):
+
+```yaml
+subscriptions:
+  - name: tasks-once-20m-deploy-check
+    pipeline_name: Tasks
+    event: time.once
+    enabled: true
+    fire_at: '2026-05-22T14:20:00-05:00'
+    agent_id: <agent-uuid>
+    prompt: |
+      Check the status of the deploy I kicked off and summarize the result.
+```
+
+**Schedule a sticky reminder toast at 4pm:**
+
+```bash
+maestro-cli cue schedule \
+  --at "2026-05-22 16:00" \
+  --agent <agent-id> \
+  --notify \
+  --sticky \
+  --message "Push rc branch - review the diff first"
+```
+
+Resulting subscription:
+
+```yaml
+subscriptions:
+  - name: tasks-once-push-rc-reminder
+    pipeline_name: Tasks
+    event: time.once
+    enabled: true
+    fire_at: '2026-05-22T16:00:00-05:00'
+    agent_id: <agent-uuid>
+    action: notify
+    notify:
+      message: 'Push rc branch - review the diff first'
+      sticky: true
+```
+
+`--notify` switches the dispatched action to `notify`. `--sticky` marks the toast as `dismissible` so it stays on screen until the user clicks it. Clicking the toast jumps to the owning agent.
+
+**Listing and cancelling pending one-time tasks:**
+
+```bash
+# List every pending one-time task across agents
+maestro-cli cue schedule --list
+
+# Cancel a pending task by sub name
+maestro-cli cue schedule --cancel tasks-once-push-rc-reminder
+```
+
+`--list` only shows enabled, unfired `time.once` subs - completed and expired ones have already self-destructed. `--cancel` deletes the sub from `cue.yaml` in place.

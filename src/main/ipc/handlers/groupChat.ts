@@ -194,6 +194,9 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 					customPath?: string;
 					customArgs?: string;
 					customEnvVars?: Record<string, string>;
+					enableMaestroP?: boolean;
+					maestroPMode?: 'interactive' | 'dynamic';
+					maestroPPath?: string;
 				}
 			): Promise<GroupChat> => {
 				logger.info(`Creating group chat: ${name}`, LOG_CONTEXT, {
@@ -309,6 +312,9 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 						customPath?: string;
 						customArgs?: string;
 						customEnvVars?: Record<string, string>;
+						enableMaestroP?: boolean;
+						maestroPMode?: 'interactive' | 'dynamic';
+						maestroPPath?: string;
 					};
 				}
 			): Promise<GroupChat> => {

@@ -245,6 +245,17 @@ export interface HistoryEntry {
 	cueSourceSession?: string;
 	/** Hostname of the machine that created this entry (for shared history) */
 	hostname?: string;
+	/**
+	 * Claude-only, per-turn: which interface spent the quota for this turn.
+	 * `interactive` = maestro-p TUI (Max plan), `api` = `claude --print` (per-token).
+	 * Captured per entry because a Dynamic-mode agent flips between the two across turns.
+	 */
+	tokenSource?: 'interactive' | 'api';
+	/**
+	 * Claude-only, per-turn: why the token source was chosen. `auto` = user/usage
+	 * selected, `limit` = forced API fallback because the Max plan quota was exhausted.
+	 */
+	tokenSourceReason?: 'auto' | 'limit';
 }
 
 // Document entry within a playbook

@@ -597,6 +597,9 @@ export interface BrowserTab {
 	id: string; // Unique tab ID (UUID)
 	url: string; // Current URL shown in the address bar
 	title: string; // Last known document title (falls back to URL)
+	// User-assigned tab name. When set, it locks the displayed label and overrides
+	// page-set titles (the website can no longer rename the tab) until the user clears it.
+	customTitle?: string;
 	createdAt: number; // Timestamp for ordering
 	partition?: string; // Persisted Electron partition so browser tabs share session data per agent
 	canGoBack: boolean; // Navigation state for toolbar back button
@@ -872,10 +875,16 @@ export interface Session {
 	// Symphony contribution metadata (only set for Symphony sessions)
 	symphonyMetadata?: SymphonySessionMetadata;
 
-	// Per-session Batch Mode opt-in (Claude Code only). When true, the spawner
-	// auto-switches between maestro-p (Time Limits / Max plan) and `claude
-	// --print` (API Limits / per-token) based on the latest usage snapshot.
+	// Per-session token-source opt-in (Claude Code only). When true, the spawner
+	// runs through maestro-p (Time Limits / Max plan) instead of `claude --print`
+	// (API Limits / per-token). The exact behavior is refined by `maestroPMode`.
 	enableMaestroP?: boolean;
+	// Refines `enableMaestroP`: 'interactive' always drives the maestro-p TUI,
+	// 'dynamic' (default when absent) auto-switches between maestro-p and `claude
+	// --print` based on the latest usage snapshot. Together the pair encodes the
+	// three user-facing modes: API (enableMaestroP off), TUI (on + interactive),
+	// Dynamic (on + dynamic). See `getClaudeTokenMode` in shared/claudeTokenMode.
+	maestroPMode?: 'interactive' | 'dynamic';
 	// Optional override for the maestro-p binary path. When empty/undefined,
 	// the spawner uses the bundled script (`process.resourcesPath/maestro-p.js`
 	// in packaged builds, `dist/cli/maestro-p.js` in dev).
@@ -1057,6 +1066,15 @@ export interface EncoreFeatureFlags {
 	usageStats: boolean;
 	symphony: boolean;
 	maestroCue: boolean;
+	/**
+	 * Exposes the desktop renderer over the embedded web server as a
+	 * `/<token>/desktop` route, with every `ipcMain.handle()` reachable via
+	 * a `bridge.invoke` WebSocket protocol. Off by default — the surface
+	 * widening is intentional but high-blast-radius, and the user must
+	 * explicitly opt in. Requires app restart to take effect (the bridge
+	 * hook is installed once at server startup).
+	 */
+	webDesktopBundle: boolean;
 }
 
 // Director's Notes settings for synopsis generation

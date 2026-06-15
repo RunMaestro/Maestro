@@ -52,6 +52,7 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 							...s,
 							filePreviewTabs: updatedTabs,
 							activeFileTabId: existingTab.id,
+							activeBrowserTabId: null,
 							activeTerminalTabId: null,
 							inputMode: 'ai' as const,
 							activeTabId: s.activeTabId,
@@ -96,6 +97,9 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 						return {
 							...s,
 							filePreviewTabs: updatedTabs,
+							activeBrowserTabId: null,
+							activeTerminalTabId: null,
+							inputMode: 'ai' as const,
 						};
 					}
 
@@ -129,6 +133,7 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 						filePreviewTabs: [...s.filePreviewTabs, newFileTab],
 						unifiedTabOrder: updatedUnifiedTabOrder,
 						activeFileTabId: newTabId,
+						activeBrowserTabId: null,
 						activeTerminalTabId: null,
 						inputMode: 'ai' as const,
 					};

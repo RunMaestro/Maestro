@@ -16,17 +16,100 @@ Each subscription has a unique `name`, an `event` type, an `enabled` flag, a `pr
 
 ### Event Types
 
-| Event                 | Fires when…                                     | Key config fields                                                                                   |
-| --------------------- | ----------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `app.startup`         | Maestro launches                                | -                                                                                                   |
-| `time.heartbeat`      | Every N minutes                                 | `interval_minutes`                                                                                  |
-| `time.scheduled`      | At specific clock times (cron-like)             | `schedule_times`, `schedule_days`                                                                   |
-| `file.changed`        | Files matching a glob are added/changed/removed | `watch` (glob)                                                                                      |
-| `agent.completed`     | An upstream agent finishes a run                | `source_session` (name or names)                                                                    |
-| `github.pull_request` | A PR matches a filter (polled)                  | `repo`, `gh_state`, `label`, `poll_minutes`, `filter`, `retrigger_on_comments`, `max_notifications` |
-| `github.issue`        | An issue matches a filter (polled)              | `repo`, `gh_state`, `label`, `poll_minutes`, `filter`, `retrigger_on_comments`, `max_notifications` |
-| `task.pending`        | Pending `- [ ]` tasks detected in watched files | `watch`                                                                                             |
-| `cli.trigger`         | Manually fired via `maestro-cli cue trigger`    | -                                                                                                   |
+| Event                 | Fires when…                                                          | Key config fields                                                                                   |
+| --------------------- | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `app.startup`         | Maestro launches                                                     | -                                                                                                   |
+| `time.heartbeat`      | Every N minutes                                                      | `interval_minutes`                                                                                  |
+| `time.scheduled`      | At specific clock times (cron-like)                                  | `schedule_times`, `schedule_days`                                                                   |
+| `time.once`           | At a specific wall-clock moment, exactly once (self-destructs after) | `fire_at`, optional `grace_minutes`, `self_destruct_on_failure`                                     |
+| `file.changed`        | Files matching a glob are added/changed/removed                      | `watch` (glob)                                                                                      |
+| `agent.completed`     | An upstream agent finishes a run                                     | `source_session` (name or names)                                                                    |
+| `github.pull_request` | A PR matches a filter (polled)                                       | `repo`, `gh_state`, `label`, `poll_minutes`, `filter`, `retrigger_on_comments`, `max_notifications` |
+| `github.issue`        | An issue matches a filter (polled)                                   | `repo`, `gh_state`, `label`, `poll_minutes`, `filter`, `retrigger_on_comments`, `max_notifications` |
+| `task.pending`        | Pending `- [ ]` tasks detected in watched files                      | `watch`                                                                                             |
+| `cli.trigger`         | Manually fired via `maestro-cli cue trigger`                         | -                                                                                                   |
+
+### One-Time Scheduled Tasks
+
+`time.once` is the subsystem you should reach for **any time a user asks for a one-off action tied to a clock**. Phrases like "in 20 minutes do X", "tomorrow at 9am email me a summary", "remind me at 4pm to push the rc branch", or "schedule a 1h check-in" all map to `time.once` - not to `time.heartbeat`, not to `time.scheduled`, and definitely not to hand-rolled `setTimeout` shims in a prompt.
+
+**Trigger:** poll-based at roughly 30-second granularity. The required `fire_at` field is an ISO-8601 timestamp **with a timezone** (`Z`, `±HH:MM`, or the colon-less `±HHMM`); anything missing the offset is rejected at load time. The subscription fires once when the wall clock crosses `fire_at`.
+
+**Actions:** every `action` already supported by Cue works here.
+
+- `prompt` - runs the configured agent with the rendered prompt (default action).
+- `notify` - surfaces a toast through the owning agent. Clicking the toast jumps to that agent. Use this for human reminders that don't need an agent run.
+- `command` - `action: command` with `command.mode: shell` or `command.mode: cli`, exactly as documented in **Command Nodes** above.
+
+**Self-destruct semantics:** the engine deletes the subscription from `cue.yaml` after a successful run (status `completed`). On a `failed` or `timeout` outcome, the subscription is also removed unless you set `self_destruct_on_failure: false` (default `true`) - flip it off only when you actively want to inspect the failed sub in the editor before cleaning it up.
+
+**Missed-fire grace window:** if Maestro is closed when `fire_at` arrives, the engine fires the subscription on next startup as long as the current time is within `grace_minutes` of `fire_at`. Default `grace_minutes` is `360` (6 hours). Past the grace window, the sub is logged as expired and self-destructs without firing - pick a smaller window for time-sensitive reminders, a larger one for anything you don't mind being late.
+
+**Default pipeline:** subscriptions authored via `maestro-cli cue schedule` land in `pipeline_name: "Tasks"` so they group into a single "Tasks" card in the Cue dashboard. Override `--pipeline` only when the one-off naturally belongs to an existing pipeline.
+
+**Authoring rule:** **never hand-write `time.once` subscriptions** - always go through `maestro-cli cue schedule`. The CLI handles ISO formatting, timezone offsets, target_node_key generation, and writes directly to the owning agent's `.maestro/cue.yaml`.
+
+**Recipes:**
+
+**"In 20 minutes, do X" → `--in` (relative offset)**
+
+```bash
+{{MAESTRO_CLI_PATH}} cue schedule \
+  --in 20m \
+  --agent {{AGENT_ID}} \
+  --prompt "Check the status of the deploy I kicked off and summarize the result."
+```
+
+Resolves to a `time.once` subscription whose `fire_at` is 20 minutes from now (in the system timezone, ISO-8601 with offset). The CLI accepts `s` / `m` / `h` / `d` suffixes.
+
+```yaml
+- name: tasks-once-20m-deploy-check
+  pipeline_name: Tasks
+  event: time.once
+  enabled: true
+  fire_at: '2026-05-22T14:20:00-05:00'
+  agent_id: <briefer-agent-id>
+  prompt: |
+    Check the status of the deploy I kicked off and summarize the result.
+```
+
+**"Remind me at 4pm to push the rc branch" → `--at` (absolute timestamp) + `--notify`**
+
+```bash
+{{MAESTRO_CLI_PATH}} cue schedule \
+  --at "2026-05-22 16:00" \
+  --agent {{AGENT_ID}} \
+  --notify \
+  --sticky \
+  --message "Push rc branch - review the diff first"
+```
+
+`--notify` switches the action to `notify`. `--sticky` marks the toast as `dismissible` (no auto-dismiss). The toast's click action jumps to the owning agent.
+
+```yaml
+- name: tasks-once-push-rc-reminder
+  pipeline_name: Tasks
+  event: time.once
+  enabled: true
+  fire_at: '2026-05-22T16:00:00-05:00'
+  agent_id: <agent-id>
+  action: notify
+  notify:
+    message: 'Push rc branch - review the diff first'
+    sticky: true
+```
+
+**Management:**
+
+```bash
+# List every pending one-time task across agents
+{{MAESTRO_CLI_PATH}} cue schedule --list
+
+# Cancel a pending task by its sub name
+{{MAESTRO_CLI_PATH}} cue schedule --cancel tasks-once-push-rc-reminder
+```
+
+`--list` only shows enabled, unfired `time.once` subs (completed/expired ones have already self-destructed). `--cancel` deletes the sub from cue.yaml in place.
 
 ### Pipelines vs. Chains (READ THIS FIRST)
 
@@ -231,6 +314,8 @@ subscriptions:
 **`cli.trigger`:**
 `{{CUE_CLI_PROMPT}}`, `{{CUE_SOURCE_AGENT_ID}}`
 
+**`time.once`:** `{{CUE_FIRE_AT}}` (the originally-scheduled fire timestamp, ISO-8601 with timezone — handy for "you asked me to remind you at {{CUE_FIRE_AT}}" phrasing in notify messages or prompts)
+
 ### CLI
 
 ```bash
@@ -257,6 +342,7 @@ When a user asks you to add, modify, or debug a Cue subscription:
 5. **For Command nodes (shell scripts or `maestro-cli` calls inside a pipeline)** - see the **Command Nodes** section above for the full schema. The keyword is `action: command` plus a `command:` block; there is no separate top-level YAML key, no `event: command` type, and no separate node graph.
 6. For full schema, field reference, and worked examples, fetch the official Cue docs: https://docs.runmaestro.ai/maestro-cue-configuration.md, https://docs.runmaestro.ai/maestro-cue-events.md, https://docs.runmaestro.ai/maestro-cue-advanced.md, https://docs.runmaestro.ai/maestro-cue-examples.md. Don't guess field names.
 7. After writing, validate with `{{MAESTRO_CLI_PATH}} cue list` - the engine reloads automatically when the file changes.
+8. For one-off / scheduled tasks (any natural-language request that maps to "do X at a specific time, once"), use `{{MAESTRO_CLI_PATH}} cue schedule` - see the **One-Time Scheduled Tasks** section. Never hand-write `time.once` subscriptions; let the CLI generate them.
 
 ### Multi-Root Pipelines (agents in different project roots)
 

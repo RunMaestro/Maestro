@@ -204,6 +204,43 @@ describe('Phase 15B — cue-db in-memory contract', () => {
 			expect(db.getRecentCueEvents(0)).toHaveLength(0);
 		});
 
+		it('updateCueEventStatus stamps error_message + exit_code when failure info is passed', () => {
+			db.recordCueEvent({
+				id: 'e-fail',
+				type: 't',
+				triggerName: 't',
+				sessionId: 's',
+				subscriptionName: 'sub',
+				status: 'running',
+			});
+			db.updateCueEventStatus('e-fail', 'timeout', null, {
+				errorMessage: 'first_byte_timeout',
+				exitCode: 5,
+			});
+			const [event] = db.getRecentCueEvents(0);
+			expect(event.status).toBe('timeout');
+			expect(event.errorMessage).toBe('first_byte_timeout');
+			expect(event.exitCode).toBe(5);
+		});
+
+		it('updateCueEventStatus leaves error_message + exit_code untouched when no failure info is passed', () => {
+			db.recordCueEvent({
+				id: 'e-ok',
+				type: 't',
+				triggerName: 't',
+				sessionId: 's',
+				subscriptionName: 'sub',
+				status: 'running',
+			});
+			// A status flip with no failure object (e.g. 'stopped') must not write
+			// the failure columns — they stay null/undefined.
+			db.updateCueEventStatus('e-ok', 'stopped');
+			const [event] = db.getRecentCueEvents(0);
+			expect(event.status).toBe('stopped');
+			expect(event.errorMessage ?? null).toBeNull();
+			expect(event.exitCode ?? null).toBeNull();
+		});
+
 		it('safeRecordCueEvent swallows errors and is non-throwing', () => {
 			db.queueWriteFailure(new Error('disk full'));
 			expect(() =>
@@ -508,6 +545,18 @@ describe.skipIf(!canLoadBetterSqlite3())('Phase 15B — real SQLite smoke test',
 			const events = cueDb.getRecentCueEvents(0);
 			expect(events).toHaveLength(1);
 			expect(events[0].id).toBe('smoke-1');
+
+			// Failure diagnostics round-trip: a non-completed run stamps
+			// error_message + exit_code (INTEGER column, so it comes back as a
+			// number, not a string) and they survive read-back.
+			cueDb.updateCueEventStatus('smoke-1', 'timeout', null, {
+				errorMessage: 'first_byte_timeout: no transcript output',
+				exitCode: 5,
+			});
+			const afterFailure = cueDb.getRecentCueEvents(0);
+			expect(afterFailure[0].status).toBe('timeout');
+			expect(afterFailure[0].errorMessage).toBe('first_byte_timeout: no transcript output');
+			expect(afterFailure[0].exitCode).toBe(5);
 		} finally {
 			if (cueDb) {
 				try {

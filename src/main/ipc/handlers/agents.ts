@@ -15,6 +15,7 @@ import {
 } from '../../agents';
 import { capabilitySnapshots } from '../../agents/capability-snapshot';
 import type { AgentCapabilitiesSnapshotMap } from '../../../shared/agentCapabilities';
+import { probeRemoteMaestroP, ensureRemoteMaestroPProbed } from '../../agents/probeRemoteMaestroP';
 import { execFileNoThrow } from '../../utils/execFile';
 import { logger } from '../../utils/logger';
 import { getWhichCommand } from '../../../shared/platformDetection';
@@ -464,6 +465,15 @@ async function detectAgentsRemote(sshRemote: SshRemoteConfig): Promise<any[]> {
 			`Failed to connect to SSH remote ${sshRemote.host}: ${connectionError}`,
 			LOG_CONTEXT
 		);
+	}
+
+	// Piggyback a maestro-p availability probe on the same connection. The
+	// Token Source selector disables the TUI option, and resolveClaudeSpawnMode
+	// falls a remote TUI spawn back to API, when the remote can't run it. Only
+	// when the connection actually worked - an unreachable host leaves the
+	// availability unknown rather than caching a false.
+	if (connectionSucceeded) {
+		await probeRemoteMaestroP(sshRemote);
 	}
 
 	return agents;
@@ -1550,6 +1560,36 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 			handlerOpts('getMaestroPDetectedPath'),
 			async (): Promise<string | null> => {
 				return getMaestroPBinPath();
+			}
+		)
+	);
+
+	// Whether `maestro-p` is on the PATH of an SSH remote. The AgentConfigPanel
+	// uses this to disable the TUI token-source option (and default an
+	// unconfigured remote agent to API) when the remote can't run it. Returns a
+	// fresh cached result, otherwise probes the remote on demand. `null` means
+	// the availability could not be determined (no such remote / unreachable).
+	//
+	// `force` bypasses the TTL cache and re-probes the remote immediately - wired
+	// to the Refresh button next to the Claude Token Source selector, so a user
+	// who just installed maestro-p on the remote can re-check without waiting out
+	// the 5-minute cache window.
+	ipcMain.handle(
+		'agents:getRemoteMaestroPAvailable',
+		withIpcErrorLogging(
+			handlerOpts('getRemoteMaestroPAvailable'),
+			async (sshRemoteId?: string, force?: boolean): Promise<boolean | null> => {
+				if (!sshRemoteId) {
+					return null;
+				}
+				const sshConfig = getSshRemoteById(settingsStore, sshRemoteId);
+				if (!sshConfig) {
+					return null;
+				}
+				if (force) {
+					return (await probeRemoteMaestroP(sshConfig)) ?? null;
+				}
+				return (await ensureRemoteMaestroPProbed(sshConfig)) ?? null;
 			}
 		)
 	);

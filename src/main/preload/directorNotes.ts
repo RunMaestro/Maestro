@@ -44,7 +44,9 @@ export interface PaginatedUnifiedHistoryResult {
  */
 export interface UnifiedHistoryOptions {
 	lookbackDays: number;
-	filter?: 'AUTO' | 'USER' | 'CUE' | null; // null = both
+	// A single type, an array of types to include, or null for "all".
+	// An empty array selects nothing.
+	filter?: 'AUTO' | 'USER' | 'CUE' | Array<'AUTO' | 'USER' | 'CUE'> | null;
 	/** Number of entries to return per page (default: 100) */
 	limit?: number;
 	/** Number of entries to skip for pagination (default: 0) */
@@ -142,7 +144,10 @@ export function createDirectorNotesApi() {
 		// the activity graph's click-to-jump behavior in the unified view.
 		getOffsetForTimestamp: (
 			timestamp: number,
-			options?: { lookbackDays?: number; filter?: 'AUTO' | 'USER' | 'CUE' | null }
+			options?: {
+				lookbackDays?: number;
+				filter?: 'AUTO' | 'USER' | 'CUE' | Array<'AUTO' | 'USER' | 'CUE'> | null;
+			}
 		): Promise<number> =>
 			ipcRenderer.invoke('director-notes:getOffsetForTimestamp', timestamp, options),
 

@@ -239,13 +239,14 @@ describe('HistoryDetailModal', () => {
 					entry={createMockEntry({
 						type: 'CUE',
 						cueTriggerName: 'lint-on-save',
-						cueEventType: 'file_change',
+						cueEventType: 'file.changed',
 					})}
 					onClose={mockOnClose}
 				/>
 			);
 
-			expect(screen.getByTitle('Trigger: lint-on-save')).toBeInTheDocument();
+			// Title carries the raw event type; the visible label is humanized.
+			expect(screen.getByTitle('Trigger: lint-on-save (file.changed)')).toBeInTheDocument();
 		});
 
 		it('should not display CUE trigger metadata for non-CUE entries', () => {

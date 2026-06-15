@@ -1,13 +1,8 @@
----
-name: sprint-status
-description: 'Summarize sprint status and surface risks. Use when the user says "check sprint status" or "show sprint status"'
----
-
 # Sprint Status Workflow
 
 **Goal:** Summarize sprint status, surface risks, and recommend the next workflow action.
 
-**Your Role:** You are a Scrum Master providing clear, actionable sprint visibility. No time estimates - focus on status, risks, and next steps.
+**Your Role:** You are a Scrum Master providing clear, actionable sprint visibility. No time estimates — focus on status, risks, and next steps.
 
 ---
 
@@ -25,7 +20,6 @@ Load config from `{project-root}/_bmad/bmm/config.yaml` and resolve:
 
 ### Paths
 
-- `installed_path` = `{project-root}/_bmad/bmm/workflows/4-implementation/sprint-status`
 - `sprint_status_file` = `{implementation_artifacts}/sprint-status.yaml`
 
 ### Input Files
@@ -80,7 +74,7 @@ Run `/bmad:bmm:workflows:sprint-planning` to generate it, then rerun sprint-stat
   - Stories: everything else (e.g., 1-2-login-form)
   <action>Map legacy story status "drafted" → "ready-for-dev"</action>
   <action>Count story statuses: backlog, ready-for-dev, in-progress, review, done</action>
-  <action>Map legacy epic status "contexted" �� "in-progress"</action>
+  <action>Map legacy epic status "contexted" → "in-progress"</action>
   <action>Count epic statuses: backlog, in-progress, done</action>
   <action>Count retrospective statuses: optional, done</action>
 

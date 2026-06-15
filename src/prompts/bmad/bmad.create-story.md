@@ -1,8 +1,3 @@
----
-name: bmad-create-story
-description: 'Creates a dedicated story file with all the context the agent will need to implement it later. Use when the user says "create the next story" or "create story [story identifier]"'
----
-
 # Create Story Workflow
 
 **Goal:** Create a comprehensive story file that gives the dev agent everything needed for flawless implementation.
@@ -33,9 +28,6 @@ Load config from `{project-root}/_bmad/bmm/config.yaml` and resolve:
 
 ### Paths
 
-- `installed_path` = `.`
-- `template` = `./template.md`
-- `validation` = `./checklist.md`
 - `sprint_status` = `{implementation_artifacts}/sprint-status.yaml`
 - `epics_file` = `{planning_artifacts}/epics.md`
 - `prd_file` = `{planning_artifacts}/prd.md`
@@ -161,11 +153,11 @@ Load config from `{project-root}/_bmad/bmm/config.yaml` and resolve:
 </step>
 
 <step n="2" goal="Load and analyze core artifacts">
-  <critical>🔬 EXHAUSTIVE ARTIFACT ANALYSIS - This is where you prevent future developer fuckups!</critical>
+  <critical>🔬 EXHAUSTIVE ARTIFACT ANALYSIS - This is where you prevent future developer mistakes!</critical>
 
   <!-- Load all available content through discovery protocol -->
 
-<action>Read fully and follow `{installed_path}/discover-inputs.md` to load all input files</action>
+<action>Read fully and follow `./discover-inputs.md` to load all input files</action>
 <note>Available content: {epics_content}, {prd_content}, {architecture_content}, {ux_content},
 {project_context}</note>
 
@@ -291,7 +283,7 @@ context engine analysis completed - comprehensive developer guide created"</acti
 </step>
 
 <step n="6" goal="Update sprint status and finalize">
-  <action>Validate the newly created story file {story_file} against {installed_path}/checklist.md and apply any required fixes before finalizing</action>
+  <action>Validate the newly created story file {default_output_file} against `./checklist.md` and apply any required fixes before finalizing</action>
   <action>Save story document unconditionally</action>
 
   <!-- Update sprint status -->
@@ -333,58 +325,98 @@ context engine analysis completed - comprehensive developer guide created"</acti
 
 The following upstream BMAD files are embedded so this Maestro prompt remains self-contained.
 
-## src/bmm/workflows/4-implementation/bmad-create-story/template.md
+## src/bmm/workflows/4-implementation/bmad-create-story/discover-inputs.md
 
 ```md
-# Story {{epic_num}}.{{story_num}}: {{story_title}}
+# Discover Inputs Protocol
 
-Status: ready-for-dev
+**Objective:** Intelligently load project files (whole or sharded) based on the workflow's Input Files configuration.
 
-<!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
+**Prerequisite:** Only execute this protocol if the workflow defines an Input Files section. If no input file patterns are configured, skip this entirely.
 
-## Story
+---
 
-As a {{role}},
-I want {{action}},
-so that {{benefit}}.
+## Step 1: Parse Input File Patterns
 
-## Acceptance Criteria
+- Read the Input Files table from the workflow configuration.
+- For each input group (prd, architecture, epics, ux, etc.), note the **load strategy** if specified.
 
-1. [Add acceptance criteria from epics/PRD]
+## Step 2: Load Files Using Smart Strategies
 
-## Tasks / Subtasks
+For each pattern in the Input Files table, work through the following substeps in order:
 
-- [ ] Task 1 (AC: #)
-  - [ ] Subtask 1.1
-- [ ] Task 2 (AC: #)
-  - [ ] Subtask 2.1
+### 2a: Try Sharded Documents First
 
-## Dev Notes
+If a sharded pattern exists for this input, determine the load strategy (defaults to **FULL_LOAD** if not specified), then apply the matching strategy:
 
-- Relevant architecture patterns and constraints
-- Source tree components to touch
-- Testing standards summary
+#### FULL_LOAD Strategy
 
-### Project Structure Notes
+Load ALL files in the sharded directory. Use this for PRD, Architecture, UX, brownfield docs, or whenever the full picture is needed.
 
-- Alignment with unified project structure (paths, modules, naming)
-- Detected conflicts or variances (with rationale)
+1. Use the glob pattern to find ALL `.md` files (e.g., `{planning_artifacts}/*architecture*/*.md`).
+2. Load EVERY matching file completely.
+3. Concatenate content in logical order: `index.md` first if it exists, then alphabetical.
+4. Store the combined result in a variable named `{pattern_name_content}` (e.g., `{architecture_content}`).
 
-### References
+#### SELECTIVE_LOAD Strategy
 
-- Cite all technical details with source paths and sections, e.g. [Source: docs/<file>.md#Section]
+Load a specific shard using a template variable. Example: used for epics with `{{epic_num}}`.
 
-## Dev Agent Record
+1. Check for template variables in the sharded pattern (e.g., `{{epic_num}}`).
+2. If the variable is undefined, ask the user for the value OR infer it from context.
+3. Resolve the template to a specific file path.
+4. Load that specific file.
+5. Store in variable: `{pattern_name_content}`.
 
-### Agent Model Used
+#### INDEX_GUIDED Strategy
 
-{{agent_model_name_version}}
+Load index.md, analyze the structure and description of each doc in the index, then intelligently load relevant docs.
 
-### Debug Log References
+**DO NOT BE LAZY** -- use best judgment to load documents that might have relevant information, even if there is only a 5% chance of relevance.
 
-### Completion Notes List
+1. Load `index.md` from the sharded directory.
+2. Parse the table of contents, links, and section headers.
+3. Analyze the workflow's purpose and objective.
+4. Identify which linked/referenced documents are likely relevant.
+   - _Example:_ If the workflow is about authentication and the index shows "Auth Overview", "Payment Setup", "Deployment" -- load the auth docs, consider deployment docs, skip payment.
+5. Load all identified relevant documents.
+6. Store combined content in variable: `{pattern_name_content}`.
 
-### File List
+**When in doubt, LOAD IT** -- context is valuable, and being thorough is better than missing critical info.
+
+---
+
+After applying the matching strategy, mark the pattern as **RESOLVED** and move to the next pattern.
+
+### 2b: Try Whole Document if No Sharded Found
+
+If no sharded matches were found OR no sharded pattern exists for this input:
+
+1. Attempt a glob match on the "whole" pattern (e.g., `{planning_artifacts}/*prd*.md`).
+2. If matches are found, load ALL matching files completely (no offset/limit).
+3. Store content in variable: `{pattern_name_content}` (e.g., `{prd_content}`).
+4. Mark pattern as **RESOLVED** and move to the next pattern.
+
+### 2c: Handle Not Found
+
+If no matches were found for either sharded or whole patterns:
+
+1. Set `{pattern_name_content}` to empty string.
+2. Note in session: "No {pattern_name} files found" -- this is not an error, just unavailable. Offer the user a chance to provide the file.
+
+## Step 3: Report Discovery Results
+
+List all loaded content variables with file counts. Example:
+```
+
+OK Loaded {prd_content} from 5 sharded files: prd/index.md, prd/requirements.md, ...
+OK Loaded {architecture_content} from 1 file: Architecture.md
+OK Loaded {epics_content} from selective load: epics/epic-3.md
+-- No ux_design files found
+
+```
+
+This gives the workflow transparency into what context is available.
 ```
 
 ## src/bmm/workflows/4-implementation/bmad-create-story/checklist.md
@@ -428,7 +460,7 @@ This is a COMPETITION to create the **ULTIMATE story context** that makes LLM de
 - The workflow framework will automatically:
   - Load this checklist file
   - Load the newly created story file (`{story_file_path}`)
-  - Load workflow variables from `{installed_path}/workflow.md`
+  - Load workflow variables from `./workflow.md`
   - Execute the validation process
 
 ### **When Running in Fresh Context:**
@@ -453,7 +485,7 @@ You will systematically re-do the entire story creation process, but with a crit
 
 ### **Step 1: Load and Understand the Target**
 
-1. **Load the workflow configuration**: `{installed_path}/workflow.md` for variable inclusion
+1. **Load the workflow configuration**: `./workflow.md` for variable inclusion
 2. **Load the story file**: `{story_file_path}` (provided by user or discovered)
 3. **Extract metadata**: epic_num, story_num, story_key, story_title from story file
 4. **Resolve all workflow variables**: implementation_artifacts, epics_file, architecture_file, etc.
@@ -755,98 +787,4 @@ The story now includes comprehensive developer guidance to prevent common implem
 - Miss key implementation signals due to inefficient communication
 
 **Go create the ultimate developer implementation guide! 🚀**
-```
-
-## src/bmm/workflows/4-implementation/bmad-create-story/discover-inputs.md
-
-```md
-# Discover Inputs Protocol
-
-**Objective:** Intelligently load project files (whole or sharded) based on the workflow's Input Files configuration.
-
-**Prerequisite:** Only execute this protocol if the workflow defines an Input Files section. If no input file patterns are configured, skip this entirely.
-
----
-
-## Step 1: Parse Input File Patterns
-
-- Read the Input Files table from the workflow configuration.
-- For each input group (prd, architecture, epics, ux, etc.), note the **load strategy** if specified.
-
-## Step 2: Load Files Using Smart Strategies
-
-For each pattern in the Input Files table, work through the following substeps in order:
-
-### 2a: Try Sharded Documents First
-
-If a sharded pattern exists for this input, determine the load strategy (defaults to **FULL_LOAD** if not specified), then apply the matching strategy:
-
-#### FULL_LOAD Strategy
-
-Load ALL files in the sharded directory. Use this for PRD, Architecture, UX, brownfield docs, or whenever the full picture is needed.
-
-1. Use the glob pattern to find ALL `.md` files (e.g., `{planning_artifacts}/*architecture*/*.md`).
-2. Load EVERY matching file completely.
-3. Concatenate content in logical order: `index.md` first if it exists, then alphabetical.
-4. Store the combined result in a variable named `{pattern_name_content}` (e.g., `{architecture_content}`).
-
-#### SELECTIVE_LOAD Strategy
-
-Load a specific shard using a template variable. Example: used for epics with `{{epic_num}}`.
-
-1. Check for template variables in the sharded pattern (e.g., `{{epic_num}}`).
-2. If the variable is undefined, ask the user for the value OR infer it from context.
-3. Resolve the template to a specific file path.
-4. Load that specific file.
-5. Store in variable: `{pattern_name_content}`.
-
-#### INDEX_GUIDED Strategy
-
-Load index.md, analyze the structure and description of each doc in the index, then intelligently load relevant docs.
-
-**DO NOT BE LAZY** -- use best judgment to load documents that might have relevant information, even if there is only a 5% chance of relevance.
-
-1. Load `index.md` from the sharded directory.
-2. Parse the table of contents, links, and section headers.
-3. Analyze the workflow's purpose and objective.
-4. Identify which linked/referenced documents are likely relevant.
-   - _Example:_ If the workflow is about authentication and the index shows "Auth Overview", "Payment Setup", "Deployment" -- load the auth docs, consider deployment docs, skip payment.
-5. Load all identified relevant documents.
-6. Store combined content in variable: `{pattern_name_content}`.
-
-**When in doubt, LOAD IT** -- context is valuable, and being thorough is better than missing critical info.
-
----
-
-After applying the matching strategy, mark the pattern as **RESOLVED** and move to the next pattern.
-
-### 2b: Try Whole Document if No Sharded Found
-
-If no sharded matches were found OR no sharded pattern exists for this input:
-
-1. Attempt a glob match on the "whole" pattern (e.g., `{planning_artifacts}/*prd*.md`).
-2. If matches are found, load ALL matching files completely (no offset/limit).
-3. Store content in variable: `{pattern_name_content}` (e.g., `{prd_content}`).
-4. Mark pattern as **RESOLVED** and move to the next pattern.
-
-### 2c: Handle Not Found
-
-If no matches were found for either sharded or whole patterns:
-
-1. Set `{pattern_name_content}` to empty string.
-2. Note in session: "No {pattern_name} files found" -- this is not an error, just unavailable. Offer the user a chance to provide the file.
-
-## Step 3: Report Discovery Results
-
-List all loaded content variables with file counts. Example:
-```
-
-OK Loaded {prd_content} from 5 sharded files: prd/index.md, prd/requirements.md, ...
-OK Loaded {architecture_content} from 1 file: Architecture.md
-OK Loaded {epics_content} from selective load: epics/epic-3.md
--- No ux_design files found
-
-```
-
-This gives the workflow transparency into what context is available.
 ```

@@ -2565,6 +2565,41 @@ describe('TerminalOutput', () => {
 			expect(screen.queryByText('API')).not.toBeInTheDocument();
 		});
 
+		it('omits the "Adaptive" prefix when the session pins maestro-p mode (forced TUI / API)', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'first prompt', source: 'user' }),
+				createLogEntry({
+					id: 'resp-tui',
+					text: 'tui response',
+					source: 'stdout',
+					renderStyle: 'text-stream',
+				}),
+				createLogEntry({ id: 'user-2', text: 'second prompt', source: 'user' }),
+				createLogEntry({
+					id: 'resp-api',
+					text: 'api response',
+					source: 'stdout',
+					renderStyle: 'structured',
+				}),
+			];
+
+			// Forced TUI: enableMaestroP on + maestroPMode 'interactive' is NOT
+			// adaptive — only Dynamic mode auto-switches, so the prefix must drop.
+			const session = createDefaultSession({
+				enableMaestroP: true,
+				maestroPMode: 'interactive',
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('TUI')).toBeInTheDocument();
+			expect(screen.getByText('API')).toBeInTheDocument();
+			expect(screen.queryByText('Adaptive TUI')).not.toBeInTheDocument();
+			expect(screen.queryByText('Adaptive API')).not.toBeInTheDocument();
+		});
+
 		it('does not render the pill on user messages even when tagged text-stream', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({

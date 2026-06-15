@@ -102,6 +102,13 @@ export interface SessionItemProps {
 	isEditing: boolean;
 	leftSidebarOpen: boolean;
 
+	/**
+	 * Stable DOM key for keyboard auto-scroll. Rendered as `data-nav-key` so the
+	 * Left Bar can locate this row and scroll it into view when it becomes the
+	 * keyboard selection. Format: `idx:<navIndex>`.
+	 */
+	navDomKey?: string;
+
 	// Optional data
 	group?: Group; // The group this session belongs to (for bookmark variant to show group badge)
 	groupId?: string; // The group ID context for generating editing key
@@ -113,6 +120,13 @@ export interface SessionItemProps {
 	wizardActive?: boolean; // Inline wizard active on at least one tab of this agent
 	wizardGeneratingDocs?: boolean; // Wizard is generating Auto Run documents (drives pulse)
 	worktreeChildCount?: number; // Number of worktree children (used for collapsed count badge)
+
+	/**
+	 * When true, the row can neither be dragged nor accept drops. Used for the
+	 * Bookmarks section, which is a filtered view: reordering/regrouping there
+	 * would be meaningless (and dropping fell through to "ungroup").
+	 */
+	dragDisabled?: boolean;
 
 	// Handlers
 	onSelect: () => void;
@@ -149,6 +163,7 @@ export const SessionItem = memo(function SessionItem({
 	isDragging,
 	isEditing,
 	leftSidebarOpen,
+	navDomKey,
 	group,
 	groupId,
 	gitFileCount,
@@ -159,6 +174,7 @@ export const SessionItem = memo(function SessionItem({
 	wizardActive = false,
 	wizardGeneratingDocs = false,
 	worktreeChildCount,
+	dragDisabled = false,
 	onSelect,
 	onDragStart,
 	onDragOver,
@@ -177,6 +193,8 @@ export const SessionItem = memo(function SessionItem({
 	const showLeftPanelStartupCommandIndicator = useSettingsStore(
 		(s) => s.showLeftPanelStartupCommandIndicator
 	);
+	const showGroupLabelInBookmarks = useSettingsStore((s) => s.showGroupLabelInBookmarks);
+	const showFullGroupLabelInBookmarks = useSettingsStore((s) => s.showFullGroupLabelInBookmarks);
 	const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures.maestroCue);
 	const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
 	const cueIndicatorVisible = maestroCueEnabled && showLeftPanelCueIndicator;
@@ -227,10 +245,11 @@ export const SessionItem = memo(function SessionItem({
 	return (
 		<div
 			key={`${variant}-${groupId || ''}-${session.id}`}
-			draggable
-			onDragStart={onDragStart}
-			onDragOver={onDragOver}
-			onDrop={onDrop}
+			data-nav-key={navDomKey}
+			draggable={!dragDisabled}
+			onDragStart={dragDisabled ? undefined : onDragStart}
+			onDragOver={dragDisabled ? undefined : onDragOver}
+			onDrop={dragDisabled ? undefined : onDrop}
 			onClick={onSelect}
 			onContextMenu={onContextMenu}
 			className={getContainerClassName()}
@@ -378,14 +397,19 @@ export const SessionItem = memo(function SessionItem({
 
 			{/* Right side: Indicators and actions */}
 			<div className="flex items-center gap-2 ml-2">
-				{/* Group badge (only in bookmark variant when session belongs to a group) */}
-				{variant === 'bookmark' && group && (
+				{/* Group badge (only in bookmark variant when session belongs to a group).
+				    Hidden entirely when showGroupLabelInBookmarks is off. Abbreviated by
+				    default; the showFullGroupLabelInBookmarks setting swaps in the full group
+				    name, truncated with the complete value available on hover. */}
+				{variant === 'bookmark' && group && showGroupLabelInBookmarks && (
 					<span
-						className="text-[9px] px-1 py-0.5 rounded"
+						className={`text-[9px] px-1 py-0.5 rounded${
+							showFullGroupLabelInBookmarks ? ' max-w-[140px] truncate' : ''
+						}`}
 						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
 						title={group.name}
 					>
-						{abbreviateGroupName(group.name)}
+						{showFullGroupLabelInBookmarks ? group.name : abbreviateGroupName(group.name)}
 					</span>
 				)}
 				{/* Git Dirty Indicator (only in wide mode) - placed before GIT/LOCAL for vertical alignment */}

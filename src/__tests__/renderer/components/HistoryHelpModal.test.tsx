@@ -129,7 +129,7 @@ describe('HistoryHelpModal', () => {
 			const { container } = render(<HistoryHelpModal {...defaultProps} />);
 
 			// Modal component uses inline width style
-			const modalContainer = container.querySelector('[style*="width: 672px"]');
+			const modalContainer = container.querySelector('[style*="width: min(calc(1008px"]');
 			expect(modalContainer).toBeInTheDocument();
 			expect(modalContainer).toHaveStyle({
 				backgroundColor: mockTheme.colors.bgSidebar,
@@ -194,7 +194,7 @@ describe('HistoryHelpModal', () => {
 			const { container } = render(<HistoryHelpModal {...defaultProps} onClose={onClose} />);
 
 			// Clicking on modal content (the inner container with width style) should not close
-			const modalContent = container.querySelector('[style*="width: 672px"]');
+			const modalContent = container.querySelector('[style*="width: min(calc(1008px"]');
 			fireEvent.click(modalContent!);
 
 			// Only the backdrop should close the modal, not the content area itself

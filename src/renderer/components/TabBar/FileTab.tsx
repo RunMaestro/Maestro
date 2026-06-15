@@ -66,6 +66,11 @@ export interface FileTabProps {
 	shortcutHint?: number | null;
 	/** True when the owning agent is running on an SSH remote — hides local-only OS actions */
 	sshRemote?: boolean;
+	/**
+	 * Disambiguated label to show instead of the bare filename, e.g. `ioc/service`
+	 * when another open tab shares the same name. Falls back to `tab.name`.
+	 */
+	displayName?: string;
 }
 
 /**
@@ -103,6 +108,7 @@ export const FileTab = memo(function FileTab({
 	colorBlindMode,
 	shortcutHint,
 	sshRemote,
+	displayName,
 }: FileTabProps) {
 	const [showCopied, setShowCopied] = useState<'path' | 'name' | null>(null);
 	const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -387,12 +393,12 @@ export const FileTab = memo(function FileTab({
 				aria-hidden="true"
 			/>
 
-			{/* Tab name - filename without extension */}
+			{/* Tab name - filename without extension, folder-prefixed when ambiguous */}
 			<span
-				className={`text-xs font-medium ${isActive ? 'whitespace-nowrap' : 'truncate max-w-[120px]'}`}
+				className="text-xs font-medium whitespace-nowrap"
 				style={{ color: isActive ? theme.colors.textMain : theme.colors.textDim }}
 			>
-				{tab.name}
+				{displayName ?? tab.name}
 			</span>
 
 			{/* Extension badge - small rounded pill, uppercase without leading dot */}

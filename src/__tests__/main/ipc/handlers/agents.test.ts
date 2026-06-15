@@ -182,6 +182,7 @@ describe('agents IPC handlers', () => {
 				'agents:getAllSnapshots',
 				'agents:reprobe',
 				'agents:getMaestroPDetectedPath',
+				'agents:getRemoteMaestroPAvailable',
 				'agents:getClaudeUsageSnapshots',
 				'agents:getClaudeUsageAccountKeys',
 				'claude:usage:refresh-all',
@@ -349,12 +350,25 @@ describe('agents IPC handlers', () => {
 				const handler = handlers.get('agents:detect');
 				await handler!({} as any, 'remote-1');
 
-				// Every probe should invoke 'command -v <binary>', never 'which'.
-				// Asserting one call per AGENT_DEFINITION catches regressions that
-				// silently skip agents instead of just dropping to zero.
+				// The remote detection piggybacks one extra maestro-p launch test
+				// (`maestro-p --version`) on top of the per-agent binary probes, so the
+				// total is AGENT_DEFINITIONS.length + 1.
 				const calls = vi.mocked(buildSshCommand).mock.calls;
-				expect(calls.length).toBe(agentCapabilities.AGENT_DEFINITIONS.length);
-				for (const [, options] of calls) {
+				expect(calls.length).toBe(agentCapabilities.AGENT_DEFINITIONS.length + 1);
+
+				// The maestro-p availability check is a LAUNCH test, not a path check:
+				// it runs `maestro-p --version` (which loads node + node-pty) rather
+				// than `command -v maestro-p`, so a host with no node fails it.
+				const maestroPProbe = calls.find(([, o]) => o.command === 'maestro-p');
+				expect(maestroPProbe).toBeDefined();
+				expect(maestroPProbe![1].args).toEqual(['--version']);
+
+				// Every other (per-agent) probe should invoke 'command -v <binary>',
+				// never 'which'. Asserting one such call per AGENT_DEFINITION catches
+				// regressions that silently skip agents instead of just dropping to zero.
+				const agentProbes = calls.filter(([, o]) => o.command !== 'maestro-p');
+				expect(agentProbes.length).toBe(agentCapabilities.AGENT_DEFINITIONS.length);
+				for (const [, options] of agentProbes) {
 					expect(options.command).toBe('command');
 					expect(options.args[0]).toBe('-v');
 				}

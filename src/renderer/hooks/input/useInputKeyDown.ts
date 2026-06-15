@@ -19,6 +19,7 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { filterSlashCommands } from '../../utils/search';
 import { logger } from '../../utils/logger';
 import { trackShortcutUsage } from '../../utils/shortcutTracking';
+import { outputSearchKeyFor } from '../../utils/outputSearch';
 
 // ============================================================================
 // Dependencies interface
@@ -108,10 +109,14 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 		(e: React.KeyboardEvent) => {
 			const activeSession = selectActiveSession(useSessionStore.getState());
 
-			// Cmd+F opens output search from input field
+			// Cmd+F opens output search from input field. Search is scoped per
+			// agent+AI-tab, so target the active window's slot.
 			if (e.key === 'f' && (e.metaKey || e.ctrlKey)) {
 				e.preventDefault();
-				useUIStore.getState().setOutputSearchOpen(true);
+				if (activeSession) {
+					const key = outputSearchKeyFor(activeSession.id, activeSession.activeTabId);
+					useUIStore.getState().setOutputSearchOpen(key, true);
+				}
 				return;
 			}
 

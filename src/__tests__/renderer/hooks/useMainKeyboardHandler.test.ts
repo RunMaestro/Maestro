@@ -3,6 +3,8 @@ import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { useMainKeyboardHandler } from '../../../renderer/hooks';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
+import { useUIStore } from '../../../renderer/stores/uiStore';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 
 /**
  * Creates a minimal mock context with all required handler functions.
@@ -3332,6 +3334,97 @@ describe('useMainKeyboardHandler', () => {
 
 			expect(handleNavForward).toHaveBeenCalledTimes(1);
 			expect(handleNavBack).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('output search find bar (Cmd+F refocus)', () => {
+		let searchInput: HTMLInputElement;
+
+		// Output search is scoped per agent+AI-tab; pin an active agent so the
+		// handler's isActiveOutputSearchOpen() resolves to this window's slot.
+		const SEARCH_KEY = 'kbd-sess::kbd-tab';
+
+		beforeEach(() => {
+			useSessionStore.setState({
+				sessions: [{ id: 'kbd-sess', activeTabId: 'kbd-tab' }],
+				activeSessionId: 'kbd-sess',
+			} as any);
+			// Mount a stand-in for the find bar's input so the handler's
+			// querySelector('.terminal-output input') focus target exists.
+			const container = document.createElement('div');
+			container.className = 'terminal-output';
+			searchInput = document.createElement('input');
+			container.appendChild(searchInput);
+			document.body.appendChild(container);
+			searchInput.blur();
+		});
+
+		afterEach(() => {
+			useUIStore.getState().setOutputSearchOpen(SEARCH_KEY, false);
+			searchInput.parentElement?.remove();
+		});
+
+		it('refocuses the find input on Cmd+F while output search is open', () => {
+			useUIStore.getState().setOutputSearchOpen(SEARCH_KEY, true);
+
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext();
+
+			const event = new KeyboardEvent('keydown', {
+				key: 'f',
+				metaKey: true,
+				bubbles: true,
+			});
+			const preventDefaultSpy = vi.spyOn(event, 'preventDefault');
+
+			act(() => {
+				window.dispatchEvent(event);
+			});
+
+			expect(preventDefaultSpy).toHaveBeenCalled();
+			expect(document.activeElement).toBe(searchInput);
+		});
+
+		it('does not steal Cmd+F focus when output search is closed', () => {
+			useUIStore.getState().setOutputSearchOpen(SEARCH_KEY, false);
+
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext();
+
+			const event = new KeyboardEvent('keydown', {
+				key: 'f',
+				metaKey: true,
+				bubbles: true,
+			});
+
+			act(() => {
+				window.dispatchEvent(event);
+			});
+
+			// The refocus path is gated on outputSearchOpen, so the find input
+			// must not be focused when the bar is closed.
+			expect(document.activeElement).not.toBe(searchInput);
+		});
+
+		it('ignores Cmd+Shift+F so it does not hijack other shortcuts', () => {
+			useUIStore.getState().setOutputSearchOpen(SEARCH_KEY, true);
+
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext();
+
+			const event = new KeyboardEvent('keydown', {
+				key: 'f',
+				metaKey: true,
+				shiftKey: true,
+				bubbles: true,
+			});
+
+			act(() => {
+				window.dispatchEvent(event);
+			});
+
+			// Refocus is plain Cmd+F only; the shift variant must not be captured.
+			expect(document.activeElement).not.toBe(searchInput);
 		});
 	});
 });

@@ -65,10 +65,12 @@ Grep-verified 2026-04-10. Import from these canonical locations:
 - **Center flash (rapid acks):** `notifyCenterFlash({ message, color, detail?, duration? })` in `src/renderer/stores/centerFlashStore.ts`; clipboard helper `flashCopiedToClipboard()` in `src/renderer/utils/flashCopiedToClipboard.ts`. Use for momentary "I did the thing" confirmations of user-initiated actions. Five-color design language: `green | yellow | orange | red | theme` - default `theme` matches the active Maestro theme. External integrations can fire flashes via `maestro-cli notify flash <message> --color <color>`. Do NOT roll your own center-screen overlay, useState+setTimeout flash, add a sixth color, or use a Toast for clipboard acks. Single visible flash at a time, themed frosted-glass card mounted once in `App.tsx`. Full decision rules, color palette, and design language: [UI-PATTERNS.md → Center Flash System](docs/agent-guides/UI-PATTERNS.md#center-flash-system-rapid-temporary-notifications).
 - **Session lookup:** `selectActiveSession()`, `selectSessionById()` in `src/renderer/stores/sessionStore.ts`; `useActiveSession()` hook in `src/renderer/hooks/session/useActiveSession.ts`
 - **Session mutation:** `updateSessionWith(sessionId, updater)` in `src/renderer/stores/sessionStore.ts` (do NOT hand-roll `setSessions(prev => prev.map(...))`)
+- **Focus an AI tab:** `aiTabFocusFields(tabId?)` in `src/renderer/utils/tabHelpers.ts` - spread into a session patch (`{ ...s, ...aiTabFocusFields(tabId) }`) to land on an AI tab. It clears `activeFileTabId`/`activeTerminalTabId`/`activeBrowserTabId` and sets `inputMode: 'ai'`. Do NOT hand-roll the literal: those non-AI tab types outrank the AI tab in the render precedence, so omitting even one leaves the previous view on screen.
 - **Modal layer:** `useModalLayer()` in `src/renderer/hooks/ui/useModalLayer.ts` (do NOT use manual `registerLayer()` boilerplate)
 - **Focus after render:** `useFocusAfterRender()` in `src/renderer/hooks/utils/useFocusAfterRender.ts` (do NOT use `useEffect + setTimeout(() => ref.focus())`)
 - **Event listeners:** `useEventListener()` in `src/renderer/hooks/utils/useEventListener.ts` (do NOT pair raw `addEventListener`/`removeEventListener` inside useEffect)
 - **Debounce/throttle:** `useDebouncedValue()`, `useDebouncedCallback()`, `useThrottledCallback()` in `src/renderer/hooks/utils/useThrottle.ts` (filename is misleading - all three live here)
+- **Render markdown:** `<Markdown preset="chat | document | wizard-bubble | release-notes">` from `src/renderer/components/Markdown/` (do NOT hand-roll `<ReactMarkdown>` + a per-surface `components`/plugin map). The chat preset is what `MarkdownRenderer` wraps. Shared internals: `buildMarkdownPlugins` (`Markdown/plugins.ts`), `preprocessMarkdown` (`Markdown/preprocess.ts`), leaf renderers in `Markdown/components/*`, and the document component map `createMarkdownComponents()` in `src/renderer/utils/markdownConfig.ts`. See [UI-PATTERNS.md → `<Markdown>`](docs/agent-guides/UI-PATTERNS.md).
 
 If your use case does NOT match an existing utility, prefer extending the canonical file over creating a new one. If you genuinely need something new, add it to the relevant guide in `docs/agent-guides/` so the next person can find it.
 
@@ -415,6 +417,14 @@ Initial hypotheses are often wrong. Before implementing any fix:
 - Tab naming bug: Modal coordination was "fixed" when the actual issue was an unregistered IPC handler
 - Tooltip clipping: Attempted `overflow: visible` on element when parent container had `overflow: hidden`
 - Session validation: Fixed renderer calls when handler wasn't wired in main process
+
+### CDP / Browser-Automation Scripts Are Ephemeral
+
+When driving the running app over Chrome DevTools Protocol (e.g. one-off `scripts/cdp-*.js` harnesses for reproducing a bug, clicking through a flow, or capturing screenshots), treat those scripts as **throwaway**. They are debugging scaffolding, not shipped code:
+
+- Write them under `scripts/` if you like, but **delete them when the investigation is done** - do not leave them in the working tree and do not commit them.
+- If one gets committed by accident, remove it (a forward `git rm` commit is fine; avoid history surgery on `rc` unless asked).
+- Heads-up on this dev setup: the dev server often runs with `DISABLE_HMR=1`, so live edits will NOT hot-reload. A full page reload only picks up new code if the vite process was started **after** the edit hit disk. Verify the served module actually contains your change (`curl localhost:17173/<module>` and grep) before trusting any CDP screenshot.
 
 ### Focus Not Working
 

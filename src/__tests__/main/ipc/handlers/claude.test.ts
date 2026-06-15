@@ -90,18 +90,53 @@ vi.mock('../../../../main/constants', () => ({
 	},
 }));
 
-// Mock pricing utility
-vi.mock('../../../../main/utils/pricing', () => ({
-	calculateClaudeCost: vi.fn(
-		(input: number, output: number, cacheRead: number, cacheCreation: number) => {
-			const inputCost = (input / 1_000_000) * 3;
-			const outputCost = (output / 1_000_000) * 15;
-			const cacheReadCost = (cacheRead / 1_000_000) * 0.3;
-			const cacheCreationCost = (cacheCreation / 1_000_000) * 3.75;
-			return inputCost + outputCost + cacheReadCost + cacheCreationCost;
+// Mock pricing utility. Flat Sonnet-tier rates keep the cost assertions in these
+// fixtures stable; the real per-model logic is exercised in modelPricing.test.ts.
+// Helpers live inside the factory because vi.mock is hoisted above top-level vars.
+vi.mock('../../../../main/utils/pricing', () => {
+	const flatCost = (input: number, output: number, cacheRead: number, cacheCreation: number) =>
+		(input / 1_000_000) * 3 +
+		(output / 1_000_000) * 15 +
+		(cacheRead / 1_000_000) * 0.3 +
+		(cacheCreation / 1_000_000) * 3.75;
+	const sumMatches = (content: string, key: string) => {
+		let total = 0;
+		for (const m of content.matchAll(new RegExp(`"${key}"\\s*:\\s*(\\d+)`, 'g'))) {
+			total += parseInt(m[1], 10);
 		}
-	),
-}));
+		return total;
+	};
+	return {
+		calculateClaudeCost: vi.fn(flatCost),
+		calculateModelCost: vi.fn(
+			(tokens: {
+				inputTokens: number;
+				outputTokens: number;
+				cacheReadTokens?: number;
+				cacheCreationTokens?: number;
+			}) =>
+				flatCost(
+					tokens.inputTokens,
+					tokens.outputTokens,
+					tokens.cacheReadTokens ?? 0,
+					tokens.cacheCreationTokens ?? 0
+				)
+		),
+		computeClaudeUsageCost: vi.fn((content: string) => {
+			const inputTokens = sumMatches(content, 'input_tokens');
+			const outputTokens = sumMatches(content, 'output_tokens');
+			const cacheReadTokens = sumMatches(content, 'cache_read_input_tokens');
+			const cacheCreationTokens = sumMatches(content, 'cache_creation_input_tokens');
+			return {
+				inputTokens,
+				outputTokens,
+				cacheReadTokens,
+				cacheCreationTokens,
+				costUsd: flatCost(inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens),
+			};
+		}),
+	};
+});
 
 describe('Claude IPC handlers', () => {
 	let handlers: Map<string, Function>;

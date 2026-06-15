@@ -113,7 +113,22 @@ function makeDeps(overrides: Partial<UseCycleSessionDeps> = {}): UseCycleSession
 	return {
 		sortedSessions: [],
 		handleOpenGroupChat: vi.fn(),
+		starredItems: [],
+		activateStarredItem: vi.fn(),
+		navIndexMap: new Map(),
 		...overrides,
+	};
+}
+
+/** Build a minimal open StarredItem row. */
+function makeOpenStarred(parentSessionId: string, tabId: string, displayName: string) {
+	return {
+		kind: 'open' as const,
+		key: `open:${parentSessionId}:${tabId}`,
+		displayName,
+		agentName: 'Agent',
+		parentSessionId,
+		tabId,
 	};
 }
 
@@ -137,6 +152,9 @@ const defaultUIStoreState = {
 	leftSidebarOpen: true,
 	bookmarksCollapsed: false,
 	showUnreadAgentsOnly: false,
+	// Cycle reads this for starred-row position tracking; reset so a starred
+	// selection from a prior test doesn't leak into the next.
+	sidebarExtraSelection: null,
 };
 
 const defaultSettingsStoreState = {
@@ -492,6 +510,319 @@ describe('useCycleSession', () => {
 
 			expect(useSessionStore.getState().activeSessionId).toBe('b');
 			expect(useSessionStore.getState().cyclePosition).toBe(1);
+		});
+	});
+
+	// =========================================================================
+	// Highlight tracks the EXACT occurrence (bookmarked-agent jump-up bug)
+	// =========================================================================
+	describe('selectedSidebarIndex tracks the cycled occurrence', () => {
+		it('lands on a bookmarked agent group row without snapping to its bookmark row', () => {
+			// 'b' is bookmarked AND in a group, so it appears twice in the sidebar:
+			// bookmark row (top) and group row (below). Cycling onto the GROUP row must
+			// highlight the group row, not jump the highlight up to the bookmark row.
+			const grp = makeGroup('grp-1', 'Group', false);
+			const sessA = makeSession({ id: 'a', name: 'Alpha', groupId: 'grp-1' });
+			const sessB = makeSession({ id: 'b', name: 'Beta', bookmarked: true, groupId: 'grp-1' });
+
+			useSessionStore.setState({
+				sessions: [sessA, sessB],
+				groups: [grp],
+				activeSessionId: 'a',
+				cyclePosition: -1,
+			} as any);
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				bookmarksCollapsed: false,
+				selectedSidebarIndex: 0,
+				sidebarExtraSelection: null,
+			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: false, ungroupedCollapsed: false } as any);
+
+			// navIndexMap: bookmark row for 'b' at 0, then group rows Alpha=1, Beta=2.
+			const navIndexMap = new Map<string, number>([
+				['bookmark:b', 0],
+				['group:grp-1:a', 1],
+				['group:grp-1:b', 2],
+			]);
+			const deps = makeDeps({ navIndexMap });
+			const { result } = renderHook(() => useCycleSession(deps));
+
+			// Visual order: [bookmark Beta(0), group Alpha(1), group Beta(2)].
+			// Active Alpha → first session occurrence is group Alpha(1). next → group Beta(2).
+			act(() => {
+				result.current.cycleSession('next');
+			});
+
+			expect(useSessionStore.getState().activeSessionId).toBe('b');
+			// Highlight must be the GROUP occurrence (navIndex 2), NOT the bookmark row (0).
+			expect(useUIStore.getState().selectedSidebarIndex).toBe(2);
+		});
+
+		it('highlights the bookmark row when cycling through the bookmarks section', () => {
+			const sessA = makeSession({ id: 'a', name: 'Alpha' });
+			const sessB = makeSession({ id: 'b', name: 'Beta', bookmarked: true });
+
+			useSessionStore.setState({
+				sessions: [sessA, sessB],
+				activeSessionId: 'a',
+				cyclePosition: -1,
+			} as any);
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				bookmarksCollapsed: false,
+				selectedSidebarIndex: -1,
+				sidebarExtraSelection: null,
+			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: false, ungroupedCollapsed: false } as any);
+
+			// bookmark Beta=0, ungrouped Alpha=1, ungrouped Beta=2
+			const navIndexMap = new Map<string, number>([
+				['bookmark:b', 0],
+				['ungrouped:a', 1],
+				['ungrouped:b', 2],
+			]);
+			const deps = makeDeps({ navIndexMap });
+			const { result } = renderHook(() => useCycleSession(deps));
+
+			// Visual order: [bookmark Beta(0), Alpha(1), Beta(2)]. Active Alpha is at
+			// visual index 1; prev → bookmark Beta(0).
+			act(() => {
+				result.current.cycleSession('prev');
+			});
+
+			expect(useSessionStore.getState().activeSessionId).toBe('b');
+			// Bookmark occurrence highlighted (navIndex 0).
+			expect(useUIStore.getState().selectedSidebarIndex).toBe(0);
+		});
+	});
+
+	// =========================================================================
+	// Starred Sessions section
+	// =========================================================================
+	describe('starred sessions section', () => {
+		it('starred rows appear at the top of the visual order, above agents', () => {
+			// Starred row points at agent 'b'. Visual order:
+			// [starred(id=b), Alpha(a), Beta(b)]
+			const sessA = makeSession({ id: 'a', name: 'Alpha' });
+			const sessB = makeSession({ id: 'b', name: 'Beta' });
+
+			useSessionStore.setState({
+				sessions: [sessA, sessB],
+				activeSessionId: 'a',
+				cyclePosition: -1,
+			} as any);
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				bookmarksCollapsed: true,
+			} as any);
+			useSettingsStore.setState({
+				groupChatsExpanded: false,
+				starredSessionsCollapsed: false,
+			} as any);
+
+			const activateStarredItem = vi.fn();
+			const starredItems = [makeOpenStarred('b', 't1', 'Zstar')];
+			const deps = makeDeps({ starredItems, activateStarredItem });
+			const { result } = renderHook(() => useCycleSession(deps));
+
+			// Active = Alpha (session slot at index 1). prev → starred slot at index 0.
+			act(() => {
+				result.current.cycleSession('prev');
+			});
+
+			expect(activateStarredItem).toHaveBeenCalledWith(starredItems[0]);
+			expect(useSessionStore.getState().cyclePosition).toBe(0);
+			// The cursor must visibly mark the starred row (the reported bug was no feedback).
+			expect(useUIStore.getState().sidebarExtraSelection).toEqual({
+				kind: 'starred',
+				key: starredItems[0].key,
+			});
+		});
+
+		it('consecutive presses advance through starred rows instead of getting stuck', () => {
+			// Reproduces the reported bug: a starred row's parent agent == the currently
+			// active agent, so activating it leaves activeSessionId unchanged. Without the
+			// sidebarExtraSelection cursor, the next press would re-resolve to the same
+			// agent occurrence and bounce back onto the same starred row.
+			const sessA = makeSession({ id: 'chat', name: 'Chat Intel', bookmarked: true });
+			// Two starred rows; the second points at the active agent ('chat').
+			const starredItems = [
+				makeOpenStarred('rc', 't0', 'Package Version Check'),
+				makeOpenStarred('chat', 't1', 'Slack Discord Last Run'),
+			];
+
+			useSessionStore.setState({
+				sessions: [sessA],
+				activeSessionId: 'chat',
+				cyclePosition: -1,
+			} as any);
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				bookmarksCollapsed: false,
+				sidebarExtraSelection: null,
+			} as any);
+			useSettingsStore.setState({
+				groupChatsExpanded: false,
+				starredSessionsCollapsed: false,
+			} as any);
+
+			// activateStarredItem is a no-op spy here (the real one would set the parent
+			// active); the cycle owns sidebarExtraSelection regardless.
+			const activateStarredItem = vi.fn();
+			const deps = makeDeps({ starredItems, activateStarredItem });
+			const { result } = renderHook(() => useCycleSession(deps));
+
+			// Visual order: [Package(0), Slack(1), bookmark Chat(2)].
+			// Active 'chat' with no extra cursor → first session occurrence = bookmark(2).
+			// prev → Slack starred(1).
+			act(() => {
+				result.current.cycleSession('prev');
+			});
+			expect(activateStarredItem).toHaveBeenLastCalledWith(starredItems[1]);
+			expect(useUIStore.getState().sidebarExtraSelection).toEqual({
+				kind: 'starred',
+				key: starredItems[1].key,
+			});
+
+			// prev again must ADVANCE to Package starred(0), not bounce back to Slack.
+			act(() => {
+				result.current.cycleSession('prev');
+			});
+			expect(activateStarredItem).toHaveBeenLastCalledWith(starredItems[0]);
+			expect(useUIStore.getState().sidebarExtraSelection).toEqual({
+				kind: 'starred',
+				key: starredItems[0].key,
+			});
+		});
+
+		it('clears the starred cursor when cycling onto a plain agent', () => {
+			const sessA = makeSession({ id: 'a', name: 'Alpha' });
+			const starredItems = [makeOpenStarred('a', 't1', 'Star A')];
+
+			useSessionStore.setState({
+				sessions: [sessA],
+				activeSessionId: 'a',
+				cyclePosition: 0, // currently parked on the starred slot
+			} as any);
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				bookmarksCollapsed: true,
+				sidebarExtraSelection: { kind: 'starred', key: starredItems[0].key },
+			} as any);
+			useSettingsStore.setState({
+				groupChatsExpanded: false,
+				starredSessionsCollapsed: false,
+			} as any);
+
+			const deps = makeDeps({ starredItems });
+			const { result } = renderHook(() => useCycleSession(deps));
+
+			// Visual order: [Star A(0), Alpha(1)]. On starred(0), next → Alpha(1) agent.
+			act(() => {
+				result.current.cycleSession('next');
+			});
+
+			expect(useSessionStore.getState().activeSessionId).toBe('a');
+			expect(useUIStore.getState().sidebarExtraSelection).toBeNull();
+		});
+
+		it('skips the starred section when starredSessionsCollapsed is true', () => {
+			const sessA = makeSession({ id: 'a', name: 'Alpha' });
+			const sessB = makeSession({ id: 'b', name: 'Beta' });
+
+			useSessionStore.setState({
+				sessions: [sessA, sessB],
+				activeSessionId: 'a',
+				cyclePosition: -1,
+			} as any);
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				bookmarksCollapsed: true,
+			} as any);
+			useSettingsStore.setState({
+				groupChatsExpanded: false,
+				starredSessionsCollapsed: true,
+			} as any);
+
+			const activateStarredItem = vi.fn();
+			const starredItems = [makeOpenStarred('b', 't1', 'Zstar')];
+			const deps = makeDeps({ starredItems, activateStarredItem });
+			const { result } = renderHook(() => useCycleSession(deps));
+
+			// Visual order: [Alpha, Beta] only. prev from Alpha(0) wraps to Beta(1).
+			act(() => {
+				result.current.cycleSession('prev');
+			});
+
+			expect(activateStarredItem).not.toHaveBeenCalled();
+			expect(useSessionStore.getState().activeSessionId).toBe('b');
+		});
+
+		it('skips the starred section when the unread-agents filter is active', () => {
+			// Section is hidden in SessionList under the unread filter, so cycling
+			// must not traverse it either.
+			const sessA = makeSession({ id: 'a', name: 'Alpha', aiTabs: [{ hasUnread: true }] as any });
+			const sessB = makeSession({ id: 'b', name: 'Beta', aiTabs: [{ hasUnread: true }] as any });
+
+			useSessionStore.setState({
+				sessions: [sessA, sessB],
+				activeSessionId: 'a',
+				cyclePosition: -1,
+			} as any);
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				bookmarksCollapsed: true,
+				showUnreadAgentsOnly: true,
+			} as any);
+			useSettingsStore.setState({
+				groupChatsExpanded: false,
+				starredSessionsCollapsed: false,
+			} as any);
+
+			const activateStarredItem = vi.fn();
+			const starredItems = [makeOpenStarred('b', 't1', 'Zstar')];
+			const deps = makeDeps({ starredItems, activateStarredItem });
+			const { result } = renderHook(() => useCycleSession(deps));
+
+			act(() => {
+				result.current.cycleSession('next');
+			});
+
+			expect(activateStarredItem).not.toHaveBeenCalled();
+			// Alpha → Beta (both unread); starred row excluded.
+			expect(useSessionStore.getState().activeSessionId).toBe('b');
+		});
+
+		it('cycles forward from the last agent onto starred rows (wrap to top)', () => {
+			const sessA = makeSession({ id: 'a', name: 'Alpha' });
+
+			useSessionStore.setState({
+				sessions: [sessA],
+				activeSessionId: 'a',
+				cyclePosition: 1, // on the Alpha session slot (index 1, after starred at 0)
+			} as any);
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				bookmarksCollapsed: true,
+			} as any);
+			useSettingsStore.setState({
+				groupChatsExpanded: false,
+				starredSessionsCollapsed: false,
+			} as any);
+
+			const activateStarredItem = vi.fn();
+			const starredItems = [makeOpenStarred('a', 't1', 'Star One')];
+			const deps = makeDeps({ starredItems, activateStarredItem });
+			const { result } = renderHook(() => useCycleSession(deps));
+
+			// Visual order: [starred(0), Alpha(1)]. next from 1 wraps to starred(0).
+			act(() => {
+				result.current.cycleSession('next');
+			});
+
+			expect(activateStarredItem).toHaveBeenCalledWith(starredItems[0]);
+			expect(useSessionStore.getState().cyclePosition).toBe(0);
 		});
 	});
 

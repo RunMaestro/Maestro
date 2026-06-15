@@ -49,6 +49,16 @@ interface BrowserTabViewProps {
 	tab: BrowserTab;
 	theme: Theme;
 	onUpdateTab: (tabId: string, updates: Partial<BrowserTab>) => void;
+	/**
+	 * Whether this browser tab should hold keyboard focus. True only when the tab
+	 * is the visible/active view AND no modal/overlay layer is open above it. When
+	 * it flips to false the guest <webview> is blurred so the newly-active surface
+	 * (file preview, AI input, terminal, or an open modal like the Tab Switcher)
+	 * can claim keyboard focus - an Electron <webview> keeps Chromium input focus
+	 * on its guest WebContents even after the host element is hidden or covered,
+	 * which otherwise strands keystrokes in the webview.
+	 */
+	isActive?: boolean;
 }
 
 export interface BrowserTabViewHandle {
@@ -90,7 +100,7 @@ function syncWebviewLayout(webview: ElectronWebviewElement | null) {
 
 export const BrowserTabView = React.memo(
 	forwardRef<BrowserTabViewHandle, BrowserTabViewProps>(function BrowserTabView(
-		{ tab, theme, onUpdateTab },
+		{ tab, theme, onUpdateTab, isActive = true },
 		ref
 	) {
 		const webviewRef = useRef<ElectronWebviewElement | null>(null);
@@ -210,6 +220,24 @@ export const BrowserTabView = React.memo(
 				host.removeEventListener('focusin', onFocusIn);
 			};
 		}, []);
+
+		// Release keyboard focus from the guest webview whenever this tab stops
+		// being the active view. visibility:hidden on the host overlay is not
+		// enough: an Electron <webview> keeps Chromium input focus on its guest
+		// WebContents, so without an explicit blur a switch to a file/AI/terminal
+		// tab leaves keystrokes routed into the (now hidden) page. Blurring lets
+		// the destination view's own focus call land. Reset the user-click guard
+		// so a fresh activation is treated as a clean slate.
+		useEffect(() => {
+			if (isActive) return;
+			const host = hostRef.current;
+			const active = document.activeElement;
+			if (host && active && host.contains(active)) {
+				(active as HTMLElement).blur();
+			}
+			webviewRef.current?.blur();
+			userClickedRef.current = false;
+		}, [isActive]);
 
 		useEffect(() => {
 			if (!isAddressFocusedRef.current) {
@@ -350,9 +378,11 @@ export const BrowserTabView = React.memo(
 			// Uses stopImmediatePropagation to prevent any other listener
 			// (including the main-process-injected bubble-phase one) from
 			// double-firing.
-			// `f` is intentionally NOT in the text-editing pass-through list: Cmd+F
-			// must reach the app so the in-page find bar can open. The remaining
-			// letters (a/c/v/x/z) keep their native text-editing behavior inside
+			// `f` and `v` are intentionally NOT in the text-editing pass-through
+			// list. Cmd+F must reach the app so the in-page find bar can open, and
+			// Cmd/Ctrl+V is handled separately via the privileged paste path
+			// (guest.paste()) so paste works inside the webview. The remaining
+			// letters (a/c/x/z) keep their native text-editing behavior inside
 			// page inputs.
 			const keyboardInjection = `(function(){
 			if(window.__maestroShortcutCaptureInstalled)return;
@@ -362,7 +392,7 @@ export const BrowserTabView = React.memo(
 				var hasAlt=e.altKey;
 				if(!hasMod&&!hasAlt)return;
 				var k=e.key.toLowerCase();
-				var te=hasMod&&!hasAlt&&!e.shiftKey&&'acvxz'.indexOf(k)!==-1;
+				var te=hasMod&&!hasAlt&&!e.shiftKey&&'acxz'.indexOf(k)!==-1;
 				var re=hasMod&&!hasAlt&&e.shiftKey&&k==='z';
 				if(te||re)return;
 				e.preventDefault();

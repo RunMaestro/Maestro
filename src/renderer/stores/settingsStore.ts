@@ -212,6 +212,7 @@ const DEFAULT_ENCORE_FEATURES: EncoreFeatureFlags = {
 	usageStats: true,
 	symphony: true,
 	maestroCue: false,
+	webDesktopBundle: false,
 };
 
 // File Preview / Edit toolbar buttons. Each key maps to a visibility toggle in
@@ -321,6 +322,7 @@ export interface SettingsStoreState {
 	forcedParallelExecution: boolean;
 	forcedParallelAcknowledged: boolean;
 	defaultSaveToHistory: boolean;
+	synopsisDebounceSeconds: number;
 	defaultShowThinking: ThinkingMode;
 	leftSidebarWidth: number;
 	rightPanelWidth: number;
@@ -354,6 +356,7 @@ export interface SettingsStoreState {
 	usageStats: MaestroUsageStats;
 	ungroupedCollapsed: boolean;
 	groupChatsExpanded: boolean;
+	groupChatSortAlphabetical: boolean;
 	starredSessionsCollapsed: boolean;
 	tourCompleted: boolean;
 	firstAutoRunCompleted: boolean;
@@ -419,6 +422,8 @@ export interface SettingsStoreState {
 	showLeftPanelGitIndicator: boolean;
 	showLeftPanelCueIndicator: boolean;
 	showLeftPanelStartupCommandIndicator: boolean;
+	showGroupLabelInBookmarks: boolean;
+	showFullGroupLabelInBookmarks: boolean;
 	// File Edit & Preview
 	fileEditWordWrap: boolean;
 	fileEditShowLineNumbers: boolean;
@@ -467,6 +472,7 @@ export interface SettingsStoreActions {
 	setForcedParallelExecution: (value: boolean) => void;
 	setForcedParallelAcknowledged: (value: boolean) => void;
 	setDefaultSaveToHistory: (value: boolean) => void;
+	setSynopsisDebounceSeconds: (value: number) => void;
 	setDefaultShowThinking: (value: ThinkingMode) => void;
 	setLeftSidebarWidth: (value: number) => void;
 	setRightPanelWidth: (value: number) => void;
@@ -495,6 +501,7 @@ export interface SettingsStoreActions {
 	setCustomAICommands: (value: CustomAICommand[]) => void;
 	setUngroupedCollapsed: (value: boolean) => void;
 	setGroupChatsExpanded: (value: boolean) => void;
+	setGroupChatSortAlphabetical: (value: boolean) => void;
 	setStarredSessionsCollapsed: (value: boolean) => void;
 	setTourCompleted: (value: boolean) => void;
 	setFirstAutoRunCompleted: (value: boolean) => void;
@@ -556,6 +563,8 @@ export interface SettingsStoreActions {
 	setShowLeftPanelGitIndicator: (value: boolean) => void;
 	setShowLeftPanelCueIndicator: (value: boolean) => void;
 	setShowLeftPanelStartupCommandIndicator: (value: boolean) => void;
+	setShowGroupLabelInBookmarks: (value: boolean) => void;
+	setShowFullGroupLabelInBookmarks: (value: boolean) => void;
 	setFileEditWordWrap: (value: boolean) => void;
 	setFileEditShowLineNumbers: (value: boolean) => void;
 	setFilePreviewToolbarButtonVisibility: (button: FilePreviewToolbarButton, value: boolean) => void;
@@ -674,6 +683,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		forcedParallelExecution: false,
 		forcedParallelAcknowledged: false,
 		defaultSaveToHistory: true,
+		synopsisDebounceSeconds: 0,
 		defaultShowThinking: 'off',
 		leftSidebarWidth: 256,
 		rightPanelWidth: 384,
@@ -684,7 +694,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		bionifyAlgorithm: '- 0 1 1 2 0.4',
 		showHiddenFiles: true,
 		fileExplorerIconTheme: 'default',
-		toastWidth: 'small',
+		toastWidth: 'dynamic',
 		terminalWidth: 100,
 		logLevel: 'info',
 		maxLogBuffer: 5000,
@@ -707,6 +717,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		usageStats: DEFAULT_USAGE_STATS,
 		ungroupedCollapsed: false,
 		groupChatsExpanded: true,
+		groupChatSortAlphabetical: false,
 		starredSessionsCollapsed: false,
 		tourCompleted: false,
 		firstAutoRunCompleted: false,
@@ -772,6 +783,8 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		showLeftPanelGitIndicator: true,
 		showLeftPanelCueIndicator: true,
 		showLeftPanelStartupCommandIndicator: true,
+		showGroupLabelInBookmarks: true,
+		showFullGroupLabelInBookmarks: false,
 		fileEditWordWrap: true,
 		fileEditShowLineNumbers: true,
 		filePreviewToolbarVisibility: { ...DEFAULT_FILE_PREVIEW_TOOLBAR_VISIBILITY },
@@ -899,6 +912,12 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setDefaultSaveToHistory: (value) => {
 			set({ defaultSaveToHistory: value });
 			window.maestro.settings.set('defaultSaveToHistory', value);
+		},
+
+		setSynopsisDebounceSeconds: (value) => {
+			const clamped = Math.max(0, Math.round(value));
+			set({ synopsisDebounceSeconds: clamped });
+			window.maestro.settings.set('synopsisDebounceSeconds', clamped);
 		},
 
 		setDefaultShowThinking: (value) => {
@@ -1045,6 +1064,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setGroupChatsExpanded: (value) => {
 			set({ groupChatsExpanded: value });
 			window.maestro.settings.set('groupChatsExpanded', value);
+		},
+
+		setGroupChatSortAlphabetical: (value) => {
+			set({ groupChatSortAlphabetical: value });
+			window.maestro.settings.set('groupChatSortAlphabetical', value);
 		},
 
 		setStarredSessionsCollapsed: (value) => {
@@ -1441,6 +1465,16 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setShowLeftPanelStartupCommandIndicator: (value) => {
 			set({ showLeftPanelStartupCommandIndicator: value });
 			window.maestro.settings.set('showLeftPanelStartupCommandIndicator', value);
+		},
+
+		setShowGroupLabelInBookmarks: (value) => {
+			set({ showGroupLabelInBookmarks: value });
+			window.maestro.settings.set('showGroupLabelInBookmarks', value);
+		},
+
+		setShowFullGroupLabelInBookmarks: (value) => {
+			set({ showFullGroupLabelInBookmarks: value });
+			window.maestro.settings.set('showFullGroupLabelInBookmarks', value);
 		},
 
 		setFileEditWordWrap: (value) => {
@@ -2188,6 +2222,9 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['defaultSaveToHistory'] !== undefined)
 			patch.defaultSaveToHistory = allSettings['defaultSaveToHistory'] as boolean;
 
+		if (allSettings['synopsisDebounceSeconds'] !== undefined)
+			patch.synopsisDebounceSeconds = allSettings['synopsisDebounceSeconds'] as number;
+
 		// ThinkingMode: support legacy boolean values (true -> 'on', false -> 'off')
 		if (allSettings['defaultShowThinking'] !== undefined) {
 			const raw = allSettings['defaultShowThinking'];
@@ -2412,6 +2449,9 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['groupChatsExpanded'] !== undefined)
 			patch.groupChatsExpanded = allSettings['groupChatsExpanded'] as boolean;
 
+		if (allSettings['groupChatSortAlphabetical'] !== undefined)
+			patch.groupChatSortAlphabetical = allSettings['groupChatSortAlphabetical'] as boolean;
+
 		if (allSettings['starredSessionsCollapsed'] !== undefined)
 			patch.starredSessionsCollapsed = allSettings['starredSessionsCollapsed'] as boolean;
 
@@ -2426,6 +2466,17 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['hiddenQuotaAccounts'] !== undefined)
 			useUIStore.setState({
 				hiddenQuotaAccounts: allSettings['hiddenQuotaAccounts'] as Record<string, string[]>,
+			});
+
+		// Usage Dashboard auto-refresh intervals live in uiStore alongside the
+		// hidden-account map (both are provider-panel state), so the persisted map
+		// hydrates directly there too.
+		if (
+			allSettings['usageRefreshIntervals'] !== undefined &&
+			typeof allSettings['usageRefreshIntervals'] === 'object'
+		)
+			useUIStore.setState({
+				usageRefreshIntervals: allSettings['usageRefreshIntervals'] as Record<string, number>,
 			});
 
 		if (allSettings['tourCompleted'] !== undefined)
@@ -2728,6 +2779,12 @@ export async function loadAllSettings(): Promise<void> {
 				'showLeftPanelStartupCommandIndicator'
 			] as boolean;
 
+		if (allSettings['showGroupLabelInBookmarks'] !== undefined)
+			patch.showGroupLabelInBookmarks = allSettings['showGroupLabelInBookmarks'] as boolean;
+
+		if (allSettings['showFullGroupLabelInBookmarks'] !== undefined)
+			patch.showFullGroupLabelInBookmarks = allSettings['showFullGroupLabelInBookmarks'] as boolean;
+
 		if (allSettings['fileEditWordWrap'] !== undefined)
 			patch.fileEditWordWrap = allSettings['fileEditWordWrap'] as boolean;
 
@@ -2841,6 +2898,7 @@ export function getSettingsActions() {
 		setCustomThemeBaseId: state.setCustomThemeBaseId,
 		setEnterToSendAI: state.setEnterToSendAI,
 		setDefaultSaveToHistory: state.setDefaultSaveToHistory,
+		setSynopsisDebounceSeconds: state.setSynopsisDebounceSeconds,
 		setDefaultShowThinking: state.setDefaultShowThinking,
 		setLeftSidebarWidth: state.setLeftSidebarWidth,
 		setRightPanelWidth: state.setRightPanelWidth,
@@ -2878,6 +2936,7 @@ export function getSettingsActions() {
 		updateUsageStats: state.updateUsageStats,
 		setUngroupedCollapsed: state.setUngroupedCollapsed,
 		setGroupChatsExpanded: state.setGroupChatsExpanded,
+		setGroupChatSortAlphabetical: state.setGroupChatSortAlphabetical,
 		setStarredSessionsCollapsed: state.setStarredSessionsCollapsed,
 		setTourCompleted: state.setTourCompleted,
 		setFirstAutoRunCompleted: state.setFirstAutoRunCompleted,

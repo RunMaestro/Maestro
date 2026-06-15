@@ -139,6 +139,16 @@ const STRIPPED_ENV_VARS = [
 	'CLAUDE_CODE_ENTRYPOINT',
 	'CLAUDE_AGENT_SDK_VERSION',
 	'CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING',
+	// Claude session-identity markers. If Maestro itself was launched from
+	// within a Claude session (e.g. `claude` spawned the app, or a dev shell
+	// inherited them), these leak into spawned claude-code turns and the
+	// maestro-p TUI it drives, making that child claude run as a NESTED session
+	// that never writes its own JSONL transcript. maestro-p reads only the
+	// JSONL, so the run times out with an empty result and no History entry is
+	// recorded. Strip them here so no spawn surface forwards them; maestro-p
+	// also strips them itself as a second line of defense.
+	'CLAUDE_CODE_SESSION_ID',
+	'CLAUDE_CODE_CHILD_SESSION',
 	// Maestro's own NODE_ENV should not leak to agents
 	'NODE_ENV',
 ];

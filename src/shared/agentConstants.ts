@@ -72,10 +72,22 @@ export function isAdaptiveModeDefaultOn(agentId: string): boolean {
  * OpenAI models (Codex, o3, o4-mini) have a single context window that includes
  * both input and output tokens, unlike Claude which has separate limits.
  *
+ * Copilot CLI also lives here: even when its underlying model is Claude Sonnet,
+ * Copilot's own usage reporting (`session.shutdown.modelMetrics.<model>.usage`)
+ * normalizes `inputTokens` as a CUMULATIVE figure that already includes cached
+ * input, with `cacheReadTokens` reported as a subset for display only. Treating
+ * Copilot as Claude-style would double-count the cached portion every time the
+ * gauge is computed. We surface `currentTokens` (the live context-window state
+ * Copilot reports) as `inputTokens`; the combined formula then yields a
+ * reasonable approximation without re-adding the cache subset.
+ *
  * NOTE: This is kept as a static set for cross-process use (shared/).
  * The canonical flag is `usesCombinedContextWindow` in AgentCapabilities.
  */
-export const COMBINED_CONTEXT_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>(['codex']);
+export const COMBINED_CONTEXT_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>([
+	'codex',
+	'copilot-cli',
+]);
 
 /**
  * Resolve the context window size for an agent, preferring a runtime

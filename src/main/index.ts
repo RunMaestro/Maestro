@@ -28,6 +28,8 @@ import {
 } from './cue/cue-executor';
 import { executeCueShell, stopCueShellRun } from './cue/cue-shell-executor';
 import { executeCueCli, stopCueCliRun } from './cue/cue-cli-executor';
+import { executeCueNotify } from './cue/cue-notify-executor';
+import { getAgentDisplayName } from '../shared/agentMetadata';
 import { logger } from './utils/logger';
 import { tunnelManager } from './tunnel-manager';
 import { powerManager } from './power-manager';
@@ -165,6 +167,7 @@ import {
 import { sampleUsage as sampleClaudeUsage } from './agents/claude-usage-sampler';
 import { setSnapshot as setClaudeUsageSnapshot } from './stores/claudeUsageStore';
 import { getMaestroPBinPath, runStartupUsageSampling } from './agents/claude-usage-startup';
+import { UsageRefreshScheduler } from './agents/usage-refresh-scheduler';
 import type { ProcessConfig as ProcessSpawnConfig } from './process-manager/types';
 import type { TemplateContext } from '../shared/templateVariables';
 
@@ -352,6 +355,7 @@ let processManager: ProcessManager | null = null;
 let webServer: WebServer | null = null;
 let agentDetector: AgentDetector | null = null;
 let cueEngine: CueEngine | null = null;
+let usageRefreshScheduler: UsageRefreshScheduler | null = null;
 let interactiveReplayController: InteractiveReplayController<ProcessSpawnConfig> | null = null;
 
 // Create safeSend with dependency injection (Phase 2 refactoring)
@@ -374,7 +378,10 @@ const settingsWatcher = createSettingsWatcher({
 	getAgentConfigsPath: () => productionDataPath,
 });
 
-const devServerPort = process.env.VITE_PORT ? parseInt(process.env.VITE_PORT, 10) : 5173;
+// Fallback must match DEFAULT_START_PORT in scripts/dev-port.mjs. Never 5173
+// (Vite's default) - sharing it lets an agent-built dev server hijack the port
+// and replace the whole app window. See scripts/dev-port.mjs for the rationale.
+const devServerPort = process.env.VITE_PORT ? parseInt(process.env.VITE_PORT, 10) : 17173;
 const devServerUrl = `http://localhost:${devServerPort}`;
 
 // Forward declaration: quitHandler is constructed after the window, but the
@@ -719,6 +726,19 @@ app
 			});
 		});
 
+		// Background quota refresh: drives the Usage Dashboard's per-provider
+		// "Auto refresh" cadence from the main process so it keeps sampling even
+		// when the dashboard is closed (the old renderer setInterval died on
+		// unmount). Reads the persisted `usageRefreshIntervals` map and re-arms on
+		// change. Idempotent; arms nothing until the user picks an interval.
+		usageRefreshScheduler = new UsageRefreshScheduler({
+			sessionsStore,
+			agentConfigsStore,
+			settingsStore: store,
+			agentDetector,
+		});
+		usageRefreshScheduler.start();
+
 		// Initialize Cue Engine for event-driven automation
 		cueEngine = new CueEngine({
 			getSessions: () => {
@@ -740,6 +760,7 @@ app
 				timeoutMs,
 				action,
 				command,
+				notify,
 			}) => {
 				const storedSessions = sessionsStore.get('sessions', []) as Array<Record<string, any>>;
 				const storedSession = storedSessions.find((s) => s.id === sessionId);
@@ -761,6 +782,56 @@ app
 					},
 					conductorProfile: (store.get('conductorProfile', '') as string) || undefined,
 				};
+
+				// `action: notify` surfaces a toast through the owning agent instead of
+				// spawning anything — handled before command/prompt so the spawn config,
+				// SSH wrap, and history-recording paths below stay agent-only. The
+				// notify message is pre-resolved by the dispatch service via the
+				// fallback chain (notify.message → label → prompt → name); falling
+				// back here to `prompt` (which the dispatcher uses as the carrier)
+				// covers the queue-restored corner where the in-memory `notify` was
+				// lost but the message survived in the persisted `prompt` slot.
+				if (action === 'notify') {
+					const sessionInfo = {
+						id: storedSession.id,
+						name: storedSession.name,
+						toolType: storedSession.toolType,
+						cwd: projectRoot,
+						projectRoot,
+						autoRunFolderPath: storedSession.autoRunFolderPath,
+					};
+					const subscription = {
+						name: subscriptionName,
+						event: event.type,
+						enabled: true,
+						prompt,
+						action,
+						notify,
+						agent_id: storedSession.id,
+					};
+					const notifyLog = (level: string, message: string) => {
+						if (level === 'error') logger.error(message, 'Cue');
+						else if (level === 'warn') logger.warn(message, 'Cue');
+						else if (level === 'debug') logger.debug(message, 'Cue');
+						else logger.cue(message, 'Cue');
+					};
+					const message = notify?.message?.trim() || prompt;
+					const notifyResult = await executeCueNotify({
+						runId,
+						session: sessionInfo,
+						subscription,
+						event,
+						agentId: storedSession.id,
+						message,
+						sticky: notify?.sticky === true,
+						title: storedSession.name || getAgentDisplayName(storedSession.toolType),
+						mainWindow,
+						onLog: notifyLog,
+					});
+					const notifyHistory = recordCueHistoryEntry(notifyResult, sessionInfo);
+					void historyManager.addEntry(storedSession.id, projectRoot, notifyHistory);
+					return notifyResult;
+				}
 
 				// `action: command` runs a shell command or maestro-cli call instead of an
 				// AI prompt — skip agent path resolution and SSH wrapping.
@@ -875,6 +946,12 @@ app
 					customEnvVars: storedSession.customEnvVars,
 					customModel: storedSession.customModel,
 					customEffort: storedSession.customEffort,
+					// Claude token-source selection (TUI / API / dynamic), read from
+					// the same persisted session record that supplies customModel
+					// above, so Cue runs honor the triggering agent's choice.
+					enableMaestroP: storedSession.enableMaestroP,
+					maestroPMode: storedSession.maestroPMode,
+					maestroPPath: storedSession.maestroPPath,
 					onLog: (level, message) => {
 						if (level === 'error') {
 							logger.error(message, 'Cue');
@@ -1194,6 +1271,8 @@ quitHandler = createQuitHandler({
 		if (cueEngine?.isEnabled()) {
 			cueEngine.stop();
 		}
+		// Tear down the background quota refresh timers.
+		usageRefreshScheduler?.stop();
 	},
 	stopSettingsWatcher: () => settingsWatcher.stop(),
 	powerManager,
@@ -1282,6 +1361,7 @@ function setupIpcHandlers() {
 		agentConfigsStore,
 		settingsStore: store,
 		getMainWindow: () => mainWindow,
+		safeSend,
 		sessionsStore,
 		interactiveReplayController: interactiveReplayController ?? undefined,
 		getCueProcesses: () => {
@@ -1432,6 +1512,11 @@ function setupIpcHandlers() {
 				customArgs: s.customArgs,
 				customEnvVars: s.customEnvVars,
 				customModel: s.customModel,
+				// Claude token-source selection, so group chat participants honor
+				// the same maestro-p TUI / API / dynamic choice as their agent.
+				enableMaestroP: s.enableMaestroP,
+				maestroPMode: s.maestroPMode,
+				maestroPPath: s.maestroPPath,
 				sshRemoteName,
 				// Pass full SSH config for remote execution support
 				sshRemoteConfig: s.sessionSshRemoteConfig,

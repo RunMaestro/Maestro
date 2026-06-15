@@ -107,6 +107,9 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		deleteGroup: vi.fn().mockResolvedValue(true),
 		moveSessionToGroup: vi.fn().mockResolvedValue(true),
 		createSession: vi.fn().mockResolvedValue({ sessionId: 'new-session-1' }),
+		createWorktreeSession: vi
+			.fn()
+			.mockResolvedValue({ success: true, sessionId: 'new-worktree-1' }),
 		deleteSession: vi.fn().mockResolvedValue(true),
 		renameSession: vi.fn().mockResolvedValue(true),
 		updateSessionCwd: vi.fn().mockResolvedValue({ success: true }),
@@ -2731,6 +2734,84 @@ describe('WebSocketMessageHandler', () => {
 			const payload = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(payload.type).toBe('error');
 			expect(payload.message).toContain('newCwd');
+		});
+	});
+
+	describe('Create Worktree Session (CLI → Desktop)', () => {
+		it('forwards parent + trimmed config to the callback and echoes the new id', async () => {
+			(callbacks.createWorktreeSession as any).mockResolvedValue({
+				success: true,
+				sessionId: 'wt-1',
+			});
+
+			handler.handleMessage(client, {
+				type: 'create_worktree_session',
+				parentSessionId: 'parent-1',
+				branchName: '  feature/foo  ',
+				baseBranch: '  rc  ',
+				requestId: 'req-1',
+			});
+
+			await new Promise((resolve) => setImmediate(resolve));
+
+			expect(callbacks.createWorktreeSession).toHaveBeenCalledWith('parent-1', {
+				branchName: 'feature/foo',
+				baseBranch: 'rc',
+			});
+			const payload = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(payload).toMatchObject({
+				type: 'create_worktree_session_result',
+				success: true,
+				sessionId: 'wt-1',
+				requestId: 'req-1',
+			});
+		});
+
+		it('surfaces the renderer-supplied error', async () => {
+			(callbacks.createWorktreeSession as any).mockResolvedValue({
+				success: false,
+				error: 'Parent agent parent-9 not found',
+			});
+
+			handler.handleMessage(client, {
+				type: 'create_worktree_session',
+				parentSessionId: 'parent-9',
+				branchName: 'feature/bar',
+			});
+
+			await new Promise((resolve) => setImmediate(resolve));
+
+			const payload = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(payload).toMatchObject({
+				type: 'create_worktree_session_result',
+				success: false,
+				error: 'Parent agent parent-9 not found',
+			});
+		});
+
+		it('rejects a missing parentSessionId', () => {
+			handler.handleMessage(client, {
+				type: 'create_worktree_session',
+				branchName: 'feature/bar',
+			});
+
+			expect(callbacks.createWorktreeSession).not.toHaveBeenCalled();
+			const payload = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(payload.type).toBe('error');
+			expect(payload.message).toContain('parentSessionId');
+		});
+
+		it('rejects a missing/empty branchName', () => {
+			handler.handleMessage(client, {
+				type: 'create_worktree_session',
+				parentSessionId: 'parent-1',
+				branchName: '   ',
+			});
+
+			expect(callbacks.createWorktreeSession).not.toHaveBeenCalled();
+			const payload = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(payload.type).toBe('error');
+			expect(payload.message).toContain('branchName');
 		});
 	});
 });

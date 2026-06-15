@@ -331,6 +331,33 @@ describe('filesystem handlers', () => {
 
 			expect(result).toBeNull();
 		});
+
+		it('should return null for missing files and rethrow unexpected local read errors', async () => {
+			const handler = registeredHandlers.get('fs:readFile');
+			vi.mocked(fs.readFile).mockRejectedValueOnce(
+				Object.assign(new Error('missing'), { code: 'ENOENT' })
+			);
+			await expect(handler!({}, '/missing/file.txt')).resolves.toBeNull();
+
+			vi.mocked(fs.readFile).mockRejectedValueOnce(new Error('Permission denied'));
+			await expect(handler!({}, '/private/file.txt')).rejects.toThrow(
+				'Failed to read file: Error: Permission denied'
+			);
+		});
+
+		it('should return null when a remote file is missing', async () => {
+			// Remote not-found mirrors the local ENOENT path: return null instead of
+			// throwing so the IPC promise does not reject and reach Sentry. (MAESTRO-MG/MF)
+			const mockSshConfig = { id: 'remote-1', host: 'server.com', username: 'user' };
+			vi.mocked(getSshRemoteById).mockReturnValue(mockSshConfig as any);
+			vi.mocked(readFileRemote).mockResolvedValue({
+				success: false,
+				error: 'File not found: /remote/missing.md',
+			});
+
+			const handler = registeredHandlers.get('fs:readFile');
+			await expect(handler!({}, '/remote/missing.md', 'remote-1')).resolves.toBeNull();
+		});
 	});
 
 	describe('fs:stat', () => {
@@ -374,6 +401,57 @@ describe('filesystem handlers', () => {
 			expect(statRemote).toHaveBeenCalledWith('/remote/file.txt', mockSshConfig);
 			expect(result.size).toBe(2048);
 			expect(result.isFile).toBe(true);
+		});
+
+		it('should return null for a missing path (ENOENT) instead of throwing', async () => {
+			// Unresolved targets (e.g. the Document Graph following a [[wiki]] link
+			// to a note that does not exist) must resolve cleanly to null, mirroring
+			// the fs:readFile ENOENT contract.
+			vi.mocked(fs.stat).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+
+			const handler = registeredHandlers.get('fs:stat');
+			const result = await handler!({}, '/test/missing (Segment).md');
+
+			expect(result).toBeNull();
+		});
+
+		it('should return null when a path component is not a directory (ENOTDIR)', async () => {
+			vi.mocked(fs.stat).mockRejectedValue(
+				Object.assign(new Error('ENOTDIR'), { code: 'ENOTDIR' })
+			);
+
+			const handler = registeredHandlers.get('fs:stat');
+			const result = await handler!({}, '/test/file.md/phantom-sub');
+
+			expect(result).toBeNull();
+		});
+
+		it('should still throw for genuine stat errors (e.g. EACCES)', async () => {
+			vi.mocked(fs.stat).mockRejectedValue(Object.assign(new Error('EACCES'), { code: 'EACCES' }));
+
+			const handler = registeredHandlers.get('fs:stat');
+			await expect(handler!({}, '/test/forbidden.txt')).rejects.toThrow('Failed to get file stats');
+		});
+
+		it('should return null when a local path is missing (ENOENT)', async () => {
+			// Missing files return null instead of throwing so callers can handle
+			// absence without an unhandled IPC rejection reaching Sentry. (MAESTRO-MH/ME)
+			vi.mocked(fs.stat).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+
+			const handler = registeredHandlers.get('fs:stat');
+			await expect(handler!({}, '/missing/file.txt')).resolves.toBeNull();
+		});
+
+		it('should return null when a remote path is missing', async () => {
+			const mockSshConfig = { id: 'remote-1', host: 'server.com', username: 'user' };
+			vi.mocked(getSshRemoteById).mockReturnValue(mockSshConfig as any);
+			vi.mocked(statRemote).mockResolvedValue({
+				success: false,
+				error: 'Path not found: /remote/missing.md',
+			});
+
+			const handler = registeredHandlers.get('fs:stat');
+			await expect(handler!({}, '/remote/missing.md', 'remote-1')).resolves.toBeNull();
 		});
 	});
 

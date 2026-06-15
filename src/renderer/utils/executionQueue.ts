@@ -45,3 +45,60 @@ export function takeNextRunnableQueueItem(queue: QueuedItem[]): {
 		remaining: [...queue.slice(0, index), ...queue.slice(index + 1)],
 	};
 }
+
+/**
+ * Move a queued item to a new position and return the resulting queue.
+ *
+ * `fromIndex`/`toIndex` follow Array.splice semantics (remove at fromIndex,
+ * insert at toIndex). When `tabId` is given, the indices address only that tab's
+ * items as shown in the filtered inline chat list: those items are reordered
+ * among themselves and written back to their original slots, so queued items
+ * belonging to other tabs keep their absolute positions. Without `tabId` the
+ * whole queue is reordered. Out-of-range or no-op moves return the queue
+ * unchanged (same reference).
+ */
+export function reorderQueueItem(
+	queue: QueuedItem[],
+	fromIndex: number,
+	toIndex: number,
+	tabId?: string
+): QueuedItem[] {
+	if (!tabId) {
+		const len = queue.length;
+		if (
+			fromIndex === toIndex ||
+			fromIndex < 0 ||
+			fromIndex >= len ||
+			toIndex < 0 ||
+			toIndex >= len
+		) {
+			return queue;
+		}
+		const next = [...queue];
+		const [removed] = next.splice(fromIndex, 1);
+		next.splice(toIndex, 0, removed);
+		return next;
+	}
+
+	// Tab-scoped reorder: collect this tab's items and the slots they occupy.
+	const slots: number[] = [];
+	const items: QueuedItem[] = [];
+	queue.forEach((item, i) => {
+		if (item.tabId === tabId) {
+			slots.push(i);
+			items.push(item);
+		}
+	});
+	const len = items.length;
+	if (fromIndex === toIndex || fromIndex < 0 || fromIndex >= len || toIndex < 0 || toIndex >= len) {
+		return queue;
+	}
+	const reordered = [...items];
+	const [removed] = reordered.splice(fromIndex, 1);
+	reordered.splice(toIndex, 0, removed);
+	const next = [...queue];
+	slots.forEach((pos, idx) => {
+		next[pos] = reordered[idx];
+	});
+	return next;
+}

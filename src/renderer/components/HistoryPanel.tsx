@@ -165,6 +165,20 @@ export const HistoryPanel = React.memo(
 					projectPath: projectPathForHistory,
 					sharedContext: sharedContextSnapshot,
 					lookbackHours: graphLookbackHours,
+					// Type filter runs server-side so the window holds the newest
+					// N entries of the selected types. Toggling a filter changes
+					// this callback's identity, which the pagination hook treats
+					// as a window reset (re-fetches page 0). Without it, a
+					// Cue-heavy agent fills the window with CUE and toggling CUE
+					// off shows nothing despite USER/AUTO history existing.
+					types: [...activeFilters],
+					// Host filter also runs server-side, for the same reason as
+					// types: the picker counts come from the full-source graph
+					// aggregate, so a host whose entries fall outside the loaded
+					// page would show "(120)" yet render nothing if filtered only
+					// client-side. Changing the host changes this callback's
+					// identity, resetting the window to the newest N of that host.
+					hostKey: selectedHost,
 					pagination: { offset, limit },
 				});
 				return {
@@ -173,7 +187,14 @@ export const HistoryPanel = React.memo(
 					total: result.total,
 				};
 			},
-			[session.id, projectPathForHistory, sharedContextSnapshot, graphLookbackHours]
+			[
+				session.id,
+				projectPathForHistory,
+				sharedContextSnapshot,
+				graphLookbackHours,
+				activeFilters,
+				selectedHost,
+			]
 		);
 
 		const getEntryId = useCallback((entry: HistoryEntry) => entry.id, []);
@@ -467,7 +488,8 @@ export const HistoryPanel = React.memo(
 					const targetOffset = await window.maestro.history.getOffsetForTimestamp(
 						session.id,
 						bucketEnd - 1,
-						graphLookbackHours
+						graphLookbackHours,
+						[...activeFilters]
 					);
 					await jumpToOffset(targetOffset);
 					requestAnimationFrame(() => {
@@ -481,6 +503,7 @@ export const HistoryPanel = React.memo(
 				allFilteredEntries,
 				session.id,
 				graphLookbackHours,
+				activeFilters,
 				jumpToOffset,
 				setSelectedIndex,
 				virtualizer,

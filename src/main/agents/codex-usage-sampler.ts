@@ -112,7 +112,13 @@ export async function sampleCodexUsage(opts: SampleCodexUsageOptions): Promise<C
 
 	if (!response.ok) {
 		const status = response.status;
-		void reportCodexUsageFailure(codexHomeKey, `http ${status}`);
+		// 401/403 just mean the CODEX_HOME isn't logged in - an expected,
+		// recoverable state we surface to the UI as `unauthenticated`, not a
+		// failure worth a Sentry breadcrumb. Only report genuinely unexpected
+		// HTTP errors. Fixes MAESTRO-RR.
+		if (status !== 401 && status !== 403) {
+			void reportCodexUsageFailure(codexHomeKey, `http ${status}`);
+		}
 		return {
 			sampledAt,
 			codexHomeKey,

@@ -142,6 +142,24 @@ export const TextPreviewFast = forwardRef<TextPreviewFastHandle, TextPreviewFast
 						scrollRangeIntoView(range);
 					});
 				},
+				// Fixed-size virtualization (every page is PAGE_HEIGHT_PX tall, holding
+				// up to DEFAULT_LINES_PER_PAGE lines) makes the line ⇄ pixel mapping a
+				// constant multiply - no per-line measurement needed.
+				getTopLine: () => {
+					const root = scrollRef.current;
+					if (!root) return 1;
+					const lineHeight = PAGE_HEIGHT_PX / DEFAULT_LINES_PER_PAGE;
+					const pageList = pagesRef.current;
+					const total = pageList.length ? pageList[pageList.length - 1].endLine : 1;
+					const line = Math.floor(root.scrollTop / lineHeight) + 1;
+					return Math.min(Math.max(1, line), Math.max(1, total));
+				},
+				scrollToLine: (line: number) => {
+					const root = scrollRef.current;
+					if (!root) return;
+					const lineHeight = PAGE_HEIGHT_PX / DEFAULT_LINES_PER_PAGE;
+					root.scrollTop = Math.max(0, (line - 1) * lineHeight);
+				},
 			}),
 			[virtualizer]
 		);

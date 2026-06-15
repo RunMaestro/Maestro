@@ -3,6 +3,7 @@ import type { Session, AITab, ThinkingMode } from '../../types';
 import { getInitialRenameValue } from '../../utils/tabHelpers';
 import { useModalStore } from '../../stores/modalStore';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { isActiveOutputSearchOpen } from '../../utils/outputSearch';
 import { editClipboardImage } from '../../components/ImageAnnotator/editClipboardImage';
 
 // Font size keyboard shortcut constants
@@ -313,6 +314,25 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				const isPromptComposerCycleShortcut =
 					ctx.isShortcut(e, 'openPromptComposer') &&
 					useModalStore.getState().modals.get('promptComposer')?.open === true;
+				// The output-search find bar registers a lightweight overlay (same
+				// priority as slash autocomplete). It must not suppress the genuinely
+				// global launchers (Switch Agent, Quick Actions, Fuzzy File Search) or
+				// its own re-invocation (Cmd+F). Without these exceptions, opening Find
+				// traps the user: Cmd+O / Cmd+K go dead and there's no keyboard path
+				// back to the find input. Scoped to the find bar via uiStore so other
+				// overlays (file preview, log viewer) keep their stricter behavior.
+				const isOutputSearchOpen = isActiveOutputSearchOpen();
+				const isOutputSearchGlobalShortcut =
+					isOutputSearchOpen &&
+					(ctx.isShortcut(e, 'agentSwitcher') ||
+						ctx.isShortcut(e, 'quickAction') ||
+						ctx.isShortcut(e, 'fuzzyFileSearch'));
+				const isOutputSearchRefocusShortcut =
+					isOutputSearchOpen &&
+					(e.metaKey || e.ctrlKey) &&
+					!e.altKey &&
+					!e.shiftKey &&
+					keyLower === 'f';
 
 				if (ctx.hasOpenModal()) {
 					// TRUE MODAL is open - block most shortcuts from App.tsx
@@ -354,6 +374,8 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						!isBrowserFindShortcut &&
 						!isBrowserNavShortcut &&
 						!isFileFilterRefocusShortcut &&
+						!isOutputSearchGlobalShortcut &&
+						!isOutputSearchRefocusShortcut &&
 						!isFontSizeShortcut
 					) {
 						return;
@@ -395,6 +417,22 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				// taking effect; the daily counter is best-effort telemetry.
 				void window.maestro?.stats?.recordShortcutUsage?.(Date.now());
 			};
+
+			// Cmd+F while the output find bar is already open: bring focus back to its
+			// input from anywhere instead of no-opping. The find bar's own keydown
+			// handler only opens search when it's closed, so without this re-pressing
+			// the shortcut after focus moved away (e.g. to the AI input) does nothing.
+			if (
+				isActiveOutputSearchOpen() &&
+				(e.metaKey || e.ctrlKey) &&
+				!e.altKey &&
+				!e.shiftKey &&
+				e.key.toLowerCase() === 'f'
+			) {
+				e.preventDefault();
+				document.querySelector<HTMLInputElement>('.terminal-output input')?.focus();
+				return;
+			}
 
 			// General shortcuts
 			// Only allow collapsing left sidebar when there are sessions (prevent collapse on empty state)
@@ -968,7 +1006,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						);
 						if (browserTab) {
 							ctx.setRenameTabId(browserTab.id);
-							ctx.setRenameTabInitialName(browserTab.title ?? '');
+							ctx.setRenameTabInitialName(browserTab.customTitle ?? '');
 							ctx.setRenameTabModalOpen(true);
 							trackShortcut('renameTab');
 						}

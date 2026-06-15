@@ -134,6 +134,22 @@ export interface ToolExecutionEvent {
 	toolCallId?: string;
 }
 
+export interface ProcessUserInputBroadcast {
+	originId: string;
+	sessionId: string;
+	tabId?: string;
+	inputMode: 'ai' | 'terminal';
+	entry: {
+		id: string;
+		timestamp: number;
+		source: 'user';
+		text: string;
+		images?: string[];
+		readOnly?: boolean;
+		forceParallel?: boolean;
+	};
+}
+
 /**
  * SSH remote info
  */
@@ -181,6 +197,9 @@ export function createProcessApi() {
 		write: (sessionId: string, data: string): Promise<boolean> =>
 			ipcRenderer.invoke('process:write', sessionId, data),
 
+		broadcastUserInput: (payload: ProcessUserInputBroadcast): Promise<void> =>
+			ipcRenderer.invoke('process:broadcast-user-input', payload),
+
 		/**
 		 * Send interrupt signal (Ctrl+C) to a process
 		 */
@@ -227,6 +246,12 @@ export function createProcessApi() {
 			const handler = (_: unknown, sessionId: string, data: string) => callback(sessionId, data);
 			ipcRenderer.on('process:data', handler);
 			return () => ipcRenderer.removeListener('process:data', handler);
+		},
+
+		onUserInput: (callback: (payload: ProcessUserInputBroadcast) => void): (() => void) => {
+			const handler = (_: unknown, payload: ProcessUserInputBroadcast) => callback(payload);
+			ipcRenderer.on('process:user-input', handler);
+			return () => ipcRenderer.removeListener('process:user-input', handler);
 		},
 
 		/**
@@ -709,6 +734,48 @@ export function createProcessApi() {
 		sendRemoteConfigureAutoRunResponse: (
 			responseChannel: string,
 			result: { success: boolean; playbookId?: string; error?: string }
+		): void => {
+			ipcRenderer.send(responseChannel, result);
+		},
+
+		/**
+		 * Subscribe to remote create-worktree-agent from the CLI. Creates a new
+		 * agent in a git worktree branched off a parent agent, without Auto Run.
+		 */
+		onRemoteCreateWorktreeSession: (
+			callback: (parentSessionId: string, config: any, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				parentSessionId: string,
+				config: any,
+				responseChannel: string
+			) => {
+				try {
+					// callback may return a promise even though typed as void
+					Promise.resolve(callback(parentSessionId, config, responseChannel)).catch((error) => {
+						ipcRenderer.send(responseChannel, {
+							success: false,
+							error: error instanceof Error ? error.message : String(error),
+						});
+					});
+				} catch (error) {
+					ipcRenderer.send(responseChannel, {
+						success: false,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				}
+			};
+			ipcRenderer.on('remote:createWorktreeSession', handler);
+			return () => ipcRenderer.removeListener('remote:createWorktreeSession', handler);
+		},
+
+		/**
+		 * Send response for remote create-worktree-agent
+		 */
+		sendRemoteCreateWorktreeSessionResponse: (
+			responseChannel: string,
+			result: { success: boolean; sessionId?: string; error?: string }
 		): void => {
 			ipcRenderer.send(responseChannel, result);
 		},

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo } from 'react';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { ThinkingStatusPill } from '../ThinkingStatusPill';
+import { QuitWhenIdleIndicator } from '../QuitWhenIdleIndicator';
 import { MergeProgressOverlay } from '../MergeProgressOverlay';
 import { ExecutionQueueIndicator } from '../ExecutionQueueIndicator';
 import { ContextWarningSash } from '../ContextWarningSash';
@@ -314,6 +315,9 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 			className="relative p-4 border-t"
 			style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
 		>
+			{/* QuitWhenIdleIndicator - sits above the thinking pill while a deferred quit is armed */}
+			<QuitWhenIdleIndicator theme={theme} />
+
 			{/* ThinkingStatusPill - only show in AI mode when there are thinking items or AutoRun */}
 			{session.inputMode === 'ai' && (thinkingItems.length > 0 || autoRunState?.isRunning) && (
 				<ThinkingStatusPill
@@ -330,7 +334,12 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 
 			{/* ExecutionQueueIndicator - show when items are queued in AI mode */}
 			{session.inputMode === 'ai' && onOpenQueueBrowser && (
-				<ExecutionQueueIndicator session={session} theme={theme} onClick={onOpenQueueBrowser} />
+				<ExecutionQueueIndicator
+					session={session}
+					theme={theme}
+					onClick={onOpenQueueBrowser}
+					onSwitchTab={onSessionClick}
+				/>
 			)}
 
 			<StagedImagesStrip
@@ -403,10 +412,10 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 				inputRef={inputRef}
 			/>
 
-			<div className="flex gap-3">
-				<div className="flex-1 flex flex-col">
+			<div className="flex min-w-0 gap-3">
+				<div className="flex min-w-0 flex-1 flex-col">
 					<div
-						className="flex-1 relative border rounded-lg bg-opacity-50 flex flex-col"
+						className="relative flex min-w-0 flex-1 flex-col rounded-lg border bg-opacity-50"
 						style={{
 							borderColor: showQueueingBorder ? theme.colors.warning : theme.colors.border,
 							backgroundColor: showQueueingBorder

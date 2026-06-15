@@ -52,6 +52,16 @@ export interface ProcessConfig {
 	 *  script's `#!/usr/bin/env node` shebang. Local spawn only — SSH builds
 	 *  its remote PATH separately. */
 	extraPathDirs?: string[];
+	/** Agent-reported session id when this spawn is resuming a prior session
+	 *  (e.g. Copilot's `--resume=<id>`, Claude's `--resume <id>`). The spawner
+	 *  uses it to seed `ManagedProcess.agentSessionId` so post-exit work that
+	 *  needs to inspect on-disk session state (Copilot's events.jsonl) can run
+	 *  even when the resumed stream never re-announces the sessionId — Copilot
+	 *  in particular emits `session.resume` (no sessionId) on resume rather
+	 *  than `session.start`, so without this seed the disk reconciliation
+	 *  never runs and the renderer falls back to streamed commentary instead
+	 *  of the authoritative final answer / context window snapshot. */
+	agentSessionId?: string;
 }
 
 /**

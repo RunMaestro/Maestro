@@ -46,6 +46,9 @@ export function NewInstanceModal({
 		Record<string, Record<string, string>>
 	>({});
 	const [enableMaestroPByAgent, setEnableMaestroPByAgent] = useState<Record<string, boolean>>({});
+	const [maestroPModeByAgent, setMaestroPModeByAgent] = useState<
+		Record<string, 'interactive' | 'dynamic'>
+	>({});
 	const [maestroPPathByAgent, setMaestroPPathByAgent] = useState<Record<string, string>>({});
 	const [detectedMaestroPPath, setDetectedMaestroPPath] = useState<string | undefined>(undefined);
 	const [agentConfigs, setAgentConfigs] = useState<Record<string, Record<string, any>>>({});
@@ -192,6 +195,7 @@ export function NewInstanceModal({
 				setCustomAgentArgs({});
 				setCustomAgentEnvVars({});
 				setEnableMaestroPByAgent({});
+				setMaestroPModeByAgent({});
 				setMaestroPPathByAgent({});
 				setAgentSshRemoteConfigs({});
 			}
@@ -285,6 +289,10 @@ export function NewInstanceModal({
 				setEnableMaestroPByAgent((prev) => ({
 					...prev,
 					[source.toolType]: source.enableMaestroP ?? isAdaptiveModeDefaultOn(source.toolType),
+				}));
+				setMaestroPModeByAgent((prev) => ({
+					...prev,
+					[source.toolType]: source.maestroPMode ?? 'dynamic',
 				}));
 				setMaestroPPathByAgent((prev) => ({
 					...prev,
@@ -521,12 +529,22 @@ export function NewInstanceModal({
 
 		// New agents default Adaptive Mode on for Claude Code (isAdaptiveModeDefaultOn);
 		// an explicit toggle in the form (true/false) always wins over the default.
+		// The explicit choice must NOT be collapsed by `|| undefined` - an explicit
+		// `false` (API) has to survive, or over SSH it reverts to the TUI default
+		// and spawns maestro-p on a remote that may not have it (exit 127). Only the
+		// unset->default path keeps the `|| undefined` collapse (a falsy default
+		// stays "unconfigured").
+		const explicitMaestroP = enableMaestroPByAgent[selectedAgent];
 		const agentEnableMaestroP =
-			(enableMaestroPByAgent[selectedAgent] ?? isAdaptiveModeDefaultOn(selectedAgent)) || undefined;
+			explicitMaestroP ?? (isAdaptiveModeDefaultOn(selectedAgent) || undefined);
 		const agentMaestroPPath =
 			agentEnableMaestroP && maestroPPathByAgent[selectedAgent]?.trim()
 				? maestroPPathByAgent[selectedAgent].trim()
 				: undefined;
+		// Token-source refinement only travels with the opt-in (defaults to dynamic).
+		const agentMaestroPMode = agentEnableMaestroP
+			? (maestroPModeByAgent[selectedAgent] ?? 'dynamic')
+			: undefined;
 
 		onCreate(
 			selectedAgent,
@@ -544,7 +562,8 @@ export function NewInstanceModal({
 			agentCustomEffort,
 			targetGroupId ?? undefined,
 			agentEnableMaestroP,
-			agentMaestroPPath
+			agentMaestroPPath,
+			agentMaestroPMode
 		);
 		onClose();
 
@@ -560,6 +579,12 @@ export function NewInstanceModal({
 		// Clear the explicit override (rather than forcing false) so the agent's
 		// default (on for Claude Code) applies again on the next open.
 		setEnableMaestroPByAgent((prev) => {
+			const next = { ...prev };
+			delete next[selectedAgent];
+			return next;
+		});
+		// Clear the explicit mode override too so the default (dynamic) applies again.
+		setMaestroPModeByAgent((prev) => {
 			const next = { ...prev };
 			delete next[selectedAgent];
 			return next;
@@ -580,6 +605,7 @@ export function NewInstanceModal({
 		customAgentArgs,
 		customAgentEnvVars,
 		enableMaestroPByAgent,
+		maestroPModeByAgent,
 		maestroPPathByAgent,
 		agentConfigs,
 		agentSshRemoteConfigs,
@@ -823,6 +849,7 @@ export function NewInstanceModal({
 					customAgentArgs={customAgentArgs}
 					customAgentEnvVars={customAgentEnvVars}
 					enableMaestroPByAgent={enableMaestroPByAgent}
+					maestroPModeByAgent={maestroPModeByAgent}
 					maestroPPathByAgent={maestroPPathByAgent}
 					detectedMaestroPPath={detectedMaestroPPath}
 					agentConfigs={agentConfigs}
@@ -840,6 +867,9 @@ export function NewInstanceModal({
 					}}
 					onEnableMaestroPChange={(agentId, value) => {
 						setEnableMaestroPByAgent((prev) => ({ ...prev, [agentId]: value }));
+					}}
+					onMaestroPModeChange={(agentId, value) => {
+						setMaestroPModeByAgent((prev) => ({ ...prev, [agentId]: value }));
 					}}
 					onMaestroPPathChange={(agentId, value) => {
 						setMaestroPPathByAgent((prev) => ({ ...prev, [agentId]: value }));

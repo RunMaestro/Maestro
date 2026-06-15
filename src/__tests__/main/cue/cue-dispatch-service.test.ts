@@ -86,7 +86,8 @@ describe('createCueDispatchService', () => {
 				undefined,
 				undefined,
 				undefined, // chainRootId
-				undefined // parentEventId
+				undefined, // parentEventId
+				undefined // notify
 			);
 		});
 	});
@@ -232,6 +233,92 @@ describe('createCueDispatchService', () => {
 				undefined, // chainRootId
 				undefined // parentEventId
 			);
+		});
+	});
+
+	describe('action: notify', () => {
+		it('resolves the toast body from notify.message and threads sticky through', () => {
+			const { deps, executeRun } = makeDeps();
+			const svc = createCueDispatchService(deps);
+			const sub = makeSub({
+				action: 'notify',
+				agent_id: 's-1',
+				prompt: '',
+				notify: { message: 'Standup in 5', sticky: true },
+			});
+			const event = createCueEvent('time.once', 'my-sub');
+
+			const dispatched = svc.dispatchSubscription('s-1', sub, event, 'src');
+
+			expect(dispatched).toBe(1);
+			const args = executeRun.mock.calls[0];
+			// prompt slot carries the resolved message
+			expect(args[1]).toBe('Standup in 5');
+			// notify config arrives at position 13 with the resolved message and sticky
+			expect(args[12]).toEqual({ message: 'Standup in 5', sticky: true });
+		});
+
+		it('falls back to label when notify.message is missing', () => {
+			const { deps, executeRun } = makeDeps();
+			const svc = createCueDispatchService(deps);
+			const sub = makeSub({
+				action: 'notify',
+				agent_id: 's-1',
+				prompt: '',
+				label: 'Coffee time',
+				notify: {},
+			});
+			const event = createCueEvent('time.once', 'my-sub');
+
+			svc.dispatchSubscription('s-1', sub, event, 'src');
+
+			const args = executeRun.mock.calls[0];
+			expect(args[1]).toBe('Coffee time');
+			expect(args[12]).toEqual({ message: 'Coffee time' });
+		});
+
+		it('falls back to prompt then name when neither notify.message nor label is set', () => {
+			const { deps, executeRun } = makeDeps();
+			const svc = createCueDispatchService(deps);
+			const sub = makeSub({
+				action: 'notify',
+				agent_id: 's-1',
+				prompt: 'inline prompt body',
+				notify: {},
+			});
+			const event = createCueEvent('time.once', 'my-sub');
+
+			svc.dispatchSubscription('s-1', sub, event, 'src');
+			expect(executeRun.mock.calls[0][1]).toBe('inline prompt body');
+
+			executeRun.mockClear();
+			const subNoPrompt = makeSub({
+				name: 'standup',
+				action: 'notify',
+				agent_id: 's-1',
+				prompt: '',
+				notify: {},
+			});
+			svc.dispatchSubscription('s-1', subNoPrompt, event, 'src');
+			expect(executeRun.mock.calls[0][1]).toBe('standup');
+		});
+
+		it('dispatches notify subs even when prompt is empty (no "no prompt" skip)', () => {
+			const { deps, executeRun, logs } = makeDeps();
+			const svc = createCueDispatchService(deps);
+			const sub = makeSub({
+				action: 'notify',
+				agent_id: 's-1',
+				prompt: '',
+				notify: { message: 'Hello' },
+			});
+			const event = createCueEvent('time.once', 'my-sub');
+
+			const dispatched = svc.dispatchSubscription('s-1', sub, event, 'src');
+
+			expect(dispatched).toBe(1);
+			expect(executeRun).toHaveBeenCalledTimes(1);
+			expect(logs.some(([level, msg]) => level === 'warn' && /no prompt/.test(msg))).toBe(false);
 		});
 	});
 });

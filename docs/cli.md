@@ -339,6 +339,9 @@ maestro-cli create-agent "Full Config" -d /workspace \
 # Remove an agent
 maestro-cli remove-agent <agent-id>
 
+# Rename an agent
+maestro-cli rename-agent <agent-id> "New Name"
+
 # Move an agent into a group (use "none" to ungroup)
 maestro-cli update-agent <agent-id> --group <group-id>
 maestro-cli update-agent <agent-id> --group none
@@ -378,6 +381,98 @@ The flag table below covers `create-agent`:
 | `--ssh-cwd <path>`                | Working directory override on the SSH remote             | -                          |
 | `--auto-run-folder <path>`        | Auto Run / playbooks folder for this agent               | `<cwd>/.maestro/playbooks` |
 | `--json`                          | Machine-readable JSON output                             | -                          |
+
+### Creating and Removing Groups
+
+Manage Left Bar groups from the command line. Requires the Maestro desktop app to be running. Use a group ID with `create-agent -g` or `update-agent --group` to place agents into it, and `update-agent --group none` to move an agent back out.
+
+```bash
+# Create a group
+maestro-cli create-group "Backend"
+
+# Create a group with an emoji icon
+maestro-cli create-group "Backend" -e 🔧
+
+# Machine-readable output (returns the new group ID)
+maestro-cli create-group "Backend" --json
+
+# Remove an (empty) group
+maestro-cli remove-group <group-id>
+
+# Remove a group that still has agents (ungroups them first)
+maestro-cli remove-group <group-id> --force
+
+# Rename a group
+maestro-cli rename-group <group-id> "Frontend"
+```
+
+Removing a group never deletes the agents inside it: the desktop ungroups any members (moves them to no group) and then removes the group. `remove-group` refuses a non-empty group unless you pass `--force`, so you don't accidentally scatter a populated group. Group IDs support partial-ID resolution.
+
+`create-group` flags:
+
+| Flag                  | Description                  | Default |
+| --------------------- | ---------------------------- | ------- |
+| `-e, --emoji <emoji>` | Emoji icon for the group     | -       |
+| `--json`              | Machine-readable JSON output | -       |
+
+`remove-group` flags:
+
+| Flag          | Description                                               | Default |
+| ------------- | --------------------------------------------------------- | ------- |
+| `-f, --force` | Delete even if the group still has agents (ungroups them) | -       |
+| `--json`      | Machine-readable JSON output                              | -       |
+
+### Creating Worktree Agents
+
+Branch a new agent off an existing parent agent into its own git worktree, without an Auto Run playbook. This mirrors the desktop "create worktree" flow: the parent agent must already exist in the running app, the desktop creates the worktree on disk and a child session linked to the parent, then hands back the new agent's ID.
+
+```bash
+# Create a worktree agent off a parent, on a new branch
+maestro-cli create-worktree -a <parent-agent-id> -b feature/new-thing
+
+# Base the new branch on a specific ref when it does not yet exist
+maestro-cli create-worktree -a <parent-agent-id> -b feature/new-thing --base-branch rc
+
+# Create the worktree and immediately dispatch an initial prompt to it
+maestro-cli create-worktree -a <parent-agent-id> -b feature/new-thing -m "Start on the API layer"
+```
+
+The optional `--message` is delivered to the new agent as a plain prompt (not an Auto Run loop) on the same connection, addressed by the ID the desktop just returned. Both `--agent` and `--branch` support the usual partial-ID resolution.
+
+| Flag                   | Description                                                                   | Default          |
+| ---------------------- | ----------------------------------------------------------------------------- | ---------------- |
+| `-a, --agent <id>`     | Parent agent ID the worktree branches from (required)                         | -                |
+| `-b, --branch <name>`  | Branch name for the worktree, created if it does not exist (required)         | -                |
+| `--base-branch <name>` | Ref the new branch is based on when it does not yet exist (e.g. `rc`, `main`) | parent repo HEAD |
+| `-m, --message <text>` | Optional initial prompt dispatched to the new agent after creation            | -                |
+| `--json`               | Machine-readable JSON output                                                  | -                |
+
+### Driving the Workspace (Focus, Mode, Tabs)
+
+Steer the desktop UI itself: focus an agent, flip an agent between AI and terminal mode, and manage an agent's AI tabs. These mirror clicking around the app and require the desktop app to be running.
+
+```bash
+# Focus (select) an agent in the Left Bar; optionally focus a specific tab
+maestro-cli focus-agent <agent-id>
+maestro-cli focus-agent <agent-id> --tab <tab-id>
+
+# Switch an agent between AI chat and terminal mode
+maestro-cli switch-mode <agent-id> ai
+maestro-cli switch-mode <agent-id> terminal
+
+# Open a new tab for an agent (optionally seed an AI tab with a prompt)
+maestro-cli tab new -a <agent-id>
+maestro-cli tab new -a <agent-id> --prompt "Start reviewing the API layer"
+
+# Close, rename, star, or unstar a tab. The owning agent is resolved from the
+# tab ID automatically, so you only need the tab ID (exact or a unique prefix).
+maestro-cli tab close <tab-id>
+maestro-cli tab rename <tab-id> "Docs"
+maestro-cli tab star <tab-id>
+maestro-cli tab unstar <tab-id>
+```
+
+Find tab IDs with `maestro-cli session list`. `tab new` returns the new tab's ID (printed, or in the JSON payload with `--json`).
 
 ### Listing Resources
 
@@ -543,6 +638,28 @@ maestro-cli settings reset fontSize
 <Tip>
 Use `maestro-cli settings list -v` from inside an AI agent conversation to give the agent full context about every available setting and what it controls.
 </Tip>
+
+### Theme and Encore Features
+
+Ergonomic, validated wrappers over the underlying settings, for the customizations users most often ask for by voice. Unlike `settings set` (which writes the settings file), these route through the running desktop app, so the change applies live. The app must be running.
+
+```bash
+# Switch the active theme by ID or display name (case-insensitive)
+maestro-cli set-theme tokyo-night
+maestro-cli set-theme "Catppuccin Mocha"
+
+# See every available theme
+maestro-cli set-theme --list
+
+# List Encore (experimental) features and whether each is enabled
+maestro-cli encore list
+
+# Enable or disable an Encore feature
+maestro-cli encore enable symphony
+maestro-cli encore disable maestroCue
+```
+
+Encore feature IDs: `directorNotes`, `usageStats`, `symphony`, `maestroCue`. Friendly aliases are accepted (for example `group-chat` for `symphony`, `cue` for `maestroCue`).
 
 ### Managing Agent Configuration
 
@@ -916,6 +1033,28 @@ worktree (or reuses an existing one on the same repo), checks out the requested
 branch, dispatches the agent inside the worktree, and - when `--create-pr` is
 set - runs `gh pr create` once the batch completes. See
 [Git Worktrees](git-worktrees.md) for more on worktree behavior.
+
+### Controlling a Running Auto Run
+
+Once an Auto Run is going, these commands stop it or recover it from an error pause - the counterpart to launching with `auto-run --launch`. They require the desktop app to be running.
+
+```bash
+# Stop the active Auto Run for an agent
+maestro-cli stop-auto-run -a <agent-id>
+
+# When an Auto Run pauses on an error, choose how to proceed:
+maestro-cli resume-auto-run -a <agent-id>   # clear the error and continue
+maestro-cli skip-auto-run -a <agent-id>     # skip the failing document, continue with the next
+maestro-cli abort-auto-run -a <agent-id>    # stop the run entirely
+
+# Revert all completed [x] tasks back to [ ] in one document so it can re-run
+maestro-cli reset-auto-run-tasks loop/step-1.md -a <agent-id>
+
+# Delete a saved playbook (find IDs with "list playbooks -a <agent-id>")
+maestro-cli remove-playbook <agent-id> <playbook-id>
+```
+
+The filename for `reset-auto-run-tasks` is relative to the agent's Auto Run folder; absolute paths and `..` traversal are rejected.
 
 ### Checking Status
 

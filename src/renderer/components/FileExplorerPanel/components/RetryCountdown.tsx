@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Clock, RotateCw } from 'lucide-react';
 import type { Theme } from '../../../types';
 

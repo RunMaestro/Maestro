@@ -65,14 +65,20 @@ export function useAgentDataListener(deps: UseAgentDataListenerDeps): void {
 				return;
 			}
 
+			// Resolve the session once and reuse it for tab resolution, placeholder
+			// removal, the agentError-recovery check, and the unread check. The
+			// batched updater never writes the store synchronously, and the only
+			// synchronous write below (placeholder removal) just strips a log entry,
+			// so none of the fields these checks read go stale. This collapses what
+			// used to be up to three full-array getSessions().find() scans per chunk
+			// down to a single lookup on the hottest path in the app.
+			const session = getSessions().find((s) => s.id === actualSessionId);
+
 			let targetTabId = tabIdFromSession;
-			if (!targetTabId) {
-				const session = getSessions().find((s) => s.id === actualSessionId);
-				if (session) {
-					const targetTab = getWriteModeTab(session) || getActiveTab(session);
-					if (targetTab) {
-						targetTabId = targetTab.id;
-					}
+			if (!targetTabId && session) {
+				const targetTab = getWriteModeTab(session) || getActiveTab(session);
+				if (targetTab) {
+					targetTabId = targetTab.id;
 				}
 			}
 
@@ -85,29 +91,37 @@ export function useAgentDataListener(deps: UseAgentDataListenerDeps): void {
 
 			deps.activeHiddenToolRef.current?.delete(`${actualSessionId}:${targetTabId}`);
 
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== actualSessionId) return s;
-					let didChange = false;
-					const updatedTabs = s.aiTabs.map((tab) => {
-						if (tab.id !== targetTabId) return tab;
-						const updatedLogs = removeHiddenProgressLog(tab.logs, targetTabId!);
-						if (updatedLogs === tab.logs) return tab;
-						didChange = true;
-						return { ...tab, logs: updatedLogs };
-					});
-					return didChange ? { ...s, aiTabs: updatedTabs } : s;
-				})
-			);
+			const targetTab = session?.aiTabs?.find((t) => t.id === targetTabId);
+
+			// Only rewrite the sessions array when the target tab still carries a
+			// hidden-progress placeholder to strip. That holds on the first visible
+			// chunk of a turn; for the thousands of chunks that follow it doesn't, so
+			// we skip the full prev.map() allocation and store notification entirely
+			// instead of mapping every session just to return `prev` unchanged.
+			if (targetTab && removeHiddenProgressLog(targetTab.logs, targetTabId) !== targetTab.logs) {
+				setSessions((prev) =>
+					prev.map((s) => {
+						if (s.id !== actualSessionId) return s;
+						let didChange = false;
+						const updatedTabs = s.aiTabs.map((tab) => {
+							if (tab.id !== targetTabId) return tab;
+							const updatedLogs = removeHiddenProgressLog(tab.logs, targetTabId!);
+							if (updatedLogs === tab.logs) return tab;
+							didChange = true;
+							return { ...tab, logs: updatedLogs };
+						});
+						return didChange ? { ...s, aiTabs: updatedTabs } : s;
+					})
+				);
+			}
 
 			deps.batchedUpdater.appendLog(actualSessionId, targetTabId, true, data);
 			deps.batchedUpdater.markDelivered(actualSessionId, targetTabId);
 			deps.batchedUpdater.updateCycleBytes(actualSessionId, data.length);
 
-			const sessionForErrorCheck = getSessions().find((s) => s.id === actualSessionId);
-			if (sessionForErrorCheck?.agentError) {
-				const activeAgentError = sessionForErrorCheck.agentError;
-				const errorTabId = sessionForErrorCheck.agentErrorTabId ?? targetTabId;
+			if (session?.agentError) {
+				const activeAgentError = session.agentError;
+				const errorTabId = session.agentErrorTabId ?? targetTabId;
 
 				setSessions((prev) =>
 					prev.map((s) => {
@@ -139,16 +153,12 @@ export function useAgentDataListener(deps: UseAgentDataListenerDeps): void {
 				});
 			}
 
-			const session = getSessions().find((s) => s.id === actualSessionId);
-			if (session) {
-				const targetTab = session.aiTabs?.find((t) => t.id === targetTabId);
-				if (targetTab) {
-					const isTargetTabActive = targetTab.id === session.activeTabId;
-					const isThisSessionActive = session.id === getActiveSessionId();
-					const isUserAtBottom = targetTab.isAtBottom !== false;
-					const shouldMarkUnread = !isTargetTabActive || !isThisSessionActive || !isUserAtBottom;
-					deps.batchedUpdater.markUnread(actualSessionId, targetTabId, shouldMarkUnread);
-				}
+			if (session && targetTab) {
+				const isTargetTabActive = targetTab.id === session.activeTabId;
+				const isThisSessionActive = session.id === getActiveSessionId();
+				const isUserAtBottom = targetTab.isAtBottom !== false;
+				const shouldMarkUnread = !isTargetTabActive || !isThisSessionActive || !isUserAtBottom;
+				deps.batchedUpdater.markUnread(actualSessionId, targetTabId, shouldMarkUnread);
 			}
 		});
 

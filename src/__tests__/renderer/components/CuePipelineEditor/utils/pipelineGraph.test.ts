@@ -556,12 +556,15 @@ describe('convertToReactFlowNodes', () => {
 		expect(groups).toHaveLength(2);
 		expect(groups.find((g) => g.id === 'pipeline-group:p1')).toBeDefined();
 		expect(groups.find((g) => g.id === 'pipeline-group:p2')).toBeDefined();
-		// Group nodes are not selectable and behind the rest, but ARE draggable
-		// so the user can reposition the entire pipeline by grabbing the card.
+		// In pointer/select mode (the default — no isHandMode flag) the group
+		// card is selectable AND draggable, and sits ABOVE its content nodes so
+		// the whole body is the drag handle. It is never deletable via the
+		// canvas Delete key — removal must go through the toolbar.
 		for (const g of groups) {
-			expect(g.selectable).toBe(false);
+			expect(g.selectable).toBe(true);
 			expect(g.draggable).toBe(true);
-			expect(g.zIndex).toBe(-1);
+			expect(g.deletable).toBe(false);
+			expect(g.zIndex).toBe(5);
 		}
 	});
 

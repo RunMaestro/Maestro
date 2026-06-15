@@ -202,6 +202,13 @@ describe('envBuilder - Global Environment Variables', () => {
 			process.env.CLAUDE_CODE_ENTRYPOINT = '/path/to/entrypoint';
 			process.env.CLAUDE_AGENT_SDK_VERSION = '1.0.0';
 			process.env.CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING = 'true';
+			// Claude session-identity markers: leaking these into a spawned
+			// claude-code turn (or the maestro-p TUI it drives) makes the child
+			// claude run as a nested session that never writes its own JSONL
+			// transcript, breaking maestro-p capture (empty synopsis -> no
+			// History entry).
+			process.env.CLAUDE_CODE_SESSION_ID = 'parent-session-uuid';
+			process.env.CLAUDE_CODE_CHILD_SESSION = '1';
 
 			const env = buildChildProcessEnv();
 
@@ -212,6 +219,8 @@ describe('envBuilder - Global Environment Variables', () => {
 			expect(env.CLAUDE_CODE_ENTRYPOINT).toBeUndefined();
 			expect(env.CLAUDE_AGENT_SDK_VERSION).toBeUndefined();
 			expect(env.CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING).toBeUndefined();
+			expect(env.CLAUDE_CODE_SESSION_ID).toBeUndefined();
+			expect(env.CLAUDE_CODE_CHILD_SESSION).toBeUndefined();
 		});
 
 		it('should preserve non-Electron variables from process env', () => {

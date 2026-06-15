@@ -213,6 +213,7 @@ describe('settingsStore', () => {
 			expect(state.usageStats).toEqual(DEFAULT_USAGE_STATS);
 			expect(state.ungroupedCollapsed).toBe(false);
 			expect(state.groupChatsExpanded).toBe(true);
+			expect(state.groupChatSortAlphabetical).toBe(false);
 			expect(state.starredSessionsCollapsed).toBe(false);
 			expect(state.tourCompleted).toBe(false);
 			expect(state.firstAutoRunCompleted).toBe(false);
@@ -511,6 +512,12 @@ describe('settingsStore', () => {
 				useSettingsStore.getState().setGroupChatsExpanded(false);
 				expect(useSettingsStore.getState().groupChatsExpanded).toBe(false);
 				expect(window.maestro.settings.set).toHaveBeenCalledWith('groupChatsExpanded', false);
+			});
+
+			it('setGroupChatSortAlphabetical updates state and persists', () => {
+				useSettingsStore.getState().setGroupChatSortAlphabetical(true);
+				expect(useSettingsStore.getState().groupChatSortAlphabetical).toBe(true);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('groupChatSortAlphabetical', true);
 			});
 
 			it('setStarredSessionsCollapsed updates state and persists', () => {

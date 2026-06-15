@@ -146,4 +146,82 @@ describe('GroupChatList', () => {
 		expect(onExpandedChange).toHaveBeenCalledWith(true);
 		expect(onNewGroupChat).toHaveBeenCalledTimes(1);
 	});
+
+	describe('sort toggle pill', () => {
+		// "Banana" was updated most recently; "Apple" comes first alphabetically.
+		const apple: GroupChat = {
+			...baseChat,
+			id: 'gc-apple',
+			name: 'Apple',
+			createdAt: 1,
+			updatedAt: 1,
+		};
+		const banana: GroupChat = {
+			...baseChat,
+			id: 'gc-banana',
+			name: 'Banana',
+			createdAt: 2,
+			updatedAt: 100,
+		};
+
+		function chatOrder(container: HTMLElement): string[] {
+			return Array.from(container.querySelectorAll('span.text-sm.truncate')).map(
+				(el) => el.textContent ?? ''
+			);
+		}
+
+		it('does not render the pill without an onSortAlphabeticalChange callback', () => {
+			const { queryByTitle } = renderList({ groupChats: [apple, banana] });
+			expect(queryByTitle(/Sorting/)).toBeNull();
+		});
+
+		it('does not render the pill with a single chat', () => {
+			const { queryByTitle } = renderList({
+				groupChats: [apple],
+				onSortAlphabeticalChange: vi.fn(),
+			});
+			expect(queryByTitle(/Sorting/)).toBeNull();
+		});
+
+		it('sorts by most recent activity by default', () => {
+			const { container } = renderList({
+				groupChats: [apple, banana],
+				onSortAlphabeticalChange: vi.fn(),
+				isExpanded: true,
+			});
+			expect(chatOrder(container)).toEqual(['Banana', 'Apple']);
+		});
+
+		it('sorts alphabetically when sortAlphabetical is true', () => {
+			const { container } = renderList({
+				groupChats: [apple, banana],
+				onSortAlphabeticalChange: vi.fn(),
+				sortAlphabetical: true,
+				isExpanded: true,
+			});
+			expect(chatOrder(container)).toEqual(['Apple', 'Banana']);
+		});
+
+		it('toggles the sort order when the pill is clicked', () => {
+			const onSortAlphabeticalChange = vi.fn();
+			const { getByTitle } = renderList({
+				groupChats: [apple, banana],
+				onSortAlphabeticalChange,
+				sortAlphabetical: false,
+			});
+			fireEvent.click(getByTitle(/Sorting by most recent/));
+			expect(onSortAlphabeticalChange).toHaveBeenCalledWith(true);
+		});
+
+		it('toggles back to most recent when clicked while alphabetical', () => {
+			const onSortAlphabeticalChange = vi.fn();
+			const { getByTitle } = renderList({
+				groupChats: [apple, banana],
+				onSortAlphabeticalChange,
+				sortAlphabetical: true,
+			});
+			fireEvent.click(getByTitle(/Sorting alphabetically/));
+			expect(onSortAlphabeticalChange).toHaveBeenCalledWith(false);
+		});
+	});
 });

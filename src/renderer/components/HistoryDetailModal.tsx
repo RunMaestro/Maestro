@@ -24,6 +24,8 @@ import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { formatElapsedTime } from '../utils/formatters';
 import { formatTimestamp } from '../../shared/formatters';
+import { humanizeCueEventType } from '../../shared/cue/cue-summary';
+import { getTokenSourcePill } from '../../shared/claudeTokenModeLabel';
 import { stripAnsiCodes } from '../../shared/stringUtils';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
@@ -165,6 +167,18 @@ export function HistoryDetailModal({
 
 	const colors = getPillColor();
 	const Icon = entry.type === 'AUTO' ? Bot : entry.type === 'CUE' ? Zap : User;
+
+	// Claude-only per-turn token source pill (TUI = maestro-p / Max plan, API =
+	// claude --print). Absent on non-Claude and older entries. Shares its label and
+	// tooltip with the live chat pill so the two can never drift.
+	const tokenPill = entry.tokenSource
+		? getTokenSourcePill({ mode: entry.tokenSource, reason: entry.tokenSourceReason })
+		: null;
+	const tokenPillColor = tokenPill
+		? tokenPill.isTui
+			? theme.colors.accent
+			: (theme.colors.warning ?? theme.colors.accent)
+		: theme.colors.accent;
 
 	// Access agentName from unified history entries (Director's Notes)
 	const agentName = (entry as HistoryEntry & { agentName?: string }).agentName;
@@ -357,10 +371,21 @@ export function HistoryDetailModal({
 								</div>
 							)}
 
-							{/* Timestamp */}
-							<span className="text-xs" style={{ color: theme.colors.textDim }}>
-								{formatTime(entry.timestamp)}
-							</span>
+							{/* Token Source Pill (Claude-only): TUI vs API for this turn.
+							    Sits right after the Resume button, before the timestamp. */}
+							{tokenPill && (
+								<span
+									className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold"
+									style={{
+										backgroundColor: tokenPillColor + '20',
+										color: tokenPillColor,
+										border: `1px solid ${tokenPillColor}40`,
+									}}
+									title={tokenPill.title}
+								>
+									{tokenPill.label}
+								</span>
+							)}
 
 							{/* CUE metadata */}
 							{entry.type === 'CUE' && entry.cueTriggerName && (
@@ -371,10 +396,12 @@ export function HistoryDetailModal({
 										color: '#06b6d4',
 										border: '1px solid #06b6d440',
 									}}
-									title={`Trigger: ${entry.cueTriggerName}`}
+									title={`Trigger: ${entry.cueTriggerName}${
+										entry.cueEventType ? ` (${entry.cueEventType})` : ''
+									}`}
 								>
 									{entry.cueTriggerName}
-									{entry.cueEventType && ` \u2022 ${entry.cueEventType}`}
+									{entry.cueEventType && ` \u2022 ${humanizeCueEventType(entry.cueEventType)}`}
 								</span>
 							)}
 
@@ -400,6 +427,11 @@ export function HistoryDetailModal({
 									Validated
 								</button>
 							)}
+
+							{/* Timestamp - right-justified (last element pushes to the right edge) */}
+							<span className="text-xs ml-auto" style={{ color: theme.colors.textDim }}>
+								{formatTime(entry.timestamp)}
+							</span>
 						</div>
 					</div>
 				</div>
@@ -530,18 +562,24 @@ export function HistoryDetailModal({
 					style={{ color: theme.colors.textMain }}
 				>
 					<style>{proseStyles}</style>
-					<MarkdownRenderer
-						content={cleanResponse}
-						theme={theme}
-						onCopy={(text) => safeClipboardWrite(text)}
-						fileTree={fileTree}
-						cwd={cwd}
-						projectRoot={projectRoot}
-						onFileClick={onFileClick}
-						enableBionifyReadingMode={bionifyReadingMode}
-						chatLineBreaks
-						chatMath
-					/>
+					{entry.type === 'CUE' && !entry.fullResponse ? (
+						<p className="text-sm italic" style={{ color: theme.colors.textDim }}>
+							This run produced no captured output.
+						</p>
+					) : (
+						<MarkdownRenderer
+							content={cleanResponse}
+							theme={theme}
+							onCopy={(text) => safeClipboardWrite(text)}
+							fileTree={fileTree}
+							cwd={cwd}
+							projectRoot={projectRoot}
+							onFileClick={onFileClick}
+							enableBionifyReadingMode={bionifyReadingMode}
+							chatLineBreaks
+							chatMath
+						/>
+					)}
 				</div>
 
 				{/* Footer */}

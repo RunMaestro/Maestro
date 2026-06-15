@@ -216,9 +216,11 @@ describe('MainPanelHeader', () => {
 		expect(screen.queryByText('$1.23')).not.toBeInTheDocument();
 	});
 
-	it('renders context window widget', () => {
+	it('renders context-usage percentage', () => {
 		render(<MainPanelHeader {...defaultProps} />);
-		expect(screen.getByText('Context Window')).toBeInTheDocument();
+		// Plain-text "X%" replaced the verbose "Context Window" label + gauge bar
+		// so narrow viewports get the readout without the bar overflow.
+		expect(screen.getByText('25%')).toBeInTheDocument();
 	});
 
 	it('renders GitStatusWidget', () => {

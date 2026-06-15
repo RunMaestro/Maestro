@@ -344,6 +344,62 @@ describe('useAgentSessionManagement', () => {
 		expect(reloadedTab.logs[1].text).toBe('Hi there');
 	});
 
+	it('does not create a duplicate tab when a concurrent resume already opened the session', async () => {
+		// handleResumeSession is async (awaits disk read), so two activations of the
+		// same starred session can both pass the pre-await dedup with no tab present.
+		// The functional setSessions update must re-check FRESH state and focus the
+		// already-created tab instead of appending a second one. There must never be
+		// two tabs for one agent session.
+		const activeSession = createMockSession({
+			aiTabs: [createMockTab({ id: 'tab-1', agentSessionId: null })],
+			activeTabId: 'tab-1',
+			projectRoot: '/test/project',
+		});
+		const setSessions = vi.fn();
+
+		window.maestro.agentSessions.read = vi.fn().mockResolvedValue({
+			messages: [
+				{ type: 'user', content: 'Hello', timestamp: '2024-01-01T00:00:00.000Z', uuid: 'msg-1' },
+			],
+			total: 1,
+			hasMore: false,
+		});
+
+		const { result } = renderHook(() =>
+			useAgentSessionManagement({
+				activeSession,
+				setSessions,
+				setActiveAgentSessionId: vi.fn(),
+				setAgentSessionsOpen: vi.fn(),
+				rightPanelRef: createRightPanelRef(),
+				defaultSaveToHistory: true,
+			})
+		);
+
+		// At call time activeSession has NO tab for 'agent-race', so the resume goes
+		// through the disk-read + createTab path and returns a functional updater.
+		await act(async () => {
+			await result.current.handleResumeSession('agent-race');
+		});
+
+		const updateFn = setSessions.mock.calls[0][0];
+
+		// Simulate the concurrent first-resume having already committed its tab into
+		// the store before this updater runs.
+		const raceTab = createMockTab({ id: 'tab-race', agentSessionId: 'agent-race', logs: [] });
+		const committedSession = {
+			...activeSession,
+			aiTabs: [...activeSession.aiTabs, raceTab],
+		};
+
+		const [updatedSession] = updateFn([committedSession]);
+
+		// Exactly one tab for 'agent-race' (the first one), focused — no duplicate.
+		const raceTabs = updatedSession.aiTabs.filter((t: AITab) => t.agentSessionId === 'agent-race');
+		expect(raceTabs).toHaveLength(1);
+		expect(updatedSession.activeTabId).toBe('tab-race');
+	});
+
 	it('clears activeFileTabId when resuming a new agent session from file preview', async () => {
 		const activeSession = createMockSession({
 			activeFileTabId: 'file-tab-1',

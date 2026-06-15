@@ -105,13 +105,13 @@ In the header component, add a toggle...
 
 ## Task Writing Guidelines
 
-### Token Efficiency is Critical
+### Group by Logical Context
 
-Each task checkbox (`- [ ]`) starts a **fresh AI context**. The entire document and system prompt are passed each time. Therefore:
+Split work into tasks by what belongs together, not by individual file or operation:
 
-- **Group related operations into single tasks** to minimize redundant context
+- **Group related operations into single tasks** so each task is one coherent unit of work
 - **Use sub-bullets** to list multiple items within a compound task
-- **Separate by logical context**, not by individual file or operation
+- **Separate unrelated work** into different tasks
 
 ### What Makes a Good Task
 
