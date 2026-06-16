@@ -355,6 +355,73 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		args: [],
 	},
 	{
+		id: 'hermes',
+		name: 'Hermes',
+		binaryName: 'hermes',
+		command: 'hermes',
+		args: [],
+		batchModePrefix: ['chat'],
+		batchModeArgs: ['-Q', '--yolo'],
+		yoloModeArgs: ['--yolo'],
+		promptArgs: (prompt: string) => ['-q', prompt],
+		modelArgs: (modelId: string) => ['-m', modelId],
+		imageArgs: (imagePath: string) => ['--image', imagePath],
+		configOptions: [
+			{
+				key: 'model',
+				type: 'text',
+				label: 'Model',
+				description:
+					'Documented Hermes model override (for example, anthropic/claude-sonnet-4-20250514). Leave empty for the CLI default.',
+				default: '',
+				argBuilder: (value: string) => (value.trim() ? ['-m', value.trim()] : []),
+			},
+			{
+				key: 'contextWindow',
+				type: 'number',
+				label: 'Context Window Size',
+				description:
+					'Fallback context window size in tokens until Hermes reports a runtime-specific value.',
+				default: 200000,
+			},
+		],
+	},
+	{
+		id: 'pi',
+		name: 'Pi',
+		binaryName: 'pi',
+		command: 'pi',
+		args: [],
+		batchModePrefix: ['-p'],
+		jsonOutputArgs: ['--mode', 'json'],
+		noPromptSeparator: true,
+		resumeArgs: (sessionId: string) => ['--session', sessionId],
+		readOnlyArgs: ['--tools', 'read,grep,find,ls'],
+		readOnlyCliEnforced: true,
+		noToolsArgs: ['--no-tools'],
+		modelArgs: (modelId: string) => ['--model', modelId],
+		imageArgs: (imagePath: string) => [`@${imagePath}`],
+		configOptions: [
+			{
+				key: 'model',
+				type: 'text',
+				label: 'Model',
+				description:
+					'Documented Pi model override (for example, claude-sonnet-4.5). Leave empty for the CLI default.',
+				default: '',
+				argBuilder: (value: string) => (value.trim() ? ['--model', value.trim()] : []),
+			},
+			{
+				key: 'contextWindow',
+				type: 'number',
+				label: 'Context Window Size',
+				description:
+					'Fallback context window size in tokens until Pi reports a runtime-specific value.',
+				default: 200000,
+			},
+		],
+	},
+	{
 		id: 'opencode',
 		name: 'OpenCode',
 		binaryName: 'opencode',

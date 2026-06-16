@@ -27,6 +27,8 @@ describe('agentConstants', () => {
 			expect(DEFAULT_CONTEXT_WINDOWS['codex']).toBe(200000);
 			expect(DEFAULT_CONTEXT_WINDOWS['opencode']).toBe(128000);
 			expect(DEFAULT_CONTEXT_WINDOWS['factory-droid']).toBe(200000);
+			expect(DEFAULT_CONTEXT_WINDOWS['hermes']).toBe(200000);
+			expect(DEFAULT_CONTEXT_WINDOWS['pi']).toBe(200000);
 		});
 
 		it('should have terminal context window set to 0', () => {

@@ -19,6 +19,8 @@ export const DEFAULT_CONTEXT_WINDOWS: Partial<Record<AgentId, number>> = {
 	codex: 200000, // OpenAI o3/o4-mini context window
 	opencode: 128000, // OpenCode (depends on model, 128k is conservative default)
 	'factory-droid': 200000, // Factory Droid (varies by model, defaults to Claude Opus)
+	hermes: 200000, // Conservative fallback until runtime-specific reporting lands
+	pi: 200000, // Conservative fallback until runtime-specific reporting lands
 	'copilot-cli': 200000, // Copilot-CLI (varies by model, defaults to Claude Sonnet)
 	terminal: 0, // Terminal has no context window
 };
