@@ -41,7 +41,11 @@ import { formatRelativeTime } from '../../../shared/formatters';
 import { gitService } from '../../services/git';
 import { AUTO_RUN_FOLDER_NAME } from '../../components/Wizard';
 import { DEFAULT_BATCH_PROMPT } from '../../components/BatchRunnerModal';
-import type { PreviousUIState, UseInlineWizardReturn } from '../batch/useInlineWizard';
+import type {
+	InlineWizardState,
+	PreviousUIState,
+	UseInlineWizardReturn,
+} from '../batch/useInlineWizard';
 import type { WizardState } from '../../components/Wizard/WizardContext';
 import type { HistoryEntryInput } from '../agent/useAgentSessionManagement';
 import type { AgentSpawnResult } from '../agent/useAgentExecution';
@@ -50,6 +54,76 @@ function getDirectoryFromSavedPath(savedPath?: string): string | undefined {
 	if (!savedPath) return undefined;
 	const lastSeparatorIndex = Math.max(savedPath.lastIndexOf('/'), savedPath.lastIndexOf('\\'));
 	return lastSeparatorIndex > 0 ? savedPath.slice(0, lastSeparatorIndex) : undefined;
+}
+
+function getProjectPathFromWizardState(
+	sessionWizardState: SessionWizardState,
+	activeSession: Session
+) {
+	const extraState = sessionWizardState as SessionWizardState & { projectPath?: string };
+	if (extraState.projectPath) return extraState.projectPath;
+	if (sessionWizardState.autoRunFolderPath?.endsWith(`/${AUTO_RUN_FOLDER_NAME}`)) {
+		return sessionWizardState.autoRunFolderPath.slice(0, -`/${AUTO_RUN_FOLDER_NAME}`.length);
+	}
+	return activeSession.projectRoot || activeSession.cwd;
+}
+
+function hydrateInlineWizardStateFromSession(
+	sessionWizardState: SessionWizardState,
+	activeSession: Session,
+	activeTabId: string
+): InlineWizardState {
+	const projectPath = getProjectPathFromWizardState(sessionWizardState, activeSession);
+
+	return {
+		isActive: sessionWizardState.isActive,
+		isInitializing: false,
+		isWaiting: sessionWizardState.isWaiting ?? false,
+		mode: sessionWizardState.mode,
+		goal: sessionWizardState.goal ?? null,
+		confidence: sessionWizardState.confidence,
+		ready: sessionWizardState.ready ?? false,
+		conversationHistory: sessionWizardState.conversationHistory.map((message) => ({
+			id: message.id,
+			role: message.role,
+			content: message.content,
+			timestamp: message.timestamp,
+			confidence: message.confidence,
+			ready: message.ready,
+			images: message.images,
+		})),
+		isGeneratingDocs: sessionWizardState.isGeneratingDocs ?? false,
+		generatedDocuments: sessionWizardState.generatedDocuments ?? [],
+		existingDocuments: [],
+		previousUIState: sessionWizardState.previousUIState,
+		error: sessionWizardState.error ?? null,
+		lastUserMessageContent: null,
+		projectPath,
+		agentType: activeSession.toolType,
+		sessionName: activeSession.name,
+		tabId: activeTabId,
+		sessionId: activeSession.id,
+		streamingContent: sessionWizardState.streamingContent ?? '',
+		generationProgress:
+			sessionWizardState.currentGeneratingIndex && sessionWizardState.totalDocuments
+				? {
+						current: sessionWizardState.currentGeneratingIndex,
+						total: sessionWizardState.totalDocuments,
+					}
+				: null,
+		currentDocumentIndex: sessionWizardState.currentDocumentIndex ?? 0,
+		agentSessionId: sessionWizardState.agentSessionId ?? null,
+		subfolderName: sessionWizardState.subfolderName ?? null,
+		subfolderPath: sessionWizardState.subfolderPath ?? null,
+		autoRunFolderPath:
+			sessionWizardState.autoRunFolderPath ?? `${projectPath}/${AUTO_RUN_FOLDER_NAME}`,
+		sessionSshRemoteConfig: activeSession.sessionSshRemoteConfig,
+		sessionCustomPath: activeSession.customPath,
+		sessionCustomArgs: activeSession.customArgs,
+		sessionCustomEnvVars: activeSession.customEnvVars,
+		sessionCustomModel: activeSession.customModel,
+		conductorProfile: useSettingsStore.getState().conductorProfile,
+	};
 }
 
 // ============================================================================
@@ -174,6 +248,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 		isWizardActive: inlineWizardActive,
 		wizardTabId: inlineWizardTabId,
 		getStateForTab: getInlineWizardStateForTab,
+		hydrateTabState: hydrateInlineWizardTabState,
 	} = inlineWizardContext;
 
 	// --- Onboarding wizard context ---
@@ -304,6 +379,14 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			return;
 		}
 
+		if (!hasWizardOnThisTab && currentTabWizardState?.isActive) {
+			hydrateInlineWizardTabState(
+				activeTabId,
+				hydrateInlineWizardStateFromSession(currentTabWizardState, activeSession, activeTabId)
+			);
+			return;
+		}
+
 		if (!hasWizardOnThisTab && currentTabWizardState) {
 			setSessions((prev) =>
 				prev.map((s) => {
@@ -379,7 +462,13 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				};
 			})
 		);
-	}, [activeSession?.id, activeSession?.activeTabId, getInlineWizardStateForTab, setSessions]);
+	}, [
+		activeSession?.id,
+		activeSession?.activeTabId,
+		getInlineWizardStateForTab,
+		hydrateInlineWizardTabState,
+		setSessions,
+	]);
 
 	// ========================================================================
 	// sendWizardMessageWithThinking

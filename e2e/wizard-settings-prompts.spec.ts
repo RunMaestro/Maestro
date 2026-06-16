@@ -55,13 +55,13 @@ const activeScenarioMatrix = [
 	{ id: 'WSP-002', title: 'renders seeded inline wizard controls' },
 	{ id: 'WSP-003', title: 'persists a custom AI command from Settings' },
 	{ id: 'WSP-004', title: "opens Director's Notes from Quick Actions when enabled" },
-	{ id: 'WSP-005', title: 'inserts a seeded Prompt Composer mention without sending' },
+	{ id: 'WSP-005', title: 'keeps seeded Prompt Composer at-text literal without sending' },
 	{ id: 'WSP-006', title: 'preserves inline wizard draft text through Prompt Composer' },
 	{ id: 'WSP-007', title: 'cancels inline wizard exit confirmation' },
 	{ id: 'WSP-008', title: 'exits inline wizard after explicit confirmation' },
 	{ id: 'WSP-009', title: 'closes the New Agent Wizard from the header button' },
 	{ id: 'WSP-010', title: 'renders seeded custom AI command settings' },
-	{ id: 'WSP-011', title: 'dismisses Prompt Composer mention suggestions before closing' },
+	{ id: 'WSP-011', title: 'closes Prompt Composer with literal at-text preserved' },
 	{ id: 'WSP-012', title: 'keeps Prompt Composer send disabled for blank drafts' },
 	{ id: 'WSP-013', title: 'shows seeded inline wizard confidence state' },
 	{ id: 'WSP-014', title: 'updates Prompt Composer character count for a draft' },
@@ -1346,12 +1346,39 @@ async function openDirectorNotesFromQuickActions(window: Page) {
 	return directorNotesDialog;
 }
 
+async function scrollSettingsToText(settingsDialog: Locator, text: string) {
+	await settingsDialog
+		.locator('.scrollbar-thin')
+		.first()
+		.evaluate((scroller, targetText) => {
+			const elements = Array.from(scroller.querySelectorAll<HTMLElement>('*'));
+			const target =
+				elements.find((candidate) =>
+					Array.from(candidate.childNodes).some(
+						(node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim() === targetText
+					)
+				) ?? elements.find((candidate) => candidate.textContent?.includes(targetText));
+			if (target) scroller.scrollTop = Math.max(0, target.offsetTop - 120);
+		}, text);
+}
+
 async function openSettingsTab(window: Page, tabTitle: string, expectedText: string) {
 	await window.keyboard.press('Meta+,');
 	const settingsDialog = window.getByRole('dialog', { name: 'Settings' });
 	await expect(settingsDialog).toBeVisible();
 	await settingsDialog.locator(`button[title="${tabTitle}"]`).click();
+	await scrollSettingsToText(settingsDialog, expectedText);
 	await expect(settingsDialog.getByText(expectedText).first()).toBeVisible();
+	return settingsDialog;
+}
+
+async function openGlobalEnvironmentSettings(window: Page) {
+	const settingsDialog = await openSettingsTab(window, 'General', 'Shell Configuration');
+	await settingsDialog.getByRole('button', { name: 'Shell Configuration' }).click();
+	await scrollSettingsToText(settingsDialog, 'Global Environment Variables');
+	await expect(
+		settingsDialog.locator('strong').filter({ hasText: /^Global Environment Variables$/ })
+	).toBeVisible();
 	return settingsDialog;
 }
 
@@ -1605,15 +1632,15 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 
 		try {
 			const composerInput = await openPromptComposer(launched.window);
+			const composerDialog = promptComposerDialog(launched.window);
 			await composerInput.fill('Ask @Rev');
-			await expect(launched.window.getByRole('button', { name: /@Reviewer/ })).toBeVisible();
-			await composerInput.press('Enter');
-			await expect(composerInput).toHaveValue('Ask @Reviewer ');
+			await expect(composerDialog.getByRole('button', { name: /@Reviewer/ })).toHaveCount(0);
+			await expect(composerInput).toHaveValue('Ask @Rev');
 
 			await launched.window.keyboard.press('Escape');
 			await expect(launched.window.getByText('Prompt Composer')).toBeHidden();
 			await launched.window.getByTitle(/Open Prompt Composer/).click();
-			await expect(composerInput).toHaveValue('Ask @Reviewer ');
+			await expect(composerInput).toHaveValue('Ask @Rev');
 		} finally {
 			await launched.cleanup();
 		}
@@ -1741,15 +1768,13 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 
 		try {
 			const composerInput = await openPromptComposer(launched.window);
+			const composerDialog = promptComposerDialog(launched.window);
 			await composerInput.fill('Ask @Rev');
 
-			const reviewerMention = launched.window.getByRole('button', { name: /@Reviewer/ });
-			await expect(reviewerMention).toBeVisible();
+			await expect(composerDialog.getByRole('button', { name: /@Reviewer/ })).toHaveCount(0);
+			await expect(composerInput).toHaveValue('Ask @Rev');
 			await launched.window.keyboard.press('Escape');
 
-			await expect(reviewerMention).toBeHidden();
-			await expect(launched.window.getByText('Prompt Composer')).toBeVisible();
-			await launched.window.keyboard.press('Escape');
 			await expect(launched.window.getByText('Prompt Composer')).toBeHidden();
 		} finally {
 			await launched.cleanup();
@@ -1991,7 +2016,9 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 
 		try {
 			await openPromptComposer(launched.window);
-			await launched.window.getByTitle(/Save to History/).click();
+			await promptComposerDialog(launched.window)
+				.getByTitle(/Save to History/)
+				.click();
 
 			await expect
 				.poll(async () => {
@@ -2019,7 +2046,9 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 
 		try {
 			await openPromptComposer(launched.window);
-			await launched.window.getByRole('button', { name: /Read-Only/ }).click();
+			await promptComposerDialog(launched.window)
+				.getByRole('button', { name: /Read-Only/ })
+				.click();
 
 			await expect
 				.poll(async () => {
@@ -2566,7 +2595,7 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 				'General',
 				'Auto-scroll AI Output'
 			);
-			await settingsDialog.getByText('Auto-scroll AI output').click();
+			await settingsDialog.getByRole('button', { name: 'Auto-scroll AI output' }).click();
 
 			await expect
 				.poll(async () => {
@@ -3262,11 +3291,7 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 		});
 
 		try {
-			const settingsDialog = await openSettingsTab(
-				launched.window,
-				'General',
-				'Global Environment Variables'
-			);
+			const settingsDialog = await openGlobalEnvironmentSettings(launched.window);
 			const envSection = settingsDialog
 				.getByText('Environment Variables (optional)')
 				.locator('xpath=ancestor::div[.//button[normalize-space(.)="Add Variable"]][1]');
@@ -3483,11 +3508,7 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 		});
 
 		try {
-			const settingsDialog = await openSettingsTab(
-				launched.window,
-				'General',
-				'Global Environment Variables'
-			);
+			const settingsDialog = await openGlobalEnvironmentSettings(launched.window);
 			const envSection = settingsDialog
 				.getByText('Environment Variables (optional)')
 				.locator('xpath=ancestor::div[.//button[normalize-space(.)="Add Variable"]][1]');
@@ -3523,10 +3544,17 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 		});
 
 		try {
-			await openSettingsTab(launched.window, 'General', 'Global Environment Variables');
-			const variableRow = launched.window
-				.getByDisplayValue('WSP_REMOVE')
-				.locator('xpath=ancestor::div[contains(@class, "flex")][1]');
+			const settingsDialog = await openGlobalEnvironmentSettings(launched.window);
+			await scrollSettingsToText(settingsDialog, 'Environment Variables (optional)');
+			const envSection = settingsDialog
+				.getByText('Environment Variables (optional)')
+				.locator('xpath=ancestor::div[.//button[normalize-space(.)="Add Variable"]][1]');
+			const variableKeyInput = envSection.locator('input[placeholder="VARIABLE"]').first();
+			await expect(variableKeyInput).toHaveValue('WSP_REMOVE');
+			const variableRow = variableKeyInput.locator(
+				'xpath=ancestor::div[contains(@class, "flex")][1]'
+			);
+			await expect(variableRow.getByTitle('Remove variable')).toBeVisible();
 			await variableRow.getByTitle('Remove variable').click();
 
 			await expect

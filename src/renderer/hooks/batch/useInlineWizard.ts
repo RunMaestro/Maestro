@@ -207,6 +207,8 @@ export interface UseInlineWizardReturn {
 	getStateForTab: (tabId: string) => InlineWizardState | undefined;
 	/** Check if a specific tab has an active wizard */
 	isWizardActiveForTab: (tabId: string) => boolean;
+	/** Hydrate inline wizard state for a tab from persisted session data */
+	hydrateTabState: (tabId: string, state: InlineWizardState) => void;
 	/**
 	 * Start the wizard with intent parsing flow.
 	 * @param naturalLanguageInput - Optional input from `/wizard <text>` command
@@ -427,6 +429,15 @@ export function useInlineWizard(): UseInlineWizardReturn {
 		},
 		[tabStates]
 	);
+
+	const hydrateTabState = useCallback((tabId: string, state: InlineWizardState) => {
+		setTabStates((prevMap) => {
+			if (prevMap.has(tabId)) return prevMap;
+			const newMap = new Map(prevMap);
+			newMap.set(tabId, state);
+			return newMap;
+		});
+	}, []);
 
 	/**
 	 * Load document contents for existing documents.
@@ -1439,6 +1450,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 		// Per-tab state accessors
 		getStateForTab,
 		isWizardActiveForTab,
+		hydrateTabState,
 
 		// Actions
 		startWizard,

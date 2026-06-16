@@ -89,7 +89,7 @@ export function EnvVarsEditor({ envVars, setEnvVars, theme }: EnvVarsEditorProps
 		const parentEntries = Object.entries(envVars);
 		// Only reset if the keys/values actually differ
 		const currentKeys = entries
-			.filter((e) => e.key.trim())
+			.filter((e) => e.key.trim() && !validateEntry(e))
 			.map((e) => `${e.key}=${e.value}`)
 			.sort()
 			.join(',');
