@@ -90,6 +90,19 @@ export function useUnifiedTabHandlers({
 			);
 
 			for (const tabId of terminalTabIds) {
+				// Diagnostic: bulk close is a separate terminal-removal path from the
+				// store's closeTerminalTab. Log it with the same shape so every closed
+				// terminal is accounted for in the logs (see "Closing terminal tab").
+				const tab = (session.terminalTabs || []).find((t) => t.id === tabId);
+				logger.info('Closing terminal tab', 'TerminalView', {
+					sessionId: session.id,
+					tabId,
+					reason: wizardWarningLabel,
+					pid: tab?.pid,
+					state: tab?.state,
+					hasStartupCommand: !!tab?.startupCommand,
+					isRemote: !!(session.sessionSshRemoteConfig?.enabled || session.sshRemoteId),
+				});
 				window.maestro.process.kill(getTerminalSessionId(session.id, tabId));
 			}
 

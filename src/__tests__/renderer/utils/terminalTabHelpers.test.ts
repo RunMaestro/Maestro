@@ -25,6 +25,7 @@ import {
 	addTerminalTab,
 	closeTerminalTab,
 	selectTerminalTab,
+	restartTerminalTab,
 	updateTerminalTabState,
 	updateTerminalTabPid,
 	updateTerminalTabCwd,
@@ -442,6 +443,54 @@ describe('selectTerminalTab', () => {
 	it('returns original session when tab not found', () => {
 		const session = createMockSession({ terminalTabs: [] });
 		const updated = selectTerminalTab(session, 'nonexistent');
+		expect(updated).toBe(session);
+	});
+});
+
+describe('restartTerminalTab', () => {
+	it('resets an exited tab to a spawnable state', () => {
+		const tab = createMockTerminalTab({
+			id: 'tab-1',
+			pid: 4242,
+			state: 'exited',
+			exitCode: 255,
+		});
+		const session = createMockSession({ terminalTabs: [tab], activeTerminalTabId: null });
+		const updated = restartTerminalTab(session, 'tab-1');
+		expect(updated.terminalTabs![0].pid).toBe(0);
+		expect(updated.terminalTabs![0].state).toBe('idle');
+		expect(updated.terminalTabs![0].exitCode).toBeUndefined();
+	});
+
+	it('preserves the startup command so the restart re-runs it', () => {
+		const tab = createMockTerminalTab({
+			id: 'tab-1',
+			pid: 99,
+			state: 'exited',
+			startupCommand: 'ssh prod',
+		});
+		const session = createMockSession({ terminalTabs: [tab] });
+		const updated = restartTerminalTab(session, 'tab-1');
+		expect(updated.terminalTabs![0].startupCommand).toBe('ssh prod');
+	});
+
+	it('selects the restarted tab and clears other active tab kinds', () => {
+		const tab = createMockTerminalTab({ id: 'tab-1', state: 'exited' });
+		const session = createMockSession({
+			terminalTabs: [tab],
+			activeTerminalTabId: null,
+			activeFileTabId: 'file-tab-1',
+			activeBrowserTabId: 'browser-tab-1',
+		});
+		const updated = restartTerminalTab(session, 'tab-1');
+		expect(updated.activeTerminalTabId).toBe('tab-1');
+		expect(updated.activeFileTabId).toBeNull();
+		expect(updated.activeBrowserTabId).toBeNull();
+	});
+
+	it('returns original session when tab not found', () => {
+		const session = createMockSession({ terminalTabs: [] });
+		const updated = restartTerminalTab(session, 'nonexistent');
 		expect(updated).toBe(session);
 	});
 });

@@ -51,11 +51,26 @@ import {
 	addTerminalTab as addTerminalTabHelper,
 	closeTerminalTab as closeTerminalTabHelper,
 	selectTerminalTab as selectTerminalTabHelper,
+	restartTerminalTab as restartTerminalTabHelper,
 	renameTerminalTab as renameTerminalTabHelper,
 	setTerminalTabStartupCommand as setTerminalTabStartupCommandHelper,
 	getTerminalSessionId,
 } from '../utils/terminalTabHelpers';
 import { useSessionStore, selectActiveSession } from './sessionStore';
+import { logger } from '../utils/logger';
+
+/**
+ * Why a terminal tab is being closed. Logged at every close site so a vanished
+ * terminal can be explained from the logs instead of guessed at. 'user-action'
+ * covers the X button, middle-click, overlay menu, and close-others/left/right.
+ */
+export type TerminalCloseReason =
+	| 'user-action'
+	| 'pty-exit'
+	| 'spawn-failure'
+	| 'close-others'
+	| 'close-left'
+	| 'close-right';
 
 // ============================================================================
 // Store Types
@@ -223,15 +238,25 @@ export interface TabStoreActions {
 
 	/**
 	 * Close a terminal tab in the active session.
-	 * Kills the associated PTY process. Refuses to close the last terminal tab.
+	 * Kills the associated PTY process.
+	 *
+	 * @param reason - Why the tab is closing. Logged for diagnostics so a
+	 *   disappearing terminal can be traced to its cause. Defaults to 'user-action'.
 	 */
-	closeTerminalTab: (tabId: string) => void;
+	closeTerminalTab: (tabId: string, reason?: TerminalCloseReason) => void;
 
 	/**
 	 * Set the active terminal tab in the active session.
 	 * Switches inputMode to 'terminal'.
 	 */
 	selectTerminalTab: (tabId: string) => void;
+
+	/**
+	 * Restart an exited terminal tab in the active session.
+	 * Resets the tab to a spawnable state and selects it; the spawn effects in
+	 * TerminalView re-create the PTY (re-running any configured startup command).
+	 */
+	restartTerminalTab: (tabId: string) => void;
 
 	/**
 	 * Rename a terminal tab in the active session.
@@ -562,11 +587,26 @@ export const useTabStore = create<TabStore>()((set) => ({
 		updateActiveSession({ ...updatedSession, inputMode: 'terminal' });
 	},
 
-	closeTerminalTab: (tabId) => {
+	closeTerminalTab: (tabId, reason = 'user-action') => {
 		const session = getActiveSession();
 		if (!session) return;
+		const tab = (session.terminalTabs || []).find((t) => t.id === tabId);
 		const updatedSession = closeTerminalTabHelper(session, tabId);
 		if (updatedSession === session) return; // Tab not found
+		// Diagnostic: record exactly why a terminal tab was removed. This is the
+		// single chokepoint for terminal-tab destruction, so this log explains every
+		// vanished terminal (especially the non-user-initiated 'pty-exit' path).
+		logger.info('Closing terminal tab', 'TerminalView', {
+			sessionId: session.id,
+			tabId,
+			reason,
+			pid: tab?.pid,
+			state: tab?.state,
+			exitCode: tab?.exitCode,
+			hasStartupCommand: !!tab?.startupCommand,
+			isRemote: !!(session.sessionSshRemoteConfig?.enabled || session.sshRemoteId),
+			ageMs: tab ? Date.now() - tab.createdAt : undefined,
+		});
 		// Kill the PTY process after confirming the tab will be removed
 		window.maestro.process.kill(getTerminalSessionId(session.id, tabId));
 		updateActiveSession(updatedSession);
@@ -576,6 +616,18 @@ export const useTabStore = create<TabStore>()((set) => ({
 		const session = getActiveSession();
 		if (!session) return;
 		const updatedSession = selectTerminalTabHelper(session, tabId);
+		updateActiveSession({ ...updatedSession, inputMode: 'terminal' });
+	},
+
+	restartTerminalTab: (tabId) => {
+		const session = getActiveSession();
+		if (!session) return;
+		const updatedSession = restartTerminalTabHelper(session, tabId);
+		if (updatedSession === session) return; // Tab not found
+		// Defensive: kill any lingering PTY for this tab before the spawn effects
+		// re-create it. On a clean exit the process map entry is already gone, so
+		// this is a no-op (and emits no exit event) in the common case.
+		window.maestro.process.kill(getTerminalSessionId(session.id, tabId));
 		updateActiveSession({ ...updatedSession, inputMode: 'terminal' });
 	},
 

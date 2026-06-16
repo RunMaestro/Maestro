@@ -352,6 +352,32 @@ export function updateTerminalTabPid(session: Session, tabId: string, pid: numbe
 }
 
 /**
+ * Reset an exited terminal tab so it can be re-spawned, and select it.
+ * Clears the dead PID and exit code and returns the tab to 'idle' so the spawn
+ * effects in TerminalView pick it up again. Selecting the tab ensures the
+ * active-tab spawn path fires even for a terminal with no startup command.
+ *
+ * @param session - The Maestro session
+ * @param tabId - The ID of the terminal tab to restart
+ * @returns New session with the tab reset and selected, or original if not found
+ */
+export function restartTerminalTab(session: Session, tabId: string): Session {
+	const terminalTabs = session.terminalTabs || [];
+	if (!terminalTabs.find((tab) => tab.id === tabId)) {
+		return session;
+	}
+	return {
+		...session,
+		terminalTabs: terminalTabs.map((tab) =>
+			tab.id === tabId ? { ...tab, pid: 0, state: 'idle', exitCode: undefined } : tab
+		),
+		activeTerminalTabId: tabId,
+		activeFileTabId: null,
+		activeBrowserTabId: null,
+	};
+}
+
+/**
  * Configure the startup command and (optional) cwd for a terminal tab.
  * Empty `command` clears the configuration.
  * Empty `cwd` clears the override (PTY falls back to tab.cwd / session.cwd).

@@ -91,6 +91,8 @@ export const TerminalView = memo(
 		// identity on every render, which would re-trigger the spawn useEffect in a loop.
 		const onTabPidChangeRef = useRef(onTabPidChange);
 		onTabPidChangeRef.current = onTabPidChange;
+		const onTabStateChangeRef = useRef(onTabStateChange);
+		onTabStateChangeRef.current = onTabStateChange;
 
 		const closeTerminalTab = useTabStore((s) => s.closeTerminalTab);
 
@@ -124,6 +126,33 @@ export const TerminalView = memo(
 				});
 			}, 200);
 		}, []);
+
+		// Handle a PTY spawn failure. Scratch tabs are closed (their config is
+		// disposable); persistent tabs are kept and marked 'exited' so they survive
+		// a transient failure (e.g. an SSH remote that is briefly unreachable) and
+		// can be restarted by the user instead of vanishing. Marking 'exited' (rather
+		// than leaving 'idle') also stops the spawn effects from retrying in a loop.
+		const handleSpawnFailure = useCallback(
+			(tabId: string, isPersistent: boolean, message: string) => {
+				logger.warn('Terminal PTY spawn failed', 'TerminalView', {
+					sessionId: session.id,
+					tabId,
+					isPersistent,
+					message,
+					decision: isPersistent ? 'keep-for-restart' : 'close',
+				});
+				if (isPersistent) {
+					onTabStateChangeRef.current(tabId, 'exited');
+					terminalRefs.current
+						.get(tabId)
+						?.write('\r\n\x1b[2m[failed to start] - restart from the tab menu\x1b[0m\r\n');
+				} else {
+					setTimeout(() => closeTerminalTab(tabId, 'spawn-failure'), 0);
+				}
+				notifySpawnFailure(message);
+			},
+			[session.id, closeTerminalTab, notifySpawnFailure]
+		);
 
 		const activeTab = getActiveTerminalTab(session);
 
@@ -174,6 +203,15 @@ export const TerminalView = memo(
 				// Guard: skip if a spawn is already in flight for this tab
 				if (spawnInFlightRef.current.has(tabId)) return;
 				spawnInFlightRef.current.add(tabId);
+
+				// "Persistent" tabs carry user intent to keep running: a configured
+				// startup command, or any tab under an SSH/remote session (whose
+				// transport can drop for reasons unrelated to the user). We never
+				// silently discard these on failure - we keep them as a restartable
+				// exited husk instead of closing the tab and losing its config.
+				const isPersistent =
+					!!tab.startupCommand ||
+					!!(session.sessionSshRemoteConfig?.enabled || session.sshRemoteId);
 
 				const terminalSessionId = getTerminalSessionId(session.id, tabId);
 
@@ -242,9 +280,11 @@ export const TerminalView = memo(
 									});
 							}
 						} else {
-							// Spawn failed — close the tab and notify via batched toast
-							setTimeout(() => closeTerminalTab(tabId), 0);
-							notifySpawnFailure(
+							// Spawn failed. Persistent tabs are kept (marked exited so the
+							// spawn effects stop retrying in a loop); scratch tabs are closed.
+							handleSpawnFailure(
+								tabId,
+								isPersistent,
 								effectiveSshConfig?.enabled
 									? 'SSH terminal could not be started. Check that the SSH remote is enabled and reachable.'
 									: 'The shell process could not be started. Check system PTY availability.'
@@ -259,9 +299,10 @@ export const TerminalView = memo(
 								operation: 'spawnTerminalTab',
 							},
 						});
-						// Spawn threw — close the tab and notify via batched toast
-						setTimeout(() => closeTerminalTab(tabId), 0);
-						notifySpawnFailure(
+						// Spawn threw — same persistent-vs-scratch handling as a failed spawn.
+						handleSpawnFailure(
+							tabId,
+							isPersistent,
 							err instanceof Error ? err.message : 'An unexpected error occurred.'
 						);
 					})
@@ -278,10 +319,8 @@ export const TerminalView = memo(
 				defaultShell,
 				shellArgs,
 				shellEnvVars,
-				// onTabPidChange accessed via stable ref — not a dep
-				// onTabStateChange not used in this callback
-				closeTerminalTab,
-				notifySpawnFailure,
+				// onTabPidChange / onTabStateChange accessed via stable refs — not deps
+				handleSpawnFailure,
 			]
 		);
 
@@ -362,32 +401,65 @@ export const TerminalView = memo(
 			return cleanup;
 		}, [session.id]);
 
-		// Auto-close terminal tabs when the shell process exits.
-		// Startup failures (exit within 2s) show an error toast; normal exits close silently.
+		// Handle a terminal's PTY exiting. A plain scratch shell is closed (the user
+		// typed `exit` / Ctrl-D, or the shell died - that's disposable). A "persistent"
+		// tab is NOT auto-closed: a tab with a startup command, or any tab under an
+		// SSH/remote session whose transport can drop for reasons unrelated to the user
+		// (sleep, network blip, server timeout). Silently destroying those discards the
+		// user's config and is the root cause of the long-standing "terminal tabs vanish"
+		// reports. Instead we keep them as a restartable exited husk with a visible notice.
+		//
+		// pid === 0 means the PTY never spawned, i.e. this 'exited' transition came from
+		// a spawn failure already handled at the spawn site - skip it here to avoid a
+		// duplicate toast/notice.
 		useEffect(() => {
 			const terminalTabs = session.terminalTabs || [];
+			const isRemoteSession = !!(session.sessionSshRemoteConfig?.enabled || session.sshRemoteId);
 			for (const tab of terminalTabs) {
 				const prev = prevTabStatesRef.current.get(tab.id);
-				if (prev !== undefined && prev !== 'exited' && tab.state === 'exited') {
+				if (prev !== undefined && prev !== 'exited' && tab.state === 'exited' && tab.pid !== 0) {
 					const age = Date.now() - tab.createdAt;
 					const tabId = tab.id;
+					const isPersistent = !!tab.startupCommand || isRemoteSession;
+					// Diagnostic: every PTY exit logs why the tab was kept or closed. This
+					// is the signal for the "terminal tabs vanish" reports - e.g. an SSH
+					// transport dropping logs exitCode here with isRemote:true / kept.
+					logger.info('Terminal PTY exited', 'TerminalView', {
+						sessionId: session.id,
+						tabId,
+						exitCode: tab.exitCode,
+						ageMs: age,
+						hasStartupCommand: !!tab.startupCommand,
+						isRemote: isRemoteSession,
+						decision: isPersistent ? 'keep-for-restart' : 'close',
+					});
 					if (age < 2000) {
-						// Startup failure — close tab and show error toast
-						logger.warn(
-							`[TerminalView] Shell exited ${age}ms after creation (exit code: ${tab.exitCode ?? '?'}). Closing tab.`
-						);
-						setTimeout(() => closeTerminalTab(tabId), 0);
+						// Exited almost immediately - surface as a startup failure toast.
 						notifySpawnFailure(
 							`Shell exited immediately${tab.exitCode != null ? ` (exit code: ${tab.exitCode})` : ''}.`
 						);
+					}
+					if (isPersistent) {
+						// Keep the tab; show a visible notice instead of a silent dead husk.
+						terminalRefs.current
+							.get(tabId)
+							?.write(
+								`\r\n\x1b[2m[process exited${tab.exitCode != null ? ` (code ${tab.exitCode})` : ''}] - restart from the tab menu\x1b[0m\r\n`
+							);
 					} else {
-						// Close on next tick to avoid mutating state mid-render
-						setTimeout(() => closeTerminalTab(tabId), 0);
+						// Close on next tick to avoid mutating state mid-render.
+						setTimeout(() => closeTerminalTab(tabId, 'pty-exit'), 0);
 					}
 				}
 				prevTabStatesRef.current.set(tab.id, tab.state);
 			}
-		}, [session.terminalTabs, closeTerminalTab]);
+		}, [
+			session.terminalTabs,
+			session.sessionSshRemoteConfig,
+			session.sshRemoteId,
+			closeTerminalTab,
+			notifySpawnFailure,
+		]);
 
 		const terminalTabs = session.terminalTabs || [];
 
