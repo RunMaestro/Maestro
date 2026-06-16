@@ -15,6 +15,7 @@ const REQUIRED_COLORS: (keyof ThemeColors)[] = [
 	'bgMain',
 	'bgSidebar',
 	'bgActivity',
+	'bgTitleBar',
 	'border',
 	'textMain',
 	'textDim',

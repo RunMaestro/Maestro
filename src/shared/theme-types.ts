@@ -50,6 +50,14 @@ export interface ThemeColors {
 	bgSidebar: string;
 	/** Background for interactive/activity elements */
 	bgActivity: string;
+	/**
+	 * Background for the draggable window title bar (the top strip that holds
+	 * the traffic-light buttons and the centered agent title). Optional: when
+	 * unset the title bar renders transparent and shows `bgMain` behind it,
+	 * which is the historical behavior. Built-in themes set it explicitly to
+	 * their `bgMain` so existing themes look unchanged.
+	 */
+	bgTitleBar?: string;
 	/** Border color for dividers and outlines */
 	border: string;
 	/** Primary text color */
