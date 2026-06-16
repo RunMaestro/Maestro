@@ -336,6 +336,25 @@ const LogItemComponent = memo(
 		}
 
 		const processedText = processLogTextHelper(textToProcess, isTerminal && log.source !== 'user');
+		const toolInput = log.metadata?.toolState?.input as Record<string, unknown> | undefined;
+		const toolDetail = toolInput
+			? safeCommand(toolInput.command) ||
+				safeStr(toolInput.pattern) ||
+				safeStr(toolInput.file_path) ||
+				safeStr(toolInput.filePath) ||
+				safeStr(toolInput.query) ||
+				safeStr(toolInput.description) ||
+				safeStr(toolInput.prompt) ||
+				safeStr(toolInput.task_id) ||
+				summarizeTodos(toolInput.todos) ||
+				safeStr(toolInput.path) ||
+				safeStr(toolInput.cmd) ||
+				safeStr(toolInput.code) ||
+				truncateStr(toolInput.content, 100) ||
+				null
+			: null;
+		const saveContent =
+			log.source === 'tool' && toolDetail ? `${log.text}\n\n${toolDetail}` : log.text;
 
 		// Skip rendering stderr entries that have no actual content
 		if (log.source === 'stderr' && !processedText.trim()) {
@@ -618,28 +637,6 @@ const LogItemComponent = memo(
 					{/* Special rendering for tool execution events (shown alongside thinking) */}
 					{log.source === 'tool' &&
 						(() => {
-							// Extract tool input details for display
-							const toolInput = log.metadata?.toolState?.input as
-								| Record<string, unknown>
-								| undefined;
-							const toolDetail = toolInput
-								? safeCommand(toolInput.command) ||
-									safeStr(toolInput.pattern) ||
-									safeStr(toolInput.file_path) ||
-									safeStr(toolInput.filePath) || // OpenCode read tool
-									safeStr(toolInput.query) ||
-									safeStr(toolInput.description) || // Task tool
-									safeStr(toolInput.prompt) || // Task tool fallback
-									safeStr(toolInput.task_id) || // TaskOutput tool
-									summarizeTodos(toolInput.todos) || // TodoWrite tool
-									// Codex-specific tool arg patterns
-									safeStr(toolInput.path) || // Codex file operations
-									safeStr(toolInput.cmd) || // Codex shell commands
-									safeStr(toolInput.code) || // Codex code execution
-									truncateStr(toolInput.content, 100) || // Codex write operations (truncated)
-									null
-								: null;
-
 							return (
 								<div
 									className="px-4 py-1.5 text-xs font-mono border-l-2"
@@ -944,7 +941,7 @@ const LogItemComponent = memo(
 						{/* Save to File Button - only for AI responses */}
 						{log.source !== 'user' && isAIMode && onSaveToFile && (
 							<button
-								onClick={() => onSaveToFile(log.text)}
+								onClick={() => onSaveToFile(saveContent)}
 								className="p-1.5 rounded opacity-0 group-hover:opacity-50 hover:!opacity-100"
 								style={{ color: theme.colors.textDim }}
 								title="Save to file"
@@ -1846,6 +1843,15 @@ export const TerminalOutput = memo(
 							userMessageAlignment={userMessageAlignment}
 						/>
 					))}
+
+					{outputSearchQuery.trim() && filteredLogs.length === 0 && (
+						<div
+							className="flex items-center justify-center py-8 text-sm"
+							style={{ color: theme.colors.textDim }}
+						>
+							<span>No matches found for filter</span>
+						</div>
+					)}
 
 					{/* Terminal busy indicator - only show for terminal commands (AI thinking moved to ThinkingStatusPill) */}
 					{session.state === 'busy' &&

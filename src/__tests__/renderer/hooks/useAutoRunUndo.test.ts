@@ -707,7 +707,7 @@ describe('useAutoRunUndo', () => {
 	// ==========================================================================
 
 	describe('scheduleUndoSnapshot', () => {
-		it('should push undo state after 1000ms debounce delay', () => {
+		it('should flush a pending debounced snapshot before immediate undo', () => {
 			const mockDeps = createMockDeps({ localContent: 'Current content' });
 			const { result } = renderHook(() => useAutoRunUndo(mockDeps));
 
@@ -720,22 +720,17 @@ describe('useAutoRunUndo', () => {
 				vi.advanceTimersByTime(500);
 			});
 
-			// Try undo - should fail (nothing pushed yet)
-			act(() => {
-				result.current.handleUndo();
-			});
-			expect(mockDeps.setLocalContent).not.toHaveBeenCalled();
-
-			// After full delay
-			act(() => {
-				vi.advanceTimersByTime(600); // Total 1100ms
-			});
-
-			// Now undo should work
+			// Immediate undo should flush the pending snapshot before the debounce fires.
 			act(() => {
 				result.current.handleUndo();
 			});
 			expect(mockDeps.setLocalContent).toHaveBeenCalledWith('Previous content');
+
+			// The flushed snapshot should not fire a second time when the original delay passes.
+			act(() => {
+				vi.advanceTimersByTime(600); // Total 1100ms
+			});
+			expect(mockDeps.setLocalContent).toHaveBeenCalledTimes(1);
 		});
 
 		it('should cancel pending snapshot when new one is scheduled', () => {

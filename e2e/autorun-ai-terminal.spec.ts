@@ -1051,6 +1051,10 @@ async function openCodexSendToAgentModal(page: Page) {
 	return dialog;
 }
 
+function autoRunSaveButton(page: Page) {
+	return page.getByTitle(/Save changes/);
+}
+
 async function openCodexPromptComposer(page: Page) {
 	const promptInput = await openCodexAiTerminal(page);
 	await page.getByTitle(/Open Prompt Composer/).click();
@@ -3710,10 +3714,8 @@ Externally refreshed Codex Auto Run sentinel.
 			await expect(browser.getByText('2 total')).toBeVisible();
 			await expect(launched.window.getByRole('button', { name: /2 items queued/ })).toBeVisible();
 			await expect(launched.window.getByText('QUEUED (2)')).toBeVisible();
-			await expect(
-				launched.window.getByText('Codex queued Main tab prompt sentinel')
-			).toBeVisible();
-			await expect(launched.window.getByText('/compact')).toBeVisible();
+			await expect(browser.getByText('Codex queued Main tab prompt sentinel')).toBeVisible();
+			await expect(browser.getByText('/compact')).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
@@ -4246,7 +4248,9 @@ Externally refreshed Codex Auto Run sentinel.
 			await dialog.getByText('Toggle Read-Only Mode', { exact: true }).click();
 
 			await expect(dialog).toBeHidden();
-			await expect(launched.window.getByText('Read-Only')).toBeVisible();
+			await expect(
+				launched.window.getByTitle("Toggle Read-Only mode (agent won't modify files)")
+			).toContainText('Read-Only');
 			await expect(promptInput).toHaveValue('Codex Quick Actions read-only draft sentinel');
 		} finally {
 			await launched.cleanup();
@@ -4279,7 +4283,7 @@ Externally refreshed Codex Auto Run sentinel.
 			await stubCodexProcessSpawn(launched.electronApp);
 			await openCodexAiTerminal(launched.window);
 			const dialog = await openQuickActions(launched.window);
-			await dialog.getByPlaceholder('Type a command or jump to agent...').fill('release queued');
+			await dialog.getByPlaceholder('Type a command or jump to agent...').fill('debug: release');
 
 			await expect(dialog.getByText('Debug: Release Next Queued Item')).toBeVisible();
 			await expect(dialog.getByText('Process next item from queue (2 queued)')).toBeVisible();
@@ -4499,7 +4503,7 @@ Externally refreshed Codex Auto Run sentinel.
 			await expect(dialog.getByText('After cleaning:')).toBeVisible();
 			await dialog.getByLabel('Clean context (remove duplicates, reduce size)').uncheck();
 			await expect(dialog.getByText('After cleaning:')).toBeHidden();
-			await expect(dialog.getByRole('button', { name: 'Send Context' })).toBeEnabled();
+			await expect(dialog.getByRole('button', { name: 'Send to Session' })).toBeEnabled();
 		} finally {
 			await launched.cleanup();
 		}
@@ -4564,7 +4568,7 @@ Externally refreshed Codex Auto Run sentinel.
 			await dialog.getByPlaceholder('Search sessions...').press('1');
 
 			await expect(dialog.getByText('Target: Queued Companion Codex')).toBeVisible();
-			await expect(dialog.getByRole('button', { name: 'Send Context' })).toBeEnabled();
+			await expect(dialog.getByRole('button', { name: 'Send to Session' })).toBeEnabled();
 		} finally {
 			await launched.cleanup();
 		}
@@ -5170,7 +5174,7 @@ Externally refreshed Codex Auto Run sentinel.
 			await openCodexAiTerminal(launched.window);
 
 			const thinkingBlock = launched.window.locator('[data-log-index="3"]');
-			await expect(thinkingBlock.getByText('thinking')).toBeVisible();
+			await expect(thinkingBlock.getByText('thinking', { exact: true }).first()).toBeVisible();
 			await expect(
 				thinkingBlock.getByText('Codex lane thinking transcript sentinel.')
 			).toBeVisible();
@@ -6516,7 +6520,7 @@ Codex saved Auto Run body sentinel.
 			await expect
 				.poll(() => fs.readFileSync(launched.phaseOnePath, 'utf-8'))
 				.toBe(shortcutContent);
-			await expect(launched.window.getByText('Unsaved changes')).toBeHidden();
+			await expect(autoRunSaveButton(launched.window)).toBeHidden();
 		} finally {
 			await launched.cleanup();
 		}
@@ -6533,7 +6537,7 @@ Codex saved Auto Run body sentinel.
 			await editor.press('Tab');
 
 			await expect(editor).toHaveValue('Codex tab sentinel\t');
-			await expect(launched.window.getByText('Unsaved changes')).toBeVisible();
+			await expect(autoRunSaveButton(launched.window)).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
@@ -6550,7 +6554,7 @@ Codex saved Auto Run body sentinel.
 			await editor.press('Meta+L');
 
 			await expect(editor).toHaveValue('Prepare Codex lane task\n- [ ] ');
-			await expect(launched.window.getByText('Unsaved changes')).toBeVisible();
+			await expect(autoRunSaveButton(launched.window)).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
@@ -6567,7 +6571,7 @@ Codex saved Auto Run body sentinel.
 			await editor.press('Enter');
 
 			await expect(editor).toHaveValue('- [ ] First Codex lane task\n- [ ] ');
-			await expect(launched.window.getByText('Unsaved changes')).toBeVisible();
+			await expect(autoRunSaveButton(launched.window)).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
@@ -6605,7 +6609,7 @@ Codex saved Auto Run body sentinel.
 
 			await expect(editor).toHaveValue('Codex template enter {{AGENT_GROUP}}');
 			await expect(launched.window.getByText('{{AGENT_GROUP}}', { exact: true })).toBeHidden();
-			await expect(launched.window.getByText('Unsaved changes')).toBeVisible();
+			await expect(autoRunSaveButton(launched.window)).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
@@ -6625,7 +6629,7 @@ Codex saved Auto Run body sentinel.
 
 			await expect(editor).toHaveValue('Codex template escape {{date');
 			await expect(launched.window.getByText('{{DATE}}', { exact: true })).toBeHidden();
-			await expect(launched.window.getByText('Unsaved changes')).toBeVisible();
+			await expect(autoRunSaveButton(launched.window)).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
@@ -6644,7 +6648,7 @@ Codex saved Auto Run body sentinel.
 
 			await expect(editor).toHaveValue('Codex template click {{AGENT_NAME}}');
 			await expect(launched.window.getByText('{{AGENT_NAME}}', { exact: true })).toBeHidden();
-			await expect(launched.window.getByText('Unsaved changes')).toBeVisible();
+			await expect(autoRunSaveButton(launched.window)).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
@@ -6666,7 +6670,7 @@ Codex saved Auto Run body sentinel.
 
 			await expect(editor).toHaveValue('Codex template tab {{MAESTRO_CLI_PATH}}');
 			await expect(launched.window.getByText('{{MAESTRO_CLI_PATH}}', { exact: true })).toBeHidden();
-			await expect(launched.window.getByText('Unsaved changes')).toBeVisible();
+			await expect(autoRunSaveButton(launched.window)).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
@@ -6682,11 +6686,11 @@ Codex saved Auto Run body sentinel.
 
 			await editor.fill(draftContent);
 			await expect(editor).toHaveValue(draftContent);
-			await expect(launched.window.getByText('Unsaved changes')).toBeVisible();
+			await expect(autoRunSaveButton(launched.window)).toBeVisible();
 			await editor.press('Meta+Z');
 
 			await expect(editor).toHaveValue(launched.phaseOneContent);
-			await expect(launched.window.getByText('Unsaved changes')).toBeHidden();
+			await expect(autoRunSaveButton(launched.window)).toBeHidden();
 		} finally {
 			await launched.cleanup();
 		}
@@ -6702,13 +6706,13 @@ Codex saved Auto Run body sentinel.
 
 			await editor.fill(draftContent);
 			await expect(editor).toHaveValue(draftContent);
-			await expect(launched.window.getByText('Unsaved changes')).toBeVisible();
+			await expect(autoRunSaveButton(launched.window)).toBeVisible();
 			await editor.press('Meta+Z');
 			await expect(editor).toHaveValue(launched.phaseOneContent);
 			await editor.press('Meta+Shift+Z');
 
 			await expect(editor).toHaveValue(draftContent);
-			await expect(launched.window.getByText('Unsaved changes')).toBeVisible();
+			await expect(autoRunSaveButton(launched.window)).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
@@ -6725,13 +6729,13 @@ Codex saved Auto Run body sentinel.
 
 			await editor.fill(firstDraft);
 			await expect(editor).toHaveValue(firstDraft);
-			await expect(launched.window.getByText('Unsaved changes')).toBeVisible();
+			await expect(autoRunSaveButton(launched.window)).toBeVisible();
 			await editor.press('Meta+Z');
 			await expect(editor).toHaveValue(launched.phaseOneContent);
 
 			await editor.fill(secondDraft);
 			await expect(editor).toHaveValue(secondDraft);
-			await expect(launched.window.getByText('Unsaved changes')).toBeVisible();
+			await expect(autoRunSaveButton(launched.window)).toBeVisible();
 			await editor.press('Meta+Shift+Z');
 
 			await expect(editor).toHaveValue(secondDraft);

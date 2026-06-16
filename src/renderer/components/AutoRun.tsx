@@ -1204,6 +1204,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		if (handleAutocompleteKeyDown(e)) {
 			return;
 		}
+		const key = e.key.toLowerCase();
 
 		// Insert actual tab character instead of moving focus
 		if (e.key === 'Tab') {
@@ -1211,11 +1212,12 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 			const textarea = e.currentTarget;
 			const start = textarea.selectionStart;
 			const end = textarea.selectionEnd;
+			const currentContent = textarea.value;
 
 			// Push undo state before modifying content
-			pushUndoState();
+			pushUndoState(currentContent, start);
 
-			const newContent = localContent.substring(0, start) + '\t' + localContent.substring(end);
+			const newContent = currentContent.substring(0, start) + '\t' + currentContent.substring(end);
 			setLocalContent(newContent);
 			lastUndoSnapshotRef.current = newContent;
 
@@ -1228,7 +1230,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		}
 
 		// Cmd+Z to undo, Cmd+Shift+Z to redo
-		if ((e.metaKey || e.ctrlKey) && e.key === 'z') {
+		if ((e.metaKey || e.ctrlKey) && key === 'z') {
 			e.preventDefault();
 			e.stopPropagation();
 			if (e.shiftKey) {
@@ -1240,10 +1242,15 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		}
 
 		// Cmd+S to save
-		if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+		if ((e.metaKey || e.ctrlKey) && key === 's') {
 			e.preventDefault();
 			e.stopPropagation();
-			if (isDirty) {
+			const currentContent = e.currentTarget.value;
+			if (currentContent !== localContentRef.current) {
+				setLocalContent(currentContent);
+			}
+			if (currentContent !== savedContentRef.current) {
+				localContentRef.current = currentContent;
 				handleSave();
 			}
 			return;
@@ -1252,7 +1259,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		// Command-E to toggle between edit and preview (without Shift)
 		// Cmd+Shift+E is allowed to propagate to global handler for "Toggle Auto Run Expanded"
 		// Skip if edit mode is locked (during Auto Run) - matches button disabled state
-		if ((e.metaKey || e.ctrlKey) && e.key === 'e' && !e.shiftKey) {
+		if ((e.metaKey || e.ctrlKey) && key === 'e' && !e.shiftKey) {
 			e.preventDefault();
 			e.stopPropagation();
 			toggleMode();
@@ -1261,7 +1268,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 
 		// Command-F to open search in edit mode (without Shift)
 		// Cmd+Shift+F is allowed to propagate to the global handler for "Go to Files"
-		if ((e.metaKey || e.ctrlKey) && e.key === 'f' && !e.shiftKey) {
+		if ((e.metaKey || e.ctrlKey) && key === 'f' && !e.shiftKey) {
 			e.preventDefault();
 			e.stopPropagation();
 			openSearch();
@@ -1269,16 +1276,17 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		}
 
 		// Command-L to insert a markdown checkbox
-		if ((e.metaKey || e.ctrlKey) && e.key === 'l') {
+		if ((e.metaKey || e.ctrlKey) && key === 'l') {
 			e.preventDefault();
 			e.stopPropagation();
 			const textarea = e.currentTarget;
 			const cursorPos = textarea.selectionStart;
-			const textBeforeCursor = localContent.substring(0, cursorPos);
-			const textAfterCursor = localContent.substring(cursorPos);
+			const currentContent = textarea.value;
+			const textBeforeCursor = currentContent.substring(0, cursorPos);
+			const textAfterCursor = currentContent.substring(cursorPos);
 
 			// Push undo state before modifying content
-			pushUndoState();
+			pushUndoState(currentContent, cursorPos);
 
 			// Check if we're at the start of a line or have text before
 			const lastNewline = textBeforeCursor.lastIndexOf('\n');
@@ -1312,8 +1320,9 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		if (e.key === 'Enter' && !e.shiftKey) {
 			const textarea = e.currentTarget;
 			const cursorPos = textarea.selectionStart;
-			const textBeforeCursor = localContent.substring(0, cursorPos);
-			const textAfterCursor = localContent.substring(cursorPos);
+			const currentContent = textarea.value;
+			const textBeforeCursor = currentContent.substring(0, cursorPos);
+			const textAfterCursor = currentContent.substring(cursorPos);
 			const currentLineStart = textBeforeCursor.lastIndexOf('\n') + 1;
 			const currentLine = textBeforeCursor.substring(currentLineStart);
 
@@ -1327,7 +1336,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 				const indent = taskListMatch[1];
 				e.preventDefault();
 				// Push undo state before modifying content
-				pushUndoState();
+				pushUndoState(currentContent, cursorPos);
 				const newContent = textBeforeCursor + '\n' + indent + '- [ ] ' + textAfterCursor;
 				setLocalContent(newContent);
 				lastUndoSnapshotRef.current = newContent;
@@ -1343,7 +1352,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 				const marker = unorderedListMatch[2];
 				e.preventDefault();
 				// Push undo state before modifying content
-				pushUndoState();
+				pushUndoState(currentContent, cursorPos);
 				const newContent = textBeforeCursor + '\n' + indent + marker + ' ' + textAfterCursor;
 				setLocalContent(newContent);
 				lastUndoSnapshotRef.current = newContent;
@@ -1359,7 +1368,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 				const num = parseInt(orderedListMatch[2]);
 				e.preventDefault();
 				// Push undo state before modifying content
-				pushUndoState();
+				pushUndoState(currentContent, cursorPos);
 				const newContent = textBeforeCursor + '\n' + indent + (num + 1) + '. ' + textAfterCursor;
 				setLocalContent(newContent);
 				lastUndoSnapshotRef.current = newContent;

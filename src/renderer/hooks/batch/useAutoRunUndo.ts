@@ -96,6 +96,7 @@ export function useAutoRunUndo({
 
 	// Timer ref for debounced undo snapshots
 	const undoSnapshotTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+	const pendingUndoSnapshotRef = useRef<UndoState | null>(null);
 
 	/**
 	 * Push current state to undo history.
@@ -104,6 +105,11 @@ export function useAutoRunUndo({
 	const pushUndoState = useCallback(
 		(contentToSnapshot?: string, cursorPos?: number) => {
 			if (!selectedFile) return;
+			if (undoSnapshotTimeoutRef.current) {
+				clearTimeout(undoSnapshotTimeoutRef.current);
+				undoSnapshotTimeoutRef.current = null;
+			}
+			pendingUndoSnapshotRef.current = null;
 
 			const snapshotContent = contentToSnapshot ?? localContent;
 			const snapshotCursor = cursorPos ?? textareaRef.current?.selectionStart ?? 0;
@@ -153,14 +159,33 @@ export function useAutoRunUndo({
 			if (undoSnapshotTimeoutRef.current) {
 				clearTimeout(undoSnapshotTimeoutRef.current);
 			}
+			pendingUndoSnapshotRef.current = {
+				content: previousContent,
+				cursorPosition: previousCursor,
+			};
 
 			// Schedule snapshot after debounce delay of inactivity
 			undoSnapshotTimeoutRef.current = setTimeout(() => {
-				pushUndoState(previousContent, previousCursor);
+				const pendingSnapshot = pendingUndoSnapshotRef.current;
+				pendingUndoSnapshotRef.current = null;
+				if (pendingSnapshot) {
+					pushUndoState(pendingSnapshot.content, pendingSnapshot.cursorPosition);
+				}
 			}, UNDO_SNAPSHOT_DEBOUNCE_MS);
 		},
 		[pushUndoState]
 	);
+
+	const flushPendingUndoSnapshot = useCallback(() => {
+		if (!pendingUndoSnapshotRef.current) return;
+		if (undoSnapshotTimeoutRef.current) {
+			clearTimeout(undoSnapshotTimeoutRef.current);
+			undoSnapshotTimeoutRef.current = null;
+		}
+		const pendingSnapshot = pendingUndoSnapshotRef.current;
+		pendingUndoSnapshotRef.current = null;
+		pushUndoState(pendingSnapshot.content, pendingSnapshot.cursorPosition);
+	}, [pushUndoState]);
 
 	/**
 	 * Handle undo action (Cmd+Z).
@@ -168,6 +193,7 @@ export function useAutoRunUndo({
 	 */
 	const handleUndo = useCallback(() => {
 		if (!selectedFile) return;
+		flushPendingUndoSnapshot();
 
 		const undoStack = undoHistoryRef.current.get(selectedFile) || [];
 		if (undoStack.length === 0) return;
@@ -199,7 +225,7 @@ export function useAutoRunUndo({
 				textareaRef.current.focus();
 			}
 		});
-	}, [selectedFile, localContent, setLocalContent, textareaRef]);
+	}, [selectedFile, flushPendingUndoSnapshot, localContent, setLocalContent, textareaRef]);
 
 	/**
 	 * Handle redo action (Cmd+Shift+Z).
@@ -207,6 +233,7 @@ export function useAutoRunUndo({
 	 */
 	const handleRedo = useCallback(() => {
 		if (!selectedFile) return;
+		flushPendingUndoSnapshot();
 
 		const redoStack = redoHistoryRef.current.get(selectedFile) || [];
 		if (redoStack.length === 0) return;
@@ -234,7 +261,7 @@ export function useAutoRunUndo({
 				textareaRef.current.focus();
 			}
 		});
-	}, [selectedFile, localContent, setLocalContent, textareaRef]);
+	}, [selectedFile, flushPendingUndoSnapshot, localContent, setLocalContent, textareaRef]);
 
 	/**
 	 * Reset undo history for current document.
@@ -251,6 +278,7 @@ export function useAutoRunUndo({
 				clearTimeout(undoSnapshotTimeoutRef.current);
 				undoSnapshotTimeoutRef.current = null;
 			}
+			pendingUndoSnapshotRef.current = null;
 		};
 	}, [selectedFile]);
 
