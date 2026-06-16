@@ -20,6 +20,7 @@ Run only the Shard B specs from the rebuilt Maestro artifacts. Do not edit sourc
 mkdir -p /tmp/maestro-e2e-phase4-b/home /tmp/maestro-e2e-phase4-b/data
 HOME=/tmp/maestro-e2e-phase4-b/home \
 MAESTRO_DATA_DIR=/tmp/maestro-e2e-phase4-b/data \
+PLAYWRIGHT_BROWSERS_PATH=/Users/jeffscottward/Library/Caches/ms-playwright \
 PLAYWRIGHT_HTML_REPORT=playwright-report/phase4-b \
 VITE_PORT=41742 \
 ./node_modules/.bin/playwright test \

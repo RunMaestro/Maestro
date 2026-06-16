@@ -342,6 +342,24 @@ export function DocumentGraphView({
 	 * Handle escape - show confirmation modal
 	 */
 	const handleEscapeRequest = useCallback(() => {
+		const searchInput = searchInputRef.current;
+		if (searchInput && document.activeElement === searchInput) {
+			if (searchInput.value) {
+				searchInput.value = '';
+				setSearchQuery('');
+				requestAnimationFrame(() => {
+					searchInputRef.current?.focus();
+				});
+				return;
+			}
+
+			searchInput.blur();
+			requestAnimationFrame(() => {
+				mindMapContainerRef.current?.focus();
+			});
+			return;
+		}
+
 		setShowCloseConfirmation(true);
 	}, []);
 
@@ -1210,10 +1228,17 @@ export function DocumentGraphView({
 	const handleSearchKeyDown = useCallback(
 		(e: React.KeyboardEvent<HTMLInputElement>) => {
 			if (e.key === 'Escape') {
+				e.preventDefault();
 				e.stopPropagation(); // Prevent layer stack from handling
-				if (searchQuery) {
+
+				const currentSearchValue = e.currentTarget.value;
+				if (currentSearchValue) {
 					// First Escape: clear search query
+					e.currentTarget.value = '';
 					setSearchQuery('');
+					requestAnimationFrame(() => {
+						searchInputRef.current?.focus();
+					});
 				} else {
 					// Second Escape (or first if empty): blur search, select center node, focus graph
 					searchInputRef.current?.blur();
@@ -1233,7 +1258,7 @@ export function DocumentGraphView({
 				}
 			}
 		},
-		[searchQuery, activeFocusFile, nodes, handleNodeSelect]
+		[activeFocusFile, nodes, handleNodeSelect]
 	);
 
 	/**

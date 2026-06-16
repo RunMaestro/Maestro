@@ -1815,6 +1815,28 @@ describe('PromptComposerModal', () => {
 			expect(onToggleTabSaveToHistory).toHaveBeenCalledTimes(1);
 		});
 
+		it('should open the staged image lightbox when Shift produces an uppercase shortcut key', () => {
+			const onOpenLightbox = vi.fn();
+
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue="Draft"
+					onSubmit={onSubmit}
+					onSend={onSend}
+					stagedImages={['img-a']}
+					onOpenLightbox={onOpenLightbox}
+				/>
+			);
+			const textarea = screen.getByPlaceholderText('Write your prompt here...');
+
+			fireEvent.keyDown(textarea, { key: 'L', metaKey: true, shiftKey: true });
+
+			expect(onOpenLightbox).toHaveBeenCalledWith('img-a', ['img-a'], 'staged');
+		});
+
 		it('should ignore the lightbox shortcut when no staged image can be opened', () => {
 			const onOpenLightbox = vi.fn();
 

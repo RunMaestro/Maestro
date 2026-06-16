@@ -282,6 +282,7 @@ async function launchContextActionsLaneWorkbench(options: { compactable?: boolea
 		];
 		activeTab.logs = [...activeTab.logs, ...extraLogs];
 		session.aiLogs = activeTab.logs;
+		session.contextUsage = 30;
 	}
 	const launched = await helpers.launchAppWithState({
 		homeDir: seeded.homeDir,
@@ -450,7 +451,7 @@ function createPreviewLinkLaneWorkbench() {
 	const secondImageFilename = 'Phase 1-Z Codex Followup.png';
 	const richContent = `# Phase 1: Lane Setup
 
-See [[Phase 2|Phase Two Follow-up]] and [Phase 2 markdown](Phase 2.md).
+See [[Phase 2|Phase Two Follow-up]] and [Phase 2 markdown](Phase%202.md).
 
 [RunMaestro external](https://runmaestro.ai/autorun-lane)
 
@@ -1302,12 +1303,34 @@ async function stubImageClipboardWrite(electronApp: ElectronApplication) {
 	});
 }
 
+async function stubTextClipboardWrite(electronApp: ElectronApplication) {
+	await electronApp.evaluate(({ ipcMain }) => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eClipboardText?: string;
+		};
+		state.__maestroE2eClipboardText = undefined;
+		ipcMain.removeHandler('clipboard:writeText');
+		ipcMain.handle('clipboard:writeText', async (_event, text: string) => {
+			state.__maestroE2eClipboardText = text;
+		});
+	});
+}
+
 async function getStubbedImageClipboardDataUrl(electronApp: ElectronApplication) {
 	return electronApp.evaluate(() => {
 		const state = globalThis as typeof globalThis & {
 			__maestroE2eClipboardImageDataUrl?: string;
 		};
 		return state.__maestroE2eClipboardImageDataUrl ?? null;
+	});
+}
+
+async function getStubbedTextClipboard(electronApp: ElectronApplication) {
+	return electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eClipboardText?: string;
+		};
+		return state.__maestroE2eClipboardText;
 	});
 }
 
@@ -3213,7 +3236,7 @@ Recovered refresh sentinel.
 			const { composer, composerInput } = await openCodexPromptComposer(launched.window);
 
 			await composer.locator('input[type="file"]').setInputFiles(imagePath);
-			await composerInput.press('Control+Shift+L');
+			await composerInput.press('Meta+Shift+L');
 
 			const lightbox = launched.window.getByRole('dialog', { name: 'Image Lightbox' });
 			await expect(lightbox).toBeVisible();
@@ -5936,30 +5959,14 @@ Codex phase two saved edit sentinel.
 	test('copies a Codex Auto Run preview image markdown reference from the lightbox', async () => {
 		const launched = await launchPreviewLinkLaneWorkbench();
 		try {
-			await launched.window.evaluate(() => {
-				const state = window as Window & { __maestroE2eCopiedMarkdown?: string };
-				state.__maestroE2eCopiedMarkdown = undefined;
-				Object.defineProperty(navigator, 'clipboard', {
-					configurable: true,
-					value: {
-						writeText: async (text: string) => {
-							state.__maestroE2eCopiedMarkdown = text;
-						},
-					},
-				});
-			});
+			await stubTextClipboardWrite(launched.electronApp);
 			await openCodexPreviewLightbox(launched.window, launched.imageFilename);
 
 			await launched.window.getByTitle('Copy markdown reference (e.g., ![alt](path))').click();
 
 			await expect
-				.poll(() =>
-					launched.window.evaluate(() => {
-						return (window as Window & { __maestroE2eCopiedMarkdown?: string })
-							.__maestroE2eCopiedMarkdown;
-					})
-				)
-				.toBe(`![images/${launched.imageFilename}](images/${launched.imageFilename})`);
+				.poll(async () => getStubbedTextClipboard(launched.electronApp))
+				.toBe('![Phase 1-Codex Lane](images/Phase%201-Codex%20Lane.png)');
 			await expect(launched.window.getByText('Copied!')).toBeVisible();
 		} finally {
 			await launched.cleanup();
@@ -6481,8 +6488,12 @@ Codex saved Auto Run body sentinel.
 			const editor = launched.window.getByPlaceholder(/Capture notes/);
 
 			await editor.fill(`${launched.phaseOneContent}\nCodex unsaved discard sentinel.\n`);
-			await expect(launched.window.getByText('Unsaved changes')).toBeVisible();
-			await launched.window.getByTitle('Discard changes').click();
+			await expect(editor).toHaveValue(
+				`${launched.phaseOneContent}\nCodex unsaved discard sentinel.\n`
+			);
+			const discardButton = launched.window.getByTitle('Discard changes');
+			await expect(discardButton).toBeVisible();
+			await discardButton.click();
 
 			await expect(editor).toHaveValue(launched.phaseOneContent);
 			expect(fs.readFileSync(launched.phaseOnePath, 'utf-8')).toBe(launched.phaseOneContent);

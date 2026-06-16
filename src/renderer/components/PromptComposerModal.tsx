@@ -320,7 +320,7 @@ export function PromptComposerModal({
 		}
 
 		// Cmd/Ctrl + Shift + L to open lightbox (if images are staged)
-		if (e.key === 'l' && (e.metaKey || e.ctrlKey) && e.shiftKey) {
+		if (e.key.toLowerCase() === 'l' && (e.metaKey || e.ctrlKey) && e.shiftKey) {
 			e.preventDefault();
 			if (stagedImages.length > 0 && onOpenLightbox) {
 				onOpenLightbox(stagedImages[0], stagedImages, 'staged');

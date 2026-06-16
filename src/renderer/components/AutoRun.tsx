@@ -1440,7 +1440,13 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 			// filePath from remarkFileLinks will be like "Note.md" or "Subfolder/Note.md"
 			// onSelectDocument expects the path without extension for simple files,
 			// or the full relative path for nested files
-			const pathWithoutExt = filePath.replace(/\.md$/, '');
+			let decodedPath = filePath;
+			try {
+				decodedPath = decodeURIComponent(filePath);
+			} catch {
+				decodedPath = filePath;
+			}
+			const pathWithoutExt = decodedPath.replace(/\.md$/, '');
 			onSelectDocument(pathWithoutExt);
 		},
 		[onSelectDocument]

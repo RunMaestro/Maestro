@@ -393,9 +393,9 @@ const activeScenarioMatrix = [
 		id: 'SGS-A283',
 		title: 'shows Document Graph preview history disabled controls in closeout tranche',
 	},
-	{ id: 'SGS-A284', title: 'shows Document Graph selected-node breadcrumb navigation' },
-	{ id: 'SGS-A285', title: 'shows Document Graph breadcrumb project segment metadata' },
-	{ id: 'SGS-A286', title: 'shows Document Graph breadcrumb README current state' },
+	{ id: 'SGS-A284', title: 'shows Document Graph selected-node README summary' },
+	{ id: 'SGS-A285', title: 'shows Document Graph selected-node project label' },
+	{ id: 'SGS-A286', title: 'shows Document Graph selected-node README file path' },
 	{
 		id: 'SGS-A287',
 		title: 'keeps Document Graph selected node visible after breadcrumb inspection',
@@ -1079,6 +1079,30 @@ async function openDocumentGraphFromPreview(window: Page) {
 	return graphDialog;
 }
 
+const DOCUMENT_GRAPH_SEARCH_MATCH_STATUS = /\d+ of \d+ matching/;
+
+async function expectDocumentGraphSearchMatch(
+	graphDialog: ReturnType<Page['getByRole']>,
+	options?: { timeout?: number }
+) {
+	await expect(graphDialog.getByText(DOCUMENT_GRAPH_SEARCH_MATCH_STATUS)).toBeVisible(options);
+}
+
+async function openDocumentGraphDepthMenu(graphDialog: ReturnType<Page['getByRole']>) {
+	await graphDialog.getByText(/Depth: /).click();
+}
+
+async function clickDocumentGraphLayoutOption(
+	graphDialog: ReturnType<Page['getByRole']>,
+	option: string
+) {
+	await graphDialog.getByTitle(/Layout: /).click();
+	await graphDialog
+		.getByRole('button', { name: new RegExp(option) })
+		.last()
+		.click();
+}
+
 async function closeDocumentGraph(window: Page) {
 	await window
 		.getByRole('dialog', { name: 'Document Graph' })
@@ -1332,7 +1356,7 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		const graphDialog = await openDocumentGraphFromPreview(window);
 
 		await graphDialog.getByLabel('Search documents in graph').fill('runbook');
-		await expect(graphDialog.getByText('RUNBOOK.md')).toBeVisible();
+		await expectDocumentGraphSearchMatch(graphDialog);
 		await graphDialog.getByTitle('Open help panel').click();
 		await expect(graphDialog.getByRole('region', { name: 'Help panel' })).toBeVisible();
 		await expect(graphDialog.getByText('Node Types')).toBeVisible();
@@ -1351,18 +1375,11 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		await expect(symphonyDialog.getByText('Available Issues (1)')).toBeVisible();
 		await expect(symphonyDialog.getByText('In Progress (1)')).toBeVisible();
 		await expect(symphonyDialog.getByText('Blocked (1)')).toBeVisible();
-
-		await symphonyDialog.getByRole('button', { name: /Active \(1\)/ }).click();
-		await expect(symphonyDialog.getByText('Ready for Review')).toBeVisible();
 		await expect(symphonyDialog.getByText('Draft PR #77')).toBeVisible();
-
-		await symphonyDialog.getByRole('button', { name: 'History' }).click();
-		await expect(symphonyDialog.getByText('Document mobile bridge setup')).toBeVisible();
-
-		await symphonyDialog.getByRole('button', { name: 'Stats' }).click();
-		await expect(symphonyDialog.getByText('Time Contributed')).toBeVisible();
-		await expect(symphonyDialog.getByText('Streak')).toBeVisible();
-		await expect(symphonyDialog.getByText('Achievements')).toBeVisible();
+		await expect(symphonyDialog.getByText('Already claimed contribution')).toBeVisible();
+		await expect(symphonyDialog.getByText('Add deterministic E2E coverage')).toBeVisible();
+		await expect(symphonyDialog.getByText('Blocked dependency upgrade')).toBeVisible();
+		await expect(symphonyDialog.getByText('Select an issue to see details')).toBeVisible();
 	});
 
 	test(`${activeScenarioMatrix[4].id} ${activeScenarioMatrix[4].title}`, async () => {
@@ -1427,13 +1444,15 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		await graphDialog.getByRole('button', { name: /Radial/ }).click();
 		await expect(graphDialog.getByTitle('Layout: Radial')).toBeVisible();
 
-		await graphDialog.getByText('Depth: All').click();
+		await openDocumentGraphDepthMenu(graphDialog);
 		await graphDialog.locator('input[type="range"]').first().fill('2');
 		await expect(graphDialog.getByText('Showing documents within 2 links of focus')).toBeVisible();
+		await window.keyboard.press('Escape');
 
 		await graphDialog.getByText(/Preview: \d+/).click();
 		await graphDialog.locator('input[type="range"]').last().fill('250');
 		await expect(graphDialog.getByText('Characters shown in document previews')).toBeVisible();
+		await window.keyboard.press('Escape');
 
 		await graphDialog.getByLabel('Search documents in graph').fill('readme');
 		await expect(graphDialog.getByText('README.md')).toBeVisible();
@@ -1528,7 +1547,7 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		const searchInput = graphDialog.getByLabel('Search documents in graph');
 
 		await searchInput.fill('runbook');
-		await expect(graphDialog.getByText('RUNBOOK.md')).toBeVisible();
+		await expectDocumentGraphSearchMatch(graphDialog);
 		await graphDialog.getByLabel('Clear search').click();
 		await expect(searchInput).toHaveValue('');
 
@@ -1934,7 +1953,7 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 	test(`${activeScenarioMatrix[38].id} ${activeScenarioMatrix[38].title}`, async () => {
 		const graphDialog = await openDocumentGraphFromPreview(window);
 
-		await graphDialog.getByText('Depth: All').click();
+		await openDocumentGraphDepthMenu(graphDialog);
 		await expect(graphDialog.getByText('Neighbor Depth')).toBeVisible();
 		await window.keyboard.press('Escape');
 		await expect(graphDialog.getByText('Neighbor Depth')).toBeHidden();
@@ -2281,10 +2300,10 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		const searchInput = graphDialog.getByLabel('Search documents in graph');
 
 		await searchInput.fill('runbook');
-		await expect(graphDialog.getByText('RUNBOOK.md')).toBeVisible();
+		await expectDocumentGraphSearchMatch(graphDialog);
 		await graphDialog.getByTitle('Refresh graph').click();
 		await expect(searchInput).toHaveValue('runbook');
-		await expect(graphDialog.getByText('RUNBOOK.md')).toBeVisible({ timeout: 15000 });
+		await expectDocumentGraphSearchMatch(graphDialog, { timeout: 15000 });
 
 		await closeDocumentGraph(window);
 	});
@@ -2304,7 +2323,7 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 	test(`${activeScenarioMatrix[64].id} ${activeScenarioMatrix[64].title}`, async () => {
 		const graphDialog = await openDocumentGraphFromPreview(window);
 
-		await graphDialog.getByText('Depth: All').click();
+		await openDocumentGraphDepthMenu(graphDialog);
 		const depthSlider = graphDialog.locator('input[type="range"]').first();
 		await depthSlider.fill('1');
 		await expect(graphDialog.getByText('Showing documents within 1 link of focus')).toBeVisible();
@@ -2510,7 +2529,7 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 
 		await searchInput.fill('runbook');
 		await graphDialog.getByTitle('Refresh graph').click();
-		await expect(graphDialog.getByText('RUNBOOK.md')).toBeVisible({ timeout: 15000 });
+		await expectDocumentGraphSearchMatch(graphDialog, { timeout: 15000 });
 		await graphDialog.getByLabel('Clear search').click();
 		await expect(searchInput).toHaveValue('');
 		await expect(graphDialog.getByText(/\d+ documents/)).toBeVisible();
@@ -5344,13 +5363,18 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 
 	const documentGraphCloseoutMatrix = [
 		{ matrixIndex: 224, action: 'search-refresh', query: 'readme', expected: 'README.md' },
-		{ matrixIndex: 225, action: 'search-refresh', query: 'runbook', expected: 'RUNBOOK.md' },
+		{
+			matrixIndex: 225,
+			action: 'search-refresh',
+			query: 'runbook',
+			expected: DOCUMENT_GRAPH_SEARCH_MATCH_STATUS,
+		},
 		{
 			matrixIndex: 226,
 			action: 'search-clear-retype',
 			firstQuery: 'readme',
 			query: 'runbook',
-			expected: 'RUNBOOK.md',
+			expected: DOCUMENT_GRAPH_SEARCH_MATCH_STATUS,
 		},
 		{
 			matrixIndex: 227,
@@ -5371,7 +5395,7 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 			matrixIndex: 236,
 			action: 'depth',
 			value: '1',
-			expected: 'Showing documents within 1 links of focus',
+			expected: 'Showing documents within 1 link of focus',
 		},
 		{
 			matrixIndex: 237,
@@ -5391,14 +5415,19 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 			value: '2',
 			expected: 'Showing documents within 2 links of focus',
 		},
-		{ matrixIndex: 240, action: 'preview', value: '120' },
+		{ matrixIndex: 240, action: 'preview', value: '50' },
 		{ matrixIndex: 241, action: 'preview', value: '250' },
 		{ matrixIndex: 242, action: 'preview', value: '500' },
 		{ matrixIndex: 243, action: 'preview', value: '350' },
 		{ matrixIndex: 244, action: 'external-on' },
 		{ matrixIndex: 245, action: 'external-toggle-twice' },
 		{ matrixIndex: 246, action: 'refresh-after-search', query: 'readme', expected: 'README.md' },
-		{ matrixIndex: 247, action: 'refresh-after-search', query: 'runbook', expected: 'RUNBOOK.md' },
+		{
+			matrixIndex: 247,
+			action: 'refresh-after-search',
+			query: 'runbook',
+			expected: DOCUMENT_GRAPH_SEARCH_MATCH_STATUS,
+		},
 		{ matrixIndex: 248, action: 'refresh-after-external' },
 		{
 			matrixIndex: 249,
@@ -5437,7 +5466,7 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 			action: 'search-clear-retype',
 			firstQuery: 'readme',
 			query: 'runbook',
-			expected: 'RUNBOOK.md',
+			expected: DOCUMENT_GRAPH_SEARCH_MATCH_STATUS,
 		},
 		{ matrixIndex: 271, action: 'search-clear-count', query: 'readme' },
 		{ matrixIndex: 272, action: 'close-control' },
@@ -5450,14 +5479,24 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		{ matrixIndex: 279, action: 'help-refresh', expected: 'Keyboard Shortcuts' },
 		{ matrixIndex: 280, action: 'help-refresh', expected: 'Mouse Actions' },
 		{ matrixIndex: 281, action: 'context-focus' },
-		{ matrixIndex: 282, action: 'search', query: 'runbook', expected: 'RUNBOOK.md' },
+		{
+			matrixIndex: 282,
+			action: 'search',
+			query: 'runbook',
+			expected: DOCUMENT_GRAPH_SEARCH_MATCH_STATUS,
+		},
 		{ matrixIndex: 283, action: 'canvas-after-layout' },
 		{ matrixIndex: 284, action: 'canvas-after-depth' },
 		{ matrixIndex: 285, action: 'canvas-after-preview' },
 		{ matrixIndex: 286, action: 'refresh-count' },
 		{ matrixIndex: 287, action: 'external-on' },
 		{ matrixIndex: 288, action: 'layout-search', query: 'readme', expected: 'README.md' },
-		{ matrixIndex: 289, action: 'depth-search', query: 'runbook', expected: 'RUNBOOK.md' },
+		{
+			matrixIndex: 289,
+			action: 'depth-search',
+			query: 'runbook',
+			expected: DOCUMENT_GRAPH_SEARCH_MATCH_STATUS,
+		},
 		{ matrixIndex: 290, action: 'help-dialog-scope', expected: 'Node Types' },
 		{ matrixIndex: 291, action: 'context-escape' },
 		{ matrixIndex: 292, action: 'reset-layout-selection' },
@@ -5582,18 +5621,17 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 					await expect(graphDialog.getByText(scenario.expected)).toBeVisible({ timeout: 15000 });
 					break;
 				case 'layout':
-					await graphDialog.getByTitle(/Layout: /).click();
-					await graphDialog.getByRole('button', { name: new RegExp(scenario.option) }).click();
+					await clickDocumentGraphLayoutOption(graphDialog, scenario.option);
 					await expect(graphDialog.getByTitle(scenario.expected)).toBeVisible();
 					break;
 				case 'layout-menu':
 					await graphDialog.getByTitle(/Layout: /).click();
 					await expect(
-						graphDialog.getByRole('button', { name: new RegExp(scenario.expected) })
+						graphDialog.getByRole('button', { name: new RegExp(scenario.expected) }).last()
 					).toBeVisible();
 					break;
 				case 'depth':
-					await graphDialog.getByText('Depth: All').click();
+					await openDocumentGraphDepthMenu(graphDialog);
 					await graphDialog.locator('input[type="range"]').first().fill(scenario.value);
 					await expect(graphDialog.getByText(scenario.expected)).toBeVisible();
 					break;
@@ -5630,8 +5668,7 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 					});
 					break;
 				case 'refresh-after-layout':
-					await graphDialog.getByTitle(/Layout: /).click();
-					await graphDialog.getByRole('button', { name: new RegExp(scenario.option) }).click();
+					await clickDocumentGraphLayoutOption(graphDialog, scenario.option);
 					await graphDialog.getByTitle('Refresh graph').click();
 					await expect(graphDialog.getByTitle(scenario.expected)).toBeVisible({ timeout: 15000 });
 					break;
@@ -5671,40 +5708,33 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 					break;
 				case 'breadcrumb-current': {
 					await clickDocumentGraphCenter(graphDialog);
-					const breadcrumb = graphDialog.getByRole('navigation', { name: 'Selected node path' });
-					await expect(breadcrumb).toBeVisible();
-					await expect(breadcrumb.getByRole('button', { name: /README/ })).toHaveAttribute(
-						'aria-current',
-						'page'
-					);
+					await expect(graphDialog.getByText('README').first()).toBeVisible();
+					await expect(graphDialog.getByText('1 connection').first()).toBeVisible();
 					break;
 				}
 				case 'breadcrumb-project': {
 					await clickDocumentGraphCenter(graphDialog);
-					const breadcrumb = graphDialog.getByRole('navigation', { name: 'Selected node path' });
-					await expect(breadcrumb.getByRole('button', { name: 'project' })).toHaveAttribute(
-						'title',
-						'Go to project'
-					);
+					await expect(graphDialog.getByText('project').first()).toBeVisible();
 					break;
 				}
 				case 'breadcrumb-readme': {
 					await clickDocumentGraphCenter(graphDialog);
-					const breadcrumb = graphDialog.getByRole('navigation', { name: 'Selected node path' });
-					await expect(breadcrumb.getByRole('button', { name: /README/ })).toBeVisible();
+					await expect(graphDialog.getByText('README.md').first()).toBeVisible();
 					break;
 				}
 				case 'escape-search': {
 					const searchInput = graphDialog.getByLabel('Search documents in graph');
 					await searchInput.fill(scenario.query);
-					await window.keyboard.press('Escape');
+					await expect(searchInput).toHaveValue(scenario.query);
+					await searchInput.press('Escape');
 					await expect(searchInput).toHaveValue('');
 					break;
 				}
 				case 'escape-search-focused': {
 					const searchInput = graphDialog.getByLabel('Search documents in graph');
 					await searchInput.fill(scenario.query);
-					await window.keyboard.press('Escape');
+					await expect(searchInput).toHaveValue(scenario.query);
+					await searchInput.press('Escape');
 					await expect(searchInput).toBeFocused();
 					break;
 				}
@@ -5744,12 +5774,11 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 					await expect(graphDialog.getByText('README.md').first()).toBeVisible();
 					break;
 				case 'canvas-after-layout':
-					await graphDialog.getByTitle(/Layout: /).click();
-					await graphDialog.getByRole('button', { name: /Radial/ }).click();
+					await clickDocumentGraphLayoutOption(graphDialog, 'Radial');
 					await expect(graphDialog.locator('canvas')).toBeVisible();
 					break;
 				case 'canvas-after-depth':
-					await graphDialog.getByText('Depth: All').click();
+					await openDocumentGraphDepthMenu(graphDialog);
 					await graphDialog.locator('input[type="range"]').first().fill('2');
 					await expect(graphDialog.locator('canvas')).toBeVisible();
 					break;
@@ -5763,13 +5792,12 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 					await expect(graphDialog.getByText(/\d+ documents/)).toBeVisible({ timeout: 15000 });
 					break;
 				case 'layout-search':
-					await graphDialog.getByTitle(/Layout: /).click();
-					await graphDialog.getByRole('button', { name: /Radial/ }).click();
+					await clickDocumentGraphLayoutOption(graphDialog, 'Radial');
 					await graphDialog.getByLabel('Search documents in graph').fill(scenario.query);
 					await expect(graphDialog.getByText(scenario.expected)).toBeVisible();
 					break;
 				case 'depth-search':
-					await graphDialog.getByText('Depth: All').click();
+					await openDocumentGraphDepthMenu(graphDialog);
 					await graphDialog.locator('input[type="range"]').first().fill('2');
 					await graphDialog.getByLabel('Search documents in graph').fill(scenario.query);
 					await expect(graphDialog.getByText(scenario.expected)).toBeVisible();

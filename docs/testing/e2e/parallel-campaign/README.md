@@ -82,6 +82,9 @@ Use this mode only after the orchestrator explicitly approves E2E execution. Kee
 - One Playwright worker per process.
 - Distinct spec ownership so two shards do not run the same spec file.
 - Distinct `HOME`, `MAESTRO_DATA_DIR`, Playwright `--output`, and report paths.
+- If a shard uses Playwright browser contexts while `HOME` is isolated, set
+  `PLAYWRIGHT_BROWSERS_PATH` to an installed browser cache outside the isolated
+  home, or install browsers into the isolated home before launching the shard.
 - Build artifacts prepared once by the orchestrator before shard launch, or separate worktrees per shard. Do not let several shards run `npm run test:e2e` concurrently because that script rebuilds shared `dist/` outputs before invoking Playwright.
 - Unique web/mobile server ports when a shard starts a web server; set `VITE_PORT` or route through `portless` per shard.
 
@@ -96,6 +99,7 @@ Each execution-shard prompt should run only its assigned specs, for example:
 ```bash
 HOME=/tmp/maestro-e2e-<execution-shard>/home \
 MAESTRO_DATA_DIR=/tmp/maestro-e2e-<execution-shard>/data \
+PLAYWRIGHT_BROWSERS_PATH=/Users/jeffscottward/Library/Caches/ms-playwright \
 PLAYWRIGHT_HTML_REPORT=playwright-report/<execution-shard> \
 VITE_PORT=<unique-port> \
 ./node_modules/.bin/playwright test e2e/<owned-spec>.spec.ts --workers=1 --output=e2e-results/<execution-shard>

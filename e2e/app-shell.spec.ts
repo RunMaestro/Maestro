@@ -2833,20 +2833,56 @@ async function focusDocumentGraphMindMap(graphDialog: Locator) {
 
 async function openDocumentGraphCenterNodeContextMenu(window: Page, graphDialog: Locator) {
 	const canvas = graphDialog.locator('canvas');
+	await expect(canvas).toBeVisible();
+	await focusDocumentGraphMindMap(graphDialog);
+
 	const box = await canvas.boundingBox();
 
 	if (!box) {
 		throw new Error('Document Graph canvas is not visible');
 	}
 
-	await window.mouse.click(box.x + box.width / 2, box.y + box.height / 2, { button: 'right' });
 	const contextMenu = window.locator('.fixed').filter({
 		has: window.getByRole('button', { name: 'Copy Path' }),
 	});
-	await expect(contextMenu.getByRole('button', { name: 'Open' })).toBeVisible();
-	await expect(contextMenu.getByRole('button', { name: 'Copy Path' })).toBeVisible();
-	await expect(contextMenu.getByRole('button', { name: 'Focus' })).toBeVisible();
-	return contextMenu;
+	const candidates = [
+		[0, 0],
+		[0, -36],
+		[-80, -36],
+		[80, -36],
+		[-80, 24],
+		[80, 24],
+		[0, 48],
+	];
+	let lastError: unknown;
+
+	for (const [index, [offsetX, offsetY]] of candidates.entries()) {
+		if (index > 0) {
+			await window.keyboard.press('Escape');
+			await window.waitForTimeout(100);
+		}
+		await window.mouse.move(box.x + box.width / 2 + offsetX, box.y + box.height / 2 + offsetY);
+		await window.mouse.click(box.x + box.width / 2 + offsetX, box.y + box.height / 2 + offsetY, {
+			button: 'right',
+		});
+
+		try {
+			await expect(contextMenu.getByRole('button', { name: 'Open' })).toBeVisible({
+				timeout: 1500,
+			});
+			await expect(contextMenu.getByRole('button', { name: 'Copy Path' })).toBeVisible({
+				timeout: 1500,
+			});
+			await expect(contextMenu.getByRole('button', { name: 'Focus' })).toBeVisible({
+				timeout: 1500,
+			});
+			return contextMenu;
+		} catch (error) {
+			lastError = error;
+		}
+	}
+
+	throw lastError ?? new Error('Document Graph node context menu did not open');
 }
 
 async function openDirectorNotesFromQuickActions(window: Page) {
