@@ -6828,7 +6828,7 @@ test.describe('Web Mobile Bridge', () => {
 						{ sessionId: workbench.primarySessionId, tabId: workbench.primaryReviewTabId }
 					);
 				})
-				.toBe('');
+				.toBeNull();
 		} finally {
 			await stopWebServer(appWindow).catch(() => {});
 			await electronApp.close();
@@ -7207,13 +7207,13 @@ test.describe('Web Mobile Bridge', () => {
 			await expect(autoDetail).toBeVisible();
 
 			await autoDetail.dispatchEvent('touchstart', {
-				touches: [{ clientX: 360, clientY: 360 }],
+				touches: [{ identifier: 0, clientX: 360, clientY: 360 }],
 			});
 			await autoDetail.dispatchEvent('touchmove', {
-				touches: [{ clientX: 250, clientY: 360 }],
+				touches: [{ identifier: 0, clientX: 250, clientY: 360 }],
 			});
 			await autoDetail.dispatchEvent('touchend', {
-				changedTouches: [{ clientX: 250, clientY: 360 }],
+				changedTouches: [{ identifier: 0, clientX: 250, clientY: 360 }],
 			});
 			const userDetail = page.getByText(
 				'User-facing mobile bridge release summary with follow-up context.'
@@ -7222,13 +7222,13 @@ test.describe('Web Mobile Bridge', () => {
 			await expect(page.getByText('2 / 2')).toBeVisible();
 
 			await userDetail.dispatchEvent('touchstart', {
-				touches: [{ clientX: 80, clientY: 360 }],
+				touches: [{ identifier: 0, clientX: 80, clientY: 360 }],
 			});
 			await userDetail.dispatchEvent('touchmove', {
-				touches: [{ clientX: 190, clientY: 360 }],
+				touches: [{ identifier: 0, clientX: 190, clientY: 360 }],
 			});
 			await userDetail.dispatchEvent('touchend', {
-				changedTouches: [{ clientX: 190, clientY: 360 }],
+				changedTouches: [{ identifier: 0, clientX: 190, clientY: 360 }],
 			});
 			await expect(autoDetail).toBeVisible();
 			await expect(page.getByText('1 / 2')).toBeVisible();

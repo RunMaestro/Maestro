@@ -3,7 +3,7 @@
 This directory coordinates the no-execution E2E authoring campaign described in
 `docs/testing/prompts/e2e-parallel-campaign-plan.md`.
 
-Current state: authoring is complete. The canonical matrix is 3,025 / 3,025 active scenarios with 0 matrix-backed scenarios remaining. Full Playwright/Electron execution is still pending.
+Current state: authoring is complete. The canonical matrix is 3,025 / 3,025 active scenarios with 0 matrix-backed scenarios remaining. Full PM2-sharded Playwright/Electron execution has completed once and Phase 5 stabilization is in progress; see `docs/testing/current-status.md` for the current pass/fail state.
 
 ## Rules
 
