@@ -1207,11 +1207,12 @@ type StubbedDirectorHistoryEntry = {
 };
 
 function createStubDirectorHistoryEntries(): StubbedDirectorHistoryEntry[] {
+	const now = Date.now();
 	return [
 		{
 			id: 'director-history-auto-1',
 			type: 'AUTO',
-			timestamp: Date.parse('2026-06-08T13:00:00Z'),
+			timestamp: now - 30 * 60 * 1000,
 			summary: 'Refined onboarding copy for the setup wizard',
 			projectPath: '/tmp/maestro-wizard',
 			sourceSessionId: 'wsp-primary-agent',
@@ -1225,7 +1226,7 @@ function createStubDirectorHistoryEntries(): StubbedDirectorHistoryEntry[] {
 		{
 			id: 'director-history-user-1',
 			type: 'USER',
-			timestamp: Date.parse('2026-06-08T12:30:00Z'),
+			timestamp: now - 60 * 60 * 1000,
 			summary: 'Reviewed billing prompt composer draft',
 			projectPath: '/tmp/maestro-prompts',
 			sourceSessionId: 'wsp-reviewer-agent',
@@ -1321,6 +1322,61 @@ async function getStubbedDirectorNotesHistoryState(electronApp: ElectronApplicat
 			updateCalls: state.__maestroE2eHistoryUpdateCalls ?? [],
 		};
 	});
+}
+
+async function stubDelayedDirectorNotesSynopsis(electronApp: ElectronApplication) {
+	await electronApp.evaluate(({ ipcMain }) => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eDirectorSynopsisCalls?: number;
+			__maestroE2eResolveDirectorSynopsis?: () => void;
+		};
+		state.__maestroE2eDirectorSynopsisCalls = 0;
+		state.__maestroE2eResolveDirectorSynopsis = undefined;
+
+		ipcMain.removeHandler('director-notes:generateSynopsis');
+		ipcMain.handle('director-notes:generateSynopsis', async () => {
+			state.__maestroE2eDirectorSynopsisCalls = (state.__maestroE2eDirectorSynopsisCalls ?? 0) + 1;
+			await new Promise<void>((resolve) => {
+				state.__maestroE2eResolveDirectorSynopsis = resolve;
+			});
+			return {
+				success: true,
+				synopsis: 'Delayed E2E synopsis ready.',
+				generatedAt: Date.now(),
+				stats: { agentCount: 1, entryCount: 2, durationMs: 123 },
+			};
+		});
+	});
+}
+
+async function getDelayedDirectorNotesSynopsisCallCount(electronApp: ElectronApplication) {
+	return electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eDirectorSynopsisCalls?: number;
+		};
+		return state.__maestroE2eDirectorSynopsisCalls ?? 0;
+	});
+}
+
+async function resolveDelayedDirectorNotesSynopsis(electronApp: ElectronApplication) {
+	await electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & {
+			__maestroE2eResolveDirectorSynopsis?: () => void;
+		};
+		state.__maestroE2eResolveDirectorSynopsis?.();
+	});
+}
+
+function directorNotesDetailModal(window: Page) {
+	return window.getByTestId('history-detail-modal');
+}
+
+function directorNotesStatsBar(directorNotesDialog: Locator) {
+	return directorNotesDialog.getByTestId('history-stats-bar');
+}
+
+function activityGraphLookbackMenu(window: Page) {
+	return window.getByTestId('activity-graph-lookback-menu');
 }
 
 async function openQuickActions(window: Page) {
@@ -1643,6 +1699,7 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 				name: "Director's Notes",
 			});
 			await expect(directorNotesDialog).toBeVisible();
+			await directorNotesDialog.getByRole('button', { name: 'Help' }).click();
 			await expect(directorNotesDialog.getByText("What are Director's Notes?")).toBeVisible();
 		} finally {
 			await launched.cleanup();
@@ -2108,6 +2165,7 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 		});
 
 		try {
+			await stubDelayedDirectorNotesSynopsis(launched.electronApp);
 			const quickActionsDialog = await openQuickActions(launched.window);
 			await quickActionsDialog
 				.getByPlaceholder('Type a command or jump to agent...')
@@ -2121,7 +2179,13 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 			await expect(
 				directorNotesDialog.getByRole('button', { name: 'Unified History' })
 			).toBeVisible();
-			await expect(directorNotesDialog.getByRole('button', { name: 'AI Overview' })).toBeDisabled();
+			const aiOverviewButton = directorNotesDialog.getByRole('button', { name: 'AI Overview' });
+			await expect
+				.poll(() => getDelayedDirectorNotesSynopsisCallCount(launched.electronApp))
+				.toBeGreaterThan(0);
+			await expect(aiOverviewButton).toBeDisabled();
+			await resolveDelayedDirectorNotesSynopsis(launched.electronApp);
+			await expect(aiOverviewButton).toBeEnabled();
 
 			await directorNotesDialog.getByRole('button', { name: 'Help' }).click();
 			await expect(directorNotesDialog.getByText("What are Director's Notes?")).toBeVisible();
@@ -8952,12 +9016,13 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 			const directorNotesDialog = await openDirectorNotesFromQuickActions(launched.window);
 
 			await directorNotesDialog.getByText('Refined onboarding copy for the setup wizard').click();
+			const detailModal = directorNotesDetailModal(launched.window);
 
-			await expect(launched.window.getByText('Planner Agent')).toBeVisible();
-			await expect(launched.window.getByText('Planning thread')).toBeVisible();
-			await expect(launched.window.getByText('AUTO').last()).toBeVisible();
-			await expect(launched.window.getByTitle('Copy session ID: provider-session-1')).toBeVisible();
-			await expect(launched.window.getByTitle('Resume session provider-session-1')).toBeVisible();
+			await expect(detailModal.getByRole('heading', { name: 'Planner Agent' })).toBeVisible();
+			await expect(detailModal.getByRole('heading', { name: 'Planning thread' })).toBeVisible();
+			await expect(detailModal.getByText('AUTO', { exact: true })).toBeVisible();
+			await expect(detailModal.getByTitle('Copy session ID: provider-session-1')).toBeVisible();
+			await expect(detailModal.getByTitle('Resume session provider-session-1')).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
@@ -8974,9 +9039,7 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 		try {
 			await stubDirectorNotesHistory(launched.electronApp);
 			const directorNotesDialog = await openDirectorNotesFromQuickActions(launched.window);
-			const statsBar = directorNotesDialog
-				.getByText('Agents')
-				.locator('xpath=ancestor::div[contains(@class, "justify-center")][1]');
+			const statsBar = directorNotesStatsBar(directorNotesDialog);
 
 			await expect(statsBar.getByText('Agents')).toBeVisible();
 			await expect(statsBar.getByText('Sessions')).toBeVisible();
@@ -9093,12 +9156,11 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 			await directorNotesDialog.getByText('Refined onboarding copy for the setup wizard').click();
 			await expect(launched.window.getByTitle('Copy session ID: provider-session-1')).toBeVisible();
 			await launched.window.keyboard.press('ArrowRight');
+			const detailModal = directorNotesDetailModal(launched.window);
 
-			await expect(launched.window.getByTitle('Copy session ID: provider-session-2')).toBeVisible();
+			await expect(detailModal.getByTitle('Copy session ID: provider-session-2')).toBeVisible();
 			await expect(launched.window.getByTitle('Copy session ID: provider-session-1')).toBeHidden();
-			await expect(
-				launched.window.getByText('Reviewed billing prompt composer draft')
-			).toBeVisible();
+			await expect(detailModal.getByText('Reviewed billing prompt composer draft')).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
@@ -9118,9 +9180,10 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 
 			await launched.window.keyboard.press('ArrowDown');
 			await launched.window.keyboard.press('Enter');
+			const detailModal = directorNotesDetailModal(launched.window);
 
-			await expect(launched.window.getByText('Planning thread')).toBeVisible();
-			await expect(launched.window.getByTitle('Resume session provider-session-1')).toBeVisible();
+			await expect(detailModal.getByRole('heading', { name: 'Planning thread' })).toBeVisible();
+			await expect(detailModal.getByTitle('Resume session provider-session-1')).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
@@ -9268,7 +9331,7 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 			{
 				id: 'director-history-auto-failed',
 				type: 'AUTO',
-				timestamp: Date.parse('2026-06-08T13:15:00Z'),
+				timestamp: Date.now() - 15 * 60 * 1000,
 				summary: 'Failed to draft wizard prompt variant',
 				projectPath: '/tmp/maestro-wizard',
 				sourceSessionId: 'wsp-primary-agent',
@@ -9290,12 +9353,13 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 			const directorNotesDialog = await openDirectorNotesFromQuickActions(launched.window);
 
 			await directorNotesDialog.getByText('Failed to draft wizard prompt variant').click();
+			const detailModal = directorNotesDetailModal(launched.window);
 
 			await expect(
-				launched.window.getByTitle('Copy session ID: provider-session-failed')
+				detailModal.getByTitle('Copy session ID: provider-session-failed')
 			).toBeVisible();
-			await expect(launched.window.getByTitle('Task failed')).toBeVisible();
-			await expect(launched.window.getByTitle('Mark as human-validated')).toBeHidden();
+			await expect(detailModal.getByTitle('Task failed')).toBeVisible();
+			await expect(detailModal.getByTitle('Mark as human-validated')).toBeHidden();
 		} finally {
 			await launched.cleanup();
 		}
@@ -9527,7 +9591,7 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 					'No history entries in this time range. Try expanding the lookback period.'
 				)
 			).toBeVisible();
-			await expect(directorNotesDialog.getByText('Agents')).toBeHidden();
+			await expect(directorNotesStatsBar(directorNotesDialog)).toBeHidden();
 		} finally {
 			await launched.cleanup();
 		}
@@ -9775,11 +9839,12 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 				.locator('[title*="right-click to change"]')
 				.click({ button: 'right' });
 
-			await expect(launched.window.getByText('Lookback Period')).toBeVisible();
-			await expect(launched.window.getByRole('button', { name: '24 hours' })).toBeVisible();
-			await expect(launched.window.getByRole('button', { name: '72 hours' })).toBeVisible();
-			await expect(launched.window.getByRole('button', { name: '1 week' })).toBeVisible();
-			await expect(launched.window.getByRole('button', { name: 'All time' })).toBeVisible();
+			const lookbackMenu = activityGraphLookbackMenu(launched.window);
+			await expect(lookbackMenu.getByText('Lookback Period')).toBeVisible();
+			await expect(lookbackMenu.getByRole('button', { name: '24 hours' })).toBeVisible();
+			await expect(lookbackMenu.getByRole('button', { name: '72 hours' })).toBeVisible();
+			await expect(lookbackMenu.getByRole('button', { name: '1 week' })).toBeVisible();
+			await expect(lookbackMenu.getByRole('button', { name: 'All time' })).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
@@ -10155,10 +10220,12 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 		});
 
 		try {
-			await expect(launched.window.getByText('thinking')).toBeVisible();
+			const thinkingDisplay = launched.window.locator('[data-testid="wizard-thinking-display"]');
+
+			await expect(thinkingDisplay.getByText('thinking', { exact: true })).toBeVisible();
 			await expect(
-				launched.window.getByText('Reading package metadata before drafting setup tasks.')
-			).toBeVisible();
+				thinkingDisplay.locator('[data-testid="thinking-display-content"]')
+			).toContainText('Reading package metadata before drafting setup tasks.');
 		} finally {
 			await launched.cleanup();
 		}
@@ -10199,7 +10266,9 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 		});
 
 		try {
-			await expect(launched.window.getByText('Agent Not Available')).toBeVisible();
+			await expect(launched.window.locator('[data-testid="error-title"]')).toContainText(
+				'Agent Not Available'
+			);
 			await expect(launched.window.getByText(/could not be started/)).toBeVisible();
 		} finally {
 			await launched.cleanup();
@@ -10574,7 +10643,7 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 			await expect(
 				launched.window.getByText('Draft onboarding tasks for the current workspace.')
 			).toBeVisible();
-			await expect(launched.window.locator('[data-testid="wizard-scroll-anchor"]')).toBeVisible();
+			await expect(launched.window.locator('[data-testid="wizard-scroll-anchor"]')).toHaveCount(1);
 		} finally {
 			await launched.cleanup();
 		}

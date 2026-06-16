@@ -54,12 +54,21 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 		ac.handleAgentChange(agentId);
 	};
 
-	const persistDnCustomConfig = () => {
+	const persistDnCustomConfig = (
+		overrides: {
+			customPath?: string;
+			customArgs?: string;
+			customEnvVars?: Record<string, string>;
+		} = {}
+	) => {
+		const customPath = overrides.customPath ?? ac.customPath;
+		const customArgs = overrides.customArgs ?? ac.customArgs;
+		const customEnvVars = overrides.customEnvVars ?? ac.customEnvVars;
 		setDirectorNotesSettings({
 			...directorNotesSettings,
-			customPath: ac.customPath || undefined,
-			customArgs: ac.customArgs || undefined,
-			customEnvVars: Object.keys(ac.customEnvVars).length > 0 ? ac.customEnvVars : undefined,
+			customPath: customPath || undefined,
+			customArgs: customArgs || undefined,
+			customEnvVars: Object.keys(customEnvVars).length > 0 ? customEnvVars : undefined,
 		});
 	};
 
@@ -258,21 +267,17 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 										onCustomPathChange={ac.setCustomPath}
 										onCustomPathBlur={persistDnCustomConfig}
 										onCustomPathClear={() => {
-											ac.setCustomPath('');
-											setDirectorNotesSettings({
-												...directorNotesSettings,
-												customPath: undefined,
-											});
+											const customPath = '';
+											ac.setCustomPath(customPath);
+											persistDnCustomConfig({ customPath });
 										}}
 										customArgs={ac.customArgs}
 										onCustomArgsChange={ac.setCustomArgs}
 										onCustomArgsBlur={persistDnCustomConfig}
 										onCustomArgsClear={() => {
-											ac.setCustomArgs('');
-											setDirectorNotesSettings({
-												...directorNotesSettings,
-												customArgs: undefined,
-											});
+											const customArgs = '';
+											ac.setCustomArgs(customArgs);
+											persistDnCustomConfig({ customArgs });
 										}}
 										customEnvVars={ac.customEnvVars}
 										onEnvVarKeyChange={(oldKey, newKey, value) => {
@@ -288,6 +293,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 											const newVars = { ...ac.customEnvVars };
 											delete newVars[key];
 											ac.setCustomEnvVars(newVars);
+											persistDnCustomConfig({ customEnvVars: newVars });
 										}}
 										onEnvVarAdd={() => {
 											let newKey = 'NEW_VAR';

@@ -50,7 +50,10 @@ export const HistoryStatsBar = memo(function HistoryStatsBar({
 	theme,
 }: HistoryStatsBarProps) {
 	return (
-		<div className="flex items-center justify-center gap-4 py-2 mb-3 flex-wrap">
+		<div
+			data-testid="history-stats-bar"
+			className="flex items-center justify-center gap-4 py-2 mb-3 flex-wrap"
+		>
 			<StatItem
 				icon={<Layers className="w-3 h-3" />}
 				label="Agents"

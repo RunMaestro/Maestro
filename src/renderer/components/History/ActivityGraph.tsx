@@ -210,6 +210,7 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 	return (
 		<div
 			ref={graphRef}
+			data-testid="activity-graph"
 			className="flex-1 min-w-0 flex flex-col relative mt-0.5"
 			title={
 				hoveredIndex === null
@@ -221,6 +222,7 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 			{/* Context menu for lookback options */}
 			{contextMenu && (
 				<div
+					data-testid="activity-graph-lookback-menu"
 					className="fixed z-50 py-1 rounded border shadow-lg"
 					style={{
 						left: contextMenu.x,

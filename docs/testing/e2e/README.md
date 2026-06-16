@@ -5,7 +5,8 @@ This directory owns the E2E coverage campaign state, lane ledgers, orchestration
 ## Current State
 
 - Matrix-backed authoring is complete: 3,025 / 3,025 active scenarios.
-- Full Playwright/Electron execution has not been run after the campaign.
+- One full PM2-sharded Playwright/Electron execution has completed after the campaign; it is not clean yet, and Phase 5 stabilization is in progress.
+- The wizard/settings/prompts full-file rerun is now clean: 372 passed, 1 env-gated skip, and 0 failed.
 - Execution should use PM2-managed Codex shards with one Playwright worker per process.
 
 ## Files

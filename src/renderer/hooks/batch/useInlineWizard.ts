@@ -431,6 +431,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 	);
 
 	const hydrateTabState = useCallback((tabId: string, state: InlineWizardState) => {
+		setCurrentTabId(tabId);
 		setTabStates((prevMap) => {
 			if (prevMap.has(tabId)) return prevMap;
 			const newMap = new Map(prevMap);

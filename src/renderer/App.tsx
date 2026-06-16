@@ -1406,6 +1406,33 @@ function MaestroConsoleInner() {
 		generateDocuments: generateInlineWizardDocuments,
 		endWizard: endInlineWizard,
 	} = inlineWizardContext;
+	const handleClearInlineWizardErrorForMainPanel = useCallback(() => {
+		clearInlineWizardError();
+		const currentSession = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
+		if (!currentSession) return;
+		const activeTab = currentSession.aiTabs.find((tab) => tab.id === currentSession.activeTabId);
+		if (!activeTab?.wizardState?.error) return;
+
+		setSessions((prev) =>
+			prev.map((session) => {
+				if (session.id !== currentSession.id) return session;
+				return {
+					...session,
+					aiTabs: session.aiTabs.map((tab) =>
+						tab.id === activeTab.id && tab.wizardState
+							? {
+									...tab,
+									wizardState: {
+										...tab.wizardState,
+										error: null,
+									},
+								}
+							: tab
+					),
+				};
+			})
+		);
+	}, [activeSessionIdRef, clearInlineWizardError, sessionsRef, setSessions]);
 
 	// --- WIZARD HANDLERS (extracted hook) ---
 	// Refs for circular deps — set after useInputHandlers/useAutoRunHandlers
@@ -2385,7 +2412,7 @@ function MaestroConsoleInner() {
 		onWizardComplete: handleWizardComplete,
 		onWizardLetsGo: handleWizardLetsGo,
 		onWizardRetry: retryInlineWizardMessage,
-		onWizardClearError: clearInlineWizardError,
+		onWizardClearError: handleClearInlineWizardErrorForMainPanel,
 		onToggleWizardShowThinking: handleToggleWizardShowThinking,
 
 		// File tree refresh

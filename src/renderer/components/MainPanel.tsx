@@ -1636,6 +1636,7 @@ export const MainPanel = React.memo(
 											theme={theme}
 											conversationHistory={activeTab.wizardState.conversationHistory}
 											isLoading={activeTab.wizardState.isWaiting ?? false}
+											streamingText={activeTab.wizardState.streamingContent ?? ''}
 											agentName={activeSession.name}
 											confidence={activeTab.wizardState.confidence}
 											ready={activeTab.wizardState.ready}

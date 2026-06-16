@@ -201,6 +201,7 @@ export function HistoryDetailModal({
 
 			{/* Modal */}
 			<div
+				data-testid="history-detail-modal"
 				className="relative w-full max-w-3xl max-h-[80vh] overflow-hidden rounded-lg border shadow-2xl flex flex-col"
 				style={{
 					backgroundColor: theme.colors.bgSidebar,
