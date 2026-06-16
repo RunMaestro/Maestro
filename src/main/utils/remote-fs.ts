@@ -624,6 +624,52 @@ export async function readFileRemote(
 }
 
 /**
+ * Read a remote IMAGE (or any binary) file as base64 via SSH.
+ *
+ * {@link readFileRemote} runs `cat` and returns stdout decoded as TEXT, so any
+ * non-UTF-8 bytes (i.e. every real image) get mangled in transit and can't be
+ * recovered locally - re-encoding that corrupted string yields a broken data URL
+ * and a "Failed to load image" preview. Instead we run `base64` ON THE REMOTE:
+ * its output is pure ASCII and passes through the SSH text channel losslessly.
+ * GNU `base64` line-wraps at 76 columns and BSD `base64` doesn't, so we strip all
+ * whitespace locally to get one contiguous payload regardless of the remote OS.
+ *
+ * @param filePath Path to the file on the remote host
+ * @param sshRemote SSH remote configuration
+ * @param deps Optional dependencies for testing
+ * @returns The file's contents as a whitespace-free base64 string
+ */
+export async function readImageFileRemoteAsBase64(
+	filePath: string,
+	sshRemote: SshRemoteConfig,
+	deps: RemoteFsDeps = defaultDeps
+): Promise<RemoteFsResult<string>> {
+	const escapedPath = shellEscapeRemotePath(filePath);
+	const remoteCommand = `base64 ${escapedPath}`;
+
+	const result = await execRemoteCommand(sshRemote, remoteCommand, deps);
+
+	if (result.exitCode !== 0) {
+		const error = result.stderr || `Failed to read file: ${filePath}`;
+		return {
+			success: false,
+			error: error.includes('No such file')
+				? `File not found: ${filePath}`
+				: error.includes('Is a directory')
+					? `Path is a directory: ${filePath}`
+					: error.includes('Permission denied')
+						? `Permission denied: ${filePath}`
+						: error,
+		};
+	}
+
+	return {
+		success: true,
+		data: result.stdout.replace(/\s+/g, ''),
+	};
+}
+
+/**
  * Read a remote file from a byte offset to EOF via `tail -c +N`.
  *
  * Built for incremental polling of an append-only log (e.g. Copilot's

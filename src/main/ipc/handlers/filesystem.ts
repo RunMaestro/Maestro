@@ -31,6 +31,7 @@ import {
 import {
 	readDirRemote,
 	readFileRemote,
+	readImageFileRemoteAsBase64,
 	readFileRemoteAbortable,
 	writeFileRemote,
 	mkdirRemote,
@@ -187,6 +188,24 @@ export function registerFilesystemHandlers(): void {
 					if (!sshConfig) {
 						throw new Error(`SSH remote not found: ${sshRemoteId}`);
 					}
+
+					// Images must be read as base64 ON THE REMOTE: a `cat`-over-SSH read
+					// returns stdout decoded as text, which mangles binary bytes beyond
+					// local recovery (the old "binary images may have issues" path). The
+					// remote `base64` output is pure ASCII and survives the text channel.
+					const imgExt = filePath.split('.').pop()?.toLowerCase();
+					if (IMAGE_EXTENSIONS.includes(imgExt || '')) {
+						const imgResult = await readImageFileRemoteAsBase64(filePath, sshConfig);
+						if (!imgResult.success) {
+							if (imgResult.error?.startsWith('File not found:')) {
+								return null;
+							}
+							throw new Error(imgResult.error || 'Failed to read remote image');
+						}
+						const mimeType = imgExt === 'svg' ? 'image/svg+xml' : `image/${imgExt}`;
+						return `data:${mimeType};base64,${imgResult.data}`;
+					}
+
 					let result: Awaited<ReturnType<typeof readFileRemote>>;
 					if (requestId) {
 						const controller = new AbortController();
@@ -212,16 +231,6 @@ export function registerFilesystemHandlers(): void {
 							return null;
 						}
 						throw new Error(result.error || 'Failed to read remote file');
-					}
-					// For images over SSH, we'd need to base64 encode on remote and decode here
-					// For now, return raw content (text files work, binary images may have issues)
-					const ext = filePath.split('.').pop()?.toLowerCase();
-					const isImage = IMAGE_EXTENSIONS.includes(ext || '');
-					if (isImage) {
-						// The remote readFile returns raw bytes as string - convert to base64 data URL
-						const mimeType = ext === 'svg' ? 'image/svg+xml' : `image/${ext}`;
-						const base64 = Buffer.from(result.data!, 'binary').toString('base64');
-						return `data:${mimeType};base64,${base64}`;
 					}
 					return result.data!;
 				}

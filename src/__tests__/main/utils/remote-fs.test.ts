@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
 	readDirRemote,
 	readFileRemote,
+	readImageFileRemoteAsBase64,
 	readFileTailRemote,
 	statRemote,
 	directorySizeRemote,
@@ -407,6 +408,39 @@ describe('remote-fs', () => {
 
 			expect(result.success).toBe(true);
 			expect(result.data).toBe('Line 1\nLine 2\r\nLine 3\tTabbed');
+		});
+	});
+
+	describe('readImageFileRemoteAsBase64', () => {
+		it('runs base64 on the remote and returns a whitespace-free payload', async () => {
+			// GNU base64 wraps at 76 cols; the result must be stripped to one line.
+			const deps = createMockDeps({
+				stdout: 'iVBORw0KGgoAAAANSUhEUg\nAAAAEAAAABCAQAAAC1\nHAwCAAAAC0lEQVR42mNk\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const result = await readImageFileRemoteAsBase64('/project/logo.png', baseConfig, deps);
+
+			expect(result.success).toBe(true);
+			expect(result.data).toBe('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk');
+			// Must invoke `base64`, not `cat` (which would mangle binary bytes). The
+			// remote command is the last element of the ssh args array.
+			const sshArgs = (deps.execSsh as any).mock.calls[0][1] as string[];
+			expect(sshArgs[sshArgs.length - 1]).toContain('base64 ');
+		});
+
+		it('maps a missing remote image to a file-not-found error', async () => {
+			const deps = createMockDeps({
+				stdout: '',
+				stderr: 'base64: /missing.png: No such file or directory',
+				exitCode: 1,
+			});
+
+			const result = await readImageFileRemoteAsBase64('/missing.png', baseConfig, deps);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('File not found');
 		});
 	});
 
