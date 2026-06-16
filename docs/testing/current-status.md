@@ -4,7 +4,7 @@ Last updated: 2026-06-16.
 
 Verification basis: Phase 1 through Phase 3 of [game-plan.md](game-plan.md), plus targeted Phase 4 E2E stabilization and focused reruns. The full sharded Playwright/Electron suite is still not verified.
 
-2026-06-16 continuation checkpoint: the canonical E2E authoring target remains complete at 3,025 / 3,025 matrix-backed active scenarios with 0 matrix-backed scenarios remaining. Current local inventory is 15 spec files, 2,375 active Playwright declarations, and 6 skipped declarations. Phase 4 execution is running through two PM2-managed shards with one Playwright worker per process and isolated `HOME`, `MAESTRO_DATA_DIR`, report, output, and `VITE_PORT` paths. Live checkpoint at 2026-06-15 22:21 ET: 360 / 2,991 shard tests had terminal results and 2,631 remained; Shard A was 169 / 985 with 0 failures, Shard B was 191 / 2,006 with 0 failures and 2 skips.
+2026-06-16 continuation checkpoint: the canonical E2E authoring target remains complete at 3,025 / 3,025 matrix-backed active scenarios with 0 matrix-backed scenarios remaining. Current local inventory is 15 spec files, 2,375 active Playwright declarations, and 6 skipped declarations. Phase 4 execution is running through two PM2-managed shards with one Playwright worker per process and isolated `HOME`, `MAESTRO_DATA_DIR`, report, output, and `VITE_PORT` paths. Live checkpoint at 2026-06-15 22:40 ET: 972 / 2,991 shard tests had terminal results and 2,019 remained; Shard A was 448 / 985 with 0 failures, Shard B was 524 / 2,006 with 0 failures and 2 skips.
 
 ## Branch State
 
@@ -43,7 +43,7 @@ Verification basis: Phase 1 through Phase 3 of [game-plan.md](game-plan.md), plu
 - Stale-path scan for pre-consolidation testing doc paths passed.
 - The count difference is expected: the E2E matrix counts scenario atoms, and one Playwright test can cover multiple scenario atoms.
 - `npm run test:e2e:stop` is the current stop mechanism. It reported no remaining Maestro E2E Playwright/Electron processes before and after the focused runs below.
-- 2026-06-15 22:21 ET live Phase 4 checkpoint: `maestro-e2e-phase4-a` and `maestro-e2e-phase4-b` are online in PM2 with `autorestart: false`, each running direct Playwright commands with `--workers=1`. Shard logs are `/tmp/maestro-phase4-a-run.log` and `/tmp/maestro-phase4-b-run.log`; the three-hour status email cron is active through `/Users/jeffscottward/.codex/scripts/maestro-e2e-status-email.mjs`, which now reports live shard remaining counts.
+- 2026-06-15 22:40 ET live Phase 4 checkpoint: `maestro-e2e-phase4-a` and `maestro-e2e-phase4-b` are online in PM2 with `autorestart: false`, each running direct Playwright commands with `--workers=1`. Shard logs are `/tmp/maestro-phase4-a-run.log` and `/tmp/maestro-phase4-b-run.log`; the three-hour status email cron is active through `/Users/jeffscottward/.codex/scripts/maestro-e2e-status-email.mjs`, which now reports live shard remaining counts.
 - The initial Phase 4 PM2 shard run (`phase4-shards-20260611-040109`, `maestro-e2e-phase4-a`, `maestro-e2e-phase4-b`) was stopped and deleted after local source repairs made its logs stale. Treat that run as discovery only, not a full-suite result.
 - Focused app-shell E2E check passed: 4/4 for `e2e/app-shell.spec.ts --grep 'command terminal Tab Switcher'`.
 - Focused app-shell stabilization rerun passed: 10/10 for the patched app-shell cluster.
