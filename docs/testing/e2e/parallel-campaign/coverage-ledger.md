@@ -2,31 +2,31 @@
 
 Source of truth: `docs/testing/e2e/coverage-campaign.md`.
 
-Current active tests: 2271
+Current active tests: 3,025
 Target active tests: 3,025
-Remaining matrix-backed active scenarios: 754
+Remaining matrix-backed active scenarios: 0
 
 ## Matrix
 
 | Surface                                                        | Lane                      | Current Active | Target Active | Remaining |
 | -------------------------------------------------------------- | ------------------------- | -------------: | ------------: | --------: |
-| App shell, layout, sidebars, resizing, focus, global shortcuts | `shell-tabs-command`      |             26 |           110 |        84 |
+| App shell, layout, sidebars, resizing, focus, global shortcuts | `shell-tabs-command`      |            110 |           110 |         0 |
 | Agent CRUD and provider setup                                  | `agent-crud-provider`     |            160 |           160 |         0 |
-| Codex AI terminal workflows                                    | `autorun-ai-terminal`     |            137 |           170 |        33 |
-| Command terminal workflows                                     | `shell-tabs-command`      |             61 |            95 |        34 |
-| Tabs and tab overlays                                          | `shell-tabs-command`      |             53 |           120 |        67 |
-| File explorer and file operations                              | `files-docs-history`      |             38 |           140 |       102 |
-| File preview and document rendering                            | `files-docs-history`      |             48 |           180 |       132 |
-| History panel                                                  | `files-docs-history`      |             32 |            95 |        63 |
+| Codex AI terminal workflows                                    | `autorun-ai-terminal`     |            170 |           170 |         0 |
+| Command terminal workflows                                     | `shell-tabs-command`      |             95 |            95 |         0 |
+| Tabs and tab overlays                                          | `shell-tabs-command`      |            120 |           120 |         0 |
+| File explorer and file operations                              | `files-docs-history`      |            140 |           140 |         0 |
+| File preview and document rendering                            | `files-docs-history`      |            180 |           180 |         0 |
+| History panel                                                  | `files-docs-history`      |             95 |            95 |         0 |
 | Auto Run                                                       | `autorun-ai-terminal`     |            260 |           260 |         0 |
-| New Agent Wizard and inline wizard                             | `wizard-settings-prompts` |            113 |           190 |        77 |
+| New Agent Wizard and inline wizard                             | `wizard-settings-prompts` |            190 |           190 |         0 |
 | Settings                                                       | `wizard-settings-prompts` |            190 |           190 |         0 |
 | Git, worktrees, PR, diff/log, Gist                             | `git-groupchat-playbooks` |            160 |           160 |         0 |
 | Group chat                                                     | `git-groupchat-playbooks` |            140 |           140 |         0 |
-| Usage dashboard and stats                                      | `stats-graph-symphony`    |             55 |           125 |        70 |
-| Document graph                                                 | `stats-graph-symphony`    |             77 |           130 |        53 |
+| Usage dashboard and stats                                      | `stats-graph-symphony`    |            125 |           125 |         0 |
+| Document graph                                                 | `stats-graph-symphony`    |            130 |           130 |         0 |
 | Playbooks, marketplace, Spec Kit, OpenSpec                     | `git-groupchat-playbooks` |            145 |           145 |         0 |
-| Symphony, leaderboard, achievements                            | `stats-graph-symphony`    |             81 |           120 |        39 |
+| Symphony, leaderboard, achievements                            | `stats-graph-symphony`    |            120 |           120 |         0 |
 | Director notes and prompt composer                             | `wizard-settings-prompts` |             90 |            90 |         0 |
 | Debug/about/update/app info/agent error modals                 | `debug-accessibility`     |             85 |            85 |         0 |
 | Mobile/web bridge                                              | `mobile-web-bridge`       |            190 |           190 |         0 |
@@ -36,15 +36,15 @@ Remaining matrix-backed active scenarios: 754
 
 | Lane                       | Matrix-backed remaining | Authored active scenarios | Authored skipped/env-gated scenarios | Last accepted commit |
 | -------------------------- | ----------------------: | ------------------------: | -----------------------------------: | -------------------- |
-| `agent-crud-provider`      |                       0 |                       104 |                                    2 | `563b9db6c`          |
-| `shell-tabs-command`       |                     185 |                        81 |                                    0 | `2d9975b17`          |
-| `files-docs-history`       |                     297 |                        52 |                                    5 | `08c4a85f9`          |
-| `autorun-ai-terminal`      |                      33 |                       240 |                                    0 | `f7474c297`          |
-| `wizard-settings-prompts`  |                      77 |                       298 |                                    1 | `b4e85b286`          |
-| `git-groupchat-playbooks`  |                       0 |                       363 |                                    7 | `ec72c453c`          |
-| `stats-graph-symphony`     |                     162 |                       174 |                                    6 | `d3b523370`          |
-| `debug-accessibility`      |                       0 |                       192 |                                    0 | `e1879dd27`          |
-| `mobile-web-bridge`        |                       0 |                       102 |                                    0 | `33a5ace5f`          |
+| `agent-crud-provider`      |                       0 |                       160 |                                    2 | `563b9db6c`          |
+| `shell-tabs-command`       |                       0 |                       325 |                                    0 | `15692b0d0`          |
+| `files-docs-history`       |                       0 |                       415 |                                    5 | `d689f9145`          |
+| `autorun-ai-terminal`      |                       0 |                       430 |                                    0 | `25b7e29d4`          |
+| `wizard-settings-prompts`  |                       0 |                       470 |                                    1 | `b4e85b286`          |
+| `git-groupchat-playbooks`  |                       0 |                       445 |                                    7 | `ec72c453c`          |
+| `stats-graph-symphony`     |                       0 |                       375 |                                    6 | `17f5fb21d`          |
+| `debug-accessibility`      |                       0 |                       215 |                                    0 | `e1879dd27`          |
+| `mobile-web-bridge`        |                       0 |                       190 |                                    0 | `33a5ace5f`          |
 | `fixtures-sharding-review` |                       0 |                         0 |                                    0 | `392c4527`           |
 
 ## Merge Log

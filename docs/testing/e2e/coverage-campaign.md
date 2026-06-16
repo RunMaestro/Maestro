@@ -11,7 +11,7 @@ Measured inventory:
 | Area                                    |                     Current Count |
 | --------------------------------------- | --------------------------------: |
 | E2E spec files after recovery tranche   |                                15 |
-| Declared active E2E test functions      |                              2356 |
+| Declared active E2E test functions      |                              2375 |
 | Explicit skipped E2E test functions     |                                 6 |
 | Last pre-campaign full E2E result       |             91 passed, 49 skipped |
 | Latest full E2E validation              | 638 passed, 0 skipped (batch 202) |

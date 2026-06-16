@@ -63,6 +63,27 @@ type ProviderSshRemote = {
 	enabled: boolean;
 };
 
+async function openTabHoverOverlay(window: Page, tab: Locator, marker = 'Copy Session ID') {
+	const overlay = window.locator('div.fixed').filter({ hasText: marker }).first();
+	let lastError: unknown;
+
+	for (let attempt = 0; attempt < 3; attempt++) {
+		await tab.scrollIntoViewIfNeeded();
+		await tab.hover();
+
+		try {
+			await expect(overlay).toBeVisible({ timeout: 3000 });
+			return overlay;
+		} catch (error) {
+			lastError = error;
+			await window.mouse.move(0, 0);
+			await window.waitForTimeout(150);
+		}
+	}
+
+	throw lastError ?? new Error(`Tab hover overlay did not open for ${marker}`);
+}
+
 const PROVIDER_MATRIX: ProviderMatrixRow[] = [
 	{
 		id: 'codex',
@@ -3906,9 +3927,9 @@ test.describe('Agent Sessions provider storage', () => {
 				.filter({ hasText: 'Provider Setup Review' })
 				.first();
 			await expect(resumedTab).toBeVisible();
-			await resumedTab.hover();
-			await expect(launched.window.getByText('codex-provider-review')).toBeVisible();
-			await expect(launched.window.getByRole('button', { name: 'Unstar Session' })).toBeVisible();
+			const overlay = await openTabHoverOverlay(launched.window, resumedTab);
+			await expect(overlay.getByText('codex-provider-review')).toBeVisible();
+			await expect(overlay.getByRole('button', { name: 'Unstar Session' })).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}

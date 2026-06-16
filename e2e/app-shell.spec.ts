@@ -562,6 +562,27 @@ async function dismissTabHoverOverlay(window: Page) {
 	});
 }
 
+async function openTabHoverOverlay(window: Page, tab: Locator, marker = 'Copy Session ID') {
+	const overlay = window.locator('div.fixed').filter({ hasText: marker }).first();
+	let lastError: unknown;
+
+	for (let attempt = 0; attempt < 3; attempt++) {
+		await tab.scrollIntoViewIfNeeded();
+		await tab.hover();
+
+		try {
+			await expect(overlay).toBeVisible({ timeout: 3000 });
+			return overlay;
+		} catch (error) {
+			lastError = error;
+			await window.mouse.move(0, 0);
+			await window.waitForTimeout(150);
+		}
+	}
+
+	throw lastError ?? new Error(`Tab hover overlay did not open for ${marker}`);
+}
+
 const E2E_SSH_REMOTE_ID = 'e2e-ssh-remote';
 const E2E_SSH_REMOTE_BASE_CWD = '/srv/maestro-e2e/base';
 const E2E_SSH_REMOTE_CURRENT_CWD = '/srv/maestro-e2e/current';
@@ -6626,12 +6647,12 @@ test.describe('App shell seeded workbench', () => {
 	test('shows file tab hover actions from the TabBar overlay', async () => {
 		const readmeTab = window.locator('[data-tab-id]').filter({ hasText: 'README' }).first();
 
-		await readmeTab.hover();
-		await expect(window.getByText('Copy File Name')).toBeVisible({ timeout: 2000 });
-		await expect(window.getByText('Open in Default App')).toBeVisible();
-		await expect(window.getByRole('button', { name: 'Close Tab', exact: true })).toBeVisible();
+		const overlay = await openTabHoverOverlay(window, readmeTab, 'Copy File Name');
+		await expect(overlay.getByText('Copy File Name')).toBeVisible();
+		await expect(overlay.getByText('Open in Default App')).toBeVisible();
+		await expect(overlay.getByRole('button', { name: 'Close Tab', exact: true })).toBeVisible();
 
-		await window.getByText('Copy File Name').click();
+		await overlay.getByText('Copy File Name').click();
 		await expect(window.getByText('Copied!')).toBeVisible();
 	});
 
@@ -6653,13 +6674,13 @@ test.describe('App shell seeded workbench', () => {
 		await expect(tabs.nth(1)).toContainText('README');
 
 		const readmeTab = tabs.filter({ hasText: 'README' }).first();
-		await readmeTab.hover();
-		await window.getByRole('button', { name: 'Move to First Position' }).click();
+		let overlay = await openTabHoverOverlay(window, readmeTab, 'Move to First Position');
+		await overlay.getByRole('button', { name: 'Move to First Position' }).click();
 		await expect(tabs.nth(0)).toContainText('README');
 		await expect(tabs.nth(1)).toContainText('Main');
 
-		await readmeTab.hover();
-		await window.getByRole('button', { name: 'Move to Last Position' }).click();
+		overlay = await openTabHoverOverlay(window, readmeTab, 'Move to Last Position');
+		await overlay.getByRole('button', { name: 'Move to Last Position' }).click();
 		await expect(tabs.nth(0)).toContainText('Main');
 		await expect(tabs.nth(1)).toContainText('README');
 	});
@@ -6670,13 +6691,13 @@ test.describe('App shell seeded workbench', () => {
 		await expect(tabs.nth(1)).toContainText('README');
 
 		const mainTab = tabs.filter({ hasText: 'Main' }).first();
-		await mainTab.hover();
-		await window.getByRole('button', { name: 'Move to Last Position' }).click();
+		let overlay = await openTabHoverOverlay(window, mainTab, 'Move to Last Position');
+		await overlay.getByRole('button', { name: 'Move to Last Position' }).click();
 		await expect(tabs.nth(0)).toContainText('README');
 		await expect(tabs.nth(1)).toContainText('Main');
 
-		await mainTab.hover();
-		await window.getByRole('button', { name: 'Move to First Position' }).click();
+		overlay = await openTabHoverOverlay(window, mainTab, 'Move to First Position');
+		await overlay.getByRole('button', { name: 'Move to First Position' }).click();
 		await expect(tabs.nth(0)).toContainText('Main');
 		await expect(tabs.nth(1)).toContainText('README');
 	});
@@ -6685,8 +6706,12 @@ test.describe('App shell seeded workbench', () => {
 		const tabs = window.locator('[data-tab-id]');
 		await expect(tabs).toHaveCount(2);
 
-		await tabs.filter({ hasText: 'README' }).first().hover();
-		await window.getByRole('button', { name: 'Close Tabs to Left' }).click();
+		const overlay = await openTabHoverOverlay(
+			window,
+			tabs.filter({ hasText: 'README' }).first(),
+			'Close Tabs to Left'
+		);
+		await overlay.getByRole('button', { name: 'Close Tabs to Left' }).click();
 
 		await expect(tabs).toHaveCount(2);
 		await expect(tabs.first()).toContainText('README');
@@ -6700,8 +6725,12 @@ test.describe('App shell seeded workbench', () => {
 		await expect(tabs).toHaveCount(2);
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
 
-		await tabs.filter({ hasText: 'Main' }).first().hover();
-		await window.getByRole('button', { name: 'Close Tabs to Right' }).click();
+		const overlay = await openTabHoverOverlay(
+			window,
+			tabs.filter({ hasText: 'Main' }).first(),
+			'Close Tabs to Right'
+		);
+		await overlay.getByRole('button', { name: 'Close Tabs to Right' }).click();
 
 		await expect(tabs).toHaveCount(1);
 		await expect(tabs.first()).toContainText('Main');
@@ -6714,8 +6743,12 @@ test.describe('App shell seeded workbench', () => {
 		await expect(tabs).toHaveCount(2);
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
 
-		await tabs.filter({ hasText: 'Main' }).first().hover();
-		await window.getByRole('button', { name: 'Close Other Tabs' }).click();
+		const overlay = await openTabHoverOverlay(
+			window,
+			tabs.filter({ hasText: 'Main' }).first(),
+			'Close Other Tabs'
+		);
+		await overlay.getByRole('button', { name: 'Close Other Tabs' }).click();
 
 		await expect(tabs).toHaveCount(1);
 		await expect(tabs.first()).toContainText('Main');
@@ -6727,8 +6760,12 @@ test.describe('App shell seeded workbench', () => {
 		const tabs = window.locator('[data-tab-id]');
 		await expect(tabs).toHaveCount(2);
 
-		await tabs.filter({ hasText: 'README' }).first().hover();
-		await window.getByRole('button', { name: 'Close Other Tabs' }).click();
+		const overlay = await openTabHoverOverlay(
+			window,
+			tabs.filter({ hasText: 'README' }).first(),
+			'Close Other Tabs'
+		);
+		await overlay.getByRole('button', { name: 'Close Other Tabs' }).click();
 
 		await expect(tabs).toHaveCount(2);
 		await expect(tabs.first()).toContainText('README');
@@ -6740,30 +6777,30 @@ test.describe('App shell seeded workbench', () => {
 	test('shows AI tab hover session actions and toggles tab status', async () => {
 		const mainTab = window.locator('[data-tab-id]').filter({ hasText: 'Main' }).first();
 
-		await mainTab.hover();
-		await expect(window.getByText('Copy Session ID')).toBeVisible();
-		await expect(window.getByText('Star Session')).toBeVisible();
-		await expect(window.getByText('Rename Tab')).toBeVisible();
-		await expect(window.getByText('Mark as Unread')).toBeVisible();
+		const overlay = await openTabHoverOverlay(window, mainTab, 'Rename Tab');
+		await expect(overlay.getByText('Copy Session ID')).toBeVisible();
+		await expect(overlay.getByText('Star Session')).toBeVisible();
+		await expect(overlay.getByText('Rename Tab')).toBeVisible();
+		await expect(overlay.getByText('Mark as Unread')).toBeVisible();
 
-		await window.getByText('Copy Session ID').click();
-		await expect(window.getByText('Copied!')).toBeVisible();
+		await overlay.getByText('Copy Session ID').click();
+		await expect(overlay.getByText('Copied!')).toBeVisible();
 
-		await window.getByText('Star Session').click();
-		await expect(window.getByText('Unstar Session')).toBeVisible();
+		await overlay.getByText('Star Session').click();
+		await expect(overlay.getByText('Unstar Session')).toBeVisible();
 
-		await window.getByText('Mark as Unread').click();
+		await overlay.getByText('Mark as Unread').click();
 		await expect(window.getByTitle('New messages')).toBeVisible();
 	});
 
 	test('toggles an AI tab star off from the TabBar hover overlay', async () => {
 		const mainTab = window.locator('[data-tab-id]').filter({ hasText: 'Main' }).first();
 
-		await mainTab.hover();
-		await window.getByText('Star Session').click();
-		await expect(window.getByText('Unstar Session')).toBeVisible();
+		const overlay = await openTabHoverOverlay(window, mainTab, 'Rename Tab');
+		await overlay.getByText('Star Session').click();
+		await expect(overlay.getByText('Unstar Session')).toBeVisible();
 
-		await window.getByText('Unstar Session').click();
+		await overlay.getByText('Unstar Session').click();
 
 		await window.getByTitle(/Search tabs/).click();
 		const switcher = window.getByRole('dialog', { name: 'Tab Switcher' });
@@ -6777,8 +6814,8 @@ test.describe('App shell seeded workbench', () => {
 
 		await window.keyboard.press('Meta+Shift+S');
 		const mainTab = window.locator('[data-tab-id]').filter({ hasText: 'Main' }).first();
-		await mainTab.hover();
-		await expect(window.getByText('Unstar Session')).toBeVisible();
+		const overlay = await openTabHoverOverlay(window, mainTab, 'Rename Tab');
+		await expect(overlay.getByText('Unstar Session')).toBeVisible();
 
 		await window.keyboard.press('Alt+Meta+T');
 		const switcher = window.getByRole('dialog', { name: 'Tab Switcher' });
@@ -6823,8 +6860,8 @@ test.describe('App shell seeded workbench', () => {
 	test('renames an AI tab from the TabBar hover overlay', async () => {
 		const mainTab = window.locator('[data-tab-id]').filter({ hasText: 'Main' }).first();
 
-		await mainTab.hover();
-		await window.getByText('Rename Tab').click();
+		const overlay = await openTabHoverOverlay(window, mainTab, 'Rename Tab');
+		await overlay.getByText('Rename Tab').click();
 
 		const renameDialog = window.getByRole('dialog', { name: 'Rename Tab' });
 		await expect(renameDialog).toBeVisible();
@@ -6840,8 +6877,8 @@ test.describe('App shell seeded workbench', () => {
 	test('cancels an AI tab rename from the TabBar hover overlay without changing the label', async () => {
 		const mainTab = window.locator('[data-tab-id]').filter({ hasText: 'Main' }).first();
 
-		await mainTab.hover();
-		await window.getByText('Rename Tab').click();
+		const overlay = await openTabHoverOverlay(window, mainTab, 'Rename Tab');
+		await overlay.getByText('Rename Tab').click();
 
 		const renameDialog = window.getByRole('dialog', { name: 'Rename Tab' });
 		await expect(renameDialog).toBeVisible();
@@ -6982,10 +7019,10 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
 
 		const mainTab = window.locator('[data-tab-id]').filter({ hasText: 'Main' }).first();
-		await mainTab.hover();
-		await window.getByText('Copy Session ID').click();
+		const overlay = await openTabHoverOverlay(window, mainTab, 'Rename Tab');
+		await overlay.getByText('Copy Session ID').click();
 
-		await expect(window.getByText('Copied!')).toBeVisible();
+		await expect(overlay.getByText('Copied!')).toBeVisible();
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
 	});
 
@@ -6994,8 +7031,8 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
 
 		const mainTab = window.locator('[data-tab-id]').filter({ hasText: 'Main' }).first();
-		await mainTab.hover();
-		await window.getByText('Mark as Unread').click();
+		const overlay = await openTabHoverOverlay(window, mainTab);
+		await overlay.getByText('Mark as Unread').click();
 
 		await expect(window.getByTitle('New messages')).toBeVisible();
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
@@ -7006,8 +7043,8 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
 
 		const readmeTab = window.locator('[data-tab-id]').filter({ hasText: 'README' }).first();
-		await readmeTab.hover();
-		await window.getByText('Copy File Name').click();
+		const overlay = await openTabHoverOverlay(window, readmeTab, 'Copy File Name');
+		await overlay.getByText('Copy File Name').click();
 
 		await expect(window.getByText('Copied!')).toBeVisible();
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
@@ -7018,8 +7055,8 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
 
 		const readmeTab = window.locator('[data-tab-id]').filter({ hasText: 'README' }).first();
-		await readmeTab.hover();
-		await window.getByText('Copy File Path').click();
+		const overlay = await openTabHoverOverlay(window, readmeTab, 'Open in Default App');
+		await overlay.getByText('Copy File Path').click();
 
 		await expect(window.getByText('Copied!')).toBeVisible();
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
@@ -7031,8 +7068,8 @@ test.describe('App shell seeded workbench', () => {
 
 		const tabRows = window.locator('[data-tab-id]');
 		const readmeTab = tabRows.filter({ hasText: 'README' }).first();
-		await readmeTab.hover();
-		await window.getByRole('button', { name: 'Close Tab', exact: true }).click();
+		const overlay = await openTabHoverOverlay(window, readmeTab, 'Close Tab');
+		await overlay.getByRole('button', { name: 'Close Tab', exact: true }).click();
 
 		await expect(tabRows).toHaveCount(1);
 		await expect(tabRows.first()).toContainText('Main');
@@ -7044,16 +7081,16 @@ test.describe('App shell seeded workbench', () => {
 		const tabRows = window.locator('[data-tab-id]');
 		const readmeTab = tabRows.filter({ hasText: 'README' }).first();
 
-		await readmeTab.hover();
-		await expect(window.getByRole('button', { name: 'Close Tabs to Right' })).toBeDisabled();
-		await expect(window.getByRole('button', { name: 'Close Tabs to Left' })).toBeEnabled();
+		let overlay = await openTabHoverOverlay(window, readmeTab, 'Close Tabs to Right');
+		await expect(overlay.getByRole('button', { name: 'Close Tabs to Right' })).toBeDisabled();
+		await expect(overlay.getByRole('button', { name: 'Close Tabs to Left' })).toBeEnabled();
 
-		await window.getByRole('button', { name: 'Move to First Position' }).click();
+		await overlay.getByRole('button', { name: 'Move to First Position' }).click();
 		await expect(tabRows.nth(0)).toContainText('README');
 
-		await readmeTab.hover();
-		await expect(window.getByRole('button', { name: 'Close Tabs to Left' })).toBeDisabled();
-		await expect(window.getByRole('button', { name: 'Close Tabs to Right' })).toBeEnabled();
+		overlay = await openTabHoverOverlay(window, readmeTab, 'Close Tabs to Left');
+		await expect(overlay.getByRole('button', { name: 'Close Tabs to Left' })).toBeDisabled();
+		await expect(overlay.getByRole('button', { name: 'Close Tabs to Right' })).toBeEnabled();
 	});
 
 	test('uses global tab shortcuts to create select close and reopen AI tabs', async () => {
@@ -7193,16 +7230,20 @@ test.describe('App shell seeded workbench', () => {
 		const tabRows = window.locator('[data-tab-id]');
 		await expect(tabRows).toHaveCount(2);
 
-		await tabRows.filter({ hasText: 'Main' }).first().hover();
-		await window.getByRole('button', { name: 'Close Tabs to Right' }).click();
+		let overlay = await openTabHoverOverlay(
+			window,
+			tabRows.filter({ hasText: 'Main' }).first(),
+			'Close Tabs to Right'
+		);
+		await overlay.getByRole('button', { name: 'Close Tabs to Right' }).click();
 
 		await expect(tabRows).toHaveCount(1);
 		const mainTab = tabRows.filter({ hasText: 'Main' }).first();
-		await mainTab.hover();
-		await expect(window.getByRole('button', { name: 'Close Tab', exact: true })).toBeDisabled();
-		await expect(window.getByRole('button', { name: 'Close Other Tabs' })).toBeDisabled();
-		await expect(window.getByRole('button', { name: 'Close Tabs to Left' })).toBeDisabled();
-		await expect(window.getByRole('button', { name: 'Close Tabs to Right' })).toBeDisabled();
+		overlay = await openTabHoverOverlay(window, mainTab);
+		await expect(overlay.getByRole('button', { name: 'Close Tab', exact: true })).toBeDisabled();
+		await expect(overlay.getByRole('button', { name: 'Close Other Tabs' })).toBeDisabled();
+		await expect(overlay.getByRole('button', { name: 'Close Tabs to Left' })).toBeDisabled();
+		await expect(overlay.getByRole('button', { name: 'Close Tabs to Right' })).toBeDisabled();
 		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
 	});
 
@@ -7284,8 +7325,8 @@ test.describe('App shell seeded workbench', () => {
 		const readmeTab = window.locator('[data-tab-id]').filter({ hasText: 'README' }).first();
 		const expectedPath = seededWorkbench.sessions[0].filePreviewTabs[0].path;
 
-		await readmeTab.hover();
-		await window.getByText('Open in Default App').click();
+		let overlay = await openTabHoverOverlay(window, readmeTab, 'Open in Default App');
+		await overlay.getByText('Open in Default App').click();
 		await expect
 			.poll(() => getStubbedShellPathCalls(electronApp))
 			.toEqual([
@@ -7295,8 +7336,8 @@ test.describe('App shell seeded workbench', () => {
 				},
 			]);
 
-		await readmeTab.hover();
-		await window
+		overlay = await openTabHoverOverlay(window, readmeTab, 'Open in Default App');
+		await overlay
 			.getByRole('button', {
 				name: /Reveal in Finder|Show in Finder|Show in Folder|Show in File Explorer|Open Containing Folder/,
 			})
@@ -7428,8 +7469,8 @@ test.describe('App shell seeded workbench', () => {
 
 		const tabRows = window.locator('[data-tab-id]');
 		const readmeTab = tabRows.filter({ hasText: 'README' }).first();
-		await readmeTab.hover();
-		await window.getByRole('button', { name: 'Close Tab', exact: true }).click();
+		const overlay = await openTabHoverOverlay(window, readmeTab, 'Close Tab');
+		await overlay.getByRole('button', { name: 'Close Tab', exact: true }).click();
 		await expect(window.getByText('File Preview Surface')).toBeHidden();
 		await expect(tabRows.filter({ hasText: 'README' })).toHaveCount(0);
 
@@ -7473,8 +7514,8 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
 
 		const mainTab = window.locator('[data-tab-id]').filter({ hasText: 'Main' }).first();
-		await mainTab.hover();
-		await window.getByText('Rename Tab').click();
+		const overlay = await openTabHoverOverlay(window, mainTab, 'Rename Tab');
+		await overlay.getByText('Rename Tab').click();
 
 		const renameDialog = window.getByRole('dialog', { name: 'Rename Tab' });
 		await renameDialog.locator('input').fill('Inactive Rename Canceled');
@@ -7492,8 +7533,8 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
 
 		const readmeTab = window.locator('[data-tab-id]').filter({ hasText: 'README' }).first();
-		await readmeTab.hover();
-		await window.getByText('Copy File Path').click();
+		const overlay = await openTabHoverOverlay(window, readmeTab, 'Open in Default App');
+		await overlay.getByText('Copy File Path').click();
 
 		await expect(window.getByText('Copied!')).toBeVisible();
 		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
@@ -7507,8 +7548,8 @@ test.describe('App shell seeded workbench', () => {
 
 		const readmeTab = window.locator('[data-tab-id]').filter({ hasText: 'README' }).first();
 		const expectedPath = seededWorkbench.sessions[0].filePreviewTabs[0].path;
-		await readmeTab.hover();
-		await window.getByText('Open in Default App').click();
+		const overlay = await openTabHoverOverlay(window, readmeTab, 'Open in Default App');
+		await overlay.getByText('Open in Default App').click();
 
 		await expect
 			.poll(() => getStubbedShellPathCalls(electronApp))
@@ -7522,8 +7563,8 @@ test.describe('App shell seeded workbench', () => {
 
 		const tabs = window.locator('[data-tab-id]');
 		const readmeTab = tabs.filter({ hasText: 'README' }).first();
-		await readmeTab.hover();
-		await window.getByRole('button', { name: 'Move to First Position' }).click();
+		const overlay = await openTabHoverOverlay(window, readmeTab, 'Move to First Position');
+		await overlay.getByRole('button', { name: 'Move to First Position' }).click();
 
 		await expect(tabs.nth(0)).toContainText('README');
 		await expect(tabs.nth(1)).toContainText('Main');
@@ -7571,8 +7612,8 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
 
 		const mainTab = window.locator('[data-tab-id]').filter({ hasText: 'Main' }).first();
-		await mainTab.hover();
-		await window.getByText('Mark as Unread').click();
+		const overlay = await openTabHoverOverlay(window, mainTab, 'Mark as Unread');
+		await overlay.getByText('Mark as Unread').click();
 
 		await window.keyboard.press('Meta+U');
 		await expect(window.getByTitle(/Showing unread only/)).toBeVisible();
@@ -7712,8 +7753,8 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
 
 		const mainTab = tabRows.filter({ hasText: 'Main' }).first();
-		await mainTab.hover();
-		await window.getByRole('button', { name: 'Move to Last Position' }).click();
+		const overlay = await openTabHoverOverlay(window, mainTab, 'Move to Last Position');
+		await overlay.getByRole('button', { name: 'Move to Last Position' }).click();
 
 		await expect(tabRows.nth(0)).toContainText('README');
 		await expect(tabRows.nth(1)).toContainText('Main');
@@ -7726,8 +7767,8 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
 
 		const mainTab = tabRows.filter({ hasText: 'Main' }).first();
-		await mainTab.hover();
-		await window.getByText('Rename Tab').click();
+		const overlay = await openTabHoverOverlay(window, mainTab, 'Rename Tab');
+		await overlay.getByText('Rename Tab').click();
 
 		const renameDialog = window.getByRole('dialog', { name: 'Rename Tab' });
 		await renameDialog.locator('input').fill('Inactive Reviewed Main');
@@ -7744,8 +7785,8 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
 
 		const mainTab = tabRows.filter({ hasText: 'Main' }).first();
-		await mainTab.hover();
-		await window.getByText('Rename Tab').click();
+		const overlay = await openTabHoverOverlay(window, mainTab, 'Rename Tab');
+		await overlay.getByText('Rename Tab').click();
 		const renameDialog = window.getByRole('dialog', { name: 'Rename Tab' });
 		await renameDialog.locator('input').fill('Switcher Reviewed Main');
 		await renameDialog.locator('input').press('Enter');
@@ -7766,8 +7807,8 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
 
 		const mainTab = tabRows.filter({ hasText: 'Main' }).first();
-		await mainTab.hover();
-		await window.getByRole('button', { name: 'Close Tab', exact: true }).click();
+		const overlay = await openTabHoverOverlay(window, mainTab);
+		await overlay.getByRole('button', { name: 'Close Tab', exact: true }).click();
 
 		await expect(tabRows.filter({ hasText: 'Main' })).toHaveCount(0);
 		await expect(tabRows.filter({ hasText: 'README' }).first()).toBeVisible();
@@ -7781,8 +7822,8 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
 
 		const mainTab = tabRows.filter({ hasText: 'Main' }).first();
-		await mainTab.hover();
-		await window.getByRole('button', { name: 'Close Tab', exact: true }).click();
+		const overlay = await openTabHoverOverlay(window, mainTab);
+		await overlay.getByRole('button', { name: 'Close Tab', exact: true }).click();
 		await expect(tabRows.filter({ hasText: 'Main' })).toHaveCount(0);
 
 		await window.keyboard.press('Meta+Shift+T');
@@ -7798,8 +7839,8 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
 
 		const mainTab = window.locator('[data-tab-id]').filter({ hasText: 'Main' }).first();
-		await mainTab.hover();
-		await window.getByText('Star Session').click();
+		const overlay = await openTabHoverOverlay(window, mainTab);
+		await overlay.getByText('Star Session').click();
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
 
 		await window.keyboard.press('Alt+Meta+T');
@@ -7816,11 +7857,11 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
 
 		const mainTab = window.locator('[data-tab-id]').filter({ hasText: 'Main' }).first();
-		await mainTab.hover();
-		await window.getByText('Star Session', { exact: true }).click();
-		await expect(window.getByText('Unstar Session', { exact: true })).toBeVisible();
-		await window.getByText('Unstar Session', { exact: true }).click();
-		await expect(window.getByText('Star Session', { exact: true })).toBeVisible();
+		const overlay = await openTabHoverOverlay(window, mainTab);
+		await overlay.getByText('Star Session', { exact: true }).click();
+		await expect(overlay.getByText('Unstar Session', { exact: true })).toBeVisible();
+		await overlay.getByText('Unstar Session', { exact: true }).click();
+		await expect(overlay.getByText('Star Session', { exact: true })).toBeVisible();
 		await dismissTabHoverOverlay(window);
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
 
@@ -7838,14 +7879,14 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
 
 		const mainTab = tabRows.filter({ hasText: 'Main' }).first();
-		await mainTab.hover();
-		await window.getByRole('button', { name: 'Move to Last Position' }).click();
+		let overlay = await openTabHoverOverlay(window, mainTab, 'Move to Last Position');
+		await overlay.getByRole('button', { name: 'Move to Last Position' }).click();
 		await expect(tabRows.nth(0)).toContainText('README');
 		await expect(tabRows.nth(1)).toContainText('Main');
 		await dismissTabHoverOverlay(window);
 
-		await mainTab.hover();
-		await window.getByRole('button', { name: 'Move to First Position' }).click();
+		overlay = await openTabHoverOverlay(window, mainTab, 'Move to First Position');
+		await overlay.getByRole('button', { name: 'Move to First Position' }).click();
 
 		await expect(tabRows.nth(0)).toContainText('Main');
 		await expect(tabRows.nth(1)).toContainText('README');
@@ -7858,14 +7899,14 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByText('Codex seeded response is visible.')).toBeVisible();
 
 		const readmeTab = tabRows.filter({ hasText: 'README' }).first();
-		await readmeTab.hover();
-		await window.getByRole('button', { name: 'Move to First Position' }).click();
+		let overlay = await openTabHoverOverlay(window, readmeTab, 'Move to First Position');
+		await overlay.getByRole('button', { name: 'Move to First Position' }).click();
 		await expect(tabRows.nth(0)).toContainText('README');
 		await expect(tabRows.nth(1)).toContainText('Main');
 		await dismissTabHoverOverlay(window);
 
-		await readmeTab.hover();
-		await window.getByRole('button', { name: 'Move to Last Position' }).click();
+		overlay = await openTabHoverOverlay(window, readmeTab, 'Move to Last Position');
+		await overlay.getByRole('button', { name: 'Move to Last Position' }).click();
 
 		await expect(tabRows.nth(0)).toContainText('Main');
 		await expect(tabRows.nth(1)).toContainText('README');
@@ -8039,8 +8080,8 @@ test.describe('App shell seeded workbench', () => {
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
 
 		const mainTab = tabRows.filter({ hasText: 'Main' }).first();
-		await mainTab.hover();
-		await window.getByRole('button', { name: 'Close Tab', exact: true }).click();
+		const overlay = await openTabHoverOverlay(window, mainTab);
+		await overlay.getByRole('button', { name: 'Close Tab', exact: true }).click();
 
 		await expect(tabRows.filter({ hasText: 'Main' })).toHaveCount(0);
 		await expect(window.locator('[data-tour="history-panel"]')).toBeVisible();
@@ -8168,8 +8209,8 @@ test.describe('App shell seeded workbench', () => {
 		await window.getByText('README', { exact: true }).click();
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
 		const closeScratchTab = tabRows.filter({ hasText: 'Close Scratch Tab' }).first();
-		await closeScratchTab.hover();
-		await window.getByRole('button', { name: 'Close Tab', exact: true }).click();
+		const overlay = await openTabHoverOverlay(window, closeScratchTab);
+		await overlay.getByRole('button', { name: 'Close Tab', exact: true }).click();
 
 		await expect(tabRows.filter({ hasText: 'Close Scratch Tab' })).toHaveCount(0);
 		await expect(tabRows.filter({ hasText: 'Keep Scratch Tab' }).first()).toBeVisible();
@@ -8191,8 +8232,8 @@ test.describe('App shell seeded workbench', () => {
 		await window.getByText('README', { exact: true }).click();
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
 		const reopenScratchTab = tabRows.filter({ hasText: 'Reopen Scratch Tab' }).first();
-		await reopenScratchTab.hover();
-		await window.getByRole('button', { name: 'Close Tab', exact: true }).click();
+		const overlay = await openTabHoverOverlay(window, reopenScratchTab);
+		await overlay.getByRole('button', { name: 'Close Tab', exact: true }).click();
 		await expect(tabRows.filter({ hasText: 'Reopen Scratch Tab' })).toHaveCount(0);
 
 		await window.keyboard.press('Meta+Shift+T');
@@ -8456,8 +8497,12 @@ test.describe('App shell seeded workbench', () => {
 
 		await window.getByText('README', { exact: true }).click();
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
-		await tabRows.filter({ hasText: 'Copy Scratch Session' }).first().hover();
-		await window.getByRole('button', { name: 'Copy Session ID' }).click();
+		const overlay = await openTabHoverOverlay(
+			window,
+			tabRows.filter({ hasText: 'Copy Scratch Session' }).first(),
+			'Rename Tab'
+		);
+		await overlay.getByRole('button', { name: 'Copy Session ID' }).click();
 
 		await expect(window.getByText('Copied!')).toBeVisible();
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
@@ -8477,8 +8522,12 @@ test.describe('App shell seeded workbench', () => {
 
 		await window.getByText('README', { exact: true }).click();
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
-		await tabRows.filter({ hasText: 'Unread Scratch Session' }).first().hover();
-		await window.getByRole('button', { name: 'Mark as Unread' }).click();
+		const overlay = await openTabHoverOverlay(
+			window,
+			tabRows.filter({ hasText: 'Unread Scratch Session' }).first(),
+			'Mark as Unread'
+		);
+		await overlay.getByRole('button', { name: 'Mark as Unread' }).click();
 
 		await expect(window.getByTitle('New messages')).toBeVisible();
 		await expect(window.getByText('File Preview Surface')).toBeVisible();
