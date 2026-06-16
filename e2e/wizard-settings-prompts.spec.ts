@@ -1386,7 +1386,7 @@ async function openPromptComposer(window: Page) {
 	await window.getByText('Main', { exact: true }).click();
 	await expect(window.getByTitle('Send message')).toBeVisible();
 	await window.getByTitle(/Open Prompt Composer/).click();
-	await expect(window.getByText('Prompt Composer')).toBeVisible();
+	await expect(promptComposerDialog(window)).toBeVisible();
 	const composerInput = window.getByPlaceholder(/Write your prompt here/);
 	await expect(composerInput).toBeVisible();
 	return composerInput;
@@ -1434,7 +1434,7 @@ async function openWizardDirectoryStep(window: Page, agentName = 'Directory Code
 
 function promptComposerDialog(window: Page) {
 	return window
-		.getByText('Prompt Composer')
+		.getByTitle('Close (Escape)')
 		.locator('xpath=ancestor::div[contains(@class, "z-10")][1]');
 }
 
@@ -1664,7 +1664,7 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 			await expect(composerInput).toHaveValue('Ask @Rev');
 
 			await launched.window.keyboard.press('Escape');
-			await expect(launched.window.getByText('Prompt Composer')).toBeHidden();
+			await expect(promptComposerDialog(launched.window)).toBeHidden();
 			await launched.window.getByTitle(/Open Prompt Composer/).click();
 			await expect(composerInput).toHaveValue('Ask @Rev');
 		} finally {
@@ -1734,7 +1734,9 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 			await exitDialog.getByRole('button', { name: 'Exit' }).click();
 
 			await expect(exitDialog).toBeHidden();
-			await expect(launched.window.getByText('Project Wizard')).toBeHidden();
+			await expect(
+				launched.window.getByPlaceholder('Tell the wizard about your project...')
+			).toBeHidden();
 			await expect(launched.window.getByTitle('Send message')).toBeVisible();
 		} finally {
 			await launched.cleanup();
@@ -1801,7 +1803,7 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 			await expect(composerInput).toHaveValue('Ask @Rev');
 			await launched.window.keyboard.press('Escape');
 
-			await expect(launched.window.getByText('Prompt Composer')).toBeHidden();
+			await expect(promptComposerDialog(launched.window)).toBeHidden();
 		} finally {
 			await launched.cleanup();
 		}
@@ -1825,7 +1827,7 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 			await expect(sendButton).toBeEnabled();
 
 			await launched.window.keyboard.press('Escape');
-			await expect(launched.window.getByText('Prompt Composer')).toBeHidden();
+			await expect(promptComposerDialog(launched.window)).toBeHidden();
 		} finally {
 			await launched.cleanup();
 		}
@@ -1880,7 +1882,7 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 			await composerInput.fill('Persist this draft through the header close control.');
 			await launched.window.getByTitle('Close (Escape)').click();
 
-			await expect(launched.window.getByText('Prompt Composer')).toBeHidden();
+			await expect(promptComposerDialog(launched.window)).toBeHidden();
 			await launched.window.getByTitle(/Open Prompt Composer/).click();
 			await expect(composerInput).toHaveValue(
 				'Persist this draft through the header close control.'
@@ -3393,7 +3395,7 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 
 			await expect(composerInput).toHaveValue('Prefix: pasted wizard prompt text');
 			await launched.window.keyboard.press('Escape');
-			await expect(launched.window.getByText('Prompt Composer')).toBeHidden();
+			await expect(promptComposerDialog(launched.window)).toBeHidden();
 		} finally {
 			await launched.cleanup();
 		}
@@ -3415,7 +3417,7 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 			await expect(composerInput).toHaveValue('@NoMatchingWspAgent');
 
 			await launched.window.keyboard.press('Escape');
-			await expect(launched.window.getByText('Prompt Composer')).toBeHidden();
+			await expect(promptComposerDialog(launched.window)).toBeHidden();
 		} finally {
 			await launched.cleanup();
 		}
@@ -3643,7 +3645,7 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 			await expect(composerInput).toHaveValue('Keyboard-opened wizard settings prompt');
 
 			await launched.window.keyboard.press('Escape');
-			await expect(launched.window.getByText('Prompt Composer')).toBeHidden();
+			await expect(promptComposerDialog(launched.window)).toBeHidden();
 		} finally {
 			await launched.cleanup();
 		}
@@ -4121,7 +4123,7 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 			await launched.window.keyboard.press('Escape');
 
 			await expect(lightbox).toBeHidden();
-			await expect(launched.window.getByText('Prompt Composer')).toBeVisible();
+			await expect(promptComposerDialog(launched.window)).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
@@ -10467,7 +10469,7 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 			await input.focus();
 			await input.press('Escape');
 
-			const exitDialog = launched.window.getByRole('dialog', { name: 'Confirm Exit Wizard' });
+			const exitDialog = launched.window.getByRole('dialog', { name: /Exit Wizard/ });
 			await expect(exitDialog.getByText('Exit Wizard?')).toBeVisible();
 			await expect(exitDialog.getByText(/Progress will be lost/)).toBeVisible();
 			await expect(exitDialog.getByRole('button', { name: 'Exit' })).toBeVisible();
@@ -10490,7 +10492,7 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 		try {
 			await launched.window.getByTitle('Wizard mode active - click to exit').click();
 
-			const exitDialog = launched.window.getByRole('dialog', { name: 'Confirm Exit Wizard' });
+			const exitDialog = launched.window.getByRole('dialog', { name: /Exit Wizard/ });
 			await expect(exitDialog.getByText('Exit Wizard?')).toBeVisible();
 			await expect(exitDialog.getByText(/Progress will be lost/)).toBeVisible();
 			await expect(exitDialog.getByRole('button', { name: 'Cancel' })).toBeVisible();
@@ -10770,7 +10772,7 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 		try {
 			await launched.window.getByTitle('Open Prompt Composer').click();
 
-			await expect(launched.window.getByText('Prompt Composer')).toBeVisible();
+			await expect(promptComposerDialog(launched.window)).toBeVisible();
 			await expect(launched.window.getByPlaceholder(/Write your prompt here/)).toBeVisible();
 		} finally {
 			await launched.cleanup();
@@ -11911,7 +11913,7 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 
 			await expect(wizardDialog.getByText('Navigate')).toBeVisible();
 			await expect(wizardDialog.getByText('Fields')).toBeVisible();
-			await expect(wizardDialog.getByText('Continue')).toBeVisible();
+			await expect(wizardDialog.getByText('EnterContinue')).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}

@@ -1577,6 +1577,31 @@ function MaestroConsoleInner() {
 	handleAutoRunRefreshRef.current = handleAutoRunRefresh;
 	setInputValueRef.current = setInputValue;
 
+	const handleEndInlineWizard = useCallback(() => {
+		const currentSessionId = activeSessionIdRef.current;
+		const currentSession = sessionsRef.current.find((session) => session.id === currentSessionId);
+		const targetTabId = currentSession?.activeTabId;
+		if (!currentSessionId || !targetTabId) return;
+
+		const clearTargetTabWizardState = () => {
+			setSessions((prev) =>
+				prev.map((session) => {
+					if (session.id !== currentSessionId) return session;
+					return {
+						...session,
+						aiTabs: session.aiTabs.map((tab) =>
+							tab.id === targetTabId ? { ...tab, wizardState: undefined } : tab
+						),
+					};
+				})
+			);
+			setInputValue('');
+		};
+
+		clearTargetTabWizardState();
+		void Promise.resolve(endInlineWizard()).finally(clearTargetTabWizardState);
+	}, [activeSessionIdRef, endInlineWizard, sessionsRef, setInputValue, setSessions]);
+
 	// Handler for marketplace import completion - refresh document list
 	const handleMarketplaceImportComplete = useCallback(
 		async (folderName: string) => {
@@ -2353,7 +2378,7 @@ function MaestroConsoleInner() {
 		generateInlineWizardDocuments,
 		retryInlineWizardMessage,
 		clearInlineWizardError,
-		endInlineWizard,
+		endInlineWizard: handleEndInlineWizard,
 		handleAutoRunRefresh,
 
 		// Complex wizard handlers
