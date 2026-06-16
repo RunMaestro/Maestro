@@ -1392,10 +1392,22 @@ async function openPromptComposer(window: Page) {
 	return composerInput;
 }
 
+const directoryNotFoundMessage = 'Directory not found. Please check the path exists.';
+
+function maestroWizardDialog(window: Page) {
+	return window.getByRole('dialog', {
+		name: /^(New Agent Wizard|Choose Project Directory|Project Discovery)$/,
+	});
+}
+
+function wizardBackButton(wizardDialog: ReturnType<typeof maestroWizardDialog>) {
+	return wizardDialog.getByRole('button', { name: 'Back' }).first();
+}
+
 async function openNewAgentWizard(window: Page) {
 	await helpers.openWizardViaShortcut(window);
-	const wizardDialog = window.getByRole('dialog', { name: 'New Agent Wizard' });
-	await expect(wizardDialog).toBeVisible();
+	await expect(window.getByRole('dialog', { name: 'New Agent Wizard' })).toBeVisible();
+	const wizardDialog = maestroWizardDialog(window);
 	await expect(wizardDialog.getByRole('heading', { name: 'Create a Maestro Agent' })).toBeVisible();
 	return wizardDialog;
 }
@@ -1415,8 +1427,9 @@ async function openWizardDirectoryStep(window: Page, agentName = 'Directory Code
 	await wizardDialog.getByLabel('Agent name').fill(agentName);
 	await wizardDialog.getByRole('button', { name: 'Codex' }).click();
 	await wizardDialog.getByRole('button', { name: 'Continue' }).click();
-	await expect(wizardDialog.getByText('Where Should We Work?')).toBeVisible();
-	return wizardDialog;
+	const directoryDialog = maestroWizardDialog(window);
+	await expect(directoryDialog.getByText('Where Should We Work?')).toBeVisible();
+	return directoryDialog;
 }
 
 function promptComposerDialog(window: Page) {
@@ -5309,7 +5322,7 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 			await stubEncoreCodexAgent(launched.electronApp);
 			const wizardDialog = await openWizardDirectoryStep(launched.window, 'Return State Agent');
 
-			await wizardDialog.getByRole('button', { name: 'Back' }).click();
+			await wizardBackButton(wizardDialog).click();
 			await expect(wizardDialog.getByLabel('Agent name')).toHaveValue('Return State Agent');
 			await expect(wizardDialog.getByRole('button', { name: 'Codex' })).toHaveAttribute(
 				'aria-pressed',
@@ -5356,9 +5369,7 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 
 			await wizardDialog.getByLabel('Project Directory').fill(missingDir);
 
-			await expect(
-				wizardDialog.getByText('Directory not found. Please check the path exists.')
-			).toBeVisible();
+			await expect(wizardDialog.getByText(directoryNotFoundMessage, { exact: true })).toBeVisible();
 			await expect(wizardDialog.getByLabel('Project Directory')).toHaveAttribute(
 				'aria-invalid',
 				'true'
@@ -5420,14 +5431,10 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 			const directoryInput = wizardDialog.getByLabel('Project Directory');
 
 			await directoryInput.fill(path.join(seeded.homeDir, 'missing-project'));
-			await expect(
-				wizardDialog.getByText('Directory not found. Please check the path exists.')
-			).toBeVisible();
+			await expect(wizardDialog.getByText(directoryNotFoundMessage, { exact: true })).toBeVisible();
 			await directoryInput.fill('');
 
-			await expect(
-				wizardDialog.getByText('Directory not found. Please check the path exists.')
-			).toBeHidden();
+			await expect(wizardDialog.getByText(directoryNotFoundMessage, { exact: true })).toBeHidden();
 			await expect(wizardDialog.getByRole('button', { name: 'Continue' })).toBeHidden();
 		} finally {
 			await launched.cleanup();
@@ -7625,7 +7632,9 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 			await wizardDialog.getByRole('button', { name: 'Continue' }).click();
 			await wizardDialog.getByLabel('Project Directory').fill('/srv/maestro/project');
 
-			await expect(wizardDialog.getByText('Git Repository Detected')).toBeVisible();
+			await expect(
+				wizardDialog.getByText('Git Repository Detected', { exact: true })
+			).toBeVisible();
 			await expect
 				.poll(async () => await getStubbedWizardRemoteDirectoryState(launched.electronApp))
 				.toMatchObject({
@@ -7702,9 +7711,7 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 			await wizardDialog.getByRole('button', { name: 'Continue' }).click();
 			await wizardDialog.getByLabel('Project Directory').fill('/srv/missing-project');
 
-			await expect(
-				wizardDialog.getByText('Directory not found. Please check the path exists.')
-			).toBeVisible();
+			await expect(wizardDialog.getByText(directoryNotFoundMessage, { exact: true })).toBeVisible();
 			await expect
 				.poll(
 					async () =>
@@ -7764,7 +7771,7 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 			await wizardDialog.getByLabel('Agent name').fill('Return Remote Agent');
 			await wizardDialog.getByRole('button', { name: 'Codex' }).click();
 			await wizardDialog.getByRole('button', { name: 'Continue' }).click();
-			await wizardDialog.getByRole('button', { name: 'Back' }).click();
+			await wizardBackButton(wizardDialog).click();
 
 			await expect(wizardDialog.getByLabel('Agent location')).toHaveValue('ssh-remote-1');
 			await expect(wizardDialog.getByLabel('Agent name')).toHaveValue('Return Remote Agent');
@@ -7795,7 +7802,9 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 			await wizardDialog.getByRole('button', { name: 'Browse' }).click();
 
 			await expect(wizardDialog.getByLabel('Project Directory')).toHaveValue(seeded.projectDir);
-			await expect(wizardDialog.getByText('Git Repository Detected')).toBeVisible();
+			await expect(
+				wizardDialog.getByText('Git Repository Detected', { exact: true })
+			).toBeVisible();
 			await expect
 				.poll(async () => await getStubbedWizardRemoteDirectoryState(launched.electronApp))
 				.toMatchObject({
@@ -7878,7 +7887,9 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 
 			await wizardDialog.getByLabel('Project Directory').fill(seeded.projectDir);
 
-			await expect(wizardDialog.getByText('Git Repository Detected')).toBeVisible();
+			await expect(
+				wizardDialog.getByText('Git Repository Detected', { exact: true })
+			).toBeVisible();
 			await expect
 				.poll(async () => {
 					const state = await getStubbedWizardRemoteDirectoryState(launched.electronApp);
@@ -8003,7 +8014,9 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 				.getByRole('button', { name: /Continue Building on Existing Plan/ })
 				.click();
 
-			await expect(wizardDialog.getByRole('heading', { name: 'Project Discovery' })).toBeVisible();
+			await expect(
+				maestroWizardDialog(launched.window).getByRole('heading', { name: 'Project Discovery' })
+			).toBeVisible();
 			await expect
 				.poll(
 					async () =>
@@ -8039,7 +8052,9 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 				.getByRole('button', { name: /Delete & Start Fresh/ })
 				.click();
 
-			await expect(wizardDialog.getByRole('heading', { name: 'Project Discovery' })).toBeVisible();
+			await expect(
+				maestroWizardDialog(launched.window).getByRole('heading', { name: 'Project Discovery' })
+			).toBeVisible();
 			await expect
 				.poll(
 					async () =>
