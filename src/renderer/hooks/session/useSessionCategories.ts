@@ -26,7 +26,8 @@ export function useSessionCategories(
 	sessionFilter: string,
 	sortedSessions: Session[],
 	showUnreadAgentsOnly = false,
-	activeSessionId?: string | null
+	activeSessionId?: string | null,
+	activeBatchSessionIds: string[] = []
 ): SessionCategories {
 	// PERF: Match SessionList's sidebar-only equality so categorization doesn't
 	// recompute on every streaming flush — only when a sidebar-relevant field
@@ -94,6 +95,11 @@ export function useSessionCategories(
 		const query = sessionFilter?.toLowerCase() ?? '';
 		const filtered: Session[] = [];
 
+		// Auto Run agents (the AUTO badge) sit between prompts in state 'idle', so
+		// the busy/unread checks below would drop them. Keep them visible in the
+		// unread filter using the same set that drives the badge.
+		const batchSessionIds = new Set(activeBatchSessionIds);
+
 		for (const s of sessions) {
 			// Exclude worktree children from main list (they appear under parent)
 			if (s.parentSessionId) continue;
@@ -106,12 +112,16 @@ export function useSessionCategories(
 			if (showUnreadAgentsOnly && !isActiveOrParentOfActive) {
 				const hasUnread = s.aiTabs?.some((tab) => tab.hasUnread);
 				const isBusy = s.state === 'busy';
-				// Also check if any worktree children have unread or are busy
+				const isAutoRunning = batchSessionIds.has(s.id);
+				// Also check if any worktree children have unread, are busy, or are auto-running
 				const children = worktreeChildrenByParentId.get(s.id);
-				const hasUnreadChildren = children?.some(
-					(child) => child.aiTabs?.some((tab) => tab.hasUnread) || child.state === 'busy'
+				const hasActiveChildren = children?.some(
+					(child) =>
+						child.aiTabs?.some((tab) => tab.hasUnread) ||
+						child.state === 'busy' ||
+						batchSessionIds.has(child.id)
 				);
-				if (!hasUnread && !isBusy && !hasUnreadChildren) continue;
+				if (!hasUnread && !isBusy && !isAutoRunning && !hasActiveChildren) continue;
 			}
 
 			if (!query) {
@@ -193,6 +203,7 @@ export function useSessionCategories(
 		sessionFilter,
 		showUnreadAgentsOnly,
 		activeSessionId,
+		activeBatchSessionIds,
 		sessions,
 		worktreeChildrenByParentId,
 		groupIds,

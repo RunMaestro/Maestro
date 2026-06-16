@@ -633,7 +633,8 @@ function SessionListInner(props: SessionListProps) {
 		deferredSessionFilter,
 		sortedSessions,
 		showUnreadAgentsOnly,
-		activeSessionId
+		activeSessionId,
+		activeBatchSessionIds
 	);
 
 	// PERF: Cached callback maps to prevent SessionItem re-renders.

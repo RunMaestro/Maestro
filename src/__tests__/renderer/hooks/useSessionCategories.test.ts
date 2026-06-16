@@ -293,6 +293,45 @@ describe('useSessionCategories', () => {
 			expect(names).toContain('Busy Agent');
 		});
 
+		it('includes auto-running agents (AUTO badge) even when idle without unread tabs', () => {
+			const s1 = makeSession({
+				name: 'Has Unread',
+				aiTabs: [{ id: 't1', hasUnread: true } as any],
+			});
+			const s2 = makeSession({
+				name: 'Auto Run Agent',
+				aiTabs: [{ id: 't2', hasUnread: false } as any],
+			});
+			const s3 = makeSession({ name: 'Idle No Unread' });
+			resetStore([s1, s2, s3]);
+
+			const { result } = renderHook(() =>
+				useSessionCategories('', [s1, s2, s3], true, null, [s2.id])
+			);
+
+			expect(result.current.sortedFilteredSessions).toHaveLength(2);
+			const names = result.current.sortedFilteredSessions.map((s) => s.name);
+			expect(names).toContain('Has Unread');
+			expect(names).toContain('Auto Run Agent');
+		});
+
+		it('keeps parent visible when a worktree child is auto-running', () => {
+			const parent = makeSession({ name: 'Parent' });
+			const child = makeSession({
+				name: 'Worktree Child',
+				parentSessionId: parent.id,
+				aiTabs: [{ id: 't1', hasUnread: false } as any],
+			});
+			resetStore([parent, child]);
+
+			const { result } = renderHook(() =>
+				useSessionCategories('', [parent, child], true, null, [child.id])
+			);
+
+			expect(result.current.sortedFilteredSessions).toHaveLength(1);
+			expect(result.current.sortedFilteredSessions[0].name).toBe('Parent');
+		});
+
 		it('keeps parent visible when active session is a worktree child without unread', () => {
 			const parent = makeSession({ name: 'Parent' });
 			const child = makeSession({
