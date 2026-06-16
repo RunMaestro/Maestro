@@ -995,6 +995,7 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 							onRefreshModels={handleRefreshModels}
 							onRefreshAgent={handleRefreshAgent}
 							refreshingAgent={refreshingAgent}
+							isSshEnabled={sshRemoteConfig?.enabled === true}
 							compact
 							showBuiltInEnvVars
 						/>

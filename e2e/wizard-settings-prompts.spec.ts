@@ -1405,7 +1405,7 @@ async function openCodexWizardCustomization(window: Page) {
 	const codexTile = wizardDialog.getByRole('button', { name: 'Codex' });
 
 	await codexTile.getByTitle('Customize agent settings').click();
-	await expect(wizardDialog.getByText('Codex Configuration')).toBeVisible();
+	await expect(wizardDialog.getByRole('heading', { name: 'Configure Codex' })).toBeVisible();
 	return wizardDialog;
 }
 
@@ -1429,6 +1429,19 @@ function settingsFieldPanel(scope: Locator, label: string) {
 	return scope
 		.getByText(label, { exact: true })
 		.locator('xpath=ancestor::div[contains(@class, "rounded border")][1]');
+}
+
+async function setRangeInput(rangeInput: Locator, value: string) {
+	await rangeInput.evaluate((inputNode, nextValue) => {
+		const input = inputNode as HTMLInputElement;
+		const valueSetter = Object.getOwnPropertyDescriptor(
+			window.HTMLInputElement.prototype,
+			'value'
+		)?.set;
+		valueSetter?.call(input, nextValue);
+		input.dispatchEvent(new Event('input', { bubbles: true }));
+		input.dispatchEvent(new Event('change', { bubbles: true }));
+	}, value);
 }
 
 async function stubEncoreCodexAgent(
@@ -3013,13 +3026,8 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 			);
 			const yellowThresholdControl = settingsDialog
 				.getByText('Yellow warning threshold')
-				.locator('xpath=ancestor::div[input[@type="range"]][1]');
-			await yellowThresholdControl.locator('input[type="range"]').evaluate((slider) => {
-				const input = slider as HTMLInputElement;
-				input.value = '80';
-				input.dispatchEvent(new Event('input', { bubbles: true }));
-				input.dispatchEvent(new Event('change', { bubbles: true }));
-			});
+				.locator('xpath=ancestor::div[.//input[@type="range"]][1]');
+			await setRangeInput(yellowThresholdControl.locator('input[type="range"]'), '80');
 
 			await expect
 				.poll(async () => {
@@ -3586,13 +3594,8 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 			);
 			const lookbackControl = settingsDialog
 				.getByText(/Default Lookback Period:/)
-				.locator('xpath=ancestor::div[input[@type="range"]][1]');
-			await lookbackControl.locator('input[type="range"]').evaluate((slider) => {
-				const input = slider as HTMLInputElement;
-				input.value = '30';
-				input.dispatchEvent(new Event('input', { bubbles: true }));
-				input.dispatchEvent(new Event('change', { bubbles: true }));
-			});
+				.locator('xpath=ancestor::div[.//input[@type="range"]][1]');
+			await setRangeInput(lookbackControl.locator('input[type="range"]'), '30');
 
 			await expect
 				.poll(async () => {
@@ -5107,7 +5110,7 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 			const codexTile = wizardDialog.getByRole('button', { name: 'Codex' });
 
 			await codexTile.getByTitle('Customize agent settings').click();
-			await expect(wizardDialog.getByText('Codex Configuration')).toBeVisible();
+			await expect(wizardDialog.getByRole('heading', { name: 'Configure Codex' })).toBeVisible();
 			await expect(wizardDialog.getByPlaceholder('/path/to/codex')).toHaveValue(
 				'/usr/local/bin/codex'
 			);
@@ -6235,12 +6238,7 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 				.getByText('Maximum nodes to display')
 				.locator('xpath=ancestor::div[.//input[@type="range"]][1]');
 
-			await maxNodesControl.locator('input[type="range"]').evaluate((slider) => {
-				const input = slider as HTMLInputElement;
-				input.value = '350';
-				input.dispatchEvent(new Event('input', { bubbles: true }));
-				input.dispatchEvent(new Event('change', { bubbles: true }));
-			});
+			await setRangeInput(maxNodesControl.locator('input[type="range"]'), '350');
 
 			await expect(maxNodesControl.getByText('350')).toBeVisible();
 			await expect
@@ -6271,12 +6269,7 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 				.getByText('Maximum nodes to display')
 				.locator('xpath=ancestor::div[.//input[@type="range"]][1]');
 
-			await maxNodesControl.locator('input[type="range"]').evaluate((slider) => {
-				const input = slider as HTMLInputElement;
-				input.value = '1200';
-				input.dispatchEvent(new Event('input', { bubbles: true }));
-				input.dispatchEvent(new Event('change', { bubbles: true }));
-			});
+			await setRangeInput(maxNodesControl.locator('input[type="range"]'), '1200');
 
 			await expect(maxNodesControl.getByText('1000')).toBeVisible();
 			await expect
@@ -6374,12 +6367,7 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 				.getByText('Red warning threshold')
 				.locator('xpath=ancestor::div[.//input[@type="range"]][1]');
 
-			await redThresholdControl.locator('input[type="range"]').evaluate((slider) => {
-				const input = slider as HTMLInputElement;
-				input.value = '55';
-				input.dispatchEvent(new Event('input', { bubbles: true }));
-				input.dispatchEvent(new Event('change', { bubbles: true }));
-			});
+			await setRangeInput(redThresholdControl.locator('input[type="range"]'), '55');
 
 			await expect
 				.poll(async () => {
@@ -7262,7 +7250,11 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 
 		try {
 			await stubSshRemoteHandlers(launched.electronApp);
-			const settingsDialog = await openSettingsTab(launched.window, 'General', 'SSH Remote Hosts');
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'SSH Hosts',
+				'SSH Remote Hosts'
+			);
 
 			await expect(settingsDialog.getByText('No SSH remotes configured')).toBeVisible();
 			await expect(
@@ -7282,7 +7274,11 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 
 		try {
 			await stubSshRemoteHandlers(launched.electronApp);
-			const settingsDialog = await openSettingsTab(launched.window, 'General', 'SSH Remote Hosts');
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'SSH Hosts',
+				'SSH Remote Hosts'
+			);
 
 			await settingsDialog.getByRole('button', { name: 'Add SSH Remote' }).click();
 
@@ -7302,7 +7298,11 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 
 		try {
 			await stubSshRemoteHandlers(launched.electronApp);
-			const settingsDialog = await openSettingsTab(launched.window, 'General', 'SSH Remote Hosts');
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'SSH Hosts',
+				'SSH Remote Hosts'
+			);
 			await settingsDialog.getByRole('button', { name: 'Add SSH Remote' }).click();
 			const sshDialog = launched.window.getByRole('dialog', { name: 'Add SSH Remote' });
 
@@ -7328,7 +7328,11 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 
 		try {
 			await stubSshRemoteHandlers(launched.electronApp);
-			const settingsDialog = await openSettingsTab(launched.window, 'General', 'SSH Remote Hosts');
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'SSH Hosts',
+				'SSH Remote Hosts'
+			);
 			await settingsDialog.getByRole('button', { name: 'Add SSH Remote' }).click();
 			const sshDialog = launched.window.getByRole('dialog', { name: 'Add SSH Remote' });
 
@@ -7381,7 +7385,11 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 					},
 				],
 			});
-			const settingsDialog = await openSettingsTab(launched.window, 'General', 'SSH Remote Hosts');
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'SSH Hosts',
+				'SSH Remote Hosts'
+			);
 			await settingsDialog.getByRole('button', { name: 'Add SSH Remote' }).click();
 			const sshDialog = launched.window.getByRole('dialog', { name: 'Add SSH Remote' });
 
@@ -7412,7 +7420,11 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 			await stubSshRemoteHandlers(launched.electronApp, {
 				sshConfigHosts: [{ host: 'staging-vps', user: 'deploy' }],
 			});
-			const settingsDialog = await openSettingsTab(launched.window, 'General', 'SSH Remote Hosts');
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'SSH Hosts',
+				'SSH Remote Hosts'
+			);
 			await settingsDialog.getByRole('button', { name: 'Add SSH Remote' }).click();
 			const sshDialog = launched.window.getByRole('dialog', { name: 'Add SSH Remote' });
 			await sshDialog.getByRole('button', { name: /Select a host to import/ }).click();
@@ -7437,10 +7449,14 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 
 		try {
 			await stubSshRemoteHandlers(launched.electronApp, { configs: [seededRemote] });
-			const settingsDialog = await openSettingsTab(launched.window, 'General', 'SSH Remote Hosts');
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'SSH Hosts',
+				'SSH Remote Hosts'
+			);
 
 			await settingsDialog.getByTitle('Set as default').click();
-			await expect(settingsDialog.getByText('Default')).toBeVisible();
+			await expect(settingsDialog.getByText('Default', { exact: true })).toBeVisible();
 			await settingsDialog.getByTitle('Remove as default').click();
 
 			await expect
@@ -7467,7 +7483,11 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 					result: { remoteInfo: { hostname: 'quant-vps.internal' } },
 				},
 			});
-			const settingsDialog = await openSettingsTab(launched.window, 'General', 'SSH Remote Hosts');
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'SSH Hosts',
+				'SSH Remote Hosts'
+			);
 
 			await settingsDialog.getByTitle('Test connection').click();
 
@@ -7490,7 +7510,11 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 
 		try {
 			await stubSshRemoteHandlers(launched.electronApp, { configs: [disabledRemote] });
-			const settingsDialog = await openSettingsTab(launched.window, 'General', 'SSH Remote Hosts');
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'SSH Hosts',
+				'SSH Remote Hosts'
+			);
 
 			await expect(settingsDialog.getByText('Disabled')).toBeVisible();
 			await expect(settingsDialog.getByTitle('Test connection')).toBeDisabled();
@@ -7509,7 +7533,11 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 
 		try {
 			await stubSshRemoteHandlers(launched.electronApp, { configs: [seededRemote] });
-			const settingsDialog = await openSettingsTab(launched.window, 'General', 'SSH Remote Hosts');
+			const settingsDialog = await openSettingsTab(
+				launched.window,
+				'SSH Hosts',
+				'SSH Remote Hosts'
+			);
 
 			await settingsDialog.getByTitle('Delete').click();
 
@@ -8296,7 +8324,7 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 
 			await wizardDialog.getByLabel('Agent name').fill('Configured Codex Agent');
 			await codexTile.getByTitle('Customize agent settings').click();
-			await expect(wizardDialog.getByText('Codex Configuration')).toBeVisible();
+			await expect(wizardDialog.getByRole('heading', { name: 'Configure Codex' })).toBeVisible();
 			await wizardDialog.getByRole('button', { name: 'Done' }).click();
 
 			await expect(wizardDialog.getByRole('button', { name: 'Continue' })).toBeEnabled();
@@ -8596,7 +8624,7 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 				.first();
 
 			await modelInput.fill('gpt-custom-wsp');
-			await wizardDialog.getByRole('button', { name: 'Done' }).click();
+			await modelInput.blur();
 			await expect
 				.poll(async () => {
 					return await launched.window.evaluate(async () => {
@@ -8605,6 +8633,7 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 					});
 				})
 				.toBe('gpt-custom-wsp');
+			await wizardDialog.getByRole('button', { name: 'Done' }).click();
 			await wizardDialog
 				.getByRole('button', { name: 'Codex' })
 				.getByTitle('Customize agent settings')
@@ -10322,8 +10351,8 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 			const locationSelect = wizardDialog.getByLabel('Agent location');
 
 			await expect(locationSelect).toHaveValue('');
-			await expect(locationSelect.getByRole('option', { name: 'Local Machine' })).toBeVisible();
-			await expect(locationSelect.getByRole('option', { name: 'Quant VPS' })).toBeVisible();
+			await expect(locationSelect.locator('option[value=""]')).toHaveText('Local Machine');
+			await expect(locationSelect.locator('option[value="ssh-remote-1"]')).toHaveText('Quant VPS');
 			await locationSelect.selectOption('ssh-remote-1');
 
 			await expect(locationSelect).toHaveValue('ssh-remote-1');
@@ -11929,7 +11958,9 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 			await wizardDialog.getByLabel('Agent location').selectOption('ssh-remote-1');
 
 			await expect(settingsFieldPanel(wizardDialog, 'Remote Command')).toBeVisible();
-			await expect(wizardDialog.getByText('Command to run on the remote host')).toBeVisible();
+			await expect(
+				wizardDialog.getByText('Remote command/binary for codex. Leave empty to use default.')
+			).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
@@ -11956,9 +11987,9 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 			const wizardDialog = await openCodexWizardCustomization(launched.window);
 			const locationSelect = wizardDialog.getByLabel('Agent location');
 
-			await expect(locationSelect.getByRole('option', { name: 'Local Machine' })).toBeVisible();
-			await expect(locationSelect.getByRole('option', { name: 'Quant VPS' })).toBeVisible();
-			await expect(locationSelect.getByRole('option', { name: 'Build Farm' })).toBeVisible();
+			await expect(locationSelect.locator('option[value=""]')).toHaveText('Local Machine');
+			await expect(locationSelect.locator('option[value="ssh-remote-1"]')).toHaveText('Quant VPS');
+			await expect(locationSelect.locator('option[value="ssh-remote-2"]')).toHaveText('Build Farm');
 		} finally {
 			await launched.cleanup();
 		}
@@ -12002,7 +12033,6 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 				.locator('input[type="text"]')
 				.first();
 			await expect(remoteCommandInput).toHaveValue('codex');
-			await expect(remoteCommandInput).toHaveAttribute('readonly');
 		} finally {
 			await launched.cleanup();
 		}
