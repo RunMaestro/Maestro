@@ -5111,7 +5111,7 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 
 			await expect(geminiTile).toBeDisabled();
 			await expect(geminiTile).toHaveAttribute('aria-pressed', 'false');
-			await expect(geminiTile.getByText('Soon')).toBeVisible();
+			await expect(geminiTile.getByText('Coming soon')).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
@@ -6673,11 +6673,12 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 				'General',
 				'GitHub CLI (gh) Path'
 			);
-			const ghPathSection = settingsDialog
-				.getByText('GitHub CLI (gh) Path')
-				.locator('xpath=ancestor::div[contains(@class, "rounded border")][1]');
+			const ghPathInput = settingsDialog.getByPlaceholder('/opt/homebrew/bin/gh');
 
-			await ghPathSection.getByRole('button', { name: 'Clear' }).click();
+			await expect(ghPathInput).toHaveValue('/usr/local/bin/gh');
+			await ghPathInput
+				.locator('xpath=following-sibling::button[normalize-space()="Clear"]')
+				.click();
 
 			await expect
 				.poll(async () => {
@@ -6789,19 +6790,19 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 		});
 
 		try {
-			const settingsDialog = await openSettingsTab(
-				launched.window,
-				'General',
-				'Default Terminal Shell'
-			);
-			await settingsDialog.getByRole('button', { name: 'Shell Configuration' }).click();
+			const settingsDialog = await openGlobalEnvironmentSettings(launched.window);
 
-			await expect(settingsDialog.getByText('Global Environment Variables')).toBeVisible();
+			await expect(
+				settingsDialog.locator('strong').filter({ hasText: /^Global Environment Variables$/ })
+			).toBeVisible();
 			await expect(
 				settingsDialog.getByText(/apply to all terminal sessions and\s+AI agent processes/)
 			).toBeVisible();
 			await expect(
-				settingsDialog.getByText('Agent-specific settings can override these values.')
+				settingsDialog.locator('p').filter({
+					hasText:
+						/Agent-specific settings can override these values\.\s+Typical use cases: API keys/,
+				})
 			).toBeVisible();
 		} finally {
 			await launched.cleanup();
@@ -10329,10 +10330,17 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 			await stubEncoreCodexAgent(launched.electronApp);
 			const wizardDialog = await openNewAgentWizard(launched.window);
 
-			await expect(wizardDialog.getByText("Anthropic's AI coding assistant")).toBeVisible();
 			await expect(wizardDialog.getByText("OpenAI's AI coding assistant")).toBeVisible();
-			await expect(wizardDialog.getByText('Open-source AI coding assistant')).toBeVisible();
-			await expect(wizardDialog.getByText("Factory's AI coding assistant")).toBeVisible();
+			await expect(
+				wizardDialog.getByRole('button', { name: 'Claude Code (not installed)' })
+			).toBeDisabled();
+			await expect(
+				wizardDialog.getByRole('button', { name: 'OpenCode (not installed)' })
+			).toBeDisabled();
+			await expect(
+				wizardDialog.getByRole('button', { name: 'Factory Droid (not installed)' })
+			).toBeDisabled();
+			await expect(wizardDialog.getByText('Not installed')).toHaveCount(3);
 		} finally {
 			await launched.cleanup();
 		}
