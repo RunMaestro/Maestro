@@ -37,6 +37,7 @@ const COLOR_CONFIG: { key: keyof ThemeColors; label: string; description: string
 	{ key: 'bgMain', label: 'Main Background', description: 'Primary content area' },
 	{ key: 'bgSidebar', label: 'Sidebar Background', description: 'Left & right panels' },
 	{ key: 'bgActivity', label: 'Activity Background', description: 'Hover, active states' },
+	{ key: 'bgTitleBar', label: 'Title Bar Background', description: 'Top draggable window strip' },
 	{ key: 'border', label: 'Border', description: 'Dividers & outlines' },
 	{ key: 'textMain', label: 'Main Text', description: 'Primary text color' },
 	{ key: 'textDim', label: 'Dimmed Text', description: 'Secondary text' },
@@ -53,15 +54,23 @@ const COLOR_CONFIG: { key: keyof ThemeColors; label: string; description: string
 function MiniUIPreview({ colors }: { colors: ThemeColors }) {
 	return (
 		<div
-			className="rounded-lg overflow-hidden border"
+			className="rounded-lg overflow-hidden border flex flex-col"
 			style={{
 				borderColor: colors.border,
 				width: '100%',
 				height: 140,
 			}}
 		>
+			{/* Draggable title bar strip */}
+			<div
+				className="h-3 shrink-0 border-b"
+				style={{
+					backgroundColor: colors.bgTitleBar ?? colors.bgMain,
+					borderColor: colors.border,
+				}}
+			/>
 			{/* Mini UI layout */}
-			<div className="flex h-full">
+			<div className="flex flex-1 min-h-0">
 				{/* Left sidebar */}
 				<div className="w-12 flex flex-col gap-1 p-1" style={{ backgroundColor: colors.bgSidebar }}>
 					{/* Session items */}
@@ -595,7 +604,9 @@ export function CustomThemeBuilder({
 								colorKey={key}
 								label={label}
 								description={description}
-								value={customThemeColors[key] ?? ''}
+								value={
+									customThemeColors[key] ?? (key === 'bgTitleBar' ? customThemeColors.bgMain : '')
+								}
 								onChange={handleColorChange}
 								theme={theme}
 							/>

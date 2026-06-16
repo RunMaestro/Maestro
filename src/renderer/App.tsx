@@ -2859,6 +2859,9 @@ function MaestroConsoleInner() {
 						style={
 							{
 								WebkitAppRegion: 'drag',
+								// Falls back to bgMain (the historical see-through behavior)
+								// for themes/saved customs that predate the bgTitleBar token.
+								backgroundColor: theme.colors.bgTitleBar ?? theme.colors.bgMain,
 							} as React.CSSProperties
 						}
 					>
