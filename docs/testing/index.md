@@ -7,7 +7,7 @@ This directory is the canonical home for Maestro test coverage documentation, ca
 - Unit and integration coverage campaigns have historical artifacts here, but need a fresh post-rebase audit before their gap list is treated as current.
 - E2E authoring reached the matrix target: 3,025 / 3,025 active matrix-backed scenarios with 0 matrix-backed scenarios remaining.
 - The E2E suite has completed one full PM2-sharded Playwright/Electron execution after the authoring campaign; it is not clean yet, and Phase 5 stabilization is in progress.
-- Recent Phase 5 focused reruns have cleared the web/mobile full-file bucket plus multiple wizard/settings/prompts directory, Prompt Composer, and inline-wizard exit clusters.
+- Recent Phase 5 focused reruns have cleared the web/mobile full-file bucket plus multiple wizard/settings/prompts directory, Prompt Composer, inline-wizard exit, and Settings/control clusters.
 - E2E execution should be sharded with separate PM2-managed Codex workers, one Playwright worker per process, and isolated data/report/output paths.
 
 See [current-status.md](current-status.md) for the evidence-backed status snapshot and [game-plan.md](game-plan.md) for the next execution plan.

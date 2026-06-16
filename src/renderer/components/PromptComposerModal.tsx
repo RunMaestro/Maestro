@@ -329,14 +329,14 @@ export function PromptComposerModal({
 		}
 
 		// Cmd/Ctrl + S to toggle Save to History
-		if (e.key === 's' && (e.metaKey || e.ctrlKey) && !e.shiftKey) {
+		if (e.key.toLowerCase() === 's' && (e.metaKey || e.ctrlKey) && !e.shiftKey) {
 			e.preventDefault();
 			onToggleTabSaveToHistory?.();
 			return;
 		}
 
 		// Cmd/Ctrl + R to toggle Read-only mode
-		if (e.key === 'r' && (e.metaKey || e.ctrlKey) && !e.shiftKey) {
+		if (e.key.toLowerCase() === 'r' && (e.metaKey || e.ctrlKey) && !e.shiftKey) {
 			e.preventDefault();
 			onToggleTabReadOnlyMode?.();
 			return;

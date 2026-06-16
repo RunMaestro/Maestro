@@ -2965,7 +2965,11 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 			const gitignoreRow = settingsDialog
 				.getByText('Honor .gitignore')
 				.locator('xpath=ancestor::label[1]');
-			await gitignoreRow.getByRole('checkbox').click();
+			const gitignoreCheckbox = gitignoreRow.getByRole('checkbox');
+			await expect(gitignoreCheckbox).toHaveAttribute('aria-checked', 'true');
+			await gitignoreCheckbox.focus();
+			await gitignoreCheckbox.press('Enter');
+			await expect(gitignoreCheckbox).toHaveAttribute('aria-checked', 'false');
 
 			await expect
 				.poll(async () => {
@@ -3786,7 +3790,11 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 			const gitignoreRow = settingsDialog
 				.getByText('Honor .gitignore')
 				.locator('xpath=ancestor::label[1]');
-			await gitignoreRow.getByRole('checkbox').click();
+			const gitignoreCheckbox = gitignoreRow.getByRole('checkbox');
+			await expect(gitignoreCheckbox).toHaveAttribute('aria-checked', 'true');
+			await gitignoreCheckbox.focus();
+			await gitignoreCheckbox.press('Enter');
+			await expect(gitignoreCheckbox).toHaveAttribute('aria-checked', 'false');
 
 			await expect
 				.poll(async () => {
@@ -4008,7 +4016,7 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 
 		try {
 			const composerInput = await openPromptComposer(launched.window);
-			await composerInput.press('Meta+S');
+			await composerInput.press('Control+S');
 
 			await expect
 				.poll(async () => {
@@ -4036,7 +4044,7 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 
 		try {
 			const composerInput = await openPromptComposer(launched.window);
-			await composerInput.press('Meta+R');
+			await composerInput.press('Control+R');
 
 			await expect
 				.poll(async () => {
@@ -4329,21 +4337,17 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 			await shortcutButton.press('Escape');
 
 			await expect(shortcutButton).not.toHaveText('Press keys...');
+			await expect(shortcutButton).toHaveText(/,/);
 			await expect
 				.poll(async () => {
 					return await launched.window.evaluate(async () => {
 						const shortcuts = await window.maestro.settings.get('shortcuts');
-						return shortcuts &&
-							typeof shortcuts === 'object' &&
-							'settings' in shortcuts &&
-							shortcuts.settings &&
-							typeof shortcuts.settings === 'object' &&
-							'keys' in shortcuts.settings
-							? shortcuts.settings.keys
+						return shortcuts && typeof shortcuts === 'object' && 'settings' in shortcuts
+							? shortcuts.settings
 							: undefined;
 					});
 				})
-				.toEqual(['Meta', ',']);
+				.toBeUndefined();
 		} finally {
 			await launched.cleanup();
 		}
@@ -4436,7 +4440,10 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 			const fontSection = settingsDialog
 				.getByText('Interface Font')
 				.locator('xpath=ancestor::div[.//input[@placeholder="Add custom font name..."]][1]');
-			await fontSection.getByText('WSP Mono').locator('xpath=following-sibling::button[1]').click();
+			await fontSection.locator('select').click();
+			const removeCustomFontButton = fontSection.getByRole('button', { name: '×' });
+			await expect(removeCustomFontButton).toBeVisible();
+			await removeCustomFontButton.click();
 
 			await expect
 				.poll(async () => {
@@ -4463,7 +4470,10 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 
 		try {
 			const settingsDialog = await openSettingsTab(launched.window, 'Display', 'Interface Font');
-			await settingsDialog.locator('select').first().selectOption('WSP Mono');
+			const fontSelect = settingsDialog.locator('select').first();
+			await fontSelect.click();
+			await expect(fontSelect.locator('option', { hasText: 'WSP Mono' })).toHaveCount(1);
+			await fontSelect.selectOption('WSP Mono');
 
 			await expect
 				.poll(async () => {
@@ -4633,12 +4643,7 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 		try {
 			const settingsDialog = await openSettingsTab(launched.window, 'Themes', 'Custom Theme');
 			const customThemeSection = settingsDialog.locator('[data-theme-id="custom"]');
-			const mainBackgroundRow = customThemeSection
-				.getByText('Main Background')
-				.locator('xpath=ancestor::div[contains(@class, "flex")][1]');
-			await mainBackgroundRow.getByRole('button', { name: /#/ }).click();
-			await mainBackgroundRow.locator('input[type="text"]').fill('#123456');
-			await mainBackgroundRow.locator('input[type="text"]').press('Enter');
+			await customThemeSection.getByTitle('Main Background').fill('#123456');
 
 			await expect
 				.poll(async () => {
