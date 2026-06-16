@@ -534,6 +534,17 @@ export function setupExitListener(
 			return;
 		}
 
+		// Diagnostic: log terminal PTY exits at the source (the ground truth for the
+		// "terminal tabs vanish" reports). A non-zero code on a remote terminal that
+		// the user didn't `exit` is the signature of a dropped SSH transport. Pairs
+		// with the renderer-side 'Terminal PTY exited' / 'Closing terminal tab' logs.
+		if (sessionId.includes('-terminal-')) {
+			logger.info('Terminal PTY process exited', 'ProcessListener', {
+				sessionId,
+				exitCode: code,
+			});
+		}
+
 		safeSend('process:exit', sessionId, code);
 
 		// Broadcast exit to web clients

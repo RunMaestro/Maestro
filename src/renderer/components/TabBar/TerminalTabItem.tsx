@@ -10,11 +10,13 @@ import {
 	ArrowRightCircle,
 	Share2,
 	Play,
+	RotateCw,
 } from 'lucide-react';
 import type { TerminalTab, Theme } from '../../types';
 import { getTerminalTabDisplayName } from '../../utils/terminalTabHelpers';
 import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { useTabStore } from '../../stores/tabStore';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 
 /**
@@ -108,6 +110,15 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 	} = useTabHoverOverlay({ registerRef });
 
 	const tabShortcuts = useSettingsStore((s) => s.tabShortcuts);
+	const restartTerminalTab = useTabStore((s) => s.restartTerminalTab);
+
+	const handleRestartClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			restartTerminalTab(tab.id);
+		},
+		[restartTerminalTab, tab.id]
+	);
 
 	const ShortcutHint = ({ keys }: { keys: string[] }) => (
 		<span
@@ -373,6 +384,18 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 				>
 					{tab.exitCode}
 				</span>
+			)}
+
+			{/* Restart button — only for an exited terminal, so the tab is recoverable
+				 (e.g. after an SSH drop) instead of being a dead husk. */}
+			{tab.state === 'exited' && (
+				<button
+					onClick={handleRestartClick}
+					className="p-0.5 rounded hover:bg-white/10 transition-colors shrink-0"
+					title="Restart terminal"
+				>
+					<RotateCw className="w-3 h-3" style={{ color: theme.colors.accent }} />
+				</button>
 			)}
 
 			{/* Close button — visible on hover or active */}

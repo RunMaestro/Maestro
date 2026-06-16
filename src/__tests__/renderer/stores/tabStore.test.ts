@@ -965,3 +965,54 @@ describe('closeTerminalTab', () => {
 		expect(session.inputMode).toBe('ai');
 	});
 });
+
+describe('restartTerminalTab', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		useSessionStore.setState({ sessions: [], activeSessionId: null });
+	});
+
+	it('resets the exited tab, selects it, and switches to terminal mode', () => {
+		const tab = createMockTerminalTabForStore({
+			id: 'term-1',
+			pid: 4242,
+			state: 'exited',
+			exitCode: 255,
+		});
+		setupSessionWithTerminalTabs([tab]);
+
+		act(() => {
+			useTabStore.getState().restartTerminalTab('term-1');
+		});
+
+		const session = useSessionStore.getState().sessions[0];
+		expect(session.terminalTabs![0].pid).toBe(0);
+		expect(session.terminalTabs![0].state).toBe('idle');
+		expect(session.terminalTabs![0].exitCode).toBeUndefined();
+		expect(session.activeTerminalTabId).toBe('term-1');
+		expect(session.inputMode).toBe('terminal');
+	});
+
+	it('kills any lingering PTY before respawn', () => {
+		const tab = createMockTerminalTabForStore({ id: 'term-1', pid: 4242, state: 'exited' });
+		setupSessionWithTerminalTabs([tab]);
+
+		act(() => {
+			useTabStore.getState().restartTerminalTab('term-1');
+		});
+
+		expect(window.maestro.process.kill).toHaveBeenCalledTimes(1);
+		expect(window.maestro.process.kill).toHaveBeenCalledWith(expect.stringContaining('term-1'));
+	});
+
+	it('does nothing when the tab does not exist', () => {
+		const tab = createMockTerminalTabForStore({ id: 'term-1', state: 'exited' });
+		setupSessionWithTerminalTabs([tab]);
+
+		act(() => {
+			useTabStore.getState().restartTerminalTab('nonexistent');
+		});
+
+		expect(window.maestro.process.kill).not.toHaveBeenCalled();
+	});
+});

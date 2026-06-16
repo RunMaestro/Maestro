@@ -309,7 +309,7 @@ describe('TerminalView — auto-close on shell exit', () => {
 			vi.advanceTimersByTime(1);
 		});
 
-		expect(mockCloseTerminalTab).toHaveBeenCalledWith('tab-1');
+		expect(mockCloseTerminalTab).toHaveBeenCalledWith('tab-1', 'pty-exit');
 		vi.useRealTimers();
 	});
 
@@ -336,7 +336,7 @@ describe('TerminalView — auto-close on shell exit', () => {
 		});
 
 		// Tab should be closed
-		expect(mockCloseTerminalTab).toHaveBeenCalledWith('tab-1');
+		expect(mockCloseTerminalTab).toHaveBeenCalledWith('tab-1', 'pty-exit');
 
 		// Toast is debounced (200ms) — advance past the dedup window
 		act(() => {
@@ -389,8 +389,8 @@ describe('TerminalView — auto-close on shell exit', () => {
 		});
 
 		// Both tabs should be closed
-		expect(mockCloseTerminalTab).toHaveBeenCalledWith('tab-1');
-		expect(mockCloseTerminalTab).toHaveBeenCalledWith('tab-2');
+		expect(mockCloseTerminalTab).toHaveBeenCalledWith('tab-1', 'pty-exit');
+		expect(mockCloseTerminalTab).toHaveBeenCalledWith('tab-2', 'pty-exit');
 
 		// Before dedup timer fires, no toast yet
 		expect(mockNotifyToast).not.toHaveBeenCalled();
@@ -408,6 +408,76 @@ describe('TerminalView — auto-close on shell exit', () => {
 				title: 'Failed to start 2 terminals',
 			})
 		);
+		vi.useRealTimers();
+	});
+
+	it('does NOT close a tab with a startup command on exit (kept for restart)', () => {
+		vi.useFakeTimers();
+		// A startup-command tab is "persistent" - exiting must not destroy its config.
+		const tab = makeTab({
+			pid: 1234,
+			state: 'busy',
+			createdAt: Date.now() - 5000,
+			startupCommand: 'npm run dev',
+		});
+		const session = makeSession([tab]);
+
+		const { rerender } = render(
+			<TerminalView {...defaultProps} session={session} isVisible={true} />
+		);
+
+		const exitedTab = makeTab({
+			pid: 1234,
+			state: 'exited',
+			exitCode: 0,
+			createdAt: Date.now() - 5000,
+			startupCommand: 'npm run dev',
+		});
+		act(() => {
+			rerender(
+				<TerminalView {...defaultProps} session={makeSession([exitedTab])} isVisible={true} />
+			);
+		});
+		act(() => {
+			vi.advanceTimersByTime(1);
+		});
+
+		expect(mockCloseTerminalTab).not.toHaveBeenCalled();
+		vi.useRealTimers();
+	});
+
+	it('does NOT close a tab under an SSH session on exit (kept for restart)', () => {
+		vi.useFakeTimers();
+		// A remote tab's PTY can exit when the SSH transport drops - that must not
+		// silently discard the tab. This is the root cause of vanishing terminals.
+		const tab = makeTab({ pid: 1234, state: 'busy', createdAt: Date.now() - 5000 });
+		const remoteSession = {
+			...makeSession([tab]),
+			sshRemoteId: 'remote-1',
+		} as unknown as Session;
+
+		const { rerender } = render(
+			<TerminalView {...defaultProps} session={remoteSession} isVisible={true} />
+		);
+
+		const exitedTab = makeTab({
+			pid: 1234,
+			state: 'exited',
+			exitCode: 255,
+			createdAt: Date.now() - 5000,
+		});
+		const exitedRemoteSession = {
+			...makeSession([exitedTab]),
+			sshRemoteId: 'remote-1',
+		} as unknown as Session;
+		act(() => {
+			rerender(<TerminalView {...defaultProps} session={exitedRemoteSession} isVisible={true} />);
+		});
+		act(() => {
+			vi.advanceTimersByTime(1);
+		});
+
+		expect(mockCloseTerminalTab).not.toHaveBeenCalled();
 		vi.useRealTimers();
 	});
 });
