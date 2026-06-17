@@ -191,7 +191,7 @@ export const AutoRunLightbox = memo(
 					if (!lightboxExternalUrl && onDelete) {
 						promptDelete();
 					}
-				} else if (e.key === 'c' && (e.metaKey || e.ctrlKey)) {
+				} else if (e.key.toLowerCase() === 'c' && (e.metaKey || e.ctrlKey)) {
 					e.preventDefault();
 					copyToClipboard();
 				}

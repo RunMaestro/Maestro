@@ -740,7 +740,7 @@ describe('handleSummarizeAndContinue (Tier 3E)', () => {
 			expect(notifyToast).toHaveBeenCalledWith(
 				expect.objectContaining({
 					type: 'error',
-					message: 'Failed to compact context. Check the tab for details.',
+					message: 'Failed to compact context: Summarization failed',
 				})
 			);
 		});
@@ -807,7 +807,7 @@ describe('handleSummarizeAndContinue (Tier 3E)', () => {
 			expect(notifyToast).toHaveBeenCalledWith(
 				expect.objectContaining({
 					type: 'error',
-					message: 'An unexpected error occurred during compaction.',
+					message: 'An unexpected error occurred during compaction: store write failed',
 					sessionId: 'session-1',
 					tabId: 'tab-1',
 				})

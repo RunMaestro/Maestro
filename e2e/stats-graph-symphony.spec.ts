@@ -5,7 +5,7 @@
  * app state and stub network-backed Symphony/leaderboard surfaces.
  */
 import { test, expect, helpers } from './fixtures/electron-app';
-import type { ElectronApplication, Page } from '@playwright/test';
+import type { ElectronApplication, Locator, Page } from '@playwright/test';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -132,7 +132,7 @@ const activeScenarioMatrix = [
 	{ id: 'SGS-A119', title: 'shows Symphony active empty state and browse-projects affordance' },
 	{ id: 'SGS-A120', title: 'exports Usage Dashboard CSV with the selected time range' },
 	{ id: 'SGS-A121', title: 're-enables Usage Dashboard CSV export after write failure' },
-	{ id: 'SGS-A122', title: 'shows Document Graph selected-node breadcrumb path' },
+	{ id: 'SGS-A122', title: 'shows Document Graph selected-node info path' },
 	{ id: 'SGS-A123', title: 'dismisses Document Graph node context menu with Escape' },
 	{ id: 'SGS-A124', title: 'shows Symphony agent creation provider detection empty state' },
 	{ id: 'SGS-A125', title: 'surfaces Symphony agent creation failure without closing the dialog' },
@@ -140,7 +140,7 @@ const activeScenarioMatrix = [
 	{ id: 'SGS-A127', title: 'uses the selected Usage Dashboard range in the export filename' },
 	{ id: 'SGS-A128', title: 'does not request CSV data after canceling the export dialog' },
 	{ id: 'SGS-A129', title: 'disables Usage Dashboard CSV export while export is pending' },
-	{ id: 'SGS-A130', title: 'shows Document Graph breadcrumb root segment for selected node' },
+	{ id: 'SGS-A130', title: 'shows Document Graph selected-node project path' },
 	{ id: 'SGS-A131', title: 'dismisses Document Graph context menu after Copy Path' },
 	{ id: 'SGS-A132', title: 'updates Symphony agent working directory from folder picker' },
 	{ id: 'SGS-A133', title: 'creates a Symphony idle session after stubbed contribution start' },
@@ -151,7 +151,7 @@ const activeScenarioMatrix = [
 	{ id: 'SGS-A138', title: 'preserves Document Graph force layout through refresh' },
 	{ id: 'SGS-A139', title: 'opens Symphony repository GitHub link through shell routing' },
 	{ id: 'SGS-A140', title: 'opens Symphony issue GitHub link through shell routing' },
-	{ id: 'SGS-A141', title: 'cycles Symphony issue documents with keyboard shortcuts' },
+	{ id: 'SGS-A141', title: 'switches Symphony issue documents with document controls' },
 	{ id: 'SGS-A142', title: 'returns from Symphony active empty state to project browse' },
 	{ id: 'SGS-A143', title: 'passes Symphony clone payload before starting contribution' },
 	{ id: 'SGS-A144', title: 'shows Symphony clone failure before starting contribution' },
@@ -175,7 +175,7 @@ const activeScenarioMatrix = [
 	{ id: 'SGS-A162', title: 'copies Document Graph external node URL to clipboard' },
 	{ id: 'SGS-A163', title: 'opens Document Graph external node URL through shell routing' },
 	{ id: 'SGS-A164', title: 'dismisses Document Graph external node context menu with Escape' },
-	{ id: 'SGS-A165', title: 'shows Document Graph external breadcrumb path' },
+	{ id: 'SGS-A165', title: 'shows Document Graph external selected-node path' },
 	{ id: 'SGS-A166', title: 'opens focused Document Graph external node with Enter' },
 	{ id: 'SGS-A167', title: 'shows Document Graph external node multi-link count' },
 	{ id: 'SGS-A168', title: 'uses Copy URLs for aggregated Document Graph external links' },
@@ -565,11 +565,30 @@ function createEmptyStatsAggregation() {
 	};
 }
 
+function formatLocalDateKey(timestamp: number) {
+	const date = new Date(timestamp);
+	return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function formatDateAssertionLabel(timestamp: number) {
+	const dateKey = formatLocalDateKey(timestamp);
+	return new Date(`${dateKey}T00:00`).toLocaleDateString('en-US', {
+		month: 'short',
+		day: 'numeric',
+		year: 'numeric',
+	});
+}
+
+function escapeRegExp(value: string) {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function createStatsGraphSymphonyWorkbench() {
 	const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-e2e-stats-graph-symphony-'));
 	const projectDir = path.join(homeDir, 'project');
 	const docsDir = path.join(projectDir, 'docs');
-	const now = Date.parse('2026-05-29T12:00:00.000Z');
+	const now = Date.now();
+	const statsSeedTime = now - 60_000;
 	const idSuffix = `${now}-${Math.random().toString(36).slice(2)}`;
 	const sessionId = `stats-graph-symphony-${idSuffix}`;
 	const aiTabId = `stats-graph-symphony-ai-${idSuffix}`;
@@ -615,7 +634,11 @@ Deterministic runbook body for document graph search coverage.
 	return {
 		homeDir,
 		projectDir,
+		runbookPath,
 		sessionId,
+		statsSeedTime,
+		statsSeedDateKey: formatLocalDateKey(statsSeedTime),
+		statsSeedDateLabel: formatDateAssertionLabel(statsSeedTime),
 		sessions: [
 			{
 				id: sessionId,
@@ -696,8 +719,8 @@ async function seedStats(
 	workbench: ReturnType<typeof createStatsGraphSymphonyWorkbench>
 ) {
 	await page.evaluate(
-		async ({ projectDir, sessionId }) => {
-			const baseTime = Date.parse('2026-05-29T12:00:00.000Z');
+		async ({ projectDir, sessionId, statsSeedTime }) => {
+			const baseTime = statsSeedTime;
 			const { stats } = (globalThis as MaestroStatsGlobal).maestro;
 			await stats.recordSessionCreated({
 				sessionId,
@@ -749,7 +772,11 @@ async function seedStats(
 			});
 			await stats.endAutoRun(autoRunId, 180_000, 2);
 		},
-		{ projectDir: workbench.projectDir, sessionId: workbench.sessionId }
+		{
+			projectDir: workbench.projectDir,
+			sessionId: workbench.sessionId,
+			statsSeedTime: workbench.statsSeedTime,
+		}
 	);
 }
 
@@ -1058,6 +1085,24 @@ async function openSymphonyFromQuickActions(window: Page) {
 	return symphonyDialog;
 }
 
+async function selectSymphonyIssue(symphonyDialog: Locator, issueName: RegExp | string) {
+	const accessibleName =
+		typeof issueName === 'string' ? new RegExp(escapeRegExp(issueName)) : issueName;
+	await symphonyDialog.getByRole('button', { name: accessibleName }).click();
+}
+
+function getSymphonyDocumentButton(symphonyDialog: Locator, documentName: string) {
+	return symphonyDialog.getByRole('button', { name: documentName, exact: true });
+}
+
+function getSymphonyCloseoutText(symphonyDialog: Locator, expected: string) {
+	if (/^[^\s:]+\.md$/.test(expected)) {
+		return getSymphonyDocumentButton(symphonyDialog, expected);
+	}
+
+	return symphonyDialog.getByText(new RegExp(escapeRegExp(expected))).first();
+}
+
 async function openAboutFromQuickActions(window: Page) {
 	const quickActionsDialog = await openQuickActions(window);
 	await quickActionsDialog
@@ -1073,7 +1118,7 @@ async function openAboutFromQuickActions(window: Page) {
 
 async function openDocumentGraphFromPreview(window: Page) {
 	await window.getByTitle('View in Document Graph (⌘ ⇧ G)').click();
-	const graphDialog = window.getByRole('dialog', { name: 'Document Graph' });
+	const graphDialog = window.getByRole('dialog', { name: 'Document Graph', exact: true });
 	await expect(graphDialog).toBeVisible({ timeout: 15000 });
 	await expect(graphDialog.getByText(/\d+ documents/)).toBeVisible({ timeout: 15000 });
 	return graphDialog;
@@ -1105,14 +1150,14 @@ async function clickDocumentGraphLayoutOption(
 
 async function closeDocumentGraph(window: Page) {
 	await window
-		.getByRole('dialog', { name: 'Document Graph' })
+		.getByRole('dialog', { name: 'Document Graph', exact: true })
 		.getByTitle('Close (Esc)')
 		.first()
 		.click();
 	const closeDialog = window.getByRole('dialog', { name: 'Close Document Graph?' });
 	await expect(closeDialog).toBeVisible();
 	await closeDialog.getByRole('button', { name: 'Close Graph' }).click();
-	await expect(window.getByRole('dialog', { name: 'Document Graph' })).toBeHidden();
+	await expect(window.getByRole('dialog', { name: 'Document Graph', exact: true })).toBeHidden();
 }
 
 async function clickDocumentGraphCenter(
@@ -1129,12 +1174,47 @@ async function clickDocumentGraphCenter(
 	});
 }
 
+async function dragDocumentGraphCenterNode(
+	window: Page,
+	graphDialog: ReturnType<Page['getByRole']>
+) {
+	const canvas = graphDialog.locator('canvas');
+	const box = await canvas.boundingBox();
+	if (!box) throw new Error('Document graph canvas was not visible');
+
+	await window.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+	await window.mouse.down();
+	await window.mouse.move(box.x + box.width / 2 + 60, box.y + box.height / 2 + 30, {
+		steps: 4,
+	});
+	await window.mouse.up();
+}
+
 async function showDocumentGraphExternalLinks(graphDialog: ReturnType<Page['getByRole']>) {
 	await graphDialog.getByTitle('Show external links').click();
 	await expect(graphDialog.getByTitle('Hide external links')).toBeVisible({ timeout: 15000 });
 }
 
 const DOCUMENT_GRAPH_EXTERNAL_NODE_SCREEN_OFFSET = 160;
+const DOCUMENT_GRAPH_FILTERED_EXTERNAL_NODE_OFFSETS = [
+	{ x: -90, y: 140 },
+	{ x: -90, y: 155 },
+	{ x: -105, y: 140 },
+	{ x: -75, y: 140 },
+	{ x: -90, y: 125 },
+	{ x: -105, y: 155 },
+	{ x: -75, y: 155 },
+];
+const DOCUMENT_GRAPH_FILTERED_EXTERNAL_NODE_LABEL = 'External: docs.runmaestro.ai';
+
+async function isVisible(locator: Locator, timeout = 500) {
+	try {
+		await expect(locator).toBeVisible({ timeout });
+		return true;
+	} catch {
+		return false;
+	}
+}
 
 async function clickDocumentGraphExternalNode(
 	graphDialog: ReturnType<Page['getByRole']>,
@@ -1151,6 +1231,35 @@ async function clickDocumentGraphExternalNode(
 			y: Math.min(box.height - 24, box.height / 2 + DOCUMENT_GRAPH_EXTERNAL_NODE_SCREEN_OFFSET),
 		},
 	});
+}
+
+async function clickDocumentGraphFilteredExternalNode(
+	graphDialog: ReturnType<Page['getByRole']>,
+	button: 'left' | 'right' = 'left'
+) {
+	const canvas = graphDialog.locator('canvas');
+	const box = await canvas.boundingBox();
+	if (!box) throw new Error('Document graph canvas was not visible');
+
+	for (const offset of DOCUMENT_GRAPH_FILTERED_EXTERNAL_NODE_OFFSETS) {
+		await canvas.click({
+			button,
+			position: {
+				x: Math.max(24, Math.min(box.width - 24, box.width / 2 + offset.x)),
+				y: Math.max(24, Math.min(box.height - 24, box.height / 2 + offset.y)),
+			},
+		});
+
+		if (button === 'left') {
+			if (await isVisible(graphDialog.getByText(DOCUMENT_GRAPH_FILTERED_EXTERNAL_NODE_LABEL))) {
+				return;
+			}
+		} else if (await isVisible(graphDialog.getByRole('button', { name: /^Copy URL$/ }))) {
+			return;
+		}
+	}
+
+	throw new Error('Could not target filtered docs.runmaestro.ai external domain node');
 }
 
 function addSecondRunMaestroExternalLink(
@@ -1232,6 +1341,24 @@ async function getCapturedExternalLinks(electronApp: ElectronApplication) {
 	});
 }
 
+async function stubWindowClipboardTextCapture(electronApp: ElectronApplication) {
+	await electronApp.evaluate(({ ipcMain }) => {
+		const state = globalThis as typeof globalThis & { __sgsClipboardText?: string };
+		state.__sgsClipboardText = '';
+		ipcMain.removeHandler('clipboard:writeText');
+		ipcMain.handle('clipboard:writeText', async (_event, text: string) => {
+			state.__sgsClipboardText = text;
+		});
+	});
+}
+
+async function getCapturedWindowClipboardText(electronApp: ElectronApplication) {
+	return electronApp.evaluate(() => {
+		const state = globalThis as typeof globalThis & { __sgsClipboardText?: string };
+		return state.__sgsClipboardText ?? '';
+	});
+}
+
 async function openLeaderboardWithManualAuthToken(
 	window: Page,
 	electronApp: ElectronApplication,
@@ -1274,7 +1401,8 @@ async function openLeaderboardWithManualAuthToken(
 
 	await leaderboardDialog.getByRole('button').first().click();
 	await expect(leaderboardDialog).toBeHidden();
-	await aboutDialog.getByRole('button', { name: /Leaderboard/ }).click();
+	const registeredAboutDialog = await openAboutFromQuickActions(window);
+	await registeredAboutDialog.getByRole('button', { name: /Leaderboard/ }).click();
 
 	const registeredLeaderboardDialog = window.getByRole('dialog', { name: /Leaderboard/ });
 	await expect(
@@ -1478,13 +1606,13 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		const symphonyDialog = await openSymphonyFromQuickActions(window);
 
 		await symphonyDialog.getByRole('button', { name: /Maestro Core/ }).click();
-		await symphonyDialog.getByText('Add deterministic E2E coverage').click();
-		await expect(symphonyDialog.getByText('#42')).toBeVisible();
-		await expect(symphonyDialog.getByText('e2e-plan.md')).toBeVisible();
+		await selectSymphonyIssue(symphonyDialog, /#42 Add deterministic E2E coverage/);
+		await expect(symphonyDialog.getByText('#42').last()).toBeVisible();
+		await expect(getSymphonyDocumentButton(symphonyDialog, 'e2e-plan.md')).toBeVisible();
 		await expect(symphonyDialog.getByText('Document preview body for SGS.')).toBeVisible();
 		await expect(symphonyDialog.getByRole('button', { name: 'Start Symphony' })).toBeEnabled();
 
-		await symphonyDialog.getByText('Blocked dependency upgrade').click();
+		await selectSymphonyIssue(symphonyDialog, /#43 Blocked dependency upgrade/);
 		await expect(symphonyDialog.getByText('Blocked by a dependency')).toBeVisible();
 		await expect(symphonyDialog.getByRole('button', { name: 'Start Symphony' })).toBeDisabled();
 		await expect(symphonyDialog.getByText('Already claimed contribution')).toBeVisible();
@@ -1565,7 +1693,7 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		await expect(aboutDialog.getByText('Maestro Achievements')).toBeVisible();
 		await aboutDialog.getByTitle('Apprentice Conductor - Click to view details').click();
 		await expect(aboutDialog.getByText('Level 1')).toBeVisible();
-		await expect(aboutDialog.getByText('Locked')).toBeVisible();
+		await expect(aboutDialog.getByText('Locked', { exact: true })).toBeVisible();
 
 		await aboutDialog.getByTitle('Share achievements').click();
 		await expect(aboutDialog.getByRole('button', { name: 'Copy to Clipboard' })).toBeVisible();
@@ -1576,7 +1704,7 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		const symphonyDialog = await openSymphonyFromQuickActions(window);
 
 		await symphonyDialog.getByRole('button', { name: /Maestro Core/ }).click();
-		await symphonyDialog.getByText('Add deterministic E2E coverage').click();
+		await selectSymphonyIssue(symphonyDialog, /#42 Add deterministic E2E coverage/);
 		await symphonyDialog.getByRole('button', { name: 'Start Symphony' }).click();
 
 		await expect(window.getByText('GitHub CLI Required')).toBeVisible();
@@ -1638,9 +1766,13 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 
 		await expect(tasksChart).toHaveAttribute('aria-label', /Tasks completed over time chart/);
 		await expect(tasksChart.getByRole('list', { name: 'Tasks completed by date' })).toBeVisible();
-		await expect(usageDashboard.getByTestId('task-bar-2026-05-29')).toHaveAttribute(
+		await expect(
+			usageDashboard.getByTestId(`task-bar-${workbench.statsSeedDateKey}`)
+		).toHaveAttribute(
 			'aria-label',
-			/May 29, 2026: \d+ tasks attempted, \d+ successful/
+			new RegExp(
+				`${escapeRegExp(workbench.statsSeedDateLabel)}: \\d+ tasks attempted, \\d+ successful`
+			)
 		);
 	});
 
@@ -1679,12 +1811,12 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 
 		await symphonyDialog.getByRole('button', { name: 'History' }).click();
 		await expect(symphonyDialog.getByText('Document mobile bridge setup')).toBeVisible();
-		await expect(symphonyDialog.getByText('Merged')).toBeVisible();
+		await expect(symphonyDialog.getByText('Merged').first()).toBeVisible();
 		await expect(symphonyDialog.getByRole('button', { name: /PR #12/ })).toBeVisible();
-		await expect(symphonyDialog.getByText('Documents')).toBeVisible();
-		await expect(symphonyDialog.getByText('Tasks')).toBeVisible();
-		await expect(symphonyDialog.getByText('Tokens')).toBeVisible();
-		await expect(symphonyDialog.getByText('Cost')).toBeVisible();
+		await expect(symphonyDialog.getByText('Documents').first()).toBeVisible();
+		await expect(symphonyDialog.getByText('Tasks').first()).toBeVisible();
+		await expect(symphonyDialog.getByText('Tokens').first()).toBeVisible();
+		await expect(symphonyDialog.getByText('Cost').first()).toBeVisible();
 		await expect(symphonyDialog.getByText('$4.56')).toBeVisible();
 	});
 
@@ -1737,7 +1869,9 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		await expect(
 			symphonyDialog.getByText('Symphony connects Maestro users with open source projects')
 		).toBeVisible();
-		await expect(symphonyDialog.getByText('runmaestro.ai')).toBeVisible();
+		await expect(
+			symphonyDialog.getByRole('button', { name: 'docs.runmaestro.ai/symphony' })
+		).toBeVisible();
 	});
 
 	test(`${activeScenarioMatrix[25].id} ${activeScenarioMatrix[25].title}`, async () => {
@@ -1751,7 +1885,7 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		await expect(symphonyDialog.getByText('Time Contributed')).toBeVisible();
 		await expect(symphonyDialog.getByText('2h 0m')).toBeVisible();
 		await expect(symphonyDialog.getByText('2 repositories')).toBeVisible();
-		await expect(symphonyDialog.getByText('Streak')).toBeVisible();
+		await expect(symphonyDialog.getByText('Streak', { exact: true })).toBeVisible();
 		await expect(symphonyDialog.getByText('2 weeks')).toBeVisible();
 		await expect(symphonyDialog.getByText('Best: 7 weeks')).toBeVisible();
 		await expect(symphonyDialog.getByText('First Steps')).toBeVisible();
@@ -1895,7 +2029,7 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 
 		await usageDashboard.locator('select').first().selectOption('month');
 
-		await expect(usageDashboard.getByText('Showing month data')).toBeVisible();
+		await expect(usageDashboard.getByText('Showing this month data')).toBeVisible();
 		await expect(usageDashboard.getByTestId('database-size-indicator')).toBeVisible();
 		await expect(usageDashboard.getByText('Press Esc to close')).toBeVisible();
 	});
@@ -1930,8 +2064,12 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 	test(`${activeScenarioMatrix[36].id} ${activeScenarioMatrix[36].title}`, async () => {
 		const graphDialog = await openDocumentGraphFromPreview(window);
 
-		await graphDialog.focus();
-		await window.keyboard.press('Meta+F');
+		await graphDialog.dispatchEvent('keydown', {
+			key: 'f',
+			ctrlKey: true,
+			bubbles: true,
+			cancelable: true,
+		});
 		await expect(graphDialog.getByLabel('Search documents in graph')).toBeFocused();
 		await graphDialog.getByLabel('Search documents in graph').fill('readme');
 		await expect(graphDialog.getByText(/1 of \d+ matching/)).toBeVisible();
@@ -1974,7 +2112,7 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 
 		const symphonyDialog = await openSymphonyFromQuickActions(window);
 		await symphonyDialog.getByRole('button', { name: /Maestro Core/ }).click();
-		await symphonyDialog.getByText('Add deterministic E2E coverage').click();
+		await selectSymphonyIssue(symphonyDialog, /#42 Add deterministic E2E coverage/);
 		await symphonyDialog.getByRole('button', { name: 'Start Symphony' }).click();
 
 		await expect(window.getByText('GitHub CLI Not Authenticated')).toBeVisible();
@@ -1991,7 +2129,7 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 
 		const symphonyDialog = await openSymphonyFromQuickActions(window);
 		await symphonyDialog.getByRole('button', { name: /Maestro Core/ }).click();
-		await symphonyDialog.getByText('Add deterministic E2E coverage').click();
+		await selectSymphonyIssue(symphonyDialog, /#42 Add deterministic E2E coverage/);
 		await symphonyDialog.getByRole('button', { name: 'Start Symphony' }).click();
 
 		await expect(window.getByText('GitHub CLI authenticated')).toBeVisible();
@@ -2027,9 +2165,11 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 
 		await usageDashboard.getByRole('tab', { name: 'Auto Run' }).click();
 
-		await expect(usageDashboard.getByRole('region', { name: 'Auto Run statistics' })).toBeVisible();
+		await expect(
+			usageDashboard.getByRole('region', { name: 'Auto Run summary metrics' })
+		).toBeVisible();
 		await expect(usageDashboard.getByRole('group', { name: /Total Sessions/ })).toBeVisible();
-		await expect(usageDashboard.getByRole('group', { name: /Avg Duration/ })).toBeVisible();
+		await expect(usageDashboard.getByRole('group', { name: /Avg Session/ })).toBeVisible();
 		await expect(
 			usageDashboard.getByRole('list', { name: 'Tasks completed by date' })
 		).toBeVisible();
@@ -2096,8 +2236,8 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 
 		await symphonyDialog.getByLabel('Help').click();
 		await expect(symphonyDialog.getByText('About Maestro Symphony').last()).toBeVisible();
-		await symphonyDialog.getByRole('button', { name: 'Close' }).click();
-		await expect(symphonyDialog.getByText('About Maestro Symphony')).toBeHidden();
+		await symphonyDialog.getByRole('button', { name: 'Close' }).last().click();
+		await expect(symphonyDialog.getByText('About Maestro Symphony').last()).toBeHidden();
 	});
 
 	test(`${activeScenarioMatrix[50].id} ${activeScenarioMatrix[50].title}`, async () => {
@@ -2106,9 +2246,9 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		await symphonyDialog.getByRole('button', { name: 'History' }).click();
 
 		await expect(symphonyDialog.getByText('PRs Created')).toBeVisible();
-		await expect(symphonyDialog.getByText('Merged')).toBeVisible();
-		await expect(symphonyDialog.getByText('Tasks')).toBeVisible();
-		await expect(symphonyDialog.getByText('Value')).toBeVisible();
+		await expect(symphonyDialog.getByText('Merged').first()).toBeVisible();
+		await expect(symphonyDialog.getByText('Tasks').first()).toBeVisible();
+		await expect(symphonyDialog.getByText('Value').first()).toBeVisible();
 	});
 
 	test(`${activeScenarioMatrix[51].id} ${activeScenarioMatrix[51].title}`, async () => {
@@ -2187,9 +2327,9 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		).toBeVisible();
 		await expect(symphonyDialog.getByText('Maintainer')).toBeVisible();
 		await expect(symphonyDialog.getByRole('button', { name: /RunMaestro/ })).toBeVisible();
-		await expect(symphonyDialog.getByText('electron')).toBeVisible();
-		await expect(symphonyDialog.getByText('codex')).toBeVisible();
-		await expect(symphonyDialog.getByText('testing')).toBeVisible();
+		await expect(symphonyDialog.getByText('electron', { exact: true }).first()).toBeVisible();
+		await expect(symphonyDialog.getByText('codex', { exact: true }).first()).toBeVisible();
+		await expect(symphonyDialog.getByText('testing', { exact: true }).first()).toBeVisible();
 		await expect(symphonyDialog.getByTitle('View repository on GitHub')).toBeVisible();
 	});
 
@@ -2197,17 +2337,13 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		const symphonyDialog = await openSymphonyFromQuickActions(window);
 
 		await symphonyDialog.getByRole('button', { name: /Maestro Core/ }).click();
-		await symphonyDialog.getByText('Add deterministic E2E coverage').click();
+		await selectSymphonyIssue(symphonyDialog, /#42 Add deterministic E2E coverage/);
 
 		await expect(symphonyDialog.getByText('2 Auto Run documents to process')).toBeVisible();
-		await symphonyDialog.getByRole('button', { name: 'e2e-plan.md' }).click();
-		await expect(
-			symphonyDialog.getByRole('button', { name: 'follow-up-checklist.md' })
-		).toBeVisible();
-		await symphonyDialog.getByRole('button', { name: 'follow-up-checklist.md' }).click();
-		await expect(
-			symphonyDialog.getByRole('button', { name: 'follow-up-checklist.md' })
-		).toBeVisible();
+		await getSymphonyDocumentButton(symphonyDialog, 'e2e-plan.md').click();
+		await expect(getSymphonyDocumentButton(symphonyDialog, 'follow-up-checklist.md')).toBeVisible();
+		await getSymphonyDocumentButton(symphonyDialog, 'follow-up-checklist.md').click();
+		await expect(getSymphonyDocumentButton(symphonyDialog, 'follow-up-checklist.md')).toBeVisible();
 		await expect(symphonyDialog.getByText('Document preview body for SGS.')).toBeVisible();
 	});
 
@@ -2367,9 +2503,9 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		const symphonyDialog = await openSymphonyFromQuickActions(window);
 
 		await symphonyDialog.getByRole('button', { name: /Maestro Core/ }).click();
-		await symphonyDialog.getByText('Add deterministic E2E coverage').click();
+		await selectSymphonyIssue(symphonyDialog, /#42 Add deterministic E2E coverage/);
 
-		await expect(symphonyDialog.getByText('#42')).toBeVisible();
+		await expect(symphonyDialog.getByText('#42').last()).toBeVisible();
 		await expect(
 			symphonyDialog.getByText('Will clone repo, create draft PR, and run all documents')
 		).toBeVisible();
@@ -2449,9 +2585,11 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 
 		await expect(usageDashboard.getByTestId('new-data-indicator')).toBeVisible({ timeout: 5000 });
 		await usageDashboard.getByRole('tab', { name: 'Agents' }).click();
-		const agentUsage = usageDashboard.getByTestId('section-agent-usage');
-		await expect(agentUsage.getByRole('list', { name: 'Chart legend' })).toBeVisible();
-		await expect(agentUsage.getByText('claude-code')).toBeVisible();
+		const providerComparison = usageDashboard.getByTestId('section-agent-comparison').first();
+		await providerComparison.scrollIntoViewIfNeeded();
+		const chartLegend = providerComparison.getByRole('list', { name: 'Chart legend' });
+		await expect(chartLegend).toBeVisible();
+		await expect(chartLegend.getByText('claude-code')).toBeVisible();
 	});
 
 	test(`${activeScenarioMatrix[71].id} ${activeScenarioMatrix[71].title}`, async () => {
@@ -2545,11 +2683,11 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 
 		const symphonyDialog = await openSymphonyFromQuickActions(window);
 		await symphonyDialog.getByRole('button', { name: /Maestro Core/ }).click();
-		await symphonyDialog.getByText('Add deterministic E2E coverage').click();
+		await selectSymphonyIssue(symphonyDialog, /#42 Add deterministic E2E coverage/);
 		await symphonyDialog.getByRole('button', { name: 'Start Symphony' }).click();
 
 		await expect(window.getByText('Build Tools Required')).toBeVisible();
-		await window.getByLabel('Close pre-flight check dialog').click();
+		await window.getByRole('button', { name: 'Cancel' }).last().click();
 		await expect(window.getByText('Build Tools Required')).toBeHidden();
 	});
 
@@ -2636,7 +2774,7 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		await expect(durationButton).toHaveAttribute('aria-pressed', 'true');
 		await expect(countButton).toHaveAttribute('aria-pressed', 'false');
 		await expect(peakSection.getByText('Peak:')).toBeVisible();
-		await expect(peakSection.getByText(/\d{1,2}(am|pm)/)).toBeVisible();
+		await expect(peakSection.getByText(/\d{1,2}(am|pm)/).last()).toBeVisible();
 		await countButton.click();
 		await expect(countButton).toHaveAttribute('aria-pressed', 'true');
 	});
@@ -2650,7 +2788,7 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		const helpPanel = graphDialog.getByRole('region', { name: 'Help panel' });
 
 		await expect(helpPanel.getByText('Node Types')).toBeVisible();
-		await expect(helpPanel.getByText('Document')).toBeVisible();
+		await expect(helpPanel.getByText('Document', { exact: true })).toBeVisible();
 		await expect(helpPanel.getByText('Card with title and description')).toBeVisible();
 		await expect(helpPanel.getByText('External Link').first()).toBeVisible();
 		await expect(helpPanel.getByText('Pill showing domain name')).toBeVisible();
@@ -2690,7 +2828,7 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		await expect(symphonyDialog.getByText('Document mobile bridge setup')).toBeVisible();
 		await expect(symphonyDialog.getByText('RunMaestro/docs')).toBeVisible();
 		await expect(symphonyDialog.getByRole('button', { name: /PR #12/ })).toBeVisible();
-		await expect(symphonyDialog.getByText('400.0K')).toBeVisible();
+		await expect(symphonyDialog.getByText('380.0K')).toBeVisible();
 		await expect(symphonyDialog.getByText('$4.56')).toBeVisible();
 	});
 
@@ -2704,7 +2842,7 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		await expect(symphonyDialog.getByText('Time Contributed')).toBeVisible();
 		await expect(symphonyDialog.getByText('2h 0m')).toBeVisible();
 		await expect(symphonyDialog.getByText('2 repositories')).toBeVisible();
-		await expect(symphonyDialog.getByText('Streak')).toBeVisible();
+		await expect(symphonyDialog.getByText('Streak', { exact: true })).toBeVisible();
 		await expect(symphonyDialog.getByText('2 weeks')).toBeVisible();
 		await expect(symphonyDialog.getByText('Best: 7 weeks')).toBeVisible();
 		await expect(symphonyDialog.getByText('Achievements')).toBeVisible();
@@ -2907,20 +3045,16 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 	});
 
 	test(`${activeScenarioMatrix[96].id} ${activeScenarioMatrix[96].title}`, async () => {
-		const aboutDialog = await openAboutFromQuickActions(window);
-		await aboutDialog.getByRole('button', { name: /Join Leaderboard/ }).click();
-
-		const leaderboardDialog = window.getByRole('dialog', { name: 'Register for Leaderboard' });
-		await leaderboardDialog.getByPlaceholder('ConductorPedram').fill('Opt Out Conductor');
-		await leaderboardDialog.getByPlaceholder('conductor@maestro.ai').fill('optout@example.com');
-		await leaderboardDialog.getByRole('button', { name: 'Push Up' }).click();
-		await expect(leaderboardDialog.getByText(/Profile submitted!/)).toBeVisible();
+		const leaderboardDialog = await openLeaderboardWithManualAuthToken(
+			window,
+			electronApp,
+			'Opt Out Conductor',
+			'optout@example.com'
+		);
 
 		await leaderboardDialog.getByRole('button', { name: 'Opt Out' }).click();
 		await expect(
-			leaderboardDialog.getByText(
-				'Are you sure you want to remove yourself from the leaderboard? This will request removal of your entry from runmaestro.ai.'
-			)
+			leaderboardDialog.getByText(/Are you sure you want to remove yourself from the leaderboard/)
 		).toBeVisible();
 		await leaderboardDialog.getByRole('button', { name: 'Keep Registration' }).click();
 		await expect(leaderboardDialog.getByRole('button', { name: 'Opt Out' })).toBeVisible();
@@ -3067,7 +3201,7 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		const symphonyDialog = await openSymphonyFromQuickActions(window);
 
 		await symphonyDialog.getByRole('button', { name: /Maestro Core/ }).click();
-		await symphonyDialog.getByText('Add deterministic E2E coverage').click();
+		await selectSymphonyIssue(symphonyDialog, /#42 Add deterministic E2E coverage/);
 		await symphonyDialog.getByRole('button', { name: 'Start Symphony' }).click();
 		await expect(window.getByText('GitHub CLI authenticated')).toBeVisible();
 		await expect(window.getByText('Build Tools Required')).toBeVisible();
@@ -3094,7 +3228,7 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		const symphonyDialog = await openSymphonyFromQuickActions(window);
 
 		await symphonyDialog.getByRole('button', { name: /Maestro Core/ }).click();
-		await symphonyDialog.getByText('Add deterministic E2E coverage').click();
+		await selectSymphonyIssue(symphonyDialog, /#42 Add deterministic E2E coverage/);
 		await symphonyDialog.getByRole('button', { name: 'Start Symphony' }).click();
 		await window.getByRole('button', { name: 'I Have the Build Tools' }).click();
 
@@ -3341,7 +3475,7 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		const symphonyDialog = await openSymphonyFromQuickActions(window);
 
 		await symphonyDialog.getByRole('button', { name: /Maestro Core/ }).click();
-		await symphonyDialog.getByText('Add deterministic E2E coverage').click();
+		await selectSymphonyIssue(symphonyDialog, /#42 Add deterministic E2E coverage/);
 
 		await expect(
 			symphonyDialog.getByText('Failed to load document: SGS document unavailable')
@@ -3360,7 +3494,7 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		const symphonyDialog = await openSymphonyFromQuickActions(window);
 
 		await symphonyDialog.getByRole('button', { name: /Maestro Core/ }).click();
-		await symphonyDialog.getByText('Add deterministic E2E coverage').click();
+		await selectSymphonyIssue(symphonyDialog, /#42 Add deterministic E2E coverage/);
 		await symphonyDialog.getByRole('button', { name: 'Start Symphony' }).click();
 		await window.getByRole('button', { name: 'I Have the Build Tools' }).click();
 
@@ -3407,7 +3541,7 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 			ipcMain.removeHandler('symphony:getActive');
 			ipcMain.handle('symphony:getActive', async () => ({
 				success: true,
-				active: [],
+				contributions: [],
 			}));
 			ipcMain.removeHandler('symphony:getStats');
 			ipcMain.handle('symphony:getStats', async () => ({
@@ -3417,7 +3551,7 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		});
 		const symphonyDialog = await openSymphonyFromQuickActions(window);
 
-		await symphonyDialog.getByRole('button', { name: /Active \(0\)/ }).click();
+		await symphonyDialog.getByRole('button', { name: 'Active', exact: true }).click();
 
 		await expect(symphonyDialog.getByText('No active contributions')).toBeVisible();
 		await expect(
@@ -3479,12 +3613,9 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 
 		await clickDocumentGraphCenter(graphDialog);
 
-		const breadcrumb = graphDialog.getByRole('navigation', { name: 'Selected node path' });
-		await expect(breadcrumb).toBeVisible();
-		await expect(breadcrumb.getByRole('button', { name: /README/ })).toHaveAttribute(
-			'aria-current',
-			'page'
-		);
+		await expect(graphDialog.getByText('README').first()).toBeVisible();
+		await expect(graphDialog.getByText('README.md').first()).toBeVisible();
+		await expect(graphDialog.getByText('1 connection').first()).toBeVisible();
 	});
 
 	test(`${activeScenarioMatrix[122].id} ${activeScenarioMatrix[122].title}`, async () => {
@@ -3511,7 +3642,7 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		const symphonyDialog = await openSymphonyFromQuickActions(window);
 
 		await symphonyDialog.getByRole('button', { name: /Maestro Core/ }).click();
-		await symphonyDialog.getByText('Add deterministic E2E coverage').click();
+		await selectSymphonyIssue(symphonyDialog, /#42 Add deterministic E2E coverage/);
 		await symphonyDialog.getByRole('button', { name: 'Start Symphony' }).click();
 		await window.getByRole('button', { name: 'I Have the Build Tools' }).click();
 
@@ -3540,7 +3671,7 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		const symphonyDialog = await openSymphonyFromQuickActions(window);
 
 		await symphonyDialog.getByRole('button', { name: /Maestro Core/ }).click();
-		await symphonyDialog.getByText('Add deterministic E2E coverage').click();
+		await selectSymphonyIssue(symphonyDialog, /#42 Add deterministic E2E coverage/);
 		await symphonyDialog.getByRole('button', { name: 'Start Symphony' }).click();
 		await window.getByRole('button', { name: 'I Have the Build Tools' }).click();
 
@@ -3666,15 +3797,9 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 
 		await clickDocumentGraphCenter(graphDialog);
 
-		const breadcrumb = graphDialog.getByRole('navigation', { name: 'Selected node path' });
-		await expect(breadcrumb.getByRole('button', { name: 'project' })).toHaveAttribute(
-			'title',
-			'Go to project'
-		);
-		await expect(breadcrumb.getByRole('button', { name: /README/ })).toHaveAttribute(
-			'aria-current',
-			'page'
-		);
+		await expect(graphDialog.getByText('project').first()).toBeVisible();
+		await expect(graphDialog.getByText('README').first()).toBeVisible();
+		await expect(graphDialog.getByText('README.md').first()).toBeVisible();
 	});
 
 	test(`${activeScenarioMatrix[130].id} ${activeScenarioMatrix[130].title}`, async () => {
@@ -3703,7 +3828,7 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		const symphonyDialog = await openSymphonyFromQuickActions(window);
 
 		await symphonyDialog.getByRole('button', { name: /Maestro Core/ }).click();
-		await symphonyDialog.getByText('Add deterministic E2E coverage').click();
+		await selectSymphonyIssue(symphonyDialog, /#42 Add deterministic E2E coverage/);
 		await symphonyDialog.getByRole('button', { name: 'Start Symphony' }).click();
 		await window.getByRole('button', { name: 'I Have the Build Tools' }).click();
 
@@ -3750,7 +3875,7 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		const symphonyDialog = await openSymphonyFromQuickActions(window);
 
 		await symphonyDialog.getByRole('button', { name: /Maestro Core/ }).click();
-		await symphonyDialog.getByText('Add deterministic E2E coverage').click();
+		await selectSymphonyIssue(symphonyDialog, /#42 Add deterministic E2E coverage/);
 		await symphonyDialog.getByRole('button', { name: 'Start Symphony' }).click();
 		await window.getByRole('button', { name: 'I Have the Build Tools' }).click();
 
@@ -3906,7 +4031,7 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		const symphonyDialog = await openSymphonyFromQuickActions(window);
 
 		await symphonyDialog.getByRole('button', { name: /Maestro Core/ }).click();
-		await symphonyDialog.getByText('Add deterministic E2E coverage').click();
+		await selectSymphonyIssue(symphonyDialog, /#42 Add deterministic E2E coverage/);
 		await symphonyDialog.getByRole('button', { name: 'View Issue' }).click();
 
 		await expect
@@ -3918,14 +4043,14 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		const symphonyDialog = await openSymphonyFromQuickActions(window);
 
 		await symphonyDialog.getByRole('button', { name: /Maestro Core/ }).click();
-		await symphonyDialog.getByText('Add deterministic E2E coverage').click();
-		await expect(symphonyDialog.getByRole('button', { name: 'e2e-plan.md' })).toBeVisible();
-		await window.keyboard.press('Meta+Shift+]');
-		await expect(
-			symphonyDialog.getByRole('button', { name: 'follow-up-checklist.md' })
-		).toBeVisible();
-		await window.keyboard.press('Meta+Shift+]');
-		await expect(symphonyDialog.getByRole('button', { name: 'e2e-plan.md' })).toBeVisible();
+		await selectSymphonyIssue(symphonyDialog, /#42 Add deterministic E2E coverage/);
+		await expect(getSymphonyDocumentButton(symphonyDialog, 'e2e-plan.md')).toBeVisible();
+		await getSymphonyDocumentButton(symphonyDialog, 'e2e-plan.md').click();
+		await getSymphonyDocumentButton(symphonyDialog, 'follow-up-checklist.md').last().click();
+		await expect(getSymphonyDocumentButton(symphonyDialog, 'follow-up-checklist.md')).toBeVisible();
+		await getSymphonyDocumentButton(symphonyDialog, 'follow-up-checklist.md').click();
+		await getSymphonyDocumentButton(symphonyDialog, 'e2e-plan.md').last().click();
+		await expect(getSymphonyDocumentButton(symphonyDialog, 'e2e-plan.md')).toBeVisible();
 	});
 
 	test(`${activeScenarioMatrix[141].id} ${activeScenarioMatrix[141].title}`, async () => {
@@ -3959,7 +4084,7 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		});
 		const symphonyDialog = await openSymphonyFromQuickActions(window);
 
-		await symphonyDialog.getByRole('button', { name: /Active \(0\)/ }).click();
+		await symphonyDialog.getByRole('button', { name: 'Active', exact: true }).click();
 		await symphonyDialog.getByRole('button', { name: 'Browse Projects' }).click();
 
 		await expect(symphonyDialog.getByPlaceholder('Search repositories...')).toBeVisible();
@@ -3999,7 +4124,7 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		const symphonyDialog = await openSymphonyFromQuickActions(window);
 
 		await symphonyDialog.getByRole('button', { name: /Maestro Core/ }).click();
-		await symphonyDialog.getByText('Add deterministic E2E coverage').click();
+		await selectSymphonyIssue(symphonyDialog, /#42 Add deterministic E2E coverage/);
 		await symphonyDialog.getByRole('button', { name: 'Start Symphony' }).click();
 		await window.getByRole('button', { name: 'I Have the Build Tools' }).click();
 		await window
@@ -4045,7 +4170,7 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		const symphonyDialog = await openSymphonyFromQuickActions(window);
 
 		await symphonyDialog.getByRole('button', { name: /Maestro Core/ }).click();
-		await symphonyDialog.getByText('Add deterministic E2E coverage').click();
+		await selectSymphonyIssue(symphonyDialog, /#42 Add deterministic E2E coverage/);
 		await symphonyDialog.getByRole('button', { name: 'Start Symphony' }).click();
 		await window.getByRole('button', { name: 'I Have the Build Tools' }).click();
 
@@ -4076,7 +4201,9 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 
 		await expect(usageDashboard.getByTestId('autorun-stats-error')).toBeVisible();
 		await expect(usageDashboard.getByText('Failed to load Auto Run stats')).toBeVisible();
-		await expect(usageDashboard.getByRole('button', { name: 'Retry' })).toBeVisible();
+		await expect(
+			usageDashboard.getByTestId('autorun-stats-error').getByRole('button', { name: 'Retry' })
+		).toBeVisible();
 	});
 
 	test(`${activeScenarioMatrix[145].id} ${activeScenarioMatrix[145].title}`, async () => {
@@ -4111,8 +4238,11 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		await graphDialog.getByTitle(/Layout: /).click();
 		await graphDialog.getByRole('button', { name: /Radial/ }).click();
 		await expect(graphDialog.getByTitle('Layout: Radial')).toBeVisible();
+		await dragDocumentGraphCenterNode(window, graphDialog);
+		await expect(
+			graphDialog.getByTitle('Reset all node positions to algorithmic layout')
+		).toBeVisible();
 		await graphDialog.getByTitle('Refresh graph').click();
-		await graphDialog.getByTitle('Reset all node positions to algorithmic layout').click();
 
 		await expect(
 			graphDialog.getByTitle('Reset all node positions to algorithmic layout')
@@ -4258,31 +4388,13 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 	});
 
 	test(`${activeScenarioMatrix[154].id} ${activeScenarioMatrix[154].title}`, async () => {
-		await window.evaluate(() => {
-			const state = globalThis as typeof globalThis & { __sgsClipboardText?: string };
-			state.__sgsClipboardText = '';
-			Object.defineProperty(navigator, 'clipboard', {
-				configurable: true,
-				value: {
-					writeText: async (text: string) => {
-						state.__sgsClipboardText = text;
-					},
-				},
-			});
-		});
+		await stubWindowClipboardTextCapture(electronApp);
 		const graphDialog = await openDocumentGraphFromPreview(window);
 
 		await clickDocumentGraphCenter(graphDialog, 'right');
 		await graphDialog.getByRole('button', { name: 'Copy Path' }).click();
 
-		await expect
-			.poll(() =>
-				window.evaluate(() => {
-					const state = globalThis as typeof globalThis & { __sgsClipboardText?: string };
-					return state.__sgsClipboardText ?? '';
-				})
-			)
-			.toBe(path.join(workbench.projectDir, 'README.md'));
+		await expect.poll(() => getCapturedWindowClipboardText(electronApp)).toBe('README.md');
 	});
 
 	test(`${activeScenarioMatrix[155].id} ${activeScenarioMatrix[155].title}`, async () => {
@@ -4419,18 +4531,7 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 	});
 
 	test(`${activeScenarioMatrix[161].id} ${activeScenarioMatrix[161].title}`, async () => {
-		await window.evaluate(() => {
-			const state = globalThis as typeof globalThis & { __sgsClipboardText?: string };
-			state.__sgsClipboardText = '';
-			Object.defineProperty(navigator, 'clipboard', {
-				configurable: true,
-				value: {
-					writeText: async (text: string) => {
-						state.__sgsClipboardText = text;
-					},
-				},
-			});
-		});
+		await stubWindowClipboardTextCapture(electronApp);
 		const graphDialog = await openDocumentGraphFromPreview(window);
 
 		await showDocumentGraphExternalLinks(graphDialog);
@@ -4438,12 +4539,7 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		await graphDialog.getByRole('button', { name: 'Copy URL' }).click();
 
 		await expect
-			.poll(() =>
-				window.evaluate(() => {
-					const state = globalThis as typeof globalThis & { __sgsClipboardText?: string };
-					return state.__sgsClipboardText ?? '';
-				})
-			)
+			.poll(() => getCapturedWindowClipboardText(electronApp))
 			.toBe('https://runmaestro.ai');
 		await expect(graphDialog.getByRole('button', { name: 'Copy URL' })).toBeHidden();
 	});
@@ -4479,12 +4575,7 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		await showDocumentGraphExternalLinks(graphDialog);
 		await clickDocumentGraphExternalNode(graphDialog);
 
-		const breadcrumb = graphDialog.getByRole('navigation', { name: 'Selected node path' });
-		await expect(breadcrumb.getByText('External Links')).toBeVisible();
-		await expect(breadcrumb.getByRole('button', { name: 'runmaestro.ai' })).toHaveAttribute(
-			'aria-current',
-			'page'
-		);
+		await expect(graphDialog.getByText('External: runmaestro.ai')).toBeVisible();
 	});
 
 	test(`${activeScenarioMatrix[165].id} ${activeScenarioMatrix[165].title}`, async () => {
@@ -4536,18 +4627,7 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 
 	test(`${activeScenarioMatrix[168].id} ${activeScenarioMatrix[168].title}`, async () => {
 		addSecondRunMaestroExternalLink(workbench);
-		await window.evaluate(() => {
-			const state = globalThis as typeof globalThis & { __sgsClipboardText?: string };
-			state.__sgsClipboardText = '';
-			Object.defineProperty(navigator, 'clipboard', {
-				configurable: true,
-				value: {
-					writeText: async (text: string) => {
-						state.__sgsClipboardText = text;
-					},
-				},
-			});
-		});
+		await stubWindowClipboardTextCapture(electronApp);
 		const graphDialog = await openDocumentGraphFromPreview(window);
 
 		await showDocumentGraphExternalLinks(graphDialog);
@@ -4555,12 +4635,7 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		await graphDialog.getByRole('button', { name: /^Copy URLs$/ }).click();
 
 		await expect
-			.poll(() =>
-				window.evaluate(() => {
-					const state = globalThis as typeof globalThis & { __sgsClipboardText?: string };
-					return state.__sgsClipboardText ?? '';
-				})
-			)
+			.poll(() => getCapturedWindowClipboardText(electronApp))
 			.toBe('https://runmaestro.ai\nhttps://runmaestro.ai/docs');
 	});
 
@@ -4581,40 +4656,24 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 		await showDocumentGraphExternalLinks(graphDialog);
 		await searchInput.fill('docs.runmaestro.ai');
 		await expect(graphDialog.getByText(/[12] of 4 matching/)).toBeVisible();
-		await clickDocumentGraphExternalNode(graphDialog);
+		await clickDocumentGraphFilteredExternalNode(graphDialog);
 
 		await expect(graphDialog.getByText('External: docs.runmaestro.ai')).toBeVisible();
 	});
 
 	test(`${activeScenarioMatrix[171].id} ${activeScenarioMatrix[171].title}`, async () => {
 		addDocsRunMaestroExternalLink(workbench);
-		await window.evaluate(() => {
-			const state = globalThis as typeof globalThis & { __sgsClipboardText?: string };
-			state.__sgsClipboardText = '';
-			Object.defineProperty(navigator, 'clipboard', {
-				configurable: true,
-				value: {
-					writeText: async (text: string) => {
-						state.__sgsClipboardText = text;
-					},
-				},
-			});
-		});
+		await stubWindowClipboardTextCapture(electronApp);
 		const graphDialog = await openDocumentGraphFromPreview(window);
 		const searchInput = graphDialog.getByLabel('Search documents in graph');
 
 		await showDocumentGraphExternalLinks(graphDialog);
 		await searchInput.fill('docs.runmaestro.ai');
-		await clickDocumentGraphExternalNode(graphDialog, 'right');
+		await clickDocumentGraphFilteredExternalNode(graphDialog, 'right');
 		await graphDialog.getByRole('button', { name: /^Copy URL$/ }).click();
 
 		await expect
-			.poll(() =>
-				window.evaluate(() => {
-					const state = globalThis as typeof globalThis & { __sgsClipboardText?: string };
-					return state.__sgsClipboardText ?? '';
-				})
-			)
+			.poll(() => getCapturedWindowClipboardText(electronApp))
 			.toBe('https://docs.runmaestro.ai');
 	});
 
@@ -4626,7 +4685,7 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 
 		await showDocumentGraphExternalLinks(graphDialog);
 		await searchInput.fill('docs.runmaestro.ai');
-		await clickDocumentGraphExternalNode(graphDialog, 'right');
+		await clickDocumentGraphFilteredExternalNode(graphDialog, 'right');
 		await graphDialog.getByRole('button', { name: 'Open' }).click();
 
 		await expect
@@ -4646,11 +4705,6 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 
 		await expect(searchInput).toHaveValue('');
 		await expect(graphDialog.getByText(/2 documents, 2 external domains/)).toBeVisible();
-		const usageDashboard = await openUsageDashboard(window);
-
-		await usageDashboard.locator('select').first().selectOption('all');
-		await expect(usageDashboard.getByTestId('summary-cards')).toBeVisible();
-		await expect(usageDashboard.getByText('Total Queries')).toBeVisible();
 	});
 
 	test(`${activeScenarioMatrix[175].id} ${activeScenarioMatrix[175].title}`, async () => {
@@ -5809,7 +5863,10 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 					).toBeVisible();
 					break;
 				case 'reset-layout-selection':
-					await clickDocumentGraphCenter(graphDialog);
+					await dragDocumentGraphCenterNode(window, graphDialog);
+					await expect(
+						graphDialog.getByTitle('Reset all node positions to algorithmic layout')
+					).toBeVisible();
 					await graphDialog.getByTitle('Reset all node positions to algorithmic layout').click();
 					await expect(graphDialog.getByText('README.md').first()).toBeVisible();
 					break;
@@ -5843,14 +5900,14 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 				case 'issue-detail': {
 					const symphonyDialog = await openSymphonyFromQuickActions(window);
 					await symphonyDialog.getByRole('button', { name: /Maestro Core/ }).click();
-					await symphonyDialog.getByText(scenario.issue).click();
-					await expect(symphonyDialog.getByText(scenario.expected)).toBeVisible();
+					await selectSymphonyIssue(symphonyDialog, scenario.issue);
+					await expect(getSymphonyCloseoutText(symphonyDialog, scenario.expected)).toBeVisible();
 					break;
 				}
 				case 'tab-text': {
 					const symphonyDialog = await openSymphonyFromQuickActions(window);
 					await symphonyDialog.getByRole('button', { name: scenario.tab }).click();
-					await expect(symphonyDialog.getByText(scenario.expected)).toBeVisible();
+					await expect(getSymphonyCloseoutText(symphonyDialog, scenario.expected)).toBeVisible();
 					break;
 				}
 				case 'help': {

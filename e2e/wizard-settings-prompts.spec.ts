@@ -1375,6 +1375,10 @@ function directorNotesStatsBar(directorNotesDialog: Locator) {
 	return directorNotesDialog.getByTestId('history-stats-bar');
 }
 
+function directorNotesUnifiedHistoryList(directorNotesDialog: Locator) {
+	return directorNotesDialog.getByTestId('director-notes-unified-history-list');
+}
+
 function activityGraphLookbackMenu(window: Page) {
 	return window.getByTestId('activity-graph-lookback-menu');
 }
@@ -9176,7 +9180,13 @@ test.describe(`wizard settings prompts lane (${activeScenarioMatrix.length} acti
 
 		try {
 			await stubDirectorNotesHistory(launched.electronApp);
-			await openDirectorNotesFromQuickActions(launched.window);
+			const directorNotesDialog = await openDirectorNotesFromQuickActions(launched.window);
+			const historyList = directorNotesUnifiedHistoryList(directorNotesDialog);
+
+			await expect(
+				directorNotesDialog.getByText('Refined onboarding copy for the setup wizard')
+			).toBeVisible();
+			await expect(historyList).toBeFocused();
 
 			await launched.window.keyboard.press('ArrowDown');
 			await launched.window.keyboard.press('Enter');

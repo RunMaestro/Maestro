@@ -270,6 +270,8 @@ const AttachmentImage = memo(function AttachmentImage({
 					if (result && result.startsWith('data:')) {
 						imageCache.set(cacheKey, result);
 						setDataUrl(result);
+					} else if (!result) {
+						setError(`Failed to load image: ${decodedSrc}`);
 					} else {
 						setError('Invalid image data');
 					}
@@ -289,6 +291,8 @@ const AttachmentImage = memo(function AttachmentImage({
 					if (isStale) return;
 					if (result && result.startsWith('data:')) {
 						setDataUrl(result);
+					} else if (!result) {
+						setError(`Failed to load image: ${src}`);
 					} else {
 						setError('Invalid image data');
 					}
@@ -319,6 +323,8 @@ const AttachmentImage = memo(function AttachmentImage({
 					if (result && result.startsWith('data:')) {
 						imageCache.set(cacheKey, result);
 						setDataUrl(result);
+					} else if (!result) {
+						setError(`Failed to load image: ${src}`);
 					} else {
 						setError('Invalid image data');
 					}

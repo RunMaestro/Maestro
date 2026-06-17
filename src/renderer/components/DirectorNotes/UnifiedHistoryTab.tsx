@@ -432,6 +432,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 				{/* Entry list with infinite scroll */}
 				<div
 					ref={listRef}
+					data-testid="director-notes-unified-history-list"
 					className="flex-1 overflow-y-auto outline-none scrollbar-thin"
 					tabIndex={0}
 					onKeyDown={handleKeyDown}

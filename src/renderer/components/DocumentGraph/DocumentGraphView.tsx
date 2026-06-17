@@ -342,6 +342,11 @@ export function DocumentGraphView({
 	 * Handle escape - show confirmation modal
 	 */
 	const handleEscapeRequest = useCallback(() => {
+		if (contextMenu) {
+			setContextMenu(null);
+			return;
+		}
+
 		const searchInput = searchInputRef.current;
 		if (searchInput && document.activeElement === searchInput) {
 			if (searchInput.value) {
@@ -361,7 +366,7 @@ export function DocumentGraphView({
 		}
 
 		setShowCloseConfirmation(true);
-	}, []);
+	}, [contextMenu]);
 
 	/**
 	 * Register with layer stack for Escape handling
@@ -1165,7 +1170,14 @@ export function DocumentGraphView({
 			// Only handle arrow keys without modifiers
 			if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
 
-			if (e.key === 'ArrowLeft' && canGoBack) {
+			if (e.key === 'Escape') {
+				e.preventDefault();
+				e.stopPropagation();
+				handlePreviewClose();
+				requestAnimationFrame(() => {
+					mindMapContainerRef.current?.focus();
+				});
+			} else if (e.key === 'ArrowLeft' && canGoBack) {
 				e.preventDefault();
 				handlePreviewBack();
 			} else if (e.key === 'ArrowRight' && canGoForward) {
@@ -1173,7 +1185,7 @@ export function DocumentGraphView({
 				handlePreviewForward();
 			}
 		},
-		[canGoBack, canGoForward, handlePreviewBack, handlePreviewForward]
+		[canGoBack, canGoForward, handlePreviewBack, handlePreviewClose, handlePreviewForward]
 	);
 
 	/**
@@ -1264,14 +1276,27 @@ export function DocumentGraphView({
 	/**
 	 * Handle container keyboard shortcuts (Cmd+F for search)
 	 */
-	const handleContainerKeyDown = useCallback((e: React.KeyboardEvent) => {
-		// Cmd+F or Ctrl+F to focus search
-		if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
-			e.preventDefault();
-			searchInputRef.current?.focus();
-			searchInputRef.current?.select();
-		}
-	}, []);
+	const handleContainerKeyDown = useCallback(
+		(e: React.KeyboardEvent) => {
+			if (e.key === 'Escape' && (previewFile || previewLoading || previewError)) {
+				e.preventDefault();
+				e.stopPropagation();
+				handlePreviewClose();
+				requestAnimationFrame(() => {
+					mindMapContainerRef.current?.focus();
+				});
+				return;
+			}
+
+			// Cmd+F or Ctrl+F to focus search
+			if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
+				e.preventDefault();
+				searchInputRef.current?.focus();
+				searchInputRef.current?.select();
+			}
+		},
+		[handlePreviewClose, previewError, previewFile, previewLoading]
+	);
 
 	if (!isOpen) return null;
 

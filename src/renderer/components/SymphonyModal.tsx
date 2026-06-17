@@ -527,6 +527,8 @@ function RepositoryDetailView({
 
 			if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === '[' || e.key === ']')) {
 				e.preventDefault();
+				e.stopPropagation();
+				e.stopImmediatePropagation();
 
 				const docCount = selectedIssue.documentPaths.length;
 				let newIndex: number;

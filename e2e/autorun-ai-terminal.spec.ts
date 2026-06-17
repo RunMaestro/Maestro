@@ -5698,10 +5698,12 @@ Externally refreshed Codex Auto Run sentinel.
 			await expect(
 				launched.window.getByRole('button', { name: 'Auto Run Docs/Phase 1.md file' })
 			).toBeVisible();
-			await expect(
-				launched.window.getByRole('button', { name: 'Auto Run Docs/Phase 2.md file' })
-			).toBeVisible();
+			const phaseTwoSuggestion = launched.window.getByRole('button', {
+				name: 'Auto Run Docs/Phase 2.md file',
+			});
+			await expect(phaseTwoSuggestion).toBeVisible();
 			await promptInput.press('ArrowDown');
+			await expect(phaseTwoSuggestion).toHaveClass(/ring-1/);
 			await promptInput.press('Enter');
 
 			await expect(promptInput).toHaveValue('@Auto Run Docs/Phase 2.md ');
@@ -6178,9 +6180,9 @@ Codex phase two saved edit sentinel.
 		const launched = await launchPreviewLinkLaneWorkbench();
 		try {
 			await stubImageClipboardWrite(launched.electronApp);
-			await openCodexPreviewLightbox(launched.window, launched.imageFilename);
+			const { lightbox } = await openCodexPreviewLightbox(launched.window, launched.imageFilename);
 
-			await launched.window.keyboard.press('Control+C');
+			await lightbox.press('Control+C');
 
 			await expect
 				.poll(async () => getStubbedImageClipboardDataUrl(launched.electronApp))
@@ -6222,7 +6224,10 @@ Codex phase two saved edit sentinel.
 			await launched.window.getByRole('img', { name: `images/${launched.imageFilename}` }).click();
 
 			await expect(launched.window.getByTitle('Close (ESC)')).toBeVisible();
-			await expect(launched.window.getByText(`images/${launched.imageFilename}`)).toBeVisible();
+			const lightbox = launched.window.locator('div.fixed.inset-0').filter({
+				has: launched.window.getByRole('img', { name: `images/${launched.imageFilename}` }),
+			});
+			await expect(lightbox.getByText(`images/${launched.imageFilename}`)).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}
@@ -6356,7 +6361,7 @@ Codex phase two saved edit sentinel.
 			await expect
 				.poll(() => fs.readFileSync(launched.phaseOnePath, 'utf-8'))
 				.toContain('- [ ] Keep Codex provider execution stubbed');
-			await expect(launched.window.getByText('0 of 3 tasks completed').first()).toBeVisible();
+			await expect(launched.window.getByText(/0 of 3 tasks(?: completed)?/).first()).toBeVisible();
 		} finally {
 			await launched.cleanup();
 		}

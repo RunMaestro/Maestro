@@ -1920,7 +1920,10 @@ describe('SymphonyModal', () => {
 				);
 
 				await act(async () => {
-					fireEvent.click(screen.getByRole('button', { name: 'Projects' }));
+					fireEvent.click(screen.getByTitle('Back (Esc)'));
+				});
+				await act(async () => {
+					fireEvent.click(screen.getByText('Test Repository'));
 				});
 				await act(async () => {
 					fireEvent.click(screen.getByText('Empty document issue'));

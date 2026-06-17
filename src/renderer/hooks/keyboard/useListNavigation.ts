@@ -37,7 +37,7 @@
  * ```
  */
 
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 
 export interface UseListNavigationOptions {
 	/**
@@ -178,46 +178,51 @@ export function useListNavigation(options: UseListNavigationOptions): UseListNav
 		enabled = true,
 	} = options;
 
-	const [selectedIndex, setSelectedIndex] = useState(
+	const [selectedIndex, setSelectedIndexState] = useState(
 		Math.min(initialIndex, Math.max(0, listLength - 1))
 	);
+	const selectedIndexRef = useRef(selectedIndex);
+
+	const setSelectedIndex: React.Dispatch<React.SetStateAction<number>> = useCallback((next) => {
+		const resolved = typeof next === 'function' ? next(selectedIndexRef.current) : next;
+		selectedIndexRef.current = resolved;
+		setSelectedIndexState(resolved);
+	}, []);
 
 	// Reset selection when list length changes (e.g., filtering)
 	useEffect(() => {
 		setSelectedIndex((prev) => {
-			if (listLength === 0) return 0;
+			if (listLength === 0) return initialIndex < 0 ? initialIndex : 0;
 			if (prev >= listLength) return listLength - 1;
 			return prev;
 		});
-	}, [listLength]);
+	}, [initialIndex, listLength, setSelectedIndex]);
 
 	const navigateDown = useCallback(() => {
 		if (listLength === 0) return;
-		setSelectedIndex((prev) => {
-			if (wrap) {
-				return (prev + 1) % listLength;
-			}
-			return Math.min(prev + 1, listLength - 1);
-		});
-	}, [listLength, wrap]);
+		const currentIndex = selectedIndexRef.current;
+		const nextIndex = wrap
+			? (currentIndex + 1) % listLength
+			: Math.min(currentIndex + 1, listLength - 1);
+		setSelectedIndex(nextIndex);
+	}, [listLength, wrap, setSelectedIndex]);
 
 	const navigateUp = useCallback(() => {
 		if (listLength === 0) return;
-		setSelectedIndex((prev) => {
-			if (wrap) {
-				return (prev - 1 + listLength) % listLength;
-			}
-			return Math.max(prev - 1, 0);
-		});
-	}, [listLength, wrap]);
+		const currentIndex = selectedIndexRef.current;
+		const nextIndex = wrap
+			? (currentIndex - 1 + listLength) % listLength
+			: Math.max(currentIndex - 1, 0);
+		setSelectedIndex(nextIndex);
+	}, [listLength, wrap, setSelectedIndex]);
 
 	const navigatePageDown = useCallback(() => {
-		setSelectedIndex((prev) => Math.min(prev + pageSize, listLength - 1));
-	}, [listLength, pageSize]);
+		setSelectedIndex(Math.min(selectedIndexRef.current + pageSize, listLength - 1));
+	}, [listLength, pageSize, setSelectedIndex]);
 
 	const navigatePageUp = useCallback(() => {
-		setSelectedIndex((prev) => Math.max(prev - pageSize, 0));
-	}, [listLength, pageSize]);
+		setSelectedIndex(Math.max(selectedIndexRef.current - pageSize, 0));
+	}, [pageSize, setSelectedIndex]);
 
 	const navigateToStart = useCallback(() => {
 		setSelectedIndex(0);
@@ -229,10 +234,11 @@ export function useListNavigation(options: UseListNavigationOptions): UseListNav
 
 	const selectCurrent = useCallback(() => {
 		if (listLength === 0) return;
-		if (selectedIndex >= 0 && selectedIndex < listLength) {
-			onSelect(selectedIndex);
+		const currentIndex = selectedIndexRef.current;
+		if (currentIndex >= 0 && currentIndex < listLength) {
+			onSelect(currentIndex);
 		}
-	}, [selectedIndex, listLength, onSelect]);
+	}, [listLength, onSelect]);
 
 	const resetSelection = useCallback(() => {
 		setSelectedIndex(Math.min(initialIndex, Math.max(0, listLength - 1)));
