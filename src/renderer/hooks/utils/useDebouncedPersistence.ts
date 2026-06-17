@@ -39,6 +39,16 @@ import { captureException } from '../../utils/sentry';
 // Maximum persisted logs per AI tab (matches session persistence limit)
 const MAX_PERSISTED_LOGS_PER_TAB = 100;
 
+// Maximum persisted file-preview content per tab. Preview tabs hold the full
+// file in `content`, but the viewer only renders a truncated slice (see
+// LARGE_FILE_PREVIEW_LIMIT) and re-reads from disk on activation. Persisting
+// whole files is pure bloat: a single 500k-line .jsonl stored 363MB in one tab,
+// ballooning sessions.json to 500MB+ and OOM-ing the main process on startup
+// (it JSON.parses the whole file at boot). Tabs over this cap persist with
+// content stripped and reload from disk when opened. Small files persist as-is
+// so unsaved edit state survives a restart.
+const MAX_PERSISTED_PREVIEW_CONTENT = 256 * 1024;
+
 /**
  * Prepare a session for persistence by:
  * 1. Filtering out tabs with active wizard state (incomplete wizards should not persist)
@@ -150,10 +160,22 @@ const prepareSessionForPersistence = (session: Session): Session => {
 	);
 	const newActiveBrowserTabId = activeBrowserTabExists ? session.activeBrowserTabId : null;
 
+	// Strip oversized file-preview content. Preview tabs hold the full file in
+	// `content`, which the viewer truncates at render time and re-reads from disk
+	// on activation, so persisting megabytes of file bytes is pure bloat (a 363MB
+	// .jsonl OOM'd startup). Keep the tab so it reopens; just drop the heavy
+	// content (and stale editContent) for tabs over the cap.
+	const cleanedFilePreviewTabs = (session.filePreviewTabs || []).map((tab) =>
+		tab.content && tab.content.length > MAX_PERSISTED_PREVIEW_CONTENT
+			? { ...tab, content: '', editContent: undefined }
+			: tab
+	);
+
 	return {
 		...sessionWithoutRuntimeFields,
 		aiTabs: truncatedTabs,
 		activeTabId: newActiveTabId,
+		filePreviewTabs: cleanedFilePreviewTabs,
 		// Reset terminal tab runtime state
 		terminalTabs: cleanedTerminalTabs,
 		activeTerminalTabId: newActiveTerminalTabId,
