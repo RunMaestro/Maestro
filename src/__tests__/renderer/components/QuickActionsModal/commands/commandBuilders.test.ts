@@ -173,6 +173,7 @@ describe('QuickActions command builders', () => {
 					hasActiveTab: true,
 					activeUnifiedIndex: 0,
 					unifiedTabCount: 2,
+					activeTabType: 'ai',
 				},
 				enterToSendAI: true,
 				onRenameTab: vi.fn(),
@@ -187,7 +188,7 @@ describe('QuickActions command builders', () => {
 		const context = buildActiveTabContextCommands({
 			activeSession: session,
 			activeSessionId: 's1',
-			isAiMode: true,
+			activeTabType: 'ai',
 			ghCliAvailable: true,
 			setSessions,
 			setQuickActionOpen: close,
@@ -231,6 +232,101 @@ describe('QuickActions command builders', () => {
 		).toEqual(['searchAgents', 'searchMessages', 'searchFiles', 'searchHistory']);
 	});
 
+	it('builds tab-type-aware Context / Buffer / Content commands', () => {
+		const session = createMockSession({
+			id: 's1',
+			activeTabId: 'tab-1',
+			aiTabs: [{ id: 'tab-1', name: 'Tab', logs: [{ id: 'l1' }], agentSessionId: 'p1' }] as any,
+		});
+		const baseArgs = {
+			activeSession: session,
+			activeSessionId: 's1',
+			ghCliAvailable: true,
+			setSessions,
+			setQuickActionOpen: close,
+			safeClipboardWrite: async () => true,
+			flashCopiedToClipboard: vi.fn(),
+			onCopyTabContext: vi.fn(),
+			onExportTabHtml: vi.fn(),
+			onPublishTabGist: vi.fn(),
+		};
+
+		// Terminal tab -> "Buffer" actions routed through the MainPanel handle.
+		const sendActiveTerminalBufferToAgent = vi.fn();
+		const terminalRef = {
+			current: {
+				copyActiveTerminalBuffer: vi.fn(),
+				sendActiveTerminalBufferToAgent,
+				publishActiveTerminalBufferGist: vi.fn(),
+			},
+		} as any;
+		const terminal = buildActiveTabContextCommands({
+			...baseArgs,
+			activeTabType: 'terminal',
+			mainPanelRef: terminalRef,
+		});
+		expect(terminal.map((a) => a.id)).toEqual([
+			'copyTerminalBuffer',
+			'sendTerminalBufferToAgent',
+			'publishTerminalBufferGist',
+		]);
+		terminal.find((a) => a.id === 'sendTerminalBufferToAgent')!.action();
+		expect(sendActiveTerminalBufferToAgent).toHaveBeenCalled();
+
+		// Browser tab -> "Content" actions, no Gist option.
+		const copyActiveBrowserContent = vi.fn();
+		const browserRef = {
+			current: { copyActiveBrowserContent, sendActiveBrowserContentToAgent: vi.fn() },
+		} as any;
+		const browser = buildActiveTabContextCommands({
+			...baseArgs,
+			activeTabType: 'browser',
+			mainPanelRef: browserRef,
+		});
+		expect(browser.map((a) => a.id)).toEqual(['copyBrowserContent', 'sendBrowserContentToAgent']);
+		browser.find((a) => a.id === 'copyBrowserContent')!.action();
+		expect(copyActiveBrowserContent).toHaveBeenCalled();
+
+		// File previews expose no context/buffer/content actions.
+		expect(buildActiveTabContextCommands({ ...baseArgs, activeTabType: 'file' })).toEqual([]);
+
+		// AI-context feature commands (Compact / Merge / Send) hide on non-AI tabs.
+		const featureArgs = {
+			activeSession: session,
+			canSummarizeActiveTab: true,
+			hasActiveSessionCapability: () => true,
+			setQuickActionOpen: close,
+			setSuccessFlashNotification: vi.fn(),
+			setAgentSessionsOpen: vi.fn(),
+			setActiveAgentSessionId: vi.fn(),
+			onSummarizeAndContinue: vi.fn(),
+			onOpenMergeSession: vi.fn(),
+			onOpenSendToAgent: vi.fn(),
+			bionifyReadingMode: false,
+			setBionifyReadingMode: vi.fn(),
+			audioFeedbackEnabled: false,
+			setAudioFeedbackEnabled: vi.fn(),
+			idleNotificationEnabled: false,
+			setIdleNotificationEnabled: vi.fn(),
+			showStarredSessionsSection: true,
+			setShowStarredSessionsSection: vi.fn(),
+			shortcuts: {},
+		};
+		const aiFeatureIds = buildFeatureCommands({ ...featureArgs, activeTabType: 'ai' }).map(
+			(a) => a.id
+		);
+		expect(aiFeatureIds).toEqual(
+			expect.arrayContaining(['summarizeAndContinue', 'mergeSession', 'sendToAgent'])
+		);
+		const terminalFeatureIds = buildFeatureCommands({
+			...featureArgs,
+			activeTabType: 'terminal',
+		}).map((a) => a.id);
+		expect(terminalFeatureIds).not.toContain('summarizeAndContinue');
+		expect(terminalFeatureIds).not.toContain('mergeSession');
+		expect(terminalFeatureIds).not.toContain('sendToAgent');
+	});
+
 	it('builds git/worktree, feature, support, and debug commands', async () => {
 		const session = createMockSession({
 			id: 's1',
@@ -264,7 +360,7 @@ describe('QuickActions command builders', () => {
 		expect(
 			buildFeatureCommands({
 				activeSession: session,
-				isAiMode: true,
+				activeTabType: 'ai',
 				canSummarizeActiveTab: true,
 				isFilePreviewOpen: true,
 				ghCliAvailable: true,

@@ -10,6 +10,7 @@ import type {
 	Theme,
 } from '../../types';
 import type { WizardStep } from '../Wizard/WizardContext';
+import type { MainPanelHandle } from '../MainPanel/types';
 
 export type QuickActionMode = 'main' | 'move-to-group' | 'agents';
 
@@ -42,6 +43,13 @@ export interface ActiveTabInfo {
 	hasActiveTab: boolean;
 	activeUnifiedIndex: number;
 	unifiedTabCount: number;
+	/**
+	 * Resolved type of the currently-visible tab (browser > terminal > file > ai
+	 * precedence). Null only when there is no active session. Drives which
+	 * noun the Command K palette uses: Context (ai) / Buffer (terminal) /
+	 * Content (browser) / none (file).
+	 */
+	activeTabType: 'ai' | 'file' | 'terminal' | 'browser' | null;
 }
 
 export interface QuickActionsModalProps {
@@ -138,6 +146,12 @@ export interface QuickActionsModalProps {
 	onCopyTabContext?: (tabId: string) => void;
 	onExportTabHtml?: (tabId: string) => void;
 	onPublishTabGist?: (tabId: string) => void;
+	/**
+	 * Imperative handle to MainPanel, used to run terminal "Buffer" and browser
+	 * "Content" actions on the active tab (the underlying scrollback / page text
+	 * lives behind refs that only MainPanel can reach).
+	 */
+	mainPanelRef?: React.RefObject<MainPanelHandle | null>;
 	isFilePreviewOpen?: boolean;
 	ghCliAvailable?: boolean;
 	onPublishGist?: () => void;

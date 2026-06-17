@@ -338,6 +338,18 @@ export const MainPanel = React.memo(
 		);
 
 		// Expose methods to parent via ref
+		// Holds the latest terminal/browser buffer-action handlers. The imperative
+		// handle only rebuilds on session-id change, so it reads these through a ref
+		// (populated every render below) to avoid calling a stale closure after tabs
+		// change within the same session.
+		const tabBufferActionsRef = useRef<{
+			copyTerminalBuffer: (tabId: string) => void;
+			sendTerminalBufferToAgent: (tabId: string) => void;
+			publishTerminalBufferGist: (tabId: string) => void;
+			copyBrowserContent: (tabId: string) => void | Promise<void>;
+			sendBrowserContentToAgent: (tabId: string) => void | Promise<void>;
+		} | null>(null);
+
 		useImperativeHandle(
 			ref,
 			() => ({
@@ -443,6 +455,31 @@ export const MainPanel = React.memo(
 				},
 				openTerminalSearch: () => {
 					setTerminalSearchOpen(true);
+				},
+				copyActiveTerminalBuffer: () => {
+					const session = selectActiveSession(useSessionStore.getState());
+					if (session?.activeTerminalTabId)
+						tabBufferActionsRef.current?.copyTerminalBuffer(session.activeTerminalTabId);
+				},
+				sendActiveTerminalBufferToAgent: () => {
+					const session = selectActiveSession(useSessionStore.getState());
+					if (session?.activeTerminalTabId)
+						tabBufferActionsRef.current?.sendTerminalBufferToAgent(session.activeTerminalTabId);
+				},
+				publishActiveTerminalBufferGist: () => {
+					const session = selectActiveSession(useSessionStore.getState());
+					if (session?.activeTerminalTabId)
+						tabBufferActionsRef.current?.publishTerminalBufferGist(session.activeTerminalTabId);
+				},
+				copyActiveBrowserContent: () => {
+					const session = selectActiveSession(useSessionStore.getState());
+					if (session?.activeBrowserTabId)
+						void tabBufferActionsRef.current?.copyBrowserContent(session.activeBrowserTabId);
+				},
+				sendActiveBrowserContentToAgent: () => {
+					const session = selectActiveSession(useSessionStore.getState());
+					if (session?.activeBrowserTabId)
+						void tabBufferActionsRef.current?.sendBrowserContentToAgent(session.activeBrowserTabId);
 				},
 			}),
 			[refreshGitStatus, activeSession?.id]
@@ -574,6 +611,16 @@ export const MainPanel = React.memo(
 			},
 			[resolveBrowserContent, props.onSendTextToAgent]
 		);
+
+		// Keep the imperative handle's buffer/content actions pointed at the latest
+		// closures so Command K runs them against the current session's tabs.
+		tabBufferActionsRef.current = {
+			copyTerminalBuffer: handleCopyTerminalBuffer,
+			sendTerminalBufferToAgent: handleSendTerminalBufferToAgent,
+			publishTerminalBufferGist: handlePublishTerminalBufferGist,
+			copyBrowserContent: handleCopyBrowserContent,
+			sendBrowserContentToAgent: handleSendBrowserContentToAgent,
+		};
 
 		// Handler for input focus - select session in sidebar
 		// Memoized to avoid recreating on every render

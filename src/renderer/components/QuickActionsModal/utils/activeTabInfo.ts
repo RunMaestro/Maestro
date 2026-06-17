@@ -13,6 +13,7 @@ export function getActiveTabInfo(
 		activeSession?.activeBrowserTabId
 	);
 
+	let activeTabType: 'ai' | 'file' | 'terminal' | 'browser' | null = null;
 	let activeUnifiedIndex = -1;
 	if (activeSession) {
 		let type: 'ai' | 'file' | 'terminal' | 'browser';
@@ -30,6 +31,7 @@ export function getActiveTabInfo(
 			type = 'ai';
 			id = activeSession.activeTabId;
 		}
+		activeTabType = type;
 		if (id) {
 			activeUnifiedIndex = (activeSession.unifiedTabOrder ?? []).findIndex(
 				(ref) => ref.type === type && ref.id === id
@@ -42,5 +44,6 @@ export function getActiveTabInfo(
 		hasActiveTab,
 		activeUnifiedIndex,
 		unifiedTabCount: activeSession?.unifiedTabOrder?.length ?? 0,
+		activeTabType,
 	};
 }

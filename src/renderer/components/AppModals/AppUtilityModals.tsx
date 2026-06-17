@@ -1,4 +1,5 @@
 import { lazy, Suspense, memo } from 'react';
+import type React from 'react';
 import type {
 	Theme,
 	Session,
@@ -11,6 +12,7 @@ import type {
 	ThinkingMode,
 } from '../../types';
 import type { FileNode } from '../../types/fileTree';
+import type { MainPanelHandle } from '../MainPanel/types';
 import type { WizardStep } from '../Wizard/WizardContext';
 import type { FlatFileItem } from '../FileSearchModal';
 
@@ -144,6 +146,7 @@ export interface AppUtilityModalsProps {
 	onCopyTabContext?: (tabId: string) => void;
 	onExportTabHtml?: (tabId: string) => void;
 	onPublishTabGist?: (tabId: string) => void;
+	mainPanelRef?: React.RefObject<MainPanelHandle | null>;
 
 	// Gist publishing (for QuickActionsModal)
 	isFilePreviewOpen: boolean;
@@ -384,6 +387,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	onCopyTabContext,
 	onExportTabHtml,
 	onPublishTabGist,
+	mainPanelRef,
 	// Gist publishing
 	isFilePreviewOpen,
 	ghCliAvailable,
@@ -582,6 +586,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					onCopyTabContext={onCopyTabContext}
 					onExportTabHtml={onExportTabHtml}
 					onPublishTabGist={onPublishTabGist}
+					mainPanelRef={mainPanelRef}
 					isFilePreviewOpen={isFilePreviewOpen}
 					ghCliAvailable={ghCliAvailable}
 					onPublishGist={onPublishGist}

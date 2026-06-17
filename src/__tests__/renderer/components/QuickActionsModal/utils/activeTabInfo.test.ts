@@ -9,6 +9,7 @@ describe('getActiveTabInfo', () => {
 			hasActiveTab: false,
 			activeUnifiedIndex: -1,
 			unifiedTabCount: 0,
+			activeTabType: null,
 		});
 	});
 
@@ -25,6 +26,7 @@ describe('getActiveTabInfo', () => {
 			hasActiveTab: true,
 			activeUnifiedIndex: 1,
 			unifiedTabCount: 2,
+			activeTabType: 'ai',
 		});
 	});
 
@@ -47,6 +49,22 @@ describe('getActiveTabInfo', () => {
 			isTerminalMode: true,
 			hasActiveTab: true,
 			activeUnifiedIndex: 3,
+			activeTabType: 'browser',
 		});
+	});
+
+	it('resolves terminal and file active tab types', () => {
+		const terminalSession = createMockSession({
+			inputMode: 'terminal',
+			activeTabId: 'ai-1',
+			activeTerminalTabId: 'terminal-1',
+		});
+		expect(getActiveTabInfo(terminalSession)).toMatchObject({ activeTabType: 'terminal' });
+
+		const fileSession = createMockSession({
+			activeTabId: 'ai-1',
+			activeFileTabId: 'file-1',
+		});
+		expect(getActiveTabInfo(fileSession)).toMatchObject({ activeTabType: 'file' });
 	});
 });

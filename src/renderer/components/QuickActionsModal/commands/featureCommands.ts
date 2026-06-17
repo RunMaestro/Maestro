@@ -1,10 +1,11 @@
 import type { Session } from '../../../types';
-import type { QuickAction } from '../types';
+import type { ActiveTabInfo, QuickAction } from '../types';
 import { editClipboardImage } from '../../ImageAnnotator/editClipboardImage';
 
 interface BuildFeatureCommandsArgs {
 	activeSession: Session | undefined;
-	isAiMode?: boolean;
+	/** Resolved active tab type; AI-context commands only apply when this is 'ai'. */
+	activeTabType?: ActiveTabInfo['activeTabType'];
 	canSummarizeActiveTab?: boolean;
 	markdownEditMode?: boolean;
 	isFilePreviewOpen?: boolean;
@@ -71,7 +72,7 @@ function flash(
 
 export function buildFeatureCommands({
 	activeSession,
-	isAiMode,
+	activeTabType,
 	canSummarizeActiveTab,
 	markdownEditMode,
 	isFilePreviewOpen,
@@ -232,7 +233,7 @@ export function buildFeatureCommands({
 		});
 	}
 
-	if (isAiMode && canSummarizeActiveTab && onSummarizeAndContinue) {
+	if (activeTabType === 'ai' && canSummarizeActiveTab && onSummarizeAndContinue) {
 		commands.push({
 			id: 'summarizeAndContinue',
 			label: 'Context: Compact',
@@ -245,7 +246,12 @@ export function buildFeatureCommands({
 		});
 	}
 
-	if (activeSession && hasActiveSessionCapability?.('supportsContextMerge') && onOpenMergeSession) {
+	if (
+		activeTabType === 'ai' &&
+		activeSession &&
+		hasActiveSessionCapability?.('supportsContextMerge') &&
+		onOpenMergeSession
+	) {
 		commands.push({
 			id: 'mergeSession',
 			label: 'Context: Merge Into',
@@ -258,7 +264,12 @@ export function buildFeatureCommands({
 		});
 	}
 
-	if (activeSession && hasActiveSessionCapability?.('supportsContextMerge') && onOpenSendToAgent) {
+	if (
+		activeTabType === 'ai' &&
+		activeSession &&
+		hasActiveSessionCapability?.('supportsContextMerge') &&
+		onOpenSendToAgent
+	) {
 		commands.push({
 			id: 'sendToAgent',
 			label: 'Context: Send to Agent',

@@ -1,4 +1,6 @@
 import { memo, useMemo } from 'react';
+import type React from 'react';
+import type { MainPanelHandle } from '../MainPanel/types';
 import { useShallow } from 'zustand/react/shallow';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useGroupChatStore } from '../../stores/groupChatStore';
@@ -263,6 +265,7 @@ export interface AppModalsProps {
 	onCopyTabContext?: (tabId: string) => void;
 	onExportTabHtml?: (tabId: string) => void;
 	onPublishTabGist?: (tabId: string) => void;
+	mainPanelRef?: React.RefObject<MainPanelHandle | null>;
 	// Gist publishing
 	isFilePreviewOpen: boolean;
 	ghCliAvailable: boolean;
@@ -728,6 +731,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onCopyTabContext,
 		onExportTabHtml,
 		onPublishTabGist,
+		mainPanelRef,
 		// Gist publishing
 		isFilePreviewOpen,
 		ghCliAvailable,
@@ -1081,6 +1085,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onCopyTabContext={onCopyTabContext}
 				onExportTabHtml={onExportTabHtml}
 				onPublishTabGist={onPublishTabGist}
+				mainPanelRef={mainPanelRef}
 				isFilePreviewOpen={isFilePreviewOpen}
 				ghCliAvailable={ghCliAvailable}
 				onPublishGist={onPublishGist}

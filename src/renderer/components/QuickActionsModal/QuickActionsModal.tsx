@@ -135,6 +135,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		onCopyTabContext,
 		onExportTabHtml,
 		onPublishTabGist,
+		mainPanelRef,
 		isFilePreviewOpen,
 		ghCliAvailable,
 		onPublishGist,
@@ -231,6 +232,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	);
 
 	const activeTabInfo = getActiveTabInfo(activeSession, isAiMode);
+	const activeTabType = activeTabInfo.activeTabType;
 
 	// Register layer on mount - escape behavior depends on current mode.
 	// Only fall back to the main menu if the user actually came from there;
@@ -453,7 +455,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		}),
 		...buildFeatureCommands({
 			activeSession,
-			isAiMode,
+			activeTabType,
 			canSummarizeActiveTab,
 			markdownEditMode,
 			isFilePreviewOpen,
@@ -505,7 +507,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		...buildActiveTabContextCommands({
 			activeSession,
 			activeSessionId,
-			isAiMode,
+			activeTabType,
 			ghCliAvailable,
 			setSessions,
 			setQuickActionOpen,
@@ -514,6 +516,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			onCopyTabContext,
 			onExportTabHtml,
 			onPublishTabGist,
+			mainPanelRef,
 			toggleTabStarShortcut: shortcuts.toggleTabStar,
 			toggleTabUnreadShortcut: tabShortcuts?.toggleTabUnread,
 		}),

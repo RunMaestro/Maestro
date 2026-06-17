@@ -43,6 +43,16 @@ export interface MainPanelHandle {
 	focusActiveTab: () => void;
 	/** Reload the active browser tab (or stop loading if in progress) */
 	reloadBrowserTab: () => void;
+	/** Copy the active terminal tab's buffer (scrollback) to the clipboard */
+	copyActiveTerminalBuffer: () => void;
+	/** Send the active terminal tab's buffer to another agent */
+	sendActiveTerminalBufferToAgent: () => void;
+	/** Publish the active terminal tab's buffer as a GitHub Gist */
+	publishActiveTerminalBufferGist: () => void;
+	/** Copy the active browser tab's rendered page content to the clipboard */
+	copyActiveBrowserContent: () => void;
+	/** Send the active browser tab's rendered page content to another agent */
+	sendActiveBrowserContentToAgent: () => void;
 }
 
 export interface MainPanelProps {
