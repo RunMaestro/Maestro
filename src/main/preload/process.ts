@@ -1245,6 +1245,38 @@ export function createProcessApi() {
 		},
 
 		/**
+		 * Subscribe to remote requests to update an agent's SSH execution config.
+		 * The renderer merges the partial patch and responds with { success, error? }
+		 * so the caller can surface why an update was refused (e.g. agent running).
+		 */
+		onRemoteUpdateSessionSsh: (
+			callback: (
+				sessionId: string,
+				sshPatch: Record<string, unknown>,
+				responseChannel: string
+			) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				sshPatch: Record<string, unknown>,
+				responseChannel: string
+			) => callback(sessionId, sshPatch, responseChannel);
+			ipcRenderer.on('remote:updateSessionSsh', handler);
+			return () => ipcRenderer.removeListener('remote:updateSessionSsh', handler);
+		},
+
+		/**
+		 * Send response for remote update session SSH config
+		 */
+		sendRemoteUpdateSessionSshResponse: (
+			responseChannel: string,
+			result: { success: boolean; error?: string }
+		): void => {
+			ipcRenderer.send(responseChannel, result);
+		},
+
+		/**
 		 * Subscribe to remote create group from web interface
 		 * Uses request-response pattern with a unique responseChannel
 		 */

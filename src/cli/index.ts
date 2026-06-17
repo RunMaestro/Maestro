@@ -483,6 +483,10 @@ program
 	.option('--ssh-remote <id>', 'SSH remote ID for remote execution')
 	.option('--ssh-cwd <path>', 'Working directory override on SSH remote')
 	.option(
+		'--sync-history-to-remote <bool>',
+		'Sync history entries to .maestro/history/ on the remote host (true/false; requires --ssh-remote)'
+	)
+	.option(
 		'--auto-run-folder <path>',
 		'Path to the agent Auto Run / playbooks folder (overrides the default <cwd>/.maestro/playbooks)'
 	)
@@ -560,6 +564,15 @@ program
 	.option(
 		'-d, --cwd <path>',
 		"Change the agent's working directory (resolved to absolute; agent must be stopped)"
+	)
+	.option(
+		'--ssh-remote <id>',
+		'Set the SSH remote for remote execution (use "none" to revert to local; agent must be stopped)'
+	)
+	.option('--ssh-cwd <path>', 'Working directory override on the SSH remote')
+	.option(
+		'--sync-history-to-remote <bool>',
+		'Sync history entries to .maestro/history/ on the remote host (true/false)'
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(updateAgent);

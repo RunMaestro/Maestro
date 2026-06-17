@@ -61,6 +61,7 @@ import type {
 	DeleteSessionCallback,
 	RenameSessionCallback,
 	UpdateSessionCwdCallback,
+	UpdateSessionSshCallback,
 	WebSettings,
 	SettingValue,
 	GroupData,
@@ -167,6 +168,7 @@ export interface WebServerCallbacks {
 	deleteSession: DeleteSessionCallback | null;
 	renameSession: RenameSessionCallback | null;
 	updateSessionCwd: UpdateSessionCwdCallback | null;
+	updateSessionSsh: UpdateSessionSshCallback | null;
 	getGitStatus: GetGitStatusCallback | null;
 	getGitDiff: GetGitDiffCallback | null;
 	getGitBranchesForSession: GetGitBranchesForSessionCallback | null;
@@ -249,6 +251,7 @@ export class CallbackRegistry {
 		deleteSession: null,
 		renameSession: null,
 		updateSessionCwd: null,
+		updateSessionSsh: null,
 		getGitStatus: null,
 		getGitDiff: null,
 		getGitBranchesForSession: null,
@@ -601,6 +604,16 @@ export class CallbackRegistry {
 			return { success: false, error: 'Session cwd updates not configured' };
 		}
 		return this.callbacks.updateSessionCwd(sessionId, newCwd);
+	}
+
+	async updateSessionSsh(
+		sessionId: string,
+		sshPatch: Record<string, unknown>
+	): Promise<{ success: boolean; error?: string }> {
+		if (!this.callbacks.updateSessionSsh) {
+			return { success: false, error: 'Session SSH updates not configured' };
+		}
+		return this.callbacks.updateSessionSsh(sessionId, sshPatch);
 	}
 
 	async getGitStatus(sessionId: string): Promise<GitStatusResult> {
@@ -989,6 +1002,10 @@ export class CallbackRegistry {
 
 	setUpdateSessionCwdCallback(callback: UpdateSessionCwdCallback): void {
 		this.callbacks.updateSessionCwd = callback;
+	}
+
+	setUpdateSessionSshCallback(callback: UpdateSessionSshCallback): void {
+		this.callbacks.updateSessionSsh = callback;
 	}
 
 	setGetGitStatusCallback(callback: GetGitStatusCallback): void {

@@ -1183,6 +1183,59 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		window.maestro.process.sendRemoteUpdateSessionCwdResponse(responseChannel, { success: true });
 	});
 
+	// Handle remote update of an agent's SSH execution config. Merges the
+	// partial patch onto the existing sessionSshRemoteConfig and flushes to disk
+	// so a follow-up CLI read sees the new config (the renderer owns the
+	// authoritative in-memory state; offline JSON edits get clobbered). Refused
+	// while the agent process is alive because the spawn target is fixed at launch.
+	useEventListener('maestro:remoteUpdateSessionSsh', async (e: Event) => {
+		const { sessionId, sshPatch, responseChannel } = (e as CustomEvent).detail;
+		const session = sessionsRef.current.find((s) => s.id === sessionId);
+		if (!session) {
+			window.maestro.process.sendRemoteUpdateSessionSshResponse(responseChannel, {
+				success: false,
+				error: 'Agent not found',
+			});
+			return;
+		}
+		if (session.aiPid && session.aiPid > 0) {
+			window.maestro.process.sendRemoteUpdateSessionSshResponse(responseChannel, {
+				success: false,
+				error: 'Agent process is running; stop it before changing SSH config',
+			});
+			return;
+		}
+
+		// Merge the patch onto the existing config, then normalize the two
+		// always-required fields so the persisted config is well-formed even when
+		// the caller only touched an optional flag (e.g. syncHistory) on an agent
+		// that never had SSH config.
+		const existing = session.sessionSshRemoteConfig ?? {};
+		const merged = { ...existing, ...sshPatch };
+		const normalized = {
+			...merged,
+			enabled: merged.enabled ?? false,
+			remoteId: merged.remoteId ?? null,
+		};
+
+		setSessions((prev: Session[]) =>
+			prev.map((s) => (s.id === sessionId ? { ...s, sessionSshRemoteConfig: normalized } : s))
+		);
+
+		// Flush to disk before signaling success so a follow-up CLI read sees the
+		// new config instead of the 2s-debounced stale value (mirrors rename).
+		try {
+			await window.maestro.sessions.setMany(
+				[{ ...session, sessionSshRemoteConfig: normalized } as any],
+				[]
+			);
+		} catch (persistErr) {
+			logger.error('[Remote] Failed to persist session SSH config:', undefined, persistErr);
+		}
+
+		window.maestro.process.sendRemoteUpdateSessionSshResponse(responseChannel, { success: true });
+	});
+
 	// Handle remote rename session from web interface
 	useEventListener('maestro:remoteRenameSession', async (e: Event) => {
 		const { sessionId, newName, responseChannel } = (e as CustomEvent).detail;

@@ -81,6 +81,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setDeleteSessionCallback = vi.fn();
 			setRenameSessionCallback = vi.fn();
 			setUpdateSessionCwdCallback = vi.fn();
+			setUpdateSessionSshCallback = vi.fn();
 			setGetGitStatusCallback = vi.fn();
 			setGetGitDiffCallback = vi.fn();
 			setGetGitBranchesForSessionCallback = vi.fn();
