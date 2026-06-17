@@ -294,6 +294,10 @@ export interface MessageHandlerCallbacks {
 		sessionId: string,
 		newCwd: string
 	) => Promise<{ success: boolean; error?: string }>;
+	updateSessionSsh: (
+		sessionId: string,
+		sshPatch: Record<string, unknown>
+	) => Promise<{ success: boolean; error?: string }>;
 	getGitStatus: (sessionId: string) => Promise<GitStatusResult>;
 	getGitDiff: (sessionId: string, filePath?: string) => Promise<GitDiffResult>;
 	getGitBranchesForSession: (sessionId: string) => Promise<GitBranchesResult>;
@@ -598,6 +602,10 @@ export class WebSocketMessageHandler {
 
 			case 'update_session_cwd':
 				this.handleUpdateSessionCwd(client, message);
+				break;
+
+			case 'update_session_ssh':
+				this.handleUpdateSessionSsh(client, message);
 				break;
 
 			case 'get_groups':
@@ -3039,6 +3047,48 @@ export class WebSocketMessageHandler {
 			})
 			.catch((error) => {
 				this.sendError(client, `Failed to update session cwd: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle update_session_ssh message - update an agent's SSH execution config
+	 * (remote selection, working-dir override, history-sync flags). Only the
+	 * fields present in `sshPatch` are merged onto the existing config. Like
+	 * cwd updates, the renderer refuses while the agent process is alive because
+	 * the spawn target is fixed at launch time.
+	 */
+	private handleUpdateSessionSsh(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+		const sshPatch = message.sshPatch as Record<string, unknown> | undefined;
+
+		if (!sessionId) {
+			this.sendError(client, 'Missing sessionId');
+			return;
+		}
+
+		if (!sshPatch || typeof sshPatch !== 'object') {
+			this.sendError(client, 'Missing or invalid sshPatch');
+			return;
+		}
+
+		if (!this.callbacks.updateSessionSsh) {
+			this.sendError(client, 'Session SSH updates not configured');
+			return;
+		}
+
+		this.callbacks
+			.updateSessionSsh(sessionId, sshPatch)
+			.then((result) => {
+				this.send(client, {
+					type: 'update_session_ssh_result',
+					success: result.success,
+					error: result.error,
+					sessionId,
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				this.sendError(client, `Failed to update session SSH config: ${error.message}`);
 			});
 	}
 

@@ -22,8 +22,17 @@ interface CreateAgentOptions {
 	providerPath?: string;
 	sshRemote?: string;
 	sshCwd?: string;
+	syncHistoryToRemote?: string;
 	autoRunFolder?: string;
 	json?: boolean;
+}
+
+// Parse a CLI boolean flag value. Accepts true/false/1/0/yes/no (case-insensitive).
+function parseBool(value: string, flag: string): boolean {
+	const v = value.trim().toLowerCase();
+	if (v === 'true' || v === '1' || v === 'yes') return true;
+	if (v === 'false' || v === '0' || v === 'no') return false;
+	throw new Error(`${flag} expects true or false, got "${value}"`);
 }
 
 export async function createAgent(name: string, options: CreateAgentOptions): Promise<void> {
@@ -73,16 +82,49 @@ export async function createAgent(name: string, options: CreateAgentOptions): Pr
 		}
 	}
 
-	// Build SSH config if provided
+	// Parse --sync-history-to-remote (maps to sessionSshRemoteConfig.syncHistory,
+	// the field behind the "Sync history to remote" checkbox in the UI).
+	let syncHistory: boolean | undefined;
+	if (options.syncHistoryToRemote !== undefined) {
+		try {
+			syncHistory = parseBool(options.syncHistoryToRemote, '--sync-history-to-remote');
+		} catch (error) {
+			const msg = error instanceof Error ? error.message : String(error);
+			if (options.json) {
+				console.log(JSON.stringify({ success: false, error: msg }));
+			} else {
+				console.error(formatError(msg));
+			}
+			process.exit(1);
+		}
+	}
+
+	// Build SSH config if provided. `--sync-history-to-remote` only takes effect
+	// alongside an SSH remote (it syncs history to the remote host), so it is
+	// folded into the config block rather than standing on its own.
 	let sessionSshRemoteConfig:
-		| { enabled: boolean; remoteId: string | null; workingDirOverride?: string }
+		| {
+				enabled: boolean;
+				remoteId: string | null;
+				workingDirOverride?: string;
+				syncHistory?: boolean;
+		  }
 		| undefined;
 	if (options.sshRemote) {
 		sessionSshRemoteConfig = {
 			enabled: true,
 			remoteId: options.sshRemote,
 			workingDirOverride: options.sshCwd,
+			syncHistory,
 		};
+	} else if (syncHistory !== undefined) {
+		const msg = '--sync-history-to-remote requires --ssh-remote';
+		if (options.json) {
+			console.log(JSON.stringify({ success: false, error: msg }));
+		} else {
+			console.error(formatError(msg));
+		}
+		process.exit(1);
 	}
 
 	// Build the WebSocket message payload

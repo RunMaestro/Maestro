@@ -1110,6 +1110,16 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			}
 		);
 
+		const unsubscribeUpdateSessionSsh = window.maestro.process.onRemoteUpdateSessionSsh(
+			(sessionId: string, sshPatch: Record<string, unknown>, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:remoteUpdateSessionSsh', {
+						detail: { sessionId, sshPatch, responseChannel },
+					})
+				);
+			}
+		);
+
 		const unsubscribeCreateGroup = window.maestro.process.onRemoteCreateGroup(
 			(name: string, emoji: string | undefined, responseChannel: string) => {
 				window.dispatchEvent(
@@ -1153,6 +1163,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribeDeleteSession();
 			unsubscribeRenameSession();
 			unsubscribeUpdateSessionCwd();
+			unsubscribeUpdateSessionSsh();
 			unsubscribeCreateGroup();
 			unsubscribeRenameGroup();
 			unsubscribeDeleteGroup();

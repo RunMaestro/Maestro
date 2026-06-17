@@ -784,6 +784,18 @@ export type UpdateSessionCwdCallback = (
 	sessionId: string,
 	newCwd: string
 ) => Promise<{ success: boolean; error?: string }>;
+/**
+ * Update an agent's SSH execution config. `sshPatch` is a partial bag of
+ * `sessionSshRemoteConfig` fields (`enabled`, `remoteId`, `workingDirOverride`,
+ * `syncHistory`, `shareHistoryToProjectDir`); only the provided keys are merged
+ * onto the existing config, so a caller can flip one field without re-sending
+ * the whole block. Typed as a plain record because the payload crosses the IPC
+ * bridge to the renderer.
+ */
+export type UpdateSessionSshCallback = (
+	sessionId: string,
+	sshPatch: Record<string, unknown>
+) => Promise<{ success: boolean; error?: string }>;
 export type GetAutoRunDocsCallback = (sessionId: string) => Promise<AutoRunDocument[]>;
 export type GetAutoRunDocContentCallback = (sessionId: string, filename: string) => Promise<string>;
 export type SaveAutoRunDocCallback = (

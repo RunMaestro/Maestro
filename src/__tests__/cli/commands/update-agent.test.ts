@@ -35,10 +35,12 @@ describe('update-agent command', () => {
 		processExitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
 	});
 
-	it('errors when neither --group nor --cwd is provided', async () => {
+	it('errors when no mutable field is provided', async () => {
 		await updateAgent('agent-1', {});
 
-		expect(formatError).toHaveBeenCalledWith('Specify at least one of --group or --cwd');
+		expect(formatError).toHaveBeenCalledWith(
+			'Specify at least one of --group, --cwd, --ssh-remote, --ssh-cwd, or --sync-history-to-remote'
+		);
 		expect(processExitSpy).toHaveBeenCalledWith(1);
 	});
 
@@ -107,6 +109,84 @@ describe('update-agent command', () => {
 			}),
 			'update_session_cwd_result'
 		);
+	});
+
+	it('sends update_session_ssh enabling a remote with --ssh-remote and --ssh-cwd', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
+		const sendCommand = vi.fn().mockResolvedValue({
+			type: 'update_session_ssh_result',
+			success: true,
+		});
+		vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+			return action({ sendCommand } as never);
+		});
+
+		await updateAgent('agent-1', { sshRemote: 'remote-7', sshCwd: '/srv/app' });
+
+		expect(sendCommand).toHaveBeenCalledWith(
+			expect.objectContaining({
+				type: 'update_session_ssh',
+				sessionId: 'full-session-id',
+				sshPatch: { enabled: true, remoteId: 'remote-7', workingDirOverride: '/srv/app' },
+			}),
+			'update_session_ssh_result'
+		);
+	});
+
+	it('treats --ssh-remote none as reverting to local (enabled:false, remoteId:null)', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
+		const sendCommand = vi.fn().mockResolvedValue({
+			type: 'update_session_ssh_result',
+			success: true,
+		});
+		vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+			return action({ sendCommand } as never);
+		});
+
+		await updateAgent('agent-1', { sshRemote: 'none' });
+
+		expect(sendCommand).toHaveBeenCalledWith(
+			expect.objectContaining({
+				type: 'update_session_ssh',
+				sshPatch: { enabled: false, remoteId: null },
+			}),
+			'update_session_ssh_result'
+		);
+	});
+
+	it('maps --sync-history-to-remote to a syncHistory-only patch', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
+		const sendCommand = vi.fn().mockResolvedValue({
+			type: 'update_session_ssh_result',
+			success: true,
+		});
+		vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+			return action({ sendCommand } as never);
+		});
+
+		await updateAgent('agent-1', { syncHistoryToRemote: 'true' });
+
+		expect(sendCommand).toHaveBeenCalledWith(
+			expect.objectContaining({
+				type: 'update_session_ssh',
+				sshPatch: { syncHistory: true },
+			}),
+			'update_session_ssh_result'
+		);
+	});
+
+	it('rejects a non-boolean --sync-history-to-remote value', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
+		vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+			return action({ sendCommand: vi.fn() } as never);
+		});
+
+		await updateAgent('agent-1', { syncHistoryToRemote: 'maybe' });
+
+		expect(formatError).toHaveBeenCalledWith(
+			'--sync-history-to-remote expects true or false, got "maybe"'
+		);
+		expect(processExitSpy).toHaveBeenCalledWith(1);
 	});
 
 	it('fans out to both messages when --group and --cwd are both provided', async () => {

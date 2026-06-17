@@ -63,6 +63,10 @@ export function showAgent(agentId: string, options: ShowAgentOptions): void {
 			groupId: agent.groupId,
 			groupName: group?.name,
 			autoRunFolderPath: agent.autoRunFolderPath,
+			// Full SSH execution config so onboarding/verification can confirm the
+			// agent's remote, working-dir override, and history-sync state without
+			// reading raw store files.
+			sessionSshRemoteConfig: agent.sessionSshRemoteConfig ?? null,
 			stats: {
 				historyEntries: history.length,
 				successCount,

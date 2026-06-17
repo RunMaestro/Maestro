@@ -1519,6 +1519,63 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			});
 		});
 
+		// Set up callback for web server to update a session's SSH execution
+		// config. Mirrors updateSessionCwd's IPC request-response shape; the
+		// renderer merges the partial patch and refuses while the agent process
+		// is alive (the spawn target is fixed at launch time).
+		server.setUpdateSessionSshCallback(
+			async (sessionId: string, sshPatch: Record<string, unknown>) => {
+				const mainWindow = getMainWindow();
+				if (!mainWindow) {
+					logger.warn('mainWindow is null for updateSessionSsh', 'WebServer');
+					return { success: false, error: 'Desktop window unavailable' };
+				}
+
+				return new Promise((resolve) => {
+					const responseChannel = `remote:updateSessionSsh:response:${randomUUID()}`;
+					let resolved = false;
+
+					const handleResponse = (
+						_event: Electron.IpcMainEvent,
+						result: { success?: boolean; error?: string } | undefined
+					) => {
+						if (resolved) return;
+						resolved = true;
+						clearTimeout(timeoutId);
+						resolve({
+							success: Boolean(result?.success),
+							error: result?.error,
+						});
+					};
+
+					ipcMain.once(responseChannel, handleResponse);
+					if (!isWebContentsAvailable(mainWindow)) {
+						logger.warn('webContents is not available for updateSessionSsh', 'WebServer');
+						ipcMain.removeListener(responseChannel, handleResponse);
+						resolve({ success: false, error: 'Desktop renderer unavailable' });
+						return;
+					}
+					mainWindow.webContents.send(
+						'remote:updateSessionSsh',
+						sessionId,
+						sshPatch,
+						responseChannel
+					);
+
+					const timeoutId = setTimeout(() => {
+						if (resolved) return;
+						resolved = true;
+						ipcMain.removeListener(responseChannel, handleResponse);
+						logger.warn(
+							`updateSessionSsh callback timed out for session ${sessionId}`,
+							'WebServer'
+						);
+						resolve({ success: false, error: 'Renderer did not respond in time' });
+					}, 5000);
+				});
+			}
+		);
+
 		// Set up callback for web server to create a group
 		// Uses IPC request-response pattern
 		server.setCreateGroupCallback(async (name: string, emoji?: string) => {
