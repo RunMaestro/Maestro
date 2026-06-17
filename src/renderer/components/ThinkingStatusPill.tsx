@@ -20,6 +20,9 @@ interface ThinkingStatusPillProps {
 	// AutoRun state for the active session - when provided and running, shows AutoRun pill instead
 	autoRunState?: BatchRunState;
 	activeSessionId?: string;
+	// Active AI tab within the active session. When forced-parallel runs two busy tabs in
+	// the same agent, the pill follows this tab so the display matches what Stop interrupts.
+	activeTabId?: string;
 	// Callback to stop auto-run (shows stop button in AutoRunPill when provided)
 	onStopAutoRun?: () => void;
 	// Callback to interrupt the current AI session
@@ -404,6 +407,7 @@ function ThinkingStatusPillInner({
 	namedSessions,
 	autoRunState,
 	activeSessionId,
+	activeTabId,
 	onStopAutoRun,
 	onInterrupt,
 }: ThinkingStatusPillProps) {
@@ -456,10 +460,18 @@ function ThinkingStatusPillInner({
 		return null;
 	}
 
-	// Primary item: prioritize an item from the active session,
-	// otherwise fall back to first thinking item.
-	// This ensures Stop button stops the session the user is currently viewing.
-	const activeItem = thinkingItems.find((item) => item.session.id === activeSessionId);
+	// Primary item selection (each layer falls back to the next):
+	//   1. The exact active tab in the active session — when forced-parallel runs two busy
+	//      tabs in the same agent, this keeps the pill (name, elapsed time) describing the
+	//      tab the user is viewing, which is also the tab Stop will interrupt.
+	//   2. Any busy tab in the active session (active tab itself isn't busy).
+	//   3. The first thinking item anywhere.
+	const activeItem =
+		(activeTabId &&
+			thinkingItems.find(
+				(item) => item.session.id === activeSessionId && item.tab?.id === activeTabId
+			)) ||
+		thinkingItems.find((item) => item.session.id === activeSessionId);
 	const primaryItem = activeItem || thinkingItems[0];
 	const additionalItems = thinkingItems.filter((item) => item !== primaryItem);
 	const hasMultiple = additionalItems.length > 0;
@@ -699,8 +711,11 @@ export const ThinkingStatusPill = memo(ThinkingStatusPillInner, (prevProps, next
 		return prevProps.theme === nextProps.theme;
 	}
 
-	// Check if activeSessionId changed - this affects which item shows as primary
+	// Check if active session/tab changed - both affect which item shows as primary.
+	// activeTabId matters when two busy tabs share the active session (forced parallel):
+	// the busy-tab set is identical, so only the active-tab change should re-render the pill.
 	if (prevProps.activeSessionId !== nextProps.activeSessionId) return false;
+	if (prevProps.activeTabId !== nextProps.activeTabId) return false;
 
 	// thinkingItems is pre-filtered by caller - just compare directly
 	const prevItems = prevProps.thinkingItems;

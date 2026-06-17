@@ -327,6 +327,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 					namedSessions={namedSessions}
 					autoRunState={autoRunState}
 					activeSessionId={session.id}
+					activeTabId={session.activeTabId}
 					onStopAutoRun={onStopAutoRun}
 					onInterrupt={handleInterrupt}
 				/>

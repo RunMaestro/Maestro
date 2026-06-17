@@ -449,6 +449,50 @@ describe('ThinkingStatusPill', () => {
 			// Agent name appears multiple times (pill + 2 dropdown rows)
 			expect(screen.getAllByText('Agent A').length).toBeGreaterThanOrEqual(2);
 		});
+
+		// Forced-parallel: two busy tabs share the active session. The primary pill must
+		// follow the active tab so its display matches the tab Stop interrupts. The dropdown
+		// is collapsed (not hovered) here, so only the primary pill renders a tab name.
+		it('follows activeTabId when two busy tabs share the active session', () => {
+			const session = createThinkingSession({ id: 'sess-1', name: 'Agent A' });
+			const tab1 = createMockAITab({ id: 'tab-1', name: 'Write', state: 'busy' });
+			const tab2 = createMockAITab({ id: 'tab-2', name: 'Read', state: 'busy' });
+			const items: ThinkingItem[] = [
+				{ session, tab: tab1 },
+				{ session, tab: tab2 },
+			];
+			render(
+				<ThinkingStatusPill
+					thinkingItems={items}
+					theme={mockTheme}
+					activeSessionId="sess-1"
+					activeTabId="tab-2"
+				/>
+			);
+
+			// Primary pill follows the active tab (tab-2 → 'Read'); the other tab's name
+			// stays hidden in the collapsed dropdown.
+			expect(screen.getByText('Read')).toBeInTheDocument();
+			expect(screen.queryByText('Write')).not.toBeInTheDocument();
+		});
+
+		// Active tab itself is idle: fall back to a busy tab in the active session.
+		it('falls back to a busy tab in the active session when the active tab is idle', () => {
+			const session = createThinkingSession({ id: 'sess-1', name: 'Agent A' });
+			const tab1 = createMockAITab({ id: 'tab-1', name: 'Write', state: 'busy' });
+			const items: ThinkingItem[] = [{ session, tab: tab1 }];
+			render(
+				<ThinkingStatusPill
+					thinkingItems={items}
+					theme={mockTheme}
+					activeSessionId="sess-1"
+					activeTabId="tab-idle"
+				/>
+			);
+
+			// No item matches the idle active tab, so the busy tab still surfaces.
+			expect(screen.getByText('Write')).toBeInTheDocument();
+		});
 	});
 
 	describe('ThinkingItemRow component (via dropdown)', () => {
