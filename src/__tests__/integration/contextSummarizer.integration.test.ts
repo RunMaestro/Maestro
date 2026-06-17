@@ -329,7 +329,7 @@ Continue with implementation.`);
 			const logs = [createMockLog({ text: 'Test' })];
 
 			await expect(service.summarizeContext(baseRequest, logs, () => {})).rejects.toThrow(
-				'Context summarization failed'
+				'IPC failed'
 			);
 		});
 	});

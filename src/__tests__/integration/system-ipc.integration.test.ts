@@ -218,7 +218,7 @@ describe('system IPC integration', () => {
 	});
 
 	it('registers every system handler and restores saved power preference', () => {
-		expect(handlers.size).toBe(38);
+		expect(handlers.size).toBe(39);
 		expect(handlers.has('dialog:selectFolder')).toBe(true);
 		expect(handlers.has('sync:setCustomPath')).toBe(true);
 		expect(handlers.has('power:removeReason')).toBe(true);

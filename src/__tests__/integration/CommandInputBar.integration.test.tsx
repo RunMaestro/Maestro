@@ -346,7 +346,7 @@ describe('CommandInputBar integration', () => {
 		expect(vibrateSpy).toHaveBeenCalledWith(50);
 	});
 
-	it('guards disabled connection states, empty terminal submits, and desktop AI keyboard submit', () => {
+	it('keeps disconnected input editable, guards disabled terminal submits, and desktop AI keyboard submit', () => {
 		setWindowSize(768);
 		const onSubmit = vi.fn();
 		const onInputBlur = vi.fn();
@@ -357,9 +357,10 @@ describe('CommandInputBar integration', () => {
 			onSubmit,
 		});
 
-		expect(screen.getByPlaceholderText('Offline...')).toBeDisabled();
+		expect(screen.getByPlaceholderText('Offline...')).not.toBeDisabled();
 		fireEvent.submit(screen.getByRole('textbox').closest('form')!);
-		expect(onSubmit).not.toHaveBeenCalled();
+		expect(onSubmit).toHaveBeenCalledWith('blocked');
+		onSubmit.mockClear();
 
 		rerender(
 			<ThemeProvider>
@@ -371,7 +372,7 @@ describe('CommandInputBar integration', () => {
 				/>
 			</ThemeProvider>
 		);
-		expect(screen.getByPlaceholderText('Connecting...')).toBeDisabled();
+		expect(screen.getByPlaceholderText('Connecting...')).not.toBeDisabled();
 
 		rerender(
 			<ThemeProvider>

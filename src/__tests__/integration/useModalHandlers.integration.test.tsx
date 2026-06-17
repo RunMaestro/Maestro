@@ -630,7 +630,7 @@ describe('useModalHandlers integration', () => {
 			undefined,
 			'remote-from-config'
 		);
-		expect(useModalStore.getState().getData('gitDiff')).toBeUndefined();
+		expect(useModalStore.getState().getData('gitDiff')).toEqual({ diff: '' });
 	});
 
 	it('invokes live recovery action callbacks from generated recovery actions', async () => {
@@ -809,7 +809,7 @@ describe('useModalHandlers integration', () => {
 		expect(input.focus).toHaveBeenCalled();
 	});
 
-	it('guards quick actions without an active AI agent and falls back to body focus', () => {
+	it('guards rename without an active AI agent, opens tab switcher for AI tabs, and falls back to body focus', () => {
 		const bodyFocus = vi.spyOn(document.body, 'focus').mockImplementation(vi.fn());
 		const { hook } = renderHandlers({
 			inputRef: { current: null },
@@ -838,6 +838,6 @@ describe('useModalHandlers integration', () => {
 		});
 
 		expect(useModalStore.getState().getData('renameTab')).toBeUndefined();
-		expect(useModalStore.getState().isOpen('tabSwitcher')).toBe(false);
+		expect(useModalStore.getState().isOpen('tabSwitcher')).toBe(true);
 	});
 });

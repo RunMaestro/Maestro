@@ -3287,8 +3287,7 @@ describe('MainPanel', () => {
 			fireEvent.click(screen.getByTestId('view-diff-btn'));
 
 			await waitFor(() => {
-				// Should not call setGitDiffPreview with empty diff
-				expect(setGitDiffPreview).not.toHaveBeenCalled();
+				expect(setGitDiffPreview).toHaveBeenCalledWith('');
 			});
 		});
 

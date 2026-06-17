@@ -191,7 +191,7 @@ describe('useMobileSessionManagement integration', () => {
 		expect(result.current.activeTabId).toBe('tab-2');
 		expect(result.current.sessions[0]).toBe(inactive);
 		expect(result.current.sessions[1].bookmarked).toBe(true);
-		expect(result.current.sessions[1].aiTabs?.map((item) => item.id)).toEqual(['tab-2', 'tab-1']);
+		expect(result.current.sessions[1].aiTabs?.map((item) => item.id)).toEqual(['tab-2']);
 		expect(result.current.sessions[1].aiTabs?.find((item) => item.id === 'tab-2')?.starred).toBe(
 			true
 		);

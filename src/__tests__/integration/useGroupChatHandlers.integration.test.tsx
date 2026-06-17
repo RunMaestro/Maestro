@@ -1,4 +1,4 @@
-import { act, cleanup, renderHook } from '@testing-library/react';
+import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useGroupChatHandlers } from '../../renderer/hooks/groupChat/useGroupChatHandlers';
@@ -466,9 +466,14 @@ describe('useGroupChatHandlers integration', () => {
 		act(() => result.current.handleJumpToGroupChatMessage(1234));
 		expect(scrollToMessage).toHaveBeenCalledWith(1234);
 
+		groupChatBridge.load.mockResolvedValueOnce({
+			id: 'gc-2',
+			name: 'Other',
+			participants: [{ name: 'Agent B' }],
+		});
 		useModalStore.getState().openModal('processMonitor');
 		act(() => result.current.handleProcessMonitorNavigateToGroupChat('gc-2'));
-		expect(useGroupChatStore.getState().activeGroupChatId).toBe('gc-2');
+		await waitFor(() => expect(useGroupChatStore.getState().activeGroupChatId).toBe('gc-2'));
 		expect(useGroupChatStore.getState().participantStates.get('Agent B')).toBe('working');
 		expect(useModalStore.getState().modals.get('processMonitor')?.open ?? false).toBe(false);
 

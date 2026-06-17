@@ -3,7 +3,6 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import React from 'react';
 import { WorktreeRunSection } from '../../renderer/components/WorktreeRunSection';
 import type { Theme, Session } from '../../renderer/types';
-import { gitService } from '../../renderer/services/git';
 
 const mockCaptureException = vi.hoisted(() => vi.fn());
 
@@ -107,6 +106,9 @@ describe('WorktreeRunSection', () => {
 		(window.maestro.git as Record<string, unknown>).branch = vi
 			.fn()
 			.mockResolvedValue({ stdout: 'main' });
+		(window.maestro.git as Record<string, unknown>).branches = vi
+			.fn()
+			.mockResolvedValue({ branches: ['main', 'develop'] });
 		mockOnWorktreeTargetChange = vi.fn();
 		mockOnOpenWorktreeConfig = vi.fn();
 	});
@@ -697,7 +699,9 @@ describe('WorktreeRunSection', () => {
 		(window.maestro.git as Record<string, unknown>).branch = vi
 			.fn()
 			.mockResolvedValue({ stdout: 'develop' });
-		vi.mocked(gitService.getBranches).mockResolvedValue(['main', 'develop', 'feature/xyz']);
+		(window.maestro.git as Record<string, unknown>).branches = vi
+			.fn()
+			.mockResolvedValue({ branches: ['main', 'develop', 'feature/xyz'] });
 
 		render(
 			<WorktreeRunSection
@@ -728,7 +732,9 @@ describe('WorktreeRunSection', () => {
 		const session = createMockSession();
 		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
 		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
-		vi.mocked(gitService.getBranches).mockResolvedValue(['main', 'develop', 'feature/xyz']);
+		(window.maestro.git as Record<string, unknown>).branches = vi
+			.fn()
+			.mockResolvedValue({ branches: ['main', 'develop', 'feature/xyz'] });
 
 		render(
 			<WorktreeRunSection
@@ -1129,7 +1135,9 @@ describe('WorktreeRunSection', () => {
 		const session = createMockSession();
 		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
 		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
-		vi.mocked(gitService.getBranches).mockRejectedValue(new Error('git not found'));
+		(window.maestro.git as Record<string, unknown>).branches = vi
+			.fn()
+			.mockRejectedValue(new Error('git not found'));
 
 		render(
 			<WorktreeRunSection
@@ -1162,10 +1170,11 @@ describe('WorktreeRunSection', () => {
 
 	it('ignores branch-loading failures after unmount', async () => {
 		const session = createMockSession();
-		const branchLoad = createDeferred<string[]>();
+		const branchLoad = createDeferred<{ branches: string[] }>();
 		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
 		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
-		vi.mocked(gitService.getBranches).mockReturnValue(branchLoad.promise);
+		const branchesMock = vi.fn().mockReturnValue(branchLoad.promise);
+		(window.maestro.git as Record<string, unknown>).branches = branchesMock;
 
 		const { unmount } = render(
 			<WorktreeRunSection
@@ -1185,7 +1194,7 @@ describe('WorktreeRunSection', () => {
 			});
 		});
 		await waitFor(() => {
-			expect(gitService.getBranches).toHaveBeenCalledWith('/project');
+			expect(branchesMock).toHaveBeenCalledWith('/project', undefined);
 		});
 		unmount();
 
@@ -1208,7 +1217,9 @@ describe('WorktreeRunSection', () => {
 		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = vi
 			.fn()
 			.mockReturnValue(scanLoad.promise);
-		vi.mocked(gitService.getBranches).mockResolvedValue(['main']);
+		(window.maestro.git as Record<string, unknown>).branches = vi
+			.fn()
+			.mockResolvedValue({ branches: ['main'] });
 
 		const { unmount } = render(
 			<WorktreeRunSection
@@ -1245,7 +1256,9 @@ describe('WorktreeRunSection', () => {
 		const session = createMockSession();
 		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
 		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
-		vi.mocked(gitService.getBranches).mockResolvedValue(['main']);
+		(window.maestro.git as Record<string, unknown>).branches = vi
+			.fn()
+			.mockResolvedValue({ branches: ['main'] });
 
 		render(
 			<WorktreeRunSection
@@ -1380,7 +1393,9 @@ describe('WorktreeRunSection', () => {
 		const session = createMockSession();
 		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
 		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
-		vi.mocked(gitService.getBranches).mockResolvedValue(['main']);
+		(window.maestro.git as Record<string, unknown>).branches = vi
+			.fn()
+			.mockResolvedValue({ branches: ['main'] });
 
 		render(
 			<WorktreeRunSection
@@ -1415,7 +1430,9 @@ describe('WorktreeRunSection', () => {
 		const session = createMockSession();
 		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
 		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
-		vi.mocked(gitService.getBranches).mockResolvedValue(['main']);
+		(window.maestro.git as Record<string, unknown>).branches = vi
+			.fn()
+			.mockResolvedValue({ branches: ['main'] });
 
 		render(
 			<WorktreeRunSection
@@ -1525,7 +1542,9 @@ describe('WorktreeRunSection', () => {
 		(window.maestro.git as Record<string, unknown>).branch = vi
 			.fn()
 			.mockResolvedValue({ stdout: '' });
-		vi.mocked(gitService.getBranches).mockResolvedValue(['zeta', 'main', 'alpha']);
+		(window.maestro.git as Record<string, unknown>).branches = vi
+			.fn()
+			.mockResolvedValue({ branches: ['zeta', 'main', 'alpha'] });
 
 		render(
 			<WorktreeRunSection
@@ -1551,14 +1570,16 @@ describe('WorktreeRunSection', () => {
 
 	it('ignores branch load results after unmount', async () => {
 		const session = createMockSession();
-		const branches = createDeferred<string[]>();
+		const branches = createDeferred<{ branches: string[] }>();
 		const branch = createDeferred<{ stdout: string }>();
 		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
 		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
 		(window.maestro.git as Record<string, unknown>).branch = vi
 			.fn()
 			.mockReturnValue(branch.promise);
-		vi.mocked(gitService.getBranches).mockReturnValue(branches.promise);
+		(window.maestro.git as Record<string, unknown>).branches = vi
+			.fn()
+			.mockReturnValue(branches.promise);
 
 		const { unmount } = render(
 			<WorktreeRunSection
@@ -1579,7 +1600,7 @@ describe('WorktreeRunSection', () => {
 		unmount();
 
 		await act(async () => {
-			branches.resolve(['main']);
+			branches.resolve({ branches: ['main'] });
 			branch.resolve({ stdout: 'main' });
 			await Promise.resolve();
 		});

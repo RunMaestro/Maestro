@@ -176,6 +176,7 @@ const createMockDeps = (overrides: Partial<UseWizardHandlersDeps> = {}): UseWiza
 		agentSessionId: null,
 		state: {} as any,
 		getStateForTab: vi.fn(() => undefined),
+		hydrateTabState: vi.fn(),
 		isWizardActiveForTab: vi.fn(() => false),
 		startWizard: vi.fn(),
 		endWizard: vi.fn().mockResolvedValue(null),
@@ -224,6 +225,9 @@ const createMockDeps = (overrides: Partial<UseWizardHandlersDeps> = {}): UseWiza
 		} as any,
 		completeWizard: vi.fn(),
 		clearResumeState: vi.fn(),
+		openWizard: vi.fn(),
+		resetWizard: vi.fn(),
+		restoreState: vi.fn(),
 	},
 	spawnBackgroundSynopsis: vi.fn().mockResolvedValue({
 		success: true,
@@ -634,7 +638,7 @@ describe('useWizardHandlers', () => {
 			expect(activeTab?.wizardState?.conversationHistory).toHaveLength(1);
 		});
 
-		it('clears wizard state when wizard is no longer active on tab', async () => {
+		it('hydrates active tab wizard state when inline state is missing', async () => {
 			const tab = createMockTab({
 				wizardState: {
 					isActive: true,
@@ -660,10 +664,12 @@ describe('useWizardHandlers', () => {
 			const session = createMockSession({ aiTabs: [tab] });
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
 
+			const hydrateTabState = vi.fn();
 			const deps = createMockDeps({
 				inlineWizardContext: {
 					...createMockDeps().inlineWizardContext,
 					getStateForTab: vi.fn().mockReturnValue(undefined),
+					hydrateTabState,
 				} as any,
 			});
 
@@ -675,11 +681,23 @@ describe('useWizardHandlers', () => {
 
 			const updatedSession = useSessionStore.getState().sessions[0];
 			const activeTab = updatedSession.aiTabs.find((t) => t.id === 'tab-1');
-			expect(activeTab?.wizardState).toBeUndefined();
+			expect(activeTab?.wizardState?.isActive).toBe(true);
+			expect(hydrateTabState).toHaveBeenCalledWith(
+				'tab-1',
+				expect.objectContaining({
+					isActive: true,
+					mode: 'new',
+					sessionId: 'session-1',
+					tabId: 'tab-1',
+				})
+			);
 		});
 
 		it('clears stale wizard state only from the active session and active tab', async () => {
-			const staleWizardState = createWizardState({ goal: 'Stale active wizard' });
+			const staleWizardState = createWizardState({
+				isActive: false,
+				goal: 'Stale inactive wizard',
+			});
 			const siblingWizardState = createWizardState({ goal: 'Keep sibling wizard' });
 			const otherWizardState = createWizardState({ goal: 'Keep other session wizard' });
 			const session = createMockSession({
@@ -699,10 +717,12 @@ describe('useWizardHandlers', () => {
 				activeSessionId: 'session-1',
 			});
 
+			const hydrateTabState = vi.fn();
 			const deps = createMockDeps({
 				inlineWizardContext: {
 					...createMockDeps().inlineWizardContext,
 					getStateForTab: vi.fn().mockReturnValue(undefined),
+					hydrateTabState,
 				} as any,
 			});
 
@@ -715,6 +735,7 @@ describe('useWizardHandlers', () => {
 			const sessions = useSessionStore.getState().sessions;
 			const activeSession = sessions.find((s) => s.id === 'session-1')!;
 			expect(activeSession.aiTabs.find((tab) => tab.id === 'tab-1')?.wizardState).toBeUndefined();
+			expect(hydrateTabState).not.toHaveBeenCalled();
 			expect(activeSession.aiTabs.find((tab) => tab.id === 'tab-2')?.wizardState).toBe(
 				siblingWizardState
 			);
@@ -3633,6 +3654,7 @@ describe('useWizardHandlers', () => {
 					completeWizard: vi.fn(),
 					clearResumeState: vi.fn(),
 					openWizard: vi.fn(),
+					resetWizard: vi.fn(),
 					restoreState: vi.fn(),
 				},
 				...overrides,
@@ -3752,6 +3774,7 @@ describe('useWizardHandlers', () => {
 				});
 
 				expect(useModalStore.getState().isOpen('wizardResume')).toBe(false);
+				expect(deps.wizardContext.resetWizard).toHaveBeenCalled();
 				expect(deps.wizardContext.openWizard).toHaveBeenCalled();
 			});
 

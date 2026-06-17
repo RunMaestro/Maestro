@@ -364,6 +364,9 @@ function invokeReactKeyDown(element: HTMLElement, key: string) {
 	onKeyDown({
 		key,
 		code: key,
+		currentTarget: element,
+		target: element,
+		preventDefault: vi.fn(),
 		stopPropagation: vi.fn(),
 	} as React.KeyboardEvent<HTMLInputElement>);
 }

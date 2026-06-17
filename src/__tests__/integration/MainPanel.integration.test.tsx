@@ -1151,7 +1151,7 @@ describe('MainPanel integration', () => {
 		render(<MainPanel {...props({ setGitDiffPreview })} />);
 		fireEvent.click(screen.getByTestId('view-diff'));
 		await waitFor(() => expect(gitService.getDiff).toHaveBeenCalled());
-		expect(setGitDiffPreview).not.toHaveBeenCalled();
+		expect(setGitDiffPreview).toHaveBeenCalledWith('');
 
 		cleanup();
 

@@ -379,7 +379,7 @@ describe('AgentConfigPanel', () => {
 			expect(props.onRefreshAgent).toHaveBeenCalled();
 		});
 
-		it('shows a read-only remote command field when SSH is enabled without a custom path', () => {
+		it('shows an editable remote command field when SSH is enabled without a custom path', () => {
 			const props = createDefaultProps({
 				isSshEnabled: true,
 				agent: createMockAgent({ path: '/usr/local/bin/claude', binaryName: 'claude' }),
@@ -391,8 +391,13 @@ describe('AgentConfigPanel', () => {
 			expect(screen.queryByText('Detect')).not.toBeInTheDocument();
 
 			const commandInput = screen.getByDisplayValue('claude');
-			expect(commandInput).toHaveAttribute('readOnly');
-			expect(commandInput).toHaveStyle({ opacity: '0.7' });
+			expect(commandInput).not.toHaveAttribute('readOnly');
+
+			fireEvent.change(commandInput, { target: { value: 'claude-dev' } });
+			expect(props.onCustomPathChange).toHaveBeenCalledWith('claude-dev');
+
+			fireEvent.blur(commandInput);
+			expect(props.onCustomPathBlur).toHaveBeenCalled();
 		});
 
 		it('uses compact spacing and remote reset copy when SSH has a custom command', () => {

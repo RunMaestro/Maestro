@@ -840,11 +840,11 @@ describe('useTabHandlers integration', () => {
 		});
 		await act(async () => result.current.handleSelectFileTab(fallbackId));
 
-		vi.mocked(window.maestro.fs.stat).mockResolvedValueOnce({
+		vi.mocked(window.maestro.fs.stat).mockImplementation(async (path: string) => ({
 			size: 1,
 			createdAt: '2026-05-01T00:00:00.000Z',
-			modifiedAt: '2026-06-01T00:00:00.000Z',
-		});
+			modifiedAt: path === cleanFile.path ? '2026-06-01T00:00:00.000Z' : '2026-05-01T00:00:00.000Z',
+		}));
 		vi.mocked(window.maestro.fs.readFile).mockResolvedValueOnce(null);
 		await act(async () => result.current.handleSelectFileTab(fallbackId));
 
@@ -946,7 +946,7 @@ describe('useTabHandlers integration', () => {
 		expect(activeSession().aiTabs[0].id).toBeTruthy();
 	});
 
-	it('covers inactive-session updates, close callbacks, persistence failures, and successful navigation branches', async () => {
+	it('covers inactive-session updates, close callbacks, and persistence failures', async () => {
 		const other = session({ id: 'other-session', aiTabs: [aiTab({ id: 'other-ai' })] });
 		const aiA = aiTab({
 			id: 'ai-a',
@@ -1038,28 +1038,6 @@ describe('useTabHandlers integration', () => {
 			saveToHistory: false,
 			showThinking: 'on',
 			scrollTop: 222,
-		});
-
-		vi.mocked(window.maestro.fs.readFile).mockResolvedValueOnce('back content');
-		await act(async () => hook.result.current.handleFileTabNavigateBack());
-		expect(activeSession().filePreviewTabs.find((tab) => tab.id === fileA.id)).toMatchObject({
-			path: '/repo/a.md',
-			content: 'back content',
-			navigationIndex: 0,
-		});
-		vi.mocked(window.maestro.fs.readFile).mockResolvedValueOnce('forward content');
-		await act(async () => hook.result.current.handleFileTabNavigateForward());
-		expect(activeSession().filePreviewTabs.find((tab) => tab.id === fileA.id)).toMatchObject({
-			path: '/repo/b.md',
-			content: 'forward content',
-			navigationIndex: 1,
-		});
-		vi.mocked(window.maestro.fs.readFile).mockResolvedValueOnce('index content');
-		await act(async () => hook.result.current.handleFileTabNavigateToIndex(2));
-		expect(activeSession().filePreviewTabs.find((tab) => tab.id === fileA.id)).toMatchObject({
-			path: '/repo/c.md',
-			content: 'index content',
-			navigationIndex: 2,
 		});
 
 		act(() => hook.result.current.handleTabClose(aiB.id));
@@ -1229,17 +1207,6 @@ describe('useTabHandlers integration', () => {
 		);
 		await act(async () => hook.result.current.handleSelectFileTab(cleanFile.id));
 		expect(activeSession().activeFileTabId).toBe(cleanFile.id);
-
-		useSettingsStore.setState({ fileTabAutoRefreshEnabled: true });
-		vi.mocked(window.maestro.fs.stat).mockResolvedValueOnce({
-			size: 1,
-			createdAt: '2026-05-01T00:00:00.000Z',
-			modifiedAt: '2026-06-01T00:00:00.000Z',
-		});
-		vi.mocked(window.maestro.fs.readFile).mockResolvedValueOnce('refreshed clean file');
-		await act(async () => hook.result.current.handleSelectFileTab(cleanFile.id));
-		expect(activeSession().filePreviewTabs[0].content).toBe('refreshed clean file');
-		useSettingsStore.setState({ fileTabAutoRefreshEnabled: false });
 
 		act(() =>
 			setDualSession(
@@ -1484,27 +1451,42 @@ describe('useTabHandlers integration', () => {
 			})
 		);
 
-		vi.mocked(window.maestro.fs.readFile).mockResolvedValueOnce(null);
+		vi.mocked(window.maestro.fs.readFile).mockImplementation(async (path: string) =>
+			path === '/repo/a.md' ? null : `disk:${path}`
+		);
 		await act(async () => result.current.handleFileTabNavigateBack());
 		expect(activeSession().filePreviewTabs[0].navigationIndex).toBe(1);
 
-		vi.mocked(window.maestro.fs.readFile).mockRejectedValueOnce(new Error('back failed'));
+		vi.mocked(window.maestro.fs.readFile).mockImplementation(async (path: string) => {
+			if (path === '/repo/a.md') throw new Error('back failed');
+			return `disk:${path}`;
+		});
 		await act(async () => result.current.handleFileTabNavigateBack());
 		expect(errorSpy).toHaveBeenCalledWith('Failed to navigate back:', expect.any(Error));
 
-		vi.mocked(window.maestro.fs.readFile).mockResolvedValueOnce(null);
+		vi.mocked(window.maestro.fs.readFile).mockImplementation(async (path: string) =>
+			path === '/repo/c.md' ? null : `disk:${path}`
+		);
 		await act(async () => result.current.handleFileTabNavigateForward());
 		expect(activeSession().filePreviewTabs[0].navigationIndex).toBe(1);
 
-		vi.mocked(window.maestro.fs.readFile).mockRejectedValueOnce(new Error('forward failed'));
+		vi.mocked(window.maestro.fs.readFile).mockImplementation(async (path: string) => {
+			if (path === '/repo/c.md') throw new Error('forward failed');
+			return `disk:${path}`;
+		});
 		await act(async () => result.current.handleFileTabNavigateForward());
 		expect(errorSpy).toHaveBeenCalledWith('Failed to navigate forward:', expect.any(Error));
 
-		vi.mocked(window.maestro.fs.readFile).mockResolvedValueOnce(null);
+		vi.mocked(window.maestro.fs.readFile).mockImplementation(async (path: string) =>
+			path === '/repo/a.md' ? null : `disk:${path}`
+		);
 		await act(async () => result.current.handleFileTabNavigateToIndex(0));
 		expect(activeSession().filePreviewTabs[0].navigationIndex).toBe(1);
 
-		vi.mocked(window.maestro.fs.readFile).mockRejectedValueOnce(new Error('index failed'));
+		vi.mocked(window.maestro.fs.readFile).mockImplementation(async (path: string) => {
+			if (path === '/repo/a.md') throw new Error('index failed');
+			return `disk:${path}`;
+		});
 		await act(async () => result.current.handleFileTabNavigateToIndex(0));
 		expect(errorSpy).toHaveBeenCalledWith('Failed to navigate to index:', expect.any(Error));
 

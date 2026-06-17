@@ -566,7 +566,7 @@ describe('MobileApp integration', () => {
 
 		renderApp();
 
-		expect(screen.getByText('Mobile Session')).toBeInTheDocument();
+		expect(screen.getAllByText('Mobile Session').length).toBeGreaterThan(0);
 		expect(screen.getByText('$0.42')).toBeInTheDocument();
 		expect(screen.getByTestId('session-pill-bar')).toBeInTheDocument();
 		expect(screen.getByTestId('tab-bar')).toBeInTheDocument();
@@ -948,11 +948,10 @@ describe('MobileApp integration', () => {
 
 		renderApp();
 
-		expect(screen.getByText('session-')).toHaveAttribute(
-			'title',
-			'Claude Session: session-agent-987654321'
+		expect(screen.getByTitle('Claude Session: session-agent-987654321')).toHaveTextContent(
+			'session-'
 		);
-		expect(screen.getByText('$0.05')).toBeInTheDocument();
+		expect(screen.getAllByTitle('Session cost: $0.05').length).toBeGreaterThan(0);
 		expect(screen.getByTitle('Session idle')).toBeInTheDocument();
 		fireEvent.click(screen.getByText('Maestro'));
 		expect(mocks.goToDashboard).not.toHaveBeenCalled();

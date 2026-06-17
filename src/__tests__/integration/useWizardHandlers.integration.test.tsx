@@ -153,6 +153,7 @@ const createDeps = (overrides: Partial<UseWizardHandlersDeps> = {}): UseWizardHa
 		completeWizard: vi.fn(),
 		clearResumeState: vi.fn(),
 		openWizard: vi.fn(),
+		resetWizard: vi.fn(),
 		restoreState: vi.fn(),
 	},
 	spawnBackgroundSynopsis: vi.fn().mockResolvedValue({
@@ -679,12 +680,14 @@ describe('useWizardHandlers integration', () => {
 		const restoreState = vi.fn();
 		const openWizard = vi.fn();
 		const clearResumeState = vi.fn();
+		const resetWizard = vi.fn();
 		const deps = createDeps({
 			wizardContext: {
 				state: createWizardState(),
 				completeWizard: vi.fn(),
 				clearResumeState,
 				openWizard,
+				resetWizard,
 				restoreState,
 			},
 		});
@@ -730,6 +733,7 @@ describe('useWizardHandlers integration', () => {
 		});
 
 		expect(clearResumeState).toHaveBeenCalledTimes(1);
+		expect(resetWizard).toHaveBeenCalledTimes(1);
 		expect(openWizard).toHaveBeenCalledTimes(3);
 
 		act(() => {

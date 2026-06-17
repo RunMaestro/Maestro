@@ -643,11 +643,15 @@ describe('TerminalOutput integration', () => {
 		fireEvent(expandedOutput as HTMLElement, wheelEvent);
 		expect(stopPropagation).toHaveBeenCalled();
 
-		fireEvent.click(screen.getAllByTitle('Filter this output')[0]);
+		const expandedFilterButton = expandableLogItem.querySelector<HTMLButtonElement>(
+			'button[title="Filter this output"]'
+		);
+		expect(expandedFilterButton).toBeTruthy();
+		fireEvent.click(expandedFilterButton as HTMLButtonElement);
 		fireEvent.change(screen.getByPlaceholderText('Include by keyword'), {
 			target: { value: 'needle' },
 		});
-		expect(screen.getByText(/needle.*beta/)).toBeInTheDocument();
+		expect(expandableLogItem).toHaveTextContent('needle beta');
 		expect(screen.queryByText('line one')).not.toBeInTheDocument();
 		fireEvent.click(screen.getByTitle('Include matching lines'));
 		expect(screen.getByPlaceholderText('Exclude by keyword')).toBeInTheDocument();
@@ -660,7 +664,11 @@ describe('TerminalOutput integration', () => {
 		await waitFor(() =>
 			expect(screen.queryByPlaceholderText('Exclude by RegEx')).not.toBeInTheDocument()
 		);
-		fireEvent.click(screen.getAllByTitle('Filter this output')[0]);
+		const reopenedFilterButton = expandableLogItem.querySelector<HTMLButtonElement>(
+			'button[title="Filter this output"]'
+		);
+		expect(reopenedFilterButton).toBeTruthy();
+		fireEvent.click(reopenedFilterButton as HTMLButtonElement);
 		const emptyFilterInput = screen.getByPlaceholderText('Include by keyword');
 		expect(emptyFilterInput).toBeInTheDocument();
 		fireEvent.blur(emptyFilterInput);
