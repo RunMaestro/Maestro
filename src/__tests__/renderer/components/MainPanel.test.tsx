@@ -3206,8 +3206,11 @@ describe('MainPanel', () => {
 			expect(screen.queryByTestId('tab-bar')).not.toBeInTheDocument();
 		});
 
-		it('should handle tab without usageStats', () => {
+		it('should handle tab without usageStats', async () => {
+			vi.mocked(window.maestro.agents.getConfig).mockResolvedValueOnce({ contextWindow: 200000 });
+			const getContextColor = vi.fn().mockReturnValue('#22c55e');
 			const session = createSession({
+				contextUsage: 37,
 				aiTabs: [
 					{
 						id: 'tab-1',
@@ -3221,10 +3224,13 @@ describe('MainPanel', () => {
 				activeTabId: 'tab-1',
 			});
 
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			render(
+				<MainPanel {...defaultProps} activeSession={session} getContextColor={getContextColor} />
+			);
 
-			// Should render without crashing - Context Window widget is hidden when contextWindow is not configured
-			expect(screen.queryByText('Context Window')).not.toBeInTheDocument();
+			await waitFor(() => {
+				expect(getContextColor).toHaveBeenCalledWith(37, theme);
+			});
 		});
 
 		it('should handle missing git status from context gracefully', async () => {
@@ -3272,6 +3278,28 @@ describe('MainPanel', () => {
 		it('should handle gitDiff with no content gracefully', async () => {
 			const { gitService } = await import('../../../renderer/services/git');
 			vi.mocked(gitService.getDiff).mockResolvedValue({ diff: '' });
+
+			const setGitDiffPreview = vi.fn();
+			const session = createSession({ isGitRepo: true });
+
+			render(
+				<MainPanel
+					{...defaultProps}
+					activeSession={session}
+					setGitDiffPreview={setGitDiffPreview}
+				/>
+			);
+
+			fireEvent.click(screen.getByTestId('view-diff-btn'));
+
+			await waitFor(() => {
+				expect(setGitDiffPreview).toHaveBeenCalledWith('');
+			});
+		});
+
+		it('should handle gitDiff responses with no diff property gracefully', async () => {
+			const { gitService } = await import('../../../renderer/services/git');
+			vi.mocked(gitService.getDiff).mockResolvedValue({} as any);
 
 			const setGitDiffPreview = vi.fn();
 			const session = createSession({ isGitRepo: true });

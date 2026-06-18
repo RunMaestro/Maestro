@@ -6,7 +6,10 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { useInlineWizard } from '../../../renderer/hooks/batch/useInlineWizard';
+import {
+	type InlineWizardState,
+	useInlineWizard,
+} from '../../../renderer/hooks/batch/useInlineWizard';
 
 // Mock hasCapabilityCached for wizard support checks
 vi.mock('../../../renderer/hooks/agent/useAgentCapabilities', async () => {
@@ -181,5 +184,46 @@ describe('useInlineWizard - Session Overrides', () => {
 				sessionCustomPath: '/delayed/path',
 			})
 		);
+	});
+
+	it('hydrates a tab once without overwriting existing tab wizard state', () => {
+		const { result } = renderHook(() => useInlineWizard());
+		const firstState = {
+			isActive: true,
+			isInitializing: false,
+			isWaiting: false,
+			mode: 'new',
+			goal: 'first',
+			confidence: 20,
+			ready: false,
+			conversationHistory: [],
+			isGeneratingDocs: false,
+			generatedDocuments: [],
+			existingDocuments: [],
+			previousUIState: null,
+			error: null,
+			lastUserMessageContent: null,
+			projectPath: '/project',
+			agentType: 'claude-code',
+			sessionName: 'Session',
+			tabId: 'tab-hydrate',
+			sessionId: 'session-hydrate',
+			streamingContent: '',
+			generationProgress: null,
+			currentDocumentIndex: 0,
+			agentSessionId: null,
+			subfolderName: null,
+			subfolderPath: null,
+			autoRunFolderPath: '/project/Auto Run Docs',
+		} as InlineWizardState;
+		const secondState = { ...firstState, goal: 'second' };
+
+		act(() => {
+			result.current.hydrateTabState('tab-hydrate', firstState);
+			result.current.hydrateTabState('tab-hydrate', secondState);
+		});
+
+		expect(result.current.getStateForTab('tab-hydrate')?.goal).toBe('first');
+		expect(result.current.isWizardActiveForTab('tab-hydrate')).toBe(true);
 	});
 });

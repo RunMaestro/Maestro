@@ -650,7 +650,7 @@ Summarize the outcome for the user in one sentence. Start with "RESULT:"`;
  * for all agents. This mirrors the bug fix in process-manager.ts where
  * --input-format stream-json was being added unconditionally to all agents.
  */
-describe.skipIf(SKIP_INTEGRATION)('Agent Argument Building Tests', () => {
+describe('Agent Argument Building Tests', () => {
 	// Test all agents, even if not available (this is arg building, not execution)
 	for (const agent of AGENTS) {
 		describe(agent.name, () => {

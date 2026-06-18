@@ -318,6 +318,33 @@ describe('useAppInitialization', () => {
 
 			expect(result.current.ghCliAvailable).toBe(false);
 		});
+
+		it('updates ghCliAvailable from availability change events', async () => {
+			mockCheckGhCli.mockResolvedValue({ installed: false, authenticated: false });
+			const { result } = renderHook(() => useAppInitialization());
+			await act(flushPromises);
+			expect(result.current.ghCliAvailable).toBe(false);
+
+			act(() => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:gh-cli-availability-changed', {
+						detail: { available: true },
+					})
+				);
+			});
+
+			expect(result.current.ghCliAvailable).toBe(true);
+
+			act(() => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:gh-cli-availability-changed', {
+						detail: { available: 'unknown' },
+					})
+				);
+			});
+
+			expect(result.current.ghCliAvailable).toBe(true);
+		});
 	});
 
 	// --- Windows warning modal ---

@@ -4,36 +4,41 @@
 
 Branch: `codex/full-e2e-coverage-campaign`
 
-This campaign extends the existing coverage work from unit/integration coverage into app-wide Playwright/Electron E2E coverage.
+This campaign extends the existing coverage work from unit/integration coverage into app-wide Playwright/Electron E2E coverage. The defined active campaign is now authored and runtime-verified on `codex/full-e2e-coverage-campaign`.
 
 Measured inventory:
 
-| Area                                    |                     Current Count |
-| --------------------------------------- | --------------------------------: |
-| E2E spec files after recovery tranche   |                                15 |
-| Declared active E2E test functions      |                              2376 |
-| Explicit skipped E2E test functions     |                                 6 |
-| Last pre-campaign full E2E result       |             91 passed, 49 skipped |
-| Latest full E2E validation              | 638 passed, 0 skipped (batch 202) |
-| Approx. authored active-target progress |            100.0% (3,025 / 3,025) |
-| Renderer component files                |                               236 |
-| Renderer hook files                     |                               123 |
-| Renderer store files                    |                                11 |
-| Web/mobile files                        |                                59 |
-| IPC handler modules                     |                                30 |
-| Approx. main IPC registrations          |                               303 |
-| Preload namespaces                      |                                24 |
-| Approx. preload IPC calls               |                               422 |
-| Settings metadata keys                  |                                88 |
-| Keyboard shortcut IDs                   |                                77 |
-| High-signal surface files               |                               573 |
-| Current `npm run test` result           |        28,521 passed, 106 skipped |
+| Area                                    |               Current Count |
+| --------------------------------------- | --------------------------: |
+| E2E spec files                          |                          15 |
+| Direct static `test(...)` calls         |                       2,373 |
+| Static `test.skip(...)` calls           |                           0 |
+| Static `test.fixme(...)` calls          |                           0 |
+| Static `test.only(...)` calls           |                           0 |
+| Final Phase 6 runtime E2E validation    |     2,970 passed, 0 skipped |
+| Approx. authored active-target progress |      100.0% (3,025 / 3,025) |
+| Renderer component files                |                         236 |
+| Renderer hook files                     |                         123 |
+| Renderer store files                    |                          11 |
+| Web/mobile files                        |                          59 |
+| IPC handler modules                     |                          30 |
+| Approx. main IPC registrations          |                         303 |
+| Preload namespaces                      |                          24 |
+| Approx. preload IPC calls               |                         422 |
+| Settings metadata keys                  |                          88 |
+| Keyboard shortcut IDs                   |                          77 |
+| High-signal surface files               |                         573 |
+| Current `npm run test:coverage` result  | 28,679 passed, 100% covered |
+| Current full integration result         |               12,687 passed |
 
-Latest authoring merge:
+Latest verification:
 
-- Latest shell-tabs-command tranche accepted `shell-tabs-command` through `37045d564` with spec commit `15692b0d0`. This added 19 active app-shell/sidebar/global-shortcut completion scenarios for Left Bar/right-panel restoration, Quick Actions cancellation without shell side effects, hidden-right Files/History/Auto Run shortcut restoration with terminal draft preservation, agent-search Escape recovery over History/Auto Run, terminal/workbench cycling with hidden chrome, and Shortcuts Help Escape behavior over a hidden Left Bar without running Playwright/E2E execution, completing the 3,025 / 3,025 active scenario target.
+- Unit/enforced coverage: `npm run test:coverage` passed with 731 test files, 28,679 tests, and 100% statements/branches/functions/lines. Log: `/tmp/maestro-final-test-coverage-20260617222450.log`.
+- Full integration with SSH enabled passed with 539 test files and 12,687 tests. Log: `/tmp/maestro-integration-ssh-full-20260617220145.log`.
+- Final Phase 6 E2E shard A passed 985 / 985. Log: `/tmp/maestro-phase6-final-a.log`; summary: [execution-results/phase6-final-shard-a.md](execution-results/phase6-final-shard-a.md).
+- Final Phase 6 E2E shard B passed 1,985 / 1,985. Log: `/tmp/maestro-phase6-final-b.log`; summary: [execution-results/phase6-final-shard-b.md](execution-results/phase6-final-shard-b.md).
 
-The current E2E suite now reaches the canonical active-target campaign matrix. Full Playwright/E2E execution remains intentionally deferred by this authoring phase.
+The current E2E suite reaches the canonical 3,025 / 3,025 authored active scenario matrix and the final Phase 6 Playwright/Electron runtime proof is green. The 3,025 matrix count is not one-to-one with the 2,970 runtime Playwright tests because matrix scenario atoms can be covered by a smaller number of runtime tests, and some direct source declarations expand into multiple runtime tests.
 
 ## Scope Rules
 

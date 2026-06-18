@@ -90,6 +90,12 @@ const fourthTrancheSkippedScenarioMatrix = [
 	},
 ] as const;
 
+const nonActiveScenarioMatrix = [
+	...secondTrancheSkippedScenarioMatrix,
+	...thirdTrancheSkippedScenarioMatrix,
+	...fourthTrancheSkippedScenarioMatrix,
+] as const;
+
 const fifthTrancheActiveScenarioMatrix = [
 	{ id: 'GGP-A26', title: 'changes Create Pull Request target branch before submission' },
 	{ id: 'GGP-A27', title: 'cancels Create Pull Request without submitting IPC payload' },
@@ -1753,7 +1759,7 @@ async function stubBundledCommandLoadFailures(electronApp: ElectronApplication) 
 	});
 }
 
-test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
+test.describe(`Git, Group Chat, and Playbooks deterministic tranches (${nonActiveScenarioMatrix.length} non-active residuals documented)`, () => {
 	test('surfaces Git commands for the active local repository', async () => {
 		const launched = await launchGitGroupChatPlaybooksWorkbench();
 		try {
@@ -5765,18 +5771,6 @@ test.describe('Git, Group Chat, and Playbooks deterministic tranches', () => {
 			} finally {
 				await launched.cleanup();
 			}
-		});
-	}
-});
-
-test.describe('Git, Group Chat, and Playbooks skipped/env-gated rows', () => {
-	for (const scenario of [
-		...secondTrancheSkippedScenarioMatrix,
-		...thirdTrancheSkippedScenarioMatrix,
-		...fourthTrancheSkippedScenarioMatrix,
-	]) {
-		test(`${scenario.id}: ${scenario.title}`, async () => {
-			test.skip(true, scenario.reason);
 		});
 	}
 });

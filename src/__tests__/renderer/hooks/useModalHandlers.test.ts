@@ -2378,6 +2378,27 @@ describe('useModalHandlers', () => {
 			expect(useModalStore.getState().isOpen('gitDiff')).toBe(true);
 			expect(useModalStore.getState().getData('gitDiff')?.diff).toBe('');
 		});
+
+		it('opens preview with an empty string when git diff response omits diff', async () => {
+			const session = createMockSession({
+				isGitRepo: true,
+				cwd: '/projects/my-repo',
+				inputMode: 'ai',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			(gitService.getDiff as ReturnType<typeof vi.fn>).mockResolvedValue({} as any);
+
+			const { result } = renderHook(() =>
+				useModalHandlers(createInputRef(), createTerminalOutputRef())
+			);
+
+			await act(async () => {
+				await result.current.handleViewGitDiff();
+			});
+
+			expect(useModalStore.getState().isOpen('gitDiff')).toBe(true);
+			expect(useModalStore.getState().getData('gitDiff')?.diff).toBe('');
+		});
 	});
 
 	describe('handleDirectorNotesResumeSession', () => {

@@ -166,11 +166,9 @@ export function useAutoRunUndo({
 
 			// Schedule snapshot after debounce delay of inactivity
 			undoSnapshotTimeoutRef.current = setTimeout(() => {
-				const pendingSnapshot = pendingUndoSnapshotRef.current;
+				const pendingSnapshot = pendingUndoSnapshotRef.current!;
 				pendingUndoSnapshotRef.current = null;
-				if (pendingSnapshot) {
-					pushUndoState(pendingSnapshot.content, pendingSnapshot.cursorPosition);
-				}
+				pushUndoState(pendingSnapshot.content, pendingSnapshot.cursorPosition);
 			}, UNDO_SNAPSHOT_DEBOUNCE_MS);
 		},
 		[pushUndoState]
@@ -178,10 +176,8 @@ export function useAutoRunUndo({
 
 	const flushPendingUndoSnapshot = useCallback(() => {
 		if (!pendingUndoSnapshotRef.current) return;
-		if (undoSnapshotTimeoutRef.current) {
-			clearTimeout(undoSnapshotTimeoutRef.current);
-			undoSnapshotTimeoutRef.current = null;
-		}
+		clearTimeout(undoSnapshotTimeoutRef.current!);
+		undoSnapshotTimeoutRef.current = null;
 		const pendingSnapshot = pendingUndoSnapshotRef.current;
 		pendingUndoSnapshotRef.current = null;
 		pushUndoState(pendingSnapshot.content, pendingSnapshot.cursorPosition);

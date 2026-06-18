@@ -175,7 +175,7 @@ export function AutoRunExpandedModal({
 	isDirtyRef.current = isDirty || sharedDraftDirty;
 	const hasUnsavedChanges = useCallback(() => {
 		return (
-			(autoRunRef.current?.isDirty() ?? false) || isDirtyRef.current || sharedDraftDirtyRef.current
+			Boolean(autoRunRef.current?.isDirty()) || isDirtyRef.current || sharedDraftDirtyRef.current
 		);
 	}, []);
 

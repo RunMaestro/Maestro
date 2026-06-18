@@ -39,6 +39,7 @@ vi.mock('electron', () => ({
 		trashItem: vi.fn(),
 	},
 	clipboard: {
+		writeText: vi.fn(),
 		writeImage: vi.fn(),
 	},
 	nativeImage: {
@@ -819,6 +820,24 @@ describe('system IPC handlers', () => {
 			const handler = handlers.get('shell:openPath');
 			// Should not throw — logs warning instead
 			await expect(handler!({} as any, '/path/to/file.xyz')).resolves.toBeUndefined();
+		});
+	});
+
+	describe('clipboard:writeText', () => {
+		it('should write valid text to the clipboard', async () => {
+			const handler = handlers.get('clipboard:writeText');
+			await handler!({} as any, 'copy me');
+
+			expect(clipboard.writeText).toHaveBeenCalledWith('copy me');
+		});
+
+		it('should reject non-string clipboard text', async () => {
+			const handler = handlers.get('clipboard:writeText');
+
+			await expect(handler!({} as any, null)).rejects.toThrow(
+				'Invalid clipboard text: must be a string'
+			);
+			expect(clipboard.writeText).not.toHaveBeenCalled();
 		});
 	});
 

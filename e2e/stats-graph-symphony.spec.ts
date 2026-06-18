@@ -1411,7 +1411,7 @@ async function openLeaderboardWithManualAuthToken(
 	return registeredLeaderboardDialog;
 }
 
-test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} active, ${skippedScenarioMatrix.length} skipped, ${envGatedScenarioMatrix.length} env-gated)`, () => {
+test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} active; ${skippedScenarioMatrix.length + envGatedScenarioMatrix.length} non-active residuals documented)`, () => {
 	let window: Page;
 	let electronApp: ElectronApplication;
 	let cleanupApp: (() => Promise<void>) | undefined;
@@ -6167,18 +6167,6 @@ test.describe(`Stats graph Symphony matrix (${activeScenarioMatrix.length} activ
 					break;
 				}
 			}
-		});
-	}
-
-	for (const scenario of skippedScenarioMatrix) {
-		test.skip(`${scenario.id} ${scenario.title} [skipped product gap]`, async () => {
-			void scenario.reason;
-		});
-	}
-
-	for (const scenario of envGatedScenarioMatrix) {
-		test.skip(`${scenario.id} ${scenario.title} [env-gated]`, async () => {
-			void scenario.reason;
 		});
 	}
 });

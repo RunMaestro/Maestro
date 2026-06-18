@@ -1986,6 +1986,24 @@ describe('FileExplorerPanel', () => {
 			expect(mockClipboard.writeText).toHaveBeenCalledWith('/Users/test/project/package.json');
 		});
 
+		it('shows a failure flash when Copy Path cannot write to the clipboard', async () => {
+			window.maestro.shell.copyTextToClipboard = vi.fn().mockRejectedValueOnce(new Error('denied'));
+
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
+
+			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('package.json')
+			);
+			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
+
+			await act(async () => {
+				fireEvent.click(screen.getByText('Copy Path'));
+				await Promise.resolve();
+			});
+
+			expect(defaultProps.onShowFlash).toHaveBeenCalledWith('Failed to Copy Path');
+		});
+
 		it('closes context menu on Escape key', () => {
 			const { container } = render(<FileExplorerPanel {...defaultProps} />);
 

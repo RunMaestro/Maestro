@@ -2,11 +2,11 @@
 
 - Status: complete
 - Date: 2026-06-17
-- Phase 5 runtime proof: clean final current-tree two-shard proof
-- Final shard total: 2,991 / 2,991 terminal
+- Runtime proof: clean final Phase 6 current-tree two-shard proof
+- Final shard total: 2,970 / 2,970 passed
 - Passed: 2,970
 - Failed: 0
-- Skipped: 21
+- Skipped: 0
 
 ## Cleanup Results
 
@@ -35,3 +35,11 @@
 - Phase 6 reporter syntax check: passed.
 - Phase 6 reporter dry run: old Phase 5 reporter scheduled `no`; Phase 6 reporter scheduled `yes`; no Maestro E2E PM2 processes listed; no live Maestro E2E Playwright/Electron processes found.
 - `git diff --check`: passed.
+
+## Final Runtime Evidence
+
+- Final Phase 6 shard A: 985 passed, 0 failed, 0 skipped. Raw log: `/tmp/maestro-phase6-final-a.log`.
+- Final Phase 6 shard B: 1,985 passed, 0 failed, 0 skipped. Raw log: `/tmp/maestro-phase6-final-b.log`.
+- Failure artifact audit: 0 failed screenshots, 0 error contexts, 0 traces, and 0 videos under `e2e-results/phase6-final-a` and `e2e-results/phase6-final-b`.
+
+The older Phase 5 A2/B2 total of 2,991 included 21 skipped tests and is retained as historical evidence only. The Phase 6 final proof above supersedes it for current status.

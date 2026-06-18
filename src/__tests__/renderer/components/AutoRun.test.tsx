@@ -789,6 +789,26 @@ describe('AutoRun', () => {
 			);
 		});
 
+		it('syncs direct textarea value before saving on Cmd+S', async () => {
+			const props = createDefaultProps({ content: 'Initial' });
+			renderWithProvider(<AutoRun {...props} />);
+
+			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+			textarea.value = 'Direct DOM edit';
+
+			await act(async () => {
+				fireEvent.keyDown(textarea, { key: 's', metaKey: true });
+				await Promise.resolve();
+			});
+
+			expect(mockMaestro.autorun.writeDoc).toHaveBeenCalledWith(
+				'/test/folder',
+				'test-doc.md',
+				'Direct DOM edit',
+				undefined
+			);
+		});
+
 		it('does not save clean content on Cmd+S', async () => {
 			const props = createDefaultProps({ content: 'Already saved' });
 			renderWithProvider(<AutoRun {...props} />);
@@ -1447,23 +1467,22 @@ describe('AutoRun', () => {
 			});
 		});
 
-		// NOTE: Image upload button is currently disabled in the component (wrapped in `false &&`)
-		// These tests are skipped until the feature is re-enabled
-		it.skip('shows image upload button in edit mode', () => {
+		it('keeps the image upload button hidden in edit mode', () => {
 			const props = createDefaultProps({ mode: 'edit' });
-			renderWithProvider(<AutoRun {...props} />);
+			const { container } = renderWithProvider(<AutoRun {...props} />);
 
-			expect(screen.getByTitle('Add image (or paste from clipboard)')).toBeInTheDocument();
+			expect(screen.queryByTitle('Add image (or paste from clipboard)')).not.toBeInTheDocument();
+			expect(container.querySelector('input[type="file"][accept="image/*"]')).toBeInTheDocument();
 		});
 
-		it.skip('hides image upload button in preview mode', () => {
+		it('hides image upload button in preview mode', () => {
 			const props = createDefaultProps({ mode: 'preview' });
 			renderWithProvider(<AutoRun {...props} />);
 
 			expect(screen.queryByTitle('Add image (or paste from clipboard)')).not.toBeInTheDocument();
 		});
 
-		it.skip('hides image upload button when locked', () => {
+		it('hides image upload button when locked', () => {
 			const batchRunState = createBatchRunState();
 			const props = createDefaultProps({ batchRunState });
 			renderWithProvider(<AutoRun {...props} />);
@@ -1473,10 +1492,43 @@ describe('AutoRun', () => {
 	});
 
 	describe('Image Paste Handling', () => {
-		// TODO: PENDING - NEEDS FIX - FileReader mocking is complex in jsdom
-		it.skip('handles image paste and inserts markdown reference', async () => {
-			// This test requires complex FileReader mocking that doesn't work well in jsdom
-			// The functionality is tested manually
+		it('handles image paste and inserts markdown reference', async () => {
+			class MockFileReader {
+				onload: ((event: { target: { result: string } }) => void) | null = null;
+				readAsDataURL() {
+					this.onload?.({ target: { result: 'data:image/png;base64,abc123' } });
+				}
+			}
+			vi.stubGlobal('FileReader', MockFileReader);
+			const props = createDefaultProps();
+			renderWithProvider(<AutoRun {...props} />);
+
+			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+			textarea.setSelectionRange(props.content.length, props.content.length);
+			fireEvent.paste(textarea, {
+				clipboardData: {
+					items: [
+						{
+							type: 'image/png',
+							getAsFile: () => new File(['test'], 'test.png', { type: 'image/png' }),
+						},
+					],
+					getData: () => '',
+				},
+			});
+
+			await waitFor(() => {
+				expect(mockMaestro.autorun.saveImage).toHaveBeenCalledWith(
+					'/test/folder',
+					'test-doc',
+					'abc123',
+					'png',
+					undefined
+				);
+			});
+			expect(props.onContentChange).toHaveBeenCalledWith(
+				`${props.content}\n![test-123.png](images/test-123.png)`
+			);
 		});
 
 		it('does not handle paste when locked', async () => {
@@ -1707,16 +1759,6 @@ describe('AutoRun', () => {
 			rerender(<AutoRun {...props} batchRunState={createBatchRunState()} />);
 
 			expect(props.onModeChange).not.toHaveBeenCalled();
-		});
-	});
-
-	describe('Legacy onChange Prop', () => {
-		// TODO: PENDING - NEEDS FIX - Legacy onChange requires deep integration testing
-		// The component's internal state management makes it hard to test the legacy path
-		// without modifying source code to expose internals
-		it.skip('falls back to onChange when onContentChange is not provided', async () => {
-			// This test verifies legacy behavior that is complex to test in isolation
-			// The functionality has been tested manually
 		});
 	});
 
@@ -2100,7 +2142,7 @@ describe('AutoRun', () => {
 			const props = createDefaultProps({
 				mode: 'preview',
 				content:
-					'[Plan](maestro-file://Specs/Plan.md)\n[Docs](https://example.com/docs)\n[Local](file:///tmp/local.md)\n\n```mermaid\ngraph TD;\n```',
+					'[Plan](maestro-file://Specs/Plan.md)\n[Broken](maestro-file://Bad%ZZ.md)\n[Docs](https://example.com/docs)\n[Local](file:///tmp/local.md)\n\n```mermaid\ngraph TD;\n```',
 			});
 
 			renderWithProvider(<AutoRun {...props} />);
@@ -2109,6 +2151,9 @@ describe('AutoRun', () => {
 
 			fireEvent.click(screen.getByText('Plan'));
 			expect(props.onSelectDocument).toHaveBeenCalledWith('Specs/Plan');
+
+			fireEvent.click(screen.getByText('Broken'));
+			expect(props.onSelectDocument).toHaveBeenCalledWith('Bad%ZZ');
 
 			fireEvent.click(screen.getByText('Docs'));
 			expect(mockMaestro.shell.openExternal).toHaveBeenCalledWith('https://example.com/docs');
@@ -2213,6 +2258,19 @@ describe('AutoRun', () => {
 			expect(mockMaestro.fs.readFile).toHaveBeenCalledWith('/tmp/bad.png', undefined);
 		});
 
+		it('shows a load error for empty absolute image reads', async () => {
+			mockMaestro.fs.readFile.mockResolvedValueOnce('');
+			const props = createDefaultProps({
+				mode: 'preview',
+				content: '![Missing Absolute](/tmp/missing-empty.png)',
+			});
+
+			renderWithProvider(<AutoRun {...props} />);
+
+			await screen.findByText('Failed to load image: /tmp/missing-empty.png');
+			expect(mockMaestro.fs.readFile).toHaveBeenCalledWith('/tmp/missing-empty.png', undefined);
+		});
+
 		it('shows an unknown-error fallback for failed absolute image reads', async () => {
 			mockMaestro.fs.readFile.mockRejectedValueOnce({});
 			const props = createDefaultProps({
@@ -2258,6 +2316,22 @@ describe('AutoRun', () => {
 			);
 		});
 
+		it('shows a load error for empty Auto Run folder image reads', async () => {
+			mockMaestro.fs.readFile.mockResolvedValueOnce('');
+			const props = createDefaultProps({
+				mode: 'preview',
+				content: '![Missing Empty](images/missing-empty.png)',
+			});
+
+			renderWithProvider(<AutoRun {...props} />);
+
+			await screen.findByText('Failed to load image: images/missing-empty.png');
+			expect(mockMaestro.fs.readFile).toHaveBeenCalledWith(
+				'/test/folder/images/missing-empty.png',
+				undefined
+			);
+		});
+
 		it('shows a load error for unresolved Auto Run folder images', async () => {
 			mockMaestro.fs.readFile.mockRejectedValueOnce(new Error('missing diagram'));
 			const props = createDefaultProps({
@@ -2286,6 +2360,24 @@ describe('AutoRun', () => {
 			await screen.findByText('Invalid image data');
 			expect(mockMaestro.fs.readFile).toHaveBeenCalledWith(
 				'/test/folder/assets/bad.png',
+				undefined
+			);
+		});
+
+		it('shows a load error for empty relative attachment reads', async () => {
+			mockMaestro.fs.readFile.mockResolvedValueOnce('');
+			const props = createDefaultProps({
+				mode: 'preview',
+				content: '![Missing Relative](assets/missing-empty.png)',
+			});
+
+			renderWithProvider(<AutoRun {...props} />);
+
+			expect(
+				await screen.findByText('Failed to load image: assets/missing-empty.png')
+			).toBeInTheDocument();
+			expect(mockMaestro.fs.readFile).toHaveBeenCalledWith(
+				'/test/folder/assets/missing-empty.png',
 				undefined
 			);
 		});
@@ -3078,12 +3170,38 @@ describe('Attachment Management', () => {
 		expect(screen.queryByText(/Attached Images/)).not.toBeInTheDocument();
 	});
 
-	// TODO: PENDING - NEEDS FIX - FileReader mocking in jsdom is complex
-	// The file upload functionality works in the real environment but jsdom
-	// doesn't properly support FileReader constructor mocking
-	it.skip('handles image upload via file input', async () => {
-		// This test requires complex FileReader mocking that doesn't work well in jsdom
-		// The functionality is tested manually
+	it('handles image upload via file input', async () => {
+		class MockFileReader {
+			onload: ((event: { target: { result: string } }) => void) | null = null;
+			readAsDataURL() {
+				this.onload?.({ target: { result: 'data:image/png;base64,upload123' } });
+			}
+		}
+		vi.stubGlobal('FileReader', MockFileReader);
+		mockMaestro.autorun.saveImage.mockResolvedValue({
+			success: true,
+			relativePath: 'images/uploaded-file.png',
+		});
+		const props = createDefaultProps({ content: 'Initial content' });
+		const { container } = renderWithProvider(<AutoRun {...props} />);
+
+		const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+		fireEvent.change(input, {
+			target: { files: [new File(['upload'], 'uploaded-file.png', { type: 'image/png' })] },
+		});
+
+		await waitFor(() => {
+			expect(mockMaestro.autorun.saveImage).toHaveBeenCalledWith(
+				'/test/folder',
+				'test-doc',
+				'upload123',
+				'png',
+				undefined
+			);
+		});
+		expect(props.onContentChange).toHaveBeenCalledWith(
+			'Initial content\n![uploaded-file.png](images/uploaded-file.png)\n'
+		);
 	});
 
 	it('expands and collapses attachments section', async () => {

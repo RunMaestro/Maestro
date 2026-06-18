@@ -192,6 +192,20 @@ describe('TerminalOutput', () => {
 					'light'
 				)
 			).toContain('color: #fff');
+			expect(
+				addTerminalHighlightMarkers(
+					'Alpha beta ALPHA',
+					'alpha',
+					defaultTheme.colors.warning,
+					'dark'
+				)
+			).toContain('color: #000');
+		});
+
+		it('returns text unchanged when no terminal highlight matches are found', () => {
+			expect(
+				addTerminalHighlightMarkers('alpha beta', 'missing', defaultTheme.colors.warning, 'dark')
+			).toBe('alpha beta');
 		});
 
 		it('returns no scroll snapshot when the scroll container is missing', () => {
@@ -416,6 +430,50 @@ describe('TerminalOutput', () => {
 			expect(container.textContent).toContain('terminal search sentinel');
 			expect(container.textContent).not.toContain('<mark');
 			expect(container.querySelector('mark')).toHaveTextContent('terminal search');
+		});
+
+		it('highlights terminal HTML text segments without modifying tag segments', () => {
+			const shellLogs: LogEntry[] = [
+				createLogEntry({
+					id: 'terminal-html-highlight-log',
+					text: '<span>needle</span>',
+					source: 'stdout',
+				}),
+			];
+			const session = createDefaultSession({
+				inputMode: 'terminal',
+				shellLogs,
+			});
+
+			const { container } = render(
+				<TerminalOutput {...createDefaultProps({ session, outputSearchQuery: 'needle' })} />
+			);
+
+			expect(container.querySelector('span mark')).toHaveTextContent('needle');
+			expect(container.querySelector('mark span')).not.toBeInTheDocument();
+		});
+
+		it('uses light-theme contrast for terminal HTML text segment highlights', () => {
+			const shellLogs: LogEntry[] = [
+				createLogEntry({
+					id: 'terminal-html-light-highlight-log',
+					text: '<span>needle</span>',
+					source: 'stdout',
+				}),
+			];
+			const session = createDefaultSession({
+				inputMode: 'terminal',
+				shellLogs,
+			});
+			const lightTheme: Theme = { ...defaultTheme, mode: 'light' };
+
+			const { container } = render(
+				<TerminalOutput
+					{...createDefaultProps({ session, theme: lightTheme, outputSearchQuery: 'needle' })}
+				/>
+			);
+
+			expect(container.querySelector('span mark')).toHaveStyle({ color: '#fff' });
 		});
 
 		it('displays user messages with different styling', () => {

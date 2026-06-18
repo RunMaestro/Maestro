@@ -231,14 +231,13 @@ describe('AutoRunExpandedModal', () => {
 			expect(screen.getByTestId('eye-icon')).toBeInTheDocument();
 		});
 
-		// NOTE: Image upload button is currently disabled in the component (wrapped in `false &&`)
-		// This test is skipped until the feature is re-enabled
-		it.skip('should render image upload button', () => {
+		it('should keep image upload button hidden while the control is disabled', () => {
 			const props = createDefaultProps();
-			renderWithProvider(<AutoRunExpandedModal {...props} />);
+			const { container } = renderWithProvider(<AutoRunExpandedModal {...props} />);
 
-			expect(screen.getByTitle(/add image/i)).toBeInTheDocument();
-			expect(screen.getByTestId('image-icon')).toBeInTheDocument();
+			expect(screen.queryByTitle(/add image/i)).not.toBeInTheDocument();
+			expect(screen.queryByTestId('image-icon')).not.toBeInTheDocument();
+			expect(container.querySelector('input[type="file"][accept="image/*"]')).toBeInTheDocument();
 		});
 
 		it('should render Run button when not running batch', () => {
@@ -453,16 +452,15 @@ describe('AutoRunExpandedModal', () => {
 			expect(editButton).toHaveClass('opacity-50', 'cursor-not-allowed');
 		});
 
-		// NOTE: Image upload button is currently disabled in the component (wrapped in `false &&`)
-		// This test is skipped until the feature is re-enabled
-		it.skip('should disable image upload button when locked', () => {
+		it('should keep image upload button hidden when locked', () => {
 			const props = createDefaultProps({
 				batchRunState: { isRunning: true, isStopping: false } as BatchRunState,
 			});
 			renderWithProvider(<AutoRunExpandedModal {...props} />);
 
-			const imageButton = screen.getByTitle(/editing disabled while auto run active/i);
-			expect(imageButton).toBeDisabled();
+			expect(screen.queryByTitle(/add image/i)).not.toBeInTheDocument();
+			expect(screen.queryByTitle(/switch to edit mode/i)).not.toBeInTheDocument();
+			expect(screen.queryByTestId('image-icon')).not.toBeInTheDocument();
 		});
 
 		it('should show Preview as selected when locked', () => {
@@ -521,6 +519,22 @@ describe('AutoRunExpandedModal', () => {
 
 			expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument();
 			expect(screen.getByRole('button', { name: /revert/i })).toBeInTheDocument();
+		});
+
+		it('should confirm before closing when shared draft content is dirty', async () => {
+			autoRunRefMethods.isDirty.mockReturnValue(false);
+
+			const props = createDefaultProps({
+				mode: 'edit',
+				externalLocalContent: '# Local draft',
+				externalSavedContent: '# Saved draft',
+			});
+			renderWithProvider(<AutoRunExpandedModal {...props} />);
+
+			fireEvent.click(screen.getByTitle('Close (Esc)'));
+
+			expect(screen.getByText('Unsaved Changes')).toBeInTheDocument();
+			expect(props.onClose).not.toHaveBeenCalled();
 		});
 
 		it('should call AutoRun save when Save button is clicked', async () => {
@@ -602,6 +616,20 @@ describe('AutoRunExpandedModal', () => {
 			});
 
 			expect(screen.queryByRole('button', { name: /save/i })).not.toBeInTheDocument();
+		});
+
+		it('treats a detached AutoRun ref as clean during dirty polling', async () => {
+			autoRunRefMethods.isDirty.mockReturnValue(undefined);
+
+			const props = createDefaultProps({ mode: 'edit' });
+			renderWithProvider(<AutoRunExpandedModal {...props} />);
+
+			await act(async () => {
+				vi.advanceTimersByTime(200);
+			});
+
+			expect(screen.queryByRole('button', { name: /save/i })).not.toBeInTheDocument();
+			expect(screen.queryByRole('button', { name: /revert/i })).not.toBeInTheDocument();
 		});
 
 		it('should not show Save/Revert when locked even if dirty', async () => {
@@ -895,31 +923,26 @@ describe('AutoRunExpandedModal', () => {
 		});
 	});
 
-	// NOTE: Image upload button is currently disabled in the component (wrapped in `false &&`)
-	// These tests are skipped until the feature is re-enabled
-	describe.skip('Image Upload Button', () => {
-		it('should be enabled in edit mode', () => {
+	describe('Hidden Image Upload Control', () => {
+		it('should not expose an image upload button in edit mode', () => {
 			const props = createDefaultProps({ mode: 'edit' });
 			renderWithProvider(<AutoRunExpandedModal {...props} />);
 
-			const imageButton = screen.getByTitle(/add image/i);
-			expect(imageButton).not.toBeDisabled();
+			expect(screen.queryByTitle(/add image/i)).not.toBeInTheDocument();
 		});
 
-		it('should be disabled in preview mode', () => {
+		it('should not expose an image upload button in preview mode', () => {
 			const props = createDefaultProps({ mode: 'preview' });
 			renderWithProvider(<AutoRunExpandedModal {...props} />);
 
-			const imageButton = screen.getByTitle(/switch to edit mode/i);
-			expect(imageButton).toBeDisabled();
+			expect(screen.queryByTitle(/switch to edit mode/i)).not.toBeInTheDocument();
 		});
 
-		it('should have ghosted style in preview mode', () => {
+		it('should not render image icon styling in preview mode', () => {
 			const props = createDefaultProps({ mode: 'preview' });
 			renderWithProvider(<AutoRunExpandedModal {...props} />);
 
-			const imageButton = screen.getByTitle(/switch to edit mode/i);
-			expect(imageButton).toHaveClass('opacity-30', 'cursor-not-allowed');
+			expect(screen.queryByTestId('image-icon')).not.toBeInTheDocument();
 		});
 
 		it('should have file input for image selection', () => {

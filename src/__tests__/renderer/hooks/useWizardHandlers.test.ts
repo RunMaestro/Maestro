@@ -639,10 +639,8 @@ describe('useWizardHandlers', () => {
 			const tab = createMockTab({
 				wizardState: {
 					isActive: true,
-					isWaiting: false,
 					mode: 'new',
 					confidence: 50,
-					ready: false,
 					conversationHistory: [],
 					previousUIState: {
 						readOnlyMode: false,
@@ -656,9 +654,9 @@ describe('useWizardHandlers', () => {
 					currentDocumentIndex: 0,
 					showWizardThinking: false,
 					thinkingContent: '',
-				},
+				} as any,
 			});
-			const session = createMockSession({ aiTabs: [tab] });
+			const session = createMockSession({ aiTabs: [tab], projectRoot: '' });
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
 
 			const hydrateTabState = vi.fn();
@@ -683,9 +681,110 @@ describe('useWizardHandlers', () => {
 				'tab-1',
 				expect.objectContaining({
 					isActive: true,
+					isWaiting: false,
 					mode: 'new',
+					projectPath: '/projects/test',
+					ready: false,
 					sessionId: 'session-1',
 					tabId: 'tab-1',
+				})
+			);
+		});
+
+		it('hydrates persisted wizard project paths, message images, and generation progress', async () => {
+			const wizardState = createWizardState({
+				projectPath: '/projects/from-state',
+				conversationHistory: [
+					{
+						id: 'msg-image',
+						role: 'assistant',
+						content: 'Here is a screenshot',
+						timestamp: 123,
+						confidence: 88,
+						ready: true,
+						images: ['data:image/png;base64,one'],
+					},
+				],
+				currentGeneratingIndex: 2,
+				totalDocuments: 5,
+				isGeneratingDocs: undefined,
+				generatedDocuments: undefined,
+				streamingContent: undefined,
+				currentDocumentIndex: undefined,
+				agentSessionId: undefined,
+				subfolderName: undefined,
+				subfolderPath: undefined,
+			});
+			const tab = createMockTab({ wizardState });
+			const session = createMockSession({ aiTabs: [tab] });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const hydrateTabState = vi.fn();
+			const deps = createMockDeps({
+				inlineWizardContext: {
+					...createMockDeps().inlineWizardContext,
+					getStateForTab: vi.fn().mockReturnValue(undefined),
+					hydrateTabState,
+				} as any,
+			});
+
+			renderHook(() => useWizardHandlers(deps));
+
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 50));
+			});
+
+			expect(hydrateTabState).toHaveBeenCalledWith(
+				'tab-1',
+				expect.objectContaining({
+					projectPath: '/projects/from-state',
+					autoRunFolderPath: '/projects/from-state/Auto Run Docs',
+					generationProgress: { current: 2, total: 5 },
+					isGeneratingDocs: false,
+					generatedDocuments: [],
+					streamingContent: '',
+					currentDocumentIndex: 0,
+					agentSessionId: null,
+					subfolderName: null,
+					subfolderPath: null,
+					conversationHistory: [
+						expect.objectContaining({
+							id: 'msg-image',
+							images: ['data:image/png;base64,one'],
+						}),
+					],
+				})
+			);
+		});
+
+		it('derives persisted wizard project paths from Auto Run folder paths', async () => {
+			const wizardState = createWizardState({
+				autoRunFolderPath: '/projects/from-folder/Auto Run Docs',
+			});
+			const tab = createMockTab({ wizardState });
+			const session = createMockSession({ aiTabs: [tab] });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const hydrateTabState = vi.fn();
+			const deps = createMockDeps({
+				inlineWizardContext: {
+					...createMockDeps().inlineWizardContext,
+					getStateForTab: vi.fn().mockReturnValue(undefined),
+					hydrateTabState,
+				} as any,
+			});
+
+			renderHook(() => useWizardHandlers(deps));
+
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 50));
+			});
+
+			expect(hydrateTabState).toHaveBeenCalledWith(
+				'tab-1',
+				expect.objectContaining({
+					projectPath: '/projects/from-folder',
+					autoRunFolderPath: '/projects/from-folder/Auto Run Docs',
 				})
 			);
 		});

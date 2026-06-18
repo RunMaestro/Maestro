@@ -276,6 +276,16 @@ describe('QuickActionsModal', () => {
 			fireEvent.click(screen.getByText('Move to Group...'));
 			expect(screen.getByPlaceholderText('Move Test Session to...')).toBeInTheDocument();
 
+			fireEvent.keyDown(screen.getByPlaceholderText('Move Test Session to...'), { key: 'Escape' });
+			await waitFor(() => {
+				expect(
+					screen.getByPlaceholderText('Type a command or jump to agent...')
+				).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByText('Move to Group...'));
+			expect(screen.getByPlaceholderText('Move Test Session to...')).toBeInTheDocument();
+
 			act(() => layerEscape());
 			await waitFor(() => {
 				expect(
@@ -1728,17 +1738,32 @@ describe('QuickActionsModal', () => {
 			expect(screen.getByText('Jump to: 🚀 Unicode 日本語')).toBeInTheDocument();
 		});
 
-		it('handles git diff with no diff content', async () => {
+		it('handles git diff with empty or missing diff content', async () => {
 			const { gitService } = await import('../../../renderer/services/git');
 			vi.mocked(gitService.getDiff).mockResolvedValueOnce({ diff: '' });
 
 			const props = createDefaultProps();
-			render(<QuickActionsModal {...props} />);
+			const { unmount } = render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('View Git Diff'));
 
 			await waitFor(() => {
-				expect(props.setGitDiffPreview).not.toHaveBeenCalled();
+				expect(props.setGitDiffPreview).toHaveBeenCalledWith('');
+				expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
+			});
+
+			unmount();
+			props.setGitDiffPreview.mockClear();
+			props.setQuickActionOpen.mockClear();
+			vi.mocked(gitService.getDiff).mockResolvedValueOnce(
+				{} as Awaited<ReturnType<typeof gitService.getDiff>>
+			);
+
+			render(<QuickActionsModal {...props} />);
+			fireEvent.click(screen.getByText('View Git Diff'));
+
+			await waitFor(() => {
+				expect(props.setGitDiffPreview).toHaveBeenCalledWith('');
 				expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
 			});
 		});

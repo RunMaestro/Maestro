@@ -1,38 +1,46 @@
 # Test Coverage Audit
 
-Historical audit. Use `docs/testing/current-status.md` for the current source of truth. Older Electron E2E and integration claims below are retained as historical checkpoints unless explicitly marked as part of the 2026-06-10 Phase 3 rerun.
+Historical audit. Use `docs/testing/current-status.md` for the current source of truth. Older Electron E2E and integration claims below are retained as historical checkpoints unless they are in the current coverage section.
 
 ## Current Coverage
 
-Measured with `npm run test:coverage` on branch `codex/full-e2e-coverage-campaign` after rebasing onto `upstream/main` at `f166b9309`.
+Measured with `npm run test:coverage` on branch `codex/full-e2e-coverage-campaign`.
 
 | Metric     | Original Baseline | After Initial Additions | Phase 1 Rerun | Latest Checkpoint |
 | ---------- | ----------------: | ----------------------: | ------------: | ----------------: |
-| Statements |            67.17% |                  67.30% |        67.30% |            99.91% |
-| Branches   |            60.58% |                  60.64% |        60.64% |            99.84% |
-| Functions  |            67.73% |                  67.85% |        67.86% |            99.89% |
-| Lines      |            67.81% |                  67.95% |        67.95% |            99.92% |
+| Statements |            67.17% |                  67.30% |        67.30% |           100.00% |
+| Branches   |            60.58% |                  60.64% |        60.64% |           100.00% |
+| Functions  |            67.73% |                  67.85% |        67.86% |           100.00% |
+| Lines      |            67.81% |                  67.95% |        67.95% |           100.00% |
 
-The unit suite passes after updating stale mobile, wizard, group-chat, session-browser, shortcut, and tab-optimistic-update tests for the current code. The coverage command executes but fails the enforced 100% global thresholds, so unit coverage is not complete on this bucket branch.
+The enforced unit coverage gate now passes at 100% global coverage.
 
 Latest checkpoint result:
 
 - Command: `npm run test:coverage`
-- Result: failed global 100% coverage thresholds
-- Test files: 730 passed, 1 skipped
-- Tests: 28,523 passed, 106 skipped
-- Coverage: 99.91% statements, 99.84% branches, 99.89% functions, 99.92% lines
-- Threshold errors: statements, branches, functions, and lines all remain below 100%.
+- Result: passed
+- Test files: 731 passed
+- Tests: 28,679 passed
+- Coverage: 100% statements, 100% branches, 100% functions, 100% lines
+- Log: `/tmp/maestro-final-test-coverage-20260617222450.log`
 
-Current top remaining coverage gaps from `coverage/coverage-final.json`:
+Current remaining enforced unit coverage gaps: none.
 
-| File                                                          | Missed Lines |  Lines | Missed Branches | Branches |
-| ------------------------------------------------------------- | -----------: | -----: | --------------: | -------: |
-| `src/renderer/hooks/tabs/useTabHandlers.ts`                   |            8 | 98.75% |              16 |   96.73% |
-| `src/web/hooks/useMobileSessionManagement.ts`                 |            8 | 96.69% |              17 |   90.00% |
-| `src/web/mobile/App.tsx`                                      |            5 | 98.08% |               8 |   96.54% |
-| `src/renderer/components/DocumentGraph/DocumentGraphView.tsx` |            6 | 98.77% |               2 |   99.51% |
-| `src/renderer/components/FilePreview.tsx`                     |            5 | 99.41% |               5 |   99.30% |
+Current full integration checkpoint:
+
+- Command: full integration run with `RUN_INTEGRATION_TESTS=true`, `RUN_SSH_INTEGRATION_TESTS=true`, and a local SSH harness.
+- Result: passed
+- Test files: 539 passed
+- Tests: 12,687 passed
+- Skip/failure audit: 0 skip markers, 0 SSH-not-configured markers, 0 `FAIL`, 0 `fn3 is not a function`
+- Log: `/tmp/maestro-integration-ssh-full-20260617220145.log`
+
+Current E2E checkpoint:
+
+- Final Phase 6 shard A: 985 passed, 0 failed, 0 skipped.
+- Final Phase 6 shard B: 1,985 passed, 0 failed, 0 skipped.
+- Combined active runtime proof: 2,970 passed, 0 failed, 0 skipped.
+- Logs: `/tmp/maestro-phase6-final-a.log`, `/tmp/maestro-phase6-final-b.log`.
 
 Historical E2E checkpoint:
 

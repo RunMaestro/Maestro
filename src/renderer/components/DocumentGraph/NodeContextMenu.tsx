@@ -115,6 +115,7 @@ export function NodeContextMenu({
 	return (
 		<div
 			ref={menuRef}
+			role="menu"
 			className="fixed z-[10000] py-1 rounded-md shadow-xl border"
 			style={{
 				left,

@@ -1164,6 +1164,36 @@ describe('WorktreeRunSection', () => {
 		}
 	});
 
+	it('uses an empty branch list when branch loading returns no branches property', async () => {
+		const session = createMockSession();
+		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
+		const branchesMock = vi.fn().mockResolvedValue({});
+		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
+		(window.maestro.git as Record<string, unknown>).branches = branchesMock;
+
+		render(
+			<WorktreeRunSection
+				theme={theme}
+				activeSession={session}
+				worktreeChildren={[]}
+				worktreeTarget={{ mode: 'create-new', createPROnCompletion: false }}
+				onWorktreeTargetChange={mockOnWorktreeTargetChange}
+				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
+			/>
+		);
+
+		await act(async () => {
+			fireEvent.change(screen.getAllByRole('combobox')[0], {
+				target: { value: '__create_new__' },
+			});
+		});
+
+		await waitFor(() => {
+			expect(branchesMock).toHaveBeenCalledWith('/project', undefined);
+		});
+		expect(screen.queryByText('Could not load branches')).not.toBeInTheDocument();
+	});
+
 	it('ignores branch-loading failures after unmount', async () => {
 		const session = createMockSession();
 		const branchLoad = createDeferred<{ branches: string[] }>();
@@ -1527,10 +1557,12 @@ describe('WorktreeRunSection', () => {
 		const session = createMockSession();
 		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
 		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
+		(window.maestro.git as Record<string, unknown>).branches = vi
+			.fn()
+			.mockResolvedValue({ branches: ['zeta', 'master', 'main', 'alpha'] });
 		(window.maestro.git as Record<string, unknown>).branch = vi
 			.fn()
 			.mockResolvedValue({ stdout: '' });
-		vi.mocked(gitService.getBranches).mockResolvedValue(['zeta', 'main', 'alpha']);
 
 		render(
 			<WorktreeRunSection
@@ -1552,6 +1584,13 @@ describe('WorktreeRunSection', () => {
 		await waitFor(() => {
 			expect(screen.getByDisplayValue(`auto-run-main-${mmdd}`)).toBeTruthy();
 		});
+		const baseBranchSelect = screen.getAllByRole('combobox')[1] as HTMLSelectElement;
+		expect([...baseBranchSelect.options].map((option) => option.value)).toEqual([
+			'main',
+			'master',
+			'alpha',
+			'zeta',
+		]);
 	});
 
 	it('ignores branch load results after unmount', async () => {

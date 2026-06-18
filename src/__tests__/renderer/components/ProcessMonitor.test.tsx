@@ -504,6 +504,20 @@ describe('ProcessMonitor', () => {
 	});
 
 	describe('Process tree building', () => {
+		it('handles orphaned batch, synopsis, and tab process IDs without matching sessions', async () => {
+			getActiveProcessesMock().mockResolvedValue([
+				createActiveProcess({ sessionId: 'orphan-batch-1234567890', pid: 11111 }),
+				createActiveProcess({ sessionId: 'orphan-synopsis-1234567890', pid: 22222 }),
+				createActiveProcess({ sessionId: 'orphan-ai-tab-1', pid: 33333 }),
+			]);
+
+			render(<ProcessMonitor theme={theme} sessions={[]} groups={[]} onClose={onClose} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('No running processes')).toBeInTheDocument();
+			});
+		});
+
 		it('should display ungrouped sessions with processes', async () => {
 			const process = createActiveProcess();
 			getActiveProcessesMock().mockResolvedValue([process]);
@@ -721,6 +735,48 @@ describe('ProcessMonitor', () => {
 				expect(screen.getByText('PID: 11111')).toBeInTheDocument();
 				expect(screen.getByText('PID: 22222')).toBeInTheDocument();
 			});
+		});
+
+		it('selects group, session, and group chat rows when they receive focus', async () => {
+			const onNavigateToGroupChat = vi.fn();
+			getActiveProcessesMock().mockResolvedValue([
+				createActiveProcess({ sessionId: 'session-1-ai-tab-1', pid: 11111 }),
+				createActiveProcess({
+					sessionId: 'group-chat-chat-1-moderator-abc123',
+					pid: 22222,
+				}),
+			]);
+			const session = createSession({ groupId: 'group-1' });
+			const group = createGroup();
+			const groupChat = createGroupChat();
+
+			render(
+				<ProcessMonitor
+					theme={theme}
+					sessions={[session]}
+					groups={[group]}
+					groupChats={[groupChat]}
+					onClose={onClose}
+					onNavigateToGroupChat={onNavigateToGroupChat}
+				/>
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText('Test Group')).toBeInTheDocument();
+				expect(screen.getByText('Planning Chat')).toBeInTheDocument();
+			});
+
+			const groupRow = screen.getByText('Test Group').closest('button')!;
+			fireEvent.focus(groupRow);
+			expect(groupRow).toHaveStyle({ outline: `2px solid ${theme.colors.accent}` });
+
+			const sessionRow = screen.getByText('Test Session').closest('button')!;
+			fireEvent.focus(sessionRow);
+			expect(sessionRow).toHaveStyle({ outline: `2px solid ${theme.colors.accent}` });
+
+			const chatRow = screen.getByText('Planning Chat').closest('[role="treeitem"]')!;
+			fireEvent.focus(chatRow);
+			expect(chatRow).toHaveStyle({ outline: `2px solid ${theme.colors.accent}` });
 		});
 
 		it('should display group chat moderator and participant processes with navigation', async () => {

@@ -8,6 +8,7 @@ import {
 type MaestroClipboardWindow = typeof window & {
 	maestro?: {
 		shell?: {
+			copyTextToClipboard?: (text: string) => Promise<void>;
 			copyImageToClipboard?: (dataUrl: string) => Promise<void>;
 		};
 	};
@@ -71,6 +72,18 @@ describe('clipboard utilities', () => {
 	});
 
 	describe('safeClipboardWrite', () => {
+		it('uses the Maestro shell bridge when available', async () => {
+			const copyTextToClipboard = vi.fn().mockResolvedValue(undefined);
+			(window as MaestroClipboardWindow).maestro = {
+				shell: { copyTextToClipboard },
+			};
+
+			await expect(safeClipboardWrite('hello')).resolves.toBe(true);
+
+			expect(copyTextToClipboard).toHaveBeenCalledWith('hello');
+			expect(writeText).not.toHaveBeenCalled();
+		});
+
 		it('returns true after writing text to the clipboard', async () => {
 			await expect(safeClipboardWrite('hello')).resolves.toBe(true);
 

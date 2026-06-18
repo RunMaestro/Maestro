@@ -3442,6 +3442,47 @@ print("world")
 			}
 		});
 
+		it('falls back to fenced code block counts when markdown text ranges are unavailable', async () => {
+			const originalHighlights = (CSS as any).highlights;
+			const originalCreateTreeWalker = document.createTreeWalker;
+			const highlights = {
+				set: vi.fn(),
+				delete: vi.fn(),
+			};
+			(CSS as any).highlights = highlights;
+			document.createTreeWalker = vi.fn(
+				() =>
+					({
+						nextNode: vi.fn(() => null),
+					}) as unknown as TreeWalker
+			);
+
+			try {
+				const { unmount } = render(
+					<FilePreview
+						{...defaultProps}
+						file={{
+							name: 'notes.md',
+							content: 'Intro\n\n```ts\nneedle();\nneedle();\n```\n\n```ts\nhaystack();\n```',
+							path: '/test/notes.md',
+						}}
+						initialSearchQuery="needle"
+					/>
+				);
+
+				expect(await screen.findByText('1/2')).toBeInTheDocument();
+				expect(highlights.set).not.toHaveBeenCalled();
+				unmount();
+			} finally {
+				if (originalHighlights === undefined) {
+					delete (CSS as any).highlights;
+				} else {
+					(CSS as any).highlights = originalHighlights;
+				}
+				document.createTreeWalker = originalCreateTreeWalker;
+			}
+		});
+
 		it('clears CSS markdown highlights when the search query is emptied', async () => {
 			const originalHighlights = (CSS as any).highlights;
 			const originalHighlight = (window as any).Highlight;

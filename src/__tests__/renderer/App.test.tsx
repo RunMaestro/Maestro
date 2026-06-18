@@ -994,6 +994,25 @@ describe('MaestroConsole app shell', () => {
 	});
 
 	it('clears auto-send activation and cancels delayed send when the active target changes', async () => {
+		const originalSetTimeout = global.setTimeout;
+		const delayedAutoSendCallbacks: Array<() => void> = [];
+		const setTimeoutSpy = vi.spyOn(global, 'setTimeout').mockImplementation(((
+			handler: TimerHandler,
+			timeout?: number,
+			...args: any[]
+		) => {
+			const handlerSource = typeof handler === 'function' ? String(handler) : '';
+			if (
+				timeout === 100 &&
+				typeof handler === 'function' &&
+				handlerSource.includes('currentSessions') &&
+				handlerSource.includes('processInput')
+			) {
+				delayedAutoSendCallbacks.push(() => handler(...args));
+				return 0 as any;
+			}
+			return originalSetTimeout(handler, timeout, ...args);
+		}) as typeof setTimeout);
 		const autoSendSession = createSession({
 			aiTabs: [
 				{
@@ -1027,25 +1046,46 @@ describe('MaestroConsole app shell', () => {
 			sessions: [autoSendSession, otherSession],
 		});
 
-		renderApp();
+		try {
+			renderApp();
 
-		await waitFor(() =>
-			expect(getSessionById(autoSendSession.id).aiTabs[0].autoSendOnActivate).toBe(false)
-		);
+			await waitFor(() =>
+				expect(getSessionById(autoSendSession.id).aiTabs[0].autoSendOnActivate).toBe(false)
+			);
+			expect(delayedAutoSendCallbacks).toHaveLength(1);
 
-		act(() => {
-			useSessionStore.getState().setActiveSessionIdInternal(otherSession.id);
-		});
+			act(() => {
+				useSessionStore.getState().setActiveSessionIdInternal(otherSession.id);
+				delayedAutoSendCallbacks.forEach((callback) => callback());
+			});
 
-		await act(async () => {
-			await new Promise((resolve) => setTimeout(resolve, 130));
-		});
-
-		expect(maestro.process.write).not.toHaveBeenCalled();
-		expect(maestro.process.spawn).not.toHaveBeenCalled();
+			expect(maestro.process.write).not.toHaveBeenCalled();
+			expect(maestro.process.spawn).not.toHaveBeenCalled();
+		} finally {
+			setTimeoutSpy.mockRestore();
+		}
 	});
 
 	it('cancels delayed auto-send when the target tab is removed before send', async () => {
+		const originalSetTimeout = global.setTimeout;
+		const delayedAutoSendCallbacks: Array<() => void> = [];
+		const setTimeoutSpy = vi.spyOn(global, 'setTimeout').mockImplementation(((
+			handler: TimerHandler,
+			timeout?: number,
+			...args: any[]
+		) => {
+			const handlerSource = typeof handler === 'function' ? String(handler) : '';
+			if (
+				timeout === 100 &&
+				typeof handler === 'function' &&
+				handlerSource.includes('currentSessions') &&
+				handlerSource.includes('processInput')
+			) {
+				delayedAutoSendCallbacks.push(() => handler(...args));
+				return 0 as any;
+			}
+			return originalSetTimeout(handler, timeout, ...args);
+		}) as typeof setTimeout);
 		const autoSendSession = createSession({
 			aiTabs: [
 				{
@@ -1083,31 +1123,33 @@ describe('MaestroConsole app shell', () => {
 			sessions: [autoSendSession],
 		});
 
-		renderApp();
+		try {
+			renderApp();
 
-		await waitFor(() =>
-			expect(getSessionById(autoSendSession.id).aiTabs[0].autoSendOnActivate).toBe(false)
-		);
+			await waitFor(() =>
+				expect(getSessionById(autoSendSession.id).aiTabs[0].autoSendOnActivate).toBe(false)
+			);
+			expect(delayedAutoSendCallbacks).toHaveLength(1);
 
-		act(() => {
-			const session = getSessionById(autoSendSession.id);
-			useSessionStore.setState({
-				sessions: [
-					{
-						...session,
-						aiTabs: [session.aiTabs[1]],
-						unifiedTabOrder: [{ type: 'ai', id: 'tab-2' }],
-					},
-				],
+			act(() => {
+				const session = getSessionById(autoSendSession.id);
+				useSessionStore.setState({
+					sessions: [
+						{
+							...session,
+							aiTabs: [session.aiTabs[1]],
+							unifiedTabOrder: [{ type: 'ai', id: 'tab-2' }],
+						},
+					],
+				});
+				delayedAutoSendCallbacks.forEach((callback) => callback());
 			});
-		});
 
-		await act(async () => {
-			await new Promise((resolve) => setTimeout(resolve, 130));
-		});
-
-		expect(maestro.process.write).not.toHaveBeenCalled();
-		expect(maestro.process.spawn).not.toHaveBeenCalled();
+			expect(maestro.process.write).not.toHaveBeenCalled();
+			expect(maestro.process.spawn).not.toHaveBeenCalled();
+		} finally {
+			setTimeoutSpy.mockRestore();
+		}
 	});
 
 	it('cancels delayed auto-send when the target session is removed before send', async () => {
@@ -1367,6 +1409,230 @@ describe('MaestroConsole app shell', () => {
 			});
 		});
 		await waitFor(() => expect(mockAppModalsState.latestProps?.canSummarizeActiveTab).toBe(false));
+	});
+
+	it('clears inline wizard errors only from the active tab through MainPanel props', async () => {
+		const session = createSession({
+			aiTabs: [
+				{
+					agentSessionId: 'claude-session-1',
+					createdAt: 1,
+					id: 'tab-1',
+					isUnread: false,
+					logs: [],
+					name: 'Planning',
+					state: 'idle',
+					wizardState: {
+						isActive: true,
+						isWaiting: false,
+						mode: 'new',
+						confidence: 40,
+						ready: false,
+						conversationHistory: [],
+						previousUIState: null,
+						error: 'wizard failed',
+						isGeneratingDocs: false,
+						generatedDocuments: [],
+						streamingContent: '',
+						currentDocumentIndex: 0,
+					} as any,
+				},
+				{
+					agentSessionId: 'claude-session-2',
+					createdAt: 2,
+					id: 'tab-2',
+					isUnread: false,
+					logs: [],
+					name: 'Sibling',
+					state: 'idle',
+					wizardState: {
+						isActive: true,
+						isWaiting: false,
+						mode: 'new',
+						confidence: 20,
+						ready: false,
+						conversationHistory: [],
+						previousUIState: null,
+						error: 'keep sibling error',
+						isGeneratingDocs: false,
+						generatedDocuments: [],
+						streamingContent: '',
+						currentDocumentIndex: 0,
+					} as any,
+				},
+			],
+			activeTabId: 'tab-1',
+		});
+		const otherSession = createSession({
+			id: 'session-other',
+			name: 'Other Agent',
+			aiTabs: [
+				{
+					agentSessionId: 'other-session',
+					createdAt: 3,
+					id: 'other-tab',
+					isUnread: false,
+					logs: [],
+					name: 'Other',
+					state: 'idle',
+					wizardState: {
+						isActive: true,
+						isWaiting: false,
+						mode: 'new',
+						confidence: 10,
+						ready: false,
+						conversationHistory: [],
+						previousUIState: null,
+						error: 'keep other error',
+						isGeneratingDocs: false,
+						generatedDocuments: [],
+						streamingContent: '',
+						currentDocumentIndex: 0,
+					} as any,
+				},
+			],
+			activeTabId: 'other-tab',
+		});
+		const maestro = configureMaestroBridge();
+		maestro.sessions.getAll.mockResolvedValue([session, otherSession]);
+		useSessionStore.setState({
+			activeSessionId: session.id,
+			sessions: [session, otherSession],
+		});
+
+		renderApp();
+		await screen.findByTestId('main-panel');
+
+		act(() => {
+			mockMainPanelState.latestProps?.onWizardClearError();
+		});
+
+		await waitFor(() => {
+			expect(getSessionById(session.id).aiTabs[0].wizardState?.error).toBeNull();
+		});
+		expect(getSessionById(session.id).aiTabs[1].wizardState?.error).toBe('keep sibling error');
+		expect(getSessionById(otherSession.id).aiTabs[0].wizardState?.error).toBe('keep other error');
+
+		act(() => {
+			mockMainPanelState.latestProps?.onWizardClearError();
+		});
+		expect(getSessionById(session.id).aiTabs[0].wizardState?.error).toBeNull();
+
+		act(() => {
+			useSessionStore.setState({ activeSessionId: 'missing-session' });
+			mockMainPanelState.latestProps?.onWizardClearError();
+		});
+		expect(getSessionById(session.id).aiTabs[1].wizardState?.error).toBe('keep sibling error');
+	});
+
+	it('ends inline wizard state on the active tab through MainPanel props', async () => {
+		const session = createSession({
+			aiTabs: [
+				{
+					agentSessionId: 'claude-session-1',
+					createdAt: 1,
+					id: 'tab-1',
+					isUnread: false,
+					logs: [],
+					name: 'Planning',
+					state: 'idle',
+					wizardState: {
+						isActive: true,
+						isWaiting: false,
+						mode: 'new',
+						confidence: 70,
+						ready: true,
+						conversationHistory: [],
+						previousUIState: null,
+						error: null,
+						isGeneratingDocs: false,
+						generatedDocuments: [],
+						streamingContent: '',
+						currentDocumentIndex: 0,
+					} as any,
+				},
+				{
+					agentSessionId: 'claude-session-2',
+					createdAt: 2,
+					id: 'tab-2',
+					isUnread: false,
+					logs: [],
+					name: 'Sibling',
+					state: 'idle',
+					wizardState: {
+						isActive: true,
+						isWaiting: false,
+						mode: 'new',
+						confidence: 30,
+						ready: false,
+						conversationHistory: [],
+						previousUIState: null,
+						error: null,
+						isGeneratingDocs: false,
+						generatedDocuments: [],
+						streamingContent: '',
+						currentDocumentIndex: 0,
+					} as any,
+				},
+			],
+			activeTabId: 'tab-1',
+		});
+		const otherSession = createSession({
+			id: 'session-other',
+			name: 'Other Agent',
+			aiTabs: [
+				{
+					agentSessionId: 'other-session',
+					createdAt: 3,
+					id: 'other-tab',
+					isUnread: false,
+					logs: [],
+					name: 'Other',
+					state: 'idle',
+					wizardState: {
+						isActive: true,
+						isWaiting: false,
+						mode: 'new',
+						confidence: 10,
+						ready: false,
+						conversationHistory: [],
+						previousUIState: null,
+						error: null,
+						isGeneratingDocs: false,
+						generatedDocuments: [],
+						streamingContent: '',
+						currentDocumentIndex: 0,
+					} as any,
+				},
+			],
+			activeTabId: 'other-tab',
+		});
+		const maestro = configureMaestroBridge();
+		maestro.sessions.getAll.mockResolvedValue([session, otherSession]);
+		useSessionStore.setState({
+			activeSessionId: session.id,
+			sessions: [session, otherSession],
+		});
+
+		renderApp();
+		await screen.findByTestId('main-panel');
+
+		act(() => {
+			mockMainPanelState.latestProps?.onExitWizard();
+		});
+
+		await waitFor(() => {
+			expect(getSessionById(session.id).aiTabs[0].wizardState).toBeUndefined();
+		});
+		expect(getSessionById(session.id).aiTabs[1].wizardState).toBeDefined();
+		expect(getSessionById(otherSession.id).aiTabs[0].wizardState).toBeDefined();
+		expect(mockMainPanelState.latestProps?.inputValue).toBe('');
+
+		act(() => {
+			useSessionStore.setState({ activeSessionId: 'missing-session' });
+			mockMainPanelState.latestProps?.onExitWizard();
+		});
+		expect(getSessionById(session.id).aiTabs[1].wizardState).toBeDefined();
 	});
 
 	it('bridges session navigation refs and keyboard summarization state through stores', async () => {

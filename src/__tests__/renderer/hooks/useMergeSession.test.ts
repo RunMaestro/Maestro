@@ -722,14 +722,135 @@ describe('useMergeSession', () => {
 	});
 });
 
-// Note: useMergeSessionWithSessions tests are skipped because:
-// 1. The base useMergeSession hook tests cover all core functionality
-// 2. useMergeSessionWithSessions is a thin wrapper that adds session state management
-// 3. Integration tests in the app provide full coverage of the session management flow
-// 4. The concurrent render issues with renderHook cleanup cause flaky tests
-describe.skip('useMergeSessionWithSessions', () => {
-	it('placeholder for wrapper hook tests', () => {
-		// These tests are covered by integration tests
-		expect(true).toBe(true);
+describe('useMergeSessionWithSessions', () => {
+	beforeEach(() => {
+		(window as any).maestro = {
+			history: {
+				add: vi.fn().mockResolvedValue(undefined),
+			},
+		};
+	});
+
+	it('returns an error when the target session cannot be found', async () => {
+		const sourceSession = createMockSession('source');
+		const setSessions = vi.fn();
+		const { result } = renderHook(() =>
+			useMergeSessionWithSessions({
+				sessions: [sourceSession],
+				setSessions,
+				activeTabId: 'tab-1',
+			})
+		);
+
+		let mergeResult;
+		await act(async () => {
+			mergeResult = await result.current.executeMerge(
+				sourceSession,
+				'tab-1',
+				'missing-target',
+				undefined,
+				{ groomContext: false, createNewSession: true, preserveTimestamps: true }
+			);
+		});
+
+		expect(mergeResult).toEqual({
+			success: false,
+			error: 'Target session not found: missing-target',
+		});
+		expect(setSessions).not.toHaveBeenCalled();
+	});
+
+	it('adds a new merged session and notifies the caller', async () => {
+		const sourceSession = createMockSession('source');
+		const targetSession = createMockSession('target');
+		let sessions = [sourceSession, targetSession];
+		const setSessions = vi.fn((updater) => {
+			sessions = typeof updater === 'function' ? updater(sessions) : updater;
+		});
+		const onSessionCreated = vi.fn();
+		const { result } = renderHook(() =>
+			useMergeSessionWithSessions({
+				sessions,
+				setSessions,
+				activeTabId: 'tab-1',
+				onSessionCreated,
+			})
+		);
+
+		let mergeResult;
+		await act(async () => {
+			mergeResult = await result.current.executeMerge(sourceSession, 'tab-1', 'target', 'tab-1', {
+				groomContext: false,
+				createNewSession: true,
+				preserveTimestamps: true,
+			});
+		});
+
+		expect(mergeResult.success).toBe(true);
+		expect(mergeResult.newSessionId).toBe('new-merged-session-id');
+		expect(sessions).toHaveLength(3);
+		expect(sessions[2].name).toBe('Merged: Session source + Session target');
+		expect(onSessionCreated).toHaveBeenCalledWith(
+			expect.objectContaining({
+				sessionId: 'new-merged-session-id',
+				sessionName: 'Merged: Session source + Session target',
+			})
+		);
+		expect((window as any).maestro.history.add).toHaveBeenCalledWith(
+			expect.objectContaining({
+				sessionId: 'new-merged-session-id',
+				sessionName: 'Merged: Session source + Session target',
+			})
+		);
+	});
+
+	it('injects source context into an existing target tab', async () => {
+		const sourceTab = createMockTab('source-tab', [
+			{ id: 'source-user', timestamp: 1, source: 'user', text: 'Source request' },
+			{ id: 'source-system', timestamp: 2, source: 'system', text: 'Internal note' },
+			{ id: 'source-ai', timestamp: 3, source: 'ai', text: 'Source answer' },
+		]);
+		const targetTab = createMockTab('target-tab', [
+			{ id: 'target-user', timestamp: 4, source: 'user', text: 'Target request' },
+		]);
+		const sourceSession = createMockSession('source', 'claude-code', 'idle', [sourceTab]);
+		const targetSession = createMockSession('target', 'codex', 'idle', [targetTab]);
+		let sessions = [sourceSession, targetSession];
+		const setSessions = vi.fn((updater) => {
+			sessions = typeof updater === 'function' ? updater(sessions) : updater;
+		});
+		const onMergeComplete = vi.fn();
+		const { result } = renderHook(() =>
+			useMergeSessionWithSessions({
+				sessions,
+				setSessions,
+				activeTabId: 'source-tab',
+				onMergeComplete,
+			})
+		);
+
+		let mergeResult;
+		await act(async () => {
+			mergeResult = await result.current.executeMerge(
+				sourceSession,
+				'source-tab',
+				'target',
+				'target-tab',
+				{ groomContext: false, createNewSession: false, preserveTimestamps: true }
+			);
+		});
+
+		expect(mergeResult.success).toBe(true);
+		const updatedTargetTab = sessions[1].aiTabs[0];
+		expect(updatedTargetTab.logs.at(-1)?.text).toBe('Context merged from "Session source".');
+		expect(updatedTargetTab.pendingMergedContext).toContain('User: Source request');
+		expect(updatedTargetTab.pendingMergedContext).toContain('Assistant: Source answer');
+		expect(updatedTargetTab.pendingMergedContext).not.toContain('Internal note');
+		expect(updatedTargetTab.inputValue).toContain('Session source');
+		expect(updatedTargetTab.autoSendOnActivate).toBe(true);
+		expect(onMergeComplete).toHaveBeenCalledWith(
+			'source-tab',
+			expect.objectContaining({ success: true })
+		);
 	});
 });

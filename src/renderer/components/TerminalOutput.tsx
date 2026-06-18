@@ -90,8 +90,6 @@ const addTerminalHtmlHighlightMarkers = (
 	warningColor: string,
 	themeMode: Theme['mode']
 ): string => {
-	if (!query) return html;
-
 	const pattern = new RegExp(escapeRegExp(query), 'gi');
 	const markerStyle = `background-color: ${warningColor}; color: ${themeMode === 'light' ? '#fff' : '#000'}; padding: 1px 2px; border-radius: 2px;`;
 

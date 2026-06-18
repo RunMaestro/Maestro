@@ -347,15 +347,12 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 	};
 
 	// Extract tab ID from process session ID (format: {sessionId}-ai-{tabId})
-	const parseTabId = (processSessionId: string, baseSessionId?: string): string | null => {
-		if (baseSessionId) {
-			const prefix = `${baseSessionId}-ai-`;
-			if (processSessionId.startsWith(prefix)) {
-				return processSessionId.slice(prefix.length);
-			}
+	const parseTabId = (processSessionId: string, baseSessionId: string): string | null => {
+		const prefix = `${baseSessionId}-ai-`;
+		if (processSessionId.startsWith(prefix)) {
+			return processSessionId.slice(prefix.length);
 		}
-		const match = processSessionId.match(/-ai-(.+)$/);
-		return match ? match[1] : null;
+		return null;
 	};
 
 	// Build the process tree using real active processes

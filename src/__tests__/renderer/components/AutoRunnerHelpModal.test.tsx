@@ -188,11 +188,9 @@ describe('AutoRunnerHelpModal', () => {
 			).toBeInTheDocument();
 		});
 
-		// NOTE: Git Worktree section was removed from the help modal
-		// The worktree UI has moved to WorktreeConfigModal
-		it.skip('should render Git Worktree section', () => {
-			expect(screen.getByText('Git Worktree (Parallel Work)')).toBeInTheDocument();
-			expect(screen.getByText(/For Git repositories, enable/)).toBeInTheDocument();
+		it('should not render the moved Git Worktree section', () => {
+			expect(screen.queryByText('Git Worktree (Parallel Work)')).not.toBeInTheDocument();
+			expect(screen.queryByText(/For Git repositories, enable/)).not.toBeInTheDocument();
 		});
 
 		it('should render Stopping Auto Run section', () => {

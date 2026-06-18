@@ -753,7 +753,7 @@ async function assertHistoryQuotaScenario(window: Page, scenario: QuotaScenario)
 	await historyQuotaAssertions[scenario.variant % historyQuotaAssertions.length](window);
 }
 
-test.describe(`Files docs history lane matrix (${activeScenarioCount} active, ${skippedScenarioMatrix.length} skipped, ${envGatedScenarioMatrix.length} env-gated)`, () => {
+test.describe(`Files docs history lane matrix (${activeScenarioCount} active; ${skippedScenarioMatrix.length + envGatedScenarioMatrix.length} non-active residuals documented)`, () => {
 	let window: Page;
 	let cleanupApp: (() => Promise<void>) | undefined;
 	let seededWorkbench: ReturnType<typeof createFilesDocsHistoryWorkbench>;
@@ -1943,18 +1943,6 @@ test.describe(`Files docs history lane matrix (${activeScenarioCount} active, ${
 			}
 
 			await assertHistoryQuotaScenario(window, scenario);
-		});
-	}
-
-	for (const scenario of skippedScenarioMatrix) {
-		test.skip(`${scenario.id} ${scenario.title} [skipped product gap]`, async () => {
-			void scenario.reason;
-		});
-	}
-
-	for (const scenario of envGatedScenarioMatrix) {
-		test.skip(`${scenario.id} ${scenario.title} [env-gated]`, async () => {
-			void scenario.reason;
 		});
 	}
 });

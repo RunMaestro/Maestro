@@ -293,8 +293,8 @@ describe('UnifiedHistoryTab integration', () => {
 				offset: 0,
 			})
 		);
-		expect(screen.getByText('User shipped a feature')).toBeInTheDocument();
-		expect(screen.getByText('Auto repaired a branch')).toBeInTheDocument();
+		expect(await screen.findByText('User shipped a feature')).toBeInTheDocument();
+		expect(await screen.findByText('Auto repaired a branch')).toBeInTheDocument();
 		expect(screen.getByTestId('history-stats-bar')).toBeInTheDocument();
 		expect(screen.getByTestId('activity-entry-count')).toHaveTextContent('2');
 		const scroller = screen.getByTestId('history-entry-0').closest('[tabindex="0"]') as HTMLElement;

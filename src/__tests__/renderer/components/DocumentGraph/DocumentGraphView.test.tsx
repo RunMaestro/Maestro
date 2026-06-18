@@ -722,6 +722,79 @@ describe('DocumentGraphView', () => {
 			});
 		});
 
+		it('routes graph Escape requests through context menu and search focus states', async () => {
+			renderGraph();
+
+			await screen.findByTestId('mind-map');
+			fireEvent.click(screen.getByText('Context first'));
+			expect(await screen.findByRole('menu')).toBeInTheDocument();
+
+			act(() => {
+				mockLayerStackState.layers
+					.filter((entry) => entry.layer.type === 'modal')
+					.at(-1)
+					?.layer.onEscape();
+			});
+			expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+
+			const searchInput = screen.getByLabelText('Search documents in graph') as HTMLInputElement;
+			searchInput.focus();
+			fireEvent.change(searchInput, { target: { value: 'Index' } });
+
+			act(() => {
+				mockLayerStackState.layers
+					.filter((entry) => entry.layer.type === 'modal')
+					.at(-1)
+					?.layer.onEscape();
+			});
+			expect(searchInput).toHaveValue('');
+			expect(searchInput).toHaveFocus();
+
+			act(() => {
+				mockLayerStackState.layers
+					.filter((entry) => entry.layer.type === 'modal')
+					.at(-1)
+					?.layer.onEscape();
+			});
+			await waitFor(() => expect(searchInput).not.toHaveFocus());
+		});
+
+		it('closes markdown previews from preview and graph keyboard Escape handlers', async () => {
+			window.maestro.fs.readFile = vi.fn().mockResolvedValue('# Preview');
+			const requestAnimationFrameSpy = vi
+				.spyOn(window, 'requestAnimationFrame')
+				.mockImplementation((callback: FrameRequestCallback) => {
+					callback(0);
+					return 1;
+				});
+
+			try {
+				renderGraph();
+
+				await screen.findByTestId('mind-map');
+				fireEvent.click(screen.getByText('Preview first'));
+				expect(await screen.findByTestId('markdown-renderer')).toBeInTheDocument();
+
+				const previewContent = document.querySelector('.graph-preview')!;
+				fireEvent.keyDown(previewContent, { key: 'Escape' });
+				await waitFor(() => {
+					expect(screen.queryByTestId('markdown-renderer')).not.toBeInTheDocument();
+				});
+
+				fireEvent.click(screen.getByText('Preview first'));
+				expect(await screen.findByTestId('markdown-renderer')).toBeInTheDocument();
+
+				fireEvent.keyDown(screen.getByRole('dialog', { name: 'Document Graph' }), {
+					key: 'Escape',
+				});
+				await waitFor(() => {
+					expect(screen.queryByTestId('markdown-renderer')).not.toBeInTheDocument();
+				});
+			} finally {
+				requestAnimationFrameSpy.mockRestore();
+			}
+		});
+
 		it('navigates preview history, opens the current preview file, and closes the panel', async () => {
 			const onDocumentOpen = vi.fn();
 			const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -784,6 +857,49 @@ describe('DocumentGraphView', () => {
 			fireEvent.click(screen.getByText('Preview first'));
 
 			expect(await screen.findByText('Failed to load preview.')).toBeInTheDocument();
+		});
+
+		it('closes a loading preview from the graph keyboard Escape handler', async () => {
+			let resolveRead!: (value: string) => void;
+			window.maestro.fs.readFile = vi.fn(
+				() =>
+					new Promise<string>((resolve) => {
+						resolveRead = resolve;
+					})
+			);
+
+			renderGraph();
+
+			await screen.findByTestId('mind-map');
+			fireEvent.click(screen.getByText('Preview first'));
+			expect((await screen.findAllByText('Loading preview...')).length).toBeGreaterThan(0);
+
+			fireEvent.keyDown(screen.getByRole('dialog', { name: 'Document Graph' }), {
+				key: 'Escape',
+			});
+
+			await waitFor(() => {
+				expect(screen.queryAllByText('Loading preview...')).toHaveLength(0);
+			});
+			resolveRead('# Late Preview');
+		});
+
+		it('closes a preview error from the graph keyboard Escape handler', async () => {
+			window.maestro.fs.readFile = vi.fn().mockRejectedValueOnce(new Error('read unavailable'));
+
+			renderGraph();
+
+			await screen.findByTestId('mind-map');
+			fireEvent.click(screen.getByText('Preview first'));
+			expect(await screen.findByText('read unavailable')).toBeInTheDocument();
+
+			fireEvent.keyDown(screen.getByRole('dialog', { name: 'Document Graph' }), {
+				key: 'Escape',
+			});
+
+			await waitFor(() => {
+				expect(screen.queryByText('read unavailable')).not.toBeInTheDocument();
+			});
 		});
 
 		it('routes document and external node context menu actions', async () => {

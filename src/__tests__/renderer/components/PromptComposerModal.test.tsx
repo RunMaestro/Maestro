@@ -277,6 +277,29 @@ describe('PromptComposerModal', () => {
 			expect(textarea.value).toBe('Initial prompt text');
 		});
 
+		it('falls back to the internal value ref when reading the textarea value returns undefined', () => {
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue="Fallback prompt"
+					onSubmit={onSubmit}
+					onSend={onSend}
+				/>
+			);
+
+			const textarea = screen.getByPlaceholderText('Write your prompt here...');
+			Object.defineProperty(textarea, 'value', {
+				configurable: true,
+				get: () => undefined,
+			});
+
+			fireEvent.click(screen.getByRole('button', { name: /send/i }));
+
+			expect(onSend).toHaveBeenCalledWith('Fallback prompt');
+		});
+
 		it('should render Send button with icon', () => {
 			renderWithProvider(
 				<PromptComposerModal

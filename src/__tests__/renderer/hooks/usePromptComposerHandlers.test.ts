@@ -253,6 +253,28 @@ describe('usePromptComposerHandlers', () => {
 			const otherChat = chats.find((c: any) => c.id === 'gc-2');
 			expect(otherChat?.draftMessage).toBe('preserved');
 		});
+
+		it('persists the visible input but leaves sessions unchanged when the active session has no active tab', () => {
+			const session = createSession({
+				id: 'sess-no-active-tab-submit',
+				aiTabs: [],
+				activeTabId: 'missing-tab',
+				unifiedTabOrder: [],
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-no-active-tab-submit',
+			});
+			const deps = createDeps();
+			const { result } = renderHook(() => usePromptComposerHandlers(deps));
+
+			act(() => {
+				result.current.handlePromptComposerSubmit('draft without tab');
+			});
+
+			expect(deps.setInputValue).toHaveBeenCalledWith('draft without tab');
+			expect(useSessionStore.getState().sessions[0]).toEqual(session);
+		});
 	});
 
 	// ========================================================================
@@ -281,6 +303,48 @@ describe('usePromptComposerHandlers', () => {
 				});
 
 				expect(deps.processInput).toHaveBeenCalledWith('send this message');
+				vi.useRealTimers();
+			});
+
+			it('persists sent prompt text to the active AI tab before processing', async () => {
+				vi.useFakeTimers();
+				const activeTab = createTab({ id: 'tab-send', inputValue: 'draft' });
+				const otherTab = createTab({ id: 'tab-other', inputValue: 'unchanged' });
+				const session = createSession({
+					id: 'sess-send',
+					aiTabs: [activeTab, otherTab],
+					activeTabId: 'tab-send',
+				});
+				const otherSession = createSession({
+					id: 'sess-other',
+					aiTabs: [createTab({ id: 'other-session-tab', inputValue: 'other session' })],
+					activeTabId: 'other-session-tab',
+				});
+				useSessionStore.setState({
+					sessions: [session, otherSession],
+					activeSessionId: 'sess-send',
+				});
+
+				const deps = createDeps();
+				const { result } = renderHook(() => usePromptComposerHandlers(deps));
+
+				act(() => {
+					result.current.handlePromptComposerSend('persist me');
+				});
+
+				const sessions = useSessionStore.getState().sessions;
+				expect(sessions[0].aiTabs.find((tab) => tab.id === 'tab-send')?.inputValue).toBe(
+					'persist me'
+				);
+				expect(sessions[0].aiTabs.find((tab) => tab.id === 'tab-other')?.inputValue).toBe(
+					'unchanged'
+				);
+				expect(sessions[1].aiTabs[0].inputValue).toBe('other session');
+
+				act(() => {
+					vi.advanceTimersByTime(0);
+				});
+				expect(deps.processInput).toHaveBeenCalledWith('persist me');
 				vi.useRealTimers();
 			});
 

@@ -630,6 +630,20 @@ describe('MarketplaceModal', () => {
 		selectInput.mockRestore();
 	});
 
+	it('wraps marketplace category keyboard shortcuts at the category edges', () => {
+		marketplaceState = defaultState({ selectedCategory: 'All' });
+		renderMarketplace();
+		fireEvent.keyDown(window, { key: '[', metaKey: true, shiftKey: true });
+		expect(mocks.setSelectedCategory).toHaveBeenCalledWith('Operations');
+
+		cleanup();
+		mocks.setSelectedCategory.mockClear();
+		marketplaceState = defaultState({ selectedCategory: 'Operations' });
+		renderMarketplace();
+		fireEvent.keyDown(window, { key: ']', metaKey: true, shiftKey: true });
+		expect(mocks.setSelectedCategory).toHaveBeenCalledWith('All');
+	});
+
 	it('handles tile arrow navigation from empty lists and focused search inputs', () => {
 		marketplaceState = defaultState({ filteredPlaybooks: [] });
 		renderMarketplace();

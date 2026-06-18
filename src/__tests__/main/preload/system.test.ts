@@ -174,6 +174,16 @@ describe('System Preload API', () => {
 			});
 		});
 
+		describe('copyTextToClipboard', () => {
+			it('should invoke clipboard:writeText with text', async () => {
+				mockInvoke.mockResolvedValue(undefined);
+
+				await api.copyTextToClipboard('copy me');
+
+				expect(mockInvoke).toHaveBeenCalledWith('clipboard:writeText', 'copy me');
+			});
+		});
+
 		describe('copyImageToClipboard', () => {
 			it('should invoke clipboard:writeImage with data URL', async () => {
 				mockInvoke.mockResolvedValue(undefined);

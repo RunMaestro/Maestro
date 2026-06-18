@@ -1,14 +1,6 @@
 /**
  * Tests for SendToAgentModal component
  *
- * TODO: These tests need to be updated to match the session-based interface.
- * The component was refactored from agent selection to session selection.
- * Key changes needed:
- * - Use session names instead of agent names
- * - Use "Search sessions..." placeholder
- * - Update expected button names and accessibility labels
- * - Update status labels (Idle, Busy instead of Ready, N/A)
- *
  * Tests the core behavior of the send-to-agent modal:
  * - Rendering with session list and search
  * - Session selection and status display
@@ -24,7 +16,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { SendToAgentModal } from '../../../renderer/components/SendToAgentModal';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
-import type { Theme, Session, AgentConfig, ToolType } from '../../../renderer/types';
+import type { Theme, Session, ToolType } from '../../../renderer/types';
 
 // Create a test theme
 const testTheme: Theme = {
@@ -46,40 +38,6 @@ const testTheme: Theme = {
 		textInverse: '#000000',
 	},
 };
-
-// Mock agent configurations
-const mockAgents: AgentConfig[] = [
-	{
-		id: 'claude-code',
-		name: 'Claude Code',
-		available: true,
-		hidden: false,
-	},
-	{
-		id: 'opencode',
-		name: 'OpenCode',
-		available: true,
-		hidden: false,
-	},
-	{
-		id: 'codex',
-		name: 'Codex',
-		available: true,
-		hidden: false,
-	},
-	{
-		id: 'gemini-cli',
-		name: 'Gemini CLI',
-		available: false, // Unavailable agent
-		hidden: false,
-	},
-	{
-		id: 'terminal',
-		name: 'Terminal',
-		available: true,
-		hidden: true, // Hidden agent
-	},
-];
 
 // Create mock sessions for the allSessions prop
 const createMockTargetSession = (
@@ -219,8 +177,7 @@ describe('SendToAgentModal', () => {
 		);
 	};
 
-	// TODO: Update tests to use session names instead of agent names
-	describe.skip('rendering', () => {
+	describe('rendering', () => {
 		it('does not render when isOpen is false', () => {
 			renderWithLayerStack(
 				<SendToAgentModal
@@ -254,7 +211,7 @@ describe('SendToAgentModal', () => {
 			expect(screen.getByText('Send Context to Agent')).toBeInTheDocument();
 		});
 
-		it('renders agent grid with visible agents', () => {
+		it('renders session list with target sessions', () => {
 			renderWithLayerStack(
 				<SendToAgentModal
 					theme={testTheme}
@@ -267,51 +224,53 @@ describe('SendToAgentModal', () => {
 				/>
 			);
 
-			// Should show visible agents
-			expect(screen.getByText('Claude Code')).toBeInTheDocument();
-			expect(screen.getByText('OpenCode')).toBeInTheDocument();
-			expect(screen.getByText('Codex')).toBeInTheDocument();
-			expect(screen.getByText('Gemini CLI')).toBeInTheDocument();
-
-			// Should NOT show hidden agents
-			expect(screen.queryByText('Terminal')).not.toBeInTheDocument();
+			expect(screen.getByRole('option', { name: /OpenCode Session/ })).toBeInTheDocument();
+			expect(screen.getByRole('option', { name: /Codex Session/ })).toBeInTheDocument();
+			expect(screen.getByRole('option', { name: /Busy Session/ })).toBeInTheDocument();
+			expect(screen.queryByRole('option', { name: /Test Session/ })).not.toBeInTheDocument();
 		});
 
-		it('shows correct status for current agent', () => {
+		it('excludes the source session from the target list', () => {
 			renderWithLayerStack(
 				<SendToAgentModal
 					theme={testTheme}
 					isOpen={true}
 					sourceSession={mockSession}
 					sourceTabId="tab-1"
-					allSessions={mockSessions}
+					allSessions={[mockSession, ...mockSessions]}
 					onClose={mockOnClose}
 					onSend={mockOnSend}
 				/>
 			);
 
-			// Claude Code is the current session's agent
-			expect(screen.getByText('Current')).toBeInTheDocument();
+			expect(screen.queryByRole('option', { name: /Test Session/ })).not.toBeInTheDocument();
+			expect(screen.getAllByRole('option')).toHaveLength(3);
 		});
 
-		it('shows correct status for unavailable agent', () => {
+		it('excludes terminal sessions from the target list', () => {
+			const terminalSession = createMockTargetSession(
+				'terminal-session',
+				'Terminal Session',
+				'terminal'
+			);
+
 			renderWithLayerStack(
 				<SendToAgentModal
 					theme={testTheme}
 					isOpen={true}
 					sourceSession={mockSession}
 					sourceTabId="tab-1"
-					allSessions={mockSessions}
+					allSessions={[...mockSessions, terminalSession]}
 					onClose={mockOnClose}
 					onSend={mockOnSend}
 				/>
 			);
 
-			// Gemini CLI is unavailable
-			expect(screen.getByText('N/A')).toBeInTheDocument();
+			expect(screen.queryByText('Terminal Session')).not.toBeInTheDocument();
+			expect(screen.getAllByRole('option')).toHaveLength(3);
 		});
 
-		it('shows Ready status for available agents', () => {
+		it('shows Idle status for available idle sessions', () => {
 			renderWithLayerStack(
 				<SendToAgentModal
 					theme={testTheme}
@@ -324,9 +283,8 @@ describe('SendToAgentModal', () => {
 				/>
 			);
 
-			// OpenCode and Codex should show Ready
-			const readyStatuses = screen.getAllByText('Ready');
-			expect(readyStatuses.length).toBeGreaterThanOrEqual(2);
+			const idleStatuses = screen.getAllByText('Idle');
+			expect(idleStatuses.length).toBeGreaterThanOrEqual(2);
 		});
 
 		it('has correct ARIA attributes', () => {
@@ -349,8 +307,7 @@ describe('SendToAgentModal', () => {
 		});
 	});
 
-	// TODO: Update tests to use "Search sessions..." placeholder
-	describe.skip('search functionality', () => {
+	describe('search functionality', () => {
 		it('renders search input', () => {
 			renderWithLayerStack(
 				<SendToAgentModal
@@ -364,10 +321,10 @@ describe('SendToAgentModal', () => {
 				/>
 			);
 
-			expect(screen.getByPlaceholderText('Search agents...')).toBeInTheDocument();
+			expect(screen.getByPlaceholderText('Search sessions...')).toBeInTheDocument();
 		});
 
-		it('filters agents based on search query', async () => {
+		it('filters sessions based on search query', async () => {
 			renderWithLayerStack(
 				<SendToAgentModal
 					theme={testTheme}
@@ -380,16 +337,16 @@ describe('SendToAgentModal', () => {
 				/>
 			);
 
-			const searchInput = screen.getByPlaceholderText('Search agents...');
+			const searchInput = screen.getByPlaceholderText('Search sessions...');
 			fireEvent.change(searchInput, { target: { value: 'open' } });
 
 			await waitFor(() => {
-				expect(screen.getByText('OpenCode')).toBeInTheDocument();
-				expect(screen.queryByText('Codex')).not.toBeInTheDocument();
+				expect(screen.getByText('OpenCode Session')).toBeInTheDocument();
+				expect(screen.queryByText('Codex Session')).not.toBeInTheDocument();
 			});
 		});
 
-		it('shows empty state when no agents match search', async () => {
+		it('shows empty state when no sessions match search', async () => {
 			renderWithLayerStack(
 				<SendToAgentModal
 					theme={testTheme}
@@ -402,18 +359,17 @@ describe('SendToAgentModal', () => {
 				/>
 			);
 
-			const searchInput = screen.getByPlaceholderText('Search agents...');
+			const searchInput = screen.getByPlaceholderText('Search sessions...');
 			fireEvent.change(searchInput, { target: { value: 'zzzzzzz' } });
 
 			await waitFor(() => {
-				expect(screen.getByText('No matching agents found')).toBeInTheDocument();
+				expect(screen.getByText('No matching sessions found')).toBeInTheDocument();
 			});
 		});
 	});
 
-	// TODO: Update tests to use session selection
-	describe.skip('agent selection', () => {
-		it('selects agent when clicked', async () => {
+	describe('session selection', () => {
+		it('selects session when clicked', async () => {
 			renderWithLayerStack(
 				<SendToAgentModal
 					theme={testTheme}
@@ -426,54 +382,52 @@ describe('SendToAgentModal', () => {
 				/>
 			);
 
-			// Find and click on OpenCode button
-			const openCodeButton = screen.getByText('OpenCode').closest('button');
-			fireEvent.click(openCodeButton!);
+			fireEvent.click(screen.getByRole('option', { name: /OpenCode Session/ }));
 
-			// Send button should now be enabled
-			const sendButton = screen.getByRole('button', { name: /send to agent/i });
+			const sendButton = screen.getByRole('button', { name: /send to session/i });
 			expect(sendButton).not.toBeDisabled();
 		});
 
-		it('cannot select current agent', () => {
+		it('does not offer the source session as a target', () => {
 			renderWithLayerStack(
 				<SendToAgentModal
 					theme={testTheme}
 					isOpen={true}
 					sourceSession={mockSession}
 					sourceTabId="tab-1"
-					allSessions={mockSessions}
+					allSessions={[mockSession, ...mockSessions]}
 					onClose={mockOnClose}
 					onSend={mockOnSend}
 				/>
 			);
 
-			// Find and click on Claude Code (current agent)
-			const claudeButton = screen.getByText('Claude Code').closest('button');
-			expect(claudeButton).toBeDisabled();
+			expect(screen.queryByRole('option', { name: /Test Session/ })).not.toBeInTheDocument();
 		});
 
-		it('cannot select unavailable agent', () => {
+		it('does not offer terminal-only sessions as targets', () => {
+			const terminalSession = createMockTargetSession(
+				'terminal-session',
+				'Terminal Session',
+				'terminal'
+			);
+
 			renderWithLayerStack(
 				<SendToAgentModal
 					theme={testTheme}
 					isOpen={true}
 					sourceSession={mockSession}
 					sourceTabId="tab-1"
-					allSessions={mockSessions}
+					allSessions={[terminalSession]}
 					onClose={mockOnClose}
 					onSend={mockOnSend}
 				/>
 			);
 
-			// Find and click on Gemini CLI (unavailable)
-			const geminiButton = screen.getByText('Gemini CLI').closest('button');
-			expect(geminiButton).toBeDisabled();
+			expect(screen.getByText('No other sessions available')).toBeInTheDocument();
 		});
 	});
 
-	// TODO: Update tests for new button names and behavior
-	describe.skip('button handlers', () => {
+	describe('button handlers', () => {
 		it('calls onClose when Cancel is clicked', () => {
 			renderWithLayerStack(
 				<SendToAgentModal
@@ -509,7 +463,7 @@ describe('SendToAgentModal', () => {
 			expect(mockOnClose).toHaveBeenCalledTimes(1);
 		});
 
-		it('Send button is disabled when no agent selected', () => {
+		it('Send button is disabled when no session selected', () => {
 			renderWithLayerStack(
 				<SendToAgentModal
 					theme={testTheme}
@@ -522,11 +476,11 @@ describe('SendToAgentModal', () => {
 				/>
 			);
 
-			const sendButton = screen.getByRole('button', { name: /send to agent/i });
+			const sendButton = screen.getByRole('button', { name: /send to session/i });
 			expect(sendButton).toBeDisabled();
 		});
 
-		it('calls onSend and onClose when Send is clicked with agent selected', async () => {
+		it('calls onSend and onClose when Send is clicked with session selected', async () => {
 			renderWithLayerStack(
 				<SendToAgentModal
 					theme={testTheme}
@@ -539,28 +493,24 @@ describe('SendToAgentModal', () => {
 				/>
 			);
 
-			// Select OpenCode
-			const openCodeButton = screen.getByText('OpenCode').closest('button');
-			fireEvent.click(openCodeButton!);
+			fireEvent.click(screen.getByRole('option', { name: /OpenCode Session/ }));
 
-			// Click Send
-			const sendButton = screen.getByRole('button', { name: /send to agent/i });
+			const sendButton = screen.getByRole('button', { name: /send to session/i });
 			fireEvent.click(sendButton);
 
 			await waitFor(() => {
 				expect(mockOnSend).toHaveBeenCalledTimes(1);
-				expect(mockOnSend).toHaveBeenCalledWith('opencode', {
+				expect(mockOnSend).toHaveBeenCalledWith('session-opencode', {
 					groomContext: true,
-					createNewSession: true,
+					targetSessionId: 'session-opencode',
 				});
 				expect(mockOnClose).toHaveBeenCalledTimes(1);
 			});
 		});
 	});
 
-	// TODO: Update tests for checkbox roles and names
-	describe.skip('options', () => {
-		it('renders groom context checkbox (checked by default)', () => {
+	describe('options', () => {
+		it('renders clean context checkbox (checked by default)', () => {
 			renderWithLayerStack(
 				<SendToAgentModal
 					theme={testTheme}
@@ -573,11 +523,11 @@ describe('SendToAgentModal', () => {
 				/>
 			);
 
-			const groomCheckbox = screen.getByRole('checkbox', { name: /groom context/i });
+			const groomCheckbox = screen.getByRole('checkbox', { name: /clean context/i });
 			expect(groomCheckbox).toBeChecked();
 		});
 
-		it('renders create new session checkbox (checked by default)', () => {
+		it('does not expose a create new session option', () => {
 			renderWithLayerStack(
 				<SendToAgentModal
 					theme={testTheme}
@@ -590,11 +540,12 @@ describe('SendToAgentModal', () => {
 				/>
 			);
 
-			const createSessionCheckbox = screen.getByRole('checkbox', { name: /create new session/i });
-			expect(createSessionCheckbox).toBeChecked();
+			expect(
+				screen.queryByRole('checkbox', { name: /create new session/i })
+			).not.toBeInTheDocument();
 		});
 
-		it('passes correct options to onSend when checkboxes are unchecked', async () => {
+		it('passes correct options to onSend when clean context is unchecked', async () => {
 			renderWithLayerStack(
 				<SendToAgentModal
 					theme={testTheme}
@@ -607,23 +558,18 @@ describe('SendToAgentModal', () => {
 				/>
 			);
 
-			// Uncheck both options
-			const groomCheckbox = screen.getByRole('checkbox', { name: /groom context/i });
-			const createSessionCheckbox = screen.getByRole('checkbox', { name: /create new session/i });
+			const groomCheckbox = screen.getByRole('checkbox', { name: /clean context/i });
 			fireEvent.click(groomCheckbox);
-			fireEvent.click(createSessionCheckbox);
 
-			// Select OpenCode and send
-			const openCodeButton = screen.getByText('OpenCode').closest('button');
-			fireEvent.click(openCodeButton!);
+			fireEvent.click(screen.getByRole('option', { name: /OpenCode Session/ }));
 
-			const sendButton = screen.getByRole('button', { name: /send to agent/i });
+			const sendButton = screen.getByRole('button', { name: /send to session/i });
 			fireEvent.click(sendButton);
 
 			await waitFor(() => {
-				expect(mockOnSend).toHaveBeenCalledWith('opencode', {
+				expect(mockOnSend).toHaveBeenCalledWith('session-opencode', {
 					groomContext: false,
-					createNewSession: false,
+					targetSessionId: 'session-opencode',
 				});
 			});
 		});
@@ -993,8 +939,7 @@ describe('SendToAgentModal', () => {
 		});
 	});
 
-	// TODO: Update tests for session-based keyboard navigation
-	describe.skip('keyboard navigation', () => {
+	describe('keyboard navigation', () => {
 		it('focuses search input on mount', async () => {
 			renderWithLayerStack(
 				<SendToAgentModal
@@ -1009,7 +954,7 @@ describe('SendToAgentModal', () => {
 			);
 
 			await waitFor(() => {
-				expect(document.activeElement).toBe(screen.getByPlaceholderText('Search agents...'));
+				expect(document.activeElement).toBe(screen.getByPlaceholderText('Search sessions...'));
 			});
 		});
 
@@ -1028,23 +973,19 @@ describe('SendToAgentModal', () => {
 
 			const dialog = screen.getByRole('dialog');
 
-			// Press ArrowRight to move to next agent
+			// Unsupported horizontal navigation should be ignored without errors.
 			fireEvent.keyDown(dialog, { key: 'ArrowRight' });
 
-			// Press ArrowDown to move to next row
 			fireEvent.keyDown(dialog, { key: 'ArrowDown' });
 
-			// Press ArrowLeft to move back
 			fireEvent.keyDown(dialog, { key: 'ArrowLeft' });
 
-			// Press ArrowUp to move up
 			fireEvent.keyDown(dialog, { key: 'ArrowUp' });
 
-			// No errors should occur during navigation
 			expect(screen.getByRole('dialog')).toBeInTheDocument();
 		});
 
-		it('selects agent with number keys', async () => {
+		it('selects session with number keys', async () => {
 			renderWithLayerStack(
 				<SendToAgentModal
 					theme={testTheme}
@@ -1059,12 +1000,14 @@ describe('SendToAgentModal', () => {
 
 			const dialog = screen.getByRole('dialog');
 
-			// Press "2" to select second agent (OpenCode, since Claude Code is first but disabled as current)
 			fireEvent.keyDown(dialog, { key: '2' });
 
-			// Send button should now be enabled because we selected OpenCode
 			await waitFor(() => {
-				const sendButton = screen.getByRole('button', { name: /send to agent/i });
+				expect(screen.getByRole('option', { name: /Codex Session/ })).toHaveAttribute(
+					'aria-selected',
+					'true'
+				);
+				const sendButton = screen.getByRole('button', { name: /send to session/i });
 				expect(sendButton).not.toBeDisabled();
 			});
 		});
@@ -1084,18 +1027,19 @@ describe('SendToAgentModal', () => {
 
 			const dialog = screen.getByRole('dialog');
 
-			// First select an agent with number key
 			fireEvent.keyDown(dialog, { key: '2' });
 
-			// Then press Enter to confirm
 			fireEvent.keyDown(dialog, { key: 'Enter' });
 
 			await waitFor(() => {
-				expect(mockOnSend).toHaveBeenCalled();
+				expect(mockOnSend).toHaveBeenCalledWith('session-codex', {
+					groomContext: true,
+					targetSessionId: 'session-codex',
+				});
 			});
 		});
 
-		it('selects highlighted agent with Space key', async () => {
+		it('selects highlighted session with Space key', async () => {
 			renderWithLayerStack(
 				<SendToAgentModal
 					theme={testTheme}
@@ -1110,22 +1054,16 @@ describe('SendToAgentModal', () => {
 
 			const dialog = screen.getByRole('dialog');
 
-			// Navigate to second item (first is Claude Code which is current)
-			fireEvent.keyDown(dialog, { key: 'ArrowRight' });
+			fireEvent.keyDown(dialog, { key: 'ArrowDown' });
 
-			// Wait for state to update after navigation
-			await waitFor(() => {
-				// The second option (OpenCode) should now be highlighted
-				const options = screen.getAllByRole('option');
-				// Check that we have navigated (just verify options exist)
-				expect(options.length).toBeGreaterThan(1);
-			});
-
-			// Press Space to select
 			fireEvent.keyDown(dialog, { key: ' ' });
 
 			await waitFor(() => {
-				const sendButton = screen.getByRole('button', { name: /send to agent/i });
+				expect(screen.getByRole('option', { name: /Codex Session/ })).toHaveAttribute(
+					'aria-selected',
+					'true'
+				);
+				const sendButton = screen.getByRole('button', { name: /send to session/i });
 				expect(sendButton).not.toBeDisabled();
 			});
 		});
@@ -1150,8 +1088,8 @@ describe('SendToAgentModal', () => {
 		});
 	});
 
-	describe('busy agent status', () => {
-		it('shows Busy status for agents with busy sessions', () => {
+	describe('busy session status', () => {
+		it('shows Busy status for busy sessions', () => {
 			const busySessions: Session[] = [
 				createMockSession({ id: 'busy-session', toolType: 'opencode', state: 'busy' }),
 			];
@@ -1189,7 +1127,7 @@ describe('SendToAgentModal', () => {
 			expect(screen.getByRole('dialog')).toHaveAttribute('tabIndex', '-1');
 		});
 
-		it('has semantic elements for agents and action buttons', () => {
+		it('has semantic elements for sessions and action buttons', () => {
 			renderWithLayerStack(
 				<SendToAgentModal
 					theme={testTheme}

@@ -4459,8 +4459,3 @@ test.describe('Agent Sessions provider storage', () => {
 		}
 	});
 });
-
-test.describe.skip('Real provider state coverage gated by MAESTRO_E2E_REAL_PROVIDER_STATE', () => {
-	test('loads real Codex provider sessions without IPC stubs', async () => {});
-	test('loads real Factory Droid provider sessions without IPC stubs', async () => {});
-});
