@@ -254,6 +254,7 @@ const mockMaestro = {
 		status: vi.fn().mockResolvedValue({ files: [], branch: 'main', stdout: '' }),
 		diff: vi.fn().mockResolvedValue(''),
 		isRepo: vi.fn().mockResolvedValue(true),
+		commitAll: vi.fn().mockResolvedValue({ success: true, committed: true, commitHash: 'abc1234' }),
 		numstat: vi.fn().mockResolvedValue([]),
 		getStatus: vi.fn().mockResolvedValue({ branch: 'main', status: [] }),
 		worktreeSetup: vi.fn().mockResolvedValue({ success: true }),

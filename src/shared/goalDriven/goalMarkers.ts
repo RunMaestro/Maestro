@@ -45,6 +45,37 @@ const COMPLETE_RE = /<!--\s*maestro:goal-complete\s*-->/g;
  */
 const DEADLOCK_RE = /<!--\s*maestro:deadlock\s*(?::\s*([\s\S]*?))?\s*-->/g;
 
+/**
+ * Matches ANY Maestro control marker comment: `<!-- maestro:<anything> -->`.
+ *
+ * Covers every marker shape the agent embeds (`progress`, `goal-complete`,
+ * `deadlock`, `halt`, ...). Non-greedy body so adjacent markers on one line are
+ * each removed individually rather than collapsed into one span.
+ */
+const ANY_MARKER_RE = /<!--\s*maestro:[\s\S]*?-->/g;
+
+/**
+ * Strip every Maestro control marker comment from `text` for display.
+ *
+ * These `<!-- maestro:... -->` comments are an internal control channel between
+ * the agent and the Auto Run engine - users should never see them in history
+ * details or any rendered surface. Collapses the blank lines a removed marker
+ * leaves behind so a trailing marker doesn't produce a dangling gap.
+ */
+export function stripMaestroMarkers(text: string): string {
+	if (!text.includes('<!--')) {
+		return text;
+	}
+	return (
+		text
+			.replace(ANY_MARKER_RE, '')
+			// Collapse 3+ newlines (left by a marker on its own line) to a clean break.
+			.replace(/\n{3,}/g, '\n\n')
+			.replace(/[ \t]+\n/g, '\n')
+			.trim()
+	);
+}
+
 /** Clamp `value` into the inclusive range `[min, max]`. */
 function clamp(value: number, min: number, max: number): number {
 	return Math.min(max, Math.max(min, value));

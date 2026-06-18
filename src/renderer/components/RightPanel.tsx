@@ -16,6 +16,8 @@ import {
 	Play,
 	XCircle,
 	Square,
+	Brain,
+	ScrollText,
 } from 'lucide-react';
 import { Spinner } from './ui/Spinner';
 import type { Session, Theme, RightPanelTab, BatchRunState } from '../types';
@@ -32,6 +34,7 @@ import { useUIStore } from '../stores/uiStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { useBatchStore } from '../stores/batchStore';
+import { useThoughtStreamStore } from '../stores/thoughtStreamStore';
 import { useSessionStore, selectActiveSession } from '../stores/sessionStore';
 import type { FileNode } from '../types/fileTree';
 import { RIGHT_PANEL_MIN_WIDTH, RIGHT_PANEL_MAX_WIDTH } from '../constants/rightPanel';
@@ -165,6 +168,16 @@ export const RightPanel = memo(
 		);
 		const batchError = useBatchStore(
 			useCallback((s) => s.batchRunStates[sessionId ?? '']?.error, [sessionId])
+		);
+
+		// Thought Stream: brain button on the Auto Run card opens a persistent,
+		// searchable view of the agent's live thinking stream for this session.
+		// While capturing, the same button doubles as the (minimized) status
+		// indicator - it animates and reads "Capturing", and clicking re-expands
+		// the panel. There is no separate floating pill.
+		const openThoughtStream = useThoughtStreamStore((s) => s.openPanel);
+		const isCapturingThoughts = useThoughtStreamStore(
+			(s) => !!sessionId && !!s.capturing[sessionId]
 		);
 
 		// === Props (domain-hook handlers + theme + batch state + refs) ===
@@ -818,34 +831,63 @@ export const RightPanel = memo(
 										{currentSessionBatchState.maxLoops ?? '∞'}
 									</span>
 								)}
+								{/* Thought Stream - peer into the agent's live reasoning. Opens a
+								    persistent, searchable panel; works for goal and task runs. */}
+								{sessionId && (
+									<button
+										className="flex items-center gap-1 text-[10px] whitespace-nowrap bg-transparent border-none p-0 cursor-pointer hover:opacity-80"
+										style={{
+											color: isCapturingThoughts ? theme.colors.accent : theme.colors.textDim,
+											textDecoration: 'underline',
+										}}
+										onClick={() => openThoughtStream(sessionId)}
+										title={
+											isCapturingThoughts
+												? 'Capturing thoughts - click to expand'
+												: "Peer into the agent's thought stream"
+										}
+									>
+										<Brain className={`w-3 h-3 ${isCapturingThoughts ? 'animate-pulse' : ''}`} />
+										{isCapturingThoughts ? 'Capturing' : 'View Thoughts'}
+									</button>
+								)}
 								{/* View history link - shown on all tabs except history */}
 								{activeRightTab !== 'history' && (
 									<button
-										className="text-[10px] whitespace-nowrap bg-transparent border-none p-0 cursor-pointer"
+										className="flex items-center gap-1 text-[10px] whitespace-nowrap bg-transparent border-none p-0 cursor-pointer hover:opacity-80"
 										style={{
 											color: theme.colors.textDim,
 											textDecoration: 'underline',
 										}}
 										onClick={() => setActiveRightTab('history')}
 									>
-										View history
+										<ScrollText className="w-3 h-3" />
+										View History
 									</button>
 								)}
 							</div>
 						</div>
 						<div className="mt-2 flex items-center justify-between gap-2">
-							<label className="flex items-center gap-1.5 cursor-pointer">
-								<input
-									type="checkbox"
-									checked={autoFollowEnabled}
-									onChange={(e) => setAutoFollowEnabled(e.target.checked)}
-									className="w-3 h-3 rounded cursor-pointer accent-current"
-									style={{ accentColor: theme.colors.accent }}
-								/>
-								<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
-									Follow active task
-								</span>
-							</label>
+							{/* "Follow active task" only applies to task-based runs that step
+							    through a document. Goal mode iterates a single goal with no
+							    discrete task list to follow, so hide the checkbox there (empty
+							    spacer keeps the Stop button right-aligned). */}
+							{currentSessionBatchState.goalMode ? (
+								<div />
+							) : (
+								<label className="flex items-center gap-1.5 cursor-pointer">
+									<input
+										type="checkbox"
+										checked={autoFollowEnabled}
+										onChange={(e) => setAutoFollowEnabled(e.target.checked)}
+										className="w-3 h-3 rounded cursor-pointer accent-current"
+										style={{ accentColor: theme.colors.accent }}
+									/>
+									<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
+										Follow active task
+									</span>
+								</label>
+							)}
 							{!errorPaused && !currentSessionBatchState.isStopping && onStopBatchRun && (
 								<button
 									onClick={() => onStopBatchRun(session.id)}

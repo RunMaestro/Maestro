@@ -23,6 +23,7 @@ import { useAgentCommandExitListener } from './internal/useAgentCommandExitListe
 import { useAgentUsageListener } from './internal/useAgentUsageListener';
 import { useAgentSessionIdListener } from './internal/useAgentSessionIdListener';
 import { useAgentThinkingListener } from './internal/useAgentThinkingListener';
+import { useThoughtStreamCaptureListener } from './internal/useThoughtStreamCaptureListener';
 import { useAgentSshRemoteListener } from './internal/useAgentSshRemoteListener';
 import { useAgentClaudeModeResolvedListener } from './internal/useAgentClaudeModeResolvedListener';
 import { useAgentToolExecutionListener } from './internal/useAgentToolExecutionListener';
@@ -93,6 +94,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 		activeHiddenToolRef,
 	});
 	useAgentThinkingListener();
+	useThoughtStreamCaptureListener();
 	useAgentSshRemoteListener();
 	useAgentClaudeModeResolvedListener();
 	useAgentToolExecutionListener();

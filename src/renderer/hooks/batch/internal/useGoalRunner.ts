@@ -418,15 +418,26 @@ export function useGoalRunner({
 				}
 
 				// Parse the agent's self-reported markers. A missing progress report
-				// carries the previous iteration's value forward (0 on the first).
+				// carries the previous iteration's RAW value forward (0 on the first).
 				const markers = parseGoalMarkers(result.response ?? '');
-				const progress =
+				const reportedProgress =
 					markers.progress ?? (history.length > 0 ? history[history.length - 1].progress : 0);
-				finalProgress = progress;
+
+				// Monotonic high-water mark for everything the USER sees. The agent's
+				// self-assessment is noisy and routinely regresses between iterations
+				// (e.g. 55% then 35%); a progress bar that slides backward is confusing
+				// and wrong, so the displayed percent only ever climbs. Exit/stall
+				// detection below deliberately uses the RAW value instead, so a single
+				// overconfident spike can't freeze the bar or trigger a false stall while
+				// the agent is genuinely still moving underneath its earlier peak.
+				const displayProgress = Math.max(finalProgress, reportedProgress);
+				finalProgress = displayProgress;
 
 				history.push({
 					iteration,
-					progress,
+					// Raw self-report - feeds the exit evaluator's stall/completion logic,
+					// which relies on real upward movement to reset a stall window.
+					progress: reportedProgress,
 					rationale: markers.rationale,
 					complete: markers.complete,
 					deadlock: markers.deadlock,
@@ -442,11 +453,11 @@ export function useGoalRunner({
 						...prev,
 						[sessionId]: {
 							...prev[sessionId],
-							goalProgress: progress,
+							goalProgress: displayProgress,
 							goalRationale: markers.rationale ?? undefined,
 							goalIteration: iteration,
-							completedTasksAcrossAllDocs: progress,
-							completedTasks: progress,
+							completedTasksAcrossAllDocs: displayProgress,
+							completedTasks: displayProgress,
 							loopIteration: iteration,
 						},
 					}),
@@ -464,7 +475,7 @@ export function useGoalRunner({
 					? result.response || synopsis
 					: result.error || result.response || synopsis;
 				const rationaleText = markers.rationale?.trim();
-				const iterationSummary = `Goal progress: ${progress}% — ${rationaleText || synopsis}`;
+				const iterationSummary = `Goal progress: ${displayProgress}% — ${rationaleText || synopsis}`;
 				onAddHistoryEntry({
 					type: 'AUTO',
 					timestamp: Date.now(),
@@ -488,10 +499,46 @@ export function useGoalRunner({
 
 				window.maestro.logger.autorun(`Goal iteration ${iteration} complete`, session.name, {
 					iteration,
-					progress,
+					progress: displayProgress,
+					reportedProgress,
 					complete: markers.complete,
 					deadlock: markers.deadlock,
 				});
+
+				// Checkpoint each iteration in git so every increment of work is a
+				// recoverable commit. Best-effort: a clean tree is a quiet no-op, and a
+				// failed commit (missing git identity, failing hooks) is logged but never
+				// aborts the run. SSH sessions commit on the remote host.
+				if (session.isGitRepo) {
+					const sshRemoteId =
+						session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
+					const commitRationale = markers.rationale?.trim();
+					const commitMessage = `Maestro Auto Run (goal) iteration ${iteration} - ${
+						commitRationale || `progress ${displayProgress}%`
+					}`;
+					try {
+						const commit = await gitService.commitAll(effectiveCwd, commitMessage, sshRemoteId);
+						if (commit.committed) {
+							window.maestro.logger.autorun(
+								`Goal iteration ${iteration} committed ${commit.commitHash ?? ''}`.trim(),
+								session.name,
+								{ iteration, commitHash: commit.commitHash }
+							);
+						} else if (!commit.success) {
+							logger.warn(
+								`[GoalRunner] Auto-commit failed on iteration ${iteration}:`,
+								undefined,
+								commit.error
+							);
+						}
+					} catch (err) {
+						logger.warn(
+							`[GoalRunner] Auto-commit threw on iteration ${iteration}:`,
+							undefined,
+							err
+						);
+					}
+				}
 
 				// Feed the running history into the pure exit evaluator.
 				const decision = evaluateGoalExit(history, goalConfig);

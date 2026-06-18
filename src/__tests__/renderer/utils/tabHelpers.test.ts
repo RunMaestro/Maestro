@@ -62,6 +62,7 @@ import {
 	findNextUnreadSession,
 	resolveQueuedItemTarget,
 	markTabRunningQueuedItem,
+	isSoleAiTabReplacement,
 } from '../../../renderer/utils/tabHelpers';
 import type { LogEntry } from '../../../renderer/types';
 import type {
@@ -1028,6 +1029,58 @@ describe('tabHelpers', () => {
 			expect(next.activeBrowserTabId).toBeNull();
 			expect(next.activeTabId).toBe('tab-1');
 			expect(next.inputMode).toBe('ai');
+		});
+	});
+
+	describe('isSoleAiTabReplacement', () => {
+		// closeTab() replaces the sole remaining AI tab with a fresh empty one, so the
+		// session still has one tab but its id changed. This is the signal to focus the
+		// chat input on that new tab.
+		const single = (id: string, overrides: Partial<Session> = {}) =>
+			createMockSession({
+				id: 'session-1',
+				inputMode: 'ai',
+				aiTabs: [createMockTab({ id })],
+				activeTabId: id,
+				...overrides,
+			});
+
+		it('detects the sole AI tab being swapped for a fresh one', () => {
+			expect(isSoleAiTabReplacement('session-1', ['old-tab'], single('fresh-tab'))).toBe(true);
+		});
+
+		it('returns false when the single tab id is unchanged', () => {
+			expect(isSoleAiTabReplacement('session-1', ['tab-1'], single('tab-1'))).toBe(false);
+		});
+
+		it('returns false when the previous session was a different agent', () => {
+			expect(isSoleAiTabReplacement('session-2', ['old-tab'], single('fresh-tab'))).toBe(false);
+		});
+
+		it('returns false when there was more than one tab before', () => {
+			expect(isSoleAiTabReplacement('session-1', ['a', 'b'], single('fresh-tab'))).toBe(false);
+		});
+
+		it('returns false when more than one tab remains', () => {
+			const session = single('fresh-tab', {
+				aiTabs: [createMockTab({ id: 'fresh-tab' }), createMockTab({ id: 'other' })],
+			});
+			expect(isSoleAiTabReplacement('session-1', ['old-tab'], session)).toBe(false);
+		});
+
+		it('returns false when the view is not in AI mode (e.g. terminal showing)', () => {
+			expect(
+				isSoleAiTabReplacement(
+					'session-1',
+					['old-tab'],
+					single('fresh-tab', { inputMode: 'terminal' })
+				)
+			).toBe(false);
+		});
+
+		it('returns false for a null/undefined session', () => {
+			expect(isSoleAiTabReplacement('session-1', ['old-tab'], null)).toBe(false);
+			expect(isSoleAiTabReplacement('session-1', ['old-tab'], undefined)).toBe(false);
 		});
 	});
 

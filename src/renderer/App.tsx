@@ -168,6 +168,7 @@ import { useActiveSession } from './hooks/session/useActiveSession';
 import { InlineWizardProvider, useInlineWizardContext } from './contexts/InlineWizardContext';
 import { ToastContainer } from './components/Toast';
 import { CenterFlash } from './components/CenterFlash';
+import { ThoughtStreamPanel } from './components/ThoughtStreamPanel';
 import { useQuitWhenIdle } from './hooks/useQuitWhenIdle';
 
 // Import services
@@ -199,6 +200,7 @@ import {
 	hasActiveWizard,
 	findNextUnreadSession,
 	getTabDisplayName,
+	isSoleAiTabReplacement,
 } from './utils/tabHelpers';
 // validateNewSession moved to useSymphonyContribution, useSessionCrud hooks
 // formatLogsForClipboard moved to useTabExportHandlers hook
@@ -1176,6 +1178,25 @@ function MaestroConsoleInner() {
 	useEffect(() => {
 		prevInputModeRef.current = activeSession?.inputMode;
 	}, [activeSession?.inputMode]);
+
+	// Auto-focus the AI input when closing the last tab spawns a fresh chat tab.
+	// closeTab() replaces the sole remaining AI tab with a new empty one, so the
+	// session still has one tab but its id changed; land the caret in the input
+	// just like a manual new tab does (the close paths don't reach inputRef).
+	const prevFocusSessionIdRef = useRef(activeSession?.id);
+	const prevAiTabIdsRef = useRef<string[]>(
+		activeSession ? activeSession.aiTabs.map((t) => t.id) : []
+	);
+	const shouldFocusOnLastTabReplaced = isSoleAiTabReplacement(
+		prevFocusSessionIdRef.current,
+		prevAiTabIdsRef.current,
+		activeSession
+	);
+	useFocusAfterRender(inputRef, shouldFocusOnLastTabReplaced, 0);
+	useEffect(() => {
+		prevFocusSessionIdRef.current = activeSession?.id;
+		prevAiTabIdsRef.current = activeSession ? activeSession.aiTabs.map((t) => t.id) : [];
+	}, [activeSession?.id, activeSession?.aiTabs]);
 
 	// PERF: Memoize sessions for NewInstanceModal validation (only recompute when modal is open)
 	// This prevents re-renders of the modal's validation logic on every session state change
@@ -3501,6 +3522,9 @@ function MaestroConsoleInner() {
 
 				{/* --- CENTER FLASH (single, app-wide; mounted via portal) --- */}
 				<CenterFlash theme={theme} />
+
+				{/* --- THOUGHT STREAM (single, app-wide; persists across tab switches) --- */}
+				<ThoughtStreamPanel theme={theme} />
 			</div>
 		</>
 	);

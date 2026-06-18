@@ -27,6 +27,7 @@ import { formatTimestamp } from '../../shared/formatters';
 import { humanizeCueEventType } from '../../shared/cue/cue-summary';
 import { getTokenSourcePill } from '../../shared/claudeTokenModeLabel';
 import { stripAnsiCodes } from '../../shared/stringUtils';
+import { stripMaestroMarkers } from '../../shared/goalDriven/goalMarkers';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { calculateContextDisplay, calculateDisplayInputTokens } from '../utils/contextUsage';
@@ -190,7 +191,9 @@ export function HistoryDetailModal({
 	//   - summary = the synopsis text
 	//   - fullResponse = may contain more context
 	const rawResponse = entry.fullResponse || entry.summary || '';
-	const cleanResponse = stripAnsiCodes(rawResponse);
+	// Strip ANSI, then the internal `<!-- maestro:... -->` control markers the Auto
+	// Run engine reads (progress/goal-complete/deadlock/halt) - users shouldn't see them.
+	const cleanResponse = stripMaestroMarkers(stripAnsiCodes(rawResponse));
 
 	return (
 		<div className="fixed inset-0 flex items-center justify-center z-[9999]">

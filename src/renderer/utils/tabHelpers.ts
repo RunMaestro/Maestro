@@ -1671,6 +1671,32 @@ export function aiTabFocusFields(tabId?: string): Partial<Session> {
 	};
 }
 
+/**
+ * Detects the "closed the last tab" transition produced by closeTab(): when the
+ * sole remaining AI tab is closed, closeTab() replaces it with a brand-new empty
+ * tab, so the session still has exactly one AI tab but its id changed. Callers use
+ * this to land the caret in the chat input on that fresh tab (same as a manual new
+ * tab), without stealing focus on unrelated single-tab states like agent switches.
+ *
+ * @param prevSessionId - The active session id from the previous render.
+ * @param prevAiTabIds  - The active session's AI tab ids from the previous render.
+ * @param session       - The current active session.
+ */
+export function isSoleAiTabReplacement(
+	prevSessionId: string | undefined,
+	prevAiTabIds: readonly string[],
+	session: Session | null | undefined
+): boolean {
+	return (
+		!!session &&
+		session.inputMode === 'ai' &&
+		prevSessionId === session.id &&
+		prevAiTabIds.length === 1 &&
+		session.aiTabs.length === 1 &&
+		session.aiTabs[0].id !== prevAiTabIds[0]
+	);
+}
+
 export interface SetActiveTabResult {
 	tab: AITab; // The newly active tab
 	session: Session; // Updated session with activeTabId changed

@@ -427,10 +427,14 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 					<span className="uppercase tracking-wider">
 						{isCurrentSessionStopping ? 'Stopping' : 'Auto'}
 					</span>
-					{/* Hide progress count when stopping - spinner is sufficient */}
+					{/* Hide progress count when stopping - spinner is sufficient.
+					    Goal-Driven runs have no task list, so show the self-reported
+					    percent instead of an X/Y task count. */}
 					{currentSessionBatchState && !isCurrentSessionStopping && (
 						<span className="text-[10px] opacity-80">
-							{currentSessionBatchState.completedTasks}/{currentSessionBatchState.totalTasks}
+							{currentSessionBatchState.goalMode
+								? `${currentSessionBatchState.goalProgress ?? 0}%`
+								: `${currentSessionBatchState.completedTasks}/${currentSessionBatchState.totalTasks}`}
 						</span>
 					)}
 					{currentSessionBatchState?.worktreeActive && (

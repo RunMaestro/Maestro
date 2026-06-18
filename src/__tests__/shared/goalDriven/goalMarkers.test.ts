@@ -5,7 +5,44 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { parseGoalMarkers } from '../../../shared/goalDriven/goalMarkers';
+import { parseGoalMarkers, stripMaestroMarkers } from '../../../shared/goalDriven/goalMarkers';
+
+describe('stripMaestroMarkers', () => {
+	it('removes a progress marker and trims the dangling gap', () => {
+		const text = 'Did the work.\n\n<!-- maestro:progress 30 | least-privilege walk done -->';
+		expect(stripMaestroMarkers(text)).toBe('Did the work.');
+	});
+
+	it('removes every marker shape (progress, complete, deadlock, halt)', () => {
+		const text = [
+			'Summary line.',
+			'<!-- maestro:progress 100 | shipped -->',
+			'<!-- maestro:goal-complete -->',
+			'<!-- maestro:deadlock: blocked -->',
+			'<!-- maestro:halt: stop -->',
+		].join('\n');
+		expect(stripMaestroMarkers(text)).toBe('Summary line.');
+	});
+
+	it('removes two markers sharing one line individually', () => {
+		const text = 'a <!-- maestro:progress 40 -->mid<!-- maestro:deadlock --> b';
+		expect(stripMaestroMarkers(text)).toBe('a mid b');
+	});
+
+	it('collapses the blank lines a mid-document marker leaves behind', () => {
+		const text = 'Before.\n\n<!-- maestro:progress 50 -->\n\nAfter.';
+		expect(stripMaestroMarkers(text)).toBe('Before.\n\nAfter.');
+	});
+
+	it('leaves marker-free text untouched', () => {
+		const text = 'Plain text with no markers.';
+		expect(stripMaestroMarkers(text)).toBe(text);
+	});
+
+	it('is tolerant of whitespace-only marker bodies', () => {
+		expect(stripMaestroMarkers('x <!--   maestro:progress   45   --> y')).toBe('x  y');
+	});
+});
 
 describe('parseGoalMarkers', () => {
 	describe('progress marker', () => {

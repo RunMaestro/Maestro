@@ -598,6 +598,14 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 	// Block launch (but not configuration) while the agent for this session is mid-thought.
 	const isAgentBusy = activeSession?.state === 'busy' || activeSession?.state === 'connecting';
 
+	// One Auto Run per agent at a time. If this session already has an active
+	// batch (spec OR goal driven), block launching another regardless of the
+	// mode the user is currently looking at. errorPaused runs still occupy the
+	// agent, so a paused run blocks a fresh launch too.
+	const isBatchRunningForSession = useBatchStore(
+		useCallback((s) => !!s.batchRunStates[sessionId]?.isRunning, [sessionId])
+	);
+
 	// Dispatching to a separate worktree spawns/uses a different agent, so the current
 	// session being busy is irrelevant — let the user launch regardless. (Busy open-worktree
 	// targets are already disabled in the WorktreeRunSection dropdown.)
@@ -607,6 +615,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 	const isGoDisabled =
 		isPreparingWorktree ||
 		blocksLaunchWhileBusy ||
+		isBatchRunningForSession ||
 		(goalMode
 			? isGoalEmpty
 			: hasNoTasks ||
@@ -738,10 +747,26 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 						</button>
 					</div>
 					<div className="flex items-center gap-4">
+						{/* Auto Run active pill - shown when this agent already has a run in
+						    flight, explaining why Go is disabled in both modes. */}
+						{isBatchRunningForSession && (
+							<div
+								className="flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-semibold whitespace-nowrap"
+								style={{
+									backgroundColor: theme.colors.accent,
+									color: theme.colors.bgMain,
+									border: `1px solid ${theme.colors.accent}`,
+								}}
+								title="An Auto Run is already active for this agent"
+							>
+								<Play className="w-2.5 h-2.5" />
+								<span>Auto Run active</span>
+							</div>
+						)}
 						{/* Agent thinking pill — shown only while the session agent is busy.
 						    Lives in the header (rather than over the Go button) so it stays
 						    visible without forcing the modal footer to grow. */}
-						{isAgentBusy && (
+						{isAgentBusy && !isBatchRunningForSession && (
 							<div
 								className="flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-semibold whitespace-nowrap"
 								style={{
@@ -1313,23 +1338,25 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 							title={
 								isPreparingWorktree
 									? 'Preparing worktree...'
-									: blocksLaunchWhileBusy
-										? 'Agent is thinking — finish or interrupt the current task before launching auto-run'
-										: goalMode
-											? isGoalEmpty
-												? 'Enter a goal to launch a Goal-Driven run'
-												: 'Start goal-driven auto-run'
-											: isPromptEmpty
-												? 'Agent prompt cannot be empty'
-												: !hasValidPrompt
-													? 'Agent prompt must reference Markdown tasks (e.g., checkbox syntax "- [ ]")'
-													: documents.length === 0
-														? 'No documents selected'
-														: documents.length === missingDocCount
-															? 'All selected documents are missing'
-															: hasNoTasks
-																? 'No unchecked tasks in documents'
-																: 'Start auto-run'
+									: isBatchRunningForSession
+										? 'An Auto Run is already active for this agent - stop it before launching another'
+										: blocksLaunchWhileBusy
+											? 'Agent is thinking - finish or interrupt the current task before launching auto-run'
+											: goalMode
+												? isGoalEmpty
+													? 'Enter a goal to launch a Goal-Driven run'
+													: 'Start goal-driven auto-run'
+												: isPromptEmpty
+													? 'Agent prompt cannot be empty'
+													: !hasValidPrompt
+														? 'Agent prompt must reference Markdown tasks (e.g., checkbox syntax "- [ ]")'
+														: documents.length === 0
+															? 'No documents selected'
+															: documents.length === missingDocCount
+																? 'All selected documents are missing'
+																: hasNoTasks
+																	? 'No unchecked tasks in documents'
+																	: 'Start auto-run'
 							}
 						>
 							{isPreparingWorktree ? <Spinner size={16} /> : <Play className="w-4 h-4" />}

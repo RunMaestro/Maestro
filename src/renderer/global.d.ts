@@ -741,6 +741,12 @@ interface MaestroAPI {
 			sshRemoteId?: string,
 			remoteCwd?: string
 		) => Promise<{ success: boolean; error?: string }>;
+		commitAll: (
+			cwd: string,
+			message: string,
+			sshRemoteId?: string,
+			remoteCwd?: string
+		) => Promise<{ success: boolean; committed: boolean; commitHash?: string; error?: string }>;
 		numstat: (
 			cwd: string,
 			sshRemoteId?: string,

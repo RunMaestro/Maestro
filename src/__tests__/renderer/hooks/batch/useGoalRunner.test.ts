@@ -199,6 +199,148 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 		expect(result.current.getBatchState(SESSION_ID).isRunning).toBe(false);
 	});
 
+	it('never lets the displayed percent regress when the agent self-report dips', async () => {
+		// The agent's self-assessment is noisy: it claims 55% then walks it back to
+		// 35%. The displayed percent (history headline + batch state) must be a
+		// monotonic high-water mark - 30 -> 55 -> 55 -> 100 - never sliding backward.
+		const responses = [
+			progressResponse(30, 'scaffolded'),
+			progressResponse(55, 'overconfident estimate'),
+			progressResponse(35, 'walked it back'),
+			progressResponse(100, 'actually done'),
+		];
+		let call = 0;
+		mockOnSpawnAgent.mockImplementation(async () => ({
+			success: true,
+			agentSessionId: `goal-agent-${call}`,
+			response: responses[call++],
+		}));
+
+		const { result } = renderProcessor([createMockSession()], [createMockGroup()]);
+
+		await act(async () => {
+			await result.current.startBatchRun(
+				SESSION_ID,
+				goalConfig('Ship the feature', 'All tests pass', null),
+				'/test/folder'
+			);
+		});
+
+		// All four iterations ran (the 35% dip is not a completion/stall signal:
+		// the raw series 30->55->35 still has an upward tick, so no stall fires).
+		expect(mockOnSpawnAgent).toHaveBeenCalledTimes(4);
+
+		const iterationPercents = mockOnAddHistoryEntry.mock.calls
+			.map((c) => c[0])
+			.filter((entry) => entry?.summary?.startsWith('Goal progress:'))
+			.map((entry) => Number(entry.summary.match(/Goal progress: (\d+)%/)?.[1]));
+
+		// Displayed percents climb monotonically - the 35% raw dip surfaces as 55%.
+		expect(iterationPercents).toEqual([30, 55, 55, 100]);
+		for (let i = 1; i < iterationPercents.length; i++) {
+			expect(iterationPercents[i]).toBeGreaterThanOrEqual(iterationPercents[i - 1]);
+		}
+
+		// onComplete reports the high-water 100%, not the agent's last dip.
+		expect(mockOnComplete).toHaveBeenCalledWith(
+			expect.objectContaining({ sessionId: SESSION_ID, completedTasks: 100, wasStopped: false })
+		);
+	});
+
+	it('commits each iteration when the session is a git repo', async () => {
+		const responses = [progressResponse(40, 'staged the schema'), progressResponse(100, 'done')];
+		let call = 0;
+		mockOnSpawnAgent.mockImplementation(async () => ({
+			success: true,
+			agentSessionId: `goal-agent-${call}`,
+			response: responses[call++],
+		}));
+
+		const { result } = renderProcessor(
+			[createMockSession({ isGitRepo: true })],
+			[createMockGroup()]
+		);
+
+		await act(async () => {
+			await result.current.startBatchRun(
+				SESSION_ID,
+				goalConfig('Ship it', 'All tests pass', null),
+				'/test/path'
+			);
+		});
+
+		const commitAll = window.maestro.git.commitAll as ReturnType<typeof vi.fn>;
+		// One commit per iteration (2 iterations: 40% then 100%).
+		expect(commitAll).toHaveBeenCalledTimes(2);
+		// Commits run in the session cwd with an iteration-stamped message.
+		expect(commitAll).toHaveBeenNthCalledWith(
+			1,
+			'/test/path',
+			'Maestro Auto Run (goal) iteration 1 - staged the schema',
+			undefined
+		);
+		expect(commitAll).toHaveBeenNthCalledWith(
+			2,
+			'/test/path',
+			'Maestro Auto Run (goal) iteration 2 - done',
+			undefined
+		);
+	});
+
+	it('does not commit when the session is not a git repo', async () => {
+		mockOnSpawnAgent.mockImplementation(async () => ({
+			success: true,
+			agentSessionId: 'goal-agent',
+			response: progressResponse(100, 'done'),
+		}));
+
+		const { result } = renderProcessor([createMockSession()], [createMockGroup()]);
+
+		await act(async () => {
+			await result.current.startBatchRun(
+				SESSION_ID,
+				goalConfig('Ship it', 'All tests pass', null),
+				'/test/path'
+			);
+		});
+
+		expect(window.maestro.git.commitAll).not.toHaveBeenCalled();
+	});
+
+	it('continues the run when an iteration commit fails', async () => {
+		(window.maestro.git.commitAll as ReturnType<typeof vi.fn>).mockResolvedValue({
+			success: false,
+			committed: false,
+			error: 'no git identity configured',
+		});
+		const responses = [progressResponse(50, 'half'), progressResponse(100, 'done')];
+		let call = 0;
+		mockOnSpawnAgent.mockImplementation(async () => ({
+			success: true,
+			agentSessionId: `goal-agent-${call}`,
+			response: responses[call++],
+		}));
+
+		const { result } = renderProcessor(
+			[createMockSession({ isGitRepo: true })],
+			[createMockGroup()]
+		);
+
+		await act(async () => {
+			await result.current.startBatchRun(
+				SESSION_ID,
+				goalConfig('Ship it', 'All tests pass', null),
+				'/test/path'
+			);
+		});
+
+		// A failed commit must not abort the run: it still reaches 100% completion.
+		expect(mockOnSpawnAgent).toHaveBeenCalledTimes(2);
+		expect(mockOnComplete).toHaveBeenCalledWith(
+			expect.objectContaining({ sessionId: SESSION_ID, completedTasks: 100, wasStopped: false })
+		);
+	});
+
 	it('exits "stalled" after STALL_THRESHOLD flat iterations', async () => {
 		mockOnSpawnAgent.mockImplementation(async () => ({
 			success: true,

@@ -1114,6 +1114,53 @@ describe('BatchRunnerModal', () => {
 			});
 		});
 
+		// One Auto Run per agent: an active run for this session must block Go in
+		// BOTH modes, even when the rest of the config is valid. Previously only
+		// the spec path was incidentally blocked (via "no documents"); a goal with
+		// text would slip through and launch a second concurrent run.
+		describe('blocks launching a second run while one is active', () => {
+			let batchStore: typeof import('../../../renderer/stores/batchStore');
+
+			beforeEach(async () => {
+				batchStore = await import('../../../renderer/stores/batchStore');
+				const { DEFAULT_BATCH_STATE } = await import('../../../renderer/hooks/batch/batchReducer');
+				batchStore.useBatchStore.setState({
+					batchRunStates: {
+						'session-123': { ...DEFAULT_BATCH_STATE, isRunning: true },
+					},
+				});
+			});
+
+			afterEach(() => {
+				batchStore.useBatchStore.setState({ batchRunStates: {} });
+			});
+
+			it('disables Go in Goal-Driven mode even with a valid goal', async () => {
+				render(<BatchRunnerModal {...createDefaultProps()} />);
+
+				fireEvent.click(screen.getByRole('button', { name: 'Goal-Driven' }));
+				fireEvent.change(screen.getByPlaceholderText(GOAL_PLACEHOLDER), {
+					target: { value: 'Refactor the auth module' },
+				});
+
+				// Goal is non-empty, so the only thing keeping Go disabled is the active run.
+				await waitFor(() => {
+					expect(screen.getByRole('button', { name: 'Go' })).toBeDisabled();
+				});
+				expect(screen.getByText('Auto Run active')).toBeInTheDocument();
+			});
+
+			it('disables Go in Spec-Driven mode while a run is active', async () => {
+				const props = createDefaultProps();
+				props.getDocumentTaskCount = vi.fn().mockResolvedValue(3);
+				render(<BatchRunnerModal {...props} />);
+
+				const goButton = screen.getByRole('button', { name: 'Go' });
+				expect(goButton).toBeDisabled();
+				expect(screen.getByText('Auto Run active')).toBeInTheDocument();
+			});
+		});
+
 		it('calls onGo with a goalConfig (not the spec-mode document config) when Go is clicked', async () => {
 			const props = createDefaultProps();
 			render(<BatchRunnerModal {...props} />);
