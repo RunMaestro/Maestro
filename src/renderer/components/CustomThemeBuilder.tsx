@@ -13,8 +13,8 @@ function isValidColor(color: string): boolean {
 	// Handle empty strings
 	if (!color || typeof color !== 'string') return false;
 
-	// Use the DOM to validate - create an option element and try to set its color
-	const testElement = new Option().style;
+	// Use a real DOM element so validation does not depend on the global Option constructor.
+	const testElement = document.createElement('span').style;
 	testElement.color = color;
 	// If the browser accepts the color, it will be non-empty
 	return testElement.color !== '';
@@ -49,6 +49,8 @@ const COLOR_CONFIG: { key: keyof ThemeColors; label: string; description: string
 	{ key: 'warning', label: 'Warning', description: 'Yellow/orange states' },
 	{ key: 'error', label: 'Error', description: 'Red states' },
 ];
+
+const OPTIONAL_IMPORT_COLOR_KEYS = new Set<string>(['bgTitleBar']);
 
 // Mini UI Preview component
 function MiniUIPreview({ colors }: { colors: ThemeColors }) {
@@ -379,7 +381,10 @@ export function CustomThemeBuilder({
 					const data = JSON.parse(e.target?.result as string);
 					if (data.colors && typeof data.colors === 'object') {
 						// Validate all required color keys exist
-						const requiredKeys = COLOR_CONFIG.map((c) => c.key);
+						const colorKeys = COLOR_CONFIG.map((c) => c.key);
+						const requiredKeys = colorKeys.filter(
+							(key) => !OPTIONAL_IMPORT_COLOR_KEYS.has(String(key))
+						);
 						const hasAllKeys = requiredKeys.every((key) => key in data.colors);
 
 						if (!hasAllKeys) {
@@ -390,7 +395,9 @@ export function CustomThemeBuilder({
 						}
 
 						// Validate all color values are valid CSS colors
-						const invalidColors = requiredKeys.filter((key) => !isValidColor(data.colors[key]));
+						const invalidColors = colorKeys.filter(
+							(key) => key in data.colors && !isValidColor(data.colors[key])
+						);
 						if (invalidColors.length > 0) {
 							const errorMsg = `Invalid theme file: invalid color values for ${invalidColors.slice(0, 3).join(', ')}${invalidColors.length > 3 ? '...' : ''}`;
 							onImportError?.(errorMsg);
