@@ -10,7 +10,10 @@
  */
 
 import type { ToolType } from '../types';
-import type { InlineWizardMessage, InlineGeneratedDocument } from '../hooks/batch/useInlineWizard';
+import type {
+	InlineGeneratedDocument,
+	InlineWizardMessage,
+} from '../hooks/batch/inlineWizard/types';
 import type { ExistingDocument } from '../utils/existingDocsDetector';
 import { logger } from '../utils/logger';
 import { getStdinFlags } from '../utils/spawnHelpers';
