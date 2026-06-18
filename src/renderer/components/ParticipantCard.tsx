@@ -16,11 +16,13 @@ import {
 	Eye,
 	EyeOff,
 } from 'lucide-react';
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import type { Theme, GroupChatParticipant, SessionState } from '../types';
 import { getStatusColor } from '../utils/theme';
 import { formatCost } from '../utils/formatters';
 import { safeClipboardWrite } from '../utils/clipboard';
+import { parsePeekOutput, formatPeekLines } from '../utils/peekOutputParser';
+import { formatTimestamp } from '../../shared/formatters';
 
 interface ParticipantCardProps {
 	theme: Theme;
@@ -41,7 +43,7 @@ function formatTime(timestamp: number): string {
 	const diff = now - timestamp;
 	if (diff < 60000) return 'just now';
 	if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
-	return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+	return formatTimestamp(timestamp, 'time');
 }
 
 export function ParticipantCard({
@@ -61,22 +63,32 @@ export function ParticipantCard({
 	const [peekOpen, setPeekOpen] = useState(false);
 	const peekRef = useRef<HTMLPreElement>(null);
 
+	// Parse raw JSONL into formatted output
+	const formattedOutput = useMemo(() => {
+		if (!liveOutput) return '';
+		const trimmed = liveOutput.length > 50000 ? liveOutput.slice(-50000) : liveOutput;
+		const parsed = parsePeekOutput(trimmed);
+		return formatPeekLines(parsed);
+	}, [liveOutput]);
+
 	// Auto-scroll peek output to bottom
 	useEffect(() => {
 		if (peekOpen && peekRef.current) {
 			peekRef.current.scrollTop = peekRef.current.scrollHeight;
 		}
-	}, [peekOpen, liveOutput]);
+	}, [peekOpen, formattedOutput]);
 
 	// Use agent's session ID (clean GUID) when available, otherwise show pending
 	const agentSessionId = participant.agentSessionId;
 	const isPending = !agentSessionId;
 
-	const copySessionId = useCallback(async (sessionId: string) => {
-		await safeClipboardWrite(sessionId);
-		setCopied(true);
-		setTimeout(() => setCopied(false), 2000);
-	}, []);
+	const copySessionId = useCallback(async () => {
+		if (agentSessionId) {
+			await safeClipboardWrite(agentSessionId);
+			setCopied(true);
+			setTimeout(() => setCopied(false), 2000);
+		}
+	}, [agentSessionId]);
 
 	// Determine if state should animate (busy or connecting)
 	const shouldPulse = state === 'busy' || state === 'connecting';
@@ -100,30 +112,26 @@ export function ParticipantCard({
 	// Always show reset button (useful for disconnected sessions, not just high context)
 	const showResetButton = onContextReset && groupChatId && !isResetting;
 
-	const handleReset = useCallback(
-		async (resetContext: (participantName: string) => void | Promise<void>) => {
-			setIsResetting(true);
-			try {
-				await resetContext(participant.name);
-			} finally {
-				setIsResetting(false);
-			}
-		},
-		[participant.name]
-	);
+	const handleReset = useCallback(async () => {
+		if (!onContextReset || !groupChatId) return;
+		setIsResetting(true);
+		try {
+			await onContextReset(participant.name);
+		} finally {
+			setIsResetting(false);
+		}
+	}, [onContextReset, groupChatId, participant.name]);
 
-	const handleRemove = useCallback(
-		async (removeParticipant: (participantName: string) => void | Promise<void>) => {
-			setIsRemoving(true);
-			try {
-				await removeParticipant(participant.name);
-			} finally {
-				setIsRemoving(false);
-				setConfirmRemove(false);
-			}
-		},
-		[participant.name]
-	);
+	const handleRemove = useCallback(async () => {
+		if (!onRemove || !groupChatId) return;
+		setIsRemoving(true);
+		try {
+			await onRemove(participant.name);
+		} finally {
+			setIsRemoving(false);
+			setConfirmRemove(false);
+		}
+	}, [onRemove, groupChatId, participant.name]);
 
 	const showRemoveButton = onRemove && groupChatId && !isRemoving;
 
@@ -175,7 +183,7 @@ export function ParticipantCard({
 					</span>
 				) : (
 					<button
-						onClick={() => copySessionId(agentSessionId)}
+						onClick={copySessionId}
 						className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full hover:opacity-80 transition-opacity cursor-pointer shrink-0"
 						style={{
 							backgroundColor: `${theme.colors.accent}20`,
@@ -250,7 +258,7 @@ export function ParticipantCard({
 				{/* Reset button */}
 				{showResetButton && (
 					<button
-						onClick={() => handleReset(onContextReset)}
+						onClick={handleReset}
 						className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded shrink-0 hover:opacity-80 transition-opacity cursor-pointer"
 						style={{
 							backgroundColor: `${theme.colors.warning}20`,
@@ -293,10 +301,10 @@ export function ParticipantCard({
 					</button>
 				)}
 				{/* Remove confirmation */}
-				{confirmRemove && !isRemoving && onRemove && groupChatId && (
+				{confirmRemove && !isRemoving && (
 					<span className="flex items-center gap-1 text-[10px] shrink-0">
 						<button
-							onClick={() => handleRemove(onRemove)}
+							onClick={handleRemove}
 							className="px-1.5 py-0.5 rounded cursor-pointer hover:opacity-80 transition-opacity"
 							style={{
 								backgroundColor: `${theme.colors.error}30`,
@@ -359,11 +367,7 @@ export function ParticipantCard({
 						border: `1px solid ${theme.colors.border}`,
 					}}
 				>
-					{liveOutput
-						? liveOutput.length > 4096
-							? liveOutput.slice(-4096)
-							: liveOutput
-						: '(no live output yet)'}
+					{formattedOutput || '(no live output yet)'}
 				</pre>
 			)}
 		</div>

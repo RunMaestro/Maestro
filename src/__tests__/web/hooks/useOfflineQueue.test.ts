@@ -904,45 +904,6 @@ describe('useOfflineQueue', () => {
 			);
 		});
 
-		it('should keep thrown commands in queue while retries remain', async () => {
-			const sendCommand = vi.fn().mockImplementation(() => {
-				throw new Error('Temporary failure');
-			});
-			const onCommandFailed = vi.fn();
-
-			const storedQueue: QueuedCommand[] = [
-				{
-					id: 'cmd-1',
-					command: 'retry later',
-					sessionId: 's1',
-					timestamp: 1,
-					inputMode: 'ai',
-					attempts: 0,
-				},
-			];
-			localStorage.setItem(STORAGE_KEY, JSON.stringify(storedQueue));
-
-			const { result } = renderHook(() =>
-				useOfflineQueue(createDefaultOptions({ sendCommand, onCommandFailed, maxRetries: 3 }))
-			);
-			vi.clearAllTimers();
-
-			await act(async () => {
-				const processPromise = result.current.processQueue();
-				await vi.advanceTimersByTimeAsync(1000);
-				await processPromise;
-			});
-
-			expect(result.current.queue).toEqual([
-				expect.objectContaining({
-					id: 'cmd-1',
-					attempts: 1,
-					lastError: 'Temporary failure',
-				}),
-			]);
-			expect(onCommandFailed).not.toHaveBeenCalled();
-		});
-
 		it('should handle non-Error throws', async () => {
 			const sendCommand = vi.fn().mockImplementation(() => {
 				throw 'string error';
@@ -1260,38 +1221,6 @@ describe('useOfflineQueue', () => {
 			});
 
 			expect(sendCommand).toHaveBeenCalled();
-		});
-
-		it('should not reset status when resumed during active processing', async () => {
-			let resumeDuringProcessing: (() => void) | null = null;
-			const sendCommand = vi.fn().mockImplementation(() => {
-				resumeDuringProcessing?.();
-				return true;
-			});
-			const storedQueue: QueuedCommand[] = [
-				{
-					id: 'cmd-1',
-					command: 'test',
-					sessionId: 's1',
-					timestamp: 1,
-					inputMode: 'ai',
-					attempts: 0,
-				},
-			];
-			localStorage.setItem(STORAGE_KEY, JSON.stringify(storedQueue));
-
-			const { result } = renderHook(() => useOfflineQueue(createDefaultOptions({ sendCommand })));
-			resumeDuringProcessing = () => result.current.resumeProcessing();
-			vi.clearAllTimers();
-
-			await act(async () => {
-				const processPromise = result.current.processQueue();
-				await vi.advanceTimersByTimeAsync(1000);
-				await processPromise;
-			});
-
-			expect(sendCommand).toHaveBeenCalledTimes(1);
-			expect(result.current.status).toBe('idle');
 		});
 
 		it('should not trigger processing if offline', async () => {

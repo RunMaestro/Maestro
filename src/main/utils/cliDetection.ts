@@ -35,7 +35,7 @@ export async function isCloudflaredInstalled(): Promise<boolean> {
 		cloudflaredInstalledCache = true;
 		// Handle Windows CRLF line endings properly
 		const lines = result.stdout.trim().split(/\r?\n/);
-		cloudflaredPathCache = lines[0].trim();
+		cloudflaredPathCache = lines[0]?.trim() || null;
 	} else {
 		cloudflaredInstalledCache = false;
 	}
@@ -72,20 +72,12 @@ export async function isGhInstalled(): Promise<boolean> {
 		// On Windows, 'where' can return multiple paths - take the first one
 		// Handle Windows CRLF line endings properly
 		const lines = result.stdout.trim().split(/\r?\n/);
-		ghPathCache = lines[0].trim();
+		ghPathCache = lines[0]?.trim() || null;
 	} else {
 		ghInstalledCache = false;
 	}
 
 	return ghInstalledCache;
-}
-
-/**
- * Get the cached path to the gh CLI binary.
- * Returns null if gh is not installed or detection hasn't run yet.
- */
-export function getGhPath(): string | null {
-	return ghPathCache;
 }
 
 /**
@@ -104,13 +96,6 @@ export async function resolveGhPath(customPath?: string): Promise<string> {
 
 	// Return cached path or fallback to 'gh'
 	return ghPathCache || 'gh';
-}
-
-export function clearGhCache(): void {
-	ghInstalledCache = null;
-	ghPathCache = null;
-	ghAuthenticatedCache = null;
-	ghStatusCacheTime = null;
 }
 
 /**
@@ -169,7 +154,7 @@ export async function detectSshPath(): Promise<string | null> {
 		// Handle Windows CRLF line endings properly
 		// On Windows, 'where' returns paths with \r\n, so we need to split on \r?\n
 		const lines = result.stdout.trim().split(/\r?\n/);
-		sshPathCache = lines[0].trim();
+		sshPathCache = lines[0]?.trim() || null;
 	} else if (isWindows()) {
 		// Fallback for Windows: Check the built-in OpenSSH location directly
 		// This is the standard location for Windows 10/11 OpenSSH
@@ -198,20 +183,4 @@ export async function detectSshPath(): Promise<string | null> {
 export async function resolveSshPath(): Promise<string> {
 	await detectSshPath();
 	return sshPathCache || 'ssh';
-}
-
-/**
- * Get the cached SSH path synchronously (returns null if detection hasn't run).
- * Use resolveSshPath() for async detection with fallback.
- */
-export function getSshPath(): string | null {
-	return sshPathCache;
-}
-
-/**
- * Clear SSH path cache (for testing or re-detection).
- */
-export function clearSshCache(): void {
-	sshPathCache = null;
-	sshDetectionDone = false;
 }

@@ -10,7 +10,390 @@
  * Do NOT duplicate theme definitions elsewhere.
  */
 
-import type { Theme, ThemeId } from './theme-types';
+import type { Theme, ThemeId, ThemeColors } from './theme-types';
+
+// ============================================================================
+// ANSI 16-color palettes for terminal emulation
+// Shared palette objects are spread into each theme's colors.
+// ============================================================================
+
+type AnsiPalette = Pick<
+	ThemeColors,
+	| 'ansiBlack'
+	| 'ansiRed'
+	| 'ansiGreen'
+	| 'ansiYellow'
+	| 'ansiBlue'
+	| 'ansiMagenta'
+	| 'ansiCyan'
+	| 'ansiWhite'
+	| 'ansiBrightBlack'
+	| 'ansiBrightRed'
+	| 'ansiBrightGreen'
+	| 'ansiBrightYellow'
+	| 'ansiBrightBlue'
+	| 'ansiBrightMagenta'
+	| 'ansiBrightCyan'
+	| 'ansiBrightWhite'
+	| 'selection'
+>;
+
+/** Official Dracula terminal palette */
+const draculaAnsi: AnsiPalette = {
+	ansiBlack: '#21222c',
+	ansiRed: '#ff5555',
+	ansiGreen: '#50fa7b',
+	ansiYellow: '#f1fa8c',
+	ansiBlue: '#6272a4',
+	ansiMagenta: '#ff79c6',
+	ansiCyan: '#8be9fd',
+	ansiWhite: '#f8f8f2',
+	ansiBrightBlack: '#6272a4',
+	ansiBrightRed: '#ff6e6e',
+	ansiBrightGreen: '#69ff94',
+	ansiBrightYellow: '#ffffa5',
+	ansiBrightBlue: '#d6acff',
+	ansiBrightMagenta: '#ff92df',
+	ansiBrightCyan: '#a4ffff',
+	ansiBrightWhite: '#ffffff',
+	selection: 'rgba(189, 147, 249, 0.3)',
+};
+
+/** Monokai Pro terminal palette */
+const monokaiAnsi: AnsiPalette = {
+	ansiBlack: '#272822',
+	ansiRed: '#f92672',
+	ansiGreen: '#a6e22e',
+	ansiYellow: '#f4bf75',
+	ansiBlue: '#66d9e8',
+	ansiMagenta: '#ae81ff',
+	ansiCyan: '#a1efe4',
+	ansiWhite: '#f8f8f2',
+	ansiBrightBlack: '#75715e',
+	ansiBrightRed: '#f92672',
+	ansiBrightGreen: '#a6e22e',
+	ansiBrightYellow: '#f4bf75',
+	ansiBrightBlue: '#66d9e8',
+	ansiBrightMagenta: '#ae81ff',
+	ansiBrightCyan: '#a1efe4',
+	ansiBrightWhite: '#f9f8f5',
+	selection: 'rgba(253, 151, 31, 0.3)',
+};
+
+/** Official Nord terminal palette */
+const nordAnsi: AnsiPalette = {
+	ansiBlack: '#3b4252',
+	ansiRed: '#bf616a',
+	ansiGreen: '#a3be8c',
+	ansiYellow: '#ebcb8b',
+	ansiBlue: '#81a1c1',
+	ansiMagenta: '#b48ead',
+	ansiCyan: '#88c0d0',
+	ansiWhite: '#e5e9f0',
+	ansiBrightBlack: '#4c566a',
+	ansiBrightRed: '#bf616a',
+	ansiBrightGreen: '#a3be8c',
+	ansiBrightYellow: '#ebcb8b',
+	ansiBrightBlue: '#81a1c1',
+	ansiBrightMagenta: '#b48ead',
+	ansiBrightCyan: '#8fbcbb',
+	ansiBrightWhite: '#eceff4',
+	selection: 'rgba(136, 192, 208, 0.3)',
+};
+
+/** Official Tokyo Night terminal palette */
+const tokyoNightAnsi: AnsiPalette = {
+	ansiBlack: '#15161e',
+	ansiRed: '#f7768e',
+	ansiGreen: '#9ece6a',
+	ansiYellow: '#e0af68',
+	ansiBlue: '#7aa2f7',
+	ansiMagenta: '#bb9af7',
+	ansiCyan: '#7dcfff',
+	ansiWhite: '#a9b1d6',
+	ansiBrightBlack: '#414868',
+	ansiBrightRed: '#f7768e',
+	ansiBrightGreen: '#9ece6a',
+	ansiBrightYellow: '#e0af68',
+	ansiBrightBlue: '#7aa2f7',
+	ansiBrightMagenta: '#bb9af7',
+	ansiBrightCyan: '#7dcfff',
+	ansiBrightWhite: '#c0caf5',
+	selection: 'rgba(122, 162, 247, 0.3)',
+};
+
+/** Official Catppuccin Mocha terminal palette */
+const catppuccinMochaAnsi: AnsiPalette = {
+	ansiBlack: '#45475a',
+	ansiRed: '#f38ba8',
+	ansiGreen: '#a6e3a1',
+	ansiYellow: '#f9e2af',
+	ansiBlue: '#89b4fa',
+	ansiMagenta: '#f5c2e7',
+	ansiCyan: '#94e2d5',
+	ansiWhite: '#bac2de',
+	ansiBrightBlack: '#585b70',
+	ansiBrightRed: '#f38ba8',
+	ansiBrightGreen: '#a6e3a1',
+	ansiBrightYellow: '#f9e2af',
+	ansiBrightBlue: '#89b4fa',
+	ansiBrightMagenta: '#f5c2e7',
+	ansiBrightCyan: '#94e2d5',
+	ansiBrightWhite: '#a6adc8',
+	selection: 'rgba(148, 226, 213, 0.3)',
+};
+
+/** Official Gruvbox Dark terminal palette */
+const gruvboxDarkAnsi: AnsiPalette = {
+	ansiBlack: '#282828',
+	ansiRed: '#cc241d',
+	ansiGreen: '#98971a',
+	ansiYellow: '#d79921',
+	ansiBlue: '#458588',
+	ansiMagenta: '#b16286',
+	ansiCyan: '#689d6a',
+	ansiWhite: '#a89984',
+	ansiBrightBlack: '#928374',
+	ansiBrightRed: '#fb4934',
+	ansiBrightGreen: '#b8bb26',
+	ansiBrightYellow: '#fabd2f',
+	ansiBrightBlue: '#83a598',
+	ansiBrightMagenta: '#d3869b',
+	ansiBrightCyan: '#8ec07c',
+	ansiBrightWhite: '#ebdbb2',
+	selection: 'rgba(131, 165, 152, 0.3)',
+};
+
+/** GitHub Light terminal palette (derived from GitHub's color system) */
+const githubLightAnsi: AnsiPalette = {
+	ansiBlack: '#24292e',
+	ansiRed: '#d73a49',
+	ansiGreen: '#22863a',
+	ansiYellow: '#b08800',
+	ansiBlue: '#0366d6',
+	ansiMagenta: '#6f42c1',
+	ansiCyan: '#0077aa',
+	ansiWhite: '#6a737d',
+	ansiBrightBlack: '#586069',
+	ansiBrightRed: '#cb2431',
+	ansiBrightGreen: '#28a745',
+	ansiBrightYellow: '#dbab09',
+	ansiBrightBlue: '#2188ff',
+	ansiBrightMagenta: '#8a63d2',
+	ansiBrightCyan: '#0599af',
+	ansiBrightWhite: '#2f363d',
+	selection: 'rgba(9, 105, 218, 0.2)',
+};
+
+/** Official Solarized Light terminal palette */
+const solarizedLightAnsi: AnsiPalette = {
+	ansiBlack: '#073642',
+	ansiRed: '#dc322f',
+	ansiGreen: '#859900',
+	ansiYellow: '#b58900',
+	ansiBlue: '#268bd2',
+	ansiMagenta: '#d33682',
+	ansiCyan: '#2aa198',
+	ansiWhite: '#eee8d5',
+	ansiBrightBlack: '#002b36',
+	ansiBrightRed: '#cb4b16',
+	ansiBrightGreen: '#586e75',
+	ansiBrightYellow: '#657b83',
+	ansiBrightBlue: '#839496',
+	ansiBrightMagenta: '#6c71c4',
+	ansiBrightCyan: '#93a1a1',
+	ansiBrightWhite: '#fdf6e3',
+	selection: 'rgba(42, 161, 152, 0.2)',
+};
+
+/** Atom One Light terminal palette */
+const oneLightAnsi: AnsiPalette = {
+	ansiBlack: '#383a42',
+	ansiRed: '#e45649',
+	ansiGreen: '#50a14f',
+	ansiYellow: '#c18401',
+	ansiBlue: '#0184bc',
+	ansiMagenta: '#a626a4',
+	ansiCyan: '#0997b3',
+	ansiWhite: '#fafafa',
+	ansiBrightBlack: '#4f525e',
+	ansiBrightRed: '#e45649',
+	ansiBrightGreen: '#50a14f',
+	ansiBrightYellow: '#c18401',
+	ansiBrightBlue: '#0184bc',
+	ansiBrightMagenta: '#a626a4',
+	ansiBrightCyan: '#0997b3',
+	ansiBrightWhite: '#ffffff',
+	selection: 'rgba(166, 38, 164, 0.2)',
+};
+
+/** Official Gruvbox Light terminal palette */
+const gruvboxLightAnsi: AnsiPalette = {
+	ansiBlack: '#fbf1c7',
+	ansiRed: '#cc241d',
+	ansiGreen: '#98971a',
+	ansiYellow: '#d79921',
+	ansiBlue: '#458588',
+	ansiMagenta: '#b16286',
+	ansiCyan: '#689d6a',
+	ansiWhite: '#7c6f64',
+	ansiBrightBlack: '#928374',
+	ansiBrightRed: '#9d0006',
+	ansiBrightGreen: '#79740e',
+	ansiBrightYellow: '#b57614',
+	ansiBrightBlue: '#076678',
+	ansiBrightMagenta: '#8f3f71',
+	ansiBrightCyan: '#427b58',
+	ansiBrightWhite: '#3c3836',
+	selection: 'rgba(69, 133, 136, 0.2)',
+};
+
+/** Official Catppuccin Latte terminal palette */
+const catppuccinLatteAnsi: AnsiPalette = {
+	ansiBlack: '#5c5f77',
+	ansiRed: '#d20f39',
+	ansiGreen: '#40a02b',
+	ansiYellow: '#df8e1d',
+	ansiBlue: '#1e66f5',
+	ansiMagenta: '#ea76cb',
+	ansiCyan: '#179299',
+	ansiWhite: '#acb0be',
+	ansiBrightBlack: '#6c6f85',
+	ansiBrightRed: '#d20f39',
+	ansiBrightGreen: '#40a02b',
+	ansiBrightYellow: '#df8e1d',
+	ansiBrightBlue: '#1e66f5',
+	ansiBrightMagenta: '#ea76cb',
+	ansiBrightCyan: '#179299',
+	ansiBrightWhite: '#bcc0cc',
+	selection: 'rgba(136, 57, 239, 0.2)',
+};
+
+/** Ayu Light terminal palette (derived from Ayu color system) */
+const ayuLightAnsi: AnsiPalette = {
+	ansiBlack: '#5c6166',
+	ansiRed: '#f07171',
+	ansiGreen: '#86b300',
+	ansiYellow: '#f2ae49',
+	ansiBlue: '#399ee6',
+	ansiMagenta: '#a37acc',
+	ansiCyan: '#4cbf99',
+	ansiWhite: '#8a9199',
+	ansiBrightBlack: '#828c99',
+	ansiBrightRed: '#ff7383',
+	ansiBrightGreen: '#99c600',
+	ansiBrightYellow: '#ffb454',
+	ansiBrightBlue: '#56b8f5',
+	ansiBrightMagenta: '#bb8dde',
+	ansiBrightCyan: '#5fd1ac',
+	ansiBrightWhite: '#959fa8',
+	selection: 'rgba(85, 180, 212, 0.2)',
+};
+
+/** Pedurple (vibe) — purple-themed ANSI palette */
+const pedurpleAnsi: AnsiPalette = {
+	ansiBlack: '#1a0f24',
+	ansiRed: '#da70d6',
+	ansiGreen: '#7cb342',
+	ansiYellow: '#d4af37',
+	ansiBlue: '#9b59b6',
+	ansiMagenta: '#ff69b4',
+	ansiCyan: '#c3a5e8',
+	ansiWhite: '#e8d5f5',
+	ansiBrightBlack: '#4a2a6a',
+	ansiBrightRed: '#ff82db',
+	ansiBrightGreen: '#8ec952',
+	ansiBrightYellow: '#e8c648',
+	ansiBrightBlue: '#b073d0',
+	ansiBrightMagenta: '#ff8dc7',
+	ansiBrightCyan: '#d4bdef',
+	ansiBrightWhite: '#f3eaf8',
+	selection: 'rgba(255, 105, 180, 0.3)',
+};
+
+/** Maestro's Choice (vibe) — gold/dark ANSI palette */
+const maestrosChoiceAnsi: AnsiPalette = {
+	ansiBlack: '#1a1a24',
+	ansiRed: '#e05070',
+	ansiGreen: '#66d9a0',
+	ansiYellow: '#f4c430',
+	ansiBlue: '#5f9ea0',
+	ansiMagenta: '#b48ead',
+	ansiCyan: '#66d9a0',
+	ansiWhite: '#a8a0a0',
+	ansiBrightBlack: '#3a3a5a',
+	ansiBrightRed: '#f06080',
+	ansiBrightGreen: '#80e9b4',
+	ansiBrightYellow: '#ffd54f',
+	ansiBrightBlue: '#79c8c8',
+	ansiBrightMagenta: '#c8a4c4',
+	ansiBrightCyan: '#80e9b4',
+	ansiBrightWhite: '#fff8e8',
+	selection: 'rgba(244, 196, 48, 0.3)',
+};
+
+/** Dre Synth (vibe) — cyberpunk/neon ANSI palette */
+const dreSynthAnsi: AnsiPalette = {
+	ansiBlack: '#0d0221',
+	ansiRed: '#ff2a6d',
+	ansiGreen: '#00ffcc',
+	ansiYellow: '#f5e642',
+	ansiBlue: '#0550ff',
+	ansiMagenta: '#d300c5',
+	ansiCyan: '#00d4ff',
+	ansiWhite: '#60e0d0',
+	ansiBrightBlack: '#150530',
+	ansiBrightRed: '#ff5588',
+	ansiBrightGreen: '#40ffdd',
+	ansiBrightYellow: '#fff870',
+	ansiBrightBlue: '#5588ff',
+	ansiBrightMagenta: '#ff44ee',
+	ansiBrightCyan: '#40eeff',
+	ansiBrightWhite: '#f0e6ff',
+	selection: 'rgba(0, 255, 204, 0.3)',
+};
+
+/** Winamp (vibe) — retro media player ANSI palette */
+const winampAnsi: AnsiPalette = {
+	ansiBlack: '#1a1a1a',
+	ansiRed: '#ff5555',
+	ansiGreen: '#00e000',
+	ansiYellow: '#ffff00',
+	ansiBlue: '#4a4a4a',
+	ansiMagenta: '#ff8924',
+	ansiCyan: '#8a8a62',
+	ansiWhite: '#cccccc',
+	ansiBrightBlack: '#3a3a3a',
+	ansiBrightRed: '#ff6666',
+	ansiBrightGreen: '#33ff33',
+	ansiBrightYellow: '#ffff55',
+	ansiBrightBlue: '#666666',
+	ansiBrightMagenta: '#ffaa55',
+	ansiBrightCyan: '#aaaa77',
+	ansiBrightWhite: '#ffffff',
+	selection: 'rgba(255, 137, 36, 0.3)',
+};
+
+/** InQuest (vibe) — high-contrast red/black ANSI palette */
+const inquestAnsi: AnsiPalette = {
+	ansiBlack: '#0a0a0a',
+	ansiRed: '#cc0033',
+	ansiGreen: '#f5f5f5',
+	ansiYellow: '#cc0033',
+	ansiBlue: '#888888',
+	ansiMagenta: '#ff3355',
+	ansiCyan: '#ffffff',
+	ansiWhite: '#cccccc',
+	ansiBrightBlack: '#2a2a2a',
+	ansiBrightRed: '#ff1144',
+	ansiBrightGreen: '#ffffff',
+	ansiBrightYellow: '#ff3355',
+	ansiBrightBlue: '#aaaaaa',
+	ansiBrightMagenta: '#ff6677',
+	ansiBrightCyan: '#ffffff',
+	ansiBrightWhite: '#f5f5f5',
+	selection: 'rgba(204, 0, 51, 0.3)',
+};
 
 export const THEMES: Record<ThemeId, Theme> = {
 	// Dark themes
@@ -20,6 +403,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 		mode: 'dark',
 		colors: {
 			bgMain: '#282a36',
+			bgTitleBar: '#282a36',
 			bgSidebar: '#21222c',
 			bgActivity: '#343746',
 			border: '#44475a',
@@ -32,6 +416,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 			success: '#50fa7b',
 			warning: '#ffb86c',
 			error: '#ff5555',
+			...draculaAnsi,
 		},
 	},
 	monokai: {
@@ -40,6 +425,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 		mode: 'dark',
 		colors: {
 			bgMain: '#272822',
+			bgTitleBar: '#272822',
 			bgSidebar: '#1e1f1c',
 			bgActivity: '#3e3d32',
 			border: '#49483e',
@@ -52,6 +438,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 			success: '#a6e22e',
 			warning: '#e6db74',
 			error: '#f92672',
+			...monokaiAnsi,
 		},
 	},
 	nord: {
@@ -60,6 +447,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 		mode: 'dark',
 		colors: {
 			bgMain: '#2e3440',
+			bgTitleBar: '#2e3440',
 			bgSidebar: '#3b4252',
 			bgActivity: '#434c5e',
 			border: '#4c566a',
@@ -72,6 +460,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 			success: '#a3be8c',
 			warning: '#ebcb8b',
 			error: '#bf616a',
+			...nordAnsi,
 		},
 	},
 	'tokyo-night': {
@@ -80,6 +469,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 		mode: 'dark',
 		colors: {
 			bgMain: '#1a1b26',
+			bgTitleBar: '#1a1b26',
 			bgSidebar: '#16161e',
 			bgActivity: '#24283b',
 			border: '#414868',
@@ -92,6 +482,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 			success: '#9ece6a',
 			warning: '#e0af68',
 			error: '#f7768e',
+			...tokyoNightAnsi,
 		},
 	},
 	'catppuccin-mocha': {
@@ -100,6 +491,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 		mode: 'dark',
 		colors: {
 			bgMain: '#1e1e2e',
+			bgTitleBar: '#1e1e2e',
 			bgSidebar: '#181825',
 			bgActivity: '#313244',
 			border: '#45475a',
@@ -112,6 +504,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 			success: '#a6e3a1',
 			warning: '#fab387',
 			error: '#f38ba8',
+			...catppuccinMochaAnsi,
 		},
 	},
 	'gruvbox-dark': {
@@ -120,6 +513,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 		mode: 'dark',
 		colors: {
 			bgMain: '#282828',
+			bgTitleBar: '#282828',
 			bgSidebar: '#1d2021',
 			bgActivity: '#3c3836',
 			border: '#504945',
@@ -132,6 +526,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 			success: '#b8bb26',
 			warning: '#fabd2f',
 			error: '#fb4934',
+			...gruvboxDarkAnsi,
 		},
 	},
 	'solarized-dark': {
@@ -140,6 +535,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 		mode: 'dark',
 		colors: {
 			bgMain: '#002b36',
+			bgTitleBar: '#002b36',
 			bgSidebar: '#073642',
 			bgActivity: '#0a4050',
 			border: '#2f4f56',
@@ -154,6 +550,27 @@ export const THEMES: Record<ThemeId, Theme> = {
 			error: '#dc322f',
 		},
 	},
+	'olive-nights': {
+		id: 'olive-nights',
+		name: 'Olive Nights',
+		mode: 'dark',
+		colors: {
+			bgMain: '#0a0b0a',
+			bgTitleBar: '#0a0b0a',
+			bgSidebar: '#0a0a0a',
+			bgActivity: '#111311',
+			border: '#0f0f0f',
+			textMain: '#f2ebc0',
+			textDim: '#cec8ba',
+			accent: '#5b675b',
+			accentDim: 'rgba(31, 43, 31, 1)',
+			accentText: '#ffffff',
+			accentForeground: '#fcfcfc',
+			success: '#bed78e',
+			warning: '#d0a795',
+			error: '#ff5555',
+		},
+	},
 	// Light themes
 	'github-light': {
 		id: 'github-light',
@@ -161,6 +578,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 		mode: 'light',
 		colors: {
 			bgMain: '#ffffff',
+			bgTitleBar: '#ffffff',
 			bgSidebar: '#f6f8fa',
 			bgActivity: '#eff2f5',
 			border: '#d0d7de',
@@ -173,6 +591,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 			success: '#1a7f37',
 			warning: '#9a6700',
 			error: '#cf222e',
+			...githubLightAnsi,
 		},
 	},
 	'solarized-light': {
@@ -181,6 +600,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 		mode: 'light',
 		colors: {
 			bgMain: '#fdf6e3',
+			bgTitleBar: '#fdf6e3',
 			bgSidebar: '#eee8d5',
 			bgActivity: '#e6dfc8',
 			border: '#d3cbb7',
@@ -193,6 +613,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 			success: '#687700',
 			warning: '#8d6a00',
 			error: '#d3302d',
+			...solarizedLightAnsi,
 		},
 	},
 	'one-light': {
@@ -201,6 +622,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 		mode: 'light',
 		colors: {
 			bgMain: '#fafafa',
+			bgTitleBar: '#fafafa',
 			bgSidebar: '#eaeaeb',
 			bgActivity: '#dbdbdc',
 			border: '#c8c8c9',
@@ -213,6 +635,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 			success: '#3f803f',
 			warning: '#996800',
 			error: '#c4493e',
+			...oneLightAnsi,
 		},
 	},
 	'gruvbox-light': {
@@ -221,6 +644,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 		mode: 'light',
 		colors: {
 			bgMain: '#fbf1c7',
+			bgTitleBar: '#fbf1c7',
 			bgSidebar: '#ebdbb2',
 			bgActivity: '#d5c4a1',
 			border: '#bdae93',
@@ -233,6 +657,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 			success: '#707013',
 			warning: '#8e6515',
 			error: '#cc241d',
+			...gruvboxLightAnsi,
 		},
 	},
 	'catppuccin-latte': {
@@ -241,6 +666,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 		mode: 'light',
 		colors: {
 			bgMain: '#eff1f5',
+			bgTitleBar: '#eff1f5',
 			bgSidebar: '#e6e9ef',
 			bgActivity: '#dce0e8',
 			border: '#acb0be',
@@ -253,6 +679,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 			success: '#317c21',
 			warning: '#b94908',
 			error: '#d20f39',
+			...catppuccinLatteAnsi,
 		},
 	},
 	'ayu-light': {
@@ -261,6 +688,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 		mode: 'light',
 		colors: {
 			bgMain: '#fafafa',
+			bgTitleBar: '#fafafa',
 			bgSidebar: '#f3f4f5',
 			bgActivity: '#e7e8e9',
 			border: '#d9d9d9',
@@ -273,6 +701,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 			success: '#5d7c00',
 			warning: '#946a2c',
 			error: '#b45555',
+			...ayuLightAnsi,
 		},
 	},
 	// Vibe themes
@@ -282,6 +711,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 		mode: 'vibe',
 		colors: {
 			bgMain: '#1a0f24',
+			bgTitleBar: '#1a0f24',
 			bgSidebar: '#140a1c',
 			bgActivity: '#2a1a3a',
 			border: '#4a2a6a',
@@ -294,6 +724,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 			success: '#7cb342',
 			warning: '#d4af37',
 			error: '#da70d6',
+			...pedurpleAnsi,
 		},
 	},
 	'maestros-choice': {
@@ -302,6 +733,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 		mode: 'vibe',
 		colors: {
 			bgMain: '#1a1a24',
+			bgTitleBar: '#1a1a24',
 			bgSidebar: '#141420',
 			bgActivity: '#24243a',
 			border: '#3a3a5a',
@@ -314,6 +746,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 			success: '#66d9a0',
 			warning: '#f4c430',
 			error: '#e05070',
+			...maestrosChoiceAnsi,
 		},
 	},
 	'dre-synth': {
@@ -322,6 +755,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 		mode: 'vibe',
 		colors: {
 			bgMain: '#0d0221',
+			bgTitleBar: '#0d0221',
 			bgSidebar: '#0a0118',
 			bgActivity: '#150530',
 			border: '#00d4aa',
@@ -334,6 +768,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 			success: '#00ffcc',
 			warning: '#ff2a6d',
 			error: '#ff2a6d',
+			...dreSynthAnsi,
 		},
 	},
 	inquest: {
@@ -342,9 +777,10 @@ export const THEMES: Record<ThemeId, Theme> = {
 		mode: 'vibe',
 		colors: {
 			bgMain: '#0a0a0a',
-			bgSidebar: '#050505',
+			bgTitleBar: '#0a0a0a',
+			bgSidebar: '#252323',
 			bgActivity: '#141414',
-			border: '#2a2a2a',
+			border: '#4a3838',
 			textMain: '#f5f5f5',
 			textDim: '#888888',
 			accent: '#cc0033',
@@ -354,6 +790,29 @@ export const THEMES: Record<ThemeId, Theme> = {
 			success: '#f5f5f5',
 			warning: '#cc0033',
 			error: '#cc0033',
+			...inquestAnsi,
+		},
+	},
+	winamp: {
+		id: 'winamp',
+		name: 'Winamp',
+		mode: 'vibe',
+		colors: {
+			bgMain: '#232323',
+			bgTitleBar: '#232323',
+			bgSidebar: '#1a1a1a',
+			bgActivity: '#3a3a3a',
+			border: '#4a4a4a',
+			textMain: '#00e000',
+			textDim: '#8a8a62',
+			accent: '#ff8924',
+			accentDim: 'rgba(255, 137, 36, 0.2)',
+			accentText: '#ffff00',
+			accentForeground: '#1a1a1a',
+			success: '#00e000',
+			warning: '#ff8924',
+			error: '#ff5555',
+			...winampAnsi,
 		},
 	},
 	// Custom theme - user-configurable, defaults to Dracula
@@ -363,6 +822,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 		mode: 'dark',
 		colors: {
 			bgMain: '#282a36',
+			bgTitleBar: '#282a36',
 			bgSidebar: '#21222c',
 			bgActivity: '#343746',
 			border: '#44475a',
@@ -375,6 +835,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 			success: '#50fa7b',
 			warning: '#ffb86c',
 			error: '#ff5555',
+			...draculaAnsi,
 		},
 	},
 };

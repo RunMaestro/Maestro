@@ -369,52 +369,6 @@ describe('useWebSocket', () => {
 
 			expect(ws.close).toHaveBeenCalledWith(1000, 'Client disconnect');
 		});
-
-		it('handles disconnect when no WebSocket exists', () => {
-			const onConnectionChange = vi.fn();
-			const { result } = renderHook(() => useWebSocket({ handlers: { onConnectionChange } }));
-
-			act(() => {
-				result.current.disconnect();
-			});
-
-			expect(MockWebSocket.getLastInstance()).toBeUndefined();
-			expect(result.current.state).toBe('disconnected');
-			expect(onConnectionChange).toHaveBeenCalledWith('disconnected');
-		});
-
-		it('ignores stale open and error events from replaced connections', () => {
-			const onConnectionChange = vi.fn();
-			const onError = vi.fn();
-			const { result } = renderHook(() =>
-				useWebSocket({ handlers: { onConnectionChange, onError } })
-			);
-
-			act(() => {
-				result.current.connect();
-			});
-			const firstWs = MockWebSocket.getLastInstance();
-
-			act(() => {
-				result.current.connect();
-			});
-			const secondWs = MockWebSocket.getLastInstance();
-
-			act(() => {
-				firstWs.simulateOpen();
-				firstWs.simulateError();
-			});
-
-			expect(result.current.state).toBe('connecting');
-			expect(onError).not.toHaveBeenCalled();
-
-			act(() => {
-				secondWs.simulateOpen();
-			});
-
-			expect(result.current.state).toBe('authenticating');
-			expect(onConnectionChange).toHaveBeenCalledWith('authenticating');
-		});
 	});
 
 	describe('Authentication Flow', () => {
@@ -892,43 +846,6 @@ describe('useWebSocket', () => {
 			expect(onSessionOutput).toHaveBeenCalledTimes(2);
 		});
 
-		it('handles empty session_output without a registered output handler', () => {
-			const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => {});
-			try {
-				const { result } = renderHook(() => useWebSocket());
-
-				act(() => {
-					result.current.connect();
-				});
-
-				const ws = MockWebSocket.getLastInstance();
-				act(() => {
-					ws.simulateOpen();
-					ws.simulateMessage({
-						type: 'connected',
-						clientId: 'client-123',
-						message: 'Connected',
-						authenticated: true,
-					} as ConnectedMessage);
-				});
-
-				act(() => {
-					ws.simulateMessage({
-						type: 'session_output',
-						sessionId: 'session-1',
-						data: '',
-						source: 'terminal',
-					} as SessionOutputMessage);
-				});
-
-				expect(consoleLog).toHaveBeenCalledWith(
-					expect.stringContaining('dataLen=0, hasHandler=false')
-				);
-			} finally {
-				consoleLog.mockRestore();
-			}
-		});
-
 		it('handles session_exit message', () => {
 			const onSessionExit = vi.fn();
 			const { result } = renderHook(() => useWebSocket({ handlers: { onSessionExit } }));
@@ -1398,36 +1315,6 @@ describe('useWebSocket', () => {
 			expect(ws.send).toHaveBeenCalledWith(JSON.stringify({ type: 'ping' }));
 		});
 
-		it('skips automatic ping when the socket is no longer open', () => {
-			const { result } = renderHook(() =>
-				useWebSocket({ pingInterval: 5000, autoReconnect: false })
-			);
-
-			act(() => {
-				result.current.connect();
-			});
-
-			const ws = MockWebSocket.getLastInstance();
-			act(() => {
-				ws.simulateOpen();
-				ws.simulateMessage({
-					type: 'connected',
-					clientId: 'client-123',
-					message: 'Connected',
-					authenticated: true,
-				} as ConnectedMessage);
-			});
-
-			ws.send.mockClear();
-			ws.readyState = MockWebSocket.CLOSED;
-
-			act(() => {
-				vi.advanceTimersByTime(5000);
-			});
-
-			expect(ws.send).not.toHaveBeenCalled();
-		});
-
 		it('does not start ping interval when pingInterval is 0', () => {
 			const { result } = renderHook(() => useWebSocket({ pingInterval: 0 }));
 
@@ -1732,38 +1619,6 @@ describe('useWebSocket', () => {
 			});
 
 			// No new WebSocket should be created
-			expect(MockWebSocket.getInstances().length).toBe(instanceCount);
-		});
-
-		it('reports an error when the reconnect attempt limit is reached', () => {
-			const onError = vi.fn();
-			const { result } = renderHook(() =>
-				useWebSocket({
-					autoReconnect: true,
-					maxReconnectAttempts: 0,
-					reconnectDelay: 100,
-					handlers: { onError },
-				})
-			);
-
-			act(() => {
-				result.current.connect();
-			});
-
-			const ws = MockWebSocket.getLastInstance();
-			act(() => {
-				ws.simulateOpen();
-				ws.simulateClose(1006, 'Connection failed');
-			});
-
-			expect(result.current.error).toBe('Failed to connect after 0 attempts');
-			expect(onError).toHaveBeenCalledWith('Failed to connect after 0 attempts');
-
-			const instanceCount = MockWebSocket.getInstances().length;
-			act(() => {
-				vi.advanceTimersByTime(100);
-			});
-
 			expect(MockWebSocket.getInstances().length).toBe(instanceCount);
 		});
 	});

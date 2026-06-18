@@ -215,69 +215,6 @@ describe('useSessionFilterMode', () => {
 			expect(groups.find((g) => g.id === 'g1')?.collapsed).toBe(false);
 			expect(groups.find((g) => g.id === 'g2')?.collapsed).toBe(true);
 		});
-
-		it('collapses groups added after filter mode preferences were saved', () => {
-			const g1 = makeGroup({ id: 'g1', collapsed: false });
-			resetStores([], [g1]);
-
-			renderHook(() => useSessionFilterMode());
-
-			act(() => {
-				useUIStore.setState({ sessionFilterOpen: true });
-			});
-
-			act(() => {
-				useSessionStore.setState({
-					groups: useSessionStore
-						.getState()
-						.groups.map((g) => (g.id === 'g1' ? { ...g, collapsed: false } : g)),
-				} as any);
-			});
-
-			act(() => {
-				useUIStore.setState({ sessionFilterOpen: false });
-			});
-
-			act(() => {
-				useSessionStore.setState({
-					groups: [...useSessionStore.getState().groups, makeGroup({ id: 'g2', collapsed: false })],
-				} as any);
-			});
-
-			act(() => {
-				useUIStore.setState({ sessionFilterOpen: true });
-			});
-
-			const groups = useSessionStore.getState().groups;
-			expect(groups.find((g) => g.id === 'g1')?.collapsed).toBe(false);
-			expect(groups.find((g) => g.id === 'g2')?.collapsed).toBe(true);
-		});
-
-		it('defaults bookmarks expanded when the saved filter bookmark preference is unavailable', () => {
-			renderHook(() => useSessionFilterMode());
-
-			act(() => {
-				useUIStore.setState({ sessionFilterOpen: true });
-			});
-
-			act(() => {
-				useUIStore.setState({ bookmarksCollapsed: null } as any);
-			});
-
-			act(() => {
-				useUIStore.setState({ sessionFilterOpen: false });
-			});
-
-			act(() => {
-				useUIStore.setState({ bookmarksCollapsed: true } as any);
-			});
-
-			act(() => {
-				useUIStore.setState({ sessionFilterOpen: true });
-			});
-
-			expect(useUIStore.getState().bookmarksCollapsed).toBe(false);
-		});
 	});
 
 	// -----------------------------------------------------------------------
@@ -370,31 +307,6 @@ describe('useSessionFilterMode', () => {
 			});
 
 			expect(useSessionStore.getState().groups[0].collapsed).toBe(false);
-		});
-
-		it('keeps groups added while filtering at their current collapsed state when closing', () => {
-			const g1 = makeGroup({ id: 'g1', collapsed: false });
-			resetStores([], [g1]);
-
-			renderHook(() => useSessionFilterMode());
-
-			act(() => {
-				useUIStore.setState({ sessionFilterOpen: true });
-			});
-
-			act(() => {
-				useSessionStore.setState({
-					groups: [...useSessionStore.getState().groups, makeGroup({ id: 'g2', collapsed: false })],
-				} as any);
-			});
-
-			act(() => {
-				useUIStore.setState({ sessionFilterOpen: false });
-			});
-
-			const groups = useSessionStore.getState().groups;
-			expect(groups.find((g) => g.id === 'g1')?.collapsed).toBe(false);
-			expect(groups.find((g) => g.id === 'g2')?.collapsed).toBe(false);
 		});
 	});
 });

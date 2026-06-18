@@ -290,6 +290,13 @@ export function useOfflineQueue(options: UseOfflineQueueOptions): UseOfflineQueu
 				continue;
 			}
 
+			// Check if still connected
+			if (!isOnline || !isConnected) {
+				webLogger.debug('Lost connection during processing', 'OfflineQueue');
+				failedCommands.push(cmd);
+				continue;
+			}
+
 			// Attempt to send the command
 			const updatedCmd = { ...cmd, attempts: cmd.attempts + 1 };
 

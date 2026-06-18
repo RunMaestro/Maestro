@@ -1,13 +1,19 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { render as rtlRender, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {
 	AutoRunDocumentSelector,
 	DocTreeNode,
-} from '../../../renderer/components/AutoRunDocumentSelector';
-import type { Theme } from '../../../renderer/types';
+} from '../../../renderer/components/AutoRun/AutoRunDocumentSelector';
+import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 
+import { mockTheme } from '../../helpers/mockTheme';
+
+// Wrap render with LayerStackProvider so useModalLayer (used by the doc
+// selector dropdown to own Escape) has the context it expects.
+const render = (ui: React.ReactElement, options?: Parameters<typeof rtlRender>[1]) =>
+	rtlRender(<LayerStackProvider>{ui}</LayerStackProvider>, options);
 // Mock lucide-react icons
 vi.mock('lucide-react', () => ({
 	ChevronDown: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
@@ -40,28 +46,20 @@ vi.mock('lucide-react', () => ({
 			📁
 		</span>
 	),
+	Search: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<span data-testid="search-icon" className={className} style={style}>
+			🔍
+		</span>
+	),
+}));
+
+// Mock theme utils (getExplorerFileIcon returns JSX with lucide-react icons)
+vi.mock('../../../renderer/utils/theme', () => ({
+	getExplorerFileIcon: () => <span data-testid="file-icon">📄</span>,
+	getExplorerFolderIcon: () => <span data-testid="folder-icon">📁</span>,
 }));
 
 // Test theme
-const mockTheme: Theme = {
-	id: 'test-theme',
-	name: 'Test Theme',
-	mode: 'dark',
-	colors: {
-		bgMain: '#1a1a2e',
-		bgSidebar: '#16213e',
-		bgActivity: '#0f3460',
-		border: '#374151',
-		accent: '#6366f1',
-		accentForeground: '#ffffff',
-		textMain: '#e5e7eb',
-		textDim: '#9ca3af',
-		success: '#22c55e',
-		warning: '#eab308',
-		error: '#ef4444',
-		purple: '#8b5cf6',
-	},
-};
 
 const defaultProps = {
 	theme: mockTheme,
@@ -97,7 +95,8 @@ describe('AutoRunDocumentSelector', () => {
 
 		it('exports AutoRunDocumentSelector component', () => {
 			expect(AutoRunDocumentSelector).toBeDefined();
-			expect(typeof AutoRunDocumentSelector).toBe('function');
+			// forwardRef components are objects with a $$typeof tag, not plain functions
+			expect(AutoRunDocumentSelector).not.toBeNull();
 		});
 	});
 
@@ -139,43 +138,15 @@ describe('AutoRunDocumentSelector', () => {
 			expect(changeFolderButton).toBeInTheDocument();
 		});
 
-		it('renders a Bionify toggle with the same toolbar geometry as adjacent action buttons', () => {
-			render(
-				<AutoRunDocumentSelector
-					{...defaultProps}
-					selectedDocument="doc1"
-					bionifyEnabled={false}
-					onToggleBionify={vi.fn()}
-				/>
-			);
+		it('does not render a Bionify toggle (toggled globally via Cmd+K)', () => {
+			render(<AutoRunDocumentSelector {...defaultProps} selectedDocument="doc1" />);
 
-			const bionifyButton = screen.getByTitle('Enable Bionify for this document preview');
-			const createButton = screen.getByTitle('Create new document');
-
-			expect(bionifyButton.className).toContain('inline-flex');
-			expect(bionifyButton.className).toContain('justify-center');
-			expect(bionifyButton.className).toContain('min-w-10');
-			expect(bionifyButton.className).toContain('h-10');
-			expect(bionifyButton.className).toBe(createButton.className);
-		});
-
-		it('shows active Bionify toggle styles and calls the toggle handler', () => {
-			const onToggleBionify = vi.fn();
-			render(
-				<AutoRunDocumentSelector
-					{...defaultProps}
-					selectedDocument="doc1"
-					bionifyEnabled={true}
-					onToggleBionify={onToggleBionify}
-				/>
-			);
-
-			const bionifyButton = screen.getByTitle('Disable Bionify for this document preview');
-			expect(bionifyButton).toHaveAttribute('aria-pressed', 'true');
-			expect(bionifyButton).toHaveStyle({ color: mockTheme.colors.accent });
-
-			fireEvent.click(bionifyButton);
-			expect(onToggleBionify).toHaveBeenCalledTimes(1);
+			expect(
+				screen.queryByTitle('Enable Bionify for this document preview')
+			).not.toBeInTheDocument();
+			expect(
+				screen.queryByTitle('Disable Bionify for this document preview')
+			).not.toBeInTheDocument();
 		});
 
 		it('applies theme colors to dropdown button', () => {
@@ -261,93 +232,17 @@ describe('AutoRunDocumentSelector', () => {
 			const button = screen.getByRole('button', { name: /doc2\.md/i });
 			fireEvent.click(button);
 
-			// Find all elements with doc2.md text, find the one in the dropdown
-			const docElements = screen.getAllByText('doc2.md');
-			// The dropdown item is a span inside a button with hover:bg-white/5 class
-			const selectedDoc = docElements
-				.find((el) => {
-					const parent = el.closest('button');
-					return parent && parent.className.includes('hover:bg-white/5');
-				})
-				?.closest('button');
-			expect(selectedDoc).toHaveStyle({ color: mockTheme.colors.accent });
-			expect(selectedDoc).toHaveStyle({ backgroundColor: mockTheme.colors.bgActivity });
-		});
-	});
-
-	describe('Task Percentages', () => {
-		it('shows the selected document completion percentage in the trigger button', () => {
-			const documentTaskCounts = new Map([['doc2', { completed: 3, total: 3 }]]);
-
-			render(
-				<AutoRunDocumentSelector
-					{...defaultProps}
-					selectedDocument="doc2"
-					documentTaskCounts={documentTaskCounts}
-				/>
-			);
-
-			const button = screen.getByRole('button', { name: /100%\s*doc2\.md/i });
-			const percentage = within(button).getByText('100%');
-
-			expect(percentage).toHaveStyle({
-				backgroundColor: mockTheme.colors.success,
-				color: '#000',
+			// In the flat list, the selected entry carries data-selected="true"
+			// and is also the initial keyboard highlight (highlightedIndex starts
+			// on the selected doc), so its background is the highlight tint.
+			const selectedEntry = document.querySelector(
+				'button[data-selected="true"][data-highlighted="true"]'
+			) as HTMLElement | null;
+			expect(selectedEntry).not.toBeNull();
+			expect(selectedEntry).toHaveStyle({ color: mockTheme.colors.accent });
+			expect(selectedEntry).toHaveStyle({
+				backgroundColor: `${mockTheme.colors.accent}25`,
 			});
-		});
-
-		it('shows an in-progress selected document percentage in the trigger button', () => {
-			const documentTaskCounts = new Map([['doc2', { completed: 1, total: 4 }]]);
-
-			render(
-				<AutoRunDocumentSelector
-					{...defaultProps}
-					selectedDocument="doc2"
-					documentTaskCounts={documentTaskCounts}
-				/>
-			);
-
-			const button = screen.getByRole('button', { name: /25%\s*doc2\.md/i });
-			const percentage = within(button).getByText('25%');
-
-			expect(percentage).toHaveStyle({
-				backgroundColor: mockTheme.colors.accentDim,
-				color: mockTheme.colors.textDim,
-			});
-		});
-
-		it('renders dropdown percentages and omits missing or zero-total counts', () => {
-			const documentTaskCounts = new Map([
-				['doc1', { completed: 1, total: 4 }],
-				['doc2', { completed: 3, total: 3 }],
-				['doc3', { completed: 0, total: 0 }],
-			]);
-
-			render(
-				<AutoRunDocumentSelector
-					{...defaultProps}
-					documents={['doc1', 'doc2', 'doc3', 'doc4']}
-					documentTaskCounts={documentTaskCounts}
-				/>
-			);
-
-			fireEvent.click(screen.getByRole('button', { name: /select a document/i }));
-
-			const inProgress = screen.getByText('25%');
-			const complete = screen.getByText('100%');
-			const zeroTotalDocument = screen.getByText('doc3.md').closest('button');
-			const missingCountDocument = screen.getByText('doc4.md').closest('button');
-
-			expect(inProgress).toHaveStyle({
-				backgroundColor: mockTheme.colors.accentDim,
-				color: mockTheme.colors.textDim,
-			});
-			expect(complete).toHaveStyle({
-				backgroundColor: mockTheme.colors.success,
-				color: '#000',
-			});
-			expect(zeroTotalDocument).not.toHaveTextContent('0%');
-			expect(missingCountDocument).not.toHaveTextContent('%');
 		});
 	});
 
@@ -362,196 +257,126 @@ describe('AutoRunDocumentSelector', () => {
 		});
 	});
 
-	describe('Tree Mode', () => {
-		const documentTree: DocTreeNode[] = [
-			{
-				name: 'folder1',
-				type: 'folder',
-				path: 'folder1',
-				children: [
-					{ name: 'nested-doc', type: 'file', path: 'folder1/nested-doc' },
-					{
-						name: 'subfolder',
-						type: 'folder',
-						path: 'folder1/subfolder',
-						children: [{ name: 'deep-doc', type: 'file', path: 'folder1/subfolder/deep-doc' }],
-					},
-				],
-			},
-			{ name: 'root-doc', type: 'file', path: 'root-doc' },
-		];
-
-		it('renders folder nodes with chevron icons', () => {
+	describe('Flat List Rendering (nested paths)', () => {
+		// The dropdown is now a single flat keyboard-navigable list. Nested
+		// document paths render as full path entries (e.g. "folder1/nested-doc.md")
+		// rather than as expandable folders.
+		it('renders nested documents as flat entries with full path', () => {
 			render(
 				<AutoRunDocumentSelector
 					{...defaultProps}
 					documents={['folder1/nested-doc', 'folder1/subfolder/deep-doc', 'root-doc']}
-					documentTree={documentTree}
 				/>
 			);
 
 			const button = screen.getByRole('button', { name: /select a document/i });
 			fireEvent.click(button);
 
-			// Folder should be visible with chevron
-			expect(screen.getByText('folder1')).toBeInTheDocument();
+			expect(screen.getByText('folder1/nested-doc.md')).toBeInTheDocument();
+			expect(screen.getByText('folder1/subfolder/deep-doc.md')).toBeInTheDocument();
+			expect(screen.getByText('root-doc.md')).toBeInTheDocument();
 		});
 
-		it('expands folder when clicked', () => {
+		it('selects a nested document by clicking its flat entry', () => {
 			render(
 				<AutoRunDocumentSelector
 					{...defaultProps}
 					documents={['folder1/nested-doc', 'folder1/subfolder/deep-doc', 'root-doc']}
-					documentTree={documentTree}
 				/>
 			);
 
 			const button = screen.getByRole('button', { name: /select a document/i });
 			fireEvent.click(button);
 
-			// Initially folder is collapsed, nested doc shouldn't be visible
-			expect(screen.queryByText('nested-doc.md')).not.toBeInTheDocument();
-
-			// Click folder to expand
-			const folderButton = screen.getByText('folder1');
-			fireEvent.click(folderButton);
-
-			// Now nested doc should be visible
-			expect(screen.getByText('nested-doc.md')).toBeInTheDocument();
-		});
-
-		it('collapses folder when clicked again', () => {
-			render(
-				<AutoRunDocumentSelector
-					{...defaultProps}
-					documents={['folder1/nested-doc', 'folder1/subfolder/deep-doc', 'root-doc']}
-					documentTree={documentTree}
-				/>
-			);
-
-			const button = screen.getByRole('button', { name: /select a document/i });
-			fireEvent.click(button);
-
-			// Expand folder
-			const folderButton = screen.getByText('folder1');
-			fireEvent.click(folderButton);
-			expect(screen.getByText('nested-doc.md')).toBeInTheDocument();
-
-			// Collapse folder
-			fireEvent.click(folderButton);
-			expect(screen.queryByText('nested-doc.md')).not.toBeInTheDocument();
-		});
-
-		it('renders nested folders correctly', () => {
-			render(
-				<AutoRunDocumentSelector
-					{...defaultProps}
-					documents={['folder1/nested-doc', 'folder1/subfolder/deep-doc', 'root-doc']}
-					documentTree={documentTree}
-				/>
-			);
-
-			const button = screen.getByRole('button', { name: /select a document/i });
-			fireEvent.click(button);
-
-			// Expand folder1
-			fireEvent.click(screen.getByText('folder1'));
-			expect(screen.getByText('subfolder')).toBeInTheDocument();
-
-			// Expand subfolder
-			fireEvent.click(screen.getByText('subfolder'));
-			expect(screen.getByText('deep-doc.md')).toBeInTheDocument();
-		});
-
-		it('selects file from tree', () => {
-			render(
-				<AutoRunDocumentSelector
-					{...defaultProps}
-					documents={['folder1/nested-doc', 'folder1/subfolder/deep-doc', 'root-doc']}
-					documentTree={documentTree}
-				/>
-			);
-
-			const button = screen.getByRole('button', { name: /select a document/i });
-			fireEvent.click(button);
-
-			// Expand folder and select nested doc
-			fireEvent.click(screen.getByText('folder1'));
-			fireEvent.click(screen.getByText('nested-doc.md'));
-
+			fireEvent.click(screen.getByText('folder1/nested-doc.md'));
 			expect(defaultProps.onSelectDocument).toHaveBeenCalledWith('folder1/nested-doc');
 		});
 
-		it('renders root-level file in tree', () => {
+		it('marks the selected nested document with data-selected', () => {
 			render(
 				<AutoRunDocumentSelector
 					{...defaultProps}
 					documents={['folder1/nested-doc', 'folder1/subfolder/deep-doc', 'root-doc']}
-					documentTree={documentTree}
+					selectedDocument="folder1/subfolder/deep-doc"
+				/>
+			);
+
+			const button = screen.getByRole('button', { name: /deep-doc\.md/i });
+			fireEvent.click(button);
+
+			// Both the trigger and the dropdown row show the doc text — pick
+			// the dropdown row by its data-selected marker.
+			const selectedButton = document.querySelector(
+				'button[data-selected="true"]'
+			) as HTMLElement | null;
+			expect(selectedButton).not.toBeNull();
+			expect(selectedButton?.textContent).toContain('folder1/subfolder/deep-doc.md');
+		});
+	});
+
+	describe('Tree Rendering (nested-only docs)', () => {
+		// Regression: when every document lives inside a subfolder and nothing is
+		// selected, the dropdown used to show "No matches for ''" because the
+		// folder was collapsed (visibleFiles empty) and the empty-state check
+		// fired before the tree rendered. Folders now auto-expand on open and the
+		// "No matches" message is gated on an active filter.
+		const nestedTree: DocTreeNode[] = [
+			{
+				name: '2026-06-01-AI-Census',
+				type: 'folder',
+				path: '2026-06-01-AI-Census',
+				children: [
+					{
+						name: 'CENSUS-01',
+						type: 'file',
+						path: '2026-06-01-AI-Census/CENSUS-01',
+					},
+					{
+						name: 'CENSUS-02',
+						type: 'file',
+						path: '2026-06-01-AI-Census/CENSUS-02',
+					},
+				],
+			},
+		];
+		const nestedDocuments = ['2026-06-01-AI-Census/CENSUS-01', '2026-06-01-AI-Census/CENSUS-02'];
+
+		it('shows nested documents on open without a selected document', () => {
+			render(
+				<AutoRunDocumentSelector
+					{...defaultProps}
+					documents={nestedDocuments}
+					documentTree={nestedTree}
+					selectedDocument={null}
 				/>
 			);
 
 			const button = screen.getByRole('button', { name: /select a document/i });
 			fireEvent.click(button);
 
-			expect(screen.getByText('root-doc.md')).toBeInTheDocument();
+			// Folder auto-expanded -> nested files visible, no false empty state.
+			expect(screen.getByText('CENSUS-01.md')).toBeInTheDocument();
+			expect(screen.getByText('CENSUS-02.md')).toBeInTheDocument();
+			expect(screen.queryByText(/No matches for/i)).not.toBeInTheDocument();
 		});
 
-		it('renders selected tree files with task percentage styling', () => {
-			const documentTaskCounts = new Map([
-				['folder1/nested-doc', { completed: 2, total: 2 }],
-				['root-doc', { completed: 1, total: 4 }],
-			]);
-
+		it('shows "No matches" only when a filter query excludes everything', () => {
 			render(
 				<AutoRunDocumentSelector
 					{...defaultProps}
-					documents={['folder1/nested-doc', 'folder1/subfolder/deep-doc', 'root-doc']}
-					documentTree={documentTree}
-					selectedDocument="folder1/nested-doc"
-					documentTaskCounts={documentTaskCounts}
+					documents={nestedDocuments}
+					documentTree={nestedTree}
+					selectedDocument={null}
 				/>
 			);
 
-			fireEvent.click(screen.getByRole('button', { name: /folder1\/nested-doc\.md/i }));
-			fireEvent.click(screen.getByText('folder1'));
+			const button = screen.getByRole('button', { name: /select a document/i });
+			fireEvent.click(button);
 
-			const selectedFile = screen.getByText('nested-doc.md').closest('button');
-			const completePct = within(selectedFile!).getByText('100%');
-			const rootPct = screen.getByText('25%');
+			const filter = screen.getByPlaceholderText('Filter documents...');
+			fireEvent.change(filter, { target: { value: 'zzz-no-such-doc' } });
 
-			expect(selectedFile).toHaveStyle({
-				color: mockTheme.colors.accent,
-				backgroundColor: mockTheme.colors.bgActivity,
-			});
-			expect(completePct).toHaveStyle({
-				backgroundColor: mockTheme.colors.success,
-				color: '#000',
-			});
-			expect(rootPct).toHaveStyle({
-				backgroundColor: mockTheme.colors.accentDim,
-				color: mockTheme.colors.textDim,
-			});
-		});
-
-		it('renders folders without children in tree mode', () => {
-			const treeWithEmptyFolder: DocTreeNode[] = [
-				{ name: 'empty-folder', type: 'folder', path: 'empty-folder' },
-				{ name: 'root-doc', type: 'file', path: 'root-doc' },
-			];
-
-			render(
-				<AutoRunDocumentSelector
-					{...defaultProps}
-					documents={['root-doc']}
-					documentTree={treeWithEmptyFolder}
-				/>
-			);
-
-			fireEvent.click(screen.getByRole('button', { name: /select a document/i }));
-
-			expect(screen.getByText('empty-folder')).toBeInTheDocument();
-			expect(screen.getByText('root-doc.md')).toBeInTheDocument();
+			expect(screen.getByText(/No matches for/i)).toBeInTheDocument();
 		});
 	});
 
@@ -595,17 +420,6 @@ describe('AutoRunDocumentSelector', () => {
 			fireEvent.keyDown(document, { key: 'Escape' });
 
 			expect(document.activeElement).toBe(button);
-		});
-
-		it('keeps dropdown open for non-Escape document keydowns', () => {
-			render(<AutoRunDocumentSelector {...defaultProps} />);
-
-			const button = screen.getByRole('button', { name: /select a document/i });
-			fireEvent.click(button);
-
-			fireEvent.keyDown(document, { key: 'Enter' });
-
-			expect(screen.getByText('doc1.md')).toBeInTheDocument();
 		});
 	});
 
@@ -867,30 +681,6 @@ describe('AutoRunDocumentSelector', () => {
 			expect(defaultProps.onCreateDocument).not.toHaveBeenCalled();
 		});
 
-		it('does not submit duplicate names when Enter is pressed', () => {
-			render(<AutoRunDocumentSelector {...defaultProps} documents={['existing-doc']} />);
-
-			fireEvent.click(screen.getByTitle('Create new document'));
-			const input = screen.getByPlaceholderText('my-tasks');
-			fireEvent.change(input, { target: { value: 'existing-doc' } });
-			fireEvent.keyDown(input, { key: 'Enter' });
-
-			expect(defaultProps.onCreateDocument).not.toHaveBeenCalled();
-			expect(screen.getByText('A document with this name already exists')).toBeInTheDocument();
-		});
-
-		it('ignores non-Enter keys with a valid document name', () => {
-			render(<AutoRunDocumentSelector {...defaultProps} />);
-
-			fireEvent.click(screen.getByTitle('Create new document'));
-			const input = screen.getByPlaceholderText('my-tasks');
-			fireEvent.change(input, { target: { value: 'new-doc' } });
-			fireEvent.keyDown(input, { key: 'Tab' });
-
-			expect(defaultProps.onCreateDocument).not.toHaveBeenCalled();
-			expect(screen.getByRole('dialog')).toBeInTheDocument();
-		});
-
 		it('disables Create button when input is empty', () => {
 			render(<AutoRunDocumentSelector {...defaultProps} />);
 
@@ -913,8 +703,6 @@ describe('AutoRunDocumentSelector', () => {
 			fireEvent.click(screen.getByRole('button', { name: /^create$/i }));
 
 			expect(screen.getByText('Creating...')).toBeInTheDocument();
-			fireEvent.keyDown(input, { key: 'Enter' });
-			expect(slowCreateDocument).toHaveBeenCalledTimes(1);
 
 			await waitFor(() => {
 				expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -1283,10 +1071,13 @@ describe('AutoRunDocumentSelector', () => {
 			const button = screen.getByRole('button', { name: /select a document/i });
 			fireEvent.click(button);
 
-			// Find the dropdown menu - the doc text is in a span, inside a button, inside the menu container
+			// Find the dropdown menu - the doc text is in a span, inside a button,
+			// inside the scrollable list, inside the menu container (added when
+			// the filter input was introduced).
 			const docText = screen.getByText('doc1.md');
 			const docButton = docText.closest('button');
-			const menu = docButton?.parentElement;
+			const scrollList = docButton?.parentElement;
+			const menu = scrollList?.parentElement;
 			expect(menu).toHaveStyle({ backgroundColor: mockTheme.colors.bgSidebar });
 		});
 

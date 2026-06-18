@@ -24,12 +24,14 @@ export type ThemeId =
 	| 'gruvbox-light'
 	| 'catppuccin-mocha'
 	| 'gruvbox-dark'
+	| 'olive-nights'
 	| 'catppuccin-latte'
 	| 'ayu-light'
 	| 'pedurple'
 	| 'maestros-choice'
 	| 'dre-synth'
 	| 'inquest'
+	| 'winamp'
 	| 'custom';
 
 /**
@@ -48,6 +50,14 @@ export interface ThemeColors {
 	bgSidebar: string;
 	/** Background for interactive/activity elements */
 	bgActivity: string;
+	/**
+	 * Background for the draggable window title bar (the top strip that holds
+	 * the traffic-light buttons and the centered agent title). Optional: when
+	 * unset the title bar renders transparent and shows `bgMain` behind it,
+	 * which is the historical behavior. Built-in themes set it explicitly to
+	 * their `bgMain` so existing themes look unchanged.
+	 */
+	bgTitleBar?: string;
 	/** Border color for dividers and outlines */
 	border: string;
 	/** Primary text color */
@@ -68,6 +78,29 @@ export interface ThemeColors {
 	warning: string;
 	/** Error state color (red tones) */
 	error: string;
+
+	/**
+	 * ANSI 16-color palette for terminal emulation.
+	 * Optional — XTerminal uses theme-appropriate defaults if not provided.
+	 */
+	ansiBlack?: string;
+	ansiRed?: string;
+	ansiGreen?: string;
+	ansiYellow?: string;
+	ansiBlue?: string;
+	ansiMagenta?: string;
+	ansiCyan?: string;
+	ansiWhite?: string;
+	ansiBrightBlack?: string;
+	ansiBrightRed?: string;
+	ansiBrightGreen?: string;
+	ansiBrightYellow?: string;
+	ansiBrightBlue?: string;
+	ansiBrightMagenta?: string;
+	ansiBrightCyan?: string;
+	ansiBrightWhite?: string;
+	/** Selection background color for terminal text selection */
+	selection?: string;
 }
 
 /**
@@ -100,12 +133,14 @@ export function isValidThemeId(id: string): id is ThemeId {
 		'gruvbox-light',
 		'catppuccin-mocha',
 		'gruvbox-dark',
+		'olive-nights',
 		'catppuccin-latte',
 		'ayu-light',
 		'pedurple',
 		'maestros-choice',
 		'dre-synth',
 		'inquest',
+		'winamp',
 		'custom',
 	];
 	return validIds.includes(id as ThemeId);

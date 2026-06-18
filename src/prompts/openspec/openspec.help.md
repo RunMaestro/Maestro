@@ -134,7 +134,7 @@ OpenSpec works seamlessly with Maestro's Auto Run feature:
 1. **Create proposal** with `/openspec.proposal`
 2. **Get approval** from stakeholders
 3. **Use `/openspec.implement`** to generate Auto Run documents
-4. Documents are saved to `Auto Run Docs/` in your project
+4. Documents are saved to `.maestro/playbooks/` in your project
 5. Each task becomes a checkbox item that Auto Run executes
 6. Complete tasks are marked with implementation notes
 7. **Archive** with `/openspec.archive` after deployment

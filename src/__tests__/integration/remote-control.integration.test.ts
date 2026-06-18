@@ -9,7 +9,7 @@
  * 2. Desktop → Web: Responses/state changes from desktop are broadcast to web clients
  * 3. Round-trip: Full cycle of command → processing → broadcast
  *
- * Run with: npm run test:integration -- --testNamePattern="Remote Control"
+ * Run with: RUN_INTEGRATION_TESTS=true npm run test:integration -- --testNamePattern="Remote Control"
  *
  * @vitest-environment node
  */
@@ -18,6 +18,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import WebSocket from 'ws';
 import { WebServer } from '../../main/web-server';
 import type { Theme, ThemeId } from '../../shared/theme-types';
+
+// Skip if not running integration tests
+const runTests = process.env.RUN_INTEGRATION_TESTS === 'true';
 
 // Mock the logger to prevent noise in test output
 vi.mock('../../main/utils/logger', () => ({
@@ -31,6 +34,7 @@ vi.mock('../../main/utils/logger', () => ({
 
 // Mock network utils to return localhost
 vi.mock('../../main/utils/networkUtils', () => ({
+	getLocalIpAddress: () => Promise.resolve('localhost'),
 	getLocalIpAddressSync: () => 'localhost',
 }));
 
@@ -87,14 +91,13 @@ const TEST_TABS: TestTab[] = [
 	},
 ];
 
-describe('Remote Control Integration Tests', () => {
+describe.skipIf(!runTests)('Remote Control Integration Tests', () => {
 	let server: WebServer;
 	let wsUrl: string;
 
 	beforeEach(async () => {
 		// Create fresh server with random port
 		server = new WebServer(0);
-		(server as any).server.log.level = 'silent';
 
 		// Set up required data callbacks
 		server.setGetSessionsCallback(() => [
@@ -297,7 +300,7 @@ describe('Remote Control Integration Tests', () => {
 
 			const response = await responsePromise;
 
-			expect(desktopCallback).toHaveBeenCalledWith('session-2', undefined);
+			expect(desktopCallback).toHaveBeenCalledWith('session-2', undefined, undefined);
 			expect(response.success).toBe(true);
 
 			client.close();

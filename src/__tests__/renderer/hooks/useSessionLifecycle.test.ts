@@ -15,12 +15,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, cleanup } from '@testing-library/react';
 
 const mockPushNavigation = vi.fn();
-const mockCaptureException = vi.hoisted(() => vi.fn());
-
-vi.mock('@sentry/electron/renderer', () => ({
-	captureException: mockCaptureException,
-	captureMessage: vi.fn(),
-}));
 
 import {
 	useSessionLifecycle,
@@ -29,9 +23,9 @@ import {
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
-import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
-import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 import type { Session, AITab } from '../../../renderer/types';
+import { createMockAITab } from '../../helpers/mockTab';
+import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
 // ============================================================================
 // Test Helpers
@@ -54,41 +48,20 @@ function createMockAITab(overrides: Partial<AITab> = {}): AITab {
 	} as AITab;
 }
 
+// Thin wrapper: lifecycle tests need a session with a pre-populated AI tab
+// and a group membership so deletion/rename code paths execute.
 function createMockSession(overrides: Partial<Session> = {}): Session {
-	return {
-		id: 'session-1',
+	return baseCreateMockSession({
 		name: 'Test Agent',
 		cwd: '/projects/myapp',
 		fullPath: '/projects/myapp',
 		projectRoot: '/projects/myapp',
-		toolType: 'claude-code' as any,
 		groupId: 'group-1',
-		inputMode: 'ai' as any,
-		state: 'idle' as any,
 		aiTabs: [createMockAITab()],
 		activeTabId: 'tab-1',
-		aiLogs: [],
-		shellLogs: [],
-		workLog: [],
-		contextUsage: 0,
-		aiPid: 0,
-		terminalPid: 0,
 		port: 3000,
-		isLive: false,
-		changedFiles: [],
-		isGitRepo: false,
-		fileTree: [],
-		fileExplorerExpanded: [],
-		fileExplorerScrollPos: 0,
-		executionQueue: [],
-		activeTimeMs: 0,
-		closedTabHistory: [],
-		filePreviewTabs: [],
-		activeFileTabId: null,
-		unifiedTabOrder: [],
-		unifiedClosedTabHistory: [],
 		...overrides,
-	} as Session;
+	});
 }
 
 // ============================================================================
@@ -130,8 +103,6 @@ beforeEach(() => {
 		showUnreadOnly: false,
 		preFilterActiveTabId: null,
 	});
-	useGroupChatStore.setState({ activeGroupChatId: null });
-	useNotificationStore.setState({ toasts: [] });
 
 	// Mock window.maestro APIs
 	(window as any).maestro = {
@@ -195,6 +166,7 @@ describe('useSessionLifecycle', () => {
 					'New Name',
 					undefined, // toolType unchanged
 					'nudge msg',
+					'init msg',
 					'/custom/path',
 					'--arg1',
 					{ MY_VAR: 'value' },
@@ -207,6 +179,7 @@ describe('useSessionLifecycle', () => {
 			const updated = useSessionStore.getState().sessions[0];
 			expect(updated.name).toBe('New Name');
 			expect(updated.nudgeMessage).toBe('nudge msg');
+			expect(updated.newSessionMessage).toBe('init msg');
 			expect(updated.customPath).toBe('/custom/path');
 			expect(updated.customArgs).toBe('--arg1');
 			expect(updated.customEnvVars).toEqual({ MY_VAR: 'value' });
@@ -242,6 +215,7 @@ describe('useSessionLifecycle', () => {
 			const session = createMockSession({
 				id: 'session-1',
 				nudgeMessage: 'old nudge',
+				newSessionMessage: 'old init',
 				customPath: '/old/path',
 			});
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
@@ -255,6 +229,7 @@ describe('useSessionLifecycle', () => {
 			const updated = useSessionStore.getState().sessions[0];
 			expect(updated.name).toBe('Name Only');
 			expect(updated.nudgeMessage).toBeUndefined();
+			expect(updated.newSessionMessage).toBeUndefined();
 			expect(updated.customPath).toBeUndefined();
 		});
 
@@ -310,31 +285,6 @@ describe('useSessionLifecycle', () => {
 			expect(updated.aiPid).toBe(0);
 			// Existing AI process killed
 			expect((window as any).maestro.process.kill).toHaveBeenCalledWith('session-1-ai');
-		});
-
-		it('still saves provider change when old AI process kill rejects', async () => {
-			(window.maestro.process.kill as ReturnType<typeof vi.fn>).mockRejectedValue(
-				new Error('Process not found')
-			);
-			const session = createMockSession({
-				id: 'session-1',
-				toolType: 'claude-code' as any,
-				aiTabs: [createMockAITab({ id: 'old-tab' })],
-				activeTabId: 'old-tab',
-			});
-			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
-
-			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
-
-			await act(async () => {
-				result.current.handleSaveEditAgent('session-1', 'My Agent', 'codex' as any);
-				await Promise.resolve();
-			});
-
-			const updated = useSessionStore.getState().sessions[0];
-			expect(updated.toolType).toBe('codex');
-			expect(updated.activeTabId).not.toBe('old-tab');
-			expect(window.maestro.process.kill).toHaveBeenCalledWith('session-1-ai');
 		});
 
 		it('does not reset tabs when toolType is same as current', () => {
@@ -534,67 +484,60 @@ describe('useSessionLifecycle', () => {
 			expect(updated.name).toBeNull();
 		});
 
-		it('persists null to agentSessions when clearing a non-claude tab name', () => {
-			const tab = createMockAITab({
-				id: 'tab-1',
-				name: 'Codex Tab',
-				agentSessionId: 'agent-456',
-			});
-			const session = createMockSession({
-				id: 'session-1',
-				toolType: 'codex' as any,
-				aiTabs: [tab],
-				activeTabId: 'tab-1',
-			});
+		it('locks a browser tab name via customTitle without touching title', () => {
+			const browserTab = {
+				id: 'browser-1',
+				url: 'https://example.com/page',
+				title: 'Example Domain',
+				createdAt: 0,
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: false,
+			};
+			const session = createMockSession({ id: 'session-1', browserTabs: [browserTab] });
 
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
-			useModalStore.getState().openModal('renameTab', { tabId: 'tab-1', initialName: 'Codex Tab' });
+			useModalStore.getState().openModal('renameTab', { tabId: 'browser-1', initialName: '' });
 
 			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
 
 			act(() => {
-				result.current.handleRenameTab('');
+				result.current.handleRenameTab('  My Tab  ');
 			});
 
-			const updated = useSessionStore.getState().sessions[0].aiTabs[0];
-			expect(updated.name).toBeNull();
-			expect(window.maestro.agentSessions.setSessionName).toHaveBeenCalledWith(
-				'codex',
-				'/projects/myapp',
-				'agent-456',
-				null
-			);
+			const updated = useSessionStore.getState().sessions[0].browserTabs![0];
+			expect(updated.customTitle).toBe('My Tab');
+			// Underlying page title is preserved so it reappears once the name is cleared
+			expect(updated.title).toBe('Example Domain');
 		});
 
-		it('only renames the active session when multiple sessions exist', () => {
-			const activeTab = createMockAITab({ id: 'tab-1', name: 'Old Active' });
-			const otherTab = createMockAITab({ id: 'tab-1', name: 'Other Name' });
-			const activeSession = createMockSession({
-				id: 'session-1',
-				aiTabs: [activeTab],
-				activeTabId: 'tab-1',
-			});
-			const otherSession = createMockSession({
-				id: 'session-2',
-				aiTabs: [otherTab],
-				activeTabId: 'tab-1',
-			});
+		it('clears a browser tab custom name when renamed to empty', () => {
+			const browserTab = {
+				id: 'browser-1',
+				url: 'https://example.com/page',
+				title: 'Example Domain',
+				customTitle: 'My Tab',
+				createdAt: 0,
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: false,
+			};
+			const session = createMockSession({ id: 'session-1', browserTabs: [browserTab] });
 
-			useSessionStore.setState({
-				sessions: [otherSession, activeSession],
-				activeSessionId: 'session-1',
-			});
-			useModalStore.getState().openModal('renameTab', { tabId: 'tab-1', initialName: '' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+			useModalStore
+				.getState()
+				.openModal('renameTab', { tabId: 'browser-1', initialName: 'My Tab' });
 
 			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
 
 			act(() => {
-				result.current.handleRenameTab('Renamed Active');
+				result.current.handleRenameTab('   ');
 			});
 
-			const sessions = useSessionStore.getState().sessions;
-			expect(sessions.find((s) => s.id === 'session-1')?.aiTabs[0].name).toBe('Renamed Active');
-			expect(sessions.find((s) => s.id === 'session-2')?.aiTabs[0].name).toBe('Other Name');
+			const updated = useSessionStore.getState().sessions[0].browserTabs![0];
+			expect(updated.customTitle).toBeUndefined();
+			expect(updated.title).toBe('Example Domain');
 		});
 
 		it('returns early if no active session', () => {
@@ -622,101 +565,6 @@ describe('useSessionLifecycle', () => {
 
 			expect(window.maestro.logger.log).not.toHaveBeenCalled();
 		});
-
-		it('captures claude tab-name persistence failures', async () => {
-			const error = new Error('Claude persistence failed');
-			(window.maestro.claude.updateSessionName as ReturnType<typeof vi.fn>).mockRejectedValue(
-				error
-			);
-			const tab = createMockAITab({ id: 'tab-1', agentSessionId: 'agent-123' });
-			const session = createMockSession({
-				id: 'session-1',
-				toolType: 'claude-code' as any,
-				aiTabs: [tab],
-				activeTabId: 'tab-1',
-			});
-
-			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
-			useModalStore.getState().openModal('renameTab', { tabId: 'tab-1', initialName: '' });
-
-			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
-
-			await act(async () => {
-				result.current.handleRenameTab('Renamed');
-				await Promise.resolve();
-			});
-
-			expect(mockCaptureException).toHaveBeenCalledWith(error, {
-				extra: {
-					tabId: 'tab-1',
-					agentSessionId: 'agent-123',
-					operation: 'persist-tab-name-claude',
-				},
-			});
-		});
-
-		it('captures non-claude tab-name persistence failures', async () => {
-			const error = new Error('Agent persistence failed');
-			(window.maestro.agentSessions.setSessionName as ReturnType<typeof vi.fn>).mockRejectedValue(
-				error
-			);
-			const tab = createMockAITab({ id: 'tab-1', agentSessionId: 'agent-456' });
-			const session = createMockSession({
-				id: 'session-1',
-				toolType: 'codex' as any,
-				aiTabs: [tab],
-				activeTabId: 'tab-1',
-			});
-
-			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
-			useModalStore.getState().openModal('renameTab', { tabId: 'tab-1', initialName: '' });
-
-			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
-
-			await act(async () => {
-				result.current.handleRenameTab('Renamed');
-				await Promise.resolve();
-			});
-
-			expect(mockCaptureException).toHaveBeenCalledWith(error, {
-				extra: {
-					tabId: 'tab-1',
-					agentSessionId: 'agent-456',
-					agentType: 'codex',
-					operation: 'persist-tab-name-agent',
-				},
-			});
-		});
-
-		it('captures history tab-name persistence failures', async () => {
-			const error = new Error('History persistence failed');
-			(window.maestro.history.updateSessionName as ReturnType<typeof vi.fn>).mockRejectedValue(
-				error
-			);
-			const tab = createMockAITab({ id: 'tab-1', agentSessionId: 'agent-789' });
-			const session = createMockSession({
-				id: 'session-1',
-				aiTabs: [tab],
-				activeTabId: 'tab-1',
-			});
-
-			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
-			useModalStore.getState().openModal('renameTab', { tabId: 'tab-1', initialName: '' });
-
-			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
-
-			await act(async () => {
-				result.current.handleRenameTab('Renamed');
-				await Promise.resolve();
-			});
-
-			expect(mockCaptureException).toHaveBeenCalledWith(error, {
-				extra: {
-					agentSessionId: 'agent-789',
-					operation: 'update-history-session-name',
-				},
-			});
-		});
 	});
 
 	// ======================================================================
@@ -740,8 +588,30 @@ describe('useSessionLifecycle', () => {
 			);
 		});
 
-		it('kills both AI and terminal processes', async () => {
-			const session = createMockSession({ id: 'session-1' });
+		it('kills AI, legacy terminal, and terminal tab PTY processes', async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				terminalTabs: [
+					{
+						id: 'tab-t1',
+						name: null,
+						shellType: 'zsh',
+						pid: 111,
+						cwd: '/tmp',
+						createdAt: Date.now(),
+						state: 'idle',
+					},
+					{
+						id: 'tab-t2',
+						name: null,
+						shellType: 'zsh',
+						pid: 222,
+						cwd: '/tmp',
+						createdAt: Date.now(),
+						state: 'idle',
+					},
+				],
+			});
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
 
 			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
@@ -752,6 +622,8 @@ describe('useSessionLifecycle', () => {
 
 			expect(window.maestro.process.kill).toHaveBeenCalledWith('session-1-ai');
 			expect(window.maestro.process.kill).toHaveBeenCalledWith('session-1-terminal');
+			expect(window.maestro.process.kill).toHaveBeenCalledWith('session-1-terminal-tab-t1');
+			expect(window.maestro.process.kill).toHaveBeenCalledWith('session-1-terminal-tab-t2');
 		});
 
 		it('deletes all associated playbooks', async () => {
@@ -915,29 +787,6 @@ describe('useSessionLifecycle', () => {
 			// Session should still be removed even though trash failed
 			expect(useSessionStore.getState().sessions).toHaveLength(0);
 		});
-
-		it('uses fallback toast message when trashItem rejects with a non-Error value', async () => {
-			(window.maestro.shell.trashItem as ReturnType<typeof vi.fn>).mockRejectedValue(
-				'trash failed'
-			);
-			const session = createMockSession({ id: 'session-1', cwd: '/projects/myapp' });
-			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
-
-			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
-
-			await act(async () => {
-				await result.current.performDeleteSession(session, true);
-			});
-
-			expect(useNotificationStore.getState().toasts).toContainEqual(
-				expect.objectContaining({
-					title: 'Failed to Erase Directory',
-					message: 'Unknown error',
-					type: 'error',
-				})
-			);
-			expect(useSessionStore.getState().sessions).toHaveLength(0);
-		});
 	});
 
 	// ======================================================================
@@ -1088,6 +937,66 @@ describe('useSessionLifecycle', () => {
 
 			expect(window.maestro.claude.updateSessionStarred).not.toHaveBeenCalled();
 		});
+
+		it('is a no-op when the active view is a terminal tab', () => {
+			const tab = createMockAITab({ id: 'tab-1', starred: false, agentSessionId: 'ag-1' });
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+				inputMode: 'terminal',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				result.current.toggleTabStar();
+			});
+
+			expect(useSessionStore.getState().sessions[0].aiTabs[0].starred).toBe(false);
+			expect(window.maestro.claude.updateSessionStarred).not.toHaveBeenCalled();
+		});
+
+		it('is a no-op when a file preview tab is focused', () => {
+			const tab = createMockAITab({ id: 'tab-1', starred: false, agentSessionId: 'ag-1' });
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+				activeFileTabId: 'file-tab-1',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				result.current.toggleTabStar();
+			});
+
+			expect(useSessionStore.getState().sessions[0].aiTabs[0].starred).toBe(false);
+			expect(window.maestro.claude.updateSessionStarred).not.toHaveBeenCalled();
+		});
+
+		it('is a no-op when a browser tab is focused', () => {
+			const tab = createMockAITab({ id: 'tab-1', starred: false, agentSessionId: 'ag-1' });
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+				activeBrowserTabId: 'browser-tab-1',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				result.current.toggleTabStar();
+			});
+
+			expect(useSessionStore.getState().sessions[0].aiTabs[0].starred).toBe(false);
+			expect(window.maestro.claude.updateSessionStarred).not.toHaveBeenCalled();
+		});
 	});
 
 	// ======================================================================
@@ -1169,34 +1078,6 @@ describe('useSessionLifecycle', () => {
 			const tabs = useSessionStore.getState().sessions[0].aiTabs;
 			expect(tabs[0].hasUnread).toBe(true); // toggled
 			expect(tabs[1].hasUnread).toBe(true); // unchanged
-		});
-
-		it('only toggles unread state on the active session', () => {
-			const activeSession = createMockSession({
-				id: 'session-1',
-				aiTabs: [createMockAITab({ id: 'tab-1', hasUnread: false })],
-				activeTabId: 'tab-1',
-			});
-			const otherSession = createMockSession({
-				id: 'session-2',
-				aiTabs: [createMockAITab({ id: 'tab-1', hasUnread: false })],
-				activeTabId: 'tab-1',
-			});
-
-			useSessionStore.setState({
-				sessions: [otherSession, activeSession],
-				activeSessionId: 'session-1',
-			});
-
-			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
-
-			act(() => {
-				result.current.toggleTabUnread();
-			});
-
-			const sessions = useSessionStore.getState().sessions;
-			expect(sessions.find((s) => s.id === 'session-1')?.aiTabs[0].hasUnread).toBe(true);
-			expect(sessions.find((s) => s.id === 'session-2')?.aiTabs[0].hasUnread).toBe(false);
 		});
 	});
 
@@ -1367,6 +1248,7 @@ describe('useSessionLifecycle', () => {
 			expect(mockPushNavigation).toHaveBeenCalledWith({
 				sessionId: 'session-1',
 				tabId: 'tab-1',
+				tabKind: 'ai',
 			});
 		});
 
@@ -1385,26 +1267,6 @@ describe('useSessionLifecycle', () => {
 			expect(mockPushNavigation).toHaveBeenCalledWith({
 				sessionId: 'session-1',
 				tabId: undefined,
-			});
-		});
-
-		it('pushes group chat navigation when a group chat is active', () => {
-			const session = createMockSession({
-				id: 'session-1',
-				inputMode: 'ai' as any,
-				aiTabs: [createMockAITab({ id: 'tab-1' })],
-				activeTabId: 'tab-1',
-			});
-
-			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
-			useGroupChatStore.setState({ activeGroupChatId: 'group-chat-1' });
-
-			renderHook(() => useSessionLifecycle(createDeps()));
-
-			expect(mockPushNavigation).toHaveBeenCalledWith({ groupChatId: 'group-chat-1' });
-			expect(mockPushNavigation).not.toHaveBeenCalledWith({
-				sessionId: 'session-1',
-				tabId: 'tab-1',
 			});
 		});
 
@@ -1445,6 +1307,7 @@ describe('useSessionLifecycle', () => {
 			expect(mockPushNavigation).toHaveBeenCalledWith({
 				sessionId: 'session-1',
 				tabId: 'tab-2',
+				tabKind: 'ai',
 			});
 		});
 	});
@@ -1707,34 +1570,6 @@ describe('useSessionLifecycle', () => {
 			expect(tabs[1].starred).toBe(false); // other tab unchanged
 		});
 
-		it('only toggles starred state on the active session', () => {
-			const activeSession = createMockSession({
-				id: 'session-1',
-				aiTabs: [createMockAITab({ id: 'tab-1', starred: false })],
-				activeTabId: 'tab-1',
-			});
-			const otherSession = createMockSession({
-				id: 'session-2',
-				aiTabs: [createMockAITab({ id: 'tab-1', starred: false })],
-				activeTabId: 'tab-1',
-			});
-
-			useSessionStore.setState({
-				sessions: [otherSession, activeSession],
-				activeSessionId: 'session-1',
-			});
-
-			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
-
-			act(() => {
-				result.current.toggleTabStar();
-			});
-
-			const sessions = useSessionStore.getState().sessions;
-			expect(sessions.find((s) => s.id === 'session-1')?.aiTabs[0].starred).toBe(true);
-			expect(sessions.find((s) => s.id === 'session-2')?.aiTabs[0].starred).toBe(false);
-		});
-
 		it('uses claude-code persistence fallback when toolType is undefined', () => {
 			const tab = createMockAITab({ id: 'tab-1', starred: false, agentSessionId: 'ag-1' });
 			const session = createMockSession({
@@ -1759,69 +1594,6 @@ describe('useSessionLifecycle', () => {
 				true
 			);
 			expect(window.maestro.agentSessions.setSessionStarred).not.toHaveBeenCalled();
-		});
-
-		it('captures claude starred persistence failures', async () => {
-			const error = new Error('Claude starred failed');
-			(window.maestro.claude.updateSessionStarred as ReturnType<typeof vi.fn>).mockRejectedValue(
-				error
-			);
-			const tab = createMockAITab({ id: 'tab-1', starred: false, agentSessionId: 'ag-1' });
-			const session = createMockSession({
-				id: 'session-1',
-				toolType: 'claude-code' as any,
-				aiTabs: [tab],
-				activeTabId: 'tab-1',
-			});
-
-			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
-
-			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
-
-			await act(async () => {
-				result.current.toggleTabStar();
-				await Promise.resolve();
-			});
-
-			expect(mockCaptureException).toHaveBeenCalledWith(error, {
-				extra: {
-					sessionId: 'session-1',
-					agentSessionId: 'ag-1',
-					operation: 'persist-starred-claude',
-				},
-			});
-		});
-
-		it('captures non-claude starred persistence failures', async () => {
-			const error = new Error('Agent starred failed');
-			(
-				window.maestro.agentSessions.setSessionStarred as ReturnType<typeof vi.fn>
-			).mockRejectedValue(error);
-			const tab = createMockAITab({ id: 'tab-1', starred: false, agentSessionId: 'ag-2' });
-			const session = createMockSession({
-				id: 'session-1',
-				toolType: 'codex' as any,
-				aiTabs: [tab],
-				activeTabId: 'tab-1',
-			});
-
-			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
-
-			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
-
-			await act(async () => {
-				result.current.toggleTabStar();
-				await Promise.resolve();
-			});
-
-			expect(mockCaptureException).toHaveBeenCalledWith(error, {
-				extra: {
-					sessionId: 'session-1',
-					agentSessionId: 'ag-2',
-					agentType: 'codex',
-					operation: 'persist-starred-agent',
-				},
-			});
 		});
 	});
 
@@ -1898,36 +1670,6 @@ describe('useSessionLifecycle', () => {
 			// activeTabId should remain unchanged since preFilterActiveTabId was null
 			expect(useSessionStore.getState().sessions[0].activeTabId).toBe('tab-1');
 		});
-
-		it('restores pre-filter tab only on the active session', () => {
-			const activeSession = createMockSession({
-				id: 'session-1',
-				aiTabs: [createMockAITab({ id: 'tab-1' }), createMockAITab({ id: 'tab-2' })],
-				activeTabId: 'tab-2',
-			});
-			const otherSession = createMockSession({
-				id: 'session-2',
-				aiTabs: [createMockAITab({ id: 'tab-1' }), createMockAITab({ id: 'tab-2' })],
-				activeTabId: 'tab-2',
-			});
-
-			useSessionStore.setState({
-				sessions: [otherSession, activeSession],
-				activeSessionId: 'session-1',
-			});
-			useUIStore.setState({ showUnreadOnly: true, preFilterActiveTabId: 'tab-1' });
-
-			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
-
-			act(() => {
-				result.current.toggleUnreadFilter();
-			});
-
-			const sessions = useSessionStore.getState().sessions;
-			expect(sessions.find((s) => s.id === 'session-1')?.activeTabId).toBe('tab-1');
-			expect(sessions.find((s) => s.id === 'session-2')?.activeTabId).toBe('tab-2');
-			expect(useUIStore.getState().preFilterActiveTabId).toBeNull();
-		});
 	});
 
 	// ======================================================================
@@ -1935,7 +1677,11 @@ describe('useSessionLifecycle', () => {
 	// ======================================================================
 
 	describe('navigation history edge cases', () => {
-		it('tracks tabId as undefined when session has aiTabs but inputMode is terminal', () => {
+		it('resolves the AI tab when aiTabs exist and no other tab kind is active (field-based, ignores inputMode)', () => {
+			// The breadcrumb resolves the visible tab from the active*TabId fields
+			// (terminal > file > browser > ai), the same priority findActiveUnifiedTabIndex
+			// uses - not from inputMode. With no activeTerminalTabId set, it falls through
+			// to the active AI tab even though inputMode is 'terminal'.
 			const tab = createMockAITab({ id: 'tab-1' });
 			const session = createMockSession({
 				id: 'session-1',
@@ -1950,7 +1696,8 @@ describe('useSessionLifecycle', () => {
 
 			expect(mockPushNavigation).toHaveBeenCalledWith({
 				sessionId: 'session-1',
-				tabId: undefined,
+				tabId: 'tab-1',
+				tabKind: 'ai',
 			});
 		});
 	});

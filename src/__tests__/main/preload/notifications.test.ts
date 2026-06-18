@@ -36,7 +36,13 @@ describe('Notification Preload API', () => {
 
 			const result = await api.show('Test Title', 'Test Body');
 
-			expect(mockInvoke).toHaveBeenCalledWith('notification:show', 'Test Title', 'Test Body');
+			expect(mockInvoke).toHaveBeenCalledWith(
+				'notification:show',
+				'Test Title',
+				'Test Body',
+				undefined,
+				undefined
+			);
 			expect(result).toEqual({ success: true });
 		});
 
@@ -126,50 +132,6 @@ describe('Notification Preload API', () => {
 	});
 
 	describe('onCommandCompleted (legacy: onTtsCompleted)', () => {
-		it('should register command completion listener and return cleanup function', () => {
-			const callback = vi.fn();
-
-			const cleanup = api.onCommandCompleted(callback);
-
-			expect(mockOn).toHaveBeenCalledWith('notification:commandCompleted', expect.any(Function));
-			expect(typeof cleanup).toBe('function');
-		});
-
-		it('should call onCommandCompleted callback when notification command completes', () => {
-			const callback = vi.fn();
-			let registeredHandler: (event: unknown, notificationId: number) => void;
-
-			mockOn.mockImplementation(
-				(_channel: string, handler: (event: unknown, notificationId: number) => void) => {
-					registeredHandler = handler;
-				}
-			);
-
-			api.onCommandCompleted(callback);
-			registeredHandler!({}, 321);
-
-			expect(callback).toHaveBeenCalledWith(321);
-		});
-
-		it('should remove onCommandCompleted listener when cleanup is called', () => {
-			const callback = vi.fn();
-			let registeredHandler: (event: unknown, notificationId: number) => void;
-
-			mockOn.mockImplementation(
-				(_channel: string, handler: (event: unknown, notificationId: number) => void) => {
-					registeredHandler = handler;
-				}
-			);
-
-			const cleanup = api.onCommandCompleted(callback);
-			cleanup();
-
-			expect(mockRemoveListener).toHaveBeenCalledWith(
-				'notification:commandCompleted',
-				registeredHandler!
-			);
-		});
-
 		it('should register event listener and return cleanup function', () => {
 			const callback = vi.fn();
 

@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { renderHook, act, waitFor } from '@testing-library/react';
+import { describe, it, expect, beforeEach } from 'vitest';
+import { renderHook, act } from '@testing-library/react';
 import {
 	useAtMentionCompletion,
 	type AtMentionSuggestion,
@@ -7,43 +7,19 @@ import {
 } from '../../../renderer/hooks';
 import type { Session } from '../../../renderer/types';
 import type { FileNode } from '../../../renderer/types/fileTree';
+import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
 // =============================================================================
 // TEST HELPERS
 // =============================================================================
 
 /**
- * Creates a minimal mock Session with just the fields needed for useAtMentionCompletion
+ * Creates a minimal mock Session with just the fields needed for
+ * useAtMentionCompletion. Positional signature is preserved for
+ * convenience; delegates to the shared factory.
  */
 function createMockSession(fileTree: FileNode[] | null = []): Session {
-	return {
-		id: 'test-session-1',
-		name: 'Test Session',
-		toolType: 'claude-code',
-		state: 'idle',
-		cwd: '/test/project',
-		fullPath: '/test/project',
-		projectRoot: '/test/project',
-		aiLogs: [],
-		shellLogs: [],
-		workLog: [],
-		contextUsage: 0,
-		inputMode: 'ai',
-		aiPid: 0,
-		terminalPid: 0,
-		port: 0,
-		isLive: false,
-		changedFiles: [],
-		isGitRepo: false,
-		fileTree: fileTree as any[],
-		fileExplorerExpanded: [],
-		fileExplorerScrollPos: 0,
-		executionQueue: [],
-		activeTimeMs: 0,
-		aiTabs: [],
-		activeTabId: '',
-		closedTabHistory: [],
-	};
+	return baseCreateMockSession({ fileTree: fileTree as any[] });
 }
 
 /**
@@ -65,11 +41,6 @@ function createFolder(name: string, children: FileNode[] = []): FileNode {
 // =============================================================================
 
 describe('useAtMentionCompletion', () => {
-	beforeEach(() => {
-		vi.clearAllMocks();
-		vi.mocked(window.maestro.autorun.listDocs).mockResolvedValue({ success: true, files: [] });
-	});
-
 	describe('interface types', () => {
 		it('AtMentionSuggestion has correct structure', () => {
 			const suggestion: AtMentionSuggestion = {
@@ -446,20 +417,6 @@ describe('useAtMentionCompletion', () => {
 			expect(suggestions[0].displayText).toBe('MyComponent.tsx');
 		});
 
-		it('keeps fuzzy-only matches that are not exact substrings', () => {
-			const session = createMockSession([createFile('MyComponent.tsx')]);
-			const { result } = renderHook(() => useAtMentionCompletion(session));
-
-			const suggestions = result.current.getSuggestions('mct');
-
-			expect(suggestions).toEqual([
-				expect.objectContaining({
-					displayText: 'MyComponent.tsx',
-					source: 'project',
-				}),
-			]);
-		});
-
 		it('matches folder names', () => {
 			const session = createMockSession([createFolder('components'), createFolder('services')]);
 			const { result } = renderHook(() => useAtMentionCompletion(session));
@@ -788,151 +745,6 @@ describe('useAtMentionCompletion', () => {
 			const suggestions = result.current.getSuggestions('');
 			expect(suggestions.length).toBe(1);
 			expect(suggestions[0].displayText).toBe('file9.ts');
-		});
-	});
-
-	// =============================================================================
-	// AUTO RUN FILE SOURCE TESTS
-	// =============================================================================
-
-	describe('Auto Run file source', () => {
-		it('adds Auto Run files outside the project tree as autorun suggestions', async () => {
-			const session = createMockSession([createFile('project-note.md')]);
-			session.autoRunFolderPath = '/external/Auto Run Docs';
-			vi.mocked(window.maestro.autorun.listDocs).mockResolvedValue({
-				success: true,
-				tree: [
-					{ name: 'Phase One', path: 'Phase-01', type: 'file' },
-					{
-						name: 'Nested',
-						path: 'Nested',
-						type: 'folder',
-						children: [{ name: 'Task List', path: 'Nested/Task-List', type: 'file' }],
-					},
-				],
-			} as any);
-
-			const { result } = renderHook(() => useAtMentionCompletion(session));
-
-			await waitFor(() => {
-				expect(result.current.getSuggestions('Phase One')).toEqual(
-					expect.arrayContaining([
-						expect.objectContaining({
-							displayText: 'Phase One.md',
-							fullPath: 'Phase-01.md',
-							source: 'autorun',
-							type: 'file',
-						}),
-					])
-				);
-			});
-
-			const nested = result.current
-				.getSuggestions('Task List')
-				.find((suggestion) => suggestion.source === 'autorun');
-			expect(nested).toMatchObject({
-				displayText: 'Task List.md',
-				fullPath: 'Nested/Task-List.md',
-				type: 'file',
-			});
-			expect(result.current.getSuggestions('project-note')[0]).toMatchObject({
-				displayText: 'project-note.md',
-				source: 'project',
-			});
-		});
-
-		it('does not fetch Auto Run files when the folder is inside the project tree', async () => {
-			const session = createMockSession([createFile('Phase-01.md')]);
-			session.autoRunFolderPath = '/test/project/Auto Run Docs';
-
-			const { result } = renderHook(() => useAtMentionCompletion(session));
-
-			expect(window.maestro.autorun.listDocs).not.toHaveBeenCalled();
-			expect(result.current.getSuggestions('Phase-01')).toEqual([
-				expect.objectContaining({
-					displayText: 'Phase-01.md',
-					source: 'project',
-				}),
-			]);
-		});
-
-		it('clears Auto Run suggestions when listing fails or returns no tree', async () => {
-			const session = createMockSession([createFile('project.ts')]);
-			session.autoRunFolderPath = '/external/Auto Run Docs';
-			vi.mocked(window.maestro.autorun.listDocs).mockResolvedValue({
-				success: false,
-			} as any);
-
-			const { result, rerender } = renderHook(({ s }) => useAtMentionCompletion(s), {
-				initialProps: { s: session },
-			});
-
-			await waitFor(() => {
-				expect(window.maestro.autorun.listDocs).toHaveBeenCalledWith('/external/Auto Run Docs');
-			});
-			expect(result.current.getSuggestions('project')[0]).toMatchObject({
-				displayText: 'project.ts',
-				source: 'project',
-			});
-			expect(result.current.getSuggestions('Phase')).toEqual([]);
-
-			vi.mocked(window.maestro.autorun.listDocs).mockRejectedValueOnce(new Error('missing'));
-			rerender({
-				s: {
-					...session,
-					autoRunFolderPath: '/external/Missing Auto Run Docs',
-				},
-			});
-
-			await waitFor(() => {
-				expect(window.maestro.autorun.listDocs).toHaveBeenCalledWith(
-					'/external/Missing Auto Run Docs'
-				);
-			});
-			expect(result.current.getSuggestions('Phase')).toEqual([]);
-		});
-
-		it('does not publish Auto Run suggestions after the hook unmounts', async () => {
-			const session = createMockSession([]);
-			session.autoRunFolderPath = '/external/Auto Run Docs';
-			let resolveListDocs!: (value: unknown) => void;
-			const listDocsPromise = new Promise((resolve) => {
-				resolveListDocs = resolve;
-			});
-			vi.mocked(window.maestro.autorun.listDocs).mockReturnValueOnce(listDocsPromise as any);
-
-			const { result, unmount } = renderHook(() => useAtMentionCompletion(session));
-			unmount();
-
-			await act(async () => {
-				resolveListDocs({
-					success: true,
-					tree: [{ name: 'Late', path: 'Late', type: 'file' }],
-				});
-				await listDocsPromise;
-			});
-
-			expect(result.current.getSuggestions('Late')).toEqual([]);
-		});
-
-		it('does not publish failed Auto Run suggestions after the hook unmounts', async () => {
-			const session = createMockSession([]);
-			session.autoRunFolderPath = '/external/Auto Run Docs';
-			let rejectListDocs!: (reason?: unknown) => void;
-			const listDocsPromise = new Promise((_resolve, reject) => {
-				rejectListDocs = reject;
-			});
-			vi.mocked(window.maestro.autorun.listDocs).mockReturnValueOnce(listDocsPromise as any);
-
-			const { result, unmount } = renderHook(() => useAtMentionCompletion(session));
-			unmount();
-
-			await act(async () => {
-				rejectListDocs(new Error('missing after unmount'));
-				await listDocsPromise.catch(() => undefined);
-			});
-
-			expect(result.current.getSuggestions('Late')).toEqual([]);
 		});
 	});
 

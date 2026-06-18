@@ -16,6 +16,7 @@ import { memo, useState, useMemo } from 'react';
 import type { Theme } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
 import { COLORBLIND_BINARY_PALETTE } from '../../constants/colorblindPalettes';
+import { formatNumber } from '../../../shared/formatters';
 
 interface LocationData {
 	location: 'local' | 'remote';
@@ -32,19 +33,6 @@ interface LocationDistributionChartProps {
 	theme: Theme;
 	/** Enable colorblind-friendly colors */
 	colorBlindMode?: boolean;
-}
-
-/**
- * Format large numbers with K/M suffixes
- */
-function formatNumber(num: number): string {
-	if (num >= 1000000) {
-		return `${(num / 1000000).toFixed(1)}M`;
-	}
-	if (num >= 1000) {
-		return `${(num / 1000).toFixed(1)}K`;
-	}
-	return num.toString();
 }
 
 /**
@@ -140,8 +128,8 @@ export const LocationDistributionChart = memo(function LocationDistributionChart
 
 	// Calculate location data
 	const locationData = useMemo((): LocationData[] => {
-		const localValue = Math.max(0, data.byLocation?.local ?? 0);
-		const remoteValue = Math.max(0, data.byLocation?.remote ?? 0);
+		const localValue = data.byLocation?.local ?? 0;
+		const remoteValue = data.byLocation?.remote ?? 0;
 		const total = localValue + remoteValue;
 
 		const locations: LocationData[] = [];
@@ -157,7 +145,7 @@ export const LocationDistributionChart = memo(function LocationDistributionChart
 				location: 'local',
 				label: 'Local',
 				value: localValue,
-				percentage: total > 0 ? (localValue / total) * 100 : 50,
+				percentage: total > 0 ? (localValue / total) * 100 : total === 0 ? 50 : 0,
 				color: localColor,
 			});
 		}
@@ -167,7 +155,7 @@ export const LocationDistributionChart = memo(function LocationDistributionChart
 				location: 'remote',
 				label: 'SSH Remote',
 				value: remoteValue,
-				percentage: total > 0 ? (remoteValue / total) * 100 : 50,
+				percentage: total > 0 ? (remoteValue / total) * 100 : total === 0 ? 50 : 0,
 				color: remoteColor,
 			});
 		}
@@ -215,7 +203,10 @@ export const LocationDistributionChart = memo(function LocationDistributionChart
 		>
 			{/* Header with title */}
 			<div className="flex items-center justify-between mb-4">
-				<h3 className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+				<h3
+					className="text-sm font-medium"
+					style={{ color: theme.colors.textMain, animation: 'card-enter 0.4s ease both' }}
+				>
 					Session Location
 				</h3>
 			</div>

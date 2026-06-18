@@ -1,150 +1,125 @@
-import { act, renderHook } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+/**
+ * Tests for useThemeStyles hook.
+ *
+ * The hook is the single bridge between the React theme system and CSS
+ * variables consumed by global stylesheets (notably scrollbar styling in
+ * src/renderer/index.css). These tests pin the contract: which CSS variables
+ * are set, what they map to, and that they update when the theme changes.
+ *
+ * Without this pinning, future refactors of useThemeStyles could silently
+ * break the app-wide themed scrollbars without any test failure.
+ */
 
-import { useThemeStyles } from '../../../renderer/hooks/ui/useThemeStyles';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { renderHook } from '@testing-library/react';
+import { useThemeStyles, type ThemeColors } from '../../../renderer/hooks/ui/useThemeStyles';
+
+const DARK_COLORS: ThemeColors = {
+	accent: '#bd93f9',
+	border: '#44475a',
+	textDim: '#6272a4',
+	bgActivity: '#343746',
+};
+
+const LIGHT_COLORS: ThemeColors = {
+	accent: '#0969da',
+	border: '#d0d7de',
+	textDim: '#656d76',
+	bgActivity: '#f6f8fa',
+};
+
+function getCssVar(name: string): string {
+	return document.documentElement.style.getPropertyValue(name);
+}
 
 describe('useThemeStyles', () => {
-	let rafCallbacks: FrameRequestCallback[];
-
 	beforeEach(() => {
-		vi.useFakeTimers();
-		rafCallbacks = [];
-		let nextRafId = 1;
-		vi.stubGlobal(
-			'requestAnimationFrame',
-			vi.fn((callback: FrameRequestCallback) => {
-				rafCallbacks.push(callback);
-				return nextRafId++;
-			})
-		);
-		vi.stubGlobal('cancelAnimationFrame', vi.fn());
-		document.body.innerHTML = '';
-		document.documentElement.removeAttribute('style');
+		// Clean slate — clear any previously set vars from other tests.
+		const root = document.documentElement.style;
+		root.removeProperty('--accent-color');
+		root.removeProperty('--highlight-color');
+		root.removeProperty('--scrollbar-thumb');
+		root.removeProperty('--scrollbar-thumb-hover');
+		root.removeProperty('--scrollbar-thumb-active');
+		root.removeProperty('--scrollbar-track');
 	});
 
 	afterEach(() => {
-		vi.clearAllTimers();
-		vi.useRealTimers();
-		vi.unstubAllGlobals();
-		document.body.innerHTML = '';
-		document.documentElement.removeAttribute('style');
+		// Same cleanup, in case a test errored before the next beforeEach.
+		const root = document.documentElement.style;
+		root.removeProperty('--accent-color');
+		root.removeProperty('--highlight-color');
+		root.removeProperty('--scrollbar-thumb');
+		root.removeProperty('--scrollbar-thumb-hover');
+		root.removeProperty('--scrollbar-thumb-active');
+		root.removeProperty('--scrollbar-track');
 	});
 
-	function dispatchScroll(target: Element) {
-		target.dispatchEvent(new Event('scroll', { bubbles: true }));
-	}
+	describe('CSS variable injection', () => {
+		it('sets all expected CSS variables from theme colors on mount', () => {
+			renderHook(() => useThemeStyles({ themeColors: DARK_COLORS }));
 
-	function runLastRaf() {
-		const callback = rafCallbacks.at(-1);
-		expect(callback).toBeDefined();
-		act(() => {
-			callback?.(performance.now());
+			expect(getCssVar('--accent-color')).toBe('#bd93f9');
+			expect(getCssVar('--highlight-color')).toBe('#bd93f9');
+			expect(getCssVar('--scrollbar-thumb')).toBe('#44475a');
+			expect(getCssVar('--scrollbar-thumb-hover')).toBe('#6272a4');
+			expect(getCssVar('--scrollbar-thumb-active')).toBe('#bd93f9');
+			expect(getCssVar('--scrollbar-track')).toBe('#343746');
 		});
-	}
 
-	it('applies accent CSS variables and updates them when the accent changes', () => {
-		const { result, rerender } = renderHook(
-			({ accent }) => useThemeStyles({ themeColors: { accent } }),
-			{ initialProps: { accent: '#ff00aa' } }
-		);
+		it('maps accent to both --accent-color and --highlight-color', () => {
+			// --highlight-color is a legacy alias kept for backwards compat with
+			// older CSS rules that reference it (e.g. animations in index.css).
+			// Both must point to the same color.
+			renderHook(() => useThemeStyles({ themeColors: DARK_COLORS }));
+			expect(getCssVar('--accent-color')).toBe(getCssVar('--highlight-color'));
+		});
 
-		expect(result.current).toEqual({});
-		expect(document.documentElement.style.getPropertyValue('--accent-color')).toBe('#ff00aa');
-		expect(document.documentElement.style.getPropertyValue('--highlight-color')).toBe('#ff00aa');
+		it('maps border to --scrollbar-thumb (idle thumb is theme-aware)', () => {
+			// Regression: previously the idle thumb was hardcoded
+			// rgba(255,255,255,0.15) which was invisible on light themes. Using
+			// the theme `border` token makes it work on both light and dark.
+			renderHook(() => useThemeStyles({ themeColors: LIGHT_COLORS }));
+			expect(getCssVar('--scrollbar-thumb')).toBe('#d0d7de');
+		});
 
-		rerender({ accent: '#00ffaa' });
+		it('updates CSS variables when theme colors change', () => {
+			const { rerender } = renderHook(({ colors }) => useThemeStyles({ themeColors: colors }), {
+				initialProps: { colors: DARK_COLORS },
+			});
+			expect(getCssVar('--scrollbar-thumb')).toBe('#44475a');
+			expect(getCssVar('--accent-color')).toBe('#bd93f9');
 
-		expect(document.documentElement.style.getPropertyValue('--accent-color')).toBe('#00ffaa');
-		expect(document.documentElement.style.getPropertyValue('--highlight-color')).toBe('#00ffaa');
+			rerender({ colors: LIGHT_COLORS });
+
+			expect(getCssVar('--scrollbar-thumb')).toBe('#d0d7de');
+			expect(getCssVar('--scrollbar-thumb-hover')).toBe('#656d76');
+			expect(getCssVar('--scrollbar-thumb-active')).toBe('#0969da');
+			expect(getCssVar('--scrollbar-track')).toBe('#f6f8fa');
+			expect(getCssVar('--accent-color')).toBe('#0969da');
+		});
+
+		it('does not re-set unchanged variables when an unrelated theme field changes', () => {
+			// Sanity: the effect's dependency array lists every consumed field.
+			// If we add a new CSS var, its source field must be in the deps.
+			const { rerender } = renderHook(({ colors }) => useThemeStyles({ themeColors: colors }), {
+				initialProps: { colors: DARK_COLORS },
+			});
+
+			rerender({ colors: { ...DARK_COLORS, accent: '#ff0000' } });
+
+			expect(getCssVar('--accent-color')).toBe('#ff0000');
+			expect(getCssVar('--scrollbar-thumb-active')).toBe('#ff0000');
+			// Other vars stay at their previous values
+			expect(getCssVar('--scrollbar-thumb')).toBe('#44475a');
+			expect(getCssVar('--scrollbar-thumb-hover')).toBe('#6272a4');
+		});
 	});
 
-	it('ignores scroll events from elements without the scrollbar-thin class', () => {
-		renderHook(() => useThemeStyles({ themeColors: { accent: '#123456' } }));
-		const plainElement = document.createElement('div');
-		document.body.appendChild(plainElement);
-
-		dispatchScroll(plainElement);
-
-		expect(requestAnimationFrame).not.toHaveBeenCalled();
-		expect(plainElement.classList.contains('scrolling')).toBe(false);
-		expect(plainElement.classList.contains('fading')).toBe(false);
-	});
-
-	it('batches active scroll updates and runs the fade-out class transition', () => {
-		const clearTimeoutSpy = vi.spyOn(global, 'clearTimeout');
-		renderHook(() => useThemeStyles({ themeColors: { accent: '#123456' } }));
-		const scroller = document.createElement('div');
-		scroller.className = 'scrollbar-thin fading';
-		document.body.appendChild(scroller);
-
-		dispatchScroll(scroller);
-		dispatchScroll(scroller);
-
-		expect(requestAnimationFrame).toHaveBeenCalledTimes(1);
-		runLastRaf();
-		expect(scroller.classList.contains('scrolling')).toBe(true);
-		expect(scroller.classList.contains('fading')).toBe(false);
-
-		dispatchScroll(scroller);
-		runLastRaf();
-		expect(clearTimeoutSpy).toHaveBeenCalled();
-
-		act(() => {
-			vi.advanceTimersByTime(1000);
+	describe('return value', () => {
+		it('returns an empty object (all functionality is via side effects)', () => {
+			const { result } = renderHook(() => useThemeStyles({ themeColors: DARK_COLORS }));
+			expect(result.current).toEqual({});
 		});
-		expect(scroller.classList.contains('scrolling')).toBe(false);
-		expect(scroller.classList.contains('fading')).toBe(true);
-
-		dispatchScroll(scroller);
-		runLastRaf();
-		expect(scroller.classList.contains('scrolling')).toBe(true);
-		expect(scroller.classList.contains('fading')).toBe(false);
-
-		act(() => {
-			vi.advanceTimersByTime(1000);
-			vi.advanceTimersByTime(500);
-		});
-		expect(scroller.classList.contains('scrolling')).toBe(false);
-		expect(scroller.classList.contains('fading')).toBe(false);
-	});
-
-	it('removes listeners, cancels pending animation frames, and clears pending timeouts on cleanup', () => {
-		const removeEventListenerSpy = vi.spyOn(document, 'removeEventListener');
-		const clearTimeoutSpy = vi.spyOn(global, 'clearTimeout');
-		const pendingRafElement = document.createElement('div');
-		pendingRafElement.className = 'scrollbar-thin';
-		document.body.appendChild(pendingRafElement);
-
-		const pendingRaf = renderHook(() => useThemeStyles({ themeColors: { accent: '#123456' } }));
-		dispatchScroll(pendingRafElement);
-		pendingRaf.unmount();
-
-		expect(cancelAnimationFrame).toHaveBeenCalledWith(1);
-		expect(removeEventListenerSpy).toHaveBeenCalledWith('scroll', expect.any(Function), true);
-
-		const pendingScrollTimeoutElement = document.createElement('div');
-		pendingScrollTimeoutElement.className = 'scrollbar-thin';
-		document.body.appendChild(pendingScrollTimeoutElement);
-		const pendingScrollTimeout = renderHook(() =>
-			useThemeStyles({ themeColors: { accent: '#654321' } })
-		);
-		dispatchScroll(pendingScrollTimeoutElement);
-		runLastRaf();
-		pendingScrollTimeout.unmount();
-		expect(clearTimeoutSpy).toHaveBeenCalled();
-
-		const pendingFadeTimeoutElement = document.createElement('div');
-		pendingFadeTimeoutElement.className = 'scrollbar-thin';
-		document.body.appendChild(pendingFadeTimeoutElement);
-		const pendingFadeTimeout = renderHook(() =>
-			useThemeStyles({ themeColors: { accent: '#abcdef' } })
-		);
-		dispatchScroll(pendingFadeTimeoutElement);
-		runLastRaf();
-		act(() => {
-			vi.advanceTimersByTime(1000);
-		});
-		pendingFadeTimeout.unmount();
-		expect(clearTimeoutSpy).toHaveBeenCalled();
 	});
 });

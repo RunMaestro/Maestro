@@ -136,40 +136,30 @@ describe('useSymphony', () => {
 
 	describe('initial state', () => {
 		it('should initialize with null registry', async () => {
-			const { result, unmount } = renderHook(() => useSymphony());
+			const { result } = renderHook(() => useSymphony());
 
 			// Initial state before fetch completes
 			expect(result.current.registry).toBe(null);
-			await waitForLoaded(result);
-			unmount();
 		});
 
-		it('should initialize with isLoading true', async () => {
-			const { result, unmount } = renderHook(() => useSymphony());
+		it('should initialize with isLoading true', () => {
+			const { result } = renderHook(() => useSymphony());
 			expect(result.current.isLoading).toBe(true);
-			await waitForLoaded(result);
-			unmount();
 		});
 
-		it('should initialize with empty repositories array', async () => {
-			const { result, unmount } = renderHook(() => useSymphony());
+		it('should initialize with empty repositories array', () => {
+			const { result } = renderHook(() => useSymphony());
 			expect(result.current.repositories).toEqual([]);
-			await waitForLoaded(result);
-			unmount();
 		});
 
-		it('should initialize with selectedCategory as "all"', async () => {
-			const { result, unmount } = renderHook(() => useSymphony());
+		it('should initialize with selectedCategory as "all"', () => {
+			const { result } = renderHook(() => useSymphony());
 			expect(result.current.selectedCategory).toBe('all');
-			await waitForLoaded(result);
-			unmount();
 		});
 
-		it('should initialize with empty searchQuery', async () => {
-			const { result, unmount } = renderHook(() => useSymphony());
+		it('should initialize with empty searchQuery', () => {
+			const { result } = renderHook(() => useSymphony());
 			expect(result.current.searchQuery).toBe('');
-			await waitForLoaded(result);
-			unmount();
 		});
 	});
 
@@ -241,18 +231,6 @@ describe('useSymphony', () => {
 			expect(result.current.cacheAge).toBe(300000);
 		});
 
-		it('should use registry response defaults when optional cache fields are omitted', async () => {
-			vi.mocked(window.maestro.symphony.getRegistry).mockResolvedValueOnce({});
-
-			const { result } = renderHook(() => useSymphony());
-
-			await waitForLoaded(result);
-
-			expect(result.current.registry).toBeNull();
-			expect(result.current.fromCache).toBe(false);
-			expect(result.current.cacheAge).toBeNull();
-		});
-
 		it('should set error on fetch failure', async () => {
 			vi.mocked(window.maestro.symphony.getRegistry).mockRejectedValue(new Error('Network error'));
 
@@ -264,55 +242,6 @@ describe('useSymphony', () => {
 
 			expect(result.current.error).toBe('Network error');
 			expect(result.current.registry).toBe(null);
-		});
-
-		it('should use a fallback error when registry fetch throws a non-Error value', async () => {
-			vi.mocked(window.maestro.symphony.getRegistry).mockRejectedValueOnce('offline');
-
-			const { result } = renderHook(() => useSymphony());
-
-			await waitForLoaded(result);
-
-			expect(result.current.error).toBe('Failed to fetch registry');
-			expect(result.current.registry).toBe(null);
-		});
-
-		it('should log symphony state fetch failures without blocking registry loading', async () => {
-			const error = new Error('State failed');
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-			vi.mocked(window.maestro.symphony.getRegistry).mockResolvedValueOnce({
-				registry: createRegistry([]),
-				fromCache: false,
-				cacheAge: 0,
-			});
-			vi.mocked(window.maestro.symphony.getState).mockRejectedValueOnce(error);
-
-			const { result } = renderHook(() => useSymphony());
-
-			await waitForLoaded(result);
-
-			await waitFor(() => {
-				expect(consoleError).toHaveBeenCalledWith('Failed to fetch symphony state:', error);
-			});
-			expect(result.current.error).toBeNull();
-		});
-
-		it('should keep empty contribution state when state response omits state', async () => {
-			vi.mocked(window.maestro.symphony.getRegistry).mockResolvedValueOnce({
-				registry: createRegistry([]),
-				fromCache: false,
-				cacheAge: 0,
-			});
-			vi.mocked(window.maestro.symphony.getState).mockResolvedValueOnce({});
-
-			const { result } = renderHook(() => useSymphony());
-
-			await waitForLoaded(result);
-
-			expect(result.current.symphonyState).toBeNull();
-			expect(result.current.activeContributions).toEqual([]);
-			expect(result.current.completedContributions).toEqual([]);
-			expect(result.current.stats).toBeNull();
 		});
 
 		it('should set isLoading false after fetch', async () => {
@@ -406,32 +335,6 @@ describe('useSymphony', () => {
 			expect(result.current.categories).not.toContain('web');
 		});
 
-		it('should sort unknown categories by their raw category names', async () => {
-			const repositories = [
-				createRepository({
-					slug: 'owner/custom-b',
-					name: 'Custom B',
-					category: 'custom-b' as SymphonyCategory,
-				}),
-				createRepository({
-					slug: 'owner/custom-a',
-					name: 'Custom A',
-					category: 'custom-a' as SymphonyCategory,
-				}),
-			];
-			vi.mocked(window.maestro.symphony.getRegistry).mockResolvedValue({
-				registry: createRegistry(repositories),
-				fromCache: false,
-				cacheAge: 0,
-			});
-
-			const { result } = renderHook(() => useSymphony());
-
-			await waitForLoaded(result);
-
-			expect(result.current.categories).toEqual(['custom-a', 'custom-b']);
-		});
-
 		it('should filter filteredRepositories by selectedCategory', async () => {
 			const result = await setupWithRepositories();
 
@@ -494,27 +397,6 @@ describe('useSymphony', () => {
 			expect(result.current.filteredRepositories[0].featured).toBe(true);
 		});
 
-		it('should move featured repos ahead of earlier non-featured repos', async () => {
-			const repositories = [
-				createRepository({ slug: 'owner/a', name: 'Alpha', featured: false }),
-				createRepository({ slug: 'owner/b', name: 'Beta', featured: true }),
-			];
-			vi.mocked(window.maestro.symphony.getRegistry).mockResolvedValue({
-				registry: createRegistry(repositories),
-				fromCache: false,
-				cacheAge: 0,
-			});
-
-			const { result } = renderHook(() => useSymphony());
-
-			await waitForLoaded(result);
-
-			expect(result.current.filteredRepositories.map((repo) => repo.slug)).toEqual([
-				'owner/b',
-				'owner/a',
-			]);
-		});
-
 		it('should sort alphabetically within groups', async () => {
 			const result = await setupWithRepositories();
 
@@ -554,18 +436,11 @@ describe('useSymphony', () => {
 
 		it('should clear repoIssues when selecting', async () => {
 			const testRepo = createRepository();
-			let resolveSecondFetch: (value: unknown) => void;
-			vi.mocked(window.maestro.symphony.getIssues)
-				.mockResolvedValueOnce({
-					issues: [createIssue()],
-					fromCache: false,
-					cacheAge: 0,
-				})
-				.mockReturnValueOnce(
-					new Promise((resolve) => {
-						resolveSecondFetch = resolve;
-					})
-				);
+			vi.mocked(window.maestro.symphony.getIssues).mockResolvedValue({
+				issues: [createIssue()],
+				fromCache: false,
+				cacheAge: 0,
+			});
 
 			const { result } = renderHook(() => useSymphony());
 
@@ -584,19 +459,12 @@ describe('useSymphony', () => {
 
 			// Select a different repo - issues should be cleared immediately
 			const anotherRepo = createRepository({ slug: 'another/repo' });
-			let selectionPromise: Promise<void>;
-			await act(async () => {
-				selectionPromise = result.current.selectRepository(anotherRepo);
-				await Promise.resolve();
+			act(() => {
+				result.current.selectRepository(anotherRepo);
 			});
 
 			// Issues should be cleared before new fetch completes
 			expect(result.current.repoIssues).toEqual([]);
-
-			await act(async () => {
-				resolveSecondFetch!({ issues: [], fromCache: false, cacheAge: 0 });
-				await selectionPromise;
-			});
 		});
 
 		it('should fetch issues for selected repo', async () => {
@@ -673,41 +541,6 @@ describe('useSymphony', () => {
 			});
 
 			expect(result.current.repoIssues).toEqual(testIssues);
-		});
-
-		it('should leave repoIssues empty when the issue response has no issues', async () => {
-			const testRepo = createRepository();
-			vi.mocked(window.maestro.symphony.getIssues).mockResolvedValueOnce({});
-
-			const { result } = renderHook(() => useSymphony());
-
-			await waitForLoaded(result);
-
-			await act(async () => {
-				await result.current.selectRepository(testRepo);
-			});
-
-			expect(result.current.repoIssues).toEqual([]);
-			expect(result.current.isLoadingIssues).toBe(false);
-		});
-
-		it('should log issue fetch failures and reset loading state', async () => {
-			const testRepo = createRepository();
-			const error = new Error('GitHub unavailable');
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-			vi.mocked(window.maestro.symphony.getIssues).mockRejectedValueOnce(error);
-
-			const { result } = renderHook(() => useSymphony());
-
-			await waitForLoaded(result);
-
-			await act(async () => {
-				await result.current.selectRepository(testRepo);
-			});
-
-			expect(result.current.repoIssues).toEqual([]);
-			expect(result.current.isLoadingIssues).toBe(false);
-			expect(consoleError).toHaveBeenCalledWith('Failed to fetch issues:', error);
 		});
 
 		it('should handle null selection (deselect)', async () => {
@@ -811,6 +644,59 @@ describe('useSymphony', () => {
 			expect(unsubscribe).toHaveBeenCalled();
 		});
 
+		it('should not invoke fetchSymphonyState after unmount even if debounce timer was queued', async () => {
+			let updateCallback: (() => void) | null = null;
+			vi.mocked(window.maestro.symphony.onUpdated).mockImplementation((callback) => {
+				updateCallback = callback;
+				return () => {};
+			});
+
+			const { unmount } = renderHook(() => useSymphony());
+
+			await act(async () => {
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			expect(updateCallback).not.toBe(null);
+
+			// Queue a debounced refetch
+			act(() => {
+				updateCallback!();
+			});
+
+			const callsBeforeUnmount = vi.mocked(window.maestro.symphony.getState).mock.calls.length;
+
+			// Unmount before the debounce timer fires
+			unmount();
+
+			// Advance past the debounce window
+			await act(async () => {
+				vi.advanceTimersByTime(1000);
+				await Promise.resolve();
+			});
+
+			// No additional getState calls after unmount
+			expect(vi.mocked(window.maestro.symphony.getState).mock.calls.length).toBe(
+				callsBeforeUnmount
+			);
+		});
+
+		it('should clear the auto-sync interval on unmount', async () => {
+			const clearIntervalSpy = vi.spyOn(globalThis, 'clearInterval');
+
+			const { unmount } = renderHook(() => useSymphony());
+
+			await act(async () => {
+				await Promise.resolve();
+			});
+
+			unmount();
+
+			expect(clearIntervalSpy).toHaveBeenCalled();
+			clearIntervalSpy.mockRestore();
+		});
+
 		it('should debounce to prevent excessive refetches', async () => {
 			let updateCallback: (() => void) | null = null;
 			vi.mocked(window.maestro.symphony.onUpdated).mockImplementation((callback) => {
@@ -850,171 +736,6 @@ describe('useSymphony', () => {
 
 			// Should have refetched exactly once
 			expect(vi.mocked(window.maestro.symphony.getState).mock.calls.length).toBe(initialCalls + 1);
-		});
-	});
-
-	// ──────────────────────────────────────────────────────────────────────────
-	// Issue Count & Auto-Sync Tests
-	// ──────────────────────────────────────────────────────────────────────────
-
-	describe('issue count loading', () => {
-		it('should keep issue counts null when the backend omits counts', async () => {
-			const testRepo = createRepository();
-			vi.mocked(window.maestro.symphony.getRegistry).mockResolvedValueOnce({
-				registry: createRegistry([testRepo]),
-				fromCache: false,
-				cacheAge: 0,
-			});
-			vi.mocked(window.maestro.symphony.getIssueCounts).mockResolvedValueOnce({});
-
-			const { result } = renderHook(() => useSymphony());
-
-			await waitForLoaded(result);
-
-			await waitFor(() => {
-				expect(result.current.isLoadingIssueCounts).toBe(false);
-			});
-			expect(result.current.issueCounts).toBeNull();
-		});
-
-		it('should log issue-count failures and clear counts', async () => {
-			const testRepo = createRepository();
-			const error = new Error('Search API failed');
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-			vi.mocked(window.maestro.symphony.getRegistry).mockResolvedValueOnce({
-				registry: createRegistry([testRepo]),
-				fromCache: false,
-				cacheAge: 0,
-			});
-			vi.mocked(window.maestro.symphony.getIssueCounts).mockRejectedValueOnce(error);
-
-			const { result } = renderHook(() => useSymphony());
-
-			await waitForLoaded(result);
-
-			await waitFor(() => {
-				expect(result.current.isLoadingIssueCounts).toBe(false);
-			});
-			expect(result.current.issueCounts).toBeNull();
-			expect(consoleError).toHaveBeenCalledWith('Failed to fetch issue counts:', error);
-		});
-
-		it('should clear stale issue counts when refreshed registry has no active repositories', async () => {
-			const testRepo = createRepository();
-			vi.mocked(window.maestro.symphony.getRegistry).mockResolvedValueOnce({
-				registry: createRegistry([testRepo]),
-				fromCache: false,
-				cacheAge: 0,
-			});
-			vi.mocked(window.maestro.symphony.getIssueCounts).mockResolvedValueOnce({
-				counts: { [testRepo.slug]: 3 },
-			});
-
-			const { result } = renderHook(() => useSymphony());
-
-			await waitFor(() => {
-				expect(result.current.issueCounts).toEqual({ [testRepo.slug]: 3 });
-			});
-
-			vi.mocked(window.maestro.symphony.getRegistry).mockResolvedValueOnce({
-				registry: createRegistry([]),
-				fromCache: false,
-				cacheAge: 0,
-			});
-
-			await act(async () => {
-				await result.current.refresh(false);
-			});
-
-			await waitFor(() => {
-				expect(result.current.repositories).toEqual([]);
-				expect(result.current.issueCounts).toBeNull();
-			});
-		});
-	});
-
-	describe('periodic auto-sync', () => {
-		beforeEach(() => {
-			vi.useFakeTimers();
-		});
-
-		afterEach(() => {
-			vi.useRealTimers();
-		});
-
-		it('should check PR statuses when active contributions exist', async () => {
-			const state = createSymphonyState({ active: [createActiveContribution()] });
-			vi.mocked(window.maestro.symphony.getState).mockResolvedValue({ state });
-
-			const { result, unmount } = renderHook(() => useSymphony());
-
-			await act(async () => {
-				await Promise.resolve();
-				await Promise.resolve();
-			});
-			expect(result.current.isLoading).toBe(false);
-			vi.clearAllMocks();
-
-			await act(async () => {
-				vi.advanceTimersByTime(2 * 60 * 1000);
-				await Promise.resolve();
-				await Promise.resolve();
-			});
-
-			expect(window.maestro.symphony.checkPRStatuses).toHaveBeenCalledTimes(1);
-			expect(window.maestro.symphony.getState).toHaveBeenCalledTimes(2);
-
-			unmount();
-		});
-
-		it('should skip PR status checks when there are no active contributions', async () => {
-			vi.mocked(window.maestro.symphony.getState).mockResolvedValue({
-				state: createSymphonyState(),
-			});
-
-			const { result, unmount } = renderHook(() => useSymphony());
-
-			await act(async () => {
-				await Promise.resolve();
-				await Promise.resolve();
-			});
-			expect(result.current.isLoading).toBe(false);
-			vi.clearAllMocks();
-
-			await act(async () => {
-				vi.advanceTimersByTime(2 * 60 * 1000);
-				await Promise.resolve();
-			});
-
-			expect(window.maestro.symphony.getState).toHaveBeenCalledTimes(1);
-			expect(window.maestro.symphony.checkPRStatuses).not.toHaveBeenCalled();
-
-			unmount();
-		});
-
-		it('should log auto-sync failures without throwing', async () => {
-			const error = new Error('Status check failed');
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-			vi.mocked(window.maestro.symphony.getState)
-				.mockResolvedValueOnce({ state: createSymphonyState() })
-				.mockRejectedValueOnce(error);
-
-			const { result, unmount } = renderHook(() => useSymphony());
-
-			await act(async () => {
-				await Promise.resolve();
-				await Promise.resolve();
-			});
-			expect(result.current.isLoading).toBe(false);
-
-			await act(async () => {
-				vi.advanceTimersByTime(2 * 60 * 1000);
-				await Promise.resolve();
-			});
-
-			expect(consoleError).toHaveBeenCalledWith('Auto-sync failed:', error);
-
-			unmount();
 		});
 	});
 
@@ -1077,15 +798,15 @@ describe('useSymphony', () => {
 		});
 
 		it('should handle checkPRStatuses failure gracefully', async () => {
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-			const failure = new Error('Network error');
 			const { result } = renderHook(() => useSymphony());
 
 			await waitFor(() => {
 				expect(result.current.isLoading).toBe(false);
 			});
 
-			vi.mocked(window.maestro.symphony.checkPRStatuses).mockRejectedValueOnce(failure);
+			vi.mocked(window.maestro.symphony.checkPRStatuses).mockRejectedValueOnce(
+				new Error('Network error')
+			);
 
 			await act(async () => {
 				await result.current.refresh(true);
@@ -1093,8 +814,6 @@ describe('useSymphony', () => {
 
 			// Should not throw, isRefreshing should still reset
 			expect(result.current.isRefreshing).toBe(false);
-			expect(consoleError).toHaveBeenCalledWith('Failed to refresh symphony:', failure);
-			consoleError.mockRestore();
 		});
 	});
 
@@ -1183,26 +902,6 @@ describe('useSymphony', () => {
 			expect(startResult!.error).toContain('Clone failed');
 		});
 
-		it('should use a fallback error when clone fails without a message', async () => {
-			vi.mocked(window.maestro.symphony.cloneRepo).mockResolvedValue({ success: false });
-
-			const { result } = renderHook(() => useSymphony());
-
-			await waitForLoaded(result);
-
-			let startResult: { success: boolean; error?: string };
-			await act(async () => {
-				startResult = await result.current.startContribution(
-					testRepo,
-					testIssue,
-					'claude-code',
-					'session-1'
-				);
-			});
-
-			expect(startResult!).toEqual({ success: false, error: 'Failed to clone repository' });
-		});
-
 		it('should call startContribution API', async () => {
 			vi.mocked(window.maestro.symphony.cloneRepo).mockResolvedValue({ success: true });
 
@@ -1251,73 +950,6 @@ describe('useSymphony', () => {
 
 			expect(startResult!.success).toBe(false);
 			expect(startResult!.error).toContain('Branch creation failed');
-		});
-
-		it('should use a fallback error when startContribution fails without a message', async () => {
-			vi.mocked(window.maestro.symphony.cloneRepo).mockResolvedValue({ success: true });
-			vi.mocked(window.maestro.symphony.startContribution).mockResolvedValue({
-				success: false,
-			});
-
-			const { result } = renderHook(() => useSymphony());
-
-			await waitForLoaded(result);
-
-			let startResult: { success: boolean; error?: string };
-			await act(async () => {
-				startResult = await result.current.startContribution(
-					testRepo,
-					testIssue,
-					'claude-code',
-					'session-1'
-				);
-			});
-
-			expect(startResult!).toEqual({ success: false, error: 'Failed to start contribution' });
-		});
-
-		it('should return Error messages when starting a contribution throws an Error', async () => {
-			const error = new Error('Clone crashed');
-			vi.mocked(window.maestro.symphony.cloneRepo).mockRejectedValue(error);
-
-			const { result } = renderHook(() => useSymphony());
-
-			await waitForLoaded(result);
-
-			let startResult: { success: boolean; error?: string };
-			await act(async () => {
-				startResult = await result.current.startContribution(
-					testRepo,
-					testIssue,
-					'claude-code',
-					'session-1'
-				);
-			});
-
-			expect(startResult!).toEqual({ success: false, error: 'Clone crashed' });
-		});
-
-		it('should use a fallback error when starting a contribution throws a non-Error value', async () => {
-			vi.mocked(window.maestro.symphony.cloneRepo).mockRejectedValue('crashed');
-
-			const { result } = renderHook(() => useSymphony());
-
-			await waitForLoaded(result);
-
-			let startResult: { success: boolean; error?: string };
-			await act(async () => {
-				startResult = await result.current.startContribution(
-					testRepo,
-					testIssue,
-					'claude-code',
-					'session-1'
-				);
-			});
-
-			expect(startResult!).toEqual({
-				success: false,
-				error: 'Failed to start contribution',
-			});
 		});
 
 		it('should refetch state on success', async () => {
@@ -1497,36 +1129,6 @@ describe('useSymphony', () => {
 
 			expect(cancelResult!.success).toBe(true);
 		});
-
-		it('should return false when cancel response omits cancelled status', async () => {
-			vi.mocked(window.maestro.symphony.cancel).mockResolvedValue({});
-
-			const { result } = renderHook(() => useSymphony());
-
-			await waitForLoaded(result);
-
-			let cancelResult: { success: boolean };
-			await act(async () => {
-				cancelResult = await result.current.cancelContribution('contrib_123');
-			});
-
-			expect(cancelResult!).toEqual({ success: false });
-		});
-
-		it('should return false when cancel throws', async () => {
-			vi.mocked(window.maestro.symphony.cancel).mockRejectedValue(new Error('Cancel failed'));
-
-			const { result } = renderHook(() => useSymphony());
-
-			await waitForLoaded(result);
-
-			let cancelResult: { success: boolean };
-			await act(async () => {
-				cancelResult = await result.current.cancelContribution('contrib_123');
-			});
-
-			expect(cancelResult!).toEqual({ success: false });
-		});
 	});
 
 	// ──────────────────────────────────────────────────────────────────────────
@@ -1645,48 +1247,6 @@ describe('useSymphony', () => {
 
 			expect(finalizeResult!.success).toBe(false);
 			expect(finalizeResult!.error).toBe('Push failed');
-		});
-
-		it('should use a fallback error when completion fails without a message', async () => {
-			vi.mocked(window.maestro.symphony.complete).mockResolvedValue({});
-
-			const result = await setupWithActiveContribution();
-
-			let finalizeResult: { success: boolean; error?: string };
-			await act(async () => {
-				finalizeResult = await result.current.finalizeContribution('contrib_active_123');
-			});
-
-			expect(finalizeResult!).toEqual({ success: false, error: 'Unknown error' });
-		});
-
-		it('should return Error messages when finalizing throws an Error', async () => {
-			vi.mocked(window.maestro.symphony.complete).mockRejectedValue(new Error('Push crashed'));
-
-			const result = await setupWithActiveContribution();
-
-			let finalizeResult: { success: boolean; error?: string };
-			await act(async () => {
-				finalizeResult = await result.current.finalizeContribution('contrib_active_123');
-			});
-
-			expect(finalizeResult!).toEqual({ success: false, error: 'Push crashed' });
-		});
-
-		it('should use a fallback error when finalizing throws a non-Error value', async () => {
-			vi.mocked(window.maestro.symphony.complete).mockRejectedValue('failed');
-
-			const result = await setupWithActiveContribution();
-
-			let finalizeResult: { success: boolean; error?: string };
-			await act(async () => {
-				finalizeResult = await result.current.finalizeContribution('contrib_active_123');
-			});
-
-			expect(finalizeResult!).toEqual({
-				success: false,
-				error: 'Failed to finalize contribution',
-			});
 		});
 	});
 

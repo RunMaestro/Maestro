@@ -107,9 +107,7 @@ export function getSpeechRecognition(): SpeechRecognitionConstructor | null {
  *   - 'strong' (50ms) - important action confirmation
  *   - number - custom duration in milliseconds
  */
-export function triggerHapticFeedback(
-	pattern: 'light' | 'medium' | 'strong' | number = 'medium'
-): void {
+function triggerHapticFeedback(pattern: 'light' | 'medium' | 'strong' | number = 'medium'): void {
 	if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
 		const duration =
 			pattern === 'light' ? 10 : pattern === 'medium' ? 25 : pattern === 'strong' ? 50 : pattern;

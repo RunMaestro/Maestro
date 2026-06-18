@@ -15,6 +15,7 @@
  */
 
 import { ipcMain, BrowserWindow } from 'electron';
+import type { ClaudeSessionOrigin, ClaudeSessionOriginsData } from '../../stores/types';
 import path from 'path';
 import os from 'os';
 import fs from 'fs/promises';
@@ -23,7 +24,7 @@ import { logger } from '../../utils/logger';
 import { withIpcErrorLogging } from '../../utils/ipcHandler';
 import { isWebContentsAvailable } from '../../utils/safe-send';
 import { CLAUDE_SESSION_PARSE_LIMITS } from '../../constants';
-import { calculateClaudeCost } from '../../utils/pricing';
+import { calculateModelCost, computeClaudeUsageCost } from '../../utils/pricing';
 import {
 	encodeClaudeProjectPath,
 	loadStatsCache,
@@ -32,6 +33,7 @@ import {
 	STATS_CACHE_VERSION,
 } from '../../utils/statsCache';
 import { app } from 'electron';
+import { captureException } from '../../utils/sentry';
 
 /**
  * Legacy global stats cache structure for deprecated claude:getGlobalStats handler.
@@ -48,6 +50,8 @@ interface LegacyGlobalStatsCache {
 			cacheCreationTokens: number;
 			sizeBytes: number;
 			fileMtimeMs: number;
+			/** Per-model cost (USD) at parse time; absent for pre-existing cache entries. */
+			costUsd?: number;
 		}
 	>;
 	totals: {
@@ -91,6 +95,7 @@ async function saveLegacyGlobalStatsCache(cache: LegacyGlobalStatsCache): Promis
 		await fs.mkdir(cacheDir, { recursive: true });
 		await fs.writeFile(cachePath, JSON.stringify(cache), 'utf-8');
 	} catch (error) {
+		void captureException(error);
 		logger.warn('Failed to save legacy global stats cache', LOG_CONTEXT, { error });
 	}
 }
@@ -106,21 +111,7 @@ function handlerOpts(operation: string, context: string = LOG_CONTEXT) {
 	return { context, operation, logSuccess: false };
 }
 
-/**
- * Claude session origin types
- */
-type ClaudeSessionOrigin = 'user' | 'auto';
-
-interface ClaudeSessionOriginInfo {
-	origin: ClaudeSessionOrigin;
-	sessionName?: string;
-	starred?: boolean;
-	contextUsage?: number;
-}
-
-interface ClaudeSessionOriginsData {
-	origins: Record<string, Record<string, ClaudeSessionOrigin | ClaudeSessionOriginInfo>>;
-}
+// ClaudeSessionOriginInfo and ClaudeSessionOriginsData imported from stores/types
 
 /**
  * Dependencies required for Claude handlers
@@ -175,6 +166,8 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 				await fs.access(projectDir);
 				logger.info(`Claude sessions directory exists: ${projectDir}`, LOG_CONTEXT);
 			} catch (err) {
+				// Expected first-run state: project has no Claude history yet.
+				// Don't send to Sentry — the other fs.access catches in this file also omit it.
 				logger.info(
 					`No Claude sessions directory found for project: ${projectPath} (tried: ${projectDir}), error: ${err}`,
 					LOG_CONTEXT
@@ -237,33 +230,14 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 							}
 						}
 
-						// Fast regex-based token extraction
-						let totalInputTokens = 0;
-						let totalOutputTokens = 0;
-						let totalCacheReadTokens = 0;
-						let totalCacheCreationTokens = 0;
-
-						const inputMatches = content.matchAll(/"input_tokens"\s*:\s*(\d+)/g);
-						for (const m of inputMatches) totalInputTokens += parseInt(m[1], 10);
-
-						const outputMatches = content.matchAll(/"output_tokens"\s*:\s*(\d+)/g);
-						for (const m of outputMatches) totalOutputTokens += parseInt(m[1], 10);
-
-						const cacheReadMatches = content.matchAll(/"cache_read_input_tokens"\s*:\s*(\d+)/g);
-						for (const m of cacheReadMatches) totalCacheReadTokens += parseInt(m[1], 10);
-
-						const cacheCreationMatches = content.matchAll(
-							/"cache_creation_input_tokens"\s*:\s*(\d+)/g
-						);
-						for (const m of cacheCreationMatches) totalCacheCreationTokens += parseInt(m[1], 10);
-
-						// Calculate cost estimate
-						const costUsd = calculateClaudeCost(
-							totalInputTokens,
-							totalOutputTokens,
-							totalCacheReadTokens,
-							totalCacheCreationTokens
-						);
+						// Per-model token + cost extraction (a session may mix models).
+						const {
+							inputTokens: totalInputTokens,
+							outputTokens: totalOutputTokens,
+							cacheReadTokens: totalCacheReadTokens,
+							cacheCreationTokens: totalCacheCreationTokens,
+							costUsd,
+						} = computeClaudeUsageCost(content);
 
 						// Extract last timestamp for duration
 						let lastTimestamp = timestamp;
@@ -307,6 +281,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 							durationSeconds,
 						};
 					} catch (error) {
+						void captureException(error);
 						logger.error(`Error reading session file: ${filename}`, LOG_CONTEXT, error);
 						return null;
 					}
@@ -453,33 +428,14 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 								}
 							}
 
-							// Token extraction
-							let totalInputTokens = 0;
-							let totalOutputTokens = 0;
-							let totalCacheReadTokens = 0;
-							let totalCacheCreationTokens = 0;
-
-							const inputMatches = content.matchAll(/"input_tokens"\s*:\s*(\d+)/g);
-							for (const m of inputMatches) totalInputTokens += parseInt(m[1], 10);
-
-							const outputMatches = content.matchAll(/"output_tokens"\s*:\s*(\d+)/g);
-							for (const m of outputMatches) totalOutputTokens += parseInt(m[1], 10);
-
-							const cacheReadMatches = content.matchAll(/"cache_read_input_tokens"\s*:\s*(\d+)/g);
-							for (const m of cacheReadMatches) totalCacheReadTokens += parseInt(m[1], 10);
-
-							const cacheCreationMatches = content.matchAll(
-								/"cache_creation_input_tokens"\s*:\s*(\d+)/g
-							);
-							for (const m of cacheCreationMatches) totalCacheCreationTokens += parseInt(m[1], 10);
-
-							// Calculate cost
-							const costUsd = calculateClaudeCost(
-								totalInputTokens,
-								totalOutputTokens,
-								totalCacheReadTokens,
-								totalCacheCreationTokens
-							);
+							// Per-model token + cost extraction (a session may mix models).
+							const {
+								inputTokens: totalInputTokens,
+								outputTokens: totalOutputTokens,
+								cacheReadTokens: totalCacheReadTokens,
+								cacheCreationTokens: totalCacheCreationTokens,
+								costUsd,
+							} = computeClaudeUsageCost(content);
 
 							// Extract last timestamp for duration
 							let lastTimestamp = timestamp;
@@ -531,6 +487,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 								sessionName,
 							};
 						} catch (error) {
+							void captureException(error);
 							logger.error(`Error reading session file: ${fileInfo.filename}`, LOG_CONTEXT, error);
 							return null;
 						}
@@ -584,29 +541,8 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 				const assistantMessageCount = (content.match(/"type"\s*:\s*"assistant"/g) || []).length;
 				const messages = userMessageCount + assistantMessageCount;
 
-				let inputTokens = 0;
-				let outputTokens = 0;
-				let cacheReadTokens = 0;
-				let cacheCreationTokens = 0;
-
-				const inputMatches = content.matchAll(/"input_tokens"\s*:\s*(\d+)/g);
-				for (const m of inputMatches) inputTokens += parseInt(m[1], 10);
-
-				const outputMatches = content.matchAll(/"output_tokens"\s*:\s*(\d+)/g);
-				for (const m of outputMatches) outputTokens += parseInt(m[1], 10);
-
-				const cacheReadMatches = content.matchAll(/"cache_read_input_tokens"\s*:\s*(\d+)/g);
-				for (const m of cacheReadMatches) cacheReadTokens += parseInt(m[1], 10);
-
-				const cacheCreationMatches = content.matchAll(/"cache_creation_input_tokens"\s*:\s*(\d+)/g);
-				for (const m of cacheCreationMatches) cacheCreationTokens += parseInt(m[1], 10);
-
-				const costUsd = calculateClaudeCost(
-					inputTokens,
-					outputTokens,
-					cacheReadTokens,
-					cacheCreationTokens
-				);
+				// Per-model token + cost extraction (a session may mix models).
+				const { inputTokens, outputTokens, costUsd } = computeClaudeUsageCost(content);
 
 				let oldestTimestamp: string | null = null;
 				const lines = content.split('\n').filter((l) => l.trim());
@@ -769,6 +705,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 						isComplete: processedCount >= sessionsToProcess.length,
 					});
 				} catch (error) {
+					void captureException(error);
 					logger.error(`Error parsing session file: ${filename}`, LOG_CONTEXT, error);
 				}
 			}
@@ -977,11 +914,19 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 					totalSizeBytes += stats.sizeBytes;
 				}
 
-				const totalCostUsd = calculateClaudeCost(
-					totalInputTokens,
-					totalOutputTokens,
-					totalCacheReadTokens,
-					totalCacheCreationTokens
+				// Prefer the per-model cost stored at parse time; fall back to flat-rate
+				// pricing for cache entries written before per-model cost was tracked.
+				const totalCostUsd = Object.values(c.sessions).reduce(
+					(sum, stats) =>
+						sum +
+						(stats.costUsd ??
+							calculateModelCost({
+								inputTokens: stats.inputTokens,
+								outputTokens: stats.outputTokens,
+								cacheReadTokens: stats.cacheReadTokens,
+								cacheCreationTokens: stats.cacheCreationTokens,
+							})),
+					0
 				);
 
 				return {
@@ -1007,24 +952,9 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 					const assistantMessageCount = (content.match(/"type"\s*:\s*"assistant"/g) || []).length;
 					const messages = userMessageCount + assistantMessageCount;
 
-					let inputTokens = 0;
-					let outputTokens = 0;
-					let cacheReadTokens = 0;
-					let cacheCreationTokens = 0;
-
-					const inputMatches = content.matchAll(/"input_tokens"\s*:\s*(\d+)/g);
-					for (const m of inputMatches) inputTokens += parseInt(m[1], 10);
-
-					const outputMatches = content.matchAll(/"output_tokens"\s*:\s*(\d+)/g);
-					for (const m of outputMatches) outputTokens += parseInt(m[1], 10);
-
-					const cacheReadMatches = content.matchAll(/"cache_read_input_tokens"\s*:\s*(\d+)/g);
-					for (const m of cacheReadMatches) cacheReadTokens += parseInt(m[1], 10);
-
-					const cacheCreationMatches = content.matchAll(
-						/"cache_creation_input_tokens"\s*:\s*(\d+)/g
-					);
-					for (const m of cacheCreationMatches) cacheCreationTokens += parseInt(m[1], 10);
+					// Per-model token + cost extraction (a session may mix models).
+					const { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, costUsd } =
+						computeClaudeUsageCost(content);
 
 					newCache.sessions[sessionKey] = {
 						fileMtimeMs: mtimeMs,
@@ -1034,6 +964,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 						cacheReadTokens,
 						cacheCreationTokens,
 						sizeBytes: fileStat.size,
+						costUsd,
 					};
 
 					processedCount++;
@@ -1042,6 +973,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 					const currentTotals = calculateGlobalTotals(newCache);
 					sendUpdate({ ...currentTotals, isComplete: processedCount >= sessionsToProcess.length });
 				} catch (error) {
+					void captureException(error);
 					logger.error(`Error parsing global session file: ${sessionKey}`, LOG_CONTEXT, error);
 				}
 			}
@@ -1415,6 +1347,15 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 
 								if (entry.type === 'user' && textLower.includes(searchLower)) {
 									userMatches++;
+									if (!matchPreview && (searchMode === 'user' || searchMode === 'all')) {
+										const idx = textLower.indexOf(searchLower);
+										const start = Math.max(0, idx - 60);
+										const end = Math.min(textContent.length, idx + query.length + 60);
+										matchPreview =
+											(start > 0 ? '...' : '') +
+											textContent.slice(start, end) +
+											(end < textContent.length ? '...' : '');
+									}
 								}
 
 								if (entry.type === 'assistant' && textLower.includes(searchLower)) {
@@ -1455,8 +1396,8 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 								matchCount = assistantMatches;
 								break;
 							case 'all':
-								matches = titleMatch || assistantMatches > 0;
-								matchType = titleMatch ? 'title' : 'assistant';
+								matches = titleMatch || userMatches > 0 || assistantMatches > 0;
+								matchType = titleMatch ? 'title' : userMatches > 0 ? 'user' : 'assistant';
 								matchCount = userMatches + assistantMatches;
 								break;
 						}
@@ -1592,6 +1533,14 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 					source: 'project' | 'user';
 				}> = [];
 
+				// Only treat "missing entry" filesystem errors as "no skill here";
+				// propagate permission/IO errors to the outer IPC handler so
+				// Sentry captures them instead of silently dropping skills.
+				const isMissingEntryError = (error: unknown): boolean => {
+					const code = (error as NodeJS.ErrnoException | undefined)?.code;
+					return code === 'ENOENT' || code === 'ENOTDIR';
+				};
+
 				/**
 				 * Parses a skill.md file to extract name, description, and token count.
 				 * Skills use YAML frontmatter with 'name' and 'description' fields.
@@ -1647,28 +1596,37 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 						const tokenCount = Math.round(content.length / 4);
 
 						return { name, description, tokenCount, source };
-					} catch {
-						return null;
+					} catch (error) {
+						if (isMissingEntryError(error)) return null;
+						throw error;
 					}
 				};
 
 				/**
-				 * Scans a skills directory for skill.md files
+				 * Scans a skills directory for SKILL.md files. Claude Code writes the
+				 * canonical uppercase name; on case-insensitive filesystems
+				 * (Windows NTFS, default macOS APFS) `skill.md` happens to match,
+				 * but on case-sensitive filesystems (Linux, WSL) it does not — so
+				 * try the canonical name first and fall back to lowercase.
 				 */
 				const scanSkillsDir = async (dir: string, source: 'project' | 'user') => {
+					let entries;
 					try {
-						const entries = await fs.readdir(dir, { withFileTypes: true });
-						for (const entry of entries) {
-							if (entry.isDirectory()) {
-								const skillPath = path.join(dir, entry.name, 'skill.md');
-								const skill = await parseSkillFile(skillPath, entry.name, source);
-								if (skill) {
-									skills.push(skill);
-								}
+						entries = await fs.readdir(dir, { withFileTypes: true });
+					} catch (error) {
+						if (isMissingEntryError(error)) return;
+						throw error;
+					}
+					for (const entry of entries) {
+						if (!entry.isDirectory()) continue;
+						for (const candidate of ['SKILL.md', 'skill.md']) {
+							const skillPath = path.join(dir, entry.name, candidate);
+							const skill = await parseSkillFile(skillPath, entry.name, source);
+							if (skill) {
+								skills.push(skill);
+								break;
 							}
 						}
-					} catch {
-						// Directory doesn't exist or isn't readable
 					}
 				};
 

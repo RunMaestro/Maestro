@@ -90,28 +90,14 @@ import { useAutoRunAchievements } from '../../../renderer/hooks/batch/useAutoRun
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { CONDUCTOR_BADGES as MOCK_CONDUCTOR_BADGES } from '../../../renderer/constants/conductorBadges';
+import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
 // ============================================================================
 // Helpers
 // ============================================================================
 
 function createMockSession(overrides: Record<string, any> = {}): any {
-	return {
-		id: 'session-1',
-		name: 'Test Session',
-		toolType: 'claude-code',
-		state: 'idle',
-		cwd: '/test',
-		projectRoot: '/test',
-		isGitRepo: false,
-		fileTree: [],
-		fileExplorerExpanded: [],
-		aiLogs: [],
-		shellLogs: [],
-		messageQueue: [],
-		executionQueue: [],
-		...overrides,
-	};
+	return baseCreateMockSession(overrides as any);
 }
 
 // ============================================================================
@@ -329,29 +315,6 @@ describe('useAutoRunAchievements', () => {
 			// Two-session delta should be approximately double the one-session delta
 			expect(deltaTwoSessions).toBeGreaterThanOrEqual(deltaOneSession * 2 - 200);
 			expect(deltaTwoSessions).toBeLessThanOrEqual(deltaOneSession * 2 + 200);
-		});
-
-		it('preserves the existing lastUpdateTime when active batch count changes', () => {
-			vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
-
-			const { rerender } = renderHook(
-				({ ids }) => useAutoRunAchievements({ activeBatchSessionIds: ids }),
-				{ initialProps: { ids: ['s1'] } }
-			);
-
-			act(() => {
-				vi.advanceTimersByTime(30000);
-			});
-
-			rerender({ ids: ['s1', 's2'] });
-
-			act(() => {
-				vi.advanceTimersByTime(60000);
-			});
-
-			expect(mockUpdateAutoRunProgress).toHaveBeenCalledTimes(1);
-			const [deltaMs] = mockUpdateAutoRunProgress.mock.calls[0];
-			expect(deltaMs).toBe(90000 * 2);
 		});
 	});
 

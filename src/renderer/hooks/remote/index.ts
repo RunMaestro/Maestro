@@ -37,3 +37,7 @@ export type { UseRemoteHandlersDeps, UseRemoteHandlersReturn } from './useRemote
 // Global live mode (web interface) management (Tier 3B)
 export { useLiveMode } from './useLiveMode';
 export type { UseLiveModeReturn } from './useLiveMode';
+
+// Remote event listeners (CustomEvent handlers from CLI/web/mobile)
+export { useAppRemoteEventListeners } from './useAppRemoteEventListeners';
+export type { UseAppRemoteEventListenersDeps } from './useAppRemoteEventListeners';

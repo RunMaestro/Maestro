@@ -68,29 +68,8 @@ export function usePromptComposerHandlers(
 		useGroupChatStore.getState();
 
 	// --- Settings ---
-	const enterToSendAI = useSettingsStore((s) => s.enterToSendAI);
-	const { setEnterToSendAI } = useSettingsStore.getState();
-
-	const persistPromptToActiveTab = useCallback(
-		(value: string) => {
-			setInputValue(value);
-			if (!activeSession) return;
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== activeSession.id) return s;
-					const activeTab = getActiveTab(s);
-					if (!activeTab) return s;
-					return {
-						...s,
-						aiTabs: s.aiTabs.map((tab) =>
-							tab.id === activeTab.id ? { ...tab, inputValue: value } : tab
-						),
-					};
-				})
-			);
-		},
-		[activeSession, setInputValue, setSessions]
-	);
+	const enterToSendAIExpanded = useSettingsStore((s) => s.enterToSendAIExpanded);
+	const { setEnterToSendAIExpanded } = useSettingsStore.getState();
 
 	const handlePromptComposerSubmit = useCallback(
 		(value: string) => {
@@ -100,10 +79,10 @@ export function usePromptComposerHandlers(
 					prev.map((c) => (c.id === activeGroupChatId ? { ...c, draftMessage: value } : c))
 				);
 			} else {
-				persistPromptToActiveTab(value);
+				setInputValue(value);
 			}
 		},
-		[activeGroupChatId, persistPromptToActiveTab, setGroupChats]
+		[activeGroupChatId, setInputValue]
 	);
 
 	const handlePromptComposerSend = useCallback(
@@ -122,7 +101,7 @@ export function usePromptComposerHandlers(
 				);
 			} else {
 				// Set the input value and trigger send
-				persistPromptToActiveTab(value);
+				setInputValue(value);
 				// Use setTimeout to ensure state updates before processing
 				setTimeout(() => processInput(value), 0);
 			}
@@ -132,7 +111,6 @@ export function usePromptComposerHandlers(
 			groupChatStagedImages,
 			groupChatReadOnlyMode,
 			handleSendGroupChatMessage,
-			persistPromptToActiveTab,
 			processInput,
 		]
 	);
@@ -209,8 +187,8 @@ export function usePromptComposerHandlers(
 	}, [activeSession]);
 
 	const handlePromptToggleEnterToSend = useCallback(
-		() => setEnterToSendAI(!enterToSendAI),
-		[enterToSendAI]
+		() => setEnterToSendAIExpanded(!enterToSendAIExpanded),
+		[enterToSendAIExpanded]
 	);
 
 	return {

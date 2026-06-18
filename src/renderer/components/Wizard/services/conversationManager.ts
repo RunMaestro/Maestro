@@ -410,12 +410,16 @@ class ConversationManager {
 					});
 				}, INACTIVITY_TIMEOUT_MS);
 
-				this.session!.responseTimeoutId = newTimeoutId;
+				if (this.session) {
+					this.session.responseTimeoutId = newTimeoutId;
+				}
 			};
 
 			// Start the initial timeout and store the reset function for listeners
 			resetTimeout();
-			this.session!.resetResponseTimeout = resetTimeout;
+			if (this.session) {
+				this.session.resetResponseTimeout = resetTimeout;
+			}
 
 			// Set up data listener
 			this.session!.dataListenerCleanup = window.maestro.process.onData(
@@ -583,17 +587,8 @@ class ConversationManager {
 				getStdinFlags({
 					isSshSession,
 					supportsStreamJsonInput: agent?.capabilities?.supportsStreamJsonInput ?? false,
+					hasImages: false, // Wizard never sends images
 				});
-			if (sendViaStdin) {
-				// Ensure the agent uses stream-json input format when sending JSON via stdin
-				const inputFormatIndex = argsForSpawn.findIndex((arg) => arg === '--input-format');
-				if (inputFormatIndex === -1) {
-					argsForSpawn.push('--input-format', 'stream-json');
-				} else if (argsForSpawn[inputFormatIndex + 1] !== 'stream-json') {
-					argsForSpawn[inputFormatIndex + 1] = 'stream-json';
-				}
-			}
-
 			// Use the agent's resolved path if available, falling back to command name
 			// This is critical for packaged Electron apps where PATH may not include agent locations
 			const commandToUse = agent.path || agent.command;
@@ -734,6 +729,21 @@ class ConversationManager {
 				return args;
 			}
 
+			case 'copilot-cli': {
+				// Copilot: base args + JSON output format + read-only enforcement
+				const args = [...(agent.args || [])];
+
+				if (agent.jsonOutputArgs) {
+					args.push(...agent.jsonOutputArgs);
+				}
+
+				if (agent.readOnlyArgs) {
+					args.push(...agent.readOnlyArgs);
+				}
+
+				return args;
+			}
+
 			default: {
 				// For unknown agents, use base args
 				return [...(agent.args || [])];
@@ -786,6 +796,7 @@ class ConversationManager {
 	 * Extract the result text from agent JSON output.
 	 * Handles different agent output formats:
 	 * - Claude Code: stream-json with { type: 'result', result: '...' }
+	 * - Copilot: JSONL with { type: 'assistant.message', data: { phase: 'final_answer', content: '...' } }
 	 * - OpenCode: JSONL with { type: 'text', part: { text: '...' } }
 	 * - Codex: JSONL with { type: 'message', content: '...' } or similar
 	 */
@@ -840,6 +851,21 @@ class ConversationManager {
 				}
 				if (textParts.length > 0) {
 					return textParts.join('');
+				}
+			}
+
+			// For Copilot: look for the final assistant message
+			if (agentType === 'copilot-cli') {
+				for (const line of lines) {
+					if (!line.trim()) continue;
+					try {
+						const msg = JSON.parse(line);
+						if (msg.type === 'assistant.message' && msg.data?.phase === 'final_answer') {
+							return typeof msg.data?.content === 'string' ? msg.data.content : null;
+						}
+					} catch {
+						// Ignore non-JSON lines
+					}
 				}
 			}
 

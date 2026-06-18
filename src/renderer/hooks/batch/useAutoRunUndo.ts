@@ -96,7 +96,6 @@ export function useAutoRunUndo({
 
 	// Timer ref for debounced undo snapshots
 	const undoSnapshotTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-	const pendingUndoSnapshotRef = useRef<UndoState | null>(null);
 
 	/**
 	 * Push current state to undo history.
@@ -105,11 +104,6 @@ export function useAutoRunUndo({
 	const pushUndoState = useCallback(
 		(contentToSnapshot?: string, cursorPos?: number) => {
 			if (!selectedFile) return;
-			if (undoSnapshotTimeoutRef.current) {
-				clearTimeout(undoSnapshotTimeoutRef.current);
-				undoSnapshotTimeoutRef.current = null;
-			}
-			pendingUndoSnapshotRef.current = null;
 
 			const snapshotContent = contentToSnapshot ?? localContent;
 			const snapshotCursor = cursorPos ?? textareaRef.current?.selectionStart ?? 0;
@@ -144,7 +138,7 @@ export function useAutoRunUndo({
 			lastUndoSnapshotRef.current = snapshotContent;
 
 			// Clear redo stack on new edit action
-			redoHistoryRef.current.delete(selectedFile);
+			redoHistoryRef.current.set(selectedFile, []);
 		},
 		[selectedFile, localContent, textareaRef]
 	);
@@ -159,29 +153,14 @@ export function useAutoRunUndo({
 			if (undoSnapshotTimeoutRef.current) {
 				clearTimeout(undoSnapshotTimeoutRef.current);
 			}
-			pendingUndoSnapshotRef.current = {
-				content: previousContent,
-				cursorPosition: previousCursor,
-			};
 
 			// Schedule snapshot after debounce delay of inactivity
 			undoSnapshotTimeoutRef.current = setTimeout(() => {
-				const pendingSnapshot = pendingUndoSnapshotRef.current!;
-				pendingUndoSnapshotRef.current = null;
-				pushUndoState(pendingSnapshot.content, pendingSnapshot.cursorPosition);
+				pushUndoState(previousContent, previousCursor);
 			}, UNDO_SNAPSHOT_DEBOUNCE_MS);
 		},
 		[pushUndoState]
 	);
-
-	const flushPendingUndoSnapshot = useCallback(() => {
-		if (!pendingUndoSnapshotRef.current) return;
-		clearTimeout(undoSnapshotTimeoutRef.current!);
-		undoSnapshotTimeoutRef.current = null;
-		const pendingSnapshot = pendingUndoSnapshotRef.current;
-		pendingUndoSnapshotRef.current = null;
-		pushUndoState(pendingSnapshot.content, pendingSnapshot.cursorPosition);
-	}, [pushUndoState]);
 
 	/**
 	 * Handle undo action (Cmd+Z).
@@ -189,7 +168,6 @@ export function useAutoRunUndo({
 	 */
 	const handleUndo = useCallback(() => {
 		if (!selectedFile) return;
-		flushPendingUndoSnapshot();
 
 		const undoStack = undoHistoryRef.current.get(selectedFile) || [];
 		if (undoStack.length === 0) return;
@@ -204,11 +182,7 @@ export function useAutoRunUndo({
 
 		// Pop and apply the undo state
 		const prevState = undoStack.pop()!;
-		if (undoStack.length > 0) {
-			undoHistoryRef.current.set(selectedFile, undoStack);
-		} else {
-			undoHistoryRef.current.delete(selectedFile);
-		}
+		undoHistoryRef.current.set(selectedFile, undoStack);
 
 		// Update content without pushing to undo stack
 		setLocalContent(prevState.content);
@@ -221,7 +195,7 @@ export function useAutoRunUndo({
 				textareaRef.current.focus();
 			}
 		});
-	}, [selectedFile, flushPendingUndoSnapshot, localContent, setLocalContent, textareaRef]);
+	}, [selectedFile, localContent, setLocalContent, textareaRef]);
 
 	/**
 	 * Handle redo action (Cmd+Shift+Z).
@@ -229,7 +203,6 @@ export function useAutoRunUndo({
 	 */
 	const handleRedo = useCallback(() => {
 		if (!selectedFile) return;
-		flushPendingUndoSnapshot();
 
 		const redoStack = redoHistoryRef.current.get(selectedFile) || [];
 		if (redoStack.length === 0) return;
@@ -257,7 +230,7 @@ export function useAutoRunUndo({
 				textareaRef.current.focus();
 			}
 		});
-	}, [selectedFile, flushPendingUndoSnapshot, localContent, setLocalContent, textareaRef]);
+	}, [selectedFile, localContent, setLocalContent, textareaRef]);
 
 	/**
 	 * Reset undo history for current document.
@@ -274,7 +247,6 @@ export function useAutoRunUndo({
 				clearTimeout(undoSnapshotTimeoutRef.current);
 				undoSnapshotTimeoutRef.current = null;
 			}
-			pendingUndoSnapshotRef.current = null;
 		};
 	}, [selectedFile]);
 

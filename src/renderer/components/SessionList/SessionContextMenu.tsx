@@ -11,9 +11,13 @@ import {
 	GitPullRequest,
 	Trash2,
 	Edit3,
+	Zap,
+	Fingerprint,
 } from 'lucide-react';
 import type { Group, Session, Theme } from '../../types';
 import { useClickOutside, useContextMenuPosition } from '../../hooks';
+import { safeClipboardWrite } from '../../utils/clipboard';
+import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 
 interface SessionContextMenuProps {
 	x: number;
@@ -34,6 +38,7 @@ interface SessionContextMenuProps {
 	onConfigureWorktrees?: () => void;
 	onDeleteWorktree?: () => void;
 	onCreateGroup?: () => void;
+	onConfigureCue?: () => void;
 }
 
 export function SessionContextMenu({
@@ -55,6 +60,7 @@ export function SessionContextMenu({
 	onConfigureWorktrees,
 	onDeleteWorktree,
 	onCreateGroup,
+	onConfigureCue,
 }: SessionContextMenuProps) {
 	const menuRef = useRef<HTMLDivElement>(null);
 	const moveToGroupRef = useRef<HTMLDivElement>(null);
@@ -99,17 +105,19 @@ export function SessionContextMenu({
 		}
 		setShowMoveSubmenu(true);
 
-		const rect = moveToGroupRef.current!.getBoundingClientRect();
-		const itemHeight = 28;
-		const submenuHeight = (groups.length + 1) * itemHeight + 16 + (groups.length > 0 ? 8 : 0);
-		const submenuWidth = 160;
-		const spaceBelow = window.innerHeight - rect.top;
-		const spaceRight = window.innerWidth - rect.right;
+		if (moveToGroupRef.current) {
+			const rect = moveToGroupRef.current.getBoundingClientRect();
+			const itemHeight = 28;
+			const submenuHeight = (groups.length + 1) * itemHeight + 16 + (groups.length > 0 ? 8 : 0);
+			const submenuWidth = 160;
+			const spaceBelow = window.innerHeight - rect.top;
+			const spaceRight = window.innerWidth - rect.right;
 
-		const vertical = spaceBelow < submenuHeight && rect.top > submenuHeight ? 'above' : 'below';
-		const horizontal = spaceRight < submenuWidth && rect.left > submenuWidth ? 'left' : 'right';
+			const vertical = spaceBelow < submenuHeight && rect.top > submenuHeight ? 'above' : 'below';
+			const horizontal = spaceRight < submenuWidth && rect.left > submenuWidth ? 'left' : 'right';
 
-		setSubmenuPosition({ vertical, horizontal });
+			setSubmenuPosition({ vertical, horizontal });
+		}
 	};
 
 	const handleMoveToGroupLeave = () => {
@@ -134,14 +142,14 @@ export function SessionContextMenu({
 	return (
 		<div
 			ref={menuRef}
-			className="fixed z-50 py-1 rounded-md shadow-xl border"
+			className="fixed z-50 py-1 rounded-md shadow-xl border whitespace-nowrap"
 			style={{
 				left,
 				top,
 				opacity: ready ? 1 : 0,
 				backgroundColor: theme.colors.bgSidebar,
 				borderColor: theme.colors.border,
-				minWidth: '160px',
+				minWidth: '10rem',
 			}}
 		>
 			<button
@@ -231,11 +239,11 @@ export function SessionContextMenu({
 
 					{showMoveSubmenu && (
 						<div
-							className="absolute py-1 rounded-md shadow-xl border"
+							className="absolute py-1 rounded-md shadow-xl border whitespace-nowrap"
 							style={{
 								backgroundColor: theme.colors.bgSidebar,
 								borderColor: theme.colors.border,
-								minWidth: '140px',
+								minWidth: '8.75rem',
 								...(submenuPosition.vertical === 'above' ? { bottom: 0 } : { top: 0 }),
 								...(submenuPosition.horizontal === 'left'
 									? { right: '100%', marginRight: 4 }
@@ -338,6 +346,26 @@ export function SessionContextMenu({
 				</>
 			)}
 
+			{onConfigureCue && (
+				<>
+					{!showWorktreeParentSection && (
+						<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+					)}
+					<button
+						type="button"
+						onClick={() => {
+							onConfigureCue();
+							onDismiss();
+						}}
+						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+						style={{ color: '#06b6d4' }}
+					>
+						<Zap className="w-3.5 h-3.5" />
+						Configure Maestro Cue
+					</button>
+				</>
+			)}
+
 			{showWorktreeChildSection && (
 				<>
 					<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
@@ -372,22 +400,36 @@ export function SessionContextMenu({
 				</>
 			)}
 
+			<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+
+			<button
+				type="button"
+				onClick={async () => {
+					if (await safeClipboardWrite(session.id)) {
+						flashCopiedToClipboard(session.id, 'Agent GUID Copied');
+					}
+					onDismiss();
+				}}
+				className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+				style={{ color: theme.colors.textMain }}
+			>
+				<Fingerprint className="w-3.5 h-3.5" />
+				Copy Agent GUID to Clipboard
+			</button>
+
 			{!session.parentSessionId && (
-				<>
-					<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
-					<button
-						type="button"
-						onClick={() => {
-							onDelete();
-							onDismiss();
-						}}
-						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-						style={{ color: theme.colors.error }}
-					>
-						<Trash2 className="w-3.5 h-3.5" />
-						Remove Agent
-					</button>
-				</>
+				<button
+					type="button"
+					onClick={() => {
+						onDelete();
+						onDismiss();
+					}}
+					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+					style={{ color: theme.colors.error }}
+				>
+					<Trash2 className="w-3.5 h-3.5" />
+					Remove Agent
+				</button>
 			)}
 		</div>
 	);

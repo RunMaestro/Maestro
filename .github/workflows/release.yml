@@ -292,6 +292,37 @@ jobs:
         env:
           DEBUG: electron-builder
 
+      # Verify native modules are correctly included in unpacked resources (Windows x64)
+      - name: Verify native modules in package (Windows)
+        if: matrix.platform == 'win'
+        shell: pwsh
+        run: |
+          $unpackedDir = "release/win-unpacked/resources/app.asar.unpacked"
+          # node-pty on Windows uses ConPTY: ships conpty.node + conpty_console_list.node, not pty.node
+          $nativeModules = @(
+            "node_modules/node-pty/build/Release/conpty.node",
+            "node_modules/node-pty/build/Release/conpty_console_list.node",
+            "node_modules/better-sqlite3/build/Release/better_sqlite3.node"
+          )
+
+          foreach ($relativePath in $nativeModules) {
+            $nativePath = Join-Path $unpackedDir $relativePath
+            Write-Host "Checking for $relativePath in unpacked resources..."
+            if (Test-Path $nativePath) {
+              Get-Item $nativePath | Format-List FullName,Length
+            } else {
+              Write-Error "ERROR: $relativePath not found in unpacked resources"
+              Write-Host "Available native modules:"
+              if (Test-Path $unpackedDir) {
+                Get-ChildItem -Path $unpackedDir -Filter *.node -Recurse -ErrorAction SilentlyContinue |
+                  Select-Object -ExpandProperty FullName
+              } else {
+                Write-Host "Directory not found: $unpackedDir"
+              }
+              exit 1
+            }
+          }
+
       # Linux/macOS: Rebuild native modules for the target arch, verify, then package.
       # npmRebuild: false in package.json prevents electron-builder from re-running npm rebuild,
       # so we ensure correct binaries are in place first via the shared script.
@@ -548,7 +579,7 @@ jobs:
           files: artifacts/release/*
           fail_on_unmatched_files: false
           draft: false
-          prerelease: false
+          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-RC') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') }}
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

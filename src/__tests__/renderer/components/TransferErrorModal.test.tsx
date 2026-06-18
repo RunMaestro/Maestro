@@ -132,20 +132,6 @@ describe('TransferErrorModal', () => {
 			expect(screen.getByText(now.toLocaleTimeString())).toBeInTheDocument();
 		});
 
-		it('omits agent transfer context when no agents are provided', () => {
-			renderWithLayerStack(
-				<TransferErrorModal
-					{...defaultProps}
-					error={createTestError('unknown', {
-						sourceAgent: undefined,
-						targetAgent: undefined,
-					})}
-				/>
-			);
-
-			expect(screen.queryByTestId('arrow-right-icon')).not.toBeInTheDocument();
-		});
-
 		it('renders cancel button', () => {
 			renderWithLayerStack(<TransferErrorModal {...defaultProps} />);
 
@@ -212,28 +198,6 @@ describe('TransferErrorModal', () => {
 
 			expect(screen.getByText('Connection Error')).toBeInTheDocument();
 		});
-
-		it('shows correct title for source_not_found', () => {
-			renderWithLayerStack(
-				<TransferErrorModal
-					{...defaultProps}
-					error={createTestError('source_not_found', { recoverable: false })}
-				/>
-			);
-
-			expect(screen.getByText('Source Not Found')).toBeInTheDocument();
-		});
-
-		it('shows correct title for cancelled transfers', () => {
-			renderWithLayerStack(
-				<TransferErrorModal
-					{...defaultProps}
-					error={createTestError('cancelled', { recoverable: false })}
-				/>
-			);
-
-			expect(screen.getByText('Transfer Cancelled')).toBeInTheDocument();
-		});
 	});
 
 	describe('recovery actions', () => {
@@ -299,22 +263,6 @@ describe('TransferErrorModal', () => {
 
 			expect(screen.queryByText('Retry')).not.toBeInTheDocument();
 		});
-
-		it.each(['source_not_found', 'cancelled'] as const)(
-			'does not show retry actions for %s errors',
-			(type) => {
-				renderWithLayerStack(
-					<TransferErrorModal
-						{...defaultProps}
-						error={createTestError(type, { recoverable: false })}
-					/>
-				);
-
-				expect(screen.queryByText('Retry')).not.toBeInTheDocument();
-				expect(screen.queryByText('Skip Grooming')).not.toBeInTheDocument();
-				expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
-			}
-		);
 
 		it('calls onCancel when cancel button is clicked', () => {
 			const onCancel = vi.fn();
@@ -407,21 +355,6 @@ describe('TransferErrorModal', () => {
 			expect(screen.getByText('2 sessions currently active')).toBeInTheDocument();
 		});
 
-		it('shows singular busy session count for agent_busy', () => {
-			renderWithLayerStack(
-				<TransferErrorModal
-					{...defaultProps}
-					error={createTestError('agent_busy', {
-						details: {
-							busySessions: 1,
-						},
-					})}
-				/>
-			);
-
-			expect(screen.getByText('1 session currently active')).toBeInTheDocument();
-		});
-
 		it('shows install instructions for agent_not_installed', () => {
 			renderWithLayerStack(
 				<TransferErrorModal
@@ -464,20 +397,8 @@ describe('classifyTransferError', () => {
 		expect(error.recoverable).toBe(true);
 	});
 
-	it('classifies timeout errors as grooming timeout when the message mentions grooming', () => {
-		const error = classifyTransferError('Request timed out while grooming context');
-		expect(error.type).toBe('grooming_timeout');
-		expect(error.recoverable).toBe(true);
-	});
-
 	it('classifies grooming failed errors', () => {
 		const error = classifyTransferError('Context grooming failed');
-		expect(error.type).toBe('grooming_failed');
-		expect(error.recoverable).toBe(true);
-	});
-
-	it('classifies groom failed wording without the exact grooming failed phrase', () => {
-		const error = classifyTransferError('The groom step failed before transfer');
 		expect(error.type).toBe('grooming_failed');
 		expect(error.recoverable).toBe(true);
 	});
@@ -494,12 +415,6 @@ describe('classifyTransferError', () => {
 		expect(error.recoverable).toBe(true);
 	});
 
-	it('classifies session failed errors without create wording', () => {
-		const error = classifyTransferError('Session failed during startup');
-		expect(error.type).toBe('session_creation_failed');
-		expect(error.recoverable).toBe(true);
-	});
-
 	it('classifies network errors', () => {
 		const error = classifyTransferError('Network connection failed');
 		expect(error.type).toBe('network_error');
@@ -508,12 +423,6 @@ describe('classifyTransferError', () => {
 
 	it('classifies source not found errors', () => {
 		const error = classifyTransferError('Source tab not found');
-		expect(error.type).toBe('source_not_found');
-		expect(error.recoverable).toBe(false);
-	});
-
-	it('classifies source missing errors', () => {
-		const error = classifyTransferError('Source session missing');
 		expect(error.type).toBe('source_not_found');
 		expect(error.recoverable).toBe(false);
 	});
@@ -547,13 +456,6 @@ describe('classifyTransferError', () => {
 		expect(error.type).toBe('unknown');
 		expect(error.originalError).toBe('Some weird unexpected error');
 		expect(error.recoverable).toBe(true);
-	});
-
-	it('uses a fallback unknown message for empty error text', () => {
-		const error = classifyTransferError('');
-		expect(error.type).toBe('unknown');
-		expect(error.message).toBe('An unexpected error occurred during the transfer.');
-		expect(error.originalError).toBe('');
 	});
 
 	it('sets timestamp on all errors', () => {

@@ -13,8 +13,8 @@ import { isWindows, isLinux } from '../../shared/platformDetection';
 import Store from 'electron-store';
 import fsSync from 'fs';
 
+import { parseJsonWithBom } from '../../shared/jsonUtils';
 import type { BootstrapSettings } from './types';
-import type { SshRemoteConfig } from '../../shared/types';
 
 // Re-export getDefaultShell from defaults for backward compatibility
 export { getDefaultShell } from './defaults';
@@ -208,6 +208,7 @@ export function getEarlySettings(syncPath: string): {
 	}>({
 		name: 'maestro-settings',
 		cwd: syncPath,
+		deserialize: parseJsonWithBom,
 	});
 
 	// Check if user has explicitly set GPU acceleration preference
@@ -221,26 +222,9 @@ export function getEarlySettings(syncPath: string): {
 	return {
 		crashReportingEnabled: earlyStore.get('crashReportingEnabled', true),
 		disableGpuAcceleration: explicitGpuSetting ?? defaultDisableGpu,
-		useNativeTitleBar: earlyStore.get('useNativeTitleBar', false),
+		useNativeTitleBar: earlyStore.get('useNativeTitleBar') ?? isWindows(),
 		autoHideMenuBar: earlyStore.get('autoHideMenuBar', false),
 	};
 }
 
 // ============================================================================
-// SSH Remote Utilities
-// ============================================================================
-
-/**
- * Get SSH remote configuration by ID from a settings store.
- * Returns undefined if not found.
- *
- * Note: This is a lower-level function that takes a store instance.
- * For convenience, use getSshRemoteById() from the main stores module
- * which automatically uses the initialized settings store.
- */
-export function findSshRemoteById(
-	sshRemotes: SshRemoteConfig[],
-	sshRemoteId: string
-): SshRemoteConfig | undefined {
-	return sshRemotes.find((r) => r.id === sshRemoteId);
-}

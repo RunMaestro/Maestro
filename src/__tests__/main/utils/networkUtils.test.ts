@@ -35,10 +35,6 @@ describe('main/utils/networkUtils', () => {
 		vi.clearAllMocks();
 	});
 
-	afterEach(() => {
-		vi.useRealTimers();
-	});
-
 	// ===========================================
 	// getLocalIpAddress (async)
 	// ===========================================
@@ -170,100 +166,6 @@ describe('main/utils/networkUtils', () => {
 			// Should still return the IP despite close error
 			const result = await networkUtils.getLocalIpAddress();
 			expect(result).toBe('192.168.1.100');
-		});
-
-		it('should ignore socket errors that arrive after a successful UDP probe settles', async () => {
-			vi.useFakeTimers();
-			let errorHandler: ((err: Error) => void) | undefined;
-			const mockSocket = {
-				on: vi.fn((event, handler) => {
-					if (event === 'error') {
-						errorHandler = handler;
-					}
-				}),
-				connect: vi.fn((port, host, callback) => {
-					callback();
-				}),
-				address: vi.fn().mockReturnValue({ address: '192.168.1.101' }),
-				close: vi.fn(),
-				removeAllListeners: vi.fn(),
-			};
-			mockCreateSocket.mockReturnValue(mockSocket as any);
-
-			const result = await networkUtils.getLocalIpAddress();
-			errorHandler?.(new Error('late socket error'));
-			await vi.advanceTimersByTimeAsync(1000);
-
-			expect(result).toBe('192.168.1.101');
-			expect(mockSocket.close).toHaveBeenCalledTimes(1);
-		});
-
-		it('should ignore a connect callback that arrives after the socket error settles', async () => {
-			vi.useFakeTimers();
-			let errorHandler: ((err: Error) => void) | undefined;
-			const mockSocket = {
-				on: vi.fn((event, handler) => {
-					if (event === 'error') {
-						errorHandler = handler;
-					}
-				}),
-				connect: vi.fn((port, host, callback) => {
-					errorHandler?.(new Error('socket error'));
-					callback();
-				}),
-				address: vi.fn().mockReturnValue({ address: '192.168.1.102' }),
-				close: vi.fn(),
-				removeAllListeners: vi.fn(),
-			};
-			mockCreateSocket.mockReturnValue(mockSocket as any);
-			mockNetworkInterfaces.mockReturnValue({
-				en0: [
-					{
-						address: '10.0.0.8',
-						netmask: '255.0.0.0',
-						family: 'IPv4',
-						mac: '00:00:00:00:00:00',
-						internal: false,
-						cidr: '10.0.0.8/8',
-					},
-				],
-			});
-
-			const result = await networkUtils.getLocalIpAddress();
-			await vi.advanceTimersByTimeAsync(1000);
-
-			expect(result).toBe('10.0.0.8');
-			expect(mockSocket.close).toHaveBeenCalledTimes(1);
-		});
-
-		it('should fall back to interface scanning when the UDP probe times out', async () => {
-			vi.useFakeTimers();
-			const mockSocket = {
-				on: vi.fn(),
-				connect: vi.fn(),
-				close: vi.fn(),
-				removeAllListeners: vi.fn(),
-			};
-			mockCreateSocket.mockReturnValue(mockSocket as any);
-			mockNetworkInterfaces.mockReturnValue({
-				en0: [
-					{
-						address: '192.168.1.77',
-						netmask: '255.255.255.0',
-						family: 'IPv4',
-						mac: '00:00:00:00:00:00',
-						internal: false,
-						cidr: '192.168.1.77/24',
-					},
-				],
-			});
-
-			const resultPromise = networkUtils.getLocalIpAddress();
-			await vi.advanceTimersByTimeAsync(1000);
-
-			await expect(resultPromise).resolves.toBe('192.168.1.77');
-			expect(mockSocket.close).toHaveBeenCalledTimes(1);
-			expect(mockSocket.removeAllListeners).toHaveBeenCalledTimes(1);
 		});
 	});
 
@@ -672,34 +574,6 @@ describe('main/utils/networkUtils', () => {
 			});
 			const result = networkUtils.getLocalIpAddressSync();
 			expect(result).toBe('192.168.0.1');
-		});
-
-		it('should not treat malformed IP addresses as private', () => {
-			mockNetworkInterfaces.mockReturnValue({
-				unknown0: [
-					{
-						address: 'not-an-ip',
-						netmask: '255.255.255.0',
-						family: 'IPv4',
-						mac: '00:00:00:00:00:00',
-						internal: false,
-						cidr: null,
-					},
-				],
-				unknown1: [
-					{
-						address: '10.0.0.1',
-						netmask: '255.0.0.0',
-						family: 'IPv4',
-						mac: '00:00:00:00:00:00',
-						internal: false,
-						cidr: '10.0.0.1/8',
-					},
-				],
-			});
-
-			const result = networkUtils.getLocalIpAddressSync();
-			expect(result).toBe('10.0.0.1');
 		});
 	});
 

@@ -85,6 +85,38 @@ export const COLORBLIND_LINE_COLORS = {
 };
 
 /**
+ * Status indicator colors for colorblind mode.
+ * Replaces the green/yellow/red/orange semantic palette used for agent state
+ * dots, diff add/remove, and git status (added/modified/deleted) with
+ * Wong-derived hues that hold up under protanopia, deuteranopia, and
+ * tritanopia. Hue + luminance carry the signal so the swap survives grayscale.
+ *
+ * - success → teal (replaces green)
+ * - warning → orange (replaces yellow; yellow is ambiguous in tritanopia)
+ * - error   → vermillion (replaces red)
+ * - connecting → strong blue (replaces hardcoded #ff8800)
+ */
+export const COLORBLIND_STATUS_COLORS = {
+	success: '#009988', // Teal
+	warning: '#EE7733', // Orange
+	error: '#CC3311', // Vermillion
+	connecting: '#0077BB', // Strong Blue
+} as const;
+
+/**
+ * Diff view background tints for colorblind mode.
+ * Mirrors the gutter/code split used by `generateDiffViewStyles()` so the
+ * added/removed rows keep a faint tinted gutter plus a stronger code-line
+ * background, but with hues that survive red-green color vision deficiencies.
+ */
+export const COLORBLIND_DIFF_COLORS = {
+	insertGutter: 'rgba(0, 153, 136, 0.12)', // Teal, gutter tint
+	insertCode: 'rgba(0, 153, 136, 0.2)', // Teal, code background
+	deleteGutter: 'rgba(204, 51, 17, 0.12)', // Vermillion, gutter tint
+	deleteCode: 'rgba(204, 51, 17, 0.2)', // Vermillion, code background
+} as const;
+
+/**
  * Helper to determine if colorblind mode should use pattern fills
  * in addition to colors for maximum accessibility
  */

@@ -12,14 +12,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock electron ipcRenderer
 const mockInvoke = vi.fn();
-const mockOn = vi.fn();
-const mockRemoveListener = vi.fn();
 
 vi.mock('electron', () => ({
 	ipcRenderer: {
 		invoke: (...args: unknown[]) => mockInvoke(...args),
-		on: (...args: unknown[]) => mockOn(...args),
-		removeListener: (...args: unknown[]) => mockRemoveListener(...args),
 	},
 }));
 
@@ -91,48 +87,6 @@ describe('Settings Preload API', () => {
 
 				expect(mockInvoke).toHaveBeenCalledWith('settings:getAll');
 				expect(result).toEqual(allSettings);
-			});
-		});
-
-		describe('onExternalChange', () => {
-			it('should register external settings change listener', () => {
-				const callback = vi.fn();
-
-				const cleanup = api.onExternalChange(callback);
-
-				expect(mockOn).toHaveBeenCalledWith('settings:externalChange', expect.any(Function));
-				expect(typeof cleanup).toBe('function');
-			});
-
-			it('should call callback when external settings change is received', () => {
-				const callback = vi.fn();
-				let registeredHandler: () => void;
-
-				mockOn.mockImplementation((_channel: string, handler: () => void) => {
-					registeredHandler = handler;
-				});
-
-				api.onExternalChange(callback);
-				registeredHandler!();
-
-				expect(callback).toHaveBeenCalledTimes(1);
-			});
-
-			it('should remove external settings listener when cleanup is called', () => {
-				const callback = vi.fn();
-				let registeredHandler: () => void;
-
-				mockOn.mockImplementation((_channel: string, handler: () => void) => {
-					registeredHandler = handler;
-				});
-
-				const cleanup = api.onExternalChange(callback);
-				cleanup();
-
-				expect(mockRemoveListener).toHaveBeenCalledWith(
-					'settings:externalChange',
-					registeredHandler!
-				);
 			});
 		});
 	});

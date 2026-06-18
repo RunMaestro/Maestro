@@ -1,3 +1,4 @@
+import { logger } from './logger';
 /**
  * markdownLinkParser - Utility for extracting links and metadata from markdown files.
  *
@@ -26,6 +27,7 @@ function dirname(filePath: string): string {
  * Get the extension of a path (browser-compatible path.extname)
  */
 function extname(filePath: string): string {
+	if (!filePath) return '';
 	const normalized = filePath.replace(/\\/g, '/');
 	const basename = normalized.slice(normalized.lastIndexOf('/') + 1);
 	const dotIndex = basename.lastIndexOf('.');
@@ -310,6 +312,11 @@ function findFileByName(
  * @returns Normalized relative path from project root, or null if invalid
  */
 function resolveRelativePath(linkPath: string, currentFilePath: string): string | null {
+	// Guard against null/undefined/non-string inputs
+	if (!linkPath || typeof linkPath !== 'string') {
+		return null;
+	}
+
 	// Skip URLs, anchors, and mailto links
 	if (URL_PATTERN.test(linkPath) || linkPath.startsWith('#') || linkPath.startsWith('mailto:')) {
 		return null;
@@ -331,8 +338,11 @@ function resolveRelativePath(linkPath: string, currentFilePath: string): string 
 	// Join and normalize the path
 	let resolved = joinPath(currentDir, decodedPath);
 
-	// Normalize path separators
+	// Normalize path separators and remove leading ./
 	resolved = resolved.replace(/\\/g, '/');
+	if (resolved.startsWith('./')) {
+		resolved = resolved.slice(2);
+	}
 
 	// Ensure it ends with .md if it doesn't have an extension
 	if (!extname(resolved)) {
@@ -379,7 +389,7 @@ export function parseMarkdownLinks(
 		frontMatter = parseFrontMatter(content);
 	} catch (error) {
 		// Log but don't crash - malformed front matter is common
-		console.warn(`Failed to parse front matter in ${filePath}:`, error);
+		logger.warn(`Failed to parse front matter in ${filePath}:`, undefined, error);
 		frontMatter = {};
 	}
 
@@ -420,7 +430,7 @@ export function parseMarkdownLinks(
 		}
 	} catch (error) {
 		// Log wiki link parsing failure but continue with markdown links
-		console.warn(`Failed to parse wiki links in ${filePath}:`, error);
+		logger.warn(`Failed to parse wiki links in ${filePath}:`, undefined, error);
 	}
 
 	// Parse standard markdown links: [text](url)
@@ -429,7 +439,8 @@ export function parseMarkdownLinks(
 		let match;
 		MARKDOWN_LINK_PATTERN.lastIndex = 0;
 		while ((match = MARKDOWN_LINK_PATTERN.exec(content)) !== null) {
-			const linkUrl = match[2]!.trim();
+			const linkUrl = match[2]?.trim();
+			if (!linkUrl) continue;
 
 			// Check if it's an external URL
 			if (URL_PATTERN.test(linkUrl)) {
@@ -470,7 +481,7 @@ export function parseMarkdownLinks(
 		}
 	} catch (error) {
 		// Log markdown link parsing failure but return what we have
-		console.warn(`Failed to parse markdown links in ${filePath}:`, error);
+		logger.warn(`Failed to parse markdown links in ${filePath}:`, undefined, error);
 	}
 
 	return {

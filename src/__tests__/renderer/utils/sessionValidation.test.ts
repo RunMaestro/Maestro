@@ -1,46 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import {
 	validateNewSession,
-	validateEditSession,
 	SessionValidationResult,
 } from '../../../renderer/utils/sessionValidation';
 import type { Session, ToolType } from '../../../renderer/types';
-
-// Helper to create a minimal mock session for testing
-function createMockSession(overrides: Partial<Session> = {}): Session {
-	return {
-		id: 'test-id',
-		name: 'Test Session',
-		toolType: 'claude-code' as ToolType,
-		state: 'idle',
-		cwd: '/Users/test/project',
-		fullPath: '/Users/test/project',
-		projectRoot: '/Users/test/project',
-		isGitRepo: false,
-		aiLogs: [],
-		shellLogs: [],
-		workLog: [],
-		contextUsage: 0,
-		inputMode: 'ai',
-		aiPid: 1234,
-		terminalPid: 0,
-		port: 3000,
-		isLive: false,
-		changedFiles: [],
-		fileTree: [],
-		fileExplorerExpanded: [],
-		fileExplorerScrollPos: 0,
-		shellCwd: '/Users/test/project',
-		aiCommandHistory: [],
-		shellCommandHistory: [],
-		executionQueue: [],
-		activeTimeMs: 0,
-		aiTabs: [],
-		activeTabId: 'tab-1',
-		closedTabHistory: [],
-		...overrides,
-	} as Session;
-}
+import { createMockSession } from '../../helpers/mockSession';
 
 describe('sessionValidation', () => {
 	describe('validateNewSession', () => {
@@ -673,55 +637,6 @@ describe('sessionValidation', () => {
 				expect(typeof result.error).toBe('string');
 				expect(result.errorField).toBe('name');
 			});
-		});
-	});
-
-	describe('validateEditSession', () => {
-		it('allows keeping the current session name', () => {
-			const existingSessions = [
-				createMockSession({ id: 'current', name: 'Current Agent' }),
-				createMockSession({ id: 'other', name: 'Other Agent' }),
-			];
-
-			const result = validateEditSession('Current Agent', 'current', existingSessions);
-
-			expect(result).toEqual({ valid: true });
-		});
-
-		it('rejects duplicate names from other sessions', () => {
-			const existingSessions = [
-				createMockSession({ id: 'current', name: 'Current Agent' }),
-				createMockSession({ id: 'other', name: 'Existing Agent' }),
-			];
-
-			const result = validateEditSession('Existing Agent', 'current', existingSessions);
-
-			expect(result.valid).toBe(false);
-			expect(result.errorField).toBe('name');
-			expect(result.error).toBe('An agent named "Existing Agent" already exists');
-		});
-
-		it('compares edited names case-insensitively after trimming', () => {
-			const existingSessions = [
-				createMockSession({ id: 'current', name: 'Current Agent' }),
-				createMockSession({ id: 'other', name: 'Existing Agent' }),
-			];
-
-			const result = validateEditSession('  existing agent  ', 'current', existingSessions);
-
-			expect(result.valid).toBe(false);
-			expect(result.errorField).toBe('name');
-		});
-
-		it('returns valid when the edited name is unique', () => {
-			const existingSessions = [
-				createMockSession({ id: 'current', name: 'Current Agent' }),
-				createMockSession({ id: 'other', name: 'Other Agent' }),
-			];
-
-			const result = validateEditSession('Renamed Agent', 'current', existingSessions);
-
-			expect(result).toEqual({ valid: true });
 		});
 	});
 });

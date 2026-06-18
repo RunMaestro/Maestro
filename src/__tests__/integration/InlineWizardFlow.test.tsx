@@ -25,12 +25,8 @@ import {
 } from '../../renderer/contexts/InlineWizardContext';
 import { WizardConversationView } from '../../renderer/components/InlineWizard/WizardConversationView';
 import { parseWizardIntent } from '../../renderer/services/wizardIntentParser';
-import {
-	clearCapabilitiesCache,
-	DEFAULT_CAPABILITIES,
-	setCapabilitiesCache,
-} from '../../renderer/hooks/agent/useAgentCapabilities';
-import type { Theme } from '../../renderer/types';
+
+import { createMockTheme } from '../helpers/mockTheme';
 
 // Mock the maestro API
 const mockMaestro = {
@@ -54,10 +50,6 @@ const mockMaestro = {
 beforeEach(() => {
 	(window as any).maestro = mockMaestro;
 	vi.clearAllMocks();
-	clearCapabilitiesCache();
-	for (const agentId of ['claude-code', 'codex', 'opencode']) {
-		setCapabilitiesCache(agentId, { ...DEFAULT_CAPABILITIES, supportsWizard: true });
-	}
 });
 
 afterEach(() => {
@@ -65,26 +57,6 @@ afterEach(() => {
 });
 
 // Create a mock theme
-const createMockTheme = (): Theme => ({
-	id: 'test-theme',
-	name: 'Test Theme',
-	mode: 'dark',
-	colors: {
-		bgMain: '#1a1a1a',
-		bgPanel: '#252525',
-		bgActivity: '#2d2d2d',
-		bgSidebar: '#1e1e1e',
-		textMain: '#ffffff',
-		textDim: '#888888',
-		accent: '#0066ff',
-		accentForeground: '#ffffff',
-		border: '#333333',
-		highlight: '#0066ff33',
-		success: '#00aa00',
-		warning: '#ffaa00',
-		error: '#ff0000',
-	},
-});
 
 /**
  * Helper to create a wrapper component with InlineWizardProvider
@@ -723,49 +695,15 @@ describe('Inline Wizard Integration Flow', () => {
 				useInlineWizardContext();
 				return null;
 			};
-			class ErrorBoundary extends React.Component<
-				{ children: React.ReactNode },
-				{ error: Error | null }
-			> {
-				state = { error: null };
 
-				static getDerivedStateFromError(error: Error) {
-					return { error };
-				}
-
-				render() {
-					if (this.state.error) {
-						return <div data-testid="provider-error">{this.state.error.message}</div>;
-					}
-					return this.props.children;
-				}
-			}
-
+			// Suppress console.error for this test
 			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-			const preventExpectedError = (event: ErrorEvent) => {
-				if (
-					event.message.includes(
-						'useInlineWizardContext must be used within an InlineWizardProvider'
-					)
-				) {
-					event.preventDefault();
-				}
-			};
-			window.addEventListener('error', preventExpectedError);
 
-			try {
-				render(
-					<ErrorBoundary>
-						<TestComponent />
-					</ErrorBoundary>
-				);
-				expect(screen.getByTestId('provider-error')).toHaveTextContent(
-					'useInlineWizardContext must be used within an InlineWizardProvider'
-				);
-			} finally {
-				window.removeEventListener('error', preventExpectedError);
-				consoleError.mockRestore();
-			}
+			expect(() => render(<TestComponent />)).toThrow(
+				'useInlineWizardContext must be used within an InlineWizardProvider'
+			);
+
+			consoleError.mockRestore();
 		});
 	});
 

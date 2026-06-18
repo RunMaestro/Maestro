@@ -4,6 +4,7 @@
  */
 
 import { describe, test, expect, vi, beforeEach } from 'vitest';
+import { logger } from '../../../renderer/utils/logger';
 import {
 	processService,
 	ProcessConfig,
@@ -22,7 +23,6 @@ const mockProcess = {
 	onData: vi.fn(),
 	onExit: vi.fn(),
 	onSessionId: vi.fn(),
-	onToolExecution: vi.fn(),
 };
 
 // Setup mock before each test
@@ -36,7 +36,7 @@ beforeEach(() => {
 	};
 
 	// Mock console.error to prevent noise in test output
-	vi.spyOn(console, 'error').mockImplementation(() => {});
+	vi.spyOn(logger, 'error').mockImplementation(() => {});
 });
 
 describe('processService', () => {
@@ -86,7 +86,7 @@ describe('processService', () => {
 			mockProcess.spawn.mockRejectedValue(error);
 
 			await expect(processService.spawn(testConfig)).rejects.toThrow('Failed to spawn process');
-			expect(console.error).toHaveBeenCalledWith('Process spawn error:', error);
+			expect(logger.error).toHaveBeenCalledWith('Process spawn error:', undefined, error);
 		});
 
 		test('handles different session IDs', async () => {
@@ -148,7 +148,7 @@ describe('processService', () => {
 			mockProcess.write.mockRejectedValue(error);
 
 			await expect(processService.write('session-1', 'data')).rejects.toThrow('Write failed');
-			expect(console.error).toHaveBeenCalledWith('Process write error:', error);
+			expect(logger.error).toHaveBeenCalledWith('Process write error:', undefined, error);
 		});
 
 		test('handles special characters in data', async () => {
@@ -187,7 +187,7 @@ describe('processService', () => {
 			mockProcess.interrupt.mockRejectedValue(error);
 
 			await expect(processService.interrupt('session-1')).rejects.toThrow('Interrupt failed');
-			expect(console.error).toHaveBeenCalledWith('Process interrupt error:', error);
+			expect(logger.error).toHaveBeenCalledWith('Process interrupt error:', undefined, error);
 		});
 
 		test('handles interrupt on non-existent session', async () => {
@@ -224,7 +224,7 @@ describe('processService', () => {
 			mockProcess.kill.mockRejectedValue(error);
 
 			await expect(processService.kill('session-1')).rejects.toThrow('Kill failed');
-			expect(console.error).toHaveBeenCalledWith('Process kill error:', error);
+			expect(logger.error).toHaveBeenCalledWith('Process kill error:', undefined, error);
 		});
 
 		test('handles kill on already-dead process', async () => {
@@ -276,7 +276,7 @@ describe('processService', () => {
 			mockProcess.resize.mockRejectedValue(error);
 
 			await expect(processService.resize('session-1', 80, 24)).rejects.toThrow('Resize failed');
-			expect(console.error).toHaveBeenCalledWith('Process resize error:', error);
+			expect(logger.error).toHaveBeenCalledWith('Process resize error:', undefined, error);
 		});
 
 		test('handles resize for different sessions', async () => {
@@ -460,39 +460,6 @@ describe('processService', () => {
 			processService.onSessionId(handler);
 
 			expect(handler).toHaveBeenCalledWith('session-1', 'claude-abc123');
-		});
-	});
-
-	describe('onToolExecution', () => {
-		test('registers tool execution handler and returns cleanup function', () => {
-			const cleanup = vi.fn();
-			mockProcess.onToolExecution.mockReturnValue(cleanup);
-			const handler = vi.fn();
-
-			const result = processService.onToolExecution(handler);
-
-			expect(mockProcess.onToolExecution).toHaveBeenCalledWith(handler);
-			expect(result).toBe(cleanup);
-		});
-
-		test('handler receives session ID and tool execution payload', () => {
-			const cleanup = vi.fn();
-			const toolEvent = {
-				toolName: 'read',
-				state: { path: '/tmp/file.txt' },
-				timestamp: 1710000000000,
-			};
-
-			type ToolExecutionHandler = Parameters<typeof processService.onToolExecution>[0];
-			mockProcess.onToolExecution.mockImplementation((handler: ToolExecutionHandler) => {
-				handler('session-1', toolEvent);
-				return cleanup;
-			});
-			const handler = vi.fn();
-
-			processService.onToolExecution(handler);
-
-			expect(handler).toHaveBeenCalledWith('session-1', toolEvent);
 		});
 	});
 

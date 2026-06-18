@@ -9,24 +9,13 @@
  * - Enabled/disabled state handling
  */
 
-import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
 	PerformanceMetrics,
-	createNoOpMetrics,
 	formatDuration,
 	PERFORMANCE_THRESHOLDS,
 	type PerformanceMetric,
 } from '../../shared/performance-metrics';
-
-let consoleDebugSpy: ReturnType<typeof vi.spyOn>;
-
-beforeEach(() => {
-	consoleDebugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
-});
-
-afterEach(() => {
-	consoleDebugSpy.mockRestore();
-});
 
 describe('PerformanceMetrics', () => {
 	describe('initialization', () => {
@@ -78,26 +67,6 @@ describe('PerformanceMetrics', () => {
 			const metrics = new PerformanceMetrics('TestContext');
 			const timestamp = metrics.now();
 			expect(typeof timestamp).toBe('number');
-		});
-
-		it('should fall back to Date.now when performance.now is unavailable', () => {
-			const originalPerformance = Object.getOwnPropertyDescriptor(globalThis, 'performance');
-			const dateNowSpy = vi.spyOn(Date, 'now').mockReturnValue(12345);
-
-			try {
-				Object.defineProperty(globalThis, 'performance', {
-					value: undefined,
-					configurable: true,
-				});
-				const metrics = new PerformanceMetrics('TestContext');
-
-				expect(metrics.now()).toBe(12345);
-			} finally {
-				if (originalPerformance) {
-					Object.defineProperty(globalThis, 'performance', originalPerformance);
-				}
-				dateNowSpy.mockRestore();
-			}
 		});
 
 		it('should return increasing values over time', async () => {
@@ -462,30 +431,6 @@ describe('PerformanceMetrics', () => {
 			// Should still log the timing
 			expect(mockLogger).toHaveBeenCalled();
 		});
-	});
-});
-
-describe('createNoOpMetrics', () => {
-	it('should create a disabled metrics instance', () => {
-		const metrics = createNoOpMetrics();
-		expect(metrics.isEnabled()).toBe(false);
-	});
-
-	it('should not log anything', () => {
-		const metrics = createNoOpMetrics();
-		const start = metrics.start();
-		metrics.end(start, 'operation');
-		expect(metrics.getMetrics()).toHaveLength(0);
-	});
-
-	it('should use a no-op logger if enabled later', () => {
-		const metrics = createNoOpMetrics();
-		metrics.setEnabled(true);
-
-		const start = metrics.start();
-		metrics.end(start, 'operation');
-
-		expect(metrics.getMetrics()).toHaveLength(1);
 	});
 });
 

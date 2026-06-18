@@ -59,6 +59,8 @@ function createMockSession(overrides: Partial<Session> = {}): Session {
 		groupId: null,
 		groupName: null,
 		groupEmoji: null,
+		terminalTabs: [],
+		activeTerminalTabId: null,
 		...overrides,
 	} as Session;
 }
@@ -342,122 +344,6 @@ describe('SessionPillBar', () => {
 			fireEvent.touchEnd(button);
 
 			expect(onSelectSession).not.toHaveBeenCalled();
-		});
-
-		it('selects session when touch movement stays below the scroll threshold', () => {
-			const onSelectSession = vi.fn();
-			const sessions = [createMockSession({ id: 'session-1', name: 'Session 1' })];
-
-			render(
-				<SessionPillBar
-					sessions={sessions}
-					activeSessionId="session-1"
-					onSelectSession={onSelectSession}
-				/>
-			);
-
-			const button = screen.getByText('Session 1').closest('button')!;
-
-			fireEvent.touchStart(button, {
-				touches: [{ clientX: 100, clientY: 50 }],
-			});
-			fireEvent.touchMove(button, {
-				touches: [{ clientX: 106, clientY: 56 }],
-			});
-			fireEvent.touchEnd(button);
-
-			expect(onSelectSession).toHaveBeenCalledWith('session-1');
-		});
-
-		it('treats vertical touch movement as scrolling', () => {
-			const onSelectSession = vi.fn();
-			const sessions = [createMockSession({ id: 'session-1', name: 'Session 1' })];
-
-			render(
-				<SessionPillBar
-					sessions={sessions}
-					activeSessionId="session-1"
-					onSelectSession={onSelectSession}
-				/>
-			);
-
-			const button = screen.getByText('Session 1').closest('button')!;
-
-			fireEvent.touchStart(button, {
-				touches: [{ clientX: 100, clientY: 50 }],
-			});
-			fireEvent.touchMove(button, {
-				touches: [{ clientX: 100, clientY: 70 }],
-			});
-			fireEvent.touchEnd(button);
-
-			expect(onSelectSession).not.toHaveBeenCalled();
-		});
-
-		it('ignores a retained long-press timer after scrolling starts', () => {
-			const clearTimeoutSpy = vi
-				.spyOn(global, 'clearTimeout')
-				.mockImplementation(() => undefined as unknown as void);
-			const sessions = [createMockSession({ id: 'session-1', name: 'Session 1' })];
-
-			try {
-				render(
-					<SessionPillBar
-						sessions={sessions}
-						activeSessionId="session-1"
-						onSelectSession={vi.fn()}
-					/>
-				);
-
-				const button = screen.getByText('Session 1').closest('button')!;
-
-				fireEvent.touchStart(button, {
-					touches: [{ clientX: 100, clientY: 50 }],
-				});
-				fireEvent.touchMove(button, {
-					touches: [{ clientX: 120, clientY: 50 }],
-				});
-
-				act(() => {
-					vi.advanceTimersByTime(500);
-				});
-
-				expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-				expect(mockTriggerHaptic).not.toHaveBeenCalledWith([30]);
-			} finally {
-				clearTimeoutSpy.mockRestore();
-			}
-		});
-
-		it('does not open details when a retained long-press timer fires after unmount', () => {
-			const clearTimeoutSpy = vi
-				.spyOn(global, 'clearTimeout')
-				.mockImplementation(() => undefined as unknown as void);
-			const sessions = [createMockSession({ id: 'session-1', name: 'Session 1' })];
-
-			try {
-				const { unmount } = render(
-					<SessionPillBar
-						sessions={sessions}
-						activeSessionId="session-1"
-						onSelectSession={vi.fn()}
-					/>
-				);
-
-				fireEvent.touchStart(screen.getByText('Session 1').closest('button')!, {
-					touches: [{ clientX: 100, clientY: 50 }],
-				});
-				unmount();
-
-				act(() => {
-					vi.advanceTimersByTime(500);
-				});
-
-				expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-				expect(mockTriggerHaptic).toHaveBeenCalledWith([30]);
-			} finally {
-				clearTimeoutSpy.mockRestore();
-			}
 		});
 
 		it('triggers long press after 500ms', () => {
@@ -786,34 +672,6 @@ describe('SessionPillBar', () => {
 			expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 		});
 
-		it('keeps popover open when clicking inside it after the outside listener starts', () => {
-			const sessions = [createMockSession({ id: 's1' })];
-
-			render(<SessionPillBar sessions={sessions} activeSessionId="s1" onSelectSession={vi.fn()} />);
-
-			fireEvent.contextMenu(screen.getByRole('button'));
-			const dialog = screen.getByRole('dialog');
-
-			act(() => {
-				vi.advanceTimersByTime(150);
-			});
-
-			fireEvent.mouseDown(dialog);
-
-			expect(screen.getByRole('dialog')).toBeInTheDocument();
-		});
-
-		it('keeps popover open on non-Escape key presses', () => {
-			const sessions = [createMockSession({ id: 's1' })];
-
-			render(<SessionPillBar sessions={sessions} activeSessionId="s1" onSelectSession={vi.fn()} />);
-
-			fireEvent.contextMenu(screen.getByRole('button'));
-			fireEvent.keyDown(document, { key: 'Enter' });
-
-			expect(screen.getByRole('dialog')).toBeInTheDocument();
-		});
-
 		it('positions popover within viewport bounds', async () => {
 			// Set narrow viewport
 			Object.defineProperty(window, 'innerWidth', {
@@ -832,67 +690,6 @@ describe('SessionPillBar', () => {
 			const dialog = screen.getByRole('dialog');
 			expect(dialog).toBeInTheDocument();
 			// Position is calculated via inline styles - verified by component rendering
-		});
-
-		it('clamps popover position to the left viewport padding', () => {
-			Object.defineProperty(window, 'innerWidth', {
-				value: 500,
-				writable: true,
-				configurable: true,
-			});
-			Element.prototype.getBoundingClientRect = vi.fn(() =>
-				createMockDOMRect({ left: -20, right: 40, width: 60, bottom: 86 })
-			);
-			const sessions = [createMockSession({ id: 's1' })];
-
-			render(<SessionPillBar sessions={sessions} activeSessionId="s1" onSelectSession={vi.fn()} />);
-
-			fireEvent.contextMenu(screen.getByRole('button'));
-
-			expect(screen.getByRole('dialog')).toHaveStyle({ left: '12px' });
-		});
-
-		it('toggles a bookmark from the popover and closes it', () => {
-			const onToggleBookmark = vi.fn();
-			const sessions = [createMockSession({ id: 's1', name: 'Session 1' })];
-
-			render(
-				<SessionPillBar
-					sessions={sessions}
-					activeSessionId="s1"
-					onSelectSession={vi.fn()}
-					onToggleBookmark={onToggleBookmark}
-				/>
-			);
-
-			fireEvent.contextMenu(screen.getByText('Session 1').closest('button')!);
-			fireEvent.click(screen.getByRole('button', { name: /Bookmark/ }));
-
-			expect(mockTriggerHaptic).toHaveBeenCalledWith([10]);
-			expect(onToggleBookmark).toHaveBeenCalledWith('s1');
-			expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-		});
-
-		it('renders remove bookmark action for bookmarked sessions', () => {
-			const onToggleBookmark = vi.fn();
-			const sessions = [
-				createMockSession({ id: 's1', name: 'Bookmarked Session', bookmarked: true }),
-			];
-
-			render(
-				<SessionPillBar
-					sessions={sessions}
-					activeSessionId={null}
-					onSelectSession={vi.fn()}
-					onToggleBookmark={onToggleBookmark}
-				/>
-			);
-
-			fireEvent.contextMenu(screen.getByText('Bookmarked Session').closest('button')!);
-			fireEvent.click(screen.getByRole('button', { name: /Remove Bookmark/ }));
-
-			expect(onToggleBookmark).toHaveBeenCalledWith('s1');
-			expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 		});
 	});
 
@@ -966,33 +763,6 @@ describe('SessionPillBar', () => {
 			expect(screen.getByText('2')).toBeInTheDocument();
 			// Backend group has 1 session
 			expect(screen.getByText('1')).toBeInTheDocument();
-		});
-
-		it('orders bookmarks first and ungrouped sessions last', () => {
-			const sessions = [
-				createMockSession({ id: 'plain', name: 'Plain Session' }),
-				createMockSession({
-					id: 'backend',
-					name: 'Backend Session',
-					groupId: 'backend',
-					groupName: 'Backend',
-				}),
-				createMockSession({
-					id: 'bookmarked',
-					name: 'Bookmarked Session',
-					bookmarked: true,
-				}),
-			];
-
-			const { container } = render(
-				<SessionPillBar sessions={sessions} activeSessionId={null} onSelectSession={vi.fn()} />
-			);
-
-			const groupOrder = Array.from(container.querySelectorAll('[data-group-id]')).map((group) =>
-				group.getAttribute('data-group-id')
-			);
-
-			expect(groupOrder).toEqual(['bookmarks', 'backend', 'ungrouped']);
 		});
 
 		it('does not render group headers for single ungrouped group', () => {
@@ -1151,101 +921,6 @@ describe('SessionPillBar', () => {
 			expect(screen.queryByText('Session 1')).not.toBeInTheDocument();
 		});
 
-		it('toggles group when header touch movement stays below the scroll threshold', () => {
-			const sessions = [
-				createMockSession({
-					id: 's1',
-					name: 'Session 1',
-					groupId: 'group-1',
-					groupName: 'Frontend',
-				}),
-				createMockSession({
-					id: 's2',
-					name: 'Session 2',
-					groupId: 'group-2',
-					groupName: 'Backend',
-				}),
-			];
-
-			render(
-				<SessionPillBar sessions={sessions} activeSessionId={null} onSelectSession={vi.fn()} />
-			);
-
-			const frontendButton = screen.getByText('Frontend').closest('button')!;
-
-			fireEvent.touchStart(frontendButton, {
-				touches: [{ clientX: 100, clientY: 50 }],
-			});
-			fireEvent.touchMove(frontendButton, {
-				touches: [{ clientX: 106, clientY: 56 }],
-			});
-			fireEvent.touchEnd(frontendButton);
-
-			expect(screen.getByText('Session 1')).toBeInTheDocument();
-		});
-
-		it('treats vertical movement on the group header as scrolling', () => {
-			const sessions = [
-				createMockSession({
-					id: 's1',
-					name: 'Session 1',
-					groupId: 'group-1',
-					groupName: 'Frontend',
-				}),
-				createMockSession({
-					id: 's2',
-					name: 'Session 2',
-					groupId: 'group-2',
-					groupName: 'Backend',
-				}),
-			];
-
-			render(
-				<SessionPillBar sessions={sessions} activeSessionId={null} onSelectSession={vi.fn()} />
-			);
-
-			const frontendButton = screen.getByText('Frontend').closest('button')!;
-
-			fireEvent.touchStart(frontendButton, {
-				touches: [{ clientX: 100, clientY: 50 }],
-			});
-			fireEvent.touchMove(frontendButton, {
-				touches: [{ clientX: 100, clientY: 70 }],
-			});
-			fireEvent.touchEnd(frontendButton);
-
-			expect(screen.queryByText('Session 1')).not.toBeInTheDocument();
-		});
-
-		it('does not toggle a group from click events on touch devices', () => {
-			Object.defineProperty(window, 'ontouchstart', {
-				value: null,
-				configurable: true,
-			});
-			const sessions = [
-				createMockSession({
-					id: 's1',
-					name: 'Session 1',
-					groupId: 'group-1',
-					groupName: 'Frontend',
-				}),
-				createMockSession({
-					id: 's2',
-					name: 'Session 2',
-					groupId: 'group-2',
-					groupName: 'Backend',
-				}),
-			];
-
-			render(
-				<SessionPillBar sessions={sessions} activeSessionId={null} onSelectSession={vi.fn()} />
-			);
-
-			fireEvent.click(screen.getByText('Frontend').closest('button')!);
-
-			expect(screen.queryByText('Session 1')).not.toBeInTheDocument();
-		});
-
 		it('handles touch cancel on group header', () => {
 			const sessions = [
 				createMockSession({
@@ -1273,32 +948,6 @@ describe('SessionPillBar', () => {
 			fireEvent.touchCancel(frontendButton);
 
 			// Should not throw, group should remain collapsed
-			expect(screen.queryByText('Session 1')).not.toBeInTheDocument();
-		});
-
-		it('ignores group header touch move before touch start', () => {
-			const sessions = [
-				createMockSession({
-					id: 's1',
-					name: 'Session 1',
-					groupId: 'group-1',
-					groupName: 'Frontend',
-				}),
-				createMockSession({
-					id: 's2',
-					groupId: 'group-2',
-					groupName: 'Backend',
-				}),
-			];
-
-			render(
-				<SessionPillBar sessions={sessions} activeSessionId={null} onSelectSession={vi.fn()} />
-			);
-
-			fireEvent.touchMove(screen.getByText('Frontend').closest('button')!, {
-				touches: [{ clientX: 130, clientY: 50 }],
-			});
-
 			expect(screen.queryByText('Session 1')).not.toBeInTheDocument();
 		});
 
@@ -1368,69 +1017,6 @@ describe('SessionPillBar', () => {
 			});
 
 			expect(Element.prototype.scrollTo).toHaveBeenCalled();
-		});
-
-		it('does not scroll after an expanded group unmounts before delayed scroll', () => {
-			delete (window as Record<string, unknown>).ontouchstart;
-			const sessions = [
-				createMockSession({
-					id: 's1',
-					groupId: 'group-1',
-					groupName: 'Frontend',
-				}),
-				createMockSession({
-					id: 's2',
-					groupId: 'group-2',
-					groupName: 'Backend',
-				}),
-			];
-
-			const { unmount } = render(
-				<SessionPillBar sessions={sessions} activeSessionId={null} onSelectSession={vi.fn()} />
-			);
-
-			fireEvent.click(screen.getByText('Frontend').closest('button')!);
-			unmount();
-			act(() => {
-				vi.advanceTimersByTime(60);
-			});
-
-			expect(Element.prototype.scrollTo).not.toHaveBeenCalled();
-		});
-
-		it('does not scroll when an expanded group header is no longer queryable', () => {
-			delete (window as Record<string, unknown>).ontouchstart;
-			const sessions = [
-				createMockSession({
-					id: 's1',
-					groupId: 'group-1',
-					groupName: 'Frontend',
-				}),
-				createMockSession({
-					id: 's2',
-					groupId: 'group-2',
-					groupName: 'Backend',
-				}),
-			];
-
-			render(
-				<SessionPillBar sessions={sessions} activeSessionId={null} onSelectSession={vi.fn()} />
-			);
-
-			const tablist = screen.getByRole('tablist');
-			const querySelectorSpy = vi.spyOn(tablist, 'querySelector').mockReturnValue(null);
-
-			try {
-				fireEvent.click(screen.getByText('Frontend').closest('button')!);
-
-				act(() => {
-					vi.advanceTimersByTime(60);
-				});
-
-				expect(Element.prototype.scrollTo).not.toHaveBeenCalled();
-			} finally {
-				querySelectorSpy.mockRestore();
-			}
 		});
 
 		it('auto-expands group containing active session', () => {

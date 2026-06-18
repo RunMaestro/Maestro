@@ -9,7 +9,6 @@ import {
 	HISTORY_VERSION,
 	MAX_ENTRIES_PER_SESSION,
 	ORPHANED_SESSION_ID,
-	DEFAULT_PAGINATION,
 	sanitizeSessionId,
 	paginateEntries,
 	sortEntriesByTimestamp,
@@ -44,11 +43,6 @@ describe('shared/history', () => {
 
 		it('exports ORPHANED_SESSION_ID as _orphaned', () => {
 			expect(ORPHANED_SESSION_ID).toBe('_orphaned');
-		});
-
-		it('exports DEFAULT_PAGINATION with limit 100 and offset 0', () => {
-			expect(DEFAULT_PAGINATION.limit).toBe(100);
-			expect(DEFAULT_PAGINATION.offset).toBe(0);
 		});
 	});
 

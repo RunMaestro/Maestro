@@ -3,6 +3,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { GroupChatHeader } from '../../../renderer/components/GroupChatHeader';
 import type { Theme, Shortcut } from '../../../renderer/types';
 
+import { mockTheme } from '../../helpers/mockTheme';
 vi.mock('lucide-react', () => ({
 	Info: ({ className }: { className?: string }) => (
 		<span data-testid="info-icon" className={className}>
@@ -30,16 +31,6 @@ vi.mock('lucide-react', () => ({
 		</span>
 	),
 }));
-
-const mockTheme = {
-	colors: {
-		bgSidebar: '#1e1e1e',
-		border: '#333',
-		textMain: '#fff',
-		textDim: '#999',
-		success: '#4caf50',
-	},
-} as Theme;
 
 const mockShortcuts: Record<string, Shortcut> = {
 	toggleRightPanel: { id: 'toggleRightPanel', label: 'Toggle right panel', keys: ['Cmd', 'B'] },
@@ -85,30 +76,9 @@ describe('GroupChatHeader', () => {
 		expect(defaultProps.onRename).toHaveBeenCalled();
 	});
 
-	it('calls onRename from keyboard activation on the title', () => {
-		const onRename = vi.fn();
-		render(<GroupChatHeader {...defaultProps} onRename={onRename} />);
-
-		const title = screen.getByText('Group Chat: Test Chat');
-		fireEvent.keyDown(title, { key: 'Enter' });
-		fireEvent.keyDown(title, { key: ' ' });
-		fireEvent.keyDown(title, { key: 'Escape' });
-
-		expect(onRename).toHaveBeenCalledTimes(2);
-	});
-
 	it('shows cost pill when totalCost is provided', () => {
 		render(<GroupChatHeader {...defaultProps} totalCost={6.98} />);
 		expect(screen.getByText('6.98')).toBeTruthy();
-	});
-
-	it('marks the cost pill when the total is incomplete', () => {
-		render(<GroupChatHeader {...defaultProps} totalCost={6.98} costIncomplete />);
-
-		const costPill = screen.getByTitle(
-			'Total accumulated cost (incomplete: not all agents report cost data)'
-		);
-		expect(costPill).toHaveTextContent('6.98*');
 	});
 
 	it('shows right panel toggle when panel is closed', () => {

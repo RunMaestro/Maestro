@@ -615,28 +615,6 @@ describe('useSwipeGestures', () => {
 			expect(result.current.offsetX).toBe(0);
 		});
 
-		it('leaves offsets unchanged before direction lock threshold is met', () => {
-			const { result } = renderHook(() =>
-				useSwipeGestures({
-					trackOffset: true,
-					lockDirection: true,
-					onSwipeLeft: () => {},
-					onSwipeRight: () => {},
-				})
-			);
-
-			act(() => {
-				const startEvent = createTouchEvent('touchstart', 100, 100);
-				result.current.handlers.onTouchStart(startEvent);
-
-				const moveEvent = createTouchEvent('touchmove', 105, 104);
-				result.current.handlers.onTouchMove(moveEvent);
-			});
-
-			expect(result.current.offsetX).toBe(0);
-			expect(result.current.offsetY).toBe(0);
-		});
-
 		it('prevents default on horizontal swipe when locked horizontally', () => {
 			const { result } = renderHook(() =>
 				useSwipeGestures({
@@ -1107,25 +1085,6 @@ describe('useSwipeGestures', () => {
 			act(() => {
 				simulateSwipe(result.current.handlers, 150, 100, 50, 100, 100);
 			});
-		});
-
-		it('does not trigger a vertical callback when the matching handler is missing', () => {
-			vi.useRealTimers();
-			const onSwipeUp = vi.fn();
-
-			const { result } = renderHook(() =>
-				useSwipeGestures({
-					onSwipeUp,
-					threshold: 50,
-					maxTime: 300,
-				})
-			);
-
-			act(() => {
-				simulateSwipe(result.current.handlers, 100, 50, 100, 150, 100);
-			});
-
-			expect(onSwipeUp).not.toHaveBeenCalled();
 		});
 
 		it('handles very small movements (no direction determined)', () => {

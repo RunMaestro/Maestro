@@ -5,369 +5,129 @@
  * - Loading bundled prompts from src/prompts/speckit/
  * - Fetching updates from GitHub's spec-kit repository
  * - User customization with ability to reset to defaults
+ *
+ * The common load/save/reset/getBySlash logic lives in spec-command-manager.ts.
+ * This module provides the SpecKit specific configuration and the GitHub release
+ * ZIP refresh strategy.
  */
 
 import fs from 'fs/promises';
-import fsSync from 'fs';
 import path from 'path';
-import { app } from 'electron';
-import https from 'https';
-import { exec } from 'child_process';
-import { promisify } from 'util';
 import { logger } from './utils/logger';
-
-const execAsync = promisify(exec);
+import {
+	createSpecCommandManager,
+	SpecCommand,
+	SpecCommandDefinition,
+	SpecMetadata,
+} from './spec-command-manager';
 
 const LOG_CONTEXT = '[SpecKit]';
 
 // All bundled spec-kit commands with their metadata
-const SPECKIT_COMMANDS = [
+const SPECKIT_COMMANDS: readonly SpecCommandDefinition[] = [
 	{
 		id: 'help',
-		command: '/speckit.help',
 		description: 'Learn how to use spec-kit with Maestro',
 		isCustom: true,
 	},
 	{
 		id: 'constitution',
-		command: '/speckit.constitution',
 		description: 'Create or update the project constitution',
 		isCustom: false,
 	},
 	{
 		id: 'specify',
-		command: '/speckit.specify',
 		description: 'Create or update feature specification',
 		isCustom: false,
 	},
 	{
 		id: 'clarify',
-		command: '/speckit.clarify',
 		description: 'Identify underspecified areas and ask clarification questions',
 		isCustom: false,
 	},
 	{
 		id: 'plan',
-		command: '/speckit.plan',
 		description: 'Execute implementation planning workflow',
 		isCustom: false,
 	},
 	{
 		id: 'tasks',
-		command: '/speckit.tasks',
 		description: 'Generate actionable, dependency-ordered tasks',
 		isCustom: false,
 	},
 	{
 		id: 'analyze',
-		command: '/speckit.analyze',
 		description: 'Cross-artifact consistency and quality analysis',
 		isCustom: false,
 	},
 	{
 		id: 'checklist',
-		command: '/speckit.checklist',
 		description: 'Generate custom checklist for feature',
 		isCustom: false,
 	},
 	{
 		id: 'taskstoissues',
-		command: '/speckit.taskstoissues',
 		description: 'Convert tasks to GitHub issues',
 		isCustom: false,
 	},
 	{
 		id: 'implement',
-		command: '/speckit.implement',
 		description: 'Execute tasks using Maestro Auto Run with worktree support',
 		isCustom: true,
 	},
 ] as const;
 
-export interface SpecKitCommand {
-	id: string;
-	command: string;
-	description: string;
-	prompt: string;
-	isCustom: boolean;
-	isModified: boolean;
-}
+// SpecKit specific public types are aliases over the shared shape.
+export type SpecKitCommand = SpecCommand;
+export type SpecKitMetadata = SpecMetadata;
 
-export interface SpecKitMetadata {
-	lastRefreshed: string;
-	commitSha: string;
-	sourceVersion: string;
-	sourceUrl: string;
-}
-
-interface StoredPrompt {
-	content: string;
-	isModified: boolean;
-	modifiedAt?: string;
-}
-
-interface StoredData {
-	metadata: SpecKitMetadata;
-	prompts: Record<string, StoredPrompt>;
-}
-
-/**
- * Get path to user's speckit customizations file
- */
-function getUserDataPath(): string {
-	return path.join(app.getPath('userData'), 'speckit-customizations.json');
-}
-
-/**
- * Load user customizations from disk
- */
-async function loadUserCustomizations(): Promise<StoredData | null> {
-	try {
-		const content = await fs.readFile(getUserDataPath(), 'utf-8');
-		return JSON.parse(content);
-	} catch {
-		return null;
-	}
-}
-
-/**
- * Save user customizations to disk
- */
-async function saveUserCustomizations(data: StoredData): Promise<void> {
-	await fs.writeFile(getUserDataPath(), JSON.stringify(data, null, 2), 'utf-8');
-}
-
-/**
- * Get the path to bundled prompts directory
- * In development, this is src/prompts/speckit
- * In production, this is in the app resources
- */
-function getBundledPromptsPath(): string {
-	if (app.isPackaged) {
-		return path.join(process.resourcesPath, 'prompts', 'speckit');
-	}
-	// In development, use the source directory
-	return path.join(__dirname, '..', '..', 'src', 'prompts', 'speckit');
-}
-
-/**
- * Get the user data directory for storing downloaded spec-kit prompts
- */
-function getUserPromptsPath(): string {
-	return path.join(app.getPath('userData'), 'speckit-prompts');
-}
-
-/**
- * Get bundled prompts by reading from disk
- * Checks user prompts directory first (for downloaded updates), then falls back to bundled
- */
-async function getBundledPrompts(): Promise<
-	Record<string, { prompt: string; description: string; isCustom: boolean }>
-> {
-	const bundledPromptsDir = getBundledPromptsPath();
-	const userPromptsDir = getUserPromptsPath();
-	const result: Record<string, { prompt: string; description: string; isCustom: boolean }> = {};
-
-	for (const cmd of SPECKIT_COMMANDS) {
-		// For custom commands, always use bundled
-		if (cmd.isCustom) {
-			try {
-				const promptPath = path.join(bundledPromptsDir, `speckit.${cmd.id}.md`);
-				const prompt = await fs.readFile(promptPath, 'utf-8');
-				result[cmd.id] = {
-					prompt,
-					description: cmd.description,
-					isCustom: cmd.isCustom,
-				};
-			} catch (error) {
-				logger.warn(`Failed to load bundled prompt for ${cmd.id}: ${error}`, LOG_CONTEXT);
-				result[cmd.id] = {
-					prompt: `# ${cmd.id}\n\nPrompt not available.`,
-					description: cmd.description,
-					isCustom: cmd.isCustom,
-				};
-			}
-			continue;
-		}
-
-		// For upstream commands, check user prompts directory first (downloaded updates)
-		try {
-			const userPromptPath = path.join(userPromptsDir, `speckit.${cmd.id}.md`);
-			const prompt = await fs.readFile(userPromptPath, 'utf-8');
-			result[cmd.id] = {
-				prompt,
-				description: cmd.description,
-				isCustom: cmd.isCustom,
-			};
-			continue;
-		} catch {
-			// User prompt not found, try bundled
-		}
-
-		// Fall back to bundled prompts
-		try {
-			const promptPath = path.join(bundledPromptsDir, `speckit.${cmd.id}.md`);
-			const prompt = await fs.readFile(promptPath, 'utf-8');
-			result[cmd.id] = {
-				prompt,
-				description: cmd.description,
-				isCustom: cmd.isCustom,
-			};
-		} catch (error) {
-			logger.warn(`Failed to load bundled prompt for ${cmd.id}: ${error}`, LOG_CONTEXT);
-			result[cmd.id] = {
-				prompt: `# ${cmd.id}\n\nPrompt not available.`,
-				description: cmd.description,
-				isCustom: cmd.isCustom,
-			};
-		}
-	}
-
-	return result;
-}
-
-/**
- * Get bundled metadata by reading from disk
- * Checks user prompts directory first (for downloaded updates), then falls back to bundled
- */
-async function getBundledMetadata(): Promise<SpecKitMetadata> {
-	const bundledPromptsDir = getBundledPromptsPath();
-	const userPromptsDir = getUserPromptsPath();
-
-	// Check user prompts directory first (downloaded updates)
-	try {
-		const userMetadataPath = path.join(userPromptsDir, 'metadata.json');
-		const content = await fs.readFile(userMetadataPath, 'utf-8');
-		return JSON.parse(content);
-	} catch {
-		// User metadata not found, try bundled
-	}
-
-	// Fall back to bundled metadata
-	try {
-		const metadataPath = path.join(bundledPromptsDir, 'metadata.json');
-		const content = await fs.readFile(metadataPath, 'utf-8');
-		return JSON.parse(content);
-	} catch {
-		// Return default metadata if file doesn't exist
-		return {
-			lastRefreshed: '2024-01-01T00:00:00Z',
-			commitSha: 'bundled',
-			sourceVersion: '0.0.90',
-			sourceUrl: 'https://github.com/github/spec-kit',
-		};
-	}
-}
+const manager = createSpecCommandManager({
+	logContext: LOG_CONTEXT,
+	filePrefix: 'speckit',
+	bundledDirName: 'speckit',
+	customizationsFileName: 'speckit-customizations.json',
+	userPromptsDirName: 'speckit-prompts',
+	commands: SPECKIT_COMMANDS,
+	defaultMetadata: {
+		lastRefreshed: '2024-01-01T00:00:00Z',
+		commitSha: 'bundled',
+		sourceVersion: '0.0.90',
+		sourceUrl: 'https://github.com/github/spec-kit',
+	},
+});
 
 /**
  * Get current spec-kit metadata
  */
-export async function getSpeckitMetadata(): Promise<SpecKitMetadata> {
-	const customizations = await loadUserCustomizations();
-	if (customizations?.metadata) {
-		return customizations.metadata;
-	}
-	return getBundledMetadata();
-}
+export const getSpeckitMetadata = (): Promise<SpecKitMetadata> => manager.getMetadata();
 
 /**
  * Get all spec-kit prompts (bundled defaults merged with user customizations)
  */
-export async function getSpeckitPrompts(): Promise<SpecKitCommand[]> {
-	const bundled = await getBundledPrompts();
-	const customizations = await loadUserCustomizations();
-
-	const commands: SpecKitCommand[] = [];
-
-	for (const [id, data] of Object.entries(bundled)) {
-		const customPrompt = customizations?.prompts?.[id];
-		const isModified = customPrompt?.isModified ?? false;
-		const prompt = isModified && customPrompt ? customPrompt.content : data.prompt;
-
-		commands.push({
-			id,
-			command: `/speckit.${id}`,
-			description: data.description,
-			prompt,
-			isCustom: data.isCustom,
-			isModified,
-		});
-	}
-
-	return commands;
-}
+export const getSpeckitPrompts = (): Promise<SpecKitCommand[]> => manager.getPrompts();
 
 /**
  * Save user's edit to a spec-kit prompt
  */
-export async function saveSpeckitPrompt(id: string, content: string): Promise<void> {
-	const customizations = (await loadUserCustomizations()) ?? {
-		metadata: await getBundledMetadata(),
-		prompts: {},
-	};
-
-	customizations.prompts[id] = {
-		content,
-		isModified: true,
-		modifiedAt: new Date().toISOString(),
-	};
-
-	await saveUserCustomizations(customizations);
-	logger.info(`Saved customization for speckit.${id}`, LOG_CONTEXT);
-}
+export const saveSpeckitPrompt = (id: string, content: string): Promise<void> =>
+	manager.savePrompt(id, content);
 
 /**
  * Reset a spec-kit prompt to its bundled default
  */
-export async function resetSpeckitPrompt(id: string): Promise<string> {
-	const bundled = await getBundledPrompts();
-	const defaultPrompt = bundled[id];
-
-	if (!defaultPrompt) {
-		throw new Error(`Unknown speckit command: ${id}`);
-	}
-
-	const customizations = await loadUserCustomizations();
-	if (customizations?.prompts?.[id]) {
-		delete customizations.prompts[id];
-		await saveUserCustomizations(customizations);
-		logger.info(`Reset speckit.${id} to bundled default`, LOG_CONTEXT);
-	}
-
-	return defaultPrompt.prompt;
-}
+export const resetSpeckitPrompt = (id: string): Promise<string> => manager.resetPrompt(id);
 
 /**
- * Download a file from a URL using https
+ * Get a single spec-kit command by ID
  */
-async function downloadFile(url: string, destPath: string): Promise<void> {
-	return new Promise((resolve, reject) => {
-		const follow = (currentUrl: string) => {
-			https
-				.get(currentUrl, { headers: { 'User-Agent': 'Maestro-SpecKit-Refresher' } }, (res) => {
-					if (res.statusCode === 301 || res.statusCode === 302) {
-						follow(res.headers.location!);
-						return;
-					}
+export const getSpeckitCommand = (id: string): Promise<SpecKitCommand | null> =>
+	manager.getCommand(id);
 
-					if (res.statusCode !== 200) {
-						reject(new Error(`HTTP ${res.statusCode}`));
-						return;
-					}
-
-					const file = fsSync.createWriteStream(destPath);
-					res.pipe(file);
-					file.on('finish', () => {
-						file.close();
-						resolve();
-					});
-					file.on('error', reject);
-				})
-				.on('error', reject);
-		};
-		follow(url);
-	});
-}
+/**
+ * Get a spec-kit command by its slash command string (e.g., "/speckit.constitution")
+ */
+export const getSpeckitCommandBySlash = (slashCommand: string): Promise<SpecKitCommand | null> =>
+	manager.getCommandBySlash(slashCommand);
 
 /**
  * Upstream commands to fetch (we skip 'implement' as it's custom)
@@ -384,147 +144,180 @@ const UPSTREAM_COMMANDS = [
 ];
 
 /**
- * Fetch latest prompts from GitHub spec-kit repository
- * Updates all upstream commands except our custom 'implement'
+ * Rewrite repo-relative paths in a command template to their installed
+ * `.specify/...` project locations. Faithful port of
+ * `CommandRegistrar.rewrite_project_relative_paths` in spec-kit's
+ * `src/specify_cli/agents.py`.
+ */
+function rewriteProjectRelativePaths(text: string): string {
+	if (!text) return text;
+	for (const [oldPath, newPath] of [
+		['../../memory/', '.specify/memory/'],
+		['../../scripts/', '.specify/scripts/'],
+		['../../templates/', '.specify/templates/'],
+	] as const) {
+		text = text.split(oldPath).join(newPath);
+	}
+	// Only rewrite top-level style references so extension-local paths like
+	// ".specify/extensions/<ext>/scripts/..." remain intact.
+	text = text.replace(/(^|[\s`"'(])(?:\.?\/)?memory\//gm, '$1.specify/memory/');
+	text = text.replace(/(^|[\s`"'(])(?:\.?\/)?scripts\//gm, '$1.specify/scripts/');
+	text = text.replace(/(^|[\s`"'(])(?:\.?\/)?templates\//gm, '$1.specify/templates/');
+	return text
+		.split('.specify/.specify/')
+		.join('.specify/')
+		.split('.specify.specify/')
+		.join('.specify/');
+}
+
+/**
+ * Turn a raw `templates/commands/<cmd>.md` source from spec-kit into the
+ * agent-ready Claude command body. This is a faithful port of
+ * `IntegrationBase.process_template` in spec-kit's
+ * `src/specify_cli/integrations/base.py`, specialized for the Claude (bash)
+ * integration. Spec-kit stopped publishing pre-rendered template ZIPs as
+ * release assets, so we now apply the same substitutions it would.
+ */
+function processSpeckitTemplate(content: string): string {
+	const scriptType = 'sh';
+	const argPlaceholder = '$ARGUMENTS';
+	const contextFile = 'CLAUDE.md';
+	const agentName = 'claude';
+
+	// 1. Extract the script command from the `scripts:` frontmatter block.
+	let scriptCommand = '';
+	let inScripts = false;
+	for (const line of content.split('\n')) {
+		if (line.trim() === 'scripts:') {
+			inScripts = true;
+			continue;
+		}
+		if (inScripts && line && !/^\s/.test(line)) inScripts = false;
+		if (inScripts) {
+			const m = line.match(new RegExp(`^\\s*${scriptType}:\\s*(.+)$`));
+			if (m) {
+				scriptCommand = m[1].trim();
+				break;
+			}
+		}
+	}
+
+	// 2. Replace {SCRIPT} with the extracted script command.
+	if (scriptCommand) content = content.split('{SCRIPT}').join(scriptCommand);
+
+	// 3. Strip the `scripts:` section out of the frontmatter.
+	const out: string[] = [];
+	let inFrontmatter = false;
+	let skipSection = false;
+	let dashCount = 0;
+	for (const line of content.split(/(?<=\n)/)) {
+		const stripped = line.replace(/[\r\n]+$/, '');
+		if (stripped === '---') {
+			dashCount += 1;
+			inFrontmatter = dashCount === 1;
+			skipSection = false;
+			out.push(line);
+			continue;
+		}
+		if (inFrontmatter) {
+			if (stripped === 'scripts:') {
+				skipSection = true;
+				continue;
+			}
+			if (skipSection) {
+				if (/^\s/.test(line)) continue;
+				skipSection = false;
+			}
+		}
+		out.push(line);
+	}
+	content = out.join('');
+
+	// 4-6. Placeholder substitutions.
+	content = content.split('{ARGS}').join(argPlaceholder).split('$ARGUMENTS').join(argPlaceholder);
+	content = content.split('__AGENT__').join(agentName).split('__CONTEXT_FILE__').join(contextFile);
+
+	// 7. Rewrite repo-relative paths to their installed locations.
+	content = rewriteProjectRelativePaths(content);
+
+	// 8. Replace __SPECKIT_COMMAND_<NAME>__ with the slash invocation.
+	content = content.replace(
+		/__SPECKIT_COMMAND_([A-Z][A-Z0-9_]*)__/g,
+		(_m, name: string) => '/speckit.' + name.toLowerCase().split('_').join('.')
+	);
+
+	return content;
+}
+
+/**
+ * Fetch a raw text file from GitHub.
+ */
+async function fetchRaw(url: string): Promise<string> {
+	const res = await fetch(url, { headers: { 'User-Agent': 'Maestro-SpecKit-Refresher' } });
+	if (!res.ok) {
+		throw new Error(`HTTP ${res.status} fetching ${url}`);
+	}
+	return res.text();
+}
+
+/**
+ * Fetch latest prompts from GitHub spec-kit repository.
+ *
+ * Spec-kit no longer ships pre-rendered command ZIPs as release assets; the
+ * command templates live at `templates/commands/<cmd>.md` in the repo and are
+ * rendered per-agent at install time. We fetch the raw templates at the latest
+ * release tag and apply the same substitutions spec-kit would for Claude.
+ * Updates all upstream commands except our custom 'implement'.
  */
 export async function refreshSpeckitPrompts(): Promise<SpecKitMetadata> {
 	logger.info('Refreshing spec-kit prompts from GitHub...', LOG_CONTEXT);
 
-	// First, get the latest release info
+	// Get the latest release tag for versioning and as the fetch ref.
 	const releaseResponse = await fetch(
-		'https://api.github.com/repos/github/spec-kit/releases/latest'
+		'https://api.github.com/repos/github/spec-kit/releases/latest',
+		{ headers: { 'User-Agent': 'Maestro-SpecKit-Refresher' } }
 	);
 	if (!releaseResponse.ok) {
 		throw new Error(`Failed to fetch release info: ${releaseResponse.statusText}`);
 	}
-
-	const releaseInfo = (await releaseResponse.json()) as {
-		tag_name: string;
-		assets?: Array<{ name: string; browser_download_url: string }>;
-	};
+	const releaseInfo = (await releaseResponse.json()) as { tag_name: string };
 	const version = releaseInfo.tag_name;
 
-	// Find the Claude template asset
-	const claudeAsset = releaseInfo.assets?.find(
-		(a) => a.name.includes('claude') && a.name.endsWith('.zip')
+	const userPromptsDir = manager.getUserPromptsPath();
+	await fs.mkdir(userPromptsDir, { recursive: true });
+
+	for (const cmd of UPSTREAM_COMMANDS) {
+		const url = `https://raw.githubusercontent.com/github/spec-kit/${version}/templates/commands/${cmd}.md`;
+		const raw = await fetchRaw(url);
+		const content = processSpeckitTemplate(raw);
+		const destPath = path.join(userPromptsDir, `speckit.${cmd}.md`);
+		await fs.writeFile(destPath, content, 'utf8');
+		logger.info(`Updated: speckit.${cmd}.md`, LOG_CONTEXT);
+	}
+
+	// Update metadata with new version info.
+	const newMetadata: SpecKitMetadata = {
+		lastRefreshed: new Date().toISOString(),
+		commitSha: version,
+		sourceVersion: version.replace(/^v/, ''),
+		sourceUrl: 'https://github.com/github/spec-kit',
+	};
+
+	await fs.writeFile(
+		path.join(userPromptsDir, 'metadata.json'),
+		JSON.stringify(newMetadata, null, 2),
+		'utf8'
 	);
 
-	if (!claudeAsset) {
-		throw new Error('Could not find Claude template in release assets');
-	}
+	// Also save to customizations file for compatibility.
+	const customizations = (await manager.loadUserCustomizations()) ?? {
+		metadata: newMetadata,
+		prompts: {},
+	};
+	customizations.metadata = newMetadata;
+	await manager.saveUserCustomizations(customizations);
 
-	// Create temp directory for download
-	const tempDir = path.join(app.getPath('temp'), 'maestro-speckit-refresh');
-	await fs.mkdir(tempDir, { recursive: true });
+	logger.info(`Refreshed spec-kit prompts to ${version}`, LOG_CONTEXT);
 
-	const tempZipPath = path.join(tempDir, 'speckit.zip');
-
-	try {
-		// Download the ZIP file
-		logger.info(`Downloading ${version} from ${claudeAsset.browser_download_url}`, LOG_CONTEXT);
-		await downloadFile(claudeAsset.browser_download_url, tempZipPath);
-		logger.info('Download complete', LOG_CONTEXT);
-
-		// Extract prompts from ZIP
-		logger.info('Extracting prompts...', LOG_CONTEXT);
-
-		// List files in the ZIP to find prompt files
-		const { stdout: listOutput } = await execAsync(`unzip -l "${tempZipPath}"`);
-		const lines = listOutput.split('\n');
-		const promptFiles: string[] = [];
-
-		for (const line of lines) {
-			// Match lines like: "  12345  01-01-2024 00:00   spec-kit-0.0.90/.claude/commands/constitution.md"
-			const match = line.match(/^\s*\d+\s+\S+\s+\S+\s+(.+)$/);
-			if (match) {
-				const filePath = match[1].trim();
-				if (filePath.includes('.claude/commands/') && filePath.endsWith('.md')) {
-					promptFiles.push(filePath);
-				}
-			}
-		}
-
-		// Create user prompts directory
-		const userPromptsDir = getUserPromptsPath();
-		await fs.mkdir(userPromptsDir, { recursive: true });
-
-		// Extract and save each prompt
-		const extractedPrompts: Record<string, string> = {};
-		for (const filePath of promptFiles) {
-			const fileName = path.basename(filePath, '.md');
-			// Skip files not in our upstream list
-			if (!UPSTREAM_COMMANDS.includes(fileName)) continue;
-
-			// Extract to temp location
-			const tempExtractDir = path.join(tempDir, 'extract');
-			await fs.mkdir(tempExtractDir, { recursive: true });
-			await execAsync(`unzip -o -j "${tempZipPath}" "${filePath}" -d "${tempExtractDir}"`);
-
-			// Read the extracted content
-			const extractedPath = path.join(tempExtractDir, path.basename(filePath));
-			try {
-				const content = await fs.readFile(extractedPath, 'utf8');
-				extractedPrompts[fileName] = content;
-
-				// Save to user prompts directory
-				const destPath = path.join(userPromptsDir, `speckit.${fileName}.md`);
-				await fs.writeFile(destPath, content, 'utf8');
-				logger.info(`Updated: speckit.${fileName}.md`, LOG_CONTEXT);
-			} catch {
-				logger.warn(`Failed to extract ${fileName}`, LOG_CONTEXT);
-			}
-		}
-
-		// Update metadata with new version info
-		const newMetadata: SpecKitMetadata = {
-			lastRefreshed: new Date().toISOString(),
-			commitSha: version,
-			sourceVersion: version.replace(/^v/, ''),
-			sourceUrl: 'https://github.com/github/spec-kit',
-		};
-
-		// Save metadata to user prompts directory
-		await fs.writeFile(
-			path.join(userPromptsDir, 'metadata.json'),
-			JSON.stringify(newMetadata, null, 2),
-			'utf8'
-		);
-
-		// Also save to customizations file for compatibility
-		const customizations = (await loadUserCustomizations()) ?? {
-			metadata: newMetadata,
-			prompts: {},
-		};
-		customizations.metadata = newMetadata;
-		await saveUserCustomizations(customizations);
-
-		logger.info(`Refreshed spec-kit prompts to ${version}`, LOG_CONTEXT);
-
-		return newMetadata;
-	} finally {
-		// Clean up temp directory
-		try {
-			await fs.rm(tempDir, { recursive: true, force: true });
-		} catch {
-			// Ignore cleanup errors
-		}
-	}
-}
-
-/**
- * Get a single spec-kit command by ID
- */
-export async function getSpeckitCommand(id: string): Promise<SpecKitCommand | null> {
-	const commands = await getSpeckitPrompts();
-	return commands.find((cmd) => cmd.id === id) ?? null;
-}
-
-/**
- * Get a spec-kit command by its slash command string (e.g., "/speckit.constitution")
- */
-export async function getSpeckitCommandBySlash(
-	slashCommand: string
-): Promise<SpecKitCommand | null> {
-	const commands = await getSpeckitPrompts();
-	return commands.find((cmd) => cmd.command === slashCommand) ?? null;
+	return newMetadata;
 }

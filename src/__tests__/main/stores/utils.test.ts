@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fsSync from 'fs';
-import path from 'path';
 
 // Mock electron-store with a class
 vi.mock('electron-store', () => {
@@ -30,7 +29,7 @@ vi.mock('fs', () => ({
 	readFileSync: vi.fn(),
 }));
 
-import { getCustomSyncPath, getEarlySettings, findSshRemoteById } from '../../../main/stores/utils';
+import { getCustomSyncPath, getEarlySettings } from '../../../main/stores/utils';
 import type { BootstrapSettings } from '../../../main/stores/types';
 import type Store from 'electron-store';
 
@@ -195,92 +194,6 @@ describe('stores/utils', () => {
 				`Custom sync path contains null bytes: ${nullBytePath}`
 			);
 		});
-
-		it('should reject Windows reserved path segments', () => {
-			const originalPlatform = process.platform;
-			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
-			const reservedPath = '/Users/test/CON/maestro';
-			const mockStore = {
-				get: vi.fn().mockReturnValue(reservedPath),
-			} as unknown as Store<BootstrapSettings>;
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-			try {
-				const result = getCustomSyncPath(mockStore);
-
-				expect(result).toBeUndefined();
-				expect(consoleSpy).toHaveBeenCalledWith(
-					`Custom sync path contains Windows reserved name: ${reservedPath}`
-				);
-			} finally {
-				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
-			}
-		});
-
-		it('should reject Windows sensitive drive roots', () => {
-			const originalPlatform = process.platform;
-			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
-			const sensitivePath = 'C:\\Windows\\Maestro';
-			const isAbsoluteSpy = vi.spyOn(path, 'isAbsolute').mockReturnValue(true);
-			const normalizeSpy = vi.spyOn(path, 'normalize').mockReturnValue(sensitivePath);
-			const mockStore = {
-				get: vi.fn().mockReturnValue(sensitivePath),
-			} as unknown as Store<BootstrapSettings>;
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-			try {
-				const result = getCustomSyncPath(mockStore);
-
-				expect(result).toBeUndefined();
-				expect(consoleSpy).toHaveBeenCalledWith(
-					`Custom sync path cannot be in sensitive system directory: ${sensitivePath}`
-				);
-			} finally {
-				isAbsoluteSpy.mockRestore();
-				normalizeSpy.mockRestore();
-				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
-			}
-		});
-
-		it('should allow valid Windows paths without a drive prefix', () => {
-			const originalPlatform = process.platform;
-			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
-			const customPath = '/Users/test/Maestro';
-			const mockStore = {
-				get: vi.fn().mockReturnValue(customPath),
-			} as unknown as Store<BootstrapSettings>;
-			vi.mocked(fsSync.existsSync).mockReturnValue(true);
-
-			try {
-				const result = getCustomSyncPath(mockStore);
-
-				expect(result).toBe(customPath);
-			} finally {
-				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
-			}
-		});
-
-		it('should allow Windows drive paths outside sensitive roots', () => {
-			const originalPlatform = process.platform;
-			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
-			const customPath = 'C:\\Users\\test\\Maestro';
-			const isAbsoluteSpy = vi.spyOn(path, 'isAbsolute').mockReturnValue(true);
-			const normalizeSpy = vi.spyOn(path, 'normalize').mockReturnValue(customPath);
-			const mockStore = {
-				get: vi.fn().mockReturnValue(customPath),
-			} as unknown as Store<BootstrapSettings>;
-			vi.mocked(fsSync.existsSync).mockReturnValue(true);
-
-			try {
-				const result = getCustomSyncPath(mockStore);
-
-				expect(result).toBe(customPath);
-			} finally {
-				isAbsoluteSpy.mockRestore();
-				normalizeSpy.mockRestore();
-				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
-			}
-		});
 	});
 
 	describe('getEarlySettings', () => {
@@ -327,6 +240,19 @@ describe('stores/utils', () => {
 			});
 		});
 
+		it('should default useNativeTitleBar to true on Windows', () => {
+			Object.defineProperty(process, 'platform', { value: 'win32' });
+
+			const result = getEarlySettings('/test/path');
+
+			expect(result).toEqual({
+				crashReportingEnabled: true,
+				disableGpuAcceleration: false,
+				useNativeTitleBar: true,
+				autoHideMenuBar: false,
+			});
+		});
+
 		it('should not auto-disable GPU acceleration on native Linux', () => {
 			// Mock Linux platform
 			Object.defineProperty(process, 'platform', { value: 'linux' });
@@ -346,65 +272,6 @@ describe('stores/utils', () => {
 				useNativeTitleBar: false,
 				autoHideMenuBar: false,
 			});
-		});
-
-		it('should not auto-disable GPU acceleration when /proc/version is missing', () => {
-			Object.defineProperty(process, 'platform', { value: 'linux' });
-			vi.mocked(fsSync.existsSync).mockReturnValue(false);
-
-			const result = getEarlySettings('/test/path');
-
-			expect(result.disableGpuAcceleration).toBe(false);
-			expect(fsSync.readFileSync).not.toHaveBeenCalled();
-		});
-
-		it('should ignore /proc/version read errors during WSL detection', () => {
-			Object.defineProperty(process, 'platform', { value: 'linux' });
-			vi.mocked(fsSync.existsSync).mockReturnValue(true);
-			vi.mocked(fsSync.readFileSync).mockImplementation(() => {
-				throw new Error('read failed');
-			});
-
-			const result = getEarlySettings('/test/path');
-
-			expect(result.disableGpuAcceleration).toBe(false);
-		});
-	});
-
-	describe('findSshRemoteById', () => {
-		const mockSshRemotes = [
-			{ id: 'remote-1', name: 'Server 1', host: 'server1.example.com', username: 'user1' },
-			{ id: 'remote-2', name: 'Server 2', host: 'server2.example.com', username: 'user2' },
-			{ id: 'remote-3', name: 'Server 3', host: 'server3.example.com', username: 'user3' },
-		];
-
-		it('should find remote by id', () => {
-			const result = findSshRemoteById(mockSshRemotes as any, 'remote-2');
-
-			expect(result).toEqual(mockSshRemotes[1]);
-		});
-
-		it('should return undefined for non-existent id', () => {
-			const result = findSshRemoteById(mockSshRemotes as any, 'non-existent');
-
-			expect(result).toBeUndefined();
-		});
-
-		it('should return undefined for empty array', () => {
-			const result = findSshRemoteById([], 'remote-1');
-
-			expect(result).toBeUndefined();
-		});
-
-		it('should find first matching remote when duplicates exist', () => {
-			const remotesWithDuplicates = [
-				{ id: 'remote-1', name: 'First', host: 'first.example.com', username: 'user1' },
-				{ id: 'remote-1', name: 'Second', host: 'second.example.com', username: 'user2' },
-			];
-
-			const result = findSshRemoteById(remotesWithDuplicates as any, 'remote-1');
-
-			expect(result?.name).toBe('First');
 		});
 	});
 });

@@ -3,18 +3,10 @@
  * Handles process exit events including group chat moderator/participant exits.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { setupExitListener } from '../exit-listener';
 import type { ProcessManager } from '../../process-manager';
 import type { ProcessListenerDependencies } from '../types';
-
-const sentryMocks = vi.hoisted(() => ({
-	captureException: vi.fn(),
-}));
-
-vi.mock('../../utils/sentry', () => ({
-	captureException: sentryMocks.captureException,
-}));
 
 describe('Exit Listener', () => {
 	let mockProcessManager: ProcessManager;
@@ -67,11 +59,12 @@ describe('Exit Listener', () => {
 			groupChatRouter: {
 				routeModeratorResponse: vi.fn().mockResolvedValue(undefined),
 				routeAgentResponse: vi.fn().mockResolvedValue(undefined),
-				markParticipantResponded: vi.fn().mockReturnValue(false),
+				markParticipantResponded: vi.fn().mockResolvedValue(undefined),
 				spawnModeratorSynthesis: vi.fn().mockResolvedValue(undefined),
 				getGroupChatReadOnlyState: vi.fn().mockReturnValue(false),
 				respawnParticipantWithRecovery: vi.fn().mockResolvedValue(undefined),
 				clearActiveParticipantTaskSession: vi.fn(),
+				clearModeratorResponseTimeout: vi.fn(),
 			},
 			groupChatStorage: {
 				loadGroupChat: vi.fn().mockResolvedValue(createMockGroupChat()),
@@ -108,15 +101,11 @@ describe('Exit Listener', () => {
 				REGEX_MODERATOR_SESSION: /^group-chat-(.+)-moderator-/,
 				REGEX_MODERATOR_SESSION_TIMESTAMP: /^group-chat-(.+)-moderator-\d+$/,
 				REGEX_AI_SUFFIX: /-ai-.+$/,
-				REGEX_AI_TAB_ID: /-ai-(.+)$/,
+				REGEX_AI_TAB_ID: /-ai-(.+?)(?:-fp-\d+)?$/,
 				REGEX_BATCH_SESSION: /-batch-\d+$/,
 				REGEX_SYNOPSIS_SESSION: /-synopsis-\d+$/,
 			},
 		};
-	});
-
-	afterEach(() => {
-		vi.useRealTimers();
 	});
 
 	const setupListener = () => {
@@ -150,27 +139,94 @@ describe('Exit Listener', () => {
 				'session:regular-session-123'
 			);
 		});
+	});
 
-		it('should broadcast regular exits to web clients using the base session id', () => {
-			const broadcastToSessionClients = vi.fn();
-			mockDeps.getWebServer = () =>
-				({
-					broadcastToSessionClients,
-				}) as unknown as ReturnType<ProcessListenerDependencies['getWebServer']>;
+	describe('Group Chat Cross-Domain Containment', () => {
+		// Regression: if a sessionId starts with GROUP_CHAT_PREFIX but does NOT
+		// match either the moderator branch or the participant-parse branch,
+		// the exit handler MUST drop it — never forwarding to process:exit,
+		// never broadcasting to web clients, and never calling
+		// cueEngine.notifyAgentCompleted. Otherwise a mis-shaped group-chat
+		// sessionId leaks into the regular exit channel and fires Cue's
+		// agent.completed subscriptions spuriously with group-chat provenance.
+		it('drops unrecognized group-chat session exit without forwarding or notifying Cue', () => {
+			const notifyAgentCompleted = vi.fn();
+			const hasCompletionSubscribers = vi.fn().mockReturnValue(true);
+			mockDeps = {
+				...mockDeps,
+				isCueEnabled: () => true,
+				getCueEngine: () =>
+					({
+						notifyAgentCompleted,
+						hasCompletionSubscribers,
+					}) as unknown as ReturnType<NonNullable<ProcessListenerDependencies['getCueEngine']>>,
+			};
+			// parseParticipantSessionId returns null → participant branch skipped.
+			// The sessionId has no "-moderator-" → moderator branch skipped.
+			mockDeps.outputParser.parseParticipantSessionId = vi.fn().mockReturnValue(null);
+
 			setupListener();
 			const handler = eventHandlers.get('exit');
 
-			handler?.('session-123-ai-tab-456', 143);
+			handler?.('group-chat-something-unrecognized', 0);
 
-			expect(broadcastToSessionClients).toHaveBeenCalledWith(
-				'session-123',
-				expect.objectContaining({
-					type: 'session_exit',
-					sessionId: 'session-123',
-					exitCode: 143,
-					timestamp: expect.any(Number),
-				})
-			);
+			expect(mockDeps.safeSend).not.toHaveBeenCalled();
+			expect(notifyAgentCompleted).not.toHaveBeenCalled();
+			expect(hasCompletionSubscribers).not.toHaveBeenCalled();
+		});
+
+		it('notifies Cue for regular (non-group-chat) session exit', () => {
+			const notifyAgentCompleted = vi.fn();
+			const hasCompletionSubscribers = vi.fn().mockReturnValue(true);
+			mockDeps = {
+				...mockDeps,
+				isCueEnabled: () => true,
+				getCueEngine: () =>
+					({
+						notifyAgentCompleted,
+						hasCompletionSubscribers,
+					}) as unknown as ReturnType<NonNullable<ProcessListenerDependencies['getCueEngine']>>,
+			};
+
+			setupListener();
+			const handler = eventHandlers.get('exit');
+
+			handler?.('plain-session-xyz', 0);
+
+			expect(mockDeps.safeSend).toHaveBeenCalledWith('process:exit', 'plain-session-xyz', 0);
+			expect(notifyAgentCompleted).toHaveBeenCalledWith('plain-session-xyz', {
+				status: 'completed',
+				exitCode: 0,
+			});
+		});
+
+		it('passes only status+exitCode to Cue (no stdout leakage path)', () => {
+			// Defensive: the exit-listener call shape is the load-bearing
+			// invariant behind the "no stdout fallback" audit in cue-engine.ts.
+			// If this test fails because someone added a stdout field, the
+			// corresponding cue-completion-chains regression test must also be
+			// updated.
+			const notifyAgentCompleted = vi.fn();
+			const hasCompletionSubscribers = vi.fn().mockReturnValue(true);
+			mockDeps = {
+				...mockDeps,
+				isCueEnabled: () => true,
+				getCueEngine: () =>
+					({
+						notifyAgentCompleted,
+						hasCompletionSubscribers,
+					}) as unknown as ReturnType<NonNullable<ProcessListenerDependencies['getCueEngine']>>,
+			};
+
+			setupListener();
+			const handler = eventHandlers.get('exit');
+
+			handler?.('plain-session-xyz', 1);
+
+			expect(notifyAgentCompleted).toHaveBeenCalledTimes(1);
+			const [, completionData] = notifyAgentCompleted.mock.calls[0];
+			expect(Object.keys(completionData).sort()).toEqual(['exitCode', 'status']);
+			expect(completionData.stdout).toBeUndefined();
 		});
 	});
 
@@ -214,69 +270,6 @@ describe('Exit Listener', () => {
 			});
 		});
 
-		it('should wait for other participants when this response is not the last one', async () => {
-			mockDeps.groupChatRouter.markParticipantResponded = vi.fn().mockReturnValue(false);
-			setupListener();
-			const handler = eventHandlers.get('exit');
-			const sessionId = 'group-chat-test-chat-123-participant-TestAgent-abc123';
-
-			handler?.(sessionId, 0);
-
-			await vi.waitFor(() => {
-				expect(mockDeps.groupChatRouter.markParticipantResponded).toHaveBeenCalledWith(
-					'test-chat-123',
-					'TestAgent'
-				);
-			});
-			expect(mockDeps.groupChatRouter.spawnModeratorSynthesis).not.toHaveBeenCalled();
-		});
-
-		it('should spawn moderator synthesis when the last participant responds', async () => {
-			mockDeps.groupChatRouter.markParticipantResponded = vi.fn().mockReturnValue(true);
-			setupListener();
-			const handler = eventHandlers.get('exit');
-			const sessionId = 'group-chat-test-chat-123-participant-TestAgent-abc123';
-
-			handler?.(sessionId, 0);
-
-			await vi.waitFor(() => {
-				expect(mockDeps.groupChatRouter.spawnModeratorSynthesis).toHaveBeenCalledWith(
-					'test-chat-123',
-					mockProcessManager,
-					expect.anything()
-				);
-			});
-		});
-
-		it('should report synthesis failures and reset the group chat to idle', async () => {
-			const synthesisError = new Error('synthesis failed');
-			mockDeps.groupChatRouter.markParticipantResponded = vi.fn().mockReturnValue(true);
-			mockDeps.groupChatRouter.spawnModeratorSynthesis = vi.fn().mockRejectedValue(synthesisError);
-			setupListener();
-			const handler = eventHandlers.get('exit');
-			const sessionId = 'group-chat-test-chat-123-participant-TestAgent-abc123';
-
-			handler?.(sessionId, 0);
-
-			await vi.waitFor(() => {
-				expect(mockDeps.groupChatEmitters.emitStateChange).toHaveBeenCalledWith(
-					'test-chat-123',
-					'idle'
-				);
-			});
-			expect(mockDeps.groupChatEmitters.emitMessage).toHaveBeenCalledWith(
-				'test-chat-123',
-				expect.objectContaining({
-					from: 'system',
-					content: expect.stringContaining('Synthesis failed'),
-				})
-			);
-			expect(sentryMocks.captureException).toHaveBeenCalledWith(synthesisError, {
-				operation: 'groupChat:spawnModeratorSynthesis',
-				groupChatId: 'test-chat-123',
-			});
-		});
-
 		it('should clear output buffer after processing', async () => {
 			setupListener();
 			const handler = eventHandlers.get('exit');
@@ -303,21 +296,6 @@ describe('Exit Listener', () => {
 			expect(mockDeps.groupChatRouter.routeAgentResponse).not.toHaveBeenCalled();
 		});
 
-		it('should mark participant as responded when buffered output is unavailable', () => {
-			mockDeps.outputBuffer.getGroupChatBufferedOutput = vi.fn().mockReturnValue(undefined);
-			setupListener();
-			const handler = eventHandlers.get('exit');
-			const sessionId = 'group-chat-test-chat-123-participant-TestAgent-abc123';
-
-			handler?.(sessionId, 0);
-
-			expect(mockDeps.groupChatRouter.markParticipantResponded).toHaveBeenCalledWith(
-				'test-chat-123',
-				'TestAgent'
-			);
-			expect(mockDeps.groupChatRouter.routeAgentResponse).not.toHaveBeenCalled();
-		});
-
 		it('should not route when parsed text is empty', async () => {
 			mockDeps.outputParser.extractTextFromStreamJson = vi.fn().mockReturnValue('   ');
 			setupListener();
@@ -330,50 +308,6 @@ describe('Exit Listener', () => {
 			await new Promise((resolve) => setTimeout(resolve, 50));
 
 			expect(mockDeps.groupChatRouter.routeAgentResponse).not.toHaveBeenCalled();
-		});
-
-		it('should route long buffered participant output without truncating parsed content', async () => {
-			mockDeps.outputBuffer.getGroupChatBufferedOutput = vi.fn().mockReturnValue('x'.repeat(301));
-			mockDeps.outputParser.extractTextFromStreamJson = vi
-				.fn()
-				.mockReturnValue('parsed long output');
-			setupListener();
-			const handler = eventHandlers.get('exit');
-			const sessionId = 'group-chat-test-chat-123-participant-TestAgent-abc123';
-
-			handler?.(sessionId, 0);
-
-			await vi.waitFor(() => {
-				expect(mockDeps.groupChatRouter.routeAgentResponse).toHaveBeenCalledWith(
-					'test-chat-123',
-					'TestAgent',
-					'parsed long output',
-					expect.anything()
-				);
-			});
-		});
-
-		it('should route long participant output when chat metadata and process manager are unavailable', async () => {
-			const parsedText = 'p'.repeat(201);
-			mockDeps.groupChatStorage.loadGroupChat = vi.fn().mockResolvedValue(null);
-			mockDeps.getProcessManager = () => null;
-			mockDeps.outputParser.extractTextFromStreamJson = vi.fn().mockReturnValue(parsedText);
-			mockDeps.groupChatRouter.markParticipantResponded = vi.fn().mockReturnValue(true);
-			setupListener();
-			const handler = eventHandlers.get('exit');
-			const sessionId = 'group-chat-test-chat-123-participant-TestAgent-abc123';
-
-			handler?.(sessionId, 0);
-
-			await vi.waitFor(() => {
-				expect(mockDeps.groupChatRouter.routeAgentResponse).toHaveBeenCalledWith(
-					'test-chat-123',
-					'TestAgent',
-					parsedText,
-					undefined
-				);
-			});
-			expect(mockDeps.groupChatRouter.spawnModeratorSynthesis).not.toHaveBeenCalled();
 		});
 	});
 
@@ -463,23 +397,6 @@ describe('Exit Listener', () => {
 			});
 		});
 
-		it('should mark participant as responded when recovery dependencies are unavailable', async () => {
-			mockDeps.getProcessManager = () => null;
-			setupListener();
-			const handler = eventHandlers.get('exit');
-			const sessionId = 'group-chat-test-chat-123-participant-TestAgent-abc123';
-
-			handler?.(sessionId, 0);
-
-			await vi.waitFor(() => {
-				expect(mockDeps.groupChatRouter.markParticipantResponded).toHaveBeenCalledWith(
-					'test-chat-123',
-					'TestAgent'
-				);
-			});
-			expect(mockDeps.groupChatRouter.respawnParticipantWithRecovery).not.toHaveBeenCalled();
-		});
-
 		it('should emit recovery system message when recovery starts', async () => {
 			setupListener();
 			const handler = eventHandlers.get('exit');
@@ -563,91 +480,40 @@ describe('Exit Listener', () => {
 			});
 		});
 
-		it('should retry a transient moderator chat load failure before routing', async () => {
-			vi.useFakeTimers();
-			mockDeps.groupChatStorage.loadGroupChat = vi
-				.fn()
-				.mockRejectedValueOnce(new Error('temporary read failure'))
-				.mockResolvedValueOnce(createMockGroupChat());
+		it('should clear moderator response timeout on exit', () => {
 			setupListener();
 			const handler = eventHandlers.get('exit');
 			const sessionId = 'group-chat-test-chat-123-moderator-1234567890';
 
 			handler?.(sessionId, 0);
 
-			await vi.waitFor(() => {
-				expect(mockDeps.groupChatStorage.loadGroupChat).toHaveBeenCalledTimes(1);
-			});
-			await vi.advanceTimersByTimeAsync(100);
-
-			await vi.waitFor(() => {
-				expect(mockDeps.groupChatRouter.routeModeratorResponse).toHaveBeenCalledWith(
-					'test-chat-123',
-					'parsed response',
-					expect.anything(),
-					expect.anything(),
-					false
-				);
-			});
-			expect(mockDeps.groupChatStorage.loadGroupChat).toHaveBeenCalledTimes(2);
-			expect(mockDeps.logger.warn).toHaveBeenCalledWith(
-				'[GroupChat] Chat load failed, retrying once',
-				'ProcessListener',
-				expect.objectContaining({
-					groupChatId: 'test-chat-123',
-				})
+			expect(mockDeps.groupChatRouter.clearModeratorResponseTimeout).toHaveBeenCalledWith(
+				'test-chat-123'
 			);
 		});
 
-		it('should log and skip routing when moderator chat load fails after retry', async () => {
-			vi.useFakeTimers();
-			mockDeps.groupChatStorage.loadGroupChat = vi
-				.fn()
-				.mockRejectedValueOnce(new Error('first failure'))
-				.mockRejectedValueOnce(new Error('second failure'));
-			setupListener();
-			const handler = eventHandlers.get('exit');
-			const sessionId = 'group-chat-test-chat-123-moderator-1234567890';
-
-			handler?.(sessionId, 0);
-			await vi.advanceTimersByTimeAsync(100);
-
-			await vi.waitFor(() => {
-				expect(mockDeps.logger.error).toHaveBeenCalledWith(
-					'[GroupChat] Failed to load chat for moderator output parsing after retry',
-					'ProcessListener',
-					expect.objectContaining({
-						groupChatId: 'test-chat-123',
-						parsedTextPreview: 'parsed response',
-						parsedTextLength: 'parsed response'.length,
-					})
-				);
-			});
-			expect(mockDeps.groupChatRouter.routeModeratorResponse).not.toHaveBeenCalled();
-		});
-
-		it('should log route failures for moderator responses', async () => {
-			mockDeps.groupChatRouter.routeModeratorResponse = vi
-				.fn()
-				.mockRejectedValue(new Error('moderator route failed'));
+		it('should emit system message and idle when moderator exits with no buffered output', async () => {
+			mockDeps.outputBuffer.getGroupChatBufferedOutput = vi.fn().mockReturnValue(undefined);
 			setupListener();
 			const handler = eventHandlers.get('exit');
 			const sessionId = 'group-chat-test-chat-123-moderator-1234567890';
 
 			handler?.(sessionId, 0);
 
-			await vi.waitFor(() => {
-				expect(mockDeps.logger.error).toHaveBeenCalledWith(
-					'[GroupChat] Failed to route moderator response',
-					'ProcessListener',
-					expect.objectContaining({
-						error: 'Error: moderator route failed',
-					})
-				);
-			});
+			expect(mockDeps.groupChatEmitters.emitMessage).toHaveBeenCalledWith(
+				'test-chat-123',
+				expect.objectContaining({
+					from: 'system',
+					content: expect.stringContaining('exited without producing output'),
+				})
+			);
+			expect(mockDeps.groupChatEmitters.emitStateChange).toHaveBeenCalledWith(
+				'test-chat-123',
+				'idle'
+			);
 		});
 
-		it('should not route moderator responses when parsing returns empty text', async () => {
+		it('should emit system message and idle when moderator output parses to empty string', async () => {
 			mockDeps.outputParser.extractTextFromStreamJson = vi.fn().mockReturnValue('   ');
 			setupListener();
 			const handler = eventHandlers.get('exit');
@@ -656,64 +522,24 @@ describe('Exit Listener', () => {
 			handler?.(sessionId, 0);
 
 			await vi.waitFor(() => {
-				expect(mockDeps.logger.warn).toHaveBeenCalledWith(
-					'[GroupChat] Moderator output parsed to empty string',
-					'ProcessListener',
+				expect(mockDeps.groupChatEmitters.emitMessage).toHaveBeenCalledWith(
+					'test-chat-123',
 					expect.objectContaining({
-						groupChatId: 'test-chat-123',
+						from: 'system',
+						content: expect.stringContaining('no visible output'),
 					})
 				);
-			});
-			expect(mockDeps.groupChatRouter.routeModeratorResponse).not.toHaveBeenCalled();
-		});
-
-		it('should warn and skip routing when moderator exits without buffered output', () => {
-			mockDeps.outputBuffer.getGroupChatBufferedOutput = vi.fn().mockReturnValue(undefined);
-			setupListener();
-			const handler = eventHandlers.get('exit');
-			const sessionId = 'group-chat-test-chat-123-moderator-1234567890';
-
-			handler?.(sessionId, 0);
-
-			expect(mockDeps.logger.warn).toHaveBeenCalledWith(
-				'[GroupChat] Moderator exit with no buffered output',
-				'ProcessListener',
-				expect.objectContaining({
-					groupChatId: 'test-chat-123',
-					sessionId,
-				})
-			);
-			expect(mockDeps.groupChatRouter.routeModeratorResponse).not.toHaveBeenCalled();
-		});
-
-		it('should route moderator output without chat metadata, process manager, or agent detector', async () => {
-			const parsedText = 'm'.repeat(301);
-			mockDeps.groupChatStorage.loadGroupChat = vi.fn().mockResolvedValue(null);
-			mockDeps.getProcessManager = () => null;
-			mockDeps.getAgentDetector = () => null;
-			mockDeps.outputParser.extractTextFromStreamJson = vi.fn().mockReturnValue(parsedText);
-			setupListener();
-			const handler = eventHandlers.get('exit');
-			const sessionId = 'group-chat-test-chat-123-moderator-1234567890';
-
-			handler?.(sessionId, 0);
-
-			await vi.waitFor(() => {
-				expect(mockDeps.groupChatRouter.routeModeratorResponse).toHaveBeenCalledWith(
+				expect(mockDeps.groupChatEmitters.emitStateChange).toHaveBeenCalledWith(
 					'test-chat-123',
-					parsedText,
-					undefined,
-					undefined,
-					false
+					'idle'
 				);
 			});
 		});
 
-		it('should route long buffered moderator output without truncating parsed content', async () => {
-			mockDeps.outputBuffer.getGroupChatBufferedOutput = vi.fn().mockReturnValue('x'.repeat(301));
-			mockDeps.outputParser.extractTextFromStreamJson = vi
+		it('should emit system message and idle when moderator response processing fails', async () => {
+			mockDeps.groupChatStorage.loadGroupChat = vi
 				.fn()
-				.mockReturnValue('parsed moderator long output');
+				.mockRejectedValue(new Error('Storage unavailable'));
 			setupListener();
 			const handler = eventHandlers.get('exit');
 			const sessionId = 'group-chat-test-chat-123-moderator-1234567890';
@@ -721,12 +547,16 @@ describe('Exit Listener', () => {
 			handler?.(sessionId, 0);
 
 			await vi.waitFor(() => {
-				expect(mockDeps.groupChatRouter.routeModeratorResponse).toHaveBeenCalledWith(
+				expect(mockDeps.groupChatEmitters.emitMessage).toHaveBeenCalledWith(
 					'test-chat-123',
-					'parsed moderator long output',
-					expect.anything(),
-					expect.anything(),
-					false
+					expect.objectContaining({
+						from: 'system',
+						content: expect.stringContaining('Failed to process moderator response'),
+					})
+				);
+				expect(mockDeps.groupChatEmitters.emitStateChange).toHaveBeenCalledWith(
+					'test-chat-123',
+					'idle'
 				);
 			});
 		});
@@ -797,54 +627,6 @@ describe('Exit Listener', () => {
 					'TestAgent'
 				);
 			});
-		});
-
-		it('should route fallback parsed participant responses without a process manager', async () => {
-			mockDeps.getProcessManager = () => null;
-			mockDeps.outputParser.extractTextFromStreamJson = vi
-				.fn()
-				.mockImplementationOnce(() => {
-					throw new Error('Parse error');
-				})
-				.mockReturnValueOnce('fallback parsed response');
-
-			setupListener();
-			const handler = eventHandlers.get('exit');
-			const sessionId = 'group-chat-test-chat-123-participant-TestAgent-abc123';
-
-			handler?.(sessionId, 0);
-
-			await vi.waitFor(() => {
-				expect(mockDeps.groupChatRouter.routeAgentResponse).toHaveBeenCalledWith(
-					'test-chat-123',
-					'TestAgent',
-					'fallback parsed response',
-					undefined
-				);
-			});
-		});
-
-		it('should mark participant as responded when fallback parsing returns empty text', async () => {
-			mockDeps.outputParser.extractTextFromStreamJson = vi
-				.fn()
-				.mockImplementationOnce(() => {
-					throw new Error('Parse error');
-				})
-				.mockReturnValueOnce('   ');
-
-			setupListener();
-			const handler = eventHandlers.get('exit');
-			const sessionId = 'group-chat-test-chat-123-participant-TestAgent-abc123';
-
-			handler?.(sessionId, 0);
-
-			await vi.waitFor(() => {
-				expect(mockDeps.groupChatRouter.markParticipantResponded).toHaveBeenCalledWith(
-					'test-chat-123',
-					'TestAgent'
-				);
-			});
-			expect(mockDeps.groupChatRouter.routeAgentResponse).not.toHaveBeenCalled();
 		});
 	});
 });

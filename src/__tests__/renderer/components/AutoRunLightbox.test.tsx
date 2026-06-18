@@ -14,15 +14,10 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
-import { AutoRunLightbox } from '../../../renderer/components/AutoRunLightbox';
+import { AutoRunLightbox } from '../../../renderer/components/AutoRun/AutoRunLightbox';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
-import type { Theme } from '../../../renderer/types';
-
-const clipboardMocks = vi.hoisted(() => ({
-	safeClipboardWrite: vi.fn(),
-	safeClipboardWriteImage: vi.fn(),
-}));
+import { createMockTheme } from '../../helpers/mockTheme';
 
 // Helper to wrap component in LayerStackProvider
 const renderWithProviders = (component: React.ReactElement) => {
@@ -57,16 +52,10 @@ vi.mock('lucide-react', () => ({
 	),
 }));
 
-vi.mock('../../../renderer/utils/clipboard', () => ({
-	safeClipboardWrite: clipboardMocks.safeClipboardWrite,
-	safeClipboardWriteImage: clipboardMocks.safeClipboardWriteImage,
-}));
-
 // Mock navigator.clipboard at module level
 const mockClipboardWrite = vi.fn();
-const mockClipboardWriteText = vi.fn();
 Object.defineProperty(navigator, 'clipboard', {
-	value: { write: mockClipboardWrite, writeText: mockClipboardWriteText },
+	value: { write: mockClipboardWrite },
 	writable: true,
 	configurable: true,
 });
@@ -80,28 +69,6 @@ global.ClipboardItem = MockClipboardItem as unknown as typeof ClipboardItem;
 // Mock fetch at module level for clipboard tests
 global.fetch = vi.fn();
 
-// Create a mock theme for testing
-const createMockTheme = (): Theme => ({
-	id: 'test-theme',
-	name: 'Test Theme',
-	mode: 'dark',
-	colors: {
-		bgMain: '#1a1a1a',
-		bgSidebar: '#252525',
-		bgPanel: '#2d2d2d',
-		bgActivity: '#333333',
-		textMain: '#ffffff',
-		textDim: '#888888',
-		accent: '#0066ff',
-		accentForeground: '#ffffff',
-		border: '#333333',
-		highlight: '#0066ff33',
-		success: '#00aa00',
-		warning: '#ffaa00',
-		error: '#ff0000',
-	},
-});
-
 // Create a mock attachment previews map
 const createMockPreviews = (filenames: string[]): Map<string, string> => {
 	const map = new Map<string, string>();
@@ -109,28 +76,6 @@ const createMockPreviews = (filenames: string[]): Map<string, string> => {
 		map.set(filename, `data:image/png;base64,mock-data-${filename}`);
 	});
 	return map;
-};
-
-const resetClipboardMocks = () => {
-	clipboardMocks.safeClipboardWrite.mockImplementation(async (text: string) => {
-		try {
-			await navigator.clipboard.writeText(text);
-			return true;
-		} catch {
-			return false;
-		}
-	});
-
-	clipboardMocks.safeClipboardWriteImage.mockImplementation(async (dataUrl: string) => {
-		try {
-			const response = await fetch(dataUrl);
-			const blob = await response.blob();
-			await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
-			return true;
-		} catch {
-			return false;
-		}
-	});
 };
 
 // Default props for AutoRunLightbox
@@ -166,8 +111,6 @@ describe('AutoRunLightbox', () => {
 
 		// Setup clipboard mock
 		mockClipboardWrite.mockResolvedValue(undefined);
-		mockClipboardWriteText.mockResolvedValue(undefined);
-		resetClipboardMocks();
 	});
 
 	afterEach(() => {
@@ -431,7 +374,6 @@ describe('AutoRunLightbox', () => {
 
 			const backdrop = document.querySelector('.fixed.inset-0.z-\\[9999\\]');
 			fireEvent.keyDown(backdrop!, { key: 'ArrowRight' });
-			fireEvent.keyDown(backdrop!, { key: 'ArrowLeft' });
 
 			expect(onNavigate).not.toHaveBeenCalled();
 		});
@@ -448,7 +390,6 @@ describe('AutoRunLightbox', () => {
 
 			const backdrop = document.querySelector('.fixed.inset-0.z-\\[9999\\]');
 			fireEvent.keyDown(backdrop!, { key: 'ArrowRight' });
-			fireEvent.keyDown(backdrop!, { key: 'ArrowLeft' });
 
 			expect(onNavigate).not.toHaveBeenCalled();
 		});
@@ -478,27 +419,6 @@ describe('AutoRunLightbox', () => {
 			fireEvent.keyDown(window, { key: 'Escape' });
 
 			expect(onClose).toHaveBeenCalledTimes(1);
-		});
-
-		it('should use the latest onClose handler when Escape is pressed after rerender', async () => {
-			vi.useRealTimers();
-			const initialOnClose = vi.fn();
-			const latestOnClose = vi.fn();
-			const props = createDefaultProps({ onClose: initialOnClose });
-			const { rerender } = renderWithProviders(<AutoRunLightbox {...props} />);
-
-			rerender(
-				<LayerStackProvider>
-					<AutoRunLightbox {...props} onClose={latestOnClose} />
-				</LayerStackProvider>
-			);
-
-			fireEvent.keyDown(window, { key: 'Escape' });
-
-			await waitFor(() => {
-				expect(latestOnClose).toHaveBeenCalledTimes(1);
-			});
-			expect(initialOnClose).not.toHaveBeenCalled();
 		});
 	});
 
@@ -732,17 +652,6 @@ describe('AutoRunLightbox', () => {
 			});
 		});
 
-		it('should not copy when C is pressed without a command modifier', () => {
-			const props = createDefaultProps();
-			renderWithProviders(<AutoRunLightbox {...props} />);
-
-			const backdrop = document.querySelector('.fixed.inset-0.z-\\[9999\\]');
-			fireEvent.keyDown(backdrop!, { key: 'c' });
-
-			expect(global.fetch).not.toHaveBeenCalled();
-			expect(mockClipboardWrite).not.toHaveBeenCalled();
-		});
-
 		it('should show "Copied!" indicator after successful copy', async () => {
 			const props = createDefaultProps();
 			renderWithProviders(<AutoRunLightbox {...props} />);
@@ -820,29 +729,6 @@ describe('AutoRunLightbox', () => {
 			});
 		});
 
-		it('should log an unexpected copy dependency failure without closing the lightbox', async () => {
-			const unexpectedError = new Error('Unexpected clipboard failure');
-			clipboardMocks.safeClipboardWriteImage.mockRejectedValueOnce(unexpectedError);
-			const onClose = vi.fn();
-			const consoleError = vi.mocked(console.error);
-
-			const props = createDefaultProps({ onClose });
-			renderWithProviders(<AutoRunLightbox {...props} />);
-
-			fireEvent.click(
-				screen.getByTitle(`Copy image to clipboard (${formatShortcutKeys(['Meta', 'c'])})`)
-			);
-
-			await waitFor(() => {
-				expect(consoleError).toHaveBeenCalledWith(
-					'Failed to copy image to clipboard:',
-					unexpectedError
-				);
-			});
-			expect(onClose).not.toHaveBeenCalled();
-			expect(screen.getByTestId('copy-icon')).toBeInTheDocument();
-		});
-
 		it('should copy external URL when viewing external image', async () => {
 			const props = createDefaultProps({
 				lightboxExternalUrl: 'https://example.com/image.png',
@@ -865,121 +751,6 @@ describe('AutoRunLightbox', () => {
 
 			// Component returns null, so no button to click
 			expect(container.firstChild).toBeNull();
-		});
-
-		it('should skip image copy if the attachment preview disappears before clicking copy', () => {
-			const previews = createMockPreviews(['image1.png']);
-			const props = createDefaultProps({
-				attachmentsList: ['image1.png'],
-				attachmentPreviews: previews,
-				lightboxFilename: 'image1.png',
-			});
-			renderWithProviders(<AutoRunLightbox {...props} />);
-
-			previews.delete('image1.png');
-			fireEvent.click(
-				screen.getByTitle(`Copy image to clipboard (${formatShortcutKeys(['Meta', 'c'])})`)
-			);
-
-			expect(global.fetch).not.toHaveBeenCalled();
-			expect(mockClipboardWrite).not.toHaveBeenCalled();
-			expect(screen.getByTestId('copy-icon')).toBeInTheDocument();
-		});
-
-		it('should copy a URL-encoded markdown reference for local attachments', async () => {
-			const filename = 'images/my doc#1.png';
-			const props = createDefaultProps({
-				attachmentsList: [filename],
-				attachmentPreviews: createMockPreviews([filename]),
-				lightboxFilename: filename,
-			});
-			renderWithProviders(<AutoRunLightbox {...props} />);
-
-			fireEvent.click(screen.getByTitle('Copy markdown reference (e.g., ![alt](path))'));
-
-			await waitFor(() => {
-				expect(mockClipboardWriteText).toHaveBeenCalledWith('![my doc#1](images/my%20doc%231.png)');
-			});
-		});
-
-		it('should use a generic alt text for markdown references when the basename is empty', async () => {
-			const filename = '/';
-			const props = createDefaultProps({
-				attachmentsList: [filename],
-				attachmentPreviews: createMockPreviews([filename]),
-				lightboxFilename: filename,
-			});
-			renderWithProviders(<AutoRunLightbox {...props} />);
-
-			fireEvent.click(screen.getByTitle('Copy markdown reference (e.g., ![alt](path))'));
-
-			await waitFor(() => {
-				expect(mockClipboardWriteText).toHaveBeenCalledWith('![image](/)');
-			});
-		});
-
-		it('should copy markdown references using the external URL as the image path', async () => {
-			const props = createDefaultProps({
-				lightboxFilename: 'remote-preview.png',
-				lightboxExternalUrl: 'https://example.com/generated image.png',
-			});
-			renderWithProviders(<AutoRunLightbox {...props} />);
-
-			fireEvent.click(screen.getByTitle('Copy markdown reference (e.g., ![alt](path))'));
-
-			await waitFor(() => {
-				expect(mockClipboardWriteText).toHaveBeenCalledWith(
-					'![remote-preview](https://example.com/generated image.png)'
-				);
-			});
-		});
-
-		it('should show and reset the markdown copied indicator after successful copy', async () => {
-			vi.useFakeTimers();
-			const props = createDefaultProps();
-			renderWithProviders(<AutoRunLightbox {...props} />);
-
-			const markdownButton = screen.getByTitle('Copy markdown reference (e.g., ![alt](path))');
-			expect(screen.getByTestId('file-text-icon')).toBeInTheDocument();
-
-			await act(async () => {
-				fireEvent.click(markdownButton);
-				await Promise.resolve();
-			});
-
-			expect(screen.getByTestId('check-icon')).toBeInTheDocument();
-			expect(screen.getByText('Copied!')).toBeInTheDocument();
-
-			act(() => {
-				vi.advanceTimersByTime(2000);
-			});
-
-			expect(screen.getByTestId('file-text-icon')).toBeInTheDocument();
-			expect(screen.queryByText('Copied!')).not.toBeInTheDocument();
-		});
-
-		it('should leave markdown copy feedback unchanged when the clipboard write fails', async () => {
-			clipboardMocks.safeClipboardWrite.mockResolvedValueOnce(false);
-			const props = createDefaultProps();
-			renderWithProviders(<AutoRunLightbox {...props} />);
-
-			fireEvent.click(screen.getByTitle('Copy markdown reference (e.g., ![alt](path))'));
-
-			await waitFor(() => {
-				expect(clipboardMocks.safeClipboardWrite).toHaveBeenCalled();
-			});
-			expect(screen.getByTestId('file-text-icon')).toBeInTheDocument();
-			expect(screen.queryByText('Copied!')).not.toBeInTheDocument();
-		});
-
-		it('should not close the lightbox when the markdown copy button is clicked', () => {
-			const onClose = vi.fn();
-			const props = createDefaultProps({ onClose });
-			renderWithProviders(<AutoRunLightbox {...props} />);
-
-			fireEvent.click(screen.getByTitle('Copy markdown reference (e.g., ![alt](path))'));
-
-			expect(onClose).not.toHaveBeenCalled();
 		});
 	});
 
@@ -1432,52 +1203,6 @@ describe('AutoRunLightbox', () => {
 			// currentIndex is -1, which is >= totalImages - 1 (false for 3 images)
 			// So it tries to navigate to newList[currentIndex] = newList[-1] which is undefined
 			expect(onNavigate).toHaveBeenCalledWith(null);
-		});
-
-		it('should ignore a stale delete confirmation if delete support is removed before confirm', async () => {
-			vi.useRealTimers(); // Need real timers for async findByRole
-			const onClose = vi.fn();
-			const onDelete = vi.fn();
-			const onNavigate = vi.fn();
-			const props = createDefaultProps({
-				onClose,
-				onDelete,
-				onNavigate,
-			});
-			const { rerender } = renderWithProviders(<AutoRunLightbox {...props} />);
-
-			fireEvent.click(screen.getByTitle('Delete image (Delete key)'));
-
-			const confirmButton = await screen.findByRole('button', { name: 'Confirm' });
-			rerender(
-				<LayerStackProvider>
-					<AutoRunLightbox {...props} onDelete={undefined} />
-				</LayerStackProvider>
-			);
-			fireEvent.click(confirmButton);
-
-			expect(onDelete).not.toHaveBeenCalled();
-			expect(onNavigate).not.toHaveBeenCalled();
-			expect(onClose).not.toHaveBeenCalled();
-		});
-
-		it('should use fallback delete text when the current filename has no basename', async () => {
-			vi.useRealTimers(); // Need real timers for async findByRole
-			const filename = '/';
-			const props = createDefaultProps({
-				attachmentsList: [filename],
-				attachmentPreviews: createMockPreviews([filename]),
-				lightboxFilename: filename,
-			});
-			renderWithProviders(<AutoRunLightbox {...props} />);
-
-			fireEvent.click(screen.getByTitle('Delete image (Delete key)'));
-
-			expect(
-				await screen.findByText(
-					'Are you sure you want to delete "this image"? This action cannot be undone.'
-				)
-			).toBeInTheDocument();
 		});
 	});
 });

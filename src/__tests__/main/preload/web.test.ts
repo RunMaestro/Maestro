@@ -268,23 +268,5 @@ describe('Web Preload API', () => {
 				expect(mockInvoke).toHaveBeenCalledWith('live:stopServer');
 			});
 		});
-
-		describe('persistent token', () => {
-			it('should invoke live:persistCurrentToken', async () => {
-				mockInvoke.mockResolvedValue({ success: true });
-
-				await api.persistCurrentToken();
-
-				expect(mockInvoke).toHaveBeenCalledWith('live:persistCurrentToken');
-			});
-
-			it('should invoke live:clearPersistentToken', async () => {
-				mockInvoke.mockResolvedValue({ success: true });
-
-				await api.clearPersistentToken();
-
-				expect(mockInvoke).toHaveBeenCalledWith('live:clearPersistentToken');
-			});
-		});
 	});
 });

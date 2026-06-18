@@ -55,7 +55,6 @@ describe('createMaestroModeContextValue', () => {
 		const config: MaestroConfig = {
 			securityToken: 'token-456',
 			sessionId: 'session-abc',
-			tabId: 'tab-start',
 			apiBase: '/token-456/api',
 			wsUrl: '/token-456/ws',
 		};
@@ -65,36 +64,9 @@ describe('createMaestroModeContextValue', () => {
 		expect(context.isDashboard).toBe(false);
 		expect(context.isSession).toBe(true);
 		expect(context.sessionId).toBe('session-abc');
-		expect(context.tabId).toBe('tab-start');
 		expect(context.securityToken).toBe('token-456');
 
-		context.goToSession('session-xyz', 'tab/value');
-		expect(window.location.href).toBe(
-			'http://localhost/token-456/session/session-xyz?tabId=tab%2Fvalue'
-		);
-	});
-
-	it('updates the current history entry only when the session URL changes', () => {
-		const config: MaestroConfig = {
-			securityToken: 'token-789',
-			sessionId: 'session-current',
-			apiBase: '/token-789/api',
-			wsUrl: '/token-789/ws',
-		};
-		const replaceState = vi.spyOn(window.history, 'replaceState').mockImplementation(() => {});
-		const context = createMaestroModeContextValue(config);
-
-		window.location.href = 'http://localhost/token-789/session/session-current';
-		context.updateUrl('session-current');
-
-		expect(replaceState).not.toHaveBeenCalled();
-
-		context.updateUrl('session-next', 'tab-next');
-
-		expect(replaceState).toHaveBeenCalledWith(
-			{ sessionId: 'session-next', tabId: 'tab-next' },
-			'',
-			'http://localhost/token-789/session/session-next?tabId=tab-next'
-		);
+		context.goToSession('session-xyz');
+		expect(window.location.href).toBe('http://localhost/token-456/session/session-xyz');
 	});
 });

@@ -121,12 +121,19 @@ function matchesKeywordAnywhere(
 	normalizedInput: string,
 	keywords: readonly string[]
 ): string | null {
+	const words = normalizedInput.split(/\s+/);
+
 	for (const keyword of keywords) {
-		// Match complete words/phrases, not substrings inside larger words.
-		const escapedKeyword = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-		const keywordPattern = new RegExp(`(?:^|\\s)${escapedKeyword}(?:\\s|$)`);
-		if (keywordPattern.test(normalizedInput)) {
-			return keyword;
+		// For multi-word keywords, check if the phrase exists
+		if (keyword.includes(' ')) {
+			if (normalizedInput.includes(keyword)) {
+				return keyword;
+			}
+		} else {
+			// For single-word keywords, check word boundaries
+			if (words.includes(keyword)) {
+				return keyword;
+			}
 		}
 	}
 	return null;
@@ -139,6 +146,10 @@ function matchesKeywordAnywhere(
 function extractGoal(input: string, matchedKeyword: string): string {
 	const normalized = input.toLowerCase().trim();
 	const keywordIndex = normalized.indexOf(matchedKeyword.toLowerCase());
+
+	if (keywordIndex === -1) {
+		return input.trim();
+	}
 
 	// Get the text after the keyword
 	const afterKeyword = input.slice(keywordIndex + matchedKeyword.length).trim();

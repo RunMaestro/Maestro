@@ -1,5 +1,7 @@
 import React, { useState, useMemo, useCallback } from 'react';
+import { Type } from 'lucide-react';
 import type { Theme } from '../types';
+import { SettingsSectionHeading } from './Settings/SettingsSectionHeading';
 
 /**
  * Common monospace fonts that are typically available across different systems.
@@ -84,6 +86,7 @@ export function FontConfigurationPanel({
 
 			// Fast O(1) lookup
 			if (normalizedFontsSet.has(normalizedSearch)) return true;
+			if (normalizedFontsSet.has(fontName.toLowerCase())) return true;
 
 			// Fallback to substring search (slower but comprehensive)
 			for (const font of normalizedFontsSet) {
@@ -112,7 +115,7 @@ export function FontConfigurationPanel({
 
 	return (
 		<div>
-			<label className="block text-xs font-bold opacity-70 uppercase mb-2">Interface Font</label>
+			<SettingsSectionHeading icon={Type}>Interface Font</SettingsSectionHeading>
 			{fontLoading ? (
 				<div className="text-sm opacity-50 p-2">Loading fonts...</div>
 			) : (

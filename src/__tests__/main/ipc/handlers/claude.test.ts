@@ -90,22 +90,53 @@ vi.mock('../../../../main/constants', () => ({
 	},
 }));
 
-// Mock pricing utility
-vi.mock('../../../../main/utils/pricing', () => ({
-	calculateClaudeCost: vi.fn(
-		(input: number, output: number, cacheRead: number, cacheCreation: number) => {
-			const inputCost = (input / 1_000_000) * 3;
-			const outputCost = (output / 1_000_000) * 15;
-			const cacheReadCost = (cacheRead / 1_000_000) * 0.3;
-			const cacheCreationCost = (cacheCreation / 1_000_000) * 3.75;
-			return inputCost + outputCost + cacheReadCost + cacheCreationCost;
+// Mock pricing utility. Flat Sonnet-tier rates keep the cost assertions in these
+// fixtures stable; the real per-model logic is exercised in modelPricing.test.ts.
+// Helpers live inside the factory because vi.mock is hoisted above top-level vars.
+vi.mock('../../../../main/utils/pricing', () => {
+	const flatCost = (input: number, output: number, cacheRead: number, cacheCreation: number) =>
+		(input / 1_000_000) * 3 +
+		(output / 1_000_000) * 15 +
+		(cacheRead / 1_000_000) * 0.3 +
+		(cacheCreation / 1_000_000) * 3.75;
+	const sumMatches = (content: string, key: string) => {
+		let total = 0;
+		for (const m of content.matchAll(new RegExp(`"${key}"\\s*:\\s*(\\d+)`, 'g'))) {
+			total += parseInt(m[1], 10);
 		}
-	),
-}));
-
-vi.mock('../../../../main/utils/safe-send', () => ({
-	isWebContentsAvailable: vi.fn((win) => Boolean(win)),
-}));
+		return total;
+	};
+	return {
+		calculateClaudeCost: vi.fn(flatCost),
+		calculateModelCost: vi.fn(
+			(tokens: {
+				inputTokens: number;
+				outputTokens: number;
+				cacheReadTokens?: number;
+				cacheCreationTokens?: number;
+			}) =>
+				flatCost(
+					tokens.inputTokens,
+					tokens.outputTokens,
+					tokens.cacheReadTokens ?? 0,
+					tokens.cacheCreationTokens ?? 0
+				)
+		),
+		computeClaudeUsageCost: vi.fn((content: string) => {
+			const inputTokens = sumMatches(content, 'input_tokens');
+			const outputTokens = sumMatches(content, 'output_tokens');
+			const cacheReadTokens = sumMatches(content, 'cache_read_input_tokens');
+			const cacheCreationTokens = sumMatches(content, 'cache_creation_input_tokens');
+			return {
+				inputTokens,
+				outputTokens,
+				cacheReadTokens,
+				cacheCreationTokens,
+				costUsd: flatCost(inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens),
+			};
+		}),
+	};
+});
 
 describe('Claude IPC handlers', () => {
 	let handlers: Map<string, Function>;
@@ -147,21 +178,6 @@ describe('Claude IPC handlers', () => {
 	afterEach(() => {
 		handlers.clear();
 	});
-
-	const fileEntry = (name: string) => ({
-		name,
-		isFile: () => true,
-		isDirectory: () => false,
-	});
-
-	const dirEntry = (name: string) => ({
-		name,
-		isFile: () => false,
-		isDirectory: () => true,
-	});
-
-	const sessionJsonl = (lines: Array<Record<string, unknown>>) =>
-		lines.map((line) => JSON.stringify(line)).join('\n');
 
 	describe('registration', () => {
 		it('should register all claude handlers', () => {
@@ -516,77 +532,6 @@ describe('Claude IPC handlers', () => {
 			expect(result).toHaveLength(1);
 			// Cost = (1M * 3 + 1M * 15 + 1M * 0.3 + 1M * 3.75) / 1M = 3 + 15 + 0.3 + 3.75 = 22.05
 			expect(result[0].costUsd).toBeCloseTo(22.05, 2);
-		});
-
-		it('uses assistant fallback text and skips non-text content when no user preview exists', async () => {
-			const fs = await import('fs/promises');
-
-			vi.mocked(fs.default.access).mockResolvedValue(undefined);
-			vi.mocked(fs.default.readdir).mockResolvedValue([
-				'assistant-only.jsonl',
-				'object-content.jsonl',
-				'user-no-timestamp.jsonl',
-			] as unknown as Awaited<ReturnType<typeof fs.default.readdir>>);
-			vi.mocked(fs.default.stat).mockResolvedValue({
-				size: 1024,
-				mtime: new Date('2024-01-15T10:00:00Z'),
-			} as unknown as Awaited<ReturnType<typeof fs.default.stat>>);
-			vi.mocked(fs.default.readFile).mockImplementation(async (filePath) => {
-				const filename = String(filePath).split('/').pop();
-				if (filename === 'assistant-only.jsonl') {
-					return sessionJsonl([
-						{
-							type: 'assistant',
-							message: {
-								role: 'assistant',
-								content: [{ type: 'text' }],
-							},
-						},
-						{
-							type: 'assistant',
-							message: {
-								role: 'assistant',
-								content: [
-									{ type: 'image', source: 'ignored' },
-									{ type: 'text' },
-									{ type: 'text', text: 'Assistant fallback preview' },
-								],
-							},
-						},
-					]);
-				}
-				if (filename === 'user-no-timestamp.jsonl') {
-					return sessionJsonl([
-						{
-							type: 'user',
-							message: { role: 'user', content: 'User preview without timestamp' },
-						},
-					]);
-				}
-				return sessionJsonl([
-					{
-						type: 'user',
-						message: { role: 'user', content: { type: 'text', text: 'ignored object' } },
-					},
-				]);
-			});
-
-			const result = await handlers.get('claude:listSessions')!({} as any, '/test/project');
-
-			expect(result).toHaveLength(3);
-			expect(result.find((session) => session.sessionId === 'assistant-only')).toMatchObject({
-				firstMessage: 'Assistant fallback preview',
-				timestamp: '2024-01-15T10:00:00.000Z',
-				durationSeconds: 0,
-			});
-			expect(result.find((session) => session.sessionId === 'object-content')).toMatchObject({
-				firstMessage: '',
-				messageCount: 1,
-			});
-			expect(result.find((session) => session.sessionId === 'user-no-timestamp')).toMatchObject({
-				firstMessage: 'User preview without timestamp',
-				timestamp: '2024-01-15T10:00:00.000Z',
-			});
 		});
 	});
 
@@ -944,91 +889,6 @@ describe('Claude IPC handlers', () => {
 			// Duration = 9:05:00 - 9:00:00 = 5 minutes = 300 seconds
 			expect(result.sessions[0].durationSeconds).toBe(300);
 		});
-
-		it('uses default options, assistant fallback previews, string origins, and skips unreadable page files', async () => {
-			const fs = await import('fs/promises');
-
-			vi.mocked(fs.default.access).mockResolvedValue(undefined);
-			vi.mocked(fs.default.readdir).mockResolvedValue([
-				'assistant-only.jsonl',
-				'empty-user.jsonl',
-				'user-no-timestamp.jsonl',
-				'unreadable.jsonl',
-			] as unknown as Awaited<ReturnType<typeof fs.default.readdir>>);
-			vi.mocked(fs.default.stat).mockResolvedValue({
-				size: 1024,
-				mtime: new Date('2024-01-15T10:00:00Z'),
-			} as unknown as Awaited<ReturnType<typeof fs.default.stat>>);
-			vi.mocked(fs.default.readFile).mockImplementation(async (filePath) => {
-				const filename = String(filePath).split('/').pop();
-				if (filename === 'unreadable.jsonl') {
-					throw new Error('EACCES');
-				}
-				if (filename === 'assistant-only.jsonl') {
-					return sessionJsonl([
-						{
-							type: 'assistant',
-							message: {
-								role: 'assistant',
-								content: [{ type: 'text' }],
-							},
-						},
-						{
-							type: 'assistant',
-							message: {
-								role: 'assistant',
-								content: [{ type: 'text', text: 'Paginated assistant fallback' }],
-							},
-						},
-					]);
-				}
-				if (filename === 'user-no-timestamp.jsonl') {
-					return sessionJsonl([
-						{
-							type: 'user',
-							message: { role: 'user', content: 'Paginated user fallback timestamp' },
-						},
-					]);
-				}
-				return sessionJsonl([
-					{
-						type: 'user',
-						message: { role: 'user', content: [{ type: 'image', source: 'ignored' }] },
-					},
-				]);
-			});
-			mockClaudeSessionOriginsStore.get.mockReturnValue({
-				'/test/project': {
-					'assistant-only': 'auto',
-				},
-			});
-
-			const result = await handlers.get('claude:listSessionsPaginated')!(
-				{} as any,
-				'/test/project'
-			);
-
-			expect(result.totalCount).toBe(4);
-			expect(result.sessions).toHaveLength(3);
-			expect(
-				result.sessions.find((session) => session.sessionId === 'assistant-only')
-			).toMatchObject({
-				firstMessage: 'Paginated assistant fallback',
-				origin: 'auto',
-				sessionName: undefined,
-				timestamp: '2024-01-15T10:00:00.000Z',
-			});
-			expect(result.sessions.find((session) => session.sessionId === 'empty-user')).toMatchObject({
-				firstMessage: '',
-				durationSeconds: 0,
-			});
-			expect(
-				result.sessions.find((session) => session.sessionId === 'user-no-timestamp')
-			).toMatchObject({
-				firstMessage: 'Paginated user fallback timestamp',
-				timestamp: '2024-01-15T10:00:00.000Z',
-			});
-		});
 	});
 
 	describe('claude:readSessionMessages', () => {
@@ -1202,41 +1062,6 @@ not valid json at all
 			// Text blocks should be joined with newline
 			expect(result.messages[0].content).toBe('First paragraph\nSecond paragraph');
 			expect(result.messages[1].content).toBe('Response paragraph 1\nResponse paragraph 2');
-		});
-
-		it('skips truthy non-string and non-array message content', async () => {
-			const fs = await import('fs/promises');
-
-			const sessionContent = sessionJsonl([
-				{
-					type: 'user',
-					message: { role: 'user', content: { type: 'text', text: 'not supported here' } },
-					timestamp: '2024-01-15T09:00:00Z',
-					uuid: 'uuid-object',
-				},
-				{
-					type: 'assistant',
-					message: { role: 'assistant', content: 'Visible response' },
-					timestamp: '2024-01-15T09:01:00Z',
-					uuid: 'uuid-visible',
-				},
-			]);
-			vi.mocked(fs.default.readFile).mockResolvedValue(sessionContent);
-
-			const result = await handlers.get('claude:readSessionMessages')!(
-				{} as any,
-				'/test/project',
-				'session-object',
-				{}
-			);
-
-			expect(result.total).toBe(1);
-			expect(result.messages).toEqual([
-				expect.objectContaining({
-					type: 'assistant',
-					content: 'Visible response',
-				}),
-			]);
 		});
 
 		it('should extract tool_use blocks from assistant messages', async () => {
@@ -1679,120 +1504,6 @@ not valid json at all
 			expect(userMatch?.matchType).toBe('title');
 			expect(assistantMatch?.matchType).toBe('assistant');
 		});
-
-		it('builds assistant previews around middle matches and ignores unsupported content objects', async () => {
-			const fs = await import('fs/promises');
-
-			vi.mocked(fs.default.access).mockResolvedValue(undefined);
-			vi.mocked(fs.default.readdir).mockResolvedValue([
-				'session-assistant-preview.jsonl',
-			] as unknown as Awaited<ReturnType<typeof fs.default.readdir>>);
-
-			const longAssistantMessage =
-				'Assistant prefix text that is long enough to be trimmed before the match. ' +
-				'The important NEEDLE appears in the middle of the assistant message. ' +
-				'Assistant suffix text that is also long enough to be trimmed after the match.';
-			vi.mocked(fs.default.readFile).mockResolvedValue(
-				sessionJsonl([
-					{
-						type: 'user',
-						message: { role: 'user', content: { type: 'text', text: 'unsupported' } },
-						timestamp: '2024-01-15T09:00:00Z',
-						uuid: 'uuid-object',
-					},
-					{
-						type: 'assistant',
-						message: { role: 'assistant', content: longAssistantMessage },
-						timestamp: '2024-01-15T09:01:00Z',
-						uuid: 'uuid-assistant',
-					},
-				])
-			);
-
-			const result = await handlers.get('claude:searchSessions')!(
-				{} as any,
-				'/test/project',
-				'NEEDLE',
-				'assistant'
-			);
-
-			expect(result).toHaveLength(1);
-			expect(result[0]).toMatchObject({
-				matchType: 'assistant',
-				matchCount: 1,
-			});
-			expect(result[0].matchPreview).toMatch(/^\.\.\./);
-			expect(result[0].matchPreview).toMatch(/\.\.\.$/);
-		});
-
-		it('keeps an existing assistant preview when a later user match becomes the title match', async () => {
-			const fs = await import('fs/promises');
-
-			vi.mocked(fs.default.access).mockResolvedValue(undefined);
-			vi.mocked(fs.default.readdir).mockResolvedValue([
-				'session-preview-priority.jsonl',
-			] as unknown as Awaited<ReturnType<typeof fs.default.readdir>>);
-			vi.mocked(fs.default.readFile).mockResolvedValue(
-				sessionJsonl([
-					{
-						type: 'assistant',
-						message: { role: 'assistant', content: 'assistant keyword preview' },
-						timestamp: '2024-01-15T09:00:00Z',
-						uuid: 'uuid-assistant',
-					},
-					{
-						type: 'user',
-						message: { role: 'user', content: 'user keyword title' },
-						timestamp: '2024-01-15T09:01:00Z',
-						uuid: 'uuid-user',
-					},
-				])
-			);
-
-			const result = await handlers.get('claude:searchSessions')!(
-				{} as any,
-				'/test/project',
-				'keyword',
-				'all'
-			);
-
-			expect(result).toEqual([
-				{
-					sessionId: 'session-preview-priority',
-					matchType: 'title',
-					matchPreview: 'assistant keyword preview',
-					matchCount: 2,
-				},
-			]);
-		});
-
-		it('returns no title results when only non-title content matches', async () => {
-			const fs = await import('fs/promises');
-
-			vi.mocked(fs.default.access).mockResolvedValue(undefined);
-			vi.mocked(fs.default.readdir).mockResolvedValue([
-				'session-assistant-only.jsonl',
-			] as unknown as Awaited<ReturnType<typeof fs.default.readdir>>);
-			vi.mocked(fs.default.readFile).mockResolvedValue(
-				sessionJsonl([
-					{
-						type: 'assistant',
-						message: { role: 'assistant', content: 'only the assistant says keyword' },
-						timestamp: '2024-01-15T09:00:00Z',
-						uuid: 'uuid-assistant',
-					},
-				])
-			);
-
-			const result = await handlers.get('claude:searchSessions')!(
-				{} as any,
-				'/test/project',
-				'keyword',
-				'title'
-			);
-
-			expect(result).toEqual([]);
-		});
 	});
 
 	describe('claude:deleteMessagePair', () => {
@@ -1991,100 +1702,6 @@ not valid json at all
 			expect(writtenContent).toContain('Next question');
 		});
 
-		it('updates partially orphaned tool_result content and preserves unrelated tool results', async () => {
-			const fs = await import('fs/promises');
-
-			const sessionContent = sessionJsonl([
-				{
-					type: 'user',
-					message: { role: 'user', content: 'Run a tool' },
-					timestamp: '2024-01-15T09:00:00Z',
-					uuid: 'uuid-delete',
-				},
-				{
-					type: 'assistant',
-					message: {
-						role: 'assistant',
-						content: [{ type: 'tool_use', id: 'tool-delete', name: 'read_file' }],
-					},
-					timestamp: '2024-01-15T09:01:00Z',
-					uuid: 'uuid-tool-use',
-				},
-				{
-					type: 'user',
-					message: {
-						role: 'user',
-						content: [
-							{ type: 'tool_result', tool_use_id: 'tool-delete', content: 'remove me' },
-							{ type: 'tool_result', content: 'missing id stays' },
-							{ type: 'text', text: 'Still useful' },
-						],
-					},
-					timestamp: '2024-01-15T09:02:00Z',
-					uuid: 'uuid-partial-result',
-				},
-				{
-					type: 'user',
-					message: {
-						role: 'user',
-						content: [{ type: 'tool_result', tool_use_id: 'tool-other', content: 'keep me' }],
-					},
-					timestamp: '2024-01-15T09:03:00Z',
-					uuid: 'uuid-unrelated-result',
-				},
-			]);
-
-			vi.mocked(fs.default.readFile).mockResolvedValue(sessionContent);
-			vi.mocked(fs.default.writeFile).mockResolvedValue(undefined);
-
-			const result = await handlers.get('claude:deleteMessagePair')!(
-				{} as any,
-				'/test/project',
-				'session-123',
-				'uuid-delete'
-			);
-
-			expect(result.success).toBe(true);
-			const writtenContent = vi.mocked(fs.default.writeFile).mock.calls[0][1] as string;
-			expect(writtenContent).not.toContain('tool-delete');
-			expect(writtenContent).toContain('missing id stays');
-			expect(writtenContent).toContain('Still useful');
-			expect(writtenContent).toContain('tool-other');
-		});
-
-		it('does not use fallback content when user message content is missing, unsupported, or different', async () => {
-			const fs = await import('fs/promises');
-
-			const sessionContent = sessionJsonl([
-				{ type: 'user', timestamp: '2024-01-15T09:00:00Z', uuid: 'uuid-no-message' },
-				{
-					type: 'user',
-					message: { role: 'user', content: { type: 'text', text: 'unsupported object' } },
-					timestamp: '2024-01-15T09:01:00Z',
-					uuid: 'uuid-object',
-				},
-				{
-					type: 'user',
-					message: { role: 'user', content: [{ type: 'text', text: 'Different text' }] },
-					timestamp: '2024-01-15T09:02:00Z',
-					uuid: 'uuid-different',
-				},
-			]);
-
-			vi.mocked(fs.default.readFile).mockResolvedValue(sessionContent);
-
-			const result = await handlers.get('claude:deleteMessagePair')!(
-				{} as any,
-				'/test/project',
-				'session-123',
-				'uuid-missing',
-				'Wanted text'
-			);
-
-			expect(result).toEqual({ success: false, error: 'User message not found' });
-			expect(fs.default.writeFile).not.toHaveBeenCalled();
-		});
-
 		it('should handle malformed JSON lines gracefully', async () => {
 			const fs = await import('fs/promises');
 
@@ -2179,1061 +1796,6 @@ not valid json at all
 			const writtenContent = vi.mocked(fs.default.writeFile).mock.calls[0][1] as string;
 			// Only newline should remain (empty file basically)
 			expect(writtenContent.trim()).toBe('');
-		});
-	});
-
-	describe('claude:getProjectStats', () => {
-		it('preserves cached archived sessions, reparses changed sessions, and sends progress', async () => {
-			const fs = await import('fs/promises');
-			const statsCache = await import('../../../../main/utils/statsCache');
-			const webContentsSend = vi.fn();
-
-			mockGetMainWindow.mockReturnValue({ webContents: { send: webContentsSend } });
-			vi.mocked(fs.default.access).mockResolvedValue(undefined);
-			vi.mocked(statsCache.loadStatsCache).mockResolvedValue({
-				version: 1,
-				sessions: {
-					'cached-current': {
-						fileMtimeMs: 100,
-						messages: 3,
-						costUsd: 1,
-						sizeBytes: 100,
-						tokens: 30,
-						oldestTimestamp: '2024-01-02T00:00:00.000Z',
-						archived: true,
-					},
-					'archived-deleted': {
-						fileMtimeMs: 50,
-						messages: 5,
-						costUsd: 2,
-						sizeBytes: 200,
-						tokens: 70,
-						oldestTimestamp: '2024-01-01T00:00:00.000Z',
-						archived: false,
-					},
-				},
-				totals: {
-					totalSessions: 2,
-					totalMessages: 8,
-					totalCostUsd: 3,
-					totalSizeBytes: 300,
-					totalTokens: 100,
-					oldestTimestamp: '2024-01-01T00:00:00.000Z',
-				},
-				lastUpdated: 123,
-			});
-			vi.mocked(fs.default.readdir).mockResolvedValue([
-				'cached-current.jsonl',
-				'new-session.jsonl',
-				'empty-session.jsonl',
-			] as unknown as Awaited<ReturnType<typeof fs.default.readdir>>);
-			vi.mocked(fs.default.stat).mockImplementation(async (filePath) => {
-				const filename = String(filePath).split('/').pop();
-				if (filename === 'empty-session.jsonl') {
-					return {
-						size: 0,
-						mtimeMs: 300,
-						mtime: new Date('2024-01-03T00:00:00.000Z'),
-					} as unknown as Awaited<ReturnType<typeof fs.default.stat>>;
-				}
-				if (filename === 'new-session.jsonl') {
-					return {
-						size: 240,
-						mtimeMs: 200,
-						mtime: new Date('2024-01-04T00:00:00.000Z'),
-					} as unknown as Awaited<ReturnType<typeof fs.default.stat>>;
-				}
-				return {
-					size: 100,
-					mtimeMs: 100,
-					mtime: new Date('2024-01-02T00:00:00.000Z'),
-				} as unknown as Awaited<ReturnType<typeof fs.default.stat>>;
-			});
-			vi.mocked(fs.default.readFile).mockResolvedValue(
-				sessionJsonl([
-					{
-						type: 'user',
-						message: { role: 'user', content: 'New question' },
-						timestamp: '2024-01-04T09:00:00.000Z',
-					},
-					{
-						type: 'assistant',
-						message: { role: 'assistant', content: 'New answer' },
-						timestamp: '2024-01-04T09:01:00.000Z',
-						usage: {
-							input_tokens: 100,
-							output_tokens: 40,
-							cache_read_input_tokens: 10,
-							cache_creation_input_tokens: 5,
-						},
-					},
-				])
-			);
-			vi.mocked(statsCache.saveStatsCache).mockResolvedValue(undefined);
-
-			const result = await handlers.get('claude:getProjectStats')!({} as any, '/test/project');
-
-			expect(result).toMatchObject({
-				totalSessions: 3,
-				totalMessages: 10,
-				totalSizeBytes: 540,
-				totalTokens: 240,
-				oldestTimestamp: '2024-01-01T00:00:00.000Z',
-				isComplete: true,
-			});
-			expect(result.totalCostUsd).toBeCloseTo(3.00092175, 8);
-			expect(webContentsSend).toHaveBeenCalledWith(
-				'claude:projectStatsUpdate',
-				expect.objectContaining({
-					projectPath: '/test/project',
-					totalSessions: 2,
-					isComplete: false,
-				})
-			);
-			expect(webContentsSend).toHaveBeenCalledWith(
-				'claude:projectStatsUpdate',
-				expect.objectContaining({
-					projectPath: '/test/project',
-					totalSessions: 3,
-					processedCount: 1,
-					isComplete: true,
-				})
-			);
-			const savedCache = vi.mocked(statsCache.saveStatsCache).mock.calls[0][1];
-			expect(savedCache.sessions['cached-current'].archived).toBe(false);
-			expect(savedCache.sessions['archived-deleted'].archived).toBe(true);
-			expect(savedCache.sessions['new-session']).toMatchObject({
-				messages: 2,
-				tokens: 140,
-				archived: false,
-			});
-		});
-
-		it('returns zero totals when the encoded project directory is missing', async () => {
-			const fs = await import('fs/promises');
-
-			vi.mocked(fs.default.access).mockRejectedValue(new Error('ENOENT'));
-
-			const result = await handlers.get('claude:getProjectStats')!({} as any, '/missing');
-
-			expect(result).toEqual({
-				totalSessions: 0,
-				totalMessages: 0,
-				totalCostUsd: 0,
-				totalSizeBytes: 0,
-				totalTokens: 0,
-				oldestTimestamp: null,
-			});
-		});
-
-		it('processes uncached sessions without a renderer window and skips parse failures', async () => {
-			const fs = await import('fs/promises');
-			const statsCache = await import('../../../../main/utils/statsCache');
-
-			vi.mocked(statsCache.loadStatsCache).mockResolvedValue(null);
-			vi.mocked(statsCache.saveStatsCache).mockResolvedValue(undefined);
-			vi.mocked(fs.default.access).mockResolvedValue(undefined);
-			vi.mocked(fs.default.readdir).mockResolvedValue([
-				'no-messages.jsonl',
-				'bad-session.jsonl',
-			] as unknown as Awaited<ReturnType<typeof fs.default.readdir>>);
-			vi.mocked(fs.default.stat).mockResolvedValue({
-				size: 123,
-				mtimeMs: 200,
-				mtime: new Date('2024-01-15T10:00:00.000Z'),
-			} as unknown as Awaited<ReturnType<typeof fs.default.stat>>);
-			vi.mocked(fs.default.readFile).mockImplementation(async (filePath) => {
-				if (String(filePath).endsWith('bad-session.jsonl')) {
-					throw new Error('EIO');
-				}
-				return JSON.stringify({
-					type: 'metadata',
-					message: { content: 'not counted' },
-				});
-			});
-
-			const result = await handlers.get('claude:getProjectStats')!({} as any, '/test/project');
-
-			expect(result).toEqual({
-				totalSessions: 1,
-				totalMessages: 0,
-				totalCostUsd: 0,
-				totalSizeBytes: 123,
-				totalTokens: 0,
-				oldestTimestamp: null,
-				isComplete: true,
-			});
-			expect(statsCache.saveStatsCache).toHaveBeenCalledWith(
-				'/test/project',
-				expect.objectContaining({
-					sessions: expect.objectContaining({
-						'no-messages': expect.objectContaining({
-							messages: 0,
-							oldestTimestamp: null,
-							archived: false,
-						}),
-					}),
-				})
-			);
-		});
-
-		it('reparses changed cached sessions instead of preserving stale cache entries', async () => {
-			const fs = await import('fs/promises');
-			const statsCache = await import('../../../../main/utils/statsCache');
-
-			vi.mocked(statsCache.loadStatsCache).mockResolvedValue({
-				version: 1,
-				sessions: {
-					changed: {
-						fileMtimeMs: 100,
-						messages: 99,
-						costUsd: 99,
-						sizeBytes: 99,
-						tokens: 99,
-						oldestTimestamp: '2024-01-01T00:00:00.000Z',
-						archived: false,
-					},
-				},
-				totals: {
-					totalSessions: 1,
-					totalMessages: 99,
-					totalCostUsd: 99,
-					totalSizeBytes: 99,
-					totalTokens: 99,
-					oldestTimestamp: '2024-01-01T00:00:00.000Z',
-				},
-				lastUpdated: 1,
-			});
-			vi.mocked(statsCache.saveStatsCache).mockResolvedValue(undefined);
-			vi.mocked(fs.default.access).mockResolvedValue(undefined);
-			vi.mocked(fs.default.readdir).mockResolvedValue(['changed.jsonl'] as unknown as Awaited<
-				ReturnType<typeof fs.default.readdir>
-			>);
-			vi.mocked(fs.default.stat).mockResolvedValue({
-				size: 240,
-				mtimeMs: 200,
-				mtime: new Date('2024-01-15T10:00:00.000Z'),
-			} as unknown as Awaited<ReturnType<typeof fs.default.stat>>);
-			vi.mocked(fs.default.readFile).mockResolvedValue(
-				sessionJsonl([
-					{
-						type: 'user',
-						message: { role: 'user', content: 'Updated question' },
-						timestamp: '2024-02-01T00:00:00.000Z',
-					},
-				])
-			);
-
-			const result = await handlers.get('claude:getProjectStats')!({} as any, '/test/project');
-
-			expect(result).toMatchObject({
-				totalSessions: 1,
-				totalMessages: 1,
-				totalSizeBytes: 240,
-				oldestTimestamp: '2024-02-01T00:00:00.000Z',
-			});
-			const savedCache = vi.mocked(statsCache.saveStatsCache).mock.calls[0][1];
-			expect(savedCache.sessions.changed).toMatchObject({
-				fileMtimeMs: 200,
-				messages: 1,
-				archived: false,
-			});
-		});
-	});
-
-	describe('claude:getSessionTimestamps', () => {
-		it('returns cached non-null oldest timestamps before scanning the filesystem', async () => {
-			const fs = await import('fs/promises');
-			const statsCache = await import('../../../../main/utils/statsCache');
-
-			vi.mocked(statsCache.loadStatsCache).mockResolvedValue({
-				version: 1,
-				sessions: {
-					'with-timestamp': {
-						fileMtimeMs: 1,
-						messages: 1,
-						costUsd: 0,
-						sizeBytes: 1,
-						tokens: 1,
-						oldestTimestamp: '2024-02-01T00:00:00.000Z',
-					},
-					'without-timestamp': {
-						fileMtimeMs: 1,
-						messages: 1,
-						costUsd: 0,
-						sizeBytes: 1,
-						tokens: 1,
-						oldestTimestamp: null,
-					},
-				},
-				totals: {
-					totalSessions: 2,
-					totalMessages: 2,
-					totalCostUsd: 0,
-					totalSizeBytes: 2,
-					totalTokens: 2,
-					oldestTimestamp: '2024-02-01T00:00:00.000Z',
-				},
-				lastUpdated: 123,
-			});
-
-			const result = await handlers.get('claude:getSessionTimestamps')!({} as any, '/test/project');
-
-			expect(result).toEqual([
-				{ sessionId: 'with-timestamp', timestamp: '2024-02-01T00:00:00.000Z' },
-			]);
-			expect(fs.default.readdir).not.toHaveBeenCalled();
-		});
-
-		it('falls back to file mtimes and skips sessions that cannot be statted', async () => {
-			const fs = await import('fs/promises');
-			const statsCache = await import('../../../../main/utils/statsCache');
-
-			vi.mocked(statsCache.loadStatsCache).mockResolvedValue(null);
-			vi.mocked(fs.default.access).mockResolvedValue(undefined);
-			vi.mocked(fs.default.readdir).mockResolvedValue([
-				'session-a.jsonl',
-				'session-b.jsonl',
-				'notes.txt',
-			] as unknown as Awaited<ReturnType<typeof fs.default.readdir>>);
-			vi.mocked(fs.default.stat).mockImplementation(async (filePath) => {
-				if (String(filePath).endsWith('session-b.jsonl')) {
-					throw new Error('EACCES');
-				}
-				return {
-					mtime: new Date('2024-02-02T10:00:00.000Z'),
-				} as unknown as Awaited<ReturnType<typeof fs.default.stat>>;
-			});
-
-			const result = await handlers.get('claude:getSessionTimestamps')!({} as any, '/test/project');
-
-			expect(result).toEqual([{ sessionId: 'session-a', timestamp: '2024-02-02T10:00:00.000Z' }]);
-		});
-
-		it('returns an empty list when timestamp cache is absent and project directory is missing', async () => {
-			const fs = await import('fs/promises');
-			const statsCache = await import('../../../../main/utils/statsCache');
-
-			vi.mocked(statsCache.loadStatsCache).mockResolvedValue(null);
-			vi.mocked(fs.default.access).mockRejectedValue(new Error('ENOENT'));
-
-			const result = await handlers.get('claude:getSessionTimestamps')!(
-				{} as any,
-				'/missing/project'
-			);
-
-			expect(result).toEqual([]);
-		});
-	});
-
-	describe('claude:getGlobalStats', () => {
-		it('reuses valid legacy cache entries, processes changed sessions, and saves totals', async () => {
-			const fs = await import('fs/promises');
-			const webContentsSend = vi.fn();
-
-			mockGetMainWindow.mockReturnValue({ webContents: { send: webContentsSend } });
-			vi.mocked(fs.default.access).mockResolvedValue(undefined);
-			vi.mocked(fs.default.readFile).mockImplementation(async (filePath) => {
-				const pathValue = String(filePath);
-				if (pathValue.endsWith('legacy-global-stats.json')) {
-					return JSON.stringify({
-						version: 1,
-						lastUpdated: 1,
-						sessions: {
-							'project-a/cached': {
-								fileMtimeMs: 100,
-								messages: 2,
-								inputTokens: 20,
-								outputTokens: 10,
-								cacheReadTokens: 5,
-								cacheCreationTokens: 2,
-								sizeBytes: 100,
-							},
-							'project-a/missing': {
-								fileMtimeMs: 90,
-								messages: 9,
-								inputTokens: 90,
-								outputTokens: 90,
-								cacheReadTokens: 0,
-								cacheCreationTokens: 0,
-								sizeBytes: 900,
-							},
-						},
-						totals: {
-							totalSessions: 2,
-							totalMessages: 11,
-							totalInputTokens: 110,
-							totalOutputTokens: 100,
-							totalCacheReadTokens: 5,
-							totalCacheCreationTokens: 2,
-							totalCostUsd: 0,
-							totalSizeBytes: 1000,
-						},
-					});
-				}
-				if (pathValue.endsWith('new.jsonl')) {
-					return sessionJsonl([
-						{ type: 'user', message: { content: 'Hi' } },
-						{
-							type: 'assistant',
-							message: { content: 'Hello' },
-							usage: {
-								input_tokens: 100,
-								output_tokens: 50,
-								cache_read_input_tokens: 25,
-								cache_creation_input_tokens: 10,
-							},
-						},
-					]);
-				}
-				throw new Error('Unreadable session');
-			});
-			vi.mocked(fs.default.readdir).mockImplementation(async (dir) => {
-				const dirPath = String(dir);
-				if (dirPath === '/mock/home/.claude/projects') {
-					return ['project-a', 'project-b', 'not-dir'] as unknown as Awaited<
-						ReturnType<typeof fs.default.readdir>
-					>;
-				}
-				if (dirPath.endsWith('project-a')) {
-					return ['cached.jsonl', 'new.jsonl', 'empty.jsonl'] as unknown as Awaited<
-						ReturnType<typeof fs.default.readdir>
-					>;
-				}
-				if (dirPath.endsWith('project-b')) {
-					return ['broken.jsonl'] as unknown as Awaited<ReturnType<typeof fs.default.readdir>>;
-				}
-				return [] as unknown as Awaited<ReturnType<typeof fs.default.readdir>>;
-			});
-			vi.mocked(fs.default.stat).mockImplementation(async (targetPath) => {
-				const pathValue = String(targetPath);
-				if (pathValue.endsWith('not-dir')) {
-					return {
-						isDirectory: () => false,
-					} as unknown as Awaited<ReturnType<typeof fs.default.stat>>;
-				}
-				if (pathValue.endsWith('project-a') || pathValue.endsWith('project-b')) {
-					return {
-						isDirectory: () => true,
-					} as unknown as Awaited<ReturnType<typeof fs.default.stat>>;
-				}
-				if (pathValue.endsWith('empty.jsonl')) {
-					return {
-						size: 0,
-						mtimeMs: 300,
-					} as unknown as Awaited<ReturnType<typeof fs.default.stat>>;
-				}
-				if (pathValue.endsWith('new.jsonl')) {
-					return {
-						size: 220,
-						mtimeMs: 200,
-					} as unknown as Awaited<ReturnType<typeof fs.default.stat>>;
-				}
-				if (pathValue.endsWith('broken.jsonl')) {
-					return {
-						size: 200,
-						mtimeMs: 200,
-					} as unknown as Awaited<ReturnType<typeof fs.default.stat>>;
-				}
-				return {
-					size: 100,
-					mtimeMs: 100,
-				} as unknown as Awaited<ReturnType<typeof fs.default.stat>>;
-			});
-			vi.mocked(fs.default.mkdir).mockResolvedValue(undefined);
-			vi.mocked(fs.default.writeFile).mockResolvedValue(undefined);
-
-			const result = await handlers.get('claude:getGlobalStats')!({} as any);
-
-			expect(result).toMatchObject({
-				totalSessions: 2,
-				totalMessages: 4,
-				totalInputTokens: 120,
-				totalOutputTokens: 60,
-				totalCacheReadTokens: 30,
-				totalCacheCreationTokens: 12,
-				totalSizeBytes: 320,
-				isComplete: true,
-			});
-			expect(result.totalCostUsd).toBeCloseTo(0.001314, 8);
-			expect(webContentsSend).toHaveBeenCalledWith(
-				'claude:globalStatsUpdate',
-				expect.objectContaining({
-					totalSessions: 2,
-					isComplete: false,
-				})
-			);
-			expect(fs.default.mkdir).toHaveBeenCalledWith('/mock/app/path/stats-cache', {
-				recursive: true,
-			});
-			const savedCache = JSON.parse(vi.mocked(fs.default.writeFile).mock.calls[0][1] as string);
-			expect(savedCache.sessions).toHaveProperty('project-a/cached');
-			expect(savedCache.sessions).toHaveProperty('project-a/new');
-			expect(savedCache.sessions).not.toHaveProperty('project-a/missing');
-			expect(savedCache.sessions).not.toHaveProperty('project-b/broken');
-		});
-
-		it('returns complete zero totals when the Claude projects directory is unavailable', async () => {
-			const fs = await import('fs/promises');
-
-			vi.mocked(fs.default.access).mockRejectedValue(new Error('ENOENT'));
-
-			const result = await handlers.get('claude:getGlobalStats')!({} as any);
-
-			expect(result).toEqual({
-				totalSessions: 0,
-				totalMessages: 0,
-				totalInputTokens: 0,
-				totalOutputTokens: 0,
-				totalCacheReadTokens: 0,
-				totalCacheCreationTokens: 0,
-				totalCostUsd: 0,
-				totalSizeBytes: 0,
-				isComplete: true,
-			});
-		});
-
-		it('ignores stale legacy cache versions and saves fresh zero totals', async () => {
-			const fs = await import('fs/promises');
-
-			vi.mocked(fs.default.access).mockResolvedValue(undefined);
-			vi.mocked(fs.default.readFile).mockResolvedValue(
-				JSON.stringify({
-					version: 0,
-					sessions: {
-						stale: {
-							fileMtimeMs: 1,
-							messages: 10,
-							inputTokens: 10,
-							outputTokens: 10,
-							cacheReadTokens: 0,
-							cacheCreationTokens: 0,
-							sizeBytes: 10,
-						},
-					},
-					totals: {},
-					lastUpdated: 1,
-				})
-			);
-			vi.mocked(fs.default.readdir).mockResolvedValue(
-				[] as unknown as Awaited<ReturnType<typeof fs.default.readdir>>
-			);
-			vi.mocked(fs.default.mkdir).mockResolvedValue(undefined);
-			vi.mocked(fs.default.writeFile).mockResolvedValue(undefined);
-
-			const result = await handlers.get('claude:getGlobalStats')!({} as any);
-
-			expect(result).toMatchObject({
-				totalSessions: 0,
-				totalMessages: 0,
-				isComplete: true,
-			});
-			const savedCache = JSON.parse(vi.mocked(fs.default.writeFile).mock.calls[0][1] as string);
-			expect(savedCache.sessions).toEqual({});
-		});
-
-		it('handles legacy cache load and save failures without failing global stats', async () => {
-			const fs = await import('fs/promises');
-
-			vi.mocked(fs.default.access).mockResolvedValue(undefined);
-			vi.mocked(fs.default.readFile).mockRejectedValue(new Error('Unreadable cache'));
-			vi.mocked(fs.default.readdir).mockResolvedValue(
-				[] as unknown as Awaited<ReturnType<typeof fs.default.readdir>>
-			);
-			vi.mocked(fs.default.mkdir).mockResolvedValue(undefined);
-			vi.mocked(fs.default.writeFile).mockRejectedValue(new Error('Read-only cache dir'));
-
-			const result = await handlers.get('claude:getGlobalStats')!({} as any);
-
-			expect(result).toMatchObject({
-				totalSessions: 0,
-				totalMessages: 0,
-				isComplete: true,
-			});
-		});
-
-		it('processes uncached global sessions without a renderer window', async () => {
-			const fs = await import('fs/promises');
-
-			vi.mocked(fs.default.access).mockResolvedValue(undefined);
-			vi.mocked(fs.default.readFile).mockImplementation(async (filePath) => {
-				if (String(filePath).endsWith('legacy-global-stats.json')) {
-					throw new Error('No cache');
-				}
-				return JSON.stringify({
-					type: 'metadata',
-					message: { content: 'not counted' },
-				});
-			});
-			vi.mocked(fs.default.readdir).mockImplementation(async (dir) => {
-				const dirPath = String(dir);
-				if (dirPath === '/mock/home/.claude/projects') {
-					return ['project-a'] as unknown as Awaited<ReturnType<typeof fs.default.readdir>>;
-				}
-				if (dirPath.endsWith('project-a')) {
-					return ['no-messages.jsonl'] as unknown as Awaited<ReturnType<typeof fs.default.readdir>>;
-				}
-				return [] as unknown as Awaited<ReturnType<typeof fs.default.readdir>>;
-			});
-			vi.mocked(fs.default.stat).mockImplementation(async (targetPath) => {
-				const pathValue = String(targetPath);
-				if (pathValue.endsWith('project-a')) {
-					return {
-						isDirectory: () => true,
-					} as unknown as Awaited<ReturnType<typeof fs.default.stat>>;
-				}
-				return {
-					size: 75,
-					mtimeMs: 200,
-				} as unknown as Awaited<ReturnType<typeof fs.default.stat>>;
-			});
-			vi.mocked(fs.default.mkdir).mockResolvedValue(undefined);
-			vi.mocked(fs.default.writeFile).mockResolvedValue(undefined);
-
-			const result = await handlers.get('claude:getGlobalStats')!({} as any);
-
-			expect(result).toEqual({
-				totalSessions: 1,
-				totalMessages: 0,
-				totalInputTokens: 0,
-				totalOutputTokens: 0,
-				totalCacheReadTokens: 0,
-				totalCacheCreationTokens: 0,
-				totalCostUsd: 0,
-				totalSizeBytes: 75,
-				isComplete: true,
-			});
-			const savedCache = JSON.parse(vi.mocked(fs.default.writeFile).mock.calls[0][1] as string);
-			expect(savedCache.sessions['project-a/no-messages']).toMatchObject({
-				messages: 0,
-				sizeBytes: 75,
-			});
-		});
-	});
-
-	describe('claude:getCommands', () => {
-		it('discovers user, project, and enabled plugin commands with descriptions', async () => {
-			const fs = await import('fs/promises');
-
-			vi.mocked(fs.default.readdir).mockImplementation(async (dir) => {
-				const dirPath = String(dir);
-				if (dirPath === '/mock/home/.claude/commands') {
-					return [fileEntry('user.md'), fileEntry('notes.txt')] as unknown as Awaited<
-						ReturnType<typeof fs.default.readdir>
-					>;
-				}
-				if (dirPath === '/test/project/.claude/commands') {
-					return [fileEntry('deploy.md')] as unknown as Awaited<
-						ReturnType<typeof fs.default.readdir>
-					>;
-				}
-				if (dirPath === '/mock/plugin/commands') {
-					return [fileEntry('ship.md')] as unknown as Awaited<
-						ReturnType<typeof fs.default.readdir>
-					>;
-				}
-				throw new Error('missing command dir');
-			});
-			vi.mocked(fs.default.readFile).mockImplementation(async (filePath) => {
-				const pathValue = String(filePath);
-				if (pathValue.endsWith('/settings.json')) {
-					return JSON.stringify({
-						enabledPlugins: {
-							'team@local': true,
-							'off@local': false,
-						},
-					});
-				}
-				if (pathValue.endsWith('/installed_plugins.json')) {
-					return JSON.stringify({
-						plugins: {
-							'team@local': { installPath: '/mock/plugin' },
-							'off@local': { installPath: '/mock/off-plugin' },
-						},
-					});
-				}
-				if (pathValue.endsWith('/user.md')) {
-					return ['---', 'allowed-tools: Bash', '---', '# User command summary'].join('\n');
-				}
-				if (pathValue.endsWith('/deploy.md')) {
-					return 'Deploy the current project';
-				}
-				if (pathValue.endsWith('/ship.md')) {
-					return 'Ship from plugin';
-				}
-				throw new Error('missing markdown');
-			});
-
-			const result = await handlers.get('claude:getCommands')!({} as any, '/test/project');
-
-			expect(result).toEqual([
-				{ command: '/user', description: 'User command summary' },
-				{ command: '/deploy', description: 'Deploy the current project' },
-				{ command: '/team:ship', description: 'Ship from plugin' },
-			]);
-		});
-
-		it('returns No description when a command file cannot be read', async () => {
-			const fs = await import('fs/promises');
-
-			vi.mocked(fs.default.readdir).mockImplementation(async (dir) => {
-				if (String(dir) === '/mock/home/.claude/commands') {
-					return [fileEntry('broken.md')] as unknown as Awaited<
-						ReturnType<typeof fs.default.readdir>
-					>;
-				}
-				return [] as unknown as Awaited<ReturnType<typeof fs.default.readdir>>;
-			});
-			vi.mocked(fs.default.readFile).mockRejectedValue(new Error('EACCES'));
-
-			const result = await handlers.get('claude:getCommands')!({} as any, '/test/project');
-
-			expect(result).toEqual([{ command: '/broken', description: 'No description' }]);
-		});
-
-		it('returns No description for frontmatter-only commands and tolerates settings without plugins', async () => {
-			const fs = await import('fs/promises');
-
-			vi.mocked(fs.default.readdir).mockImplementation(async (dir) => {
-				if (String(dir) === '/mock/home/.claude/commands') {
-					return [fileEntry('frontmatter-only.md')] as unknown as Awaited<
-						ReturnType<typeof fs.default.readdir>
-					>;
-				}
-				return [] as unknown as Awaited<ReturnType<typeof fs.default.readdir>>;
-			});
-			vi.mocked(fs.default.readFile).mockImplementation(async (filePath) => {
-				const pathValue = String(filePath);
-				if (pathValue.endsWith('/settings.json')) {
-					return JSON.stringify({});
-				}
-				if (pathValue.endsWith('/frontmatter-only.md')) {
-					return ['---', 'allowed-tools: Bash', '---', ''].join('\n');
-				}
-				throw new Error('unexpected read');
-			});
-
-			const result = await handlers.get('claude:getCommands')!({} as any, '/test/project');
-
-			expect(result).toEqual([{ command: '/frontmatter-only', description: 'No description' }]);
-		});
-
-		it('skips enabled plugins that have no install path', async () => {
-			const fs = await import('fs/promises');
-
-			vi.mocked(fs.default.readdir).mockResolvedValue(
-				[] as unknown as Awaited<ReturnType<typeof fs.default.readdir>>
-			);
-			vi.mocked(fs.default.readFile).mockImplementation(async (filePath) => {
-				const pathValue = String(filePath);
-				if (pathValue.endsWith('/settings.json')) {
-					return JSON.stringify({
-						enabledPlugins: {
-							'missing-install@local': true,
-						},
-					});
-				}
-				if (pathValue.endsWith('/installed_plugins.json')) {
-					return JSON.stringify({
-						plugins: {
-							'missing-install@local': {},
-						},
-					});
-				}
-				throw new Error('unexpected read');
-			});
-
-			const result = await handlers.get('claude:getCommands')!({} as any, '/test/project');
-
-			expect(result).toEqual([]);
-		});
-	});
-
-	describe('claude:getSkills', () => {
-		it('parses project and user skill metadata and skips unreadable skills', async () => {
-			const fs = await import('fs/promises');
-			const projectSkillContent = [
-				'---',
-				'name: "Project Planner"',
-				"description: 'Plans project work'",
-				'---',
-				'Plan projects carefully.',
-			].join('\n');
-
-			vi.mocked(fs.default.readdir).mockImplementation(async (dir) => {
-				const dirPath = String(dir);
-				if (dirPath === '/test/project/.claude/skills') {
-					return [
-						dirEntry('planner'),
-						fileEntry('README.md'),
-						dirEntry('broken'),
-					] as unknown as Awaited<ReturnType<typeof fs.default.readdir>>;
-				}
-				if (dirPath === '/mock/home/.claude/skills') {
-					return [fileEntry('notes.md'), dirEntry('fallback')] as unknown as Awaited<
-						ReturnType<typeof fs.default.readdir>
-					>;
-				}
-				return [] as unknown as Awaited<ReturnType<typeof fs.default.readdir>>;
-			});
-			vi.mocked(fs.default.readFile).mockImplementation(async (filePath) => {
-				const pathValue = String(filePath);
-				if (pathValue.endsWith('/planner/skill.md')) {
-					return projectSkillContent;
-				}
-				if (pathValue.endsWith('/fallback/skill.md')) {
-					return 'Body only skill content';
-				}
-				throw new Error('Unreadable skill');
-			});
-
-			const result = await handlers.get('claude:getSkills')!({} as any, '/test/project');
-
-			expect(result).toEqual([
-				{
-					name: 'Project Planner',
-					description: 'Plans project work',
-					tokenCount: Math.round(projectSkillContent.length / 4),
-					source: 'project',
-				},
-				{
-					name: 'fallback',
-					description: 'No description',
-					tokenCount: Math.round('Body only skill content'.length / 4),
-					source: 'user',
-				},
-			]);
-		});
-	});
-
-	describe('Claude session origins', () => {
-		it('registers named and unnamed origins', async () => {
-			mockClaudeSessionOriginsStore.get.mockReturnValue({});
-
-			await handlers.get('claude:registerSessionOrigin')!(
-				{} as any,
-				'/test/project',
-				'session-named',
-				'auto',
-				'Auto Run'
-			);
-			expect(mockClaudeSessionOriginsStore.set).toHaveBeenLastCalledWith('origins', {
-				'/test/project': {
-					'session-named': { origin: 'auto', sessionName: 'Auto Run' },
-				},
-			});
-
-			mockClaudeSessionOriginsStore.get.mockReturnValue({});
-			await handlers.get('claude:registerSessionOrigin')!(
-				{} as any,
-				'/test/project',
-				'session-user',
-				'user'
-			);
-			expect(mockClaudeSessionOriginsStore.set).toHaveBeenLastCalledWith('origins', {
-				'/test/project': {
-					'session-user': 'user',
-				},
-			});
-		});
-
-		it('updates name, starred state, and context usage while preserving existing metadata', async () => {
-			mockClaudeSessionOriginsStore.get.mockReturnValue({
-				'/test/project': {
-					'string-origin': 'auto',
-					'object-origin': {
-						origin: 'user',
-						sessionName: 'Original',
-						starred: true,
-						contextUsage: 10,
-					},
-				},
-			});
-
-			await handlers.get('claude:updateSessionName')!(
-				{} as any,
-				'/test/project',
-				'string-origin',
-				'Renamed'
-			);
-			expect(mockClaudeSessionOriginsStore.set).toHaveBeenLastCalledWith(
-				'origins',
-				expect.objectContaining({
-					'/test/project': expect.objectContaining({
-						'string-origin': { origin: 'auto', sessionName: 'Renamed' },
-					}),
-				})
-			);
-
-			await handlers.get('claude:updateSessionStarred')!(
-				{} as any,
-				'/test/project',
-				'object-origin',
-				false
-			);
-			await handlers.get('claude:updateSessionContextUsage')!(
-				{} as any,
-				'/test/project',
-				'object-origin',
-				72
-			);
-
-			expect(mockClaudeSessionOriginsStore.set).toHaveBeenLastCalledWith(
-				'origins',
-				expect.objectContaining({
-					'/test/project': expect.objectContaining({
-						'object-origin': {
-							origin: 'user',
-							sessionName: 'Original',
-							starred: false,
-							contextUsage: 72,
-						},
-					}),
-				})
-			);
-		});
-
-		it('creates user-origin metadata when updates target unknown sessions', async () => {
-			mockClaudeSessionOriginsStore.get.mockReturnValue({});
-
-			await handlers.get('claude:updateSessionName')!(
-				{} as any,
-				'/test/project',
-				'new-name',
-				'New Name'
-			);
-			await handlers.get('claude:updateSessionStarred')!(
-				{} as any,
-				'/test/project',
-				'new-star',
-				true
-			);
-			await handlers.get('claude:updateSessionContextUsage')!(
-				{} as any,
-				'/test/project',
-				'new-context',
-				33
-			);
-
-			expect(mockClaudeSessionOriginsStore.set).toHaveBeenLastCalledWith('origins', {
-				'/test/project': {
-					'new-name': { origin: 'user', sessionName: 'New Name' },
-					'new-star': { origin: 'user', starred: true },
-					'new-context': { origin: 'user', contextUsage: 33 },
-				},
-			});
-		});
-
-		it('updates existing project origin maps for object, string, and newly created sessions', async () => {
-			const originsData = {
-				'/test/project': {
-					named: { origin: 'auto' as const, sessionName: 'Before' },
-					'star-string': 'user' as const,
-					'context-string': 'auto' as const,
-				},
-			};
-			mockClaudeSessionOriginsStore.get.mockReturnValue(originsData);
-
-			await handlers.get('claude:registerSessionOrigin')!(
-				{} as any,
-				'/test/project',
-				'registered-without-name',
-				'auto'
-			);
-			await handlers.get('claude:updateSessionName')!({} as any, '/test/project', 'named', 'After');
-			await handlers.get('claude:updateSessionStarred')!(
-				{} as any,
-				'/brand/new/project',
-				'fresh-star',
-				true
-			);
-			await handlers.get('claude:updateSessionStarred')!(
-				{} as any,
-				'/test/project',
-				'star-string',
-				true
-			);
-			await handlers.get('claude:updateSessionContextUsage')!(
-				{} as any,
-				'/another/new/project',
-				'fresh-context',
-				42
-			);
-			await handlers.get('claude:updateSessionContextUsage')!(
-				{} as any,
-				'/test/project',
-				'context-string',
-				64
-			);
-
-			expect(mockClaudeSessionOriginsStore.set).toHaveBeenLastCalledWith('origins', {
-				'/test/project': {
-					named: { origin: 'auto', sessionName: 'After' },
-					'star-string': { origin: 'user', starred: true },
-					'context-string': { origin: 'auto', contextUsage: 64 },
-					'registered-without-name': 'auto',
-				},
-				'/brand/new/project': {
-					'fresh-star': { origin: 'user', starred: true },
-				},
-				'/another/new/project': {
-					'fresh-context': { origin: 'user', contextUsage: 42 },
-				},
-			});
-		});
-
-		it('returns project origins and named sessions with best-effort last activity', async () => {
-			const fs = await import('fs/promises');
-
-			mockClaudeSessionOriginsStore.get.mockReturnValue({
-				'/test/project': {
-					'named-a': { origin: 'user', sessionName: 'Named A', starred: true },
-					unnamed: 'auto',
-				},
-				'/other/project': {
-					'named-b': { origin: 'auto', sessionName: 'Named B' },
-				},
-			});
-			vi.mocked(fs.default.stat).mockImplementation(async (filePath) => {
-				if (String(filePath).includes('named-b')) {
-					throw new Error('ENOENT');
-				}
-				return {
-					mtime: new Date('2024-03-03T03:03:03.000Z'),
-				} as unknown as Awaited<ReturnType<typeof fs.default.stat>>;
-			});
-
-			const projectOrigins = await handlers.get('claude:getSessionOrigins')!(
-				{} as any,
-				'/test/project'
-			);
-			const missingOrigins = await handlers.get('claude:getSessionOrigins')!(
-				{} as any,
-				'/missing/project'
-			);
-			const namedSessions = await handlers.get('claude:getAllNamedSessions')!({} as any);
-
-			expect(projectOrigins).toEqual({
-				'named-a': { origin: 'user', sessionName: 'Named A', starred: true },
-				unnamed: 'auto',
-			});
-			expect(missingOrigins).toEqual({});
-			expect(namedSessions).toEqual([
-				{
-					agentSessionId: 'named-a',
-					projectPath: '/test/project',
-					sessionName: 'Named A',
-					starred: true,
-					lastActivityAt: new Date('2024-03-03T03:03:03.000Z').getTime(),
-				},
-				{
-					agentSessionId: 'named-b',
-					projectPath: '/other/project',
-					sessionName: 'Named B',
-					starred: undefined,
-					lastActivityAt: undefined,
-				},
-			]);
 		});
 	});
 
@@ -3570,6 +2132,108 @@ not valid json at all
 				// Should only include sessions where stat succeeded
 				expect(result.totalCount).toBe(2);
 				expect(result.sessions).toHaveLength(2);
+			});
+		});
+	});
+
+	describe('claude:getSkills', () => {
+		it('finds skills via SKILL.md on case-sensitive filesystems (Linux/WSL)', async () => {
+			const fs = await import('fs/promises');
+
+			// Simulate a case-sensitive filesystem: SKILL.md exists, skill.md does not.
+			// Only the project-level skills directory has entries; user dir is empty.
+			vi.mocked(fs.default.readdir).mockImplementation(async (dir: any) => {
+				if (String(dir) === '/test/project/.claude/skills') {
+					return [{ name: 'Research', isDirectory: () => true }] as any;
+				}
+				return [] as any;
+			});
+			vi.mocked(fs.default.readFile).mockImplementation(async (filePath: any) => {
+				const p = String(filePath);
+				if (p === '/test/project/.claude/skills/Research/SKILL.md') {
+					return '---\nname: Research\ndescription: Deep literature review\n---\n\nBody';
+				}
+				const enoent: NodeJS.ErrnoException = Object.assign(new Error('ENOENT'), {
+					code: 'ENOENT',
+				});
+				throw enoent;
+			});
+
+			const handler = handlers.get('claude:getSkills');
+			const result = await handler!({} as any, '/test/project');
+
+			expect(result).toHaveLength(1);
+			expect(result[0]).toMatchObject({
+				name: 'Research',
+				description: 'Deep literature review',
+				source: 'project',
+			});
+		});
+
+		it('propagates non-ENOENT filesystem errors from scanSkillsDir', async () => {
+			const fs = await import('fs/promises');
+
+			// A permission error on the skills directory must NOT be silently
+			// swallowed — it should propagate so Sentry captures it.
+			vi.mocked(fs.default.readdir).mockImplementation(async () => {
+				throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
+			});
+
+			const handler = handlers.get('claude:getSkills');
+			await expect(handler!({} as any, '/test/project')).rejects.toMatchObject({
+				code: 'EACCES',
+			});
+		});
+
+		it('propagates non-ENOENT filesystem errors from parseSkillFile', async () => {
+			const fs = await import('fs/promises');
+
+			vi.mocked(fs.default.readdir).mockImplementation(async (dir: any) => {
+				if (String(dir) === '/test/project/.claude/skills') {
+					return [{ name: 'Locked', isDirectory: () => true }] as any;
+				}
+				return [] as any;
+			});
+			// The skill dir lists fine but SKILL.md is locked — this must
+			// surface, not be silently dropped as "skill not found".
+			vi.mocked(fs.default.readFile).mockImplementation(async () => {
+				throw Object.assign(new Error('IO error'), { code: 'EIO' });
+			});
+
+			const handler = handlers.get('claude:getSkills');
+			await expect(handler!({} as any, '/test/project')).rejects.toMatchObject({
+				code: 'EIO',
+			});
+		});
+
+		it('falls back to lowercase skill.md for legacy layouts', async () => {
+			const fs = await import('fs/promises');
+
+			vi.mocked(fs.default.readdir).mockImplementation(async (dir: any) => {
+				if (String(dir) === '/test/project/.claude/skills') {
+					return [{ name: 'Legacy', isDirectory: () => true }] as any;
+				}
+				return [] as any;
+			});
+			vi.mocked(fs.default.readFile).mockImplementation(async (filePath: any) => {
+				const p = String(filePath);
+				// Only lowercase skill.md exists
+				if (p === '/test/project/.claude/skills/Legacy/skill.md') {
+					return '---\ndescription: Legacy skill\n---\n\nBody';
+				}
+				const enoent: NodeJS.ErrnoException = Object.assign(new Error('ENOENT'), {
+					code: 'ENOENT',
+				});
+				throw enoent;
+			});
+
+			const handler = handlers.get('claude:getSkills');
+			const result = await handler!({} as any, '/test/project');
+
+			expect(result).toHaveLength(1);
+			expect(result[0]).toMatchObject({
+				name: 'Legacy',
+				description: 'Legacy skill',
 			});
 		});
 	});

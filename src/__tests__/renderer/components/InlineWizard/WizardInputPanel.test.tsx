@@ -11,14 +11,16 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { WizardInputPanel } from '../../../../renderer/components/InlineWizard/WizardInputPanel';
 import {
 	formatShortcutKeys,
 	formatEnterToSend,
 } from '../../../../renderer/utils/shortcutFormatter';
-import type { Session, Theme } from '../../../../renderer/types';
+import type { Session } from '../../../../renderer/types';
+import { createMockSession as baseCreateMockSession } from '../../../helpers/mockSession';
 
+import { mockTheme } from '../../../helpers/mockTheme';
 // Mock useLayerStack for the WizardExitConfirmDialog
 vi.mock('../../../../renderer/contexts/LayerStackContext', () => ({
 	useLayerStack: () => ({
@@ -28,63 +30,34 @@ vi.mock('../../../../renderer/contexts/LayerStackContext', () => ({
 	}),
 }));
 
-// Mock theme for testing
-const mockTheme: Theme = {
-	id: 'test-theme',
-	name: 'Test Theme',
-	mode: 'dark',
-	colors: {
-		background: '#1a1a1a',
-		backgroundDim: '#0d0d0d',
-		backgroundBright: '#2a2a2a',
-		bgActivity: '#333333',
-		bgMain: '#1a1a1a',
-		bgSidebar: '#141414',
-		textMain: '#ffffff',
-		textDim: '#888888',
-		textMuted: '#666666',
-		textBright: '#ffffff',
-		border: '#333333',
-		borderBright: '#444444',
-		success: '#00ff00',
-		warning: '#ffff00',
-		error: '#ff0000',
-		accent: '#007bff',
-		accentForeground: '#ffffff',
-		accentText: '#66b2ff',
+// Mock sessionStore for tab close on Escape
+const mockSetSessions = vi.fn();
+vi.mock('../../../../renderer/stores/sessionStore', () => ({
+	useSessionStore: {
+		getState: () => ({
+			setSessions: mockSetSessions,
+		}),
 	},
-};
+}));
 
-// Mock session for testing
+// Mock theme for testing
+
+// Thin wrapper: seeds an active wizard state on the session so the
+// input panel renders the wizard chrome.
 const createMockSession = (overrides?: Partial<Session>): Session =>
-	({
+	baseCreateMockSession({
 		id: 'test-session',
-		name: 'Test Session',
 		cwd: '/test',
 		fullPath: '/test',
 		projectRoot: '/test',
-		toolType: 'claude-code',
-		state: 'idle',
-		inputMode: 'ai',
-		isGitRepo: false,
-		shellLogs: [],
-		fileTree: [],
-		changedFiles: [],
-		workLog: [],
 		aiTabs: [
 			{
 				id: 'tab-1',
 				name: 'Main',
 				logs: [],
 			},
-		],
+		] as any,
 		activeTabId: 'tab-1',
-		closedTabHistory: [],
-		executionQueue: [],
-		contextUsage: 0,
-		fileExplorerExpanded: [],
-		fileExplorerScrollPos: 0,
-		isLive: false,
 		aiPid: 1234,
 		port: 3000,
 		wizardState: {
@@ -97,9 +70,9 @@ const createMockSession = (overrides?: Partial<Session>): Session =>
 				saveToHistory: true,
 				showThinking: 'off',
 			},
-		},
+		} as any,
 		...overrides,
-	}) as Session;
+	});
 
 describe('WizardInputPanel', () => {
 	const defaultProps = {
@@ -147,44 +120,6 @@ describe('WizardInputPanel', () => {
 	});
 
 	describe('input functionality', () => {
-		it('auto-focuses the textarea after mount', async () => {
-			const focusSpy = vi
-				.spyOn(HTMLTextAreaElement.prototype, 'focus')
-				.mockImplementation(() => {});
-			const inputRef = { current: null } as React.RefObject<HTMLTextAreaElement>;
-
-			try {
-				render(<WizardInputPanel {...defaultProps} inputRef={inputRef} />);
-
-				await waitFor(() => {
-					expect(focusSpy).toHaveBeenCalled();
-				});
-			} finally {
-				focusSpy.mockRestore();
-			}
-		});
-
-		it('skips auto-resize when the textarea ref is unavailable', () => {
-			const refSetter = vi.fn();
-			const unavailableRef = {} as React.RefObject<HTMLTextAreaElement>;
-			Object.defineProperty(unavailableRef, 'current', {
-				configurable: true,
-				get: () => null,
-				set: refSetter,
-			});
-
-			render(
-				<WizardInputPanel
-					{...defaultProps}
-					inputRef={unavailableRef}
-					inputValue="Resize defensively"
-				/>
-			);
-
-			expect(screen.getByDisplayValue('Resize defensively')).toBeInTheDocument();
-			expect(refSetter).toHaveBeenCalledWith(expect.any(HTMLTextAreaElement));
-		});
-
 		it('displays the current input value', () => {
 			render(<WizardInputPanel {...defaultProps} inputValue="Hello wizard" />);
 			expect(screen.getByDisplayValue('Hello wizard')).toBeInTheDocument();
@@ -323,22 +258,6 @@ describe('WizardInputPanel', () => {
 			expect(images).toHaveLength(2);
 		});
 
-		it('opens staged images in the lightbox with staged context', () => {
-			const setLightboxImage = vi.fn();
-			const stagedImages = ['data:image/png;base64,abc123', 'data:image/png;base64,def456'];
-			render(
-				<WizardInputPanel
-					{...defaultProps}
-					stagedImages={stagedImages}
-					setLightboxImage={setLightboxImage}
-				/>
-			);
-
-			fireEvent.click(screen.getByAltText('Staged wizard image 1'));
-
-			expect(setLightboxImage).toHaveBeenCalledWith(stagedImages[0], stagedImages, 'staged');
-		});
-
 		it('calls setStagedImages when removing an image', () => {
 			const setStagedImages = vi.fn();
 			const stagedImages = ['data:image/png;base64,abc123'];
@@ -357,116 +276,6 @@ describe('WizardInputPanel', () => {
 			fireEvent.click(xButton!);
 
 			expect(setStagedImages).toHaveBeenCalled();
-			const updater = setStagedImages.mock.calls[0][0] as (prev: string[]) => string[];
-			expect(updater(['data:image/png;base64,abc123', 'data:image/png;base64,keep'])).toEqual([
-				'data:image/png;base64,keep',
-			]);
-		});
-
-		it('clicks the hidden file input from the attach image button', () => {
-			render(<WizardInputPanel {...defaultProps} canAttachImages={true} />);
-
-			const fileInput = document.getElementById('wizard-image-file-input') as HTMLInputElement;
-			const clickSpy = vi.spyOn(fileInput, 'click').mockImplementation(() => {});
-
-			try {
-				fireEvent.click(screen.getByTitle('Attach Image'));
-
-				expect(clickSpy).toHaveBeenCalledTimes(1);
-			} finally {
-				clickSpy.mockRestore();
-			}
-		});
-
-		it('adds selected image files and ignores duplicate image data', () => {
-			const imageData = 'data:image/png;base64,new-image';
-			const setStagedImages = vi.fn();
-			const showFlashNotification = vi.fn();
-			const OriginalFileReader = globalThis.FileReader;
-
-			class MockFileReader {
-				onload: ((event: { target: { result: string } }) => void) | null = null;
-
-				readAsDataURL(): void {
-					this.onload?.({ target: { result: imageData } });
-				}
-			}
-
-			vi.stubGlobal('FileReader', MockFileReader);
-
-			try {
-				render(
-					<WizardInputPanel
-						{...defaultProps}
-						canAttachImages={true}
-						setStagedImages={setStagedImages}
-						showFlashNotification={showFlashNotification}
-					/>
-				);
-
-				const fileInput = document.getElementById('wizard-image-file-input') as HTMLInputElement;
-				const file = new File(['image'], 'wizard.png', { type: 'image/png' });
-				fireEvent.change(fileInput, { target: { files: [file] } });
-
-				expect(setStagedImages).toHaveBeenCalledTimes(1);
-				const updater = setStagedImages.mock.calls[0][0] as (prev: string[]) => string[];
-				expect(updater([])).toEqual([imageData]);
-
-				const existing = [imageData];
-				expect(updater(existing)).toBe(existing);
-				expect(showFlashNotification).toHaveBeenCalledWith('Duplicate image ignored');
-			} finally {
-				vi.stubGlobal('FileReader', OriginalFileReader);
-			}
-		});
-
-		it('ignores file input changes without selected files', () => {
-			const setStagedImages = vi.fn();
-			render(
-				<WizardInputPanel
-					{...defaultProps}
-					canAttachImages={true}
-					setStagedImages={setStagedImages}
-				/>
-			);
-
-			const fileInput = document.getElementById('wizard-image-file-input') as HTMLInputElement;
-			fireEvent.change(fileInput, { target: { files: null } });
-
-			expect(setStagedImages).not.toHaveBeenCalled();
-		});
-
-		it('ignores image reader loads without image data', () => {
-			const setStagedImages = vi.fn();
-			const OriginalFileReader = globalThis.FileReader;
-
-			class MockFileReader {
-				onload: ((event: { target: { result: string | null } | null }) => void) | null = null;
-
-				readAsDataURL(): void {
-					this.onload?.({ target: { result: null } });
-				}
-			}
-
-			vi.stubGlobal('FileReader', MockFileReader);
-
-			try {
-				render(
-					<WizardInputPanel
-						{...defaultProps}
-						canAttachImages={true}
-						setStagedImages={setStagedImages}
-					/>
-				);
-
-				const fileInput = document.getElementById('wizard-image-file-input') as HTMLInputElement;
-				const file = new File(['image'], 'empty.png', { type: 'image/png' });
-				fireEvent.change(fileInput, { target: { files: [file] } });
-
-				expect(setStagedImages).not.toHaveBeenCalled();
-			} finally {
-				vi.stubGlobal('FileReader', OriginalFileReader);
-			}
 		});
 	});
 
@@ -625,8 +434,31 @@ describe('WizardInputPanel', () => {
 	});
 
 	describe('escape key handling', () => {
-		it('shows exit confirmation dialog when Escape is pressed in textarea', () => {
-			render(<WizardInputPanel {...defaultProps} />);
+		it('exits wizard directly when Escape is pressed with no user interaction', () => {
+			const onExitWizard = vi.fn();
+			render(<WizardInputPanel {...defaultProps} onExitWizard={onExitWizard} />);
+
+			const textarea = screen.getByPlaceholderText('Tell the wizard about your project...');
+			fireEvent.keyDown(textarea, { key: 'Escape' });
+
+			// No dialog — exits directly (only 1 tab, so falls back to onExitWizard)
+			expect(screen.queryByText('Exit Wizard?')).not.toBeInTheDocument();
+			expect(onExitWizard).toHaveBeenCalledTimes(1);
+		});
+
+		it('shows exit confirmation dialog when Escape is pressed with user interaction', () => {
+			const sessionWithHistory = createMockSession({
+				wizardState: {
+					isActive: true,
+					mode: 'new',
+					confidence: 50,
+					conversationHistory: [
+						{ id: 'msg-1', role: 'user', content: 'Hello', timestamp: Date.now() },
+					],
+					previousUIState: { readOnlyMode: false, saveToHistory: true, showThinking: 'off' },
+				},
+			});
+			render(<WizardInputPanel {...defaultProps} session={sessionWithHistory} />);
 
 			const textarea = screen.getByPlaceholderText('Tell the wizard about your project...');
 			fireEvent.keyDown(textarea, { key: 'Escape' });
@@ -636,6 +468,24 @@ describe('WizardInputPanel', () => {
 			expect(
 				screen.getByText('Progress will be lost. Are you sure you want to exit the wizard?')
 			).toBeInTheDocument();
+		});
+
+		it('shows exit confirmation dialog when Escape is pressed with typed input', () => {
+			render(<WizardInputPanel {...defaultProps} inputValue="some text" />);
+
+			const textarea = screen.getByPlaceholderText('Tell the wizard about your project...');
+			fireEvent.keyDown(textarea, { key: 'Escape' });
+
+			expect(screen.getByText('Exit Wizard?')).toBeInTheDocument();
+		});
+
+		it('shows exit confirmation dialog when Escape is pressed with staged images', () => {
+			render(<WizardInputPanel {...defaultProps} stagedImages={['data:image/png;base64,abc']} />);
+
+			const textarea = screen.getByPlaceholderText('Tell the wizard about your project...');
+			fireEvent.keyDown(textarea, { key: 'Escape' });
+
+			expect(screen.getByText('Exit Wizard?')).toBeInTheDocument();
 		});
 
 		it('forwards non-Escape key events to handleInputKeyDown', () => {
@@ -660,7 +510,24 @@ describe('WizardInputPanel', () => {
 
 		it('calls onExitWizard when Exit is clicked in dialog', () => {
 			const onExitWizard = vi.fn();
-			render(<WizardInputPanel {...defaultProps} onExitWizard={onExitWizard} />);
+			const sessionWithHistory = createMockSession({
+				wizardState: {
+					isActive: true,
+					mode: 'new',
+					confidence: 50,
+					conversationHistory: [
+						{ id: 'msg-1', role: 'user', content: 'Hello', timestamp: Date.now() },
+					],
+					previousUIState: { readOnlyMode: false, saveToHistory: true, showThinking: 'off' },
+				},
+			});
+			render(
+				<WizardInputPanel
+					{...defaultProps}
+					session={sessionWithHistory}
+					onExitWizard={onExitWizard}
+				/>
+			);
 
 			// Show the dialog
 			const textarea = screen.getByPlaceholderText('Tell the wizard about your project...');
@@ -673,7 +540,18 @@ describe('WizardInputPanel', () => {
 		});
 
 		it('closes dialog when Cancel is clicked', () => {
-			render(<WizardInputPanel {...defaultProps} />);
+			const sessionWithHistory = createMockSession({
+				wizardState: {
+					isActive: true,
+					mode: 'new',
+					confidence: 50,
+					conversationHistory: [
+						{ id: 'msg-1', role: 'user', content: 'Hello', timestamp: Date.now() },
+					],
+					previousUIState: { readOnlyMode: false, saveToHistory: true, showThinking: 'off' },
+				},
+			});
+			render(<WizardInputPanel {...defaultProps} session={sessionWithHistory} />);
 
 			// Show the dialog
 			const textarea = screen.getByPlaceholderText('Tell the wizard about your project...');

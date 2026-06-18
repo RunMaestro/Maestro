@@ -85,15 +85,18 @@ function isExpandable(value: unknown): value is object {
 /**
  * Get preview text for collapsed objects/arrays
  */
-function getPreview(value: object): string {
+function getPreview(value: unknown): string {
 	if (Array.isArray(value)) {
 		return `Array(${value.length})`;
 	}
-	const keys = Object.keys(value);
-	if (keys.length <= 3) {
-		return `{ ${keys.join(', ')} }`;
+	if (value !== null && typeof value === 'object') {
+		const keys = Object.keys(value);
+		if (keys.length <= 3) {
+			return `{ ${keys.join(', ')} }`;
+		}
+		return `{ ${keys.slice(0, 3).join(', ')}, ... }`;
 	}
-	return `{ ${keys.slice(0, 3).join(', ')}, ... }`;
+	return '';
 }
 
 /**
@@ -151,8 +154,10 @@ const JsonNode = memo(
 		const indent = depth * 16;
 
 		const toggleExpand = useCallback(() => {
-			setIsExpanded((prev) => !prev);
-		}, []);
+			if (expandable) {
+				setIsExpanded((prev) => !prev);
+			}
+		}, [expandable]);
 
 		// Render primitive value
 		if (!expandable) {

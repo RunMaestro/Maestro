@@ -1,32 +1,39 @@
 # Testing Current Status
 
-Last updated: 2026-06-17 22:25 EDT.
+Last updated: 2026-06-17 23:48 EDT.
 
 ## Verdict
 
-The defined active test campaign is complete and green on the current branch, `codex/full-e2e-coverage-campaign`.
+The pre-upstream-sync checkpoint was green, but the campaign is not final on the current upstream-sync tree.
 
-- Unit/enforced coverage: passing at 100%.
-- Integration: passing, including the SSH provider integration path.
-- E2E: passing in the final Phase 6 two-shard Playwright/Electron proof.
-- Active E2E runtime skips in the Phase 6 final proof: 0.
+- Current sync work: `upstream/main` at `7eca62d07` is being merged into `codex/full-e2e-coverage-campaign`.
+- Static/pre-push gate on the clean upstream-shaped tree: passed through format, TypeScript, ESLint, and unit test execution.
+- Unit suite on the upstream-shaped tree: 1,073 files passed, 1 skipped; 31,219 tests passed, 108 skipped.
+- Enforced unit coverage on the upstream-shaped tree: failing the 100% global thresholds.
+- Integration and E2E have not been rerun after the upstream-sync tree change.
 
-Caveat: "complete" means the campaign's defined active surface and enforced coverage gates. The known non-active residuals at the bottom of this document are still intentionally outside the active E2E scope because they require live external accounts, real OS handoff state, configured remote services, or product work not covered by deterministic local tests.
+Current blocking gaps before finality:
+
+- Unit coverage must return to 100% statements/branches/functions/lines on the upstream-synced tree.
+- Unit skipped tests must be eliminated or converted into active passing coverage.
+- Full integration, including the SSH provider path, must be rerun with 0 skips on the upstream-synced tree.
+- Full E2E Phase 6 equivalent shards must be rerun with 0 failed and 0 skipped tests on the upstream-synced tree.
+
+The known non-active residuals at the bottom of this document remain intentionally outside the active E2E scope because they require live external accounts, real OS handoff state, configured remote services, or product work not covered by deterministic local tests.
 
 ## Latest Verification
 
-| Gate                                   |                                                                            Result | Evidence                                                                                                                          |
-| -------------------------------------- | --------------------------------------------------------------------------------: | --------------------------------------------------------------------------------------------------------------------------------- |
-| Unit coverage, `npm run test:coverage` |   731 files passed, 28,679 tests passed, 100% statements/branches/functions/lines | `/tmp/maestro-final-test-coverage-20260617222450.log`                                                                             |
-| E2E build before final shards          |                                                passed with existing warnings only | `/tmp/maestro-e2e-build-current-20260617194846.log`                                                                               |
-| Phase 6 final E2E shard A              |                                                   985 passed, 0 failed, 0 skipped | `/tmp/maestro-phase6-final-a.log`, [e2e/execution-results/phase6-final-shard-a.md](e2e/execution-results/phase6-final-shard-a.md) |
-| Phase 6 final E2E shard B              |                                                 1,985 passed, 0 failed, 0 skipped | `/tmp/maestro-phase6-final-b.log`, [e2e/execution-results/phase6-final-shard-b.md](e2e/execution-results/phase6-final-shard-b.md) |
-| Combined Phase 6 final E2E runtime     |                                                 2,970 passed, 0 failed, 0 skipped | `e2e-results/phase6-final-a`, `e2e-results/phase6-final-b`                                                                        |
-| Phase 6 final failure artifacts        |                        0 failed screenshots, 0 error contexts, 0 traces, 0 videos | `e2e-results/phase6-final-a`, `e2e-results/phase6-final-b`                                                                        |
-| Full integration with SSH enabled      |                                             539 files passed, 12,687 tests passed | `/tmp/maestro-integration-ssh-full-20260617220145.log`                                                                            |
-| Integration skip/failure audit         | 0 skip markers, 0 SSH-not-configured markers, 0 `FAIL`, 0 `fn3 is not a function` | `/tmp/maestro-integration-ssh-full-20260617220145.log`                                                                            |
+| Gate                                           |                                                                                  Result | Evidence                                                         |
+| ---------------------------------------------- | --------------------------------------------------------------------------------------: | ---------------------------------------------------------------- |
+| Upstream-shaped `npm run validate:push`        |                   format, TypeScript, ESLint, and unit execution passed; 108 unit skips | `/tmp/maestro-phase7-validate-push-20260617234110.log`           |
+| Upstream-shaped `npm run test:coverage`        | failed 100% thresholds: 66% statements, 60.78% branches, 63.25% functions, 67.05% lines | `/tmp/maestro-upstream-overlay-test-coverage-20260617232642.log` |
+| Pre-upstream-sync unit coverage checkpoint     |         731 files passed, 28,679 tests passed, 100% statements/branches/functions/lines | `/tmp/maestro-final-test-coverage-20260617222450.log`            |
+| Pre-upstream-sync full integration with SSH    |                                                   539 files passed, 12,687 tests passed | `/tmp/maestro-integration-ssh-full-20260617220145.log`           |
+| Pre-upstream-sync final Phase 6 E2E shard A    |                                                         985 passed, 0 failed, 0 skipped | `/tmp/maestro-phase6-final-a.log`                                |
+| Pre-upstream-sync final Phase 6 E2E shard B    |                                                       1,985 passed, 0 failed, 0 skipped | `/tmp/maestro-phase6-final-b.log`                                |
+| Pre-upstream-sync combined Phase 6 E2E runtime |                                                       2,970 passed, 0 failed, 0 skipped | `e2e-results/phase6-final-a`, `e2e-results/phase6-final-b`       |
 
-The temporary local SSH daemon used for integration verification was removed after the successful run.
+The temporary local SSH daemon used for the pre-sync integration verification was removed after that successful run.
 
 ## E2E Count Reconciliation
 

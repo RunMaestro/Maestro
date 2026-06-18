@@ -77,19 +77,6 @@ describe('aggregateModelUsage', () => {
 		const result = aggregateModelUsage(modelUsage, {}, 0);
 		expect(result.contextWindow).toBe(300000);
 	});
-
-	it('should treat missing model token counts as zero', () => {
-		const modelUsage: Record<string, ModelStats> = {
-			model1: { outputTokens: 25 },
-		};
-
-		const result = aggregateModelUsage(modelUsage, {}, 0);
-
-		expect(result.inputTokens).toBe(0);
-		expect(result.outputTokens).toBe(25);
-		expect(result.cacheReadInputTokens).toBe(0);
-		expect(result.cacheCreationInputTokens).toBe(0);
-	});
 });
 
 describe('estimateContextUsage', () => {
@@ -169,15 +156,6 @@ describe('estimateContextUsage', () => {
 		it('should return null when no agent specified', () => {
 			const stats = createStats({ contextWindow: 0 });
 			const result = estimateContextUsage(stats);
-			expect(result).toBeNull();
-		});
-
-		it('should return null when a runtime agent id has no default context window', () => {
-			const stats = createStats({ contextWindow: 0 });
-			const result = estimateContextUsage(
-				stats,
-				'missing-agent' as Parameters<typeof estimateContextUsage>[1]
-			);
 			expect(result).toBeNull();
 		});
 

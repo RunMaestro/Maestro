@@ -1,249 +1,267 @@
-import { EventEmitter } from 'events';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { DataBufferManager } from '../../../../main/process-manager/handlers/DataBufferManager';
-import type { ManagedProcess, ProcessConfig } from '../../../../main/process-manager/types';
+/**
+ * Tests for src/main/process-manager/spawners/PtySpawner.ts
+ *
+ * Key behaviors verified:
+ * - Shell terminal: uses `shell` field with -l/-i flags (login+interactive)
+ * - SSH terminal: when no `shell` is provided, uses `command`/`args` directly
+ *   (this is the fix for SSH terminal tabs connecting to remote hosts)
+ * - AI agent PTY: uses `command`/`args` directly (toolType !== 'terminal')
+ */
 
-const mocks = vi.hoisted(() => ({
-	ptySpawn: vi.fn(),
-	stripControlSequences: vi.fn((data: string) => data),
-	buildPtyTerminalEnv: vi.fn(),
-	buildChildProcessEnv: vi.fn(),
-	isWindows: vi.fn(),
-	logger: {
-		debug: vi.fn(),
-		error: vi.fn(),
-		info: vi.fn(),
-		warn: vi.fn(),
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { EventEmitter } from 'events';
+
+// ── Mocks ──────────────────────────────────────────────────────────────────
+
+const mockPtySpawn = vi.fn();
+const mockPtyProcess = {
+	pid: 99999,
+	onData: vi.fn(),
+	onExit: vi.fn(),
+	write: vi.fn(),
+	resize: vi.fn(),
+	kill: vi.fn(),
+};
+
+vi.mock('node-pty', () => ({
+	spawn: (...args: unknown[]) => {
+		mockPtySpawn(...args);
+		return mockPtyProcess;
 	},
 }));
 
-vi.mock('node-pty', () => ({
-	spawn: mocks.ptySpawn,
+vi.mock('../../../../main/utils/logger', () => ({
+	logger: {
+		info: vi.fn(),
+		warn: vi.fn(),
+		error: vi.fn(),
+		debug: vi.fn(),
+	},
 }));
 
 vi.mock('../../../../main/utils/terminalFilter', () => ({
-	stripControlSequences: mocks.stripControlSequences,
-}));
-
-vi.mock('../../../../main/utils/logger', () => ({
-	logger: mocks.logger,
+	stripControlSequences: vi.fn((data: string) => data),
 }));
 
 vi.mock('../../../../main/process-manager/utils/envBuilder', () => ({
-	buildPtyTerminalEnv: mocks.buildPtyTerminalEnv,
-	buildChildProcessEnv: mocks.buildChildProcessEnv,
+	buildPtyTerminalEnv: vi.fn(() => ({ TERM: 'xterm-256color' })),
+	buildChildProcessEnv: vi.fn(() => ({ PATH: '/usr/bin' })),
+	collectMaestroEnvVars: vi.fn(() => ({})),
 }));
 
 vi.mock('../../../../shared/platformDetection', () => ({
-	isWindows: mocks.isWindows,
+	isWindows: vi.fn(() => false),
 }));
 
+vi.mock('../../../../main/process-manager/utils/pathResolver', () => ({
+	resolveShellPath: vi.fn((shell: string) => shell),
+}));
+
+// ── Imports (after mocks) ──────────────────────────────────────────────────
+
 import { PtySpawner } from '../../../../main/process-manager/spawners/PtySpawner';
+import type { ManagedProcess, ProcessConfig } from '../../../../main/process-manager/types';
+import { resolveShellPath } from '../../../../main/process-manager/utils/pathResolver';
+import { isWindows } from '../../../../shared/platformDetection';
 
-type MockPty = {
-	pid: number;
-	onData: ReturnType<typeof vi.fn>;
-	onExit: ReturnType<typeof vi.fn>;
-	emitData: (data: string) => void;
-	emitExit: (exitCode: number) => void;
-};
+// ── Helpers ────────────────────────────────────────────────────────────────
 
-function createMockPty(pid = 4321): MockPty {
-	let dataHandler: ((data: string) => void) | undefined;
-	let exitHandler: ((event: { exitCode: number }) => void) | undefined;
-
-	return {
-		pid,
-		onData: vi.fn((handler: (data: string) => void) => {
-			dataHandler = handler;
-		}),
-		onExit: vi.fn((handler: (event: { exitCode: number }) => void) => {
-			exitHandler = handler;
-		}),
-		emitData(data: string) {
-			dataHandler?.(data);
-		},
-		emitExit(exitCode: number) {
-			exitHandler?.({ exitCode });
-		},
-	};
-}
-
-function createContext() {
+function createTestContext() {
 	const processes = new Map<string, ManagedProcess>();
 	const emitter = new EventEmitter();
 	const bufferManager = {
 		emitDataBuffered: vi.fn(),
 		flushDataBuffer: vi.fn(),
 	};
-	const spawner = new PtySpawner(processes, emitter, bufferManager as DataBufferManager);
-
+	const spawner = new PtySpawner(processes, emitter, bufferManager as any);
 	return { processes, emitter, bufferManager, spawner };
 }
 
-function createConfig(overrides: Partial<ProcessConfig> = {}): ProcessConfig {
+function createBaseConfig(overrides: Partial<ProcessConfig> = {}): ProcessConfig {
 	return {
-		sessionId: 'session-1',
+		sessionId: 'test-session',
 		toolType: 'terminal',
-		cwd: '/workspace/project',
-		command: 'claude',
-		args: ['--print'],
+		cwd: '/home/user',
+		command: 'zsh',
+		args: [],
+		shell: 'zsh',
 		...overrides,
 	};
 }
 
+// ── Tests ──────────────────────────────────────────────────────────────────
+
 describe('PtySpawner', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
-		mocks.isWindows.mockReturnValue(false);
-		mocks.buildPtyTerminalEnv.mockReturnValue({ PATH: '/terminal/bin', TERM: 'xterm-256color' });
-		mocks.buildChildProcessEnv.mockReturnValue({ PATH: '/agent/bin', HOME: '/home/tester' });
-		mocks.stripControlSequences.mockImplementation((data: string) => data);
-		mocks.ptySpawn.mockReturnValue(createMockPty());
+		mockPtyProcess.onData.mockImplementation(() => {});
+		mockPtyProcess.onExit.mockImplementation(() => {});
 	});
 
-	it('spawns a non-Windows terminal shell with login, interactive, and custom shell args', () => {
-		const { processes, spawner } = createContext();
+	describe('shell terminal (toolType=terminal, shell provided)', () => {
+		it('spawns the shell with -l -i flags', () => {
+			const { spawner } = createTestContext();
+			spawner.spawn(createBaseConfig({ shell: 'zsh' }));
 
-		const result = spawner.spawn(
-			createConfig({
-				shell: '/bin/zsh',
-				shellArgs: '--rcfile "/tmp/my rc" \'--noprofile\'',
-				shellEnvVars: { FOO: 'bar' },
-			})
-		);
+			expect(mockPtySpawn).toHaveBeenCalledWith(
+				'zsh',
+				['-l', '-i'],
+				expect.objectContaining({ name: 'xterm-256color' })
+			);
+		});
 
-		expect(result).toEqual({ pid: 4321, success: true });
-		expect(mocks.buildPtyTerminalEnv).toHaveBeenCalledWith({ FOO: 'bar' });
-		expect(mocks.ptySpawn).toHaveBeenCalledWith(
-			'/bin/zsh',
-			['-l', '-i', '--rcfile', '/tmp/my rc', '--noprofile'],
-			{
-				name: 'xterm-256color',
-				cols: 100,
-				rows: 30,
-				cwd: '/workspace/project',
-				env: { PATH: '/terminal/bin', TERM: 'xterm-256color' },
-			}
-		);
-		expect(processes.get('session-1')).toMatchObject({
-			sessionId: 'session-1',
-			toolType: 'terminal',
-			pid: 4321,
-			isTerminal: true,
-			command: '/bin/zsh',
-			args: ['-l', '-i', '--rcfile', '/tmp/my rc', '--noprofile'],
+		it('appends custom shellArgs after -l -i', () => {
+			const { spawner } = createTestContext();
+			spawner.spawn(createBaseConfig({ shell: 'zsh', shellArgs: '--login --no-rcs' }));
+
+			const [, args] = mockPtySpawn.mock.calls[0];
+			expect(args[0]).toBe('-l');
+			expect(args[1]).toBe('-i');
+			expect(args).toContain('--login');
+			expect(args).toContain('--no-rcs');
+		});
+
+		it('returns success with pid from PTY process', () => {
+			const { spawner } = createTestContext();
+			const result = spawner.spawn(createBaseConfig({ shell: 'bash' }));
+
+			expect(result.success).toBe(true);
+			expect(result.pid).toBe(99999);
 		});
 	});
 
-	it('uses the Windows default terminal shell without login args', () => {
-		mocks.isWindows.mockReturnValue(true);
-		const { spawner } = createContext();
+	describe('SSH terminal (toolType=terminal, no shell provided)', () => {
+		it('uses command and args directly without -l/-i flags', () => {
+			const { spawner } = createTestContext();
+			spawner.spawn(
+				createBaseConfig({
+					shell: undefined,
+					command: 'ssh',
+					args: ['pedram@pedtome.example.com'],
+				})
+			);
 
-		spawner.spawn(createConfig());
+			expect(mockPtySpawn).toHaveBeenCalledWith(
+				'ssh',
+				['pedram@pedtome.example.com'],
+				expect.objectContaining({ name: 'xterm-256color' })
+			);
+		});
 
-		expect(mocks.ptySpawn).toHaveBeenCalledWith(
-			'powershell.exe',
-			[],
-			expect.objectContaining({ cwd: '/workspace/project' })
-		);
-	});
+		it('passes through ssh args including -t flag and remote command', () => {
+			const { spawner } = createTestContext();
+			const sshArgs = ['-t', 'pedram@pedtome.example.com', 'cd "/project" && exec $SHELL'];
+			spawner.spawn(
+				createBaseConfig({
+					shell: undefined,
+					command: 'ssh',
+					args: sshArgs,
+				})
+			);
 
-	it('ignores malformed quote-only shell args when parsing produces no arguments', () => {
-		const { spawner } = createContext();
+			expect(mockPtySpawn).toHaveBeenCalledWith(
+				'ssh',
+				sshArgs,
+				expect.objectContaining({ name: 'xterm-256color' })
+			);
+		});
 
-		spawner.spawn(createConfig({ shellArgs: '"' }));
+		it('passes through ssh args with -i and -p flags', () => {
+			const { spawner } = createTestContext();
+			const sshArgs = ['-i', '/home/user/.ssh/id_rsa', '-p', '2222', 'pedram@pedtome.example.com'];
+			spawner.spawn(
+				createBaseConfig({
+					shell: undefined,
+					command: 'ssh',
+					args: sshArgs,
+				})
+			);
 
-		expect(mocks.ptySpawn).toHaveBeenCalledWith(
-			'bash',
-			['-l', '-i'],
-			expect.objectContaining({ cwd: '/workspace/project' })
-		);
-	});
+			const [cmd, args] = mockPtySpawn.mock.calls[0];
+			expect(cmd).toBe('ssh');
+			expect(args).toEqual(sshArgs);
+			// Must NOT contain -l or -i (shell flags)
+			expect(args).not.toContain('-l');
+		});
 
-	it('spawns an agent command with child-process style environment', () => {
-		const { processes, spawner } = createContext();
+		it('returns success with pid from PTY process', () => {
+			const { spawner } = createTestContext();
+			const result = spawner.spawn(
+				createBaseConfig({
+					shell: undefined,
+					command: 'ssh',
+					args: ['user@remote.example.com'],
+				})
+			);
 
-		const result = spawner.spawn(
-			createConfig({
-				toolType: 'claude-code',
-				command: 'claude',
-				args: ['--dangerously-skip-permissions'],
-				customEnvVars: { API_URL: 'https://example.test' },
-				shellEnvVars: { GLOBAL_TOKEN: 'set' },
-			})
-		);
-
-		expect(result).toEqual({ pid: 4321, success: true });
-		expect(mocks.buildChildProcessEnv).toHaveBeenCalledWith(
-			{ API_URL: 'https://example.test' },
-			false,
-			{ GLOBAL_TOKEN: 'set' }
-		);
-		expect(mocks.ptySpawn).toHaveBeenCalledWith(
-			'claude',
-			['--dangerously-skip-permissions'],
-			expect.objectContaining({ env: { PATH: '/agent/bin', HOME: '/home/tester' } })
-		);
-		expect(processes.get('session-1')).toMatchObject({
-			command: 'claude',
-			args: ['--dangerously-skip-permissions'],
-			isTerminal: true,
+			expect(result.success).toBe(true);
+			expect(result.pid).toBe(99999);
 		});
 	});
 
-	it('filters PTY output and buffers only non-empty cleaned data', () => {
-		const ptyProcess = createMockPty();
-		mocks.ptySpawn.mockReturnValue(ptyProcess);
-		mocks.stripControlSequences.mockReturnValueOnce('cleaned output').mockReturnValueOnce('   ');
-		const { processes, bufferManager, spawner } = createContext();
+	describe('Windows shell resolution', () => {
+		it('resolves shell ID to executable via resolveShellPath', () => {
+			vi.mocked(isWindows).mockReturnValueOnce(true);
+			vi.mocked(resolveShellPath).mockReturnValueOnce('powershell.exe');
 
-		spawner.spawn(createConfig());
-		processes.get('session-1')!.lastCommand = 'ls -la';
-		ptyProcess.emitData('\u001b[?2004hcleaned output');
-		ptyProcess.emitData('\u001b[?2004l');
+			const { spawner } = createTestContext();
+			spawner.spawn(createBaseConfig({ shell: 'powershell' }));
 
-		expect(mocks.stripControlSequences).toHaveBeenNthCalledWith(
-			1,
-			'\u001b[?2004hcleaned output',
-			'ls -la',
-			true
-		);
-		expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith('session-1', 'cleaned output');
-		expect(bufferManager.emitDataBuffered).toHaveBeenCalledTimes(1);
+			expect(resolveShellPath).toHaveBeenCalledWith('powershell');
+			expect(mockPtySpawn).toHaveBeenCalledWith(
+				'powershell.exe',
+				[],
+				expect.objectContaining({ name: 'xterm-256color' })
+			);
+		});
 	});
 
-	it('flushes buffered output, emits exit, and removes the process on PTY exit', () => {
-		const ptyProcess = createMockPty();
-		mocks.ptySpawn.mockReturnValue(ptyProcess);
-		const { processes, emitter, bufferManager, spawner } = createContext();
-		const exitEvents: Array<[string, number]> = [];
-		emitter.on('exit', (sessionId: string, exitCode: number) => {
-			exitEvents.push([sessionId, exitCode]);
+	describe('AI agent PTY (toolType !== terminal)', () => {
+		it('uses command and args directly regardless of shell field', () => {
+			const { spawner } = createTestContext();
+			spawner.spawn(
+				createBaseConfig({
+					toolType: 'claude-code',
+					command: 'claude',
+					args: ['--print'],
+					shell: 'zsh',
+				})
+			);
+
+			expect(mockPtySpawn).toHaveBeenCalledWith(
+				'claude',
+				['--print'],
+				expect.objectContaining({ name: 'xterm-256color' })
+			);
 		});
-
-		spawner.spawn(createConfig());
-		ptyProcess.emitExit(130);
-
-		expect(bufferManager.flushDataBuffer).toHaveBeenCalledWith('session-1');
-		expect(exitEvents).toEqual([['session-1', 130]]);
-		expect(processes.has('session-1')).toBe(false);
 	});
 
-	it('returns a failed result and logs when PTY spawn throws', () => {
-		mocks.ptySpawn.mockImplementation(() => {
-			throw new Error('spawn denied');
+	describe('process registration', () => {
+		it('registers the managed process by sessionId', () => {
+			const { spawner, processes } = createTestContext();
+			spawner.spawn(createBaseConfig({ sessionId: 'my-session', shell: 'zsh' }));
+
+			expect(processes.has('my-session')).toBe(true);
+			expect(processes.get('my-session')?.pid).toBe(99999);
 		});
-		const { processes, spawner } = createContext();
 
-		const result = spawner.spawn(createConfig());
+		it('sets isTerminal=true for all PTY processes', () => {
+			const { spawner, processes } = createTestContext();
 
-		expect(result).toEqual({ pid: -1, success: false });
-		expect(processes.has('session-1')).toBe(false);
-		expect(mocks.logger.error).toHaveBeenCalledWith(
-			'[ProcessManager] Failed to spawn PTY process',
-			'ProcessManager',
-			{ error: 'Error: spawn denied' }
-		);
+			// Shell terminal
+			spawner.spawn(createBaseConfig({ sessionId: 'shell-session', shell: 'zsh' }));
+			expect(processes.get('shell-session')?.isTerminal).toBe(true);
+
+			// SSH terminal
+			spawner.spawn(
+				createBaseConfig({
+					sessionId: 'ssh-session',
+					shell: undefined,
+					command: 'ssh',
+					args: ['host'],
+				})
+			);
+			expect(processes.get('ssh-session')?.isTerminal).toBe(true);
+		});
 	});
 });

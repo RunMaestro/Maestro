@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { logger } from '../../../renderer/utils/logger';
 import {
 	parseGitDiff,
 	getFileName,
@@ -421,7 +422,7 @@ index 1234567..0000000
 				});
 
 				// Spy on console.error
-				const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+				const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 
 				const diffText = `diff --git a/file.ts b/file.ts
 --- a/file.ts
@@ -436,7 +437,11 @@ index 1234567..0000000
 				expect(result[0].parsedDiff).toEqual([]);
 				expect(result[0].oldPath).toBe('file.ts');
 				expect(result[0].newPath).toBe('file.ts');
-				expect(consoleSpy).toHaveBeenCalledWith('Failed to parse diff section:', expect.any(Error));
+				expect(consoleSpy).toHaveBeenCalledWith(
+					'Failed to parse diff section:',
+					undefined,
+					expect.any(Error)
+				);
 
 				consoleSpy.mockRestore();
 			});
@@ -447,7 +452,7 @@ index 1234567..0000000
 					throw new Error('Parse error');
 				});
 
-				const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+				const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 
 				const diffText = `diff --git a/image.png b/image.png
 new file mode 100644
@@ -465,7 +470,7 @@ Binary files /dev/null and b/image.png differ`;
 
 		describe('diffText preservation', () => {
 			it('preserves the original diff text in the result', () => {
-				const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+				const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 				const diffText = `diff --git a/file.ts b/file.ts
 --- a/file.ts
 +++ b/file.ts

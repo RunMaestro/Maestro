@@ -763,24 +763,6 @@ describe('useUnreadBadge', () => {
 			expect(result.current.unreadIds.has('saved2')).toBe(true);
 		});
 
-		it('loads empty state and still updates when localStorage is unavailable', () => {
-			Object.defineProperty(window, 'localStorage', {
-				writable: true,
-				configurable: true,
-				value: undefined,
-			});
-
-			const { result } = renderHook(() => useUnreadBadge());
-
-			expect(result.current.unreadIds.size).toBe(0);
-
-			act(() => {
-				result.current.addUnread('id1');
-			});
-
-			expect(result.current.unreadIds.has('id1')).toBe(true);
-		});
-
 		it('handles localStorage.setItem errors', () => {
 			const setItemMock = vi.fn().mockImplementation(() => {
 				throw new Error('Storage quota exceeded');

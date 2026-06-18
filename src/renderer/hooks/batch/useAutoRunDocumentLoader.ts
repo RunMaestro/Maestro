@@ -10,9 +10,10 @@
  * Reads from: sessionStore (activeSession), batchStore (document setters)
  */
 
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useRef } from 'react';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useBatchStore } from '../../stores/batchStore';
+import { countMarkdownTasks } from './batchUtils';
 
 // ============================================================================
 // Return type
@@ -27,11 +28,22 @@ export interface UseAutoRunDocumentLoaderReturn {
 	) => Promise<Map<string, { completed: number; total: number }>>;
 }
 
+// SSH remote folders can't use chokidar, so we poll. The first iteration is
+// scheduled after this delay (not immediate) so it doesn't double-fetch on top
+// of the loader effect's initial pass.
+const REMOTE_POLL_INTERVAL_MS = 20000;
+
 // ============================================================================
 // Hook implementation
 // ============================================================================
 
 export function useAutoRunDocumentLoader(): UseAutoRunDocumentLoaderReturn {
+	const loadSequenceRef = useRef(0);
+	// Last (sessionId|folder|sshRemoteId) tuple — lets us distinguish a true
+	// session/folder change (full reload) from a `selectedFile`-only change
+	// (single-file content fetch).
+	const structureKeyRef = useRef<string | null>(null);
+
 	// --- Reactive subscriptions ---
 	const activeSession = useSessionStore(selectActiveSession);
 	const activeSessionId = useSessionStore((s) => s.activeSessionId);
@@ -45,26 +57,22 @@ export function useAutoRunDocumentLoader(): UseAutoRunDocumentLoaderReturn {
 		setDocumentTaskCounts: setAutoRunDocumentTaskCounts,
 	} = useBatchStore.getState();
 
-	// Helper to count tasks in document content
-	const countTasksInContent = useCallback(
-		(content: string): { completed: number; total: number } => {
-			const completedRegex = /^[\s]*[-*]\s*\[x\]/gim;
-			const uncheckedRegex = /^[\s]*[-*]\s*\[\s\]/gim;
-			const completedMatches = content.match(completedRegex) || [];
-			const uncheckedMatches = content.match(uncheckedRegex) || [];
-			const completed = completedMatches.length;
-			const total = completed + uncheckedMatches.length;
-			return { completed, total };
-		},
-		[]
-	);
-
-	// Load task counts for all documents
-	const loadTaskCounts = useCallback(
-		async (folderPath: string, documents: string[], sshRemoteId?: string) => {
+	// Internal helper: reads each doc once, counts tasks, and optionally
+	// captures content for a single doc so callers don't have to re-read it.
+	// `captureInList` tells the caller whether the requested capture target was
+	// part of the documents list (so they can decide whether to fall back to an
+	// explicit read for a stale selectedFile).
+	const readTaskCountsAndContent = useCallback(
+		async (
+			folderPath: string,
+			documents: string[],
+			sshRemoteId: string | undefined,
+			captureContentFor?: string
+		) => {
 			const counts = new Map<string, { completed: number; total: number }>();
+			let capturedContent: string | undefined;
+			const captureInList = !!captureContentFor && documents.includes(captureContentFor);
 
-			// Load content and count tasks for each document in parallel
 			await Promise.all(
 				documents.map(async (docPath) => {
 					try {
@@ -74,9 +82,15 @@ export function useAutoRunDocumentLoader(): UseAutoRunDocumentLoaderReturn {
 							sshRemoteId
 						);
 						if (result.success && result.content) {
-							const taskCount = countTasksInContent(result.content);
+							const taskCount = countMarkdownTasks(result.content);
 							if (taskCount.total > 0) {
-								counts.set(docPath, taskCount);
+								counts.set(docPath, {
+									completed: taskCount.checked,
+									total: taskCount.total,
+								});
+							}
+							if (captureContentFor && captureContentFor === docPath) {
+								capturedContent = result.content;
 							}
 						}
 					} catch {
@@ -85,55 +99,134 @@ export function useAutoRunDocumentLoader(): UseAutoRunDocumentLoaderReturn {
 				})
 			);
 
-			return counts;
+			return { counts, capturedContent, captureInList };
 		},
-		[countTasksInContent]
+		[]
 	);
 
-	// Load Auto Run document list and content when session changes
-	// Always reload content from disk when switching sessions to ensure fresh data
+	// Public API: load task counts for all documents (back-compat signature)
+	const loadTaskCounts = useCallback(
+		async (folderPath: string, documents: string[], sshRemoteId?: string) => {
+			const { counts } = await readTaskCountsAndContent(folderPath, documents, sshRemoteId);
+			return counts;
+		},
+		[readTaskCountsAndContent]
+	);
+
+	// Helper: update a session's autoRunContent if it actually changed.
+	const applySelectedContent = useCallback(
+		(sessionId: string, nextContent: string) => {
+			setSessions((prev) => {
+				const target = prev.find((s) => s.id === sessionId);
+				if (!target) return prev;
+				if (target.autoRunContent === nextContent) return prev;
+				return prev.map((s) =>
+					s.id === sessionId
+						? {
+								...s,
+								autoRunContent: nextContent,
+								autoRunContentVersion: (s.autoRunContentVersion || 0) + 1,
+							}
+						: s
+				);
+			});
+		},
+		[setSessions]
+	);
+
+	// Loader effect: full reload on session/folder/sshRemoteId change,
+	// targeted single-file content fetch when only selectedFile changes.
 	useEffect(() => {
-		const loadAutoRunData = async () => {
-			if (!activeSession?.autoRunFolderPath) {
+		const currentLoadSequence = ++loadSequenceRef.current;
+
+		if (!activeSession?.autoRunFolderPath) {
+			structureKeyRef.current = null;
+			setAutoRunDocumentList([]);
+			setAutoRunDocumentTree([]);
+			setAutoRunDocumentTaskCounts(new Map());
+			setAutoRunIsLoadingDocuments(false);
+			return;
+		}
+
+		const folderPath = activeSession.autoRunFolderPath;
+		const sshRemoteId =
+			activeSession.sshRemoteId || activeSession.sessionSshRemoteConfig?.remoteId || undefined;
+		const selectedFile = activeSession.autoRunSelectedFile;
+		const sessionId = activeSession.id;
+
+		const structureKey = `${activeSessionId}|${folderPath}|${sshRemoteId ?? ''}`;
+		const structureChanged = structureKeyRef.current !== structureKey;
+		structureKeyRef.current = structureKey;
+
+		const load = async () => {
+			if (structureChanged) {
+				// Full reload: list + counts + selected file (deduped).
+				setAutoRunIsLoadingDocuments(true);
 				setAutoRunDocumentList([]);
 				setAutoRunDocumentTree([]);
 				setAutoRunDocumentTaskCounts(new Map());
-				return;
-			}
+				try {
+					const listResult = await window.maestro.autorun.listDocs(folderPath, sshRemoteId);
+					if (currentLoadSequence !== loadSequenceRef.current) return;
+					if (listResult.success) {
+						const files = listResult.files || [];
+						setAutoRunDocumentList(files);
+						setAutoRunDocumentTree(listResult.tree || []);
 
-			// Get SSH remote ID for remote sessions (check both runtime and config values)
-			const sshRemoteId =
-				activeSession.sshRemoteId || activeSession.sessionSshRemoteConfig?.remoteId || undefined;
+						const { counts, capturedContent, captureInList } = await readTaskCountsAndContent(
+							folderPath,
+							files,
+							sshRemoteId,
+							selectedFile
+						);
+						if (currentLoadSequence !== loadSequenceRef.current) return;
+						setAutoRunDocumentTaskCounts(counts);
 
-			// Load document list
-			setAutoRunIsLoadingDocuments(true);
-			const listResult = await window.maestro.autorun.listDocs(
-				activeSession.autoRunFolderPath,
-				sshRemoteId
-			);
-			if (listResult.success) {
-				const files = listResult.files || [];
-				setAutoRunDocumentList(files);
-				setAutoRunDocumentTree(listResult.tree || []);
-
-				// Load task counts for all documents
-				const counts = await loadTaskCounts(activeSession.autoRunFolderPath, files, sshRemoteId);
-				setAutoRunDocumentTaskCounts(counts);
-			}
-			setAutoRunIsLoadingDocuments(false);
-
-			// Always load content from disk when switching sessions
-			// This ensures we have fresh data and prevents stale content from showing
-			if (activeSession.autoRunSelectedFile) {
+						if (selectedFile) {
+							let content: string;
+							if (captureInList) {
+								// Already read during task counting — reuse it.
+								content = capturedContent ?? '';
+							} else {
+								// Selected file isn't in the listing (stale ref); read explicitly.
+								const contentResult = await window.maestro.autorun.readDoc(
+									folderPath,
+									selectedFile + '.md',
+									sshRemoteId
+								);
+								if (currentLoadSequence !== loadSequenceRef.current) return;
+								content = contentResult.success ? contentResult.content || '' : '';
+							}
+							setSessions((prev) =>
+								prev.map((s) =>
+									s.id === sessionId
+										? {
+												...s,
+												autoRunContent: content,
+												autoRunContentVersion: (s.autoRunContentVersion || 0) + 1,
+											}
+										: s
+								)
+							);
+						}
+					}
+				} finally {
+					if (currentLoadSequence === loadSequenceRef.current) {
+						setAutoRunIsLoadingDocuments(false);
+					}
+				}
+			} else if (selectedFile) {
+				// Only the selected file changed — read just that file.
 				const contentResult = await window.maestro.autorun.readDoc(
-					activeSession.autoRunFolderPath,
-					activeSession.autoRunSelectedFile + '.md',
+					folderPath,
+					selectedFile + '.md',
 					sshRemoteId
 				);
+				if (currentLoadSequence !== loadSequenceRef.current) return;
 				const newContent = contentResult.success ? contentResult.content || '' : '';
 				setSessions((prev) =>
 					prev.map((s) =>
-						s.id === activeSession.id
+						s.id === sessionId
 							? {
 									...s,
 									autoRunContent: newContent,
@@ -145,15 +238,16 @@ export function useAutoRunDocumentLoader(): UseAutoRunDocumentLoaderReturn {
 			}
 		};
 
-		loadAutoRunData();
+		load();
 		// Note: Use primitive values (remoteId) not object refs (sessionSshRemoteConfig) to avoid infinite re-render loops
 	}, [
 		activeSessionId,
+		activeSession?.id,
 		activeSession?.autoRunFolderPath,
 		activeSession?.autoRunSelectedFile,
 		activeSession?.sshRemoteId,
 		activeSession?.sessionSshRemoteConfig?.remoteId,
-		loadTaskCounts,
+		readTaskCountsAndContent,
 	]);
 
 	// File watching for Auto Run - watch whenever a folder is configured
@@ -163,7 +257,6 @@ export function useAutoRunDocumentLoader(): UseAutoRunDocumentLoaderReturn {
 	useEffect(() => {
 		const sessionId = activeSession?.id;
 		const folderPath = activeSession?.autoRunFolderPath;
-		const selectedFile = activeSession?.autoRunSelectedFile;
 		// Get SSH remote ID for remote sessions (check both runtime and config values)
 		const sshRemoteId =
 			activeSession?.sshRemoteId || activeSession?.sessionSshRemoteConfig?.remoteId || undefined;
@@ -171,64 +264,111 @@ export function useAutoRunDocumentLoader(): UseAutoRunDocumentLoaderReturn {
 		// Only watch if folder is set
 		if (!folderPath || !sessionId) return;
 
-		// Start watching the folder (for remote sessions, this returns isRemote: true)
-		window.maestro.autorun.watchFolder(folderPath, sshRemoteId);
+		let disposed = false;
+		let unsubscribe = () => {};
+		let remotePollTimeout: ReturnType<typeof setTimeout> | null = null;
+		let isRefreshing = false;
 
-		// Listen for file change events (only triggered for local sessions)
-		const unsubscribe = window.maestro.autorun.onFileChanged(async (data) => {
-			// Only respond to changes in the current folder
-			if (data.folderPath !== folderPath) return;
-
-			// Reload document list for any change (in case files added/removed)
+		const refreshAutoRunData = async () => {
 			const listResult = await window.maestro.autorun.listDocs(folderPath, sshRemoteId);
-			if (listResult.success) {
-				const files = listResult.files || [];
-				setAutoRunDocumentList(files);
-				setAutoRunDocumentTree(listResult.tree || []);
+			if (disposed) return;
+			if (!listResult.success) return;
 
-				// Reload task counts for all documents
-				const counts = await loadTaskCounts(folderPath, files, sshRemoteId);
-				setAutoRunDocumentTaskCounts(counts);
-			}
+			const files = listResult.files || [];
+			setAutoRunDocumentList(files);
+			setAutoRunDocumentTree(listResult.tree || []);
 
-			// If we have a selected document and it matches the changed file, reload its content
-			// Update in session state (per-session, not global)
-			if (selectedFile && data.filename === selectedFile) {
-				const contentResult = await window.maestro.autorun.readDoc(
-					folderPath,
-					selectedFile + '.md',
-					sshRemoteId
-				);
-				if (contentResult.success) {
-					// Update content in the specific session that owns this folder
-					setSessions((prev) =>
-						prev.map((s) =>
-							s.id === sessionId
-								? {
-										...s,
-										autoRunContent: contentResult.content || '',
-										autoRunContentVersion: (s.autoRunContentVersion || 0) + 1,
-									}
-								: s
-						)
+			// Re-read selectedFile from the store at refresh time (the user may
+			// have switched docs since this effect was set up).
+			const currentSelected = useSessionStore
+				.getState()
+				.sessions.find((s) => s.id === sessionId)?.autoRunSelectedFile;
+
+			const { counts, capturedContent, captureInList } = await readTaskCountsAndContent(
+				folderPath,
+				files,
+				sshRemoteId,
+				currentSelected
+			);
+			if (disposed) return;
+			setAutoRunDocumentTaskCounts(counts);
+
+			if (currentSelected) {
+				let nextContent: string;
+				if (captureInList) {
+					nextContent = capturedContent ?? '';
+				} else {
+					const contentResult = await window.maestro.autorun.readDoc(
+						folderPath,
+						currentSelected + '.md',
+						sshRemoteId
 					);
+					if (disposed) return;
+					if (!contentResult.success) return;
+					nextContent = contentResult.content || '';
 				}
+				applySelectedContent(sessionId, nextContent);
 			}
-		});
+		};
+
+		(async () => {
+			const watchResult = await window.maestro.autorun.watchFolder(folderPath, sshRemoteId);
+			if (disposed) return;
+
+			// SSH remote sessions don't support file watchers; fall back to polling.
+			if ((watchResult as any)?.isRemote) {
+				const runRemotePoll = async () => {
+					if (disposed || isRefreshing) return;
+					isRefreshing = true;
+					try {
+						await refreshAutoRunData();
+					} finally {
+						isRefreshing = false;
+						if (!disposed) {
+							remotePollTimeout = setTimeout(() => {
+								void runRemotePoll();
+							}, REMOTE_POLL_INTERVAL_MS);
+						}
+					}
+				};
+				// Defer the first poll. The loader effect just performed the
+				// initial pass; firing immediately would duplicate that work.
+				remotePollTimeout = setTimeout(() => {
+					void runRemotePoll();
+				}, REMOTE_POLL_INTERVAL_MS);
+				return;
+			}
+
+			// Local sessions use file change events.
+			unsubscribe = window.maestro.autorun.onFileChanged(async (data) => {
+				if (disposed) return;
+				if (data.folderPath !== folderPath) return;
+
+				await refreshAutoRunData();
+			});
+		})();
 
 		// Cleanup: stop watching when folder changes or unmount
 		return () => {
+			disposed = true;
+			if (remotePollTimeout) {
+				clearTimeout(remotePollTimeout);
+				remotePollTimeout = null;
+			}
 			window.maestro.autorun.unwatchFolder(folderPath);
 			unsubscribe();
 		};
+		// Intentionally NOT depending on autoRunSelectedFile — the watcher reads
+		// the latest selected file from the store at refresh time, so changing
+		// the selected doc shouldn't tear down and re-establish the watcher.
 		// Note: Use primitive values (remoteId) not object refs (sessionSshRemoteConfig) to avoid infinite re-render loops
 	}, [
 		activeSession?.id,
 		activeSession?.autoRunFolderPath,
-		activeSession?.autoRunSelectedFile,
 		activeSession?.sshRemoteId,
 		activeSession?.sessionSshRemoteConfig?.remoteId,
-		loadTaskCounts,
+		readTaskCountsAndContent,
+		applySelectedContent,
 	]);
 
 	return { loadTaskCounts };

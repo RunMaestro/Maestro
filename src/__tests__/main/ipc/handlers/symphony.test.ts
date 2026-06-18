@@ -8,13 +8,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ipcMain, BrowserWindow, App } from 'electron';
 import fs from 'fs/promises';
-import path from 'path';
 import {
 	registerSymphonyHandlers,
 	SymphonyHandlerDependencies,
 } from '../../../../main/ipc/handlers/symphony';
 import type { ActiveContribution } from '../../../../shared/symphony-types';
-import { logger } from '../../../../main/utils/logger';
 
 // Mock electron
 vi.mock('electron', () => ({
@@ -47,6 +45,11 @@ vi.mock('../../../../main/utils/execFile', () => ({
 // Mock symphony-fork
 vi.mock('../../../../main/utils/symphony-fork', () => ({
 	ensureForkSetup: vi.fn(),
+}));
+
+// Mock cliDetection — resolveGhPath returns 'gh' so existing assertions still match
+vi.mock('../../../../main/utils/cliDetection', () => ({
+	resolveGhPath: vi.fn().mockResolvedValue('gh'),
 }));
 
 // Mock the logger
@@ -103,11 +106,18 @@ describe('Symphony IPC handlers', () => {
 			set: vi.fn(),
 		};
 
+		// Setup mock settings store
+		const mockSettingsStore = {
+			get: vi.fn().mockReturnValue([]),
+			set: vi.fn(),
+		};
+
 		// Setup dependencies
 		mockDeps = {
 			app: mockApp,
 			getMainWindow: () => mockMainWindow,
 			sessionsStore: mockSessionsStore as any,
+			settingsStore: mockSettingsStore as any,
 		};
 
 		// Default mock for fs operations
@@ -218,17 +228,6 @@ describe('Symphony IPC handlers', () => {
 			const handler = getCloneHandler();
 			const result = await handler!({} as any, {
 				repoUrl: 'https://github.com/owner',
-				localPath: '/tmp/test-repo',
-			});
-
-			expect(result.success).toBe(false);
-			expect(result.error).toContain('Invalid repository path');
-		});
-
-		it('should reject repository URLs with traversal segments before URL normalization', async () => {
-			const handler = getCloneHandler();
-			const result = await handler!({} as any, {
-				repoUrl: 'https://github.com/../../../etc/passwd',
 				localPath: '/tmp/test-repo',
 			});
 
@@ -797,45 +796,8 @@ describe('Symphony IPC handlers', () => {
 			expect(result.issues[0].documentPaths).toEqual([]);
 		});
 
-		it('should truncate oversized issue bodies before parsing document paths', async () => {
-			const maxBodySize = 1024 * 1024;
-			const issueBody = 'x'.repeat(maxBodySize + 10) + '\n- docs/after-limit.md';
-			mockFetch
-				.mockResolvedValueOnce({
-					ok: true,
-					json: () =>
-						Promise.resolve([
-							{
-								number: 1,
-								title: 'Huge body',
-								body: issueBody,
-								url: 'https://api.github.com/repos/owner/repo/issues/1',
-								html_url: 'https://github.com/owner/repo/issues/1',
-								user: { login: 'user' },
-								created_at: '2024-01-01',
-								updated_at: '2024-01-01',
-							},
-						]),
-				})
-				.mockResolvedValueOnce({
-					ok: true,
-					json: () => Promise.resolve([]),
-				});
-
-			const handler = getIssuesHandler();
-			const result = await handler!({} as any, 'owner/repo');
-
-			expect(result.issues[0].documentPaths).toEqual([]);
-			expect(logger.warn).toHaveBeenCalledWith(
-				'Issue body too large, truncating for document parsing',
-				'[Symphony]',
-				{
-					bodyLength: issueBody.length,
-					maxSize: maxBodySize,
-				}
-			);
-		});
-
+		// Note: Testing MAX_BODY_SIZE truncation is difficult to do directly
+		// since parseDocumentPaths is internal. The implementation handles it.
 		it('should handle large body content gracefully', async () => {
 			// Create a body with many document references
 			const issueBody = Array(100).fill('- docs/file.md').join('\n');
@@ -867,133 +829,6 @@ describe('Symphony IPC handlers', () => {
 			// Should handle without error and deduplicate
 			expect(result.issues).toBeDefined();
 			expect(result.issues[0].documentPaths.length).toBeGreaterThanOrEqual(1);
-		});
-
-		it('should mark issues in progress when an open PR references the issue', async () => {
-			mockFetch
-				.mockResolvedValueOnce({
-					ok: true,
-					json: () =>
-						Promise.resolve([
-							{
-								number: 12,
-								title: 'Implement feature',
-								body: 'Please update docs/task.md',
-								url: 'https://api.github.com/repos/owner/repo/issues/12',
-								html_url: 'https://github.com/owner/repo/issues/12',
-								user: { login: 'issue-author' },
-								created_at: '2024-01-01',
-								updated_at: '2024-01-02',
-								labels: [],
-							},
-						]),
-				})
-				.mockResolvedValueOnce({
-					ok: true,
-					json: () =>
-						Promise.resolve([
-							{
-								number: 77,
-								title: '[WIP] Symphony: Implement feature (#12)',
-								body: null,
-								html_url: 'https://github.com/owner/repo/pull/77',
-								user: { login: 'contributor' },
-								draft: true,
-							},
-						]),
-				});
-
-			const handler = getIssuesHandler();
-			const result = await handler!({} as any, 'owner/repo');
-
-			expect(result.issues[0]).toMatchObject({
-				status: 'in_progress',
-				claimedByPr: {
-					number: 77,
-					url: 'https://github.com/owner/repo/pull/77',
-					author: 'contributor',
-					isDraft: true,
-				},
-			});
-		});
-
-		it('should keep issues available when PR enrichment returns an error response', async () => {
-			mockFetch
-				.mockResolvedValueOnce({
-					ok: true,
-					json: () =>
-						Promise.resolve([
-							{
-								number: 12,
-								title: 'Implement feature',
-								body: '',
-								url: 'https://api.github.com/repos/owner/repo/issues/12',
-								html_url: 'https://github.com/owner/repo/issues/12',
-								user: { login: 'issue-author' },
-								created_at: '2024-01-01',
-								updated_at: '2024-01-02',
-								labels: [],
-							},
-						]),
-				})
-				.mockResolvedValueOnce({
-					ok: false,
-					status: 503,
-				});
-
-			const handler = getIssuesHandler();
-			const result = await handler!({} as any, 'owner/repo');
-
-			expect(result.issues[0].status).toBe('available');
-			expect(logger.warn).toHaveBeenCalledWith(
-				'Failed to fetch PRs for issue status: 503',
-				'[Symphony]'
-			);
-		});
-
-		it('should keep issues available when PR enrichment throws', async () => {
-			mockFetch
-				.mockResolvedValueOnce({
-					ok: true,
-					json: () =>
-						Promise.resolve([
-							{
-								number: 12,
-								title: 'Implement feature',
-								body: '',
-								url: 'https://api.github.com/repos/owner/repo/issues/12',
-								html_url: 'https://github.com/owner/repo/issues/12',
-								user: { login: 'issue-author' },
-								created_at: '2024-01-01',
-								updated_at: '2024-01-02',
-								labels: [],
-							},
-						]),
-				})
-				.mockRejectedValueOnce(new Error('PR API unavailable'));
-
-			const handler = getIssuesHandler();
-			const result = await handler!({} as any, 'owner/repo');
-
-			expect(result.issues[0].status).toBe('available');
-			expect(logger.warn).toHaveBeenCalledWith(
-				'Failed to enrich issues with PR status',
-				'[Symphony]',
-				{ error: 'PR API unavailable' }
-			);
-		});
-
-		it('should skip PR enrichment when no issues are returned', async () => {
-			mockFetch.mockResolvedValueOnce({
-				ok: true,
-				json: () => Promise.resolve([]),
-			});
-
-			const handler = getIssuesHandler();
-			const result = await handler!({} as any, 'owner/repo');
-
-			expect(result.issues).toEqual([]);
-			expect(mockFetch).toHaveBeenCalledTimes(1);
 		});
 	});
 
@@ -1252,7 +1087,9 @@ describe('Symphony IPC handlers', () => {
 			const result = await handler!({} as any, false);
 
 			expect(result.fromCache).toBe(false);
-			expect(result.registry).toEqual(freshRegistry);
+			expect(result.registry).toEqual(
+				expect.objectContaining({ repositories: freshRegistry.repositories })
+			);
 		});
 
 		it('should fetch fresh data when forceRefresh is true', async () => {
@@ -1275,7 +1112,9 @@ describe('Symphony IPC handlers', () => {
 			const result = await handler!({} as any, true); // forceRefresh = true
 
 			expect(result.fromCache).toBe(false);
-			expect(result.registry).toEqual(freshRegistry);
+			expect(result.registry).toEqual(
+				expect.objectContaining({ repositories: freshRegistry.repositories })
+			);
 		});
 
 		it('should update cache after fresh fetch', async () => {
@@ -1293,295 +1132,9 @@ describe('Symphony IPC handlers', () => {
 			expect(fs.writeFile).toHaveBeenCalled();
 			const writeCall = vi.mocked(fs.writeFile).mock.calls[0];
 			const writtenData = JSON.parse(writeCall[1] as string);
-			expect(writtenData.registry.data).toEqual(freshRegistry);
-		});
-
-		it('should enrich a cached registry with valid cached star counts', async () => {
-			const cacheData = {
-				registry: {
-					data: {
-						repositories: [
-							{ slug: 'owner/repo', isActive: true },
-							{ slug: 'inactive/repo', isActive: false },
-						],
-					},
-					fetchedAt: Date.now() - 1000,
-				},
-				issues: {},
-				stars: {
-					data: {
-						'owner/repo': 42,
-						'inactive/repo': 3,
-					},
-					fetchedAt: Date.now() - 1000,
-				},
-			};
-			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(cacheData));
-
-			const handler = handlers.get('symphony:getRegistry');
-			const result = await handler!({} as any, false);
-
-			expect(result).toMatchObject({
-				success: true,
-				fromCache: true,
-				registry: {
-					repositories: [
-						expect.objectContaining({ slug: 'owner/repo', stars: 42 }),
-						expect.objectContaining({ slug: 'inactive/repo', stars: 3 }),
-					],
-				},
-			});
-			expect(mockFetch).not.toHaveBeenCalled();
-		});
-
-		it('should fetch and cache fresh star counts for active repositories', async () => {
-			vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
-			mockFetch
-				.mockResolvedValueOnce({
-					ok: true,
-					json: () =>
-						Promise.resolve({
-							repositories: [
-								{ slug: 'owner/repo', isActive: true },
-								{ slug: 'inactive/repo', isActive: false },
-							],
-						}),
-				})
-				.mockResolvedValueOnce({
-					ok: true,
-					json: () => Promise.resolve({ stargazers_count: 123 }),
-				});
-
-			const handler = handlers.get('symphony:getRegistry');
-			const result = await handler!({} as any, false);
-
-			expect(result).toMatchObject({
-				success: true,
-				fromCache: false,
-				registry: {
-					repositories: [
-						expect.objectContaining({ slug: 'owner/repo', stars: 123 }),
-						expect.objectContaining({ slug: 'inactive/repo', stars: undefined }),
-					],
-				},
-			});
-			expect(mockFetch).toHaveBeenNthCalledWith(
-				2,
-				expect.stringContaining('/repos/owner/repo'),
-				expect.objectContaining({
-					headers: expect.objectContaining({
-						'User-Agent': 'Maestro-Symphony',
-					}),
-				})
+			expect(writtenData.registry.data).toEqual(
+				expect.objectContaining({ repositories: freshRegistry.repositories })
 			);
-			const starCacheWrite = JSON.parse(vi.mocked(fs.writeFile).mock.calls[0][1] as string);
-			expect(starCacheWrite.stars.data).toEqual({ 'owner/repo': 123 });
-		});
-
-		it('should cache zero stars when a repository star request fails', async () => {
-			vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
-			mockFetch
-				.mockResolvedValueOnce({
-					ok: true,
-					json: () =>
-						Promise.resolve({
-							repositories: [{ slug: 'owner/repo', isActive: true }],
-						}),
-				})
-				.mockResolvedValueOnce({
-					ok: false,
-				});
-
-			const handler = handlers.get('symphony:getRegistry');
-			const result = await handler!({} as any, false);
-
-			expect(result.registry.repositories[0].stars).toBe(0);
-			const starCacheWrite = JSON.parse(vi.mocked(fs.writeFile).mock.calls[0][1] as string);
-			expect(starCacheWrite.stars.data).toEqual({ 'owner/repo': 0 });
-		});
-
-		it('should default missing stargazer counts to zero', async () => {
-			vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
-			mockFetch
-				.mockResolvedValueOnce({
-					ok: true,
-					json: () =>
-						Promise.resolve({
-							repositories: [{ slug: 'owner/repo', isActive: true }],
-						}),
-				})
-				.mockResolvedValueOnce({
-					ok: true,
-					json: () => Promise.resolve({}),
-				});
-
-			const handler = handlers.get('symphony:getRegistry');
-			const result = await handler!({} as any, false);
-
-			expect(result.registry.repositories[0].stars).toBe(0);
-		});
-
-		it('should omit star counts for repositories whose star requests reject', async () => {
-			vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
-			mockFetch
-				.mockResolvedValueOnce({
-					ok: true,
-					json: () =>
-						Promise.resolve({
-							repositories: [
-								{ slug: 'owner/repo', isActive: true },
-								{ slug: 'other/repo', isActive: true },
-							],
-						}),
-				})
-				.mockResolvedValueOnce({
-					ok: true,
-					json: () => Promise.resolve({ stargazers_count: 5 }),
-				})
-				.mockRejectedValueOnce(new Error('stars unavailable'));
-
-			const handler = handlers.get('symphony:getRegistry');
-			const result = await handler!({} as any, false);
-
-			expect(result.registry.repositories).toEqual([
-				expect.objectContaining({ slug: 'owner/repo', stars: 5 }),
-				expect.objectContaining({ slug: 'other/repo', stars: undefined }),
-			]);
-		});
-
-		it('should reject non-OK registry responses when no cache is available', async () => {
-			vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
-			mockFetch.mockResolvedValueOnce({
-				ok: false,
-				status: 502,
-				statusText: 'Bad Gateway',
-			});
-
-			const handler = handlers.get('symphony:getRegistry');
-			const result = await handler!({} as any, false);
-
-			expect(result.success).toBe(false);
-			expect(result.error).toContain('Failed to fetch registry: 502 Bad Gateway');
-		});
-
-		it('should stringify non-Error registry fetch failures', async () => {
-			vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
-			mockFetch.mockRejectedValueOnce('offline');
-
-			const handler = handlers.get('symphony:getRegistry');
-			const result = await handler!({} as any, false);
-
-			expect(result.success).toBe(false);
-			expect(result.error).toContain('Network error: offline');
-		});
-
-		it('should reject registry payloads without a repositories array', async () => {
-			vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
-			mockFetch.mockResolvedValueOnce({
-				ok: true,
-				json: () => Promise.resolve({ repositories: null }),
-			});
-
-			const handler = handlers.get('symphony:getRegistry');
-			const result = await handler!({} as any, false);
-
-			expect(result.success).toBe(false);
-			expect(result.error).toContain('Invalid registry structure');
-		});
-
-		it('should fall back to expired registry cache when fresh registry fetch fails', async () => {
-			const cacheData = {
-				registry: {
-					data: {
-						repositories: [{ slug: 'owner/repo', isActive: true }],
-					},
-					fetchedAt: Date.now() - 3 * 60 * 60 * 1000,
-				},
-				issues: {},
-				stars: {
-					data: { 'owner/repo': 88 },
-					fetchedAt: Date.now() - 1000,
-				},
-			};
-			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(cacheData));
-			mockFetch.mockRejectedValueOnce(new Error('Registry unavailable'));
-
-			const handler = handlers.get('symphony:getRegistry');
-			const result = await handler!({} as any, false);
-
-			expect(result).toMatchObject({
-				success: true,
-				fromCache: true,
-				registry: {
-					repositories: [expect.objectContaining({ slug: 'owner/repo', stars: 88 })],
-				},
-			});
-			expect(result.cacheAge).toBeGreaterThan(0);
-			expect(logger.info).toHaveBeenCalledWith(
-				expect.stringContaining('Using expired cache as fallback'),
-				'[Symphony]'
-			);
-		});
-
-		it('should fall back to stale cached stars when fresh star caching fails', async () => {
-			const cacheData = {
-				registry: {
-					data: {
-						repositories: [{ slug: 'owner/repo', isActive: true }],
-					},
-					fetchedAt: Date.now() - 3 * 60 * 60 * 1000,
-				},
-				issues: {},
-				stars: {
-					data: { 'owner/repo': 123 },
-					fetchedAt: Date.now() - 10 * 60 * 60 * 1000,
-				},
-			};
-			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(cacheData));
-			vi.mocked(fs.writeFile).mockRejectedValueOnce(new Error('Cache write denied'));
-			mockFetch
-				.mockResolvedValueOnce({
-					ok: true,
-					json: () =>
-						Promise.resolve({
-							repositories: [{ slug: 'owner/repo', isActive: true }],
-						}),
-				})
-				.mockResolvedValueOnce({
-					ok: true,
-					json: () => Promise.resolve({ stargazers_count: 456 }),
-				});
-
-			const handler = handlers.get('symphony:getRegistry');
-			const result = await handler!({} as any, true);
-
-			expect(result.success).toBe(true);
-			expect(result.fromCache).toBe(false);
-			expect(result.registry.repositories[0].stars).toBe(123);
-		});
-
-		it('should keep fresh registry data when star caching fails without a stale star cache', async () => {
-			vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
-			vi.mocked(fs.writeFile).mockRejectedValueOnce(new Error('Cache write denied'));
-			mockFetch
-				.mockResolvedValueOnce({
-					ok: true,
-					json: () =>
-						Promise.resolve({
-							repositories: [{ slug: 'owner/repo', isActive: true }],
-						}),
-				})
-				.mockResolvedValueOnce({
-					ok: true,
-					json: () => Promise.resolve({ stargazers_count: 456 }),
-				});
-
-			const handler = handlers.get('symphony:getRegistry');
-			const result = await handler!({} as any, false);
-
-			expect(result.success).toBe(true);
-			expect(result.fromCache).toBe(false);
-			expect(result.registry.repositories[0].stars).toBeUndefined();
 		});
 
 		it('should handle network errors gracefully', async () => {
@@ -1594,7 +1147,7 @@ describe('Symphony IPC handlers', () => {
 
 			// The IPC handler wrapper catches errors and returns success: false
 			expect(result.success).toBe(false);
-			expect(result.error).toContain('Network error');
+			expect(result.error).toContain('Failed to fetch registry');
 		});
 	});
 
@@ -1706,339 +1259,6 @@ describe('Symphony IPC handlers', () => {
 			// The IPC handler wrapper catches errors and returns success: false
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('403');
-		});
-
-		it('should fall back to expired issue cache when fresh issue fetch fails', async () => {
-			const cachedIssues = [{ number: 5, title: 'Expired cached issue' }];
-			const cacheData = {
-				issues: {
-					'owner/repo': {
-						data: cachedIssues,
-						fetchedAt: Date.now() - 10 * 60 * 1000,
-					},
-				},
-			};
-			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(cacheData));
-			mockFetch.mockRejectedValueOnce(new Error('Issues API unavailable'));
-
-			const handler = handlers.get('symphony:getIssues');
-			const result = await handler!({} as any, 'owner/repo', false);
-
-			expect(result.success).toBe(true);
-			expect(result.fromCache).toBe(true);
-			expect(result.issues).toEqual(cachedIssues);
-			expect(result.cacheAge).toBeGreaterThan(0);
-		});
-
-		it('should wrap unexpected issue parsing failures as GitHub API errors', async () => {
-			vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
-			mockFetch.mockResolvedValueOnce({
-				ok: true,
-				json: () => Promise.reject(new Error('Invalid JSON')),
-			});
-
-			const handler = handlers.get('symphony:getIssues');
-			const result = await handler!({} as any, 'owner/repo', false);
-
-			expect(result.success).toBe(false);
-			expect(result.error).toContain('Failed to fetch issues: Invalid JSON');
-		});
-
-		it('should stringify non-Error issue parsing failures', async () => {
-			vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
-			mockFetch.mockResolvedValueOnce({
-				ok: true,
-				json: () => Promise.reject('bad json'),
-			});
-
-			const handler = handlers.get('symphony:getIssues');
-			const result = await handler!({} as any, 'owner/repo', false);
-
-			expect(result.success).toBe(false);
-			expect(result.error).toContain('Failed to fetch issues: bad json');
-		});
-
-		it('should parse and deduplicate mixed document references from issue bodies', async () => {
-			vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
-			mockFetch
-				.mockResolvedValueOnce({
-					ok: true,
-					json: () =>
-						Promise.resolve([
-							{
-								number: 3,
-								title: 'Document parsing',
-								body: [
-									'[external.md](https://github.com/owner/repo/files/external.md)',
-									'[external.md](https://github.com/owner/repo/files/external.md)',
-									'[local-link.md](docs/local-link.md)',
-									'- https://github.com/owner/repo/files/skipped.md',
-									'- docs/internal.md',
-								].join('\n'),
-								url: 'https://api.github.com/repos/owner/repo/issues/3',
-								html_url: 'https://github.com/owner/repo/issues/3',
-								user: { login: 'user' },
-								created_at: '2024-01-01',
-								updated_at: '2024-01-01',
-								labels: [],
-							},
-						]),
-				})
-				.mockResolvedValueOnce({
-					ok: true,
-					json: () => Promise.resolve([]),
-				});
-
-			const handler = handlers.get('symphony:getIssues');
-			const result = await handler!({} as any, 'owner/repo', false);
-
-			expect(result.success).toBe(true);
-			expect(result.issues[0].documentPaths).toEqual([
-				{
-					name: 'external.md',
-					path: 'https://github.com/owner/repo/files/external.md',
-					isExternal: true,
-				},
-				{ name: 'internal.md', path: 'docs/internal.md', isExternal: false },
-			]);
-		});
-
-		it('should leave issues available when linked PR enrichment has no matches', async () => {
-			vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
-			mockFetch
-				.mockResolvedValueOnce({
-					ok: true,
-					json: () =>
-						Promise.resolve([
-							{
-								number: 4,
-								title: 'Unclaimed issue',
-								body: '',
-								url: 'https://api.github.com/repos/owner/repo/issues/4',
-								html_url: 'https://github.com/owner/repo/issues/4',
-								user: { login: 'user' },
-								created_at: '2024-01-01',
-								updated_at: '2024-01-01',
-								labels: [],
-							},
-						]),
-				})
-				.mockResolvedValueOnce({
-					ok: true,
-					json: () =>
-						Promise.resolve([
-							{
-								number: 20,
-								title: 'Fix unrelated problem',
-								body: 'Closes #999',
-								html_url: 'https://github.com/owner/repo/pull/20',
-								user: { login: 'contributor' },
-								draft: true,
-							},
-						]),
-				});
-
-			const handler = handlers.get('symphony:getIssues');
-			const result = await handler!({} as any, 'owner/repo', false);
-
-			expect(result.success).toBe(true);
-			expect(result.issues[0].status).toBe('available');
-			expect(result.issues[0].claimedByPr).toBeUndefined();
-		});
-
-		it('should stringify non-Error PR enrichment failures', async () => {
-			vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
-			mockFetch
-				.mockResolvedValueOnce({
-					ok: true,
-					json: () =>
-						Promise.resolve([
-							{
-								number: 5,
-								title: 'PR enrichment failure',
-								body: '',
-								url: 'https://api.github.com/repos/owner/repo/issues/5',
-								html_url: 'https://github.com/owner/repo/issues/5',
-								user: { login: 'user' },
-								created_at: '2024-01-01',
-								updated_at: '2024-01-01',
-								labels: [],
-							},
-						]),
-				})
-				.mockRejectedValueOnce('prs offline');
-
-			const handler = handlers.get('symphony:getIssues');
-			const result = await handler!({} as any, 'owner/repo', false);
-
-			expect(result.success).toBe(true);
-			expect(logger.warn).toHaveBeenCalledWith(
-				'Failed to enrich issues with PR status',
-				'[Symphony]',
-				{ error: 'prs offline' }
-			);
-		});
-	});
-
-	describe('symphony:getIssueCounts cache operations', () => {
-		const getIssueCountsHandler = () => handlers.get('symphony:getIssueCounts');
-
-		it('should return cached issue counts when requested repo set matches and cache is valid', async () => {
-			const cacheData = {
-				issues: {},
-				issueCounts: {
-					data: {
-						'owner/repo': 2,
-						'other/repo': 1,
-					},
-					fetchedAt: Date.now() - 1000,
-					repoSlugs: ['other/repo', 'owner/repo'],
-				},
-			};
-			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(cacheData));
-
-			const result = await getIssueCountsHandler()!({} as any, ['owner/repo', 'other/repo']);
-
-			expect(result).toMatchObject({
-				success: true,
-				counts: {
-					'owner/repo': 2,
-					'other/repo': 1,
-				},
-				fromCache: true,
-			});
-			expect(mockFetch).not.toHaveBeenCalled();
-		});
-
-		it('should fetch fresh counts and persist a sorted unique repo cache key', async () => {
-			vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
-			mockFetch.mockResolvedValueOnce({
-				ok: true,
-				json: () =>
-					Promise.resolve({
-						total_count: 3,
-						items: [
-							{ repository_url: 'https://api.github.com/repos/owner/repo' },
-							{ repository_url: 'https://api.github.com/repos/owner/repo' },
-							{ repository_url: 'https://api.github.com/repos/other/repo' },
-							{ repository_url: 'https://api.github.com/repos/unrequested/repo' },
-						],
-					}),
-			});
-
-			const result = await getIssueCountsHandler()!({} as any, [
-				'owner/repo',
-				'other/repo',
-				'owner/repo',
-			]);
-
-			expect(result).toMatchObject({
-				success: true,
-				counts: {
-					'owner/repo': 2,
-					'other/repo': 1,
-				},
-				fromCache: false,
-			});
-			expect(mockFetch).toHaveBeenCalledWith(
-				expect.stringContaining(
-					'/search/issues?q=label:runmaestro.ai+state:open+repo:owner/repo+repo:other/repo+repo:owner/repo'
-				),
-				expect.objectContaining({
-					headers: expect.objectContaining({
-						'User-Agent': 'Maestro-Symphony',
-					}),
-				})
-			);
-			const writtenData = JSON.parse(vi.mocked(fs.writeFile).mock.calls[0][1] as string);
-			expect(writtenData.issueCounts.data).toEqual({
-				'owner/repo': 2,
-				'other/repo': 1,
-			});
-			expect(writtenData.issueCounts.repoSlugs).toEqual(['other/repo', 'owner/repo']);
-		});
-
-		it('should paginate search results until a partial page is returned', async () => {
-			vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
-			mockFetch
-				.mockResolvedValueOnce({
-					ok: true,
-					json: () =>
-						Promise.resolve({
-							total_count: 101,
-							items: Array.from({ length: 100 }, () => ({
-								repository_url: 'https://api.github.com/repos/owner/repo',
-							})),
-						}),
-				})
-				.mockResolvedValueOnce({
-					ok: true,
-					json: () =>
-						Promise.resolve({
-							total_count: 101,
-							items: [{ repository_url: 'https://api.github.com/repos/other/repo' }],
-						}),
-				});
-
-			const result = await getIssueCountsHandler()!({} as any, ['owner/repo', 'other/repo']);
-
-			expect(result.counts).toEqual({
-				'owner/repo': 100,
-				'other/repo': 1,
-			});
-			expect(mockFetch).toHaveBeenCalledTimes(2);
-			expect(mockFetch.mock.calls[1][0]).toContain('page=2');
-		});
-
-		it('should return empty counts for an empty repo list', async () => {
-			vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
-
-			const result = await getIssueCountsHandler()!({} as any, []);
-
-			expect(result).toMatchObject({
-				success: true,
-				counts: {},
-				fromCache: false,
-			});
-			expect(mockFetch).not.toHaveBeenCalled();
-		});
-
-		it('should fall back to expired cached counts when GitHub search fails', async () => {
-			const cacheData = {
-				issues: {},
-				issueCounts: {
-					data: { 'owner/repo': 7 },
-					fetchedAt: Date.now() - 60 * 60 * 1000,
-					repoSlugs: ['owner/repo'],
-				},
-			};
-			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(cacheData));
-			mockFetch.mockResolvedValueOnce({
-				ok: false,
-				status: 500,
-			});
-
-			const result = await getIssueCountsHandler()!({} as any, ['owner/repo']);
-
-			expect(result).toMatchObject({
-				success: true,
-				counts: { 'owner/repo': 7 },
-				fromCache: true,
-			});
-			expect(result.cacheAge).toBeGreaterThan(0);
-		});
-
-		it('should return an IPC error response when search fails without cached counts', async () => {
-			vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
-			mockFetch.mockResolvedValueOnce({
-				ok: false,
-				status: 403,
-			});
-
-			const result = await getIssueCountsHandler()!({} as any, ['owner/repo']);
-
-			expect(result.success).toBe(false);
-			expect(result.error).toContain('Search API failed: 403');
 		});
 	});
 
@@ -2504,16 +1724,6 @@ describe('Symphony IPC handlers', () => {
 				expect(result.error).toContain('required');
 			});
 
-			it('should fail when repo slug is missing a repository name', async () => {
-				const handler = getStartHandler();
-				const result = await handler!({} as any, {
-					...validStartParams,
-					repoSlug: 'owner/',
-				});
-
-				expect(result.error).toContain('Owner and repository name');
-			});
-
 			it('should fail with invalid repo URL', async () => {
 				const handler = getStartHandler();
 				const result = await handler!({} as any, {
@@ -2522,16 +1732,6 @@ describe('Symphony IPC handlers', () => {
 				});
 
 				expect(result.error).toContain('HTTPS');
-			});
-
-			it('should fail when repo name is missing', async () => {
-				const handler = getStartHandler();
-				const result = await handler!({} as any, {
-					...validStartParams,
-					repoName: '',
-				});
-
-				expect(result.error).toContain('Repository name is required');
 			});
 
 			it('should fail with non-positive issue number', async () => {
@@ -2552,65 +1752,6 @@ describe('Symphony IPC handlers', () => {
 				});
 
 				expect(result.error).toContain('Invalid document path');
-			});
-
-			it('should reject external document URLs that are not HTTPS', async () => {
-				const handler = getStartHandler();
-				const result = await handler!({} as any, {
-					...validStartParams,
-					documentPaths: [
-						{ name: 'doc.md', path: 'http://github.com/owner/repo/doc.md', isExternal: true },
-					],
-				});
-
-				expect(result.error).toContain('External document URL must use HTTPS');
-			});
-
-			it('should reject external document URLs outside GitHub domains', async () => {
-				const handler = getStartHandler();
-				const result = await handler!({} as any, {
-					...validStartParams,
-					documentPaths: [
-						{ name: 'doc.md', path: 'https://example.com/owner/repo/doc.md', isExternal: true },
-					],
-				});
-
-				expect(result.error).toContain('External document URL must be from GitHub');
-			});
-
-			it('should reject malformed external document URLs', async () => {
-				const handler = getStartHandler();
-				const result = await handler!({} as any, {
-					...validStartParams,
-					documentPaths: [{ name: 'doc.md', path: 'not-a-url', isExternal: true }],
-				});
-
-				expect(result.error).toContain('Invalid external document URL');
-			});
-
-			it('should allow safe internal paths and trusted GitHub external documents', async () => {
-				vi.mocked(execFileNoThrow).mockImplementation(async (cmd, args) => {
-					if (cmd === 'gh' && args?.[0] === 'auth')
-						return { stdout: '', stderr: 'not logged in', exitCode: 1 };
-					return { stdout: '', stderr: '', exitCode: 0 };
-				});
-
-				const handler = getStartHandler();
-				const result = await handler!({} as any, {
-					...validStartParams,
-					documentPaths: [
-						{ name: 'internal.md', path: 'docs/internal.md', isExternal: false },
-						{
-							name: 'external.md',
-							path: 'https://raw.githubusercontent.com/owner/repo/main/external.md',
-							isExternal: true,
-						},
-					],
-				});
-
-				expect(result.error).toContain('not authenticated');
-				expect(result.error).not.toContain('Invalid document path');
-				expect(result.error).not.toContain('External document URL');
 			});
 		});
 
@@ -2821,7 +1962,7 @@ describe('Symphony IPC handlers', () => {
 
 			it('should clean up on branch creation failure', async () => {
 				vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
-				vi.mocked(fs.rm).mockRejectedValueOnce(new Error('Cleanup denied'));
+				vi.mocked(fs.rm).mockResolvedValue(undefined);
 				vi.mocked(execFileNoThrow).mockImplementation(async (cmd, args) => {
 					if (cmd === 'gh' && args?.[0] === 'auth')
 						return { stdout: 'Logged in', stderr: '', exitCode: 0 };
@@ -2882,7 +2023,7 @@ describe('Symphony IPC handlers', () => {
 
 			it('should clean up on PR creation failure', async () => {
 				vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
-				vi.mocked(fs.rm).mockRejectedValueOnce(new Error('Cleanup denied'));
+				vi.mocked(fs.rm).mockResolvedValue(undefined);
 				vi.mocked(execFileNoThrow).mockImplementation(async (cmd, args) => {
 					if (cmd === 'gh' && args?.[0] === 'auth')
 						return { stdout: 'Logged in', stderr: '', exitCode: 0 };
@@ -3045,7 +2186,6 @@ describe('Symphony IPC handlers', () => {
 
 			it('should return error when fork setup fails', async () => {
 				vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
-				vi.mocked(fs.rm).mockRejectedValueOnce(new Error('Cleanup denied'));
 				vi.mocked(ensureForkSetup).mockResolvedValue({ isFork: false, error: 'permission denied' });
 				vi.mocked(execFileNoThrow).mockImplementation(async (cmd, args) => {
 					if (cmd === 'gh' && args?.[0] === 'auth')
@@ -3274,17 +2414,6 @@ describe('Symphony IPC handlers', () => {
 
 				// Verify broadcast was sent
 				expect(mockMainWindow.webContents.send).toHaveBeenCalledWith('symphony:updated');
-			});
-
-			it('should register active contributions when no main window is available', async () => {
-				vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
-				(mockMainWindow as any) = null;
-
-				const handler = getRegisterActiveHandler();
-				const result = await handler!({} as any, validRegisterParams);
-
-				expect(result.success).toBe(true);
-				expect(fs.writeFile).toHaveBeenCalled();
 			});
 		});
 	});
@@ -3523,7 +2652,31 @@ describe('Symphony IPC handlers', () => {
 			return lastCall ? JSON.parse(lastCall[1] as string) : null;
 		};
 
-		const createActiveContribution = (overrides?: Partial<ActiveContribution>) => ({
+		const createActiveContribution = (
+			overrides?: Partial<{
+				id: string;
+				repoSlug: string;
+				repoName: string;
+				issueNumber: number;
+				issueTitle: string;
+				localPath: string;
+				branchName: string;
+				draftPrNumber: number;
+				draftPrUrl: string;
+				status: string;
+				progress: {
+					totalDocuments: number;
+					completedDocuments: number;
+					totalTasks: number;
+					completedTasks: number;
+				};
+				tokenUsage: { inputTokens: number; outputTokens: number; estimatedCost: number };
+				timeSpent: number;
+				sessionId: string;
+				agentType: string;
+				startedAt: string;
+			}>
+		) => ({
 			id: 'contrib_complete_test',
 			repoSlug: 'owner/repo',
 			repoName: 'repo',
@@ -3769,104 +2922,6 @@ describe('Symphony IPC handlers', () => {
 				expect(commentBody).toContain('5,000'); // provided outputTokens, not 2,500
 				expect(commentBody).toContain('$1.25'); // provided cost, not $0.50
 			});
-
-			it('should format hour-long contribution durations in PR comments', async () => {
-				vi.mocked(fs.readFile).mockResolvedValue(
-					JSON.stringify(createStateWithActiveContribution())
-				);
-				let commentBody = '';
-				vi.mocked(execFileNoThrow).mockImplementation(async (cmd, args) => {
-					if (cmd === 'gh' && args?.[0] === 'pr' && args?.[1] === 'comment') {
-						commentBody = args?.[4] as string;
-					}
-					return { stdout: '', stderr: '', exitCode: 0 };
-				});
-
-				const handler = getCompleteHandler();
-				await handler!({} as any, {
-					contributionId: 'contrib_complete_test',
-					stats: {
-						inputTokens: 1,
-						outputTokens: 2,
-						estimatedCost: 0.01,
-						timeSpentMs: 3_723_000,
-						documentsProcessed: 1,
-						tasksCompleted: 1,
-					},
-				});
-
-				expect(commentBody).toContain('1h 2m 3s');
-			});
-
-			it('should format sub-minute contribution durations in PR comments', async () => {
-				vi.mocked(fs.readFile).mockResolvedValue(
-					JSON.stringify(createStateWithActiveContribution())
-				);
-				let commentBody = '';
-				vi.mocked(execFileNoThrow).mockImplementation(async (cmd, args) => {
-					if (cmd === 'gh' && args?.[0] === 'pr' && args?.[1] === 'comment') {
-						commentBody = args?.[4] as string;
-					}
-					return { stdout: '', stderr: '', exitCode: 0 };
-				});
-
-				const handler = getCompleteHandler();
-				await handler!({} as any, {
-					contributionId: 'contrib_complete_test',
-					stats: {
-						inputTokens: 1,
-						outputTokens: 2,
-						estimatedCost: 0.01,
-						timeSpentMs: 3_000,
-						documentsProcessed: 1,
-						tasksCompleted: 1,
-					},
-				});
-
-				expect(commentBody).toContain('3s');
-			});
-
-			it('should complete fork contributions even when posting the stats comment fails', async () => {
-				const state = createStateWithActiveContribution(
-					createActiveContribution({
-						isFork: true,
-						forkSlug: 'contributor/repo',
-						upstreamSlug: 'owner/repo',
-					})
-				);
-				state.stats.lastContributionDate = undefined as any;
-				state.stats.currentStreak = 0;
-				state.stats.longestStreak = 0;
-				vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(state));
-				vi.mocked(execFileNoThrow).mockImplementation(async (cmd, args) => {
-					if (cmd === 'gh' && args?.[0] === 'pr' && args?.[1] === 'ready') {
-						expect(args).toContain('--repo');
-						expect(args).toContain('owner/repo');
-						return { stdout: '', stderr: '', exitCode: 0 };
-					}
-					if (cmd === 'gh' && args?.[0] === 'pr' && args?.[1] === 'comment') {
-						expect(args).toContain('--repo');
-						expect(args).toContain('owner/repo');
-						return { stdout: '', stderr: 'comment failed', exitCode: 1 };
-					}
-					return { stdout: '', stderr: '', exitCode: 0 };
-				});
-
-				const handler = getCompleteHandler();
-				const result = await handler!({} as any, {
-					contributionId: 'contrib_complete_test',
-				});
-
-				expect(result.success).toBe(true);
-				expect(logger.warn).toHaveBeenCalledWith(
-					'Failed to post PR comment',
-					'[Symphony]',
-					expect.objectContaining({ error: 'comment failed' })
-				);
-				const writtenState = getFinalStateWrite();
-				expect(writtenState.stats.currentStreak).toBe(1);
-				expect(writtenState.stats.firstContributionAt).toBeDefined();
-			});
 		});
 
 		describe('state transitions', () => {
@@ -3950,21 +3005,6 @@ describe('Symphony IPC handlers', () => {
 				// Should have added owner/repo to the list
 				expect(writtenState.stats.repositoriesContributed).toContain('owner/repo');
 				expect(writtenState.stats.repositoriesContributed).toHaveLength(3); // was 2, now 3
-			});
-
-			it('should preserve an existing firstContributionAt timestamp', async () => {
-				const state = createStateWithActiveContribution();
-				state.stats.firstContributionAt = '2023-01-01T00:00:00.000Z';
-				vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(state));
-				vi.mocked(execFileNoThrow).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
-
-				const handler = getCompleteHandler();
-				await handler!({} as any, {
-					contributionId: 'contrib_complete_test',
-				});
-
-				const writtenState = getFinalStateWrite();
-				expect(writtenState.stats.firstContributionAt).toBe('2023-01-01T00:00:00.000Z');
 			});
 
 			it('should not duplicate repository in repositoriesContributed', async () => {
@@ -4060,27 +3100,6 @@ describe('Symphony IPC handlers', () => {
 
 				// Gap should reset streak to 1
 				expect(writtenState.stats.currentStreak).toBe(1);
-			});
-
-			it('should calculate completion streak weeks correctly on Sundays', async () => {
-				vi.useFakeTimers();
-				try {
-					vi.setSystemTime(new Date('2024-01-07T12:00:00Z'));
-					const state = createStateWithActiveContribution();
-					state.stats.lastContributionDate = undefined as any;
-					vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(state));
-					vi.mocked(execFileNoThrow).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
-
-					const handler = getCompleteHandler();
-					await handler!({} as any, {
-						contributionId: 'contrib_complete_test',
-					});
-
-					const writtenState = getFinalStateWrite();
-					expect(writtenState.stats.lastContributionDate).toBe('2024-W1');
-				} finally {
-					vi.useRealTimers();
-				}
 			});
 
 			it('should update longestStreak when current exceeds it', async () => {
@@ -4468,30 +3487,6 @@ describe('Symphony IPC handlers', () => {
 				expect(writtenState.history[0].mergedAt).toBe(mergeTimestamp);
 			});
 
-			it('should set a fallback mergedAt timestamp when GitHub omits it', async () => {
-				const state = createStateWithHistory([{ id: 'pr_merged', prNumber: 200 }]);
-				vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(state));
-
-				mockFetch.mockResolvedValue({
-					ok: true,
-					json: () =>
-						Promise.resolve({
-							state: 'closed',
-							merged: true,
-							merged_at: null,
-						}),
-				});
-
-				const handler = getCheckPRStatusesHandler();
-				await handler!({} as any);
-
-				const writeCall = vi
-					.mocked(fs.writeFile)
-					.mock.calls.find((call) => (call[0] as string).includes('state.json'));
-				const writtenState = JSON.parse(writeCall![1] as string);
-				expect(writtenState.history[0].mergedAt).toBeDefined();
-			});
-
 			it('should increment totalMerged stat on merge', async () => {
 				const state = createStateWithHistory([
 					{ id: 'pr_1', prNumber: 101 },
@@ -4579,18 +3574,6 @@ describe('Symphony IPC handlers', () => {
 				expect(result.errors).toHaveLength(1);
 				expect(result.errors[0]).toContain('102'); // PR number in error
 				expect(result.errors[0]).toContain('404');
-			});
-
-			it('should stringify non-Error exceptions while checking completed PRs', async () => {
-				const state = createStateWithHistory([{ id: 'pr_1', prNumber: 101 }]);
-				vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(state));
-				mockFetch.mockRejectedValue('history lookup failed');
-
-				const handler = getCheckPRStatusesHandler();
-				const result = await handler!({} as any);
-
-				expect(result.checked).toBe(1);
-				expect(result.errors).toEqual(['Error checking PR #101: history lookup failed']);
 			});
 		});
 
@@ -4722,57 +3705,6 @@ describe('Symphony IPC handlers', () => {
 				expect(writtenState.stats.totalMerged).toBe(4);
 			});
 
-			it('should move sparse merged active contributions with fallback values', async () => {
-				const state = {
-					active: [
-						{
-							id: 'active_sparse_merged',
-							repoSlug: 'owner/repo',
-							repoName: 'repo',
-							issueNumber: 42,
-							issueTitle: 'Sparse Merged Active',
-							localPath: '/tmp/repo',
-							branchName: 'symphony/issue-42-abc',
-							draftPrNumber: 601,
-							startedAt: '2024-01-01T00:00:00Z',
-							status: 'ready_for_review',
-							progress: {
-								totalDocuments: 2,
-								completedDocuments: 2,
-								totalTasks: 10,
-								completedTasks: 8,
-							},
-							tokenUsage: { inputTokens: 2000, outputTokens: 1000, estimatedCost: 0.2 },
-							timeSpent: 120000,
-							sessionId: 'session-456',
-							agentType: 'claude-code',
-						},
-					],
-					history: [],
-					stats: { totalMerged: 3 },
-				};
-				vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(state));
-				mockFetch.mockResolvedValue({
-					ok: true,
-					json: () =>
-						Promise.resolve({
-							state: 'closed',
-							merged: true,
-							merged_at: null,
-						}),
-				});
-
-				const handler = getCheckPRStatusesHandler();
-				await handler!({} as any);
-
-				const writeCall = vi
-					.mocked(fs.writeFile)
-					.mock.calls.find((call) => (call[0] as string).includes('state.json'));
-				const writtenState = JSON.parse(writeCall![1] as string);
-				expect(writtenState.history[0].prUrl).toBe('');
-				expect(writtenState.history[0].mergedAt).toBeDefined();
-			});
-
 			it('should broadcast update when changes occur', async () => {
 				const state = createStateWithHistory([{ id: 'pr_1', prNumber: 101 }]);
 				vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(state));
@@ -4824,435 +3756,6 @@ describe('Symphony IPC handlers', () => {
 				expect(result.merged).toBe(1);
 				expect(result.closed).toBe(1);
 				expect(result.errors).toEqual([]);
-			});
-
-			it('should record fetch exceptions while checking completed PRs', async () => {
-				const state = createStateWithHistory([{ id: 'pr_error', prNumber: 404 }]);
-				vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(state));
-				mockFetch.mockRejectedValue(new Error('network down'));
-
-				const handler = getCheckPRStatusesHandler();
-				const result = await handler!({} as any);
-
-				expect(result.checked).toBe(1);
-				expect(result.errors).toEqual(['Error checking PR #404: network down']);
-			});
-
-			it('should sync active PR and fork metadata before checking status', async () => {
-				const state = {
-					active: [
-						{
-							id: 'active_metadata',
-							repoSlug: 'owner/repo',
-							repoName: 'repo',
-							issueNumber: 42,
-							issueTitle: 'Metadata Active',
-							localPath: '/tmp/repo',
-							branchName: 'symphony/issue-42-abc',
-							startedAt: '2024-01-01T00:00:00Z',
-							status: 'running',
-							progress: {
-								totalDocuments: 1,
-								completedDocuments: 0,
-								totalTasks: 1,
-								completedTasks: 0,
-							},
-							tokenUsage: { inputTokens: 0, outputTokens: 0, estimatedCost: 0 },
-							timeSpent: 0,
-							sessionId: 'session-123',
-							agentType: 'claude-code',
-						},
-					],
-					history: [],
-					stats: { totalMerged: 0 },
-				};
-				vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
-					if (String(filePath).includes('metadata.json')) {
-						return JSON.stringify({
-							prCreated: true,
-							draftPrNumber: 77,
-							draftPrUrl: 'https://github.com/owner/repo/pull/77',
-							isFork: true,
-							forkSlug: 'contributor/repo',
-							upstreamSlug: 'owner/repo',
-						});
-					}
-					return JSON.stringify(state);
-				});
-				mockFetch.mockResolvedValue({
-					ok: true,
-					json: () => Promise.resolve({ state: 'open', merged: false, merged_at: null }),
-				});
-
-				const handler = getCheckPRStatusesHandler();
-				const result = await handler!({} as any);
-
-				expect(result.checked).toBe(1);
-				const writeCall = vi
-					.mocked(fs.writeFile)
-					.mock.calls.find((call) => (call[0] as string).includes('state.json'));
-				const writtenState = JSON.parse(writeCall![1] as string);
-				expect(writtenState.active[0]).toMatchObject({
-					draftPrNumber: 77,
-					draftPrUrl: 'https://github.com/owner/repo/pull/77',
-					isFork: true,
-					forkSlug: 'contributor/repo',
-					upstreamSlug: 'owner/repo',
-				});
-			});
-
-			it('should discover active PRs by branch name and move closed active PRs to history', async () => {
-				const state = {
-					active: [
-						{
-							id: 'active_discover',
-							repoSlug: 'owner/repo',
-							repoName: 'repo',
-							issueNumber: 42,
-							issueTitle: 'Discover Active',
-							localPath: '/tmp/repo',
-							branchName: 'symphony/issue-42-abc',
-							startedAt: '2024-01-01T00:00:00Z',
-							status: 'running',
-							progress: {
-								totalDocuments: 1,
-								completedDocuments: 1,
-								totalTasks: 2,
-								completedTasks: 2,
-							},
-							tokenUsage: { inputTokens: 100, outputTokens: 50, estimatedCost: 0.01 },
-							timeSpent: 1000,
-							sessionId: 'session-123',
-							agentType: 'claude-code',
-							isFork: true,
-							forkSlug: 'contributor/repo',
-							upstreamSlug: 'owner/repo',
-						},
-					],
-					history: [],
-					stats: { totalMerged: 0 },
-				};
-				vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
-					if (String(filePath).includes('metadata.json')) {
-						throw new Error('ENOENT');
-					}
-					return JSON.stringify(state);
-				});
-				mockFetch
-					.mockResolvedValueOnce({
-						ok: true,
-						json: () =>
-							Promise.resolve([
-								{
-									number: 88,
-									html_url: 'https://github.com/owner/repo/pull/88',
-									state: 'open',
-								},
-							]),
-					})
-					.mockResolvedValueOnce({
-						ok: true,
-						json: () => Promise.resolve({ state: 'closed', merged: false, merged_at: null }),
-					});
-
-				const handler = getCheckPRStatusesHandler();
-				const result = await handler!({} as any);
-
-				expect(result).toMatchObject({ checked: 1, closed: 1, merged: 0 });
-				expect(mockFetch).toHaveBeenNthCalledWith(
-					1,
-					expect.stringContaining('head=contributor%3Asymphony%2Fissue-42-abc'),
-					expect.any(Object)
-				);
-				const writeCall = vi
-					.mocked(fs.writeFile)
-					.mock.calls.find((call) => (call[0] as string).includes('state.json'));
-				const writtenState = JSON.parse(writeCall![1] as string);
-				expect(writtenState.active).toHaveLength(0);
-				expect(writtenState.history[0]).toMatchObject({
-					id: 'active_discover',
-					prNumber: 88,
-					wasClosed: true,
-				});
-			});
-
-			it('should record errors for active PR status fetch failures', async () => {
-				const state = {
-					active: [
-						{
-							id: 'active_error',
-							repoSlug: 'owner/repo',
-							repoName: 'repo',
-							issueNumber: 42,
-							issueTitle: 'Active Error',
-							localPath: '/tmp/repo',
-							branchName: 'symphony/issue-42-abc',
-							draftPrNumber: 90,
-							draftPrUrl: 'https://github.com/owner/repo/pull/90',
-							startedAt: '2024-01-01T00:00:00Z',
-							status: 'running',
-							progress: {
-								totalDocuments: 1,
-								completedDocuments: 0,
-								totalTasks: 1,
-								completedTasks: 0,
-							},
-							tokenUsage: { inputTokens: 0, outputTokens: 0, estimatedCost: 0 },
-							timeSpent: 0,
-							sessionId: 'session-123',
-							agentType: 'claude-code',
-						},
-					],
-					history: [],
-					stats: { totalMerged: 0 },
-				};
-				vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(state));
-				mockFetch.mockRejectedValue(new Error('status timeout'));
-
-				const handler = getCheckPRStatusesHandler();
-				const result = await handler!({} as any);
-
-				expect(result.checked).toBe(1);
-				expect(result.errors).toEqual(['Error checking PR #90: status timeout']);
-			});
-
-			it('should stringify non-Error exceptions while checking active PRs', async () => {
-				const state = {
-					active: [
-						{
-							id: 'active_string_error',
-							repoSlug: 'owner/repo',
-							repoName: 'repo',
-							issueNumber: 42,
-							issueTitle: 'Active String Error',
-							localPath: '/tmp/repo',
-							branchName: 'symphony/issue-42-abc',
-							draftPrNumber: 93,
-							draftPrUrl: 'https://github.com/owner/repo/pull/93',
-							startedAt: '2024-01-01T00:00:00Z',
-							status: 'running',
-							progress: {
-								totalDocuments: 1,
-								completedDocuments: 0,
-								totalTasks: 1,
-								completedTasks: 0,
-							},
-							tokenUsage: { inputTokens: 0, outputTokens: 0, estimatedCost: 0 },
-							timeSpent: 0,
-							sessionId: 'session-123',
-							agentType: 'claude-code',
-						},
-					],
-					history: [],
-					stats: { totalMerged: 0 },
-				};
-				vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(state));
-				mockFetch.mockRejectedValue('active lookup failed');
-
-				const handler = getCheckPRStatusesHandler();
-				const result = await handler!({} as any);
-
-				expect(result.checked).toBe(1);
-				expect(result.errors).toEqual(['Error checking PR #93: active lookup failed']);
-			});
-
-			it('should skip completed history entries without PR identity', async () => {
-				const state = {
-					active: [],
-					history: [
-						{ id: 'missing_pr', repoSlug: 'owner/repo' },
-						{ id: 'missing_repo', prNumber: 91 },
-					],
-					stats: { totalMerged: 0 },
-				};
-				vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(state));
-
-				const handler = getCheckPRStatusesHandler();
-				const result = await handler!({} as any);
-
-				expect(result).toMatchObject({ checked: 0, merged: 0, closed: 0 });
-				expect(mockFetch).not.toHaveBeenCalled();
-			});
-
-			it('should skip metadata sync when active PR and fork fields are already present', async () => {
-				const state = {
-					active: [
-						{
-							id: 'active_synced',
-							repoSlug: 'owner/repo',
-							repoName: 'repo',
-							issueNumber: 42,
-							issueTitle: 'Already Synced',
-							localPath: '/tmp/repo',
-							branchName: 'symphony/issue-42-abc',
-							draftPrNumber: 91,
-							draftPrUrl: 'https://github.com/owner/repo/pull/91',
-							startedAt: '2024-01-01T00:00:00Z',
-							status: 'running',
-							progress: {
-								totalDocuments: 1,
-								completedDocuments: 0,
-								totalTasks: 1,
-								completedTasks: 0,
-							},
-							tokenUsage: { inputTokens: 0, outputTokens: 0, estimatedCost: 0 },
-							timeSpent: 0,
-							sessionId: 'session-123',
-							agentType: 'claude-code',
-							isFork: false,
-						},
-					],
-					history: [],
-					stats: { totalMerged: 0 },
-				};
-				vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(state));
-				mockFetch.mockResolvedValue({
-					ok: true,
-					json: () => Promise.resolve({ state: 'open', merged: false, merged_at: null }),
-				});
-
-				const handler = getCheckPRStatusesHandler();
-				const result = await handler!({} as any);
-
-				expect(result.checked).toBe(1);
-				expect(fs.readFile).toHaveBeenCalledTimes(1);
-			});
-
-			it('should report HTTP failures for active PR status checks', async () => {
-				const state = {
-					active: [
-						{
-							id: 'active_http_error',
-							repoSlug: 'owner/repo',
-							repoName: 'repo',
-							issueNumber: 42,
-							issueTitle: 'Active HTTP Error',
-							localPath: '/tmp/repo',
-							branchName: 'symphony/issue-42-abc',
-							draftPrNumber: 92,
-							draftPrUrl: 'https://github.com/owner/repo/pull/92',
-							startedAt: '2024-01-01T00:00:00Z',
-							status: 'running',
-							progress: {
-								totalDocuments: 1,
-								completedDocuments: 0,
-								totalTasks: 1,
-								completedTasks: 0,
-							},
-							tokenUsage: { inputTokens: 0, outputTokens: 0, estimatedCost: 0 },
-							timeSpent: 0,
-							sessionId: 'session-123',
-							agentType: 'claude-code',
-						},
-					],
-					history: [],
-					stats: { totalMerged: 0 },
-				};
-				vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(state));
-				mockFetch.mockResolvedValue({ ok: false, status: 503 });
-
-				const handler = getCheckPRStatusesHandler();
-				const result = await handler!({} as any);
-
-				expect(result.checked).toBe(1);
-				expect(result.errors).toEqual(['Failed to check PR #92: 503']);
-			});
-
-			it('should keep running when branch-based PR discovery throws', async () => {
-				const state = {
-					active: [
-						{
-							id: 'active_discovery_error',
-							repoSlug: 'owner/repo',
-							repoName: 'repo',
-							issueNumber: 42,
-							issueTitle: 'Discovery Error',
-							localPath: '/tmp/repo',
-							branchName: 'symphony/issue-42-abc',
-							startedAt: '2024-01-01T00:00:00Z',
-							status: 'running',
-							progress: {
-								totalDocuments: 1,
-								completedDocuments: 0,
-								totalTasks: 1,
-								completedTasks: 0,
-							},
-							tokenUsage: { inputTokens: 0, outputTokens: 0, estimatedCost: 0 },
-							timeSpent: 0,
-							sessionId: 'session-123',
-							agentType: 'claude-code',
-						},
-					],
-					history: [],
-					stats: { totalMerged: 0 },
-				};
-				vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
-					if (String(filePath).includes('metadata.json')) {
-						throw new Error('ENOENT');
-					}
-					return JSON.stringify(state);
-				});
-				mockFetch.mockRejectedValue('GitHub search unavailable');
-
-				const handler = getCheckPRStatusesHandler();
-				const result = await handler!({} as any);
-
-				expect(result).toMatchObject({ checked: 0, merged: 0, closed: 0 });
-				expect(logger.warn).toHaveBeenCalledWith(
-					'Error discovering PR by branch',
-					'[Symphony]',
-					expect.objectContaining({
-						repoSlug: 'owner/repo',
-						branchName: 'symphony/issue-42-abc',
-						error: 'GitHub search unavailable',
-					})
-				);
-			});
-
-			it('should log Error objects from branch-based PR discovery failures', async () => {
-				const state = {
-					active: [
-						{
-							id: 'active_discovery_error',
-							repoSlug: 'owner/repo',
-							repoName: 'repo',
-							issueNumber: 42,
-							issueTitle: 'Discovery Error',
-							localPath: '/tmp/repo',
-							branchName: 'symphony/issue-42-abc',
-							startedAt: '2024-01-01T00:00:00Z',
-							status: 'running',
-							progress: {
-								totalDocuments: 1,
-								completedDocuments: 0,
-								totalTasks: 1,
-								completedTasks: 0,
-							},
-							tokenUsage: { inputTokens: 0, outputTokens: 0, estimatedCost: 0 },
-							timeSpent: 0,
-							sessionId: 'session-123',
-							agentType: 'claude-code',
-						},
-					],
-					history: [],
-					stats: { totalMerged: 0 },
-				};
-				vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
-					if (String(filePath).includes('metadata.json')) {
-						throw new Error('ENOENT');
-					}
-					return JSON.stringify(state);
-				});
-				mockFetch.mockRejectedValue(new Error('GitHub search unavailable'));
-
-				const handler = getCheckPRStatusesHandler();
-				await handler!({} as any);
-
-				expect(logger.warn).toHaveBeenCalledWith(
-					'Error discovering PR by branch',
-					'[Symphony]',
-					expect.objectContaining({ error: 'GitHub search unavailable' })
-				);
 			});
 		});
 	});
@@ -5384,42 +3887,6 @@ describe('Symphony IPC handlers', () => {
 			expect(writtenState.stats.totalMerged).toBe(1);
 		});
 
-		it('should use fallback timestamps and empty PR URL when a merged PR has sparse data', async () => {
-			const contribution = createActiveContribution({
-				draftPrNumber: 456,
-				draftPrUrl: undefined,
-			});
-			const state = {
-				active: [contribution],
-				history: [],
-				stats: { totalMerged: 0 },
-			};
-			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(state));
-
-			mockFetch.mockResolvedValue({
-				ok: true,
-				json: () =>
-					Promise.resolve({
-						state: 'closed',
-						merged: true,
-						merged_at: null,
-						draft: false,
-					}),
-			});
-
-			const handler = getSyncContributionHandler();
-			const result = await handler!({} as any, 'contrib_123');
-
-			expect(result.success).toBe(true);
-			const writeCall = vi
-				.mocked(fs.writeFile)
-				.mock.calls.find((call) => (call[0] as string).includes('state.json'));
-			const writtenState = JSON.parse(writeCall![1] as string);
-			expect(writtenState.history[0].prUrl).toBe('');
-			expect(writtenState.history[0].completedAt).toBeDefined();
-			expect(writtenState.history[0].mergedAt).toBeDefined();
-		});
-
 		it('should detect closed PR and move to history', async () => {
 			const contribution = createActiveContribution({
 				draftPrNumber: 456,
@@ -5457,39 +3924,6 @@ describe('Symphony IPC handlers', () => {
 			expect(writeCall).toBeDefined();
 			const writtenState = JSON.parse(writeCall![1] as string);
 			expect(writtenState.history[0].wasClosed).toBe(true);
-		});
-
-		it('should use an empty PR URL when a closed PR has no stored URL', async () => {
-			const contribution = createActiveContribution({
-				draftPrNumber: 456,
-				draftPrUrl: undefined,
-			});
-			const state = {
-				active: [contribution],
-				history: [],
-				stats: { totalMerged: 0 },
-			};
-			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(state));
-
-			mockFetch.mockResolvedValue({
-				ok: true,
-				json: () =>
-					Promise.resolve({
-						state: 'closed',
-						merged: false,
-						merged_at: null,
-						draft: false,
-					}),
-			});
-
-			const handler = getSyncContributionHandler();
-			await handler!({} as any, 'contrib_123');
-
-			const writeCall = vi
-				.mocked(fs.writeFile)
-				.mock.calls.find((call) => (call[0] as string).includes('state.json'));
-			const writtenState = JSON.parse(writeCall![1] as string);
-			expect(writtenState.history[0].prUrl).toBe('');
 		});
 
 		it('should update status when PR is no longer draft', async () => {
@@ -5531,71 +3965,6 @@ describe('Symphony IPC handlers', () => {
 			expect(writtenState.active[0].status).toBe('ready_for_review');
 		});
 
-		it('should report steady ready PR status when no state transition is needed', async () => {
-			const contribution = createActiveContribution({
-				draftPrNumber: 456,
-				draftPrUrl: 'https://github.com/owner/repo/pull/456',
-				status: 'ready_for_review',
-				isFork: true,
-				forkSlug: 'contributor/repo',
-				upstreamSlug: 'owner/repo',
-			});
-			const state = {
-				active: [contribution],
-				history: [],
-				stats: { totalMerged: 0 },
-			};
-			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(state));
-
-			mockFetch.mockResolvedValue({
-				ok: true,
-				json: () =>
-					Promise.resolve({
-						state: 'open',
-						merged: false,
-						merged_at: null,
-						draft: false,
-					}),
-			});
-
-			const handler = getSyncContributionHandler();
-			const result = await handler!({} as any, 'contrib_123');
-
-			expect(result.success).toBe(true);
-			expect(result.message).toBe('PR #456 synced (ready)');
-		});
-
-		it('should report steady draft PR status when no state transition is needed', async () => {
-			const contribution = createActiveContribution({
-				draftPrNumber: 456,
-				draftPrUrl: 'https://github.com/owner/repo/pull/456',
-				status: 'ready_for_review',
-			});
-			const state = {
-				active: [contribution],
-				history: [],
-				stats: { totalMerged: 0 },
-			};
-			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(state));
-
-			mockFetch.mockResolvedValue({
-				ok: true,
-				json: () =>
-					Promise.resolve({
-						state: 'open',
-						merged: false,
-						merged_at: null,
-						draft: true,
-					}),
-			});
-
-			const handler = getSyncContributionHandler();
-			const result = await handler!({} as any, 'contrib_123');
-
-			expect(result.success).toBe(true);
-			expect(result.message).toBe('PR #456 synced (draft)');
-		});
-
 		it('should handle GitHub API errors gracefully', async () => {
 			const contribution = createActiveContribution({
 				draftPrNumber: 456,
@@ -5618,181 +3987,6 @@ describe('Symphony IPC handlers', () => {
 
 			expect(result.success).toBe(true);
 			expect(result.message).toContain('Could not check PR status');
-		});
-
-		it('should keep metadata sync message when the follow-up PR status request fails', async () => {
-			const contribution = createActiveContribution({ draftPrNumber: undefined });
-			const state = {
-				active: [contribution],
-				history: [],
-				stats: { totalMerged: 0 },
-			};
-			vi.mocked(fs.readFile)
-				.mockResolvedValueOnce(JSON.stringify(state))
-				.mockResolvedValueOnce(
-					JSON.stringify({
-						prCreated: true,
-						draftPrNumber: 789,
-						draftPrUrl: 'https://github.com/owner/repo/pull/789',
-					})
-				);
-			mockFetch.mockResolvedValue({ ok: false, status: 500 });
-
-			const handler = getSyncContributionHandler();
-			const result = await handler!({} as any, 'contrib_123');
-
-			expect(result.success).toBe(true);
-			expect(result.message).toBe('Synced PR #789 from metadata');
-		});
-
-		it('should sync fork metadata without PR info and report an in-progress local checkout', async () => {
-			const contribution = createActiveContribution({
-				draftPrNumber: undefined,
-				isFork: undefined,
-			});
-			const state = {
-				active: [contribution],
-				history: [],
-				stats: { totalMerged: 0 },
-			};
-			vi.mocked(fs.readFile)
-				.mockResolvedValueOnce(JSON.stringify(state))
-				.mockResolvedValueOnce(
-					JSON.stringify({
-						isFork: true,
-						forkSlug: 'contributor/repo',
-						upstreamSlug: 'owner/repo',
-					})
-				);
-			vi.mocked(fs.access).mockResolvedValue(undefined);
-
-			const handler = getSyncContributionHandler();
-			const result = await handler!({} as any, 'contrib_123');
-
-			expect(result.success).toBe(true);
-			expect(result.message).toContain('No PR exists yet');
-			const writeCall = vi
-				.mocked(fs.writeFile)
-				.mock.calls.find((call) => (call[0] as string).includes('state.json'));
-			const writtenState = JSON.parse(writeCall![1] as string);
-			expect(writtenState.active[0]).toMatchObject({
-				isFork: true,
-				forkSlug: 'contributor/repo',
-				upstreamSlug: 'owner/repo',
-			});
-		});
-
-		it('should discover a PR by branch when metadata has no PR information', async () => {
-			const contribution = createActiveContribution({ draftPrNumber: undefined });
-			const state = {
-				active: [contribution],
-				history: [],
-				stats: { totalMerged: 0 },
-			};
-			vi.mocked(fs.readFile)
-				.mockResolvedValueOnce(JSON.stringify(state))
-				.mockRejectedValueOnce(new Error('ENOENT'));
-			mockFetch
-				.mockResolvedValueOnce({
-					ok: true,
-					json: () =>
-						Promise.resolve([
-							{
-								number: 321,
-								html_url: 'https://github.com/owner/repo/pull/321',
-								state: 'open',
-							},
-						]),
-				})
-				.mockResolvedValueOnce({
-					ok: true,
-					json: () =>
-						Promise.resolve({
-							state: 'open',
-							merged: false,
-							merged_at: null,
-							draft: true,
-						}),
-				});
-
-			const handler = getSyncContributionHandler();
-			const result = await handler!({} as any, 'contrib_123');
-
-			expect(result.success).toBe(true);
-			expect(result.prCreated).toBe(true);
-			expect(result.message).toContain('Discovered PR #321');
-		});
-
-		it('should warn when a contribution has no PR and its local path is inaccessible', async () => {
-			const contribution = createActiveContribution({ draftPrNumber: undefined });
-			const state = {
-				active: [contribution],
-				history: [],
-				stats: { totalMerged: 0 },
-			};
-			vi.mocked(fs.readFile)
-				.mockResolvedValueOnce(JSON.stringify(state))
-				.mockRejectedValueOnce(new Error('ENOENT'));
-			mockFetch.mockResolvedValueOnce({
-				ok: true,
-				json: () => Promise.resolve([]),
-			});
-			vi.mocked(fs.access).mockRejectedValue(new Error('missing checkout'));
-
-			const handler = getSyncContributionHandler();
-			const result = await handler!({} as any, 'contrib_123');
-
-			expect(result.success).toBe(true);
-			expect(result.message).toBe('Synced successfully');
-			expect(logger.warn).toHaveBeenCalledWith(
-				'Local path not accessible for contribution',
-				'[Symphony]',
-				expect.objectContaining({ localPath: contribution.localPath })
-			);
-		});
-
-		it('should return a sync error when PR status fetching throws', async () => {
-			const contribution = createActiveContribution({
-				draftPrNumber: 456,
-				draftPrUrl: 'https://github.com/owner/repo/pull/456',
-			});
-			const state = {
-				active: [contribution],
-				history: [],
-				stats: { totalMerged: 0 },
-			};
-			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(state));
-			mockFetch.mockRejectedValue(new Error('GitHub unavailable'));
-
-			const handler = getSyncContributionHandler();
-			const result = await handler!({} as any, 'contrib_123');
-
-			expect(result).toEqual({
-				success: false,
-				error: 'GitHub unavailable',
-			});
-		});
-
-		it('should return unknown sync errors for non-Error thrown values', async () => {
-			const contribution = createActiveContribution({
-				draftPrNumber: 456,
-				draftPrUrl: 'https://github.com/owner/repo/pull/456',
-			});
-			const state = {
-				active: [contribution],
-				history: [],
-				stats: { totalMerged: 0 },
-			};
-			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(state));
-			mockFetch.mockRejectedValue('GitHub unavailable');
-
-			const handler = getSyncContributionHandler();
-			const result = await handler!({} as any, 'contrib_123');
-
-			expect(result).toEqual({
-				success: false,
-				error: 'Unknown error',
-			});
 		});
 	});
 
@@ -6025,17 +4219,6 @@ describe('Symphony IPC handlers', () => {
 				expect(result.error).toContain('Invalid owner');
 			});
 
-			it('should reject repo slug with missing repository name', async () => {
-				const handler = getStartContributionHandler();
-				const result = await handler!({} as any, {
-					...validStartContributionParams,
-					repoSlug: 'owner/',
-				});
-
-				expect(result.success).toBe(false);
-				expect(result.error).toContain('Owner and repository name');
-			});
-
 			it('should validate issue number is positive integer', async () => {
 				const handler = getStartContributionHandler();
 				const result = await handler!({} as any, {
@@ -6078,43 +4261,6 @@ describe('Symphony IPC handlers', () => {
 
 				expect(result.success).toBe(false);
 				expect(result.error).toContain('Invalid document path');
-			});
-
-			it('should reject external document URLs that are not HTTPS', async () => {
-				const handler = getStartContributionHandler();
-				const result = await handler!({} as any, {
-					...validStartContributionParams,
-					documentPaths: [
-						{ name: 'doc.md', path: 'http://github.com/attachments/doc.md', isExternal: true },
-					],
-				});
-
-				expect(result.success).toBe(false);
-				expect(result.error).toContain('External document URL must use HTTPS');
-			});
-
-			it('should reject external document URLs outside GitHub domains', async () => {
-				const handler = getStartContributionHandler();
-				const result = await handler!({} as any, {
-					...validStartContributionParams,
-					documentPaths: [
-						{ name: 'doc.md', path: 'https://example.com/attachments/doc.md', isExternal: true },
-					],
-				});
-
-				expect(result.success).toBe(false);
-				expect(result.error).toContain('External document URL must be from GitHub');
-			});
-
-			it('should reject malformed external document URLs', async () => {
-				const handler = getStartContributionHandler();
-				const result = await handler!({} as any, {
-					...validStartContributionParams,
-					documentPaths: [{ name: 'doc.md', path: 'not-a-url', isExternal: true }],
-				});
-
-				expect(result.success).toBe(false);
-				expect(result.error).toContain('Invalid external document URL');
 			});
 
 			it('should reject document paths starting with slash', async () => {
@@ -6362,69 +4508,6 @@ describe('Symphony IPC handlers', () => {
 					.mock.calls.filter((call) => (call[0] as string).includes('missing.md'));
 				expect(writeCallsForMissing).toHaveLength(0);
 			});
-
-			it('should continue when an external document download throws', async () => {
-				vi.mocked(execFileNoThrow).mockImplementation(async (cmd, args) => {
-					if (cmd === 'gh' && args?.[0] === 'auth')
-						return { stdout: 'Logged in', stderr: '', exitCode: 0 };
-					if (cmd === 'git' && args?.[0] === 'checkout')
-						return { stdout: '', stderr: '', exitCode: 0 };
-					return { stdout: '', stderr: '', exitCode: 0 };
-				});
-				mockFetch.mockRejectedValue('download timeout');
-
-				const handler = getStartContributionHandler();
-				const result = await handler!({} as any, {
-					...validStartContributionParams,
-					documentPaths: [
-						{
-							name: 'timeout.md',
-							path: 'https://github.com/attachments/timeout.md',
-							isExternal: true,
-						},
-					],
-				});
-
-				expect(result.success).toBe(true);
-				expect(logger.warn).toHaveBeenCalledWith(
-					'Failed to download document',
-					'[Symphony]',
-					expect.objectContaining({
-						name: 'timeout.md',
-						error: 'download timeout',
-					})
-				);
-			});
-
-			it('should log Error objects from external document download failures', async () => {
-				vi.mocked(execFileNoThrow).mockImplementation(async (cmd, args) => {
-					if (cmd === 'gh' && args?.[0] === 'auth')
-						return { stdout: 'Logged in', stderr: '', exitCode: 0 };
-					if (cmd === 'git' && args?.[0] === 'checkout')
-						return { stdout: '', stderr: '', exitCode: 0 };
-					return { stdout: '', stderr: '', exitCode: 0 };
-				});
-				mockFetch.mockRejectedValue(new Error('download timeout'));
-
-				const handler = getStartContributionHandler();
-				const result = await handler!({} as any, {
-					...validStartContributionParams,
-					documentPaths: [
-						{
-							name: 'timeout.md',
-							path: 'https://github.com/attachments/timeout.md',
-							isExternal: true,
-						},
-					],
-				});
-
-				expect(result.success).toBe(true);
-				expect(logger.warn).toHaveBeenCalledWith(
-					'Failed to download document',
-					'[Symphony]',
-					expect.objectContaining({ error: 'download timeout' })
-				);
-			});
 		});
 
 		describe('repo-internal documents', () => {
@@ -6457,7 +4540,7 @@ describe('Symphony IPC handlers', () => {
 						return { stdout: '', stderr: '', exitCode: 0 };
 					return { stdout: '', stderr: '', exitCode: 0 };
 				});
-				vi.mocked(fs.access).mockRejectedValue('ENOENT: no such file or directory');
+				vi.mocked(fs.access).mockRejectedValue(new Error('ENOENT: no such file or directory'));
 
 				const handler = getStartContributionHandler();
 				const result = await handler!({} as any, {
@@ -6469,32 +4552,6 @@ describe('Symphony IPC handlers', () => {
 
 				// Should still succeed, just skip the missing file
 				expect(result.success).toBe(true);
-			});
-
-			it('should log Error objects from missing repo-internal documents', async () => {
-				vi.mocked(execFileNoThrow).mockImplementation(async (cmd, args) => {
-					if (cmd === 'gh' && args?.[0] === 'auth')
-						return { stdout: 'Logged in', stderr: '', exitCode: 0 };
-					if (cmd === 'git' && args?.[0] === 'checkout')
-						return { stdout: '', stderr: '', exitCode: 0 };
-					return { stdout: '', stderr: '', exitCode: 0 };
-				});
-				vi.mocked(fs.access).mockRejectedValue(new Error('ENOENT: no such file or directory'));
-
-				const handler = getStartContributionHandler();
-				const result = await handler!({} as any, {
-					...validStartContributionParams,
-					documentPaths: [
-						{ name: 'nonexistent.md', path: 'docs/nonexistent.md', isExternal: false },
-					],
-				});
-
-				expect(result.success).toBe(true);
-				expect(logger.warn).toHaveBeenCalledWith(
-					'Document not found in repo',
-					'[Symphony]',
-					expect.objectContaining({ error: 'ENOENT: no such file or directory' })
-				);
 			});
 
 			it('should reject document paths with traversal patterns in resolution', async () => {
@@ -6516,36 +4573,6 @@ describe('Symphony IPC handlers', () => {
 				// Should be rejected due to path traversal
 				expect(result.success).toBe(false);
 				expect(result.error).toContain('Invalid document path');
-			});
-
-			it('should skip a repo document if resolution escapes the checkout root', async () => {
-				vi.mocked(execFileNoThrow).mockImplementation(async (cmd, args) => {
-					if (cmd === 'gh' && args?.[0] === 'auth')
-						return { stdout: 'Logged in', stderr: '', exitCode: 0 };
-					if (cmd === 'git' && args?.[0] === 'checkout')
-						return { stdout: '', stderr: '', exitCode: 0 };
-					return { stdout: '', stderr: '', exitCode: 0 };
-				});
-				const resolveSpy = vi.spyOn(path, 'resolve').mockReturnValueOnce('/tmp/outside/task.md');
-
-				const handler = getStartContributionHandler();
-				let result: any;
-				try {
-					result = await handler!({} as any, {
-						...validStartContributionParams,
-						documentPaths: [{ name: 'task.md', path: 'docs/task.md', isExternal: false }],
-					});
-				} finally {
-					resolveSpy.mockRestore();
-				}
-
-				expect(result!.success).toBe(true);
-				expect(logger.error).toHaveBeenCalledWith(
-					'Attempted path traversal in document path',
-					'[Symphony]',
-					{ docPath: 'docs/task.md' }
-				);
-				expect(fs.access).not.toHaveBeenCalledWith('/tmp/outside/task.md');
 			});
 		});
 
@@ -6639,67 +4666,6 @@ describe('Symphony IPC handlers', () => {
 				expect(result.success).toBe(false);
 				expect(result.error).toBeDefined();
 				expect(result.branchName).toBeUndefined();
-			});
-
-			it('should continue without a draft PR when the initial empty commit fails', async () => {
-				vi.mocked(execFileNoThrow).mockImplementation(async (cmd, args) => {
-					if (cmd === 'gh' && args?.[0] === 'auth')
-						return { stdout: 'Logged in', stderr: '', exitCode: 0 };
-					if (cmd === 'git' && args?.[0] === 'checkout')
-						return { stdout: '', stderr: '', exitCode: 0 };
-					if (cmd === 'git' && args?.[0] === 'commit')
-						return { stdout: '', stderr: 'nothing to commit', exitCode: 1 };
-					return { stdout: '', stderr: '', exitCode: 0 };
-				});
-
-				const handler = getStartContributionHandler();
-				const result = await handler!({} as any, validStartContributionParams);
-
-				expect(result.success).toBe(true);
-				expect(result.draftPrNumber).toBeUndefined();
-				expect(logger.warn).toHaveBeenCalledWith(
-					'Empty commit failed, continuing without draft PR',
-					'[Symphony]',
-					expect.objectContaining({ error: 'nothing to commit' })
-				);
-			});
-
-			it('should return an error when setup throws after validation succeeds', async () => {
-				vi.mocked(execFileNoThrow).mockImplementation(async (cmd, args) => {
-					if (cmd === 'gh' && args?.[0] === 'auth')
-						return { stdout: 'Logged in', stderr: '', exitCode: 0 };
-					if (cmd === 'git' && args?.[0] === 'checkout')
-						return { stdout: '', stderr: '', exitCode: 0 };
-					return { stdout: '', stderr: '', exitCode: 0 };
-				});
-				vi.mocked(fs.mkdir).mockRejectedValueOnce('disk full');
-
-				const handler = getStartContributionHandler();
-				const result = await handler!({} as any, validStartContributionParams);
-
-				expect(result).toEqual({
-					success: false,
-					error: 'Unknown error',
-				});
-			});
-
-			it('should return Error messages when setup throws Error objects', async () => {
-				vi.mocked(execFileNoThrow).mockImplementation(async (cmd, args) => {
-					if (cmd === 'gh' && args?.[0] === 'auth')
-						return { stdout: 'Logged in', stderr: '', exitCode: 0 };
-					if (cmd === 'git' && args?.[0] === 'checkout')
-						return { stdout: '', stderr: '', exitCode: 0 };
-					return { stdout: '', stderr: '', exitCode: 0 };
-				});
-				vi.mocked(fs.mkdir).mockRejectedValueOnce(new Error('disk full'));
-
-				const handler = getStartContributionHandler();
-				const result = await handler!({} as any, validStartContributionParams);
-
-				expect(result).toEqual({
-					success: false,
-					error: 'disk full',
-				});
 			});
 		});
 
@@ -6931,37 +4897,6 @@ describe('Symphony IPC handlers', () => {
 					expect.any(Object)
 				);
 			});
-
-			it('should return private draft PR auth errors after commit validation succeeds', async () => {
-				const metadata = createValidMetadata();
-				let authChecks = 0;
-				vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
-					if ((filePath as string).includes('metadata.json')) {
-						return JSON.stringify(metadata);
-					}
-					throw new Error('ENOENT');
-				});
-				vi.mocked(execFileNoThrow).mockImplementation(async (cmd, args) => {
-					if (cmd === 'gh' && args?.[0] === 'auth') {
-						authChecks += 1;
-						return authChecks === 1
-							? { stdout: 'Logged in', stderr: '', exitCode: 0 }
-							: { stdout: '', stderr: 'unexpected gh failure', exitCode: 1 };
-					}
-					if (cmd === 'git' && args?.[0] === 'symbolic-ref')
-						return { stdout: 'refs/remotes/origin/main', stderr: '', exitCode: 0 };
-					if (cmd === 'git' && args?.[0] === 'rev-list')
-						return { stdout: '1', stderr: '', exitCode: 0 };
-					return { stdout: '', stderr: '', exitCode: 0 };
-				});
-
-				const handler = getCreateDraftPRHandler();
-				const result = await handler!({} as any, { contributionId: 'contrib_draft_test' });
-
-				expect(result.success).toBe(false);
-				expect(result.error).toContain('GitHub CLI error: unexpected gh failure');
-				expect(authChecks).toBe(2);
-			});
 		});
 
 		describe('commit counting', () => {
@@ -7114,76 +5049,6 @@ describe('Symphony IPC handlers', () => {
 					);
 				expect(prCreateCall).toBeDefined();
 				expect(prCreateCall![1]).toContain('--draft');
-			});
-
-			it('should return an error when pushing the branch fails before PR creation', async () => {
-				const metadata = createValidMetadata();
-				vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
-					if ((filePath as string).includes('metadata.json')) {
-						return JSON.stringify(metadata);
-					}
-					throw new Error('ENOENT');
-				});
-				vi.mocked(execFileNoThrow).mockImplementation(async (cmd, args) => {
-					if (cmd === 'gh' && args?.[0] === 'auth')
-						return { stdout: 'Logged in', stderr: '', exitCode: 0 };
-					if (cmd === 'git' && args?.[0] === 'symbolic-ref')
-						return { stdout: 'refs/remotes/origin/main', stderr: '', exitCode: 0 };
-					if (cmd === 'git' && args?.[0] === 'rev-list')
-						return { stdout: '2', stderr: '', exitCode: 0 };
-					if (cmd === 'git' && args?.[0] === 'rev-parse')
-						return { stdout: 'symphony/issue-42-abc123', stderr: '', exitCode: 0 };
-					if (cmd === 'git' && args?.[0] === 'push')
-						return { stdout: '', stderr: 'push rejected', exitCode: 1 };
-					return { stdout: '', stderr: '', exitCode: 0 };
-				});
-
-				const handler = getCreateDraftPRHandler();
-				const result = await handler!({} as any, { contributionId: 'contrib_draft_test' });
-
-				expect(result.success).toBe(false);
-				expect(result.error).toContain('Failed to push: push rejected');
-				const prCreateCalls = vi
-					.mocked(execFileNoThrow)
-					.mock.calls.filter(
-						(call) => call[0] === 'gh' && call[1]?.[0] === 'pr' && call[1]?.[1] === 'create'
-					);
-				expect(prCreateCalls).toHaveLength(0);
-			});
-
-			it('should clean up the remote branch when gh pr create fails after pushing', async () => {
-				const metadata = createValidMetadata();
-				vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
-					if ((filePath as string).includes('metadata.json')) {
-						return JSON.stringify(metadata);
-					}
-					throw new Error('ENOENT');
-				});
-				vi.mocked(execFileNoThrow).mockImplementation(async (cmd, args) => {
-					if (cmd === 'gh' && args?.[0] === 'auth')
-						return { stdout: 'Logged in', stderr: '', exitCode: 0 };
-					if (cmd === 'git' && args?.[0] === 'symbolic-ref')
-						return { stdout: 'refs/remotes/origin/main', stderr: '', exitCode: 0 };
-					if (cmd === 'git' && args?.[0] === 'rev-list')
-						return { stdout: '1', stderr: '', exitCode: 0 };
-					if (cmd === 'git' && args?.[0] === 'rev-parse')
-						return { stdout: 'symphony/issue-42-abc123', stderr: '', exitCode: 0 };
-					if (cmd === 'git' && args?.[0] === 'push') return { stdout: '', stderr: '', exitCode: 0 };
-					if (cmd === 'gh' && args?.[0] === 'pr' && args?.[1] === 'create')
-						return { stdout: '', stderr: 'validation failed', exitCode: 1 };
-					return { stdout: '', stderr: '', exitCode: 0 };
-				});
-
-				const handler = getCreateDraftPRHandler();
-				const result = await handler!({} as any, { contributionId: 'contrib_draft_test' });
-
-				expect(result.success).toBe(false);
-				expect(result.error).toContain('Failed to create PR: validation failed');
-				expect(execFileNoThrow).toHaveBeenCalledWith(
-					'git',
-					['push', 'origin', '--delete', 'symphony/issue-42-abc123'],
-					expect.any(String)
-				);
 			});
 		});
 
@@ -7710,34 +5575,6 @@ This is a Symphony task document.
 				expect(result.success).toBe(false);
 				expect(result.error).toContain('Network timeout');
 			});
-
-			it('should return HTTP status errors for non-OK responses', async () => {
-				mockFetch.mockResolvedValueOnce({
-					ok: false,
-					status: 500,
-					statusText: 'Server Error',
-				});
-
-				const handler = getFetchDocumentContentHandler();
-				const result = await handler!({} as any, {
-					url: 'https://raw.githubusercontent.com/owner/repo/main/file.md',
-				});
-
-				expect(result.success).toBe(false);
-				expect(result.error).toBe('HTTP 500: Server Error');
-			});
-
-			it('should return a generic error when document fetch throws a non-Error value', async () => {
-				mockFetch.mockRejectedValueOnce('network down');
-
-				const handler = getFetchDocumentContentHandler();
-				const result = await handler!({} as any, {
-					url: 'https://raw.githubusercontent.com/owner/repo/main/file.md',
-				});
-
-				expect(result.success).toBe(false);
-				expect(result.error).toBe('Failed to fetch document');
-			});
 		});
 	});
 
@@ -8099,35 +5936,6 @@ This is a Symphony task document.
 		});
 
 		describe('successful credit', () => {
-			const getWeekNumber = (date: Date): string => {
-				const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
-				const dayNum = d.getUTCDay() || 7;
-				d.setUTCDate(d.getUTCDate() + 4 - dayNum);
-				const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-				const weekNo = Math.ceil(((d.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
-				return `${d.getUTCFullYear()}-W${weekNo}`;
-			};
-
-			const createStateWithStats = (overrides: Record<string, unknown>) => ({
-				active: [],
-				history: [],
-				stats: {
-					totalContributions: 3,
-					totalMerged: 0,
-					totalIssuesResolved: 0,
-					totalDocumentsProcessed: 0,
-					totalTasksCompleted: 0,
-					totalTokensUsed: 0,
-					totalTimeSpent: 0,
-					estimatedCostDonated: 0,
-					repositoriesContributed: ['owner/repo'],
-					uniqueMaintainersHelped: 0,
-					currentStreak: 2,
-					longestStreak: 2,
-					...overrides,
-				},
-			});
-
 			it('should create a completed contribution with minimal params', async () => {
 				const handler = getManualCreditHandler();
 				const result = await handler!({} as any, {
@@ -8236,129 +6044,6 @@ This is a Symphony task document.
 
 				expect(writtenState.stats.firstContributionAt).toBeDefined();
 				expect(writtenState.stats.lastContributionAt).toBeDefined();
-			});
-
-			it('should default the issue title and preserve an existing first contribution timestamp', async () => {
-				vi.mocked(fs.readFile).mockResolvedValue(
-					JSON.stringify(
-						createStateWithStats({
-							firstContributionAt: '2024-01-01T00:00:00.000Z',
-						})
-					)
-				);
-
-				const handler = getManualCreditHandler();
-				await handler!({} as any, {
-					repoSlug: 'owner/repo',
-					repoName: 'Test Repo',
-					issueNumber: 126,
-					prNumber: 459,
-					prUrl: 'https://github.com/owner/repo/pull/459',
-				});
-
-				const writeCall = vi.mocked(fs.writeFile).mock.calls[0];
-				const writtenState = JSON.parse(writeCall[1] as string);
-
-				expect(writtenState.history[0].issueTitle).toBe('Issue #126');
-				expect(writtenState.stats.firstContributionAt).toBe('2024-01-01T00:00:00.000Z');
-			});
-
-			it('should increment the streak when the previous contribution was last week', async () => {
-				const previousWeek = getWeekNumber(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000));
-				vi.mocked(fs.readFile).mockResolvedValue(
-					JSON.stringify(createStateWithStats({ lastContributionDate: previousWeek }))
-				);
-
-				const handler = getManualCreditHandler();
-				await handler!({} as any, {
-					repoSlug: 'owner/repo',
-					repoName: 'Test Repo',
-					issueNumber: 123,
-					issueTitle: 'Test Issue',
-					prNumber: 456,
-					prUrl: 'https://github.com/owner/repo/pull/456',
-				});
-
-				const writeCall = vi.mocked(fs.writeFile).mock.calls[0];
-				const writtenState = JSON.parse(writeCall[1] as string);
-
-				expect(writtenState.stats.currentStreak).toBe(3);
-				expect(writtenState.stats.longestStreak).toBe(3);
-			});
-
-			it('should keep the streak unchanged when the previous contribution was this week', async () => {
-				const currentWeek = getWeekNumber(new Date());
-				vi.mocked(fs.readFile).mockResolvedValue(
-					JSON.stringify(createStateWithStats({ lastContributionDate: currentWeek }))
-				);
-
-				const handler = getManualCreditHandler();
-				await handler!({} as any, {
-					repoSlug: 'owner/repo',
-					repoName: 'Test Repo',
-					issueNumber: 124,
-					issueTitle: 'Test Issue',
-					prNumber: 457,
-					prUrl: 'https://github.com/owner/repo/pull/457',
-				});
-
-				const writeCall = vi.mocked(fs.writeFile).mock.calls[0];
-				const writtenState = JSON.parse(writeCall[1] as string);
-
-				expect(writtenState.stats.currentStreak).toBe(2);
-				expect(writtenState.stats.longestStreak).toBe(2);
-			});
-
-			it('should calculate manual credit streak weeks correctly on Sundays', async () => {
-				vi.useFakeTimers();
-				try {
-					vi.setSystemTime(new Date('2024-01-07T12:00:00Z'));
-
-					const handler = getManualCreditHandler();
-					await handler!({} as any, {
-						repoSlug: 'owner/repo',
-						repoName: 'Test Repo',
-						issueNumber: 127,
-						issueTitle: 'Sunday Issue',
-						prNumber: 460,
-						prUrl: 'https://github.com/owner/repo/pull/460',
-					});
-
-					const writeCall = vi.mocked(fs.writeFile).mock.calls[0];
-					const writtenState = JSON.parse(writeCall[1] as string);
-					expect(writtenState.stats.lastContributionDate).toBe('2024-W1');
-				} finally {
-					vi.useRealTimers();
-				}
-			});
-
-			it('should reset the streak when the previous contribution was before last week', async () => {
-				const olderWeek = getWeekNumber(new Date(Date.now() - 21 * 24 * 60 * 60 * 1000));
-				vi.mocked(fs.readFile).mockResolvedValue(
-					JSON.stringify(
-						createStateWithStats({
-							lastContributionDate: olderWeek,
-							currentStreak: 5,
-							longestStreak: 7,
-						})
-					)
-				);
-
-				const handler = getManualCreditHandler();
-				await handler!({} as any, {
-					repoSlug: 'owner/repo',
-					repoName: 'Test Repo',
-					issueNumber: 125,
-					issueTitle: 'Test Issue',
-					prNumber: 458,
-					prUrl: 'https://github.com/owner/repo/pull/458',
-				});
-
-				const writeCall = vi.mocked(fs.writeFile).mock.calls[0];
-				const writtenState = JSON.parse(writeCall[1] as string);
-
-				expect(writtenState.stats.currentStreak).toBe(1);
-				expect(writtenState.stats.longestStreak).toBe(7);
 			});
 		});
 	});

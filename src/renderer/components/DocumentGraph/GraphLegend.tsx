@@ -105,6 +105,10 @@ const KEYBOARD_SHORTCUTS: KeyboardShortcutItem[] = [
 		keys: formatShortcutKeys(['Meta', 'f']),
 		description: 'Focus search',
 	},
+	{
+		keys: '+ / -',
+		description: 'Increase / decrease node spacing',
+	},
 ];
 
 /**
@@ -153,9 +157,21 @@ const DocumentNodePreview = memo(function DocumentNodePreview({
 /**
  * Mini preview of an external link node pill for the legend (mind map style)
  */
-const ExternalNodePreview = memo(function ExternalNodePreview({ theme }: { theme: Theme }) {
+const ExternalNodePreview = memo(function ExternalNodePreview({
+	theme,
+	selected = false,
+}: {
+	theme: Theme;
+	selected?: boolean;
+}) {
 	return (
-		<svg width={36} height={18} viewBox="0 0 36 18" role="img" aria-label="External link node pill">
+		<svg
+			width={36}
+			height={18}
+			viewBox="0 0 36 18"
+			role="img"
+			aria-label={`External link node pill${selected ? ' (selected)' : ''}`}
+		>
 			{/* Pill background */}
 			<rect
 				x={1}
@@ -164,7 +180,7 @@ const ExternalNodePreview = memo(function ExternalNodePreview({ theme }: { theme
 				height={14}
 				rx={7}
 				fill={theme.colors.bgMain}
-				stroke={`${theme.colors.border}80`}
+				stroke={selected ? theme.colors.accent : `${theme.colors.border}80`}
 				strokeWidth={1}
 			/>
 			{/* Domain text representation */}

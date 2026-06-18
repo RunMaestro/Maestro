@@ -1,27 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { CollapsedSessionPill } from '../../../../renderer/components/SessionList/CollapsedSessionPill';
+import {
+	CollapsedSessionPill,
+	CollapsedSessionPillRows,
+} from '../../../../renderer/components/SessionList/CollapsedSessionPill';
 import type { Session, Theme } from '../../../../renderer/types';
 
+import { mockTheme } from '../../../helpers/mockTheme';
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-const mockTheme: Theme = {
-	name: 'test',
-	colors: {
-		bgMain: '#1a1a2e',
-		bgSidebar: '#16213e',
-		bgInput: '#0f3460',
-		textMain: '#e0e0e0',
-		textDim: '#888888',
-		accent: '#e94560',
-		border: '#333333',
-		error: '#ff4444',
-		success: '#00cc66',
-		warning: '#ffaa00',
-	},
-} as Theme;
 
 let idCounter = 0;
 function makeSession(overrides: Partial<Session> = {}): Session {
@@ -118,75 +106,6 @@ describe('CollapsedSessionPill', () => {
 		expect(setActiveSessionId).toHaveBeenCalledWith('test-session');
 	});
 
-	it('calls setActiveSessionId when Enter or Space is pressed', () => {
-		const session = makeSession({ id: 'keyboard-session' });
-		const setActiveSessionId = vi.fn();
-		const props = createDefaultProps({ session, setActiveSessionId });
-
-		const { container } = render(<CollapsedSessionPill {...props} />);
-
-		const segment = container.firstElementChild!.firstElementChild!;
-		fireEvent.keyDown(segment, { key: 'Enter' });
-		fireEvent.keyDown(segment, { key: ' ' });
-
-		expect(setActiveSessionId).toHaveBeenNthCalledWith(1, 'keyboard-session');
-		expect(setActiveSessionId).toHaveBeenNthCalledWith(2, 'keyboard-session');
-	});
-
-	it('ignores unrelated keyboard input', () => {
-		const setActiveSessionId = vi.fn();
-		const props = createDefaultProps({ setActiveSessionId });
-
-		const { container } = render(<CollapsedSessionPill {...props} />);
-
-		fireEvent.keyDown(container.firstElementChild!.firstElementChild!, { key: 'Escape' });
-
-		expect(setActiveSessionId).not.toHaveBeenCalled();
-	});
-
-	it('positions tooltip on focus and clears it on blur', () => {
-		const props = createDefaultProps();
-		const { container } = render(<CollapsedSessionPill {...props} />);
-
-		const segment = container.firstElementChild!.firstElementChild! as HTMLElement;
-		vi.spyOn(segment, 'getBoundingClientRect').mockReturnValue({
-			x: 42,
-			y: 64,
-			width: 10,
-			height: 10,
-			top: 64,
-			right: 52,
-			bottom: 74,
-			left: 42,
-			toJSON: () => ({}),
-		} as DOMRect);
-
-		fireEvent.focus(segment);
-
-		const tooltip = segment.querySelector('.fixed') as HTMLElement;
-		expect(tooltip.style.top).toBe('64px');
-
-		fireEvent.blur(segment);
-
-		expect(tooltip.style.top).toBe('');
-	});
-
-	it('positions tooltip on hover and clears it on mouse leave', () => {
-		const props = createDefaultProps();
-		const { container } = render(<CollapsedSessionPill {...props} />);
-
-		const segment = container.firstElementChild!.firstElementChild! as HTMLElement;
-		const tooltip = segment.querySelector('.fixed') as HTMLElement;
-
-		fireEvent.mouseEnter(segment, { clientX: 90, clientY: 123 });
-
-		expect(tooltip.style.top).toBe('123px');
-
-		fireEvent.mouseLeave(segment);
-
-		expect(tooltip.style.top).toBe('');
-	});
-
 	it('stops event propagation on click', () => {
 		const props = createDefaultProps();
 		const { container } = render(<CollapsedSessionPill {...props} />);
@@ -240,21 +159,6 @@ describe('CollapsedSessionPill', () => {
 		expect(segment.style.backgroundColor).toBe('transparent');
 	});
 
-	it('uses status color for non-hollow sessions', () => {
-		const session = makeSession({
-			toolType: 'codex',
-			state: 'busy',
-			agentSessionId: 'agent-session',
-		});
-		const props = createDefaultProps({ session });
-
-		const { container } = render(<CollapsedSessionPill {...props} />);
-
-		const segment = container.firstElementChild!.firstElementChild! as HTMLElement;
-		expect(segment.style.backgroundColor).toBe('rgb(255, 170, 0)');
-		expect(segment.style.border).toBe('');
-	});
-
 	it('renders tooltip content within each segment', () => {
 		const session = makeSession({ name: 'My Test Agent' });
 		const props = createDefaultProps({ session });
@@ -298,5 +202,120 @@ describe('CollapsedSessionPill', () => {
 		});
 		const { container: c2 } = render(<CollapsedSessionPill {...props2} />);
 		expect((c2.firstElementChild as HTMLElement).style.gap).toBe('1px');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// CollapsedSessionPillRows
+// ---------------------------------------------------------------------------
+
+function createRowsProps(
+	sessions: Session[],
+	overrides: Partial<Parameters<typeof CollapsedSessionPillRows>[0]> = {}
+) {
+	return {
+		sessions,
+		keyPrefix: 'rows-test',
+		onContainerClick: vi.fn(),
+		theme: mockTheme as Theme,
+		activeBatchSessionIds: [] as string[],
+		leftSidebarWidth: 300,
+		contextWarningYellowThreshold: 70,
+		contextWarningRedThreshold: 90,
+		getFileCount: vi.fn(() => 0),
+		getWorktreeChildren: vi.fn(() => [] as Session[]),
+		setActiveSessionId: vi.fn(),
+		...overrides,
+	};
+}
+
+describe('CollapsedSessionPillRows', () => {
+	beforeEach(() => {
+		idCounter = 0;
+	});
+
+	it('renders a single row when session count is at or below the per-row cap', () => {
+		const sessions = Array.from({ length: 20 }, () => makeSession());
+		const props = createRowsProps(sessions);
+		const { container } = render(<CollapsedSessionPillRows {...props} />);
+
+		const wrapper = container.firstElementChild as HTMLElement;
+		expect(wrapper.children.length).toBe(1);
+
+		const row = wrapper.firstElementChild as HTMLElement;
+		expect(row.children.length).toBe(20);
+		// No spacers should exist when there is only a single row
+		const spacers = row.querySelectorAll(':scope > div.flex-1:not(.rounded-full)');
+		expect(spacers.length).toBe(0);
+	});
+
+	it('wraps to a new row when exceeding the per-row cap', () => {
+		const sessions = Array.from({ length: 22 }, () => makeSession());
+		const props = createRowsProps(sessions);
+		const { container } = render(<CollapsedSessionPillRows {...props} />);
+
+		const wrapper = container.firstElementChild as HTMLElement;
+		expect(wrapper.children.length).toBe(2);
+
+		const firstRow = wrapper.children[0] as HTMLElement;
+		const secondRow = wrapper.children[1] as HTMLElement;
+		// First row is full (20 pills, no spacers)
+		expect(firstRow.children.length).toBe(20);
+		// Second row has 2 pills + 18 spacers so widths stay aligned with row above
+		expect(secondRow.children.length).toBe(20);
+	});
+
+	it('produces three rows for 41 sessions (20 + 20 + 1 + 19 spacers)', () => {
+		const sessions = Array.from({ length: 41 }, () => makeSession());
+		const props = createRowsProps(sessions);
+		const { container } = render(<CollapsedSessionPillRows {...props} />);
+
+		const wrapper = container.firstElementChild as HTMLElement;
+		expect(wrapper.children.length).toBe(3);
+		expect((wrapper.children[0] as HTMLElement).children.length).toBe(20);
+		expect((wrapper.children[1] as HTMLElement).children.length).toBe(20);
+		// Last row padded to 20 (1 pill + 19 spacers)
+		expect((wrapper.children[2] as HTMLElement).children.length).toBe(20);
+	});
+
+	it('honors a custom maxPerRow, wrapping and padding to that cap', () => {
+		const sessions = Array.from({ length: 12 }, () => makeSession());
+		const props = createRowsProps(sessions, { maxPerRow: 5 });
+		const { container } = render(<CollapsedSessionPillRows {...props} />);
+
+		const wrapper = container.firstElementChild as HTMLElement;
+		// 12 sessions at 5/row → 3 rows (5 + 5 + 2)
+		expect(wrapper.children.length).toBe(3);
+		expect((wrapper.children[0] as HTMLElement).children.length).toBe(5);
+		expect((wrapper.children[1] as HTMLElement).children.length).toBe(5);
+		// Last row padded to 5 (2 pills + 3 spacers)
+		expect((wrapper.children[2] as HTMLElement).children.length).toBe(5);
+	});
+
+	it('falls back to the default cap of 20 when maxPerRow is omitted', () => {
+		const sessions = Array.from({ length: 21 }, () => makeSession());
+		const props = createRowsProps(sessions);
+		const { container } = render(<CollapsedSessionPillRows {...props} />);
+
+		const wrapper = container.firstElementChild as HTMLElement;
+		expect(wrapper.children.length).toBe(2);
+		expect((wrapper.children[0] as HTMLElement).children.length).toBe(20);
+	});
+
+	it('fires onContainerClick when the wrapper is clicked', () => {
+		const sessions = [makeSession(), makeSession()];
+		const onContainerClick = vi.fn();
+		const props = createRowsProps(sessions, { onContainerClick });
+		const { container } = render(<CollapsedSessionPillRows {...props} />);
+
+		fireEvent.click(container.firstElementChild!);
+		expect(onContainerClick).toHaveBeenCalledTimes(1);
+	});
+
+	it('renders nothing inside the wrapper when sessions is empty', () => {
+		const props = createRowsProps([]);
+		const { container } = render(<CollapsedSessionPillRows {...props} />);
+		const wrapper = container.firstElementChild as HTMLElement;
+		expect(wrapper.children.length).toBe(0);
 	});
 });

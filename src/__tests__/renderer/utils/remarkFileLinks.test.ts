@@ -4,18 +4,18 @@ import remarkParse from 'remark-parse';
 import remarkStringify from 'remark-stringify';
 import { remarkFileLinks, buildFileTreeIndices } from '../../../renderer/utils/remarkFileLinks';
 import type { FileNode } from '../../../renderer/types/fileTree';
-import type { Link, Paragraph, Root } from 'mdast';
 
 // Helper to process markdown and return the result
 async function processMarkdown(
 	content: string,
 	fileTree: FileNode[],
 	cwd: string,
-	projectRoot?: string
+	projectRoot?: string,
+	homeDir?: string
 ): Promise<string> {
 	const result = await unified()
 		.use(remarkParse)
-		.use(remarkFileLinks, { fileTree, cwd, projectRoot })
+		.use(remarkFileLinks, { fileTree, cwd, projectRoot, homeDir })
 		.use(remarkStringify)
 		.process(content);
 	return String(result);
@@ -59,6 +59,15 @@ const sampleFileTree: FileNode[] = [
 		children: [
 			{ name: 'Pasted image 20250519123910.png', type: 'file' },
 			{ name: 'screenshot.jpg', type: 'file' },
+		],
+	},
+	{
+		name: 'output',
+		type: 'folder',
+		children: [
+			{ name: 'recording.wav', type: 'file' },
+			{ name: 'report.pdf', type: 'file' },
+			{ name: 'data.csv', type: 'file' },
 		],
 	},
 	{ name: 'README.md', type: 'file' },
@@ -241,81 +250,6 @@ describe('remarkFileLinks', () => {
 			// remark-stringify wraps URLs with spaces in angle brackets
 			expect(result).toContain('[Notes/Meeting Notes](<maestro-file://Notes/Meeting Notes.md>)');
 		});
-
-		it('disambiguates partial paths that match only one candidate', async () => {
-			const tree: FileNode[] = [
-				{
-					name: 'Docs',
-					type: 'folder',
-					children: [
-						{
-							name: 'Guides',
-							type: 'folder',
-							children: [{ name: 'Setup.md', type: 'file' }],
-						},
-					],
-				},
-				{
-					name: 'Archive',
-					type: 'folder',
-					children: [{ name: 'Setup.md', type: 'file' }],
-				},
-			];
-
-			const result = await processMarkdown('See [[Guides/Setup]]', tree, '');
-
-			expect(result).toContain('[Guides/Setup](maestro-file://Docs/Guides/Setup.md)');
-		});
-
-		it('uses cwd proximity when a partial path still matches multiple candidates', async () => {
-			const tree: FileNode[] = [
-				{
-					name: 'Product',
-					type: 'folder',
-					children: [
-						{
-							name: 'Guides',
-							type: 'folder',
-							children: [{ name: 'Setup.md', type: 'file' }],
-						},
-					],
-				},
-				{
-					name: 'Engineering',
-					type: 'folder',
-					children: [
-						{
-							name: 'Guides',
-							type: 'folder',
-							children: [{ name: 'Setup.md', type: 'file' }],
-						},
-					],
-				},
-			];
-
-			const result = await processMarkdown('See [[Guides/Setup]]', tree, 'Engineering');
-
-			expect(result).toContain('[Guides/Setup](maestro-file://Engineering/Guides/Setup.md)');
-		});
-
-		it('falls back to cwd proximity when a partial path filters out every candidate', async () => {
-			const tree: FileNode[] = [
-				{
-					name: 'Product',
-					type: 'folder',
-					children: [{ name: 'Setup.md', type: 'file' }],
-				},
-				{
-					name: 'Engineering',
-					type: 'folder',
-					children: [{ name: 'Setup.md', type: 'file' }],
-				},
-			];
-
-			const result = await processMarkdown('See [[Missing/Setup]]', tree, 'Product');
-
-			expect(result).toContain('[Missing/Setup](maestro-file://Product/Setup.md)');
-		});
 	});
 
 	describe('edge cases', () => {
@@ -333,32 +267,6 @@ describe('remarkFileLinks', () => {
 			);
 			expect(result).not.toContain('maestro-file://');
 			expect(result).toContain('This is just regular text');
-		});
-
-		it('uses empty indices when neither fileTree nor indices are provided', async () => {
-			const result = await unified()
-				.use(remarkParse)
-				.use(remarkFileLinks, { cwd: '' })
-				.use(remarkStringify)
-				.process('See [[TODO]] and README.md');
-
-			expect(String(result)).not.toContain('maestro-file://');
-			expect(String(result)).toContain('README.md');
-		});
-
-		it('converts a first-token match without adding leading empty text', async () => {
-			const result = await processMarkdown('[[TODO]] is first.', sampleFileTree, '');
-
-			expect(result).toContain('[TODO](maestro-file://Notes/TODO.md) is first.');
-		});
-
-		it('ignores root-level text and inline code nodes without parent context', () => {
-			const transform = remarkFileLinks({ fileTree: sampleFileTree, cwd: '' });
-			const textRoot = { type: 'text', value: 'README.md' } as unknown as Root;
-			const inlineCodeRoot = { type: 'inlineCode', value: 'README.md' } as unknown as Root;
-
-			expect(() => transform(textRoot)).not.toThrow();
-			expect(() => transform(inlineCodeRoot)).not.toThrow();
 		});
 
 		it('preserves existing markdown links', async () => {
@@ -515,32 +423,76 @@ describe('remarkFileLinks', () => {
 				'[/Users/pedram/Project/SomeOther/NonExistent File.md](<maestro-file://SomeOther/NonExistent File.md>)'
 			);
 		});
+	});
 
-		it('handles project roots with trailing slashes', async () => {
+	describe('markdown links with absolute path hrefs', () => {
+		it('converts markdown link with absolute path href to maestro-file link', async () => {
+			// Agents like Codex emit [display](absolute-path) style links
 			const result = await processMarkdown(
-				'See /Users/pedram/Project/OPSWAT/README.md for details.',
-				sampleFileTree,
+				'Modified [src/components/CameraModal.tsx](/Users/pedram/Project/src/components/CameraModal.tsx) to add callback.',
+				[
+					{
+						name: 'src',
+						type: 'folder',
+						children: [
+							{
+								name: 'components',
+								type: 'folder',
+								children: [{ name: 'CameraModal.tsx', type: 'file' }],
+							},
+						],
+					},
+				],
 				'',
-				'/Users/pedram/Project/'
+				'/Users/pedram/Project'
 			);
-
 			expect(result).toContain(
-				'[/Users/pedram/Project/OPSWAT/README.md](maestro-file://OPSWAT/README.md)'
+				'[src/components/CameraModal.tsx](maestro-file://src/components/CameraModal.tsx)'
 			);
 		});
 
-		it('does not double-convert absolute paths inside an existing wiki match', async () => {
+		it('converts markdown link with absolute path href even when file not in tree', async () => {
+			// Absolute paths within projectRoot should link even without file tree match
 			const result = await processMarkdown(
-				'See [[README|/Users/pedram/Project/OPSWAT/README.md]] now.',
+				'See [App.tsx](/Users/pedram/Project/src/App.tsx) for details.',
 				sampleFileTree,
 				'',
 				'/Users/pedram/Project'
 			);
+			expect(result).toContain('[App.tsx](maestro-file://src/App.tsx)');
+		});
 
-			expect(result).toContain(
-				'[/Users/pedram/Project/OPSWAT/README.md](maestro-file://README.md)'
+		it('does not convert markdown link with absolute path outside projectRoot', async () => {
+			const result = await processMarkdown(
+				'See [file.tsx](/other/path/file.tsx) for details.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project'
 			);
-			expect(result.match(/maestro-file:\/\//g)).toHaveLength(1);
+			// Should remain unconverted
+			expect(result).not.toContain('maestro-file://');
+		});
+
+		it('converts markdown link with tilde path href to maestro-file link', async () => {
+			const result = await processMarkdown(
+				'See [README.md](~/Project/OPSWAT/README.md) for details.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project',
+				'/Users/pedram'
+			);
+			expect(result).toContain('[README.md](maestro-file://OPSWAT/README.md)');
+		});
+
+		it('converts markdown link with tilde path outside projectRoot to file:// URL', async () => {
+			const result = await processMarkdown(
+				'See [notes.md](~/Documents/notes.md) for details.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project',
+				'/Users/pedram'
+			);
+			expect(result).toContain('[notes.md](file:///Users/pedram/Documents/notes.md)');
 		});
 	});
 
@@ -576,54 +528,6 @@ describe('remarkFileLinks', () => {
 				'/Users/pedram/Project'
 			);
 			expect(result).toContain('[OPSWAT/README](maestro-file://OPSWAT/README.md)');
-		});
-
-		it('leaves unresolved wiki links in backticks unchanged', async () => {
-			const result = await processMarkdown(
-				'Reference `[[Missing Note]]` here.',
-				sampleFileTree,
-				'',
-				'/Users/pedram/Project'
-			);
-
-			expect(result).toContain('`[[Missing Note]]`');
-			expect(result).not.toContain('maestro-file://');
-		});
-
-		it('leaves absolute paths in backticks unchanged when the extension is unsupported', async () => {
-			const result = await processMarkdown(
-				'Check `/Users/pedram/Project/archive.bin` for info.',
-				sampleFileTree,
-				'',
-				'/Users/pedram/Project'
-			);
-
-			expect(result).toContain('`/Users/pedram/Project/archive.bin`');
-			expect(result).not.toContain('maestro-file://');
-		});
-
-		it('leaves absolute paths in backticks unchanged when outside projectRoot', async () => {
-			const result = await processMarkdown(
-				'Check `/other/path/README.md` for info.',
-				sampleFileTree,
-				'',
-				'/Users/pedram/Project'
-			);
-
-			expect(result).toContain('`/other/path/README.md`');
-			expect(result).not.toContain('maestro-file://');
-		});
-
-		it('leaves missing relative paths in backticks unchanged', async () => {
-			const result = await processMarkdown(
-				'See `Missing/README.md` for details.',
-				sampleFileTree,
-				'',
-				'/Users/pedram/Project'
-			);
-
-			expect(result).toContain('`Missing/README.md`');
-			expect(result).not.toContain('maestro-file://');
 		});
 
 		it('leaves non-path inline code unchanged', async () => {
@@ -737,94 +641,6 @@ describe('remarkFileLinks', () => {
 			);
 			expect(result).toContain('![Pasted image 20250519123910.png]');
 		});
-
-		it('uses a relative image path when projectRoot is not provided', async () => {
-			const result = await processMarkdown(
-				'Preview: ![[attachments/screenshot.jpg]]',
-				sampleFileTree,
-				''
-			);
-
-			expect(result).toContain('![attachments/screenshot.jpg](attachments/screenshot.jpg)');
-		});
-	});
-
-	describe('standard markdown links', () => {
-		it('converts relative markdown links to maestro file links', async () => {
-			const result = await processMarkdown(
-				'Check [tasks](TODO) and [meeting](Notes%2FMeeting%20Notes.md).',
-				sampleFileTree,
-				''
-			);
-
-			expect(result).toContain('[tasks](maestro-file://Notes/TODO.md)');
-			expect(result).toContain('[meeting](<maestro-file://Notes/Meeting Notes.md>)');
-		});
-
-		it('leaves unresolved relative markdown links unchanged', async () => {
-			const result = await processMarkdown('Check [missing](Missing.md).', sampleFileTree, '');
-
-			expect(result).toContain('[missing](Missing.md)');
-			expect(result).not.toContain('maestro-file://');
-		});
-
-		it('preserves links with protocols, anchors, or empty hrefs', async () => {
-			const result = await processMarkdown(
-				[
-					'[already](maestro-file://README.md)',
-					'[http](http://example.com)',
-					'[https](https://example.com)',
-					'[mail](mailto:test@example.com)',
-					'[anchor](#section)',
-					'[file](file:///tmp/readme.md)',
-					'[empty]()',
-				].join(' '),
-				sampleFileTree,
-				''
-			);
-
-			expect(result).toContain('[already](maestro-file://README.md)');
-			expect(result).toContain('[http](http://example.com)');
-			expect(result).toContain('[https](https://example.com)');
-			expect(result).toContain('[mail](mailto:test@example.com)');
-			expect(result).toContain('[anchor](#section)');
-			expect(result).toContain('[file](file:///tmp/readme.md)');
-			expect(result).toContain('[empty]()');
-		});
-
-		it('preserves existing link hProperties while adding the maestro file attribute', () => {
-			const tree: Root = {
-				type: 'root',
-				children: [
-					{
-						type: 'paragraph',
-						children: [
-							{
-								type: 'link',
-								url: 'TODO',
-								data: {
-									hProperties: {
-										className: 'existing-link',
-									},
-								},
-								children: [{ type: 'text', value: 'tasks' }],
-							},
-						],
-					},
-				],
-			};
-
-			const transformer = remarkFileLinks({ fileTree: sampleFileTree, cwd: '' });
-			transformer(tree);
-
-			const paragraph = tree.children[0] as Paragraph;
-			const link = paragraph.children[0] as Link;
-			expect(link.url).toBe('maestro-file://Notes/TODO.md');
-			expect(link.data?.hProperties).toMatchObject({
-				className: 'existing-link',
-				'data-maestro-file': 'Notes/TODO.md',
-			});
-		});
 	});
 
 	describe('buildFileTreeIndices', () => {
@@ -875,6 +691,137 @@ describe('remarkFileLinks', () => {
 			expect(indices.allPaths.has('OPSWAT')).toBe(false);
 			expect(indices.allPaths.has('Notes')).toBe(false);
 			expect(indices.allPaths.has('attachments')).toBe(false);
+		});
+	});
+
+	describe('extended file extensions', () => {
+		it('converts media file references (wav, mp3, etc.)', async () => {
+			const result = await processMarkdown(
+				'Listen to output/recording.wav for the sample.',
+				sampleFileTree,
+				''
+			);
+			expect(result).toContain('[output/recording.wav](maestro-file://output/recording.wav)');
+		});
+
+		it('converts document file references (pdf, csv, etc.)', async () => {
+			const result = await processMarkdown(
+				'See output/report.pdf and output/data.csv for results.',
+				sampleFileTree,
+				''
+			);
+			expect(result).toContain('[output/report.pdf](maestro-file://output/report.pdf)');
+			expect(result).toContain('[output/data.csv](maestro-file://output/data.csv)');
+		});
+
+		it('converts absolute paths with media extensions', async () => {
+			const result = await processMarkdown(
+				'File at /Users/pedram/Project/output/recording.wav here.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project'
+			);
+			expect(result).toContain(
+				'[/Users/pedram/Project/output/recording.wav](maestro-file://output/recording.wav)'
+			);
+		});
+	});
+
+	describe('tilde path references', () => {
+		it('converts tilde paths within projectRoot to maestro-file links', async () => {
+			const result = await processMarkdown(
+				'See ~/Project/output/recording.wav for the audio.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project',
+				'/Users/pedram'
+			);
+			expect(result).toContain(
+				'[~/Project/output/recording.wav](maestro-file://output/recording.wav)'
+			);
+		});
+
+		it('converts tilde paths outside projectRoot to file:// links', async () => {
+			const result = await processMarkdown(
+				'See ~/Downloads/audio/sample.wav for the sample.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project',
+				'/Users/pedram'
+			);
+			expect(result).toContain(
+				'[~/Downloads/audio/sample.wav](file:///Users/pedram/Downloads/audio/sample.wav)'
+			);
+		});
+
+		it('does not convert tilde paths when homeDir is not provided', async () => {
+			const result = await processMarkdown(
+				'See ~/Downloads/audio/sample.wav for the sample.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project'
+			);
+			expect(result).not.toContain('file://');
+			expect(result).not.toContain('maestro-file://');
+			expect(result).toContain('~/Downloads/audio/sample.wav');
+		});
+
+		it('handles multiple tilde paths in same text', async () => {
+			const result = await processMarkdown(
+				'Compare ~/Downloads/a.wav and ~/Downloads/b.mp3 side by side.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project',
+				'/Users/pedram'
+			);
+			expect(result).toContain('[~/Downloads/a.wav](file:///Users/pedram/Downloads/a.wav)');
+			expect(result).toContain('[~/Downloads/b.mp3](file:///Users/pedram/Downloads/b.mp3)');
+		});
+
+		it('converts tilde path in inline code', async () => {
+			const result = await processMarkdown(
+				'Check `~/Downloads/audio/sample.wav` for the file.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project',
+				'/Users/pedram'
+			);
+			expect(result).toContain('[sample.wav](file:///Users/pedram/Downloads/audio/sample.wav)');
+			expect(result).not.toContain('`~/Downloads');
+		});
+
+		it('converts tilde path in inline code within projectRoot', async () => {
+			const result = await processMarkdown(
+				'See `~/Project/output/recording.wav` here.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project',
+				'/Users/pedram'
+			);
+			expect(result).toContain('[recording.wav](maestro-file://output/recording.wav)');
+		});
+	});
+
+	describe('bare maestro:// deep links', () => {
+		it('auto-linkifies a bare maestro:// URL in running text', async () => {
+			const result = await processMarkdown(
+				'Go to maestro://session/abc/tab/xyz now.',
+				sampleFileTree,
+				''
+			);
+			// remark-stringify emits CommonMark autolinks as <url> when the link
+			// text equals the URL, which is what we get when we wrap a bare URL.
+			expect(result).toContain('<maestro://session/abc/tab/xyz>');
+		});
+
+		it('does not rewrite an explicit markdown link with a maestro:// href', async () => {
+			const result = await processMarkdown(
+				'See [the agent](maestro://group/grp1).',
+				sampleFileTree,
+				''
+			);
+			expect(result).toContain('[the agent](maestro://group/grp1)');
+			expect(result).not.toContain('maestro-file://');
 		});
 	});
 

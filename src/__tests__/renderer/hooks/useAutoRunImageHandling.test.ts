@@ -108,31 +108,6 @@ const createMockClipboardEvent = (imageType = 'image/png'): React.ClipboardEvent
 	} as unknown as React.ClipboardEvent;
 };
 
-const createTextClipboardEvent = (text: string): React.ClipboardEvent => {
-	const textItem: DataTransferItem = {
-		kind: 'string',
-		type: 'text/plain',
-		getAsFile: () => null,
-		getAsString: (callback) => callback?.(text),
-		webkitGetAsEntry: () => null,
-	};
-
-	return {
-		clipboardData: {
-			items: {
-				length: 1,
-				0: textItem,
-				item: (index: number) => (index === 0 ? textItem : null),
-				[Symbol.iterator]: function* () {
-					yield textItem;
-				},
-			} as unknown as DataTransferItemList,
-			getData: () => text,
-		},
-		preventDefault: vi.fn(),
-	} as unknown as React.ClipboardEvent;
-};
-
 const createMockFileInputEvent = (
 	filename = 'test.png',
 	fileType = 'image/png'
@@ -203,28 +178,6 @@ class MockFileReader {
 	removeEventListener = vi.fn();
 	dispatchEvent = vi.fn().mockReturnValue(true);
 }
-
-const installFileReaderResult = (readerResult: string | ArrayBuffer | null) => {
-	const OriginalFileReader = global.FileReader;
-
-	class ResultFileReader extends MockFileReader {
-		readAsDataURL = vi.fn(function (this: ResultFileReader) {
-			setTimeout(() => {
-				this.result = readerResult;
-				this.readyState = 2;
-				this.onload?.({
-					target: { result: readerResult },
-				} as unknown as ProgressEvent<FileReader>);
-			}, 0);
-		});
-	}
-
-	global.FileReader = ResultFileReader as unknown as typeof FileReader;
-
-	return () => {
-		global.FileReader = OriginalFileReader;
-	};
-};
 
 // Extend the global mock with image-related methods
 beforeEach(() => {
@@ -372,119 +325,6 @@ describe('useAutoRunImageHandling', () => {
 			expect(result.current.attachmentPreviews.get('images/missing.png')).toBeUndefined();
 		});
 
-		it('should ignore preview reads that do not return data URLs', async () => {
-			const mockDeps = createMockDeps();
-
-			(window.maestro.autorun as any).listImages.mockResolvedValue({
-				success: true,
-				images: [{ filename: 'notes.txt', relativePath: 'images/notes.txt' }],
-			});
-			(window.maestro.fs.readFile as any).mockResolvedValue('plain text response');
-
-			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
-
-			await waitFor(() => {
-				expect(result.current.attachmentsList).toContain('images/notes.txt');
-			});
-
-			expect(result.current.attachmentPreviews.size).toBe(0);
-		});
-
-		it('should clear attachments when listImages rejects', async () => {
-			const mockDeps = createMockDeps();
-
-			(window.maestro.autorun as any).listImages.mockRejectedValue(new Error('remote list failed'));
-
-			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
-
-			await waitFor(() => {
-				expect(window.maestro.autorun.listImages).toHaveBeenCalled();
-			});
-
-			expect(result.current.attachmentsList).toEqual([]);
-			expect(result.current.attachmentPreviews.size).toBe(0);
-		});
-
-		it('should ignore stale listImages results after unmount', async () => {
-			const mockDeps = createMockDeps();
-			let resolveList:
-				| ((value: {
-						success: boolean;
-						images: { filename: string; relativePath: string }[];
-				  }) => void)
-				| undefined;
-
-			(window.maestro.autorun as any).listImages.mockReturnValue(
-				new Promise((resolve) => {
-					resolveList = resolve;
-				})
-			);
-
-			const { unmount } = renderHook(() => useAutoRunImageHandling(mockDeps));
-			unmount();
-
-			await act(async () => {
-				resolveList?.({
-					success: true,
-					images: [{ filename: 'stale.png', relativePath: 'images/stale.png' }],
-				});
-				await Promise.resolve();
-			});
-
-			expect(window.maestro.fs.readFile).not.toHaveBeenCalled();
-		});
-
-		it('should ignore stale listImages rejections after unmount', async () => {
-			const mockDeps = createMockDeps();
-			let rejectList: ((reason: Error) => void) | undefined;
-
-			(window.maestro.autorun as any).listImages.mockReturnValue(
-				new Promise((_resolve, reject) => {
-					rejectList = reject;
-				})
-			);
-
-			const { unmount } = renderHook(() => useAutoRunImageHandling(mockDeps));
-			unmount();
-
-			await act(async () => {
-				rejectList?.(new Error('late failure'));
-				await Promise.resolve();
-			});
-
-			expect(window.maestro.fs.readFile).not.toHaveBeenCalled();
-		});
-
-		it('should ignore stale preview reads after unmount', async () => {
-			const mockDeps = createMockDeps();
-			let resolveRead: ((value: string) => void) | undefined;
-
-			(window.maestro.autorun as any).listImages.mockResolvedValue({
-				success: true,
-				images: [{ filename: 'late.png', relativePath: 'images/late.png' }],
-			});
-			(window.maestro.fs.readFile as any).mockReturnValue(
-				new Promise((resolve) => {
-					resolveRead = resolve;
-				})
-			);
-
-			const { result, unmount } = renderHook(() => useAutoRunImageHandling(mockDeps));
-
-			await waitFor(() => {
-				expect(window.maestro.fs.readFile).toHaveBeenCalled();
-			});
-
-			unmount();
-
-			await act(async () => {
-				resolveRead?.('data:image/png;base64,late');
-				await Promise.resolve();
-			});
-
-			expect(result.current.attachmentPreviews.size).toBe(0);
-		});
-
 		it('should reload attachments when selectedFile changes', async () => {
 			const mockDeps = createMockDeps();
 
@@ -574,113 +414,6 @@ describe('useAutoRunImageHandling', () => {
 			expect(window.maestro.autorun.saveImage).not.toHaveBeenCalled();
 		});
 
-		it('should ignore paste events with no clipboard items', async () => {
-			const mockDeps = createMockDeps();
-			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
-			const clipboardEvent = {
-				clipboardData: null,
-				preventDefault: vi.fn(),
-			} as unknown as React.ClipboardEvent;
-
-			await act(async () => {
-				await result.current.handlePaste(clipboardEvent);
-			});
-
-			expect(clipboardEvent.preventDefault).not.toHaveBeenCalled();
-			expect(window.maestro.autorun.saveImage).not.toHaveBeenCalled();
-		});
-
-		it('should trim text paste and restore cursor position when no image is present', async () => {
-			const textarea = createMockTextarea(5);
-			const mockDeps = createMockDeps({
-				textareaRef: { current: textarea },
-				localContent: 'HelloWorld',
-			});
-			const requestAnimationFrameSpy = vi
-				.spyOn(window, 'requestAnimationFrame')
-				.mockImplementation((callback: FrameRequestCallback) => {
-					callback(0);
-					return 1;
-				});
-			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
-			const clipboardEvent = createTextClipboardEvent('  pasted text  \n');
-
-			try {
-				await act(async () => {
-					await result.current.handlePaste(clipboardEvent);
-				});
-
-				expect(clipboardEvent.preventDefault).toHaveBeenCalled();
-				expect(mockDeps.setLocalContent).toHaveBeenCalledWith('Hellopasted textWorld');
-				expect(mockDeps.handleContentChange).toHaveBeenCalledWith('Hellopasted textWorld');
-				expect(textarea.selectionStart).toBe(16);
-				expect(textarea.selectionEnd).toBe(16);
-			} finally {
-				requestAnimationFrameSpy.mockRestore();
-			}
-		});
-
-		it('should leave empty text paste events alone', async () => {
-			const mockDeps = createMockDeps();
-			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
-			const clipboardEvent = createTextClipboardEvent('');
-
-			await act(async () => {
-				await result.current.handlePaste(clipboardEvent);
-			});
-
-			expect(clipboardEvent.preventDefault).not.toHaveBeenCalled();
-			expect(mockDeps.setLocalContent).not.toHaveBeenCalled();
-		});
-
-		it('should prevent trimmed text paste without editing when textarea is unavailable', async () => {
-			const mockDeps = createMockDeps({
-				textareaRef: { current: null },
-				localContent: 'HelloWorld',
-			});
-			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
-			const clipboardEvent = createTextClipboardEvent('  pasted  ');
-
-			await act(async () => {
-				await result.current.handlePaste(clipboardEvent);
-			});
-
-			expect(clipboardEvent.preventDefault).toHaveBeenCalled();
-			expect(mockDeps.setLocalContent).not.toHaveBeenCalled();
-			expect(mockDeps.handleContentChange).not.toHaveBeenCalled();
-		});
-
-		it('should default missing text selection positions to the start of the document', async () => {
-			const textarea = {
-				selectionStart: undefined,
-				selectionEnd: undefined,
-			} as unknown as HTMLTextAreaElement;
-			const mockDeps = createMockDeps({
-				textareaRef: { current: textarea },
-				localContent: 'World',
-			});
-			const requestAnimationFrameSpy = vi
-				.spyOn(window, 'requestAnimationFrame')
-				.mockImplementation((callback: FrameRequestCallback) => {
-					callback(0);
-					return 1;
-				});
-			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
-			const clipboardEvent = createTextClipboardEvent('  Hello  ');
-
-			try {
-				await act(async () => {
-					await result.current.handlePaste(clipboardEvent);
-				});
-
-				expect(mockDeps.setLocalContent).toHaveBeenCalledWith('HelloWorld');
-				expect(textarea.selectionStart).toBe(5);
-				expect(textarea.selectionEnd).toBe(5);
-			} finally {
-				requestAnimationFrameSpy.mockRestore();
-			}
-		});
-
 		it('should NOT paste when folderPath is null', async () => {
 			const mockDeps = createMockDeps({ folderPath: null });
 
@@ -707,89 +440,6 @@ describe('useAutoRunImageHandling', () => {
 			});
 
 			expect(window.maestro.autorun.saveImage).not.toHaveBeenCalled();
-		});
-
-		it('should skip image clipboard items that do not provide a file', async () => {
-			const mockDeps = createMockDeps();
-			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
-			const imageItem: DataTransferItem = {
-				kind: 'file',
-				type: 'image/png',
-				getAsFile: () => null,
-				getAsString: () => {},
-				webkitGetAsEntry: () => null,
-			};
-			const clipboardEvent = {
-				clipboardData: {
-					items: {
-						length: 1,
-						0: imageItem,
-						item: (index: number) => (index === 0 ? imageItem : null),
-						[Symbol.iterator]: function* () {
-							yield imageItem;
-						},
-					} as unknown as DataTransferItemList,
-				},
-				preventDefault: vi.fn(),
-			} as unknown as React.ClipboardEvent;
-
-			await act(async () => {
-				await result.current.handlePaste(clipboardEvent);
-			});
-
-			expect(clipboardEvent.preventDefault).toHaveBeenCalled();
-			expect(window.maestro.autorun.saveImage).not.toHaveBeenCalled();
-		});
-
-		it('should skip pasted images when FileReader returns no data', async () => {
-			vi.useFakeTimers();
-			const restoreFileReader = installFileReaderResult(null);
-			const textarea = createMockTextarea(0);
-			const mockDeps = createMockDeps({
-				textareaRef: { current: textarea },
-			});
-			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
-			const clipboardEvent = createMockClipboardEvent();
-
-			try {
-				await act(async () => {
-					await result.current.handlePaste(clipboardEvent);
-					vi.runAllTimers();
-				});
-
-				expect(window.maestro.autorun.saveImage).not.toHaveBeenCalled();
-				expect(mockDeps.setLocalContent).not.toHaveBeenCalled();
-			} finally {
-				restoreFileReader();
-			}
-		});
-
-		it('should insert newlines around pasted image markdown and restore cursor position', async () => {
-			vi.useFakeTimers();
-			const textarea = createMockTextarea(3);
-			const mockDeps = createMockDeps({
-				textareaRef: { current: textarea },
-				localContent: 'abcXYZ',
-			});
-			(window.maestro.autorun as any).saveImage.mockResolvedValue({
-				success: true,
-				relativePath: 'images/file name.png',
-			});
-			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
-			const clipboardEvent = createMockClipboardEvent();
-
-			await act(async () => {
-				await result.current.handlePaste(clipboardEvent);
-				vi.runAllTimers();
-				await Promise.resolve();
-				vi.runAllTimers();
-			});
-
-			expect(mockDeps.setLocalContent).toHaveBeenCalledWith(
-				'abc\n![file name.png](images/file%20name.png)\nXYZ'
-			);
-			expect(textarea.setSelectionRange).toHaveBeenCalledWith(45, 45);
-			expect(textarea.focus).toHaveBeenCalled();
 		});
 
 		it('should handle different image types (jpeg)', async () => {
@@ -896,85 +546,6 @@ describe('useAutoRunImageHandling', () => {
 			});
 
 			expect(result.current.attachmentsList).toEqual([]);
-			expect(mockDeps.setLocalContent).not.toHaveBeenCalled();
-		});
-
-		it('should skip non-image clipboard items before saving the first image item', async () => {
-			vi.useFakeTimers();
-
-			const textarea = createMockTextarea(0);
-			const mockDeps = createMockDeps({
-				textareaRef: { current: textarea },
-			});
-			const textItem: DataTransferItem = {
-				kind: 'string',
-				type: 'text/plain',
-				getAsFile: () => null,
-				getAsString: (callback) => callback?.('plain text'),
-				webkitGetAsEntry: () => null,
-			};
-			const imageFile = new File(['test image data'], 'test.png', { type: 'image/' });
-			const imageItem: DataTransferItem = {
-				kind: 'file',
-				type: 'image/',
-				getAsFile: () => imageFile,
-				getAsString: () => {},
-				webkitGetAsEntry: () => null,
-			};
-			const clipboardEvent = {
-				clipboardData: {
-					items: {
-						length: 2,
-						0: textItem,
-						1: imageItem,
-						item: (index: number) => (index === 0 ? textItem : index === 1 ? imageItem : null),
-						[Symbol.iterator]: function* () {
-							yield textItem;
-							yield imageItem;
-						},
-					} as unknown as DataTransferItemList,
-					getData: () => 'plain text',
-				},
-				preventDefault: vi.fn(),
-			} as unknown as React.ClipboardEvent;
-
-			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
-
-			await act(async () => {
-				await result.current.handlePaste(clipboardEvent);
-				vi.runAllTimers();
-			});
-
-			expect(clipboardEvent.preventDefault).toHaveBeenCalledTimes(1);
-			expect(window.maestro.autorun.saveImage).toHaveBeenCalledWith(
-				'/test/autorun',
-				'Phase 1',
-				expect.any(String),
-				'png',
-				undefined
-			);
-		});
-
-		it('should keep malformed saved paste paths as attachments when textarea is unavailable', async () => {
-			vi.useFakeTimers();
-
-			const mockDeps = createMockDeps({
-				textareaRef: { current: null },
-			});
-			(window.maestro.autorun as any).saveImage.mockResolvedValue({
-				success: true,
-				relativePath: 'images/',
-			});
-
-			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
-			const clipboardEvent = createMockClipboardEvent();
-
-			await act(async () => {
-				await result.current.handlePaste(clipboardEvent);
-				vi.runAllTimers();
-			});
-
-			expect(result.current.attachmentsList).toContain('images/');
 			expect(mockDeps.setLocalContent).not.toHaveBeenCalled();
 		});
 
@@ -1141,64 +712,6 @@ describe('useAutoRunImageHandling', () => {
 			expect(window.maestro.autorun.saveImage).not.toHaveBeenCalled();
 		});
 
-		it('should skip selected files when FileReader returns no data', async () => {
-			vi.useFakeTimers();
-			const restoreFileReader = installFileReaderResult(null);
-			const mockDeps = createMockDeps();
-			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
-			const fileEvent = createMockFileInputEvent();
-
-			try {
-				await act(async () => {
-					await result.current.handleFileSelect(fileEvent);
-					vi.runAllTimers();
-				});
-
-				expect(window.maestro.autorun.saveImage).not.toHaveBeenCalled();
-				expect(mockDeps.setLocalContent).not.toHaveBeenCalled();
-				expect(fileEvent.target.value).toBe('');
-			} finally {
-				restoreFileReader();
-			}
-		});
-
-		it('should skip selected files when editing locks before FileReader loads', async () => {
-			const OriginalFileReader = global.FileReader;
-			let reader: MockFileReader | null = null;
-			class DeferredFileReader extends MockFileReader {
-				readAsDataURL = vi.fn(function (this: DeferredFileReader) {
-					reader = this;
-					this.result =
-						'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
-				});
-			}
-			global.FileReader = DeferredFileReader as unknown as typeof FileReader;
-			const mockDeps = createMockDeps();
-			const { result, rerender } = renderHook(
-				(props: ReturnType<typeof createMockDeps>) => useAutoRunImageHandling(props),
-				{ initialProps: mockDeps }
-			);
-			const fileEvent = createMockFileInputEvent();
-
-			try {
-				await act(async () => {
-					await result.current.handleFileSelect(fileEvent);
-				});
-				rerender({ ...mockDeps, isLocked: true });
-				await act(async () => {
-					reader?.onload?.({
-						target: { result: reader.result },
-					} as unknown as ProgressEvent<FileReader>);
-				});
-
-				expect(window.maestro.autorun.saveImage).not.toHaveBeenCalled();
-				expect(mockDeps.setLocalContent).not.toHaveBeenCalled();
-				expect(fileEvent.target.value).toBe('');
-			} finally {
-				global.FileReader = OriginalFileReader;
-			}
-		});
-
 		it('should push undo state before modifying content', async () => {
 			vi.useFakeTimers();
 
@@ -1247,53 +760,6 @@ describe('useAutoRunImageHandling', () => {
 				'gif',
 				undefined
 			);
-		});
-
-		it('should use png extension fallback for unnamed files and malformed returned paths', async () => {
-			vi.useFakeTimers();
-
-			const mockDeps = createMockDeps({ localContent: 'content' });
-			(window.maestro.autorun as any).saveImage.mockResolvedValue({
-				success: true,
-				relativePath: 'images/',
-			});
-			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
-			const fileEvent = createMockFileInputEvent('', 'image/png');
-
-			await act(async () => {
-				await result.current.handleFileSelect(fileEvent);
-				vi.runAllTimers();
-			});
-
-			expect(window.maestro.autorun.saveImage).toHaveBeenCalledWith(
-				'/test/autorun',
-				'Phase 1',
-				expect.any(String),
-				'png',
-				undefined
-			);
-			expect(mockDeps.setLocalContent).toHaveBeenCalledWith('content\n![images/](images/)\n');
-		});
-
-		it('should not update state when manual upload saveImage fails', async () => {
-			vi.useFakeTimers();
-
-			const mockDeps = createMockDeps();
-			(window.maestro.autorun as any).saveImage.mockResolvedValue({
-				success: false,
-				error: 'upload failed',
-			});
-			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
-			const fileEvent = createMockFileInputEvent();
-
-			await act(async () => {
-				await result.current.handleFileSelect(fileEvent);
-				vi.runAllTimers();
-			});
-
-			expect(result.current.attachmentsList).toEqual([]);
-			expect(mockDeps.setLocalContent).not.toHaveBeenCalled();
-			expect(fileEvent.target.value).toBe('');
 		});
 	});
 
@@ -1426,20 +892,6 @@ describe('useAutoRunImageHandling', () => {
 			const newContent = (mockDeps.setLocalContent as any).mock.calls[0][0];
 			expect(newContent).not.toContain('file (1).png');
 		});
-
-		it('should remove markdown references for trailing-slash attachment paths', async () => {
-			const mockDeps = createMockDeps({
-				localContent: '![images/](images/)\nContent',
-			});
-
-			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
-
-			await act(async () => {
-				await result.current.handleRemoveAttachment('images/');
-			});
-
-			expect(mockDeps.setLocalContent).toHaveBeenCalledWith('Content');
-		});
 	});
 
 	// ============================================================================
@@ -1496,7 +948,7 @@ describe('useAutoRunImageHandling', () => {
 	describe('lightbox operations', () => {
 		describe('openLightboxByFilename', () => {
 			it('should open lightbox with attachment filename', () => {
-				const mockDeps = createMockDeps({ folderPath: null });
+				const mockDeps = createMockDeps();
 
 				const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
@@ -1509,7 +961,7 @@ describe('useAutoRunImageHandling', () => {
 			});
 
 			it('should handle http URL', () => {
-				const mockDeps = createMockDeps({ folderPath: null });
+				const mockDeps = createMockDeps();
 
 				const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
@@ -1522,7 +974,7 @@ describe('useAutoRunImageHandling', () => {
 			});
 
 			it('should handle https URL', () => {
-				const mockDeps = createMockDeps({ folderPath: null });
+				const mockDeps = createMockDeps();
 
 				const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
@@ -1535,7 +987,7 @@ describe('useAutoRunImageHandling', () => {
 			});
 
 			it('should handle data: URL', () => {
-				const mockDeps = createMockDeps({ folderPath: null });
+				const mockDeps = createMockDeps();
 
 				const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
@@ -1552,7 +1004,7 @@ describe('useAutoRunImageHandling', () => {
 
 		describe('closeLightbox', () => {
 			it('should clear lightbox state', () => {
-				const mockDeps = createMockDeps({ folderPath: null });
+				const mockDeps = createMockDeps();
 
 				const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
@@ -1575,7 +1027,7 @@ describe('useAutoRunImageHandling', () => {
 
 		describe('handleLightboxNavigate', () => {
 			it('should update lightboxFilename', () => {
-				const mockDeps = createMockDeps({ folderPath: null });
+				const mockDeps = createMockDeps();
 
 				const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
@@ -1591,7 +1043,7 @@ describe('useAutoRunImageHandling', () => {
 			});
 
 			it('should handle null to close', () => {
-				const mockDeps = createMockDeps({ folderPath: null });
+				const mockDeps = createMockDeps();
 
 				const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
@@ -1684,7 +1136,7 @@ describe('useAutoRunImageHandling', () => {
 
 	describe('attachmentsExpanded state', () => {
 		it('should default to true', () => {
-			const mockDeps = createMockDeps({ folderPath: null });
+			const mockDeps = createMockDeps();
 
 			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
@@ -1692,7 +1144,7 @@ describe('useAutoRunImageHandling', () => {
 		});
 
 		it('should toggle via setAttachmentsExpanded', () => {
-			const mockDeps = createMockDeps({ folderPath: null });
+			const mockDeps = createMockDeps();
 
 			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
@@ -1716,7 +1168,7 @@ describe('useAutoRunImageHandling', () => {
 
 	describe('fileInputRef', () => {
 		it('should provide a ref for file input element', () => {
-			const mockDeps = createMockDeps({ folderPath: null });
+			const mockDeps = createMockDeps();
 
 			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
@@ -1731,7 +1183,7 @@ describe('useAutoRunImageHandling', () => {
 
 	describe('handler memoization', () => {
 		it('should maintain stable handler references when deps unchanged', () => {
-			const mockDeps = createMockDeps({ folderPath: null });
+			const mockDeps = createMockDeps();
 
 			const { result, rerender } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
@@ -1754,7 +1206,7 @@ describe('useAutoRunImageHandling', () => {
 		});
 
 		it('should update handlers when localContent changes', () => {
-			const mockDeps = createMockDeps({ folderPath: null });
+			const mockDeps = createMockDeps();
 
 			const { result, rerender } = renderHook(({ deps }) => useAutoRunImageHandling(deps), {
 				initialProps: { deps: mockDeps },

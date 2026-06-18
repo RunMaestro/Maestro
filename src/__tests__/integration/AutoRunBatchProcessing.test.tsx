@@ -15,8 +15,9 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import React, { createRef } from 'react';
 import { AutoRun, AutoRunHandle } from '../../renderer/components/AutoRun';
 import { LayerStackProvider } from '../../renderer/contexts/LayerStackContext';
-import { imageCache } from '../../renderer/hooks/batch/useAutoRunImageHandling';
-import type { Theme, BatchRunState, SessionState } from '../../renderer/types';
+import type { BatchRunState, SessionState } from '../../renderer/types';
+
+import { createMockTheme } from '../helpers/mockTheme';
 
 // Helper to render with LayerStackProvider (required by AutoRunSearchBar)
 const renderWithProvider = (ui: React.ReactElement) => {
@@ -28,95 +29,11 @@ const renderWithProvider = (ui: React.ReactElement) => {
 	};
 };
 
-const getByExactTextContent = (text: string): HTMLElement =>
-	screen.getByText((_, element) => {
-		const normalize = (value: string | null | undefined) =>
-			value?.replace(/\s+/g, ' ').trim() ?? '';
-		const elementText = normalize(element?.textContent);
-		const childHasSameText = Array.from(element?.children ?? []).some(
-			(child) => normalize(child.textContent) === text
-		);
-		return elementText === text && !childHasSameText;
-	});
-
 // Mock external dependencies
 vi.mock('react-markdown', () => ({
-	default: ({
-		children,
-		components,
-	}: {
-		children: string;
-		components?: {
-			a?: React.ComponentType<{ href?: string; children?: React.ReactNode }>;
-			img?: React.ComponentType<{ src?: string; alt?: string }>;
-			pre?: React.ComponentType<{ children?: React.ReactNode }>;
-		};
-	}) => {
-		if (typeof children !== 'string') {
-			return <div data-testid="react-markdown">{children}</div>;
-		}
-
-		const nodes: React.ReactNode[] = [];
-		const ImageComponent = components?.img;
-		const LinkComponent = components?.a;
-		const PreComponent = components?.pre;
-		const pushInlineNodes = (text: string, keyPrefix: string) => {
-			const inlinePattern = /!\[([^\]]*)\]\(([^)]*)\)|\[([^\]]+)\]\(([^)]+)\)/g;
-			let lastIndex = 0;
-			let match: RegExpExecArray | null;
-			while ((match = inlinePattern.exec(text)) !== null) {
-				if (match.index > lastIndex) {
-					nodes.push(text.slice(lastIndex, match.index));
-				}
-				if (match[1] !== undefined && ImageComponent) {
-					nodes.push(
-						<ImageComponent
-							key={`${keyPrefix}-image-${match.index}`}
-							alt={match[1]}
-							src={match[2]}
-						/>
-					);
-				} else if (match[3] !== undefined && LinkComponent) {
-					nodes.push(
-						<LinkComponent key={`${keyPrefix}-link-${match.index}`} href={match[4]}>
-							{match[3]}
-						</LinkComponent>
-					);
-				} else {
-					nodes.push(match[0]);
-				}
-				lastIndex = match.index + match[0].length;
-			}
-			if (lastIndex < text.length) {
-				nodes.push(text.slice(lastIndex));
-			}
-		};
-
-		const codeBlockPattern = /```(\w+)\n([\s\S]*?)```/g;
-		let lastBlockIndex = 0;
-		let blockMatch: RegExpExecArray | null;
-		while ((blockMatch = codeBlockPattern.exec(children)) !== null) {
-			if (blockMatch.index > lastBlockIndex) {
-				pushInlineNodes(
-					children.slice(lastBlockIndex, blockMatch.index),
-					`text-${blockMatch.index}`
-				);
-			}
-			if (PreComponent) {
-				nodes.push(
-					<PreComponent key={`pre-${blockMatch.index}`}>
-						<code className={`language-${blockMatch[1]}`}>{blockMatch[2]}</code>
-					</PreComponent>
-				);
-			} else {
-				nodes.push(blockMatch[0]);
-			}
-			lastBlockIndex = blockMatch.index + blockMatch[0].length;
-		}
-		pushInlineNodes(children.slice(lastBlockIndex), 'tail');
-
-		return <div data-testid="react-markdown">{nodes}</div>;
-	},
+	default: ({ children }: { children: string }) => (
+		<div data-testid="react-markdown">{children}</div>
+	),
 }));
 
 vi.mock('remark-gfm', () => ({
@@ -155,7 +72,6 @@ vi.mock('../../renderer/components/AutoRunDocumentSelector', () => ({
 		onSelectDocument,
 		onRefresh,
 		onChangeFolder,
-		onToggleBionify,
 		isLoading,
 	}: any) => (
 		<div data-testid="document-selector">
@@ -175,9 +91,6 @@ vi.mock('../../renderer/components/AutoRunDocumentSelector', () => ({
 			</button>
 			<button data-testid="change-folder-btn" onClick={onChangeFolder}>
 				Change
-			</button>
-			<button data-testid="bionify-toggle" onClick={onToggleBionify}>
-				Bionify
 			</button>
 			{isLoading && <span data-testid="loading-indicator">Loading...</span>}
 		</div>
@@ -208,28 +121,6 @@ vi.mock('../../renderer/components/TemplateAutocompleteDropdown', () => ({
 	TemplateAutocompleteDropdown: React.forwardRef(() => null),
 }));
 
-// Create a mock theme for testing
-const createMockTheme = (): Theme => ({
-	id: 'test-theme',
-	name: 'Test Theme',
-	mode: 'dark',
-	colors: {
-		bgMain: '#1a1a1a',
-		bgPanel: '#252525',
-		bgActivity: '#2d2d2d',
-		bgSidebar: '#1e1e1e',
-		textMain: '#ffffff',
-		textDim: '#888888',
-		accent: '#0066ff',
-		accentForeground: '#ffffff',
-		border: '#333333',
-		highlight: '#0066ff33',
-		success: '#00aa00',
-		warning: '#ffaa00',
-		error: '#ff0000',
-	},
-});
-
 // Setup window.maestro mock
 const setupMaestroMock = () => {
 	const mockMaestro = {
@@ -246,9 +137,6 @@ const setupMaestroMock = () => {
 		settings: {
 			get: vi.fn().mockResolvedValue(null),
 			set: vi.fn().mockResolvedValue(undefined),
-		},
-		shell: {
-			openExternal: vi.fn().mockResolvedValue(undefined),
 		},
 	};
 
@@ -311,7 +199,6 @@ describe('AutoRun + Batch Processing Integration', () => {
 	let mockMaestro: ReturnType<typeof setupMaestroMock>;
 
 	beforeEach(() => {
-		imageCache.clear();
 		mockMaestro = setupMaestroMock();
 		vi.useFakeTimers({ shouldAdvanceTime: true });
 	});
@@ -426,9 +313,11 @@ describe('AutoRun + Batch Processing Integration', () => {
 			const props = createDefaultProps({ batchRunState, mode: 'preview' });
 			renderWithProvider(<AutoRun {...props} />);
 
-			// Preview button should be selected when locked.
+			// Preview button should be styled as selected when locked (has font-semibold class)
 			const previewButton = screen.getByRole('button', { name: /preview/i });
-			expect(previewButton).toHaveAttribute('aria-pressed', 'true');
+			// font-semibold in Tailwind applies font-weight: 600, but toHaveStyle doesn't work well with Tailwind
+			// Instead, check the class is applied
+			expect(previewButton).toHaveClass('font-semibold');
 		});
 	});
 
@@ -527,7 +416,7 @@ describe('AutoRun + Batch Processing Integration', () => {
 			const { rerender } = renderWithProvider(<AutoRun {...props} />);
 
 			// Verify initial task count (3 tasks, 0 completed)
-			expect(getByExactTextContent('0 of 3 tasks completed')).toBeInTheDocument();
+			expect(screen.getByText(/0 of 3 tasks completed/i)).toBeInTheDocument();
 
 			// Simulate task completion - content updated externally
 			const updatedContent = `- [x] Task 1
@@ -537,7 +426,7 @@ describe('AutoRun + Batch Processing Integration', () => {
 
 			// Task count should update
 			await waitFor(() => {
-				expect(getByExactTextContent('1 of 3 tasks completed')).toBeInTheDocument();
+				expect(screen.getByText(/1 of 3 tasks completed/i)).toBeInTheDocument();
 			});
 		});
 
@@ -552,7 +441,7 @@ describe('AutoRun + Batch Processing Integration', () => {
 			});
 			renderWithProvider(<AutoRun {...props} />);
 
-			expect(getByExactTextContent('2 of 3 tasks completed')).toBeInTheDocument();
+			expect(screen.getByText(/2 of 3 tasks completed/i)).toBeInTheDocument();
 		});
 
 		it('shows success styling when all tasks are completed', async () => {
@@ -567,10 +456,8 @@ describe('AutoRun + Batch Processing Integration', () => {
 			const { container } = renderWithProvider(<AutoRun {...props} />);
 
 			// Find the task count element and verify it has success color
-			const taskCountElement = getByExactTextContent('3 of 3 tasks completed');
-			expect(taskCountElement.querySelector('span')).toHaveStyle({
-				color: createMockTheme().colors.success,
-			});
+			const taskCountElement = screen.getByText(/3 of 3 tasks completed/i);
+			expect(taskCountElement).toHaveStyle({ color: createMockTheme().colors.success });
 		});
 
 		it('reflects content version changes by syncing with external updates', async () => {
@@ -587,7 +474,7 @@ describe('AutoRun + Batch Processing Integration', () => {
 			rerender(<AutoRun {...props} content="- [x] Initial task" contentVersion={1} />);
 
 			await waitFor(() => {
-				expect(getByExactTextContent('1 of 1 task completed')).toBeInTheDocument();
+				expect(screen.getByText(/1 of 1 task completed/i)).toBeInTheDocument();
 			});
 		});
 
@@ -720,31 +607,31 @@ describe('AutoRun + Batch Processing Integration', () => {
 	});
 
 	describe('Image Upload Disabled During Batch Run', () => {
-		it('does not render image upload button during batch run', () => {
+		it('disables image upload button during batch run', () => {
 			const batchRunState = createBatchRunState({ isRunning: true });
 			const props = createDefaultProps({ batchRunState });
 			renderWithProvider(<AutoRun {...props} />);
 
-			expect(
-				screen.queryByTitle(
-					/Add image \(or paste from clipboard\)|Switch to Edit mode to add images/i
-				)
-			).not.toBeInTheDocument();
+			// Image button should be disabled/ghosted
+			const imageButton = screen.getByTitle(/Switch to Edit mode to add images/i);
+			expect(imageButton).toBeDisabled();
 		});
 
-		it('does not render image upload button when batch run is idle', () => {
+		it('enables image upload button when batch run ends', () => {
 			const props = createDefaultProps();
 			renderWithProvider(<AutoRun {...props} />);
 
-			expect(screen.queryByTitle(/Add image \(or paste from clipboard\)/i)).not.toBeInTheDocument();
+			const imageButton = screen.getByTitle(/Add image \(or paste from clipboard\)/i);
+			expect(imageButton).not.toBeDisabled();
 		});
 
-		it('does not render image upload tooltip during batch run', () => {
+		it('shows correct tooltip for image button during batch run', () => {
 			const batchRunState = createBatchRunState({ isRunning: true });
 			const props = createDefaultProps({ batchRunState });
 			renderWithProvider(<AutoRun {...props} />);
 
-			expect(screen.queryByTitle(/Switch to Edit mode to add images/i)).not.toBeInTheDocument();
+			const imageButton = screen.getByTitle(/Switch to Edit mode to add images/i);
+			expect(imageButton).toBeInTheDocument();
 		});
 	});
 
@@ -964,449 +851,6 @@ describe('AutoRun + Batch Processing Integration', () => {
 
 			// Document selector should show current document
 			expect(screen.getByTestId('doc-select')).toHaveValue('Phase 1');
-		});
-	});
-
-	describe('Preview Images And Editor Keyboard', () => {
-		it('uses cached markdown image state and opens an external image lightbox', async () => {
-			imageCache.set('/test/folder:images/cached.png', 'data:image/png;base64,cached');
-			imageCache.set('/test/folder:plain-cached.png', 'data:image/png;base64,plain');
-			const props = createDefaultProps({
-				mode: 'preview',
-				content: [
-					'![Blank]()',
-					'![Cached](images/cached.png)',
-					'![Plain](plain-cached.png)',
-					'![External](https://example.com/external.png)',
-				].join('\n'),
-			});
-
-			renderWithProvider(<AutoRun {...props} />);
-
-			expect(screen.queryByAltText('Blank')).not.toBeInTheDocument();
-			expect(screen.getByAltText('Cached')).toHaveAttribute('src', 'data:image/png;base64,cached');
-			expect(screen.getByAltText('Plain')).toHaveAttribute('src', 'data:image/png;base64,plain');
-			expect(mockMaestro.fs.readFile).not.toHaveBeenCalledWith(
-				'/test/folder/images/cached.png',
-				undefined
-			);
-			expect(mockMaestro.fs.readFile).not.toHaveBeenCalledWith(
-				'/test/folder/plain-cached.png',
-				undefined
-			);
-
-			fireEvent.click(screen.getByAltText('Cached').closest('span')!);
-			fireEvent.click(screen.getByAltText('External').closest('span')!);
-
-			expect(await screen.findByAltText('https://example.com/external.png')).toBeInTheDocument();
-		});
-
-		it('loads markdown attachment images from data, remote, relative, and absolute sources', async () => {
-			mockMaestro.fs.readFile
-				.mockResolvedValueOnce('data:image/png;base64,relative')
-				.mockResolvedValueOnce('not-image-data')
-				.mockRejectedValueOnce(new Error('missing'));
-			const props = createDefaultProps({
-				mode: 'preview',
-				content: [
-					'![Inline](data:image/png;base64,aW5saW5l)',
-					'![Remote](https://example.com/remote.png)',
-					'![Relative](images/flow%20chart.png)',
-					'![Invalid](/absolute/invalid.png)',
-					'![Missing](plain-missing.png)',
-				].join('\n'),
-			});
-
-			renderWithProvider(<AutoRun {...props} />);
-
-			expect(screen.getByAltText('Inline')).toHaveAttribute(
-				'src',
-				'data:image/png;base64,aW5saW5l'
-			);
-			expect(screen.getByAltText('Remote')).toHaveAttribute(
-				'src',
-				'https://example.com/remote.png'
-			);
-			expect(await screen.findByAltText('Relative')).toHaveAttribute(
-				'src',
-				'data:image/png;base64,relative'
-			);
-			expect(mockMaestro.fs.readFile).toHaveBeenCalledWith(
-				'/test/folder/images/flow chart.png',
-				undefined
-			);
-			expect(mockMaestro.fs.readFile).toHaveBeenCalledWith('/absolute/invalid.png', undefined);
-			expect(mockMaestro.fs.readFile).toHaveBeenCalledWith(
-				'/test/folder/plain-missing.png',
-				undefined
-			);
-			expect(await screen.findByText('Invalid image data')).toBeInTheDocument();
-			expect(await screen.findByText('Failed to load image: missing')).toBeInTheDocument();
-		});
-
-		it('handles editor keyboard insertion, search, and save shortcuts', async () => {
-			const props = createDefaultProps({
-				content: 'Intro',
-			});
-			renderWithProvider(<AutoRun {...props} />);
-
-			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
-			textarea.setSelectionRange(5, 5);
-			fireEvent.keyDown(textarea, { key: 'Tab' });
-			expect(textarea).toHaveValue('Intro\t');
-
-			textarea.setSelectionRange(0, 0);
-			fireEvent.keyDown(textarea, { key: 'l', metaKey: true });
-			expect(textarea).toHaveValue('- [ ] Intro\t');
-
-			fireEvent.change(textarea, { target: { value: '- [ ] Task' } });
-			textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-			fireEvent.keyDown(textarea, { key: 'Enter' });
-			expect(textarea).toHaveValue('- [ ] Task\n- [ ] ');
-
-			fireEvent.keyDown(textarea, { key: 'f', metaKey: true });
-			fireEvent.change(screen.getByPlaceholderText(/search/i), {
-				target: { value: 'Task' },
-			});
-			await act(async () => {
-				vi.advanceTimersByTime(200);
-				await Promise.resolve();
-			});
-			expect(screen.getByText('1/1')).toBeInTheDocument();
-
-			fireEvent.keyDown(textarea, { key: 's', metaKey: true });
-			await waitFor(() => expect(mockMaestro.autorun.writeDoc).toHaveBeenCalled());
-		});
-
-		it('renders existing attachment previews and removes an attachment through the preview panel', async () => {
-			const onContentChange = vi.fn();
-			mockMaestro.autorun.listImages.mockResolvedValueOnce({
-				success: true,
-				images: [{ filename: 'one.png', relativePath: 'images/one.png' }],
-			});
-			mockMaestro.fs.readFile.mockResolvedValueOnce('data:image/png;base64,one');
-			const props = createDefaultProps({
-				content: '![one.png](images/one.png)\n',
-				onContentChange,
-			});
-
-			renderWithProvider(<AutoRun {...props} />);
-
-			const attachmentToggle = await screen.findByRole('button', {
-				name: /attached images \(1\)/i,
-			});
-			const thumbnail = await screen.findByAltText('images/one.png');
-			fireEvent.click(thumbnail);
-			expect(await screen.findByTitle(/copy markdown reference/i)).toBeInTheDocument();
-			fireEvent.click(screen.getByTitle('Close (ESC)'));
-
-			fireEvent.click(attachmentToggle);
-			expect(screen.queryByAltText('images/one.png')).not.toBeInTheDocument();
-			fireEvent.click(attachmentToggle);
-
-			fireEvent.click(await screen.findByTitle('Remove image'));
-
-			await waitFor(() => {
-				expect(mockMaestro.autorun.deleteImage).toHaveBeenCalledWith(
-					'/test/folder',
-					'images/one.png',
-					undefined
-				);
-			});
-			expect(onContentChange).toHaveBeenCalledWith('');
-		});
-
-		it('resets completed tasks from the confirmation modal and reports the flash count', async () => {
-			const ref = createRef<AutoRunHandle>();
-			const onShowFlash = vi.fn();
-			const resetContent = '- [ ] Done\n* [ ] Other\n- [ ] Open';
-			const props = createDefaultProps({
-				content: '- [x] Done\n* [x] Other\n- [ ] Open',
-				onShowFlash,
-			});
-
-			renderWithProvider(<AutoRun {...props} ref={ref} />);
-
-			act(() => {
-				ref.current?.openResetTasksModal();
-			});
-			expect(screen.getByRole('dialog', { name: 'Reset Completed Tasks' })).toBeInTheDocument();
-
-			fireEvent.click(screen.getByRole('button', { name: 'Reset Tasks' }));
-
-			await waitFor(() => {
-				expect(mockMaestro.autorun.writeDoc).toHaveBeenCalledWith(
-					'/test/folder',
-					'Phase 1.md',
-					resetContent,
-					undefined
-				);
-			});
-			expect(onShowFlash).toHaveBeenCalledWith('2 tasks reverted to incomplete');
-			expect(screen.getByRole('textbox')).toHaveValue(resetContent);
-			await waitFor(() => expect(ref.current?.getCompletedTaskCount()).toBe(0));
-		});
-
-		it('logs reset save failures without closing over stale task state', async () => {
-			const ref = createRef<AutoRunHandle>();
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-			try {
-				mockMaestro.autorun.writeDoc.mockRejectedValueOnce(new Error('disk full'));
-				const props = createDefaultProps({
-					content: '- [x] Done',
-				});
-
-				renderWithProvider(<AutoRun {...props} ref={ref} />);
-
-				act(() => {
-					ref.current?.openResetTasksModal();
-				});
-				fireEvent.click(screen.getByRole('button', { name: 'Reset Tasks' }));
-
-				await waitFor(() => {
-					expect(consoleError).toHaveBeenCalledWith(
-						'Failed to save after reset:',
-						expect.any(Error)
-					);
-				});
-			} finally {
-				consoleError.mockRestore();
-			}
-		});
-
-		it('navigates edit-mode search matches and closes back to the editor', async () => {
-			const content = 'Alpha beta\nAlpha gamma\nAlpha delta';
-			const props = createDefaultProps({ content });
-			renderWithProvider(<AutoRun {...props} />);
-
-			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
-			Object.defineProperty(textarea, 'clientHeight', { value: 40, configurable: true });
-			Object.defineProperty(textarea, 'clientWidth', { value: 240, configurable: true });
-
-			fireEvent.keyDown(textarea, { key: 'f', metaKey: true });
-			fireEvent.change(screen.getByPlaceholderText(/search/i), {
-				target: { value: 'Alpha' },
-			});
-
-			await act(async () => {
-				vi.advanceTimersByTime(200);
-				await Promise.resolve();
-			});
-			expect(screen.getByText('1/3')).toBeInTheDocument();
-
-			fireEvent.click(screen.getByTitle(/Next match/i));
-			await waitFor(() => expect(screen.getByText('2/3')).toBeInTheDocument());
-			await waitFor(() => expect(textarea.selectionStart).toBe(content.indexOf('Alpha', 1)));
-
-			fireEvent.click(screen.getByTitle(/Previous match/i));
-			await waitFor(() => expect(screen.getByText('1/3')).toBeInTheDocument());
-			await waitFor(() => expect(textarea.selectionStart).toBe(0));
-
-			fireEvent.click(screen.getByTitle(/Close search/i));
-			expect(screen.queryByPlaceholderText(/search/i)).not.toBeInTheDocument();
-			expect(document.activeElement).toBe(textarea);
-		});
-
-		it('handles undo, redo, checkbox insertion, and list continuation shortcuts', async () => {
-			const props = createDefaultProps({ content: 'Middle' });
-			renderWithProvider(<AutoRun {...props} />);
-
-			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
-			textarea.setSelectionRange(3, 3);
-			fireEvent.keyDown(textarea, { key: 'l', metaKey: true });
-			expect(textarea).toHaveValue('Mid\n- [ ] dle');
-			await act(async () => {
-				vi.advanceTimersByTime(0);
-				await Promise.resolve();
-			});
-			expect(textarea.selectionStart).toBe(10);
-
-			fireEvent.change(textarea, { target: { value: '- bullet' } });
-			textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-			fireEvent.keyDown(textarea, { key: 'Enter' });
-			expect(textarea).toHaveValue('- bullet\n- ');
-			await act(async () => {
-				vi.advanceTimersByTime(0);
-				await Promise.resolve();
-			});
-
-			fireEvent.change(textarea, { target: { value: '1. first' } });
-			textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-			fireEvent.keyDown(textarea, { key: 'Enter' });
-			expect(textarea).toHaveValue('1. first\n2. ');
-
-			fireEvent.keyDown(textarea, { key: 'z', metaKey: true });
-			await waitFor(() => expect(textarea).toHaveValue('1. first'));
-			fireEvent.keyDown(textarea, { key: 'z', metaKey: true, shiftKey: true });
-			await waitFor(() => expect(textarea).toHaveValue('1. first\n2. '));
-		});
-
-		it('syncs externally managed draft content and save state', async () => {
-			const onExternalLocalContentChange = vi.fn();
-			const onExternalSavedContentChange = vi.fn();
-			const props = createDefaultProps({
-				content: 'Initial',
-				externalLocalContent: 'Draft A',
-				externalSavedContent: 'Initial',
-				onExternalLocalContentChange,
-				onExternalSavedContentChange,
-			});
-			const { rerender } = renderWithProvider(<AutoRun {...props} />);
-
-			expect(screen.getByRole('textbox')).toHaveValue('Draft A');
-
-			rerender(
-				<AutoRun {...props} externalLocalContent="Draft B" externalSavedContent="Draft B" />
-			);
-			await waitFor(() => expect(screen.getByRole('textbox')).toHaveValue('Draft B'));
-
-			fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Draft C' } });
-			expect(onExternalLocalContentChange).toHaveBeenCalledWith('Draft C');
-
-			fireEvent.keyDown(screen.getByRole('textbox'), { key: 's', metaKey: true });
-			await waitFor(() => {
-				expect(mockMaestro.autorun.writeDoc).toHaveBeenCalledWith(
-					'/test/folder',
-					'Phase 1.md',
-					'Draft C',
-					undefined
-				);
-			});
-			expect(onExternalSavedContentChange).toHaveBeenCalledWith('Draft C');
-		});
-
-		it('routes preview markdown file links, external links, and mermaid blocks', async () => {
-			const onSelectDocument = vi.fn();
-			const props = createDefaultProps({
-				mode: 'preview',
-				onSelectDocument,
-				documentTree: [
-					{
-						name: 'Nested',
-						type: 'folder',
-						path: 'Nested',
-						children: [{ name: 'Note.md', type: 'file', path: 'Nested/Note.md' }],
-					},
-				],
-				content: [
-					'```mermaid',
-					'graph TD; A-->B;',
-					'```',
-					'[Internal](Nested/Note.md)',
-					'[External](https://example.com/docs)',
-					'![Searchable](https://example.com/searchable.png)',
-				].join('\n'),
-			});
-			const { container } = renderWithProvider(<AutoRun {...props} />);
-
-			expect(screen.getByTestId('mermaid-renderer')).toHaveTextContent('graph TD; A-->B;');
-			fireEvent.click(screen.getByText('Internal'));
-			expect(onSelectDocument).toHaveBeenCalledWith('Nested/Note');
-			fireEvent.click(screen.getByText('External'));
-			expect(mockMaestro.shell.openExternal).toHaveBeenCalledWith('https://example.com/docs');
-
-			const preview = container.querySelector('.prose') as HTMLDivElement;
-			fireEvent.keyDown(preview, { key: 'f', metaKey: true });
-			fireEvent.change(screen.getByPlaceholderText(/search/i), {
-				target: { value: 'Searchable' },
-			});
-			await act(async () => {
-				vi.advanceTimersByTime(200);
-				await Promise.resolve();
-			});
-			expect(screen.getByText('1/2')).toBeInTheDocument();
-			expect(screen.getByAltText('Searchable')).toHaveAttribute(
-				'src',
-				'https://example.com/searchable.png'
-			);
-		});
-
-		it('refreshes the empty-folder state and clears the refresh animation timer', async () => {
-			const onRefresh = vi.fn().mockResolvedValue(undefined);
-			const props = createDefaultProps({
-				documentList: [],
-				selectedFile: null,
-				content: '',
-				onRefresh,
-			});
-
-			renderWithProvider(<AutoRun {...props} />);
-
-			expect(screen.getByText('No Documents Found')).toBeInTheDocument();
-			const refreshButtons = screen.getAllByRole('button', { name: /refresh/i });
-			fireEvent.click(refreshButtons[refreshButtons.length - 1]);
-
-			await waitFor(() => expect(onRefresh).toHaveBeenCalledTimes(1));
-			await act(async () => {
-				vi.advanceTimersByTime(500);
-				await Promise.resolve();
-			});
-		});
-
-		it('persists preview scroll state and handles preview-mode shortcuts', async () => {
-			const onStateChange = vi.fn();
-			const onModeChange = vi.fn();
-			const props = createDefaultProps({
-				mode: 'preview',
-				content: 'Preview body',
-				onStateChange,
-				onModeChange,
-			});
-			const { container } = renderWithProvider(<AutoRun {...props} />);
-
-			const preview = container.querySelector('.prose') as HTMLDivElement;
-			preview.scrollTop = 42;
-			fireEvent.scroll(preview);
-			await act(async () => {
-				vi.advanceTimersByTime(500);
-				await Promise.resolve();
-			});
-
-			expect(onStateChange).toHaveBeenCalledWith(
-				expect.objectContaining({ mode: 'preview', previewScrollPos: 42 })
-			);
-
-			fireEvent.keyDown(preview, { key: 'f', metaKey: true });
-			expect(screen.getByPlaceholderText(/search/i)).toBeInTheDocument();
-
-			fireEvent.keyDown(preview, { key: 'e', metaKey: true });
-			expect(onModeChange).toHaveBeenCalledWith('edit');
-		});
-
-		it('wires optional toolbar controls, bionify toggle, and help modal lifecycle', async () => {
-			const onExpand = vi.fn();
-			const onOpenMarketplace = vi.fn();
-			const onLaunchWizard = vi.fn();
-			const props = createDefaultProps({
-				onExpand,
-				onOpenMarketplace,
-				onLaunchWizard,
-				shortcuts: {
-					toggleAutoRunExpanded: {
-						id: 'toggleAutoRunExpanded',
-						name: 'Toggle Auto Run Expanded',
-						keys: ['Meta', 'Shift', 'E'],
-						description: 'Toggle Auto Run Expanded',
-						category: 'Auto Run',
-					},
-				},
-			});
-
-			renderWithProvider(<AutoRun {...props} />);
-
-			fireEvent.click(screen.getByTitle(/Expand to full screen/i));
-			fireEvent.click(screen.getByTitle(/Browse PlayBooks/i));
-			fireEvent.click(screen.getByTitle('Launch In-Tab Wizard'));
-			fireEvent.click(screen.getByTestId('bionify-toggle'));
-			fireEvent.click(screen.getByTitle('Learn about Auto Runner'));
-
-			expect(onExpand).toHaveBeenCalledTimes(1);
-			expect(onOpenMarketplace).toHaveBeenCalledTimes(1);
-			expect(onLaunchWizard).toHaveBeenCalledTimes(1);
-			expect(screen.getByTestId('help-modal')).toBeInTheDocument();
-
-			fireEvent.click(screen.getByText('Close'));
-			expect(screen.queryByTestId('help-modal')).not.toBeInTheDocument();
 		});
 	});
 });

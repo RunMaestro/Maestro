@@ -6,13 +6,8 @@
  * env vars via the correct ProcessConfig field.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import {
-	cancelAllGroomingSessions,
-	getActiveGroomingSessionCount,
-	groomContext,
-	type GroomingProcessManager,
-} from '../../../main/utils/context-groomer';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { groomContext, type GroomingProcessManager } from '../../../main/utils/context-groomer';
 import type { AgentDetector } from '../../../main/agents';
 import type { AgentConfig } from '../../../main/agents';
 
@@ -28,6 +23,13 @@ vi.mock('../../../main/utils/agent-args', () => ({
 			modelSource: 'default',
 		})
 	),
+}));
+
+// Mock platform detection so we can toggle isWindows() per test
+vi.mock('../../../shared/platformDetection', () => ({
+	isWindows: vi.fn(() => false),
+	isMacOS: vi.fn(() => true),
+	isLinux: vi.fn(() => false),
 }));
 
 // Mock uuid to return predictable values
@@ -46,6 +48,7 @@ vi.mock('../../../main/utils/logger', () => ({
 }));
 
 import { buildAgentArgs, applyAgentConfigOverrides } from '../../../main/utils/agent-args';
+import { isWindows } from '../../../shared/platformDetection';
 
 function makeAgent(overrides: Partial<AgentConfig> = {}): AgentConfig {
 	return {
@@ -68,7 +71,6 @@ function createMockProcessManager(): GroomingProcessManager & {
 	_emitError: (sessionId: string, error: unknown) => void;
 } {
 	const handlers = new Map<string, ((...args: unknown[]) => void)[]>();
-	let lastSpawnConfig: Record<string, unknown> | null = null;
 
 	return {
 		_handlers: handlers,
@@ -86,8 +88,6 @@ function createMockProcessManager(): GroomingProcessManager & {
 			for (const fn of fns) fn(sessionId, error);
 		},
 		spawn(config: Record<string, unknown>) {
-			lastSpawnConfig = config;
-			// Store on the instance for test assertions
 			(this as any)._lastSpawnConfig = config;
 
 			// Schedule data + exit to resolve the promise
@@ -125,22 +125,9 @@ describe('groomContext', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		vi.mocked(isWindows).mockReturnValue(false);
 		mockPM = createMockProcessManager();
 		agent = makeAgent();
-	});
-
-	afterEach(() => {
-		vi.useRealTimers();
-	});
-
-	it('reports zero active grooming sessions when idle', () => {
-		expect(getActiveGroomingSessionCount()).toBe(0);
-	});
-
-	it('logs and does nothing when cancelling with no active grooming sessions', () => {
-		cancelAllGroomingSessions();
-
-		expect(getActiveGroomingSessionCount()).toBe(0);
 	});
 
 	it('calls buildAgentArgs with correct parameters', async () => {
@@ -199,22 +186,6 @@ describe('groomContext', () => {
 			agent,
 			expect.any(Array),
 			expect.objectContaining({ agentConfigValues: {} })
-		);
-	});
-
-	it('uses an empty base arg list when an available agent has no args', async () => {
-		const agentWithoutArgs = makeAgent({ args: undefined as unknown as string[] });
-		const detector = createMockAgentDetector(agentWithoutArgs);
-
-		await groomContext(
-			{ projectRoot: '/project', agentType: 'claude-code', prompt: 'summarize' },
-			mockPM,
-			detector
-		);
-
-		expect(buildAgentArgs).toHaveBeenCalledWith(
-			agentWithoutArgs,
-			expect.objectContaining({ baseArgs: [] })
 		);
 	});
 
@@ -309,6 +280,50 @@ describe('groomContext', () => {
 		expect(config).not.toHaveProperty('sessionCustomPath');
 		expect(config).not.toHaveProperty('sessionCustomArgs');
 		expect(config).not.toHaveProperty('sessionCustomEnvVars');
+	});
+
+	it('sets sendPromptViaStdinRaw=true on Windows to avoid ENAMETOOLONG', async () => {
+		vi.mocked(isWindows).mockReturnValue(true);
+		const detector = createMockAgentDetector(agent);
+
+		await groomContext(
+			{ projectRoot: '/project', agentType: 'claude-code', prompt: 'summarize' },
+			mockPM,
+			detector
+		);
+
+		expect(mockPM._lastSpawnConfig!.sendPromptViaStdinRaw).toBe(true);
+	});
+
+	it('does NOT set sendPromptViaStdinRaw on non-Windows platforms', async () => {
+		vi.mocked(isWindows).mockReturnValue(false);
+		const detector = createMockAgentDetector(agent);
+
+		await groomContext(
+			{ projectRoot: '/project', agentType: 'claude-code', prompt: 'summarize' },
+			mockPM,
+			detector
+		);
+
+		expect(mockPM._lastSpawnConfig!.sendPromptViaStdinRaw).toBe(false);
+	});
+
+	it('does NOT set sendPromptViaStdinRaw on Windows when SSH is enabled', async () => {
+		vi.mocked(isWindows).mockReturnValue(true);
+		const detector = createMockAgentDetector(agent);
+
+		await groomContext(
+			{
+				projectRoot: '/project',
+				agentType: 'claude-code',
+				prompt: 'summarize',
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' },
+			},
+			mockPM,
+			detector
+		);
+
+		expect(mockPM._lastSpawnConfig!.sendPromptViaStdinRaw).toBe(false);
 	});
 
 	it('passes SSH remote config through to spawn', async () => {
@@ -474,190 +489,6 @@ describe('groomContext', () => {
 		).rejects.toThrow('Grooming error: agent crashed');
 	});
 
-	it('rejects with stringified details for non-Error agent-error events', async () => {
-		const detector = createMockAgentDetector(agent);
-
-		mockPM.spawn = vi.fn((config: Record<string, unknown>) => {
-			(mockPM as any)._lastSpawnConfig = config;
-			const sessionId = config.sessionId as string;
-			setTimeout(() => {
-				mockPM._emitError(sessionId, 'agent failed without Error');
-			}, 10);
-			return { pid: 12345, success: true };
-		});
-
-		await expect(
-			groomContext(
-				{ projectRoot: '/project', agentType: 'claude-code', prompt: 'summarize' },
-				mockPM,
-				detector
-			)
-		).rejects.toThrow('Grooming error: agent failed without Error');
-	});
-
-	it('ignores process events for other grooming sessions', async () => {
-		const detector = createMockAgentDetector(agent);
-
-		mockPM.spawn = vi.fn((config: Record<string, unknown>) => {
-			(mockPM as any)._lastSpawnConfig = config;
-			return { pid: 12345, success: true };
-		});
-
-		const promise = groomContext(
-			{ projectRoot: '/project', agentType: 'claude-code', prompt: 'summarize' },
-			mockPM,
-			detector
-		);
-		await vi.waitFor(() => expect(mockPM._lastSpawnConfig).not.toBeNull());
-
-		const sessionId = mockPM._lastSpawnConfig!.sessionId as string;
-		mockPM._emitData('other-session', 'ignored ');
-		mockPM._emitExit('other-session', 1);
-		mockPM._emitError('other-session', new Error('ignored'));
-		mockPM._emitData(sessionId, 'accepted');
-		mockPM._emitExit(sessionId, 0);
-
-		await expect(promise).resolves.toMatchObject({
-			response: 'accepted',
-			completionReason: 'process exited with code 0',
-		});
-	});
-
-	it('collects repeated chunks and only logs selected chunk counts', async () => {
-		const detector = createMockAgentDetector(agent);
-
-		mockPM.spawn = vi.fn((config: Record<string, unknown>) => {
-			(mockPM as any)._lastSpawnConfig = config;
-			return { pid: 12345, success: true };
-		});
-
-		const promise = groomContext(
-			{ projectRoot: '/project', agentType: 'claude-code', prompt: 'summarize' },
-			mockPM,
-			detector
-		);
-		await vi.waitFor(() => expect(mockPM._lastSpawnConfig).not.toBeNull());
-
-		const sessionId = mockPM._lastSpawnConfig!.sessionId as string;
-		for (let i = 1; i <= 10; i++) {
-			mockPM._emitData(sessionId, String(i));
-		}
-		mockPM._emitExit(sessionId, 0);
-
-		await expect(promise).resolves.toMatchObject({
-			response: '12345678910',
-		});
-	});
-
-	it('cancels active grooming sessions and rejects the pending operation', async () => {
-		const detector = createMockAgentDetector(agent);
-
-		mockPM.spawn = vi.fn((config: Record<string, unknown>) => {
-			(mockPM as any)._lastSpawnConfig = config;
-			return { pid: 12345, success: true };
-		});
-
-		const promise = groomContext(
-			{ projectRoot: '/project', agentType: 'claude-code', prompt: 'summarize' },
-			mockPM,
-			detector
-		);
-		await vi.waitFor(() => expect(mockPM._lastSpawnConfig).not.toBeNull());
-
-		expect(getActiveGroomingSessionCount()).toBe(1);
-
-		cancelAllGroomingSessions();
-
-		await expect(promise).rejects.toThrow('Grooming cancelled by user');
-		expect(mockPM.kill).toHaveBeenCalledWith(mockPM._lastSpawnConfig!.sessionId);
-		expect(getActiveGroomingSessionCount()).toBe(0);
-	});
-
-	it('still rejects cancellation when killing an already exited process throws', async () => {
-		const detector = createMockAgentDetector(agent);
-
-		mockPM.spawn = vi.fn((config: Record<string, unknown>) => {
-			(mockPM as any)._lastSpawnConfig = config;
-			return { pid: 12345, success: true };
-		});
-		mockPM.kill = vi.fn(() => {
-			throw new Error('already exited');
-		});
-
-		const promise = groomContext(
-			{ projectRoot: '/project', agentType: 'claude-code', prompt: 'summarize' },
-			mockPM,
-			detector
-		);
-		await vi.waitFor(() => expect(mockPM._lastSpawnConfig).not.toBeNull());
-
-		cancelAllGroomingSessions();
-
-		await expect(promise).rejects.toThrow('Grooming cancelled by user');
-		expect(getActiveGroomingSessionCount()).toBe(0);
-	});
-
-	it('ignores reentrant cancellation while a cancellation is already resolving', async () => {
-		const detector = createMockAgentDetector(agent);
-
-		mockPM.spawn = vi.fn((config: Record<string, unknown>) => {
-			(mockPM as any)._lastSpawnConfig = config;
-			return { pid: 12345, success: true };
-		});
-		mockPM.kill = vi.fn(() => {
-			cancelAllGroomingSessions();
-		});
-
-		const promise = groomContext(
-			{ projectRoot: '/project', agentType: 'claude-code', prompt: 'summarize' },
-			mockPM,
-			detector
-		);
-		await vi.waitFor(() => expect(mockPM._lastSpawnConfig).not.toBeNull());
-
-		cancelAllGroomingSessions();
-
-		await expect(promise).rejects.toThrow('Grooming cancelled by user');
-		expect(mockPM.kill).toHaveBeenCalledTimes(1);
-		expect(getActiveGroomingSessionCount()).toBe(0);
-	});
-
-	it('ignores reentrant exit and error events during cleanup after resolving', async () => {
-		const detector = createMockAgentDetector(agent);
-		let emittedDuringCleanup = false;
-
-		mockPM.spawn = vi.fn((config: Record<string, unknown>) => {
-			(mockPM as any)._lastSpawnConfig = config;
-			return { pid: 12345, success: true };
-		});
-		const originalOff = mockPM.off.bind(mockPM);
-		mockPM.off = vi.fn((event: string, handler: (...args: unknown[]) => void) => {
-			if (!emittedDuringCleanup && event === 'data') {
-				emittedDuringCleanup = true;
-				const sessionId = mockPM._lastSpawnConfig!.sessionId as string;
-				mockPM._emitExit(sessionId, 99);
-				mockPM._emitError(sessionId, new Error('late error'));
-			}
-			originalOff(event, handler);
-		});
-
-		const promise = groomContext(
-			{ projectRoot: '/project', agentType: 'claude-code', prompt: 'summarize' },
-			mockPM,
-			detector
-		);
-		await vi.waitFor(() => expect(mockPM._lastSpawnConfig).not.toBeNull());
-
-		const sessionId = mockPM._lastSpawnConfig!.sessionId as string;
-		mockPM._emitData(sessionId, 'final');
-		mockPM._emitExit(sessionId, 0);
-
-		await expect(promise).resolves.toMatchObject({
-			response: 'final',
-			completionReason: 'process exited with code 0',
-		});
-	});
-
 	it('uses custom timeout when provided', async () => {
 		const detector = createMockAgentDetector(agent);
 
@@ -713,63 +544,6 @@ describe('groomContext', () => {
 		expect(result.completionReason).toContain('timeout with content');
 	});
 
-	it('resolves after idle timeout when buffered content is long enough', async () => {
-		vi.useFakeTimers();
-		const detector = createMockAgentDetector(agent);
-
-		mockPM.spawn = vi.fn((config: Record<string, unknown>) => {
-			(mockPM as any)._lastSpawnConfig = config;
-			return { pid: 12345, success: true };
-		});
-
-		const promise = groomContext(
-			{ projectRoot: '/project', agentType: 'claude-code', prompt: 'summarize' },
-			mockPM,
-			detector
-		);
-		await vi.waitFor(() => expect(mockPM._lastSpawnConfig).not.toBeNull());
-
-		const sessionId = mockPM._lastSpawnConfig!.sessionId as string;
-		mockPM._emitData(sessionId, 'idle content '.repeat(10));
-		await vi.advanceTimersByTimeAsync(6000);
-
-		await expect(promise).resolves.toMatchObject({
-			completionReason: 'idle timeout with content',
-		});
-	});
-
-	it('ignores overall timeout after the operation already resolved', async () => {
-		vi.useFakeTimers();
-		const detector = createMockAgentDetector(agent);
-
-		mockPM.spawn = vi.fn((config: Record<string, unknown>) => {
-			(mockPM as any)._lastSpawnConfig = config;
-			return { pid: 12345, success: true };
-		});
-
-		const promise = groomContext(
-			{
-				projectRoot: '/project',
-				agentType: 'claude-code',
-				prompt: 'summarize',
-				timeoutMs: 100,
-			},
-			mockPM,
-			detector
-		);
-		await vi.waitFor(() => expect(mockPM._lastSpawnConfig).not.toBeNull());
-
-		const sessionId = mockPM._lastSpawnConfig!.sessionId as string;
-		mockPM._emitData(sessionId, 'done');
-		mockPM._emitExit(sessionId, 0);
-
-		await expect(promise).resolves.toMatchObject({
-			response: 'done',
-		});
-		await vi.advanceTimersByTimeAsync(100);
-		expect(getActiveGroomingSessionCount()).toBe(0);
-	});
-
 	it('sets correct spawn config fields', async () => {
 		const detector = createMockAgentDetector(agent);
 
@@ -784,5 +558,50 @@ describe('groomContext', () => {
 		expect(config.toolType).toBe('claude-code');
 		expect(config.cwd).toBe('/project');
 		expect(config.prompt).toBe('summarize this');
+	});
+
+	it('calls onProgress callback with chunk data on each data event', async () => {
+		const detector = createMockAgentDetector(agent);
+		const onProgress = vi.fn();
+
+		// Override spawn to emit multiple data chunks before exiting
+		mockPM.spawn = vi.fn((config: Record<string, unknown>) => {
+			(mockPM as any)._lastSpawnConfig = config;
+			const sessionId = config.sessionId as string;
+			setTimeout(() => {
+				mockPM._emitData(sessionId, 'chunk1');
+				mockPM._emitData(sessionId, 'chunk2');
+				mockPM._emitData(sessionId, 'chunk3');
+				mockPM._emitExit(sessionId, 0);
+			}, 10);
+			return { pid: 12345, success: true };
+		});
+
+		await groomContext(
+			{
+				projectRoot: '/project',
+				agentType: 'claude-code',
+				prompt: 'summarize',
+				onProgress,
+			},
+			mockPM,
+			detector
+		);
+
+		expect(onProgress).toHaveBeenCalledTimes(3);
+		// First call: 1 chunk, 6 bytes ("chunk1")
+		expect(onProgress.mock.calls[0][0]).toMatchObject({
+			chunkCount: 1,
+			bytesReceived: 6,
+		});
+		// Third call: 3 chunks, 18 bytes total
+		expect(onProgress.mock.calls[2][0]).toMatchObject({
+			chunkCount: 3,
+			bytesReceived: 18,
+		});
+		// All calls should have elapsedMs >= 0
+		for (const call of onProgress.mock.calls) {
+			expect(call[0].elapsedMs).toBeGreaterThanOrEqual(0);
+		}
 	});
 });

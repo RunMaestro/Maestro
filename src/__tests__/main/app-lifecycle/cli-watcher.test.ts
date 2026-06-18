@@ -248,24 +248,6 @@ describe('app-lifecycle/cli-watcher', () => {
 				})
 			);
 		});
-
-		it('should handle watch() throwing a non-Error value', async () => {
-			mockWatch.mockImplementationOnce(() => {
-				// eslint-disable-next-line @typescript-eslint/only-throw-error
-				throw 'Watch failed';
-			});
-
-			const { createCliWatcher } = await import('../../../main/app-lifecycle/cli-watcher');
-
-			const cliWatcher = createCliWatcher({ getMainWindow, getUserDataPath });
-			cliWatcher.start();
-
-			expect(mockLogger.error).toHaveBeenCalledWith(
-				'Failed to start CLI activity watcher: Watch failed',
-				'CliActivityWatcher',
-				{ stack: undefined }
-			);
-		});
 	});
 
 	describe('stop', () => {

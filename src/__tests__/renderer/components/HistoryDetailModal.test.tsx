@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { act, render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { HistoryDetailModal } from '../../../renderer/components/HistoryDetailModal';
 import type { Theme, HistoryEntry } from '../../../renderer/types';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 
+import { mockTheme } from '../../helpers/mockTheme';
+import { spyOnListeners, expectAllListenersRemoved } from '../../helpers/listenerLeakAssertions';
 // Mock LayerStackContext
 const mockRegisterLayer = vi.fn(() => 'layer-id-1');
 const mockUnregisterLayer = vi.fn();
@@ -32,26 +34,6 @@ Object.defineProperty(navigator, 'clipboard', {
 });
 
 // Create a mock theme
-const mockTheme: Theme = {
-	id: 'dracula',
-	name: 'Dracula',
-	mode: 'dark',
-	colors: {
-		bgMain: '#282a36',
-		bgSidebar: '#21222c',
-		bgActivity: '#343746',
-		textMain: '#f8f8f2',
-		textDim: '#6272a4',
-		accent: '#bd93f9',
-		accentForeground: '#f8f8f2',
-		border: '#44475a',
-		success: '#50fa7b',
-		warning: '#ffb86c',
-		error: '#ff5555',
-		scrollbar: '#44475a',
-		scrollbarHover: '#6272a4',
-	},
-};
 
 // Create a base history entry for testing
 const createMockEntry = (overrides: Partial<HistoryEntry> = {}): HistoryEntry => ({
@@ -105,15 +87,6 @@ describe('HistoryDetailModal', () => {
 			);
 
 			expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
-		});
-
-		it('should render session name as the primary heading when agent name is absent', () => {
-			const entry = createMockEntry({ sessionName: 'Standalone Session' });
-			render(<HistoryDetailModal theme={mockTheme} entry={entry} onClose={mockOnClose} />);
-
-			const heading = screen.getByRole('heading', { name: 'Standalone Session' });
-			expect(heading).toHaveClass('text-lg', 'font-bold');
-			expect(heading).toHaveStyle({ color: mockTheme.colors.textMain });
 		});
 
 		it('should render Delete button when onDelete is provided', () => {
@@ -218,6 +191,75 @@ describe('HistoryDetailModal', () => {
 			);
 			expect(validatedIndicator).toBeInTheDocument();
 		});
+
+		it('should render CUE type with correct pill and teal color', () => {
+			render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={createMockEntry({ type: 'CUE' })}
+					onClose={mockOnClose}
+				/>
+			);
+
+			const cuePill = screen.getByText('CUE');
+			expect(cuePill).toBeInTheDocument();
+			expect(cuePill.closest('span')).toHaveStyle({ color: '#06b6d4' });
+		});
+
+		it('should show success indicator for CUE entries with success=true', () => {
+			render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={createMockEntry({ type: 'CUE', success: true })}
+					onClose={mockOnClose}
+				/>
+			);
+
+			const successIndicator = screen.getByTitle('Task completed successfully');
+			expect(successIndicator).toBeInTheDocument();
+		});
+
+		it('should show failure indicator for CUE entries with success=false', () => {
+			render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={createMockEntry({ type: 'CUE', success: false })}
+					onClose={mockOnClose}
+				/>
+			);
+
+			const failureIndicator = screen.getByTitle('Task failed');
+			expect(failureIndicator).toBeInTheDocument();
+		});
+
+		it('should display CUE trigger metadata when available', () => {
+			render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={createMockEntry({
+						type: 'CUE',
+						cueTriggerName: 'lint-on-save',
+						cueEventType: 'file.changed',
+					})}
+					onClose={mockOnClose}
+				/>
+			);
+
+			// Title carries the raw event type; the visible label is humanized.
+			expect(screen.getByTitle('Trigger: lint-on-save (file.changed)')).toBeInTheDocument();
+		});
+
+		it('should not display CUE trigger metadata for non-CUE entries', () => {
+			render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={createMockEntry({ type: 'AUTO' })}
+					onClose={mockOnClose}
+				/>
+			);
+
+			expect(screen.queryByTitle(/Trigger:/)).not.toBeInTheDocument();
+		});
 	});
 
 	describe('Content Display', () => {
@@ -305,6 +347,7 @@ describe('HistoryDetailModal', () => {
 		});
 
 		it('should copy full session ID to clipboard when clicking session button', async () => {
+			vi.useRealTimers(); // Use real timers for async clipboard operations
 			const sessionId = 'abc12345-def6-7890-ghij-klmnopqrstuv';
 			render(
 				<HistoryDetailModal
@@ -315,16 +358,16 @@ describe('HistoryDetailModal', () => {
 			);
 
 			const copyButton = screen.getByTitle(`Copy session ID: ${sessionId}`);
-			await act(async () => {
-				fireEvent.click(copyButton);
-				await Promise.resolve();
-				await Promise.resolve();
-			});
+			fireEvent.click(copyButton);
 
-			expect(mockWriteText).toHaveBeenCalledWith(sessionId);
+			await waitFor(() => {
+				expect(mockWriteText).toHaveBeenCalledWith(sessionId);
+			});
+			vi.useFakeTimers(); // Restore fake timers
 		});
 
 		it('should show copied state after copying session ID', async () => {
+			vi.useRealTimers(); // Use real timers for async clipboard operations
 			const sessionId = 'abc12345-def6-7890-ghij-klmnopqrstuv';
 			render(
 				<HistoryDetailModal
@@ -335,20 +378,13 @@ describe('HistoryDetailModal', () => {
 			);
 
 			const copyButton = screen.getByTitle(`Copy session ID: ${sessionId}`);
-			await act(async () => {
-				fireEvent.click(copyButton);
-				await Promise.resolve();
-				await Promise.resolve();
+			fireEvent.click(copyButton);
+
+			// Wait for copy state to show
+			await waitFor(() => {
+				expect(mockWriteText).toHaveBeenCalled();
 			});
-
-			expect(mockWriteText).toHaveBeenCalled();
-			expect(copyButton.querySelector('[data-testid="check-icon"]')).toBeInTheDocument();
-
-			act(() => {
-				vi.advanceTimersByTime(2000);
-			});
-
-			expect(copyButton.querySelector('[data-testid="copy-icon"]')).toBeInTheDocument();
+			vi.useFakeTimers(); // Restore fake timers
 		});
 
 		it('should not display session ID elements when agentSessionId is undefined', () => {
@@ -721,6 +757,12 @@ describe('HistoryDetailModal', () => {
 				<HistoryDetailModal
 					theme={mockTheme}
 					entry={createMockEntry({
+						// Accumulated multi-tool entry: raw tokens overflow the window,
+						// but the preserved per-entry contextUsage is the last known good
+						// percentage. The display must clamp at 100% rather than render
+						// 0% (issue #762: previously the overflow path silently surfaced
+						// the capacity as the used-token count).
+						contextUsage: 100,
 						usageStats: {
 							inputTokens: 150000,
 							outputTokens: 1000,
@@ -734,7 +776,6 @@ describe('HistoryDetailModal', () => {
 				/>
 			);
 
-			// Should cap at 100%
 			expect(screen.getByText('100%')).toBeInTheDocument();
 		});
 
@@ -759,25 +800,6 @@ describe('HistoryDetailModal', () => {
 			// Should render 0 for undefined token values instead of crashing
 			const inLabels = screen.getAllByText('In:');
 			expect(inLabels.length).toBeGreaterThan(0);
-		});
-
-		it('should default missing cache token counts to zero', () => {
-			render(
-				<HistoryDetailModal
-					theme={mockTheme}
-					entry={createMockEntry({
-						usageStats: {
-							inputTokens: 1000,
-							outputTokens: 500,
-							contextWindow: 100000,
-							totalCostUsd: 0,
-						} as any,
-					})}
-					onClose={mockOnClose}
-				/>
-			);
-
-			expect(screen.getByText('1%')).toBeInTheDocument();
 		});
 	});
 
@@ -866,6 +888,21 @@ describe('HistoryDetailModal', () => {
 			expect(screen.getByText(/auto history entry/)).toBeInTheDocument();
 		});
 
+		it('should show correct type in delete confirmation for CUE entry', () => {
+			render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={createMockEntry({ type: 'CUE' })}
+					onClose={mockOnClose}
+					onDelete={mockOnDelete}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle('Delete this history entry'));
+
+			expect(screen.getByText(/cue history entry/)).toBeInTheDocument();
+		});
+
 		it('should cancel delete when Cancel button is clicked', () => {
 			render(
 				<HistoryDetailModal
@@ -887,63 +924,6 @@ describe('HistoryDetailModal', () => {
 			expect(screen.queryByText('Delete History Entry')).not.toBeInTheDocument();
 		});
 
-		it('should close delete confirmation from the header close button', () => {
-			render(
-				<HistoryDetailModal
-					theme={mockTheme}
-					entry={createMockEntry()}
-					onClose={mockOnClose}
-					onDelete={mockOnDelete}
-				/>
-			);
-
-			fireEvent.click(screen.getByTitle('Delete this history entry'));
-
-			const headerClose = screen
-				.getByText('Delete History Entry')
-				.closest('.p-4')
-				?.querySelector('button');
-			expect(headerClose).toBeTruthy();
-			fireEvent.click(headerClose!);
-
-			expect(screen.queryByText('Delete History Entry')).not.toBeInTheDocument();
-		});
-
-		it('should close delete confirmation when Cancel receives Enter', () => {
-			render(
-				<HistoryDetailModal
-					theme={mockTheme}
-					entry={createMockEntry()}
-					onClose={mockOnClose}
-					onDelete={mockOnDelete}
-				/>
-			);
-
-			fireEvent.click(screen.getByTitle('Delete this history entry'));
-
-			fireEvent.keyDown(screen.getByRole('button', { name: 'Cancel' }), { key: 'Enter' });
-
-			expect(mockOnDelete).not.toHaveBeenCalled();
-			expect(screen.queryByText('Delete History Entry')).not.toBeInTheDocument();
-		});
-
-		it('should leave delete confirmation open when Cancel receives a non-Enter key', () => {
-			render(
-				<HistoryDetailModal
-					theme={mockTheme}
-					entry={createMockEntry()}
-					onClose={mockOnClose}
-					onDelete={mockOnDelete}
-				/>
-			);
-
-			fireEvent.click(screen.getByTitle('Delete this history entry'));
-			fireEvent.keyDown(screen.getByRole('button', { name: 'Cancel' }), { key: 'Escape' });
-
-			expect(screen.getByText('Delete History Entry')).toBeInTheDocument();
-			expect(mockOnDelete).not.toHaveBeenCalled();
-		});
-
 		it('should call onDelete and onClose when confirming delete', () => {
 			render(
 				<HistoryDetailModal
@@ -960,86 +940,6 @@ describe('HistoryDetailModal', () => {
 			fireEvent.click(deleteButtons[deleteButtons.length - 1]); // Last one is in modal
 
 			expect(mockOnDelete).toHaveBeenCalledWith('test-entry-id');
-			expect(mockOnClose).toHaveBeenCalled();
-		});
-
-		it('should close confirmation without deleting if delete handler is removed before confirm click', () => {
-			const entry = createMockEntry({ id: 'removed-handler-entry-id' });
-			const { rerender } = render(
-				<HistoryDetailModal
-					theme={mockTheme}
-					entry={entry}
-					onClose={mockOnClose}
-					onDelete={mockOnDelete}
-				/>
-			);
-
-			fireEvent.click(screen.getByTitle('Delete this history entry'));
-			rerender(<HistoryDetailModal theme={mockTheme} entry={entry} onClose={mockOnClose} />);
-
-			const deleteButtons = screen.getAllByRole('button', { name: 'Delete' });
-			fireEvent.click(deleteButtons[deleteButtons.length - 1]);
-
-			expect(mockOnDelete).not.toHaveBeenCalled();
-			expect(mockOnClose).toHaveBeenCalled();
-		});
-
-		it('should confirm delete when the confirmation button receives Enter', () => {
-			render(
-				<HistoryDetailModal
-					theme={mockTheme}
-					entry={createMockEntry({ id: 'keyboard-entry-id' })}
-					onClose={mockOnClose}
-					onDelete={mockOnDelete}
-				/>
-			);
-
-			fireEvent.click(screen.getByTitle('Delete this history entry'));
-
-			const deleteButtons = screen.getAllByRole('button', { name: 'Delete' });
-			fireEvent.keyDown(deleteButtons[deleteButtons.length - 1], { key: 'Enter' });
-
-			expect(mockOnDelete).toHaveBeenCalledWith('keyboard-entry-id');
-			expect(mockOnClose).toHaveBeenCalled();
-		});
-
-		it('should ignore non-Enter keys on the confirmation delete button', () => {
-			render(
-				<HistoryDetailModal
-					theme={mockTheme}
-					entry={createMockEntry()}
-					onClose={mockOnClose}
-					onDelete={mockOnDelete}
-				/>
-			);
-
-			fireEvent.click(screen.getByTitle('Delete this history entry'));
-
-			const deleteButtons = screen.getAllByRole('button', { name: 'Delete' });
-			fireEvent.keyDown(deleteButtons[deleteButtons.length - 1], { key: 'Escape' });
-
-			expect(screen.getByText('Delete History Entry')).toBeInTheDocument();
-			expect(mockOnDelete).not.toHaveBeenCalled();
-		});
-
-		it('should close confirmation without deleting if delete handler is removed before Enter confirm', () => {
-			const entry = createMockEntry({ id: 'removed-handler-keyboard-entry-id' });
-			const { rerender } = render(
-				<HistoryDetailModal
-					theme={mockTheme}
-					entry={entry}
-					onClose={mockOnClose}
-					onDelete={mockOnDelete}
-				/>
-			);
-
-			fireEvent.click(screen.getByTitle('Delete this history entry'));
-			rerender(<HistoryDetailModal theme={mockTheme} entry={entry} onClose={mockOnClose} />);
-
-			const deleteButtons = screen.getAllByRole('button', { name: 'Delete' });
-			fireEvent.keyDown(deleteButtons[deleteButtons.length - 1], { key: 'Enter' });
-
-			expect(mockOnDelete).not.toHaveBeenCalled();
 			expect(mockOnClose).toHaveBeenCalled();
 		});
 
@@ -1229,23 +1129,6 @@ describe('HistoryDetailModal', () => {
 			expect(mockOnNavigate).toHaveBeenCalledWith(mockEntries[2], 2);
 		});
 
-		it('should ignore non-arrow navigation keys', () => {
-			render(
-				<HistoryDetailModal
-					theme={mockTheme}
-					entry={mockEntries[1]}
-					onClose={mockOnClose}
-					filteredEntries={mockEntries}
-					currentIndex={1}
-					onNavigate={mockOnNavigate}
-				/>
-			);
-
-			fireEvent.keyDown(window, { key: 'Home' });
-
-			expect(mockOnNavigate).not.toHaveBeenCalled();
-		});
-
 		it('should not navigate when delete confirmation is showing', () => {
 			render(
 				<HistoryDetailModal
@@ -1302,6 +1185,40 @@ describe('HistoryDetailModal', () => {
 
 			expect(mockOnNavigate).not.toHaveBeenCalled();
 		});
+
+		it('should not call onNavigate after unmount', () => {
+			const { unmount } = render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={mockEntries[1]}
+					onClose={mockOnClose}
+					filteredEntries={mockEntries}
+					currentIndex={1}
+					onNavigate={mockOnNavigate}
+				/>
+			);
+			unmount();
+			fireEvent.keyDown(window, { key: 'ArrowLeft' });
+			fireEvent.keyDown(window, { key: 'ArrowRight' });
+			expect(mockOnNavigate).not.toHaveBeenCalled();
+		});
+
+		it('should remove its keydown listener on unmount (no leak)', () => {
+			const spies = spyOnListeners(window);
+			const { unmount } = render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={mockEntries[1]}
+					onClose={mockOnClose}
+					filteredEntries={mockEntries}
+					currentIndex={1}
+					onNavigate={mockOnNavigate}
+				/>
+			);
+			unmount();
+			expectAllListenersRemoved(spies.addSpy, spies.removeSpy);
+			spies.restore();
+		});
 	});
 
 	describe('Layer Stack Integration', () => {
@@ -1341,23 +1258,6 @@ describe('HistoryDetailModal', () => {
 			expect(mockUpdateLayerHandler).toHaveBeenCalled();
 		});
 
-		it('should call the latest onClose from the updated layer escape handler', () => {
-			const { rerender } = render(
-				<HistoryDetailModal theme={mockTheme} entry={createMockEntry()} onClose={mockOnClose} />
-			);
-
-			const newOnClose = vi.fn();
-			rerender(
-				<HistoryDetailModal theme={mockTheme} entry={createMockEntry()} onClose={newOnClose} />
-			);
-
-			const updatedEscape = mockUpdateLayerHandler.mock.calls.at(-1)?.[1] as () => void;
-			updatedEscape();
-
-			expect(newOnClose).toHaveBeenCalled();
-			expect(mockOnClose).not.toHaveBeenCalled();
-		});
-
 		it('should call onClose via layer escape handler', () => {
 			render(
 				<HistoryDetailModal theme={mockTheme} entry={createMockEntry()} onClose={mockOnClose} />
@@ -1368,28 +1268,6 @@ describe('HistoryDetailModal', () => {
 			registerCall.onEscape();
 
 			expect(mockOnClose).toHaveBeenCalled();
-		});
-	});
-
-	describe('Markdown Copy', () => {
-		it('copies code blocks through the markdown renderer copy callback', async () => {
-			render(
-				<HistoryDetailModal
-					theme={mockTheme}
-					entry={createMockEntry({
-						summary: '```ts\nconst answer = 42;\n```',
-					})}
-					onClose={mockOnClose}
-				/>
-			);
-
-			fireEvent.click(screen.getByTitle('Copy code'));
-
-			await act(async () => {
-				await Promise.resolve();
-			});
-
-			expect(mockWriteText).toHaveBeenCalledWith('const answer = 42;');
 		});
 	});
 

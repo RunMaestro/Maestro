@@ -19,6 +19,7 @@ import { format, subDays, startOfWeek, addDays, getDay } from 'date-fns';
 import type { Theme } from '../../types';
 import type { StatsTimeRange, StatsAggregation } from '../../hooks/stats/useStats';
 import { COLORBLIND_HEATMAP_SCALE } from '../../constants/colorblindPalettes';
+import { formatDurationHuman as formatDuration } from '../../../shared/formatters';
 
 // Metric display mode
 type MetricMode = 'count' | 'duration';
@@ -201,29 +202,12 @@ function build4HourBlockGrid(
 }
 
 /**
- * Format duration in milliseconds to human-readable string
- */
-function formatDuration(ms: number): string {
-	const totalSeconds = Math.floor(ms / 1000);
-	const hours = Math.floor(totalSeconds / 3600);
-	const minutes = Math.floor((totalSeconds % 3600) / 60);
-	const seconds = totalSeconds % 60;
-
-	if (hours > 0) {
-		return `${hours}h ${minutes}m`;
-	}
-	if (minutes > 0) {
-		return `${minutes}m ${seconds}s`;
-	}
-	return `${seconds}s`;
-}
-
-/**
  * Calculate intensity level (0-4) from a value and max value
  * Level 0 = no activity, 1-4 = increasing activity
  */
 function calculateIntensity(value: number, maxValue: number): number {
 	if (value === 0) return 0;
+	if (maxValue === 0) return 0;
 
 	const ratio = value / maxValue;
 	if (ratio <= 0.25) return 1;
@@ -270,8 +254,10 @@ function buildGitHubGrid(
 			// Start of a new month
 			if (lastMonth !== '') {
 				// Close out the previous month label
-				const lastLabel = monthLabels[monthLabels.length - 1]!;
-				lastLabel.colSpan = weekIndex - lastLabel.startCol;
+				const lastLabel = monthLabels[monthLabels.length - 1];
+				if (lastLabel) {
+					lastLabel.colSpan = weekIndex - lastLabel.startCol;
+				}
 			}
 			monthLabels.push({
 				month: monthStr,
@@ -316,9 +302,32 @@ function buildGitHubGrid(
 		}
 	}
 
+	// Handle partial last week
+	if (currentWeek.length > 0) {
+		// Fill remaining days as placeholders
+		while (currentWeek.length < 7) {
+			const nextDate = addDays(currentWeek[currentWeek.length - 1].date, 1);
+			currentWeek.push({
+				date: nextDate,
+				dateString: format(nextDate, 'yyyy-MM-dd'),
+				dayOfWeek: getDay(nextDate),
+				count: 0,
+				duration: 0,
+				intensity: 0,
+				isPlaceholder: true,
+			});
+		}
+		weeks.push({
+			weekStart: startOfWeek(currentWeek[0].date, { weekStartsOn: 0 }),
+			days: currentWeek,
+		});
+	}
+
 	// Close out the last month label
-	const lastLabel = monthLabels[monthLabels.length - 1]!;
-	lastLabel.colSpan = weeks.length - lastLabel.startCol;
+	if (monthLabels.length > 0) {
+		const lastLabel = monthLabels[monthLabels.length - 1];
+		lastLabel.colSpan = weeks.length - lastLabel.startCol;
+	}
 
 	// Calculate intensities
 	const maxVal = metricMode === 'count' ? Math.max(maxCount, 1) : Math.max(maxDuration, 1);
@@ -368,22 +377,29 @@ function getIntensityColor(intensity: number, theme: Theme, colorBlindMode?: boo
 		}
 	}
 
-	const clampedIntensity = Math.max(0, Math.min(4, Math.round(intensity)));
-
 	// Fallback to accent with varying opacity if parsing fails
 	if (!accentRgb) {
 		const opacities = [0.1, 0.3, 0.5, 0.7, 1.0];
-		return `${accent}${Math.round(opacities[clampedIntensity] * 255)
+		return `${accent}${Math.round(opacities[intensity] * 255)
 			.toString(16)
 			.padStart(2, '0')}`;
 	}
 
-	const opacities = [0, 0.2, 0.4, 0.6, 0.9];
-	const opacity = opacities[clampedIntensity]!;
-
-	return opacity === 0
-		? bgSecondary
-		: `rgba(${accentRgb.r}, ${accentRgb.g}, ${accentRgb.b}, ${opacity})`;
+	// Generate colors for each intensity level
+	switch (intensity) {
+		case 0:
+			return bgSecondary;
+		case 1:
+			return `rgba(${accentRgb.r}, ${accentRgb.g}, ${accentRgb.b}, 0.2)`;
+		case 2:
+			return `rgba(${accentRgb.r}, ${accentRgb.g}, ${accentRgb.b}, 0.4)`;
+		case 3:
+			return `rgba(${accentRgb.r}, ${accentRgb.g}, ${accentRgb.b}, 0.6)`;
+		case 4:
+			return `rgba(${accentRgb.r}, ${accentRgb.g}, ${accentRgb.b}, 0.9)`;
+		default:
+			return bgSecondary;
+	}
 }
 
 export const ActivityHeatmap = memo(function ActivityHeatmap({
@@ -498,7 +514,7 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
 			columns.push({
 				date,
 				dateString,
-				dayLabel: format(date, 'EEE'),
+				dayLabel: format(date, numDays <= 7 ? 'EEE' : 'd'),
 				hours: hourData,
 			});
 		}
@@ -539,6 +555,7 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
 
 	const handleMouseEnterBlock = useCallback(
 		(cell: TimeBlockCell, event: React.MouseEvent<HTMLDivElement>) => {
+			if (cell.isPlaceholder) return;
 			setHoveredCell(cell);
 			setCellRect(event.currentTarget.getBoundingClientRect());
 		},
@@ -562,7 +579,7 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
 		>
 			{/* Header with title and metric toggle */}
 			<div className="flex items-center justify-between mb-4">
-				<h3 className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+				<h3 className="text-sm font-medium card-enter" style={{ color: theme.colors.textMain }}>
 					Activity Heatmap
 				</h3>
 				<div className="flex items-center gap-2">
@@ -604,7 +621,9 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
 				</div>
 			</div>
 
-			{/* GitHub-style heatmap for year/all views */}
+			{/* GitHub-style heatmap for year/all views — week columns stretch to
+			    fill the container instead of using a fixed 13px cell width, so
+			    the heatmap fills the modal regardless of viewport width. */}
 			{useGitHubLayout && gitHubGrid && (
 				<div className="flex gap-2">
 					{/* Day of week labels (Y-axis) */}
@@ -625,18 +644,19 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
 					</div>
 
 					{/* Grid container */}
-					<div className="flex-1 overflow-x-auto">
-						{/* Month labels row */}
-						<div className="flex" style={{ marginBottom: 6, height: 18 }}>
+					<div className="flex-1 min-w-0">
+						{/* Month labels row — column widths derived from the same flex
+						    distribution as the cells (each week column = 1 unit). */}
+						<div className="flex gap-[2px]" style={{ marginBottom: 6, height: 18 }}>
 							{gitHubGrid.monthLabels.map((monthLabel, idx) => (
 								<div
 									key={`${monthLabel.month}-${idx}`}
-									className="text-xs"
+									className="text-xs min-w-0"
 									style={{
 										color: theme.colors.textDim,
-										width: monthLabel.colSpan * 15, // 13px cell + 2px gap
+										flexGrow: monthLabel.colSpan,
+										flexBasis: 0,
 										paddingLeft: 2,
-										flexShrink: 0,
 									}}
 								>
 									{monthLabel.colSpan >= 3 ? monthLabel.month : ''}
@@ -649,16 +669,15 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
 							{gitHubGrid.weeks.map((week, weekIdx) => (
 								<div
 									key={weekIdx}
-									className="flex flex-col gap-[2px]"
-									style={{ width: 13, flexShrink: 0 }}
+									className="flex flex-col gap-[2px] min-w-0"
+									style={{ flex: '1 1 0' }}
 								>
 									{week.days.map((day) => (
 										<div
 											key={day.dateString}
-											className="rounded-sm cursor-default"
+											className="rounded-sm cursor-default w-full"
 											style={{
-												width: 13,
-												height: 13,
+												aspectRatio: '1 / 1',
 												backgroundColor: day.isPlaceholder
 													? 'transparent'
 													: getIntensityColor(day.intensity, theme, colorBlindMode),
@@ -690,15 +709,17 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
 				</div>
 			)}
 
-			{/* 4-hour block heatmap for month/quarter views */}
+			{/* 4-hour block heatmap for month/quarter views — day columns are
+			    flex 1/0/0 so the grid stretches to fill the modal instead of
+			    fixing every column at 14px and forcing horizontal scroll. */}
 			{use4HourBlockLayout && blockGrid && (
 				<div className="flex gap-2">
 					{/* Time block labels (Y-axis) */}
-					<div className="flex flex-col flex-shrink-0" style={{ width: 52, paddingTop: 22 }}>
+					<div className="flex flex-col flex-shrink-0" style={{ width: 60, paddingTop: 22 }}>
 						{TIME_BLOCK_LABELS.map((label, idx) => (
 							<div
 								key={idx}
-								className="text-xs text-right flex items-center justify-end pr-2"
+								className="text-xs text-right flex items-center justify-end pr-2 whitespace-nowrap"
 								style={{
 									color: theme.colors.textDim,
 									height: 20,
@@ -709,9 +730,9 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
 						))}
 					</div>
 
-					{/* Grid of cells with scrolling */}
-					<div className="flex-1 overflow-x-auto">
-						<div className="flex gap-[3px]" style={{ minWidth: blockGrid.dayColumns.length * 17 }}>
+					{/* Grid of cells — fills the available width */}
+					<div className="flex-1 min-w-0">
+						<div className="flex gap-[3px]">
 							{blockGrid.dayColumns.map((col, colIdx) => {
 								// Show day number for all days, but only show month on 1st of month
 								const isFirstOfMonth = col.date.getDate() === 1;
@@ -719,8 +740,8 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
 								return (
 									<div
 										key={col.dateString}
-										className="flex flex-col gap-[3px]"
-										style={{ width: 14, flexShrink: 0 }}
+										className="flex flex-col gap-[3px] min-w-0"
+										style={{ flex: '1 1 0' }}
 									>
 										{/* Day label with month indicator */}
 										<div
@@ -738,14 +759,12 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
 										{col.blocks.map((block) => (
 											<div
 												key={`${col.dateString}-${block.blockIndex}`}
-												className="rounded-sm cursor-default"
+												className="rounded-sm cursor-default w-full"
 												style={{
 													height: 17,
-													backgroundColor: getIntensityColor(
-														block.intensity,
-														theme,
-														colorBlindMode
-													),
+													backgroundColor: block.isPlaceholder
+														? 'transparent'
+														: getIntensityColor(block.intensity, theme, colorBlindMode),
 													outline:
 														hoveredCell &&
 														'blockIndex' in hoveredCell &&

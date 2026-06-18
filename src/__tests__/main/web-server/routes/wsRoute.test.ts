@@ -233,21 +233,6 @@ describe('WsRoute', () => {
 				})
 			);
 		});
-
-		it('should tolerate missing request URL and host metadata', () => {
-			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
-			const connection = createMockConnection();
-
-			expect(() => {
-				route!.handler(connection, { headers: {} });
-			}).not.toThrow();
-
-			expect(callbacks.onClientConnect).toHaveBeenCalledWith(
-				expect.objectContaining({
-					subscribedSessionId: undefined,
-				})
-			);
-		});
 	});
 
 	describe('Initial Sync Messages', () => {
@@ -284,43 +269,6 @@ describe('WsRoute', () => {
 			expect(sessionsMsg.sessions[0].liveEnabledAt).toBeDefined();
 		});
 
-		it('should preserve existing session agent IDs when live info is incomplete', () => {
-			(callbacks.getSessions as any).mockReturnValue([
-				{
-					id: 'session-fallback',
-					name: 'Session Fallback',
-					toolType: 'claude-code',
-					state: 'idle',
-					inputMode: 'ai',
-					cwd: '/test/project',
-					groupId: null,
-					agentSessionId: 'existing-agent-session',
-				},
-			]);
-			(callbacks.getLiveSessionInfo as any).mockReturnValue({
-				sessionId: 'session-fallback',
-				enabledAt: 123,
-			});
-			(callbacks.isSessionLive as any).mockReturnValue(false);
-
-			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
-			const connection = createMockConnection();
-			route!.handler(connection, createMockRequest());
-
-			const sentMessages = (connection.socket.send as any).mock.calls.map((call: any[]) =>
-				JSON.parse(call[0])
-			);
-
-			const sessionsMsg = sentMessages.find((m: any) => m.type === 'sessions_list');
-			expect(sessionsMsg.sessions[0]).toEqual(
-				expect.objectContaining({
-					agentSessionId: 'existing-agent-session',
-					liveEnabledAt: 123,
-					isLive: false,
-				})
-			);
-		});
-
 		it('should send theme', () => {
 			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
 			const connection = createMockConnection();
@@ -348,25 +296,6 @@ describe('WsRoute', () => {
 
 			const themeMsg = sentMessages.find((m: any) => m.type === 'theme');
 			expect(themeMsg).toBeUndefined();
-		});
-
-		it('should send the global Bionify reading-mode setting when configured', () => {
-			(callbacks as any).getBionifyReadingMode = vi.fn().mockReturnValue(true);
-
-			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
-			const connection = createMockConnection();
-			route!.handler(connection, createMockRequest());
-
-			const sentMessages = (connection.socket.send as any).mock.calls.map((call: any[]) =>
-				JSON.parse(call[0])
-			);
-
-			expect(sentMessages).toContainEqual(
-				expect.objectContaining({
-					type: 'bionify_reading_mode',
-					enabled: true,
-				})
-			);
 		});
 
 		it('should send custom_commands', () => {

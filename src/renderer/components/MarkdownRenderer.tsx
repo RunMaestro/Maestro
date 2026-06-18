@@ -1,234 +1,16 @@
-import React, { memo, useMemo, useState, useEffect } from 'react';
-import ReactMarkdown from 'react-markdown';
-import rehypeRaw from 'rehype-raw';
-import DOMPurify from 'dompurify';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { getSyntaxStyle } from '../utils/syntaxTheme';
-import { Clipboard, Loader2, ImageOff } from 'lucide-react';
+/**
+ * MarkdownRenderer - chat-surface markdown renderer.
+ *
+ * This is now a thin wrapper around the unified <Markdown> component (chat
+ * preset). The full implementation lives in components/Markdown/*. The wrapper
+ * is preserved so the many existing import sites and tests keep working
+ * unchanged.
+ */
+
+import { memo } from 'react';
 import type { Theme } from '../types';
 import type { FileNode } from '../types/fileTree';
-import { remarkFileLinks, buildFileTreeIndices } from '../utils/remarkFileLinks';
-import remarkFrontmatter from 'remark-frontmatter';
-import { remarkFrontmatterTable } from '../utils/remarkFrontmatterTable';
-import { REMARK_GFM_PLUGINS, applyReadableTextTransforms } from '../utils/markdownConfig';
-
-// ============================================================================
-// LocalImage - Loads local images via IPC
-// ============================================================================
-
-// Module-level cache for local images to prevent flicker on re-render
-const localImageCache = new Map<string, string>();
-
-const markdownUrlTransform = (url: string, key: string): string => {
-	const trimmed = url.trim();
-
-	if (key === 'src' && /^data:image\//i.test(trimmed)) {
-		return url;
-	}
-
-	if (
-		trimmed.startsWith('#') ||
-		trimmed.startsWith('git@') ||
-		/^(https?:|mailto:|file:|maestro-file:)/i.test(trimmed)
-	) {
-		return url;
-	}
-
-	if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) {
-		return '';
-	}
-
-	return url;
-};
-
-interface LocalImageProps {
-	src?: string;
-	alt?: string;
-	theme: Theme;
-	width?: number; // Optional width in pixels (from ![[image|300]] syntax)
-	sshRemoteId?: string; // SSH remote ID for remote file operations
-}
-
-// Helper to compute initial image state synchronously from cache
-// This prevents flickering when ReactMarkdown rebuilds the component tree
-function getLocalImageInitialState(src: string | undefined) {
-	if (!src) {
-		return { dataUrl: null, loading: false };
-	}
-
-	// Data URLs are ready immediately
-	if (src.startsWith('data:')) {
-		return { dataUrl: src, loading: false };
-	}
-
-	// HTTP URLs are ready immediately (browser handles loading)
-	if (src.startsWith('http://') || src.startsWith('https://')) {
-		return { dataUrl: src, loading: false };
-	}
-
-	// Check cache for file paths
-	let filePath = src;
-	if (src.startsWith('file://')) {
-		filePath = decodeURIComponent(src.replace('file://', ''));
-	}
-
-	if (localImageCache.has(filePath)) {
-		return { dataUrl: localImageCache.get(filePath)!, loading: false };
-	}
-
-	// Need to load
-	return { dataUrl: null, loading: true };
-}
-
-const LocalImage = memo(({ src, alt, theme, width, sshRemoteId }: LocalImageProps) => {
-	// Compute initial state synchronously from cache to prevent flicker
-	const initialState = useMemo(() => getLocalImageInitialState(src), [src]);
-
-	const [dataUrl, setDataUrl] = useState<string | null>(initialState.dataUrl);
-	const [error, setError] = useState<string | null>(null);
-	const [loading, setLoading] = useState(initialState.loading);
-
-	useEffect(() => {
-		// If we already have data from cache, skip loading
-		if (initialState.dataUrl) {
-			return;
-		}
-
-		let isStale = false;
-
-		if (!src) {
-			setLoading(false);
-			return;
-		}
-
-		// For file:// URLs, extract the path and load via IPC
-		let filePath = src;
-		if (src.startsWith('file://')) {
-			filePath = decodeURIComponent(src.replace('file://', ''));
-		}
-
-		// Double-check cache
-		if (localImageCache.has(filePath)) {
-			setDataUrl(localImageCache.get(filePath)!);
-			setLoading(false);
-			return;
-		}
-
-		window.maestro.fs
-			.readFile(filePath, sshRemoteId)
-			.then((result) => {
-				if (isStale) return;
-				if (result && result.startsWith('data:')) {
-					localImageCache.set(filePath, result);
-					setDataUrl(result);
-				} else {
-					setError('Invalid image data');
-				}
-				setLoading(false);
-			})
-			.catch((err) => {
-				if (isStale) return;
-				setError(`Failed to load image: ${err.message || 'Unknown error'}`);
-				setLoading(false);
-			});
-
-		return () => {
-			isStale = true;
-		};
-	}, [src, sshRemoteId, initialState.dataUrl]);
-
-	if (loading) {
-		return (
-			<span
-				className="inline-flex items-center gap-2 px-3 py-2 rounded"
-				style={{ backgroundColor: theme.colors.bgActivity }}
-			>
-				<Loader2 className="w-4 h-4 animate-spin" style={{ color: theme.colors.textDim }} />
-				<span className="text-xs" style={{ color: theme.colors.textDim }}>
-					Loading image...
-				</span>
-			</span>
-		);
-	}
-
-	if (error) {
-		return (
-			<span
-				className="inline-flex items-center gap-2 px-3 py-2 rounded text-xs"
-				style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-				title={error}
-			>
-				<ImageOff className="w-4 h-4" />
-				<span>{alt || 'Image'}</span>
-			</span>
-		);
-	}
-
-	if (!dataUrl) {
-		return null;
-	}
-
-	// Build style based on whether width is specified
-	const imageStyle: React.CSSProperties = width
-		? { width: `${width}px`, height: 'auto', borderRadius: '4px' }
-		: { maxWidth: '100%', height: 'auto', borderRadius: '4px' };
-
-	return <img src={dataUrl} alt={alt || ''} style={imageStyle} />;
-});
-
-LocalImage.displayName = 'LocalImage';
-
-// ============================================================================
-// CodeBlockWithCopy - Code block with copy button overlay
-// ============================================================================
-
-interface CodeBlockWithCopyProps {
-	language: string;
-	codeContent: string;
-	theme: Theme;
-	onCopy: (text: string) => void;
-}
-
-const CodeBlockWithCopy = memo(
-	({ language, codeContent, theme, onCopy }: CodeBlockWithCopyProps) => {
-		return (
-			<div className="relative group/codeblock">
-				<button
-					onClick={() => onCopy(codeContent)}
-					className="absolute bottom-2 right-2 p-1.5 rounded opacity-0 group-hover/codeblock:opacity-70 hover:!opacity-100 transition-opacity z-10"
-					style={{
-						backgroundColor: theme.colors.bgActivity,
-						color: theme.colors.textDim,
-						border: `1px solid ${theme.colors.border}`,
-					}}
-					title="Copy code"
-				>
-					<Clipboard className="w-3.5 h-3.5" />
-				</button>
-				<SyntaxHighlighter
-					language={language}
-					style={getSyntaxStyle(theme.mode)}
-					customStyle={{
-						margin: '0.5em 0',
-						padding: '1em',
-						background: theme.colors.bgSidebar,
-						fontSize: '0.9em',
-						borderRadius: '6px',
-					}}
-					PreTag="div"
-				>
-					{codeContent}
-				</SyntaxHighlighter>
-			</div>
-		);
-	}
-);
-
-CodeBlockWithCopy.displayName = 'CodeBlockWithCopy';
-
-// ============================================================================
-// MarkdownRenderer - Unified markdown rendering component for AI responses
-// ============================================================================
+import { Markdown } from './Markdown/Markdown';
 
 interface MarkdownRendererProps {
 	/** The markdown content to render */
@@ -257,6 +39,25 @@ interface MarkdownRendererProps {
 	bionifyIntensity?: number;
 	/** Algorithm string controlling Bionify highlight lengths */
 	bionifyAlgorithm?: string;
+	/**
+	 * Treat single newlines as hard line breaks (chat-style rendering).
+	 *
+	 * Default CommonMark collapses single `\n` between non-blank lines into a
+	 * space. That's correct for document/file preview, but wrong for chat
+	 * surfaces where users expect line structure to be preserved (#622). When
+	 * enabled, this routes content through `remark-breaks` so single newlines
+	 * render as `<br>`.
+	 */
+	chatLineBreaks?: boolean;
+	/**
+	 * Render `$...$` and `$$...$$` as math via KaTeX (chat-style rendering).
+	 *
+	 * Off by default so file/doc preview keeps treating `$` as literal text -
+	 * markdown files with currency or shell prompts shouldn't suddenly parse
+	 * as math. Enable on chat surfaces so a line-isolated `$$x+y$$` renders
+	 * as a centered block formula (#622).
+	 */
+	chatMath?: boolean;
 }
 
 /**
@@ -271,259 +72,10 @@ interface MarkdownRendererProps {
  * Note: Prose styles are injected at the TerminalOutput container level for performance.
  * This component assumes those styles are already present in a parent container.
  */
-export const MarkdownRenderer = memo(
-	({
-		content,
-		theme,
-		onCopy,
-		className = '',
-		fileTree,
-		cwd,
-		projectRoot,
-		onFileClick,
-		allowRawHtml = false,
-		sshRemoteId,
-		enableBionifyReadingMode = false,
-		bionifyIntensity,
-		bionifyAlgorithm,
-	}: MarkdownRendererProps) => {
-		// Memoize file tree indices to avoid O(n) traversal on every render
-		// Only rebuild when fileTree reference changes
-		const fileTreeIndices = useMemo(() => {
-			if (fileTree && fileTree.length > 0) {
-				return buildFileTreeIndices(fileTree);
-			}
-			return null;
-		}, [fileTree]);
-
-		// Memoize remark plugins to avoid recreating on every render
-		const remarkPlugins = useMemo(() => {
-			const plugins: any[] = [...REMARK_GFM_PLUGINS, remarkFrontmatter, remarkFrontmatterTable];
-			// Add remarkFileLinks if we have file tree for relative paths,
-			// OR if we have projectRoot for absolute paths (even with empty file tree)
-			if ((fileTree && fileTree.length > 0 && cwd !== undefined) || projectRoot) {
-				plugins.push([
-					remarkFileLinks,
-					{ indices: fileTreeIndices || undefined, cwd: cwd || '', projectRoot },
-				]);
-			}
-			return plugins;
-		}, [fileTree, fileTreeIndices, cwd, projectRoot]);
-
-		// Defense-in-depth: sanitize raw HTML with DOMPurify before markdown parsing
-		// to strip script tags, event handlers, and other XSS vectors
-		const sanitizedContent = useMemo(() => {
-			if (allowRawHtml) {
-				return DOMPurify.sanitize(content);
-			}
-			return content;
-		}, [content, allowRawHtml]);
-
-		const withReadableTransforms = (children: React.ReactNode) =>
-			applyReadableTextTransforms(children, {
-				theme,
-				enableBionifyReadingMode,
-				bionifyIntensity,
-				bionifyAlgorithm,
-			});
-
-		return (
-			<div
-				className={`prose prose-sm max-w-none text-sm ${className}`}
-				style={{ color: theme.colors.textMain, lineHeight: 1.4, paddingLeft: '0.5em' }}
-			>
-				<ReactMarkdown
-					remarkPlugins={remarkPlugins}
-					rehypePlugins={allowRawHtml ? [rehypeRaw] : undefined}
-					urlTransform={markdownUrlTransform}
-					components={{
-						a: ({ node: _node, href, children, ...props }) => {
-							// Check for maestro-file:// protocol OR data-maestro-file attribute
-							// (data attribute is fallback when rehype strips custom protocols)
-							const dataFilePath = (props as any)['data-maestro-file'];
-							const isMaestroFile = href?.startsWith('maestro-file://') || !!dataFilePath;
-							const filePath =
-								dataFilePath ||
-								(href?.startsWith('maestro-file://') ? href.replace('maestro-file://', '') : null);
-
-							return (
-								<a
-									href={href}
-									{...props}
-									onClick={(e) => {
-										e.preventDefault();
-										if (isMaestroFile && filePath && onFileClick) {
-											onFileClick(filePath);
-										} else if (href) {
-											// Open http/https URLs via openExternal; file:// URLs via openPath
-											if (/^file:\/\//.test(href)) {
-												window.maestro.shell.openPath(href.replace(/^file:\/\//, ''));
-											} else if (/^https?:\/\//.test(href)) {
-												window.maestro.shell.openExternal(href);
-											} else {
-												// Attempt to convert non-standard URLs (e.g. git@host:user/repo)
-												try {
-													const converted = href.startsWith('git@')
-														? href
-																.replace(/^git@/, 'https://')
-																.replace(/:([^/])/, '/$1')
-																.replace(/\.git$/, '')
-														: href;
-													if (/^https?:\/\//.test(converted)) {
-														window.maestro.shell.openExternal(converted);
-													}
-												} catch {
-													// Silently ignore unparseable URLs
-												}
-											}
-										}
-									}}
-									style={{
-										color: theme.colors.accent,
-										textDecoration: 'underline',
-										cursor: 'pointer',
-									}}
-								>
-									{children}
-								</a>
-							);
-						},
-						pre: ({ children }: any) => {
-							// In react-markdown v10, block code is <pre><code>...</code></pre>
-							// Extract the code element and render with SyntaxHighlighter
-							const codeElement = React.Children.toArray(children).find(
-								(child: any) => child?.type === 'code' || child?.props?.node?.tagName === 'code'
-							) as React.ReactElement<any> | undefined;
-
-							if (codeElement?.props) {
-								const { className, children: codeChildren } = codeElement.props;
-								const match = (className || '').match(/language-(\w+)/);
-								const language = match ? match[1] : 'text';
-								const codeContent = String(codeChildren).replace(/\n$/, '');
-
-								return (
-									<CodeBlockWithCopy
-										language={language}
-										codeContent={codeContent}
-										theme={theme}
-										onCopy={onCopy}
-									/>
-								);
-							}
-
-							// Fallback: render as-is
-							return <pre>{children}</pre>;
-						},
-						code: ({ node: _node, className, children, ...props }: any) => {
-							// Inline code only — block code is handled by the pre component above
-							return (
-								<code className={className} {...props}>
-									{children}
-								</code>
-							);
-						},
-						p: ({ node: _node, children, ...props }: any) => (
-							<p {...props}>{withReadableTransforms(children)}</p>
-						),
-						li: ({ node: _node, children, ...props }: any) => (
-							<li {...props}>{withReadableTransforms(children)}</li>
-						),
-						blockquote: ({ node: _node, children, ...props }: any) => (
-							<blockquote {...props}>{withReadableTransforms(children)}</blockquote>
-						),
-						h1: ({ node: _node, children, ...props }: any) => (
-							<h1 {...props}>{withReadableTransforms(children)}</h1>
-						),
-						h2: ({ node: _node, children, ...props }: any) => (
-							<h2 {...props}>{withReadableTransforms(children)}</h2>
-						),
-						h3: ({ node: _node, children, ...props }: any) => (
-							<h3 {...props}>{withReadableTransforms(children)}</h3>
-						),
-						h4: ({ node: _node, children, ...props }: any) => (
-							<h4 {...props}>{withReadableTransforms(children)}</h4>
-						),
-						h5: ({ node: _node, children, ...props }: any) => (
-							<h5 {...props}>{withReadableTransforms(children)}</h5>
-						),
-						h6: ({ node: _node, children, ...props }: any) => (
-							<h6 {...props}>{withReadableTransforms(children)}</h6>
-						),
-						img: ({ node: _node, src, alt, ...props }: any) => {
-							// Use LocalImage component to handle file:// URLs via IPC
-							// Extract width from data-maestro-width attribute if present
-							const widthStr = props['data-maestro-width'];
-							const width = widthStr ? parseInt(widthStr, 10) : undefined;
-
-							return (
-								<LocalImage
-									src={src}
-									alt={alt}
-									theme={theme}
-									width={width}
-									sshRemoteId={sshRemoteId}
-								/>
-							);
-						},
-						table: ({ node: _node, style, ...props }: any) => (
-							<div className="overflow-x-auto scrollbar-thin" style={{ maxWidth: '100%' }}>
-								<table
-									{...props}
-									style={{
-										minWidth: '100%',
-										borderCollapse: 'collapse',
-										...(style || {}),
-									}}
-								/>
-							</div>
-						),
-						th: ({ node: _node, style, children, ...props }: any) => (
-							<th
-								{...props}
-								style={{
-									padding: '8px 12px',
-									textAlign: 'left',
-									borderBottom: `1px solid ${theme.colors.border}`,
-									whiteSpace: 'nowrap',
-									...(style || {}),
-								}}
-							>
-								{withReadableTransforms(children)}
-							</th>
-						),
-						td: ({ node: _node, style, children, ...props }: any) => (
-							<td
-								{...props}
-								style={{
-									padding: '8px 12px',
-									borderBottom: `1px solid ${theme.colors.border}`,
-									wordWrap: 'break-word',
-									overflowWrap: 'break-word',
-									whiteSpace: 'normal',
-									verticalAlign: 'top',
-									...(style || {}),
-								}}
-							>
-								{withReadableTransforms(children)}
-							</td>
-						),
-						// Strip event handler attributes (e.g. onToggle) that rehype-raw may
-						// pass through as strings from AI-generated HTML, which React rejects.
-						// Fixes MAESTRO-8Q
-						details: ({ node: _node, onToggle: _onToggle, ...props }: any) => (
-							<details {...props} />
-						),
-					}}
-				>
-					{sanitizedContent}
-				</ReactMarkdown>
-			</div>
-		);
-	}
-);
+export const MarkdownRenderer = memo((props: MarkdownRendererProps) => (
+	<Markdown preset="chat" {...props} />
+));
 
 MarkdownRenderer.displayName = 'MarkdownRenderer';
 
-// Also export CodeBlockWithCopy for cases where only the code block is needed
-export { CodeBlockWithCopy };
-export type { CodeBlockWithCopyProps, MarkdownRendererProps };
+export type { MarkdownRendererProps };

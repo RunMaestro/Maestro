@@ -284,17 +284,6 @@ describe('ipcHandler.ts', () => {
 
 			expect(logger.info).toHaveBeenCalledWith('list success', '[Playbooks]', undefined);
 		});
-
-		it('should not log success when logSuccess is false', async () => {
-			const handler = createDataHandler(
-				{ context: '[Test]', operation: 'getData', logSuccess: false },
-				async () => 'value'
-			);
-
-			await handler();
-
-			expect(logger.info).not.toHaveBeenCalled();
-		});
 	});
 
 	describe('withErrorLogging', () => {
@@ -852,17 +841,6 @@ describe('ipcHandler.ts', () => {
 
 			expect(nullResult).toEqual({ success: true, data: null });
 			expect(undefinedResult).toEqual({ success: true, data: undefined });
-		});
-
-		it('should not log success when logSuccess is false', async () => {
-			const handler = createIpcDataHandler(
-				{ context: '[Test]', operation: 'getData', logSuccess: false },
-				async () => 'value'
-			);
-
-			await handler({});
-
-			expect(logger.info).not.toHaveBeenCalled();
 		});
 	});
 

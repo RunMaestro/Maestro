@@ -4,7 +4,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import type { Group, SessionInfo, HistoryEntry } from '../../shared/types';
+import type { Group, SessionInfo, HistoryEntry, SshRemoteConfig } from '../../shared/types';
 import {
 	HISTORY_VERSION,
 	MAX_ENTRIES_PER_SESSION,
@@ -18,6 +18,10 @@ import {
 
 // Get the Maestro config directory path
 function getConfigDir(): string {
+	// Allow overriding the data directory (e.g. for dev mode: maestro-dev)
+	if (process.env.MAESTRO_USER_DATA) {
+		return path.resolve(process.env.MAESTRO_USER_DATA);
+	}
 	const platform = os.platform();
 	const home = os.homedir();
 
@@ -60,6 +64,24 @@ function writeStoreFile<T>(filename: string, data: T): void {
 	}
 	const filePath = path.join(dirPath, filename);
 	fs.writeFileSync(filePath, JSON.stringify(data, null, '\t'), 'utf-8');
+}
+
+/**
+ * Atomically write JSON to `filePath` via a temp file + rename. rename() is
+ * atomic on POSIX, so a concurrent reader (the desktop app reads these same
+ * history files) never sees a partial or `}{`-concatenated file. Mirrors the
+ * app-side `atomicWriteJson`; kept local so the CLI bundle stays free of the
+ * main-process import chain.
+ */
+function atomicWriteFileSync(filePath: string, content: string): void {
+	// Safety gate: never rename empty/unparseable content over a good file.
+	if (!content) {
+		throw new Error(`Refusing to write empty content to ${filePath}`);
+	}
+	JSON.parse(content); // throws before touching the file if content isn't valid JSON
+	const tmp = `${filePath}.tmp`;
+	fs.writeFileSync(tmp, content, 'utf-8');
+	fs.renameSync(tmp, filePath);
 }
 
 // Store file structures (as used by Electron Store)
@@ -470,6 +492,19 @@ export function resolveGroupId(partialId: string): string {
 }
 
 /**
+ * Returns the mtime (ms since epoch) of a session's history file as a cheap
+ * recency proxy. Returns 0 when the file doesn't exist or can't be stat'd, so
+ * sessions that have never been used sort below ones that have.
+ */
+export function getSessionHistoryMtimeMs(sessionId: string): number {
+	try {
+		return fs.statSync(getSessionHistoryPath(sessionId)).mtimeMs;
+	} catch {
+		return 0;
+	}
+}
+
+/**
  * Get a session by ID (supports partial IDs)
  */
 export function getSessionById(sessionId: string): SessionInfo | undefined {
@@ -546,6 +581,13 @@ export function addHistoryEntry(entry: HistoryEntry): void {
 				try {
 					data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
 				} catch {
+					// Corrupt history: preserve the bytes aside for recovery
+					// instead of silently overwriting them with a fresh file.
+					try {
+						fs.renameSync(filePath, `${filePath}.corrupt-${Date.now()}`);
+					} catch {
+						// best-effort; fall through to a fresh file either way
+					}
 					data = {
 						version: HISTORY_VERSION,
 						sessionId,
@@ -573,7 +615,7 @@ export function addHistoryEntry(entry: HistoryEntry): void {
 			// Update projectPath if it changed
 			data.projectPath = entry.projectPath;
 
-			fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+			atomicWriteFileSync(filePath, JSON.stringify(data, null, 2));
 		} else {
 			// Use legacy format
 			const filePath = path.posix.join(getConfigDir(), 'maestro-history.json');
@@ -589,4 +631,49 @@ export function addHistoryEntry(entry: HistoryEntry): void {
 			`[WARNING] Failed to write history entry: ${error instanceof Error ? error.message : String(error)}`
 		);
 	}
+}
+
+// ============================================================================
+// SSH Remote Helpers
+// ============================================================================
+
+/**
+ * Read all SSH remote configurations from settings
+ */
+export function readSshRemotes(): SshRemoteConfig[] {
+	const settings = readSettings();
+	return (settings.sshRemotes as SshRemoteConfig[]) || [];
+}
+
+/**
+ * Write SSH remotes array back to settings
+ */
+export function writeSshRemotes(remotes: SshRemoteConfig[]): void {
+	writeSettingValue('sshRemotes', remotes);
+}
+
+/**
+ * Resolve an SSH remote ID (partial or full)
+ * Throws if ambiguous or not found
+ */
+export function resolveSshRemoteId(partialId: string): string {
+	const remotes = readSshRemotes();
+	const allIds = remotes.map((r) => r.id);
+	const resolution = resolveId(partialId, allIds);
+
+	if (resolution.ambiguous) {
+		const matchList = resolution.matches
+			.map((id) => {
+				const remote = remotes.find((r) => r.id === id);
+				return `  ${id.slice(0, 8)}  ${remote?.name || 'Unknown'}`;
+			})
+			.join('\n');
+		throw new Error(`Ambiguous SSH remote ID '${partialId}'. Matches:\n${matchList}`);
+	}
+
+	if (!resolution.id) {
+		throw new Error(`SSH remote not found: ${partialId}`);
+	}
+
+	return resolution.id;
 }

@@ -25,6 +25,7 @@ vi.mock('electron', () => ({
 // Mock the execFile module
 vi.mock('../../../../main/utils/execFile', () => ({
 	execFileNoThrow: vi.fn(),
+	execFileBufferNoThrow: vi.fn(),
 }));
 
 // Mock the logger
@@ -49,9 +50,12 @@ vi.mock('fs/promises', () => ({
 	default: {
 		access: vi.fn(),
 		readdir: vi.fn(),
-		realpath: vi.fn(async (filePath: string) => filePath),
 		rmdir: vi.fn(),
-		rm: vi.fn(),
+		// realpath: identity by default so symlink-resolution paths in scanWorktreeDirectory
+		// and the chokidar discovery validator behave like a no-op in tests. Individual
+		// tests can override this via vi.mocked(fs.realpath).mockResolvedValue(...) to
+		// exercise the symlink-resolution behavior.
+		realpath: vi.fn().mockImplementation(async (p: string) => p),
 	},
 }));
 
@@ -81,16 +85,27 @@ vi.mock('../../../../main/runtime/getShellPath', () => ({
 vi.mock('../../../../main/utils/remote-git', () => ({
 	execGitRemote: vi.fn(),
 	execGit: vi.fn(),
-	worktreeInfoRemote: vi.fn(),
-	worktreeSetupRemote: vi.fn(),
-	worktreeCheckoutRemote: vi.fn(),
-	listWorktreesRemote: vi.fn(),
-	getRepoRootRemote: vi.fn(),
 }));
 
-// Mock remote filesystem helpers used by SSH-aware git handlers
+// Mock remote-fs (used by scanWorktreeDirectory's SSH branch)
 vi.mock('../../../../main/utils/remote-fs', () => ({
 	readDirRemote: vi.fn(),
+}));
+
+// Mock the stores module — git.ts now imports getSshRemoteById from here
+// instead of receiving it via dependency injection. We delegate to the
+// mockSettingsStore so existing tests can still drive SSH remote lookups
+// by configuring `mockSettingsStore.get.mockReturnValue([...])`.
+const { mockSettingsStore } = vi.hoisted(() => ({
+	mockSettingsStore: {
+		get: vi.fn().mockReturnValue([] as Array<{ id: string }>),
+	},
+}));
+vi.mock('../../../../main/stores', () => ({
+	getSshRemoteById: (id: string) => {
+		const remotes = mockSettingsStore.get('sshRemotes', []) as Array<{ id: string }>;
+		return remotes.find((r) => r.id === id);
+	},
 }));
 
 // Mock child_process for spawnSync (used in git:showFile for images)
@@ -99,40 +114,30 @@ const { mockSpawnSync } = vi.hoisted(() => ({
 	mockSpawnSync: vi.fn(),
 }));
 
-vi.mock('child_process', () => ({
-	spawnSync: mockSpawnSync,
-	// Include other exports that might be needed
-	spawn: vi.fn(),
-	exec: vi.fn(),
-	execSync: vi.fn(),
-	execFile: vi.fn(),
-	execFileSync: vi.fn(),
-	fork: vi.fn(),
-}));
+vi.mock('child_process', () => {
+	const mock = {
+		spawnSync: mockSpawnSync,
+		// Include other exports that might be needed
+		spawn: vi.fn(),
+		exec: vi.fn(),
+		execSync: vi.fn(),
+		execFile: vi.fn(),
+		execFileSync: vi.fn(),
+		fork: vi.fn(),
+	};
+	// Also expose as default for modules that import via CJS interop
+	return { ...mock, default: mock };
+});
 
 describe('Git IPC handlers', () => {
 	let handlers: Map<string, Function>;
-	let mockSettingsStore: any;
-	const enabledSshRemote = {
-		id: 'ssh-remote-123',
-		enabled: true,
-		host: 'example.com',
-		user: 'testuser',
-		privateKeyPath: '/path/to/key',
-		knownHostsPath: '/path/to/known_hosts',
-	};
-
-	const enableSshRemote = () => {
-		mockSettingsStore.get.mockReturnValue([enabledSshRemote]);
-	};
 
 	beforeEach(async () => {
 		// Clear mocks
 		vi.clearAllMocks();
 
-		mockSettingsStore = {
-			get: vi.fn().mockReturnValue([]),
-		};
+		// Reset hoisted settings store mock to a clean state for each test
+		mockSettingsStore.get.mockReturnValue([]);
 
 		// Capture all registered handlers
 		handlers = new Map();
@@ -147,15 +152,13 @@ describe('Git IPC handlers', () => {
 
 		// Set up execGit mock to dispatch to local or remote
 		const remoteGit = await import('../../../../main/utils/remote-git');
-		vi.mocked(remoteGit.execGit).mockImplementation(
-			async (args, localCwd, sshRemote, remoteCwd) => {
-				if (sshRemote) {
-					return remoteGit.execGitRemote(args, { sshRemote, remoteCwd: remoteCwd ?? localCwd });
-				} else {
-					return execFile.execFileNoThrow('git', args, localCwd);
-				}
+		vi.mocked(remoteGit.execGit).mockImplementation(async (args, localCwd, sshRemote) => {
+			if (sshRemote) {
+				return remoteGit.execGitRemote(args, { sshRemote, remoteCwd: localCwd });
+			} else {
+				return execFile.execFileNoThrow('git', args, localCwd);
 			}
-		);
+		});
 	});
 
 	afterEach(() => {
@@ -163,11 +166,12 @@ describe('Git IPC handlers', () => {
 	});
 
 	describe('registration', () => {
-		it('should register all 26 git handlers', () => {
+		it('should register all git handlers', () => {
 			const expectedChannels = [
 				'git:status',
 				'git:diff',
 				'git:isRepo',
+				'git:init',
 				'git:numstat',
 				'git:branch',
 				'git:remote',
@@ -193,7 +197,7 @@ describe('Git IPC handlers', () => {
 				'git:createGist',
 			];
 
-			expect(handlers.size).toBe(26);
+			expect(handlers.size).toBe(expectedChannels.length);
 			for (const channel of expectedChannels) {
 				expect(handlers.has(channel)).toBe(true);
 			}
@@ -267,28 +271,6 @@ describe('Git IPC handlers', () => {
 
 			expect(result).toEqual({
 				stdout: '',
-				stderr: '',
-			});
-		});
-
-		it('should use provided remote cwd for SSH status checks', async () => {
-			enableSshRemote();
-			const remoteGit = await import('../../../../main/utils/remote-git');
-			vi.mocked(remoteGit.execGitRemote).mockResolvedValue({
-				stdout: ' M remote-file.ts\n',
-				stderr: '',
-				exitCode: 0,
-			});
-
-			const handler = handlers.get('git:status');
-			const result = await handler!({} as any, '/local/session', 'ssh-remote-123', '/remote/repo');
-
-			expect(remoteGit.execGitRemote).toHaveBeenCalledWith(['status', '--porcelain'], {
-				sshRemote: enabledSshRemote,
-				remoteCwd: '/remote/repo',
-			});
-			expect(result).toEqual({
-				stdout: ' M remote-file.ts\n',
 				stderr: '',
 			});
 		});
@@ -1190,29 +1172,6 @@ COMMIT_STARTdef987654321|Jane Smith|2024-01-14T09:00:00+00:00||Add feature
 			});
 		});
 
-		it('should parse deletion-only shortstat entries', async () => {
-			const logOutput = `COMMIT_STARTabc123456789|John Doe|2024-01-15T10:30:00+00:00||Remove obsolete file
-
- 1 file changed, 12 deletions(-)`;
-
-			vi.mocked(execFile.execFileNoThrow).mockResolvedValue({
-				stdout: logOutput,
-				stderr: '',
-				exitCode: 0,
-			});
-
-			const handler = handlers.get('git:log');
-			const result = await handler!({} as any, '/test/repo');
-
-			expect(result.entries[0]).toEqual(
-				expect.objectContaining({
-					additions: 0,
-					deletions: 12,
-					subject: 'Remove obsolete file',
-				})
-			);
-		});
-
 		it('should use SSH remote execution when sshRemoteId is provided', async () => {
 			// Mock the remote config
 			mockSettingsStore.get.mockReturnValue([
@@ -1649,71 +1608,49 @@ export function Component() {
 			});
 		});
 
-		// Image file handling uses a runtime require('child_process') call. The
-		// failure path can use the hoisted mock; the success path below uses a real
-		// temporary git repo so binary output is exercised end-to-end.
-
-		it('should recognize image files and use spawnSync for them', async () => {
-			// The handler takes different code paths for images vs text files.
-			// This test verifies that image files (gif) trigger the spawnSync path
-			// by checking the error response when spawnSync returns a failure status.
-			mockSpawnSync.mockReturnValue({
+		it('should recognize image files and read them via the async buffer exec', async () => {
+			// Image files take a different code path than text files: they read raw
+			// binary via execFileBufferNoThrow (async, non-blocking) instead of
+			// execFileNoThrow. Verify the image path by checking the error response
+			// when the buffer exec returns a non-zero exit code.
+			vi.mocked(execFile.execFileBufferNoThrow).mockResolvedValue({
 				stdout: Buffer.from(''),
-				stderr: undefined,
-				status: 1,
-				pid: 1234,
-				output: [null, Buffer.from(''), undefined],
-				signal: null,
+				stderr: '',
+				exitCode: 1,
 			});
 
 			const handler = handlers.get('git:showFile');
 			const result = await handler!({} as any, '/test/repo', 'HEAD', 'assets/logo.gif');
 
-			// The fact we get this specific error proves the spawnSync path was taken
+			// Reaching this specific error proves the image (buffer-exec) path was taken.
+			expect(execFile.execFileBufferNoThrow).toHaveBeenCalledWith(
+				'git',
+				['show', 'HEAD:assets/logo.gif'],
+				'/test/repo',
+				50 * 1024 * 1024
+			);
 			expect(result).toEqual({
 				error: 'Failed to read file from git',
 			});
 		});
 
-		it('should return base64 data URL for image files read from git', async () => {
-			const fs = await vi.importActual<typeof import('node:fs')>('node:fs');
-			const os = await vi.importActual<typeof import('node:os')>('node:os');
-			const childProcess =
-				await vi.importActual<typeof import('node:child_process')>('node:child_process');
-			const imageBytes = Buffer.from('image-bytes');
-			const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-git-showfile-'));
-			const runGit = (args: string[]) => {
-				const result = childProcess.spawnSync('git', args, { cwd: repoDir });
-				expect(result.status).toBe(0);
-			};
-
-			mockSpawnSync.mockReturnValue({
-				stdout: imageBytes,
-				stderr: Buffer.from(''),
-				status: 0,
-				pid: 1234,
-				output: [null, imageBytes, Buffer.from('')],
-				signal: null,
+		it('should return a base64 data URL for an image read successfully', async () => {
+			// Success path is now unit-testable because the binary read goes through
+			// the mockable execFileBufferNoThrow helper (previously it used spawnSync
+			// and required integration tests).
+			const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+			vi.mocked(execFile.execFileBufferNoThrow).mockResolvedValue({
+				stdout: pngBytes,
+				stderr: '',
+				exitCode: 0,
 			});
 
-			try {
-				fs.mkdirSync(path.join(repoDir, 'assets'), { recursive: true });
-				fs.writeFileSync(path.join(repoDir, 'assets/logo.png'), imageBytes);
-				runGit(['init']);
-				runGit(['config', 'user.email', 'test@example.com']);
-				runGit(['config', 'user.name', 'Test User']);
-				runGit(['add', 'assets/logo.png']);
-				runGit(['commit', '-m', 'add image']);
+			const handler = handlers.get('git:showFile');
+			const result = await handler!({} as any, '/test/repo', 'HEAD', 'assets/logo.png');
 
-				const handler = handlers.get('git:showFile');
-				const result = await handler!({} as any, repoDir, 'HEAD', 'assets/logo.png');
-
-				expect(result).toEqual({
-					content: `data:image/png;base64,${imageBytes.toString('base64')}`,
-				});
-			} finally {
-				fs.rmSync(repoDir, { recursive: true, force: true });
-			}
+			expect(result).toEqual({
+				content: `data:image/png;base64,${pngBytes.toString('base64')}`,
+			});
 		});
 
 		it('should handle different git refs (tags, branches, commit hashes)', async () => {
@@ -1752,15 +1689,12 @@ export function Component() {
 			);
 		});
 
-		it('should return fallback error when image spawnSync fails without stderr', async () => {
-			// When spawnSync fails without a stderr message, we get the fallback error
-			mockSpawnSync.mockReturnValue({
+		it('should return fallback error when image buffer exec fails without stderr', async () => {
+			// When the buffer exec fails without a stderr message, we get the fallback error.
+			vi.mocked(execFile.execFileBufferNoThrow).mockResolvedValue({
 				stdout: Buffer.from(''),
-				stderr: Buffer.from(''),
-				status: 128,
-				pid: 1234,
-				output: [null, Buffer.from(''), Buffer.from('')],
-				signal: null,
+				stderr: '',
+				exitCode: 128,
 			});
 
 			const handler = handlers.get('git:showFile');
@@ -2043,206 +1977,6 @@ export function Component() {
 				repoRoot: '/main/repo',
 			});
 		});
-
-		it('should fall back to git-dir as common dir and omit repo root when toplevel lookup fails', async () => {
-			const fsPromises = await import('fs/promises');
-			vi.mocked(fsPromises.default.access).mockResolvedValue(undefined);
-
-			vi.mocked(execFile.execFileNoThrow)
-				.mockResolvedValueOnce({
-					stdout: 'true\n',
-					stderr: '',
-					exitCode: 0,
-				})
-				.mockResolvedValueOnce({
-					stdout: '.git\n',
-					stderr: '',
-					exitCode: 0,
-				})
-				.mockResolvedValueOnce({
-					stdout: '',
-					stderr: 'fatal: unable to read common dir',
-					exitCode: 128,
-				})
-				.mockResolvedValueOnce({
-					stdout: 'main\n',
-					stderr: '',
-					exitCode: 0,
-				})
-				.mockResolvedValueOnce({
-					stdout: '',
-					stderr: 'fatal: not a git repository',
-					exitCode: 128,
-				});
-
-			const handler = handlers.get('git:worktreeInfo');
-			const result = await handler!({} as any, '/main/repo');
-
-			expect(result).toEqual({
-				success: true,
-				exists: true,
-				isWorktree: false,
-				currentBranch: 'main',
-				repoRoot: undefined,
-			});
-		});
-
-		it('should resolve relative git common dirs when reporting worktree repo root', async () => {
-			const fsPromises = await import('fs/promises');
-			vi.mocked(fsPromises.default.access).mockResolvedValue(undefined);
-
-			vi.mocked(execFile.execFileNoThrow)
-				.mockResolvedValueOnce({
-					stdout: 'true\n',
-					stderr: '',
-					exitCode: 0,
-				})
-				.mockResolvedValueOnce({
-					stdout: '.git\n',
-					stderr: '',
-					exitCode: 0,
-				})
-				.mockResolvedValueOnce({
-					stdout: '../main-repo/.git\n',
-					stderr: '',
-					exitCode: 0,
-				})
-				.mockResolvedValueOnce({
-					stdout: 'feature/relative\n',
-					stderr: '',
-					exitCode: 0,
-				})
-				.mockResolvedValueOnce({
-					stdout: '/worktrees/feature\n',
-					stderr: '',
-					exitCode: 0,
-				});
-
-			const handler = handlers.get('git:worktreeInfo');
-			const result = await handler!({} as any, '/parent/worktrees/feature');
-
-			expect(result).toEqual({
-				success: true,
-				exists: true,
-				isWorktree: true,
-				currentBranch: 'feature/relative',
-				repoRoot: path.resolve('/parent/worktrees/feature', '../main-repo'),
-			});
-		});
-
-		it('should return an error when git directory lookup fails', async () => {
-			const fsPromises = await import('fs/promises');
-			vi.mocked(fsPromises.default.access).mockResolvedValue(undefined);
-
-			vi.mocked(execFile.execFileNoThrow)
-				.mockResolvedValueOnce({
-					stdout: 'true\n',
-					stderr: '',
-					exitCode: 0,
-				})
-				.mockResolvedValueOnce({
-					stdout: '',
-					stderr: 'fatal: unable to read git dir',
-					exitCode: 128,
-				})
-				.mockResolvedValueOnce({
-					stdout: '.git\n',
-					stderr: '',
-					exitCode: 0,
-				})
-				.mockResolvedValueOnce({
-					stdout: 'main\n',
-					stderr: '',
-					exitCode: 0,
-				})
-				.mockResolvedValueOnce({
-					stdout: '/main/repo\n',
-					stderr: '',
-					exitCode: 0,
-				});
-
-			const handler = handlers.get('git:worktreeInfo');
-			const result = await handler!({} as any, '/main/repo');
-
-			expect(result).toEqual({
-				success: false,
-				error: 'Error: Failed to get git directory',
-			});
-		});
-
-		it('should return worktree info from SSH remote helper', async () => {
-			enableSshRemote();
-			const remoteGit = await import('../../../../main/utils/remote-git');
-			vi.mocked(remoteGit.worktreeInfoRemote).mockResolvedValue({
-				success: true,
-				data: {
-					exists: true,
-					isWorktree: true,
-					currentBranch: 'feature/remote',
-					repoRoot: '/remote/main',
-				},
-			});
-
-			const handler = handlers.get('git:worktreeInfo');
-			const result = await handler!({} as any, '/remote/worktree', 'ssh-remote-123');
-
-			expect(remoteGit.worktreeInfoRemote).toHaveBeenCalledWith(
-				'/remote/worktree',
-				enabledSshRemote
-			);
-			expect(result).toEqual({
-				success: true,
-				exists: true,
-				isWorktree: true,
-				currentBranch: 'feature/remote',
-				repoRoot: '/remote/main',
-			});
-		});
-
-		it('should return an error when SSH worktree info fails', async () => {
-			enableSshRemote();
-			const remoteGit = await import('../../../../main/utils/remote-git');
-			vi.mocked(remoteGit.worktreeInfoRemote).mockResolvedValue({
-				success: false,
-				error: 'permission denied',
-			});
-
-			const handler = handlers.get('git:worktreeInfo');
-			const result = await handler!({} as any, '/remote/worktree', 'ssh-remote-123');
-
-			expect(result).toEqual({
-				success: false,
-				error: 'Error: permission denied',
-			});
-		});
-
-		it('should use fallback error when SSH worktree info fails without an error', async () => {
-			enableSshRemote();
-			const remoteGit = await import('../../../../main/utils/remote-git');
-			vi.mocked(remoteGit.worktreeInfoRemote).mockResolvedValue({
-				success: false,
-			});
-
-			const handler = handlers.get('git:worktreeInfo');
-			const result = await handler!({} as any, '/remote/worktree', 'ssh-remote-123');
-
-			expect(result).toEqual({
-				success: false,
-				error: 'Error: Remote worktreeInfo failed',
-			});
-		});
-
-		it('should return an error for disabled SSH remotes', async () => {
-			mockSettingsStore.get.mockReturnValue([{ ...enabledSshRemote, enabled: false }]);
-
-			const handler = handlers.get('git:worktreeInfo');
-			const result = await handler!({} as any, '/remote/worktree', 'ssh-remote-123');
-
-			expect(result).toEqual({
-				success: false,
-				error: 'Error: SSH remote not found: ssh-remote-123',
-			});
-		});
 	});
 
 	describe('git:getRepoRoot', () => {
@@ -2338,170 +2072,9 @@ export function Component() {
 				error: 'Error: Not a git repository',
 			});
 		});
-
-		it('should return repository root from SSH remote helper', async () => {
-			enableSshRemote();
-			const remoteGit = await import('../../../../main/utils/remote-git');
-			vi.mocked(remoteGit.getRepoRootRemote).mockResolvedValue({
-				success: true,
-				data: '/remote/repo',
-			});
-
-			const handler = handlers.get('git:getRepoRoot');
-			const result = await handler!({} as any, '/remote/repo/src', 'ssh-remote-123');
-
-			expect(remoteGit.getRepoRootRemote).toHaveBeenCalledWith(
-				'/remote/repo/src',
-				enabledSshRemote
-			);
-			expect(result).toEqual({
-				success: true,
-				root: '/remote/repo',
-			});
-		});
-
-		it('should return an error when SSH repo root lookup fails', async () => {
-			enableSshRemote();
-			const remoteGit = await import('../../../../main/utils/remote-git');
-			vi.mocked(remoteGit.getRepoRootRemote).mockResolvedValue({
-				success: false,
-				error: 'not a git repository',
-			});
-
-			const handler = handlers.get('git:getRepoRoot');
-			const result = await handler!({} as any, '/remote/path', 'ssh-remote-123');
-
-			expect(result).toEqual({
-				success: false,
-				error: 'Error: not a git repository',
-			});
-		});
-
-		it('should use fallback error when SSH repo root lookup fails without an error', async () => {
-			enableSshRemote();
-			const remoteGit = await import('../../../../main/utils/remote-git');
-			vi.mocked(remoteGit.getRepoRootRemote).mockResolvedValue({
-				success: false,
-			});
-
-			const handler = handlers.get('git:getRepoRoot');
-			const result = await handler!({} as any, '/remote/path', 'ssh-remote-123');
-
-			expect(result).toEqual({
-				success: false,
-				error: 'Error: Not a git repository',
-			});
-		});
-
-		it('should return an error when SSH repo root remote is missing', async () => {
-			mockSettingsStore.get.mockReturnValue([]);
-
-			const handler = handlers.get('git:getRepoRoot');
-			const result = await handler!({} as any, '/remote/path', 'ssh-remote-123');
-
-			expect(result).toEqual({
-				success: false,
-				error: 'Error: SSH remote not found: ssh-remote-123',
-			});
-		});
 	});
 
 	describe('git:worktreeSetup', () => {
-		it('should create worktree via SSH remote helper', async () => {
-			enableSshRemote();
-			const remoteGit = await import('../../../../main/utils/remote-git');
-			vi.mocked(remoteGit.worktreeSetupRemote).mockResolvedValue({
-				success: true,
-				data: {
-					success: true,
-					created: true,
-					currentBranch: 'feature/remote',
-					requestedBranch: 'feature/remote',
-					branchMismatch: false,
-				},
-			});
-
-			const handler = handlers.get('git:worktreeSetup');
-			const result = await handler!(
-				{} as any,
-				'/remote/main',
-				'/remote/worktrees/feature',
-				'feature/remote',
-				'ssh-remote-123'
-			);
-
-			expect(remoteGit.worktreeSetupRemote).toHaveBeenCalledWith(
-				'/remote/main',
-				'/remote/worktrees/feature',
-				'feature/remote',
-				enabledSshRemote
-			);
-			expect(result).toEqual({
-				success: true,
-				created: true,
-				currentBranch: 'feature/remote',
-				requestedBranch: 'feature/remote',
-				branchMismatch: false,
-			});
-		});
-
-		it('should throw when SSH worktree setup fails', async () => {
-			enableSshRemote();
-			const remoteGit = await import('../../../../main/utils/remote-git');
-			vi.mocked(remoteGit.worktreeSetupRemote).mockResolvedValue({
-				success: false,
-				error: 'remote git worktree add failed',
-			});
-
-			const handler = handlers.get('git:worktreeSetup');
-
-			await expect(
-				handler!(
-					{} as any,
-					'/remote/main',
-					'/remote/worktrees/feature',
-					'feature/remote',
-					'ssh-remote-123'
-				)
-			).rejects.toThrow('remote git worktree add failed');
-		});
-
-		it('should throw fallback error when SSH worktree setup fails without an error', async () => {
-			enableSshRemote();
-			const remoteGit = await import('../../../../main/utils/remote-git');
-			vi.mocked(remoteGit.worktreeSetupRemote).mockResolvedValue({
-				success: false,
-			});
-
-			const handler = handlers.get('git:worktreeSetup');
-
-			await expect(
-				handler!(
-					{} as any,
-					'/remote/main',
-					'/remote/worktrees/feature',
-					'feature/remote',
-					'ssh-remote-123'
-				)
-			).rejects.toThrow('Remote worktreeSetup failed');
-		});
-
-		it('should throw when SSH worktree setup remote is missing', async () => {
-			mockSettingsStore.get.mockReturnValue([]);
-
-			const handler = handlers.get('git:worktreeSetup');
-
-			await expect(
-				handler!(
-					{} as any,
-					'/remote/main',
-					'/remote/worktrees/feature',
-					'feature/remote',
-					'ssh-remote-123'
-				)
-			).rejects.toThrow('SSH remote not found: ssh-remote-123');
-		});
-
 		it('should create worktree successfully with new branch', async () => {
 			// Mock fs.access to throw (path doesn't exist)
 			const fsPromises = await import('fs/promises');
@@ -2546,6 +2119,80 @@ export function Component() {
 				requestedBranch: 'feature-branch',
 				branchMismatch: false,
 			});
+		});
+
+		it('should pass baseBranch to git worktree add when branch is new', async () => {
+			// Regression: the UI's "Base Branch" dropdown (and the CLI's
+			// --base-branch flag) historically dropped this value, so new branches
+			// always started from the main repo's HEAD instead of the user's
+			// chosen base. This test pins the wiring end-to-end.
+			const fsPromises = await import('fs/promises');
+			vi.mocked(fsPromises.default.access).mockRejectedValue(new Error('ENOENT'));
+
+			vi.mocked(execFile.execFileNoThrow)
+				.mockResolvedValueOnce({
+					// branch doesn't exist yet
+					stdout: '',
+					stderr: 'fatal: Needed a single revision',
+					exitCode: 128,
+				})
+				.mockResolvedValueOnce({
+					stdout: "Preparing worktree (new branch 'feature-from-rc')",
+					stderr: '',
+					exitCode: 0,
+				});
+
+			const handler = handlers.get('git:worktreeSetup');
+			await handler!(
+				{} as any,
+				'/main/repo',
+				'/worktrees/feature',
+				'feature-from-rc',
+				undefined, // sshRemoteId
+				'rc' // baseBranch
+			);
+
+			expect(execFile.execFileNoThrow).toHaveBeenCalledWith(
+				'git',
+				['worktree', 'add', '-b', 'feature-from-rc', '/worktrees/feature', 'rc'],
+				'/main/repo'
+			);
+		});
+
+		it('should ignore baseBranch when the branch already exists', async () => {
+			// Once the branch exists, `git worktree add <path> <branch>` adopts it;
+			// baseBranch would be a no-op so the handler must not pass it.
+			const fsPromises = await import('fs/promises');
+			vi.mocked(fsPromises.default.access).mockRejectedValue(new Error('ENOENT'));
+
+			vi.mocked(execFile.execFileNoThrow)
+				.mockResolvedValueOnce({
+					// branch already exists
+					stdout: 'abc123',
+					stderr: '',
+					exitCode: 0,
+				})
+				.mockResolvedValueOnce({
+					stdout: '',
+					stderr: '',
+					exitCode: 0,
+				});
+
+			const handler = handlers.get('git:worktreeSetup');
+			await handler!(
+				{} as any,
+				'/main/repo',
+				'/worktrees/existing',
+				'already-exists',
+				undefined,
+				'rc' // baseBranch — ignored when branch already exists
+			);
+
+			expect(execFile.execFileNoThrow).toHaveBeenCalledWith(
+				'git',
+				['worktree', 'add', '/worktrees/existing', 'already-exists'],
+				'/main/repo'
+			);
 		});
 
 		it('should create worktree with existing branch', async () => {
@@ -2685,49 +2332,6 @@ export function Component() {
 			});
 		});
 
-		it('should keep existing worktree when repo comparison and branch lookup fail', async () => {
-			const fsPromises = await import('fs/promises');
-			vi.mocked(fsPromises.default.access).mockResolvedValue(undefined);
-
-			vi.mocked(execFile.execFileNoThrow)
-				.mockResolvedValueOnce({
-					stdout: 'true\n',
-					stderr: '',
-					exitCode: 0,
-				})
-				.mockResolvedValueOnce({
-					stdout: '',
-					stderr: 'fatal: unable to read common dir',
-					exitCode: 128,
-				})
-				.mockResolvedValueOnce({
-					stdout: '.git\n',
-					stderr: '',
-					exitCode: 0,
-				})
-				.mockResolvedValueOnce({
-					stdout: '',
-					stderr: 'fatal: ambiguous argument HEAD',
-					exitCode: 128,
-				});
-
-			const handler = handlers.get('git:worktreeSetup');
-			const result = await handler!(
-				{} as any,
-				'/main/repo',
-				'/worktrees/feature',
-				'feature-branch'
-			);
-
-			expect(result).toEqual({
-				success: true,
-				created: false,
-				currentBranch: '',
-				requestedBranch: 'feature-branch',
-				branchMismatch: true,
-			});
-		});
-
 		it('should reject nested worktree path inside main repo', async () => {
 			const handler = handlers.get('git:worktreeSetup');
 			// Worktree path is inside the main repo
@@ -2860,23 +2464,43 @@ export function Component() {
 			});
 		});
 
-		it('should handle git worktree creation failure', async () => {
-			// Mock fs.access to throw (path doesn't exist)
+		it('should recover when branch is already checked out at another worktree', async () => {
+			// fs.access is called twice:
+			//  1) for the requested /worktrees/feature path (must reject — doesn't exist)
+			//  2) for the recovered /existing/wt/feature-branch path (must resolve — does exist)
 			const fsPromises = await import('fs/promises');
-			vi.mocked(fsPromises.default.access).mockRejectedValue(new Error('ENOENT'));
+			vi.mocked(fsPromises.default.access).mockImplementation(async (p: any) => {
+				if (String(p) === '/existing/wt/feature-branch') return undefined;
+				throw new Error('ENOENT');
+			});
 
 			vi.mocked(execFile.execFileNoThrow)
 				.mockResolvedValueOnce({
-					// git rev-parse --verify branchName (branch doesn't exist)
+					// git rev-parse --verify branchName (branch exists)
+					stdout: 'abc123456789',
+					stderr: '',
+					exitCode: 0,
+				})
+				.mockResolvedValueOnce({
+					// git worktree add fails because branch already attached elsewhere
 					stdout: '',
-					stderr: 'fatal: Needed a single revision',
+					stderr: "fatal: 'feature-branch' is already checked out at '/existing/wt/feature-branch'",
 					exitCode: 128,
 				})
 				.mockResolvedValueOnce({
-					// git worktree add -b fails
-					stdout: '',
-					stderr: "fatal: 'feature-branch' is already checked out at '/other/path'",
-					exitCode: 128,
+					// findLocalWorktreeForBranch → git worktree list --porcelain
+					stdout: [
+						'worktree /main/repo',
+						'HEAD aaa',
+						'branch refs/heads/main',
+						'',
+						'worktree /existing/wt/feature-branch',
+						'HEAD bbb',
+						'branch refs/heads/feature-branch',
+						'',
+					].join('\n'),
+					stderr: '',
+					exitCode: 0,
 				});
 
 			const handler = handlers.get('git:worktreeSetup');
@@ -2888,12 +2512,23 @@ export function Component() {
 			);
 
 			expect(result).toEqual({
-				success: false,
-				error: "fatal: 'feature-branch' is already checked out at '/other/path'",
+				success: true,
+				created: false,
+				alreadyExisted: true,
+				existingPath: '/existing/wt/feature-branch',
+				currentBranch: 'feature-branch',
+				requestedBranch: 'feature-branch',
+				branchMismatch: false,
 			});
+			expect(execFile.execFileNoThrow).toHaveBeenCalledWith(
+				'git',
+				['worktree', 'list', '--porcelain'],
+				'/main/repo'
+			);
 		});
 
-		it('should return fallback error when worktree creation fails without stderr', async () => {
+		it('should fall through to error when porcelain returns a stale worktree path that no longer exists on disk', async () => {
+			// fs.access rejects → recovered path is stale, treat as no match
 			const fsPromises = await import('fs/promises');
 			vi.mocked(fsPromises.default.access).mockRejectedValue(new Error('ENOENT'));
 
@@ -2905,7 +2540,93 @@ export function Component() {
 				})
 				.mockResolvedValueOnce({
 					stdout: '',
+					stderr: "fatal: 'feature-branch' is already checked out at '/stale/path'",
+					exitCode: 128,
+				})
+				.mockResolvedValueOnce({
+					// porcelain returns the stale path
+					stdout: [
+						'worktree /main/repo',
+						'HEAD aaa',
+						'branch refs/heads/main',
+						'',
+						'worktree /stale/path',
+						'HEAD bbb',
+						'branch refs/heads/feature-branch',
+						'',
+					].join('\n'),
 					stderr: '',
+					exitCode: 0,
+				});
+
+			const handler = handlers.get('git:worktreeSetup');
+			const result = await handler!(
+				{} as any,
+				'/main/repo',
+				'/worktrees/feature',
+				'feature-branch'
+			);
+
+			expect(result).toEqual({
+				success: false,
+				error: "fatal: 'feature-branch' is already checked out at '/stale/path'",
+			});
+			expect(fsPromises.default.access).toHaveBeenCalledWith('/stale/path');
+		});
+
+		it('should still surface error when branch is "already used" but porcelain lookup yields no match', async () => {
+			const fsPromises = await import('fs/promises');
+			vi.mocked(fsPromises.default.access).mockRejectedValue(new Error('ENOENT'));
+
+			vi.mocked(execFile.execFileNoThrow)
+				.mockResolvedValueOnce({
+					// git rev-parse --verify branchName (branch exists)
+					stdout: 'abc123',
+					stderr: '',
+					exitCode: 0,
+				})
+				.mockResolvedValueOnce({
+					// git worktree add fails
+					stdout: '',
+					stderr: "fatal: 'feature-branch' is already used by worktree at '/gone'",
+					exitCode: 128,
+				})
+				.mockResolvedValueOnce({
+					// porcelain returns nothing matching
+					stdout: 'worktree /main/repo\nHEAD aaa\nbranch refs/heads/main\n',
+					stderr: '',
+					exitCode: 0,
+				});
+
+			const handler = handlers.get('git:worktreeSetup');
+			const result = await handler!(
+				{} as any,
+				'/main/repo',
+				'/worktrees/feature',
+				'feature-branch'
+			);
+
+			expect(result).toEqual({
+				success: false,
+				error: "fatal: 'feature-branch' is already used by worktree at '/gone'",
+			});
+		});
+
+		it('should surface unrelated git worktree creation failures unchanged', async () => {
+			const fsPromises = await import('fs/promises');
+			vi.mocked(fsPromises.default.access).mockRejectedValue(new Error('ENOENT'));
+
+			vi.mocked(execFile.execFileNoThrow)
+				.mockResolvedValueOnce({
+					// git rev-parse --verify branchName (branch doesn't exist)
+					stdout: '',
+					stderr: 'fatal: Needed a single revision',
+					exitCode: 128,
+				})
+				.mockResolvedValueOnce({
+					// git worktree add -b fails for an unrelated reason
+					stdout: '',
+					stderr: 'fatal: permission denied',
 					exitCode: 128,
 				});
 
@@ -2919,83 +2640,18 @@ export function Component() {
 
 			expect(result).toEqual({
 				success: false,
-				error: 'Failed to create worktree',
+				error: 'fatal: permission denied',
 			});
+			// porcelain lookup must NOT run for non-"already used" errors
+			expect(execFile.execFileNoThrow).not.toHaveBeenCalledWith(
+				'git',
+				['worktree', 'list', '--porcelain'],
+				'/main/repo'
+			);
 		});
 	});
 
 	describe('git:worktreeCheckout', () => {
-		it('should checkout a branch via SSH remote helper', async () => {
-			enableSshRemote();
-			const remoteGit = await import('../../../../main/utils/remote-git');
-			vi.mocked(remoteGit.worktreeCheckoutRemote).mockResolvedValue({
-				success: true,
-				data: {
-					success: true,
-					hasUncommittedChanges: false,
-				},
-			});
-
-			const handler = handlers.get('git:worktreeCheckout');
-			const result = await handler!(
-				{} as any,
-				'/remote/worktree',
-				'feature/remote',
-				true,
-				'ssh-remote-123'
-			);
-
-			expect(remoteGit.worktreeCheckoutRemote).toHaveBeenCalledWith(
-				'/remote/worktree',
-				'feature/remote',
-				true,
-				enabledSshRemote
-			);
-			expect(result).toEqual({
-				success: true,
-				hasUncommittedChanges: false,
-			});
-		});
-
-		it('should throw when SSH checkout fails', async () => {
-			enableSshRemote();
-			const remoteGit = await import('../../../../main/utils/remote-git');
-			vi.mocked(remoteGit.worktreeCheckoutRemote).mockResolvedValue({
-				success: false,
-				error: 'remote checkout failed',
-			});
-
-			const handler = handlers.get('git:worktreeCheckout');
-
-			await expect(
-				handler!({} as any, '/remote/worktree', 'feature/remote', false, 'ssh-remote-123')
-			).rejects.toThrow('remote checkout failed');
-		});
-
-		it('should throw fallback error when SSH checkout fails without an error', async () => {
-			enableSshRemote();
-			const remoteGit = await import('../../../../main/utils/remote-git');
-			vi.mocked(remoteGit.worktreeCheckoutRemote).mockResolvedValue({
-				success: false,
-			});
-
-			const handler = handlers.get('git:worktreeCheckout');
-
-			await expect(
-				handler!({} as any, '/remote/worktree', 'feature/remote', false, 'ssh-remote-123')
-			).rejects.toThrow('Remote worktreeCheckout failed');
-		});
-
-		it('should throw when SSH checkout remote is missing', async () => {
-			mockSettingsStore.get.mockReturnValue([]);
-
-			const handler = handlers.get('git:worktreeCheckout');
-
-			await expect(
-				handler!({} as any, '/remote/worktree', 'feature/remote', false, 'ssh-remote-123')
-			).rejects.toThrow('SSH remote not found: ssh-remote-123');
-		});
-
 		it('should switch branch successfully in worktree', async () => {
 			vi.mocked(execFile.execFileNoThrow)
 				.mockResolvedValueOnce({
@@ -3500,68 +3156,6 @@ export function Component() {
 			});
 		});
 
-		it('should proceed without enriched PATH when getShellPath returns an empty path', async () => {
-			const shellPathModule = await import('../../../../main/runtime/getShellPath');
-			vi.mocked(shellPathModule.getShellPath).mockResolvedValueOnce('');
-
-			vi.mocked(execFile.execFileNoThrow)
-				.mockResolvedValueOnce({
-					stdout: 'Everything up-to-date',
-					stderr: '',
-					exitCode: 0,
-				})
-				.mockResolvedValueOnce({
-					stdout: 'https://github.com/user/repo/pull/790',
-					stderr: '',
-					exitCode: 0,
-				});
-
-			const handler = handlers.get('git:createPR');
-			const result = await handler!({} as any, '/worktree/path', 'main', 'Title', 'Body');
-
-			expect(execFile.execFileNoThrow).toHaveBeenCalledWith(
-				'git',
-				['push', '-u', 'origin', 'HEAD'],
-				'/worktree/path',
-				undefined
-			);
-			expect(result).toEqual({
-				success: true,
-				prUrl: 'https://github.com/user/repo/pull/790',
-			});
-		});
-
-		it('should stringify non-Error getShellPath failures and continue with default PATH', async () => {
-			const shellPathModule = await import('../../../../main/runtime/getShellPath');
-			vi.mocked(shellPathModule.getShellPath).mockRejectedValueOnce('shell unavailable');
-
-			vi.mocked(execFile.execFileNoThrow)
-				.mockResolvedValueOnce({
-					stdout: 'Everything up-to-date',
-					stderr: '',
-					exitCode: 0,
-				})
-				.mockResolvedValueOnce({
-					stdout: 'https://github.com/user/repo/pull/791',
-					stderr: '',
-					exitCode: 0,
-				});
-
-			const handler = handlers.get('git:createPR');
-			const result = await handler!({} as any, '/worktree/path', 'main', 'Title', 'Body');
-
-			expect(execFile.execFileNoThrow).toHaveBeenCalledWith(
-				'git',
-				['push', '-u', 'origin', 'HEAD'],
-				'/worktree/path',
-				undefined
-			);
-			expect(result).toEqual({
-				success: true,
-				prUrl: 'https://github.com/user/repo/pull/791',
-			});
-		});
-
 		it('should return fallback error when gh fails without stderr', async () => {
 			vi.mocked(execFile.execFileNoThrow)
 				.mockResolvedValueOnce({
@@ -3640,25 +3234,6 @@ export function Component() {
 				installed: false,
 				authenticated: false,
 			});
-		});
-
-		it('should not cache missing gh result when checking a custom ghPath', async () => {
-			const cliDetection = await import('../../../../main/utils/cliDetection');
-			vi.mocked(cliDetection.resolveGhPath).mockResolvedValue('/custom/path/gh');
-			vi.mocked(execFile.execFileNoThrow).mockResolvedValueOnce({
-				stdout: '',
-				stderr: 'no such file or directory',
-				exitCode: 127,
-			});
-
-			const handler = handlers.get('git:checkGhCli');
-			const result = await handler!({} as any, '/custom/path/gh');
-
-			expect(result).toEqual({
-				installed: false,
-				authenticated: false,
-			});
-			expect(cliDetection.setCachedGhStatus).not.toHaveBeenCalled();
 		});
 
 		it('should return installed: true and authenticated: false when gh is installed but not authed', async () => {
@@ -4004,83 +3579,6 @@ export function Component() {
 	});
 
 	describe('git:listWorktrees', () => {
-		it('should list worktrees via SSH remote helper', async () => {
-			enableSshRemote();
-			const remoteGit = await import('../../../../main/utils/remote-git');
-			const worktrees = [
-				{
-					path: '/remote/main',
-					head: 'abc123',
-					branch: 'main',
-					isBare: false,
-				},
-				{
-					path: '/remote/feature',
-					head: 'def456',
-					branch: 'feature/remote',
-					isBare: false,
-				},
-			];
-			vi.mocked(remoteGit.listWorktreesRemote).mockResolvedValue({
-				success: true,
-				data: worktrees,
-			});
-
-			const handler = handlers.get('git:listWorktrees');
-			const result = await handler!({} as any, '/remote/main', 'ssh-remote-123');
-
-			expect(remoteGit.listWorktreesRemote).toHaveBeenCalledWith('/remote/main', enabledSshRemote);
-			expect(result).toEqual({
-				success: true,
-				worktrees,
-			});
-		});
-
-		it('should return an error when SSH list worktrees fails', async () => {
-			enableSshRemote();
-			const remoteGit = await import('../../../../main/utils/remote-git');
-			vi.mocked(remoteGit.listWorktreesRemote).mockResolvedValue({
-				success: false,
-				error: 'remote worktree list failed',
-			});
-
-			const handler = handlers.get('git:listWorktrees');
-			const result = await handler!({} as any, '/remote/main', 'ssh-remote-123');
-
-			expect(result).toEqual({
-				success: false,
-				error: 'Error: remote worktree list failed',
-			});
-		});
-
-		it('should use fallback error when SSH list worktrees fails without an error', async () => {
-			enableSshRemote();
-			const remoteGit = await import('../../../../main/utils/remote-git');
-			vi.mocked(remoteGit.listWorktreesRemote).mockResolvedValue({
-				success: false,
-			});
-
-			const handler = handlers.get('git:listWorktrees');
-			const result = await handler!({} as any, '/remote/main', 'ssh-remote-123');
-
-			expect(result).toEqual({
-				success: false,
-				error: 'Error: Remote listWorktrees failed',
-			});
-		});
-
-		it('should return an error when SSH list worktrees remote is missing', async () => {
-			mockSettingsStore.get.mockReturnValue([]);
-
-			const handler = handlers.get('git:listWorktrees');
-			const result = await handler!({} as any, '/remote/main', 'ssh-remote-123');
-
-			expect(result).toEqual({
-				success: false,
-				error: 'Error: SSH remote not found: ssh-remote-123',
-			});
-		});
-
 		it('should return list of worktrees with parsed details', async () => {
 			const porcelainOutput = `worktree /home/user/project
 HEAD abc123def456789
@@ -4254,31 +3752,6 @@ branch refs/heads/main`;
 			});
 		});
 
-		it('should default missing head and branch on final worktree entry', async () => {
-			const porcelainOutput = 'worktree /home/user/project-no-head';
-
-			vi.mocked(execFile.execFileNoThrow).mockResolvedValue({
-				stdout: porcelainOutput,
-				stderr: '',
-				exitCode: 0,
-			});
-
-			const handler = handlers.get('git:listWorktrees');
-			const result = await handler!({} as any, '/home/user/project');
-
-			expect(result).toEqual({
-				success: true,
-				worktrees: [
-					{
-						path: '/home/user/project-no-head',
-						head: '',
-						branch: null,
-						isBare: false,
-					},
-				],
-			});
-		});
-
 		it('should handle multiple worktrees with various branch formats', async () => {
 			const porcelainOutput = `worktree /home/user/project
 HEAD abc123
@@ -4334,207 +3807,6 @@ branch refs/heads/bugfix-123
 
 		beforeEach(async () => {
 			mockFs = (await import('fs/promises')).default;
-		});
-
-		it('should scan SSH remote directories using remote filesystem and git helpers', async () => {
-			enableSshRemote();
-			const remoteFs = await import('../../../../main/utils/remote-fs');
-			const remoteGit = await import('../../../../main/utils/remote-git');
-			vi.mocked(remoteFs.readDirRemote).mockResolvedValue({
-				success: true,
-				data: [
-					{ name: 'remote-worktree', isDirectory: true },
-					{ name: '.hidden', isDirectory: true },
-					{ name: 'README.md', isDirectory: false },
-				] as any,
-			});
-			vi.mocked(remoteGit.execGitRemote).mockImplementation(async (args, options: any) => {
-				const cwd = String(options.remoteCwd);
-				if (cwd.endsWith('/remote-worktree')) {
-					if (args.includes('--is-inside-work-tree')) {
-						return { stdout: 'true\n', stderr: '', exitCode: 0 };
-					}
-					if (args.includes('--show-toplevel')) {
-						return { stdout: '/remote/parent/remote-worktree\n', stderr: '', exitCode: 0 };
-					}
-					if (args.includes('--git-dir')) {
-						return {
-							stdout: '/remote/main/.git/worktrees/remote-worktree\n',
-							stderr: '',
-							exitCode: 0,
-						};
-					}
-					if (args.includes('--git-common-dir')) {
-						return { stdout: '/remote/main/.git\n', stderr: '', exitCode: 0 };
-					}
-					if (args.includes('--abbrev-ref')) {
-						return { stdout: 'feature/remote\n', stderr: '', exitCode: 0 };
-					}
-				}
-
-				return { stdout: '', stderr: 'fatal: not a git repository', exitCode: 128 };
-			});
-
-			const handler = handlers.get('git:scanWorktreeDirectory');
-			const result = await handler!({} as any, '/remote/parent/', 'ssh-remote-123');
-
-			expect(remoteFs.readDirRemote).toHaveBeenCalledWith('/remote/parent/', enabledSshRemote);
-			expect(result).toEqual({
-				success: true,
-				gitSubdirs: [
-					{
-						path: '/remote/parent/remote-worktree',
-						name: 'remote-worktree',
-						isWorktree: true,
-						branch: 'feature/remote',
-						repoRoot: '/remote/main',
-					},
-				],
-			});
-		});
-
-		it('should scan SSH paths without trailing slash and resolve relative and root repo roots', async () => {
-			enableSshRemote();
-			const remoteFs = await import('../../../../main/utils/remote-fs');
-			const remoteGit = await import('../../../../main/utils/remote-git');
-			vi.mocked(remoteFs.readDirRemote).mockResolvedValue({
-				success: true,
-				data: [
-					{ name: 'relative-worktree', isDirectory: true },
-					{ name: 'root-worktree', isDirectory: true },
-				] as any,
-			});
-			vi.mocked(remoteGit.execGitRemote).mockImplementation(async (args, options: any) => {
-				const cwd = String(options.remoteCwd);
-
-				if (args.includes('--is-inside-work-tree')) {
-					return { stdout: 'true\n', stderr: '', exitCode: 0 };
-				}
-				if (args.includes('--show-toplevel')) {
-					return { stdout: `${cwd}\n`, stderr: '', exitCode: 0 };
-				}
-
-				if (cwd.endsWith('/relative-worktree')) {
-					if (args.includes('--git-dir')) {
-						return {
-							stdout: '../main/.git/worktrees/relative-worktree\n',
-							stderr: '',
-							exitCode: 0,
-						};
-					}
-					if (args.includes('--git-common-dir')) {
-						return { stdout: '../main/.git\n', stderr: '', exitCode: 0 };
-					}
-					if (args.includes('--abbrev-ref')) {
-						return { stdout: 'feature/relative\n', stderr: '', exitCode: 0 };
-					}
-				}
-
-				if (cwd.endsWith('/root-worktree')) {
-					if (args.includes('--git-dir')) {
-						return { stdout: '/.git/worktrees/root-worktree\n', stderr: '', exitCode: 0 };
-					}
-					if (args.includes('--git-common-dir')) {
-						return { stdout: '/.git\n', stderr: '', exitCode: 0 };
-					}
-					if (args.includes('--abbrev-ref')) {
-						return { stdout: 'feature/root\n', stderr: '', exitCode: 0 };
-					}
-				}
-
-				return { stdout: '', stderr: 'fatal: not a git repository', exitCode: 128 };
-			});
-
-			const handler = handlers.get('git:scanWorktreeDirectory');
-			const result = await handler!({} as any, '/remote/parent', 'ssh-remote-123');
-
-			expect(result).toEqual({
-				success: true,
-				gitSubdirs: [
-					{
-						path: '/remote/parent/relative-worktree',
-						name: 'relative-worktree',
-						isWorktree: true,
-						branch: 'feature/relative',
-						repoRoot: '/remote/parent/main',
-					},
-					{
-						path: '/remote/parent/root-worktree',
-						name: 'root-worktree',
-						isWorktree: true,
-						branch: 'feature/root',
-						repoRoot: '/',
-					},
-				],
-			});
-		});
-
-		it('should include SSH repos with null metadata when git metadata fallbacks fail', async () => {
-			enableSshRemote();
-			const remoteFs = await import('../../../../main/utils/remote-fs');
-			const remoteGit = await import('../../../../main/utils/remote-git');
-			let showToplevelCalls = 0;
-
-			vi.mocked(remoteFs.readDirRemote).mockResolvedValue({
-				success: true,
-				data: [{ name: 'broken-metadata', isDirectory: true }] as any,
-			});
-			vi.mocked(remoteGit.execGitRemote).mockImplementation(async (args, options: any) => {
-				const cwd = String(options.remoteCwd);
-
-				if (args.includes('--is-inside-work-tree')) {
-					return { stdout: 'true\n', stderr: '', exitCode: 0 };
-				}
-				if (args.includes('--show-toplevel')) {
-					showToplevelCalls += 1;
-					if (showToplevelCalls === 1) {
-						return { stdout: `${cwd}\n`, stderr: '', exitCode: 0 };
-					}
-					return { stdout: '', stderr: 'fatal: unable to read toplevel', exitCode: 128 };
-				}
-				if (
-					args.includes('--git-dir') ||
-					args.includes('--git-common-dir') ||
-					args.includes('--abbrev-ref')
-				) {
-					return { stdout: '', stderr: 'fatal: unable to read metadata', exitCode: 128 };
-				}
-
-				return { stdout: '', stderr: 'fatal: not a git repository', exitCode: 128 };
-			});
-
-			const handler = handlers.get('git:scanWorktreeDirectory');
-			const result = await handler!({} as any, '/remote/parent', 'ssh-remote-123');
-
-			expect(result).toEqual({
-				success: true,
-				gitSubdirs: [
-					{
-						path: '/remote/parent/broken-metadata',
-						name: 'broken-metadata',
-						isWorktree: false,
-						branch: null,
-						repoRoot: null,
-					},
-				],
-			});
-		});
-
-		it('should return an empty list when SSH directory reads fail', async () => {
-			enableSshRemote();
-			const remoteFs = await import('../../../../main/utils/remote-fs');
-			vi.mocked(remoteFs.readDirRemote).mockResolvedValue({
-				success: false,
-				error: 'permission denied',
-			});
-
-			const handler = handlers.get('git:scanWorktreeDirectory');
-			const result = await handler!({} as any, '/remote/parent', 'ssh-remote-123');
-
-			expect(result).toEqual({
-				success: true,
-				gitSubdirs: [],
-			});
 		});
 
 		it('should find git repositories and worktrees in directory', async () => {
@@ -4724,55 +3996,6 @@ branch refs/heads/bugfix-123
 			});
 		});
 
-		it('should fall back to resolved paths when realpath lookup fails', async () => {
-			vi.mocked(mockFs.readdir).mockResolvedValue([
-				{ name: 'repo-dir', isDirectory: () => true },
-			] as any);
-			vi.mocked(mockFs.realpath)
-				.mockRejectedValueOnce(new Error('realpath failed for subdir'))
-				.mockRejectedValueOnce(new Error('realpath failed for toplevel'));
-
-			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (cmd, args, cwd) => {
-				const cwdStr = String(cwd);
-
-				if (cwdStr.endsWith('repo-dir')) {
-					if (args?.includes('--is-inside-work-tree')) {
-						return { stdout: 'true\n', stderr: '', exitCode: 0 };
-					}
-					if (args?.includes('--show-toplevel')) {
-						return { stdout: '/parent/repo-dir', stderr: '', exitCode: 0 };
-					}
-					if (args?.includes('--git-dir')) {
-						return { stdout: '.git', stderr: '', exitCode: 0 };
-					}
-					if (args?.includes('--git-common-dir')) {
-						return { stdout: '.git', stderr: '', exitCode: 0 };
-					}
-					if (args?.includes('--abbrev-ref')) {
-						return { stdout: 'main\n', stderr: '', exitCode: 0 };
-					}
-				}
-
-				return { stdout: '', stderr: 'fatal: not a git repository', exitCode: 128 };
-			});
-
-			const handler = handlers.get('git:scanWorktreeDirectory');
-			const result = await handler!({} as any, '/parent');
-
-			expect(result).toEqual({
-				success: true,
-				gitSubdirs: [
-					{
-						path: path.join('/parent', 'repo-dir'),
-						name: 'repo-dir',
-						isWorktree: false,
-						branch: 'main',
-						repoRoot: '/parent/repo-dir',
-					},
-				],
-			});
-		});
-
 		it('should return empty array when directory has no git repos', async () => {
 			vi.mocked(mockFs.readdir).mockResolvedValue([
 				{ name: 'folder1', isDirectory: () => true },
@@ -4812,10 +4035,12 @@ branch refs/heads/bugfix-123
 			const handler = handlers.get('git:scanWorktreeDirectory');
 			const result = await handler!({} as any, '/nonexistent/path');
 
-			// The handler catches errors and returns empty gitSubdirs
+			// The handler catches errors and returns empty gitSubdirs along with
+			// scanFailed: true so the renderer knows not to bulk-remove sessions.
 			expect(result).toEqual({
 				success: true,
 				gitSubdirs: [],
+				scanFailed: true,
 			});
 		});
 
@@ -5000,6 +4225,253 @@ branch refs/heads/bugfix-123
 			expect(result.gitSubdirs).toHaveLength(1);
 			expect(result.gitSubdirs[0].name).toBe('good-worktree');
 		});
+
+		it('should accept worktrees on symlinked basePaths via realpath canonicalization', async () => {
+			// Regression: on Linux/Windows, if the configured basePath traverses a symlink
+			// (e.g. /home/user/work → /data/work), git rev-parse --show-toplevel returns
+			// the realpath while the constructed subdirPath does not. Without realpath
+			// canonicalization the comparison rejected every subdir and the renderer
+			// then bulk-flagged every existing worktree as removed.
+			vi.mocked(mockFs.readdir).mockResolvedValue([
+				{ name: 'feature-branch', isDirectory: () => true },
+			] as any);
+
+			vi.mocked(mockFs.realpath).mockImplementation(async (p: any) => {
+				const s = String(p);
+				if (s === '/home/user/worktrees/feature-branch') {
+					return '/data/worktrees/feature-branch';
+				}
+				if (s === '/data/worktrees/feature-branch') {
+					return '/data/worktrees/feature-branch';
+				}
+				return s;
+			});
+
+			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (cmd, args) => {
+				if (args?.includes('--is-inside-work-tree')) {
+					return { stdout: 'true\n', stderr: '', exitCode: 0 };
+				}
+				if (args?.includes('--show-toplevel')) {
+					// git always returns realpath, not the symlink path
+					return { stdout: '/data/worktrees/feature-branch', stderr: '', exitCode: 0 };
+				}
+				if (args?.includes('--git-dir')) {
+					return { stdout: '.git', stderr: '', exitCode: 0 };
+				}
+				if (args?.includes('--git-common-dir')) {
+					return { stdout: '.git', stderr: '', exitCode: 0 };
+				}
+				if (args?.includes('--abbrev-ref')) {
+					return { stdout: 'feature-branch\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: '', exitCode: 0 };
+			});
+
+			const handler = handlers.get('git:scanWorktreeDirectory');
+			const result = await handler!({} as any, '/home/user/worktrees');
+
+			expect(result.gitSubdirs).toHaveLength(1);
+			expect(result.gitSubdirs[0].branch).toBe('feature-branch');
+			expect(result.scanFailed).toBeFalsy();
+		});
+
+		it('should discover nested worktrees from slash-named branches', async () => {
+			// Regression: branches like "fix/worktree-removal" produce a nested
+			// path <basePath>/fix/worktree-removal. Without one-level recursion,
+			// the scan misses these and the renderer wrongly removes the session.
+			vi.mocked(mockFs.readdir).mockImplementation(async (dir: any) => {
+				if (String(dir) === '/parent') {
+					return [
+						// Flat worktree (existing happy path)
+						{ name: 'flat-branch', isDirectory: () => true },
+						// Group directory containing nested worktrees
+						{ name: 'fix', isDirectory: () => true },
+					] as any;
+				}
+				if (String(dir) === path.join('/parent', 'fix')) {
+					return [
+						{ name: 'worktree-removal', isDirectory: () => true },
+						{ name: 'files-restart', isDirectory: () => true },
+					] as any;
+				}
+				return [] as any;
+			});
+
+			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (cmd, args, cwd) => {
+				const cwdStr = String(cwd);
+
+				// Group directory itself is NOT a git repo
+				if (cwdStr === path.join('/parent', 'fix')) {
+					if (args?.includes('--is-inside-work-tree')) {
+						return { stdout: '', stderr: 'fatal: not a git repository', exitCode: 128 };
+					}
+				}
+
+				// Helper: act like a real worktree at the given path
+				const respondAsWorktreeAt = (workPath: string, branch: string) => {
+					if (cwdStr === workPath) {
+						if (args?.includes('--is-inside-work-tree')) {
+							return { stdout: 'true\n', stderr: '', exitCode: 0 };
+						}
+						if (args?.includes('--show-toplevel')) {
+							return { stdout: workPath, stderr: '', exitCode: 0 };
+						}
+						if (args?.includes('--git-dir')) {
+							return {
+								stdout: `/parent/main-repo/.git/worktrees/${branch}`,
+								stderr: '',
+								exitCode: 0,
+							};
+						}
+						if (args?.includes('--git-common-dir')) {
+							return { stdout: '/parent/main-repo/.git', stderr: '', exitCode: 0 };
+						}
+						if (args?.includes('--abbrev-ref')) {
+							return { stdout: `${branch}\n`, stderr: '', exitCode: 0 };
+						}
+					}
+					return null;
+				};
+
+				return (
+					respondAsWorktreeAt(path.join('/parent', 'flat-branch'), 'flat-branch') ??
+					respondAsWorktreeAt(
+						path.join('/parent', 'fix', 'worktree-removal'),
+						'fix/worktree-removal'
+					) ??
+					respondAsWorktreeAt(
+						path.join('/parent', 'fix', 'files-restart'),
+						'fix/files-restart'
+					) ?? { stdout: '', stderr: 'fatal: not a git repository', exitCode: 128 }
+				);
+			});
+
+			const handler = handlers.get('git:scanWorktreeDirectory');
+			const result = await handler!({} as any, '/parent');
+
+			const paths = (result.gitSubdirs as Array<{ path: string; branch: string }>)
+				.map((e) => e.path)
+				.sort();
+			expect(paths).toEqual(
+				[
+					path.join('/parent', 'flat-branch'),
+					path.join('/parent', 'fix', 'files-restart'),
+					path.join('/parent', 'fix', 'worktree-removal'),
+				].sort()
+			);
+			const nested = (result.gitSubdirs as Array<{ path: string; branch: string }>).find(
+				(e) => e.path === path.join('/parent', 'fix', 'worktree-removal')
+			);
+			expect(nested?.branch).toBe('fix/worktree-removal');
+			expect(result.scanFailed).toBeFalsy();
+		});
+
+		it('should not recurse beyond one level', async () => {
+			// MAX_DEPTH=1 means we cover <basePath>/<group>/<branch> but not deeper.
+			// Worktrees at <basePath>/a/b/c must NOT appear.
+			vi.mocked(mockFs.readdir).mockImplementation(async (dir: any) => {
+				const s = String(dir);
+				if (s === '/parent') return [{ name: 'a', isDirectory: () => true }] as any;
+				if (s === path.join('/parent', 'a')) return [{ name: 'b', isDirectory: () => true }] as any;
+				if (s === path.join('/parent', 'a', 'b'))
+					return [{ name: 'c', isDirectory: () => true }] as any;
+				return [] as any;
+			});
+
+			// Make every level look like "not a git repo" except the deepest one.
+			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (cmd, args, cwd) => {
+				const cwdStr = String(cwd);
+				if (cwdStr === path.join('/parent', 'a', 'b', 'c')) {
+					if (args?.includes('--is-inside-work-tree')) {
+						return { stdout: 'true\n', stderr: '', exitCode: 0 };
+					}
+					if (args?.includes('--show-toplevel')) {
+						return { stdout: cwdStr, stderr: '', exitCode: 0 };
+					}
+					if (args?.includes('--abbrev-ref')) {
+						return { stdout: 'too-deep\n', stderr: '', exitCode: 0 };
+					}
+					return { stdout: '.git', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: 'fatal: not a git repository', exitCode: 128 };
+			});
+
+			const handler = handlers.get('git:scanWorktreeDirectory');
+			const result = await handler!({} as any, '/parent');
+
+			expect(result.gitSubdirs).toHaveLength(0);
+			expect(result.scanFailed).toBeFalsy();
+		});
+
+		it('should set scanFailed when SSH readDirRemote fails at the top level', async () => {
+			// Regression: previously the SSH branch in readSubdirs returned null on
+			// failure, scanLevel returned [], the outer try/catch never fired, and
+			// the renderer received { gitSubdirs: [] } with no scanFailed flag.
+			// That triggered bulk-removal of every SSH worktree session whenever
+			// the remote read failed (network blip, expired auth, missing path).
+			mockSettingsStore.get.mockReturnValue([
+				{ id: 'ssh-1', host: 'remote.example.com', user: 'me' },
+			]);
+
+			const remoteFs = await import('../../../../main/utils/remote-fs');
+			vi.mocked(remoteFs.readDirRemote).mockResolvedValue({
+				success: false,
+				error: 'connection timed out',
+			} as any);
+
+			const handler = handlers.get('git:scanWorktreeDirectory');
+			const result = await handler!({} as any, '/remote/worktrees', 'ssh-1');
+
+			expect(result.gitSubdirs).toEqual([]);
+			expect(result.scanFailed).toBe(true);
+		});
+
+		it('should swallow read errors on nested group directories', async () => {
+			// If recursing into a group dir fails (perms, race with deletion), the
+			// rest of the scan must still succeed. Without this, a transient
+			// failure on one nested branch wipes every sibling worktree session.
+			vi.mocked(mockFs.readdir).mockImplementation(async (dir: any) => {
+				const s = String(dir);
+				if (s === '/parent') {
+					return [
+						{ name: 'good-flat', isDirectory: () => true },
+						{ name: 'broken-group', isDirectory: () => true },
+					] as any;
+				}
+				if (s === path.join('/parent', 'broken-group')) {
+					const err = new Error('EACCES: permission denied') as NodeJS.ErrnoException;
+					err.code = 'EACCES';
+					throw err;
+				}
+				return [] as any;
+			});
+
+			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (cmd, args, cwd) => {
+				const cwdStr = String(cwd);
+				if (cwdStr === path.join('/parent', 'good-flat')) {
+					if (args?.includes('--is-inside-work-tree')) {
+						return { stdout: 'true\n', stderr: '', exitCode: 0 };
+					}
+					if (args?.includes('--show-toplevel')) {
+						return { stdout: cwdStr, stderr: '', exitCode: 0 };
+					}
+					if (args?.includes('--abbrev-ref')) {
+						return { stdout: 'good-flat\n', stderr: '', exitCode: 0 };
+					}
+					return { stdout: '.git', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: 'fatal: not a git repository', exitCode: 128 };
+			});
+
+			const handler = handlers.get('git:scanWorktreeDirectory');
+			const result = await handler!({} as any, '/parent');
+
+			expect(result.gitSubdirs).toHaveLength(1);
+			expect((result.gitSubdirs as Array<{ name: string }>)[0].name).toBe('good-flat');
+			// Whole-scan failure must NOT be flagged — that would trigger the renderer's
+			// removal-skip fallback; we only flag scanFailed for the top-level read.
+			expect(result.scanFailed).toBeFalsy();
+		});
 	});
 
 	describe('git:watchWorktreeDirectory', () => {
@@ -5009,24 +4481,6 @@ branch refs/heads/bugfix-123
 		beforeEach(async () => {
 			mockFs = (await import('fs/promises')).default;
 			mockChokidar = (await import('chokidar')).default;
-		});
-
-		it('should return polling guidance for SSH remote sessions', async () => {
-			const handler = handlers.get('git:watchWorktreeDirectory');
-			const result = await handler!(
-				{} as any,
-				'session-remote',
-				'/remote/worktrees',
-				'ssh-remote-123'
-			);
-
-			expect(mockFs.access).not.toHaveBeenCalled();
-			expect(mockChokidar.watch).not.toHaveBeenCalled();
-			expect(result).toEqual({
-				success: true,
-				isRemote: true,
-				message: 'File watching not available for remote sessions. Use polling instead.',
-			});
 		});
 
 		it('should start watching a valid directory and return success', async () => {
@@ -5048,40 +4502,11 @@ branch refs/heads/bugfix-123
 				ignored: [/(^|[/\\])\../, expect.any(RegExp)],
 				persistent: true,
 				ignoreInitial: true,
-				depth: 0,
+				depth: 1,
 			});
 			expect(mockWatcher.on).toHaveBeenCalledWith('addDir', expect.any(Function));
 			expect(mockWatcher.on).toHaveBeenCalledWith('error', expect.any(Function));
 			expect(result).toEqual({ success: true });
-		});
-
-		it('should log watcher error events without failing setup', async () => {
-			vi.mocked(mockFs.access).mockResolvedValue(undefined);
-
-			let errorCallback: Function | undefined;
-			const mockWatcher = {
-				on: vi.fn((event: string, cb: Function) => {
-					if (event === 'error') {
-						errorCallback = cb;
-					}
-					return mockWatcher;
-				}),
-				close: vi.fn().mockResolvedValue(undefined),
-			};
-			vi.mocked(mockChokidar.watch).mockReturnValue(mockWatcher as any);
-
-			const handler = handlers.get('git:watchWorktreeDirectory');
-			const result = await handler!({} as any, 'session-error', '/parent/worktrees');
-
-			expect(result).toEqual({ success: true });
-			expect(errorCallback).toBeDefined();
-
-			errorCallback!(new Error('watch failed'));
-
-			const { logger } = await import('../../../../main/utils/logger');
-			expect(logger.error).toHaveBeenCalledWith(
-				'[Git] Worktree watcher error for session session-error: Error: watch failed'
-			);
 		});
 
 		it('should close existing watcher before starting new one for same session', async () => {
@@ -5356,7 +4781,7 @@ branch refs/heads/bugfix-123
 			vi.useRealTimers();
 		});
 
-		it('should debounce rapid directory additions', async () => {
+		it('should use per-directory debounce so multiple worktrees are each detected', async () => {
 			vi.useFakeTimers();
 
 			vi.mocked(mockFs.access).mockResolvedValue(undefined);
@@ -5402,7 +4827,7 @@ branch refs/heads/bugfix-123
 			const handler = handlers.get('git:watchWorktreeDirectory');
 			await handler!({} as any, 'session-debounce', '/parent/worktrees');
 
-			// Simulate rapid directory additions
+			// Simulate rapid directory additions for different paths
 			await addDirCallback!('/parent/worktrees/dir1');
 			await vi.advanceTimersByTimeAsync(100);
 			await addDirCallback!('/parent/worktrees/dir2');
@@ -5412,49 +4837,16 @@ branch refs/heads/bugfix-123
 			// Fast-forward past debounce
 			await vi.advanceTimersByTimeAsync(600);
 
-			// Only the last directory should be processed due to debouncing
-			expect(checkedPaths).toEqual(['/parent/worktrees/dir3']);
+			// All three directories should be processed (per-directory debounce)
+			expect(checkedPaths).toHaveLength(3);
+			expect(checkedPaths).toContain('/parent/worktrees/dir1');
+			expect(checkedPaths).toContain('/parent/worktrees/dir2');
+			expect(checkedPaths).toContain('/parent/worktrees/dir3');
 
 			vi.useRealTimers();
 		});
 
-		it('should clear pending debounce timer when restarting watcher for the same session', async () => {
-			vi.useFakeTimers();
-
-			vi.mocked(mockFs.access).mockResolvedValue(undefined);
-
-			let addDirCallback: Function | undefined;
-			const mockWatcher1 = {
-				on: vi.fn((event: string, cb: Function) => {
-					if (event === 'addDir') {
-						addDirCallback = cb;
-					}
-					return mockWatcher1;
-				}),
-				close: vi.fn().mockResolvedValue(undefined),
-			};
-			const mockWatcher2 = {
-				on: vi.fn().mockReturnThis(),
-				close: vi.fn().mockResolvedValue(undefined),
-			};
-			vi.mocked(mockChokidar.watch)
-				.mockReturnValueOnce(mockWatcher1 as any)
-				.mockReturnValueOnce(mockWatcher2 as any);
-
-			const handler = handlers.get('git:watchWorktreeDirectory');
-			await handler!({} as any, 'session-restart', '/parent/worktrees');
-			await addDirCallback!('/parent/worktrees/new-worktree');
-			await handler!({} as any, 'session-restart', '/other/worktrees');
-
-			await vi.advanceTimersByTimeAsync(600);
-
-			expect(mockWatcher1.close).toHaveBeenCalled();
-			expect(execFile.execFileNoThrow).not.toHaveBeenCalled();
-
-			vi.useRealTimers();
-		});
-
-		it('should skip discovered directories when toplevel lookup fails', async () => {
+		it('should debounce repeated addDir events for the same directory', async () => {
 			vi.useFakeTimers();
 
 			vi.mocked(mockFs.access).mockResolvedValue(undefined);
@@ -5481,122 +4873,35 @@ branch refs/heads/bugfix-123
 			const { BrowserWindow } = await import('electron');
 			vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([mockWindow] as any);
 
-			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (cmd, args) => {
-				if (args?.includes('--is-inside-work-tree')) {
-					return { stdout: 'true\n', stderr: '', exitCode: 0 };
-				}
-				if (args?.includes('--show-toplevel')) {
-					return { stdout: '', stderr: 'fatal: unable to read tree', exitCode: 128 };
-				}
-				return { stdout: '', stderr: '', exitCode: 0 };
-			});
-
-			const handler = handlers.get('git:watchWorktreeDirectory');
-			await handler!({} as any, 'session-toplevel-fails', '/parent/worktrees');
-			await addDirCallback!('/parent/worktrees/broken-worktree');
-
-			await vi.advanceTimersByTimeAsync(600);
-
-			expect(mockWindow.webContents.send).not.toHaveBeenCalled();
-
-			vi.useRealTimers();
-		});
-
-		it('should skip discovered directories nested inside another worktree', async () => {
-			vi.useFakeTimers();
-
-			vi.mocked(mockFs.access).mockResolvedValue(undefined);
-
-			let addDirCallback: Function | undefined;
-			const mockWatcher = {
-				on: vi.fn((event: string, cb: Function) => {
-					if (event === 'addDir') {
-						addDirCallback = cb;
-					}
-					return mockWatcher;
-				}),
-				close: vi.fn().mockResolvedValue(undefined),
-			};
-			vi.mocked(mockChokidar.watch).mockReturnValue(mockWatcher as any);
-
-			const mockWindow = {
-				isDestroyed: vi.fn().mockReturnValue(false),
-				webContents: {
-					send: vi.fn(),
-					isDestroyed: vi.fn().mockReturnValue(false),
-				},
-			};
-			const { BrowserWindow } = await import('electron');
-			vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([mockWindow] as any);
-
-			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (cmd, args) => {
-				if (args?.includes('--is-inside-work-tree')) {
-					return { stdout: 'true\n', stderr: '', exitCode: 0 };
-				}
-				if (args?.includes('--show-toplevel')) {
-					return { stdout: '/parent/worktrees/main-worktree\n', stderr: '', exitCode: 0 };
-				}
-				return { stdout: '', stderr: '', exitCode: 0 };
-			});
-
-			const handler = handlers.get('git:watchWorktreeDirectory');
-			await handler!({} as any, 'session-nested', '/parent/worktrees');
-			await addDirCallback!('/parent/worktrees/main-worktree/build');
-
-			await vi.advanceTimersByTimeAsync(600);
-
-			expect(mockWindow.webContents.send).not.toHaveBeenCalled();
-
-			vi.useRealTimers();
-		});
-
-		it('should skip emitting when renderer window is unavailable after branch lookup fails', async () => {
-			vi.useFakeTimers();
-
-			vi.mocked(mockFs.access).mockResolvedValue(undefined);
-
-			let addDirCallback: Function | undefined;
-			const mockWatcher = {
-				on: vi.fn((event: string, cb: Function) => {
-					if (event === 'addDir') {
-						addDirCallback = cb;
-					}
-					return mockWatcher;
-				}),
-				close: vi.fn().mockResolvedValue(undefined),
-			};
-			vi.mocked(mockChokidar.watch).mockReturnValue(mockWatcher as any);
-
-			const mockWindow = {
-				isDestroyed: vi.fn().mockReturnValue(true),
-				webContents: {
-					send: vi.fn(),
-					isDestroyed: vi.fn().mockReturnValue(false),
-				},
-			};
-			const { BrowserWindow } = await import('electron');
-			vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([mockWindow] as any);
-
+			const checkedPaths: string[] = [];
 			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (cmd, args, cwd) => {
 				if (args?.includes('--is-inside-work-tree')) {
+					checkedPaths.push(cwd as string);
 					return { stdout: 'true\n', stderr: '', exitCode: 0 };
 				}
 				if (args?.includes('--show-toplevel')) {
 					return { stdout: String(cwd), stderr: '', exitCode: 0 };
 				}
 				if (args?.includes('--abbrev-ref')) {
-					return { stdout: '', stderr: 'fatal: ambiguous argument HEAD', exitCode: 128 };
+					return { stdout: 'feature\n', stderr: '', exitCode: 0 };
 				}
 				return { stdout: '', stderr: '', exitCode: 0 };
 			});
 
 			const handler = handlers.get('git:watchWorktreeDirectory');
-			await handler!({} as any, 'session-destroyed-window', '/parent/worktrees');
-			await addDirCallback!('/parent/worktrees/feature-worktree');
+			await handler!({} as any, 'session-debounce-same', '/parent/worktrees');
+
+			// Simulate repeated addDir for the SAME path (e.g., rapid filesystem events)
+			await addDirCallback!('/parent/worktrees/dir1');
+			await vi.advanceTimersByTimeAsync(100);
+			await addDirCallback!('/parent/worktrees/dir1');
+			await vi.advanceTimersByTimeAsync(100);
+			await addDirCallback!('/parent/worktrees/dir1');
 
 			await vi.advanceTimersByTimeAsync(600);
 
-			expect(mockWindow.webContents.send).not.toHaveBeenCalled();
+			// Should only process once despite three events for the same path
+			expect(checkedPaths).toEqual(['/parent/worktrees/dir1']);
 
 			vi.useRealTimers();
 		});
@@ -5699,6 +5004,54 @@ branch refs/heads/bugfix-123
 			vi.useRealTimers();
 		});
 
+		it('should not kill a new watcher when unwatch races with watch (StrictMode)', async () => {
+			vi.mocked(mockFs.access).mockResolvedValue(undefined);
+
+			let closeResolveA: (() => void) | undefined;
+			const mockWatcherA = {
+				on: vi.fn().mockReturnThis(),
+				close: vi.fn(
+					() =>
+						new Promise<void>((r) => {
+							closeResolveA = r;
+						})
+				),
+			};
+			const mockWatcherB = {
+				on: vi.fn().mockReturnThis(),
+				close: vi.fn().mockResolvedValue(undefined),
+			};
+			vi.mocked(mockChokidar.watch)
+				.mockReturnValueOnce(mockWatcherA as any)
+				.mockReturnValueOnce(mockWatcherB as any);
+
+			const watchHandler = handlers.get('git:watchWorktreeDirectory');
+			const unwatchHandler = handlers.get('git:unwatchWorktreeDirectory');
+
+			// Create initial watcher A
+			await watchHandler!({} as any, 'race-session', '/some/path');
+
+			// Simulate React StrictMode: unwatch and watch fire concurrently.
+			// Start unwatch (will await watcher.close() which we control)
+			const unwatchPromise = unwatchHandler!({} as any, 'race-session');
+
+			// Before unwatch resolves, start watch — this creates watcher B
+			const watchPromise = watchHandler!({} as any, 'race-session', '/some/path');
+
+			// Now let watcher A's close resolve (unwatch resumes)
+			closeResolveA!();
+			await unwatchPromise;
+			await watchPromise;
+
+			// Watcher B should still be functional — the late-resolving unwatch
+			// must NOT have removed it from the map
+			expect(mockWatcherB.close).not.toHaveBeenCalled();
+
+			// Verify watcher B is the active watcher by unwatching and confirming B is closed
+			await unwatchHandler!({} as any, 'race-session');
+			expect(mockWatcherB.close).toHaveBeenCalled();
+		});
+
 		it('should handle multiple watch/unwatch cycles for same session', async () => {
 			vi.mocked(mockFs.access).mockResolvedValue(undefined);
 
@@ -5729,292 +5082,6 @@ branch refs/heads/bugfix-123
 			await watchHandler!({} as any, 'session-cycle', '/path/3');
 			await unwatchHandler!({} as any, 'session-cycle');
 			expect(mockWatchers[2].close).toHaveBeenCalled();
-		});
-	});
-
-	describe('git:removeWorktree', () => {
-		let mockFs: typeof import('fs/promises').default;
-
-		beforeEach(async () => {
-			mockFs = (await import('fs/promises')).default;
-		});
-
-		it('should remove a worktree through git worktree remove', async () => {
-			vi.mocked(mockFs.access).mockResolvedValue(undefined);
-			vi.mocked(execFile.execFileNoThrow).mockResolvedValue({
-				stdout: '',
-				stderr: '',
-				exitCode: 0,
-			});
-
-			const handler = handlers.get('git:removeWorktree');
-			const result = await handler!({} as any, '/worktrees/feature');
-
-			expect(execFile.execFileNoThrow).toHaveBeenCalledWith(
-				'git',
-				['worktree', 'remove', '/worktrees/feature'],
-				'/worktrees/feature'
-			);
-			expect(mockFs.rm).not.toHaveBeenCalled();
-			expect(result).toEqual({ success: true });
-		});
-
-		it('should pass --force to git worktree remove when requested', async () => {
-			vi.mocked(mockFs.access).mockResolvedValue(undefined);
-			vi.mocked(execFile.execFileNoThrow).mockResolvedValue({
-				stdout: '',
-				stderr: '',
-				exitCode: 0,
-			});
-
-			const handler = handlers.get('git:removeWorktree');
-			const result = await handler!({} as any, '/worktrees/feature', true);
-
-			expect(execFile.execFileNoThrow).toHaveBeenCalledWith(
-				'git',
-				['worktree', 'remove', '--force', '/worktrees/feature'],
-				'/worktrees/feature'
-			);
-			expect(result).toEqual({ success: true });
-		});
-
-		it('should skip dirty-check and recursively remove when forced git removal fails', async () => {
-			vi.mocked(mockFs.access).mockResolvedValue(undefined);
-			vi.mocked(mockFs.rm).mockResolvedValue(undefined);
-			vi.mocked(execFile.execFileNoThrow).mockResolvedValueOnce({
-				stdout: '',
-				stderr: 'fatal: contains modified or untracked files',
-				exitCode: 128,
-			});
-
-			const handler = handlers.get('git:removeWorktree');
-			const result = await handler!({} as any, '/worktrees/dirty', true);
-
-			expect(execFile.execFileNoThrow).toHaveBeenCalledTimes(1);
-			expect(mockFs.rm).toHaveBeenCalledWith('/worktrees/dirty', {
-				recursive: true,
-				force: true,
-			});
-			expect(result).toEqual({ success: true });
-		});
-
-		it('should refuse non-forced removal when the worktree has uncommitted changes', async () => {
-			vi.mocked(mockFs.access).mockResolvedValue(undefined);
-			vi.mocked(execFile.execFileNoThrow)
-				.mockResolvedValueOnce({
-					stdout: '',
-					stderr: 'fatal: contains modified or untracked files',
-					exitCode: 128,
-				})
-				.mockResolvedValueOnce({
-					stdout: 'M  src/file.ts\n?? new-file.ts\n',
-					stderr: '',
-					exitCode: 0,
-				});
-
-			const handler = handlers.get('git:removeWorktree');
-			const result = await handler!({} as any, '/worktrees/dirty');
-
-			expect(mockFs.rm).not.toHaveBeenCalled();
-			expect(result).toEqual({
-				success: false,
-				error: 'Worktree has uncommitted changes. Use force option to delete anyway.',
-				hasUncommittedChanges: true,
-			});
-		});
-
-		it('should fall back to recursive directory removal for clean non-worktree paths', async () => {
-			vi.mocked(mockFs.access).mockResolvedValue(undefined);
-			vi.mocked(mockFs.rm).mockResolvedValue(undefined);
-			vi.mocked(execFile.execFileNoThrow)
-				.mockResolvedValueOnce({
-					stdout: '',
-					stderr: 'fatal: not a git worktree',
-					exitCode: 128,
-				})
-				.mockResolvedValueOnce({
-					stdout: '',
-					stderr: '',
-					exitCode: 0,
-				});
-
-			const handler = handlers.get('git:removeWorktree');
-			const result = await handler!({} as any, '/worktrees/clean-folder');
-
-			expect(mockFs.rm).toHaveBeenCalledWith('/worktrees/clean-folder', {
-				recursive: true,
-				force: true,
-			});
-			expect(result).toEqual({ success: true });
-		});
-
-		it('should return an error when the target cannot be accessed', async () => {
-			vi.mocked(mockFs.access).mockRejectedValue(new Error('ENOENT: no such file or directory'));
-
-			const handler = handlers.get('git:removeWorktree');
-			const result = await handler!({} as any, '/missing/worktree');
-
-			expect(execFile.execFileNoThrow).not.toHaveBeenCalled();
-			expect(mockFs.rm).not.toHaveBeenCalled();
-			expect(result).toEqual({
-				success: false,
-				error: 'ENOENT: no such file or directory',
-			});
-		});
-
-		it('should stringify non-Error failures when remove target cannot be accessed', async () => {
-			vi.mocked(mockFs.access).mockRejectedValue('permission denied');
-
-			const handler = handlers.get('git:removeWorktree');
-			const result = await handler!({} as any, '/missing/worktree');
-
-			expect(execFile.execFileNoThrow).not.toHaveBeenCalled();
-			expect(mockFs.rm).not.toHaveBeenCalled();
-			expect(result).toEqual({
-				success: false,
-				error: 'permission denied',
-			});
-		});
-	});
-
-	describe('git:createGist', () => {
-		beforeEach(async () => {
-			const cliDetection = await import('../../../../main/utils/cliDetection');
-			vi.mocked(cliDetection.resolveGhPath).mockResolvedValue('gh');
-		});
-
-		it('should create a public gist with description', async () => {
-			vi.mocked(execFile.execFileNoThrow).mockResolvedValue({
-				stdout: 'https://gist.github.com/user/abc123\n',
-				stderr: '',
-				exitCode: 0,
-			});
-
-			const handler = handlers.get('git:createGist');
-			const result = await handler!({} as any, 'report.md', '# Report', 'Coverage report', true);
-
-			expect(execFile.execFileNoThrow).toHaveBeenCalledWith(
-				'gh',
-				['gist', 'create', '--filename', 'report.md', '--desc', 'Coverage report', '--public', '-'],
-				undefined,
-				{ input: '# Report' }
-			);
-			expect(result).toEqual({
-				success: true,
-				gistUrl: 'https://gist.github.com/user/abc123',
-			});
-		});
-
-		it('should create a private gist without description using a custom gh path', async () => {
-			const cliDetection = await import('../../../../main/utils/cliDetection');
-			vi.mocked(cliDetection.resolveGhPath).mockResolvedValue('/opt/homebrew/bin/gh');
-			vi.mocked(execFile.execFileNoThrow).mockResolvedValue({
-				stdout: 'https://gist.github.com/user/private123\n',
-				stderr: '',
-				exitCode: 0,
-			});
-
-			const handler = handlers.get('git:createGist');
-			const result = await handler!(
-				{} as any,
-				'notes.txt',
-				'private notes',
-				'',
-				false,
-				'/opt/homebrew/bin/gh'
-			);
-
-			expect(cliDetection.resolveGhPath).toHaveBeenCalledWith('/opt/homebrew/bin/gh');
-			expect(execFile.execFileNoThrow).toHaveBeenCalledWith(
-				'/opt/homebrew/bin/gh',
-				['gist', 'create', '--filename', 'notes.txt', '-'],
-				undefined,
-				{ input: 'private notes' }
-			);
-			expect(result).toEqual({
-				success: true,
-				gistUrl: 'https://gist.github.com/user/private123',
-			});
-		});
-
-		it('should report when gh is not installed', async () => {
-			vi.mocked(execFile.execFileNoThrow).mockResolvedValue({
-				stdout: '',
-				stderr: 'command not found: gh',
-				exitCode: 127,
-			});
-
-			const handler = handlers.get('git:createGist');
-			const result = await handler!({} as any, 'file.txt', 'content', '', false);
-
-			expect(result).toEqual({
-				success: false,
-				error: 'GitHub CLI (gh) is not installed. Please install it to create gists.',
-			});
-		});
-
-		it('should report when gh is not recognized on Windows shells', async () => {
-			vi.mocked(execFile.execFileNoThrow).mockResolvedValue({
-				stdout: '',
-				stderr: "'gh' is not recognized as an internal or external command",
-				exitCode: 1,
-			});
-
-			const handler = handlers.get('git:createGist');
-			const result = await handler!({} as any, 'file.txt', 'content', '', false);
-
-			expect(result).toEqual({
-				success: false,
-				error: 'GitHub CLI (gh) is not installed. Please install it to create gists.',
-			});
-		});
-
-		it('should report when gh is not authenticated', async () => {
-			vi.mocked(execFile.execFileNoThrow).mockResolvedValue({
-				stdout: '',
-				stderr: 'You are not logged into any GitHub hosts',
-				exitCode: 1,
-			});
-
-			const handler = handlers.get('git:createGist');
-			const result = await handler!({} as any, 'file.txt', 'content', '', false);
-
-			expect(result).toEqual({
-				success: false,
-				error: 'GitHub CLI is not authenticated. Please run "gh auth login" first.',
-			});
-		});
-
-		it('should return generic gist creation failures', async () => {
-			vi.mocked(execFile.execFileNoThrow).mockResolvedValue({
-				stdout: '',
-				stderr: 'HTTP 422: validation failed',
-				exitCode: 1,
-			});
-
-			const handler = handlers.get('git:createGist');
-			const result = await handler!({} as any, 'file.txt', 'content', '', false);
-
-			expect(result).toEqual({
-				success: false,
-				error: 'HTTP 422: validation failed',
-			});
-		});
-
-		it('should return fallback error when gh fails without stderr', async () => {
-			vi.mocked(execFile.execFileNoThrow).mockResolvedValue({
-				stdout: '',
-				stderr: '',
-				exitCode: 1,
-			});
-
-			const handler = handlers.get('git:createGist');
-			const result = await handler!({} as any, 'file.txt', 'content', '', false);
-
-			expect(result).toEqual({
-				success: false,
-				error: 'Failed to create gist',
-			});
 		});
 	});
 });

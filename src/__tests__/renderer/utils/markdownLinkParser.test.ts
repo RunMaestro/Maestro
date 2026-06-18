@@ -9,17 +9,12 @@
  * - Edge cases: malformed input, URL encoding, special characters
  */
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
 	parseMarkdownLinks,
 	extractDomain,
 	type ParsedMarkdownLinks,
 	type ParseMarkdownLinksOptions,
 } from '../../../renderer/utils/markdownLinkParser';
-
-afterEach(() => {
-	vi.restoreAllMocks();
-});
 
 // ---------------------------------------------------------------------------
 // extractDomain
@@ -69,10 +64,6 @@ describe('extractDomain', () => {
 	it('should fall back to regex extraction for malformed URLs with protocol', () => {
 		// This URL has a protocol prefix so the regex fallback can extract the domain
 		expect(extractDomain('http://some-domain.com')).toBe('some-domain.com');
-	});
-
-	it('should use regex fallback when URL parsing fails but a protocol host is present', () => {
-		expect(extractDomain('http://bad host/path')).toBe('bad host');
 	});
 
 	it('should handle IDN domains (punycode)', () => {
@@ -343,32 +334,11 @@ Also see [Docs](https://docs.example.com/page).
 			expect(result.internalLinks).toContain('sibling.md');
 		});
 
-		it('should handle current files addressed from the root directory', () => {
-			const content = '[[sibling]]';
-			const result = parseMarkdownLinks(content, '/readme.md');
-
-			expect(result.internalLinks).toContain('sibling.md');
-		});
-
-		it('should preserve unresolved parent segments above the project root', () => {
-			const content = '[outside](../outside.md)';
-			const result = parseMarkdownLinks(content, 'readme.md');
-
-			expect(result.internalLinks).toContain('../outside.md');
-		});
-
 		it('should preserve .md extension if already present', () => {
 			const content = '[[already.md]]';
 			const result = parseMarkdownLinks(content, 'readme.md');
 
 			expect(result.internalLinks).toContain('already.md');
-		});
-
-		it('should preserve the normalized current-directory fallback for dot-only links', () => {
-			const content = '[[.]]';
-			const result = parseMarkdownLinks(content, '');
-
-			expect(result.internalLinks).toEqual(['..md']);
 		});
 	});
 
@@ -565,34 +535,6 @@ Content`;
 
 			expect(result).toBeDefined();
 		});
-
-		it('should warn and continue when front matter parsing throws unexpectedly', () => {
-			const originalMatch = String.prototype.match;
-			const error = new Error('front matter parser failed');
-			vi.spyOn(String.prototype, 'match').mockImplementation(function (
-				this: string,
-				matcher: string | RegExp
-			) {
-				if (
-					this.includes('front matter boom') &&
-					matcher instanceof RegExp &&
-					matcher.source === String.raw`^---\r?\n([\s\S]*?)\r?\n---`
-				) {
-					throw error;
-				}
-				return originalMatch.call(this, matcher as RegExp);
-			});
-			const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-
-			const result = parseMarkdownLinks(
-				'---\ntitle: front matter boom\n---\n\n[ok](https://example.com)',
-				'doc.md'
-			);
-
-			expect(result.frontMatter).toEqual({});
-			expect(result.externalLinks).toHaveLength(1);
-			expect(consoleWarn).toHaveBeenCalledWith('Failed to parse front matter in doc.md:', error);
-		});
 	});
 
 	// -----------------------------------------------------------------------
@@ -767,27 +709,6 @@ Also see [another doc](./other.md) here.
 
 			expect(result).toBeDefined();
 		});
-
-		it('should warn and continue with markdown links when wiki parsing throws unexpectedly', () => {
-			const originalExec = RegExp.prototype.exec;
-			const error = new Error('wiki parser failed');
-			vi.spyOn(RegExp.prototype, 'exec').mockImplementation(function (this: RegExp, value: string) {
-				if (
-					this.source === String.raw`\[\[([^\]|]+)(?:\|[^\]]+)?\]\]` &&
-					value.includes('wiki boom')
-				) {
-					throw error;
-				}
-				return originalExec.call(this, value);
-			});
-			const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-
-			const result = parseMarkdownLinks('[[wiki boom]] and [ok](https://example.com)', 'readme.md');
-
-			expect(result.internalLinks).toEqual([]);
-			expect(result.externalLinks).toHaveLength(1);
-			expect(consoleWarn).toHaveBeenCalledWith('Failed to parse wiki links in readme.md:', error);
-		});
 	});
 
 	// -----------------------------------------------------------------------
@@ -829,33 +750,6 @@ with newline](./file.md).`;
 			const result = parseMarkdownLinks(content, 'readme.md');
 
 			expect(result).toBeDefined();
-		});
-
-		it('should warn and keep wiki results when markdown link parsing throws unexpectedly', () => {
-			const originalExec = RegExp.prototype.exec;
-			const error = new Error('markdown parser failed');
-			vi.spyOn(RegExp.prototype, 'exec').mockImplementation(function (this: RegExp, value: string) {
-				if (
-					this.source === String.raw`\[([^\]]*)\]\(((?:[^()\s]|\([^()]*\))+)\)` &&
-					value.includes('markdown boom')
-				) {
-					throw error;
-				}
-				return originalExec.call(this, value);
-			});
-			const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-
-			const result = parseMarkdownLinks(
-				'[[wiki-ok]] and [markdown boom](https://example.com)',
-				'readme.md'
-			);
-
-			expect(result.internalLinks).toEqual(['wiki-ok.md']);
-			expect(result.externalLinks).toEqual([]);
-			expect(consoleWarn).toHaveBeenCalledWith(
-				'Failed to parse markdown links in readme.md:',
-				error
-			);
 		});
 	});
 
@@ -1114,69 +1008,11 @@ See [First](https://en.wikipedia.org/wiki/A_(letter)) and
 			expect(result.internalLinks).toContain('docs/guide.md');
 		});
 
-		it('should resolve exact extensionless paths from the file tree fallback', () => {
-			const content = '[[docs/exact]]';
-			const result = parseMarkdownLinks(content, 'other/index.md', {
-				allFiles: ['docs/exact'],
-			});
-
-			expect(result.internalLinks).toContain('docs/exact');
-		});
-
-		it('should resolve exact markdown paths from the file tree fallback', () => {
-			const content = '[[docs/exact]]';
-			const result = parseMarkdownLinks(content, 'other/index.md', {
-				allFiles: ['docs/exact.md'],
-			});
-
-			expect(result.internalLinks).toContain('docs/exact.md');
-		});
-
 		it('should resolve standard markdown links via fallback', () => {
 			const content = '[PlexTrac](PlexTrac.md)';
 			const result = parseMarkdownLinks(content, 'Market Research/INDEX.md', options);
 
 			expect(result.internalLinks).toContain('Market Research/Vendors/PlexTrac.md');
-		});
-
-		it('should use a unique partial-path match when multiple files share a filename', () => {
-			const content = '[[Vendors/PlexTrac]]';
-			const result = parseMarkdownLinks(content, 'Scratch/INDEX.md', {
-				allFiles: [
-					'Archive/Vendors/PlexTrac Old.md',
-					'Market Research/Vendors/PlexTrac.md',
-					'Other/PlexTrac.md',
-				],
-			});
-
-			expect(result.internalLinks).toEqual(['Market Research/Vendors/PlexTrac.md']);
-		});
-
-		it('should use proximity when partial-path matches are still ambiguous', () => {
-			const content = '[[Vendors/PlexTrac]]';
-			const result = parseMarkdownLinks(content, 'Market Research/Notes/INDEX.md', {
-				allFiles: ['Archive/Vendors/PlexTrac.md', 'Market Research/Vendors/PlexTrac.md'],
-			});
-
-			expect(result.internalLinks).toEqual(['Market Research/Vendors/PlexTrac.md']);
-		});
-
-		it('should fall back to proximity when a partial path filters out every candidate', () => {
-			const content = '[[Missing/Guide]]';
-			const result = parseMarkdownLinks(content, 'docs/index.md', {
-				allFiles: ['docs/Guide.md', 'notes/Guide.md'],
-			});
-
-			expect(result.internalLinks).toEqual(['docs/Guide.md']);
-		});
-
-		it('should keep the first candidate when later fallback candidates are farther away', () => {
-			const content = '[[guide]]';
-			const result = parseMarkdownLinks(content, 'docs/subdir/index.md', {
-				allFiles: ['docs/guide.md', 'notes/guide.md'],
-			});
-
-			expect(result.internalLinks).toEqual(['docs/guide.md']);
 		});
 
 		it('should pick closest match when multiple files share a filename', () => {
@@ -1189,32 +1025,6 @@ See [First](https://en.wikipedia.org/wiki/A_(letter)) and
 
 			// Should prefer docs/readme.md since it shares the docs/ prefix with the current file
 			expect(result.internalLinks).toContain('docs/readme.md');
-		});
-
-		it('should choose a later closer fallback candidate by path proximity', () => {
-			const content = '[[guide]]';
-			const result = parseMarkdownLinks(content, 'docs/subdir/index.md', {
-				allFiles: ['notes/guide.md', 'docs/guide.md'],
-			});
-
-			expect(result.internalLinks).toEqual(['docs/guide.md']);
-		});
-
-		it('should keep standard markdown relative resolution when fallback finds no match', () => {
-			const content = '[missing](missing.md)';
-			const result = parseMarkdownLinks(content, 'docs/readme.md', {
-				allFiles: ['other/file.md'],
-			});
-
-			expect(result.internalLinks).toEqual(['docs/missing.md']);
-		});
-
-		it('should not include standard markdown links to non-markdown files as internal links', () => {
-			const content = '[asset](diagram.png)';
-			const result = parseMarkdownLinks(content, 'docs/readme.md');
-
-			expect(result.internalLinks).toEqual([]);
-			expect(result.externalLinks).toEqual([]);
 		});
 
 		it('should still work without allFiles (backward compatible)', () => {

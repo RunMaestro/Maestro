@@ -16,7 +16,6 @@ vi.mock('../../../main/utils/logger', () => ({
 import { getExpandedEnvWithShell, checkBinaryExists } from '../../../main/agents/path-prober';
 import { getShellPath } from '../../runtime/getShellPath';
 import { execFileNoThrow } from '../../../main/utils/execFile';
-import { logger } from '../../../main/utils/logger';
 
 describe('path-prober shell path integration', () => {
 	beforeEach(() => {
@@ -61,33 +60,5 @@ describe('path-prober shell path integration', () => {
 		const result = await checkBinaryExists('node');
 		expect(result.exists).toBe(true);
 		expect(result.path).toBe('/usr/bin/node');
-	});
-
-	it('returns the base PATH when shell probing returns no path', async () => {
-		(getShellPath as any).mockResolvedValue('');
-
-		const env = await getExpandedEnvWithShell();
-		expect(env.PATH).toBeDefined();
-		expect((env.PATH ?? '').length).toBeGreaterThan(0);
-	});
-
-	it('falls back to console debug when shell probe logging fails', async () => {
-		const shellError = new Error('shell unavailable');
-		const consoleDebug = vi.spyOn(console, 'debug').mockImplementation(() => {});
-		(getShellPath as any).mockRejectedValue(shellError);
-		(logger.debug as any).mockImplementationOnce(() => {
-			throw new Error('logger unavailable');
-		});
-
-		try {
-			const env = await getExpandedEnvWithShell();
-			expect(env.PATH).toBeDefined();
-			expect(consoleDebug).toHaveBeenCalledWith(
-				'Shell PATH probe failed; using base expanded env',
-				shellError
-			);
-		} finally {
-			consoleDebug.mockRestore();
-		}
 	});
 });

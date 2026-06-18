@@ -165,43 +165,6 @@ describe('Debug Package Collectors', () => {
 		});
 	});
 
-	describe('sanitizeText', () => {
-		it('should replace home directory in free-text strings', async () => {
-			const { sanitizeText } = await import('../../../main/debug-package/collectors/sanitize');
-
-			const homeDir = os.homedir();
-			const text = `Error loading file ${homeDir}/Projects/secret-project/config.json`;
-
-			const sanitized = sanitizeText(text);
-
-			expect(sanitized).not.toContain(homeDir);
-			expect(sanitized).toContain('~/Projects/secret-project/config.json');
-		});
-
-		it('should handle Windows home directories in free-text strings', async () => {
-			const homedirSpy = vi.spyOn(os, 'homedir').mockReturnValue('C:\\Users\\testuser');
-			const { sanitizeText } = await import('../../../main/debug-package/collectors/sanitize');
-
-			try {
-				const sanitized = sanitizeText('Open C:\\Users\\testuser\\Documents\\Project');
-
-				expect(sanitized).toBe('Open ~\\Documents\\Project');
-			} finally {
-				homedirSpy.mockRestore();
-			}
-		});
-
-		it('should return non-string values unchanged', async () => {
-			const { sanitizeText } = await import('../../../main/debug-package/collectors/sanitize');
-
-			expect(sanitizeText(null as any)).toBeNull();
-			expect(sanitizeText(undefined as any)).toBeUndefined();
-			expect(sanitizeText(123 as any)).toBe(123);
-			const value = { message: 'already structured' };
-			expect(sanitizeText(value as any)).toBe(value);
-		});
-	});
-
 	describe('sanitizeLogMessage', () => {
 		it('should truncate messages over 500 chars', async () => {
 			const { sanitizeLogMessage } =
@@ -290,59 +253,6 @@ describe('Debug Package Collectors', () => {
 
 			// Verify no raw home dir paths
 			expect(JSON.stringify(result.raw)).not.toContain(homeDir);
-		});
-
-		it('should include sanitized sync info from bootstrap store', async () => {
-			const { collectSettings } = await import('../../../main/debug-package/collectors/settings');
-
-			const homeDir = os.homedir();
-			const mockStore = {
-				get: vi.fn(),
-				set: vi.fn(),
-				store: {
-					customPath: '/var/tmp/project',
-					optionalSetting: null,
-					theme: 'dark',
-				},
-			};
-			const mockBootstrapStore = {
-				get: vi.fn().mockReturnValue(`${homeDir}/MaestroSync`),
-			};
-
-			const result = await collectSettings(mockStore as any, mockBootstrapStore as any);
-
-			expect(result.raw.customPath).toBe('/var/tmp/project');
-			expect(result.raw.optionalSetting).toBeNull();
-			expect(result.sanitizedFields).not.toContain('customPath');
-			expect(result.raw._syncInfo).toEqual({
-				hasCustomSyncPath: true,
-				customSyncPath: '~/MaestroSync',
-			});
-		});
-
-		it('should handle missing settings data and unset sync path', async () => {
-			const { collectSettings } = await import('../../../main/debug-package/collectors/settings');
-
-			const mockStore = {
-				get: vi.fn(),
-				set: vi.fn(),
-				store: undefined,
-			};
-			const mockBootstrapStore = {
-				get: vi.fn().mockReturnValue(undefined),
-			};
-
-			const result = await collectSettings(mockStore as any, mockBootstrapStore as any);
-
-			expect(result).toEqual({
-				raw: {
-					_syncInfo: {
-						hasCustomSyncPath: false,
-						customSyncPath: undefined,
-					},
-				},
-				sanitizedFields: [],
-			});
 		});
 
 		it('should handle nested objects with sensitive keys', async () => {
@@ -459,9 +369,6 @@ describe('Debug Package Collectors', () => {
 						id: 'minimal-session',
 						// Missing most fields
 					},
-					{
-						// Missing id
-					},
 				]),
 				set: vi.fn(),
 				store: {},
@@ -469,13 +376,12 @@ describe('Debug Package Collectors', () => {
 
 			const result = await collectSessions(mockStore as any);
 
-			expect(result).toHaveLength(2);
+			expect(result).toHaveLength(1);
 			expect(result[0].id).toBe('minimal-session');
 			expect(result[0].toolType).toBe('unknown');
 			expect(result[0].tabCount).toBe(0);
 			expect(result[0].executionQueueLength).toBe(0);
 			expect(result[0].hasError).toBe(false);
-			expect(result[1].id).toBe('unknown');
 		});
 	});
 
@@ -610,29 +516,6 @@ describe('Debug Package Collectors', () => {
 
 			expect(result).toHaveLength(0);
 		});
-
-		it('should use safe defaults for sparse process records', async () => {
-			const { collectProcesses } = await import('../../../main/debug-package/collectors/processes');
-
-			const mockProcessManager = {
-				getAll: vi.fn().mockReturnValue([{}]),
-			};
-
-			const result = await collectProcesses(mockProcessManager as any);
-
-			expect(result).toEqual([
-				{
-					sessionId: 'unknown',
-					toolType: 'unknown',
-					pid: 0,
-					cwd: '',
-					isTerminal: false,
-					isBatchMode: false,
-					uptimeMs: 0,
-					hasParser: false,
-				},
-			]);
-		});
 	});
 
 	describe('collectLogs', () => {
@@ -729,40 +612,6 @@ describe('Debug Package Collectors', () => {
 			// Should count errors in last 24h
 			expect(result.errorCount24h).toBe(2);
 		});
-
-		it('should use safe fallback fields for malformed session errors', async () => {
-			const { logger } = await import('../../../main/utils/logger');
-			vi.mocked(logger.getLogs).mockReturnValue([]);
-			vi.spyOn(Date, 'now').mockReturnValue(123456);
-
-			const { collectErrors } = await import('../../../main/debug-package/collectors/errors');
-
-			const mockStore = {
-				get: vi.fn().mockReturnValue([
-					{
-						agentError: {
-							recoverable: false,
-						},
-					},
-				]),
-				set: vi.fn(),
-				store: {},
-			};
-
-			const result = collectErrors(mockStore as any);
-
-			expect(result.currentSessionErrors).toEqual([
-				{
-					sessionId: 'unknown',
-					errorType: 'unknown',
-					recoverable: false,
-					timestamp: 123456,
-					agentId: 'unknown',
-				},
-			]);
-			expect(result.recentErrorLogs).toEqual([]);
-			expect(result.errorCount24h).toBe(0);
-		});
 	});
 
 	describe('collectBatchState', () => {
@@ -798,11 +647,6 @@ describe('Debug Package Collectors', () => {
 							error: { type: 'document_error' },
 						},
 					},
-					{
-						batchRunState: {
-							isRunning: false,
-						},
-					},
 				]),
 				set: vi.fn(),
 				store: {},
@@ -810,7 +654,7 @@ describe('Debug Package Collectors', () => {
 
 			const result = collectBatchState(mockStore as any);
 
-			expect(result.activeSessions).toHaveLength(3);
+			expect(result.activeSessions).toHaveLength(2);
 
 			const session1 = result.activeSessions.find((s) => s.sessionId === 'session-1');
 			expect(session1).toBeDefined();
@@ -828,10 +672,6 @@ describe('Debug Package Collectors', () => {
 			expect(session3).toBeDefined();
 			expect(session3!.hasError).toBe(true);
 			expect(session3!.errorType).toBe('document_error');
-
-			const sessionWithoutId = result.activeSessions.find((s) => s.sessionId === 'unknown');
-			expect(sessionWithoutId).toBeDefined();
-			expect(sessionWithoutId!.isRunning).toBe(false);
 		});
 	});
 
@@ -903,23 +743,6 @@ describe('Debug Package Collectors', () => {
 			expect(result.github.ghCliInstalled).toBe(false);
 			expect(result.cloudflared.installed).toBe(false);
 		});
-
-		it('should tolerate git output without a parseable version', async () => {
-			const { execFileNoThrow } = await import('../../../main/utils/execFile');
-
-			vi.mocked(execFileNoThrow)
-				.mockResolvedValueOnce({ stdout: 'git is installed', stderr: '', exitCode: 0 })
-				.mockResolvedValueOnce({ stdout: '', stderr: 'command not found', exitCode: 127 });
-
-			const { collectExternalTools } =
-				await import('../../../main/debug-package/collectors/external-tools');
-
-			const result = await collectExternalTools();
-
-			expect(result.git.available).toBe(true);
-			expect(result.git.version).toBeUndefined();
-			expect(result.github.ghCliInstalled).toBe(false);
-		});
 	});
 
 	describe('collectWebServer', () => {
@@ -972,65 +795,6 @@ describe('Debug Package Collectors', () => {
 			expect(result.connectedClients).toBe(0);
 			expect(result.liveSessions).toHaveLength(0);
 		});
-
-		it('should handle unavailable live sessions from an active web server', async () => {
-			const { collectWebServer } =
-				await import('../../../main/debug-package/collectors/web-server');
-
-			const mockWebServer = {
-				isActive: vi.fn().mockReturnValue(true),
-				getPort: vi.fn().mockReturnValue(3000),
-				getWebClientCount: vi.fn().mockReturnValue(1),
-				getLiveSessions: vi.fn().mockReturnValue(null),
-			};
-
-			const result = await collectWebServer(mockWebServer as any);
-
-			expect(result.isRunning).toBe(true);
-			expect(result.liveSessions).toEqual([]);
-		});
-
-		it('should use safe live session fallbacks', async () => {
-			const fixedNow = Date.UTC(2026, 0, 2, 3, 4, 5);
-			vi.spyOn(Date, 'now').mockReturnValue(fixedNow);
-
-			const { collectWebServer } =
-				await import('../../../main/debug-package/collectors/web-server');
-
-			const mockWebServer = {
-				isActive: vi.fn().mockReturnValue(true),
-				getPort: vi.fn().mockReturnValue(3000),
-				getWebClientCount: vi.fn().mockReturnValue(2),
-				getLiveSessions: vi.fn().mockReturnValue([{ sessionId: 'session-alias' }, {}]),
-			};
-
-			const result = await collectWebServer(mockWebServer as any);
-
-			expect(result.liveSessions).toEqual([
-				{ sessionId: 'session-alias', enabledAt: fixedNow },
-				{ sessionId: 'unknown', enabledAt: fixedNow },
-			]);
-		});
-
-		it('should report cloudflared as unavailable when installation detection fails', async () => {
-			const { isCloudflaredInstalled } = await import('../../../main/utils/cliDetection');
-			const { tunnelManager } = await import('../../../main/tunnel-manager');
-			vi.mocked(isCloudflaredInstalled).mockRejectedValue(new Error('cloudflared lookup failed'));
-			vi.mocked(tunnelManager.getStatus).mockReturnValue({
-				isRunning: false,
-				url: null,
-				error: null,
-			} as any);
-
-			const { collectWebServer } =
-				await import('../../../main/debug-package/collectors/web-server');
-
-			const result = await collectWebServer(null);
-
-			expect(result.tunnel.cloudflaredInstalled).toBe(false);
-			expect(result.tunnel.isRunning).toBe(false);
-			expect(result.tunnel.hasUrl).toBe(false);
-		});
 	});
 
 	describe('collectStorage', () => {
@@ -1080,122 +844,6 @@ describe('Debug Package Collectors', () => {
 			const result = await collectStorage(mockBootstrapStore as any);
 
 			expect(result.paths.customSyncPath).toBe('[SET]');
-		});
-
-		it('should report zero sizes for missing storage paths', async () => {
-			const fs = await import('fs');
-			const { app } = await import('electron');
-
-			vi.mocked(app.getPath).mockReturnValue('/mock/userData');
-			vi.mocked(fs.existsSync).mockReturnValue(false);
-
-			const { collectStorage } = await import('../../../main/debug-package/collectors/storage');
-
-			const result = await collectStorage({ get: vi.fn().mockReturnValue(undefined) } as any);
-
-			expect(result.sizes.sessionsBytes).toBe(0);
-			expect(result.sizes.historyBytes).toBe(0);
-			expect(result.sizes.groupChatsBytes).toBe(0);
-			expect(result.sizes.totalBytes).toBe(0);
-		});
-
-		it('should count files and nested directories in storage size totals', async () => {
-			const fs = await import('fs');
-			const { app } = await import('electron');
-
-			vi.mocked(app.getPath).mockReturnValue('/mock/userData');
-			vi.mocked(fs.existsSync).mockReturnValue(true);
-			vi.mocked(fs.statSync).mockImplementation((target: any) => {
-				const filePath = String(target);
-				if (filePath.endsWith('maestro-sessions.json')) {
-					return { size: 100, isDirectory: () => false } as any;
-				}
-				if (filePath.endsWith('/history') || filePath.endsWith('/history/nested')) {
-					return { size: 0, isDirectory: () => true } as any;
-				}
-				if (filePath.endsWith('/group-chats')) {
-					return { size: 40, isDirectory: () => false } as any;
-				}
-				if (filePath.endsWith('/history/one.json')) {
-					return { size: 20, isDirectory: () => false } as any;
-				}
-				if (filePath.endsWith('/history/nested/two.json')) {
-					return { size: 30, isDirectory: () => false } as any;
-				}
-				return { size: 0, isDirectory: () => false } as any;
-			});
-			vi.mocked(fs.readdirSync).mockImplementation((target: any) => {
-				const filePath = String(target);
-				if (filePath.endsWith('/history')) return ['one.json', 'nested'] as any;
-				if (filePath.endsWith('/history/nested')) return ['two.json'] as any;
-				return [] as any;
-			});
-
-			const { collectStorage } = await import('../../../main/debug-package/collectors/storage');
-
-			const result = await collectStorage({ get: vi.fn().mockReturnValue(undefined) } as any);
-
-			expect(result.sizes.sessionsBytes).toBe(100);
-			expect(result.sizes.historyBytes).toBe(50);
-			expect(result.sizes.groupChatsBytes).toBe(40);
-			expect(result.sizes.totalBytes).toBe(190);
-		});
-
-		it('should skip inaccessible directory entries and tolerate root stat failures', async () => {
-			const fs = await import('fs');
-			const { app } = await import('electron');
-
-			vi.mocked(app.getPath).mockReturnValue('/mock/userData');
-			vi.mocked(fs.existsSync).mockReturnValue(true);
-			vi.mocked(fs.statSync).mockImplementation((target: any) => {
-				const filePath = String(target);
-				if (filePath.endsWith('maestro-sessions.json')) {
-					return { size: 10, isDirectory: () => false } as any;
-				}
-				if (filePath.endsWith('/history')) {
-					return { size: 0, isDirectory: () => true } as any;
-				}
-				if (filePath.endsWith('/history/ok.json')) {
-					return { size: 15, isDirectory: () => false } as any;
-				}
-				if (filePath.endsWith('/history/denied.json') || filePath.endsWith('/group-chats')) {
-					throw new Error('permission denied');
-				}
-				return { size: 0, isDirectory: () => false } as any;
-			});
-			vi.mocked(fs.readdirSync).mockReturnValue(['ok.json', 'denied.json'] as any);
-
-			const { collectStorage } = await import('../../../main/debug-package/collectors/storage');
-
-			const result = await collectStorage({ get: vi.fn().mockReturnValue(undefined) } as any);
-
-			expect(result.sizes.sessionsBytes).toBe(10);
-			expect(result.sizes.historyBytes).toBe(15);
-			expect(result.sizes.groupChatsBytes).toBe(0);
-			expect(result.sizes.totalBytes).toBe(25);
-		});
-
-		it('should return zero when the sessions file stat fails', async () => {
-			const fs = await import('fs');
-			const { app } = await import('electron');
-
-			vi.mocked(app.getPath).mockReturnValue('/mock/userData');
-			vi.mocked(fs.existsSync).mockReturnValue(true);
-			vi.mocked(fs.statSync).mockImplementation((target: any) => {
-				const filePath = String(target);
-				if (filePath.endsWith('maestro-sessions.json')) {
-					throw new Error('stat failed');
-				}
-				return { size: 0, isDirectory: () => true } as any;
-			});
-			vi.mocked(fs.readdirSync).mockReturnValue([]);
-
-			const { collectStorage } = await import('../../../main/debug-package/collectors/storage');
-
-			const result = await collectStorage({ get: vi.fn().mockReturnValue(undefined) } as any);
-
-			expect(result.sizes.sessionsBytes).toBe(0);
-			expect(result.sizes.totalBytes).toBe(0);
 		});
 	});
 
@@ -1263,64 +911,6 @@ describe('Debug Package Collectors', () => {
 			// Verify no message content
 			expect(JSON.stringify(result)).not.toContain('message 1');
 			expect(JSON.stringify(result)).not.toContain('message 2');
-		});
-
-		it('should collect fallback metadata when chat fields or logs are missing', async () => {
-			const fs = await import('fs');
-			const { app } = await import('electron');
-
-			vi.mocked(app.getPath).mockReturnValue('/mock/userData');
-			vi.mocked(fs.existsSync).mockImplementation((target: any) => {
-				const filePath = String(target);
-				return !filePath.endsWith('fallback.log.json');
-			});
-			vi.mocked(fs.readdirSync).mockReturnValue(['fallback.json', 'nested.json'] as any);
-			vi.mocked(fs.readFileSync).mockImplementation((target: any) => {
-				const filePath = String(target);
-				if (filePath.endsWith('fallback.json')) {
-					return JSON.stringify({
-						moderator: {},
-						participants: 'not-an-array',
-					});
-				}
-				if (filePath.endsWith('nested.json')) {
-					return JSON.stringify({
-						id: 'nested',
-						moderator: { agentId: 'moderator-agent' },
-						participants: [{}],
-					});
-				}
-				if (filePath.endsWith('nested.log.json')) {
-					throw new Error('log read failed');
-				}
-				return '';
-			});
-
-			const { collectGroupChats } =
-				await import('../../../main/debug-package/collectors/group-chats');
-
-			const result = await collectGroupChats();
-
-			expect(result).toEqual([
-				{
-					id: 'fallback',
-					moderatorAgentId: 'unknown',
-					participantCount: 0,
-					participants: [],
-					messageCount: 0,
-					createdAt: 0,
-					updatedAt: 0,
-				},
-				{
-					id: 'nested',
-					moderatorAgentId: 'moderator-agent',
-					participantCount: 1,
-					participants: [{ agentId: 'unknown' }],
-					messageCount: 0,
-					createdAt: 0,
-					updatedAt: 0,
-				},
-			]);
 		});
 
 		it('should handle missing group chats directory', async () => {

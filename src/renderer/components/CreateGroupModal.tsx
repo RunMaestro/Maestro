@@ -21,24 +21,25 @@ export function CreateGroupModal(props: CreateGroupModalProps) {
 	const inputRef = useRef<HTMLInputElement>(null);
 
 	const handleCreate = () => {
-		const trimmedGroupName = groupName.trim();
-		const newGroupId = `group-${generateId()}`;
-		const newGroup: Group = {
-			id: newGroupId,
-			name: trimmedGroupName.toUpperCase(),
-			emoji: groupEmoji,
-			collapsed: false,
-		};
-		setGroups([...groups, newGroup]);
+		if (groupName.trim()) {
+			const newGroupId = `group-${generateId()}`;
+			const newGroup: Group = {
+				id: newGroupId,
+				name: groupName.trim().toUpperCase(),
+				emoji: groupEmoji,
+				collapsed: false,
+			};
+			setGroups([...groups, newGroup]);
 
-		// Call callback with new group ID if provided
-		if (onGroupCreated) {
-			onGroupCreated(newGroupId);
+			// Call callback with new group ID if provided
+			if (onGroupCreated) {
+				onGroupCreated(newGroupId);
+			}
+
+			setGroupName('');
+			setGroupEmoji('📂');
+			onClose();
 		}
-
-		setGroupName('');
-		setGroupEmoji('📂');
-		onClose();
 	};
 
 	return (

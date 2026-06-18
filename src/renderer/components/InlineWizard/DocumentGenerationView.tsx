@@ -18,6 +18,8 @@ import type { Theme } from '../../types';
 import type { GeneratedDocument } from '../Wizard/WizardContext';
 import { AustinFactsDisplay } from './AustinFactsDisplay';
 import { formatSize, formatElapsedTime } from '../../../shared/formatters';
+import { DocumentEditor as SharedDocumentEditor } from '../Wizard/shared/DocumentEditor';
+import { DocumentSelector as SharedDocumentSelector } from '../Wizard/shared/DocumentSelector';
 
 /**
  * Props for DocumentGenerationView
@@ -34,9 +36,11 @@ export interface DocumentGenerationViewProps {
 	/** Streaming content being generated (shown during generation) */
 	streamingContent?: string;
 	/** Called when generation completes and user clicks Done */
-	onComplete?: () => void;
+	onComplete: () => void;
+	/** Called when user wants to complete the wizard AND immediately start the Batch Runner for the generated docs */
+	onCompleteAndStartAutoRun?: () => void;
 	/** Called when user selects a different document */
-	onDocumentSelect?: (index: number) => void;
+	onDocumentSelect: (index: number) => void;
 	/** Folder path for Auto Run docs */
 	folderPath?: string;
 	/** Called when document content changes (for editing) */
@@ -51,6 +55,96 @@ export interface DocumentGenerationViewProps {
 	onCancel?: () => void;
 	/** Subfolder name where documents are saved (for completion message) */
 	subfolderName?: string;
+	/** Wall-clock timestamp (ms) when generation started; used so elapsed time survives unmount/remount when switching tabs */
+	startedAt?: number;
+}
+
+/**
+ * Document selector dropdown for switching between generated documents.
+ * Kept as an inline wizard export while delegating behavior to the shared wizard selector.
+ */
+export function DocumentSelector({
+	documents,
+	selectedIndex,
+	onSelect,
+	theme,
+	disabled,
+}: {
+	documents: GeneratedDocument[];
+	selectedIndex: number;
+	onSelect: (index: number) => void;
+	theme: Theme;
+	disabled?: boolean;
+}): JSX.Element {
+	return (
+		<SharedDocumentSelector
+			documents={documents}
+			selectedIndex={selectedIndex}
+			onSelect={onSelect}
+			theme={theme}
+			disabled={disabled}
+			className="flex-1 min-w-0"
+			showTaskCounts
+		/>
+	);
+}
+
+/**
+ * Document editor component with edit/preview modes.
+ * The inline wizard keeps this export stable and reuses the shared editor internals.
+ */
+export function DocumentEditor({
+	content,
+	onContentChange,
+	mode,
+	onModeChange,
+	folderPath,
+	selectedFile,
+	attachments,
+	onAddAttachment,
+	onRemoveAttachment,
+	theme,
+	isLocked,
+	textareaRef,
+	previewRef,
+}: {
+	content: string;
+	onContentChange: (content: string) => void;
+	mode: 'edit' | 'preview';
+	onModeChange: (mode: 'edit' | 'preview') => void;
+	folderPath?: string;
+	selectedFile?: string;
+	attachments: Array<{ filename: string; dataUrl: string }>;
+	onAddAttachment: (filename: string, dataUrl: string) => void;
+	onRemoveAttachment: (filename: string) => void;
+	theme: Theme;
+	isLocked: boolean;
+	textareaRef: React.RefObject<HTMLTextAreaElement>;
+	previewRef: React.RefObject<HTMLDivElement>;
+}): JSX.Element {
+	return (
+		<SharedDocumentEditor
+			content={content}
+			onContentChange={onContentChange}
+			mode={mode}
+			onModeChange={onModeChange}
+			folderPath={folderPath ?? ''}
+			selectedFile={selectedFile ?? ''}
+			attachments={attachments}
+			onAddAttachment={onAddAttachment}
+			onRemoveAttachment={onRemoveAttachment}
+			theme={theme}
+			isLocked={isLocked}
+			textareaRef={textareaRef}
+			previewRef={previewRef}
+			documents={[]}
+			selectedDocIndex={0}
+			onDocumentSelect={() => {}}
+			statsText=""
+			proseClassPrefix="doc-gen-view"
+			showHeader={false}
+		/>
+	);
 }
 
 /**
@@ -189,17 +283,16 @@ function CreatedFilesList({
 	useEffect(() => {
 		if (documents.length > prevFilesCountRef.current && documents.length > 0) {
 			const newestFile = documents[documents.length - 1];
-			const previousAutoExpandedFile = lastAutoExpandedRef.current;
 
 			setExpandedFiles((prev) => {
 				const next = new Set(prev);
 
 				// Collapse the previous auto-expanded file (only if user hasn't touched it)
 				if (
-					previousAutoExpandedFile &&
-					!userToggledFilesRef.current.has(previousAutoExpandedFile)
+					lastAutoExpandedRef.current &&
+					!userToggledFilesRef.current.has(lastAutoExpandedRef.current)
 				) {
-					next.delete(previousAutoExpandedFile);
+					next.delete(lastAutoExpandedRef.current);
 				}
 
 				// Expand the new file
@@ -306,6 +399,7 @@ export function DocumentGenerationView({
 	isGenerating,
 	streamingContent: _streamingContent,
 	onComplete,
+	onCompleteAndStartAutoRun,
 	onDocumentSelect: _onDocumentSelect,
 	folderPath: _folderPath,
 	onContentChange: _onContentChange,
@@ -314,23 +408,24 @@ export function DocumentGenerationView({
 	totalDocuments: _totalDocuments,
 	onCancel,
 	subfolderName,
+	startedAt,
 }: DocumentGenerationViewProps): JSX.Element {
 	// Calculate total tasks
 	const totalTasks = documents.reduce((sum, doc) => sum + countTasks(doc.content), 0);
 
-	// Track elapsed time for generation
-	const [startTime] = useState(() => Date.now());
-	const [elapsedMs, setElapsedMs] = useState(0);
+	// Persisted start timestamp survives tab switches; fall back to a local
+	// instant so the counter still works if the caller doesn't pass one.
+	const fallbackStartRef = useRef<number>(Date.now());
+	const startTime = startedAt ?? fallbackStartRef.current;
+	const [elapsedMs, setElapsedMs] = useState(() => Math.max(0, Date.now() - startTime));
 
 	useEffect(() => {
 		if (!isGenerating) return;
 
-		// Update immediately
-		setElapsedMs(Date.now() - startTime);
+		setElapsedMs(Math.max(0, Date.now() - startTime));
 
-		// Update every second
 		const interval = setInterval(() => {
-			setElapsedMs(Date.now() - startTime);
+			setElapsedMs(Math.max(0, Date.now() - startTime));
 		}, 1000);
 
 		return () => clearInterval(interval);
@@ -412,7 +507,7 @@ export function DocumentGenerationView({
 					<p className="text-sm text-center max-w-md" style={{ color: theme.colors.textDim }}>
 						Available under{' '}
 						<span style={{ color: theme.colors.accent, fontWeight: 500 }}>
-							{subfolderName || 'Auto Run Docs'}/
+							{subfolderName || '.maestro/playbooks'}/
 						</span>
 					</p>
 				) : (
@@ -457,18 +552,33 @@ export function DocumentGenerationView({
 				{/* Created files list */}
 				<CreatedFilesList documents={documents} theme={theme} />
 
-				{/* Bottom section: Austin Facts during generation, Exit Wizard button when done */}
+				{/* Bottom section: Austin Facts during generation, action buttons when done */}
 				{isComplete ? (
-					<button
-						onClick={onComplete}
-						className="mt-8 px-6 py-3 text-base font-semibold rounded-lg transition-all hover:opacity-90 hover:scale-105"
-						style={{
-							backgroundColor: theme.colors.success,
-							color: 'white',
-						}}
-					>
-						Exit Wizard
-					</button>
+					<div className="mt-8 flex items-center gap-3">
+						<button
+							onClick={onComplete}
+							className="px-6 py-3 text-base font-semibold rounded-lg transition-all hover:opacity-90 hover:scale-105"
+							style={{
+								backgroundColor: theme.colors.bgActivity,
+								color: theme.colors.textMain,
+								border: `1px solid ${theme.colors.border}`,
+							}}
+						>
+							Exit Wizard
+						</button>
+						{onCompleteAndStartAutoRun && documents.length > 0 && (
+							<button
+								onClick={onCompleteAndStartAutoRun}
+								className="px-6 py-3 text-base font-semibold rounded-lg transition-all hover:opacity-90 hover:scale-105"
+								style={{
+									backgroundColor: theme.colors.success,
+									color: 'white',
+								}}
+							>
+								Start Auto Run
+							</button>
+						)}
+					</div>
 				) : (
 					<>
 						{/* Cancel button */}

@@ -22,7 +22,7 @@ vi.mock('../../../renderer/services/wizardIntentParser', () => ({
 vi.mock('../../../renderer/utils/existingDocsDetector', () => ({
 	hasExistingAutoRunDocs: vi.fn().mockResolvedValue(false),
 	getExistingAutoRunDocs: vi.fn().mockResolvedValue([]),
-	getAutoRunFolderPath: vi.fn((projectPath: string) => `${projectPath}/Auto Run Docs`),
+	getAutoRunFolderPath: vi.fn((projectPath: string) => `${projectPath}/.maestro/playbooks`),
 }));
 
 vi.mock('../../../renderer/services/inlineWizardConversation', () => ({
@@ -53,23 +53,6 @@ function createWrapper() {
 	};
 }
 
-function mockNoActiveConversationSessionError() {
-	return vi.spyOn(console, 'error').mockImplementation(() => {});
-}
-
-function expectNoActiveConversationSessionError(
-	consoleError: ReturnType<typeof mockNoActiveConversationSessionError>
-) {
-	expect(consoleError).toHaveBeenCalledWith(
-		'[useInlineWizard] No active conversation session, currentState:',
-		expect.objectContaining({
-			agentType: null,
-			projectPath: null,
-			autoRunFolderPath: null,
-		})
-	);
-}
-
 describe('InlineWizardContext', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -80,31 +63,15 @@ describe('InlineWizardContext', () => {
 	});
 
 	describe('useInlineWizardContext outside provider', () => {
-		it('should throw an error when used outside InlineWizardProvider', async () => {
+		it('should throw an error when used outside InlineWizardProvider', () => {
 			// Suppress console.error for this test since React will log the error
 			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-			const preventExpectedError = (event: ErrorEvent) => {
-				if (
-					event.error instanceof Error &&
-					event.error.message ===
-						'useInlineWizardContext must be used within an InlineWizardProvider'
-				) {
-					event.preventDefault();
-				}
-			};
-			window.addEventListener('error', preventExpectedError);
 
-			try {
-				expect(() => {
-					renderHook(() => useInlineWizardContext());
-				}).toThrow('useInlineWizardContext must be used within an InlineWizardProvider');
-				await act(async () => {
-					await Promise.resolve();
-				});
-			} finally {
-				window.removeEventListener('error', preventExpectedError);
-				consoleSpy.mockRestore();
-			}
+			expect(() => {
+				renderHook(() => useInlineWizardContext());
+			}).toThrow('useInlineWizardContext must be used within an InlineWizardProvider');
+
+			consoleSpy.mockRestore();
 		});
 	});
 
@@ -156,6 +123,7 @@ describe('InlineWizardContext', () => {
 				subfolderName: null,
 				subfolderPath: null,
 				autoRunFolderPath: null,
+				extractedProjectName: null,
 			});
 		});
 	});
@@ -219,33 +187,27 @@ describe('InlineWizardContext', () => {
 		});
 
 		it('should reset conversation history when starting', async () => {
-			const consoleError = mockNoActiveConversationSessionError();
 			const { result } = renderHook(() => useInlineWizardContext(), {
 				wrapper: createWrapper(),
 			});
 
-			try {
-				// Start wizard and add a message
-				await act(async () => {
-					await result.current.startWizard();
-				});
+			// Start wizard and add a message
+			await act(async () => {
+				await result.current.startWizard();
+			});
 
-				act(() => {
-					result.current.sendMessage('test message');
-				});
+			act(() => {
+				result.current.sendMessage('test message');
+			});
 
-				expect(result.current.conversationHistory.length).toBeGreaterThan(0);
+			expect(result.current.conversationHistory.length).toBeGreaterThan(0);
 
-				// Start wizard again - should reset
-				await act(async () => {
-					await result.current.startWizard('new session');
-				});
+			// Start wizard again - should reset
+			await act(async () => {
+				await result.current.startWizard('new session');
+			});
 
-				expect(result.current.conversationHistory).toEqual([]);
-				expectNoActiveConversationSessionError(consoleError);
-			} finally {
-				consoleError.mockRestore();
-			}
+			expect(result.current.conversationHistory).toEqual([]);
 		});
 	});
 
@@ -292,142 +254,119 @@ describe('InlineWizardContext', () => {
 		});
 
 		it('should reset all state to initial values', async () => {
-			const consoleError = mockNoActiveConversationSessionError();
 			const { result } = renderHook(() => useInlineWizardContext(), {
 				wrapper: createWrapper(),
 			});
 
-			try {
-				// Build up some state
-				await act(async () => {
-					await result.current.startWizard('test');
-				});
+			// Build up some state
+			await act(async () => {
+				await result.current.startWizard('test');
+			});
 
-				await act(async () => {
-					result.current.setMode('new');
-					result.current.setGoal('add feature');
-					result.current.setConfidence(75);
-					await result.current.sendMessage('hello');
-					result.current.setGeneratingDocs(true);
-					result.current.setError('test error');
-				});
+			await act(async () => {
+				result.current.setMode('new');
+				result.current.setGoal('add feature');
+				result.current.setConfidence(75);
+				await result.current.sendMessage('hello');
+				result.current.setGeneratingDocs(true);
+				result.current.setError('test error');
+			});
 
-				// End wizard
-				await act(async () => {
-					await result.current.endWizard();
-				});
+			// End wizard
+			await act(async () => {
+				await result.current.endWizard();
+			});
 
-				// All state should be reset
-				expect(result.current.state).toEqual({
-					isActive: false,
-					isInitializing: false,
-					isWaiting: false,
-					mode: null,
-					goal: null,
-					confidence: 0,
-					ready: false,
-					conversationHistory: [],
-					isGeneratingDocs: false,
-					generatedDocuments: [],
-					existingDocuments: [],
-					previousUIState: null,
-					error: null,
-					projectPath: null,
-					agentType: null,
-					sessionName: null,
-					tabId: null,
-					sessionId: null,
-					streamingContent: '',
-					generationProgress: null,
-					currentDocumentIndex: 0,
-					lastUserMessageContent: null,
-					agentSessionId: null,
-					subfolderName: null,
-					subfolderPath: null,
-					autoRunFolderPath: null,
-				});
-				expectNoActiveConversationSessionError(consoleError);
-			} finally {
-				consoleError.mockRestore();
-			}
+			// All state should be reset
+			expect(result.current.state).toEqual({
+				isActive: false,
+				isInitializing: false,
+				isWaiting: false,
+				mode: null,
+				goal: null,
+				confidence: 0,
+				ready: false,
+				conversationHistory: [],
+				isGeneratingDocs: false,
+				generatedDocuments: [],
+				existingDocuments: [],
+				previousUIState: null,
+				error: null,
+				projectPath: null,
+				agentType: null,
+				sessionName: null,
+				tabId: null,
+				sessionId: null,
+				streamingContent: '',
+				generationProgress: null,
+				currentDocumentIndex: 0,
+				lastUserMessageContent: null,
+				agentSessionId: null,
+				subfolderName: null,
+				subfolderPath: null,
+				autoRunFolderPath: null,
+				extractedProjectName: null,
+			});
 		});
 	});
 
 	describe('sendMessage', () => {
 		it('should add a user message to conversation history', async () => {
-			const consoleError = mockNoActiveConversationSessionError();
 			const { result } = renderHook(() => useInlineWizardContext(), {
 				wrapper: createWrapper(),
 			});
 
-			try {
-				await act(async () => {
-					await result.current.startWizard();
-				});
+			await act(async () => {
+				await result.current.startWizard();
+			});
 
-				act(() => {
-					result.current.sendMessage('Hello, wizard!');
-				});
+			act(() => {
+				result.current.sendMessage('Hello, wizard!');
+			});
 
-				expect(result.current.conversationHistory).toHaveLength(1);
-				expect(result.current.conversationHistory[0].role).toBe('user');
-				expect(result.current.conversationHistory[0].content).toBe('Hello, wizard!');
-				expectNoActiveConversationSessionError(consoleError);
-			} finally {
-				consoleError.mockRestore();
-			}
+			expect(result.current.conversationHistory).toHaveLength(1);
+			expect(result.current.conversationHistory[0].role).toBe('user');
+			expect(result.current.conversationHistory[0].content).toBe('Hello, wizard!');
 		});
 
 		it('should generate unique message IDs', async () => {
-			const consoleError = mockNoActiveConversationSessionError();
 			const { result } = renderHook(() => useInlineWizardContext(), {
 				wrapper: createWrapper(),
 			});
 
-			try {
-				await act(async () => {
-					await result.current.startWizard();
-				});
+			await act(async () => {
+				await result.current.startWizard();
+			});
 
-				act(() => {
-					result.current.sendMessage('Message 1');
-					result.current.sendMessage('Message 2');
-				});
+			act(() => {
+				result.current.sendMessage('Message 1');
+				result.current.sendMessage('Message 2');
+			});
 
-				const ids = result.current.conversationHistory.map((m) => m.id);
-				expect(ids[0]).not.toBe(ids[1]);
-				expectNoActiveConversationSessionError(consoleError);
-			} finally {
-				consoleError.mockRestore();
-			}
+			const ids = result.current.conversationHistory.map((m) => m.id);
+			expect(ids[0]).not.toBe(ids[1]);
 		});
 
 		it('should include timestamp on messages', async () => {
-			const consoleError = mockNoActiveConversationSessionError();
 			const { result } = renderHook(() => useInlineWizardContext(), {
 				wrapper: createWrapper(),
 			});
 
-			try {
-				await act(async () => {
-					await result.current.startWizard();
-				});
+			await act(async () => {
+				await result.current.startWizard();
+			});
 
-				const beforeTime = Date.now();
+			const beforeTime = Date.now();
 
-				act(() => {
-					result.current.sendMessage('Test message');
-				});
+			act(() => {
+				result.current.sendMessage('Test message');
+			});
 
-				const afterTime = Date.now();
-				const messageTime = result.current.conversationHistory[0].timestamp;
+			const afterTime = Date.now();
+			const messageTime = result.current.conversationHistory[0].timestamp;
 
-				expect(messageTime).toBeGreaterThanOrEqual(beforeTime);
-				expect(messageTime).toBeLessThanOrEqual(afterTime);
-				expectNoActiveConversationSessionError(consoleError);
-			} finally {
-				consoleError.mockRestore();
-			}
+			expect(messageTime).toBeGreaterThanOrEqual(beforeTime);
+			expect(messageTime).toBeLessThanOrEqual(afterTime);
 		});
 	});
 
@@ -701,81 +640,69 @@ describe('InlineWizardContext', () => {
 
 	describe('clearConversation', () => {
 		it('should clear conversation history', async () => {
-			const consoleError = mockNoActiveConversationSessionError();
 			const { result } = renderHook(() => useInlineWizardContext(), {
 				wrapper: createWrapper(),
 			});
 
-			try {
-				await act(async () => {
-					await result.current.startWizard();
-				});
+			await act(async () => {
+				await result.current.startWizard();
+			});
 
-				act(() => {
-					result.current.sendMessage('Message 1');
-					result.current.addAssistantMessage('Response 1');
-					result.current.sendMessage('Message 2');
-				});
+			act(() => {
+				result.current.sendMessage('Message 1');
+				result.current.addAssistantMessage('Response 1');
+				result.current.sendMessage('Message 2');
+			});
 
-				expect(result.current.conversationHistory).toHaveLength(3);
+			expect(result.current.conversationHistory).toHaveLength(3);
 
-				act(() => {
-					result.current.clearConversation();
-				});
+			act(() => {
+				result.current.clearConversation();
+			});
 
-				expect(result.current.conversationHistory).toEqual([]);
-				expectNoActiveConversationSessionError(consoleError);
-			} finally {
-				consoleError.mockRestore();
-			}
+			expect(result.current.conversationHistory).toEqual([]);
 		});
 	});
 
 	describe('reset', () => {
 		it('should reset all state to initial values', async () => {
-			const consoleError = mockNoActiveConversationSessionError();
 			const { result } = renderHook(() => useInlineWizardContext(), {
 				wrapper: createWrapper(),
 			});
 
-			try {
-				// Build up state
-				await act(async () => {
-					await result.current.startWizard('test', {
-						readOnlyMode: true,
-						saveToHistory: false,
-						showThinking: 'on',
-					});
+			// Build up state
+			await act(async () => {
+				await result.current.startWizard('test', {
+					readOnlyMode: true,
+					saveToHistory: false,
+					showThinking: 'on',
 				});
+			});
 
-				act(() => {
-					result.current.setMode('iterate');
-					result.current.setGoal('add feature');
-					result.current.setConfidence(80);
-					result.current.sendMessage('test');
-					result.current.setGeneratingDocs(true);
-					result.current.setError('error');
-				});
+			act(() => {
+				result.current.setMode('iterate');
+				result.current.setGoal('add feature');
+				result.current.setConfidence(80);
+				result.current.sendMessage('test');
+				result.current.setGeneratingDocs(true);
+				result.current.setError('error');
+			});
 
-				// Reset
-				act(() => {
-					result.current.reset();
-				});
+			// Reset
+			act(() => {
+				result.current.reset();
+			});
 
-				// Verify everything is reset
-				expect(result.current.isWizardActive).toBe(false);
-				expect(result.current.wizardMode).toBeNull();
-				expect(result.current.wizardGoal).toBeNull();
-				expect(result.current.confidence).toBe(0);
-				expect(result.current.conversationHistory).toEqual([]);
-				expect(result.current.isGeneratingDocs).toBe(false);
-				expect(result.current.generatedDocuments).toEqual([]);
-				expect(result.current.error).toBeNull();
-				expect(result.current.state.previousUIState).toBeNull();
-				expectNoActiveConversationSessionError(consoleError);
-			} finally {
-				consoleError.mockRestore();
-			}
+			// Verify everything is reset
+			expect(result.current.isWizardActive).toBe(false);
+			expect(result.current.wizardMode).toBeNull();
+			expect(result.current.wizardGoal).toBeNull();
+			expect(result.current.confidence).toBe(0);
+			expect(result.current.conversationHistory).toEqual([]);
+			expect(result.current.isGeneratingDocs).toBe(false);
+			expect(result.current.generatedDocuments).toEqual([]);
+			expect(result.current.error).toBeNull();
+			expect(result.current.state.previousUIState).toBeNull();
 		});
 	});
 

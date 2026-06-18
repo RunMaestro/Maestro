@@ -16,6 +16,7 @@ import React, { Component, ReactNode } from 'react';
 import { AlertTriangle, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react';
 import type { Theme } from '../../types';
 import { logger } from '../../utils/logger';
+import { captureException } from '../../utils/sentry';
 
 interface Props {
 	children: ReactNode;
@@ -72,6 +73,14 @@ export class ChartErrorBoundary extends Component<Props, State> {
 			error: error.toString(),
 			stack: error.stack,
 			componentStack: errorInfo.componentStack,
+		});
+
+		// Report to Sentry for crash tracking
+		captureException(error, {
+			extra: {
+				chartName,
+				componentStack: errorInfo.componentStack,
+			},
 		});
 
 		// Also log to console for development

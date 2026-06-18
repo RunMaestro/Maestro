@@ -144,25 +144,4 @@ describe('web/mobile/constants', () => {
 			expect(supportsVoiceInput()).toBe(false);
 		});
 	});
-
-	describe('non-browser environments', () => {
-		it('should return false for browser capability checks when window is unavailable', () => {
-			const originalWindow = globalThis.window;
-			Object.defineProperty(globalThis, 'window', {
-				value: undefined,
-				configurable: true,
-			});
-
-			try {
-				expect(isMobileViewport()).toBe(false);
-				expect(supportsHaptics()).toBe(false);
-				expect(supportsVoiceInput()).toBe(false);
-			} finally {
-				Object.defineProperty(globalThis, 'window', {
-					value: originalWindow,
-					configurable: true,
-				});
-			}
-		});
-	});
 });

@@ -24,6 +24,7 @@ import { useOperationStore, selectIsAnySummarizing } from '../../stores/operatio
 import { useSessionStore } from '../../stores/sessionStore';
 import { notifyToast } from '../../stores/notificationStore';
 import type { SummarizeState, TabSummarizeState } from '../../stores/operationStore';
+import { logger } from '../../utils/logger';
 
 // Re-export types from the canonical store location
 export type { SummarizeState, TabSummarizeState } from '../../stores/operationStore';
@@ -64,19 +65,6 @@ export interface UseSummarizeAndContinueResult {
 	minContextUsagePercent: number;
 	/** High-level handler: validates, summarizes, updates session, shows toast (Tier 3E) */
 	handleSummarizeAndContinue: (tabId?: string) => void;
-}
-
-export function createSummarizeSystemLogEntry(message: string, result?: SummarizeResult): LogEntry {
-	let text = message;
-	if (result && result.success) {
-		text = `${message}\n\nToken reduction: ${result.reductionPercent}% (~${(result.originalTokens ?? 0).toLocaleString()} → ~${(result.compactedTokens ?? 0).toLocaleString()} tokens)`;
-	}
-	return {
-		id: `system-summarize-${Date.now()}`,
-		timestamp: Date.now(),
-		source: 'system',
-		text,
-	};
 }
 
 /**
@@ -142,6 +130,25 @@ export function useSummarizeAndContinue(session: Session | null): UseSummarizeAn
 	}, []);
 
 	/**
+	 * Create a system log entry for the chat history
+	 */
+	const createSystemLogEntry = useCallback(
+		(message: string, result?: SummarizeResult): LogEntry => {
+			let text = message;
+			if (result && result.success) {
+				text = `${message}\n\nToken reduction: ${result.reductionPercent}% (~${(result.originalTokens ?? 0).toLocaleString()} → ~${(result.compactedTokens ?? 0).toLocaleString()} tokens)`;
+			}
+			return {
+				id: `system-summarize-${Date.now()}`,
+				timestamp: Date.now(),
+				source: 'system',
+				text,
+			};
+		},
+		[]
+	);
+
+	/**
 	 * Start the summarization process for a specific tab.
 	 */
 	const startSummarize = useCallback(
@@ -198,10 +205,9 @@ export function useSummarizeAndContinue(session: Session | null): UseSummarizeAn
 					},
 					sourceTab.logs,
 					(p) => {
-						if (cancelRefs.current.get(sourceTabId)) {
-							return;
+						if (!cancelRefs.current.get(sourceTabId)) {
+							useOperationStore.getState().updateSummarizeTabState(sourceTabId, { progress: p });
 						}
-						useOperationStore.getState().updateSummarizeTabState(sourceTabId, { progress: p });
 					}
 				);
 
@@ -252,7 +258,7 @@ export function useSummarizeAndContinue(session: Session | null): UseSummarizeAn
 				});
 
 				// Create system log entry for the chat history
-				const systemLogEntry = createSummarizeSystemLogEntry(
+				const systemLogEntry = createSystemLogEntry(
 					`Context summarized and continued in new tab "${compactedTabName}"`,
 					finalResult
 				);
@@ -287,7 +293,7 @@ export function useSummarizeAndContinue(session: Session | null): UseSummarizeAn
 				return null;
 			}
 		},
-		[session]
+		[session, createSystemLogEntry]
 	);
 
 	/**
@@ -342,6 +348,8 @@ export function useSummarizeAndContinue(session: Session | null): UseSummarizeAn
 					type: 'warning',
 					title: 'Cannot Compact',
 					message: `Context too small. Need at least ${contextSummarizationService.getMinContextUsagePercent()}% usage, ~2k tokens, or 8+ messages to compact.`,
+					sessionId: session.id,
+					tabId: targetTabId,
 				});
 				return;
 			}
@@ -416,7 +424,7 @@ export function useSummarizeAndContinue(session: Session | null): UseSummarizeAn
 					}
 				})
 				.catch((err) => {
-					console.error('[handleSummarizeAndContinue] Unexpected error:', err);
+					logger.error('[handleSummarizeAndContinue] Unexpected error:', undefined, err);
 					const detail = err instanceof Error ? err.message : String(err);
 					notifyToast({
 						type: 'error',

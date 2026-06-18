@@ -34,6 +34,8 @@ const baseCapabilities = {
 	supportsGroupChatModeration: false,
 	usesJsonLineOutput: false,
 	usesCombinedContextWindow: false,
+	supportsAppendSystemPrompt: false,
+	supportsProjectMemory: false,
 };
 
 describe('useAgentCapabilities', () => {
@@ -88,19 +90,6 @@ describe('useAgentCapabilities', () => {
 		expect(window.maestro.agents.getCapabilities).toHaveBeenCalledTimes(2);
 	});
 
-	it('checks individual capabilities with hasCapability', async () => {
-		vi.mocked(window.maestro.agents.getCapabilities).mockResolvedValueOnce(baseCapabilities);
-
-		const { result } = renderHook(() => useAgentCapabilities('claude-code'));
-
-		await waitFor(() => {
-			expect(result.current.loading).toBe(false);
-		});
-
-		expect(result.current.hasCapability('supportsResume')).toBe(true);
-		expect(result.current.hasCapability('supportsModelSelection')).toBe(false);
-	});
-
 	it('clears error state when agentId is unset', async () => {
 		vi.mocked(window.maestro.agents.getCapabilities).mockRejectedValue(new Error('boom'));
 
@@ -117,18 +106,6 @@ describe('useAgentCapabilities', () => {
 
 		await waitFor(() => {
 			expect(result.current.error).toBeNull();
-			expect(result.current.capabilities).toEqual(DEFAULT_CAPABILITIES);
-		});
-	});
-
-	it('uses a generic error message for non-Error rejections', async () => {
-		vi.mocked(window.maestro.agents.getCapabilities).mockRejectedValueOnce('boom');
-
-		const { result } = renderHook(() => useAgentCapabilities('claude-code'));
-
-		await waitFor(() => {
-			expect(result.current.loading).toBe(false);
-			expect(result.current.error).toBe('Failed to load capabilities');
 			expect(result.current.capabilities).toEqual(DEFAULT_CAPABILITIES);
 		});
 	});

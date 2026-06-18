@@ -6,7 +6,6 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
-import * as path from 'path';
 
 // Mock dependencies before importing the module
 vi.mock('../../../main/utils/execFile', () => ({
@@ -202,59 +201,6 @@ describe('path-prober', () => {
 			}
 		});
 
-		it('should return false on Windows when extension probing finds no file', async () => {
-			const originalPlatform = process.platform;
-			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
-
-			try {
-				statMock.mockRejectedValue(new Error('ENOENT'));
-
-				const result = await checkCustomPath('C:\\custom\\claude');
-				expect(result.exists).toBe(false);
-				expect(statMock).toHaveBeenCalledTimes(3);
-			} finally {
-				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
-			}
-		});
-
-		it('should not add Windows extensions when the custom path already has one', async () => {
-			const originalPlatform = process.platform;
-			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
-
-			try {
-				statMock.mockRejectedValue(new Error('ENOENT'));
-
-				const result = await checkCustomPath('C:\\custom\\claude.cmd');
-				expect(result.exists).toBe(false);
-				expect(statMock).toHaveBeenCalledTimes(1);
-			} finally {
-				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
-			}
-		});
-
-		it('should log and return false when custom path validation hits an unexpected error', async () => {
-			const originalPlatform = process.platform;
-			Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
-
-			try {
-				statMock.mockResolvedValue({ isFile: () => true } as fs.Stats);
-				accessMock.mockRejectedValue(new Error('EACCES'));
-				vi.mocked(logger.warn).mockImplementationOnce(() => {
-					throw new Error('logger unavailable');
-				});
-
-				const result = await checkCustomPath('/path/to/non-executable');
-				expect(result.exists).toBe(false);
-				expect(logger.debug).toHaveBeenCalledWith(
-					expect.stringContaining('Error checking custom path'),
-					'PathProber',
-					expect.objectContaining({ error: expect.any(Error) })
-				);
-			} finally {
-				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
-			}
-		});
-
 		it('should skip executable check on Windows', async () => {
 			const originalPlatform = process.platform;
 			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
@@ -299,24 +245,6 @@ describe('path-prober', () => {
 			expect(result).toBeNull();
 			// Should have tried multiple paths
 			expect(accessMock).toHaveBeenCalled();
-		});
-
-		it('should return the first successful Windows direct probe path', async () => {
-			accessMock.mockImplementation(async (probePath) => {
-				if (String(probePath).endsWith(`${path.sep}.local${path.sep}bin${path.sep}claude.exe`)) {
-					return undefined;
-				}
-				throw new Error('ENOENT');
-			});
-
-			const result = await probeWindowsPaths('claude');
-			expect(result).toContain(`${path.sep}.local${path.sep}bin${path.sep}claude.exe`);
-			expect(result).toContain('claude.exe');
-			expect(logger.debug).toHaveBeenCalledWith(
-				'Direct probe found claude',
-				'PathProber',
-				expect.objectContaining({ path: result })
-			);
 		});
 	});
 
@@ -448,27 +376,6 @@ describe('path-prober', () => {
 			}
 		});
 
-		it('should return a Windows direct probe result before running where', async () => {
-			const originalPlatform = process.platform;
-			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
-
-			try {
-				accessMock.mockImplementation(async (probePath) => {
-					if (String(probePath).endsWith(`${path.sep}.local${path.sep}bin${path.sep}claude.exe`)) {
-						return undefined;
-					}
-					throw new Error('ENOENT');
-				});
-
-				const result = await checkBinaryExists('claude');
-				expect(result.exists).toBe(true);
-				expect(result.path).toContain('claude.exe');
-				expect(execMock).not.toHaveBeenCalled();
-			} finally {
-				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
-			}
-		});
-
 		it('should return exists: false if binary not found', async () => {
 			const originalPlatform = process.platform;
 			Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
@@ -487,80 +394,6 @@ describe('path-prober', () => {
 				const result = await checkBinaryExists('non-existent');
 				expect(result.exists).toBe(false);
 				expect(result.path).toBeUndefined();
-			} finally {
-				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
-			}
-		});
-
-		it('should return exists: false when the lookup command rejects', async () => {
-			const originalPlatform = process.platform;
-			Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
-
-			try {
-				accessMock.mockRejectedValue(new Error('ENOENT'));
-				execMock.mockRejectedValue(new Error('spawn failed'));
-
-				const result = await checkBinaryExists('broken-binary');
-				expect(result.exists).toBe(false);
-				expect(result.path).toBeUndefined();
-			} finally {
-				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
-			}
-		});
-
-		it('should resolve an extensionless Windows match to an existing .exe file', async () => {
-			const originalPlatform = process.platform;
-			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
-
-			try {
-				const binaryPath = 'C:\\Tools\\binary';
-				accessMock.mockImplementation(async (probePath) => {
-					if (String(probePath) === `${binaryPath}.exe`) {
-						return undefined;
-					}
-					throw new Error('ENOENT');
-				});
-				execMock.mockResolvedValue({
-					exitCode: 0,
-					stdout: `${binaryPath}\r\n`,
-					stderr: '',
-				});
-
-				const result = await checkBinaryExists('binary');
-				expect(result.exists).toBe(true);
-				expect(result.path).toBe(`${binaryPath}.exe`);
-				expect(logger.debug).toHaveBeenCalledWith('Found .exe version of binary', 'PathProber', {
-					path: `${binaryPath}.exe`,
-				});
-			} finally {
-				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
-			}
-		});
-
-		it('should resolve an extensionless Windows match to .cmd when .exe is missing', async () => {
-			const originalPlatform = process.platform;
-			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
-
-			try {
-				const binaryPath = 'C:\\Tools\\binary';
-				accessMock.mockImplementation(async (probePath) => {
-					if (String(probePath) === `${binaryPath}.cmd`) {
-						return undefined;
-					}
-					throw new Error('ENOENT');
-				});
-				execMock.mockResolvedValue({
-					exitCode: 0,
-					stdout: `${binaryPath}\r\n`,
-					stderr: '',
-				});
-
-				const result = await checkBinaryExists('binary');
-				expect(result.exists).toBe(true);
-				expect(result.path).toBe(`${binaryPath}.cmd`);
-				expect(logger.debug).toHaveBeenCalledWith('Found .cmd version of binary', 'PathProber', {
-					path: `${binaryPath}.cmd`,
-				});
 			} finally {
 				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
 			}

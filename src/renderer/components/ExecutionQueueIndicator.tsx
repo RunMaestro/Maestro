@@ -6,33 +6,45 @@ interface ExecutionQueueIndicatorProps {
 	session: Session;
 	theme: Theme;
 	onClick: () => void; // Opens the ExecutionQueueBrowser modal
+	onSwitchTab?: (sessionId: string, tabId?: string) => void; // Jumps to a specific tab
 }
 
 /**
  * Compact indicator showing the number of items queued for execution.
  * Appears above the input area when items are queued.
- * Clicking opens the ExecutionQueueBrowser modal for full queue management.
+ * Clicking the left ("N items queued") or right ("Click to view") regions opens
+ * the ExecutionQueueBrowser modal for full queue management. Clicking an
+ * individual tab pill jumps to that tab.
  */
-export function ExecutionQueueIndicator({ session, theme, onClick }: ExecutionQueueIndicatorProps) {
+export function ExecutionQueueIndicator({
+	session,
+	theme,
+	onClick,
+	onSwitchTab,
+}: ExecutionQueueIndicatorProps) {
 	const queue = session.executionQueue || [];
-	const containerRef = useRef<HTMLButtonElement>(null);
+	const containerRef = useRef<HTMLDivElement>(null);
 	const [maxVisiblePills, setMaxVisiblePills] = useState(3);
 
 	// Count items by type
 	const messageCount = queue.filter((item) => item.type === 'message').length;
 	const commandCount = queue.filter((item) => item.type === 'command').length;
 
-	// Group by tab to show tab-specific counts
-	const tabCounts = queue.reduce(
+	// Group by tab to show tab-specific counts. Keyed by tabId so a pill can jump
+	// to its tab; tabName is kept for display.
+	const tabGroups = queue.reduce(
 		(acc, item) => {
-			const tabName = item.tabName || 'Unknown';
-			acc[tabName] = (acc[tabName] || 0) + 1;
+			const tabId = item.tabId || 'unknown';
+			if (!acc[tabId]) {
+				acc[tabId] = { tabId, tabName: item.tabName || 'Unknown', count: 0 };
+			}
+			acc[tabId].count += 1;
 			return acc;
 		},
-		{} as Record<string, number>
+		{} as Record<string, { tabId: string; tabName: string; count: number }>
 	);
 
-	const tabNames = Object.keys(tabCounts);
+	const tabs = Object.values(tabGroups);
 
 	// Calculate how many pills we can show and their max width based on available space
 	const [maxPillWidth, setMaxPillWidth] = useState<number | null>(null);
@@ -58,7 +70,7 @@ export function ExecutionQueueIndicator({ session, theme, onClick }: ExecutionQu
 		const availableWidth = containerWidth - fixedWidth - plusIndicatorWidth;
 
 		// Calculate how many pills to show and their width
-		const numTabs = tabNames.length;
+		const numTabs = tabs.length;
 		if (numTabs === 0) {
 			setMaxVisiblePills(0);
 			setMaxPillWidth(null);
@@ -92,7 +104,7 @@ export function ExecutionQueueIndicator({ session, theme, onClick }: ExecutionQu
 
 		setMaxVisiblePills(pillsToShow);
 		setMaxPillWidth(pillWidth);
-	}, [tabNames.length]);
+	}, [tabs.length]);
 
 	// Use ResizeObserver to recalculate when container size changes
 	useEffect(() => {
@@ -108,71 +120,85 @@ export function ExecutionQueueIndicator({ session, theme, onClick }: ExecutionQu
 		calculateMaxPills();
 
 		return () => observer.disconnect();
-	}, [calculateMaxPills, queue.length, tabNames.length]);
+	}, [calculateMaxPills, queue.length, tabs.length]);
 
 	if (queue.length === 0) {
 		return null;
 	}
 
 	return (
-		<button
+		<div
 			ref={containerRef}
-			onClick={onClick}
-			className="w-full mb-2 px-3 py-2 rounded-lg border flex items-center gap-2 text-sm transition-all hover:opacity-90"
+			className="w-full mb-2 px-3 py-2 rounded-lg border flex items-center gap-2 text-sm"
 			style={{
 				backgroundColor: theme.colors.bgActivity,
 				borderColor: theme.colors.border,
 				color: theme.colors.textMain,
 			}}
 		>
-			<ListOrdered className="w-4 h-4 flex-shrink-0" style={{ color: theme.colors.warning }} />
+			{/* Left region: opens the queue browser */}
+			<button
+				type="button"
+				onClick={onClick}
+				className="flex items-center gap-2 transition-all hover:opacity-90"
+				title="View execution queue"
+			>
+				<ListOrdered className="w-4 h-4 flex-shrink-0" style={{ color: theme.colors.warning }} />
 
-			<span className="text-left whitespace-nowrap">
-				<span className="font-semibold">{queue.length}</span>{' '}
-				{queue.length === 1 ? 'item' : 'items'} queued
-			</span>
+				<span className="text-left whitespace-nowrap">
+					<span className="font-semibold">{queue.length}</span>{' '}
+					{queue.length === 1 ? 'item' : 'items'} queued
+				</span>
 
-			{/* Item type breakdown */}
-			<div className="flex items-center gap-2 text-xs opacity-70 flex-shrink-0">
-				{messageCount > 0 && (
-					<span className="flex items-center gap-1">
-						<MessageSquare className="w-3 h-3" />
-						{messageCount}
-					</span>
-				)}
-				{commandCount > 0 && (
-					<span className="flex items-center gap-1">
-						<Command className="w-3 h-3" />
-						{commandCount}
-					</span>
-				)}
-			</div>
+				{/* Item type breakdown */}
+				<div className="flex items-center gap-2 text-xs opacity-70 flex-shrink-0">
+					{messageCount > 0 && (
+						<span className="flex items-center gap-1">
+							<MessageSquare className="w-3 h-3" />
+							{messageCount}
+						</span>
+					)}
+					{commandCount > 0 && (
+						<span className="flex items-center gap-1">
+							<Command className="w-3 h-3" />
+							{commandCount}
+						</span>
+					)}
+				</div>
+			</button>
 
 			{/* Spacer to push pills to the right */}
 			<div className="flex-1" />
 
-			{/* Tab pills - dynamically show as many as fit, then +N more */}
+			{/* Tab pills - dynamically show as many as fit, then +N more.
+			    Each pill jumps to its tab. */}
 			<div className="flex items-center gap-1 flex-shrink-0">
-				{tabNames.slice(0, maxVisiblePills).map((tabName) => {
-					const countSuffix = tabCounts[tabName] > 1 ? ` (${tabCounts[tabName]})` : '';
-					const fullText = tabName + countSuffix;
+				{tabs.slice(0, maxVisiblePills).map((tab) => {
+					const countSuffix = tab.count > 1 ? ` (${tab.count})` : '';
+					const fullText = tab.tabName + countSuffix;
+					const canJump = !!onSwitchTab && tab.tabId !== 'unknown';
 					return (
-						<span
-							key={tabName}
-							className="px-1.5 py-0.5 rounded text-xs font-mono overflow-hidden text-ellipsis"
+						<button
+							key={tab.tabId}
+							type="button"
+							onClick={canJump ? () => onSwitchTab?.(session.id, tab.tabId) : undefined}
+							disabled={!canJump}
+							className={`px-1.5 py-0.5 rounded text-xs font-mono overflow-hidden text-ellipsis transition-all ${
+								canJump ? 'hover:opacity-80 cursor-pointer' : 'cursor-default'
+							}`}
 							style={{
 								backgroundColor: theme.colors.accent + '30',
 								color: theme.colors.textMain,
 								maxWidth: maxPillWidth ? `${maxPillWidth}px` : undefined,
 								whiteSpace: 'nowrap',
 							}}
-							title={fullText}
+							title={canJump ? `Jump to ${fullText}` : fullText}
 						>
 							{fullText}
-						</span>
+						</button>
 					);
 				})}
-				{tabNames.length > maxVisiblePills && (
+				{tabs.length > maxVisiblePills && (
 					<span
 						className="px-1.5 py-0.5 rounded text-xs whitespace-nowrap"
 						style={{
@@ -180,12 +206,20 @@ export function ExecutionQueueIndicator({ session, theme, onClick }: ExecutionQu
 							color: maxVisiblePills === 0 ? theme.colors.textMain : theme.colors.textDim,
 						}}
 					>
-						+{tabNames.length - maxVisiblePills}
+						+{tabs.length - maxVisiblePills}
 					</span>
 				)}
 			</div>
 
-			<span className="text-xs opacity-50 flex-shrink-0 whitespace-nowrap">Click to view</span>
-		</button>
+			{/* Right region: opens the queue browser */}
+			<button
+				type="button"
+				onClick={onClick}
+				className="text-xs opacity-50 flex-shrink-0 whitespace-nowrap transition-all hover:opacity-80"
+				title="View execution queue"
+			>
+				Click to view
+			</button>
+		</div>
 	);
 }

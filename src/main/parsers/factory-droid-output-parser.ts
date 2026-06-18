@@ -102,12 +102,15 @@ export class FactoryDroidOutputParser implements AgentOutputParser {
 			);
 		} catch {
 			// Not valid JSON - return as raw text event
-			return {
-				type: 'text',
-				text: line,
-				isPartial: true,
-				raw: line,
-			};
+			if (line.trim()) {
+				return {
+					type: 'text',
+					text: line,
+					isPartial: true,
+					raw: line,
+				};
+			}
+			return null;
 		}
 	}
 
@@ -116,6 +119,10 @@ export class FactoryDroidOutputParser implements AgentOutputParser {
 	 * Core logic extracted from parseJsonLine to avoid redundant JSON.parse calls.
 	 */
 	parseJsonObject(parsed: unknown): ParsedEvent | null {
+		if (!parsed || typeof parsed !== 'object') {
+			return null;
+		}
+
 		if (!isFactoryStreamMessage(parsed)) {
 			return null;
 		}
@@ -134,6 +141,13 @@ export class FactoryDroidOutputParser implements AgentOutputParser {
 
 			case 'error':
 				return this.parseErrorEvent(data);
+
+			default:
+				return {
+					type: 'system',
+					sessionId: data.session_id,
+					raw: data,
+				};
 		}
 	}
 

@@ -1,336 +1,227 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { GroupChatList } from '../../../renderer/components/GroupChatList';
-import { useContextMenuPosition } from '../../../renderer/hooks';
-import type { GroupChat, Theme } from '../../../renderer/types';
+/**
+ * Tests for GroupChatList — left-sidebar list of Group Chats.
+ *
+ * Characterization tests for Tier 2 listener-hygiene refactor: pin down the
+ * GroupChatContextMenu Escape-key behaviour and listener cleanup before
+ * swapping to useEventListener.
+ */
 
-vi.mock('../../../renderer/hooks', async () => {
-	const actual =
-		await vi.importActual<typeof import('../../../renderer/hooks')>('../../../renderer/hooks');
+import { render, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { GroupChatList } from '../../../renderer/components/GroupChatList';
+import { mockTheme } from '../../helpers/mockTheme';
+import { spyOnListeners, expectAllListenersRemoved } from '../../helpers/listenerLeakAssertions';
+import type { GroupChat } from '../../../shared/group-chat-types';
+
+// Stub the click-outside hook so we only measure the context menu's own keydown
+// listener in the leak assertion.
+vi.mock('../../../renderer/hooks', async (orig) => {
+	const actual = await (orig as () => Promise<Record<string, unknown>>)();
 	return {
 		...actual,
 		useClickOutside: vi.fn(),
-		useContextMenuPosition: vi.fn(() => ({ left: 24, top: 32, ready: true })),
+		useContextMenuPosition: () => ({ left: 0, top: 0, ready: true }),
 	};
 });
 
-const theme: Theme = {
-	id: 'custom',
-	name: 'Test Theme',
-	mode: 'dark',
-	colors: {
-		bgMain: '#101010',
-		bgSidebar: '#181818',
-		bgActivity: '#202020',
-		border: '#333333',
-		textMain: '#f5f5f5',
-		textDim: '#999999',
-		accent: '#4a9eff',
-		accentDim: '#2b5f99',
-		accentText: '#dbeafe',
-		accentForeground: '#ffffff',
-		success: '#22c55e',
-		warning: '#f59e0b',
-		error: '#ef4444',
-	},
+const baseChat: GroupChat = {
+	id: 'gc-1',
+	name: 'Test Chat',
+	createdAt: 1,
+	moderatorAgentId: 'claude-code',
+	moderatorSessionId: 'group-chat-gc-1-moderator',
+	participants: [],
+	logPath: '/tmp/log',
+	imagesDir: '/tmp/imgs',
 };
 
-const baseChat = (overrides: Partial<GroupChat> = {}): GroupChat => ({
-	id: 'chat-1',
-	name: 'Planning Room',
-	createdAt: 1000,
-	updatedAt: 1000,
-	moderatorAgentId: 'claude-code',
-	moderatorSessionId: 'group-chat-chat-1-moderator',
-	participants: [],
-	logPath: '/tmp/chat-1/log.jsonl',
-	imagesDir: '/tmp/chat-1/images',
-	...overrides,
-});
+function renderList(overrides: Partial<Parameters<typeof GroupChatList>[0]> = {}) {
+	const defaults = {
+		theme: mockTheme,
+		groupChats: [baseChat],
+		activeGroupChatId: null,
+		onOpenGroupChat: vi.fn(),
+		onNewGroupChat: vi.fn(),
+		onEditGroupChat: vi.fn(),
+		onRenameGroupChat: vi.fn(),
+		onDeleteGroupChat: vi.fn(),
+	};
+	return render(<GroupChatList {...defaults} {...overrides} />);
+}
 
-const defaultProps = () => ({
-	theme,
-	groupChats: [] as GroupChat[],
-	activeGroupChatId: null,
-	onOpenGroupChat: vi.fn(),
-	onNewGroupChat: vi.fn(),
-	onEditGroupChat: vi.fn(),
-	onRenameGroupChat: vi.fn(),
-	onDeleteGroupChat: vi.fn(),
-	onArchiveGroupChat: vi.fn(),
-});
+function openContextMenu(container: HTMLElement) {
+	// Walk up from the chat name to the row element that owns the onContextMenu
+	// handler (the row has py-1.5; the section header has py-2 — distinguish by
+	// closeting on the cursor-pointer class plus walking up from the name).
+	const nameSpan = container.querySelector('span.text-sm.truncate');
+	expect(nameSpan).not.toBeNull();
+	const row = (nameSpan as HTMLElement).closest('[class*="cursor-pointer"]');
+	expect(row).not.toBeNull();
+	fireEvent.contextMenu(row as HTMLElement, { clientX: 50, clientY: 50 });
+}
 
 describe('GroupChatList', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 	});
 
-	it('expands an empty uncontrolled list and keeps the new-chat button from toggling it', () => {
-		const props = defaultProps();
-		render(<GroupChatList {...props} />);
-
-		expect(screen.queryByText('No group chats yet')).not.toBeInTheDocument();
-
-		fireEvent.click(screen.getByText('Group Chats'));
-
-		expect(screen.getByText('No group chats yet')).toBeInTheDocument();
-
-		fireEvent.click(screen.getByTitle('New Group Chat'));
-
-		expect(props.onNewGroupChat).toHaveBeenCalledOnce();
-		expect(screen.getByText('No group chats yet')).toBeInTheDocument();
+	afterEach(() => {
+		vi.clearAllMocks();
 	});
 
-	it('sorts active chats by recent activity and reveals archived chats on demand', () => {
-		const props = defaultProps();
-		render(
-			<GroupChatList
-				{...props}
-				groupChats={[
-					baseChat({ id: 'older', name: 'Older Active', createdAt: 1000, updatedAt: 2000 }),
-					baseChat({
-						id: 'archived',
-						name: 'Archived Room',
-						createdAt: 1000,
-						updatedAt: 9000,
-						archived: true,
-					}),
-					baseChat({
-						id: 'newer',
-						name: 'Newer Active',
-						createdAt: 1000,
-						updatedAt: 3000,
-						participants: [
-							{
-								name: 'Agent One',
-								agentId: 'claude-code',
-								sessionId: 'session-1',
-								addedAt: 1000,
-							},
-							{
-								name: 'Agent Two',
-								agentId: 'codex',
-								sessionId: 'session-2',
-								addedAt: 1000,
-							},
-						],
-					}),
-				]}
-			/>
-		);
-
-		const visibleItems = screen.getAllByText(/Active$/).map((item) => item.textContent);
-		expect(visibleItems).toEqual(['Newer Active', 'Older Active']);
-		expect(screen.queryByText('Archived Room')).not.toBeInTheDocument();
-		expect(screen.getByTitle('2 participants')).toHaveTextContent('2');
-
-		fireEvent.click(screen.getByTitle('Show 1 archived chat'));
-
-		expect(screen.getByTitle('Hide archived chats')).toBeInTheDocument();
-		expect(
-			screen
-				.getAllByText(/^(Newer Active|Older Active|Archived Room)$/)
-				.map((item) => item.textContent)
-		).toEqual(['Newer Active', 'Older Active', 'Archived Room']);
+	it('renders the list with a single chat', () => {
+		const { getByText } = renderList();
+		expect(getByText('Test Chat')).toBeInTheDocument();
 	});
 
-	it('sorts chats by created time when updated time is missing', () => {
-		const props = defaultProps();
-		render(
-			<GroupChatList
-				{...props}
-				groupChats={[
-					baseChat({ id: 'older', name: 'Older Created', createdAt: 1000, updatedAt: undefined }),
-					baseChat({ id: 'newer', name: 'Newer Created', createdAt: 3000, updatedAt: undefined }),
-				]}
-			/>
-		);
-
-		expect(screen.getAllByText(/Created$/).map((item) => item.textContent)).toEqual([
-			'Newer Created',
-			'Older Created',
-		]);
+	it('does not mount the context-menu keydown listener until right-clicked', () => {
+		const spies = spyOnListeners(document);
+		renderList();
+		const keydownAdds = spies.addSpy.mock.calls.filter(([t]) => t === 'keydown');
+		expect(keydownAdds).toHaveLength(0);
+		spies.restore();
 	});
 
-	it('pluralizes archived and participant labels', () => {
-		const props = defaultProps();
-		render(
-			<GroupChatList
-				{...props}
-				groupChats={[
-					baseChat({
-						id: 'single-participant',
-						name: 'Solo Chat',
-						participants: [
-							{
-								name: 'Agent One',
-								agentId: 'claude-code',
-								sessionId: 'session-1',
-								addedAt: 1000,
-							},
-						],
-					}),
-					baseChat({ id: 'archived-a', name: 'Archived A', archived: true }),
-					baseChat({ id: 'archived-b', name: 'Archived B', archived: true }),
-				]}
-			/>
-		);
+	it('closes the context menu on Escape after right-click', () => {
+		const { container, queryByText } = renderList();
+		openContextMenu(container);
+		expect(queryByText('Edit')).toBeInTheDocument();
 
-		expect(screen.getByTitle('1 participant')).toHaveTextContent('1');
-		expect(screen.getByTitle('Show 2 archived chats')).toHaveTextContent('2');
+		fireEvent.keyDown(document, { key: 'Escape' });
+		expect(queryByText('Edit')).not.toBeInTheDocument();
 	});
 
-	it('shows the archived empty state when every chat is archived', () => {
-		const props = defaultProps();
-		render(
-			<GroupChatList
-				{...props}
-				groupChats={[baseChat({ id: 'archived', name: 'Archived Room', archived: true })]}
-			/>
-		);
-
-		expect(screen.getByText('All group chats are archived')).toBeInTheDocument();
-
-		fireEvent.click(screen.getByTitle('Show 1 archived chat'));
-
-		expect(screen.getByText('Archived Room')).toBeInTheDocument();
+	it('removes the context-menu keydown listener after Escape closes the menu', () => {
+		const spies = spyOnListeners(document);
+		const { container } = renderList();
+		openContextMenu(container);
+		fireEvent.keyDown(document, { key: 'Escape' });
+		expectAllListenersRemoved(spies.addSpy, spies.removeSpy);
+		spies.restore();
 	});
 
-	it('uses controlled expansion and asks the parent to expand when a chat is added', () => {
-		const props = defaultProps();
+	it('removes the context-menu keydown listener on unmount', () => {
+		const spies = spyOnListeners(document);
+		const { container, unmount } = renderList();
+		openContextMenu(container);
+		unmount();
+		expectAllListenersRemoved(spies.addSpy, spies.removeSpy);
+		spies.restore();
+	});
+
+	it('stays collapsed when a new chat is added', () => {
 		const onExpandedChange = vi.fn();
-		const { rerender } = render(
-			<GroupChatList {...props} isExpanded={false} onExpandedChange={onExpandedChange} />
-		);
-
-		fireEvent.click(screen.getByText('Group Chats'));
-		expect(onExpandedChange).toHaveBeenCalledWith(true);
-
+		const secondChat: GroupChat = { ...baseChat, id: 'gc-2', name: 'Second Chat' };
+		const { rerender } = renderList({
+			isExpanded: false,
+			onExpandedChange,
+			groupChats: [baseChat],
+		});
 		rerender(
 			<GroupChatList
-				{...props}
-				groupChats={[baseChat({ id: 'new-chat', name: 'New Chat' })]}
+				theme={mockTheme}
+				groupChats={[baseChat, secondChat]}
+				activeGroupChatId={null}
+				onOpenGroupChat={vi.fn()}
+				onNewGroupChat={vi.fn()}
+				onEditGroupChat={vi.fn()}
+				onRenameGroupChat={vi.fn()}
+				onDeleteGroupChat={vi.fn()}
 				isExpanded={false}
 				onExpandedChange={onExpandedChange}
 			/>
 		);
-
-		expect(onExpandedChange).toHaveBeenLastCalledWith(true);
+		expect(onExpandedChange).not.toHaveBeenCalled();
 	});
 
-	it('opens chats and renders busy indicators from active and inactive chat state', () => {
-		const props = defaultProps();
-		render(
-			<GroupChatList
-				{...props}
-				groupChats={[
-					baseChat({ id: 'active', name: 'Active Chat' }),
-					baseChat({ id: 'inactive', name: 'Inactive Chat' }),
-					baseChat({ id: 'idle', name: 'Idle Chat' }),
-				]}
-				activeGroupChatId="active"
-				groupChatState="moderator-thinking"
-				participantStates={new Map([['Agent One', 'working']])}
-				groupChatStates={new Map([['inactive', 'agent-working']])}
-				allGroupChatParticipantStates={new Map([['idle', new Map([['Agent Two', 'working']])]])}
-			/>
-		);
-
-		fireEvent.click(screen.getByText('Inactive Chat'));
-		expect(props.onOpenGroupChat).toHaveBeenCalledWith('inactive');
-
-		fireEvent.doubleClick(screen.getByText('Idle Chat'));
-		expect(props.onOpenGroupChat).toHaveBeenCalledWith('idle');
-
-		expect(screen.getAllByTitle('Thinking...')).toHaveLength(3);
-		expect(screen.queryByTitle('Idle')).not.toBeInTheDocument();
-	});
-
-	it('runs context-menu edit, rename, archive, unarchive, delete, and escape close actions', () => {
-		const props = defaultProps();
-		render(
-			<GroupChatList
-				{...props}
-				groupChats={[
-					baseChat({ id: 'active', name: 'Active Chat' }),
-					baseChat({ id: 'archived', name: 'Archived Chat', archived: true }),
-				]}
-			/>
-		);
-
-		fireEvent.contextMenu(screen.getByText('Active Chat'), { clientX: 12, clientY: 18 });
-		const editMenu = screen.getByRole('button', { name: 'Edit' }).closest('div')!;
-		expect(within(editMenu).getByRole('button', { name: 'Archive' })).toBeInTheDocument();
-
-		fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
-		expect(props.onEditGroupChat).toHaveBeenCalledWith('active');
-		expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument();
-
-		fireEvent.contextMenu(screen.getByText('Active Chat'), { clientX: 12, clientY: 18 });
-		fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
-		expect(props.onRenameGroupChat).toHaveBeenCalledWith('active');
-
-		fireEvent.contextMenu(screen.getByText('Active Chat'), { clientX: 12, clientY: 18 });
-		fireEvent.click(screen.getByRole('button', { name: 'Archive' }));
-		expect(props.onArchiveGroupChat).toHaveBeenCalledWith('active', true);
-
-		fireEvent.click(screen.getByTitle('Show 1 archived chat'));
-		fireEvent.contextMenu(screen.getByText('Archived Chat'), { clientX: 12, clientY: 18 });
-		fireEvent.click(screen.getByRole('button', { name: 'Unarchive' }));
-		expect(props.onArchiveGroupChat).toHaveBeenCalledWith('archived', false);
-
-		fireEvent.contextMenu(screen.getByText('Active Chat'), { clientX: 12, clientY: 18 });
-		fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
-		expect(props.onDeleteGroupChat).toHaveBeenCalledWith('active');
-
-		fireEvent.contextMenu(screen.getByText('Active Chat'), { clientX: 12, clientY: 18 });
-		expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument();
-		fireEvent.keyDown(document, { key: 'Enter' });
-		expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument();
-		fireEvent.keyDown(document, { key: 'Escape' });
-		expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument();
-	});
-
-	it('renders a hidden context menu while its measured position is not ready', () => {
-		vi.mocked(useContextMenuPosition).mockReturnValueOnce({ left: 24, top: 32, ready: false });
-		const props = defaultProps();
-		render(
-			<GroupChatList {...props} groupChats={[baseChat({ id: 'active', name: 'Active Chat' })]} />
-		);
-
-		fireEvent.contextMenu(screen.getByText('Active Chat'), { clientX: 12, clientY: 18 });
-
-		expect(screen.getByRole('button', { name: 'Edit' }).closest('div')).toHaveStyle({
-			opacity: '0',
+	it('expands and creates a chat when New Chat is clicked while collapsed', () => {
+		const onExpandedChange = vi.fn();
+		const onNewGroupChat = vi.fn();
+		const { getByText } = renderList({
+			isExpanded: false,
+			onExpandedChange,
+			onNewGroupChat,
 		});
+		fireEvent.click(getByText('+ New Chat'));
+		expect(onExpandedChange).toHaveBeenCalledWith(true);
+		expect(onNewGroupChat).toHaveBeenCalledTimes(1);
 	});
 
-	it('omits archive actions when no archive callback is provided', () => {
-		const props = defaultProps();
-		render(
-			<GroupChatList
-				{...props}
-				onArchiveGroupChat={undefined}
-				groupChats={[baseChat({ id: 'active', name: 'Active Chat' })]}
-			/>
-		);
+	describe('sort toggle pill', () => {
+		// "Banana" was updated most recently; "Apple" comes first alphabetically.
+		const apple: GroupChat = {
+			...baseChat,
+			id: 'gc-apple',
+			name: 'Apple',
+			createdAt: 1,
+			updatedAt: 1,
+		};
+		const banana: GroupChat = {
+			...baseChat,
+			id: 'gc-banana',
+			name: 'Banana',
+			createdAt: 2,
+			updatedAt: 100,
+		};
 
-		fireEvent.contextMenu(screen.getByText('Active Chat'), { clientX: 12, clientY: 18 });
+		function chatOrder(container: HTMLElement): string[] {
+			return Array.from(container.querySelectorAll('span.text-sm.truncate')).map(
+				(el) => el.textContent ?? ''
+			);
+		}
 
-		expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument();
-		expect(screen.queryByRole('button', { name: 'Archive' })).not.toBeInTheDocument();
-	});
+		it('does not render the pill without an onSortAlphabeticalChange callback', () => {
+			const { queryByTitle } = renderList({ groupChats: [apple, banana] });
+			expect(queryByTitle(/Sorting/)).toBeNull();
+		});
 
-	it('does not archive when the context-menu chat no longer exists', () => {
-		const props = defaultProps();
-		const { rerender } = render(
-			<GroupChatList {...props} groupChats={[baseChat({ id: 'active', name: 'Active Chat' })]} />
-		);
+		it('does not render the pill with a single chat', () => {
+			const { queryByTitle } = renderList({
+				groupChats: [apple],
+				onSortAlphabeticalChange: vi.fn(),
+			});
+			expect(queryByTitle(/Sorting/)).toBeNull();
+		});
 
-		fireEvent.contextMenu(screen.getByText('Active Chat'), { clientX: 12, clientY: 18 });
-		rerender(<GroupChatList {...props} groupChats={[]} />);
-		fireEvent.click(screen.getByRole('button', { name: 'Archive' }));
+		it('sorts by most recent activity by default', () => {
+			const { container } = renderList({
+				groupChats: [apple, banana],
+				onSortAlphabeticalChange: vi.fn(),
+				isExpanded: true,
+			});
+			expect(chatOrder(container)).toEqual(['Banana', 'Apple']);
+		});
 
-		expect(props.onArchiveGroupChat).not.toHaveBeenCalled();
+		it('sorts alphabetically when sortAlphabetical is true', () => {
+			const { container } = renderList({
+				groupChats: [apple, banana],
+				onSortAlphabeticalChange: vi.fn(),
+				sortAlphabetical: true,
+				isExpanded: true,
+			});
+			expect(chatOrder(container)).toEqual(['Apple', 'Banana']);
+		});
+
+		it('toggles the sort order when the pill is clicked', () => {
+			const onSortAlphabeticalChange = vi.fn();
+			const { getByTitle } = renderList({
+				groupChats: [apple, banana],
+				onSortAlphabeticalChange,
+				sortAlphabetical: false,
+			});
+			fireEvent.click(getByTitle(/Sorting by most recent/));
+			expect(onSortAlphabeticalChange).toHaveBeenCalledWith(true);
+		});
+
+		it('toggles back to most recent when clicked while alphabetical', () => {
+			const onSortAlphabeticalChange = vi.fn();
+			const { getByTitle } = renderList({
+				groupChats: [apple, banana],
+				onSortAlphabeticalChange,
+				sortAlphabetical: true,
+			});
+			fireEvent.click(getByTitle(/Sorting alphabetically/));
+			expect(onSortAlphabeticalChange).toHaveBeenCalledWith(false);
+		});
 	});
 });

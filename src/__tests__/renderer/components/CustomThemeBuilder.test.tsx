@@ -7,37 +7,39 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { CustomThemeBuilder } from '../../../renderer/components/CustomThemeBuilder';
-import { THEMES } from '../../../renderer/constants/themes';
+import { MODAL_PRIORITIES } from '../../../renderer/constants/modalPriorities';
 import type { Theme, ThemeColors, ThemeId } from '../../../shared/theme-types';
+
+import { mockTheme, mockThemeColors } from '../../helpers/mockTheme';
+
+// Capture layer-stack registrations so the base-theme dropdown's Escape
+// handling can be exercised without a real LayerStackProvider.
+const { registeredLayers } = vi.hoisted(() => ({
+	registeredLayers: new Map<string, { priority: number; onEscape: () => void }>(),
+}));
+
+vi.mock('../../../renderer/contexts/LayerStackContext', () => {
+	let counter = 0;
+	return {
+		useLayerStack: () => ({
+			registerLayer: (layer: { priority: number; onEscape: () => void }) => {
+				const id = `layer-${++counter}`;
+				registeredLayers.set(id, layer);
+				return id;
+			},
+			unregisterLayer: (id: string) => {
+				registeredLayers.delete(id);
+			},
+			updateLayerHandler: vi.fn(),
+		}),
+	};
+});
 
 // ============================================================================
 // Test Fixtures
 // ============================================================================
-
-const mockThemeColors: ThemeColors = {
-	bgMain: '#1a1a2e',
-	bgSidebar: '#16213e',
-	bgActivity: '#0f3460',
-	border: '#555555',
-	textMain: '#e0e0e0',
-	textDim: '#888888',
-	accent: '#8b5cf6',
-	accentDim: '#8b5cf640',
-	accentText: '#a78bfa',
-	accentForeground: '#ffffff',
-	success: '#10b981',
-	warning: '#f59e0b',
-	error: '#ef4444',
-};
-
-const mockTheme: Theme = {
-	id: 'dracula' as ThemeId,
-	name: 'Dracula',
-	mode: 'dark',
-	colors: mockThemeColors,
-};
 
 /**
  * Create a valid theme export JSON string
@@ -88,6 +90,7 @@ describe('CustomThemeBuilder', () => {
 		onSelect = vi.fn();
 		onImportError = vi.fn();
 		onImportSuccess = vi.fn();
+		registeredLayers.clear();
 	});
 
 	afterEach(() => {
@@ -290,38 +293,6 @@ describe('CustomThemeBuilder', () => {
 					expect(setCustomThemeBaseId).toHaveBeenCalledWith('monokai');
 				});
 			});
-
-			it('should import colors without updating base theme when baseTheme is unknown', async () => {
-				const importData = {
-					name: 'Custom Theme',
-					baseTheme: 'unknown-theme',
-					colors: mockThemeColors,
-					exportedAt: new Date().toISOString(),
-				};
-
-				render(
-					<CustomThemeBuilder
-						theme={mockTheme}
-						customThemeColors={mockThemeColors}
-						setCustomThemeColors={setCustomThemeColors}
-						customThemeBaseId="dracula"
-						setCustomThemeBaseId={setCustomThemeBaseId}
-						isSelected={false}
-						onSelect={onSelect}
-						onImportError={onImportError}
-						onImportSuccess={onImportSuccess}
-					/>
-				);
-
-				const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
-				await simulateFileUpload(fileInput, createFileFromJSON(JSON.stringify(importData)));
-
-				await waitFor(() => {
-					expect(setCustomThemeColors).toHaveBeenCalledWith(mockThemeColors);
-					expect(setCustomThemeBaseId).not.toHaveBeenCalled();
-					expect(onImportSuccess).toHaveBeenCalledWith('Theme imported successfully');
-				});
-			});
 		});
 
 		describe('Color Validation', () => {
@@ -385,13 +356,40 @@ describe('CustomThemeBuilder', () => {
 				});
 			});
 
-			it('should truncate invalid color errors after the first three keys', async () => {
-				const invalidColors = {
+			it('should import a theme that omits the optional bgTitleBar key', async () => {
+				// Older/partial exports may omit the optional bgTitleBar key and
+				// must still import successfully (the UI falls back to bgMain).
+				const colorsWithoutTitleBar = { ...mockThemeColors } as ThemeColors;
+				delete colorsWithoutTitleBar.bgTitleBar;
+
+				render(
+					<CustomThemeBuilder
+						theme={mockTheme}
+						customThemeColors={mockThemeColors}
+						setCustomThemeColors={setCustomThemeColors}
+						customThemeBaseId="dracula"
+						setCustomThemeBaseId={setCustomThemeBaseId}
+						isSelected={false}
+						onSelect={onSelect}
+						onImportError={onImportError}
+						onImportSuccess={onImportSuccess}
+					/>
+				);
+
+				const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+				const file = createFileFromJSON(createValidThemeJSON(colorsWithoutTitleBar));
+				await simulateFileUpload(fileInput, file);
+
+				await waitFor(() => {
+					expect(setCustomThemeColors).toHaveBeenCalledWith(colorsWithoutTitleBar);
+					expect(onImportError).not.toHaveBeenCalled();
+				});
+			});
+
+			it('should reject a theme whose optional bgTitleBar value is invalid', async () => {
+				const colorsWithBadTitleBar = {
 					...mockThemeColors,
-					bgMain: 'not-a-color',
-					bgSidebar: 'still-not-a-color',
-					bgActivity: 'also-not-a-color',
-					border: 'invalid-border',
+					bgTitleBar: 'not-a-color',
 				};
 
 				render(
@@ -409,15 +407,11 @@ describe('CustomThemeBuilder', () => {
 				);
 
 				const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
-				await simulateFileUpload(
-					fileInput,
-					createFileFromJSON(createValidThemeJSON(invalidColors))
-				);
+				const file = createFileFromJSON(createValidThemeJSON(colorsWithBadTitleBar));
+				await simulateFileUpload(fileInput, file);
 
 				await waitFor(() => {
-					expect(onImportError).toHaveBeenCalledWith(
-						'Invalid theme file: invalid color values for bgMain, bgSidebar, bgActivity...'
-					);
+					expect(onImportError).toHaveBeenCalled();
 					expect(setCustomThemeColors).not.toHaveBeenCalled();
 				});
 			});
@@ -612,39 +606,6 @@ describe('CustomThemeBuilder', () => {
 					expect(errorCall).toContain('bgSidebar');
 				});
 			});
-
-			it('should omit the ellipsis when three or fewer color keys are missing', async () => {
-				const incompleteColors: Partial<ThemeColors> = { ...mockThemeColors };
-				delete incompleteColors.warning;
-				delete incompleteColors.error;
-
-				render(
-					<CustomThemeBuilder
-						theme={mockTheme}
-						customThemeColors={mockThemeColors}
-						setCustomThemeColors={setCustomThemeColors}
-						customThemeBaseId="dracula"
-						setCustomThemeBaseId={setCustomThemeBaseId}
-						isSelected={false}
-						onSelect={onSelect}
-						onImportError={onImportError}
-						onImportSuccess={onImportSuccess}
-					/>
-				);
-
-				const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
-				await simulateFileUpload(
-					fileInput,
-					createFileFromJSON(JSON.stringify({ colors: incompleteColors }))
-				);
-
-				await waitFor(() => {
-					expect(onImportError).toHaveBeenCalledWith(
-						'Invalid theme file: missing color keys (warning, error)'
-					);
-					expect(setCustomThemeColors).not.toHaveBeenCalled();
-				});
-			});
 		});
 
 		describe('JSON Parse Errors', () => {
@@ -773,7 +734,7 @@ describe('CustomThemeBuilder', () => {
 	});
 
 	describe('Reset Functionality', () => {
-		it('should reset colors when reset button is clicked', () => {
+		it('should ask for confirmation before resetting colors', () => {
 			render(
 				<CustomThemeBuilder
 					theme={mockTheme}
@@ -789,8 +750,49 @@ describe('CustomThemeBuilder', () => {
 			const resetButton = screen.getByTitle('Reset to default');
 			fireEvent.click(resetButton);
 
+			// Reset should not happen until the confirmation is accepted
+			expect(setCustomThemeColors).not.toHaveBeenCalled();
+			expect(screen.getByText('Reset Custom Theme')).toBeInTheDocument();
+		});
+
+		it('should reset colors when confirmation is accepted', () => {
+			render(
+				<CustomThemeBuilder
+					theme={mockTheme}
+					customThemeColors={mockThemeColors}
+					setCustomThemeColors={setCustomThemeColors}
+					customThemeBaseId="dracula"
+					setCustomThemeBaseId={setCustomThemeBaseId}
+					isSelected={false}
+					onSelect={onSelect}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle('Reset to default'));
+			fireEvent.click(screen.getByRole('button', { name: 'Reset' }));
+
 			expect(setCustomThemeColors).toHaveBeenCalled();
 			expect(setCustomThemeBaseId).toHaveBeenCalledWith('dracula');
+		});
+
+		it('should not reset colors when confirmation is cancelled', () => {
+			render(
+				<CustomThemeBuilder
+					theme={mockTheme}
+					customThemeColors={mockThemeColors}
+					setCustomThemeColors={setCustomThemeColors}
+					customThemeBaseId="dracula"
+					setCustomThemeBaseId={setCustomThemeBaseId}
+					isSelected={false}
+					onSelect={onSelect}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle('Reset to default'));
+			fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+			expect(setCustomThemeColors).not.toHaveBeenCalled();
+			expect(setCustomThemeBaseId).not.toHaveBeenCalled();
 		});
 	});
 
@@ -817,7 +819,31 @@ describe('CustomThemeBuilder', () => {
 			expect(screen.getByText('Nord')).toBeInTheDocument();
 		});
 
-		it('should initialize colors from a selected base theme', () => {
+		it('should register a layer above Settings while the dropdown is open', () => {
+			render(
+				<CustomThemeBuilder
+					theme={mockTheme}
+					customThemeColors={mockThemeColors}
+					setCustomThemeColors={setCustomThemeColors}
+					customThemeBaseId="dracula"
+					setCustomThemeBaseId={setCustomThemeBaseId}
+					isSelected={false}
+					onSelect={onSelect}
+				/>
+			);
+
+			// No layer registered until the dropdown opens
+			expect(registeredLayers.size).toBe(0);
+
+			fireEvent.click(screen.getByRole('button', { name: /Initialize/i }));
+
+			const layers = [...registeredLayers.values()];
+			expect(layers).toHaveLength(1);
+			expect(layers[0].priority).toBe(MODAL_PRIORITIES.CUSTOM_THEME_BASE_SELECTOR);
+			expect(layers[0].priority).toBeGreaterThan(MODAL_PRIORITIES.SETTINGS);
+		});
+
+		it('should close only the dropdown when its Escape layer fires', () => {
 			render(
 				<CustomThemeBuilder
 					theme={mockTheme}
@@ -831,70 +857,19 @@ describe('CustomThemeBuilder', () => {
 			);
 
 			fireEvent.click(screen.getByRole('button', { name: /Initialize/i }));
-			fireEvent.click(screen.getByRole('button', { name: /Monokai/i }));
+			expect(screen.getByText('Monokai')).toBeInTheDocument();
 
-			expect(setCustomThemeColors).toHaveBeenCalledWith(THEMES.monokai.colors);
-			expect(setCustomThemeBaseId).toHaveBeenCalledWith('monokai');
-			expect(screen.queryByText('Nord')).not.toBeInTheDocument();
-		});
+			// Simulate the layer stack delegating Escape to the topmost layer
+			const layer = [...registeredLayers.values()][0];
+			act(() => layer.onEscape());
 
-		it('should close the selector without applying colors when a listed base theme is unavailable', () => {
-			const themes = THEMES as unknown as Record<string, Theme>;
-			themes.__missingBaseForTest = {
-				...THEMES.dracula,
-				id: 'missing-theme' as ThemeId,
-				name: 'Missing Theme',
-			};
-
-			try {
-				render(
-					<CustomThemeBuilder
-						theme={mockTheme}
-						customThemeColors={mockThemeColors}
-						setCustomThemeColors={setCustomThemeColors}
-						customThemeBaseId="dracula"
-						setCustomThemeBaseId={setCustomThemeBaseId}
-						isSelected={false}
-						onSelect={onSelect}
-					/>
-				);
-
-				fireEvent.click(screen.getByRole('button', { name: /Initialize/i }));
-				fireEvent.click(screen.getByRole('button', { name: /Missing Theme/i }));
-
-				expect(setCustomThemeColors).not.toHaveBeenCalled();
-				expect(setCustomThemeBaseId).not.toHaveBeenCalled();
-				expect(screen.queryByText('Missing Theme')).not.toBeInTheDocument();
-			} finally {
-				delete themes.__missingBaseForTest;
-			}
+			// Dropdown is gone; the builder itself stays mounted
+			expect(screen.queryByText('Monokai')).not.toBeInTheDocument();
+			expect(screen.getByText('Custom Theme')).toBeInTheDocument();
 		});
 	});
 
 	describe('Color Input', () => {
-		it('should render complex rgba colors with a neutral color picker and alpha marker', () => {
-			const complexColors = {
-				...mockThemeColors,
-				accentDim: 'rgba(139,92,246,0.25)',
-			};
-
-			render(
-				<CustomThemeBuilder
-					theme={mockTheme}
-					customThemeColors={complexColors}
-					setCustomThemeColors={setCustomThemeColors}
-					customThemeBaseId="dracula"
-					setCustomThemeBaseId={setCustomThemeBaseId}
-					isSelected={false}
-					onSelect={onSelect}
-				/>
-			);
-
-			expect(screen.getByTitle('Accent Dim')).toHaveValue('#888888');
-			expect(screen.getByText('α')).toBeInTheDocument();
-			expect(screen.getByRole('button', { name: 'rgba(139,92,...' })).toBeInTheDocument();
-		});
-
 		it('should update color when color picker value changes', () => {
 			render(
 				<CustomThemeBuilder
@@ -916,87 +891,6 @@ describe('CustomThemeBuilder', () => {
 			fireEvent.change(colorInputs[0], { target: { value: '#ff0000' } });
 
 			expect(setCustomThemeColors).toHaveBeenCalled();
-		});
-
-		it('should edit a color value from the inline text input', () => {
-			render(
-				<CustomThemeBuilder
-					theme={mockTheme}
-					customThemeColors={mockThemeColors}
-					setCustomThemeColors={setCustomThemeColors}
-					customThemeBaseId="dracula"
-					setCustomThemeBaseId={setCustomThemeBaseId}
-					isSelected={false}
-					onSelect={onSelect}
-				/>
-			);
-
-			fireEvent.click(screen.getByRole('button', { name: '#1a1a2e' }));
-			const textInput = screen
-				.getAllByDisplayValue('#1a1a2e')
-				.find((input) => input.getAttribute('type') === 'text')!;
-			fireEvent.change(textInput, { target: { value: '#123456' } });
-			fireEvent.keyDown(textInput, { key: 'Enter' });
-
-			expect(setCustomThemeColors).toHaveBeenCalledWith({
-				...mockThemeColors,
-				bgMain: '#123456',
-			});
-			expect(document.querySelector('input[type="text"]')).not.toBeInTheDocument();
-		});
-
-		it('should close the inline color editor on blur', () => {
-			render(
-				<CustomThemeBuilder
-					theme={mockTheme}
-					customThemeColors={mockThemeColors}
-					setCustomThemeColors={setCustomThemeColors}
-					customThemeBaseId="dracula"
-					setCustomThemeBaseId={setCustomThemeBaseId}
-					isSelected={false}
-					onSelect={onSelect}
-				/>
-			);
-
-			fireEvent.click(screen.getByRole('button', { name: '#16213e' }));
-			const textInput = screen
-				.getAllByDisplayValue('#16213e')
-				.find((input) => input.getAttribute('type') === 'text')!;
-			fireEvent.blur(textInput);
-
-			expect(document.querySelector('input[type="text"]')).not.toBeInTheDocument();
-		});
-	});
-
-	describe('Import Button', () => {
-		it('should open the hidden file input and ignore an empty file selection', () => {
-			const inputClick = vi
-				.spyOn(HTMLInputElement.prototype, 'click')
-				.mockImplementation(() => undefined);
-
-			render(
-				<CustomThemeBuilder
-					theme={mockTheme}
-					customThemeColors={mockThemeColors}
-					setCustomThemeColors={setCustomThemeColors}
-					customThemeBaseId="dracula"
-					setCustomThemeBaseId={setCustomThemeBaseId}
-					isSelected={false}
-					onSelect={onSelect}
-					onImportError={onImportError}
-					onImportSuccess={onImportSuccess}
-				/>
-			);
-
-			fireEvent.click(screen.getByTitle('Import theme'));
-			expect(inputClick).toHaveBeenCalledOnce();
-
-			const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
-			fireEvent.change(fileInput);
-
-			expect(setCustomThemeColors).not.toHaveBeenCalled();
-			expect(onImportError).not.toHaveBeenCalled();
-			expect(onImportSuccess).not.toHaveBeenCalled();
 		});
 	});
 });

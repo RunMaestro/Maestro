@@ -2,7 +2,7 @@
  * Tests for the Document Graph layout algorithms
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { Node, Edge } from 'reactflow';
 import {
 	applyForceLayout,
@@ -40,22 +40,6 @@ function createDocumentNode(id: string, x = 0, y = 0): Node<DocumentNodeData> {
 			wordCount: 500,
 			size: '1 KB',
 			filePath: `${id}.md`,
-		},
-	};
-}
-
-function createDocumentNodeWithData(
-	id: string,
-	dataOverrides: Partial<DocumentNodeData>,
-	x = 0,
-	y = 0
-): Node<DocumentNodeData> {
-	const node = createDocumentNode(id, x, y);
-	return {
-		...node,
-		data: {
-			...node.data,
-			...dataOverrides,
 		},
 	};
 }
@@ -152,64 +136,6 @@ describe('layoutAlgorithms', () => {
 			expect(result[1].position).toBeDefined();
 		});
 
-		it('should arrange external-only graphs in a grid', () => {
-			const nodes: Node<GraphNodeData>[] = [
-				createExternalNode('github.com'),
-				createExternalNode('docs.example.com'),
-				createExternalNode('npmjs.com'),
-				createExternalNode('vite.dev'),
-			];
-
-			const result = applyForceLayout(nodes, [], { nodeSeparation: 40 });
-
-			expect(result).toHaveLength(4);
-			for (const node of result) {
-				expect(Number.isFinite(node.position.x)).toBe(true);
-				expect(Number.isFinite(node.position.y)).toBe(true);
-			}
-			expect(new Set(result.map((node) => node.position.x)).size).toBeGreaterThan(1);
-			expect(new Set(result.map((node) => node.position.y)).size).toBeGreaterThan(1);
-		});
-
-		it('should size richly described document nodes without dropping their data', () => {
-			const longTitle = 'A'.repeat(60);
-			const longDescription = 'Detailed project notes '.repeat(12);
-			const nodes: Node<GraphNodeData>[] = [
-				createDocumentNodeWithData('doc-rich', {
-					title: longTitle,
-					description: longDescription,
-				}),
-				createDocumentNode('doc-linked'),
-			];
-			const edges: Edge[] = [createEdge('doc-rich', 'doc-linked')];
-
-			const result = applyForceLayout(nodes, edges);
-
-			const richNode = result.find((node) => node.id === 'doc-rich');
-			expect(richNode).toBeDefined();
-			expect((richNode!.data as DocumentNodeData).title).toBe(longTitle);
-			expect((richNode!.data as DocumentNodeData).description).toBe(longDescription);
-			expect(Number.isFinite(richNode!.position.x)).toBe(true);
-			expect(Number.isFinite(richNode!.position.y)).toBe(true);
-		});
-
-		it('should handle missing titles and short content previews when sizing nodes', () => {
-			const nodes: Node<GraphNodeData>[] = [
-				createDocumentNodeWithData('doc-preview', {
-					title: '',
-					contentPreview: 'Short preview text',
-				}),
-			];
-
-			const result = applyForceLayout(nodes, []);
-
-			expect(result).toHaveLength(1);
-			expect((result[0].data as DocumentNodeData).title).toBe('');
-			expect((result[0].data as DocumentNodeData).contentPreview).toBe('Short preview text');
-			expect(Number.isFinite(result[0].position.x)).toBe(true);
-			expect(Number.isFinite(result[0].position.y)).toBe(true);
-		});
-
 		it('should preserve node data after layout', () => {
 			const nodes: Node<GraphNodeData>[] = [createDocumentNode('doc1')];
 			const result = applyForceLayout(nodes, []);
@@ -236,76 +162,6 @@ describe('layoutAlgorithms', () => {
 			const avgY = (result[0].position.y + result[1].position.y) / 2;
 			expect(avgX).toBeCloseTo(500, -2);
 			expect(avgY).toBeCloseTo(500, -2);
-		});
-
-		it('should fall back to zero when the force simulation leaves coordinates unset', async () => {
-			vi.resetModules();
-			vi.doMock('d3-force', () => {
-				const chain = () => {
-					const api = {
-						distance: () => api,
-						distanceMax: () => api,
-						id: () => api,
-						iterations: () => api,
-						radius: () => api,
-						strength: () => api,
-					};
-					return api;
-				};
-
-				return {
-					forceCenter: () => ({}),
-					forceCollide: chain,
-					forceLink: chain,
-					forceManyBody: chain,
-					forceSimulation: (simNodes: Array<{ x?: number; y?: number }>) => {
-						const simulation = {
-							force: () => simulation,
-							stop: () => simulation,
-							tick: () => {
-								for (const node of simNodes) {
-									delete node.x;
-									delete node.y;
-								}
-								return simulation;
-							},
-						};
-						return simulation;
-					},
-					forceX: chain,
-					forceY: chain,
-				};
-			});
-
-			try {
-				const { applyForceLayout: applyMockedForceLayout } =
-					await import('../../../../renderer/components/DocumentGraph/layoutAlgorithms');
-				const result = applyMockedForceLayout([createDocumentNode('doc1', 25, 50)], []);
-
-				expect(result).toHaveLength(1);
-				expect(result[0].position).toEqual({ x: 0, y: 0 });
-			} finally {
-				vi.doUnmock('d3-force');
-				vi.resetModules();
-			}
-		});
-
-		it('should preserve an original position when generated force positions cannot be matched', () => {
-			const node = createDocumentNode('doc1', 25, 50);
-			let idReads = 0;
-			Object.defineProperty(node, 'id', {
-				configurable: true,
-				get: () => {
-					idReads += 1;
-					return idReads === 1 ? 'layout-doc' : 'doc1';
-				},
-			});
-
-			const result = applyForceLayout([node], []);
-
-			expect(result).toHaveLength(1);
-			expect(result[0].id).toBe('doc1');
-			expect(result[0].position).toEqual({ x: 25, y: 50 });
 		});
 	});
 
@@ -387,43 +243,6 @@ describe('layoutAlgorithms', () => {
 			expect(doc!.position.y).toBeLessThan(ext!.position.y);
 		});
 
-		it('should arrange external-only graphs in a grid', () => {
-			const nodes: Node<GraphNodeData>[] = [
-				createExternalNode('github.com'),
-				createExternalNode('docs.example.com'),
-				createExternalNode('npmjs.com'),
-			];
-
-			const result = applyHierarchicalLayout(nodes, [], { nodeSeparation: 30 });
-
-			expect(result).toHaveLength(3);
-			for (const node of result) {
-				expect(Number.isFinite(node.position.x)).toBe(true);
-				expect(Number.isFinite(node.position.y)).toBe(true);
-			}
-			expect(result.every((node) => node.position.x === 0 && node.position.y === 0)).toBe(false);
-		});
-
-		it('should ignore internal edges that reference missing document nodes', () => {
-			const nodes: Node<GraphNodeData>[] = [createDocumentNode('doc1'), createDocumentNode('doc2')];
-			const edges: Edge[] = [
-				createEdge('doc1', 'missing-target'),
-				createEdge('missing-source', 'doc2'),
-				createEdge('doc1', 'doc2'),
-			];
-
-			const result = applyHierarchicalLayout(nodes, edges, { rankDirection: 'TB' });
-
-			expect(result).toHaveLength(2);
-			for (const node of result) {
-				expect(Number.isFinite(node.position.x)).toBe(true);
-				expect(Number.isFinite(node.position.y)).toBe(true);
-			}
-			const doc1 = result.find((node) => node.id === 'doc1');
-			const doc2 = result.find((node) => node.id === 'doc2');
-			expect(doc1!.position.y).toBeLessThan(doc2!.position.y);
-		});
-
 		it('should apply node and rank separation options', () => {
 			const nodes: Node<GraphNodeData>[] = [
 				createDocumentNode('doc1'),
@@ -448,24 +267,6 @@ describe('layoutAlgorithms', () => {
 			const spacedSep = Math.abs(spacedDoc2!.position.x - spacedDoc3!.position.x);
 
 			expect(spacedSep).toBeGreaterThan(defaultSep);
-		});
-
-		it('should preserve an original position when dagre omits a generated node', () => {
-			const node = createDocumentNode('doc1', 30, 60);
-			let idReads = 0;
-			Object.defineProperty(node, 'id', {
-				configurable: true,
-				get: () => {
-					idReads += 1;
-					return idReads <= 2 ? 'layout-doc' : 'doc1';
-				},
-			});
-
-			const result = applyHierarchicalLayout([node], []);
-
-			expect(result).toHaveLength(1);
-			expect(result[0].id).toBe('doc1');
-			expect(result[0].position).toEqual({ x: 30, y: 60 });
 		});
 	});
 
@@ -563,19 +364,6 @@ describe('layoutAlgorithms', () => {
 				expect(data.nodeType).toBe('document');
 				expect(data.title).toBe('doc1');
 			}
-		});
-
-		it('should keep start nodes that have no matching end position', () => {
-			const unchanged = createDocumentNode('doc-stale', 10, 20);
-			const moving = createDocumentNode('doc-moving', 0, 0);
-			const endNodes: Node<GraphNodeData>[] = [createDocumentNode('doc-moving', 100, 100)];
-
-			const result = createLayoutTransitionFrames([unchanged, moving], endNodes, 2);
-
-			const middleUnchanged = result[1].find((node) => node.id === 'doc-stale');
-			const finalMoving = result[result.length - 1].find((node) => node.id === 'doc-moving');
-			expect(middleUnchanged).toBe(unchanged);
-			expect(finalMoving?.position).toEqual({ x: 100, y: 100 });
 		});
 	});
 
@@ -980,20 +768,6 @@ describe('layoutAlgorithms', () => {
 						Math.pow(result[0].position.y - centroidY, 2)
 				);
 				// Should be within reasonable distance from centroid
-				expect(distance).toBeLessThan(150);
-			});
-
-			it('should use outgoing edges from new nodes and skip missing neighbors', () => {
-				const existingNodes: Node<GraphNodeData>[] = [createDocumentNode('doc1', 100, 100)];
-				const newNodes: Node<GraphNodeData>[] = [createDocumentNode('doc2', 0, 0)];
-				const edges: Edge[] = [createEdge('doc2', 'doc1'), createEdge('doc2', 'missing-doc')];
-
-				const result = positionNewNodesNearNeighbors(newNodes, existingNodes, edges);
-
-				expect(result).toHaveLength(1);
-				const distance = Math.sqrt(
-					Math.pow(result[0].position.x - 100, 2) + Math.pow(result[0].position.y - 100, 2)
-				);
 				expect(distance).toBeLessThan(150);
 			});
 

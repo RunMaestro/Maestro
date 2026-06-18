@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { GitBranch, Info } from 'lucide-react';
 import type { Theme, Session, WorktreeRunTarget } from '../types';
+import { gitService } from '../services/git';
 import { getStatusColor } from '../utils/theme';
 import { captureException } from '../utils/sentry';
+import { sanitizeGitBranchName } from '../../shared/gitUtils';
 
 interface WorktreeRunSectionProps {
 	theme: Theme;
@@ -51,9 +53,7 @@ export function WorktreeRunSection({
 		setBranchLoadError(false);
 
 		Promise.all([
-			window.maestro.git
-				.branches(activeSession.cwd, sshRemoteId)
-				.then((result) => result.branches || []),
+			gitService.getBranches(activeSession.cwd),
 			window.maestro.git.branch(activeSession.cwd, sshRemoteId),
 		])
 			.then(([result, branchResult]) => {
@@ -420,7 +420,11 @@ export function WorktreeRunSection({
 									<input
 										type="text"
 										value={newBranchName}
-										onChange={(e) => setNewBranchName(e.target.value)}
+										onChange={(e) =>
+											setNewBranchName(
+												sanitizeGitBranchName(e.target.value, { allowIncomplete: true })
+											)
+										}
 										className="w-full rounded-lg border px-3 py-1.5 text-sm outline-none"
 										style={{
 											backgroundColor: theme.colors.bgMain,

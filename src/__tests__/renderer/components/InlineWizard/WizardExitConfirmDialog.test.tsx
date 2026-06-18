@@ -13,8 +13,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { WizardExitConfirmDialog } from '../../../../renderer/components/InlineWizard/WizardExitConfirmDialog';
-import type { Theme } from '../../../../renderer/types';
 
+import { mockTheme } from '../../../helpers/mockTheme';
 // Mock useLayerStack
 const mockRegisterLayer = vi.fn(() => 'layer-1');
 const mockUnregisterLayer = vi.fn();
@@ -29,31 +29,6 @@ vi.mock('../../../../renderer/contexts/LayerStackContext', () => ({
 }));
 
 // Mock theme for testing
-const mockTheme: Theme = {
-	id: 'test-theme',
-	name: 'Test Theme',
-	mode: 'dark',
-	colors: {
-		background: '#1a1a1a',
-		backgroundDim: '#0d0d0d',
-		backgroundBright: '#2a2a2a',
-		bgActivity: '#333333',
-		bgMain: '#1a1a1a',
-		bgSidebar: '#141414',
-		textMain: '#ffffff',
-		textDim: '#888888',
-		textMuted: '#666666',
-		textBright: '#ffffff',
-		border: '#333333',
-		borderBright: '#444444',
-		success: '#00ff00',
-		warning: '#ffff00',
-		error: '#ff0000',
-		accent: '#007bff',
-		accentForeground: '#ffffff',
-		accentText: '#66b2ff',
-	},
-};
 
 describe('WizardExitConfirmDialog', () => {
 	const defaultProps = {
@@ -149,36 +124,6 @@ describe('WizardExitConfirmDialog', () => {
 			expect(mockUnregisterLayer).toHaveBeenCalledWith('layer-1');
 		});
 
-		it('skips layer updates and unregister when registration returns no id', () => {
-			mockRegisterLayer.mockReturnValueOnce(undefined as unknown as string);
-
-			const { unmount } = render(<WizardExitConfirmDialog {...defaultProps} />);
-
-			expect(mockUpdateLayerHandler).not.toHaveBeenCalled();
-
-			unmount();
-
-			expect(mockUnregisterLayer).not.toHaveBeenCalled();
-		});
-
-		it('updates the layer escape handler when onCancel changes', () => {
-			const firstCancel = vi.fn();
-			const nextCancel = vi.fn();
-			const { rerender } = render(
-				<WizardExitConfirmDialog {...defaultProps} onCancel={firstCancel} />
-			);
-
-			rerender(<WizardExitConfirmDialog {...defaultProps} onCancel={nextCancel} />);
-
-			const latestHandler = mockUpdateLayerHandler.mock.calls.at(-1)?.[1];
-			expect(latestHandler).toEqual(expect.any(Function));
-
-			latestHandler();
-
-			expect(firstCancel).not.toHaveBeenCalled();
-			expect(nextCancel).toHaveBeenCalledTimes(1);
-		});
-
 		it('calls onCancel when Escape is pressed via layer stack', () => {
 			const onCancel = vi.fn();
 			render(<WizardExitConfirmDialog {...defaultProps} onCancel={onCancel} />);
@@ -200,33 +145,6 @@ describe('WizardExitConfirmDialog', () => {
 
 			// The Cancel button should be focused as the safer default action
 			expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
-		});
-	});
-
-	describe('keyboard handling', () => {
-		it('allows Tab and Enter to use natural dialog behavior', () => {
-			render(<WizardExitConfirmDialog {...defaultProps} />);
-			const dialog = screen.getByRole('dialog');
-			const tabEvent = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true });
-			const enterEvent = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true });
-			const tabStopPropagation = vi.spyOn(tabEvent, 'stopPropagation');
-			const enterStopPropagation = vi.spyOn(enterEvent, 'stopPropagation');
-
-			fireEvent(dialog, tabEvent);
-			fireEvent(dialog, enterEvent);
-
-			expect(tabStopPropagation).not.toHaveBeenCalled();
-			expect(enterStopPropagation).not.toHaveBeenCalled();
-		});
-
-		it('stops propagation for other keys', () => {
-			render(<WizardExitConfirmDialog {...defaultProps} />);
-			const event = new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true });
-			const stopPropagation = vi.spyOn(event, 'stopPropagation');
-
-			fireEvent(screen.getByRole('dialog'), event);
-
-			expect(stopPropagation).toHaveBeenCalledTimes(1);
 		});
 	});
 

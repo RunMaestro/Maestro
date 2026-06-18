@@ -13,7 +13,9 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import React from 'react';
 import { AutoRun, AutoRunHandle } from '../../renderer/components/AutoRun';
 import { LayerStackProvider } from '../../renderer/contexts/LayerStackContext';
-import type { Theme, BatchRunState, SessionState } from '../../renderer/types';
+import type { BatchRunState, SessionState } from '../../renderer/types';
+
+import { createMockTheme } from '../helpers/mockTheme';
 
 // Helper to render with LayerStackProvider (required by AutoRunSearchBar)
 const renderWithProvider = (ui: React.ReactElement) => {
@@ -124,25 +126,6 @@ vi.mock('../../renderer/components/TemplateAutocompleteDropdown', () => ({
 }));
 
 // Helper to create mock theme
-const createMockTheme = (): Theme => ({
-	id: 'test-theme',
-	name: 'Test Theme',
-	mode: 'dark',
-	colors: {
-		bgMain: '#1a1a1a',
-		bgPanel: '#252525',
-		bgActivity: '#2d2d2d',
-		textMain: '#ffffff',
-		textDim: '#888888',
-		accent: '#0066ff',
-		accentForeground: '#ffffff',
-		border: '#333333',
-		highlight: '#0066ff33',
-		success: '#00aa00',
-		warning: '#ffaa00',
-		error: '#ff0000',
-	},
-});
 
 // Setup window.maestro mock
 const setupMaestroMock = () => {

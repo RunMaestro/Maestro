@@ -14,8 +14,9 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { ShortcutsTab } from '../../../../../renderer/components/Settings/tabs/ShortcutsTab';
-import type { Theme, Shortcut } from '../../../../../renderer/types';
+import type { Shortcut } from '../../../../../renderer/types';
 
+import { mockTheme } from '../../../../helpers/mockTheme';
 // Mock formatShortcutKeys
 vi.mock('../../../../../renderer/utils/shortcutFormatter', () => ({
 	formatShortcutKeys: vi.fn((keys: string[]) => keys.join('+')),
@@ -42,27 +43,6 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		setTabShortcuts: mockSetTabShortcuts,
 	}),
 }));
-
-const mockTheme: Theme = {
-	id: 'dracula',
-	name: 'Dracula',
-	mode: 'dark',
-	colors: {
-		bgMain: '#282a36',
-		bgSidebar: '#21222c',
-		bgActivity: '#343746',
-		border: '#44475a',
-		textMain: '#f8f8f2',
-		textDim: '#6272a4',
-		accent: '#bd93f9',
-		accentDim: '#bd93f920',
-		accentText: '#ff79c6',
-		accentForeground: '#ffffff',
-		success: '#50fa7b',
-		warning: '#ffb86c',
-		error: '#ff5555',
-	},
-};
 
 describe('ShortcutsTab', () => {
 	beforeEach(() => {
@@ -207,14 +187,14 @@ describe('ShortcutsTab', () => {
 		});
 
 		// Initially called with false
-		expect(onRecordingChange).toHaveBeenCalledWith(false, undefined);
+		expect(onRecordingChange).toHaveBeenCalledWith(false);
 		onRecordingChange.mockClear();
 
 		// Click to enter recording mode
 		const shortcutButton = screen.getByText('Meta+n');
 		fireEvent.click(shortcutButton);
 
-		expect(onRecordingChange).toHaveBeenCalledWith(true, expect.any(Function));
+		expect(onRecordingChange).toHaveBeenCalledWith(true);
 		onRecordingChange.mockClear();
 
 		// Cancel recording
@@ -224,28 +204,7 @@ describe('ShortcutsTab', () => {
 			stopPropagation: vi.fn(),
 		});
 
-		expect(onRecordingChange).toHaveBeenCalledWith(false, undefined);
-	});
-
-	it('should let the recording cancel callback clear recording state', async () => {
-		const onRecordingChange = vi.fn();
-		render(<ShortcutsTab theme={mockTheme} onRecordingChange={onRecordingChange} />);
-
-		await act(async () => {
-			await vi.advanceTimersByTimeAsync(100);
-		});
-		onRecordingChange.mockClear();
-
-		const shortcutButton = screen.getByText('Meta+n').closest('button');
-		expect(shortcutButton).not.toBeNull();
-		fireEvent.click(shortcutButton!);
-
-		const cancelRecording = onRecordingChange.mock.calls[0][1] as () => void;
-		act(() => {
-			cancelRecording();
-		});
-
-		expect(screen.getByText('Meta+n')).toBeInTheDocument();
+		expect(onRecordingChange).toHaveBeenCalledWith(false);
 	});
 
 	it('should show hasNoAgents message when set', async () => {
@@ -410,24 +369,6 @@ describe('ShortcutsTab', () => {
 		expect(screen.getByText('Press keys...')).toBeInTheDocument();
 	});
 
-	it('should ignore shortcut keydown events when not recording', async () => {
-		render(<ShortcutsTab theme={mockTheme} />);
-
-		await act(async () => {
-			await vi.advanceTimersByTimeAsync(100);
-		});
-
-		const shortcutButton = screen.getByText('Meta+n');
-		fireEvent.keyDown(shortcutButton, {
-			key: 'k',
-			preventDefault: vi.fn(),
-			stopPropagation: vi.fn(),
-		});
-
-		expect(mockSetShortcuts).not.toHaveBeenCalled();
-		expect(screen.queryByText('Press keys...')).not.toBeInTheDocument();
-	});
-
 	it('should handle Alt+Digit recording using e.code', async () => {
 		render(<ShortcutsTab theme={mockTheme} />);
 
@@ -449,30 +390,6 @@ describe('ShortcutsTab', () => {
 		expect(mockSetShortcuts).toHaveBeenCalledWith({
 			...mockShortcuts,
 			'new-session': { ...mockShortcuts['new-session'], keys: ['Alt', '1'] },
-		});
-	});
-
-	it('should keep non-letter Alt shortcut keys from the keyboard event key', async () => {
-		render(<ShortcutsTab theme={mockTheme} />);
-
-		await act(async () => {
-			await vi.advanceTimersByTimeAsync(100);
-		});
-
-		const shortcutButton = screen.getByText('Meta+n');
-		fireEvent.click(shortcutButton);
-
-		fireEvent.keyDown(shortcutButton, {
-			key: 'ArrowUp',
-			code: 'ArrowUp',
-			altKey: true,
-			preventDefault: vi.fn(),
-			stopPropagation: vi.fn(),
-		});
-
-		expect(mockSetShortcuts).toHaveBeenCalledWith({
-			...mockShortcuts,
-			'new-session': { ...mockShortcuts['new-session'], keys: ['Alt', 'ArrowUp'] },
 		});
 	});
 

@@ -9,7 +9,6 @@ import {
 	countLines,
 	extractTitle,
 	extractDescription,
-	extractContentPreview,
 	type DocumentStats,
 } from '../../../renderer/utils/documentStats';
 
@@ -137,14 +136,6 @@ describe('extractTitle', () => {
 		const frontMatter = { title: 123 };
 		expect(extractTitle(content, 'document.md', frontMatter)).toBe('Heading Title');
 	});
-
-	it('should return an empty title for an empty fallback path', () => {
-		expect(extractTitle('', '', {})).toBe('');
-	});
-
-	it('should use an extensionless filename as the fallback title', () => {
-		expect(extractTitle('', 'README', {})).toBe('README');
-	});
 });
 
 describe('extractDescription', () => {
@@ -234,49 +225,6 @@ describe('extractDescription', () => {
 
 	it('should return undefined for empty front matter', () => {
 		expect(extractDescription({})).toBeUndefined();
-	});
-});
-
-describe('extractContentPreview', () => {
-	it('should strip markdown and remove a duplicated leading title', () => {
-		const content = `---
-title: Demo
----
-
-# Demo
-
-> Intro with **bold** and [docs](./docs.md).
-
-- [x] First item
-- Second item
-
-| A | B |
-| - | - |
-| 1 | 2 |
-
-\`\`\`ts
-const hidden = true;
-\`\`\`
-
-![image](./image.png)
-
-More ~~useful~~ text with <span>HTML</span> and [[wiki|alias]].
-`;
-
-		expect(extractContentPreview(content, 'Demo')).toBe(
-			'Intro with bold and docs. First item Second item More useful text with HTML and wiki.'
-		);
-	});
-
-	it('should return undefined when stripped content is too short', () => {
-		expect(extractContentPreview('# Hi', 'Hi')).toBeUndefined();
-	});
-
-	it('should truncate long previews to the preview limit', () => {
-		const preview = extractContentPreview(`Long Title\n${'a'.repeat(700)}`, 'Long Title');
-
-		expect(preview).toHaveLength(600);
-		expect(preview).toBe('a'.repeat(600));
 	});
 });
 
@@ -428,49 +376,6 @@ Content
 				expect(result.wordCount).toBe(0);
 				expect(result.size).toBe('0 B');
 			});
-
-			it('should fall back when string-like content methods throw', () => {
-				const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-				const hostileContent = {
-					match: () => {
-						throw new Error('match failed');
-					},
-					trim: () => {
-						throw new Error('trim failed');
-					},
-					replace: () => {
-						throw new Error('replace failed');
-					},
-				};
-
-				try {
-					// @ts-expect-error Testing runtime behavior with malformed string-like input
-					const result = computeDocumentStats(hostileContent, 'bad-content.md', 12);
-
-					expect(result.title).toBe('bad-content');
-					expect(result.lineCount).toBe(0);
-					expect(result.wordCount).toBe(0);
-					expect(result.contentPreview).toBeUndefined();
-					expect(consoleWarn).toHaveBeenCalledWith(
-						'Failed to extract title from bad-content.md:',
-						expect.any(Error)
-					);
-					expect(consoleWarn).toHaveBeenCalledWith(
-						'Failed to count lines in bad-content.md:',
-						expect.any(Error)
-					);
-					expect(consoleWarn).toHaveBeenCalledWith(
-						'Failed to count words in bad-content.md:',
-						expect.any(Error)
-					);
-					expect(consoleWarn).toHaveBeenCalledWith(
-						'Failed to extract content preview from bad-content.md:',
-						expect.any(Error)
-					);
-				} finally {
-					consoleWarn.mockRestore();
-				}
-			});
 		});
 
 		describe('binary and special content', () => {
@@ -532,40 +437,6 @@ title: Incomplete`;
 
 				// Should not crash
 				expect(result.title).toBe('doc');
-			});
-
-			it('should fall back when markdown link parsing unexpectedly throws', async () => {
-				const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-				vi.resetModules();
-				vi.doMock('../../../renderer/utils/markdownLinkParser', () => ({
-					parseMarkdownLinks: vi.fn(() => {
-						throw new Error('parser failed');
-					}),
-				}));
-
-				try {
-					const { computeDocumentStats: computeWithThrowingParser } =
-						await import('../../../renderer/utils/documentStats');
-
-					const result = computeWithThrowingParser(
-						'# Fallback Title\n\nBody content here.',
-						'parser.md',
-						24
-					);
-
-					expect(result.title).toBe('Fallback Title');
-					expect(result.description).toBeUndefined();
-					expect(result.lineCount).toBe(3);
-					expect(result.wordCount).toBe(6);
-					expect(consoleWarn).toHaveBeenCalledWith(
-						'Unexpected error parsing front matter in parser.md:',
-						expect.any(Error)
-					);
-				} finally {
-					vi.doUnmock('../../../renderer/utils/markdownLinkParser');
-					vi.resetModules();
-					consoleWarn.mockRestore();
-				}
 			});
 		});
 

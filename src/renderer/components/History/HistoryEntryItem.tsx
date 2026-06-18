@@ -1,54 +1,14 @@
 import { memo } from 'react';
-import { Bot, User, ExternalLink, Check, X, Clock, Award } from 'lucide-react';
-import type { Theme, HistoryEntry, HistoryEntryType } from '../../types';
+import { ExternalLink, Check, X, Clock, Award, Server } from 'lucide-react';
+import type { Theme, HistoryEntry } from '../../types';
 import { formatElapsedTime } from '../../utils/formatters';
 import { stripMarkdown } from '../../utils/textProcessing';
-import { DoubleCheck } from './historyConstants';
+import { DoubleCheck, getPillColor, getEntryIcon } from './historyConstants';
+import { formatTimestamp } from '../../../shared/formatters';
+import { humanizeCueEventType } from '../../../shared/cue/cue-summary';
+import { getTokenSourcePill } from '../../../shared/claudeTokenModeLabel';
 
-// Get pill color based on entry type
-const getPillColor = (type: HistoryEntryType, theme: Theme) => {
-	switch (type) {
-		case 'AUTO':
-			return {
-				bg: theme.colors.warning + '20',
-				text: theme.colors.warning,
-				border: theme.colors.warning + '40',
-			};
-		case 'USER':
-			return {
-				bg: theme.colors.accent + '20',
-				text: theme.colors.accent,
-				border: theme.colors.accent + '40',
-			};
-	}
-};
-
-// Get icon for entry type
-const getEntryIcon = (type: HistoryEntryType) => {
-	switch (type) {
-		case 'AUTO':
-			return Bot;
-		case 'USER':
-			return User;
-	}
-};
-
-// Format timestamp
-const formatTime = (timestamp: number) => {
-	const date = new Date(timestamp);
-	const now = new Date();
-	const isToday = date.toDateString() === now.toDateString();
-
-	if (isToday) {
-		return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-	} else {
-		return (
-			date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) +
-			' ' +
-			date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
-		);
-	}
-};
+const formatTime = (timestamp: number) => formatTimestamp(timestamp, 'smart');
 
 export interface HistoryEntryItemProps {
 	entry: HistoryEntry;
@@ -56,7 +16,7 @@ export interface HistoryEntryItemProps {
 	isSelected: boolean;
 	theme: Theme;
 	onOpenDetailModal: (entry: HistoryEntry, index: number) => void;
-	onOpenSessionAsTab?: (agentSessionId: string) => void;
+	onOpenSessionAsTab?: (agentSessionId: string, projectPath?: string) => void;
 	onOpenAboutModal?: () => void;
 	/** When true, displays the agentName field prominently in the entry header (used in unified history view) */
 	showAgentName?: boolean;
@@ -74,6 +34,18 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 }: HistoryEntryItemProps) {
 	const colors = getPillColor(entry.type, theme);
 	const Icon = getEntryIcon(entry.type);
+
+	// Claude-only per-turn token source pill (TUI = maestro-p / Max plan, API =
+	// claude --print). Absent on non-Claude and older entries. Shares its label and
+	// tooltip with the live chat pill so the two can never drift.
+	const tokenPill = entry.tokenSource
+		? getTokenSourcePill({ mode: entry.tokenSource, reason: entry.tokenSourceReason })
+		: null;
+	const tokenPillColor = tokenPill
+		? tokenPill.isTui
+			? theme.colors.accent
+			: (theme.colors.warning ?? theme.colors.accent)
+		: theme.colors.accent;
 
 	const agentName = showAgentName
 		? (entry as HistoryEntry & { agentName?: string }).agentName
@@ -109,7 +81,7 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 						<button
 							onClick={(e) => {
 								e.stopPropagation();
-								onOpenSessionAsTab?.(entry.agentSessionId!);
+								onOpenSessionAsTab?.(entry.agentSessionId!, entry.projectPath);
 							}}
 							className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold transition-colors hover:opacity-80 min-w-0 flex-shrink ${entry.sessionName ? '' : 'font-mono uppercase'}`}
 							style={{
@@ -126,8 +98,8 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 						</button>
 					)}
 
-					{/* Success/Failure Indicator for AUTO entries */}
-					{entry.type === 'AUTO' && entry.success !== undefined && (
+					{/* Success/Failure Indicator for AUTO and CUE entries */}
+					{(entry.type === 'AUTO' || entry.type === 'CUE') && entry.success !== undefined && (
 						<span
 							className="flex items-center justify-center w-5 h-5 rounded-full flex-shrink-0"
 							style={{
@@ -197,10 +169,23 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 				{entry.summary ? stripMarkdown(entry.summary) : 'No summary available'}
 			</p>
 
-			{/* Footer Row - Time, Cost, and Achievement Action */}
+			{/* CUE metadata subtitle */}
+			{entry.type === 'CUE' && entry.cueEventType && (
+				<p
+					className="text-[10px] mt-1"
+					style={{ color: theme.colors.textDim }}
+					title={entry.cueEventType}
+				>
+					Triggered by: {humanizeCueEventType(entry.cueEventType)}
+				</p>
+			)}
+
+			{/* Footer Row - Time, Cost, Token Source, Achievement Action, and Remote Origin */}
 			{(entry.elapsedTimeMs !== undefined ||
 				(entry.usageStats && entry.usageStats.totalCostUsd > 0) ||
-				entry.achievementAction) && (
+				tokenPill ||
+				entry.achievementAction ||
+				entry.hostname) && (
 				<div
 					className="flex items-center gap-3 mt-2 pt-2 border-t"
 					style={{ borderColor: theme.colors.border }}
@@ -227,6 +212,20 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 							${entry.usageStats.totalCostUsd.toFixed(2)}
 						</span>
 					)}
+					{/* Token Source Pill (Claude-only): TUI vs API for this turn */}
+					{tokenPill && (
+						<span
+							className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded-full"
+							style={{
+								backgroundColor: tokenPillColor + '20',
+								color: tokenPillColor,
+								border: `1px solid ${tokenPillColor}40`,
+							}}
+							title={tokenPill.title}
+						>
+							{tokenPill.label}
+						</span>
+					)}
 					{/* Achievement Action Button */}
 					{entry.achievementAction === 'openAbout' && onOpenAboutModal && (
 						<button
@@ -245,6 +244,21 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 							<Award className="w-3 h-3" />
 							View Achievements
 						</button>
+					)}
+					{/* Remote hostname pill - shown for entries from other hosts */}
+					{entry.hostname && (
+						<span
+							className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold ${entry.achievementAction ? '' : 'ml-auto'}`}
+							style={{
+								backgroundColor: theme.colors.bgActivity,
+								color: theme.colors.textDim,
+								border: `1px solid ${theme.colors.border}`,
+							}}
+							title={`Origin: ${entry.hostname}`}
+						>
+							<Server className="w-2.5 h-2.5" />
+							{entry.hostname}
+						</span>
 					)}
 				</div>
 			)}

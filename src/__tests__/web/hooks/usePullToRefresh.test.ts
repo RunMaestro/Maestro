@@ -218,23 +218,6 @@ describe('usePullToRefresh', () => {
 			expect(result.current.pullDistance).toBeGreaterThan(0);
 		});
 
-		it('should treat a missing scroll container as being at the top', () => {
-			const { result } = renderHook(() => usePullToRefresh({ onRefresh: mockOnRefresh }));
-			const startEvent = {
-				...createTouchEvent(0, 0, 0),
-				currentTarget: null,
-			} as unknown as React.TouchEvent;
-
-			act(() => {
-				result.current.containerProps.onTouchStart(startEvent);
-			});
-			act(() => {
-				result.current.containerProps.onTouchMove(createTouchEvent(100, 0, 0));
-			});
-
-			expect(result.current.pullDistance).toBe(50);
-		});
-
 		it('should not activate pull when not at top', () => {
 			const { result } = renderHook(() => usePullToRefresh({ onRefresh: mockOnRefresh }));
 

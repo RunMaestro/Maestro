@@ -12,7 +12,8 @@ import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal, ModalFooter } from './ui/Modal';
 import { useWizard } from './Wizard/WizardContext';
-import { AUTO_RUN_FOLDER_NAME } from './Wizard/services/phaseGenerator';
+import { PLAYBOOKS_DIR } from '../../shared/maestro-paths';
+import { logger } from '../utils/logger';
 
 interface DebugWizardModalProps {
 	theme: Theme;
@@ -57,14 +58,14 @@ export function DebugWizardModal({
 			if (result) {
 				setDirectoryPath(result);
 				// Auto-populate agent name from folder name
-				const folderName = result.split(/[\\/]/).filter(Boolean).pop() || 'My Project';
+				const folderName = result.split('/').pop() || result.split('\\').pop() || 'My Project';
 				if (!agentName) {
 					setAgentName(folderName);
 				}
 				setError(null);
 			}
 		} catch (err) {
-			console.error('Failed to select directory:', err);
+			logger.error('Failed to select directory:', undefined, err);
 		}
 	}, [agentName]);
 
@@ -84,7 +85,7 @@ export function DebugWizardModal({
 
 		try {
 			// Check if Auto Run Docs folder exists
-			const autoRunPath = `${directoryPath}/${AUTO_RUN_FOLDER_NAME}`;
+			const autoRunPath = `${directoryPath}/${PLAYBOOKS_DIR}`;
 
 			let files: string[] = [];
 			try {
@@ -121,7 +122,7 @@ export function DebugWizardModal({
 					const taskCount = (content.match(/^-\s*\[\s*[xX ]?\s*\]/gm) || []).length;
 					documents.push({ filename, content, taskCount });
 				} catch (err) {
-					console.warn(`Failed to read ${filename}:`, err);
+					logger.warn(`Failed to read ${filename}:`, undefined, err);
 				}
 			}
 
@@ -147,7 +148,7 @@ export function DebugWizardModal({
 
 			onClose();
 		} catch (err) {
-			console.error('Failed to load documents:', err);
+			logger.error('Failed to load documents:', undefined, err);
 			setError(err instanceof Error ? err.message : 'Unknown error');
 			setLoading(false);
 		}
@@ -179,7 +180,7 @@ export function DebugWizardModal({
 		<Modal
 			theme={theme}
 			title="Debug: Jump to Phase Review"
-			priority={MODAL_PRIORITIES.CONFIRM}
+			priority={MODAL_PRIORITIES.CONFIRM || 100}
 			onClose={onClose}
 			width={500}
 			initialFocusRef={inputRef}
@@ -230,7 +231,7 @@ export function DebugWizardModal({
 						</button>
 					</div>
 					<p className="text-xs mt-1" style={{ color: theme.colors.textDim }}>
-						Must contain an "{AUTO_RUN_FOLDER_NAME}" folder with .md files
+						Must contain an "{PLAYBOOKS_DIR}" folder with .md files
 					</p>
 				</div>
 

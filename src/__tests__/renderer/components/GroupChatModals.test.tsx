@@ -1,237 +1,138 @@
-import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DeleteGroupChatModal } from '../../../renderer/components/DeleteGroupChatModal';
+/**
+ * @fileoverview Tests for GroupChatModal component (create and edit modes)
+ *
+ * Regression test for: MAESTRO_SESSION_RESUMED env var display in group chat moderator customization
+ * This test ensures that when users customize the moderator agent in group chat modals,
+ * they see the built-in MAESTRO_SESSION_RESUMED environment variable.
+ */
+
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { GroupChatModal } from '../../../renderer/components/GroupChatModal';
-import { RenameGroupChatModal } from '../../../renderer/components/RenameGroupChatModal';
-import type { AgentConfig, Theme } from '../../../renderer/types';
+import type { GroupChat, AgentConfig } from '../../../renderer/types';
 
-const agentConfigurationMock = vi.hoisted(() => ({
-	useAgentConfiguration: vi.fn(),
-}));
+import { createMockTheme } from '../../helpers/mockTheme';
 
-vi.mock('../../../renderer/hooks/agent', () => ({
-	useAgentConfiguration: agentConfigurationMock.useAgentConfiguration,
-}));
-
-vi.mock('../../../renderer/components/shared/AgentConfigPanel', () => ({
-	AgentConfigPanel: ({ customEnvVars }: { customEnvVars: Record<string, string> }) => (
-		<div data-testid="agent-config-panel">
-			{Object.entries(customEnvVars).map(([key, value]) => (
-				<div key={key}>
-					<span>{key}</span>
-					<span>{value}</span>
-				</div>
-			))}
-		</div>
+// Mock lucide-react icons
+vi.mock('lucide-react', () => ({
+	Folder: ({ className }: { className?: string }) => (
+		<span data-testid="folder-icon" className={className}>
+			📁
+		</span>
+	),
+	X: ({ className }: { className?: string }) => (
+		<span data-testid="x-icon" className={className}>
+			×
+		</span>
+	),
+	RefreshCw: ({ className }: { className?: string }) => (
+		<span data-testid="refresh-icon" className={className}>
+			🔄
+		</span>
+	),
+	Check: ({ className }: { className?: string }) => (
+		<span data-testid="check-icon" className={className}>
+			✓
+		</span>
+	),
+	Plus: ({ className }: { className?: string }) => (
+		<span data-testid="plus-icon" className={className}>
+			+
+		</span>
+	),
+	Trash2: ({ className }: { className?: string }) => (
+		<span data-testid="trash-icon" className={className}>
+			🗑
+		</span>
+	),
+	HelpCircle: ({ className }: { className?: string }) => (
+		<span data-testid="help-circle-icon" className={className}>
+			?
+		</span>
+	),
+	ChevronDown: ({ className }: { className?: string }) => (
+		<span data-testid="chevron-down-icon" className={className}>
+			▼
+		</span>
+	),
+	Settings: ({ className }: { className?: string }) => (
+		<span data-testid="settings-icon" className={className}>
+			⚙
+		</span>
+	),
+	ArrowLeft: ({ className }: { className?: string }) => (
+		<span data-testid="arrow-left-icon" className={className}>
+			←
+		</span>
 	),
 }));
 
-vi.mock('../../../renderer/components/ui/Modal', () => ({
-	Modal: ({
-		title,
-		onClose,
-		headerIcon,
-		children,
-		footer,
-	}: {
-		title: string;
-		onClose: () => void;
-		headerIcon?: React.ReactNode;
-		children: React.ReactNode;
-		footer?: React.ReactNode;
-	}) => (
-		<div role="dialog" aria-label={title}>
-			<div>
-				{headerIcon}
-				<h2>{title}</h2>
-				<button type="button" aria-label="Close modal" onClick={onClose}>
-					Close
-				</button>
-			</div>
-			<div>{children}</div>
-			<div>{footer}</div>
-		</div>
-	),
-	ModalFooter: ({
-		onCancel,
-		onConfirm,
-		confirmLabel = 'Confirm',
-		confirmDisabled = false,
-	}: {
-		onCancel: () => void;
-		onConfirm: () => void;
-		confirmLabel?: string;
-		confirmDisabled?: boolean;
-	}) => (
-		<>
-			<button type="button" onClick={onCancel}>
-				Cancel
-			</button>
-			<button type="button" disabled={confirmDisabled} onClick={onConfirm}>
-				{confirmLabel}
-			</button>
-		</>
-	),
+// Mock layer stack context
+const mockRegisterLayer = vi.fn(() => 'layer-group-chat-123');
+const mockUnregisterLayer = vi.fn();
+const mockUpdateLayerHandler = vi.fn();
+
+vi.mock('../../../renderer/contexts/LayerStackContext', () => ({
+	useLayerStack: () => ({
+		registerLayer: mockRegisterLayer,
+		unregisterLayer: mockUnregisterLayer,
+		updateLayerHandler: mockUpdateLayerHandler,
+	}),
 }));
 
-vi.mock('../../../renderer/components/ui', async () => {
-	const React = await vi.importActual<typeof import('react')>('react');
-
-	return {
-		Modal: ({
-			title,
-			onClose,
-			children,
-			footer,
-		}: {
-			title: string;
-			onClose: () => void;
-			children: React.ReactNode;
-			footer?: React.ReactNode;
-		}) => (
-			<div role="dialog" aria-label={title}>
-				<div>
-					<h2>{title}</h2>
-					<button type="button" aria-label="Close modal" onClick={onClose}>
-						Close
-					</button>
-				</div>
-				<div>{children}</div>
-				<div>{footer}</div>
-			</div>
-		),
-		ModalFooter: ({
-			onCancel,
-			onConfirm,
-			confirmLabel = 'Confirm',
-			confirmDisabled = false,
-		}: {
-			onCancel: () => void;
-			onConfirm: () => void;
-			confirmLabel?: string;
-			confirmDisabled?: boolean;
-		}) => (
-			<>
-				<button type="button" onClick={onCancel}>
-					Cancel
-				</button>
-				<button type="button" disabled={confirmDisabled} onClick={onConfirm}>
-					{confirmLabel}
-				</button>
-			</>
-		),
-		FormInput: React.forwardRef<
-			HTMLInputElement,
-			{
-				label?: string;
-				value: string;
-				onChange: (value: string) => void;
-				onSubmit?: () => void;
-				placeholder?: string;
-			}
-		>(({ label, value, onChange, onSubmit, placeholder }, ref) => (
-			<label>
-				{label}
-				<input
-					ref={ref}
-					value={value}
-					placeholder={placeholder}
-					onChange={(event) => onChange(event.target.value)}
-					onKeyDown={(event) => {
-						if (event.key === 'Enter' && onSubmit) {
-							onSubmit();
-						}
-					}}
-				/>
-			</label>
-		)),
-	};
-});
-
-const theme: Theme = {
-	id: 'test-theme',
-	name: 'Test Theme',
-	mode: 'dark',
-	colors: {
-		bgMain: '#111111',
-		bgSidebar: '#222222',
-		bgActivity: '#333333',
-		textMain: '#ffffff',
-		textDim: '#999999',
-		accent: '#00aaff',
-		accentForeground: '#ffffff',
-		border: '#444444',
-		error: '#ff5555',
-		warning: '#ffaa00',
-	},
-};
-
-const createMockTheme = () => theme;
+// =============================================================================
+// TEST HELPERS
+// =============================================================================
 
 function createMockAgent(overrides: Partial<AgentConfig> = {}): AgentConfig {
 	return {
 		id: 'claude-code',
 		name: 'Claude Code',
-		command: 'claude-code',
-		args: [],
 		available: true,
-		path: '/usr/local/bin/claude-code',
+		path: '/usr/local/bin/claude',
+		binaryName: 'claude',
 		hidden: false,
-		capabilities: {},
+		capabilities: {
+			supportsModelSelection: false,
+		},
+		...overrides,
+	} as AgentConfig;
+}
+
+function createMockGroupChat(overrides: Partial<GroupChat> = {}): GroupChat {
+	return {
+		id: 'group-chat-1',
+		name: 'Test Group Chat',
+		moderatorAgentId: 'claude-code',
+		createdAt: Date.now(),
 		...overrides,
 	};
 }
 
-function setupDefaultMocks(agents: AgentConfig[] = [createMockAgent()]) {
-	const agentConfig = { model: '' };
+// =============================================================================
+// TESTS
+// =============================================================================
 
-	agentConfigurationMock.useAgentConfiguration.mockReturnValue({
-		isDetecting: false,
-		detectedAgents: agents,
-		selectedAgent: agents[0]?.id ?? null,
-		setSelectedAgent: vi.fn(),
-		handleAgentChange: vi.fn(),
-		customPath: '',
-		setCustomPath: vi.fn(),
-		customArgs: '',
-		setCustomArgs: vi.fn(),
-		customEnvVars: { MAESTRO_SESSION_RESUMED: '1 (when resuming)' },
-		setCustomEnvVars: vi.fn(),
-		agentConfig,
-		setAgentConfig: vi.fn(),
-		agentConfigRef: { current: agentConfig },
-		availableModels: [],
-		loadingModels: false,
-		refreshModels: vi.fn(),
-		refreshAgent: vi.fn(),
-		refreshingAgent: false,
-		saveAgentConfig: vi.fn().mockResolvedValue(undefined),
-		isConfigExpanded: true,
-		toggleConfigExpanded: vi.fn(),
-		hasCustomization: true,
-		sshRemotes: [],
-		sshRemoteConfig: undefined,
-		setSshRemoteConfig: vi.fn(),
-	});
-}
+describe('GroupChatModal', () => {
+	/**
+	 * Setup fresh mocks before each test.
+	 * Uses mockResolvedValue for agent IPC methods (detect, getConfig, setConfig, getModels).
+	 * Called in beforeEach; individual tests only need to call this again if they
+	 * need different agents than the default single claude-code agent.
+	 */
+	function setupDefaultMocks(agents?: AgentConfig[]) {
+		const defaultAgents = agents ?? [createMockAgent({ id: 'claude-code', name: 'Claude Code' })];
+		vi.mocked(window.maestro.agents.detect).mockResolvedValue(defaultAgents);
+		vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({});
+		vi.mocked(window.maestro.agents.setConfig).mockResolvedValue(undefined);
+		vi.mocked(window.maestro.agents.getModels).mockResolvedValue([]);
+	}
 
-function invokeReactClickHandler(button: HTMLElement) {
-	const reactPropsKey = Object.getOwnPropertyNames(button).find((key) =>
-		key.startsWith('__reactProps$')
-	);
-	expect(reactPropsKey).toBeDefined();
-
-	const reactProps = (button as unknown as Record<string, { onClick?: () => void }>)[
-		reactPropsKey as string
-	];
-	expect(reactProps.onClick).toEqual(expect.any(Function));
-	reactProps.onClick?.();
-}
-
-describe('DeleteGroupChatModal', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mockRegisterLayer.mockClear().mockReturnValue('layer-group-chat-123');
+		mockUnregisterLayer.mockClear();
+		mockUpdateLayerHandler.mockClear();
 		setupDefaultMocks();
 	});
 
@@ -313,152 +214,86 @@ describe('DeleteGroupChatModal', () => {
 		});
 	});
 
-	function renderDeleteModal(
-		overrides: Partial<React.ComponentProps<typeof DeleteGroupChatModal>> = {}
-	) {
-		const props: React.ComponentProps<typeof DeleteGroupChatModal> = {
-			theme,
-			isOpen: true,
-			groupChatName: 'Planning Room',
-			onClose: vi.fn(),
-			onConfirm: vi.fn(),
-			...overrides,
-		};
+	describe('edit mode', () => {
+		it('should display MAESTRO_SESSION_RESUMED in moderator configuration panel', async () => {
+			const onSave = vi.fn();
+			const onClose = vi.fn();
+			const groupChat = createMockGroupChat();
 
-		return {
-			...render(<DeleteGroupChatModal {...props} />),
-			props,
-		};
-	}
+			render(
+				<GroupChatModal
+					mode="edit"
+					theme={createMockTheme()}
+					isOpen={true}
+					groupChat={groupChat}
+					onClose={onClose}
+					onSave={onSave}
+				/>
+			);
 
-	it('does not render when closed', () => {
-		renderDeleteModal({ isOpen: false });
+			// Wait for dropdown to be rendered
+			await waitFor(
+				() => {
+					expect(screen.getByRole('combobox', { name: /select moderator/i })).toBeInTheDocument();
+				},
+				{ timeout: 3000 }
+			);
 
-		expect(screen.queryByRole('dialog', { name: 'Delete Group Chat' })).not.toBeInTheDocument();
-	});
+			// Verify Claude Code is pre-selected
+			const dropdown = screen.getByRole('combobox', { name: /select moderator/i });
+			expect(dropdown).toHaveValue('claude-code');
 
-	it('renders permanent-delete warning and closes from cancel and header controls', () => {
-		const { props, unmount } = renderDeleteModal();
+			// Click the Customize button to expand config panel
+			const customizeButton = screen.getByRole('button', { name: /customize/i });
+			fireEvent.click(customizeButton);
 
-		expect(screen.getByRole('dialog', { name: 'Delete Group Chat' })).toBeInTheDocument();
-		expect(screen.getByText('"Planning Room"')).toBeInTheDocument();
-		expect(screen.getByText(/permanently delete the group chat/i)).toBeInTheDocument();
-		expect(screen.getByText(/Participant sessions will not be affected/i)).toBeInTheDocument();
+			// Wait for config panel to appear and verify MAESTRO_SESSION_RESUMED is displayed
+			await waitFor(() => {
+				expect(screen.getByText('MAESTRO_SESSION_RESUMED')).toBeInTheDocument();
+			});
 
-		fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-		expect(props.onClose).toHaveBeenCalledTimes(1);
-		expect(props.onConfirm).not.toHaveBeenCalled();
-		unmount();
-
-		const second = renderDeleteModal();
-		fireEvent.click(screen.getByRole('button', { name: 'Close modal' }));
-		expect(second.props.onClose).toHaveBeenCalledTimes(1);
-		expect(second.props.onConfirm).not.toHaveBeenCalled();
-	});
-
-	it('confirms deletion and then closes', () => {
-		const { props } = renderDeleteModal();
-
-		fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
-
-		expect(props.onConfirm).toHaveBeenCalledTimes(1);
-		expect(props.onClose).toHaveBeenCalledTimes(1);
-	});
-});
-
-describe('RenameGroupChatModal', () => {
-	beforeEach(() => {
-		vi.clearAllMocks();
-	});
-
-	afterEach(() => {
-		vi.restoreAllMocks();
-	});
-
-	function renderRenameModal(
-		overrides: Partial<React.ComponentProps<typeof RenameGroupChatModal>> = {}
-	) {
-		const props: React.ComponentProps<typeof RenameGroupChatModal> = {
-			theme,
-			isOpen: true,
-			currentName: 'Planning Room',
-			onClose: vi.fn(),
-			onRename: vi.fn(),
-			...overrides,
-		};
-
-		return {
-			...render(<RenameGroupChatModal {...props} />),
-			props,
-		};
-	}
-
-	it('does not render when closed', () => {
-		renderRenameModal({ isOpen: false });
-
-		expect(screen.queryByRole('dialog', { name: 'Rename Group Chat' })).not.toBeInTheDocument();
-	});
-
-	it('renders the current name, resets on reopen with a new name, and closes from cancel', async () => {
-		const { props, rerender } = renderRenameModal();
-
-		expect(screen.getByRole('dialog', { name: 'Rename Group Chat' })).toBeInTheDocument();
-		expect(screen.getByLabelText('Chat Name')).toHaveValue('Planning Room');
-
-		fireEvent.change(screen.getByLabelText('Chat Name'), {
-			target: { value: 'Draft Name' },
-		});
-		expect(screen.getByLabelText('Chat Name')).toHaveValue('Draft Name');
-
-		rerender(<RenameGroupChatModal {...props} isOpen={false} currentName="Execution Room" />);
-		expect(screen.queryByRole('dialog', { name: 'Rename Group Chat' })).not.toBeInTheDocument();
-
-		rerender(<RenameGroupChatModal {...props} currentName="Execution Room" />);
-		await waitFor(() => {
-			expect(screen.getByLabelText('Chat Name')).toHaveValue('Execution Room');
+			// Also verify the value hint is shown
+			expect(screen.getByText('1 (when resuming)')).toBeInTheDocument();
 		});
 
-		fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-		expect(props.onClose).toHaveBeenCalledTimes(1);
-	});
+		it('should show warning when changing moderator agent', async () => {
+			// Setup multiple agents
+			setupDefaultMocks([
+				createMockAgent({ id: 'claude-code', name: 'Claude Code' }),
+				createMockAgent({ id: 'codex', name: 'Codex' }),
+			]);
 
-	it('keeps rename disabled for blank or unchanged names and guards direct submission', () => {
-		const { props } = renderRenameModal();
+			const onSave = vi.fn();
+			const onClose = vi.fn();
+			const groupChat = createMockGroupChat({ moderatorAgentId: 'claude-code' });
 
-		const renameButton = screen.getByRole('button', { name: 'Rename' });
-		expect(renameButton).toBeDisabled();
-		invokeReactClickHandler(renameButton);
-		expect(props.onRename).not.toHaveBeenCalled();
-		expect(props.onClose).not.toHaveBeenCalled();
+			render(
+				<GroupChatModal
+					mode="edit"
+					theme={createMockTheme()}
+					isOpen={true}
+					groupChat={groupChat}
+					onClose={onClose}
+					onSave={onSave}
+				/>
+			);
 
-		fireEvent.change(screen.getByLabelText('Chat Name'), { target: { value: '   ' } });
-		expect(screen.getByRole('button', { name: 'Rename' })).toBeDisabled();
-		invokeReactClickHandler(screen.getByRole('button', { name: 'Rename' }));
-		expect(props.onRename).not.toHaveBeenCalled();
-		expect(props.onClose).not.toHaveBeenCalled();
-	});
+			// Wait for dropdown
+			await waitFor(
+				() => {
+					expect(screen.getByRole('combobox', { name: /select moderator/i })).toBeInTheDocument();
+				},
+				{ timeout: 3000 }
+			);
 
-	it('renames with trimmed text from click and Enter submission', async () => {
-		const { props, unmount } = renderRenameModal();
+			// Change to different agent
+			const dropdown = screen.getByRole('combobox', { name: /select moderator/i });
+			fireEvent.change(dropdown, { target: { value: 'codex' } });
 
-		fireEvent.change(screen.getByLabelText('Chat Name'), {
-			target: { value: '  Launch Room  ' },
-		});
-		fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
-
-		expect(props.onRename).toHaveBeenCalledWith('Launch Room');
-		expect(props.onClose).toHaveBeenCalledTimes(1);
-		unmount();
-
-		const second = renderRenameModal();
-		fireEvent.change(screen.getByLabelText('Chat Name'), {
-			target: { value: 'Review Room' },
-		});
-		fireEvent.keyDown(screen.getByLabelText('Chat Name'), { key: 'Enter' });
-
-		await waitFor(() => {
-			expect(second.props.onRename).toHaveBeenCalledWith('Review Room');
-			expect(second.props.onClose).toHaveBeenCalledTimes(1);
+			// Verify warning message appears
+			await waitFor(() => {
+				expect(screen.getByText(/changing the moderator agent/i)).toBeInTheDocument();
+			});
 		});
 	});
 });

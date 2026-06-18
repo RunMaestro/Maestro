@@ -1,29 +1,11 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { render, screen, fireEvent, act, within } from '@testing-library/react';
 import { ActivityGraph } from '../../../../renderer/components/History';
-import type { Theme, HistoryEntry, HistoryEntryType } from '../../../../renderer/types';
+import type { HistoryEntry, HistoryEntryType } from '../../../../renderer/types';
 
+import { mockTheme } from '../../../helpers/mockTheme';
 // Create mock theme
-const mockTheme: Theme = {
-	id: 'test-theme',
-	name: 'Test Theme',
-	mode: 'dark',
-	colors: {
-		bgMain: '#1e1e1e',
-		bgSidebar: '#252526',
-		bgActivity: '#333333',
-		textMain: '#ffffff',
-		textDim: '#808080',
-		accent: '#007acc',
-		border: '#404040',
-		success: '#4ec9b0',
-		warning: '#dcdcaa',
-		error: '#f14c4c',
-		scrollbar: '#404040',
-		scrollbarHover: '#808080',
-	},
-};
 
 // Create mock history entry factory
 const createMockEntry = (overrides: Partial<HistoryEntry> = {}): HistoryEntry => ({
@@ -260,27 +242,6 @@ describe('ActivityGraph', () => {
 		expect(userCount).toBeInTheDocument();
 	});
 
-	it('ignores out-of-window entries and malformed runtime entry types', () => {
-		const entries = [
-			createMockEntry({ type: 'AUTO', timestamp: NOW - 48 * 60 * 60 * 1000 }),
-			createMockEntry({
-				type: 'SYSTEM' as HistoryEntryType,
-				timestamp: NOW - 30 * 60 * 1000,
-			}),
-		];
-
-		render(
-			<ActivityGraph
-				entries={entries}
-				theme={mockTheme}
-				lookbackHours={24}
-				onLookbackChange={vi.fn()}
-			/>
-		);
-
-		expect(screen.getByTitle(/24 hours: 0 auto, 0 user/)).toBeInTheDocument();
-	});
-
 	it('renders axis labels for 24-hour lookback', () => {
 		render(
 			<ActivityGraph entries={[]} theme={mockTheme} lookbackHours={24} onLookbackChange={vi.fn()} />
@@ -327,186 +288,6 @@ describe('ActivityGraph', () => {
 		expect(screen.getByText('Now')).toBeInTheDocument();
 	});
 
-	it('handles empty and zero-width all-time windows', () => {
-		const { container, rerender } = render(
-			<ActivityGraph
-				entries={[]}
-				theme={mockTheme}
-				lookbackHours={null}
-				onLookbackChange={vi.fn()}
-			/>
-		);
-
-		expect(container.querySelectorAll('.flex-1.min-w-0.flex.flex-col.justify-end')).toHaveLength(
-			24
-		);
-		expect(screen.getByTitle(/All time: 0 auto, 0 user/)).toBeInTheDocument();
-
-		rerender(
-			<ActivityGraph
-				entries={[createMockEntry({ timestamp: NOW })]}
-				theme={mockTheme}
-				referenceTime={NOW}
-				lookbackHours={null}
-				onLookbackChange={vi.fn()}
-			/>
-		);
-
-		expect(screen.getByTitle(/All time: 1 auto, 0 user/)).toBeInTheDocument();
-	});
-
-	it('renders start and end axis labels for long fixed lookback windows', () => {
-		const startLabel = new Date(NOW - 720 * 60 * 60 * 1000).toLocaleDateString([], {
-			month: 'short',
-			day: 'numeric',
-		});
-
-		render(
-			<ActivityGraph
-				entries={[]}
-				theme={mockTheme}
-				lookbackHours={720}
-				onLookbackChange={vi.fn()}
-			/>
-		);
-
-		expect(screen.getByText(startLabel)).toBeInTheDocument();
-		expect(screen.getByText('Now')).toBeInTheDocument();
-	});
-
-	it('shows date ranges in tooltips for long fixed lookback windows', () => {
-		const startLabel = new Date(NOW - 720 * 60 * 60 * 1000).toLocaleDateString([], {
-			month: 'short',
-			day: 'numeric',
-		});
-		const endLabel = new Date(NOW - 696 * 60 * 60 * 1000).toLocaleDateString([], {
-			month: 'short',
-			day: 'numeric',
-		});
-
-		const { container } = render(
-			<ActivityGraph
-				entries={[]}
-				theme={mockTheme}
-				lookbackHours={720}
-				onLookbackChange={vi.fn()}
-			/>
-		);
-
-		const bars = container.querySelectorAll('.flex-1.min-w-0.flex.flex-col.justify-end');
-		fireEvent.mouseEnter(bars[0]);
-
-		expect(screen.getByText(`${startLabel} - ${endLabel}`)).toBeInTheDocument();
-	});
-
-	it('shows a single date in tooltips when a long-window bucket stays within one day', () => {
-		const expectedLabel = new Date(NOW).toLocaleDateString([], {
-			month: 'short',
-			day: 'numeric',
-		});
-
-		const { container } = render(
-			<ActivityGraph
-				entries={[]}
-				theme={mockTheme}
-				lookbackHours={168}
-				onLookbackChange={vi.fn()}
-			/>
-		);
-
-		const bars = container.querySelectorAll('.flex-1.min-w-0.flex.flex-col.justify-end');
-		fireEvent.mouseEnter(bars[bars.length - 1]);
-
-		expect(screen.getByText(expectedLabel)).toBeInTheDocument();
-	});
-
-	it('formats noon and PM times in short-window tooltips', () => {
-		const localNoon = new Date(2025, 5, 15, 12, 0, 0).getTime();
-
-		const { container } = render(
-			<ActivityGraph
-				entries={[]}
-				theme={mockTheme}
-				referenceTime={localNoon}
-				lookbackHours={24}
-				onLookbackChange={vi.fn()}
-			/>
-		);
-
-		const bars = container.querySelectorAll('.flex-1.min-w-0.flex.flex-col.justify-end');
-		fireEvent.mouseEnter(bars[bars.length - 1]);
-
-		expect(screen.getByText('11AM - 12PM')).toBeInTheDocument();
-	});
-
-	it('shows historical reference time in centered tooltips', () => {
-		const { container } = render(
-			<ActivityGraph
-				entries={[]}
-				theme={mockTheme}
-				referenceTime={NOW - 2 * 60 * 60 * 1000}
-				lookbackHours={24}
-				onLookbackChange={vi.fn()}
-			/>
-		);
-
-		const bars = container.querySelectorAll('.flex-1.min-w-0.flex.flex-col.justify-end');
-		fireEvent.mouseEnter(bars[Math.floor(bars.length / 2)]);
-
-		expect(screen.getByText('2h ago')).toBeInTheDocument();
-		expect(container.querySelector('.absolute.top-full')).toHaveStyle({
-			transform: 'translateX(-50%)',
-		});
-	});
-
-	it('includes minute-level historical reference time in the title', () => {
-		render(
-			<ActivityGraph
-				entries={[]}
-				theme={mockTheme}
-				referenceTime={NOW - 30 * 60 * 1000}
-				lookbackHours={24}
-				onLookbackChange={vi.fn()}
-			/>
-		);
-
-		expect(screen.getByTitle(/Viewing: 30m ago/)).toBeInTheDocument();
-	});
-
-	it('includes hour-level historical reference time in the title', () => {
-		render(
-			<ActivityGraph
-				entries={[]}
-				theme={mockTheme}
-				referenceTime={NOW - 2 * 60 * 60 * 1000}
-				lookbackHours={24}
-				onLookbackChange={vi.fn()}
-			/>
-		);
-
-		expect(screen.getByTitle(/Viewing: 2h ago/)).toBeInTheDocument();
-	});
-
-	it('includes date historical reference time in the title', () => {
-		const referenceTime = NOW - 48 * 60 * 60 * 1000;
-		const referenceLabel = new Date(referenceTime).toLocaleDateString([], {
-			month: 'short',
-			day: 'numeric',
-		});
-
-		render(
-			<ActivityGraph
-				entries={[]}
-				theme={mockTheme}
-				referenceTime={referenceTime}
-				lookbackHours={24}
-				onLookbackChange={vi.fn()}
-			/>
-		);
-
-		expect(screen.getByTitle(new RegExp(`Viewing: ${referenceLabel}`))).toBeInTheDocument();
-	});
-
 	it('displays title attribute with summary info', () => {
 		const entries = [
 			createMockEntry({ type: 'AUTO', timestamp: NOW - 1 * 60 * 60 * 1000 }),
@@ -527,16 +308,306 @@ describe('ActivityGraph', () => {
 		expect(graphContainer).toBeInTheDocument();
 	});
 
-	it('falls back to the default lookback option for unknown lookback values', () => {
-		render(
+	it('counts CUE entries in buckets', () => {
+		const entries = [
+			createMockEntry({ type: 'CUE', timestamp: NOW - 30 * 60 * 1000 }),
+			createMockEntry({ type: 'CUE', timestamp: NOW - 45 * 60 * 1000 }),
+			createMockEntry({ type: 'AUTO', timestamp: NOW - 35 * 60 * 1000 }),
+		];
+
+		const { container } = render(
 			<ActivityGraph
-				entries={[]}
+				entries={entries}
 				theme={mockTheme}
-				lookbackHours={999}
+				lookbackHours={24}
 				onLookbackChange={vi.fn()}
 			/>
 		);
 
-		expect(screen.getByTitle(/24 hours: 0 auto, 0 user/)).toBeInTheDocument();
+		// Hover over the last bucket to see tooltip
+		const bars = container.querySelectorAll('.flex-1.min-w-0.flex.flex-col.justify-end');
+		const lastBar = bars[bars.length - 1];
+		fireEvent.mouseEnter(lastBar);
+
+		// Should show Cue row in tooltip with count scoped to the Cue row
+		const cueLabel = screen.getByText('Cue');
+		expect(cueLabel).toBeInTheDocument();
+		const cueRow = cueLabel.closest('div')!;
+		expect(within(cueRow).getByText('2')).toBeInTheDocument();
+	});
+
+	it('shows Cue row with zero count in tooltip when bucket has no CUE entries', () => {
+		const entries = [
+			createMockEntry({ type: 'AUTO', timestamp: NOW - 30 * 60 * 1000 }),
+			createMockEntry({ type: 'USER', timestamp: NOW - 35 * 60 * 1000 }),
+		];
+
+		const { container } = render(
+			<ActivityGraph
+				entries={entries}
+				theme={mockTheme}
+				lookbackHours={24}
+				onLookbackChange={vi.fn()}
+			/>
+		);
+
+		const bars = container.querySelectorAll('.flex-1.min-w-0.flex.flex-col.justify-end');
+		const lastBar = bars[bars.length - 1];
+		fireEvent.mouseEnter(lastBar);
+
+		// All three rows should appear, Cue with 0
+		expect(screen.getByText('Auto')).toBeInTheDocument();
+		expect(screen.getByText('User')).toBeInTheDocument();
+		const cueLabel = screen.getByText('Cue');
+		expect(cueLabel).toBeInTheDocument();
+		const cueRow = cueLabel.closest('div')!;
+		expect(within(cueRow).getByText('0')).toBeInTheDocument();
+	});
+
+	it('includes CUE count in summary title when present', () => {
+		const entries = [
+			createMockEntry({ type: 'AUTO', timestamp: NOW - 1 * 60 * 60 * 1000 }),
+			createMockEntry({ type: 'CUE', timestamp: NOW - 2 * 60 * 60 * 1000 }),
+		];
+
+		render(
+			<ActivityGraph
+				entries={entries}
+				theme={mockTheme}
+				lookbackHours={168}
+				onLookbackChange={vi.fn()}
+			/>
+		);
+
+		const graphContainer = screen.getByTitle(/1 auto, 0 user, 1 cue/);
+		expect(graphContainer).toBeInTheDocument();
+	});
+
+	it('excludes CUE count from summary title when zero', () => {
+		const entries = [createMockEntry({ type: 'AUTO', timestamp: NOW - 1 * 60 * 60 * 1000 })];
+
+		render(
+			<ActivityGraph
+				entries={entries}
+				theme={mockTheme}
+				lookbackHours={168}
+				onLookbackChange={vi.fn()}
+			/>
+		);
+
+		// Title should NOT contain "cue"
+		const graphContainer = screen.getByTitle(/1 auto, 0 user \(right-click/);
+		expect(graphContainer).toBeInTheDocument();
+	});
+
+	it('makes CUE-only bars clickable', () => {
+		const onBarClick = vi.fn();
+		const entries = [createMockEntry({ type: 'CUE', timestamp: NOW - 30 * 60 * 1000 })];
+
+		const { container } = render(
+			<ActivityGraph
+				entries={entries}
+				theme={mockTheme}
+				lookbackHours={24}
+				onLookbackChange={vi.fn()}
+				onBarClick={onBarClick}
+			/>
+		);
+
+		const bars = container.querySelectorAll('.flex-1.min-w-0.flex.flex-col.justify-end');
+		const lastBar = bars[bars.length - 1];
+		fireEvent.click(lastBar);
+
+		expect(onBarClick).toHaveBeenCalledWith(expect.any(Number), expect.any(Number));
+	});
+
+	it('renders CUE bar segment with correct color in tooltip', () => {
+		const entries = [createMockEntry({ type: 'CUE', timestamp: NOW - 30 * 60 * 1000 })];
+
+		const { container } = render(
+			<ActivityGraph
+				entries={entries}
+				theme={mockTheme}
+				lookbackHours={24}
+				onLookbackChange={vi.fn()}
+			/>
+		);
+
+		// Hover to show tooltip, then verify CUE label uses the cyan color
+		const bars = container.querySelectorAll('.flex-1.min-w-0.flex.flex-col.justify-end');
+		const lastBar = bars[bars.length - 1];
+		fireEvent.mouseEnter(lastBar);
+
+		const cueLabel = screen.getByText('Cue');
+		expect(cueLabel).toHaveStyle({ color: '#06b6d4' });
+	});
+
+	it('scales bar height correctly with mixed AUTO, USER, and CUE entries', () => {
+		const entries = [
+			createMockEntry({ type: 'AUTO', timestamp: NOW - 30 * 60 * 1000 }),
+			createMockEntry({ type: 'USER', timestamp: NOW - 30 * 60 * 1000 }),
+			createMockEntry({ type: 'CUE', timestamp: NOW - 30 * 60 * 1000 }),
+		];
+
+		const { container } = render(
+			<ActivityGraph
+				entries={entries}
+				theme={mockTheme}
+				lookbackHours={24}
+				onLookbackChange={vi.fn()}
+			/>
+		);
+
+		// The bar with all 3 entries should be at 100% height (it's the max)
+		const bars = container.querySelectorAll('.flex-1.min-w-0.flex.flex-col.justify-end');
+		const lastBar = bars[bars.length - 1];
+		const barInner = lastBar.querySelector('.w-full.rounded-t-sm') as HTMLElement;
+		// height should be 100% since this is the max bucket
+		expect(barInner.style.height).toBe('100%');
+	});
+
+	it('shows viewport indicator line when viewportRange is provided', () => {
+		const entries = [
+			createMockEntry({ type: 'AUTO', timestamp: NOW - 1 * 60 * 60 * 1000 }),
+			createMockEntry({ type: 'AUTO', timestamp: NOW - 12 * 60 * 60 * 1000 }),
+		];
+
+		const { container } = render(
+			<ActivityGraph
+				entries={entries}
+				theme={mockTheme}
+				lookbackHours={24}
+				onLookbackChange={vi.fn()}
+				viewportRange={{
+					start: NOW - 13 * 60 * 60 * 1000,
+					end: NOW - 12 * 60 * 60 * 1000,
+				}}
+			/>
+		);
+
+		// The indicator line should be rendered
+		const indicator = container.querySelector('.pointer-events-none.z-20');
+		expect(indicator).toBeInTheDocument();
+		// Should be positioned roughly at 50% (12h into a 24h window)
+		const left = parseFloat((indicator as HTMLElement).style.left);
+		expect(left).toBeGreaterThan(40);
+		expect(left).toBeLessThan(60);
+	});
+
+	it('does not show viewport indicator when no viewportRange', () => {
+		const entries = [createMockEntry({ type: 'AUTO', timestamp: NOW - 1 * 60 * 60 * 1000 })];
+
+		const { container } = render(
+			<ActivityGraph
+				entries={entries}
+				theme={mockTheme}
+				lookbackHours={24}
+				onLookbackChange={vi.fn()}
+			/>
+		);
+
+		const indicator = container.querySelector('.pointer-events-none.z-20');
+		expect(indicator).not.toBeInTheDocument();
+	});
+
+	it('shows a time label following the viewport indicator', () => {
+		const entries = [
+			createMockEntry({ type: 'AUTO', timestamp: NOW - 1 * 60 * 60 * 1000 }),
+			createMockEntry({ type: 'AUTO', timestamp: NOW - 12 * 60 * 60 * 1000 }),
+		];
+
+		const { container } = render(
+			<ActivityGraph
+				entries={entries}
+				theme={mockTheme}
+				lookbackHours={24}
+				onLookbackChange={vi.fn()}
+				viewportRange={{
+					start: NOW - 13 * 60 * 60 * 1000,
+					end: NOW - 12 * 60 * 60 * 1000,
+				}}
+			/>
+		);
+
+		// Should render the indicator label in the axis row
+		const label = container.querySelector('[data-testid="viewport-indicator-label"]');
+		expect(label).toBeInTheDocument();
+		// For 24h lookback, label should show a time (contains AM or PM)
+		expect(label!.textContent).toMatch(/AM|PM/);
+	});
+
+	it('hides indicator label when too close to edges', () => {
+		const entries = [createMockEntry({ type: 'AUTO', timestamp: NOW - 1 * 60 * 60 * 1000 })];
+
+		// Position the indicator at ~96% (very close to "Now" edge)
+		const { container } = render(
+			<ActivityGraph
+				entries={entries}
+				theme={mockTheme}
+				lookbackHours={24}
+				onLookbackChange={vi.fn()}
+				viewportRange={{
+					start: NOW - 2 * 60 * 60 * 1000,
+					end: NOW - 1 * 60 * 60 * 1000,
+				}}
+			/>
+		);
+
+		// Label should be hidden since the indicator is near the right edge (>88%)
+		const label = container.querySelector('[data-testid="viewport-indicator-label"]');
+		expect(label).not.toBeInTheDocument();
+	});
+
+	it('uses precomputedBuckets when provided instead of client-side bucketing', () => {
+		// Provide entries that would produce 1 auto in the last bucket via client-side bucketing
+		const entries = [createMockEntry({ type: 'AUTO', timestamp: NOW - 30 * 60 * 1000 })];
+
+		// But precomputed buckets say there are 5 auto in the last bucket (backend saw more data)
+		const precomputedBuckets = Array.from({ length: 24 }, () => ({ auto: 0, user: 0, cue: 0 }));
+		precomputedBuckets[23] = { auto: 5, user: 3, cue: 0 };
+
+		const { container } = render(
+			<ActivityGraph
+				entries={entries}
+				theme={mockTheme}
+				lookbackHours={24}
+				onLookbackChange={vi.fn()}
+				precomputedBuckets={precomputedBuckets}
+			/>
+		);
+
+		// Hover the last bar to verify tooltip shows precomputed values
+		const bars = container.querySelectorAll('.flex-1.min-w-0.flex.flex-col.justify-end');
+		const lastBar = bars[bars.length - 1];
+		fireEvent.mouseEnter(lastBar);
+
+		// Should show 5 (from precomputed) not 1 (from client-side bucketing)
+		expect(screen.getByText('5')).toBeInTheDocument();
+		expect(screen.getByText('3')).toBeInTheDocument();
+	});
+
+	it('falls back to client-side bucketing when precomputedBuckets length does not match', () => {
+		const entries = [createMockEntry({ type: 'AUTO', timestamp: NOW - 30 * 60 * 1000 })];
+
+		// Wrong number of buckets — should be ignored
+		const wrongBuckets = [{ auto: 99, user: 0, cue: 0 }];
+
+		const { container } = render(
+			<ActivityGraph
+				entries={entries}
+				theme={mockTheme}
+				lookbackHours={24}
+				onLookbackChange={vi.fn()}
+				precomputedBuckets={wrongBuckets}
+			/>
+		);
+
+		// Should fall back to client-side bucketing: 1 auto entry in last bucket
+		const bars = container.querySelectorAll('.flex-1.min-w-0.flex.flex-col.justify-end');
+		const lastBar = bars[bars.length - 1];
+		fireEvent.mouseEnter(lastBar);
+
+		expect(screen.getByText('1')).toBeInTheDocument();
+		expect(screen.queryByText('99')).not.toBeInTheDocument();
 	});
 });

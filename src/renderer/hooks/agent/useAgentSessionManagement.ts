@@ -1,15 +1,38 @@
 import { useCallback, useRef } from 'react';
 import type { Session, LogEntry, UsageStats, ThinkingMode } from '../../types';
-import { createTab, getActiveTab } from '../../utils/tabHelpers';
+import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
+import { aiTabFocusFields, createTab, getActiveTab } from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
+import { buildSharedHistoryContext } from '../../utils/sessionHelpers';
 import type { RightPanelHandle } from '../../components/RightPanel';
 import { FALLBACK_CONTEXT_WINDOW } from '../../../shared/agentConstants';
+import { logger } from '../../utils/logger';
+
+/**
+ * Matches the Auto Run synopsis prompt that Maestro injects into the agent
+ * session after a task ("Give/Provide a brief synopsis of what you just
+ * accomplished ..."). The leading verb and trailing wording have drifted across
+ * versions and the prompt is user-customizable, so we anchor on the stable core
+ * phrase. A restored tab hides this request and the assistant's `**Summary:**`
+ * reply since they are bookkeeping, not part of the user's conversation.
+ */
+const SYNOPSIS_REQUEST_PATTERN =
+	/^\s*\S+\s+a\s+brief\s+synopsis\s+of\s+what\s+you\s+just\s+accomplished/i;
+
+export function isSynopsisRequest(msg: {
+	type?: string;
+	role?: string;
+	content?: string;
+}): boolean {
+	const isUser = msg.type === 'user' || msg.role === 'user';
+	return isUser && typeof msg.content === 'string' && SYNOPSIS_REQUEST_PATTERN.test(msg.content);
+}
 
 /**
  * History entry for the addHistoryEntry function.
  */
 export interface HistoryEntryInput {
-	type: 'AUTO' | 'USER';
+	type: 'AUTO' | 'USER' | 'CUE';
 	summary: string;
 	fullResponse?: string;
 	agentSessionId?: string;
@@ -24,6 +47,16 @@ export interface HistoryEntryInput {
 	success?: boolean;
 	/** Task execution time in milliseconds */
 	elapsedTimeMs?: number;
+	/** Context usage percentage from the agent run (used when activeSession context isn't available) */
+	contextUsage?: number;
+	/**
+	 * Claude-only, per-turn token source override. When omitted, it's resolved from
+	 * the entry's session `claudeInteractive` mode. Background/Auto Run/Cue callers
+	 * can set it explicitly to stamp the source they ran under.
+	 */
+	tokenSource?: 'interactive' | 'api';
+	/** Claude-only, per-turn token source reason override. See {@link tokenSource}. */
+	tokenSourceReason?: 'auto' | 'limit';
 }
 
 /**
@@ -44,6 +77,8 @@ export interface UseAgentSessionManagementDeps {
 	defaultSaveToHistory: boolean;
 	/** Default value for showThinking on new tabs */
 	defaultShowThinking: ThinkingMode;
+	/** Flash notification callback for user feedback */
+	showFlash?: (message: string) => void;
 }
 
 /**
@@ -56,14 +91,40 @@ export interface UseAgentSessionManagementReturn {
 	addHistoryEntryRef: React.MutableRefObject<((entry: HistoryEntryInput) => Promise<void>) | null>;
 	/** Jump to a specific agent session in the browser */
 	handleJumpToAgentSession: (agentSessionId: string) => void;
-	/** Resume a Agent session, opening as a new tab or switching to existing */
+	/**
+	 * Resume a Agent session, opening as a new tab or switching to existing.
+	 * Resolves to `true` when a tab was opened or switched, `false` when the
+	 * session could not be loaded (e.g. aged out / no longer on disk) so callers
+	 * can offer recovery (such as removing a stale star).
+	 */
 	handleResumeSession: (
 		agentSessionId: string,
 		providedMessages?: LogEntry[],
 		sessionName?: string,
 		starred?: boolean,
-		usageStats?: UsageStats
-	) => Promise<void>;
+		usageStats?: UsageStats,
+		projectPath?: string,
+		opts?: ResumeSessionOptions
+	) => Promise<boolean>;
+}
+
+/**
+ * Optional behavior overrides for {@link UseAgentSessionManagementReturn.handleResumeSession}.
+ */
+export interface ResumeSessionOptions {
+	/**
+	 * Resume into a specific Maestro agent (Session.id) resolved fresh from the
+	 * store, rather than the closure's active session. Required when jumping
+	 * across agents (e.g. the Left Bar "Starred Sessions" list), where the active
+	 * session has just switched and the closure value is stale.
+	 */
+	targetSessionId?: string;
+	/**
+	 * Skip the built-in flash when the session can't be loaded. Lets the caller
+	 * present its own recovery UI (e.g. "this session aged out, remove the star?")
+	 * instead of a transient message.
+	 */
+	suppressUnavailableFlash?: boolean;
 }
 
 /**
@@ -88,6 +149,7 @@ export function useAgentSessionManagement(
 		rightPanelRef,
 		defaultSaveToHistory,
 		defaultShowThinking,
+		showFlash,
 	} = deps;
 
 	// Refs for functions that need to be accessed from other callbacks
@@ -114,25 +176,65 @@ export function useAgentSessionManagement(
 
 			const shouldIncludeContextUsage = !entry.sessionId || entry.sessionId === activeSession?.id;
 
-			await window.maestro.history.add({
-				id: generateId(),
-				type: entry.type,
-				timestamp: Date.now(),
-				summary: entry.summary,
-				fullResponse: entry.fullResponse,
-				agentSessionId: entry.agentSessionId,
-				sessionId: targetSessionId,
-				sessionName: sessionName,
-				projectPath: targetProjectPath,
-				...(shouldIncludeContextUsage ? { contextUsage: activeSession?.contextUsage } : {}),
-				// Only include usageStats if explicitly provided (per-task tracking)
-				// Never use cumulative session stats - they're lifetime totals
-				usageStats: entry.usageStats,
-				// Pass through success field for error/failure tracking
-				success: entry.success,
-				// Pass through task execution time
-				elapsedTimeMs: entry.elapsedTimeMs,
-			});
+			// Resolve the Claude token source for this turn. Token source belongs on
+			// the ENTRY, not the agent: a Dynamic-mode agent flips between TUI and API
+			// across turns, so we snapshot the resolved mode at write time. An explicit
+			// override from the caller (background/Auto Run/Cue) always wins; otherwise
+			// read the resolved session's live `claudeInteractive`. For Claude Code we
+			// always emit a token source: when `claudeInteractive` is absent the turn
+			// ran the default `claude --print` (API) path - the adaptive/maestro-p
+			// machinery only writes that field when it engages, so absence means API.
+			// Non-Claude agents get no field at all.
+			const tokenSourceFields = (() => {
+				if (entry.tokenSource) {
+					return {
+						tokenSource: entry.tokenSource,
+						...(entry.tokenSourceReason ? { tokenSourceReason: entry.tokenSourceReason } : {}),
+					};
+				}
+				const tokenSession = entry.sessionId
+					? selectSessionById(entry.sessionId)(useSessionStore.getState())
+					: activeSession;
+				if (tokenSession?.toolType === 'claude-code') {
+					const ci = tokenSession.claudeInteractive;
+					return {
+						tokenSource: ci?.mode ?? 'api',
+						...(ci?.modeReason ? { tokenSourceReason: ci.modeReason } : {}),
+					};
+				}
+				return {};
+			})();
+
+			await window.maestro.history.add(
+				{
+					id: generateId(),
+					type: entry.type,
+					timestamp: Date.now(),
+					summary: entry.summary,
+					fullResponse: entry.fullResponse,
+					agentSessionId: entry.agentSessionId,
+					sessionId: targetSessionId,
+					sessionName: sessionName,
+					projectPath: targetProjectPath,
+					// Claude-only per-turn token source (TUI vs API); omitted otherwise
+					...tokenSourceFields,
+					// Prefer active session's live context percentage; fall back to entry's own estimate
+					...(() => {
+						const ctx = shouldIncludeContextUsage
+							? (activeSession?.contextUsage ?? entry.contextUsage)
+							: entry.contextUsage;
+						return ctx != null ? { contextUsage: ctx } : {};
+					})(),
+					// Only include usageStats if explicitly provided (per-task tracking)
+					// Never use cumulative session stats - they're lifetime totals
+					usageStats: entry.usageStats,
+					// Pass through success field for error/failure tracking
+					success: entry.success,
+					// Pass through task execution time
+					elapsedTimeMs: entry.elapsedTimeMs,
+				},
+				buildSharedHistoryContext(activeSession)
+			);
 
 			// Refresh history panel to show the new entry
 			rightPanelRef.current?.refreshHistoryPanel();
@@ -165,26 +267,45 @@ export function useAgentSessionManagement(
 			providedMessages?: LogEntry[],
 			sessionName?: string,
 			starred?: boolean,
-			usageStats?: UsageStats
-		) => {
-			// Use projectRoot (not cwd) for consistent session storage access
-			if (!activeSession?.projectRoot) return;
+			usageStats?: UsageStats,
+			projectPath?: string,
+			opts?: ResumeSessionOptions
+		): Promise<boolean> => {
+			// Resolve the agent to resume into. When a targetSessionId is provided
+			// (cross-agent jump, e.g. starred sessions), read it fresh from the store
+			// because the active session may have just switched and the `activeSession`
+			// closure is stale. Otherwise operate on the current active session.
+			const targetSession = opts?.targetSessionId
+				? (selectSessionById(opts.targetSessionId)(useSessionStore.getState()) ?? null)
+				: activeSession;
+			// Need a session for tab management
+			if (!targetSession) return false;
+			// Use provided projectPath (e.g. from history entry) or fall back to the target's projectRoot
+			const resolvedProjectRoot = projectPath || targetSession.projectRoot;
+			if (!resolvedProjectRoot) {
+				logger.warn('[handleResumeSession] No projectRoot on target session', undefined, {
+					sessionId: targetSession.id,
+					cwd: targetSession.cwd,
+				});
+				if (!opts?.suppressUnavailableFlash) {
+					showFlash?.('Cannot resume session: no project root set');
+				}
+				return false;
+			}
 
 			// Check if a tab with this agentSessionId already exists
-			const existingTab = activeSession.aiTabs?.find(
+			const existingTab = targetSession.aiTabs?.find(
 				(tab) => tab.agentSessionId === agentSessionId
 			);
-			if (existingTab) {
+			if (existingTab && existingTab.logs && existingTab.logs.length > 0) {
 				// Switch to the existing tab instead of creating a duplicate
 				setSessions((prev) =>
 					prev.map((s) =>
-						s.id === activeSession.id
-							? { ...s, activeTabId: existingTab.id, activeFileTabId: null, inputMode: 'ai' }
-							: s
+						s.id === targetSession.id ? { ...s, ...aiTabFocusFields(existingTab.id) } : s
 					)
 				);
 				setActiveAgentSessionId(agentSessionId);
-				return;
+				return true;
 			}
 
 			try {
@@ -195,23 +316,67 @@ export function useAgentSessionManagement(
 				} else {
 					// Load the session messages using the generic agentSessions API
 					// Use projectRoot (not cwd) for consistent session storage access
-					const agentId = activeSession.toolType || 'claude-code';
+					// Pass sshRemoteId so SSH-remote sessions read from the correct host
+					const agentId = targetSession.toolType || 'claude-code';
 					const result = await window.maestro.agentSessions.read(
 						agentId,
-						activeSession.projectRoot,
+						resolvedProjectRoot,
 						agentSessionId,
-						{ offset: 0, limit: 100 }
+						{ offset: 0, limit: 500 },
+						targetSession.sshRemoteId
 					);
 
-					// Convert to log entries
-					messages = result.messages.map(
-						(msg: { type: string; content: string; timestamp: string; uuid: string }) => ({
-							id: msg.uuid || generateId(),
-							timestamp: new Date(msg.timestamp).getTime(),
-							source: msg.type === 'user' ? ('user' as const) : ('stdout' as const),
-							text: msg.content || '',
-						})
+					// Drop the Auto Run synopsis request and the assistant reply that
+					// immediately follows it. These are Maestro bookkeeping turns, not part
+					// of the user's conversation, so they shouldn't reappear on restore.
+					const withoutSynopsis = result.messages.filter(
+						(
+							msg: { type: string; role?: string; content: string },
+							i: number,
+							arr: { type: string; role?: string; content: string }[]
+						) => {
+							if (isSynopsisRequest(msg)) return false;
+							const prev = arr[i - 1];
+							const isAssistant = msg.type === 'assistant' || msg.role === 'assistant';
+							if (prev && isSynopsisRequest(prev) && isAssistant) return false;
+							return true;
+						}
 					);
+
+					// Convert to log entries, keeping messages with actual text content or
+					// reconstructed images. Tool-use-only messages (empty text, no images)
+					// are skipped — restored tabs start with thinking off so there's nothing
+					// useful to render for those entries.
+					messages = withoutSynopsis
+						.filter(
+							(msg: { content: string; images?: string[] }) =>
+								(msg.content && msg.content.trim().length > 0) ||
+								(msg.images != null && msg.images.length > 0)
+						)
+						.map(
+							(msg: {
+								type: string;
+								content: string;
+								timestamp: string;
+								uuid: string;
+								images?: string[];
+							}) => ({
+								id: msg.uuid || generateId(),
+								timestamp: new Date(msg.timestamp).getTime(),
+								source: msg.type === 'user' ? ('user' as const) : ('stdout' as const),
+								text: msg.content,
+								...(msg.images && msg.images.length > 0 && { images: msg.images }),
+							})
+						);
+				}
+
+				if (messages.length === 0) {
+					// No messages came back: the session is empty or has aged out / been
+					// removed from disk. Treat as unavailable so callers can recover.
+					if (!opts?.suppressUnavailableFlash) {
+						showFlash?.('Session has no displayable messages');
+					}
+					return false;
 				}
 
 				// Look up starred status, session name, and context usage from stores if not provided
@@ -221,14 +386,11 @@ export function useAgentSessionManagement(
 				let finalUsageStats = usageStats;
 
 				// Always look up origins for Claude sessions to get contextUsage (and name/starred if not provided)
-				if (activeSession.toolType === 'claude-code') {
+				if (targetSession.toolType === 'claude-code') {
 					try {
 						// Look up session metadata from session origins (name, starred, contextUsage)
 						// Note: getSessionOrigins is still Claude-specific until we add generic origin tracking
-						// Use projectRoot (not cwd) for consistent session storage access
-						const origins = await window.maestro.claude.getSessionOrigins(
-							activeSession.projectRoot
-						);
+						const origins = await window.maestro.claude.getSessionOrigins(resolvedProjectRoot);
 						const originData = origins[agentSessionId];
 						if (originData && typeof originData === 'object') {
 							if (sessionName === undefined && originData.sessionName) {
@@ -242,7 +404,11 @@ export function useAgentSessionManagement(
 							}
 						}
 					} catch (error) {
-						console.warn('[handleResumeSession] Failed to lookup session metadata:', error);
+						logger.warn(
+							'[handleResumeSession] Failed to lookup session metadata:',
+							undefined,
+							error
+						);
 					}
 				}
 
@@ -266,7 +432,37 @@ export function useAgentSessionManagement(
 				// IMPORTANT: Use functional update to get fresh session state and avoid race conditions
 				setSessions((prev) =>
 					prev.map((s) => {
-						if (s.id !== activeSession.id) return s;
+						if (s.id !== targetSession.id) return s;
+
+						// Re-resolve the existing tab from FRESH state, not the `existingTab`
+						// captured before the async read above. handleResumeSession awaits
+						// disk I/O, so two activations of the same starred session (a rapid
+						// double-click, or a click racing the keyboard cycle) can both pass
+						// the pre-await dedup with no tab present. Re-checking here means the
+						// second update sees the first's committed tab and focuses it instead
+						// of creating a duplicate. There must never be two tabs for one session.
+						const freshExistingTab = s.aiTabs?.find((tab) => tab.agentSessionId === agentSessionId);
+
+						// If a tab already exists for this session, repopulate (if needed) and
+						// focus it instead of creating a duplicate.
+						if (freshExistingTab) {
+							const updatedTabs = s.aiTabs.map((tab) =>
+								tab.id === freshExistingTab.id
+									? {
+											...tab,
+											logs: tab.logs && tab.logs.length > 0 ? tab.logs : messages,
+											name: name ?? tab.name,
+											starred: isStarred || tab.starred,
+											usageStats: finalUsageStats ?? tab.usageStats,
+										}
+									: tab
+							);
+							return {
+								...s,
+								aiTabs: updatedTabs,
+								...aiTabFocusFields(freshExistingTab.id),
+							};
+						}
 
 						// Create tab from the CURRENT session state (not stale closure value)
 						const result = createTab(s, {
@@ -277,14 +473,24 @@ export function useAgentSessionManagement(
 							usageStats: finalUsageStats,
 							saveToHistory: defaultSaveToHistory,
 							showThinking: defaultShowThinking,
-						})!;
+						});
+						if (!result) return s;
 
 						return { ...result.session, activeFileTabId: null, inputMode: 'ai' };
 					})
 				);
 				setActiveAgentSessionId(agentSessionId);
+				return true;
 			} catch (error) {
-				console.error('Failed to resume session:', error);
+				logger.error('Failed to resume session:', undefined, error);
+				if (!opts?.suppressUnavailableFlash) {
+					const msg =
+						error instanceof Error && error.message.includes('ENOENT')
+							? 'Session file not found on disk'
+							: 'Failed to load session';
+					showFlash?.(msg);
+				}
+				return false;
 			}
 		},
 		[
@@ -296,6 +502,7 @@ export function useAgentSessionManagement(
 			setActiveAgentSessionId,
 			defaultSaveToHistory,
 			defaultShowThinking,
+			showFlash,
 		]
 	);
 

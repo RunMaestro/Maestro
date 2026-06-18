@@ -159,28 +159,6 @@ describe('WakaTime Listener', () => {
 		);
 	});
 
-	it('should fall back to session id when process directory is unavailable on data event', () => {
-		vi.mocked(mockProcessManager.get).mockReturnValue({
-			sessionId: 'session-no-dir',
-			toolType: 'codex',
-			pid: 1234,
-			isTerminal: false,
-			startTime: Date.now(),
-		} as any);
-
-		setupWakaTimeListener(mockProcessManager, mockWakaTimeManager, mockSettingsStore);
-
-		const handler = eventHandlers.get('data');
-		handler?.('session-no-dir', 'output');
-
-		expect(mockWakaTimeManager.sendHeartbeat).toHaveBeenCalledWith(
-			'session-no-dir',
-			'session-no-dir',
-			undefined,
-			undefined
-		);
-	});
-
 	it('should send heartbeat on query-complete with projectPath and source', () => {
 		setupWakaTimeListener(mockProcessManager, mockWakaTimeManager, mockSettingsStore);
 
@@ -867,24 +845,6 @@ describe('WakaTime Listener', () => {
 			expect(mockWakaTimeManager.sendFileHeartbeats).not.toHaveBeenCalled();
 		});
 
-		it('should skip usage flush when WakaTime is disabled after files are collected', () => {
-			toolExecutionHandler('session-interactive', {
-				toolName: 'Write',
-				state: { input: { file_path: '/home/user/project/a.ts' } },
-				timestamp: 1000,
-			});
-
-			const enabledCallback = mockSettingsStore.onDidChange.mock.calls.find(
-				(c: any[]) => c[0] === 'wakatimeEnabled'
-			)[1];
-			enabledCallback(false);
-
-			usageHandler('session-interactive', usageStats);
-			vi.advanceTimersByTime(500);
-
-			expect(mockWakaTimeManager.sendFileHeartbeats).not.toHaveBeenCalled();
-		});
-
 		it('should skip usage flush when detailed tracking is disabled', () => {
 			const detailedCallback = mockSettingsStore.onDidChange.mock.calls.find(
 				(c: any[]) => c[0] === 'wakatimeDetailedTracking'
@@ -944,32 +904,6 @@ describe('WakaTime Listener', () => {
 				[{ filePath: path.resolve('/home/user/fallback', 'src/utils.ts'), timestamp: 1000 }],
 				'fallback',
 				'/home/user/fallback',
-				undefined
-			);
-		});
-
-		it('should filter relative file paths when usage flush has no project directory', () => {
-			vi.mocked(mockProcessManager.get).mockReturnValue({
-				sessionId: 'session-interactive',
-				toolType: 'claude-code',
-				pid: 1234,
-				isTerminal: false,
-				startTime: Date.now(),
-			} as any);
-
-			toolExecutionHandler('session-interactive', {
-				toolName: 'Write',
-				state: { input: { file_path: 'src/utils.ts' } },
-				timestamp: 1000,
-			});
-
-			usageHandler('session-interactive', usageStats);
-			vi.advanceTimersByTime(500);
-
-			expect(mockWakaTimeManager.sendFileHeartbeats).toHaveBeenCalledWith(
-				[],
-				'session-interactive',
-				undefined,
 				undefined
 			);
 		});

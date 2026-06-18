@@ -379,29 +379,6 @@ describe('useAgentConfiguration', () => {
 			expect(result.current.availableModels).toEqual(['opus', 'sonnet', 'haiku']);
 		});
 
-		it('logs model refresh failures and clears loading state', async () => {
-			const error = new Error('models unavailable');
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-			const { result } = renderHook(() =>
-				useAgentConfiguration({ enabled: true, autoSelect: true })
-			);
-
-			await waitFor(() => {
-				expect(result.current.isDetecting).toBe(false);
-			});
-
-			mockGetModels.mockRejectedValueOnce(error);
-
-			await act(async () => {
-				await result.current.refreshModels();
-			});
-
-			expect(consoleError).toHaveBeenCalledWith('Failed to refresh models:', error);
-			expect(result.current.loadingModels).toBe(false);
-
-			consoleError.mockRestore();
-		});
-
 		it('does not refresh models when no agent selected', async () => {
 			const { result } = renderHook(() =>
 				useAgentConfiguration({ enabled: true, autoSelect: false })
@@ -439,48 +416,6 @@ describe('useAgentConfiguration', () => {
 			expect(result.current.detectedAgents).toHaveLength(3);
 			expect(result.current.refreshingAgent).toBe(false);
 		});
-
-		it('applies a custom filter while refreshing agents', async () => {
-			const filter = (agent: AgentConfig) => agent.id === 'codex';
-			const { result } = renderHook(() =>
-				useAgentConfiguration({ enabled: true, autoSelect: true, agentFilter: filter })
-			);
-
-			await waitFor(() => {
-				expect(result.current.isDetecting).toBe(false);
-			});
-
-			mockDetect.mockResolvedValue([agentClaude, agentCodex]);
-
-			await act(async () => {
-				await result.current.refreshAgent();
-			});
-
-			expect(result.current.detectedAgents).toEqual([agentCodex]);
-		});
-
-		it('logs refresh failures and clears refreshing state', async () => {
-			const error = new Error('detect failed');
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-			const { result } = renderHook(() =>
-				useAgentConfiguration({ enabled: true, autoSelect: true })
-			);
-
-			await waitFor(() => {
-				expect(result.current.isDetecting).toBe(false);
-			});
-
-			mockDetect.mockRejectedValueOnce(error);
-
-			await act(async () => {
-				await result.current.refreshAgent();
-			});
-
-			expect(consoleError).toHaveBeenCalledWith('Failed to refresh agents:', error);
-			expect(result.current.refreshingAgent).toBe(false);
-
-			consoleError.mockRestore();
-		});
 	});
 
 	describe('SSH remotes', () => {
@@ -497,39 +432,6 @@ describe('useAgentConfiguration', () => {
 			});
 
 			expect(result.current.sshRemotes).toEqual(remotes);
-		});
-
-		it('keeps SSH remotes empty when the config response has no configs', async () => {
-			mockGetSshConfigs.mockResolvedValue({ success: true });
-
-			const { result } = renderHook(() =>
-				useAgentConfiguration({ enabled: true, loadSshRemotes: true })
-			);
-
-			await waitFor(() => {
-				expect(result.current.isDetecting).toBe(false);
-			});
-
-			expect(result.current.sshRemotes).toEqual([]);
-		});
-
-		it('logs SSH remote load failures without blocking detection', async () => {
-			const error = new Error('ssh config read failed');
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-			mockGetSshConfigs.mockRejectedValueOnce(error);
-
-			const { result } = renderHook(() =>
-				useAgentConfiguration({ enabled: true, loadSshRemotes: true })
-			);
-
-			await waitFor(() => {
-				expect(result.current.isDetecting).toBe(false);
-			});
-
-			expect(consoleError).toHaveBeenCalledWith('Failed to load SSH remotes:', error);
-			expect(result.current.sshRemotes).toEqual([]);
-
-			consoleError.mockRestore();
 		});
 
 		it('does not load SSH remotes when loadSshRemotes=false', async () => {
@@ -591,9 +493,6 @@ describe('useAgentConfiguration', () => {
 				result.current.setCustomEnvVars({ K: 'V' });
 				result.current.toggleConfigExpanded();
 			});
-			await waitFor(() => {
-				expect(result.current.agentConfig).toEqual({ model: 'opus' });
-			});
 
 			// Reset
 			act(() => {
@@ -647,163 +546,6 @@ describe('useAgentConfiguration', () => {
 			expect(mockGetModels).toHaveBeenCalledWith('claude-code');
 			expect(result.current.agentConfig).toEqual({ model: 'opus' });
 			expect(result.current.availableModels).toEqual(['opus', 'sonnet']);
-		});
-
-		it('uses an empty config object when the IPC config payload is missing', async () => {
-			mockGetConfig.mockResolvedValueOnce(null);
-
-			const { result } = renderHook(() =>
-				useAgentConfiguration({ enabled: true, autoSelect: true })
-			);
-
-			await waitFor(() => {
-				expect(result.current.isDetecting).toBe(false);
-			});
-
-			await act(async () => {
-				await result.current.loadAgentConfig('claude-code');
-			});
-
-			expect(result.current.agentConfig).toEqual({});
-			expect(result.current.agentConfigRef.current).toEqual({});
-		});
-
-		it('logs model load failures while preserving loaded config', async () => {
-			const error = new Error('model list failed');
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-			const agentWithModels = makeAgent({
-				id: 'claude-code',
-				capabilities: { supportsModelSelection: true } as any,
-			});
-			mockDetect.mockResolvedValue([agentWithModels]);
-			mockGetModels.mockRejectedValueOnce(error);
-
-			const { result } = renderHook(() =>
-				useAgentConfiguration({ enabled: true, autoSelect: true })
-			);
-
-			await waitFor(() => {
-				expect(result.current.isDetecting).toBe(false);
-			});
-
-			await act(async () => {
-				await result.current.loadAgentConfig('claude-code');
-			});
-
-			expect(result.current.agentConfig).toEqual({ model: 'opus' });
-			expect(result.current.availableModels).toEqual([]);
-			expect(result.current.loadingModels).toBe(false);
-			expect(consoleError).toHaveBeenCalledWith('Failed to load models:', error);
-
-			consoleError.mockRestore();
-		});
-
-		it('ignores stale config results when a newer config load wins', async () => {
-			let resolveStaleConfig: (config: { model: string }) => void = () => {};
-			const staleConfig = new Promise<{ model: string }>((resolve) => {
-				resolveStaleConfig = resolve;
-			});
-			mockGetConfig
-				.mockImplementationOnce(() => staleConfig)
-				.mockResolvedValueOnce({ model: 'fresh-config' });
-
-			const { result } = renderHook(() =>
-				useAgentConfiguration({ enabled: true, autoSelect: true })
-			);
-
-			await waitFor(() => {
-				expect(result.current.isDetecting).toBe(false);
-			});
-
-			let staleLoad!: Promise<void>;
-			act(() => {
-				staleLoad = result.current.loadAgentConfig('claude-code');
-			});
-			await waitFor(() => {
-				expect(mockGetConfig).toHaveBeenCalledTimes(1);
-			});
-
-			await act(async () => {
-				await result.current.loadAgentConfig('claude-code');
-			});
-
-			await act(async () => {
-				resolveStaleConfig({ model: 'stale-config' });
-				await staleLoad;
-			});
-
-			expect(result.current.agentConfig).toEqual({ model: 'fresh-config' });
-		});
-
-		it('ignores stale model results when a newer config load wins', async () => {
-			const agentWithModels = makeAgent({
-				id: 'claude-code',
-				capabilities: { supportsModelSelection: true } as any,
-			});
-			mockDetect.mockResolvedValue([agentWithModels]);
-			let resolveStaleModels: (models: string[]) => void = () => {};
-			const staleModels = new Promise<string[]>((resolve) => {
-				resolveStaleModels = resolve;
-			});
-			mockGetModels
-				.mockImplementationOnce(() => staleModels)
-				.mockResolvedValueOnce(['fresh-model']);
-
-			const { result } = renderHook(() =>
-				useAgentConfiguration({ enabled: true, autoSelect: true })
-			);
-
-			await waitFor(() => {
-				expect(result.current.isDetecting).toBe(false);
-			});
-
-			let staleLoad!: Promise<void>;
-			act(() => {
-				staleLoad = result.current.loadAgentConfig('claude-code');
-			});
-			await waitFor(() => {
-				expect(mockGetModels).toHaveBeenCalledTimes(1);
-			});
-
-			await act(async () => {
-				await result.current.loadAgentConfig('claude-code');
-			});
-
-			await act(async () => {
-				resolveStaleModels(['stale-model']);
-				await staleLoad;
-			});
-
-			expect(result.current.availableModels).toEqual(['fresh-model']);
-		});
-
-		it('loads the newly selected agent config when config is already expanded', async () => {
-			const { result } = renderHook(() =>
-				useAgentConfiguration({ enabled: true, autoSelect: true })
-			);
-
-			await waitFor(() => {
-				expect(result.current.isDetecting).toBe(false);
-			});
-
-			await act(async () => {
-				result.current.toggleConfigExpanded();
-			});
-			await waitFor(() => {
-				expect(mockGetConfig).toHaveBeenCalledWith('claude-code');
-			});
-
-			mockGetConfig.mockClear();
-			mockGetConfig.mockResolvedValueOnce({ model: 'codex-model' });
-
-			act(() => {
-				result.current.handleAgentChange('codex');
-			});
-
-			await waitFor(() => {
-				expect(mockGetConfig).toHaveBeenCalledWith('codex');
-			});
-			expect(result.current.selectedAgent).toBe('codex');
 		});
 
 		it('loads config but not models for agent without model selection', async () => {

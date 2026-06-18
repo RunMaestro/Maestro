@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { logger } from '../../../renderer/utils/logger';
 import { renderHook, act } from '@testing-library/react';
 import { useLiveMode } from '../../../renderer/hooks/remote/useLiveMode';
 
@@ -113,7 +114,7 @@ describe('useLiveMode', () => {
 	it('toggleGlobalLive handles startServer failure (success: false) without changing state', async () => {
 		mockLive.startServer.mockResolvedValue({ success: false, error: 'Port in use' });
 
-		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 		const { result } = renderHook(() => useLiveMode());
 
 		await act(async () => {
@@ -125,6 +126,7 @@ describe('useLiveMode', () => {
 		expect(result.current.webInterfaceUrl).toBeNull();
 		expect(consoleSpy).toHaveBeenCalledWith(
 			'[toggleGlobalLive] Failed to start server:',
+			undefined,
 			'Port in use'
 		);
 
@@ -135,7 +137,7 @@ describe('useLiveMode', () => {
 		const error = new Error('Network failure');
 		mockLive.startServer.mockRejectedValue(error);
 
-		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 		const { result } = renderHook(() => useLiveMode());
 
 		await act(async () => {
@@ -144,7 +146,7 @@ describe('useLiveMode', () => {
 
 		expect(result.current.isLiveMode).toBe(false);
 		expect(result.current.webInterfaceUrl).toBeNull();
-		expect(consoleSpy).toHaveBeenCalledWith('[toggleGlobalLive] Error:', error);
+		expect(consoleSpy).toHaveBeenCalledWith('[toggleGlobalLive] Error:', undefined, error);
 
 		consoleSpy.mockRestore();
 	});
@@ -163,7 +165,7 @@ describe('useLiveMode', () => {
 		const error = new Error('disableAll failed');
 		mockLive.disableAll.mockRejectedValue(error);
 
-		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 
 		await act(async () => {
 			await result.current.toggleGlobalLive();
@@ -174,6 +176,7 @@ describe('useLiveMode', () => {
 		expect(result.current.webInterfaceUrl).toBeNull();
 		expect(consoleSpy).toHaveBeenCalledWith(
 			'[toggleGlobalLive] disableAll failed after tunnel stop:',
+			undefined,
 			error
 		);
 
@@ -252,7 +255,7 @@ describe('useLiveMode', () => {
 		// Make restart fail
 		mockLive.startServer.mockResolvedValue({ success: false, error: 'Restart failed' });
 
-		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 
 		let returnValue: string | null = 'not-null';
 		await act(async () => {
@@ -265,6 +268,7 @@ describe('useLiveMode', () => {
 		expect(result.current.webInterfaceUrl).toBeNull();
 		expect(consoleSpy).toHaveBeenCalledWith(
 			'[restartWebServer] Failed to restart server:',
+			undefined,
 			'Restart failed'
 		);
 
@@ -283,7 +287,7 @@ describe('useLiveMode', () => {
 		const error = new Error('Stop server crashed');
 		mockLive.stopServer.mockRejectedValue(error);
 
-		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 
 		let returnValue: string | null = 'not-null';
 		await act(async () => {
@@ -294,7 +298,7 @@ describe('useLiveMode', () => {
 		// State should reflect server is stopped after exception
 		expect(result.current.isLiveMode).toBe(false);
 		expect(result.current.webInterfaceUrl).toBeNull();
-		expect(consoleSpy).toHaveBeenCalledWith('[restartWebServer] Error:', error);
+		expect(consoleSpy).toHaveBeenCalledWith('[restartWebServer] Error:', undefined, error);
 
 		consoleSpy.mockRestore();
 	});

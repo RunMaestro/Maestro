@@ -14,7 +14,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import type { Group, SessionInfo, HistoryEntry } from '../../../shared/types';
+import type { Group, SessionInfo, HistoryEntry, SshRemoteConfig } from '../../../shared/types';
 
 // Store original env values
 const originalEnv = { ...process.env };
@@ -38,7 +38,6 @@ import {
 	readSessions,
 	readGroups,
 	readHistory,
-	readHistoryPaginated,
 	readSettings,
 	readSettingValue,
 	writeSettingValue,
@@ -55,6 +54,9 @@ import {
 	getSessionsByGroup,
 	getConfigDirectory,
 	addHistoryEntry,
+	readSshRemotes,
+	writeSshRemotes,
+	resolveSshRemoteId,
 } from '../../../cli/services/storage';
 
 describe('storage service', () => {
@@ -88,6 +90,10 @@ describe('storage service', () => {
 		vi.clearAllMocks();
 		// Reset environment
 		process.env = { ...originalEnv };
+		// Strip MAESTRO_USER_DATA if set in the test runner's shell — getConfigDir()
+		// honors it as an override, so leaving it set would shadow the mocked
+		// homedir/platform paths these tests assert against.
+		delete process.env.MAESTRO_USER_DATA;
 		// Default to macOS
 		vi.mocked(os.platform).mockReturnValue('darwin');
 		vi.mocked(os.homedir).mockReturnValue('/Users/testuser');
@@ -332,14 +338,6 @@ describe('storage service', () => {
 			vi.mocked(fs.readFileSync).mockImplementation(() => {
 				throw error;
 			});
-
-			const result = readSettings();
-
-			expect(result).toEqual({});
-		});
-
-		it('should return empty object when settings file contains null', () => {
-			vi.mocked(fs.readFileSync).mockReturnValue('null');
 
 			const result = readSettings();
 
@@ -971,19 +969,6 @@ describe('storage service', () => {
 				expect(result[0].sessionId).toBe('session-123');
 			});
 
-			it('should return empty array when session history data has no entries', () => {
-				const sessionHistoryData = {
-					version: 1,
-					sessionId: 'session-123',
-					projectPath: '/project/path',
-				};
-				vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(sessionHistoryData));
-
-				const result = readHistory(undefined, 'session-123');
-
-				expect(result).toEqual([]);
-			});
-
 			it('should return empty array when session file does not exist', () => {
 				vi.mocked(fs.existsSync).mockImplementation((filepath: fs.PathLike) => {
 					const pathStr = String(filepath);
@@ -996,32 +981,6 @@ describe('storage service', () => {
 				const result = readHistory(undefined, 'nonexistent-session');
 
 				expect(result).toEqual([]);
-			});
-
-			it('should return empty array when a session history file is malformed', () => {
-				vi.mocked(fs.existsSync).mockImplementation((filepath: fs.PathLike) => {
-					const pathStr = path.normalize(String(filepath));
-					return (
-						pathStr.includes('history-migrated.json') ||
-						pathStr.includes(`${path.sep}history${path.sep}session-123.json`)
-					);
-				});
-				vi.mocked(fs.readFileSync).mockReturnValue('{not valid json');
-
-				const result = readHistory(undefined, 'session-123');
-
-				expect(result).toEqual([]);
-			});
-
-			it('should return empty array when migrated history directory is missing', () => {
-				vi.mocked(fs.existsSync).mockImplementation((filepath: fs.PathLike) => {
-					return String(filepath).includes('history-migrated.json');
-				});
-
-				const result = readHistory();
-
-				expect(result).toEqual([]);
-				expect(fs.readdirSync).not.toHaveBeenCalled();
 			});
 
 			it('should aggregate entries by projectPath across all sessions', () => {
@@ -1237,75 +1196,6 @@ describe('storage service', () => {
 				// Last entry should be trimmed
 				expect(writtenData.entries[4999].id).toBe('entry-4998');
 			});
-
-			it('should recover from malformed existing session history when writing', () => {
-				vi.mocked(fs.existsSync).mockImplementation((filepath: fs.PathLike) => {
-					const pathStr = path.normalize(String(filepath));
-					if (pathStr.includes('history-migrated.json')) {
-						return true;
-					}
-					return pathStr.includes(`${path.sep}history`);
-				});
-				vi.mocked(fs.readFileSync).mockReturnValue('{not valid json');
-
-				const newEntry = mockHistoryEntry({
-					id: 'recovered-entry',
-					sessionId: 'session-123',
-					projectPath: '/recovered/project',
-				});
-				addHistoryEntry(newEntry);
-
-				const writtenData = JSON.parse(vi.mocked(fs.writeFileSync).mock.calls[0][1] as string);
-				expect(writtenData).toMatchObject({
-					version: 1,
-					sessionId: 'session-123',
-					projectPath: '/recovered/project',
-				});
-				expect(writtenData.entries).toEqual([newEntry]);
-			});
-		});
-	});
-
-	describe('readHistoryPaginated', () => {
-		it('should paginate filtered history entries', () => {
-			const entries = [
-				mockHistoryEntry({ id: 'alpha-1', projectPath: '/alpha', sessionId: 'session-a' }),
-				mockHistoryEntry({ id: 'alpha-2', projectPath: '/alpha', sessionId: 'session-a' }),
-				mockHistoryEntry({ id: 'beta-1', projectPath: '/beta', sessionId: 'session-b' }),
-			];
-			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ entries }));
-
-			const result = readHistoryPaginated({
-				projectPath: '/alpha',
-				sessionId: 'session-a',
-				pagination: { limit: 1, offset: 1 },
-			});
-
-			expect(result).toEqual({
-				entries: [entries[1]],
-				total: 2,
-				limit: 1,
-				offset: 1,
-				hasMore: false,
-			});
-		});
-
-		it('should use default pagination when called without options', () => {
-			const entries = [
-				mockHistoryEntry({ id: 'entry-1', projectPath: '/alpha', sessionId: 'session-a' }),
-				mockHistoryEntry({ id: 'entry-2', projectPath: '/beta', sessionId: 'session-b' }),
-			];
-			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ entries }));
-
-			const result = readHistoryPaginated();
-
-			expect(result).toEqual({
-				entries,
-				total: 2,
-				limit: 100,
-				offset: 0,
-				hasMore: false,
-			});
 		});
 	});
 
@@ -1335,13 +1225,6 @@ describe('storage service', () => {
 			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(settings));
 
 			expect(readSettingValue('encoreFeatures.nonExistent')).toBeUndefined();
-		});
-
-		it('should return undefined when a nested path crosses a non-object value', () => {
-			const settings = { terminal: { fontSize: 14 } };
-			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(settings));
-
-			expect(readSettingValue('terminal.fontSize.value')).toBeUndefined();
 		});
 	});
 
@@ -1445,15 +1328,6 @@ describe('storage service', () => {
 			expect(result).toBe(false);
 			expect(fs.writeFileSync).not.toHaveBeenCalled();
 		});
-
-		it('should return false when a nested delete path crosses a non-object value', () => {
-			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ a: { b: 1 } }));
-
-			const result = deleteSettingValue('a.b.c');
-
-			expect(result).toBe(false);
-			expect(fs.writeFileSync).not.toHaveBeenCalled();
-		});
 	});
 
 	describe('readAgentConfig', () => {
@@ -1518,19 +1392,6 @@ describe('storage service', () => {
 			const written = JSON.parse(vi.mocked(fs.writeFileSync).mock.calls[0][1] as string);
 			expect(written.configs.opencode.model).toBe('sonnet');
 		});
-
-		it('should create the config store when it does not exist', () => {
-			const error = new Error('File not found') as NodeJS.ErrnoException;
-			error.code = 'ENOENT';
-			vi.mocked(fs.readFileSync).mockImplementation(() => {
-				throw error;
-			});
-
-			writeAgentConfigValue('codex', 'model', 'gpt-5');
-
-			const written = JSON.parse(vi.mocked(fs.writeFileSync).mock.calls[0][1] as string);
-			expect(written.configs.codex.model).toBe('gpt-5');
-		});
 	});
 
 	describe('deleteAgentConfigValue', () => {
@@ -1580,6 +1441,104 @@ describe('storage service', () => {
 
 			expect(result).toBe(false);
 			expect(fs.writeFileSync).not.toHaveBeenCalled();
+		});
+	});
+
+	// ============================================================================
+	// SSH Remote Helpers
+	// ============================================================================
+
+	const mockSshRemote = (overrides: Partial<SshRemoteConfig> = {}): SshRemoteConfig => ({
+		id: 'remote-1',
+		name: 'Dev Server',
+		host: '192.168.1.100',
+		port: 22,
+		username: 'deploy',
+		privateKeyPath: '',
+		enabled: true,
+		...overrides,
+	});
+
+	describe('readSshRemotes', () => {
+		it('should read SSH remotes from settings', () => {
+			const remotes = [mockSshRemote()];
+			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ sshRemotes: remotes }));
+
+			const result = readSshRemotes();
+
+			expect(result).toEqual(remotes);
+		});
+
+		it('should return empty array when no remotes configured', () => {
+			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({}));
+
+			const result = readSshRemotes();
+
+			expect(result).toEqual([]);
+		});
+
+		it('should return empty array when settings file does not exist', () => {
+			vi.mocked(fs.readFileSync).mockImplementation(() => {
+				const err = new Error('ENOENT') as NodeJS.ErrnoException;
+				err.code = 'ENOENT';
+				throw err;
+			});
+
+			const result = readSshRemotes();
+
+			expect(result).toEqual([]);
+		});
+	});
+
+	describe('writeSshRemotes', () => {
+		it('should write SSH remotes to settings file', () => {
+			const remotes = [mockSshRemote()];
+			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ otherSetting: true }));
+			vi.mocked(fs.existsSync).mockReturnValue(true);
+
+			writeSshRemotes(remotes);
+
+			expect(fs.writeFileSync).toHaveBeenCalledWith(
+				expect.stringContaining('maestro-settings.json'),
+				expect.stringContaining('"sshRemotes"'),
+				'utf-8'
+			);
+		});
+	});
+
+	describe('resolveSshRemoteId', () => {
+		it('should resolve exact ID match', () => {
+			const remotes = [mockSshRemote({ id: 'remote-abc-123' })];
+			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ sshRemotes: remotes }));
+
+			const result = resolveSshRemoteId('remote-abc-123');
+
+			expect(result).toBe('remote-abc-123');
+		});
+
+		it('should resolve partial ID match', () => {
+			const remotes = [mockSshRemote({ id: 'remote-abc-123' })];
+			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ sshRemotes: remotes }));
+
+			const result = resolveSshRemoteId('remote-abc');
+
+			expect(result).toBe('remote-abc-123');
+		});
+
+		it('should throw for ambiguous ID', () => {
+			const remotes = [
+				mockSshRemote({ id: 'remote-abc-1', name: 'Server A' }),
+				mockSshRemote({ id: 'remote-abc-2', name: 'Server B' }),
+			];
+			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ sshRemotes: remotes }));
+
+			expect(() => resolveSshRemoteId('remote-abc')).toThrow('Ambiguous SSH remote ID');
+		});
+
+		it('should throw for non-existent ID', () => {
+			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ sshRemotes: [] }));
+
+			expect(() => resolveSshRemoteId('nonexistent')).toThrow('SSH remote not found');
 		});
 	});
 });

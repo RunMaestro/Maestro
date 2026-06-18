@@ -17,6 +17,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import type { MarketplaceManifest, MarketplacePlaybook } from '../../../shared/marketplace-types';
+import { logger } from '../../utils/logger';
 
 /**
  * Return type for the useMarketplace hook
@@ -140,7 +141,7 @@ export function useMarketplace(): UseMarketplaceReturn {
 					setError(result.error || 'Failed to load marketplace data');
 				}
 			} catch (err) {
-				console.error('Failed to load marketplace manifest:', err);
+				logger.error('Failed to load marketplace manifest:', undefined, err);
 				setError('Failed to load marketplace data');
 			}
 			setIsLoading(false);
@@ -152,7 +153,7 @@ export function useMarketplace(): UseMarketplaceReturn {
 	// Hot reload: listen for manifest changes (local-manifest.json edits)
 	useEffect(() => {
 		const cleanup = window.maestro.marketplace.onManifestChanged(async () => {
-			console.log('Local manifest changed, reloading...');
+			logger.info('Local manifest changed, reloading...');
 			try {
 				const result = await window.maestro.marketplace.getManifest();
 				if (result.success && result.manifest) {
@@ -161,7 +162,7 @@ export function useMarketplace(): UseMarketplaceReturn {
 					setCacheAge(result.cacheAge ?? null);
 				}
 			} catch (err) {
-				console.error('Failed to reload manifest after change:', err);
+				logger.error('Failed to reload manifest after change:', undefined, err);
 			}
 		});
 
@@ -219,7 +220,7 @@ export function useMarketplace(): UseMarketplaceReturn {
 				setError(result.error || 'Failed to refresh marketplace data');
 			}
 		} catch (err) {
-			console.error('Failed to refresh marketplace manifest:', err);
+			logger.error('Failed to refresh marketplace manifest:', undefined, err);
 			setError('Failed to refresh marketplace data');
 		}
 		setIsRefreshing(false);
@@ -246,7 +247,7 @@ export function useMarketplace(): UseMarketplaceReturn {
 				setIsImporting(false);
 				return result;
 			} catch (err) {
-				console.error('Failed to import playbook:', err);
+				logger.error('Failed to import playbook:', undefined, err);
 				setIsImporting(false);
 				return { success: false, error: 'Import failed' };
 			}
@@ -264,7 +265,7 @@ export function useMarketplace(): UseMarketplaceReturn {
 			}
 			return null;
 		} catch (err) {
-			console.error('Failed to fetch README:', err);
+			logger.error('Failed to fetch README:', undefined, err);
 			return null;
 		}
 	}, []);
@@ -279,7 +280,7 @@ export function useMarketplace(): UseMarketplaceReturn {
 				}
 				return null;
 			} catch (err) {
-				console.error('Failed to fetch document:', err);
+				logger.error('Failed to fetch document:', undefined, err);
 				return null;
 			}
 		},

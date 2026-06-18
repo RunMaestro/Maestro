@@ -66,9 +66,10 @@ export const ContextWarningSash = memo(function ContextWarningSash({
 
 	// Handle dismiss action
 	const handleDismiss = useCallback(() => {
+		if (!warningLevel) return;
 		setDismissedByTab((prev) => ({
 			...prev,
-			[tabKey]: { usage: contextUsage, level: warningLevel! },
+			[tabKey]: { usage: contextUsage, level: warningLevel },
 		}));
 	}, [contextUsage, warningLevel, tabKey]);
 

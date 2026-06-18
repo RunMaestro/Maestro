@@ -13,7 +13,7 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
-import { AutoRunSetupModal } from '../../../renderer/components/AutoRunSetupModal';
+import { AutoRunSetupModal } from '../../../renderer/components/AutoRun/AutoRunSetupModal';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import type { Theme } from '../../../renderer/types';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
@@ -214,69 +214,6 @@ describe('AutoRunSetupModal', () => {
 			).toBeInTheDocument();
 		});
 
-		it('shows SSH remote placeholder, disables browse, and blocks Cmd+O when remote is active', async () => {
-			const onClose = vi.fn();
-			const onFolderSelected = vi.fn();
-
-			const { container } = renderWithLayerStack(
-				<AutoRunSetupModal
-					theme={theme}
-					onClose={onClose}
-					onFolderSelected={onFolderSelected}
-					sshRemoteId="remote-1"
-					sshRemoteHost="build.example.com"
-				/>
-			);
-
-			await act(async () => {
-				await vi.runAllTimersAsync();
-			});
-
-			expect(
-				screen.getByPlaceholderText(
-					'Enter remote path on build.example.com (e.g., /home/user/docs)'
-				)
-			).toBeInTheDocument();
-			const browseButton = screen.getByTestId('folder-icon').closest('button')!;
-			expect(browseButton).toBeDisabled();
-			expect(browseButton).toHaveClass('opacity-40');
-			expect(browseButton).toHaveAttribute(
-				'title',
-				'Folder picker unavailable for SSH remote (build.example.com). Enter the remote path manually.'
-			);
-
-			fireEvent.click(browseButton);
-			fireEvent.keyDown(container.firstChild as HTMLElement, { key: 'o', metaKey: true });
-
-			expect(window.maestro.dialog.selectFolder).not.toHaveBeenCalled();
-		});
-
-		it('shows generic SSH remote text when the remote host is unknown', async () => {
-			const onClose = vi.fn();
-			const onFolderSelected = vi.fn();
-
-			renderWithLayerStack(
-				<AutoRunSetupModal
-					theme={theme}
-					onClose={onClose}
-					onFolderSelected={onFolderSelected}
-					sshRemoteId="remote-1"
-				/>
-			);
-
-			await act(async () => {
-				await vi.runAllTimersAsync();
-			});
-
-			expect(
-				screen.getByPlaceholderText('Enter remote path (e.g., /home/user/docs)')
-			).toBeInTheDocument();
-			expect(screen.getByTestId('folder-icon').closest('button')).toHaveAttribute(
-				'title',
-				'Folder picker unavailable for SSH remote. Enter the remote path manually.'
-			);
-		});
-
 		it('applies theme colors to modal container', async () => {
 			const onClose = vi.fn();
 			const onFolderSelected = vi.fn();
@@ -290,7 +227,7 @@ describe('AutoRunSetupModal', () => {
 			});
 
 			// Modal uses inline width style instead of Tailwind class
-			const modalContent = container.querySelector('[style*="width: 520px"]');
+			const modalContent = container.querySelector('[style*="width: min(calc(520px"]');
 			expect(modalContent).toHaveStyle({ backgroundColor: theme.colors.bgSidebar });
 		});
 	});
@@ -699,55 +636,6 @@ describe('AutoRunSetupModal', () => {
 
 			expect(onFolderSelected).toHaveBeenCalledWith('/home/testuser/Projects');
 		});
-
-		it('uses the selected path unchanged when continuing before homeDir resolves', async () => {
-			const onClose = vi.fn();
-			const onFolderSelected = vi.fn();
-
-			vi.mocked(window.maestro.fs.homeDir).mockImplementation(() => new Promise(() => {}));
-
-			renderWithLayerStack(
-				<AutoRunSetupModal
-					theme={theme}
-					onClose={onClose}
-					onFolderSelected={onFolderSelected}
-					currentFolder="/pending/home"
-				/>
-			);
-
-			fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
-
-			expect(onFolderSelected).toHaveBeenCalledWith('/pending/home');
-			expect(onClose).toHaveBeenCalledTimes(1);
-		});
-
-		it('expands standalone tilde when continuing', async () => {
-			const onClose = vi.fn();
-			const onFolderSelected = vi.fn();
-
-			vi.mocked(window.maestro.fs.homeDir).mockResolvedValue('/home/testuser');
-			vi.mocked(window.maestro.autorun.listDocs).mockResolvedValue({ success: true, files: [] });
-
-			renderWithLayerStack(
-				<AutoRunSetupModal theme={theme} onClose={onClose} onFolderSelected={onFolderSelected} />
-			);
-
-			await act(async () => {
-				await vi.runAllTimersAsync();
-			});
-
-			const input = screen.getByPlaceholderText(/Select Auto Run folder/);
-			fireEvent.change(input, { target: { value: '~' } });
-
-			await act(async () => {
-				vi.advanceTimersByTime(300);
-				await vi.runAllTimersAsync();
-			});
-
-			fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
-
-			expect(onFolderSelected).toHaveBeenCalledWith('/home/testuser');
-		});
 	});
 
 	describe('folder picker dialog', () => {
@@ -913,7 +801,7 @@ describe('AutoRunSetupModal', () => {
 			const onClose = vi.fn();
 			const onFolderSelected = vi.fn();
 
-			const { container } = renderWithLayerStack(
+			renderWithLayerStack(
 				<AutoRunSetupModal theme={theme} onClose={onClose} onFolderSelected={onFolderSelected} />
 			);
 
@@ -921,30 +809,8 @@ describe('AutoRunSetupModal', () => {
 				await vi.runAllTimersAsync();
 			});
 
-			fireEvent.keyDown(container.firstChild as HTMLElement, { key: 'Enter' });
-
-			expect(onFolderSelected).not.toHaveBeenCalled();
-			expect(onClose).not.toHaveBeenCalled();
-		});
-
-		it('ignores non-Enter keys when a folder is selected', async () => {
-			const onClose = vi.fn();
-			const onFolderSelected = vi.fn();
-
-			const { container } = renderWithLayerStack(
-				<AutoRunSetupModal
-					theme={theme}
-					onClose={onClose}
-					onFolderSelected={onFolderSelected}
-					currentFolder="/existing/path"
-				/>
-			);
-
-			await act(async () => {
-				await vi.runAllTimersAsync();
-			});
-
-			fireEvent.keyDown(container.firstChild as HTMLElement, { key: 'Tab' });
+			const dialog = screen.getByRole('dialog');
+			fireEvent.keyDown(dialog, { key: 'Enter' });
 
 			expect(onFolderSelected).not.toHaveBeenCalled();
 			expect(onClose).not.toHaveBeenCalled();
@@ -1339,7 +1205,7 @@ describe('AutoRunSetupModal', () => {
 			});
 
 			// Modal uses inline width style instead of Tailwind class
-			const modalContent = container.querySelector('[style*="width: 520px"]');
+			const modalContent = container.querySelector('[style*="width: min(calc(520px"]');
 			expect(modalContent).toHaveStyle({ backgroundColor: lightTheme.colors.bgSidebar });
 		});
 

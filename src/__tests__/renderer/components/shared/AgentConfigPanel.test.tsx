@@ -6,9 +6,11 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { AgentConfigPanel } from '../../../../renderer/components/shared/AgentConfigPanel';
-import type { Theme, AgentConfig } from '../../../../renderer/types';
+import type { AgentConfig, AgentCapabilities } from '../../../../renderer/types';
+
+import { createMockTheme } from '../../../helpers/mockTheme';
 
 // Mock lucide-react icons
 vi.mock('lucide-react', () => ({
@@ -43,28 +45,6 @@ vi.mock('lucide-react', () => ({
 // TEST HELPERS
 // =============================================================================
 
-function createMockTheme(): Theme {
-	return {
-		id: 'test-theme',
-		name: 'Test Theme',
-		colors: {
-			bgMain: '#1a1a1a',
-			bgSidebar: '#252525',
-			bgActivity: '#333333',
-			textMain: '#ffffff',
-			textDim: '#888888',
-			accent: '#6366f1',
-			border: '#333333',
-			success: '#22c55e',
-			error: '#ef4444',
-			warning: '#f59e0b',
-			contextFree: '#22c55e',
-			contextMedium: '#f59e0b',
-			contextHigh: '#ef4444',
-		},
-	};
-}
-
 function createMockAgent(overrides: Partial<AgentConfig> = {}): AgentConfig {
 	return {
 		id: 'claude-code',
@@ -77,41 +57,6 @@ function createMockAgent(overrides: Partial<AgentConfig> = {}): AgentConfig {
 	};
 }
 
-const modelCapableAgent = createMockAgent({
-	capabilities: { supportsModelSelection: true } as NonNullable<AgentConfig['capabilities']>,
-	configOptions: [
-		{
-			key: 'model',
-			type: 'text',
-			label: 'Model',
-			description: 'Model to use for requests',
-			default: 'claude-3-sonnet',
-		},
-		{
-			key: 'contextWindow',
-			type: 'number',
-			label: 'Context Window',
-			description: 'Maximum context size',
-			default: 200000,
-		},
-		{
-			key: 'streaming',
-			type: 'checkbox',
-			label: 'Streaming',
-			description: 'Enable streaming responses',
-			default: false,
-		},
-		{
-			key: 'approval',
-			type: 'select',
-			label: 'Approval Mode',
-			description: 'Controls command approval behavior',
-			default: 'suggest',
-			options: ['suggest', 'auto'],
-		},
-	],
-});
-
 function createDefaultProps(overrides: Partial<Parameters<typeof AgentConfigPanel>[0]> = {}) {
 	return {
 		theme: createMockTheme(),
@@ -119,11 +64,9 @@ function createDefaultProps(overrides: Partial<Parameters<typeof AgentConfigPane
 		customPath: '',
 		onCustomPathChange: vi.fn(),
 		onCustomPathBlur: vi.fn(),
-		onCustomPathClear: vi.fn(),
 		customArgs: '',
 		onCustomArgsChange: vi.fn(),
 		onCustomArgsBlur: vi.fn(),
-		onCustomArgsClear: vi.fn(),
 		customEnvVars: {},
 		onEnvVarKeyChange: vi.fn(),
 		onEnvVarValueChange: vi.fn(),
@@ -224,71 +167,103 @@ describe('AgentConfigPanel', () => {
 			);
 			expect(customKeyInput).toBeDefined();
 		});
+	});
 
-		it('toggles the built-in environment variable help text', async () => {
-			render(<AgentConfigPanel {...createDefaultProps({ showBuiltInEnvVars: true })} />);
+	describe('Model field clear button', () => {
+		const modelAgent = createMockAgent({
+			configOptions: [
+				{
+					key: 'model',
+					label: 'Model',
+					type: 'text',
+					description: 'Model to use',
+					default: '',
+				},
+			],
+			capabilities: {
+				supportsModelSelection: true,
+			} as Partial<AgentCapabilities> as AgentCapabilities,
+		});
 
-			const helpButton = screen.getByTitle('What is this?');
-
-			fireEvent.click(helpButton);
-			expect(screen.getByText(/skip initialization on resumed sessions/i)).toBeInTheDocument();
-
-			fireEvent.click(helpButton);
-			expect(
-				screen.queryByText(/skip initialization on resumed sessions/i)
-			).not.toBeInTheDocument();
-
-			fireEvent.click(helpButton);
-			expect(screen.getByText(/skip initialization on resumed sessions/i)).toBeInTheDocument();
-
-			fireEvent.blur(helpButton);
-			await waitFor(() =>
-				expect(
-					screen.queryByText(/skip initialization on resumed sessions/i)
-				).not.toBeInTheDocument()
+		it('should show Clear button when model has a value', () => {
+			render(
+				<AgentConfigPanel
+					{...createDefaultProps({
+						agent: modelAgent,
+						agentConfig: { model: 'opencode/kimi-k2.5-free' },
+						availableModels: ['opencode/kimi-k2.5-free', 'another-model'],
+					})}
+				/>
 			);
+
+			expect(screen.getByText('Clear')).toBeInTheDocument();
 		});
 
-		it('defers environment variable key changes until blur and updates values immediately', () => {
-			const props = createDefaultProps({ customEnvVars: { OLD_KEY: 'old-value' } });
+		it('should NOT show Clear button when model is empty', () => {
+			render(
+				<AgentConfigPanel
+					{...createDefaultProps({
+						agent: modelAgent,
+						agentConfig: { model: '' },
+						availableModels: ['opencode/kimi-k2.5-free'],
+					})}
+				/>
+			);
 
-			render(<AgentConfigPanel {...props} />);
-
-			const keyInput = screen.getByDisplayValue('OLD_KEY');
-			const valueInput = screen.getByDisplayValue('old-value');
-
-			fireEvent.change(keyInput, { target: { value: 'NEW_KEY' } });
-			expect(props.onEnvVarKeyChange).not.toHaveBeenCalled();
-
-			fireEvent.change(valueInput, { target: { value: 'new-value' } });
-			expect(props.onEnvVarValueChange).toHaveBeenCalledWith('OLD_KEY', 'new-value');
-
-			fireEvent.blur(keyInput);
-			expect(props.onEnvVarKeyChange).toHaveBeenCalledWith('OLD_KEY', 'NEW_KEY', 'old-value');
-			expect(props.onEnvVarsBlur).toHaveBeenCalled();
+			expect(screen.queryByText('Clear')).not.toBeInTheDocument();
 		});
 
-		it('blurs unchanged environment variable keys without renaming them', () => {
-			const props = createDefaultProps({ customEnvVars: { KEEP_KEY: 'keep-value' } });
+		it('should call onChange and onBlur with empty string when Clear is clicked', async () => {
+			const onConfigChange = vi.fn();
+			const onConfigBlur = vi.fn();
 
-			render(<AgentConfigPanel {...props} />);
+			render(
+				<AgentConfigPanel
+					{...createDefaultProps({
+						agent: modelAgent,
+						agentConfig: { model: 'opencode/kimi-k2.5-free' },
+						availableModels: ['opencode/kimi-k2.5-free'],
+						onConfigChange,
+						onConfigBlur,
+					})}
+				/>
+			);
 
-			fireEvent.blur(screen.getByDisplayValue('KEEP_KEY'));
+			const clearBtn = screen.getByText('Clear');
+			clearBtn.click();
 
-			expect(props.onEnvVarKeyChange).not.toHaveBeenCalled();
-			expect(props.onEnvVarsBlur).toHaveBeenCalledTimes(1);
+			expect(onConfigChange).toHaveBeenCalledWith('model', '');
+			expect(onConfigBlur).toHaveBeenCalledWith('model', '');
 		});
 
-		it('handles add and remove environment variable actions', () => {
-			const props = createDefaultProps({ customEnvVars: { REMOVE_ME: '1' } });
+		it('should commit empty value when user manually clears input and blurs', async () => {
+			const onConfigChange = vi.fn();
+			const onConfigBlur = vi.fn();
 
-			render(<AgentConfigPanel {...props} />);
+			render(
+				<AgentConfigPanel
+					{...createDefaultProps({
+						agent: modelAgent,
+						agentConfig: { model: 'opencode/kimi-k2.5-free' },
+						availableModels: ['opencode/kimi-k2.5-free'],
+						onConfigChange,
+						onConfigBlur,
+					})}
+				/>
+			);
 
-			fireEvent.click(screen.getByTitle('Remove variable'));
-			expect(props.onEnvVarRemove).toHaveBeenCalledWith('REMOVE_ME');
+			const modelInput = screen.getByDisplayValue('opencode/kimi-k2.5-free');
 
-			fireEvent.click(screen.getByText('Add Variable'));
-			expect(props.onEnvVarAdd).toHaveBeenCalled();
+			// Focus to enter filter mode, then clear the text and blur
+			fireEvent.focus(modelInput);
+			fireEvent.change(modelInput, { target: { value: '' } });
+			fireEvent.blur(modelInput);
+
+			// The blur handler uses setTimeout(150ms), so wait for it
+			await waitFor(() => {
+				expect(onConfigChange).toHaveBeenCalledWith('model', '');
+				expect(onConfigBlur).toHaveBeenCalledWith('model', '');
+			});
 		});
 	});
 
@@ -312,26 +287,6 @@ describe('AgentConfigPanel', () => {
 			expect(pathInput).toBeInTheDocument();
 		});
 
-		it('should show Reset button when custom path differs from detected path', () => {
-			render(
-				<AgentConfigPanel {...createDefaultProps({ customPath: '/custom/path/to/claude' })} />
-			);
-
-			expect(screen.getByText('Reset')).toBeInTheDocument();
-		});
-
-		it('should show Reset button when custom path matches detected path', () => {
-			render(<AgentConfigPanel {...createDefaultProps({ customPath: '/usr/local/bin/claude' })} />);
-
-			expect(screen.getByText('Reset')).toBeInTheDocument();
-		});
-
-		it('should NOT show Reset button when no custom path is set', () => {
-			render(<AgentConfigPanel {...createDefaultProps({ customPath: '' })} />);
-
-			expect(screen.queryByText('Reset')).not.toBeInTheDocument();
-		});
-
 		it('should render custom arguments input section', () => {
 			render(<AgentConfigPanel {...createDefaultProps()} />);
 
@@ -343,551 +298,168 @@ describe('AgentConfigPanel', () => {
 
 			expect(screen.getByText('Environment Variables (optional)')).toBeInTheDocument();
 		});
+	});
 
-		it('wires path, custom argument, clear, reset, and detect actions', () => {
-			const props = createDefaultProps({
-				customPath: '/custom/claude',
-				customArgs: '--dangerously-skip-permissions',
-				onRefreshAgent: vi.fn(),
-			});
+	describe('Claude Token Source selector', () => {
+		it('offers API / TUI / Dynamic for a local claude-code agent', () => {
+			render(<AgentConfigPanel {...createDefaultProps({ onEnableMaestroPChange: vi.fn() })} />);
 
-			render(<AgentConfigPanel {...props} />);
-
-			fireEvent.change(screen.getByDisplayValue('/custom/claude'), {
-				target: { value: '/new/claude' },
-			});
-			expect(props.onCustomPathChange).toHaveBeenCalledWith('/new/claude');
-
-			fireEvent.blur(screen.getByDisplayValue('/custom/claude'));
-			expect(props.onCustomPathBlur).toHaveBeenCalled();
-
-			fireEvent.click(screen.getByText('Reset'));
-			expect(props.onCustomPathClear).toHaveBeenCalled();
-
-			fireEvent.change(screen.getByDisplayValue('--dangerously-skip-permissions'), {
-				target: { value: '--verbose' },
-			});
-			expect(props.onCustomArgsChange).toHaveBeenCalledWith('--verbose');
-
-			fireEvent.blur(screen.getByDisplayValue('--dangerously-skip-permissions'));
-			expect(props.onCustomArgsBlur).toHaveBeenCalled();
-
-			fireEvent.click(screen.getByText('Clear'));
-			expect(props.onCustomArgsClear).toHaveBeenCalled();
-
-			fireEvent.click(screen.getByText('Detect'));
-			expect(props.onRefreshAgent).toHaveBeenCalled();
+			expect(screen.getByText('Claude Token Source')).toBeInTheDocument();
+			expect(screen.getByText('API')).toBeInTheDocument();
+			expect(screen.getByText('TUI')).toBeInTheDocument();
+			expect(screen.getByText('Dynamic')).toBeInTheDocument();
 		});
 
-		it('shows an editable remote command field when SSH is enabled without a custom path', () => {
-			const props = createDefaultProps({
-				isSshEnabled: true,
-				agent: createMockAgent({ path: '/usr/local/bin/claude', binaryName: 'claude' }),
-			});
+		it('defaults an unconfigured SSH agent to TUI (remote maestro-p), not API', () => {
+			// enableMaestroP left undefined (never configured) + SSH => TUI is the
+			// default selection, and the remote-host hint renders.
+			render(
+				<AgentConfigPanel
+					{...createDefaultProps({ onEnableMaestroPChange: vi.fn(), isSshEnabled: true })}
+				/>
+			);
 
-			render(<AgentConfigPanel {...props} />);
-
-			expect(screen.getByText('Remote Command')).toBeInTheDocument();
-			expect(screen.queryByText('Detect')).not.toBeInTheDocument();
-
-			const commandInput = screen.getByDisplayValue('claude');
-			expect(commandInput).not.toHaveAttribute('readOnly');
-
-			fireEvent.change(commandInput, { target: { value: 'claude-dev' } });
-			expect(props.onCustomPathChange).toHaveBeenCalledWith('claude-dev');
-
-			fireEvent.blur(commandInput);
-			expect(props.onCustomPathBlur).toHaveBeenCalled();
+			const tuiButton = screen.getByText('TUI').closest('button');
+			const apiButton = screen.getByText('API').closest('button');
+			expect(tuiButton?.className).toContain('ring-2');
+			expect(apiButton?.className).not.toContain('ring-2');
+			expect(screen.getByText(/Runs maestro-p on the remote host/)).toBeInTheDocument();
 		});
 
-		it('uses compact spacing and remote reset copy when SSH has a custom command', () => {
-			const { container } = render(
+		it('honors an explicit API choice on an SSH agent (does not force TUI)', () => {
+			render(
 				<AgentConfigPanel
 					{...createDefaultProps({
-						compact: true,
-						customPath: 'claude-dev',
+						onEnableMaestroPChange: vi.fn(),
 						isSshEnabled: true,
+						enableMaestroP: false,
 					})}
 				/>
 			);
 
-			expect(container.firstElementChild).toHaveClass('space-y-2');
-			expect(container.querySelector('.p-2.rounded.border')).toBeTruthy();
-			expect(screen.getByTitle('Reset to remote binary name')).toBeInTheDocument();
+			const apiButton = screen.getByText('API').closest('button');
+			const tuiButton = screen.getByText('TUI').closest('button');
+			expect(apiButton?.className).toContain('ring-2');
+			expect(tuiButton?.className).not.toContain('ring-2');
 		});
 
-		it('shows refreshing path detection state and falls back to an empty path value', () => {
-			const props = createDefaultProps({
-				agent: createMockAgent({ path: '' }),
-				onRefreshAgent: vi.fn(),
-				refreshingAgent: true,
-			});
-
-			render(<AgentConfigPanel {...props} />);
-
-			expect(screen.getByTestId('refresh-icon')).toHaveClass('animate-spin');
-			expect(screen.getByPlaceholderText('/path/to/claude')).toHaveValue('');
-		});
-
-		it('persists number, checkbox, and select config options', () => {
-			const props = createDefaultProps({
-				agent: modelCapableAgent,
-				agentConfig: {
-					contextWindow: 150000,
-					streaming: false,
-					approval: 'suggest',
-				},
-			});
-
-			const { rerender } = render(<AgentConfigPanel {...props} />);
-
-			const contextWindowInput = screen.getByDisplayValue('150000');
-			fireEvent.change(contextWindowInput, { target: { value: '175000' } });
-			expect(props.onConfigChange).toHaveBeenCalledWith('contextWindow', 175000);
-
-			rerender(
-				<AgentConfigPanel
-					{...props}
-					agentConfig={{ ...props.agentConfig, contextWindow: 175000 }}
-				/>
-			);
-			fireEvent.blur(screen.getByDisplayValue('175000'));
-			expect(props.onConfigBlur).toHaveBeenCalledWith('contextWindow', 175000);
-
-			fireEvent.click(screen.getByRole('checkbox'));
-			expect(props.onConfigChange).toHaveBeenCalledWith('streaming', true);
-			expect(props.onConfigBlur).toHaveBeenCalledWith('streaming', true);
-
-			fireEvent.change(screen.getByRole('combobox'), { target: { value: 'auto' } });
-			expect(props.onConfigChange).toHaveBeenCalledWith('approval', 'auto');
-			expect(props.onConfigBlur).toHaveBeenCalledWith('approval', 'auto');
-		});
-
-		it('normalizes empty and invalid number config values to zero', () => {
-			const props = createDefaultProps({
-				agent: createMockAgent({
-					configOptions: [
-						{
-							key: 'retries',
-							type: 'number',
-							label: 'Retries',
-							description: 'Retry count',
-						},
-					],
-				}),
-				agentConfig: { retries: 5 },
-			});
-
-			const { rerender } = render(<AgentConfigPanel {...props} />);
-
-			const retriesInput = screen.getByDisplayValue('5');
-			expect(retriesInput).toHaveAttribute('placeholder', '0');
-
-			fireEvent.change(retriesInput, { target: { value: '' } });
-			expect(props.onConfigChange).toHaveBeenCalledWith('retries', 0);
-
-			rerender(<AgentConfigPanel {...props} agentConfig={{ retries: '' }} />);
-			const emptyRetriesInput = screen.getByRole('spinbutton');
-			fireEvent.blur(emptyRetriesInput);
-			expect(props.onConfigBlur).toHaveBeenCalledWith('retries', 0);
-
-			Object.defineProperty(emptyRetriesInput, 'value', {
-				configurable: true,
-				get: () => 'not-a-number',
-			});
-			fireEvent.change(emptyRetriesInput);
-			expect(props.onConfigChange).toHaveBeenCalledTimes(2);
-			expect(props.onConfigChange).toHaveBeenLastCalledWith('retries', 0);
-
-			fireEvent.blur(emptyRetriesInput);
-			expect(props.onConfigBlur).toHaveBeenCalledTimes(2);
-			expect(props.onConfigBlur).toHaveBeenLastCalledWith('retries', 0);
-		});
-
-		it('renders select config options without a configured value or default', () => {
-			const props = createDefaultProps({
-				agent: createMockAgent({
-					configOptions: [
-						{
-							key: 'approval',
-							type: 'select',
-							label: 'Approval Mode',
-							description: 'Controls command approval behavior',
-							options: ['manual', 'auto'],
-						},
-					],
-				}),
-			});
-
-			render(<AgentConfigPanel {...props} />);
-
-			const approvalSelect = screen.getByRole('combobox');
-			expect(approvalSelect).toHaveValue('manual');
-
-			fireEvent.change(approvalSelect, { target: { value: 'manual' } });
-			expect(props.onConfigChange).toHaveBeenCalledWith('approval', 'manual');
-			expect(props.onConfigBlur).toHaveBeenCalledWith('approval', 'manual');
-		});
-
-		it('allows config option changes when blur persistence is unavailable', () => {
-			const onConfigChange = vi.fn();
-			const props = createDefaultProps({
-				agent: modelCapableAgent,
-				agentConfig: {
-					contextWindow: 150000,
-					streaming: false,
-					approval: 'suggest',
-				},
-				onConfigBlur: undefined,
-				onConfigChange,
-			});
-
-			render(<AgentConfigPanel {...props} />);
-
-			fireEvent.click(screen.getByRole('checkbox'));
-			expect(onConfigChange).toHaveBeenCalledWith('streaming', true);
-
-			fireEvent.change(screen.getByRole('combobox'), { target: { value: 'auto' } });
-			expect(onConfigChange).toHaveBeenCalledWith('approval', 'auto');
-		});
-
-		it('logs asynchronous config persistence failures without throwing', async () => {
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-			const rejection = new Error('disk unavailable');
-			const props = createDefaultProps({
-				agent: createMockAgent({
-					configOptions: [
-						{
-							key: 'streaming',
-							type: 'checkbox',
-							label: 'Streaming',
-							description: 'Enable streaming responses',
-							default: false,
-						},
-					],
-				}),
-				onConfigBlur: vi.fn(() => Promise.reject(rejection)),
-			});
-
-			try {
-				render(<AgentConfigPanel {...props} />);
-
-				fireEvent.click(screen.getByRole('checkbox'));
-
-				await waitFor(() => {
-					expect(consoleError).toHaveBeenCalledWith(
-						'Failed to persist config field "streaming":',
-						rejection
-					);
-				});
-			} finally {
-				consoleError.mockRestore();
-			}
-		});
-
-		it('supports model dropdown filtering, selection, and refresh', () => {
-			const props = createDefaultProps({
-				agent: modelCapableAgent,
-				agentConfig: { model: 'claude-3-sonnet' },
-				availableModels: ['claude-3-sonnet', 'claude-3-opus'],
-				onRefreshModels: vi.fn(),
-			});
-
-			render(<AgentConfigPanel {...props} />);
-
-			expect(screen.getByText('2 models available')).toBeInTheDocument();
-			fireEvent.click(screen.getByTitle('Refresh available models'));
-			expect(props.onRefreshModels).toHaveBeenCalled();
-
-			const modelInput = screen.getByDisplayValue('claude-3-sonnet');
-			fireEvent.focus(modelInput);
-
-			fireEvent.change(modelInput, { target: { value: 'opus' } });
-			expect(screen.getByText('claude-3-opus')).toBeInTheDocument();
-			expect(screen.queryByText('claude-3-sonnet')).not.toBeInTheDocument();
-
-			fireEvent.click(screen.getByText('claude-3-opus'));
-			expect(props.onConfigChange).toHaveBeenCalledWith('model', 'claude-3-opus');
-			expect(props.onConfigBlur).toHaveBeenCalledWith('model', 'claude-3-opus');
-		});
-
-		it('opens the model dropdown from the chevron button without bubbling', () => {
-			const onOuterClick = vi.fn();
-			const props = createDefaultProps({
-				agent: modelCapableAgent,
-				agentConfig: { model: 'claude-3-sonnet' },
-				availableModels: ['claude-3-sonnet', 'claude-3-opus'],
-			});
-
+		it('disables the TUI option and falls back to API when the remote has no maestro-p', async () => {
+			// The remote probe reports maestro-p is absent: TUI can't run there, so
+			// the option is dropped and an unconfigured agent defaults to API.
+			(
+				window as unknown as {
+					maestro: { agents: { getRemoteMaestroPAvailable: ReturnType<typeof vi.fn> } };
+				}
+			).maestro.agents.getRemoteMaestroPAvailable.mockResolvedValue(false);
 			render(
-				<div onClick={onOuterClick}>
-					<AgentConfigPanel {...props} />
-				</div>
-			);
-
-			const modelInput = screen.getByDisplayValue('claude-3-sonnet');
-			const dropdownButton = screen.getByTestId('chevron-down-icon').closest('button')!;
-
-			fireEvent.click(dropdownButton);
-
-			expect(screen.getByRole('button', { name: 'claude-3-sonnet' })).toBeInTheDocument();
-			expect(document.activeElement).toBe(modelInput);
-			expect(onOuterClick).not.toHaveBeenCalled();
-		});
-
-		it('resets model filter text on outside click without committing it', async () => {
-			const props = createDefaultProps({
-				agent: modelCapableAgent,
-				agentConfig: { model: 'claude-3-sonnet' },
-				availableModels: ['claude-3-sonnet', 'claude-3-opus'],
-			});
-
-			render(<AgentConfigPanel {...props} />);
-
-			const modelInput = screen.getByDisplayValue('claude-3-sonnet');
-			fireEvent.focus(modelInput);
-			fireEvent.change(modelInput, { target: { value: 'opus' } });
-			expect(await screen.findByText('claude-3-opus')).toBeInTheDocument();
-
-			fireEvent.mouseDown(document.body);
-
-			await waitFor(() => {
-				expect(screen.queryByText('claude-3-opus')).not.toBeInTheDocument();
-				expect(modelInput).toHaveValue('claude-3-sonnet');
-			});
-			expect(props.onConfigChange).not.toHaveBeenCalled();
-		});
-
-		it('keeps the model dropdown open on inside clicks and closes it outside when not filtering', async () => {
-			const props = createDefaultProps({
-				agent: modelCapableAgent,
-				agentConfig: { model: 'claude-3-sonnet' },
-				availableModels: ['claude-3-sonnet', 'claude-3-opus'],
-			});
-
-			render(<AgentConfigPanel {...props} />);
-
-			const modelInput = screen.getByDisplayValue('claude-3-sonnet');
-			const dropdownButton = screen.getByTestId('chevron-down-icon').closest('button')!;
-			fireEvent.click(dropdownButton);
-			expect(screen.getByRole('button', { name: 'claude-3-sonnet' })).toBeInTheDocument();
-
-			fireEvent.mouseDown(modelInput);
-			expect(screen.getByRole('button', { name: 'claude-3-sonnet' })).toBeInTheDocument();
-
-			fireEvent.mouseDown(document.body);
-
-			await waitFor(() => {
-				expect(screen.queryByRole('button', { name: 'claude-3-sonnet' })).not.toBeInTheDocument();
-			});
-			expect(modelInput).toHaveValue('claude-3-sonnet');
-			expect(props.onConfigChange).not.toHaveBeenCalled();
-		});
-
-		it('does not let the delayed blur overwrite a selected model', async () => {
-			const props = createDefaultProps({
-				agent: modelCapableAgent,
-				agentConfig: { model: 'claude-3-sonnet' },
-				availableModels: ['claude-3-sonnet', 'claude-3-opus'],
-			});
-
-			render(<AgentConfigPanel {...props} />);
-
-			const modelInput = screen.getByDisplayValue('claude-3-sonnet');
-			fireEvent.focus(modelInput);
-			fireEvent.change(modelInput, { target: { value: 'opus' } });
-			fireEvent.click(await screen.findByText('claude-3-opus'));
-			fireEvent.blur(modelInput);
-
-			await new Promise((resolve) => setTimeout(resolve, 200));
-
-			expect(props.onConfigChange).toHaveBeenCalledWith('model', 'claude-3-opus');
-			expect(props.onConfigBlur).toHaveBeenCalledTimes(1);
-			expect(props.onConfigBlur).toHaveBeenCalledWith('model', 'claude-3-opus');
-		});
-
-		it('commits a typed custom model on blur when no dropdown item is selected', async () => {
-			const props = createDefaultProps({
-				agent: modelCapableAgent,
-				agentConfig: { model: 'claude-3-sonnet' },
-				availableModels: ['claude-3-sonnet', 'claude-3-opus'],
-			});
-
-			render(<AgentConfigPanel {...props} />);
-
-			const modelInput = screen.getByDisplayValue('claude-3-sonnet');
-			fireEvent.focus(modelInput);
-			fireEvent.change(modelInput, { target: { value: 'local-model' } });
-			fireEvent.blur(modelInput);
-
-			await waitFor(() => {
-				expect(props.onConfigChange).toHaveBeenCalledWith('model', 'local-model');
-				expect(props.onConfigBlur).toHaveBeenCalledWith('model', 'local-model');
-			});
-		});
-
-		it('restores the committed model when filtering is abandoned on blur', async () => {
-			const props = createDefaultProps({
-				agent: modelCapableAgent,
-				agentConfig: { model: 'claude-3-sonnet' },
-				availableModels: ['claude-3-sonnet', 'claude-3-opus'],
-			});
-
-			render(<AgentConfigPanel {...props} />);
-
-			const modelInput = screen.getByDisplayValue('claude-3-sonnet');
-			fireEvent.focus(modelInput);
-			fireEvent.change(modelInput, { target: { value: '' } });
-			fireEvent.blur(modelInput);
-
-			await waitFor(() => {
-				expect(props.onConfigChange).not.toHaveBeenCalled();
-				expect(props.onConfigBlur).toHaveBeenCalledWith('model', 'claude-3-sonnet');
-			});
-		});
-
-		it('shows model loading and singular available-model copy', () => {
-			const { rerender } = render(
 				<AgentConfigPanel
 					{...createDefaultProps({
-						agent: modelCapableAgent,
-						availableModels: [],
-						loadingModels: true,
-						onRefreshModels: vi.fn(),
+						onEnableMaestroPChange: vi.fn(),
+						isSshEnabled: true,
+						sshRemoteId: 'remote-without-maestro-p',
 					})}
 				/>
 			);
 
-			expect(screen.getByText('Loading available models...')).toBeInTheDocument();
-			expect(screen.getByTestId('refresh-icon')).toHaveClass('animate-spin');
-
-			rerender(
-				<AgentConfigPanel
-					{...createDefaultProps({
-						agent: modelCapableAgent,
-						availableModels: ['claude-3-sonnet'],
-						loadingModels: false,
-					})}
-				/>
+			// Once the async probe resolves, the warning appears and TUI is gone.
+			await waitFor(() =>
+				expect(screen.getByText(/maestro-p was not found on the remote/)).toBeInTheDocument()
 			);
-
-			expect(screen.getByText('1 model available')).toBeInTheDocument();
+			expect(screen.queryByText('TUI')).not.toBeInTheDocument();
+			const apiButton = screen.getByText('API').closest('button');
+			expect(apiButton?.className).toContain('ring-2');
+			(
+				window as unknown as {
+					maestro: { agents: { getRemoteMaestroPAvailable: ReturnType<typeof vi.fn> } };
+				}
+			).maestro.agents.getRemoteMaestroPAvailable.mockResolvedValue(null);
 		});
 
-		it('commits non-model text config values on blur after the parent rerenders', async () => {
-			const textAgent = createMockAgent({
-				configOptions: [
-					{
-						key: 'systemPrompt',
-						type: 'text',
-						label: 'System Prompt',
-						description: 'Prompt prefix',
-						default: 'default prompt',
-					},
-				],
-			});
-			const props = createDefaultProps({
-				agent: textAgent,
-				agentConfig: { systemPrompt: 'initial prompt' },
-			});
-
-			const { rerender } = render(<AgentConfigPanel {...props} />);
-
-			fireEvent.focus(screen.getByDisplayValue('initial prompt'));
-			fireEvent.change(screen.getByDisplayValue('initial prompt'), {
-				target: { value: 'updated prompt' },
-			});
-			expect(props.onConfigChange).toHaveBeenCalledWith('systemPrompt', 'updated prompt');
-
-			rerender(<AgentConfigPanel {...props} agentConfig={{ systemPrompt: 'updated prompt' }} />);
-			fireEvent.blur(screen.getByDisplayValue('updated prompt'));
-
-			await waitFor(() => {
-				expect(props.onConfigBlur).toHaveBeenCalledWith('systemPrompt', 'updated prompt');
-			});
-		});
-
-		it('handles text config options without a default placeholder', () => {
-			const textAgent = createMockAgent({
-				configOptions: [
-					{
-						key: 'systemPrompt',
-						type: 'text',
-						label: 'System Prompt',
-						description: 'Prompt prefix',
-					},
-				],
-			});
-			const props = createDefaultProps({ agent: textAgent, agentConfig: { systemPrompt: '' } });
-
-			render(<AgentConfigPanel {...props} />);
-
-			const textInput = screen
-				.getAllByRole('textbox')
-				.find((input) => input.getAttribute('placeholder') === '');
-			expect(textInput).toBeDefined();
-
-			fireEvent.focus(textInput!);
-			fireEvent.change(textInput!, { target: { value: 'new prompt' } });
-
-			expect(props.onConfigChange).toHaveBeenCalledWith('systemPrompt', 'new prompt');
-		});
-
-		it('cleans up stale environment variable display state after keys are removed', () => {
-			const props = createDefaultProps({ customEnvVars: { REMOVE_ME: '1' } });
-			const { rerender } = render(<AgentConfigPanel {...props} />);
-
-			expect(screen.getByDisplayValue('REMOVE_ME')).toBeInTheDocument();
-
-			rerender(<AgentConfigPanel {...props} customEnvVars={{ KEEP_ME: '2' }} />);
-
-			expect(screen.queryByDisplayValue('REMOVE_ME')).not.toBeInTheDocument();
-			expect(screen.getByDisplayValue('KEEP_ME')).toBeInTheDocument();
-		});
-
-		it('keeps pending environment variable key edits when the backing key remains present', () => {
-			const props = createDefaultProps({ customEnvVars: { KEEP_ME: '1' } });
-			const { rerender } = render(<AgentConfigPanel {...props} />);
-
-			fireEvent.change(screen.getByDisplayValue('KEEP_ME'), { target: { value: 'EDITED_KEY' } });
-
-			rerender(<AgentConfigPanel {...props} customEnvVars={{ KEEP_ME: '2' }} />);
-
-			expect(screen.getByDisplayValue('EDITED_KEY')).toBeInTheDocument();
-			expect(screen.getByDisplayValue('2')).toBeInTheDocument();
-		});
-
-		it('stops field clicks from bubbling to parent overlays', () => {
-			const onOuterClick = vi.fn();
-			const props = createDefaultProps({
-				customPath: '/custom/claude',
-				customArgs: '--verbose',
-				customEnvVars: { API_KEY: 'secret' },
-				agent: modelCapableAgent,
-				agentConfig: {
-					model: 'claude-3-sonnet',
-					contextWindow: 150000,
-					streaming: false,
-					approval: 'suggest',
-				},
-				availableModels: ['claude-3-sonnet', 'claude-3-opus'],
-			});
+		it('re-probes the remote with force when the Re-check button is clicked', async () => {
+			const probeFn = (
+				window as unknown as {
+					maestro: { agents: { getRemoteMaestroPAvailable: ReturnType<typeof vi.fn> } };
+				}
+			).maestro.agents.getRemoteMaestroPAvailable;
+			// First probe (mount): maestro-p absent. After the user installs it on the
+			// remote and clicks Re-check, the forced re-probe reports it present.
+			probeFn.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
 
 			render(
-				<div onClick={onOuterClick}>
-					<AgentConfigPanel {...props} />
-				</div>
+				<AgentConfigPanel
+					{...createDefaultProps({
+						onEnableMaestroPChange: vi.fn(),
+						isSshEnabled: true,
+						sshRemoteId: 'remote-just-got-maestro-p',
+					})}
+				/>
 			);
 
-			fireEvent.click(screen.getByDisplayValue('/custom/claude'));
-			fireEvent.click(screen.getByDisplayValue('--verbose'));
-			fireEvent.click(screen.getByDisplayValue('API_KEY'));
-			fireEvent.click(screen.getByDisplayValue('secret'));
-			fireEvent.click(screen.getByDisplayValue('claude-3-sonnet'));
-			fireEvent.click(screen.getByDisplayValue('150000'));
-			fireEvent.click(screen.getByRole('combobox'));
+			// Mount probe resolves to absent: TUI option missing, warning shown.
+			await waitFor(() =>
+				expect(screen.getByText(/maestro-p was not found on the remote/)).toBeInTheDocument()
+			);
+			expect(probeFn).toHaveBeenLastCalledWith('remote-just-got-maestro-p', false);
 
-			expect(onOuterClick).not.toHaveBeenCalled();
+			fireEvent.click(screen.getByText('Re-check'));
+
+			// The refresh forces a cache-bypassing re-probe...
+			await waitFor(() =>
+				expect(probeFn).toHaveBeenLastCalledWith('remote-just-got-maestro-p', true)
+			);
+			// ...which now reports maestro-p present: the warning clears and TUI returns.
+			await waitFor(() =>
+				expect(screen.queryByText(/maestro-p was not found on the remote/)).not.toBeInTheDocument()
+			);
+			expect(screen.getByText('TUI')).toBeInTheDocument();
+
+			probeFn.mockResolvedValue(null);
+		});
+
+		it('renders the selector for SSH agents but drops the Dynamic option', () => {
+			render(
+				<AgentConfigPanel
+					{...createDefaultProps({ onEnableMaestroPChange: vi.fn(), isSshEnabled: true })}
+				/>
+			);
+
+			expect(screen.getByText('Claude Token Source')).toBeInTheDocument();
+			expect(screen.getByText('API')).toBeInTheDocument();
+			expect(screen.getByText('TUI')).toBeInTheDocument();
+			expect(screen.queryByText('Dynamic')).not.toBeInTheDocument();
+		});
+
+		it('hides the local Maestro-P Path override when SSH is enabled and TUI is selected', () => {
+			render(
+				<AgentConfigPanel
+					{...createDefaultProps({
+						onEnableMaestroPChange: vi.fn(),
+						onMaestroPModeChange: vi.fn(),
+						isSshEnabled: true,
+						enableMaestroP: true,
+						maestroPMode: 'interactive',
+					})}
+				/>
+			);
+
+			// The remote TUI hint shows, but the local-script path input does not.
+			expect(screen.getByText(/Runs maestro-p on the remote host/)).toBeInTheDocument();
+			expect(screen.queryByText('Maestro-P Path (optional)')).not.toBeInTheDocument();
+		});
+
+		it('still shows the local Maestro-P Path override for a local TUI agent', () => {
+			render(
+				<AgentConfigPanel
+					{...createDefaultProps({
+						onEnableMaestroPChange: vi.fn(),
+						onMaestroPModeChange: vi.fn(),
+						enableMaestroP: true,
+						maestroPMode: 'interactive',
+					})}
+				/>
+			);
+
+			expect(screen.getByText('Maestro-P Path (optional)')).toBeInTheDocument();
 		});
 	});
 });

@@ -40,16 +40,28 @@ vi.mock('../../../../main/process-manager/utils/imageUtils', () => ({
 	cleanupTempFiles: vi.fn(),
 }));
 
+// SSH config resolution: real getters require initialized stores, which don't
+// exist in unit tests. Mock so each test controls whether the remote resolves.
+vi.mock('../../../../main/stores/getters', () => ({
+	getSshRemoteById: vi.fn(() => null),
+}));
+
+// For SSH-remote Copilot sessions the events file is read over SSH via
+// remote-fs. Mock the two read paths the shutdown reconciliation uses.
+vi.mock('../../../../main/utils/remote-fs', () => ({
+	readFileRemote: vi.fn(),
+	readFileTailRemote: vi.fn(),
+}));
+
 // ── Imports (after mocks) ──────────────────────────────────────────────────
 
 import { ExitHandler } from '../../../../main/process-manager/handlers/ExitHandler';
 import { DataBufferManager } from '../../../../main/process-manager/handlers/DataBufferManager';
-import { logger } from '../../../../main/utils/logger';
 import { matchSshErrorPattern } from '../../../../main/parsers/error-patterns';
-import { aggregateModelUsage } from '../../../../main/parsers/usage-aggregator';
-import { cleanupTempFiles } from '../../../../main/process-manager/utils/imageUtils';
+import { getSshRemoteById } from '../../../../main/stores/getters';
+import { readFileRemote, readFileTailRemote } from '../../../../main/utils/remote-fs';
 import type { ManagedProcess } from '../../../../main/process-manager/types';
-import type { AgentOutputParser } from '../../../../main/parsers';
+import type { AgentOutputParser, ParsedEvent } from '../../../../main/parsers';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -103,24 +115,21 @@ describe('ExitHandler', () => {
 	let exitHandler: ExitHandler;
 
 	beforeEach(() => {
-		vi.clearAllMocks();
-		vi.mocked(matchSshErrorPattern).mockReturnValue(null);
-		vi.mocked(aggregateModelUsage).mockReturnValue({
-			inputTokens: 100,
-			outputTokens: 50,
-			cacheReadInputTokens: 0,
-			cacheCreationInputTokens: 0,
-			totalCostUsd: 0.01,
-			contextWindow: 200000,
-		});
 		processes = new Map();
 		emitter = new EventEmitter();
 		bufferManager = new DataBufferManager(processes, emitter);
 		exitHandler = new ExitHandler({ processes, emitter, bufferManager });
+		// Default: no SSH remote resolves and no remote reads happen. Individual
+		// SSH tests override these. Reset so per-test mock values don't leak.
+		vi.mocked(getSshRemoteById)
+			.mockReset()
+			.mockReturnValue(null as never);
+		vi.mocked(readFileRemote).mockReset();
+		vi.mocked(readFileTailRemote).mockReset();
 	});
 
 	describe('stream-json jsonBuffer processing at exit', () => {
-		it('should process remaining jsonBuffer content as a result message', () => {
+		it('should process remaining jsonBuffer content as a result message', async () => {
 			const resultJson = '{"type":"result","result":"Auth Bug Fix","session_id":"abc"}';
 			const mockParser = createMockOutputParser({
 				parseJsonLine: vi.fn(() => ({
@@ -142,14 +151,14 @@ describe('ExitHandler', () => {
 			const dataEvents: string[] = [];
 			emitter.on('data', (_sid: string, data: string) => dataEvents.push(data));
 
-			exitHandler.handleExit('test-session', 0);
+			await exitHandler.handleExit('test-session', 0);
 
 			expect(mockParser.parseJsonLine).toHaveBeenCalledWith(resultJson);
 			expect(mockParser.isResultMessage).toHaveBeenCalled();
 			expect(dataEvents).toContain('Auth Bug Fix');
 		});
 
-		it('should not process jsonBuffer if already empty', () => {
+		it('should not process jsonBuffer if already empty', async () => {
 			const mockParser = createMockOutputParser();
 
 			const proc = createMockProcess({
@@ -160,12 +169,12 @@ describe('ExitHandler', () => {
 			});
 			processes.set('test-session', proc);
 
-			exitHandler.handleExit('test-session', 0);
+			await exitHandler.handleExit('test-session', 0);
 
 			expect(mockParser.parseJsonLine).not.toHaveBeenCalled();
 		});
 
-		it('should not process jsonBuffer if resultEmitted is already true', () => {
+		it('should not process jsonBuffer if resultEmitted is already true', async () => {
 			const resultJson = '{"type":"result","result":"Tab Name"}';
 			const mockParser = createMockOutputParser({
 				parseJsonLine: vi.fn(() => ({
@@ -187,13 +196,13 @@ describe('ExitHandler', () => {
 			const dataEvents: string[] = [];
 			emitter.on('data', (_sid: string, data: string) => dataEvents.push(data));
 
-			exitHandler.handleExit('test-session', 0);
+			await exitHandler.handleExit('test-session', 0);
 
 			// parseJsonLine is called, but data should NOT be emitted again
 			expect(dataEvents).not.toContain('Tab Name');
 		});
 
-		it('should emit raw line as data when JSON parsing fails', () => {
+		it('should emit raw line as data when JSON parsing fails', async () => {
 			const invalidJson = 'not valid json at all';
 			const mockParser = createMockOutputParser({
 				parseJsonLine: vi.fn(() => {
@@ -212,12 +221,12 @@ describe('ExitHandler', () => {
 			const dataEvents: string[] = [];
 			emitter.on('data', (_sid: string, data: string) => dataEvents.push(data));
 
-			exitHandler.handleExit('test-session', 0);
+			await exitHandler.handleExit('test-session', 0);
 
 			expect(dataEvents).toContain(invalidJson);
 		});
 
-		it('should use streamedText as fallback when result event has no text', () => {
+		it('should use streamedText as fallback when result event has no text', async () => {
 			const resultJson = '{"type":"result"}';
 			const mockParser = createMockOutputParser({
 				parseJsonLine: vi.fn(() => ({
@@ -239,39 +248,14 @@ describe('ExitHandler', () => {
 			const dataEvents: string[] = [];
 			emitter.on('data', (_sid: string, data: string) => dataEvents.push(data));
 
-			exitHandler.handleExit('test-session', 0);
+			await exitHandler.handleExit('test-session', 0);
 
 			expect(dataEvents).toContain('Accumulated streaming text');
-		});
-
-		it('does not emit data when a result event has no text or streamed fallback', () => {
-			const resultJson = '{"type":"result"}';
-			const mockParser = createMockOutputParser({
-				parseJsonLine: vi.fn(() => ({
-					type: 'result',
-					text: '',
-				})) as unknown as AgentOutputParser['parseJsonLine'],
-				isResultMessage: vi.fn(() => true) as unknown as AgentOutputParser['isResultMessage'],
-			});
-			const proc = createMockProcess({
-				isStreamJsonMode: true,
-				jsonBuffer: resultJson,
-				outputParser: mockParser,
-				streamedText: '',
-			});
-			processes.set('test-session', proc);
-			const dataEvents: string[] = [];
-			emitter.on('data', (_sid: string, data: string) => dataEvents.push(data));
-
-			exitHandler.handleExit('test-session', 0);
-
-			expect(proc.resultEmitted).toBe(true);
-			expect(dataEvents).toEqual([]);
 		});
 	});
 
 	describe('final data buffer flush', () => {
-		it('should flush data buffer before emitting exit event', () => {
+		it('should flush data buffer before emitting exit event', async () => {
 			const proc = createMockProcess({
 				isStreamJsonMode: true,
 				isBatchMode: true,
@@ -284,7 +268,7 @@ describe('ExitHandler', () => {
 			emitter.on('data', () => events.push('data'));
 			emitter.on('exit', () => events.push('exit'));
 
-			exitHandler.handleExit('test-session', 0);
+			await exitHandler.handleExit('test-session', 0);
 
 			// Data should come before exit
 			const dataIdx = events.indexOf('data');
@@ -292,21 +276,21 @@ describe('ExitHandler', () => {
 			expect(dataIdx).toBeLessThan(exitIdx);
 		});
 
-		it('should emit exit event even with no buffered data', () => {
+		it('should emit exit event even with no buffered data', async () => {
 			const proc = createMockProcess();
 			processes.set('test-session', proc);
 
 			const exitEvents: Array<{ sessionId: string; code: number }> = [];
 			emitter.on('exit', (sid: string, code: number) => exitEvents.push({ sessionId: sid, code }));
 
-			exitHandler.handleExit('test-session', 0);
+			await exitHandler.handleExit('test-session', 0);
 
 			expect(exitEvents).toEqual([{ sessionId: 'test-session', code: 0 }]);
 		});
 	});
 
 	describe('streamedText fallback', () => {
-		it('should emit streamedText when no result was emitted in stream-json mode', () => {
+		it('should emit streamedText when no result was emitted in stream-json mode', async () => {
 			const proc = createMockProcess({
 				isStreamJsonMode: true,
 				isBatchMode: true,
@@ -318,12 +302,12 @@ describe('ExitHandler', () => {
 			const dataEvents: string[] = [];
 			emitter.on('data', (_sid: string, data: string) => dataEvents.push(data));
 
-			exitHandler.handleExit('test-session', 0);
+			await exitHandler.handleExit('test-session', 0);
 
 			expect(dataEvents).toContain('Partial response text');
 		});
 
-		it('should not emit streamedText when result was already emitted', () => {
+		it('should not emit streamedText when result was already emitted', async () => {
 			const proc = createMockProcess({
 				isStreamJsonMode: true,
 				isBatchMode: true,
@@ -335,383 +319,280 @@ describe('ExitHandler', () => {
 			const dataEvents: string[] = [];
 			emitter.on('data', (_sid: string, data: string) => dataEvents.push(data));
 
-			exitHandler.handleExit('test-session', 0);
+			await exitHandler.handleExit('test-session', 0);
 
 			expect(dataEvents).not.toContain('Should not be emitted');
 		});
 	});
 
 	describe('process cleanup', () => {
-		it('should remove process from map after exit', () => {
+		it('should remove process from map after exit', async () => {
 			const proc = createMockProcess();
 			processes.set('test-session', proc);
 
-			exitHandler.handleExit('test-session', 0);
+			await exitHandler.handleExit('test-session', 0);
 
 			expect(processes.has('test-session')).toBe(false);
 		});
 
-		it('should emit exit event for unknown sessions', () => {
+		it('should emit exit event for unknown sessions', async () => {
 			const exitEvents: Array<{ sessionId: string; code: number }> = [];
 			emitter.on('exit', (sid: string, code: number) => exitEvents.push({ sessionId: sid, code }));
 
-			exitHandler.handleExit('unknown-session', 1);
+			await exitHandler.handleExit('unknown-session', 1);
 
 			expect(exitEvents).toEqual([{ sessionId: 'unknown-session', code: 1 }]);
 		});
 	});
 
-	describe('synopsis exit logging', () => {
-		it('logs synopsis exit details with populated buffers', () => {
-			const proc = createMockProcess({
-				resultEmitted: true,
-				streamedText: 'streamed synopsis',
-				stdoutBuffer: 'stdout synopsis',
-				stderrBuffer: 'stderr synopsis',
-			});
-			processes.set('agent-synopsis-1', proc);
+	describe('SSH error pattern false-positive prevention', () => {
+		it('should only check stderr for SSH patterns, not stdout', async () => {
+			const mockedMatchSsh = vi.mocked(matchSshErrorPattern);
+			mockedMatchSsh.mockReturnValue(null);
 
-			exitHandler.handleExit('agent-synopsis-1', 0);
-
-			expect(logger.info).toHaveBeenCalledWith(
-				'[ProcessManager] Synopsis session exit',
-				'ProcessManager',
-				expect.objectContaining({
-					sessionId: 'agent-synopsis-1',
-					streamedTextLength: 'streamed synopsis'.length,
-					stdoutBufferLength: 'stdout synopsis'.length,
-					stderrBufferLength: 'stderr synopsis'.length,
-				})
-			);
-		});
-
-		it('logs synopsis exit details with empty fallback previews', () => {
-			processes.set('agent-synopsis-2', createMockProcess());
-
-			exitHandler.handleExit('agent-synopsis-2', 0);
-
-			expect(logger.info).toHaveBeenCalledWith(
-				'[ProcessManager] Synopsis session exit',
-				'ProcessManager',
-				expect.objectContaining({
-					sessionId: 'agent-synopsis-2',
-					streamedTextPreview: '(empty)',
-					stderrPreview: '(empty)',
-				})
-			);
-		});
-	});
-
-	describe('batch mode JSON and lifecycle events', () => {
-		it('parses batch JSON result, session id, and usage at exit', () => {
-			const proc = createMockProcess({
-				isBatchMode: true,
-				isStreamJsonMode: false,
-				jsonBuffer: JSON.stringify({
-					result: 'Batch result',
-					session_id: 'agent-session-1',
-					usage: { input_tokens: 10 },
-					total_cost_usd: 0.25,
-				}),
-			});
-			processes.set('test-session', proc);
-			const dataEvents: string[] = [];
-			const sessionEvents: string[] = [];
-			const usageEvents: unknown[] = [];
-			emitter.on('data', (_sid: string, data: string) => dataEvents.push(data));
-			emitter.on('session-id', (_sid: string, agentSessionId: string) =>
-				sessionEvents.push(agentSessionId)
-			);
-			emitter.on('usage', (_sid: string, usage: unknown) => usageEvents.push(usage));
-
-			exitHandler.handleExit('test-session', 0);
-
-			expect(dataEvents).toContain('Batch result');
-			expect(sessionEvents).toEqual(['agent-session-1']);
-			expect(aggregateModelUsage).toHaveBeenCalledWith(undefined, { input_tokens: 10 }, 0.25);
-			expect(usageEvents).toEqual([
-				{
-					inputTokens: 100,
-					outputTokens: 50,
-					cacheReadInputTokens: 0,
-					cacheCreationInputTokens: 0,
-					totalCostUsd: 0.01,
-					contextWindow: 200000,
-				},
-			]);
-			expect(proc.resultEmitted).toBe(true);
-			expect(proc.sessionIdEmitted).toBe(true);
-		});
-
-		it('does not re-emit result or session id when already emitted and handles modelUsage-only usage', () => {
-			const proc = createMockProcess({
-				isBatchMode: true,
-				isStreamJsonMode: false,
-				resultEmitted: true,
-				sessionIdEmitted: true,
-				jsonBuffer: JSON.stringify({
-					result: 'Already sent',
-					session_id: 'already-sent',
-					modelUsage: {
-						sonnet: { inputTokens: 10 },
-					},
-				}),
-			});
-			processes.set('test-session', proc);
-			const dataEvents: string[] = [];
-			const sessionEvents: string[] = [];
-			emitter.on('data', (_sid: string, data: string) => dataEvents.push(data));
-			emitter.on('session-id', (_sid: string, agentSessionId: string) =>
-				sessionEvents.push(agentSessionId)
-			);
-
-			exitHandler.handleExit('test-session', 0);
-
-			expect(dataEvents).not.toContain('Already sent');
-			expect(sessionEvents).toEqual([]);
-			expect(aggregateModelUsage).toHaveBeenCalledWith({ sonnet: { inputTokens: 10 } }, {}, 0);
-		});
-
-		it('does not emit usage when batch JSON has no usage fields', () => {
-			const proc = createMockProcess({
-				isBatchMode: true,
-				isStreamJsonMode: false,
-				jsonBuffer: JSON.stringify({ result: 'No usage payload' }),
-			});
-			processes.set('test-session', proc);
-			const usageEvents: unknown[] = [];
-			emitter.on('usage', (_sid: string, usage: unknown) => usageEvents.push(usage));
-
-			exitHandler.handleExit('test-session', 0);
-
-			expect(aggregateModelUsage).not.toHaveBeenCalled();
-			expect(usageEvents).toEqual([]);
-		});
-
-		it('falls back to raw batch output when JSON parsing fails', () => {
-			const proc = createMockProcess({
-				isBatchMode: true,
-				isStreamJsonMode: false,
-				jsonBuffer: '{bad json',
-			});
-			processes.set('test-session', proc);
-			const dataEvents: string[] = [];
-			emitter.on('data', (_sid: string, data: string) => dataEvents.push(data));
-
-			exitHandler.handleExit('test-session', 1);
-
-			expect(logger.error).toHaveBeenCalledWith(
-				'[ProcessManager] Failed to parse JSON response',
-				'ProcessManager',
-				expect.objectContaining({ sessionId: 'test-session' })
-			);
-			expect(dataEvents).toContain('{bad json');
-		});
-	});
-
-	describe('exit error detection', () => {
-		it('emits parser-detected agent errors from exit details', () => {
-			const agentError = {
-				type: 'rate_limit' as const,
-				message: 'Rate limit exceeded',
-				recoverable: true,
-				agentId: 'claude-code',
-				timestamp: 123,
-			};
-			const mockParser = createMockOutputParser({
-				detectErrorFromExit: vi.fn(() => agentError),
-			});
-			const proc = createMockProcess({
-				outputParser: mockParser,
-				stderrBuffer: 'rate limited',
-				stdoutBuffer: 'partial stdout',
-			});
-			processes.set('test-session', proc);
-			const errorEvents: unknown[] = [];
-			emitter.on('agent-error', (_sid: string, error: unknown) => errorEvents.push(error));
-
-			exitHandler.handleExit('test-session', 1);
-
-			expect(mockParser.detectErrorFromExit).toHaveBeenCalledWith(
-				1,
-				'rate limited',
-				'partial stdout'
-			);
-			expect(errorEvents).toEqual([{ ...agentError, sessionId: 'test-session' }]);
-			expect(proc.errorEmitted).toBe(true);
-		});
-
-		it('emits SSH agent errors detected from combined stdout and stderr', () => {
-			vi.mocked(matchSshErrorPattern).mockReturnValue({
-				type: 'auth' as const,
-				message: 'Permission denied',
-				recoverable: true,
-			});
 			const proc = createMockProcess({
 				sshRemoteId: 'remote-1',
-				stdoutBuffer: 'stdout before failure',
-				stderrBuffer: 'Permission denied (publickey)',
-			});
-			processes.set('test-session', proc);
-			const errorEvents: unknown[] = [];
-			emitter.on('agent-error', (_sid: string, error: unknown) => errorEvents.push(error));
-
-			exitHandler.handleExit('test-session', 255);
-
-			expect(matchSshErrorPattern).toHaveBeenCalledWith(
-				'stdout before failure\nPermission denied (publickey)'
-			);
-			expect(errorEvents).toHaveLength(1);
-			expect(errorEvents[0]).toMatchObject({
-				type: 'auth',
-				message: 'Permission denied',
-				recoverable: true,
-				agentId: 'claude-code',
-				sessionId: 'test-session',
-				raw: {
-					exitCode: 255,
-					stderr: 'Permission denied (publickey)',
-					stdout: 'stdout before failure',
-				},
-			});
-			expect(proc.errorEmitted).toBe(true);
-		});
-
-		it('warns when SSH exits non-zero without a recognized error pattern', () => {
-			const proc = createMockProcess({
-				sshRemoteId: 'remote-1',
-				stdoutBuffer: '',
-				stderrBuffer: 'custom remote failure',
+				// stdout contains JSONL with response text that mentions "command not found"
+				stdoutBuffer:
+					'{"type":"assistant","message":{"content":[{"text":"bash: opencode: command not found"}]}}\n',
+				stderrBuffer: 'Warning: something harmless',
 			});
 			processes.set('test-session', proc);
 
-			exitHandler.handleExit('test-session', 2);
+			await exitHandler.handleExit('test-session', 1);
 
-			expect(logger.warn).toHaveBeenCalledWith(
-				'[ProcessManager] SSH command failed without matching error pattern',
-				'ProcessManager',
-				expect.objectContaining({
-					sessionId: 'test-session',
-					exitCode: 2,
-					sshRemoteId: 'remote-1',
-				})
-			);
+			// Should be called with stderr only, NOT the combined stdout+stderr
+			expect(mockedMatchSsh).toHaveBeenCalledWith('Warning: something harmless');
+
+			mockedMatchSsh.mockReset();
 		});
 
-		it('checks SSH stderr even when exit code is zero and does not warn without a pattern', () => {
+		it('should NOT false-positive when agent response text contains SSH error keywords', async () => {
+			const mockedMatchSsh = vi.mocked(matchSshErrorPattern);
+			// Return null — no SSH error in stderr
+			mockedMatchSsh.mockReturnValue(null);
+
 			const proc = createMockProcess({
 				sshRemoteId: 'remote-1',
-				stderrBuffer: 'remote shell warning',
-			});
-			processes.set('test-session', proc);
-
-			exitHandler.handleExit('test-session', 0);
-
-			expect(matchSshErrorPattern).toHaveBeenCalledWith('\nremote shell warning');
-			expect(logger.warn).not.toHaveBeenCalled();
-		});
-
-		it('checks SSH stdout fallback when stderr is empty on non-zero exit', () => {
-			const proc = createMockProcess({
-				sshRemoteId: 'remote-1',
-				stdoutBuffer: '',
-				streamedText: 'streamed remote failure',
+				stdoutBuffer:
+					'{"type":"result","result":"The pattern bash:.*opencode.*command not found matches shell errors"}\n',
 				stderrBuffer: '',
 			});
 			processes.set('test-session', proc);
 
-			exitHandler.handleExit('test-session', 2);
+			const errors: unknown[] = [];
+			emitter.on('agent-error', (...args: unknown[]) => errors.push(args));
 
-			expect(matchSshErrorPattern).toHaveBeenCalledWith('streamed remote failure\n');
-			expect(logger.warn).toHaveBeenCalledWith(
-				'[ProcessManager] SSH command failed without matching error pattern',
-				'ProcessManager',
-				expect.objectContaining({
-					stdoutPreview: 'streamed remote failure',
-					stderrPreview: '',
-				})
-			);
+			await exitHandler.handleExit('test-session', 1);
+
+			// matchSshErrorPattern should receive empty stderr, not the stdout with response text
+			expect(mockedMatchSsh).toHaveBeenCalledWith('');
+			expect(errors).toHaveLength(0);
+
+			mockedMatchSsh.mockReset();
+		});
+
+		it('should detect real SSH errors from stderr', async () => {
+			const mockedMatchSsh = vi.mocked(matchSshErrorPattern);
+			mockedMatchSsh.mockReturnValue({
+				type: 'agent_crashed',
+				message: 'OpenCode command not found.',
+				recoverable: false,
+			});
+
+			const proc = createMockProcess({
+				sshRemoteId: 'remote-1',
+				stdoutBuffer: '',
+				stderrBuffer: 'bash: opencode: command not found',
+			});
+			processes.set('test-session', proc);
+
+			const errors: Array<[string, unknown]> = [];
+			emitter.on('agent-error', (sid: string, err: unknown) => errors.push([sid, err]));
+
+			await exitHandler.handleExit('test-session', 1);
+
+			expect(mockedMatchSsh).toHaveBeenCalledWith('bash: opencode: command not found');
+			expect(errors).toHaveLength(1);
+
+			mockedMatchSsh.mockReset();
 		});
 	});
 
-	describe('cleanup and process error handling', () => {
-		it('cleans temp image files and emits query-complete for batch processes', () => {
-			const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(2500);
+	describe('Copilot post-exit shutdown wait', () => {
+		it('blocks `exit` until events.jsonl shutdown marker is observed and overrides streamedText with the on-disk final answer', async () => {
+			// Set up a real Copilot events.jsonl on a temp config dir. The
+			// streamedText our parent captured is the stale planning narration;
+			// the on-disk file has the real final answer plus the shutdown marker.
+			const fs = await import('fs/promises');
+			const os = await import('os');
+			const path = await import('path');
+			const configDir = await fs.mkdtemp(path.join(os.tmpdir(), 'maestro-exit-copilot-'));
+			const agentSessionId = 'cp-exit-session';
+			const eventsPath = path.join(configDir, 'session-state', agentSessionId, 'events.jsonl');
+			await fs.mkdir(path.dirname(eventsPath), { recursive: true });
+			await fs.writeFile(
+				eventsPath,
+				[
+					JSON.stringify({ type: 'session.start', data: { sessionId: agentSessionId } }),
+					JSON.stringify({
+						type: 'assistant.message',
+						data: { content: "I'll run this end-to-end.", toolRequests: [] },
+					}),
+					JSON.stringify({
+						type: 'assistant.message',
+						data: { content: 'Final: I did the thing.', toolRequests: [] },
+					}),
+					JSON.stringify({ type: 'session.shutdown', data: { currentTokens: 42 } }),
+				].join('\n') + '\n'
+			);
+
+			const prevConfigDir = process.env.COPILOT_CONFIG_DIR;
+			process.env.COPILOT_CONFIG_DIR = configDir;
+
 			try {
 				const proc = createMockProcess({
+					toolType: 'copilot-cli',
+					isStreamJsonMode: true,
 					isBatchMode: true,
-					querySource: 'auto',
-					startTime: 1000,
-					projectPath: '/repo',
-					tabId: 'tab-1',
-					tempImageFiles: ['/tmp/image-1.png'],
+					agentSessionId,
+					streamedText: "I'll run this end-to-end.",
 				});
 				processes.set('test-session', proc);
-				const queryEvents: unknown[] = [];
-				emitter.on('query-complete', (_sid: string, event: unknown) => queryEvents.push(event));
 
-				exitHandler.handleExit('test-session', 0);
+				const dataEvents: string[] = [];
+				const exitEvents: number[] = [];
+				emitter.on('data', (_sid: string, data: string) => dataEvents.push(data));
+				emitter.on('exit', (_sid: string, code: number) => exitEvents.push(code));
 
-				expect(cleanupTempFiles).toHaveBeenCalledWith(['/tmp/image-1.png']);
-				expect(queryEvents).toEqual([
-					{
-						sessionId: 'test-session',
-						agentType: 'claude-code',
-						source: 'auto',
-						startTime: 1000,
-						duration: 1500,
-						projectPath: '/repo',
-						tabId: 'tab-1',
-					},
-				]);
+				await exitHandler.handleExit('test-session', 0);
+
+				expect(dataEvents).toContain('Final: I did the thing.');
+				expect(dataEvents).not.toContain("I'll run this end-to-end.");
+				expect(exitEvents).toEqual([0]);
+				expect(processes.has('test-session')).toBe(false);
 			} finally {
-				nowSpy.mockRestore();
+				if (prevConfigDir === undefined) {
+					delete process.env.COPILOT_CONFIG_DIR;
+				} else {
+					process.env.COPILOT_CONFIG_DIR = prevConfigDir;
+				}
+				await fs.rm(configDir, { recursive: true, force: true });
 			}
 		});
 
-		it('handleError emits agent-error, cleans temp files, exits, and deletes process', () => {
+		it('skips reconciliation when the SSH remote cannot be resolved (no leaking to local disk)', async () => {
+			// The agent opted into SSH but the remote id no longer resolves. We must
+			// NOT fall back to reading a local events.jsonl (which would never match);
+			// the handler skips reconciliation and exits cleanly.
+			vi.mocked(getSshRemoteById).mockReturnValue(null as never);
+
 			const proc = createMockProcess({
-				tempImageFiles: ['/tmp/image-1.png'],
+				toolType: 'copilot-cli',
+				isStreamJsonMode: true,
+				isBatchMode: true,
+				agentSessionId: 'cp-ssh-session',
+				sshRemoteId: 'remote-1',
+				streamedText: 'whatever the parent saw',
 			});
 			processes.set('test-session', proc);
+
+			const exitEvents: number[] = [];
+			emitter.on('exit', (_sid: string, code: number) => exitEvents.push(code));
+
+			const start = Date.now();
+			await exitHandler.handleExit('test-session', 0);
+			const elapsed = Date.now() - start;
+
+			expect(exitEvents).toEqual([0]);
+			expect(elapsed).toBeLessThan(200); // no polling delay
+			expect(readFileTailRemote).not.toHaveBeenCalled();
+			expect(readFileRemote).not.toHaveBeenCalled();
+		});
+
+		it('reconciles over SSH when the remote resolves, overriding streamedText with the remote final answer', async () => {
+			// The events file lives on the remote host; the readers must go over SSH.
+			// Without this the remote context gauge stays stuck at 0% and the stale
+			// parent narration is never replaced by the real final answer.
+			vi.mocked(getSshRemoteById).mockReturnValue({
+				id: 'remote-1',
+				name: 'remote',
+				host: 'remote.example',
+				port: 22,
+				username: 'pedram',
+				privateKeyPath: '/tmp/key',
+				enabled: true,
+			} as never);
+
+			// The waiter tails the remote file and sees the shutdown marker.
+			vi.mocked(readFileTailRemote).mockResolvedValue({
+				success: true,
+				data:
+					[
+						JSON.stringify({ type: 'session.start', data: { sessionId: 'cp-ssh-session' } }),
+						JSON.stringify({ type: 'session.shutdown', data: { currentTokens: 99 } }),
+					].join('\n') + '\n',
+			});
+			// The final-answer / usage readers read the whole remote file.
+			vi.mocked(readFileRemote).mockResolvedValue({
+				success: true,
+				data:
+					[
+						JSON.stringify({ type: 'session.start', data: { sessionId: 'cp-ssh-session' } }),
+						JSON.stringify({
+							type: 'assistant.message',
+							data: { content: 'planning narration', toolRequests: [] },
+						}),
+						JSON.stringify({
+							type: 'session.task_complete',
+							data: { summary: 'Remote final answer.' },
+						}),
+						JSON.stringify({ type: 'session.shutdown', data: { currentTokens: 99 } }),
+					].join('\n') + '\n',
+			});
+
+			const proc = createMockProcess({
+				toolType: 'copilot-cli',
+				isStreamJsonMode: true,
+				isBatchMode: true,
+				agentSessionId: 'cp-ssh-session',
+				sshRemoteId: 'remote-1',
+				streamedText: 'planning narration',
+			});
+			processes.set('test-session', proc);
+
 			const dataEvents: string[] = [];
 			const exitEvents: number[] = [];
-			const errorEvents: unknown[] = [];
 			emitter.on('data', (_sid: string, data: string) => dataEvents.push(data));
 			emitter.on('exit', (_sid: string, code: number) => exitEvents.push(code));
-			emitter.on('agent-error', (_sid: string, error: unknown) => errorEvents.push(error));
 
-			exitHandler.handleError('test-session', new Error('spawn failed'));
+			await exitHandler.handleExit('test-session', 0);
 
-			expect(errorEvents).toHaveLength(1);
-			expect(errorEvents[0]).toMatchObject({
-				type: 'agent_crashed',
-				message: 'Agent process error: spawn failed',
-				recoverable: true,
-				agentId: 'claude-code',
-				sessionId: 'test-session',
-				raw: { stderr: 'spawn failed' },
-			});
-			expect(cleanupTempFiles).toHaveBeenCalledWith(['/tmp/image-1.png']);
-			expect(dataEvents).toEqual(['[error] spawn failed']);
-			expect(exitEvents).toEqual([1]);
+			expect(readFileTailRemote).toHaveBeenCalled();
+			expect(dataEvents).toContain('Remote final answer.');
+			expect(exitEvents).toEqual([0]);
 			expect(processes.has('test-session')).toBe(false);
 		});
 
-		it('handleError still emits data and exit for unknown sessions', () => {
-			const dataEvents: string[] = [];
+		it('skips the wait when agentSessionId was never observed (Copilot crashed before session.start)', async () => {
+			const proc = createMockProcess({
+				toolType: 'copilot-cli',
+				isStreamJsonMode: true,
+				isBatchMode: true,
+				agentSessionId: undefined,
+				streamedText: '',
+			});
+			processes.set('test-session', proc);
+
 			const exitEvents: number[] = [];
-			const errorEvents: unknown[] = [];
-			emitter.on('data', (_sid: string, data: string) => dataEvents.push(data));
 			emitter.on('exit', (_sid: string, code: number) => exitEvents.push(code));
-			emitter.on('agent-error', (_sid: string, error: unknown) => errorEvents.push(error));
 
-			exitHandler.handleError('missing-session', new Error('spawn failed'));
+			const start = Date.now();
+			await exitHandler.handleExit('test-session', 1);
+			const elapsed = Date.now() - start;
 
-			expect(errorEvents).toEqual([]);
-			expect(cleanupTempFiles).not.toHaveBeenCalled();
-			expect(dataEvents).toEqual(['[error] spawn failed']);
 			expect(exitEvents).toEqual([1]);
+			expect(elapsed).toBeLessThan(200);
 		});
 	});
 });

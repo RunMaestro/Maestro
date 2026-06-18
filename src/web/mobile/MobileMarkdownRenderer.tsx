@@ -14,14 +14,36 @@
  * - Frontmatter parsing (not needed for AI responses)
  */
 
-import React, { memo, useCallback, useState } from 'react';
+import React, { memo, useCallback, useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
+import rehypeKatex from 'rehype-katex';
+import remarkBreaks from 'remark-breaks';
+import remarkMath from 'remark-math';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus, vs } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { useThemeColors, useTheme } from '../components/ThemeProvider';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
 import { REMARK_GFM_PLUGINS } from '../../shared/markdownPlugins';
+import { extractHexColor } from '../../shared/hexColor';
+import { remarkPromoteDisplayMath } from '../../shared/remarkPromoteDisplayMath';
+import { normalizeChatDisplayMath } from '../../shared/normalizeChatDisplayMath';
 import { BionifyText, getBionifyReadingModeStyles } from '../../renderer/utils/bionifyReadingMode';
+import 'katex/dist/katex.min.css';
+
+// Mobile chat surfaces (#622): single `\n` should render as a hard break,
+// not be collapsed into a space the way CommonMark does for document prose;
+// `$$...$$` should render through KaTeX rather than show as literal
+// dollar-sign text. `singleDollarTextMath: false` keeps `$5`, `$HOME`,
+// shell variables and similar single-dollar content from being misparsed
+// as inline math. `remarkPromoteDisplayMath` runs after `remarkMath` so a
+// single-line `$$x+y$$` gets the centered block treatment users expect.
+const MOBILE_CHAT_REMARK_PLUGINS: any[] = [
+	...REMARK_GFM_PLUGINS,
+	remarkBreaks,
+	[remarkMath, { singleDollarTextMath: false }],
+	remarkPromoteDisplayMath,
+];
+const MOBILE_CHAT_REHYPE_PLUGINS = [rehypeKatex];
 
 /**
  * Props for MobileMarkdownRenderer
@@ -161,7 +183,7 @@ const CodeBlockWithCopy = memo(
 					</button>
 				</div>
 				<SyntaxHighlighter
-					language={language}
+					language={language || 'text'}
 					style={syntaxStyle}
 					customStyle={{
 						margin: 0,
@@ -184,6 +206,98 @@ const CodeBlockWithCopy = memo(
 CodeBlockWithCopy.displayName = 'CodeBlockWithCopy';
 
 /**
+ * InlineCodeWithCopy - Tap an inline `code` span to copy it.
+ * Briefly swaps the contents for "Copied to Clipboard" as a flash notice
+ * since the mobile shell does not have a global toast surface.
+ */
+interface InlineCodeWithCopyProps {
+	hexColor: string | null;
+	bgColor: string;
+	successColor: string;
+	textMainColor: string;
+	children: React.ReactNode;
+}
+
+const extractText = (node: React.ReactNode): string => {
+	if (node == null || node === false) return '';
+	if (typeof node === 'string' || typeof node === 'number') return String(node);
+	if (Array.isArray(node)) return node.map(extractText).join('');
+	if (React.isValidElement(node)) {
+		return extractText((node.props as { children?: React.ReactNode }).children);
+	}
+	return '';
+};
+
+const InlineCodeWithCopy = memo(
+	({ hexColor, bgColor, successColor, textMainColor, children }: InlineCodeWithCopyProps) => {
+		const [copied, setCopied] = useState(false);
+
+		const handleCopy = useCallback(async () => {
+			const text = extractText(children).trim();
+			if (!text) return;
+			try {
+				await navigator.clipboard.writeText(text);
+				setCopied(true);
+				triggerHaptic(HAPTIC_PATTERNS.success);
+				setTimeout(() => setCopied(false), 1500);
+			} catch {
+				triggerHaptic(HAPTIC_PATTERNS.error);
+			}
+		}, [children]);
+
+		return (
+			<code
+				role="button"
+				tabIndex={0}
+				aria-label="Copy code to clipboard"
+				title="Tap to copy"
+				onClick={handleCopy}
+				onKeyDown={(e) => {
+					if (e.key === 'Enter' || e.key === ' ') {
+						e.preventDefault();
+						void handleCopy();
+					}
+				}}
+				style={{
+					backgroundColor: copied ? `${successColor}30` : bgColor,
+					padding: '2px 6px',
+					borderRadius: '4px',
+					fontSize: '0.9em',
+					fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
+					cursor: 'pointer',
+					color: copied ? successColor : textMainColor,
+					transition: 'background-color 0.15s ease, color 0.15s ease',
+				}}
+			>
+				{copied ? (
+					'Copied to Clipboard'
+				) : (
+					<>
+						{hexColor && (
+							<span
+								style={{
+									display: 'inline-block',
+									width: '0.75em',
+									height: '0.75em',
+									backgroundColor: hexColor,
+									borderRadius: '2px',
+									marginRight: '0.35em',
+									verticalAlign: 'middle',
+									border: '1px solid rgba(128, 128, 128, 0.3)',
+								}}
+							/>
+						)}
+						{children}
+					</>
+				)}
+			</code>
+		);
+	}
+);
+
+InlineCodeWithCopy.displayName = 'InlineCodeWithCopy';
+
+/**
  * MobileMarkdownRenderer component
  *
  * Renders markdown content with full GFM support for mobile displays.
@@ -193,6 +307,11 @@ export const MobileMarkdownRenderer = memo(
 		const colors = useThemeColors();
 		const { isDark } = useTheme();
 		const syntaxStyle = isDark ? vscDarkPlus : vs;
+
+		// Rewrite multi-line `$$...$$` so delimiters sit on their own lines before
+		// remark-math parses (otherwise the block fence breaks and swallows the
+		// rest of the message). See #622.
+		const normalizedContent = useMemo(() => normalizeChatDisplayMath(content), [content]);
 
 		return (
 			<div
@@ -226,7 +345,8 @@ export const MobileMarkdownRenderer = memo(
           }
         `}</style>
 				<ReactMarkdown
-					remarkPlugins={REMARK_GFM_PLUGINS}
+					remarkPlugins={MOBILE_CHAT_REMARK_PLUGINS}
+					rehypePlugins={MOBILE_CHAT_REHYPE_PLUGINS}
 					components={{
 						// Links open in new tab
 						a: ({ href, children }) => (
@@ -247,41 +367,42 @@ export const MobileMarkdownRenderer = memo(
 						pre: ({ children }: any) => {
 							const codeElement = React.Children.toArray(children).find(
 								(child: any) => child?.type === 'code' || child?.props?.node?.tagName === 'code'
-							) as React.ReactElement<any>;
-							const { className, children: codeChildren } = codeElement.props;
-							const match = (className || '').match(/language-(\w+)/);
-							const language = match ? match[1] : 'text';
-							const codeContent = String(codeChildren).replace(/\n$/, '');
+							) as React.ReactElement<any> | undefined;
 
-							return (
-								<CodeBlockWithCopy
-									language={language}
-									codeContent={codeContent}
-									syntaxStyle={syntaxStyle}
-									bgColor={colors.bgActivity}
-									borderColor={colors.border}
-									textDimColor={colors.textDim}
-									successColor={colors.success}
-								/>
-							);
+							if (codeElement?.props) {
+								const { className, children: codeChildren } = codeElement.props;
+								const match = (className || '').match(/language-(\w+)/);
+								const language = match ? match[1] : 'text';
+								const codeContent = String(codeChildren).replace(/\n$/, '');
+
+								return (
+									<CodeBlockWithCopy
+										language={language}
+										codeContent={codeContent}
+										syntaxStyle={syntaxStyle}
+										bgColor={colors.bgActivity}
+										borderColor={colors.border}
+										textDimColor={colors.textDim}
+										successColor={colors.success}
+									/>
+								);
+							}
+
+							return <pre>{children}</pre>;
 						},
 
 						// Inline code only — block code is handled by pre above
-						code: ({ className: _className, children, ...props }: any) => {
+						code: ({ className: _className, children }: any) => {
+							const hexColor = extractHexColor(children);
 							return (
-								<code
-									{...props}
-									style={{
-										backgroundColor: colors.bgActivity,
-										padding: '2px 6px',
-										borderRadius: '4px',
-										fontSize: '0.9em',
-										fontFamily:
-											'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
-									}}
+								<InlineCodeWithCopy
+									hexColor={hexColor ?? null}
+									bgColor={colors.bgActivity}
+									successColor={colors.success}
+									textMainColor={colors.textMain}
 								>
 									{children}
-								</code>
+								</InlineCodeWithCopy>
 							);
 						},
 
@@ -461,18 +582,23 @@ export const MobileMarkdownRenderer = memo(
 						),
 
 						// Task list items (GFM) - handled by li with checkbox
-						input: ({ checked, ...props }: any) => (
-							<input
-								type="checkbox"
-								checked={checked}
-								disabled
-								style={{
-									marginRight: '8px',
-									accentColor: colors.accent,
-								}}
-								{...props}
-							/>
-						),
+						input: ({ type, checked, ...props }: any) => {
+							if (type === 'checkbox') {
+								return (
+									<input
+										type="checkbox"
+										checked={checked}
+										disabled
+										style={{
+											marginRight: '8px',
+											accentColor: colors.accent,
+										}}
+										{...props}
+									/>
+								);
+							}
+							return <input type={type} {...props} />;
+						},
 
 						// Images
 						img: ({ src, alt }) => (
@@ -489,7 +615,7 @@ export const MobileMarkdownRenderer = memo(
 						),
 					}}
 				>
-					{content}
+					{normalizedContent}
 				</ReactMarkdown>
 			</div>
 		);

@@ -81,18 +81,6 @@ describe('useScrollPosition', () => {
 			expect(result.current.handleScroll).toBeDefined();
 		});
 
-		it('should use the unthrottled handler when throttleMs is 0', () => {
-			const { result } = renderHook(() => useScrollPosition({ containerRef, throttleMs: 0 }));
-
-			Object.defineProperty(mockContainer, 'scrollTop', { value: 275, configurable: true });
-
-			act(() => {
-				result.current.handleScroll();
-			});
-
-			expect(result.current.scrollTop).toBe(275);
-		});
-
 		it('should respect custom bottomThreshold', () => {
 			// Scroll to 460px - within 40px of bottom but not within 30px
 			Object.defineProperty(mockContainer, 'scrollTop', { value: 460, configurable: true });

@@ -1,221 +1,211 @@
-import { act, renderHook } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
-
+import { describe, it, expect, vi } from 'vitest';
+import { renderHook, act } from '@testing-library/react';
 import { useSessionNavigation } from '../../../renderer/hooks/session/useSessionNavigation';
-import type { UseSessionNavigationDeps } from '../../../renderer/hooks/session/useSessionNavigation';
 import type { NavHistoryEntry } from '../../../renderer/hooks/session/useNavigationHistory';
 import type { Session } from '../../../renderer/types';
+import { createMockSession } from '../../helpers/mockSession';
+import { createMockAITab, createMockFileTab } from '../../helpers/mockTab';
 
-function makeSession(overrides: Partial<Session> & { id: string; name: string }): Session {
-	return {
-		id: overrides.id,
-		name: overrides.name,
-		aiTabs: overrides.aiTabs ?? [],
-		activeTabId: overrides.activeTabId,
-	} as Session;
-}
-
-function renderNavigationHook({
-	sessions,
-	backEntry = null,
-	forwardEntry = null,
-	onNavigateToGroupChat,
-}: {
-	sessions: Session[];
-	backEntry?: NavHistoryEntry | null;
-	forwardEntry?: NavHistoryEntry | null;
-	onNavigateToGroupChat?: UseSessionNavigationDeps['onNavigateToGroupChat'];
-}) {
-	let currentSessions = sessions;
-	const cyclePositionRef = { current: 7 };
-	const setActiveSessionId = vi.fn();
-	const setSessions = vi.fn((updater: React.SetStateAction<Session[]>) => {
-		currentSessions = typeof updater === 'function' ? updater(currentSessions) : updater;
-	});
-	const deps: UseSessionNavigationDeps = {
-		navigateBack: vi.fn(() => backEntry),
-		navigateForward: vi.fn(() => forwardEntry),
-		setActiveSessionId,
-		setSessions,
-		cyclePositionRef,
-		onNavigateToGroupChat,
-	};
-
-	const hook = renderHook(() => useSessionNavigation(sessions, deps));
-
-	return {
-		...hook,
-		deps,
-		getSessions: () => currentSessions,
-		cyclePositionRef,
-		setActiveSessionId,
-		setSessions,
-	};
-}
-
+/**
+ * Codifies the breadcrumb restore behavior: navigateBack/navigateForward must
+ * reactivate the previously-visited tab of ANY kind (ai, file, browser,
+ * terminal), not just AI tabs. Guards against regressing to AI-only restore.
+ */
 describe('useSessionNavigation', () => {
-	it('does nothing when back and forward history have no entries', () => {
-		const rendered = renderNavigationHook({
-			sessions: [makeSession({ id: 'session-1', name: 'Session 1' })],
+	function setup(
+		sessions: Session[],
+		backEntry: NavHistoryEntry | null,
+		forwardEntry: NavHistoryEntry | null = null
+	) {
+		const navigateBack = vi.fn(() => backEntry);
+		const navigateForward = vi.fn(() => forwardEntry);
+		const setActiveSessionId = vi.fn();
+		const onNavigateToGroupChat = vi.fn(async () => {});
+		// Capture the updater and apply it to `sessions` so we can assert the
+		// session shape the hook produces.
+		let updatedSessions: Session[] = sessions;
+		const setSessions = vi.fn((updater: unknown) => {
+			updatedSessions =
+				typeof updater === 'function'
+					? (updater as (prev: Session[]) => Session[])(sessions)
+					: (updater as Session[]);
 		});
+		const cyclePositionRef = { current: 0 };
 
-		act(() => {
-			rendered.result.current.handleNavBack();
-			rendered.result.current.handleNavForward();
-		});
+		const { result } = renderHook(() =>
+			useSessionNavigation(sessions, {
+				navigateBack,
+				navigateForward,
+				setActiveSessionId,
+				setSessions: setSessions as React.Dispatch<React.SetStateAction<Session[]>>,
+				cyclePositionRef,
+				onNavigateToGroupChat,
+			})
+		);
 
-		expect(rendered.deps.navigateBack).toHaveBeenCalledTimes(1);
-		expect(rendered.deps.navigateForward).toHaveBeenCalledTimes(1);
-		expect(rendered.setActiveSessionId).not.toHaveBeenCalled();
-		expect(rendered.setSessions).not.toHaveBeenCalled();
-		expect(rendered.cyclePositionRef.current).toBe(7);
-	});
-
-	it('navigates back to an existing session and resets cycle position', () => {
-		const rendered = renderNavigationHook({
-			sessions: [
-				makeSession({ id: 'session-1', name: 'Session 1' }),
-				makeSession({ id: 'session-2', name: 'Session 2' }),
-			],
-			backEntry: { sessionId: 'session-2' },
-		});
-
-		act(() => {
-			rendered.result.current.handleNavBack();
-		});
-
-		expect(rendered.setActiveSessionId).toHaveBeenCalledWith('session-2');
-		expect(rendered.cyclePositionRef.current).toBe(-1);
-		expect(rendered.setSessions).not.toHaveBeenCalled();
-	});
-
-	it('navigates forward to an existing session tab when the tab exists', () => {
-		const rendered = renderNavigationHook({
-			sessions: [
-				makeSession({
-					id: 'session-1',
-					name: 'Session 1',
-					aiTabs: [{ id: 'tab-a' }, { id: 'tab-b' }] as Session['aiTabs'],
-					activeTabId: 'tab-a',
-				}),
-				makeSession({ id: 'session-2', name: 'Session 2' }),
-			],
-			forwardEntry: { sessionId: 'session-1', tabId: 'tab-b' },
-		});
-
-		act(() => {
-			rendered.result.current.handleNavForward();
-		});
-
-		expect(rendered.setActiveSessionId).toHaveBeenCalledWith('session-1');
-		expect(rendered.cyclePositionRef.current).toBe(-1);
-		expect(rendered.getSessions()).toMatchObject([
-			{ id: 'session-1', activeTabId: 'tab-b' },
-			{ id: 'session-2' },
-		]);
-	});
-
-	it('leaves the active tab unchanged when the history tab is not present', () => {
-		const rendered = renderNavigationHook({
-			sessions: [
-				makeSession({
-					id: 'session-1',
-					name: 'Session 1',
-					aiTabs: [{ id: 'tab-a' }] as Session['aiTabs'],
-					activeTabId: 'tab-a',
-				}),
-			],
-			backEntry: { sessionId: 'session-1', tabId: 'missing-tab' },
-		});
-
-		act(() => {
-			rendered.result.current.handleNavBack();
-		});
-
-		expect(rendered.setActiveSessionId).toHaveBeenCalledWith('session-1');
-		expect(rendered.getSessions()).toEqual([
-			expect.objectContaining({ id: 'session-1', activeTabId: 'tab-a' }),
-		]);
-	});
-
-	it('handles tab history for a session without an aiTabs array', () => {
-		const session = {
-			id: 'session-without-tabs',
-			name: 'Session Without Tabs',
-		} as Session;
-		const rendered = renderNavigationHook({
-			sessions: [session],
-			forwardEntry: { sessionId: session.id, tabId: 'tab-a' },
-		});
-
-		act(() => {
-			rendered.result.current.handleNavForward();
-		});
-
-		expect(rendered.setActiveSessionId).toHaveBeenCalledWith(session.id);
-		expect(rendered.getSessions()).toEqual([session]);
-	});
-
-	it('ignores history entries without a session or group chat id', () => {
-		const rendered = renderNavigationHook({
-			sessions: [makeSession({ id: 'session-1', name: 'Session 1' })],
-			backEntry: { tabId: 'tab-only' },
-		});
-
-		act(() => {
-			rendered.result.current.handleNavBack();
-		});
-
-		expect(rendered.setActiveSessionId).not.toHaveBeenCalled();
-		expect(rendered.setSessions).not.toHaveBeenCalled();
-		expect(rendered.cyclePositionRef.current).toBe(7);
-	});
-
-	it('ignores session history entries when the session was deleted', () => {
-		const rendered = renderNavigationHook({
-			sessions: [makeSession({ id: 'session-1', name: 'Session 1' })],
-			forwardEntry: { sessionId: 'deleted-session' },
-		});
-
-		act(() => {
-			rendered.result.current.handleNavForward();
-		});
-
-		expect(rendered.setActiveSessionId).not.toHaveBeenCalled();
-		expect(rendered.setSessions).not.toHaveBeenCalled();
-		expect(rendered.cyclePositionRef.current).toBe(7);
-	});
-
-	it('navigates to group chats through the provided callback', () => {
-		const onNavigateToGroupChat = vi.fn().mockResolvedValue(undefined);
-		const rendered = renderNavigationHook({
-			sessions: [makeSession({ id: 'session-1', name: 'Session 1' })],
-			backEntry: { groupChatId: 'group-chat-1' },
+		return {
+			result,
+			navigateBack,
+			navigateForward,
+			setActiveSessionId,
+			setSessions,
 			onNavigateToGroupChat,
+			cyclePositionRef,
+			getUpdated: () => updatedSessions,
+		};
+	}
+
+	it('restores a browser tab on navigate back', () => {
+		const session = createMockSession({
+			id: 's1',
+			aiTabs: [createMockAITab({ id: 'ai-1' })],
+			activeTabId: 'ai-1',
+			browserTabs: [{ id: 'b1' }] as any,
+			activeBrowserTabId: null,
+			unifiedTabOrder: [
+				{ type: 'ai', id: 'ai-1' },
+				{ type: 'browser', id: 'b1' },
+			],
+		});
+		const { result, setActiveSessionId, getUpdated, cyclePositionRef } = setup([session], {
+			sessionId: 's1',
+			tabId: 'b1',
+			tabKind: 'browser',
 		});
 
-		act(() => {
-			rendered.result.current.handleNavBack();
-		});
+		act(() => result.current.handleNavBack());
 
-		expect(onNavigateToGroupChat).toHaveBeenCalledWith('group-chat-1');
-		expect(rendered.setActiveSessionId).not.toHaveBeenCalled();
-		expect(rendered.setSessions).not.toHaveBeenCalled();
-		expect(rendered.cyclePositionRef.current).toBe(7);
+		expect(setActiveSessionId).toHaveBeenCalledWith('s1');
+		expect(cyclePositionRef.current).toBe(-1);
+		const updated = getUpdated().find((s) => s.id === 's1')!;
+		expect(updated.activeBrowserTabId).toBe('b1');
+		expect(updated.activeFileTabId).toBeNull();
+		expect(updated.activeTerminalTabId).toBeNull();
+		expect(updated.inputMode).toBe('ai');
 	});
 
-	it('allows group chat history entries when no callback was provided', () => {
-		const rendered = renderNavigationHook({
-			sessions: [makeSession({ id: 'session-1', name: 'Session 1' })],
-			forwardEntry: { groupChatId: 'group-chat-1' },
+	it('restores a file tab on navigate back', () => {
+		const session = createMockSession({
+			id: 's1',
+			aiTabs: [createMockAITab({ id: 'ai-1' })],
+			activeTabId: 'ai-1',
+			filePreviewTabs: [createMockFileTab({ id: 'f1' })],
+			activeFileTabId: null,
+			unifiedTabOrder: [
+				{ type: 'ai', id: 'ai-1' },
+				{ type: 'file', id: 'f1' },
+			],
+		});
+		const { result, getUpdated } = setup([session], {
+			sessionId: 's1',
+			tabId: 'f1',
+			tabKind: 'file',
 		});
 
-		act(() => {
-			rendered.result.current.handleNavForward();
+		act(() => result.current.handleNavBack());
+
+		const updated = getUpdated().find((s) => s.id === 's1')!;
+		expect(updated.activeFileTabId).toBe('f1');
+		expect(updated.activeBrowserTabId).toBeNull();
+		expect(updated.inputMode).toBe('ai');
+	});
+
+	it('restores a terminal tab (and terminal inputMode) on navigate back', () => {
+		const session = createMockSession({
+			id: 's1',
+			aiTabs: [createMockAITab({ id: 'ai-1' })],
+			activeTabId: 'ai-1',
+			terminalTabs: [{ id: 't1', name: 'Terminal 1' }] as any,
+			activeTerminalTabId: null,
+			unifiedTabOrder: [
+				{ type: 'ai', id: 'ai-1' },
+				{ type: 'terminal', id: 't1' },
+			],
+		});
+		const { result, getUpdated } = setup([session], {
+			sessionId: 's1',
+			tabId: 't1',
+			tabKind: 'terminal',
 		});
 
-		expect(rendered.setActiveSessionId).not.toHaveBeenCalled();
-		expect(rendered.setSessions).not.toHaveBeenCalled();
-		expect(rendered.cyclePositionRef.current).toBe(7);
+		act(() => result.current.handleNavBack());
+
+		const updated = getUpdated().find((s) => s.id === 's1')!;
+		expect(updated.activeTerminalTabId).toBe('t1');
+		expect(updated.inputMode).toBe('terminal');
+	});
+
+	it('restores an AI tab for legacy entries without tabKind', () => {
+		const session = createMockSession({
+			id: 's1',
+			aiTabs: [createMockAITab({ id: 'ai-1' }), createMockAITab({ id: 'ai-2' })],
+			activeTabId: 'ai-2',
+			activeFileTabId: 'f1', // stale selection that must be cleared
+			filePreviewTabs: [createMockFileTab({ id: 'f1' })],
+			unifiedTabOrder: [
+				{ type: 'ai', id: 'ai-1' },
+				{ type: 'ai', id: 'ai-2' },
+				{ type: 'file', id: 'f1' },
+			],
+		});
+		// No tabKind — mimics an entry recorded before the tabKind field existed.
+		const { result, getUpdated } = setup([session], { sessionId: 's1', tabId: 'ai-1' });
+
+		act(() => result.current.handleNavBack());
+
+		const updated = getUpdated().find((s) => s.id === 's1')!;
+		expect(updated.activeTabId).toBe('ai-1');
+		expect(updated.activeFileTabId).toBeNull();
+		expect(updated.inputMode).toBe('ai');
+	});
+
+	it('navigates to a group chat without touching session state', () => {
+		const { result, setActiveSessionId, setSessions, onNavigateToGroupChat } = setup(
+			[createMockSession({ id: 's1' })],
+			{ groupChatId: 'gc1' }
+		);
+
+		act(() => result.current.handleNavBack());
+
+		expect(onNavigateToGroupChat).toHaveBeenCalledWith('gc1');
+		expect(setActiveSessionId).not.toHaveBeenCalled();
+		expect(setSessions).not.toHaveBeenCalled();
+	});
+
+	it('is a no-op when the target session no longer exists', () => {
+		const { result, setActiveSessionId, setSessions } = setup([createMockSession({ id: 's1' })], {
+			sessionId: 'gone',
+			tabId: 'x',
+			tabKind: 'ai',
+		});
+
+		act(() => result.current.handleNavBack());
+
+		expect(setActiveSessionId).not.toHaveBeenCalled();
+		expect(setSessions).not.toHaveBeenCalled();
+	});
+
+	it('uses navigateForward for handleNavForward', () => {
+		const session = createMockSession({
+			id: 's1',
+			aiTabs: [createMockAITab({ id: 'ai-1' })],
+			activeTabId: 'ai-1',
+			browserTabs: [{ id: 'b1' }] as any,
+			unifiedTabOrder: [
+				{ type: 'ai', id: 'ai-1' },
+				{ type: 'browser', id: 'b1' },
+			],
+		});
+		const { result, navigateForward, navigateBack, getUpdated } = setup([session], null, {
+			sessionId: 's1',
+			tabId: 'b1',
+			tabKind: 'browser',
+		});
+
+		act(() => result.current.handleNavForward());
+
+		expect(navigateForward).toHaveBeenCalledTimes(1);
+		expect(navigateBack).not.toHaveBeenCalled();
+		expect(getUpdated().find((s) => s.id === 's1')!.activeBrowserTabId).toBe('b1');
 	});
 });

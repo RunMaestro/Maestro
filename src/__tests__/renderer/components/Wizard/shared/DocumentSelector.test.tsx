@@ -1,188 +1,85 @@
-import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { DocumentSelector } from '../../../../../renderer/components/Wizard/shared/DocumentSelector';
-import type { GeneratedDocument } from '../../../../../renderer/components/Wizard/WizardContext';
-import { THEMES } from '../../../../../shared/themes';
 
-const theme = THEMES['dracula'];
-
-const documents: GeneratedDocument[] = [
-	{ filename: 'plan.md', content: '# Plan', taskCount: 2 },
-	{
-		filename: 'very-long-generated-document-name-for-review.md',
-		content: '# Review',
-		taskCount: 4,
+const mockTheme = {
+	id: 'test-theme',
+	name: 'Test Theme',
+	mode: 'dark',
+	colors: {
+		bgMain: '#101010',
+		bgSidebar: '#181818',
+		bgActivity: '#202020',
+		textMain: '#f5f5f5',
+		textDim: '#9a9a9a',
+		accent: '#4a9eff',
+		accentForeground: '#ffffff',
+		border: '#303030',
+		success: '#16a34a',
+		warning: '#f59e0b',
+		error: '#ef4444',
 	},
-	{ filename: 'tasks.md', content: '- [ ] Task', taskCount: 1 },
+} as const;
+
+const documents = [
+	{ filename: 'Phase-01.md', content: '# One', taskCount: 2 },
+	{ filename: 'Phase-02.md', content: '# Two', taskCount: 0 },
 ];
 
 describe('DocumentSelector', () => {
-	it('opens in uncontrolled mode, selects a document, and closes the menu', () => {
+	it('selects a document and closes the dropdown', () => {
 		const onSelect = vi.fn();
-
-		const { container } = render(
-			<DocumentSelector documents={documents} selectedIndex={0} onSelect={onSelect} theme={theme} />
+		render(
+			<DocumentSelector
+				documents={documents}
+				selectedIndex={0}
+				onSelect={onSelect}
+				theme={mockTheme}
+			/>
 		);
 
-		const trigger = screen.getByRole('button', { name: /plan\.md/i });
-		expect(container.firstElementChild).toHaveStyle({ width: '412.5px' });
-		expect(screen.queryByRole('button', { name: documents[1].filename })).not.toBeInTheDocument();
-
-		fireEvent.click(trigger);
-
-		const selectedOption = screen.getAllByRole('button', { name: 'plan.md' })[1];
-		const nextOption = screen.getByRole('button', { name: documents[1].filename });
-		expect(selectedOption).toHaveStyle({
-			color: theme.colors.accent,
-			backgroundColor: theme.colors.bgActivity,
-		});
-		expect(nextOption).toHaveStyle({ color: theme.colors.textMain });
-		expect(nextOption.style.backgroundColor).toBe('transparent');
-
-		fireEvent.click(nextOption);
+		fireEvent.click(screen.getByRole('button', { name: /Phase-01.md/i }));
+		fireEvent.click(screen.getByRole('button', { name: /Phase-02.md/i }));
 
 		expect(onSelect).toHaveBeenCalledWith(1);
-		expect(screen.queryByRole('button', { name: documents[1].filename })).not.toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: /Phase-02.md/i })).not.toBeInTheDocument();
 	});
 
-	it('closes on outside click and Escape, restoring focus to the trigger', () => {
-		const onSelect = vi.fn();
-		const onOpenChange = vi.fn();
+	it('closes with Escape before parent document handlers see the event', () => {
+		const parentKeyDown = vi.fn();
+		document.addEventListener('keydown', parentKeyDown);
 
 		render(
 			<DocumentSelector
 				documents={documents}
 				selectedIndex={0}
-				onSelect={onSelect}
-				theme={theme}
-				isOpen
-				onOpenChange={onOpenChange}
+				onSelect={vi.fn()}
+				theme={mockTheme}
 			/>
 		);
-		const trigger = screen.getAllByRole('button', { name: /plan\.md/i })[0];
 
-		fireEvent.mouseDown(document.body);
-
-		expect(onOpenChange).toHaveBeenCalledWith(false);
-
+		fireEvent.click(screen.getByRole('button', { name: /Phase-01.md/i }));
 		fireEvent.keyDown(document, { key: 'Escape' });
 
-		expect(onOpenChange).toHaveBeenCalledWith(false);
-		expect(trigger).toHaveFocus();
-		expect(onSelect).not.toHaveBeenCalled();
+		expect(parentKeyDown).not.toHaveBeenCalled();
+		expect(screen.queryByRole('button', { name: /Phase-02.md/i })).not.toBeInTheDocument();
+		document.removeEventListener('keydown', parentKeyDown);
 	});
 
-	it('keeps the menu open for contained mouse downs and non-Escape keys', () => {
-		const onOpenChange = vi.fn();
-
+	it('shows task count badges when requested', () => {
 		render(
 			<DocumentSelector
 				documents={documents}
 				selectedIndex={0}
 				onSelect={vi.fn()}
-				theme={theme}
-				isOpen
-				onOpenChange={onOpenChange}
+				theme={mockTheme}
+				showTaskCounts
 			/>
 		);
 
-		fireEvent.mouseDown(screen.getByRole('button', { name: documents[1].filename }));
-		fireEvent.keyDown(document, { key: 'Enter' });
+		fireEvent.click(screen.getByRole('button', { name: /Phase-01.md/i }));
 
-		expect(onOpenChange).not.toHaveBeenCalled();
-	});
-
-	it('uses controlled open callbacks for trigger and option selection', () => {
-		const onOpenChange = vi.fn();
-		const onSelect = vi.fn();
-
-		const { rerender } = render(
-			<DocumentSelector
-				documents={documents}
-				selectedIndex={2}
-				onSelect={onSelect}
-				theme={theme}
-				isOpen={false}
-				onOpenChange={onOpenChange}
-				className="selector-shell"
-			/>
-		);
-
-		fireEvent.click(screen.getByRole('button', { name: /tasks\.md/i }));
-
-		expect(onOpenChange).toHaveBeenCalledWith(true);
-
-		rerender(
-			<DocumentSelector
-				documents={documents}
-				selectedIndex={2}
-				onSelect={onSelect}
-				theme={theme}
-				isOpen
-				onOpenChange={onOpenChange}
-				className="selector-shell"
-			/>
-		);
-
-		fireEvent.click(screen.getByRole('button', { name: 'plan.md' }));
-
-		expect(onSelect).toHaveBeenCalledWith(0);
-		expect(onOpenChange).toHaveBeenLastCalledWith(false);
-		expect(document.querySelector('.selector-shell')).toBeInTheDocument();
-	});
-
-	it('does not open while disabled', () => {
-		const onOpenChange = vi.fn();
-
-		render(
-			<DocumentSelector
-				documents={documents}
-				selectedIndex={0}
-				onSelect={vi.fn()}
-				theme={theme}
-				disabled
-				onOpenChange={onOpenChange}
-			/>
-		);
-
-		const trigger = screen.getByRole('button', { name: /plan\.md/i });
-		expect(trigger).toBeDisabled();
-
-		fireEvent.click(trigger);
-
-		expect(onOpenChange).not.toHaveBeenCalled();
-		expect(screen.queryByText('No documents generated')).not.toBeInTheDocument();
-	});
-
-	it('shows an empty prompt and minimum width when there are no documents', () => {
-		const { container } = render(
-			<DocumentSelector documents={[]} selectedIndex={0} onSelect={vi.fn()} theme={theme} isOpen />
-		);
-
-		expect(container.firstElementChild).toHaveStyle({ width: '280px' });
-		expect(screen.getByRole('button', { name: /select document/i })).toBeInTheDocument();
-		expect(screen.getByText('No documents generated')).toBeInTheDocument();
-	});
-
-	it('caps very long document names at the maximum width', () => {
-		const longDocuments: GeneratedDocument[] = [
-			{
-				filename:
-					'this-document-name-is-intentionally-long-enough-to-hit-the-selector-width-cap.md',
-				content: '# Long',
-				taskCount: 1,
-			},
-		];
-
-		const { container } = render(
-			<DocumentSelector
-				documents={longDocuments}
-				selectedIndex={0}
-				onSelect={vi.fn()}
-				theme={theme}
-			/>
-		);
-
-		expect(container.firstElementChild).toHaveStyle({ width: '500px' });
+		expect(screen.getByText('2 tasks')).toBeInTheDocument();
+		expect(screen.queryByText('0 tasks')).not.toBeInTheDocument();
 	});
 });

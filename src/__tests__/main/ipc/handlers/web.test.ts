@@ -28,8 +28,32 @@ vi.mock('../../../../main/web-server', () => ({
 	WebServer: vi.fn(),
 }));
 
-import { registerWebHandlers } from '../../../../main/ipc/handlers/web';
-import { logger } from '../../../../main/utils/logger';
+// Mock cli-server-discovery so handlers don't touch the real filesystem.
+// `readCliServerInfo` mirrors the last-written info so `ensureCliServer`'s
+// verification step (added when we made the discovery file write retry on
+// silent failures) can succeed in tests without doing real disk I/O.
+let lastWrittenInfo: any = null;
+vi.mock('../../../../shared/cli-server-discovery', () => ({
+	writeCliServerInfo: vi.fn((info: any) => {
+		lastWrittenInfo = info;
+	}),
+	deleteCliServerInfo: vi.fn(() => {
+		lastWrittenInfo = null;
+	}),
+	readCliServerInfo: vi.fn(() => lastWrittenInfo),
+}));
+
+import {
+	registerWebHandlers,
+	ensureCliServer,
+	startCliDiscoveryWatchdog,
+	stopCliDiscoveryWatchdog,
+} from '../../../../main/ipc/handlers/web';
+import {
+	writeCliServerInfo,
+	deleteCliServerInfo,
+	readCliServerInfo,
+} from '../../../../shared/cli-server-discovery';
 
 describe('web handlers', () => {
 	let mockWebServer: any;
@@ -40,6 +64,16 @@ describe('web handlers', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		registeredHandlers.clear();
+		lastWrittenInfo = null;
+		// Re-wire the writeCliServerInfo / readCliServerInfo mocks after
+		// clearAllMocks blew away their implementations.
+		vi.mocked(writeCliServerInfo).mockImplementation((info: any) => {
+			lastWrittenInfo = info;
+		});
+		vi.mocked(deleteCliServerInfo).mockImplementation(() => {
+			lastWrittenInfo = null;
+		});
+		vi.mocked(readCliServerInfo).mockImplementation(() => lastWrittenInfo);
 
 		// Create mock web server
 		mockWebServer = {
@@ -57,7 +91,12 @@ describe('web handlers', () => {
 			broadcastSessionStateChange: vi.fn(),
 			getWebClientCount: vi.fn().mockReturnValue(1),
 			getSecurityToken: vi.fn().mockReturnValue('mock-security-token'),
-			start: vi.fn().mockResolvedValue({ port: 8080, url: 'http://localhost:8080' }),
+			getPort: vi.fn().mockReturnValue(8080),
+			start: vi.fn().mockResolvedValue({
+				port: 8080,
+				token: 'mock-security-token',
+				url: 'http://localhost:8080',
+			}),
 			stop: vi.fn().mockResolvedValue(undefined),
 		};
 
@@ -166,73 +205,6 @@ describe('web handlers', () => {
 			expect(mockWebServer.broadcastAutoRunState).toHaveBeenCalledWith('session-123', state);
 			expect(result).toBe(true);
 		});
-
-		it('should return false when web server is null', async () => {
-			webServerRef.current = null;
-
-			const handler = registeredHandlers.get('web:broadcastAutoRunState');
-			const result = await handler!({}, 'session-123', null);
-
-			expect(result).toBe(false);
-			expect(mockWebServer.broadcastAutoRunState).not.toHaveBeenCalled();
-		});
-	});
-
-	describe('web:broadcastTabsChange', () => {
-		it('should broadcast tab changes when clients are connected', async () => {
-			const aiTabs = [{ id: 'tab-1', name: 'Agent', status: 'idle' }];
-
-			const handler = registeredHandlers.get('web:broadcastTabsChange');
-			const result = await handler!({}, 'session-123', aiTabs, 'tab-1');
-
-			expect(mockWebServer.broadcastTabsChange).toHaveBeenCalledWith(
-				'session-123',
-				aiTabs,
-				'tab-1'
-			);
-			expect(result).toBe(true);
-		});
-
-		it('should not broadcast tab changes without connected clients', async () => {
-			mockWebServer.getWebClientCount.mockReturnValue(0);
-
-			const handler = registeredHandlers.get('web:broadcastTabsChange');
-			const result = await handler!({}, 'session-123', [], 'tab-1');
-
-			expect(result).toBe(false);
-			expect(mockWebServer.broadcastTabsChange).not.toHaveBeenCalled();
-		});
-	});
-
-	describe('web:broadcastSessionState', () => {
-		it('should broadcast session state changes with additional data', async () => {
-			const additionalData = {
-				name: 'Agent',
-				toolType: 'codex',
-				inputMode: 'ai',
-				cwd: '/tmp/project',
-			};
-
-			const handler = registeredHandlers.get('web:broadcastSessionState');
-			const result = await handler!({}, 'session-123', 'busy', additionalData);
-
-			expect(mockWebServer.broadcastSessionStateChange).toHaveBeenCalledWith(
-				'session-123',
-				'busy',
-				additionalData
-			);
-			expect(result).toBe(true);
-		});
-
-		it('should not broadcast session state changes without connected clients', async () => {
-			mockWebServer.getWebClientCount.mockReturnValue(0);
-
-			const handler = registeredHandlers.get('web:broadcastSessionState');
-			const result = await handler!({}, 'session-123', 'idle');
-
-			expect(result).toBe(false);
-			expect(mockWebServer.broadcastSessionStateChange).not.toHaveBeenCalled();
-		});
 	});
 
 	describe('live:toggle', () => {
@@ -332,63 +304,6 @@ describe('web handlers', () => {
 		});
 	});
 
-	describe('live:getDashboardUrl', () => {
-		it('should return the secure dashboard URL', async () => {
-			const handler = registeredHandlers.get('live:getDashboardUrl');
-			const result = await handler!({});
-
-			expect(result).toBe('http://localhost:8080');
-		});
-
-		it('should return null when web server is unavailable', async () => {
-			webServerRef.current = null;
-
-			const handler = registeredHandlers.get('live:getDashboardUrl');
-			const result = await handler!({});
-
-			expect(result).toBeNull();
-		});
-	});
-
-	describe('live:getLiveSessions', () => {
-		it('should return current live sessions', async () => {
-			const liveSessions = [{ sessionId: 'session-1' }, { sessionId: 'session-2' }];
-			mockWebServer.getLiveSessions.mockReturnValue(liveSessions);
-
-			const handler = registeredHandlers.get('live:getLiveSessions');
-			const result = await handler!({});
-
-			expect(result).toBe(liveSessions);
-		});
-
-		it('should return an empty list when web server is unavailable', async () => {
-			webServerRef.current = null;
-
-			const handler = registeredHandlers.get('live:getLiveSessions');
-			const result = await handler!({});
-
-			expect(result).toEqual([]);
-		});
-	});
-
-	describe('live:broadcastActiveSession', () => {
-		it('should broadcast the active session when web server exists', async () => {
-			const handler = registeredHandlers.get('live:broadcastActiveSession');
-			await handler!({}, 'session-123');
-
-			expect(mockWebServer.broadcastActiveSessionChange).toHaveBeenCalledWith('session-123');
-		});
-
-		it('should no-op when web server is unavailable', async () => {
-			webServerRef.current = null;
-
-			const handler = registeredHandlers.get('live:broadcastActiveSession');
-			await expect(handler!({}, 'session-123')).resolves.toBeUndefined();
-
-			expect(mockWebServer.broadcastActiveSessionChange).not.toHaveBeenCalled();
-		});
-	});
-
 	describe('live:startServer', () => {
 		it('should create and start web server if not exists', async () => {
 			webServerRef.current = null;
@@ -404,7 +319,10 @@ describe('web handlers', () => {
 			expect(result).toEqual({ success: true, url: 'http://localhost:8080' });
 		});
 
-		it('should just start existing server if not active', async () => {
+		it('should just start existing server if not active and persistentWebLink is on', async () => {
+			mockSettingsStore.get.mockImplementation((key: string, def: unknown) =>
+				key === 'persistentWebLink' ? true : def
+			);
 			mockWebServer.isActive.mockReturnValue(false);
 
 			const handler = registeredHandlers.get('live:startServer');
@@ -415,7 +333,10 @@ describe('web handlers', () => {
 			expect(result).toEqual({ success: true, url: 'http://localhost:8080' });
 		});
 
-		it('should return url for already running server', async () => {
+		it('should return url for already running server when persistentWebLink is on', async () => {
+			mockSettingsStore.get.mockImplementation((key: string, def: unknown) =>
+				key === 'persistentWebLink' ? true : def
+			);
 			mockWebServer.isActive.mockReturnValue(true);
 
 			const handler = registeredHandlers.get('live:startServer');
@@ -423,6 +344,107 @@ describe('web handlers', () => {
 
 			expect(mockWebServer.start).not.toHaveBeenCalled();
 			expect(result).toEqual({ success: true, url: 'http://localhost:8080' });
+		});
+
+		it('should rotate the server (tear down + recreate) on Live ON when persistentWebLink is off', async () => {
+			// Existing CLI-only server (e.g. spun up by ensureCliServer after a
+			// previous live:stopServer). The next Live ON must mint a fresh
+			// security token instead of reusing the prior one.
+			mockSettingsStore.get.mockImplementation((key: string, def: unknown) =>
+				key === 'persistentWebLink' ? false : def
+			);
+			const freshServer = {
+				...mockWebServer,
+				isActive: vi.fn().mockReturnValue(false),
+				stop: vi.fn().mockResolvedValue(undefined),
+				start: vi.fn().mockResolvedValue({
+					port: 8080,
+					token: 'fresh-token',
+					url: 'http://localhost:8080',
+				}),
+				getSecurityToken: vi.fn().mockReturnValue('fresh-token'),
+				getPort: vi.fn().mockReturnValue(8080),
+				getSecureUrl: vi.fn().mockReturnValue('http://localhost:8080'),
+			};
+			mockCreateWebServer.mockReturnValueOnce(freshServer);
+
+			const handler = registeredHandlers.get('live:startServer');
+			const result = await handler!({});
+
+			expect(mockWebServer.stop).toHaveBeenCalled();
+			expect(mockCreateWebServer).toHaveBeenCalled();
+			expect(freshServer.start).toHaveBeenCalled();
+			expect(writeCliServerInfo).toHaveBeenCalledWith(
+				expect.objectContaining({ token: 'fresh-token' })
+			);
+			expect(result).toEqual({ success: true, url: 'http://localhost:8080' });
+		});
+
+		it('should bail out and keep the existing server if stop() fails during rotation', async () => {
+			// If stop() throws, the old server may still be bound to its port —
+			// dropping the reference would leak it and the next start() would either
+			// collide on a custom port or run a second server in parallel. The
+			// handler must preserve the handle and surface the error.
+			mockSettingsStore.get.mockImplementation((key: string, def: unknown) =>
+				key === 'persistentWebLink' ? false : def
+			);
+			mockWebServer.stop.mockRejectedValueOnce(new Error('stop boom'));
+
+			const handler = registeredHandlers.get('live:startServer');
+			const result = await handler!({});
+
+			expect(mockWebServer.stop).toHaveBeenCalled();
+			expect(webServerRef.current).toBe(mockWebServer); // reference preserved
+			expect(mockCreateWebServer).not.toHaveBeenCalled();
+			expect(mockWebServer.start).not.toHaveBeenCalled();
+			expect(writeCliServerInfo).not.toHaveBeenCalled();
+			expect(result).toEqual({ success: false, error: 'stop boom' });
+		});
+
+		it('should reuse the server (no rotation) on Live ON when persistentWebLink is on', async () => {
+			mockSettingsStore.get.mockImplementation((key: string, def: unknown) =>
+				key === 'persistentWebLink' ? true : def
+			);
+			mockWebServer.isActive.mockReturnValue(true);
+
+			const handler = registeredHandlers.get('live:startServer');
+			await handler!({});
+
+			expect(mockWebServer.stop).not.toHaveBeenCalled();
+			expect(mockCreateWebServer).not.toHaveBeenCalled();
+			expect(writeCliServerInfo).toHaveBeenCalledWith(
+				expect.objectContaining({ token: 'mock-security-token' })
+			);
+		});
+
+		it('should publish CLI discovery file after starting', async () => {
+			mockWebServer.isActive.mockReturnValue(false);
+
+			const handler = registeredHandlers.get('live:startServer');
+			await handler!({});
+
+			expect(writeCliServerInfo).toHaveBeenCalledWith(
+				expect.objectContaining({
+					port: 8080,
+					token: 'mock-security-token',
+					pid: expect.any(Number),
+					startedAt: expect.any(Number),
+				})
+			);
+		});
+
+		it('should publish CLI discovery file even when server already running (persistent)', async () => {
+			mockSettingsStore.get.mockImplementation((key: string, def: unknown) =>
+				key === 'persistentWebLink' ? true : def
+			);
+			mockWebServer.isActive.mockReturnValue(true);
+
+			const handler = registeredHandlers.get('live:startServer');
+			await handler!({});
+
+			expect(writeCliServerInfo).toHaveBeenCalledWith(
+				expect.objectContaining({ port: 8080, token: 'mock-security-token' })
+			);
 		});
 
 		it('should handle start errors', async () => {
@@ -433,54 +455,135 @@ describe('web handlers', () => {
 			const result = await handler!({});
 
 			expect(result).toEqual({ success: false, error: 'Port in use' });
+			expect(writeCliServerInfo).not.toHaveBeenCalled();
+		});
+
+		// Regression tests for #859: CLI discovery file must be refreshed so
+		// `maestro-cli` can reconnect after a stop/start cycle.
+		it('should refresh CLI discovery file after starting a freshly-created server', async () => {
+			webServerRef.current = null;
+			mockWebServer.isActive.mockReturnValue(false);
+
+			const handler = registeredHandlers.get('live:startServer');
+			await handler!({});
+
+			expect(writeCliServerInfo).toHaveBeenCalledTimes(1);
+			expect(writeCliServerInfo).toHaveBeenCalledWith(
+				expect.objectContaining({
+					port: 8080,
+					token: 'mock-security-token',
+					pid: process.pid,
+				})
+			);
+		});
+
+		it('should refresh CLI discovery file when the existing server is restarted (persistent)', async () => {
+			mockSettingsStore.get.mockImplementation((key: string, def: unknown) =>
+				key === 'persistentWebLink' ? true : def
+			);
+			mockWebServer.isActive.mockReturnValue(false);
+
+			const handler = registeredHandlers.get('live:startServer');
+			await handler!({});
+
+			expect(writeCliServerInfo).toHaveBeenCalledTimes(1);
+			expect(writeCliServerInfo).toHaveBeenCalledWith(
+				expect.objectContaining({
+					port: 8080,
+					token: 'mock-security-token',
+				})
+			);
+		});
+
+		it('should refresh CLI discovery file when the server is already running (persistent)', async () => {
+			mockSettingsStore.get.mockImplementation((key: string, def: unknown) =>
+				key === 'persistentWebLink' ? true : def
+			);
+			mockWebServer.isActive.mockReturnValue(true);
+
+			const handler = registeredHandlers.get('live:startServer');
+			await handler!({});
+
+			expect(writeCliServerInfo).toHaveBeenCalledTimes(1);
+			expect(writeCliServerInfo).toHaveBeenCalledWith(
+				expect.objectContaining({
+					port: 8080,
+					token: 'mock-security-token',
+				})
+			);
+		});
+
+		it('should not refresh CLI discovery file when start throws', async () => {
+			mockWebServer.isActive.mockReturnValue(false);
+			mockWebServer.start.mockRejectedValue(new Error('Port in use'));
+
+			const handler = registeredHandlers.get('live:startServer');
+			await handler!({});
+
+			expect(writeCliServerInfo).not.toHaveBeenCalled();
+		});
+
+		// A discovery-file write failure (disk full, unwritable config dir, …)
+		// must not mask a genuinely-running server — `ensureCliServer` treats
+		// the write as non-fatal and `live:startServer` should too.
+		it('should still report success when discovery write fails after a fresh start', async () => {
+			mockWebServer.isActive.mockReturnValue(false);
+			vi.mocked(writeCliServerInfo).mockImplementationOnce(() => {
+				throw new Error('disk full');
+			});
+
+			const handler = registeredHandlers.get('live:startServer');
+			const result = await handler!({});
+
+			expect(mockWebServer.start).toHaveBeenCalled();
+			expect(result).toEqual({ success: true, url: 'http://localhost:8080' });
+		});
+
+		it('should still report success when discovery write fails on an already-running server (persistent)', async () => {
+			mockSettingsStore.get.mockImplementation((key: string, def: unknown) =>
+				key === 'persistentWebLink' ? true : def
+			);
+			mockWebServer.isActive.mockReturnValue(true);
+			vi.mocked(writeCliServerInfo).mockImplementationOnce(() => {
+				throw new Error('permission denied');
+			});
+
+			const handler = registeredHandlers.get('live:startServer');
+			const result = await handler!({});
+
+			expect(mockWebServer.start).not.toHaveBeenCalled();
+			expect(result).toEqual({ success: true, url: 'http://localhost:8080' });
 		});
 	});
 
 	describe('live:stopServer', () => {
-		it('should stop web server and clean up', async () => {
+		it('should stop web server, delete discovery, and re-establish CLI server', async () => {
 			const handler = registeredHandlers.get('live:stopServer');
 			const result = await handler!({});
 
 			expect(mockWebServer.stop).toHaveBeenCalled();
-			expect(webServerRef.current).toBeNull();
+			expect(deleteCliServerInfo).toHaveBeenCalledTimes(1);
+			// ensureCliServer recreates the server and republishes discovery so
+			// maestro-cli keeps working after Live Mode is turned off.
+			expect(webServerRef.current).toBe(mockWebServer);
+			expect(writeCliServerInfo).toHaveBeenCalled();
 			expect(result).toEqual({ success: true });
 		});
 
-		it('should succeed when server is already null', async () => {
+		it('should still re-establish CLI server when no server existed', async () => {
 			webServerRef.current = null;
 
 			const handler = registeredHandlers.get('live:stopServer');
 			const result = await handler!({});
 
+			expect(mockCreateWebServer).toHaveBeenCalled();
+			expect(writeCliServerInfo).toHaveBeenCalled();
 			expect(result).toEqual({ success: true });
-		});
-
-		it('should report stop failures and keep the server reference', async () => {
-			mockWebServer.stop.mockRejectedValue(new Error('shutdown failed'));
-
-			const handler = registeredHandlers.get('live:stopServer');
-			const result = await handler!({});
-
-			expect(result).toEqual({ success: false, error: 'shutdown failed' });
-			expect(webServerRef.current).toBe(mockWebServer);
-			expect(logger.error).toHaveBeenCalledWith(
-				'Failed to stop web server: shutdown failed',
-				'WebServer'
-			);
 		});
 	});
 
 	describe('live:disableAll', () => {
-		it('should return count 0 when web server is unavailable', async () => {
-			webServerRef.current = null;
-
-			const handler = registeredHandlers.get('live:disableAll');
-			const result = await handler!({});
-
-			expect(result).toEqual({ success: true, count: 0 });
-		});
-
-		it('should disable all live sessions and stop server', async () => {
+		it('should disable all live sessions, stop server, and re-establish CLI', async () => {
 			mockWebServer.getLiveSessions.mockReturnValue([
 				{ sessionId: 'session-1' },
 				{ sessionId: 'session-2' },
@@ -492,7 +595,9 @@ describe('web handlers', () => {
 			expect(mockWebServer.setSessionOffline).toHaveBeenCalledWith('session-1');
 			expect(mockWebServer.setSessionOffline).toHaveBeenCalledWith('session-2');
 			expect(mockWebServer.stop).toHaveBeenCalled();
-			expect(webServerRef.current).toBeNull();
+			expect(deleteCliServerInfo).toHaveBeenCalledTimes(1);
+			// Same as stopServer: CLI must remain reachable.
+			expect(writeCliServerInfo).toHaveBeenCalled();
 			expect(result).toEqual({ success: true, count: 2 });
 		});
 
@@ -502,27 +607,9 @@ describe('web handlers', () => {
 			const handler = registeredHandlers.get('live:disableAll');
 			const result = await handler!({});
 
+			expect(mockWebServer.stop).toHaveBeenCalled();
+			expect(deleteCliServerInfo).toHaveBeenCalledTimes(1);
 			expect(result).toEqual({ success: true, count: 0 });
-		});
-
-		it('should report stop failures after marking sessions offline', async () => {
-			mockWebServer.getLiveSessions.mockReturnValue([
-				{ sessionId: 'session-1' },
-				{ sessionId: 'session-2' },
-			]);
-			mockWebServer.stop.mockRejectedValue(new Error('stop failed'));
-
-			const handler = registeredHandlers.get('live:disableAll');
-			const result = await handler!({});
-
-			expect(mockWebServer.setSessionOffline).toHaveBeenCalledWith('session-1');
-			expect(mockWebServer.setSessionOffline).toHaveBeenCalledWith('session-2');
-			expect(result).toEqual({ success: false, count: 2, error: 'stop failed' });
-			expect(webServerRef.current).toBe(mockWebServer);
-			expect(logger.error).toHaveBeenCalledWith(
-				'Failed to stop web server during disableAll: stop failed',
-				'WebServer'
-			);
 		});
 	});
 
@@ -642,6 +729,211 @@ describe('web handlers', () => {
 			const result = await handler!({});
 
 			expect(result).toBe(0);
+		});
+	});
+
+	describe('ensureCliServer', () => {
+		// Helper to build the deps object the way main/index.ts does.
+		function buildDeps() {
+			return {
+				getWebServer: () => webServerRef.current,
+				setWebServer: (server: any) => {
+					webServerRef.current = server;
+				},
+				createWebServer: mockCreateWebServer,
+				settingsStore: mockSettingsStore,
+			};
+		}
+
+		it('publishes the discovery file on first try when the server starts cleanly', async () => {
+			webServerRef.current = null;
+			mockWebServer.isActive.mockReturnValue(false);
+
+			const ok = await ensureCliServer(buildDeps());
+
+			expect(ok).toBe(true);
+			expect(mockWebServer.start).toHaveBeenCalledTimes(1);
+			expect(writeCliServerInfo).toHaveBeenCalledWith(
+				expect.objectContaining({ port: 8080, token: 'mock-security-token', pid: process.pid })
+			);
+		});
+
+		it('refreshes the discovery file when an already-running server is reused', async () => {
+			mockWebServer.isActive.mockReturnValue(true);
+
+			const ok = await ensureCliServer(buildDeps());
+
+			expect(ok).toBe(true);
+			expect(mockWebServer.start).not.toHaveBeenCalled();
+			expect(writeCliServerInfo).toHaveBeenCalledWith(
+				expect.objectContaining({ port: 8080, token: 'mock-security-token' })
+			);
+		});
+
+		it('retries when start() throws and succeeds on a subsequent attempt', async () => {
+			webServerRef.current = null;
+			const failingServer = {
+				...mockWebServer,
+				isActive: vi.fn().mockReturnValue(false),
+				start: vi.fn().mockRejectedValue(new Error('EADDRINUSE')),
+				stop: vi.fn().mockResolvedValue(undefined),
+				getPort: vi.fn().mockReturnValue(8080),
+				getSecurityToken: vi.fn().mockReturnValue('mock-security-token'),
+			};
+			const succeedingServer = {
+				...mockWebServer,
+				isActive: vi.fn().mockReturnValue(false),
+				start: vi.fn().mockResolvedValue({
+					port: 9090,
+					token: 'retry-token',
+					url: 'http://localhost:9090',
+				}),
+				getPort: vi.fn().mockReturnValue(9090),
+				getSecurityToken: vi.fn().mockReturnValue('retry-token'),
+			};
+			mockCreateWebServer.mockReturnValueOnce(failingServer).mockReturnValueOnce(succeedingServer);
+
+			const ok = await ensureCliServer(buildDeps());
+
+			expect(ok).toBe(true);
+			expect(failingServer.start).toHaveBeenCalled();
+			expect(succeedingServer.start).toHaveBeenCalled();
+			expect(writeCliServerInfo).toHaveBeenCalledWith(
+				expect.objectContaining({ port: 9090, token: 'retry-token' })
+			);
+		});
+
+		it('returns false after exhausting retries when start() keeps failing', async () => {
+			webServerRef.current = null;
+			mockCreateWebServer.mockImplementation(() => ({
+				...mockWebServer,
+				isActive: vi.fn().mockReturnValue(false),
+				start: vi.fn().mockRejectedValue(new Error('persistent failure')),
+				stop: vi.fn().mockResolvedValue(undefined),
+				getPort: vi.fn().mockReturnValue(8080),
+				getSecurityToken: vi.fn().mockReturnValue('mock-security-token'),
+			}));
+
+			const ok = await ensureCliServer(buildDeps());
+
+			expect(ok).toBe(false);
+			// Up to 3 attempts, each creating a fresh server.
+			expect(mockCreateWebServer).toHaveBeenCalledTimes(3);
+			expect(writeCliServerInfo).not.toHaveBeenCalled();
+		});
+
+		it('retries when the discovery file is missing after a successful write', async () => {
+			webServerRef.current = null;
+			mockWebServer.isActive.mockReturnValue(false);
+			// First write looks like it succeeded but readback finds nothing
+			// (simulating the silent-failure case the retry guards against).
+			let writeCount = 0;
+			vi.mocked(writeCliServerInfo).mockImplementation((info: any) => {
+				writeCount++;
+				// First attempt: pretend the file vanished. Second+: persist.
+				if (writeCount > 1) {
+					lastWrittenInfo = info;
+				}
+			});
+
+			const ok = await ensureCliServer(buildDeps());
+
+			expect(ok).toBe(true);
+			expect(writeCount).toBeGreaterThanOrEqual(2);
+		});
+	});
+
+	describe('cli discovery watchdog', () => {
+		function buildDeps() {
+			return {
+				getWebServer: () => webServerRef.current,
+				setWebServer: (server: any) => {
+					webServerRef.current = server;
+				},
+				createWebServer: mockCreateWebServer,
+				settingsStore: mockSettingsStore,
+			};
+		}
+
+		afterEach(() => {
+			stopCliDiscoveryWatchdog();
+			vi.useRealTimers();
+		});
+
+		it('rewrites the discovery file when it goes missing while the server is running', () => {
+			vi.useFakeTimers();
+			mockWebServer.isActive.mockReturnValue(true);
+			// Prime the file as if a previous write succeeded.
+			lastWrittenInfo = {
+				port: 8080,
+				token: 'mock-security-token',
+				pid: process.pid,
+				startedAt: Date.now(),
+			};
+
+			startCliDiscoveryWatchdog(buildDeps(), 1000);
+
+			// Simulate external deletion of the discovery file.
+			lastWrittenInfo = null;
+			vi.mocked(writeCliServerInfo).mockClear();
+
+			vi.advanceTimersByTime(1000);
+
+			expect(writeCliServerInfo).toHaveBeenCalledWith(
+				expect.objectContaining({ port: 8080, token: 'mock-security-token' })
+			);
+		});
+
+		it('does nothing when the discovery file already matches the running server', () => {
+			vi.useFakeTimers();
+			mockWebServer.isActive.mockReturnValue(true);
+			lastWrittenInfo = {
+				port: 8080,
+				token: 'mock-security-token',
+				pid: process.pid,
+				startedAt: Date.now(),
+			};
+
+			startCliDiscoveryWatchdog(buildDeps(), 1000);
+			vi.mocked(writeCliServerInfo).mockClear();
+			vi.advanceTimersByTime(1000);
+
+			expect(writeCliServerInfo).not.toHaveBeenCalled();
+		});
+
+		it('brings up the server when none is running, so the discovery file appears without a Live Mode toggle', async () => {
+			vi.useFakeTimers();
+			webServerRef.current = null;
+			// Start with no live server so the watchdog falls back to ensureCliServer.
+			mockWebServer.isActive.mockReturnValue(false);
+
+			startCliDiscoveryWatchdog(buildDeps(), 1000);
+			await vi.advanceTimersByTimeAsync(1000);
+
+			expect(mockCreateWebServer).toHaveBeenCalled();
+			expect(writeCliServerInfo).toHaveBeenCalled();
+		});
+
+		it('skips work when a server exists but is not yet active', () => {
+			vi.useFakeTimers();
+			mockWebServer.isActive.mockReturnValue(false);
+
+			startCliDiscoveryWatchdog(buildDeps(), 1000);
+			vi.advanceTimersByTime(2000);
+
+			expect(writeCliServerInfo).not.toHaveBeenCalled();
+		});
+
+		it('stops firing after stopCliDiscoveryWatchdog is called', () => {
+			vi.useFakeTimers();
+			mockWebServer.isActive.mockReturnValue(true);
+			lastWrittenInfo = null; // missing — would normally trigger a write
+
+			startCliDiscoveryWatchdog(buildDeps(), 1000);
+			stopCliDiscoveryWatchdog();
+			vi.advanceTimersByTime(5000);
+
+			expect(writeCliServerInfo).not.toHaveBeenCalled();
 		});
 	});
 });

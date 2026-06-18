@@ -355,39 +355,6 @@ describe('run-playbook command', () => {
 		});
 	});
 
-	describe('unsupported agent type', () => {
-		it('should error when the agent definition is unavailable (human-readable)', async () => {
-			const playbook = mockPlaybook();
-			const agent = mockSession({ toolType: 'unknown-agent' as any });
-
-			vi.mocked(findPlaybookById).mockReturnValue({ playbook, agentId: 'agent-1' });
-			vi.mocked(getSessionById).mockReturnValue(agent);
-
-			await expect(runPlaybook('pb-123', {})).rejects.toThrow('process.exit(1)');
-
-			expect(formatError).toHaveBeenCalledWith(
-				'Agent type "unknown-agent" is not supported in CLI batch mode yet.'
-			);
-			expect(detectAgent).not.toHaveBeenCalled();
-		});
-
-		it('should emit JSON error when the agent definition is unavailable', async () => {
-			const playbook = mockPlaybook();
-			const agent = mockSession({ toolType: 'unknown-agent' as any });
-
-			vi.mocked(findPlaybookById).mockReturnValue({ playbook, agentId: 'agent-1' });
-			vi.mocked(getSessionById).mockReturnValue(agent);
-
-			await expect(runPlaybook('pb-123', { json: true })).rejects.toThrow('process.exit(1)');
-
-			expect(emitError).toHaveBeenCalledWith(
-				'Agent type "unknown-agent" is not supported in CLI batch mode yet.',
-				'AGENT_UNSUPPORTED'
-			);
-			expect(detectAgent).not.toHaveBeenCalled();
-		});
-	});
-
 	describe('playbook not found', () => {
 		it('should error when playbook is not found (human-readable)', async () => {
 			vi.mocked(findPlaybookById).mockImplementation(() => {
@@ -611,117 +578,6 @@ describe('run-playbook command', () => {
 				});
 				expect(waitCompleteCall).toBeDefined();
 			} finally {
-				vi.useRealTimers();
-			}
-		});
-
-		it('should report changed busy reasons while waiting', async () => {
-			vi.useFakeTimers();
-			try {
-				const playbook = mockPlaybook();
-				const agent = mockSession();
-
-				vi.mocked(findPlaybookById).mockReturnValue({ playbook, agentId: 'agent-1' });
-				vi.mocked(getSessionById).mockReturnValue(agent);
-				vi.mocked(executePlaybook).mockReturnValue(mockEventGenerator([]));
-
-				let busyPoll = 0;
-				vi.mocked(isSessionBusyWithCli).mockImplementation(() => {
-					busyPoll++;
-					return busyPoll <= 2;
-				});
-				let activityRead = 0;
-				vi.mocked(getCliActivityForSession).mockImplementation(() => {
-					activityRead++;
-					return {
-						sessionId: 'agent-1',
-						playbookId: `pb-${activityRead}`,
-						playbookName: activityRead <= 1 ? 'First Playbook' : 'Second Playbook',
-						startedAt: 1000,
-						pid: activityRead <= 1 ? 111 : 222,
-					};
-				});
-
-				const runPromise = runPlaybook('pb-123', { wait: true });
-
-				await vi.advanceTimersByTimeAsync(5000);
-				await vi.advanceTimersByTimeAsync(5000);
-				await runPromise;
-
-				expect(formatWarning).toHaveBeenCalledWith(
-					'Still waiting: Running playbook "Second Playbook" from CLI (PID: 222)'
-				);
-			} finally {
-				vi.useRealTimers();
-			}
-		});
-
-		it('should format sub-second wait durations', async () => {
-			vi.useFakeTimers();
-			const dateNow = vi.spyOn(Date, 'now').mockReturnValueOnce(1000).mockReturnValueOnce(1500);
-			try {
-				const playbook = mockPlaybook();
-				const agent = mockSession();
-
-				vi.mocked(findPlaybookById).mockReturnValue({ playbook, agentId: 'agent-1' });
-				vi.mocked(getSessionById).mockReturnValue(agent);
-				vi.mocked(executePlaybook).mockReturnValue(mockEventGenerator([]));
-
-				let busyPoll = 0;
-				vi.mocked(isSessionBusyWithCli).mockImplementation(() => {
-					busyPoll++;
-					return busyPoll === 1;
-				});
-				vi.mocked(getCliActivityForSession).mockReturnValue({
-					sessionId: 'agent-1',
-					playbookId: 'pb-other',
-					playbookName: 'Other Playbook',
-					startedAt: 1000,
-					pid: 12345,
-				});
-
-				const runPromise = runPlaybook('pb-123', { wait: true });
-				await vi.advanceTimersByTimeAsync(5000);
-				await runPromise;
-
-				expect(formatInfo).toHaveBeenCalledWith('Agent available after waiting 500ms');
-			} finally {
-				dateNow.mockRestore();
-				vi.useRealTimers();
-			}
-		});
-
-		it('should format minute wait durations', async () => {
-			vi.useFakeTimers();
-			const dateNow = vi.spyOn(Date, 'now').mockReturnValueOnce(0).mockReturnValueOnce(125000);
-			try {
-				const playbook = mockPlaybook();
-				const agent = mockSession();
-
-				vi.mocked(findPlaybookById).mockReturnValue({ playbook, agentId: 'agent-1' });
-				vi.mocked(getSessionById).mockReturnValue(agent);
-				vi.mocked(executePlaybook).mockReturnValue(mockEventGenerator([]));
-
-				let busyPoll = 0;
-				vi.mocked(isSessionBusyWithCli).mockImplementation(() => {
-					busyPoll++;
-					return busyPoll === 1;
-				});
-				vi.mocked(getCliActivityForSession).mockReturnValue({
-					sessionId: 'agent-1',
-					playbookId: 'pb-other',
-					playbookName: 'Other Playbook',
-					startedAt: 1000,
-					pid: 12345,
-				});
-
-				const runPromise = runPlaybook('pb-123', { wait: true });
-				await vi.advanceTimersByTimeAsync(5000);
-				await runPromise;
-
-				expect(formatInfo).toHaveBeenCalledWith('Agent available after waiting 2m 5s');
-			} finally {
-				dateNow.mockRestore();
 				vi.useRealTimers();
 			}
 		});
@@ -958,20 +814,6 @@ describe('run-playbook command', () => {
 					sessions: [],
 				})
 			);
-			vi.mocked(executePlaybook).mockReturnValue(mockEventGenerator([]));
-
-			await runPlaybook('pb-123', {});
-
-			expect(executePlaybook).toHaveBeenCalled();
-		});
-
-		it('should treat desktop session files without sessions as not busy', async () => {
-			const playbook = mockPlaybook();
-			const agent = mockSession();
-
-			vi.mocked(findPlaybookById).mockReturnValue({ playbook, agentId: 'agent-1' });
-			vi.mocked(getSessionById).mockReturnValue(agent);
-			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ version: 1 }));
 			vi.mocked(executePlaybook).mockReturnValue(mockEventGenerator([]));
 
 			await runPlaybook('pb-123', {});

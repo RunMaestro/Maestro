@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('marked', () => ({
 	marked: {
@@ -7,30 +7,12 @@ vi.mock('marked', () => ({
 	},
 }));
 
-import { downloadTabExport, generateTabExportHtml } from '../../../renderer/utils/tabExport';
+import { generateTabExportHtml } from '../../../renderer/utils/tabExport';
 import type { AITab, LogEntry, Theme } from '../../../renderer/types';
+import { createMockAITab } from '../../helpers/mockTab';
 
+import { mockTheme } from '../../helpers/mockTheme';
 // Mock theme for testing
-const mockTheme: Theme = {
-	id: 'dracula',
-	name: 'Dracula',
-	mode: 'dark',
-	colors: {
-		bgMain: '#282a36',
-		bgSidebar: '#21222c',
-		bgActivity: '#1e1f29',
-		border: '#44475a',
-		textMain: '#f8f8f2',
-		textDim: '#6272a4',
-		accent: '#bd93f9',
-		accentDim: 'rgba(189, 147, 249, 0.1)',
-		accentText: '#bd93f9',
-		accentForeground: '#282a36',
-		success: '#50fa7b',
-		warning: '#f1fa8c',
-		error: '#ff5555',
-	},
-};
 
 const mockSession = {
 	name: 'My Session',
@@ -49,18 +31,13 @@ function createLogEntry(overrides?: Partial<LogEntry>): LogEntry {
 }
 
 function createMockTab(overrides?: Partial<AITab>): AITab {
-	return {
+	return createMockAITab({
 		id: 'tab-001',
 		agentSessionId: 'abc12345-def6-7890-ghij-klmnopqrstuv',
 		name: 'Test Tab',
-		starred: false,
-		logs: [],
-		inputValue: '',
-		stagedImages: [],
 		createdAt: 1703116800000, // 2023-12-21T00:00:00.000Z
-		state: 'idle',
 		...overrides,
-	};
+	});
 }
 
 describe('tabExport', () => {
@@ -113,14 +90,15 @@ describe('tabExport', () => {
 				});
 				const html = generateTabExportHtml(tab, mockSession, mockTheme);
 
-				expect(html).toContain('Session ABC12345');
-				expect(html).toContain('<title>Session ABC12345 - Maestro Tab Export</title>');
+				expect(html).toContain('ABC12345');
+				expect(html).toContain('<title>ABC12345 - Maestro Tab Export</title>');
 			});
 
 			it('falls back to "New Session" when no name or session ID', () => {
 				const tab = createMockTab({ name: null, agentSessionId: null });
 				const html = generateTabExportHtml(tab, mockSession, mockTheme);
 
+				// getTabDisplayName returns 'New Session' for unnamed tabs without agentSessionId
 				expect(html).toContain('New Session');
 				expect(html).toContain('<title>New Session - Maestro Tab Export</title>');
 			});
@@ -133,15 +111,15 @@ describe('tabExport', () => {
 
 				expect(html).toContain('--bg-primary: #282a36');
 				expect(html).toContain('--bg-secondary: #21222c');
-				expect(html).toContain('--bg-tertiary: #1e1f29');
+				expect(html).toContain('--bg-tertiary: #343746');
 				expect(html).toContain('--text-primary: #f8f8f2');
 				expect(html).toContain('--text-secondary: #6272a4');
 				expect(html).toContain('--text-dim: #6272a4');
 				expect(html).toContain('--border: #44475a');
 				expect(html).toContain('--accent: #bd93f9');
-				expect(html).toContain('--accent-dim: rgba(189, 147, 249, 0.1)');
+				expect(html).toContain('--accent-dim: rgba(189, 147, 249, 0.2)');
 				expect(html).toContain('--success: #50fa7b');
-				expect(html).toContain('--warning: #f1fa8c');
+				expect(html).toContain('--warning: #ffb86c');
 				expect(html).toContain('--error: #ff5555');
 			});
 
@@ -928,93 +906,6 @@ describe('tabExport', () => {
 				// stdout gets labeled as 'AI'
 				expect(html).toContain('>AI<');
 			});
-		});
-	});
-
-	describe('downloadTabExport', () => {
-		const hadCreateObjectURL = 'createObjectURL' in URL;
-		const hadRevokeObjectURL = 'revokeObjectURL' in URL;
-		const originalCreateObjectURL = URL.createObjectURL;
-		const originalRevokeObjectURL = URL.revokeObjectURL;
-
-		afterEach(() => {
-			if (hadCreateObjectURL) {
-				Object.defineProperty(URL, 'createObjectURL', {
-					configurable: true,
-					value: originalCreateObjectURL,
-				});
-			} else {
-				Reflect.deleteProperty(URL, 'createObjectURL');
-			}
-
-			if (hadRevokeObjectURL) {
-				Object.defineProperty(URL, 'revokeObjectURL', {
-					configurable: true,
-					value: originalRevokeObjectURL,
-				});
-			} else {
-				Reflect.deleteProperty(URL, 'revokeObjectURL');
-			}
-
-			vi.restoreAllMocks();
-		});
-
-		const installDownloadMocks = () => {
-			const createObjectURL = vi.fn<[Blob], string>(() => 'blob:tab-export');
-			const revokeObjectURL = vi.fn<[string], void>();
-			Object.defineProperty(URL, 'createObjectURL', {
-				configurable: true,
-				value: createObjectURL,
-			});
-			Object.defineProperty(URL, 'revokeObjectURL', {
-				configurable: true,
-				value: revokeObjectURL,
-			});
-
-			const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
-			const appendSpy = vi.spyOn(document.body, 'appendChild');
-			const removeSpy = vi.spyOn(document.body, 'removeChild');
-
-			return { appendSpy, clickSpy, createObjectURL, removeSpy, revokeObjectURL };
-		};
-
-		it('downloads a named tab with a sanitized filename and revokes the object URL', async () => {
-			const { appendSpy, clickSpy, createObjectURL, removeSpy, revokeObjectURL } =
-				installDownloadMocks();
-			const tab = createMockTab({ name: 'My Tab!' });
-
-			await downloadTabExport(tab, mockSession, mockTheme);
-
-			expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob));
-			const link = appendSpy.mock.calls[0][0] as HTMLAnchorElement;
-			expect(link.href).toBe('blob:tab-export');
-			expect(link.download).toBe('my-tab--export.html');
-			expect(clickSpy).toHaveBeenCalledTimes(1);
-			expect(removeSpy).toHaveBeenCalledWith(link);
-			expect(revokeObjectURL).toHaveBeenCalledWith('blob:tab-export');
-		});
-
-		it('uses the agent session id prefix when the tab has no name', async () => {
-			const { appendSpy } = installDownloadMocks();
-			const tab = createMockTab({
-				name: null,
-				agentSessionId: 'ABC12345-def6-7890-ghij-klmnopqrstuv',
-			});
-
-			await downloadTabExport(tab, mockSession, mockTheme);
-
-			const link = appendSpy.mock.calls[0][0] as HTMLAnchorElement;
-			expect(link.download).toBe('abc12345-export.html');
-		});
-
-		it('uses a generic filename when the tab has no name or session id', async () => {
-			const { appendSpy } = installDownloadMocks();
-			const tab = createMockTab({ name: null, agentSessionId: null });
-
-			await downloadTabExport(tab, mockSession, mockTheme);
-
-			const link = appendSpy.mock.calls[0][0] as HTMLAnchorElement;
-			expect(link.download).toBe('tab-export.html');
 		});
 	});
 });

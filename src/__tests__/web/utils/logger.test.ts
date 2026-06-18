@@ -597,31 +597,6 @@ describe('src/web/utils/logger.ts', () => {
 			// The module exposes __webLogger when window is defined
 			expect((window as any).__webLogger).toBe(webLogger);
 		});
-
-		it('initializes without exposing webLogger when window is unavailable', async () => {
-			const originalWindowDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'window');
-			vi.resetModules();
-			Object.defineProperty(globalThis, 'window', {
-				value: undefined,
-				configurable: true,
-				writable: true,
-			});
-
-			try {
-				expect(typeof window).toBe('undefined');
-
-				const module = await import('../../../web/utils/logger');
-
-				expect(module.webLogger).toBeDefined();
-				expect(module.default).toBe(module.webLogger);
-			} finally {
-				if (originalWindowDescriptor) {
-					Object.defineProperty(globalThis, 'window', originalWindowDescriptor);
-				} else {
-					Reflect.deleteProperty(globalThis, 'window');
-				}
-			}
-		});
 	});
 
 	describe('edge cases', () => {

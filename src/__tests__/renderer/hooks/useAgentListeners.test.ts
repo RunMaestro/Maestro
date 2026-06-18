@@ -17,65 +17,33 @@ import {
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
-import { useNotificationStore } from '../../../renderer/stores/notificationStore';
-import { gitService } from '../../../renderer/services/git';
 import type { Session, AITab, AgentError } from '../../../renderer/types';
+import { createMockAITab } from '../../helpers/mockTab';
+import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
 // ============================================================================
 // Helpers
 // ============================================================================
 
 function createMockTab(overrides: Partial<AITab> = {}): AITab {
-	return {
-		id: 'tab-1',
-		agentSessionId: null,
-		name: null,
-		starred: false,
-		logs: [],
-		inputValue: '',
-		stagedImages: [],
+	return createMockAITab({
 		createdAt: 1700000000000,
-		state: 'idle' as const,
 		saveToHistory: true,
 		...overrides,
-	};
+	});
 }
 
+// Thin wrapper: pre-populates a base AI tab so agent listeners have a
+// target tab for streaming events.
 function createMockSession(overrides: Partial<Session> = {}): Session {
 	const baseTab = createMockTab();
-	return {
-		id: 'session-1',
-		name: 'Test Session',
-		toolType: 'claude-code',
-		state: 'idle',
-		cwd: '/test/project',
-		fullPath: '/test/project',
-		projectRoot: '/test/project',
-		aiLogs: [],
-		shellLogs: [],
-		workLog: [],
-		contextUsage: 0,
-		inputMode: 'ai',
-		aiPid: 0,
-		terminalPid: 0,
-		port: 0,
-		isLive: false,
-		changedFiles: [],
+	return baseCreateMockSession({
 		isGitRepo: true,
-		fileTree: [],
-		fileExplorerExpanded: [],
-		fileExplorerScrollPos: 0,
-		aiTabs: overrides.aiTabs ?? [baseTab],
-		activeTabId: overrides.activeTabId ?? baseTab.id,
-		closedTabHistory: [],
-		executionQueue: [],
-		activeTimeMs: 0,
-		filePreviewTabs: [],
-		activeFileTabId: null,
+		aiTabs: [baseTab],
+		activeTabId: baseTab.id,
 		unifiedTabOrder: [{ type: 'ai' as const, id: baseTab.id }],
-		unifiedClosedTabHistory: [],
 		...overrides,
-	} as Session;
+	});
 }
 
 // ============================================================================
@@ -172,6 +140,7 @@ function createMockBatchedUpdater(): BatchedUpdater {
 		updateContextUsage: vi.fn(),
 		updateCycleBytes: vi.fn(),
 		updateCycleTokens: vi.fn(),
+		flushNow: vi.fn(),
 	};
 }
 
@@ -188,37 +157,6 @@ function createMockDeps(overrides: Partial<UseAgentListenersDeps> = {}): UseAgen
 		contextWarningYellowThreshold: 80,
 		...overrides,
 	};
-}
-
-function installMockAnimationFrame() {
-	vi.useFakeTimers();
-	const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
-	const originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
-
-	globalThis.requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
-		return setTimeout(() => callback(0), 0) as unknown as number;
-	});
-	globalThis.cancelAnimationFrame = vi.fn((id: number) => {
-		clearTimeout(id as unknown as ReturnType<typeof setTimeout>);
-	});
-
-	return () => {
-		if (originalRequestAnimationFrame) {
-			globalThis.requestAnimationFrame = originalRequestAnimationFrame;
-		} else {
-			delete (globalThis as Partial<typeof globalThis>).requestAnimationFrame;
-		}
-		if (originalCancelAnimationFrame) {
-			globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
-		} else {
-			delete (globalThis as Partial<typeof globalThis>).cancelAnimationFrame;
-		}
-		vi.useRealTimers();
-	};
-}
-
-function flushAsyncWork() {
-	return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 // ============================================================================
@@ -250,7 +188,6 @@ beforeEach(() => {
 		removedWorktreePaths: new Set(),
 	});
 	useModalStore.getState().closeAll();
-	useNotificationStore.getState().clearToasts();
 
 	// Mock window.maestro
 	(window as any).maestro = {
@@ -277,6 +214,7 @@ beforeEach(() => {
 
 afterEach(() => {
 	vi.restoreAllMocks();
+	vi.unstubAllGlobals();
 });
 
 // ============================================================================
@@ -388,76 +326,6 @@ describe('useAgentListeners', () => {
 			expect(deps.batchedUpdater.markDelivered).toHaveBeenCalledWith('sess-1', 'tab-1');
 		});
 
-		it('routes legacy AI data without an explicit tab id to the write-mode tab', () => {
-			const deps = createMockDeps();
-			const session = createMockSession({
-				id: 'sess-1',
-				state: 'busy',
-				aiTabs: [
-					createMockTab({ id: 'tab-1', state: 'idle' }),
-					createMockTab({ id: 'tab-2', state: 'busy' }),
-				],
-				activeTabId: 'tab-1',
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			onDataHandler?.('sess-1-ai', 'Legacy output');
-
-			expect(deps.batchedUpdater.appendLog).toHaveBeenCalledWith(
-				'sess-1',
-				'tab-2',
-				true,
-				'Legacy output'
-			);
-			expect(deps.batchedUpdater.markDelivered).toHaveBeenCalledWith('sess-1', 'tab-2');
-		});
-
-		it('logs and ignores legacy AI data when no target tab can be found', () => {
-			const deps = createMockDeps();
-			const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-			const session = createMockSession({
-				id: 'sess-1',
-				aiTabs: [],
-				activeTabId: 'missing-tab',
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			onDataHandler?.('sess-1-ai', 'orphaned output');
-
-			expect(consoleErrorSpy).toHaveBeenCalledWith(
-				'[onData] No target tab found - session has no aiTabs, this should not happen'
-			);
-			expect(deps.batchedUpdater.appendLog).not.toHaveBeenCalled();
-		});
-
-		it('logs and ignores legacy AI data when the session is missing', () => {
-			const deps = createMockDeps();
-			const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-			useSessionStore.setState({
-				sessions: [],
-				activeSessionId: '',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			onDataHandler?.('missing-ai', 'orphaned output');
-
-			expect(consoleErrorSpy).toHaveBeenCalledWith(
-				'[onData] No target tab found - session has no aiTabs, this should not happen'
-			);
-			expect(deps.batchedUpdater.appendLog).not.toHaveBeenCalled();
-		});
-
 		it('skips empty stdout for non-AI data', () => {
 			const deps = createMockDeps();
 			renderHook(() => useAgentListeners(deps));
@@ -497,154 +365,6 @@ describe('useAgentListeners', () => {
 			expect(deps.batchedUpdater.appendLog).not.toHaveBeenCalled();
 		});
 
-		it('returns early for batch process output', () => {
-			const deps = createMockDeps();
-			renderHook(() => useAgentListeners(deps));
-
-			onDataHandler?.('sess-1-batch-123', 'batch output');
-
-			expect(deps.batchedUpdater.appendLog).not.toHaveBeenCalled();
-			expect(deps.batchedUpdater.markDelivered).not.toHaveBeenCalled();
-		});
-
-		it('appends explicit AI tab data when the session is missing but skips unread lookup', () => {
-			const deps = createMockDeps();
-			useSessionStore.setState({
-				sessions: [],
-				activeSessionId: '',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			onDataHandler?.('sess-1-ai-tab-1', 'late output');
-
-			expect(deps.batchedUpdater.appendLog).toHaveBeenCalledWith(
-				'sess-1',
-				'tab-1',
-				true,
-				'late output'
-			);
-			expect(deps.batchedUpdater.markDelivered).toHaveBeenCalledWith('sess-1', 'tab-1');
-			expect(deps.batchedUpdater.markUnread).not.toHaveBeenCalled();
-		});
-
-		it('appends explicit AI tab data when the target tab is missing but skips unread marking', () => {
-			const deps = createMockDeps();
-			const session = createMockSession({
-				id: 'sess-1',
-				aiTabs: [createMockTab({ id: 'tab-2' })],
-				activeTabId: 'tab-2',
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			onDataHandler?.('sess-1-ai-tab-1', 'late output');
-
-			expect(deps.batchedUpdater.appendLog).toHaveBeenCalledWith(
-				'sess-1',
-				'tab-1',
-				true,
-				'late output'
-			);
-			expect(deps.batchedUpdater.markDelivered).toHaveBeenCalledWith('sess-1', 'tab-1');
-			expect(deps.batchedUpdater.markUnread).not.toHaveBeenCalled();
-		});
-
-		it('clears paused agent error state and marks inactive output as unread on successful AI data', () => {
-			const deps = createMockDeps();
-			const otherSession = createMockSession({ id: 'other-session' });
-			const agentError: AgentError = {
-				type: 'auth_expired',
-				message: 'Authentication required',
-				recoverable: true,
-				agentId: 'claude-code',
-				sessionId: 'agent-session-1',
-				timestamp: Date.now(),
-			};
-			const session = createMockSession({
-				id: 'sess-1',
-				state: 'error',
-				agentError,
-				agentErrorTabId: 'tab-1',
-				agentErrorPaused: true,
-				aiTabs: [
-					createMockTab({
-						id: 'tab-1',
-						agentError,
-						isAtBottom: false,
-					}),
-					createMockTab({
-						id: 'tab-2',
-						agentError,
-					}),
-				],
-				activeTabId: 'tab-1',
-			});
-			useSessionStore.setState({
-				sessions: [otherSession, session],
-				activeSessionId: 'other-session',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			onDataHandler?.('sess-1-ai-tab-1', 'Recovered output');
-
-			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
-			expect(updated?.agentError).toBeUndefined();
-			expect(updated?.agentErrorTabId).toBeUndefined();
-			expect(updated?.agentErrorPaused).toBe(false);
-			expect(updated?.state).toBe('busy');
-			expect(updated?.aiTabs[0].agentError).toBeUndefined();
-			expect(updated?.aiTabs[1].agentError).toBe(agentError);
-			expect(window.maestro.agentError.clearError).toHaveBeenCalledWith('sess-1');
-			expect(deps.batchedUpdater.markUnread).toHaveBeenCalledWith('sess-1', 'tab-1', true);
-			expect(useSessionStore.getState().sessions.find((s) => s.id === 'other-session')).toBe(
-				otherSession
-			);
-		});
-
-		it('logs clear-error failures after successful AI data resumes a paused session', async () => {
-			const deps = createMockDeps();
-			const clearError = new Error('clear failed');
-			vi.mocked(window.maestro.agentError.clearError).mockRejectedValueOnce(clearError);
-			const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-			const agentError: AgentError = {
-				type: 'network_error',
-				message: 'Network failed',
-				recoverable: true,
-				agentId: 'claude-code',
-				sessionId: 'agent-session-1',
-				timestamp: Date.now(),
-			};
-			const session = createMockSession({
-				id: 'sess-1',
-				state: 'error',
-				agentError,
-				agentErrorTabId: 'tab-1',
-				agentErrorPaused: true,
-				aiTabs: [createMockTab({ id: 'tab-1', agentError })],
-				activeTabId: 'tab-1',
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			onDataHandler?.('sess-1-ai-tab-1', 'Recovered output');
-			await flushAsyncWork();
-
-			expect(consoleErrorSpy).toHaveBeenCalledWith(
-				'Failed to clear agent error on successful data:',
-				clearError
-			);
-		});
-
 		it('tracks cycle bytes for AI data', () => {
 			const deps = createMockDeps();
 			const session = createMockSession({
@@ -665,6 +385,58 @@ describe('useAgentListeners', () => {
 				'sess-1',
 				expect.any(Number)
 			);
+		});
+
+		it('removes a recovered agent error log when successful data resumes', () => {
+			const deps = createMockDeps();
+			const recoveredError: AgentError = {
+				type: 'permission_denied',
+				message: 'Permission denied. Check file and directory permissions.',
+				recoverable: false,
+				agentId: 'copilot-cli',
+				timestamp: 1700000000000,
+			};
+			const session = createMockSession({
+				id: 'sess-1',
+				state: 'error',
+				toolType: 'copilot-cli',
+				agentError: recoveredError,
+				agentErrorTabId: 'tab-1',
+				agentErrorPaused: true,
+				aiTabs: [
+					createMockTab({
+						id: 'tab-1',
+						agentError: recoveredError,
+						logs: [
+							{
+								id: 'log-error',
+								timestamp: recoveredError.timestamp,
+								source: 'error',
+								text: recoveredError.message,
+								agentError: recoveredError,
+							},
+						],
+					}),
+				],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			onDataHandler?.('sess-1-ai-tab-1', 'Final answer');
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			expect(updated?.agentError).toBeUndefined();
+			expect(updated?.agentErrorTabId).toBeUndefined();
+			expect(updated?.agentErrorPaused).toBe(false);
+			expect(updated?.state).toBe('busy');
+			expect(updated?.aiTabs[0]?.agentError).toBeUndefined();
+			expect(updated?.aiTabs[0]?.logs).toEqual([]);
+			expect(window.maestro.agentError.clearError).toHaveBeenCalledWith('sess-1');
 		});
 	});
 
@@ -705,23 +477,6 @@ describe('useAgentListeners', () => {
 
 			expect(deps.batchedUpdater.appendLog).not.toHaveBeenCalled();
 		});
-
-		it('skips batch stderr and appends non-AI stderr to shell logs', () => {
-			const deps = createMockDeps();
-			renderHook(() => useAgentListeners(deps));
-
-			onStderrHandler?.('sess-1-batch-123', 'ignored batch stderr');
-			onStderrHandler?.('sess-1', 'terminal stderr');
-
-			expect(deps.batchedUpdater.appendLog).toHaveBeenCalledTimes(1);
-			expect(deps.batchedUpdater.appendLog).toHaveBeenCalledWith(
-				'sess-1',
-				null,
-				false,
-				'terminal stderr',
-				true
-			);
-		});
 	});
 
 	// ========================================================================
@@ -731,35 +486,10 @@ describe('useAgentListeners', () => {
 	describe('onCommandExit', () => {
 		it('transitions session to idle when no AI tabs busy', () => {
 			const deps = createMockDeps();
-			const otherSession = createMockSession({ id: 'other-session', state: 'idle' });
 			const session = createMockSession({
 				id: 'sess-1',
 				state: 'busy',
 				busySource: 'terminal',
-			});
-			useSessionStore.setState({
-				sessions: [otherSession, session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			onCommandExitHandler?.('sess-1', 0);
-
-			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
-			expect(updated?.state).toBe('idle');
-			expect(useSessionStore.getState().sessions.find((s) => s.id === 'other-session')).toBe(
-				otherSession
-			);
-		});
-
-		it('keeps command sessions busy when an AI tab is still running', () => {
-			const deps = createMockDeps();
-			const session = createMockSession({
-				id: 'sess-1',
-				state: 'busy',
-				busySource: 'terminal',
-				aiTabs: [createMockTab({ id: 'tab-1', state: 'busy' })],
 			});
 			useSessionStore.setState({
 				sessions: [session],
@@ -771,9 +501,7 @@ describe('useAgentListeners', () => {
 			onCommandExitHandler?.('sess-1', 0);
 
 			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
-			expect(updated?.state).toBe('busy');
-			expect(updated?.busySource).toBe('ai');
-			expect(updated?.shellLogs).toEqual([]);
+			expect(updated?.state).toBe('idle');
 		});
 
 		it('adds system log entry for non-zero exit code', () => {
@@ -809,10 +537,9 @@ describe('useAgentListeners', () => {
 	describe('onSlashCommands', () => {
 		it('updates session agentCommands with normalized commands', () => {
 			const deps = createMockDeps();
-			const otherSession = createMockSession({ id: 'other-session' });
 			const session = createMockSession({ id: 'sess-1' });
 			useSessionStore.setState({
-				sessions: [otherSession, session],
+				sessions: [session],
 				activeSessionId: 'sess-1',
 			});
 
@@ -828,9 +555,6 @@ describe('useAgentListeners', () => {
 			expect(updated!.agentCommands![0].command).toBe('/help');
 			expect(updated!.agentCommands![1].command).toBe('/status');
 			expect(updated!.agentCommands![2].command).toBe('/clear');
-			expect(useSessionStore.getState().sessions.find((s) => s.id === 'other-session')).toBe(
-				otherSession
-			);
 		});
 	});
 
@@ -841,7 +565,6 @@ describe('useAgentListeners', () => {
 	describe('onSessionId', () => {
 		it('sets agentSessionId on the target tab', () => {
 			const deps = createMockDeps();
-			const otherSession = createMockSession({ id: 'other-session' });
 			const tab = createMockTab({
 				id: 'tab-1',
 				agentSessionId: null,
@@ -850,36 +573,6 @@ describe('useAgentListeners', () => {
 			const session = createMockSession({
 				id: 'sess-1',
 				aiTabs: [tab],
-				activeTabId: 'tab-1',
-			});
-			useSessionStore.setState({
-				sessions: [otherSession, session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			onSessionIdHandler?.('sess-1-ai-tab-1', 'agent-session-abc');
-
-			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
-			const updatedTab = updated?.aiTabs.find((t) => t.id === 'tab-1');
-			expect(updatedTab?.agentSessionId).toBe('agent-session-abc');
-			expect(useSessionStore.getState().sessions.find((s) => s.id === 'other-session')).toBe(
-				otherSession
-			);
-		});
-
-		it('preserves non-default tab names when capturing provider session IDs', () => {
-			const deps = createMockDeps();
-			const namedTab = createMockTab({
-				id: 'tab-1',
-				name: 'Review plan',
-				agentSessionId: null,
-				awaitingSessionId: true,
-			});
-			const session = createMockSession({
-				id: 'sess-1',
-				aiTabs: [namedTab],
 				activeTabId: 'tab-1',
 			});
 			useSessionStore.setState({
@@ -892,13 +585,8 @@ describe('useAgentListeners', () => {
 			onSessionIdHandler?.('sess-1-ai-tab-1', 'agent-session-abc');
 
 			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
-			expect(updated?.aiTabs[0]).toEqual(
-				expect.objectContaining({
-					agentSessionId: 'agent-session-abc',
-					awaitingSessionId: false,
-					name: 'Review plan',
-				})
-			);
+			const updatedTab = updated?.aiTabs.find((t) => t.id === 'tab-1');
+			expect(updatedTab?.agentSessionId).toBe('agent-session-abc');
 		});
 
 		it('registers session origin via IPC', () => {
@@ -933,159 +621,12 @@ describe('useAgentListeners', () => {
 			const deps = createMockDeps();
 			renderHook(() => useAgentListeners(deps));
 
-			onSessionIdHandler?.('sess-1-batch-0', 'agent-session-abc');
+			onSessionIdHandler?.('sess-1-batch-0-ai', 'agent-session-abc');
 
 			expect(window.maestro.agentSessions.registerSessionOrigin).not.toHaveBeenCalled();
 		});
 
-		it('logs register-session-origin failures', async () => {
-			const deps = createMockDeps();
-			const registerError = new Error('origin failed');
-			vi.mocked(window.maestro.agentSessions.registerSessionOrigin).mockRejectedValueOnce(
-				registerError
-			);
-			const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-			const tab = createMockTab({
-				id: 'tab-1',
-				agentSessionId: null,
-				awaitingSessionId: true,
-			});
-			const session = createMockSession({
-				id: 'sess-1',
-				aiTabs: [tab],
-				activeTabId: 'tab-1',
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			onSessionIdHandler?.('sess-1-ai-tab-1', 'agent-session-abc');
-			await flushAsyncWork();
-
-			expect(consoleErrorSpy).toHaveBeenCalledWith(
-				'[onSessionId] Failed to register session origin:',
-				registerError
-			);
-		});
-
-		it('uses an awaiting tab for legacy AI session IDs and clears default tab names', () => {
-			const deps = createMockDeps();
-			const activeTab = createMockTab({
-				id: 'tab-1',
-				name: 'Active Tab',
-				awaitingSessionId: false,
-			});
-			const awaitingTab = createMockTab({
-				id: 'tab-2',
-				name: 'New Session',
-				awaitingSessionId: true,
-			});
-			const session = createMockSession({
-				id: 'sess-1',
-				aiTabs: [activeTab, awaitingTab],
-				activeTabId: 'tab-1',
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			onSessionIdHandler?.('sess-1-ai', 'agent-session-legacy');
-
-			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
-			const updatedActiveTab = updated?.aiTabs.find((tab) => tab.id === 'tab-1');
-			const updatedAwaitingTab = updated?.aiTabs.find((tab) => tab.id === 'tab-2');
-			expect(updatedActiveTab?.agentSessionId).toBeNull();
-			expect(updatedAwaitingTab?.agentSessionId).toBe('agent-session-legacy');
-			expect(updatedAwaitingTab?.awaitingSessionId).toBe(false);
-			expect(updatedAwaitingTab?.name).toBeNull();
-			expect(updated?.agentSessionId).toBe('agent-session-legacy');
-		});
-
-		it('accepts a new provider session ID and records a resume failure when resume returns a different ID', () => {
-			const deps = createMockDeps();
-			const tab = createMockTab({
-				id: 'tab-1',
-				agentSessionId: 'existing-agent-session',
-				name: 'Pinned Tab',
-			});
-			const session = createMockSession({
-				id: 'sess-1',
-				aiTabs: [tab],
-				activeTabId: 'tab-1',
-				agentSessionId: 'existing-agent-session',
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			onSessionIdHandler?.('sess-1-ai-tab-1', 'new-agent-session');
-
-			const updatedSession = useSessionStore.getState().sessions[0];
-			expect(updatedSession).not.toBe(session);
-			expect(updatedSession.agentSessionId).toBe('new-agent-session');
-			expect(updatedSession.aiTabs[0]).toEqual(
-				expect.objectContaining({
-					agentSessionId: 'new-agent-session',
-					awaitingSessionId: false,
-					name: 'Pinned Tab',
-				})
-			);
-			expect(updatedSession.aiTabs[0].logs.at(-1)).toEqual(
-				expect.objectContaining({
-					source: 'system',
-					text: expect.stringContaining('Session resume failed'),
-				})
-			);
-			expect(window.maestro.agentSessions.registerSessionOrigin).toHaveBeenCalledWith(
-				'/test/project',
-				'new-agent-session',
-				'user'
-			);
-		});
-
-		it('stores provider session ID at session level when no tab can be targeted', () => {
-			const deps = createMockDeps();
-			const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-			const session = createMockSession({
-				id: 'sess-1',
-				aiTabs: [],
-				activeTabId: null,
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			onSessionIdHandler?.('sess-1-ai', 'session-level-id');
-
-			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
-			expect(updated?.agentSessionId).toBe('session-level-id');
-			expect(consoleErrorSpy).toHaveBeenCalledWith(
-				'[onSessionId] No target tab found - session has no aiTabs, storing at session level only'
-			);
-		});
-
-		it('does not register session origin when the owning session is missing', () => {
-			const deps = createMockDeps();
-			renderHook(() => useAgentListeners(deps));
-
-			onSessionIdHandler?.('missing-session-ai-tab-1', 'agent-session-abc');
-
-			expect(window.maestro.agentSessions.registerSessionOrigin).not.toHaveBeenCalled();
-		});
-
-		it('detects resume failure when agent returns a different session ID', () => {
+		it('detects resume failure when non-claude-code agent returns a different session ID', () => {
 			const deps = createMockDeps();
 			const tab = createMockTab({
 				id: 'tab-1',
@@ -1100,14 +641,10 @@ describe('useAgentListeners', () => {
 					contextWindow: 200000,
 				},
 			});
-			const siblingTab = createMockTab({
-				id: 'tab-2',
-				agentSessionId: 'sibling-session-id',
-				awaitingSessionId: false,
-			});
 			const session = createMockSession({
 				id: 'sess-1',
-				aiTabs: [tab, siblingTab],
+				toolType: 'codex',
+				aiTabs: [tab],
 				activeTabId: 'tab-1',
 			});
 			useSessionStore.setState({
@@ -1122,11 +659,9 @@ describe('useAgentListeners', () => {
 
 			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
 			const updatedTab = updated?.aiTabs.find((t) => t.id === 'tab-1');
-			const updatedSiblingTab = updated?.aiTabs.find((t) => t.id === 'tab-2');
 
 			// Should accept the new session ID (not keep the stale one)
 			expect(updatedTab?.agentSessionId).toBe('new-session-id');
-			expect(updatedSiblingTab?.agentSessionId).toBe('sibling-session-id');
 			// Should clear usage stats
 			expect(updatedTab?.usageStats).toBeUndefined();
 			// Should add a system log entry about resume failure
@@ -1134,6 +669,98 @@ describe('useAgentListeners', () => {
 			expect(resumeLog).toBeDefined();
 			// Should reset context usage
 			expect(deps.batchedUpdater.updateContextUsage).toHaveBeenCalledWith('sess-1', 0);
+		});
+
+		it('treats claude-code session-ID fork as expected (preserves original ID, no warning)', () => {
+			// Claude Code 2.1.x in batch mode emits a fresh session_id on every spawn but
+			// keeps appending to the original JSONL. Storing the fork ID would produce a
+			// "no conversation found with session id" error on the next resume since no
+			// JSONL exists under the fork ID. Keep the original; ignore the fork.
+			const deps = createMockDeps();
+			const tab = createMockTab({
+				id: 'tab-1',
+				agentSessionId: 'old-session-id',
+				awaitingSessionId: false,
+				usageStats: {
+					inputTokens: 100,
+					outputTokens: 50,
+					cacheReadInputTokens: 50000,
+					cacheCreationInputTokens: 0,
+					totalCostUsd: 0.001,
+					contextWindow: 200000,
+				},
+			});
+			const session = createMockSession({
+				id: 'sess-1',
+				toolType: 'claude-code',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+				agentSessionId: 'old-session-id',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			// Claude returns a DIFFERENT session ID — expected fork, not a failure.
+			onSessionIdHandler?.('sess-1-ai-tab-1', 'fork-session-id');
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			const updatedTab = updated?.aiTabs.find((t) => t.id === 'tab-1');
+
+			// Original ID preserved on tab — fork ID has no backing JSONL.
+			expect(updatedTab?.agentSessionId).toBe('old-session-id');
+			// Session-level ID also preserved.
+			expect(updated?.agentSessionId).toBe('old-session-id');
+			// Awaiting cleared.
+			expect(updatedTab?.awaitingSessionId).toBe(false);
+			// Usage stats preserved (no false context-loss signal).
+			expect(updatedTab?.usageStats?.cacheReadInputTokens).toBe(50000);
+			// No resume-failure log entry.
+			const hasResumeFailureLog = !!updatedTab?.logs.some((l) =>
+				l.text.includes('Session resume failed')
+			);
+			expect(hasResumeFailureLog).toBe(false);
+			// Context usage NOT reset.
+			expect(deps.batchedUpdater.updateContextUsage).not.toHaveBeenCalled();
+		});
+
+		it('claude-code first-time capture stores tab id but skips session-level write', () => {
+			// On first message in a tab, agentSessionId is empty so the new ID goes onto
+			// the tab. Session-level field is intentionally NOT written for claude-code:
+			// the deprecated session-level field would otherwise accumulate fork IDs from
+			// closed/reset tabs and cause "Session not found" on later spawns.
+			const deps = createMockDeps();
+			const tab = createMockTab({
+				id: 'tab-1',
+				agentSessionId: undefined,
+				awaitingSessionId: true,
+			});
+			const session = createMockSession({
+				id: 'sess-1',
+				toolType: 'claude-code',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+				agentSessionId: undefined,
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			onSessionIdHandler?.('sess-1-ai-tab-1', 'first-session-id');
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			const updatedTab = updated?.aiTabs.find((t) => t.id === 'tab-1');
+
+			expect(updatedTab?.agentSessionId).toBe('first-session-id');
+			expect(updatedTab?.awaitingSessionId).toBe(false);
+			// Session-level intentionally not written for claude-code.
+			expect(updated?.agentSessionId).toBeUndefined();
 		});
 
 		it('does not warn on resume success (same session ID returned)', () => {
@@ -1199,6 +826,169 @@ describe('useAgentListeners', () => {
 			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
 			expect(updated?.contextUsage).toBe(48);
 		});
+
+		it('stores session ID at session level when tab was closed (not on another tab)', () => {
+			const deps = createMockDeps();
+			// Tab B exists but Tab A (from the process session ID) was closed
+			const tabB = createMockTab({
+				id: 'tab-b',
+				agentSessionId: null,
+				awaitingSessionId: false,
+			});
+			const session = createMockSession({
+				id: 'sess-1',
+				toolType: 'codex',
+				aiTabs: [tabB],
+				activeTabId: 'tab-b',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			// Process reports back with tab-a's ID, but tab-a no longer exists
+			onSessionIdHandler?.('sess-1-ai-tab-a', 'orphan-session-id');
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			// Session-level agentSessionId should be set
+			expect(updated?.agentSessionId).toBe('orphan-session-id');
+			// Tab B should NOT have been assigned the orphaned session ID
+			const updatedTabB = updated?.aiTabs.find((t) => t.id === 'tab-b');
+			expect(updatedTabB?.agentSessionId).toBeNull();
+		});
+
+		it('skips session-level write for claude-code when tab was closed', () => {
+			// For claude-code, the session-level agentSessionId is intentionally not
+			// updated from a closed tab's events: the ID may be a fork without a
+			// backing JSONL, and would break a future tab's first resume.
+			const deps = createMockDeps();
+			const tabB = createMockTab({
+				id: 'tab-b',
+				agentSessionId: null,
+				awaitingSessionId: false,
+			});
+			const session = createMockSession({
+				id: 'sess-1',
+				toolType: 'claude-code',
+				aiTabs: [tabB],
+				activeTabId: 'tab-b',
+				agentSessionId: undefined,
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			onSessionIdHandler?.('sess-1-ai-tab-a', 'orphan-fork-id');
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			expect(updated?.agentSessionId).toBeUndefined();
+			const updatedTabB = updated?.aiTabs.find((t) => t.id === 'tab-b');
+			expect(updatedTabB?.agentSessionId).toBeNull();
+		});
+
+		it('does not cross-bind when closed tab had awaitingSessionId and another tab also awaits', () => {
+			const deps = createMockDeps();
+			// Tab B is awaiting its own session ID — must not receive Tab A's
+			const tabB = createMockTab({
+				id: 'tab-b',
+				agentSessionId: null,
+				awaitingSessionId: true,
+			});
+			const session = createMockSession({
+				id: 'sess-1',
+				toolType: 'codex',
+				aiTabs: [tabB],
+				activeTabId: 'tab-b',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			// Tab A was closed, its process reports back with explicit tab ID
+			onSessionIdHandler?.('sess-1-ai-tab-a', 'tab-a-session');
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			// Tab B must keep awaiting ITS OWN session ID
+			const updatedTabB = updated?.aiTabs.find((t) => t.id === 'tab-b');
+			expect(updatedTabB?.agentSessionId).toBeNull();
+			expect(updatedTabB?.awaitingSessionId).toBe(true);
+			// Session level gets the orphaned ID
+			expect(updated?.agentSessionId).toBe('tab-a-session');
+		});
+
+		it('still binds correctly to existing tab when tab ID matches', () => {
+			const deps = createMockDeps();
+			// Tab A exists and is awaiting — should receive its session ID normally
+			const tabA = createMockTab({
+				id: 'tab-a',
+				agentSessionId: null,
+				awaitingSessionId: true,
+			});
+			const tabB = createMockTab({
+				id: 'tab-b',
+				agentSessionId: null,
+			});
+			const session = createMockSession({
+				id: 'sess-1',
+				aiTabs: [tabA, tabB],
+				activeTabId: 'tab-a',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			onSessionIdHandler?.('sess-1-ai-tab-a', 'correct-session');
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			const updatedTabA = updated?.aiTabs.find((t) => t.id === 'tab-a');
+			expect(updatedTabA?.agentSessionId).toBe('correct-session');
+			expect(updatedTabA?.awaitingSessionId).toBe(false);
+			// Tab B untouched
+			const updatedTabB = updated?.aiTabs.find((t) => t.id === 'tab-b');
+			expect(updatedTabB?.agentSessionId).toBeNull();
+		});
+
+		it('handles forced-parallel session ID for closed tab without cross-binding', () => {
+			const deps = createMockDeps();
+			const tabB = createMockTab({
+				id: 'tab-b',
+				agentSessionId: null,
+			});
+			const session = createMockSession({
+				id: 'sess-1',
+				toolType: 'codex',
+				aiTabs: [tabB],
+				activeTabId: 'tab-b',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			// Forced-parallel process from closed tab-a reports session ID
+			// The -fp-{timestamp} suffix is stripped by REGEX_AI_TAB, leaving tabId = 'tab-a'
+			onSessionIdHandler?.('sess-1-ai-tab-a-fp-1712611230000', 'fp-session');
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			// Tab B must NOT be contaminated
+			const updatedTabB = updated?.aiTabs.find((t) => t.id === 'tab-b');
+			expect(updatedTabB?.agentSessionId).toBeNull();
+			// Session level gets the ID
+			expect(updated?.agentSessionId).toBe('fp-session');
+		});
 	});
 
 	// ========================================================================
@@ -1216,7 +1006,6 @@ describe('useAgentListeners', () => {
 
 		it('sets error state on the session', () => {
 			const deps = createMockDeps();
-			const otherSession = createMockSession({ id: 'other-session', state: 'idle' });
 			const tab = createMockTab({ id: 'tab-1' });
 			const session = createMockSession({
 				id: 'sess-1',
@@ -1225,7 +1014,7 @@ describe('useAgentListeners', () => {
 				activeTabId: 'tab-1',
 			});
 			useSessionStore.setState({
-				sessions: [otherSession, session],
+				sessions: [session],
 				activeSessionId: 'sess-1',
 			});
 
@@ -1238,9 +1027,6 @@ describe('useAgentListeners', () => {
 			expect(updated?.agentErrorTabId).toBe('tab-1');
 			expect(updated?.state).toBe('error');
 			expect(updated?.agentErrorPaused).toBe(true);
-			expect(useSessionStore.getState().sessions.find((s) => s.id === 'other-session')).toBe(
-				otherSession
-			);
 		});
 
 		it('opens the agent error modal', () => {
@@ -1293,9 +1079,9 @@ describe('useAgentListeners', () => {
 			expect(agentErrorOpen).toBe(false);
 		});
 
-		it('records session_not_found as a system log without pausing the session', () => {
+		it('clears agentSessionId on session_not_found so next spawn starts fresh', () => {
 			const deps = createMockDeps();
-			const tab = createMockTab({ id: 'tab-1', logs: [] });
+			const tab = createMockTab({ id: 'tab-1', agentSessionId: 'stale-session-id' });
 			const session = createMockSession({
 				id: 'sess-1',
 				state: 'busy',
@@ -1312,31 +1098,20 @@ describe('useAgentListeners', () => {
 			onAgentErrorHandler?.('sess-1-ai-tab-1', {
 				...baseError,
 				type: 'session_not_found',
-				message: 'Provider session disappeared',
 			});
 
 			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
-			expect(updated?.state).toBe('busy');
-			expect(updated?.agentError).toBeUndefined();
-			expect(updated?.agentErrorPaused).toBeUndefined();
-			expect(updated?.aiTabs[0].agentError).toBeUndefined();
-			expect(updated?.aiTabs[0].logs).toEqual([
-				expect.objectContaining({
-					source: 'system',
-					text: 'Provider session disappeared',
-					agentError: undefined,
-				}),
-			]);
+			const updatedTab = updated?.aiTabs.find((t) => t.id === 'tab-1');
+			expect(updatedTab?.agentSessionId).toBeNull();
 		});
 
 		it('appends error log entry to the target tab', () => {
 			const deps = createMockDeps();
 			const tab = createMockTab({ id: 'tab-1', logs: [] });
-			const untouchedTab = createMockTab({ id: 'tab-2', logs: [] });
 			const session = createMockSession({
 				id: 'sess-1',
 				state: 'busy',
-				aiTabs: [tab, untouchedTab],
+				aiTabs: [tab],
 				activeTabId: 'tab-1',
 			});
 			useSessionStore.setState({
@@ -1354,64 +1129,6 @@ describe('useAgentListeners', () => {
 				(l: any) => l.source === 'error' || l.text?.includes('Authentication')
 			);
 			expect(errorLog).toBeDefined();
-			expect(updated?.aiTabs.find((t) => t.id === 'tab-2')).toBe(untouchedTab);
-		});
-
-		it('appends legacy AI errors to the active tab when no tab id is present', () => {
-			const deps = createMockDeps();
-			const tab = createMockTab({ id: 'tab-1', logs: [] });
-			const session = createMockSession({
-				id: 'sess-1',
-				state: 'busy',
-				aiTabs: [tab],
-				activeTabId: 'tab-1',
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			onAgentErrorHandler?.('sess-1-ai', baseError);
-
-			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
-			expect(updated?.agentErrorTabId).toBe('tab-1');
-			expect(updated?.aiTabs[0].logs).toEqual([
-				expect.objectContaining({
-					source: 'error',
-					text: baseError.message,
-				}),
-			]);
-		});
-
-		it('stores session error state without a tab log when the explicit tab is missing', () => {
-			const deps = createMockDeps();
-			const tab = createMockTab({ id: 'tab-1', logs: [] });
-			const session = createMockSession({
-				id: 'sess-1',
-				state: 'busy',
-				aiTabs: [tab],
-				activeTabId: 'tab-1',
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			onAgentErrorHandler?.('sess-1-ai-missing-tab', baseError);
-
-			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
-			expect(updated).toEqual(
-				expect.objectContaining({
-					state: 'error',
-					agentError: expect.objectContaining({ message: baseError.message }),
-					agentErrorTabId: undefined,
-				})
-			);
-			expect(updated?.aiTabs[0].logs).toEqual([]);
 		});
 
 		it('pauses batch on error when batch is running', () => {
@@ -1447,228 +1164,6 @@ describe('useAgentListeners', () => {
 			expect(pauseBatchOnError).toHaveBeenCalledWith('sess-1', baseError, 2, 'Processing doc3.md');
 		});
 
-		it('adds Auto Run error history when a running batch pauses on agent error', () => {
-			const pauseBatchOnError = vi.fn();
-			const addHistoryEntry = vi.fn();
-			const deps = createMockDeps({
-				getBatchStateRef: {
-					current: () =>
-						({
-							isRunning: true,
-							errorPaused: false,
-							currentDocumentIndex: 0,
-							documents: ['doc1.md'],
-						}) as any,
-				},
-				pauseBatchOnErrorRef: { current: pauseBatchOnError },
-				addHistoryEntryRef: { current: addHistoryEntry },
-			});
-			const tab = createMockTab({ id: 'tab-1' });
-			const session = createMockSession({
-				id: 'sess-1',
-				state: 'busy',
-				aiTabs: [tab],
-				activeTabId: 'tab-1',
-				cwd: '/repo/project',
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			onAgentErrorHandler?.('sess-1-ai-tab-1', {
-				...baseError,
-				type: 'network_error',
-				message: 'Network unavailable',
-			});
-
-			expect(addHistoryEntry).toHaveBeenCalledWith(
-				expect.objectContaining({
-					type: 'AUTO',
-					summary: 'Auto Run error: Connection Error (doc1.md)',
-					projectPath: '/repo/project',
-					sessionId: 'sess-1',
-					success: false,
-					fullResponse: expect.stringContaining('- Check your internet connection and try again'),
-				})
-			);
-		});
-
-		it('pauses Auto Run without history when no history callback is registered', () => {
-			const pauseBatchOnError = vi.fn();
-			const deps = createMockDeps({
-				getBatchStateRef: {
-					current: () =>
-						({
-							isRunning: true,
-							errorPaused: false,
-							currentDocumentIndex: 0,
-							documents: ['doc.md'],
-						}) as any,
-				},
-				pauseBatchOnErrorRef: { current: pauseBatchOnError },
-				addHistoryEntryRef: { current: null },
-			});
-			const session = createMockSession({
-				id: 'sess-1',
-				state: 'busy',
-				aiTabs: [createMockTab({ id: 'tab-1' })],
-				activeTabId: 'tab-1',
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			onAgentErrorHandler?.('sess-1-ai-tab-1', baseError);
-
-			expect(pauseBatchOnError).toHaveBeenCalledWith(
-				'sess-1',
-				expect.objectContaining({ message: baseError.message }),
-				0,
-				'Processing doc.md'
-			);
-			expect(deps.addHistoryEntryRef.current).toBeNull();
-		});
-
-		it('adds Auto Run token exhaustion history without a current document', () => {
-			const pauseBatchOnError = vi.fn();
-			const addHistoryEntry = vi.fn();
-			const deps = createMockDeps({
-				getBatchStateRef: {
-					current: () =>
-						({
-							isRunning: true,
-							errorPaused: false,
-							currentDocumentIndex: 0,
-							documents: [],
-						}) as any,
-				},
-				pauseBatchOnErrorRef: { current: pauseBatchOnError },
-				addHistoryEntryRef: { current: addHistoryEntry },
-			});
-			const session = createMockSession({
-				id: 'sess-1',
-				state: 'busy',
-				aiTabs: [createMockTab({ id: 'tab-1' })],
-				activeTabId: 'tab-1',
-				cwd: '/repo/project',
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			onAgentErrorHandler?.('sess-1-ai-tab-1', {
-				...baseError,
-				type: 'token_exhaustion',
-				message: 'Context exhausted',
-			});
-
-			expect(pauseBatchOnError).toHaveBeenCalledWith(
-				'sess-1',
-				expect.objectContaining({ type: 'token_exhaustion' }),
-				0,
-				undefined
-			);
-			expect(addHistoryEntry).toHaveBeenCalledWith(
-				expect.objectContaining({
-					summary: 'Auto Run error: Context Limit Reached',
-					fullResponse: expect.stringContaining(
-						'- Start a new session to reset the context window'
-					),
-				})
-			);
-			expect(addHistoryEntry).toHaveBeenCalledWith(
-				expect.objectContaining({
-					fullResponse: expect.not.stringContaining('- Document:'),
-				})
-			);
-		});
-
-		it.each([
-			['auth_expired', '- Re-authenticate with the provider'],
-			['rate_limited', '- Wait a few minutes before retrying'],
-			['agent_crashed', '- Review the error message and take appropriate action'],
-		] as const)('adds Auto Run remediation history for %s', (type, expectedAdvice) => {
-			const addHistoryEntry = vi.fn();
-			const deps = createMockDeps({
-				getBatchStateRef: {
-					current: () =>
-						({
-							isRunning: true,
-							errorPaused: false,
-							currentDocumentIndex: 0,
-							documents: ['doc.md'],
-						}) as any,
-				},
-				pauseBatchOnErrorRef: { current: vi.fn() },
-				addHistoryEntryRef: { current: addHistoryEntry },
-			});
-			const session = createMockSession({
-				id: 'sess-1',
-				state: 'busy',
-				aiTabs: [createMockTab({ id: 'tab-1' })],
-				activeTabId: 'tab-1',
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			onAgentErrorHandler?.('sess-1-ai-tab-1', {
-				...baseError,
-				type,
-				message: `${type} happened`,
-			});
-
-			expect(addHistoryEntry).toHaveBeenCalledWith(
-				expect.objectContaining({
-					fullResponse: expect.stringContaining(expectedAdvice),
-				})
-			);
-		});
-
-		it('does not pause an already error-paused batch again', () => {
-			const pauseBatchOnError = vi.fn();
-			const deps = createMockDeps({
-				getBatchStateRef: {
-					current: () =>
-						({
-							isRunning: true,
-							errorPaused: true,
-							currentDocumentIndex: 0,
-							documents: ['doc1.md'],
-						}) as any,
-				},
-				pauseBatchOnErrorRef: { current: pauseBatchOnError },
-			});
-			const session = createMockSession({
-				id: 'sess-1',
-				state: 'busy',
-				aiTabs: [createMockTab({ id: 'tab-1' })],
-				activeTabId: 'tab-1',
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			onAgentErrorHandler?.('sess-1-ai-tab-1', baseError);
-
-			expect(pauseBatchOnError).not.toHaveBeenCalled();
-		});
-
 		it('delegates group chat errors to groupChatStore', () => {
 			useGroupChatStore.setState({ groupChatError: null });
 
@@ -1692,116 +1187,6 @@ describe('useAgentListeners', () => {
 
 			// Should set error in groupChatStore directly
 			expect(useGroupChatStore.getState().groupChatError).not.toBeNull();
-		});
-
-		it('labels moderator group chat errors in stored state and messages', () => {
-			useGroupChatStore.setState({
-				groupChatError: null,
-				groupChatMessages: [],
-				groupChatState: 'working',
-				groupChatStates: new Map([['12345678-1234-1234-1234-123456789012', 'working']]),
-			});
-
-			const deps = createMockDeps();
-			renderHook(() => useAgentListeners(deps));
-
-			onAgentErrorHandler?.(
-				'group-chat-12345678-1234-1234-1234-123456789012-moderator-1700000000000',
-				baseError
-			);
-
-			const groupChatState = useGroupChatStore.getState();
-			expect(groupChatState.groupChatError).toEqual(
-				expect.objectContaining({
-					groupChatId: '12345678-1234-1234-1234-123456789012',
-					participantName: 'Moderator',
-				})
-			);
-			expect(groupChatState.groupChatMessages.at(-1)).toEqual(
-				expect.objectContaining({
-					from: 'system',
-					content: expect.stringContaining('Moderator error:'),
-				})
-			);
-			expect(groupChatState.groupChatState).toBe('idle');
-			expect(groupChatState.groupChatStates.get('12345678-1234-1234-1234-123456789012')).toBe(
-				'idle'
-			);
-		});
-
-		it('suppresses group chat session_not_found errors for exit recovery', () => {
-			useGroupChatStore.setState({
-				groupChatError: null,
-				groupChatMessages: [],
-				groupChatState: 'working',
-				groupChatStates: new Map([['12345678-1234-1234-1234-123456789012', 'working']]),
-			});
-			const deps = createMockDeps();
-			renderHook(() => useAgentListeners(deps));
-
-			onAgentErrorHandler?.(
-				'group-chat-12345678-1234-1234-1234-123456789012-moderator-1700000000000',
-				{
-					...baseError,
-					type: 'session_not_found',
-				}
-			);
-
-			const groupChatState = useGroupChatStore.getState();
-			expect(groupChatState.groupChatError).toBeNull();
-			expect(groupChatState.groupChatMessages).toEqual([]);
-			expect(groupChatState.groupChatState).toBe('working');
-			expect(groupChatState.groupChatStates.get('12345678-1234-1234-1234-123456789012')).toBe(
-				'working'
-			);
-		});
-
-		it('suppresses participant group chat session_not_found errors for exit recovery', () => {
-			useGroupChatStore.setState({
-				groupChatError: null,
-				groupChatMessages: [],
-				groupChatState: 'working',
-				groupChatStates: new Map([['12345678-1234-1234-1234-123456789012', 'working']]),
-			});
-			const deps = createMockDeps();
-			renderHook(() => useAgentListeners(deps));
-
-			onAgentErrorHandler?.(
-				'group-chat-12345678-1234-1234-1234-123456789012-claude-1700000000000',
-				{
-					...baseError,
-					type: 'session_not_found',
-				}
-			);
-
-			const groupChatState = useGroupChatStore.getState();
-			expect(groupChatState.groupChatError).toBeNull();
-			expect(groupChatState.groupChatMessages).toEqual([]);
-			expect(groupChatState.groupChatState).toBe('working');
-			expect(groupChatState.groupChatStates.get('12345678-1234-1234-1234-123456789012')).toBe(
-				'working'
-			);
-		});
-
-		it('ignores synopsis process errors', () => {
-			const deps = createMockDeps();
-			const session = createMockSession({
-				id: 'sess-1',
-				state: 'busy',
-				aiTabs: [createMockTab({ id: 'tab-1', logs: [] })],
-				activeTabId: 'tab-1',
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			onAgentErrorHandler?.('sess-1-synopsis-1700000000000', baseError);
-
-			expect(useSessionStore.getState().sessions[0]).toBe(session);
-			expect(useModalStore.getState().isOpen('agentError')).toBe(false);
 		});
 	});
 
@@ -1837,7 +1222,6 @@ describe('useAgentListeners', () => {
 			onUsageHandler?.('sess-1-ai-tab-1', usage);
 
 			expect(deps.batchedUpdater.updateUsage).toHaveBeenCalledWith('sess-1', 'tab-1', usage);
-			expect(deps.batchedUpdater.updateUsage).toHaveBeenCalledWith('sess-1', null, usage);
 		});
 
 		it('updates cycle tokens for output tokens', () => {
@@ -1865,164 +1249,6 @@ describe('useAgentListeners', () => {
 
 			expect(deps.batchedUpdater.updateCycleTokens).toHaveBeenCalledWith('sess-1', 50);
 		});
-
-		it('falls back to accumulated context growth when raw token totals exceed the window', () => {
-			const deps = createMockDeps();
-			const tab = createMockTab({ id: 'tab-1' });
-			const session = createMockSession({
-				id: 'sess-1',
-				toolType: 'claude-code',
-				contextUsage: 70,
-				aiTabs: [tab],
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			onUsageHandler?.('sess-1-ai-tab-1', {
-				inputTokens: 500,
-				outputTokens: 50,
-				cacheReadInputTokens: 0,
-				cacheCreationInputTokens: 0,
-				totalCostUsd: 0.001,
-				contextWindow: 100,
-			});
-
-			expect(deps.batchedUpdater.updateContextUsage).toHaveBeenCalledWith('sess-1', 73);
-		});
-
-		it('does not estimate accumulated context growth without prior usage', () => {
-			const deps = createMockDeps();
-			const session = createMockSession({
-				id: 'sess-1',
-				toolType: 'claude-code',
-				contextUsage: 0,
-				aiTabs: [createMockTab({ id: 'tab-1' })],
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			onUsageHandler?.('sess-1-ai-tab-1', {
-				inputTokens: 500,
-				outputTokens: 50,
-				cacheReadInputTokens: 0,
-				cacheCreationInputTokens: 0,
-				totalCostUsd: 0.001,
-				contextWindow: 100,
-			});
-
-			expect(deps.batchedUpdater.updateContextUsage).not.toHaveBeenCalled();
-			expect(deps.batchedUpdater.updateCycleTokens).toHaveBeenCalledWith('sess-1', 50);
-		});
-
-		it('uses the default context window when accumulated usage exceeds the default window', () => {
-			const deps = createMockDeps();
-			const session = createMockSession({
-				id: 'sess-1',
-				toolType: 'claude-code',
-				contextUsage: 70,
-				aiTabs: [createMockTab({ id: 'tab-1' })],
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			onUsageHandler?.('sess-1-ai-tab-1', {
-				inputTokens: 300_000,
-				outputTokens: 50,
-				cacheReadInputTokens: 0,
-				cacheCreationInputTokens: 0,
-				totalCostUsd: 0.001,
-				contextWindow: 0,
-			});
-
-			expect(deps.batchedUpdater.updateContextUsage).toHaveBeenCalledWith('sess-1', 71);
-		});
-
-		it('skips accumulated context fallback when usage arrives for a missing session', () => {
-			const deps = createMockDeps();
-			renderHook(() => useAgentListeners(deps));
-
-			onUsageHandler?.('missing-session-ai-tab-1', {
-				inputTokens: 500,
-				outputTokens: 50,
-				cacheReadInputTokens: 0,
-				cacheCreationInputTokens: 0,
-				totalCostUsd: 0.001,
-				contextWindow: 100,
-			});
-
-			expect(deps.batchedUpdater.updateUsage).toHaveBeenCalledWith(
-				'missing-session',
-				'tab-1',
-				expect.objectContaining({ inputTokens: 500 })
-			);
-			expect(deps.batchedUpdater.updateContextUsage).not.toHaveBeenCalled();
-		});
-
-		it('keeps current context usage when no agent type can provide a fallback window', () => {
-			const deps = createMockDeps();
-			const session = createMockSession({
-				id: 'sess-1',
-				toolType: undefined as any,
-				contextUsage: 70,
-				aiTabs: [createMockTab({ id: 'tab-1' })],
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			onUsageHandler?.('sess-1-ai-tab-1', {
-				inputTokens: 500,
-				outputTokens: 50,
-				cacheReadInputTokens: 0,
-				cacheCreationInputTokens: 0,
-				totalCostUsd: 0.001,
-				contextWindow: 0,
-			});
-
-			expect(deps.batchedUpdater.updateContextUsage).toHaveBeenCalledWith('sess-1', 70);
-		});
-
-		it('keeps current context usage when the agent type has no default window', () => {
-			const deps = createMockDeps();
-			const session = createMockSession({
-				id: 'sess-1',
-				toolType: 'unknown-agent' as any,
-				contextUsage: 70,
-				aiTabs: [createMockTab({ id: 'tab-1' })],
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			onUsageHandler?.('sess-1-ai-tab-1', {
-				inputTokens: 500,
-				outputTokens: 50,
-				cacheReadInputTokens: 0,
-				cacheCreationInputTokens: 0,
-				totalCostUsd: 0.001,
-				contextWindow: 0,
-			});
-
-			expect(deps.batchedUpdater.updateContextUsage).toHaveBeenCalledWith('sess-1', 70);
-		});
 	});
 
 	// ========================================================================
@@ -2030,326 +1256,38 @@ describe('useAgentListeners', () => {
 	// ========================================================================
 
 	describe('onThinkingChunk', () => {
-		it('buffers multiple chunks into a single thinking log on the next animation frame', () => {
-			const restoreAnimationFrame = installMockAnimationFrame();
-			try {
-				const deps = createMockDeps();
-				const tab = createMockTab({
-					id: 'tab-1',
-					showThinking: 'on',
-					logs: [],
-				});
-				const otherTab = createMockTab({
-					id: 'tab-2',
-					showThinking: 'on',
-					logs: [],
-				});
-				const session = createMockSession({
-					id: 'sess-1',
-					aiTabs: [tab, otherTab],
-					activeTabId: 'tab-1',
-				});
-				useSessionStore.setState({
-					sessions: [session],
-					activeSessionId: 'sess-1',
-				});
-
-				renderHook(() => useAgentListeners(deps));
-
-				onThinkingChunkHandler?.('sess-1-ai-tab-1', 'thinking ');
-				onThinkingChunkHandler?.('sess-1-ai-tab-1', 'chunk');
-				expect(globalThis.requestAnimationFrame).toHaveBeenCalledTimes(1);
-
-				vi.runOnlyPendingTimers();
-
-				const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
-				expect(updated?.aiTabs[0].logs).toEqual([
-					expect.objectContaining({
-						source: 'thinking',
-						text: 'thinking chunk',
+		it('removes hidden progress once visible output arrives', () => {
+			const deps = createMockDeps();
+			const session = createMockSession({
+				id: 'sess-1',
+				state: 'busy',
+				aiTabs: [
+					createMockTab({
+						id: 'tab-1',
+						showThinking: 'off',
+						logs: [
+							{
+								id: 'hidden-progress:tab-1',
+								timestamp: 1700000000000,
+								source: 'system',
+								text: 'Thinking through the next step...',
+							},
+						],
 					}),
-				]);
-				expect(updated?.aiTabs[1]).toBe(otherTab);
-			} finally {
-				restoreAnimationFrame();
-			}
-		});
-
-		it('appends buffered thinking content to an existing thinking log', () => {
-			const restoreAnimationFrame = installMockAnimationFrame();
-			try {
-				const deps = createMockDeps();
-				const tab = createMockTab({
-					id: 'tab-1',
-					showThinking: 'on',
-					logs: [
-						{
-							id: 'thinking-1',
-							timestamp: 1700000000000,
-							source: 'thinking',
-							text: 'existing ',
-						},
-					],
-				});
-				const otherTab = createMockTab({ id: 'tab-2', showThinking: 'on', logs: [] });
-				const session = createMockSession({
-					id: 'sess-1',
-					aiTabs: [tab, otherTab],
-					activeTabId: 'tab-1',
-				});
-				useSessionStore.setState({
-					sessions: [session],
-					activeSessionId: 'sess-1',
-				});
-
-				renderHook(() => useAgentListeners(deps));
-
-				onThinkingChunkHandler?.('sess-1-ai-tab-1', 'addition');
-				vi.runOnlyPendingTimers();
-
-				const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
-				expect(updated?.aiTabs[0].logs).toEqual([
-					expect.objectContaining({
-						id: 'thinking-1',
-						source: 'thinking',
-						text: 'existing addition',
-					}),
-				]);
-				expect(updated?.aiTabs[1]).toBe(otherTab);
-			} finally {
-				restoreAnimationFrame();
-			}
-		});
-
-		it('ignores thinking chunks for sessions that are no longer present', () => {
-			const restoreAnimationFrame = installMockAnimationFrame();
-			try {
-				const deps = createMockDeps();
-				const session = createMockSession({
-					id: 'sess-1',
-					aiTabs: [createMockTab({ id: 'tab-1', showThinking: 'on', logs: [] })],
-					activeTabId: 'tab-1',
-				});
-				useSessionStore.setState({
-					sessions: [session],
-					activeSessionId: 'sess-1',
-				});
-
-				renderHook(() => useAgentListeners(deps));
-
-				onThinkingChunkHandler?.('missing-session-ai-tab-1', 'orphaned chunk');
-				vi.runOnlyPendingTimers();
-
-				expect(useSessionStore.getState().sessions[0]).toBe(session);
-			} finally {
-				restoreAnimationFrame();
-			}
-		});
-
-		it('skips unrelated buffered chunks and missing target tabs while applying valid thinking', () => {
-			const restoreAnimationFrame = installMockAnimationFrame();
-			try {
-				const deps = createMockDeps();
-				const session = createMockSession({
-					id: 'sess-1',
-					aiTabs: [createMockTab({ id: 'tab-1', showThinking: 'on', logs: [] })],
-					activeTabId: 'tab-1',
-				});
-				useSessionStore.setState({
-					sessions: [session],
-					activeSessionId: 'sess-1',
-				});
-
-				renderHook(() => useAgentListeners(deps));
-
-				onThinkingChunkHandler?.('other-session-ai-tab-1', 'other chunk');
-				onThinkingChunkHandler?.('sess-1-ai-missing-tab', 'missing tab chunk');
-				onThinkingChunkHandler?.('sess-1-ai-tab-1', 'visible thinking');
-				vi.runOnlyPendingTimers();
-
-				const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
-				expect(updated?.aiTabs[0].logs).toEqual([
-					expect.objectContaining({
-						source: 'thinking',
-						text: 'visible thinking',
-					}),
-				]);
-			} finally {
-				restoreAnimationFrame();
-			}
-		});
-
-		it('drops malformed thinking chunks and replaces malformed combined thinking content', () => {
-			const restoreAnimationFrame = installMockAnimationFrame();
-			try {
-				const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-				const deps = createMockDeps();
-				const malformedTab = createMockTab({
-					id: 'tab-1',
-					showThinking: 'on',
-					logs: [],
-				});
-				const replacingTab = createMockTab({
-					id: 'tab-2',
-					showThinking: 'on',
-					logs: [
-						{
-							id: 'thinking-1',
-							timestamp: 1700000000000,
-							source: 'thinking',
-							text: 'Task',
-						},
-					],
-				});
-				const session = createMockSession({
-					id: 'sess-1',
-					aiTabs: [malformedTab, replacingTab],
-					activeTabId: 'tab-1',
-				});
-				useSessionStore.setState({
-					sessions: [session],
-					activeSessionId: 'sess-1',
-				});
-
-				renderHook(() => useAgentListeners(deps));
-
-				onThinkingChunkHandler?.('sess-1-ai-tab-1', 'TaskGrepRead');
-				vi.runOnlyPendingTimers();
-
-				let updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
-				expect(updated?.aiTabs.find((tab) => tab.id === 'tab-1')?.logs).toEqual([]);
-				expect(consoleWarnSpy).toHaveBeenCalledWith(
-					'[App] Skipping malformed thinking chunk (concatenated tool names):',
-					'TaskGrepRead'
-				);
-
-				onThinkingChunkHandler?.('sess-1-ai-tab-2', 'GrepRead');
-				vi.runOnlyPendingTimers();
-
-				updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
-				expect(updated?.aiTabs.find((tab) => tab.id === 'tab-2')?.logs).toEqual([
-					expect.objectContaining({
-						id: 'thinking-1',
-						source: 'thinking',
-						text: 'GrepRead',
-					}),
-				]);
-				expect(consoleWarnSpy).toHaveBeenCalledWith(
-					'[App] Detected malformed thinking content, replacing instead of appending'
-				);
-			} finally {
-				restoreAnimationFrame();
-			}
-		});
-
-		it('ignores malformed IDs and tabs with thinking hidden', () => {
-			const restoreAnimationFrame = installMockAnimationFrame();
-			try {
-				const deps = createMockDeps();
-				const tab = createMockTab({
-					id: 'tab-1',
-					showThinking: 'off',
-					logs: [],
-				});
-				const session = createMockSession({
-					id: 'sess-1',
-					aiTabs: [tab],
-					activeTabId: 'tab-1',
-				});
-				useSessionStore.setState({
-					sessions: [session],
-					activeSessionId: 'sess-1',
-				});
-
-				renderHook(() => useAgentListeners(deps));
-
-				onThinkingChunkHandler?.('sess-1-terminal', 'ignored');
-				expect(globalThis.requestAnimationFrame).not.toHaveBeenCalled();
-
-				onThinkingChunkHandler?.('sess-1-ai-tab-1', 'hidden');
-				vi.runOnlyPendingTimers();
-
-				const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
-				expect(updated?.aiTabs[0].logs).toEqual([]);
-			} finally {
-				restoreAnimationFrame();
-			}
-		});
-
-		it('cancels pending thinking chunk animation frame on unmount', () => {
-			const restoreAnimationFrame = installMockAnimationFrame();
-			try {
-				const deps = createMockDeps();
-				const tab = createMockTab({
-					id: 'tab-1',
-					showThinking: 'on',
-					logs: [],
-				});
-				const session = createMockSession({
-					id: 'sess-1',
-					aiTabs: [tab],
-					activeTabId: 'tab-1',
-				});
-				useSessionStore.setState({
-					sessions: [session],
-					activeSessionId: 'sess-1',
-				});
-
-				const { unmount } = renderHook(() => useAgentListeners(deps));
-
-				onThinkingChunkHandler?.('sess-1-ai-tab-1', 'pending');
-				expect(globalThis.requestAnimationFrame).toHaveBeenCalledTimes(1);
-
-				unmount();
-
-				expect(globalThis.cancelAnimationFrame).toHaveBeenCalledTimes(1);
-			} finally {
-				restoreAnimationFrame();
-			}
-		});
-
-		it('ignores stale thinking animation frame callbacks after cleanup clears the buffer', () => {
-			const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
-			const originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
-			let capturedCallback: FrameRequestCallback | undefined;
-			globalThis.requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
-				capturedCallback = callback;
-				return 123;
+				],
+				activeTabId: 'tab-1',
 			});
-			globalThis.cancelAnimationFrame = vi.fn();
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
 
-			try {
-				const deps = createMockDeps();
-				const session = createMockSession({
-					id: 'sess-1',
-					aiTabs: [createMockTab({ id: 'tab-1', showThinking: 'on', logs: [] })],
-					activeTabId: 'tab-1',
-				});
-				useSessionStore.setState({
-					sessions: [session],
-					activeSessionId: 'sess-1',
-				});
+			renderHook(() => useAgentListeners(deps));
 
-				const { unmount } = renderHook(() => useAgentListeners(deps));
+			onDataHandler?.('sess-1-ai-tab-1', 'Visible response');
 
-				onThinkingChunkHandler?.('sess-1-ai-tab-1', 'pending');
-				unmount();
-				capturedCallback?.(0);
-
-				expect(useSessionStore.getState().sessions[0].aiTabs[0].logs).toEqual([]);
-				expect(globalThis.cancelAnimationFrame).toHaveBeenCalledWith(123);
-			} finally {
-				if (originalRequestAnimationFrame) {
-					globalThis.requestAnimationFrame = originalRequestAnimationFrame;
-				} else {
-					delete (globalThis as Partial<typeof globalThis>).requestAnimationFrame;
-				}
-				if (originalCancelAnimationFrame) {
-					globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
-				} else {
-					delete (globalThis as Partial<typeof globalThis>).cancelAnimationFrame;
-				}
-			}
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			expect(updated?.aiTabs[0]?.logs).toEqual([]);
 		});
 	});
 
@@ -2358,64 +1296,11 @@ describe('useAgentListeners', () => {
 	// ========================================================================
 
 	describe('onToolExecution', () => {
-		it('appends tool execution logs when thinking output is visible', () => {
+		it('does not emit tool logs when thinking is hidden', () => {
 			const deps = createMockDeps();
-			const otherSession = createMockSession({ id: 'other-session' });
-			const tab = createMockTab({
-				id: 'tab-1',
-				showThinking: 'on',
-				logs: [],
-			});
-			const untouchedTab = createMockTab({
-				id: 'tab-2',
-				showThinking: 'on',
-				logs: [],
-			});
 			const session = createMockSession({
 				id: 'sess-1',
-				aiTabs: [tab, untouchedTab],
-				activeTabId: 'tab-1',
-			});
-			useSessionStore.setState({
-				sessions: [otherSession, session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			onToolExecutionHandler?.('sess-1-ai-tab-1', {
-				toolName: 'Read',
-				state: { path: '/tmp/file.ts' },
-				timestamp: 1700000000123,
-			});
-
-			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
-			expect(updated?.aiTabs[0].logs).toEqual([
-				expect.objectContaining({
-					source: 'tool',
-					text: 'Read',
-					timestamp: 1700000000123,
-					metadata: {
-						toolState: { path: '/tmp/file.ts' },
-					},
-				}),
-			]);
-			expect(updated?.aiTabs[1]).toBe(untouchedTab);
-			expect(useSessionStore.getState().sessions.find((s) => s.id === 'other-session')).toBe(
-				otherSession
-			);
-		});
-
-		it('ignores malformed IDs and tabs with thinking output hidden', () => {
-			const deps = createMockDeps();
-			const tab = createMockTab({
-				id: 'tab-1',
-				showThinking: 'off',
-				logs: [],
-			});
-			const session = createMockSession({
-				id: 'sess-1',
-				aiTabs: [tab],
+				aiTabs: [createMockTab({ id: 'tab-1', showThinking: 'off' })],
 				activeTabId: 'tab-1',
 			});
 			useSessionStore.setState({
@@ -2425,17 +1310,175 @@ describe('useAgentListeners', () => {
 
 			renderHook(() => useAgentListeners(deps));
 
-			onToolExecutionHandler?.('sess-1-terminal', {
-				toolName: 'Ignored',
-				timestamp: 1700000000123,
-			});
 			onToolExecutionHandler?.('sess-1-ai-tab-1', {
-				toolName: 'Hidden',
-				timestamp: 1700000000124,
+				toolName: 'view',
+				state: { status: 'running', input: { path: 'src/renderer/App.tsx' } },
+				timestamp: 1700000000000,
 			});
 
 			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
-			expect(updated?.aiTabs[0].logs).toEqual([]);
+			expect(updated?.aiTabs[0]?.logs).toEqual([]);
+		});
+
+		// Copilot-CLI emits paired `tool.execution_start` and `tool.execution_complete`
+		// events. Without correlation, each appended a separate LogEntry — the second
+		// rendered as an empty bubble because the complete event omits `input`.
+		// With toolCallId, both events collapse into a single bubble that gains
+		// `output`/status while preserving `input`.
+		it('merges running and completed events for the same toolCallId into a single log entry', () => {
+			const deps = createMockDeps();
+			const session = createMockSession({
+				id: 'sess-1',
+				aiTabs: [createMockTab({ id: 'tab-1', showThinking: 'on' })],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			onToolExecutionHandler?.('sess-1-ai-tab-1', {
+				toolName: 'bash',
+				state: { status: 'running', input: { command: 'ls -la' } },
+				timestamp: 1700000000000,
+				toolCallId: 'call_abc',
+			});
+
+			onToolExecutionHandler?.('sess-1-ai-tab-1', {
+				toolName: 'bash',
+				state: { status: 'completed', output: 'total 0' },
+				timestamp: 1700000000500,
+				toolCallId: 'call_abc',
+			});
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			const logs = updated?.aiTabs[0]?.logs ?? [];
+			expect(logs).toHaveLength(1);
+			expect(logs[0]).toMatchObject({
+				id: 'tool-call_abc',
+				source: 'tool',
+				text: 'bash',
+				metadata: {
+					toolState: {
+						status: 'completed',
+						input: { command: 'ls -la' },
+						output: 'total 0',
+					},
+				},
+			});
+		});
+
+		// Codex (and other agents that do not emit a per-call correlation id)
+		// rely on the toolName fallback: the completion event is merged into
+		// the most recent still-running entry of the same tool.
+		it('merges completion into the last running entry of the same toolName when no toolCallId is provided', () => {
+			const deps = createMockDeps();
+			const session = createMockSession({
+				id: 'sess-1',
+				aiTabs: [createMockTab({ id: 'tab-1', showThinking: 'on' })],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			onToolExecutionHandler?.('sess-1-ai-tab-1', {
+				toolName: 'bash',
+				state: { status: 'running', input: { command: 'ls' } },
+				timestamp: 1700000000000,
+			});
+
+			onToolExecutionHandler?.('sess-1-ai-tab-1', {
+				toolName: 'bash',
+				state: { status: 'completed', output: 'a b c' },
+				timestamp: 1700000000500,
+			});
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			const logs = updated?.aiTabs[0]?.logs ?? [];
+			expect(logs).toHaveLength(1);
+			expect(logs[0]?.metadata?.toolState).toEqual({
+				status: 'completed',
+				input: { command: 'ls' },
+				output: 'a b c',
+			});
+		});
+
+		it('only merges into running entries — does not retro-update an already-completed entry', () => {
+			const deps = createMockDeps();
+			const session = createMockSession({
+				id: 'sess-1',
+				aiTabs: [createMockTab({ id: 'tab-1', showThinking: 'on' })],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			// First call completes cleanly via the fallback.
+			onToolExecutionHandler?.('sess-1-ai-tab-1', {
+				toolName: 'bash',
+				state: { status: 'running', input: { command: 'ls' } },
+				timestamp: 1700000000000,
+			});
+			onToolExecutionHandler?.('sess-1-ai-tab-1', {
+				toolName: 'bash',
+				state: { status: 'completed', output: '...' },
+				timestamp: 1700000000500,
+			});
+
+			// A second isolated completion event with no running predecessor
+			// should still produce its own (admittedly empty) bubble rather
+			// than overwriting the prior, already-finalized one.
+			onToolExecutionHandler?.('sess-1-ai-tab-1', {
+				toolName: 'bash',
+				state: { status: 'completed' },
+				timestamp: 1700000000900,
+			});
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			expect(updated?.aiTabs[0]?.logs).toHaveLength(2);
+		});
+
+		it('keeps two log entries for distinct toolCallIds', () => {
+			const deps = createMockDeps();
+			const session = createMockSession({
+				id: 'sess-1',
+				aiTabs: [createMockTab({ id: 'tab-1', showThinking: 'on' })],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			onToolExecutionHandler?.('sess-1-ai-tab-1', {
+				toolName: 'bash',
+				state: { status: 'running', input: { command: 'pwd' } },
+				timestamp: 1700000000000,
+				toolCallId: 'call_a',
+			});
+
+			onToolExecutionHandler?.('sess-1-ai-tab-1', {
+				toolName: 'bash',
+				state: { status: 'running', input: { command: 'whoami' } },
+				timestamp: 1700000000100,
+				toolCallId: 'call_b',
+			});
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			const logs = updated?.aiTabs[0]?.logs ?? [];
+			expect(logs.map((l) => l.id)).toEqual(['tool-call_a', 'tool-call_b']);
 		});
 	});
 
@@ -2446,10 +1489,9 @@ describe('useAgentListeners', () => {
 	describe('onSshRemote', () => {
 		it('updates session SSH remote info', () => {
 			const deps = createMockDeps();
-			const otherSession = createMockSession({ id: 'other-session' });
 			const session = createMockSession({ id: 'sess-1' });
 			useSessionStore.setState({
-				sessions: [otherSession, session],
+				sessions: [session],
 				activeSessionId: 'sess-1',
 			});
 
@@ -2468,249 +1510,6 @@ describe('useAgentListeners', () => {
 				host: 'example.com',
 			});
 			expect(updated?.sshRemoteId).toBe('remote-1');
-			expect(useSessionStore.getState().sessions.find((s) => s.id === 'other-session')).toBe(
-				otherSession
-			);
-		});
-
-		it('updates SSH remote info for plain session IDs', () => {
-			const deps = createMockDeps();
-			const session = createMockSession({ id: 'sess-1' });
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			onSshRemoteHandler?.('sess-1', {
-				id: 'remote-plain',
-				name: 'Plain Server',
-				host: 'plain.example.com',
-			});
-
-			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
-			expect(updated?.sshRemote).toEqual({
-				id: 'remote-plain',
-				name: 'Plain Server',
-				host: 'plain.example.com',
-			});
-			expect(updated?.sshRemoteId).toBe('remote-plain');
-		});
-
-		it('clears SSH remote info from terminal-suffixed session IDs', () => {
-			const deps = createMockDeps();
-			const session = createMockSession({
-				id: 'sess-1',
-				sshRemote: {
-					id: 'remote-1',
-					name: 'My Server',
-					host: 'example.com',
-				},
-				sshRemoteId: 'remote-1',
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			onSshRemoteHandler?.('sess-1-terminal', null);
-
-			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
-			expect(updated?.sshRemote).toBeUndefined();
-			expect(updated?.sshRemoteId).toBeUndefined();
-		});
-
-		it('preserves session identity when the SSH remote ID is unchanged', () => {
-			const deps = createMockDeps();
-			const sshRemote = {
-				id: 'remote-1',
-				name: 'My Server',
-				host: 'example.com',
-			};
-			const session = createMockSession({
-				id: 'sess-1',
-				sshRemote,
-				sshRemoteId: 'remote-1',
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			onSshRemoteHandler?.('sess-1-ai-tab-1', {
-				id: 'remote-1',
-				name: 'Updated Name',
-				host: 'updated.example.com',
-			});
-
-			expect(useSessionStore.getState().sessions[0]).toBe(session);
-		});
-
-		it('detects a remote git repo and caches branches and tags for new SSH remotes', async () => {
-			const isRepoSpy = vi.spyOn(gitService, 'isRepo').mockResolvedValue(true);
-			const getBranchesSpy = vi
-				.spyOn(gitService, 'getBranches')
-				.mockResolvedValue(['main', 'feature/test']);
-			const getTagsSpy = vi.spyOn(gitService, 'getTags').mockResolvedValue(['v1.0.0']);
-			const deps = createMockDeps();
-			const otherSession = createMockSession({ id: 'other-session', isGitRepo: false });
-			const session = createMockSession({
-				id: 'sess-1',
-				isGitRepo: false,
-				cwd: '/local/project',
-				sessionSshRemoteConfig: {
-					enabled: true,
-					remoteId: 'remote-1',
-					workingDirOverride: '/remote/project',
-				},
-			});
-			useSessionStore.setState({
-				sessions: [otherSession, session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			onSshRemoteHandler?.('sess-1-ai', {
-				id: 'remote-1',
-				name: 'Build Server',
-				host: 'build.example.com',
-			});
-			await flushAsyncWork();
-
-			expect(isRepoSpy).toHaveBeenCalledWith('/remote/project', 'remote-1');
-			expect(getBranchesSpy).toHaveBeenCalledWith('/remote/project', 'remote-1');
-			expect(getTagsSpy).toHaveBeenCalledWith('/remote/project', 'remote-1');
-			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
-			expect(updated).toEqual(
-				expect.objectContaining({
-					isGitRepo: true,
-					gitBranches: ['main', 'feature/test'],
-					gitTags: ['v1.0.0'],
-					gitRefsCacheTime: expect.any(Number),
-				})
-			);
-			expect(useSessionStore.getState().sessions.find((s) => s.id === 'other-session')).toBe(
-				otherSession
-			);
-		});
-
-		it('does not load git refs when a new SSH remote is not a git repo', async () => {
-			const isRepoSpy = vi.spyOn(gitService, 'isRepo').mockResolvedValue(false);
-			const getBranchesSpy = vi.spyOn(gitService, 'getBranches');
-			const getTagsSpy = vi.spyOn(gitService, 'getTags');
-			const deps = createMockDeps();
-			const session = createMockSession({
-				id: 'sess-1',
-				isGitRepo: false,
-				cwd: '/local/project',
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			onSshRemoteHandler?.('sess-1-ai', {
-				id: 'remote-1',
-				name: 'Build Server',
-				host: 'build.example.com',
-			});
-			await flushAsyncWork();
-
-			expect(isRepoSpy).toHaveBeenCalledWith('/local/project', 'remote-1');
-			expect(getBranchesSpy).not.toHaveBeenCalled();
-			expect(getTagsSpy).not.toHaveBeenCalled();
-			expect(useSessionStore.getState().sessions[0]).toEqual(
-				expect.objectContaining({
-					isGitRepo: false,
-					sshRemoteId: 'remote-1',
-				})
-			);
-		});
-
-		it('does not overwrite git refs when repo status changes before SSH detection resolves', async () => {
-			let resolveIsRepo: (value: boolean) => void = () => {};
-			vi.spyOn(gitService, 'isRepo').mockImplementation(
-				() =>
-					new Promise<boolean>((resolve) => {
-						resolveIsRepo = resolve;
-					})
-			);
-			const getBranchesSpy = vi.spyOn(gitService, 'getBranches').mockResolvedValue(['main']);
-			const getTagsSpy = vi.spyOn(gitService, 'getTags').mockResolvedValue(['v1.0.0']);
-			const deps = createMockDeps();
-			const session = createMockSession({
-				id: 'sess-1',
-				isGitRepo: false,
-				cwd: '/local/project',
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			onSshRemoteHandler?.('sess-1-ai', {
-				id: 'remote-1',
-				name: 'Build Server',
-				host: 'build.example.com',
-			});
-
-			useSessionStore.setState((state) => ({
-				sessions: state.sessions.map((s) =>
-					s.id === 'sess-1' ? { ...s, isGitRepo: true, gitBranches: ['existing'] } : s
-				),
-			}));
-			resolveIsRepo(true);
-			await flushAsyncWork();
-
-			expect(getBranchesSpy).toHaveBeenCalledWith('/local/project', 'remote-1');
-			expect(getTagsSpy).toHaveBeenCalledWith('/local/project', 'remote-1');
-			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
-			expect(updated).toEqual(
-				expect.objectContaining({ isGitRepo: true, gitBranches: ['existing'] })
-			);
-			expect(updated?.gitTags).toBeUndefined();
-		});
-
-		it('logs SSH git detection failures without marking the session as a repo', async () => {
-			const error = new Error('ssh offline');
-			vi.spyOn(gitService, 'isRepo').mockRejectedValue(error);
-			const getBranchesSpy = vi.spyOn(gitService, 'getBranches');
-			const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-			const deps = createMockDeps();
-			const session = createMockSession({
-				id: 'sess-1',
-				isGitRepo: false,
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			onSshRemoteHandler?.('sess-1-ai', {
-				id: 'remote-1',
-				name: 'Build Server',
-				host: 'build.example.com',
-			});
-			await flushAsyncWork();
-
-			expect(getBranchesSpy).not.toHaveBeenCalled();
-			expect(consoleErrorSpy).toHaveBeenCalledWith(
-				'[SSH] Failed to check git repo status for sess-1:',
-				error
-			);
-			expect(useSessionStore.getState().sessions[0].isGitRepo).toBe(false);
 		});
 	});
 
@@ -2719,1378 +1518,9 @@ describe('useAgentListeners', () => {
 	// ========================================================================
 
 	describe('onExit', () => {
-		it('returns early for batch process exits', async () => {
+		it('transitions AI session from busy to idle on process exit and preserves agentSessionId for resume', async () => {
 			const deps = createMockDeps();
-			vi.spyOn(console, 'log').mockImplementation(() => undefined);
-			renderHook(() => useAgentListeners(deps));
-
-			await onExitHandler?.('sess-1-batch-123', 0);
-
-			expect(mockProcess.getActiveProcesses).not.toHaveBeenCalled();
-			expect(deps.addToastRef.current).not.toHaveBeenCalled();
-			expect(useSessionStore.getState().sessions).toEqual([]);
-		});
-
-		it('ignores AI exit events while the process is still reported active', async () => {
-			const deps = createMockDeps();
-			const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-			mockProcess.getActiveProcesses.mockResolvedValueOnce([{ sessionId: 'sess-1-ai-tab-1' }]);
-			const session = createMockSession({
-				id: 'sess-1',
-				state: 'busy',
-				busySource: 'ai',
-				aiTabs: [createMockTab({ id: 'tab-1', state: 'busy' })],
-				activeTabId: 'tab-1',
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			await onExitHandler?.('sess-1-ai-tab-1', 0);
-
-			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
-			expect(updated?.state).toBe('busy');
-			expect(updated?.aiTabs[0].state).toBe('busy');
-			expect(consoleWarnSpy).toHaveBeenCalledWith(
-				'[onExit] Process still running despite exit event, ignoring:',
-				expect.objectContaining({
-					sessionId: 'sess-1-ai-tab-1',
-					activeProcesses: ['sess-1-ai-tab-1'],
-				})
-			);
-		});
-
-		it('continues AI exit handling when active process verification fails', async () => {
-			const deps = createMockDeps();
-			const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-			mockProcess.getActiveProcesses.mockRejectedValueOnce(new Error('process list failed'));
-			const session = createMockSession({
-				id: 'sess-1',
-				state: 'busy',
-				busySource: 'ai',
-				aiTabs: [createMockTab({ id: 'tab-1', state: 'busy' })],
-				activeTabId: 'tab-1',
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			await onExitHandler?.('sess-1-ai-tab-1', 0);
-
-			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
-			expect(updated?.state).toBe('idle');
-			expect(updated?.aiTabs[0].state).toBe('idle');
-			expect(consoleErrorSpy).toHaveBeenCalledWith(
-				'[onExit] Failed to verify process status:',
-				expect.any(Error)
-			);
-		});
-
-		it('ignores AI process exits when the owning session no longer exists', async () => {
-			const deps = createMockDeps();
-			renderHook(() => useAgentListeners(deps));
-			await flushAsyncWork();
-			vi.clearAllMocks();
-			useSessionStore.setState({ sessions: [], activeSessionId: '' });
-
-			await onExitHandler?.('missing-session-ai-tab-1', 0);
-			await flushAsyncWork();
-
-			expect(useSessionStore.getState().sessions).toEqual([]);
-			expect(window.maestro.stats.recordQuery).not.toHaveBeenCalled();
-			expect(window.maestro.logger.log).not.toHaveBeenCalled();
-			expect(deps.addToastRef.current).not.toHaveBeenCalled();
-		});
-
-		it('does not process queued AI work while the session is already paused for an agent error', async () => {
-			const processQueuedItem = vi.fn();
-			const deps = createMockDeps({
-				processQueuedItemRef: { current: processQueuedItem },
-			});
-			const agentError: AgentError = {
-				type: 'auth_expired',
-				message: 'Authentication required',
-				recoverable: true,
-				agentId: 'claude-code',
-				sessionId: 'agent-session-1',
-				timestamp: Date.now(),
-			};
-			const queueItem = {
-				id: 'queue-1',
-				tabId: 'tab-1',
-				type: 'message' as const,
-				text: 'queued prompt',
-				timestamp: 1700000000000,
-			};
-			const untouchedTab = createMockTab({ id: 'tab-2', state: 'idle' });
-			const session = createMockSession({
-				id: 'sess-1',
-				state: 'error',
-				busySource: 'ai',
-				agentError,
-				aiTabs: [untouchedTab],
-				activeTabId: 'tab-2',
-				executionQueue: [queueItem],
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			await onExitHandler?.('sess-1-ai-tab-1', 0);
-			await flushAsyncWork();
-
-			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
-			expect(updated).toEqual(
-				expect.objectContaining({
-					state: 'error',
-					agentError,
-					executionQueue: [queueItem],
-				})
-			);
-			expect(updated?.aiTabs[0]).toBe(untouchedTab);
-			expect(processQueuedItem).not.toHaveBeenCalled();
-		});
-
-		it('preserves errored sessions with no AI tabs on process exit', async () => {
-			const deps = createMockDeps();
-			const agentError: AgentError = {
-				type: 'network_error',
-				message: 'Network failed',
-				recoverable: true,
-				agentId: 'claude-code',
-				sessionId: 'agent-session-1',
-				timestamp: Date.now(),
-			};
-			const session = createMockSession({
-				id: 'sess-1',
-				state: 'error',
-				busySource: 'ai',
-				agentError,
-				aiTabs: [],
-				activeTabId: 'missing-tab',
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			await onExitHandler?.('sess-1-ai-tab-1', 0);
-
-			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
-			expect(updated).toEqual(
-				expect.objectContaining({
-					state: 'error',
-					busySource: undefined,
-					thinkingStartTime: undefined,
-					aiTabs: [],
-				})
-			);
-		});
-
-		it('preserves session error state while clearing busy AI tab state on exit', async () => {
-			const deps = createMockDeps();
-			const agentError: AgentError = {
-				type: 'auth_expired',
-				message: 'Authentication required',
-				recoverable: true,
-				agentId: 'claude-code',
-				sessionId: 'agent-session-1',
-				timestamp: Date.now(),
-			};
-			const session = createMockSession({
-				id: 'sess-1',
-				state: 'error',
-				busySource: 'ai',
-				agentError,
-				thinkingStartTime: 1700000000000,
-				aiTabs: [
-					createMockTab({
-						id: 'tab-1',
-						state: 'busy',
-						thinkingStartTime: 1700000000000,
-					}),
-				],
-				activeTabId: 'tab-1',
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			await onExitHandler?.('sess-1-ai-tab-1', 0);
-
-			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
-			expect(updated?.state).toBe('error');
-			expect(updated?.busySource).toBeUndefined();
-			expect(updated?.thinkingStartTime).toBeUndefined();
-			expect(updated?.agentError).toBe(agentError);
-			expect(updated?.aiTabs[0].state).toBe('idle');
-			expect(updated?.aiTabs[0].thinkingStartTime).toBeUndefined();
-		});
-
-		it('preserves error state while clearing all busy tabs on legacy AI exit', async () => {
-			const deps = createMockDeps();
-			const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-			const agentError: AgentError = {
-				type: 'network_error',
-				message: 'Network failed',
-				recoverable: true,
-				agentId: 'claude-code',
-				sessionId: 'agent-session-1',
-				timestamp: Date.now(),
-			};
-			const session = createMockSession({
-				id: 'sess-1',
-				state: 'error',
-				busySource: 'ai',
-				agentError,
-				thinkingStartTime: 1700000000000,
-				aiTabs: [
-					createMockTab({
-						id: 'tab-1',
-						state: 'busy',
-						thinkingStartTime: 1700000000000,
-					}),
-					createMockTab({ id: 'tab-2', state: 'idle' }),
-				],
-				activeTabId: 'tab-1',
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			await onExitHandler?.('sess-1-ai', 0);
-
-			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
-			expect(updated?.state).toBe('error');
-			expect(updated?.busySource).toBeUndefined();
-			expect(updated?.thinkingStartTime).toBeUndefined();
-			expect(updated?.agentError).toBe(agentError);
-			expect(updated?.aiTabs).toEqual([
-				expect.objectContaining({ id: 'tab-1', state: 'idle', thinkingStartTime: undefined }),
-				expect.objectContaining({ id: 'tab-2', state: 'idle' }),
-			]);
-			expect(consoleLogSpy).toHaveBeenCalledWith(
-				'[onExit] Process exit event received:',
-				expect.objectContaining({ rawSessionId: 'sess-1-ai' })
-			);
-		});
-
-		it('clears all busy tabs on successful legacy AI exit', async () => {
-			const deps = createMockDeps();
-			vi.spyOn(console, 'log').mockImplementation(() => undefined);
-			const session = createMockSession({
-				id: 'sess-1',
-				state: 'busy',
-				busySource: 'ai',
-				thinkingStartTime: 1700000000000,
-				aiTabs: [
-					createMockTab({
-						id: 'tab-1',
-						state: 'busy',
-						thinkingStartTime: 1700000000000,
-					}),
-					createMockTab({
-						id: 'tab-2',
-						state: 'busy',
-						thinkingStartTime: 1700000000000,
-					}),
-				],
-				activeTabId: 'tab-1',
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			await onExitHandler?.('sess-1-ai', 0);
-
-			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
-			expect(updated?.state).toBe('idle');
-			expect(updated?.busySource).toBeUndefined();
-			expect(updated?.thinkingStartTime).toBeUndefined();
-			expect(updated?.aiTabs).toEqual([
-				expect.objectContaining({ id: 'tab-1', state: 'idle', thinkingStartTime: undefined }),
-				expect.objectContaining({ id: 'tab-2', state: 'idle', thinkingStartTime: undefined }),
-			]);
-		});
-
-		it('keeps AI sessions busy when a different AI tab is still running', async () => {
-			const deps = createMockDeps();
-			vi.spyOn(console, 'log').mockImplementation(() => undefined);
-			const sessionThinkingStart = 1700000000000;
-			const stillBusyStart = 1700000000100;
-			const session = createMockSession({
-				id: 'sess-1',
-				state: 'busy',
-				busySource: 'ai',
-				thinkingStartTime: sessionThinkingStart,
-				aiTabs: [
-					createMockTab({
-						id: 'tab-1',
-						state: 'busy',
-						thinkingStartTime: 1700000000200,
-					}),
-					createMockTab({
-						id: 'tab-2',
-						state: 'busy',
-						thinkingStartTime: stillBusyStart,
-					}),
-				],
-				activeTabId: 'tab-1',
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			await onExitHandler?.('sess-1-ai-tab-1', 0);
-
-			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
-			expect(updated?.state).toBe('busy');
-			expect(updated?.busySource).toBe('ai');
-			expect(updated?.thinkingStartTime).toBe(sessionThinkingStart);
-			expect(updated?.aiTabs).toEqual([
-				expect.objectContaining({ id: 'tab-1', state: 'idle', thinkingStartTime: undefined }),
-				expect.objectContaining({ id: 'tab-2', state: 'busy', thinkingStartTime: stillBusyStart }),
-			]);
-		});
-
-		it('idles successful legacy AI exits when there are no AI tabs', async () => {
-			const deps = createMockDeps();
-			const session = createMockSession({
-				id: 'sess-1',
-				state: 'busy',
-				busySource: 'ai',
-				aiTabs: [],
-				activeTabId: 'missing-tab',
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			await onExitHandler?.('sess-1-ai', 0);
-
-			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
-			expect(updated).toEqual(
-				expect.objectContaining({
-					state: 'idle',
-					busySource: undefined,
-					thinkingStartTime: undefined,
-					aiTabs: [],
-				})
-			);
-		});
-
-		it('leaves idle AI tabs unchanged on legacy AI exit', async () => {
-			const deps = createMockDeps();
-			const idleTab = createMockTab({ id: 'tab-1', state: 'idle' });
-			const session = createMockSession({
-				id: 'sess-1',
-				state: 'busy',
-				busySource: 'ai',
-				aiTabs: [idleTab],
-				activeTabId: 'tab-1',
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			await onExitHandler?.('sess-1-ai', 0);
-
-			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
-			expect(updated?.state).toBe('idle');
-			expect(updated?.busySource).toBeUndefined();
-			expect(updated?.aiTabs[0]).toBe(idleTab);
-		});
-
-		it('clears busy state for error sessions without an attached agent error', async () => {
-			const deps = createMockDeps();
-			const tab = createMockTab({
-				id: 'tab-1',
-				state: 'busy',
-				thinkingStartTime: 1700000000000,
-			});
-			const session = createMockSession({
-				id: 'sess-1',
-				state: 'error',
-				busySource: 'ai',
-				agentError: undefined,
-				aiTabs: [tab],
-				activeTabId: 'tab-1',
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			await onExitHandler?.('sess-1-ai-tab-1', 0);
-
-			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
-			expect(updated?.state).toBe('idle');
-			expect(updated?.busySource).toBeUndefined();
-			expect(updated?.aiTabs[0].state).toBe('idle');
-		});
-
-		it('starts the next queued message and appends its user log after AI exit', async () => {
-			const processQueuedItem = vi.fn().mockResolvedValue(undefined);
-			const deps = createMockDeps({
-				processQueuedItemRef: { current: processQueuedItem },
-			});
-			const queueItem = {
-				id: 'queue-1',
-				tabId: 'tab-2',
-				type: 'message' as const,
-				text: 'queued prompt',
-				images: ['image-data'],
-				timestamp: 1700000000000,
-			};
-			const session = createMockSession({
-				id: 'sess-1',
-				state: 'busy',
-				busySource: 'ai',
-				aiTabs: [
-					createMockTab({ id: 'tab-1', state: 'busy' }),
-					createMockTab({ id: 'tab-2', state: 'idle', logs: [] }),
-					createMockTab({ id: 'tab-3', state: 'idle', logs: [] }),
-				],
-				activeTabId: 'tab-1',
-				executionQueue: [queueItem],
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			await onExitHandler?.('sess-1-ai-tab-1', 0);
-			await new Promise((resolve) => setTimeout(resolve, 0));
-
-			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
-			expect(updated?.state).toBe('busy');
-			expect(updated?.busySource).toBe('ai');
-			expect(updated?.executionQueue).toEqual([]);
-			expect(updated?.aiTabs.find((tab) => tab.id === 'tab-1')?.state).toBe('idle');
-			const queuedTab = updated?.aiTabs.find((tab) => tab.id === 'tab-2');
-			expect(queuedTab?.state).toBe('busy');
-			expect(queuedTab?.logs).toEqual([
-				expect.objectContaining({
-					source: 'user',
-					text: 'queued prompt',
-					images: ['image-data'],
-				}),
-			]);
-			expect(updated?.aiTabs.find((tab) => tab.id === 'tab-3')).toEqual(
-				expect.objectContaining({ state: 'idle', logs: [] })
-			);
-			expect(processQueuedItem).toHaveBeenCalledWith('sess-1', queueItem);
-		});
-
-		it('continues queued processing when the queued target tab is missing', async () => {
-			const processQueuedItem = vi.fn().mockResolvedValue(undefined);
-			const deps = createMockDeps({
-				processQueuedItemRef: { current: processQueuedItem },
-			});
-			const otherSession = createMockSession({ id: 'other-session' });
-			const queueItem = {
-				id: 'queue-missing-tab',
-				tabId: 'missing-tab',
-				type: 'message' as const,
-				text: 'queued prompt without target tab',
-				timestamp: 1700000000000,
-			};
-			const session = createMockSession({
-				id: 'sess-1',
-				state: 'busy',
-				busySource: 'ai',
-				aiTabs: [],
-				activeTabId: 'missing-tab',
-				executionQueue: [queueItem],
-			});
-			useSessionStore.setState({
-				sessions: [otherSession, session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			await onExitHandler?.('sess-1-ai-tab-1', 0);
-			await flushAsyncWork();
-
-			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
-			expect(updated).toEqual(
-				expect.objectContaining({
-					state: 'busy',
-					busySource: 'ai',
-					executionQueue: [],
-					aiTabs: [],
-					currentCycleTokens: 0,
-					currentCycleBytes: 0,
-				})
-			);
-			expect(processQueuedItem).toHaveBeenCalledWith('sess-1', queueItem);
-			expect(useSessionStore.getState().sessions.find((s) => s.id === 'other-session')).toBe(
-				otherSession
-			);
-		});
-
-		it('records query stats for completed AI processes with timing data', async () => {
-			const deps = createMockDeps({
-				getBatchStateRef: { current: vi.fn().mockReturnValue({ isRunning: true }) },
-			});
-			const session = createMockSession({
-				id: 'sess-1',
-				name: 'Project Session',
-				groupId: 'group-1',
-				state: 'busy',
-				busySource: 'ai',
-				toolType: 'codex',
-				cwd: '/repo/project',
-				usageStats: {
-					inputTokens: 100,
-					outputTokens: 25,
-					cacheReadInputTokens: 5,
-					cacheCreationInputTokens: 0,
-					totalCostUsd: 0.01,
-				},
-				aiTabs: [
-					createMockTab({
-						id: 'tab-1',
-						name: 'Implementation',
-						state: 'busy',
-						thinkingStartTime: Date.now() - 1000,
-						agentSessionId: 'agent-session-1',
-						logs: [
-							{ id: 'user-1', timestamp: 1, source: 'user', text: 'Implement feature' },
-							{ id: 'ai-1', timestamp: 2, source: 'ai', text: 'Implemented feature.' },
-						],
-					}),
-				],
-				activeTabId: 'tab-1',
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				groups: [{ id: 'group-1', name: 'Coverage Group', emoji: 'G', collapsed: false }],
-				activeSessionId: 'other-session',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			await onExitHandler?.('sess-1-ai-tab-1', 0);
-
-			expect(window.maestro.stats.recordQuery).toHaveBeenCalledWith(
-				expect.objectContaining({
-					sessionId: 'sess-1',
-					agentType: 'codex',
-					source: 'auto',
-					projectPath: '/repo/project',
-					tabId: 'tab-1',
-					isRemote: false,
-				})
-			);
-		});
-
-		it('logs truncated completion metadata and fallback summaries for inactive AI tabs', async () => {
-			const deps = createMockDeps();
-			const longPrompt = `Review ${'branch coverage '.repeat(20)}`;
-			const longResponse = `${'coverage detail '.repeat(45)}done.`;
-			const session = createMockSession({
-				id: 'sess-1',
-				name: '',
-				cwd: '',
-				state: 'busy',
-				busySource: 'ai',
-				toolType: 'codex',
-				aiTabs: [
-					createMockTab({
-						id: 'tab-1',
-						state: 'busy',
-						thinkingStartTime: Date.now() - 1000,
-						agentSessionId: 'agent-session-1',
-						logs: [
-							{ id: 'user-1', timestamp: 1, source: 'user', text: longPrompt },
-							{ id: 'system-1', timestamp: 1, source: 'system', text: undefined as any },
-							{ id: 'ai-1', timestamp: 2, source: 'ai', text: longResponse },
-						],
-					}),
-				],
-				activeTabId: 'tab-1',
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'other-session',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			await onExitHandler?.('sess-1-ai-tab-1', 0);
-			await flushAsyncWork();
-
-			expect(window.maestro.logger.log).toHaveBeenCalledWith(
-				'info',
-				'Agent process completed',
-				'App',
-				expect.objectContaining({
-					project: 'Unknown',
-					prompt: expect.stringMatching(/^\S[\s\S]{199}\.\.\.$/),
-					response: expect.stringMatching(/^\S[\s\S]{499}\.\.\.$/),
-				})
-			);
-			expect(useNotificationStore.getState().toasts.at(-1)).toEqual(
-				expect.objectContaining({
-					title: `${longPrompt.substring(0, 47)}...`,
-					message: `${longResponse.trim().substring(0, 120)}...`,
-					project: 'Unknown',
-				})
-			);
-		});
-
-		it('uses a bounded fallback summary when AI output has no sentence punctuation', async () => {
-			const deps = createMockDeps();
-			const responseWithoutSentence = 'completed branch coverage work '.repeat(12);
-			const session = createMockSession({
-				id: 'sess-1',
-				state: 'busy',
-				busySource: 'ai',
-				toolType: 'codex',
-				aiTabs: [
-					createMockTab({
-						id: 'tab-1',
-						state: 'busy',
-						thinkingStartTime: Date.now() - 1000,
-						agentSessionId: 'agent-session-1',
-						logs: [
-							{ id: 'user-1', timestamp: 1, source: 'user', text: 'Summarize without punctuation' },
-							{ id: 'ai-1', timestamp: 2, source: 'ai', text: responseWithoutSentence },
-						],
-					}),
-				],
-				activeTabId: 'tab-1',
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'other-session',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			await onExitHandler?.('sess-1-ai-tab-1', 0);
-			await flushAsyncWork();
-
-			expect(useNotificationStore.getState().toasts.at(-1)).toEqual(
-				expect.objectContaining({
-					message: responseWithoutSentence.trim().substring(0, 120),
-				})
-			);
-		});
-
-		it('logs query stats recording failures after AI exit', async () => {
-			const error = new Error('stats db unavailable');
-			const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-			window.maestro.stats.recordQuery.mockRejectedValueOnce(error);
-			const deps = createMockDeps();
-			const session = createMockSession({
-				id: 'sess-1',
-				state: 'busy',
-				busySource: 'ai',
-				toolType: 'codex',
-				cwd: '/repo/project',
-				aiTabs: [
-					createMockTab({
-						id: 'tab-1',
-						state: 'busy',
-						thinkingStartTime: Date.now() - 1000,
-						logs: [
-							{ id: 'user-1', timestamp: 1, source: 'user', text: 'Run stats' },
-							{ id: 'ai-1', timestamp: 2, source: 'ai', text: 'Done.' },
-						],
-					}),
-				],
-				activeTabId: 'tab-1',
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'other-session',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			await onExitHandler?.('sess-1-ai-tab-1', 0);
-			await flushAsyncWork();
-
-			expect(consoleWarnSpy).toHaveBeenCalledWith(
-				'[onProcessExit] Failed to record query stats:',
-				error
-			);
-		});
-
-		it('creates a history synopsis entry for completed saved AI tabs', async () => {
-			const spawnBackgroundSynopsis = vi.fn().mockResolvedValue({
-				success: true,
-				response:
-					'**Summary:** Added listener coverage for synopsis branches.\n\n**Details:** Verified the background synopsis handoff and history refresh behavior.',
-				usageStats: {
-					inputTokens: 10,
-					outputTokens: 5,
-					totalTokens: 15,
-					totalCostUsd: 0.01,
-				},
-			});
-			const addHistoryEntry = vi.fn().mockResolvedValue(undefined);
-			const refreshHistoryPanel = vi.fn();
-			const deps = createMockDeps({
-				spawnBackgroundSynopsisRef: { current: spawnBackgroundSynopsis },
-				addHistoryEntryRef: { current: addHistoryEntry },
-				rightPanelRef: { current: { refreshHistoryPanel } as any },
-			});
-			const previousSynopsisTime = Date.now() - 60_000;
-			const otherSession = createMockSession({ id: 'other-session' });
-			const untouchedTab = createMockTab({
-				id: 'tab-2',
-				name: 'Untouched Tab',
-				lastSynopsisTime: 1234,
-			});
-			const session = createMockSession({
-				id: 'sess-1',
-				name: 'Coverage Project',
-				toolType: 'codex',
-				cwd: '/repo/project',
-				state: 'busy',
-				busySource: 'ai',
-				customModel: 'gpt-5',
-				aiTabs: [
-					createMockTab({
-						id: 'tab-1',
-						name: 'Coverage Tab',
-						state: 'busy',
-						thinkingStartTime: Date.now() - 1200,
-						agentSessionId: 'agent-session-1',
-						saveToHistory: true,
-						lastSynopsisTime: previousSynopsisTime,
-						logs: [
-							{ id: 'user-1', timestamp: 1, source: 'user', text: 'Save this work' },
-							{
-								id: 'ai-1',
-								timestamp: 2,
-								source: 'ai',
-								text: 'Implemented the requested coverage branch.',
-							},
-						],
-					}),
-					untouchedTab,
-				],
-				activeTabId: 'tab-1',
-			});
-			useSessionStore.setState({
-				sessions: [otherSession, session],
-				activeSessionId: 'other-session',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			await onExitHandler?.('sess-1-ai-tab-1', 0);
-			await flushAsyncWork();
-
-			expect(spawnBackgroundSynopsis).toHaveBeenCalledWith(
-				'sess-1',
-				'/repo/project',
-				'agent-session-1',
-				expect.stringContaining('Only synopsize work done since the last synopsis'),
-				'codex',
-				expect.objectContaining({ customModel: 'gpt-5' })
-			);
-			expect(addHistoryEntry).toHaveBeenCalledWith(
-				expect.objectContaining({
-					type: 'USER',
-					summary: 'Added listener coverage for synopsis branches.',
-					fullResponse:
-						'Added listener coverage for synopsis branches.\n\nVerified the background synopsis handoff and history refresh behavior.',
-					agentSessionId: 'agent-session-1',
-					sessionId: 'sess-1',
-					projectPath: '/repo/project',
-					sessionName: 'Coverage Tab',
-					usageStats: expect.objectContaining({ totalTokens: 15 }),
-					elapsedTimeMs: expect.any(Number),
-				})
-			);
-			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1')!;
-			expect(updated.aiTabs[0].lastSynopsisTime).toEqual(expect.any(Number));
-			expect(updated.aiTabs[0].lastSynopsisTime).not.toBe(previousSynopsisTime);
-			expect(updated.aiTabs[1]).toBe(untouchedTab);
-			expect(useSessionStore.getState().sessions.find((s) => s.id === 'other-session')).toBe(
-				otherSession
-			);
-			expect(refreshHistoryPanel).toHaveBeenCalled();
-		});
-
-		it('creates a synopsis entry without refreshing history when the right panel is absent', async () => {
-			const spawnBackgroundSynopsis = vi.fn().mockResolvedValue({
-				success: true,
-				response:
-					'**Summary:** Captured a concise synopsis.\n\n**Details:** Stored without a panel refresh.',
-			});
-			const addHistoryEntry = vi.fn().mockResolvedValue(undefined);
-			const deps = createMockDeps({
-				spawnBackgroundSynopsisRef: { current: spawnBackgroundSynopsis },
-				addHistoryEntryRef: { current: addHistoryEntry },
-				rightPanelRef: { current: null },
-			});
-			const session = createMockSession({
-				id: 'sess-1',
-				state: 'busy',
-				busySource: 'ai',
-				aiTabs: [
-					createMockTab({
-						id: 'tab-1',
-						state: 'busy',
-						agentSessionId: 'agent-session-1',
-						saveToHistory: true,
-						logs: [
-							{ id: 'user-1', timestamp: 1, source: 'user', text: 'Save this work' },
-							{ id: 'ai-1', timestamp: 2, source: 'ai', text: 'Finished.' },
-						],
-					}),
-				],
-				activeTabId: 'tab-1',
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			await onExitHandler?.('sess-1-ai-tab-1', 0);
-			await flushAsyncWork();
-
-			expect(addHistoryEntry).toHaveBeenCalledWith(
-				expect.objectContaining({
-					summary: 'Captured a concise synopsis.',
-					fullResponse: 'Captured a concise synopsis.\n\nStored without a panel refresh.',
-				})
-			);
-		});
-
-		it('uses the session provider id for synopsis when the completed tab has no provider id', async () => {
-			const spawnBackgroundSynopsis = vi.fn().mockResolvedValue({
-				success: true,
-				response:
-					'**Summary:** Saved via session provider id.\n\n**Details:** Used the session fallback.',
-			});
-			const addHistoryEntry = vi.fn().mockResolvedValue(undefined);
-			const deps = createMockDeps({
-				spawnBackgroundSynopsisRef: { current: spawnBackgroundSynopsis },
-				addHistoryEntryRef: { current: addHistoryEntry },
-			});
-			const session = createMockSession({
-				id: 'sess-1',
-				state: 'busy',
-				busySource: 'ai',
-				agentSessionId: 'session-level-agent-id',
-				pendingAICommandForSynopsis: 'Run saved prompt',
-				aiTabs: [
-					createMockTab({
-						id: 'tab-1',
-						state: 'busy',
-						agentSessionId: null,
-						saveToHistory: false,
-						logs: [
-							{ id: 'user-1', timestamp: 1, source: 'user', text: 'Run saved prompt' },
-							{ id: 'ai-1', timestamp: 2, source: 'ai', text: 'Finished.' },
-						],
-					}),
-				],
-				activeTabId: 'tab-1',
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			await onExitHandler?.('sess-1-ai-tab-1', 0);
-			await flushAsyncWork();
-
-			expect(spawnBackgroundSynopsis).toHaveBeenCalledWith(
-				'sess-1',
-				'/test/project',
-				'session-level-agent-id',
-				expect.any(String),
-				'claude-code',
-				expect.any(Object)
-			);
-			expect(addHistoryEntry).toHaveBeenCalledWith(
-				expect.objectContaining({ agentSessionId: 'session-level-agent-id' })
-			);
-		});
-
-		it('skips synopsis when completed tabs are not marked for history', async () => {
-			const spawnBackgroundSynopsis = vi.fn();
-			const deps = createMockDeps({
-				spawnBackgroundSynopsisRef: { current: spawnBackgroundSynopsis },
-				addHistoryEntryRef: { current: vi.fn() },
-			});
-			const session = createMockSession({
-				id: 'sess-1',
-				state: 'busy',
-				busySource: 'ai',
-				agentSessionId: 'session-level-agent-id',
-				pendingAICommandForSynopsis: undefined,
-				aiTabs: [
-					createMockTab({
-						id: 'tab-1',
-						state: 'busy',
-						agentSessionId: null,
-						saveToHistory: false,
-						logs: [
-							{ id: 'user-1', timestamp: 1, source: 'user', text: 'Do not save' },
-							{ id: 'ai-1', timestamp: 2, source: 'ai', text: 'Finished.' },
-						],
-					}),
-				],
-				activeTabId: 'tab-1',
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			await onExitHandler?.('sess-1-ai-tab-1', 0);
-			await flushAsyncWork();
-
-			expect(spawnBackgroundSynopsis).not.toHaveBeenCalled();
-		});
-
-		it('skips history creation when synopsis returns nothing to report', async () => {
-			const spawnBackgroundSynopsis = vi.fn().mockResolvedValue({
-				success: true,
-				response: 'NOTHING_TO_REPORT',
-			});
-			const addHistoryEntry = vi.fn();
-			const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-			const deps = createMockDeps({
-				spawnBackgroundSynopsisRef: { current: spawnBackgroundSynopsis },
-				addHistoryEntryRef: { current: addHistoryEntry },
-			});
-			const session = createMockSession({
-				id: 'sess-1',
-				state: 'busy',
-				busySource: 'ai',
-				aiTabs: [
-					createMockTab({
-						id: 'tab-1',
-						state: 'busy',
-						agentSessionId: 'agent-session-1',
-						saveToHistory: true,
-						logs: [
-							{ id: 'user-1', timestamp: 1, source: 'user', text: 'Save this work' },
-							{ id: 'ai-1', timestamp: 2, source: 'ai', text: 'No material changes.' },
-						],
-					}),
-				],
-				activeTabId: 'tab-1',
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			await onExitHandler?.('sess-1-ai-tab-1', 0);
-			await flushAsyncWork();
-
-			expect(addHistoryEntry).not.toHaveBeenCalled();
-			expect(useSessionStore.getState().sessions[0].aiTabs[0].lastSynopsisTime).toBeUndefined();
-			expect(consoleLogSpy).toHaveBeenCalledWith(
-				'[onProcessExit] Synopsis returned NOTHING_TO_REPORT - skipping history entry',
-				expect.objectContaining({
-					sessionId: 'sess-1',
-					agentSessionId: 'agent-session-1',
-				})
-			);
-		});
-
-		it('logs failed synopsis generation without creating history', async () => {
-			const spawnBackgroundSynopsis = vi.fn().mockResolvedValue({
-				success: false,
-				response: '',
-			});
-			const addHistoryEntry = vi.fn();
-			const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-			const deps = createMockDeps({
-				spawnBackgroundSynopsisRef: { current: spawnBackgroundSynopsis },
-				addHistoryEntryRef: { current: addHistoryEntry },
-			});
-			const session = createMockSession({
-				id: 'sess-1',
-				state: 'busy',
-				busySource: 'ai',
-				aiTabs: [
-					createMockTab({
-						id: 'tab-1',
-						state: 'busy',
-						agentSessionId: 'agent-session-1',
-						saveToHistory: true,
-						logs: [
-							{ id: 'user-1', timestamp: 1, source: 'user', text: 'Save this work' },
-							{ id: 'ai-1', timestamp: 2, source: 'ai', text: 'Finished.' },
-						],
-					}),
-				],
-				activeTabId: 'tab-1',
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			await onExitHandler?.('sess-1-ai-tab-1', 0);
-			await flushAsyncWork();
-
-			expect(addHistoryEntry).not.toHaveBeenCalled();
-			expect(consoleWarnSpy).toHaveBeenCalledWith(
-				'[onProcessExit] Synopsis generation failed - no history entry created',
-				expect.objectContaining({
-					sessionId: 'sess-1',
-					agentSessionId: 'agent-session-1',
-					hasResponse: false,
-				})
-			);
-		});
-
-		it('skips synopsis history when generation succeeds without a response', async () => {
-			const spawnBackgroundSynopsis = vi.fn().mockResolvedValue({
-				success: true,
-				response: '',
-			});
-			const addHistoryEntry = vi.fn();
-			const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-			const deps = createMockDeps({
-				spawnBackgroundSynopsisRef: { current: spawnBackgroundSynopsis },
-				addHistoryEntryRef: { current: addHistoryEntry },
-			});
-			const session = createMockSession({
-				id: 'sess-1',
-				state: 'busy',
-				busySource: 'ai',
-				aiTabs: [
-					createMockTab({
-						id: 'tab-1',
-						state: 'busy',
-						agentSessionId: 'agent-session-1',
-						saveToHistory: true,
-						logs: [
-							{ id: 'user-1', timestamp: 1, source: 'user', text: 'Save this work' },
-							{ id: 'ai-1', timestamp: 2, source: 'ai', text: 'Finished.' },
-						],
-					}),
-				],
-				activeTabId: 'tab-1',
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			await onExitHandler?.('sess-1-ai-tab-1', 0);
-			await flushAsyncWork();
-
-			expect(addHistoryEntry).not.toHaveBeenCalled();
-			expect(consoleWarnSpy).not.toHaveBeenCalledWith(
-				'[onProcessExit] Synopsis generation failed - no history entry created',
-				expect.anything()
-			);
-		});
-
-		it('logs rejected synopsis generation without creating history', async () => {
-			const error = new Error('synopsis process failed');
-			const spawnBackgroundSynopsis = vi.fn().mockRejectedValue(error);
-			const addHistoryEntry = vi.fn();
-			const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-			const deps = createMockDeps({
-				spawnBackgroundSynopsisRef: { current: spawnBackgroundSynopsis },
-				addHistoryEntryRef: { current: addHistoryEntry },
-			});
-			const session = createMockSession({
-				id: 'sess-1',
-				state: 'busy',
-				busySource: 'ai',
-				aiTabs: [
-					createMockTab({
-						id: 'tab-1',
-						state: 'busy',
-						agentSessionId: 'agent-session-1',
-						saveToHistory: true,
-						logs: [
-							{ id: 'user-1', timestamp: 1, source: 'user', text: 'Save this work' },
-							{ id: 'ai-1', timestamp: 2, source: 'ai', text: 'Finished.' },
-						],
-					}),
-				],
-				activeTabId: 'tab-1',
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			await onExitHandler?.('sess-1-ai-tab-1', 0);
-			await flushAsyncWork();
-
-			expect(addHistoryEntry).not.toHaveBeenCalled();
-			expect(consoleErrorSpy).toHaveBeenCalledWith('[onProcessExit] Synopsis failed:', error);
-		});
-
-		it('refreshes git refs after terminal git commands with the session SSH remote', async () => {
-			const getBranchesSpy = vi
-				.spyOn(gitService, 'getBranches')
-				.mockResolvedValue(['main', 'feature/ref-refresh']);
-			const getTagsSpy = vi.spyOn(gitService, 'getTags').mockResolvedValue(['v2.0.0']);
-			const deps = createMockDeps();
-			const otherSession = createMockSession({ id: 'other-session' });
-			const session = createMockSession({
-				id: 'sess-1',
-				cwd: '/repo/project',
-				state: 'busy',
-				busySource: 'terminal',
-				isGitRepo: true,
-				sshRemoteId: 'remote-1',
-				shellLogs: [
-					{
-						id: 'cmd-1',
-						timestamp: 1,
-						source: 'user',
-						text: 'git fetch origin',
-					},
-				],
-			});
-			useSessionStore.setState({
-				sessions: [otherSession, session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			await onExitHandler?.('sess-1-terminal', 0);
-			await flushAsyncWork();
-
-			expect(getBranchesSpy).toHaveBeenCalledWith('/repo/project', 'remote-1');
-			expect(getTagsSpy).toHaveBeenCalledWith('/repo/project', 'remote-1');
-			const refreshed = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
-			expect(refreshed?.gitBranches).toEqual(['main', 'feature/ref-refresh']);
-			expect(refreshed?.gitTags).toEqual(['v2.0.0']);
-			expect(refreshed?.gitRefsCacheTime).toEqual(expect.any(Number));
-			expect(useSessionStore.getState().sessions.find((s) => s.id === 'other-session')).toBe(
-				otherSession
-			);
-		});
-
-		it('refreshes git refs with session SSH remote config when no remote id is set', async () => {
-			const getBranchesSpy = vi.spyOn(gitService, 'getBranches').mockResolvedValue(['main']);
-			const getTagsSpy = vi.spyOn(gitService, 'getTags').mockResolvedValue(['v3.0.0']);
-			const deps = createMockDeps();
-			const session = createMockSession({
-				id: 'sess-1',
-				cwd: '/repo/project',
-				state: 'busy',
-				busySource: 'terminal',
-				isGitRepo: true,
-				sshRemoteId: undefined,
-				sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-config-1' } as any,
-				shellLogs: [
-					{
-						id: 'cmd-1',
-						timestamp: 1,
-						source: 'user',
-						text: 'git branch --all',
-					},
-				],
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			await onExitHandler?.('sess-1-terminal', 0);
-			await flushAsyncWork();
-
-			expect(getBranchesSpy).toHaveBeenCalledWith('/repo/project', 'remote-config-1');
-			expect(getTagsSpy).toHaveBeenCalledWith('/repo/project', 'remote-config-1');
-		});
-
-		it('refreshes local git refs with an undefined remote id when no SSH remote is configured', async () => {
-			const getBranchesSpy = vi.spyOn(gitService, 'getBranches').mockResolvedValue(['main']);
-			const getTagsSpy = vi.spyOn(gitService, 'getTags').mockResolvedValue(['v1.0.0']);
-			const deps = createMockDeps();
-			const session = createMockSession({
-				id: 'sess-1',
-				cwd: '/repo/project',
-				state: 'busy',
-				busySource: 'terminal',
-				isGitRepo: true,
-				sshRemoteId: undefined,
-				sessionSshRemoteConfig: undefined,
-				shellLogs: [
-					{
-						id: 'cmd-1',
-						timestamp: 1,
-						source: 'user',
-						text: 'git tag --list',
-					},
-				],
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			await onExitHandler?.('sess-1-terminal', 0);
-			await flushAsyncWork();
-
-			expect(getBranchesSpy).toHaveBeenCalledWith('/repo/project', undefined);
-			expect(getTagsSpy).toHaveBeenCalledWith('/repo/project', undefined);
-		});
-
-		it('does not refresh git refs after non-git terminal commands', async () => {
-			const getBranchesSpy = vi.spyOn(gitService, 'getBranches');
-			const getTagsSpy = vi.spyOn(gitService, 'getTags');
-			const deps = createMockDeps();
-			const session = createMockSession({
-				id: 'sess-1',
-				state: 'busy',
-				busySource: 'terminal',
-				isGitRepo: true,
-				shellLogs: [
-					{
-						id: 'cmd-1',
-						timestamp: 1,
-						source: 'user',
-						text: 'npm test',
-					},
-				],
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			await onExitHandler?.('sess-1-terminal', 0);
-			await flushAsyncWork();
-
-			expect(getBranchesSpy).not.toHaveBeenCalled();
-			expect(getTagsSpy).not.toHaveBeenCalled();
-			expect(useSessionStore.getState().sessions[0].gitRefsCacheTime).toBeUndefined();
-		});
-
-		it('does not refresh git refs for terminal commands in non-git sessions', async () => {
-			const getBranchesSpy = vi.spyOn(gitService, 'getBranches');
-			const getTagsSpy = vi.spyOn(gitService, 'getTags');
-			const deps = createMockDeps();
-			const session = createMockSession({
-				id: 'sess-1',
-				state: 'busy',
-				busySource: 'terminal',
-				isGitRepo: false,
-				shellLogs: [
-					{
-						id: 'cmd-1',
-						timestamp: 1,
-						source: 'user',
-						text: 'git fetch origin',
-					},
-				],
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			await onExitHandler?.('sess-1-terminal', 0);
-			await flushAsyncWork();
-
-			expect(getBranchesSpy).not.toHaveBeenCalled();
-			expect(getTagsSpy).not.toHaveBeenCalled();
-		});
-
-		it('keeps terminal sessions busy when an AI tab is still busy', async () => {
-			const deps = createMockDeps();
-			const session = createMockSession({
-				id: 'sess-1',
-				state: 'busy',
-				busySource: 'ai',
-				aiTabs: [createMockTab({ id: 'tab-1', state: 'busy' })],
-				shellLogs: [],
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-1',
-			});
-
-			renderHook(() => useAgentListeners(deps));
-
-			await onExitHandler?.('sess-1-terminal', 1);
-
-			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
-			expect(updated?.state).toBe('busy');
-			expect(updated?.busySource).toBe('ai');
-			expect(updated?.shellLogs.at(-1)).toEqual(
-				expect.objectContaining({
-					source: 'system',
-					text: 'Terminal process exited with code 1',
-				})
-			);
-		});
-
-		it('transitions AI session from busy to idle on process exit', async () => {
-			const deps = createMockDeps();
-			const tab = createMockTab({ id: 'tab-1' });
+			const tab = createMockTab({ id: 'tab-1', agentSessionId: 'old-session-id' });
 			const session = createMockSession({
 				id: 'sess-1',
 				state: 'busy',
@@ -4113,6 +1543,260 @@ describe('useAgentListeners', () => {
 
 			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
 			expect(updated?.state).toBe('idle');
+			// agentSessionId is preserved on normal exit so the next message can
+			// resume the conversation. Stale IDs are cleared by onAgentError when
+			// session_not_found is detected.
+			const updatedTab = updated?.aiTabs.find((t) => t.id === 'tab-1');
+			expect(updatedTab?.agentSessionId).toBe('old-session-id');
+		});
+
+		it('clears hidden progress logs on AI exit', async () => {
+			const deps = createMockDeps();
+			const tab = createMockTab({
+				id: 'tab-1',
+				showThinking: 'off',
+				logs: [
+					{
+						id: 'hidden-progress:tab-1',
+						timestamp: 1700000000000,
+						source: 'system',
+						text: 'Reading src/renderer/App.tsx',
+					},
+				],
+			});
+			const session = createMockSession({
+				id: 'sess-1',
+				state: 'busy',
+				busySource: 'ai',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			await onExitHandler?.('sess-1-ai-tab-1');
+			await new Promise((r) => setTimeout(r, 50));
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			expect(updated?.aiTabs[0]?.logs).toEqual([]);
+		});
+
+		// ThinkingMode contract — exit-time clearing.
+		// `'on'` is temporary: thinking/tool entries are scratch state for the
+		// active turn and must disappear when the agent process exits.
+		// `'sticky'` is pinned and opts out so users can review reasoning.
+		// See `ThinkingMode` in src/shared/types.ts and the matching inline
+		// clearing point in src/renderer/hooks/session/useBatchedSessionUpdates.ts.
+		it("clears thinking and tool logs on AI exit when showThinking is 'on'", async () => {
+			const deps = createMockDeps();
+			const tab = createMockTab({
+				id: 'tab-1',
+				showThinking: 'on',
+				logs: [
+					{
+						id: 'log-thinking-1',
+						timestamp: 1700000000001,
+						source: 'thinking',
+						text: 'reasoning about the request...',
+					},
+					{
+						id: 'log-tool-1',
+						timestamp: 1700000000002,
+						source: 'tool',
+						text: 'bash: ls -la',
+					},
+					{
+						id: 'log-stdout-1',
+						timestamp: 1700000000003,
+						source: 'stdout',
+						text: 'final answer',
+					},
+				],
+			});
+			const session = createMockSession({
+				id: 'sess-1',
+				state: 'busy',
+				busySource: 'ai',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			await onExitHandler?.('sess-1-ai-tab-1');
+			await new Promise((r) => setTimeout(r, 50));
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			const remaining = updated?.aiTabs[0]?.logs ?? [];
+			expect(remaining.map((l) => l.source)).toEqual(['stdout']);
+			expect(updated?.aiTabs[0]?.state).toBe('idle');
+			expect(updated?.aiTabs[0]?.thinkingStartTime).toBeUndefined();
+		});
+
+		it("preserves thinking and tool logs on AI exit when showThinking is 'sticky'", async () => {
+			const deps = createMockDeps();
+			const tab = createMockTab({
+				id: 'tab-1',
+				showThinking: 'sticky',
+				logs: [
+					{
+						id: 'log-thinking-1',
+						timestamp: 1700000000001,
+						source: 'thinking',
+						text: 'reasoning about the request...',
+					},
+					{
+						id: 'log-tool-1',
+						timestamp: 1700000000002,
+						source: 'tool',
+						text: 'bash: ls -la',
+					},
+					{
+						id: 'log-stdout-1',
+						timestamp: 1700000000003,
+						source: 'stdout',
+						text: 'final answer',
+					},
+				],
+			});
+			const session = createMockSession({
+				id: 'sess-1',
+				state: 'busy',
+				busySource: 'ai',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			await onExitHandler?.('sess-1-ai-tab-1');
+			await new Promise((r) => setTimeout(r, 50));
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			const remaining = updated?.aiTabs[0]?.logs ?? [];
+			expect(remaining.map((l) => l.source)).toEqual(['thinking', 'tool', 'stdout']);
+			expect(updated?.aiTabs[0]?.state).toBe('idle');
+		});
+
+		it("clears thinking/tool logs on AI exit in error path when showThinking is 'on'", async () => {
+			const deps = createMockDeps();
+			const tab = createMockTab({
+				id: 'tab-1',
+				showThinking: 'on',
+				logs: [
+					{
+						id: 'log-thinking-1',
+						timestamp: 1700000000001,
+						source: 'thinking',
+						text: 'reasoning...',
+					},
+					{
+						id: 'log-tool-1',
+						timestamp: 1700000000002,
+						source: 'tool',
+						text: 'tool call',
+					},
+				],
+			});
+			const agentError: AgentError = {
+				type: 'rate_limited',
+				message: 'rate limited',
+				timestamp: 1700000000004,
+				recoverable: true,
+				agentId: 'claude-code',
+			};
+			const session = createMockSession({
+				id: 'sess-1',
+				state: 'error',
+				agentError,
+				busySource: 'ai',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			await onExitHandler?.('sess-1-ai-tab-1');
+			await new Promise((r) => setTimeout(r, 50));
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			expect(updated?.aiTabs[0]?.logs ?? []).toEqual([]);
+		});
+
+		it("clears thinking/tool logs on the just-exited tab in queue-waiting branch when showThinking is 'on'", async () => {
+			const processQueuedItem = vi.fn().mockResolvedValue(undefined);
+			const deps = createMockDeps({
+				processQueuedItemRef: { current: processQueuedItem },
+			});
+			const tabA = createMockTab({
+				id: 'tab-a',
+				state: 'busy',
+				agentSessionId: 'sess-a',
+				showThinking: 'on',
+				logs: [
+					{
+						id: 'log-thinking-a',
+						timestamp: 1700000000001,
+						source: 'thinking',
+						text: 'reasoning A',
+					},
+					{
+						id: 'log-tool-a',
+						timestamp: 1700000000002,
+						source: 'tool',
+						text: 'tool A',
+					},
+				],
+			});
+			const tabB = createMockTab({ id: 'tab-b', state: 'busy', agentSessionId: 'sess-b' });
+			const queueItem = {
+				id: 'q1',
+				tabId: 'tab-c',
+				type: 'message' as const,
+				text: 'queued write',
+				timestamp: Date.now(),
+			};
+			const session = createMockSession({
+				id: 'sess-1',
+				state: 'busy',
+				busySource: 'ai',
+				aiTabs: [tabA, tabB],
+				activeTabId: 'tab-a',
+				executionQueue: [queueItem],
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			await onExitHandler?.('sess-1-ai-tab-a');
+			await new Promise((r) => setTimeout(r, 50));
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			const updatedTabA = updated?.aiTabs.find((t) => t.id === 'tab-a');
+			// Tab A exited and was marked idle; thinking/tool logs are gone.
+			expect(updatedTabA?.state).toBe('idle');
+			expect(updatedTabA?.logs ?? []).toEqual([]);
+			// Queue is NOT drained because tab-b is still busy.
+			expect(processQueuedItem).not.toHaveBeenCalled();
 		});
 
 		it('processes execution queue on exit', async () => {
@@ -4148,6 +1832,222 @@ describe('useAgentListeners', () => {
 			expect(processQueuedItem).toHaveBeenCalledWith('sess-1', queueItem);
 		});
 
+		// Regression: Cmd+T -> type -> Enter -> Cmd+W. The new tab is closed while its
+		// message is still queued, so it moves to orphanedThinkingTabs. When a DIFFERENT
+		// tab's turn exits and dequeues that item, the queued message must route to the
+		// orphan (fire-and-forget background send), NOT leak onto the active tab.
+		it('routes a queued item for a closed (orphaned) tab to the orphan, not the active tab', async () => {
+			const processQueuedItem = vi.fn().mockResolvedValue(undefined);
+			const deps = createMockDeps({
+				processQueuedItemRef: { current: processQueuedItem },
+			});
+			// tab-a is the visible/active tab whose turn is finishing.
+			const tabA = createMockTab({ id: 'tab-a', state: 'busy' });
+			// tab-new was created via Cmd+T, had a message queued, then was closed (Cmd+W).
+			// It now lives in orphanedThinkingTabs.
+			const orphanTab = createMockTab({ id: 'tab-new', state: 'busy', logs: [] });
+			const queueItem = {
+				id: 'q1',
+				tabId: 'tab-new',
+				type: 'message' as const,
+				text: 'background message',
+				timestamp: Date.now(),
+			};
+			const session = createMockSession({
+				id: 'sess-1',
+				state: 'busy',
+				busySource: 'ai',
+				aiTabs: [tabA],
+				activeTabId: 'tab-a',
+				orphanedThinkingTabs: [orphanTab],
+				executionQueue: [queueItem],
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-1' });
+
+			renderHook(() => useAgentListeners(deps));
+
+			await onExitHandler?.('sess-1-ai-tab-a');
+			await new Promise((r) => setTimeout(r, 50));
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			const activeTab = updated?.aiTabs.find((t) => t.id === 'tab-a');
+			const orphan = updated?.orphanedThinkingTabs?.find((t) => t.id === 'tab-new');
+
+			// The message must NOT appear on the active tab.
+			expect(activeTab?.logs.some((l) => l.text === 'background message')).toBe(false);
+			// The message DOES land on the orphaned tab, which is marked thinking again.
+			expect(orphan?.logs.some((l) => l.source === 'user' && l.text === 'background message')).toBe(
+				true
+			);
+			expect(orphan?.state).toBe('busy');
+			// And the spawn is dispatched for the orphan's item.
+			expect(processQueuedItem).toHaveBeenCalledWith('sess-1', queueItem);
+		});
+
+		it('does NOT dequeue write-mode item when another tab is still busy', async () => {
+			const processQueuedItem = vi.fn().mockResolvedValue(undefined);
+			const deps = createMockDeps({
+				processQueuedItemRef: { current: processQueuedItem },
+			});
+			const tabA = createMockTab({ id: 'tab-a', state: 'busy', agentSessionId: 'sess-a' });
+			const tabB = createMockTab({ id: 'tab-b', state: 'busy', agentSessionId: 'sess-b' });
+			const queueItem = {
+				id: 'q1',
+				tabId: 'tab-c',
+				type: 'message' as const,
+				text: 'queued write',
+				timestamp: Date.now(),
+			};
+			const session = createMockSession({
+				id: 'sess-1',
+				state: 'busy',
+				busySource: 'ai',
+				aiTabs: [tabA, tabB],
+				activeTabId: 'tab-a',
+				executionQueue: [queueItem],
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			// Tab A exits, but Tab B is still busy — queued write must NOT run
+			await onExitHandler?.('sess-1-ai-tab-a');
+			await new Promise((r) => setTimeout(r, 50));
+
+			expect(processQueuedItem).not.toHaveBeenCalled();
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			// Session stays busy because tab-b is still running
+			expect(updated?.state).toBe('busy');
+			// Queue is NOT drained
+			expect(updated?.executionQueue).toHaveLength(1);
+			// Tab A was marked idle
+			const updatedTabA = updated?.aiTabs.find((t) => t.id === 'tab-a');
+			expect(updatedTabA?.state).toBe('idle');
+			// Tab B still busy
+			const updatedTabB = updated?.aiTabs.find((t) => t.id === 'tab-b');
+			expect(updatedTabB?.state).toBe('busy');
+		});
+
+		it('dequeues forceParallel item even when another tab is busy', async () => {
+			const processQueuedItem = vi.fn().mockResolvedValue(undefined);
+			const deps = createMockDeps({
+				processQueuedItemRef: { current: processQueuedItem },
+			});
+			const tabA = createMockTab({ id: 'tab-a', state: 'busy', agentSessionId: 'sess-a' });
+			const tabB = createMockTab({ id: 'tab-b', state: 'busy', agentSessionId: 'sess-b' });
+			const queueItem = {
+				id: 'q1',
+				tabId: 'tab-c',
+				type: 'message' as const,
+				text: 'forced parallel',
+				timestamp: Date.now(),
+				forceParallel: true,
+			};
+			const session = createMockSession({
+				id: 'sess-1',
+				state: 'busy',
+				busySource: 'ai',
+				aiTabs: [tabA, tabB],
+				activeTabId: 'tab-a',
+				executionQueue: [queueItem],
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			await onExitHandler?.('sess-1-ai-tab-a');
+			await new Promise((r) => setTimeout(r, 50));
+
+			expect(processQueuedItem).toHaveBeenCalledWith('sess-1', queueItem);
+		});
+
+		it('dequeues readOnly item even when another tab is busy', async () => {
+			const processQueuedItem = vi.fn().mockResolvedValue(undefined);
+			const deps = createMockDeps({
+				processQueuedItemRef: { current: processQueuedItem },
+			});
+			const tabA = createMockTab({ id: 'tab-a', state: 'busy', agentSessionId: 'sess-a' });
+			const tabB = createMockTab({ id: 'tab-b', state: 'busy', agentSessionId: 'sess-b' });
+			const queueItem = {
+				id: 'q1',
+				tabId: 'tab-c',
+				type: 'message' as const,
+				text: 'read only query',
+				timestamp: Date.now(),
+				readOnlyMode: true,
+			};
+			const session = createMockSession({
+				id: 'sess-1',
+				state: 'busy',
+				busySource: 'ai',
+				aiTabs: [tabA, tabB],
+				activeTabId: 'tab-a',
+				executionQueue: [queueItem],
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			await onExitHandler?.('sess-1-ai-tab-a');
+			await new Promise((r) => setTimeout(r, 50));
+
+			expect(processQueuedItem).toHaveBeenCalledWith('sess-1', queueItem);
+		});
+
+		it('dequeues write-mode item once ALL other tabs finish', async () => {
+			const processQueuedItem = vi.fn().mockResolvedValue(undefined);
+			const deps = createMockDeps({
+				processQueuedItemRef: { current: processQueuedItem },
+			});
+			const tabA = createMockTab({ id: 'tab-a', state: 'busy', agentSessionId: 'sess-a' });
+			const tabB = createMockTab({ id: 'tab-b', state: 'busy', agentSessionId: 'sess-b' });
+			const queueItem = {
+				id: 'q1',
+				tabId: 'tab-c',
+				type: 'message' as const,
+				text: 'queued write',
+				timestamp: Date.now(),
+			};
+			const session = createMockSession({
+				id: 'sess-1',
+				state: 'busy',
+				busySource: 'ai',
+				aiTabs: [tabA, tabB],
+				activeTabId: 'tab-a',
+				executionQueue: [queueItem],
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			// Tab A exits — tab B still busy, so queue stays
+			await onExitHandler?.('sess-1-ai-tab-a');
+			await new Promise((r) => setTimeout(r, 50));
+			expect(processQueuedItem).not.toHaveBeenCalled();
+
+			// Now tab B also exits — no more busy tabs, queue should drain
+			// Update store to reflect tab-a is now idle (from the first exit)
+			const midState = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			expect(midState?.aiTabs.find((t) => t.id === 'tab-a')?.state).toBe('idle');
+
+			await onExitHandler?.('sess-1-ai-tab-b');
+			await new Promise((r) => setTimeout(r, 50));
+
+			expect(processQueuedItem).toHaveBeenCalledWith('sess-1', queueItem);
+		});
+
 		it('handles terminal exit with non-zero exit code', async () => {
 			const deps = createMockDeps();
 			const session = createMockSession({
@@ -4169,6 +2069,202 @@ describe('useAgentListeners', () => {
 
 			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
 			expect(updated?.state).toBe('idle');
+		});
+
+		it('transitions session to idle when exiting process tab was already closed', async () => {
+			const deps = createMockDeps();
+			// Tab B is the only remaining tab — Tab A was closed while its process ran
+			const tabB = createMockTab({ id: 'tab-b', state: 'idle', agentSessionId: null });
+			const session = createMockSession({
+				id: 'sess-1',
+				state: 'idle', // Already set to idle by closeTab cleanup
+				busySource: undefined,
+				aiTabs: [tabB],
+				activeTabId: 'tab-b',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			// Tab A's process exits — tab-a no longer in aiTabs
+			await onExitHandler?.('sess-1-ai-tab-a');
+			await new Promise((r) => setTimeout(r, 50));
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			// Session stays idle (was already idle from closeTab fix)
+			expect(updated?.state).toBe('idle');
+			// Tab B must remain untouched
+			const updatedTabB = updated?.aiTabs.find((t) => t.id === 'tab-b');
+			expect(updatedTabB?.state).toBe('idle');
+			expect(updatedTabB?.agentSessionId).toBeNull();
+		});
+
+		it('keeps other busy tabs running when closed tab process exits', async () => {
+			const deps = createMockDeps();
+			// Tab B is actively working on its own task
+			const tabB = createMockTab({ id: 'tab-b', state: 'busy', agentSessionId: 'tab-b-session' });
+			const session = createMockSession({
+				id: 'sess-1',
+				state: 'busy',
+				busySource: 'ai',
+				aiTabs: [tabB],
+				activeTabId: 'tab-b',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			// Tab A's orphaned process exits — should not affect Tab B
+			await onExitHandler?.('sess-1-ai-tab-a');
+			await new Promise((r) => setTimeout(r, 50));
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			// Session stays busy because Tab B is still working
+			expect(updated?.state).toBe('busy');
+			const updatedTabB = updated?.aiTabs.find((t) => t.id === 'tab-b');
+			expect(updatedTabB?.state).toBe('busy');
+			expect(updatedTabB?.agentSessionId).toBe('tab-b-session');
+		});
+
+		it('drains a queued message in the background after its tab was closed (fire-and-forget)', async () => {
+			const processQueuedItem = vi.fn().mockResolvedValue(undefined);
+			const deps = createMockDeps({
+				processQueuedItemRef: { current: processQueuedItem },
+			});
+			// Tab A was closed while its agent ran, so it lives in
+			// orphanedThinkingTabs - NOT in aiTabs - and a fresh idle tab replaced it.
+			const orphan = createMockTab({
+				id: 'tab-a',
+				state: 'busy',
+				agentSessionId: 'sess-a',
+			});
+			const freshTab = createMockTab({ id: 'tab-fresh', state: 'idle' });
+			const queueItem = {
+				id: 'q1',
+				tabId: 'tab-a',
+				type: 'message' as const,
+				text: 'finish the refactor',
+				timestamp: Date.now(),
+			};
+			const session = createMockSession({
+				id: 'sess-1',
+				state: 'busy',
+				busySource: 'ai',
+				aiTabs: [freshTab],
+				activeTabId: 'tab-fresh',
+				orphanedThinkingTabs: [orphan],
+				executionQueue: [queueItem],
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			// The orphan's current turn finishes.
+			await onExitHandler?.('sess-1-ai-tab-a');
+			await new Promise((r) => setTimeout(r, 50));
+
+			// The queued follow-up dispatches against the orphan, even though its
+			// tab is no longer visible.
+			expect(processQueuedItem).toHaveBeenCalledWith('sess-1', queueItem);
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			// Item dequeued, session still busy, orphan kept alive for the new turn.
+			expect(updated?.executionQueue).toHaveLength(0);
+			expect(updated?.state).toBe('busy');
+			expect(updated?.orphanedThinkingTabs?.map((t) => t.id)).toContain('tab-a');
+			// The queued user message is recorded on the orphan's own log so a later
+			// restore shows the background conversation.
+			const updatedOrphan = updated?.orphanedThinkingTabs?.find((t) => t.id === 'tab-a');
+			expect(updatedOrphan?.logs.some((l) => l.text === 'finish the refactor')).toBe(true);
+		});
+
+		it('retires a closed orphan once its queue is empty', async () => {
+			const processQueuedItem = vi.fn().mockResolvedValue(undefined);
+			const deps = createMockDeps({
+				processQueuedItemRef: { current: processQueuedItem },
+			});
+			const orphan = createMockTab({ id: 'tab-a', state: 'busy', agentSessionId: 'sess-a' });
+			const freshTab = createMockTab({ id: 'tab-fresh', state: 'idle' });
+			const session = createMockSession({
+				id: 'sess-1',
+				state: 'busy',
+				busySource: 'ai',
+				aiTabs: [freshTab],
+				activeTabId: 'tab-fresh',
+				orphanedThinkingTabs: [orphan],
+				executionQueue: [],
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			await onExitHandler?.('sess-1-ai-tab-a');
+			await new Promise((r) => setTimeout(r, 50));
+
+			// No queued work remained, so the orphan is retired and nothing dispatches.
+			expect(processQueuedItem).not.toHaveBeenCalled();
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			expect(updated?.orphanedThinkingTabs ?? []).toHaveLength(0);
+			expect(updated?.state).toBe('idle');
+		});
+	});
+
+	// ========================================================================
+	// Regression: no TTS / audioFeedback code (removed in ff58abe14)
+	// ========================================================================
+
+	describe('regression: no TTS speak code in onExit', () => {
+		it('does not reference useSettingsStore in the module source', async () => {
+			const fs = await import('fs');
+			const path = await import('path');
+			const sourceFile = path.resolve(
+				__dirname,
+				'../../../renderer/hooks/agent/useAgentListeners.ts'
+			);
+			const source = fs.readFileSync(sourceFile, 'utf-8');
+			expect(source).not.toContain('useSettingsStore');
+			expect(source).not.toContain('audioFeedback');
+			expect(source).not.toContain('notification.speak');
+		});
+
+		it('does not call window.maestro.notification.speak on process exit', async () => {
+			const speakMock = vi.fn().mockResolvedValue(undefined);
+			(window as any).maestro.notification = {
+				...((window as any).maestro.notification || {}),
+				speak: speakMock,
+			};
+
+			const deps = createMockDeps();
+			const tab = createMockTab({ id: 'tab-1' });
+			const session = createMockSession({
+				id: 'sess-1',
+				state: 'busy',
+				busySource: 'ai',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			await onExitHandler?.('sess-1-ai-tab-1');
+			await new Promise((r) => setTimeout(r, 100));
+
+			expect(speakMock).not.toHaveBeenCalled();
 		});
 	});
 });

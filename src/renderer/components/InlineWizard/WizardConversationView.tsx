@@ -287,7 +287,7 @@ function getUserFriendlyErrorMessage(error: string): { title: string; descriptio
 	// Default generic error
 	return {
 		title: 'Something Went Wrong',
-		description: error,
+		description: error || 'An unexpected error occurred. Please try again.',
 	};
 }
 
@@ -432,7 +432,8 @@ export function WizardConversationView({
 
 	// Detect user scroll to decide whether to auto-scroll
 	useEffect(() => {
-		const container = containerRef.current!;
+		const container = containerRef.current;
+		if (!container) return;
 
 		const handleScroll = () => {
 			// Ignore programmatic scrolls
@@ -452,7 +453,8 @@ export function WizardConversationView({
 	// but only if the user hasn't scrolled up to read history.
 	const scrollToBottom = useCallback(() => {
 		if (userScrolledUpRef.current) return;
-		const container = containerRef.current!;
+		const container = containerRef.current;
+		if (!container) return;
 
 		isProgrammaticScrollRef.current = true;
 		container.scrollTo({
@@ -488,12 +490,14 @@ export function WizardConversationView({
 			if (lastMsg?.role === 'user') {
 				// User just sent a message - scroll to bottom regardless of scroll position
 				userScrolledUpRef.current = false;
-				const container = containerRef.current!;
-				isProgrammaticScrollRef.current = true;
-				container.scrollTo({ top: container.scrollHeight, behavior: 'auto' });
-				requestAnimationFrame(() => {
-					isProgrammaticScrollRef.current = false;
-				});
+				const container = containerRef.current;
+				if (container) {
+					isProgrammaticScrollRef.current = true;
+					container.scrollTo({ top: container.scrollHeight, behavior: 'auto' });
+					requestAnimationFrame(() => {
+						isProgrammaticScrollRef.current = false;
+					});
+				}
 			}
 		}
 	}, [conversationHistory]);

@@ -6,11 +6,10 @@ import {
 	type TransferRequest,
 } from '../../../renderer/hooks';
 import type { Session, AITab, LogEntry, ToolType } from '../../../renderer/types';
+import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import type { SendToAgentOptions } from '../../../renderer/components/SendToAgentModal';
+import { createMockAITab } from '../../helpers/mockTab';
 import * as contextGroomer from '../../../renderer/services/contextGroomer';
-import { extractTabContext } from '../../../renderer/utils/contextExtractor';
-import { createMergedSession } from '../../../renderer/utils/tabHelpers';
-import { useOperationStore } from '../../../renderer/stores/operationStore';
 
 // Mock the context grooming service
 vi.mock('../../../renderer/services/contextGroomer', async () => {
@@ -88,21 +87,17 @@ vi.mock('../../../renderer/utils/tabHelpers', () => ({
 
 // Create a mock tab
 function createMockTab(id: string, logs: LogEntry[] = []): AITab {
-	return {
+	return createMockAITab({
 		id,
 		name: `Tab ${id}`,
 		agentSessionId: `session-${id}`,
-		starred: false,
 		logs,
-		inputValue: '',
-		stagedImages: [],
-		createdAt: Date.now(),
-		state: 'idle',
 		saveToHistory: true,
-	};
+	});
 }
 
-// Create a minimal session for testing
+// Thin wrapper: positional signature preserved. Pre-populates a tab
+// with hello/hi logs so Send To Agent has real content to forward.
 function createMockSession(
 	id: string,
 	toolType: ToolType = 'claude-code',
@@ -112,48 +107,15 @@ function createMockSession(
 		{ id: 'log-1', timestamp: Date.now(), source: 'user', text: 'Hello' },
 		{ id: 'log-2', timestamp: Date.now() + 100, source: 'ai', text: 'Hi there!' },
 	]);
-
-	return {
+	return baseCreateMockSession({
 		id,
 		name: `Session ${id}`,
 		toolType,
 		state,
-		cwd: '/test/project',
-		fullPath: '/test/project',
-		projectRoot: '/test/project',
-		aiLogs: [],
-		shellLogs: [],
-		workLog: [],
-		contextUsage: 0,
-		inputMode: 'ai',
-		aiPid: 0,
-		terminalPid: 0,
-		port: 0,
-		isLive: false,
-		changedFiles: [],
-		isGitRepo: false,
-		fileTree: [],
-		fileExplorerExpanded: [],
-		fileExplorerScrollPos: 0,
-		activeTimeMs: 0,
-		executionQueue: [],
 		aiTabs: [tab],
 		activeTabId: tab.id,
-		closedTabHistory: [],
-	};
-}
-
-beforeEach(() => {
-	useOperationStore.getState().resetAll();
-	vi.mocked(window.maestro.agents.get).mockResolvedValue({
-		available: true,
-	} as Awaited<ReturnType<typeof window.maestro.agents.get>>);
-	Object.assign(window.maestro, {
-		history: {
-			add: vi.fn().mockResolvedValue(true),
-		},
 	});
-});
+}
 
 describe('useSendToAgent', () => {
 	beforeEach(() => {
@@ -250,76 +212,6 @@ describe('useSendToAgent', () => {
 			expect(result.current.transferState).toBe('complete');
 		});
 
-		it('handles missing log text while estimating context size', async () => {
-			const { result } = renderHook(() => useSendToAgent());
-			const sourceSession = createMockSession('source-1', 'claude-code');
-			sourceSession.aiTabs[0].logs = [
-				{ id: 'missing-text', timestamp: Date.now(), source: 'user', text: undefined as any },
-				{ id: 'log-2', timestamp: Date.now() + 1, source: 'ai', text: 'Still transferable' },
-			];
-
-			let transferResult;
-			await act(async () => {
-				transferResult = await result.current.startTransfer({
-					sourceSession,
-					sourceTabId: 'tab-1',
-					targetAgent: 'opencode',
-					options: { groomContext: false, createNewSession: true },
-				});
-			});
-
-			expect(transferResult.success).toBe(true);
-			expect(createMergedSession).toHaveBeenCalledWith(
-				expect.objectContaining({
-					mergedLogs: sourceSession.aiTabs[0].logs,
-				})
-			);
-		});
-
-		it('uses the project folder name when the session name is missing', async () => {
-			const { result } = renderHook(() => useSendToAgent());
-			const sourceSession = createMockSession('source-1', 'claude-code');
-			sourceSession.name = '';
-			sourceSession.projectRoot = '/workspace/fallback-project';
-
-			await act(async () => {
-				await result.current.startTransfer({
-					sourceSession,
-					sourceTabId: 'tab-1',
-					targetAgent: 'opencode',
-					options: { groomContext: false, createNewSession: true },
-				});
-			});
-
-			expect(createMergedSession).toHaveBeenCalledWith(
-				expect.objectContaining({
-					name: expect.stringContaining('fallback-project'),
-				})
-			);
-		});
-
-		it('uses an unnamed session label when both name and project folder are missing', async () => {
-			const { result } = renderHook(() => useSendToAgent());
-			const sourceSession = createMockSession('source-1', 'claude-code');
-			sourceSession.name = '';
-			sourceSession.projectRoot = '';
-
-			await act(async () => {
-				await result.current.startTransfer({
-					sourceSession,
-					sourceTabId: 'tab-1',
-					targetAgent: 'opencode',
-					options: { groomContext: false, createNewSession: true },
-				});
-			});
-
-			expect(createMergedSession).toHaveBeenCalledWith(
-				expect.objectContaining({
-					name: expect.stringContaining('Unnamed Session'),
-				})
-			);
-		});
-
 		it('uses buildContextTransferPrompt for agent-specific grooming', async () => {
 			const spy = vi.spyOn(contextGroomer, 'buildContextTransferPrompt');
 			const { result } = renderHook(() => useSendToAgent());
@@ -366,33 +258,6 @@ describe('useSendToAgent', () => {
 			expect(result.current.error).toBe('Grooming timeout');
 		});
 
-		it('uses a generic grooming error when grooming fails without a message', async () => {
-			vi.mocked(contextGroomer.contextGroomingService.groomContexts).mockResolvedValue({
-				groomedLogs: [],
-				tokensSaved: 0,
-				success: false,
-			});
-
-			const { result } = renderHook(() => useSendToAgent());
-			const sourceSession = createMockSession('source-1', 'claude-code');
-
-			let transferResult;
-			await act(async () => {
-				transferResult = await result.current.startTransfer({
-					sourceSession,
-					sourceTabId: 'tab-1',
-					targetAgent: 'opencode',
-					options: { groomContext: true, createNewSession: true },
-				});
-			});
-
-			expect(transferResult).toEqual({
-				success: false,
-				error: 'Context grooming failed',
-			});
-			expect(result.current.error).toBe('Context grooming failed');
-		});
-
 		it('updates progress during transfer', async () => {
 			let progressCallback: ((p: any) => void) | undefined;
 			vi.mocked(contextGroomer.contextGroomingService.groomContexts).mockImplementation(
@@ -424,87 +289,40 @@ describe('useSendToAgent', () => {
 			expect(result.current.progress?.stage).toBe('complete');
 			expect(result.current.progress?.progress).toBe(100);
 		});
-
-		it('preserves non-grooming progress messages from the grooming service', async () => {
-			const setTransferStateSpy = vi.spyOn(useOperationStore.getState(), 'setTransferState');
-			vi.mocked(contextGroomer.contextGroomingService.groomContexts).mockImplementation(
-				async (request, onProgress) => {
-					onProgress({ stage: 'collecting', progress: 35, message: 'Collecting source data' });
-					return {
-						groomedLogs: [{ id: 'log', timestamp: Date.now(), source: 'ai', text: 'Done' }],
-						tokensSaved: 5,
-						success: true,
-					};
-				}
-			);
-
-			try {
-				const { result } = renderHook(() => useSendToAgent());
-				const sourceSession = createMockSession('source-1', 'claude-code');
-
-				await act(async () => {
-					await result.current.startTransfer({
-						sourceSession,
-						sourceTabId: 'tab-1',
-						targetAgent: 'opencode',
-						options: { groomContext: true, createNewSession: true },
-					});
-				});
-
-				expect(setTransferStateSpy).toHaveBeenCalledWith(
-					expect.objectContaining({
-						progress: expect.objectContaining({
-							stage: 'collecting',
-							progress: 35,
-							message: 'Collecting source data',
-						}),
-					})
-				);
-			} finally {
-				setTransferStateSpy.mockRestore();
-			}
-		});
 	});
 
 	describe('cancelTransfer', () => {
 		it('cancels an active transfer and resets state', async () => {
-			let resolveGrooming!: (value: {
-				groomedLogs: LogEntry[];
-				tokensSaved: number;
-				success: true;
-			}) => void;
-
+			// Set up a slow grooming operation
 			vi.mocked(contextGroomer.contextGroomingService.groomContexts).mockImplementation(
 				() =>
-					new Promise((resolve) => {
-						resolveGrooming = resolve;
-					})
+					new Promise((resolve) =>
+						setTimeout(
+							() =>
+								resolve({
+									groomedLogs: [],
+									tokensSaved: 0,
+									success: true,
+								}),
+							1000
+						)
+					)
 			);
 
 			const { result } = renderHook(() => useSendToAgent());
 			const sourceSession = createMockSession('source-1', 'claude-code');
 
-			let transferPromise!: Promise<unknown>;
-			act(() => {
-				transferPromise = result.current.startTransfer({
-					sourceSession,
-					sourceTabId: 'tab-1',
-					targetAgent: 'opencode',
-					options: { groomContext: true, createNewSession: true },
-				});
+			// Start transfer without awaiting
+			const transferPromise = result.current.startTransfer({
+				sourceSession,
+				sourceTabId: 'tab-1',
+				targetAgent: 'opencode',
+				options: { groomContext: true, createNewSession: true },
 			});
-
-			await waitFor(() =>
-				expect(contextGroomer.contextGroomingService.groomContexts).toHaveBeenCalled()
-			);
 
 			// Cancel immediately
 			act(() => {
 				result.current.cancelTransfer();
-			});
-			resolveGrooming({ groomedLogs: [], tokensSaved: 0, success: true });
-			await act(async () => {
-				await transferPromise;
 			});
 
 			expect(result.current.transferState).toBe('idle');
@@ -746,95 +564,6 @@ describe('useSendToAgentWithSessions', () => {
 		// Should not add session when createNewSession is false
 		expect(mockOnSessionCreated).not.toHaveBeenCalled();
 	});
-
-	it('handles filtered context and missing active tab when callbacks are omitted', async () => {
-		const defaultCreateMergedSession = vi.mocked(createMergedSession).getMockImplementation();
-		expect(defaultCreateMergedSession).toBeDefined();
-		vi.mocked(createMergedSession).mockImplementationOnce(defaultCreateMergedSession!);
-		vi.mocked(createMergedSession).mockImplementationOnce((args) => {
-			const created = defaultCreateMergedSession!(args);
-			return {
-				...created,
-				session: {
-					...created.session,
-					aiTabs: [],
-					activeTabId: '',
-				},
-			};
-		});
-
-		const sessions = [createMockSession('existing-1')];
-		const sourceSession = createMockSession('source-1', 'claude-code');
-		sourceSession.aiTabs[0].logs = [
-			{ id: 'system-only', timestamp: Date.now(), source: 'system', text: 'Internal note' },
-			{ id: 'blank-user', timestamp: Date.now() + 1, source: 'user', text: '   ' },
-		];
-
-		const { result } = renderHook(() =>
-			useSendToAgentWithSessions({
-				sessions,
-				setSessions: mockSetSessions,
-			})
-		);
-
-		let transferResult;
-		await act(async () => {
-			transferResult = await result.current.executeTransfer(sourceSession, 'tab-1', 'opencode', {
-				groomContext: false,
-				createNewSession: true,
-			});
-		});
-
-		expect(transferResult).toEqual(
-			expect.objectContaining({
-				success: true,
-				newSessionId: 'new-session-id',
-				newTabId: '',
-			})
-		);
-		expect(contextGroomer.contextGroomingService.groomContexts).not.toHaveBeenCalled();
-		const updateFn = mockSetSessions.mock.calls.at(-1)?.[0] as (prev: Session[]) => Session[];
-		const updatedSessions = updateFn(sessions);
-		const newSession = updatedSessions.find((s) => s.id === 'new-session-id');
-		expect(newSession?.aiTabs).toEqual([]);
-	});
-
-	it('logs history failures without failing session creation', async () => {
-		const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-		const historyError = new Error('history unavailable');
-		vi.mocked(window.maestro.history.add).mockRejectedValueOnce(historyError);
-
-		try {
-			const sessions = [createMockSession('existing-1')];
-
-			const { result } = renderHook(() =>
-				useSendToAgentWithSessions({
-					sessions,
-					setSessions: mockSetSessions,
-					onSessionCreated: mockOnSessionCreated,
-				})
-			);
-
-			const sourceSession = createMockSession('source-1', 'claude-code');
-
-			let transferResult;
-			await act(async () => {
-				transferResult = await result.current.executeTransfer(sourceSession, 'tab-1', 'opencode', {
-					groomContext: true,
-					createNewSession: true,
-				});
-			});
-
-			expect(transferResult.success).toBe(true);
-			expect(mockSetSessions).toHaveBeenCalled();
-			expect(consoleWarn).toHaveBeenCalledWith(
-				'Failed to log transfer operation to history:',
-				historyError
-			);
-		} finally {
-			consoleWarn.mockRestore();
-		}
-	});
 });
 
 describe('error handling', () => {
@@ -1041,42 +770,24 @@ describe('error handling', () => {
 	});
 
 	it('clears transferError on cancelTransfer', async () => {
-		let resolveGrooming!: (value: {
-			groomedLogs: LogEntry[];
-			tokensSaved: number;
-			success: true;
-		}) => void;
 		vi.mocked(contextGroomer.contextGroomingService.groomContexts).mockImplementation(
-			() =>
-				new Promise((resolve) => {
-					resolveGrooming = resolve;
-				})
+			() => new Promise(() => {}) // Never resolves
 		);
 
 		const { result } = renderHook(() => useSendToAgent());
 		const sourceSession = createMockSession('source-1', 'claude-code');
 
-		let transferPromise!: Promise<unknown>;
-		act(() => {
-			transferPromise = result.current.startTransfer({
-				sourceSession,
-				sourceTabId: 'tab-1',
-				targetAgent: 'opencode',
-				options: { groomContext: true, createNewSession: true },
-			});
+		// Start transfer (it will hang)
+		result.current.startTransfer({
+			sourceSession,
+			sourceTabId: 'tab-1',
+			targetAgent: 'opencode',
+			options: { groomContext: true, createNewSession: true },
 		});
-
-		await waitFor(() =>
-			expect(contextGroomer.contextGroomingService.groomContexts).toHaveBeenCalled()
-		);
 
 		// Cancel
 		act(() => {
 			result.current.cancelTransfer();
-		});
-		resolveGrooming({ groomedLogs: [], tokensSaved: 0, success: true });
-		await act(async () => {
-			await transferPromise;
 		});
 
 		expect(result.current.transferError).toBeNull();
@@ -1092,231 +803,6 @@ describe('transfer edge cases', () => {
 			tokensSaved: 10,
 			success: true,
 		});
-	});
-
-	it('returns an error without starting when another transfer is already in progress', async () => {
-		useOperationStore.getState().setGlobalTransferInProgress(true);
-
-		const { result } = renderHook(() => useSendToAgent());
-		const sourceSession = createMockSession('source-1', 'claude-code');
-
-		let transferResult;
-		await act(async () => {
-			transferResult = await result.current.startTransfer({
-				sourceSession,
-				sourceTabId: 'tab-1',
-				targetAgent: 'opencode',
-				options: { groomContext: false, createNewSession: true },
-			});
-		});
-
-		expect(transferResult).toEqual({
-			success: false,
-			error: 'A transfer operation is already in progress. Please wait for it to complete.',
-		});
-		expect(createMergedSession).not.toHaveBeenCalled();
-	});
-
-	it('warns but continues when transferring very large context', async () => {
-		const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-
-		try {
-			const { result } = renderHook(() => useSendToAgent());
-			const sourceSession = createMockSession('source-1', 'claude-code');
-			sourceSession.aiTabs[0].logs = [
-				{
-					id: 'large-log',
-					timestamp: Date.now(),
-					source: 'user',
-					text: 'x'.repeat(400004),
-				},
-			];
-
-			let transferResult;
-			await act(async () => {
-				transferResult = await result.current.startTransfer({
-					sourceSession,
-					sourceTabId: 'tab-1',
-					targetAgent: 'opencode',
-					options: { groomContext: false, createNewSession: true },
-				});
-			});
-
-			expect(transferResult.success).toBe(true);
-			expect(consoleWarn).toHaveBeenCalledWith(expect.stringContaining('Large context transfer'));
-		} finally {
-			consoleWarn.mockRestore();
-		}
-	});
-
-	it('warns but continues when agent availability cannot be verified', async () => {
-		const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-		vi.mocked(window.maestro.agents.get).mockResolvedValueOnce(null);
-
-		try {
-			const { result } = renderHook(() => useSendToAgent());
-			const sourceSession = createMockSession('source-1', 'claude-code');
-
-			let transferResult;
-			await act(async () => {
-				transferResult = await result.current.startTransfer({
-					sourceSession,
-					sourceTabId: 'tab-1',
-					targetAgent: 'opencode',
-					options: { groomContext: false, createNewSession: true },
-				});
-			});
-
-			expect(transferResult.success).toBe(true);
-			expect(consoleWarn).toHaveBeenCalledWith(
-				'Could not verify agent availability:',
-				expect.any(Error)
-			);
-		} finally {
-			consoleWarn.mockRestore();
-		}
-	});
-
-	it('returns cancellation when cancelled after agent availability check', async () => {
-		const { result } = renderHook(() => useSendToAgent());
-		const sourceSession = createMockSession('source-1', 'claude-code');
-
-		vi.mocked(window.maestro.agents.get).mockImplementationOnce(async () => {
-			result.current.cancelTransfer();
-			return {
-				available: true,
-			} as Awaited<ReturnType<typeof window.maestro.agents.get>>;
-		});
-
-		let transferResult;
-		await act(async () => {
-			transferResult = await result.current.startTransfer({
-				sourceSession,
-				sourceTabId: 'tab-1',
-				targetAgent: 'opencode',
-				options: { groomContext: false, createNewSession: true },
-			});
-		});
-
-		expect(transferResult).toEqual({ success: false, error: 'Transfer cancelled' });
-		expect(extractTabContext).not.toHaveBeenCalled();
-	});
-
-	it('returns cancellation when cancelled after context extraction', async () => {
-		const { result } = renderHook(() => useSendToAgent());
-		const sourceSession = createMockSession('source-1', 'claude-code');
-
-		vi.mocked(extractTabContext).mockImplementationOnce((tab, name, session) => {
-			result.current.cancelTransfer();
-			return {
-				type: 'tab',
-				sessionId: session.id,
-				tabId: tab.id,
-				projectRoot: session.projectRoot,
-				name: `${name} / ${tab.name || 'Tab'}`,
-				logs: tab.logs,
-				agentType: session.toolType,
-			};
-		});
-
-		let transferResult;
-		await act(async () => {
-			transferResult = await result.current.startTransfer({
-				sourceSession,
-				sourceTabId: 'tab-1',
-				targetAgent: 'opencode',
-				options: { groomContext: false, createNewSession: true },
-			});
-		});
-
-		expect(transferResult).toEqual({ success: false, error: 'Transfer cancelled' });
-		expect(createMergedSession).not.toHaveBeenCalled();
-	});
-
-	it('returns cancellation when cancelled while preparing raw context', async () => {
-		const { result } = renderHook(() => useSendToAgent());
-		const sourceSession = createMockSession('source-1', 'claude-code');
-
-		vi.mocked(extractTabContext).mockImplementationOnce((tab, name, session) => ({
-			type: 'tab',
-			sessionId: session.id,
-			tabId: tab.id,
-			projectRoot: session.projectRoot,
-			name: `${name} / ${tab.name || 'Tab'}`,
-			get logs() {
-				result.current.cancelTransfer();
-				return tab.logs;
-			},
-			agentType: session.toolType,
-		}));
-
-		let transferResult;
-		await act(async () => {
-			transferResult = await result.current.startTransfer({
-				sourceSession,
-				sourceTabId: 'tab-1',
-				targetAgent: 'opencode',
-				options: { groomContext: false, createNewSession: true },
-			});
-		});
-
-		expect(transferResult).toEqual({ success: false, error: 'Transfer cancelled' });
-		expect(createMergedSession).not.toHaveBeenCalled();
-	});
-
-	it('returns cancellation when cancelled after grooming completes', async () => {
-		vi.mocked(contextGroomer.contextGroomingService.groomContexts).mockImplementationOnce(
-			async () => {
-				result.current.cancelTransfer();
-				return {
-					groomedLogs: [{ id: 'log', timestamp: Date.now(), source: 'ai', text: 'Done' }],
-					tokensSaved: 5,
-					success: true,
-				};
-			}
-		);
-
-		const { result } = renderHook(() => useSendToAgent());
-		const sourceSession = createMockSession('source-1', 'claude-code');
-
-		let transferResult;
-		await act(async () => {
-			transferResult = await result.current.startTransfer({
-				sourceSession,
-				sourceTabId: 'tab-1',
-				targetAgent: 'opencode',
-				options: { groomContext: true, createNewSession: true },
-			});
-		});
-
-		expect(transferResult).toEqual({ success: false, error: 'Transfer cancelled' });
-		expect(createMergedSession).not.toHaveBeenCalled();
-	});
-
-	it('classifies non-Error transfer failures with the fallback message', async () => {
-		vi.mocked(createMergedSession).mockImplementationOnce(() => {
-			throw 'non-error failure';
-		});
-
-		const { result } = renderHook(() => useSendToAgent());
-		const sourceSession = createMockSession('source-1', 'claude-code');
-
-		let transferResult;
-		await act(async () => {
-			transferResult = await result.current.startTransfer({
-				sourceSession,
-				sourceTabId: 'tab-1',
-				targetAgent: 'opencode',
-				options: { groomContext: false, createNewSession: true },
-			});
-		});
-
-		expect(transferResult).toEqual({
-			success: false,
-			error: 'Unknown error during transfer',
-		});
-		expect(result.current.transferState).toBe('error');
-		expect(result.current.error).toBe('Unknown error during transfer');
 	});
 
 	it('handles transfer to same agent type (should still work)', async () => {

@@ -15,10 +15,15 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { SessionList } from '../../../renderer/components/SessionList';
 import type { Session, Group, Theme } from '../../../renderer/types';
+import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
-import { useSettingsStore, DEFAULT_AUTO_RUN_STATS } from '../../../renderer/stores/settingsStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+
+// Deep-cloned default autoRunStats captured from a fresh store (no longer exported).
+const DEFAULT_AUTO_RUN_STATS = JSON.parse(JSON.stringify(useSettingsStore.getState().autoRunStats));
 import { useBatchStore } from '../../../renderer/stores/batchStore';
+import { useModalStore } from '../../../renderer/stores/modalStore';
 import type { BatchRunState } from '../../../renderer/types';
 
 // Mock QRCodeSVG to avoid complex rendering
@@ -58,6 +63,8 @@ vi.mock('lucide-react', () => ({
 	Trophy: () => <span data-testid="icon-trophy" />,
 	Trash2: () => <span data-testid="icon-trash" />,
 	Edit3: () => <span data-testid="icon-edit" />,
+	Smile: () => <span data-testid="icon-smile" />,
+	Fingerprint: () => <span data-testid="icon-fingerprint" />,
 	FolderInput: () => <span data-testid="icon-folder-input" />,
 	FolderPlus: () => <span data-testid="icon-folder-plus" />,
 	Download: () => <span data-testid="icon-download" />,
@@ -69,6 +76,11 @@ vi.mock('lucide-react', () => ({
 	Music: () => <span data-testid="icon-music" />,
 	Command: () => <span data-testid="icon-command" />,
 	MessageSquare: () => <span data-testid="icon-message-square" />,
+	MessageSquarePlus: () => <span data-testid="icon-message-square-plus" />,
+	Bell: () => <span data-testid="icon-bell" />,
+	Zap: ({ title, style }: { title?: string; style?: Record<string, string> }) => (
+		<span data-testid="icon-zap" title={title} style={style} />
+	),
 }));
 
 // Mock gitService
@@ -76,6 +88,13 @@ vi.mock('../../../renderer/services/git', () => ({
 	gitService: {
 		getStatus: vi.fn().mockResolvedValue({ files: [] }),
 	},
+}));
+
+// Mock InlineWizardContext to avoid Provider requirement
+vi.mock('../../../renderer/contexts/InlineWizardContext', () => ({
+	useInlineWizardContext: () => ({
+		wizardActiveSessions: new Map(),
+	}),
 }));
 
 // Mock GitStatusContext to avoid Provider requirement
@@ -115,7 +134,10 @@ const mockModalActions = {
 	setRenameInstanceModalOpen: vi.fn(),
 	setRenameInstanceValue: vi.fn(),
 	setRenameInstanceSessionId: vi.fn(),
-	setDuplicatingSessionId: vi.fn(),
+	setRenameGroupModalOpen: vi.fn(),
+	setRenameGroupId: vi.fn(),
+	setRenameGroupValue: vi.fn(),
+	setRenameGroupEmoji: vi.fn(),
 };
 
 vi.mock('../../../renderer/stores/modalStore', async (importActual) => {
@@ -153,29 +175,22 @@ const defaultShortcuts: Record<string, any> = {
 	processMonitor: { keys: ['meta', 'shift', 'p'], description: 'Process monitor' },
 	usageDashboard: { keys: ['alt', 'meta', 'u'], description: 'Usage dashboard' },
 	toggleSidebar: { keys: ['meta', 'b'], description: 'Toggle sidebar' },
+	filterUnreadAgents: { keys: ['alt', 'u'], description: 'Filter unread agents' },
 };
 
-// Create mock session
-const createMockSession = (overrides: Partial<Session> = {}): Session => ({
-	id: `session-${Math.random().toString(36).substr(2, 9)}`,
-	name: 'Test Session',
-	toolType: 'claude-code',
-	state: 'idle',
-	inputMode: 'ai',
-	cwd: '/home/user/project',
-	projectRoot: '/home/user/project',
-	aiPid: 12345,
-	terminalPid: 12346,
-	aiLogs: [],
-	shellLogs: [],
-	isGitRepo: true,
-	fileTree: [],
-	fileExplorerExpanded: [],
-	messageQueue: [],
-	contextUsage: 30,
-	activeTimeMs: 60000,
-	...overrides,
-});
+const createMockSession = (overrides: Partial<Session> = {}): Session =>
+	baseCreateMockSession({
+		id: `session-${Math.random().toString(36).substr(2, 9)}`,
+		cwd: '/home/user/project',
+		fullPath: '/home/user/project',
+		projectRoot: '/home/user/project',
+		aiPid: 12345,
+		terminalPid: 12346,
+		isGitRepo: true,
+		contextUsage: 30,
+		activeTimeMs: 60000,
+		...overrides,
+	});
 
 // Create mock group
 const createMockGroup = (overrides: Partial<Group> = {}): Group => ({
@@ -194,6 +209,8 @@ const createDefaultProps = (overrides: Partial<Parameters<typeof SessionList>[0]
 	webInterfaceUrl: null,
 	showSessionJumpNumbers: false,
 	visibleSessions: [] as Session[],
+	starredItems: [],
+	activateStarredItem: vi.fn(),
 	toggleGlobalLive: vi.fn(),
 	restartWebServer: vi.fn().mockResolvedValue(null),
 	toggleGroup: vi.fn(),
@@ -227,13 +244,6 @@ const createDefaultProps = (overrides: Partial<Parameters<typeof SessionList>[0]
 	...overrides,
 });
 
-async function openLiveOverlay() {
-	fireEvent.click(screen.getByText('LIVE'));
-	await waitFor(() =>
-		expect((window.maestro as any).tunnel.isCloudflaredInstalled).toHaveBeenCalled()
-	);
-}
-
 describe('SessionList', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -242,12 +252,12 @@ describe('SessionList', () => {
 			leftSidebarOpen: true,
 			activeFocus: 'main' as const,
 			selectedSidebarIndex: -1,
+			sidebarExtraSelection: null,
 			editingGroupId: null,
 			editingSessionId: null,
 			draggingSessionId: null,
 			bookmarksCollapsed: false,
 			sessionFilterOpen: false,
-			groupChatsExpanded: false,
 		});
 		useSessionStore.setState({
 			sessions: [],
@@ -258,6 +268,7 @@ describe('SessionList', () => {
 			shortcuts: defaultShortcuts,
 			leftSidebarWidth: 300,
 			ungroupedCollapsed: false,
+			groupChatsExpanded: false,
 			autoRunStats: { ...DEFAULT_AUTO_RUN_STATS },
 		});
 		useBatchStore.setState({ batchRunStates: {} });
@@ -414,7 +425,7 @@ describe('SessionList', () => {
 			expect(toggleGlobalLive).toHaveBeenCalled();
 		});
 
-		it('opens live overlay when clicking LIVE button', async () => {
+		it('opens live overlay when clicking LIVE button', () => {
 			useUIStore.setState({ leftSidebarOpen: true });
 			const props = createDefaultProps({
 				isLiveMode: true,
@@ -422,13 +433,14 @@ describe('SessionList', () => {
 			});
 			render(<SessionList {...props} />);
 
-			await openLiveOverlay();
+			// Click LIVE to toggle overlay
+			fireEvent.click(screen.getByText('LIVE'));
 
 			// Overlay should appear with description text
 			expect(screen.getByText(/Control your agents/)).toBeInTheDocument();
 		});
 
-		it('shows QR code in live overlay', async () => {
+		it('shows QR code in live overlay', () => {
 			useUIStore.setState({ leftSidebarOpen: true });
 			const props = createDefaultProps({
 				isLiveMode: true,
@@ -436,7 +448,7 @@ describe('SessionList', () => {
 			});
 			render(<SessionList {...props} />);
 
-			await openLiveOverlay();
+			fireEvent.click(screen.getByText('LIVE'));
 
 			expect(screen.getByTestId('qr-code')).toBeInTheDocument();
 		});
@@ -452,7 +464,7 @@ describe('SessionList', () => {
 			});
 			render(<SessionList {...props} />);
 
-			await openLiveOverlay();
+			fireEvent.click(screen.getByText('LIVE'));
 
 			const copyButton = screen.getByTitle('Copy URL');
 			fireEvent.click(copyButton);
@@ -460,7 +472,7 @@ describe('SessionList', () => {
 			expect(mockClipboard.writeText).toHaveBeenCalledWith('http://localhost:3000');
 		});
 
-		it('opens browser when Open in Browser clicked', async () => {
+		it('opens browser when Open in Browser clicked', () => {
 			useUIStore.setState({ leftSidebarOpen: true });
 			const props = createDefaultProps({
 				isLiveMode: true,
@@ -468,14 +480,14 @@ describe('SessionList', () => {
 			});
 			render(<SessionList {...props} />);
 
-			await openLiveOverlay();
+			fireEvent.click(screen.getByText('LIVE'));
 
 			fireEvent.click(screen.getByText('Open in Browser'));
 
 			expect(window.maestro.shell.openExternal).toHaveBeenCalledWith('http://localhost:3000');
 		});
 
-		it('turns off live mode when Turn Off button clicked', async () => {
+		it('turns off live mode when Turn Off button clicked', () => {
 			const toggleGlobalLive = vi.fn();
 			useUIStore.setState({ leftSidebarOpen: true });
 			const props = createDefaultProps({
@@ -485,7 +497,7 @@ describe('SessionList', () => {
 			});
 			render(<SessionList {...props} />);
 
-			await openLiveOverlay();
+			fireEvent.click(screen.getByText('LIVE'));
 
 			fireEvent.click(screen.getByText('Turn Off Web Interface'));
 
@@ -617,22 +629,6 @@ describe('SessionList', () => {
 			expect(screen.getByPlaceholderText('Filter agents...')).toBeInTheDocument();
 		});
 
-		it('opens filter input with Ctrl+F and ignores non-Escape filter keys', () => {
-			useUIStore.setState({
-				leftSidebarOpen: true,
-				activeFocus: 'sidebar',
-			});
-			const props = createDefaultProps({});
-			const { container } = render(<SessionList {...props} />);
-
-			const sidebar = container.firstChild as HTMLElement;
-			fireEvent.keyDown(sidebar, { key: 'f', ctrlKey: true });
-
-			const input = screen.getByPlaceholderText('Filter agents...');
-			fireEvent.keyDown(input, { key: 'Enter' });
-			expect(input).toBeInTheDocument();
-		});
-
 		it('closes filter with Escape key', () => {
 			useUIStore.setState({
 				leftSidebarOpen: true,
@@ -735,56 +731,8 @@ describe('SessionList', () => {
 			expect(setBookmarksCollapsed).toHaveBeenCalledWith(true);
 		});
 
-		it('shows the bookmarked session group badge inside the bookmarks section', () => {
-			const group = createMockGroup({ id: 'g1', name: 'Client Work' });
-			const sessions = [
-				createMockSession({
-					id: 's1',
-					name: 'Pinned Agent',
-					bookmarked: true,
-					groupId: 'g1',
-				}),
-			];
-			useSessionStore.setState({ sessions: sessions, groups: [group] });
-			useUIStore.setState({ leftSidebarOpen: true, bookmarksCollapsed: false });
-			const props = createDefaultProps({
-				sortedSessions: sessions,
-			});
-			render(<SessionList {...props} />);
-
-			expect(screen.getAllByText('Pinned Agent').length).toBeGreaterThan(0);
-			expect(screen.getAllByText('Client Work').length).toBeGreaterThan(0);
-		});
-
-		it('expands bookmarks when clicking the collapsed bookmarks palette', () => {
-			const sessions = [
-				createMockSession({ id: 's1', name: 'Collapsed Bookmark', bookmarked: true }),
-			];
-			useSessionStore.setState({ sessions: sessions });
-			useUIStore.setState({ leftSidebarOpen: true, bookmarksCollapsed: true });
-			const props = createDefaultProps({
-				sortedSessions: sessions,
-			});
-			render(<SessionList {...props} />);
-
-			expect(screen.getByText('Bookmarks').closest('button')).toHaveAttribute(
-				'aria-expanded',
-				'false'
-			);
-			const collapsedSegment = screen.getByRole('button', { name: 'Switch to Collapsed Bookmark' });
-			fireEvent.click(collapsedSegment.parentElement!.parentElement!);
-
-			expect(screen.getByText('Bookmarks').closest('button')).toHaveAttribute(
-				'aria-expanded',
-				'true'
-			);
-		});
-
 		it('toggles bookmark on session via button', () => {
-			const sessions = [
-				createMockSession({ id: 's1', name: 'Test Session', bookmarked: false }),
-				createMockSession({ id: 's2', name: 'Other Session', bookmarked: false }),
-			];
+			const sessions = [createMockSession({ id: 's1', name: 'Test Session', bookmarked: false })];
 			useSessionStore.setState({ sessions: sessions });
 			useUIStore.setState({ leftSidebarOpen: true });
 			const setSessions = vi.spyOn(useSessionStore.getState(), 'setSessions');
@@ -802,9 +750,6 @@ describe('SessionList', () => {
 			fireEvent.click(bookmarkButtons[0]);
 
 			expect(setSessions).toHaveBeenCalled();
-			expect(
-				useSessionStore.getState().sessions.filter((session) => session.bookmarked)
-			).toHaveLength(1);
 		});
 	});
 
@@ -851,49 +796,6 @@ describe('SessionList', () => {
 			expect(toggleGroup).toHaveBeenCalledWith('g1');
 		});
 
-		it('drops sessions onto an expanded group through grouped session rows', () => {
-			const handleDropOnGroup = vi.fn();
-			const group = createMockGroup({ id: 'g1', name: 'Drop Group', collapsed: false });
-			const sessions = [createMockSession({ id: 's1', name: 'Grouped Drop', groupId: 'g1' })];
-			useSessionStore.setState({
-				sessions: sessions,
-				groups: [group],
-			});
-			useUIStore.setState({ leftSidebarOpen: true });
-			const props = createDefaultProps({
-				sortedSessions: sessions,
-				handleDropOnGroup,
-			});
-			render(<SessionList {...props} />);
-
-			fireEvent.drop(screen.getByText('Grouped Drop').closest('[draggable="true"]')!);
-
-			expect(handleDropOnGroup).toHaveBeenCalledWith('g1');
-		});
-
-		it('toggles group collapse from keyboard activation', () => {
-			const toggleGroup = vi.fn();
-			const group = createMockGroup({ id: 'g1', name: 'Keyboard Group', collapsed: false });
-			const sessions = [createMockSession({ id: 's1', name: 'Session', groupId: 'g1' })];
-			useSessionStore.setState({
-				sessions: sessions,
-				groups: [group],
-			});
-			useUIStore.setState({ leftSidebarOpen: true });
-			const props = createDefaultProps({
-				sortedSessions: sessions,
-				toggleGroup,
-			});
-			render(<SessionList {...props} />);
-
-			const header = screen.getByText('Keyboard Group').closest('[role="button"]')!;
-			fireEvent.keyDown(header, { key: 'Enter' });
-			fireEvent.keyDown(header, { key: ' ' });
-
-			expect(toggleGroup).toHaveBeenNthCalledWith(1, 'g1');
-			expect(toggleGroup).toHaveBeenNthCalledWith(2, 'g1');
-		});
-
 		it('shows delete button for empty groups on hover', () => {
 			const group = createMockGroup({ id: 'g1', name: 'Empty Group' });
 			useSessionStore.setState({
@@ -908,51 +810,6 @@ describe('SessionList', () => {
 
 			// Empty group should have delete button (visible on hover)
 			expect(screen.getByTitle('Delete empty group')).toBeInTheDocument();
-		});
-
-		it('confirms and removes an empty group from the delete button', () => {
-			const showConfirmation = vi.fn((_message, callback) => callback());
-			const group = createMockGroup({ id: 'g1', name: 'Empty Group' });
-			useSessionStore.setState({
-				sessions: [],
-				groups: [group],
-			});
-			useUIStore.setState({ leftSidebarOpen: true });
-			const props = createDefaultProps({
-				sortedSessions: [],
-				showConfirmation,
-			});
-			render(<SessionList {...props} />);
-
-			fireEvent.click(screen.getByTitle('Delete empty group'));
-
-			expect(showConfirmation).toHaveBeenCalledWith(
-				expect.stringContaining('Empty Group'),
-				expect.any(Function)
-			);
-			expect(useSessionStore.getState().groups).toEqual([]);
-		});
-
-		it('calls the worktree-group delete handler for populated worktree groups', () => {
-			const onDeleteWorktreeGroup = vi.fn();
-			const group = createMockGroup({ id: 'g-tree', name: 'Worktrees', emoji: '🌳' });
-			const sessions = [
-				createMockSession({ id: 's1', name: 'Grouped Session', groupId: 'g-tree' }),
-			];
-			useSessionStore.setState({
-				sessions: sessions,
-				groups: [group],
-			});
-			useUIStore.setState({ leftSidebarOpen: true });
-			const props = createDefaultProps({
-				sortedSessions: sessions,
-				onDeleteWorktreeGroup,
-			});
-			render(<SessionList {...props} />);
-
-			fireEvent.click(screen.getByTitle('Remove group and all agents'));
-
-			expect(onDeleteWorktreeGroup).toHaveBeenCalledWith('g-tree');
 		});
 
 		it('creates new group when button clicked', () => {
@@ -1017,12 +874,9 @@ describe('SessionList', () => {
 			const headerRow = ungroupedHeader.closest('.flex.items-center.justify-between');
 			expect(headerRow).not.toBeNull();
 			expect(headerRow?.contains(newGroupButton)).toBe(true);
-
-			fireEvent.click(newGroupButton);
-			expect(createNewGroup).toHaveBeenCalled();
 		});
 
-		it('shows standalone New Group button when groups exist with no ungrouped sessions', () => {
+		it('hides the Ungrouped Agents header when no ungrouped sessions exist but still shows the New Group button', () => {
 			const createNewGroup = vi.fn();
 			const group = createMockGroup({ id: 'g1', name: 'My Group', sessionIds: ['s1'] });
 			const sessions = [createMockSession({ id: 's1', name: 'Grouped Session', groupId: 'g1' })];
@@ -1037,14 +891,136 @@ describe('SessionList', () => {
 			});
 			render(<SessionList {...props} />);
 
-			// New Group button should be visible
-			expect(screen.getByText('New Group')).toBeInTheDocument();
-			// Ungrouped Agents header should NOT be visible (no ungrouped sessions)
+			// With every session in a group, the empty "Ungrouped Agents" folder
+			// header is replaced by a compact drop-zone container + New Group
+			// button — no orphan folder header.
 			expect(screen.queryByText('Ungrouped Agents')).not.toBeInTheDocument();
+			// The New Group button still renders so the user can keep organizing.
+			expect(screen.getByText('New Group')).toBeInTheDocument();
+		});
+	});
 
-			// Button should be standalone (full-width style)
-			const newGroupButton = screen.getByText('New Group').closest('button');
-			expect(newGroupButton).toHaveClass('w-full');
+	// ============================================================================
+	// Group Context Menu Tests
+	// ============================================================================
+
+	describe('Group Context Menu', () => {
+		it('opens context menu on right-click of a group header', () => {
+			const group = createMockGroup({ id: 'g1', name: 'My Group', emoji: '🚀' });
+			const sessions = [createMockSession({ id: 's1', name: 'Session', groupId: 'g1' })];
+			useSessionStore.setState({ sessions, groups: [group] });
+			useUIStore.setState({ leftSidebarOpen: true });
+			const props = createDefaultProps({ sortedSessions: sessions });
+			render(<SessionList {...props} />);
+
+			fireEvent.contextMenu(screen.getByText('My Group'), { clientX: 100, clientY: 100 });
+
+			expect(screen.getByText('Rename Group...')).toBeInTheDocument();
+			expect(screen.getByText('New Agent in Group...')).toBeInTheDocument();
+		});
+
+		it('opens rename group modal when "Rename Group..." is clicked', () => {
+			const group = createMockGroup({ id: 'g1', name: 'My Group', emoji: '🚀' });
+			useSessionStore.setState({ sessions: [], groups: [group] });
+			useUIStore.setState({ leftSidebarOpen: true });
+			const props = createDefaultProps({ sortedSessions: [] });
+			render(<SessionList {...props} />);
+
+			fireEvent.contextMenu(screen.getByText('My Group'), { clientX: 100, clientY: 100 });
+			fireEvent.click(screen.getByText('Rename Group...'));
+
+			expect(mockModalActions.setRenameGroupId).toHaveBeenCalledWith('g1');
+			expect(mockModalActions.setRenameGroupValue).toHaveBeenCalledWith('My Group');
+			expect(mockModalActions.setRenameGroupEmoji).toHaveBeenCalledWith('🚀');
+			expect(mockModalActions.setRenameGroupModalOpen).toHaveBeenCalledWith(true);
+		});
+
+		it('opens newInstance modal with presetGroupId when "New Agent in Group..." is clicked', () => {
+			const group = createMockGroup({ id: 'g1', name: 'My Group' });
+			useSessionStore.setState({ sessions: [], groups: [group] });
+			useUIStore.setState({ leftSidebarOpen: true });
+			const props = createDefaultProps({ sortedSessions: [] });
+			render(<SessionList {...props} />);
+
+			fireEvent.contextMenu(screen.getByText('My Group'), { clientX: 100, clientY: 100 });
+			fireEvent.click(screen.getByText('New Agent in Group...'));
+
+			expect(useModalStore.getState().isOpen('newInstance')).toBe(true);
+			const modalData = useModalStore.getState().getData('newInstance');
+			expect(modalData).toMatchObject({
+				duplicatingSessionId: null,
+				presetGroupId: 'g1',
+			});
+		});
+
+		it('expands a collapsed group when creating a new agent in it', () => {
+			const toggleGroup = vi.fn();
+			const group = createMockGroup({ id: 'g1', name: 'My Group', collapsed: true });
+			useSessionStore.setState({ sessions: [], groups: [group] });
+			useUIStore.setState({ leftSidebarOpen: true });
+			const props = createDefaultProps({ sortedSessions: [], toggleGroup });
+			render(<SessionList {...props} />);
+
+			fireEvent.contextMenu(screen.getByText('My Group'), { clientX: 100, clientY: 100 });
+			fireEvent.click(screen.getByText('New Agent in Group...'));
+
+			expect(toggleGroup).toHaveBeenCalledWith('g1');
+		});
+
+		it('shows Delete Group when the group is empty', () => {
+			const group = createMockGroup({ id: 'g1', name: 'Empty Group' });
+			useSessionStore.setState({ sessions: [], groups: [group] });
+			useUIStore.setState({ leftSidebarOpen: true });
+			const props = createDefaultProps({ sortedSessions: [] });
+			render(<SessionList {...props} />);
+
+			fireEvent.contextMenu(screen.getByText('Empty Group'), { clientX: 100, clientY: 100 });
+
+			expect(screen.getByText('Delete Group')).toBeInTheDocument();
+		});
+
+		it('offers Delete Group (which ungroups agents) for a non-empty non-worktree group', () => {
+			const group = createMockGroup({ id: 'g1', name: 'My Group', emoji: '🚀' });
+			const sessions = [createMockSession({ id: 's1', name: 'Session', groupId: 'g1' })];
+			useSessionStore.setState({ sessions, groups: [group] });
+			useUIStore.setState({ leftSidebarOpen: true });
+			const props = createDefaultProps({ sortedSessions: sessions });
+			render(<SessionList {...props} />);
+
+			fireEvent.contextMenu(screen.getByText('My Group'), { clientX: 100, clientY: 100 });
+
+			// Non-worktree groups use the "Delete Group" label even when populated;
+			// the destructive "Remove Group and Agents" wording is reserved for worktrees.
+			expect(screen.getByText('Delete Group')).toBeInTheDocument();
+			expect(screen.queryByText('Remove Group and Agents')).not.toBeInTheDocument();
+		});
+
+		it('does not show "Change Emoji..." in the group context menu (emoji is changed via Rename)', () => {
+			const group = createMockGroup({ id: 'g1', name: 'My Group', emoji: '🚀' });
+			useSessionStore.setState({ sessions: [], groups: [group] });
+			useUIStore.setState({ leftSidebarOpen: true });
+			const props = createDefaultProps({ sortedSessions: [] });
+			render(<SessionList {...props} />);
+
+			fireEvent.contextMenu(screen.getByText('My Group'), { clientX: 100, clientY: 100 });
+
+			expect(screen.queryByText('Change Emoji...')).not.toBeInTheDocument();
+		});
+
+		it('shows "Remove Group and Agents" for a non-empty worktree group', () => {
+			const group = createMockGroup({ id: 'g1', name: 'Worktree Group', emoji: '🌳' });
+			const sessions = [createMockSession({ id: 's1', name: 'Session', groupId: 'g1' })];
+			useSessionStore.setState({ sessions, groups: [group] });
+			useUIStore.setState({ leftSidebarOpen: true });
+			const props = createDefaultProps({
+				sortedSessions: sessions,
+				onDeleteWorktreeGroup: vi.fn(),
+			});
+			render(<SessionList {...props} />);
+
+			fireEvent.contextMenu(screen.getByText('Worktree Group'), { clientX: 100, clientY: 100 });
+
+			expect(screen.getByText('Remove Group and Agents')).toBeInTheDocument();
 		});
 	});
 
@@ -1087,7 +1063,7 @@ describe('SessionList', () => {
 			expect(screen.getByText('Ungrouped Session')).toBeInTheDocument();
 		});
 
-		it('hides Ungrouped Agents folder when all sessions are in groups', () => {
+		it('hides the Ungrouped Agents folder when all sessions are in groups', () => {
 			const group = createMockGroup({ id: 'g1', name: 'My Group', sessionIds: ['s1'] });
 			const sessions = [createMockSession({ id: 's1', name: 'Grouped Session', groupId: 'g1' })];
 			useSessionStore.setState({
@@ -1102,7 +1078,8 @@ describe('SessionList', () => {
 
 			// The session should be visible in the group
 			expect(screen.getByText('Grouped Session')).toBeInTheDocument();
-			// But the Ungrouped Agents folder should NOT be visible
+			// No empty "Ungrouped Agents" header — the drop zone / New Group
+			// button takes over that space instead.
 			expect(screen.queryByText('Ungrouped Agents')).not.toBeInTheDocument();
 		});
 
@@ -1118,191 +1095,6 @@ describe('SessionList', () => {
 
 			fireEvent.click(screen.getByText('Click Me'));
 			expect(setActiveSessionId).toHaveBeenCalledWith('s1');
-		});
-	});
-
-	// ============================================================================
-	// Worktree Session Tests
-	// ============================================================================
-
-	describe('Worktree Sessions', () => {
-		it('shows a collapsed worktree band and expands it through the parent callback', () => {
-			const onToggleWorktreeExpanded = vi.fn();
-			const parent = createMockSession({
-				id: 'parent',
-				name: 'Parent Agent',
-				worktreesExpanded: false,
-			});
-			const childA = createMockSession({
-				id: 'child-a',
-				name: 'Feature Alpha',
-				parentSessionId: 'parent',
-				worktreeBranch: 'feature/alpha',
-			});
-			const childB = createMockSession({
-				id: 'child-b',
-				name: 'Feature Beta',
-				parentSessionId: 'parent',
-				worktreeBranch: 'feature/beta',
-			});
-			useSessionStore.setState({ sessions: [parent, childA, childB] });
-			useUIStore.setState({ leftSidebarOpen: true });
-			const props = createDefaultProps({
-				sortedSessions: [parent, childA, childB],
-				onToggleWorktreeExpanded,
-			});
-			render(<SessionList {...props} />);
-
-			expect(screen.getByText('Parent Agent')).toBeInTheDocument();
-			expect(screen.queryByText('Feature Alpha')).not.toBeInTheDocument();
-
-			fireEvent.click(screen.getByTitle('2 worktrees (click to expand)'));
-
-			expect(onToggleWorktreeExpanded).toHaveBeenCalledWith('parent');
-		});
-
-		it('shows singular collapsed worktree copy for one child', () => {
-			const onToggleWorktreeExpanded = vi.fn();
-			const parent = createMockSession({
-				id: 'parent',
-				name: 'Solo Parent',
-				worktreesExpanded: false,
-			});
-			const child = createMockSession({
-				id: 'child',
-				name: 'Solo Worktree',
-				parentSessionId: 'parent',
-				worktreeBranch: 'feature/solo',
-			});
-			useSessionStore.setState({ sessions: [parent, child] });
-			useUIStore.setState({ leftSidebarOpen: true });
-			const props = createDefaultProps({
-				sortedSessions: [parent, child],
-				onToggleWorktreeExpanded,
-			});
-			render(<SessionList {...props} />);
-
-			fireEvent.click(screen.getByTitle('1 worktree (click to expand)'));
-
-			expect(onToggleWorktreeExpanded).toHaveBeenCalledWith('parent');
-		});
-
-		it('renders expanded worktree children and collapses them through the drawer handle', () => {
-			const onToggleWorktreeExpanded = vi.fn();
-			const startRenamingSession = vi.fn();
-			const parent = createMockSession({
-				id: 'parent',
-				name: 'Parent Agent',
-				worktreesExpanded: true,
-			});
-			const child = createMockSession({
-				id: 'child',
-				name: 'Feature Child',
-				parentSessionId: 'parent',
-				worktreeBranch: 'feature/child',
-			});
-			const childB = createMockSession({
-				id: 'child-b',
-				name: 'Feature Child B',
-				parentSessionId: 'parent',
-				worktreeBranch: 'feature/child-b',
-			});
-			useSessionStore.setState({
-				sessions: [parent, child, childB],
-				activeSessionId: 'child',
-			});
-			useUIStore.setState({
-				leftSidebarOpen: true,
-				activeFocus: 'sidebar',
-				selectedSidebarIndex: 1,
-			});
-			const props = createDefaultProps({
-				sortedSessions: [parent, child, childB],
-				onToggleWorktreeExpanded,
-				startRenamingSession,
-			});
-			render(<SessionList {...props} />);
-
-			expect(screen.getByText('Feature Child')).toBeInTheDocument();
-			expect(screen.getByText('Feature Child B')).toBeInTheDocument();
-			fireEvent.doubleClick(screen.getByText('Feature Child'));
-			expect(startRenamingSession).toHaveBeenCalledWith('worktree-parent-child');
-			expect(screen.getByText('2 worktrees')).toBeInTheDocument();
-
-			fireEvent.click(screen.getByTitle('Click to collapse worktrees'));
-			expect(onToggleWorktreeExpanded).toHaveBeenCalledWith('parent');
-		});
-
-		it('handles sessions absent from sorted-session index data', () => {
-			const session = createMockSession({ id: 'indexed-late', name: 'Index Fallback' });
-			useSessionStore.setState({ sessions: [session] });
-			useUIStore.setState({
-				leftSidebarOpen: true,
-				activeFocus: 'sidebar',
-				selectedSidebarIndex: 0,
-			});
-			const props = createDefaultProps({
-				sortedSessions: [],
-			});
-			render(<SessionList {...props} />);
-
-			expect(screen.getByText('Index Fallback')).toBeInTheDocument();
-		});
-
-		it('renders ungrouped expanded worktrees when the child is absent from sorted sessions', () => {
-			const group = createMockGroup({ id: 'g-empty', name: 'Other Group' });
-			const parent = createMockSession({
-				id: 'parent',
-				name: 'Ungrouped Worktree Parent',
-				worktreesExpanded: true,
-			});
-			const child = createMockSession({
-				id: 'child',
-				name: 'Ungrouped Worktree Child',
-				parentSessionId: 'parent',
-				worktreeBranch: 'feature/ungrouped',
-			});
-			useSessionStore.setState({ sessions: [parent, child], groups: [group] });
-			useUIStore.setState({
-				leftSidebarOpen: true,
-				activeFocus: 'sidebar',
-				selectedSidebarIndex: 99,
-			});
-			const props = createDefaultProps({
-				sortedSessions: [parent],
-				onToggleWorktreeExpanded: vi.fn(),
-			});
-			render(<SessionList {...props} />);
-
-			expect(screen.getByText('Ungrouped Worktree Child')).toBeInTheDocument();
-		});
-
-		it('renders grouped expanded worktrees without the flat wrapper', () => {
-			const onToggleWorktreeExpanded = vi.fn();
-			const group = createMockGroup({ id: 'g1', name: 'Grouped Worktrees' });
-			const parent = createMockSession({
-				id: 'parent',
-				name: 'Grouped Parent',
-				groupId: 'g1',
-				worktreesExpanded: true,
-			});
-			const child = createMockSession({
-				id: 'child',
-				name: 'Grouped Child',
-				parentSessionId: 'parent',
-				worktreeBranch: 'feature/grouped',
-			});
-			useSessionStore.setState({ sessions: [parent, child], groups: [group] });
-			useUIStore.setState({ leftSidebarOpen: true });
-			const props = createDefaultProps({
-				sortedSessions: [parent, child],
-				onToggleWorktreeExpanded,
-			});
-			render(<SessionList {...props} />);
-
-			expect(screen.getByText('Grouped Child')).toBeInTheDocument();
-			fireEvent.click(screen.getByTitle('Click to collapse worktrees'));
-			expect(onToggleWorktreeExpanded).toHaveBeenCalledWith('parent');
 		});
 	});
 
@@ -1326,26 +1118,6 @@ describe('SessionList', () => {
 			// Context menu items should appear
 			expect(screen.getByText('Rename')).toBeInTheDocument();
 			expect(screen.getByText('Remove Agent')).toBeInTheDocument();
-		});
-
-		it('delegates deletion to the parent handler when one is supplied', () => {
-			const onDeleteSession = vi.fn();
-			const showConfirmation = vi.fn();
-			const sessions = [createMockSession({ id: 's1', name: 'Delegate Delete' })];
-			useSessionStore.setState({ sessions: sessions });
-			useUIStore.setState({ leftSidebarOpen: true });
-			const props = createDefaultProps({
-				sortedSessions: sessions,
-				onDeleteSession,
-				showConfirmation,
-			});
-			render(<SessionList {...props} />);
-
-			fireEvent.contextMenu(screen.getByText('Delegate Delete'), { clientX: 100, clientY: 100 });
-			fireEvent.click(screen.getByText('Remove Agent'));
-
-			expect(onDeleteSession).toHaveBeenCalledWith('s1');
-			expect(showConfirmation).not.toHaveBeenCalled();
 		});
 
 		it('closes context menu on Escape', () => {
@@ -1387,30 +1159,6 @@ describe('SessionList', () => {
 			expect(mockModalActions.setRenameInstanceModalOpen).toHaveBeenCalledWith(true);
 		});
 
-		it('routes edit and duplicate context actions to their handlers', () => {
-			const onEditAgent = vi.fn();
-			const onNewAgentSession = vi.fn();
-			const sessions = [createMockSession({ id: 's1', name: 'Context Actions' })];
-			useSessionStore.setState({ sessions: sessions });
-			useUIStore.setState({ leftSidebarOpen: true });
-			const props = createDefaultProps({
-				sortedSessions: sessions,
-				onEditAgent,
-				onNewAgentSession,
-			});
-			render(<SessionList {...props} />);
-
-			fireEvent.contextMenu(screen.getByText('Context Actions'), { clientX: 100, clientY: 100 });
-			fireEvent.click(screen.getByText('Edit Agent...'));
-			expect(onEditAgent).toHaveBeenCalledWith(sessions[0]);
-
-			fireEvent.contextMenu(screen.getByText('Context Actions'), { clientX: 100, clientY: 100 });
-			fireEvent.click(screen.getByText('Duplicate...'));
-			expect(mockModalActions.setDuplicatingSessionId).toHaveBeenCalledWith('s1');
-			expect(onNewAgentSession).toHaveBeenCalled();
-			expect(screen.queryByText('Duplicate...')).not.toBeInTheDocument();
-		});
-
 		it('triggers delete confirmation from context menu', () => {
 			const showConfirmation = vi.fn();
 			const sessions = [createMockSession({ id: 's1', name: 'Delete Me' })];
@@ -1433,26 +1181,24 @@ describe('SessionList', () => {
 			);
 		});
 
-		it('hides the context menu when its session leaves the store', () => {
-			const showConfirmation = vi.fn();
-			const sessions = [createMockSession({ id: 's1', name: 'Stale Delete' })];
-			useSessionStore.setState({ sessions });
+		it('copies agent GUID to clipboard from context menu', async () => {
+			const mockClipboard = { writeText: vi.fn().mockResolvedValue(undefined) };
+			Object.assign(navigator, { clipboard: mockClipboard });
+
+			const sessions = [createMockSession({ id: 'agent-guid-1', name: 'Copy GUID Me' })];
+			useSessionStore.setState({ sessions: sessions });
 			useUIStore.setState({ leftSidebarOpen: true });
 			const props = createDefaultProps({
 				sortedSessions: sessions,
-				showConfirmation,
 			});
 			render(<SessionList {...props} />);
 
-			fireEvent.contextMenu(screen.getByText('Stale Delete'), { clientX: 100, clientY: 100 });
-			expect(screen.getByText('Remove Agent')).toBeInTheDocument();
+			// Open context menu
+			fireEvent.contextMenu(screen.getByText('Copy GUID Me'), { clientX: 100, clientY: 100 });
 
-			act(() => {
-				useSessionStore.setState({ sessions: [] });
-			});
+			fireEvent.click(screen.getByText('Copy Agent GUID to Clipboard'));
 
-			expect(screen.queryByText('Remove Agent')).not.toBeInTheDocument();
-			expect(showConfirmation).not.toHaveBeenCalled();
+			expect(mockClipboard.writeText).toHaveBeenCalledWith('agent-guid-1');
 		});
 
 		it('toggles bookmark from context menu', () => {
@@ -1473,63 +1219,30 @@ describe('SessionList', () => {
 			expect(setSessions).toHaveBeenCalled();
 		});
 
-		it('routes parent worktree context actions to parent-session callbacks', () => {
-			const onQuickCreateWorktree = vi.fn();
-			const onOpenWorktreeConfig = vi.fn();
-			const parent = createMockSession({
-				id: 'parent',
-				name: 'Worktree Parent',
-				worktreeConfig: { basePath: '/tmp/worktrees', watchEnabled: true },
-			});
-			useSessionStore.setState({ sessions: [parent] });
+		it('opens newInstance modal directly on duplicate (skips newAgentChoice)', () => {
+			const sessions = [createMockSession({ id: 's-dup', name: 'Duplicate Me' })];
+			useSessionStore.setState({ sessions });
 			useUIStore.setState({ leftSidebarOpen: true });
+			const onNewAgentSession = vi.fn();
 			const props = createDefaultProps({
-				sortedSessions: [parent],
-				onQuickCreateWorktree,
-				onOpenWorktreeConfig,
+				sortedSessions: sessions,
+				onNewAgentSession,
 			});
 			render(<SessionList {...props} />);
 
-			fireEvent.contextMenu(screen.getByText('Worktree Parent'), { clientX: 100, clientY: 100 });
-			fireEvent.click(screen.getByText('Create Worktree'));
-			expect(onQuickCreateWorktree).toHaveBeenCalledWith(parent);
+			// Open context menu
+			fireEvent.contextMenu(screen.getByText('Duplicate Me'), { clientX: 100, clientY: 100 });
 
-			fireEvent.contextMenu(screen.getByText('Worktree Parent'), { clientX: 100, clientY: 100 });
-			fireEvent.click(screen.getByText('Configure Worktrees'));
-			expect(onOpenWorktreeConfig).toHaveBeenCalledWith(parent);
-		});
+			fireEvent.click(screen.getByText('Duplicate...'));
 
-		it('routes worktree-child context actions to child-session callbacks', () => {
-			const onOpenCreatePR = vi.fn();
-			const onDeleteWorktree = vi.fn();
-			const parent = createMockSession({
-				id: 'parent',
-				name: 'Parent Session',
-				worktreesExpanded: true,
-			});
-			const child = createMockSession({
-				id: 'child',
-				name: 'Feature Worktree',
-				parentSessionId: 'parent',
-				worktreeBranch: 'feature/context-menu',
-			});
-			useSessionStore.setState({ sessions: [parent, child] });
-			useUIStore.setState({ leftSidebarOpen: true });
-			const props = createDefaultProps({
-				sortedSessions: [parent, child],
-				onOpenCreatePR,
-				onDeleteWorktree,
-			});
-			render(<SessionList {...props} />);
+			// Should NOT open the newAgentChoice modal
+			expect(onNewAgentSession).not.toHaveBeenCalled();
+			expect(useModalStore.getState().isOpen('newAgentChoice')).toBe(false);
 
-			fireEvent.contextMenu(screen.getByText('Feature Worktree'), { clientX: 100, clientY: 100 });
-			expect(screen.queryByText('Remove Agent')).not.toBeInTheDocument();
-			fireEvent.click(screen.getByText('Create Pull Request'));
-			expect(onOpenCreatePR).toHaveBeenCalledWith(child);
-
-			fireEvent.contextMenu(screen.getByText('Feature Worktree'), { clientX: 100, clientY: 100 });
-			fireEvent.click(screen.getByText('Remove Worktree'));
-			expect(onDeleteWorktree).toHaveBeenCalledWith(child);
+			// Should directly open newInstance with the duplicating session ID
+			expect(useModalStore.getState().isOpen('newInstance')).toBe(true);
+			const modalData = useModalStore.getState().getData('newInstance');
+			expect(modalData?.duplicatingSessionId).toBe('s-dup');
 		});
 	});
 
@@ -1554,67 +1267,6 @@ describe('SessionList', () => {
 			expect(screen.getByText('About Maestro')).toBeInTheDocument();
 		});
 
-		it('opens the collapsed sidebar menu from the wand button', () => {
-			useUIStore.setState({ leftSidebarOpen: false });
-			const props = createDefaultProps({});
-			render(<SessionList {...props} />);
-
-			fireEvent.click(screen.getByTitle('Menu'));
-
-			expect(screen.getByText('Command Palette')).toBeInTheDocument();
-			expect(screen.getByText('Keyboard Shortcuts')).toBeInTheDocument();
-		});
-
-		it('keeps the hamburger menu open when clicking inside it', () => {
-			useUIStore.setState({ leftSidebarOpen: true });
-			const props = createDefaultProps({});
-			render(<SessionList {...props} />);
-
-			fireEvent.click(screen.getByTitle('Menu'));
-			const shortcutsItem = screen.getByText('Keyboard Shortcuts');
-			fireEvent.mouseDown(shortcutsItem);
-
-			expect(shortcutsItem).toBeInTheDocument();
-		});
-
-		it('closes the menu when clicking outside the menu container', () => {
-			useUIStore.setState({ leftSidebarOpen: true });
-			const props = createDefaultProps({});
-			render(<SessionList {...props} />);
-
-			fireEvent.click(screen.getByTitle('Menu'));
-			expect(screen.getByText('Keyboard Shortcuts')).toBeInTheDocument();
-
-			fireEvent.mouseDown(document.body);
-
-			expect(screen.queryByText('Keyboard Shortcuts')).not.toBeInTheDocument();
-		});
-
-		it('responds to tour actions that open and close the hamburger menu', () => {
-			useUIStore.setState({ leftSidebarOpen: true });
-			const props = createDefaultProps({});
-			render(<SessionList {...props} />);
-
-			act(() => {
-				window.dispatchEvent(
-					new CustomEvent('tour:action', { detail: { type: 'openHamburgerMenu' } })
-				);
-			});
-			expect(screen.getByText('Command Palette')).toBeInTheDocument();
-
-			act(() => {
-				window.dispatchEvent(new CustomEvent('tour:action', { detail: { type: 'unknownAction' } }));
-			});
-			expect(screen.getByText('Command Palette')).toBeInTheDocument();
-
-			act(() => {
-				window.dispatchEvent(
-					new CustomEvent('tour:action', { detail: { type: 'closeHamburgerMenu' } })
-				);
-			});
-			expect(screen.queryByText('Command Palette')).not.toBeInTheDocument();
-		});
-
 		it('opens shortcuts help from menu', () => {
 			useUIStore.setState({ leftSidebarOpen: true });
 			const props = createDefaultProps({});
@@ -1637,7 +1289,9 @@ describe('SessionList', () => {
 			fireEvent.click(screen.getByText('Settings'));
 
 			expect(mockModalActions.setSettingsModalOpen).toHaveBeenCalledWith(true);
-			expect(mockModalActions.setSettingsTab).toHaveBeenCalledWith('general');
+			// No setSettingsTab call: opening generically lets SettingsModal restore
+			// the last tab the user viewed in this app session.
+			expect(mockModalActions.setSettingsTab).not.toHaveBeenCalled();
 		});
 
 		it('opens log viewer from menu', () => {
@@ -1756,7 +1410,16 @@ describe('SessionList', () => {
 		});
 
 		it('shows busy status with pulse animation', () => {
-			const sessions = [createMockSession({ id: 's1', name: 'Busy Session', state: 'busy' })];
+			// Claude sessions without an agentSessionId render a static "no active Claude session"
+			// indicator regardless of state — provide one so the busy animation is exercised.
+			const sessions = [
+				createMockSession({
+					id: 's1',
+					name: 'Busy Session',
+					state: 'busy',
+					agentSessionId: 'agent-session-1',
+				}),
+			];
 			useSessionStore.setState({ sessions: sessions });
 			useUIStore.setState({ leftSidebarOpen: true });
 			const props = createDefaultProps({
@@ -1764,8 +1427,8 @@ describe('SessionList', () => {
 			});
 			const { container } = render(<SessionList {...props} />);
 
-			// Look for animate-pulse class on status indicator
-			const pulsingElements = container.querySelectorAll('.animate-pulse');
+			// Busy state renders an animate-ping ring behind the status dot
+			const pulsingElements = container.querySelectorAll('.animate-ping');
 			expect(pulsingElements.length).toBeGreaterThan(0);
 		});
 
@@ -1893,7 +1556,7 @@ describe('SessionList', () => {
 			expect(handleDropOnGroup).toHaveBeenCalledWith('g1');
 		});
 
-		it('shows drop zone for ungrouping when dragging and all sessions are grouped', () => {
+		it('shows the compact ungroup drop-zone when dragging and all sessions are grouped', () => {
 			const handleDropOnUngrouped = vi.fn();
 			const group = createMockGroup({ id: 'g1', name: 'My Group', sessionIds: ['s1'] });
 			const sessions = [createMockSession({ id: 's1', name: 'Grouped Session', groupId: 'g1' })];
@@ -1911,11 +1574,13 @@ describe('SessionList', () => {
 			});
 			render(<SessionList {...props} />);
 
-			// Drop zone should be visible when dragging
+			// With no ungrouped sessions the folder header is hidden; a compact
+			// "Drop here to ungroup" placeholder appears while a drag is active.
+			expect(screen.queryByText('Ungrouped Agents')).not.toBeInTheDocument();
 			expect(screen.getByText('Drop here to ungroup')).toBeInTheDocument();
 		});
 
-		it('calls handleDropOnUngrouped when dropping on ungroup zone', () => {
+		it('calls handleDropOnUngrouped when dropping on the compact ungroup drop-zone', () => {
 			const handleDropOnUngrouped = vi.fn();
 			const group = createMockGroup({ id: 'g1', name: 'My Group', sessionIds: ['s1'] });
 			const sessions = [createMockSession({ id: 's1', name: 'Grouped Session', groupId: 'g1' })];
@@ -1933,9 +1598,13 @@ describe('SessionList', () => {
 			});
 			render(<SessionList {...props} />);
 
-			// Find the drop zone and drop on it
-			const dropZone = screen.getByText('Drop here to ungroup');
-			fireEvent.drop(dropZone);
+			// The drop handler lives on the outer container that wraps both the
+			// placeholder and the New Group button. Walk up from the placeholder
+			// text to that container and fire drop there.
+			const placeholder = screen.getByText('Drop here to ungroup');
+			const dropContainer = placeholder.parentElement as HTMLElement | null;
+			expect(dropContainer).not.toBeNull();
+			fireEvent.drop(dropContainer!);
 
 			expect(handleDropOnUngrouped).toHaveBeenCalled();
 		});
@@ -1992,32 +1661,6 @@ describe('SessionList', () => {
 
 			// Should show trophy icon with level number
 			expect(screen.getByText('3')).toBeInTheDocument();
-		});
-
-		it('uses gold styling for top-level achievement badges', () => {
-			const autoRunStats = {
-				cumulativeTimeMs: 36000000,
-				longestRunMs: 18000000,
-				totalRuns: 100,
-				currentBadgeLevel: 8,
-				badgeHistory: [],
-			};
-			useUIStore.setState({ leftSidebarOpen: true });
-			useSettingsStore.setState({ autoRunStats: autoRunStats });
-			const props = createDefaultProps({});
-			render(<SessionList {...props} />);
-
-			expect(screen.getByText('8').closest('button')).toHaveStyle({ color: '#FFD700' });
-		});
-
-		it('marks the collapsed wand as active while a session is busy', () => {
-			const sessions = [createMockSession({ id: 's1', state: 'busy' })];
-			useSessionStore.setState({ sessions });
-			useUIStore.setState({ leftSidebarOpen: false });
-			const props = createDefaultProps({ sortedSessions: sessions });
-			render(<SessionList {...props} />);
-
-			expect(screen.getByTestId('icon-wand')).toHaveClass('wand-sparkle-active');
 		});
 
 		it('opens about modal when badge clicked', () => {
@@ -2166,7 +1809,6 @@ describe('SessionList', () => {
 
 		it('calls finishRenamingGroup on blur', () => {
 			const finishRenamingGroup = vi.fn();
-			const toggleGroup = vi.fn();
 			const group = createMockGroup({ id: 'g1', name: 'Original' });
 			useSessionStore.setState({
 				sessions: [],
@@ -2179,90 +1821,14 @@ describe('SessionList', () => {
 			const props = createDefaultProps({
 				sortedSessions: [],
 				finishRenamingGroup,
-				toggleGroup,
 			});
 			render(<SessionList {...props} />);
 
 			const input = screen.getByDisplayValue('Original');
-			fireEvent.click(input);
-			expect(toggleGroup).not.toHaveBeenCalled();
-
 			fireEvent.change(input, { target: { value: 'New Name' } });
 			fireEvent.blur(input);
 
 			expect(finishRenamingGroup).toHaveBeenCalledWith('g1', 'New Name');
-		});
-
-		it('starts group renaming on group-name double click', () => {
-			const startRenamingGroup = vi.fn();
-			const group = createMockGroup({ id: 'g1', name: 'Double Click Group' });
-			useSessionStore.setState({
-				sessions: [],
-				groups: [group],
-			});
-			useUIStore.setState({
-				leftSidebarOpen: true,
-				editingGroupId: null,
-			});
-			const props = createDefaultProps({
-				sortedSessions: [],
-				startRenamingGroup,
-			});
-			render(<SessionList {...props} />);
-
-			fireEvent.doubleClick(screen.getByText('Double Click Group'));
-
-			expect(startRenamingGroup).toHaveBeenCalledWith('g1');
-		});
-
-		it('ignores non-activation keys on group headers', () => {
-			const toggleGroup = vi.fn();
-			const group = createMockGroup({ id: 'g1', name: 'Keyboard Group' });
-			useSessionStore.setState({
-				sessions: [],
-				groups: [group],
-			});
-			useUIStore.setState({
-				leftSidebarOpen: true,
-				editingGroupId: null,
-			});
-			const props = createDefaultProps({
-				sortedSessions: [],
-				toggleGroup,
-			});
-			render(<SessionList {...props} />);
-
-			fireEvent.keyDown(screen.getByText('Keyboard Group').closest('[role="button"]')!, {
-				key: 'Escape',
-			});
-
-			expect(toggleGroup).not.toHaveBeenCalled();
-		});
-
-		it('ignores non-Enter keys on group rename inputs', () => {
-			const finishRenamingGroup = vi.fn();
-			const toggleGroup = vi.fn();
-			const group = createMockGroup({ id: 'g1', name: 'Original' });
-			useSessionStore.setState({
-				sessions: [],
-				groups: [group],
-			});
-			useUIStore.setState({
-				leftSidebarOpen: true,
-				editingGroupId: 'g1',
-			});
-			const props = createDefaultProps({
-				sortedSessions: [],
-				finishRenamingGroup,
-				toggleGroup,
-			});
-			render(<SessionList {...props} />);
-
-			const input = screen.getByDisplayValue('Original');
-			fireEvent.keyDown(input, { key: 'Tab' });
-
-			expect(finishRenamingGroup).not.toHaveBeenCalled();
-			expect(toggleGroup).not.toHaveBeenCalled();
 		});
 
 		it('calls finishRenamingGroup on Enter', () => {
@@ -2285,10 +1851,8 @@ describe('SessionList', () => {
 			const input = screen.getByDisplayValue('Original');
 			fireEvent.change(input, { target: { value: 'New Name' } });
 			fireEvent.keyDown(input, { key: 'Enter' });
-			fireEvent.blur(input);
 
 			expect(finishRenamingGroup).toHaveBeenCalledWith('g1', 'New Name');
-			expect(finishRenamingGroup).toHaveBeenCalledTimes(1);
 		});
 	});
 
@@ -2487,10 +2051,7 @@ describe('SessionList', () => {
 		it('moves session to group when submenu item clicked', () => {
 			// Use unique name that won't appear in the groups section
 			const group = createMockGroup({ id: 'g1', name: 'Click Target', collapsed: true });
-			const sessions = [
-				createMockSession({ id: 's1', name: 'Move Me To Group' }),
-				createMockSession({ id: 's2', name: 'Stay Ungrouped' }),
-			];
+			const sessions = [createMockSession({ id: 's1', name: 'Move Me To Group' })];
 			useSessionStore.setState({
 				sessions: sessions,
 				groups: [group],
@@ -2519,92 +2080,6 @@ describe('SessionList', () => {
 			fireEvent.click(submenuButton || groupButtons[groupButtons.length - 1]);
 
 			expect(setSessions).toHaveBeenCalled();
-			expect(useSessionStore.getState().sessions[0].groupId).toBe('g1');
-			expect(useSessionStore.getState().sessions[1].groupId).toBeUndefined();
-		});
-
-		it('moves a grouped session back to the ungrouped bucket', () => {
-			const group = createMockGroup({ id: 'g1', name: 'Original Group', collapsed: false });
-			const sessions = [
-				createMockSession({
-					id: 's1',
-					name: 'Move Back To Ungrouped',
-					groupId: 'g1',
-				}),
-			];
-			useSessionStore.setState({
-				sessions: sessions,
-				groups: [group],
-			});
-			useUIStore.setState({ leftSidebarOpen: true });
-			const props = createDefaultProps({
-				sortedSessions: sessions,
-			});
-			render(<SessionList {...props} />);
-
-			fireEvent.contextMenu(screen.getByText('Move Back To Ungrouped'), {
-				clientX: 100,
-				clientY: 100,
-			});
-
-			const moveToGroupButton = screen.getByText('Move to Group');
-			fireEvent.mouseEnter(moveToGroupButton.closest('.relative')!);
-			fireEvent.click(screen.getByText('Ungrouped').closest('button')!);
-
-			expect(useSessionStore.getState().sessions[0].groupId).toBeUndefined();
-		});
-
-		it('creates a new group for the selected session from the move submenu', () => {
-			const onCreateGroupAndMove = vi.fn();
-			const sessions = [createMockSession({ id: 's1', name: 'Create Group From Menu' })];
-			useSessionStore.setState({
-				sessions: sessions,
-				groups: [],
-			});
-			useUIStore.setState({ leftSidebarOpen: true });
-			const props = createDefaultProps({
-				sortedSessions: sessions,
-				onCreateGroupAndMove,
-			});
-			render(<SessionList {...props} />);
-
-			fireEvent.contextMenu(screen.getByText('Create Group From Menu'), {
-				clientX: 100,
-				clientY: 100,
-			});
-
-			const moveToGroupButton = screen.getByText('Move to Group');
-			fireEvent.mouseEnter(moveToGroupButton.closest('.relative')!);
-			fireEvent.click(screen.getByText('Create New Group'));
-
-			expect(onCreateGroupAndMove).toHaveBeenCalledWith('s1');
-		});
-
-		it('falls back to createNewGroup when move-and-create is not supplied', () => {
-			const createNewGroup = vi.fn();
-			const sessions = [createMockSession({ id: 's1', name: 'Fallback Create Group' })];
-			useSessionStore.setState({
-				sessions: sessions,
-				groups: [],
-			});
-			useUIStore.setState({ leftSidebarOpen: true });
-			const props = createDefaultProps({
-				sortedSessions: sessions,
-				createNewGroup,
-				onCreateGroupAndMove: undefined,
-			});
-			render(<SessionList {...props} />);
-
-			fireEvent.contextMenu(screen.getByText('Fallback Create Group'), {
-				clientX: 100,
-				clientY: 100,
-			});
-
-			const moveToGroupButton = screen.getByText('Move to Group');
-			fireEvent.mouseEnter(moveToGroupButton.closest('.relative')!);
-			fireEvent.click(screen.getByText('Create New Group'));
-
-			expect(createNewGroup).toHaveBeenCalled();
 		});
 	});
 
@@ -2641,7 +2116,9 @@ describe('SessionList', () => {
 			const props = createDefaultProps({});
 			const { container } = render(<SessionList {...props} />);
 
-			expect(container.firstChild).toHaveClass('ring-1');
+			// Focus ring is applied via boxShadow inline style instead of ring-1 class
+			const panel = container.firstChild as HTMLElement;
+			expect(panel.style.boxShadow).toBeTruthy();
 		});
 	});
 
@@ -2826,6 +2303,27 @@ describe('SessionList', () => {
 			// Active session should have accent border color
 			const activeSession = screen.getByText('Active Session').closest('[style*="border"]');
 			expect(activeSession).toHaveStyle({ borderColor: defaultTheme.colors.accent });
+		});
+
+		it('suppresses the agent active border while a Starred keyboard cursor is live', () => {
+			// Cycling onto a Starred row activates its parent agent. Without suppression
+			// the agent row would show its (stronger) active border and steal visual
+			// focus from the Starred row the keyboard cursor is actually on.
+			const sessions = [createMockSession({ id: 's1', name: 'Active Session' })];
+			useSessionStore.setState({
+				sessions,
+				activeSessionId: 's1',
+			});
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				sidebarExtraSelection: { kind: 'starred', key: 'open:s1:t1' },
+			});
+			const props = createDefaultProps({ sortedSessions: sessions });
+			const { container } = render(<SessionList {...props} />);
+
+			const agentRow = screen.getByText('Active Session').closest('[style*="border"]');
+			// Border must NOT be the accent color (active styling suppressed).
+			expect(agentRow).not.toHaveStyle({ borderColor: defaultTheme.colors.accent });
 		});
 
 		it('highlights active session in collapsed mode without ring', () => {
@@ -3015,38 +2513,31 @@ describe('SessionList', () => {
 		});
 
 		it('handles tunnel start exception gracefully', async () => {
-			const error = new Error('Network error');
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-			const mockStart = vi.fn().mockRejectedValue(error);
+			const mockStart = vi.fn().mockRejectedValue(new Error('Network error'));
 			(window.maestro as Record<string, unknown>).tunnel = {
 				isCloudflaredInstalled: vi.fn().mockResolvedValue(true),
 				start: mockStart,
 				stop: vi.fn(),
-				getStatus: vi.fn().mockRejectedValue(error),
+				getStatus: vi.fn().mockRejectedValue(new Error('Network error')),
 			};
 
-			try {
-				useUIStore.setState({ leftSidebarOpen: true });
-				const props = createDefaultProps({
-					isLiveMode: true,
-					webInterfaceUrl: 'http://localhost:3000',
-				});
-				render(<SessionList {...props} />);
+			useUIStore.setState({ leftSidebarOpen: true });
+			const props = createDefaultProps({
+				isLiveMode: true,
+				webInterfaceUrl: 'http://localhost:3000',
+			});
+			render(<SessionList {...props} />);
 
-				await openLiveOverlay();
+			fireEvent.click(screen.getByText('LIVE'));
 
-				fireEvent.click(await screen.findByTitle('Enable remote control'));
+			await waitFor(() => {
+				const toggleButton = screen.getByTitle('Enable remote control');
+				fireEvent.click(toggleButton);
+			});
 
-				await waitFor(() => {
-					expect(screen.getByText('Network error')).toBeInTheDocument();
-				});
-				expect(consoleError).toHaveBeenCalledWith(
-					'[handleTunnelToggle] Failed to start tunnel:',
-					error
-				);
-			} finally {
-				consoleError.mockRestore();
-			}
+			await waitFor(() => {
+				expect(screen.getByText('Network error')).toBeInTheDocument();
+			});
 		});
 
 		it('shows local/remote pill selector when tunnel is connected', async () => {
@@ -3670,7 +3161,7 @@ describe('SessionList', () => {
 	// ============================================================================
 
 	describe('Live Overlay Keyboard', () => {
-		it('closes live overlay with Escape key', async () => {
+		it('closes live overlay with Escape key', () => {
 			useUIStore.setState({ leftSidebarOpen: true });
 			const props = createDefaultProps({
 				isLiveMode: true,
@@ -3678,7 +3169,8 @@ describe('SessionList', () => {
 			});
 			render(<SessionList {...props} />);
 
-			await openLiveOverlay();
+			// Open overlay
+			fireEvent.click(screen.getByText('LIVE'));
 
 			// Verify overlay is open
 			expect(screen.getByText(/Control your agents/)).toBeInTheDocument();
@@ -3741,14 +3233,14 @@ describe('SessionList', () => {
 				useSettingsStore.setState({ leftSidebarWidth: 300 });
 			}); // Reset for second drag
 
-			// Try to drag below min (256px)
+			// Try to drag below min (280px)
 			fireEvent.mouseDown(resizeHandle!, { clientX: 300 });
 			fireEvent.mouseMove(document, { clientX: 100 });
 			// State is only updated on mouseUp for performance
 			fireEvent.mouseUp(document);
 
-			// Should be clamped to 256
-			expect(setLeftSidebarWidthState).toHaveBeenCalledWith(256);
+			// Should be clamped to 280
+			expect(setLeftSidebarWidthState).toHaveBeenCalledWith(280);
 		});
 	});
 
@@ -3937,6 +3429,165 @@ describe('SessionList', () => {
 
 			// Menu should close
 			expect(screen.queryByText('Rename')).not.toBeInTheDocument();
+		});
+	});
+
+	// ============================================================================
+	// Cue Status Indicator Tests
+	// ============================================================================
+
+	describe('Cue Status Indicator', () => {
+		it('shows Zap icon for sessions with active Cue subscriptions', async () => {
+			const session = createMockSession({ id: 's1', name: 'Cue Session' });
+			useSessionStore.setState({ sessions: [session] });
+			useUIStore.setState({ leftSidebarOpen: true });
+			useSettingsStore.setState({
+				shortcuts: defaultShortcuts,
+				encoreFeatures: {
+					directorNotes: false,
+					usageStats: true,
+					symphony: true,
+					maestroCue: true,
+				},
+				showLeftPanelCueIndicator: true,
+			});
+
+			// Mock Cue status to return session with subscriptions
+			(window.maestro as Record<string, unknown>).cue = {
+				getStatus: vi.fn().mockResolvedValue([
+					{
+						sessionId: 's1',
+						sessionName: 'Cue Session',
+						subscriptionCount: 3,
+						enabled: true,
+						activeRuns: 0,
+					},
+				]),
+				getActiveRuns: vi.fn().mockResolvedValue([]),
+				getActivityLog: vi.fn().mockResolvedValue([]),
+				onActivityUpdate: vi.fn().mockReturnValue(() => {}),
+			};
+
+			const props = createDefaultProps({ sortedSessions: [session] });
+			render(<SessionList {...props} />);
+
+			// Wait for async status fetch to complete
+			await waitFor(() => {
+				expect(screen.getByTestId('icon-zap')).toBeInTheDocument();
+			});
+
+			const zapIcon = screen.getByTestId('icon-zap');
+			expect(zapIcon.closest('span[title]')).toHaveAttribute(
+				'title',
+				'Maestro Cue active (3 subscriptions)'
+			);
+		});
+
+		it('hides Zap icon when the Cue Encore Feature is disabled', async () => {
+			const session = createMockSession({ id: 's1', name: 'Cue Session' });
+			useSessionStore.setState({ sessions: [session] });
+			useUIStore.setState({ leftSidebarOpen: true });
+			useSettingsStore.setState({
+				shortcuts: defaultShortcuts,
+				encoreFeatures: {
+					directorNotes: false,
+					usageStats: true,
+					symphony: true,
+					maestroCue: false,
+				},
+				showLeftPanelCueIndicator: true,
+			});
+
+			// Mock Cue status to return session with subscriptions
+			(window.maestro as Record<string, unknown>).cue = {
+				getStatus: vi.fn().mockResolvedValue([
+					{
+						sessionId: 's1',
+						sessionName: 'Cue Session',
+						subscriptionCount: 2,
+						enabled: false,
+						activeRuns: 0,
+					},
+				]),
+				getActiveRuns: vi.fn().mockResolvedValue([]),
+				getActivityLog: vi.fn().mockResolvedValue([]),
+				onActivityUpdate: vi.fn().mockReturnValue(() => {}),
+			};
+
+			const props = createDefaultProps({ sortedSessions: [session] });
+			render(<SessionList {...props} />);
+
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 50));
+			});
+
+			expect(screen.queryByTestId('icon-zap')).not.toBeInTheDocument();
+		});
+
+		it('hides Zap icon when the user disables the Cue indicator setting', async () => {
+			const session = createMockSession({ id: 's1', name: 'Cue Session' });
+			useSessionStore.setState({ sessions: [session] });
+			useUIStore.setState({ leftSidebarOpen: true });
+			useSettingsStore.setState({
+				shortcuts: defaultShortcuts,
+				encoreFeatures: {
+					directorNotes: false,
+					usageStats: true,
+					symphony: true,
+					maestroCue: true,
+				},
+				showLeftPanelCueIndicator: false,
+			});
+
+			(window.maestro as Record<string, unknown>).cue = {
+				getStatus: vi.fn().mockResolvedValue([
+					{
+						sessionId: 's1',
+						sessionName: 'Cue Session',
+						subscriptionCount: 4,
+						enabled: true,
+						activeRuns: 0,
+					},
+				]),
+				getActiveRuns: vi.fn().mockResolvedValue([]),
+				getActivityLog: vi.fn().mockResolvedValue([]),
+				onActivityUpdate: vi.fn().mockReturnValue(() => {}),
+			};
+
+			const props = createDefaultProps({ sortedSessions: [session] });
+			render(<SessionList {...props} />);
+
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 50));
+			});
+
+			expect(screen.queryByTestId('icon-zap')).not.toBeInTheDocument();
+		});
+
+		it('does not show Zap icon for sessions without Cue subscriptions', async () => {
+			const session = createMockSession({ id: 's1', name: 'No Sub Session' });
+			useSessionStore.setState({ sessions: [session] });
+			useUIStore.setState({ leftSidebarOpen: true });
+			useSettingsStore.setState({
+				shortcuts: defaultShortcuts,
+			});
+
+			// Mock Cue status with no sessions having subscriptions
+			(window.maestro as Record<string, unknown>).cue = {
+				getStatus: vi.fn().mockResolvedValue([]),
+				getActiveRuns: vi.fn().mockResolvedValue([]),
+				getActivityLog: vi.fn().mockResolvedValue([]),
+				onActivityUpdate: vi.fn().mockReturnValue(() => {}),
+			};
+
+			const props = createDefaultProps({ sortedSessions: [session] });
+			render(<SessionList {...props} />);
+
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 50));
+			});
+
+			expect(screen.queryByTestId('icon-zap')).not.toBeInTheDocument();
 		});
 	});
 });

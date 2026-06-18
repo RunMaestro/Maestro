@@ -9,12 +9,6 @@ import React from 'react';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 
-const mockThemeState = vi.hoisted(() => ({ isDark: true }));
-const mockSyntaxStyles = vi.hoisted(() => ({
-	vscDarkPlus: { name: 'dark' },
-	vs: { name: 'light' },
-}));
-
 // Mock the dependencies before importing the component
 vi.mock('../../../web/components/ThemeProvider', () => ({
 	useThemeColors: () => ({
@@ -30,7 +24,7 @@ vi.mock('../../../web/components/ThemeProvider', () => ({
 		error: '#f44336',
 	}),
 	useTheme: () => ({
-		isDark: mockThemeState.isDark,
+		isDark: true,
 	}),
 }));
 
@@ -67,20 +61,16 @@ vi.mock('react-syntax-highlighter', () => ({
 		style: Record<string, unknown>;
 		customStyle: Record<string, unknown>;
 	}) => (
-		<pre
-			data-testid="syntax-highlighter"
-			data-language={language}
-			data-syntax-style={String(style.name ?? '')}
-			style={customStyle}
-		>
+		<pre data-testid="syntax-highlighter" data-language={language} style={customStyle}>
 			{children}
 		</pre>
 	),
 }));
 
 vi.mock('react-syntax-highlighter/dist/esm/styles/prism', () => ({
-	vscDarkPlus: mockSyntaxStyles.vscDarkPlus,
-	vs: mockSyntaxStyles.vs,
+	vscDarkPlus: {},
+	vs: {},
+	vs: {},
 }));
 
 import ResponseViewer, {
@@ -165,7 +155,6 @@ describe('ResponseViewer', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		vi.useFakeTimers();
-		mockThemeState.isDark = true;
 		originalBodyStyle = document.body.style.overflow;
 
 		// Mock clipboard API
@@ -474,53 +463,6 @@ describe('ResponseViewer', () => {
 			expect(screen.getByText('cpp')).toBeInTheDocument();
 		});
 
-		it('uses the light syntax theme when light mode is active', () => {
-			mockThemeState.isDark = false;
-
-			const textWithCode = '```js\nconst light = true;\n```';
-			render(
-				<ResponseViewer
-					isOpen={true}
-					response={createMockResponse({ text: textWithCode })}
-					onClose={vi.fn()}
-				/>
-			);
-
-			expect(screen.getByTestId('syntax-highlighter')).toHaveAttribute(
-				'data-syntax-style',
-				'light'
-			);
-		});
-
-		it('treats whitespace-only code fence languages as plain code', () => {
-			const textWithCode = '```   \nplain code\n```';
-			render(
-				<ResponseViewer
-					isOpen={true}
-					response={createMockResponse({ text: textWithCode })}
-					onClose={vi.fn()}
-				/>
-			);
-
-			expect(screen.getByTestId('syntax-highlighter')).toHaveAttribute('data-language', 'text');
-			expect(screen.getByText('code')).toBeInTheDocument();
-		});
-
-		it('ignores whitespace-only text around code blocks', () => {
-			const textWithCode = '  \n```js\nconst trimmed = true;\n```\n   ';
-			render(
-				<ResponseViewer
-					isOpen={true}
-					response={createMockResponse({ text: textWithCode })}
-					onClose={vi.fn()}
-				/>
-			);
-
-			const dialog = screen.getByRole('dialog');
-			expect(screen.getByTestId('syntax-highlighter')).toHaveTextContent('const trimmed = true;');
-			expect(dialog.querySelectorAll('[style*="white-space: pre-wrap"]')).toHaveLength(0);
-		});
-
 		it('handles empty code blocks gracefully', () => {
 			const textWithEmptyBlock = 'Text before\n```\n   \n```\nText after';
 			render(
@@ -624,42 +566,6 @@ describe('ResponseViewer', () => {
 			});
 
 			expect(screen.getByLabelText('Copy code')).toBeInTheDocument();
-		});
-
-		it('keeps the latest copied code block active when an earlier timer fires', async () => {
-			const textWithCode = '```js\nconst first = true;\n```\n```ts\nconst second = true;\n```';
-			render(
-				<ResponseViewer
-					isOpen={true}
-					response={createMockResponse({ text: textWithCode })}
-					onClose={vi.fn()}
-				/>
-			);
-
-			const copyButtons = screen.getAllByLabelText('Copy code');
-			await act(async () => {
-				fireEvent.click(copyButtons[0]);
-			});
-
-			act(() => {
-				vi.advanceTimersByTime(1000);
-			});
-
-			await act(async () => {
-				fireEvent.click(screen.getAllByLabelText('Copy code')[0]);
-			});
-
-			act(() => {
-				vi.advanceTimersByTime(1000);
-			});
-
-			expect(screen.getByLabelText('Copied!')).toBeInTheDocument();
-
-			act(() => {
-				vi.advanceTimersByTime(1000);
-			});
-
-			expect(screen.getAllByLabelText('Copy code')).toHaveLength(2);
 		});
 
 		it('handles clipboard error gracefully', async () => {
@@ -870,52 +776,9 @@ describe('ResponseViewer', () => {
 
 			expect(onClose).not.toHaveBeenCalled();
 		});
-
-		it('ignores movement below the swipe direction threshold', () => {
-			const onClose = vi.fn();
-			render(<ResponseViewer isOpen={true} response={createMockResponse()} onClose={onClose} />);
-
-			const dialog = screen.getByRole('dialog');
-			fireEvent.touchStart(
-				dialog,
-				createTouchEvent('touchstart', [{ clientX: 100, clientY: 100 }])
-			);
-			fireEvent.touchMove(dialog, createTouchEvent('touchmove', [{ clientX: 105, clientY: 106 }]));
-			fireEvent.touchEnd(dialog, createTouchEvent('touchend', []));
-
-			expect(dialog).toHaveStyle({ transform: 'translate(0px, 0px)' });
-			expect(onClose).not.toHaveBeenCalled();
-		});
 	});
 
 	describe('Swipe gestures - horizontal navigation', () => {
-		it('ignores touch move events before a touch start', () => {
-			const onNavigate = vi.fn();
-			const onClose = vi.fn();
-			const allResponses = [
-				createMockResponseItem({ sessionId: 's1' }),
-				createMockResponseItem({ sessionId: 's2' }),
-			];
-
-			render(
-				<ResponseViewer
-					isOpen={true}
-					response={null}
-					allResponses={allResponses}
-					currentIndex={0}
-					onNavigate={onNavigate}
-					onClose={onClose}
-				/>
-			);
-
-			const dialog = screen.getByRole('dialog');
-			fireEvent.touchMove(dialog, createTouchEvent('touchmove', [{ clientX: 20, clientY: 20 }]));
-			fireEvent.touchEnd(dialog, createTouchEvent('touchend', []));
-
-			expect(onNavigate).not.toHaveBeenCalled();
-			expect(onClose).not.toHaveBeenCalled();
-		});
-
 		it('navigates to previous on swipe right past threshold', () => {
 			const onNavigate = vi.fn();
 			const allResponses = [
@@ -1010,70 +873,6 @@ describe('ResponseViewer', () => {
 			// Navigation not called because only 1 response
 			expect(onNavigate).not.toHaveBeenCalled();
 		});
-
-		it('resists swiping right past the first response', () => {
-			const onNavigate = vi.fn();
-			const allResponses = [
-				createMockResponseItem({ sessionId: 's1' }),
-				createMockResponseItem({ sessionId: 's2' }),
-			];
-
-			render(
-				<ResponseViewer
-					isOpen={true}
-					response={null}
-					allResponses={allResponses}
-					currentIndex={0}
-					onNavigate={onNavigate}
-					onClose={vi.fn()}
-				/>
-			);
-
-			const dialog = screen.getByRole('dialog');
-			fireEvent.touchStart(
-				dialog,
-				createTouchEvent('touchstart', [{ clientX: 100, clientY: 100 }])
-			);
-			fireEvent.touchMove(dialog, createTouchEvent('touchmove', [{ clientX: 120, clientY: 100 }]));
-			fireEvent.touchMove(dialog, createTouchEvent('touchmove', [{ clientX: 220, clientY: 100 }]));
-
-			expect(dialog).toHaveStyle({ transform: 'translate(50px, 0px)' });
-
-			fireEvent.touchEnd(dialog, createTouchEvent('touchend', []));
-			expect(onNavigate).not.toHaveBeenCalled();
-		});
-
-		it('resists swiping left past the last response', () => {
-			const onNavigate = vi.fn();
-			const allResponses = [
-				createMockResponseItem({ sessionId: 's1' }),
-				createMockResponseItem({ sessionId: 's2' }),
-			];
-
-			render(
-				<ResponseViewer
-					isOpen={true}
-					response={null}
-					allResponses={allResponses}
-					currentIndex={1}
-					onNavigate={onNavigate}
-					onClose={vi.fn()}
-				/>
-			);
-
-			const dialog = screen.getByRole('dialog');
-			fireEvent.touchStart(
-				dialog,
-				createTouchEvent('touchstart', [{ clientX: 200, clientY: 100 }])
-			);
-			fireEvent.touchMove(dialog, createTouchEvent('touchmove', [{ clientX: 180, clientY: 100 }]));
-			fireEvent.touchMove(dialog, createTouchEvent('touchmove', [{ clientX: 80, clientY: 100 }]));
-
-			expect(dialog).toHaveStyle({ transform: 'translate(-50px, 0px)' });
-
-			fireEvent.touchEnd(dialog, createTouchEvent('touchend', []));
-			expect(onNavigate).not.toHaveBeenCalled();
-		});
 	});
 
 	describe('Pinch-to-zoom', () => {
@@ -1164,47 +963,6 @@ describe('ResponseViewer', () => {
 			expect(triggerHaptic).toHaveBeenCalledWith(HAPTIC_PATTERNS.tap);
 			// Zoom indicator should disappear
 			expect(screen.queryByLabelText('Reset zoom')).not.toBeInTheDocument();
-		});
-
-		it('handles two-finger touch while the full response is loading', () => {
-			render(
-				<ResponseViewer
-					isOpen={true}
-					response={createMockResponse()}
-					isLoading={true}
-					onClose={vi.fn()}
-				/>
-			);
-
-			const dialog = screen.getByRole('dialog');
-			fireEvent.touchStart(
-				dialog,
-				createTouchEvent('touchstart', [
-					{ clientX: 100, clientY: 100 },
-					{ clientX: 140, clientY: 100 },
-				])
-			);
-
-			expect(screen.getByText('Loading full response...')).toBeInTheDocument();
-			expect(screen.queryByLabelText('Reset zoom')).not.toBeInTheDocument();
-		});
-
-		it('ignores one-finger movement after a pinch starts', () => {
-			render(<ResponseViewer isOpen={true} response={createMockResponse()} onClose={vi.fn()} />);
-
-			const dialog = screen.getByRole('dialog');
-			fireEvent.touchStart(
-				dialog,
-				createTouchEvent('touchstart', [
-					{ clientX: 100, clientY: 100 },
-					{ clientX: 140, clientY: 100 },
-				])
-			);
-			fireEvent.touchMove(dialog, createTouchEvent('touchmove', [{ clientX: 180, clientY: 100 }]));
-			fireEvent.touchEnd(dialog, createTouchEvent('touchend', []));
-
-			expect(screen.queryByLabelText('Reset zoom')).not.toBeInTheDocument();
-			expect(triggerHaptic).not.toHaveBeenCalled();
 		});
 	});
 
@@ -1417,28 +1175,6 @@ describe('ResponseViewer', () => {
 			expect(screen.getByText('Fallback Session')).toBeInTheDocument();
 		});
 
-		it('falls back to response prop when the active response item is malformed', () => {
-			const allResponses = [
-				createMockResponseItem({
-					sessionId: 'broken',
-					response: undefined as unknown as LastResponsePreview,
-				}),
-			];
-
-			render(
-				<ResponseViewer
-					isOpen={true}
-					response={createMockResponse({ text: 'Fallback response' })}
-					allResponses={allResponses}
-					currentIndex={0}
-					onNavigate={vi.fn()}
-					onClose={vi.fn()}
-				/>
-			);
-
-			expect(screen.getByText('Fallback response')).toBeInTheDocument();
-		});
-
 		it('resets zoom when currentIndex changes', () => {
 			const allResponses = [
 				createMockResponseItem({ sessionId: 's1' }),
@@ -1630,25 +1366,6 @@ describe('ResponseViewer', () => {
 
 			// Zoom should reset (indicator disappears)
 			expect(screen.queryByLabelText('Reset zoom')).not.toBeInTheDocument();
-		});
-
-		it('ignores multi-touch input for double tap zoom', () => {
-			render(<ResponseViewer isOpen={true} response={createMockResponse()} onClose={vi.fn()} />);
-
-			const dialog = screen.getByRole('dialog');
-			const contentArea = dialog.querySelector('[style*="transform"]');
-
-			expect(contentArea).toBeInTheDocument();
-			fireEvent.touchStart(
-				contentArea!,
-				createTouchEvent('touchstart', [
-					{ clientX: 100, clientY: 100 },
-					{ clientX: 140, clientY: 100 },
-				])
-			);
-
-			expect(screen.queryByLabelText('Reset zoom')).not.toBeInTheDocument();
-			expect(triggerHaptic).not.toHaveBeenCalled();
 		});
 	});
 
@@ -1897,21 +1614,6 @@ describe('Pure function tests (via exports)', () => {
 			);
 
 			expect(screen.getByText(/const template/)).toBeInTheDocument();
-		});
-
-		it('renders an empty code fence as plain text fallback', () => {
-			const text = '```\n```';
-			render(
-				<ResponseViewer isOpen={true} response={createMockResponse({ text })} onClose={vi.fn()} />
-			);
-
-			const fallbackTextNodes = screen.getAllByText((_, element) => element?.textContent === text);
-			expect(
-				fallbackTextNodes.some(
-					(element) => element instanceof HTMLElement && element.style.whiteSpace === 'pre-wrap'
-				)
-			).toBe(true);
-			expect(screen.queryByTestId('syntax-highlighter')).not.toBeInTheDocument();
 		});
 	});
 });

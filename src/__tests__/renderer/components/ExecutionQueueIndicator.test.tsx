@@ -39,14 +39,10 @@ class MockResizeObserver {
 global.ResizeObserver = MockResizeObserver as unknown as typeof ResizeObserver;
 
 // Mock Element.prototype.clientWidth for calculateMaxPills
-function setClientWidth(width: number): void {
-	Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
-		configurable: true,
-		value: width,
-	});
-}
-
-setClientWidth(800); // Simulate a wide container by default
+Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+	configurable: true,
+	value: 800, // Simulate a wide container
+});
 
 // Mock getBoundingClientRect for layout calculations
 Element.prototype.getBoundingClientRect = vi.fn().mockReturnValue({
@@ -125,13 +121,19 @@ describe('ExecutionQueueIndicator', () => {
 	});
 
 	let mockOnClick: ReturnType<typeof vi.fn>;
+	let mockOnSwitchTab: ReturnType<typeof vi.fn>;
+
+	// The root is now a <div> wrapping multiple buttons (left region, pills,
+	// right "Click to view"). Most assertions about the indicator's overall text
+	// content target this root element.
+	const getRoot = (container: HTMLElement) => container.firstChild as HTMLElement;
 
 	beforeEach(() => {
 		mockOnClick = vi.fn();
+		mockOnSwitchTab = vi.fn();
 		mockObserve.mockClear();
 		mockUnobserve.mockClear();
 		mockDisconnect.mockClear();
-		setClientWidth(800);
 	});
 
 	afterEach(() => {
@@ -162,30 +164,36 @@ describe('ExecutionQueueIndicator', () => {
 			const session = createSession({
 				executionQueue: [createQueuedItem()],
 			});
-			render(<ExecutionQueueIndicator session={session} theme={theme} onClick={mockOnClick} />);
+			const { container } = render(
+				<ExecutionQueueIndicator session={session} theme={theme} onClick={mockOnClick} />
+			);
 			// Check for the complete "1 item queued" text
-			const button = screen.getByRole('button');
-			expect(button).toHaveTextContent('1');
-			expect(button).toHaveTextContent('item queued');
+			const root = getRoot(container);
+			expect(root).toHaveTextContent('1');
+			expect(root).toHaveTextContent('item queued');
 		});
 
 		it('should show plural "items" for multiple queued items', () => {
 			const session = createSession({
 				executionQueue: [createQueuedItem(), createQueuedItem()],
 			});
-			render(<ExecutionQueueIndicator session={session} theme={theme} onClick={mockOnClick} />);
-			const button = screen.getByRole('button');
-			expect(button).toHaveTextContent('2');
-			expect(button).toHaveTextContent('items queued');
+			const { container } = render(
+				<ExecutionQueueIndicator session={session} theme={theme} onClick={mockOnClick} />
+			);
+			const root = getRoot(container);
+			expect(root).toHaveTextContent('2');
+			expect(root).toHaveTextContent('items queued');
 		});
 
 		it('should correctly display large queue counts', () => {
 			const queue = Array.from({ length: 25 }, () => createQueuedItem());
 			const session = createSession({ executionQueue: queue });
-			render(<ExecutionQueueIndicator session={session} theme={theme} onClick={mockOnClick} />);
-			const button = screen.getByRole('button');
-			expect(button).toHaveTextContent('25');
-			expect(button).toHaveTextContent('items queued');
+			const { container } = render(
+				<ExecutionQueueIndicator session={session} theme={theme} onClick={mockOnClick} />
+			);
+			const root = getRoot(container);
+			expect(root).toHaveTextContent('25');
+			expect(root).toHaveTextContent('items queued');
 		});
 	});
 
@@ -198,11 +206,13 @@ describe('ExecutionQueueIndicator', () => {
 					createQueuedItem({ type: 'message' }),
 				],
 			});
-			render(<ExecutionQueueIndicator session={session} theme={theme} onClick={mockOnClick} />);
-			const button = screen.getByRole('button');
+			const { container } = render(
+				<ExecutionQueueIndicator session={session} theme={theme} onClick={mockOnClick} />
+			);
+			const root = getRoot(container);
 			// Should show total count of 3
-			expect(button).toHaveTextContent('3');
-			expect(button).toHaveTextContent('items queued');
+			expect(root).toHaveTextContent('3');
+			expect(root).toHaveTextContent('items queued');
 		});
 
 		it('should show command count when there are commands', () => {
@@ -212,10 +222,12 @@ describe('ExecutionQueueIndicator', () => {
 					createQueuedItem({ type: 'command' }),
 				],
 			});
-			render(<ExecutionQueueIndicator session={session} theme={theme} onClick={mockOnClick} />);
-			const button = screen.getByRole('button');
-			expect(button).toHaveTextContent('2');
-			expect(button).toHaveTextContent('items queued');
+			const { container } = render(
+				<ExecutionQueueIndicator session={session} theme={theme} onClick={mockOnClick} />
+			);
+			const root = getRoot(container);
+			expect(root).toHaveTextContent('2');
+			expect(root).toHaveTextContent('items queued');
 		});
 
 		it('should show both message and command counts when mixed', () => {
@@ -226,11 +238,13 @@ describe('ExecutionQueueIndicator', () => {
 					createQueuedItem({ type: 'command', tabName: 'Cmds' }),
 				],
 			});
-			render(<ExecutionQueueIndicator session={session} theme={theme} onClick={mockOnClick} />);
-			const button = screen.getByRole('button');
+			const { container } = render(
+				<ExecutionQueueIndicator session={session} theme={theme} onClick={mockOnClick} />
+			);
+			const root = getRoot(container);
 			// Total of 3 items
-			expect(button).toHaveTextContent('3');
-			expect(button).toHaveTextContent('items queued');
+			expect(root).toHaveTextContent('3');
+			expect(root).toHaveTextContent('items queued');
 		});
 
 		it('should not show message count section when no messages', () => {
@@ -297,33 +311,37 @@ describe('ExecutionQueueIndicator', () => {
 					createQueuedItem({ tabName: 'MyTab' }), // 5 chars, won't be truncated
 				],
 			});
-			render(<ExecutionQueueIndicator session={session} theme={theme} onClick={mockOnClick} />);
-			const button = screen.getByRole('button');
-			expect(button).toHaveTextContent('MyTab');
+			const { container } = render(
+				<ExecutionQueueIndicator session={session} theme={theme} onClick={mockOnClick} />
+			);
+			const root = getRoot(container);
+			expect(root).toHaveTextContent('MyTab');
 			// Should not contain "(1)" for single item
-			expect(button.textContent).not.toContain('(1)');
+			expect(root.textContent).not.toContain('(1)');
 		});
 
 		it('should group items by tab and show multiple pills', () => {
 			const session = createSession({
 				executionQueue: [
-					createQueuedItem({ tabName: 'TabA' }), // Short names to avoid truncation
-					createQueuedItem({ tabName: 'TabB' }),
-					createQueuedItem({ tabName: 'TabA' }),
+					createQueuedItem({ tabId: 'tab-a', tabName: 'TabA' }), // Short names to avoid truncation
+					createQueuedItem({ tabId: 'tab-b', tabName: 'TabB' }),
+					createQueuedItem({ tabId: 'tab-a', tabName: 'TabA' }),
 				],
 			});
-			render(<ExecutionQueueIndicator session={session} theme={theme} onClick={mockOnClick} />);
-			const button = screen.getByRole('button');
+			const { container } = render(
+				<ExecutionQueueIndicator session={session} theme={theme} onClick={mockOnClick} />
+			);
+			const root = getRoot(container);
 			// TabA has 2 items, TabB has 1
 			// With 3 items total, we should see proper grouping
-			expect(button).toHaveTextContent('3');
-			expect(button).toHaveTextContent('items queued');
+			expect(root).toHaveTextContent('3');
+			expect(root).toHaveTextContent('items queued');
 			// The first tab (TabA with 2 items) should always be visible
-			expect(button).toHaveTextContent('TabA (2)');
+			expect(root).toHaveTextContent('TabA (2)');
 			// TabB may be shown directly or collapsed into +1 depending on available space
 			// We verify that we have either TabB shown, OR a +1 indicator
-			const hasTabB = button.textContent?.includes('TabB');
-			const hasOverflowIndicator = button.textContent?.includes('+1');
+			const hasTabB = root.textContent?.includes('TabB');
+			const hasOverflowIndicator = root.textContent?.includes('+1');
 			expect(hasTabB || hasOverflowIndicator).toBe(true);
 		});
 
@@ -335,32 +353,18 @@ describe('ExecutionQueueIndicator', () => {
 			expect(screen.getByText('Unknown')).toBeInTheDocument();
 		});
 
-		it('handles a sparse queue without tab names during resize calculation', async () => {
-			const sparseQueue = new Array<QueuedItem>(1);
-			const session = createSession({ executionQueue: sparseQueue });
-
-			render(<ExecutionQueueIndicator session={session} theme={theme} onClick={mockOnClick} />);
-
-			expect(screen.getByRole('button')).toHaveTextContent('1');
-			expect(screen.getByRole('button')).toHaveTextContent('item queued');
-			await waitFor(() => {
-				expect(mockObserve).toHaveBeenCalledTimes(1);
-			});
-			expect(screen.queryByText('Unknown')).not.toBeInTheDocument();
-		});
-
 		it('should show +N indicator when there are more tabs than can be displayed', () => {
 			// Create many tabs to exceed the visible limit (default ~2-5)
 			const session = createSession({
 				executionQueue: [
-					createQueuedItem({ tabName: 'Tab1' }),
-					createQueuedItem({ tabName: 'Tab2' }),
-					createQueuedItem({ tabName: 'Tab3' }),
-					createQueuedItem({ tabName: 'Tab4' }),
-					createQueuedItem({ tabName: 'Tab5' }),
-					createQueuedItem({ tabName: 'Tab6' }),
-					createQueuedItem({ tabName: 'Tab7' }),
-					createQueuedItem({ tabName: 'Tab8' }),
+					createQueuedItem({ tabId: 'tab-1', tabName: 'Tab1' }),
+					createQueuedItem({ tabId: 'tab-2', tabName: 'Tab2' }),
+					createQueuedItem({ tabId: 'tab-3', tabName: 'Tab3' }),
+					createQueuedItem({ tabId: 'tab-4', tabName: 'Tab4' }),
+					createQueuedItem({ tabId: 'tab-5', tabName: 'Tab5' }),
+					createQueuedItem({ tabId: 'tab-6', tabName: 'Tab6' }),
+					createQueuedItem({ tabId: 'tab-7', tabName: 'Tab7' }),
+					createQueuedItem({ tabId: 'tab-8', tabName: 'Tab8' }),
 				],
 			});
 			render(<ExecutionQueueIndicator session={session} theme={theme} onClick={mockOnClick} />);
@@ -368,38 +372,24 @@ describe('ExecutionQueueIndicator', () => {
 			// The exact number depends on maxVisiblePills state
 			expect(screen.getByText(/^\+\d+$/)).toBeInTheDocument();
 		});
-
-		it('collapses all tab pills into a highlighted +N indicator when space is too narrow', async () => {
-			setClientWidth(380);
-			const session = createSession({
-				executionQueue: [
-					createQueuedItem({ tabName: 'Tab1' }),
-					createQueuedItem({ tabName: 'Tab2' }),
-					createQueuedItem({ tabName: 'Tab3' }),
-					createQueuedItem({ tabName: 'Tab4' }),
-				],
-			});
-
-			render(<ExecutionQueueIndicator session={session} theme={theme} onClick={mockOnClick} />);
-
-			const overflowIndicator = await screen.findByText('+4');
-			await waitFor(() => {
-				expect(screen.queryByText('Tab1')).not.toBeInTheDocument();
-			});
-			expect(overflowIndicator.style.backgroundColor).not.toBe('');
-			expect(overflowIndicator.style.backgroundColor).not.toBe('transparent');
-			expect(overflowIndicator.getAttribute('style')).toContain('color');
-		});
 	});
 
 	describe('click behavior', () => {
-		it('should call onClick when button is clicked', () => {
+		it('should call onClick when the left "items queued" region is clicked', () => {
 			const session = createSession({
 				executionQueue: [createQueuedItem()],
 			});
 			render(<ExecutionQueueIndicator session={session} theme={theme} onClick={mockOnClick} />);
-			const button = screen.getByRole('button');
-			fireEvent.click(button);
+			fireEvent.click(screen.getByText(/item queued/).closest('button')!);
+			expect(mockOnClick).toHaveBeenCalledTimes(1);
+		});
+
+		it('should call onClick when the "Click to view" region is clicked', () => {
+			const session = createSession({
+				executionQueue: [createQueuedItem()],
+			});
+			render(<ExecutionQueueIndicator session={session} theme={theme} onClick={mockOnClick} />);
+			fireEvent.click(screen.getByText('Click to view'));
 			expect(mockOnClick).toHaveBeenCalledTimes(1);
 		});
 
@@ -410,6 +400,54 @@ describe('ExecutionQueueIndicator', () => {
 			render(<ExecutionQueueIndicator session={session} theme={theme} onClick={mockOnClick} />);
 			expect(screen.getByText('Click to view')).toBeInTheDocument();
 		});
+
+		it('should call onSwitchTab with the session id and tab id when a pill is clicked', () => {
+			const session = createSession({
+				executionQueue: [createQueuedItem({ tabId: 'tab-42', tabName: 'TargetTab' })],
+			});
+			render(
+				<ExecutionQueueIndicator
+					session={session}
+					theme={theme}
+					onClick={mockOnClick}
+					onSwitchTab={mockOnSwitchTab}
+				/>
+			);
+			fireEvent.click(screen.getByText('TargetTab'));
+			expect(mockOnSwitchTab).toHaveBeenCalledTimes(1);
+			expect(mockOnSwitchTab).toHaveBeenCalledWith('test-session', 'tab-42');
+			// Clicking a pill should not open the queue browser
+			expect(mockOnClick).not.toHaveBeenCalled();
+		});
+
+		it('should not jump when onSwitchTab is not provided', () => {
+			const session = createSession({
+				executionQueue: [createQueuedItem({ tabId: 'tab-42', tabName: 'TargetTab' })],
+			});
+			render(<ExecutionQueueIndicator session={session} theme={theme} onClick={mockOnClick} />);
+			const pill = screen.getByText('TargetTab');
+			expect(pill).toBeDisabled();
+			fireEvent.click(pill);
+			expect(mockOnClick).not.toHaveBeenCalled();
+		});
+
+		it('should not jump for items without a tab id', () => {
+			const session = createSession({
+				executionQueue: [createQueuedItem({ tabId: '', tabName: 'NoTab' })],
+			});
+			render(
+				<ExecutionQueueIndicator
+					session={session}
+					theme={theme}
+					onClick={mockOnClick}
+					onSwitchTab={mockOnSwitchTab}
+				/>
+			);
+			const pill = screen.getByText('NoTab');
+			expect(pill).toBeDisabled();
+			fireEvent.click(pill);
+			expect(mockOnSwitchTab).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('styling', () => {
@@ -417,11 +455,13 @@ describe('ExecutionQueueIndicator', () => {
 			const session = createSession({
 				executionQueue: [createQueuedItem()],
 			});
-			render(<ExecutionQueueIndicator session={session} theme={theme} onClick={mockOnClick} />);
-			const button = screen.getByRole('button');
+			const { container } = render(
+				<ExecutionQueueIndicator session={session} theme={theme} onClick={mockOnClick} />
+			);
+			const root = getRoot(container);
 			// Check that style attribute contains background-color, border-color, and color
 			// Note: browsers convert hex to rgb
-			const style = button.getAttribute('style');
+			const style = root.getAttribute('style');
 			expect(style).toContain('background-color');
 			expect(style).toContain('border-color');
 			expect(style).toContain('color');
@@ -534,47 +574,48 @@ describe('ExecutionQueueIndicator', () => {
 				],
 			});
 
-			const { rerender } = render(
+			const { container, rerender } = render(
 				<ExecutionQueueIndicator session={session1} theme={theme} onClick={mockOnClick} />
 			);
-			let button = screen.getByRole('button');
-			expect(button).toHaveTextContent('1');
-			expect(button).toHaveTextContent('item queued');
+			let root = getRoot(container);
+			expect(root).toHaveTextContent('1');
+			expect(root).toHaveTextContent('item queued');
 
 			rerender(<ExecutionQueueIndicator session={session2} theme={theme} onClick={mockOnClick} />);
-			button = screen.getByRole('button');
-			expect(button).toHaveTextContent('2');
-			expect(button).toHaveTextContent('items queued');
+			root = getRoot(container);
+			expect(root).toHaveTextContent('2');
+			expect(root).toHaveTextContent('items queued');
 		});
 	});
 
 	describe('accessibility', () => {
-		it('should be a button element for keyboard accessibility', () => {
+		it('should expose the queue-opening regions as button elements', () => {
 			const session = createSession({
 				executionQueue: [createQueuedItem()],
 			});
 			render(<ExecutionQueueIndicator session={session} theme={theme} onClick={mockOnClick} />);
-			expect(screen.getByRole('button')).toBeInTheDocument();
+			// Left region + "Click to view" + the tab pill are all focusable buttons
+			expect(screen.getAllByRole('button').length).toBeGreaterThanOrEqual(2);
 		});
 
-		it('should respond to Enter key press', () => {
+		it('should respond to Enter key press on the "Click to view" region', () => {
 			const session = createSession({
 				executionQueue: [createQueuedItem()],
 			});
 			render(<ExecutionQueueIndicator session={session} theme={theme} onClick={mockOnClick} />);
-			const button = screen.getByRole('button');
+			const button = screen.getByText('Click to view');
 			fireEvent.keyDown(button, { key: 'Enter' });
 			fireEvent.keyUp(button, { key: 'Enter' });
 			fireEvent.click(button);
 			expect(mockOnClick).toHaveBeenCalled();
 		});
 
-		it('should respond to Space key press', () => {
+		it('should respond to Space key press on the "Click to view" region', () => {
 			const session = createSession({
 				executionQueue: [createQueuedItem()],
 			});
 			render(<ExecutionQueueIndicator session={session} theme={theme} onClick={mockOnClick} />);
-			const button = screen.getByRole('button');
+			const button = screen.getByText('Click to view');
 			fireEvent.keyDown(button, { key: ' ' });
 			fireEvent.keyUp(button, { key: ' ' });
 			fireEvent.click(button);

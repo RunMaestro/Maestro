@@ -4,29 +4,33 @@ Historical audit. Use `docs/testing/current-status.md` for the current source of
 
 ## Current Coverage
 
-Measured with `npm run test:coverage` on branch `codex/full-e2e-coverage-campaign`.
+Phase 7 upstream-sync revalidation is active on branch `codex/full-e2e-coverage-campaign`. The pre-upstream-sync checkpoint reached 100% unit coverage and green integration/E2E, but that proof is historical after syncing the tree to `upstream/main`.
 
-| Metric     | Original Baseline | After Initial Additions | Phase 1 Rerun | Latest Checkpoint |
-| ---------- | ----------------: | ----------------------: | ------------: | ----------------: |
-| Statements |            67.17% |                  67.30% |        67.30% |           100.00% |
-| Branches   |            60.58% |                  60.64% |        60.64% |           100.00% |
-| Functions  |            67.73% |                  67.85% |        67.86% |           100.00% |
-| Lines      |            67.81% |                  67.95% |        67.95% |           100.00% |
+Measured with `npm run test:coverage` on the current upstream-shaped tree:
 
-The enforced unit coverage gate now passes at 100% global coverage.
+| Metric     | Pre-Sync Final Checkpoint | Current Upstream-Sync Check |
+| ---------- | ------------------------: | --------------------------: |
+| Statements |                   100.00% |                      66.00% |
+| Branches   |                   100.00% |                      60.78% |
+| Functions  |                   100.00% |                      63.25% |
+| Lines      |                   100.00% |                      67.05% |
 
-Latest checkpoint result:
+Current upstream-sync coverage result:
 
 - Command: `npm run test:coverage`
-- Result: passed
-- Test files: 731 passed
-- Tests: 28,679 passed
-- Coverage: 100% statements, 100% branches, 100% functions, 100% lines
-- Log: `/tmp/maestro-final-test-coverage-20260617222450.log`
+- Result: failed 100% global coverage thresholds
+- Test files: 1,073 passed, 1 skipped
+- Tests: 31,219 passed, 108 skipped
+- Coverage: 66.00% statements, 60.78% branches, 63.25% functions, 67.05% lines
+- Log: `/tmp/maestro-upstream-overlay-test-coverage-20260617232642.log`
 
-Current remaining enforced unit coverage gaps: none.
+Current remaining enforced unit coverage gaps: open. The current tree has 1,667 covered files in `coverage/coverage-final.json`, and the largest gaps include web-server factory/message-handler paths, Codex/OpenCode session storage, `App.tsx`, Document Graph views, and mobile/web remote-event surfaces.
 
-Current full integration checkpoint:
+Current full integration checkpoint: not rerun after the upstream-sync tree change.
+
+Current E2E checkpoint: not rerun after the upstream-sync tree change.
+
+Pre-upstream-sync full integration checkpoint:
 
 - Command: full integration run with `RUN_INTEGRATION_TESTS=true`, `RUN_SSH_INTEGRATION_TESTS=true`, and a local SSH harness.
 - Result: passed
@@ -35,7 +39,7 @@ Current full integration checkpoint:
 - Skip/failure audit: 0 skip markers, 0 SSH-not-configured markers, 0 `FAIL`, 0 `fn3 is not a function`
 - Log: `/tmp/maestro-integration-ssh-full-20260617220145.log`
 
-Current E2E checkpoint:
+Pre-upstream-sync E2E checkpoint:
 
 - Final Phase 6 shard A: 985 passed, 0 failed, 0 skipped.
 - Final Phase 6 shard B: 1,985 passed, 0 failed, 0 skipped.

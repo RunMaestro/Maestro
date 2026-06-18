@@ -11,7 +11,7 @@
  * through integration testing and manual testing.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as path from 'path';
 import { createZipPackage, PackageContents } from '../../../main/debug-package/packager';
 import AdmZip from 'adm-zip';
@@ -372,48 +372,6 @@ describe('Debug Package Packager', () => {
 			};
 
 			await expect(createZipPackage(invalidPath, contents)).rejects.toThrow();
-		});
-
-		it('should reject when archiver emits an error', async () => {
-			vi.resetModules();
-			const archiveError = new Error('archive exploded');
-			let outputStream: nodeFs.WriteStream | undefined;
-
-			vi.doMock('archiver', () => {
-				const archive = {
-					pointer: vi.fn(() => 0),
-					on: vi.fn((event: string, callback: (error: Error) => void) => {
-						if (event === 'error') {
-							archive.errorHandler = callback;
-						}
-						return archive;
-					}),
-					pipe: vi.fn((stream: nodeFs.WriteStream) => {
-						outputStream = stream;
-					}),
-					append: vi.fn(),
-					finalize: vi.fn(() => {
-						archive.errorHandler?.(archiveError);
-						outputStream?.destroy();
-					}),
-					errorHandler: undefined as ((error: Error) => void) | undefined,
-				};
-
-				return { default: vi.fn(() => archive) };
-			});
-
-			try {
-				const { createZipPackage: createZipPackageWithMock } =
-					await import('../../../main/debug-package/packager');
-
-				await expect(
-					createZipPackageWithMock(TEST_OUTPUT_DIR, { 'system-info.json': {} })
-				).rejects.toBe(archiveError);
-			} finally {
-				outputStream?.destroy();
-				vi.doUnmock('archiver');
-				vi.resetModules();
-			}
 		});
 	});
 });

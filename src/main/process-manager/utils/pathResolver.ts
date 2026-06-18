@@ -10,10 +10,11 @@ const shellPathCache = new Map<string, string>();
  * Uses caching to avoid repeated filesystem checks.
  */
 export function resolveShellPath(shell: string): string {
-	const shellName = shell
-		.split(/[/\\]/)
-		.pop()!
-		.replace(/\.exe$/i, '');
+	const shellName =
+		shell
+			.split(/[/\\]/)
+			.pop()
+			?.replace(/\.exe$/i, '') || shell;
 
 	if (isWindows()) {
 		if (shellName === 'powershell' && !shell.includes('\\')) {

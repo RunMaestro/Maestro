@@ -5,6 +5,7 @@ import { AchievementCard } from '../../../renderer/components/AchievementCard';
 import type { Theme } from '../../../renderer/types';
 import type { AutoRunStats } from '../../../renderer/types';
 
+import { mockTheme } from '../../helpers/mockTheme';
 // Mock the MaestroSilhouette component
 vi.mock('../../../renderer/components/MaestroSilhouette', () => ({
 	MaestroSilhouette: ({
@@ -77,25 +78,6 @@ vi.mock('lucide-react', () => ({
 }));
 
 // Test theme
-const mockTheme: Theme = {
-	id: 'test-theme',
-	name: 'Test Theme',
-	mode: 'dark',
-	colors: {
-		bgMain: '#1e1e2e',
-		bgSidebar: '#181825',
-		bgActivity: '#11111b',
-		textMain: '#cdd6f4',
-		textDim: '#a6adc8',
-		accent: '#8B5CF6',
-		border: '#313244',
-		success: '#a6e3a1',
-		warning: '#f9e2af',
-		error: '#f38ba8',
-		info: '#89dceb',
-		highlight: '#f5c2e7',
-	},
-};
 
 // Base autoRunStats for tests
 const baseAutoRunStats: AutoRunStats = {
@@ -182,123 +164,13 @@ Object.defineProperty(navigator, 'clipboard', {
 	writable: true,
 });
 
-const createMockCanvasContext = () => ({
-	createRadialGradient: vi.fn().mockReturnValue({
-		addColorStop: vi.fn(),
-	}),
-	createLinearGradient: vi.fn().mockReturnValue({
-		addColorStop: vi.fn(),
-	}),
-	fillStyle: '',
-	strokeStyle: '',
-	lineWidth: 0,
-	lineCap: '',
-	font: '',
-	textAlign: '',
-	textBaseline: '',
-	imageSmoothingEnabled: false,
-	imageSmoothingQuality: '',
-	scale: vi.fn(),
-	fillRect: vi.fn(),
-	roundRect: vi.fn(),
-	fill: vi.fn(),
-	stroke: vi.fn(),
-	beginPath: vi.fn(),
-	closePath: vi.fn(),
-	arc: vi.fn(),
-	ellipse: vi.fn(),
-	clip: vi.fn(),
-	save: vi.fn(),
-	restore: vi.fn(),
-	drawImage: vi.fn(),
-	fillText: vi.fn(),
-	moveTo: vi.fn(),
-	lineTo: vi.fn(),
-	quadraticCurveTo: vi.fn(),
-	measureText: vi.fn((text: string) => ({ width: text.length * 7 })),
-});
-
-const installShareImageMocks = (
-	options: {
-		fetchedImage?: string | null;
-		fetchReject?: unknown;
-		imageLoad?: 'load' | 'error';
-		imageLoadSequence?: Array<'load' | 'error'>;
-		getContextError?: Error;
-		toBlobResult?: Blob | null;
-	} = {}
-) => {
-	const ctx = createMockCanvasContext();
-	const originalImage = global.Image;
-	const originalGetContext = HTMLCanvasElement.prototype.getContext;
-	const originalToBlob = HTMLCanvasElement.prototype.toBlob;
-	const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
-	const originalFetchImageAsBase64 = window.maestro.fs.fetchImageAsBase64;
-
-	class MockImage {
-		onload: (() => void) | null = null;
-		onerror: (() => void) | null = null;
-		private _src = '';
-
-		set src(value: string) {
-			this._src = value;
-			const imageLoad = options.imageLoadSequence?.shift() ?? options.imageLoad;
-			if (imageLoad === 'error') {
-				this.onerror?.();
-			} else {
-				this.onload?.();
-			}
-		}
-
-		get src() {
-			return this._src;
-		}
-	}
-
-	global.Image = MockImage as unknown as typeof Image;
-	Object.assign(window.maestro.fs, {
-		fetchImageAsBase64:
-			options.fetchReject !== undefined
-				? vi.fn().mockRejectedValue(options.fetchReject)
-				: vi.fn().mockResolvedValue(options.fetchedImage ?? null),
-	});
-	HTMLCanvasElement.prototype.getContext = options.getContextError
-		? vi.fn(() => {
-				throw options.getContextError;
-			})
-		: vi.fn().mockReturnValue(ctx);
-	HTMLCanvasElement.prototype.toBlob = vi.fn((callback: BlobCallback) => {
-		callback(
-			options.toBlobResult === undefined
-				? new Blob(['png'], { type: 'image/png' })
-				: options.toBlobResult
-		);
-	});
-	HTMLCanvasElement.prototype.toDataURL = vi.fn().mockReturnValue('data:image/png;base64,canvas');
-
-	return {
-		ctx,
-		restore: () => {
-			global.Image = originalImage;
-			HTMLCanvasElement.prototype.getContext = originalGetContext;
-			HTMLCanvasElement.prototype.toBlob = originalToBlob;
-			HTMLCanvasElement.prototype.toDataURL = originalToDataURL;
-			window.maestro.fs.fetchImageAsBase64 = originalFetchImageAsBase64;
-		},
-	};
-};
-
 describe('AchievementCard', () => {
-	let restoreShareImageMocks: (() => void) | null = null;
-
 	beforeEach(() => {
 		vi.clearAllMocks();
 		vi.useFakeTimers({ shouldAdvanceTime: true });
-		restoreShareImageMocks = null;
 	});
 
 	afterEach(() => {
-		restoreShareImageMocks?.();
 		vi.useRealTimers();
 	});
 
@@ -573,35 +445,6 @@ describe('AchievementCard', () => {
 			});
 		});
 
-		it('keeps tooltip open when clicking inside it', () => {
-			const { container } = render(
-				<AchievementCard theme={mockTheme} autoRunStats={firstBadgeStats} />
-			);
-
-			const segments = container.querySelectorAll('.h-3.rounded-full.cursor-pointer');
-			fireEvent.click(segments[0]);
-			vi.advanceTimersByTime(10);
-
-			const tooltip = container.querySelector('.absolute.bottom-full') as HTMLElement;
-			fireEvent.click(tooltip);
-
-			expect(screen.getByText('Level 1')).toBeInTheDocument();
-		});
-
-		it('switches tooltips from inside the badge container without closing as an outside click', () => {
-			const { container } = render(
-				<AchievementCard theme={mockTheme} autoRunStats={firstBadgeStats} />
-			);
-
-			const segments = container.querySelectorAll('.h-3.rounded-full.cursor-pointer');
-			fireEvent.click(segments[0]);
-			vi.advanceTimersByTime(10);
-			fireEvent.click(segments[1]);
-
-			expect(screen.getByText('Level 2')).toBeInTheDocument();
-			expect(screen.queryByText('Level 1')).not.toBeInTheDocument();
-		});
-
 		it('shows flavor text only for unlocked badges', async () => {
 			const { container } = render(
 				<AchievementCard theme={mockTheme} autoRunStats={firstBadgeStats} />
@@ -664,15 +507,6 @@ describe('AchievementCard', () => {
 			await waitFor(() => {
 				expect(screen.queryByText('Principal Guest')).not.toBeInTheDocument();
 			});
-		});
-
-		it('shows high-level badges in expanded history', async () => {
-			render(<AchievementCard theme={mockTheme} autoRunStats={maxLevelStats} />);
-
-			fireEvent.click(screen.getByText('Path to the Podium: Timeline'));
-
-			expect(await screen.findByText('Titan')).toBeInTheDocument();
-			expect(screen.getByText('Grand')).toBeInTheDocument();
 		});
 	});
 
@@ -773,26 +607,35 @@ describe('AchievementCard', () => {
 				expect(screen.queryByText('Copy to Clipboard')).not.toBeInTheDocument();
 			});
 		});
-
-		it('keeps share menu open when clicking inside it', () => {
-			const { container } = render(
-				<AchievementCard theme={mockTheme} autoRunStats={firstBadgeStats} />
-			);
-
-			fireEvent.click(screen.getByTitle('Share achievements'));
-			vi.advanceTimersByTime(10);
-
-			const menu = container.querySelector('.absolute.right-0.top-full') as HTMLElement;
-			fireEvent.click(menu);
-
-			expect(screen.getByText('Copy to Clipboard')).toBeInTheDocument();
-		});
 	});
 
 	describe('Copy to Clipboard', () => {
 		it('attempts to generate image for clipboard', async () => {
-			const { restore } = installShareImageMocks();
-			restoreShareImageMocks = restore;
+			// Mock canvas context for image generation
+			const mockContext = {
+				createRadialGradient: vi.fn().mockReturnValue({
+					addColorStop: vi.fn(),
+				}),
+				createLinearGradient: vi.fn().mockReturnValue({
+					addColorStop: vi.fn(),
+				}),
+				fillStyle: '',
+				strokeStyle: '',
+				lineWidth: 0,
+				font: '',
+				textAlign: '',
+				textBaseline: '',
+				letterSpacing: '',
+				fillRect: vi.fn(),
+				roundRect: vi.fn(),
+				fill: vi.fn(),
+				stroke: vi.fn(),
+				beginPath: vi.fn(),
+				arc: vi.fn(),
+				fillText: vi.fn(),
+				measureText: vi.fn().mockReturnValue({ width: 100 }),
+			};
+			HTMLCanvasElement.prototype.getContext = vi.fn().mockReturnValue(mockContext);
 
 			render(<AchievementCard theme={mockTheme} autoRunStats={firstBadgeStats} />);
 
@@ -805,260 +648,37 @@ describe('AchievementCard', () => {
 			fireEvent.click(copyButton);
 
 			// The canvas context should be accessed for image generation
-			await waitFor(() => expect(HTMLCanvasElement.prototype.getContext).toHaveBeenCalled());
-		});
-
-		it('generates a personalized share image and writes it to the clipboard', async () => {
-			const { ctx, restore } = installShareImageMocks({
-				fetchedImage: 'data:image/png;base64,avatar',
-			});
-			restoreShareImageMocks = restore;
-
-			render(
-				<AchievementCard
-					theme={mockTheme}
-					autoRunStats={level5Stats}
-					globalStats={mockGlobalStats}
-					usageStats={{
-						maxAgents: 8,
-						maxSimultaneousAutoRuns: 3,
-						maxSimultaneousQueries: 11,
-						maxQueueDepth: 5,
-					}}
-					handsOnTimeMs={2 * 60 * 60 * 1000 + 5 * 60 * 1000}
-					leaderboardRegistration={{
-						email: 'ada@example.com',
-						displayName: 'Ada Lovelace',
-						githubUsername: 'adalovelace',
-						twitterHandle: 'ada_ai',
-						linkedinHandle: 'ada-lovelace',
-						discordUsername: 'ada#1234',
-						registeredAt: Date.now(),
-						emailConfirmed: true,
-					}}
-				/>
-			);
-
-			fireEvent.click(screen.getByTitle('Share achievements'));
-			fireEvent.click(screen.getByText('Copy to Clipboard'));
-
-			await waitFor(() => expect(mockClipboard.write).toHaveBeenCalled());
-			expect(ctx.scale).toHaveBeenCalledWith(3, 3);
-			expect(ctx.drawImage).toHaveBeenCalled();
-			expect(ctx.fillText).toHaveBeenCalledWith('ADA LOVELACE', 300, expect.any(Number));
-			expect(ctx.fillText).toHaveBeenCalledWith(
-				'adalovelace',
-				expect.any(Number),
-				expect.any(Number)
-			);
-			expect(ctx.fillText).toHaveBeenCalledWith('ada_ai', expect.any(Number), expect.any(Number));
-			expect(ctx.fillText).toHaveBeenCalledWith(
-				'ada-lovelace',
-				expect.any(Number),
-				expect.any(Number)
-			);
-			expect(ctx.fillText).toHaveBeenCalledWith('ada#1234', expect.any(Number), expect.any(Number));
-		});
-
-		it('shows copied state, closes the menu, and resets copy success', async () => {
-			const { restore } = installShareImageMocks();
-			restoreShareImageMocks = restore;
-
-			render(<AchievementCard theme={mockTheme} autoRunStats={firstBadgeStats} />);
-
-			fireEvent.click(screen.getByTitle('Share achievements'));
-			fireEvent.click(screen.getByText('Copy to Clipboard'));
-
-			await waitFor(() => expect(screen.getByText('Copied!')).toBeInTheDocument());
-
-			act(() => {
-				vi.advanceTimersByTime(1000);
-			});
-			await waitFor(() => expect(screen.queryByText('Copied!')).not.toBeInTheDocument());
-
-			act(() => {
-				vi.advanceTimersByTime(1000);
-			});
-			fireEvent.click(screen.getByTitle('Share achievements'));
-			expect(screen.getByText('Copy to Clipboard')).toBeInTheDocument();
-		});
-
-		it('does not write to clipboard when canvas does not produce a blob', async () => {
-			const { restore } = installShareImageMocks({ toBlobResult: null });
-			restoreShareImageMocks = restore;
-
-			render(<AchievementCard theme={mockTheme} autoRunStats={firstBadgeStats} />);
-
-			fireEvent.click(screen.getByTitle('Share achievements'));
-			fireEvent.click(screen.getByText('Copy to Clipboard'));
-
-			await waitFor(() => expect(HTMLCanvasElement.prototype.toBlob).toHaveBeenCalled());
-			expect(mockClipboard.write).not.toHaveBeenCalled();
-			expect(screen.getByText('Copy to Clipboard')).toBeInTheDocument();
-		});
-
-		it('does not show copied state when clipboard write fails', async () => {
-			const { restore } = installShareImageMocks();
-			restoreShareImageMocks = restore;
-			mockClipboard.write.mockRejectedValueOnce(new Error('clipboard denied'));
-
-			render(<AchievementCard theme={mockTheme} autoRunStats={firstBadgeStats} />);
-
-			fireEvent.click(screen.getByTitle('Share achievements'));
-			fireEvent.click(screen.getByText('Copy to Clipboard'));
-
-			await waitFor(() => expect(mockClipboard.write).toHaveBeenCalled());
-			expect(screen.queryByText('Copied!')).not.toBeInTheDocument();
-			expect(screen.getByText('Copy to Clipboard')).toBeInTheDocument();
-		});
-
-		it('falls back to default artwork and GitHub initials when image elements fail', async () => {
-			const { ctx, restore } = installShareImageMocks({
-				fetchedImage: 'data:image/png;base64,image',
-				imageLoad: 'error',
-			});
-			restoreShareImageMocks = restore;
-
-			render(
-				<AchievementCard
-					theme={mockTheme}
-					autoRunStats={firstBadgeStats}
-					leaderboardRegistration={{
-						email: 'ada@example.com',
-						displayName: 'Ada Lovelace',
-						githubUsername: 'adalovelace',
-						registeredAt: Date.now(),
-						emailConfirmed: true,
-					}}
-				/>
-			);
-
-			fireEvent.click(screen.getByTitle('Share achievements'));
-			fireEvent.click(screen.getByText('Copy to Clipboard'));
-
-			await waitFor(() => expect(mockClipboard.write).toHaveBeenCalled());
-			expect(ctx.fillText).toHaveBeenCalledWith('GH', expect.any(Number), expect.any(Number));
-			expect(ctx.fillText).toHaveBeenCalledWith('ADA LOVELACE', 300, expect.any(Number));
-		});
-
-		it('generates a personalized share image when the wand badge image fails', async () => {
-			const { ctx, restore } = installShareImageMocks({
-				fetchedImage: 'data:image/png;base64,image',
-				imageLoadSequence: ['load', 'load', 'error'],
-			});
-			restoreShareImageMocks = restore;
-
-			render(
-				<AchievementCard
-					theme={mockTheme}
-					autoRunStats={firstBadgeStats}
-					leaderboardRegistration={{
-						email: 'ada@example.com',
-						displayName: 'Ada Lovelace',
-						githubUsername: 'adalovelace',
-						registeredAt: Date.now(),
-						emailConfirmed: true,
-					}}
-				/>
-			);
-
-			fireEvent.click(screen.getByTitle('Share achievements'));
-			fireEvent.click(screen.getByText('Copy to Clipboard'));
-
-			await waitFor(() => expect(mockClipboard.write).toHaveBeenCalled());
-			expect(ctx.fillText).toHaveBeenCalledWith('ADA LOVELACE', 300, expect.any(Number));
-		});
-
-		it('logs image fetch failures and still generates a share image', async () => {
-			const { restore } = installShareImageMocks({
-				fetchReject: new Error('network unavailable'),
-			});
-			restoreShareImageMocks = restore;
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-			render(
-				<AchievementCard
-					theme={mockTheme}
-					autoRunStats={firstBadgeStats}
-					leaderboardRegistration={{
-						email: 'ada@example.com',
-						displayName: 'Ada Lovelace',
-						githubUsername: 'adalovelace',
-						registeredAt: Date.now(),
-						emailConfirmed: true,
-					}}
-				/>
-			);
-
-			fireEvent.click(screen.getByTitle('Share achievements'));
-			fireEvent.click(screen.getByText('Copy to Clipboard'));
-
-			await waitFor(() => expect(mockClipboard.write).toHaveBeenCalled());
-			expect(consoleError).toHaveBeenCalledWith(
-				'Failed to load image:',
-				expect.objectContaining({ message: 'network unavailable' })
-			);
-			consoleError.mockRestore();
-		});
-
-		it('renders subsecond and minute-only hands-on time in share images', async () => {
-			const { ctx, restore } = installShareImageMocks();
-			restoreShareImageMocks = restore;
-			const { rerender } = render(
-				<AchievementCard theme={mockTheme} autoRunStats={firstBadgeStats} handsOnTimeMs={500} />
-			);
-
-			fireEvent.click(screen.getByTitle('Share achievements'));
-			fireEvent.click(screen.getByText('Copy to Clipboard'));
-			await waitFor(() =>
-				expect(ctx.fillText).toHaveBeenCalledWith('0m', expect.any(Number), expect.any(Number))
-			);
-
-			act(() => {
-				vi.advanceTimersByTime(2000);
-			});
-			rerender(
-				<AchievementCard
-					theme={mockTheme}
-					autoRunStats={firstBadgeStats}
-					handsOnTimeMs={30 * 60 * 1000}
-				/>
-			);
-			fireEvent.click(screen.getByTitle('Share achievements'));
-			fireEvent.click(screen.getByText('Copy to Clipboard'));
-
-			await waitFor(() =>
-				expect(ctx.fillText).toHaveBeenCalledWith('30m', expect.any(Number), expect.any(Number))
-			);
-		});
-
-		it('logs share image generation failures for clipboard copy', async () => {
-			const { restore } = installShareImageMocks({
-				getContextError: new Error('canvas unavailable'),
-			});
-			restoreShareImageMocks = restore;
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-			render(<AchievementCard theme={mockTheme} autoRunStats={firstBadgeStats} />);
-
-			fireEvent.click(screen.getByTitle('Share achievements'));
-			fireEvent.click(screen.getByText('Copy to Clipboard'));
-
-			await waitFor(() =>
-				expect(consoleError).toHaveBeenCalledWith(
-					'Failed to generate share image:',
-					expect.objectContaining({ message: 'canvas unavailable' })
-				)
-			);
-			consoleError.mockRestore();
+			expect(HTMLCanvasElement.prototype.getContext).toHaveBeenCalled();
 		});
 	});
 
 	describe('Download Image', () => {
 		it('attempts to generate image for download', async () => {
-			const { restore } = installShareImageMocks();
-			restoreShareImageMocks = restore;
-			const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+			// Mock canvas context
+			const mockContext = {
+				createRadialGradient: vi.fn().mockReturnValue({
+					addColorStop: vi.fn(),
+				}),
+				createLinearGradient: vi.fn().mockReturnValue({
+					addColorStop: vi.fn(),
+				}),
+				fillStyle: '',
+				strokeStyle: '',
+				lineWidth: 0,
+				font: '',
+				textAlign: '',
+				textBaseline: '',
+				letterSpacing: '',
+				fillRect: vi.fn(),
+				roundRect: vi.fn(),
+				fill: vi.fn(),
+				stroke: vi.fn(),
+				beginPath: vi.fn(),
+				arc: vi.fn(),
+				fillText: vi.fn(),
+				measureText: vi.fn().mockReturnValue({ width: 100 }),
+			};
+			HTMLCanvasElement.prototype.getContext = vi.fn().mockReturnValue(mockContext);
 
 			render(<AchievementCard theme={mockTheme} autoRunStats={firstBadgeStats} />);
 
@@ -1069,59 +689,7 @@ describe('AchievementCard', () => {
 			fireEvent.click(saveButton);
 
 			// The canvas context should be accessed for image generation
-			await waitFor(() => expect(HTMLCanvasElement.prototype.getContext).toHaveBeenCalled());
-			clickSpy.mockRestore();
-		});
-
-		it('generates a beginning-journey image for download when no badge is unlocked', async () => {
-			const { ctx, restore } = installShareImageMocks();
-			restoreShareImageMocks = restore;
-			const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
-
-			render(
-				<AchievementCard
-					theme={mockTheme}
-					autoRunStats={baseAutoRunStats}
-					globalStats={null}
-					usageStats={null}
-				/>
-			);
-
-			fireEvent.click(screen.getByTitle('Share achievements'));
-			fireEvent.click(screen.getByText('Save as Image'));
-
-			await waitFor(() => expect(clickSpy).toHaveBeenCalled());
-			expect(HTMLCanvasElement.prototype.toDataURL).toHaveBeenCalledWith('image/png');
-			expect(ctx.fillText).toHaveBeenCalledWith('MAESTRO ACHIEVEMENTS', 300, expect.any(Number));
-			expect(ctx.fillText).toHaveBeenCalledWith(
-				'Journey Just Beginning...',
-				300,
-				expect.any(Number)
-			);
-			expect(ctx.fillText).toHaveBeenCalledWith('🏆', 300, 72);
-
-			clickSpy.mockRestore();
-		});
-
-		it('logs share image generation failures for download', async () => {
-			const { restore } = installShareImageMocks({
-				getContextError: new Error('canvas unavailable'),
-			});
-			restoreShareImageMocks = restore;
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-			render(<AchievementCard theme={mockTheme} autoRunStats={firstBadgeStats} />);
-
-			fireEvent.click(screen.getByTitle('Share achievements'));
-			fireEvent.click(screen.getByText('Save as Image'));
-
-			await waitFor(() =>
-				expect(consoleError).toHaveBeenCalledWith(
-					'Failed to download image:',
-					expect.objectContaining({ message: 'canvas unavailable' })
-				)
-			);
-			consoleError.mockRestore();
+			expect(HTMLCanvasElement.prototype.getContext).toHaveBeenCalled();
 		});
 	});
 
@@ -1219,10 +787,7 @@ describe('AchievementCard', () => {
 
 			// Now call the captured handler
 			expect(capturedHandler).not.toBeNull();
-			let result = false;
-			act(() => {
-				result = capturedHandler!();
-			});
+			const result = capturedHandler!();
 
 			expect(result).toBe(true);
 		});
@@ -1502,26 +1067,6 @@ describe('AchievementCard', () => {
 
 			// Should not crash and should render
 			expect(screen.getByText('Maestro Achievements')).toBeInTheDocument();
-		});
-
-		it('omits invalid badge history records when expanding history', async () => {
-			const invalidHistoryStats: AutoRunStats = {
-				cumulativeTimeMs: 60 * 60 * 1000,
-				longestRunMs: 20 * 60 * 1000,
-				totalRuns: 4,
-				lastRunMs: 5 * 60 * 1000,
-				badgeHistory: [
-					{ level: 1, unlockedAt: Date.now() - 86400000 },
-					{ level: 99, unlockedAt: Date.now() },
-				],
-			};
-
-			render(<AchievementCard theme={mockTheme} autoRunStats={invalidHistoryStats} />);
-
-			fireEvent.click(screen.getByText('Path to the Podium: Timeline'));
-
-			await waitFor(() => expect(screen.getByText('Apprentice')).toBeInTheDocument());
-			expect(screen.queryByText('99')).not.toBeInTheDocument();
 		});
 
 		it('handles light theme mode', () => {

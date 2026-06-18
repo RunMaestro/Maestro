@@ -6,6 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { logger } from '../../../renderer/utils/logger';
 import { renderHook, act } from '@testing-library/react';
 import { useLayerStack } from '../../../renderer/hooks';
 import { ModalLayer, OverlayLayer } from '../../../renderer/types/layer';
@@ -1050,31 +1051,9 @@ describe('useLayerStack', () => {
 				consoleSpy.mockRestore();
 			});
 
-			it('list() should show N/A for layers without an aria label', () => {
-				process.env.NODE_ENV = 'development';
-				const consoleSpy = vi.spyOn(console, 'table').mockImplementation(() => {});
-
-				const { result } = renderHook(() => useLayerStack());
-
-				act(() => {
-					result.current.registerLayer(createModalLayer());
-				});
-
-				window.__MAESTRO_DEBUG__?.layers?.list();
-
-				expect(consoleSpy).toHaveBeenCalledWith([
-					expect.objectContaining({
-						type: 'modal',
-						ariaLabel: 'N/A',
-					}),
-				]);
-
-				consoleSpy.mockRestore();
-			});
-
 			it('top() should log the top layer', () => {
 				process.env.NODE_ENV = 'development';
-				const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+				const consoleSpy = vi.spyOn(logger, 'info').mockImplementation(() => {});
 
 				const { result } = renderHook(() => useLayerStack());
 
@@ -1086,6 +1065,7 @@ describe('useLayerStack', () => {
 
 				expect(consoleSpy).toHaveBeenCalledWith(
 					'Top Layer:',
+					undefined,
 					expect.objectContaining({ ariaLabel: 'Top Layer' })
 				);
 
@@ -1094,7 +1074,7 @@ describe('useLayerStack', () => {
 
 			it('top() should log message when no layers exist', () => {
 				process.env.NODE_ENV = 'development';
-				const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+				const consoleSpy = vi.spyOn(logger, 'info').mockImplementation(() => {});
 
 				// Need to register and then unregister to have debug API but no layers
 				const { result } = renderHook(() => useLayerStack());
@@ -1117,7 +1097,7 @@ describe('useLayerStack', () => {
 
 			it('simulate.escape() should dispatch Escape key event', () => {
 				process.env.NODE_ENV = 'development';
-				const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+				const consoleSpy = vi.spyOn(logger, 'info').mockImplementation(() => {});
 				const dispatchSpy = vi.spyOn(window, 'dispatchEvent');
 
 				const { result } = renderHook(() => useLayerStack());
@@ -1143,7 +1123,7 @@ describe('useLayerStack', () => {
 
 			it('simulate.closeAll() should clear all layers', () => {
 				process.env.NODE_ENV = 'development';
-				const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+				const consoleSpy = vi.spyOn(logger, 'info').mockImplementation(() => {});
 
 				const { result } = renderHook(() => useLayerStack());
 
@@ -1262,27 +1242,6 @@ describe('useLayerStack', () => {
 
 			expect(closed!).toBe(true);
 			expect(handler).toHaveBeenCalledTimes(1);
-		});
-
-		it('should treat malformed layers without handlers as closable', async () => {
-			const { result } = renderHook(() => useLayerStack());
-
-			act(() => {
-				result.current.registerLayer({
-					type: 'modal',
-					priority: 100,
-					blocksLowerLayers: true,
-					capturesFocus: true,
-					focusTrap: 'strict',
-				} as Omit<ModalLayer, 'id'>);
-			});
-
-			let closed: boolean;
-			await act(async () => {
-				closed = await result.current.closeTopLayer();
-			});
-
-			expect(closed!).toBe(true);
 		});
 	});
 

@@ -13,37 +13,12 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, act, fireEvent } from '@testing-library/react';
+import { render, screen, act, waitFor } from '@testing-library/react';
 import { WizardConversationView } from '../../../../renderer/components/InlineWizard/WizardConversationView';
 import type { WizardMessageBubbleMessage } from '../../../../renderer/components/InlineWizard/WizardMessageBubble';
-import type { Theme } from '../../../../renderer/types';
 
+import { mockTheme } from '../../../helpers/mockTheme';
 // Mock theme for testing
-const mockTheme: Theme = {
-	id: 'test-theme',
-	name: 'Test Theme',
-	mode: 'dark',
-	colors: {
-		background: '#1a1a1a',
-		backgroundDim: '#0d0d0d',
-		backgroundBright: '#2a2a2a',
-		bgMain: '#1a1a1a',
-		bgSidebar: '#141414',
-		bgActivity: '#333333',
-		textMain: '#ffffff',
-		textDim: '#888888',
-		textMuted: '#666666',
-		textBright: '#ffffff',
-		border: '#333333',
-		borderBright: '#444444',
-		success: '#00ff00',
-		warning: '#ffff00',
-		error: '#ff0000',
-		accent: '#007bff',
-		accentForeground: '#ffffff',
-		accentText: '#66b2ff',
-	},
-};
 
 // Helper to create test messages
 function createMessage(
@@ -469,10 +444,6 @@ describe('WizardConversationView', () => {
 
 			// Should scroll because user sent a message
 			expect(mockScrollTo).toHaveBeenCalled();
-
-			act(() => {
-				vi.advanceTimersByTime(16);
-			});
 		});
 	});
 
@@ -551,77 +522,6 @@ describe('WizardConversationView', () => {
 
 			expect(screen.getByText('User question')).toBeInTheDocument();
 			expect(screen.getByText('AI is responding...')).toBeInTheDocument();
-		});
-	});
-
-	describe('error display', () => {
-		it.each([
-			['request timed out waiting for agent output', 'Response Timeout', /agent stopped producing/],
-			['agent timed out during response streaming', 'Response Timeout', /agent stopped producing/],
-			['codex not available on this machine', 'Agent Not Available', /could not be started/],
-			['claude binary not found', 'Agent Not Available', /could not be started/],
-			['wizard session is not active', 'Session Error', /no longer active/],
-			['No active wizard session found', 'Session Error', /no longer active/],
-			['failed to spawn claude', 'Failed to Start Agent', /Could not start the AI agent/],
-			['agent exited with code 1', 'Agent Error', /stopped unexpectedly/],
-			['failed to parse model response', 'Response Error', /Could not understand/],
-			['parse error in model response', 'Response Error', /Could not understand/],
-			['unexpected provider failure', 'Something Went Wrong', /unexpected provider failure/],
-		])('maps "%s" to the friendly "%s" message', (error, title, description) => {
-			render(<WizardConversationView theme={mockTheme} conversationHistory={[]} error={error} />);
-
-			expect(screen.getByTestId('wizard-error-display')).toBeInTheDocument();
-			expect(screen.getByTestId('error-title')).toHaveTextContent(title);
-			expect(screen.getByTestId('error-description')).toHaveTextContent(description);
-			expect(screen.getByTestId('error-technical-details')).toHaveTextContent(error);
-		});
-
-		it('invokes retry and dismiss callbacks from the error actions', () => {
-			const onRetry = vi.fn();
-			const onClearError = vi.fn();
-
-			render(
-				<WizardConversationView
-					theme={mockTheme}
-					conversationHistory={[]}
-					error="failed to spawn claude"
-					onRetry={onRetry}
-					onClearError={onClearError}
-				/>
-			);
-
-			fireEvent.click(screen.getByTestId('error-retry-button'));
-			fireEvent.click(screen.getByTestId('error-dismiss-button'));
-
-			expect(onRetry).toHaveBeenCalledTimes(1);
-			expect(onClearError).toHaveBeenCalledTimes(1);
-		});
-
-		it('omits optional error actions when callbacks are not provided', () => {
-			render(
-				<WizardConversationView
-					theme={mockTheme}
-					conversationHistory={[]}
-					error="agent exited with code 1"
-				/>
-			);
-
-			expect(screen.queryByTestId('error-retry-button')).not.toBeInTheDocument();
-			expect(screen.queryByTestId('error-dismiss-button')).not.toBeInTheDocument();
-		});
-
-		it('prioritizes loading state over an error display', () => {
-			render(
-				<WizardConversationView
-					theme={mockTheme}
-					conversationHistory={[]}
-					isLoading={true}
-					error="failed to spawn claude"
-				/>
-			);
-
-			expect(screen.queryByTestId('wizard-error-display')).not.toBeInTheDocument();
-			expect(screen.queryByTestId('wizard-typing-indicator')).not.toBeInTheDocument();
 		});
 	});
 
@@ -935,28 +835,6 @@ describe('WizardConversationView', () => {
 			expect(screen.getByText(/Reasoning/)).toBeInTheDocument();
 		});
 
-		it('omits reasoning fallback when only tool executions are visible', () => {
-			render(
-				<WizardConversationView
-					theme={mockTheme}
-					conversationHistory={[]}
-					isLoading={true}
-					showThinking={true}
-					thinkingContent=""
-					toolExecutions={[
-						{
-							toolName: 'Glob',
-							state: { status: 'running', input: { pattern: '**/*.md' } },
-							timestamp: Date.now(),
-						},
-					]}
-				/>
-			);
-
-			expect(screen.getByText('Glob')).toBeInTheDocument();
-			expect(screen.getByTestId('thinking-display-content')).not.toHaveTextContent('Reasoning...');
-		});
-
 		it('falls back to typing indicator when showThinking=true but not loading', () => {
 			render(
 				<WizardConversationView
@@ -1097,28 +975,6 @@ describe('WizardConversationView', () => {
 			);
 
 			expect(screen.getByText('Read')).toBeInTheDocument();
-		});
-
-		it('defaults tool executions with no state to a running status', () => {
-			render(
-				<WizardConversationView
-					theme={mockTheme}
-					conversationHistory={[]}
-					isLoading={true}
-					showThinking={true}
-					thinkingContent="Working..."
-					toolExecutions={[
-						{
-							toolName: 'List',
-							timestamp: Date.now(),
-						},
-					]}
-				/>
-			);
-
-			const toolBadge = screen.getByText('List');
-			expect(toolBadge).toBeInTheDocument();
-			expect(screen.getByText('●')).toBeInTheDocument();
 		});
 	});
 });

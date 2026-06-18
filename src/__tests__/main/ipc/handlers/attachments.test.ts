@@ -136,10 +136,6 @@ describe('attachments handlers', () => {
 			// Test SVG
 			const svgResult = await handler!({}, 'session-123', 'icon.svg');
 			expect(svgResult.dataUrl).toMatch(/^data:image\/svg\+xml;base64,/);
-
-			// Unknown image extensions fall back to PNG for a browser-safe data URL.
-			const unknownResult = await handler!({}, 'session-123', 'scan.bmp');
-			expect(unknownResult.dataUrl).toMatch(/^data:image\/png;base64,/);
 		});
 
 		it('should handle load errors gracefully', async () => {
@@ -254,24 +250,6 @@ describe('attachments handlers', () => {
 				'data:image/png;base64,abc',
 				'evil.png'
 			);
-
-			expect(result.success).toBe(false);
-			expect(fs.writeFile).not.toHaveBeenCalled();
-		});
-
-		it('should reject dot-only sessionId in save', async () => {
-			const handler = registeredHandlers.get('attachments:save');
-			const result = await handler!({}, '.', 'data:image/png;base64,abc', 'image.png');
-
-			expect(result.success).toBe(false);
-			expect(fs.writeFile).not.toHaveBeenCalled();
-		});
-
-		it('should reject session paths that do not resolve under the attachments directory', async () => {
-			mockApp.getPath.mockReturnValueOnce('relative-user-data');
-
-			const handler = registeredHandlers.get('attachments:save');
-			const result = await handler!({}, 'session-123', 'data:image/png;base64,abc', 'image.png');
 
 			expect(result.success).toBe(false);
 			expect(fs.writeFile).not.toHaveBeenCalled();

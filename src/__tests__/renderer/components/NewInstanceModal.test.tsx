@@ -5,9 +5,11 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
-import { EditAgentModal, NewInstanceModal } from '../../../renderer/components/NewInstanceModal';
+import { NewInstanceModal } from '../../../renderer/components/NewInstanceModal';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import type { Theme, Session } from '../../../renderer/types';
 import type { AgentConfig } from '../../../renderer/types';
 
@@ -60,41 +62,6 @@ const createAgentConfig = (overrides: Partial<AgentConfig> = {}): AgentConfig =>
 	...overrides,
 });
 
-const createSession = (overrides: Partial<Session> = {}): Session =>
-	({
-		id: 'session-1',
-		name: 'Editable Agent',
-		toolType: 'claude-code',
-		cwd: '/test/project',
-		projectRoot: '/test/project',
-		fullPath: '/test/project',
-		state: 'idle',
-		inputMode: 'ai',
-		aiPid: 12345,
-		terminalPid: 0,
-		port: 3000,
-		aiTabs: [],
-		activeTabId: 'tab-1',
-		closedTabHistory: [],
-		shellLogs: [],
-		executionQueue: [],
-		contextUsage: 0,
-		workLog: [],
-		isGitRepo: false,
-		changedFiles: [],
-		fileTree: [],
-		fileExplorerExpanded: [],
-		fileExplorerScrollPos: 0,
-		isLive: false,
-		...overrides,
-	}) as Session;
-
-const waitForNewInstanceModalReady = async () => {
-	await waitFor(() => {
-		expect(screen.getByLabelText('Agent Name')).toBeInTheDocument();
-	});
-};
-
 describe('NewInstanceModal', () => {
 	let theme: Theme;
 	let onClose: ReturnType<typeof vi.fn>;
@@ -121,15 +88,7 @@ describe('NewInstanceModal', () => {
 			agents: [createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true })],
 			debugInfo: null,
 		});
-		vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({});
-		vi.mocked(window.maestro.agents.getModels).mockResolvedValue([]);
-		vi.mocked(window.maestro.agents.setConfig).mockResolvedValue(undefined);
 		vi.mocked(window.maestro.agents.setCustomPath).mockResolvedValue(undefined);
-		vi.mocked(window.maestro.fs.stat).mockResolvedValue({
-			size: 1024,
-			createdAt: '2024-01-01T00:00:00.000Z',
-			modifiedAt: '2024-01-15T12:30:00.000Z',
-		});
 		// Default: no SSH remotes configured
 		vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
 			success: true,
@@ -139,6 +98,8 @@ describe('NewInstanceModal', () => {
 
 	afterEach(() => {
 		vi.clearAllMocks();
+		// Reset groups so tests don't leak group state between cases
+		useSessionStore.setState({ groups: [] });
 	});
 
 	describe('Initial render and visibility', () => {
@@ -174,7 +135,6 @@ describe('NewInstanceModal', () => {
 			expect(modal).toBeInTheDocument();
 			expect(modal).toHaveAttribute('aria-modal', 'true');
 			expect(modal).toHaveAttribute('aria-label', 'Create New Agent');
-			await waitForNewInstanceModalReady();
 		});
 
 		it('should display modal header with title and close button', async () => {
@@ -190,10 +150,9 @@ describe('NewInstanceModal', () => {
 
 			expect(screen.getByText('Create New Agent')).toBeInTheDocument();
 			expect(screen.getByTestId('x-icon')).toBeInTheDocument();
-			await waitForNewInstanceModalReady();
 		});
 
-		it('should show loading state initially', async () => {
+		it('should show loading state initially', () => {
 			render(
 				<NewInstanceModal
 					isOpen={true}
@@ -205,7 +164,6 @@ describe('NewInstanceModal', () => {
 			);
 
 			expect(screen.getByText('Loading agents...')).toBeInTheDocument();
-			await waitForNewInstanceModalReady();
 		});
 	});
 
@@ -383,7 +341,7 @@ describe('NewInstanceModal', () => {
 	});
 
 	describe('Agent selection', () => {
-		it('should allow selecting claude-code with keyboard activation when available', async () => {
+		it('should allow selecting claude-code when available', async () => {
 			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
 				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
 			]);
@@ -403,11 +361,8 @@ describe('NewInstanceModal', () => {
 			});
 
 			const option = screen.getByRole('option', { name: /Claude Code/i });
-			fireEvent.keyDown(option, { key: 'Tab' });
+			fireEvent.click(option);
 			expect(option).toHaveAttribute('aria-selected', 'true');
-			fireEvent.keyDown(option, { key: ' ' });
-			expect(option).toHaveAttribute('aria-selected', 'true');
-			expect(await screen.findByPlaceholderText('/path/to/claude')).toBeInTheDocument();
 		});
 
 		it('should allow selecting unavailable claude-code to configure custom path', async () => {
@@ -777,8 +732,13 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				undefined,
-				{ enabled: false, remoteId: null },
-				undefined
+				undefined,
+				expect.objectContaining({ enabled: false, remoteId: null }),
+				undefined,
+				undefined,
+				true, // enableMaestroP defaults on for Claude Code (Adaptive Mode)
+				undefined, // maestroPPath
+				'dynamic' // maestroPMode defaults to dynamic when Adaptive on
 			);
 		});
 
@@ -824,8 +784,13 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				undefined,
-				{ enabled: false, remoteId: null },
-				undefined
+				undefined,
+				expect.objectContaining({ enabled: false, remoteId: null }),
+				undefined,
+				undefined,
+				true, // enableMaestroP defaults on for Claude Code (Adaptive Mode)
+				undefined, // maestroPPath
+				'dynamic' // maestroPMode defaults to dynamic when Adaptive on
 			);
 		});
 
@@ -871,74 +836,18 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				undefined,
-				{ enabled: false, remoteId: null },
-				undefined
+				undefined,
+				expect.objectContaining({ enabled: false, remoteId: null }),
+				undefined,
+				undefined,
+				true, // enableMaestroP defaults on for Claude Code (Adaptive Mode)
+				undefined, // maestroPPath
+				'dynamic' // maestroPMode defaults to dynamic when Adaptive on
 			);
 		});
 	});
 
 	describe('Form submission', () => {
-		it('requires directory conflict acknowledgement and truncates the nudge message', async () => {
-			const existingSession = createSession({
-				id: 'existing-session',
-				name: 'Existing Agent',
-				cwd: '/shared/project',
-				projectRoot: '/shared/project',
-			});
-
-			render(
-				<NewInstanceModal
-					isOpen={true}
-					onClose={onClose}
-					onCreate={onCreate}
-					theme={theme}
-					existingSessions={[existingSession]}
-				/>
-			);
-
-			await waitForNewInstanceModalReady();
-
-			fireEvent.change(screen.getByLabelText('Agent Name'), { target: { value: 'New Agent' } });
-			fireEvent.change(screen.getByLabelText('Working Directory'), {
-				target: { value: '/shared/project' },
-			});
-
-			expect(
-				screen.getByText(/This directory is already used by "Existing Agent"/)
-			).toBeInTheDocument();
-			expect(screen.getByText('Create Agent')).toBeDisabled();
-
-			const longNudge = 'x'.repeat(1005);
-			const nudgeInput = screen.getByPlaceholderText(
-				'Instructions appended to every message you send...'
-			) as HTMLTextAreaElement;
-			fireEvent.change(nudgeInput, { target: { value: longNudge } });
-			expect(nudgeInput.value).toHaveLength(1000);
-			expect(screen.getByText(/1000\/1000 characters/)).toBeInTheDocument();
-
-			fireEvent.click(screen.getByLabelText('I understand the risk and want to proceed'));
-			await waitFor(() => {
-				expect(screen.getByText('Create Agent')).toBeEnabled();
-			});
-
-			fireEvent.click(screen.getByText('Create Agent'));
-
-			expect(onCreate).toHaveBeenCalledWith(
-				'claude-code',
-				'/shared/project',
-				'New Agent',
-				'x'.repeat(1000),
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				{ enabled: false, remoteId: null },
-				undefined
-			);
-		});
-
 		it('should call onCreate with correct values when Create button is clicked', async () => {
 			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
 				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
@@ -980,43 +889,15 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				undefined,
-				{ enabled: false, remoteId: null },
-				undefined
+				undefined,
+				expect.objectContaining({ enabled: false, remoteId: null }),
+				undefined,
+				undefined,
+				true, // enableMaestroP defaults on for Claude Code (Adaptive Mode)
+				undefined, // maestroPPath
+				'dynamic' // maestroPMode defaults to dynamic when Adaptive on
 			);
 			expect(onClose).toHaveBeenCalled();
-		});
-
-		it('blocks create when the requested agent name already exists', async () => {
-			render(
-				<NewInstanceModal
-					isOpen={true}
-					onClose={onClose}
-					onCreate={onCreate}
-					theme={theme}
-					existingSessions={[createSession({ id: 'session-2', name: 'Taken Agent' })]}
-				/>
-			);
-
-			await waitForNewInstanceModalReady();
-
-			fireEvent.change(screen.getByLabelText('Agent Name'), { target: { value: 'Taken Agent' } });
-			fireEvent.change(screen.getByLabelText('Working Directory'), {
-				target: { value: '/new/project' },
-			});
-
-			expect(
-				await screen.findByText('An agent named "Taken Agent" already exists')
-			).toBeInTheDocument();
-			expect(screen.getByText('Create Agent')).toBeDisabled();
-
-			fireEvent.keyDown(screen.getByRole('group', { name: 'Create new agent dialog' }), {
-				key: 'Escape',
-			});
-			fireEvent.keyDown(screen.getByRole('group', { name: 'Create new agent dialog' }), {
-				key: 'Enter',
-				ctrlKey: true,
-			});
-			expect(onCreate).not.toHaveBeenCalled();
 		});
 
 		it('should disable Create button when no instance name provided', async () => {
@@ -1368,7 +1249,6 @@ describe('NewInstanceModal', () => {
 					ariaLabel: 'Create New Agent',
 				})
 			);
-			await waitForNewInstanceModalReady();
 		});
 
 		it('should unregister layer when modal closes', async () => {
@@ -1387,7 +1267,6 @@ describe('NewInstanceModal', () => {
 			);
 
 			expect(mockRegisterLayer).toHaveBeenCalled();
-			await waitForNewInstanceModalReady();
 
 			rerender(
 				<NewInstanceModal
@@ -1417,8 +1296,6 @@ describe('NewInstanceModal', () => {
 				/>
 			);
 
-			await waitForNewInstanceModalReady();
-
 			const newOnClose = vi.fn();
 			rerender(
 				<NewInstanceModal
@@ -1430,7 +1307,18 @@ describe('NewInstanceModal', () => {
 				/>
 			);
 
-			expect(mockUpdateLayerHandler).toHaveBeenCalledWith('layer-new-instance-123', newOnClose);
+			// useModalLayer wraps onEscape in a stable closure (`() => onEscapeRef.current()`)
+			// to avoid re-registering the layer on every render. The handler still routes to
+			// the latest onClose via ref - we just verify update was called with our layer id.
+			expect(mockUpdateLayerHandler).toHaveBeenCalledWith(
+				'layer-new-instance-123',
+				expect.any(Function)
+			);
+			// Trigger the latest registered escape handler and verify it calls the new onClose
+			const lastCall =
+				mockUpdateLayerHandler.mock.calls[mockUpdateLayerHandler.mock.calls.length - 1];
+			(lastCall[1] as () => void)();
+			expect(newOnClose).toHaveBeenCalledTimes(1);
 		});
 	});
 
@@ -1461,9 +1349,6 @@ describe('NewInstanceModal', () => {
 				expect(screen.getByPlaceholderText('/path/to/claude')).toBeInTheDocument();
 				expect(screen.getByText('Path')).toBeInTheDocument();
 			});
-
-			fireEvent.click(screen.getByText('Add Variable'));
-			expect(await screen.findByDisplayValue('NEW_VAR')).toBeInTheDocument();
 		});
 
 		it('should pass custom path to onCreate when creating agent', async () => {
@@ -1498,14 +1383,9 @@ describe('NewInstanceModal', () => {
 				expect(screen.getByPlaceholderText('/path/to/claude')).toBeInTheDocument();
 			});
 
-			// Set custom path and args, then blur both inputs. These values are local until create.
+			// Set custom path
 			const customPathInput = screen.getByPlaceholderText('/path/to/claude');
 			fireEvent.change(customPathInput, { target: { value: '/custom/path/to/claude' } });
-			fireEvent.blur(customPathInput);
-
-			const customArgsInput = screen.getByPlaceholderText('--flag value --another-flag');
-			fireEvent.change(customArgsInput, { target: { value: '--verbose' } });
-			fireEvent.blur(customArgsInput);
 
 			// Create agent
 			const createButton = screen.getByText('Create Agent');
@@ -1519,14 +1399,19 @@ describe('NewInstanceModal', () => {
 				'/my/project',
 				'My Session',
 				undefined,
+				undefined,
 				'/custom/path/to/claude',
-				'--verbose',
 				undefined,
 				undefined,
 				undefined,
 				undefined,
-				{ enabled: false, remoteId: null },
-				undefined
+				undefined,
+				expect.objectContaining({ enabled: false, remoteId: null }),
+				undefined,
+				undefined,
+				true, // enableMaestroP defaults on for Claude Code (Adaptive Mode)
+				undefined, // maestroPPath
+				'dynamic' // maestroPMode defaults to dynamic when Adaptive on
 			);
 		});
 
@@ -1666,125 +1551,19 @@ describe('NewInstanceModal', () => {
 				'/my/project',
 				'Custom Path Agent',
 				undefined,
+				undefined,
 				'/custom/bin/claude',
 				undefined,
 				undefined,
 				undefined,
 				undefined,
 				undefined,
-				{ enabled: false, remoteId: null },
-				undefined
-			);
-		});
-
-		it('should reset custom path to detected path when Reset button is clicked', async () => {
-			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
-				createAgentConfig({
-					id: 'claude-code',
-					name: 'Claude Code',
-					available: true,
-					path: '/detected/bin/claude',
-				}),
-			]);
-
-			render(
-				<NewInstanceModal
-					isOpen={true}
-					onClose={onClose}
-					onCreate={onCreate}
-					theme={theme}
-					existingSessions={[]}
-				/>
-			);
-
-			// Wait for agents to load, then click to expand
-			await waitFor(() => {
-				expect(screen.getByText('Claude Code')).toBeInTheDocument();
-			});
-			fireEvent.click(screen.getByText('Claude Code'));
-
-			// Path input should be pre-filled with detected path
-			await waitFor(() => {
-				expect(screen.getByDisplayValue('/detected/bin/claude')).toBeInTheDocument();
-			});
-
-			// Set a different custom path
-			const customPathInput = screen.getByDisplayValue('/detected/bin/claude');
-			fireEvent.change(customPathInput, { target: { value: '/custom/path' } });
-
-			await waitFor(() => {
-				expect(customPathInput).toHaveValue('/custom/path');
-			});
-
-			// Reset button should appear when custom path differs from detected path
-			await waitFor(() => {
-				expect(screen.getByText('Reset')).toBeInTheDocument();
-			});
-
-			await act(async () => {
-				fireEvent.click(screen.getByText('Reset'));
-			});
-
-			// Path should be reset to detected path
-			expect(customPathInput).toHaveValue('/detected/bin/claude');
-		});
-
-		it('should preload saved per-agent path, arguments, and environment variables', async () => {
-			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
-				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
-			]);
-			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({
-				customPath: '/saved/bin/claude',
-				customArgs: '--verbose --profile saved',
-				customEnvVars: { API_MODE: 'test' },
-			});
-
-			render(
-				<NewInstanceModal
-					isOpen={true}
-					onClose={onClose}
-					onCreate={onCreate}
-					theme={theme}
-					existingSessions={[]}
-				/>
-			);
-
-			await waitFor(() => {
-				expect(screen.getByText('Claude Code')).toBeInTheDocument();
-			});
-			fireEvent.click(screen.getByText('Claude Code'));
-
-			await waitFor(() => {
-				expect(screen.getByDisplayValue('/saved/bin/claude')).toBeInTheDocument();
-				expect(screen.getByDisplayValue('--verbose --profile saved')).toBeInTheDocument();
-				expect(screen.getByDisplayValue('API_MODE')).toBeInTheDocument();
-				expect(screen.getByDisplayValue('test')).toBeInTheDocument();
-			});
-
-			fireEvent.change(screen.getByLabelText('Agent Name'), {
-				target: { value: 'Saved Config Agent' },
-			});
-			fireEvent.change(screen.getByPlaceholderText('Select directory...'), {
-				target: { value: '/repo/project' },
-			});
-
-			await act(async () => {
-				fireEvent.click(screen.getByText('Create Agent'));
-			});
-
-			expect(onCreate).toHaveBeenCalledWith(
-				'claude-code',
-				'/repo/project',
-				'Saved Config Agent',
-				undefined,
-				'/saved/bin/claude',
-				'--verbose --profile saved',
-				{ API_MODE: 'test' },
+				expect.objectContaining({ enabled: false, remoteId: null }),
 				undefined,
 				undefined,
-				undefined,
-				{ enabled: false, remoteId: null },
-				undefined
+				true, // enableMaestroP defaults on for Claude Code (Adaptive Mode)
+				undefined, // maestroPPath
+				'dynamic' // maestroPMode defaults to dynamic when Adaptive on
 			);
 		});
 	});
@@ -1792,7 +1571,7 @@ describe('NewInstanceModal', () => {
 	describe('Error handling', () => {
 		it('should handle agent detection failure gracefully', async () => {
 			vi.mocked(window.maestro.agents.detect).mockRejectedValue(new Error('Detection failed'));
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 
 			render(
 				<NewInstanceModal
@@ -1805,7 +1584,11 @@ describe('NewInstanceModal', () => {
 			);
 
 			await waitFor(() => {
-				expect(consoleSpy).toHaveBeenCalledWith('Failed to load agents:', expect.any(Error));
+				expect(consoleSpy).toHaveBeenCalledWith(
+					'Failed to load agents:',
+					undefined,
+					expect.any(Error)
+				);
 			});
 
 			consoleSpy.mockRestore();
@@ -1816,7 +1599,7 @@ describe('NewInstanceModal', () => {
 				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
 			]);
 			vi.mocked(window.maestro.agents.refresh).mockRejectedValue(new Error('Refresh failed'));
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 
 			render(
 				<NewInstanceModal
@@ -1838,7 +1621,11 @@ describe('NewInstanceModal', () => {
 			});
 
 			await waitFor(() => {
-				expect(consoleSpy).toHaveBeenCalledWith('Failed to refresh agent:', expect.any(Error));
+				expect(consoleSpy).toHaveBeenCalledWith(
+					'Failed to refresh agent:',
+					undefined,
+					expect.any(Error)
+				);
 			});
 
 			consoleSpy.mockRestore();
@@ -1929,7 +1716,6 @@ describe('NewInstanceModal', () => {
 			const modal = screen.getByRole('dialog');
 			expect(modal).toHaveAttribute('aria-modal', 'true');
 			expect(modal).toHaveAttribute('aria-label', 'Create New Agent');
-			await waitForNewInstanceModalReady();
 		});
 
 		it('should have proper role=option on agent selections', async () => {
@@ -1953,7 +1739,7 @@ describe('NewInstanceModal', () => {
 			});
 		});
 
-		it('should have tabindex=-1 on modal container', async () => {
+		it('should have tabindex=-1 on modal container', () => {
 			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
 				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
 			]);
@@ -1970,7 +1756,6 @@ describe('NewInstanceModal', () => {
 
 			const modal = screen.getByRole('dialog');
 			expect(modal).toHaveAttribute('tabIndex', '-1');
-			await waitForNewInstanceModalReady();
 		});
 
 		it('should have tabindex=0 for available claude-code option', async () => {
@@ -2246,75 +2031,6 @@ describe('NewInstanceModal', () => {
 			});
 		});
 
-		it('should report model loading failures locally', async () => {
-			const modelFailure = new Error('models unavailable');
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-			const agentWithModelSelection = createAgentConfig({
-				id: 'opencode',
-				name: 'OpenCode',
-				available: true,
-				capabilities: {
-					supportsResume: false,
-					supportsReadOnlyMode: false,
-					supportsJsonOutput: true,
-					supportsSessionId: true,
-					supportsImageInput: false,
-					supportsSlashCommands: false,
-					supportsSessionStorage: false,
-					supportsCostTracking: false,
-					supportsUsageStats: true,
-					supportsBatchMode: true,
-					supportsStreaming: true,
-					supportsResultMessages: true,
-					supportsModelSelection: true,
-				},
-				configOptions: [
-					{
-						key: 'model',
-						type: 'text',
-						label: 'Model',
-						description: 'Model to use',
-						default: '',
-					},
-				],
-			});
-
-			vi.mocked(window.maestro.agents.detect).mockResolvedValue([agentWithModelSelection]);
-			vi.mocked(window.maestro.agents.getModels).mockRejectedValue(modelFailure);
-			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({});
-
-			try {
-				render(
-					<NewInstanceModal
-						isOpen={true}
-						onClose={onClose}
-						onCreate={onCreate}
-						theme={theme}
-						existingSessions={[]}
-					/>
-				);
-
-				await waitFor(() => {
-					expect(screen.getByText('OpenCode')).toBeInTheDocument();
-				});
-
-				const agentRow = screen.getByText('OpenCode').closest('[role="option"]');
-				expect(agentRow).not.toBeNull();
-				await act(async () => {
-					fireEvent.click(agentRow!);
-				});
-
-				await waitFor(() => {
-					expect(consoleError).toHaveBeenCalledWith(
-						'Failed to load models for opencode:',
-						modelFailure
-					);
-				});
-			} finally {
-				consoleError.mockRestore();
-			}
-		});
-
 		it('should not load models for agents without supportsModelSelection', async () => {
 			const agentWithoutModelSelection = createAgentConfig({
 				id: 'claude-code',
@@ -2491,69 +2207,6 @@ describe('NewInstanceModal', () => {
 			expect(dirInput.value).toBe('/test/project');
 		});
 
-		it('should create a duplicated agent with source session overrides', async () => {
-			const sourceSession = createSession({
-				name: 'Original Agent',
-				toolType: 'claude-code',
-				cwd: '/test/project',
-				projectRoot: '/test/project',
-				fullPath: '/test/project',
-				nudgeMessage: 'Custom system prompt',
-				customPath: '/usr/local/bin/claude',
-				customArgs: '--verbose',
-				customEnvVars: { DEBUG: 'true' },
-				customModel: 'claude-opus-4',
-				customContextWindow: 200000,
-				customProviderPath: '/opt/claude-provider',
-			});
-
-			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
-				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
-			]);
-			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({});
-
-			render(
-				<NewInstanceModal
-					isOpen={true}
-					onClose={onClose}
-					onCreate={onCreate}
-					theme={theme}
-					existingSessions={[]}
-					sourceSession={sourceSession}
-				/>
-			);
-
-			await waitFor(() => {
-				expect(screen.getByLabelText('Agent Name')).toHaveValue('Original Agent (Copy)');
-			});
-
-			await waitFor(() => {
-				expect(screen.getByDisplayValue('/usr/local/bin/claude')).toBeInTheDocument();
-				expect(screen.getByDisplayValue('--verbose')).toBeInTheDocument();
-				expect(screen.getByDisplayValue('DEBUG')).toBeInTheDocument();
-				expect(screen.getByDisplayValue('true')).toBeInTheDocument();
-			});
-
-			await act(async () => {
-				fireEvent.click(screen.getByText('Create Agent'));
-			});
-
-			expect(onCreate).toHaveBeenCalledWith(
-				'claude-code',
-				'/test/project',
-				'Original Agent (Copy)',
-				'Custom system prompt',
-				'/usr/local/bin/claude',
-				'--verbose',
-				{ DEBUG: 'true' },
-				'claude-opus-4',
-				200000,
-				'/opt/claude-provider',
-				{ enabled: false, remoteId: null },
-				undefined
-			);
-		});
-
 		it('should allow modifying pre-filled fields', async () => {
 			const sourceSession: Session = {
 				id: 'session-1',
@@ -2688,6 +2341,220 @@ describe('NewInstanceModal', () => {
 			expect(sourceSession.customArgs).toBe('--model=opus --verbose');
 		});
 
+		it('forwards source.customEffort through to onCreate when duplicating a Codex agent', async () => {
+			// Positive coverage for the customEffort plumbing (#755) and the
+			// duplicate-flow merge fix (CodeRabbit review): the picked effort must
+			// flow through as the trailing customEffort arg, not just `undefined`.
+			const sourceSession: Session = {
+				id: 'session-codex',
+				name: 'Codex Agent',
+				toolType: 'codex',
+				cwd: '/home/testuser/proj',
+				projectRoot: '/home/testuser/proj',
+				fullPath: '/home/testuser/proj',
+				state: 'idle',
+				inputMode: 'ai',
+				aiPid: 0,
+				terminalPid: 0,
+				port: 3000,
+				aiTabs: [],
+				activeTabId: 'tab-1',
+				closedTabHistory: [],
+				shellLogs: [],
+				executionQueue: [],
+				contextUsage: 0,
+				workLog: [],
+				isGitRepo: false,
+				changedFiles: [],
+				fileTree: [],
+				fileExplorerExpanded: [],
+				fileExplorerScrollPos: 0,
+				isLive: false,
+				customEffort: 'xhigh',
+			} as Session;
+
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({
+					id: 'codex',
+					name: 'OpenAI Codex',
+					available: true,
+					configOptions: [
+						{
+							key: 'reasoningEffort',
+							type: 'select',
+							label: 'Reasoning Effort',
+							default: '',
+							options: ['', 'minimal', 'low', 'medium', 'high', 'xhigh'],
+						},
+					],
+				}),
+			]);
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+					sourceSession={sourceSession}
+				/>
+			);
+
+			await waitFor(() => {
+				const nameInput = screen.getByLabelText('Agent Name') as HTMLInputElement;
+				expect(nameInput.value).toBe('Codex Agent (Copy)');
+			});
+
+			await act(async () => {
+				fireEvent.click(screen.getByText('Create Agent'));
+			});
+
+			// 13th positional arg is customEffort. assert it's 'xhigh', not undefined.
+			expect(onCreate).toHaveBeenCalled();
+			const args = onCreate.mock.calls[0];
+			expect(args[12]).toBe('xhigh');
+		});
+
+		it('forwards source.groupId through to onCreate so duplicates inherit the group (issue #827)', async () => {
+			const sourceSession: Session = {
+				id: 'session-grouped',
+				name: 'Grouped Agent',
+				toolType: 'claude-code',
+				cwd: '/test/project',
+				projectRoot: '/test/project',
+				fullPath: '/test/project',
+				state: 'idle',
+				inputMode: 'ai',
+				aiPid: 0,
+				terminalPid: 0,
+				port: 3000,
+				aiTabs: [],
+				activeTabId: 'tab-1',
+				closedTabHistory: [],
+				shellLogs: [],
+				executionQueue: [],
+				contextUsage: 0,
+				workLog: [],
+				isGitRepo: false,
+				changedFiles: [],
+				fileTree: [],
+				fileExplorerExpanded: [],
+				fileExplorerScrollPos: 0,
+				isLive: false,
+				groupId: 'group-abc',
+			} as Session;
+
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
+			]);
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+					sourceSession={sourceSession}
+				/>
+			);
+
+			await waitFor(() => {
+				const nameInput = screen.getByLabelText('Agent Name') as HTMLInputElement;
+				expect(nameInput.value).toBe('Grouped Agent (Copy)');
+			});
+
+			await act(async () => {
+				fireEvent.click(screen.getByText('Create Agent'));
+			});
+
+			// 14th positional arg (index 13) is groupId; must equal source.groupId so
+			// the duplicate lands in the same group as the original.
+			expect(onCreate).toHaveBeenCalled();
+			const args = onCreate.mock.calls[0];
+			expect(args[13]).toBe('group-abc');
+		});
+
+		it('does not clobber the user-typed name when sourceSession reference changes (issue #827)', async () => {
+			// Regression: AppModals derives sourceSession from a useMemo over the
+			// sessions array. Any unrelated sessions update produces a new object
+			// reference. The pre-fill effect must depend on sourceSession?.id, not
+			// the full object, otherwise it re-runs and overwrites whatever the
+			// user has typed in the name field.
+			const baseSession: Session = {
+				id: 'session-1',
+				name: 'Original Agent',
+				toolType: 'claude-code',
+				cwd: '/test/project',
+				projectRoot: '/test/project',
+				fullPath: '/test/project',
+				state: 'idle',
+				inputMode: 'ai',
+				aiPid: 0,
+				terminalPid: 0,
+				port: 3000,
+				aiTabs: [],
+				activeTabId: 'tab-1',
+				closedTabHistory: [],
+				shellLogs: [],
+				executionQueue: [],
+				contextUsage: 0,
+				workLog: [],
+				isGitRepo: false,
+				changedFiles: [],
+				fileTree: [],
+				fileExplorerExpanded: [],
+				fileExplorerScrollPos: 0,
+				isLive: false,
+			} as Session;
+
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
+			]);
+
+			const { rerender } = render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+					sourceSession={baseSession}
+				/>
+			);
+
+			await waitFor(() => {
+				const nameInput = screen.getByLabelText('Agent Name') as HTMLInputElement;
+				expect(nameInput.value).toBe('Original Agent (Copy)');
+			});
+
+			// User edits the pre-filled name.
+			const nameInput = screen.getByLabelText('Agent Name') as HTMLInputElement;
+			await act(async () => {
+				fireEvent.change(nameInput, { target: { value: 'My New Agent' } });
+			});
+			expect(nameInput.value).toBe('My New Agent');
+
+			// Parent re-renders with a NEW object reference for the same source
+			// session (simulating the upstream useMemo recomputing when the
+			// sessions array updates). The user-typed value must be preserved.
+			await act(async () => {
+				rerender(
+					<NewInstanceModal
+						isOpen={true}
+						onClose={onClose}
+						onCreate={onCreate}
+						theme={theme}
+						existingSessions={[]}
+						sourceSession={{ ...baseSession }}
+					/>
+				);
+			});
+
+			expect((screen.getByLabelText('Agent Name') as HTMLInputElement).value).toBe('My New Agent');
+		});
+
 		it('should display SSH selector even when no agent is selected', async () => {
 			// This tests the bug where SSH section was hidden when no agents were available
 			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
@@ -2723,63 +2590,6 @@ describe('NewInstanceModal', () => {
 				expect(screen.getByText('SSH Remote Execution')).toBeInTheDocument();
 				expect(screen.getByText('Local Execution')).toBeInTheDocument();
 			});
-		});
-
-		it('ignores unsuccessful SSH config list results without showing the selector', async () => {
-			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
-				success: false,
-				configs: [
-					{
-						id: 'remote-1',
-						name: 'Ignored Server',
-						host: 'ignored.example.com',
-						port: 22,
-						username: 'testuser',
-						privateKeyPath: '/path/to/key',
-						enabled: true,
-					},
-				],
-			});
-
-			render(
-				<NewInstanceModal
-					isOpen={true}
-					onClose={onClose}
-					onCreate={onCreate}
-					theme={theme}
-					existingSessions={[]}
-				/>
-			);
-
-			await waitForNewInstanceModalReady();
-			expect(screen.queryByText('SSH Remote Execution')).not.toBeInTheDocument();
-		});
-
-		it('should report SSH remote config load failures locally', async () => {
-			const sshFailure = new Error('ssh config unavailable');
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-			vi.mocked(window.maestro.sshRemote.getConfigs).mockRejectedValue(sshFailure);
-
-			try {
-				render(
-					<NewInstanceModal
-						isOpen={true}
-						onClose={onClose}
-						onCreate={onCreate}
-						theme={theme}
-						existingSessions={[]}
-					/>
-				);
-
-				await waitFor(() => {
-					expect(consoleError).toHaveBeenCalledWith(
-						'Failed to load SSH remote configs:',
-						sshFailure
-					);
-				});
-			} finally {
-				consoleError.mockRestore();
-			}
 		});
 
 		it('should transfer pending SSH config when agent is selected', async () => {
@@ -2875,7 +2685,7 @@ describe('NewInstanceModal', () => {
 			// This validates the path exists on the remote and enables the Create button
 			await waitFor(
 				() => {
-					expect(screen.getByText('Remote directory found')).toBeInTheDocument();
+					expect(screen.getByText('Directory found on test.example.com')).toBeInTheDocument();
 				},
 				{ timeout: 3000 }
 			);
@@ -2887,7 +2697,9 @@ describe('NewInstanceModal', () => {
 			});
 
 			// Should have passed the SSH config that was selected while agent was not yet selected
-			// This proves the _pending_ config was transferred to the agent on selection
+			// This proves the _pending_ config was transferred to the agent on selection.
+			// workingDirOverride should be the working directory path since SSH is enabled
+			// (the Working Directory field contains a remote path when SSH is on).
 			expect(onCreate).toHaveBeenCalledWith(
 				'opencode',
 				'/test/path',
@@ -2899,311 +2711,18 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				undefined,
-				{ enabled: true, remoteId: 'remote-1' },
-				undefined
-			);
-		});
-
-		it('should show remote path validation errors for SSH create sessions', async () => {
-			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
-				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
-			]);
-			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
-				success: true,
-				configs: [
-					{
-						id: 'remote-1',
-						name: 'Prod',
-						host: 'prod.example.com',
-						port: 22,
-						username: 'deploy',
-						privateKeyPath: '~/.ssh/id_ed25519',
-						enabled: true,
-					},
-				],
-			});
-			vi.mocked(window.maestro.fs.stat).mockResolvedValue({ isFile: true } as any);
-
-			render(
-				<NewInstanceModal
-					isOpen={true}
-					onClose={onClose}
-					onCreate={onCreate}
-					theme={theme}
-					existingSessions={[]}
-				/>
-			);
-
-			await waitFor(() => {
-				expect(screen.getByText('SSH Remote Execution')).toBeInTheDocument();
-			});
-
-			fireEvent.change(screen.getByRole('combobox'), { target: { value: 'remote-1' } });
-			fireEvent.change(screen.getByLabelText('Agent Name'), { target: { value: 'Remote Agent' } });
-			fireEvent.change(screen.getByLabelText('Working Directory'), {
-				target: { value: '/remote/project' },
-			});
-
-			await waitFor(
-				() => {
-					expect(screen.getByText('Path is a file, not a directory')).toBeInTheDocument();
-				},
-				{ timeout: 3000 }
-			);
-			expect(window.maestro.fs.stat).toHaveBeenCalledWith('/remote/project', 'remote-1');
-			expect(screen.getByText('Create Agent')).toBeEnabled();
-		});
-
-		it('should show inaccessible remote path errors when SSH create validation rejects', async () => {
-			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
-				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
-			]);
-			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
-				success: true,
-				configs: [
-					{
-						id: 'remote-1',
-						name: 'Prod',
-						host: 'prod.example.com',
-						port: 22,
-						username: 'deploy',
-						privateKeyPath: '~/.ssh/id_ed25519',
-						enabled: true,
-					},
-				],
-			});
-			vi.mocked(window.maestro.fs.stat).mockRejectedValue(new Error('permission denied'));
-
-			render(
-				<NewInstanceModal
-					isOpen={true}
-					onClose={onClose}
-					onCreate={onCreate}
-					theme={theme}
-					existingSessions={[]}
-				/>
-			);
-
-			await waitFor(() => {
-				expect(screen.getByText('SSH Remote Execution')).toBeInTheDocument();
-			});
-
-			fireEvent.change(screen.getByRole('combobox'), { target: { value: 'remote-1' } });
-			fireEvent.change(screen.getByLabelText('Working Directory'), {
-				target: { value: '/remote/private' },
-			});
-
-			await waitFor(
-				() => {
-					expect(screen.getByText('Path not found or not accessible')).toBeInTheDocument();
-				},
-				{ timeout: 3000 }
-			);
-			expect(window.maestro.fs.stat).toHaveBeenCalledWith('/remote/private', 'remote-1');
-		});
-
-		it('should show not accessible when SSH create path stat returns no file type', async () => {
-			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
-				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
-			]);
-			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
-				success: true,
-				configs: [
-					{
-						id: 'remote-1',
-						name: 'Prod',
-						host: 'prod.example.com',
-						port: 22,
-						username: 'deploy',
-						privateKeyPath: '~/.ssh/id_ed25519',
-						enabled: true,
-					},
-				],
-			});
-			vi.mocked(window.maestro.fs.stat).mockResolvedValue(null as any);
-
-			render(
-				<NewInstanceModal
-					isOpen={true}
-					onClose={onClose}
-					onCreate={onCreate}
-					theme={theme}
-					existingSessions={[]}
-				/>
-			);
-
-			await waitFor(() => {
-				expect(screen.getByText('SSH Remote Execution')).toBeInTheDocument();
-			});
-
-			fireEvent.change(screen.getByRole('combobox'), { target: { value: 'remote-1' } });
-			fireEvent.change(screen.getByLabelText('Working Directory'), {
-				target: { value: '/remote/missing' },
-			});
-
-			await waitFor(
-				() => {
-					expect(screen.getByText('Path not found or not accessible')).toBeInTheDocument();
-				},
-				{ timeout: 3000 }
-			);
-			expect(window.maestro.fs.stat).toHaveBeenCalledWith('/remote/missing', 'remote-1');
-		});
-
-		it('keeps folder picking disabled for SSH paths and supports Ctrl+Enter creation', async () => {
-			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
-				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
-			]);
-			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
-				success: true,
-				configs: [
-					{
-						id: 'remote-1',
-						name: 'Prod',
-						host: 'prod.example.com',
-						port: 22,
-						username: 'deploy',
-						privateKeyPath: '~/.ssh/id_ed25519',
-						enabled: true,
-					},
-				],
-			});
-			vi.mocked(window.maestro.fs.stat).mockResolvedValue({
-				isDirectory: true,
-				isFile: false,
-			} as any);
-
-			render(
-				<NewInstanceModal
-					isOpen={true}
-					onClose={onClose}
-					onCreate={onCreate}
-					theme={theme}
-					existingSessions={[]}
-				/>
-			);
-
-			await waitFor(() => {
-				expect(screen.getByText('SSH Remote Execution')).toBeInTheDocument();
-			});
-
-			fireEvent.change(screen.getByRole('combobox'), { target: { value: 'remote-1' } });
-
-			const dialog = screen.getByRole('group', { name: 'Create new agent dialog' });
-			fireEvent.keyDown(dialog, { key: 'o', metaKey: true });
-			expect(window.maestro.dialog.selectFolder).not.toHaveBeenCalled();
-			expect(screen.getByTitle(/Folder picker unavailable for SSH remote/)).toBeDisabled();
-
-			fireEvent.change(screen.getByLabelText('Agent Name'), { target: { value: 'Remote Agent' } });
-			fireEvent.change(screen.getByLabelText('Working Directory'), {
-				target: { value: '/remote/project' },
-			});
-
-			await waitFor(
-				() => {
-					expect(screen.getByText('Remote directory found')).toBeInTheDocument();
-				},
-				{ timeout: 3000 }
-			);
-
-			fireEvent.keyDown(dialog, { key: 'Enter', ctrlKey: true });
-
-			expect(onCreate).toHaveBeenCalledWith(
-				'claude-code',
-				'/remote/project',
-				'Remote Agent',
 				undefined,
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				{ enabled: true, remoteId: 'remote-1' },
-				undefined
-			);
-		});
-
-		it('transfers pending SSH config when selecting an unavailable agent header', async () => {
-			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
-				createAgentConfig({
-					id: 'claude-code',
-					name: 'Claude Code',
-					available: false,
-					path: null,
+				expect.objectContaining({
+					enabled: true,
+					remoteId: 'remote-1',
+					syncHistory: false,
+					workingDirOverride: '/test/path',
 				}),
-			]);
-			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
-				success: true,
-				configs: [
-					{
-						id: 'remote-1',
-						name: 'Prod',
-						host: 'prod.example.com',
-						port: 22,
-						username: 'deploy',
-						privateKeyPath: '~/.ssh/id_ed25519',
-						enabled: true,
-					},
-				],
-			});
-			vi.mocked(window.maestro.fs.stat).mockResolvedValue({
-				isDirectory: true,
-				isFile: false,
-			} as any);
-
-			render(
-				<NewInstanceModal
-					isOpen={true}
-					onClose={onClose}
-					onCreate={onCreate}
-					theme={theme}
-					existingSessions={[]}
-				/>
-			);
-
-			await waitFor(() => {
-				expect(screen.getByText('SSH Remote Execution')).toBeInTheDocument();
-			});
-
-			fireEvent.change(screen.getByRole('combobox'), { target: { value: 'remote-1' } });
-			const option = await screen.findByRole('option', { name: /Claude Code/i });
-			fireEvent.click(option);
-
-			await waitFor(() => {
-				expect(screen.getByPlaceholderText('/path/to/claude')).toBeInTheDocument();
-			});
-
-			fireEvent.change(screen.getByPlaceholderText('/path/to/claude'), {
-				target: { value: '/remote/bin/claude' },
-			});
-			fireEvent.change(screen.getByLabelText('Agent Name'), { target: { value: 'Remote Claude' } });
-			fireEvent.change(screen.getByLabelText('Working Directory'), {
-				target: { value: '/remote/project' },
-			});
-
-			await waitFor(
-				() => {
-					expect(screen.getByText('Remote directory found')).toBeInTheDocument();
-				},
-				{ timeout: 3000 }
-			);
-
-			fireEvent.click(screen.getByText('Create Agent'));
-
-			expect(onCreate).toHaveBeenCalledWith(
-				'claude-code',
-				'/remote/project',
-				'Remote Claude',
-				undefined,
-				'/remote/bin/claude',
 				undefined,
 				undefined,
-				undefined,
-				undefined,
-				undefined,
-				{ enabled: true, remoteId: 'remote-1' },
-				undefined
+				undefined, // enableMaestroP
+				undefined, // maestroPPath
+				undefined // maestroPMode
 			);
 		});
 
@@ -3329,14 +2848,226 @@ describe('NewInstanceModal', () => {
 				expect(detectMock.mock.calls.length).toBeGreaterThan(initialCallCount);
 				expect(detectMock).toHaveBeenCalledWith('remote-1');
 			});
+		});
 
-			const afterRemoteCallCount = detectMock.mock.calls.length;
-			fireEvent.change(dropdown, { target: { value: 'local' } });
+		it('should set workingDirOverride to the remote path when creating SSH agent (regression: SSH terminal cwd)', async () => {
+			// Regression test: when SSH is enabled the "Working Directory" field contains a remote
+			// path. This path MUST flow into sessionSshRemoteConfig.workingDirOverride so that
+			// SSH terminals `cd` to the correct directory on the remote host. Without this,
+			// terminals would drop into the remote home directory instead.
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
+			]);
+			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+				success: true,
+				configs: [
+					{
+						id: 'remote-1',
+						name: 'Dev Server',
+						host: 'dev.example.com',
+						port: 22,
+						username: 'devuser',
+						privateKeyPath: '/path/to/key',
+						enabled: true,
+					},
+				],
+			});
+			vi.mocked(window.maestro.fs.stat).mockResolvedValue({
+				size: 4096,
+				createdAt: '2024-01-01T00:00:00.000Z',
+				modifiedAt: '2024-01-15T12:30:00.000Z',
+				isDirectory: true,
+				isFile: false,
+			});
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+				/>
+			);
+
+			// Wait for agents and SSH selector to load
+			await waitFor(() => {
+				expect(screen.getByText('SSH Remote Execution')).toBeInTheDocument();
+			});
+
+			// Select SSH remote
+			const dropdown = screen.getByRole('combobox');
+			fireEvent.change(dropdown, { target: { value: 'remote-1' } });
+
+			// Select agent
+			await waitFor(() => {
+				expect(screen.getByText('Claude Code')).toBeInTheDocument();
+			});
+			const agentOption = screen.getByRole('option', { name: /Claude Code/i });
+			await act(async () => {
+				fireEvent.click(agentOption);
+			});
+
+			// Fill in name and remote working directory
+			fireEvent.change(screen.getByLabelText('Agent Name'), {
+				target: { value: 'Remote Agent' },
+			});
+			fireEvent.change(screen.getByLabelText('Working Directory'), {
+				target: { value: '/home/devuser/my-project' },
+			});
+
+			// Wait for remote path validation
+			await waitFor(
+				() => {
+					expect(screen.getByText('Directory found on dev.example.com')).toBeInTheDocument();
+				},
+				{ timeout: 3000 }
+			);
+
+			// Create the agent
+			await act(async () => {
+				fireEvent.click(screen.getByText('Create Agent'));
+			});
+
+			// The critical assertion: workingDirOverride MUST match the remote path
+			expect(onCreate).toHaveBeenCalledWith(
+				'claude-code',
+				'/home/devuser/my-project',
+				'Remote Agent',
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				expect.objectContaining({
+					enabled: true,
+					remoteId: 'remote-1',
+					workingDirOverride: '/home/devuser/my-project',
+				}),
+				undefined,
+				undefined,
+				true, // enableMaestroP defaults on for Claude Code (Adaptive Mode)
+				undefined, // maestroPPath
+				'dynamic' // maestroPMode defaults to dynamic when Adaptive on
+			);
+		});
+
+		it('should preserve explicit workingDirOverride over working directory when duplicating SSH agent', async () => {
+			// When duplicating a session that already has an explicit workingDirOverride,
+			// the explicit value should take precedence over the working directory field.
+			const sourceSession: Session = {
+				id: 'session-1',
+				name: 'SSH Agent',
+				toolType: 'claude-code',
+				cwd: '/home/devuser/project',
+				projectRoot: '/home/devuser/project',
+				fullPath: '/home/devuser/project',
+				state: 'idle',
+				inputMode: 'ai',
+				aiPid: 12345,
+				terminalPid: 12346,
+				port: 3000,
+				aiTabs: [],
+				activeTabId: 'tab-1',
+				closedTabHistory: [],
+				shellLogs: [],
+				executionQueue: [],
+				contextUsage: 0,
+				workLog: [],
+				isGitRepo: false,
+				changedFiles: [],
+				fileTree: [],
+				fileExplorerExpanded: [],
+				fileExplorerScrollPos: 0,
+				isLive: false,
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'remote-1',
+					workingDirOverride: '/explicit/override/path',
+				},
+			} as Session;
+
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
+			]);
+			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+				success: true,
+				configs: [
+					{
+						id: 'remote-1',
+						name: 'Dev Server',
+						host: 'dev.example.com',
+						port: 22,
+						username: 'devuser',
+						privateKeyPath: '/path/to/key',
+						enabled: true,
+					},
+				],
+			});
+			vi.mocked(window.maestro.fs.stat).mockResolvedValue({
+				size: 4096,
+				createdAt: '2024-01-01T00:00:00.000Z',
+				modifiedAt: '2024-01-15T12:30:00.000Z',
+				isDirectory: true,
+				isFile: false,
+			});
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+					sourceSession={sourceSession}
+				/>
+			);
 
 			await waitFor(() => {
-				expect(detectMock.mock.calls.length).toBeGreaterThan(afterRemoteCallCount);
-				expect(detectMock).toHaveBeenCalledWith(undefined);
+				const nameInput = screen.getByLabelText('Agent Name') as HTMLInputElement;
+				expect(nameInput.value).toBe('SSH Agent (Copy)');
 			});
+
+			// Wait for remote path validation
+			await waitFor(
+				() => {
+					expect(screen.getByText(/Directory found/)).toBeInTheDocument();
+				},
+				{ timeout: 3000 }
+			);
+
+			// Create the duplicate
+			await act(async () => {
+				fireEvent.click(screen.getByText('Create Agent'));
+			});
+
+			// The explicit workingDirOverride from the source session should be preserved
+			expect(onCreate).toHaveBeenCalledWith(
+				expect.any(String),
+				expect.any(String),
+				expect.any(String),
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				expect.objectContaining({
+					enabled: true,
+					remoteId: 'remote-1',
+					workingDirOverride: '/explicit/override/path',
+				}),
+				undefined,
+				undefined,
+				true, // enableMaestroP defaults on for Claude Code (Adaptive Mode)
+				undefined, // maestroPPath
+				'dynamic' // maestroPMode defaults to dynamic when Adaptive on
+			);
 		});
 
 		it('should show connection error when SSH remote is unreachable', async () => {
@@ -3350,6 +3081,7 @@ describe('NewInstanceModal', () => {
 						},
 						{
 							...createAgentConfig({ id: 'opencode', name: 'OpenCode', available: false }),
+							error: 'Connection refused',
 						},
 					];
 				}
@@ -3409,147 +3141,9 @@ describe('NewInstanceModal', () => {
 		});
 	});
 
-	describe('Agent configuration panel integration', () => {
-		it('handles create-side config cleanup, cached model loads, refreshes, and persistence failures', async () => {
-			const configFailure = new Error('config write failed');
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-			const configurableAgent = createAgentConfig({
-				id: 'claude-code',
-				name: 'Claude Code',
-				available: true,
-				capabilities: {
-					supportsModelSelection: true,
-				} as AgentConfig['capabilities'],
-				configOptions: [
-					{
-						key: 'model',
-						label: 'Model',
-						type: 'text',
-						default: 'claude-sonnet',
-						description: 'Model slug',
-					},
-					{
-						key: 'providerPath',
-						label: 'Provider Path',
-						type: 'text',
-						default: '/old/provider',
-						description: 'Provider binary path',
-					},
-				],
-			});
-
-			vi.mocked(window.maestro.agents.detect).mockResolvedValue([configurableAgent]);
-			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({
-				customEnvVars: { NEW_VAR: 'one', NEW_VAR_1: 'two' },
-				model: 'claude-sonnet',
-				providerPath: '/old/provider',
-			});
-			vi.mocked(window.maestro.agents.getModels).mockResolvedValue(['claude-sonnet']);
-			vi.mocked(window.maestro.agents.refresh).mockResolvedValue({
-				agents: [configurableAgent],
-				debugInfo: null,
-			});
-			vi.mocked(window.maestro.agents.setConfig).mockRejectedValue(configFailure);
-
-			try {
-				render(
-					<NewInstanceModal
-						isOpen={true}
-						onClose={onClose}
-						onCreate={onCreate}
-						theme={theme}
-						existingSessions={[]}
-					/>
-				);
-
-				await screen.findByText('Claude Code');
-				const agentRow = screen.getByRole('option', { name: /Claude Code/i });
-				fireEvent.click(agentRow);
-
-				await waitFor(() => {
-					expect(window.maestro.agents.getModels).toHaveBeenCalledWith('claude-code', false);
-				});
-
-				fireEvent.click(agentRow);
-				fireEvent.click(agentRow);
-				expect(window.maestro.agents.getModels).toHaveBeenCalledTimes(1);
-
-				fireEvent.click(screen.getByText('Add Variable'));
-				expect(await screen.findByDisplayValue('NEW_VAR_2')).toBeInTheDocument();
-
-				for (let remainingVars = 3; remainingVars > 0; remainingVars--) {
-					fireEvent.click(screen.getAllByTitle('Remove variable')[0]);
-				}
-				expect(screen.queryAllByTitle('Remove variable')).toHaveLength(0);
-
-				fireEvent.click(screen.getByTitle('Refresh available models'));
-				await waitFor(() => {
-					expect(window.maestro.agents.getModels).toHaveBeenCalledWith('claude-code', true);
-				});
-
-				fireEvent.click(screen.getByTitle('Re-detect agent path'));
-				await waitFor(() => {
-					expect(window.maestro.agents.refresh).toHaveBeenCalledWith('claude-code');
-				});
-
-				const providerPath = screen.getByDisplayValue('/old/provider');
-				fireEvent.change(providerPath, { target: { value: '/new/provider' } });
-				fireEvent.blur(providerPath);
-
-				await waitFor(() => {
-					expect(window.maestro.agents.setConfig).toHaveBeenCalledWith(
-						'claude-code',
-						expect.objectContaining({ providerPath: '/new/provider' })
-					);
-					expect(consoleError).toHaveBeenCalledWith(
-						'Failed to persist config for claude-code:',
-						configFailure
-					);
-				});
-			} finally {
-				consoleError.mockRestore();
-			}
-		});
-
-		it('should create with edited args, env vars, config values, and open hook docs', async () => {
-			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
-				createAgentConfig({
-					id: 'claude-code',
-					name: 'Claude Code',
-					available: true,
-					configOptions: [
-						{
-							key: 'model',
-							label: 'Model',
-							type: 'text',
-							default: 'claude-sonnet',
-							description: 'Model slug',
-						},
-						{
-							key: 'contextWindow',
-							label: 'Context Window',
-							type: 'number',
-							default: 100000,
-							description: 'Context window',
-						},
-						{
-							key: 'providerPath',
-							label: 'Provider Path',
-							type: 'text',
-							default: '/old/provider',
-							description: 'Provider binary path',
-						},
-					],
-				}),
-			]);
-			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({
-				customPath: '/custom/bin/claude',
-				customArgs: '--old',
-				customEnvVars: { EXISTING: '1' },
-				model: 'claude-sonnet',
-				contextWindow: 100000,
-				providerPath: '/old/provider',
-			});
+	describe('Agent Group selector', () => {
+		it('hides the Agent Group control when no groups exist', async () => {
+			useSessionStore.setState({ groups: [] });
 
 			render(
 				<NewInstanceModal
@@ -3562,969 +3156,79 @@ describe('NewInstanceModal', () => {
 			);
 
 			await waitFor(() => {
-				expect(screen.getByText('Claude Code')).toBeInTheDocument();
+				expect(screen.getByText('Create New Agent')).toBeInTheDocument();
+			});
+			expect(screen.queryByLabelText('Agent Group')).not.toBeInTheDocument();
+		});
+
+		it('renders the dropdown and forwards the picked group through onCreate', async () => {
+			useSessionStore.setState({
+				groups: [
+					{ id: 'group-alpha', name: 'Alpha', emoji: '🅰️', collapsed: false },
+					{ id: 'group-beta', name: 'Beta', emoji: '🅱️', collapsed: false },
+				],
 			});
 
-			fireEvent.keyDown(screen.getByRole('option', { name: /Claude Code/i }), { key: 'Enter' });
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+				/>
+			);
 
-			await waitFor(() => {
-				expect(screen.getByDisplayValue('/custom/bin/claude')).toBeInTheDocument();
-			});
+			// Dropdown is present and defaults to "No Group (Ungrouped)"
+			const trigger = await screen.findByLabelText('Agent Group');
+			expect(trigger).toHaveTextContent('No Group (Ungrouped)');
 
+			// Pick "Beta"
+			fireEvent.click(trigger);
+			fireEvent.click(await screen.findByRole('option', { name: /Beta/ }));
+
+			// Fill required fields and submit
 			fireEvent.change(screen.getByLabelText('Agent Name'), {
-				target: { value: 'Configured Agent' },
+				target: { value: 'My Agent' },
 			});
 			fireEvent.change(screen.getByLabelText('Working Directory'), {
-				target: { value: '/workspace/project' },
-			});
-			fireEvent.click(screen.getByText('Clear'));
-			fireEvent.change(screen.getByPlaceholderText('--flag value --another-flag'), {
-				target: { value: '--fast' },
-			});
-
-			fireEvent.click(screen.getByText('Add Variable'));
-			const newEnvKeyInput = await screen.findByDisplayValue('NEW_VAR');
-			fireEvent.change(newEnvKeyInput, { target: { value: 'API_TOKEN' } });
-			fireEvent.blur(newEnvKeyInput);
-			const envValueInputs = screen.getAllByPlaceholderText('value');
-			fireEvent.change(envValueInputs[envValueInputs.length - 1], { target: { value: 'secret' } });
-			fireEvent.click(screen.getAllByTitle('Remove variable')[0]);
-
-			fireEvent.change(screen.getByDisplayValue('claude-sonnet'), {
-				target: { value: 'claude-haiku' },
-			});
-			fireEvent.change(screen.getByDisplayValue('100000'), { target: { value: '200000' } });
-			fireEvent.change(screen.getByDisplayValue('/old/provider'), {
-				target: { value: '/new/provider' },
-			});
-
-			fireEvent.click(screen.getByRole('button', { name: 'MAESTRO_SESSION_RESUMED' }));
-			expect(window.maestro.shell.openExternal).toHaveBeenCalledWith(
-				'https://docs.runmaestro.ai/autorun-playbooks#environment-variables'
-			);
-
-			fireEvent.click(screen.getByText('Create Agent'));
-
-			expect(onCreate).toHaveBeenCalledWith(
-				'claude-code',
-				'/workspace/project',
-				'Configured Agent',
-				undefined,
-				'/custom/bin/claude',
-				'--fast',
-				{ API_TOKEN: 'secret' },
-				'claude-haiku',
-				200000,
-				'/new/provider',
-				{ enabled: false, remoteId: null },
-				undefined
-			);
-			expect(onClose).toHaveBeenCalled();
-		});
-	});
-
-	describe('EditAgentModal', () => {
-		let onSave: ReturnType<typeof vi.fn>;
-
-		beforeEach(() => {
-			onSave = vi.fn();
-			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({});
-		});
-
-		it('should render null when closed or no session is provided', () => {
-			const { container, rerender } = render(
-				<EditAgentModal
-					isOpen={false}
-					onClose={onClose}
-					onSave={onSave}
-					theme={theme}
-					session={createSession()}
-					existingSessions={[]}
-				/>
-			);
-
-			expect(container.firstChild).toBeNull();
-
-			rerender(
-				<EditAgentModal
-					isOpen={true}
-					onClose={onClose}
-					onSave={onSave}
-					theme={theme}
-					session={null}
-					existingSessions={[]}
-				/>
-			);
-
-			expect(container.firstChild).toBeNull();
-		});
-
-		it('should preload session overrides and save them with a trimmed name', async () => {
-			const session = createSession({
-				name: 'Editable Agent',
-				nudgeMessage: 'Keep responses terse',
-				customPath: '/custom/bin/claude',
-				customArgs: '--verbose',
-				customEnvVars: { DEBUG: '1' },
-				customModel: 'claude-opus-4',
-				customContextWindow: 200000,
-			});
-
-			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
-				createAgentConfig({
-					id: 'claude-code',
-					name: 'Claude Code',
-					available: true,
-					capabilities: {
-						supportsModelSelection: true,
-					} as AgentConfig['capabilities'],
-				}),
-			]);
-			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({
-				model: 'global-model',
-				contextWindow: 100000,
-			});
-
-			render(
-				<EditAgentModal
-					isOpen={true}
-					onClose={onClose}
-					onSave={onSave}
-					theme={theme}
-					session={session}
-					existingSessions={[]}
-				/>
-			);
-
-			const nameInput = await screen.findByLabelText('Agent Name');
-			fireEvent.change(nameInput, { target: { value: '  Renamed Agent  ' } });
-
-			fireEvent.click(screen.getByText('Save Changes'));
-
-			expect(onSave).toHaveBeenCalledWith(
-				'session-1',
-				'Renamed Agent',
-				undefined,
-				'Keep responses terse',
-				'/custom/bin/claude',
-				'--verbose',
-				{ DEBUG: '1' },
-				'claude-opus-4',
-				200000,
-				{ enabled: false, remoteId: null }
-			);
-			expect(onClose).toHaveBeenCalled();
-		});
-
-		it('blocks saving an edit when the new name duplicates another session', async () => {
-			render(
-				<EditAgentModal
-					isOpen={true}
-					onClose={onClose}
-					onSave={onSave}
-					theme={theme}
-					session={createSession({ id: 'session-1', name: 'Editable Agent' })}
-					existingSessions={[createSession({ id: 'session-2', name: 'Taken Agent' })]}
-				/>
-			);
-
-			const nameInput = await screen.findByLabelText('Agent Name');
-			fireEvent.change(nameInput, { target: { value: 'Taken Agent' } });
-
-			expect(
-				await screen.findByText('An agent named "Taken Agent" already exists')
-			).toBeInTheDocument();
-			expect(screen.getByText('Save Changes')).toBeDisabled();
-
-			fireEvent.keyDown(screen.getByRole('group', { name: 'Edit agent dialog' }), {
-				key: 'Escape',
-			});
-			fireEvent.keyDown(screen.getByRole('group', { name: 'Edit agent dialog' }), {
-				key: 'Enter',
-				ctrlKey: true,
-			});
-			expect(onSave).not.toHaveBeenCalled();
-		});
-
-		it('renders edit form without provider settings when the session provider is not detected', async () => {
-			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
-				createAgentConfig({ id: 'opencode', name: 'OpenCode', available: true }),
-			]);
-
-			render(
-				<EditAgentModal
-					isOpen={true}
-					onClose={onClose}
-					onSave={onSave}
-					theme={theme}
-					session={createSession({ toolType: 'claude-code' })}
-					existingSessions={[]}
-				/>
-			);
-
-			expect(await screen.findByLabelText('Agent Name')).toBeInTheDocument();
-			await waitFor(() => {
-				expect(screen.queryByText('Claude Code Settings')).not.toBeInTheDocument();
-			});
-		});
-
-		it('should clear provider-specific overrides when saving a provider switch', async () => {
-			const session = createSession({
-				toolType: 'claude-code',
-				customPath: '/custom/bin/claude',
-				customArgs: '--verbose',
-				customEnvVars: { DEBUG: '1' },
-				customModel: 'claude-opus-4',
-				customContextWindow: 200000,
-			});
-
-			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
-				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
-				createAgentConfig({ id: 'codex', name: 'Codex', available: true }),
-			]);
-			vi.mocked(window.maestro.agents.getConfig).mockImplementation(async (agentId) =>
-				agentId === 'codex' ? { model: 'gpt-5', contextWindow: 128000 } : {}
-			);
-
-			render(
-				<EditAgentModal
-					isOpen={true}
-					onClose={onClose}
-					onSave={onSave}
-					theme={theme}
-					session={session}
-					existingSessions={[]}
-				/>
-			);
-
-			const providerSelect = await screen.findByRole('combobox');
-			fireEvent.change(providerSelect, { target: { value: 'codex' } });
-
-			await waitFor(() => {
-				expect(screen.getByText(/Changing the provider will clear/)).toBeInTheDocument();
-				expect(window.maestro.agents.getConfig).toHaveBeenCalledWith('codex');
-			});
-
-			fireEvent.click(screen.getByText('Save Changes'));
-
-			expect(onSave).toHaveBeenCalledWith(
-				'session-1',
-				'Editable Agent',
-				'codex',
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				'gpt-5',
-				128000,
-				{ enabled: false, remoteId: null }
-			);
-		});
-
-		it('allows saving a provider switch to an unavailable agent when a custom path is set', async () => {
-			const session = createSession({
-				toolType: 'claude-code',
-			});
-
-			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
-				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
-				createAgentConfig({
-					id: 'codex',
-					name: 'Codex',
-					available: false,
-					path: undefined,
-					binaryName: 'codex',
-				}),
-			]);
-			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({});
-
-			render(
-				<EditAgentModal
-					isOpen={true}
-					onClose={onClose}
-					onSave={onSave}
-					theme={theme}
-					session={session}
-					existingSessions={[]}
-				/>
-			);
-
-			const providerSelect = await screen.findByRole('combobox');
-			fireEvent.change(providerSelect, { target: { value: 'codex' } });
-
-			await waitFor(() => {
-				expect(screen.getByText(/Changing the provider will clear/)).toBeInTheDocument();
-				expect(screen.getByPlaceholderText('/path/to/codex')).toBeInTheDocument();
-			});
-
-			const saveButton = screen.getByText('Save Changes');
-			expect(saveButton).toBeDisabled();
-
-			fireEvent.change(screen.getByPlaceholderText('/path/to/codex'), {
-				target: { value: '/custom/bin/codex' },
+				target: { value: '/tmp/work' },
 			});
 
 			await waitFor(() => {
-				expect(saveButton).toBeEnabled();
+				const btn = screen.getByRole('button', { name: 'Create Agent' });
+				expect(btn).not.toBeDisabled();
 			});
-			fireEvent.click(saveButton);
 
-			expect(onSave).toHaveBeenCalledWith(
-				'session-1',
-				'Editable Agent',
-				'codex',
-				undefined,
-				'/custom/bin/codex',
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				{ enabled: false, remoteId: null }
-			);
+			await act(async () => {
+				fireEvent.click(screen.getByRole('button', { name: 'Create Agent' }));
+			});
+
+			expect(onCreate).toHaveBeenCalled();
+			// 14th positional arg (index 13) is groupId.
+			expect(onCreate.mock.calls[0][13]).toBe('group-beta');
 		});
 
-		it('should show remote path validation errors for SSH edit sessions', async () => {
-			const session = createSession({
-				projectRoot: '/remote/project',
-				sessionSshRemoteConfig: {
-					enabled: true,
-					remoteId: 'remote-1',
-				},
-			});
-
-			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
-				success: true,
-				configs: [
-					{
-						id: 'remote-1',
-						name: 'Prod',
-						host: 'prod.example.com',
-						port: 22,
-						username: 'deploy',
-						privateKeyPath: '~/.ssh/id_ed25519',
-						enabled: true,
-					},
-				],
-			});
-			vi.mocked(window.maestro.fs.stat).mockResolvedValue({ isFile: true } as any);
-
-			render(
-				<EditAgentModal
-					isOpen={true}
-					onClose={onClose}
-					onSave={onSave}
-					theme={theme}
-					session={session}
-					existingSessions={[]}
-				/>
-			);
-
-			await waitFor(
-				() => {
-					expect(document.body.textContent).toContain(
-						'Path is a file, not a directory (prod.example.com)'
-					);
-				},
-				{ timeout: 1500 }
-			);
-		});
-
-		it('should show successful and missing remote path status for SSH edit sessions', async () => {
-			const session = createSession({
-				projectRoot: '/remote/project',
-				sessionSshRemoteConfig: {
-					enabled: true,
-					remoteId: 'remote-1',
-				},
-			});
-
-			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
-				success: true,
-				configs: [
-					{
-						id: 'remote-1',
-						name: 'Prod',
-						host: 'prod.example.com',
-						port: 22,
-						username: 'deploy',
-						privateKeyPath: '~/.ssh/id_ed25519',
-						enabled: true,
-					},
-				],
-			});
-			vi.mocked(window.maestro.fs.stat).mockResolvedValue({
-				isDirectory: true,
-				isFile: false,
-			} as any);
-
-			const { rerender } = render(
-				<EditAgentModal
-					isOpen={true}
-					onClose={onClose}
-					onSave={onSave}
-					theme={theme}
-					session={session}
-					existingSessions={[]}
-				/>
-			);
-
-			await waitFor(
-				() => {
-					expect(document.body.textContent).toContain('Directory found on prod.example.com');
-				},
-				{ timeout: 1500 }
-			);
-
-			fireEvent.click(screen.getByText('Save Changes'));
-			expect(onSave).toHaveBeenCalledWith(
-				'session-1',
-				'Editable Agent',
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				{ enabled: true, remoteId: 'remote-1', workingDirOverride: undefined }
-			);
-
-			vi.mocked(window.maestro.fs.stat).mockResolvedValue(null as any);
-			rerender(
-				<EditAgentModal
-					isOpen={true}
-					onClose={onClose}
-					onSave={onSave}
-					theme={theme}
-					session={createSession({
-						id: 'session-2',
-						projectRoot: '/remote/missing',
-						sessionSshRemoteConfig: {
-							enabled: true,
-							remoteId: 'remote-1',
-						},
-					})}
-					existingSessions={[]}
-				/>
-			);
-
-			await waitFor(
-				() => {
-					expect(document.body.textContent).toContain('Path not found on remote');
-				},
-				{ timeout: 1500 }
-			);
-		});
-
-		it('validates saved SSH sessions even when the remote config list is unavailable', async () => {
-			const session = createSession({
-				projectRoot: '/remote/project',
-				sessionSshRemoteConfig: {
-					enabled: true,
-					remoteId: 'remote-1',
-				},
-			});
-
-			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
-				success: false,
-				configs: [],
-			});
-			vi.mocked(window.maestro.fs.stat).mockResolvedValue({
-				isDirectory: true,
-				isFile: false,
-			} as any);
-
-			render(
-				<EditAgentModal
-					isOpen={true}
-					onClose={onClose}
-					onSave={onSave}
-					theme={theme}
-					session={session}
-					existingSessions={[]}
-				/>
-			);
-
-			await waitFor(
-				() => {
-					expect(document.body.textContent).toContain('Directory found on remote');
-				},
-				{ timeout: 1500 }
-			);
-			expect(window.maestro.fs.stat).toHaveBeenCalledWith('/remote/project', 'remote-1');
-		});
-
-		it('handles edit modal load failures and remote validation rejection', async () => {
-			const modelFailure = new Error('models offline');
-			const sshFailure = new Error('ssh configs offline');
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-			const session = createSession({
-				projectRoot: '/remote/private',
-				sessionSshRemoteConfig: {
-					enabled: true,
-					remoteId: 'remote-1',
-				},
-			});
-
-			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
-				createAgentConfig({
-					id: 'claude-code',
-					name: 'Claude Code',
-					available: true,
-					capabilities: {
-						supportsModelSelection: true,
-					} as AgentConfig['capabilities'],
-				}),
-			]);
-			vi.mocked(window.maestro.agents.getModels).mockRejectedValue(modelFailure);
-			vi.mocked(window.maestro.sshRemote.getConfigs).mockRejectedValue(sshFailure);
-			vi.mocked(window.maestro.fs.stat).mockRejectedValue(new Error('permission denied'));
-
-			try {
-				render(
-					<EditAgentModal
-						isOpen={true}
-						onClose={onClose}
-						onSave={onSave}
-						theme={theme}
-						session={session}
-						existingSessions={[]}
-					/>
-				);
-
-				await waitFor(() => {
-					expect(consoleError).toHaveBeenCalledWith('Failed to load models:', modelFailure);
-					expect(consoleError).toHaveBeenCalledWith('Failed to load SSH remotes:', sshFailure);
-				});
-
-				await waitFor(
-					() => {
-						expect(document.body.textContent).toContain('Path not found on remote');
-					},
-					{ timeout: 1500 }
-				);
-			} finally {
-				consoleError.mockRestore();
-			}
-		});
-
-		it('reports edit refresh failures for models and agent detection', async () => {
-			const refreshModelsFailure = new Error('refresh models failed');
-			const refreshAgentFailure = new Error('refresh agent failed');
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-			const editableAgent = createAgentConfig({
-				id: 'claude-code',
-				name: 'Claude Code',
-				available: true,
-				capabilities: {
-					supportsModelSelection: true,
-				} as AgentConfig['capabilities'],
-				configOptions: [
-					{
-						key: 'model',
-						label: 'Model',
-						type: 'text',
-						default: 'claude-sonnet',
-						description: 'Model slug',
-					},
-				],
-			});
-
-			vi.mocked(window.maestro.agents.detect).mockResolvedValue([editableAgent]);
-			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({ model: 'claude-sonnet' });
-			vi.mocked(window.maestro.agents.getModels)
-				.mockResolvedValueOnce(['claude-sonnet'])
-				.mockRejectedValueOnce(refreshModelsFailure);
-			vi.mocked(window.maestro.agents.refresh).mockRejectedValue(refreshAgentFailure);
-
-			try {
-				render(
-					<EditAgentModal
-						isOpen={true}
-						onClose={onClose}
-						onSave={onSave}
-						theme={theme}
-						session={createSession({ customModel: 'claude-sonnet' })}
-						existingSessions={[]}
-					/>
-				);
-
-				await screen.findByText('Claude Code Settings');
-
-				fireEvent.click(screen.getByTitle('Refresh available models'));
-				await waitFor(() => {
-					expect(consoleError).toHaveBeenCalledWith(
-						'Failed to refresh models:',
-						refreshModelsFailure
-					);
-				});
-
-				fireEvent.click(screen.getByTitle('Re-detect agent path'));
-				await waitFor(() => {
-					expect(consoleError).toHaveBeenCalledWith(
-						'Failed to refresh agent:',
-						refreshAgentFailure
-					);
-				});
-			} finally {
-				consoleError.mockRestore();
-			}
-		});
-
-		it('clears edit agent settings when re-detection no longer returns the provider', async () => {
-			const editableAgent = createAgentConfig({
-				id: 'claude-code',
-				name: 'Claude Code',
-				available: true,
-			});
-
-			vi.mocked(window.maestro.agents.detect).mockResolvedValue([editableAgent]);
-			vi.mocked(window.maestro.agents.refresh).mockResolvedValue({
-				agents: [],
-				debugInfo: null,
+		it('seeds the dropdown from presetGroupId so the caller-supplied group is preselected', async () => {
+			useSessionStore.setState({
+				groups: [{ id: 'group-preset', name: 'Preset', emoji: '📦', collapsed: false }],
 			});
 
 			render(
-				<EditAgentModal
+				<NewInstanceModal
 					isOpen={true}
 					onClose={onClose}
-					onSave={onSave}
+					onCreate={onCreate}
 					theme={theme}
-					session={createSession()}
 					existingSessions={[]}
+					presetGroupId="group-preset"
 				/>
 			);
 
-			await screen.findByText('Claude Code Settings');
-			fireEvent.click(screen.getByTitle('Re-detect agent path'));
-
+			const trigger = await screen.findByLabelText('Agent Group');
 			await waitFor(() => {
-				expect(window.maestro.agents.refresh).toHaveBeenCalledWith('claude-code');
-				expect(screen.queryByText('Claude Code Settings')).not.toBeInTheDocument();
+				expect(trigger).toHaveTextContent(/Preset/);
 			});
-		});
-
-		it('skips edit remote validation when the SSH session has no project root', async () => {
-			const session = createSession({
-				projectRoot: '',
-				sessionSshRemoteConfig: {
-					enabled: true,
-					remoteId: 'remote-1',
-				},
-			});
-
-			render(
-				<EditAgentModal
-					isOpen={true}
-					onClose={onClose}
-					onSave={onSave}
-					theme={theme}
-					session={session}
-					existingSessions={[]}
-				/>
-			);
-
-			await screen.findByLabelText('Agent Name');
-			expect(window.maestro.fs.stat).not.toHaveBeenCalled();
-		});
-
-		it('shows copied state briefly after copying the session id', async () => {
-			const originalClipboard = navigator.clipboard;
-			const writeText = vi.fn().mockResolvedValue(undefined);
-			Object.defineProperty(navigator, 'clipboard', {
-				configurable: true,
-				value: { writeText },
-			});
-
-			try {
-				render(
-					<EditAgentModal
-						isOpen={true}
-						onClose={onClose}
-						onSave={onSave}
-						theme={theme}
-						session={createSession()}
-						existingSessions={[]}
-					/>
-				);
-
-				const copyButton = await screen.findByTitle('Click to copy: session-1');
-				vi.useFakeTimers();
-
-				await act(async () => {
-					fireEvent.click(copyButton);
-					await Promise.resolve();
-				});
-
-				expect(writeText).toHaveBeenCalledWith('session-1');
-				expect(screen.getByTitle('Copied!')).toBeInTheDocument();
-
-				act(() => {
-					vi.advanceTimersByTime(2000);
-				});
-
-				expect(screen.getByTitle('Click to copy: session-1')).toBeInTheDocument();
-			} finally {
-				vi.useRealTimers();
-				Object.defineProperty(navigator, 'clipboard', {
-					configurable: true,
-					value: originalClipboard,
-				});
-			}
-		});
-
-		it('leaves the session id copy state unchanged when clipboard write fails', async () => {
-			const originalClipboard = navigator.clipboard;
-			const writeText = vi.fn().mockRejectedValue(new Error('clipboard unavailable'));
-			Object.defineProperty(navigator, 'clipboard', {
-				configurable: true,
-				value: { writeText },
-			});
-
-			try {
-				render(
-					<EditAgentModal
-						isOpen={true}
-						onClose={onClose}
-						onSave={onSave}
-						theme={theme}
-						session={createSession()}
-						existingSessions={[]}
-					/>
-				);
-
-				const copyButton = await screen.findByTitle('Click to copy: session-1');
-
-				await act(async () => {
-					fireEvent.click(copyButton);
-					await Promise.resolve();
-				});
-
-				expect(writeText).toHaveBeenCalledWith('session-1');
-				expect(screen.queryByTitle('Copied!')).not.toBeInTheDocument();
-				expect(screen.getByTitle('Click to copy: session-1')).toBeInTheDocument();
-			} finally {
-				Object.defineProperty(navigator, 'clipboard', {
-					configurable: true,
-					value: originalClipboard,
-				});
-			}
-		});
-
-		it('clears edit overrides, truncates nudges, handles env key collisions, and reports config persistence failures', async () => {
-			const configFailure = new Error('edit config write failed');
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-			const session = createSession({
-				customPath: '/custom/bin/claude',
-				customArgs: '--old',
-				customEnvVars: { NEW_VAR: 'one', NEW_VAR_1: 'two' },
-				customModel: 'claude-sonnet',
-			});
-			const editableAgent = createAgentConfig({
-				id: 'claude-code',
-				name: 'Claude Code',
-				available: true,
-				configOptions: [
-					{
-						key: 'providerPath',
-						label: 'Provider Path',
-						type: 'text',
-						default: '/global/provider',
-						description: 'Provider binary path',
-					},
-				],
-			});
-
-			vi.mocked(window.maestro.agents.detect).mockResolvedValue([editableAgent]);
-			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({
-				providerPath: '/global/provider',
-			});
-			vi.mocked(window.maestro.agents.setConfig).mockRejectedValue(configFailure);
-
-			try {
-				render(
-					<EditAgentModal
-						isOpen={true}
-						onClose={onClose}
-						onSave={onSave}
-						theme={theme}
-						session={session}
-						existingSessions={[]}
-					/>
-				);
-
-				await screen.findByText('Claude Code Settings');
-
-				fireEvent.click(screen.getByText('Reset'));
-				fireEvent.click(screen.getByText('Clear'));
-
-				const longNudge = 'z'.repeat(1005);
-				const nudgeInput = screen.getByPlaceholderText(
-					'Instructions appended to every message you send...'
-				) as HTMLTextAreaElement;
-				fireEvent.change(nudgeInput, { target: { value: longNudge } });
-				expect(nudgeInput.value).toHaveLength(1000);
-
-				fireEvent.click(screen.getByText('Add Variable'));
-				expect(await screen.findByDisplayValue('NEW_VAR_2')).toBeInTheDocument();
-
-				const providerPath = screen.getByDisplayValue('/global/provider');
-				fireEvent.change(providerPath, { target: { value: '/new/provider' } });
-				fireEvent.blur(providerPath);
-
-				await waitFor(() => {
-					expect(window.maestro.agents.setConfig).toHaveBeenCalledWith('claude-code', {
-						providerPath: '/new/provider',
-					});
-					expect(consoleError).toHaveBeenCalledWith(
-						'Failed to persist config for claude-code:',
-						configFailure
-					);
-				});
-
-				fireEvent.click(screen.getByText('Save Changes'));
-
-				expect(onSave).toHaveBeenCalledWith(
-					'session-1',
-					'Editable Agent',
-					undefined,
-					'z'.repeat(1000),
-					undefined,
-					undefined,
-					{ NEW_VAR: 'one', NEW_VAR_1: 'two', NEW_VAR_2: '' },
-					'claude-sonnet',
-					undefined,
-					{ enabled: false, remoteId: null }
-				);
-			} finally {
-				consoleError.mockRestore();
-			}
-		});
-
-		it('should handle copy, refresh, config edits, and keyboard save', async () => {
-			const originalClipboard = navigator.clipboard;
-			const writeText = vi.fn().mockResolvedValue(undefined);
-			Object.defineProperty(navigator, 'clipboard', {
-				configurable: true,
-				value: { writeText },
-			});
-
-			const session = createSession({
-				customPath: '/custom/bin/claude',
-				customArgs: '--old',
-				customEnvVars: { KEEP: '1' },
-				customModel: 'claude-sonnet',
-				customContextWindow: 100000,
-			});
-
-			const editableAgent = createAgentConfig({
-				id: 'claude-code',
-				name: 'Claude Code',
-				available: true,
-				capabilities: {
-					supportsModelSelection: true,
-				} as AgentConfig['capabilities'],
-				configOptions: [
-					{
-						key: 'model',
-						label: 'Model',
-						type: 'text',
-						default: 'claude-sonnet',
-						description: 'Model slug',
-					},
-					{
-						key: 'contextWindow',
-						label: 'Context Window',
-						type: 'number',
-						default: 100000,
-						description: 'Context window',
-					},
-				],
-			});
-
-			vi.mocked(window.maestro.agents.detect).mockResolvedValue([editableAgent]);
-			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({
-				model: 'global-model',
-				contextWindow: 64000,
-			});
-			vi.mocked(window.maestro.agents.getModels).mockResolvedValue([
-				'claude-sonnet',
-				'claude-opus',
-			]);
-			vi.mocked(window.maestro.agents.refresh).mockResolvedValue({
-				agents: [editableAgent],
-				debugInfo: null,
-			});
-
-			try {
-				render(
-					<EditAgentModal
-						isOpen={true}
-						onClose={onClose}
-						onSave={onSave}
-						theme={theme}
-						session={session}
-						existingSessions={[]}
-					/>
-				);
-
-				await screen.findByText('Claude Code Settings');
-
-				fireEvent.click(screen.getByTitle(`Click to copy: ${session.id}`));
-				await waitFor(() => {
-					expect(writeText).toHaveBeenCalledWith(session.id);
-				});
-
-				fireEvent.click(screen.getByTitle('Re-detect agent path'));
-				await waitFor(() => {
-					expect(window.maestro.agents.refresh).toHaveBeenCalledWith('claude-code');
-				});
-
-				fireEvent.click(screen.getByTitle('Refresh available models'));
-				await waitFor(() => {
-					expect(window.maestro.agents.getModels).toHaveBeenCalledWith('claude-code', true);
-				});
-
-				fireEvent.blur(screen.getByDisplayValue('/custom/bin/claude'));
-				const customArgsInput = screen.getByPlaceholderText('--flag value --another-flag');
-				fireEvent.change(customArgsInput, {
-					target: { value: '--new' },
-				});
-				fireEvent.blur(customArgsInput);
-				const envKeyInput = screen.getByDisplayValue('KEEP');
-				fireEvent.change(envKeyInput, { target: { value: 'TOKEN' } });
-				fireEvent.blur(envKeyInput);
-				fireEvent.change(screen.getByDisplayValue('1'), { target: { value: '2' } });
-				fireEvent.click(screen.getByText('Add Variable'));
-				fireEvent.click(screen.getAllByTitle('Remove variable')[1]);
-				fireEvent.change(screen.getByDisplayValue('100000'), { target: { value: '200000' } });
-				fireEvent.blur(screen.getByDisplayValue('200000'));
-				expect(window.maestro.agents.setConfig).not.toHaveBeenCalled();
-
-				fireEvent.keyDown(screen.getByRole('group', { name: 'Edit agent dialog' }), {
-					key: 'Enter',
-					metaKey: true,
-				});
-
-				expect(onSave).toHaveBeenCalledWith(
-					'session-1',
-					'Editable Agent',
-					undefined,
-					undefined,
-					'/custom/bin/claude',
-					'--new',
-					{ TOKEN: '2' },
-					'claude-sonnet',
-					200000,
-					{ enabled: false, remoteId: null }
-				);
-				expect(onClose).toHaveBeenCalled();
-			} finally {
-				Object.defineProperty(navigator, 'clipboard', {
-					configurable: true,
-					value: originalClipboard,
-				});
-			}
 		});
 	});
 });

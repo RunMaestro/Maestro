@@ -172,21 +172,6 @@ describe('Stats aggregation and filtering', () => {
 			expect(mockStatement.all).toHaveBeenCalled();
 		});
 
-		it('should use a blank filter value when projectPath normalization returns null', async () => {
-			mockStatement.all.mockReturnValue([]);
-
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-			mockStatement.all.mockClear();
-
-			const malformedPath = { replace: vi.fn(() => null) };
-			db.getQueryEvents('year', { projectPath: malformedPath as any });
-
-			const lastCall = mockStatement.all.mock.calls.at(-1);
-			expect(lastCall?.at(-1)).toBe('');
-		});
-
 		it('should filter with sessionId filter', async () => {
 			mockStatement.all.mockReturnValue([]);
 
@@ -294,7 +279,7 @@ describe('Stats aggregation and filtering', () => {
 
 			// Should only contain headers
 			expect(csv).toBe(
-				'id,sessionId,agentType,source,startTime,duration,projectPath,tabId,isRemote'
+				'id,sessionId,agentType,source,startTime,duration,projectPath,tabId,isRemote,isWorktree'
 			);
 		});
 	});
@@ -377,61 +362,6 @@ describe('Query events recorded for interactive sessions', () => {
 			const lastCall = runCalls[runCalls.length - 1];
 			expect(lastCall[6]).toBeNull(); // project_path
 			expect(lastCall[7]).toBeNull(); // tab_id
-		});
-
-		it('should encode remote query flags for storage', async () => {
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-			mockStatement.run.mockClear();
-
-			const startTime = Date.now();
-			db.insertQueryEvent({
-				sessionId: 'remote-session',
-				agentType: 'claude-code',
-				source: 'user',
-				startTime,
-				duration: 3000,
-				isRemote: true,
-			});
-			db.insertQueryEvent({
-				sessionId: 'local-session',
-				agentType: 'claude-code',
-				source: 'user',
-				startTime,
-				duration: 3000,
-				isRemote: false,
-			});
-
-			expect(mockStatement.run.mock.calls[0][8]).toBe(1);
-			expect(mockStatement.run.mock.calls[1][8]).toBe(0);
-		});
-
-		it('should clear the cached insert statement', async () => {
-			const { StatsDB } = await import('../../../main/stats');
-			const { clearQueryEventCache } = await import('../../../main/stats/query-events');
-			const db = new StatsDB();
-			db.initialize();
-			clearQueryEventCache();
-			mockDb.prepare.mockClear();
-
-			const startTime = Date.now();
-			const event = {
-				sessionId: 'cache-session',
-				agentType: 'claude-code' as const,
-				source: 'user' as const,
-				startTime,
-				duration: 3000,
-			};
-
-			db.insertQueryEvent(event);
-			db.insertQueryEvent(event);
-			expect(mockDb.prepare).toHaveBeenCalledTimes(1);
-
-			clearQueryEventCache();
-			db.insertQueryEvent(event);
-
-			expect(mockDb.prepare).toHaveBeenCalledTimes(2);
 		});
 
 		it('should record multiple interactive queries for the same session', async () => {

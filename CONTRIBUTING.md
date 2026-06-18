@@ -86,7 +86,8 @@ maestro/
 │   │   └── templateVariables.ts # Template variable system
 │   └── web/               # Web interface (Remote Control)
 │       └── ...            # Mobile-optimized React app
-├── docs/                  # User documentation
+├── docs/                  # Mintlify documentation (hosted at docs.runmaestro.ai)
+│   ├── docs.json          # Mintlify configuration and navigation
 │   ├── screenshots/       # All documentation screenshots
 │   ├── assets/            # Logos, icons, and static assets
 │   └── *.md               # Documentation pages
@@ -157,14 +158,14 @@ MAESTRO_DEMO_DIR=~/Desktop/my-demo npm run dev
 When working with multiple git worktrees, you can run Maestro instances in parallel by specifying different ports using the `VITE_PORT` environment variable:
 
 ```bash
-# In the main worktree (uses default port 5173)
+# In the main worktree (uses default port 17173)
 npm run dev
 
 # In worktree 2 (in another directory and terminal)
-VITE_PORT=5174 npm run dev
+VITE_PORT=17174 npm run dev
 
 # In worktree 3
-VITE_PORT=5175 npm run dev
+VITE_PORT=17175 npm run dev
 ```
 
 This allows you to develop and test different branches simultaneously without port conflicts.
@@ -644,13 +645,14 @@ Based on capabilities, these UI features are automatically enabled/disabled:
 
 ### Supported Agents Reference
 
-| Agent         | Resume                | Read-Only                   | JSON | Images | Sessions                      | Cost             | Status      |
-| ------------- | --------------------- | --------------------------- | ---- | ------ | ----------------------------- | ---------------- | ----------- |
-| Claude Code   | ✅ `--resume`         | ✅ `--permission-mode plan` | ✅   | ✅     | ✅ `~/.claude/`               | ✅               | ✅ Complete |
-| Codex         | ✅ `exec resume`      | ✅ `--sandbox read-only`    | ✅   | ✅     | ✅ `~/.codex/`                | ❌ (tokens only) | ✅ Complete |
-| OpenCode      | ✅ `--session`        | ✅ `--agent plan`           | ✅   | ✅     | ✅ `~/.local/share/opencode/` | ✅               | ✅ Complete |
-| Factory Droid | ✅ `-s, --session-id` | ✅ (default mode)           | ✅   | ✅     | ✅ `~/.factory/`              | ❌ (tokens only) | ✅ Complete |
-| Gemini CLI    | TBD                   | TBD                         | TBD  | TBD    | TBD                           | ✅               | 📋 Planned  |
+| Agent         | Resume                       | Read-Only                   | JSON | Images | Sessions                       | Cost                    | Status      |
+| ------------- | ---------------------------- | --------------------------- | ---- | ------ | ------------------------------ | ----------------------- | ----------- |
+| Claude Code   | ✅ `--resume`                | ✅ `--permission-mode plan` | ✅   | ✅     | ✅ `~/.claude/`                | ✅                      | ✅ Complete |
+| Codex         | ✅ `exec resume`             | ✅ `--sandbox read-only`    | ✅   | ✅     | ✅ `~/.codex/`                 | ❌ (tokens only)        | ✅ Complete |
+| OpenCode      | ✅ `--session`               | ✅ `--agent plan`           | ✅   | ✅     | ✅ `~/.local/share/opencode/`  | ✅                      | ✅ Complete |
+| Factory Droid | ✅ `-s, --session-id`        | ✅ (default mode)           | ✅   | ✅     | ✅ `~/.factory/`               | ❌ (tokens only)        | ✅ Complete |
+| Copilot-CLI   | ✅ `--resume` / `--continue` | ✅ permission rules         | ✅   | ✅     | ✅ `~/.copilot/session-state/` | ❌ (not exposed by CLI) | 🧪 Beta     |
+| Gemini CLI    | TBD                          | TBD                         | TBD  | TBD    | TBD                            | ✅                      | 📋 Planned  |
 
 For detailed implementation guide, see [AGENT_SUPPORT.md](AGENT_SUPPORT.md).
 
@@ -974,11 +976,11 @@ Place icons in `build/` directory:
 
 ### 2. Update Version
 
-Update in `package.json`. Use **odd** minor versions for `main` (stable) and **even** minor versions for `rc` (pre-release). See [Branching & Release Strategy](#branching--release-strategy).
+Update in `package.json`:
 
 ```json
 {
-	"version": "0.15.0"
+	"version": "X.Y.Z"
 }
 ```
 
@@ -998,25 +1000,21 @@ Output in `release/` directory.
 Create a release tag to trigger automated builds:
 
 ```bash
-# Stable release (from main)
-git tag v0.15.0
-git push origin v0.15.0
-
-# Release candidate (from rc) — use -RC suffix
-git tag v0.16.0-RC
-git push origin v0.16.0-RC
+git tag vX.Y.Z
+git push origin vX.Y.Z
 ```
 
-GitHub Actions will build for all platforms and create a release. Tags containing `-RC`, `-beta`, or `-alpha` are automatically marked as pre-releases on GitHub.
+GitHub Actions will build for all platforms and create a release.
 
 ## Documentation
 
-User documentation source files live in the `docs/` directory.
+User documentation is hosted on [Mintlify](https://mintlify.com) at **[docs.runmaestro.ai](https://docs.runmaestro.ai)**. The source files live in the `docs/` directory.
 
 ### Documentation Structure
 
 ```
 docs/
+├── docs.json              # Mintlify configuration (navigation, theme, links)
 ├── index.md               # Homepage
 ├── screenshots/           # All documentation screenshots (PNG format)
 ├── assets/                # Logos, icons, favicons
@@ -1024,6 +1022,18 @@ docs/
 │   └── overview.md
 └── *.md                   # Feature and reference pages
 ```
+
+### Page Organization
+
+Pages are organized by topic in `docs.json` under `navigation.dropdowns`:
+
+| Group               | Pages                                                                                                                                                    | Purpose                                      |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| **Overview**        | index, about/overview, features, screenshots                                                                                                             | Introduction and feature highlights          |
+| **Getting Started** | installation, getting-started                                                                                                                            | Onboarding new users                         |
+| **Usage**           | general-usage, history, context-management, autorun-playbooks, git-worktrees, group-chat, remote-access, slash-commands, speckit-commands, configuration | Feature documentation                        |
+| **Providers & CLI** | provider-notes, cli                                                                                                                                      | Provider configuration and command line docs |
+| **Reference**       | achievements, keyboard-shortcuts, troubleshooting                                                                                                        | Quick reference guides                       |
 
 ### Adding a New Documentation Page
 
@@ -1039,7 +1049,16 @@ docs/
    Content goes here...
    ```
 
-2. **Reference from other pages** using relative links:
+2. **Add to navigation** in `docs/docs.json`:
+
+   ```json
+   {
+   	"group": "Usage",
+   	"pages": ["existing-page", "my-feature"]
+   }
+   ```
+
+3. **Reference from other pages** using relative links:
    ```markdown
    See [My Feature](./my-feature) for details.
    ```
@@ -1048,11 +1067,11 @@ docs/
 
 Every documentation page needs YAML frontmatter:
 
-| Field         | Required | Description                                 |
-| ------------- | -------- | ------------------------------------------- |
-| `title`       | Yes      | Page title                                  |
-| `description` | Yes      | Brief description for SEO and page previews |
-| `icon`        | No       | Optional icon metadata                      |
+| Field         | Required | Description                                                                        |
+| ------------- | -------- | ---------------------------------------------------------------------------------- |
+| `title`       | Yes      | Page title (appears in navigation and browser tab)                                 |
+| `description` | Yes      | Brief description for SEO and page previews                                        |
+| `icon`        | No       | [Mintlify icon](https://mintlify.com/docs/content/components/icons) for navigation |
 
 ### Screenshots
 
@@ -1097,6 +1116,26 @@ Static assets like logos and icons live in `docs/assets/`:
 | `made-with-maestro.svg` | Badge for README                        |
 | `maestro-app-icon.png`  | High-res app icon                       |
 
+Reference assets with `/assets/` paths in `docs.json` configuration.
+
+### Mintlify Features
+
+Documentation supports Mintlify components:
+
+```markdown
+<Note>
+This is an informational note.
+</Note>
+
+<Warning>
+This is a warning message.
+</Warning>
+
+<Tip>
+This is a helpful tip.
+</Tip>
+```
+
 **Embed videos:**
 
 ```markdown
@@ -1109,6 +1148,18 @@ Static assets like logos and icons live in `docs/assets/`:
 ```
 
 **Tables, code blocks, and standard markdown** all work as expected.
+
+### Local Preview
+
+Mintlify provides a CLI for local preview. Install and run:
+
+```bash
+npm i -g mintlify
+cd docs
+mintlify dev
+```
+
+This starts a local server at `http://localhost:3000` with hot reload.
 
 ### MCP Server
 
@@ -1136,7 +1187,7 @@ See [MCP Server documentation](https://docs.runmaestro.ai/mcp-server) for full d
 
 ### Deployment
 
-Documentation deployment is handled by the configured docs hosting pipeline when changes to `docs/` are pushed to `main`.
+Documentation is automatically deployed when changes to `docs/` are pushed to `main`. Mintlify handles the build and hosting.
 
 ## Questions?
 

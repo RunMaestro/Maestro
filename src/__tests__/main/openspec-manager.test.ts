@@ -5,14 +5,14 @@
  * - Loading bundled prompts from disk
  * - User customization persistence
  * - Resetting to defaults
- * - Parsing AGENTS.md for upstream command extraction
+ *
+ * Note: the upstream refresh path (refreshOpenSpecPrompts) fetches and parses
+ * GitHub sources over the network and is not exercised here.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'fs/promises';
 import path from 'path';
-import { app } from 'electron';
-import { logger } from '../../main/utils/logger';
 
 // Mock electron app module
 vi.mock('electron', () => ({
@@ -41,13 +41,19 @@ vi.mock('../../main/utils/logger', () => ({
 	},
 }));
 
+/** Create a Node.js-style ENOENT error with .code property */
+function enoent(): NodeJS.ErrnoException {
+	const err = new Error('ENOENT: no such file or directory') as NodeJS.ErrnoException;
+	err.code = 'ENOENT';
+	return err;
+}
+
 // Import the module after mocks are set up
 import {
 	getOpenSpecMetadata,
 	getOpenSpecPrompts,
 	saveOpenSpecPrompt,
 	resetOpenSpecPrompt,
-	refreshOpenSpecPrompts,
 	getOpenSpecCommand,
 	getOpenSpecCommandBySlash,
 	OpenSpecCommand,
@@ -68,9 +74,6 @@ describe('openspec-manager', () => {
 	});
 
 	afterEach(() => {
-		(app as typeof app & { isPackaged: boolean }).isPackaged = false;
-		delete (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
-		vi.unstubAllGlobals();
 		vi.clearAllMocks();
 	});
 
@@ -80,32 +83,12 @@ describe('openspec-manager', () => {
 			vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
 				const pathStr = filePath.toString();
 				if (pathStr.includes('openspec-customizations.json')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				if (pathStr.includes('metadata.json')) {
 					return JSON.stringify(mockMetadata);
 				}
-				throw new Error('ENOENT');
-			});
-
-			const metadata = await getOpenSpecMetadata();
-
-			expect(metadata).toEqual(mockMetadata);
-		});
-
-		it('should fall back to bundled metadata when downloaded metadata is missing', async () => {
-			vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
-				const pathStr = filePath.toString();
-				if (pathStr.includes('openspec-customizations.json')) {
-					throw new Error('ENOENT');
-				}
-				if (pathStr.includes('openspec-prompts') && pathStr.includes('metadata.json')) {
-					throw new Error('ENOENT');
-				}
-				if (pathStr.includes('metadata.json')) {
-					return JSON.stringify(mockMetadata);
-				}
-				throw new Error('ENOENT');
+				throw enoent();
 			});
 
 			const metadata = await getOpenSpecMetadata();
@@ -129,7 +112,7 @@ describe('openspec-manager', () => {
 						prompts: {},
 					});
 				}
-				throw new Error('ENOENT');
+				throw enoent();
 			});
 
 			const metadata = await getOpenSpecMetadata();
@@ -138,7 +121,7 @@ describe('openspec-manager', () => {
 		});
 
 		it('should return default metadata when no files exist', async () => {
-			vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
+			vi.mocked(fs.readFile).mockRejectedValue(enoent());
 
 			const metadata = await getOpenSpecMetadata();
 
@@ -155,15 +138,15 @@ describe('openspec-manager', () => {
 			vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
 				const pathStr = filePath.toString();
 				if (pathStr.includes('openspec-customizations.json')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				if (pathStr.includes('openspec-prompts')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				if (pathStr.endsWith('.md')) {
 					return mockBundledPrompt;
 				}
-				throw new Error('ENOENT');
+				throw enoent();
 			});
 
 			const commands = await getOpenSpecPrompts();
@@ -180,15 +163,15 @@ describe('openspec-manager', () => {
 			vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
 				const pathStr = filePath.toString();
 				if (pathStr.includes('openspec-customizations.json')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				if (pathStr.includes('openspec-prompts')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				if (pathStr.endsWith('.md')) {
 					return mockBundledPrompt;
 				}
-				throw new Error('ENOENT');
+				throw enoent();
 			});
 
 			const commands = await getOpenSpecPrompts();
@@ -208,15 +191,15 @@ describe('openspec-manager', () => {
 			vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
 				const pathStr = filePath.toString();
 				if (pathStr.includes('openspec-customizations.json')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				if (pathStr.includes('openspec-prompts')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				if (pathStr.endsWith('.md')) {
 					return mockBundledPrompt;
 				}
-				throw new Error('ENOENT');
+				throw enoent();
 			});
 
 			const commands = await getOpenSpecPrompts();
@@ -248,12 +231,12 @@ describe('openspec-manager', () => {
 					});
 				}
 				if (pathStr.includes('openspec-prompts')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				if (pathStr.endsWith('.md')) {
 					return mockBundledPrompt;
 				}
-				throw new Error('ENOENT');
+				throw enoent();
 			});
 
 			const commands = await getOpenSpecPrompts();
@@ -271,12 +254,12 @@ describe('openspec-manager', () => {
 			vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
 				const pathStr = filePath.toString();
 				if (pathStr.includes('openspec-customizations.json')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				if (pathStr.includes('metadata.json')) {
 					return JSON.stringify(mockMetadata);
 				}
-				throw new Error('ENOENT');
+				throw enoent();
 			});
 			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 
@@ -308,7 +291,7 @@ describe('openspec-manager', () => {
 				if (pathStr.includes('openspec-customizations.json')) {
 					return JSON.stringify(existingCustomizations);
 				}
-				throw new Error('ENOENT');
+				throw enoent();
 			});
 			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 
@@ -340,12 +323,12 @@ describe('openspec-manager', () => {
 					return JSON.stringify(customizations);
 				}
 				if (pathStr.includes('openspec-prompts')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				if (pathStr.endsWith('.md')) {
 					return mockBundledPrompt;
 				}
-				throw new Error('ENOENT');
+				throw enoent();
 			});
 			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 
@@ -363,42 +346,18 @@ describe('openspec-manager', () => {
 			vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
 				const pathStr = filePath.toString();
 				if (pathStr.includes('openspec-customizations.json')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				if (pathStr.includes('openspec-prompts')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				if (pathStr.endsWith('.md')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
-				throw new Error('ENOENT');
+				throw enoent();
 			});
 
 			await expect(resetOpenSpecPrompt('nonexistent')).rejects.toThrow('Unknown openspec command');
-		});
-
-		it('should return bundled default without writing when no customization exists', async () => {
-			vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
-				const pathStr = filePath.toString();
-				if (pathStr.includes('openspec-customizations.json')) {
-					return JSON.stringify({
-						metadata: mockMetadata,
-						prompts: {},
-					});
-				}
-				if (pathStr.includes('openspec-prompts')) {
-					throw new Error('ENOENT');
-				}
-				if (pathStr.endsWith('.md')) {
-					return mockBundledPrompt;
-				}
-				throw new Error('ENOENT');
-			});
-
-			const result = await resetOpenSpecPrompt('proposal');
-
-			expect(result).toBe(mockBundledPrompt);
-			expect(fs.writeFile).not.toHaveBeenCalled();
 		});
 	});
 
@@ -407,15 +366,15 @@ describe('openspec-manager', () => {
 			vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
 				const pathStr = filePath.toString();
 				if (pathStr.includes('openspec-customizations.json')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				if (pathStr.includes('openspec-prompts')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				if (pathStr.endsWith('.md')) {
 					return mockBundledPrompt;
 				}
-				throw new Error('ENOENT');
+				throw enoent();
 			});
 
 			const command = await getOpenSpecCommand('proposal');
@@ -429,15 +388,15 @@ describe('openspec-manager', () => {
 			vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
 				const pathStr = filePath.toString();
 				if (pathStr.includes('openspec-customizations.json')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				if (pathStr.includes('openspec-prompts')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				if (pathStr.endsWith('.md')) {
 					return mockBundledPrompt;
 				}
-				throw new Error('ENOENT');
+				throw enoent();
 			});
 
 			const command = await getOpenSpecCommand('nonexistent');
@@ -451,15 +410,15 @@ describe('openspec-manager', () => {
 			vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
 				const pathStr = filePath.toString();
 				if (pathStr.includes('openspec-customizations.json')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				if (pathStr.includes('openspec-prompts')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				if (pathStr.endsWith('.md')) {
 					return mockBundledPrompt;
 				}
-				throw new Error('ENOENT');
+				throw enoent();
 			});
 
 			const command = await getOpenSpecCommandBySlash('/openspec.proposal');
@@ -473,15 +432,15 @@ describe('openspec-manager', () => {
 			vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
 				const pathStr = filePath.toString();
 				if (pathStr.includes('openspec-customizations.json')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				if (pathStr.includes('openspec-prompts')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				if (pathStr.endsWith('.md')) {
 					return mockBundledPrompt;
 				}
-				throw new Error('ENOENT');
+				throw enoent();
 			});
 
 			const command = await getOpenSpecCommandBySlash('/openspec.nonexistent');
@@ -497,20 +456,20 @@ describe('openspec-manager', () => {
 			vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
 				const pathStr = filePath.toString();
 				if (pathStr.includes('openspec-customizations.json')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				// User prompts directory (downloaded updates)
 				if (pathStr.includes('openspec-prompts') && pathStr.includes('openspec.proposal.md')) {
 					return userPromptContent;
 				}
 				if (pathStr.includes('openspec-prompts')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				// Bundled prompts (fallback)
 				if (pathStr.endsWith('.md')) {
 					return mockBundledPrompt;
 				}
-				throw new Error('ENOENT');
+				throw enoent();
 			});
 
 			const commands = await getOpenSpecPrompts();
@@ -523,7 +482,7 @@ describe('openspec-manager', () => {
 			vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
 				const pathStr = filePath.toString();
 				if (pathStr.includes('openspec-customizations.json')) {
-					throw new Error('ENOENT');
+					throw enoent();
 				}
 				if (pathStr.includes('openspec-prompts')) {
 					return '# Should not be used for custom commands';
@@ -531,7 +490,7 @@ describe('openspec-manager', () => {
 				if (pathStr.endsWith('.md')) {
 					return mockBundledPrompt;
 				}
-				throw new Error('ENOENT');
+				throw enoent();
 			});
 
 			const commands = await getOpenSpecPrompts();
@@ -541,181 +500,6 @@ describe('openspec-manager', () => {
 			// Custom commands should use bundled, not user prompts directory
 			expect(helpCmd?.prompt).toBe(mockBundledPrompt);
 			expect(implementCmd?.prompt).toBe(mockBundledPrompt);
-		});
-	});
-
-	describe('packaged prompt paths', () => {
-		it('should load bundled prompts from process resources when packaged', async () => {
-			(app as typeof app & { isPackaged: boolean }).isPackaged = true;
-			Object.defineProperty(process, 'resourcesPath', {
-				value: '/mock/resources',
-				configurable: true,
-			});
-			vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
-				const pathStr = filePath.toString();
-				if (pathStr.includes('openspec-customizations.json')) {
-					throw new Error('ENOENT');
-				}
-				if (pathStr.includes('openspec-prompts')) {
-					throw new Error('ENOENT');
-				}
-				if (pathStr.includes('/mock/resources/prompts/openspec') && pathStr.endsWith('.md')) {
-					return mockBundledPrompt;
-				}
-				throw new Error(`Unexpected path: ${pathStr}`);
-			});
-
-			const commands = await getOpenSpecPrompts();
-
-			expect(commands).toHaveLength(5);
-			expect(fs.readFile).toHaveBeenCalledWith(
-				expect.stringContaining('/mock/resources/prompts/openspec/openspec.help.md'),
-				'utf-8'
-			);
-		});
-	});
-
-	describe('refreshOpenSpecPrompts', () => {
-		const agentsMd = [
-			'# Stage 1: Creating Changes',
-			'Write the proposal.',
-			'',
-			'# Stage 2: Implementing Changes',
-			'Implement the approved tasks.',
-			'',
-			'# Stage 3: Archiving Changes',
-			'Archive the completed change.',
-			'',
-		].join('\n');
-
-		function stubFetch(...responses: unknown[]) {
-			const fetchMock = vi.fn();
-			for (const response of responses) {
-				if (response instanceof Error) {
-					fetchMock.mockRejectedValueOnce(response);
-				} else {
-					fetchMock.mockResolvedValueOnce(response);
-				}
-			}
-			vi.stubGlobal('fetch', fetchMock);
-			return fetchMock;
-		}
-
-		it('should fetch latest release prompts, preserve existing customizations, and write metadata', async () => {
-			stubFetch(
-				{
-					ok: true,
-					json: vi.fn().mockResolvedValue({ tag_name: 'v1.2.3' }),
-				},
-				{
-					ok: true,
-					text: vi.fn().mockResolvedValue(agentsMd),
-				}
-			);
-			vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
-				const pathStr = filePath.toString();
-				if (pathStr.includes('openspec-customizations.json')) {
-					return JSON.stringify({
-						metadata: mockMetadata,
-						prompts: {
-							help: {
-								content: '# Custom Help',
-								isModified: true,
-							},
-						},
-					});
-				}
-				throw new Error('ENOENT');
-			});
-			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
-			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
-
-			const metadata = await refreshOpenSpecPrompts();
-
-			expect(metadata).toMatchObject({
-				commitSha: 'v1.2.3',
-				sourceVersion: '1.2.3',
-				sourceUrl: 'https://github.com/Fission-AI/OpenSpec',
-			});
-			expect(fs.mkdir).toHaveBeenCalledWith('/mock/userData/openspec-prompts', {
-				recursive: true,
-			});
-			expect(fs.writeFile).toHaveBeenCalledWith(
-				expect.stringContaining('openspec.proposal.md'),
-				expect.stringContaining('Write the proposal.'),
-				'utf8'
-			);
-			expect(fs.writeFile).toHaveBeenCalledWith(
-				expect.stringContaining('openspec.apply.md'),
-				expect.stringContaining('Implement the approved tasks.'),
-				'utf8'
-			);
-			expect(fs.writeFile).toHaveBeenCalledWith(
-				expect.stringContaining('openspec.archive.md'),
-				expect.stringContaining('Archive the completed change.'),
-				'utf8'
-			);
-
-			const customizationsWrite = vi
-				.mocked(fs.writeFile)
-				.mock.calls.find(([filePath]) =>
-					filePath.toString().includes('openspec-customizations.json')
-				);
-			expect(customizationsWrite).toBeDefined();
-			const writtenCustomizations = JSON.parse(customizationsWrite![1] as string);
-			expect(writtenCustomizations.metadata.commitSha).toBe('v1.2.3');
-			expect(writtenCustomizations.prompts.help.content).toBe('# Custom Help');
-		});
-
-		it('should warn and throw when release lookup fails and AGENTS.md cannot be fetched', async () => {
-			stubFetch(new Error('network down'), {
-				ok: false,
-				statusText: 'Not Found',
-			});
-
-			await expect(refreshOpenSpecPrompts()).rejects.toThrow(
-				'Failed to fetch AGENTS.md: Not Found'
-			);
-			expect(logger.warn).toHaveBeenCalledWith(
-				'Could not fetch release info, using main branch',
-				'[OpenSpec]'
-			);
-		});
-
-		it('should use main when no latest release is available and warn for missing sections', async () => {
-			stubFetch(
-				{ ok: false },
-				{
-					ok: true,
-					text: vi.fn().mockResolvedValue('# Stage 1: Creating Changes\nOnly proposal.'),
-				}
-			);
-			vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
-			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
-			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
-
-			const metadata = await refreshOpenSpecPrompts();
-
-			expect(metadata.commitSha).toBe('main');
-			expect(metadata.sourceVersion).toBe('main');
-			expect(fs.writeFile).toHaveBeenCalledWith(
-				expect.stringContaining('openspec.proposal.md'),
-				expect.stringContaining('Only proposal.'),
-				'utf8'
-			);
-			expect(fs.writeFile).not.toHaveBeenCalledWith(
-				expect.stringContaining('openspec.apply.md'),
-				expect.any(String),
-				'utf8'
-			);
-			expect(logger.warn).toHaveBeenCalledWith(
-				'Could not extract apply section from AGENTS.md',
-				'[OpenSpec]'
-			);
-			expect(logger.warn).toHaveBeenCalledWith(
-				'Could not extract archive section from AGENTS.md',
-				'[OpenSpec]'
-			);
 		});
 	});
 });

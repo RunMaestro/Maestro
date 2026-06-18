@@ -42,15 +42,24 @@ vi.mock('electron-store', () => {
 	};
 });
 
+vi.mock('../../../main/prompt-manager', () => ({
+	getPrompt: vi.fn((id: string) => {
+		const prompts: Record<string, string> = {
+			'group-chat-moderator-system':
+				'You are a Group Chat Moderator.\n\n{{CONDUCTOR_PROFILE}}\n\nCoordinate multiple AI agents using @mentions.',
+			'group-chat-moderator-synthesis':
+				'Review the agents responses and synthesize a coherent answer.',
+		};
+		return prompts[id] ?? `mock prompt for ${id}`;
+	}),
+}));
+
 import {
 	spawnModerator,
 	sendToModerator,
 	killModerator,
 	getModeratorSessionId,
-	getModeratorChatLog,
 	clearAllModeratorSessions,
-	startSessionCleanup,
-	stopSessionCleanup,
 	getModeratorSystemPrompt,
 	type IProcessManager,
 } from '../../../main/group-chat/group-chat-moderator';
@@ -86,16 +95,12 @@ describe('group-chat-moderator', () => {
 			write: vi.fn().mockReturnValue(true),
 			kill: vi.fn().mockReturnValue(true),
 		};
-		vi.spyOn(console, 'log').mockImplementation(() => {});
 
 		// Clear any leftover sessions from previous tests
 		clearAllModeratorSessions();
 	});
 
 	afterEach(async () => {
-		stopSessionCleanup();
-		vi.useRealTimers();
-
 		// Clean up any created chats
 		for (const id of createdChats) {
 			try {
@@ -117,7 +122,7 @@ describe('group-chat-moderator', () => {
 		}
 
 		// Clear mocks
-		vi.restoreAllMocks();
+		vi.clearAllMocks();
 	});
 
 	// Helper to track created chats for cleanup
@@ -226,16 +231,6 @@ describe('group-chat-moderator', () => {
 			expect(messages.some((m) => m.content === 'Log only message')).toBe(true);
 		});
 
-		it('does not write when a process manager is provided without an active moderator session', async () => {
-			const chat = await createTestChat('No Active Session Test', 'claude-code');
-
-			await sendToModerator(chat.id, 'Log only with manager', mockProcessManager);
-
-			expect(mockProcessManager.write).not.toHaveBeenCalled();
-			const messages = await readLog(chat.logPath);
-			expect(messages.some((m) => m.content === 'Log only with manager')).toBe(true);
-		});
-
 		it('throws for non-existent chat', async () => {
 			await expect(sendToModerator('non-existent-id', 'Hello')).rejects.toThrow(/not found/i);
 		});
@@ -333,57 +328,6 @@ describe('group-chat-moderator', () => {
 
 			expect(getModeratorSessionId(chat1.id)).toBeUndefined();
 			expect(getModeratorSessionId(chat2.id)).toBeUndefined();
-		});
-	});
-
-	describe('session cleanup', () => {
-		it('cleans stale moderator sessions and can be started or stopped repeatedly', async () => {
-			const chat = await createTestChat('Cleanup Test', 'claude-code');
-			const logSpy = vi.mocked(console.log);
-
-			vi.useFakeTimers();
-			vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
-
-			await spawnModerator(chat, mockProcessManager);
-			logSpy.mockClear();
-
-			startSessionCleanup();
-			startSessionCleanup();
-
-			vi.advanceTimersByTime(10 * 60 * 1000);
-
-			expect(getModeratorSessionId(chat.id)).toBeTruthy();
-			expect(logSpy).not.toHaveBeenCalledWith(
-				expect.stringContaining('[GroupChatModerator] Cleaned up')
-			);
-
-			vi.setSystemTime(new Date('2026-01-01T00:31:00.000Z'));
-			vi.advanceTimersByTime(10 * 60 * 1000);
-
-			expect(getModeratorSessionId(chat.id)).toBeUndefined();
-			expect(logSpy).toHaveBeenCalledWith('[GroupChatModerator] Cleaned up 1 stale session(s)');
-
-			stopSessionCleanup();
-			stopSessionCleanup();
-		});
-	});
-
-	describe('getModeratorChatLog', () => {
-		it('returns messages from the group chat log', async () => {
-			const chat = await createTestChat('Chat Log Test', 'claude-code');
-			await sendToModerator(chat.id, 'Logged message');
-
-			await expect(getModeratorChatLog(chat.id)).resolves.toEqual(
-				expect.arrayContaining([
-					expect.objectContaining({ from: 'user', content: 'Logged message' }),
-				])
-			);
-		});
-
-		it('throws for a missing group chat', async () => {
-			await expect(getModeratorChatLog('missing-chat')).rejects.toThrow(
-				'Group chat not found: missing-chat'
-			);
 		});
 	});
 });

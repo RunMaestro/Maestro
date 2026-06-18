@@ -62,9 +62,11 @@ export function OfflineQueueBanner({
 	}, [onClearQueue]);
 
 	const handleRetry = useCallback(() => {
-		triggerHaptic(HAPTIC_PATTERNS.tap);
-		onProcessQueue();
-	}, [onProcessQueue]);
+		if (canRetry) {
+			triggerHaptic(HAPTIC_PATTERNS.tap);
+			onProcessQueue();
+		}
+	}, [canRetry, onProcessQueue]);
 
 	const handleRemoveCommand = useCallback(
 		(commandId: string) => {

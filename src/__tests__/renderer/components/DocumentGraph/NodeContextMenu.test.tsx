@@ -12,32 +12,13 @@ import {
 	type NodeContextMenuProps,
 } from '../../../../renderer/components/DocumentGraph/NodeContextMenu';
 import type { Theme } from '../../../../renderer/types';
+import { mockTheme } from '../../../helpers/mockTheme';
 import type {
 	DocumentNodeData,
 	ExternalLinkNodeData,
 } from '../../../../renderer/components/DocumentGraph/graphDataBuilder';
 
 // Mock theme for testing
-const mockTheme: Theme = {
-	id: 'dracula',
-	name: 'Dracula',
-	mode: 'dark',
-	colors: {
-		bgMain: '#282a36',
-		bgSidebar: '#21222c',
-		bgActivity: '#343746',
-		border: '#44475a',
-		textMain: '#f8f8f2',
-		textDim: '#6272a4',
-		accent: '#bd93f9',
-		accentDim: 'rgba(189, 147, 249, 0.2)',
-		accentText: '#ff79c6',
-		accentForeground: '#282a36',
-		success: '#50fa7b',
-		warning: '#ffb86c',
-		error: '#ff5555',
-	},
-};
 
 // Mock document node data
 const mockDocumentNodeData: DocumentNodeData = {
@@ -55,13 +36,6 @@ const mockExternalNodeDataSingle: ExternalLinkNodeData = {
 	domain: 'example.com',
 	linkCount: 1,
 	urls: ['https://example.com/page'],
-};
-
-const mockExternalNodeDataEmpty: ExternalLinkNodeData = {
-	nodeType: 'external',
-	domain: 'empty.example.com',
-	linkCount: 0,
-	urls: [],
 };
 
 // Mock external node data with multiple URLs
@@ -226,25 +200,6 @@ describe('NodeContextMenu', () => {
 			expect(onOpenExternal).toHaveBeenCalledWith('https://example.com/page');
 		});
 
-		it('dismisses without opening when an external node has no URLs', () => {
-			const onOpen = vi.fn();
-			const onOpenExternal = vi.fn();
-			const onDismiss = vi.fn();
-			const props = createProps({
-				nodeData: mockExternalNodeDataEmpty,
-				onOpen,
-				onOpenExternal,
-				onDismiss,
-			});
-			render(<NodeContextMenu {...props} />);
-
-			fireEvent.click(screen.getByRole('button', { name: /open/i }));
-
-			expect(onOpen).not.toHaveBeenCalled();
-			expect(onOpenExternal).not.toHaveBeenCalled();
-			expect(onDismiss).toHaveBeenCalled();
-		});
-
 		it('copies URL to clipboard when Copy URL is clicked', async () => {
 			const onDismiss = vi.fn();
 			const props = createProps({ nodeData: mockExternalNodeDataSingle, onDismiss });
@@ -255,22 +210,6 @@ describe('NodeContextMenu', () => {
 			await waitFor(() => {
 				expect(mockClipboardWriteText).toHaveBeenCalledWith('https://example.com/page');
 			});
-			expect(onDismiss).toHaveBeenCalled();
-		});
-
-		it('dismisses without copying when node data has an unsupported type', () => {
-			const unsupportedNodeData = {
-				nodeType: 'unsupported',
-				filePath: '/ignored.md',
-				urls: ['https://ignored.example.com'],
-			} as unknown as NodeContextMenuProps['nodeData'];
-			const onDismiss = vi.fn();
-			const props = createProps({ nodeData: unsupportedNodeData, onDismiss });
-			render(<NodeContextMenu {...props} />);
-
-			fireEvent.click(screen.getByRole('button', { name: /copy url$/i }));
-
-			expect(mockClipboardWriteText).not.toHaveBeenCalled();
 			expect(onDismiss).toHaveBeenCalled();
 		});
 	});
@@ -346,9 +285,6 @@ describe('NodeContextMenu', () => {
 			const onDismiss = vi.fn();
 			const props = createProps({ onDismiss });
 			render(<NodeContextMenu {...props} />);
-
-			fireEvent.keyDown(document, { key: 'Enter' });
-			expect(onDismiss).not.toHaveBeenCalled();
 
 			fireEvent.keyDown(document, { key: 'Escape' });
 

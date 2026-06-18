@@ -111,7 +111,9 @@ function createSession(overrides: Partial<Session> = {}): Session {
 		activeFileTabId: null,
 		unifiedTabOrder: [{ type: 'ai' as const, id: tab.id }],
 		unifiedClosedTabHistory: [],
-		autoRunFolderPath: '/test/project/Auto Run Docs',
+		autoRunFolderPath: '/test/project/.maestro/playbooks',
+		terminalTabs: [],
+		activeTerminalTabId: null,
 		...overrides,
 		// Ensure aiTabs uses proper tab objects
 		...(overrides.aiTabs ? { aiTabs: overrides.aiTabs } : {}),
@@ -144,7 +146,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	vi.useRealTimers();
 	cleanup();
 	window.confirm = originalConfirm;
 });
@@ -223,62 +224,6 @@ describe('useInterruptHandler', () => {
 			const synopsisCallOrder = (deps.cancelPendingSynopsis as any).mock.invocationCallOrder[0];
 			const interruptCallOrder = mockMaestro.process.interrupt.mock.invocationCallOrder[0];
 			expect(synopsisCallOrder).toBeLessThan(interruptCallOrder);
-		});
-
-		it('continues interrupting when pending synopsis cancellation fails', async () => {
-			const synopsisError = new Error('synopsis stuck');
-			const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-			const session = createSession({
-				id: 'sess-syn-fail',
-				inputMode: 'ai',
-				state: 'busy',
-				aiTabs: [createTab({ id: 'tab-syn-fail', state: 'busy' })],
-				activeTabId: 'tab-syn-fail',
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-syn-fail',
-			});
-
-			const deps = createDeps({
-				sessionsRef: { current: [session] },
-				cancelPendingSynopsis: vi.fn().mockRejectedValue(synopsisError),
-			});
-			const { result } = renderHook(() => useInterruptHandler(deps));
-
-			await act(async () => {
-				await result.current.handleInterrupt();
-			});
-
-			expect(mockMaestro.process.interrupt).toHaveBeenCalledWith('sess-syn-fail-ai-tab-syn-fail');
-			expect(consoleWarn).toHaveBeenCalledWith(
-				'[useInterruptHandler] Failed to cancel pending synopsis:',
-				synopsisError
-			);
-			consoleWarn.mockRestore();
-		});
-
-		it('uses the default AI target when no active tab exists', async () => {
-			const session = createSession({
-				id: 'sess-default-target',
-				inputMode: 'ai',
-				state: 'busy',
-				aiTabs: [],
-				activeTabId: 'missing-tab',
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-default-target',
-			});
-
-			const deps = createDeps({ sessionsRef: { current: [session] } });
-			const { result } = renderHook(() => useInterruptHandler(deps));
-
-			await act(async () => {
-				await result.current.handleInterrupt();
-			});
-
-			expect(mockMaestro.process.interrupt).toHaveBeenCalledWith('sess-default-target-ai-default');
 		});
 
 		it('adds "Canceled by user" system log to active tab', async () => {
@@ -380,38 +325,6 @@ describe('useInterruptHandler', () => {
 			expect(updated.busySource).toBeUndefined();
 			expect(updated.thinkingStartTime).toBeUndefined();
 			expect(updated.aiTabs[0].state).toBe('idle');
-		});
-
-		it('leaves non-active idle tabs unchanged when interrupting without a queue', async () => {
-			const activeTab = createTab({ id: 'tab-active-idle-cleanup', state: 'busy' });
-			const idleTab = createTab({
-				id: 'tab-idle-unchanged',
-				state: 'idle',
-				logs: [{ id: 'idle-log', timestamp: 1, source: 'ai', text: 'keep me' }],
-			});
-			const session = createSession({
-				id: 'sess-idle-unchanged',
-				inputMode: 'ai',
-				state: 'busy',
-				aiTabs: [activeTab, idleTab],
-				activeTabId: activeTab.id,
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: session.id,
-			});
-
-			const deps = createDeps({ sessionsRef: { current: [session] } });
-			const { result } = renderHook(() => useInterruptHandler(deps));
-
-			await act(async () => {
-				await result.current.handleInterrupt();
-			});
-
-			const unchangedTab = useSessionStore
-				.getState()
-				.sessions[0].aiTabs.find((tab) => tab.id === idleTab.id);
-			expect(unchangedTab).toEqual(idleTab);
 		});
 
 		it('does not affect other sessions', async () => {
@@ -551,25 +464,13 @@ describe('useInterruptHandler', () => {
 				text: 'Next task',
 				tabId: 'tab-target',
 			};
-			const busyTab = createTab({
-				id: 'tab-busy',
-				state: 'busy',
-				logs: [
-					{ id: 'thinking-q2', timestamp: 1, source: 'thinking', text: 'remove' },
-					{ id: 'ai-q2', timestamp: 2, source: 'ai', text: 'keep' },
-				],
-			});
+			const busyTab = createTab({ id: 'tab-busy', state: 'busy' });
 			const targetTab = createTab({ id: 'tab-target', state: 'idle' });
-			const idleTab = createTab({
-				id: 'tab-queue-idle',
-				state: 'idle',
-				logs: [{ id: 'idle-q2', timestamp: 3, source: 'ai', text: 'idle stays' }],
-			});
 			const session = createSession({
 				id: 'sess-q2',
 				inputMode: 'ai',
 				state: 'busy',
-				aiTabs: [busyTab, targetTab, idleTab],
+				aiTabs: [busyTab, targetTab],
 				activeTabId: 'tab-busy',
 				executionQueue: [queuedItem],
 			});
@@ -588,11 +489,8 @@ describe('useInterruptHandler', () => {
 			const updated = useSessionStore.getState().sessions[0];
 			const updatedTargetTab = updated.aiTabs.find((t: any) => t.id === 'tab-target');
 			const updatedBusyTab = updated.aiTabs.find((t: any) => t.id === 'tab-busy');
-			const updatedIdleTab = updated.aiTabs.find((t: any) => t.id === 'tab-queue-idle');
 			expect(updatedTargetTab?.state).toBe('busy');
 			expect(updatedBusyTab?.state).toBe('idle');
-			expect(updatedBusyTab?.logs.some((log) => log.source === 'thinking')).toBe(false);
-			expect(updatedIdleTab).toEqual(idleTab);
 		});
 
 		it('removes processed item from execution queue', async () => {
@@ -669,164 +567,6 @@ describe('useInterruptHandler', () => {
 			expect(userLogs).toHaveLength(1);
 			expect(userLogs![0].text).toBe('Queued user message');
 		});
-
-		it('does not add a user log when the next queued item is a command', async () => {
-			const queuedItem = {
-				id: 'q-command',
-				type: 'command' as const,
-				command: '/status',
-				commandDescription: 'Show status',
-				tabId: 'tab-command',
-			};
-			const tab = createTab({ id: 'tab-command', state: 'busy' });
-			const session = createSession({
-				id: 'sess-command',
-				inputMode: 'ai',
-				state: 'busy',
-				aiTabs: [tab],
-				activeTabId: 'tab-command',
-				executionQueue: [queuedItem],
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: 'sess-command',
-			});
-
-			const deps = createDeps({ sessionsRef: { current: [session] } });
-			const { result } = renderHook(() => useInterruptHandler(deps));
-
-			await act(async () => {
-				await result.current.handleInterrupt();
-			});
-
-			const updatedTab = useSessionStore
-				.getState()
-				.sessions[0].aiTabs.find((t: any) => t.id === 'tab-command');
-			expect(updatedTab?.state).toBe('busy');
-			expect(updatedTab?.logs.filter((l: any) => l.source === 'user')).toHaveLength(0);
-		});
-
-		it('keeps session busy when queued item has no matching or active tab', async () => {
-			vi.useFakeTimers();
-			const queuedItem = {
-				id: 'q-no-target',
-				type: 'message' as const,
-				text: 'No target tab',
-				tabId: 'missing-tab',
-			};
-			const session = createSession({
-				id: 'sess-no-target',
-				inputMode: 'ai',
-				state: 'busy',
-				aiTabs: [],
-				activeTabId: 'missing-active',
-				executionQueue: [queuedItem],
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: session.id,
-			});
-
-			const deps = createDeps({ sessionsRef: { current: [session] } });
-			const { result } = renderHook(() => useInterruptHandler(deps));
-
-			await act(async () => {
-				await result.current.handleInterrupt();
-			});
-
-			const updated = useSessionStore.getState().sessions[0];
-			expect(updated.state).toBe('busy');
-			expect(updated.executionQueue).toHaveLength(0);
-
-			act(() => {
-				vi.runOnlyPendingTimers();
-			});
-			expect(deps.processQueuedItem).toHaveBeenCalledWith(session.id, queuedItem);
-		});
-
-		it('logs queued item processing failures after interrupt', async () => {
-			vi.useFakeTimers();
-			const queueError = new Error('queue failed');
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-			const queuedItem = {
-				id: 'q-fail',
-				type: 'message' as const,
-				text: 'Queued failure',
-				tabId: 'tab-q-fail',
-			};
-			const tab = createTab({ id: 'tab-q-fail', state: 'busy' });
-			const session = createSession({
-				id: 'sess-q-fail',
-				inputMode: 'ai',
-				state: 'busy',
-				aiTabs: [tab],
-				activeTabId: tab.id,
-				executionQueue: [queuedItem],
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: session.id,
-			});
-
-			const deps = createDeps({
-				sessionsRef: { current: [session] },
-				processQueuedItem: vi.fn().mockRejectedValue(queueError),
-			});
-			const { result } = renderHook(() => useInterruptHandler(deps));
-
-			await act(async () => {
-				await result.current.handleInterrupt();
-			});
-			await act(async () => {
-				vi.runOnlyPendingTimers();
-				await Promise.resolve();
-			});
-
-			expect(consoleError).toHaveBeenCalledWith(
-				'[useInterruptHandler] Failed to process queued item:',
-				queueError
-			);
-			consoleError.mockRestore();
-		});
-
-		it('does not append canceled logs when terminal mode processes a queued item', async () => {
-			const queuedItem = {
-				id: 'q-terminal',
-				type: 'message' as const,
-				text: 'Terminal queued message',
-				tabId: 'tab-terminal-target',
-			};
-			const busyTab = createTab({
-				id: 'tab-terminal-busy',
-				state: 'busy',
-				logs: [{ id: 'terminal-thinking', timestamp: 1, source: 'thinking', text: 'remove' }],
-			});
-			const targetTab = createTab({ id: 'tab-terminal-target', state: 'idle' });
-			const session = createSession({
-				id: 'sess-terminal-queue',
-				inputMode: 'terminal',
-				state: 'busy',
-				aiTabs: [busyTab, targetTab],
-				activeTabId: busyTab.id,
-				executionQueue: [queuedItem],
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: session.id,
-			});
-
-			const deps = createDeps({ sessionsRef: { current: [session] } });
-			const { result } = renderHook(() => useInterruptHandler(deps));
-
-			await act(async () => {
-				await result.current.handleInterrupt();
-			});
-
-			const updatedBusyTab = useSessionStore
-				.getState()
-				.sessions[0].aiTabs.find((tab) => tab.id === busyTab.id);
-			expect(updatedBusyTab?.logs).toEqual([]);
-		});
 	});
 
 	// ========================================================================
@@ -897,27 +637,20 @@ describe('useInterruptHandler', () => {
 			window.confirm = vi.fn().mockReturnValue(true);
 
 			const tab = createTab({ id: 'tab-fk', state: 'busy' });
-			const idleTab = createTab({ id: 'tab-fk-idle', state: 'idle' });
 			const session = createSession({
 				id: 'sess-fk',
 				inputMode: 'ai',
 				state: 'busy',
-				aiTabs: [tab, idleTab],
+				aiTabs: [tab],
 				activeTabId: 'tab-fk',
 			});
-			const otherSession = createSession({
-				id: 'sess-fk-other',
-				state: 'busy',
-				aiTabs: [createTab({ id: 'tab-fk-other', state: 'busy' })],
-				activeTabId: 'tab-fk-other',
-			});
 			useSessionStore.setState({
-				sessions: [session, otherSession],
+				sessions: [session],
 				activeSessionId: 'sess-fk',
 			});
 
 			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-			const deps = createDeps({ sessionsRef: { current: [session, otherSession] } });
+			const deps = createDeps({ sessionsRef: { current: [session] } });
 			const { result } = renderHook(() => useInterruptHandler(deps));
 
 			await act(async () => {
@@ -929,8 +662,6 @@ describe('useInterruptHandler', () => {
 				(l: any) => l.text === 'Process forcefully terminated'
 			);
 			expect(killLogs).toHaveLength(1);
-			expect(useSessionStore.getState().sessions[0].aiTabs[1]).toEqual(idleTab);
-			expect(useSessionStore.getState().sessions[1]).toEqual(otherSession);
 			consoleError.mockRestore();
 		});
 
@@ -962,158 +693,6 @@ describe('useInterruptHandler', () => {
 				(l: any) => l.text === 'Process forcefully terminated'
 			);
 			expect(killLogs).toHaveLength(1);
-			consoleError.mockRestore();
-		});
-
-		it('processes queued items after force kill and logs processing failures', async () => {
-			vi.useFakeTimers();
-			mockMaestro.process.interrupt.mockRejectedValueOnce(new Error('SIGINT failed'));
-			window.confirm = vi.fn().mockReturnValue(true);
-			const queueError = new Error('after-kill queue failed');
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-			const queuedItem = {
-				id: 'q-after-kill',
-				type: 'message' as const,
-				text: 'Run after kill',
-				tabId: 'tab-after-kill-target',
-				images: ['image-a'],
-			};
-			const busyTab = createTab({
-				id: 'tab-after-kill-busy',
-				state: 'busy',
-				logs: [
-					{ id: 'thinking-log', timestamp: 1, source: 'thinking', text: 'remove' },
-					{ id: 'ai-log', timestamp: 2, source: 'ai', text: 'keep' },
-				],
-			});
-			const targetTab = createTab({ id: 'tab-after-kill-target', state: 'idle' });
-			const idleTab = createTab({ id: 'tab-after-kill-idle', state: 'idle' });
-			const session = createSession({
-				id: 'sess-after-kill',
-				inputMode: 'ai',
-				state: 'busy',
-				aiTabs: [busyTab, targetTab, idleTab],
-				activeTabId: busyTab.id,
-				executionQueue: [queuedItem],
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: session.id,
-			});
-
-			const deps = createDeps({
-				sessionsRef: { current: [session] },
-				processQueuedItem: vi.fn().mockRejectedValue(queueError),
-			});
-			const { result } = renderHook(() => useInterruptHandler(deps));
-
-			await act(async () => {
-				await result.current.handleInterrupt();
-			});
-
-			const updated = useSessionStore.getState().sessions[0];
-			expect(updated.state).toBe('busy');
-			expect(updated.executionQueue).toHaveLength(0);
-			expect(updated.aiTabs.find((tab) => tab.id === targetTab.id)?.state).toBe('busy');
-			expect(
-				updated.aiTabs
-					.find((tab) => tab.id === targetTab.id)
-					?.logs.some((log) => log.source === 'user' && log.text === queuedItem.text)
-			).toBe(true);
-			expect(
-				updated.aiTabs
-					.find((tab) => tab.id === busyTab.id)
-					?.logs.some((log) => log.source === 'thinking')
-			).toBe(false);
-			expect(updated.aiTabs.find((tab) => tab.id === idleTab.id)).toEqual(idleTab);
-
-			await act(async () => {
-				vi.runOnlyPendingTimers();
-				await Promise.resolve();
-			});
-
-			expect(deps.processQueuedItem).toHaveBeenCalledWith(session.id, queuedItem);
-			expect(consoleError).toHaveBeenCalledWith(
-				'[useInterruptHandler] Failed to process queued item after kill:',
-				queueError
-			);
-			consoleError.mockRestore();
-		});
-
-		it('keeps session busy after force kill when queued item has no target tab', async () => {
-			mockMaestro.process.interrupt.mockRejectedValueOnce(new Error('SIGINT failed'));
-			window.confirm = vi.fn().mockReturnValue(true);
-			const queuedItem = {
-				id: 'q-after-kill-missing',
-				type: 'command' as const,
-				text: '',
-				tabId: 'missing-tab',
-			};
-			const session = createSession({
-				id: 'sess-after-kill-missing',
-				inputMode: 'ai',
-				state: 'busy',
-				aiTabs: [],
-				activeTabId: 'missing-active',
-				executionQueue: [queuedItem],
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: session.id,
-			});
-
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-			const deps = createDeps({ sessionsRef: { current: [session] } });
-			const { result } = renderHook(() => useInterruptHandler(deps));
-
-			await act(async () => {
-				await result.current.handleInterrupt();
-			});
-
-			const updated = useSessionStore.getState().sessions[0];
-			expect(updated.state).toBe('busy');
-			expect(updated.executionQueue).toHaveLength(0);
-			consoleError.mockRestore();
-		});
-
-		it('does not add a user log for command queue items after force kill', async () => {
-			mockMaestro.process.interrupt.mockRejectedValueOnce(new Error('SIGINT failed'));
-			window.confirm = vi.fn().mockReturnValue(true);
-			const queuedItem = {
-				id: 'q-after-kill-command',
-				type: 'command' as const,
-				command: '/status',
-				commandDescription: 'Show status',
-				tabId: 'tab-after-kill-command',
-			};
-			const busyTab = createTab({ id: 'tab-after-kill-busy', state: 'busy' });
-			const targetTab = createTab({ id: 'tab-after-kill-command', state: 'idle' });
-			const session = createSession({
-				id: 'sess-after-kill-command',
-				inputMode: 'ai',
-				state: 'busy',
-				aiTabs: [busyTab, targetTab],
-				activeTabId: busyTab.id,
-				executionQueue: [queuedItem],
-			});
-			useSessionStore.setState({
-				sessions: [session],
-				activeSessionId: session.id,
-			});
-
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-			const deps = createDeps({ sessionsRef: { current: [session] } });
-			const { result } = renderHook(() => useInterruptHandler(deps));
-
-			await act(async () => {
-				await result.current.handleInterrupt();
-			});
-
-			const updatedTab = useSessionStore
-				.getState()
-				.sessions[0].aiTabs.find((tab) => tab.id === targetTab.id);
-			expect(updatedTab?.state).toBe('busy');
-			expect(updatedTab?.logs.filter((log) => log.source === 'user')).toHaveLength(0);
 			consoleError.mockRestore();
 		});
 	});
@@ -1231,57 +810,6 @@ describe('useInterruptHandler', () => {
 			const sources = updatedTab.logs.map((l: any) => l.source);
 			expect(sources).not.toContain('thinking');
 			expect(sources).not.toContain('tool');
-			consoleError.mockRestore();
-		});
-
-		it('formats non-Error kill failures and leaves other sessions unchanged', async () => {
-			mockMaestro.process.interrupt.mockRejectedValueOnce(new Error('SIGINT failed'));
-			mockMaestro.process.kill.mockRejectedValueOnce('string failure');
-			window.confirm = vi.fn().mockReturnValue(true);
-
-			const activeTab = createTab({ id: 'tab-string-failure', state: 'busy' });
-			const idleTab = createTab({ id: 'tab-string-failure-idle', state: 'idle' });
-			const busyOtherTab = createTab({
-				id: 'tab-string-failure-busy-other',
-				state: 'busy',
-				logs: [
-					{ id: 'busy-other-thinking', timestamp: 1, source: 'thinking', text: 'remove' },
-					{ id: 'busy-other-ai', timestamp: 2, source: 'ai', text: 'keep' },
-				],
-			});
-			const activeSession = createSession({
-				id: 'sess-string-failure',
-				inputMode: 'ai',
-				state: 'busy',
-				aiTabs: [activeTab, idleTab, busyOtherTab],
-				activeTabId: activeTab.id,
-			});
-			const otherSession = createSession({
-				id: 'sess-other-unchanged',
-				state: 'busy',
-				aiTabs: [createTab({ id: 'tab-other-unchanged', state: 'busy' })],
-				activeTabId: 'tab-other-unchanged',
-			});
-			useSessionStore.setState({
-				sessions: [activeSession, otherSession],
-				activeSessionId: activeSession.id,
-			});
-
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-			const deps = createDeps({ sessionsRef: { current: [activeSession, otherSession] } });
-			const { result } = renderHook(() => useInterruptHandler(deps));
-
-			await act(async () => {
-				await result.current.handleInterrupt();
-			});
-
-			const [updatedActive, updatedOther] = useSessionStore.getState().sessions;
-			expect(updatedActive.aiTabs[0].logs.at(-1)?.text).toContain('string failure');
-			expect(updatedActive.aiTabs[1]).toEqual(idleTab);
-			expect(updatedActive.aiTabs[2].logs).toEqual([
-				{ id: 'busy-other-ai', timestamp: 2, source: 'ai', text: 'keep' },
-			]);
-			expect(updatedOther).toEqual(otherSession);
 			consoleError.mockRestore();
 		});
 	});

@@ -1,13 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import {
-	clearAllRendererPerfMetrics,
-	getAllRendererPerfMetrics,
-	getRendererPerfMetrics,
-	isRendererPerfEnabled,
-	logger,
-	type LogLevel,
-	setRendererPerfEnabled,
-} from '../../../renderer/utils/logger';
+import { logger, LogLevel } from '../../../renderer/utils/logger';
 
 describe('logger', () => {
 	let logSpy: ReturnType<typeof vi.fn>;
@@ -26,16 +18,11 @@ describe('logger', () => {
 				log: logSpy,
 			},
 		};
-
-		setRendererPerfEnabled(false);
-		clearAllRendererPerfMetrics();
-		logSpy.mockClear();
 	});
 
 	afterEach(() => {
 		// Restore original maestro
 		(window as any).maestro = originalMaestro;
-		vi.restoreAllMocks();
 	});
 
 	describe('LogLevel type', () => {
@@ -297,94 +284,6 @@ describe('logger', () => {
 			logger.debug('msg', 'ctx', undefined);
 
 			expect(logSpy).toHaveBeenCalledTimes(6);
-		});
-	});
-
-	describe('renderer performance metrics', () => {
-		it('caches performance metrics instances by context', () => {
-			const first = getRendererPerfMetrics('DocumentGraph');
-			const second = getRendererPerfMetrics('DocumentGraph');
-			const other = getRendererPerfMetrics('UsageDashboard');
-
-			expect(first).toBe(second);
-			expect(other).not.toBe(first);
-			expect(first.isEnabled()).toBe(false);
-			expect(other.isEnabled()).toBe(false);
-		});
-
-		it('toggles renderer performance metrics for existing instances', () => {
-			const metrics = getRendererPerfMetrics('DocumentGraph');
-
-			setRendererPerfEnabled(true);
-
-			expect(isRendererPerfEnabled()).toBe(true);
-			expect(metrics.isEnabled()).toBe(true);
-			expect(logSpy).toHaveBeenLastCalledWith(
-				'info',
-				'Renderer performance metrics enabled',
-				'[RendererPerf]',
-				undefined
-			);
-
-			setRendererPerfEnabled(false);
-
-			expect(isRendererPerfEnabled()).toBe(false);
-			expect(metrics.isEnabled()).toBe(false);
-			expect(logSpy).toHaveBeenLastCalledWith(
-				'info',
-				'Renderer performance metrics disabled',
-				'[RendererPerf]',
-				undefined
-			);
-		});
-
-		it('returns collected metrics sorted by timestamp and clears them', () => {
-			const dateNow = vi.spyOn(Date, 'now');
-			const alpha = getRendererPerfMetrics('Alpha');
-			const beta = getRendererPerfMetrics('Beta');
-			setRendererPerfEnabled(true);
-			logSpy.mockClear();
-
-			dateNow.mockReturnValueOnce(2000);
-			alpha.end(0, 'second', { order: 2 });
-			dateNow.mockReturnValueOnce(1000);
-			beta.end(0, 'first', { order: 1 });
-
-			const metrics = getAllRendererPerfMetrics();
-
-			expect(metrics.map((metric) => metric.name)).toEqual(['first', 'second']);
-			expect(metrics.map((metric) => metric.context)).toEqual(['Beta', 'Alpha']);
-			expect(logSpy).toHaveBeenCalledWith(
-				'debug',
-				expect.stringMatching(/^\[PERF\] second: .*ms {"order":2}$/),
-				'[Alpha]',
-				undefined
-			);
-			expect(logSpy).toHaveBeenCalledWith(
-				'debug',
-				expect.stringMatching(/^\[PERF\] first: .*ms {"order":1}$/),
-				'[Beta]',
-				undefined
-			);
-
-			clearAllRendererPerfMetrics();
-
-			expect(getAllRendererPerfMetrics()).toEqual([]);
-		});
-
-		it('does not collect metrics while disabled', () => {
-			const metrics = getRendererPerfMetrics('DisabledContext');
-
-			expect(isRendererPerfEnabled()).toBe(false);
-			expect(metrics.end(0, 'ignored')).toBeGreaterThanOrEqual(0);
-
-			expect(getAllRendererPerfMetrics()).toEqual([]);
-			expect(logSpy).not.toHaveBeenCalledWith(
-				'debug',
-				expect.stringContaining('[PERF] ignored'),
-				'[DisabledContext]',
-				undefined
-			);
 		});
 	});
 });

@@ -11,8 +11,10 @@ export interface ExecOptions {
 	timeout?: number;
 }
 
-// Maximum buffer size for command output (10MB)
-const EXEC_MAX_BUFFER = 10 * 1024 * 1024;
+// Maximum buffer size for command output (100MB).
+// Sized to comfortably hold large remote-fs reads (e.g., multi-MB session
+// transcripts streamed back over SSH via `cat`) without truncating mid-file.
+const EXEC_MAX_BUFFER = 100 * 1024 * 1024;
 
 export interface ExecResult {
 	stdout: string;
@@ -52,6 +54,7 @@ export function needsWindowsShell(command: string): boolean {
 	// Use regex to handle both Unix (/) and Windows (\) path separators
 	const knownExeCommands = new Set([
 		'git',
+		'gh',
 		'node',
 		'npm',
 		'npx',
@@ -148,6 +151,54 @@ export async function execFileNoThrow(
 				? `${error.stderr || ''}\nETIMEDOUT: process timed out after ${timeout}ms`
 				: error.stderr || error.message || '',
 			exitCode: isTimeout ? 'ETIMEDOUT' : (error.code ?? 1),
+		};
+	}
+}
+
+export interface ExecBufferResult {
+	/** Raw stdout bytes, binary-safe (not decoded to a string). */
+	stdout: Buffer;
+	stderr: string;
+	exitCode: number | string;
+}
+
+/**
+ * Binary-safe sibling of `execFileNoThrow`: captures stdout as a raw Buffer
+ * instead of a utf8 string. Use this for reading binary blobs (e.g. `git show`
+ * of an image at a ref) where decoding to a string would corrupt the data.
+ *
+ * Crucially this is async (promisified `execFile`), so it does NOT block the
+ * Electron main-process event loop the way `spawnSync` does - a large blob or a
+ * slow git object lookup no longer freezes the whole UI.
+ */
+export async function execFileBufferNoThrow(
+	command: string,
+	args: string[] = [],
+	cwd?: string,
+	maxBuffer: number = EXEC_MAX_BUFFER
+): Promise<ExecBufferResult> {
+	try {
+		const useShell = isWindows() && needsWindowsShell(command);
+
+		const { stdout, stderr } = await execFileAsync(command, args, {
+			cwd,
+			encoding: 'buffer',
+			maxBuffer,
+			shell: useShell,
+		});
+
+		return {
+			// With `encoding: 'buffer'` Node returns Buffers at runtime even though
+			// the promisified type signature still says string.
+			stdout: stdout as unknown as Buffer,
+			stderr: (stderr as unknown as Buffer)?.toString() ?? '',
+			exitCode: 0,
+		};
+	} catch (error: any) {
+		return {
+			stdout: Buffer.isBuffer(error.stdout) ? error.stdout : Buffer.alloc(0),
+			stderr: error.stderr?.toString() || error.message || '',
+			exitCode: error.code ?? 1,
 		};
 	}
 }

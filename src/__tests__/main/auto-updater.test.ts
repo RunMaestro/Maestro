@@ -1,377 +1,286 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+/**
+ * @file auto-updater.test.ts
+ * @description Tests for the electron-updater integration in src/main/auto-updater.ts.
+ *
+ * Focused on the `updates:install` IPC handler — specifically that it invokes
+ * the optional `onBeforeQuitAndInstall` hook before calling
+ * `autoUpdater.quitAndInstall()`. This hook is what lets the host bypass the
+ * busy-agent quit confirmation gate so the Windows installer (which spawns
+ * waiting on our PID) isn't orphaned by `before-quit` preventDefault.
+ */
 
-const mocks = vi.hoisted(() => {
-	const eventHandlers = new Map<string, (...args: any[]) => void>();
-	const ipcHandlers = new Map<string, (...args: any[]) => any>();
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-	const autoUpdater = {
-		autoDownload: true,
-		autoInstallOnAppQuit: false,
-		allowPrerelease: true,
-		on: vi.fn((event: string, handler: (...args: any[]) => void) => {
-			eventHandlers.set(event, handler);
-			return autoUpdater;
-		}),
-		checkForUpdates: vi.fn(),
-		downloadUpdate: vi.fn(),
-		quitAndInstall: vi.fn(),
-	};
-
-	return {
-		autoUpdater,
-		eventHandlers,
-		ipcHandlers,
-		ipcMain: {
-			handle: vi.fn((channel: string, handler: (...args: any[]) => any) => {
-				ipcHandlers.set(channel, handler);
-			}),
-		},
-		isWebContentsAvailable: vi.fn(() => true),
-		logger: {
-			info: vi.fn(),
-			error: vi.fn(),
-		},
-	};
+// Capture IPC handler registrations so we can invoke them from tests.
+const ipcHandlers = new Map<string, (...args: unknown[]) => unknown>();
+const mockHandle = vi.fn((channel: string, fn: (...args: unknown[]) => unknown) => {
+	ipcHandlers.set(channel, fn);
 });
 
 vi.mock('electron', () => ({
-	BrowserWindow: vi.fn(),
-	ipcMain: mocks.ipcMain,
+	BrowserWindow: class {},
+	ipcMain: {
+		handle: (channel: string, fn: (...args: unknown[]) => unknown) => mockHandle(channel, fn),
+	},
 }));
 
 vi.mock('../../main/utils/logger', () => ({
-	logger: mocks.logger,
+	logger: {
+		info: vi.fn(),
+		warn: vi.fn(),
+		error: vi.fn(),
+		debug: vi.fn(),
+	},
 }));
 
 vi.mock('../../main/utils/safe-send', () => ({
-	isWebContentsAvailable: mocks.isWebContentsAvailable,
+	isWebContentsAvailable: vi.fn(() => false),
 }));
 
-const updateInfo = {
-	version: '1.2.3',
-	releaseDate: '2026-05-14T00:00:00.000Z',
-	files: [{ url: 'Maestro-1.2.3.dmg' }],
-} as any;
+const mockCaptureException = vi.fn().mockResolvedValue(undefined);
+vi.mock('../../main/utils/sentry', () => ({
+	captureException: (...args: unknown[]) => mockCaptureException(...args),
+}));
 
-async function importAutoUpdaterModule() {
-	vi.resetModules();
-	const module = await import('../../main/auto-updater');
-	module._setAutoUpdaterLoaderForTesting(() => mocks.autoUpdater as any);
-	return module;
-}
+// electron-updater is loaded via dynamic `require` inside auto-updater.ts to
+// defer electron.app access — that bypasses vitest's module mocker. We use the
+// __setAutoUpdaterForTesting escape hatch instead.
+const mockAutoUpdater = {
+	autoDownload: false,
+	autoInstallOnAppQuit: false,
+	allowPrerelease: false,
+	on: vi.fn(),
+	checkForUpdates: vi.fn(),
+	downloadUpdate: vi.fn(),
+	quitAndInstall: vi.fn(),
+	setFeedURL: vi.fn(),
+};
 
-function createWindow() {
-	return {
-		webContents: {
-			send: vi.fn(),
-		},
-	} as any;
-}
-
-function getIpcHandler(channel: string) {
-	const handler = mocks.ipcHandlers.get(channel);
-	if (!handler) {
-		throw new Error(`Missing IPC handler: ${channel}`);
-	}
-	return handler;
-}
-
-describe('auto-updater', () => {
+describe('main/auto-updater', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
-		mocks.eventHandlers.clear();
-		mocks.ipcHandlers.clear();
-		mocks.autoUpdater.autoDownload = true;
-		mocks.autoUpdater.autoInstallOnAppQuit = false;
-		mocks.autoUpdater.allowPrerelease = true;
-		mocks.autoUpdater.checkForUpdates.mockResolvedValue(undefined);
-		mocks.autoUpdater.downloadUpdate.mockResolvedValue(undefined);
-		mocks.isWebContentsAvailable.mockReturnValue(true);
+		vi.resetModules();
+		ipcHandlers.clear();
+		mockAutoUpdater.quitAndInstall.mockReset();
 	});
 
-	it('initializes electron-updater defaults and registers events and IPC handlers once', async () => {
-		const { initAutoUpdater } = await importAutoUpdaterModule();
-		const window = createWindow();
-
-		initAutoUpdater(window);
-		initAutoUpdater(window);
-
-		expect(mocks.autoUpdater.autoDownload).toBe(false);
-		expect(mocks.autoUpdater.autoInstallOnAppQuit).toBe(true);
-		expect(mocks.autoUpdater.allowPrerelease).toBe(false);
-		expect(mocks.logger.info).toHaveBeenCalledWith('electron-updater initialized', 'AutoUpdater', {
-			autoDownload: false,
-			autoInstallOnAppQuit: true,
-			allowPrerelease: false,
-		});
-		expect([...mocks.eventHandlers.keys()]).toEqual([
-			'update-available',
-			'update-not-available',
-			'download-progress',
-			'update-downloaded',
-			'error',
-		]);
-		expect([...mocks.ipcHandlers.keys()]).toEqual([
-			'updates:checkAutoUpdater',
-			'updates:download',
-			'updates:install',
-			'updates:getStatus',
-		]);
-		expect(mocks.ipcMain.handle).toHaveBeenCalledTimes(4);
-		expect(mocks.autoUpdater.on).toHaveBeenCalledTimes(10);
+	afterEach(() => {
+		vi.restoreAllMocks();
 	});
 
-	it('sends event-driven status changes to the renderer', async () => {
-		const { initAutoUpdater } = await importAutoUpdaterModule();
-		const window = createWindow();
-		const progress = { percent: 42, bytesPerSecond: 10, total: 100, transferred: 42, delta: 5 };
-		const error = new Error('network unavailable');
+	describe('updates:install handler', () => {
+		it('invokes onBeforeQuitAndInstall before quitAndInstall', async () => {
+			const { initAutoUpdater, __setAutoUpdaterForTesting } =
+				await import('../../main/auto-updater');
+			__setAutoUpdaterForTesting(
+				mockAutoUpdater as unknown as Parameters<typeof __setAutoUpdaterForTesting>[0]
+			);
+			const callOrder: string[] = [];
+			const onBeforeQuitAndInstall = vi.fn(() => {
+				callOrder.push('onBeforeQuitAndInstall');
+			});
+			mockAutoUpdater.quitAndInstall.mockImplementation(() => {
+				callOrder.push('quitAndInstall');
+			});
 
-		initAutoUpdater(window);
+			initAutoUpdater({} as Parameters<typeof initAutoUpdater>[0], {
+				onBeforeQuitAndInstall,
+			});
 
-		mocks.eventHandlers.get('update-available')?.(updateInfo);
-		expect(window.webContents.send).toHaveBeenLastCalledWith('updates:status', {
-			status: 'available',
-			info: updateInfo,
+			const installHandler = ipcHandlers.get('updates:install');
+			expect(installHandler).toBeTruthy();
+
+			await installHandler!();
+
+			expect(onBeforeQuitAndInstall).toHaveBeenCalledTimes(1);
+			expect(mockAutoUpdater.quitAndInstall).toHaveBeenCalledWith(false, true);
+			expect(callOrder).toEqual(['onBeforeQuitAndInstall', 'quitAndInstall']);
 		});
 
-		mocks.eventHandlers.get('update-not-available')?.(updateInfo);
-		expect(window.webContents.send).toHaveBeenLastCalledWith('updates:status', {
-			status: 'not-available',
-			info: updateInfo,
+		it('still calls quitAndInstall when no onBeforeQuitAndInstall is provided', async () => {
+			const { initAutoUpdater, __setAutoUpdaterForTesting } =
+				await import('../../main/auto-updater');
+			__setAutoUpdaterForTesting(
+				mockAutoUpdater as unknown as Parameters<typeof __setAutoUpdaterForTesting>[0]
+			);
+
+			initAutoUpdater({} as Parameters<typeof initAutoUpdater>[0]);
+
+			const installHandler = ipcHandlers.get('updates:install');
+			expect(installHandler).toBeTruthy();
+
+			await installHandler!();
+
+			expect(mockAutoUpdater.quitAndInstall).toHaveBeenCalledWith(false, true);
 		});
 
-		mocks.eventHandlers.get('download-progress')?.(progress);
-		expect(window.webContents.send).toHaveBeenLastCalledWith('updates:status', {
-			status: 'downloading',
-			info: updateInfo,
-			progress,
+		it('still calls quitAndInstall if onBeforeQuitAndInstall throws and reports to Sentry', async () => {
+			const { initAutoUpdater, __setAutoUpdaterForTesting } =
+				await import('../../main/auto-updater');
+			__setAutoUpdaterForTesting(
+				mockAutoUpdater as unknown as Parameters<typeof __setAutoUpdaterForTesting>[0]
+			);
+			const hookError = new Error('hook blew up');
+			const onBeforeQuitAndInstall = vi.fn(() => {
+				throw hookError;
+			});
+
+			initAutoUpdater({} as Parameters<typeof initAutoUpdater>[0], {
+				onBeforeQuitAndInstall,
+			});
+
+			const installHandler = ipcHandlers.get('updates:install');
+			expect(installHandler).toBeTruthy();
+
+			expect(() => installHandler!()).not.toThrow();
+
+			expect(onBeforeQuitAndInstall).toHaveBeenCalledTimes(1);
+			expect(mockAutoUpdater.quitAndInstall).toHaveBeenCalledWith(false, true);
+			expect(mockCaptureException).toHaveBeenCalledWith(
+				hookError,
+				expect.objectContaining({
+					module: 'AutoUpdater',
+					hook: 'onBeforeQuitAndInstall',
+					operation: 'updates:install',
+				})
+			);
 		});
 
-		mocks.eventHandlers.get('update-downloaded')?.(updateInfo);
-		expect(window.webContents.send).toHaveBeenLastCalledWith('updates:status', {
-			status: 'downloaded',
-			info: updateInfo,
-		});
+		it('wraps non-Error throws from onBeforeQuitAndInstall before reporting to Sentry', async () => {
+			const { initAutoUpdater, __setAutoUpdaterForTesting } =
+				await import('../../main/auto-updater');
+			__setAutoUpdaterForTesting(
+				mockAutoUpdater as unknown as Parameters<typeof __setAutoUpdaterForTesting>[0]
+			);
+			const onBeforeQuitAndInstall = vi.fn(() => {
+				// eslint-disable-next-line @typescript-eslint/no-throw-literal
+				throw 'string-thrown';
+			});
 
-		mocks.eventHandlers.get('error')?.(error);
-		expect(window.webContents.send).toHaveBeenLastCalledWith('updates:status', {
-			status: 'error',
-			error: 'network unavailable',
+			initAutoUpdater({} as Parameters<typeof initAutoUpdater>[0], {
+				onBeforeQuitAndInstall,
+			});
+
+			const installHandler = ipcHandlers.get('updates:install');
+			installHandler!();
+
+			expect(mockCaptureException).toHaveBeenCalledWith(
+				expect.objectContaining({ message: 'string-thrown' }),
+				expect.any(Object)
+			);
+			expect(mockAutoUpdater.quitAndInstall).toHaveBeenCalledWith(false, true);
 		});
-		expect(mocks.logger.error).toHaveBeenCalledWith(
-			'Auto-update error: network unavailable',
-			'AutoUpdater',
-			{ stack: error.stack }
-		);
 	});
 
-	it('does not send status when the window web contents is unavailable', async () => {
-		const { initAutoUpdater } = await importAutoUpdaterModule();
-		const window = createWindow();
+	describe('updates:download handler - transient retry + error sanitization', () => {
+		// The raw blob electron-updater throws on a GitHub 504: an HTTP status,
+		// an HTML error page, and a dump of response headers + cookies.
+		const raw504 =
+			'504 "method: GET url: https://github.com/RunMaestro/Maestro/releases.atom\n\n' +
+			' Data:\n <html><body><h1>504 Gateway Time-out</h1>\nThe server didn\'t respond in time.\n</body></html>\n\n " ' +
+			'Headers: { "set-cookie": [ "_gh_sess=secret-cookie-value", "logged_in=no" ] }';
 
-		initAutoUpdater(window);
-		mocks.isWebContentsAvailable.mockReturnValue(false);
-
-		mocks.eventHandlers.get('update-available')?.(updateInfo);
-
-		expect(window.webContents.send).not.toHaveBeenCalled();
-	});
-
-	it('handles update-check IPC success, empty results, and failures', async () => {
-		const { initAutoUpdater } = await importAutoUpdaterModule();
-		const window = createWindow();
-		initAutoUpdater(window);
-		const checkHandler = getIpcHandler('updates:checkAutoUpdater');
-
-		mocks.autoUpdater.checkForUpdates.mockResolvedValueOnce({ updateInfo });
-		await expect(checkHandler()).resolves.toEqual({ success: true, updateInfo });
-		expect(window.webContents.send).toHaveBeenCalledWith('updates:status', { status: 'checking' });
-		expect(mocks.logger.info).toHaveBeenCalledWith(
-			'electron-updater check result: v1.2.3 available',
-			'AutoUpdater',
-			{ version: '1.2.3', releaseDate: '2026-05-14T00:00:00.000Z' }
-		);
-
-		mocks.autoUpdater.checkForUpdates.mockResolvedValueOnce(undefined);
-		await expect(checkHandler()).resolves.toEqual({ success: true, updateInfo: undefined });
-		expect(mocks.logger.info).toHaveBeenCalledWith(
-			'electron-updater check result: no update',
-			'AutoUpdater',
-			undefined
-		);
-
-		const failure = new Error('GitHub unavailable');
-		mocks.autoUpdater.checkForUpdates.mockRejectedValueOnce(failure);
-		await expect(checkHandler()).resolves.toEqual({ success: false, error: 'GitHub unavailable' });
-		expect(window.webContents.send).toHaveBeenLastCalledWith('updates:status', {
-			status: 'error',
-			error: 'GitHub unavailable',
-		});
-		expect(mocks.logger.error).toHaveBeenCalledWith(
-			'electron-updater check failed: GitHub unavailable',
-			'AutoUpdater',
-			{ stack: failure.stack }
-		);
-
-		mocks.autoUpdater.checkForUpdates.mockRejectedValueOnce('offline');
-		await expect(checkHandler()).resolves.toEqual({ success: false, error: 'Unknown error' });
-		expect(mocks.logger.error).toHaveBeenCalledWith(
-			'electron-updater check failed: Unknown error',
-			'AutoUpdater',
-			{ stack: undefined }
-		);
-	});
-
-	it('handles download IPC success, unavailable updates, and failures', async () => {
-		const { initAutoUpdater } = await importAutoUpdaterModule();
-		const window = createWindow();
-		initAutoUpdater(window);
-		const downloadHandler = getIpcHandler('updates:download');
-
-		mocks.autoUpdater.checkForUpdates.mockResolvedValueOnce({ updateInfo });
-		await expect(downloadHandler()).resolves.toEqual({ success: true });
-		expect(mocks.autoUpdater.downloadUpdate).toHaveBeenCalledTimes(1);
-		expect(window.webContents.send).toHaveBeenCalledWith('updates:status', {
-			status: 'downloading',
-			progress: { percent: 0, bytesPerSecond: 0, total: 0, transferred: 0, delta: 0 },
-		});
-		expect(mocks.logger.info).toHaveBeenCalledWith('Starting download of v1.2.3', 'AutoUpdater', {
-			version: '1.2.3',
-			releaseDate: '2026-05-14T00:00:00.000Z',
-			files: ['Maestro-1.2.3.dmg'],
+		beforeEach(() => {
+			vi.useFakeTimers();
+			mockAutoUpdater.checkForUpdates.mockReset();
+			mockAutoUpdater.downloadUpdate.mockReset();
+			mockAutoUpdater.setFeedURL.mockReset();
 		});
 
-		mocks.autoUpdater.checkForUpdates.mockResolvedValueOnce(null);
-		await expect(downloadHandler()).resolves.toEqual({
-			success: false,
-			error: 'No update available to download',
-		});
-		expect(window.webContents.send).toHaveBeenLastCalledWith('updates:status', {
-			status: 'error',
-			error: 'No update available to download',
+		afterEach(() => {
+			vi.useRealTimers();
 		});
 
-		mocks.autoUpdater.checkForUpdates.mockResolvedValueOnce({});
-		await expect(downloadHandler()).resolves.toEqual({
-			success: false,
-			error: 'No update available to download',
-		});
-
-		const failure = new Error('disk full');
-		mocks.autoUpdater.checkForUpdates.mockResolvedValueOnce({
-			updateInfo: { ...updateInfo, files: undefined },
-		});
-		mocks.autoUpdater.downloadUpdate.mockRejectedValueOnce(failure);
-		await expect(downloadHandler()).resolves.toEqual({ success: false, error: 'disk full' });
-		expect(window.webContents.send).toHaveBeenLastCalledWith('updates:status', {
-			status: 'error',
-			error: 'disk full',
-		});
-		expect(mocks.logger.error).toHaveBeenCalledWith('Download failed: disk full', 'AutoUpdater', {
-			stack: failure.stack,
-		});
-
-		mocks.autoUpdater.checkForUpdates.mockRejectedValueOnce('cancelled');
-		await expect(downloadHandler()).resolves.toEqual({ success: false, error: 'Unknown error' });
-		expect(mocks.logger.error).toHaveBeenCalledWith(
-			'Download failed: Unknown error',
-			'AutoUpdater',
-			{
-				stack: undefined,
-			}
-		);
-	});
-
-	it('installs downloaded updates and exposes current status', async () => {
-		const { initAutoUpdater } = await importAutoUpdaterModule();
-		initAutoUpdater(createWindow());
-
-		mocks.eventHandlers.get('update-downloaded')?.(updateInfo);
-
-		expect(getIpcHandler('updates:getStatus')()).toEqual({
-			status: 'downloaded',
-			info: updateInfo,
-		});
-		expect(getIpcHandler('updates:install')()).toBeUndefined();
-		expect(mocks.autoUpdater.quitAndInstall).toHaveBeenCalledWith(false, true);
-	});
-
-	it('supports manual checks and prerelease toggling', async () => {
-		const { checkForUpdatesManual, setAllowPrerelease } = await importAutoUpdaterModule();
-
-		mocks.autoUpdater.checkForUpdates.mockResolvedValueOnce({ updateInfo });
-		await expect(checkForUpdatesManual()).resolves.toBe(updateInfo);
-		expect(mocks.logger.info).toHaveBeenCalledWith(
-			'Manual check found update: v1.2.3',
-			'AutoUpdater'
-		);
-
-		mocks.autoUpdater.checkForUpdates.mockResolvedValueOnce({});
-		await expect(checkForUpdatesManual()).resolves.toBeNull();
-		expect(mocks.logger.info).toHaveBeenCalledWith(
-			'Manual check: no update available',
-			'AutoUpdater'
-		);
-
-		mocks.autoUpdater.checkForUpdates.mockRejectedValueOnce('boom');
-		await expect(checkForUpdatesManual()).resolves.toBeNull();
-		expect(mocks.logger.error).toHaveBeenCalledWith(
-			'Manual update check failed: Unknown error',
-			'AutoUpdater',
-			{
-				stack: undefined,
-			}
-		);
-
-		const failure = new Error('manual failed');
-		mocks.autoUpdater.checkForUpdates.mockRejectedValueOnce(failure);
-		await expect(checkForUpdatesManual()).resolves.toBeNull();
-		expect(mocks.logger.error).toHaveBeenCalledWith(
-			'Manual update check failed: manual failed',
-			'AutoUpdater',
-			{ stack: failure.stack }
-		);
-
-		setAllowPrerelease(true);
-		expect(mocks.autoUpdater.allowPrerelease).toBe(true);
-		expect(mocks.logger.info).toHaveBeenCalledWith(
-			'Auto-updater prerelease mode: enabled',
-			'AutoUpdater'
-		);
-
-		setAllowPrerelease(false);
-		expect(mocks.autoUpdater.allowPrerelease).toBe(false);
-		expect(mocks.logger.info).toHaveBeenCalledWith(
-			'Auto-updater prerelease mode: disabled',
-			'AutoUpdater'
-		);
-	});
-
-	it('loads electron-updater through the default lazy loader', async () => {
-		const nodeModule = await import('node:module');
-		const moduleLoader = nodeModule.default as any;
-		const originalLoad = moduleLoader._load;
-		moduleLoader._load = vi.fn(function (
-			this: unknown,
-			request: string,
-			parent: unknown,
-			isMain: boolean
-		) {
-			if (request === 'electron-updater') {
-				return { autoUpdater: mocks.autoUpdater };
-			}
-			return originalLoad.call(this, request, parent, isMain);
-		});
-
-		try {
-			vi.resetModules();
-			mocks.autoUpdater.checkForUpdates.mockResolvedValueOnce({ updateInfo });
-			const { checkForUpdatesManual } = await import('../../main/auto-updater');
-
-			await expect(checkForUpdatesManual()).resolves.toBe(updateInfo);
-		} finally {
-			moduleLoader._load = originalLoad;
+		async function getDownloadHandler() {
+			const { initAutoUpdater, __setAutoUpdaterForTesting } =
+				await import('../../main/auto-updater');
+			__setAutoUpdaterForTesting(
+				mockAutoUpdater as unknown as Parameters<typeof __setAutoUpdaterForTesting>[0]
+			);
+			initAutoUpdater({} as Parameters<typeof initAutoUpdater>[0]);
+			const handler = ipcHandlers.get('updates:download');
+			expect(handler).toBeTruthy();
+			return handler!;
 		}
+
+		it('retries a transient 504 on the pre-download check and then succeeds', async () => {
+			mockAutoUpdater.checkForUpdates
+				.mockRejectedValueOnce(new Error(raw504))
+				.mockResolvedValueOnce({ updateInfo: { version: '1.2.3' } });
+			mockAutoUpdater.downloadUpdate.mockResolvedValue(undefined);
+
+			const handler = await getDownloadHandler();
+			const resultPromise = handler();
+			await vi.runAllTimersAsync();
+			const result = await resultPromise;
+
+			expect(result).toEqual({ success: true });
+			expect(mockAutoUpdater.checkForUpdates).toHaveBeenCalledTimes(2);
+			expect(mockAutoUpdater.downloadUpdate).toHaveBeenCalledTimes(1);
+		});
+
+		it('gives up after max attempts and returns a friendly, sanitized error', async () => {
+			mockAutoUpdater.checkForUpdates.mockRejectedValue(new Error(raw504));
+
+			const handler = await getDownloadHandler();
+			const resultPromise = handler();
+			await vi.runAllTimersAsync();
+			const result = (await resultPromise) as { success: boolean; error: string };
+
+			expect(result.success).toBe(false);
+			// Three attempts: 1 initial + 2 retries.
+			expect(mockAutoUpdater.checkForUpdates).toHaveBeenCalledTimes(3);
+			// Friendly message, not the raw HTML/header/cookie blob.
+			expect(result.error).toContain('GitHub is temporarily unavailable');
+			expect(result.error).toContain('HTTP 504');
+			expect(result.error).not.toContain('<html>');
+			expect(result.error).not.toContain('set-cookie');
+			expect(result.error).not.toContain('_gh_sess');
+		});
+
+		it('points electron-updater at the CDN release assets when given a target tag', async () => {
+			mockAutoUpdater.checkForUpdates.mockResolvedValue({ updateInfo: { version: '1.2.3' } });
+			mockAutoUpdater.downloadUpdate.mockResolvedValue(undefined);
+
+			const handler = await getDownloadHandler();
+			const resultPromise = handler({}, 'v1.2.3');
+			await vi.runAllTimersAsync();
+			const result = await resultPromise;
+
+			expect(result).toEqual({ success: true });
+			// Generic provider pointed at the release's CDN-served asset directory,
+			// bypassing releases.atom entirely.
+			expect(mockAutoUpdater.setFeedURL).toHaveBeenCalledWith({
+				provider: 'generic',
+				url: 'https://github.com/RunMaestro/Maestro/releases/download/v1.2.3/',
+			});
+		});
+
+		it('falls back to the default GitHub provider when no tag is supplied', async () => {
+			mockAutoUpdater.checkForUpdates.mockResolvedValue({ updateInfo: { version: '1.2.3' } });
+			mockAutoUpdater.downloadUpdate.mockResolvedValue(undefined);
+
+			const handler = await getDownloadHandler();
+			const resultPromise = handler();
+			await vi.runAllTimersAsync();
+			await resultPromise;
+
+			expect(mockAutoUpdater.setFeedURL).not.toHaveBeenCalled();
+		});
+
+		it('does not retry a non-transient error', async () => {
+			mockAutoUpdater.checkForUpdates.mockRejectedValue(
+				new Error('ENOSPC: no space left on device')
+			);
+
+			const handler = await getDownloadHandler();
+			const resultPromise = handler();
+			await vi.runAllTimersAsync();
+			const result = (await resultPromise) as { success: boolean; error: string };
+
+			expect(result.success).toBe(false);
+			expect(mockAutoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
+			expect(result.error).toContain('ENOSPC');
+		});
 	});
 });

@@ -17,6 +17,7 @@ import type { SessionInfo } from '../../../shared/types';
 vi.mock('../../../cli/services/storage', () => ({
 	resolveAgentId: vi.fn(),
 	getSessionById: vi.fn(),
+	readSessions: vi.fn().mockReturnValue([]),
 }));
 
 // Mock agent-sessions
@@ -25,7 +26,7 @@ vi.mock('../../../cli/services/agent-sessions', () => ({
 }));
 
 import { listSessions } from '../../../cli/commands/list-sessions';
-import { resolveAgentId, getSessionById } from '../../../cli/services/storage';
+import { resolveAgentId, getSessionById, readSessions } from '../../../cli/services/storage';
 import { listClaudeSessions } from '../../../cli/services/agent-sessions';
 
 describe('list sessions command', () => {
@@ -205,61 +206,49 @@ describe('list sessions command', () => {
 		expect(processExitSpy).toHaveBeenCalledWith(1);
 	});
 
-	it('should stop with JSON error when resolved agent is missing from storage', () => {
-		vi.mocked(resolveAgentId).mockReturnValue('agent-missing-123');
-		vi.mocked(getSessionById).mockReturnValue(undefined);
-
-		listSessions('agent-missing', { json: true });
-
-		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
-		expect(output).toEqual({
-			success: false,
-			error: 'Agent not found: agent-missing',
-			code: 'AGENT_NOT_FOUND',
-		});
-		expect(consoleSpy).toHaveBeenCalledTimes(1);
-		expect(consoleErrorSpy).not.toHaveBeenCalled();
-		expect(listClaudeSessions).not.toHaveBeenCalled();
-		expect(processExitSpy).toHaveBeenCalledWith(1);
-	});
-
-	it('should stop with formatted error when resolved agent is missing from storage', () => {
-		vi.mocked(resolveAgentId).mockReturnValue('agent-missing-123');
-		vi.mocked(getSessionById).mockReturnValue(undefined);
-
-		listSessions('agent-missing', {});
-
-		expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
-		expect(consoleErrorSpy.mock.calls[0][0]).toContain('Agent not found: agent-missing');
-		expect(consoleSpy).not.toHaveBeenCalled();
-		expect(listClaudeSessions).not.toHaveBeenCalled();
-		expect(processExitSpy).toHaveBeenCalledWith(1);
-	});
-
-	it('should exit with error for unsupported agent type', () => {
+	it('should list empty sessions for non-Claude agent type', () => {
 		vi.mocked(resolveAgentId).mockReturnValue('agent-term-1');
 		vi.mocked(getSessionById).mockReturnValue(
 			mockAgent({ id: 'agent-term-1', toolType: 'terminal' })
 		);
+		vi.mocked(readSessions).mockReturnValue([
+			{
+				id: 'agent-term-1',
+				name: 'Terminal',
+				toolType: 'terminal' as any,
+				cwd: '/test',
+				projectRoot: '/test',
+			},
+		]);
 
 		listSessions('agent-term', {});
 
-		expect(consoleErrorSpy).toHaveBeenCalled();
-		expect(processExitSpy).toHaveBeenCalledWith(1);
+		// Non-Claude agents use tab-based listing; no tabs = empty output
+		expect(consoleSpy).toHaveBeenCalled();
+		expect(processExitSpy).not.toHaveBeenCalled();
 	});
 
-	it('should exit with error for unsupported agent type in JSON mode', () => {
-		vi.mocked(resolveAgentId).mockReturnValue('agent-term-1');
+	it('should list empty sessions for non-Claude agent types in JSON mode', () => {
+		vi.mocked(resolveAgentId).mockReturnValue('agent-codex-1');
 		vi.mocked(getSessionById).mockReturnValue(
-			mockAgent({ id: 'agent-term-1', toolType: 'terminal' })
+			mockAgent({ id: 'agent-codex-1', toolType: 'codex' })
 		);
+		vi.mocked(readSessions).mockReturnValue([
+			{
+				id: 'agent-codex-1',
+				name: 'Test Codex',
+				toolType: 'codex' as any,
+				cwd: '/test',
+				projectRoot: '/test',
+			},
+		]);
 
-		listSessions('agent-term', { json: true });
+		listSessions('agent-codex', { json: true });
 
 		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
-		expect(output.success).toBe(false);
-		expect(output.code).toBe('AGENT_UNSUPPORTED');
-		expect(processExitSpy).toHaveBeenCalledWith(1);
+		expect(output.success).toBe(true);
+		expect(output.sessions).toEqual([]);
+		expect(output.totalCount).toBe(0);
 	});
 
 	it('should exit with error for invalid limit', () => {
@@ -269,24 +258,6 @@ describe('list sessions command', () => {
 		listSessions('agent-abc', { limit: 'abc' });
 
 		expect(consoleErrorSpy).toHaveBeenCalled();
-		expect(processExitSpy).toHaveBeenCalledWith(1);
-	});
-
-	it('should output JSON and stop for invalid limit', () => {
-		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
-		vi.mocked(getSessionById).mockReturnValue(mockAgent());
-
-		listSessions('agent-abc', { limit: '0', json: true });
-
-		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
-		expect(output).toEqual({
-			success: false,
-			error: 'Invalid limit value. Must be a positive integer.',
-			code: 'INVALID_OPTION',
-		});
-		expect(consoleSpy).toHaveBeenCalledTimes(1);
-		expect(consoleErrorSpy).not.toHaveBeenCalled();
-		expect(listClaudeSessions).not.toHaveBeenCalled();
 		expect(processExitSpy).toHaveBeenCalledWith(1);
 	});
 
@@ -303,61 +274,5 @@ describe('list sessions command', () => {
 
 		expect(consoleSpy).toHaveBeenCalledTimes(1);
 		expect(processExitSpy).not.toHaveBeenCalled();
-	});
-
-	it('should output JSON and stop for invalid skip', () => {
-		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
-		vi.mocked(getSessionById).mockReturnValue(mockAgent());
-
-		listSessions('agent-abc', { skip: '-1', json: true });
-
-		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
-		expect(output).toEqual({
-			success: false,
-			error: 'Invalid skip value. Must be a non-negative integer.',
-			code: 'INVALID_OPTION',
-		});
-		expect(consoleSpy).toHaveBeenCalledTimes(1);
-		expect(consoleErrorSpy).not.toHaveBeenCalled();
-		expect(listClaudeSessions).not.toHaveBeenCalled();
-		expect(processExitSpy).toHaveBeenCalledWith(1);
-	});
-
-	it('should output JSON when an unexpected error is thrown', () => {
-		vi.mocked(resolveAgentId).mockImplementation(() => {
-			throw new Error('storage read failed');
-		});
-
-		listSessions('agent-abc', { json: true });
-
-		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
-		expect(output).toEqual({
-			success: false,
-			error: 'storage read failed',
-			code: 'UNKNOWN_ERROR',
-		});
-		expect(consoleErrorSpy).not.toHaveBeenCalled();
-		expect(getSessionById).not.toHaveBeenCalled();
-		expect(listClaudeSessions).not.toHaveBeenCalled();
-		expect(processExitSpy).toHaveBeenCalledWith(1);
-	});
-
-	it('should output unknown JSON error when an unexpected non-Error value is thrown', () => {
-		vi.mocked(resolveAgentId).mockImplementation(() => {
-			throw 'storage read failed';
-		});
-
-		listSessions('agent-abc', { json: true });
-
-		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
-		expect(output).toEqual({
-			success: false,
-			error: 'Unknown error',
-			code: 'UNKNOWN_ERROR',
-		});
-		expect(consoleErrorSpy).not.toHaveBeenCalled();
-		expect(getSessionById).not.toHaveBeenCalled();
-		expect(listClaudeSessions).not.toHaveBeenCalled();
-		expect(processExitSpy).toHaveBeenCalledWith(1);
 	});
 });

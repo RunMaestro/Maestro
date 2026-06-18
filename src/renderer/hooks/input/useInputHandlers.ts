@@ -22,6 +22,7 @@ import { useUIStore } from '../../stores/uiStore';
 import { useFileExplorerStore } from '../../stores/fileExplorerStore';
 import { useInputContext } from '../../contexts/InputContext';
 import { getActiveTab } from '../../utils/tabHelpers';
+import { setLiveDraft } from '../../utils/liveDraftStore';
 import { useDebouncedValue } from '../utils';
 import { useInputSync } from './useInputSync';
 import { useTabCompletion } from './useTabCompletion';
@@ -29,6 +30,33 @@ import type { TabCompletionSuggestion } from './useTabCompletion';
 import { useAtMentionCompletion, type AtMentionSuggestion } from './useAtMentionCompletion';
 import { useInputProcessing } from './useInputProcessing';
 import { useInputKeyDown } from './useInputKeyDown';
+import { IMAGE_EXTENSIONS } from '../../utils/fileExplorerIcons/shared';
+import {
+	FILE_TREE_SINGLE_MIME,
+	FILE_TREE_MULTI_MIME,
+} from '../../components/FileExplorerPanel/types';
+
+function isImagePath(path: string): boolean {
+	const ext = path.toLowerCase().split('.').pop();
+	return ext ? IMAGE_EXTENSIONS.has(ext) : false;
+}
+
+/**
+ * Convert an absolute filesystem path into the form used inside an `@` mention:
+ * if it sits inside `projectRoot`, return the relative path; otherwise return
+ * the absolute path unchanged. Forward-slash normalised so Windows drops still
+ * produce a clean mention.
+ */
+function toMentionPath(absolutePath: string, projectRoot?: string): string {
+	const norm = absolutePath.replace(/\\/g, '/');
+	if (!projectRoot) return norm;
+	const root = projectRoot.replace(/\\/g, '/').replace(/\/+$/, '');
+	if (norm === root) return '.';
+	if (norm.startsWith(root + '/')) {
+		return norm.slice(root.length + 1);
+	}
+	return norm;
+}
 
 // ============================================================================
 // Dependencies interface
@@ -44,7 +72,7 @@ export interface UseInputHandlersDeps {
 	/** Drag counter ref for image drop handling */
 	dragCounterRef: React.MutableRefObject<number>;
 	/** Set dragging image state */
-	setIsDraggingImage: (value: boolean) => void;
+	setIsDraggingFile: (value: boolean) => void;
 
 	// From useBatchHandlers
 	/** Get batch state for a specific session */
@@ -100,9 +128,11 @@ export interface UseInputHandlersReturn {
 	/** Set staged images for the current message */
 	setStagedImages: (images: string[] | ((prev: string[]) => string[])) => void;
 	/** Process and send the current input */
-	processInput: (text?: string) => void;
+	processInput: (text?: string, options?: { forceParallel?: boolean; images?: string[] }) => void;
 	/** Ref to latest processInput for use in memoized callbacks */
-	processInputRef: React.MutableRefObject<(text?: string) => void>;
+	processInputRef: React.MutableRefObject<
+		(text?: string, options?: { forceParallel?: boolean; images?: string[] }) => void
+	>;
 	/** Keyboard event handler for the input textarea */
 	handleInputKeyDown: (e: React.KeyboardEvent) => void;
 	/** Handler for input blur (persists input to session state) */
@@ -137,7 +167,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		terminalOutputRef,
 		fileTreeKeyboardNavRef,
 		dragCounterRef,
-		setIsDraggingImage,
+		setIsDraggingFile,
 		getBatchState,
 		activeBatchRunState,
 		processQueuedItemRef,
@@ -200,11 +230,24 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	// PERF: Refs to access current input values without triggering re-renders
 	const terminalInputValueRef = useRef(terminalInputValue);
 	const aiInputValueLocalRef = useRef(aiInputValueLocal);
+	// Ref-mirror of activeTab.id so the live-draft sync below isn't re-triggered
+	// on tab-switch alone (which would briefly write the OLD tab's text into the
+	// NEW tab's slot before setAiInputValueLocal lands).
+	const activeTabIdRef = useRef<string | undefined>(activeTab?.id);
+	useEffect(() => {
+		activeTabIdRef.current = activeTab?.id;
+	}, [activeTab?.id]);
 	useEffect(() => {
 		terminalInputValueRef.current = terminalInputValue;
 	}, [terminalInputValue]);
 	useEffect(() => {
 		aiInputValueLocalRef.current = aiInputValueLocal;
+		// Mirror the live value into liveDraftStore so hasDraft() reflects what's
+		// on screen for the active tab (tab.inputValue only updates on blur/submit).
+		const currentTabId = activeTabIdRef.current;
+		if (currentTabId) {
+			setLiveDraft(currentTabId, aiInputValueLocal);
+		}
 	}, [aiInputValueLocal]);
 
 	// Derived input value
@@ -284,14 +327,16 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			const prevTabId = prevActiveTabIdRef.current;
 
 			// Save current AI input to the PREVIOUS tab
-			setSessions((prev) =>
-				prev.map((s) => ({
-					...s,
-					aiTabs: s.aiTabs.map((tab) =>
-						tab.id === prevTabId ? { ...tab, inputValue: aiInputValueLocal } : tab
-					),
-				}))
-			);
+			if (prevTabId) {
+				setSessions((prev) =>
+					prev.map((s) => ({
+						...s,
+						aiTabs: s.aiTabs.map((tab) =>
+							tab.id === prevTabId ? { ...tab, inputValue: aiInputValueLocal } : tab
+						),
+					}))
+				);
+			}
 
 			// Load new tab's persisted input value
 			setAiInputValueLocal(activeTab.inputValue ?? '');
@@ -319,11 +364,13 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			const prevSessionId = prevActiveSessionIdRef.current;
 
 			// Save terminal input to the previous session (including empty string to persist cleared input)
-			setSessions((prev) =>
-				prev.map((s) =>
-					s.id === prevSessionId ? { ...s, terminalDraftInput: terminalInputValue } : s
-				)
-			);
+			if (prevSessionId) {
+				setSessions((prev) =>
+					prev.map((s) =>
+						s.id === prevSessionId ? { ...s, terminalDraftInput: terminalInputValue } : s
+					)
+				);
+			}
 
 			// Load terminal input from the new session
 			setTerminalInputValue(activeSession.terminalDraftInput ?? '');
@@ -370,8 +417,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			if (!suggestion || suggestion.type === 'history' || flatFileList.length === 0) return;
 
 			const targetPath = suggestion.value.replace(/\/$/, '');
-			const pathSegments = targetPath.split(/\s+/);
-			const pathOnly = pathSegments[pathSegments.length - 1];
+			const pathOnly = targetPath.split(/\s+/).pop() || targetPath;
 			const matchIndex = flatFileList.findIndex((item) => item.fullPath === pathOnly);
 
 			if (matchIndex >= 0) {
@@ -418,7 +464,9 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	});
 
 	// processInputRef — maintained for access in memoized callbacks without stale closures
-	const processInputRef = useRef(processInput);
+	const processInputRef = useRef<
+		(text?: string, options?: { forceParallel?: boolean; images?: string[] }) => void
+	>(() => {});
 	useEffect(() => {
 		processInputRef.current = processInput;
 	}, [processInput]);
@@ -548,21 +596,129 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		[activeGroupChatId, activeSession, setInputValue, setStagedImages]
 	);
 
+	const appendMentionsToAiInput = useCallback(
+		(paths: string[]) => {
+			if (paths.length === 0) return;
+			const joined = paths.map((p) => `@${p}`).join(' ');
+			setInputValue((prev) => {
+				if (!prev) return joined + ' ';
+				const sep = /\s$/.test(prev) ? '' : ' ';
+				return prev + sep + joined + ' ';
+			});
+		},
+		[setInputValue]
+	);
+
+	const appendMentionsToGroupChatDraft = useCallback((paths: string[]) => {
+		if (paths.length === 0) return;
+		const joined = paths.map((p) => `@${p}`).join(' ');
+		// Reading the store via getState() (instead of subscribing) is intentional:
+		// this callback only runs on user drop events, so we always want the latest
+		// chatId / setter at fire time and don't want stale-closure invalidation to
+		// re-create the callback (and bust handleDrop's useCallback deps) on every
+		// store update.
+		const { activeGroupChatId: chatId, setGroupChats } = useGroupChatStore.getState();
+		if (!chatId) return;
+		setGroupChats((prev) =>
+			prev.map((c) => {
+				if (c.id !== chatId) return c;
+				const current = c.draftMessage ?? '';
+				const sep = current && !/\s$/.test(current) ? ' ' : '';
+				const next = current ? current + sep + joined + ' ' : joined + ' ';
+				return { ...c, draftMessage: next };
+			})
+		);
+	}, []);
+
 	const handleDrop = useCallback(
 		(e: React.DragEvent) => {
 			e.preventDefault();
 			dragCounterRef.current = 0;
-			setIsDraggingImage(false);
+			setIsDraggingFile(false);
 
 			const isGroupChatActive = !!activeGroupChatId;
 			const isDirectAIMode = activeSession && activeSession.inputMode === 'ai';
 
+			// Files-panel drag: image files are staged as image attachments;
+			// other files/folders are inserted as @<path> in the AI input.
+			// AI mode only; group chat is excluded.
+			//
+			// A multi-selection drag packs every selected relative path into the
+			// multi MIME (a JSON array); a single-row drag packs just one path into
+			// the single MIME. Read the array first so dragging N selected rows
+			// inserts N mentions (folders included, each as its own @mention), and
+			// fall back to the single path otherwise.
+			const internalMulti = e.dataTransfer.getData(FILE_TREE_MULTI_MIME);
+			const internalSingle = e.dataTransfer.getData(FILE_TREE_SINGLE_MIME);
+			if (internalMulti || internalSingle) {
+				if (isGroupChatActive || !isDirectAIMode) return;
+
+				let internalPaths: string[] = [];
+				if (internalMulti) {
+					try {
+						const parsed = JSON.parse(internalMulti);
+						if (Array.isArray(parsed)) {
+							internalPaths = parsed.filter((p): p is string => typeof p === 'string');
+						}
+					} catch {
+						// Malformed payload — fall back to the single path below.
+					}
+				}
+				if (internalPaths.length === 0 && internalSingle) internalPaths = [internalSingle];
+				if (internalPaths.length === 0) return;
+
+				// Relative paths are built by FileExplorerPanel against `session.fullPath`
+				// (see TreeRow's `${session.fullPath}/${fullPath}`), so resolve image
+				// reads against fullPath first to match the explorer's own absolute-path
+				// construction.
+				const treeRoot = activeSession?.fullPath ?? activeSession?.projectRoot;
+				const sshRemoteId =
+					activeSession?.sshRemoteId ??
+					activeSession?.sessionSshRemoteConfig?.remoteId ??
+					undefined;
+
+				const mentionPaths: string[] = [];
+				for (const p of internalPaths) {
+					if (isImagePath(p) && treeRoot) {
+						const absolutePath = `${treeRoot}/${p}`;
+						void window.maestro.fs
+							.readFile(absolutePath, sshRemoteId)
+							.then((content) => {
+								if (typeof content !== 'string' || !content.startsWith('data:image/')) return;
+								setStagedImages((prev) => {
+									if (prev.includes(content)) {
+										setSuccessFlashNotification('Duplicate image ignored');
+										setTimeout(() => setSuccessFlashNotification(null), 2000);
+										return prev;
+									}
+									return [...prev, content];
+								});
+							})
+							.catch(() => {
+								setSuccessFlashNotification('Could not read image file');
+								setTimeout(() => setSuccessFlashNotification(null), 2000);
+							});
+					} else {
+						// Non-image file, folder, or image we can't resolve a root for:
+						// insert as an @mention rather than dropping it silently.
+						mentionPaths.push(p);
+					}
+				}
+
+				if (mentionPaths.length > 0) appendMentionsToAiInput(mentionPaths);
+				inputRef.current?.focus();
+				return;
+			}
+
 			if (!isGroupChatActive && !isDirectAIMode) return;
 
 			const files = e.dataTransfer.files;
+			const externalPaths: string[] = [];
+			const projectRoot = activeSession?.projectRoot ?? activeSession?.fullPath;
 
 			for (let i = 0; i < files.length; i++) {
-				if (files[i].type.startsWith('image/')) {
+				const file = files[i];
+				if (file.type.startsWith('image/')) {
 					const reader = new FileReader();
 					reader.onload = (event) => {
 						if (event.target?.result) {
@@ -588,11 +744,34 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 							}
 						}
 					};
-					reader.readAsDataURL(files[i]);
+					reader.readAsDataURL(file);
+				} else {
+					// External non-image file or folder - collect path for @-mention.
+					// `File.path` was removed in modern Electron; resolve via webUtils
+					// (bridged through the preload as `getPathForFile`).
+					const filePath = window.maestro.fs.getPathForFile(file);
+					if (filePath) {
+						externalPaths.push(toMentionPath(filePath, projectRoot));
+					}
+				}
+			}
+
+			if (externalPaths.length > 0) {
+				if (isGroupChatActive) {
+					appendMentionsToGroupChatDraft(externalPaths);
+				} else if (isDirectAIMode) {
+					appendMentionsToAiInput(externalPaths);
+					inputRef.current?.focus();
 				}
 			}
 		},
-		[activeGroupChatId, activeSession, setStagedImages]
+		[
+			activeGroupChatId,
+			activeSession,
+			setStagedImages,
+			appendMentionsToAiInput,
+			appendMentionsToGroupChatDraft,
+		]
 	);
 
 	// ====================================================================

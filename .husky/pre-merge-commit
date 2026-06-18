@@ -1,0 +1,4 @@
+#!/bin/sh
+
+# Run staged-file formatting/lint checks before creating a merge commit.
+npx lint-staged

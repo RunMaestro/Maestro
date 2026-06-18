@@ -2,20 +2,10 @@ import React, { useState, useCallback, useRef } from 'react';
 import { Palette, Download, Upload, RotateCcw, Check, ChevronDown } from 'lucide-react';
 import type { Theme, ThemeColors, ThemeId } from '../types';
 import { THEMES, DEFAULT_CUSTOM_THEME_COLORS } from '../constants/themes';
-
-/**
- * Validates that a string is a valid CSS color value
- */
-function isValidColor(color: string): boolean {
-	// Handle empty strings
-	if (!color || typeof color !== 'string') return false;
-
-	// Use the DOM to validate - create an option element and try to set its color
-	const testElement = new Option().style;
-	testElement.color = color;
-	// If the browser accepts the color, it will be non-empty
-	return testElement.color !== '';
-}
+import { ConfirmModal } from './ConfirmModal';
+import { useModalLayer } from '../hooks/ui/useModalLayer';
+import { MODAL_PRIORITIES } from '../constants/modalPriorities';
+import { isValidCssColor } from '../../shared/cssColor';
 
 interface CustomThemeBuilderProps {
 	theme: Theme; // Current active theme for styling the builder
@@ -34,6 +24,7 @@ const COLOR_CONFIG: { key: keyof ThemeColors; label: string; description: string
 	{ key: 'bgMain', label: 'Main Background', description: 'Primary content area' },
 	{ key: 'bgSidebar', label: 'Sidebar Background', description: 'Left & right panels' },
 	{ key: 'bgActivity', label: 'Activity Background', description: 'Hover, active states' },
+	{ key: 'bgTitleBar', label: 'Title Bar Background', description: 'Top draggable window strip' },
 	{ key: 'border', label: 'Border', description: 'Dividers & outlines' },
 	{ key: 'textMain', label: 'Main Text', description: 'Primary text color' },
 	{ key: 'textDim', label: 'Dimmed Text', description: 'Secondary text' },
@@ -50,15 +41,23 @@ const COLOR_CONFIG: { key: keyof ThemeColors; label: string; description: string
 function MiniUIPreview({ colors }: { colors: ThemeColors }) {
 	return (
 		<div
-			className="rounded-lg overflow-hidden border"
+			className="rounded-lg overflow-hidden border flex flex-col"
 			style={{
 				borderColor: colors.border,
 				width: '100%',
 				height: 140,
 			}}
 		>
+			{/* Draggable title bar strip */}
+			<div
+				className="h-3 shrink-0 border-b"
+				style={{
+					backgroundColor: colors.bgTitleBar ?? colors.bgMain,
+					borderColor: colors.border,
+				}}
+			/>
 			{/* Mini UI layout */}
-			<div className="flex h-full">
+			<div className="flex flex-1 min-h-0">
 				{/* Left sidebar */}
 				<div className="w-12 flex flex-col gap-1 p-1" style={{ backgroundColor: colors.bgSidebar }}>
 					{/* Session items */}
@@ -291,6 +290,7 @@ export function CustomThemeBuilder({
 	onImportSuccess,
 }: CustomThemeBuilderProps) {
 	const [showBaseSelector, setShowBaseSelector] = useState(false);
+	const [showResetConfirm, setShowResetConfirm] = useState(false);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 
 	// Get all themes except 'custom' for base selection
@@ -304,6 +304,21 @@ export function CustomThemeBuilder({
 			});
 		},
 		[customThemeColors, setCustomThemeColors]
+	);
+
+	// Register the base-theme dropdown as its own layer while open so Escape
+	// closes the dropdown first instead of dismissing the whole Settings modal.
+	const closeBaseSelector = useCallback(() => setShowBaseSelector(false), []);
+	useModalLayer(
+		MODAL_PRIORITIES.CUSTOM_THEME_BASE_SELECTOR,
+		'Base Theme Selector',
+		closeBaseSelector,
+		{
+			enabled: showBaseSelector,
+			blocksLowerLayers: false,
+			capturesFocus: false,
+			focusTrap: 'none',
+		}
 	);
 
 	const handleInitializeFromBase = useCallback(
@@ -350,8 +365,12 @@ export function CustomThemeBuilder({
 				try {
 					const data = JSON.parse(e.target?.result as string);
 					if (data.colors && typeof data.colors === 'object') {
-						// Validate all required color keys exist
-						const requiredKeys = COLOR_CONFIG.map((c) => c.key);
+						// Validate all required color keys exist. bgTitleBar is
+						// optional (older/partial theme exports may omit it; the UI
+						// falls back to bgMain), so it must not be required here.
+						const requiredKeys = COLOR_CONFIG.map((c) => c.key).filter(
+							(key) => key !== 'bgTitleBar'
+						);
 						const hasAllKeys = requiredKeys.every((key) => key in data.colors);
 
 						if (!hasAllKeys) {
@@ -361,8 +380,10 @@ export function CustomThemeBuilder({
 							return;
 						}
 
-						// Validate all color values are valid CSS colors
-						const invalidColors = requiredKeys.filter((key) => !isValidColor(data.colors[key]));
+						// Validate color values for every key that is present (including
+						// the optional bgTitleBar when supplied).
+						const presentKeys = COLOR_CONFIG.map((c) => c.key).filter((key) => key in data.colors);
+						const invalidColors = presentKeys.filter((key) => !isValidCssColor(data.colors[key]));
 						if (invalidColors.length > 0) {
 							const errorMsg = `Invalid theme file: invalid color values for ${invalidColors.slice(0, 3).join(', ')}${invalidColors.length > 3 ? '...' : ''}`;
 							onImportError?.(errorMsg);
@@ -385,7 +406,9 @@ export function CustomThemeBuilder({
 			reader.readAsText(file);
 
 			// Reset file input
-			event.currentTarget.value = '';
+			if (fileInputRef.current) {
+				fileInputRef.current.value = '';
+			}
 		},
 		[setCustomThemeColors, setCustomThemeBaseId, onImportError, onImportSuccess]
 	);
@@ -541,7 +564,7 @@ export function CustomThemeBuilder({
 
 						{/* Reset */}
 						<button
-							onClick={handleReset}
+							onClick={() => setShowResetConfirm(true)}
 							className="flex items-center justify-center gap-1 px-2 py-1.5 rounded text-xs font-medium border hover:opacity-80"
 							style={{
 								backgroundColor: theme.colors.error + '20',
@@ -574,7 +597,9 @@ export function CustomThemeBuilder({
 								colorKey={key}
 								label={label}
 								description={description}
-								value={customThemeColors[key]}
+								value={
+									customThemeColors[key] ?? (key === 'bgTitleBar' ? customThemeColors.bgMain : '')
+								}
 								onChange={handleColorChange}
 								theme={theme}
 							/>
@@ -582,6 +607,17 @@ export function CustomThemeBuilder({
 					</div>
 				</div>
 			</div>
+
+			{showResetConfirm && (
+				<ConfirmModal
+					theme={theme}
+					title="Reset Custom Theme"
+					message="Reset all custom theme colors to their defaults? This will discard your current customizations."
+					confirmLabel="Reset"
+					onConfirm={handleReset}
+					onClose={() => setShowResetConfirm(false)}
+				/>
+			)}
 		</div>
 	);
 }

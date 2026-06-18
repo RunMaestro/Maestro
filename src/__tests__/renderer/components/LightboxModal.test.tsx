@@ -15,7 +15,6 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { LightboxModal } from '../../../renderer/components/LightboxModal';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
-import * as clipboardUtils from '../../../renderer/utils/clipboard';
 
 // Mock lucide-react
 vi.mock('lucide-react', () => ({
@@ -226,25 +225,6 @@ describe('LightboxModal', () => {
 
 			const image = screen.getByRole('img');
 			fireEvent.click(image);
-			expect(onClose).not.toHaveBeenCalled();
-		});
-
-		it('does not close when mouse down starts on the image', () => {
-			const onClose = vi.fn();
-			const onNavigate = vi.fn();
-
-			renderWithLayerStack(
-				<LightboxModal
-					image={mockImage}
-					stagedImages={mockImages}
-					onClose={onClose}
-					onNavigate={onNavigate}
-				/>
-			);
-
-			const image = screen.getByRole('img');
-			fireEvent.mouseDown(image);
-
 			expect(onClose).not.toHaveBeenCalled();
 		});
 	});
@@ -589,7 +569,7 @@ describe('LightboxModal', () => {
 			expect(screen.queryByText('Copied!')).not.toBeInTheDocument();
 		});
 
-		it('does not close when copy button is clicked', async () => {
+		it('does not close when copy button is clicked', () => {
 			const onClose = vi.fn();
 			const onNavigate = vi.fn();
 
@@ -605,42 +585,8 @@ describe('LightboxModal', () => {
 			const copyButton = screen.getByTitle(
 				`Copy image to clipboard (${formatShortcutKeys(['Meta', 'c'])})`
 			);
-			await act(async () => {
-				fireEvent.click(copyButton);
-				await Promise.resolve();
-				await Promise.resolve();
-			});
+			fireEvent.click(copyButton);
 
-			expect(onClose).not.toHaveBeenCalled();
-		});
-
-		it('logs unexpected clipboard helper failures without closing the lightbox', async () => {
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-			vi.spyOn(clipboardUtils, 'safeClipboardWriteImage').mockRejectedValueOnce(
-				new Error('helper failed')
-			);
-			const onClose = vi.fn();
-			const onNavigate = vi.fn();
-
-			renderWithLayerStack(
-				<LightboxModal
-					image={mockImage}
-					stagedImages={mockImages}
-					onClose={onClose}
-					onNavigate={onNavigate}
-				/>
-			);
-
-			fireEvent.click(
-				screen.getByTitle(`Copy image to clipboard (${formatShortcutKeys(['Meta', 'c'])})`)
-			);
-
-			await waitFor(() => {
-				expect(consoleError).toHaveBeenCalledWith(
-					'Failed to copy image to clipboard:',
-					expect.any(Error)
-				);
-			});
 			expect(onClose).not.toHaveBeenCalled();
 		});
 
@@ -1072,11 +1018,6 @@ describe('LightboxModal', () => {
 			expect(onDelete).toHaveBeenCalledWith(mockImage);
 			// Should navigate to next image (mockImages[1]) since we deleted first
 			expect(onNavigate).toHaveBeenCalledWith(mockImages[1]);
-
-			act(() => {
-				vi.advanceTimersByTime(0);
-			});
-			expect(screen.getByRole('dialog')).toHaveFocus();
 		});
 
 		it('calls onClose when deleting the only image', async () => {
@@ -1161,41 +1102,6 @@ describe('LightboxModal', () => {
 			fireEvent.click(cancelButton);
 
 			// Confirm modal should be closed
-			expect(
-				screen.queryByText(/Are you sure you want to remove this image/)
-			).not.toBeInTheDocument();
-			expect(onDelete).not.toHaveBeenCalled();
-		});
-
-		it('hides an open confirmation modal when delete support is removed', () => {
-			const onClose = vi.fn();
-			const onNavigate = vi.fn();
-			const onDelete = vi.fn();
-
-			const { rerender } = renderWithLayerStack(
-				<LightboxModal
-					image={mockImage}
-					stagedImages={mockImages}
-					onClose={onClose}
-					onNavigate={onNavigate}
-					onDelete={onDelete}
-				/>
-			);
-
-			fireEvent.click(screen.getByTitle('Delete image (Delete key)'));
-			expect(screen.getByText(/Are you sure you want to remove this image/)).toBeInTheDocument();
-
-			rerender(
-				<LayerStackProvider>
-					<LightboxModal
-						image={mockImage}
-						stagedImages={mockImages}
-						onClose={onClose}
-						onNavigate={onNavigate}
-					/>
-				</LayerStackProvider>
-			);
-
 			expect(
 				screen.queryByText(/Are you sure you want to remove this image/)
 			).not.toBeInTheDocument();

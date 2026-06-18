@@ -11,6 +11,7 @@
  */
 
 import { useState, useCallback } from 'react';
+import { logger } from '../../utils/logger';
 
 // ============================================================================
 // Return type
@@ -45,7 +46,11 @@ export function useLiveMode(): UseLiveModeReturn {
 				try {
 					await (window as any).maestro.live.disableAll();
 				} catch (disableErr) {
-					console.error('[toggleGlobalLive] disableAll failed after tunnel stop:', disableErr);
+					logger.error(
+						'[toggleGlobalLive] disableAll failed after tunnel stop:',
+						undefined,
+						disableErr
+					);
 				}
 			} else {
 				// Turn on - start the server and get the URL
@@ -54,11 +59,11 @@ export function useLiveMode(): UseLiveModeReturn {
 					setIsLiveMode(true);
 					setWebInterfaceUrl(result.url);
 				} else {
-					console.error('[toggleGlobalLive] Failed to start server:', result.error);
+					logger.error('[toggleGlobalLive] Failed to start server:', undefined, result.error);
 				}
 			}
 		} catch (error) {
-			console.error('[toggleGlobalLive] Error:', error);
+			logger.error('[toggleGlobalLive] Error:', undefined, error);
 		}
 	}, [isLiveMode]);
 
@@ -75,14 +80,14 @@ export function useLiveMode(): UseLiveModeReturn {
 				// Server stopped but failed to restart — update state to reflect stopped server
 				setIsLiveMode(false);
 				setWebInterfaceUrl(null);
-				console.error('[restartWebServer] Failed to restart server:', result.error);
+				logger.error('[restartWebServer] Failed to restart server:', undefined, result.error);
 				return null;
 			}
 		} catch (error) {
 			// stopServer may have succeeded — ensure state reflects server is down
 			setIsLiveMode(false);
 			setWebInterfaceUrl(null);
-			console.error('[restartWebServer] Error:', error);
+			logger.error('[restartWebServer] Error:', undefined, error);
 			return null;
 		}
 	}, [isLiveMode]);

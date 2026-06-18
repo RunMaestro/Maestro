@@ -4,7 +4,6 @@
  *
  * Functions:
  * - parseSynopsis: Parse AI-generated synopsis responses into structured format
- * - isNothingToReport: Check if response indicates no meaningful work was done
  */
 
 import { stripAnsiCodes } from './stringUtils';
@@ -15,7 +14,7 @@ import { stripAnsiCodes } from './stringUtils';
  */
 export const NOTHING_TO_REPORT = 'NOTHING_TO_REPORT';
 
-export interface ParsedSynopsis {
+interface ParsedSynopsis {
 	shortSummary: string;
 	fullSynopsis: string;
 	/** True if the AI indicated there was nothing meaningful to report */
@@ -56,19 +55,73 @@ function isConversationalFiller(text: string): boolean {
 }
 
 /**
- * Check if a response indicates nothing meaningful to report.
- * Looks for the NOTHING_TO_REPORT sentinel token anywhere in the response.
+ * Check if text is a wrap-up / housekeeping status that should not stand alone
+ * as a History list-view headline. Distinct from conversational filler — these
+ * are statements about completion / process state rather than reactions.
  *
- * @param response - Raw AI response string
- * @returns True if the response contains NOTHING_TO_REPORT
+ * The prompt forbids these in Summary, but models still emit them. When the
+ * Summary reduces to one of these, parseSynopsis tries to recover by promoting
+ * the Details headline.
  */
-export function isNothingToReport(response: string): boolean {
-	const clean = stripAnsiCodes(response)
-		.replace(/─+/g, '')
-		.replace(/[│┌┐└┘├┤┬┴┼]/g, '')
-		.trim();
+function isWrapUpStatus(text: string): boolean {
+	const trimmed = text.trim();
+	const wholeLinePatterns = [
+		/^task\s+(complete|completed|done|finished)[\s!.]*$/i,
+		/^pushed(\s+(cleanly|to\s+remote|successfully|the\s+changes?))?[\s!.]*$/i,
+		/^all\s+set[\s!.]*$/i,
+		/^ready\s+to\s+ship[\s!.]*$/i,
+		/^checkbox\s+flipped\s+to\s+\[x?\][\s!.,].*$/i,
+		/^no\s+commit\s+needed[\s!.,]*.*$/i,
+		/^nothing\s+to\s+commit[\s!.,]*.*$/i,
+	];
+	if (wholeLinePatterns.some((pattern) => pattern.test(trimmed))) return true;
 
-	return clean.includes(NOTHING_TO_REPORT);
+	// Trailing wrap-up sentence: catches Summary lines that bury a banal
+	// housekeeping note as the closer, e.g. "The playbook file is gitignored —
+	// no commit needed for that. Task complete."
+	const trailingPatterns = [
+		/[.!?\s]task\s+(complete|completed|done|finished)[\s!.]*$/i,
+		/\bper\s+playbook\s+instructions\b/i,
+		/[.!?\s]no\s+commit\s+needed[\s!.]*$/i,
+		/[.!?\s]nothing\s+to\s+commit[\s!.]*$/i,
+	];
+	return trailingPatterns.some((pattern) => pattern.test(trimmed));
+}
+
+/**
+ * If Details leads with a markdown heading (`#`/`##`/`###`) or a bolded span
+ * at the start of the first line (`**Title** ...` or `**Title**`), return the
+ * unwrapped title text.
+ *
+ * The prompt now forbids leading Details with a heading, but models still do
+ * it — they put the real lede here while leaving Summary as a status note.
+ * When that happens we promote the headline to Summary so the History list
+ * view reads correctly. Details is left as-is; the body view continues to
+ * show the heading as the model wrote it.
+ *
+ * Short bold spans like `**Note:**` or `**Warning:**` are filtered out — they
+ * are labels, not headlines.
+ */
+function extractDetailsHeadline(details: string): string | null {
+	const firstLine = details
+		.split('\n')
+		.find((line) => line.trim())
+		?.trim();
+	if (!firstLine) return null;
+
+	const headingMatch = firstLine.match(/^#{1,6}\s+(.+?)\s*$/);
+	if (headingMatch) return headingMatch[1].trim();
+
+	const boldLeadingMatch = firstLine.match(/^\*\*([^*\n]+?)\*\*/);
+	if (boldLeadingMatch) {
+		const candidate = boldLeadingMatch[1].trim();
+		// Skip short labels like "Note:" / "Warning:" — not real headlines.
+		if (candidate.length >= 15 && !candidate.endsWith(':')) {
+			return candidate;
+		}
+	}
+
+	return null;
 }
 
 /**
@@ -111,7 +164,31 @@ export function parseSynopsis(response: string): ParsedSynopsis {
 	let shortSummary = summaryMatch?.[1]?.trim() || '';
 	let details = detailsMatch?.[1]?.trim() || '';
 
+	// Rescue case: model put a status/wrap-up note in Summary but the real
+	// headline as a markdown heading or bold title at the top of Details.
+	// Promote the headline and strip it from Details so the body view doesn't
+	// restate the lede.
+	const summaryIsWeak =
+		!shortSummary ||
+		isTemplatePlaceholder(shortSummary) ||
+		isConversationalFiller(shortSummary) ||
+		isWrapUpStatus(shortSummary);
+	if (summaryIsWeak) {
+		const headline = extractDetailsHeadline(details);
+		if (headline) {
+			shortSummary = headline;
+			// Intentionally leave `details` untouched — the body view continues
+			// to show the model's original content. Only the list-view lede
+			// (shortSummary) changes.
+		}
+	}
+
 	// Check if summary is a template placeholder or conversational filler
+	// (NOTE: deliberately excludes isWrapUpStatus here — when there's no
+	// rescue headline available, a weak wrap-up Summary is still more useful
+	// than the generic "Task completed" default. The rescue block above is
+	// where wrap-up status triggers replacement; this block handles the
+	// stricter case of *no usable content at all*.)
 	if (
 		!shortSummary ||
 		isTemplatePlaceholder(shortSummary) ||

@@ -1,8 +1,8 @@
 # Testing Campaign Game Plan
 
-Last updated: 2026-06-17 22:25 EDT.
+Last updated: 2026-06-17 23:33 EDT.
 
-This plan covered branch hygiene, coverage audit work, and full E2E execution for the `codex/full-e2e-coverage-campaign` branch. All phases are now complete for the defined active test surface.
+This plan covers branch hygiene, coverage audit work, and full E2E execution for the `codex/full-e2e-coverage-campaign` branch. Phases 1-6 reached a green pre-upstream-sync checkpoint. Phase 7 is now active because syncing `upstream/main` into the branch invalidated the prior finality proof.
 
 ## Phase 1: Freeze The Current Documentation State
 
@@ -48,7 +48,7 @@ Status: complete.
 
 ## Phase 6: Cleanup And Handoff
 
-Status: complete.
+Status: complete for the pre-upstream-sync checkpoint; historical after Phase 7 began.
 
 - Final Phase 6 shard A: 985 passed, 0 failed, 0 skipped.
 - Final Phase 6 shard B: 1,985 passed, 0 failed, 0 skipped.
@@ -57,3 +57,18 @@ Status: complete.
   - [e2e/execution-results/phase6-final-shard-a.md](e2e/execution-results/phase6-final-shard-a.md)
   - [e2e/execution-results/phase6-final-shard-b.md](e2e/execution-results/phase6-final-shard-b.md)
 - Cleanup and reporter handoff doc: [e2e/execution-results/phase6-cleanup-handoff.md](e2e/execution-results/phase6-cleanup-handoff.md)
+
+## Phase 7: Upstream Sync Revalidation
+
+Status: active.
+
+- A direct rebase/merge of the old campaign branch onto current `upstream/main` produced a malformed hybrid tree, so the sync strategy changed to an upstream-shaped tree plus targeted campaign docs/E2E overlay.
+- The upstream-shaped tree passed `npm run validate:push` through format, TypeScript, ESLint, and unit execution.
+- The upstream-shaped unit suite still reports 108 skipped tests, so it does not satisfy the no-skips requirement.
+- `npm run test:coverage` on the upstream-shaped tree fails the enforced 100% thresholds with 66% statements, 60.78% branches, 63.25% functions, and 67.05% lines.
+- Next work:
+  - restore 100% unit coverage with current-upstream-compatible tests,
+  - remove or activate unit skips,
+  - rerun full integration with SSH and 0 skips,
+  - rerun full E2E shards with 0 failures and 0 skips,
+  - update this plan and [current-status.md](current-status.md) with final evidence.

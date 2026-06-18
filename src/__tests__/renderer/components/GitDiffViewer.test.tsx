@@ -3,6 +3,7 @@ import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
 import { GitDiffViewer } from '../../../renderer/components/GitDiffViewer';
 import type { ParsedFileDiff } from '../../../renderer/utils/gitDiffParser';
 
+import { mockTheme } from '../../helpers/mockTheme';
 // Create mock parsed files for testing
 const createMockParsedFile = (overrides: Partial<ParsedFileDiff> = {}): ParsedFileDiff => ({
 	oldPath: 'src/test.ts',
@@ -120,32 +121,37 @@ vi.mock('../../../renderer/contexts/LayerStackContext', () => ({
 vi.mock('react-diff-view/style/index.css', () => ({}));
 
 // Sample theme for testing
-const mockTheme = {
-	id: 'test-theme' as const,
-	name: 'Test Theme',
-	mode: 'dark' as const,
-	colors: {
-		bgMain: '#1a1a2e',
-		bgSidebar: '#16162a',
-		bgActivity: '#22223a',
-		textMain: '#ffffff',
-		textDim: '#888888',
-		accent: '#0088ff',
-		border: '#333355',
-		success: '#22c55e',
-		warning: '#f59e0b',
-		error: '#ef4444',
-		vibe: '#8855ff',
-		statusBar: '#0d0d1a',
-		scrollbarThumb: '#444466',
-	},
-};
 
 describe('GitDiffViewer', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		// Default: return empty array (no files)
 		mockParseGitDiff.mockReturnValue([]);
+		// jsdom in this environment doesn't provide a working Storage on
+		// window.localStorage, so install a minimal in-memory mock that
+		// satisfies the Storage methods the component uses. Same pattern as
+		// ProcessMonitor.test.tsx / QuickActionsModal.test.tsx.
+		const store = new Map<string, string>();
+		Object.defineProperty(window, 'localStorage', {
+			configurable: true,
+			writable: true,
+			value: {
+				getItem: vi.fn((key: string) => (store.has(key) ? store.get(key)! : null)),
+				setItem: vi.fn((key: string, value: string) => {
+					store.set(key, String(value));
+				}),
+				removeItem: vi.fn((key: string) => {
+					store.delete(key);
+				}),
+				clear: vi.fn(() => {
+					store.clear();
+				}),
+				key: vi.fn((index: number) => Array.from(store.keys())[index] ?? null),
+				get length() {
+					return store.size;
+				},
+			},
+		});
 	});
 
 	afterEach(() => {
@@ -200,7 +206,7 @@ describe('GitDiffViewer', () => {
 			expect(screen.getByText('/test/project')).toBeInTheDocument();
 		});
 
-		it('shows file count for single file', () => {
+		it('shows current file position in header for single file', () => {
 			const onClose = vi.fn();
 			mockParseGitDiff.mockReturnValue([createMockParsedFile()]);
 
@@ -213,10 +219,10 @@ describe('GitDiffViewer', () => {
 				/>
 			);
 
-			expect(screen.getByText('1 file changed')).toBeInTheDocument();
+			expect(screen.getByText('File 1 of 1')).toBeInTheDocument();
 		});
 
-		it('shows file count for multiple files', () => {
+		it('shows current file position in header for multiple files', () => {
 			const onClose = vi.fn();
 			mockParseGitDiff.mockReturnValue([
 				createMockParsedFile({ oldPath: 'src/file1.ts', newPath: 'src/file1.ts' }),
@@ -232,7 +238,7 @@ describe('GitDiffViewer', () => {
 				/>
 			);
 
-			expect(screen.getByText('2 files changed')).toBeInTheDocument();
+			expect(screen.getByText('File 1 of 2')).toBeInTheDocument();
 		});
 
 		it('focuses the dialog on mount', () => {
@@ -295,7 +301,7 @@ describe('GitDiffViewer', () => {
 			expect(mockUnregisterLayer).toHaveBeenCalledWith('mock-layer-id');
 		});
 
-		it('does not need a layer handler update after mount', () => {
+		it('updates layer handler after mount', () => {
 			const onClose = vi.fn();
 			mockParseGitDiff.mockReturnValue([createMockParsedFile()]);
 
@@ -308,7 +314,7 @@ describe('GitDiffViewer', () => {
 				/>
 			);
 
-			expect(mockUpdateLayerHandler).not.toHaveBeenCalled();
+			expect(mockUpdateLayerHandler).toHaveBeenCalledWith('mock-layer-id', expect.any(Function));
 		});
 
 		it('escape handler calls onClose', () => {
@@ -619,29 +625,6 @@ describe('GitDiffViewer', () => {
 			expect(screen.getByText('File 2 of 2')).toBeInTheDocument();
 		});
 
-		it('ignores unrelated modifier shortcuts', () => {
-			const onClose = vi.fn();
-			mockParseGitDiff.mockReturnValue([
-				createMockParsedFile({ oldPath: 'src/file1.ts', newPath: 'src/file1.ts' }),
-				createMockParsedFile({ oldPath: 'src/file2.ts', newPath: 'src/file2.ts' }),
-			]);
-
-			render(
-				<GitDiffViewer
-					diffText="mock diff"
-					cwd="/test/project"
-					theme={mockTheme}
-					onClose={onClose}
-				/>
-			);
-
-			act(() => {
-				fireEvent.keyDown(window, { key: 'P', metaKey: true });
-			});
-
-			expect(screen.getByText('File 1 of 2')).toBeInTheDocument();
-		});
-
 		it('cleans up keyboard listener on unmount', () => {
 			const onClose = vi.fn();
 			mockParseGitDiff.mockReturnValue([
@@ -862,8 +845,10 @@ describe('GitDiffViewer', () => {
 				/>
 			);
 
-			// The Plus icon from lucide-react should be present with green color
-			const greenSpans = document.querySelectorAll('.text-green-500');
+			// The Plus icon from lucide-react should be present with green color (inline style for colorblind support)
+			const greenSpans = Array.from(document.querySelectorAll<HTMLSpanElement>('span')).filter(
+				(s) => s.style.color === 'rgb(34, 197, 94)'
+			);
 			expect(greenSpans.length).toBeGreaterThan(0);
 		});
 
@@ -914,8 +899,10 @@ describe('GitDiffViewer', () => {
 				/>
 			);
 
-			// There should be red minus sign for deletions
-			const redSpans = document.querySelectorAll('.text-red-500');
+			// There should be red minus sign for deletions (inline style for colorblind support)
+			const redSpans = Array.from(document.querySelectorAll<HTMLSpanElement>('span')).filter(
+				(s) => s.style.color === 'rgb(239, 68, 68)'
+			);
 			expect(redSpans.length).toBeGreaterThan(0);
 		});
 
@@ -1095,101 +1082,6 @@ describe('GitDiffViewer', () => {
 
 			// May appear multiple times (tab + footer)
 			expect(screen.getAllByText('file-with-dashes.ts').length).toBeGreaterThanOrEqual(1);
-		});
-
-		it('uses oldPath and index fallbacks for tab labels when newPath is missing', () => {
-			const onClose = vi.fn();
-			mockParseGitDiff.mockReturnValue([
-				createMockParsedFile({
-					oldPath: 'src/old-only.ts',
-					newPath: '',
-				}),
-				createMockParsedFile({
-					oldPath: '',
-					newPath: '',
-				}),
-			]);
-
-			render(
-				<GitDiffViewer
-					diffText="mock diff"
-					cwd="/test/project"
-					theme={mockTheme}
-					onClose={onClose}
-				/>
-			);
-
-			expect(screen.getAllByText('old-only.ts').length).toBeGreaterThanOrEqual(1);
-			expect(screen.getByText('file-1')).toBeInTheDocument();
-
-			fireEvent.click(screen.getByText('file-1'));
-
-			expect(screen.getAllByText('file-1').length).toBeGreaterThanOrEqual(2);
-		});
-
-		it('keeps a valid active file when the parsed diff shrinks', () => {
-			const onClose = vi.fn();
-			mockParseGitDiff
-				.mockReturnValueOnce([
-					createMockParsedFile({ oldPath: 'src/file1.ts', newPath: 'src/file1.ts' }),
-					createMockParsedFile({ oldPath: 'src/file2.ts', newPath: 'src/file2.ts' }),
-				])
-				.mockReturnValueOnce([
-					createMockParsedFile({ oldPath: 'src/file1.ts', newPath: 'src/file1.ts' }),
-				]);
-
-			const { rerender } = render(
-				<GitDiffViewer
-					diffText="first diff"
-					cwd="/test/project"
-					theme={mockTheme}
-					onClose={onClose}
-				/>
-			);
-
-			fireEvent.click(screen.getByText('file2.ts'));
-			expect(screen.getByText('File 2 of 2')).toBeInTheDocument();
-
-			rerender(
-				<GitDiffViewer
-					diffText="second diff"
-					cwd="/test/project"
-					theme={mockTheme}
-					onClose={onClose}
-				/>
-			);
-
-			expect(screen.getByText('File 1 of 1')).toBeInTheDocument();
-			expect(screen.getAllByText('file1.ts').length).toBeGreaterThanOrEqual(1);
-		});
-
-		it('ignores tab shortcuts while empty so later diffs start on the first file', () => {
-			const onClose = vi.fn();
-			mockParseGitDiff
-				.mockReturnValueOnce([])
-				.mockReturnValueOnce([
-					createMockParsedFile({ oldPath: 'src/file1.ts', newPath: 'src/file1.ts' }),
-				]);
-
-			const { rerender } = render(
-				<GitDiffViewer diffText="" cwd="/test/project" theme={mockTheme} onClose={onClose} />
-			);
-
-			act(() => {
-				fireEvent.keyDown(window, { key: ']', metaKey: true });
-			});
-
-			rerender(
-				<GitDiffViewer
-					diffText="mock diff"
-					cwd="/test/project"
-					theme={mockTheme}
-					onClose={onClose}
-				/>
-			);
-
-			expect(screen.getByText('File 1 of 1')).toBeInTheDocument();
-			expect(screen.getAllByText('file1.ts').length).toBeGreaterThanOrEqual(1);
 		});
 	});
 
@@ -1531,6 +1423,197 @@ describe('GitDiffViewer', () => {
 			);
 
 			expect(mockGetFileName).toHaveBeenCalledWith('src/deep/nested/file.ts');
+		});
+	});
+
+	describe('View type persistence', () => {
+		const STORAGE_KEY = 'maestro.gitDiffViewer.viewType';
+
+		it('uses initialViewType when nothing is persisted', () => {
+			mockParseGitDiff.mockReturnValue([createMockParsedFile()]);
+
+			render(
+				<GitDiffViewer
+					diffText="mock diff"
+					cwd="/test/project"
+					theme={mockTheme}
+					onClose={vi.fn()}
+					initialViewType="split"
+				/>
+			);
+
+			expect(screen.getByTestId('diff-component')).toHaveAttribute('data-view-type', 'split');
+		});
+
+		it('reads the stored view type from localStorage and overrides initialViewType', () => {
+			window.localStorage.setItem(STORAGE_KEY, 'split');
+			mockParseGitDiff.mockReturnValue([createMockParsedFile()]);
+
+			render(
+				<GitDiffViewer
+					diffText="mock diff"
+					cwd="/test/project"
+					theme={mockTheme}
+					onClose={vi.fn()}
+					initialViewType="unified"
+				/>
+			);
+
+			expect(screen.getByTestId('diff-component')).toHaveAttribute('data-view-type', 'split');
+		});
+
+		it('persists the chosen view type when the toggle is clicked', () => {
+			mockParseGitDiff.mockReturnValue([createMockParsedFile()]);
+
+			render(
+				<GitDiffViewer
+					diffText="mock diff"
+					cwd="/test/project"
+					theme={mockTheme}
+					onClose={vi.fn()}
+				/>
+			);
+
+			expect(window.localStorage.getItem(STORAGE_KEY)).toBe('unified');
+
+			const toggle = screen.getByRole('button', { name: /switch to side-by-side/i });
+			act(() => {
+				fireEvent.click(toggle);
+			});
+
+			expect(window.localStorage.getItem(STORAGE_KEY)).toBe('split');
+			expect(screen.getByTestId('diff-component')).toHaveAttribute('data-view-type', 'split');
+		});
+
+		it('ignores invalid values stored in localStorage and falls back to initialViewType', () => {
+			window.localStorage.setItem(STORAGE_KEY, 'garbage');
+			mockParseGitDiff.mockReturnValue([createMockParsedFile()]);
+
+			render(
+				<GitDiffViewer
+					diffText="mock diff"
+					cwd="/test/project"
+					theme={mockTheme}
+					onClose={vi.fn()}
+					initialViewType="split"
+				/>
+			);
+
+			expect(screen.getByTestId('diff-component')).toHaveAttribute('data-view-type', 'split');
+		});
+	});
+
+	describe('Enter key toggle', () => {
+		const STORAGE_KEY = 'maestro.gitDiffViewer.viewType';
+
+		it('toggles view type when Enter is pressed and focus is not on a form control', () => {
+			mockParseGitDiff.mockReturnValue([createMockParsedFile()]);
+
+			render(
+				<GitDiffViewer
+					diffText="mock diff"
+					cwd="/test/project"
+					theme={mockTheme}
+					onClose={vi.fn()}
+				/>
+			);
+
+			expect(screen.getByTestId('diff-component')).toHaveAttribute('data-view-type', 'unified');
+
+			act(() => {
+				// Move focus off the auto-focused dialog button (if any) onto the body
+				// so the Enter handler doesn't get short-circuited by isFormControl().
+				(document.activeElement as HTMLElement | null)?.blur();
+				fireEvent.keyDown(window, { key: 'Enter' });
+			});
+
+			expect(screen.getByTestId('diff-component')).toHaveAttribute('data-view-type', 'split');
+			expect(window.localStorage.getItem(STORAGE_KEY)).toBe('split');
+
+			act(() => {
+				fireEvent.keyDown(window, { key: 'Enter' });
+			});
+
+			expect(screen.getByTestId('diff-component')).toHaveAttribute('data-view-type', 'unified');
+			expect(window.localStorage.getItem(STORAGE_KEY)).toBe('unified');
+		});
+
+		it('ignores Enter with modifier keys', () => {
+			mockParseGitDiff.mockReturnValue([createMockParsedFile()]);
+
+			render(
+				<GitDiffViewer
+					diffText="mock diff"
+					cwd="/test/project"
+					theme={mockTheme}
+					onClose={vi.fn()}
+				/>
+			);
+
+			act(() => {
+				(document.activeElement as HTMLElement | null)?.blur();
+				fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+				fireEvent.keyDown(window, { key: 'Enter', ctrlKey: true });
+				fireEvent.keyDown(window, { key: 'Enter', shiftKey: true });
+				fireEvent.keyDown(window, { key: 'Enter', altKey: true });
+			});
+
+			expect(screen.getByTestId('diff-component')).toHaveAttribute('data-view-type', 'unified');
+		});
+
+		it('does not toggle when a button is focused (so the button activates instead)', () => {
+			mockParseGitDiff.mockReturnValue([createMockParsedFile()]);
+
+			render(
+				<GitDiffViewer
+					diffText="mock diff"
+					cwd="/test/project"
+					theme={mockTheme}
+					onClose={vi.fn()}
+				/>
+			);
+
+			const closeButton = screen.getByRole('button', { name: 'Close (Esc)' });
+
+			act(() => {
+				closeButton.focus();
+				fireEvent.keyDown(closeButton, { key: 'Enter' });
+			});
+
+			// View type stays unified because the keydown originated from a button
+			// and was skipped by isFormControl().
+			expect(screen.getByTestId('diff-component')).toHaveAttribute('data-view-type', 'unified');
+		});
+
+		it('documents the Enter shortcut in the footer with the opposite view label', () => {
+			mockParseGitDiff.mockReturnValue([createMockParsedFile()]);
+
+			const { unmount } = render(
+				<GitDiffViewer
+					diffText="mock diff"
+					cwd="/test/project"
+					theme={mockTheme}
+					onClose={vi.fn()}
+					initialViewType="unified"
+				/>
+			);
+
+			expect(screen.getByText(/to toggle side-by-side view/i)).toBeInTheDocument();
+
+			// The persisted preference is read by the useState initializer, which
+			// only runs on mount — so unmount and remount to pick up the change.
+			unmount();
+			window.localStorage.setItem(STORAGE_KEY, 'split');
+			render(
+				<GitDiffViewer
+					diffText="mock diff (alt)"
+					cwd="/test/project"
+					theme={mockTheme}
+					onClose={vi.fn()}
+				/>
+			);
+
+			expect(screen.getByText(/to toggle unified view/i)).toBeInTheDocument();
 		});
 	});
 });

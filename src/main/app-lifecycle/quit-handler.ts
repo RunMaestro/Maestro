@@ -10,6 +10,12 @@ import type { WebServer } from '../web-server';
 import { tunnelManager as tunnelManagerInstance } from '../tunnel-manager';
 import type { HistoryManager } from '../history-manager';
 import { isWebContentsAvailable } from '../utils/safe-send';
+import { deleteCliServerInfo } from '../../shared/cli-server-discovery';
+import { stopAllCueRuns } from '../cue/cue-executor';
+import { stopAllCueShellRuns } from '../cue/cue-shell-executor';
+import { stopAllCueCliRuns } from '../cue/cue-cli-executor';
+import { flushTelemetry } from '../cue/cue-telemetry';
+import { captureException } from '../utils/sentry';
 import { powerManager as powerManagerInstance } from '../power-manager';
 
 /**
@@ -18,6 +24,47 @@ import { powerManager as powerManagerInstance } from '../power-manager';
  * renderer crashed), force-quit to prevent the app from lingering in the background.
  */
 const QUIT_CONFIRMATION_TIMEOUT_MS = 5000;
+
+/**
+ * Grace window between running cleanup and hard-exiting on a normal user quit.
+ *
+ * After performCleanup() the only work left is fire-and-forget (telemetry POST,
+ * the tunnel's SIGTERM->exit, web-server socket close). The critical teardown
+ * (PTY SIGKILL, stats DB close) already ran synchronously. We let those tails
+ * make progress for this long, then hardExit() the process. Kept short so quit
+ * still feels instant; the trade is a sub-second delay for a guaranteed exit.
+ */
+const FORCE_EXIT_GRACE_MS = 750;
+
+/**
+ * Terminates the process immediately, bypassing Electron's Node-environment
+ * teardown.
+ *
+ * Why not app.exit()/process.exit(): both still run node::FreeEnvironment ->
+ * Environment::CleanupHandles, which finalizes native-addon ThreadSafeFunctions.
+ * A node-pty / fsevents TSFN whose underlying mutex is already gone deadlocks
+ * there on uv_mutex_lock and hangs the process forever, forcing the user to kill
+ * it from Activity Monitor (MAESTRO-3B). Confirmed via `sample`: on quit the main
+ * thread parks in napi_release_threadsafe_function -> uv_mutex_lock ->
+ * __psynch_mutexwait and never returns, even after app.exit(0) is called.
+ *
+ * SIGKILL to self is kernel-enforced, uncatchable, and runs no finalizers, so it
+ * cannot deadlock. On Windows, Node maps 'SIGKILL' to TerminateProcess on the
+ * target, which is the equivalent hard kill. All durable state (stats DB,
+ * unflushed telemetry rows in SQLite) was already persisted synchronously in
+ * performCleanup before the grace window, so nothing is lost.
+ */
+function hardExit(): void {
+	try {
+		process.kill(process.pid, 'SIGKILL');
+	} catch (err) {
+		// process.kill should never throw when signalling self, but if it does
+		// fall back to app.exit() so we still attempt to terminate rather than
+		// linger in the background.
+		logger.error(`Hard exit via SIGKILL failed, falling back to app.exit: ${err}`, 'Shutdown');
+		app.exit(0);
+	}
+}
 
 /** Dependencies for quit handler */
 export interface QuitHandlerDependencies {
@@ -55,6 +102,15 @@ interface QuitHandlerState {
 	isRequestingConfirmation: boolean;
 	/** Safety timeout for quit confirmation — forces quit if renderer never responds */
 	confirmationTimeout: ReturnType<typeof setTimeout> | null;
+	/**
+	 * Whether this quit is the auto-updater installing an update. On that path we
+	 * must let Electron's graceful will-quit/quit teardown run so electron-updater
+	 * can apply the update (Squirrel.Mac install-on-quit, the Windows NSIS handoff).
+	 * The force-exit fallback is skipped when this is set.
+	 */
+	installingUpdate: boolean;
+	/** Guards against re-entrant before-quit running cleanup / arming the timer twice. */
+	cleanupStarted: boolean;
 }
 
 /** Quit handler instance */
@@ -100,6 +156,8 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		quitConfirmed: false,
 		isRequestingConfirmation: false,
 		confirmationTimeout: null,
+		installingUpdate: false,
+		cleanupStarted: false,
 	};
 
 	return {
@@ -119,6 +177,16 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 				clearConfirmationTimeout();
 				state.isRequestingConfirmation = false;
 				// Nothing to do - app stays running
+			});
+
+			// Renderer is showing the quit-confirmation modal and is waiting on the
+			// user. Disarm the dead-renderer safety timeout so we don't force-quit
+			// out from under an open dialog. We keep isRequestingConfirmation set so
+			// repeat quit attempts stay suppressed; the eventual confirm/cancel from
+			// the modal clears it.
+			ipcMain.on('app:quitConfirmationPending', () => {
+				logger.info('Quit confirmation pending — user deciding, disarming timeout', 'Window');
+				clearConfirmationTimeout();
 			});
 
 			// IMPORTANT: This handler must be synchronous for event.preventDefault() to work!
@@ -169,8 +237,30 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 					return;
 				}
 
-				// Quit confirmed - proceed with cleanup (async operations are fire-and-forget)
+				// Quit confirmed. Guard against a re-entrant before-quit (e.g. another
+				// path calling app.quit() during the grace window) running cleanup or
+				// arming the timer twice.
+				if (state.cleanupStarted) {
+					return;
+				}
+				state.cleanupStarted = true;
+
+				// Proceed with cleanup (async operations are fire-and-forget).
 				performCleanup();
+
+				// On the update-install path, let Electron's graceful teardown run so
+				// electron-updater can apply the update. Otherwise, take control of the
+				// exit: hold the event loop open (preventDefault) and hardExit() after a
+				// short grace window. This dodges the native Node-environment teardown
+				// that can deadlock on native addon finalizers and hang the process
+				// forever (see hardExit() and FORCE_EXIT_GRACE_MS).
+				if (!state.installingUpdate) {
+					event.preventDefault();
+					setTimeout(() => {
+						logger.info('Hard-exiting after cleanup grace window', 'Shutdown');
+						hardExit();
+					}, FORCE_EXIT_GRACE_MS);
+				}
 			});
 		},
 
@@ -179,6 +269,12 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		confirmQuit: () => {
 			clearConfirmationTimeout();
 			state.quitConfirmed = true;
+			// confirmQuit() is only invoked from the auto-updater's
+			// onBeforeQuitAndInstall hook (the renderer's user-quit path goes through
+			// the 'app:quitConfirmed' IPC handler instead). Mark this so the
+			// before-quit handler skips the force-exit and lets the updater apply the
+			// update via the graceful will-quit/quit teardown.
+			state.installingUpdate = true;
 		},
 	};
 
@@ -226,9 +322,35 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 			});
 		}
 
-		// Clean up all running processes
+		// Kill all active Cue processes (tracked separately from ProcessManager)
+		logger.info('Killing active Cue processes', 'Shutdown');
+		stopAllCueRuns();
+		stopAllCueShellRuns();
+		stopAllCueCliRuns();
+
+		// Flush Cue telemetry outbox before quit so events captured between the
+		// last autorun and shutdown aren't deferred to the next launch (or lost
+		// if the user uninstalls). Fire-and-forget — performCleanup is sync and
+		// the network call may not finish before quit, but unflushed rows
+		// survive in SQLite for the next session.
+		flushTelemetry({ reason: 'app-quit' }).catch((error) => {
+			// Errors already logged inside flushTelemetry; report unexpected
+			// failures to Sentry so we can spot regressions, but don't rethrow
+			// — a network failure during shutdown shouldn't crash cleanup.
+			captureException(error, {
+				context: 'quit-handler.performCleanup.flushTelemetry',
+			});
+		});
+
+		// Clean up all running processes. shutdown:true makes PTYs SIGKILL
+		// immediately (no SIGTERM grace, no escalation timer, no onExit
+		// listener) so node-pty's worker threads exit and release their
+		// N-API ThreadSafeFunctions before Electron tears down the Node
+		// environment. Otherwise CleanupHandles can finalize a TSFN whose
+		// underlying mutex is already gone, aborting the main process
+		// (Sentry MAESTRO-3B).
 		logger.info('Killing all running processes', 'Shutdown');
-		processManager?.killAll();
+		processManager?.killAll({ shutdown: true });
 
 		// Clear power save blocker AFTER killAll() to prevent late process output
 		// from re-arming the blocker via addBlockReason()
@@ -245,6 +367,10 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		webServer?.stop().catch((err: unknown) => {
 			logger.error(`Error stopping web server: ${err}`, 'Shutdown');
 		});
+
+		// Delete CLI server discovery file so CLI knows we're gone
+		logger.info('Deleting CLI server discovery file', 'Shutdown');
+		deleteCliServerInfo();
 
 		// Close stats database
 		logger.info('Closing stats database', 'Shutdown');

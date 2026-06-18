@@ -183,8 +183,10 @@ function SessionPill({ session, isActive, onSelect, onLongPress }: SessionPillPr
 			onContextMenu={(e) => {
 				e.preventDefault();
 				// Show long press menu on right-click for desktop
-				const rect = buttonRef.current!.getBoundingClientRect();
-				onLongPress(session, rect);
+				if (buttonRef.current) {
+					const rect = buttonRef.current.getBoundingClientRect();
+					onLongPress(session, rect);
+				}
 			}}
 			style={{
 				display: 'flex',
@@ -240,6 +242,7 @@ interface SessionInfoPopoverProps {
 	anchorRect: DOMRect;
 	onClose: () => void;
 	onToggleBookmark?: (sessionId: string) => void;
+	onOpenContextManagement?: (sessionId: string) => void;
 }
 
 /**
@@ -250,6 +253,7 @@ function SessionInfoPopover({
 	anchorRect,
 	onClose,
 	onToggleBookmark,
+	onOpenContextManagement,
 }: SessionInfoPopoverProps) {
 	const colors = useThemeColors();
 	const popoverRef = useRef<HTMLDivElement>(null);
@@ -555,6 +559,36 @@ function SessionInfoPopover({
 							{session.bookmarked ? 'Remove Bookmark' : 'Bookmark'}
 						</button>
 					)}
+
+					{/* Context management action */}
+					{onOpenContextManagement && (
+						<button
+							onClick={() => {
+								triggerHaptic(HAPTIC_PATTERNS.tap);
+								onOpenContextManagement(session.id);
+								onClose();
+							}}
+							style={{
+								display: 'flex',
+								alignItems: 'center',
+								gap: '8px',
+								width: '100%',
+								padding: '10px 12px',
+								borderRadius: '8px',
+								border: `1px solid ${colors.border}`,
+								backgroundColor: colors.bgMain,
+								color: colors.textMain,
+								fontSize: '14px',
+								fontWeight: 500,
+								cursor: 'pointer',
+								transition: 'background-color 0.15s ease',
+								marginTop: '8px',
+							}}
+						>
+							<span style={{ fontSize: '16px' }}>{'\u{1F504}'}</span>
+							Context Management
+						</button>
+					)}
 				</div>
 			</div>
 
@@ -735,6 +769,12 @@ export interface SessionPillBarProps {
 	onOpenAllSessions?: () => void;
 	/** Callback to open the History panel */
 	onOpenHistory?: () => void;
+	/** Callback to open the right drawer panel */
+	onOpenRightDrawer?: () => void;
+	/** Callback to open the Agent Creation Sheet */
+	onOpenCreateAgent?: () => void;
+	/** Callback to open the Context Management Sheet for a session */
+	onOpenContextManagement?: (sessionId: string) => void;
 	/** Optional className for additional styling */
 	className?: string;
 	/** Optional inline styles */
@@ -772,6 +812,9 @@ export function SessionPillBar({
 	onToggleBookmark,
 	onOpenAllSessions,
 	onOpenHistory,
+	onOpenRightDrawer,
+	onOpenCreateAgent,
+	onOpenContextManagement,
 	className = '',
 	style,
 }: SessionPillBarProps) {
@@ -817,10 +860,12 @@ export function SessionPillBar({
 	const sortedGroupKeys = useMemo(() => {
 		const keys = Object.keys(sessionsByGroup);
 		return keys.sort((a, b) => {
-			// Put bookmarks first and ungrouped sessions last.
-			const priority = (key: string) => (key === 'bookmarks' ? 0 : key === 'ungrouped' ? 2 : 1);
-			const priorityDiff = priority(a) - priority(b);
-			if (priorityDiff !== 0) return priorityDiff;
+			// Put 'bookmarks' at the start
+			if (a === 'bookmarks') return -1;
+			if (b === 'bookmarks') return 1;
+			// Put 'ungrouped' at the end
+			if (a === 'ungrouped') return 1;
+			if (b === 'ungrouped') return -1;
 			// Sort others alphabetically by group name
 			return sessionsByGroup[a].name.localeCompare(sessionsByGroup[b].name);
 		});
@@ -854,7 +899,7 @@ export function SessionPillBar({
 		// If the active session's group is collapsed, expand it
 		if (collapsedGroups.has(activeGroupKey)) {
 			setCollapsedGroups((prev) => {
-				const next = new Set(prev);
+				const next = new Set(prev || []);
 				next.delete(activeGroupKey);
 				return next;
 			});
@@ -874,10 +919,10 @@ export function SessionPillBar({
 	// Toggle group collapsed state and scroll to show the group header when expanding
 	const handleToggleCollapse = useCallback(
 		(groupId: string) => {
-			const wasCollapsed = new Set(collapsedGroups).has(groupId);
+			const wasCollapsed = collapsedGroups?.has(groupId) ?? true;
 
 			setCollapsedGroups((prev) => {
-				const next = new Set(prev);
+				const next = new Set(prev || []);
 				if (next.has(groupId)) {
 					next.delete(groupId);
 				} else {
@@ -1065,6 +1110,49 @@ export function SessionPillBar({
 								</svg>
 							</button>
 						)}
+						{/* Right drawer panel button */}
+						{onOpenRightDrawer && (
+							<button
+								onClick={() => {
+									triggerHaptic(HAPTIC_PATTERNS.tap);
+									onOpenRightDrawer();
+								}}
+								style={{
+									display: 'flex',
+									alignItems: 'center',
+									justifyContent: 'center',
+									width: '36px',
+									height: '36px',
+									borderRadius: '18px',
+									border: `1px solid ${colors.border}`,
+									backgroundColor: colors.bgMain,
+									color: colors.textMain,
+									cursor: 'pointer',
+									flexShrink: 0,
+									padding: 0,
+									touchAction: 'manipulation',
+									WebkitTapHighlightColor: 'transparent',
+									outline: 'none',
+								}}
+								aria-label="Open panel drawer"
+								title="Panel"
+							>
+								{/* Panel/sidebar icon (three horizontal lines with right panel) */}
+								<svg
+									width="18"
+									height="18"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									strokeWidth="2"
+									strokeLinecap="round"
+									strokeLinejoin="round"
+								>
+									<rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+									<line x1="15" y1="3" x2="15" y2="21" />
+								</svg>
+							</button>
+						)}
 					</div>
 				)}
 
@@ -1137,6 +1225,43 @@ export function SessionPillBar({
 							</React.Fragment>
 						);
 					})}
+
+					{/* "+" pill for creating a new agent */}
+					{onOpenCreateAgent && (
+						<div style={{ scrollSnapAlign: 'start' }} role="presentation">
+							<button
+								onClick={() => {
+									triggerHaptic(HAPTIC_PATTERNS.tap);
+									onOpenCreateAgent();
+								}}
+								style={{
+									display: 'flex',
+									alignItems: 'center',
+									justifyContent: 'center',
+									padding: '8px 14px',
+									borderRadius: '20px',
+									border: `1px dashed ${colors.border}`,
+									backgroundColor: 'transparent',
+									color: colors.accent,
+									fontSize: '16px',
+									fontWeight: 500,
+									whiteSpace: 'nowrap',
+									cursor: 'pointer',
+									flexShrink: 0,
+									minWidth: 'fit-content',
+									touchAction: 'manipulation',
+									WebkitTapHighlightColor: 'transparent',
+									outline: 'none',
+									userSelect: 'none',
+									WebkitUserSelect: 'none',
+									transition: 'all 0.15s ease',
+								}}
+								aria-label="Create new agent"
+							>
+								+
+							</button>
+						</div>
+					)}
 				</div>
 
 				{/* Inline style for hiding scrollbar */}
@@ -1154,6 +1279,7 @@ export function SessionPillBar({
 					anchorRect={popoverState.anchorRect}
 					onClose={handleClosePopover}
 					onToggleBookmark={onToggleBookmark}
+					onOpenContextManagement={onOpenContextManagement}
 				/>
 			)}
 		</>

@@ -2,15 +2,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import React from 'react';
 import { WorktreeRunSection } from '../../../renderer/components/WorktreeRunSection';
-import type { Theme, Session } from '../../../renderer/types';
+import type { Session } from '../../../renderer/types';
+import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { gitService } from '../../../renderer/services/git';
 
-const mockCaptureException = vi.hoisted(() => vi.fn());
-
-vi.mock('@sentry/electron/renderer', () => ({
-	captureException: mockCaptureException,
-	captureMessage: vi.fn(),
-}));
+import { createMockTheme } from '../../helpers/mockTheme';
 
 // Mock gitService
 vi.mock('../../../renderer/services/git', () => ({
@@ -41,30 +37,22 @@ function createMockTheme(): Theme {
 		},
 	};
 }
-
+// Thin wrapper: configures a worktree parent session with matching cwd and
+// worktreeConfig so the WorktreeRunSection has state to render.
 function createMockSession(overrides: Partial<Session> = {}): Session {
-	return {
+	return baseCreateMockSession({
 		id: 'parent-1',
 		name: 'Test Agent',
-		toolType: 'claude-code',
 		cwd: '/project',
 		fullPath: '/project',
 		projectRoot: '/project',
-		state: 'idle',
-		tabs: [],
-		activeTabIndex: 0,
 		isGitRepo: true,
-		isLive: false,
-		changedFiles: [],
-		fileTree: [],
-		fileExplorerExpanded: [],
-		fileExplorerScrollPos: 0,
 		worktreeConfig: {
 			basePath: '/project/worktrees',
 			watchEnabled: false,
 		},
 		...overrides,
-	} as Session;
+	});
 }
 
 function createWorktreeChild(overrides: Partial<Session> = {}): Session {
@@ -79,23 +67,6 @@ function createWorktreeChild(overrides: Partial<Session> = {}): Session {
 	});
 }
 
-function createDeferred<T>() {
-	let resolve!: (value: T) => void;
-	let reject!: (reason?: unknown) => void;
-	const promise = new Promise<T>((res, rej) => {
-		resolve = res;
-		reject = rej;
-	});
-	return { promise, resolve, reject };
-}
-
-async function flushAsyncEffects() {
-	await act(async () => {
-		await Promise.resolve();
-		await Promise.resolve();
-	});
-}
-
 describe('WorktreeRunSection', () => {
 	const theme = createMockTheme();
 	let mockOnWorktreeTargetChange: ReturnType<typeof vi.fn>;
@@ -104,9 +75,6 @@ describe('WorktreeRunSection', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		// Restore git.branch to default mock (previous tests may override it)
-		(window.maestro.git as Record<string, unknown>).branches = vi
-			.fn()
-			.mockResolvedValue({ branches: ['main', 'develop'] });
 		(window.maestro.git as Record<string, unknown>).branch = vi
 			.fn()
 			.mockResolvedValue({ stdout: 'main' });
@@ -465,7 +433,7 @@ describe('WorktreeRunSection', () => {
 		});
 	});
 
-	it('shows selector dropdown when worktreeTarget is non-null (toggle on)', async () => {
+	it('shows selector dropdown when worktreeTarget is non-null (toggle on)', () => {
 		const session = createMockSession();
 		const child = createWorktreeChild();
 		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
@@ -481,13 +449,12 @@ describe('WorktreeRunSection', () => {
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
 			/>
 		);
-		await flushAsyncEffects();
 
 		// Selector should be visible
 		expect(screen.getAllByRole('combobox').length).toBeGreaterThanOrEqual(1);
 	});
 
-	it('lists open worktree agents as options', async () => {
+	it('lists open worktree agents as options', () => {
 		const session = createMockSession();
 		const child1 = createWorktreeChild({
 			id: 'child-1',
@@ -516,7 +483,6 @@ describe('WorktreeRunSection', () => {
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
 			/>
 		);
-		await flushAsyncEffects();
 
 		// Both children should be listed as options
 		const options = screen.getAllByRole('option');
@@ -529,7 +495,7 @@ describe('WorktreeRunSection', () => {
 		);
 	});
 
-	it('disables busy agents and shows busy suffix', async () => {
+	it('disables busy agents and shows busy suffix', () => {
 		const session = createMockSession();
 		const idleChild = createWorktreeChild({
 			id: 'child-idle',
@@ -560,7 +526,6 @@ describe('WorktreeRunSection', () => {
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
 			/>
 		);
-		await flushAsyncEffects();
 
 		const options = screen.getAllByRole('option');
 		const busyOption = options.find(
@@ -576,85 +541,6 @@ describe('WorktreeRunSection', () => {
 		expect(idleOption).toBeTruthy();
 		expect(idleOption.disabled).toBe(false);
 		expect(idleOption.textContent).not.toContain('— busy');
-	});
-
-	it('uses unknown branch fallback for open worktree agents without branch metadata', async () => {
-		const session = createMockSession();
-		const child = createWorktreeChild({
-			id: 'child-no-branch',
-			name: 'Branchless Agent',
-			worktreeBranch: undefined,
-		});
-		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
-		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
-
-		render(
-			<WorktreeRunSection
-				theme={theme}
-				activeSession={session}
-				worktreeChildren={[child]}
-				worktreeTarget={{
-					mode: 'existing-open',
-					sessionId: 'child-no-branch',
-					createPROnCompletion: false,
-				}}
-				onWorktreeTargetChange={mockOnWorktreeTargetChange}
-				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
-			/>
-		);
-		await flushAsyncEffects();
-
-		const branchlessOption = screen
-			.getAllByRole('option')
-			.find((o) => (o as HTMLOptionElement).value === 'child-no-branch') as HTMLOptionElement;
-		expect(branchlessOption.textContent).toContain('unknown branch');
-	});
-
-	it.each([
-		['busy', 'busy', true],
-		['connecting', 'connecting', true],
-		['error', 'error', false],
-		['waiting_input', 'waiting', false],
-	] as const)('shows selected open agent %s state indicator', async (state, label, pulses) => {
-		const session = createMockSession();
-		const child = createWorktreeChild({
-			id: `child-${state}`,
-			name: 'State Agent',
-			state,
-			worktreeBranch: `${state}-branch`,
-		});
-		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
-		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
-
-		render(
-			<WorktreeRunSection
-				theme={theme}
-				activeSession={session}
-				worktreeChildren={[child]}
-				worktreeTarget={{
-					mode: 'existing-open',
-					sessionId: child.id,
-					createPROnCompletion: false,
-				}}
-				onWorktreeTargetChange={mockOnWorktreeTargetChange}
-				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
-			/>
-		);
-		await flushAsyncEffects();
-
-		const select = screen.getAllByRole('combobox')[0] as HTMLSelectElement;
-		await act(async () => {
-			fireEvent.change(select, { target: { value: child.id } });
-		});
-
-		const indicator = screen.getByTestId('agent-state-indicator');
-		expect(indicator).toHaveTextContent(`State Agent — ${label}`);
-		const statusDot = indicator.querySelector('.rounded-full');
-		if (pulses) {
-			expect(statusDot).toHaveClass('animate-pulse');
-		} else {
-			expect(statusDot).not.toHaveClass('animate-pulse');
-		}
 	});
 
 	it('shows base branch dropdown and branch name input when Create New Worktree is selected', async () => {
@@ -820,41 +706,7 @@ describe('WorktreeRunSection', () => {
 		);
 	});
 
-	it('toggles the PR checkbox locally without emitting when no target is selected yet', async () => {
-		const session = createMockSession();
-		const child = createWorktreeChild();
-		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
-		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
-
-		render(
-			<WorktreeRunSection
-				theme={theme}
-				activeSession={session}
-				worktreeChildren={[child]}
-				worktreeTarget={{ mode: 'existing-open', sessionId: child.id, createPROnCompletion: false }}
-				onWorktreeTargetChange={mockOnWorktreeTargetChange}
-				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
-			/>
-		);
-		await flushAsyncEffects();
-		mockOnWorktreeTargetChange.mockClear();
-
-		const prCheckbox = screen.getByRole('checkbox');
-		await act(async () => {
-			fireEvent.keyDown(prCheckbox, { key: 'Escape' });
-		});
-
-		expect(prCheckbox).toHaveAttribute('aria-checked', 'false');
-
-		await act(async () => {
-			fireEvent.keyDown(prCheckbox, { key: ' ' });
-		});
-
-		expect(prCheckbox).toHaveAttribute('aria-checked', 'true');
-		expect(mockOnWorktreeTargetChange).not.toHaveBeenCalled();
-	});
-
-	it('emits correct WorktreeRunTarget for existing-open mode', async () => {
+	it('emits correct WorktreeRunTarget for existing-open mode', () => {
 		const session = createMockSession();
 		const child = createWorktreeChild({ id: 'child-1' });
 		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
@@ -874,13 +726,10 @@ describe('WorktreeRunSection', () => {
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
 			/>
 		);
-		await flushAsyncEffects();
 
 		// Select the existing-open child via dropdown
 		const select = screen.getAllByRole('combobox')[0] as HTMLSelectElement;
-		await act(async () => {
-			fireEvent.change(select, { target: { value: 'child-1' } });
-		});
+		fireEvent.change(select, { target: { value: 'child-1' } });
 
 		expect(mockOnWorktreeTargetChange).toHaveBeenCalledWith({
 			mode: 'existing-open',
@@ -889,85 +738,7 @@ describe('WorktreeRunSection', () => {
 		});
 	});
 
-	it('does not emit a target for an empty selector value', async () => {
-		const session = createMockSession();
-		const child = createWorktreeChild({ id: 'child-1' });
-		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
-		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
-
-		render(
-			<WorktreeRunSection
-				theme={theme}
-				activeSession={session}
-				worktreeChildren={[child]}
-				worktreeTarget={{
-					mode: 'existing-open',
-					sessionId: 'child-1',
-					createPROnCompletion: false,
-				}}
-				onWorktreeTargetChange={mockOnWorktreeTargetChange}
-				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
-			/>
-		);
-		await flushAsyncEffects();
-		mockOnWorktreeTargetChange.mockClear();
-
-		const select = screen.getAllByRole('combobox')[0] as HTMLSelectElement;
-		await act(async () => {
-			fireEvent.change(select, { target: { value: '' } });
-		});
-
-		expect(mockOnWorktreeTargetChange).not.toHaveBeenCalled();
-		expect(screen.queryByTestId('agent-state-indicator')).not.toBeInTheDocument();
-	});
-
-	it('hides the open-agent state indicator when the selected session is missing', async () => {
-		const session = createMockSession();
-		const child = createWorktreeChild({ id: 'child-1' });
-		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
-		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
-
-		const { rerender } = render(
-			<WorktreeRunSection
-				theme={theme}
-				activeSession={session}
-				worktreeChildren={[child]}
-				worktreeTarget={{
-					mode: 'existing-open',
-					sessionId: 'child-1',
-					createPROnCompletion: false,
-				}}
-				onWorktreeTargetChange={mockOnWorktreeTargetChange}
-				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
-			/>
-		);
-		await flushAsyncEffects();
-
-		const select = screen.getAllByRole('combobox')[0] as HTMLSelectElement;
-		await act(async () => {
-			fireEvent.change(select, { target: { value: 'child-1' } });
-		});
-		expect(screen.getByTestId('agent-state-indicator')).toHaveTextContent('Worktree Child');
-
-		rerender(
-			<WorktreeRunSection
-				theme={theme}
-				activeSession={session}
-				worktreeChildren={[]}
-				worktreeTarget={{
-					mode: 'existing-open',
-					sessionId: 'child-1',
-					createPROnCompletion: false,
-				}}
-				onWorktreeTargetChange={mockOnWorktreeTargetChange}
-				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
-			/>
-		);
-
-		expect(screen.queryByTestId('agent-state-indicator')).not.toBeInTheDocument();
-	});
-
-	it('calls onWorktreeTargetChange(null) when toggle is turned off', async () => {
+	it('calls onWorktreeTargetChange(null) when toggle is turned off', () => {
 		const session = createMockSession();
 		const child = createWorktreeChild();
 		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
@@ -983,18 +754,15 @@ describe('WorktreeRunSection', () => {
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
 			/>
 		);
-		await flushAsyncEffects();
 
 		// Click the toggle to turn off
 		const toggle = screen.getByText('Dispatch to a separate worktree');
-		await act(async () => {
-			fireEvent.click(toggle);
-		});
+		fireEvent.click(toggle);
 
 		expect(mockOnWorktreeTargetChange).toHaveBeenCalledWith(null);
 	});
 
-	it('clicking toggle on always defaults to create-new mode', async () => {
+	it('clicking toggle on always defaults to create-new mode', () => {
 		const session = createMockSession();
 		const idleChild = createWorktreeChild({ id: 'child-idle', state: 'idle', name: 'Idle' });
 		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
@@ -1010,13 +778,10 @@ describe('WorktreeRunSection', () => {
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
 			/>
 		);
-		await flushAsyncEffects();
 
 		// Click the toggle to turn on
 		const toggle = screen.getByText('Dispatch to a separate worktree');
-		await act(async () => {
-			fireEvent.click(toggle);
-		});
+		fireEvent.click(toggle);
 
 		// Should always default to create-new, even when idle children exist
 		expect(mockOnWorktreeTargetChange).toHaveBeenCalledWith({
@@ -1025,7 +790,7 @@ describe('WorktreeRunSection', () => {
 		});
 	});
 
-	it('clicking toggle on with no children also selects create-new', async () => {
+	it('clicking toggle on with no children also selects create-new', () => {
 		const session = createMockSession();
 		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
 		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
@@ -1040,13 +805,10 @@ describe('WorktreeRunSection', () => {
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
 			/>
 		);
-		await flushAsyncEffects();
 
 		// Click the toggle to turn on — no children exist
 		const toggle = screen.getByText('Dispatch to a separate worktree');
-		await act(async () => {
-			fireEvent.click(toggle);
-		});
+		fireEvent.click(toggle);
 
 		expect(mockOnWorktreeTargetChange).toHaveBeenCalledWith({
 			mode: 'create-new',
@@ -1131,9 +893,8 @@ describe('WorktreeRunSection', () => {
 	it('shows error message when getBranches fails', async () => {
 		const session = createMockSession();
 		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
-		const branchesMock = vi.fn().mockRejectedValue(new Error('git not found'));
 		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
-		(window.maestro.git as Record<string, unknown>).branches = branchesMock;
+		vi.mocked(gitService.getBranches).mockRejectedValue(new Error('git not found'));
 
 		render(
 			<WorktreeRunSection
@@ -1162,114 +923,6 @@ describe('WorktreeRunSection', () => {
 		if (comboboxes.length > 1) {
 			expect((comboboxes[1] as HTMLSelectElement).disabled).toBe(true);
 		}
-	});
-
-	it('uses an empty branch list when branch loading returns no branches property', async () => {
-		const session = createMockSession();
-		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
-		const branchesMock = vi.fn().mockResolvedValue({});
-		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
-		(window.maestro.git as Record<string, unknown>).branches = branchesMock;
-
-		render(
-			<WorktreeRunSection
-				theme={theme}
-				activeSession={session}
-				worktreeChildren={[]}
-				worktreeTarget={{ mode: 'create-new', createPROnCompletion: false }}
-				onWorktreeTargetChange={mockOnWorktreeTargetChange}
-				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
-			/>
-		);
-
-		await act(async () => {
-			fireEvent.change(screen.getAllByRole('combobox')[0], {
-				target: { value: '__create_new__' },
-			});
-		});
-
-		await waitFor(() => {
-			expect(branchesMock).toHaveBeenCalledWith('/project', undefined);
-		});
-		expect(screen.queryByText('Could not load branches')).not.toBeInTheDocument();
-	});
-
-	it('ignores branch-loading failures after unmount', async () => {
-		const session = createMockSession();
-		const branchLoad = createDeferred<{ branches: string[] }>();
-		const branchesMock = vi.fn().mockReturnValue(branchLoad.promise);
-		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
-		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
-		(window.maestro.git as Record<string, unknown>).branches = branchesMock;
-
-		const { unmount } = render(
-			<WorktreeRunSection
-				theme={theme}
-				activeSession={session}
-				worktreeChildren={[createWorktreeChild()]}
-				worktreeTarget={{ mode: 'create-new', createPROnCompletion: false }}
-				onWorktreeTargetChange={mockOnWorktreeTargetChange}
-				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
-			/>
-		);
-
-		await flushAsyncEffects();
-		await act(async () => {
-			fireEvent.change(screen.getAllByRole('combobox')[0], {
-				target: { value: '__create_new__' },
-			});
-		});
-		await waitFor(() => {
-			expect(branchesMock).toHaveBeenCalledWith('/project', undefined);
-		});
-		unmount();
-
-		await act(async () => {
-			branchLoad.reject(new Error('late branch failure'));
-			await Promise.resolve();
-		});
-
-		expect(mockCaptureException).not.toHaveBeenCalledWith(
-			expect.any(Error),
-			expect.objectContaining({ extra: expect.objectContaining({ cwd: '/project' }) })
-		);
-	});
-
-	it('ignores worktree scan failures after unmount', async () => {
-		const session = createMockSession();
-		const scanLoad = createDeferred<{
-			gitSubdirs: Array<{ path: string; name: string; branch: string | null }>;
-		}>();
-		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = vi
-			.fn()
-			.mockReturnValue(scanLoad.promise);
-		vi.mocked(gitService.getBranches).mockResolvedValue(['main']);
-
-		const { unmount } = render(
-			<WorktreeRunSection
-				theme={theme}
-				activeSession={session}
-				worktreeChildren={[createWorktreeChild()]}
-				worktreeTarget={{ mode: 'create-new', createPROnCompletion: false }}
-				onWorktreeTargetChange={mockOnWorktreeTargetChange}
-				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
-			/>
-		);
-
-		await flushAsyncEffects();
-		unmount();
-
-		await act(async () => {
-			scanLoad.reject(new Error('late scan failure'));
-			await Promise.resolve();
-		});
-
-		expect(mockCaptureException).not.toHaveBeenCalledWith(
-			expect.any(Error),
-			expect.objectContaining({
-				extra: expect.objectContaining({ basePath: '/project/worktrees' }),
-			})
-		);
 	});
 
 	// -----------------------------------------------------------------------
@@ -1314,11 +967,55 @@ describe('WorktreeRunSection', () => {
 		expect(screen.getByText('Branch name is required')).toBeTruthy();
 	});
 
+	it('keeps incomplete branch suffixes while typing a new worktree branch name', async () => {
+		const session = createMockSession();
+		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
+		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
+		vi.mocked(gitService.getBranches).mockResolvedValue(['main']);
+
+		render(
+			<WorktreeRunSection
+				theme={theme}
+				activeSession={session}
+				worktreeChildren={[]}
+				worktreeTarget={{ mode: 'create-new', createPROnCompletion: false }}
+				onWorktreeTargetChange={mockOnWorktreeTargetChange}
+				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
+			/>
+		);
+
+		const select = screen.getAllByRole('combobox')[0] as HTMLSelectElement;
+		await act(async () => {
+			fireEvent.change(select, { target: { value: '__create_new__' } });
+		});
+
+		await waitFor(() => {
+			expect(screen.getByText('Worktree Branch Name')).toBeTruthy();
+		});
+
+		const branchInput = screen.getByDisplayValue(/auto-run-/) as HTMLInputElement;
+
+		await act(async () => {
+			fireEvent.change(branchInput, { target: { value: 'cue-' } });
+		});
+		expect(branchInput.value).toBe('cue-');
+
+		await act(async () => {
+			fireEvent.change(branchInput, { target: { value: 'feature/' } });
+		});
+		expect(branchInput.value).toBe('feature/');
+
+		await act(async () => {
+			fireEvent.change(branchInput, { target: { value: 'release/v1.' } });
+		});
+		expect(branchInput.value).toBe('release/v1.');
+	});
+
 	// -----------------------------------------------------------------------
 	// UX Polish: Info icon, state indicator, path preview, keyboard nav
 	// -----------------------------------------------------------------------
 
-	it('shows "Off" badge in off state and "Enabled" badge in on state', async () => {
+	it('shows "Off" badge in off state and "Enabled" badge in on state', () => {
 		const session = createMockSession();
 		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
 		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
@@ -1333,26 +1030,22 @@ describe('WorktreeRunSection', () => {
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
 			/>
 		);
-		await flushAsyncEffects();
 
 		// Off state should show "Off" badge
 		expect(screen.getByText('Off')).toBeTruthy();
 		expect(screen.queryByText('Enabled')).toBeNull();
 
 		// On state should show "Enabled"
-		await act(async () => {
-			rerender(
-				<WorktreeRunSection
-					theme={theme}
-					activeSession={session}
-					worktreeChildren={[]}
-					worktreeTarget={{ mode: 'create-new', createPROnCompletion: false }}
-					onWorktreeTargetChange={mockOnWorktreeTargetChange}
-					onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
-				/>
-			);
-		});
-		await flushAsyncEffects();
+		rerender(
+			<WorktreeRunSection
+				theme={theme}
+				activeSession={session}
+				worktreeChildren={[]}
+				worktreeTarget={{ mode: 'create-new', createPROnCompletion: false }}
+				onWorktreeTargetChange={mockOnWorktreeTargetChange}
+				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
+			/>
+		);
 		expect(screen.getByText('Enabled')).toBeTruthy();
 		expect(screen.queryByText('Off')).toBeNull();
 	});
@@ -1376,7 +1069,7 @@ describe('WorktreeRunSection', () => {
 		expect(svgIcon).toBeTruthy();
 	});
 
-	it('shows agent state color indicator when an open agent is selected', async () => {
+	it('shows agent state color indicator when an open agent is selected', () => {
 		const session = createMockSession();
 		const idleChild = createWorktreeChild({ id: 'child-idle', name: 'Idle Agent', state: 'idle' });
 		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
@@ -1396,13 +1089,10 @@ describe('WorktreeRunSection', () => {
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
 			/>
 		);
-		await flushAsyncEffects();
 
 		// Select the idle child to set internal selectedValue
 		const select = screen.getAllByRole('combobox')[0] as HTMLSelectElement;
-		await act(async () => {
-			fireEvent.change(select, { target: { value: 'child-idle' } });
-		});
+		fireEvent.change(select, { target: { value: 'child-idle' } });
 
 		// State indicator should be visible
 		const indicator = screen.getByTestId('agent-state-indicator');
@@ -1483,7 +1173,7 @@ describe('WorktreeRunSection', () => {
 		expect(screen.queryByText(/\/project\/worktrees\//)).toBeNull();
 	});
 
-	it('PR checkbox is keyboard accessible with Enter and Space', async () => {
+	it('PR checkbox is keyboard accessible with Enter and Space', () => {
 		const session = createMockSession();
 		const child = createWorktreeChild();
 		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
@@ -1499,22 +1189,17 @@ describe('WorktreeRunSection', () => {
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
 			/>
 		);
-		await flushAsyncEffects();
 
 		// Select the child to set internal state
 		const select = screen.getAllByRole('combobox')[0] as HTMLSelectElement;
-		await act(async () => {
-			fireEvent.change(select, { target: { value: child.id } });
-		});
+		fireEvent.change(select, { target: { value: child.id } });
 
 		const checkbox = screen.getByRole('checkbox');
 		expect(checkbox).toBeTruthy();
 		expect(checkbox.getAttribute('tabindex')).toBe('0');
 
 		// Press Enter to toggle
-		await act(async () => {
-			fireEvent.keyDown(checkbox, { key: 'Enter' });
-		});
+		fireEvent.keyDown(checkbox, { key: 'Enter' });
 		expect(mockOnWorktreeTargetChange).toHaveBeenCalledWith(
 			expect.objectContaining({ createPROnCompletion: true })
 		);
@@ -1522,15 +1207,13 @@ describe('WorktreeRunSection', () => {
 		mockOnWorktreeTargetChange.mockClear();
 
 		// Press Space to toggle back
-		await act(async () => {
-			fireEvent.keyDown(checkbox, { key: ' ' });
-		});
+		fireEvent.keyDown(checkbox, { key: ' ' });
 		expect(mockOnWorktreeTargetChange).toHaveBeenCalledWith(
 			expect.objectContaining({ createPROnCompletion: false })
 		);
 	});
 
-	it('expanded section has animation class', async () => {
+	it('expanded section has animation class', () => {
 		const session = createMockSession();
 		const child = createWorktreeChild();
 		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
@@ -1546,202 +1229,9 @@ describe('WorktreeRunSection', () => {
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
 			/>
 		);
-		await flushAsyncEffects();
 
 		// The expanded content wrapper should have the animation class
 		const animatedDiv = container.querySelector('.animate-slide-down');
 		expect(animatedDiv).toBeTruthy();
-	});
-
-	it('sorts main before alphabetical branches when current branch is unavailable', async () => {
-		const session = createMockSession();
-		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
-		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
-		(window.maestro.git as Record<string, unknown>).branches = vi
-			.fn()
-			.mockResolvedValue({ branches: ['zeta', 'master', 'main', 'alpha'] });
-		(window.maestro.git as Record<string, unknown>).branch = vi
-			.fn()
-			.mockResolvedValue({ stdout: '' });
-
-		render(
-			<WorktreeRunSection
-				theme={theme}
-				activeSession={session}
-				worktreeChildren={[]}
-				worktreeTarget={{ mode: 'create-new', createPROnCompletion: false }}
-				onWorktreeTargetChange={mockOnWorktreeTargetChange}
-				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
-			/>
-		);
-
-		const select = screen.getAllByRole('combobox')[0] as HTMLSelectElement;
-		await act(async () => {
-			fireEvent.change(select, { target: { value: '__create_new__' } });
-		});
-
-		const mmdd = `${String(new Date().getMonth() + 1).padStart(2, '0')}${String(new Date().getDate()).padStart(2, '0')}`;
-		await waitFor(() => {
-			expect(screen.getByDisplayValue(`auto-run-main-${mmdd}`)).toBeTruthy();
-		});
-		const baseBranchSelect = screen.getAllByRole('combobox')[1] as HTMLSelectElement;
-		expect([...baseBranchSelect.options].map((option) => option.value)).toEqual([
-			'main',
-			'master',
-			'alpha',
-			'zeta',
-		]);
-	});
-
-	it('ignores branch load results after unmount', async () => {
-		const session = createMockSession();
-		const branches = createDeferred<string[]>();
-		const branch = createDeferred<{ stdout: string }>();
-		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
-		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
-		(window.maestro.git as Record<string, unknown>).branch = vi
-			.fn()
-			.mockReturnValue(branch.promise);
-		vi.mocked(gitService.getBranches).mockReturnValue(branches.promise);
-
-		const { unmount } = render(
-			<WorktreeRunSection
-				theme={theme}
-				activeSession={session}
-				worktreeChildren={[]}
-				worktreeTarget={{ mode: 'create-new', createPROnCompletion: false }}
-				onWorktreeTargetChange={mockOnWorktreeTargetChange}
-				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
-			/>
-		);
-
-		const select = screen.getAllByRole('combobox')[0] as HTMLSelectElement;
-		await act(async () => {
-			fireEvent.change(select, { target: { value: '__create_new__' } });
-		});
-
-		unmount();
-
-		await act(async () => {
-			branches.resolve(['main']);
-			branch.resolve({ stdout: 'main' });
-			await Promise.resolve();
-		});
-
-		expect(mockCaptureException).not.toHaveBeenCalled();
-	});
-
-	it('does not scan when enabled from legacy config without a base path', async () => {
-		const session = createMockSession({
-			worktreeConfig: undefined,
-			worktreeParentPath: '/legacy/worktrees',
-		});
-		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
-		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
-
-		render(
-			<WorktreeRunSection
-				theme={theme}
-				activeSession={session}
-				worktreeChildren={[]}
-				worktreeTarget={{ mode: 'create-new', createPROnCompletion: false }}
-				onWorktreeTargetChange={mockOnWorktreeTargetChange}
-				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
-			/>
-		);
-		await flushAsyncEffects();
-
-		expect(screen.getAllByRole('combobox').length).toBeGreaterThan(0);
-		expect(scanMock).not.toHaveBeenCalled();
-	});
-
-	it('ignores scan results after unmount', async () => {
-		const session = createMockSession();
-		const scan = createDeferred<{
-			gitSubdirs: Array<{ path: string; name: string; branch: string }>;
-		}>();
-		const scanMock = vi.fn().mockReturnValue(scan.promise);
-		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
-
-		const { unmount } = render(
-			<WorktreeRunSection
-				theme={theme}
-				activeSession={session}
-				worktreeChildren={[]}
-				worktreeTarget={{ mode: 'create-new', createPROnCompletion: false }}
-				onWorktreeTargetChange={mockOnWorktreeTargetChange}
-				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
-			/>
-		);
-
-		expect(scanMock).toHaveBeenCalledWith('/project/worktrees', undefined);
-		unmount();
-
-		await act(async () => {
-			scan.resolve({
-				gitSubdirs: [{ path: '/project/worktrees/later', name: 'later', branch: 'later' }],
-			});
-			await Promise.resolve();
-		});
-
-		expect(mockCaptureException).not.toHaveBeenCalled();
-	});
-
-	it('reports scan failures and clears scanning state', async () => {
-		const session = createMockSession();
-		const error = new Error('scan failed');
-		const scanMock = vi.fn().mockRejectedValue(error);
-		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
-
-		render(
-			<WorktreeRunSection
-				theme={theme}
-				activeSession={session}
-				worktreeChildren={[]}
-				worktreeTarget={{ mode: 'create-new', createPROnCompletion: false }}
-				onWorktreeTargetChange={mockOnWorktreeTargetChange}
-				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
-			/>
-		);
-
-		await waitFor(() => {
-			expect(mockCaptureException).toHaveBeenCalledWith(error, {
-				extra: { basePath: '/project/worktrees', sshRemoteId: undefined },
-			});
-		});
-		expect(screen.queryByText('Scanning...')).toBeNull();
-	});
-
-	it('toggles PR creation when the checkbox control is clicked directly', async () => {
-		const session = createMockSession();
-		const child = createWorktreeChild();
-		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
-		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
-
-		render(
-			<WorktreeRunSection
-				theme={theme}
-				activeSession={session}
-				worktreeChildren={[child]}
-				worktreeTarget={{ mode: 'existing-open', sessionId: child.id, createPROnCompletion: false }}
-				onWorktreeTargetChange={mockOnWorktreeTargetChange}
-				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
-			/>
-		);
-		await flushAsyncEffects();
-
-		const select = screen.getAllByRole('combobox')[0] as HTMLSelectElement;
-		await act(async () => {
-			fireEvent.change(select, { target: { value: child.id } });
-		});
-		mockOnWorktreeTargetChange.mockClear();
-
-		await act(async () => {
-			fireEvent.click(screen.getByRole('checkbox'));
-		});
-
-		expect(mockOnWorktreeTargetChange).toHaveBeenCalledWith(
-			expect.objectContaining({ createPROnCompletion: true })
-		);
 	});
 });

@@ -141,13 +141,11 @@ function extractTextFromContent(content: FactoryContentItem[] | string): string 
 	}
 
 	if (Array.isArray(content)) {
-		const textParts: string[] = [];
-		for (const item of content) {
-			if (item.type === 'text' && item.text) {
-				textParts.push(item.text);
-			}
-		}
-		return textParts.join(' ').trim();
+		return content
+			.filter((c) => c.type === 'text' && c.text)
+			.map((c) => c.text || '')
+			.join(' ')
+			.trim();
 	}
 
 	return '';
@@ -365,6 +363,7 @@ export class FactoryDroidSessionStorage extends BaseSessionStorage {
 					durationSeconds,
 				});
 			} catch (e) {
+				void captureException(e);
 				logger.warn(`Error reading remote Factory Droid session ${sessionId}`, LOG_CONTEXT, {
 					error: e,
 				});
@@ -466,6 +465,7 @@ export class FactoryDroidSessionStorage extends BaseSessionStorage {
 					// Factory Droid doesn't provide cost in settings.json
 				});
 			} catch (e) {
+				void captureException(e);
 				logger.warn(`Error reading Factory Droid session ${sessionId}`, LOG_CONTEXT, { error: e });
 			}
 		}

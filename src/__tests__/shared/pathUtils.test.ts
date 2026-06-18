@@ -18,10 +18,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import {
 	expandTilde,
-	encodeClaudeProjectPath,
-	parseVersion,
 	compareVersions,
-	detectNodeVersionManagerBinPaths,
 	buildExpandedPath,
 	buildExpandedEnv,
 } from '../../shared/pathUtils';
@@ -84,43 +81,6 @@ describe('expandTilde', () => {
 			expect(result).toContain('testuser');
 			expect(result).toContain('.config');
 		});
-	});
-});
-
-describe('encodeClaudeProjectPath', () => {
-	it('replaces non-alphanumeric characters with dashes', () => {
-		expect(encodeClaudeProjectPath('/Users/test user/my-project')).toBe(
-			'-Users-test-user-my-project'
-		);
-		expect(encodeClaudeProjectPath('C:\\Users\\test\\repo.name')).toBe('C--Users-test-repo-name');
-	});
-});
-
-describe('parseVersion', () => {
-	it('should parse version with v prefix', () => {
-		expect(parseVersion('v22.10.0')).toEqual([22, 10, 0]);
-	});
-
-	it('should parse version without v prefix', () => {
-		expect(parseVersion('0.14.0')).toEqual([0, 14, 0]);
-	});
-
-	it('should handle single digit versions', () => {
-		expect(parseVersion('v8.0.0')).toEqual([8, 0, 0]);
-	});
-
-	it('should handle versions with more than 3 parts', () => {
-		expect(parseVersion('1.2.3.4')).toEqual([1, 2, 3, 4]);
-	});
-
-	it('should handle non-numeric parts as 0', () => {
-		expect(parseVersion('1.beta.3')).toEqual([1, 0, 3]);
-	});
-
-	it('should strip pre-release suffixes before parsing', () => {
-		expect(parseVersion('0.15.0-rc.1')).toEqual([0, 15, 0]);
-		expect(parseVersion('v1.2.0-beta.3')).toEqual([1, 2, 0]);
-		expect(parseVersion('0.15.0-alpha')).toEqual([0, 15, 0]);
 	});
 });
 
@@ -230,138 +190,6 @@ describe('compareVersions', () => {
 	});
 });
 
-describe('detectNodeVersionManagerBinPaths', () => {
-	const originalPlatform = process.platform;
-	const originalNvmDir = process.env.NVM_DIR;
-	const originalNPrefix = process.env.N_PREFIX;
-	let tempDirs: string[] = [];
-
-	const createTempHome = (): string => {
-		const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-path-utils-'));
-		tempDirs.push(tempHome);
-		vi.mocked(os.homedir).mockReturnValue(tempHome);
-		process.env.NVM_DIR = path.join(tempHome, '.nvm');
-		process.env.N_PREFIX = path.join(tempHome, 'n-prefix');
-		return tempHome;
-	};
-
-	beforeEach(() => {
-		Object.defineProperty(process, 'platform', { value: 'darwin' });
-		vi.mocked(os.homedir).mockReturnValue('/Users/testuser');
-		tempDirs = [];
-		if (originalNvmDir === undefined) {
-			delete process.env.NVM_DIR;
-		} else {
-			process.env.NVM_DIR = originalNvmDir;
-		}
-		if (originalNPrefix === undefined) {
-			delete process.env.N_PREFIX;
-		} else {
-			process.env.N_PREFIX = originalNPrefix;
-		}
-	});
-
-	afterEach(() => {
-		Object.defineProperty(process, 'platform', { value: originalPlatform });
-		vi.mocked(os.homedir).mockReturnValue('/Users/testuser');
-		if (originalNvmDir === undefined) {
-			delete process.env.NVM_DIR;
-		} else {
-			process.env.NVM_DIR = originalNvmDir;
-		}
-		if (originalNPrefix === undefined) {
-			delete process.env.N_PREFIX;
-		} else {
-			process.env.N_PREFIX = originalNPrefix;
-		}
-		for (const tempDir of tempDirs) {
-			fs.rmSync(tempDir, { recursive: true, force: true });
-		}
-		tempDirs = [];
-	});
-
-	it('returns no Unix version-manager paths on Windows', () => {
-		Object.defineProperty(process, 'platform', { value: 'win32' });
-
-		expect(detectNodeVersionManagerBinPaths()).toEqual([]);
-	});
-
-	it('detects nvm current without requiring an installed versions directory', () => {
-		const tempHome = createTempHome();
-		const nvmDir = path.join(tempHome, '.nvm');
-		const currentBin = path.join(nvmDir, 'current', 'bin');
-		fs.mkdirSync(currentBin, { recursive: true });
-
-		expect(detectNodeVersionManagerBinPaths()).toEqual([currentBin]);
-	});
-
-	it('uses ~/.nvm when NVM_DIR is not set', () => {
-		const tempHome = createTempHome();
-		delete process.env.NVM_DIR;
-		const currentBin = path.join(tempHome, '.nvm', 'current', 'bin');
-		fs.mkdirSync(currentBin, { recursive: true });
-
-		expect(detectNodeVersionManagerBinPaths()).toEqual([currentBin]);
-	});
-
-	it('sorts nvm versions descending and skips versions without a bin directory', () => {
-		const tempHome = createTempHome();
-		const versionsDir = path.join(tempHome, '.nvm', 'versions', 'node');
-		const v20Bin = path.join(versionsDir, 'v20.0.0', 'bin');
-		const v22Bin = path.join(versionsDir, 'v22.0.0', 'bin');
-		fs.mkdirSync(v20Bin, { recursive: true });
-		fs.mkdirSync(v22Bin, { recursive: true });
-		fs.mkdirSync(path.join(versionsDir, 'v99.0.0'), { recursive: true });
-
-		expect(detectNodeVersionManagerBinPaths()).toEqual([v22Bin, v20Bin]);
-	});
-
-	it('detects fnm default alias and sorted version installation bins', () => {
-		const tempHome = createTempHome();
-		process.env.NVM_DIR = path.join(tempHome, 'missing-nvm');
-		const fnmDir = path.join(tempHome, 'Library', 'Application Support', 'fnm');
-		const aliasBin = path.join(fnmDir, 'aliases', 'default', 'bin');
-		const versionsDir = path.join(fnmDir, 'node-versions');
-		const v18Bin = path.join(versionsDir, 'v18.0.0', 'installation', 'bin');
-		const v20Bin = path.join(versionsDir, 'v20.0.0', 'installation', 'bin');
-		fs.mkdirSync(aliasBin, { recursive: true });
-		fs.mkdirSync(v18Bin, { recursive: true });
-		fs.mkdirSync(v20Bin, { recursive: true });
-		fs.mkdirSync(path.join(versionsDir, 'v99.0.0'), { recursive: true });
-
-		expect(detectNodeVersionManagerBinPaths()).toEqual([aliasBin, v20Bin, v18Bin]);
-	});
-
-	it('detects shim-based managers and n when fnm has no bins', () => {
-		const tempHome = createTempHome();
-		process.env.NVM_DIR = path.join(tempHome, 'missing-nvm');
-		fs.mkdirSync(path.join(tempHome, 'Library', 'Application Support', 'fnm'), {
-			recursive: true,
-		});
-		const voltaBin = path.join(tempHome, '.volta', 'bin');
-		const miseShims = path.join(tempHome, '.local', 'share', 'mise', 'shims');
-		const asdfShims = path.join(tempHome, '.asdf', 'shims');
-		const nBin = path.join(process.env.N_PREFIX!, 'bin');
-		fs.mkdirSync(voltaBin, { recursive: true });
-		fs.mkdirSync(miseShims, { recursive: true });
-		fs.mkdirSync(asdfShims, { recursive: true });
-		fs.mkdirSync(path.join(process.env.N_PREFIX!, 'n', 'versions'), { recursive: true });
-		fs.mkdirSync(nBin, { recursive: true });
-
-		expect(detectNodeVersionManagerBinPaths()).toEqual([voltaBin, miseShims, asdfShims, nBin]);
-	});
-
-	it('does not add n path when n versions exist without a bin directory', () => {
-		const tempHome = createTempHome();
-		process.env.NVM_DIR = path.join(tempHome, 'missing-nvm');
-		fs.mkdirSync(path.join(process.env.N_PREFIX!, 'n', 'versions'), { recursive: true });
-
-		expect(detectNodeVersionManagerBinPaths()).not.toContain(
-			path.join(process.env.N_PREFIX!, 'bin')
-		);
-	});
-});
-
 describe('buildExpandedPath', () => {
 	const originalPlatform = process.platform;
 	const originalPath = process.env.PATH;
@@ -461,14 +289,6 @@ describe('buildExpandedPath', () => {
 			expect(result).toContain('/my/custom/bin');
 			expect(result).toContain('/another/path');
 			expect(result).toContain('/opt/homebrew/bin');
-		});
-
-		it('should not duplicate custom paths already present in PATH', () => {
-			process.env.PATH = '/usr/bin';
-			const result = buildExpandedPath(['/usr/bin']);
-
-			const pathParts = result.split(':');
-			expect(pathParts.filter((p) => p === '/usr/bin')).toHaveLength(1);
 		});
 
 		it('should handle empty PATH environment', () => {

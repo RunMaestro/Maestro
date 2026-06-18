@@ -36,7 +36,9 @@ import { createMergedSession } from '../../utils/tabHelpers';
 import { classifyTransferError } from '../../components/TransferErrorModal';
 import { generateId } from '../../utils/ids';
 import { useOperationStore } from '../../stores/operationStore';
+import { estimateTokensFromLogs } from '../../../shared/formatters';
 import type { TransferState, TransferLastRequest } from '../../stores/operationStore';
+import { logger } from '../../utils/logger';
 
 // Re-export types from the canonical store location
 export type { TransferState } from '../../stores/operationStore';
@@ -46,15 +48,6 @@ export type { TransferState } from '../../stores/operationStore';
  * Default: 100,000 tokens (safe for most models)
  */
 const MAX_CONTEXT_TOKENS_WARNING = 100000;
-
-/**
- * Estimate token count from log entries
- * Uses a simple heuristic: ~4 characters per token (average for English text)
- */
-function estimateTokensFromLogs(logs: { text: string }[]): number {
-	const totalChars = logs.reduce((sum, log) => sum + (log.text?.length || 0), 0);
-	return Math.round(totalChars / 4);
-}
 
 /**
  * Request to transfer context to another agent
@@ -255,7 +248,7 @@ export function useSendToAgent(): UseSendToAgentResult {
 			const sourceTokens = estimateTokensFromLogs(sourceTab.logs);
 			if (sourceTokens > MAX_CONTEXT_TOKENS_WARNING) {
 				// Log a warning but continue - the modal should have already warned the user
-				console.warn(
+				logger.warn(
 					`Large context transfer: ~${sourceTokens.toLocaleString()} tokens. ` +
 						`This may exceed the target agent's context window.`
 				);
@@ -273,7 +266,7 @@ export function useSendToAgent(): UseSendToAgentResult {
 			} catch (agentCheckError) {
 				// If we can't check agent status, log warning but continue
 				// The agent detection may not be available in all contexts
-				console.warn('Could not verify agent availability:', agentCheckError);
+				logger.warn('Could not verify agent availability:', undefined, agentCheckError);
 			}
 
 			// Check for cancellation
@@ -688,7 +681,7 @@ Please confirm you've reviewed this context and let me know you're ready to cont
 					});
 				} catch (historyError) {
 					// Non-critical: log but don't fail the transfer operation
-					console.warn('Failed to log transfer operation to history:', historyError);
+					logger.warn('Failed to log transfer operation to history:', undefined, historyError);
 				}
 
 				// Notify caller with session ID and name

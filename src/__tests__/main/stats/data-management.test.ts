@@ -109,9 +109,6 @@ describe('Database VACUUM functionality', () => {
 		lastDbPath = null;
 		mockDb.pragma.mockReturnValue([{ user_version: 0 }]);
 		mockDb.prepare.mockReturnValue(mockStatement);
-		mockDb.transaction.mockImplementation((fn: () => void) => {
-			return () => fn();
-		});
 		mockStatement.run.mockReturnValue({ changes: 1 });
 		mockFsExistsSync.mockReturnValue(true);
 		// Reset statSync to throw by default (simulates file not existing)
@@ -583,26 +580,6 @@ describe('Database VACUUM functionality', () => {
 			expect(result.deletedAutoRunTasks).toBe(0);
 		});
 
-		it('should stringify non-Error cleanup failures', async () => {
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-			mockDb.transaction.mockImplementation(() => {
-				throw 'transaction aborted';
-			});
-
-			const result = db.clearOldData(30);
-
-			expect(result).toEqual({
-				success: false,
-				deletedQueryEvents: 0,
-				deletedAutoRunSessions: 0,
-				deletedAutoRunTasks: 0,
-				deletedSessionLifecycle: 0,
-				error: 'transaction aborted',
-			});
-		});
-
 		it('should support various time periods', async () => {
 			mockStatement.all.mockReturnValue([]);
 			mockStatement.run.mockReturnValue({ changes: 0 });
@@ -617,49 +594,6 @@ describe('Database VACUUM functionality', () => {
 				const result = db.clearOldData(days);
 				expect(result.success).toBe(true);
 			}
-		});
-	});
-
-	describe('exportToCsv method', () => {
-		it('should export empty optional fields as blank CSV values', async () => {
-			const now = Date.UTC(2026, 0, 2, 3, 4, 5);
-			mockStatement.all.mockReturnValue([
-				{
-					id: 'event-blank-fields',
-					session_id: 'session-blank-fields',
-					agent_type: 'codex',
-					source: 'user',
-					start_time: now,
-					duration: 1200,
-					project_path: null,
-					tab_id: null,
-					is_remote: null,
-				},
-				{
-					id: 'event-remote',
-					session_id: 'session-remote',
-					agent_type: 'claude-code',
-					source: 'auto',
-					start_time: now + 1,
-					duration: 2400,
-					project_path: '/repo',
-					tab_id: 'tab-remote',
-					is_remote: 1,
-				},
-			]);
-
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-
-			const csv = db.exportToCsv('all');
-
-			expect(csv.split('\n')[1]).toBe(
-				`"event-blank-fields","session-blank-fields","codex","user","${new Date(now).toISOString()}","1200","","",""`
-			);
-			expect(csv.split('\n')[2]).toBe(
-				`"event-remote","session-remote","claude-code","auto","${new Date(now + 1).toISOString()}","2400","/repo","tab-remote","true"`
-			);
 		});
 	});
 

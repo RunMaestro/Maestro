@@ -519,6 +519,18 @@ const CODEX_ERROR_PATTERNS: AgentErrorPatterns = {
 
 	session_not_found: [
 		{
+			// `codex exec resume <id>` when the rollout file backing the thread is
+			// gone (e.g. pruned, or written by a different/older Codex version).
+			// The CLI exits 1 with stderr like:
+			//   "thread/resume: thread/resume failed: no rollout found for thread id <uuid>"
+			// Without this pattern it fell through to a dead-end "Agent exited with
+			// code 1" crash instead of Maestro's in-place fresh-session recovery
+			// (which re-seeds the prior conversation from the tab transcript). See #1042.
+			pattern: /no rollout found|rollout not found/i,
+			message: 'Previous Codex session could not be found. Starting fresh conversation.',
+			recoverable: true,
+		},
+		{
 			pattern: /session.*not found/i,
 			message: 'Session not found. Starting fresh conversation.',
 			recoverable: true,
@@ -856,6 +868,134 @@ export const SSH_ERROR_PATTERNS: AgentErrorPatterns = {
 };
 
 // ============================================================================
+// GitHub Copilot CLI Error Patterns
+// ============================================================================
+
+const COPILOT_ERROR_PATTERNS: AgentErrorPatterns = {
+	auth_expired: [
+		{
+			pattern: /authentication failed/i,
+			message: 'Authentication failed. Please run "gh auth login" to re-authenticate.',
+			recoverable: true,
+		},
+		{
+			pattern: /not authenticated/i,
+			message: 'Not authenticated. Please run "gh auth login" to authenticate.',
+			recoverable: true,
+		},
+		{
+			pattern: /unauthorized/i,
+			message: 'Unauthorized. Please check your GitHub authentication.',
+			recoverable: true,
+		},
+		{
+			pattern: /invalid.*token/i,
+			message: 'Invalid GitHub token. Please re-authenticate with "gh auth login".',
+			recoverable: true,
+		},
+	],
+
+	rate_limited: [
+		{
+			pattern: /rate limit exceeded/i,
+			message: 'GitHub API rate limit exceeded. Please wait and try again.',
+			recoverable: true,
+		},
+		{
+			pattern: /quota.*exceeded/i,
+			message: 'API quota exceeded. Resume when quota resets.',
+			recoverable: true,
+		},
+	],
+
+	network_error: [
+		{
+			pattern: /connection failed/i,
+			message: 'Connection failed. Check your internet connection.',
+			recoverable: true,
+		},
+		{
+			pattern: /network error/i,
+			message: 'Network error. Please check your connection.',
+			recoverable: true,
+		},
+		{
+			pattern: /timeout/i,
+			message: 'Request timed out. Please try again.',
+			recoverable: true,
+		},
+	],
+
+	permission_denied: [
+		{
+			pattern: /permission denied/i,
+			message: 'Permission denied. Check file and directory permissions.',
+			recoverable: false,
+		},
+	],
+
+	session_not_found: [
+		{
+			pattern: /session.*not found/i,
+			message: 'Session not found. Starting fresh conversation.',
+			recoverable: true,
+		},
+	],
+
+	token_exhaustion: [
+		{
+			pattern: /prompt.*too\s+long/i,
+			message: 'Prompt is too long. Try a shorter message or start a new session.',
+			recoverable: true,
+		},
+		{
+			pattern: /context.*exceeded/i,
+			message: 'Context limit exceeded. Start a new session.',
+			recoverable: true,
+		},
+		{
+			pattern: /context.*too long/i,
+			message: 'The conversation has exceeded the context limit. Start a new session.',
+			recoverable: true,
+		},
+		{
+			pattern: /maximum.*tokens/i,
+			message: 'Maximum token limit reached. Start a new session to continue.',
+			recoverable: true,
+		},
+		{
+			pattern: /context window/i,
+			message: 'Context window exceeded. Please start a new session.',
+			recoverable: true,
+		},
+		{
+			pattern: /token limit/i,
+			message: 'Token limit reached. Consider starting a fresh conversation.',
+			recoverable: true,
+		},
+		{
+			pattern: /input.*too large/i,
+			message: 'Input is too large for the context window.',
+			recoverable: true,
+		},
+	],
+
+	agent_crashed: [
+		{
+			pattern: /no prompt provided.*interactive terminal/i,
+			message:
+				'GitHub Copilot was launched without a terminal. Interactive Copilot sessions require PTY mode.',
+			recoverable: true,
+		},
+		{
+			pattern: /unexpected error/i,
+			message: 'An unexpected error occurred in the agent.',
+			recoverable: true,
+		},
+	],
+};
+
+// ============================================================================
 // Pattern Registry
 // ============================================================================
 
@@ -864,6 +1004,7 @@ const patternRegistry = new Map<ToolType, AgentErrorPatterns>([
 	['opencode', OPENCODE_ERROR_PATTERNS],
 	['codex', CODEX_ERROR_PATTERNS],
 	['factory-droid', FACTORY_DROID_ERROR_PATTERNS],
+	['copilot-cli', COPILOT_ERROR_PATTERNS],
 ]);
 
 /**
@@ -895,32 +1036,77 @@ export function getErrorPatterns(agentId: ToolType | string): AgentErrorPatterns
 }
 
 /**
+ * Default minimum chunk length for the streaming-path length guard.
+ *
+ * During agent streaming, the vast majority of stdout/stderr chunks are
+ * single-token noise ("the", "a", punctuation) that can never match an
+ * error pattern. The shortest real error string we observe in
+ * production is "timeout" (7 chars), which always arrives within a
+ * larger log line. Skipping the regex bank for chunks under this
+ * threshold is the bulk of the PR-D 1.8 win.
+ *
+ * Callers that test individual error strings in isolation (unit tests,
+ * one-shot probes) can pass `minLength: 0` to opt out.
+ *
+ * See CLAUDE-PERFORMANCE.md§"Error-pattern regex bank".
+ */
+export const ERROR_PATTERN_DEFAULT_MIN_CHUNK_LENGTH = 7;
+
+/**
+ * Error types ordered by historical hit frequency (most-likely first).
+ * Production telemetry shows rate_limited and network_error account for
+ * ~70% of all matches; the auth/permission tail is rare. Iterating in
+ * hit-frequency order means most matches succeed in the first 1-2
+ * pattern types instead of the last 1-2.
+ *
+ * If telemetry shifts (new agent provider, new error class), reorder
+ * here. Behavior is identical — first-match early-return is preserved.
+ */
+const ERROR_TYPES_BY_HIT_FREQUENCY: AgentErrorType[] = [
+	'rate_limited',
+	'network_error',
+	'token_exhaustion',
+	'auth_expired',
+	'agent_crashed',
+	'session_not_found',
+	'permission_denied',
+];
+
+export interface MatchErrorPatternOptions {
+	/**
+	 * Skip the regex bank entirely for chunks shorter than this. Pass `0`
+	 * to disable (unit tests checking individual error strings should do
+	 * this). Defaults to {@link ERROR_PATTERN_DEFAULT_MIN_CHUNK_LENGTH}.
+	 */
+	minLength?: number;
+}
+
+/**
  * Match a line against error patterns and return the error type
  * @param patterns - Error patterns to match against
  * @param line - The line to check
+ * @param options - Tuning knobs (length guard threshold)
  * @returns Matched error info or null if no match
  */
 export function matchErrorPattern(
 	patterns: AgentErrorPatterns,
-	line: string
+	line: string,
+	options?: MatchErrorPatternOptions
 ): { type: AgentErrorType; message: string; recoverable: boolean } | null {
 	// Guard against non-string input (e.g. when obj.message is an object)
 	if (typeof line !== 'string') {
 		return null;
 	}
 
-	// Check each error type's patterns
-	const errorTypes: AgentErrorType[] = [
-		'auth_expired',
-		'token_exhaustion',
-		'rate_limited',
-		'network_error',
-		'permission_denied',
-		'session_not_found',
-		'agent_crashed',
-	];
+	// Length guard: token noise during streaming dominates by volume but
+	// never contains an error pattern. Skipping the regex bank here is
+	// the largest single CPU saving on the streaming path.
+	const minLength = options?.minLength ?? ERROR_PATTERN_DEFAULT_MIN_CHUNK_LENGTH;
+	if (line.length < minLength) {
+		return null;
+	}
 
-	for (const errorType of errorTypes) {
+	for (const errorType of ERROR_TYPES_BY_HIT_FREQUENCY) {
 		const typePatterns = patterns[errorType];
 		if (!typePatterns) continue;
 

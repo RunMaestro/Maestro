@@ -9,21 +9,20 @@ import {
 	useModalActions,
 	selectModalOpen,
 	selectModalData,
-	selectModal,
 	getModalActions,
 	type ModalId,
 	type SettingsModalData,
 	type ConfirmModalData,
 	type RenameInstanceModalData,
 	type LightboxData,
+	type CueYamlEditorData,
 } from '../../../renderer/stores/modalStore';
-import { CONDUCTOR_BADGES } from '../../../renderer/constants/conductorBadges';
 import type { Session } from '../../../renderer/types';
 
 describe('modalStore', () => {
 	beforeEach(() => {
 		// Reset store to initial state before each test
-		useModalStore.setState({ modals: new Map() });
+		useModalStore.setState({ modals: new Map(), promptComposerFullscreen: false });
 	});
 
 	describe('initial state', () => {
@@ -300,8 +299,8 @@ describe('modalStore', () => {
 			expect(result.current).toEqual({ tab: 'theme' });
 		});
 
-		it('provides full entry via selectModal', () => {
-			const { result } = renderHook(() => useModalStore(selectModal('settings')));
+		it('provides full entry via modals map', () => {
+			const { result } = renderHook(() => useModalStore((s) => s.modals.get('settings')));
 
 			expect(result.current).toBeUndefined();
 
@@ -411,6 +410,7 @@ describe('modalStore', () => {
 				'renameTab',
 				'renameGroup',
 				'agentSessions',
+				'memoryViewer',
 				'queueBrowser',
 				'batchRunner',
 				'autoRunSetup',
@@ -448,6 +448,8 @@ describe('modalStore', () => {
 				'symphony',
 				'updateCheck',
 				'windowsWarning',
+				'cueModal',
+				'cueYamlEditor',
 			];
 
 			// Open and close each to verify they all work
@@ -1007,363 +1009,6 @@ describe('modalStore', () => {
 		});
 	});
 
-	describe('compatibility layer: legacy setters preserve modal behavior', () => {
-		it('updates settings and quick action data through legacy setters', () => {
-			const actions = getModalActions();
-
-			actions.openSettings();
-			expect(useModalStore.getState().getData('settings')?.tab).toBe('general');
-
-			actions.setSettingsModalOpen(true);
-			actions.setSettingsTab('theme');
-			expect(useModalStore.getState().getData('settings')?.tab).toBe('theme');
-
-			actions.setQuickActionOpen(true);
-			expect(useModalStore.getState().getData('quickAction')?.initialMode).toBe('main');
-
-			actions.setQuickActionInitialMode('move-to-group');
-			expect(useModalStore.getState().getData('quickAction')?.initialMode).toBe('move-to-group');
-
-			actions.setQuickActionOpen(false);
-			expect(useModalStore.getState().isOpen('quickAction')).toBe(false);
-		});
-
-		it('opens and closes simple boolean modals through legacy setters', () => {
-			const actions = getModalActions();
-			const booleanModalSetters: Array<[ModalId, (open: boolean) => void]> = [
-				['newInstance', actions.setNewInstanceModalOpen],
-				['editAgent', actions.setEditAgentModalOpen],
-				['deleteAgent', actions.setDeleteAgentModalOpen],
-				['shortcutsHelp', actions.setShortcutsHelpOpen],
-				['about', actions.setAboutModalOpen],
-				['updateCheck', actions.setUpdateCheckModalOpen],
-				['leaderboard', actions.setLeaderboardRegistrationOpen],
-				['logViewer', actions.setLogViewerOpen],
-				['processMonitor', actions.setProcessMonitorOpen],
-				['usageDashboard', actions.setUsageDashboardOpen],
-				['playground', actions.setPlaygroundOpen],
-				['debugWizard', actions.setDebugWizardModalOpen],
-				['debugPackage', actions.setDebugPackageModalOpen],
-				['confirm', actions.setConfirmModalOpen],
-				['queueBrowser', actions.setQueueBrowserOpen],
-				['batchRunner', actions.setBatchRunnerModalOpen],
-				['autoRunSetup', actions.setAutoRunSetupModalOpen],
-				['marketplace', actions.setMarketplaceModalOpen],
-				['wizardResume', actions.setWizardResumeModalOpen],
-				['worktreeConfig', actions.setWorktreeConfigModalOpen],
-				['createWorktree', actions.setCreateWorktreeModalOpen],
-				['createPR', actions.setCreatePRModalOpen],
-				['deleteWorktree', actions.setDeleteWorktreeModalOpen],
-				['tabSwitcher', actions.setTabSwitcherOpen],
-				['fuzzyFileSearch', actions.setFuzzyFileSearchOpen],
-				['promptComposer', actions.setPromptComposerOpen],
-				['mergeSession', actions.setMergeSessionModalOpen],
-				['sendToAgent', actions.setSendToAgentModalOpen],
-				['newGroupChat', actions.setShowNewGroupChatModal],
-				['groupChatInfo', actions.setShowGroupChatInfo],
-				['gitLog', actions.setGitLogOpen],
-				['tour', actions.setTourOpen],
-				['symphony', actions.setSymphonyModalOpen],
-				['windowsWarning', actions.setWindowsWarningModalOpen],
-				['directorNotes', actions.setDirectorNotesOpen],
-			];
-
-			for (const [modalId, setOpen] of booleanModalSetters) {
-				setOpen(true);
-				expect(useModalStore.getState().isOpen(modalId)).toBe(true);
-
-				setOpen(false);
-				expect(useModalStore.getState().isOpen(modalId)).toBe(false);
-				expect(useModalStore.getState().getData(modalId)).toBeUndefined();
-			}
-		});
-
-		it('updates new instance duplication and ignores local shortcuts search state', () => {
-			const actions = getModalActions();
-
-			actions.setShortcutsSearchQuery('rename');
-			expect(useModalStore.getState().modals.size).toBe(0);
-
-			actions.setNewInstanceModalOpen(true);
-			expect(useModalStore.getState().getData('newInstance')?.duplicatingSessionId).toBeNull();
-
-			actions.setDuplicatingSessionId('session-copy-source');
-			expect(useModalStore.getState().getData('newInstance')?.duplicatingSessionId).toBe(
-				'session-copy-source'
-			);
-
-			actions.setDuplicatingSessionId(null);
-			expect(useModalStore.getState().getData('newInstance')?.duplicatingSessionId).toBeNull();
-		});
-
-		it('updates lightbox gallery metadata only while lightbox data exists', () => {
-			const actions = getModalActions();
-
-			actions.setLightboxImages(['ignored.png']);
-			actions.setLightboxSource('staged');
-			expect(useModalStore.getState().getData('lightbox')).toBeUndefined();
-
-			actions.setLightboxImage('hero.png');
-			actions.setLightboxImages(['hero.png', 'detail.png']);
-			actions.setLightboxSource('staged');
-			actions.setLightboxIsGroupChat(true);
-			actions.setLightboxAllowDelete(true);
-
-			expect(useModalStore.getState().getData('lightbox')).toEqual({
-				image: 'hero.png',
-				images: ['hero.png', 'detail.png'],
-				source: 'staged',
-				isGroupChat: true,
-				allowDelete: true,
-			});
-		});
-
-		it('opens data-backed celebration modals and closes them with null', () => {
-			const actions = getModalActions();
-			const standingOvation = {
-				badge: CONDUCTOR_BADGES[0],
-				isNewRecord: true,
-				recordTimeMs: 1200,
-			};
-			const firstRun = {
-				elapsedTimeMs: 5000,
-				completedTasks: 4,
-				totalTasks: 4,
-			};
-
-			actions.setStandingOvationData(standingOvation);
-			expect(useModalStore.getState().getData('standingOvation')).toEqual(standingOvation);
-
-			actions.setStandingOvationData(null);
-			expect(useModalStore.getState().isOpen('standingOvation')).toBe(false);
-
-			actions.setFirstRunCelebrationData(firstRun);
-			expect(useModalStore.getState().getData('firstRunCelebration')).toEqual(firstRun);
-
-			actions.setFirstRunCelebrationData(null);
-			expect(useModalStore.getState().isOpen('firstRunCelebration')).toBe(false);
-
-			actions.setPendingKeyboardMasteryLevel(3);
-			expect(useModalStore.getState().getData('keyboardMastery')).toEqual({ level: 3 });
-
-			actions.setPendingKeyboardMasteryLevel(null);
-			expect(useModalStore.getState().isOpen('keyboardMastery')).toBe(false);
-		});
-
-		it('sets edit and delete agent session data and clears it with null', () => {
-			const actions = getModalActions();
-			const session = {
-				id: 'session-legacy',
-				name: 'Legacy Session',
-				agentType: 'claude-code',
-			} as unknown as Session;
-
-			actions.setEditAgentSession(session);
-			expect(useModalStore.getState().isOpen('editAgent')).toBe(true);
-			expect(useModalStore.getState().getData('editAgent')?.session).toEqual(session);
-
-			actions.setEditAgentSession(null);
-			expect(useModalStore.getState().isOpen('editAgent')).toBe(false);
-			expect(useModalStore.getState().getData('editAgent')).toBeUndefined();
-
-			actions.setDeleteAgentSession(session);
-			expect(useModalStore.getState().isOpen('deleteAgent')).toBe(true);
-			expect(useModalStore.getState().getData('deleteAgent')?.session).toEqual(session);
-
-			actions.setDeleteAgentSession(null);
-			expect(useModalStore.getState().isOpen('deleteAgent')).toBe(false);
-			expect(useModalStore.getState().getData('deleteAgent')).toBeUndefined();
-		});
-
-		it('opens wizard resume and agent error modals with payloads and closes with null', () => {
-			const actions = getModalActions();
-			const wizardState = {
-				mode: 'resume',
-				documents: [],
-			} as NonNullable<Parameters<typeof actions.setWizardResumeState>[0]>;
-			const historicalError = {
-				message: 'Agent failed',
-				timestamp: 1710000000000,
-			} as Parameters<typeof actions.showHistoricalAgentError>[1];
-
-			actions.setWizardResumeState(wizardState);
-			expect(useModalStore.getState().getData('wizardResume')?.state).toEqual(wizardState);
-
-			actions.setWizardResumeState(null);
-			expect(useModalStore.getState().isOpen('wizardResume')).toBe(false);
-
-			actions.setAgentErrorModalSessionId('session-error');
-			expect(useModalStore.getState().getData('agentError')).toEqual({
-				sessionId: 'session-error',
-			});
-
-			actions.showHistoricalAgentError('session-error', historicalError);
-			expect(useModalStore.getState().getData('agentError')).toEqual({
-				sessionId: 'session-error',
-				historicalError,
-			});
-
-			actions.setAgentErrorModalSessionId(null);
-			expect(useModalStore.getState().isOpen('agentError')).toBe(false);
-		});
-
-		it('opens worktree operation modals with session payloads and closes with null', () => {
-			const actions = getModalActions();
-			const session = {
-				id: 'session-worktree',
-				name: 'Worktree Session',
-				agentType: 'claude-code',
-			} as unknown as Session;
-
-			actions.setCreatePRSession(session);
-			expect(useModalStore.getState().getData('createPR')?.session).toEqual(session);
-
-			actions.setCreatePRSession(null);
-			expect(useModalStore.getState().isOpen('createPR')).toBe(false);
-
-			actions.setDeleteWorktreeSession(session);
-			expect(useModalStore.getState().getData('deleteWorktree')?.session).toEqual(session);
-
-			actions.setDeleteWorktreeSession(null);
-			expect(useModalStore.getState().isOpen('deleteWorktree')).toBe(false);
-		});
-
-		it('updates confirmation message and callback only when data exists', () => {
-			const actions = getModalActions();
-			const initialConfirm = vi.fn();
-			const replacementConfirm = vi.fn();
-
-			actions.showConfirmation('Initial message', initialConfirm);
-			actions.setConfirmModalMessage('Updated message');
-			actions.setConfirmModalOnConfirm(replacementConfirm);
-
-			const confirmData = useModalStore.getState().getData('confirm');
-			expect(confirmData?.message).toBe('Updated message');
-
-			confirmData?.onConfirm();
-			expect(initialConfirm).not.toHaveBeenCalled();
-			expect(replacementConfirm).toHaveBeenCalledTimes(1);
-
-			actions.setConfirmModalOnConfirm(null);
-			expect(useModalStore.getState().getData('confirm')?.onConfirm).toBe(replacementConfirm);
-		});
-
-		it('covers rename setter fallback and update paths', () => {
-			const actions = getModalActions();
-
-			actions.setRenameInstanceSessionId('session-1');
-			actions.setRenameInstanceValue('Updated Session');
-			actions.setRenameInstanceSessionId(null);
-			expect(useModalStore.getState().getData('renameInstance')).toEqual({
-				sessionId: 'session-1',
-				value: 'Updated Session',
-			});
-
-			actions.setRenameInstanceModalOpen(false);
-			actions.setRenameInstanceModalOpen(true);
-			expect(useModalStore.getState().getData('renameInstance')).toEqual({
-				sessionId: '',
-				value: '',
-			});
-
-			actions.setRenameTabInitialName('Draft Tab');
-			expect(useModalStore.getState().getData('renameTab')).toEqual({
-				tabId: '',
-				initialName: 'Draft Tab',
-			});
-
-			actions.setRenameTabModalOpen(false);
-			actions.setRenameTabModalOpen(true);
-			expect(useModalStore.getState().getData('renameTab')).toEqual({
-				tabId: '',
-				initialName: '',
-			});
-
-			actions.setRenameGroupId(null);
-			expect(useModalStore.getState().isOpen('renameGroup')).toBe(false);
-
-			actions.setRenameGroupValue('Fallback Group');
-			expect(useModalStore.getState().getData('renameGroup')).toEqual({
-				groupId: '',
-				value: 'Fallback Group',
-				emoji: '📂',
-			});
-
-			useModalStore.getState().closeModal('renameGroup');
-
-			actions.setRenameGroupEmoji('💼');
-			expect(useModalStore.getState().getData('renameGroup')).toEqual({
-				groupId: '',
-				value: '',
-				emoji: '💼',
-			});
-
-			actions.setRenameGroupModalOpen(false);
-			actions.setRenameGroupModalOpen(true);
-			expect(useModalStore.getState().getData('renameGroup')).toEqual({
-				groupId: '',
-				value: '',
-				emoji: '📂',
-			});
-		});
-
-		it('manages agent session browser state through legacy setters', () => {
-			const actions = getModalActions();
-
-			actions.setAgentSessionsOpen(true);
-			expect(useModalStore.getState().isOpen('agentSessions')).toBe(true);
-			expect(useModalStore.getState().getData('agentSessions')?.activeAgentSessionId).toBeNull();
-
-			actions.setActiveAgentSessionId('agent-session-1');
-			expect(useModalStore.getState().getData('agentSessions')?.activeAgentSessionId).toBe(
-				'agent-session-1'
-			);
-
-			actions.setActiveAgentSessionId(null);
-			expect(useModalStore.getState().getData('agentSessions')?.activeAgentSessionId).toBeNull();
-
-			actions.setAgentSessionsOpen(false);
-			expect(useModalStore.getState().isOpen('agentSessions')).toBe(false);
-		});
-
-		it('maps group chat identifiers to modal data and null closes each modal', () => {
-			const actions = getModalActions();
-			const groupChatModalSetters: Array<[ModalId, (id: string | null) => void]> = [
-				['deleteGroupChat', actions.setShowDeleteGroupChatModal],
-				['renameGroupChat', actions.setShowRenameGroupChatModal],
-				['editGroupChat', actions.setShowEditGroupChatModal],
-			];
-
-			for (const [modalId, setGroupChatId] of groupChatModalSetters) {
-				setGroupChatId('group-chat-1');
-				expect(useModalStore.getState().isOpen(modalId)).toBe(true);
-				expect(useModalStore.getState().getData(modalId)).toEqual({
-					groupChatId: 'group-chat-1',
-				});
-
-				setGroupChatId(null);
-				expect(useModalStore.getState().isOpen(modalId)).toBe(false);
-				expect(useModalStore.getState().getData(modalId)).toBeUndefined();
-			}
-		});
-
-		it('opens and clears git diff preview and updates tour origin state', () => {
-			const actions = getModalActions();
-
-			actions.setGitDiffPreview('diff --git a/file b/file');
-			expect(useModalStore.getState().getData('gitDiff')?.diff).toBe('diff --git a/file b/file');
-
-			actions.setGitDiffPreview(null);
-			expect(useModalStore.getState().isOpen('gitDiff')).toBe(false);
-
-			actions.setTourOpen(true);
-			expect(useModalStore.getState().getData('tour')?.fromWizard).toBe(false);
-
-			actions.setTourFromWizard(true);
-			expect(useModalStore.getState().getData('tour')?.fromWizard).toBe(true);
-		});
-	});
-
 	describe('compatibility layer: getModalActions()', () => {
 		it('returns all expected action methods', () => {
 			const actions = getModalActions();
@@ -1427,7 +1072,10 @@ describe('modalStore', () => {
 			});
 
 			expect(result.current.settingsModalOpen).toBe(false);
-			expect(result.current.settingsTab).toBe('general'); // Falls back to default
+			// settingsTab is undefined when no explicit tab was requested —
+			// SettingsModal restores the last in-session tab and only falls
+			// back to 'general' on first open.
+			expect(result.current.settingsTab).toBeUndefined();
 		});
 
 		it('provides all action methods from getModalActions()', () => {
@@ -1476,6 +1124,95 @@ describe('modalStore', () => {
 			});
 
 			expect(result.current.quitConfirmModalOpen).toBe(false);
+		});
+	});
+
+	describe('integration: cue YAML editor modal flow', () => {
+		it('openCueYamlEditor opens modal with session data', () => {
+			const actions = getModalActions();
+
+			actions.openCueYamlEditor('sess-123', '/projects/my-app');
+
+			const state = useModalStore.getState();
+			expect(state.isOpen('cueYamlEditor')).toBe(true);
+
+			const data = state.getData('cueYamlEditor') as CueYamlEditorData;
+			expect(data.sessionId).toBe('sess-123');
+			expect(data.projectRoot).toBe('/projects/my-app');
+		});
+
+		it('closeCueYamlEditor closes modal and clears data', () => {
+			const actions = getModalActions();
+
+			actions.openCueYamlEditor('sess-123', '/projects/my-app');
+			actions.closeCueYamlEditor();
+
+			const state = useModalStore.getState();
+			expect(state.isOpen('cueYamlEditor')).toBe(false);
+			expect(state.getData('cueYamlEditor')).toBeUndefined();
+		});
+
+		it('useModalActions exposes cueYamlEditor reactive state', () => {
+			const { result } = renderHook(() => useModalActions());
+
+			expect(result.current.cueYamlEditorOpen).toBe(false);
+			expect(result.current.cueYamlEditorSessionId).toBeNull();
+			expect(result.current.cueYamlEditorProjectRoot).toBeNull();
+
+			act(() => {
+				result.current.openCueYamlEditor('sess-456', '/projects/other');
+			});
+
+			expect(result.current.cueYamlEditorOpen).toBe(true);
+			expect(result.current.cueYamlEditorSessionId).toBe('sess-456');
+			expect(result.current.cueYamlEditorProjectRoot).toBe('/projects/other');
+
+			act(() => {
+				result.current.closeCueYamlEditor();
+			});
+
+			expect(result.current.cueYamlEditorOpen).toBe(false);
+			expect(result.current.cueYamlEditorSessionId).toBeNull();
+			expect(result.current.cueYamlEditorProjectRoot).toBeNull();
+		});
+	});
+
+	describe('Prompt Composer full-screen cycle', () => {
+		it('togglePromptComposerFullscreen flips the persisted flag', () => {
+			const store = useModalStore.getState();
+			expect(store.promptComposerFullscreen).toBe(false);
+
+			store.togglePromptComposerFullscreen();
+			expect(useModalStore.getState().promptComposerFullscreen).toBe(true);
+
+			useModalStore.getState().togglePromptComposerFullscreen();
+			expect(useModalStore.getState().promptComposerFullscreen).toBe(false);
+		});
+
+		it('cyclePromptComposer opens the composer (windowed) when it is closed', () => {
+			const store = useModalStore.getState();
+			expect(store.isOpen('promptComposer')).toBe(false);
+
+			store.cyclePromptComposer();
+
+			expect(useModalStore.getState().isOpen('promptComposer')).toBe(true);
+			// Opening must not change the size — it stays in its last-used mode.
+			expect(useModalStore.getState().promptComposerFullscreen).toBe(false);
+		});
+
+		it('cyclePromptComposer toggles size while the composer stays open', () => {
+			const store = useModalStore.getState();
+			store.openModal('promptComposer');
+
+			// First press while open → full-screen ("expanded-expanded").
+			useModalStore.getState().cyclePromptComposer();
+			expect(useModalStore.getState().isOpen('promptComposer')).toBe(true);
+			expect(useModalStore.getState().promptComposerFullscreen).toBe(true);
+
+			// Next press → back to windowed ("contracted-expanded"), still open.
+			useModalStore.getState().cyclePromptComposer();
+			expect(useModalStore.getState().isOpen('promptComposer')).toBe(true);
+			expect(useModalStore.getState().promptComposerFullscreen).toBe(false);
 		});
 	});
 });

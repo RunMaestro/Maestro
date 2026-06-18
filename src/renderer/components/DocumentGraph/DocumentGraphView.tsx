@@ -20,7 +20,6 @@ import {
 	ExternalLink,
 	RefreshCw,
 	Search,
-	Loader2,
 	ChevronDown,
 	Sliders,
 	AlertCircle,
@@ -32,8 +31,10 @@ import {
 	ChevronLeft,
 	ChevronRight,
 } from 'lucide-react';
+import { Spinner } from '../ui/Spinner';
 import type { Theme } from '../../types';
 import { useLayerStack } from '../../contexts/LayerStackContext';
+import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { Modal, ModalFooter } from '../ui/Modal';
 import { useDebouncedCallback } from '../../hooks/utils';
@@ -45,6 +46,7 @@ import {
 	invalidateCacheForFiles,
 	BacklinkUpdateData,
 	GraphData,
+	PartialUpdate,
 } from './graphDataBuilder';
 import {
 	MindMap,
@@ -53,13 +55,21 @@ import {
 	convertToMindMapData,
 	NodePositionOverride,
 } from './MindMap';
-import { type MindMapLayoutType, LAYOUT_LABELS } from './mindMapLayouts';
+import {
+	type MindMapLayoutType,
+	LAYOUT_LABELS,
+	SPACING_SCALE_DEFAULT,
+	SPACING_SCALE_MIN,
+	SPACING_SCALE_MAX,
+	SPACING_SCALE_STEP,
+} from './mindMapLayouts';
 import { NodeContextMenu } from './NodeContextMenu';
 import { GraphLegend } from './GraphLegend';
 import { MarkdownRenderer } from '../MarkdownRenderer';
 import { generateProseStyles } from '../../utils/markdownConfig';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import type { FileNode } from '../../types/fileTree';
+import { logger } from '../../utils/logger';
 import { useSettingsStore } from '../../stores/settingsStore';
 
 /** Debounce delay for graph rebuilds when settings change (ms) */
@@ -201,7 +211,7 @@ export function DocumentGraphView({
 	onNeighborDepthChange,
 	defaultPreviewCharLimit = 100,
 	onPreviewCharLimitChange,
-	defaultLayoutType = 'mindmap',
+	defaultLayoutType = 'hierarchical',
 	onLayoutTypeChange,
 	sshRemoteId,
 }: DocumentGraphViewProps) {
@@ -222,6 +232,14 @@ export function DocumentGraphView({
 	const [showPreviewSlider, setShowPreviewSlider] = useState(false);
 	const [layoutType, setLayoutType] = useState<MindMapLayoutType>(defaultLayoutType);
 	const [showLayoutDropdown, setShowLayoutDropdown] = useState(false);
+	const [spacingScale, setSpacingScale] = useState<number>(SPACING_SCALE_DEFAULT);
+
+	// Close all other dropdowns when opening one
+	const openDropdown = (which: 'depth' | 'preview' | 'layout') => {
+		setShowDepthSlider(which === 'depth' ? (v) => !v : false);
+		setShowPreviewSlider(which === 'preview' ? (v) => !v : false);
+		setShowLayoutDropdown(which === 'layout' ? (v) => !v : false);
+	};
 
 	// Sync settings state with prop changes
 	useEffect(() => {
@@ -338,52 +356,33 @@ export function DocumentGraphView({
 	const abortBacklinkScanRef = useRef<(() => void) | null>(null);
 	const currentGraphDataRef = useRef<GraphData | null>(null);
 
+	// Progressive expansion state — true while BFS is still walking outward after
+	// the focus node has been rendered. Drives the non-blocking "expanding graph"
+	// badge in the bottom-left corner.
+	const [expandingGraph, setExpandingGraph] = useState(false);
+	const [expandProgress, setExpandProgress] = useState<{
+		depth: number;
+		loaded: number;
+	} | null>(null);
+	// Tracks whether the streaming flow has emitted at least the focus node.
+	// Once true, the final state-replacement at the end of loadGraphData becomes
+	// a no-op overlay rather than a fresh setNodes() that would visibly flash.
+	const streamingActiveRef = useRef(false);
+
 	/**
 	 * Handle escape - show confirmation modal
 	 */
 	const handleEscapeRequest = useCallback(() => {
-		if (contextMenu) {
-			setContextMenu(null);
-			return;
-		}
-
-		const searchInput = searchInputRef.current;
-		if (searchInput && document.activeElement === searchInput) {
-			if (searchInput.value) {
-				searchInput.value = '';
-				setSearchQuery('');
-				requestAnimationFrame(() => {
-					searchInputRef.current?.focus();
-				});
-				return;
-			}
-
-			searchInput.blur();
-			requestAnimationFrame(() => {
-				mindMapContainerRef.current?.focus();
-			});
-			return;
-		}
-
 		setShowCloseConfirmation(true);
-	}, [contextMenu]);
+	}, []);
 
 	/**
 	 * Register with layer stack for Escape handling
 	 */
-	useEffect(() => {
-		if (isOpen) {
-			const id = registerLayer({
-				type: 'modal',
-				priority: MODAL_PRIORITIES.DOCUMENT_GRAPH,
-				blocksLowerLayers: true,
-				capturesFocus: true,
-				focusTrap: 'lenient',
-				onEscape: handleEscapeRequest,
-			});
-			return () => unregisterLayer(id);
-		}
-	}, [isOpen, registerLayer, unregisterLayer, handleEscapeRequest]);
+	useModalLayer(MODAL_PRIORITIES.DOCUMENT_GRAPH, undefined, handleEscapeRequest, {
+		focusTrap: 'lenient',
+		enabled: isOpen,
+	});
 
 	/**
 	 * Register depth slider dropdown with layer stack when open
@@ -402,24 +401,6 @@ export function DocumentGraphView({
 			return () => unregisterLayer(id);
 		}
 	}, [showDepthSlider, registerLayer, unregisterLayer]);
-
-	/**
-	 * Register preview slider dropdown with layer stack when open
-	 */
-	useEffect(() => {
-		if (showPreviewSlider) {
-			const id = registerLayer({
-				type: 'overlay',
-				priority: MODAL_PRIORITIES.DOCUMENT_GRAPH + 1,
-				blocksLowerLayers: false,
-				capturesFocus: false,
-				focusTrap: 'none',
-				allowClickOutside: true,
-				onEscape: () => setShowPreviewSlider(false),
-			});
-			return () => unregisterLayer(id);
-		}
-	}, [showPreviewSlider, registerLayer, unregisterLayer]);
 
 	/**
 	 * Register layout dropdown with layer stack when open
@@ -531,7 +512,7 @@ export function DocumentGraphView({
 				setAllLinksWithExternal((prev) => [...prev, ...newMindMapLinks]);
 				setLoadedDocuments((prev) => prev + updateData.newNodes.length);
 
-				console.log('[DocumentGraph] Added backlinks:', {
+				logger.info('[DocumentGraph] Added backlinks:', undefined, {
 					newNodes: updateData.newNodes.length,
 					newEdges: updateData.newEdges.length,
 					progress: `${updateData.filesScanned}/${updateData.totalFiles}`,
@@ -548,139 +529,216 @@ export function DocumentGraphView({
 		setBacklinksLoading(false);
 		setBacklinkProgress(null);
 		abortBacklinkScanRef.current = null;
-		console.log('[DocumentGraph] Backlink scan complete');
+		logger.info('[DocumentGraph] Backlink scan complete');
 	}, []);
+
+	/**
+	 * Handle streaming partial updates from buildGraphData. The focus node
+	 * arrives first (so the user sees the graph instantly), then each BFS depth
+	 * arrives as it completes. This is what makes the modal feel responsive
+	 * over SSH.
+	 */
+	const handlePartialUpdate = useCallback(
+		(update: PartialUpdate) => {
+			const { nodes: newMindMapNodes, links: newMindMapLinks } = convertToMindMapData(
+				update.newNodes.map((n) => ({ id: n.id, data: n.data })),
+				update.newEdges.map((e) => ({ source: e.source, target: e.target, type: e.type })),
+				previewCharLimit
+			);
+
+			if (update.phase === 'focus') {
+				// First update — replace any stale state from a previous build with
+				// just the focus node, dismiss the spinner, and flag the BFS
+				// expansion as in-flight.
+				streamingActiveRef.current = true;
+				setNodes(newMindMapNodes);
+				setLinks(newMindMapLinks);
+				setDocumentOnlyNodes(newMindMapNodes);
+				setDocumentOnlyLinks(newMindMapLinks);
+				setAllNodesWithExternal(newMindMapNodes);
+				setAllLinksWithExternal(newMindMapLinks);
+				setLoadedDocuments(update.loadedDocuments);
+				setActiveFocusFile(focusFilePath);
+				setLoading(false);
+				setExpandingGraph(true);
+				setExpandProgress({ depth: 0, loaded: update.loadedDocuments });
+				return;
+			}
+
+			// depth-complete: append to every list. We append in both the
+			// document-only and "with external" lists so the toggle stays in sync;
+			// external-domain nodes get folded in at the end of the build.
+			setNodes((prev) => [...prev, ...newMindMapNodes]);
+			setLinks((prev) => [...prev, ...newMindMapLinks]);
+			setDocumentOnlyNodes((prev) => [...prev, ...newMindMapNodes]);
+			setDocumentOnlyLinks((prev) => [...prev, ...newMindMapLinks]);
+			setAllNodesWithExternal((prev) => [...prev, ...newMindMapNodes]);
+			setAllLinksWithExternal((prev) => [...prev, ...newMindMapLinks]);
+			setLoadedDocuments(update.loadedDocuments);
+			setExpandProgress({ depth: update.currentDepth, loaded: update.loadedDocuments });
+		},
+		[previewCharLimit, focusFilePath]
+	);
 
 	/**
 	 * Load and build graph data
 	 */
-	const loadGraphData = useCallback(async () => {
-		// Abort any ongoing backlink scan
-		if (abortBacklinkScanRef.current) {
-			abortBacklinkScanRef.current();
-			abortBacklinkScanRef.current = null;
-		}
-
-		setLoading(true);
-		setError(null);
-		setProgress(null);
-		setBacklinksLoading(false);
-		setBacklinkProgress(null);
-		setMaxNodes(defaultMaxNodes);
-
-		try {
-			console.log('[DocumentGraph] Building graph data:', {
-				rootPath,
-				focusFilePath,
-				includeExternalLinks,
-				sshRemoteId: !!sshRemoteId,
-			});
-
-			const graphData = await buildGraphData({
-				rootPath,
-				focusFile: focusFilePath,
-				maxDepth: neighborDepth > 0 ? neighborDepth : 10, // Use large depth for "all"
-				maxNodes: defaultMaxNodes,
-				onProgress: handleProgress,
-				sshRemoteId,
-			});
-
-			// Store reference to current graph data for backlink scanning
-			currentGraphDataRef.current = graphData;
-
-			console.log('[DocumentGraph] Graph data built (outgoing links only):', {
-				totalDocuments: graphData.totalDocuments,
-				loadedDocuments: graphData.loadedDocuments,
-				nodeCount: graphData.nodes.length,
-				edgeCount: graphData.edges.length,
-				internalLinkCount: graphData.internalLinkCount,
-				externalLinkCount: graphData.cachedExternalData.totalLinkCount,
-				externalDomains: graphData.cachedExternalData.domainCount,
-				sampleNodeIds: graphData.nodes.slice(0, 5).map((n) => n.id),
-			});
-
-			// Update pagination state
-			setTotalDocuments(graphData.totalDocuments);
-			setLoadedDocuments(graphData.loadedDocuments);
-			setHasMore(graphData.hasMore);
-
-			// Store all markdown files for wiki-link resolution in preview panel
-			setAllMarkdownFiles(graphData.allMarkdownFiles);
-
-			// Cache external data and link counts for instant toggling
-			setCachedExternalData(graphData.cachedExternalData);
-			setInternalLinkCount(graphData.internalLinkCount);
-
-			// Convert document-only nodes/links to mind map format (for toggling)
-			const docOnlyNodes = graphData.nodes.filter((n) => n.type === 'documentNode');
-			const docOnlyEdges = graphData.edges.filter((e) => e.type !== 'external');
-			const { nodes: docMindMapNodes, links: docMindMapLinks } = convertToMindMapData(
-				docOnlyNodes.map((n) => ({ id: n.id, data: n.data })),
-				docOnlyEdges.map((e) => ({ source: e.source, target: e.target, type: e.type })),
-				previewCharLimit
-			);
-			setDocumentOnlyNodes(docMindMapNodes);
-			setDocumentOnlyLinks(docMindMapLinks);
-
-			// Convert ALL nodes/links (with external) to mind map format (for toggling)
-			const allNodes = [...docOnlyNodes, ...graphData.cachedExternalData.externalNodes];
-			const allEdges = [...docOnlyEdges, ...graphData.cachedExternalData.externalEdges];
-			const { nodes: allMindMapNodes, links: allMindMapLinks } = convertToMindMapData(
-				allNodes.map((n) => ({ id: n.id, data: n.data })),
-				allEdges.map((e) => ({ source: e.source, target: e.target, type: e.type })),
-				previewCharLimit
-			);
-			setAllNodesWithExternal(allMindMapNodes);
-			setAllLinksWithExternal(allMindMapLinks);
-
-			// Set current display based on includeExternalLinks setting
-			const mindMapNodes = includeExternalLinks ? allMindMapNodes : docMindMapNodes;
-			const mindMapLinks = includeExternalLinks ? allMindMapLinks : docMindMapLinks;
-
-			console.log('[DocumentGraph] Converted to mind map format:', {
-				nodeCount: mindMapNodes.length,
-				linkCount: mindMapLinks.length,
-				docOnlyCount: docMindMapNodes.length,
-				withExternalCount: allMindMapNodes.length,
-				sampleFilePaths: mindMapNodes
-					.filter((n) => n.nodeType === 'document')
-					.slice(0, 5)
-					.map((n) => n.filePath),
-				focusFilePath,
-			});
-
-			setNodes(mindMapNodes);
-			setLinks(mindMapLinks);
-
-			// Set active focus file from the required focusFilePath prop
-			setActiveFocusFile(focusFilePath);
-
-			// Start background backlink scan after initial graph is displayed
-			if (graphData.startBacklinkScan) {
-				setBacklinksLoading(true);
-				abortBacklinkScanRef.current = graphData.startBacklinkScan(
-					handleBacklinkUpdate,
-					handleBacklinkComplete
-				);
+	const loadGraphData = useCallback(
+		async (resetPagination = true) => {
+			// Abort any ongoing backlink scan
+			if (abortBacklinkScanRef.current) {
+				abortBacklinkScanRef.current();
+				abortBacklinkScanRef.current = null;
 			}
-		} catch (err) {
-			console.error('Failed to build graph data:', err);
-			setError(err instanceof Error ? err.message : 'Failed to load document graph');
-		} finally {
-			setLoading(false);
-		}
-	}, [
-		rootPath,
-		includeExternalLinks,
-		defaultMaxNodes,
-		handleProgress,
-		focusFilePath,
-		neighborDepth,
-		previewCharLimit,
-		handleBacklinkUpdate,
-		handleBacklinkComplete,
-		sshRemoteId,
-	]);
+
+			setLoading(true);
+			setError(null);
+			setProgress(null);
+			setBacklinksLoading(false);
+			setBacklinkProgress(null);
+			streamingActiveRef.current = false;
+			setExpandingGraph(false);
+			setExpandProgress(null);
+
+			if (resetPagination) {
+				setMaxNodes(defaultMaxNodes);
+			}
+
+			try {
+				logger.info('[DocumentGraph] Building graph data:', undefined, {
+					rootPath,
+					focusFilePath,
+					includeExternalLinks,
+					sshRemoteId: !!sshRemoteId,
+				});
+
+				const graphData = await buildGraphData({
+					rootPath,
+					focusFile: focusFilePath,
+					maxDepth: neighborDepth > 0 ? neighborDepth : 10, // Use large depth for "all"
+					maxNodes: resetPagination ? defaultMaxNodes : maxNodes,
+					onProgress: handleProgress,
+					onPartialUpdate: handlePartialUpdate,
+					sshRemoteId,
+				});
+
+				// Store reference to current graph data for backlink scanning
+				currentGraphDataRef.current = graphData;
+
+				logger.info('[DocumentGraph] Graph data built (outgoing links only):', undefined, {
+					totalDocuments: graphData.totalDocuments,
+					loadedDocuments: graphData.loadedDocuments,
+					nodeCount: graphData.nodes.length,
+					edgeCount: graphData.edges.length,
+					internalLinkCount: graphData.internalLinkCount,
+					externalLinkCount: graphData.cachedExternalData.totalLinkCount,
+					externalDomains: graphData.cachedExternalData.domainCount,
+					sampleNodeIds: graphData.nodes.slice(0, 5).map((n) => n.id),
+				});
+
+				// Update pagination state
+				setTotalDocuments(graphData.totalDocuments);
+				setLoadedDocuments(graphData.loadedDocuments);
+				setHasMore(graphData.hasMore);
+
+				// Store all markdown files for wiki-link resolution in preview panel
+				setAllMarkdownFiles(graphData.allMarkdownFiles);
+
+				// Cache external data and link counts for instant toggling
+				setCachedExternalData(graphData.cachedExternalData);
+				setInternalLinkCount(graphData.internalLinkCount);
+
+				// Convert document-only nodes/links to mind map format (for toggling)
+				const docOnlyNodes = graphData.nodes.filter((n) => n.type === 'documentNode');
+				const docOnlyEdges = graphData.edges.filter((e) => e.type !== 'external');
+				const { nodes: docMindMapNodes, links: docMindMapLinks } = convertToMindMapData(
+					docOnlyNodes.map((n) => ({ id: n.id, data: n.data })),
+					docOnlyEdges.map((e) => ({ source: e.source, target: e.target, type: e.type })),
+					previewCharLimit
+				);
+				setDocumentOnlyNodes(docMindMapNodes);
+				setDocumentOnlyLinks(docMindMapLinks);
+
+				// Convert ALL nodes/links (with external) to mind map format (for toggling)
+				const allNodes = [...docOnlyNodes, ...graphData.cachedExternalData.externalNodes];
+				const allEdges = [...docOnlyEdges, ...graphData.cachedExternalData.externalEdges];
+				const { nodes: allMindMapNodes, links: allMindMapLinks } = convertToMindMapData(
+					allNodes.map((n) => ({ id: n.id, data: n.data })),
+					allEdges.map((e) => ({ source: e.source, target: e.target, type: e.type })),
+					previewCharLimit
+				);
+				setAllNodesWithExternal(allMindMapNodes);
+				setAllLinksWithExternal(allMindMapLinks);
+
+				// Set current display based on includeExternalLinks setting
+				const mindMapNodes = includeExternalLinks ? allMindMapNodes : docMindMapNodes;
+				const mindMapLinks = includeExternalLinks ? allMindMapLinks : docMindMapLinks;
+
+				logger.info('[DocumentGraph] Converted to mind map format:', undefined, {
+					nodeCount: mindMapNodes.length,
+					linkCount: mindMapLinks.length,
+					docOnlyCount: docMindMapNodes.length,
+					withExternalCount: allMindMapNodes.length,
+					sampleFilePaths: mindMapNodes
+						.filter((n) => n.nodeType === 'document')
+						.slice(0, 5)
+						.map((n) => n.filePath),
+					focusFilePath,
+				});
+
+				// If the streaming flow has already populated nodes/links, only
+				// flip the visible list when toggling state requires it (e.g. the
+				// user has external-links enabled and externals just arrived).
+				// Otherwise replace state — the streaming path may have been a
+				// no-op (e.g. focus file failed to parse and we got the empty
+				// fallback return).
+				if (!streamingActiveRef.current) {
+					setNodes(mindMapNodes);
+					setLinks(mindMapLinks);
+				} else if (includeExternalLinks) {
+					setNodes(allMindMapNodes);
+					setLinks(allMindMapLinks);
+				}
+
+				// Set active focus file from the required focusFilePath prop
+				setActiveFocusFile(focusFilePath);
+
+				// Streaming BFS is done — clear the in-flight badge.
+				setExpandingGraph(false);
+				setExpandProgress(null);
+
+				// Start background backlink scan after initial graph is displayed
+				if (graphData.startBacklinkScan) {
+					setBacklinksLoading(true);
+					abortBacklinkScanRef.current = graphData.startBacklinkScan(
+						handleBacklinkUpdate,
+						handleBacklinkComplete
+					);
+				}
+			} catch (err) {
+				logger.error('Failed to build graph data:', undefined, err);
+				setError(err instanceof Error ? err.message : 'Failed to load document graph');
+				setExpandingGraph(false);
+				setExpandProgress(null);
+			} finally {
+				setLoading(false);
+			}
+		},
+		[
+			rootPath,
+			includeExternalLinks,
+			maxNodes,
+			defaultMaxNodes,
+			handleProgress,
+			handlePartialUpdate,
+			focusFilePath,
+			neighborDepth,
+			previewCharLimit,
+			handleBacklinkUpdate,
+			handleBacklinkComplete,
+			sshRemoteId,
+		]
+	);
 
 	/**
 	 * Debounced version of loadGraphData for settings changes
@@ -717,17 +775,21 @@ export function DocumentGraphView({
 		if (includeExternalLinks) {
 			setNodes(allNodesWithExternal);
 			setLinks(allLinksWithExternal);
-			console.log('[DocumentGraph] Added external links from cache:', {
+			logger.info('[DocumentGraph] Added external links from cache:', undefined, {
 				totalNodes: allNodesWithExternal.length,
 				totalLinks: allLinksWithExternal.length,
 			});
 		} else {
 			setNodes(documentOnlyNodes);
 			setLinks(documentOnlyLinks);
-			console.log('[DocumentGraph] Removed external links (using cached document-only data):', {
-				totalNodes: documentOnlyNodes.length,
-				totalLinks: documentOnlyLinks.length,
-			});
+			logger.info(
+				'[DocumentGraph] Removed external links (using cached document-only data):',
+				undefined,
+				{
+					totalNodes: documentOnlyNodes.length,
+					totalLinks: documentOnlyLinks.length,
+				}
+			);
 		}
 	}, [
 		includeExternalLinks,
@@ -768,7 +830,7 @@ export function DocumentGraphView({
 		if (!isOpen || !rootPath) return;
 
 		window.maestro.documentGraph.watchFolder(rootPath).catch((err) => {
-			console.error('Failed to start document graph file watcher:', err);
+			logger.error('Failed to start document graph file watcher:', undefined, err);
 		});
 
 		const unsubscribe = window.maestro.documentGraph.onFilesChanged((data) => {
@@ -783,7 +845,7 @@ export function DocumentGraphView({
 		return () => {
 			unsubscribe();
 			window.maestro.documentGraph.unwatchFolder(rootPath).catch((err) => {
-				console.error('Failed to stop document graph file watcher:', err);
+				logger.error('Failed to stop document graph file watcher:', undefined, err);
 			});
 		};
 	}, [isOpen, rootPath, debouncedLoadGraphData]);
@@ -813,6 +875,12 @@ export function DocumentGraphView({
 		window.maestro.fs
 			.stat(fullPath, sshRemoteId)
 			.then((stats) => {
+				// stat returns null for a phantom target (e.g. an unresolved [[wiki]]
+				// link that points nowhere) - treat it as "no stats" like the catch.
+				if (!stats) {
+					setSelectedNodeStats(null);
+					return;
+				}
 				setSelectedNodeStats({
 					createdAt: stats.createdAt ? new Date(stats.createdAt) : null,
 					modifiedAt: stats.modifiedAt ? new Date(stats.modifiedAt) : null,
@@ -847,7 +915,7 @@ export function DocumentGraphView({
 		// Set this node as the new center - triggers re-layout in MindMap
 		setActiveFocusFile(node.filePath);
 
-		console.log('[DocumentGraph] Re-centering graph on:', node.filePath);
+		logger.info('[DocumentGraph] Re-centering graph on:', undefined, node.filePath);
 	}, []);
 
 	/**
@@ -933,6 +1001,8 @@ export function DocumentGraphView({
 	 * Handle load more
 	 */
 	const handleLoadMore = useCallback(async () => {
+		if (!hasMore || loadingMore) return;
+
 		setLoadingMore(true);
 		const newMaxNodes = maxNodes + LOAD_MORE_INCREMENT;
 		setMaxNodes(newMaxNodes);
@@ -959,11 +1029,13 @@ export function DocumentGraphView({
 			setNodes(mindMapNodes);
 			setLinks(mindMapLinks);
 		} catch (err) {
-			console.error('Failed to load more documents:', err);
+			logger.error('Failed to load more documents:', undefined, err);
 		} finally {
 			setLoadingMore(false);
 		}
 	}, [
+		hasMore,
+		loadingMore,
 		maxNodes,
 		rootPath,
 		activeFocusFile,
@@ -1017,17 +1089,13 @@ export function DocumentGraphView({
 	/**
 	 * Handle node position change from drag operations
 	 */
-	const handleNodePositionChange = useCallback(
-		(nodeId: string, position: NodePositionOverride) => {
-			positionsContextRef.current = { focusFile: activeFocusFile, depth: neighborDepth };
-			setNodePositions((prev) => {
-				const next = new Map(prev);
-				next.set(nodeId, position);
-				return next;
-			});
-		},
-		[activeFocusFile, neighborDepth]
-	);
+	const handleNodePositionChange = useCallback((nodeId: string, position: NodePositionOverride) => {
+		setNodePositions((prev) => {
+			const next = new Map(prev);
+			next.set(nodeId, position);
+			return next;
+		});
+	}, []);
 
 	/**
 	 * Reset all node positions to algorithmic layout
@@ -1136,26 +1204,30 @@ export function DocumentGraphView({
 	 * Navigate back in preview history
 	 */
 	const handlePreviewBack = useCallback(() => {
-		const newIndex = previewHistoryIndex - 1;
-		setPreviewHistoryIndex(newIndex);
-		setPreviewFile(previewHistory[newIndex]);
-		// Focus the content area for keyboard scrolling
-		requestAnimationFrame(() => {
-			previewContentRef.current?.focus();
-		});
+		if (previewHistoryIndex > 0) {
+			const newIndex = previewHistoryIndex - 1;
+			setPreviewHistoryIndex(newIndex);
+			setPreviewFile(previewHistory[newIndex]);
+			// Focus the content area for keyboard scrolling
+			requestAnimationFrame(() => {
+				previewContentRef.current?.focus();
+			});
+		}
 	}, [previewHistoryIndex, previewHistory]);
 
 	/**
 	 * Navigate forward in preview history
 	 */
 	const handlePreviewForward = useCallback(() => {
-		const newIndex = previewHistoryIndex + 1;
-		setPreviewHistoryIndex(newIndex);
-		setPreviewFile(previewHistory[newIndex]);
-		// Focus the content area for keyboard scrolling
-		requestAnimationFrame(() => {
-			previewContentRef.current?.focus();
-		});
+		if (previewHistoryIndex < previewHistory.length - 1) {
+			const newIndex = previewHistoryIndex + 1;
+			setPreviewHistoryIndex(newIndex);
+			setPreviewFile(previewHistory[newIndex]);
+			// Focus the content area for keyboard scrolling
+			requestAnimationFrame(() => {
+				previewContentRef.current?.focus();
+			});
+		}
 	}, [previewHistoryIndex, previewHistory]);
 
 	// Can navigate back/forward?
@@ -1170,14 +1242,7 @@ export function DocumentGraphView({
 			// Only handle arrow keys without modifiers
 			if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
 
-			if (e.key === 'Escape') {
-				e.preventDefault();
-				e.stopPropagation();
-				handlePreviewClose();
-				requestAnimationFrame(() => {
-					mindMapContainerRef.current?.focus();
-				});
-			} else if (e.key === 'ArrowLeft' && canGoBack) {
+			if (e.key === 'ArrowLeft' && canGoBack) {
 				e.preventDefault();
 				handlePreviewBack();
 			} else if (e.key === 'ArrowRight' && canGoForward) {
@@ -1185,7 +1250,7 @@ export function DocumentGraphView({
 				handlePreviewForward();
 			}
 		},
-		[canGoBack, canGoForward, handlePreviewBack, handlePreviewClose, handlePreviewForward]
+		[canGoBack, canGoForward, handlePreviewBack, handlePreviewForward]
 	);
 
 	/**
@@ -1240,17 +1305,10 @@ export function DocumentGraphView({
 	const handleSearchKeyDown = useCallback(
 		(e: React.KeyboardEvent<HTMLInputElement>) => {
 			if (e.key === 'Escape') {
-				e.preventDefault();
 				e.stopPropagation(); // Prevent layer stack from handling
-
-				const currentSearchValue = e.currentTarget.value;
-				if (currentSearchValue) {
+				if (searchQuery) {
 					// First Escape: clear search query
-					e.currentTarget.value = '';
 					setSearchQuery('');
-					requestAnimationFrame(() => {
-						searchInputRef.current?.focus();
-					});
 				} else {
 					// Second Escape (or first if empty): blur search, select center node, focus graph
 					searchInputRef.current?.blur();
@@ -1270,33 +1328,42 @@ export function DocumentGraphView({
 				}
 			}
 		},
-		[activeFocusFile, nodes, handleNodeSelect]
+		[searchQuery, activeFocusFile, nodes, handleNodeSelect]
 	);
 
 	/**
-	 * Handle container keyboard shortcuts (Cmd+F for search)
+	 * Handle container keyboard shortcuts (Cmd+F for search; +/- for node spacing)
 	 */
-	const handleContainerKeyDown = useCallback(
-		(e: React.KeyboardEvent) => {
-			if (e.key === 'Escape' && (previewFile || previewLoading || previewError)) {
-				e.preventDefault();
-				e.stopPropagation();
-				handlePreviewClose();
-				requestAnimationFrame(() => {
-					mindMapContainerRef.current?.focus();
-				});
-				return;
-			}
+	const handleContainerKeyDown = useCallback((e: React.KeyboardEvent) => {
+		// Cmd+F or Ctrl+F to focus search
+		if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
+			e.preventDefault();
+			searchInputRef.current?.focus();
+			searchInputRef.current?.select();
+			return;
+		}
 
-			// Cmd+F or Ctrl+F to focus search
-			if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
-				e.preventDefault();
-				searchInputRef.current?.focus();
-				searchInputRef.current?.select();
-			}
-		},
-		[handlePreviewClose, previewError, previewFile, previewLoading]
-	);
+		// +/- adjust node spacing in any layout. Skip when modifiers are held so
+		// browser zoom (Cmd/Ctrl +/-) and similar shortcuts still work, and skip
+		// when typing into an input (search box, sliders).
+		if (e.metaKey || e.ctrlKey || e.altKey) return;
+		const target = e.target as HTMLElement | null;
+		const tag = target?.tagName;
+		if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) return;
+
+		// '=' is the unshifted '+' key on US layouts; accept both for ergonomics.
+		const isIncrease = e.key === '+' || e.key === '=';
+		const isDecrease = e.key === '-' || e.key === '_';
+		if (!isIncrease && !isDecrease) return;
+
+		e.preventDefault();
+		setSpacingScale((prev) => {
+			const next = isIncrease ? prev + SPACING_SCALE_STEP : prev - SPACING_SCALE_STEP;
+			const clamped = Math.min(SPACING_SCALE_MAX, Math.max(SPACING_SCALE_MIN, next));
+			// Round to one decimal to avoid floating-point drift.
+			return Math.round(clamped * 10) / 10;
+		});
+	}, []);
 
 	if (!isOpen) return null;
 
@@ -1309,7 +1376,7 @@ export function DocumentGraphView({
 				const query = searchQuery.toLowerCase();
 				if (n.nodeType === 'document') {
 					return (
-						n.label.toLowerCase().includes(query) ||
+						(n.label?.toLowerCase().includes(query) ?? false) ||
 						(n.filePath?.toLowerCase().includes(query) ?? false)
 					);
 				} else {
@@ -1350,12 +1417,6 @@ export function DocumentGraphView({
 						<h2 className="text-lg font-semibold" style={{ color: theme.colors.textMain }}>
 							Document Graph
 						</h2>
-						<span
-							className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
-							style={{ backgroundColor: theme.colors.warning + '30', color: theme.colors.warning }}
-						>
-							Beta
-						</span>
 						<span
 							className="text-xs px-2 py-0.5 rounded"
 							style={{
@@ -1417,7 +1478,7 @@ export function DocumentGraphView({
 						{/* Layout Algorithm Selector */}
 						<div className="relative">
 							<button
-								onClick={() => setShowLayoutDropdown(!showLayoutDropdown)}
+								onClick={() => openDropdown('layout')}
 								className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm transition-colors"
 								style={{
 									backgroundColor: `${theme.colors.accent}10`,
@@ -1445,30 +1506,35 @@ export function DocumentGraphView({
 										minWidth: 200,
 									}}
 								>
-									{(['mindmap', 'radial', 'force'] as MindMapLayoutType[]).map((type) => (
-										<button
-											key={type}
-											onClick={() => handleLayoutTypeChange(type)}
-											className="w-full px-3 py-2 text-left text-sm transition-colors flex items-center justify-between"
-											style={{
-												backgroundColor:
-													layoutType === type ? `${theme.colors.accent}15` : 'transparent',
-												color: layoutType === type ? theme.colors.accent : theme.colors.textMain,
-											}}
-											onMouseEnter={(e) =>
-												(e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)
-											}
-											onMouseLeave={(e) =>
-												(e.currentTarget.style.backgroundColor =
-													layoutType === type ? `${theme.colors.accent}15` : 'transparent')
-											}
-										>
-											<span>{LAYOUT_LABELS[type].name}</span>
-											<span className="text-xs" style={{ color: theme.colors.textDim }}>
-												{LAYOUT_LABELS[type].description}
-											</span>
-										</button>
-									))}
+									{(['mindmap', 'radial', 'hierarchical', 'force'] as MindMapLayoutType[]).map(
+										(type) => (
+											<button
+												key={type}
+												onClick={() => handleLayoutTypeChange(type)}
+												className="w-full px-3 py-2 text-left text-sm transition-colors flex items-center justify-between gap-3"
+												style={{
+													backgroundColor:
+														layoutType === type ? `${theme.colors.accent}15` : 'transparent',
+													color: layoutType === type ? theme.colors.accent : theme.colors.textMain,
+												}}
+												onMouseEnter={(e) =>
+													(e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)
+												}
+												onMouseLeave={(e) =>
+													(e.currentTarget.style.backgroundColor =
+														layoutType === type ? `${theme.colors.accent}15` : 'transparent')
+												}
+											>
+												<span className="whitespace-nowrap">{LAYOUT_LABELS[type].name}</span>
+												<span
+													className="text-xs whitespace-nowrap shrink-0"
+													style={{ color: theme.colors.textDim }}
+												>
+													{LAYOUT_LABELS[type].description}
+												</span>
+											</button>
+										)
+									)}
 								</div>
 							)}
 						</div>
@@ -1476,7 +1542,7 @@ export function DocumentGraphView({
 						{/* Neighbor Depth Slider */}
 						<div className="relative">
 							<button
-								onClick={() => setShowDepthSlider(!showDepthSlider)}
+								onClick={() => openDropdown('depth')}
 								className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm transition-colors"
 								style={{
 									backgroundColor:
@@ -1502,7 +1568,7 @@ export function DocumentGraphView({
 
 							{showDepthSlider && (
 								<div
-									className="absolute top-full right-0 mt-2 p-3 rounded-lg shadow-lg z-50"
+									className="absolute top-full right-0 mt-2 p-3 rounded-lg shadow-lg z-[60]"
 									style={{
 										backgroundColor: theme.colors.bgActivity,
 										border: `1px solid ${theme.colors.border}`,
@@ -1549,7 +1615,7 @@ export function DocumentGraphView({
 						{/* Preview Character Limit Slider */}
 						<div className="relative">
 							<button
-								onClick={() => setShowPreviewSlider(!showPreviewSlider)}
+								onClick={() => openDropdown('preview')}
 								className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm transition-colors"
 								style={{
 									backgroundColor:
@@ -1575,7 +1641,7 @@ export function DocumentGraphView({
 
 							{showPreviewSlider && (
 								<div
-									className="absolute top-full right-0 mt-2 p-3 rounded-lg shadow-lg z-50"
+									className="absolute top-full right-0 mt-2 p-3 rounded-lg shadow-lg z-[60]"
 									style={{
 										backgroundColor: theme.colors.bgActivity,
 										border: `1px solid ${theme.colors.border}`,
@@ -1597,12 +1663,6 @@ export function DocumentGraphView({
 										step="50"
 										value={previewCharLimit}
 										onChange={handlePreviewCharLimitChange}
-										onKeyDown={(e) => {
-											if (e.key === 'Escape') {
-												e.stopPropagation();
-												setShowPreviewSlider(false);
-											}
-										}}
 										className="w-full"
 										style={{ accentColor: theme.colors.accent }}
 									/>
@@ -1750,7 +1810,7 @@ export function DocumentGraphView({
 				>
 					{loading ? (
 						<div className="h-full flex flex-col items-center justify-center gap-8">
-							<Loader2 className="w-8 h-8 animate-spin" style={{ color: theme.colors.accent }} />
+							<Spinner size={32} color={theme.colors.accent} />
 							<div className="flex flex-col items-center gap-4">
 								<p className="text-sm" style={{ color: theme.colors.textDim }}>
 									{progress
@@ -1844,9 +1904,11 @@ export function DocumentGraphView({
 							searchQuery={searchQuery}
 							previewCharLimit={previewCharLimit}
 							layoutType={layoutType}
+							spacingScale={spacingScale}
 							nodePositions={nodePositions}
 							onNodePositionChange={handleNodePositionChange}
 							containerRef={mindMapContainerRef}
+							legendExpanded={legendExpanded}
 						/>
 					) : (
 						<div
@@ -1989,28 +2051,28 @@ export function DocumentGraphView({
 										className="flex items-center gap-2 text-xs"
 										style={{ color: theme.colors.textDim }}
 									>
-										<Loader2 className="w-4 h-4 animate-spin" />
+										<Spinner size={16} />
 										Loading preview...
 									</div>
 								) : previewError ? (
 									<p className="text-xs" style={{ color: theme.colors.textDim }}>
 										{previewError}
 									</p>
-								) : (
+								) : previewFile ? (
 									<MarkdownRenderer
-										content={previewFile!.content}
+										content={previewFile.content}
 										theme={theme}
 										onCopy={async (text: string) => {
 											await safeClipboardWrite(text);
 										}}
 										fileTree={previewFileTree}
 										projectRoot={rootPath}
-										cwd={previewFile!.relativePath.split('/').slice(0, -1).join('/')}
+										cwd={previewFile.relativePath.split('/').slice(0, -1).join('/')}
 										onFileClick={handlePreviewFile}
 										sshRemoteId={sshRemoteId}
 										enableBionifyReadingMode={bionifyReadingMode}
 									/>
-								)}
+								) : null}
 							</div>
 						</div>
 					)}
@@ -2080,15 +2142,32 @@ export function DocumentGraphView({
 								onMouseLeave={(e) => !loadingMore && (e.currentTarget.style.opacity = '1')}
 								title={`Load ${Math.min(LOAD_MORE_INCREMENT, totalDocuments - loadedDocuments)} more documents`}
 							>
-								{loadingMore ? (
-									<Loader2 className="w-3 h-3 animate-spin" />
-								) : (
-									<ChevronDown className="w-3 h-3" />
-								)}
+								{loadingMore ? <Spinner size={12} /> : <ChevronDown className="w-3 h-3" />}
 								{loadingMore
 									? 'Loading...'
 									: `Load more (${totalDocuments - loadedDocuments} remaining)`}
 							</button>
+						)}
+						{/* BFS expansion indicator — visible after the focus node has
+						    rendered while we're still walking outward */}
+						{expandingGraph && (
+							<span
+								className="flex items-center gap-1.5 px-2 py-1 rounded text-xs"
+								style={{
+									backgroundColor: `${theme.colors.accent}15`,
+									color: theme.colors.textDim,
+								}}
+								title="Fanning out from the focus document"
+							>
+								<Spinner size={12} color={theme.colors.accent} />
+								<span>
+									Expanding graph
+									{expandProgress && expandProgress.depth > 0
+										? ` (depth ${expandProgress.depth}, ${expandProgress.loaded} docs)`
+										: ''}
+									...
+								</span>
+							</span>
 						)}
 						{/* Backlink loading indicator */}
 						{backlinksLoading && (
@@ -2100,7 +2179,7 @@ export function DocumentGraphView({
 								}}
 								title="Scanning for documents that link to the current graph"
 							>
-								<Loader2 className="w-3 h-3 animate-spin" style={{ color: theme.colors.accent }} />
+								<Spinner size={12} color={theme.colors.accent} />
 								<span>
 									Scanning backlinks
 									{backlinkProgress && ` (${backlinkProgress.scanned}/${backlinkProgress.total})`}
@@ -2191,15 +2270,6 @@ export function DocumentGraphView({
 					onClick={(e) => {
 						e.stopPropagation();
 						setShowDepthSlider(false);
-					}}
-				/>
-			)}
-			{showPreviewSlider && (
-				<div
-					className="fixed inset-0 z-40"
-					onClick={(e) => {
-						e.stopPropagation();
-						setShowPreviewSlider(false);
 					}}
 				/>
 			)}

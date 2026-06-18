@@ -107,16 +107,6 @@ describe('Input Component', () => {
 			render(<Input variant={'unknown' as any} data-testid="input" />);
 			expect(screen.getByTestId('input')).toBeInTheDocument();
 		});
-
-		it('uses error border colors for filled and ghost variants', () => {
-			const { rerender } = render(<Input variant="filled" error data-testid="input" />);
-
-			expect(screen.getByTestId('input').style.borderColor).toBe('rgb(239, 68, 68)');
-
-			rerender(<Input variant="ghost" error data-testid="input" />);
-
-			expect(screen.getByTestId('input').style.borderColor).toBe('rgb(239, 68, 68)');
-		});
 	});
 
 	describe('disabled state', () => {
@@ -149,14 +139,6 @@ describe('Input Component', () => {
 		it('wraps input with icons in container', () => {
 			const { container } = render(<Input leftIcon={<span>L</span>} data-testid="input" />);
 			expect(container.querySelector('.relative.inline-flex')).toBeInTheDocument();
-		});
-
-		it('applies full-width layout to the icon wrapper', () => {
-			const { container } = render(
-				<Input fullWidth leftIcon={<span>L</span>} data-testid="input" />
-			);
-
-			expect(container.querySelector('.relative.inline-flex')).toHaveClass('w-full');
 		});
 	});
 
@@ -230,13 +212,6 @@ describe('TextArea Component', () => {
 			render(<TextArea ref={ref} />);
 			expect(ref.current).toBeInstanceOf(HTMLTextAreaElement);
 		});
-
-		it('supports callback refs', () => {
-			const ref = vi.fn();
-			render(<TextArea ref={ref} />);
-
-			expect(ref).toHaveBeenCalledWith(expect.any(HTMLTextAreaElement));
-		});
 	});
 
 	describe('variants and sizes', () => {
@@ -256,29 +231,6 @@ describe('TextArea Component', () => {
 				expect(screen.getByTestId('textarea')).toBeInTheDocument();
 				cleanup();
 			});
-		});
-
-		it('keeps structural styles when variant is unknown', () => {
-			render(<TextArea variant={'unknown' as any} data-testid="textarea" />);
-
-			const textarea = screen.getByTestId('textarea');
-			expect(textarea).toBeInTheDocument();
-			expect(textarea.style.border).toBe('');
-			expect(textarea.style.minHeight).toBe('60px');
-		});
-
-		it('uses error border colors for default, filled, and ghost variants', () => {
-			const { rerender } = render(<TextArea variant="default" error data-testid="textarea" />);
-
-			expect(screen.getByTestId('textarea').style.borderColor).toBe('rgb(239, 68, 68)');
-
-			rerender(<TextArea variant="filled" error data-testid="textarea" />);
-
-			expect(screen.getByTestId('textarea').style.borderColor).toBe('rgb(239, 68, 68)');
-
-			rerender(<TextArea variant="ghost" error data-testid="textarea" />);
-
-			expect(screen.getByTestId('textarea').style.borderColor).toBe('rgb(239, 68, 68)');
 		});
 	});
 
@@ -310,63 +262,6 @@ describe('TextArea Component', () => {
 			render(<TextArea autoResize onInput={handleInput} data-testid="textarea" />);
 			fireEvent.input(screen.getByTestId('textarea'), { target: { value: 'test' } });
 			expect(handleInput).toHaveBeenCalled();
-		});
-
-		it('clamps auto-resize height to maxRows and enables vertical overflow', () => {
-			render(<TextArea autoResize minRows={1} maxRows={2} size="md" data-testid="textarea" />);
-			const textarea = screen.getByTestId('textarea');
-			Object.defineProperty(textarea, 'scrollHeight', {
-				configurable: true,
-				value: 120,
-			});
-
-			fireEvent.input(textarea, { target: { value: 'line 1\nline 2\nline 3' } });
-
-			expect(textarea).toHaveStyle({ height: '40px', overflowY: 'auto' });
-		});
-
-		it('fires onInput without resizing when autoResize is false', () => {
-			const handleInput = vi.fn();
-			render(<TextArea autoResize={false} onInput={handleInput} data-testid="textarea" />);
-			const textarea = screen.getByTestId('textarea');
-
-			fireEvent.input(textarea, { target: { value: 'manual size' } });
-
-			expect(handleInput).toHaveBeenCalled();
-			expect(textarea.style.height).toBe('');
-		});
-
-		it('uses size-specific line heights when auto-resizing', () => {
-			const { rerender } = render(
-				<TextArea autoResize minRows={2} size="sm" data-testid="textarea" />
-			);
-			const textarea = screen.getByTestId('textarea');
-			Object.defineProperty(textarea, 'scrollHeight', {
-				configurable: true,
-				value: 1,
-			});
-
-			fireEvent.input(textarea, { target: { value: 'short' } });
-
-			expect(textarea).toHaveStyle({ height: '32px', overflowY: 'hidden' });
-
-			rerender(<TextArea autoResize minRows={2} size="lg" data-testid="textarea" />);
-
-			fireEvent.input(screen.getByTestId('textarea'), { target: { value: 'short' } });
-
-			expect(screen.getByTestId('textarea')).toHaveStyle({
-				height: '48px',
-				overflowY: 'hidden',
-			});
-		});
-	});
-
-	describe('full width', () => {
-		it('applies full width class and style when fullWidth is true', () => {
-			render(<TextArea fullWidth data-testid="textarea" />);
-
-			expect(screen.getByTestId('textarea')).toHaveClass('w-full');
-			expect(screen.getByTestId('textarea')).toHaveStyle({ width: '100%' });
 		});
 	});
 

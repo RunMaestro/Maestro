@@ -17,6 +17,7 @@ const ipcHandlers = new Map<string, (...args: unknown[]) => void>();
 
 // Mock app
 const mockQuit = vi.fn();
+const mockExit = vi.fn();
 const mockAppOn = vi.fn((event: string, handler: (e: { preventDefault: () => void }) => void) => {
 	if (event === 'before-quit') {
 		beforeQuitHandler = handler;
@@ -32,6 +33,7 @@ vi.mock('electron', () => ({
 	app: {
 		on: (...args: unknown[]) => mockAppOn(...args),
 		quit: () => mockQuit(),
+		exit: (...args: unknown[]) => mockExit(...args),
 	},
 	ipcMain: {
 		on: (...args: unknown[]) => mockIpcMainOn(...args),
@@ -63,6 +65,12 @@ vi.mock('../../../main/power-manager', () => ({
 	powerManager: {
 		clearAllReasons: vi.fn(),
 	},
+}));
+
+// Mock cue-executor to avoid pulling in agent/parser/SSH dependencies
+const mockStopAllCueRuns = vi.fn();
+vi.mock('../../../main/cue/cue-executor', () => ({
+	stopAllCueRuns: (...args: unknown[]) => mockStopAllCueRuns(...args),
 }));
 
 describe('app-lifecycle/quit-handler', () => {
@@ -97,7 +105,6 @@ describe('app-lifecycle/quit-handler', () => {
 		cleanupAllGroomingSessions: ReturnType<typeof vi.fn>;
 		closeStatsDB: ReturnType<typeof vi.fn>;
 		stopCliWatcher: ReturnType<typeof vi.fn>;
-		stopSettingsWatcher: ReturnType<typeof vi.fn>;
 		powerManager: typeof mockPowerManager;
 		stopSessionCleanup: ReturnType<typeof vi.fn>;
 	};
@@ -106,6 +113,10 @@ describe('app-lifecycle/quit-handler', () => {
 		vi.clearAllMocks();
 		beforeQuitHandler = null;
 		ipcHandlers.clear();
+
+		// Stub process.kill so the production hardExit() (SIGKILL to self) never
+		// actually terminates the test runner. Restored by vi.restoreAllMocks().
+		vi.spyOn(process, 'kill').mockReturnValue(true);
 
 		mockMainWindow = {
 			isDestroyed: vi.fn().mockReturnValue(false),
@@ -137,7 +148,6 @@ describe('app-lifecycle/quit-handler', () => {
 			cleanupAllGroomingSessions: vi.fn().mockResolvedValue(undefined),
 			closeStatsDB: vi.fn(),
 			stopCliWatcher: vi.fn(),
-			stopSettingsWatcher: vi.fn(),
 			powerManager: mockPowerManager,
 			stopSessionCleanup: vi.fn(),
 		};
@@ -187,6 +197,13 @@ describe('app-lifecycle/quit-handler', () => {
 			quitHandler.setup();
 
 			expect(ipcHandlers.has('app:quitCancelled')).toBe(true);
+		});
+
+		it('should register app:quitConfirmationPending IPC handler', async () => {
+			const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
+			const quitHandler = createQuitHandler(deps as Parameters<typeof createQuitHandler>[0]);
+			quitHandler.setup();
+			expect(ipcHandlers.has('app:quitConfirmationPending')).toBe(true);
 		});
 
 		it('should register before-quit handler on app', async () => {
@@ -284,54 +301,44 @@ describe('app-lifecycle/quit-handler', () => {
 			expect(mockQuit).toHaveBeenCalled();
 		});
 
-		it('should perform cleanup when quit is confirmed', async () => {
+		it('should perform cleanup on the update-install path without force-exiting', async () => {
+			vi.useFakeTimers();
 			const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
 
 			const quitHandler = createQuitHandler(deps as Parameters<typeof createQuitHandler>[0]);
 			quitHandler.setup();
+			// confirmQuit() is the auto-updater path — graceful teardown must proceed
+			// so electron-updater can apply the update.
 			quitHandler.confirmQuit();
 
 			const mockEvent = { preventDefault: vi.fn() };
 			beforeQuitHandler!(mockEvent);
 
-			// Should not prevent default when confirmed
+			// On the update path we must NOT hold the loop open or hard-exit, so the
+			// native will-quit/quit teardown can run the installer handoff.
 			expect(mockEvent.preventDefault).not.toHaveBeenCalled();
+			vi.advanceTimersByTime(60_000);
+			expect(mockExit).not.toHaveBeenCalled();
+			vi.useRealTimers();
 
 			// Should perform cleanup
 			expect(mockHistoryManager.stopWatching).toHaveBeenCalled();
 			expect(deps.stopCliWatcher).toHaveBeenCalled();
-			expect(deps.stopSettingsWatcher).toHaveBeenCalled();
 			expect(deps.stopSessionCleanup).toHaveBeenCalled();
+			// Cue processes (tracked separately) must be killed before ProcessManager.killAll
+			expect(mockStopAllCueRuns).toHaveBeenCalled();
 			expect(mockProcessManager.killAll).toHaveBeenCalled();
+			const cueOrder = mockStopAllCueRuns.mock.invocationCallOrder[0];
+			const killOrder = mockProcessManager.killAll.mock.invocationCallOrder[0];
+			expect(cueOrder).toBeLessThan(killOrder);
 			// clearAllReasons must be called AFTER killAll to prevent late process
 			// output from re-arming the sleep blocker
 			expect(mockPowerManager.clearAllReasons).toHaveBeenCalled();
-			const killOrder = mockProcessManager.killAll.mock.invocationCallOrder[0];
 			const clearOrder = mockPowerManager.clearAllReasons.mock.invocationCallOrder[0];
 			expect(killOrder).toBeLessThan(clearOrder);
 			expect(mockTunnelManager.stop).toHaveBeenCalled();
 			expect(mockWebServer.stop).toHaveBeenCalled();
 			expect(deps.closeStatsDB).toHaveBeenCalled();
-		});
-
-		it('should ignore duplicate quit attempts while confirmation is pending', async () => {
-			const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
-
-			const quitHandler = createQuitHandler(deps as Parameters<typeof createQuitHandler>[0]);
-			quitHandler.setup();
-
-			const firstEvent = { preventDefault: vi.fn() };
-			const secondEvent = { preventDefault: vi.fn() };
-			beforeQuitHandler!(firstEvent);
-			beforeQuitHandler!(secondEvent);
-
-			expect(firstEvent.preventDefault).toHaveBeenCalled();
-			expect(secondEvent.preventDefault).toHaveBeenCalled();
-			expect(mockMainWindow.webContents.send).toHaveBeenCalledTimes(1);
-			expect(mockLogger.debug).toHaveBeenCalledWith(
-				'Quit confirmation already in progress, ignoring duplicate request',
-				'Window'
-			);
 		});
 
 		it('should cleanup grooming sessions if any are active', async () => {
@@ -443,6 +450,30 @@ describe('app-lifecycle/quit-handler', () => {
 			vi.useRealTimers();
 		});
 
+		it('should disarm the safety timeout when the modal is pending without quitting', async () => {
+			vi.useFakeTimers();
+
+			const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
+
+			const quitHandler = createQuitHandler(deps as Parameters<typeof createQuitHandler>[0]);
+			quitHandler.setup();
+
+			const mockEvent = { preventDefault: vi.fn() };
+			beforeQuitHandler!(mockEvent);
+
+			// Renderer signals the confirmation modal is now showing.
+			const pendingHandler = ipcHandlers.get('app:quitConfirmationPending')!;
+			pendingHandler();
+
+			// Advance well past the 5s timeout — the app must NOT force-quit while
+			// the user is deciding at the open modal.
+			vi.advanceTimersByTime(5000);
+			expect(mockQuit).not.toHaveBeenCalled();
+			expect(quitHandler.isQuitConfirmed()).toBe(false);
+
+			vi.useRealTimers();
+		});
+
 		it('should clear safety timeout when renderer cancels quit', async () => {
 			vi.useFakeTimers();
 
@@ -465,37 +496,6 @@ describe('app-lifecycle/quit-handler', () => {
 			vi.useRealTimers();
 		});
 
-		it('should ignore a stale safety timeout after renderer cancels quit', async () => {
-			vi.useFakeTimers();
-			const clearTimeoutSpy = vi
-				.spyOn(globalThis, 'clearTimeout')
-				.mockImplementation(() => undefined);
-
-			try {
-				const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
-
-				const quitHandler = createQuitHandler(deps as Parameters<typeof createQuitHandler>[0]);
-				quitHandler.setup();
-
-				const mockEvent = { preventDefault: vi.fn() };
-				beforeQuitHandler!(mockEvent);
-
-				const cancelHandler = ipcHandlers.get('app:quitCancelled')!;
-				cancelHandler();
-
-				vi.advanceTimersByTime(5000);
-
-				expect(mockQuit).not.toHaveBeenCalled();
-				expect(mockLogger.warn).not.toHaveBeenCalledWith(
-					'Quit confirmation timed out — renderer did not respond, forcing quit',
-					'Window'
-				);
-			} finally {
-				clearTimeoutSpy.mockRestore();
-				vi.useRealTimers();
-			}
-		});
-
 		it('should work without stopCliWatcher dependency', async () => {
 			const depsWithoutCliWatcher = { ...deps };
 			delete depsWithoutCliWatcher.stopCliWatcher;
@@ -514,55 +514,59 @@ describe('app-lifecycle/quit-handler', () => {
 			expect(() => beforeQuitHandler!(mockEvent)).not.toThrow();
 		});
 
-		it('should work without optional settings watcher and session cleanup dependencies', async () => {
-			const depsWithoutOptionalWatchers = { ...deps };
-			delete depsWithoutOptionalWatchers.stopSettingsWatcher;
-			delete depsWithoutOptionalWatchers.stopSessionCleanup;
-
-			const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
-
-			const quitHandler = createQuitHandler(
-				depsWithoutOptionalWatchers as Parameters<typeof createQuitHandler>[0]
-			);
-			quitHandler.setup();
-			quitHandler.confirmQuit();
-
-			const mockEvent = { preventDefault: vi.fn() };
-
-			expect(() => beforeQuitHandler!(mockEvent)).not.toThrow();
-			expect(mockProcessManager.killAll).toHaveBeenCalled();
-		});
-
-		it('should log asynchronous cleanup failures without blocking shutdown', async () => {
-			deps.getActiveGroomingSessionCount.mockReturnValue(1);
-			deps.cleanupAllGroomingSessions.mockRejectedValueOnce(new Error('grooming failed'));
-			mockTunnelManager.stop.mockRejectedValueOnce(new Error('tunnel failed'));
-			mockWebServer.stop.mockRejectedValueOnce(new Error('web failed'));
-
+		it('should hold the loop open and hard-exit after the grace window on a user quit', async () => {
+			vi.useFakeTimers();
 			const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
 
 			const quitHandler = createQuitHandler(deps as Parameters<typeof createQuitHandler>[0]);
 			quitHandler.setup();
-			quitHandler.confirmQuit();
+
+			// User-quit path: renderer confirms via the IPC handler (NOT confirmQuit,
+			// which is reserved for the auto-updater). This sets quitConfirmed=true
+			// and calls app.quit(), which re-emits before-quit.
+			ipcHandlers.get('app:quitConfirmed')!();
 
 			const mockEvent = { preventDefault: vi.fn() };
 			beforeQuitHandler!(mockEvent);
 
-			await Promise.resolve();
+			// Cleanup ran...
+			expect(mockHistoryManager.stopWatching).toHaveBeenCalled();
+			expect(mockProcessManager.killAll).toHaveBeenCalled();
+			// ...the loop is held open so the watchdog timer can fire...
+			expect(mockEvent.preventDefault).toHaveBeenCalled();
+			expect(process.kill).not.toHaveBeenCalled();
 
-			expect(mockLogger.error).toHaveBeenCalledWith(
-				expect.stringContaining('Error cleaning up grooming sessions: Error: grooming failed'),
-				'Shutdown'
-			);
-			expect(mockLogger.error).toHaveBeenCalledWith(
-				expect.stringContaining('Error stopping tunnel: Error: tunnel failed'),
-				'Shutdown'
-			);
-			expect(mockLogger.error).toHaveBeenCalledWith(
-				expect.stringContaining('Error stopping web server: Error: web failed'),
-				'Shutdown'
-			);
-			expect(deps.closeStatsDB).toHaveBeenCalled();
+			// ...and after the grace window we hard-exit via SIGKILL to self,
+			// bypassing the native teardown that deadlocks on addon TSFN finalizers.
+			vi.advanceTimersByTime(750);
+			expect(process.kill).toHaveBeenCalledWith(process.pid, 'SIGKILL');
+			// app.exit() must NOT be used on this path — it runs FreeEnvironment and
+			// can deadlock; it is only the fallback if process.kill throws.
+			expect(mockExit).not.toHaveBeenCalled();
+
+			vi.useRealTimers();
+		});
+
+		it('should not run cleanup or arm the timer twice on a re-entrant before-quit', async () => {
+			vi.useFakeTimers();
+			const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
+
+			const quitHandler = createQuitHandler(deps as Parameters<typeof createQuitHandler>[0]);
+			quitHandler.setup();
+			ipcHandlers.get('app:quitConfirmed')!();
+
+			beforeQuitHandler!({ preventDefault: vi.fn() });
+			// A second before-quit emit (e.g. another path calling app.quit) must be a no-op.
+			beforeQuitHandler!({ preventDefault: vi.fn() });
+
+			expect(mockHistoryManager.stopWatching).toHaveBeenCalledTimes(1);
+			expect(mockProcessManager.killAll).toHaveBeenCalledTimes(1);
+
+			vi.advanceTimersByTime(750);
+			// Only one timer was armed despite two emits.
+			expect(process.kill).toHaveBeenCalledTimes(1);
+
+			vi.useRealTimers();
 		});
 	});
 

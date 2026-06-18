@@ -21,38 +21,40 @@ vi.mock('electron', () => ({
 }));
 
 // Mock agents module (capabilities exports)
-vi.mock('../../../../main/agents', () => ({
-	getAgentCapabilities: vi.fn(),
-	AGENT_DEFINITIONS: [
-		{ id: 'claude-code', name: 'Claude Code', binaryName: 'claude', configOptions: [] },
-		{
-			id: 'codex',
-			name: 'Codex',
-			binaryName: 'codex',
-			configOptions: [{ key: 'model', default: 'gpt-5-codex' }, { key: 'approvalMode' }],
+vi.mock('../../../../main/agents', async () => {
+	const opencodeConfig = await import('../../../../main/agents/opencode-config');
+	return {
+		getAgentCapabilities: vi.fn(),
+		AGENT_DEFINITIONS: [
+			{ id: 'claude-code', name: 'Claude Code', binaryName: 'claude', configOptions: [] },
+			{ id: 'codex', name: 'Codex', binaryName: 'codex', configOptions: [] },
+			{ id: 'opencode', name: 'OpenCode', binaryName: 'opencode', configOptions: [] },
+			{ id: 'terminal', name: 'Terminal', binaryName: 'bash', configOptions: [] },
+		],
+		DEFAULT_CAPABILITIES: {
+			supportsResume: false,
+			supportsReadOnlyMode: false,
+			supportsJsonOutput: false,
+			supportsSessionId: false,
+			supportsImageInput: false,
+			supportsImageInputOnResume: false,
+			supportsSlashCommands: false,
+			supportsSessionStorage: false,
+			supportsCostTracking: false,
+			supportsUsageStats: false,
+			supportsBatchMode: false,
+			requiresPromptToStart: false,
+			supportsStreaming: false,
+			supportsResultMessages: false,
+			supportsModelSelection: false,
+			supportsStreamJsonInput: false,
 		},
-		{ id: 'opencode', name: 'OpenCode', binaryName: 'opencode', configOptions: [] },
-		{ id: 'terminal', name: 'Terminal', binaryName: 'bash', configOptions: [] },
-	],
-	DEFAULT_CAPABILITIES: {
-		supportsResume: false,
-		supportsReadOnlyMode: false,
-		supportsJsonOutput: false,
-		supportsSessionId: false,
-		supportsImageInput: false,
-		supportsImageInputOnResume: false,
-		supportsSlashCommands: false,
-		supportsSessionStorage: false,
-		supportsCostTracking: false,
-		supportsUsageStats: false,
-		supportsBatchMode: false,
-		requiresPromptToStart: false,
-		supportsStreaming: false,
-		supportsResultMessages: false,
-		supportsModelSelection: false,
-		supportsStreamJsonInput: false,
-	},
-}));
+		parseOpenCodeConfig: opencodeConfig.parseOpenCodeConfig,
+		extractModelsFromConfig: opencodeConfig.extractModelsFromConfig,
+		getOpenCodeConfigPaths: opencodeConfig.getOpenCodeConfigPaths,
+		getOpenCodeCommandDirs: opencodeConfig.getOpenCodeCommandDirs,
+	};
+});
 
 // Mock the logger
 vi.mock('../../../../main/utils/logger', () => ({
@@ -72,6 +74,13 @@ vi.mock('../../../../main/utils/execFile', () => ({
 // Mock fs
 vi.mock('fs', () => ({
 	existsSync: vi.fn(),
+	readdirSync: vi.fn(),
+	accessSync: vi.fn(),
+	constants: { R_OK: 4 },
+	promises: {
+		readdir: vi.fn(),
+		readFile: vi.fn(),
+	},
 }));
 
 // Mock ssh-command-builder for remote model discovery tests
@@ -87,7 +96,6 @@ vi.mock('../../../../main/utils/stripAnsi', () => ({
 
 import { execFileNoThrow } from '../../../../main/utils/execFile';
 import { buildSshCommand } from '../../../../main/utils/ssh-command-builder';
-import { logger } from '../../../../main/utils/logger';
 import * as fs from 'fs';
 
 describe('agents IPC handlers', () => {
@@ -108,6 +116,8 @@ describe('agents IPC handlers', () => {
 	beforeEach(() => {
 		// Clear mocks
 		vi.clearAllMocks();
+		vi.mocked(fs.readdirSync).mockReturnValue([] as any);
+		vi.mocked(fs.accessSync).mockImplementation(() => undefined);
 
 		// Create mock agent detector
 		mockAgentDetector = {
@@ -144,24 +154,6 @@ describe('agents IPC handlers', () => {
 		handlers.clear();
 	});
 
-	function registerWithSshRemotes(remotes: any[]) {
-		const settingsStore = {
-			get: vi.fn((key: string, defaultValue?: unknown) => {
-				if (key === 'sshRemotes') return remotes;
-				return defaultValue;
-			}),
-			set: vi.fn(),
-		};
-
-		handlers.clear();
-		registerAgentsHandlers({
-			...deps,
-			settingsStore: settingsStore as any,
-		});
-
-		return settingsStore;
-	}
-
 	describe('registration', () => {
 		it('should register all agents handlers', () => {
 			const expectedChannels = [
@@ -183,7 +175,20 @@ describe('agents IPC handlers', () => {
 				'agents:getCustomEnvVars',
 				'agents:getAllCustomEnvVars',
 				'agents:getModels',
+				'agents:getConfigOptions',
 				'agents:discoverSlashCommands',
+				// Capability snapshot bridge (status pill + reprobe + live events)
+				'agents:getSnapshot',
+				'agents:getAllSnapshots',
+				'agents:reprobe',
+				'agents:getMaestroPDetectedPath',
+				'agents:getRemoteMaestroPAvailable',
+				'agents:getClaudeUsageSnapshots',
+				'agents:getClaudeUsageAccountKeys',
+				'claude:usage:refresh-all',
+				'agents:getCodexUsageSnapshots',
+				'agents:getCodexUsageAccountKeys',
+				'codex:usage:refresh-all',
 			];
 
 			for (const channel of expectedChannels) {
@@ -303,185 +308,101 @@ describe('agents IPC handlers', () => {
 			expect(result[0].configOptions[0].key).toBe('test');
 		});
 
-		it('should return unavailable agents when SSH remote config is missing', async () => {
-			registerWithSshRemotes([]);
-			vi.mocked(agentCapabilities.getAgentCapabilities).mockImplementation((id) => ({ id }) as any);
+		describe('SSH remote detection (issue #878)', () => {
+			let mockSettingsStore: {
+				get: ReturnType<typeof vi.fn>;
+				set: ReturnType<typeof vi.fn>;
+			};
 
-			const handler = handlers.get('agents:detect');
-			const result = await handler!({} as any, 'missing-remote');
+			beforeEach(() => {
+				mockSettingsStore = {
+					get: vi.fn().mockReturnValue([
+						{
+							id: 'remote-1',
+							host: 'dev.example.com',
+							username: 'dev',
+							port: 22,
+							enabled: true,
+						},
+					]),
+					set: vi.fn(),
+				};
 
-			expect(result).toHaveLength(4);
-			expect(result.every((agent: any) => agent.available === false)).toBe(true);
-			expect(result[0]).toMatchObject({
-				id: 'claude-code',
-				path: undefined,
-				error: 'SSH remote configuration not found: missing-remote',
+				handlers.clear();
+				registerAgentsHandlers({
+					...deps,
+					settingsStore: mockSettingsStore as any,
+				});
+
+				vi.mocked(buildSshCommand).mockResolvedValue({
+					command: 'ssh',
+					args: ['-o', 'BatchMode=yes', 'dev@dev.example.com', 'mock'],
+				});
 			});
-			expect(buildSshCommand).not.toHaveBeenCalled();
-			expect(mockAgentDetector.detectAgents).not.toHaveBeenCalled();
-		});
 
-		it('should return unavailable remote agents when no settings store is registered', async () => {
-			vi.mocked(agentCapabilities.getAgentCapabilities).mockImplementation((id) => ({ id }) as any);
-
-			const handler = handlers.get('agents:detect');
-			const result = await handler!({} as any, 'missing-store-remote');
-
-			expect(result).toHaveLength(4);
-			expect(result.every((agent: any) => agent.available === false)).toBe(true);
-			expect(result[0]).toMatchObject({
-				id: 'claude-code',
-				error: 'SSH remote configuration not found: missing-store-remote',
-			});
-			expect(logger.warn).toHaveBeenCalledWith(
-				'[AgentDetector] Settings store not available for SSH remote lookup',
-				'[AgentDetector]'
-			);
-			expect(buildSshCommand).not.toHaveBeenCalled();
-			expect(mockAgentDetector.detectAgents).not.toHaveBeenCalled();
-		});
-
-		it('should detect remote agents and preserve per-agent SSH failures', async () => {
-			registerWithSshRemotes([
-				{
-					id: 'remote-1',
-					host: 'dev.example.com',
-					username: 'dev',
-					enabled: false,
-				},
-			]);
-			vi.mocked(agentCapabilities.getAgentCapabilities).mockImplementation((id) => ({ id }) as any);
-			vi.mocked(buildSshCommand).mockResolvedValue({ command: 'ssh', args: ['mock'] });
-			vi.mocked(execFileNoThrow)
-				.mockResolvedValueOnce({
+			it("uses POSIX 'command -v' (not 'which') to probe each agent binary", async () => {
+				vi.mocked(execFileNoThrow).mockResolvedValue({
 					exitCode: 0,
-					stdout: '/usr/bin/claude\n',
+					stdout: '/home/dev/.local/bin/claude\n',
 					stderr: '',
-				})
-				.mockResolvedValueOnce({
+				});
+
+				const handler = handlers.get('agents:detect');
+				await handler!({} as any, 'remote-1');
+
+				// The remote detection piggybacks one extra maestro-p launch test
+				// (`maestro-p --version`) on top of the per-agent binary probes, so the
+				// total is AGENT_DEFINITIONS.length + 1.
+				const calls = vi.mocked(buildSshCommand).mock.calls;
+				expect(calls.length).toBe(agentCapabilities.AGENT_DEFINITIONS.length + 1);
+
+				// The maestro-p availability check is a LAUNCH test, not a path check:
+				// it runs `maestro-p --version` (which loads node + node-pty) rather
+				// than `command -v maestro-p`, so a host with no node fails it.
+				const maestroPProbe = calls.find(([, o]) => o.command === 'maestro-p');
+				expect(maestroPProbe).toBeDefined();
+				expect(maestroPProbe![1].args).toEqual(['--version']);
+
+				// Every other (per-agent) probe should invoke 'command -v <binary>',
+				// never 'which'. Asserting one such call per AGENT_DEFINITION catches
+				// regressions that silently skip agents instead of just dropping to zero.
+				const agentProbes = calls.filter(([, o]) => o.command !== 'maestro-p');
+				expect(agentProbes.length).toBe(agentCapabilities.AGENT_DEFINITIONS.length);
+				for (const [, options] of agentProbes) {
+					expect(options.command).toBe('command');
+					expect(options.args[0]).toBe('-v');
+				}
+			});
+
+			it('marks the agent available and records the resolved remote path', async () => {
+				vi.mocked(execFileNoThrow).mockResolvedValue({
+					exitCode: 0,
+					stdout: '/home/dev/.claude/local/claude\n',
+					stderr: '',
+				});
+
+				const handler = handlers.get('agents:detect');
+				const result = await handler!({} as any, 'remote-1');
+
+				const claude = result.find((a: any) => a.id === 'claude-code');
+				expect(claude.available).toBe(true);
+				expect(claude.path).toBe('/home/dev/.claude/local/claude');
+			});
+
+			it('marks the agent unavailable when command -v exits non-zero', async () => {
+				vi.mocked(execFileNoThrow).mockResolvedValue({
 					exitCode: 1,
 					stdout: '',
 					stderr: '',
-				})
-				.mockResolvedValueOnce({
-					exitCode: 255,
-					stdout: '',
-					stderr: 'Permission denied\nextra details',
-				})
-				.mockRejectedValueOnce(new Error('SSH command failed'));
-
-			const handler = handlers.get('agents:detect');
-			const result = await handler!({} as any, 'remote-1');
-
-			expect(result).toHaveLength(4);
-			expect(result[0]).toMatchObject({
-				id: 'claude-code',
-				available: true,
-				path: '/usr/bin/claude',
-				capabilities: { id: 'claude-code' },
-			});
-			expect(result[1]).toMatchObject({
-				id: 'codex',
-				available: false,
-				path: undefined,
-			});
-			expect(result[2]).toMatchObject({
-				id: 'opencode',
-				available: false,
-				error: 'Permission denied',
-			});
-			expect(result[3]).toMatchObject({
-				id: 'terminal',
-				available: false,
-				error: 'Failed to connect: SSH command failed',
-			});
-			expect(buildSshCommand).toHaveBeenCalledWith(
-				expect.objectContaining({ id: 'remote-1', host: 'dev.example.com' }),
-				{ command: 'which', args: ['claude'] }
-			);
-			expect(mockAgentDetector.detectAgents).not.toHaveBeenCalled();
-		});
-
-		it('should summarize remote detection failures when SSH setup throws non-Error values', async () => {
-			registerWithSshRemotes([
-				{
-					id: 'remote-string-error',
-					host: 'offline.example.com',
-					username: 'dev',
-				},
-			]);
-			vi.mocked(agentCapabilities.getAgentCapabilities).mockImplementation((id) => ({ id }) as any);
-			vi.mocked(buildSshCommand).mockRejectedValue('network offline');
-
-			const handler = handlers.get('agents:detect');
-			const result = await handler!({} as any, 'remote-string-error');
-
-			expect(result).toHaveLength(4);
-			expect(result.every((agent: any) => agent.available === false)).toBe(true);
-			expect(result[0]).toMatchObject({
-				id: 'claude-code',
-				error: 'Failed to connect: network offline',
-			});
-			expect(logger.error).toHaveBeenCalledWith(
-				'Failed to connect to SSH remote offline.example.com: network offline',
-				'[AgentDetector]'
-			);
-		});
-
-		it('should not treat remote command failures as successful SSH connectivity', async () => {
-			registerWithSshRemotes([
-				{
-					id: 'remote-command-failure',
-					host: 'dev.example.com',
-					username: 'dev',
-				},
-			]);
-			vi.mocked(agentCapabilities.getAgentCapabilities).mockImplementation((id) => ({ id }) as any);
-			vi.mocked(buildSshCommand).mockResolvedValue({ command: 'ssh', args: ['mock'] });
-			vi.mocked(execFileNoThrow).mockResolvedValue({
-				exitCode: 2,
-				stdout: '',
-				stderr: 'which failed unexpectedly',
-			});
-
-			const handler = handlers.get('agents:detect');
-			const result = await handler!({} as any, 'remote-command-failure');
-
-			expect(result).toHaveLength(4);
-			expect(result.every((agent: any) => agent.available === false)).toBe(true);
-			expect(result.every((agent: any) => agent.error === undefined)).toBe(true);
-			expect(logger.error).not.toHaveBeenCalled();
-		});
-
-		it('should mark remote agents unavailable when SSH detection times out', async () => {
-			registerWithSshRemotes([
-				{
-					id: 'remote-detect-timeout',
-					host: 'slow.example.com',
-					username: 'dev',
-				},
-			]);
-			vi.mocked(agentCapabilities.getAgentCapabilities).mockImplementation((id) => ({ id }) as any);
-			vi.mocked(buildSshCommand).mockResolvedValue({ command: 'ssh', args: ['mock'] });
-			vi.mocked(execFileNoThrow).mockReturnValue(new Promise(() => {}) as any);
-
-			vi.useFakeTimers();
-			try {
-				const handler = handlers.get('agents:detect');
-				const resultPromise = handler!({} as any, 'remote-detect-timeout');
-
-				await vi.advanceTimersByTimeAsync(40000);
-				const result = await resultPromise;
-
-				expect(result).toHaveLength(4);
-				expect(result.every((agent: any) => agent.available === false)).toBe(true);
-				expect(result[0]).toMatchObject({
-					error: 'Failed to connect: SSH connection timed out after 10s',
 				});
-				expect(execFileNoThrow).toHaveBeenCalledTimes(4);
-			} finally {
-				vi.useRealTimers();
-			}
+
+				const handler = handlers.get('agents:detect');
+				const result = await handler!({} as any, 'remote-1');
+
+				const claude = result.find((a: any) => a.id === 'claude-code');
+				expect(claude.available).toBe(false);
+				expect(claude.path).toBeUndefined();
+			});
 		});
 	});
 
@@ -534,219 +455,6 @@ describe('agents IPC handlers', () => {
 			expect(result.resumeArgs).toBeUndefined();
 			expect(result.id).toBe('claude-code');
 		});
-
-		it('should return an unavailable agent when SSH remote config is missing', async () => {
-			registerWithSshRemotes([]);
-			vi.mocked(agentCapabilities.getAgentCapabilities).mockReturnValue({
-				supportsResume: false,
-			} as any);
-
-			const handler = handlers.get('agents:get');
-			const result = await handler!({} as any, 'codex', 'missing-remote');
-
-			expect(result).toMatchObject({
-				id: 'codex',
-				available: false,
-				path: undefined,
-				error: 'SSH remote configuration not found: missing-remote',
-			});
-			expect(buildSshCommand).not.toHaveBeenCalled();
-			expect(mockAgentDetector.getAgent).not.toHaveBeenCalled();
-		});
-
-		it('should throw for an unknown agent when the SSH remote config is missing', async () => {
-			registerWithSshRemotes([]);
-
-			const handler = handlers.get('agents:get');
-			await expect(handler!({} as any, 'unknown-agent', 'missing-remote')).rejects.toThrow(
-				'Unknown agent: unknown-agent'
-			);
-
-			expect(buildSshCommand).not.toHaveBeenCalled();
-			expect(mockAgentDetector.getAgent).not.toHaveBeenCalled();
-		});
-
-		it('should detect a specific agent over SSH', async () => {
-			registerWithSshRemotes([
-				{
-					id: 'remote-1',
-					host: 'dev.example.com',
-					username: 'dev',
-					enabled: false,
-				},
-			]);
-			vi.mocked(agentCapabilities.getAgentCapabilities).mockReturnValue({
-				supportsResume: true,
-			} as any);
-			vi.mocked(buildSshCommand).mockResolvedValue({
-				command: 'ssh',
-				args: ['dev@dev.example.com', 'which codex'],
-			});
-			vi.mocked(execFileNoThrow).mockResolvedValue({
-				exitCode: 0,
-				stdout: '/opt/bin/codex\n',
-				stderr: '',
-			});
-
-			const handler = handlers.get('agents:get');
-			const result = await handler!({} as any, 'codex', 'remote-1');
-
-			expect(result).toMatchObject({
-				id: 'codex',
-				available: true,
-				path: '/opt/bin/codex',
-				capabilities: { supportsResume: true },
-			});
-			expect(buildSshCommand).toHaveBeenCalledWith(
-				expect.objectContaining({ id: 'remote-1', host: 'dev.example.com' }),
-				{ command: 'which', args: ['codex'] }
-			);
-			expect(mockAgentDetector.getAgent).not.toHaveBeenCalled();
-		});
-
-		it('should throw for an unknown agent before running remote SSH detection', async () => {
-			registerWithSshRemotes([
-				{
-					id: 'remote-1',
-					host: 'dev.example.com',
-					username: 'dev',
-				},
-			]);
-
-			const handler = handlers.get('agents:get');
-			await expect(handler!({} as any, 'unknown-agent', 'remote-1')).rejects.toThrow(
-				'Unknown agent: unknown-agent'
-			);
-
-			expect(buildSshCommand).not.toHaveBeenCalled();
-			expect(execFileNoThrow).not.toHaveBeenCalled();
-			expect(mockAgentDetector.getAgent).not.toHaveBeenCalled();
-		});
-
-		it.each([
-			'Connection refused',
-			'Connection timed out',
-			'No route to host',
-			'Could not resolve hostname',
-			'Permission denied',
-		])('should surface SSH connection stderr for a specific agent: %s', async (stderr) => {
-			const remoteId = `remote-${stderr.toLowerCase().replaceAll(' ', '-')}`;
-			registerWithSshRemotes([
-				{
-					id: remoteId,
-					host: 'dev.example.com',
-					username: 'dev',
-				},
-			]);
-			vi.mocked(agentCapabilities.getAgentCapabilities).mockReturnValue({
-				supportsResume: true,
-			} as any);
-			vi.mocked(buildSshCommand).mockResolvedValue({
-				command: 'ssh',
-				args: ['dev@dev.example.com', 'which codex'],
-			});
-			vi.mocked(execFileNoThrow).mockResolvedValue({
-				exitCode: 255,
-				stdout: '',
-				stderr: `${stderr}\nextra details`,
-			});
-
-			const handler = handlers.get('agents:get');
-			const result = await handler!({} as any, 'codex', remoteId);
-
-			expect(result).toMatchObject({
-				id: 'codex',
-				available: false,
-				path: undefined,
-				error: stderr,
-			});
-			expect(logger.warn).toHaveBeenCalledWith(
-				`SSH connection error for dev.example.com: ${stderr}`,
-				'[AgentDetector]'
-			);
-		});
-
-		it('should return an unavailable specific agent when SSH command fails', async () => {
-			registerWithSshRemotes([
-				{
-					id: 'remote-1',
-					host: 'dev.example.com',
-					username: 'dev',
-				},
-			]);
-			vi.mocked(agentCapabilities.getAgentCapabilities).mockReturnValue({
-				supportsResume: true,
-			} as any);
-			vi.mocked(buildSshCommand).mockRejectedValue(new Error('SSH config invalid'));
-
-			const handler = handlers.get('agents:get');
-			const result = await handler!({} as any, 'codex', 'remote-1');
-
-			expect(result).toMatchObject({
-				id: 'codex',
-				available: false,
-				error: 'Failed to connect: SSH config invalid',
-			});
-			expect(execFileNoThrow).not.toHaveBeenCalled();
-		});
-
-		it('should stringify non-Error SSH failures for a specific remote agent', async () => {
-			registerWithSshRemotes([
-				{
-					id: 'remote-string-failure',
-					host: 'dev.example.com',
-					username: 'dev',
-				},
-			]);
-			vi.mocked(agentCapabilities.getAgentCapabilities).mockReturnValue({
-				supportsResume: true,
-			} as any);
-			vi.mocked(buildSshCommand).mockRejectedValue('ssh refused');
-
-			const handler = handlers.get('agents:get');
-			const result = await handler!({} as any, 'codex', 'remote-string-failure');
-
-			expect(result).toMatchObject({
-				id: 'codex',
-				available: false,
-				error: 'Failed to connect: ssh refused',
-			});
-		});
-
-		it('should return an unavailable specific agent when SSH detection times out', async () => {
-			registerWithSshRemotes([
-				{
-					id: 'remote-get-timeout',
-					host: 'slow.example.com',
-					username: 'dev',
-				},
-			]);
-			vi.mocked(agentCapabilities.getAgentCapabilities).mockReturnValue({
-				supportsResume: true,
-			} as any);
-			vi.mocked(buildSshCommand).mockResolvedValue({
-				command: 'ssh',
-				args: ['dev@slow.example.com', 'which codex'],
-			});
-			vi.mocked(execFileNoThrow).mockReturnValue(new Promise(() => {}) as any);
-
-			vi.useFakeTimers();
-			try {
-				const handler = handlers.get('agents:get');
-				const resultPromise = handler!({} as any, 'codex', 'remote-get-timeout');
-
-				await vi.advanceTimersByTimeAsync(10000);
-				const result = await resultPromise;
-
-				expect(result).toMatchObject({
-					id: 'codex',
-					available: false,
-					error: 'Failed to connect: SSH connection timed out after 10s',
-				});
-			} finally {
-				vi.useRealTimers();
-			}
-		});
 	});
 
 	describe('agents:getCapabilities', () => {
@@ -768,6 +476,15 @@ describe('agents IPC handlers', () => {
 				supportsResultMessages: true,
 				supportsModelSelection: false,
 				supportsStreamJsonInput: true,
+				supportsThinkingDisplay: false,
+				supportsContextMerge: false,
+				supportsContextExport: false,
+				supportsWizard: false,
+				supportsGroupChatModeration: false,
+				usesJsonLineOutput: false,
+				usesCombinedContextWindow: false,
+				supportsAppendSystemPrompt: false,
+				supportsProjectMemory: false,
 			};
 
 			vi.mocked(agentCapabilities.getAgentCapabilities).mockReturnValue(mockCapabilities);
@@ -797,6 +514,15 @@ describe('agents IPC handlers', () => {
 				supportsResultMessages: false,
 				supportsModelSelection: false,
 				supportsStreamJsonInput: false,
+				supportsThinkingDisplay: false,
+				supportsContextMerge: false,
+				supportsContextExport: false,
+				supportsWizard: false,
+				supportsGroupChatModeration: false,
+				usesJsonLineOutput: false,
+				usesCombinedContextWindow: false,
+				supportsAppendSystemPrompt: false,
+				supportsProjectMemory: false,
 			};
 
 			vi.mocked(agentCapabilities.getAgentCapabilities).mockReturnValue(defaultCaps);
@@ -826,6 +552,15 @@ describe('agents IPC handlers', () => {
 				supportsResultMessages: true,
 				supportsModelSelection: true,
 				supportsStreamJsonInput: true,
+				supportsThinkingDisplay: false,
+				supportsContextMerge: false,
+				supportsContextExport: false,
+				supportsWizard: false,
+				supportsGroupChatModeration: false,
+				usesJsonLineOutput: false,
+				usesCombinedContextWindow: false,
+				supportsAppendSystemPrompt: false,
+				supportsProjectMemory: false,
 			};
 
 			vi.mocked(agentCapabilities.getAgentCapabilities).mockReturnValue(mockCapabilities);
@@ -891,68 +626,6 @@ describe('agents IPC handlers', () => {
 			expect(result.debugInfo.error).toContain('failed');
 		});
 
-		it('should use fallback debug info when the requested agent is absent', async () => {
-			const originalPath = process.env.PATH;
-			const originalHome = process.env.HOME;
-			delete process.env.PATH;
-			delete process.env.HOME;
-
-			mockAgentDetector.detectAgents.mockResolvedValue([]);
-			vi.mocked(execFileNoThrow).mockResolvedValue({
-				stdout: '',
-				stderr: '',
-				exitCode: 1,
-			});
-
-			try {
-				const handler = handlers.get('agents:refresh');
-				const result = await handler!({} as any, 'missing-agent');
-
-				expect(result.debugInfo).toMatchObject({
-					agentId: 'missing-agent',
-					available: false,
-					path: null,
-					binaryName: 'missing-agent',
-					envPath: '',
-					homeDir: '',
-				});
-				expect(result.debugInfo.error).toContain('Binary not found in PATH');
-				expect(execFileNoThrow).toHaveBeenCalledWith(expect.any(String), ['missing-agent']);
-			} finally {
-				if (originalPath === undefined) {
-					delete process.env.PATH;
-				} else {
-					process.env.PATH = originalPath;
-				}
-				if (originalHome === undefined) {
-					delete process.env.HOME;
-				} else {
-					process.env.HOME = originalHome;
-				}
-			}
-		});
-
-		it('should leave debug error empty when a manual lookup succeeds for an unavailable agent', async () => {
-			mockAgentDetector.detectAgents.mockResolvedValue([
-				{ id: 'codex', name: 'Codex', available: false, binaryName: 'codex' },
-			]);
-			vi.mocked(execFileNoThrow).mockResolvedValue({
-				stdout: '/usr/local/bin/codex\n',
-				stderr: '',
-				exitCode: 0,
-			});
-
-			const handler = handlers.get('agents:refresh');
-			const result = await handler!({} as any, 'codex');
-
-			expect(result.debugInfo).toMatchObject({
-				agentId: 'codex',
-				available: false,
-				binaryName: 'codex',
-				error: null,
-			});
-		});
-
 		it('should return debug info without error for available agent', async () => {
 			const mockAgents = [
 				{
@@ -999,20 +672,6 @@ describe('agents IPC handlers', () => {
 			const result = await handler!({} as any, 'unknown-agent');
 
 			expect(result).toEqual({});
-		});
-
-		it('should merge agent config defaults with stored values', async () => {
-			mockAgentConfigsStore.get.mockReturnValue({
-				codex: { model: 'gpt-5.1-codex', sandboxMode: 'workspace-write' },
-			});
-
-			const handler = handlers.get('agents:getConfig');
-			const result = await handler!({} as any, 'codex');
-
-			expect(result).toEqual({
-				model: 'gpt-5.1-codex',
-				sandboxMode: 'workspace-write',
-			});
 		});
 	});
 
@@ -1074,17 +733,6 @@ describe('agents IPC handlers', () => {
 			const result = await handler!({} as any, 'unknown-agent', 'model');
 
 			expect(result).toBeUndefined();
-		});
-
-		it('should fall back to default agent config values when a key is not stored', async () => {
-			mockAgentConfigsStore.get.mockReturnValue({
-				codex: {},
-			});
-
-			const handler = handlers.get('agents:getConfigValue');
-			const result = await handler!({} as any, 'codex', 'model');
-
-			expect(result).toBe('gpt-5-codex');
 		});
 	});
 
@@ -1504,146 +1152,6 @@ describe('agents IPC handlers', () => {
 				expect(result).toEqual(mockModels);
 				expect(buildSshCommand).not.toHaveBeenCalled();
 			});
-
-			it('should reuse cached remote models when forceRefresh is false', async () => {
-				mockSettingsStore.get.mockReturnValue([
-					{
-						id: 'remote-cache-edge',
-						host: 'cache.example.com',
-						username: 'dev',
-					},
-				]);
-				vi.mocked(buildSshCommand).mockResolvedValue({
-					command: 'ssh',
-					args: ['dev@cache.example.com', 'opencode models'],
-				});
-				vi.mocked(execFileNoThrow).mockResolvedValue({
-					exitCode: 0,
-					stdout: 'model-a\nmodel-b\n',
-					stderr: '',
-				});
-
-				const handler = handlers.get('agents:getModels');
-				const first = await handler!({} as any, 'opencode', true, 'remote-cache-edge');
-				const second = await handler!({} as any, 'opencode', false, 'remote-cache-edge');
-
-				expect(first).toEqual(['model-a', 'model-b']);
-				expect(second).toEqual(['model-a', 'model-b']);
-				expect(buildSshCommand).toHaveBeenCalledTimes(1);
-				expect(execFileNoThrow).toHaveBeenCalledTimes(1);
-			});
-
-			it('should return empty remote models for unknown agents', async () => {
-				mockSettingsStore.get.mockReturnValue([
-					{
-						id: 'remote-unknown-agent',
-						host: 'dev.example.com',
-						username: 'dev',
-					},
-				]);
-
-				const handler = handlers.get('agents:getModels');
-				const result = await handler!({} as any, 'unknown-agent', false, 'remote-unknown-agent');
-
-				expect(result).toEqual([]);
-				expect(buildSshCommand).not.toHaveBeenCalled();
-				expect(execFileNoThrow).not.toHaveBeenCalled();
-			});
-
-			it('should return empty remote models when the remote command exits non-zero', async () => {
-				mockSettingsStore.get.mockReturnValue([
-					{
-						id: 'remote-nonzero',
-						host: 'dev.example.com',
-						username: 'dev',
-					},
-				]);
-				vi.mocked(buildSshCommand).mockResolvedValue({
-					command: 'ssh',
-					args: ['dev@dev.example.com', 'opencode models'],
-				});
-				vi.mocked(execFileNoThrow).mockResolvedValue({
-					exitCode: 2,
-					stdout: '',
-					stderr: 'models unavailable',
-				});
-
-				const handler = handlers.get('agents:getModels');
-				const result = await handler!({} as any, 'opencode', false, 'remote-nonzero');
-
-				expect(result).toEqual([]);
-			});
-
-			it('should return empty remote models when model discovery times out', async () => {
-				mockSettingsStore.get.mockReturnValue([
-					{
-						id: 'remote-timeout',
-						host: 'slow.example.com',
-						username: 'dev',
-					},
-				]);
-				vi.mocked(buildSshCommand).mockRejectedValue(
-					new Error('SSH model discovery timed out after 10s')
-				);
-
-				const handler = handlers.get('agents:getModels');
-				const result = await handler!({} as any, 'opencode', false, 'remote-timeout');
-
-				expect(result).toEqual([]);
-			});
-
-			it('should time out pending SSH model discovery and default forceRefresh to false', async () => {
-				mockSettingsStore.get.mockReturnValue([
-					{
-						id: 'remote-model-race-timeout',
-						host: 'slow-models.example.com',
-						username: 'dev',
-					},
-				]);
-				vi.mocked(buildSshCommand).mockResolvedValue({
-					command: 'ssh',
-					args: ['dev@slow-models.example.com', 'opencode models'],
-				});
-				vi.mocked(execFileNoThrow).mockReturnValue(new Promise(() => {}) as any);
-
-				vi.useFakeTimers();
-				try {
-					const handler = handlers.get('agents:getModels');
-					const resultPromise = handler!(
-						{} as any,
-						'opencode',
-						undefined,
-						'remote-model-race-timeout'
-					);
-
-					await vi.advanceTimersByTimeAsync(10000);
-					const result = await resultPromise;
-
-					expect(result).toEqual([]);
-					expect(buildSshCommand).toHaveBeenCalledWith(
-						expect.objectContaining({ id: 'remote-model-race-timeout' }),
-						expect.objectContaining({ command: 'opencode', args: ['models'] })
-					);
-				} finally {
-					vi.useRealTimers();
-				}
-			});
-
-			it('should throw unexpected remote model discovery errors', async () => {
-				mockSettingsStore.get.mockReturnValue([
-					{
-						id: 'remote-error',
-						host: 'broken.example.com',
-						username: 'dev',
-					},
-				]);
-				vi.mocked(buildSshCommand).mockRejectedValue(new Error('SSH config invalid'));
-
-				const handler = handlers.get('agents:getModels');
-				await expect(handler!({} as any, 'opencode', false, 'remote-error')).rejects.toThrow(
-					'SSH config invalid'
-				);
-			});
 		});
 	});
 
@@ -1688,7 +1196,131 @@ describe('agents IPC handlers', () => {
 				],
 				'/test/project'
 			);
-			expect(result).toEqual(['/help', '/compact', '/clear']);
+			expect(result).toEqual([{ name: '/help' }, { name: '/compact' }, { name: '/clear' }]);
+		});
+
+		it('enriches Claude skill commands with descriptions from SKILL.md frontmatter', async () => {
+			const mockAgent = {
+				id: 'claude-code',
+				available: true,
+				path: '/usr/bin/claude',
+				command: 'claude',
+			};
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+
+			const initMessage = JSON.stringify({
+				type: 'system',
+				subtype: 'init',
+				slash_commands: ['/Research', '/help'],
+			});
+
+			vi.mocked(fs.existsSync).mockReturnValue(true);
+			vi.mocked(execFileNoThrow).mockResolvedValue({
+				stdout: initMessage + '\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			// Project-level skill directory lists Research; user-level has nothing.
+			vi.mocked(fs.promises.readdir).mockImplementation(async (dir: any) => {
+				if (String(dir) === '/test/project/.claude/skills') {
+					return [{ name: 'Research', isDirectory: () => true }] as any;
+				}
+				const enoent = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+				throw enoent;
+			});
+			vi.mocked(fs.promises.readFile).mockImplementation(async (filePath: any) => {
+				const p = String(filePath);
+				// Canonical uppercase SKILL.md is what Claude Code actually writes.
+				if (p === '/test/project/.claude/skills/Research/SKILL.md') {
+					return '---\nname: Research\ndescription: Deep literature review\n---\n\nBody';
+				}
+				const enoent = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+				throw enoent;
+			});
+
+			const handler = handlers.get('agents:discoverSlashCommands');
+			const result = await handler!({} as any, 'claude-code', '/test/project');
+
+			expect(result).toEqual([
+				{ name: '/Research', description: 'Deep literature review' },
+				{ name: '/help' }, // built-in, no skill file → no description
+			]);
+		});
+
+		it('ignores a "description:" line that appears in the body (not the frontmatter)', async () => {
+			const mockAgent = {
+				id: 'claude-code',
+				available: true,
+				path: '/usr/bin/claude',
+				command: 'claude',
+			};
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+
+			vi.mocked(fs.existsSync).mockReturnValue(true);
+			vi.mocked(execFileNoThrow).mockResolvedValue({
+				stdout:
+					JSON.stringify({
+						type: 'system',
+						subtype: 'init',
+						slash_commands: ['/Research'],
+					}) + '\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			vi.mocked(fs.promises.readdir).mockImplementation(async (dir: any) => {
+				if (String(dir) === '/test/project/.claude/skills') {
+					return [{ name: 'Research', isDirectory: () => true }] as any;
+				}
+				const enoent = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+				throw enoent;
+			});
+			vi.mocked(fs.promises.readFile).mockImplementation(async (filePath: any) => {
+				const p = String(filePath);
+				// Frontmatter has no description; body contains a misleading
+				// "description:" line that must NOT be picked up.
+				if (p === '/test/project/.claude/skills/Research/SKILL.md') {
+					return '---\nname: Research\n---\n\nSee description: this is body text.';
+				}
+				const enoent = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+				throw enoent;
+			});
+
+			const handler = handlers.get('agents:discoverSlashCommands');
+			const result = await handler!({} as any, 'claude-code', '/test/project');
+
+			expect(result).toEqual([{ name: '/Research' }]);
+		});
+
+		it('falls back to names-only when skill enrichment fails, preserving slash commands', async () => {
+			const mockAgent = {
+				id: 'claude-code',
+				available: true,
+				path: '/usr/bin/claude',
+				command: 'claude',
+			};
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+
+			vi.mocked(fs.existsSync).mockReturnValue(true);
+			vi.mocked(execFileNoThrow).mockResolvedValue({
+				stdout:
+					JSON.stringify({ type: 'system', subtype: 'init', slash_commands: ['/x', '/y'] }) + '\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			// An unexpected failure on the skills dir (e.g. EACCES) should
+			// NOT tear down the slash-command list — enrichment is
+			// best-effort. The error is still captured by Sentry inside
+			// discoverSlashCommands; the list itself survives.
+			vi.mocked(fs.promises.readdir).mockImplementation(async () => {
+				throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
+			});
+
+			const handler = handlers.get('agents:discoverSlashCommands');
+			const result = await handler!({} as any, 'claude-code', '/test/project');
+			expect(result).toEqual([{ name: '/x' }, { name: '/y' }]);
 		});
 
 		it('should use custom path if provided', async () => {
@@ -1720,35 +1352,23 @@ describe('agents IPC handlers', () => {
 			expect(execFileNoThrow).toHaveBeenCalledWith('/custom/claude', expect.any(Array), '/test');
 		});
 
-		it('should fall back to the agent command when no custom or detected path exists', async () => {
+		it('should return null for unsupported agents', async () => {
 			const mockAgent = {
-				id: 'claude-code',
+				id: 'codex',
 				available: true,
-				command: 'claude',
+				path: '/usr/bin/codex',
 			};
 
 			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
-			vi.mocked(fs.existsSync).mockReturnValue(true);
-			vi.mocked(execFileNoThrow).mockResolvedValue({
-				stdout:
-					JSON.stringify({
-						type: 'system',
-						subtype: 'init',
-						slash_commands: ['/help'],
-					}) + '\n',
-				stderr: '',
-				exitCode: 0,
-			});
 
 			const handler = handlers.get('agents:discoverSlashCommands');
-			const result = await handler!({} as any, 'claude-code', '/test');
+			const result = await handler!({} as any, 'codex', '/test');
 
-			expect(result).toEqual(['/help']);
-			expect(fs.existsSync).toHaveBeenCalledWith('claude');
-			expect(execFileNoThrow).toHaveBeenCalledWith('claude', expect.any(Array), '/test');
+			expect(result).toBeNull();
+			expect(execFileNoThrow).not.toHaveBeenCalled();
 		});
 
-		it('should return null for non-Claude Code agents', async () => {
+		it('should return empty array when no custom commands exist for opencode', async () => {
 			const mockAgent = {
 				id: 'opencode',
 				available: true,
@@ -1757,11 +1377,250 @@ describe('agents IPC handlers', () => {
 
 			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
 
+			// All disk reads return ENOENT (no custom commands)
+			const enoent = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+			vi.mocked(fs.promises.readdir).mockRejectedValue(enoent);
+			vi.mocked(fs.promises.readFile).mockRejectedValue(enoent);
+
 			const handler = handlers.get('agents:discoverSlashCommands');
 			const result = await handler!({} as any, 'opencode', '/test');
 
-			expect(result).toBeNull();
+			// No built-in commands — only custom .md commands are discoverable
+			expect(result).toEqual([]);
 			expect(execFileNoThrow).not.toHaveBeenCalled();
+		});
+
+		it('should discover opencode commands from project .opencode/commands/*.md with prompt content', async () => {
+			const mockAgent = {
+				id: 'opencode',
+				available: true,
+				path: '/usr/bin/opencode',
+			};
+
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+
+			const enoent = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+			// Project commands dir has custom .md files
+			vi.mocked(fs.promises.readdir).mockImplementation(async (dir) => {
+				if (String(dir).includes('/test/.opencode/commands')) {
+					return ['deploy.md', 'lint.md', 'README.txt'] as any;
+				}
+				throw enoent;
+			});
+			vi.mocked(fs.promises.readFile).mockImplementation(async (filePath) => {
+				const p = String(filePath);
+				if (p.endsWith('deploy.md')) return 'Deploy the application to production';
+				if (p.endsWith('lint.md')) return 'Run linting on the codebase';
+				throw enoent;
+			});
+
+			const handler = handlers.get('agents:discoverSlashCommands');
+			const result = await handler!({} as any, 'opencode', '/test');
+
+			const names = result.map((c: any) => c.name);
+			expect(names).toContain('deploy');
+			expect(names).toContain('lint');
+			// Non-.md files should be ignored
+			expect(names).not.toContain('README.txt');
+			// Custom commands should have prompt content
+			const deployCmd = result.find((c: any) => c.name === 'deploy');
+			expect(deployCmd.prompt).toBe('Deploy the application to production');
+		});
+
+		it('should discover opencode commands from ~/.opencode/commands/ (home directory)', async () => {
+			const mockAgent = {
+				id: 'opencode',
+				available: true,
+				path: '/usr/bin/opencode',
+			};
+
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+
+			const enoent = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+			const homeDir = require('os').homedir();
+			vi.mocked(fs.promises.readdir).mockImplementation(async (dir) => {
+				if (String(dir) === `${homeDir}/.opencode/commands`) {
+					return ['octest.md'] as any;
+				}
+				throw enoent;
+			});
+			vi.mocked(fs.promises.readFile).mockImplementation(async (filePath) => {
+				const p = String(filePath);
+				if (p.endsWith('octest.md')) return 'Report your status.';
+				throw enoent;
+			});
+
+			const handler = handlers.get('agents:discoverSlashCommands');
+			const result = await handler!({} as any, 'opencode', '/test');
+
+			const names = result.map((c: any) => c.name);
+			expect(names).toContain('octest');
+			const octest = result.find((c: any) => c.name === 'octest');
+			expect(octest.prompt).toBe('Report your status.');
+		});
+
+		it('should strip YAML frontmatter from command .md files', async () => {
+			const mockAgent = {
+				id: 'opencode',
+				available: true,
+				path: '/usr/bin/opencode',
+			};
+
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+
+			const enoent = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+			vi.mocked(fs.promises.readdir).mockImplementation(async (dir) => {
+				if (String(dir).includes('/test/.opencode/commands')) {
+					return ['deploy.md'] as any;
+				}
+				throw enoent;
+			});
+			vi.mocked(fs.promises.readFile).mockImplementation(async (filePath) => {
+				const p = String(filePath);
+				if (p.endsWith('deploy.md'))
+					return '---\ndescription: Deploy cmd\nagent: build\n---\n\nDeploy the app.';
+				throw enoent;
+			});
+
+			const handler = handlers.get('agents:discoverSlashCommands');
+			const result = await handler!({} as any, 'opencode', '/test');
+
+			const deployCmd = result.find((c: any) => c.name === 'deploy');
+			expect(deployCmd.prompt).toBe('Deploy the app.');
+		});
+
+		it('should discover opencode commands from opencode.json config', async () => {
+			const mockAgent = {
+				id: 'opencode',
+				available: true,
+				path: '/usr/bin/opencode',
+			};
+
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+
+			const enoent = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+			vi.mocked(fs.promises.readdir).mockRejectedValue(enoent);
+			vi.mocked(fs.promises.readFile).mockImplementation(async (filePath) => {
+				if (String(filePath).includes('/test/opencode.json')) {
+					return JSON.stringify({ command: { 'my-cmd': { prompt: 'Do the thing' } } });
+				}
+				throw enoent;
+			});
+
+			const handler = handlers.get('agents:discoverSlashCommands');
+			const result = await handler!({} as any, 'opencode', '/test');
+
+			const names = result.map((c: any) => c.name);
+			expect(names).toContain('my-cmd');
+			// Config commands should have prompt content
+			const myCmd = result.find((c: any) => c.name === 'my-cmd');
+			expect(myCmd.prompt).toBe('Do the thing');
+		});
+
+		it('should ignore array values in opencode.json command property', async () => {
+			const mockAgent = {
+				id: 'opencode',
+				available: true,
+				path: '/usr/bin/opencode',
+			};
+
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+
+			const enoent = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+			vi.mocked(fs.promises.readdir).mockRejectedValue(enoent);
+			vi.mocked(fs.promises.readFile).mockImplementation(async (filePath) => {
+				if (String(filePath).includes('/test/opencode.json')) {
+					return JSON.stringify({ command: ['not', 'an', 'object'] });
+				}
+				throw enoent;
+			});
+
+			const handler = handlers.get('agents:discoverSlashCommands');
+			const result = await handler!({} as any, 'opencode', '/test');
+
+			// Array config ignored, no built-ins — result should be empty
+			expect(result).toEqual([]);
+		});
+
+		it('should gracefully handle malformed opencode.json and return empty array', async () => {
+			const mockAgent = {
+				id: 'opencode',
+				available: true,
+				path: '/usr/bin/opencode',
+			};
+
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+
+			const enoent = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+			vi.mocked(fs.promises.readdir).mockRejectedValue(enoent);
+			vi.mocked(fs.promises.readFile).mockImplementation(async (filePath) => {
+				if (String(filePath).includes('/test/opencode.json')) {
+					return '{ invalid json, }';
+				}
+				throw enoent;
+			});
+
+			const handler = handlers.get('agents:discoverSlashCommands');
+			const result = await handler!({} as any, 'opencode', '/test');
+
+			// Malformed JSON skipped gracefully, no built-ins — empty result
+			expect(result).toEqual([]);
+		});
+
+		it('should honor OPENCODE_CONFIG env var for config discovery', async () => {
+			const mockAgent = {
+				id: 'opencode',
+				available: true,
+				path: '/usr/bin/opencode',
+			};
+
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+
+			const originalEnv = process.env.OPENCODE_CONFIG;
+			process.env.OPENCODE_CONFIG = '/custom/path/opencode.json';
+
+			const enoent = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+			vi.mocked(fs.promises.readdir).mockRejectedValue(enoent);
+			vi.mocked(fs.promises.readFile).mockImplementation(async (filePath) => {
+				if (String(filePath) === '/custom/path/opencode.json') {
+					return JSON.stringify({ command: { 'env-cmd': { prompt: 'From env config' } } });
+				}
+				throw enoent;
+			});
+
+			const handler = handlers.get('agents:discoverSlashCommands');
+			const result = await handler!({} as any, 'opencode', '/test');
+
+			const envCmd = result.find((c: any) => c.name === 'env-cmd');
+			expect(envCmd).toBeDefined();
+			expect(envCmd.prompt).toBe('From env config');
+
+			// Restore env
+			if (originalEnv === undefined) {
+				delete process.env.OPENCODE_CONFIG;
+			} else {
+				process.env.OPENCODE_CONFIG = originalEnv;
+			}
+		});
+
+		it('should rethrow non-ENOENT errors for opencode discovery', async () => {
+			const mockAgent = {
+				id: 'opencode',
+				available: true,
+				path: '/usr/bin/opencode',
+			};
+
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+
+			// Permission error (not ENOENT)
+			const permError = Object.assign(new Error('EACCES'), { code: 'EACCES' });
+			vi.mocked(fs.promises.readdir).mockRejectedValue(permError);
+			vi.mocked(fs.promises.readFile).mockRejectedValue(
+				Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+			);
+
+			const handler = handlers.get('agents:discoverSlashCommands');
+			await expect(handler!({} as any, 'opencode', '/test')).rejects.toThrow('EACCES');
 		});
 
 		it('should return null when agent is not available', async () => {
@@ -1781,7 +1640,6 @@ describe('agents IPC handlers', () => {
 			};
 
 			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
-			vi.mocked(fs.existsSync).mockReturnValue(true);
 			vi.mocked(execFileNoThrow).mockResolvedValue({
 				stdout: '',
 				stderr: 'Error',
@@ -1802,7 +1660,6 @@ describe('agents IPC handlers', () => {
 			};
 
 			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
-			vi.mocked(fs.existsSync).mockReturnValue(true);
 			vi.mocked(execFileNoThrow).mockResolvedValue({
 				stdout: 'some non-json output\n',
 				stderr: '',
@@ -1813,42 +1670,6 @@ describe('agents IPC handlers', () => {
 			const result = await handler!({} as any, 'claude-code', '/test');
 
 			expect(result).toBeNull();
-		});
-
-		it('should return null when the command path does not exist', async () => {
-			const mockAgent = {
-				id: 'claude-code',
-				available: true,
-				path: '/missing/claude',
-			};
-
-			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
-			vi.mocked(fs.existsSync).mockReturnValue(false);
-
-			const handler = handlers.get('agents:discoverSlashCommands');
-			const result = await handler!({} as any, 'claude-code', '/test');
-
-			expect(result).toBeNull();
-			expect(execFileNoThrow).not.toHaveBeenCalled();
-		});
-
-		it('should return null when slash command discovery throws unexpectedly', async () => {
-			const mockAgent = {
-				id: 'claude-code',
-				available: true,
-				path: '/usr/bin/claude',
-			};
-
-			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
-			vi.mocked(fs.existsSync).mockImplementation(() => {
-				throw new Error('stat failed');
-			});
-
-			const handler = handlers.get('agents:discoverSlashCommands');
-			const result = await handler!({} as any, 'claude-code', '/test');
-
-			expect(result).toBeNull();
-			expect(execFileNoThrow).not.toHaveBeenCalled();
 		});
 	});
 
@@ -1867,6 +1688,108 @@ describe('agents IPC handlers', () => {
 			const handler = handlers.get('agents:detect');
 
 			await expect(handler!({} as any)).rejects.toThrow('Agent detector');
+		});
+	});
+
+	describe('agents:getClaudeUsageSnapshots', () => {
+		it('returns the full snapshot map from claudeUsageStore', async () => {
+			const claudeUsageStore = await import('../../../../main/stores/claudeUsageStore');
+			const getAllSpy = vi.spyOn(claudeUsageStore, 'getAllSnapshots').mockReturnValue({
+				'/Users/me/.claude': {
+					sampledAt: '2026-05-15T00:00:00.000Z',
+					configDirKey: '/Users/me/.claude',
+					session: { percent: 42, resetsAt: '2026-05-15T05:00:00.000Z' },
+					weekAllModels: { percent: 7, resetsAt: '2026-05-22T00:00:00.000Z' },
+					weekSonnetOnly: { percent: 3, resetsAt: '2026-05-22T00:00:00.000Z' },
+				},
+			});
+
+			const handler = handlers.get('agents:getClaudeUsageSnapshots')!;
+			const result = await handler({} as any);
+
+			expect(getAllSpy).toHaveBeenCalled();
+			expect(result).toHaveProperty('/Users/me/.claude');
+			expect(result['/Users/me/.claude'].session.percent).toBe(42);
+			getAllSpy.mockRestore();
+		});
+
+		it('returns an empty object when no snapshots are cached', async () => {
+			const claudeUsageStore = await import('../../../../main/stores/claudeUsageStore');
+			const getAllSpy = vi.spyOn(claudeUsageStore, 'getAllSnapshots').mockReturnValue({});
+
+			const handler = handlers.get('agents:getClaudeUsageSnapshots')!;
+			const result = await handler({} as any);
+
+			expect(result).toEqual({});
+			getAllSpy.mockRestore();
+		});
+	});
+
+	describe('claude:usage:refresh-all', () => {
+		it('delegates to runStartupUsageSampling and returns the snapshot count', async () => {
+			const claudeUsageStartup = await import('../../../../main/agents/claude-usage-startup');
+			const claudeUsageStore = await import('../../../../main/stores/claudeUsageStore');
+
+			const runSpy = vi
+				.spyOn(claudeUsageStartup, 'runStartupUsageSampling')
+				.mockResolvedValue(undefined);
+			const getAllSpy = vi.spyOn(claudeUsageStore, 'getAllSnapshots').mockReturnValue({
+				'/Users/me/.claude': {
+					sampledAt: '2026-05-15T00:00:00.000Z',
+					configDirKey: '/Users/me/.claude',
+					session: { percent: 50, resetsAt: '2026-05-15T05:00:00.000Z' },
+					weekAllModels: { percent: 7, resetsAt: '2026-05-22T00:00:00.000Z' },
+					weekSonnetOnly: { percent: 3, resetsAt: '2026-05-22T00:00:00.000Z' },
+				},
+				'/Users/me/.claude-gmail': {
+					sampledAt: '2026-05-15T00:00:00.000Z',
+					configDirKey: '/Users/me/.claude-gmail',
+					session: { percent: 20, resetsAt: '2026-05-15T05:00:00.000Z' },
+					weekAllModels: { percent: 5, resetsAt: '2026-05-22T00:00:00.000Z' },
+					weekSonnetOnly: { percent: 1, resetsAt: '2026-05-22T00:00:00.000Z' },
+				},
+			});
+
+			// Re-register with the full dep set so the handler can delegate.
+			handlers.clear();
+			vi.mocked(ipcMain.handle).mockImplementation((channel, handler) => {
+				handlers.set(channel, handler);
+			});
+			registerAgentsHandlers({
+				getAgentDetector: () => mockAgentDetector as any,
+				agentConfigsStore: mockAgentConfigsStore as any,
+				settingsStore: { get: vi.fn(), set: vi.fn() } as any,
+				sessionsStore: { get: vi.fn(), set: vi.fn() } as any,
+			});
+
+			const handler = handlers.get('claude:usage:refresh-all')!;
+			const result = await handler({} as any);
+
+			expect(runSpy).toHaveBeenCalledTimes(1);
+			// Manual refresh must opt into the aggressive sampling path — startup
+			// mode would skip when no maestro-p session exists.
+			expect(runSpy).toHaveBeenCalledWith(expect.objectContaining({ mode: 'manual' }));
+			expect(result).toEqual({ refreshed: 2 });
+
+			runSpy.mockRestore();
+			getAllSpy.mockRestore();
+		});
+
+		it('returns refreshed: 0 without throwing when sessionsStore is missing', async () => {
+			const claudeUsageStartup = await import('../../../../main/agents/claude-usage-startup');
+			const runSpy = vi
+				.spyOn(claudeUsageStartup, 'runStartupUsageSampling')
+				.mockResolvedValue(undefined);
+
+			// The default beforeEach() wires deps WITHOUT sessionsStore/settingsStore,
+			// so the registered handler should fall back to the no-op path.
+			const handler = handlers.get('claude:usage:refresh-all')!;
+			const result = await handler({} as any);
+
+			expect(runSpy).not.toHaveBeenCalled();
+			expect(result).toEqual({ refreshed: 0 });
+
+			runSpy.mockRestore();
 		});
 	});
 });

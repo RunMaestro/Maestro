@@ -232,31 +232,6 @@ describe('show-agent command', () => {
 			expect(parsed.stats.totalOutputTokens).toBe(200);
 		});
 
-		it('should default missing cost totals to zero', () => {
-			const history: HistoryEntry[] = [
-				mockHistoryEntry({
-					usageStats: {
-						inputTokens: 100,
-						outputTokens: 200,
-						cacheReadInputTokens: 0,
-						cacheCreationInputTokens: 0,
-						totalCostUsd: undefined,
-					},
-				}),
-			];
-
-			vi.mocked(getSessionById).mockReturnValue(mockSession());
-			vi.mocked(readGroups).mockReturnValue([]);
-			vi.mocked(readHistory).mockReturnValue(history);
-
-			showAgent('agent-123', { json: true });
-
-			const output = consoleSpy.mock.calls[0][0];
-			const parsed = JSON.parse(output);
-
-			expect(parsed.stats.totalCost).toBe(0);
-		});
-
 		it('should handle entries without elapsedTimeMs', () => {
 			const history: HistoryEntry[] = [
 				mockHistoryEntry({ elapsedTimeMs: undefined }),

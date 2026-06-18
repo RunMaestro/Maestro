@@ -33,7 +33,10 @@ import {
 import { stripAnsiCodes } from '../../shared/stringUtils';
 // SYNC: Uses estimateContextUsage() from shared/contextUsage.ts
 // See that file for the canonical formula and all locations that must stay in sync.
-import { estimateContextUsage } from '../../renderer/utils/contextUsage';
+import {
+	calculateDisplayInputTokens,
+	estimateContextUsage,
+} from '../../renderer/utils/contextUsage';
 
 /**
  * Props for SessionStatusBanner component
@@ -270,8 +273,18 @@ const ElapsedTimeDisplay = memo(function ElapsedTimeDisplay({
 /**
  * TokenCount component - displays total token count in a compact format
  * Shows total tokens (input + output) for mobile-friendly display.
+ *
+ * The input total is computed via `calculateDisplayInputTokens`, which adds the
+ * Claude cache partitions back so resumed sessions don't show single-digit
+ * uncached deltas as if they were the full input (see issue #844).
  */
-function TokenCount({ usageStats }: { usageStats?: UsageStats | null }) {
+function TokenCount({
+	usageStats,
+	toolType,
+}: {
+	usageStats?: UsageStats | null;
+	toolType?: string;
+}) {
 	const colors = useThemeColors();
 
 	// Don't render if no usage stats or no token data
@@ -279,7 +292,7 @@ function TokenCount({ usageStats }: { usageStats?: UsageStats | null }) {
 		return null;
 	}
 
-	const inputTokens = usageStats.inputTokens ?? 0;
+	const inputTokens = calculateDisplayInputTokens(usageStats, toolType);
 	const outputTokens = usageStats.outputTokens ?? 0;
 	const totalTokens = inputTokens + outputTokens;
 
@@ -718,7 +731,7 @@ export function SessionStatusBanner({
 						<CostTracker usageStats={session.usageStats} />
 
 						{/* Token count (compact, total only for mobile) */}
-						<TokenCount usageStats={session.usageStats} />
+						<TokenCount usageStats={session.usageStats} toolType={session.toolType} />
 
 						{/* Elapsed time when thinking */}
 						{isThinking && thinkingStartTime && (

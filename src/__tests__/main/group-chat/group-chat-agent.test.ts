@@ -38,6 +38,24 @@ vi.mock('electron-store', () => {
 	};
 });
 
+vi.mock('../../../main/prompt-manager', () => ({
+	getPrompt: vi.fn((id: string) => {
+		const fs = require('fs');
+		const path = require('path');
+		const promptsDir = path.resolve(__dirname, '..', '..', '..', '..', 'src', 'prompts');
+		const filenameMap: Record<string, string> = {
+			'group-chat-participant': 'group-chat-participant.md',
+			'group-chat-participant-request': 'group-chat-participant-request.md',
+			'group-chat-participant-continuation': 'group-chat-participant-continuation.md',
+			'group-chat-moderator-system': 'group-chat-moderator-system.md',
+			'group-chat-moderator-synthesis': 'group-chat-moderator-synthesis.md',
+		};
+		const filename = filenameMap[id];
+		if (!filename) throw new Error(`Unknown prompt ID in test mock: ${id}`);
+		return fs.readFileSync(path.join(promptsDir, filename), 'utf-8');
+	}),
+}));
+
 import {
 	addParticipant,
 	sendToParticipant,
@@ -45,7 +63,6 @@ import {
 	getParticipantSessionId,
 	isParticipantActive,
 	getActiveParticipants,
-	clearAllParticipantSessions,
 	clearAllParticipantSessionsGlobal,
 	getParticipantSystemPrompt,
 	setActiveParticipantSession,
@@ -272,23 +289,6 @@ describe('group-chat-agent', () => {
 				messages.some((m) => m.from === 'moderator->Client' && m.content === 'Logged message')
 			).toBe(true);
 		});
-
-		it('logs message without writing when no process manager is provided', async () => {
-			const chat = await createTestChatWithModerator('Log Only Test');
-			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
-			setActiveParticipantSession(chat.id, 'Client', 'active-session-log-only');
-
-			await sendToParticipant(chat.id, 'Client', 'Record this only');
-
-			const messages = await readLog(chat.logPath);
-			expect(
-				messages.some((m) => m.from === 'moderator->Client' && m.content === 'Record this only')
-			).toBe(true);
-			expect(mockProcessManager.write).not.toHaveBeenCalledWith(
-				'active-session-log-only',
-				expect.any(String)
-			);
-		});
 	});
 
 	// ===========================================================================
@@ -351,18 +351,18 @@ describe('group-chat-agent', () => {
 			expect(isParticipantActive(chat.id, 'Client')).toBe(false);
 		});
 
-		it('throws for unknown participant', async () => {
+		it('is a no-op for unknown participant (idempotent)', async () => {
 			const chat = await createTestChatWithModerator('Unknown Remove Test');
 
-			await expect(removeParticipant(chat.id, 'Unknown', mockProcessManager)).rejects.toThrow(
-				/not found/i
-			);
+			await expect(
+				removeParticipant(chat.id, 'Unknown', mockProcessManager)
+			).resolves.toBeUndefined();
 		});
 
-		it('throws for non-existent chat', async () => {
+		it('is a no-op for non-existent chat (idempotent)', async () => {
 			await expect(
 				removeParticipant('non-existent-id', 'Client', mockProcessManager)
-			).rejects.toThrow(/not found/i);
+			).resolves.toBeUndefined();
 		});
 
 		it('handles removal when process manager not provided', async () => {
@@ -435,31 +435,6 @@ describe('group-chat-agent', () => {
 
 			expect(getActiveParticipants(chat1.id)).toEqual([]);
 			expect(getActiveParticipants(chat2.id)).toEqual([]);
-		});
-
-		it('clearAllParticipantSessions kills and removes only the selected group sessions', async () => {
-			setActiveParticipantSession('chat-1', 'Client', 'session-client');
-			setActiveParticipantSession('chat-1', 'Server', 'session-server');
-			setActiveParticipantSession('chat-2', 'Client', 'session-other');
-
-			await clearAllParticipantSessions('chat-1', mockProcessManager);
-
-			expect(mockProcessManager.kill).toHaveBeenCalledWith('session-client');
-			expect(mockProcessManager.kill).toHaveBeenCalledWith('session-server');
-			expect(mockProcessManager.kill).not.toHaveBeenCalledWith('session-other');
-			expect(getActiveParticipants('chat-1')).toEqual([]);
-			expect(getParticipantSessionId('chat-2', 'Client')).toBe('session-other');
-		});
-
-		it('clearAllParticipantSessions clears selected group sessions without a process manager', async () => {
-			setActiveParticipantSession('chat-1', 'Client', 'session-client');
-			setActiveParticipantSession('chat-2', 'Client', 'session-other');
-
-			await clearAllParticipantSessions('chat-1');
-
-			expect(mockProcessManager.kill).not.toHaveBeenCalled();
-			expect(isParticipantActive('chat-1', 'Client')).toBe(false);
-			expect(getParticipantSessionId('chat-2', 'Client')).toBe('session-other');
 		});
 	});
 

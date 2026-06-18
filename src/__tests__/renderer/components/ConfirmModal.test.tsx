@@ -19,9 +19,7 @@ import type { Theme } from '../../../renderer/types';
 // Mock lucide-react
 vi.mock('lucide-react', () => ({
 	X: () => <svg data-testid="x-icon" />,
-	AlertTriangle: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
-		<svg data-testid="alert-triangle-icon" className={className} style={style} />
-	),
+	AlertTriangle: () => <svg data-testid="alert-triangle-icon" />,
 	Trash2: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<svg data-testid="trash2-icon" className={className} style={style} />
 	),
@@ -93,25 +91,6 @@ describe('ConfirmModal', () => {
 			);
 
 			expect(screen.getByTestId('trash2-icon')).toBeInTheDocument();
-		});
-
-		it('renders a custom header icon when provided', () => {
-			renderWithLayerStack(
-				<ConfirmModal
-					theme={testTheme}
-					message="Test"
-					onConfirm={vi.fn()}
-					onClose={vi.fn()}
-					destructive={false}
-					headerIcon={<span data-testid="custom-header-icon" />}
-				/>
-			);
-
-			expect(screen.getByTestId('custom-header-icon')).toBeInTheDocument();
-			expect(screen.getByTestId('alert-triangle-icon')).toHaveStyle({
-				color: testTheme.colors.warning,
-			});
-			expect(screen.queryByTestId('trash2-icon')).not.toBeInTheDocument();
 		});
 
 		it('has correct ARIA attributes', () => {

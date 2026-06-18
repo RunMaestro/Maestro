@@ -15,6 +15,7 @@ import { memo, useMemo } from 'react';
 import { Briefcase, Coffee } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
+import { formatDurationHuman as formatDuration } from '../../../shared/formatters';
 
 interface WeekdayComparisonChartProps {
 	/** Aggregated stats data from the API */
@@ -23,47 +24,6 @@ interface WeekdayComparisonChartProps {
 	theme: Theme;
 	/** Enable colorblind-friendly colors */
 	colorBlindMode?: boolean;
-}
-
-/**
- * Format duration in milliseconds to human-readable string
- */
-function formatDuration(ms: number): string {
-	if (ms === 0) return '0s';
-
-	const totalSeconds = Math.floor(ms / 1000);
-	const hours = Math.floor(totalSeconds / 3600);
-	const minutes = Math.floor((totalSeconds % 3600) / 60);
-	const seconds = totalSeconds % 60;
-
-	if (hours > 0) {
-		return `${hours}h ${minutes}m`;
-	}
-	if (minutes > 0) {
-		return `${minutes}m ${seconds}s`;
-	}
-	return `${seconds}s`;
-}
-
-function getDayOfWeek(dateString: string): number {
-	const localDateMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateString);
-	if (localDateMatch) {
-		const [, year, month, day] = localDateMatch;
-		const yearNumber = Number(year);
-		const monthIndex = Number(month) - 1;
-		const dayNumber = Number(day);
-		const localDate = new Date(yearNumber, monthIndex, dayNumber);
-
-		if (
-			localDate.getFullYear() === yearNumber &&
-			localDate.getMonth() === monthIndex &&
-			localDate.getDate() === dayNumber
-		) {
-			return localDate.getDay();
-		}
-	}
-
-	return new Date(dateString).getDay();
 }
 
 export const WeekdayComparisonChart = memo(function WeekdayComparisonChart({
@@ -77,7 +37,8 @@ export const WeekdayComparisonChart = memo(function WeekdayComparisonChart({
 		const weekendStats = { count: 0, duration: 0, days: 0 };
 
 		data.byDay.forEach((day) => {
-			const dayOfWeek = getDayOfWeek(day.date);
+			const date = new Date(day.date);
+			const dayOfWeek = date.getDay();
 			const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
 
 			if (isWeekend) {
@@ -137,7 +98,10 @@ export const WeekdayComparisonChart = memo(function WeekdayComparisonChart({
 	if (!hasData) {
 		return (
 			<div className="p-4 rounded-lg" style={{ backgroundColor: theme.colors.bgMain }}>
-				<h3 className="text-sm font-medium mb-4" style={{ color: theme.colors.textMain }}>
+				<h3
+					className="text-sm font-medium mb-4"
+					style={{ color: theme.colors.textMain, animation: 'card-enter 0.4s ease both' }}
+				>
 					Weekday vs Weekend
 				</h3>
 				<div

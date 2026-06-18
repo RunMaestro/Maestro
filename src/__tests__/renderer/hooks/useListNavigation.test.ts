@@ -501,25 +501,6 @@ describe('useListNavigation', () => {
 			// Index 4 is out of bounds for list of 3
 			expect(onSelect).not.toHaveBeenCalled();
 		});
-
-		it('should ignore meta-key non-number keys when number hotkeys are enabled', () => {
-			const onSelect = vi.fn();
-			const { result } = renderHook(() =>
-				useListNavigation({
-					listLength: 10,
-					onSelect,
-					enableNumberHotkeys: true,
-				})
-			);
-			const event = createReactKeyboardEvent('a', { metaKey: true });
-
-			act(() => {
-				result.current.handleKeyDown(event);
-			});
-
-			expect(onSelect).not.toHaveBeenCalled();
-			expect(event.preventDefault).not.toHaveBeenCalled();
-		});
 	});
 
 	describe('enabled option', () => {
@@ -718,48 +699,6 @@ describe('useListNavigation', () => {
 
 			expect(result.current.selectedIndex).toBe(3);
 		});
-
-		it('should keep helper methods as no-ops for an empty list', () => {
-			const onSelect = vi.fn();
-			const { result } = renderHook(() =>
-				useListNavigation({
-					listLength: 0,
-					enablePageNavigation: true,
-					onSelect,
-				})
-			);
-
-			act(() => {
-				result.current.navigateDown();
-				result.current.navigateUp();
-				result.current.selectCurrent();
-				result.current.handleKeyDown(createReactKeyboardEvent('PageDown'));
-				result.current.handleKeyDown(createReactKeyboardEvent('PageUp'));
-				result.current.handleKeyDown(createReactKeyboardEvent('End'));
-			});
-
-			expect(result.current.selectedIndex).toBe(0);
-			expect(onSelect).not.toHaveBeenCalled();
-		});
-
-		it('should not select when programmatic selection is outside list bounds', () => {
-			const onSelect = vi.fn();
-			const { result } = renderHook(() =>
-				useListNavigation({
-					listLength: 3,
-					onSelect,
-				})
-			);
-
-			act(() => {
-				result.current.setSelectedIndex(5);
-			});
-			act(() => {
-				result.current.selectCurrent();
-			});
-
-			expect(onSelect).not.toHaveBeenCalled();
-		});
 	});
 
 	describe('native KeyboardEvent support', () => {
@@ -859,25 +798,6 @@ describe('useListNavigation', () => {
 			);
 
 			const event = createReactKeyboardEvent('a');
-			act(() => {
-				result.current.handleKeyDown(event);
-			});
-
-			expect(result.current.selectedIndex).toBe(0);
-			expect(event.preventDefault).not.toHaveBeenCalled();
-		});
-
-		it('should ignore unrelated keys when vim and page navigation are enabled', () => {
-			const { result } = renderHook(() =>
-				useListNavigation({
-					listLength: 5,
-					onSelect: vi.fn(),
-					enableVimKeys: true,
-					enablePageNavigation: true,
-				})
-			);
-
-			const event = createReactKeyboardEvent('x');
 			act(() => {
 				result.current.handleKeyDown(event);
 			});

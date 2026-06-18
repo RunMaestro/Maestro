@@ -7,7 +7,7 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { WizardProvider, useWizard } from '../../../../renderer/components/Wizard/WizardContext';
 import { MaestroWizard } from '../../../../renderer/components/Wizard/MaestroWizard';
 import { AgentSelectionScreen } from '../../../../renderer/components/Wizard/screens/AgentSelectionScreen';
@@ -19,6 +19,7 @@ import { LayerStackProvider } from '../../../../renderer/contexts/LayerStackCont
 import type { Theme, AgentConfig } from '../../../../renderer/types';
 import { formatShortcutKeys } from '../../../../renderer/utils/shortcutFormatter';
 
+import { mockTheme } from '../../../helpers/mockTheme';
 // Mock lucide-react icons
 vi.mock('lucide-react', () => ({
 	X: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
@@ -169,30 +170,6 @@ const mockMaestro = {
 };
 
 // Mock theme
-const mockTheme: Theme = {
-	id: 'test-dark',
-	name: 'Test Dark',
-	mode: 'dark',
-	colors: {
-		bgMain: '#1a1a1a',
-		bgSidebar: '#252525',
-		bgActivity: '#2a2a2a',
-		border: '#333333',
-		textMain: '#ffffff',
-		textDim: '#888888',
-		textFaint: '#555555',
-		accent: '#4a9eff',
-		accentForeground: '#ffffff',
-		buttonBg: '#333333',
-		buttonHover: '#444444',
-		headerBg: '#202020',
-		scrollbarTrack: '#1a1a1a',
-		scrollbarThumb: '#444444',
-		success: '#22c55e',
-		warning: '#f59e0b',
-		error: '#ef4444',
-	},
-};
 
 // Mock available agents
 const mockAgents: AgentConfig[] = [
@@ -215,12 +192,6 @@ const renderWithProviders = (ui: React.ReactElement) => {
 		</LayerStackProvider>
 	);
 };
-
-async function settleWizardEffects() {
-	await act(async () => {
-		await Promise.resolve();
-	});
-}
 
 // Test component to trigger wizard opening
 function WizardOpener({ theme }: { theme: Theme }) {
@@ -274,48 +245,37 @@ describe('Wizard Keyboard Navigation', () => {
 		});
 
 		it('should handle arrow key navigation between tiles', async () => {
-			mockMaestro.agents.detect.mockResolvedValueOnce([
-				mockAgents[0],
-				{
-					id: 'codex',
-					name: 'Codex',
-					command: 'codex',
-					args: [],
-					available: true,
-					path: '/usr/local/bin/codex',
-					hidden: false,
-				},
-			]);
-			await act(async () => {
-				renderWithProviders(<AgentSelectionScreen theme={mockTheme} />);
-				await Promise.resolve();
-				await Promise.resolve();
-			});
+			renderWithProviders(<AgentSelectionScreen theme={mockTheme} />);
 
 			await waitFor(() => {
 				expect(screen.queryByText('Detecting available agents...')).not.toBeInTheDocument();
 			});
+
 			// Get the container with keyboard handler
 			const container = screen.getByText('Create a Maestro Agent').closest('div[tabindex]');
 			expect(container).toBeInTheDocument();
 
+			// When only one agent is available, focus goes to name field, not tiles
+			// Focus the tile manually to test arrow key navigation
 			const claudeTile = screen.getByRole('button', { name: /claude code/i });
-			await waitFor(() => expect(claudeTile).toHaveFocus());
+			claudeTile.focus();
+			expect(claudeTile).toHaveFocus();
 
 			// Press ArrowRight - the keyboard handler should process the event
-			await act(async () => {
-				fireEvent.keyDown(container!, { key: 'ArrowRight' });
+			// Note: Disabled buttons may not receive focus, but the index tracking should still work
+			fireEvent.keyDown(container!, { key: 'ArrowRight' });
 
-				// Press ArrowLeft to go back - should stay on Claude (or handle boundary)
-				fireEvent.keyDown(container!, { key: 'ArrowLeft' });
+			// Press ArrowLeft to go back - should stay on Claude (or handle boundary)
+			fireEvent.keyDown(container!, { key: 'ArrowLeft' });
 
-				// Arrow key navigation should not break the component
-				fireEvent.keyDown(container!, { key: 'ArrowDown' });
-				fireEvent.keyDown(container!, { key: 'ArrowUp' });
-				await Promise.resolve();
-			});
+			// Claude Code should remain accessible
+			expect(claudeTile).toBeInTheDocument();
 
-			// Component should remain functional
+			// Arrow key navigation should not break the component
+			fireEvent.keyDown(container!, { key: 'ArrowDown' });
+			fireEvent.keyDown(container!, { key: 'ArrowUp' });
+
+			// Component should still be functional
 			expect(claudeTile).toBeInTheDocument();
 		});
 
@@ -513,7 +473,6 @@ describe('Wizard Keyboard Navigation', () => {
 
 		it('should focus textarea on mount', async () => {
 			renderWithProviders(<ConversationScreenWrapper theme={mockTheme} />);
-			await settleWizardEffects();
 
 			const textarea = screen.getByPlaceholderText('Describe your project...');
 			expect(textarea).toHaveFocus();
@@ -521,7 +480,6 @@ describe('Wizard Keyboard Navigation', () => {
 
 		it('should add new line with Shift+Enter', async () => {
 			renderWithProviders(<ConversationScreenWrapper theme={mockTheme} />);
-			await settleWizardEffects();
 
 			const textarea = screen.getByPlaceholderText(
 				'Describe your project...'
@@ -606,7 +564,6 @@ describe('Wizard Keyboard Navigation', () => {
 
 		it('should display keyboard shortcut label next to thinking toggle', async () => {
 			renderWithProviders(<ConversationScreenWrapper theme={mockTheme} />);
-			await settleWizardEffects();
 
 			// Find the keyboard shortcut label
 			const shortcutLabel = screen.getByText(formatShortcutKeys(['Meta', 'Shift', 'k']));

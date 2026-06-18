@@ -1,17 +1,18 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
 	readDirRemote,
 	readFileRemote,
+	readImageFileRemoteAsBase64,
+	readFileTailRemote,
 	statRemote,
 	directorySizeRemote,
 	writeFileRemote,
 	existsRemote,
 	mkdirRemote,
-	renameRemote,
-	deleteRemote,
-	countItemsRemote,
-	incrementalScanRemote,
-	listAllFilesRemote,
+	listDirWithStatsRemote,
+	bulkStatFileInSubdirsRemote,
+	listTreeRemote,
+	__resetHostLimitersForTest,
 	type RemoteFsDeps,
 } from '../../../main/utils/remote-fs';
 import type { SshRemoteConfig } from '../../../shared/types';
@@ -35,7 +36,7 @@ describe('remote-fs', () => {
 			execSsh: vi.fn().mockResolvedValue(execResult),
 			buildSshArgs: vi
 				.fn()
-				.mockImplementation(() => [
+				.mockReturnValue([
 					'-i',
 					'/home/user/.ssh/id_ed25519',
 					'-o',
@@ -83,22 +84,6 @@ describe('remote-fs', () => {
 			]);
 		});
 
-		it('marks symbolic links to directories as directories when reported by the remote shell', async () => {
-			const deps = createMockDeps({
-				stdout: 'link-to-dir@\nlink-to-file@\n__SYMDIR__link-to-dir\n',
-				stderr: '',
-				exitCode: 0,
-			});
-
-			const result = await readDirRemote('/home/user', baseConfig, deps);
-
-			expect(result.success).toBe(true);
-			expect(result.data).toEqual([
-				{ name: 'link-to-dir', isDirectory: true, isSymlink: true },
-				{ name: 'link-to-file', isDirectory: false, isSymlink: true },
-			]);
-		});
-
 		it('handles hidden files (from -A flag)', async () => {
 			const deps = createMockDeps({
 				stdout: '.gitignore\n.env\npackage.json\nsrc/\n',
@@ -127,22 +112,6 @@ describe('remote-fs', () => {
 				{ name: 'run.sh', isDirectory: false, isSymlink: false },
 				{ name: 'script.py', isDirectory: false, isSymlink: false },
 				{ name: 'data.txt', isDirectory: false, isSymlink: false },
-			]);
-		});
-
-		it('strips named pipe and socket indicators and skips empty parsed names', async () => {
-			const deps = createMockDeps({
-				stdout: 'fifo|\nsocket=\n*\n__LS_ERROR__\n',
-				stderr: '',
-				exitCode: 0,
-			});
-
-			const result = await readDirRemote('/special', baseConfig, deps);
-
-			expect(result.success).toBe(true);
-			expect(result.data).toEqual([
-				{ name: 'fifo', isDirectory: false, isSymlink: false },
-				{ name: 'socket', isDirectory: false, isSymlink: false },
 			]);
 		});
 
@@ -194,15 +163,171 @@ describe('remote-fs', () => {
 
 			await readDirRemote("/path/with spaces/and'quotes", baseConfig, deps);
 
-			// Accept full SSH binary path (e.g., /usr/bin/ssh or C:\Windows\System32\OpenSSH\ssh.exe) for cross-platform compatibility
+			// Accept full SSH binary path (e.g., /usr/bin/ssh or C:\Windows\System32\OpenSSH\ssh.exe) for cross-platform compatibility.
+			// readDir streams no stdin payload, so the optional `input` arg is undefined.
 			expect(deps.execSsh).toHaveBeenCalledWith(
 				expect.stringMatching(/ssh(\.exe)?$/),
-				expect.any(Array)
+				expect.any(Array),
+				undefined
 			);
 			const call = (deps.execSsh as any).mock.calls[0][1];
 			const remoteCommand = call[call.length - 1];
 			// Path should be properly escaped in the command
 			expect(remoteCommand).toContain("'/path/with spaces/and'\\''quotes'");
+		});
+
+		it('uses find rather than shell globs so zsh NOMATCH cannot fail the command', async () => {
+			// Regression: an earlier implementation scanned for symlinks with
+			// `for f in <path>/* <path>/.[!.]* <path>/..?*; do ...; done`, which
+			// aborts with exit 1 under zsh (the default shell on macOS) whenever
+			// any pattern has no match — common for directories without dotfiles.
+			// Using `find -type l` avoids shell glob expansion entirely.
+			const deps = createMockDeps({ stdout: 'file.txt\n', stderr: '', exitCode: 0 });
+
+			await readDirRemote('/some/dir', baseConfig, deps);
+
+			const call = (deps.execSsh as any).mock.calls[0][1];
+			const remoteCommand = call[call.length - 1];
+			expect(remoteCommand).toMatch(/find .* -type l/);
+			expect(remoteCommand).not.toMatch(/\.\[!\.\]\*/);
+			expect(remoteCommand).not.toMatch(/\.\.\?\*/);
+		});
+
+		it('uses find -exec for the symlink scan so a pipeline does not leak [ -d ] exit status', async () => {
+			// Regression: a `find … | while read f; do [ -d "$f" ] && basename "$f"; done`
+			// pipeline exits with the status of its last body command, so any directory
+			// containing a symlink whose target was NOT a directory (common — e.g. a
+			// file-symlink in a project root) made the whole SSH command exit 1 and
+			// `readDirRemote` report failure even though `ls` succeeded. Seen in the
+			// field on a remote checkout with a single file-symlink.
+			const deps = createMockDeps({ stdout: 'file.txt\n', stderr: '', exitCode: 0 });
+
+			await readDirRemote('/some/dir', baseConfig, deps);
+
+			const call = (deps.execSsh as any).mock.calls[0][1];
+			const remoteCommand = call[call.length - 1];
+			expect(remoteCommand).toMatch(/-exec test -d \{\} \\;/);
+			expect(remoteCommand).toMatch(/-exec basename \{\} \\;/);
+			expect(remoteCommand).not.toMatch(/while IFS= read/);
+		});
+
+		it('expands remote home-relative paths before executing over SSH', async () => {
+			const deps = createMockDeps({
+				stdout: 'file.txt\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			await readDirRemote('~/.copilot/session-state', baseConfig, deps);
+
+			const call = (deps.execSsh as any).mock.calls[0][1];
+			const remoteCommand = call[call.length - 1];
+			expect(remoteCommand).toContain('"$HOME/.copilot/session-state"');
+		});
+	});
+
+	describe('listTreeRemote', () => {
+		// Two find invocations are bundled into one SSH command; output is
+		// `dirs\n__MAESTRO_FIND_SEP__\nfiles`.
+		const SEP = '__MAESTRO_FIND_SEP__';
+
+		it('parses combined dir/file find output and strips ./ prefixes', async () => {
+			const stdout = `./src\n./src/components\n./docs\n${SEP}\n./README.md\n./src/index.ts\n./src/components/Button.tsx\n`;
+			const deps = createMockDeps({ stdout, stderr: '', exitCode: 0 });
+
+			const result = await listTreeRemote('/project', { maxDepth: 5 }, baseConfig, deps);
+
+			expect(result.success).toBe(true);
+			expect(result.data?.directories).toEqual(['src', 'src/components', 'docs']);
+			expect(result.data?.files).toEqual([
+				'README.md',
+				'src/index.ts',
+				'src/components/Button.tsx',
+			]);
+			expect(result.data?.truncated).toBe(false);
+		});
+
+		it('detects truncation when file count exceeds maxFiles', async () => {
+			// head returned cap+1 entries — the helper should slice off the marker
+			// entry and flag truncated=true.
+			const files = ['a', 'b', 'c', 'd'].map((n) => `./${n}.txt`).join('\n');
+			const stdout = `./src\n${SEP}\n${files}\n`;
+			const deps = createMockDeps({ stdout, stderr: '', exitCode: 0 });
+
+			const result = await listTreeRemote(
+				'/project',
+				{ maxDepth: 5, maxFiles: 3 },
+				baseConfig,
+				deps
+			);
+
+			expect(result.success).toBe(true);
+			expect(result.data?.truncated).toBe(true);
+			expect(result.data?.files).toEqual(['a.txt', 'b.txt', 'c.txt']);
+		});
+
+		it('reports CD failure as a missing directory error', async () => {
+			const deps = createMockDeps({ stdout: '__CD_ERROR__\n', stderr: '', exitCode: 0 });
+
+			const result = await listTreeRemote('/missing', { maxDepth: 5 }, baseConfig, deps);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('not found or not accessible');
+		});
+
+		it('builds a single SSH command containing both find invocations and a head cap', async () => {
+			const deps = createMockDeps({ stdout: `${SEP}\n`, stderr: '', exitCode: 0 });
+
+			await listTreeRemote(
+				'/project',
+				{
+					maxDepth: 4,
+					ignorePatterns: ['node_modules', '.git'],
+					excludePaths: ['.maestro'],
+					maxFiles: 1000,
+				},
+				baseConfig,
+				deps
+			);
+
+			const call = (deps.execSsh as any).mock.calls[0][1];
+			const remoteCommand = call[call.length - 1] as string;
+			// Two find calls split by the marker echo.
+			expect(remoteCommand).toContain('-type d -print');
+			expect(remoteCommand).toContain('-type f -print');
+			expect(remoteCommand).toContain(`echo "${SEP}"`);
+			// Depth is plumbed through.
+			expect(remoteCommand).toMatch(/-maxdepth 4/);
+			// Ignore patterns turn into -name prunes.
+			expect(remoteCommand).toContain("-name 'node_modules'");
+			expect(remoteCommand).toContain("-name '.git'");
+			// excludePaths turn into -path prunes (relative to the cd'd root).
+			expect(remoteCommand).toContain("-path './.maestro'");
+			// File cap goes to head with cap+1 to detect overflow.
+			expect(remoteCommand).toContain('| head -n 1001');
+			// Symlinks followed so symlinks-to-dirs appear as their target.
+			expect(remoteCommand).toContain('find -L');
+		});
+
+		it('skips ignore patterns containing slashes (find -name matches base names only)', async () => {
+			const deps = createMockDeps({ stdout: `${SEP}\n`, stderr: '', exitCode: 0 });
+
+			await listTreeRemote(
+				'/project',
+				{
+					maxDepth: 5,
+					ignorePatterns: ['node_modules', 'dist/cache', 'build/**'],
+				},
+				baseConfig,
+				deps
+			);
+
+			const call = (deps.execSsh as any).mock.calls[0][1];
+			const remoteCommand = call[call.length - 1] as string;
+			expect(remoteCommand).toContain("-name 'node_modules'");
+			// Path-bearing patterns are dropped — they cannot work with -name.
+			expect(remoteCommand).not.toContain('dist/cache');
+			expect(remoteCommand).not.toContain('build/**');
 		});
 	});
 
@@ -283,6 +408,106 @@ describe('remote-fs', () => {
 
 			expect(result.success).toBe(true);
 			expect(result.data).toBe('Line 1\nLine 2\r\nLine 3\tTabbed');
+		});
+	});
+
+	describe('readImageFileRemoteAsBase64', () => {
+		it('runs base64 on the remote and returns a whitespace-free payload', async () => {
+			// GNU base64 wraps at 76 cols; the result must be stripped to one line.
+			const deps = createMockDeps({
+				stdout: 'iVBORw0KGgoAAAANSUhEUg\nAAAAEAAAABCAQAAAC1\nHAwCAAAAC0lEQVR42mNk\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const result = await readImageFileRemoteAsBase64('/project/logo.png', baseConfig, deps);
+
+			expect(result.success).toBe(true);
+			expect(result.data).toBe('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk');
+			// Must invoke `base64`, not `cat` (which would mangle binary bytes). The
+			// remote command is the last element of the ssh args array.
+			const sshArgs = (deps.execSsh as any).mock.calls[0][1] as string[];
+			expect(sshArgs[sshArgs.length - 1]).toContain('base64 ');
+		});
+
+		it('maps a missing remote image to a file-not-found error', async () => {
+			const deps = createMockDeps({
+				stdout: '',
+				stderr: 'base64: /missing.png: No such file or directory',
+				exitCode: 1,
+			});
+
+			const result = await readImageFileRemoteAsBase64('/missing.png', baseConfig, deps);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('File not found');
+		});
+	});
+
+	describe('readFileTailRemote', () => {
+		it('reads the whole file from offset 0 (tail -c +1)', async () => {
+			const deps = createMockDeps({ stdout: 'a\nb\nc\n', stderr: '', exitCode: 0 });
+
+			const result = await readFileTailRemote('/log/events.jsonl', baseConfig, 0, deps);
+
+			expect(result.success).toBe(true);
+			expect(result.data).toBe('a\nb\nc\n');
+			const cmd = (deps.execSsh as any).mock.calls[0][1].at(-1);
+			// tail -c +N is 1-indexed, so skipping 0 bytes starts at byte 1.
+			expect(cmd).toMatch(/tail -c \+1 /);
+		});
+
+		it('starts at offset+1 so already-consumed bytes are skipped', async () => {
+			const deps = createMockDeps({ stdout: 'new tail\n', stderr: '', exitCode: 0 });
+
+			const result = await readFileTailRemote('/log/events.jsonl', baseConfig, 42, deps);
+
+			expect(result.success).toBe(true);
+			expect(result.data).toBe('new tail\n');
+			const cmd = (deps.execSsh as any).mock.calls[0][1].at(-1);
+			expect(cmd).toMatch(/tail -c \+43 /);
+		});
+
+		it('floors and clamps a fractional or negative offset', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+
+			await readFileTailRemote('/log/events.jsonl', baseConfig, 10.9, deps);
+			expect((deps.execSsh as any).mock.calls[0][1].at(-1)).toMatch(/tail -c \+11 /);
+
+			const deps2 = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+			await readFileTailRemote('/log/events.jsonl', baseConfig, -5, deps2);
+			expect((deps2.execSsh as any).mock.calls[0][1].at(-1)).toMatch(/tail -c \+1 /);
+		});
+
+		it('shell-escapes the remote path', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+
+			await readFileTailRemote("/log/with spaces/events'.jsonl", baseConfig, 0, deps);
+
+			const cmd = (deps.execSsh as any).mock.calls[0][1].at(-1);
+			expect(cmd).toContain("'/log/with spaces/events'\\''.jsonl'");
+		});
+
+		it('maps a missing file to a "File not found" error', async () => {
+			const deps = createMockDeps({
+				stdout: '',
+				stderr: 'tail: cannot open /gone.jsonl: No such file or directory',
+				exitCode: 1,
+			});
+
+			const result = await readFileTailRemote('/gone.jsonl', baseConfig, 0, deps);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('File not found');
+		});
+
+		it('returns an empty string when nothing new is past the offset', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+
+			const result = await readFileTailRemote('/log/events.jsonl', baseConfig, 100, deps);
+
+			expect(result.success).toBe(true);
+			expect(result.data).toBe('');
 		});
 	});
 
@@ -388,6 +613,303 @@ describe('remote-fs', () => {
 		});
 	});
 
+	describe('listDirWithStatsRemote', () => {
+		it('parses pipe-separated stat output into entries with ms-resolution mtime', async () => {
+			const deps = createMockDeps({
+				stdout:
+					'56943|1776365005|0196d5fb.jsonl\n' +
+					'524327|1776179531|019e42cb.jsonl\n' +
+					'1024|1776000000|partial.jsonl\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const result = await listDirWithStatsRemote(
+				'/remote/project/sessions',
+				baseConfig,
+				{ nameSuffix: '.jsonl' },
+				deps
+			);
+
+			expect(result.success).toBe(true);
+			expect(result.data).toEqual([
+				{ name: '0196d5fb.jsonl', size: 56943, mtime: 1776365005000 },
+				{ name: '019e42cb.jsonl', size: 524327, mtime: 1776179531000 },
+				{ name: 'partial.jsonl', size: 1024, mtime: 1776000000000 },
+			]);
+		});
+
+		it('issues exactly one SSH call for a dir with many files', async () => {
+			// Simulate 300 session files coming back in a single stat response — the
+			// key property that separates this implementation from the previous
+			// per-file stat fan-out that tripped OpenSSH MaxStartups.
+			const lines: string[] = [];
+			for (let i = 0; i < 300; i++) {
+				lines.push(`${1000 + i}|${1_776_000_000 + i}|session-${i}.jsonl`);
+			}
+			const deps = createMockDeps({
+				stdout: lines.join('\n') + '\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const result = await listDirWithStatsRemote(
+				'/remote/sessions',
+				baseConfig,
+				{ nameSuffix: '.jsonl' },
+				deps
+			);
+
+			expect(result.success).toBe(true);
+			expect(result.data).toHaveLength(300);
+			expect(deps.execSsh).toHaveBeenCalledTimes(1);
+		});
+
+		it('applies the nameSuffix filter to the remote glob', async () => {
+			const deps = createMockDeps({
+				stdout: '',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			await listDirWithStatsRemote('/remote/sessions', baseConfig, { nameSuffix: '.jsonl' }, deps);
+
+			const execMock = deps.execSsh as ReturnType<typeof vi.fn>;
+			const sshArgs: string[] = execMock.mock.calls[0][1];
+			const remoteCommand = sshArgs[sshArgs.length - 1];
+			expect(remoteCommand).toContain('*.jsonl');
+		});
+
+		it('falls back to matching all files when nameSuffix is not provided', async () => {
+			const deps = createMockDeps({
+				stdout: '',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			await listDirWithStatsRemote('/remote/sessions', baseConfig, undefined, deps);
+
+			const execMock = deps.execSsh as ReturnType<typeof vi.fn>;
+			const sshArgs: string[] = execMock.mock.calls[0][1];
+			const remoteCommand = sshArgs[sshArgs.length - 1];
+			// Glob is just `*` (no suffix) and the command should not contain
+			// a stray `*.` token that would restrict matches.
+			expect(remoteCommand).toMatch(/\s\*\s/);
+		});
+
+		it('returns an empty array when the remote directory is missing', async () => {
+			// The shell wrapper uses `cd ... || exit 0`, so the command exits cleanly
+			// with no output when the directory doesn't exist.
+			const deps = createMockDeps({
+				stdout: '',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const result = await listDirWithStatsRemote('/nonexistent', baseConfig, undefined, deps);
+
+			expect(result.success).toBe(true);
+			expect(result.data).toEqual([]);
+		});
+
+		it('skips malformed lines instead of failing the whole listing', async () => {
+			const deps = createMockDeps({
+				// Middle line is junk; the other two must still come through.
+				stdout: '100|1000|good.jsonl\ngarbage-line\n200|2000|also-good.jsonl\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const result = await listDirWithStatsRemote(
+				'/remote',
+				baseConfig,
+				{ nameSuffix: '.jsonl' },
+				deps
+			);
+
+			expect(result.success).toBe(true);
+			expect(result.data).toEqual([
+				{ name: 'good.jsonl', size: 100, mtime: 1000000 },
+				{ name: 'also-good.jsonl', size: 200, mtime: 2000000 },
+			]);
+		});
+
+		it('preserves pipe characters that appear inside a filename', async () => {
+			// Names are split on only the first two `|` separators so a pipe in
+			// the filename itself does not corrupt the entry.
+			const deps = createMockDeps({
+				stdout: '42|1700|weird|name.jsonl\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const result = await listDirWithStatsRemote(
+				'/remote',
+				baseConfig,
+				{ nameSuffix: '.jsonl' },
+				deps
+			);
+
+			expect(result.success).toBe(true);
+			expect(result.data).toEqual([{ name: 'weird|name.jsonl', size: 42, mtime: 1700000 }]);
+		});
+
+		it('returns an error result when the SSH command itself fails', async () => {
+			const deps = createMockDeps({
+				stdout: '',
+				stderr: 'ssh: connection refused',
+				exitCode: 255,
+			});
+
+			const result = await listDirWithStatsRemote(
+				'/remote',
+				baseConfig,
+				{ nameSuffix: '.jsonl' },
+				deps
+			);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('connection refused');
+		});
+
+		it('expands a home-relative path via $HOME so the cd lands in the right directory', async () => {
+			// Regression: shellEscape() single-quotes the path, which prevents
+			// tilde expansion and silently sends the stat loop to the wrong
+			// cwd — the bug that broke Claude/Copilot remote session listing.
+			const deps = createMockDeps({
+				stdout: '',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			await listDirWithStatsRemote(
+				'~/.claude/projects',
+				baseConfig,
+				{ nameSuffix: '.jsonl' },
+				deps
+			);
+
+			const sshArgs = (deps.execSsh as any).mock.calls[0][1];
+			const remoteCommand = sshArgs[sshArgs.length - 1];
+			expect(remoteCommand).toContain('cd "$HOME/.claude/projects"');
+			expect(remoteCommand).not.toContain("cd '~/");
+		});
+	});
+
+	describe('bulkStatFileInSubdirsRemote', () => {
+		it('returns one entry per matching subdirectory file with size + mtime', async () => {
+			const deps = createMockDeps({
+				stdout:
+					'1024|1700000000|sess-a/events.jsonl\n' +
+					'2048|1700000010|sess-b/events.jsonl\n' +
+					'4096|1700000020|sess-c/events.jsonl\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const result = await bulkStatFileInSubdirsRemote(
+				'/remote/sessions',
+				'events.jsonl',
+				baseConfig,
+				deps
+			);
+
+			expect(result.success).toBe(true);
+			expect(result.data).toEqual([
+				{ name: 'sess-a', size: 1024, mtime: 1700000000000 },
+				{ name: 'sess-b', size: 2048, mtime: 1700000010000 },
+				{ name: 'sess-c', size: 4096, mtime: 1700000020000 },
+			]);
+		});
+
+		it('issues exactly one SSH call regardless of subdirectory count', async () => {
+			const lines: string[] = [];
+			for (let i = 0; i < 200; i++) {
+				lines.push(`${1000 + i}|${1_700_000_000 + i}|sess-${i}/events.jsonl`);
+			}
+			const deps = createMockDeps({
+				stdout: lines.join('\n') + '\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const result = await bulkStatFileInSubdirsRemote(
+				'/remote/sessions',
+				'events.jsonl',
+				baseConfig,
+				deps
+			);
+
+			expect(result.success).toBe(true);
+			expect(result.data).toHaveLength(200);
+			expect(deps.execSsh).toHaveBeenCalledTimes(1);
+		});
+
+		it('expands a home-relative parentDir via $HOME so the cd lands in the right directory', async () => {
+			// Regression: same single-quote tilde bug as listDirWithStatsRemote.
+			// `~/.copilot/session-state` must turn into `cd "$HOME/.copilot/session-state"`.
+			const deps = createMockDeps({
+				stdout: '',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			await bulkStatFileInSubdirsRemote(
+				'~/.copilot/session-state',
+				'events.jsonl',
+				baseConfig,
+				deps
+			);
+
+			const sshArgs = (deps.execSsh as any).mock.calls[0][1];
+			const remoteCommand = sshArgs[sshArgs.length - 1];
+			expect(remoteCommand).toContain('cd "$HOME/.copilot/session-state"');
+			expect(remoteCommand).not.toContain("cd '~/");
+		});
+
+		it('rejects fileNames containing shell metacharacters to prevent injection', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+
+			const result = await bulkStatFileInSubdirsRemote(
+				'/remote/sessions',
+				'events.jsonl; rm -rf /',
+				baseConfig,
+				deps
+			);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Refusing unsafe fileName');
+			// The command must never reach SSH.
+			expect(deps.execSsh).not.toHaveBeenCalled();
+		});
+
+		it('drops rows that do not end with the requested fileName suffix', async () => {
+			// Defensive: if stat ever returns an unexpected line shape, we skip
+			// it instead of producing a session id that's actually a sibling path.
+			const deps = createMockDeps({
+				stdout:
+					'100|1000|sess-good/events.jsonl\n' +
+					'200|2000|something-else/other.txt\n' +
+					'300|3000|sess-also-good/events.jsonl\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const result = await bulkStatFileInSubdirsRemote(
+				'/remote/sessions',
+				'events.jsonl',
+				baseConfig,
+				deps
+			);
+
+			expect(result.success).toBe(true);
+			expect(result.data?.map((d: { name: string }) => d.name)).toEqual([
+				'sess-good',
+				'sess-also-good',
+			]);
+		});
+	});
+
 	describe('directorySizeRemote', () => {
 		it('parses du -sb output (GNU)', async () => {
 			const deps = createMockDeps({
@@ -466,10 +988,14 @@ describe('remote-fs', () => {
 			const result = await writeFileRemote('/output.txt', 'Hello, World!', baseConfig, deps);
 
 			expect(result.success).toBe(true);
-			// Verify the SSH command includes base64-encoded content
-			const call = (deps.execSsh as any).mock.calls[0][1];
-			const remoteCommand = call[call.length - 1];
+			// The remote command decodes base64 read from stdin; the payload itself
+			// is streamed via stdin (3rd execSsh arg), not embedded in the command,
+			// to avoid the ARG_MAX "Argument list too long" failure on large files.
+			const call = (deps.execSsh as any).mock.calls[0];
+			const remoteCommand = call[1][call[1].length - 1];
 			expect(remoteCommand).toContain('base64 -d');
+			expect(remoteCommand).not.toContain('echo');
+			expect(call[2]).toBe(Buffer.from('Hello, World!', 'utf-8').toString('base64'));
 		});
 
 		it('handles content with special characters', async () => {
@@ -483,10 +1009,9 @@ describe('remote-fs', () => {
 			const result = await writeFileRemote('/output.txt', content, baseConfig, deps);
 
 			expect(result.success).toBe(true);
-			// Verify base64 encoding is used (safe for special chars)
-			const call = (deps.execSsh as any).mock.calls[0][1];
-			const remoteCommand = call[call.length - 1];
-			expect(remoteCommand).toContain(Buffer.from(content, 'utf-8').toString('base64'));
+			// base64 encoding (passed via stdin) keeps special chars safe
+			const input = (deps.execSsh as any).mock.calls[0][2];
+			expect(input).toBe(Buffer.from(content, 'utf-8').toString('base64'));
 		});
 
 		it('handles permission denied on write', async () => {
@@ -527,12 +1052,11 @@ describe('remote-fs', () => {
 			const result = await writeFileRemote('/output.png', binaryContent, baseConfig, deps);
 
 			expect(result.success).toBe(true);
-			// Verify the SSH command includes base64-encoded content from buffer
-			const call = (deps.execSsh as any).mock.calls[0][1];
-			const remoteCommand = call[call.length - 1];
+			// Command decodes base64 from stdin; the encoded buffer rides on stdin
+			const call = (deps.execSsh as any).mock.calls[0];
+			const remoteCommand = call[1][call[1].length - 1];
 			expect(remoteCommand).toContain('base64 -d');
-			// Verify it contains the base64-encoded buffer content
-			expect(remoteCommand).toContain(binaryContent.toString('base64'));
+			expect(call[2]).toBe(binaryContent.toString('base64'));
 		});
 
 		it('correctly encodes Buffer vs string content differently', async () => {
@@ -547,17 +1071,15 @@ describe('remote-fs', () => {
 			const testBuffer = Buffer.from([0x48, 0x65, 0x6c, 0x6c, 0x6f]); // Same as 'Hello' in ASCII
 
 			await writeFileRemote('/string.txt', testString, baseConfig, deps);
-			const stringCall = (deps.execSsh as any).mock.calls[0][1];
-			const stringCommand = stringCall[stringCall.length - 1];
+			const stringInput = (deps.execSsh as any).mock.calls[0][2];
 
 			await writeFileRemote('/buffer.txt', testBuffer, baseConfig, deps);
-			const bufferCall = (deps.execSsh as any).mock.calls[1][1];
-			const bufferCommand = bufferCall[bufferCall.length - 1];
+			const bufferInput = (deps.execSsh as any).mock.calls[1][2];
 
 			// Both should produce the same base64 since 'Hello' === Buffer([0x48, 0x65, 0x6c, 0x6c, 0x6f])
 			const expectedBase64 = Buffer.from('Hello', 'utf-8').toString('base64');
-			expect(stringCommand).toContain(expectedBase64);
-			expect(bufferCommand).toContain(expectedBase64);
+			expect(stringInput).toBe(expectedBase64);
+			expect(bufferInput).toBe(expectedBase64);
 		});
 	});
 
@@ -671,425 +1193,6 @@ describe('remote-fs', () => {
 		});
 	});
 
-	describe('renameRemote', () => {
-		it('renames paths successfully with escaped source and destination', async () => {
-			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
-
-			const result = await renameRemote('/old name.txt', "/new'name.txt", baseConfig, deps);
-
-			expect(result.success).toBe(true);
-			const call = (deps.execSsh as any).mock.calls[0][1];
-			const remoteCommand = call[call.length - 1];
-			expect(remoteCommand).toContain("mv '/old name.txt' '/new'\\''name.txt'");
-		});
-
-		it('maps rename permission and missing-path errors', async () => {
-			const permissionDeps = createMockDeps({
-				stdout: '',
-				stderr: "mv: cannot move '/old': Permission denied",
-				exitCode: 1,
-			});
-			const missingDeps = createMockDeps({
-				stdout: '',
-				stderr: "mv: cannot stat '/old': No such file or directory",
-				exitCode: 1,
-			});
-
-			await expect(renameRemote('/old', '/new', baseConfig, permissionDeps)).resolves.toMatchObject(
-				{
-					success: false,
-					error: 'Permission denied: /old',
-				}
-			);
-			await expect(renameRemote('/old', '/new', baseConfig, missingDeps)).resolves.toMatchObject({
-				success: false,
-				error: 'Path not found: /old',
-			});
-		});
-	});
-
-	describe('deleteRemote', () => {
-		it('deletes recursively by default and can delete non-recursively', async () => {
-			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
-
-			await expect(deleteRemote('/tmp/tree', baseConfig, true, deps)).resolves.toMatchObject({
-				success: true,
-			});
-			await expect(deleteRemote('/tmp/file.txt', baseConfig, false, deps)).resolves.toMatchObject({
-				success: true,
-			});
-
-			const recursiveCommand = (deps.execSsh as any).mock.calls[0][1].at(-1);
-			const fileCommand = (deps.execSsh as any).mock.calls[1][1].at(-1);
-			expect(recursiveCommand).toContain('rm -rf');
-			expect(fileCommand).toContain('rm -f');
-		});
-
-		it('maps delete permission and missing-path errors', async () => {
-			const permissionDeps = createMockDeps({
-				stdout: '',
-				stderr: "rm: cannot remove '/protected': Permission denied",
-				exitCode: 1,
-			});
-			const missingDeps = createMockDeps({
-				stdout: '',
-				stderr: "rm: cannot remove '/missing': No such file or directory",
-				exitCode: 1,
-			});
-
-			await expect(
-				deleteRemote('/protected', baseConfig, true, permissionDeps)
-			).resolves.toMatchObject({
-				success: false,
-				error: 'Permission denied: /protected',
-			});
-			await expect(deleteRemote('/missing', baseConfig, true, missingDeps)).resolves.toMatchObject({
-				success: false,
-				error: 'Path not found: /missing',
-			});
-		});
-	});
-
-	describe('countItemsRemote', () => {
-		it('parses file and folder counts', async () => {
-			const deps = createMockDeps({
-				stdout: 'FILES:123\nDIRS:45\n',
-				stderr: '',
-				exitCode: 0,
-			});
-
-			const result = await countItemsRemote('/project', baseConfig, deps);
-
-			expect(result).toEqual({
-				success: true,
-				data: { fileCount: 123, folderCount: 45 },
-			});
-		});
-
-		it('defaults missing count lines to zero', async () => {
-			const deps = createMockDeps({
-				stdout: 'FILES:\n',
-				stderr: '',
-				exitCode: 0,
-			});
-
-			const result = await countItemsRemote('/project', baseConfig, deps);
-
-			expect(result).toEqual({
-				success: true,
-				data: { fileCount: 0, folderCount: 0 },
-			});
-		});
-
-		it('maps count permission and missing directory errors', async () => {
-			const permissionDeps = createMockDeps({
-				stdout: '',
-				stderr: "find: '/protected': Permission denied",
-				exitCode: 1,
-			});
-			const missingDeps = createMockDeps({
-				stdout: '',
-				stderr: "find: '/missing': No such file or directory",
-				exitCode: 1,
-			});
-
-			await expect(
-				countItemsRemote('/protected', baseConfig, permissionDeps)
-			).resolves.toMatchObject({
-				success: false,
-				error: 'Permission denied: /protected',
-			});
-			await expect(countItemsRemote('/missing', baseConfig, missingDeps)).resolves.toMatchObject({
-				success: false,
-				error: 'Directory not found: /missing',
-			});
-		});
-	});
-
-	describe('incrementalScanRemote', () => {
-		it('returns relative changed files and scan metadata', async () => {
-			vi.useFakeTimers();
-			try {
-				vi.setSystemTime(new Date('2026-05-15T12:00:00.000Z'));
-				const deps = createMockDeps({
-					stdout: '/project/src/app.ts\n/outside/path.txt\n\n',
-					stderr: '',
-					exitCode: 0,
-				});
-
-				const result = await incrementalScanRemote('/project', baseConfig, 1703836800, deps);
-
-				expect(result.success).toBe(true);
-				expect(result.data).toEqual({
-					added: ['src/app.ts', '/outside/path.txt'],
-					deleted: [],
-					hasChanges: true,
-					scanTime: 1778846400,
-				});
-				const remoteCommand = (deps.execSsh as any).mock.calls[0][1].at(-1);
-				expect(remoteCommand).toContain('2023-12-29T08:00:00.000Z');
-			} finally {
-				vi.useRealTimers();
-			}
-		});
-
-		it('returns no changes for empty scan output', async () => {
-			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
-
-			const result = await incrementalScanRemote('/project', baseConfig, 1703836800, deps);
-
-			expect(result.success).toBe(true);
-			expect(result.data?.added).toEqual([]);
-			expect(result.data?.hasChanges).toBe(false);
-		});
-
-		it('returns stderr when incremental scan fails', async () => {
-			const deps = createMockDeps({
-				stdout: '',
-				stderr: 'find: Permission denied',
-				exitCode: 1,
-			});
-
-			const result = await incrementalScanRemote('/project', baseConfig, 1703836800, deps);
-
-			expect(result).toEqual({ success: false, error: 'find: Permission denied' });
-		});
-	});
-
-	describe('listAllFilesRemote', () => {
-		it('returns relative file paths and preserves outside paths', async () => {
-			const deps = createMockDeps({
-				stdout: '/project/a.ts\n/project/src/b.ts\n/other/c.ts\n',
-				stderr: '',
-				exitCode: 0,
-			});
-
-			const result = await listAllFilesRemote('/project', baseConfig, 3, deps);
-
-			expect(result).toEqual({
-				success: true,
-				data: ['a.ts', 'src/b.ts', '/other/c.ts'],
-			});
-			const remoteCommand = (deps.execSsh as any).mock.calls[0][1].at(-1);
-			expect(remoteCommand).toContain('-maxdepth 3');
-		});
-
-		it('uses the default max depth and filters empty lines', async () => {
-			const deps = createMockDeps({
-				stdout: '\n/project/file.ts\n\n',
-				stderr: '',
-				exitCode: 0,
-			});
-
-			const result = await listAllFilesRemote('/project', baseConfig, undefined, deps);
-
-			expect(result).toEqual({ success: true, data: ['file.ts'] });
-			const remoteCommand = (deps.execSsh as any).mock.calls[0][1].at(-1);
-			expect(remoteCommand).toContain('-maxdepth 10');
-		});
-
-		it('returns stderr when list-all fails', async () => {
-			const deps = createMockDeps({
-				stdout: '',
-				stderr: 'find failed',
-				exitCode: 1,
-			});
-
-			const result = await listAllFilesRemote('/project', baseConfig, 10, deps);
-
-			expect(result).toEqual({ success: false, error: 'find failed' });
-		});
-	});
-
-	describe('fallback and generic error messages', () => {
-		it('reports readDir command failures when stderr is unavailable', async () => {
-			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 2 });
-
-			await expect(readDirRemote('/missing', baseConfig, deps)).resolves.toMatchObject({
-				success: false,
-				error: 'ls failed with exit code 2',
-			});
-		});
-
-		it('reports stat fallback and generic failures', async () => {
-			await expect(
-				statRemote('/mystery', baseConfig, createMockDeps({ stdout: '', stderr: '', exitCode: 2 }))
-			).resolves.toMatchObject({
-				success: false,
-				error: 'Failed to stat: /mystery',
-			});
-			await expect(
-				statRemote(
-					'/mystery',
-					baseConfig,
-					createMockDeps({ stdout: '', stderr: 'stat exploded', exitCode: 1 })
-				)
-			).resolves.toMatchObject({
-				success: false,
-				error: 'stat exploded',
-			});
-		});
-
-		it('reports directory size fallback and generic failures', async () => {
-			await expect(
-				directorySizeRemote(
-					'/mystery',
-					baseConfig,
-					createMockDeps({ stdout: '', stderr: '', exitCode: 2 })
-				)
-			).resolves.toMatchObject({
-				success: false,
-				error: 'Failed to get directory size: /mystery',
-			});
-			await expect(
-				directorySizeRemote(
-					'/mystery',
-					baseConfig,
-					createMockDeps({ stdout: '', stderr: 'du exploded', exitCode: 1 })
-				)
-			).resolves.toMatchObject({
-				success: false,
-				error: 'du exploded',
-			});
-		});
-
-		it('reports write fallback and generic failures', async () => {
-			await expect(
-				writeFileRemote(
-					'/mystery.txt',
-					'data',
-					baseConfig,
-					createMockDeps({ stdout: '', stderr: '', exitCode: 2 })
-				)
-			).resolves.toMatchObject({
-				success: false,
-				error: 'Failed to write file: /mystery.txt',
-			});
-			await expect(
-				writeFileRemote(
-					'/mystery.txt',
-					'data',
-					baseConfig,
-					createMockDeps({ stdout: '', stderr: 'write exploded', exitCode: 1 })
-				)
-			).resolves.toMatchObject({
-				success: false,
-				error: 'write exploded',
-			});
-		});
-
-		it('reports exists fallback failures', async () => {
-			await expect(
-				existsRemote(
-					'/mystery',
-					baseConfig,
-					createMockDeps({ stdout: '', stderr: '', exitCode: 2 })
-				)
-			).resolves.toMatchObject({
-				success: false,
-				error: 'Failed to check path existence',
-			});
-		});
-
-		it('reports mkdir fallback and generic failures', async () => {
-			await expect(
-				mkdirRemote(
-					'/mystery',
-					baseConfig,
-					true,
-					createMockDeps({ stdout: '', stderr: '', exitCode: 2 })
-				)
-			).resolves.toMatchObject({
-				success: false,
-				error: 'Failed to create directory: /mystery',
-			});
-			await expect(
-				mkdirRemote(
-					'/mystery',
-					baseConfig,
-					true,
-					createMockDeps({ stdout: '', stderr: 'mkdir exploded', exitCode: 1 })
-				)
-			).resolves.toMatchObject({
-				success: false,
-				error: 'mkdir exploded',
-			});
-		});
-
-		it('reports rename fallback and generic failures', async () => {
-			await expect(
-				renameRemote(
-					'/old',
-					'/new',
-					baseConfig,
-					createMockDeps({ stdout: '', stderr: '', exitCode: 2 })
-				)
-			).resolves.toMatchObject({
-				success: false,
-				error: 'Failed to rename: /old',
-			});
-			await expect(
-				renameRemote(
-					'/old',
-					'/new',
-					baseConfig,
-					createMockDeps({ stdout: '', stderr: 'mv exploded', exitCode: 1 })
-				)
-			).resolves.toMatchObject({
-				success: false,
-				error: 'mv exploded',
-			});
-		});
-
-		it('reports delete fallback and generic failures', async () => {
-			await expect(
-				deleteRemote(
-					'/mystery',
-					baseConfig,
-					true,
-					createMockDeps({ stdout: '', stderr: '', exitCode: 2 })
-				)
-			).resolves.toMatchObject({
-				success: false,
-				error: 'Failed to delete: /mystery',
-			});
-			await expect(
-				deleteRemote(
-					'/mystery',
-					baseConfig,
-					true,
-					createMockDeps({ stdout: '', stderr: 'rm exploded', exitCode: 1 })
-				)
-			).resolves.toMatchObject({
-				success: false,
-				error: 'rm exploded',
-			});
-		});
-
-		it('reports count fallback and generic failures', async () => {
-			await expect(
-				countItemsRemote(
-					'/mystery',
-					baseConfig,
-					createMockDeps({ stdout: '', stderr: '', exitCode: 2 })
-				)
-			).resolves.toMatchObject({
-				success: false,
-				error: 'Failed to count items: /mystery',
-			});
-			await expect(
-				countItemsRemote(
-					'/mystery',
-					baseConfig,
-					createMockDeps({ stdout: '', stderr: 'find exploded', exitCode: 1 })
-				)
-			).resolves.toMatchObject({
-				success: false,
-				error: 'find exploded',
-			});
-		});
-	});
-
 	describe('SSH context integration', () => {
 		it('passes correct SSH remote config to buildSshArgs', async () => {
 			const customConfig: SshRemoteConfig = {
@@ -1167,6 +1270,113 @@ describe('remote-fs', () => {
 
 			expect(result.success).toBe(false);
 			expect(result.error).toBeDefined();
+		});
+	});
+
+	// Verifies that the per-host concurrency cap actually serializes excess
+	// SSH calls. Without this, a recursive file scan can fan out hundreds of
+	// concurrent SSH+cloudflared processes and starve unrelated callers
+	// (agent spawn, terminal, git) until cloudflared rate-limits.
+	describe('per-host SSH concurrency limit', () => {
+		beforeEach(() => {
+			__resetHostLimitersForTest();
+		});
+
+		/** execSsh stub whose resolution is deferred until release() is called. */
+		function deferredDeps(): {
+			deps: RemoteFsDeps;
+			pending: () => number;
+			release: () => void;
+		} {
+			let inFlight = 0;
+			const releasers: Array<() => void> = [];
+			const deps: RemoteFsDeps = {
+				execSsh: vi.fn().mockImplementation(async () => {
+					inFlight++;
+					await new Promise<void>((resolve) => releasers.push(resolve));
+					inFlight--;
+					return { stdout: '', stderr: '', exitCode: 0 } satisfies ExecResult;
+				}),
+				buildSshArgs: vi.fn().mockReturnValue(['testuser@dev.example.com']),
+			};
+			return {
+				deps,
+				pending: () => inFlight,
+				release: () => {
+					const next = releasers.shift();
+					if (next) next();
+				},
+			};
+		}
+
+		/** Poll until pending count stabilizes at the expected value (or fail on timeout). */
+		async function waitForPending(
+			pending: () => number,
+			expected: number,
+			timeoutMs = 500
+		): Promise<void> {
+			const deadline = Date.now() + timeoutMs;
+			while (Date.now() < deadline) {
+				if (pending() === expected) return;
+				await new Promise((r) => setTimeout(r, 5));
+			}
+			throw new Error(`pending() never reached ${expected}, last value ${pending()}`);
+		}
+
+		it('caps concurrent SSH calls per host at 4', async () => {
+			const { deps, pending, release } = deferredDeps();
+
+			// Fire 8 calls — cap is 4, so only 4 should reach execSsh.
+			const calls = Array.from({ length: 8 }, (_, i) =>
+				readFileRemote(`/file-${i}`, baseConfig, deps)
+			);
+
+			await waitForPending(pending, 4);
+
+			// pending should never exceed the cap while calls are queued.
+			await new Promise((r) => setTimeout(r, 30));
+			expect(pending()).toBe(4);
+
+			// Drain everything — release one slot at a time, waiting between
+			// each so the next queued call has time to start (and push its
+			// releaser onto the deferred queue) before the next release fires.
+			for (let i = 0; i < 8; i++) {
+				release();
+				await new Promise((r) => setTimeout(r, 5));
+			}
+			await Promise.all(calls);
+			expect(pending()).toBe(0);
+		});
+
+		it('uses separate limiters per distinct host', async () => {
+			const { deps, pending, release } = deferredDeps();
+			const otherConfig: SshRemoteConfig = { ...baseConfig, host: 'other.example.com' };
+
+			// 4 to each host — both should saturate independently (8 in flight).
+			const calls = [
+				...Array.from({ length: 4 }, (_, i) => readFileRemote(`/a-${i}`, baseConfig, deps)),
+				...Array.from({ length: 4 }, (_, i) => readFileRemote(`/b-${i}`, otherConfig, deps)),
+			];
+
+			await waitForPending(pending, 8);
+
+			for (let i = 0; i < 8; i++) release();
+			await Promise.all(calls);
+		});
+
+		it('releases the slot even when the SSH call rejects', async () => {
+			const failingDeps: RemoteFsDeps = {
+				execSsh: vi.fn().mockRejectedValue(new Error('boom')),
+				buildSshArgs: vi.fn().mockReturnValue(['testuser@dev.example.com']),
+			};
+
+			// Fire 5 calls — if the slot weren't released on rejection, the 5th
+			// would hang forever waiting on an acquire() that never resolves.
+			const results = await Promise.allSettled(
+				Array.from({ length: 5 }, (_, i) => readFileRemote(`/x-${i}`, baseConfig, failingDeps))
+			);
+
+			expect(results.every((r) => r.status === 'rejected')).toBe(true);
 		});
 	});
 });

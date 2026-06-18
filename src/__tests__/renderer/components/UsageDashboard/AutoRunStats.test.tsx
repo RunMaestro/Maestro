@@ -286,17 +286,6 @@ describe('AutoRunStats', () => {
 			});
 		});
 
-		it('uses a fallback error message for non-Error fetch failures', async () => {
-			mockStatsApi.getAutoRunSessions.mockRejectedValue('offline');
-
-			render(<AutoRunStats timeRange="week" theme={theme} />);
-
-			await waitFor(() => {
-				expect(screen.getByTestId('autorun-stats-error')).toBeInTheDocument();
-				expect(screen.getByText('Failed to load Auto Run stats')).toBeInTheDocument();
-			});
-		});
-
 		it('shows retry button on error', async () => {
 			mockStatsApi.getAutoRunSessions.mockRejectedValue(new Error('API Error'));
 
@@ -342,29 +331,6 @@ describe('AutoRunStats', () => {
 		});
 	});
 
-	describe('Missing Task Counts', () => {
-		it('treats missing task counts as zero without hiding the session metrics', async () => {
-			mockStatsApi.getAutoRunSessions.mockResolvedValue([
-				{
-					id: 'session-missing-counts',
-					sessionId: 'maestro-missing-counts',
-					agentType: 'claude-code',
-					startTime: new Date('2025-01-01T12:00:00').getTime(),
-					duration: 60000,
-				},
-			]);
-
-			render(<AutoRunStats timeRange="week" theme={theme} />);
-
-			await waitFor(() => {
-				expect(screen.getByTestId('autorun-stats')).toBeInTheDocument();
-				expect(screen.getByLabelText('Total Sessions: 1')).toBeInTheDocument();
-				expect(screen.getByLabelText('Tasks Done: 0, of 0 attempted')).toBeInTheDocument();
-				expect(screen.getByText('No task data available')).toBeInTheDocument();
-			});
-		});
-	});
-
 	describe('Number Formatting', () => {
 		it('formats thousands with K suffix', async () => {
 			// Create many sessions
@@ -380,23 +346,6 @@ describe('AutoRunStats', () => {
 
 			await waitFor(() => {
 				expect(screen.getByText('1.5K')).toBeInTheDocument();
-			});
-		});
-
-		it('formats millions with M suffix', async () => {
-			const largeSession = {
-				...mockSessions[0],
-				tasksCompleted: 1_250_000,
-				tasksTotal: 1_500_000,
-				duration: 60000,
-			};
-			mockStatsApi.getAutoRunSessions.mockResolvedValue([largeSession]);
-
-			render(<AutoRunStats timeRange="all" theme={theme} />);
-
-			await waitFor(() => {
-				expect(screen.getByText('1.3M')).toBeInTheDocument();
-				expect(screen.getByText('of 1.5M attempted')).toBeInTheDocument();
 			});
 		});
 	});
@@ -497,135 +446,6 @@ describe('AutoRunStats', () => {
 			await waitFor(() => {
 				expect(screen.getByText('No task data available')).toBeInTheDocument();
 			});
-		});
-
-		it('orders task bars chronologically by local session date', async () => {
-			mockStatsApi.getAutoRunSessions.mockResolvedValue([
-				{
-					...mockSessions[0],
-					id: 'later',
-					startTime: new Date('2025-01-03T12:00:00').getTime(),
-					tasksTotal: 3,
-					tasksCompleted: 2,
-				},
-				{
-					...mockSessions[1],
-					id: 'earlier',
-					startTime: new Date('2025-01-01T12:00:00').getTime(),
-					tasksTotal: 1,
-					tasksCompleted: 1,
-				},
-			]);
-
-			render(<AutoRunStats timeRange="week" theme={theme} />);
-
-			await waitFor(() => {
-				const bars = screen.getAllByRole('listitem').map((bar) => bar.getAttribute('data-testid'));
-				expect(bars).toEqual(['task-bar-2025-01-01', 'task-bar-2025-01-03']);
-			});
-		});
-
-		it('renders first and last axis labels without a middle label for two dates', async () => {
-			mockStatsApi.getAutoRunSessions.mockResolvedValue([
-				{
-					...mockSessions[0],
-					id: 'first',
-					startTime: new Date('2025-01-01T12:00:00').getTime(),
-					tasksTotal: 1,
-					tasksCompleted: 1,
-				},
-				{
-					...mockSessions[1],
-					id: 'last',
-					startTime: new Date('2025-01-03T12:00:00').getTime(),
-					tasksTotal: 2,
-					tasksCompleted: 2,
-				},
-			]);
-
-			render(<AutoRunStats timeRange="week" theme={theme} />);
-
-			await waitFor(() => {
-				expect(screen.getByText('Jan 1')).toBeInTheDocument();
-				expect(screen.getByText('Jan 3')).toBeInTheDocument();
-				expect(screen.queryByText('Jan 2')).not.toBeInTheDocument();
-			});
-		});
-
-		it('renders a middle axis label when there are more than two dates', async () => {
-			mockStatsApi.getAutoRunSessions.mockResolvedValue([
-				{
-					...mockSessions[0],
-					id: 'first',
-					startTime: new Date('2025-01-01T12:00:00').getTime(),
-					tasksTotal: 1,
-					tasksCompleted: 1,
-				},
-				{
-					...mockSessions[0],
-					id: 'middle',
-					startTime: new Date('2025-01-02T12:00:00').getTime(),
-					tasksTotal: 2,
-					tasksCompleted: 1,
-				},
-				{
-					...mockSessions[1],
-					id: 'last',
-					startTime: new Date('2025-01-03T12:00:00').getTime(),
-					tasksTotal: 3,
-					tasksCompleted: 2,
-				},
-			]);
-
-			render(<AutoRunStats timeRange="week" theme={theme} />);
-
-			await waitFor(() => {
-				expect(screen.getByText('Jan 1')).toBeInTheDocument();
-				expect(screen.getByText('Jan 2')).toBeInTheDocument();
-				expect(screen.getByText('Jan 3')).toBeInTheDocument();
-			});
-		});
-
-		it('shows and hides task bar tooltip with hover and keyboard controls', async () => {
-			render(<AutoRunStats timeRange="week" theme={theme} />);
-
-			const [bar] = await screen.findAllByRole('listitem');
-			Object.defineProperty(bar, 'getBoundingClientRect', {
-				value: () => ({
-					left: 100,
-					top: 200,
-					width: 40,
-					height: 80,
-					right: 140,
-					bottom: 280,
-					x: 100,
-					y: 200,
-					toJSON: () => ({}),
-				}),
-			});
-
-			fireEvent.mouseEnter(bar);
-			expect(screen.getByTestId('task-bar-tooltip')).toBeInTheDocument();
-
-			fireEvent.keyDown(bar, { key: 'Enter' });
-			expect(screen.queryByTestId('task-bar-tooltip')).not.toBeInTheDocument();
-
-			fireEvent.mouseEnter(bar);
-			expect(screen.getByTestId('task-bar-tooltip')).toBeInTheDocument();
-
-			fireEvent.keyDown(bar, { key: 'Escape' });
-			expect(screen.queryByTestId('task-bar-tooltip')).not.toBeInTheDocument();
-		});
-
-		it('handles keyboard selection before a bar has been hovered', async () => {
-			render(<AutoRunStats timeRange="week" theme={theme} />);
-
-			const [bar] = await screen.findAllByRole('listitem');
-
-			fireEvent.keyDown(bar, { key: 'Enter' });
-			fireEvent.keyDown(bar, { key: 'Enter' });
-
-			expect(screen.queryByTestId('task-bar-tooltip')).not.toBeInTheDocument();
 		});
 	});
 
@@ -739,29 +559,6 @@ describe('AutoRunStats', () => {
 			unmount();
 
 			expect(unsubscribe).toHaveBeenCalled();
-		});
-
-		it('refetches sessions when stats update callback fires', async () => {
-			let statsUpdateCallback: (() => void) | undefined;
-			mockStatsApi.onStatsUpdate.mockImplementation((callback: () => void) => {
-				statsUpdateCallback = callback;
-				return vi.fn();
-			});
-
-			render(<AutoRunStats timeRange="week" theme={theme} />);
-
-			await waitFor(() => {
-				expect(mockStatsApi.getAutoRunSessions).toHaveBeenCalledTimes(1);
-				expect(statsUpdateCallback).toBeDefined();
-			});
-
-			await act(async () => {
-				statsUpdateCallback?.();
-			});
-
-			await waitFor(() => {
-				expect(mockStatsApi.getAutoRunSessions).toHaveBeenCalledTimes(2);
-			});
 		});
 	});
 

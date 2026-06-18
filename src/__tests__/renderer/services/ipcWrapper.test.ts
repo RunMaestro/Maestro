@@ -5,24 +5,21 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
 	createIpcMethod,
-	ipcCache,
 	IpcMethodOptionsWithDefault,
 	IpcMethodOptionsRethrow,
 } from '../../../renderer/services/ipcWrapper';
+import { logger } from '../../../renderer/utils/logger';
 
 describe('ipcWrapper', () => {
-	// Store console.error spy
+	// Store logger.error spy (Phase 11 migrated ipcWrapper from console.error to logger.error)
 	let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
 
 	beforeEach(() => {
-		ipcCache.clear();
-		consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		consoleErrorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 	});
 
 	afterEach(() => {
-		ipcCache.clear();
 		consoleErrorSpy.mockRestore();
-		vi.useRealTimers();
 	});
 
 	describe('createIpcMethod', () => {
@@ -46,7 +43,11 @@ describe('ipcWrapper', () => {
 				});
 
 				expect(result).toEqual({ data: 'default' });
-				expect(consoleErrorSpy).toHaveBeenCalledWith('Test operation error:', expect.any(Error));
+				expect(consoleErrorSpy).toHaveBeenCalledWith(
+					'Test operation error:',
+					undefined,
+					expect.any(Error)
+				);
 			});
 
 			it('should return empty array as default value', async () => {
@@ -127,7 +128,7 @@ describe('ipcWrapper', () => {
 					})
 				).rejects.toThrow('Spawn failed');
 
-				expect(consoleErrorSpy).toHaveBeenCalledWith('Process spawn error:', error);
+				expect(consoleErrorSpy).toHaveBeenCalledWith('Process spawn error:', undefined, error);
 			});
 
 			it('should apply transform function on success', async () => {
@@ -192,7 +193,11 @@ describe('ipcWrapper', () => {
 				defaultValue: null,
 			});
 
-			expect(consoleErrorSpy).toHaveBeenCalledWith('Git status error:', expect.any(Error));
+			expect(consoleErrorSpy).toHaveBeenCalledWith(
+				'Git status error:',
+				undefined,
+				expect.any(Error)
+			);
 		});
 
 		it('should include the original error object', async () => {
@@ -204,7 +209,7 @@ describe('ipcWrapper', () => {
 				defaultValue: null,
 			});
 
-			expect(consoleErrorSpy).toHaveBeenCalledWith('Operation error:', originalError);
+			expect(consoleErrorSpy).toHaveBeenCalledWith('Operation error:', undefined, originalError);
 		});
 
 		it('should handle non-Error objects as errors', async () => {
@@ -214,84 +219,7 @@ describe('ipcWrapper', () => {
 				defaultValue: null,
 			});
 
-			expect(consoleErrorSpy).toHaveBeenCalledWith('Operation error:', 'string error');
-		});
-	});
-
-	describe('ipcCache', () => {
-		it('returns cached data while an entry is still fresh', async () => {
-			vi.useFakeTimers();
-			vi.setSystemTime(1000);
-			const fetcher = vi.fn().mockResolvedValueOnce('fresh').mockResolvedValueOnce('stale');
-
-			await expect(ipcCache.getOrFetch('status', fetcher, 1000)).resolves.toBe('fresh');
-			vi.setSystemTime(1500);
-			await expect(ipcCache.getOrFetch('status', fetcher, 1000)).resolves.toBe('fresh');
-
-			expect(fetcher).toHaveBeenCalledTimes(1);
-		});
-
-		it('refetches data when a cached entry is stale', async () => {
-			vi.useFakeTimers();
-			vi.setSystemTime(1000);
-			const fetcher = vi.fn().mockResolvedValueOnce('first').mockResolvedValueOnce('second');
-
-			await expect(ipcCache.getOrFetch('status', fetcher, 100)).resolves.toBe('first');
-			vi.setSystemTime(1200);
-			await expect(ipcCache.getOrFetch('status', fetcher, 100)).resolves.toBe('second');
-
-			expect(fetcher).toHaveBeenCalledTimes(2);
-		});
-
-		it('invalidates a single cache entry', async () => {
-			const fetcher = vi.fn().mockResolvedValueOnce('first').mockResolvedValueOnce('second');
-
-			await expect(ipcCache.getOrFetch('branches', fetcher)).resolves.toBe('first');
-			ipcCache.invalidate('branches');
-			await expect(ipcCache.getOrFetch('branches', fetcher)).resolves.toBe('second');
-
-			expect(fetcher).toHaveBeenCalledTimes(2);
-		});
-
-		it('invalidates cache entries by prefix without touching other keys', async () => {
-			const sshFetcher = vi.fn().mockResolvedValueOnce('ssh-1').mockResolvedValueOnce('ssh-2');
-			const configFetcher = vi
-				.fn()
-				.mockResolvedValueOnce('config-1')
-				.mockResolvedValueOnce('config-2');
-			const gitFetcher = vi.fn().mockResolvedValueOnce('git-1').mockResolvedValueOnce('git-2');
-
-			await ipcCache.getOrFetch('ssh-remotes', sshFetcher);
-			await ipcCache.getOrFetch('ssh-configs', configFetcher);
-			await ipcCache.getOrFetch('git-status', gitFetcher);
-
-			ipcCache.invalidatePrefix('ssh-');
-
-			await expect(ipcCache.getOrFetch('ssh-remotes', sshFetcher)).resolves.toBe('ssh-2');
-			await expect(ipcCache.getOrFetch('ssh-configs', configFetcher)).resolves.toBe('config-2');
-			await expect(ipcCache.getOrFetch('git-status', gitFetcher)).resolves.toBe('git-1');
-
-			expect(sshFetcher).toHaveBeenCalledTimes(2);
-			expect(configFetcher).toHaveBeenCalledTimes(2);
-			expect(gitFetcher).toHaveBeenCalledTimes(1);
-		});
-
-		it('clears every cache entry', async () => {
-			const firstFetcher = vi
-				.fn()
-				.mockResolvedValueOnce('first-1')
-				.mockResolvedValueOnce('first-2');
-			const secondFetcher = vi
-				.fn()
-				.mockResolvedValueOnce('second-1')
-				.mockResolvedValueOnce('second-2');
-
-			await ipcCache.getOrFetch('first', firstFetcher);
-			await ipcCache.getOrFetch('second', secondFetcher);
-			ipcCache.clear();
-
-			await expect(ipcCache.getOrFetch('first', firstFetcher)).resolves.toBe('first-2');
-			await expect(ipcCache.getOrFetch('second', secondFetcher)).resolves.toBe('second-2');
+			expect(consoleErrorSpy).toHaveBeenCalledWith('Operation error:', undefined, 'string error');
 		});
 	});
 });

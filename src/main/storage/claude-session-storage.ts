@@ -18,9 +18,10 @@ import Store from 'electron-store';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { CLAUDE_SESSION_PARSE_LIMITS } from '../constants';
-import { calculateClaudeCost } from '../utils/pricing';
+import { computeClaudeUsageCost } from '../utils/pricing';
 import { encodeClaudeProjectPath } from '../utils/statsCache';
-import { readDirRemote, readFileRemote, statRemote } from '../utils/remote-fs';
+import { readFileRemote, listDirWithStatsRemote } from '../utils/remote-fs';
+import { mapWithConcurrency, REMOTE_SESSION_READ_CONCURRENCY } from '../utils/concurrency';
 import type {
 	AgentSessionInfo,
 	PaginatedSessionsResult,
@@ -32,26 +33,46 @@ import type {
 	SessionMessage,
 } from '../agents';
 import type { ToolType, SshRemoteConfig } from '../../shared/types';
+import type {
+	ClaudeSessionOrigin,
+	ClaudeSessionOriginInfo,
+	ClaudeSessionOriginsData,
+} from '../stores/types';
 import { BaseSessionStorage } from './base-session-storage';
 import type { SearchableMessage } from './base-session-storage';
+export type { ClaudeSessionOriginsData } from '../stores/types';
+
+/**
+ * Origin data structure stored in electron-store
+ */
+type StoredOriginData = ClaudeSessionOrigin | ClaudeSessionOriginInfo;
 
 const LOG_CONTEXT = '[ClaudeSessionStorage]';
 const MAX_SESSION_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
 
 /**
- * Origin data structure stored in electron-store
+ * Matches the synthetic placeholder text the harness writes alongside an image
+ * content block, e.g. "[Image: original 2808x1566, displayed at 2000x1115.
+ * Multiply coordinates by 1.40 to map to original image.]". When we recover the
+ * real image we drop this text so the restored bubble isn't a duplicate.
  */
-type StoredOriginData =
-	| AgentSessionOrigin
-	| {
-			origin: AgentSessionOrigin;
-			sessionName?: string;
-			starred?: boolean;
-			contextUsage?: number;
-	  };
+const IMAGE_PLACEHOLDER_PATTERN = /^\s*\[Image:[^\]]*to map to original image\.?\]\s*$/;
 
-export interface ClaudeSessionOriginsData {
-	origins: Record<string, Record<string, StoredOriginData>>;
+function isImagePlaceholderText(text: string | undefined): boolean {
+	return typeof text === 'string' && IMAGE_PLACEHOLDER_PATTERN.test(text);
+}
+
+/**
+ * Remove any synthetic `[Image: ...]` placeholder lines from a text blob,
+ * returning the trimmed remainder. A message that is nothing but placeholder
+ * lines collapses to an empty string so callers can drop it entirely.
+ */
+function stripImagePlaceholderLines(text: string): string {
+	return text
+		.split('\n')
+		.filter((line) => !isImagePlaceholderText(line))
+		.join('\n')
+		.trim();
 }
 
 /**
@@ -128,30 +149,14 @@ function parseSessionContent(
 		// Use assistant response as preview if available, otherwise fall back to user message
 		const previewMessage = firstAssistantMessage || firstUserMessage;
 
-		// Fast regex-based token extraction
-		let totalInputTokens = 0;
-		let totalOutputTokens = 0;
-		let totalCacheReadTokens = 0;
-		let totalCacheCreationTokens = 0;
-
-		const inputMatches = content.matchAll(/"input_tokens"\s*:\s*(\d+)/g);
-		for (const m of inputMatches) totalInputTokens += parseInt(m[1], 10);
-
-		const outputMatches = content.matchAll(/"output_tokens"\s*:\s*(\d+)/g);
-		for (const m of outputMatches) totalOutputTokens += parseInt(m[1], 10);
-
-		const cacheReadMatches = content.matchAll(/"cache_read_input_tokens"\s*:\s*(\d+)/g);
-		for (const m of cacheReadMatches) totalCacheReadTokens += parseInt(m[1], 10);
-
-		const cacheCreationMatches = content.matchAll(/"cache_creation_input_tokens"\s*:\s*(\d+)/g);
-		for (const m of cacheCreationMatches) totalCacheCreationTokens += parseInt(m[1], 10);
-
-		const costUsd = calculateClaudeCost(
-			totalInputTokens,
-			totalOutputTokens,
-			totalCacheReadTokens,
-			totalCacheCreationTokens
-		);
+		// Per-model token + cost extraction (a session may mix models).
+		const {
+			inputTokens: totalInputTokens,
+			outputTokens: totalOutputTokens,
+			cacheReadTokens: totalCacheReadTokens,
+			cacheCreationTokens: totalCacheCreationTokens,
+			costUsd,
+		} = computeClaudeUsageCost(content);
 
 		// Extract last timestamp for duration
 		let lastTimestamp = timestamp;
@@ -409,7 +414,11 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 	}
 
 	/**
-	 * List sessions from remote host via SSH
+	 * List sessions from remote host via SSH.
+	 *
+	 * Uses one SSH round-trip to enumerate and stat every `.jsonl` in the
+	 * project's session directory, then reads per-session content with bounded
+	 * concurrency to stay under sshd's MaxStartups limit.
 	 */
 	private async listSessionsRemote(
 		projectPath: string,
@@ -417,43 +426,29 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 	): Promise<AgentSessionInfo[]> {
 		const projectDir = this.getRemoteEncodedProjectDir(projectPath);
 
-		// List directory via SSH
-		const dirResult = await readDirRemote(projectDir, sshConfig);
-		if (!dirResult.success || !dirResult.data) {
+		const dirResult = await listDirWithStatsRemote(projectDir, sshConfig, { nameSuffix: '.jsonl' });
+		if (!dirResult.success) {
 			logger.info(
-				`No Claude sessions directory found on remote for project: ${projectPath}`,
+				`No Claude sessions directory found on remote for project: ${projectPath} (${dirResult.error})`,
 				LOG_CONTEXT
 			);
 			return [];
 		}
 
-		// Filter for .jsonl files
-		const sessionFiles = dirResult.data.filter(
-			(entry) => !entry.isDirectory && entry.name.endsWith('.jsonl')
-		);
+		const sessionFiles = (dirResult.data || []).filter((entry) => entry.size > 0);
 
-		// Get metadata for each session
-		const sessions = await Promise.all(
-			sessionFiles.map(async (entry) => {
+		const sessions = await mapWithConcurrency(
+			sessionFiles,
+			REMOTE_SESSION_READ_CONCURRENCY,
+			async (entry) => {
 				const sessionId = entry.name.replace('.jsonl', '');
 				const filePath = `${projectDir}/${entry.name}`;
-
 				try {
-					// Get file stats via SSH
-					const statResult = await statRemote(filePath, sshConfig);
-					if (!statResult.success || !statResult.data) {
-						logger.error(`Failed to stat remote file: ${filePath}`, LOG_CONTEXT);
-						return null;
-					}
-
 					return await parseSessionFileRemote(
 						filePath,
 						sessionId,
 						projectPath,
-						{
-							size: statResult.data.size,
-							mtimeMs: statResult.data.mtime,
-						},
+						{ size: entry.size, mtimeMs: entry.mtime },
 						sshConfig
 					);
 				} catch (error) {
@@ -464,16 +459,13 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 					});
 					return null;
 				}
-			})
+			}
 		);
 
-		// Filter out nulls, 0-byte sessions, and sort by modified date
 		const validSessions = sessions
 			.filter((s): s is NonNullable<typeof s> => s !== null)
-			.filter((s) => s.sizeBytes > 0)
 			.sort((a, b) => new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime());
 
-		// Attach origin info (origins are stored locally, not on remote)
 		const projectOrigins = this.getProjectOrigins(projectPath);
 		const sessionsWithOrigins = validSessions.map((session) =>
 			this.attachOriginInfo(session, projectOrigins)
@@ -581,7 +573,11 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 	}
 
 	/**
-	 * List sessions with pagination from remote host via SSH
+	 * List sessions with pagination from remote host via SSH.
+	 *
+	 * Uses one SSH round-trip to enumerate and stat every `.jsonl` in the
+	 * project's session directory, then reads the current page's contents with
+	 * bounded concurrency to stay under sshd's MaxStartups limit.
 	 */
 	private async listSessionsPaginatedRemote(
 		projectPath: string,
@@ -591,48 +587,24 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 		const { cursor, limit = 100 } = options || {};
 		const projectDir = this.getRemoteEncodedProjectDir(projectPath);
 
-		// List directory via SSH
-		const dirResult = await readDirRemote(projectDir, sshConfig);
-		if (!dirResult.success || !dirResult.data) {
+		const dirResult = await listDirWithStatsRemote(projectDir, sshConfig, { nameSuffix: '.jsonl' });
+		if (!dirResult.success) {
 			return { sessions: [], hasMore: false, totalCount: 0, nextCursor: null };
 		}
 
-		// Filter for .jsonl files
-		const sessionFiles = dirResult.data.filter(
-			(entry) => !entry.isDirectory && entry.name.endsWith('.jsonl')
-		);
-
-		// Get file stats for all session files
-		const fileStats = await Promise.all(
-			sessionFiles.map(async (entry) => {
-				const sessionId = entry.name.replace('.jsonl', '');
-				const filePath = `${projectDir}/${entry.name}`;
-				try {
-					const statResult = await statRemote(filePath, sshConfig);
-					if (!statResult.success || !statResult.data) {
-						return null;
-					}
-					return {
-						sessionId,
-						filename: entry.name,
-						filePath,
-						modifiedAt: statResult.data.mtime,
-						sizeBytes: statResult.data.size,
-					};
-				} catch {
-					return null;
-				}
-			})
-		);
-
-		const sortedFiles = fileStats
-			.filter((s): s is NonNullable<typeof s> => s !== null)
-			.filter((s) => s.sizeBytes > 0)
+		const sortedFiles = (dirResult.data || [])
+			.filter((entry) => entry.size > 0)
+			.map((entry) => ({
+				sessionId: entry.name.replace('.jsonl', ''),
+				filename: entry.name,
+				filePath: `${projectDir}/${entry.name}`,
+				modifiedAt: entry.mtime,
+				sizeBytes: entry.size,
+			}))
 			.sort((a, b) => b.modifiedAt - a.modifiedAt);
 
 		const totalCount = sortedFiles.length;
 
-		// Find cursor position
 		let startIndex = 0;
 		if (cursor) {
 			const cursorIndex = sortedFiles.findIndex((f) => f.sessionId === cursor);
@@ -643,12 +615,12 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 		const hasMore = startIndex + limit < totalCount;
 		const nextCursor = hasMore ? pageFiles[pageFiles.length - 1]?.sessionId : null;
 
-		// Get project origins (stored locally)
 		const projectOrigins = this.getProjectOrigins(projectPath);
 
-		// Read full content for sessions in this page
-		const sessions = await Promise.all(
-			pageFiles.map(async (fileInfo) => {
+		const sessions = await mapWithConcurrency(
+			pageFiles,
+			REMOTE_SESSION_READ_CONCURRENCY,
+			async (fileInfo) => {
 				const session = await parseSessionFileRemote(
 					fileInfo.filePath,
 					fileInfo.sessionId,
@@ -660,7 +632,7 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 					return this.attachOriginInfo(session, projectOrigins);
 				}
 				return null;
-			})
+			}
 		);
 
 		const validSessions = sessions.filter((s): s is NonNullable<typeof s> => s !== null);
@@ -715,6 +687,7 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 				if (entry.type === 'user' || entry.type === 'assistant') {
 					let msgContent = '';
 					let toolUse = undefined;
+					let images: string[] | undefined;
 
 					if (entry.message?.content) {
 						if (typeof entry.message.content === 'string') {
@@ -726,15 +699,45 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 							const toolBlocks = entry.message.content.filter(
 								(b: { type?: string }) => b.type === 'tool_use'
 							);
+							const imageBlocks = entry.message.content.filter(
+								(b: { type?: string }) => b.type === 'image'
+							);
 
-							msgContent = textBlocks.map((b: { text?: string }) => b.text).join('\n');
+							// Reconstruct base64 data URLs from image content blocks so a
+							// resumed tab re-renders the original images instead of falling
+							// back to the harness's synthetic `[Image: ...]` placeholder text.
+							if (imageBlocks.length > 0) {
+								const urls = imageBlocks
+									.map((b: { source?: { type?: string; media_type?: string; data?: string } }) => {
+										const src = b.source;
+										if (src?.type === 'base64' && src.media_type && src.data) {
+											return `data:${src.media_type};base64,${src.data}`;
+										}
+										return null;
+									})
+									.filter((url: string | null): url is string => url !== null);
+								if (urls.length > 0) {
+									images = urls;
+								}
+							}
+
+							// Always drop the synthetic `[Image: ... Multiply coordinates by
+							// ...]` placeholder lines. They are redundant either way: when the
+							// image is in this same message we render the recovered image, and
+							// when the placeholder arrives as its own follow-up message it is a
+							// text echo of an image already shown in a prior message. Filtering
+							// line-by-line lets a placeholder-only message collapse to empty so
+							// it is dropped entirely below.
+							msgContent = stripImagePlaceholderLines(
+								textBlocks.map((b: { text?: string }) => b.text || '').join('\n')
+							);
 							if (toolBlocks.length > 0) {
 								toolUse = toolBlocks;
 							}
 						}
 					}
 
-					if (msgContent && msgContent.trim()) {
+					if ((msgContent && msgContent.trim()) || toolUse || images) {
 						messages.push({
 							type: entry.type,
 							role: entry.message?.role,
@@ -742,6 +745,7 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 							timestamp: entry.timestamp,
 							uuid: entry.uuid,
 							toolUse,
+							...(images && { images }),
 						});
 					}
 				}
@@ -1137,11 +1141,17 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 							const stats = await fs.stat(sessionFile);
 							lastActivityAt = stats.mtime.getTime();
 						} else {
-							// No session file path found, skip this stale entry
+							logger.debug(
+								`Skipping named session ${agentSessionId}: no session file path for project ${projectPath}`,
+								LOG_CONTEXT
+							);
 							continue;
 						}
 					} catch {
-						// Session file doesn't exist or is inaccessible, skip stale entry
+						logger.debug(
+							`Skipping named session ${agentSessionId}: file not found at expected path for project ${projectPath}`,
+							LOG_CONTEXT
+						);
 						continue;
 					}
 

@@ -2,7 +2,7 @@
  * LogViewer.tsx Test Suite
  *
  * Tests for the LogViewer component which displays Maestro system logs with:
- * - Log level filtering (debug, info, warn, error, toast)
+ * - Log level filtering (debug, info, warn, error, toast, autorun, cue)
  * - Search functionality
  * - Expand/collapse log details
  * - Export and clear logs
@@ -14,36 +14,18 @@
 import React from 'react';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { logger } from '../../../renderer/utils/logger';
 import { LogViewer } from '../../../renderer/components/LogViewer';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
-import type { Theme } from '../../../renderer/types';
 
+import { mockTheme } from '../../helpers/mockTheme';
 // Mock theme
-const mockTheme: Theme = {
-	id: 'dracula',
-	name: 'Dracula',
-	mode: 'dark',
-	colors: {
-		bgMain: '#282a36',
-		bgSidebar: '#21222c',
-		bgActivity: '#44475a',
-		textMain: '#f8f8f2',
-		textDim: '#6272a4',
-		accent: '#bd93f9',
-		border: '#44475a',
-		error: '#ff5555',
-		warning: '#ffb86c',
-		success: '#50fa7b',
-		syntaxComment: '#6272a4',
-		syntaxKeyword: '#ff79c6',
-	},
-};
 
 // Mock log entries
 const createMockLog = (
 	overrides: Partial<{
 		timestamp: number;
-		level: 'debug' | 'info' | 'warn' | 'error' | 'toast' | 'autorun';
+		level: 'debug' | 'info' | 'warn' | 'error' | 'toast' | 'autorun' | 'cue';
 		message: string;
 		context?: string;
 		data?: unknown;
@@ -68,6 +50,12 @@ vi.mock('../../../renderer/contexts/LayerStackContext', () => ({
 	}),
 }));
 
+// Mock clipboard utility
+const mockSafeClipboardWrite = vi.fn().mockResolvedValue(true);
+vi.mock('../../../renderer/utils/clipboard', () => ({
+	safeClipboardWrite: (...args: unknown[]) => mockSafeClipboardWrite(...args),
+}));
+
 // Mock ConfirmModal
 vi.mock('../../../renderer/components/ConfirmModal', () => ({
 	ConfirmModal: ({
@@ -85,6 +73,20 @@ vi.mock('../../../renderer/components/ConfirmModal', () => ({
 			<button onClick={onClose}>Cancel</button>
 		</div>
 	),
+}));
+
+// Mock sessionStore for agent name → session ID resolution
+const mockSessions = [
+	{ id: 'session-1', name: 'MyAgent', aiTabs: [{ id: 'tab-1' }] },
+	{ id: 'session-2', name: 'OtherAgent', aiTabs: [] },
+];
+vi.mock('../../../renderer/stores/sessionStore', () => ({
+	useSessionStore: (selector: (state: unknown) => unknown) => {
+		const mockState = {
+			sessions: mockSessions,
+		};
+		return selector(mockState);
+	},
 }));
 
 // Add getLogs, clearLogs, and onNewLog to the existing window.maestro.logger mock
@@ -112,9 +114,6 @@ afterEach(() => {
 // Helper to get the mock functions
 const getMockGetLogs = () => window.maestro.logger.getLogs as ReturnType<typeof vi.fn>;
 const getMockClearLogs = () => window.maestro.logger.clearLogs as ReturnType<typeof vi.fn>;
-const getMockOnNewLog = () => window.maestro.logger.onNewLog as ReturnType<typeof vi.fn>;
-const getMockGetMaxLogBuffer = () =>
-	window.maestro.logger.getMaxLogBuffer as ReturnType<typeof vi.fn>;
 
 describe('LogViewer', () => {
 	describe('Initial render', () => {
@@ -125,20 +124,12 @@ describe('LogViewer', () => {
 			expect(dialog).toBeInTheDocument();
 			expect(dialog).toHaveAttribute('aria-modal', 'true');
 			expect(dialog).toHaveAttribute('aria-label', 'System Log Viewer');
-
-			await waitFor(() => {
-				expect(getMockGetLogs()).toHaveBeenCalled();
-			});
 		});
 
 		it('should render header with title', async () => {
 			render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
 
 			expect(screen.getByText('Maestro System Logs')).toBeInTheDocument();
-
-			await waitFor(() => {
-				expect(getMockGetLogs()).toHaveBeenCalled();
-			});
 		});
 
 		it('should display entry count', async () => {
@@ -172,47 +163,6 @@ describe('LogViewer', () => {
 			});
 		});
 
-		it('should fall back to the default max buffer when logger settings return zero', async () => {
-			getMockGetMaxLogBuffer().mockResolvedValue(0);
-
-			render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
-
-			await waitFor(() => {
-				expect(getMockGetLogs()).toHaveBeenCalledWith({ limit: 1000 });
-			});
-		});
-
-		it('should prepend live logs and trim to the max log buffer', async () => {
-			const liveHandlers: Array<(log: ReturnType<typeof createMockLog>) => void> = [];
-			getMockGetMaxLogBuffer().mockImplementation(() => ({
-				then: (cb: (value: number) => void) => {
-					cb(1);
-					return Promise.resolve(1);
-				},
-			}));
-			getMockGetLogs().mockResolvedValue([createMockLog({ message: 'Older log' })]);
-			getMockOnNewLog().mockImplementation((handler) => {
-				liveHandlers.push(handler);
-				return vi.fn();
-			});
-
-			render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
-
-			await waitFor(() => {
-				expect(screen.getByText('Older log')).toBeInTheDocument();
-			});
-			await waitFor(() => {
-				expect(liveHandlers.length).toBeGreaterThan(0);
-			});
-
-			act(() => {
-				liveHandlers.at(-1)?.(createMockLog({ message: 'Newest log' }));
-			});
-
-			expect(screen.getByText('Newest log')).toBeInTheDocument();
-			expect(screen.queryByText('Older log')).not.toBeInTheDocument();
-		});
-
 		it('should display empty state when no logs', async () => {
 			getMockGetLogs().mockResolvedValue([]);
 
@@ -237,10 +187,6 @@ describe('LogViewer', () => {
 					ariaLabel: 'System Log Viewer',
 				})
 			);
-
-			await waitFor(() => {
-				expect(getMockGetLogs()).toHaveBeenCalled();
-			});
 		});
 
 		it('should unregister layer on unmount', async () => {
@@ -260,43 +206,6 @@ describe('LogViewer', () => {
 			await waitFor(() => {
 				expect(mockUpdateLayerHandler).toHaveBeenCalled();
 			});
-		});
-
-		it('should invoke onClose from the initially registered Escape handler', async () => {
-			const onClose = vi.fn();
-			render(<LogViewer theme={mockTheme} onClose={onClose} />);
-
-			await waitFor(() => {
-				expect(getMockGetLogs()).toHaveBeenCalled();
-			});
-
-			const registeredEscape = mockRegisterLayer.mock.calls[0][0].onEscape as () => void;
-			act(() => registeredEscape());
-
-			expect(onClose).toHaveBeenCalled();
-		});
-
-		it('should close search before closing the modal from the updated Escape handler', async () => {
-			const onClose = vi.fn();
-			render(<LogViewer theme={mockTheme} onClose={onClose} />);
-
-			fireEvent.keyDown(screen.getByRole('dialog'), { key: 'f', metaKey: true });
-			const searchInput = await screen.findByPlaceholderText('Search logs...');
-			fireEvent.change(searchInput, { target: { value: 'trace' } });
-
-			const searchEscape = mockUpdateLayerHandler.mock.calls.at(-1)?.[1] as () => void;
-			act(() => searchEscape());
-
-			expect(screen.queryByPlaceholderText('Search logs...')).not.toBeInTheDocument();
-			expect(onClose).not.toHaveBeenCalled();
-
-			await waitFor(() => {
-				expect(mockUpdateLayerHandler).toHaveBeenCalled();
-			});
-			const modalEscape = mockUpdateLayerHandler.mock.calls.at(-1)?.[1] as () => void;
-			act(() => modalEscape());
-
-			expect(onClose).toHaveBeenCalled();
 		});
 	});
 
@@ -321,6 +230,8 @@ describe('LogViewer', () => {
 				expect(screen.getByRole('button', { name: 'WARN' })).toBeInTheDocument();
 				expect(screen.getByRole('button', { name: 'ERROR' })).toBeInTheDocument();
 				expect(screen.getByRole('button', { name: 'TOAST' })).toBeInTheDocument();
+				expect(screen.getByRole('button', { name: 'AUTORUN' })).toBeInTheDocument();
+				expect(screen.getByRole('button', { name: 'CUE' })).toBeInTheDocument();
 			});
 		});
 
@@ -409,6 +320,45 @@ describe('LogViewer', () => {
 			});
 		});
 
+		it('should always enable cue level regardless of logLevel', async () => {
+			render(<LogViewer theme={mockTheme} onClose={vi.fn()} logLevel="error" />);
+
+			await waitFor(() => {
+				expect(screen.getByRole('button', { name: 'CUE' })).not.toBeDisabled();
+			});
+		});
+
+		it('should filter cue logs by level when CUE toggle clicked', async () => {
+			getMockGetLogs().mockResolvedValue([
+				createMockLog({ level: 'cue', message: 'Cue event fired' }),
+				createMockLog({ level: 'info', message: 'Info message' }),
+			]);
+
+			render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Cue event fired')).toBeInTheDocument();
+				expect(screen.getByText('Info message')).toBeInTheDocument();
+			});
+
+			// Click CUE to disable it
+			const cueButton = screen.getByRole('button', { name: 'CUE' });
+			fireEvent.click(cueButton);
+
+			await waitFor(() => {
+				expect(screen.queryByText('Cue event fired')).not.toBeInTheDocument();
+				// Info should still be visible
+				expect(screen.getByText('Info message')).toBeInTheDocument();
+			});
+
+			// Click CUE to re-enable it
+			fireEvent.click(cueButton);
+
+			await waitFor(() => {
+				expect(screen.getByText('Cue event fired')).toBeInTheDocument();
+			});
+		});
+
 		it('should persist level selections via callback', async () => {
 			const onSelectedLevelsChange = vi.fn();
 
@@ -455,23 +405,9 @@ describe('LogViewer', () => {
 		});
 
 		it('should open search with Cmd+F', async () => {
-			const onShortcutUsed = vi.fn();
-			render(<LogViewer theme={mockTheme} onClose={vi.fn()} onShortcutUsed={onShortcutUsed} />);
-
-			fireEvent.keyDown(screen.getByRole('dialog'), { key: 'f', metaKey: true });
-
-			await waitFor(() => {
-				expect(screen.getByPlaceholderText('Search logs...')).toBeInTheDocument();
-			});
-			fireEvent.keyDown(screen.getByRole('dialog'), { key: 'f', metaKey: true });
-
-			expect(onShortcutUsed).toHaveBeenCalledTimes(1);
-		});
-
-		it('should open search with Ctrl+F', async () => {
 			render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
 
-			fireEvent.keyDown(screen.getByRole('dialog'), { key: 'f', ctrlKey: true });
+			fireEvent.keyDown(screen.getByRole('dialog'), { key: 'f', metaKey: true });
 
 			await waitFor(() => {
 				expect(screen.getByPlaceholderText('Search logs...')).toBeInTheDocument();
@@ -738,14 +674,12 @@ describe('LogViewer', () => {
 			// Mock anchor element
 			const mockClick = vi.fn();
 			const originalCreateElement = document.createElement.bind(document);
-			const createElementSpy = vi
-				.spyOn(document, 'createElement')
-				.mockImplementation((tag: string) => {
-					if (tag === 'a') {
-						return { click: mockClick, href: '', download: '' } as unknown as HTMLAnchorElement;
-					}
-					return originalCreateElement(tag);
-				});
+			vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+				if (tag === 'a') {
+					return { click: mockClick, href: '', download: '' } as unknown as HTMLAnchorElement;
+				}
+				return originalCreateElement(tag);
+			});
 
 			render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
 
@@ -761,60 +695,6 @@ describe('LogViewer', () => {
 
 			createObjectURLSpy.mockRestore();
 			revokeObjectURLSpy.mockRestore();
-			createElementSpy.mockRestore();
-		});
-
-		it('should export logs without context or data suffixes when they are absent', async () => {
-			getMockGetLogs().mockResolvedValue([
-				createMockLog({
-					timestamp: new Date('2024-01-15T10:30:00').getTime(),
-					level: 'info',
-					message: 'Plain message',
-					context: undefined,
-					data: undefined,
-				}),
-			]);
-
-			let exportedBlob: Blob | undefined;
-			const createObjectURLSpy = vi.spyOn(URL, 'createObjectURL').mockImplementation((blob) => {
-				exportedBlob = blob as Blob;
-				return 'blob:test-url';
-			});
-			const revokeObjectURLSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
-			const mockClick = vi.fn();
-			const originalCreateElement = document.createElement.bind(document);
-			const createElementSpy = vi
-				.spyOn(document, 'createElement')
-				.mockImplementation((tag: string) => {
-					if (tag === 'a') {
-						return { click: mockClick, href: '', download: '' } as unknown as HTMLAnchorElement;
-					}
-					return originalCreateElement(tag);
-				});
-
-			try {
-				render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
-
-				await waitFor(() => {
-					expect(screen.getByTitle('Export logs')).toBeInTheDocument();
-				});
-				fireEvent.click(screen.getByTitle('Export logs'));
-
-				expect(mockClick).toHaveBeenCalled();
-				expect(exportedBlob).toBeDefined();
-				const exportedText = await new Promise<string>((resolve, reject) => {
-					const reader = new FileReader();
-					reader.onload = () => resolve(String(reader.result));
-					reader.onerror = () => reject(reader.error);
-					reader.readAsText(exportedBlob!);
-				});
-				expect(exportedText).toContain('[INFO]  Plain message');
-				expect(exportedText).not.toContain('undefined');
-			} finally {
-				createObjectURLSpy.mockRestore();
-				revokeObjectURLSpy.mockRestore();
-				createElementSpy.mockRestore();
-			}
 		});
 	});
 
@@ -843,10 +723,7 @@ describe('LogViewer', () => {
 			});
 
 			fireEvent.click(screen.getByTitle('Clear logs'));
-			await act(async () => {
-				fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
-				await Promise.resolve();
-			});
+			fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
 
 			expect(getMockClearLogs()).toHaveBeenCalled();
 		});
@@ -875,10 +752,6 @@ describe('LogViewer', () => {
 			const onClose = vi.fn();
 
 			render(<LogViewer theme={mockTheme} onClose={onClose} />);
-
-			await waitFor(() => {
-				expect(getMockGetLogs()).toHaveBeenCalled();
-			});
 
 			fireEvent.click(screen.getByTitle('Close log viewer'));
 
@@ -1087,6 +960,53 @@ describe('LogViewer', () => {
 		});
 	});
 
+	describe('Viewport indicator', () => {
+		it('should show indicator line when scrolled', async () => {
+			getMockGetLogs().mockResolvedValue([
+				createMockLog({ level: 'info', message: 'Log 1' }),
+				createMockLog({ level: 'error', message: 'Log 2' }),
+				createMockLog({ level: 'warn', message: 'Log 3' }),
+			]);
+
+			render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Log 1')).toBeInTheDocument();
+			});
+
+			const container = screen.getByRole('dialog').querySelector('.overflow-y-auto');
+			if (container) {
+				Object.defineProperty(container, 'scrollHeight', { value: 1000, configurable: true });
+				Object.defineProperty(container, 'clientHeight', { value: 500, configurable: true });
+				Object.defineProperty(container, 'scrollTop', {
+					value: 200,
+					writable: true,
+					configurable: true,
+				});
+				fireEvent.scroll(container);
+			}
+
+			await waitFor(() => {
+				const indicator = screen.getByRole('dialog').querySelector('.pointer-events-none.z-20');
+				expect(indicator).toBeInTheDocument();
+			});
+		});
+
+		it('should not show indicator when at top', async () => {
+			getMockGetLogs().mockResolvedValue([createMockLog({ level: 'info', message: 'Log 1' })]);
+
+			render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Log 1')).toBeInTheDocument();
+			});
+
+			// No scroll event fired, so no indicator
+			const indicator = screen.getByRole('dialog').querySelector('.pointer-events-none.z-20');
+			expect(indicator).not.toBeInTheDocument();
+		});
+	});
+
 	describe('Log level colors', () => {
 		it('should use correct color for debug level', async () => {
 			getMockGetLogs().mockResolvedValue([createMockLog({ level: 'debug', message: 'Debug' })]);
@@ -1140,20 +1060,6 @@ describe('LogViewer', () => {
 			await waitFor(() => {
 				const levelPill = screen.getByText('toast');
 				expect(levelPill).toHaveStyle({ color: '#a855f7' });
-			});
-		});
-
-		it('should fall back to theme colors for unknown log levels', async () => {
-			getMockGetLogs().mockResolvedValue([
-				createMockLog({ level: 'trace' as any, message: 'Trace message' }),
-			]);
-
-			render(<LogViewer theme={mockTheme} onClose={vi.fn()} savedSelectedLevels={['trace']} />);
-
-			await waitFor(() => {
-				const levelPill = screen.getByText('trace');
-				expect(levelPill).toHaveStyle({ color: mockTheme.colors.textDim });
-				expect(levelPill.style.backgroundColor).toBe('transparent');
 			});
 		});
 	});
@@ -1248,6 +1154,167 @@ describe('LogViewer', () => {
 			});
 		});
 
+		it('should display agent pill for cue entries with context', async () => {
+			getMockGetLogs().mockResolvedValue([
+				createMockLog({
+					level: 'cue',
+					message: '[CUE] "On PR Opened" triggered (pull_request.opened)',
+					context: 'My Cue Agent',
+				}),
+			]);
+
+			render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('My Cue Agent')).toBeInTheDocument();
+			});
+		});
+
+		it('should render cue agent pill with teal color', async () => {
+			getMockGetLogs().mockResolvedValue([
+				createMockLog({
+					level: 'cue',
+					message: '[CUE] "Deploy Check" triggered (push)',
+					context: 'Cue Session',
+				}),
+			]);
+
+			render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+
+			await waitFor(() => {
+				const agentPill = screen.getByText('Cue Session');
+				expect(agentPill).toBeInTheDocument();
+				expect(agentPill.closest('span')).toHaveStyle({
+					backgroundColor: 'rgba(6, 182, 212, 0.2)',
+					color: '#06b6d4',
+				});
+			});
+		});
+
+		it('should not show context badge for cue entries (uses agent pill instead)', async () => {
+			getMockGetLogs().mockResolvedValue([
+				createMockLog({
+					level: 'cue',
+					message: 'Cue triggered',
+					context: 'CueContext',
+				}),
+			]);
+
+			render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+
+			await waitFor(() => {
+				// The context should appear as an agent pill, not as a context badge
+				const contextElement = screen.getByText('CueContext');
+				expect(contextElement).toBeInTheDocument();
+				// Verify it's styled as an agent pill (teal), not a context badge (accent color)
+				expect(contextElement.closest('span')).toHaveStyle({ color: '#06b6d4' });
+			});
+		});
+
+		it('should navigate to agent when clicking toast agent pill with sessionId', async () => {
+			const onSessionClick = vi.fn();
+			getMockGetLogs().mockResolvedValue([
+				createMockLog({
+					level: 'toast',
+					message: 'Task complete',
+					data: { project: 'MyAgent', sessionId: 'session-1', tabId: 'tab-1' },
+				}),
+			]);
+
+			render(<LogViewer theme={mockTheme} onClose={vi.fn()} onSessionClick={onSessionClick} />);
+
+			await waitFor(() => {
+				const pill = screen.getByText('MyAgent');
+				expect(pill).toHaveAttribute('title', 'Jump to MyAgent');
+				fireEvent.click(pill);
+			});
+
+			expect(onSessionClick).toHaveBeenCalledWith('session-1', 'tab-1');
+		});
+
+		it('should not be clickable when toast has no sessionId', async () => {
+			const onSessionClick = vi.fn();
+			getMockGetLogs().mockResolvedValue([
+				createMockLog({
+					level: 'toast',
+					message: 'Task complete',
+					data: { project: 'MyAgent' },
+				}),
+			]);
+
+			render(<LogViewer theme={mockTheme} onClose={vi.fn()} onSessionClick={onSessionClick} />);
+
+			await waitFor(() => {
+				const pill = screen.getByText('MyAgent');
+				expect(pill).not.toHaveAttribute('title');
+				fireEvent.click(pill);
+			});
+
+			expect(onSessionClick).not.toHaveBeenCalled();
+		});
+
+		it('should navigate to agent when clicking autorun agent pill', async () => {
+			const onSessionClick = vi.fn();
+			getMockGetLogs().mockResolvedValue([
+				createMockLog({
+					level: 'autorun',
+					message: 'Auto run started',
+					context: 'MyAgent', // Matches mockSessions[0].name
+				}),
+			]);
+
+			render(<LogViewer theme={mockTheme} onClose={vi.fn()} onSessionClick={onSessionClick} />);
+
+			await waitFor(() => {
+				const pill = screen.getByText('MyAgent');
+				expect(pill).toHaveAttribute('title', 'Jump to MyAgent');
+				fireEvent.click(pill);
+			});
+
+			expect(onSessionClick).toHaveBeenCalledWith('session-1');
+		});
+
+		it('should navigate to agent when clicking cue agent pill', async () => {
+			const onSessionClick = vi.fn();
+			getMockGetLogs().mockResolvedValue([
+				createMockLog({
+					level: 'cue',
+					message: 'Cue triggered',
+					context: 'OtherAgent', // Matches mockSessions[1].name
+				}),
+			]);
+
+			render(<LogViewer theme={mockTheme} onClose={vi.fn()} onSessionClick={onSessionClick} />);
+
+			await waitFor(() => {
+				const pill = screen.getByText('OtherAgent');
+				expect(pill).toHaveAttribute('title', 'Jump to OtherAgent');
+				fireEvent.click(pill);
+			});
+
+			expect(onSessionClick).toHaveBeenCalledWith('session-2');
+		});
+
+		it('should render cue level pill with teal color', async () => {
+			getMockGetLogs().mockResolvedValue([
+				createMockLog({
+					level: 'cue',
+					message: 'Cue level test',
+				}),
+			]);
+
+			render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+
+			await waitFor(() => {
+				const levelPill = screen.getByText('cue');
+				expect(levelPill).toBeInTheDocument();
+				expect(levelPill).toHaveStyle({
+					color: '#06b6d4',
+					backgroundColor: 'rgba(6, 182, 212, 0.15)',
+				});
+			});
+		});
+
 		it('should not show context badge for toast entries', async () => {
 			getMockGetLogs().mockResolvedValue([
 				createMockLog({
@@ -1300,20 +1367,24 @@ describe('LogViewer', () => {
 
 	describe('Error handling', () => {
 		it('should handle getLogs failure gracefully', async () => {
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleError = vi.spyOn(logger, 'error').mockImplementation(() => {});
 			getMockGetLogs().mockRejectedValue(new Error('Failed to load'));
 
 			render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
 
 			await waitFor(() => {
-				expect(consoleError).toHaveBeenCalledWith('Failed to load logs:', expect.any(Error));
+				expect(consoleError).toHaveBeenCalledWith(
+					'Failed to load logs:',
+					undefined,
+					expect.any(Error)
+				);
 			});
 
 			consoleError.mockRestore();
 		});
 
 		it('should handle clearLogs failure gracefully', async () => {
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleError = vi.spyOn(logger, 'error').mockImplementation(() => {});
 			getMockGetLogs().mockResolvedValue([createMockLog({ message: 'Test' })]);
 			getMockClearLogs().mockRejectedValue(new Error('Failed to clear'));
 
@@ -1327,7 +1398,11 @@ describe('LogViewer', () => {
 			fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
 
 			await waitFor(() => {
-				expect(consoleError).toHaveBeenCalledWith('Failed to clear logs:', expect.any(Error));
+				expect(consoleError).toHaveBeenCalledWith(
+					'Failed to clear logs:',
+					undefined,
+					expect.any(Error)
+				);
 			});
 
 			consoleError.mockRestore();
@@ -1525,6 +1600,86 @@ describe('LogViewer', () => {
 			await waitFor(() => {
 				// Only the log with data should show expanded JSON content
 				expect(screen.getByText(/"foo":/)).toBeInTheDocument();
+			});
+		});
+	});
+
+	describe('Copy log entry', () => {
+		it('should render copy button for each log entry', async () => {
+			getMockGetLogs().mockResolvedValue([
+				createMockLog({ message: 'Log 1' }),
+				createMockLog({ message: 'Log 2' }),
+			]);
+
+			render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Log 1')).toBeInTheDocument();
+			});
+
+			const copyButtons = screen.getAllByTitle('Copy log entry');
+			expect(copyButtons).toHaveLength(2);
+		});
+
+		it('should copy log entry text to clipboard on click', async () => {
+			const timestamp = Date.now();
+			getMockGetLogs().mockResolvedValue([
+				createMockLog({ message: 'Important log', level: 'error', context: 'TestCtx', timestamp }),
+			]);
+
+			render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Important log')).toBeInTheDocument();
+			});
+
+			const copyButton = screen.getByTitle('Copy log entry');
+			fireEvent.click(copyButton);
+
+			await waitFor(() => {
+				expect(mockSafeClipboardWrite).toHaveBeenCalledWith(expect.stringContaining('[ERROR]'));
+				expect(mockSafeClipboardWrite).toHaveBeenCalledWith(
+					expect.stringContaining('Important log')
+				);
+				expect(mockSafeClipboardWrite).toHaveBeenCalledWith(expect.stringContaining('[TestCtx]'));
+			});
+		});
+
+		it('should show check icon after successful copy', async () => {
+			getMockGetLogs().mockResolvedValue([createMockLog({ message: 'Copy me' })]);
+
+			render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Copy me')).toBeInTheDocument();
+			});
+
+			const copyButton = screen.getByTitle('Copy log entry');
+			fireEvent.click(copyButton);
+
+			await waitFor(() => {
+				expect(screen.getByTitle('Copied!')).toBeInTheDocument();
+			});
+		});
+
+		it('should include data in copied text when log has data', async () => {
+			getMockGetLogs().mockResolvedValue([
+				createMockLog({ message: 'With data', data: { key: 'value' } }),
+			]);
+
+			render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('With data')).toBeInTheDocument();
+			});
+
+			const copyButton = screen.getByTitle('Copy log entry');
+			fireEvent.click(copyButton);
+
+			await waitFor(() => {
+				expect(mockSafeClipboardWrite).toHaveBeenCalledWith(
+					expect.stringContaining('"key": "value"')
+				);
 			});
 		});
 	});

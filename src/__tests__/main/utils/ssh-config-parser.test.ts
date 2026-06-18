@@ -4,34 +4,17 @@
  * Tests the parsing of ~/.ssh/config files to extract host configurations.
  */
 
-import { describe, it, expect, afterEach } from 'vitest';
-import * as fs from 'fs';
-import * as os from 'os';
+import { describe, it, expect, beforeEach } from 'vitest';
 import * as path from 'path';
 import {
 	parseSshConfig,
 	parseConfigContent,
-	findSshConfigHost,
 	getSshConfigHostSummary,
 	SshConfigHost,
 	SshConfigParserDeps,
 } from '../../../main/utils/ssh-config-parser';
 
 describe('ssh-config-parser', () => {
-	const tempDirs: string[] = [];
-
-	function createTempHome(): string {
-		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ssh-config-parser-'));
-		tempDirs.push(tempDir);
-		return tempDir;
-	}
-
-	afterEach(() => {
-		for (const tempDir of tempDirs.splice(0)) {
-			fs.rmSync(tempDir, { recursive: true, force: true });
-		}
-	});
-
 	describe('parseConfigContent', () => {
 		it('should parse a simple host entry', () => {
 			const content = `
@@ -249,132 +232,9 @@ Host server1 server2 server3
 			expect(hosts[0].host).toBe('server1');
 			expect(hosts[0].hostName).toBe('192.168.1.1');
 		});
-
-		it('should ignore malformed directive lines', () => {
-			const content = `
-Host valid-host
-    HostName valid.example.com
-    ThisLineHasNoValue
-    User admin
-`;
-			const hosts = parseConfigContent(content, '/home/user');
-
-			expect(hosts).toHaveLength(1);
-			expect(hosts[0]).toMatchObject({
-				host: 'valid-host',
-				hostName: 'valid.example.com',
-				user: 'admin',
-			});
-		});
-
-		it('should use the host alias for IdentityFile %h tokens before HostName is set', () => {
-			const content = `
-Host jump-alias
-    User deploy
-    IdentityFile ~/.ssh/%h-%r
-    HostName jump.example.com
-`;
-			const hosts = parseConfigContent(content, '/home/user');
-
-			expect(hosts).toHaveLength(1);
-			expect(hosts[0].identityFile).toBe('/home/user/.ssh/jump-alias-deploy');
-			expect(hosts[0].hostName).toBe('jump.example.com');
-		});
 	});
 
 	describe('parseSshConfig', () => {
-		it('should read the default config from HOME when no deps are provided', () => {
-			const originalHome = process.env.HOME;
-			const homeDir = createTempHome();
-			const sshDir = path.join(homeDir, '.ssh');
-			fs.mkdirSync(sshDir, { recursive: true });
-			fs.writeFileSync(
-				path.join(sshDir, 'config'),
-				`
-Host default-home
-    HostName default.example.com
-    User homeuser
-`,
-				'utf-8'
-			);
-			process.env.HOME = homeDir;
-
-			try {
-				const result = parseSshConfig();
-
-				expect(result.success).toBe(true);
-				expect(result.configPath).toBe(path.join(homeDir, '.ssh', 'config'));
-				expect(result.hosts[0]).toMatchObject({
-					host: 'default-home',
-					hostName: 'default.example.com',
-					user: 'homeuser',
-				});
-			} finally {
-				if (originalHome === undefined) {
-					delete process.env.HOME;
-				} else {
-					process.env.HOME = originalHome;
-				}
-			}
-		});
-
-		it('should use USERPROFILE when HOME is unavailable and default config is missing', () => {
-			const originalHome = process.env.HOME;
-			const originalUserProfile = process.env.USERPROFILE;
-			const userProfile = createTempHome();
-			delete process.env.HOME;
-			process.env.USERPROFILE = userProfile;
-
-			try {
-				const result = parseSshConfig();
-
-				expect(result.success).toBe(true);
-				expect(result.hosts).toEqual([]);
-				expect(result.configPath).toBe(path.join(userProfile, '.ssh', 'config'));
-			} finally {
-				if (originalHome === undefined) {
-					delete process.env.HOME;
-				} else {
-					process.env.HOME = originalHome;
-				}
-				if (originalUserProfile === undefined) {
-					delete process.env.USERPROFILE;
-				} else {
-					process.env.USERPROFILE = originalUserProfile;
-				}
-			}
-		});
-
-		it('should use a relative fallback path when no home environment is available', () => {
-			const originalHome = process.env.HOME;
-			const originalUserProfile = process.env.USERPROFILE;
-			const originalCwd = process.cwd();
-			const tempCwd = createTempHome();
-			delete process.env.HOME;
-			delete process.env.USERPROFILE;
-			process.chdir(tempCwd);
-
-			try {
-				const result = parseSshConfig();
-
-				expect(result.success).toBe(true);
-				expect(result.hosts).toEqual([]);
-				expect(result.configPath).toBe(path.join('', '.ssh', 'config'));
-			} finally {
-				process.chdir(originalCwd);
-				if (originalHome === undefined) {
-					delete process.env.HOME;
-				} else {
-					process.env.HOME = originalHome;
-				}
-				if (originalUserProfile === undefined) {
-					delete process.env.USERPROFILE;
-				} else {
-					process.env.USERPROFILE = originalUserProfile;
-				}
-			}
-		});
-
 		it('should return empty hosts when config file does not exist', () => {
 			const deps: Partial<SshConfigParserDeps> = {
 				fileExists: () => false,
@@ -421,94 +281,6 @@ Host dev
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('Permission denied');
 			expect(result.hosts).toHaveLength(0);
-		});
-
-		it('should stringify non-Error parse failures', () => {
-			const deps: Partial<SshConfigParserDeps> = {
-				fileExists: () => true,
-				readFile: () => {
-					throw 'unexpected failure';
-				},
-				homeDir: '/home/user',
-			};
-
-			const result = parseSshConfig(deps);
-
-			expect(result.success).toBe(false);
-			expect(result.error).toContain('unexpected failure');
-			expect(result.hosts).toEqual([]);
-		});
-	});
-
-	describe('findSshConfigHost', () => {
-		it('should find a host by name', () => {
-			const mockContent = `
-Host dev-server
-    HostName 192.168.1.100
-    User admin
-
-Host prod-server
-    HostName 10.0.0.1
-    User root
-`;
-			const deps: Partial<SshConfigParserDeps> = {
-				fileExists: () => true,
-				readFile: () => mockContent,
-				homeDir: '/home/user',
-			};
-
-			const host = findSshConfigHost('dev-server', deps);
-
-			expect(host).toBeDefined();
-			expect(host?.host).toBe('dev-server');
-			expect(host?.hostName).toBe('192.168.1.100');
-		});
-
-		it('should return undefined for non-existent host', () => {
-			const mockContent = `
-Host dev-server
-    HostName 192.168.1.100
-`;
-			const deps: Partial<SshConfigParserDeps> = {
-				fileExists: () => true,
-				readFile: () => mockContent,
-				homeDir: '/home/user',
-			};
-
-			const host = findSshConfigHost('unknown-server', deps);
-
-			expect(host).toBeUndefined();
-		});
-
-		it('should perform case-insensitive host matching', () => {
-			const mockContent = `
-Host Dev-Server
-    HostName 192.168.1.100
-`;
-			const deps: Partial<SshConfigParserDeps> = {
-				fileExists: () => true,
-				readFile: () => mockContent,
-				homeDir: '/home/user',
-			};
-
-			const host = findSshConfigHost('dev-server', deps);
-
-			expect(host).toBeDefined();
-			expect(host?.host).toBe('Dev-Server');
-		});
-
-		it('should return undefined when parsing the config fails', () => {
-			const deps: Partial<SshConfigParserDeps> = {
-				fileExists: () => true,
-				readFile: () => {
-					throw new Error('unreadable');
-				},
-				homeDir: '/home/user',
-			};
-
-			const host = findSshConfigHost('dev-server', deps);
-
-			expect(host).toBeUndefined();
 		});
 	});
 

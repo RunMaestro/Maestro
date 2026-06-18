@@ -66,6 +66,7 @@ export function useKeyboardVisibility(): UseKeyboardVisibilityReturn {
 	 * Calculate keyboard offset from viewport dimensions
 	 */
 	const calculateOffset = useCallback(() => {
+		if (typeof window === 'undefined') return;
 		const viewport = window.visualViewport;
 		if (!viewport) return;
 
@@ -86,6 +87,7 @@ export function useKeyboardVisibility(): UseKeyboardVisibilityReturn {
 	}, []);
 
 	useEffect(() => {
+		if (typeof window === 'undefined') return;
 		const viewport = window.visualViewport;
 		if (!viewport) return;
 

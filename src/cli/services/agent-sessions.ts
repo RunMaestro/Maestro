@@ -6,19 +6,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { encodeClaudeProjectPath } from '../../shared/pathUtils';
+import { computeClaudeUsageCost } from '../../shared/modelPricing';
 
 // ============================================================================
 // Constants (inlined from main/constants.ts to avoid Electron dependencies)
 // ============================================================================
-
-const TOKENS_PER_MILLION = 1_000_000;
-
-const CLAUDE_PRICING = {
-	INPUT_PER_MILLION: 3,
-	OUTPUT_PER_MILLION: 15,
-	CACHE_READ_PER_MILLION: 0.3,
-	CACHE_CREATION_PER_MILLION: 3.75,
-} as const;
 
 const PARSE_LIMITS = {
 	FIRST_MESSAGE_SCAN_LINES: 20,
@@ -125,20 +117,6 @@ function getSessionOriginInfo(
 // Session Parsing
 // ============================================================================
 
-function calculateCost(
-	inputTokens: number,
-	outputTokens: number,
-	cacheReadTokens: number,
-	cacheCreationTokens: number
-): number {
-	return (
-		(inputTokens / TOKENS_PER_MILLION) * CLAUDE_PRICING.INPUT_PER_MILLION +
-		(outputTokens / TOKENS_PER_MILLION) * CLAUDE_PRICING.OUTPUT_PER_MILLION +
-		(cacheReadTokens / TOKENS_PER_MILLION) * CLAUDE_PRICING.CACHE_READ_PER_MILLION +
-		(cacheCreationTokens / TOKENS_PER_MILLION) * CLAUDE_PRICING.CACHE_CREATION_PER_MILLION
-	);
-}
-
 function extractTextFromContent(content: unknown): string {
 	if (typeof content === 'string') return content;
 	if (Array.isArray(content)) {
@@ -192,27 +170,14 @@ function parseSessionContent(
 
 		const previewMessage = firstAssistantMessage || firstUserMessage;
 
-		// Fast regex-based token extraction
-		let totalInputTokens = 0;
-		let totalOutputTokens = 0;
-		let totalCacheReadTokens = 0;
-		let totalCacheCreationTokens = 0;
-
-		for (const m of content.matchAll(/"input_tokens"\s*:\s*(\d+)/g))
-			totalInputTokens += parseInt(m[1], 10);
-		for (const m of content.matchAll(/"output_tokens"\s*:\s*(\d+)/g))
-			totalOutputTokens += parseInt(m[1], 10);
-		for (const m of content.matchAll(/"cache_read_input_tokens"\s*:\s*(\d+)/g))
-			totalCacheReadTokens += parseInt(m[1], 10);
-		for (const m of content.matchAll(/"cache_creation_input_tokens"\s*:\s*(\d+)/g))
-			totalCacheCreationTokens += parseInt(m[1], 10);
-
-		const costUsd = calculateCost(
-			totalInputTokens,
-			totalOutputTokens,
-			totalCacheReadTokens,
-			totalCacheCreationTokens
-		);
+		// Per-model token + cost extraction (a session may mix models).
+		const {
+			inputTokens: totalInputTokens,
+			outputTokens: totalOutputTokens,
+			cacheReadTokens: totalCacheReadTokens,
+			cacheCreationTokens: totalCacheCreationTokens,
+			costUsd,
+		} = computeClaudeUsageCost(content);
 
 		// Extract last timestamp for duration
 		let lastTimestamp = timestamp;

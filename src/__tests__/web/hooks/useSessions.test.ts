@@ -221,6 +221,63 @@ describe('useSessions', () => {
 			expect(result.current.sessions[1].state).toBe('idle'); // Unchanged
 		});
 
+		it('setLocalSessionState optimistically updates a session state', () => {
+			const { result } = renderHook(() => useSessions());
+
+			act(() => {
+				capturedHandlers.onSessionsUpdate?.([
+					{ id: 'session-1', name: 'Session 1', state: 'idle' } as SessionData,
+					{ id: 'session-2', name: 'Session 2', state: 'idle' } as SessionData,
+				]);
+			});
+
+			act(() => {
+				result.current.setLocalSessionState('session-1', 'connecting');
+			});
+
+			expect(result.current.sessions[0].state).toBe('connecting');
+			expect(result.current.sessions[1].state).toBe('idle');
+		});
+
+		it('setLocalSessionState is overwritten by a server-broadcast state change', () => {
+			const { result } = renderHook(() => useSessions());
+
+			act(() => {
+				capturedHandlers.onSessionsUpdate?.([
+					{ id: 'session-1', name: 'Session 1', state: 'idle' } as SessionData,
+				]);
+			});
+
+			act(() => {
+				result.current.setLocalSessionState('session-1', 'connecting');
+			});
+			expect(result.current.sessions[0].state).toBe('connecting');
+
+			// A subsequent server broadcast (e.g., agent actually starts processing)
+			// should overwrite the optimistic state.
+			act(() => {
+				capturedHandlers.onSessionStateChange?.('session-1', 'busy');
+			});
+			expect(result.current.sessions[0].state).toBe('busy');
+		});
+
+		it('setLocalSessionState is a no-op for unknown session ids', () => {
+			const { result } = renderHook(() => useSessions());
+
+			act(() => {
+				capturedHandlers.onSessionsUpdate?.([
+					{ id: 'session-1', name: 'Session 1', state: 'idle' } as SessionData,
+				]);
+			});
+
+			act(() => {
+				result.current.setLocalSessionState('nonexistent', 'connecting');
+			});
+
+			expect(result.current.sessions).toHaveLength(1);
+			expect(result.current.sessions[0].state).toBe('idle');
+		});
+
 		it('handleSessionAdded adds new session to list', () => {
 			const { result } = renderHook(() => useSessions());
 
@@ -791,29 +848,6 @@ describe('useSessions', () => {
 			});
 
 			expect(onError).toHaveBeenCalledWith('Network error');
-		});
-
-		it('uses an unknown error message for non-Error send failures', async () => {
-			const onError = vi.fn();
-			const { result } = renderHook(() => useSessions({ onError }));
-
-			act(() => {
-				capturedHandlers.onSessionsUpdate?.([
-					{ id: 'session-1', name: 'Session 1', state: 'idle' } as SessionData,
-				]);
-			});
-
-			(global.fetch as vi.Mock).mockRejectedValue('network failed');
-
-			let success: boolean;
-			await act(async () => {
-				success = await result.current.sendCommand('session-1', 'test');
-			});
-
-			expect(success!).toBe(false);
-			expect(result.current.sessions[0].isSending).toBe(false);
-			expect(result.current.sessions[0].lastError).toBe('Unknown error');
-			expect(onError).toHaveBeenCalledWith('Unknown error');
 		});
 
 		it('returns false on failure', async () => {

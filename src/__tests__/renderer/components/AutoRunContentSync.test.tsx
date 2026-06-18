@@ -14,18 +14,16 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import React from 'react';
 import { AutoRun, AutoRunHandle } from '../../../renderer/components/AutoRun';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
-import type { Theme } from '../../../renderer/types';
+
+import { createMockTheme } from '../../helpers/mockTheme';
 
 // Helper to wrap component in LayerStackProvider with custom rerender
 const renderWithProviders = (ui: React.ReactElement) => {
 	const result = render(<LayerStackProvider>{ui}</LayerStackProvider>);
 	return {
 		...result,
-		rerender: (newUi: React.ReactElement) => {
-			act(() => {
-				result.rerender(<LayerStackProvider>{newUi}</LayerStackProvider>);
-			});
-		},
+		rerender: (newUi: React.ReactElement) =>
+			result.rerender(<LayerStackProvider>{newUi}</LayerStackProvider>),
 	};
 };
 
@@ -127,31 +125,6 @@ vi.mock('../../../renderer/components/TemplateAutocompleteDropdown', () => ({
 	TemplateAutocompleteDropdown: React.forwardRef(() => null),
 }));
 
-vi.mock('../../../renderer/utils/tokenCounter', () => ({
-	getEncoder: vi.fn(() => new Promise(() => {})),
-}));
-
-// Create a mock theme for testing
-const createMockTheme = (): Theme => ({
-	id: 'test-theme',
-	name: 'Test Theme',
-	mode: 'dark',
-	colors: {
-		bgMain: '#1a1a1a',
-		bgPanel: '#252525',
-		bgActivity: '#2d2d2d',
-		textMain: '#ffffff',
-		textDim: '#888888',
-		accent: '#0066ff',
-		accentForeground: '#ffffff',
-		border: '#333333',
-		highlight: '#0066ff33',
-		success: '#00aa00',
-		warning: '#ffaa00',
-		error: '#ff0000',
-	},
-});
-
 // Setup window.maestro mock
 const setupMaestroMock = () => {
 	const mockMaestro = {
@@ -160,7 +133,7 @@ const setupMaestroMock = () => {
 			readDir: vi.fn().mockResolvedValue([]),
 		},
 		autorun: {
-			listImages: vi.fn(() => new Promise(() => {})),
+			listImages: vi.fn().mockResolvedValue({ success: true, images: [] }),
 			saveImage: vi.fn().mockResolvedValue({ success: true, relativePath: 'images/test-123.png' }),
 			deleteImage: vi.fn().mockResolvedValue({ success: true }),
 			writeDoc: vi.fn().mockResolvedValue(undefined),

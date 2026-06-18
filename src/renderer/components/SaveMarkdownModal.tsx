@@ -72,6 +72,15 @@ export function SaveMarkdownModal({
 	};
 
 	const handleSave = async () => {
+		if (!folder.trim()) {
+			setError('Please select a folder');
+			return;
+		}
+		if (!filename.trim()) {
+			setError('Please enter a filename');
+			return;
+		}
+
 		setSaving(true);
 		setError(null);
 

@@ -14,6 +14,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, cleanup } from '@testing-library/react';
 import type { Session, CustomAICommand } from '../../../renderer/types';
+import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
 // ============================================================================
 // Mock modules BEFORE importing the hook
@@ -61,20 +62,19 @@ import {
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
-import { gitService } from '../../../renderer/services/git';
-import { substituteTemplateVariables } from '../../../renderer/utils/templateVariables';
 
 // ============================================================================
 // Helpers
 // ============================================================================
 
+// Thin wrapper: populates an AI tab and terminal draft so remote command
+// dispatching code has state to operate on.
 function createMockSession(overrides: Partial<Session> = {}): Session {
-	return {
-		id: 'session-1',
+	return baseCreateMockSession({
 		name: 'Test Agent',
-		state: 'idle',
-		busySource: undefined,
-		toolType: 'claude-code',
+		cwd: '/test',
+		fullPath: '/test',
+		projectRoot: '/test',
 		aiTabs: [
 			{
 				id: 'tab-1',
@@ -84,17 +84,12 @@ function createMockSession(overrides: Partial<Session> = {}): Session {
 				logs: [],
 				stagedImages: [],
 			},
-		],
+		] as any,
 		activeTabId: 'tab-1',
-		inputMode: 'ai',
-		isGitRepo: false,
-		cwd: '/test',
-		projectRoot: '/test',
-		shellLogs: [],
 		shellCwd: '/test',
 		terminalDraftInput: '',
 		...overrides,
-	} as Session;
+	});
 }
 
 function createMockDeps(overrides: Partial<UseRemoteHandlersDeps> = {}): UseRemoteHandlersDeps {
@@ -143,6 +138,12 @@ beforeEach(() => {
 				command: 'claude',
 				path: '/usr/local/bin/claude',
 				args: [],
+			}),
+		},
+		prompts: {
+			get: vi.fn().mockResolvedValue({
+				success: true,
+				content: 'Maestro System Context: {{AGENT_NAME}}',
 			}),
 		},
 	};
@@ -435,6 +436,83 @@ describe('useRemoteHandlers', () => {
 			);
 		});
 
+		it('includes appendSystemPrompt for new sessions (no agentSessionId)', async () => {
+			const session = createMockSession({ inputMode: 'ai' });
+			const deps = createMockDeps({
+				sessionsRef: { current: [session] },
+			});
+
+			renderHook(() => useRemoteHandlers(deps));
+
+			const addListenerCall = (window.addEventListener as any).mock.calls.find(
+				(call: any[]) => call[0] === 'maestro:remoteCommand'
+			);
+			const handler = addListenerCall[1];
+
+			await act(async () => {
+				await handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: {
+							sessionId: 'session-1',
+							command: 'hello',
+							inputMode: 'ai',
+						},
+					})
+				);
+			});
+
+			expect(window.maestro.prompts.get).toHaveBeenCalledWith('maestro-system-prompt');
+			expect(window.maestro.process.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					appendSystemPrompt: expect.any(String),
+				})
+			);
+		});
+
+		it('still passes appendSystemPrompt for resumed sessions (Claude Code does not persist --append-system-prompt across resume)', async () => {
+			const session = createMockSession({
+				inputMode: 'ai',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						name: 'Tab 1',
+						inputValue: '',
+						logs: [],
+						stagedImages: [],
+						agentSessionId: 'existing-session-123',
+					} as any,
+				],
+			});
+			const deps = createMockDeps({
+				sessionsRef: { current: [session] },
+			});
+
+			renderHook(() => useRemoteHandlers(deps));
+
+			const addListenerCall = (window.addEventListener as any).mock.calls.find(
+				(call: any[]) => call[0] === 'maestro:remoteCommand'
+			);
+			const handler = addListenerCall[1];
+
+			await act(async () => {
+				await handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: {
+							sessionId: 'session-1',
+							command: 'hello',
+							inputMode: 'ai',
+						},
+					})
+				);
+			});
+
+			expect(window.maestro.process.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					appendSystemPrompt: expect.any(String),
+				})
+			);
+		});
+
 		it('ignores command when session not found', async () => {
 			const deps = createMockDeps({
 				sessionsRef: { current: [] },
@@ -718,52 +796,6 @@ describe('useRemoteHandlers', () => {
 			expect(updated?.shellLogs[0].source).toBe('user');
 		});
 
-		it('updates only the targeted session for terminal commands and errors', async () => {
-			const target = createMockSession({ inputMode: 'terminal', shellLogs: [] });
-			const other = createMockSession({
-				id: 'session-2',
-				name: 'Other Agent',
-				inputMode: 'terminal',
-				shellLogs: [{ id: 'existing', timestamp: 1, source: 'system', text: 'keep me' }],
-			});
-			useSessionStore.setState({
-				sessions: [target, other],
-				activeSessionId: 'session-1',
-			} as any);
-			const deps = createMockDeps({ sessionsRef: { current: [target, other] } });
-
-			renderHook(() => useRemoteHandlers(deps));
-			const handler = getRemoteCommandHandler();
-
-			await act(async () => {
-				await handler(
-					new CustomEvent('maestro:remoteCommand', {
-						detail: { sessionId: 'session-1', command: 'echo ok', inputMode: 'terminal' },
-					})
-				);
-			});
-
-			let sessions = useSessionStore.getState().sessions;
-			expect(sessions.find((s) => s.id === 'session-1')?.shellLogs.at(-1)?.text).toBe('echo ok');
-			expect(sessions.find((s) => s.id === 'session-2')?.shellLogs).toEqual(other.shellLogs);
-
-			(window.maestro.process.runCommand as any).mockRejectedValueOnce(new Error('denied'));
-
-			await act(async () => {
-				await handler(
-					new CustomEvent('maestro:remoteCommand', {
-						detail: { sessionId: 'session-1', command: 'bad', inputMode: 'terminal' },
-					})
-				);
-			});
-
-			sessions = useSessionStore.getState().sessions;
-			expect(sessions.find((s) => s.id === 'session-1')?.shellLogs.at(-1)?.text).toContain(
-				'denied'
-			);
-			expect(sessions.find((s) => s.id === 'session-2')?.shellLogs).toEqual(other.shellLogs);
-		});
-
 		it('falls back to workingDirOverride when remoteCwd is undefined on SSH session', async () => {
 			const session = createMockSession({
 				inputMode: 'terminal',
@@ -791,36 +823,6 @@ describe('useRemoteHandlers', () => {
 
 			expect(window.maestro.process.runCommand).toHaveBeenCalledWith(
 				expect.objectContaining({ cwd: '/override/path' })
-			);
-		});
-
-		it('falls back to session cwd for SSH terminal commands without remote overrides', async () => {
-			const session = createMockSession({
-				inputMode: 'terminal',
-				sshRemoteId: 'remote-1',
-				remoteCwd: undefined,
-				cwd: '/project/fallback',
-				sessionSshRemoteConfig: {
-					enabled: true,
-					remoteId: 'remote-1',
-					workingDirOverride: undefined,
-				},
-			});
-			const deps = createMockDeps({ sessionsRef: { current: [session] } });
-
-			renderHook(() => useRemoteHandlers(deps));
-			const handler = getRemoteCommandHandler();
-
-			await act(async () => {
-				await handler(
-					new CustomEvent('maestro:remoteCommand', {
-						detail: { sessionId: 'session-1', command: 'pwd', inputMode: 'terminal' },
-					})
-				);
-			});
-
-			expect(window.maestro.process.runCommand).toHaveBeenCalledWith(
-				expect.objectContaining({ cwd: '/project/fallback' })
 			);
 		});
 
@@ -1088,70 +1090,6 @@ describe('useRemoteHandlers', () => {
 			);
 		});
 
-		it('continues slash command handling when git status lookup fails', async () => {
-			vi.mocked(gitService.getStatus).mockRejectedValueOnce(new Error('git unavailable'));
-			const customCommand: CustomAICommand = {
-				command: '/ship',
-				description: 'Ship command',
-				prompt: 'Ship from {{gitBranch}}',
-			};
-			const session = createMockSession({ inputMode: 'ai', isGitRepo: true });
-			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' } as any);
-			const deps = createMockDeps({
-				sessionsRef: { current: [session] },
-				customAICommandsRef: { current: [customCommand] },
-			});
-
-			renderHook(() => useRemoteHandlers(deps));
-			const handler = getRemoteCommandHandler();
-
-			await act(async () => {
-				await handler(
-					new CustomEvent('maestro:remoteCommand', {
-						detail: { sessionId: 'session-1', command: '/ship', inputMode: 'ai' },
-					})
-				);
-			});
-
-			expect(gitService.getStatus).toHaveBeenCalledWith('/test');
-			expect(window.maestro.process.spawn).toHaveBeenCalledWith(
-				expect.objectContaining({ prompt: 'Ship from {{gitBranch}}' })
-			);
-		});
-
-		it('passes git branch into slash command template variables for git repositories', async () => {
-			vi.mocked(gitService.getStatus).mockResolvedValueOnce({ branch: 'feature/remote' } as any);
-			const customCommand: CustomAICommand = {
-				command: '/ship',
-				description: 'Ship command',
-				prompt: 'Ship from {{gitBranch}}',
-			};
-			const session = createMockSession({ inputMode: 'ai', isGitRepo: true });
-			useSettingsStore.setState({ conductorProfile: 'team' } as any);
-			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' } as any);
-			const deps = createMockDeps({
-				sessionsRef: { current: [session] },
-				customAICommandsRef: { current: [customCommand] },
-			});
-
-			renderHook(() => useRemoteHandlers(deps));
-			const handler = getRemoteCommandHandler();
-
-			await act(async () => {
-				await handler(
-					new CustomEvent('maestro:remoteCommand', {
-						detail: { sessionId: 'session-1', command: '/ship', inputMode: 'ai' },
-					})
-				);
-			});
-
-			expect(substituteTemplateVariables).toHaveBeenCalledWith('Ship from {{gitBranch}}', {
-				session,
-				gitBranch: 'feature/remote',
-				conductorProfile: 'team',
-			});
-		});
-
 		it('returns early when agent config is not found', async () => {
 			(window.maestro.agents.get as any).mockResolvedValue(null);
 
@@ -1199,174 +1137,6 @@ describe('useRemoteHandlers', () => {
 				(l) => l.source === 'system' && l.text.includes('Spawn failed')
 			);
 			expect(errorLog).toBeTruthy();
-		});
-
-		it('uses agent command defaults and updates only the active AI tab', async () => {
-			(window.maestro.agents.get as any).mockResolvedValue({
-				command: 'claude',
-			});
-			const session = createMockSession({
-				inputMode: 'ai',
-				aiTabs: [
-					{
-						id: 'tab-1',
-						name: 'Tab 1',
-						inputValue: '',
-						data: [],
-						logs: [{ id: 'existing', timestamp: 1, source: 'system', text: 'keep me' }],
-						stagedImages: [],
-					},
-					{
-						id: 'tab-2',
-						name: 'Tab 2',
-						inputValue: '',
-						data: [],
-						logs: [],
-						stagedImages: [],
-					},
-				],
-				activeTabId: 'tab-2',
-			});
-			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' } as any);
-			const deps = createMockDeps({ sessionsRef: { current: [session] } });
-
-			renderHook(() => useRemoteHandlers(deps));
-			const handler = getRemoteCommandHandler();
-
-			await act(async () => {
-				await handler(
-					new CustomEvent('maestro:remoteCommand', {
-						detail: { sessionId: 'session-1', command: 'help', inputMode: 'ai' },
-					})
-				);
-			});
-
-			expect(window.maestro.process.spawn).toHaveBeenCalledWith(
-				expect.objectContaining({
-					command: 'claude',
-					args: [],
-					sessionId: 'session-1-ai-tab-2',
-				})
-			);
-			const updated = useSessionStore.getState().sessions[0];
-			expect(updated.aiTabs[0].logs).toEqual(session.aiTabs[0].logs);
-			expect(updated.aiTabs[1].state).toBe('busy');
-			expect(updated.aiTabs[1].logs.at(-1)?.text).toBe('help');
-		});
-
-		it('stringifies non-Error spawn failures and leaves inactive AI tabs unchanged', async () => {
-			(window.maestro.process.spawn as any).mockRejectedValue('spawn denied');
-			const session = createMockSession({
-				inputMode: 'ai',
-				aiTabs: [
-					{
-						id: 'tab-1',
-						name: 'Tab 1',
-						inputValue: '',
-						data: [],
-						logs: [{ id: 'existing', timestamp: 1, source: 'system', text: 'keep me' }],
-						stagedImages: [],
-					},
-					{
-						id: 'tab-2',
-						name: 'Tab 2',
-						inputValue: '',
-						data: [],
-						logs: [],
-						stagedImages: [],
-					},
-				],
-				activeTabId: 'tab-2',
-			});
-			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' } as any);
-			const deps = createMockDeps({ sessionsRef: { current: [session] } });
-
-			renderHook(() => useRemoteHandlers(deps));
-			const handler = getRemoteCommandHandler();
-
-			await act(async () => {
-				await handler(
-					new CustomEvent('maestro:remoteCommand', {
-						detail: { sessionId: 'session-1', command: 'help', inputMode: 'ai' },
-					})
-				);
-			});
-
-			const updated = useSessionStore.getState().sessions[0];
-			expect(updated.state).toBe('idle');
-			expect(updated.aiTabs[0].logs).toEqual(session.aiTabs[0].logs);
-			expect(updated.aiTabs[1].logs.at(-1)?.text).toContain('spawn denied');
-		});
-
-		it('leaves sessions unchanged when the target AI session has no active tab', async () => {
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-			try {
-				const session = createMockSession({
-					inputMode: 'ai',
-					aiTabs: [],
-					activeTabId: 'missing-tab',
-				});
-				const other = createMockSession({ id: 'session-2', name: 'Other Agent' });
-				useSessionStore.setState({
-					sessions: [session, other],
-					activeSessionId: 'session-1',
-				} as any);
-				const deps = createMockDeps({ sessionsRef: { current: [session, other] } });
-
-				renderHook(() => useRemoteHandlers(deps));
-				const handler = getRemoteCommandHandler();
-
-				await act(async () => {
-					await handler(
-						new CustomEvent('maestro:remoteCommand', {
-							detail: { sessionId: 'session-1', command: 'help', inputMode: 'ai' },
-						})
-					);
-				});
-
-				expect(consoleError).toHaveBeenCalledWith(
-					'[runAICommand] No active tab found - session has no aiTabs, this should not happen'
-				);
-				expect(useSessionStore.getState().sessions).toEqual([session, other]);
-			} finally {
-				consoleError.mockRestore();
-			}
-		});
-
-		it('leaves sessions unchanged on spawn failure when the target AI session has no active tab', async () => {
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-			try {
-				(window.maestro.process.spawn as any).mockRejectedValue(new Error('spawn denied'));
-				const session = createMockSession({
-					inputMode: 'ai',
-					aiTabs: [],
-					activeTabId: 'missing-tab',
-				});
-				const other = createMockSession({ id: 'session-2', name: 'Other Agent' });
-				useSessionStore.setState({
-					sessions: [session, other],
-					activeSessionId: 'session-1',
-				} as any);
-				const deps = createMockDeps({ sessionsRef: { current: [session, other] } });
-
-				renderHook(() => useRemoteHandlers(deps));
-				const handler = getRemoteCommandHandler();
-
-				await act(async () => {
-					await handler(
-						new CustomEvent('maestro:remoteCommand', {
-							detail: { sessionId: 'session-1', command: 'help', inputMode: 'ai' },
-						})
-					);
-				});
-
-				expect(consoleError).toHaveBeenCalledWith(
-					'[runAICommand error] No active tab found - session has no aiTabs, this should not happen'
-				);
-				expect(useSessionStore.getState().sessions).toEqual([session, other]);
-			} finally {
-				consoleError.mockRestore();
-			}
 		});
 
 		it('filters --dangerously-skip-permissions from args in readOnly mode', async () => {

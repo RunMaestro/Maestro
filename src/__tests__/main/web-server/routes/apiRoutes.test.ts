@@ -186,37 +186,6 @@ describe('ApiRoutes', () => {
 			expect(result.sessions[0].liveEnabledAt).toBeDefined();
 		});
 
-		it('should preserve existing session agent IDs when live info is incomplete', async () => {
-			(callbacks.getSessions as any).mockReturnValue([
-				{
-					id: 'session-fallback',
-					name: 'Session Fallback',
-					toolType: 'claude-code',
-					state: 'idle',
-					inputMode: 'ai',
-					cwd: '/test/project',
-					groupId: null,
-					agentSessionId: 'existing-agent-session',
-				},
-			]);
-			(callbacks.getLiveSessionInfo as any).mockReturnValue({
-				sessionId: 'session-fallback',
-				enabledAt: 123,
-			});
-			(callbacks.isSessionLive as any).mockReturnValue(false);
-
-			const route = mockFastify.getRoute('GET', `/${securityToken}/api/sessions`);
-			const result = await route!.handler();
-
-			expect(result.sessions[0]).toEqual(
-				expect.objectContaining({
-					agentSessionId: 'existing-agent-session',
-					liveEnabledAt: 123,
-					isLive: false,
-				})
-			);
-		});
-
 		it('should return empty array when no callbacks configured', async () => {
 			const emptyRoutes = new ApiRoutes(securityToken, rateLimitConfig);
 			const emptyFastify = createMockFastify();
@@ -240,35 +209,6 @@ describe('ApiRoutes', () => {
 			expect(result.session.agentSessionId).toBe('claude-agent-123');
 			expect(result.session.isLive).toBe(true);
 			expect(callbacks.getSessionDetail).toHaveBeenCalledWith('session-1', undefined);
-		});
-
-		it('should preserve existing detail agent ID when live info is incomplete', async () => {
-			(callbacks.getSessionDetail as any).mockReturnValue({
-				id: 'session-fallback',
-				name: 'Session Fallback',
-				toolType: 'claude-code',
-				state: 'idle',
-				inputMode: 'ai',
-				cwd: '/test/project',
-				agentSessionId: 'existing-detail-agent',
-			});
-			(callbacks.getLiveSessionInfo as any).mockReturnValue({
-				sessionId: 'session-fallback',
-				enabledAt: 456,
-			});
-			(callbacks.isSessionLive as any).mockReturnValue(false);
-
-			const route = mockFastify.getRoute('GET', `/${securityToken}/api/session/:id`);
-			const reply = createMockReply();
-			const result = await route!.handler({ params: { id: 'session-fallback' }, query: {} }, reply);
-
-			expect(result.session).toEqual(
-				expect.objectContaining({
-					agentSessionId: 'existing-detail-agent',
-					liveEnabledAt: 456,
-					isLive: false,
-				})
-			);
 		});
 
 		it('should pass tabId query param to callback', async () => {

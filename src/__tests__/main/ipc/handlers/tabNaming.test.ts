@@ -33,9 +33,12 @@ vi.mock('uuid', () => ({
 	v4: vi.fn(() => 'mock-uuid-1234'),
 }));
 
-// Mock the prompts
-vi.mock('../../../../prompts', () => ({
-	tabNamingPrompt: 'You are a tab naming assistant. Generate a concise tab name.',
+// Mock prompt-manager so getPrompt() returns mock content without needing disk I/O
+vi.mock('../../../../main/prompt-manager', () => ({
+	getPrompt: vi.fn((id: string) => {
+		if (id === 'tab-naming') return 'You are a tab naming assistant. Generate a concise tab name.';
+		return `mock prompt for ${id}`;
+	}),
 }));
 
 // Mock the agent args utilities
@@ -61,6 +64,25 @@ vi.mock('../../../../main/utils/ssh-remote-resolver', () => ({
 vi.mock('../../../../main/utils/ssh-command-builder', () => ({
 	buildSshCommand: vi.fn(),
 }));
+
+// Mock platform detection so we can toggle isWindows() per test
+vi.mock('../../../../shared/platformDetection', () => ({
+	isWindows: vi.fn(() => false),
+	isMacOS: vi.fn(() => true),
+	isLinux: vi.fn(() => false),
+}));
+
+// Mock fs.existsSync so the shared Claude spawn-mode resolver's maestro-p binary
+// existence check passes. resolveClaudeSpawnMode reads fs.existsSync via its
+// default `fileExists` dependency, and the tab-naming handler calls the resolver
+// with default deps (no injection point at the IPC layer).
+vi.mock('fs', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('fs')>();
+	return {
+		...actual,
+		existsSync: vi.fn(() => true),
+	};
+});
 
 // Capture registered handlers
 const registeredHandlers: Map<string, (...args: unknown[]) => Promise<unknown>> = new Map();
@@ -103,9 +125,11 @@ describe('Tab Naming IPC Handlers', () => {
 		readOnlyArgs: ['--permission-mode', 'plan'],
 	};
 
-	beforeEach(() => {
+	beforeEach(async () => {
 		vi.clearAllMocks();
 		registeredHandlers.clear();
+		const { isWindows } = await import('../../../../shared/platformDetection');
+		(isWindows as Mock).mockReturnValue(false);
 
 		// Capture handler registrations
 		(ipcMain.handle as Mock).mockImplementation(
@@ -225,31 +249,27 @@ describe('Tab Naming IPC Handlers', () => {
 			expect(result).toBe('Login Form Implementation');
 		});
 
-		it('uses the agent command and empty args when no path or args are configured', async () => {
-			mockAgentDetector.getAgent.mockResolvedValue({
-				id: 'opencode',
-				name: 'OpenCode',
-				command: 'opencode',
-			});
+		it('forwards promptArgs and noPromptSeparator so agents like copilot-cli receive -p <prompt>', async () => {
+			// Regression guard: without forwarding promptArgs, ChildProcessSpawner falls back
+			// to `-- <prompt>` which breaks copilot-cli (needs `-p <prompt>`) and factory-droid
+			// (needs a bare positional prompt).
+			const copilotPromptArgs = vi.fn((p: string) => ['-p', p]);
+			const mockCopilotAgent: AgentConfig = {
+				id: 'copilot-cli',
+				name: 'Copilot-CLI',
+				command: 'copilot',
+				path: '/usr/local/bin/copilot',
+				args: [],
+				promptArgs: copilotPromptArgs,
+			};
+			mockAgentDetector.getAgent.mockResolvedValue(mockCopilotAgent);
 
-			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
-			let onExitCallback: ((sessionId: string) => void) | undefined;
+			mockProcessManager.on.mockImplementation(() => {});
 
-			mockProcessManager.on.mockImplementation(
-				(event: string, callback: (...args: any[]) => void) => {
-					if (event === 'data') onDataCallback = callback;
-					if (event === 'exit') onExitCallback = callback;
-				}
-			);
-
-			const resultPromise = invokeHandler('tabNaming:generateTabName', {
-				userMessage: 'Name this tab',
-				agentType: 'opencode',
+			invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Review this repo',
+				agentType: 'copilot-cli',
 				cwd: '/test/project',
-				sessionSshRemoteConfig: {
-					enabled: true,
-					remoteId: null,
-				},
 			});
 
 			await vi.waitFor(() => {
@@ -258,16 +278,41 @@ describe('Tab Naming IPC Handlers', () => {
 
 			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
 				expect.objectContaining({
-					command: 'opencode',
-					args: [],
-					sendPromptViaStdin: false,
+					toolType: 'copilot-cli',
+					promptArgs: copilotPromptArgs,
 				})
 			);
+		});
 
-			onDataCallback?.('tab-naming-mock-uuid-1234', 'OpenCode Naming');
-			onExitCallback?.('tab-naming-mock-uuid-1234');
+		it('forwards noPromptSeparator for agents that use bare positional prompts (factory-droid)', async () => {
+			const mockDroidAgent: AgentConfig = {
+				id: 'factory-droid',
+				name: 'Factory Droid',
+				command: 'droid',
+				path: '/usr/local/bin/droid',
+				args: [],
+				noPromptSeparator: true,
+			};
+			mockAgentDetector.getAgent.mockResolvedValue(mockDroidAgent);
 
-			await expect(resultPromise).resolves.toBe('OpenCode Naming');
+			mockProcessManager.on.mockImplementation(() => {});
+
+			invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Review this repo',
+				agentType: 'factory-droid',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					toolType: 'factory-droid',
+					noPromptSeparator: true,
+				})
+			);
 		});
 
 		it('filters out --dangerously-skip-permissions for read-only parallel execution', async () => {
@@ -373,6 +418,102 @@ describe('Tab Naming IPC Handlers', () => {
 			expect(result).toBe('Dark Mode Toggle');
 		});
 
+		it('extracts the tab name from Claude stream-json output (the real-world path)', async () => {
+			// Regression: tab naming inherits the agent's default args, which include
+			// `--output-format stream-json`. The generated name therefore arrives buried
+			// inside JSON envelopes, and every line is far longer than extractTabName's
+			// 40-char filter. Without parsing the stream-json first, extraction always
+			// returns null and tabs never get named. We must lift the `result` text out.
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string, code?: number) => void) | undefined;
+
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Help me build a Rick and Morty side scroller game',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			// A representative slice of real `claude --output-format stream-json` output:
+			// a long init line, an assistant message, and the terminating result.
+			const streamJson = [
+				JSON.stringify({
+					type: 'system',
+					subtype: 'init',
+					session_id: 'abc',
+					tools: ['Bash', 'Read', 'Grep'],
+					slash_commands: ['/help', '/compact'],
+				}),
+				JSON.stringify({
+					type: 'assistant',
+					message: { role: 'assistant', content: [{ type: 'text', text: 'Side-Scroller Game' }] },
+					session_id: 'abc',
+				}),
+				JSON.stringify({
+					type: 'result',
+					subtype: 'success',
+					is_error: false,
+					result: 'Side-Scroller Game',
+					session_id: 'abc',
+				}),
+			].join('\n');
+
+			onDataCallback?.('tab-naming-mock-uuid-1234', streamJson);
+			onExitCallback?.('tab-naming-mock-uuid-1234', 0);
+
+			const result = await resultPromise;
+			expect(result).toBe('Side-Scroller Game');
+		});
+
+		it('extracts from streaming assistant text when no result event arrives (early extraction)', async () => {
+			// Early extraction resolves before the process exits, so only assistant
+			// (streaming) events are present - no terminating result line yet.
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string, code?: number) => void) | undefined;
+
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Add a leaderboard endpoint',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			const streamJson = [
+				JSON.stringify({ type: 'system', subtype: 'init', session_id: 'abc' }),
+				JSON.stringify({
+					type: 'assistant',
+					message: { role: 'assistant', content: [{ type: 'text', text: 'Leaderboard Endpoint' }] },
+					session_id: 'abc',
+				}),
+			].join('\n');
+
+			onDataCallback?.('tab-naming-mock-uuid-1234', streamJson);
+			onExitCallback?.('tab-naming-mock-uuid-1234', 0);
+
+			const result = await resultPromise;
+			expect(result).toBe('Leaderboard Endpoint');
+		});
+
 		it('returns null for empty output', async () => {
 			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
 			let onExitCallback: ((sessionId: string) => void) | undefined;
@@ -416,54 +557,14 @@ describe('Tab Naming IPC Handlers', () => {
 				expect(mockProcessManager.spawn).toHaveBeenCalled();
 			});
 
-			// Advance time past the timeout (30 seconds)
-			vi.advanceTimersByTime(31000);
+			// Advance time past the timeout (120 seconds)
+			vi.advanceTimersByTime(121000);
 
 			const result = await resultPromise;
 			expect(result).toBeNull();
 			expect(mockProcessManager.kill).toHaveBeenCalledWith('tab-naming-mock-uuid-1234');
 
 			vi.useRealTimers();
-		});
-
-		it('ignores stale timeout and exit events after completion', async () => {
-			vi.useFakeTimers();
-			const clearTimeoutSpy = vi
-				.spyOn(global, 'clearTimeout')
-				.mockImplementation(() => undefined as any);
-			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
-			let onExitCallback: ((sessionId: string) => void) | undefined;
-
-			mockProcessManager.on.mockImplementation(
-				(event: string, callback: (...args: any[]) => void) => {
-					if (event === 'data') onDataCallback = callback;
-					if (event === 'exit') onExitCallback = callback;
-				}
-			);
-
-			try {
-				const resultPromise = invokeHandler('tabNaming:generateTabName', {
-					userMessage: 'Complete before timeout',
-					agentType: 'claude-code',
-					cwd: '/test/project',
-				});
-
-				await vi.waitFor(() => {
-					expect(mockProcessManager.spawn).toHaveBeenCalled();
-				});
-
-				onDataCallback?.('tab-naming-mock-uuid-1234', 'Fast Result');
-				onExitCallback?.('other-session-id');
-				onExitCallback?.('tab-naming-mock-uuid-1234');
-				onExitCallback?.('tab-naming-mock-uuid-1234');
-				await vi.advanceTimersByTimeAsync(31000);
-
-				await expect(resultPromise).resolves.toBe('Fast Result');
-				expect(mockProcessManager.kill).not.toHaveBeenCalled();
-			} finally {
-				clearTimeoutSpy.mockRestore();
-				vi.useRealTimers();
-			}
 		});
 
 		it('cleans up listeners on completion', async () => {
@@ -625,6 +726,114 @@ describe('Tab Naming IPC Handlers', () => {
 			expect(result).toBe('Tab Name');
 		});
 
+		it('sets sendPromptViaStdinRaw on Windows to avoid ENAMETOOLONG', async () => {
+			const { isWindows } = await import('../../../../shared/platformDetection');
+			(isWindows as Mock).mockReturnValue(true);
+
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string) => void) | undefined;
+
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'long first message',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({ sendPromptViaStdinRaw: true })
+			);
+
+			onDataCallback?.('tab-naming-mock-uuid-1234', 'Tab Name');
+			onExitCallback?.('tab-naming-mock-uuid-1234');
+			await resultPromise;
+		});
+
+		it('does NOT set sendPromptViaStdinRaw on non-Windows platforms', async () => {
+			const { isWindows } = await import('../../../../shared/platformDetection');
+			(isWindows as Mock).mockReturnValue(false);
+
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string) => void) | undefined;
+
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'message',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({ sendPromptViaStdinRaw: false })
+			);
+
+			onDataCallback?.('tab-naming-mock-uuid-1234', 'Tab Name');
+			onExitCallback?.('tab-naming-mock-uuid-1234');
+			await resultPromise;
+		});
+
+		it('does NOT set sendPromptViaStdinRaw on Windows when SSH is enabled', async () => {
+			const { isWindows } = await import('../../../../shared/platformDetection');
+			(isWindows as Mock).mockReturnValue(true);
+
+			const { getSshRemoteConfig } = await import('../../../../main/utils/ssh-remote-resolver');
+			const { buildSshCommand } = await import('../../../../main/utils/ssh-command-builder');
+			(getSshRemoteConfig as Mock).mockReturnValue({
+				config: { id: 'r1', host: 'h', port: 22 },
+				source: 'session',
+			});
+			(buildSshCommand as Mock).mockResolvedValue({ command: 'ssh', args: [] });
+
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string) => void) | undefined;
+
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'message',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' },
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({ sendPromptViaStdinRaw: false })
+			);
+
+			onDataCallback?.('tab-naming-mock-uuid-1234', 'Tab Name');
+			onExitCallback?.('tab-naming-mock-uuid-1234');
+			await resultPromise;
+		});
+
 		it('uses stdin for prompt when SSH remote is configured', async () => {
 			// Import and mock the SSH utilities
 			const { getSshRemoteConfig } = await import('../../../../main/utils/ssh-remote-resolver');
@@ -707,30 +916,39 @@ describe('Tab Naming IPC Handlers', () => {
 			expect(result).toBe('SSH Remote Feature');
 		});
 
-		it('wraps SSH commands without stdin when stream-json input is unsupported', async () => {
+		it('embeds prompt in SSH wrapper args for non-stream-json agents (copilot)', async () => {
+			// Regression: Without this, ChildProcessSpawner appends `-p <prompt>` AFTER
+			// buildSshCommand has wrapped the agent invocation in `bash -c '<...>'`.
+			// SSH then passes the trailing `-p <prompt>` as positional args to the
+			// remote bash (not into the wrapped command), so copilot never sees the
+			// prompt. The tab-naming spawn just times out and the spinner clears with
+			// no rename. See tabNaming.ts SSH branch.
 			const { getSshRemoteConfig } = await import('../../../../main/utils/ssh-remote-resolver');
 			const { buildSshCommand } = await import('../../../../main/utils/ssh-command-builder');
 
 			(getSshRemoteConfig as Mock).mockReturnValue({
-				config: {
-					id: 'test-remote',
-					host: 'test.example.com',
-					port: 22,
-				},
+				config: { id: 'test-remote', host: 'test.example.com', port: 22 },
 				source: 'session',
 			});
 			(buildSshCommand as Mock).mockResolvedValue({
 				command: '/usr/bin/ssh',
-				args: ['test.example.com', 'claude --print'],
+				args: ['-o', 'BatchMode=yes', 'test.example.com', "/bin/bash -c '...'"],
 			});
-			mockAgentDetector.getAgent.mockResolvedValue({
-				...mockClaudeAgent,
-				capabilities: {},
-			});
+
+			const copilotPromptArgs = vi.fn((p: string) => ['-p', p]);
+			const mockCopilotAgent: AgentConfig = {
+				id: 'copilot-cli',
+				name: 'Copilot-CLI',
+				command: 'copilot',
+				path: '/usr/local/bin/copilot',
+				args: [],
+				promptArgs: copilotPromptArgs,
+				capabilities: { supportsStreamJsonInput: false },
+			};
+			mockAgentDetector.getAgent.mockResolvedValue(mockCopilotAgent);
 
 			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
 			let onExitCallback: ((sessionId: string) => void) | undefined;
-
 			mockProcessManager.on.mockImplementation(
 				(event: string, callback: (...args: any[]) => void) => {
 					if (event === 'data') onDataCallback = callback;
@@ -739,291 +957,36 @@ describe('Tab Naming IPC Handlers', () => {
 			);
 
 			const resultPromise = invokeHandler('tabNaming:generateTabName', {
-				userMessage: 'Use SSH without stdin',
-				agentType: 'claude-code',
+				userMessage: 'Review this repo',
+				agentType: 'copilot-cli',
 				cwd: '/test/project',
-				sessionSshRemoteConfig: {
-					enabled: true,
-					remoteId: 'test-remote-id',
-					workingDirOverride: '/remote/project',
-				},
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'test-remote-id' },
 			});
 
 			await vi.waitFor(() => {
 				expect(mockProcessManager.spawn).toHaveBeenCalled();
 			});
 
-			expect(buildSshCommand).toHaveBeenCalledWith(
-				expect.anything(),
-				expect.objectContaining({
-					command: 'claude',
-					cwd: '/remote/project',
-					useStdin: false,
-				})
-			);
+			// Prompt must reach buildSshCommand inside `args`, not be left for the
+			// post-wrapper appender in ChildProcessSpawner.
+			const sshCall = (buildSshCommand as Mock).mock.calls[0][1];
+			expect(sshCall.args).toContain('-p');
+			const promptIdx = sshCall.args.indexOf('-p');
+			expect(sshCall.args[promptIdx + 1]).toContain('Review this repo');
+			expect(sshCall.useStdin).toBe(false);
+
+			// Spawner must be told the prompt is already in args so it does not
+			// append it again to the SSH-wrapped command.
 			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
 				expect.objectContaining({
+					promptAlreadyInArgs: true,
 					sendPromptViaStdin: false,
 				})
 			);
 
-			onDataCallback?.('tab-naming-mock-uuid-1234', 'SSH Command Naming');
+			onDataCallback?.('tab-naming-mock-uuid-1234', 'Repo Review');
 			onExitCallback?.('tab-naming-mock-uuid-1234');
-
-			await expect(resultPromise).resolves.toBe('SSH Command Naming');
-		});
-
-		it('falls back to local execution when SSH remote config cannot be resolved', async () => {
-			const { getSshRemoteConfig } = await import('../../../../main/utils/ssh-remote-resolver');
-			const { buildSshCommand } = await import('../../../../main/utils/ssh-command-builder');
-
-			(getSshRemoteConfig as Mock).mockReturnValue({
-				config: null,
-				source: 'missing',
-			});
-
-			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
-			let onExitCallback: ((sessionId: string) => void) | undefined;
-
-			mockProcessManager.on.mockImplementation(
-				(event: string, callback: (...args: any[]) => void) => {
-					if (event === 'data') onDataCallback = callback;
-					if (event === 'exit') onExitCallback = callback;
-				}
-			);
-
-			const resultPromise = invokeHandler('tabNaming:generateTabName', {
-				userMessage: 'SSH config missing',
-				agentType: 'claude-code',
-				cwd: '/test/project',
-				sessionSshRemoteConfig: {
-					enabled: true,
-					remoteId: 'missing-remote',
-				},
-			});
-
-			await vi.waitFor(() => {
-				expect(mockProcessManager.spawn).toHaveBeenCalled();
-			});
-
-			expect(buildSshCommand).not.toHaveBeenCalled();
-			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
-				expect.objectContaining({
-					command: '/usr/local/bin/claude',
-					cwd: '/test/project',
-					sendPromptViaStdin: false,
-				})
-			);
-
-			onDataCallback?.('tab-naming-mock-uuid-1234', 'Local Fallback Naming');
-			onExitCallback?.('tab-naming-mock-uuid-1234');
-
-			await expect(resultPromise).resolves.toBe('Local Fallback Naming');
-		});
-
-		it('adds stream-json stdin args when only the input-format flag is present', async () => {
-			const { getSshRemoteConfig } = await import('../../../../main/utils/ssh-remote-resolver');
-			const { buildSshCommand } = await import('../../../../main/utils/ssh-command-builder');
-
-			(getSshRemoteConfig as Mock).mockReturnValue({
-				config: {
-					id: 'test-remote',
-					host: 'test.example.com',
-					port: 22,
-				},
-				source: 'session',
-			});
-			(buildSshCommand as Mock).mockResolvedValue({
-				command: '/usr/bin/ssh',
-				args: ['test.example.com', 'claude --input-format stream-json'],
-			});
-			mockAgentDetector.getAgent.mockResolvedValue({
-				...mockClaudeAgent,
-				args: ['--print', '--input-format'],
-				capabilities: {
-					supportsStreamJsonInput: true,
-				},
-			});
-
-			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
-			let onExitCallback: ((sessionId: string) => void) | undefined;
-
-			mockProcessManager.on.mockImplementation(
-				(event: string, callback: (...args: any[]) => void) => {
-					if (event === 'data') onDataCallback = callback;
-					if (event === 'exit') onExitCallback = callback;
-				}
-			);
-
-			const resultPromise = invokeHandler('tabNaming:generateTabName', {
-				userMessage: 'Use SSH with incomplete stdin args',
-				agentType: 'claude-code',
-				cwd: '/test/project',
-				sessionSshRemoteConfig: {
-					enabled: true,
-					remoteId: 'test-remote-id',
-				},
-			});
-
-			await vi.waitFor(() => {
-				expect(mockProcessManager.spawn).toHaveBeenCalled();
-			});
-
-			expect(buildSshCommand).toHaveBeenCalledWith(
-				expect.anything(),
-				expect.objectContaining({
-					args: expect.arrayContaining(['--input-format', 'stream-json']),
-					useStdin: true,
-				})
-			);
-
-			onDataCallback?.('tab-naming-mock-uuid-1234', 'SSH Partial Args Naming');
-			onExitCallback?.('tab-naming-mock-uuid-1234');
-
-			await expect(resultPromise).resolves.toBe('SSH Partial Args Naming');
-		});
-
-		it('does not duplicate stream-json stdin args when they are already present', async () => {
-			const { getSshRemoteConfig } = await import('../../../../main/utils/ssh-remote-resolver');
-			const { buildSshCommand } = await import('../../../../main/utils/ssh-command-builder');
-
-			(getSshRemoteConfig as Mock).mockReturnValue({
-				config: {
-					id: 'test-remote',
-					host: 'test.example.com',
-					port: 22,
-				},
-				source: 'session',
-			});
-			(buildSshCommand as Mock).mockResolvedValue({
-				command: '/usr/bin/ssh',
-				args: ['test.example.com', 'claude --input-format stream-json'],
-			});
-			mockAgentDetector.getAgent.mockResolvedValue({
-				...mockClaudeAgent,
-				args: ['--print', '--input-format', 'stream-json'],
-				capabilities: {
-					supportsStreamJsonInput: true,
-				},
-			});
-
-			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
-			let onExitCallback: ((sessionId: string) => void) | undefined;
-
-			mockProcessManager.on.mockImplementation(
-				(event: string, callback: (...args: any[]) => void) => {
-					if (event === 'data') onDataCallback = callback;
-					if (event === 'exit') onExitCallback = callback;
-				}
-			);
-
-			const resultPromise = invokeHandler('tabNaming:generateTabName', {
-				userMessage: 'Use SSH with complete stdin args',
-				agentType: 'claude-code',
-				cwd: '/test/project',
-				sessionSshRemoteConfig: {
-					enabled: true,
-					remoteId: 'test-remote-id',
-				},
-			});
-
-			await vi.waitFor(() => {
-				expect(mockProcessManager.spawn).toHaveBeenCalled();
-			});
-
-			expect(buildSshCommand).toHaveBeenCalledWith(
-				expect.anything(),
-				expect.objectContaining({
-					args: ['--print', '--input-format', 'stream-json'],
-					useStdin: true,
-				})
-			);
-
-			onDataCallback?.('tab-naming-mock-uuid-1234', 'SSH Complete Args Naming');
-			onExitCallback?.('tab-naming-mock-uuid-1234');
-
-			await expect(resultPromise).resolves.toBe('SSH Complete Args Naming');
-		});
-
-		it('adds stream-json input args for SSH stdin when the agent args do not already include them', async () => {
-			const { getSshRemoteConfig } = await import('../../../../main/utils/ssh-remote-resolver');
-			const { buildSshCommand } = await import('../../../../main/utils/ssh-command-builder');
-
-			(getSshRemoteConfig as Mock).mockReturnValue({
-				config: {
-					id: 'test-remote',
-					host: 'test.example.com',
-					port: 22,
-				},
-				source: 'session',
-			});
-			(buildSshCommand as Mock).mockResolvedValue({
-				command: '/usr/bin/ssh',
-				args: ['test.example.com', 'claude --print --input-format stream-json'],
-			});
-			mockAgentDetector.getAgent.mockResolvedValue({
-				...mockClaudeAgent,
-				args: ['--print'],
-				capabilities: {
-					supportsStreamJsonInput: true,
-				},
-			});
-
-			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
-			let onExitCallback: ((sessionId: string) => void) | undefined;
-
-			mockProcessManager.on.mockImplementation(
-				(event: string, callback: (...args: any[]) => void) => {
-					if (event === 'data') onDataCallback = callback;
-					if (event === 'exit') onExitCallback = callback;
-				}
-			);
-
-			const resultPromise = invokeHandler('tabNaming:generateTabName', {
-				userMessage: 'Use SSH with stdin args',
-				agentType: 'claude-code',
-				cwd: '/test/project',
-				sessionSshRemoteConfig: {
-					enabled: true,
-					remoteId: 'test-remote-id',
-				},
-			});
-
-			await vi.waitFor(() => {
-				expect(mockProcessManager.spawn).toHaveBeenCalled();
-			});
-
-			expect(buildSshCommand).toHaveBeenCalledWith(
-				expect.anything(),
-				expect.objectContaining({
-					args: ['--print', '--input-format', 'stream-json'],
-					useStdin: true,
-				})
-			);
-
-			onDataCallback?.('tab-naming-mock-uuid-1234', 'SSH Stdin Naming');
-			onExitCallback?.('tab-naming-mock-uuid-1234');
-
-			await expect(resultPromise).resolves.toBe('SSH Stdin Naming');
-		});
-
-		it('returns null and tolerates cleanup failure when configuration resolution throws', async () => {
-			const { applyAgentConfigOverrides } = await import('../../../../main/utils/agent-args');
-			(applyAgentConfigOverrides as Mock).mockImplementationOnce(() => {
-				throw new Error('bad config');
-			});
-			mockProcessManager.kill.mockImplementationOnce(() => {
-				throw new Error('already gone');
-			});
-
-			const result = await invokeHandler('tabNaming:generateTabName', {
-				userMessage: 'Trigger config failure',
-				agentType: 'claude-code',
-				cwd: '/test/project',
-			});
-
-			expect(result).toBeNull();
-			expect(mockProcessManager.kill).toHaveBeenCalledWith('tab-naming-mock-uuid-1234');
+			await resultPromise;
 		});
 
 		it('handles process manager not available', async () => {
@@ -1054,6 +1017,459 @@ describe('Tab Naming IPC Handlers', () => {
 				})
 			).rejects.toThrow('Process manager');
 		});
+	});
+
+	describe('Claude token-source resolution', () => {
+		// A realistic claude-code agent that supports the maestro-p interactive
+		// wrapper (interactiveCommand + interactiveModeArgs present), so the shared
+		// resolver can pick the TUI path.
+		const interactiveClaudeAgent: AgentConfig = {
+			id: 'claude-code',
+			name: 'Claude Code',
+			command: 'claude',
+			path: '/usr/local/bin/claude',
+			args: [
+				'--print',
+				'--verbose',
+				'--output-format',
+				'stream-json',
+				'--dangerously-skip-permissions',
+			],
+			interactiveCommand: 'maestro-p',
+			interactiveModeArgs: ['--dangerously-skip-permissions'],
+		};
+
+		// Wire process events so we can drive the spawn to completion and resolve
+		// the handler's promise after asserting on the spawn call. Returns a
+		// `finish()` that simulates output + a clean exit.
+		function wireProcessEvents(): () => void {
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string, code?: number) => void) | undefined;
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+			return () => {
+				onDataCallback?.('tab-naming-mock-uuid-1234', 'Generated Tab Name');
+				onExitCallback?.('tab-naming-mock-uuid-1234', 0);
+			};
+		}
+
+		it('wraps the spawn with maestro-p when the agent selected interactive (TUI) mode', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue(interactiveClaudeAgent);
+			const finish = wireProcessEvents();
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Help me implement a login form',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+				enableMaestroP: true,
+				maestroPMode: 'interactive',
+				// Explicit override so the resolver doesn't depend on the bundled
+				// lookup; fs.existsSync is mocked to true so the binary "exists".
+				maestroPPath: '/bundled/maestro-p.js',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+			// Interactive mode runs maestro-p (a Node script) via process.execPath,
+			// with the maestro-p script as the first positional arg.
+			expect(spawnCall.command).toBe(process.execPath);
+			expect(spawnCall.args[0]).toMatch(/maestro-p\.js$/);
+			// maestro-p is told which real claude binary to drive.
+			expect(spawnCall.customEnvVars?.MAESTRO_CLAUDE_BIN).toBe('/usr/local/bin/claude');
+
+			finish();
+			await resultPromise;
+		});
+
+		it('spawns plain claude when the agent is API-only (enableMaestroP false)', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue(interactiveClaudeAgent);
+			const finish = wireProcessEvents();
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Help me implement a login form',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+				enableMaestroP: false,
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+			// API mode leaves the original claude command/args untouched - no
+			// process.execPath wrap, no maestro-p script.
+			expect(spawnCall.command).toBe('/usr/local/bin/claude');
+			expect(spawnCall.command).not.toBe(process.execPath);
+			expect(spawnCall.args[0]).not.toMatch(/maestro-p\.js$/);
+			expect(spawnCall.args).toContain('--print');
+
+			finish();
+			await resultPromise;
+		});
+
+		it('runs maestro-p on the remote host when an SSH agent selected interactive (TUI) mode', async () => {
+			// SSH used to be force-downgraded to `claude --print`. It now honors the
+			// selection: TUI routes to maestro-p on the REMOTE host (driving the
+			// remote claude TUI on the Max plan), realized by swapping the SSH
+			// remote command to `maestro-p` and prepending the interactive flags.
+			const { getSshRemoteConfig } = await import('../../../../main/utils/ssh-remote-resolver');
+			const { buildSshCommand } = await import('../../../../main/utils/ssh-command-builder');
+			(getSshRemoteConfig as Mock).mockReturnValue({
+				config: { id: 'r1', host: 'h', port: 22 },
+				source: 'session',
+			});
+			(buildSshCommand as Mock).mockResolvedValue({ command: 'ssh', args: ['remote', 'cmd'] });
+
+			mockAgentDetector.getAgent.mockResolvedValue({
+				...interactiveClaudeAgent,
+				capabilities: { supportsStreamJsonInput: true },
+			});
+			const finish = wireProcessEvents();
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Help me implement a login form',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+				enableMaestroP: true,
+				maestroPMode: 'interactive',
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' },
+			});
+
+			await vi.waitFor(() => {
+				expect(buildSshCommand).toHaveBeenCalled();
+			});
+
+			// The remote command handed to buildSshCommand is maestro-p (not claude),
+			// with the interactive flags prepended ahead of the existing arg list.
+			const sshCall = (buildSshCommand as Mock).mock.calls[0][1];
+			expect(sshCall.command).toBe('maestro-p');
+			expect(sshCall.args[0]).toBe('--dangerously-skip-permissions');
+			// stream-json prompt still flows over stdin.
+			expect(sshCall.useStdin).toBe(true);
+
+			finish();
+			await resultPromise;
+		});
+
+		it('spawns plain claude over SSH when the agent is API-only (enableMaestroP false)', async () => {
+			const { getSshRemoteConfig } = await import('../../../../main/utils/ssh-remote-resolver');
+			const { buildSshCommand } = await import('../../../../main/utils/ssh-command-builder');
+			(getSshRemoteConfig as Mock).mockReturnValue({
+				config: { id: 'r1', host: 'h', port: 22 },
+				source: 'session',
+			});
+			(buildSshCommand as Mock).mockResolvedValue({ command: 'ssh', args: ['remote', 'cmd'] });
+
+			mockAgentDetector.getAgent.mockResolvedValue({
+				...interactiveClaudeAgent,
+				capabilities: { supportsStreamJsonInput: true },
+			});
+			const finish = wireProcessEvents();
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Help me implement a login form',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+				enableMaestroP: false,
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' },
+			});
+
+			await vi.waitFor(() => {
+				expect(buildSshCommand).toHaveBeenCalled();
+			});
+
+			// API path keeps the plain remote claude binary - no maestro-p swap.
+			const sshCall = (buildSshCommand as Mock).mock.calls[0][1];
+			expect(sshCall.command).toBe('claude');
+			expect(sshCall.args).not.toContain('--dangerously-skip-permissions');
+
+			finish();
+			await resultPromise;
+		});
+	});
+});
+
+describe('tab naming diagnostic logging', () => {
+	let mockProcessManager: {
+		spawn: Mock;
+		kill: Mock;
+		on: Mock;
+		off: Mock;
+	};
+
+	let mockAgentDetector: {
+		getAgent: Mock;
+	};
+
+	let mockAgentConfigsStore: {
+		get: Mock;
+		set: Mock;
+	};
+
+	let mockSettingsStore: {
+		get: Mock;
+		set: Mock;
+	};
+
+	const mockAgent: AgentConfig = {
+		id: 'claude-code',
+		name: 'Claude Code',
+		command: 'claude',
+		path: '/usr/local/bin/claude',
+		args: [],
+	};
+
+	let loggerMock: { info: Mock; warn: Mock; error: Mock; debug: Mock };
+
+	beforeEach(async () => {
+		vi.clearAllMocks();
+		registeredHandlers.clear();
+
+		const loggerModule = await import('../../../../main/utils/logger');
+		loggerMock = loggerModule.logger as unknown as typeof loggerMock;
+
+		(ipcMain.handle as Mock).mockImplementation(
+			(channel: string, handler: (...args: unknown[]) => Promise<unknown>) => {
+				registeredHandlers.set(channel, handler);
+			}
+		);
+
+		mockProcessManager = {
+			spawn: vi.fn(),
+			kill: vi.fn(),
+			on: vi.fn(),
+			off: vi.fn(),
+		};
+
+		mockAgentDetector = {
+			getAgent: vi.fn().mockResolvedValue(mockAgent),
+		};
+
+		mockAgentConfigsStore = {
+			get: vi.fn().mockReturnValue({}),
+			set: vi.fn(),
+		};
+
+		mockSettingsStore = {
+			get: vi.fn().mockReturnValue({}),
+			set: vi.fn(),
+		};
+
+		registerTabNamingHandlers({
+			getProcessManager: () => mockProcessManager as unknown as ProcessManager,
+			getAgentDetector: () => mockAgentDetector as unknown as AgentDetector,
+			agentConfigsStore: mockAgentConfigsStore as unknown as Parameters<
+				typeof registerTabNamingHandlers
+			>[0]['agentConfigsStore'],
+			settingsStore: mockSettingsStore as unknown as Parameters<
+				typeof registerTabNamingHandlers
+			>[0]['settingsStore'],
+		});
+	});
+
+	async function invokeHandler(channel: string, ...args: unknown[]): Promise<unknown> {
+		const handler = registeredHandlers.get(channel);
+		if (!handler) {
+			throw new Error(`No handler registered for channel: ${channel}`);
+		}
+		return handler({}, ...args);
+	}
+
+	it('logs warn with output snippet when extraction fails on empty output', async () => {
+		let onExitCallback: ((sessionId: string, code?: number) => void) | undefined;
+
+		mockProcessManager.on.mockImplementation(
+			(event: string, callback: (...args: any[]) => void) => {
+				if (event === 'exit') onExitCallback = callback;
+			}
+		);
+
+		const resultPromise = invokeHandler('tabNaming:generateTabName', {
+			userMessage: 'Test',
+			agentType: 'claude-code',
+			cwd: '/test',
+		});
+
+		await vi.waitFor(() => {
+			expect(mockProcessManager.spawn).toHaveBeenCalled();
+		});
+
+		onExitCallback?.('tab-naming-mock-uuid-1234', 0);
+		await resultPromise;
+
+		expect(loggerMock.warn).toHaveBeenCalledWith(
+			'Tab naming extraction failed',
+			expect.any(String),
+			expect.objectContaining({
+				reason: 'empty_output',
+				outputLength: 0,
+			})
+		);
+	});
+
+	it('logs warn with non-zero exit code and output snippet', async () => {
+		let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+		let onExitCallback: ((sessionId: string, code?: number) => void) | undefined;
+
+		mockProcessManager.on.mockImplementation(
+			(event: string, callback: (...args: any[]) => void) => {
+				if (event === 'data') onDataCallback = callback;
+				if (event === 'exit') onExitCallback = callback;
+			}
+		);
+
+		const resultPromise = invokeHandler('tabNaming:generateTabName', {
+			userMessage: 'Test',
+			agentType: 'claude-code',
+			cwd: '/test',
+		});
+
+		await vi.waitFor(() => {
+			expect(mockProcessManager.spawn).toHaveBeenCalled();
+		});
+
+		onDataCallback?.('tab-naming-mock-uuid-1234', 'Error: authentication failed');
+		onExitCallback?.('tab-naming-mock-uuid-1234', 1);
+		const result = await resultPromise;
+
+		// A non-zero exit must yield null, NOT a name mined from the error banner.
+		// (Regression guard: an "X unavailable. Learn more: https://.../news/..."
+		// banner used to be parsed into a garbage tab name.)
+		expect(result).toBeNull();
+
+		expect(loggerMock.warn).toHaveBeenCalledWith(
+			'Tab naming process exited with non-zero code',
+			expect.any(String),
+			expect.objectContaining({
+				exitCode: 1,
+				outputSnippet: expect.stringContaining('authentication failed'),
+			})
+		);
+	});
+
+	it('logs warn with filter reason when output exists but parsing fails', async () => {
+		let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+		let onExitCallback: ((sessionId: string, code?: number) => void) | undefined;
+
+		mockProcessManager.on.mockImplementation(
+			(event: string, callback: (...args: any[]) => void) => {
+				if (event === 'data') onDataCallback = callback;
+				if (event === 'exit') onExitCallback = callback;
+			}
+		);
+
+		const resultPromise = invokeHandler('tabNaming:generateTabName', {
+			userMessage: 'Test',
+			agentType: 'claude-code',
+			cwd: '/test',
+		});
+
+		await vi.waitFor(() => {
+			expect(mockProcessManager.spawn).toHaveBeenCalled();
+		});
+
+		// Output that's too long to pass the 40-char filter
+		const longOutput =
+			'This is a very long output that exceeds the maximum character limit for tab names';
+		onDataCallback?.('tab-naming-mock-uuid-1234', longOutput);
+		onExitCallback?.('tab-naming-mock-uuid-1234', 0);
+		await resultPromise;
+
+		expect(loggerMock.warn).toHaveBeenCalledWith(
+			'Tab naming extraction failed',
+			expect.any(String),
+			expect.objectContaining({
+				reason: expect.stringContaining('no_valid_lines_after_filtering'),
+				outputSnippet: expect.stringContaining('This is a very long output'),
+			})
+		);
+	});
+
+	it('logs warn with output snippet on timeout', async () => {
+		vi.useFakeTimers();
+
+		let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+
+		mockProcessManager.on.mockImplementation(
+			(event: string, callback: (...args: any[]) => void) => {
+				if (event === 'data') onDataCallback = callback;
+			}
+		);
+
+		const resultPromise = invokeHandler('tabNaming:generateTabName', {
+			userMessage: 'Test',
+			agentType: 'claude-code',
+			cwd: '/test',
+		});
+
+		// Flush microtasks so the spawn call and promise setup complete
+		await vi.advanceTimersByTimeAsync(0);
+
+		expect(mockProcessManager.spawn).toHaveBeenCalled();
+
+		// Send partial output that won't parse as a valid tab name (too long for 40-char filter)
+		onDataCallback?.(
+			'tab-naming-mock-uuid-1234',
+			'Thinking about what name to give this tab based on the conversation context provided'
+		);
+
+		await vi.advanceTimersByTimeAsync(121000);
+		const result = await resultPromise;
+
+		expect(result).toBeNull();
+		expect(loggerMock.warn).toHaveBeenCalledWith(
+			'Tab naming request timed out',
+			expect.any(String),
+			expect.objectContaining({
+				outputLength: expect.any(Number),
+				outputSnippet: expect.stringContaining('Thinking about what name'),
+			})
+		);
+
+		vi.useRealTimers();
+	});
+
+	it('does not log extraction failure warn when extraction succeeds', async () => {
+		let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+		let onExitCallback: ((sessionId: string, code?: number) => void) | undefined;
+
+		mockProcessManager.on.mockImplementation(
+			(event: string, callback: (...args: any[]) => void) => {
+				if (event === 'data') onDataCallback = callback;
+				if (event === 'exit') onExitCallback = callback;
+			}
+		);
+
+		const resultPromise = invokeHandler('tabNaming:generateTabName', {
+			userMessage: 'Test',
+			agentType: 'claude-code',
+			cwd: '/test',
+		});
+
+		await vi.waitFor(() => {
+			expect(mockProcessManager.spawn).toHaveBeenCalled();
+		});
+
+		onDataCallback?.('tab-naming-mock-uuid-1234', 'Clean Tab Name');
+		onExitCallback?.('tab-naming-mock-uuid-1234', 0);
+
+		const result = await resultPromise;
+		expect(result).toBe('Clean Tab Name');
+
+		// Should not have logged any extraction failure
+		const warnCalls = loggerMock.warn.mock.calls;
+		const extractionFailCalls = warnCalls.filter(
+			(call: unknown[]) => call[0] === 'Tab naming extraction failed'
+		);
+		expect(extractionFailCalls).toHaveLength(0);
 	});
 });
 

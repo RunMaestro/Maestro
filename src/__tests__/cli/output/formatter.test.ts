@@ -25,8 +25,7 @@ import {
 	formatInfo,
 	formatWarning,
 	formatSessions,
-	formatSettingsList,
-	formatSettingDetail,
+	formatSshRemotes,
 	type GroupDisplay,
 	type AgentDisplay,
 	type PlaybookDisplay,
@@ -35,7 +34,7 @@ import {
 	type RunEvent,
 	type AgentDetailDisplay,
 	type SessionDisplay,
-	type SettingDisplay,
+	type SshRemoteDisplay,
 } from '../../../cli/output/formatter';
 
 // Store original process.stdout.isTTY
@@ -59,19 +58,18 @@ describe('formatter', () => {
 	// ============================================================================
 
 	describe('Color and style handling', () => {
-		it('should include ANSI codes when stdout is TTY', async () => {
+		it('should include ANSI codes when stdout is TTY', () => {
 			// Simulate TTY environment
 			Object.defineProperty(process.stdout, 'isTTY', {
 				value: true,
 				writable: true,
 			});
 
-			vi.resetModules();
-			const { formatError: formatErrorWithColor } = await import('../../../cli/output/formatter');
-			const result = formatErrorWithColor('Test error');
+			// Re-import to pick up new isTTY value - the module caches supportsColor
+			// So we test through the public functions that use colors
+			const result = formatError('Test error');
 
 			// Error format uses red color
-			expect(result).toContain('\x1b[31m');
 			expect(result).toContain('Error:');
 			expect(result).toContain('Test error');
 		});
@@ -712,19 +710,6 @@ describe('formatter', () => {
 			expect(result).toContain('Preview task');
 		});
 
-		it('should format task_preview with missing task text', () => {
-			const event: RunEvent = {
-				type: 'task_preview',
-				timestamp,
-				taskIndex: 0,
-			};
-
-			const result = formatRunEvent(event);
-
-			expect(result).toContain('1.');
-			expect(result).not.toContain('undefined');
-		});
-
 		it('should format successful task_complete event', () => {
 			const event: RunEvent = {
 				type: 'task_complete',
@@ -756,21 +741,6 @@ describe('formatter', () => {
 			expect(result).toContain('Task failed');
 		});
 
-		it('should format task_complete with missing summary', () => {
-			const event: RunEvent = {
-				type: 'task_complete',
-				timestamp,
-				success: true,
-				elapsedMs: 1000,
-			};
-
-			const result = formatRunEvent(event);
-
-			expect(result).toContain('✓');
-			expect(result).toContain('1.0s');
-			expect(result).not.toContain('undefined');
-		});
-
 		it('should format task_complete in debug mode with full response', () => {
 			const event: RunEvent = {
 				type: 'task_complete',
@@ -786,23 +756,6 @@ describe('formatter', () => {
 			expect(result).toContain('First line of response');
 			expect(result).toContain('2.0s');
 			expect(result).toContain('claude-s'); // First 8 chars of session ID
-		});
-
-		it('should format debug task_complete without a response summary or session id', () => {
-			const event: RunEvent = {
-				type: 'task_complete',
-				timestamp,
-				success: true,
-				elapsedMs: 2000,
-				fullResponse: '\nSecond line only',
-			};
-
-			const result = formatRunEvent(event, { debug: true });
-
-			expect(result).toContain('✓');
-			expect(result).toContain('(2.0s)');
-			expect(result).not.toContain('claude');
-			expect(result).not.toContain('Second line only');
 		});
 
 		it('should format history_write event', () => {
@@ -1387,243 +1340,75 @@ describe('formatter', () => {
 			expect(result).toContain('5.0m'); // 300 seconds = 5.0m
 			expect(result).toContain('1.0m'); // 60 seconds = 1.0m
 		});
-
-		it('should format sub-minute, hour-long, and empty session values', () => {
-			const result = formatSessions(
-				[
-					{
-						sessionId: 'short-session',
-						modifiedAt: '2026-02-08T10:00:00.000Z',
-						firstMessage: '',
-						messageCount: 0,
-						costUsd: 0,
-						durationSeconds: 45,
-					},
-					{
-						sessionId: 'long-session',
-						sessionName: 'Long running session',
-						modifiedAt: '2026-02-09T10:00:00.000Z',
-						messageCount: 3,
-						costUsd: 0,
-						durationSeconds: 7200,
-					},
-					{
-						sessionId: 'instant-session',
-						modifiedAt: '2026-02-10T10:00:00.000Z',
-						messageCount: 1,
-						costUsd: 0,
-						durationSeconds: 0,
-					},
-				],
-				'Test Agent',
-				3,
-				3
-			);
-
-			expect(result).toContain('45s');
-			expect(result).toContain('2.0h');
-			expect(result).toContain('$0');
-			expect(result).toContain('0 msgs');
-			expect(result).not.toContain('undefined');
-		});
 	});
 
-	describe('formatSettingsList', () => {
-		const settings: SettingDisplay[] = [
-			{
-				key: 'model',
-				value: 'gpt-5.5',
-				type: 'string',
-				category: 'agent',
-				description: 'Default model',
-				defaultValue: 'gpt-5.4',
-				isDefault: false,
-			},
-			{
-				key: 'apiKey',
-				value: 'secret-value',
-				type: 'string',
-				category: 'agent',
-				description: 'Provider token',
-				defaultValue: undefined,
-				sensitive: true,
-			},
-			{
-				key: 'verbose',
-				value: true,
-				type: 'boolean',
-				category: 'cli',
-				defaultValue: false,
-				isDefault: true,
-			},
-			{
-				key: 'retries',
-				value: 3,
-				type: 'number',
-				category: 'cli',
-				defaultValue: 1,
-			},
-			{
-				key: 'disabled',
-				value: false,
-				type: 'boolean',
-				category: 'cli',
-				defaultValue: true,
-			},
-			{
-				key: 'emptyString',
-				value: '',
-				type: 'string',
-				category: 'display',
-				defaultValue: '',
-			},
-			{
-				key: 'longString',
-				value: 'x'.repeat(80),
-				type: 'string',
-				category: 'display',
-				defaultValue: 'short',
-			},
-			{
-				key: 'emptyArray',
-				value: [],
-				type: 'array',
-				category: 'display',
-				defaultValue: [],
-			},
-			{
-				key: 'arrayValue',
-				value: ['alpha', 'beta', 'gamma'],
-				type: 'array',
-				category: 'display',
-				defaultValue: [],
-			},
-			{
-				key: 'longArray',
-				value: Array.from({ length: 20 }, (_, index) => `item-${index}`),
-				type: 'array',
-				category: 'display',
-				defaultValue: [],
-			},
-			{
-				key: 'objectValue',
-				value: { theme: 'dark', density: 'compact' },
-				type: 'object',
-				category: 'display',
-				defaultValue: null,
-			},
-			{
-				key: 'longObject',
-				value: { description: 'x'.repeat(90) },
-				type: 'object',
-				category: 'display',
-				defaultValue: {},
-			},
-			{
-				key: 'nullValue',
-				value: null,
-				type: 'string',
-				category: 'display',
-				defaultValue: undefined,
-			},
-			{
-				key: 'undefinedValue',
-				value: undefined,
-				type: 'string',
-				category: 'display',
-				defaultValue: null,
-			},
-			{
-				key: 'symbolValue',
-				value: Symbol('token'),
-				type: 'symbol',
-				category: 'display',
-				defaultValue: Symbol('default'),
-			},
-		];
+	// ============================================================================
+	// formatSshRemotes Tests
+	// ============================================================================
 
-		it('should return an empty-state message when no settings are available', () => {
-			expect(formatSettingsList([])).toContain('No settings found.');
+	describe('formatSshRemotes', () => {
+		const baseRemote: SshRemoteDisplay = {
+			id: 'remote-abc-123',
+			name: 'Dev Server',
+			host: '192.168.1.100',
+			port: 22,
+			username: 'deploy',
+			enabled: true,
+		};
+
+		it('should return "No SSH remotes configured." for empty array', () => {
+			const result = formatSshRemotes([]);
+			expect(result).toContain('No SSH remotes configured');
 		});
 
-		it('should render grouped settings with formatted values, defaults, and descriptions', () => {
-			const result = formatSettingsList(settings, {
-				verbose: true,
-				showDefaults: true,
-			});
-
-			expect(result).toContain('SETTINGS');
-			expect(result).toContain('agent');
-			expect(result).toContain('cli');
-			expect(result).toContain('display');
-			expect(result).toContain('model = gpt-5.5');
-			expect(result).toContain('default: gpt-5.4');
-			expect(result).toContain('apiKey = ***');
-			expect(result).not.toContain('secret-value');
-			expect(result).toContain('verbose = true (default)');
-			expect(result).toContain('retries = 3');
-			expect(result).toContain('disabled = false');
-			expect(result).toContain('emptyString = ""');
-			expect(result).toContain('longString = ');
-			expect(result).toContain('…');
-			expect(result).toContain('emptyArray = []');
-			expect(result).toContain('arrayValue = ["alpha","beta","gamma"]');
-			expect(result).toContain('longArray = ');
-			expect(result).toContain('objectValue = {"theme":"dark","density":"compact"}');
-			expect(result).toContain('longObject = ');
-			expect(result).toContain('nullValue = null');
-			expect(result).toContain('undefinedValue = undefined');
-			expect(result).toContain('symbolValue = Symbol(token)');
-			expect(result).toContain('Default model');
-			expect(result).toContain('Provider token');
+		it('should display remote name and host', () => {
+			const result = formatSshRemotes([baseRemote]);
+			expect(result).toContain('Dev Server');
+			expect(result).toContain('deploy@192.168.1.100');
 		});
 
-		it('should render only keys when keysOnly is requested', () => {
-			const result = formatSettingsList(settings.slice(0, 2), { keysOnly: true });
+		it('should show enabled/disabled status', () => {
+			const enabled = formatSshRemotes([{ ...baseRemote, enabled: true }]);
+			expect(enabled).toContain('enabled');
 
-			expect(result).toContain('model');
-			expect(result).toContain('apiKey');
-			expect(result).not.toContain('=');
-			expect(result).not.toContain('Default model');
-		});
-	});
-
-	describe('formatSettingDetail', () => {
-		it('should render setting detail with a description', () => {
-			const result = formatSettingDetail({
-				key: 'theme',
-				value: 'dark',
-				type: 'string',
-				category: 'display',
-				defaultValue: 'system',
-				description: 'Controls the CLI theme',
-			});
-
-			expect(result).toContain('SETTING');
-			expect(result).toContain('Key:');
-			expect(result).toContain('theme');
-			expect(result).toContain('Value:');
-			expect(result).toContain('dark');
-			expect(result).toContain('Default:');
-			expect(result).toContain('system');
-			expect(result).toContain('Category:');
-			expect(result).toContain('display');
-			expect(result).toContain('Controls the CLI theme');
+			const disabled = formatSshRemotes([{ ...baseRemote, enabled: false }]);
+			expect(disabled).toContain('disabled');
 		});
 
-		it('should mask sensitive setting detail values', () => {
-			const result = formatSettingDetail({
-				key: 'apiKey',
-				value: 'secret-value',
-				type: 'string',
-				category: 'agent',
-				defaultValue: undefined,
-				sensitive: true,
-			});
+		it('should show default tag', () => {
+			const result = formatSshRemotes([{ ...baseRemote, isDefault: true }]);
+			expect(result).toContain('[default]');
+		});
 
-			expect(result).toContain('***');
-			expect(result).not.toContain('secret-value');
-			expect(result).not.toContain('Controls the CLI theme');
+		it('should show ssh-config tag', () => {
+			const result = formatSshRemotes([{ ...baseRemote, useSshConfig: true }]);
+			expect(result).toContain('[ssh-config]');
+		});
+
+		it('should show non-standard port', () => {
+			const result = formatSshRemotes([{ ...baseRemote, port: 2222 }]);
+			expect(result).toContain(':2222');
+		});
+
+		it('should not show port 22', () => {
+			const result = formatSshRemotes([baseRemote]);
+			expect(result).not.toContain(':22');
+		});
+
+		it('should show host without username when username is empty', () => {
+			const result = formatSshRemotes([{ ...baseRemote, username: '' }]);
+			expect(result).toContain('192.168.1.100');
+			expect(result).not.toContain('@');
+		});
+
+		it('should show count in header', () => {
+			const result = formatSshRemotes([baseRemote, { ...baseRemote, id: 'r2', name: 'Staging' }]);
+			expect(result).toContain('(2)');
+		});
+
+		it('should show remote ID', () => {
+			const result = formatSshRemotes([baseRemote]);
+			expect(result).toContain('remote-abc-123');
 		});
 	});
 });

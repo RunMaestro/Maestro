@@ -15,19 +15,24 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Search, ArrowRight, X, Loader2, Circle } from 'lucide-react';
-import type { Theme, Session, AITab, ToolType } from '../types';
+import { GhostIconButton } from './ui/GhostIconButton';
+import { Spinner } from './ui/Spinner';
+import type { Theme, Session, ToolType } from '../types';
 import type { MergeResult } from '../types/contextMerge';
 import { fuzzyMatchWithScore } from '../utils/search';
-import { useLayerStack } from '../contexts/LayerStackContext';
+import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { formatTokensCompact } from '../utils/formatters';
+import { estimateTokensFromLogs } from '../../shared/formatters';
 import { getAgentIcon } from '../constants/agentIcons';
 import { ScreenReaderAnnouncement, useAnnouncement } from './Wizard/ScreenReaderAnnouncement';
+import { getTabDisplayName } from '../utils/tabHelpers';
+import { logger } from '../utils/logger';
 
 /**
  * Session availability status for display in the selection list
  */
-export type SessionStatus = 'idle' | 'busy';
+export type SessionStatus = 'idle' | 'busy' | 'current';
 
 /**
  * Session option for display in the selection list
@@ -76,6 +81,10 @@ function getStatusLabel(status: SessionStatus): string {
 			return 'Idle';
 		case 'busy':
 			return 'Busy';
+		case 'current':
+			return 'Source';
+		default:
+			return '';
 	}
 }
 
@@ -88,6 +97,10 @@ function getStatusColor(status: SessionStatus, theme: Theme): string {
 			return theme.colors.success;
 		case 'busy':
 			return theme.colors.warning;
+		case 'current':
+			return theme.colors.textDim;
+		default:
+			return theme.colors.textDim;
 	}
 }
 
@@ -98,25 +111,7 @@ function getSessionDisplayName(session: Session): string {
 	return session.name || session.projectRoot.split('/').pop() || 'Unnamed Session';
 }
 
-/**
- * Estimate token count from log entries
- * Uses a simple heuristic: ~4 characters per token (average for English text)
- */
-function estimateTokens(logs: { text: string }[]): number {
-	const totalChars = logs.reduce((sum, log) => sum + (log.text?.length || 0), 0);
-	return Math.round(totalChars / 4);
-}
-
-/**
- * Get display name for a tab
- */
-function getTabDisplayName(tab: AITab): string {
-	if (tab.name) return tab.name;
-	if (tab.agentSessionId) {
-		return tab.agentSessionId.split('-')[0].toUpperCase();
-	}
-	return 'New Tab';
-}
+const estimateTokens = estimateTokensFromLogs;
 
 /**
  * SendToAgentModal Component
@@ -163,26 +158,13 @@ export function SendToAgentModal({
 		setSelectedIndex(0);
 	}, []);
 
-	const { registerLayer, unregisterLayer } = useLayerStack();
-
 	// Register layer on mount
-	useEffect(() => {
-		if (!isOpen) return;
-
-		const id = registerLayer({
-			type: 'modal',
-			priority: MODAL_PRIORITIES.SEND_TO_AGENT,
-			blocksLowerLayers: true,
-			capturesFocus: true,
-			focusTrap: 'strict',
-			ariaLabel: 'Send Context to Agent',
-			onEscape: () => onCloseRef.current(),
-		});
-
-		return () => {
-			unregisterLayer(id);
-		};
-	}, [isOpen, registerLayer, unregisterLayer]);
+	useModalLayer(
+		MODAL_PRIORITIES.SEND_TO_AGENT,
+		'Send Context to Agent',
+		() => onCloseRef.current(),
+		{ enabled: isOpen }
+	);
 
 	// Focus input on mount
 	useEffect(() => {
@@ -223,7 +205,15 @@ export function SendToAgentModal({
 				return true;
 			})
 			.map((session) => {
-				const status: SessionStatus = session.state === 'busy' ? 'busy' : 'idle';
+				let status: SessionStatus;
+
+				if (session.id === sourceSession.id) {
+					status = 'current';
+				} else if (session.state === 'busy') {
+					status = 'busy';
+				} else {
+					status = 'idle';
+				}
 
 				return {
 					id: session.id,
@@ -294,28 +284,33 @@ export function SendToAgentModal({
 	}, [isSending, announce]);
 
 	// Handle session selection
-	const handleSelectSession = useCallback((sessionId: string) => {
-		setSelectedSessionId(sessionId);
-	}, []);
-
-	// Handle send action
-	const handleSend = useCallback(
-		async (targetSessionId: string) => {
-			setIsSending(true);
-			try {
-				await onSend(targetSessionId, {
-					groomContext,
-					targetSessionId,
-				});
-				onClose();
-			} catch (error) {
-				console.error('Send to session failed:', error);
-			} finally {
-				setIsSending(false);
+	const handleSelectSession = useCallback(
+		(sessionId: string) => {
+			const session = sessionOptions.find((s) => s.id === sessionId);
+			if (session && session.status !== 'current') {
+				setSelectedSessionId(sessionId);
 			}
 		},
-		[groomContext, onSend, onClose]
+		[sessionOptions]
 	);
+
+	// Handle send action
+	const handleSend = useCallback(async () => {
+		if (!selectedSessionId) return;
+
+		setIsSending(true);
+		try {
+			await onSend(selectedSessionId, {
+				groomContext,
+				targetSessionId: selectedSessionId,
+			});
+			onClose();
+		} catch (error) {
+			logger.error('Send to session failed:', undefined, error);
+		} finally {
+			setIsSending(false);
+		}
+	}, [selectedSessionId, groomContext, onSend, onClose]);
 
 	// Handle key down - list navigation (up/down only)
 	const handleKeyDown = useCallback(
@@ -343,7 +338,9 @@ export function SendToAgentModal({
 				const index = parseInt(e.key, 10) - 1;
 				if (index < filteredSessions.length) {
 					const session = filteredSessions[index];
-					handleSelectSession(session.id);
+					if (session.status !== 'current') {
+						handleSelectSession(session.id);
+					}
 				}
 				return;
 			}
@@ -352,7 +349,9 @@ export function SendToAgentModal({
 			if (e.key === ' ' && !e.shiftKey && filteredSessions[selectedIndex]) {
 				e.preventDefault();
 				const session = filteredSessions[selectedIndex];
-				handleSelectSession(session.id);
+				if (session.status !== 'current') {
+					handleSelectSession(session.id);
+				}
 				return;
 			}
 
@@ -361,10 +360,12 @@ export function SendToAgentModal({
 				e.preventDefault();
 				e.stopPropagation();
 				if (selectedSessionId) {
-					handleSend(selectedSessionId);
+					handleSend();
 				} else if (filteredSessions[selectedIndex]) {
 					const session = filteredSessions[selectedIndex];
-					handleSelectSession(session.id);
+					if (session.status !== 'current') {
+						handleSelectSession(session.id);
+					}
 				}
 				return;
 			}
@@ -388,7 +389,7 @@ export function SendToAgentModal({
 		if (isSending) return false;
 		if (!selectedSessionId) return false;
 		const session = sessionOptions.find((s) => s.id === selectedSessionId);
-		return Boolean(session);
+		return session && session.status !== 'current';
 	}, [selectedSessionId, sessionOptions, isSending]);
 
 	if (!isOpen) return null;
@@ -407,7 +408,7 @@ export function SendToAgentModal({
 			<ScreenReaderAnnouncement {...announcementProps} />
 
 			<div
-				className="w-[600px] rounded-xl shadow-2xl border outline-none flex flex-col animate-slide-up"
+				className="modal-w-md rounded-xl shadow-2xl border outline-none flex flex-col animate-slide-up"
 				style={{
 					backgroundColor: theme.colors.bgSidebar,
 					borderColor: theme.colors.border,
@@ -433,15 +434,9 @@ export function SendToAgentModal({
 							Send Context to Agent
 						</h2>
 					</div>
-					<button
-						type="button"
-						onClick={onClose}
-						className="p-1 rounded hover:bg-white/10 transition-colors"
-						style={{ color: theme.colors.textDim }}
-						aria-label="Close dialog"
-					>
+					<GhostIconButton onClick={onClose} ariaLabel="Close dialog" color={theme.colors.textDim}>
 						<X className="w-4 h-4" aria-hidden="true" />
-					</button>
+					</GhostIconButton>
 				</div>
 
 				{/* Description for screen readers */}
@@ -501,28 +496,32 @@ export function SendToAgentModal({
 								{filteredSessions.map((session, index) => {
 									const isHighlighted = index === selectedIndex;
 									const isSelected = selectedSessionId === session.id;
+									const isDisabled = session.status === 'current';
 
 									return (
 										<button
 											key={session.id}
 											ref={isHighlighted ? selectedItemRef : undefined}
-											onClick={() => handleSelectSession(session.id)}
+											onClick={() => !isDisabled && handleSelectSession(session.id)}
+											disabled={isDisabled}
 											role="option"
 											aria-selected={isSelected}
+											aria-disabled={isDisabled}
 											aria-label={`${session.name}, ${getStatusLabel(session.status)}${index < 9 ? `, press ${index + 1} to select` : ''}`}
-											className={`w-full p-3 rounded-lg border text-left transition-all duration-150 flex items-center gap-3 ${isSelected ? 'animate-highlight-pulse' : ''}`}
+											className={`w-full p-3 rounded-lg border text-left transition-all duration-150 disabled:cursor-not-allowed flex items-center gap-3 ${isSelected ? 'animate-highlight-pulse' : ''}`}
 											style={
 												{
 													backgroundColor: isSelected
 														? theme.colors.accent
-														: isHighlighted
+														: isHighlighted && !isDisabled
 															? `${theme.colors.accent}20`
 															: theme.colors.bgMain,
 													borderColor: isSelected
 														? theme.colors.accent
-														: isHighlighted
+														: isHighlighted && !isDisabled
 															? theme.colors.accent
 															: theme.colors.border,
+													opacity: isDisabled ? 0.5 : 1,
 													'--pulse-color': `${theme.colors.accent}40`,
 												} as React.CSSProperties
 											}
@@ -571,12 +570,12 @@ export function SendToAgentModal({
 												aria-hidden="true"
 											>
 												{session.status === 'idle' && <Circle className="w-2 h-2 fill-current" />}
-												{session.status === 'busy' && <Loader2 className="w-3 h-3 animate-spin" />}
+												{session.status === 'busy' && <Spinner size={12} />}
 												{getStatusLabel(session.status)}
 											</div>
 
 											{/* Quick Select Number */}
-											{index < 9 && (
+											{index < 9 && !isDisabled && (
 												<div
 													className="text-[10px] opacity-50 shrink-0"
 													style={{
@@ -680,7 +679,7 @@ export function SendToAgentModal({
 					</button>
 					<button
 						type="button"
-						onClick={selectedSessionId ? () => handleSend(selectedSessionId) : undefined}
+						onClick={handleSend}
 						disabled={!canSend}
 						aria-busy={isSending}
 						className="px-4 py-2 rounded text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"

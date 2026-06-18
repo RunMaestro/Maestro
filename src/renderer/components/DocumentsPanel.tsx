@@ -12,9 +12,10 @@ import {
 	Folder,
 	CheckSquare,
 } from 'lucide-react';
+import { GhostIconButton } from './ui/GhostIconButton';
 import type { Theme, BatchDocumentEntry } from '../types';
 import { generateId } from '../utils/ids';
-import { useLayerStack } from '../contexts/LayerStackContext';
+import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { formatMetaKey } from '../utils/shortcutFormatter';
 
@@ -66,25 +67,12 @@ function DocumentSelectorModal({
 	onRefresh,
 }: DocumentSelectorModalProps) {
 	// Layer stack for escape handling
-	const { registerLayer, unregisterLayer } = useLayerStack();
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
 
-	// Register with layer stack for escape handling
-	useEffect(() => {
-		const id = registerLayer({
-			type: 'modal',
-			priority: MODAL_PRIORITIES.DOCUMENT_SELECTOR,
-			blocksLowerLayers: true,
-			capturesFocus: true,
-			focusTrap: 'strict',
-			ariaLabel: 'Select Documents',
-			onEscape: () => {
-				onCloseRef.current();
-			},
-		});
-		return () => unregisterLayer(id);
-	}, [registerLayer, unregisterLayer]);
+	useModalLayer(MODAL_PRIORITIES.DOCUMENT_SELECTOR, 'Select Documents', () => {
+		onCloseRef.current();
+	});
 
 	// Pre-select currently added documents
 	const [selectedDocs, setSelectedDocs] = useState<Set<string>>(() => {
@@ -216,20 +204,19 @@ function DocumentSelectorModal({
 			let message: string;
 			if (diff > 0) {
 				message = `Found ${diff} new document${diff === 1 ? '' : 's'}`;
-			} else {
+			} else if (diff < 0) {
 				message = `${Math.abs(diff)} document${Math.abs(diff) === 1 ? '' : 's'} removed`;
+			} else {
+				message = 'No changes';
 			}
 			setRefreshMessage(message);
 			setPrevDocCount(allDocuments.length);
+
+			// Clear message after 3 seconds
+			const timer = setTimeout(() => setRefreshMessage(null), 3000);
+			return () => clearTimeout(timer);
 		}
 	}, [allDocuments.length, prevDocCount, refreshing]);
-
-	useEffect(() => {
-		if (!refreshMessage) return;
-
-		const timer = setTimeout(() => setRefreshMessage(null), 3000);
-		return () => clearTimeout(timer);
-	}, [refreshMessage]);
 
 	// Render a tree node recursively with checkboxes
 	const renderTreeNode = (node: DocTreeNode, depth: number = 0): React.ReactNode => {
@@ -427,7 +414,7 @@ function DocumentSelectorModal({
 				aria-label="Close document selector"
 			/>
 			<div
-				className="relative z-10 w-[550px] max-h-[70vh] border rounded-lg shadow-2xl overflow-hidden flex flex-col"
+				className="relative z-10 modal-w-xl max-h-[70vh] border rounded-lg shadow-2xl overflow-hidden flex flex-col"
 				style={{ backgroundColor: theme.colors.bgSidebar, borderColor: theme.colors.border }}
 				onClick={(e) => e.stopPropagation()}
 			>
@@ -485,13 +472,9 @@ function DocumentSelectorModal({
 						>
 							<RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
 						</button>
-						<button
-							onClick={onClose}
-							className="p-1 rounded hover:bg-white/10 transition-colors"
-							style={{ color: theme.colors.textDim }}
-						>
+						<GhostIconButton onClick={onClose} color={theme.colors.textDim}>
 							<X className="w-4 h-4" />
-						</button>
+						</GhostIconButton>
 					</div>
 				</div>
 
@@ -899,7 +882,9 @@ export function DocumentsPanel({
 					{documents.length === 0 ? (
 						<div className="p-4 text-center" style={{ color: theme.colors.textDim }}>
 							<p className="text-sm">No documents selected</p>
-							<p className="text-xs mt-1">Click "+ Add Docs" to select documents to run</p>
+							<p className="text-xs mt-1">
+								Load a playbook or click "+ Add Docs" to select documents to run
+							</p>
 						</div>
 					) : (
 						<div
@@ -1246,11 +1231,11 @@ export function DocumentsPanel({
 									type="range"
 									min="1"
 									max="25"
-									value={maxLoops!}
+									value={maxLoops ?? 5}
 									onChange={(e) => setMaxLoops(parseInt(e.target.value))}
 									className="w-32 h-1 rounded-lg appearance-none cursor-pointer"
 									style={{
-										background: `linear-gradient(to right, ${theme.colors.accent} 0%, ${theme.colors.accent} ${(maxLoops! / 25) * 100}%, ${theme.colors.border} ${(maxLoops! / 25) * 100}%, ${theme.colors.border} 100%)`,
+										background: `linear-gradient(to right, ${theme.colors.accent} 0%, ${theme.colors.accent} ${((maxLoops ?? 5) / 25) * 100}%, ${theme.colors.border} ${((maxLoops ?? 5) / 25) * 100}%, ${theme.colors.border} 100%)`,
 									}}
 								/>
 								<span

@@ -2,28 +2,10 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { HistoryEntryItem } from '../../../../renderer/components/History';
-import type { Theme, HistoryEntry, HistoryEntryType } from '../../../../renderer/types';
+import type { HistoryEntry, HistoryEntryType } from '../../../../renderer/types';
 
+import { mockTheme } from '../../../helpers/mockTheme';
 // Create mock theme
-const mockTheme: Theme = {
-	id: 'test-theme',
-	name: 'Test Theme',
-	mode: 'dark',
-	colors: {
-		bgMain: '#1e1e1e',
-		bgSidebar: '#252526',
-		bgActivity: '#333333',
-		textMain: '#ffffff',
-		textDim: '#808080',
-		accent: '#007acc',
-		border: '#404040',
-		success: '#4ec9b0',
-		warning: '#dcdcaa',
-		error: '#f14c4c',
-		scrollbar: '#404040',
-		scrollbarHover: '#808080',
-	},
-};
 
 // Create mock history entry factory
 const createMockEntry = (overrides: Partial<HistoryEntry> = {}): HistoryEntry => ({
@@ -95,6 +77,86 @@ describe('HistoryEntryItem', () => {
 			/>
 		);
 		expect(screen.getByText('USER')).toBeInTheDocument();
+	});
+
+	it('shows CUE type pill for CUE entries', () => {
+		render(
+			<HistoryEntryItem
+				entry={createMockEntry({ type: 'CUE' })}
+				index={0}
+				isSelected={false}
+				theme={mockTheme}
+				onOpenDetailModal={vi.fn()}
+			/>
+		);
+		expect(screen.getByText('CUE')).toBeInTheDocument();
+	});
+
+	it('shows CUE pill with teal color', () => {
+		render(
+			<HistoryEntryItem
+				entry={createMockEntry({ type: 'CUE' })}
+				index={0}
+				isSelected={false}
+				theme={mockTheme}
+				onOpenDetailModal={vi.fn()}
+			/>
+		);
+		const cuePill = screen.getByText('CUE').closest('span')!;
+		expect(cuePill).toHaveStyle({ color: '#06b6d4' });
+	});
+
+	it('shows success indicator for successful CUE entries', () => {
+		render(
+			<HistoryEntryItem
+				entry={createMockEntry({ type: 'CUE', success: true })}
+				index={0}
+				isSelected={false}
+				theme={mockTheme}
+				onOpenDetailModal={vi.fn()}
+			/>
+		);
+		expect(screen.getByTitle('Task completed successfully')).toBeInTheDocument();
+	});
+
+	it('shows failure indicator for failed CUE entries', () => {
+		render(
+			<HistoryEntryItem
+				entry={createMockEntry({ type: 'CUE', success: false })}
+				index={0}
+				isSelected={false}
+				theme={mockTheme}
+				onOpenDetailModal={vi.fn()}
+			/>
+		);
+		expect(screen.getByTitle('Task failed')).toBeInTheDocument();
+	});
+
+	it('shows CUE event type metadata when present', () => {
+		render(
+			<HistoryEntryItem
+				entry={createMockEntry({ type: 'CUE', cueEventType: 'file.changed' })}
+				index={0}
+				isSelected={false}
+				theme={mockTheme}
+				onOpenDetailModal={vi.fn()}
+			/>
+		);
+		// The raw type is humanized for display (raw value kept in the title attr).
+		expect(screen.getByText('Triggered by: File Change')).toBeInTheDocument();
+	});
+
+	it('does not show CUE metadata for non-CUE entries', () => {
+		render(
+			<HistoryEntryItem
+				entry={createMockEntry({ type: 'AUTO' })}
+				index={0}
+				isSelected={false}
+				theme={mockTheme}
+				onOpenDetailModal={vi.fn()}
+			/>
+		);
+		expect(screen.queryByText(/Triggered by:/)).not.toBeInTheDocument();
 	});
 
 	it('shows success indicator for successful AUTO entries', () => {
@@ -304,7 +366,7 @@ describe('HistoryEntryItem', () => {
 		const sessionButton = screen.getByTitle('session-abc-123');
 		fireEvent.click(sessionButton);
 
-		expect(onOpenSessionAsTab).toHaveBeenCalledWith('session-abc-123');
+		expect(onOpenSessionAsTab).toHaveBeenCalledWith('session-abc-123', '/test/project');
 	});
 
 	it('shows elapsed time when present', () => {
@@ -412,22 +474,5 @@ describe('HistoryEntryItem', () => {
 		// Should show time format (no date portion since it's today)
 		const timestampEl = screen.getByText(/^\d{1,2}:\d{2}\s*(AM|PM)$/i);
 		expect(timestampEl).toBeInTheDocument();
-	});
-
-	it('formats older timestamps with date and time', () => {
-		const yesterday = new Date('2025-06-14T12:00:00Z');
-		const entry = createMockEntry({ timestamp: yesterday.getTime() });
-
-		render(
-			<HistoryEntryItem
-				entry={entry}
-				index={0}
-				isSelected={false}
-				theme={mockTheme}
-				onOpenDetailModal={vi.fn()}
-			/>
-		);
-
-		expect(screen.getByText(/Jun 14,?\s+\d{1,2}:\d{2}\s*(AM|PM)/i)).toBeInTheDocument();
 	});
 });

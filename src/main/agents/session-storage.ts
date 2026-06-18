@@ -36,6 +36,13 @@ export interface SessionMessage {
 	timestamp: string;
 	uuid: string;
 	toolUse?: unknown;
+	/**
+	 * Base64 data URLs for any image content blocks attached to the message
+	 * (e.g. user-pasted screenshots). Reconstructed from the transcript so a
+	 * resumed/reopened tab can re-render images instead of falling back to the
+	 * agent's synthetic `[Image: ...]` text placeholder.
+	 */
+	images?: string[];
 }
 
 /**

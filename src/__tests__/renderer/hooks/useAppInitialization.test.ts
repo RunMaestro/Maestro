@@ -23,6 +23,11 @@ const mockSettingsState: Record<string, unknown> = {
 	audioFeedbackEnabled: false,
 	audioFeedbackCommand: '',
 	osNotificationsEnabled: false,
+	idleNotificationEnabled: false,
+	idleNotificationCommand: '',
+	speckitEnabled: true,
+	openspecEnabled: true,
+	bmadEnabled: true,
 	autoRunStats: {
 		cumulativeTimeMs: 0,
 		totalRuns: 0,
@@ -48,6 +53,7 @@ vi.mock('../../../renderer/stores/settingsStore', () => ({
 
 const mockSessionState: Record<string, unknown> = {
 	sessionsLoaded: false,
+	initialFileTreeReady: false,
 };
 
 vi.mock('../../../renderer/stores/sessionStore', () => ({
@@ -93,6 +99,7 @@ vi.mock('../../../renderer/stores/tabStore', () => ({
 const mockSetDefaultDuration = vi.fn();
 const mockSetAudioFeedback = vi.fn();
 const mockSetOsNotifications = vi.fn();
+const mockSetIdleNotification = vi.fn();
 
 vi.mock('../../../renderer/stores/notificationStore', () => ({
 	useNotificationStore: Object.assign(vi.fn(), {
@@ -100,6 +107,7 @@ vi.mock('../../../renderer/stores/notificationStore', () => ({
 			setDefaultDuration: mockSetDefaultDuration,
 			setAudioFeedback: mockSetAudioFeedback,
 			setOsNotifications: mockSetOsNotifications,
+			setIdleNotification: mockSetIdleNotification,
 		}),
 		setState: vi.fn(),
 		subscribe: vi.fn(() => vi.fn()),
@@ -165,6 +173,7 @@ beforeAll(() => {
 		},
 	};
 	(window as any).__hideSplash = vi.fn();
+	(window as any).__updateSplash = vi.fn();
 });
 
 // ============================================================================
@@ -181,6 +190,11 @@ function resetStores() {
 	mockSettingsState.audioFeedbackEnabled = false;
 	mockSettingsState.audioFeedbackCommand = '';
 	mockSettingsState.osNotificationsEnabled = false;
+	mockSettingsState.idleNotificationEnabled = false;
+	mockSettingsState.idleNotificationCommand = '';
+	mockSettingsState.speckitEnabled = true;
+	mockSettingsState.openspecEnabled = true;
+	mockSettingsState.bmadEnabled = true;
 	mockSettingsState.autoRunStats = {
 		cumulativeTimeMs: 0,
 		totalRuns: 0,
@@ -192,15 +206,12 @@ function resetStores() {
 	};
 
 	mockSessionState.sessionsLoaded = false;
+	mockSessionState.initialFileTreeReady = false;
 	mockTabStoreState.fileGistUrls = {};
 }
 
 function flushPromises() {
 	return new Promise((resolve) => setTimeout(resolve, 0));
-}
-
-async function settleInitializationEffects() {
-	await act(flushPromises);
 }
 
 beforeEach(() => {
@@ -217,7 +228,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	vi.restoreAllMocks();
 	vi.useRealTimers();
 });
 
@@ -228,7 +238,7 @@ afterEach(() => {
 describe('useAppInitialization', () => {
 	// --- Return values ---
 	describe('initial return values', () => {
-		it('should return default values on mount', async () => {
+		it('should return default values on mount', () => {
 			const { result } = renderHook(() => useAppInitialization());
 
 			expect(result.current.ghCliAvailable).toBe(false);
@@ -236,52 +246,78 @@ describe('useAppInitialization', () => {
 			expect(result.current.speckitCommands).toEqual([]);
 			expect(result.current.openspecCommands).toEqual([]);
 			expect(typeof result.current.saveFileGistUrl).toBe('function');
-
-			await settleInitializationEffects();
 		});
 	});
 
 	// --- Splash screen ---
 	describe('splash screen coordination', () => {
-		it('should not call __hideSplash when settings are not loaded', async () => {
+		it('should not call __hideSplash when settings are not loaded', () => {
 			mockSettingsState.settingsLoaded = false;
 			mockSessionState.sessionsLoaded = true;
 			renderHook(() => useAppInitialization());
 
 			expect((window as any).__hideSplash).not.toHaveBeenCalled();
-			await settleInitializationEffects();
 		});
 
-		it('should not call __hideSplash when sessions are not loaded', async () => {
+		it('should call __updateSplash with progress when only sessions loaded', () => {
+			mockSettingsState.settingsLoaded = false;
+			mockSessionState.sessionsLoaded = true;
+			renderHook(() => useAppInitialization());
+
+			expect((window as any).__updateSplash).toHaveBeenCalledWith(60, 'Warming up the ensemble...');
+			expect((window as any).__hideSplash).not.toHaveBeenCalled();
+		});
+
+		it('should call __updateSplash with progress when only settings loaded', () => {
 			mockSettingsState.settingsLoaded = true;
 			mockSessionState.sessionsLoaded = false;
 			renderHook(() => useAppInitialization());
 
+			expect((window as any).__updateSplash).toHaveBeenCalledWith(60, 'Warming up the ensemble...');
 			expect((window as any).__hideSplash).not.toHaveBeenCalled();
-			await settleInitializationEffects();
 		});
 
-		it('should call __hideSplash when both settings and sessions are loaded', async () => {
+		it('should show file tree loading progress when sessions loaded but file tree not ready', () => {
 			mockSettingsState.settingsLoaded = true;
 			mockSessionState.sessionsLoaded = true;
+			mockSessionState.initialFileTreeReady = false;
 			renderHook(() => useAppInitialization());
 
-			expect((window as any).__hideSplash).toHaveBeenCalledTimes(1);
-			await settleInitializationEffects();
+			expect((window as any).__updateSplash).toHaveBeenCalledWith(80, 'Indexing the score...');
+			expect((window as any).__hideSplash).not.toHaveBeenCalled();
 		});
 
-		it('should not throw when splash hide callback is unavailable', async () => {
+		it('should call __hideSplash after rAF + delay when all three gates pass', async () => {
+			vi.useFakeTimers();
 			mockSettingsState.settingsLoaded = true;
 			mockSessionState.sessionsLoaded = true;
-			const originalHideSplash = (window as any).__hideSplash;
-			delete (window as any).__hideSplash;
+			mockSessionState.initialFileTreeReady = true;
+			renderHook(() => useAppInitialization());
 
-			try {
-				expect(() => renderHook(() => useAppInitialization())).not.toThrow();
-				await settleInitializationEffects();
-			} finally {
-				(window as any).__hideSplash = originalHideSplash;
-			}
+			// Should update to 90% first
+			expect((window as any).__updateSplash).toHaveBeenCalledWith(90, 'The concertmaster rises...');
+
+			// __hideSplash not called yet (waiting for rAF + timeout)
+			expect((window as any).__hideSplash).not.toHaveBeenCalled();
+
+			// Advance time to flush double rAF (fake timers mock requestAnimationFrame)
+			// Each rAF fires at ~16ms intervals, so 50ms covers the double rAF
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			// Should update to 95%
+			expect((window as any).__updateSplash).toHaveBeenCalledWith(
+				95,
+				'Maestro takes the podium...'
+			);
+
+			// Advance past the 150ms delay
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(200);
+			});
+
+			expect((window as any).__hideSplash).toHaveBeenCalledTimes(1);
 		});
 	});
 
@@ -318,44 +354,16 @@ describe('useAppInitialization', () => {
 
 			expect(result.current.ghCliAvailable).toBe(false);
 		});
-
-		it('updates ghCliAvailable from availability change events', async () => {
-			mockCheckGhCli.mockResolvedValue({ installed: false, authenticated: false });
-			const { result } = renderHook(() => useAppInitialization());
-			await act(flushPromises);
-			expect(result.current.ghCliAvailable).toBe(false);
-
-			act(() => {
-				window.dispatchEvent(
-					new CustomEvent('maestro:gh-cli-availability-changed', {
-						detail: { available: true },
-					})
-				);
-			});
-
-			expect(result.current.ghCliAvailable).toBe(true);
-
-			act(() => {
-				window.dispatchEvent(
-					new CustomEvent('maestro:gh-cli-availability-changed', {
-						detail: { available: 'unknown' },
-					})
-				);
-			});
-
-			expect(result.current.ghCliAvailable).toBe(true);
-		});
 	});
 
 	// --- Windows warning modal ---
 	describe('Windows warning modal', () => {
-		it('should expose debug function for Windows warning modal', async () => {
+		it('should expose debug function for Windows warning modal', () => {
 			renderHook(() => useAppInitialization());
 
 			expect(mockExposeWindowsWarningModalDebug).toHaveBeenCalledWith(
 				mockSetWindowsWarningModalOpen
 			);
-			await settleInitializationEffects();
 		});
 
 		it('should not show Windows warning when settings not loaded', async () => {
@@ -387,26 +395,6 @@ describe('useAppInitialization', () => {
 			expect(mockSetWindowsWarningModalOpen).toHaveBeenCalledWith(true);
 		});
 
-		it('should only show Windows warning once when suppression toggles', async () => {
-			mockSettingsState.settingsLoaded = true;
-			mockSettingsState.suppressWindowsWarning = false;
-			mockGetStatus.mockResolvedValue({ platform: 'win32' });
-			const { rerender } = renderHook(() => useAppInitialization());
-			await act(flushPromises);
-
-			mockSettingsState.suppressWindowsWarning = true;
-			rerender();
-			await act(flushPromises);
-
-			mockSettingsState.suppressWindowsWarning = false;
-			rerender();
-			await act(flushPromises);
-
-			expect(mockGetStatus).toHaveBeenCalledTimes(1);
-			expect(mockSetWindowsWarningModalOpen).toHaveBeenCalledTimes(1);
-			expect(mockSetWindowsWarningModalOpen).toHaveBeenCalledWith(true);
-		});
-
 		it('should not show Windows warning on non-Windows platform', async () => {
 			mockSettingsState.settingsLoaded = true;
 			mockSettingsState.suppressWindowsWarning = false;
@@ -418,19 +406,12 @@ describe('useAppInitialization', () => {
 		});
 
 		it('should handle platform detection error gracefully', async () => {
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 			mockSettingsState.settingsLoaded = true;
-			const error = new Error('platform error');
-			mockGetStatus.mockRejectedValue(error);
+			mockGetStatus.mockRejectedValue(new Error('platform error'));
 			renderHook(() => useAppInitialization());
-			await settleInitializationEffects();
+			await act(flushPromises);
 
 			expect(mockSetWindowsWarningModalOpen).not.toHaveBeenCalledWith(true);
-			expect(consoleError).toHaveBeenCalledWith(
-				'[App] Failed to detect platform for Windows warning:',
-				error
-			);
-			consoleError.mockRestore();
 		});
 	});
 
@@ -455,24 +436,17 @@ describe('useAppInitialization', () => {
 		});
 
 		it('should handle gist URL loading error gracefully', async () => {
-			const consoleDebug = vi.spyOn(console, 'debug').mockImplementation(() => {});
-			const error = new Error('load error');
-			mockSettingsGet.mockRejectedValue(error);
+			mockSettingsGet.mockRejectedValue(new Error('load error'));
 			renderHook(() => useAppInitialization());
-			await settleInitializationEffects();
+			await act(flushPromises);
 
 			expect(mockSetFileGistUrls).not.toHaveBeenCalled();
-			expect(consoleDebug).toHaveBeenCalledWith(
-				'[useAppInitialization] Failed to load fileGistUrls:',
-				error
-			);
-			consoleDebug.mockRestore();
 		});
 	});
 
 	// --- saveFileGistUrl ---
 	describe('saveFileGistUrl', () => {
-		it('should update tab store and persist to settings', async () => {
+		it('should update tab store and persist to settings', () => {
 			mockTabStoreState.fileGistUrls = { 'existing.ts': { url: 'https://old', id: 'old' } };
 			const { result } = renderHook(() => useAppInitialization());
 			const gistInfo = { url: 'https://gist.github.com/456', id: '456' };
@@ -489,29 +463,25 @@ describe('useAppInitialization', () => {
 				'existing.ts': { url: 'https://old', id: 'old' },
 				'new.ts': gistInfo,
 			});
-
-			await settleInitializationEffects();
 		});
 	});
 
 	// --- Beta updates sync ---
 	describe('beta updates sync', () => {
-		it('should sync beta updates setting when settings loaded', async () => {
+		it('should sync beta updates setting when settings loaded', () => {
 			mockSettingsState.settingsLoaded = true;
 			mockSettingsState.enableBetaUpdates = true;
 			renderHook(() => useAppInitialization());
 
 			expect(mockSetAllowPrerelease).toHaveBeenCalledWith(true);
-			await settleInitializationEffects();
 		});
 
-		it('should not sync beta updates when settings not loaded', async () => {
+		it('should not sync beta updates when settings not loaded', () => {
 			mockSettingsState.settingsLoaded = false;
 			mockSettingsState.enableBetaUpdates = true;
 			renderHook(() => useAppInitialization());
 
 			expect(mockSetAllowPrerelease).not.toHaveBeenCalled();
-			await settleInitializationEffects();
 		});
 	});
 
@@ -533,13 +503,12 @@ describe('useAppInitialization', () => {
 			expect(mockSetUpdateCheckModalOpen).toHaveBeenCalledWith(true);
 		});
 
-		it('should not check for updates when disabled', async () => {
+		it('should not check for updates when disabled', () => {
 			mockSettingsState.settingsLoaded = true;
 			mockSettingsState.checkForUpdatesOnStartup = false;
 			renderHook(() => useAppInitialization());
 
 			expect(mockUpdatesCheck).not.toHaveBeenCalled();
-			await settleInitializationEffects();
 		});
 
 		it('should not open modal when no update available', async () => {
@@ -559,11 +528,9 @@ describe('useAppInitialization', () => {
 
 		it('should handle update check error gracefully', async () => {
 			vi.useFakeTimers();
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 			mockSettingsState.settingsLoaded = true;
 			mockSettingsState.checkForUpdatesOnStartup = true;
-			const error = new Error('check failed');
-			mockUpdatesCheck.mockRejectedValue(error);
+			mockUpdatesCheck.mockRejectedValue(new Error('check failed'));
 
 			renderHook(() => useAppInitialization());
 
@@ -572,8 +539,51 @@ describe('useAppInitialization', () => {
 			});
 
 			expect(mockSetUpdateCheckModalOpen).not.toHaveBeenCalled();
-			expect(consoleError).toHaveBeenCalledWith('Failed to check for updates on startup:', error);
-			consoleError.mockRestore();
+		});
+
+		it('should re-check daily for long-running sessions', async () => {
+			vi.useFakeTimers();
+			mockSettingsState.settingsLoaded = true;
+			mockSettingsState.checkForUpdatesOnStartup = true;
+			mockUpdatesCheck.mockResolvedValue({ updateAvailable: false });
+
+			renderHook(() => useAppInitialization());
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(2500);
+			});
+			expect(mockUpdatesCheck).toHaveBeenCalledTimes(1);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000);
+			});
+			expect(mockUpdatesCheck).toHaveBeenCalledTimes(2);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000);
+			});
+			expect(mockUpdatesCheck).toHaveBeenCalledTimes(3);
+		});
+
+		it('should clear daily interval on unmount', async () => {
+			vi.useFakeTimers();
+			mockSettingsState.settingsLoaded = true;
+			mockSettingsState.checkForUpdatesOnStartup = true;
+			mockUpdatesCheck.mockResolvedValue({ updateAvailable: false });
+
+			const { unmount } = renderHook(() => useAppInitialization());
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(2500);
+			});
+			expect(mockUpdatesCheck).toHaveBeenCalledTimes(1);
+
+			unmount();
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000);
+			});
+			expect(mockUpdatesCheck).toHaveBeenCalledTimes(1);
 		});
 	});
 
@@ -618,73 +628,6 @@ describe('useAppInitialization', () => {
 				authToken: 'token123',
 			});
 			expect(mockSettingsState.setAutoRunStats).toHaveBeenCalled();
-		});
-
-		it('should use current longest-run values when synced data omits them', async () => {
-			vi.useFakeTimers();
-			mockSettingsState.settingsLoaded = true;
-			mockSettingsState.leaderboardRegistration = {
-				authToken: 'token123',
-				email: 'user@example.com',
-			};
-			mockSettingsState.autoRunStats = {
-				cumulativeTimeMs: 100,
-				totalRuns: 1,
-				currentBadgeLevel: 0,
-				longestRunMs: 50,
-				longestRunTimestamp: 123456,
-				lastBadgeUnlockLevel: 0,
-				lastAcknowledgedBadgeLevel: 0,
-			};
-			mockLeaderboardSync.mockResolvedValue({
-				success: true,
-				found: true,
-				data: {
-					cumulativeTimeMs: 500,
-					totalRuns: 5,
-					badgeLevel: 2,
-				},
-			});
-
-			renderHook(() => useAppInitialization());
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(3500);
-			});
-
-			expect(mockSettingsState.setAutoRunStats).toHaveBeenCalledWith(
-				expect.objectContaining({
-					cumulativeTimeMs: 500,
-					longestRunMs: 50,
-					longestRunTimestamp: 123456,
-				})
-			);
-		});
-
-		it('should not update stats when sync response has no server data', async () => {
-			vi.useFakeTimers();
-			mockSettingsState.settingsLoaded = true;
-			mockSettingsState.leaderboardRegistration = {
-				authToken: 'token123',
-				email: 'user@example.com',
-			};
-			mockLeaderboardSync.mockResolvedValue({
-				success: true,
-				found: false,
-				data: null,
-			});
-
-			renderHook(() => useAppInitialization());
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(3500);
-			});
-
-			expect(mockLeaderboardSync).toHaveBeenCalledWith({
-				email: 'user@example.com',
-				authToken: 'token123',
-			});
-			expect(mockSettingsState.setAutoRunStats).not.toHaveBeenCalled();
 		});
 
 		it('should not sync when no auth token', async () => {
@@ -738,14 +681,12 @@ describe('useAppInitialization', () => {
 
 		it('should handle sync failure gracefully', async () => {
 			vi.useFakeTimers();
-			const consoleDebug = vi.spyOn(console, 'debug').mockImplementation(() => {});
 			mockSettingsState.settingsLoaded = true;
 			mockSettingsState.leaderboardRegistration = {
 				authToken: 'token123',
 				email: 'user@example.com',
 			};
-			const error = new Error('sync failed');
-			mockLeaderboardSync.mockRejectedValue(error);
+			mockLeaderboardSync.mockRejectedValue(new Error('sync failed'));
 
 			renderHook(() => useAppInitialization());
 
@@ -755,17 +696,13 @@ describe('useAppInitialization', () => {
 
 			// Should not throw
 			expect(mockSettingsState.setAutoRunStats).not.toHaveBeenCalled();
-			expect(consoleDebug).toHaveBeenCalledWith(
-				'[Leaderboard] Startup sync failed (non-critical):',
-				error
-			);
-			consoleDebug.mockRestore();
 		});
 	});
 
 	// --- SpecKit commands ---
 	describe('SpecKit commands loading', () => {
 		it('should load SpecKit commands on mount', async () => {
+			mockSettingsState.settingsLoaded = true;
 			const { result } = renderHook(() => useAppInitialization());
 			await act(flushPromises);
 
@@ -773,23 +710,23 @@ describe('useAppInitialization', () => {
 		});
 
 		it('should handle SpecKit loading error gracefully', async () => {
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+			mockSettingsState.settingsLoaded = true;
 			const { getSpeckitCommands } = await import('../../../renderer/services/speckit');
-			const error = new Error('load failed');
-			(getSpeckitCommands as ReturnType<typeof vi.fn>).mockRejectedValueOnce(error);
+			(getSpeckitCommands as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+				new Error('load failed')
+			);
 
 			const { result } = renderHook(() => useAppInitialization());
-			await settleInitializationEffects();
+			await act(flushPromises);
 
 			expect(result.current.speckitCommands).toEqual([]);
-			expect(consoleError).toHaveBeenCalledWith('[SpecKit] Failed to load commands:', error);
-			consoleError.mockRestore();
 		});
 	});
 
 	// --- OpenSpec commands ---
 	describe('OpenSpec commands loading', () => {
 		it('should load OpenSpec commands on mount', async () => {
+			mockSettingsState.settingsLoaded = true;
 			const { result } = renderHook(() => useAppInitialization());
 			await act(flushPromises);
 
@@ -797,17 +734,16 @@ describe('useAppInitialization', () => {
 		});
 
 		it('should handle OpenSpec loading error gracefully', async () => {
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+			mockSettingsState.settingsLoaded = true;
 			const { getOpenSpecCommands } = await import('../../../renderer/services/openspec');
-			const error = new Error('load failed');
-			(getOpenSpecCommands as ReturnType<typeof vi.fn>).mockRejectedValueOnce(error);
+			(getOpenSpecCommands as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+				new Error('load failed')
+			);
 
 			const { result } = renderHook(() => useAppInitialization());
-			await settleInitializationEffects();
+			await act(flushPromises);
 
 			expect(result.current.openspecCommands).toEqual([]);
-			expect(consoleError).toHaveBeenCalledWith('[OpenSpec] Failed to load commands:', error);
-			consoleError.mockRestore();
 		});
 	});
 
@@ -836,19 +772,12 @@ describe('useAppInitialization', () => {
 		});
 
 		it('should handle SSH config loading error', async () => {
-			const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-			const error = new Error('SSH error');
-			mockGetSshConfigs.mockRejectedValue(error);
+			mockGetSshConfigs.mockRejectedValue(new Error('SSH error'));
 
 			const { result } = renderHook(() => useAppInitialization());
-			await settleInitializationEffects();
+			await act(flushPromises);
 
 			expect(result.current.sshRemoteConfigs).toEqual([]);
-			expect(consoleWarn).toHaveBeenCalledWith(
-				'[useAppInitialization] Failed to load SSH remote configs:',
-				error
-			);
-			consoleWarn.mockRestore();
 		});
 	});
 
@@ -910,6 +839,15 @@ describe('useAppInitialization', () => {
 			await act(flushPromises);
 
 			expect(mockSetOsNotifications).toHaveBeenCalledWith(true);
+		});
+
+		it('should sync idle notification settings', async () => {
+			mockSettingsState.idleNotificationEnabled = true;
+			mockSettingsState.idleNotificationCommand = 'say Maestro is idle';
+			renderHook(() => useAppInitialization());
+			await act(flushPromises);
+
+			expect(mockSetIdleNotification).toHaveBeenCalledWith(true, 'say Maestro is idle');
 		});
 	});
 

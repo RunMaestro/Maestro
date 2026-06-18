@@ -16,14 +16,18 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback, memo } from 'react';
 import { Search, ChevronRight, ChevronDown, GitMerge, Clipboard, Check, X } from 'lucide-react';
-import type { Theme, Session, AITab } from '../types';
+import { GhostIconButton } from './ui/GhostIconButton';
+import type { Theme, Session } from '../types';
 import type { MergeResult } from '../types/contextMerge';
 import { fuzzyMatchWithScore } from '../utils/search';
-import { useLayerStack } from '../contexts/LayerStackContext';
+import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { useListNavigation } from '../hooks';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { formatTokensCompact } from '../utils/formatters';
+import { estimateTokensFromLogs } from '../../shared/formatters';
 import { ScreenReaderAnnouncement, useAnnouncement } from './Wizard/ScreenReaderAnnouncement';
+import { getTabDisplayName } from '../utils/tabHelpers';
+import { logger } from '../utils/logger';
 
 /**
  * View modes for the modal
@@ -75,14 +79,7 @@ export interface MergeSessionModalProps {
 	) => Promise<MergeResult>;
 }
 
-/**
- * Estimate token count from log entries
- * Uses a simple heuristic: ~4 characters per token (average for English text)
- */
-function estimateTokens(logs: { text: string }[]): number {
-	const totalChars = logs.reduce((sum, log) => sum + (log.text?.length || 0), 0);
-	return Math.round(totalChars / 4);
-}
+const estimateTokens = estimateTokensFromLogs;
 
 /**
  * Animated token display component that highlights when value changes
@@ -138,17 +135,6 @@ function getSessionDisplayName(session: Session): string {
 }
 
 /**
- * Get display name for a tab
- */
-function getTabDisplayName(tab: AITab): string {
-	if (tab.name) return tab.name;
-	if (tab.agentSessionId) {
-		return tab.agentSessionId.split('-')[0].toUpperCase();
-	}
-	return 'New Tab';
-}
-
-/**
  * MergeSessionModal Component
  */
 export function MergeSessionModal({
@@ -192,7 +178,6 @@ export function MergeSessionModal({
 
 	// Refs
 	const inputRef = useRef<HTMLInputElement>(null);
-	const layerIdRef = useRef<string>();
 	const onCloseRef = useRef(onClose);
 	const scrollContainerRef = useRef<HTMLDivElement>(null);
 	const selectedItemRef = useRef<HTMLButtonElement>(null);
@@ -202,34 +187,13 @@ export function MergeSessionModal({
 		onCloseRef.current = onClose;
 	});
 
-	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
-
 	// Register layer on mount
-	useEffect(() => {
-		if (!isOpen) return;
-
-		const id = registerLayer({
-			type: 'modal',
-			priority: MODAL_PRIORITIES.MERGE_SESSION,
-			blocksLowerLayers: true,
-			capturesFocus: true,
-			focusTrap: 'strict',
-			ariaLabel: 'Merge Session Contexts',
-			onEscape: () => onCloseRef.current(),
-		});
-		layerIdRef.current = id;
-
-		return () => {
-			unregisterLayer(id);
-		};
-	}, [isOpen, registerLayer, unregisterLayer]);
-
-	// Update handler when onClose changes
-	useEffect(() => {
-		if (layerIdRef.current) {
-			updateLayerHandler(layerIdRef.current, () => onCloseRef.current());
-		}
-	}, [updateLayerHandler]);
+	useModalLayer(
+		MODAL_PRIORITIES.MERGE_SESSION,
+		'Merge Session Contexts',
+		() => onCloseRef.current(),
+		{ enabled: isOpen }
+	);
 
 	// Focus input on mount
 	useEffect(() => {
@@ -248,7 +212,6 @@ export function MergeSessionModal({
 		if (!sourceTab) return 0;
 		return estimateTokens(sourceTab.logs);
 	}, [sourceTab]);
-	const sourceDisplayName = sourceTab ? getTabDisplayName(sourceTab) : 'Context';
 
 	// Build flat list of sessions and tabs for navigation
 	const allItems = useMemo((): SessionListItem[] => {
@@ -295,7 +258,7 @@ export function MergeSessionModal({
 		items.sort((a, b) => {
 			const sessionCompare = a.sessionName.localeCompare(b.sessionName);
 			if (sessionCompare !== 0) return sessionCompare;
-			return a.tabName!.localeCompare(b.tabName!);
+			return (a.tabName || '').localeCompare(b.tabName || '');
 		});
 
 		return items;
@@ -310,7 +273,7 @@ export function MergeSessionModal({
 		const query = searchQuery.trim();
 		return allItems
 			.map((item) => {
-				const searchText = `${item.sessionName} ${item.tabName} ${item.agentSessionId || ''}`;
+				const searchText = `${item.sessionName} ${item.tabName || ''} ${item.agentSessionId || ''}`;
 				const result = fuzzyMatchWithScore(searchText, query);
 				return { item, score: result.score };
 			})
@@ -370,7 +333,10 @@ export function MergeSessionModal({
 	// Handle selection by index (for keyboard navigation)
 	const handleSelectByIndex = useCallback(
 		(index: number) => {
-			handleSelectItem(filteredItems[index]!);
+			const item = filteredItems[index];
+			if (item) {
+				handleSelectItem(item);
+			}
 		},
 		[filteredItems, handleSelectItem]
 	);
@@ -454,20 +420,20 @@ export function MergeSessionModal({
 	}, []);
 
 	// Handle merge action
-	const handleMerge = useCallback(
-		async (target: SessionListItem) => {
-			setIsMerging(true);
-			try {
-				await onMerge(target.sessionId, target.tabId, options);
-				onClose();
-			} catch (error) {
-				console.error('Merge failed:', error);
-			} finally {
-				setIsMerging(false);
-			}
-		},
-		[options, onMerge, onClose]
-	);
+	const handleMerge = useCallback(async () => {
+		const target = viewMode === 'paste' ? pastedIdMatch : selectedTarget;
+		if (!target) return;
+
+		setIsMerging(true);
+		try {
+			await onMerge(target.sessionId, target.tabId, options);
+			onClose();
+		} catch (error) {
+			logger.error('Merge failed:', undefined, error);
+		} finally {
+			setIsMerging(false);
+		}
+	}, [viewMode, pastedIdMatch, selectedTarget, options, onMerge, onClose]);
 
 	// Handle key down
 	const handleKeyDown = useCallback(
@@ -526,11 +492,11 @@ export function MergeSessionModal({
 				e.preventDefault();
 				e.stopPropagation();
 				if (viewMode === 'paste' && pastedIdValid && pastedIdMatch) {
-					handleMerge(pastedIdMatch);
+					handleMerge();
 				} else if (viewMode === 'search' && selectedTarget) {
-					handleMerge(selectedTarget);
+					handleMerge();
 				} else if (filteredItems[selectedIndex]) {
-					handleSelectByIndex(selectedIndex);
+					handleSelectItem(filteredItems[selectedIndex]);
 				}
 				return;
 			}
@@ -547,7 +513,6 @@ export function MergeSessionModal({
 			pastedIdMatch,
 			handleMerge,
 			handleSelectItem,
-			handleSelectByIndex,
 			handleViewModeChange,
 			listKeyDown,
 		]
@@ -589,7 +554,7 @@ export function MergeSessionModal({
 			<ScreenReaderAnnouncement {...announcementProps} />
 
 			<div
-				className="w-[600px] rounded-xl shadow-2xl border outline-none flex flex-col animate-slide-up"
+				className="modal-w-md rounded-xl shadow-2xl border outline-none flex flex-col animate-slide-up"
 				style={{
 					backgroundColor: theme.colors.bgSidebar,
 					borderColor: theme.colors.border,
@@ -612,18 +577,16 @@ export function MergeSessionModal({
 							className="text-sm font-bold"
 							style={{ color: theme.colors.textMain }}
 						>
-							Merge "{sourceDisplayName}" Into
+							Merge "{sourceTab ? getTabDisplayName(sourceTab) : 'Context'}" Into
 						</h2>
 					</div>
-					<button
-						type="button"
+					<GhostIconButton
 						onClick={onClose}
-						className="p-1 rounded hover:bg-white/10 transition-colors"
-						style={{ color: theme.colors.textDim }}
-						aria-label="Close merge dialog"
+						ariaLabel="Close merge dialog"
+						color={theme.colors.textDim}
 					>
 						<X className="w-4 h-4" aria-hidden="true" />
-					</button>
+					</GhostIconButton>
 				</div>
 
 				{/* Description for screen readers */}
@@ -954,7 +917,9 @@ export function MergeSessionModal({
 						aria-label="Token estimate"
 					>
 						<div className="flex justify-between">
-							<span style={{ color: theme.colors.textDim }}>Source: {sourceDisplayName}</span>
+							<span style={{ color: theme.colors.textDim }}>
+								Source: {sourceTab?.name || getTabDisplayName(sourceTab!)}
+							</span>
 							<span style={{ color: theme.colors.textMain }}>
 								~{formatTokensCompact(sourceTokens)} tokens
 							</span>
@@ -1042,7 +1007,7 @@ export function MergeSessionModal({
 					</button>
 					<button
 						type="button"
-						onClick={() => handleMerge(viewMode === 'paste' ? pastedIdMatch! : selectedTarget!)}
+						onClick={handleMerge}
 						disabled={!canMerge}
 						className="px-4 py-2 rounded text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
 						style={{

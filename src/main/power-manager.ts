@@ -12,6 +12,7 @@
 
 import { powerSaveBlocker } from 'electron';
 import { logger } from './utils/logger';
+import { captureException } from './utils/sentry';
 
 const CONTEXT = 'PowerManager';
 
@@ -39,6 +40,8 @@ export interface PowerStatus {
  * Reasons follow a naming convention:
  * - "session:{sessionId}" - AI session is busy
  * - "autorun:{identifier}" - Auto Run is active
+ * - "cue:schedule:{sessionId}" - Cue session has active heartbeat/scheduled subscriptions
+ * - "cue:run:{runId}" - Cue run is executing
  */
 class PowerManager {
 	/** ID of the active powerSaveBlocker, or null if not blocking */
@@ -167,6 +170,11 @@ class PowerManager {
 	 * Uses 'prevent-display-sleep' which also prevents system sleep.
 	 */
 	private startBlocking(): void {
+		if (this.blockerId !== null) {
+			logger.debug('Already blocking, skipping start', CONTEXT);
+			return;
+		}
+
 		try {
 			// 'prevent-display-sleep' prevents both display and system sleep
 			// This is the more aggressive option, appropriate for long-running AI tasks
@@ -176,6 +184,7 @@ class PowerManager {
 				platform: process.platform,
 			});
 		} catch (error) {
+			void captureException(error);
 			logger.error('Failed to start power save blocker', CONTEXT, error);
 			this.blockerId = null;
 		}
@@ -185,16 +194,21 @@ class PowerManager {
 	 * Stop the power save blocker.
 	 */
 	private stopBlocking(): void {
-		const blockerId = this.blockerId!;
+		if (this.blockerId === null) {
+			logger.debug('Not blocking, skipping stop', CONTEXT);
+			return;
+		}
+
 		try {
 			// Verify the blocker is still active before stopping
-			if (powerSaveBlocker.isStarted(blockerId)) {
-				powerSaveBlocker.stop(blockerId);
-				logger.info(`Stopped power save blocker (id: ${blockerId})`, CONTEXT);
+			if (powerSaveBlocker.isStarted(this.blockerId)) {
+				powerSaveBlocker.stop(this.blockerId);
+				logger.info(`Stopped power save blocker (id: ${this.blockerId})`, CONTEXT);
 			} else {
-				logger.debug(`Power save blocker ${blockerId} was already stopped`, CONTEXT);
+				logger.debug(`Power save blocker ${this.blockerId} was already stopped`, CONTEXT);
 			}
 		} catch (error) {
+			void captureException(error);
 			logger.error('Error stopping power save blocker', CONTEXT, error);
 		} finally {
 			this.blockerId = null;

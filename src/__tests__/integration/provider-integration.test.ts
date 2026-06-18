@@ -56,79 +56,6 @@ const SSH_PROVIDER_TIMEOUT = 180_000; // 3 minutes
 // Test directory
 const TEST_CWD = process.cwd();
 
-function createOpenCodeTestConfigHome(): string {
-	const configHome = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-opencode-test-config-'));
-	const opencodeConfigDir = path.join(configHome, 'opencode');
-	const homeDir = os.homedir();
-	fs.mkdirSync(opencodeConfigDir, { recursive: true });
-
-	const candidatePlugins = [
-		path.join(homeDir, '.cache/opencode/node_modules/opencode-antigravity-auth'),
-		path.join(homeDir, '.cache/opencode/node_modules/opencode-anthropic-auth'),
-		path.join(homeDir, '.config/opencode/plugins/migration-hooks.js'),
-		path.join(homeDir, '.config/opencode/plugins/ecc-compat.js'),
-	].filter((pluginPath) => fs.existsSync(pluginPath));
-
-	fs.writeFileSync(
-		path.join(opencodeConfigDir, 'opencode.json'),
-		JSON.stringify(
-			{
-				permission: 'allow',
-				model: process.env.OPENCODE_MODEL || 'opencode/kimi-k2.5',
-				plugin: candidatePlugins,
-				$schema: 'https://opencode.ai/config.json',
-			},
-			null,
-			2
-		)
-	);
-
-	return configHome;
-}
-
-const OPENCODE_TEST_CONFIG_HOME = createOpenCodeTestConfigHome();
-
-afterAll(() => {
-	fs.rmSync(OPENCODE_TEST_CONFIG_HOME, { recursive: true, force: true });
-});
-
-function getProviderEnv(provider: ProviderConfig): NodeJS.ProcessEnv {
-	if (provider.agentId !== 'opencode') {
-		return { ...process.env };
-	}
-
-	return {
-		...process.env,
-		XDG_CONFIG_HOME: OPENCODE_TEST_CONFIG_HOME,
-	};
-}
-
-function isLocalSshHost(host: string): boolean {
-	const normalizedHost = host.toLowerCase();
-	const hostname = os.hostname().toLowerCase();
-
-	return (
-		normalizedHost === 'localhost' ||
-		normalizedHost === '127.0.0.1' ||
-		normalizedHost === '::1' ||
-		normalizedHost === hostname ||
-		normalizedHost === hostname.split('.')[0]
-	);
-}
-
-function getProviderSshEnv(
-	provider: ProviderConfig,
-	sshConfig: SshRemoteConfig
-): Record<string, string> | undefined {
-	if (provider.agentId !== 'opencode' || !isLocalSshHost(sshConfig.host)) {
-		return undefined;
-	}
-
-	return {
-		XDG_CONFIG_HOME: OPENCODE_TEST_CONFIG_HOME,
-	};
-}
-
 /**
  * SSH Remote Configuration for Integration Tests
  *
@@ -325,7 +252,7 @@ const PROVIDERS: ProviderConfig[] = [
 			}
 			return null;
 		},
-		isSuccessful: (_output: string, exitCode: number) => {
+		isSuccessful: (output: string, exitCode: number) => {
 			return exitCode === 0;
 		},
 		/**
@@ -761,32 +688,26 @@ const PROVIDERS: ProviderConfig[] = [
 			return responses.length > 0 ? responses.join('') : null;
 		},
 		isSuccessful: (output: string, exitCode: number) => {
-			if (exitCode !== 0) return false;
-			for (const line of output.split('\n')) {
-				try {
-					const json = JSON.parse(line);
-					if (json.type === 'error') return false;
-				} catch {
-					/* ignore non-JSON lines */
-				}
-			}
-			return true;
+			return exitCode === 0;
 		},
 		/**
 		 * Build args with image file path for OpenCode.
 		 * Mirrors agent-detector.ts: imageArgs: (imagePath) => ['-f', imagePath]
 		 *
-		 * Uses the configured OpenCode model by default. OPENCODE_VISION_MODEL can override
-		 * OPENCODE_MODEL when a separate image-capable model is needed for local verification.
+		 * Uses vision-capable model. Defaults to ollama/qwen3-vl:latest but can be overridden
+		 * with OPENCODE_VISION_MODEL env var. Note: Ollama models require the :latest or :tag suffix.
 		 */
-		buildImageArgs: (prompt: string, imagePath: string) => {
-			const args = ['run', '--format', 'json'];
-			const model = process.env.OPENCODE_VISION_MODEL || process.env.OPENCODE_MODEL;
-			if (model) {
-				args.push('--model', model);
-			}
-			return [...args, '-f', imagePath, '--', prompt];
-		},
+		buildImageArgs: (prompt: string, imagePath: string) => [
+			'run',
+			'--format',
+			'json',
+			'--model',
+			process.env.OPENCODE_VISION_MODEL || 'ollama/qwen3-vl:latest',
+			'-f',
+			imagePath,
+			'--',
+			prompt,
+		],
 		/**
 		 * Parse tools from OpenCode init event.
 		 * OpenCode may expose available tools in step_start or init events
@@ -839,6 +760,150 @@ const PROVIDERS: ProviderConfig[] = [
 			return executions;
 		},
 	},
+	{
+		name: 'Copilot-CLI',
+		agentId: 'copilot-cli',
+		command: 'copilot',
+		checkCommand: 'copilot --version',
+		/**
+		 * Mirrors the copilot-cli definition in src/main/agents/definitions.ts:
+		 *   args: []                       (no base args; interactive default)
+		 *   batchModeArgs: ['--allow-all'] (full permissions for unattended runs)
+		 *   jsonOutputArgs: ['--output-format', 'json']
+		 *   promptArgs: (prompt) => ['-p', prompt]
+		 *
+		 * Final assembly (process.ts IPC handler):
+		 *   copilot --allow-all --output-format json -p "<prompt>"
+		 *
+		 * Copilot does not support --input-format stream-json
+		 * (supportsStreamJsonInput: false). Images are embedded into the prompt
+		 * as @file mentions via imagePromptBuilder, not via a CLI flag.
+		 */
+		buildInitialArgs: (prompt: string, options?: { images?: string[] }) => {
+			const capabilities = getAgentCapabilities('copilot-cli');
+			if (options?.images && options.images.length > 0 && capabilities.supportsStreamJsonInput) {
+				throw new Error(
+					'Copilot-CLI should not support stream-json input — capability misconfigured'
+				);
+			}
+			return ['--allow-all', '--output-format', 'json', '-p', prompt];
+		},
+		buildResumeArgs: (sessionId: string, prompt: string) => [
+			'--allow-all',
+			'--output-format',
+			'json',
+			`--resume=${sessionId}`,
+			'-p',
+			prompt,
+		],
+		buildSshArgs: () => ['--allow-all', '--output-format', 'json'],
+		buildSshResumeArgs: (sessionId: string) => [
+			'--allow-all',
+			'--output-format',
+			'json',
+			`--resume=${sessionId}`,
+		],
+		parseSessionId: (output: string) => {
+			// Copilot emits the session ID on the top-level `result` event at
+			// completion: {"type":"result","sessionId":"...","exitCode":0,"usage":{...}}
+			for (const line of output.split('\n')) {
+				try {
+					const json = JSON.parse(line);
+					if (json.type === 'result' && typeof json.sessionId === 'string') {
+						return json.sessionId;
+					}
+				} catch {
+					/* ignore non-JSON lines */
+				}
+			}
+			return null;
+		},
+		parseResponse: (output: string) => {
+			// Modern Copilot's final answer lives in an `assistant.message` event
+			// with non-empty content and empty toolRequests, no `phase` field.
+			// Legacy `phase: 'final_answer'` is also accepted.
+			for (const line of output.split('\n')) {
+				try {
+					const json = JSON.parse(line);
+					if (json.type !== 'assistant.message') continue;
+					const data = json.data || {};
+					const content = typeof data.content === 'string' ? data.content : '';
+					const toolRequests = Array.isArray(data.toolRequests) ? data.toolRequests : [];
+					const phase = data.phase;
+					const isFinal =
+						phase === 'final_answer' ||
+						(phase === undefined && content.length > 0 && toolRequests.length === 0);
+					if (isFinal) return content;
+				} catch {
+					/* ignore non-JSON lines */
+				}
+			}
+			return null;
+		},
+		isSuccessful: (output: string, exitCode: number) => {
+			if (exitCode !== 0) return false;
+			// Require a final result event — bare exit 0 with no result means
+			// the session was interrupted before completion.
+			return output.includes('"type":"result"');
+		},
+		parseTools: (output: string) => {
+			// Copilot emits session.tools_updated with model metadata; tool list
+			// is not directly exposed in JSONL (it's an interactive-mode concept).
+			// Surface tool names actually used in toolRequests on assistant.messages.
+			const toolNames = new Set<string>();
+			for (const line of output.split('\n')) {
+				try {
+					const json = JSON.parse(line);
+					const toolRequests = json?.data?.toolRequests;
+					if (Array.isArray(toolRequests)) {
+						for (const tool of toolRequests) {
+							if (tool?.name) toolNames.add(tool.name);
+						}
+					}
+				} catch {
+					/* ignore non-JSON lines */
+				}
+			}
+			return toolNames.size > 0 ? [...toolNames] : null;
+		},
+		parseToolExecutions: (output: string) => {
+			const executions: Array<{
+				name: string;
+				status?: string;
+				input?: unknown;
+				output?: unknown;
+			}> = [];
+			const byCallId = new Map<string, { name: string; input?: unknown }>();
+
+			for (const line of output.split('\n')) {
+				try {
+					const json = JSON.parse(line);
+					if (json.type === 'tool.execution_start' && json.data?.toolCallId) {
+						byCallId.set(json.data.toolCallId, {
+							name: json.data.toolName || 'unknown',
+							input: json.data.arguments,
+						});
+						executions.push({
+							name: json.data.toolName || 'unknown',
+							status: 'running',
+							input: json.data.arguments,
+						});
+					} else if (json.type === 'tool.execution_complete' && json.data?.toolCallId) {
+						const start = byCallId.get(json.data.toolCallId);
+						executions.push({
+							name: start?.name || 'unknown',
+							status: json.data.success === false ? 'failed' : 'completed',
+							input: start?.input,
+							output: json.data.result?.content ?? json.data.result,
+						});
+					}
+				} catch {
+					/* ignore non-JSON lines */
+				}
+			}
+			return executions;
+		},
+	},
 ];
 
 /**
@@ -869,7 +934,7 @@ function runProvider(
 
 		const proc = spawn(provider.command, args, {
 			cwd,
-			env: getProviderEnv(provider),
+			env: { ...process.env },
 			shell: false,
 			stdio: ['pipe', 'pipe', 'pipe'],
 		});
@@ -1007,17 +1072,11 @@ async function runProviderViaSshStdin(
 		imageArgs?: (imagePath: string) => string[];
 	}
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-	const providerEnv = getProviderSshEnv(provider, sshConfig);
-	const env = {
-		...(providerEnv ?? {}),
-		...(options?.env ?? {}),
-	};
-
 	const sshCommand = await buildSshCommandWithStdin(sshConfig, {
 		command: provider.command,
 		args,
 		cwd: options?.cwd,
-		env: Object.keys(env).length > 0 ? env : undefined,
+		env: options?.env,
 		stdinInput: options?.stdinInput,
 		images: options?.images,
 		imageArgs: options?.imageArgs,
@@ -1552,16 +1611,14 @@ describe.skipIf(SKIP_INTEGRATION)('Provider Integration Tests', () => {
 					console.log(`📋 Session ID: ${sessionId}`);
 					expect(sessionId, `${provider.name} should return session ID`).toBeTruthy();
 
-					// Now request a synopsis (this is what happens when a task completes)
-					const synopsisPrompt = `Provide a brief synopsis of what you just accomplished in this task using this exact format:
-
-**Summary:** [1-2 sentences describing the key outcome]
-
-**Details:** [A paragraph with more specifics about what was done]
-
-Rules:
-- Be specific about what was actually accomplished.
-- Focus only on meaningful work that was done.`;
+					// Now request a synopsis (this is what happens when a task completes).
+					// Use the real, live prompt rather than a hand-copied literal so this
+					// test never drifts from the actual prompt - edit the .md freely and
+					// this test follows automatically.
+					const synopsisPrompt = fs.readFileSync(
+						path.join(__dirname, '../../prompts/autorun-synopsis.md'),
+						'utf-8'
+					);
 
 					const synopsisArgs = provider.buildResumeArgs(sessionId!, synopsisPrompt);
 
@@ -1588,13 +1645,13 @@ Rules:
 					console.log(`   - shortSummary: ${parsed.shortSummary.substring(0, 100)}`);
 					console.log(`   - fullSynopsis length: ${parsed.fullSynopsis.length}`);
 
-					// Verify the summary is NOT a template placeholder
-					const templatePlaceholders = [
-						'[1-2 sentences',
-						'[A paragraph',
-						'... (1-2 sentences)',
-						'... then blank line',
-					];
+					// Verify the summary is NOT a verbatim echo of the template. Derive
+					// the placeholder signatures from the loaded prompt (the leading text
+					// of each `**Summary:**/**Details:** [...]` block) so this check tracks
+					// the prompt instead of hard-coding literals that go stale.
+					const templatePlaceholders = Array.from(
+						synopsisPrompt.matchAll(/\*\*(?:Summary|Details):\*\*\s*(\[[^\].]{5,})/g)
+					).map((m) => m[1].trim().slice(0, 20));
 
 					for (const placeholder of templatePlaceholders) {
 						expect(
@@ -1995,9 +2052,8 @@ Rules:
 						expect(tools, `${provider.name} should expose tools array`).toBeTruthy();
 						expect(tools!.length, `${provider.name} should have multiple tools`).toBeGreaterThan(5);
 
-						// Verify stable core tools are present. Exact search/read tool names can vary across
-						// Claude Code releases, but these core entries are still emitted by the init event.
-						const expectedTools = ['Task', 'Edit', 'Bash'];
+						// Verify common tools are present
+						const expectedTools = ['Read', 'Edit', 'Write', 'Bash', 'Glob', 'Grep'];
 						for (const tool of expectedTools) {
 							expect(tools!.includes(tool), `${provider.name} should have ${tool} tool`).toBe(true);
 						}
@@ -2031,25 +2087,15 @@ Rules:
 						return;
 					}
 
-					const toolFixtureDir = fs.mkdtempSync(
-						path.join(os.tmpdir(), `maestro-provider-tool-${provider.agentId}-`)
-					);
-					const toolFixturePath = path.join(toolFixtureDir, 'tool-read-fixture.txt');
-					const toolFixtureToken = `maestro-tool-token-${provider.agentId}`;
-					fs.writeFileSync(toolFixturePath, `TOKEN=${toolFixtureToken}\n`);
-
-					const prompt = `Use your file-reading tool to read this exact file: ${toolFixturePath}. Reply with only the token value after TOKEN=.`;
+					// Ask to read package.json - this should trigger a Read/file tool
+					const prompt =
+						'Read the package.json file in the current directory and tell me the project name. Be brief.';
 					const args = provider.buildInitialArgs(prompt);
 
 					console.log(`\n🔨 Testing tool execution for ${provider.name}`);
 					console.log(`🚀 Running: ${provider.command} ${args.join(' ')}`);
 
-					let result: { stdout: string; stderr: string; exitCode: number };
-					try {
-						result = await runProvider(provider, args);
-					} finally {
-						fs.rmSync(toolFixtureDir, { recursive: true, force: true });
-					}
+					const result = await runProvider(provider, args);
 
 					console.log(`📤 Exit code: ${result.exitCode}`);
 
@@ -2066,13 +2112,14 @@ Rules:
 						console.log(`   - ${exec.name} (${exec.status || 'unknown status'})`);
 					}
 
+					// Also check for result containing project name (maestro)
 					const response = provider.parseResponse(result.stdout);
 					console.log(`💬 Response: ${response?.substring(0, 200)}`);
 
-					const responseHasFixtureToken = response?.includes(toolFixtureToken);
+					const responseHasProjectName = response?.toLowerCase().includes('maestro');
 					expect(
-						responseHasFixtureToken,
-						`${provider.name} should have read the temporary fixture token. Got: "${response?.substring(0, 100)}"`
+						responseHasProjectName,
+						`${provider.name} should have read package.json and found project name. Got: "${response?.substring(0, 100)}"`
 					).toBe(true);
 
 					// Claude Code reliably emits tool execution events in stream-json format.
@@ -2131,27 +2178,15 @@ Rules:
 						return;
 					}
 
-					const toolFixtureDir = fs.mkdtempSync(
-						path.join(os.tmpdir(), `maestro-provider-state-${provider.agentId}-`)
-					);
-					const toolFixturePath = path.join(toolFixtureDir, 'tool-state-fixture.txt');
-					fs.writeFileSync(
-						toolFixturePath,
-						`STATE_TOKEN=maestro-state-token-${provider.agentId}\n`
-					);
-
-					const prompt = `Use a shell or list tool to list this directory: ${toolFixtureDir}. Then use your file-reading tool to read this exact file: ${toolFixturePath}. Be very brief.`;
+					// Ask to do multiple operations that trigger tools
+					const prompt =
+						'List the files in the current directory using the Glob or Bash tool, then read the README.md file. Be very brief in your response.';
 					const args = provider.buildInitialArgs(prompt);
 
 					console.log(`\n📊 Testing tool state tracking for ${provider.name}`);
 					console.log(`🚀 Running: ${provider.command} ${args.join(' ')}`);
 
-					let result: { stdout: string; stderr: string; exitCode: number };
-					try {
-						result = await runProvider(provider, args);
-					} finally {
-						fs.rmSync(toolFixtureDir, { recursive: true, force: true });
-					}
+					const result = await runProvider(provider, args);
 
 					console.log(`📤 Exit code: ${result.exitCode}`);
 

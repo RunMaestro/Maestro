@@ -1,11 +1,25 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { RefreshCw, Save, Loader2, Clock, Copy, Check, Bot, History, Timer } from 'lucide-react';
+import {
+	RefreshCw,
+	Save,
+	Clock,
+	Copy,
+	Check,
+	Bot,
+	History,
+	Timer,
+	AArrowUp,
+	AArrowDown,
+} from 'lucide-react';
+import { Spinner } from '../ui/Spinner';
 import type { Theme } from '../../types';
 import { MarkdownRenderer } from '../MarkdownRenderer';
 import { SaveMarkdownModal } from '../SaveMarkdownModal';
 import { useSettings } from '../../hooks';
 import { generateTerminalProseStyles } from '../../utils/markdownConfig';
 import { safeClipboardWrite } from '../../utils/clipboard';
+import { notifyToast } from '../../stores/notificationStore';
+import { useModalStore } from '../../stores/modalStore';
 
 type SynopsisStats = NonNullable<
 	Awaited<ReturnType<typeof window.maestro.directorNotes.generateSynopsis>>['stats']
@@ -14,6 +28,26 @@ type SynopsisStats = NonNullable<
 interface AIOverviewTabProps {
 	theme: Theme;
 	onSynopsisReady?: () => void;
+}
+
+// Font-scale zoom for the rendered synopsis. Stored as an em multiplier so the
+// em-based prose styles scale proportionally. Persisted to localStorage so the
+// chosen size is remembered across opens of Director's Notes.
+const FONT_SCALE_STORAGE_KEY = 'directorNotes.fontScale';
+const FONT_SCALE_MIN = 0.7;
+const FONT_SCALE_MAX = 2.0;
+const FONT_SCALE_STEP = 0.1;
+const FONT_SCALE_DEFAULT = 1.0;
+
+function clampFontScale(value: number): number {
+	if (!Number.isFinite(value)) return FONT_SCALE_DEFAULT;
+	return Math.min(FONT_SCALE_MAX, Math.max(FONT_SCALE_MIN, value));
+}
+
+function loadFontScale(): number {
+	const raw = localStorage.getItem(FONT_SCALE_STORAGE_KEY);
+	if (raw === null) return FONT_SCALE_DEFAULT;
+	return clampFontScale(Number(raw));
 }
 
 // Module-level cache so synopsis survives tab switches (unmount/remount)
@@ -27,11 +61,31 @@ let cachedSynopsis: {
 // Exported for testing only – allows resetting the module-level cache between test runs
 export function _resetCacheForTesting() {
 	cachedSynopsis = null;
+	activeGenerationPromise = null;
 }
 
 // Check whether a cached synopsis exists (any lookback window)
 export function hasCachedSynopsis(): boolean {
 	return cachedSynopsis !== null;
+}
+
+// Module-level: tracks the in-flight synopsis IPC promise.
+// Prevents duplicate generation when the modal is closed and reopened
+// while a generation is still running in the main process.
+type SynopsisResult = Awaited<ReturnType<typeof window.maestro.directorNotes.generateSynopsis>>;
+let activeGenerationPromise: Promise<SynopsisResult> | null = null;
+
+/** Fire a toast when synopsis completes while the modal is closed */
+function fireSynopsisReadyToast() {
+	notifyToast({
+		type: 'success',
+		title: "Director's Notes",
+		message: 'AI Synopsis is ready. Click to view.',
+		dismissible: true,
+		onClick: () => {
+			useModalStore.getState().openModal('directorNotes', { initialTab: 'ai-overview' });
+		},
+	});
 }
 
 export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
@@ -42,15 +96,31 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 		cachedSynopsis?.generatedAt ?? null
 	);
 	const [isGenerating, setIsGenerating] = useState(false);
-	const [progress, setProgress] = useState({ phase: 'idle', message: '', percent: 0 });
 	const [showSaveModal, setShowSaveModal] = useState(false);
 	const [copied, setCopied] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [stats, setStats] = useState<SynopsisStats | null>(cachedSynopsis?.stats ?? null);
+	const [fontScale, setFontScale] = useState<number>(loadFontScale);
 	const mountedRef = useRef(true);
 
-	// Generate prose styles for markdown rendering
-	const proseStyles = generateTerminalProseStyles(theme, '.director-notes-content');
+	// Adjust the synopsis font size and persist the new scale.
+	const adjustFontScale = useCallback((direction: -1 | 1) => {
+		setFontScale((prev) => {
+			const next = clampFontScale(prev + direction * FONT_SCALE_STEP);
+			localStorage.setItem(FONT_SCALE_STORAGE_KEY, String(next));
+			return next;
+		});
+	}, []);
+	const isGeneratingRef = useRef(false);
+
+	// Generate prose styles for markdown rendering. MarkdownRenderer's root
+	// `.prose` carries Tailwind's `text-sm` (0.875rem, an absolute rem unit),
+	// which would otherwise pin the base font size and ignore the zoom control.
+	// Override it with a scaled size (same selector → higher specificity than the
+	// utility class) so the em-based prose children scale proportionally.
+	const proseStyles =
+		generateTerminalProseStyles(theme, '.director-notes-content') +
+		`\n.director-notes-content .prose { font-size: calc(0.875rem * ${fontScale}) !important; }`;
 
 	// Format generation duration for display
 	const formatDurationMs = (ms: number): string => {
@@ -75,6 +145,7 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 
 	// Copy synopsis markdown to clipboard
 	const copyToClipboard = useCallback(async () => {
+		if (!synopsis) return;
 		const ok = await safeClipboardWrite(synopsis);
 		if (ok) {
 			setCopied(true);
@@ -86,17 +157,20 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 	// so the renderer only needs to make a single IPC call.
 	const generateSynopsis = useCallback(async () => {
 		setIsGenerating(true);
+		isGeneratingRef.current = true;
 		setError(null);
-		setProgress({ phase: 'generating', message: 'Generating synopsis...', percent: 20 });
+
+		const ipcPromise = window.maestro.directorNotes.generateSynopsis({
+			lookbackDays,
+			provider: directorNotesSettings.provider,
+			customPath: directorNotesSettings.customPath,
+			customArgs: directorNotesSettings.customArgs,
+			customEnvVars: directorNotesSettings.customEnvVars,
+		});
+		activeGenerationPromise = ipcPromise;
 
 		try {
-			const result = await window.maestro.directorNotes.generateSynopsis({
-				lookbackDays,
-				provider: directorNotesSettings.provider,
-				customPath: directorNotesSettings.customPath,
-				customArgs: directorNotesSettings.customArgs,
-				customEnvVars: directorNotesSettings.customEnvVars,
-			});
+			const result = await ipcPromise;
 
 			// Always cache regardless of mount state so result is available next open
 			if (result.success) {
@@ -109,15 +183,19 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 				};
 			}
 
-			// Only update component state if still mounted
-			if (!mountedRef.current) return;
+			// If component unmounted while generating, fire a toast notification
+			if (!mountedRef.current) {
+				if (result.success) {
+					fireSynopsisReadyToast();
+				}
+				return;
+			}
 
 			if (result.success) {
 				const ts = result.generatedAt ?? Date.now();
 				setSynopsis(result.synopsis);
 				setGeneratedAt(ts);
 				setStats(result.stats ?? null);
-				setProgress({ phase: 'complete', message: 'Synopsis complete', percent: 100 });
 				onSynopsisReady?.();
 			} else {
 				setError(result.error || 'Failed to generate synopsis');
@@ -126,13 +204,18 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 			if (!mountedRef.current) return;
 			setError(err instanceof Error ? err.message : 'Failed to generate synopsis');
 		} finally {
+			// Only clear if this is still the active generation (not overwritten by Regenerate)
+			if (activeGenerationPromise === ipcPromise) {
+				activeGenerationPromise = null;
+			}
+			isGeneratingRef.current = false;
 			if (mountedRef.current) {
 				setIsGenerating(false);
 			}
 		}
 	}, [lookbackDays, directorNotesSettings, onSynopsisReady]);
 
-	// On mount: use cache if available (regardless of lookback), otherwise generate fresh
+	// On mount: use cache if available, attach to in-flight generation, or start fresh
 	useEffect(() => {
 		mountedRef.current = true;
 		if (cachedSynopsis) {
@@ -141,6 +224,37 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 			setStats(cachedSynopsis.stats ?? null);
 			setLookbackDays(cachedSynopsis.lookbackDays);
 			onSynopsisReady?.();
+		} else if (activeGenerationPromise) {
+			// A generation is already in flight (started before modal was closed).
+			// Attach to it instead of starting a duplicate.
+			setIsGenerating(true);
+			isGeneratingRef.current = true;
+
+			const existingPromise = activeGenerationPromise;
+			existingPromise
+				.then((result) => {
+					if (!mountedRef.current) return;
+					if (result.success) {
+						const ts = result.generatedAt ?? Date.now();
+						setSynopsis(result.synopsis);
+						setGeneratedAt(ts);
+						setStats(result.stats ?? null);
+						if (cachedSynopsis) setLookbackDays(cachedSynopsis.lookbackDays);
+						onSynopsisReady?.();
+					} else {
+						setError(result.error || 'Failed to generate synopsis');
+					}
+				})
+				.catch((err) => {
+					if (!mountedRef.current) return;
+					setError(err instanceof Error ? err.message : 'Failed to generate synopsis');
+				})
+				.finally(() => {
+					isGeneratingRef.current = false;
+					if (mountedRef.current) {
+						setIsGenerating(false);
+					}
+				});
 		} else {
 			generateSynopsis();
 		}
@@ -193,11 +307,7 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 						opacity: isGenerating ? 0.5 : 1,
 					}}
 				>
-					{isGenerating ? (
-						<Loader2 className="w-3.5 h-3.5 animate-spin" />
-					) : (
-						<RefreshCw className="w-3.5 h-3.5" />
-					)}
+					{isGenerating ? <Spinner size={14} /> : <RefreshCw className="w-3.5 h-3.5" />}
 					{isGenerating ? 'Regenerating…' : 'Regenerate'}
 				</button>
 
@@ -233,29 +343,6 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 					{copied ? 'Copied!' : 'Copy'}
 				</button>
 			</div>
-
-			{/* Progress bar — only during first generation (no existing content) */}
-			{isGenerating && !synopsis && (
-				<div className="shrink-0 px-4 py-2" style={{ backgroundColor: theme.colors.bgActivity }}>
-					<div className="flex items-center gap-3">
-						<div
-							className="flex-1 h-2 rounded-full overflow-hidden"
-							style={{ backgroundColor: theme.colors.border }}
-						>
-							<div
-								className="h-full transition-all duration-300"
-								style={{
-									width: `${progress.percent}%`,
-									backgroundColor: theme.colors.accent,
-								}}
-							/>
-						</div>
-						<span className="text-xs whitespace-nowrap" style={{ color: theme.colors.textDim }}>
-							{progress.message}
-						</span>
-					</div>
-				</div>
-			)}
 
 			{/* Stats bar — stays visible during regeneration */}
 			{stats && synopsis && (
@@ -293,6 +380,40 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 							</span>
 						</div>
 					)}
+
+					{/* Font-size controls — right-justified, scale only the synopsis text */}
+					<div className="ml-auto flex items-center gap-1">
+						<button
+							onClick={() => adjustFontScale(-1)}
+							disabled={fontScale <= FONT_SCALE_MIN}
+							aria-label="Decrease font size"
+							title="Decrease font size"
+							className="flex items-center justify-center w-7 h-7 rounded transition-colors hover:opacity-100"
+							style={{
+								color: theme.colors.textDim,
+								border: `1px solid ${theme.colors.border}`,
+								opacity: fontScale <= FONT_SCALE_MIN ? 0.4 : 0.8,
+								cursor: fontScale <= FONT_SCALE_MIN ? 'default' : 'pointer',
+							}}
+						>
+							<AArrowDown className="w-4 h-4" />
+						</button>
+						<button
+							onClick={() => adjustFontScale(1)}
+							disabled={fontScale >= FONT_SCALE_MAX}
+							aria-label="Increase font size"
+							title="Increase font size"
+							className="flex items-center justify-center w-7 h-7 rounded transition-colors hover:opacity-100"
+							style={{
+								color: theme.colors.textDim,
+								border: `1px solid ${theme.colors.border}`,
+								opacity: fontScale >= FONT_SCALE_MAX ? 0.4 : 0.8,
+								cursor: fontScale >= FONT_SCALE_MAX ? 'default' : 'pointer',
+							}}
+						>
+							<AArrowUp className="w-4 h-4" />
+						</button>
+					</div>
 				</div>
 			)}
 
@@ -323,13 +444,10 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 					</div>
 				) : isGenerating ? (
 					<div className="flex items-center justify-center h-full">
-						<div className="text-center">
-							<Loader2
-								className="w-8 h-8 animate-spin mx-auto mb-3"
-								style={{ color: theme.colors.accent }}
-							/>
+						<div className="flex items-center gap-3">
+							<Spinner size={24} color={theme.colors.accent} />
 							<p className="text-sm" style={{ color: theme.colors.textDim }}>
-								{progress.message}
+								Generating…
 							</p>
 						</div>
 					</div>

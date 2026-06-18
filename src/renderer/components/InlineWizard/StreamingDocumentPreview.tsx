@@ -12,15 +12,12 @@
  * Used by DocumentGenerationView during document generation phase.
  */
 
-import { useState, useEffect, useRef, useMemo, type UIEvent } from 'react';
-import ReactMarkdown from 'react-markdown';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { FileText, Code2, AlignLeft } from 'lucide-react';
 import type { Theme } from '../../types';
-import {
-	REMARK_GFM_PLUGINS,
-	createMarkdownComponents,
-	generateInlineWizardPreviewProseStyles,
-} from '../../utils/markdownConfig';
+import { generateInlineWizardPreviewProseStyles } from '../../utils/markdownConfig';
+import { Markdown } from '../Markdown';
+import { openUrl } from '../../utils/openUrl';
 import { useSettingsStore } from '../../stores/settingsStore';
 
 /**
@@ -122,8 +119,10 @@ export function StreamingDocumentPreview({
 	}, [content, filename]);
 
 	// Handle scroll to detect if user has manually scrolled
-	const handleScroll = (event: UIEvent<HTMLDivElement>) => {
-		const { scrollTop, scrollHeight, clientHeight } = event.currentTarget;
+	const handleScroll = () => {
+		if (!containerRef.current) return;
+
+		const { scrollTop, scrollHeight, clientHeight } = containerRef.current;
 		const isNearBottom = scrollHeight - scrollTop - clientHeight < 50;
 
 		// If user scrolls up, stop auto-scroll. If they scroll back to bottom, resume.
@@ -142,22 +141,8 @@ export function StreamingDocumentPreview({
 		[theme]
 	);
 
-	// Markdown components from shared factory (handles SyntaxHighlighter, links, etc.)
-	const markdownComponents = useMemo(
-		() =>
-			createMarkdownComponents({
-				theme,
-				enableBionifyReadingMode: bionifyReadingMode,
-				onExternalLinkClick: (href) => {
-					void window.maestro.shell.openExternal(href);
-				},
-				codeBlockStyle: {
-					padding: '0.75em',
-					fontSize: '0.85em',
-				},
-			}),
-		[bionifyReadingMode, theme]
-	);
+	// Code-block style overrides for the compact streaming preview.
+	const codeBlockStyle = useMemo(() => ({ padding: '0.75em', fontSize: '0.85em' }), []);
 
 	return (
 		<div className="relative flex flex-col h-full streaming-preview">
@@ -255,9 +240,15 @@ export function StreamingDocumentPreview({
 					/* Markdown preview */
 					<div className="prose prose-sm max-w-none text-sm">
 						<style>{proseStyles}</style>
-						<ReactMarkdown remarkPlugins={REMARK_GFM_PLUGINS} components={markdownComponents}>
-							{cleanedContent}
-						</ReactMarkdown>
+						<Markdown
+							preset="document"
+							frontmatter={false}
+							theme={theme}
+							content={cleanedContent}
+							enableBionifyReadingMode={bionifyReadingMode}
+							onExternalLinkClick={openUrl}
+							codeBlockStyle={codeBlockStyle}
+						/>
 						{/* Blinking cursor at end */}
 						<span
 							className="inline-block w-2 h-4 ml-0.5 align-text-bottom animate-pulse"
@@ -275,8 +266,9 @@ export function StreamingDocumentPreview({
 					<button
 						onClick={() => {
 							updateUserScrolled(false);
-							const container = containerRef.current!;
-							container.scrollTop = container.scrollHeight;
+							if (containerRef.current) {
+								containerRef.current.scrollTop = containerRef.current.scrollHeight;
+							}
 						}}
 						className="px-3 py-1.5 rounded-full text-xs shadow-lg transition-colors hover:opacity-90"
 						style={{

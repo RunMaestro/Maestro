@@ -44,12 +44,14 @@ function getIpViaUdp(): Promise<string> {
 		let settled = false;
 
 		const cleanup = () => {
-			settled = true;
-			socket.removeAllListeners();
-			try {
-				socket.close();
-			} catch {
-				// Ignore close errors
+			if (!settled) {
+				settled = true;
+				socket.removeAllListeners();
+				try {
+					socket.close();
+				} catch {
+					// Ignore close errors
+				}
 			}
 		};
 

@@ -1,8 +1,9 @@
 import { useRef, useState } from 'react';
-import { AlertTriangle, Loader2, Trash2 } from 'lucide-react';
+import { AlertTriangle, Trash2 } from 'lucide-react';
 import type { Theme, Session } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal } from './ui/Modal';
+import { Spinner } from './ui/Spinner';
 
 interface DeleteWorktreeModalProps {
 	theme: Theme;
@@ -71,7 +72,7 @@ export function DeleteWorktreeModal({
 								opacity: 0.7,
 							}}
 						>
-							<Loader2 className="w-3 h-3 animate-spin" />
+							<Spinner size={12} />
 							Deleting...
 						</button>
 					) : (

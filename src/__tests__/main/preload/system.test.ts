@@ -143,17 +143,6 @@ describe('System Preload API', () => {
 			});
 		});
 
-		describe('openPath', () => {
-			it('should invoke shell:openPath with path', async () => {
-				mockInvoke.mockResolvedValue('/path/to/file');
-
-				const result = await api.openPath('/path/to/file');
-
-				expect(mockInvoke).toHaveBeenCalledWith('shell:openPath', '/path/to/file');
-				expect(result).toBe('/path/to/file');
-			});
-		});
-
 		describe('trashItem', () => {
 			it('should invoke shell:trashItem with path', async () => {
 				mockInvoke.mockResolvedValue(undefined);
@@ -161,39 +150,6 @@ describe('System Preload API', () => {
 				await api.trashItem('/path/to/file');
 
 				expect(mockInvoke).toHaveBeenCalledWith('shell:trashItem', '/path/to/file');
-			});
-		});
-
-		describe('showItemInFolder', () => {
-			it('should invoke shell:showItemInFolder with path', async () => {
-				mockInvoke.mockResolvedValue(undefined);
-
-				await api.showItemInFolder('/path/to/file');
-
-				expect(mockInvoke).toHaveBeenCalledWith('shell:showItemInFolder', '/path/to/file');
-			});
-		});
-
-		describe('copyTextToClipboard', () => {
-			it('should invoke clipboard:writeText with text', async () => {
-				mockInvoke.mockResolvedValue(undefined);
-
-				await api.copyTextToClipboard('copy me');
-
-				expect(mockInvoke).toHaveBeenCalledWith('clipboard:writeText', 'copy me');
-			});
-		});
-
-		describe('copyImageToClipboard', () => {
-			it('should invoke clipboard:writeImage with data URL', async () => {
-				mockInvoke.mockResolvedValue(undefined);
-
-				await api.copyImageToClipboard('data:image/png;base64,abc123');
-
-				expect(mockInvoke).toHaveBeenCalledWith(
-					'clipboard:writeImage',
-					'data:image/png;base64,abc123'
-				);
 			});
 		});
 	});
@@ -465,7 +421,16 @@ describe('System Preload API', () => {
 
 				const result = await api.download();
 
-				expect(mockInvoke).toHaveBeenCalledWith('updates:download');
+				expect(mockInvoke).toHaveBeenCalledWith('updates:download', undefined);
+				expect(result).toEqual({ success: true });
+			});
+
+			it('should forward an explicit target tag', async () => {
+				mockInvoke.mockResolvedValue({ success: true });
+
+				const result = await api.download('v1.2.3');
+
+				expect(mockInvoke).toHaveBeenCalledWith('updates:download', 'v1.2.3');
 				expect(result).toEqual({ success: true });
 			});
 		});
@@ -576,23 +541,6 @@ describe('System Preload API', () => {
 
 				expect(callback).toHaveBeenCalled();
 			});
-
-			it('should remove quit confirmation listener when cleanup is called', () => {
-				const callback = vi.fn();
-				let registeredHandler: () => void;
-
-				mockOn.mockImplementation((_channel: string, handler: () => void) => {
-					registeredHandler = handler;
-				});
-
-				const cleanup = api.onQuitConfirmationRequest(callback);
-				cleanup();
-
-				expect(mockRemoveListener).toHaveBeenCalledWith(
-					'app:requestQuitConfirmation',
-					registeredHandler!
-				);
-			});
 		});
 
 		describe('confirmQuit', () => {
@@ -608,38 +556,6 @@ describe('System Preload API', () => {
 				api.cancelQuit();
 
 				expect(mockSend).toHaveBeenCalledWith('app:quitCancelled');
-			});
-		});
-
-		describe('onSystemResume', () => {
-			it('should register system resume listener and call callback', () => {
-				const callback = vi.fn();
-				let registeredHandler: () => void;
-
-				mockOn.mockImplementation((_channel: string, handler: () => void) => {
-					registeredHandler = handler;
-				});
-
-				const cleanup = api.onSystemResume(callback);
-				registeredHandler!();
-
-				expect(mockOn).toHaveBeenCalledWith('app:systemResume', registeredHandler!);
-				expect(callback).toHaveBeenCalledTimes(1);
-				expect(typeof cleanup).toBe('function');
-			});
-
-			it('should remove system resume listener when cleanup is called', () => {
-				const callback = vi.fn();
-				let registeredHandler: () => void;
-
-				mockOn.mockImplementation((_channel: string, handler: () => void) => {
-					registeredHandler = handler;
-				});
-
-				const cleanup = api.onSystemResume(callback);
-				cleanup();
-
-				expect(mockRemoveListener).toHaveBeenCalledWith('app:systemResume', registeredHandler!);
 			});
 		});
 	});

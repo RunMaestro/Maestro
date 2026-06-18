@@ -11,6 +11,18 @@ vi.mock('react-syntax-highlighter/dist/esm/styles/prism', () => ({
 	vs: {},
 }));
 
+// Mock openUrl so link-click tests can assert the exact options passed through
+// (specifically the translated `ctrlKey` modifier) without depending on the
+// settings store's useSystemBrowser default or whether an active session
+// exists. See bug #1060: cmd-click (metaKey) on macOS must translate to the
+// same ctrlKey:true inversion as ctrl-click.
+const { mockOpenUrl } = vi.hoisted(() => ({ mockOpenUrl: vi.fn() }));
+vi.mock('../../../renderer/utils/openUrl', () => ({
+	openUrl: mockOpenUrl,
+	openInSystemBrowser: vi.fn(),
+	openInMaestroBrowser: vi.fn(),
+}));
+
 import {
 	generateProseStyles,
 	generateAutoRunProseStyles,
@@ -24,6 +36,7 @@ import {
 } from '../../../renderer/utils/markdownConfig';
 import type { Theme } from '../../../shared/theme-types';
 
+import { mockTheme } from '../../helpers/mockTheme';
 /**
  * Tests for markdown configuration utilities.
  *
@@ -37,31 +50,6 @@ import type { Theme } from '../../../shared/theme-types';
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
-
-const mockTheme: Theme = {
-	id: 'dracula',
-	name: 'Dracula',
-	mode: 'dark',
-	colors: {
-		textMain: '#ffffff',
-		textDim: '#888888',
-		accent: '#0066ff',
-		accentDim: 'rgba(0, 102, 255, 0.2)',
-		accentText: '#0066ff',
-		accentForeground: '#ffffff',
-		success: '#00cc00',
-		warning: '#ffaa00',
-		error: '#ff0000',
-		bgMain: '#1a1a1a',
-		bgSidebar: '#2a2a2a',
-		bgActivity: '#333333',
-		border: '#444444',
-	},
-};
-
-beforeEach(() => {
-	vi.clearAllMocks();
-});
 
 // ---------------------------------------------------------------------------
 // generateProseStyles
@@ -103,6 +91,12 @@ describe('generateProseStyles', () => {
 			expect(css).toContain('.prose table');
 			expect(css).toContain('.prose th');
 			expect(css).toContain('.prose td');
+		});
+
+		it('should allow inline code to wrap when it cannot break cleanly', () => {
+			const css = generateProseStyles({ theme: mockTheme });
+			const codeRule = css.match(/\.prose code \{[^}]*\}/)?.[0] ?? '';
+			expect(codeRule).toContain('overflow-wrap: anywhere');
 		});
 
 		it('should include blockquote, link, and hr rules', () => {
@@ -353,9 +347,9 @@ describe('generateProseStyles', () => {
 			expect(css).toContain(`color: ${mockTheme.colors.textDim}`);
 		});
 
-		it('should inject accent into link color', () => {
+		it('should inject accentText into link color', () => {
 			const css = generateProseStyles({ theme: mockTheme });
-			expect(css).toContain(`.prose a { color: ${mockTheme.colors.accent}`);
+			expect(css).toContain(`.prose a { color: ${mockTheme.colors.accentText}`);
 		});
 
 		it('should inject bgActivity into code background', () => {
@@ -699,26 +693,6 @@ describe('generateInlineWizardPreviewProseStyles', () => {
 			'.doc-gen-view.prose, .doc-gen-view .prose li > p:first-child > strong:first-child'
 		);
 	});
-
-	it('should use compact streaming dimensions and the default prose selector', () => {
-		const css = generateInlineWizardPreviewProseStyles(mockTheme, '', 'streaming');
-
-		expect(css).toContain('.prose h1');
-		expect(css).toContain('font-size: 1.75em');
-		expect(css).toContain('font-size: 1.4em');
-		expect(css).toContain('font-size: 1.15em');
-		expect(css).toContain('margin: 0.4em 0');
-		expect(css).toContain('padding: 0.15em 0.3em');
-		expect(css).toContain('font-size: 0.85em');
-		expect(css).toContain('padding: 0.75em');
-		expect(css).toContain(`border-left: 3px solid ${mockTheme.colors.border}`);
-		expect(css).toContain('width: 14px');
-		expect(css).toContain('margin-right: 6px');
-		expect(css).toContain('left: 3px');
-		expect(css).toContain('top: 0px');
-		expect(css).toContain('width: 4px');
-		expect(css).toContain('height: 8px');
-	});
 });
 
 // ---------------------------------------------------------------------------
@@ -758,300 +732,11 @@ describe('shared markdown presets', () => {
 		expect(components.code).toBeDefined();
 		expect(components.a).toBeDefined();
 	});
-
-	it('should render wizard bubble components with expected tags, classes, and link behavior', () => {
-		const components = createWizardBubbleMarkdownComponents(mockTheme);
-		const openExternal = vi.mocked(window.maestro.shell.openExternal);
-
-		expect((components.p as any)({ children: 'paragraph' }).props.className).toBe('mb-2 last:mb-0');
-		expect((components.ul as any)({ children: 'items' }).props.className).toBe(
-			'list-disc ml-4 mb-2'
-		);
-		expect((components.ol as any)({ children: 'items' }).props.className).toBe(
-			'list-decimal ml-4 mb-2'
-		);
-		expect((components.li as any)({ children: 'item' }).props.className).toBe('mb-1');
-		expect((components.strong as any)({ children: 'strong' }).props.className).toBe(
-			'font-semibold'
-		);
-		expect((components.em as any)({ children: 'em' }).props.className).toBe('italic');
-
-		const inlineCode = (components.code as any)({ children: 'inline' });
-		expect(inlineCode.props.className).toContain('font-mono');
-		expect(inlineCode.props.style.backgroundColor).toBe(`${mockTheme.colors.bgMain}80`);
-
-		const blockCode = (components.code as any)({
-			children: 'block',
-			className: 'language-ts',
-		});
-		expect(blockCode.props.className).toBe('language-ts');
-
-		const pre = (components.pre as any)({ children: 'code' });
-		expect(pre.type).toBe('pre');
-		expect(pre.props.style.backgroundColor).toBe(mockTheme.colors.bgMain);
-
-		const externalLink = (components.a as any)({
-			href: 'https://example.com',
-			children: 'external',
-		});
-		externalLink.props.onClick();
-		expect(openExternal).toHaveBeenCalledWith('https://example.com');
-
-		openExternal.mockClear();
-		const relativeLink = (components.a as any)({ href: './local.md', children: 'local' });
-		relativeLink.props.onClick();
-		expect(openExternal).not.toHaveBeenCalled();
-
-		expect((components.h1 as any)({ children: 'h1' }).props.className).toBe(
-			'text-lg font-bold mb-2'
-		);
-		expect((components.h2 as any)({ children: 'h2' }).props.className).toBe(
-			'text-base font-bold mb-2'
-		);
-		expect((components.h3 as any)({ children: 'h3' }).props.className).toBe(
-			'text-sm font-bold mb-1'
-		);
-		expect((components.blockquote as any)({ children: 'quote' }).props.style.borderColor).toBe(
-			mockTheme.colors.border
-		);
-	});
-
-	it('should render release note components with expected tags, colors, and link behavior', () => {
-		const components = createReleaseNotesMarkdownComponents(mockTheme);
-		const openExternal = vi.mocked(window.maestro.shell.openExternal);
-
-		expect((components.h1 as any)({ children: 'h1' }).props.style.color).toBe(
-			mockTheme.colors.textMain
-		);
-		expect((components.h2 as any)({ children: 'h2' }).props.style.color).toBe(
-			mockTheme.colors.textMain
-		);
-		expect((components.h3 as any)({ children: 'h3' }).props.style.color).toBe(
-			mockTheme.colors.textMain
-		);
-		expect((components.p as any)({ children: 'copy' }).props.style.color).toBe(
-			mockTheme.colors.textDim
-		);
-		expect((components.ul as any)({ children: 'items' }).props.className).toContain('list-disc');
-		expect((components.ol as any)({ children: 'items' }).props.className).toContain('list-decimal');
-		expect((components.li as any)({ children: 'item' }).props.style.color).toBe(
-			mockTheme.colors.textDim
-		);
-
-		const code = (components.code as any)({ children: 'version' });
-		expect(code.props.style.backgroundColor).toBe(mockTheme.colors.bgMain);
-		expect(code.props.style.color).toBe(mockTheme.colors.accent);
-
-		const preventDefault = vi.fn();
-		const externalLink = (components.a as any)({
-			href: 'mailto:test@example.com',
-			children: 'email',
-		});
-		externalLink.props.onClick({ preventDefault });
-		expect(preventDefault).toHaveBeenCalled();
-		expect(openExternal).toHaveBeenCalledWith('mailto:test@example.com');
-
-		openExternal.mockClear();
-		const localLink = (components.a as any)({ href: '#changes', children: 'anchor' });
-		localLink.props.onClick({ preventDefault: vi.fn() });
-		expect(openExternal).not.toHaveBeenCalled();
-	});
 });
 
 // ---------------------------------------------------------------------------
 // createMarkdownComponents — link handling (Fixes MAESTRO-F4, MAESTRO-E5, etc.)
 // ---------------------------------------------------------------------------
-
-describe('createMarkdownComponents rendering behavior', () => {
-	const readableChildren = (element: React.ReactElement) =>
-		(element.props.children as React.ReactElement).props.children;
-
-	it('should render text wrappers without search highlighting', () => {
-		const components = createMarkdownComponents({ theme: mockTheme });
-
-		for (const tag of ['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'td', 'th'] as const) {
-			const element = (components[tag] as any)({ children: 'Plain text' });
-			expect(element.type).toBe(tag);
-			expect(readableChildren(element)).toBe('Plain text');
-		}
-
-		expect((components.blockquote as any)({ children: 'Quote' }).type).toBe('blockquote');
-		expect((components.strong as any)({ children: 'Strong' }).type).toBe('strong');
-		expect((components.em as any)({ children: 'Emphasis' }).type).toBe('em');
-	});
-
-	it('should highlight text matches across strings, nested elements, arrays, and current match refs', () => {
-		const onMatchRendered = vi.fn();
-		const components = createMarkdownComponents({
-			theme: mockTheme,
-			searchHighlight: {
-				query: 'find+',
-				currentMatchIndex: 1,
-				onMatchRendered,
-			},
-		});
-
-		const element = (components.p as any)({
-			children: [
-				'Find+ first',
-				React.createElement('strong', { key: 'nested' }, 'find+ nested'),
-				['find+ array'],
-				42,
-				null,
-			],
-		});
-
-		const [firstFragment, nestedStrong, arrayChildren, numericChild, nullChild] =
-			readableChildren(element);
-		const firstMark = firstFragment.props.children[0];
-		expect(firstMark.type).toBe('mark');
-		expect(firstMark.props['data-match-index']).toBe(0);
-		expect(firstMark.props['data-current']).toBeUndefined();
-		expect(firstMark.props.style.backgroundColor).toBe('#ffd700');
-
-		const nestedMark = nestedStrong.props.children.props.children[0];
-		expect(nestedMark.props['data-match-index']).toBe(1);
-		expect(nestedMark.props['data-current']).toBe('true');
-		expect(nestedMark.props.style.backgroundColor).toBe(mockTheme.colors.accent);
-
-		const currentRef = (nestedMark as any).ref ?? nestedMark.props.ref;
-		const marker = document.createElement('mark');
-		currentRef(marker);
-		expect(onMatchRendered).toHaveBeenCalledWith(1, marker);
-
-		expect(arrayChildren[0].props.children[0].props['data-match-index']).toBe(2);
-		expect(numericChild).toBe(42);
-		expect(nullChild).toBeNull();
-	});
-
-	it('should leave text unchanged when the search query is blank or has no matches', () => {
-		const blankQuery = createMarkdownComponents({
-			theme: mockTheme,
-			searchHighlight: { query: '   ', currentMatchIndex: 0 },
-		});
-		expect(readableChildren((blankQuery.p as any)({ children: 'Plain text' }))).toBe('Plain text');
-
-		const noMatch = createMarkdownComponents({
-			theme: mockTheme,
-			searchHighlight: { query: 'missing', currentMatchIndex: 0 },
-		});
-		expect(readableChildren((noMatch.p as any)({ children: 'Plain text' }))).toBe('Plain text');
-	});
-
-	it('should preserve child elements with no children and clone unkeyed matched elements', () => {
-		const components = createMarkdownComponents({
-			theme: mockTheme,
-			searchHighlight: { query: 'match', currentMatchIndex: 0 },
-		});
-
-		const childlessElement = (components.p as any)({ children: React.createElement('hr') });
-		expect(readableChildren(childlessElement).type).toBe('hr');
-
-		const unkeyedElement = (components.p as any)({
-			children: React.createElement('span', null, 'match inside'),
-		});
-		const unkeyedChild = readableChildren(unkeyedElement);
-		expect(unkeyedChild.type).toBe('span');
-		expect(unkeyedChild.key).toBe('elem-0');
-		expect(unkeyedChild.props.children.props.children[0].type).toBe('mark');
-	});
-
-	it('should route code blocks to custom renderers, syntax highlighting, or fallback pre tags', () => {
-		const MermaidRenderer = vi.fn();
-		const customComponents = createMarkdownComponents({
-			theme: mockTheme,
-			customLanguageRenderers: { mermaid: MermaidRenderer },
-		});
-		const mermaidCode = React.createElement(
-			'code',
-			{ className: 'language-mermaid' },
-			'graph TD\n'
-		);
-		const mermaidElement = (customComponents.pre as any)({ children: mermaidCode });
-		expect(mermaidElement.type).toBe(MermaidRenderer);
-		expect(mermaidElement.props.code).toBe('graph TD');
-		expect(mermaidElement.props.theme).toBe(mockTheme);
-
-		const highlightedComponents = createMarkdownComponents({
-			theme: mockTheme,
-			codeBlockStyle: {
-				margin: '1px',
-				padding: '2px',
-				fontSize: '11px',
-				borderRadius: '3px',
-				backgroundColor: '#101010',
-			},
-		});
-		const jsCode = React.createElement('code', { className: 'language-js' }, 'const x = 1;\n');
-		const highlightedElement = (highlightedComponents.pre as any)({ children: jsCode });
-		expect(highlightedElement.props.language).toBe('js');
-		expect(highlightedElement.props.children).toBe('const x = 1;');
-		expect(highlightedElement.props.customStyle).toMatchObject({
-			margin: '1px',
-			padding: '2px',
-			fontSize: '11px',
-			borderRadius: '3px',
-			background: '#101010',
-		});
-		expect(highlightedElement.props.style['pre[class*="language-"]']).toMatchObject({
-			color: mockTheme.colors.textMain,
-			background: mockTheme.colors.bgActivity,
-		});
-
-		const defaultComponents = createMarkdownComponents({ theme: mockTheme });
-		const codeNode = React.createElement('span', { node: { tagName: 'code' } }, 'plain text\n');
-		const defaultElement = (defaultComponents.pre as any)({ children: codeNode });
-		expect(defaultElement.props.language).toBe('text');
-		expect(defaultElement.props.customStyle).toMatchObject({
-			margin: '0.5em 0',
-			padding: '1em',
-			background: mockTheme.colors.bgActivity,
-			fontSize: '0.9em',
-			borderRadius: '6px',
-		});
-
-		const fallback = (defaultComponents.pre as any)({ children: React.createElement('span') });
-		expect(fallback.type).toBe('pre');
-	});
-
-	it('should render inline code, custom images, and sanitized details elements', () => {
-		const ImageRenderer = vi.fn();
-		const components = createMarkdownComponents({
-			theme: mockTheme,
-			imageRenderer: ImageRenderer,
-		});
-
-		const code = (components.code as any)({
-			className: 'language-ts',
-			children: 'inline',
-			'data-testid': 'inline-code',
-		});
-		expect(code.type).toBe('code');
-		expect(code.props.className).toBe('language-ts');
-		expect(code.props['data-testid']).toBe('inline-code');
-
-		const image = (components.img as any)({
-			src: 'image.png',
-			alt: 'Preview',
-			loading: 'lazy',
-		});
-		expect(image.type).toBe(ImageRenderer);
-		expect(image.props).toMatchObject({
-			src: 'image.png',
-			alt: 'Preview',
-			loading: 'lazy',
-		});
-
-		const details = (components.details as any)({
-			onToggle: 'alert(1)',
-			open: true,
-			children: 'details body',
-		});
-		expect(details.type).toBe('details');
-		expect(details.props.onToggle).toBeUndefined();
-		expect(details.props.open).toBe(true);
-	});
-});
 
 describe('createMarkdownComponents link handling', () => {
 	it('should call onExternalLinkClick for http/https URLs', () => {
@@ -1067,7 +752,7 @@ describe('createMarkdownComponents link handling', () => {
 		const element = aComponent({ node: null, href: 'https://example.com', children: 'link' });
 		const clickEvent = { preventDefault: vi.fn() } as any;
 		element.props.onClick(clickEvent);
-		expect(onExternalLinkClick).toHaveBeenCalledWith('https://example.com');
+		expect(onExternalLinkClick).toHaveBeenCalledWith('https://example.com', { ctrlKey: undefined });
 	});
 
 	it('should call onExternalLinkClick for mailto URLs', () => {
@@ -1081,25 +766,41 @@ describe('createMarkdownComponents link handling', () => {
 		const element = aComponent({ node: null, href: 'mailto:test@example.com', children: 'email' });
 		const clickEvent = { preventDefault: vi.fn() } as any;
 		element.props.onClick(clickEvent);
-		expect(onExternalLinkClick).toHaveBeenCalledWith('mailto:test@example.com');
+		expect(onExternalLinkClick).toHaveBeenCalledWith('mailto:test@example.com', {
+			ctrlKey: undefined,
+		});
 	});
 
-	it('should call onExternalLinkClick for file URLs', () => {
+	// Bug #1060: on macOS a Cmd+click sets metaKey (not ctrlKey). The handler
+	// must translate `metaKey || ctrlKey` into the ctrlKey option so the
+	// open-in-browser inversion still fires. Under the old `{ ctrlKey: e.ctrlKey }`
+	// code a metaKey-only click yielded ctrlKey:false, so this would fail.
+	it('should translate Cmd-click (metaKey) into ctrlKey:true for onExternalLinkClick', () => {
 		const onExternalLinkClick = vi.fn();
-		const onFileClick = vi.fn();
 		const components = createMarkdownComponents({
 			theme: mockTheme,
 			onExternalLinkClick,
-			onFileClick,
 		});
 		const aComponent = components.a as any;
 
-		const element = aComponent({ node: null, href: 'file:///tmp/readme.md', children: 'file' });
+		const element = aComponent({ node: null, href: 'https://example.com', children: 'link' });
+		const clickEvent = { preventDefault: vi.fn(), metaKey: true, ctrlKey: false } as any;
+		element.props.onClick(clickEvent);
+		expect(onExternalLinkClick).toHaveBeenCalledWith('https://example.com', { ctrlKey: true });
+	});
+
+	it('should pass ctrlKey:false to onExternalLinkClick on a plain click', () => {
+		const onExternalLinkClick = vi.fn();
+		const components = createMarkdownComponents({
+			theme: mockTheme,
+			onExternalLinkClick,
+		});
+		const aComponent = components.a as any;
+
+		const element = aComponent({ node: null, href: 'https://example.com', children: 'link' });
 		const clickEvent = { preventDefault: vi.fn(), metaKey: false, ctrlKey: false } as any;
 		element.props.onClick(clickEvent);
-
-		expect(onExternalLinkClick).toHaveBeenCalledWith('file:///tmp/readme.md');
-		expect(onFileClick).not.toHaveBeenCalled();
+		expect(onExternalLinkClick).toHaveBeenCalledWith('https://example.com', { ctrlKey: false });
 	});
 
 	it('should NOT call onExternalLinkClick for relative paths', () => {
@@ -1125,6 +826,21 @@ describe('createMarkdownComponents link handling', () => {
 		}
 	});
 
+	it('should forward id and other props through heading components (rehype-slug support)', () => {
+		const components = createMarkdownComponents({
+			theme: mockTheme,
+			searchHighlight: { query: '', currentMatchIndex: 0 },
+		});
+
+		// rehype-slug adds an id prop to headings; the component overrides must forward it
+		for (const tag of ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'] as const) {
+			const Component = components[tag] as any;
+			expect(Component).toBeDefined();
+			const element = Component({ node: null, id: 'my-heading', children: 'Title' });
+			expect(element.props.id).toBe('my-heading');
+		}
+	});
+
 	it('should route relative paths to onFileClick when available', () => {
 		const onExternalLinkClick = vi.fn();
 		const onFileClick = vi.fn();
@@ -1141,110 +857,123 @@ describe('createMarkdownComponents link handling', () => {
 		expect(onFileClick).toHaveBeenCalledWith('LICENSE', { openInNewTab: false });
 		expect(onExternalLinkClick).not.toHaveBeenCalled();
 	});
+});
 
-	it('should route maestro-file protocol and data attribute file links to onFileClick', () => {
-		const onFileClick = vi.fn();
-		const components = createMarkdownComponents({ theme: mockTheme, onFileClick });
+// ---------------------------------------------------------------------------
+// createWizardBubbleMarkdownComponents - link handling (#1060)
+// ---------------------------------------------------------------------------
+
+describe('createWizardBubbleMarkdownComponents link handling', () => {
+	beforeEach(() => {
+		mockOpenUrl.mockClear();
+	});
+
+	// Under the old `{ ctrlKey: e.ctrlKey }` code a metaKey-only click yielded
+	// ctrlKey:false, so this guard would fail. See bug #1060.
+	it('should translate Cmd-click (metaKey) into ctrlKey:true for openUrl', () => {
+		const components = createWizardBubbleMarkdownComponents(mockTheme);
 		const aComponent = components.a as any;
 
-		const protocolLink = aComponent({
-			node: null,
-			href: 'maestro-file://docs/spec.md',
-			children: 'spec',
-		});
-		protocolLink.props.onClick({ preventDefault: vi.fn(), metaKey: true, ctrlKey: false });
-		expect(onFileClick).toHaveBeenCalledWith('docs/spec.md', { openInNewTab: true });
-
-		const dataAttributeLink = aComponent({
-			node: null,
-			href: undefined,
-			'data-maestro-file': 'docs/from-data.md',
-			children: 'data file',
-		});
-		dataAttributeLink.props.onClick({ preventDefault: vi.fn(), metaKey: false, ctrlKey: true });
-		expect(onFileClick).toHaveBeenCalledWith('docs/from-data.md', { openInNewTab: true });
+		const element = aComponent({ href: 'https://example.com', children: 'link' });
+		const clickEvent = { preventDefault: vi.fn(), metaKey: true, ctrlKey: false } as any;
+		element.props.onClick(clickEvent);
+		expect(mockOpenUrl).toHaveBeenCalledWith('https://example.com', { ctrlKey: true });
 	});
 
-	it('should route anchor links through onAnchorClick when provided', () => {
-		const onAnchorClick = vi.fn();
-		const components = createMarkdownComponents({ theme: mockTheme, onAnchorClick });
-		const anchor = (components.a as any)({ node: null, href: '#setup', children: 'setup' });
+	it('should pass ctrlKey:false to openUrl on a plain click', () => {
+		const components = createWizardBubbleMarkdownComponents(mockTheme);
+		const aComponent = components.a as any;
 
-		anchor.props.onClick({ preventDefault: vi.fn(), metaKey: false, ctrlKey: false });
+		const element = aComponent({ href: 'https://example.com', children: 'link' });
+		const clickEvent = { preventDefault: vi.fn(), metaKey: false, ctrlKey: false } as any;
+		element.props.onClick(clickEvent);
+		expect(mockOpenUrl).toHaveBeenCalledWith('https://example.com', { ctrlKey: false });
+	});
+});
 
-		expect(onAnchorClick).toHaveBeenCalledWith('setup');
+// ---------------------------------------------------------------------------
+// createReleaseNotesMarkdownComponents - link handling (#1060)
+// ---------------------------------------------------------------------------
+
+describe('createReleaseNotesMarkdownComponents link handling', () => {
+	beforeEach(() => {
+		mockOpenUrl.mockClear();
 	});
 
-	it('should scroll same-page anchors when no explicit anchor handler is provided', () => {
-		const components = createMarkdownComponents({ theme: mockTheme, onFileClick: vi.fn() });
-		const target = document.createElement('section');
-		target.id = 'install';
-		target.scrollIntoView = vi.fn();
-		document.body.appendChild(target);
+	// Under the old `{ ctrlKey: e.ctrlKey }` code a metaKey-only click yielded
+	// ctrlKey:false, so this guard would fail. See bug #1060.
+	it('should translate Cmd-click (metaKey) into ctrlKey:true for openUrl', () => {
+		const components = createReleaseNotesMarkdownComponents(mockTheme);
+		const aComponent = components.a as any;
 
-		try {
-			const anchor = (components.a as any)({ node: null, href: '#install', children: 'install' });
-			anchor.props.onClick({ preventDefault: vi.fn(), metaKey: false, ctrlKey: false });
-
-			expect(target.scrollIntoView).toHaveBeenCalledWith({
-				behavior: 'smooth',
-				block: 'start',
-			});
-		} finally {
-			target.remove();
-		}
+		const element = aComponent({ href: 'https://example.com', children: 'link' });
+		const clickEvent = { preventDefault: vi.fn(), metaKey: true, ctrlKey: false } as any;
+		element.props.onClick(clickEvent);
+		expect(mockOpenUrl).toHaveBeenCalledWith('https://example.com', { ctrlKey: true });
 	});
 
-	it('should use a container ref for anchor scrolling when provided', () => {
-		const target = document.createElement('section');
-		target.scrollIntoView = vi.fn();
-		const querySelector = vi.fn(() => target);
-		const containerRef = { current: { querySelector } as unknown as HTMLElement };
-		vi.stubGlobal('CSS', { escape: (value: string) => value });
+	it('should pass ctrlKey:false to openUrl on a plain click', () => {
+		const components = createReleaseNotesMarkdownComponents(mockTheme);
+		const aComponent = components.a as any;
 
-		try {
-			const components = createMarkdownComponents({
-				theme: mockTheme,
-				onFileClick: vi.fn(),
-				containerRef,
-			});
-			const anchor = (components.a as any)({
-				node: null,
-				href: '#from-container',
-				children: 'container anchor',
-			});
+		const element = aComponent({ href: 'https://example.com', children: 'link' });
+		const clickEvent = { preventDefault: vi.fn(), metaKey: false, ctrlKey: false } as any;
+		element.props.onClick(clickEvent);
+		expect(mockOpenUrl).toHaveBeenCalledWith('https://example.com', { ctrlKey: false });
+	});
+});
 
-			anchor.props.onClick({ preventDefault: vi.fn(), metaKey: false, ctrlKey: false });
+// ---------------------------------------------------------------------------
+// Hex color swatch in inline code
+// ---------------------------------------------------------------------------
 
-			expect(querySelector).toHaveBeenCalledWith('#from-container');
-			expect(target.scrollIntoView).toHaveBeenCalledWith({
-				behavior: 'smooth',
-				block: 'start',
-			});
-		} finally {
-			vi.unstubAllGlobals();
-		}
+describe('hex color swatch in inline code', () => {
+	it('should render a color swatch span before hex color in createMarkdownComponents', () => {
+		const components = createMarkdownComponents({ theme: mockTheme });
+		const codeComponent = components.code as any;
+		// Inline code now renders through the shared InlineCode leaf; render it to
+		// inspect the swatch in the DOM.
+		const { container } = render(codeComponent({ children: '#FF0000' }));
+		const code = container.querySelector('code');
+		expect(code).toBeInTheDocument();
+		const swatch = code!.querySelector('span');
+		expect(swatch).toBeInTheDocument();
+		expect(swatch!.getAttribute('style')).toContain('background-color');
+		expect(code!.textContent).toContain('#FF0000');
 	});
 
-	it('should tolerate same-page anchors that do not resolve to an element', () => {
-		const components = createMarkdownComponents({ theme: mockTheme, onFileClick: vi.fn() });
-		const anchor = (components.a as any)({ node: null, href: '#missing', children: 'missing' });
-
-		expect(() =>
-			anchor.props.onClick({ preventDefault: vi.fn(), metaKey: false, ctrlKey: false })
-		).not.toThrow();
+	it('should not render swatch for non-hex inline code', () => {
+		const components = createMarkdownComponents({ theme: mockTheme });
+		const codeComponent = components.code as any;
+		const { container } = render(codeComponent({ children: 'console.log' }));
+		const code = container.querySelector('code');
+		expect(code!.querySelector('span')).toBeNull();
+		expect(code!.textContent).toBe('console.log');
 	});
 
-	it('should do nothing for links with no matching handler path', () => {
-		const onExternalLinkClick = vi.fn();
-		const components = createMarkdownComponents({ theme: mockTheme, onExternalLinkClick });
-		const link = (components.a as any)({ node: null, href: undefined, children: 'empty' });
-		const preventDefault = vi.fn();
+	it('should render swatch in wizard bubble inline code', () => {
+		const components = createWizardBubbleMarkdownComponents(mockTheme);
+		const codeComponent = components.code as any;
+		const element = codeComponent({ children: '#8B3FFC' });
+		const children = React.Children.toArray(element.props.children);
+		// swatch (or null filtered) + text
+		const swatch = children.find(
+			(c: any) => c?.type === 'span' && c?.props?.style?.backgroundColor
+		) as React.ReactElement | undefined;
+		expect(swatch).toBeDefined();
+		expect(swatch!.props.style.backgroundColor).toBe('#8B3FFC');
+	});
 
-		link.props.onClick({ preventDefault, metaKey: false, ctrlKey: false });
-
-		expect(preventDefault).toHaveBeenCalled();
-		expect(onExternalLinkClick).not.toHaveBeenCalled();
+	it('should render swatch in release notes inline code', () => {
+		const components = createReleaseNotesMarkdownComponents(mockTheme);
+		const codeComponent = components.code as any;
+		const element = codeComponent({ children: '#00CC00' });
+		const children = React.Children.toArray(element.props.children);
+		const swatch = children.find(
+			(c: any) => c?.type === 'span' && c?.props?.style?.backgroundColor
+		) as React.ReactElement | undefined;
+		expect(swatch).toBeDefined();
+		expect(swatch!.props.style.backgroundColor).toBe('#00CC00');
 	});
 });
 

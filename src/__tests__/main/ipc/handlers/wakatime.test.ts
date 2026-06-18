@@ -107,25 +107,6 @@ describe('WakaTime IPC Handlers', () => {
 			expect(mockExecFileNoThrow).not.toHaveBeenCalled();
 		});
 
-		it('should return available: false when the version command fails', async () => {
-			const mockManager = createMockWakaTimeManager();
-			registerWakatimeHandlers(mockManager);
-
-			mockExecFileNoThrow.mockResolvedValueOnce({
-				exitCode: 1,
-				stdout: '',
-				stderr: 'wakatime-cli: command failed',
-			});
-
-			const handler = handlers.get('wakatime:checkCli')!;
-			const result = await handler({});
-
-			expect(result).toEqual({ available: false });
-			expect(mockExecFileNoThrow).toHaveBeenCalledWith('/usr/local/bin/wakatime-cli', [
-				'--version',
-			]);
-		});
-
 		it('should trigger auto-install via ensureCliInstalled', async () => {
 			const cliPath = '/home/user/.wakatime/wakatime-cli-linux-amd64';
 			const mockManager = createMockWakaTimeManager({

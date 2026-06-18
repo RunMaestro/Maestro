@@ -1,271 +1,322 @@
 /**
- * Tests for AgentUsageChart component.
+ * Tests for AgentUsageChart component
  *
- * Covers session display names, metric switching, tooltip formatting, colorblind
- * colors, empty states, and time-range-specific axis labels.
+ * Focuses on session-name resolution behavior shared with the other dashboard
+ * charts: session keys from `bySessionByDay` are resolved via `buildNameMap`
+ * so the line legend, tooltips, and aria labels show user-assigned session
+ * names (or the prettified type fallback) instead of raw UUID prefixes.
  */
 
-import { describe, it, expect } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
-import React from 'react';
+import { describe, it, expect, vi } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { AgentUsageChart } from '../../../../renderer/components/UsageDashboard/AgentUsageChart';
-import { COLORBLIND_AGENT_PALETTE } from '../../../../renderer/constants/colorblindPalettes';
-import type { StatsAggregation, StatsTimeRange } from '../../../../renderer/hooks/stats/useStats';
+import type { StatsAggregation } from '../../../../renderer/hooks/stats/useStats';
 import type { Session } from '../../../../renderer/types';
 import { THEMES } from '../../../../shared/themes';
 
-const theme = THEMES['dracula'];
-
-function makeAggregation(
-	bySessionByDay: StatsAggregation['bySessionByDay'] = {}
-): StatsAggregation {
+let _sessionIdCounter = 0;
+function makeSession(overrides: Partial<Session> = {}): Session {
+	_sessionIdCounter++;
 	return {
-		totalQueries: 0,
-		totalDuration: 0,
-		avgDuration: 0,
-		byAgent: {},
-		bySource: { user: 0, auto: 0 },
-		byLocation: { local: 0, remote: 0 },
-		byDay: [],
-		byHour: [],
-		totalSessions: 0,
-		sessionsByAgent: {},
-		sessionsByDay: [],
-		avgSessionDuration: 0,
-		byAgentByDay: {},
-		bySessionByDay,
-	};
+		id: `s${_sessionIdCounter}`,
+		name: `Session ${_sessionIdCounter}`,
+		toolType: 'claude-code',
+		state: 'idle',
+		cwd: '/tmp',
+		fullPath: '/tmp',
+		projectRoot: '/tmp',
+		aiLogs: [],
+		shellLogs: [],
+		workLog: [],
+		contextUsage: 0,
+		inputMode: 'ai',
+		aiPid: 0,
+		terminalPid: 0,
+		port: 0,
+		isLive: false,
+		changedFiles: [],
+		isGitRepo: false,
+		fileTree: [],
+		fileExplorerExpanded: [],
+		fileExplorerScrollPos: 0,
+		createdAt: 0,
+		...overrides,
+	} as Session;
 }
 
-const namedSessionId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
-const uuidOnlySessionId = '12345678-9999-8888-7777-666666666666-ai-tab';
+const theme = THEMES['dracula'];
 
-const namedSessions = [
-	{ id: namedSessionId, name: 'Planning Agent' },
-	{ id: 'terminal-session', name: '' },
-] as Session[];
+const baseEmptyData: StatsAggregation = {
+	totalQueries: 0,
+	totalDuration: 0,
+	avgDuration: 0,
+	byAgent: {},
+	bySource: { user: 0, auto: 0 },
+	byLocation: { local: 0, remote: 0 },
+	byDay: [],
+	byHour: [],
+	totalSessions: 0,
+	sessionsByAgent: {},
+	sessionsByDay: [],
+	avgSessionDuration: 0,
+	byAgentByDay: {},
+	bySessionByDay: {},
+	bySessionSource: {},
+};
+
+function dataForSessions(
+	sessionDays: Record<string, Array<{ date: string; count: number; duration: number }>>
+): StatsAggregation {
+	return { ...baseEmptyData, bySessionByDay: sessionDays };
+}
 
 describe('AgentUsageChart', () => {
-	it('renders an empty state when there is no per-session usage breakdown', () => {
-		const dataWithoutSessionBreakdown = {
-			...makeAggregation(),
-			bySessionByDay: undefined,
-		} as unknown as StatsAggregation;
-
-		render(<AgentUsageChart data={dataWithoutSessionBreakdown} timeRange="week" theme={theme} />);
-
-		expect(screen.getByText('Agent Usage Over Time')).toBeInTheDocument();
-		expect(screen.getByText('No usage data available')).toBeInTheDocument();
-		expect(screen.getByRole('figure')).toHaveAccessibleName(/0 agents displayed/i);
-	});
-
-	it('maps session IDs to names, falls back to compact IDs, and limits display to top agents', () => {
-		const topAgents = Object.fromEntries(
-			Array.from({ length: 8 }, (_, index) => [
-				`extra-agent-${index}`,
-				[{ date: '2024-12-20', count: 10 - index, duration: 1000 * (index + 1) }],
-			])
-		);
-		const data = makeAggregation({
-			[namedSessionId + '-ai-tab']: [
-				{ date: '2024-12-20', count: 20, duration: 120_000 },
-				{ date: '2024-12-21', count: 0, duration: 0 },
-			],
-			'terminal-session': [{ date: '2024-12-21', count: 7, duration: 70_000 }],
-			[uuidOnlySessionId]: [{ date: '2024-12-21', count: 6, duration: 60_000 }],
-			...topAgents,
-			'tiny-agent': [{ date: '2024-12-20', count: 1, duration: 1000 }],
+	describe('Rendering', () => {
+		it('renders the title', () => {
+			render(<AgentUsageChart data={baseEmptyData} timeRange="week" theme={theme} />);
+			expect(screen.getByText('Agent Usage Over Time')).toBeInTheDocument();
 		});
 
-		const { container } = render(
-			<AgentUsageChart data={data} timeRange="week" theme={theme} sessions={namedSessions} />
-		);
-
-		expect(screen.getByText('Planning Agent')).toBeInTheDocument();
-		expect(screen.getByText('TERMINAL')).toBeInTheDocument();
-		expect(screen.getByText('12345678')).toBeInTheDocument();
-		expect(screen.queryByText('TINY-AGE')).not.toBeInTheDocument();
-		expect(screen.getByRole('img')).toHaveAccessibleName(/query counts per agent/i);
-		expect(container.querySelectorAll('path[stroke]').length).toBe(10);
-	});
-
-	it('switches to duration mode and formats tooltip durations for hours, minutes, and zero', () => {
-		const data = makeAggregation({
-			slow: [{ date: '2024-12-20', count: 1, duration: 3_660_000 }],
-			quick: [{ date: '2024-12-20', count: 2, duration: 65_000 }],
-			fast: [{ date: '2024-12-20', count: 1, duration: 5000 }],
-			'idle-duration': [{ date: '2024-12-20', count: 1, duration: 0 }],
+		it('renders the empty-state message when no session data is present', () => {
+			render(<AgentUsageChart data={baseEmptyData} timeRange="week" theme={theme} />);
+			expect(screen.getByText('No usage data available')).toBeInTheDocument();
 		});
-
-		const { container } = render(<AgentUsageChart data={data} timeRange="month" theme={theme} />);
-
-		fireEvent.click(screen.getByRole('button', { name: 'Time' }));
-		expect(screen.getByRole('figure')).toHaveAccessibleName(/duration over time/i);
-		expect(screen.getAllByText('Time').length).toBeGreaterThanOrEqual(2);
-
-		const firstPoint = container.querySelector('circle');
-		expect(firstPoint).toBeInTheDocument();
-		fireEvent.mouseEnter(firstPoint!);
-
-		expect(screen.getByText('1h 1m')).toBeInTheDocument();
-		expect(screen.getByText('1m 5s')).toBeInTheDocument();
-		expect(screen.getByText('5s')).toBeInTheDocument();
-		expect(screen.getByText('0s')).toBeInTheDocument();
 	});
 
-	it('switches back to query mode after showing duration metrics', () => {
-		const data = makeAggregation({
-			agent: [{ date: '2024-12-20', count: 3, duration: 3000 }],
-		});
-
-		render(<AgentUsageChart data={data} timeRange="week" theme={theme} />);
-
-		fireEvent.click(screen.getByRole('button', { name: 'Time' }));
-		expect(screen.getByRole('figure')).toHaveAccessibleName(/duration over time/i);
-
-		fireEvent.click(screen.getByRole('button', { name: 'Queries' }));
-
-		expect(screen.getByRole('figure')).toHaveAccessibleName(/query counts over time/i);
-	});
-
-	it('shows singular query counts on hover and clears the tooltip on mouse leave', () => {
-		const data = makeAggregation({
-			'solo-agent': [{ date: '2024-12-20', count: 1, duration: 5000 }],
-		});
-
-		const { container } = render(<AgentUsageChart data={data} timeRange="week" theme={theme} />);
-
-		const point = container.querySelector('circle');
-		expect(point).toBeInTheDocument();
-		expect(point).toHaveAttribute('r', '4');
-
-		fireEvent.mouseEnter(point!);
-		expect(point).toHaveAttribute('r', '6');
-		expect(screen.getByText('1 query')).toBeInTheDocument();
-
-		fireEvent.mouseLeave(point!);
-		expect(container.querySelector('.fixed.z-50')).not.toBeInTheDocument();
-	});
-
-	it('omits agents with no usage for the hovered day from the tooltip', () => {
-		const data = makeAggregation({
-			'active-first-day': [{ date: '2024-12-20', count: 2, duration: 5000 }],
-			'active-second-day': [{ date: '2024-12-21', count: 4, duration: 7000 }],
-		});
-
-		const { container } = render(<AgentUsageChart data={data} timeRange="week" theme={theme} />);
-		const points = container.querySelectorAll('circle');
-		expect(points.length).toBeGreaterThan(0);
-
-		fireEvent.mouseEnter(points[0]);
-		const tooltip = container.querySelector('.fixed.z-50');
-		expect(tooltip).toBeInTheDocument();
-		if (!tooltip) {
-			throw new Error('Expected tooltip to be rendered');
-		}
-
-		expect(within(tooltip).getByText('ACTIVE-F:')).toBeInTheDocument();
-		expect(within(tooltip).getByText('2 queries')).toBeInTheDocument();
-		expect(within(tooltip).queryByText('ACTIVE-S:')).not.toBeInTheDocument();
-		expect(within(tooltip).queryByText('4 queries')).not.toBeInTheDocument();
-	});
-
-	it('uses the colorblind-safe palette when colorblind mode is enabled', () => {
-		const data = makeAggregation({
-			agent: [{ date: '2024-12-20', count: 3, duration: 3000 }],
-		});
-
-		const { container } = render(
-			<AgentUsageChart data={data} timeRange="week" theme={theme} colorBlindMode />
-		);
-
-		expect(container.querySelector('path[stroke]')).toHaveAttribute(
-			'stroke',
-			COLORBLIND_AGENT_PALETTE[0]
-		);
-	});
-
-	it.each([
-		['day', '05:30'],
-		['week', 'Fri'],
-		['month', 'Dec 20'],
-		['quarter', 'Dec 20'],
-		['year', 'Dec'],
-		['all', 'Dec 2024'],
-	] satisfies Array<[StatsTimeRange, string]>)(
-		'renders %s-specific X-axis labels',
-		(timeRange, expectedLabel) => {
-			const data = makeAggregation({
-				agent: [{ date: '2024-12-20T05:30:00', count: 3, duration: 3000 }],
+	describe('Session Name Resolution', () => {
+		it('uses the user-assigned session name when the stat key matches a session', () => {
+			const session = makeSession({ id: 'sess-aaa', name: 'Backend API' });
+			const data = dataForSessions({
+				'sess-aaa': [{ date: '2024-12-20', count: 5, duration: 60_000 }],
 			});
 
-			render(<AgentUsageChart data={data} timeRange={timeRange} theme={theme} />);
+			render(<AgentUsageChart data={data} timeRange="week" theme={theme} sessions={[session]} />);
 
-			expect(screen.getByText(expectedLabel)).toBeInTheDocument();
-		}
-	);
-
-	it('uses month-day labels for unknown time ranges', () => {
-		const data = makeAggregation({
-			agent: [{ date: '2024-12-20', count: 3, duration: 3000 }],
+			expect(screen.getByText('Backend API')).toBeInTheDocument();
 		});
 
-		render(
-			<AgentUsageChart data={data} timeRange={'unexpected' as StatsTimeRange} theme={theme} />
-		);
+		it('matches stat keys with tab-id suffixes back to the underlying session', () => {
+			const session = makeSession({ id: 'sess-bbb', name: 'Frontend' });
+			const data = dataForSessions({
+				'sess-bbb-ai-tab1': [{ date: '2024-12-20', count: 3, duration: 30_000 }],
+			});
 
-		expect(screen.getByText('Dec 20')).toBeInTheDocument();
+			render(<AgentUsageChart data={data} timeRange="week" theme={theme} sessions={[session]} />);
+
+			expect(screen.getByText('Frontend')).toBeInTheDocument();
+		});
+
+		it('disambiguates colliding session names with " (2)" suffixes', () => {
+			const a = makeSession({ id: 'sess-aaa', name: 'Worker' });
+			const b = makeSession({ id: 'sess-bbb', name: 'Worker' });
+			const data = dataForSessions({
+				'sess-aaa': [{ date: '2024-12-20', count: 5, duration: 60_000 }],
+				'sess-bbb': [{ date: '2024-12-20', count: 3, duration: 30_000 }],
+			});
+
+			render(<AgentUsageChart data={data} timeRange="week" theme={theme} sessions={[a, b]} />);
+
+			expect(screen.getByText('Worker')).toBeInTheDocument();
+			expect(screen.getByText('Worker (2)')).toBeInTheDocument();
+		});
+
+		it('appends " (WT)" suffix to worktree-child session names', () => {
+			const parent = makeSession({ id: 'parent', name: 'Main App' });
+			const worktree = makeSession({
+				id: 'wt-1',
+				name: 'Feature Branch',
+				parentSessionId: 'parent',
+			});
+			const data = dataForSessions({
+				parent: [{ date: '2024-12-20', count: 5, duration: 60_000 }],
+				'wt-1': [{ date: '2024-12-20', count: 3, duration: 30_000 }],
+			});
+
+			render(
+				<AgentUsageChart data={data} timeRange="week" theme={theme} sessions={[parent, worktree]} />
+			);
+
+			expect(screen.getByText('Main App')).toBeInTheDocument();
+			expect(screen.getByText('Feature Branch (WT)')).toBeInTheDocument();
+		});
+
+		it('falls back to a prettified key when no matching session exists', () => {
+			// "claude-code" is the canonical agent id, so prettifyAgentType returns
+			// "Claude Code" — used as the legend label when no session is registered
+			// for this stat key.
+			const data = dataForSessions({
+				'claude-code': [{ date: '2024-12-20', count: 5, duration: 60_000 }],
+			});
+
+			render(<AgentUsageChart data={data} timeRange="week" theme={theme} sessions={[]} />);
+
+			expect(screen.getByText('Claude Code')).toBeInTheDocument();
+		});
 	});
 
-	it('thins dense X-axis labels while keeping the final label visible', () => {
-		const denseDays = Array.from({ length: 15 }, (_, index) => ({
-			date: `2024-12-${String(index + 1).padStart(2, '0')}`,
-			count: index + 1,
-			duration: (index + 1) * 1000,
-		}));
+	describe('Drill-down filter', () => {
+		// Two-session fixture used across the drill-down tests below.
+		function buildTwoSessionFixture() {
+			const sessionA = makeSession({ id: 'sess-aaa', name: 'Backend' });
+			const sessionB = makeSession({ id: 'sess-bbb', name: 'Frontend' });
+			const data = dataForSessions({
+				'sess-aaa': [{ date: '2024-12-20', count: 5, duration: 60_000 }],
+				'sess-bbb': [{ date: '2024-12-20', count: 3, duration: 30_000 }],
+			});
+			return { sessions: [sessionA, sessionB], data };
+		}
 
-		render(
-			<AgentUsageChart
-				data={makeAggregation({ agent: denseDays })}
-				timeRange="month"
-				theme={theme}
-			/>
-		);
+		it('renders legend items as non-interactive when onAgentClick is not provided', () => {
+			const { sessions, data } = buildTwoSessionFixture();
+			const { container } = render(
+				<AgentUsageChart data={data} timeRange="week" theme={theme} sessions={sessions} />
+			);
 
-		expect(screen.getByText('Dec 1')).toBeInTheDocument();
-		expect(screen.queryByText('Dec 2')).not.toBeInTheDocument();
-		expect(screen.getByText('Dec 15')).toBeInTheDocument();
-	});
+			const legendButtons = container.querySelectorAll('[role="button"]');
+			expect(legendButtons.length).toBe(0);
+		});
 
-	it('uses every other X-axis label for medium date ranges', () => {
-		const mediumDays = Array.from({ length: 8 }, (_, index) => ({
-			date: `2024-12-${String(index + 1).padStart(2, '0')}`,
-			count: index + 1,
-			duration: (index + 1) * 1000,
-		}));
+		it('renders legend items as buttons with tabIndex when onAgentClick is provided', () => {
+			const { sessions, data } = buildTwoSessionFixture();
+			const { container } = render(
+				<AgentUsageChart
+					data={data}
+					timeRange="week"
+					theme={theme}
+					sessions={sessions}
+					onAgentClick={vi.fn()}
+				/>
+			);
 
-		render(
-			<AgentUsageChart
-				data={makeAggregation({ agent: mediumDays })}
-				timeRange="month"
-				theme={theme}
-			/>
-		);
+			const legendButtons = container.querySelectorAll('[role="button"]');
+			// Sorted by total queries desc → Backend (5), Frontend (3).
+			expect(legendButtons.length).toBe(2);
+			legendButtons.forEach((btn) => {
+				expect(btn.getAttribute('tabIndex')).toBe('0');
+				expect((btn as HTMLElement).style.cursor).toBe('pointer');
+			});
+		});
 
-		expect(screen.getByText('Dec 1')).toBeInTheDocument();
-		expect(screen.queryByText('Dec 2')).not.toBeInTheDocument();
-		expect(screen.getByText('Dec 8')).toBeInTheDocument();
-	});
+		it('fires onAgentClick with the session key and resolved display name', () => {
+			const { sessions, data } = buildTwoSessionFixture();
+			const onAgentClick = vi.fn();
+			const { container } = render(
+				<AgentUsageChart
+					data={data}
+					timeRange="week"
+					theme={theme}
+					sessions={sessions}
+					onAgentClick={onAgentClick}
+				/>
+			);
 
-	it('treats a session with no dated entries as empty usage data', () => {
-		render(
-			<AgentUsageChart
-				data={makeAggregation({ 'empty-session': [] })}
-				timeRange="week"
-				theme={theme}
-			/>
-		);
+			const legendButtons = container.querySelectorAll('[role="button"]');
+			fireEvent.click(legendButtons[0]); // Backend (sorted first by total)
 
-		expect(screen.getByText('No usage data available')).toBeInTheDocument();
+			expect(onAgentClick).toHaveBeenCalledTimes(1);
+			expect(onAgentClick).toHaveBeenCalledWith('sess-aaa', 'Backend');
+		});
+
+		it('fires onAgentClick on Enter and Space key activation', () => {
+			const { sessions, data } = buildTwoSessionFixture();
+			const onAgentClick = vi.fn();
+			const { container } = render(
+				<AgentUsageChart
+					data={data}
+					timeRange="week"
+					theme={theme}
+					sessions={sessions}
+					onAgentClick={onAgentClick}
+				/>
+			);
+
+			const legendButtons = container.querySelectorAll('[role="button"]');
+			fireEvent.keyDown(legendButtons[0], { key: 'Enter' });
+			fireEvent.keyDown(legendButtons[0], { key: ' ' });
+
+			expect(onAgentClick).toHaveBeenCalledTimes(2);
+		});
+
+		it('highlights the matching legend item with an accent background', () => {
+			const { sessions, data } = buildTwoSessionFixture();
+			const { container } = render(
+				<AgentUsageChart
+					data={data}
+					timeRange="week"
+					theme={theme}
+					sessions={sessions}
+					onAgentClick={vi.fn()}
+					activeFilterKey="sess-aaa"
+				/>
+			);
+
+			const legendButtons = container.querySelectorAll(
+				'[role="button"]'
+			) as NodeListOf<HTMLElement>;
+			// Backend (sorted first) is selected; Frontend is not.
+			expect(legendButtons[0].style.backgroundColor).not.toBe('');
+			expect(legendButtons[1].style.backgroundColor).toBe('');
+		});
+
+		it('reflects selection state via aria-pressed', () => {
+			const { sessions, data } = buildTwoSessionFixture();
+			const { container } = render(
+				<AgentUsageChart
+					data={data}
+					timeRange="week"
+					theme={theme}
+					sessions={sessions}
+					onAgentClick={vi.fn()}
+					activeFilterKey="sess-bbb"
+				/>
+			);
+
+			const legendButtons = container.querySelectorAll('[role="button"]');
+			// Sorted: Backend (false), Frontend (true).
+			expect(legendButtons[0].getAttribute('aria-pressed')).toBe('false');
+			expect(legendButtons[1].getAttribute('aria-pressed')).toBe('true');
+		});
+
+		it('dims non-selected lines to 0.15 stroke-opacity and thickens the selected line', () => {
+			const { sessions, data } = buildTwoSessionFixture();
+			const { container } = render(
+				<AgentUsageChart
+					data={data}
+					timeRange="week"
+					theme={theme}
+					sessions={sessions}
+					onAgentClick={vi.fn()}
+					activeFilterKey="sess-aaa"
+				/>
+			);
+
+			// Two lines, sorted: sess-aaa (selected), sess-bbb (dimmed).
+			const lines = container.querySelectorAll('path');
+			expect(lines.length).toBe(2);
+			expect(lines[0].getAttribute('stroke-opacity')).toBe('1');
+			expect(lines[0].getAttribute('stroke-width')).toBe('2.5');
+			expect(lines[1].getAttribute('stroke-opacity')).toBe('0.15');
+			expect(lines[1].getAttribute('stroke-width')).toBe('2');
+		});
+
+		it('renders all lines at full opacity and default width when no filter is active', () => {
+			const { sessions, data } = buildTwoSessionFixture();
+			const { container } = render(
+				<AgentUsageChart
+					data={data}
+					timeRange="week"
+					theme={theme}
+					sessions={sessions}
+					onAgentClick={vi.fn()}
+					activeFilterKey={null}
+				/>
+			);
+
+			const lines = container.querySelectorAll('path');
+			lines.forEach((line) => {
+				expect(line.getAttribute('stroke-opacity')).toBe('1');
+				expect(line.getAttribute('stroke-width')).toBe('2');
+			});
+		});
 	});
 });

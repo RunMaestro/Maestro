@@ -84,7 +84,9 @@ function createSession(overrides: Partial<Session> = {}): Session {
 		activeFileTabId: null,
 		unifiedTabOrder: [{ type: 'ai' as const, id: 'tab-1' }],
 		unifiedClosedTabHistory: [],
-		autoRunFolderPath: '/test/project/Auto Run Docs',
+		autoRunFolderPath: '/test/project/.maestro/playbooks',
+		terminalTabs: [],
+		activeTerminalTabId: null,
 		...overrides,
 	} as Session;
 }
@@ -254,6 +256,96 @@ describe('useQueueHandlers', () => {
 			});
 
 			expect(useSessionStore.getState().activeSessionId).toBe('sess-1');
+		});
+
+		it('activates the specified tab when tabId is provided', () => {
+			const session = createSession({
+				id: 'sess-1',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: null,
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+						saveToHistory: false,
+						showThinking: false,
+					},
+					{
+						id: 'tab-2',
+						agentSessionId: null,
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+						saveToHistory: false,
+						showThinking: false,
+					},
+				],
+				activeTabId: 'tab-1',
+				inputMode: 'terminal',
+				activeFileTabId: 'file-1',
+				activeTerminalTabId: 'term-1',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: '' });
+
+			const { result } = renderHook(() => useQueueHandlers());
+
+			act(() => {
+				result.current.handleSwitchQueueSession('sess-1', 'tab-2');
+			});
+
+			expect(useSessionStore.getState().activeSessionId).toBe('sess-1');
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.activeTabId).toBe('tab-2');
+			expect(updated.inputMode).toBe('ai');
+			expect(updated.activeFileTabId).toBeNull();
+			expect(updated.activeTerminalTabId).toBeNull();
+		});
+
+		it('does not change activeTabId when tabId is not in aiTabs', () => {
+			const session = createSession({
+				id: 'sess-1',
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: '' });
+
+			const { result } = renderHook(() => useQueueHandlers());
+
+			act(() => {
+				result.current.handleSwitchQueueSession('sess-1', 'nonexistent-tab');
+			});
+
+			expect(useSessionStore.getState().activeSessionId).toBe('sess-1');
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.activeTabId).toBe('tab-1'); // unchanged
+		});
+
+		it('only switches session when tabId is omitted', () => {
+			const session = createSession({
+				id: 'sess-1',
+				activeTabId: 'tab-1',
+				inputMode: 'terminal',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: '' });
+
+			const { result } = renderHook(() => useQueueHandlers());
+
+			act(() => {
+				result.current.handleSwitchQueueSession('sess-1');
+			});
+
+			expect(useSessionStore.getState().activeSessionId).toBe('sess-1');
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.activeTabId).toBe('tab-1'); // unchanged
+			expect(updated.inputMode).toBe('terminal'); // unchanged
 		});
 
 		it('sets active session ID even for an unknown session ID', () => {

@@ -9,10 +9,11 @@
 
 import { BrowserWindow, App } from 'electron';
 import Store from 'electron-store';
+import type { AgentConfigsData, ClaudeSessionOriginsData } from '../../stores/types';
 import { registerGitHandlers, GitHandlerDependencies } from './git';
 import { registerAutorunHandlers } from './autorun';
 import { registerPlaybooksHandlers } from './playbooks';
-import { registerHistoryHandlers } from './history';
+import { registerHistoryHandlers, HistoryHandlerDependencies } from './history';
 import { registerAgentsHandlers, AgentsHandlerDependencies } from './agents';
 import { registerProcessHandlers, ProcessHandlerDependencies } from './process';
 import {
@@ -33,6 +34,7 @@ import { registerGroupChatHandlers, GroupChatHandlerDependencies } from './group
 import { registerDebugHandlers, DebugHandlerDependencies } from './debug';
 import { registerSpeckitHandlers } from './speckit';
 import { registerOpenSpecHandlers } from './openspec';
+import { registerBmadHandlers } from './bmad';
 import {
 	registerContextHandlers,
 	ContextHandlerDependencies,
@@ -41,22 +43,37 @@ import {
 } from './context';
 import { registerMarketplaceHandlers, MarketplaceHandlerDependencies } from './marketplace';
 import { registerStatsHandlers, StatsHandlerDependencies } from './stats';
+import { registerCueStatsHandlers, CueStatsHandlerDependencies } from './cue-stats';
 import { registerDocumentGraphHandlers, DocumentGraphHandlerDependencies } from './documentGraph';
 import { registerSshRemoteHandlers, SshRemoteHandlerDependencies } from './ssh-remote';
 import { registerFilesystemHandlers } from './filesystem';
 import { registerAttachmentsHandlers, AttachmentsHandlerDependencies } from './attachments';
-import { registerWebHandlers, WebHandlerDependencies } from './web';
+import {
+	registerWebHandlers,
+	ensureCliServer,
+	startCliDiscoveryWatchdog,
+	stopCliDiscoveryWatchdog,
+	WebHandlerDependencies,
+} from './web';
 import { registerLeaderboardHandlers, LeaderboardHandlerDependencies } from './leaderboard';
 import { registerNotificationsHandlers } from './notifications';
 import { registerSymphonyHandlers, SymphonyHandlerDependencies } from './symphony';
 import { registerAgentErrorHandlers } from './agent-error';
 import { registerTabNamingHandlers, TabNamingHandlerDependencies } from './tabNaming';
 import { registerDirectorNotesHandlers, DirectorNotesHandlerDependencies } from './director-notes';
+import { registerCueHandlers, CueHandlerDependencies } from './cue';
+import { registerCueBackupHandlers } from './cue-backup';
 import { registerWakatimeHandlers } from './wakatime';
+import { registerFeedbackHandlers } from './feedback';
+import { registerMaestroCliHandlers } from './maestro-cli';
+import { registerPromptsHandlers } from './prompts';
+import { registerMemoryHandlers } from './memory';
 import { AgentDetector } from '../../agents';
 import { ProcessManager } from '../../process-manager';
 import { WebServer } from '../../web-server';
 import { tunnelManager as tunnelManagerInstance } from '../../tunnel-manager';
+import { createSafeSend } from '../../utils/safe-send';
+import { getSshRemoteById } from '../../stores/getters';
 
 // Type for tunnel manager instance
 type TunnelManagerType = typeof tunnelManagerInstance;
@@ -66,6 +83,7 @@ export { registerGitHandlers };
 export { registerAutorunHandlers };
 export { registerPlaybooksHandlers };
 export { registerHistoryHandlers };
+export type { HistoryHandlerDependencies };
 export { registerAgentsHandlers };
 export { registerProcessHandlers };
 export { registerPersistenceHandlers };
@@ -76,16 +94,24 @@ export { registerGroupChatHandlers };
 export { registerDebugHandlers };
 export { registerSpeckitHandlers };
 export { registerOpenSpecHandlers };
+export { registerBmadHandlers };
 export { registerContextHandlers, cleanupAllGroomingSessions, getActiveGroomingSessionCount };
 export { registerMarketplaceHandlers };
 export type { MarketplaceHandlerDependencies };
 export { registerStatsHandlers };
+export { registerCueStatsHandlers };
+export type { CueStatsHandlerDependencies };
 export { registerDocumentGraphHandlers };
 export { registerSshRemoteHandlers };
 export { registerFilesystemHandlers };
 export { registerAttachmentsHandlers };
 export type { AttachmentsHandlerDependencies };
-export { registerWebHandlers };
+export {
+	registerWebHandlers,
+	ensureCliServer,
+	startCliDiscoveryWatchdog,
+	stopCliDiscoveryWatchdog,
+};
 export type { WebHandlerDependencies };
 export { registerLeaderboardHandlers };
 export type { LeaderboardHandlerDependencies };
@@ -96,7 +122,14 @@ export { registerTabNamingHandlers };
 export type { TabNamingHandlerDependencies };
 export { registerDirectorNotesHandlers };
 export type { DirectorNotesHandlerDependencies };
+export { registerCueHandlers };
+export type { CueHandlerDependencies };
+export { registerCueBackupHandlers };
 export { registerWakatimeHandlers };
+export { registerFeedbackHandlers };
+export { registerMaestroCliHandlers };
+export { registerPromptsHandlers };
+export { registerMemoryHandlers };
 export type { AgentsHandlerDependencies };
 export type { ProcessHandlerDependencies };
 export type { PersistenceHandlerDependencies };
@@ -113,26 +146,9 @@ export type { GitHandlerDependencies };
 export type { SymphonyHandlerDependencies };
 export type { MaestroSettings, SessionsData, GroupsData };
 
-/**
- * Interface for agent configuration store data
- */
-interface AgentConfigsData {
-	configs: Record<string, Record<string, any>>;
-}
+// AgentConfigsData imported from stores/types
 
-/**
- * Interface for Claude session origins store
- */
-type ClaudeSessionOrigin = 'user' | 'auto';
-interface ClaudeSessionOriginInfo {
-	origin: ClaudeSessionOrigin;
-	sessionName?: string;
-	starred?: boolean;
-	contextUsage?: number;
-}
-interface ClaudeSessionOriginsData {
-	origins: Record<string, Record<string, ClaudeSessionOrigin | ClaudeSessionOriginInfo>>;
-}
+// ClaudeSessionOriginInfo and ClaudeSessionOriginsData imported from stores/types
 
 /**
  * Dependencies required for handler registration
@@ -172,7 +188,17 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	});
 	registerAutorunHandlers(deps);
 	registerPlaybooksHandlers(deps);
-	registerHistoryHandlers();
+	registerHistoryHandlers({
+		safeSend: createSafeSend(deps.getMainWindow),
+		getMaxEntries: () => deps.settingsStore.get('maxLogBuffer', 5000) as number,
+		getSshRemoteById,
+		getSessionById: (id: string) => {
+			const sessions = (
+				deps.sessionsStore.get('sessions', []) as Array<Record<string, unknown>>
+			).filter((s) => typeof s === 'object' && s !== null);
+			return sessions.find((s) => s.id === id);
+		},
+	});
 	registerAgentsHandlers({
 		getAgentDetector: deps.getAgentDetector,
 		agentConfigsStore: deps.agentConfigsStore,
@@ -224,6 +250,8 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	registerSpeckitHandlers();
 	// Register OpenSpec handlers (no dependencies needed)
 	registerOpenSpecHandlers();
+	// Register BMAD handlers (no dependencies needed)
+	registerBmadHandlers();
 	registerContextHandlers({
 		getMainWindow: deps.getMainWindow,
 		getProcessManager: deps.getProcessManager,
@@ -237,6 +265,10 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	// Register stats handlers for usage tracking
 	registerStatsHandlers({
 		getMainWindow: deps.getMainWindow,
+		settingsStore: deps.settingsStore,
+	});
+	// Register Cue Stats handlers for the Cue Dashboard aggregation query
+	registerCueStatsHandlers({
 		settingsStore: deps.settingsStore,
 	});
 	// Register document graph handlers for file watching
@@ -260,12 +292,13 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		settingsStore: deps.settingsStore,
 	});
 	// Register notification handlers (OS notifications and TTS)
-	registerNotificationsHandlers();
+	registerNotificationsHandlers({ getMainWindow: deps.getMainWindow });
 	// Register Symphony handlers for token donation / open source contributions
 	registerSymphonyHandlers({
 		app: deps.app,
 		getMainWindow: deps.getMainWindow,
 		sessionsStore: deps.sessionsStore,
+		settingsStore: deps.settingsStore,
 	});
 	// Register agent error handlers (error state management)
 	registerAgentErrorHandlers();
@@ -282,6 +315,18 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		getAgentDetector: deps.getAgentDetector,
 		agentConfigsStore: deps.agentConfigsStore,
 	});
+	// Register Feedback handlers (gh auth + feedback submission)
+	registerFeedbackHandlers({
+		getProcessManager: deps.getProcessManager,
+	});
+	// Register Cue Backup handlers (Cue modal Backup tab)
+	registerCueBackupHandlers({
+		sessionsStore: deps.sessionsStore,
+	});
+	// Register Core Prompts handlers (no dependencies needed)
+	registerPromptsHandlers();
+	// Register project Memory handlers (Claude Code per-project memory viewer)
+	registerMemoryHandlers();
 	// Setup logger event forwarding to renderer
 	setupLoggerEventForwarding(deps.getMainWindow);
 }

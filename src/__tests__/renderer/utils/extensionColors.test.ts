@@ -87,50 +87,6 @@ describe('getExtensionColor', () => {
 			// Different theme accents should produce different colors
 			expect(dracula.bg).not.toBe(nord.bg);
 		});
-
-		it('derives light-theme color from theme accent for unknown extension', () => {
-			const result = getExtensionColor('.xyz', lightTheme);
-
-			expect(result.bg).toContain('0.15');
-			expect(result.text).toContain('0.9');
-			expect(result.bg).not.toBe(lightTheme.colors.border);
-		});
-
-		it('supports shorthand hex accents for unknown extensions', () => {
-			const theme = {
-				...lightTheme,
-				colors: { ...lightTheme.colors, accent: '#abc' },
-			};
-
-			const result = getExtensionColor('.xyz', theme);
-
-			expect(result.bg).toBe('rgba(170, 187, 204, 0.15)');
-			expect(result.text).toBe('rgba(170, 187, 204, 0.9)');
-		});
-
-		it('uses the neutral light fallback for non-hex accents', () => {
-			const theme = {
-				...lightTheme,
-				colors: { ...lightTheme.colors, accent: 'var(--accent)' },
-			};
-
-			expect(getExtensionColor('.xyz', theme)).toEqual({
-				bg: 'rgba(107, 114, 128, 0.15)',
-				text: 'rgba(75, 85, 99, 0.9)',
-			});
-		});
-
-		it('uses the neutral dark fallback for hex-like accents that cannot become RGB', () => {
-			const theme = {
-				...darkTheme,
-				colors: { ...darkTheme.colors, accent: '#abcd' },
-			};
-
-			expect(getExtensionColor('.xyz', theme)).toEqual({
-				bg: 'rgba(156, 163, 175, 0.3)',
-				text: 'rgba(209, 213, 219, 0.9)',
-			});
-		});
 	});
 
 	describe('light vs dark theme adaptation', () => {
@@ -168,33 +124,6 @@ describe('getExtensionColor', () => {
 			const result = getExtensionColor('.xyz', darkTheme, true);
 			expect(result.bg).toContain('rgba');
 			expect(result.bg).not.toBe(darkTheme.colors.border);
-		});
-
-		it('uses light accent fallback for unknown extensions in colorblind mode', () => {
-			const result = getExtensionColor('.xyz', lightTheme, true);
-
-			expect(result.bg).toContain('0.15');
-			expect(result.text).toContain('0.9');
-		});
-
-		it('uses neutral fallbacks for non-hex accents in colorblind mode', () => {
-			const light = {
-				...lightTheme,
-				colors: { ...lightTheme.colors, accent: 'hsl(200 50% 40%)' },
-			};
-			const dark = {
-				...darkTheme,
-				colors: { ...darkTheme.colors, accent: 'hsl(200 50% 40%)' },
-			};
-
-			expect(getExtensionColor('.xyz', light, true)).toEqual({
-				bg: 'rgba(107, 114, 128, 0.15)',
-				text: 'rgba(75, 85, 99, 0.9)',
-			});
-			expect(getExtensionColor('.xyz', dark, true)).toEqual({
-				bg: 'rgba(156, 163, 175, 0.3)',
-				text: 'rgba(209, 213, 219, 0.9)',
-			});
 		});
 	});
 

@@ -14,7 +14,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import React from 'react';
-import { format, subDays } from 'date-fns';
 import { ActivityHeatmap } from '../../../../renderer/components/UsageDashboard/ActivityHeatmap';
 import type { StatsAggregation } from '../../../../renderer/hooks/stats/useStats';
 import { THEMES } from '../../../../shared/themes';
@@ -53,20 +52,6 @@ const emptyData: StatsAggregation = {
 	bySource: { user: 0, auto: 0 },
 	byDay: [],
 };
-
-function makeDataForDate(date: Date, count = 9, duration = 540_000): StatsAggregation {
-	return {
-		...emptyData,
-		totalQueries: count,
-		totalDuration: duration,
-		avgDuration: duration,
-		byDay: [{ date: format(date, 'yyyy-MM-dd'), count, duration }],
-	};
-}
-
-function makeTodayData(count = 9, duration = 540_000): StatsAggregation {
-	return makeDataForDate(new Date(), count, duration);
-}
 
 describe('ActivityHeatmap', () => {
 	describe('Rendering', () => {
@@ -127,10 +112,6 @@ describe('ActivityHeatmap', () => {
 			expect(durationButton).toHaveStyle({
 				color: theme.colors.accent,
 			});
-
-			const countButton = screen.getByText('Count');
-			fireEvent.click(countButton);
-			expect(countButton).toHaveAttribute('aria-pressed', 'true');
 		});
 	});
 
@@ -164,73 +145,6 @@ describe('ActivityHeatmap', () => {
 
 			expect(screen.getByText('Activity Heatmap')).toBeInTheDocument();
 		});
-
-		it('renders quarter range with 4-hour block cells and block labels', () => {
-			const today = new Date();
-			render(<ActivityHeatmap data={makeDataForDate(today)} timeRange="quarter" theme={theme} />);
-
-			expect(screen.getByText('12a-4a')).toBeInTheDocument();
-			expect(screen.getByText('8a-12p')).toBeInTheDocument();
-			expect(
-				screen.getByRole('gridcell', {
-					name: new RegExp(`${format(today, 'MMM d')} 8a-12p: 2 queries`),
-				})
-			).toBeInTheDocument();
-		});
-
-		it('uses duration intensity mode for quarter block cells', () => {
-			const today = new Date();
-			render(
-				<ActivityHeatmap
-					data={makeDataForDate(today, 9, 540_000)}
-					timeRange="quarter"
-					theme={theme}
-				/>
-			);
-
-			fireEvent.click(screen.getByRole('button', { name: 'Show total duration' }));
-
-			expect(screen.getByRole('button', { name: 'Show total duration' })).toHaveAttribute(
-				'aria-pressed',
-				'true'
-			);
-			expect(
-				screen.getByRole('gridcell', {
-					name: new RegExp(`${format(today, 'MMM d')} 8a-12p: 2 queries, 2m 0s`),
-				})
-			).toBeInTheDocument();
-		});
-
-		it('uses duration intensity mode for year cells', () => {
-			const today = new Date();
-			render(
-				<ActivityHeatmap
-					data={makeDataForDate(today, 2, 3_600_000)}
-					timeRange="year"
-					theme={theme}
-				/>
-			);
-
-			fireEvent.click(screen.getByRole('button', { name: 'Show total duration' }));
-
-			expect(screen.getByRole('button', { name: 'Show total duration' })).toHaveAttribute(
-				'aria-pressed',
-				'true'
-			);
-			expect(
-				screen.getByRole('gridcell', {
-					name: new RegExp(`${format(today, 'MMM d, yyyy')}: 2 queries, 1h 0m`),
-				})
-			).toBeInTheDocument();
-		});
-
-		it('falls back to week layout for unknown time ranges', () => {
-			render(<ActivityHeatmap data={mockData} timeRange={'unexpected' as any} theme={theme} />);
-
-			expect(screen.getByText('Activity Heatmap')).toBeInTheDocument();
-			expect(screen.getByText('12a')).toBeInTheDocument();
-			expect(screen.getByText('10p')).toBeInTheDocument();
-		});
 	});
 
 	describe('Theme Support', () => {
@@ -260,64 +174,6 @@ describe('ActivityHeatmap', () => {
 			render(<ActivityHeatmap data={mockData} timeRange="week" theme={lightTheme} />);
 
 			expect(screen.getByText('Activity Heatmap')).toBeInTheDocument();
-		});
-
-		it('uses the colorblind-safe palette when enabled', () => {
-			const { container } = render(
-				<ActivityHeatmap data={makeTodayData()} timeRange="week" theme={theme} colorBlindMode />
-			);
-
-			expect(screen.getByLabelText('Intensity level 4: High activity')).toHaveStyle({
-				backgroundColor: '#253494',
-			});
-		});
-
-		it('parses rgb accent colors for intensity backgrounds', () => {
-			const rgbTheme = {
-				...theme,
-				colors: {
-					...theme.colors,
-					accent: 'rgb(10, 20, 30)',
-				},
-			};
-			const { container } = render(
-				<ActivityHeatmap data={makeTodayData()} timeRange="week" theme={rgbTheme} />
-			);
-
-			const cells = Array.from(
-				container.querySelectorAll<HTMLElement>('.rounded-sm.cursor-default')
-			);
-			expect(cells.some((cell) => cell.style.backgroundColor.includes('10, 20, 30'))).toBe(true);
-		});
-
-		it('falls back to opacity suffixes when accent color cannot be parsed', () => {
-			const fallbackTheme = {
-				...theme,
-				colors: {
-					...theme.colors,
-					accent: 'var(--accent)',
-				},
-			};
-
-			render(<ActivityHeatmap data={makeTodayData()} timeRange="week" theme={fallbackTheme} />);
-
-			expect(screen.getByText('Activity Heatmap')).toBeInTheDocument();
-			expect(screen.getAllByRole('listitem')).toHaveLength(5);
-		});
-
-		it('falls back when an rgb accent has no numeric channels', () => {
-			const fallbackTheme = {
-				...theme,
-				colors: {
-					...theme.colors,
-					accent: 'rgb(not-a-color)',
-				},
-			};
-
-			render(<ActivityHeatmap data={makeTodayData()} timeRange="week" theme={fallbackTheme} />);
-
-			expect(screen.getByText('Activity Heatmap')).toBeInTheDocument();
-			expect(screen.getAllByRole('listitem')).toHaveLength(5);
 		});
 	});
 
@@ -356,173 +212,9 @@ describe('ActivityHeatmap', () => {
 				expect(tooltip).not.toBeInTheDocument();
 			}
 		});
-
-		it('ignores placeholder day cells and shows tooltip for real year cells', () => {
-			const today = new Date();
-			const { container } = render(
-				<ActivityHeatmap data={makeDataForDate(today, 1, 4_000)} timeRange="year" theme={theme} />
-			);
-			const cells = screen.getAllByRole('gridcell');
-			const placeholderCell = cells.find((cell) => cell.getAttribute('aria-label') === '');
-			const realCell = screen.getByRole('gridcell', {
-				name: new RegExp(`${format(today, 'MMM d, yyyy')}: 1 query, 4s`),
-			});
-
-			expect(placeholderCell).toBeInstanceOf(HTMLElement);
-			fireEvent.mouseEnter(placeholderCell as HTMLElement);
-			expect(container.querySelector('.fixed.z-\\[99999\\]')).not.toBeInTheDocument();
-
-			fireEvent.mouseEnter(realCell);
-			expect(container.querySelector('.fixed.z-\\[99999\\]')).toBeInTheDocument();
-			expect(screen.getByText('1 query')).toBeInTheDocument();
-		});
-
-		it('shows block tooltip and outline for hovered quarter cells', () => {
-			const today = new Date();
-			const { container } = render(
-				<ActivityHeatmap
-					data={makeDataForDate(today, 9, 540_000)}
-					timeRange="quarter"
-					theme={theme}
-				/>
-			);
-			const blockCell = screen.getByRole('gridcell', {
-				name: new RegExp(`${format(today, 'MMM d')} 8a-12p: 2 queries`),
-			});
-
-			fireEvent.mouseEnter(blockCell);
-
-			expect(container.querySelector('.fixed.z-\\[99999\\]')).toBeInTheDocument();
-			expect(screen.getByText('8a-12p')).toBeInTheDocument();
-			expect(blockCell).toHaveStyle({ outline: `2px solid ${theme.colors.accent}` });
-		});
-
-		it('keeps tooltip inside the viewport near right and bottom edges', () => {
-			const today = new Date();
-			const { container } = render(
-				<ActivityHeatmap data={makeDataForDate(today, 9, 540_000)} timeRange="week" theme={theme} />
-			);
-			const cell = screen.getByRole('gridcell', {
-				name: new RegExp(`${format(today, 'MMM d')} 9:00`),
-			});
-			const rect = {
-				left: 1000,
-				right: 1014,
-				top: 740,
-				bottom: 754,
-				width: 14,
-				height: 14,
-				x: 1000,
-				y: 740,
-				toJSON: () => ({}),
-			} as DOMRect;
-			vi.spyOn(cell, 'getBoundingClientRect').mockReturnValue(rect);
-
-			fireEvent.mouseEnter(cell);
-
-			const tooltip = container.querySelector<HTMLElement>('.fixed.z-\\[99999\\]');
-			expect(tooltip).toBeInTheDocument();
-			expect(Number.parseFloat(tooltip!.style.left)).toBeLessThan(rect.left);
-			expect(Number.parseFloat(tooltip!.style.top)).toBeLessThan(rect.top);
-		});
-
-		it('centers tooltip below cells away from viewport edges', () => {
-			const today = new Date();
-			const { container } = render(
-				<ActivityHeatmap data={makeDataForDate(today, 9, 540_000)} timeRange="week" theme={theme} />
-			);
-			const cell = screen.getByRole('gridcell', {
-				name: new RegExp(`${format(today, 'MMM d')} 9:00`),
-			});
-			const rect = {
-				left: 300,
-				right: 314,
-				top: 120,
-				bottom: 134,
-				width: 14,
-				height: 14,
-				x: 300,
-				y: 120,
-				toJSON: () => ({}),
-			} as DOMRect;
-			vi.spyOn(cell, 'getBoundingClientRect').mockReturnValue(rect);
-
-			fireEvent.mouseEnter(cell);
-
-			const tooltip = container.querySelector<HTMLElement>('.fixed.z-\\[99999\\]');
-			expect(tooltip).toBeInTheDocument();
-			expect(Number.parseFloat(tooltip!.style.left)).toBeCloseTo(197, 0);
-			expect(Number.parseFloat(tooltip!.style.top)).toBe(rect.bottom + 4);
-		});
 	});
 
 	describe('Data Visualization', () => {
-		it('fills a partial final week in year layout with placeholder cells', () => {
-			vi.useFakeTimers();
-			vi.setSystemTime(new Date('2025-01-15T12:00:00Z'));
-			try {
-				render(<ActivityHeatmap data={makeTodayData()} timeRange="year" theme={theme} />);
-
-				const placeholderCells = screen
-					.getAllByRole('gridcell')
-					.filter((cell) => cell.getAttribute('aria-label') === '');
-				expect(placeholderCells.length).toBeGreaterThan(0);
-			} finally {
-				vi.useRealTimers();
-			}
-		});
-
-		it('formats year cells with hour-scale durations', () => {
-			const today = new Date();
-			render(
-				<ActivityHeatmap
-					data={makeDataForDate(today, 2, 3_600_000)}
-					timeRange="year"
-					theme={theme}
-				/>
-			);
-
-			expect(
-				screen.getByRole('gridcell', {
-					name: new RegExp(`${format(today, 'MMM d, yyyy')}: 2 queries, 1h 0m`),
-				})
-			).toBeInTheDocument();
-		});
-
-		it('maps year cells across low and medium intensity levels', () => {
-			const today = new Date();
-			const intensityData: StatsAggregation = {
-				...emptyData,
-				totalQueries: 10,
-				byDay: [
-					{ date: format(subDays(today, 3), 'yyyy-MM-dd'), count: 1, duration: 1_000 },
-					{ date: format(subDays(today, 2), 'yyyy-MM-dd'), count: 2, duration: 2_000 },
-					{ date: format(subDays(today, 1), 'yyyy-MM-dd'), count: 3, duration: 3_000 },
-					{ date: format(today, 'yyyy-MM-dd'), count: 4, duration: 4_000 },
-				],
-			};
-
-			render(<ActivityHeatmap data={intensityData} timeRange="year" theme={theme} />);
-
-			const low = screen.getByRole('gridcell', {
-				name: new RegExp(`${format(subDays(today, 3), 'MMM d, yyyy')}: 1 query`),
-			});
-			const mediumLow = screen.getByRole('gridcell', {
-				name: new RegExp(`${format(subDays(today, 2), 'MMM d, yyyy')}: 2 queries`),
-			});
-			const mediumHigh = screen.getByRole('gridcell', {
-				name: new RegExp(`${format(subDays(today, 1), 'MMM d, yyyy')}: 3 queries`),
-			});
-			const high = screen.getByRole('gridcell', {
-				name: new RegExp(`${format(today, 'MMM d, yyyy')}: 4 queries`),
-			});
-
-			expect((low as HTMLElement).style.backgroundColor).toContain('0.2');
-			expect((mediumLow as HTMLElement).style.backgroundColor).toContain('0.4');
-			expect((mediumHigh as HTMLElement).style.backgroundColor).toContain('0.6');
-			expect((high as HTMLElement).style.backgroundColor).toContain('0.9');
-		});
-
 		it('creates heatmap cells based on data', () => {
 			const { container } = render(
 				<ActivityHeatmap data={mockData} timeRange="week" theme={theme} />

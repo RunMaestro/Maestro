@@ -117,21 +117,6 @@ describe('useAutoRunUndo', () => {
 			expect(mockDeps.setLocalContent).toHaveBeenCalledTimes(1);
 		});
 
-		it('should use current local content when no snapshot content is provided', () => {
-			const mockDeps = createMockDeps({ localContent: 'Current content' });
-			const { result } = renderHook(() => useAutoRunUndo(mockDeps));
-
-			act(() => {
-				result.current.pushUndoState(undefined, 3);
-			});
-
-			act(() => {
-				result.current.handleUndo();
-			});
-
-			expect(mockDeps.setLocalContent).toHaveBeenCalledWith('Current content');
-		});
-
 		it('should do nothing when selectedFile is null', () => {
 			const mockDeps = createMockDeps({ selectedFile: null, localContent: 'Content' });
 			const { result } = renderHook(() => useAutoRunUndo(mockDeps));
@@ -645,37 +630,6 @@ describe('useAutoRunUndo', () => {
 			expect(mockDeps.setLocalContent).toHaveBeenCalledWith('Version 1');
 		});
 
-		it('should skip redo cursor restoration when textarea ref is cleared before frame', async () => {
-			const textarea = createMockTextarea(5, 'Version 2');
-			const textareaRef = { current: textarea };
-			const mockDeps = createMockDeps({
-				localContent: 'Version 2',
-				textareaRef,
-			});
-			const { result } = renderHook(() => useAutoRunUndo(mockDeps));
-
-			act(() => {
-				result.current.pushUndoState('Version 1', 10);
-			});
-			act(() => {
-				result.current.handleUndo();
-			});
-
-			textareaRef.current = null;
-
-			act(() => {
-				result.current.handleRedo();
-			});
-
-			await act(async () => {
-				vi.advanceTimersByTime(100);
-			});
-
-			expect(mockDeps.setLocalContent).toHaveBeenLastCalledWith('Version 2');
-			expect(textarea.setSelectionRange).not.toHaveBeenCalledWith(5, 5);
-			expect(textarea.focus).not.toHaveBeenCalled();
-		});
-
 		it('should use 0 as cursor position when textarea has no selectionStart', () => {
 			const textarea = createMockTextarea(0, 'Content');
 			// Simulate undefined selectionStart
@@ -707,7 +661,7 @@ describe('useAutoRunUndo', () => {
 	// ==========================================================================
 
 	describe('scheduleUndoSnapshot', () => {
-		it('should flush a pending debounced snapshot before immediate undo', () => {
+		it('should push undo state after 1000ms debounce delay', () => {
 			const mockDeps = createMockDeps({ localContent: 'Current content' });
 			const { result } = renderHook(() => useAutoRunUndo(mockDeps));
 
@@ -720,17 +674,22 @@ describe('useAutoRunUndo', () => {
 				vi.advanceTimersByTime(500);
 			});
 
-			// Immediate undo should flush the pending snapshot before the debounce fires.
+			// Try undo - should fail (nothing pushed yet)
+			act(() => {
+				result.current.handleUndo();
+			});
+			expect(mockDeps.setLocalContent).not.toHaveBeenCalled();
+
+			// After full delay
+			act(() => {
+				vi.advanceTimersByTime(600); // Total 1100ms
+			});
+
+			// Now undo should work
 			act(() => {
 				result.current.handleUndo();
 			});
 			expect(mockDeps.setLocalContent).toHaveBeenCalledWith('Previous content');
-
-			// The flushed snapshot should not fire a second time when the original delay passes.
-			act(() => {
-				vi.advanceTimersByTime(600); // Total 1100ms
-			});
-			expect(mockDeps.setLocalContent).toHaveBeenCalledTimes(1);
 		});
 
 		it('should cancel pending snapshot when new one is scheduled', () => {

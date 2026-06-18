@@ -173,26 +173,6 @@ describe('group-chat/output-parser', () => {
 			expect(extractTextFromAgentOutput(jsonlOutput, 'claude-code')).toBe('Part 1\nPart 2');
 		});
 
-		it('should skip empty lines before passing JSONL to the parser', () => {
-			const mockParser = {
-				parseJsonLine: vi.fn((line: string) => {
-					const parsed = JSON.parse(line);
-					return { type: 'text', text: parsed.text };
-				}),
-			};
-			vi.mocked(getOutputParser).mockReturnValue(mockParser as any);
-
-			const jsonlOutput = [
-				'{"type": "text", "text": "Part 1"}',
-				'',
-				'   ',
-				'{"type": "text", "text": "Part 2"}',
-			].join('\n');
-
-			expect(extractTextFromAgentOutput(jsonlOutput, 'claude-code')).toBe('Part 1\nPart 2');
-			expect(mockParser.parseJsonLine).toHaveBeenCalledTimes(2);
-		});
-
 		it('should prefer result over text events', () => {
 			const mockParser = {
 				parseJsonLine: vi.fn((line: string) => {

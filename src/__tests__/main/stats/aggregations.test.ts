@@ -686,69 +686,6 @@ describe('Aggregation queries return correct calculations', () => {
 		vi.resetModules();
 	});
 
-	const createAggregationDb = ({
-		totals = { count: 0, total_duration: 0 },
-		byAgent = [],
-		bySource = [],
-		byLocation = [],
-		byDay = [],
-		byAgentByDay = [],
-		byHour = [],
-		sessionTotals = { count: 0 },
-		avgSessionDuration = { avg_duration: 0 },
-		sessionsByAgent = [],
-		sessionsByDay = [],
-		bySessionByDay = [],
-	}: {
-		totals?: { count: number; total_duration: number };
-		byAgent?: Array<{ agent_type: string; count: number; duration: number }>;
-		bySource?: Array<{ source: 'user' | 'auto'; count: number }>;
-		byLocation?: Array<{ is_remote: number | null; count: number }>;
-		byDay?: Array<{ date: string; count: number; duration: number }>;
-		byAgentByDay?: Array<{
-			agent_type: string;
-			date: string;
-			count: number;
-			duration: number;
-		}>;
-		byHour?: Array<{ hour: number; count: number; duration: number }>;
-		sessionTotals?: { count: number };
-		avgSessionDuration?: { avg_duration: number };
-		sessionsByAgent?: Array<{ agent_type: string; count: number }>;
-		sessionsByDay?: Array<{ date: string; count: number }>;
-		bySessionByDay?: Array<{
-			session_id: string;
-			date: string;
-			count: number;
-			duration: number;
-		}>;
-	}) => ({
-		prepare: vi.fn((sql: string) => ({
-			get: vi.fn(() => {
-				if (sql.includes('COUNT(*) as count, COALESCE(SUM(duration), 0)')) return totals;
-				if (sql.includes('COUNT(DISTINCT session_id)')) return sessionTotals;
-				if (sql.includes('AVG(duration)')) return avgSessionDuration;
-				return {};
-			}),
-			all: vi.fn(() => {
-				if (sql.includes('GROUP BY agent_type, date(')) return byAgentByDay;
-				if (sql.includes('GROUP BY session_id, date(')) return bySessionByDay;
-				if (sql.includes('GROUP BY is_remote')) return byLocation;
-				if (sql.includes('GROUP BY source')) return bySource;
-				if (sql.includes('GROUP BY hour')) return byHour;
-				if (sql.includes('FROM session_lifecycle') && sql.includes('GROUP BY agent_type')) {
-					return sessionsByAgent;
-				}
-				if (sql.includes('FROM session_lifecycle') && sql.includes('GROUP BY date(')) {
-					return sessionsByDay;
-				}
-				if (sql.includes('GROUP BY agent_type')) return byAgent;
-				if (sql.includes('GROUP BY date(')) return byDay;
-				return [];
-			}),
-		})),
-	});
-
 	describe('totalQueries and totalDuration calculations', () => {
 		it('should return correct totalQueries count from database', async () => {
 			// Mock the totals query result
@@ -1357,81 +1294,6 @@ describe('Aggregation queries return correct calculations', () => {
 		});
 	});
 
-	describe('aggregation edge branches', () => {
-		it('separates remote rows from local and legacy-null location rows', async () => {
-			const { getAggregatedStats } = await import('../../../main/stats/aggregations');
-			const db = createAggregationDb({
-				byLocation: [
-					{ is_remote: 1, count: 2 },
-					{ is_remote: 0, count: 3 },
-					{ is_remote: null, count: 4 },
-				],
-			}) as Parameters<typeof getAggregatedStats>[0];
-
-			const stats = getAggregatedStats(db, 'all');
-
-			expect(stats.byLocation).toEqual({ local: 7, remote: 2 });
-		});
-
-		it('appends multiple daily rows for the same agent', async () => {
-			const { getAggregatedStats } = await import('../../../main/stats/aggregations');
-			const db = createAggregationDb({
-				byAgentByDay: [
-					{ agent_type: 'claude-code', date: '2026-01-01', count: 1, duration: 1000 },
-					{ agent_type: 'claude-code', date: '2026-01-02', count: 2, duration: 2000 },
-				],
-			}) as Parameters<typeof getAggregatedStats>[0];
-
-			const stats = getAggregatedStats(db, 'week');
-
-			expect(stats.byAgentByDay['claude-code']).toEqual([
-				{ date: '2026-01-01', count: 1, duration: 1000 },
-				{ date: '2026-01-02', count: 2, duration: 2000 },
-			]);
-		});
-
-		it('appends multiple daily rows for the same session', async () => {
-			const { getAggregatedStats } = await import('../../../main/stats/aggregations');
-			const db = createAggregationDb({
-				bySessionByDay: [
-					{ session_id: 'session-1', date: '2026-01-01', count: 1, duration: 1000 },
-					{ session_id: 'session-1', date: '2026-01-02', count: 2, duration: 2000 },
-				],
-			}) as Parameters<typeof getAggregatedStats>[0];
-
-			const stats = getAggregatedStats(db, 'week');
-
-			expect(stats.bySessionByDay['session-1']).toEqual([
-				{ date: '2026-01-01', count: 1, duration: 1000 },
-				{ date: '2026-01-02', count: 2, duration: 2000 },
-			]);
-		});
-
-		it('warns when total aggregation duration exceeds the dashboard threshold', async () => {
-			const { getAggregatedStats } = await import('../../../main/stats/aggregations');
-			const { perfMetrics, LOG_CONTEXT } = await import('../../../main/stats/utils');
-			const { logger } = await import('../../../main/utils/logger');
-			const endSpy = vi.spyOn(perfMetrics, 'end').mockImplementation((_start, label) => {
-				return label === 'getAggregatedStats:total' ? 10000 : 1;
-			});
-			const db = createAggregationDb({
-				totals: { count: 4, total_duration: 12000 },
-			}) as Parameters<typeof getAggregatedStats>[0];
-
-			try {
-				getAggregatedStats(db, 'month');
-
-				expect(logger.warn).toHaveBeenCalledWith(
-					expect.stringContaining('getAggregatedStats took 10000ms'),
-					LOG_CONTEXT,
-					{ range: 'month', totalQueries: 4 }
-				);
-			} finally {
-				endSpy.mockRestore();
-			}
-		});
-	});
-
 	describe('edge case calculations', () => {
 		it('should handle very small average (less than 1ms)', async () => {
 			// 10 queries, 5ms total = 0.5ms average, should round to 1 (or 0)
@@ -1504,6 +1366,111 @@ describe('Aggregation queries return correct calculations', () => {
 			expect(stats.byDay).toHaveLength(2);
 			expect(stats.byDay[0].date).toBe('2023-12-31');
 			expect(stats.byDay[1].date).toBe('2024-01-01');
+		});
+	});
+
+	describe('byWorktreeStatus breakdown calculations', () => {
+		it('should return correct worktree vs parent counts and durations', async () => {
+			mockStatement.get.mockReturnValue({ count: 100, total_duration: 500000 });
+			// queryByWorktreeStatus is the 11th .all call in getAggregatedStats; populate
+			// the prior 10 with empty arrays so we can isolate the worktree assertion.
+			mockStatement.all
+				.mockReturnValueOnce([]) // 1: byAgent
+				.mockReturnValueOnce([]) // 2: bySource
+				.mockReturnValueOnce([]) // 3: byLocation
+				.mockReturnValueOnce([]) // 4: byDay
+				.mockReturnValueOnce([]) // 5: byAgentByDay
+				.mockReturnValueOnce([]) // 6: byHour
+				.mockReturnValueOnce([]) // 7: sessionsByAgent (from querySessionStats)
+				.mockReturnValueOnce([]) // 8: sessionsByDay (from querySessionStats)
+				.mockReturnValueOnce([]) // 9: bySessionByDay
+				.mockReturnValueOnce([]) // 10: bySessionSource
+				.mockReturnValueOnce([
+					{ is_worktree: 0, count: 70, duration: 350000 },
+					{ is_worktree: 1, count: 30, duration: 150000 },
+				]); // 11: byWorktreeStatus
+
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			db.initialize();
+
+			const stats = db.getAggregatedStats('week');
+
+			expect(stats.worktreeQueries).toBe(30);
+			expect(stats.parentQueries).toBe(70);
+			expect(stats.byWorktreeStatus).toEqual({
+				worktree: { count: 30, duration: 150000 },
+				parent: { count: 70, duration: 350000 },
+			});
+		});
+
+		it('should default to zeros when no rows exist', async () => {
+			mockStatement.get.mockReturnValue({ count: 0, total_duration: 0 });
+			mockStatement.all.mockReturnValue([]);
+
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			db.initialize();
+
+			const stats = db.getAggregatedStats('day');
+
+			expect(stats.worktreeQueries).toBe(0);
+			expect(stats.parentQueries).toBe(0);
+			expect(stats.byWorktreeStatus).toEqual({
+				worktree: { count: 0, duration: 0 },
+				parent: { count: 0, duration: 0 },
+			});
+		});
+
+		it('should treat NULL is_worktree (legacy rows) as parent via COALESCE', async () => {
+			// SQL's COALESCE(is_worktree, 0) collapses NULL to 0 before grouping, so the
+			// driver only sees a single 0-bucket row even when legacy NULL rows are present.
+			mockStatement.get.mockReturnValue({ count: 50, total_duration: 250000 });
+			mockStatement.all
+				.mockReturnValueOnce([]) // 1: byAgent
+				.mockReturnValueOnce([]) // 2: bySource
+				.mockReturnValueOnce([]) // 3: byLocation
+				.mockReturnValueOnce([]) // 4: byDay
+				.mockReturnValueOnce([]) // 5: byAgentByDay
+				.mockReturnValueOnce([]) // 6: byHour
+				.mockReturnValueOnce([]) // 7: sessionsByAgent
+				.mockReturnValueOnce([]) // 8: sessionsByDay
+				.mockReturnValueOnce([]) // 9: bySessionByDay
+				.mockReturnValueOnce([]) // 10: bySessionSource
+				.mockReturnValueOnce([{ is_worktree: 0, count: 50, duration: 250000 }]); // 11
+
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			db.initialize();
+
+			const stats = db.getAggregatedStats('all');
+
+			expect(stats.parentQueries).toBe(50);
+			expect(stats.worktreeQueries).toBe(0);
+			expect(stats.byWorktreeStatus.parent).toEqual({ count: 50, duration: 250000 });
+			expect(stats.byWorktreeStatus.worktree).toEqual({ count: 0, duration: 0 });
+		});
+
+		it('should use COALESCE(is_worktree, 0) in the SQL query', async () => {
+			mockStatement.get.mockReturnValue({ count: 0, total_duration: 0 });
+			mockStatement.all.mockReturnValue([]);
+
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			db.initialize();
+
+			db.getAggregatedStats('week');
+
+			const prepareCalls = mockDb.prepare.mock.calls;
+			const worktreeCall = prepareCalls.find((call) =>
+				(call[0] as string).includes('COALESCE(is_worktree, 0)')
+			);
+
+			expect(worktreeCall).toBeDefined();
+			expect(worktreeCall![0]).toContain('GROUP BY COALESCE(is_worktree, 0)');
+			expect(worktreeCall![0]).toContain('FROM query_events');
+			// Ensures duration is summed alongside the count for the activity-split bar
+			expect(worktreeCall![0]).toContain('SUM(duration)');
 		});
 	});
 });

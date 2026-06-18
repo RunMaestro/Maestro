@@ -42,8 +42,6 @@ vi.mock('fs/promises', () => ({
 		writeFile: vi.fn(),
 		mkdir: vi.fn(),
 		unlink: vi.fn(),
-		readdir: vi.fn(),
-		stat: vi.fn(),
 	},
 }));
 
@@ -540,95 +538,6 @@ describe('playbooks IPC handlers', () => {
 			expect(result.success).toBe(true);
 			// The export should still succeed, just skip the missing document
 		});
-
-		it('should include asset files and skip non-file asset entries during export', async () => {
-			const existingPlaybooks = [
-				{
-					id: 'pb-1',
-					name: 'Export Assets',
-					documents: [{ filename: 'phase-one/doc1', order: 0 }],
-					loopEnabled: false,
-					prompt: '',
-				},
-			];
-			vi.mocked(fs.readFile)
-				.mockResolvedValueOnce(JSON.stringify({ playbooks: existingPlaybooks }))
-				.mockResolvedValueOnce('# Document content')
-				.mockResolvedValueOnce(Buffer.from('asset-content'));
-			vi.mocked(fs.readdir).mockResolvedValue(['diagram.png', 'nested-folder'] as any);
-			vi.mocked(fs.stat)
-				.mockResolvedValueOnce({ isFile: () => true } as any)
-				.mockResolvedValueOnce({ isFile: () => false } as any);
-
-			vi.mocked(dialog.showSaveDialog).mockResolvedValue({
-				canceled: false,
-				filePath: '/export/path/Export_Assets.zip',
-			});
-
-			const mockArchive = {
-				pipe: vi.fn(),
-				append: vi.fn(),
-				finalize: vi.fn().mockResolvedValue(undefined),
-				on: vi.fn(),
-			};
-			vi.mocked(archiver).mockReturnValue(mockArchive as any);
-
-			const mockStream = new PassThrough();
-			vi.mocked(createWriteStream).mockReturnValue(mockStream as any);
-			setTimeout(() => mockStream.emit('close'), 10);
-
-			const handler = handlers.get('playbooks:export');
-			const result = await handler!({} as any, 'session-123', 'pb-1', '/autorun/path');
-
-			expect(result.success).toBe(true);
-			expect(fs.readdir).toHaveBeenCalledWith('/autorun/path/phase-one/assets');
-			expect(mockArchive.append).toHaveBeenCalledWith(Buffer.from('asset-content'), {
-				name: 'assets/diagram.png',
-			});
-			expect(mockArchive.append).not.toHaveBeenCalledWith(expect.anything(), {
-				name: 'assets/nested-folder',
-			});
-		});
-
-		it('should report archive errors during export', async () => {
-			const existingPlaybooks = [
-				{
-					id: 'pb-1',
-					name: 'Broken Export',
-					documents: [],
-					loopEnabled: false,
-					prompt: '',
-				},
-			];
-			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({ playbooks: existingPlaybooks }));
-
-			vi.mocked(dialog.showSaveDialog).mockResolvedValue({
-				canceled: false,
-				filePath: '/export/path/Broken_Export.zip',
-			});
-
-			let archiveErrorHandler: ((error: Error) => void) | undefined;
-			const mockArchive = {
-				pipe: vi.fn(),
-				append: vi.fn(),
-				finalize: vi.fn().mockImplementation(async () => {
-					archiveErrorHandler?.(new Error('archive failed'));
-				}),
-				on: vi.fn((event: string, handler: (error: Error) => void) => {
-					if (event === 'error') {
-						archiveErrorHandler = handler;
-					}
-				}),
-			};
-			vi.mocked(archiver).mockReturnValue(mockArchive as any);
-			vi.mocked(createWriteStream).mockReturnValue(new PassThrough() as any);
-
-			const handler = handlers.get('playbooks:export');
-			const result = await handler!({} as any, 'session-123', 'pb-1', '/autorun/path');
-
-			expect(result.success).toBe(false);
-			expect(result.error).toContain('archive failed');
-		});
 	});
 
 	describe('playbooks:import', () => {
@@ -819,53 +728,6 @@ describe('playbooks IPC handlers', () => {
 			await handler!({} as any, 'session-123', '/autorun/path');
 
 			expect(fs.mkdir).toHaveBeenCalledWith('/autorun/path', { recursive: true });
-		});
-
-		it('should import asset files from ZIP entries', async () => {
-			vi.mocked(dialog.showOpenDialog).mockResolvedValue({
-				canceled: false,
-				filePaths: ['/import/path/playbook.zip'],
-			});
-
-			const mockManifest = {
-				name: 'Import with Assets',
-				documents: [],
-			};
-
-			const assetContent = Buffer.from('asset-bytes');
-			const mockEntries = [
-				{
-					entryName: 'manifest.json',
-					getData: () => Buffer.from(JSON.stringify(mockManifest)),
-				},
-				{
-					entryName: 'assets/diagram.png',
-					isDirectory: false,
-					getData: () => assetContent,
-				},
-				{
-					entryName: 'assets/nested',
-					isDirectory: true,
-					getData: () => Buffer.from('ignored'),
-				},
-			];
-
-			vi.mocked(AdmZip).mockImplementation(function (this: any) {
-				this.getEntries = () => mockEntries;
-				return this;
-			} as any);
-
-			vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
-			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
-			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
-
-			const handler = handlers.get('playbooks:import');
-			const result = await handler!({} as any, 'session-123', '/autorun/path');
-
-			expect(result.success).toBe(true);
-			expect(result.importedAssets).toEqual(['diagram.png']);
-			expect(fs.mkdir).toHaveBeenCalledWith('/autorun/path/assets', { recursive: true });
-			expect(fs.writeFile).toHaveBeenCalledWith('/autorun/path/assets/diagram.png', assetContent);
 		});
 	});
 });

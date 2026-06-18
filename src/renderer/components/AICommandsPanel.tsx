@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import type { Theme, CustomAICommand } from '../types';
 import { TEMPLATE_VARIABLES_GENERAL } from '../utils/templateVariables';
-import { useTemplateAutocomplete } from '../hooks';
+import { useSaveShortcut, useTemplateAutocomplete } from '../hooks';
 import { TemplateAutocompleteDropdown } from './TemplateAutocompleteDropdown';
 
 interface AICommandsPanelProps {
@@ -86,20 +86,20 @@ export function AICommandsPanel({
 	};
 
 	const handleSaveEdit = () => {
-		const commandBeingEdited = editingCommand!;
+		if (!editingCommand) return;
 
 		// Ensure command starts with /
-		const command = commandBeingEdited.command.startsWith('/')
-			? commandBeingEdited.command
-			: `/${commandBeingEdited.command}`;
+		const command = editingCommand.command.startsWith('/')
+			? editingCommand.command
+			: `/${editingCommand.command}`;
 
 		const updated = customAICommands.map((cmd) =>
-			cmd.id === commandBeingEdited.id
+			cmd.id === editingCommand.id
 				? {
 						...cmd,
 						command,
-						description: commandBeingEdited.description,
-						prompt: commandBeingEdited.prompt,
+						description: editingCommand.description,
+						prompt: editingCommand.prompt,
 					}
 				: cmd
 		);
@@ -108,6 +108,8 @@ export function AICommandsPanel({
 	};
 
 	const handleCreate = () => {
+		if (!newCommand.command || !newCommand.description || !newCommand.prompt) return;
+
 		// Ensure command starts with /
 		const command = newCommand.command.startsWith('/')
 			? newCommand.command
@@ -138,6 +140,8 @@ export function AICommandsPanel({
 	};
 
 	const handleDelete = (id: string) => {
+		const cmd = customAICommands.find((c) => c.id === id);
+		if (cmd?.isBuiltIn) return; // Can't delete built-in commands
 		setCustomAICommands(customAICommands.filter((c) => c.id !== id));
 	};
 
@@ -150,6 +154,15 @@ export function AICommandsPanel({
 		setIsCreating(false);
 	};
 
+	const isCreateValid = Boolean(newCommand.command && newCommand.description && newCommand.prompt);
+	useSaveShortcut(
+		() => {
+			if (editingCommand) handleSaveEdit();
+			else if (isCreating && isCreateValid) handleCreate();
+		},
+		Boolean(editingCommand) || (isCreating && isCreateValid)
+	);
+
 	return (
 		<div className="space-y-4">
 			<div>
@@ -158,8 +171,8 @@ export function AICommandsPanel({
 					Custom AI Commands
 				</label>
 				<p className="text-xs opacity-50" style={{ color: theme.colors.textDim }}>
-					Slash commands available in AI terminal mode. Built-in commands can be edited but not
-					deleted.
+					Slash commands are available in 1-1 AI chats. Built-in commands can be edited but not
+					deleted. Template variables are available.
 				</p>
 			</div>
 

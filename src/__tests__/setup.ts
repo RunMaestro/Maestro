@@ -4,21 +4,16 @@ import React from 'react';
 
 // Create a mock icon component factory
 const createMockIcon = (name: string) => {
-	const MockIcon = function ({
-		className,
-		style,
-	}: {
-		className?: string;
-		style?: React.CSSProperties;
-	}) {
+	const defaultTestId = `${name
+		.toLowerCase()
+		.replace(/([A-Z])/g, '-$1')
+		.toLowerCase()
+		.replace(/^-/, '')}-icon`;
+	const MockIcon = function (props: Record<string, unknown>) {
+		const { 'data-testid': dataTestId, ...rest } = props;
 		return React.createElement('svg', {
-			'data-testid': `${name
-				.toLowerCase()
-				.replace(/([A-Z])/g, '-$1')
-				.toLowerCase()
-				.replace(/^-/, '')}-icon`,
-			className,
-			style,
+			...rest,
+			'data-testid': dataTestId ?? defaultTestId,
 		});
 	};
 	MockIcon.displayName = name;
@@ -187,12 +182,20 @@ if (typeof window !== 'undefined') {
 		},
 	});
 
-	// Mock IntersectionObserver
-	global.IntersectionObserver = vi.fn().mockImplementation(() => ({
-		observe: vi.fn(),
-		unobserve: vi.fn(),
-		disconnect: vi.fn(),
-	}));
+	// Mock IntersectionObserver as a proper class so `new IntersectionObserver(...)`
+	// works for components that construct one (e.g. JumpToMessageTopButton).
+	// vi.fn().mockImplementation(arrow) is not callable as a constructor here.
+	class MockIntersectionObserver {
+		constructor(_cb: IntersectionObserverCallback, _opts?: IntersectionObserverInit) {}
+		observe = vi.fn();
+		unobserve = vi.fn();
+		disconnect = vi.fn();
+		takeRecords = vi.fn(() => []);
+		root = null;
+		rootMargin = '';
+		thresholds: ReadonlyArray<number> = [];
+	}
+	global.IntersectionObserver = MockIntersectionObserver as unknown as typeof IntersectionObserver;
 
 	// Mock Element.prototype.scrollTo - needed for components that use scrollTo
 	Element.prototype.scrollTo = vi.fn();
@@ -213,6 +216,9 @@ const mockMaestro = {
 		get: vi.fn().mockResolvedValue([]),
 		save: vi.fn().mockResolvedValue(undefined),
 		setAll: vi.fn().mockResolvedValue(undefined),
+		setMany: vi.fn().mockResolvedValue(undefined),
+		getActiveSessionId: vi.fn().mockResolvedValue(''),
+		setActiveSessionId: vi.fn().mockResolvedValue(undefined),
 	},
 	groups: {
 		get: vi.fn().mockResolvedValue([]),
@@ -225,8 +231,21 @@ const mockMaestro = {
 		write: vi.fn().mockResolvedValue(undefined),
 		kill: vi.fn().mockResolvedValue(undefined),
 		resize: vi.fn().mockResolvedValue(undefined),
+		getActiveProcesses: vi.fn().mockResolvedValue([]),
+		isTerminalBusy: vi.fn().mockResolvedValue(false),
 		onOutput: vi.fn().mockReturnValue(() => {}),
 		onExit: vi.fn().mockReturnValue(() => {}),
+	},
+	feedback: {
+		checkGhAuth: vi.fn().mockResolvedValue({ authenticated: true }),
+		submit: vi.fn().mockResolvedValue({ success: true }),
+		composePrompt: vi.fn().mockResolvedValue({ prompt: 'composed feedback prompt' }),
+		getConversationPrompt: vi
+			.fn()
+			.mockResolvedValue({ prompt: 'system prompt', environment: '- Maestro version: test' }),
+		submitConversation: vi.fn().mockResolvedValue({ success: true }),
+		searchIssues: vi.fn().mockResolvedValue({ issues: [] }),
+		subscribeIssue: vi.fn().mockResolvedValue({ success: true }),
 	},
 	git: {
 		branch: vi.fn().mockResolvedValue({ stdout: 'main' }),
@@ -259,6 +278,11 @@ const mockMaestro = {
 	fs: {
 		readDir: vi.fn().mockResolvedValue([]),
 		readFile: vi.fn().mockResolvedValue(''),
+		// Mirrors the preload webUtils bridge: returns the dropped file's absolute
+		// path. Test fixtures set `.path` on their fake File objects.
+		getPathForFile: vi.fn((file?: { path?: string }) => file?.path ?? ''),
+		writeFile: vi.fn().mockResolvedValue({ success: true }),
+		writeImageFile: vi.fn().mockResolvedValue({ success: true }),
 		stat: vi.fn().mockResolvedValue({
 			size: 1024,
 			createdAt: '2024-01-01T00:00:00.000Z',
@@ -289,6 +313,8 @@ const mockMaestro = {
 		refresh: vi.fn().mockResolvedValue({ agents: [], debugInfo: null }),
 		// Model discovery for agents that support model selection
 		getModels: vi.fn().mockResolvedValue([]),
+		// Config options discovery (effort levels, reasoning, etc.)
+		getConfigOptions: vi.fn().mockResolvedValue([]),
 		// Capabilities for gating UI features based on agent type
 		getCapabilities: vi.fn().mockResolvedValue({
 			supportsResume: true,
@@ -310,6 +336,14 @@ const mockMaestro = {
 			supportsContextMerge: false,
 			supportsContextExport: false,
 		}),
+		getMaestroPDetectedPath: vi.fn().mockResolvedValue(null),
+		getRemoteMaestroPAvailable: vi.fn().mockResolvedValue(null),
+		getClaudeUsageSnapshots: vi.fn().mockResolvedValue({}),
+		getClaudeUsageAccountKeys: vi.fn().mockResolvedValue([]),
+		getCodexUsageSnapshots: vi.fn().mockResolvedValue({}),
+		getCodexUsageAccountKeys: vi.fn().mockResolvedValue([]),
+		refreshClaudeUsageSnapshots: vi.fn().mockResolvedValue({ refreshed: 0 }),
+		refreshCodexUsageSnapshots: vi.fn().mockResolvedValue({ refreshed: 0 }),
 	},
 	fonts: {
 		detect: vi.fn().mockResolvedValue([]),
@@ -369,7 +403,6 @@ const mockMaestro = {
 		getSessionOrigins: vi.fn().mockResolvedValue({}),
 		getOrigins: vi.fn().mockResolvedValue({}),
 		setSessionName: vi.fn().mockResolvedValue(undefined),
-		setSessionStarred: vi.fn().mockResolvedValue(undefined),
 		updateSessionName: vi.fn().mockResolvedValue(undefined),
 		updateSessionStarred: vi.fn().mockResolvedValue(undefined),
 		registerSessionOrigin: vi.fn().mockResolvedValue(undefined),
@@ -377,6 +410,8 @@ const mockMaestro = {
 	autorun: {
 		readDoc: vi.fn().mockResolvedValue({ success: true, content: '' }),
 		writeDoc: vi.fn().mockResolvedValue({ success: true }),
+		saveImage: vi.fn().mockResolvedValue({ success: true, path: 'images/test.png' }),
+		deleteImage: vi.fn().mockResolvedValue({ success: true }),
 		watchFolder: vi.fn().mockReturnValue(() => {}),
 		unwatchFolder: vi.fn(),
 		readFolder: vi.fn().mockResolvedValue({ success: true, files: [] }),
@@ -421,7 +456,6 @@ const mockMaestro = {
 	web: {
 		broadcastAutoRunState: vi.fn(),
 		broadcastSessionState: vi.fn(),
-		broadcastUserInput: vi.fn(),
 		start: vi.fn().mockResolvedValue(undefined),
 		stop: vi.fn().mockResolvedValue(undefined),
 		getStatus: vi.fn().mockResolvedValue({ running: false }),
@@ -495,6 +529,10 @@ const mockMaestro = {
 		recordSessionCreated: vi.fn().mockResolvedValue('lifecycle-id'),
 		recordSessionClosed: vi.fn().mockResolvedValue(true),
 		getSessionLifecycle: vi.fn().mockResolvedValue([]),
+		// Shortcut usage tracking (Usage Dashboard daily bar chart)
+		recordShortcutUsage: vi.fn().mockResolvedValue(null),
+		getShortcutUsageByDay: vi.fn().mockResolvedValue([]),
+		getShortcutUsageTotal: vi.fn().mockResolvedValue(0),
 	},
 	sshRemote: {
 		getConfigs: vi.fn().mockResolvedValue({ success: true, configs: [] }),
@@ -529,7 +567,6 @@ const mockMaestro = {
 		getActive: vi.fn().mockResolvedValue({ success: true, contributions: [] }),
 		getCompleted: vi.fn().mockResolvedValue({ success: true, contributions: [] }),
 		getStats: vi.fn().mockResolvedValue({ success: true, stats: {} }),
-		getIssueCounts: vi.fn().mockResolvedValue({ success: true, counts: {} }),
 		start: vi.fn().mockResolvedValue({ success: true, contributionId: 'test-id' }),
 		registerActive: vi.fn().mockResolvedValue({ success: true }),
 		updateStatus: vi.fn().mockResolvedValue({ success: true, updated: true }),
@@ -549,10 +586,44 @@ const mockMaestro = {
 		confirmQuit: vi.fn(),
 		cancelQuit: vi.fn(),
 		onSystemResume: vi.fn().mockReturnValue(() => {}),
+		onBrowserTabShortcutKey: vi.fn().mockReturnValue(() => {}),
 	},
 	wakatime: {
 		checkCli: vi.fn().mockResolvedValue({ available: false }),
 		validateApiKey: vi.fn().mockResolvedValue({ valid: false }),
+	},
+	cue: {
+		getSettings: vi.fn().mockResolvedValue({
+			timeout_minutes: 30,
+			timeout_on_fail: 'break',
+			max_concurrent: 1,
+			queue_size: 512,
+		}),
+		saveSettings: vi.fn().mockResolvedValue({ writtenRoots: [] }),
+		getStatus: vi.fn().mockResolvedValue([]),
+		getActiveRuns: vi.fn().mockResolvedValue([]),
+		getActivityLog: vi.fn().mockResolvedValue([]),
+		getEventCount: vi.fn().mockResolvedValue(0),
+		enable: vi.fn().mockResolvedValue(undefined),
+		disable: vi.fn().mockResolvedValue(undefined),
+		setActive: vi.fn().mockResolvedValue(undefined),
+		stopRun: vi.fn().mockResolvedValue(false),
+		stopAll: vi.fn().mockResolvedValue(undefined),
+		refreshSession: vi.fn().mockResolvedValue(undefined),
+		readYaml: vi.fn().mockResolvedValue(null),
+		writeYaml: vi.fn().mockResolvedValue(undefined),
+		validateYaml: vi.fn().mockResolvedValue({ valid: true, errors: [] }),
+		onActivityUpdate: vi.fn().mockReturnValue(() => {}),
+	},
+	// Core Prompts API (disk-based prompts loaded at runtime)
+	prompts: {
+		get: vi.fn().mockResolvedValue({ success: true, content: '' }),
+		getAll: vi.fn().mockResolvedValue({ success: true, prompts: [] }),
+		getAllIds: vi.fn().mockResolvedValue({ success: true, ids: [] }),
+		save: vi.fn().mockResolvedValue({ success: true }),
+		reset: vi.fn().mockResolvedValue({ success: true, content: '' }),
+		getPath: vi.fn().mockResolvedValue({ success: true, path: '/mock/prompts/core' }),
+		listFiles: vi.fn().mockResolvedValue({ success: true, files: [] }),
 	},
 	// Synchronous platform string (replaces async os.getPlatform IPC)
 	platform: 'darwin',

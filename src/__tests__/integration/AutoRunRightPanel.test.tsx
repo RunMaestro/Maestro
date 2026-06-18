@@ -13,12 +13,12 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import React, { createRef, useState } from 'react';
 import { RightPanel, RightPanelHandle } from '../../renderer/components/RightPanel';
 import { AutoRun, AutoRunHandle } from '../../renderer/components/AutoRun';
-import type { Session, Theme, Shortcut, BatchRunState, RightPanelTab } from '../../renderer/types';
+import type { Session, Shortcut, BatchRunState, RightPanelTab } from '../../renderer/types';
+import type { Session, Shortcut, BatchRunState, RightPanelTab } from '../../renderer/types';
+import { createMockSession as baseCreateMockSession } from '../helpers/mockSession';
 import { LayerStackProvider } from '../../renderer/contexts/LayerStackContext';
-import { useBatchStore } from '../../renderer/stores/batchStore';
-import { useSessionStore } from '../../renderer/stores/sessionStore';
-import { useSettingsStore } from '../../renderer/stores/settingsStore';
-import { useUIStore } from '../../renderer/stores/uiStore';
+
+import { createMockTheme } from '../helpers/mockTheme';
 
 // Mock external dependencies
 vi.mock('react-markdown', () => ({
@@ -127,28 +127,6 @@ vi.mock('../../renderer/utils/shortcutFormatter', () => ({
 	isMacOS: vi.fn(() => false),
 }));
 
-// Create a mock theme for testing
-const createMockTheme = (): Theme => ({
-	id: 'test-theme',
-	name: 'Test Theme',
-	mode: 'dark',
-	colors: {
-		bgMain: '#1a1a1a',
-		bgPanel: '#252525',
-		bgActivity: '#2d2d2d',
-		bgSidebar: '#1e1e1e',
-		textMain: '#ffffff',
-		textDim: '#888888',
-		accent: '#0066ff',
-		accentForeground: '#ffffff',
-		border: '#333333',
-		highlight: '#0066ff33',
-		success: '#00aa00',
-		warning: '#ffaa00',
-		error: '#ff0000',
-	},
-});
-
 // Setup window.maestro mock
 const setupMaestroMock = () => {
 	const mockMaestro = {
@@ -172,40 +150,28 @@ const setupMaestroMock = () => {
 	return mockMaestro;
 };
 
-// Create mock session
-const createMockSession = (overrides: Partial<Session> = {}): Session => ({
-	id: 'test-session-1',
-	name: 'Test Session',
-	cwd: '/test/path',
-	projectRoot: '/test/path',
-	fullPath: '/test/path',
-	toolType: 'claude-code',
-	state: 'idle',
-	inputMode: 'ai',
-	isGitRepo: true,
-	aiPid: 1234,
-	terminalPid: 5678,
-	port: 3000,
-	aiTabs: [{ id: 'tab-1', name: 'Tab 1', logs: [] }],
-	activeTabId: 'tab-1',
-	closedTabHistory: [],
-	shellLogs: [],
-	fileTree: [],
-	fileExplorerExpanded: [],
-	fileExplorerScrollPos: 0,
-	executionQueue: [],
-	changedFiles: [],
-	isLive: false,
-	contextUsage: 0,
-	workLog: [],
-	autoRunFolderPath: '/test/autorun',
-	autoRunSelectedFile: 'Phase 1',
-	autoRunMode: 'edit',
-	autoRunCursorPosition: 0,
-	autoRunEditScrollPos: 0,
-	autoRunPreviewScrollPos: 0,
-	...overrides,
-});
+// Thin wrapper: seeds auto run state so the right panel shows the auto
+// run tab with content.
+const createMockSession = (overrides: Partial<Session> = {}): Session =>
+	baseCreateMockSession({
+		id: 'test-session-1',
+		cwd: '/test/path',
+		fullPath: '/test/path',
+		projectRoot: '/test/path',
+		isGitRepo: true,
+		aiPid: 1234,
+		terminalPid: 5678,
+		port: 3000,
+		aiTabs: [{ id: 'tab-1', name: 'Tab 1', logs: [] }] as any,
+		activeTabId: 'tab-1',
+		autoRunFolderPath: '/test/autorun',
+		autoRunSelectedFile: 'Phase 1',
+		autoRunMode: 'edit',
+		autoRunCursorPosition: 0,
+		autoRunEditScrollPos: 0,
+		autoRunPreviewScrollPos: 0,
+		...overrides,
+	});
 
 // Create mock shortcuts
 const createMockShortcuts = (): Record<string, Shortcut> => ({
@@ -224,42 +190,6 @@ const createMockShortcuts = (): Record<string, Shortcut> => ({
 		category: 'Auto Run',
 	},
 });
-
-function seedRightPanelStores({
-	session,
-	activeRightTab,
-	rightPanelOpen = true,
-	rightPanelWidth = 400,
-	activeFocus = 'right',
-	documentList = ['Phase 1', 'Phase 2', 'Phase 3'],
-	batchRunStates = {},
-}: {
-	session: Session | null;
-	activeRightTab: RightPanelTab;
-	rightPanelOpen?: boolean;
-	rightPanelWidth?: number;
-	activeFocus?: 'sidebar' | 'main' | 'right';
-	documentList?: string[];
-	batchRunStates?: Record<string, BatchRunState>;
-}) {
-	useSessionStore.setState({
-		sessions: session ? [session] : [],
-		activeSessionId: session?.id ?? '',
-		groups: [],
-	});
-	useUIStore.setState({ rightPanelOpen, activeRightTab, activeFocus });
-	useSettingsStore.setState({
-		rightPanelWidth,
-		shortcuts: createMockShortcuts(),
-		showHiddenFiles: false,
-	});
-	useBatchStore.setState({
-		documentList,
-		documentTree: [],
-		isLoadingDocuments: false,
-		batchRunStates,
-	});
-}
 
 // Wrapper component to test RightPanel with state management
 const RightPanelTestWrapper = ({
@@ -280,9 +210,7 @@ const RightPanelTestWrapper = ({
 	const [activeRightTab, setActiveRightTab] = useState<RightPanelTab>(initialTab);
 	const [rightPanelWidth, setRightPanelWidth] = useState(initialWidth);
 	const [autoRunContent, setAutoRunContent] = useState(initialContent);
-	const [session, setSession] = useState(() =>
-		createMockSession({ autoRunContent: initialContent })
-	);
+	const [session, setSession] = useState(() => createMockSession());
 	const [rightPanelOpen, setRightPanelOpen] = useState(true);
 	const [activeFocus, setActiveFocus] = useState('right');
 
@@ -291,7 +219,6 @@ const RightPanelTestWrapper = ({
 
 	const handleContentChange = (content: string) => {
 		setAutoRunContent(content);
-		setSession((prev) => ({ ...prev, autoRunContent: content }));
 		onContentChange?.(content);
 	};
 
@@ -315,14 +242,6 @@ const RightPanelTestWrapper = ({
 		}));
 		onStateChange?.(state);
 	};
-
-	seedRightPanelStores({
-		session,
-		activeRightTab,
-		rightPanelOpen,
-		rightPanelWidth,
-		activeFocus: activeFocus as 'sidebar' | 'main' | 'right',
-	});
 
 	return (
 		<LayerStackProvider>
@@ -348,6 +267,7 @@ const RightPanelTestWrapper = ({
 				fileTreeContainerRef={fileTreeContainerRef}
 				fileTreeFilterInputRef={fileTreeFilterInputRef}
 				toggleFolder={() => {}}
+				toggleFolderRecursive={() => {}}
 				handleFileClick={async () => {}}
 				expandAllFolders={() => {}}
 				collapseAllFolders={() => {}}
@@ -378,7 +298,6 @@ describe('Auto Run + RightPanel Integration', () => {
 
 	beforeEach(() => {
 		mockMaestro = setupMaestroMock();
-		seedRightPanelStores({ session: null, activeRightTab: 'autorun', documentList: [] });
 		vi.useFakeTimers({ shouldAdvanceTime: true });
 		vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
 			cb(0);
@@ -431,16 +350,6 @@ describe('Auto Run + RightPanel Integration', () => {
 				const [version, setVersion] = useState(0);
 				const fileTreeContainerRef = React.useRef<HTMLDivElement>(null);
 				const fileTreeFilterInputRef = React.useRef<HTMLInputElement>(null);
-				const session = createMockSession({
-					autoRunContent: content,
-					autoRunContentVersion: version,
-				});
-
-				seedRightPanelStores({
-					session,
-					activeRightTab: activeTab,
-					documentList: ['Phase 1'],
-				});
 
 				return (
 					<LayerStackProvider>
@@ -455,7 +364,7 @@ describe('Auto Run + RightPanel Integration', () => {
 								External Change
 							</button>
 							<RightPanel
-								session={session}
+								session={createMockSession()}
 								theme={createMockTheme()}
 								shortcuts={createMockShortcuts()}
 								rightPanelOpen={true}
@@ -476,6 +385,7 @@ describe('Auto Run + RightPanel Integration', () => {
 								fileTreeContainerRef={fileTreeContainerRef}
 								fileTreeFilterInputRef={fileTreeFilterInputRef}
 								toggleFolder={() => {}}
+								toggleFolderRecursive={() => {}}
 								handleFileClick={async () => {}}
 								expandAllFolders={() => {}}
 								collapseAllFolders={() => {}}
@@ -542,9 +452,9 @@ describe('Auto Run + RightPanel Integration', () => {
 			const autorunTab = screen.getByRole('button', { name: 'Auto Run' });
 			fireEvent.click(autorunTab);
 
-			// Preview mode should still be active.
+			// Preview mode should still be active (button should be styled as selected)
 			const previewButtonAfter = screen.getByRole('button', { name: /preview/i });
-			expect(previewButtonAfter).toHaveAttribute('aria-pressed', 'true');
+			expect(previewButtonAfter).toHaveClass('font-semibold');
 		});
 
 		it('preserves cursor position when switching tabs', async () => {
@@ -713,7 +623,7 @@ describe('Auto Run + RightPanel Integration', () => {
 
 			// Mode should still be preview
 			const previewButtonAfter = screen.getByRole('button', { name: /preview/i });
-			expect(previewButtonAfter).toHaveAttribute('aria-pressed', 'true');
+			expect(previewButtonAfter).toHaveClass('font-semibold');
 		});
 
 		it('maintains scroll position during resize', async () => {
@@ -783,18 +693,12 @@ describe('Auto Run + RightPanel Integration', () => {
 		it('expanded modal receives same content as panel', async () => {
 			// Use the standalone RightPanel to access expanded modal functionality
 			const TestComponent = () => {
+				const session = createMockSession();
 				const ref = createRef<RightPanelHandle>();
 				const theme = createMockTheme();
 				const [content, setContent] = useState('# Initial Content\n\n- [ ] Task 1');
 				const fileTreeContainerRef = React.useRef<HTMLDivElement>(null);
 				const fileTreeFilterInputRef = React.useRef<HTMLInputElement>(null);
-				const session = createMockSession({ autoRunContent: content });
-
-				seedRightPanelStores({
-					session,
-					activeRightTab: 'autorun',
-					documentList: ['Phase 1'],
-				});
 
 				return (
 					<LayerStackProvider>
@@ -821,6 +725,7 @@ describe('Auto Run + RightPanel Integration', () => {
 							fileTreeContainerRef={fileTreeContainerRef}
 							fileTreeFilterInputRef={fileTreeFilterInputRef}
 							toggleFolder={() => {}}
+							toggleFolderRecursive={() => {}}
 							handleFileClick={async () => {}}
 							expandAllFolders={() => {}}
 							collapseAllFolders={() => {}}
@@ -898,16 +803,6 @@ describe('Auto Run + RightPanel Integration', () => {
 				const [version, setVersion] = useState(0);
 				const fileTreeContainerRef = React.useRef<HTMLDivElement>(null);
 				const fileTreeFilterInputRef = React.useRef<HTMLInputElement>(null);
-				const session = createMockSession({
-					autoRunContent: content,
-					autoRunContentVersion: version,
-				});
-
-				seedRightPanelStores({
-					session,
-					activeRightTab: 'autorun',
-					documentList: ['Phase 1'],
-				});
 
 				return (
 					<LayerStackProvider>
@@ -922,7 +817,7 @@ describe('Auto Run + RightPanel Integration', () => {
 								External Update
 							</button>
 							<RightPanel
-								session={session}
+								session={createMockSession()}
 								theme={createMockTheme()}
 								shortcuts={createMockShortcuts()}
 								rightPanelOpen={true}
@@ -943,6 +838,7 @@ describe('Auto Run + RightPanel Integration', () => {
 								fileTreeContainerRef={fileTreeContainerRef}
 								fileTreeFilterInputRef={fileTreeFilterInputRef}
 								toggleFolder={() => {}}
+								toggleFolderRecursive={() => {}}
 								handleFileClick={async () => {}}
 								expandAllFolders={() => {}}
 								collapseAllFolders={() => {}}
@@ -987,19 +883,12 @@ describe('Auto Run + RightPanel Integration', () => {
 			const ref = createRef<RightPanelHandle>();
 			const fileTreeContainerRef = React.createRef<HTMLDivElement>();
 			const fileTreeFilterInputRef = React.createRef<HTMLInputElement>();
-			const session = createMockSession({ autoRunContent: 'Test content' });
-
-			seedRightPanelStores({
-				session,
-				activeRightTab: 'autorun',
-				documentList: ['Phase 1'],
-			});
 
 			render(
 				<LayerStackProvider>
 					<RightPanel
 						ref={ref}
-						session={session}
+						session={createMockSession()}
 						theme={createMockTheme()}
 						shortcuts={createMockShortcuts()}
 						rightPanelOpen={true}
@@ -1020,6 +909,7 @@ describe('Auto Run + RightPanel Integration', () => {
 						fileTreeContainerRef={fileTreeContainerRef}
 						fileTreeFilterInputRef={fileTreeFilterInputRef}
 						toggleFolder={() => {}}
+						toggleFolderRecursive={() => {}}
 						handleFileClick={async () => {}}
 						expandAllFolders={() => {}}
 						collapseAllFolders={() => {}}
@@ -1077,19 +967,12 @@ describe('Auto Run + RightPanel Integration', () => {
 			const ref = createRef<RightPanelHandle>();
 			const fileTreeContainerRef = React.createRef<HTMLDivElement>();
 			const fileTreeFilterInputRef = React.createRef<HTMLInputElement>();
-			const session = createMockSession({ autoRunContent: 'Test content' });
-
-			seedRightPanelStores({
-				session,
-				activeRightTab: 'autorun',
-				documentList: ['Phase 1'],
-			});
 
 			render(
 				<LayerStackProvider>
 					<RightPanel
 						ref={ref}
-						session={session}
+						session={createMockSession()}
 						theme={createMockTheme()}
 						shortcuts={createMockShortcuts()}
 						rightPanelOpen={true}
@@ -1110,6 +993,7 @@ describe('Auto Run + RightPanel Integration', () => {
 						fileTreeContainerRef={fileTreeContainerRef}
 						fileTreeFilterInputRef={fileTreeFilterInputRef}
 						toggleFolder={() => {}}
+						toggleFolderRecursive={() => {}}
 						handleFileClick={async () => {}}
 						expandAllFolders={() => {}}
 						collapseAllFolders={() => {}}
@@ -1182,16 +1066,6 @@ describe('Auto Run + RightPanel Integration', () => {
 				const [version, setVersion] = useState(0);
 				const fileTreeContainerRef = React.useRef<HTMLDivElement>(null);
 				const fileTreeFilterInputRef = React.useRef<HTMLInputElement>(null);
-				const session = createMockSession({
-					autoRunContent: content,
-					autoRunContentVersion: version,
-				});
-
-				seedRightPanelStores({
-					session,
-					activeRightTab: activeTab,
-					documentList: ['Phase 1'],
-				});
 
 				return (
 					<LayerStackProvider>
@@ -1206,7 +1080,7 @@ describe('Auto Run + RightPanel Integration', () => {
 								Simulate Save
 							</button>
 							<RightPanel
-								session={session}
+								session={createMockSession()}
 								theme={createMockTheme()}
 								shortcuts={createMockShortcuts()}
 								rightPanelOpen={true}
@@ -1227,6 +1101,7 @@ describe('Auto Run + RightPanel Integration', () => {
 								fileTreeContainerRef={fileTreeContainerRef}
 								fileTreeFilterInputRef={fileTreeFilterInputRef}
 								toggleFolder={() => {}}
+								toggleFolderRecursive={() => {}}
 								handleFileClick={async () => {}}
 								expandAllFolders={() => {}}
 								collapseAllFolders={() => {}}
@@ -1280,13 +1155,6 @@ describe('Auto Run + RightPanel Integration', () => {
 				const [content, setContent] = useState('Session 1 content');
 				const fileTreeContainerRef = React.useRef<HTMLDivElement>(null);
 				const fileTreeFilterInputRef = React.useRef<HTMLInputElement>(null);
-				const sessionWithContent = { ...session, autoRunContent: content };
-
-				seedRightPanelStores({
-					session: sessionWithContent,
-					activeRightTab: activeTab,
-					documentList: ['Phase 1'],
-				});
 
 				return (
 					<LayerStackProvider>
@@ -1301,7 +1169,7 @@ describe('Auto Run + RightPanel Integration', () => {
 								Switch Session
 							</button>
 							<RightPanel
-								session={sessionWithContent}
+								session={session}
 								theme={createMockTheme()}
 								shortcuts={createMockShortcuts()}
 								rightPanelOpen={true}
@@ -1322,6 +1190,7 @@ describe('Auto Run + RightPanel Integration', () => {
 								fileTreeContainerRef={fileTreeContainerRef}
 								fileTreeFilterInputRef={fileTreeFilterInputRef}
 								toggleFolder={() => {}}
+								toggleFolderRecursive={() => {}}
 								handleFileClick={async () => {}}
 								expandAllFolders={() => {}}
 								collapseAllFolders={() => {}}
@@ -1371,7 +1240,6 @@ describe('Auto Run + RightPanel Integration', () => {
 		it('handles null session gracefully', () => {
 			const fileTreeContainerRef = React.createRef<HTMLDivElement>();
 			const fileTreeFilterInputRef = React.createRef<HTMLInputElement>();
-			seedRightPanelStores({ session: null, activeRightTab: 'autorun', documentList: [] });
 
 			const { container } = render(
 				<RightPanel
@@ -1396,6 +1264,7 @@ describe('Auto Run + RightPanel Integration', () => {
 					fileTreeContainerRef={fileTreeContainerRef}
 					fileTreeFilterInputRef={fileTreeFilterInputRef}
 					toggleFolder={() => {}}
+					toggleFolderRecursive={() => {}}
 					handleFileClick={async () => {}}
 					expandAllFolders={() => {}}
 					collapseAllFolders={() => {}}
@@ -1480,18 +1349,10 @@ describe('Auto Run + RightPanel Integration', () => {
 				worktreeActive: false,
 				originalContent: '',
 			};
-			const session = createMockSession({ autoRunContent: '# Test' });
-
-			seedRightPanelStores({
-				session,
-				activeRightTab: 'files',
-				documentList: ['Phase 1'],
-				batchRunStates: { [session.id]: batchRunState },
-			});
 
 			render(
 				<RightPanel
-					session={session}
+					session={createMockSession()}
 					theme={createMockTheme()}
 					shortcuts={createMockShortcuts()}
 					rightPanelOpen={true}
@@ -1512,6 +1373,7 @@ describe('Auto Run + RightPanel Integration', () => {
 					fileTreeContainerRef={fileTreeContainerRef}
 					fileTreeFilterInputRef={fileTreeFilterInputRef}
 					toggleFolder={() => {}}
+					toggleFolderRecursive={() => {}}
 					handleFileClick={async () => {}}
 					expandAllFolders={() => {}}
 					collapseAllFolders={() => {}}
@@ -1567,19 +1429,11 @@ describe('Auto Run + RightPanel Integration', () => {
 					worktreeActive: false,
 					originalContent: '',
 				};
-				const session = createMockSession({ autoRunContent: '# Test content' });
-
-				seedRightPanelStores({
-					session,
-					activeRightTab: activeTab,
-					documentList: ['Phase 1'],
-					batchRunStates: { [session.id]: batchRunState },
-				});
 
 				return (
 					<LayerStackProvider>
 						<RightPanel
-							session={session}
+							session={createMockSession()}
 							theme={createMockTheme()}
 							shortcuts={createMockShortcuts()}
 							rightPanelOpen={true}
@@ -1600,6 +1454,7 @@ describe('Auto Run + RightPanel Integration', () => {
 							fileTreeContainerRef={fileTreeContainerRef}
 							fileTreeFilterInputRef={fileTreeFilterInputRef}
 							toggleFolder={() => {}}
+							toggleFolderRecursive={() => {}}
 							handleFileClick={async () => {}}
 							expandAllFolders={() => {}}
 							collapseAllFolders={() => {}}

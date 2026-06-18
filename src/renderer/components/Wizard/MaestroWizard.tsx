@@ -14,7 +14,7 @@ import {
 	INDEX_TO_STEP,
 	type WizardStep,
 } from './WizardContext';
-import { useLayerStack } from '../../contexts/LayerStackContext';
+import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { WizardExitConfirmModal } from './WizardExitConfirmModal';
 import { ScreenReaderAnnouncement } from './ScreenReaderAnnouncement';
@@ -111,8 +111,6 @@ export function MaestroWizard({
 		getCurrentStepNumber,
 	} = useWizard();
 
-	const { registerLayer, unregisterLayer } = useLayerStack();
-
 	// State for exit confirmation modal
 	const [showExitConfirm, setShowExitConfirm] = useState(false);
 
@@ -123,8 +121,6 @@ export function MaestroWizard({
 	const wizardStartTimeRef = useRef<number>(0);
 	// Track if wizard start has been recorded for this open session
 	const wizardStartedRef = useRef(false);
-	// Track open transitions so restored steps sync only when the wizard opens
-	const wasOpenRef = useRef(false);
 
 	// State for screen transition animations
 	// displayedStep is the step actually being rendered (lags behind currentStep during transitions)
@@ -170,8 +166,8 @@ export function MaestroWizard({
 	/**
 	 * Handle confirmed exit - saves state and closes wizard
 	 */
-	const handleConfirmExit = useCallback(() => {
-		saveStateForResumeRef.current();
+	const handleConfirmExit = useCallback(async () => {
+		await saveStateForResumeRef.current();
 		setShowExitConfirm(false);
 		// Record wizard abandonment for analytics
 		if (onWizardAbandon) {
@@ -190,8 +186,8 @@ export function MaestroWizard({
 	/**
 	 * Handle quit without saving - clears state, resets wizard, and closes
 	 */
-	const handleQuitWithoutSaving = useCallback(() => {
-		clearResumeStateRef.current();
+	const handleQuitWithoutSaving = useCallback(async () => {
+		await clearResumeStateRef.current();
 		resetWizardRef.current(); // Reset in-memory state so next open starts fresh
 		setShowExitConfirm(false);
 		// Record wizard abandonment for analytics
@@ -203,9 +199,8 @@ export function MaestroWizard({
 
 	// Handle step transitions with fade animation
 	useEffect(() => {
-		// Step changes can happen while a prior transition is still fading out.
-		// Always reschedule the fade target so the rendered screen reaches the latest step.
-		if (state.currentStep !== displayedStep) {
+		// Only animate if step has actually changed and we're not already transitioning
+		if (state.currentStep !== displayedStep && !isTransitioning) {
 			// Determine direction based on step indices
 			const currentIndex = STEP_INDEX[state.currentStep];
 			const displayedIndex = STEP_INDEX[displayedStep];
@@ -221,7 +216,7 @@ export function MaestroWizard({
 
 			return () => clearTimeout(fadeOutTimer);
 		}
-	}, [state.currentStep, displayedStep]);
+	}, [state.currentStep, displayedStep, isTransitioning]);
 
 	// End transition after displayedStep updates
 	useEffect(() => {
@@ -236,10 +231,7 @@ export function MaestroWizard({
 
 	// Sync displayedStep when wizard opens (in case state was restored)
 	useEffect(() => {
-		const justOpened = state.isOpen && !wasOpenRef.current;
-		wasOpenRef.current = state.isOpen;
-
-		if (justOpened) {
+		if (state.isOpen) {
 			setDisplayedStep(state.currentStep);
 			setIsTransitioning(false); // Ensure we're not stuck in transitioning state
 		}
@@ -281,27 +273,17 @@ export function MaestroWizard({
 	}, [state.isOpen, displayedStep, isTransitioning]);
 
 	// Register with layer stack for Escape handling
-	useEffect(() => {
-		if (state.isOpen && !showExitConfirm) {
-			const id = registerLayer({
-				type: 'modal',
-				priority: MODAL_PRIORITIES.WIZARD,
-				blocksLowerLayers: true,
-				capturesFocus: true,
-				focusTrap: 'strict',
-				ariaLabel: 'Setup Wizard',
-				onEscape: handleCloseRequest,
-			});
-			return () => unregisterLayer(id);
-		}
-	}, [state.isOpen, showExitConfirm, registerLayer, unregisterLayer, handleCloseRequest]);
+	useModalLayer(MODAL_PRIORITIES.WIZARD, 'Setup Wizard', handleCloseRequest, {
+		enabled: state.isOpen && !showExitConfirm,
+	});
 
 	// Capture-phase handler for global shortcuts that should work anywhere in the modal
 	// This ensures Cmd+Shift+K (thinking toggle) works even when focus is on header elements
 	useEffect(() => {
 		if (!state.isOpen) return;
 
-		const modal = modalRef.current!;
+		const modal = modalRef.current;
+		if (!modal) return;
 
 		const handleCaptureKeyDown = (e: KeyboardEvent) => {
 			// Cmd+Shift+K to toggle thinking display (only on conversation step)
@@ -324,7 +306,8 @@ export function MaestroWizard({
 	useEffect(() => {
 		if (!state.isOpen) return;
 
-		const modal = modalRef.current!;
+		const modal = modalRef.current;
+		if (!modal) return;
 
 		const handleBubbleKeyDown = (e: KeyboardEvent) => {
 			// Stop Cmd+E from bubbling further after the wizard's internal handlers process it
@@ -343,7 +326,8 @@ export function MaestroWizard({
 	useEffect(() => {
 		if (!state.isOpen || showExitConfirm) return;
 
-		const modal = modalRef.current!;
+		const modal = modalRef.current;
+		if (!modal) return;
 
 		const handleFocusTrap = (e: KeyboardEvent) => {
 			if (e.key !== 'Tab') return;
@@ -351,6 +335,8 @@ export function MaestroWizard({
 			// Get all focusable elements within the modal
 			const focusableElements = modal.querySelectorAll(FOCUSABLE_SELECTOR);
 			const focusableArray = Array.from(focusableElements) as HTMLElement[];
+
+			if (focusableArray.length === 0) return;
 
 			const firstElement = focusableArray[0];
 			const lastElement = focusableArray[focusableArray.length - 1];
@@ -384,11 +370,13 @@ export function MaestroWizard({
 		if (state.isOpen && modalRef.current) {
 			// Focus the first focusable element in the modal
 			const focusableElements = modalRef.current.querySelectorAll(FOCUSABLE_SELECTOR);
-			const firstFocusable = focusableElements[0] as HTMLElement;
-			// Small delay to let the modal render
-			requestAnimationFrame(() => {
-				firstFocusable.focus();
-			});
+			const firstFocusable = focusableElements[0] as HTMLElement | undefined;
+			if (firstFocusable) {
+				// Small delay to let the modal render
+				requestAnimationFrame(() => {
+					firstFocusable.focus();
+				});
+			}
 		}
 	}, [state.isOpen]);
 
@@ -455,7 +443,7 @@ export function MaestroWizard({
 
 			<div
 				ref={modalRef}
-				className="w-[90vw] h-[80vh] max-w-5xl rounded-xl border shadow-2xl flex flex-col overflow-hidden wizard-modal"
+				className="modal-w-2xl h-[85vh] rounded-xl border shadow-2xl flex flex-col overflow-hidden wizard-modal"
 				style={{
 					backgroundColor: theme.colors.bgMain,
 					borderColor: theme.colors.border,
@@ -509,7 +497,12 @@ export function MaestroWizard({
 								<button
 									key={stepNum}
 									onClick={() => {
-										goToStep(INDEX_TO_STEP[stepNum]!);
+										if (canNavigate) {
+											const targetStep = INDEX_TO_STEP[stepNum];
+											if (targetStep) {
+												goToStep(targetStep);
+											}
+										}
 									}}
 									disabled={!canNavigate}
 									className={`w-2.5 h-2.5 rounded-full transition-all duration-300 ${
@@ -537,7 +530,10 @@ export function MaestroWizard({
 							<button
 								onClick={() => {
 									const prevStepNum = currentStepNumber - 1;
-									goToStep(INDEX_TO_STEP[prevStepNum]!);
+									const targetStep = INDEX_TO_STEP[prevStepNum];
+									if (targetStep) {
+										goToStep(targetStep);
+									}
 								}}
 								className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-offset-1"
 								style={{

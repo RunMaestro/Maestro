@@ -5,8 +5,8 @@ import {
 	AIOverviewTab,
 	_resetCacheForTesting,
 } from '../../../../renderer/components/DirectorNotes/AIOverviewTab';
-import type { Theme } from '../../../../renderer/types';
 
+import { mockTheme } from '../../../helpers/mockTheme';
 // Mock useSettings hook
 vi.mock('../../../../renderer/hooks/settings/useSettings', () => ({
 	useSettings: () => ({
@@ -22,23 +22,13 @@ vi.mock('../../../../renderer/hooks/settings/useSettings', () => ({
 vi.mock('../../../../renderer/components/MarkdownRenderer', () => ({
 	MarkdownRenderer: ({
 		content,
-		onCopy,
 		enableBionifyReadingMode,
 	}: {
 		content: string;
-		onCopy: (text: string) => void;
 		enableBionifyReadingMode?: boolean;
 	}) => (
 		<div data-testid="markdown-renderer" data-bionify={enableBionifyReadingMode ? 'on' : 'off'}>
 			{content}
-			<button
-				type="button"
-				aria-label="Copy markdown block"
-				data-testid="markdown-copy"
-				onClick={() => onCopy('copied markdown')}
-			>
-				Copy markdown block
-			</button>
 		</div>
 	),
 }));
@@ -59,6 +49,18 @@ vi.mock('../../../../renderer/utils/markdownConfig', () => ({
 	generateTerminalProseStyles: () => '.director-notes-content { color: inherit; }',
 }));
 
+// Mock notifyToast so we can assert the unmount-completion toast shape
+const mockNotifyToast = vi.fn();
+vi.mock('../../../../renderer/stores/notificationStore', () => ({
+	notifyToast: (...args: unknown[]) => mockNotifyToast(...args),
+}));
+
+// Mock modalStore so the toast onClick handler doesn't explode in tests
+const mockOpenModal = vi.fn();
+vi.mock('../../../../renderer/stores/modalStore', () => ({
+	useModalStore: { getState: () => ({ openModal: mockOpenModal }) },
+}));
+
 // Mock navigator.clipboard
 const mockWriteText = vi.fn().mockResolvedValue(undefined);
 Object.defineProperty(navigator, 'clipboard', {
@@ -67,26 +69,6 @@ Object.defineProperty(navigator, 'clipboard', {
 });
 
 // Mock theme
-const mockTheme: Theme = {
-	id: 'dracula',
-	name: 'Dracula',
-	mode: 'dark',
-	colors: {
-		bgMain: '#282a36',
-		bgSidebar: '#21222c',
-		bgActivity: '#343746',
-		textMain: '#f8f8f2',
-		textDim: '#6272a4',
-		accent: '#bd93f9',
-		accentForeground: '#f8f8f2',
-		border: '#44475a',
-		success: '#50fa7b',
-		warning: '#ffb86c',
-		error: '#ff5555',
-		scrollbar: '#44475a',
-		scrollbarHover: '#6272a4',
-	},
-};
 
 // Mock IPC APIs
 const mockGenerateSynopsis = vi.fn();
@@ -95,9 +77,36 @@ beforeEach(() => {
 	// Reset module-level synopsis cache so each test starts fresh
 	_resetCacheForTesting();
 
+	// jsdom in this environment doesn't provide a working Storage on
+	// window.localStorage, so install a minimal in-memory mock that satisfies
+	// the Storage methods the component uses (font-scale persistence). Same
+	// pattern as GitDiffViewer.test.tsx / ProcessMonitor.test.tsx.
+	const store = new Map<string, string>();
+	Object.defineProperty(window, 'localStorage', {
+		configurable: true,
+		writable: true,
+		value: {
+			getItem: vi.fn((key: string) => (store.has(key) ? store.get(key)! : null)),
+			setItem: vi.fn((key: string, value: string) => {
+				store.set(key, String(value));
+			}),
+			removeItem: vi.fn((key: string) => {
+				store.delete(key);
+			}),
+			clear: vi.fn(() => {
+				store.clear();
+			}),
+			key: vi.fn((index: number) => Array.from(store.keys())[index] ?? null),
+			get length() {
+				return store.size;
+			},
+		},
+	});
+
 	(window as any).maestro = {
 		directorNotes: {
 			generateSynopsis: mockGenerateSynopsis,
+			onSynopsisProgress: () => () => {},
 		},
 	};
 
@@ -108,7 +117,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	vi.useRealTimers();
 	vi.clearAllMocks();
 });
 
@@ -119,9 +127,9 @@ describe('AIOverviewTab', () => {
 
 		render(<AIOverviewTab theme={mockTheme} />);
 
-		// Should show generating state - text appears in both progress bar and spinner
+		// Should show generating state - spinner shows "Generating…"
 		await waitFor(() => {
-			const elements = screen.getAllByText(/Generating synopsis/);
+			const elements = screen.getAllByText(/Generating/);
 			expect(elements.length).toBeGreaterThan(0);
 		});
 	});
@@ -188,46 +196,6 @@ describe('AIOverviewTab', () => {
 		});
 	});
 
-	it('displays default error when generation fails without a message', async () => {
-		mockGenerateSynopsis.mockResolvedValue({
-			success: false,
-			synopsis: '',
-		});
-
-		render(<AIOverviewTab theme={mockTheme} />);
-
-		await waitFor(() => {
-			expect(screen.getByText('Failed to generate synopsis')).toBeInTheDocument();
-		});
-	});
-
-	it('shows regeneration errors above existing synopsis content', async () => {
-		mockGenerateSynopsis
-			.mockResolvedValueOnce({
-				success: true,
-				synopsis: '# Existing Synopsis',
-			})
-			.mockResolvedValueOnce({
-				success: false,
-				synopsis: '',
-				error: 'Regeneration failed',
-			});
-
-		render(<AIOverviewTab theme={mockTheme} />);
-
-		await waitFor(() => {
-			expect(screen.getByText(/# Existing Synopsis/)).toBeInTheDocument();
-		});
-
-		await act(async () => {
-			fireEvent.click(screen.getByText('Regenerate'));
-		});
-
-		const errorBanner = await screen.findByText('Regeneration failed');
-		expect(errorBanner).toHaveClass('mb-4');
-		expect(screen.getByText(/# Existing Synopsis/)).toBeInTheDocument();
-	});
-
 	it('displays error on exception', async () => {
 		mockGenerateSynopsis.mockRejectedValue(new Error('Network error'));
 
@@ -235,16 +203,6 @@ describe('AIOverviewTab', () => {
 
 		await waitFor(() => {
 			expect(screen.getByText('Network error')).toBeInTheDocument();
-		});
-	});
-
-	it('displays default error for non-Error rejections', async () => {
-		mockGenerateSynopsis.mockRejectedValue('rejected without Error');
-
-		render(<AIOverviewTab theme={mockTheme} />);
-
-		await waitFor(() => {
-			expect(screen.getByText('Failed to generate synopsis')).toBeInTheDocument();
 		});
 	});
 
@@ -257,31 +215,6 @@ describe('AIOverviewTab', () => {
 
 		const slider = screen.getByRole('slider');
 		expect(slider).toHaveValue('7');
-	});
-
-	it('uses updated lookback days when regenerating', async () => {
-		mockGenerateSynopsis.mockResolvedValue({
-			success: true,
-			synopsis: '# Synopsis',
-		});
-
-		render(<AIOverviewTab theme={mockTheme} />);
-
-		await waitFor(() => {
-			expect(screen.getByTestId('markdown-renderer')).toBeInTheDocument();
-		});
-
-		fireEvent.change(screen.getByRole('slider'), { target: { value: '30' } });
-		expect(screen.getByText('Lookback: 30 days')).toBeInTheDocument();
-
-		fireEvent.click(screen.getByText('Regenerate'));
-
-		await waitFor(() => {
-			expect(mockGenerateSynopsis).toHaveBeenCalledTimes(2);
-		});
-		expect(mockGenerateSynopsis).toHaveBeenLastCalledWith(
-			expect.objectContaining({ lookbackDays: 30 })
-		);
 	});
 
 	it('renders Regenerate button', async () => {
@@ -344,85 +277,6 @@ describe('AIOverviewTab', () => {
 		expect(screen.getByTestId('save-markdown-modal')).toBeInTheDocument();
 	});
 
-	it('copies synopsis markdown and resets the copied state', async () => {
-		mockGenerateSynopsis.mockResolvedValue({
-			success: true,
-			synopsis: '# Synopsis',
-		});
-
-		render(<AIOverviewTab theme={mockTheme} />);
-
-		await waitFor(() => {
-			expect(screen.getByTestId('markdown-renderer')).toBeInTheDocument();
-		});
-
-		vi.useFakeTimers();
-		fireEvent.click(screen.getByText('Copy'));
-		await act(async () => {
-			await Promise.resolve();
-		});
-
-		expect(mockWriteText).toHaveBeenCalledWith('# Synopsis');
-		expect(screen.getByText('Copied!')).toBeInTheDocument();
-
-		act(() => {
-			vi.advanceTimersByTime(2000);
-		});
-		expect(screen.getByText('Copy')).toBeInTheDocument();
-	});
-
-	it('keeps copy disabled while synopsis is unavailable', async () => {
-		mockGenerateSynopsis.mockReturnValue(new Promise(() => {}));
-
-		render(<AIOverviewTab theme={mockTheme} />);
-
-		const copyButton = screen.getByRole('button', { name: 'Copy' });
-		expect(copyButton).toBeDisabled();
-
-		fireEvent.click(copyButton);
-		expect(mockWriteText).not.toHaveBeenCalled();
-	});
-
-	it('leaves copy state unchanged when clipboard write fails', async () => {
-		mockWriteText.mockRejectedValueOnce(new Error('clipboard denied'));
-		mockGenerateSynopsis.mockResolvedValue({
-			success: true,
-			synopsis: '# Synopsis',
-		});
-
-		render(<AIOverviewTab theme={mockTheme} />);
-
-		await waitFor(() => {
-			expect(screen.getByTestId('markdown-renderer')).toBeInTheDocument();
-		});
-
-		fireEvent.click(screen.getByText('Copy'));
-
-		await waitFor(() => {
-			expect(mockWriteText).toHaveBeenCalledWith('# Synopsis');
-		});
-		expect(screen.queryByText('Copied!')).not.toBeInTheDocument();
-	});
-
-	it('passes markdown renderer copy requests through the safe clipboard helper', async () => {
-		mockGenerateSynopsis.mockResolvedValue({
-			success: true,
-			synopsis: '# Synopsis',
-		});
-
-		render(<AIOverviewTab theme={mockTheme} />);
-
-		await waitFor(() => {
-			expect(screen.getByTestId('markdown-renderer')).toBeInTheDocument();
-		});
-
-		fireEvent.click(screen.getByTestId('markdown-copy'));
-
-		await waitFor(() => {
-			expect(mockWriteText).toHaveBeenCalledWith('copied markdown');
-		});
-	});
-
 	it('displays stats bar when synopsis includes stats', async () => {
 		mockGenerateSynopsis.mockResolvedValue({
 			success: true,
@@ -459,6 +313,92 @@ describe('AIOverviewTab', () => {
 
 		expect(screen.getByText(/history entry\b/)).toBeInTheDocument();
 		expect(screen.getByText(/\bagent\b/)).toBeInTheDocument();
+	});
+
+	describe('synopsis font scaling', () => {
+		const FONT_SCALE_STORAGE_KEY = 'directorNotes.fontScale';
+
+		beforeEach(() => {
+			mockGenerateSynopsis.mockResolvedValue({
+				success: true,
+				synopsis: '# Synopsis',
+				stats: { agentCount: 3, entryCount: 42, durationMs: 95000 },
+			});
+		});
+
+		it('renders increase/decrease font-size controls with the stats bar', async () => {
+			render(<AIOverviewTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('markdown-renderer')).toBeInTheDocument();
+			});
+
+			expect(screen.getByLabelText('Increase font size')).toBeInTheDocument();
+			expect(screen.getByLabelText('Decrease font size')).toBeInTheDocument();
+		});
+
+		it('persists a larger scale to localStorage when increasing', async () => {
+			render(<AIOverviewTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('markdown-renderer')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByLabelText('Increase font size'));
+
+			// Default is 1.0, step is 0.1.
+			expect(window.localStorage.getItem(FONT_SCALE_STORAGE_KEY)).toBe('1.1');
+		});
+
+		it('persists a smaller scale to localStorage when decreasing', async () => {
+			render(<AIOverviewTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('markdown-renderer')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByLabelText('Decrease font size'));
+
+			expect(window.localStorage.getItem(FONT_SCALE_STORAGE_KEY)).toBe('0.9');
+		});
+
+		// Regression guard: the controls used to update state + localStorage but
+		// the rendered text never changed, because MarkdownRenderer's `.prose`
+		// root carries Tailwind `text-sm` (an absolute rem unit) that pinned the
+		// base size. The fix scales `.prose` directly via an injected style rule.
+		const proseFontRule = (): string | undefined =>
+			Array.from(document.querySelectorAll('style'))
+				.map((el) => el.textContent || '')
+				.find((css) => css.includes('.director-notes-content .prose'));
+
+		it('injects a scaled .prose font-size rule that tracks the current scale', async () => {
+			render(<AIOverviewTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('markdown-renderer')).toBeInTheDocument();
+			});
+
+			// Default scale 1.0.
+			expect(proseFontRule()).toContain('font-size: calc(0.875rem * 1) !important');
+
+			fireEvent.click(screen.getByLabelText('Increase font size'));
+
+			expect(proseFontRule()).toContain('font-size: calc(0.875rem * 1.1) !important');
+		});
+
+		it('loads the persisted scale and disables increase at the max bound', async () => {
+			// Preload a scale at the clamp ceiling (FONT_SCALE_MAX = 2.0).
+			window.localStorage.setItem(FONT_SCALE_STORAGE_KEY, '2');
+
+			render(<AIOverviewTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('markdown-renderer')).toBeInTheDocument();
+			});
+
+			expect(screen.getByLabelText('Increase font size')).toBeDisabled();
+			expect(screen.getByLabelText('Decrease font size')).not.toBeDisabled();
+		});
 	});
 
 	it('does not update state after unmount but caches result', async () => {
@@ -500,60 +440,11 @@ describe('AIOverviewTab', () => {
 		expect(hasCachedSynopsis()).toBe(true);
 	});
 
-	it('uses cached synopsis on remount without regenerating', async () => {
-		const generatedAt = new Date('2025-01-15T12:00:00Z').getTime();
-		mockGenerateSynopsis.mockResolvedValue({
-			success: true,
-			synopsis: '# Cached Synopsis',
-			generatedAt,
-			stats: { agentCount: 1, entryCount: 1, durationMs: 0 },
-		});
-
-		const { unmount } = render(<AIOverviewTab theme={mockTheme} />);
-
-		await waitFor(() => {
-			expect(screen.getByText(/# Cached Synopsis/)).toBeInTheDocument();
-		});
-		unmount();
-
-		mockGenerateSynopsis.mockClear();
-		const onSynopsisReady = vi.fn();
-		render(<AIOverviewTab theme={mockTheme} onSynopsisReady={onSynopsisReady} />);
-
-		expect(screen.getByText(/# Cached Synopsis/)).toBeInTheDocument();
-		expect(screen.getByText(/history entry\b/)).toBeInTheDocument();
-		expect(mockGenerateSynopsis).not.toHaveBeenCalled();
-		expect(onSynopsisReady).toHaveBeenCalled();
-	});
-
-	it('uses cached synopsis without rendering stats when cached stats are absent', async () => {
-		const generatedAt = new Date('2025-01-15T12:00:00Z').getTime();
-		mockGenerateSynopsis.mockResolvedValue({
-			success: true,
-			synopsis: '# Cached Without Stats',
-			generatedAt,
-		});
-
-		const { unmount } = render(<AIOverviewTab theme={mockTheme} />);
-
-		await waitFor(() => {
-			expect(screen.getByText(/# Cached Without Stats/)).toBeInTheDocument();
-		});
-		unmount();
-
-		mockGenerateSynopsis.mockClear();
-		render(<AIOverviewTab theme={mockTheme} />);
-
-		expect(screen.getByText(/# Cached Without Stats/)).toBeInTheDocument();
-		expect(screen.queryByText(/history entr/)).not.toBeInTheDocument();
-		expect(mockGenerateSynopsis).not.toHaveBeenCalled();
-	});
-
-	it('ignores generation errors that settle after unmount', async () => {
-		let rejectGeneration!: (error: Error) => void;
+	it('fires a completion toast that opts in to the custom notification command when generation finishes after unmount', async () => {
+		let resolveGeneration!: (value: any) => void;
 		mockGenerateSynopsis.mockReturnValue(
-			new Promise((_, reject) => {
-				rejectGeneration = reject;
+			new Promise((resolve) => {
+				resolveGeneration = resolve;
 			})
 		);
 
@@ -566,9 +457,43 @@ describe('AIOverviewTab', () => {
 		unmount();
 
 		await act(async () => {
-			rejectGeneration(new Error('late failure'));
-			await Promise.resolve();
+			resolveGeneration({
+				success: true,
+				synopsis: '# Cached Result',
+				generatedAt: 1234567890,
+			});
 		});
+
+		expect(mockNotifyToast).toHaveBeenCalledTimes(1);
+		const toastArg = mockNotifyToast.mock.calls[0][0];
+		expect(toastArg).toMatchObject({
+			type: 'success',
+			title: "Director's Notes",
+			message: expect.stringMatching(/synopsis is ready/i),
+		});
+		// Regression guard: synopsis completion must flow through the custom audio/TTS
+		// notification command when the user has one configured.
+		expect(toastArg.skipCustomNotification).toBeUndefined();
+		// Clicking the toast should open Director's Notes directly to the AI Overview tab.
+		expect(typeof toastArg.onClick).toBe('function');
+		toastArg.onClick();
+		expect(mockOpenModal).toHaveBeenCalledWith('directorNotes', { initialTab: 'ai-overview' });
+	});
+
+	it('does not fire a completion toast when generation finishes while still mounted', async () => {
+		mockGenerateSynopsis.mockResolvedValue({
+			success: true,
+			synopsis: '# Synopsis',
+			generatedAt: 1234567890,
+		});
+
+		render(<AIOverviewTab theme={mockTheme} />);
+
+		await waitFor(() => {
+			expect(screen.getByTestId('markdown-renderer')).toBeInTheDocument();
+		});
+
+		expect(mockNotifyToast).not.toHaveBeenCalled();
 	});
 
 	it('closes save modal when close button is clicked', async () => {

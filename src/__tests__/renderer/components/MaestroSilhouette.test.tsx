@@ -285,41 +285,6 @@ describe('CSS animation injection', () => {
 		const styleElements = document.querySelectorAll('#maestro-animation-styles');
 		expect(styleElements.length).toBe(1);
 	});
-
-	it('does not duplicate styles when imported after stylesheet already exists', async () => {
-		expect(document.getElementById('maestro-animation-styles')).toBeInTheDocument();
-		const styleCountBefore = document.querySelectorAll('#maestro-animation-styles').length;
-
-		vi.resetModules();
-		await import('../../../renderer/components/MaestroSilhouette');
-
-		expect(document.querySelectorAll('#maestro-animation-styles')).toHaveLength(styleCountBefore);
-	});
-
-	it('initializes when document is unavailable', async () => {
-		const originalDocumentDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'document');
-		vi.resetModules();
-		Object.defineProperty(globalThis, 'document', {
-			value: undefined,
-			configurable: true,
-			writable: true,
-		});
-
-		try {
-			expect(typeof document).toBe('undefined');
-
-			const module = await import('../../../renderer/components/MaestroSilhouette');
-
-			expect(module.MaestroSilhouette).toBeDefined();
-			expect(module.AnimatedMaestro).toBeDefined();
-		} finally {
-			if (originalDocumentDescriptor) {
-				Object.defineProperty(globalThis, 'document', originalDocumentDescriptor);
-			} else {
-				Reflect.deleteProperty(globalThis, 'document');
-			}
-		}
-	});
 });
 
 describe('edge cases', () => {

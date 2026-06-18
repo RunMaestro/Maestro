@@ -23,21 +23,15 @@
  */
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import {
-	Server,
-	Plus,
-	Trash2,
-	CheckCircle,
-	XCircle,
-	Loader2,
-	FileCode,
-	ChevronDown,
-} from 'lucide-react';
+import { Server, Plus, Trash2, CheckCircle, XCircle, FileCode, ChevronDown } from 'lucide-react';
+import { GhostIconButton } from '../ui/GhostIconButton';
+import { Spinner } from '../ui/Spinner';
 import type { Theme } from '../../types';
 import type { SshRemoteConfig, SshRemoteTestResult } from '../../../shared/types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { Modal, ModalFooter } from '../ui/Modal';
 import { FormInput } from '../ui/FormInput';
+import { useSaveShortcut } from '../../hooks';
 
 /**
  * SSH config host entry from ~/.ssh/config
@@ -237,7 +231,11 @@ export function SshRemoteModal({
 
 	// Handle keyboard navigation in dropdown
 	const handleDropdownKeyDown = (e: React.KeyboardEvent) => {
-		if (e.key === 'ArrowDown') {
+		if (e.key === 'Escape') {
+			e.preventDefault();
+			e.stopPropagation();
+			setShowSshConfigDropdown(false);
+		} else if (e.key === 'ArrowDown') {
 			e.preventDefault();
 			setSshConfigHighlightIndex((prev) =>
 				prev < filteredSshConfigHosts.length - 1 ? prev + 1 : prev
@@ -350,6 +348,12 @@ export function SshRemoteModal({
 
 	// Handle save
 	const handleSave = async () => {
+		const validationError = validateForm();
+		if (validationError) {
+			setError(validationError);
+			return;
+		}
+
 		setSaving(true);
 		setError(null);
 
@@ -370,13 +374,21 @@ export function SshRemoteModal({
 
 	// Handle test connection
 	const handleTestConnection = async () => {
+		if (!onTestConnection) return;
+
+		const validationError = validateForm();
+		if (validationError) {
+			setError(validationError);
+			return;
+		}
+
 		setTesting(true);
 		setError(null);
 		setTestResult(null);
 
 		try {
 			const config = buildConfig();
-			const result = await onTestConnection!(config);
+			const result = await onTestConnection(config);
 			if (result.success && result.result) {
 				setTestResult({
 					success: true,
@@ -416,6 +428,8 @@ export function SshRemoteModal({
 		setEnvVars((prev) => prev.filter((entry) => entry.id !== id));
 	};
 
+	useSaveShortcut(handleSave, isOpen && !saving);
+
 	if (!isOpen) return null;
 
 	const modalTitle = title || (initialConfig ? 'Edit SSH Remote' : 'Add SSH Remote');
@@ -447,7 +461,7 @@ export function SshRemoteModal({
 						>
 							{testing ? (
 								<>
-									<Loader2 className="w-4 h-4 animate-spin" />
+									<Spinner size={16} />
 									Testing...
 								</>
 							) : (
@@ -497,8 +511,8 @@ export function SshRemoteModal({
 						) : (
 							<XCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
 						)}
-						<div>
-							<div>{testResult.message}</div>
+						<div className="min-w-0">
+							<div className="whitespace-pre-wrap break-words">{testResult.message}</div>
 							{testResult.hostname && (
 								<div className="text-xs mt-1 opacity-80">
 									Remote hostname: {testResult.hostname}
@@ -541,7 +555,7 @@ export function SshRemoteModal({
 							>
 								{sshConfigLoading ? (
 									<span className="flex items-center gap-2">
-										<Loader2 className="w-3 h-3 animate-spin" />
+										<Spinner size={12} />
 										Loading...
 									</span>
 								) : (
@@ -750,15 +764,15 @@ export function SshRemoteModal({
 											color: theme.colors.textMain,
 										}}
 									/>
-									<button
-										type="button"
+									<GhostIconButton
 										onClick={() => removeEnvVar(entry.id)}
-										className="p-2 rounded hover:bg-white/10 transition-colors"
+										padding="p-2"
 										title="Remove variable"
-										style={{ color: theme.colors.textDim }}
+										ariaLabel="Remove variable"
+										color={theme.colors.textDim}
 									>
 										<Trash2 className="w-3 h-3" />
-									</button>
+									</GhostIconButton>
 								</div>
 							))}
 						</div>

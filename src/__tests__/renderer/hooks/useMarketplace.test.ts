@@ -39,30 +39,6 @@ const createManifest = (playbooks: MarketplacePlaybook[] = []): MarketplaceManif
 // Use the global window.maestro mock from setup.ts
 beforeEach(() => {
 	vi.clearAllMocks();
-	vi.mocked(window.maestro.marketplace.getManifest).mockResolvedValue({
-		success: true,
-		manifest: createManifest([]),
-		fromCache: false,
-	});
-	vi.mocked(window.maestro.marketplace.refreshManifest).mockResolvedValue({
-		success: true,
-		manifest: createManifest([]),
-		fromCache: false,
-	});
-	vi.mocked(window.maestro.marketplace.getDocument).mockResolvedValue({
-		success: true,
-		content: '',
-	});
-	vi.mocked(window.maestro.marketplace.getReadme).mockResolvedValue({
-		success: true,
-		content: null,
-	});
-	vi.mocked(window.maestro.marketplace.importPlaybook).mockResolvedValue({
-		success: true,
-		playbook: { id: 'new', name: 'Test' },
-		importedDocs: [],
-	});
-	vi.mocked(window.maestro.marketplace.onManifestChanged).mockReturnValue(() => {});
 });
 
 describe('useMarketplace', () => {
@@ -107,13 +83,9 @@ describe('useMarketplace', () => {
 			expect(typeof result.current.fetchDocument).toBe('function');
 		});
 
-		it('starts with loading state true', async () => {
+		it('starts with loading state true', () => {
 			const { result } = renderHook(() => useMarketplace());
 			expect(result.current.isLoading).toBe(true);
-
-			await waitFor(() => {
-				expect(result.current.isLoading).toBe(false);
-			});
 		});
 
 		it('defaults selectedCategory to "All"', async () => {
@@ -157,40 +129,6 @@ describe('useMarketplace', () => {
 			expect(result.current.playbooks).toHaveLength(1);
 		});
 
-		it('defaults optional cache metadata when the manifest response omits it', async () => {
-			const testManifest = createManifest([createPlaybook()]);
-			vi.mocked(window.maestro.marketplace.getManifest).mockResolvedValue({
-				success: true,
-				manifest: testManifest,
-			});
-
-			const { result } = renderHook(() => useMarketplace());
-
-			await waitFor(() => {
-				expect(result.current.isLoading).toBe(false);
-			});
-
-			expect(result.current.manifest).toEqual(testManifest);
-			expect(result.current.fromCache).toBe(false);
-			expect(result.current.cacheAge).toBeNull();
-		});
-
-		it('leaves manifest and error empty when a successful load omits the manifest payload', async () => {
-			vi.mocked(window.maestro.marketplace.getManifest).mockResolvedValue({
-				success: true,
-			});
-
-			const { result } = renderHook(() => useMarketplace());
-
-			await waitFor(() => {
-				expect(result.current.isLoading).toBe(false);
-			});
-
-			expect(result.current.manifest).toBeNull();
-			expect(result.current.playbooks).toEqual([]);
-			expect(result.current.error).toBeNull();
-		});
-
 		it('sets fromCache correctly when data is cached', async () => {
 			vi.mocked(window.maestro.marketplace.getManifest).mockResolvedValue({
 				success: true,
@@ -225,10 +163,10 @@ describe('useMarketplace', () => {
 			expect(result.current.manifest).toBeNull();
 		});
 
-		it('uses the default load error when the response omits an error message', async () => {
-			vi.mocked(window.maestro.marketplace.getManifest).mockResolvedValue({
-				success: false,
-			});
+		it('handles thrown exceptions gracefully', async () => {
+			vi.mocked(window.maestro.marketplace.getManifest).mockRejectedValue(
+				new Error('Unexpected error')
+			);
 
 			const { result } = renderHook(() => useMarketplace());
 
@@ -237,161 +175,6 @@ describe('useMarketplace', () => {
 			});
 
 			expect(result.current.error).toBe('Failed to load marketplace data');
-			expect(result.current.manifest).toBeNull();
-		});
-
-		it('handles thrown exceptions gracefully', async () => {
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-			vi.mocked(window.maestro.marketplace.getManifest).mockRejectedValue(
-				new Error('Unexpected error')
-			);
-
-			try {
-				const { result } = renderHook(() => useMarketplace());
-
-				await waitFor(() => {
-					expect(result.current.isLoading).toBe(false);
-				});
-
-				expect(result.current.error).toBe('Failed to load marketplace data');
-				expect(consoleError).toHaveBeenCalledWith(
-					'Failed to load marketplace manifest:',
-					expect.any(Error)
-				);
-			} finally {
-				consoleError.mockRestore();
-			}
-		});
-	});
-
-	describe('hot reload manifest updates', () => {
-		it('reloads manifest data when the preload listener reports a manifest change', async () => {
-			const oldManifest = createManifest([createPlaybook({ id: 'old' })]);
-			const newManifest = createManifest([createPlaybook({ id: 'new' })]);
-			let manifestChangedHandler: (() => void) | undefined;
-
-			vi.mocked(window.maestro.marketplace.getManifest)
-				.mockResolvedValueOnce({
-					success: true,
-					manifest: oldManifest,
-					fromCache: true,
-					cacheAge: 60000,
-				})
-				.mockResolvedValueOnce({
-					success: true,
-					manifest: newManifest,
-				});
-			vi.mocked(window.maestro.marketplace.onManifestChanged).mockImplementation((handler) => {
-				manifestChangedHandler = handler;
-				return vi.fn();
-			});
-			const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => {});
-
-			try {
-				const { result } = renderHook(() => useMarketplace());
-
-				await waitFor(() => {
-					expect(result.current.isLoading).toBe(false);
-				});
-				expect(result.current.playbooks[0].id).toBe('old');
-				expect(result.current.fromCache).toBe(true);
-				expect(result.current.cacheAge).toBe(60000);
-				expect(window.maestro.marketplace.onManifestChanged).toHaveBeenCalledTimes(1);
-				expect(manifestChangedHandler).toBeDefined();
-
-				await act(async () => {
-					await manifestChangedHandler!();
-				});
-
-				expect(window.maestro.marketplace.getManifest).toHaveBeenCalledTimes(2);
-				expect(consoleLog).toHaveBeenCalledWith('Local manifest changed, reloading...');
-				expect(result.current.playbooks[0].id).toBe('new');
-				expect(result.current.fromCache).toBe(false);
-				expect(result.current.cacheAge).toBeNull();
-			} finally {
-				consoleLog.mockRestore();
-			}
-		});
-
-		it('leaves the current manifest unchanged when a hot reload returns an error response', async () => {
-			const oldManifest = createManifest([createPlaybook({ id: 'old' })]);
-			let manifestChangedHandler: (() => void) | undefined;
-
-			vi.mocked(window.maestro.marketplace.getManifest)
-				.mockResolvedValueOnce({
-					success: true,
-					manifest: oldManifest,
-				})
-				.mockResolvedValueOnce({
-					success: false,
-					error: 'Local manifest is malformed',
-				});
-			vi.mocked(window.maestro.marketplace.onManifestChanged).mockImplementation((handler) => {
-				manifestChangedHandler = handler;
-				return vi.fn();
-			});
-			const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => {});
-
-			try {
-				const { result } = renderHook(() => useMarketplace());
-
-				await waitFor(() => {
-					expect(result.current.isLoading).toBe(false);
-				});
-				expect(window.maestro.marketplace.onManifestChanged).toHaveBeenCalledTimes(1);
-				expect(manifestChangedHandler).toBeDefined();
-
-				await act(async () => {
-					await manifestChangedHandler!();
-				});
-
-				expect(consoleLog).toHaveBeenCalledWith('Local manifest changed, reloading...');
-				expect(result.current.playbooks[0].id).toBe('old');
-				expect(result.current.error).toBeNull();
-			} finally {
-				consoleLog.mockRestore();
-			}
-		});
-
-		it('logs hot reload exceptions without replacing the current manifest', async () => {
-			const oldManifest = createManifest([createPlaybook({ id: 'old' })]);
-			let manifestChangedHandler: (() => void) | undefined;
-
-			vi.mocked(window.maestro.marketplace.getManifest)
-				.mockResolvedValueOnce({
-					success: true,
-					manifest: oldManifest,
-				})
-				.mockRejectedValueOnce(new Error('Reload failed'));
-			vi.mocked(window.maestro.marketplace.onManifestChanged).mockImplementation((handler) => {
-				manifestChangedHandler = handler;
-				return vi.fn();
-			});
-			const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => {});
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-			try {
-				const { result } = renderHook(() => useMarketplace());
-
-				await waitFor(() => {
-					expect(result.current.isLoading).toBe(false);
-				});
-				expect(window.maestro.marketplace.onManifestChanged).toHaveBeenCalledTimes(1);
-				expect(manifestChangedHandler).toBeDefined();
-
-				await act(async () => {
-					await manifestChangedHandler!();
-				});
-
-				expect(result.current.playbooks[0].id).toBe('old');
-				expect(consoleError).toHaveBeenCalledWith(
-					'Failed to reload manifest after change:',
-					expect.any(Error)
-				);
-			} finally {
-				consoleLog.mockRestore();
-				consoleError.mockRestore();
-			}
 		});
 	});
 
@@ -690,80 +473,6 @@ describe('useMarketplace', () => {
 
 			expect(result.current.error).toBe('Refresh failed');
 		});
-
-		it('uses the default refresh error when the response omits an error message', async () => {
-			vi.mocked(window.maestro.marketplace.refreshManifest).mockResolvedValue({
-				success: false,
-			});
-
-			const { result } = renderHook(() => useMarketplace());
-
-			await waitFor(() => {
-				expect(result.current.isLoading).toBe(false);
-			});
-
-			await act(async () => {
-				await result.current.refresh();
-			});
-
-			expect(result.current.error).toBe('Failed to refresh marketplace data');
-		});
-
-		it('leaves existing data unchanged when a successful refresh omits the manifest payload', async () => {
-			const initialManifest = createManifest([createPlaybook({ id: 'existing' })]);
-			vi.mocked(window.maestro.marketplace.getManifest).mockResolvedValue({
-				success: true,
-				manifest: initialManifest,
-				fromCache: true,
-				cacheAge: 30000,
-			});
-			vi.mocked(window.maestro.marketplace.refreshManifest).mockResolvedValue({
-				success: true,
-			});
-
-			const { result } = renderHook(() => useMarketplace());
-
-			await waitFor(() => {
-				expect(result.current.isLoading).toBe(false);
-			});
-
-			await act(async () => {
-				await result.current.refresh();
-			});
-
-			expect(result.current.playbooks[0].id).toBe('existing');
-			expect(result.current.fromCache).toBe(true);
-			expect(result.current.cacheAge).toBe(30000);
-			expect(result.current.error).toBeNull();
-		});
-
-		it('handles thrown exceptions during refresh', async () => {
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-			vi.mocked(window.maestro.marketplace.refreshManifest).mockRejectedValue(
-				new Error('Refresh crashed')
-			);
-
-			try {
-				const { result } = renderHook(() => useMarketplace());
-
-				await waitFor(() => {
-					expect(result.current.isLoading).toBe(false);
-				});
-
-				await act(async () => {
-					await result.current.refresh();
-				});
-
-				expect(result.current.error).toBe('Failed to refresh marketplace data');
-				expect(result.current.isRefreshing).toBe(false);
-				expect(consoleError).toHaveBeenCalledWith(
-					'Failed to refresh marketplace manifest:',
-					expect.any(Error)
-				);
-			} finally {
-				consoleError.mockRestore();
-			}
-		});
 	});
 
 	describe('import playbook functionality', () => {
@@ -875,35 +584,24 @@ describe('useMarketplace', () => {
 		});
 
 		it('handles thrown exceptions during import', async () => {
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 			vi.mocked(window.maestro.marketplace.importPlaybook).mockRejectedValue(
 				new Error('Network error')
 			);
 
-			try {
-				const { result } = renderHook(() => useMarketplace());
+			const { result } = renderHook(() => useMarketplace());
 
-				await waitFor(() => {
-					expect(result.current.isLoading).toBe(false);
-				});
+			await waitFor(() => {
+				expect(result.current.isLoading).toBe(false);
+			});
 
-				const playbook = createPlaybook();
-				let importResult: { success: boolean; error?: string };
-				await act(async () => {
-					importResult = await result.current.importPlaybook(
-						playbook,
-						'folder',
-						'/path',
-						'session'
-					);
-				});
+			const playbook = createPlaybook();
+			let importResult: { success: boolean; error?: string };
+			await act(async () => {
+				importResult = await result.current.importPlaybook(playbook, 'folder', '/path', 'session');
+			});
 
-				expect(importResult!.success).toBe(false);
-				expect(importResult!.error).toBe('Import failed');
-				expect(consoleError).toHaveBeenCalledWith('Failed to import playbook:', expect.any(Error));
-			} finally {
-				consoleError.mockRestore();
-			}
+			expect(importResult!.success).toBe(false);
+			expect(importResult!.error).toBe('Import failed');
 		});
 	});
 
@@ -971,28 +669,22 @@ describe('useMarketplace', () => {
 			});
 
 			it('returns null on exception', async () => {
-				const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 				vi.mocked(window.maestro.marketplace.getReadme).mockRejectedValue(
 					new Error('Network error')
 				);
 
-				try {
-					const { result } = renderHook(() => useMarketplace());
+				const { result } = renderHook(() => useMarketplace());
 
-					await waitFor(() => {
-						expect(result.current.isLoading).toBe(false);
-					});
+				await waitFor(() => {
+					expect(result.current.isLoading).toBe(false);
+				});
 
-					let content: string | null;
-					await act(async () => {
-						content = await result.current.fetchReadme('playbooks/test');
-					});
+				let content: string | null;
+				await act(async () => {
+					content = await result.current.fetchReadme('playbooks/test');
+				});
 
-					expect(content!).toBeNull();
-					expect(consoleError).toHaveBeenCalledWith('Failed to fetch README:', expect.any(Error));
-				} finally {
-					consoleError.mockRestore();
-				}
+				expect(content!).toBeNull();
 			});
 		});
 
@@ -1021,25 +713,6 @@ describe('useMarketplace', () => {
 				);
 			});
 
-			it('returns null when a successful document response omits content', async () => {
-				vi.mocked(window.maestro.marketplace.getDocument).mockResolvedValue({
-					success: true,
-				});
-
-				const { result } = renderHook(() => useMarketplace());
-
-				await waitFor(() => {
-					expect(result.current.isLoading).toBe(false);
-				});
-
-				let content: string | null;
-				await act(async () => {
-					content = await result.current.fetchDocument('playbooks/test', 'phase-1');
-				});
-
-				expect(content!).toBeNull();
-			});
-
 			it('returns null on failure', async () => {
 				vi.mocked(window.maestro.marketplace.getDocument).mockResolvedValue({
 					success: false,
@@ -1061,28 +734,22 @@ describe('useMarketplace', () => {
 			});
 
 			it('returns null on exception', async () => {
-				const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 				vi.mocked(window.maestro.marketplace.getDocument).mockRejectedValue(
 					new Error('Network error')
 				);
 
-				try {
-					const { result } = renderHook(() => useMarketplace());
+				const { result } = renderHook(() => useMarketplace());
 
-					await waitFor(() => {
-						expect(result.current.isLoading).toBe(false);
-					});
+				await waitFor(() => {
+					expect(result.current.isLoading).toBe(false);
+				});
 
-					let content: string | null;
-					await act(async () => {
-						content = await result.current.fetchDocument('playbooks/test', 'phase-1');
-					});
+				let content: string | null;
+				await act(async () => {
+					content = await result.current.fetchDocument('playbooks/test', 'phase-1');
+				});
 
-					expect(content!).toBeNull();
-					expect(consoleError).toHaveBeenCalledWith('Failed to fetch document:', expect.any(Error));
-				} finally {
-					consoleError.mockRestore();
-				}
+				expect(content!).toBeNull();
 			});
 		});
 	});

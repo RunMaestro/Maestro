@@ -16,6 +16,7 @@ import type {
 } from '../../shared/group-chat-types';
 import { stripMarkdown } from '../utils/textProcessing';
 import { useUIStore } from '../stores/uiStore';
+import { formatTimestamp } from '../../shared/formatters';
 
 // Lookback period options for the activity graph
 type LookbackPeriod = {
@@ -391,9 +392,14 @@ function GroupChatActivityGraph({
 						className="absolute text-[8px] font-mono"
 						style={{
 							color: theme.colors.textDim,
-							left: index === 0 ? '0' : 'auto',
+							left:
+								index === 0
+									? '0'
+									: index === bucketCount - 1
+										? 'auto'
+										: `${(index / (bucketCount - 1)) * 100}%`,
 							right: index === bucketCount - 1 ? '0' : 'auto',
-							transform: 'none',
+							transform: index > 0 && index < bucketCount - 1 ? 'translateX(-50%)' : 'none',
 						}}
 					>
 						{label}
@@ -512,10 +518,12 @@ export function GroupChatHistoryPanel({
 		const entriesInBucket = filteredEntries.filter(
 			(e) => e.timestamp >= bucketStart && e.timestamp < bucketEnd
 		);
-		const firstEntryId = entriesInBucket[0]!.id;
-		const element = listRef.current!.querySelector(`[data-entry-id="${firstEntryId}"]`);
-		if (element) {
-			element.scrollIntoView({ block: 'center', behavior: 'smooth' });
+		if (entriesInBucket.length > 0 && listRef.current) {
+			const firstEntryId = entriesInBucket[0].id;
+			const element = listRef.current.querySelector(`[data-entry-id="${firstEntryId}"]`);
+			if (element) {
+				element.scrollIntoView({ block: 'center', behavior: 'smooth' });
+			}
 		}
 	};
 
@@ -531,52 +539,16 @@ export function GroupChatHistoryPanel({
 		[searchFilterOpen, setSearchFilterOpen]
 	);
 
-	// Get pill color for entry type
-	const getTypePillColor = (type: GroupChatHistoryEntryType) => {
-		switch (type) {
-			case 'delegation':
-				return {
-					bg: theme.colors.accent + '20',
-					text: theme.colors.accent,
-					border: theme.colors.accent + '40',
-				};
-			case 'response':
-				return {
-					bg: theme.colors.success + '20',
-					text: theme.colors.success,
-					border: theme.colors.success + '40',
-				};
-			case 'synthesis':
-				return {
-					bg: theme.colors.warning + '20',
-					text: theme.colors.warning,
-					border: theme.colors.warning + '40',
-				};
-			case 'error':
-				return {
-					bg: theme.colors.error + '20',
-					text: theme.colors.error,
-					border: theme.colors.error + '40',
-				};
-		}
+	// Filter chips are toggles, not a color legend: per-entry colors come from the
+	// agent (participantColor), so all chips share one neutral accent tint and rely
+	// on their icon + label to differentiate. Active vs inactive is conveyed by opacity.
+	const typePillColor = {
+		bg: theme.colors.accent + '20',
+		text: theme.colors.accent,
+		border: theme.colors.accent + '40',
 	};
 
-	// Format timestamp
-	const formatTime = (timestamp: number) => {
-		const date = new Date(timestamp);
-		const now = new Date();
-		const isToday = date.toDateString() === now.toDateString();
-
-		if (isToday) {
-			return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-		} else {
-			return (
-				date.toLocaleDateString([], { month: 'short', day: 'numeric' }) +
-				' ' +
-				date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-			);
-		}
-	};
+	const formatTime = (timestamp: number) => formatTimestamp(timestamp, 'smart');
 
 	return (
 		<div
@@ -588,7 +560,7 @@ export function GroupChatHistoryPanel({
 			<div className="flex gap-1.5 flex-wrap mb-2 justify-center">
 				{TYPE_FILTER_CONFIG.map(({ type, label, icon: Icon }) => {
 					const isActive = activeFilters.has(type);
-					const colors = getTypePillColor(type);
+					const colors = typePillColor;
 					return (
 						<button
 							key={type}

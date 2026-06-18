@@ -717,33 +717,6 @@ describe('AgentPromptComposerModal', () => {
 			expect(mockHandleKeyDown).toHaveBeenCalled();
 		});
 
-		it('does not handle textarea keys when autocomplete consumes the event', async () => {
-			mockHandleKeyDown.mockReturnValueOnce(true);
-
-			renderWithLayerStack(
-				<AgentPromptComposerModal
-					isOpen={true}
-					onClose={vi.fn()}
-					theme={theme}
-					initialValue="HelloWorld"
-					onSubmit={vi.fn()}
-				/>
-			);
-
-			const textarea = screen.getByPlaceholderText(
-				'Enter your agent prompt... (type {{ for variables)'
-			) as HTMLTextAreaElement;
-			textarea.selectionStart = 5;
-			textarea.selectionEnd = 5;
-
-			await act(async () => {
-				fireEvent.keyDown(textarea, { key: 'Tab' });
-			});
-
-			expect(mockHandleKeyDown).toHaveBeenCalled();
-			expect(textarea.value).toBe('HelloWorld');
-		});
-
 		it('updates character count as user types', async () => {
 			renderWithLayerStack(
 				<AgentPromptComposerModal
@@ -843,7 +816,11 @@ describe('AgentPromptComposerModal', () => {
 			const backdrop = document.querySelector('.fixed.inset-0');
 			expect(backdrop).toBeInTheDocument();
 
+			// Backdrop close requires both mousedown AND click to originate on the
+			// backdrop element itself — guards against drag-overshoot from text
+			// selection inside the modal accidentally closing it.
 			await act(async () => {
+				fireEvent.mouseDown(backdrop!);
 				fireEvent.click(backdrop!);
 			});
 

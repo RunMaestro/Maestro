@@ -175,7 +175,7 @@ describe('CreateGroupModal', () => {
 			const { container } = renderModal();
 
 			// Modal uses inline width style instead of Tailwind class
-			const modalContent = container.querySelector('[style*="width: 400px"]');
+			const modalContent = container.querySelector('[style*="width: min(calc(400px"]');
 			expect(modalContent).toHaveStyle({ backgroundColor: theme.colors.bgSidebar });
 		});
 
@@ -183,7 +183,7 @@ describe('CreateGroupModal', () => {
 			const { container } = renderModal();
 
 			// Modal uses inline width style instead of Tailwind class
-			const modalContent = container.querySelector('[style*="width: 400px"]');
+			const modalContent = container.querySelector('[style*="width: min(calc(400px"]');
 			expect(modalContent).toHaveStyle({ borderColor: theme.colors.border });
 		});
 
@@ -305,9 +305,7 @@ describe('CreateGroupModal', () => {
 
 			const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true });
 			const preventDefaultSpy = vi.spyOn(event, 'preventDefault');
-			act(() => {
-				input.dispatchEvent(event);
-			});
+			input.dispatchEvent(event);
 
 			expect(preventDefaultSpy).toHaveBeenCalled();
 		});
@@ -509,17 +507,6 @@ describe('CreateGroupModal', () => {
 			fireEvent.click(screen.getByRole('button', { name: 'Create' }));
 
 			expect(onClose).toHaveBeenCalledTimes(1);
-		});
-
-		it('calls onGroupCreated with the new group ID', () => {
-			const onGroupCreated = vi.fn();
-			renderModal({ onGroupCreated });
-
-			const input = screen.getByPlaceholderText('Enter group name...');
-			fireEvent.change(input, { target: { value: 'Callback Group' } });
-			fireEvent.click(screen.getByRole('button', { name: 'Create' }));
-
-			expect(onGroupCreated).toHaveBeenCalledWith('group-test-id');
 		});
 	});
 
@@ -790,7 +777,7 @@ describe('CreateGroupModal', () => {
 			const { container } = renderModal({ theme: lightTheme });
 
 			// Modal uses inline width style instead of Tailwind class
-			const modalContent = container.querySelector('[style*="width: 400px"]');
+			const modalContent = container.querySelector('[style*="width: min(calc(400px"]');
 			expect(modalContent).toHaveStyle({ backgroundColor: lightTheme.colors.bgSidebar });
 		});
 

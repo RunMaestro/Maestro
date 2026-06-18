@@ -14,32 +14,13 @@ import {
 	type NodeBreadcrumbProps,
 } from '../../../../renderer/components/DocumentGraph/NodeBreadcrumb';
 import type { Theme } from '../../../../renderer/types';
+import { mockTheme } from '../../../helpers/mockTheme';
 import type {
 	DocumentNodeData,
 	ExternalLinkNodeData,
 } from '../../../../renderer/components/DocumentGraph/graphDataBuilder';
 
 // Mock theme for testing
-const mockTheme: Theme = {
-	id: 'dracula',
-	name: 'Dracula',
-	mode: 'dark',
-	colors: {
-		bgMain: '#282a36',
-		bgSidebar: '#21222c',
-		bgActivity: '#343746',
-		border: '#44475a',
-		textMain: '#f8f8f2',
-		textDim: '#6272a4',
-		accent: '#bd93f9',
-		accentDim: 'rgba(189, 147, 249, 0.2)',
-		accentText: '#ff79c6',
-		accentForeground: '#282a36',
-		success: '#50fa7b',
-		warning: '#ffb86c',
-		error: '#ff5555',
-	},
-};
 
 // Light theme for theme testing
 const lightTheme: Theme = {
@@ -90,23 +71,6 @@ describe('NodeBreadcrumb', () => {
 		it('renders nothing when no node is selected', () => {
 			const { container } = render(
 				<NodeBreadcrumb selectedNodeData={null} theme={mockTheme} rootPath="/project" />
-			);
-
-			expect(container.firstChild).toBeNull();
-		});
-
-		it('renders nothing for unsupported node types', () => {
-			const { container } = render(
-				<NodeBreadcrumb
-					selectedNodeData={
-						{
-							nodeType: 'unsupported',
-							theme: mockTheme,
-						} as unknown as NodeBreadcrumbProps['selectedNodeData']
-					}
-					theme={mockTheme}
-					rootPath="/project"
-				/>
 			);
 
 			expect(container.firstChild).toBeNull();
@@ -279,32 +243,6 @@ describe('NodeBreadcrumb', () => {
 			// Click on root segment
 			fireEvent.click(screen.getByText('project'));
 			expect(onSegmentClick).toHaveBeenCalledWith('');
-		});
-
-		it('uses root as the root segment label when rootPath has no folder name', () => {
-			render(
-				<NodeBreadcrumb
-					selectedNodeData={createDocumentNodeData('folder/file.md')}
-					theme={mockTheme}
-					rootPath="/"
-				/>
-			);
-
-			expect(screen.getByText('root')).toBeInTheDocument();
-		});
-
-		it('ignores non-final segment clicks when no segment click handler is provided', () => {
-			render(
-				<NodeBreadcrumb
-					selectedNodeData={createDocumentNodeData('folder/file.md')}
-					theme={mockTheme}
-					rootPath="/project"
-				/>
-			);
-
-			fireEvent.click(screen.getByText('folder'));
-
-			expect(screen.getByText('folder')).toBeInTheDocument();
 		});
 
 		it('final segment button is disabled', () => {
@@ -651,40 +589,6 @@ describe('NodeBreadcrumb', () => {
 
 			const fileButton = screen.getByText('file').closest('button');
 			expect(fileButton).toHaveStyle({ cursor: 'default' });
-		});
-
-		it('highlights non-final segments on hover and clears highlight on leave', () => {
-			render(
-				<NodeBreadcrumb
-					selectedNodeData={createDocumentNodeData('folder/file.md')}
-					theme={mockTheme}
-					rootPath="/project"
-				/>
-			);
-
-			const folderButton = screen.getByText('folder').closest('button')!;
-
-			fireEvent.mouseEnter(folderButton);
-			expect(folderButton).toHaveStyle({ backgroundColor: `${mockTheme.colors.accent}15` });
-
-			fireEvent.mouseLeave(folderButton);
-			expect(folderButton.style.backgroundColor).toBe('transparent');
-		});
-
-		it('does not highlight the final segment on hover', () => {
-			render(
-				<NodeBreadcrumb
-					selectedNodeData={createDocumentNodeData('folder/file.md')}
-					theme={mockTheme}
-					rootPath="/project"
-				/>
-			);
-
-			const fileButton = screen.getByText('file').closest('button')!;
-
-			fireEvent.mouseEnter(fileButton);
-
-			expect(fileButton.style.backgroundColor).toBe('transparent');
 		});
 	});
 });

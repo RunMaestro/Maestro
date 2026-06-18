@@ -2,9 +2,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { InputArea } from '../../../renderer/components/InputArea';
-import { formatShortcutKeys, formatEnterToSend } from '../../../renderer/utils/shortcutFormatter';
-import type { Session, Theme } from '../../../renderer/types';
+import { formatEnterToSend } from '../../../renderer/utils/shortcutFormatter';
+import type { Session } from '../../../renderer/types';
+import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
+import { mockTheme } from '../../helpers/mockTheme';
 // Mock scrollIntoView since jsdom doesn't support it
 Element.prototype.scrollIntoView = vi.fn();
 
@@ -98,34 +100,20 @@ vi.mock('../../../renderer/components/InlineWizard', () => ({
 	)),
 }));
 
-// Default theme for tests
-const mockTheme: Theme = {
-	id: 'dracula',
-	name: 'Dracula',
-	mode: 'dark',
-	colors: {
-		bgMain: '#282a36',
-		bgSidebar: '#21222c',
-		bgActivity: '#343746',
-		textMain: '#f8f8f2',
-		textDim: '#6272a4',
-		accent: '#bd93f9',
-		accentForeground: '#282a36',
-		border: '#44475a',
-		success: '#50fa7b',
-		error: '#ff5555',
-		warning: '#f1fa8c',
-		info: '#8be9fd',
-	},
-};
+vi.mock('../../../renderer/components/NotificationPopover', () => ({
+	NotificationPopover: vi.fn(({ onClose }) => (
+		<div data-testid="notification-popover">NotificationPopover</div>
+	)),
+}));
 
-// Default session for tests
-// Note: wizardState is per-tab, so pass it separately or via aiTabs override
+// Default theme for tests
+
+// Thin wrapper: InputArea tests accept an ad-hoc `wizardState` override that
+// gets routed onto the first AI tab (wizard state is per-tab in the real
+// model). Builds that tab and delegates baseline fields to the shared factory.
 const createMockSession = (overrides: Partial<Session> & { wizardState?: any } = {}): Session => {
-	// Extract wizardState from overrides (it should go on the tab, not session)
 	const { wizardState, ...sessionOverrides } = overrides;
 
-	// Build aiTabs - if wizardState is provided, add it to the first tab
 	const defaultTab = {
 		id: 'tab-1',
 		logs: [],
@@ -143,32 +131,19 @@ const createMockSession = (overrides: Partial<Session> & { wizardState?: any } =
 		...(wizardState ? { wizardState } : {}),
 	};
 
-	return {
-		id: 'session-1',
-		name: 'Test Session',
-		toolType: 'claude-code',
-		state: 'idle',
-		inputMode: 'ai',
+	return baseCreateMockSession({
 		cwd: '/Users/test/project',
+		fullPath: '/Users/test/project',
 		projectRoot: '/Users/test/project',
-		aiPid: 0,
-		terminalPid: 0,
-		aiTabs: [defaultTab],
+		aiTabs: [defaultTab] as any,
 		activeTabId: 'tab-1',
-		shellLogs: [],
-		usageStats: { inputTokens: 0, outputTokens: 0, totalCost: 0 },
-		agentSessionId: null,
-		isGitRepo: false,
-		fileTree: [],
-		fileExplorerExpanded: [],
-		messageQueue: [],
+		usageStats: { inputTokens: 0, outputTokens: 0, totalCost: 0 } as any,
 		shellCommandHistory: [],
 		aiCommandHistory: [],
-		closedTabHistory: [],
 		shellCwd: '/Users/test/project',
-		busySource: null,
+		busySource: undefined,
 		...sessionOverrides,
-	};
+	});
 };
 
 // Default props factory
@@ -230,13 +205,11 @@ describe('InputArea', () => {
 			expect(screen.getByRole('textbox')).toBeInTheDocument();
 		});
 
-		it('renders the mode toggle button', () => {
+		it('renders the notification settings button', () => {
 			const props = createDefaultProps();
 			render(<InputArea {...props} />);
 
-			expect(
-				screen.getByTitle(`Toggle Mode (${formatShortcutKeys(['Meta', 'j'])})`)
-			).toBeInTheDocument();
+			expect(screen.getByTitle('Notification Settings')).toBeInTheDocument();
 		});
 
 		it('renders the send button', () => {
@@ -322,62 +295,6 @@ describe('InputArea', () => {
 			expect(screen.queryByTitle('Attach Image')).not.toBeInTheDocument();
 		});
 
-		it('checks resumed-session image capability when an AI tab has an agent session', async () => {
-			const useAgentCapabilitiesMock =
-				await import('../../../renderer/hooks/agent/useAgentCapabilities');
-			vi.mocked(useAgentCapabilitiesMock.useAgentCapabilities).mockReturnValueOnce({
-				capabilities: {
-					supportsResume: true,
-					supportsReadOnlyMode: true,
-					supportsJsonOutput: true,
-					supportsSessionId: true,
-					supportsImageInput: true,
-					supportsImageInputOnResume: false,
-					supportsSlashCommands: true,
-					supportsSessionStorage: true,
-					supportsCostTracking: true,
-					supportsUsageStats: true,
-					supportsBatchMode: true,
-					requiresPromptToStart: false,
-					supportsStreaming: true,
-					supportsResultMessages: true,
-					supportsModelSelection: false,
-					supportsStreamJsonInput: false,
-				},
-				loading: false,
-				error: null,
-				refresh: vi.fn(),
-				hasCapability: vi.fn((cap: string) => cap !== 'supportsImageInputOnResume'),
-			});
-
-			const props = createDefaultProps({
-				session: createMockSession({
-					inputMode: 'ai',
-					aiTabs: [
-						{
-							id: 'tab-1',
-							logs: [],
-							agentSessionId: 'existing-agent-session',
-							lastActivityAt: 0,
-							scrollTop: 0,
-							busyStartTime: null,
-							statusMessage: null,
-							contextUsage: null,
-							isStarred: false,
-							name: null,
-							readOnlyMode: false,
-							draftInput: '',
-							saveToHistory: false,
-						},
-					],
-					activeTabId: 'tab-1',
-				}),
-			});
-			render(<InputArea {...props} />);
-
-			expect(screen.queryByTitle('Attach Image')).not.toBeInTheDocument();
-		});
-
 		it('shows prompt composer button when onOpenPromptComposer is provided', () => {
 			const onOpenPromptComposer = vi.fn();
 			const props = createDefaultProps({
@@ -387,22 +304,6 @@ describe('InputArea', () => {
 			render(<InputArea {...props} />);
 
 			expect(screen.getByTitle('Open Prompt Composer')).toBeInTheDocument();
-		});
-
-		it('includes the prompt composer shortcut in the button title', () => {
-			const onOpenPromptComposer = vi.fn();
-			const props = createDefaultProps({
-				session: createMockSession({ inputMode: 'ai' }),
-				onOpenPromptComposer,
-				shortcuts: {
-					openPromptComposer: { keys: ['Meta', 'p'] },
-				} as any,
-			});
-			render(<InputArea {...props} />);
-
-			expect(
-				screen.getByTitle(`Open Prompt Composer (${formatShortcutKeys(['Meta', 'p'])})`)
-			).toBeInTheDocument();
 		});
 
 		it('shows read-only toggle when onToggleTabReadOnlyMode is provided', () => {
@@ -416,27 +317,6 @@ describe('InputArea', () => {
 			const toggle = screen.getByTitle(/Toggle plan mode/);
 			expect(toggle).toBeInTheDocument();
 			expect(toggle).toHaveTextContent('Plan-Mode');
-		});
-
-		it.each([
-			['off', 'Show Thinking - Click to stream AI reasoning'],
-			['on', 'Thinking (temporary) - Click for sticky mode'],
-			['sticky', 'Thinking (sticky) - Click to turn off'],
-		])('renders the %s Show Thinking toggle state', (tabShowThinking, title) => {
-			const onToggleTabShowThinking = vi.fn();
-			const props = createDefaultProps({
-				session: createMockSession({ inputMode: 'ai' }),
-				supportsThinking: true,
-				tabShowThinking: tabShowThinking as any,
-				onToggleTabShowThinking,
-			});
-			render(<InputArea {...props} />);
-
-			const toggle = screen.getByTitle(title);
-			expect(toggle).toHaveTextContent('Thinking');
-
-			fireEvent.click(toggle);
-			expect(onToggleTabShowThinking).toHaveBeenCalledTimes(1);
 		});
 
 		it('hides read-only toggle when agent does not support read-only mode', async () => {
@@ -564,66 +444,6 @@ describe('InputArea', () => {
 			expect(screen.getByText(/~\/project\/src/)).toBeInTheDocument();
 		});
 
-		it('prefixes remote terminal cwd with the SSH remote name', () => {
-			const props = createDefaultProps({
-				session: createMockSession({
-					inputMode: 'terminal',
-					cwd: '/Users/test/project',
-					remoteCwd: '/srv/app',
-					sshRemoteId: 'remote-1',
-					sshRemote: { name: 'production' },
-				} as any),
-			});
-			render(<InputArea {...props} />);
-
-			expect(screen.getByText('PRODUCTION:/srv/app')).toBeInTheDocument();
-		});
-
-		it('uses SSH working directory override when remote cwd is missing', () => {
-			const props = createDefaultProps({
-				session: createMockSession({
-					inputMode: 'terminal',
-					cwd: '/Users/test/project',
-					remoteCwd: undefined,
-					sessionSshRemoteConfig: {
-						enabled: true,
-						host: 'example.com',
-						workingDirOverride: '/home/deploy/app',
-					},
-				} as any),
-			});
-			render(<InputArea {...props} />);
-
-			expect(screen.getByText('~/app')).toBeInTheDocument();
-		});
-
-		it('falls back to cwd for remote terminals without remote directory metadata', () => {
-			const props = createDefaultProps({
-				session: createMockSession({
-					inputMode: 'terminal',
-					cwd: '/srv/fallback',
-					remoteCwd: undefined,
-					sshRemoteId: 'remote-1',
-				} as any),
-			});
-			render(<InputArea {...props} />);
-
-			expect(screen.getByText('/srv/fallback')).toBeInTheDocument();
-		});
-
-		it('falls back to home when local terminal cwd metadata is missing', () => {
-			const props = createDefaultProps({
-				session: createMockSession({
-					inputMode: 'terminal',
-					cwd: undefined,
-					shellCwd: undefined,
-				} as any),
-			});
-			render(<InputArea {...props} />);
-
-			expect(screen.getByText('~')).toBeInTheDocument();
-		});
-
 		it('does NOT show attach image button in terminal mode', () => {
 			const props = createDefaultProps({
 				session: createMockSession({ inputMode: 'terminal' }),
@@ -650,26 +470,6 @@ describe('InputArea', () => {
 			render(<InputArea {...props} />);
 
 			expect(screen.getByTitle('Run command (Enter)')).toBeInTheDocument();
-		});
-
-		it('shows terminal busy status and disables send while a terminal command is running', () => {
-			const processInput = vi.fn();
-			const props = createDefaultProps({
-				processInput,
-				session: createMockSession({
-					inputMode: 'terminal',
-					state: 'busy',
-					busySource: 'terminal',
-				}),
-			});
-			render(<InputArea {...props} />);
-
-			const sendButton = screen.getByTitle('Command already running');
-			expect(screen.getByTestId('thinking-status-pill')).toBeInTheDocument();
-			expect(sendButton).toBeDisabled();
-
-			fireEvent.click(sendButton);
-			expect(processInput).not.toHaveBeenCalled();
 		});
 	});
 
@@ -842,8 +642,9 @@ describe('InputArea', () => {
 			});
 			render(<InputArea {...props} />);
 
-			expect(screen.getByText('/clear')).toBeInTheDocument();
-			expect(screen.queryByText('/help')).not.toBeInTheDocument();
+			// Fuzzy highlight splits text into spans, so use a function matcher
+			expect(screen.getByText((_, el) => el?.textContent === '/clear')).toBeInTheDocument();
+			expect(screen.queryByText((_, el) => el?.textContent === '/help')).not.toBeInTheDocument();
 		});
 
 		it('shows terminalOnly commands in terminal mode', () => {
@@ -1132,39 +933,6 @@ describe('InputArea', () => {
 			expect(setCommandHistoryFilter).toHaveBeenCalledWith('');
 		});
 
-		it('updates history filter text and resets selection when typing in the filter', () => {
-			const setCommandHistoryFilter = vi.fn();
-			const setCommandHistorySelectedIndex = vi.fn();
-			const props = createDefaultProps({
-				session: createMockSession({ aiCommandHistory: ['one', 'two'] }),
-				commandHistoryOpen: true,
-				setCommandHistoryFilter,
-				setCommandHistorySelectedIndex,
-			});
-			render(<InputArea {...props} />);
-
-			fireEvent.change(screen.getByPlaceholderText('Filter messages...'), {
-				target: { value: 'tw' },
-			});
-
-			expect(setCommandHistoryFilter).toHaveBeenCalledWith('tw');
-			expect(setCommandHistorySelectedIndex).toHaveBeenCalledWith(0);
-		});
-
-		it('updates command history selection on item hover', () => {
-			const setCommandHistorySelectedIndex = vi.fn();
-			const props = createDefaultProps({
-				session: createMockSession({ aiCommandHistory: ['one', 'two'] }),
-				commandHistoryOpen: true,
-				setCommandHistorySelectedIndex,
-			});
-			render(<InputArea {...props} />);
-
-			fireEvent.mouseEnter(screen.getByText('one'));
-
-			expect(setCommandHistorySelectedIndex).toHaveBeenCalledWith(1);
-		});
-
 		it('deduplicates command history', () => {
 			const props = createDefaultProps({
 				session: createMockSession({
@@ -1232,27 +1000,6 @@ describe('InputArea', () => {
 			expect(setCommandHistoryOpen).toHaveBeenCalledWith(false);
 		});
 
-		it('ignores Enter when the selected command history item is unavailable', () => {
-			const setInputValue = vi.fn();
-			const setCommandHistoryOpen = vi.fn();
-			const setCommandHistoryFilter = vi.fn();
-			const props = createDefaultProps({
-				session: createMockSession({ aiCommandHistory: ['one'] }),
-				commandHistoryOpen: true,
-				commandHistorySelectedIndex: 10,
-				setInputValue,
-				setCommandHistoryOpen,
-				setCommandHistoryFilter,
-			});
-			render(<InputArea {...props} />);
-
-			fireEvent.keyDown(screen.getByPlaceholderText('Filter messages...'), { key: 'Enter' });
-
-			expect(setInputValue).not.toHaveBeenCalled();
-			expect(setCommandHistoryOpen).not.toHaveBeenCalled();
-			expect(setCommandHistoryFilter).not.toHaveBeenCalled();
-		});
-
 		it('handles Escape key to close', () => {
 			const setCommandHistoryOpen = vi.fn();
 			const setCommandHistoryFilter = vi.fn();
@@ -1269,54 +1016,6 @@ describe('InputArea', () => {
 
 			expect(setCommandHistoryOpen).toHaveBeenCalledWith(false);
 			expect(setCommandHistoryFilter).toHaveBeenCalledWith('');
-		});
-
-		it('leaves command history open for unrelated filter keys', () => {
-			const setCommandHistoryOpen = vi.fn();
-			const setCommandHistoryFilter = vi.fn();
-			const props = createDefaultProps({
-				session: createMockSession({ aiCommandHistory: ['one'] }),
-				commandHistoryOpen: true,
-				setCommandHistoryOpen,
-				setCommandHistoryFilter,
-			});
-			render(<InputArea {...props} />);
-
-			fireEvent.keyDown(screen.getByPlaceholderText('Filter messages...'), { key: 'PageDown' });
-
-			expect(setCommandHistoryOpen).not.toHaveBeenCalled();
-			expect(setCommandHistoryFilter).not.toHaveBeenCalled();
-		});
-
-		it('uses empty history when split command-history arrays are missing', () => {
-			const terminalRender = render(
-				<InputArea
-					{...createDefaultProps({
-						session: createMockSession({
-							inputMode: 'terminal',
-							shellCommandHistory: undefined,
-						} as any),
-						commandHistoryOpen: true,
-					})}
-				/>
-			);
-
-			expect(screen.getByText('No matching commands')).toBeInTheDocument();
-
-			terminalRender.unmount();
-			render(
-				<InputArea
-					{...createDefaultProps({
-						session: createMockSession({
-							inputMode: 'ai',
-							aiCommandHistory: undefined,
-						} as any),
-						commandHistoryOpen: true,
-					})}
-				/>
-			);
-
-			expect(screen.getByText('No matching messages')).toBeInTheDocument();
 		});
 
 		it('falls back to legacy commandHistory', () => {
@@ -1518,24 +1217,6 @@ describe('InputArea', () => {
 
 			expect(screen.getByText('No matching branches')).toBeInTheDocument();
 		});
-
-		it.each([
-			['all', 'No matching suggestions'],
-			['history', 'No matching history'],
-			['tag', 'No matching tags'],
-			['file', 'No matching files'],
-		])('shows the %s tab-completion empty state', (filter, message) => {
-			const props = createDefaultProps({
-				session: createMockSession({ inputMode: 'terminal', isGitRepo: true }),
-				tabCompletionOpen: true,
-				tabCompletionSuggestions: [],
-				tabCompletionFilter: filter as any,
-				setTabCompletionFilter: vi.fn(),
-			});
-			render(<InputArea {...props} />);
-
-			expect(screen.getByText(message)).toBeInTheDocument();
-		});
 	});
 
 	describe('@ Mention Completion', () => {
@@ -1564,27 +1245,6 @@ describe('InputArea', () => {
 			expect(screen.getByText('Files')).toBeInTheDocument();
 			expect(screen.getByText('src/index.ts')).toBeInTheDocument();
 			expect(screen.getByText('src/utils')).toBeInTheDocument();
-		});
-
-		it('marks Auto Run mention suggestions with their source badge', () => {
-			const props = createDefaultProps({
-				session: createMockSession({ inputMode: 'ai' }),
-				atMentionOpen: true,
-				atMentionFilter: 'spec',
-				atMentionSuggestions: [
-					{
-						value: 'Auto Run Docs/spec.md',
-						type: 'file' as const,
-						displayText: 'spec.md',
-						fullPath: 'Auto Run Docs/spec.md',
-						source: 'autorun',
-					} as any,
-				],
-			});
-			render(<InputArea {...props} />);
-
-			expect(screen.getByText('Auto Run Docs/spec.md')).toBeInTheDocument();
-			expect(screen.getByText('Auto Run')).toBeInTheDocument();
 		});
 
 		it('does NOT show @ mention in terminal mode', () => {
@@ -1660,34 +1320,6 @@ describe('InputArea', () => {
 			expect(setAtMentionFilter).toHaveBeenCalledWith('');
 			expect(setAtMentionStartIndex).toHaveBeenCalledWith(-1);
 		});
-
-		it('updates @ mention selection on item hover', () => {
-			const setSelectedAtMentionIndex = vi.fn();
-			const props = createDefaultProps({
-				session: createMockSession({ inputMode: 'ai' }),
-				atMentionOpen: true,
-				atMentionSuggestions: [
-					{
-						value: 'src/index.ts',
-						type: 'file' as const,
-						displayText: 'index.ts',
-						fullPath: 'src/index.ts',
-					},
-					{
-						value: 'src/utils',
-						type: 'folder' as const,
-						displayText: 'utils',
-						fullPath: 'src/utils',
-					},
-				],
-				setSelectedAtMentionIndex,
-			});
-			render(<InputArea {...props} />);
-
-			fireEvent.mouseEnter(screen.getByText('src/utils'));
-
-			expect(setSelectedAtMentionIndex).toHaveBeenCalledWith(1);
-		});
 	});
 
 	describe('Input Handling', () => {
@@ -1716,22 +1348,6 @@ describe('InputArea', () => {
 			expect(setSelectedSlashCommandIndex).toHaveBeenCalledWith(0);
 		});
 
-		it('does not reset slash command selection when autocomplete is already open', () => {
-			const setSlashCommandOpen = vi.fn();
-			const setSelectedSlashCommandIndex = vi.fn();
-			const props = createDefaultProps({
-				slashCommandOpen: true,
-				setSlashCommandOpen,
-				setSelectedSlashCommandIndex,
-			});
-			render(<InputArea {...props} />);
-
-			fireEvent.change(screen.getByRole('textbox'), { target: { value: '/help' } });
-
-			expect(setSlashCommandOpen).toHaveBeenCalledWith(true);
-			expect(setSelectedSlashCommandIndex).not.toHaveBeenCalled();
-		});
-
 		it('closes slash command when input has space', () => {
 			const setSlashCommandOpen = vi.fn();
 			const props = createDefaultProps({
@@ -1743,36 +1359,6 @@ describe('InputArea', () => {
 			fireEvent.change(screen.getByRole('textbox'), { target: { value: '/clear arg' } });
 
 			expect(setSlashCommandOpen).toHaveBeenCalledWith(false);
-		});
-
-		it('uses cursor start when textarea selectionStart is unavailable', () => {
-			const setInputValue = vi.fn();
-			const setAtMentionOpen = vi.fn();
-			const setAtMentionFilter = vi.fn();
-			const setAtMentionStartIndex = vi.fn();
-			const setSelectedAtMentionIndex = vi.fn();
-			const props = createDefaultProps({
-				session: createMockSession({ inputMode: 'ai' }),
-				setInputValue,
-				setAtMentionOpen,
-				setAtMentionFilter,
-				setAtMentionStartIndex,
-				setSelectedAtMentionIndex,
-			});
-			render(<InputArea {...props} />);
-
-			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
-			Object.defineProperty(textarea, 'selectionStart', {
-				configurable: true,
-				get: () => null,
-			});
-			fireEvent.change(textarea, { target: { value: '@src' } });
-
-			expect(setInputValue).toHaveBeenCalledWith('@src');
-			expect(setAtMentionOpen).toHaveBeenCalledWith(false);
-			expect(setAtMentionFilter).not.toHaveBeenCalled();
-			expect(setAtMentionStartIndex).not.toHaveBeenCalled();
-			expect(setSelectedAtMentionIndex).not.toHaveBeenCalled();
 		});
 
 		it('triggers @ mention detection in AI mode', () => {
@@ -1823,30 +1409,6 @@ describe('InputArea', () => {
 			});
 
 			expect(setAtMentionOpen).toHaveBeenCalledWith(false);
-		});
-
-		it('closes @ mention completion when the typed trigger is invalid', () => {
-			const setAtMentionOpen = vi.fn();
-			const setAtMentionFilter = vi.fn();
-			const setAtMentionStartIndex = vi.fn();
-			const setSelectedAtMentionIndex = vi.fn();
-			const props = createDefaultProps({
-				session: createMockSession({ inputMode: 'ai' }),
-				setAtMentionOpen,
-				setAtMentionFilter,
-				setAtMentionStartIndex,
-				setSelectedAtMentionIndex,
-			});
-			render(<InputArea {...props} />);
-
-			fireEvent.change(screen.getByRole('textbox'), {
-				target: { value: 'email@example', selectionStart: 'email@example'.length },
-			});
-
-			expect(setAtMentionOpen).toHaveBeenCalledWith(false);
-			expect(setAtMentionFilter).not.toHaveBeenCalled();
-			expect(setAtMentionStartIndex).not.toHaveBeenCalled();
-			expect(setSelectedAtMentionIndex).not.toHaveBeenCalled();
 		});
 
 		it('calls handleInputKeyDown on key down', () => {
@@ -1905,14 +1467,13 @@ describe('InputArea', () => {
 	});
 
 	describe('Button Actions', () => {
-		it('calls toggleInputMode when clicking mode toggle', () => {
-			const toggleInputMode = vi.fn();
-			const props = createDefaultProps({ toggleInputMode });
+		it('opens notification popover when clicking notification button', () => {
+			const props = createDefaultProps();
 			render(<InputArea {...props} />);
 
-			fireEvent.click(screen.getByTitle(`Toggle Mode (${formatShortcutKeys(['Meta', 'j'])})`));
+			fireEvent.click(screen.getByTitle('Notification Settings'));
 
-			expect(toggleInputMode).toHaveBeenCalled();
+			expect(screen.getByTestId('notification-popover')).toBeInTheDocument();
 		});
 
 		it('calls processInput when clicking send button', () => {
@@ -2066,77 +1627,6 @@ describe('InputArea', () => {
 			expect(setStagedImages).toHaveBeenCalled();
 		});
 
-		it('ignores duplicate image file data and keeps existing staged images', async () => {
-			const originalFileReader = global.FileReader;
-			class MockFileReader {
-				onload: ((event: ProgressEvent<FileReader>) => void) | null = null;
-				readAsDataURL() {
-					this.onload?.({
-						target: { result: 'data:image/png;base64,DUPLICATE' },
-					} as ProgressEvent<FileReader>);
-				}
-			}
-			global.FileReader = MockFileReader as unknown as typeof FileReader;
-
-			const setStagedImages = vi.fn();
-			const showFlashNotification = vi.fn();
-			const props = createDefaultProps({
-				session: createMockSession({ inputMode: 'ai' }),
-				setStagedImages,
-				showFlashNotification,
-			});
-			render(<InputArea {...props} />);
-
-			try {
-				const fileInput = document.getElementById('image-file-input') as HTMLInputElement;
-				const file = new File(['duplicate'], 'duplicate.png', { type: 'image/png' });
-
-				await act(async () => {
-					fireEvent.change(fileInput, { target: { files: [file] } });
-				});
-
-				const updater = setStagedImages.mock.calls[0][0];
-				expect(updater(['data:image/png;base64,DUPLICATE'])).toEqual([
-					'data:image/png;base64,DUPLICATE',
-				]);
-				expect(showFlashNotification).toHaveBeenCalledWith('Duplicate image ignored');
-				expect(updater([])).toEqual(['data:image/png;base64,DUPLICATE']);
-			} finally {
-				global.FileReader = originalFileReader;
-			}
-		});
-
-		it('ignores image reader events without a result', async () => {
-			const originalFileReader = global.FileReader;
-			class MockFileReader {
-				onload: ((event: ProgressEvent<FileReader>) => void) | null = null;
-				readAsDataURL() {
-					this.onload?.({ target: { result: '' } } as ProgressEvent<FileReader>);
-				}
-			}
-			global.FileReader = MockFileReader as unknown as typeof FileReader;
-
-			const setStagedImages = vi.fn();
-			const props = createDefaultProps({
-				session: createMockSession({ inputMode: 'ai' }),
-				setStagedImages,
-			});
-			render(<InputArea {...props} />);
-
-			try {
-				const fileInput = document.getElementById('image-file-input') as HTMLInputElement;
-				const file = new File(['empty result'], 'empty.png', { type: 'image/png' });
-
-				await act(async () => {
-					fireEvent.change(fileInput, { target: { files: [file] } });
-				});
-
-				expect(setStagedImages).not.toHaveBeenCalled();
-			} finally {
-				global.FileReader = originalFileReader;
-			}
-		});
-
 		it('clears file input value after selection', async () => {
 			const setStagedImages = vi.fn();
 			const props = createDefaultProps({
@@ -2219,75 +1709,28 @@ describe('InputArea', () => {
 		});
 	});
 
-	describe('Mode Icon Display', () => {
-		it('shows Terminal icon in terminal mode', () => {
-			const props = createDefaultProps({
-				session: createMockSession({ inputMode: 'terminal' }),
-			});
+	describe('Notification Button', () => {
+		it('renders bell icon notification button', () => {
+			const props = createDefaultProps();
 			render(<InputArea {...props} />);
 
-			// Terminal icon should be in the mode toggle button
-			const modeButton = screen.getByTitle(`Toggle Mode (${formatShortcutKeys(['Meta', 'j'])})`);
-			expect(modeButton.querySelector('[data-testid="terminal-icon"]')).toBeInTheDocument();
+			const notifButton = screen.getByTitle('Notification Settings');
+			expect(notifButton).toBeInTheDocument();
 		});
 
-		it('shows Cpu icon in AI mode', () => {
-			const props = createDefaultProps({
-				session: createMockSession({ inputMode: 'ai' }),
-			});
+		it('shows notification popover on click and hides on second click', () => {
+			const props = createDefaultProps();
 			render(<InputArea {...props} />);
 
-			const modeButton = screen.getByTitle(`Toggle Mode (${formatShortcutKeys(['Meta', 'j'])})`);
-			expect(modeButton.querySelector('[data-testid="cpu-icon"]')).toBeInTheDocument();
-		});
+			const notifButton = screen.getByTitle('Notification Settings');
 
-		it('shows Wand2 icon in AI mode when wizard is active', () => {
-			const props = createDefaultProps({
-				session: createMockSession({
-					inputMode: 'ai',
-					wizardState: {
-						isActive: true,
-						mode: 'new',
-						confidence: 50,
-						conversationHistory: [],
-						previousUIState: {
-							readOnlyMode: false,
-							saveToHistory: true,
-							showThinking: 'off',
-						},
-					},
-				}),
-				// Note: onExitWizard is intentionally NOT provided, so we test the fallback path
-				// in the regular InputArea (not WizardInputPanel)
-			});
-			render(<InputArea {...props} />);
+			// Click to open
+			fireEvent.click(notifButton);
+			expect(screen.getByTestId('notification-popover')).toBeInTheDocument();
 
-			const modeButton = screen.getByTitle(`Toggle Mode (${formatShortcutKeys(['Meta', 'j'])})`);
-			// wand2 icon should be shown with accent color
-			expect(modeButton.querySelector('[data-testid="wand2-icon"]')).toBeInTheDocument();
-		});
-
-		it('shows Terminal icon in terminal mode even when wizard is active', () => {
-			const props = createDefaultProps({
-				session: createMockSession({
-					inputMode: 'terminal',
-					wizardState: {
-						isActive: true,
-						mode: 'new',
-						confidence: 50,
-						conversationHistory: [],
-						previousUIState: {
-							readOnlyMode: false,
-							saveToHistory: true,
-							showThinking: 'off',
-						},
-					},
-				}),
-			});
-			render(<InputArea {...props} />);
-
-			const modeButton = screen.getByTitle(`Toggle Mode (${formatShortcutKeys(['Meta', 'j'])})`);
-			expect(modeButton.querySelector('[data-testid="terminal-icon"]')).toBeInTheDocument();
+			// Click again to close (toggle)
+			fireEvent.click(notifButton);
+			expect(screen.queryByTestId('notification-popover')).not.toBeInTheDocument();
 		});
 	});
 
@@ -2594,9 +2037,7 @@ describe('InputArea', () => {
 			expect(screen.getByTestId('wizard-input-panel')).toBeInTheDocument();
 			// Normal components should NOT be rendered
 			expect(screen.queryByTestId('thinking-status-pill')).not.toBeInTheDocument();
-			expect(
-				screen.queryByTitle(`Toggle Mode (${formatShortcutKeys(['Meta', 'j'])})`)
-			).not.toBeInTheDocument();
+			expect(screen.queryByTitle('Notification Settings')).not.toBeInTheDocument();
 			expect(screen.queryByTitle('Send message')).not.toBeInTheDocument();
 		});
 

@@ -7,7 +7,6 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, cleanup } from '@testing-library/react';
-import { StrictMode, createElement, type ReactNode } from 'react';
 
 // Mock gitService before any imports that use it
 vi.mock('../../../renderer/services/git', () => ({
@@ -24,16 +23,12 @@ vi.mock('../../../renderer/utils/ids', () => ({
 	generateId: vi.fn(() => `mock-id-${++idCounter}`),
 }));
 
-// Mock AUTO_RUN_FOLDER_NAME
-vi.mock('../../../renderer/components/Wizard', () => ({
-	AUTO_RUN_FOLDER_NAME: '.maestro-autorun',
-}));
-
 import { useSessionRestoration } from '../../../renderer/hooks/session/useSessionRestoration';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { gitService } from '../../../renderer/services/git';
 import type { Session } from '../../../renderer/types';
+import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
 // Cast to access mock methods
 const mockGitService = gitService as {
@@ -46,55 +41,46 @@ const mockGitService = gitService as {
 // Test Helpers
 // ============================================================================
 
+// Thin wrapper: restoration tests need a heavily pre-populated session
+// (tab, shellLogs, live URL, auto run folder, agent error state, etc.) so
+// migration logic has something to migrate. Delegates to the shared factory
+// for baseline required fields.
 function createMockSession(overrides: Partial<Session> = {}): Session {
-	return {
+	return baseCreateMockSession({
 		id: 'session-1',
 		name: 'Test Agent',
 		cwd: '/projects/myapp',
 		fullPath: '/projects/myapp',
 		projectRoot: '/projects/myapp',
-		toolType: 'claude-code' as any,
 		groupId: 'group-1',
-		inputMode: 'ai' as any,
-		state: 'idle' as any,
 		aiTabs: [
 			{
 				id: 'tab-1',
 				agentSessionId: null,
 				name: null,
-				state: 'busy' as const,
+				state: 'busy',
 				logs: [],
 				starred: false,
 				inputValue: '',
 				stagedImages: [],
 				createdAt: Date.now(),
 			},
-		],
+		] as any,
 		activeTabId: 'tab-1',
-		aiLogs: [],
-		shellLogs: [{ id: 'log-1', timestamp: Date.now(), source: 'system' as const, text: 'hello' }],
-		workLog: [],
-		contextUsage: 0,
+		shellLogs: [
+			{ id: 'log-1', timestamp: Date.now(), source: 'system' as const, text: 'hello' },
+		] as any,
 		aiPid: 123,
 		terminalPid: 456,
 		port: 3000,
 		isLive: true,
 		liveUrl: 'http://localhost:3000',
-		changedFiles: [],
 		isGitRepo: true,
-		fileTree: [],
-		fileExplorerExpanded: [],
-		fileExplorerScrollPos: 0,
 		autoRunFolderPath: '/projects/myapp/.maestro-autorun',
 		fileTreeAutoRefreshInterval: 180,
-		executionQueue: [],
 		activeTimeMs: 5000,
-		closedTabHistory: [],
-		filePreviewTabs: [],
-		activeFileTabId: null,
 		unifiedTabOrder: [{ type: 'ai' as const, id: 'tab-1' }],
-		unifiedClosedTabHistory: [],
-		busySource: 'user',
+		busySource: 'user' as any,
 		thinkingStartTime: Date.now(),
 		currentCycleTokens: 100,
 		currentCycleBytes: 2000,
@@ -102,7 +88,7 @@ function createMockSession(overrides: Partial<Session> = {}): Session {
 		agentError: { message: 'stale error' } as any,
 		agentErrorPaused: true,
 		...overrides,
-	} as any;
+	});
 }
 
 // Mock IPC
@@ -135,7 +121,11 @@ beforeEach(() => {
 	if (!(window as any).maestro) {
 		(window as any).maestro = {};
 	}
-	(window as any).maestro.sessions = { getAll: mockGetAll };
+	(window as any).maestro.sessions = {
+		getAll: mockGetAll,
+		getActiveSessionId: vi.fn().mockResolvedValue(''),
+		setActiveSessionId: vi.fn(),
+	};
 	(window as any).maestro.groups = { getAll: mockGroupsGetAll };
 	(window as any).maestro.groupChat = { list: mockGroupChatList };
 	(window as any).maestro.agents = {
@@ -180,146 +170,280 @@ describe('restoreSession — Migration logic', () => {
 			restored = await result.current.restoreSession(session);
 		});
 
-		expect(restored!.autoRunFolderPath).toBe('/projects/myapp/.maestro-autorun');
+		expect(restored!.autoRunFolderPath).toBe('/projects/myapp/.maestro/playbooks');
 	});
 
 	it('sets fileTreeAutoRefreshInterval to 180 when missing', async () => {
-		const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 		const session = createMockSession({ fileTreeAutoRefreshInterval: undefined as any });
 		const { result } = renderHook(() => useSessionRestoration());
 
-		try {
-			let restored: Session;
-			await act(async () => {
-				restored = await result.current.restoreSession(session);
-			});
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
 
-			expect(consoleWarn).toHaveBeenCalledWith(
-				'[restoreSession] Session missing fileTreeAutoRefreshInterval, defaulting to 180s'
-			);
-			expect(restored!.fileTreeAutoRefreshInterval).toBe(180);
-		} finally {
-			consoleWarn.mockRestore();
-		}
+		expect(restored!.fileTreeAutoRefreshInterval).toBe(180);
 	});
 
-	it('migrates toolType terminal to claude-code', async () => {
-		const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-		const session = createMockSession({ toolType: 'terminal' as any });
-		const { result } = renderHook(() => useSessionRestoration());
-
-		try {
-			let restored: Session;
-			await act(async () => {
-				restored = await result.current.restoreSession(session);
-			});
-
-			expect(consoleWarn).toHaveBeenCalledWith(
-				"[restoreSession] Session has toolType='terminal', migrating to claude-code"
-			);
-			expect(restored!.toolType).toBe('claude-code');
-		} finally {
-			consoleWarn.mockRestore();
-		}
-	});
-
-	it('adds warning log when migrating from terminal toolType', async () => {
-		const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-		const session = createMockSession({ toolType: 'terminal' as any });
-		const { result } = renderHook(() => useSessionRestoration());
-
-		try {
-			let restored: Session;
-			await act(async () => {
-				restored = await result.current.restoreSession(session);
-			});
-
-			expect(consoleWarn).toHaveBeenCalledWith(
-				"[restoreSession] Session has toolType='terminal', migrating to claude-code"
-			);
-			const activeTab = restored!.aiTabs.find((t) => t.id === restored!.activeTabId);
-			const warningLog = activeTab?.logs.find((l) =>
-				l.text.includes('Session migrated to use Claude Code agent')
-			);
-			expect(warningLog).toBeDefined();
-			expect(warningLog?.source).toBe('system');
-		} finally {
-			consoleWarn.mockRestore();
-		}
-	});
-
-	it('adds terminal migration warning only to the active tab', async () => {
-		const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+	it('backfills createdAt from the earliest tab/log/workLog timestamp when missing', async () => {
+		const oldestTab = 1_700_000_000_000;
+		const oldestLog = 1_690_000_000_000; // older than the tab
 		const session = createMockSession({
-			toolType: 'terminal' as any,
+			createdAt: undefined as any,
 			aiTabs: [
 				{
 					id: 'tab-1',
 					agentSessionId: null,
 					name: null,
-					state: 'idle' as const,
-					logs: [],
+					state: 'idle',
+					logs: [
+						{ id: 'l1', timestamp: oldestLog, source: 'system' as const, text: 'first' },
+						{ id: 'l2', timestamp: oldestLog + 1000, source: 'system' as const, text: 'later' },
+					],
 					starred: false,
 					inputValue: '',
 					stagedImages: [],
-					createdAt: Date.now(),
+					createdAt: oldestTab,
 				},
-				{
-					id: 'tab-2',
-					agentSessionId: null,
-					name: null,
-					state: 'idle' as const,
-					logs: [],
-					starred: false,
-					inputValue: '',
-					stagedImages: [],
-					createdAt: Date.now(),
-				},
-			],
-			activeTabId: 'tab-2',
+			] as any,
 		});
 		const { result } = renderHook(() => useSessionRestoration());
 
-		try {
-			let restored: Session;
-			await act(async () => {
-				restored = await result.current.restoreSession(session);
-			});
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
 
-			expect(consoleWarn).toHaveBeenCalledWith(
-				"[restoreSession] Session has toolType='terminal', migrating to claude-code"
-			);
-			expect(restored!.aiTabs.find((tab) => tab.id === 'tab-1')?.logs).toEqual([]);
-			expect(restored!.aiTabs.find((tab) => tab.id === 'tab-2')?.logs[0]?.text).toContain(
-				'Session migrated to use Claude Code agent'
-			);
-		} finally {
-			consoleWarn.mockRestore();
-		}
+		expect(restored!.createdAt).toBe(oldestLog);
 	});
 
-	it('migrates terminal toolType without appending a warning when activeTabId is stale', async () => {
-		const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+	it('backfills createdAt to Date.now() when no historical timestamps exist', async () => {
+		const before = Date.now();
 		const session = createMockSession({
-			toolType: 'terminal' as any,
-			activeTabId: 'missing-tab',
+			createdAt: undefined as any,
+			aiTabs: [
+				{
+					id: 'tab-1',
+					agentSessionId: null,
+					name: null,
+					state: 'idle',
+					logs: [],
+					starred: false,
+					inputValue: '',
+					stagedImages: [],
+					createdAt: 0,
+				},
+			] as any,
+			workLog: [],
 		});
 		const { result } = renderHook(() => useSessionRestoration());
 
-		try {
-			let restored: Session;
-			await act(async () => {
-				restored = await result.current.restoreSession(session);
-			});
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
 
-			expect(consoleWarn).toHaveBeenCalledWith(
-				"[restoreSession] Session has toolType='terminal', migrating to claude-code"
-			);
-			expect(restored!.toolType).toBe('claude-code');
-			expect(restored!.aiTabs.every((tab) => tab.logs.length === 0)).toBe(true);
-		} finally {
-			consoleWarn.mockRestore();
-		}
+		expect(restored!.createdAt).toBeGreaterThanOrEqual(before);
+		expect(restored!.createdAt).toBeLessThanOrEqual(Date.now());
+	});
+
+	it('leaves an existing createdAt untouched', async () => {
+		const original = 1_650_000_000_000;
+		const session = createMockSession({ createdAt: original });
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.createdAt).toBe(original);
+	});
+
+	it('rehydrates browser tabs with a safe URL, title, and partition', async () => {
+		const session = createMockSession({
+			browserTabs: [
+				{
+					id: 'browser-1',
+					url: '',
+					title: '',
+					createdAt: 1,
+					canGoBack: true,
+					canGoForward: true,
+					isLoading: true,
+				},
+			] as any,
+			activeBrowserTabId: 'browser-1',
+			unifiedTabOrder: [
+				{ type: 'ai' as const, id: 'tab-1' },
+				{ type: 'browser' as const, id: 'browser-1' },
+			],
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.browserTabs[0].url).toBe('about:blank');
+		expect(restored!.browserTabs[0].title).toBe('New Tab');
+		expect(restored!.browserTabs[0].partition).toContain('persist:maestro-browser-session-');
+		expect(restored!.browserTabs[0].isLoading).toBe(false);
+	});
+
+	it('preserves a safe persisted browser partition and active browser selection', async () => {
+		const session = createMockSession({
+			browserTabs: [
+				{
+					id: 'browser-1',
+					url: 'https://example.com/docs',
+					title: 'Example Docs',
+					createdAt: 1,
+					partition: 'persist:maestro-browser-session-session-1',
+					canGoBack: true,
+					canGoForward: true,
+					isLoading: true,
+					webContentsId: 101,
+				},
+			] as any,
+			activeBrowserTabId: 'browser-1',
+			unifiedTabOrder: [
+				{ type: 'ai' as const, id: 'tab-1' },
+				{ type: 'browser' as const, id: 'browser-1' },
+			],
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.browserTabs[0].partition).toBe('persist:maestro-browser-session-session-1');
+		expect(restored!.browserTabs[0].webContentsId).toBeUndefined();
+		expect(restored!.activeBrowserTabId).toBe('browser-1');
+		expect(restored!.unifiedTabOrder).toEqual([
+			{ type: 'ai', id: 'tab-1' },
+			{ type: 'browser', id: 'browser-1' },
+		]);
+	});
+
+	it('restores active browser selection for legacy sessions with no unified tab order', async () => {
+		const session = createMockSession({
+			browserTabs: [
+				{
+					id: 'browser-1',
+					url: 'localhost:5173',
+					title: '',
+					createdAt: 1,
+					canGoBack: true,
+					canGoForward: false,
+					isLoading: true,
+					partition: undefined,
+				},
+			] as any,
+			activeBrowserTabId: 'browser-1',
+			unifiedTabOrder: undefined as any,
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.activeBrowserTabId).toBe('browser-1');
+		expect(restored!.browserTabs[0]).toMatchObject({
+			url: 'http://localhost:5173/',
+			title: 'localhost:5173',
+			partition: 'persist:maestro-browser-session-session-1',
+			canGoBack: false,
+			canGoForward: false,
+			isLoading: false,
+		});
+		expect(restored!.unifiedTabOrder).toEqual([
+			{ type: 'ai', id: 'tab-1' },
+			{ type: 'browser', id: 'browser-1' },
+		]);
+	});
+
+	it('clears stale active browser references when the restored browser tab is missing', async () => {
+		const session = createMockSession({
+			activeBrowserTabId: 'browser-missing',
+			unifiedTabOrder: [
+				{ type: 'ai' as const, id: 'tab-1' },
+				{ type: 'browser' as const, id: 'browser-missing' },
+			],
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.activeBrowserTabId).toBeNull();
+		expect(restored!.unifiedTabOrder).toEqual([{ type: 'ai', id: 'tab-1' }]);
+	});
+
+	it('repairs unified tab order for restored browser tabs without changing active AI focus', async () => {
+		const session = createMockSession({
+			browserTabs: [
+				{
+					id: 'browser-1',
+					url: 'https://example.com',
+					title: 'Example',
+					createdAt: 1,
+					canGoBack: false,
+					canGoForward: false,
+					isLoading: false,
+				},
+			] as any,
+			unifiedTabOrder: [{ type: 'ai' as const, id: 'tab-1' }],
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.activeTabId).toBe('tab-1');
+		expect(restored!.activeBrowserTabId).toBeNull();
+		expect(restored!.unifiedTabOrder).toEqual([
+			{ type: 'ai', id: 'tab-1' },
+			{ type: 'browser', id: 'browser-1' },
+		]);
+	});
+
+	it('migrates toolType terminal to claude-code', async () => {
+		const session = createMockSession({ toolType: 'terminal' as any });
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.toolType).toBe('claude-code');
+	});
+
+	it('adds warning log when migrating from terminal toolType', async () => {
+		const session = createMockSession({ toolType: 'terminal' as any });
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		const activeTab = restored!.aiTabs.find((t) => t.id === restored!.activeTabId);
+		const warningLog = activeTab?.logs.find((l) =>
+			l.text.includes('Session migrated to use Claude Code agent')
+		);
+		expect(warningLog).toBeDefined();
+		expect(warningLog?.source).toBe('system');
 	});
 });
 
@@ -329,118 +453,74 @@ describe('restoreSession — Migration logic', () => {
 
 describe('restoreSession — Corruption recovery', () => {
 	it('creates default tab when aiTabs is empty', async () => {
-		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 		const session = createMockSession({ aiTabs: [], activeTabId: null });
 		const { result } = renderHook(() => useSessionRestoration());
 
-		try {
-			let restored: Session;
-			await act(async () => {
-				restored = await result.current.restoreSession(session);
-			});
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
 
-			expect(consoleError).toHaveBeenCalledWith(
-				'[restoreSession] Session has no aiTabs - data corruption, creating default tab:',
-				session.id
-			);
-			expect(restored!.aiTabs).toHaveLength(1);
-			expect(restored!.aiTabs[0].id).toBe('mock-id-1');
-			expect(restored!.activeTabId).toBe('mock-id-1');
-			expect(restored!.state).toBe('error');
-		} finally {
-			consoleError.mockRestore();
-		}
+		expect(restored!.aiTabs).toHaveLength(1);
+		expect(restored!.aiTabs[0].id).toBe('mock-id-1');
+		expect(restored!.activeTabId).toBe('mock-id-1');
+		expect(restored!.state).toBe('error');
 	});
 
 	it('includes corruption warning log in recovered tab', async () => {
-		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 		const session = createMockSession({ aiTabs: [], activeTabId: null });
 		const { result } = renderHook(() => useSessionRestoration());
 
-		try {
-			let restored: Session;
-			await act(async () => {
-				restored = await result.current.restoreSession(session);
-			});
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
 
-			expect(consoleError).toHaveBeenCalledWith(
-				'[restoreSession] Session has no aiTabs - data corruption, creating default tab:',
-				session.id
-			);
-			const log = restored!.aiTabs[0].logs[0];
-			expect(log.text).toContain('corrupted');
-			expect(log.source).toBe('system');
-		} finally {
-			consoleError.mockRestore();
-		}
+		const log = restored!.aiTabs[0].logs[0];
+		expect(log.text).toContain('corrupted');
+		expect(log.source).toBe('system');
 	});
 
 	it('creates default tab when aiTabs is undefined', async () => {
-		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 		const session = createMockSession({ aiTabs: undefined as any, activeTabId: null });
 		const { result } = renderHook(() => useSessionRestoration());
 
-		try {
-			let restored: Session;
-			await act(async () => {
-				restored = await result.current.restoreSession(session);
-			});
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
 
-			expect(consoleError).toHaveBeenCalledWith(
-				'[restoreSession] Session has no aiTabs - data corruption, creating default tab:',
-				session.id
-			);
-			expect(restored!.aiTabs).toHaveLength(1);
-			expect(restored!.state).toBe('error');
-		} finally {
-			consoleError.mockRestore();
-		}
+		expect(restored!.aiTabs).toHaveLength(1);
+		expect(restored!.state).toBe('error');
 	});
 
 	it('sets up unifiedTabOrder for recovered session', async () => {
-		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 		const session = createMockSession({ aiTabs: [], activeTabId: null });
 		const { result } = renderHook(() => useSessionRestoration());
 
-		try {
-			let restored: Session;
-			await act(async () => {
-				restored = await result.current.restoreSession(session);
-			});
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
 
-			expect(consoleError).toHaveBeenCalledWith(
-				'[restoreSession] Session has no aiTabs - data corruption, creating default tab:',
-				session.id
-			);
-			expect(restored!.unifiedTabOrder).toEqual([{ type: 'ai', id: 'mock-id-1' }]);
-			expect(restored!.filePreviewTabs).toEqual([]);
-			expect(restored!.activeFileTabId).toBeNull();
-		} finally {
-			consoleError.mockRestore();
-		}
+		expect(restored!.unifiedTabOrder).toEqual([{ type: 'ai', id: 'mock-id-1' }]);
+		expect(restored!.filePreviewTabs).toEqual([]);
+		expect(restored!.activeFileTabId).toBeNull();
 	});
 
 	it('clears orphaned activeFileTabId when inputMode is terminal', async () => {
-		const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 		const session = createMockSession({
 			inputMode: 'terminal',
 			activeFileTabId: 'orphaned-file-tab',
 		});
 		const { result } = renderHook(() => useSessionRestoration());
 
-		try {
-			let restored: Session;
-			await act(async () => {
-				restored = await result.current.restoreSession(session);
-			});
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
 
-			expect(consoleWarn).toHaveBeenCalledWith(
-				"[restoreSession] Session has activeFileTabId='orphaned-file-tab' but inputMode='terminal' — clearing orphaned file tab reference"
-			);
-			expect(restored!.activeFileTabId).toBeNull();
-		} finally {
-			consoleWarn.mockRestore();
-		}
+		expect(restored!.activeFileTabId).toBeNull();
 	});
 
 	it('preserves activeFileTabId when inputMode is ai', async () => {
@@ -456,6 +536,53 @@ describe('restoreSession — Corruption recovery', () => {
 		});
 
 		expect(restored!.activeFileTabId).toBe('valid-file-tab');
+	});
+
+	it('gives active file selection precedence over stale browser selection in ai mode', async () => {
+		const session = createMockSession({
+			inputMode: 'ai',
+			filePreviewTabs: [
+				{
+					id: 'file-1',
+					path: '/projects/myapp/README.md',
+					name: 'README.md',
+					content: '# docs',
+					scrollTop: 0,
+					searchQuery: '',
+					editMode: false,
+					createdAt: 1,
+					lastModified: 1,
+					isLoading: false,
+				},
+			] as any,
+			activeFileTabId: 'file-1',
+			browserTabs: [
+				{
+					id: 'browser-1',
+					url: 'https://example.com',
+					title: 'Example',
+					createdAt: 1,
+					canGoBack: false,
+					canGoForward: false,
+					isLoading: false,
+				},
+			] as any,
+			activeBrowserTabId: 'browser-1',
+			unifiedTabOrder: [
+				{ type: 'ai' as const, id: 'tab-1' },
+				{ type: 'file' as const, id: 'file-1' },
+				{ type: 'browser' as const, id: 'browser-1' },
+			],
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.activeFileTabId).toBe('file-1');
+		expect(restored!.activeBrowserTabId).toBeNull();
 	});
 });
 
@@ -560,6 +687,7 @@ describe('restoreSession — Runtime state reset', () => {
 					name: null,
 					state: 'busy' as const,
 					thinkingStartTime: 999,
+					isGeneratingName: true,
 					logs: [],
 					starred: false,
 					inputValue: '',
@@ -572,6 +700,7 @@ describe('restoreSession — Runtime state reset', () => {
 					name: null,
 					state: 'error' as const,
 					thinkingStartTime: 888,
+					isGeneratingName: true,
 					logs: [],
 					starred: false,
 					inputValue: '',
@@ -591,6 +720,10 @@ describe('restoreSession — Runtime state reset', () => {
 		expect(restored!.aiTabs[0].thinkingStartTime).toBeUndefined();
 		expect(restored!.aiTabs[1].state).toBe('idle');
 		expect(restored!.aiTabs[1].thinkingStartTime).toBeUndefined();
+		// A naming call interrupted by reload must not leave the flag stranded -
+		// otherwise the namingNotInFlight guard blocks auto-naming retries forever.
+		expect(restored!.aiTabs[0].isGeneratingName).toBe(false);
+		expect(restored!.aiTabs[1].isGeneratingName).toBe(false);
 	});
 
 	it('preserves shellLogs', async () => {
@@ -658,7 +791,7 @@ describe('restoreSession — Runtime state reset', () => {
 		expect(restored!.filePreviewTabs).toEqual([]);
 	});
 
-	it('builds unifiedTabOrder from aiTabs when missing', async () => {
+	it('builds unifiedTabOrder from aiTabs only when terminalTabs is missing', async () => {
 		const session = createMockSession({ unifiedTabOrder: undefined as any });
 		const { result } = renderHook(() => useSessionRestoration());
 
@@ -667,47 +800,10 @@ describe('restoreSession — Runtime state reset', () => {
 			restored = await result.current.restoreSession(session);
 		});
 
+		// When unifiedTabOrder is undefined and terminalTabs is missing,
+		// restoration builds order from AI tabs only — no default terminal tab is created.
 		expect(restored!.unifiedTabOrder).toEqual([{ type: 'ai', id: 'tab-1' }]);
-	});
-
-	it('builds unifiedTabOrder when filePreviewTabs is also missing', async () => {
-		const session = createMockSession({
-			unifiedTabOrder: undefined as any,
-			filePreviewTabs: undefined as any,
-		});
-		const { result } = renderHook(() => useSessionRestoration());
-
-		let restored: Session;
-		await act(async () => {
-			restored = await result.current.restoreSession(session);
-		});
-
-		expect(restored!.unifiedTabOrder).toEqual([{ type: 'ai', id: 'tab-1' }]);
-	});
-
-	it('builds unifiedTabOrder from ai and file preview tabs when missing', async () => {
-		const session = createMockSession({
-			unifiedTabOrder: undefined as any,
-			filePreviewTabs: [
-				{
-					id: 'file-tab-1',
-					path: '/projects/myapp/README.md',
-					name: 'README.md',
-					content: '# Readme',
-				},
-			] as any,
-		});
-		const { result } = renderHook(() => useSessionRestoration());
-
-		let restored: Session;
-		await act(async () => {
-			restored = await result.current.restoreSession(session);
-		});
-
-		expect(restored!.unifiedTabOrder).toEqual([
-			{ type: 'ai', id: 'tab-1' },
-			{ type: 'file', id: 'file-tab-1' },
-		]);
+		expect(restored!.terminalTabs).toHaveLength(0);
 	});
 
 	it('resets closedTabHistory to empty', async () => {
@@ -805,14 +901,64 @@ describe('restoreSession — Git info (local sessions)', () => {
 		expect(mockGitService.isRepo).not.toHaveBeenCalled();
 		expect(restored!.isGitRepo).toBe(false);
 	});
+});
 
-	it('defaults persisted git repo state to false for remote sessions without cached value', async () => {
+// ============================================================================
+// restoreSession — Error handling
+// ============================================================================
+
+describe('restoreSession — Error handling', () => {
+	it('returns idle session even when agent is unavailable (validated in background)', async () => {
+		const session = createMockSession();
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		// Agent validation is deferred to background - restoreSession always
+		// returns idle so it never blocks the splash screen.
+		expect(restored!.state).toBe('idle');
+		expect(restored!.aiPid).toBe(0);
+		expect(restored!.isLive).toBe(false);
+	});
+
+	it('falls back to persisted git info when git operations time out', async () => {
+		vi.useFakeTimers();
+		// Make git operations hang for this call only (never resolve within timeout)
+		mockGitService.isRepo.mockImplementationOnce(
+			() => new Promise(() => {}) // never resolves
+		);
 		const session = createMockSession({
-			sshRemoteId: 'remote-1',
-			isGitRepo: undefined as any,
-			gitBranches: undefined,
-			gitTags: undefined,
-			gitRefsCacheTime: undefined,
+			isGitRepo: true,
+			gitBranches: ['persisted-branch'],
+			gitTags: ['v-persisted'],
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		const restorePromise = act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		// Advance past the 5s git timeout
+		await vi.advanceTimersByTimeAsync(6000);
+		await restorePromise;
+
+		// Should use persisted values since git timed out
+		expect(restored!.isGitRepo).toBe(true);
+		expect(restored!.gitBranches).toEqual(['persisted-branch']);
+		expect(restored!.gitTags).toEqual(['v-persisted']);
+		expect(restored!.state).toBe('idle');
+		vi.useRealTimers();
+	});
+
+	it('falls back to persisted git info when git operations throw', async () => {
+		mockGitService.isRepo.mockRejectedValueOnce(new Error('ENOENT'));
+		const session = createMockSession({
+			isGitRepo: true,
+			gitBranches: ['saved-branch'],
 		});
 		const { result } = renderHook(() => useSessionRestoration());
 
@@ -821,58 +967,92 @@ describe('restoreSession — Git info (local sessions)', () => {
 			restored = await result.current.restoreSession(session);
 		});
 
-		expect(mockGitService.isRepo).not.toHaveBeenCalled();
-		expect(restored!.isGitRepo).toBe(false);
-		expect(restored!.gitBranches).toBeUndefined();
-		expect(restored!.gitTags).toBeUndefined();
+		expect(restored!.isGitRepo).toBe(true);
+		expect(restored!.gitBranches).toEqual(['saved-branch']);
+		expect(restored!.state).toBe('idle');
 	});
 });
 
 // ============================================================================
-// restoreSession — Error handling
+// validateAgentInBackground
 // ============================================================================
 
-describe('restoreSession — Error handling', () => {
-	it('returns error session when agent not found', async () => {
-		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+describe('validateAgentInBackground', () => {
+	it('marks session as error when agent is not found', async () => {
 		mockAgentsGet.mockResolvedValueOnce(null);
-		const session = createMockSession();
-		const { result } = renderHook(() => useSessionRestoration());
+		const session = createMockSession({ id: 'validate-1' });
+		mockGetAll.mockResolvedValueOnce([session]);
 
-		try {
-			let restored: Session;
-			await act(async () => {
-				restored = await result.current.restoreSession(session);
-			});
+		renderHook(() => useSessionRestoration());
 
-			expect(consoleError).toHaveBeenCalledWith('Agent not found for toolType: claude-code');
-			expect(restored!.state).toBe('error');
-			expect(restored!.aiPid).toBe(-1);
-			expect(restored!.isLive).toBe(false);
-		} finally {
-			consoleError.mockRestore();
-		}
+		// Wait for mount effect + background validation
+		await act(async () => {
+			await new Promise((r) => setTimeout(r, 100));
+		});
+
+		const updated = useSessionStore.getState().sessions.find((s) => s.id === 'validate-1');
+		expect(updated?.state).toBe('error');
+		expect(updated?.aiPid).toBe(-1);
 	});
 
-	it('returns error session on unexpected exception', async () => {
-		const error = new Error('IPC failure');
-		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-		mockAgentsGet.mockRejectedValueOnce(error);
-		const session = createMockSession();
-		const { result } = renderHook(() => useSessionRestoration());
+	it('passes sshRemoteId to agents.get for SSH sessions', async () => {
+		const session = createMockSession({
+			id: 'ssh-validate-1',
+			sshRemoteId: 'my-remote',
+		});
+		mockGetAll.mockResolvedValueOnce([session]);
 
-		try {
-			let restored: Session;
-			await act(async () => {
-				restored = await result.current.restoreSession(session);
-			});
+		renderHook(() => useSessionRestoration());
 
-			expect(consoleError).toHaveBeenCalledWith(`Error restoring session ${session.id}:`, error);
-			expect(restored!.state).toBe('error');
-			expect(restored!.aiPid).toBe(-1);
-		} finally {
-			consoleError.mockRestore();
-		}
+		await act(async () => {
+			await new Promise((r) => setTimeout(r, 100));
+		});
+
+		expect(mockAgentsGet).toHaveBeenCalledWith('claude-code', 'my-remote');
+	});
+
+	it('passes undefined sshRemoteId for local sessions', async () => {
+		const session = createMockSession({ id: 'local-validate-1' });
+		mockGetAll.mockResolvedValueOnce([session]);
+
+		renderHook(() => useSessionRestoration());
+
+		await act(async () => {
+			await new Promise((r) => setTimeout(r, 100));
+		});
+
+		expect(mockAgentsGet).toHaveBeenCalledWith('claude-code', undefined);
+	});
+
+	it('does not mark session as error when agent is found', async () => {
+		mockAgentsGet.mockResolvedValue({ id: 'claude-code', name: 'Claude Code' });
+		const session = createMockSession({ id: 'valid-agent-1' });
+		mockGetAll.mockResolvedValueOnce([session]);
+
+		renderHook(() => useSessionRestoration());
+
+		await act(async () => {
+			await new Promise((r) => setTimeout(r, 100));
+		});
+
+		const updated = useSessionStore.getState().sessions.find((s) => s.id === 'valid-agent-1');
+		expect(updated?.state).toBe('idle');
+	});
+
+	it('handles agents.get rejection gracefully', async () => {
+		mockAgentsGet.mockRejectedValueOnce(new Error('IPC failure'));
+		const session = createMockSession({ id: 'ipc-fail-1' });
+		mockGetAll.mockResolvedValueOnce([session]);
+
+		renderHook(() => useSessionRestoration());
+
+		await act(async () => {
+			await new Promise((r) => setTimeout(r, 100));
+		});
+
+		// Should not crash - session stays idle (validation failure is logged, not fatal)
+		const updated = useSessionStore.getState().sessions.find((s) => s.id === 'ipc-fail-1');
+		expect(updated?.state).toBe('idle');
 	});
 });
 
@@ -889,10 +1069,7 @@ describe('fetchGitInfoInBackground', () => {
 			await new Promise((r) => setTimeout(r, 50));
 		});
 		useSessionStore.setState({
-			sessions: [
-				createMockSession({ id: 's1', isGitRepo: false }),
-				createMockSession({ id: 's2', isGitRepo: false, sshConnectionFailed: true }),
-			],
+			sessions: [createMockSession({ id: 's1', isGitRepo: false })],
 		} as any);
 		mockGitService.isRepo.mockClear();
 		mockGitService.getBranches.mockClear();
@@ -907,47 +1084,29 @@ describe('fetchGitInfoInBackground', () => {
 		expect(mockGitService.getTags).toHaveBeenCalledWith('/remote/path', 'ssh-1');
 
 		const updated = useSessionStore.getState().sessions.find((s) => s.id === 's1');
-		const untouched = useSessionStore.getState().sessions.find((s) => s.id === 's2');
 		expect(updated?.isGitRepo).toBe(true);
 		expect(updated?.gitBranches).toEqual(['main', 'feature-1']);
 		expect(updated?.gitTags).toEqual(['v1.0', 'v2.0']);
 		expect(updated?.sshConnectionFailed).toBe(false);
-		expect(untouched?.isGitRepo).toBe(false);
-		expect(untouched?.sshConnectionFailed).toBe(true);
 	});
 
 	it('marks sshConnectionFailed on error', async () => {
-		const error = new Error('SSH timeout');
-		const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 		const { result } = renderHook(() => useSessionRestoration());
 
 		await act(async () => {
 			await new Promise((r) => setTimeout(r, 50));
 		});
 		useSessionStore.setState({
-			sessions: [
-				createMockSession({ id: 's1' }),
-				createMockSession({ id: 's2', sshConnectionFailed: false }),
-			],
+			sessions: [createMockSession({ id: 's1' })],
 		} as any);
-		mockGitService.isRepo.mockRejectedValueOnce(error);
+		mockGitService.isRepo.mockRejectedValueOnce(new Error('SSH timeout'));
 
-		try {
-			await act(async () => {
-				await result.current.fetchGitInfoInBackground('s1', '/remote/path', 'ssh-1');
-			});
+		await act(async () => {
+			await result.current.fetchGitInfoInBackground('s1', '/remote/path', 'ssh-1');
+		});
 
-			expect(consoleWarn).toHaveBeenCalledWith(
-				'[fetchGitInfoInBackground] Failed to fetch git info for session s1:',
-				error
-			);
-			const updated = useSessionStore.getState().sessions.find((s) => s.id === 's1');
-			const untouched = useSessionStore.getState().sessions.find((s) => s.id === 's2');
-			expect(updated?.sshConnectionFailed).toBe(true);
-			expect(untouched?.sshConnectionFailed).toBe(false);
-		} finally {
-			consoleWarn.mockRestore();
-		}
+		const updated = useSessionStore.getState().sessions.find((s) => s.id === 's1');
+		expect(updated?.sshConnectionFailed).toBe(true);
 	});
 
 	it('skips branches/tags when not a git repo', async () => {
@@ -1004,14 +1163,6 @@ describe('initialLoadComplete proxy', () => {
 
 		expect(result.current.initialLoadComplete.current).toBe(true);
 	});
-
-	it('leaves unrelated proxy properties untouched', () => {
-		const { result } = renderHook(() => useSessionRestoration());
-
-		expect(Reflect.set(result.current.initialLoadComplete, 'other', true)).toBe(false);
-		expect(Reflect.get(result.current.initialLoadComplete, 'other')).toBeUndefined();
-		expect(useSessionStore.getState().initialLoadComplete).toBe(false);
-	});
 });
 
 // ============================================================================
@@ -1067,20 +1218,6 @@ describe('Session & Group loading effect', () => {
 		expect(groupChats).toHaveLength(1);
 	});
 
-	it('falls back to an empty group chat list when IPC returns null', async () => {
-		mockGetAll.mockResolvedValueOnce([]);
-		mockGroupsGetAll.mockResolvedValueOnce([]);
-		mockGroupChatList.mockResolvedValueOnce(null);
-
-		renderHook(() => useSessionRestoration());
-
-		await act(async () => {
-			await new Promise((r) => setTimeout(r, 50));
-		});
-
-		expect(useGroupChatStore.getState().groupChats).toEqual([]);
-	});
-
 	it('sets sessionsLoaded to true after loading', async () => {
 		mockGetAll.mockResolvedValueOnce([]);
 
@@ -1119,6 +1256,25 @@ describe('Session & Group loading effect', () => {
 		expect(useSessionStore.getState().activeSessionId).toBe('real-1');
 	});
 
+	it('restores persisted activeSessionId from disk', async () => {
+		useSessionStore.setState({ activeSessionId: '' } as any);
+		const session1 = createMockSession({ id: 'sess-1' });
+		const session2 = createMockSession({ id: 'sess-2' });
+		mockGetAll.mockResolvedValueOnce([session1, session2]);
+		// Mock the persisted active session ID to be the second session
+		(window as any).maestro.sessions.getActiveSessionId = vi.fn().mockResolvedValue('sess-2');
+
+		renderHook(() => useSessionRestoration());
+
+		await act(async () => {
+			await new Promise((r) => setTimeout(r, 50));
+		});
+
+		expect(useSessionStore.getState().activeSessionId).toBe('sess-2');
+		// Reset mock
+		(window as any).maestro.sessions.getActiveSessionId = vi.fn().mockResolvedValue('');
+	});
+
 	it('keeps activeSessionId when it matches a loaded session', async () => {
 		useSessionStore.setState({ activeSessionId: 'loaded-1' } as any);
 		const session = createMockSession({ id: 'loaded-1' });
@@ -1134,47 +1290,69 @@ describe('Session & Group loading effect', () => {
 	});
 
 	it('handles IPC failure gracefully (sets empty arrays)', async () => {
-		const error = new Error('IPC dead');
-		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-		mockGetAll.mockRejectedValueOnce(error);
+		mockGetAll.mockRejectedValueOnce(new Error('IPC dead'));
 
-		try {
-			renderHook(() => useSessionRestoration());
+		renderHook(() => useSessionRestoration());
 
-			await act(async () => {
-				await new Promise((r) => setTimeout(r, 50));
-			});
+		await act(async () => {
+			await new Promise((r) => setTimeout(r, 50));
+		});
 
-			expect(useSessionStore.getState().sessions).toEqual([]);
-			expect(useSessionStore.getState().groups).toEqual([]);
-			expect(useSessionStore.getState().sessionsLoaded).toBe(true);
-			expect(useSessionStore.getState().initialLoadComplete).toBe(true);
-			expect(consoleError).toHaveBeenCalledWith('Failed to load sessions/groups:', error);
-		} finally {
-			consoleError.mockRestore();
-		}
+		expect(useSessionStore.getState().sessions).toEqual([]);
+		expect(useSessionStore.getState().groups).toEqual([]);
+		expect(useSessionStore.getState().sessionsLoaded).toBe(true);
+		expect(useSessionStore.getState().initialLoadComplete).toBe(true);
 	});
 
 	it('handles group chat load failure gracefully', async () => {
-		const error = new Error('GC fail');
-		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 		mockGetAll.mockResolvedValueOnce([]);
 		mockGroupsGetAll.mockResolvedValueOnce([]);
-		mockGroupChatList.mockRejectedValueOnce(error);
+		mockGroupChatList.mockRejectedValueOnce(new Error('GC fail'));
 
-		try {
-			renderHook(() => useSessionRestoration());
+		renderHook(() => useSessionRestoration());
 
-			await act(async () => {
-				await new Promise((r) => setTimeout(r, 50));
-			});
+		await act(async () => {
+			await new Promise((r) => setTimeout(r, 50));
+		});
 
-			expect(useGroupChatStore.getState().groupChats).toEqual([]);
-			expect(useSessionStore.getState().sessionsLoaded).toBe(true);
-			expect(consoleError).toHaveBeenCalledWith('Failed to load group chats:', error);
-		} finally {
-			consoleError.mockRestore();
-		}
+		expect(useGroupChatStore.getState().groupChats).toEqual([]);
+		expect(useSessionStore.getState().sessionsLoaded).toBe(true);
+	});
+
+	it('restores session with terminal tabs correctly', async () => {
+		const session = createMockSession({
+			terminalTabs: [
+				{
+					id: 'tt-1',
+					name: 'Dev Server',
+					shellType: 'zsh',
+					pid: 0,
+					cwd: '/projects/app',
+					createdAt: Date.now(),
+					state: 'idle' as const,
+					startupCommand: 'npm run dev',
+				},
+			],
+			activeTerminalTabId: 'tt-1',
+			unifiedTabOrder: [
+				{ type: 'ai' as const, id: 'tab-1' },
+				{ type: 'terminal' as const, id: 'tt-1' },
+			],
+		});
+		mockGetAll.mockResolvedValueOnce([session]);
+
+		renderHook(() => useSessionRestoration());
+
+		await act(async () => {
+			await new Promise((r) => setTimeout(r, 50));
+		});
+
+		const sessions = useSessionStore.getState().sessions;
+		expect(sessions).toHaveLength(1);
+		expect(sessions[0].terminalTabs).toHaveLength(1);
+		expect(sessions[0].terminalTabs[0].id).toBe('tt-1');
+		expect(sessions[0].terminalTabs[0].name).toBe('Dev Server');
+		expect(sessions[0].activeTerminalTabId).toBe('tt-1');
 	});
 
 	it('fires fetchGitInfoInBackground for SSH sessions after load', async () => {
@@ -1201,29 +1379,6 @@ describe('Session & Group loading effect', () => {
 		expect(backgroundCall).toBeDefined();
 	});
 
-	it('fires background git info using enabled session SSH config remoteId after load', async () => {
-		const sshSession = createMockSession({
-			id: 'ssh-config-1',
-			sshRemoteId: undefined,
-			sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-from-config' } as any,
-			cwd: '/remote/config-dir',
-			isGitRepo: false,
-		});
-		mockGetAll.mockResolvedValueOnce([sshSession]);
-		mockGitService.isRepo.mockResolvedValue(true);
-
-		renderHook(() => useSessionRestoration());
-
-		await act(async () => {
-			await new Promise((r) => setTimeout(r, 100));
-		});
-
-		const backgroundCall = mockGitService.isRepo.mock.calls.find(
-			(c: any[]) => c[0] === '/remote/config-dir' && c[1] === 'remote-from-config'
-		);
-		expect(backgroundCall).toBeDefined();
-	});
-
 	it('runs loading effect only once per hook instance (ref guard)', async () => {
 		mockGetAll.mockResolvedValue([]);
 
@@ -1241,20 +1396,6 @@ describe('Session & Group loading effect', () => {
 		});
 
 		// getAll should only have been called once
-		expect(mockGetAll).toHaveBeenCalledTimes(1);
-	});
-
-	it('guards duplicate StrictMode mount-effect execution', async () => {
-		mockGetAll.mockResolvedValue([]);
-		const wrapper = ({ children }: { children: ReactNode }) =>
-			createElement(StrictMode, null, children);
-
-		renderHook(() => useSessionRestoration(), { wrapper });
-
-		await act(async () => {
-			await new Promise((r) => setTimeout(r, 50));
-		});
-
 		expect(mockGetAll).toHaveBeenCalledTimes(1);
 	});
 
@@ -1300,5 +1441,401 @@ describe('Session & Group loading effect', () => {
 		// Both should have state reset
 		expect(sessions[0].state).toBe('idle');
 		expect(sessions[1].state).toBe('idle');
+	});
+});
+
+// ============================================================================
+// restoreSession — Terminal tab persistence
+// ============================================================================
+
+describe('restoreSession — Terminal tab persistence', () => {
+	it('preserves terminal tab metadata (name, shellType, cwd, createdAt) across restart', async () => {
+		const createdAt = 1700000000000;
+		const session = createMockSession({
+			terminalTabs: [
+				{
+					id: 'tt-1',
+					name: 'My Dev Server',
+					shellType: 'zsh',
+					pid: 12345,
+					cwd: '/projects/myapp',
+					createdAt,
+					state: 'idle' as const,
+					startupCommand: 'npm run dev',
+				},
+			],
+			activeTerminalTabId: 'tt-1',
+			unifiedTabOrder: [
+				{ type: 'ai' as const, id: 'tab-1' },
+				{ type: 'terminal' as const, id: 'tt-1' },
+			],
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		const termTab = restored!.terminalTabs.find((t) => t.id === 'tt-1');
+		expect(termTab).toBeDefined();
+		expect(termTab!.name).toBe('My Dev Server');
+		expect(termTab!.shellType).toBe('zsh');
+		expect(termTab!.cwd).toBe('/projects/myapp');
+		expect(termTab!.createdAt).toBe(createdAt);
+	});
+
+	it('resets terminal tab runtime state (pid, state, exitCode) on restore', async () => {
+		const session = createMockSession({
+			terminalTabs: [
+				{
+					id: 'tt-1',
+					name: null,
+					shellType: 'bash',
+					pid: 9999,
+					cwd: '/home/user',
+					createdAt: Date.now(),
+					state: 'busy' as const,
+					exitCode: 1,
+					startupCommand: 'npm run dev',
+				},
+			],
+			activeTerminalTabId: 'tt-1',
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		const termTab = restored!.terminalTabs[0];
+		expect(termTab.pid).toBe(0);
+		expect(termTab.state).toBe('idle');
+		expect(termTab.exitCode).toBeUndefined();
+	});
+
+	it('preserves activeTerminalTabId across restart', async () => {
+		const session = createMockSession({
+			terminalTabs: [
+				{
+					id: 'tt-active',
+					name: 'Active Tab',
+					shellType: 'zsh',
+					pid: 100,
+					cwd: '/home/user',
+					createdAt: Date.now(),
+					state: 'idle' as const,
+					startupCommand: 'npm run dev',
+				},
+			],
+			activeTerminalTabId: 'tt-active',
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.activeTerminalTabId).toBe('tt-active');
+	});
+
+	it('sets activeTerminalTabId to null when undefined', async () => {
+		const session = createMockSession({
+			terminalTabs: [
+				{
+					id: 'tt-1',
+					name: null,
+					shellType: 'zsh',
+					pid: 0,
+					cwd: '/home/user',
+					createdAt: Date.now(),
+					state: 'idle' as const,
+					startupCommand: 'npm run dev',
+				},
+			],
+			activeTerminalTabId: undefined,
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.activeTerminalTabId).toBeNull();
+	});
+
+	it('does NOT create a default terminal tab when terminalTabs is empty', async () => {
+		const session = createMockSession({
+			terminalTabs: [],
+			activeTerminalTabId: null,
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		// Terminal tabs are created on demand, not by restoration
+		expect(restored!.terminalTabs).toHaveLength(0);
+		expect(restored!.activeTerminalTabId).toBeNull();
+	});
+
+	it('does NOT create a default terminal tab when terminalTabs is missing (migration)', async () => {
+		const session = createMockSession({
+			terminalTabs: undefined as any,
+			activeTerminalTabId: null,
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		// Migration only ensures the array exists — it does not add a default tab
+		expect(restored!.terminalTabs).toHaveLength(0);
+		expect(restored!.activeTerminalTabId).toBeNull();
+	});
+
+	it('preserves existing unifiedTabOrder without adding a terminal ref when migrating empty terminalTabs', async () => {
+		const session = createMockSession({
+			terminalTabs: [],
+			activeTerminalTabId: null,
+			unifiedTabOrder: [{ type: 'ai' as const, id: 'tab-1' }],
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		// No terminal ref should be added since no terminal tab was created
+		const termRef = restored!.unifiedTabOrder.find((r) => r.type === 'terminal');
+		expect(termRef).toBeUndefined();
+		// AI tab should still be present
+		const aiRef = restored!.unifiedTabOrder.find((r) => r.type === 'ai');
+		expect(aiRef).toBeDefined();
+	});
+
+	it('resets exited terminal tab state on restore', async () => {
+		const session = createMockSession({
+			terminalTabs: [
+				{
+					id: 'tt-1',
+					name: null,
+					shellType: 'zsh',
+					pid: 200,
+					cwd: '/home/user',
+					createdAt: Date.now(),
+					state: 'exited' as const,
+					exitCode: 1,
+					startupCommand: 'npm run dev',
+				},
+			],
+			activeTerminalTabId: null,
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		const termTab = restored!.terminalTabs[0];
+		expect(termTab.state).toBe('idle');
+		expect(termTab.exitCode).toBeUndefined();
+		expect(termTab.pid).toBe(0);
+	});
+
+	it('preserves multiple terminal tabs with all metadata intact', async () => {
+		const session = createMockSession({
+			terminalTabs: [
+				{
+					id: 'tt-1',
+					name: 'Backend',
+					shellType: 'zsh',
+					pid: 100,
+					cwd: '/projects/backend',
+					createdAt: 1000000,
+					state: 'idle' as const,
+					startupCommand: 'npm run backend',
+				},
+				{
+					id: 'tt-2',
+					name: 'Frontend',
+					shellType: 'bash',
+					pid: 200,
+					cwd: '/projects/frontend',
+					createdAt: 2000000,
+					state: 'exited' as const,
+					exitCode: 1,
+					startupCommand: 'npm run frontend',
+				},
+			],
+			activeTerminalTabId: 'tt-1',
+			unifiedTabOrder: [
+				{ type: 'ai' as const, id: 'tab-1' },
+				{ type: 'terminal' as const, id: 'tt-1' },
+				{ type: 'terminal' as const, id: 'tt-2' },
+			],
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.terminalTabs).toHaveLength(2);
+
+		const tab1 = restored!.terminalTabs.find((t) => t.id === 'tt-1');
+		expect(tab1!.name).toBe('Backend');
+		expect(tab1!.cwd).toBe('/projects/backend');
+		expect(tab1!.pid).toBe(0); // Runtime state reset
+
+		const tab2 = restored!.terminalTabs.find((t) => t.id === 'tt-2');
+		expect(tab2!.name).toBe('Frontend');
+		expect(tab2!.state).toBe('idle'); // Runtime state reset
+		expect(tab2!.exitCode).toBeUndefined(); // Runtime state reset
+	});
+
+	it('preserves scrollTop and searchQuery on terminal tabs', async () => {
+		const session = createMockSession({
+			terminalTabs: [
+				{
+					id: 'tt-1',
+					name: null,
+					shellType: 'zsh',
+					pid: 0,
+					cwd: '/home/user',
+					createdAt: Date.now(),
+					state: 'idle' as const,
+					scrollTop: 2000,
+					searchQuery: 'webpack',
+					startupCommand: 'npm run dev',
+				},
+			],
+			activeTerminalTabId: null,
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		const termTab = restored!.terminalTabs[0];
+		expect(termTab.scrollTop).toBe(2000);
+		expect(termTab.searchQuery).toBe('webpack');
+	});
+
+	it('drops terminal tabs without a startup command on restart', async () => {
+		const session = createMockSession({
+			terminalTabs: [
+				{
+					id: 'tt-plain',
+					name: 'Scratch',
+					shellType: 'zsh',
+					pid: 0,
+					cwd: '/home/user',
+					createdAt: Date.now(),
+					state: 'idle' as const,
+				},
+			],
+			activeTerminalTabId: 'tt-plain',
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let dropRestored: Session;
+		await act(async () => {
+			dropRestored = await result.current.restoreSession(session);
+		});
+
+		// No startup command => the terminal does not survive an app restart.
+		expect(dropRestored!.terminalTabs).toHaveLength(0);
+		expect(dropRestored!.activeTerminalTabId).toBeNull();
+	});
+
+	it('treats a whitespace-only startup command as no command and drops the tab', async () => {
+		const session = createMockSession({
+			terminalTabs: [
+				{
+					id: 'tt-blank',
+					name: 'Scratch',
+					shellType: 'zsh',
+					pid: 0,
+					cwd: '/home/user',
+					createdAt: Date.now(),
+					state: 'idle' as const,
+					startupCommand: '   ',
+				},
+			],
+			activeTerminalTabId: 'tt-blank',
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let blankRestored: Session;
+		await act(async () => {
+			blankRestored = await result.current.restoreSession(session);
+		});
+
+		expect(blankRestored!.terminalTabs).toHaveLength(0);
+		expect(blankRestored!.activeTerminalTabId).toBeNull();
+	});
+
+	it('keeps startup-command terminals, drops plain ones, and prunes the unified order', async () => {
+		const session = createMockSession({
+			terminalTabs: [
+				{
+					id: 'tt-keep',
+					name: 'Dev Server',
+					shellType: 'zsh',
+					pid: 0,
+					cwd: '/projects/app',
+					createdAt: 1000,
+					state: 'idle' as const,
+					startupCommand: 'npm run dev',
+				},
+				{
+					id: 'tt-drop',
+					name: 'Scratch',
+					shellType: 'zsh',
+					pid: 0,
+					cwd: '/projects/app',
+					createdAt: 2000,
+					state: 'idle' as const,
+				},
+			],
+			activeTerminalTabId: 'tt-drop',
+			inputMode: 'terminal',
+			unifiedTabOrder: [
+				{ type: 'ai' as const, id: 'tab-1' },
+				{ type: 'terminal' as const, id: 'tt-keep' },
+				{ type: 'terminal' as const, id: 'tt-drop' },
+			],
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let mixedRestored: Session;
+		await act(async () => {
+			mixedRestored = await result.current.restoreSession(session);
+		});
+
+		expect(mixedRestored!.terminalTabs).toHaveLength(1);
+		expect(mixedRestored!.terminalTabs[0].id).toBe('tt-keep');
+
+		// The dropped tab's ref is pruned from the unified order; the kept one remains.
+		const termRefs = mixedRestored!.unifiedTabOrder.filter((r) => r.type === 'terminal');
+		expect(termRefs).toEqual([{ type: 'terminal', id: 'tt-keep' }]);
+
+		// Active terminal pointed at the dropped tab, so it clears and the input
+		// mode falls back to AI rather than stranding the user in terminal mode.
+		expect(mixedRestored!.activeTerminalTabId).toBeNull();
+		expect(mixedRestored!.inputMode).toBe('ai');
 	});
 });

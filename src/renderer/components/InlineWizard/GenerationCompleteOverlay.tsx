@@ -24,33 +24,6 @@ export interface GenerationCompleteOverlayProps {
 	disableConfetti?: boolean;
 }
 
-interface StartGenerationCompleteOptions {
-	isClosing: boolean;
-	setIsClosing: (isClosing: boolean) => void;
-	disableConfetti: boolean;
-	onDone: () => void;
-}
-
-export function startGenerationComplete({
-	isClosing,
-	setIsClosing,
-	disableConfetti,
-	onDone,
-}: StartGenerationCompleteOptions): boolean {
-	if (isClosing) return false; // Prevent double-clicks
-	setIsClosing(true);
-
-	// Trigger celebratory confetti burst (if not disabled)
-	triggerCelebration(disableConfetti);
-
-	// Wait 500ms for confetti to be visible, then call completion callback
-	setTimeout(() => {
-		onDone();
-	}, 500);
-
-	return true;
-}
-
 /**
  * GenerationCompleteOverlay - Shown when document generation finishes
  *
@@ -70,7 +43,16 @@ export function GenerationCompleteOverlay({
 	const [isClosing, setIsClosing] = useState(false);
 
 	const handleDoneClick = useCallback(() => {
-		startGenerationComplete({ isClosing, setIsClosing, disableConfetti, onDone });
+		if (isClosing) return; // Prevent double-clicks
+		setIsClosing(true);
+
+		// Trigger celebratory confetti burst (if not disabled)
+		triggerCelebration(disableConfetti);
+
+		// Wait 500ms for confetti to be visible, then call completion callback
+		setTimeout(() => {
+			onDone();
+		}, 500);
 	}, [isClosing, onDone, disableConfetti]);
 
 	return (

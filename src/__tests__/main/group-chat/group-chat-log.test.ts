@@ -10,20 +10,10 @@
  * - Edge cases (empty files, image references)
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
-
-const uuidMock = vi.hoisted(() => ({
-	counter: 0,
-	v4: vi.fn(() => '00000000-0000-4000-8000-000000000000'),
-}));
-
-vi.mock('uuid', () => ({
-	v4: uuidMock.v4,
-}));
-
 import {
 	escapeContent,
 	unescapeContent,
@@ -36,12 +26,6 @@ describe('group-chat-log', () => {
 	let testDir: string;
 
 	beforeEach(async () => {
-		uuidMock.counter = 0;
-		uuidMock.v4.mockImplementation(() => {
-			uuidMock.counter += 1;
-			return `${uuidMock.counter.toString(16).padStart(8, '0')}-0000-4000-8000-000000000000`;
-		});
-
 		// Create a unique temp directory for each test
 		testDir = path.join(
 			os.tmpdir(),
@@ -193,21 +177,18 @@ describe('group-chat-log', () => {
 			expect(content).toContain('Line1\\nLine2\\|Data');
 		});
 
-		it('appends and reads read-only log entries', async () => {
-			const logPath = path.join(testDir, 'readonly-chat.log');
+		it('appends with image filenames', async () => {
+			const logPath = path.join(testDir, 'image-append.log');
+			await appendToLog(logPath, 'user', 'Check this', false, ['img-001.png', 'img-002.jpg']);
+			const content = await fs.readFile(logPath, 'utf-8');
+			expect(content).toContain('|images:img-001.png,img-002.jpg');
+		});
 
-			await appendToLog(logPath, 'moderator', 'Read-only synthesis', true);
-
-			const raw = await fs.readFile(logPath, 'utf-8');
-			expect(raw).toContain('|readOnly\n');
-			const messages = await readLog(logPath);
-			expect(messages).toEqual([
-				expect.objectContaining({
-					from: 'moderator',
-					content: 'Read-only synthesis',
-					readOnly: true,
-				}),
-			]);
+		it('appends with readOnly and image filenames', async () => {
+			const logPath = path.join(testDir, 'ro-image.log');
+			await appendToLog(logPath, 'user', 'Read only with images', true, ['screenshot.png']);
+			const content = await fs.readFile(logPath, 'utf-8');
+			expect(content).toContain('|readOnly|images:screenshot.png');
 		});
 
 		it('uses ISO 8601 timestamp format', async () => {
@@ -275,10 +256,6 @@ describe('group-chat-log', () => {
 			expect(messages).toEqual([]);
 		});
 
-		it('rethrows non-missing-file read failures', async () => {
-			await expect(readLog(testDir)).rejects.toMatchObject({ code: 'EISDIR' });
-		});
-
 		it('parses multiple messages', async () => {
 			const logPath = path.join(testDir, 'multi-parse.log');
 			await fs.writeFile(
@@ -314,26 +291,37 @@ describe('group-chat-log', () => {
 			expect(messages).toHaveLength(2);
 		});
 
-		it('skips malformed lines without enough separators', async () => {
-			const logPath = path.join(testDir, 'malformed.log');
+		it('parses image filenames from log', async () => {
+			const logPath = path.join(testDir, 'images-parse.log');
 			await fs.writeFile(
 				logPath,
-				[
-					'not enough fields',
-					'2024-01-15T10:30:00.000Z|user|Valid message',
-					'also|not-enough',
-				].join('\n')
+				'2024-01-15T10:30:00.000Z|user|Check this|images:img-001.png,img-002.jpg\n'
 			);
-
 			const messages = await readLog(logPath);
+			expect(messages).toHaveLength(1);
+			expect(messages[0].content).toBe('Check this');
+			expect(messages[0].images).toEqual(['img-001.png', 'img-002.jpg']);
+		});
 
-			expect(messages).toEqual([
-				{
-					timestamp: '2024-01-15T10:30:00.000Z',
-					from: 'user',
-					content: 'Valid message',
-				},
-			]);
+		it('parses readOnly and images together', async () => {
+			const logPath = path.join(testDir, 'ro-images.log');
+			await fs.writeFile(
+				logPath,
+				'2024-01-15T10:30:00.000Z|user|Hello|readOnly|images:screenshot.png\n'
+			);
+			const messages = await readLog(logPath);
+			expect(messages).toHaveLength(1);
+			expect(messages[0].readOnly).toBe(true);
+			expect(messages[0].images).toEqual(['screenshot.png']);
+		});
+
+		it('round-trips with appendToLog including images', async () => {
+			const logPath = path.join(testDir, 'round-trip-images.log');
+			await appendToLog(logPath, 'user', 'With images', false, ['img.png']);
+			const messages = await readLog(logPath);
+			expect(messages).toHaveLength(1);
+			expect(messages[0].content).toBe('With images');
+			expect(messages[0].images).toEqual(['img.png']);
 		});
 
 		it('round-trips with appendToLog', async () => {
@@ -405,25 +393,6 @@ describe('group-chat-log', () => {
 
 			const filename = await saveImage(imagesDir, Buffer.from('data'), 'noextension');
 			expect(filename).toMatch(/\.png$/);
-		});
-
-		it('rejects unsupported image extensions before writing', async () => {
-			const imagesDir = path.join(testDir, 'images');
-
-			await expect(saveImage(imagesDir, Buffer.from('<svg />'), 'diagram.svg')).rejects.toThrow(
-				'Invalid image extension: .svg'
-			);
-			await expect(fs.access(imagesDir)).rejects.toMatchObject({ code: 'ENOENT' });
-		});
-
-		it('rejects generated image paths that escape the images directory', async () => {
-			const imagesDir = path.join(testDir, 'images');
-			uuidMock.v4.mockReturnValueOnce('/../../escape');
-
-			await expect(saveImage(imagesDir, Buffer.from('data'), 'image.png')).rejects.toThrow(
-				'Path traversal attempt detected'
-			);
-			await expect(fs.access(imagesDir)).rejects.toMatchObject({ code: 'ENOENT' });
 		});
 
 		it('generates unique filenames for each image', async () => {

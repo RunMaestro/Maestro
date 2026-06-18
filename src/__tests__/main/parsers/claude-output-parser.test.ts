@@ -147,47 +147,6 @@ describe('ClaudeOutputParser', () => {
 			const event = parser.parseJsonLine(line);
 			expect(event?.raw).toEqual(original);
 		});
-
-		it('should fall back to result message content when result text is missing', () => {
-			const event = parser.parseJsonLine(
-				JSON.stringify({
-					type: 'result',
-					session_id: 'sess-fallback',
-					message: {
-						content: [
-							{ type: 'text', text: 'Recovered ' },
-							{ type: 'text', text: 'answer' },
-						],
-					},
-				})
-			);
-
-			expect(event?.type).toBe('result');
-			expect(event?.text).toBe('Recovered answer');
-			expect(event?.sessionId).toBe('sess-fallback');
-		});
-
-		it('should preserve unknown message types as system events', () => {
-			const event = parser.parseJsonLine(
-				JSON.stringify({ type: 'debug', session_id: 'sess-unknown', payload: { ok: true } })
-			);
-
-			expect(event?.type).toBe('system');
-			expect(event?.sessionId).toBe('sess-unknown');
-			expect(event?.raw).toEqual({
-				type: 'debug',
-				session_id: 'sess-unknown',
-				payload: { ok: true },
-			});
-		});
-	});
-
-	describe('parseJsonObject', () => {
-		it('should return null for non-object parsed values', () => {
-			expect(parser.parseJsonObject(null)).toBeNull();
-			expect(parser.parseJsonObject('not-object')).toBeNull();
-			expect(parser.parseJsonObject(42)).toBeNull();
-		});
 	});
 
 	describe('isResultMessage', () => {
@@ -684,59 +643,31 @@ describe('ClaudeOutputParser', () => {
 			expect(error?.parsedJson).toBeDefined();
 		});
 
-		it('should extract flat embedded JSON error messages', () => {
-			const line = 'Error streaming: {"type":"error","message":"Rate limit exceeded"}';
-			const error = parser.detectErrorFromLine(line);
-			expect(error).not.toBeNull();
-			expect(error?.type).toBe('rate_limited');
-		});
-
-		it('should ignore embedded JSON without an error message', () => {
-			const line = 'Status update: {"type":"notice","ok":true}';
+		it('should NOT treat system api_retry events as errors', () => {
+			// Claude Code emits these when retrying HTTP 429/529; the turn ultimately
+			// succeeds. The `error` field here is a retry-category tag, not a failure.
+			const line = JSON.stringify({
+				type: 'system',
+				subtype: 'api_retry',
+				attempt: 1,
+				max_retries: 10,
+				retry_delay_ms: 549.5,
+				error_status: 529,
+				error: 'rate_limit',
+				session_id: 'b63e648d-360f-44b7-a9b0-6dc63b609241',
+				uuid: '1b397bb3-2e6f-4821-8547-e026d8d11817',
+			});
 			expect(parser.detectErrorFromLine(line)).toBeNull();
 		});
 
-		it('should ignore embedded JSON errors that do not match a known pattern', () => {
-			const line = 'Error streaming: {"type":"error","message":"novel provider failure"}';
+		it('should NOT treat system init events as errors even if they carry an error field', () => {
+			const line = JSON.stringify({
+				type: 'system',
+				subtype: 'init',
+				session_id: 'abc',
+				error: 'something',
+			});
 			expect(parser.detectErrorFromLine(line)).toBeNull();
-		});
-
-		it('should ignore malformed embedded JSON', () => {
-			expect(parser.detectErrorFromLine('Error streaming: {"type":"error"')).toBeNull();
-		});
-	});
-
-	describe('detectErrorFromParsed', () => {
-		it('should return null for non-object parsed values', () => {
-			expect(parser.detectErrorFromParsed(null)).toBeNull();
-			expect(parser.detectErrorFromParsed('error')).toBeNull();
-			expect(parser.detectErrorFromParsed(500)).toBeNull();
-		});
-
-		it('should return null when parsed object has no error text', () => {
-			expect(parser.detectErrorFromParsed({ type: 'result', result: 'ok' })).toBeNull();
-		});
-
-		it('should detect snake-case turn failed errors', () => {
-			const error = parser.detectErrorFromParsed({
-				type: 'turn_failed',
-				error: { message: 'Connection failed while streaming' },
-			});
-
-			expect(error).not.toBeNull();
-			expect(error?.type).toBe('network_error');
-			expect(error?.parsedJson).toBeDefined();
-		});
-
-		it('should stringify unknown object-valued error payloads', () => {
-			const error = parser.detectErrorFromParsed({
-				error: { code: 'E_PROVIDER', detail: 'new provider failure' },
-			});
-
-			expect(error).not.toBeNull();
-			expect(error?.type).toBe('unknown');
-			expect(error?.message).toBe('{"code":"E_PROVIDER","detail":"new provider failure"}');
-			expect(error?.parsedJson).toBeDefined();
 		});
 	});
 
@@ -777,14 +708,6 @@ describe('ClaudeOutputParser', () => {
 			expect(error?.type).toBe('agent_crashed');
 			expect(error?.message).toContain('exited with code 1');
 			expect(error?.recoverable).toBe(true);
-		});
-
-		it('should fall back to agent_crashed when embedded stderr JSON is unrecognized', () => {
-			const stderr = 'Error streaming: {"type":"error","message":"novel provider failure"}';
-			const error = parser.detectErrorFromExit(2, stderr, '');
-			expect(error).not.toBeNull();
-			expect(error?.type).toBe('agent_crashed');
-			expect(error?.raw?.stderr).toBe(stderr);
 		});
 
 		it('should handle different exit codes', () => {

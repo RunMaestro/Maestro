@@ -42,16 +42,42 @@ const LOG_CONTEXT = '[OpenCodeSessionStorage]';
 const TRAILING_SEP_RE = new RegExp(`${path.sep.replace('\\', '\\\\')}+$`);
 
 /**
- * Get OpenCode data base directory (platform-specific)
- * - Linux/macOS: ~/.local/share/opencode
- * - Windows: %APPDATA%\opencode
+ * Candidate OpenCode data base directories, in preference order.
+ *
+ * OpenCode (Go binary) uses XDG-style paths on all platforms — including
+ * Windows, where `opencode db path` resolves to `%USERPROFILE%\.local\share\opencode`
+ * rather than `%APPDATA%`. We keep `%APPDATA%\opencode` as a Windows-only
+ * fallback for any legacy/alternate installs.
+ */
+function getOpenCodeDataDirCandidates(): string[] {
+	const candidates: string[] = [];
+	const home = os.homedir();
+
+	if (process.env.XDG_DATA_HOME) {
+		candidates.push(path.join(process.env.XDG_DATA_HOME, 'opencode'));
+	}
+	candidates.push(path.join(home, '.local', 'share', 'opencode'));
+
+	if (isWindows()) {
+		const appData = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
+		candidates.push(path.join(appData, 'opencode'));
+	}
+
+	return candidates;
+}
+
+/**
+ * Pick the first candidate that exists on disk. If none exist, return the
+ * preferred candidate so callers still get a sensible default path to log.
  */
 function getOpenCodeDataDir(): string {
-	if (isWindows()) {
-		const appData = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
-		return path.join(appData, 'opencode');
+	const candidates = getOpenCodeDataDirCandidates();
+	for (const candidate of candidates) {
+		if (fsSync.existsSync(candidate)) {
+			return candidate;
+		}
 	}
-	return path.join(os.homedir(), '.local', 'share', 'opencode');
+	return candidates[0];
 }
 
 /**
@@ -62,10 +88,20 @@ function getOpenCodeStorageDir(): string {
 }
 
 /**
- * Get OpenCode SQLite database path (v1.2+)
+ * Get OpenCode SQLite database path (v1.2+).
+ *
+ * Checks each candidate data dir for an existing `opencode.db` and returns
+ * the first hit. Falls back to the preferred candidate's path when none exist,
+ * so callers still get a deterministic value (existence is re-checked at use).
  */
 function getOpenCodeDbPath(): string {
-	return path.join(getOpenCodeDataDir(), 'opencode.db');
+	for (const candidate of getOpenCodeDataDirCandidates()) {
+		const dbPath = path.join(candidate, 'opencode.db');
+		if (fsSync.existsSync(dbPath)) {
+			return dbPath;
+		}
+	}
+	return path.join(getOpenCodeDataDirCandidates()[0], 'opencode.db');
 }
 
 const OPENCODE_STORAGE_DIR = getOpenCodeStorageDir();
@@ -770,20 +806,8 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 	 * Extract text content from message parts
 	 */
 	private extractTextFromParts(parts: OpenCodePart[]): string {
-		const textParts: string[] = [];
-		for (const part of parts) {
-			if (part.type === 'text' && part.text) {
-				textParts.push(part.text);
-			}
-		}
+		const textParts = parts.filter((p) => p.type === 'text' && p.text).map((p) => p.text || '');
 		return textParts.join(' ').trim();
-	}
-
-	private getPartsForMessage(
-		parts: Map<string, OpenCodePart[]>,
-		messageId: string
-	): OpenCodePart[] {
-		return parts.get(messageId) ?? [];
 	}
 
 	// ─── SQLite-based methods (OpenCode v1.2+) ──────────────────────────────
@@ -991,28 +1015,24 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 				}
 
 				if (!foundPreview && data.role === 'assistant') {
-					const parts = partsByMessageId.get(msg.id);
-					if (parts) {
-						for (const part of parts) {
-							const partData = safeJsonParse<SqlitePartData>(part.data);
-							if (partData?.type === 'text' && partData.text?.trim()) {
-								firstMessage = partData.text;
-								foundPreview = true;
-								break;
-							}
+					const parts = partsByMessageId.get(msg.id) || [];
+					for (const part of parts) {
+						const partData = safeJsonParse<SqlitePartData>(part.data);
+						if (partData?.type === 'text' && partData.text?.trim()) {
+							firstMessage = partData.text;
+							foundPreview = true;
+							break;
 						}
 					}
 				}
 
 				if (!candidateUserPreview && data.role === 'user') {
-					const parts = partsByMessageId.get(msg.id);
-					if (parts) {
-						for (const part of parts) {
-							const partData = safeJsonParse<SqlitePartData>(part.data);
-							if (partData?.type === 'text' && partData.text?.trim()) {
-								candidateUserPreview = partData.text;
-								break;
-							}
+					const parts = partsByMessageId.get(msg.id) || [];
+					for (const part of parts) {
+						const partData = safeJsonParse<SqlitePartData>(part.data);
+						if (partData?.type === 'text' && partData.text?.trim()) {
+							candidateUserPreview = partData.text;
+							break;
 						}
 					}
 				}
@@ -1075,8 +1095,12 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 	/**
 	 * Load messages for a session from SQLite.
 	 * Returns null if the database doesn't exist or lacks the expected schema.
+	 * Accepts an optional db handle to avoid re-opening the database.
 	 */
-	private loadSessionMessagesSqlite(sessionId: string): {
+	private loadSessionMessagesSqlite(
+		sessionId: string,
+		existingDb?: Database.Database
+	): {
 		messages: OpenCodeMessage[];
 		parts: Map<string, OpenCodePart[]>;
 		totalInputTokens: number;
@@ -1085,7 +1109,8 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 		totalCacheWriteTokens: number;
 		totalCost: number;
 	} | null {
-		const db = openOpenCodeDb();
+		const ownsDb = !existingDb;
+		const db = existingDb ?? openOpenCodeDb();
 		if (!db) return null;
 
 		try {
@@ -1193,7 +1218,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 			captureException(error instanceof Error ? error : new Error(String(error)));
 			throw error;
 		} finally {
-			db.close();
+			if (ownsDb) db.close();
 		}
 	}
 
@@ -1303,7 +1328,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 			let firstUserMessage = '';
 
 			for (const msg of messages) {
-				const msgParts = this.getPartsForMessage(parts, msg.id);
+				const msgParts = parts.get(msg.id) || [];
 				const textContent = this.extractTextFromParts(msgParts);
 
 				if (!firstUserMessage && msg.role === 'user' && textContent.trim()) {
@@ -1435,7 +1460,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 			let firstUserMessage = '';
 
 			for (const msg of messages) {
-				const msgParts = this.getPartsForMessage(parts, msg.id);
+				const msgParts = parts.get(msg.id) || [];
 				const textContent = this.extractTextFromParts(msgParts);
 
 				if (!firstUserMessage && msg.role === 'user' && textContent.trim()) {
@@ -1519,7 +1544,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 		for (const msg of messages) {
 			if (msg.role !== 'user' && msg.role !== 'assistant') continue;
 
-			const msgParts = this.getPartsForMessage(parts, msg.id);
+			const msgParts = parts.get(msg.id) || [];
 			const textContent = this.extractTextFromParts(msgParts);
 
 			// Extract tool use if present
@@ -1557,7 +1582,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 			.filter((msg) => msg.role === 'user' || msg.role === 'assistant')
 			.map((msg) => ({
 				role: msg.role as 'user' | 'assistant',
-				textContent: this.extractTextFromParts(this.getPartsForMessage(parts, msg.id)),
+				textContent: this.extractTextFromParts(parts.get(msg.id) || []),
 			}))
 			.filter((msg) => msg.textContent.length > 0);
 	}
@@ -1629,7 +1654,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 
 				for (let i = messages.length - 1; i >= 0; i--) {
 					if (messages[i].role === 'user') {
-						const msgParts = this.getPartsForMessage(parts, messages[i].id);
+						const msgParts = parts.get(messages[i].id) || [];
 						const textContent = this.extractTextFromParts(msgParts);
 						if (textContent.trim().toLowerCase() === normalizedFallback) {
 							userMessageIndex = i;
@@ -1664,7 +1689,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 				messagesToDelete.push(messages[i]);
 
 				// Collect tool parts from messages being deleted
-				const msgParts = this.getPartsForMessage(parts, messages[i].id);
+				const msgParts = parts.get(messages[i].id) || [];
 				for (const part of msgParts) {
 					if (part.type === 'tool') {
 						toolPartsBeingDeleted.push(part);
@@ -1715,7 +1740,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 				for (const msg of messages) {
 					if (messagesToDelete.includes(msg)) continue;
 
-					const msgParts = this.getPartsForMessage(parts, msg.id);
+					const msgParts = parts.get(msg.id) || [];
 					const partDir = this.getPartDir(msg.id);
 
 					for (const part of msgParts) {

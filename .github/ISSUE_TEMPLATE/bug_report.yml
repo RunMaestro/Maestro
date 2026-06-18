@@ -1,0 +1,159 @@
+name: Bug report
+description: Report a reproducible Maestro bug with the environment details needed for triage.
+title: 'Bug: '
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting this. Please fill out the required fields so we can reproduce the issue without extra back-and-forth.
+
+        If you opened this from the Maestro app, prefer the in-app feedback flow when possible so screenshots and environment details stay aligned.
+
+  - type: input
+    id: summary
+    attributes:
+      label: Summary
+      description: One-line description of the bug.
+      placeholder: Feedback modal fails to submit after attaching a screenshot
+    validations:
+      required: true
+
+  - type: input
+    id: maestro_version
+    attributes:
+      label: Maestro version
+      description: The Maestro version shown in the app or release build.
+      placeholder: 0.15.3
+    validations:
+      required: true
+
+  - type: dropdown
+    id: operating_system
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Windows
+        - Linux
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: os_version
+    attributes:
+      label: OS version
+      description: Include the exact OS version if you know it.
+      placeholder: macOS 15.4 / Windows 11 24H2 / Ubuntu 24.04
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install_source
+    attributes:
+      label: Install source
+      options:
+        - Release build
+        - Dev build
+        - Packaged locally
+    validations:
+      required: true
+
+  - type: dropdown
+    id: product_area
+    attributes:
+      label: Product area
+      description: Where did the issue happen?
+      options:
+        - Local agent session
+        - SSH remote session
+        - Group chat
+        - Auto Run
+        - Symphony
+        - Desktop UI / shell
+        - Other / not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: agent_provider
+    attributes:
+      label: Agent/provider involved
+      description: Strongly encouraged when the bug involves an agent workflow.
+      options:
+        - Claude Code
+        - Codex
+        - OpenCode
+        - Factory Droid
+        - Terminal
+        - Multiple
+        - Not sure / not applicable
+
+  - type: dropdown
+    id: ssh_remote_enabled
+    attributes:
+      label: Was SSH remote execution enabled?
+      options:
+        - 'Yes'
+        - 'No'
+        - Not sure / not applicable
+
+  - type: dropdown
+    id: reproducibility
+    attributes:
+      label: Reproducibility
+      options:
+        - Always
+        - Sometimes / intermittent
+        - Happened once
+        - Not sure
+
+  - type: textarea
+    id: steps_to_reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Use a numbered list when possible.
+      placeholder: |
+        1. Open Maestro
+        2. Click Feedback
+        3. Attach a screenshot
+        4. Click Send Feedback
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected_behavior
+    attributes:
+      label: Expected behavior
+      placeholder: The issue should be created successfully and the modal should close.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual_behavior
+    attributes:
+      label: Actual behavior
+      placeholder: The modal stays open and shows an authentication error even though gh is logged in.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs_and_context
+    attributes:
+      label: Logs, screenshots, or additional context
+      description: Paste logs, drag in screenshots, or include links to recordings if available.
+      placeholder: Include stack traces, screenshots, session context, or repo/worktree details that help us triage.
+
+  - type: textarea
+    id: advanced_environment_details
+    attributes:
+      label: Advanced environment details
+      description: Optional details that are sometimes useful for harder-to-reproduce issues.
+      placeholder: |
+        Include any of these when relevant:
+        - Node / Electron version
+        - Shell used
+        - Git repo or worktree context
+        - Remote OS details if SSH is involved

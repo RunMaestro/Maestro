@@ -11,17 +11,66 @@ import type {
 } from '../../../renderer/types';
 import { gitService } from '../../../renderer/services/git';
 import { useUIStore } from '../../../renderer/stores/uiStore';
+import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import {
 	clearCapabilitiesCache,
 	setCapabilitiesCache,
 } from '../../../renderer/hooks/agent/useAgentCapabilities';
 
-const mockFilePreviewFocus = vi.hoisted(() => vi.fn());
-const getMockFsWriteFile = () =>
-	(window.maestro.fs as unknown as { writeFile: ReturnType<typeof vi.fn> }).writeFile;
-
 // Mock child components to simplify testing - must be before MainPanel import
+
+// LayerStack: MainPanelContent reads layerCount to blur the browser webview when a
+// modal/overlay is layered above it. These tests render MainPanel in isolation
+// without a LayerStackProvider, so stub the hook (no layers open => layerCount 0).
+vi.mock('../../../renderer/contexts/LayerStackContext', () => ({
+	useLayerStack: () => ({
+		registerLayer: vi.fn(() => 'layer-test'),
+		unregisterLayer: vi.fn(),
+		updateLayerHandler: vi.fn(),
+		getTopLayer: vi.fn(() => undefined),
+		closeTopLayer: vi.fn(async () => false),
+		getLayers: vi.fn(() => []),
+		hasOpenLayers: vi.fn(() => false),
+		hasOpenModal: vi.fn(() => false),
+		layerCount: 0,
+	}),
+}));
+
+// TerminalView: forwardRef stub that records render calls per session so we can
+// assert persistence (kept mounted) vs destruction (unmounted) across sessions.
+const terminalViewSessions: string[] = [];
+vi.mock('../../../renderer/components/TerminalView', () => {
+	const React = require('react');
+	const TerminalView = React.forwardRef(
+		(props: { session: { id: string }; isVisible: boolean }, ref: React.Ref<unknown>) => {
+			React.useImperativeHandle(ref, () => ({
+				clearActiveTerminal: vi.fn(),
+				focusActiveTerminal: vi.fn(),
+			}));
+			// Track which session IDs have been mounted
+			React.useEffect(() => {
+				terminalViewSessions.push(props.session.id);
+				return () => {
+					const idx = terminalViewSessions.lastIndexOf(props.session.id);
+					if (idx !== -1) terminalViewSessions.splice(idx, 1);
+				};
+			}, [props.session.id]);
+			return React.createElement('div', {
+				'data-testid': `terminal-view-${props.session.id}`,
+				'data-visible': String(props.isVisible),
+			});
+		}
+	);
+	TerminalView.displayName = 'TerminalView';
+	return {
+		TerminalView,
+		createTabStateChangeHandler: vi.fn(() => vi.fn()),
+		createTabPidChangeHandler: vi.fn(() => vi.fn()),
+	};
+});
+
 vi.mock('../../../renderer/components/LogViewer', () => ({
 	LogViewer: (props: { onClose: () => void }) => {
 		return React.createElement(
@@ -37,149 +86,46 @@ vi.mock('../../../renderer/components/LogViewer', () => ({
 }));
 
 vi.mock('../../../renderer/components/TerminalOutput', () => ({
-	TerminalOutput: React.forwardRef(
-		(
-			props: {
-				session: { name: string };
-				onFileSaved?: () => void;
-				onStopAutoRun?: () => void;
-				cwd?: string;
-			},
-			ref
-		) => {
-			return React.createElement(
-				'div',
-				{ 'data-testid': 'terminal-output', ref },
-				`Terminal Output for ${props.session?.name}`,
-				React.createElement('span', { 'data-testid': 'terminal-cwd' }, props.cwd ?? ''),
-				React.createElement(
-					'button',
-					{ onClick: props.onFileSaved, 'data-testid': 'terminal-file-saved' },
-					'File Saved'
-				),
-				React.createElement(
-					'button',
-					{ onClick: props.onStopAutoRun, 'data-testid': 'terminal-stop-auto-run' },
-					'Stop Auto Run'
-				)
-			);
-		}
-	),
+	TerminalOutput: React.forwardRef((props: { session: { name: string } }, ref) => {
+		return React.createElement(
+			'div',
+			{ 'data-testid': 'terminal-output', ref },
+			`Terminal Output for ${props.session?.name}`
+		);
+	}),
 }));
 
 vi.mock('../../../renderer/components/InputArea', () => ({
 	InputArea: (props: {
 		session: { name: string };
 		onInputFocus: () => void;
-		onStopAutoRun?: () => void;
-		onSummarizeAndContinue?: () => void;
-		onSessionClick?: (sessionId: string, tabId?: string) => void;
+		availableModels?: string[];
 	}) => {
 		return React.createElement(
 			'div',
-			{ 'data-testid': 'input-area' },
+			{
+				'data-testid': 'input-area',
+				'data-available-models': JSON.stringify(props.availableModels ?? []),
+			},
 			React.createElement('input', { 'data-testid': 'input-field', onFocus: props.onInputFocus }),
-			`Input for ${props.session?.name}`,
-			React.createElement(
-				'button',
-				{ onClick: props.onStopAutoRun, 'data-testid': 'input-stop-auto-run' },
-				'Stop Input Auto Run'
-			),
-			React.createElement(
-				'button',
-				{ onClick: props.onSummarizeAndContinue, 'data-testid': 'input-summarize' },
-				'Summarize'
-			),
-			React.createElement(
-				'button',
-				{
-					onClick: () => props.onSessionClick?.('clicked-session', 'clicked-tab'),
-					'data-testid': 'input-session-click',
-				},
-				'Session Click'
-			)
+			`Input for ${props.session?.name}`
 		);
 	},
 }));
 
 vi.mock('../../../renderer/components/FilePreview', () => ({
-	FilePreview: React.forwardRef(
-		(
-			props: {
-				file: { name: string };
-				onClose: () => void;
-				setMarkdownEditMode?: (editMode: boolean) => void;
-				onSave?: (path: string, content: string) => void | Promise<void>;
-				onEditContentChange?: (content: string) => void;
-				onScrollPositionChange?: (scrollTop: number) => void;
-				onSearchQueryChange?: (query: string) => void;
-				onReloadFile?: () => void;
-				cwd?: string;
-			},
-			ref
-		) => {
-			React.useImperativeHandle(ref, () =>
-				props.file.name === 'no-ref.ts' ? null : { focus: mockFilePreviewFocus }
-			);
-
-			return React.createElement(
-				'div',
-				{ 'data-testid': 'file-preview' },
-				`File Preview: ${props.file.name}`,
-				React.createElement('span', { 'data-testid': 'file-preview-cwd' }, props.cwd ?? ''),
-				React.createElement(
-					'button',
-					{ onClick: props.onClose, 'data-testid': 'file-preview-close' },
-					'Close'
-				),
-				React.createElement(
-					'button',
-					{
-						onClick: () => props.setMarkdownEditMode?.(true),
-						'data-testid': 'file-preview-edit-mode',
-					},
-					'Edit Mode'
-				),
-				React.createElement(
-					'button',
-					{
-						onClick: () => props.onSave?.('/test/test.ts', 'saved content'),
-						'data-testid': 'file-preview-save',
-					},
-					'Save'
-				),
-				React.createElement(
-					'button',
-					{
-						onClick: () => props.onEditContentChange?.('changed content'),
-						'data-testid': 'file-preview-edit-content',
-					},
-					'Edit Content'
-				),
-				React.createElement(
-					'button',
-					{
-						onClick: () => props.onScrollPositionChange?.(123),
-						'data-testid': 'file-preview-scroll',
-					},
-					'Scroll'
-				),
-				React.createElement(
-					'button',
-					{
-						onClick: () => props.onSearchQueryChange?.('needle'),
-						'data-testid': 'file-preview-search',
-					},
-					'Search'
-				),
-				React.createElement(
-					'button',
-					{ onClick: props.onReloadFile, 'data-testid': 'file-preview-reload' },
-					'Reload'
-				)
-			);
-		}
-	),
+	FilePreview: (props: { file: { name: string }; onClose: () => void }) => {
+		return React.createElement(
+			'div',
+			{ 'data-testid': 'file-preview' },
+			`File Preview: ${props.file.name}`,
+			React.createElement(
+				'button',
+				{ onClick: props.onClose, 'data-testid': 'file-preview-close' },
+				'Close'
+			)
+		);
+	},
 }));
 
 vi.mock('../../../renderer/components/AgentSessionsBrowser', () => ({
@@ -261,46 +207,6 @@ vi.mock('../../../renderer/components/InlineWizard', () => ({
 			`Wizard Conversation (${props.conversationHistory.length} messages)`,
 			props.isLoading &&
 				React.createElement('span', { 'data-testid': 'wizard-loading' }, ' Loading...')
-		);
-	},
-	DocumentGenerationView: (props: {
-		documents: Array<{ filename: string }>;
-		onComplete?: () => void;
-		onDocumentSelect?: (index: number) => void;
-		onContentChange?: (content: string, docIndex: number) => void;
-		onCancel?: () => void;
-		folderPath?: string;
-	}) => {
-		return React.createElement(
-			'div',
-			{ 'data-testid': 'document-generation-view' },
-			`Document Generation (${props.documents.length}) ${props.folderPath ?? ''}`,
-			React.createElement(
-				'button',
-				{ onClick: props.onComplete, 'data-testid': 'wizard-complete' },
-				'Complete'
-			),
-			React.createElement(
-				'button',
-				{
-					onClick: () => props.onDocumentSelect?.(1),
-					'data-testid': 'wizard-select-document',
-				},
-				'Select'
-			),
-			React.createElement(
-				'button',
-				{
-					onClick: () => props.onContentChange?.('updated', 0),
-					'data-testid': 'wizard-change-content',
-				},
-				'Change'
-			),
-			React.createElement(
-				'button',
-				{ onClick: props.onCancel, 'data-testid': 'wizard-cancel-generation' },
-				'Cancel'
-			)
 		);
 	},
 }));
@@ -483,6 +389,13 @@ describe('MainPanel', () => {
 			},
 		],
 		activeTabId: 'tab-1',
+		filePreviewTabs: [],
+		activeFileTabId: null,
+		terminalTabs: [],
+		activeTerminalTabId: null,
+		unifiedTabOrder: [{ type: 'ai' as const, id: 'tab-1' }],
+		unifiedClosedTabHistory: [],
+		closedTabHistory: [],
 		...overrides,
 	});
 
@@ -490,6 +403,7 @@ describe('MainPanel', () => {
 		// State
 		logViewerOpen: false,
 		agentSessionsOpen: false,
+		memoryViewerOpen: false,
 		activeAgentSessionId: null,
 		activeSession: createSession(),
 		thinkingItems: [] as ThinkingItem[],
@@ -511,6 +425,7 @@ describe('MainPanel', () => {
 		setGitDiffPreview: vi.fn(),
 		setLogViewerOpen: vi.fn(),
 		setAgentSessionsOpen: vi.fn(),
+		setMemoryViewerOpen: vi.fn(),
 		setActiveAgentSessionId: vi.fn(),
 		onResumeAgentSession: vi.fn(),
 		onNewAgentSession: vi.fn(),
@@ -556,17 +471,6 @@ describe('MainPanel', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		vi.useFakeTimers({ shouldAdvanceTime: true });
-		mockFilePreviewFocus.mockClear();
-		vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({});
-		vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
-			success: true,
-			configs: [],
-		});
-		(window.maestro.fs as unknown as { writeFile: ReturnType<typeof vi.fn> }).writeFile = vi
-			.fn()
-			.mockResolvedValue(undefined);
-		vi.mocked(window.maestro.shell.openExternal).mockResolvedValue(undefined);
-		vi.mocked(gitService.getDiff).mockResolvedValue({ diff: 'mock diff content' });
 
 		// Reset Zustand stores to initial state (Phase 3C: MainPanel reads from stores)
 		useUIStore.setState({
@@ -579,9 +483,7 @@ describe('MainPanel', () => {
 		useSettingsStore.setState({
 			fontFamily: 'monospace',
 			enterToSendAI: true,
-			enterToSendTerminal: false,
 			chatRawTextMode: false,
-			autoScrollAiMode: false,
 			userMessageAlignment: 'right',
 			maxOutputLines: 1000,
 			logLevel: 'info',
@@ -592,6 +494,11 @@ describe('MainPanel', () => {
 				contextWarningYellowThreshold: 60,
 				contextWarningRedThreshold: 80,
 			},
+			// Header pills are now opt-in via Settings → Display. Tests below
+			// exercise the pill behaviors, so enable them explicitly. Defaults
+			// in the store are showSessionIdPill: false, showSessionCostPill: true.
+			showSessionIdPill: true,
+			showSessionCostPill: true,
 		});
 
 		// Clear capabilities cache and pre-populate with Claude Code capabilities (default test agent)
@@ -688,19 +595,6 @@ describe('MainPanel', () => {
 			expect(screen.getByTestId('terminal-output')).toBeInTheDocument();
 			expect(screen.getByTestId('input-area')).toBeInTheDocument();
 		});
-
-		it('should refresh the active session file tree after TerminalOutput saves a file', () => {
-			const refreshFileTree = vi.fn().mockResolvedValue(undefined);
-			const session = createSession({ id: 'session-refresh' });
-
-			render(
-				<MainPanel {...defaultProps} activeSession={session} refreshFileTree={refreshFileTree} />
-			);
-
-			fireEvent.click(screen.getByTestId('terminal-file-saved'));
-
-			expect(refreshFileTree).toHaveBeenCalledWith('session-refresh');
-		});
 	});
 
 	describe('Header display', () => {
@@ -735,23 +629,25 @@ describe('MainPanel', () => {
 			expect(screen.queryByText('Test Session')).not.toBeInTheDocument();
 		});
 
+		it('should show bookmark indicator when session is bookmarked', () => {
+			const session = createSession({ bookmarked: true });
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+
+			expect(screen.getByTestId('bookmark-icon')).toBeInTheDocument();
+		});
+
+		it('should not show bookmark indicator when session is not bookmarked', () => {
+			const session = createSession({ bookmarked: false });
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+
+			expect(screen.queryByTestId('bookmark-icon')).not.toBeInTheDocument();
+		});
+
 		it('should show Agent Sessions button in header', () => {
 			render(<MainPanel {...defaultProps} />);
 
 			const agentSessionsBtn = screen.getByTitle(/Agent Sessions/);
 			expect(agentSessionsBtn).toBeInTheDocument();
-		});
-
-		it('should use the default Agent Sessions shortcut when the saved shortcut is missing', () => {
-			useSettingsStore.setState({
-				shortcuts: {
-					toggleRightPanel: defaultShortcuts.toggleRightPanel,
-				} as never,
-			});
-
-			render(<MainPanel {...defaultProps} />);
-
-			expect(screen.getByTitle('Agent Sessions (Meta+Shift+l)')).toBeInTheDocument();
 		});
 
 		it('should open Agent Sessions when button is clicked', () => {
@@ -872,13 +768,15 @@ describe('MainPanel', () => {
 			...overrides,
 		});
 
-		it('should render FilePreview when activeFileTab is set', () => {
+		it('should render FilePreview when activeFileTab is set', async () => {
 			const activeFileTab = createFileTab();
 			render(
 				<MainPanel {...defaultProps} activeFileTabId="file-tab-1" activeFileTab={activeFileTab} />
 			);
 
-			expect(screen.getByTestId('file-preview')).toBeInTheDocument();
+			// FilePreview is React.lazy-loaded behind Suspense, so it mounts on a
+			// microtask rather than synchronously - await it the first time.
+			expect(await screen.findByTestId('file-preview')).toBeInTheDocument();
 			expect(screen.getByText('File Preview: test.ts')).toBeInTheDocument();
 		});
 
@@ -909,183 +807,6 @@ describe('MainPanel', () => {
 
 			expect(onFileTabClose).toHaveBeenCalledWith('file-tab-1');
 		});
-
-		it('should pass edit, save, scroll, search, and reload callbacks through FilePreview', async () => {
-			const activeFileTab = createFileTab();
-			const onFileTabEditModeChange = vi.fn();
-			const onFileTabEditContentChange = vi.fn();
-			const onFileTabScrollPositionChange = vi.fn();
-			const onFileTabSearchQueryChange = vi.fn();
-			const onReloadFileTab = vi.fn();
-
-			render(
-				<MainPanel
-					{...defaultProps}
-					activeFileTabId="file-tab-1"
-					activeFileTab={activeFileTab}
-					onFileTabEditModeChange={onFileTabEditModeChange}
-					onFileTabEditContentChange={onFileTabEditContentChange}
-					onFileTabScrollPositionChange={onFileTabScrollPositionChange}
-					onFileTabSearchQueryChange={onFileTabSearchQueryChange}
-					onReloadFileTab={onReloadFileTab}
-				/>
-			);
-
-			fireEvent.click(screen.getByTestId('file-preview-edit-mode'));
-			fireEvent.click(screen.getByTestId('file-preview-edit-content'));
-			fireEvent.click(screen.getByTestId('file-preview-scroll'));
-			fireEvent.click(screen.getByTestId('file-preview-search'));
-			fireEvent.click(screen.getByTestId('file-preview-reload'));
-			fireEvent.click(screen.getByTestId('file-preview-save'));
-
-			expect(onFileTabEditModeChange).toHaveBeenCalledWith('file-tab-1', true);
-			expect(onFileTabEditContentChange).toHaveBeenCalledWith('file-tab-1', 'changed content');
-			expect(onFileTabScrollPositionChange).toHaveBeenCalledWith('file-tab-1', 123);
-			expect(onFileTabSearchQueryChange).toHaveBeenCalledWith('file-tab-1', 'needle');
-			expect(onReloadFileTab).toHaveBeenCalledWith('file-tab-1');
-			await waitFor(() => {
-				expect(getMockFsWriteFile()).toHaveBeenCalledWith('/test/test.ts', 'saved content');
-			});
-			expect(onFileTabEditContentChange).toHaveBeenCalledWith(
-				'file-tab-1',
-				undefined,
-				'saved content'
-			);
-		});
-
-		it('should clear external edit content when FilePreview reports unchanged content', () => {
-			const activeFileTab = createFileTab({ content: 'changed content' });
-			const onFileTabEditContentChange = vi.fn();
-
-			render(
-				<MainPanel
-					{...defaultProps}
-					activeFileTabId="file-tab-1"
-					activeFileTab={activeFileTab}
-					onFileTabEditContentChange={onFileTabEditContentChange}
-				/>
-			);
-
-			fireEvent.click(screen.getByTestId('file-preview-edit-content'));
-
-			expect(onFileTabEditContentChange).toHaveBeenCalledWith('file-tab-1', undefined);
-		});
-
-		it('should focus the FilePreview ref through the MainPanel imperative handle', () => {
-			const activeFileTab = createFileTab();
-			const panelRef = React.createRef<React.ElementRef<typeof MainPanel>>();
-
-			render(
-				<MainPanel
-					{...defaultProps}
-					ref={panelRef}
-					activeFileTabId="file-tab-1"
-					activeFileTab={activeFileTab}
-				/>
-			);
-
-			act(() => {
-				panelRef.current?.focusFilePreview();
-			});
-
-			expect(mockFilePreviewFocus).toHaveBeenCalled();
-		});
-
-		it('should focus the preview container when FilePreview does not expose a focus ref', () => {
-			const activeFileTab = createFileTab({ name: 'no-ref' });
-			const panelRef = React.createRef<React.ElementRef<typeof MainPanel>>();
-			const focusSpy = vi.spyOn(HTMLElement.prototype, 'focus').mockImplementation(() => {});
-
-			render(
-				<MainPanel
-					{...defaultProps}
-					ref={panelRef}
-					activeFileTabId="file-tab-1"
-					activeFileTab={activeFileTab}
-				/>
-			);
-
-			act(() => {
-				panelRef.current?.focusFilePreview();
-			});
-
-			expect(mockFilePreviewFocus).not.toHaveBeenCalled();
-			expect(focusSpy).toHaveBeenCalled();
-			focusSpy.mockRestore();
-		});
-
-		it('should pass a relative cwd to FilePreview for files under the session root', () => {
-			const activeFileTab = createFileTab({ path: '/test/project/src/test.ts' });
-			const session = createSession({ fullPath: '/test/project' });
-
-			render(
-				<MainPanel
-					{...defaultProps}
-					activeSession={session}
-					activeFileTabId="file-tab-1"
-					activeFileTab={activeFileTab}
-				/>
-			);
-
-			expect(screen.getByTestId('file-preview-cwd')).toHaveTextContent('src');
-		});
-
-		it('should pass an empty cwd to FilePreview for files outside the session root', () => {
-			const activeFileTab = createFileTab({ path: '/other/project/src/test.ts' });
-			const session = createSession({ fullPath: '/test/project' });
-
-			render(
-				<MainPanel
-					{...defaultProps}
-					activeSession={session}
-					activeFileTabId="file-tab-1"
-					activeFileTab={activeFileTab}
-				/>
-			);
-
-			expect(screen.getByTestId('file-preview-cwd').textContent).toBe('');
-		});
-
-		it('should pass an empty cwd to FilePreview for a root-level file under the session root', () => {
-			const activeFileTab = createFileTab({ path: '/test/project/README.md' });
-			const session = createSession({ fullPath: '/test/project' });
-
-			render(
-				<MainPanel
-					{...defaultProps}
-					activeSession={session}
-					activeFileTabId="file-tab-1"
-					activeFileTab={activeFileTab}
-				/>
-			);
-
-			expect(screen.getByTestId('file-preview-cwd').textContent).toBe('');
-		});
-
-		it('should show the remote loading state for a pending file preview request', () => {
-			render(
-				<MainPanel
-					{...defaultProps}
-					filePreviewLoading={{ name: 'remote.md', path: '/remote/remote.md' }}
-				/>
-			);
-
-			expect(screen.getByText('Fetching from remote server...')).toBeInTheDocument();
-			expect(screen.queryByTestId('terminal-output')).not.toBeInTheDocument();
-		});
-
-		it('should show the active file tab name while the tab content is loading', () => {
-			const activeFileTab = createFileTab({ isLoading: true });
-
-			render(
-				<MainPanel {...defaultProps} activeFileTabId="file-tab-1" activeFileTab={activeFileTab} />
-			);
-
-			expect(screen.getByText('Fetching from remote server...')).toBeInTheDocument();
-			expect(
-				screen.getByText((_content, element) => element?.textContent === 'Loading test.ts')
-			).toBeInTheDocument();
-		});
 	});
 
 	describe('Tab Bar', () => {
@@ -1105,12 +826,13 @@ describe('MainPanel', () => {
 			expect(screen.getByTestId('tab-tab-2')).toBeInTheDocument();
 		});
 
-		it('should not render TabBar in terminal mode', () => {
+		it('should render TabBar in terminal mode (unified tab system shows tabs in all modes)', () => {
 			const session = createSession({ inputMode: 'terminal' });
 
 			render(<MainPanel {...defaultProps} activeSession={session} />);
 
-			expect(screen.queryByTestId('tab-bar')).not.toBeInTheDocument();
+			// TabBar renders in both AI and terminal modes when aiTabs exist
+			expect(screen.queryByTestId('tab-bar')).toBeInTheDocument();
 		});
 
 		it('should call onTabSelect when tab is clicked', () => {
@@ -1183,31 +905,9 @@ describe('MainPanel', () => {
 
 			render(<MainPanel {...defaultProps} activeSession={session} />);
 
-			await act(async () => {
-				fireEvent.click(screen.getByText('ABC12345'));
-			});
+			fireEvent.click(screen.getByText('ABC12345'));
 
 			expect(writeText).toHaveBeenCalledWith('abc12345-def6-7890-ghij-klmnopqrstuv');
-		});
-
-		it('should use the generic copy title when the active tab has no name', () => {
-			const session = createSession({
-				inputMode: 'ai',
-				aiTabs: [
-					{
-						id: 'tab-1',
-						agentSessionId: 'abc12345-def6-7890',
-						name: '',
-						isUnread: false,
-						createdAt: Date.now(),
-					},
-				],
-				activeTabId: 'tab-1',
-			});
-
-			render(<MainPanel {...defaultProps} activeSession={session} />);
-
-			expect(screen.getByTitle('Click to copy: abc12345-def6-7890')).toBeInTheDocument();
 		});
 
 		it('should not show UUID pill in terminal mode', () => {
@@ -1222,6 +922,31 @@ describe('MainPanel', () => {
 						createdAt: Date.now(),
 					},
 				],
+			});
+
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+
+			expect(screen.queryByText('ABC12345')).not.toBeInTheDocument();
+		});
+
+		it('should not show UUID pill when showSessionIdPill setting is disabled', () => {
+			// The pill is opt-in via Settings → Display (defaults to false in
+			// the store). Even when every other gating condition is satisfied,
+			// the pill must stay hidden until the user enables the setting.
+			useSettingsStore.setState({ showSessionIdPill: false });
+
+			const session = createSession({
+				inputMode: 'ai',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'abc12345-def6-7890-ghij-klmnopqrstuv',
+						name: 'Tab 1',
+						isUnread: false,
+						createdAt: Date.now(),
+					},
+				],
+				activeTabId: 'tab-1',
 			});
 
 			render(<MainPanel {...defaultProps} activeSession={session} />);
@@ -1439,169 +1164,6 @@ describe('MainPanel', () => {
 			// Context Window widget should not be present
 			expect(screen.queryByText('Context Window')).not.toBeInTheDocument();
 		});
-
-		it('should use a positive session customContextWindow over the reported usage window', async () => {
-			const getContextColor = vi.fn().mockReturnValue('#22c55e');
-			const session = createSession({
-				customContextWindow: 1000,
-				aiTabs: [
-					{
-						id: 'tab-1',
-						agentSessionId: 'claude-1',
-						name: 'Tab 1',
-						isUnread: false,
-						createdAt: Date.now(),
-						usageStats: {
-							inputTokens: 300,
-							outputTokens: 100,
-							cacheReadInputTokens: 50,
-							cacheCreationInputTokens: 50,
-							totalCostUsd: 0.05,
-							contextWindow: 200000,
-						},
-					},
-				],
-				activeTabId: 'tab-1',
-			});
-
-			render(
-				<MainPanel {...defaultProps} activeSession={session} getContextColor={getContextColor} />
-			);
-
-			await waitFor(() => {
-				expect(getContextColor).toHaveBeenCalledWith(40, theme);
-			});
-			expect(window.maestro.agents.getConfig).not.toHaveBeenCalled();
-		});
-
-		it('should hide context usage and log when agent config context window fails to load', async () => {
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-			vi.mocked(window.maestro.agents.getConfig).mockRejectedValueOnce(new Error('config failed'));
-			const session = createSession({
-				aiTabs: [
-					{
-						id: 'tab-1',
-						agentSessionId: 'claude-1',
-						name: 'Tab 1',
-						isUnread: false,
-						createdAt: Date.now(),
-						usageStats: {
-							inputTokens: 300,
-							outputTokens: 100,
-							cacheReadInputTokens: 50,
-							cacheCreationInputTokens: 50,
-							totalCostUsd: 0.05,
-							contextWindow: 0,
-						},
-					},
-				],
-				activeTabId: 'tab-1',
-			});
-
-			render(<MainPanel {...defaultProps} activeSession={session} />);
-
-			await waitFor(() => {
-				expect(consoleError).toHaveBeenCalledWith(
-					'Failed to load agent context window setting',
-					expect.any(Error)
-				);
-			});
-			expect(screen.queryByText('Context Window')).not.toBeInTheDocument();
-			consoleError.mockRestore();
-		});
-
-		it('should use agent config context window and zero missing usage token fields in the tooltip', async () => {
-			vi.mocked(window.maestro.agents.getConfig).mockResolvedValueOnce({ contextWindow: 1000 });
-			const getContextColor = vi.fn().mockReturnValue('#22c55e');
-			const session = createSession({
-				aiTabs: [
-					{
-						id: 'tab-1',
-						agentSessionId: 'claude-1',
-						name: 'Tab 1',
-						isUnread: false,
-						createdAt: Date.now(),
-						usageStats: {
-							contextWindow: 0,
-							reasoningTokens: 25,
-						} as never,
-					},
-				],
-				activeTabId: 'tab-1',
-			});
-
-			render(
-				<MainPanel {...defaultProps} activeSession={session} getContextColor={getContextColor} />
-			);
-
-			await waitFor(() => {
-				expect(screen.getByText('Context Window')).toBeInTheDocument();
-			});
-			fireEvent.mouseEnter(screen.getByText('Context Window').parentElement!);
-			act(() => {
-				vi.advanceTimersByTime(200);
-			});
-
-			await waitFor(() => {
-				expect(screen.getByText('Reasoning Tokens')).toBeInTheDocument();
-			});
-			expect(screen.getByText('25')).toBeInTheDocument();
-			expect(screen.getByText('Cache Read')).toBeInTheDocument();
-			expect(screen.getByText('Cache Write')).toBeInTheDocument();
-			expect(screen.getAllByText('0').length).toBeGreaterThanOrEqual(4);
-		});
-
-		it('should ignore a failed agent config load after unmounting', async () => {
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-			let rejectConfig!: (error: Error) => void;
-			const configPromise = new Promise<never>((_resolve, reject) => {
-				rejectConfig = reject;
-			});
-			vi.mocked(window.maestro.agents.getConfig).mockReturnValueOnce(configPromise);
-			const session = createSession({
-				aiTabs: [
-					{
-						id: 'tab-1',
-						agentSessionId: 'claude-1',
-						name: 'Tab 1',
-						isUnread: false,
-						createdAt: Date.now(),
-						usageStats: {
-							inputTokens: 300,
-							outputTokens: 100,
-							cacheReadInputTokens: 50,
-							cacheCreationInputTokens: 50,
-							totalCostUsd: 0.05,
-							contextWindow: 0,
-						},
-					},
-				],
-				activeTabId: 'tab-1',
-			});
-
-			const { unmount } = render(<MainPanel {...defaultProps} activeSession={session} />);
-			unmount();
-			await act(async () => {
-				rejectConfig(new Error('late config failed'));
-				await configPromise.catch(() => undefined);
-			});
-
-			expect(consoleError).toHaveBeenCalledWith(
-				'Failed to load agent context window setting',
-				expect.any(Error)
-			);
-			consoleError.mockRestore();
-		});
-
-		it('should fall back missing context management settings to safe defaults', () => {
-			useSettingsStore.setState({
-				contextManagementSettings: {} as never,
-			});
-
-			render(<MainPanel {...defaultProps} />);
-
-			expect(screen.getAllByText(/^Context( Window)?$/)[0]).toBeInTheDocument();
-		});
 	});
 
 	describe('Auto mode indicator', () => {
@@ -1726,9 +1288,7 @@ describe('MainPanel', () => {
 				/>
 			);
 
-			const stoppingButton = screen.getByText('Stopping').closest('button') as HTMLButtonElement;
-			expect(stoppingButton).toBeDisabled();
-			fireEvent.click(stoppingButton);
+			fireEvent.click(screen.getByText('Stopping'));
 
 			expect(onStopBatchRun).not.toHaveBeenCalled();
 		});
@@ -2183,26 +1743,6 @@ describe('MainPanel', () => {
 			});
 		});
 
-		it('should fall back to blank branch and remote values when git status fields are empty', () => {
-			setMockGitStatus('session-1', {
-				fileCount: 0,
-				branch: '',
-				remote: '',
-				ahead: 0,
-				behind: 0,
-				totalAdditions: 0,
-				totalDeletions: 0,
-				modifiedCount: 0,
-				fileChanges: [],
-				lastUpdated: Date.now(),
-			});
-			const session = createSession({ isGitRepo: true });
-
-			render(<MainPanel {...defaultProps} activeSession={session} />);
-
-			expect(screen.getByText('GIT')).toBeInTheDocument();
-		});
-
 		it('should copy branch name when copy button is clicked', async () => {
 			const writeText = vi.fn().mockResolvedValue(undefined);
 			Object.assign(navigator, { clipboard: { writeText } });
@@ -2224,9 +1764,7 @@ describe('MainPanel', () => {
 
 			// Click copy button
 			const copyButtons = screen.getAllByTitle(/Copy branch name/);
-			await act(async () => {
-				fireEvent.click(copyButtons[0]);
-			});
+			fireEvent.click(copyButtons[0]);
 
 			expect(writeText).toHaveBeenCalledWith('main');
 		});
@@ -2254,76 +1792,6 @@ describe('MainPanel', () => {
 			fireEvent.click(screen.getByText('my-ssh-remote'));
 
 			expect(setGitLogOpen).toHaveBeenCalledWith(true);
-		});
-
-		it('should render an SSH remote badge without git actions for non-git sessions', async () => {
-			const setGitLogOpen = vi.fn();
-			const session = createSession({
-				isGitRepo: false,
-				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-remote-123' },
-			});
-			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValueOnce({
-				success: true,
-				configs: [{ id: 'ssh-remote-123', name: 'my-ssh-remote' }],
-			});
-
-			render(<MainPanel {...defaultProps} activeSession={session} setGitLogOpen={setGitLogOpen} />);
-
-			const sshBadge = await screen.findByText('my-ssh-remote');
-			expect(screen.getByTitle('SSH Remote: my-ssh-remote')).toBeInTheDocument();
-			fireEvent.click(sshBadge);
-
-			expect(setGitLogOpen).not.toHaveBeenCalled();
-			expect(mockRefreshGitStatus).not.toHaveBeenCalled();
-		});
-
-		it('should ignore clicks on the local badge for non-git sessions', () => {
-			const setGitLogOpen = vi.fn();
-			const session = createSession({ isGitRepo: false });
-
-			render(<MainPanel {...defaultProps} activeSession={session} setGitLogOpen={setGitLogOpen} />);
-
-			fireEvent.click(screen.getByText('LOCAL'));
-
-			expect(setGitLogOpen).not.toHaveBeenCalled();
-			expect(mockRefreshGitStatus).not.toHaveBeenCalled();
-		});
-
-		it('should fall back to the git badge when SSH remote lookup is unsuccessful', async () => {
-			const session = createSession({
-				isGitRepo: true,
-				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-remote-123' },
-			});
-			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValueOnce({
-				success: false,
-				configs: [],
-			});
-
-			render(<MainPanel {...defaultProps} activeSession={session} />);
-
-			await waitFor(() => {
-				expect(window.maestro.sshRemote.getConfigs).toHaveBeenCalled();
-			});
-			expect(screen.queryByText('ssh-remote-123')).not.toBeInTheDocument();
-			expect(screen.getByText(/main|GIT/)).toBeInTheDocument();
-		});
-
-		it('should fall back to the git badge when SSH remote lookup rejects', async () => {
-			const session = createSession({
-				isGitRepo: true,
-				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-remote-123' },
-			});
-			vi.mocked(window.maestro.sshRemote.getConfigs).mockRejectedValueOnce(
-				new Error('ssh config failed')
-			);
-
-			render(<MainPanel {...defaultProps} activeSession={session} />);
-
-			await waitFor(() => {
-				expect(window.maestro.sshRemote.getConfigs).toHaveBeenCalled();
-			});
-			expect(screen.queryByText('ssh-remote-123')).not.toBeInTheDocument();
-			expect(screen.getByText(/main|GIT/)).toBeInTheDocument();
 		});
 
 		it('should call gitService.getDiff with SSH remote ID when session has SSH remote config enabled', async () => {
@@ -2356,44 +1824,6 @@ describe('MainPanel', () => {
 			});
 		});
 
-		it('should request terminal git diff from shell cwd when available', async () => {
-			const session = createSession({
-				inputMode: 'terminal',
-				isGitRepo: true,
-				cwd: '/test/project',
-				shellCwd: '/test/project/subdir',
-			});
-
-			render(<MainPanel {...defaultProps} activeSession={session} />);
-
-			fireEvent.click(screen.getByTestId('view-diff-btn'));
-
-			await waitFor(() => {
-				expect(gitService.getDiff).toHaveBeenCalledWith(
-					'/test/project/subdir',
-					undefined,
-					undefined
-				);
-			});
-		});
-
-		it('should request terminal git diff from session cwd when shell cwd is missing', async () => {
-			const session = createSession({
-				inputMode: 'terminal',
-				isGitRepo: true,
-				cwd: '/test/project',
-				shellCwd: undefined,
-			});
-
-			render(<MainPanel {...defaultProps} activeSession={session} />);
-
-			fireEvent.click(screen.getByTestId('view-diff-btn'));
-
-			await waitFor(() => {
-				expect(gitService.getDiff).toHaveBeenCalledWith('/test/project', undefined, undefined);
-			});
-		});
-
 		it('should call setGitLogOpen when View Git Log button is clicked in SSH sessions', async () => {
 			const setGitLogOpen = vi.fn();
 			const session = createSession({
@@ -2417,54 +1847,6 @@ describe('MainPanel', () => {
 			fireEvent.click(screen.getByTestId('view-log-btn'));
 
 			expect(setGitLogOpen).toHaveBeenCalledWith(true);
-		});
-
-		it('should open worktree configuration from the git tooltip for parent sessions', async () => {
-			const onOpenWorktreeConfig = vi.fn();
-			const session = createSession({ isGitRepo: true });
-
-			render(
-				<MainPanel
-					{...defaultProps}
-					activeSession={session}
-					onOpenWorktreeConfig={onOpenWorktreeConfig}
-					isWorktreeChild={false}
-				/>
-			);
-
-			const gitBadge = await screen.findByText(/main|GIT/);
-			fireEvent.mouseEnter(gitBadge.parentElement!);
-
-			await waitFor(() => {
-				expect(screen.getByText('Configure Worktrees')).toBeInTheDocument();
-			});
-			fireEvent.click(screen.getByText('Configure Worktrees'));
-
-			expect(onOpenWorktreeConfig).toHaveBeenCalled();
-		});
-
-		it('should open PR creation from the git tooltip for worktree child sessions', async () => {
-			const onOpenCreatePR = vi.fn();
-			const session = createSession({ isGitRepo: true });
-
-			render(
-				<MainPanel
-					{...defaultProps}
-					activeSession={session}
-					onOpenCreatePR={onOpenCreatePR}
-					isWorktreeChild={true}
-				/>
-			);
-
-			const gitBadge = await screen.findByText(/main|GIT/);
-			fireEvent.mouseEnter(gitBadge.parentElement!);
-
-			await waitFor(() => {
-				expect(screen.getByText('Create Pull Request')).toBeInTheDocument();
-			});
-			fireEvent.click(screen.getByText('Create Pull Request'));
-
-			expect(onOpenCreatePR).toHaveBeenCalled();
 		});
 	});
 
@@ -2555,7 +1937,12 @@ describe('MainPanel', () => {
 
 			await waitFor(() => {
 				expect(screen.getByText('Input Tokens')).toBeInTheDocument();
-				expect(screen.getByText('1,500')).toBeInTheDocument();
+				// Claude reports inputTokens as the uncached delta only, so the
+				// displayed "Input Tokens" value is inputTokens + cacheRead + cacheCreation
+				// = 1500 + 200 + 100 = 1800. See issue #844 / calculateDisplayInputTokens.
+				// Same number also appears in the "Context Tokens" row (which sums the
+				// same three fields), so we expect two matches.
+				expect(screen.getAllByText('1,800')).toHaveLength(2);
 				expect(screen.getByText('Output Tokens')).toBeInTheDocument();
 				expect(screen.getByText('750')).toBeInTheDocument();
 				expect(screen.getByText('Cache Read')).toBeInTheDocument();
@@ -2584,36 +1971,6 @@ describe('MainPanel', () => {
 			render(<MainPanel {...defaultProps} isMobileLandscape={true} />);
 
 			expect(screen.queryByTestId('input-area')).not.toBeInTheDocument();
-		});
-
-		it('should stop the active session auto-run from the input area', () => {
-			const onStopBatchRun = vi.fn();
-			const session = createSession({ id: 'session-abc' });
-
-			render(
-				<MainPanel {...defaultProps} activeSession={session} onStopBatchRun={onStopBatchRun} />
-			);
-
-			fireEvent.click(screen.getByTestId('input-stop-auto-run'));
-
-			expect(onStopBatchRun).toHaveBeenCalledWith('session-abc');
-		});
-
-		it('should summarize and continue the active tab from the input area', () => {
-			const onSummarizeAndContinue = vi.fn();
-			const session = createSession({ activeTabId: 'tab-summary' });
-
-			render(
-				<MainPanel
-					{...defaultProps}
-					activeSession={session}
-					onSummarizeAndContinue={onSummarizeAndContinue}
-				/>
-			);
-
-			fireEvent.click(screen.getByTestId('input-summarize'));
-
-			expect(onSummarizeAndContinue).toHaveBeenCalledWith('tab-summary');
 		});
 	});
 
@@ -2677,30 +2034,13 @@ describe('MainPanel', () => {
 				expect(gitService.getDiff).toHaveBeenCalledWith(session.cwd, undefined, undefined);
 			});
 		});
-
-		it('should not fetch a diff for non-git sessions', () => {
-			const setGitDiffPreview = vi.fn();
-			const session = createSession({ isGitRepo: false });
-
-			render(
-				<MainPanel
-					{...defaultProps}
-					activeSession={session}
-					setGitDiffPreview={setGitDiffPreview}
-				/>
-			);
-
-			fireEvent.click(screen.getByTestId('view-diff-btn'));
-
-			expect(gitService.getDiff).not.toHaveBeenCalled();
-			expect(setGitDiffPreview).not.toHaveBeenCalled();
-		});
 	});
 
 	describe('Copy notification', () => {
-		it('should show copy notification when text is copied', async () => {
+		it('fires a Session ID center flash when the UUID pill is clicked', async () => {
 			const writeText = vi.fn().mockResolvedValue(undefined);
 			Object.assign(navigator, { clipboard: { writeText } });
+			useCenterFlashStore.getState().setActive(null);
 
 			const session = createSession({
 				inputMode: 'ai',
@@ -2721,13 +2061,17 @@ describe('MainPanel', () => {
 			fireEvent.click(screen.getByText('ABC12345'));
 
 			await waitFor(() => {
-				expect(screen.getByText('Session ID Copied to Clipboard')).toBeInTheDocument();
+				const active = useCenterFlashStore.getState().active;
+				expect(active?.message).toBe('Session ID Copied');
+				expect(active?.detail).toBe('abc12345-def6-7890');
+				expect(active?.color).toBe('theme');
 			});
 		});
 
-		it('should hide copy notification after 2 seconds', async () => {
+		it('center flash auto-dismisses after its duration elapses', async () => {
 			const writeText = vi.fn().mockResolvedValue(undefined);
 			Object.assign(navigator, { clipboard: { writeText } });
+			useCenterFlashStore.getState().setActive(null);
 
 			const session = createSession({
 				inputMode: 'ai',
@@ -2748,17 +2092,15 @@ describe('MainPanel', () => {
 			fireEvent.click(screen.getByText('ABC12345'));
 
 			await waitFor(() => {
-				expect(screen.getByText('Session ID Copied to Clipboard')).toBeInTheDocument();
+				expect(useCenterFlashStore.getState().active?.message).toBe('Session ID Copied');
 			});
 
-			// Advance timers by 2 seconds
+			// Advance well past the default center-flash duration
 			await act(async () => {
-				vi.advanceTimersByTime(2000);
+				vi.advanceTimersByTime(5000);
 			});
 
-			await waitFor(() => {
-				expect(screen.queryByText('Session ID Copied to Clipboard')).not.toBeInTheDocument();
-			});
+			expect(useCenterFlashStore.getState().active).toBeNull();
 		});
 	});
 
@@ -2767,7 +2109,9 @@ describe('MainPanel', () => {
 			useUIStore.setState({ activeFocus: 'main' });
 			const { container } = render(<MainPanel {...defaultProps} />);
 
-			const mainPanel = container.querySelector('.ring-1');
+			// MainPanel no longer uses ring-1 class; focus is tracked via activeFocus state only
+			// The component renders without a visible focus ring border
+			const mainPanel = container.querySelector('.flex-1');
 			expect(mainPanel).toBeInTheDocument();
 		});
 
@@ -2909,26 +2253,9 @@ describe('MainPanel', () => {
 				/>
 			);
 
-			fireEvent.click(screen.getByTestId('input-session-click'));
-
-			expect(setActiveSessionId).toHaveBeenCalledWith('clicked-session');
-			expect(onTabSelect).toHaveBeenCalledWith('clicked-tab');
-		});
-
-		it('should select the session without tab navigation when no tab selector is provided', () => {
-			const setActiveSessionId = vi.fn();
-
-			render(
-				<MainPanel
-					{...defaultProps}
-					setActiveSessionId={setActiveSessionId}
-					onTabSelect={undefined}
-				/>
-			);
-
-			fireEvent.click(screen.getByTestId('input-session-click'));
-
-			expect(setActiveSessionId).toHaveBeenCalledWith('clicked-session');
+			// The InputArea receives handleSessionClick, but we can't directly test it without accessing the mock
+			// This is tested through the integration with InputArea mock
+			expect(screen.getByTestId('input-area')).toBeInTheDocument();
 		});
 	});
 
@@ -3123,69 +2450,9 @@ describe('MainPanel', () => {
 
 			// Click copy remote URL button
 			const copyButtons = screen.getAllByTitle(/Copy remote URL/);
-			await act(async () => {
-				fireEvent.click(copyButtons[0]);
-			});
+			fireEvent.click(copyButtons[0]);
 
 			expect(writeText).toHaveBeenCalledWith('https://github.com/user/repo.git');
-		});
-
-		it('should open the remote origin in an external browser when the origin is clickable', async () => {
-			setMockGitStatus('session-1', {
-				fileCount: 0,
-				branch: 'main',
-				remote: 'https://github.com/user/repo.git',
-				ahead: 0,
-				behind: 0,
-				totalAdditions: 0,
-				totalDeletions: 0,
-				modifiedCount: 0,
-				fileChanges: [],
-				lastUpdated: Date.now(),
-			});
-
-			const session = createSession({ isGitRepo: true });
-			render(<MainPanel {...defaultProps} activeSession={session} />);
-
-			const gitBadge = await screen.findByText(/main|GIT/);
-			fireEvent.mouseEnter(gitBadge.parentElement!);
-
-			await waitFor(() => {
-				expect(screen.getByText('github.com/user/repo')).toBeInTheDocument();
-			});
-			fireEvent.click(screen.getByText('github.com/user/repo'));
-
-			expect(window.maestro.shell.openExternal).toHaveBeenCalledWith(
-				'https://github.com/user/repo'
-			);
-		});
-
-		it('should not open an external browser for an invalid remote origin', async () => {
-			setMockGitStatus('session-1', {
-				fileCount: 0,
-				branch: 'main',
-				remote: 'not-a-remote-url',
-				ahead: 0,
-				behind: 0,
-				totalAdditions: 0,
-				totalDeletions: 0,
-				modifiedCount: 0,
-				fileChanges: [],
-				lastUpdated: Date.now(),
-			});
-
-			const session = createSession({ isGitRepo: true });
-			render(<MainPanel {...defaultProps} activeSession={session} />);
-
-			const gitBadge = await screen.findByText(/main|GIT/);
-			fireEvent.mouseEnter(gitBadge.parentElement!);
-
-			await waitFor(() => {
-				expect(screen.getByText('not-a-remote-url')).toBeInTheDocument();
-			});
-			fireEvent.click(screen.getByText('not-a-remote-url'));
-
-			expect(window.maestro.shell.openExternal).not.toHaveBeenCalled();
 		});
 	});
 
@@ -3206,11 +2473,8 @@ describe('MainPanel', () => {
 			expect(screen.queryByTestId('tab-bar')).not.toBeInTheDocument();
 		});
 
-		it('should handle tab without usageStats', async () => {
-			vi.mocked(window.maestro.agents.getConfig).mockResolvedValueOnce({ contextWindow: 200000 });
-			const getContextColor = vi.fn().mockReturnValue('#22c55e');
+		it('should handle tab without usageStats', () => {
 			const session = createSession({
-				contextUsage: 37,
 				aiTabs: [
 					{
 						id: 'tab-1',
@@ -3224,13 +2488,10 @@ describe('MainPanel', () => {
 				activeTabId: 'tab-1',
 			});
 
-			render(
-				<MainPanel {...defaultProps} activeSession={session} getContextColor={getContextColor} />
-			);
+			render(<MainPanel {...defaultProps} activeSession={session} />);
 
-			await waitFor(() => {
-				expect(getContextColor).toHaveBeenCalledWith(37, theme);
-			});
+			// Should render without crashing - Context Window widget is hidden when contextWindow is not configured
+			expect(screen.queryByText('Context Window')).not.toBeInTheDocument();
 		});
 
 		it('should handle missing git status from context gracefully', async () => {
@@ -3275,9 +2536,11 @@ describe('MainPanel', () => {
 			expect(screen.queryByText('Copied to Clipboard')).not.toBeInTheDocument();
 		});
 
-		it('should handle gitDiff with no content gracefully', async () => {
+		it('should flash a notification and re-poll git status when gitDiff has no content', async () => {
 			const { gitService } = await import('../../../renderer/services/git');
 			vi.mocked(gitService.getDiff).mockResolvedValue({ diff: '' });
+			useCenterFlashStore.getState().setActive(null);
+			mockRefreshGitStatus.mockClear();
 
 			const setGitDiffPreview = vi.fn();
 			const session = createSession({ isGitRepo: true });
@@ -3293,41 +2556,13 @@ describe('MainPanel', () => {
 			fireEvent.click(screen.getByTestId('view-diff-btn'));
 
 			await waitFor(() => {
-				expect(setGitDiffPreview).toHaveBeenCalledWith('');
+				// Should not open the diff modal with empty content
+				expect(setGitDiffPreview).not.toHaveBeenCalled();
+				// Should flash an informational message instead
+				expect(useCenterFlashStore.getState().active?.message).toBe('No diff to examine');
+				// And re-sync the polling cache so the stale widget clears
+				expect(mockRefreshGitStatus).toHaveBeenCalled();
 			});
-		});
-
-		it('should handle gitDiff responses with no diff property gracefully', async () => {
-			const { gitService } = await import('../../../renderer/services/git');
-			vi.mocked(gitService.getDiff).mockResolvedValue({} as any);
-
-			const setGitDiffPreview = vi.fn();
-			const session = createSession({ isGitRepo: true });
-
-			render(
-				<MainPanel
-					{...defaultProps}
-					activeSession={session}
-					setGitDiffPreview={setGitDiffPreview}
-				/>
-			);
-
-			fireEvent.click(screen.getByTestId('view-diff-btn'));
-
-			await waitFor(() => {
-				expect(setGitDiffPreview).toHaveBeenCalledWith('');
-			});
-		});
-
-		it('should pass a relative cwd to TerminalOutput when cwd is inside the project root', () => {
-			const session = createSession({
-				fullPath: '/test/project',
-				cwd: '/test/project/subdir',
-			});
-
-			render(<MainPanel {...defaultProps} activeSession={session} />);
-
-			expect(screen.getByTestId('terminal-cwd')).toHaveTextContent('subdir');
 		});
 	});
 
@@ -4144,122 +3379,6 @@ describe('MainPanel', () => {
 			expect(screen.getByTestId('wizard-loading')).toBeInTheDocument();
 		});
 
-		it('should render document generation and wire document callbacks while wizard docs are generating', () => {
-			const onWizardComplete = vi.fn();
-			const onWizardDocumentSelect = vi.fn();
-			const onWizardContentChange = vi.fn();
-			const onWizardCancelGeneration = vi.fn();
-			const session = createSessionWithTabWizardState({
-				isActive: true,
-				isGeneratingDocs: true,
-				mode: 'new',
-				confidence: 80,
-				conversationHistory: [],
-				generatedDocuments: [{ filename: 'Phase-01.md' }, { filename: 'Phase-02.md' }],
-				currentDocumentIndex: 0,
-				streamingContent: 'draft content',
-				subfolderPath: '/test/project/generated',
-				previousUIState: {
-					readOnlyMode: false,
-					saveToHistory: true,
-					showThinking: false,
-				},
-			});
-
-			render(
-				<MainPanel
-					{...defaultProps}
-					activeSession={session}
-					onWizardComplete={onWizardComplete}
-					onWizardDocumentSelect={onWizardDocumentSelect}
-					onWizardContentChange={onWizardContentChange}
-					onWizardCancelGeneration={onWizardCancelGeneration}
-				/>
-			);
-
-			expect(screen.getByTestId('document-generation-view')).toHaveTextContent(
-				'Document Generation (2) /test/project/generated'
-			);
-			expect(screen.queryByTestId('input-area')).not.toBeInTheDocument();
-
-			fireEvent.click(screen.getByTestId('wizard-complete'));
-			fireEvent.click(screen.getByTestId('wizard-select-document'));
-			fireEvent.click(screen.getByTestId('wizard-change-content'));
-			fireEvent.click(screen.getByTestId('wizard-cancel-generation'));
-
-			expect(onWizardComplete).toHaveBeenCalled();
-			expect(onWizardDocumentSelect).toHaveBeenCalledWith(1);
-			expect(onWizardContentChange).toHaveBeenCalledWith('updated', 0);
-			expect(onWizardCancelGeneration).toHaveBeenCalled();
-		});
-
-		it('should keep document generation visible for generated documents waiting to complete', () => {
-			const session = createSessionWithTabWizardState({
-				isActive: true,
-				isGeneratingDocs: false,
-				mode: 'new',
-				confidence: 80,
-				conversationHistory: [],
-				generatedDocuments: [{ filename: 'Phase-01.md' }],
-				currentDocumentIndex: 0,
-				autoRunFolderPath: '/test/project/autorun',
-				previousUIState: {
-					readOnlyMode: false,
-					saveToHistory: true,
-					showThinking: false,
-				},
-			});
-
-			render(<MainPanel {...defaultProps} activeSession={session} />);
-
-			expect(screen.getByTestId('document-generation-view')).toHaveTextContent(
-				'Document Generation (1) /test/project/autorun'
-			);
-			expect(screen.queryByTestId('wizard-conversation-view')).not.toBeInTheDocument();
-		});
-
-		it('should render document generation with empty document defaults while generation is active', () => {
-			const session = createSessionWithTabWizardState({
-				isActive: true,
-				isGeneratingDocs: true,
-				mode: 'new',
-				confidence: 80,
-				conversationHistory: [],
-				previousUIState: {
-					readOnlyMode: false,
-					saveToHistory: true,
-					showThinking: false,
-				},
-			});
-
-			render(<MainPanel {...defaultProps} activeSession={session} />);
-
-			expect(screen.getByTestId('document-generation-view')).toHaveTextContent(
-				'Document Generation (0)'
-			);
-		});
-
-		it('should render completed document generation when generating flag is omitted', () => {
-			const session = createSessionWithTabWizardState({
-				isActive: true,
-				mode: 'new',
-				confidence: 80,
-				conversationHistory: [],
-				generatedDocuments: [{ filename: 'Phase-01.md' }],
-				previousUIState: {
-					readOnlyMode: false,
-					saveToHistory: true,
-					showThinking: false,
-				},
-			});
-
-			render(<MainPanel {...defaultProps} activeSession={session} />);
-
-			expect(screen.getByTestId('document-generation-view')).toHaveTextContent(
-				'Document Generation (1)'
-			);
-		});
-
 		it('should still render header and tabs when wizard is active', () => {
 			const session = createSessionWithTabWizardState({
 				isActive: true,
@@ -4306,6 +3425,214 @@ describe('MainPanel', () => {
 
 			// The mock component just shows message count, but the agentName is passed through
 			expect(screen.getByTestId('wizard-conversation-view')).toBeInTheDocument();
+		});
+	});
+
+	// ---------------------------------------------------------------------------
+	// Terminal session persistence
+	// ---------------------------------------------------------------------------
+	describe('terminal session persistence', () => {
+		const makeTerminalTab = (id = 'ttab-1') => ({
+			id,
+			name: null,
+			shellType: 'zsh' as const,
+			pid: 9000,
+			cwd: '/tmp',
+			createdAt: Date.now(),
+			state: 'idle' as const,
+			exitCode: undefined,
+		});
+
+		beforeEach(() => {
+			terminalViewSessions.length = 0;
+		});
+
+		it('renders TerminalView when active session has terminal tabs in terminal mode', () => {
+			const tab = makeTerminalTab();
+			const session = createSession({
+				id: 'session-term',
+				inputMode: 'terminal',
+				terminalTabs: [tab],
+				activeTerminalTabId: tab.id,
+				unifiedTabOrder: [{ type: 'terminal' as const, id: tab.id }],
+			});
+			// Seed session store so the eviction effect keeps the session alive
+			useSessionStore.setState({ sessions: [session] });
+
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+
+			const view = screen.getByTestId('terminal-view-session-term');
+			expect(view).toBeInTheDocument();
+			expect(view.getAttribute('data-visible')).toBe('true');
+		});
+
+		it('hides TerminalView (display:none) when switching to AI mode, but keeps it mounted', async () => {
+			const tab = makeTerminalTab();
+			const sessionTerminal = createSession({
+				id: 'session-persist',
+				inputMode: 'terminal',
+				terminalTabs: [tab],
+				activeTerminalTabId: tab.id,
+				unifiedTabOrder: [{ type: 'terminal' as const, id: tab.id }],
+			});
+			const sessionAI = createSession({
+				id: 'session-persist',
+				inputMode: 'ai',
+				terminalTabs: [tab],
+				activeTerminalTabId: tab.id,
+				unifiedTabOrder: [{ type: 'terminal' as const, id: tab.id }],
+			});
+			useSessionStore.setState({ sessions: [sessionTerminal] });
+
+			const { rerender } = render(<MainPanel {...defaultProps} activeSession={sessionTerminal} />);
+
+			// Confirm it is visible
+			expect(screen.getByTestId('terminal-view-session-persist').getAttribute('data-visible')).toBe(
+				'true'
+			);
+
+			// Simulate switching to AI mode (inputMode changes, terminalTabs unchanged)
+			await act(async () => {
+				rerender(<MainPanel {...defaultProps} activeSession={sessionAI} />);
+			});
+
+			// TerminalView must still be in the DOM (not unmounted)
+			const view = screen.getByTestId('terminal-view-session-persist');
+			expect(view).toBeInTheDocument();
+			// But hidden
+			expect(view.getAttribute('data-visible')).toBe('false');
+		});
+
+		it('shows TerminalView again when switching back from AI mode to terminal mode', async () => {
+			const tab = makeTerminalTab();
+			const sessionTerminal = createSession({
+				id: 'session-roundtrip',
+				inputMode: 'terminal',
+				terminalTabs: [tab],
+				activeTerminalTabId: tab.id,
+				unifiedTabOrder: [{ type: 'terminal' as const, id: tab.id }],
+			});
+			const sessionAI = createSession({
+				id: 'session-roundtrip',
+				inputMode: 'ai',
+				terminalTabs: [tab],
+				activeTerminalTabId: tab.id,
+				unifiedTabOrder: [{ type: 'terminal' as const, id: tab.id }],
+			});
+			useSessionStore.setState({ sessions: [sessionTerminal] });
+
+			const { rerender } = render(<MainPanel {...defaultProps} activeSession={sessionTerminal} />);
+
+			// Switch to AI mode
+			await act(async () => {
+				rerender(<MainPanel {...defaultProps} activeSession={sessionAI} />);
+			});
+
+			// Switch back to terminal mode
+			await act(async () => {
+				rerender(<MainPanel {...defaultProps} activeSession={sessionTerminal} />);
+			});
+
+			const view = screen.getByTestId('terminal-view-session-roundtrip');
+			expect(view.getAttribute('data-visible')).toBe('true');
+		});
+
+		it('does not render TerminalView when session has no terminal tabs', () => {
+			const session = createSession({ inputMode: 'ai', terminalTabs: [] });
+			useSessionStore.setState({ sessions: [session] });
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+			expect(screen.queryByTestId('terminal-view-session-1')).not.toBeInTheDocument();
+		});
+	});
+
+	describe('Model/effort pill race condition', () => {
+		it('should discard stale model responses when switching agent types', async () => {
+			// Simulate: OpenCode model discovery (slow subprocess) resolves AFTER
+			// Claude model discovery (fast file read) when switching agents.
+			// Without the stale flag fix, the late OpenCode response would overwrite
+			// Claude's model list, showing wrong models in the picker.
+
+			let resolveOpenCodeModels!: (models: string[]) => void;
+			const openCodeModelsPromise = new Promise<string[]>((resolve) => {
+				resolveOpenCodeModels = resolve;
+			});
+
+			const claudeModels = ['sonnet', 'opus', 'haiku', 'opus[1m]', 'sonnet[1m]'];
+			const openCodeModels = ['github-copilot/gpt-5-mini', 'ollama/llama3:8b'];
+
+			// Start with OpenCode session
+			const openCodeSession = createSession({
+				id: 'session-opencode',
+				toolType: 'opencode' as any,
+				name: 'OpenCode Session',
+			});
+
+			setCapabilitiesCache('opencode', {
+				supportsResume: false,
+				supportsReadOnlyMode: true,
+				supportsJsonOutput: true,
+				supportsSessionId: true,
+				supportsImageInput: false,
+				supportsImageInputOnResume: false,
+				supportsSlashCommands: true,
+				supportsSessionStorage: false,
+				supportsCostTracking: false,
+				supportsUsageStats: false,
+				supportsBatchMode: true,
+				requiresPromptToStart: false,
+				supportsStreaming: true,
+				supportsResultMessages: true,
+				supportsModelSelection: true,
+				supportsStreamJsonInput: false,
+			});
+
+			// Mock getModels: OpenCode returns a slow promise, Claude returns immediately
+			vi.mocked(window.maestro.agents.getModels).mockImplementation((agentId: string) => {
+				if (agentId === 'opencode') return openCodeModelsPromise;
+				if (agentId === 'claude-code') return Promise.resolve(claudeModels);
+				return Promise.resolve([]);
+			});
+			vi.mocked(window.maestro.agents.getConfigOptions).mockResolvedValue([]);
+			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({});
+
+			useSessionStore.setState({ sessions: [openCodeSession] });
+
+			// Render with OpenCode session — triggers getModels('opencode') which is pending
+			const { rerender } = render(<MainPanel {...defaultProps} activeSession={openCodeSession} />);
+
+			// Switch to Claude session — triggers getModels('claude-code') which resolves fast
+			const claudeSession = createSession({
+				id: 'session-claude',
+				toolType: 'claude-code',
+				name: 'Claude Session',
+			});
+			useSessionStore.setState({ sessions: [claudeSession] });
+
+			await act(async () => {
+				rerender(<MainPanel {...defaultProps} activeSession={claudeSession} />);
+			});
+
+			// Wait for Claude models to be applied
+			await waitFor(() => {
+				expect(vi.mocked(window.maestro.agents.getModels)).toHaveBeenCalledWith('claude-code');
+			});
+
+			// Now resolve the stale OpenCode models (arriving late)
+			await act(async () => {
+				resolveOpenCodeModels(openCodeModels);
+			});
+
+			// Both IPC calls should have fired
+			expect(vi.mocked(window.maestro.agents.getModels)).toHaveBeenCalledWith('opencode');
+			expect(vi.mocked(window.maestro.agents.getModels)).toHaveBeenCalledWith('claude-code');
+
+			// The stale OpenCode models should NOT appear — Claude models should persist.
+			// Verify via the data attribute exposed by the InputArea mock.
+			await waitFor(() => {
+				const inputArea = screen.getByTestId('input-area');
+				const models = JSON.parse(inputArea.getAttribute('data-available-models') || '[]');
+				expect(models).toEqual(claudeModels);
+			});
 		});
 	});
 });

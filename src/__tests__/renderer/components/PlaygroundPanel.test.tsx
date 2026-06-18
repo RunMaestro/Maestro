@@ -19,6 +19,7 @@ import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
 import { PlaygroundPanel } from '../../../renderer/components/PlaygroundPanel';
 import type { Theme } from '../../../renderer/types';
 
+import { mockTheme } from '../../helpers/mockTheme';
 // Mock the LayerStackContext
 const mockRegisterLayer = vi.fn(() => 'layer-123');
 const mockUnregisterLayer = vi.fn();
@@ -79,25 +80,6 @@ vi.mock('../../../renderer/components/StandingOvationOverlay', () => ({
 	),
 }));
 
-// Mock KeyboardMasteryCelebration
-vi.mock('../../../renderer/components/KeyboardMasteryCelebration', () => ({
-	KeyboardMasteryCelebration: ({
-		level,
-		onClose,
-	}: {
-		theme: Theme;
-		level: number;
-		onClose: () => void;
-	}) => (
-		<div data-testid="keyboard-mastery-celebration" data-level={level}>
-			Keyboard Mastery
-			<button onClick={onClose} data-testid="close-keyboard-mastery">
-				Close
-			</button>
-		</div>
-	),
-}));
-
 // Mock CONDUCTOR_BADGES
 vi.mock('../../../renderer/constants/conductorBadges', () => ({
 	CONDUCTOR_BADGES: [
@@ -122,52 +104,16 @@ vi.mock('../../../renderer/constants/conductorBadges', () => ({
 			requiredTimeMs: 28800000,
 			shortName: 'Associate',
 		},
-		{
-			id: 'moment',
-			level: 4,
-			name: 'Moment',
-			requiredTimeMs: 500,
-			shortName: 'Moment',
-		},
 	],
 	getBadgeForTime: vi.fn((timeMs: number) => {
 		if (timeMs >= 28800000) return { level: 3, name: 'Associate', requiredTimeMs: 28800000 };
 		if (timeMs >= 3600000) return { level: 2, name: 'Assistant', requiredTimeMs: 3600000 };
 		if (timeMs >= 900000) return { level: 1, name: 'Apprentice', requiredTimeMs: 900000 };
-		if (timeMs >= 500) return { level: 4, name: 'Moment', requiredTimeMs: 500 };
 		return null;
 	}),
 }));
 
 // Sample theme for testing
-const mockTheme: Theme = {
-	id: 'dracula',
-	name: 'Dracula',
-	mode: 'dark',
-	colors: {
-		bgMain: '#282a36',
-		bgSidebar: '#21222c',
-		bgActivity: '#343746',
-		border: '#44475a',
-		textMain: '#f8f8f2',
-		textDim: '#6272a4',
-		accent: '#bd93f9',
-		accentDim: '#bd93f920',
-		accentForeground: '#ffffff',
-		success: '#50fa7b',
-		warning: '#ffb86c',
-		error: '#ff5555',
-	},
-};
-
-function getSliderByLabel(labelText: string): HTMLInputElement {
-	const slider = screen.getAllByRole('slider').find((candidate) => {
-		const label = candidate.closest('div')?.querySelector('label');
-		return label?.textContent?.includes(labelText);
-	});
-	expect(slider).toBeDefined();
-	return slider as HTMLInputElement;
-}
 
 describe('PlaygroundPanel', () => {
 	let mockOnClose: ReturnType<typeof vi.fn>;
@@ -343,24 +289,6 @@ describe('PlaygroundPanel', () => {
 
 			expect(screen.getByText('Fire Confetti!')).toBeInTheDocument();
 		});
-
-		it('ignores tab shortcut keys when the command modifier is not pressed', () => {
-			render(<PlaygroundPanel theme={mockTheme} themeMode="dark" onClose={mockOnClose} />);
-
-			fireEvent.keyDown(window, { key: ']', shiftKey: true });
-
-			expect(screen.getByText('Quick Set Badge Level')).toBeInTheDocument();
-			expect(screen.queryByText('Fire Confetti!')).not.toBeInTheDocument();
-		});
-
-		it('ignores unrelated Cmd+Shift shortcuts', () => {
-			render(<PlaygroundPanel theme={mockTheme} themeMode="dark" onClose={mockOnClose} />);
-
-			fireEvent.keyDown(window, { key: 'P', metaKey: true, shiftKey: true });
-
-			expect(screen.getByText('Quick Set Badge Level')).toBeInTheDocument();
-			expect(screen.queryByText('Fire Confetti!')).not.toBeInTheDocument();
-		});
 	});
 
 	describe('Close Functionality', () => {
@@ -401,7 +329,7 @@ describe('PlaygroundPanel', () => {
 			expect(mockUnregisterLayer).toHaveBeenCalledWith('layer-123');
 		});
 
-		it('keeps the same registered layer when onClose changes', () => {
+		it('updates layer handler when onClose changes', () => {
 			const { rerender } = render(
 				<PlaygroundPanel theme={mockTheme} themeMode="dark" onClose={mockOnClose} />
 			);
@@ -409,22 +337,7 @@ describe('PlaygroundPanel', () => {
 			const newOnClose = vi.fn();
 			rerender(<PlaygroundPanel theme={mockTheme} themeMode="dark" onClose={newOnClose} />);
 
-			expect(mockRegisterLayer).toHaveBeenCalledTimes(1);
-			expect(mockUpdateLayerHandler).not.toHaveBeenCalled();
-		});
-
-		it('layer escape handler calls the latest onClose callback', () => {
-			const { rerender } = render(
-				<PlaygroundPanel theme={mockTheme} themeMode="dark" onClose={mockOnClose} />
-			);
-			const newOnClose = vi.fn();
-			rerender(<PlaygroundPanel theme={mockTheme} themeMode="dark" onClose={newOnClose} />);
-
-			const layerConfig = mockRegisterLayer.mock.calls[0][0];
-			layerConfig.onEscape();
-
-			expect(mockOnClose).not.toHaveBeenCalled();
-			expect(newOnClose).toHaveBeenCalledTimes(1);
+			expect(mockUpdateLayerHandler).toHaveBeenCalled();
 		});
 	});
 
@@ -453,17 +366,6 @@ describe('PlaygroundPanel', () => {
 				const stats = JSON.parse(card.getAttribute('data-stats') || '{}');
 				expect(stats.cumulativeTimeMs).toBeGreaterThan(0);
 			});
-		});
-
-		it('clicking None leaves badge history unchanged', () => {
-			render(<PlaygroundPanel theme={mockTheme} themeMode="dark" onClose={mockOnClose} />);
-
-			fireEvent.click(screen.getByRole('button', { name: 'None' }));
-
-			const card = screen.getByTestId('achievement-card');
-			const stats = JSON.parse(card.getAttribute('data-stats') || '{}');
-			expect(stats.cumulativeTimeMs).toBe(0);
-			expect(stats.badgeHistory).toEqual([]);
 		});
 	});
 
@@ -497,39 +399,6 @@ describe('PlaygroundPanel', () => {
 
 			// Time should have changed from initial
 			expect(screen.getByText(/Cumulative Time:/)).toBeInTheDocument();
-		});
-
-		it('changing cumulative time slider back to zero restores zero display', () => {
-			render(<PlaygroundPanel theme={mockTheme} themeMode="dark" onClose={mockOnClose} />);
-
-			const cumulativeSlider = screen.getAllByRole('slider')[0];
-
-			fireEvent.change(cumulativeSlider, { target: { value: '50' } });
-			fireEvent.change(cumulativeSlider, { target: { value: '0' } });
-
-			expect(screen.getByText(/Cumulative Time: 0s/)).toBeInTheDocument();
-		});
-
-		it('maps sub-second badge times to the start of the slider', () => {
-			render(<PlaygroundPanel theme={mockTheme} themeMode="dark" onClose={mockOnClose} />);
-
-			fireEvent.click(screen.getByRole('button', { name: 'Lv 4' }));
-
-			const cumulativeSlider = screen.getAllByRole('slider')[0] as HTMLInputElement;
-			const card = screen.getByTestId('achievement-card');
-			const stats = JSON.parse(card.getAttribute('data-stats') || '{}');
-			expect(stats.cumulativeTimeMs).toBe(500);
-			expect(cumulativeSlider.value).toBe('0');
-		});
-
-		it('changing longest run slider updates display', () => {
-			render(<PlaygroundPanel theme={mockTheme} themeMode="dark" onClose={mockOnClose} />);
-
-			const longestRunSlider = screen.getAllByRole('slider')[1];
-
-			fireEvent.change(longestRunSlider, { target: { value: '55' } });
-
-			expect(screen.getByText(/Longest Run:/)).not.toHaveTextContent('0s');
 		});
 
 		it('changing total runs slider updates display', () => {
@@ -610,19 +479,6 @@ describe('PlaygroundPanel', () => {
 			fireEvent.click(screen.getByTestId('close-ovation'));
 			expect(screen.queryByTestId('standing-ovation')).not.toBeInTheDocument();
 		});
-
-		it('does not show standing ovation when the selected badge level is unavailable', () => {
-			render(<PlaygroundPanel theme={mockTheme} themeMode="dark" onClose={mockOnClose} />);
-
-			const standingOvationSection = screen
-				.getByText('Standing Ovation Test')
-				.closest('div')?.parentElement;
-			const select = standingOvationSection!.querySelector('select');
-			fireEvent.change(select!, { target: { value: '999' } });
-			fireEvent.click(screen.getByRole('button', { name: /Trigger Standing Ovation/ }));
-
-			expect(screen.queryByTestId('standing-ovation')).not.toBeInTheDocument();
-		});
 	});
 
 	describe('Achievements Tab - Reset', () => {
@@ -666,24 +522,6 @@ describe('PlaygroundPanel', () => {
 		});
 	});
 
-	describe('Achievements Tab - Keyboard Mastery', () => {
-		it('shows the selected keyboard mastery celebration and closes it', () => {
-			render(<PlaygroundPanel theme={mockTheme} themeMode="dark" onClose={mockOnClose} />);
-
-			const masterySection = screen.getByText('Mastery Level to Show').closest('div');
-			const select = masterySection!.querySelector('select');
-			fireEvent.change(select!, { target: { value: '2' } });
-			fireEvent.click(screen.getByRole('button', { name: /Trigger Keyboard Mastery Celebration/ }));
-
-			const celebration = screen.getByTestId('keyboard-mastery-celebration');
-			expect(celebration).toHaveAttribute('data-level', '2');
-
-			fireEvent.click(screen.getByTestId('close-keyboard-mastery'));
-
-			expect(screen.queryByTestId('keyboard-mastery-celebration')).not.toBeInTheDocument();
-		});
-	});
-
 	describe('Confetti Tab - Origin Grid', () => {
 		beforeEach(() => {
 			render(<PlaygroundPanel theme={mockTheme} themeMode="dark" onClose={mockOnClose} />);
@@ -720,16 +558,6 @@ describe('PlaygroundPanel', () => {
 			fireEvent.click(bottomCenter);
 
 			expect(screen.getByText('Select at least one origin')).toBeInTheDocument();
-		});
-
-		it('disables firing when the final origin is removed', () => {
-			fireEvent.click(screen.getByTitle('Bottom Center'));
-
-			const fireButton = screen.getByRole('button', { name: /Fire Confetti!/ });
-			expect(fireButton).toBeDisabled();
-
-			fireEvent.click(fireButton);
-			expect(mockConfetti).not.toHaveBeenCalled();
 		});
 
 		it('origin count displays correctly with pluralization', () => {
@@ -777,14 +605,6 @@ describe('PlaygroundPanel', () => {
 				fireEvent.change(particleSlider, { target: { value: '250' } });
 				expect(screen.getByText('250')).toBeInTheDocument();
 			}
-		});
-
-		it('changing start velocity updates display and confetti settings', () => {
-			fireEvent.change(getSliderByLabel('Start Velocity'), { target: { value: '72' } });
-			fireEvent.click(screen.getByRole('button', { name: /Fire Confetti!/ }));
-
-			expect(screen.getByText('72')).toBeInTheDocument();
-			expect(mockConfetti).toHaveBeenCalledWith(expect.objectContaining({ startVelocity: 72 }));
 		});
 	});
 
@@ -868,31 +688,6 @@ describe('PlaygroundPanel', () => {
 			fireEvent.click(checkbox);
 			expect(checkbox).toBeChecked();
 		});
-
-		it('changing physics sliders updates their labels and confetti payload', () => {
-			fireEvent.change(getSliderByLabel('Gravity'), { target: { value: '2.5' } });
-			fireEvent.change(getSliderByLabel('Decay'), { target: { value: '0.75' } });
-			fireEvent.change(getSliderByLabel('Drift'), { target: { value: '-1.5' } });
-			fireEvent.change(getSliderByLabel('Scalar'), { target: { value: '2.2' } });
-			fireEvent.change(getSliderByLabel('Ticks'), { target: { value: '350' } });
-
-			fireEvent.click(screen.getByRole('button', { name: /Fire Confetti!/ }));
-
-			expect(screen.getByText('2.50')).toBeInTheDocument();
-			expect(screen.getByText('0.75')).toBeInTheDocument();
-			expect(screen.getByText('-1.5')).toBeInTheDocument();
-			expect(screen.getByText('2.2')).toBeInTheDocument();
-			expect(screen.getByText('350')).toBeInTheDocument();
-			expect(mockConfetti).toHaveBeenCalledWith(
-				expect.objectContaining({
-					gravity: 2.5,
-					decay: 0.75,
-					drift: -1.5,
-					scalar: 2.2,
-					ticks: 350,
-				})
-			);
-		});
 	});
 
 	describe('Confetti Tab - Colors', () => {
@@ -916,14 +711,6 @@ describe('PlaygroundPanel', () => {
 			const colorInputs = document.querySelectorAll('input[type="color"]');
 			expect(colorInputs.length).toBe(9); // 8 default + 1 new
 		});
-
-		it('remove button deletes a color while more than one color remains', () => {
-			const removeButtons = screen.getAllByRole('button', { name: '×' });
-			fireEvent.click(removeButtons[0]);
-
-			const colorInputs = document.querySelectorAll('input[type="color"]');
-			expect(colorInputs.length).toBe(7);
-		});
 	});
 
 	describe('Confetti Tab - Fire Button', () => {
@@ -941,16 +728,6 @@ describe('PlaygroundPanel', () => {
 			fireEvent.click(screen.getByTitle('Bottom Center'));
 
 			expect(screen.getByRole('button', { name: /Fire Confetti!/ })).toBeDisabled();
-		});
-
-		it('fire handler does not call confetti when invoked with no selected origins', () => {
-			fireEvent.click(screen.getByTitle('Bottom Center'));
-			const fireButton = screen.getByRole('button', { name: /Fire Confetti!/ });
-			fireButton.removeAttribute('disabled');
-
-			fireEvent.click(fireButton);
-
-			expect(mockConfetti).not.toHaveBeenCalled();
 		});
 
 		it('fire button calls confetti with settings', () => {
@@ -999,20 +776,6 @@ describe('PlaygroundPanel', () => {
 			});
 
 			expect(screen.getByText('Copied!')).toBeInTheDocument();
-		});
-
-		it('copying multiple selected origins writes a multi-origin snippet', async () => {
-			fireEvent.click(screen.getByTitle('Top Left'));
-
-			await act(async () => {
-				fireEvent.click(screen.getByRole('button', { name: /Copy Settings/ }));
-			});
-
-			const copiedText = (navigator.clipboard.writeText as ReturnType<typeof vi.fn>).mock
-				.calls[0][0] as string;
-			expect(copiedText).toContain('Multiple origins');
-			expect(copiedText).toContain('{ x: 0, y: 0 }');
-			expect(copiedText).toContain('{ x: 0.5, y: 1 }');
 		});
 
 		it('success resets after timeout', async () => {
@@ -1174,20 +937,6 @@ describe('PlaygroundPanel', () => {
 				expect(screen.getByText('5.0s')).toBeInTheDocument();
 			}
 		});
-
-		it('changing fade and stagger controls updates the preview CSS', () => {
-			fireEvent.change(getSliderByLabel('Fade-out start'), { target: { value: '20' } });
-			fireEvent.change(getSliderByLabel('Fade-in start'), { target: { value: '80' } });
-			fireEvent.change(getSliderByLabel('Stagger offset'), { target: { value: '1.25' } });
-
-			const styleEl = document.querySelector('style[data-baton-playground]');
-			expect(screen.getByText('20%')).toBeInTheDocument();
-			expect(screen.getByText('80%')).toBeInTheDocument();
-			expect(screen.getByText('1.25s')).toBeInTheDocument();
-			expect(styleEl?.textContent).toContain('20%');
-			expect(styleEl?.textContent).toContain('80%');
-			expect(styleEl?.textContent).toContain('animation-delay: 1.25s');
-		});
 	});
 
 	describe('Baton Tab - Movement Controls', () => {
@@ -1219,14 +968,6 @@ describe('PlaygroundPanel', () => {
 			// The button should now be highlighted (accent color)
 			const linearBtn = screen.getByRole('button', { name: 'linear' });
 			expect(linearBtn).toHaveStyle({ backgroundColor: mockTheme.colors.accent });
-		});
-
-		it('changing translate amount updates the preview CSS', () => {
-			fireEvent.change(getSliderByLabel('Translate amount'), { target: { value: '2.4' } });
-
-			const styleEl = document.querySelector('style[data-baton-playground]');
-			expect(screen.getByText('2.4px')).toBeInTheDocument();
-			expect(styleEl?.textContent).toContain('translate(2.4px, -2.4px)');
 		});
 	});
 

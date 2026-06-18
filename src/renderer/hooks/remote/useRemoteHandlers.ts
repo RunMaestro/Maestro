@@ -22,6 +22,9 @@ import { substituteTemplateVariables } from '../../utils/templateVariables';
 import { gitService } from '../../services/git';
 import { captureException } from '../../utils/sentry';
 import { filterYoloArgs } from '../../utils/agentArgs';
+import { getStdinFlags, prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
+import { DEFAULT_IMAGE_ONLY_PROMPT } from '../input/useInputProcessing';
+import { logger } from '../../utils/logger';
 
 // ============================================================================
 // Dependencies interface
@@ -36,6 +39,8 @@ export interface UseRemoteHandlersDeps {
 	speckitCommandsRef: React.MutableRefObject<CustomAICommand[]>;
 	/** OpenSpec commands ref */
 	openspecCommandsRef: React.MutableRefObject<CustomAICommand[]>;
+	/** BMAD commands ref */
+	bmadCommandsRef?: React.MutableRefObject<CustomAICommand[]>;
 	/** Toggle global live mode (web interface) */
 	toggleGlobalLive: () => Promise<void>;
 	/** Whether live/remote mode is active */
@@ -71,6 +76,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 		customAICommandsRef,
 		speckitCommandsRef,
 		openspecCommandsRef,
+		bmadCommandsRef,
 		toggleGlobalLive,
 		isLiveMode,
 		sshRemoteConfigs,
@@ -79,7 +85,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 	// --- Store subscriptions ---
 	const sessions = useSessionStore(selectSessions);
 	const setSessions = useMemo(() => useSessionStore.getState().setSessions, []);
-	const addLogToActiveTab = useMemo(() => useSessionStore.getState().addLogToTab, []);
+	const addLogToTab = useMemo(() => useSessionStore.getState().addLogToTab, []);
 	const setSuccessFlashNotification = useMemo(
 		() => useUIStore.getState().setSuccessFlashNotification,
 		[]
@@ -114,26 +120,48 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				sessionId: string;
 				command: string;
 				inputMode?: 'ai' | 'terminal';
+				/** Optional explicit tab target (from `maestro-cli dispatch --session
+				 *  <tabId>`). When unset, falls back to the active tab. When set
+				 *  but unknown, the command is dropped (we never silently re-route
+				 *  to the active tab — callers chaining `--session <tabId>` would
+				 *  otherwise believe the command landed in the requested tab). */
+				tabId?: string;
+				/** When true, bypass the renderer's busy-state guard. Mirrors the
+				 *  server-side `force` bit so `dispatch --force` can land on a
+				 *  busy session without being dropped at this boundary. */
+				force?: boolean;
+				/** Optional base64 data URLs pasted from a web/mobile client.
+				 *  Forwarded to the agent spawn so AI tabs can render and send
+				 *  them in the prompt, mirroring desktop staged-images. */
+				images?: string[];
 			}>;
-			const { sessionId, command, inputMode: webInputMode } = customEvent.detail;
+			const {
+				sessionId,
+				command,
+				inputMode: webInputMode,
+				tabId: requestedTabId,
+				force,
+				images,
+			} = customEvent.detail;
 
-			console.log('[Remote] Processing remote command via event:', {
+			logger.info('[Remote] Processing remote command via event:', undefined, {
 				sessionId,
 				command: command.substring(0, 50),
 				webInputMode,
+				requestedTabId,
 			});
 
 			// Find the session directly from sessionsRef (not from React state which may be stale)
 			const session = sessionsRef.current.find((s) => s.id === sessionId);
 			if (!session) {
-				console.log('[Remote] ERROR: Session not found in sessionsRef:', sessionId);
+				logger.info('[Remote] ERROR: Session not found in sessionsRef:', undefined, sessionId);
 				return;
 			}
 
 			// Use web's inputMode if provided, otherwise fall back to session state
 			const effectiveInputMode = webInputMode || session.inputMode;
 
-			console.log('[Remote] Found session:', {
+			logger.info('[Remote] Found session:', undefined, {
 				id: session.id,
 				agentSessionId: session.agentSessionId || 'none',
 				state: session.state,
@@ -144,7 +172,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 
 			// Handle terminal mode commands
 			if (effectiveInputMode === 'terminal') {
-				console.log('[Remote] Terminal mode - using runCommand for clean output');
+				logger.info('[Remote] Terminal mode - using runCommand for clean output');
 
 				// Add user message to shell logs and set state to busy
 				setSessions((prev) =>
@@ -154,15 +182,18 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 							...s,
 							state: 'busy' as SessionState,
 							busySource: 'terminal',
-							shellLogs: [
-								...s.shellLogs,
-								{
-									id: generateId(),
-									timestamp: Date.now(),
-									source: 'user',
-									text: command,
-								},
-							],
+							// TODO: Remove shellLogs once terminal tabs migration is complete
+							...(!s.terminalTabs?.length && {
+								shellLogs: [
+									...s.shellLogs,
+									{
+										id: generateId(),
+										timestamp: Date.now(),
+										source: 'user',
+										text: command,
+									},
+								],
+							}),
 						};
 					})
 				);
@@ -180,7 +211,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 						cwd: commandCwd,
 						sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 					});
-					console.log('[Remote] Terminal command completed successfully');
+					logger.info('[Remote] Terminal command completed successfully');
 				} catch (error: unknown) {
 					captureException(error, {
 						extra: {
@@ -199,15 +230,18 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 								state: 'idle' as SessionState,
 								busySource: undefined,
 								thinkingStartTime: undefined,
-								shellLogs: [
-									...s.shellLogs,
-									{
-										id: generateId(),
-										timestamp: Date.now(),
-										source: 'system',
-										text: `Error: Failed to run command - ${errorMessage}`,
-									},
-								],
+								// TODO: Remove shellLogs once terminal tabs migration is complete
+								...(!s.terminalTabs?.length && {
+									shellLogs: [
+										...s.shellLogs,
+										{
+											id: generateId(),
+											timestamp: Date.now(),
+											source: 'system',
+											text: `Error: Failed to run command - ${errorMessage}`,
+										},
+									],
+								}),
 							};
 						})
 					);
@@ -217,15 +251,36 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 
 			// Handle AI mode for batch-mode agents
 			if (!hasCapabilityCached(session.toolType, 'supportsBatchMode')) {
-				console.log('[Remote] Not a batch-mode agent, skipping');
+				logger.info('[Remote] Not a batch-mode agent, skipping');
 				return;
 			}
 
-			// Check if session is busy
-			if (session.state === 'busy') {
-				console.log('[Remote] Session is busy, cannot process command');
+			// Check if session is busy. `force: true` (from `dispatch --force`)
+			// bypasses this guard — without that escape hatch, the renderer would
+			// silently drop forced dispatches and the server-side allow-list
+			// would be moot.
+			if (session.state === 'busy' && !force) {
+				logger.info('[Remote] Session is busy, cannot process command');
 				return;
 			}
+
+			// Resolve the target tab BEFORE the slash-command branch so unknown-
+			// command error logs land on the targeted tab instead of whichever
+			// tab happens to be active. This also lets us short-circuit early
+			// when `--session <tabId>` names a tab that no longer exists, rather
+			// than silently re-routing to the active tab (which would mislead
+			// callers chaining `command_result.tabId` back as `--session`).
+			const requestedTab = requestedTabId
+				? session.aiTabs?.find((t) => t.id === requestedTabId)
+				: undefined;
+			if (requestedTabId && !requestedTab) {
+				logger.warn(
+					`[Remote] Requested tabId "${requestedTabId}" not found in session ${sessionId} — dropping command (avoiding silent re-route to active tab)`
+				);
+				return;
+			}
+			const targetTab = requestedTab ?? getActiveTab(session);
+			const writeTabId = targetTab?.id;
 
 			// Check for slash commands (built-in and custom)
 			let promptToSend = command;
@@ -234,7 +289,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 			// Handle slash commands (custom AI commands only)
 			if (command.trim().startsWith('/')) {
 				const commandText = command.trim();
-				console.log('[Remote] Detected slash command:', commandText);
+				logger.info('[Remote] Detected slash command:', undefined, commandText);
 
 				const matchingCustomCommand = customAICommandsRef.current.find(
 					(cmd) => cmd.command === commandText
@@ -245,20 +300,27 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				const matchingOpenspecCommand = openspecCommandsRef.current.find(
 					(cmd) => cmd.command === commandText
 				);
+				const matchingBmadCommand = bmadCommandsRef?.current.find(
+					(cmd) => cmd.command === commandText
+				);
 
 				const matchingCommand =
-					matchingCustomCommand || matchingSpeckitCommand || matchingOpenspecCommand;
+					matchingCustomCommand ||
+					matchingSpeckitCommand ||
+					matchingOpenspecCommand ||
+					matchingBmadCommand;
 
 				if (matchingCommand) {
-					console.log(
-						'[Remote] Found matching command:',
+					logger.info('[Remote] Found matching command:', undefined, [
 						matchingCommand.command,
 						matchingSpeckitCommand
 							? '(spec-kit)'
 							: matchingOpenspecCommand
 								? '(openspec)'
-								: '(custom)'
-					);
+								: matchingBmadCommand
+									? '(bmad)'
+									: '(custom)',
+					]);
 
 					// Get git branch for template substitution
 					let gitBranch: string | undefined;
@@ -281,10 +343,14 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					// Read conductorProfile from settings store at call time
 					const conductorProfile = useSettingsStore.getState().conductorProfile;
 
-					// Substitute template variables
+					// Substitute template variables. Use the resolved target tab
+					// id for `activeTabId` so substitutions reflect the dispatch
+					// target rather than whatever tab is actually active in the UI.
 					promptToSend = substituteTemplateVariables(matchingCommand.prompt, {
 						session,
 						gitBranch,
+						groupId: session.groupId,
+						activeTabId: writeTabId ?? session.activeTabId,
 						conductorProfile,
 					});
 					commandMetadata = {
@@ -292,59 +358,106 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 						description: matchingCommand.description,
 					};
 
-					console.log(
+					logger.info(
 						'[Remote] Substituted prompt (first 100 chars):',
+						undefined,
 						promptToSend.substring(0, 100)
 					);
 				} else {
-					// Unknown slash command
-					console.log('[Remote] Unknown slash command:', commandText);
-					addLogToActiveTab(sessionId, {
-						source: 'system',
-						text: `Unknown command: ${commandText}`,
-					});
+					// Unknown slash command — route the error log to the targeted
+					// tab (not whichever tab happens to be active) so the caller
+					// sees the error in the conversation they dispatched into.
+					logger.info('[Remote] Unknown slash command:', undefined, commandText);
+					addLogToTab(
+						sessionId,
+						{
+							source: 'system',
+							text: `Unknown command: ${commandText}`,
+						},
+						writeTabId
+					);
 					return;
 				}
+			}
+
+			// Image-only sends (web/mobile composer paste with no text) arrive
+			// with an empty command. Inject the user-customizable image-only
+			// default prompt so the agent CLI doesn't crash on an empty --print
+			// arg, mirroring the desktop input path in useInputProcessing.
+			if (!promptToSend.trim() && images && images.length > 0) {
+				promptToSend = DEFAULT_IMAGE_ONLY_PROMPT;
 			}
 
 			try {
 				// Get agent configuration for this session's tool type
 				const agent = await window.maestro.agents.get(session.toolType);
 				if (!agent) {
-					console.log(`[Remote] ERROR: Agent not found for toolType: ${session.toolType}`);
+					logger.info(`[Remote] ERROR: Agent not found for toolType: ${session.toolType}`);
 					return;
 				}
 
-				// Get the ACTIVE TAB's agentSessionId for session continuity
-				const activeTab = getActiveTab(session);
-				const tabAgentSessionId = activeTab?.agentSessionId;
-				const isReadOnly = activeTab?.readOnlyMode;
+				// The agent-config await above is a real microtask gap. Re-check
+				// that the tab we resolved still exists; if it was closed in the
+				// interim, abort before spawning so the agent doesn't start with
+				// a `${sessionId}-ai-${tabId}` route that nothing reads from.
+				if (writeTabId) {
+					const liveSession = sessionsRef.current.find((s) => s.id === sessionId);
+					const tabStillExists = liveSession?.aiTabs?.some((t) => t.id === writeTabId);
+					if (!tabStillExists) {
+						logger.warn(
+							`[Remote] Target tab "${writeTabId}" was closed before spawn — dropping command`
+						);
+						return;
+					}
+				}
+
+				const tabAgentSessionId = targetTab?.agentSessionId;
+				const isReadOnly = targetTab?.readOnlyMode;
 
 				// Filter out YOLO/skip-permissions flags when read-only mode is active
 				const agentArgs = agent.args ?? [];
 				const spawnArgs = isReadOnly ? filterYoloArgs(agentArgs, agent) : [...agentArgs];
 
 				// Include tab ID in targetSessionId for proper output routing
-				const targetSessionId = `${sessionId}-ai-${activeTab?.id || 'default'}`;
-				const commandToUse = agent.path ?? agent.command;
+				const targetSessionId = `${sessionId}-ai-${targetTab?.id || 'default'}`;
+				const commandToUse = agent.path ?? agent.command ?? '';
 
-				console.log('[Remote] Spawning agent:', {
+				const appendSystemPrompt = await prepareMaestroSystemPrompt({
+					session,
+					activeTabId: targetTab?.id,
+				});
+
+				// Determine whether to send the prompt via stdin on Windows to avoid
+				// exceeding the command line length limit. Remote commands may include
+				// substituted slash command prompts that can be very large.
+				const isSshSession = Boolean(session.sessionSshRemoteConfig?.enabled);
+				const remoteImages = images && images.length > 0 ? images : undefined;
+				const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
+					isSshSession,
+					supportsStreamJsonInput: agent.capabilities?.supportsStreamJsonInput ?? false,
+					hasImages: !!remoteImages,
+				});
+
+				logger.info('[Remote] Spawning agent:', undefined, {
 					maestroSessionId: sessionId,
 					targetSessionId,
-					activeTabId: activeTab?.id,
+					targetTabId: targetTab?.id,
 					tabAgentSessionId: tabAgentSessionId || 'NEW SESSION',
 					isResume: !!tabAgentSessionId,
+					hasAppendSystemPrompt: !!appendSystemPrompt,
 					command: commandToUse,
 					args: spawnArgs,
 					prompt: promptToSend.substring(0, 100),
+					imageCount: remoteImages?.length ?? 0,
 				});
 
-				// Add user message to active tab's logs and set state to busy
+				// Add user message to target tab's logs and set state to busy
 				const userLogEntry: LogEntry = {
 					id: generateId(),
 					timestamp: Date.now(),
 					source: 'user',
 					text: promptToSend,
+					...(remoteImages && { images: remoteImages }),
 					...(commandMetadata && { aiCommand: commandMetadata }),
 				};
 
@@ -352,11 +465,14 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					prev.map((s) => {
 						if (s.id !== sessionId) return s;
 
-						const activeTab = getActiveTab(s);
+						// Pin the target tab id so we don't accidentally write into a
+						// different active tab if the user switched while we awaited
+						// the agent config above.
+						const resolvedWriteTabId = writeTabId ?? s.activeTabId;
 						const updatedAiTabs =
 							s.aiTabs?.length > 0
 								? s.aiTabs.map((tab) =>
-										tab.id === s.activeTabId
+										tab.id === resolvedWriteTabId
 											? {
 													...tab,
 													state: 'busy' as const,
@@ -366,10 +482,8 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 									)
 								: s.aiTabs;
 
-						if (!activeTab) {
-							console.error(
-								'[runAICommand] No active tab found - session has no aiTabs, this should not happen'
-							);
+						if (!s.aiTabs?.some((t) => t.id === resolvedWriteTabId)) {
+							logger.error('[runAICommand] Target tab not found in session — dropping user log');
 							return s;
 						}
 
@@ -398,6 +512,8 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					command: commandToUse,
 					args: spawnArgs,
 					prompt: promptToSend,
+					images: remoteImages,
+					appendSystemPrompt,
 					agentSessionId: tabAgentSessionId ?? undefined,
 					readOnlyMode: isReadOnly,
 					sessionCustomPath: session.customPath,
@@ -406,9 +522,13 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					sessionCustomModel: session.customModel,
 					sessionCustomContextWindow: session.customContextWindow,
 					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
+					// Windows stdin handling - slash command prompts after template
+					// substitution can exceed shell command line limits
+					sendPromptViaStdin,
+					sendPromptViaStdinRaw,
 				});
 
-				console.log(`[Remote] ${session.toolType} spawn initiated successfully`);
+				logger.info(`[Remote] ${session.toolType} spawn initiated successfully`);
 			} catch (error: unknown) {
 				captureException(error, {
 					extra: { sessionId, toolType: session.toolType, mode: 'ai', operation: 'remote-spawn' },
@@ -423,11 +543,13 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				setSessions((prev) =>
 					prev.map((s) => {
 						if (s.id !== sessionId) return s;
-						const activeTab = getActiveTab(s);
+						// Mirror the success path: route the error log to the same tab
+						// we tried to write into, falling back to active when unset.
+						const resolvedWriteTabId = writeTabId ?? s.activeTabId;
 						const updatedAiTabs =
 							s.aiTabs?.length > 0
 								? s.aiTabs.map((tab) =>
-										tab.id === s.activeTabId
+										tab.id === resolvedWriteTabId
 											? {
 													...tab,
 													state: 'idle' as const,
@@ -438,9 +560,9 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 									)
 								: s.aiTabs;
 
-						if (!activeTab) {
-							console.error(
-								'[runAICommand error] No active tab found - session has no aiTabs, this should not happen'
+						if (!s.aiTabs?.some((t) => t.id === resolvedWriteTabId)) {
+							logger.error(
+								'[runAICommand error] Target tab not found in session — dropping error log'
 							);
 							return s;
 						}

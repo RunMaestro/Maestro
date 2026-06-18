@@ -3,12 +3,21 @@
 
 import { spawnAgent, detectAgent, type AgentResult } from '../services/agent-spawner';
 import { resolveAgentId, getSessionById } from '../services/storage';
+import { prepareMaestroSystemPromptCli } from '../services/system-prompt';
 import { estimateContextUsage } from '../../main/parsers/usage-aggregator';
 import { getAgentDefinition } from '../../main/agents/definitions';
+import { withMaestroClient } from '../services/maestro-client';
 import type { ToolType } from '../../shared/types';
 
 interface SendOptions {
 	session?: string;
+	readOnly?: boolean;
+	tab?: boolean;
+	// Commander auto-negates `--no-system-prompt` into `systemPrompt: false`,
+	// defaulting to true when the flag is omitted. Bots calling
+	// `maestro-cli send` get the Maestro system context by default — parity
+	// with desktop spawn sites that all pass `appendSystemPrompt`.
+	systemPrompt?: boolean;
 }
 
 interface SendResponse {
@@ -106,13 +115,52 @@ export async function send(
 		process.exit(1);
 	}
 
-	// Spawn agent — spawnAgent handles --resume vs --session-id internally
-	const result = await spawnAgent(agent.toolType, agent.cwd, message, options.session);
+	// Only resume a session when explicitly requested via --session flag.
+	// Without -s, always create a fresh session to prevent session leakage
+	// when multiple callers (e.g. Discord threads) send concurrently.
+	const agentSessionId = options.session;
+
+	// Build the Maestro system prompt unless the caller opted out with
+	// `--no-system-prompt`. Failure to build (template missing, fs error) is
+	// non-fatal: spawn proceeds without the prompt rather than failing the
+	// whole send, matching the renderer's `prepareMaestroSystemPrompt` which
+	// returns undefined on failure (`src/renderer/utils/spawnHelpers.ts:35`).
+	const includeSystemPrompt = options.systemPrompt !== false;
+	const appendSystemPrompt = includeSystemPrompt
+		? await prepareMaestroSystemPromptCli(agent)
+		: undefined;
+
+	// Spawn agent — spawnAgent handles --resume vs fresh session internally
+	const result = await spawnAgent(agent.toolType, agent.cwd, message, agentSessionId, {
+		readOnlyMode: options.readOnly,
+		customModel: agent.customModel,
+		customEffort: agent.customEffort,
+		customArgs: agent.customArgs,
+		customEnvVars: agent.customEnvVars,
+		sshRemoteConfig: agent.sessionSshRemoteConfig,
+		appendSystemPrompt,
+	});
 	const response = buildResponse(agentId, agent.name, result, agent.toolType);
 
 	console.log(JSON.stringify(response, null, 2));
 
 	if (!result.success) {
 		process.exit(1);
+	}
+
+	// If --tab flag is set, focus the session tab in Maestro desktop
+	if (options.tab) {
+		try {
+			await withMaestroClient(async (client) => {
+				await client.sendCommand(
+					{ type: 'select_session', sessionId: agentId, focus: true },
+					'select_session_result'
+				);
+			});
+		} catch {
+			console.error(
+				'Warning: Could not focus session tab in Maestro desktop (app may not be running)'
+			);
+		}
 	}
 }

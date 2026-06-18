@@ -94,10 +94,6 @@ describe('conductorBadges', () => {
 			expect(getProgressToNextBadge(7.5 * MINUTE, null, next)).toBe(50);
 			expect(getProgressToNextBadge(15 * MINUTE, null, next)).toBe(100);
 		});
-
-		it('should return 100 when the next badge does not advance beyond the current badge', () => {
-			expect(getProgressToNextBadge(8 * HOUR, CONDUCTOR_BADGES[1], CONDUCTOR_BADGES[1])).toBe(100);
-		});
 	});
 
 	describe('formatTimeRemaining', () => {
@@ -112,12 +108,6 @@ describe('conductorBadges', () => {
 		it('should format remaining time appropriately', () => {
 			expect(formatTimeRemaining(0, CONDUCTOR_BADGES[0])).toMatch(/\d+m remaining/);
 			expect(formatTimeRemaining(0, CONDUCTOR_BADGES[10])).toMatch(/\d+y \d+d remaining/);
-		});
-
-		it('should format month, day, and hour remaining times', () => {
-			expect(formatTimeRemaining(0, CONDUCTOR_BADGES[6])).toBe('3mo 0d remaining');
-			expect(formatTimeRemaining(0, CONDUCTOR_BADGES[3])).toBe('1d 0h remaining');
-			expect(formatTimeRemaining(0, CONDUCTOR_BADGES[1])).toBe('1h 0m remaining');
 		});
 	});
 

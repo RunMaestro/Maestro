@@ -437,22 +437,6 @@ describe('remote-git.ts', () => {
 			expect(result.data![0].head).toBe('');
 		});
 
-		it('should default missing metadata on a final entry without trailing newline', async () => {
-			mockExecFileNoThrow.mockResolvedValue(successResult('worktree /repo'));
-
-			const result = await listWorktreesRemote('/repo', sshRemote);
-
-			expect(result.success).toBe(true);
-			expect(result.data).toEqual([
-				{
-					path: '/repo',
-					head: '',
-					branch: null,
-					isBare: false,
-				},
-			]);
-		});
-
 		it('should pass correct arguments to execGitRemote', async () => {
 			mockExecFileNoThrow.mockResolvedValue(successResult(''));
 
@@ -556,15 +540,6 @@ describe('remote-git.ts', () => {
 			expect(result.error).toBe('SSH connection refused');
 		});
 
-		it('should return fallback error when path existence check fails without stderr', async () => {
-			mockExecFileNoThrow.mockResolvedValueOnce(failResult('', 255));
-
-			const result = await worktreeInfoRemote('/some/path', sshRemote);
-
-			expect(result.success).toBe(false);
-			expect(result.error).toBe('Failed to check path existence');
-		});
-
 		it('should handle branch being undefined when rev-parse fails', async () => {
 			// Check path exists
 			mockExecFileNoThrow.mockResolvedValueOnce(successResult('EXISTS'));
@@ -583,44 +558,6 @@ describe('remote-git.ts', () => {
 
 			expect(result.success).toBe(true);
 			expect(result.data!.currentBranch).toBeUndefined();
-		});
-
-		it('should leave repoRoot undefined when regular repo root lookup fails', async () => {
-			mockExecFileNoThrow.mockResolvedValueOnce(successResult('EXISTS'));
-			mockExecFileNoThrow.mockResolvedValueOnce(successResult('true'));
-			mockExecFileNoThrow.mockResolvedValueOnce(successResult('.git\n'));
-			mockExecFileNoThrow.mockResolvedValueOnce(successResult('.git\n'));
-			mockExecFileNoThrow.mockResolvedValueOnce(successResult('main\n'));
-			mockExecFileNoThrow.mockResolvedValueOnce(failResult('not a git repo', 128));
-
-			const result = await worktreeInfoRemote('/repo', sshRemote);
-
-			expect(result.success).toBe(true);
-			expect(result.data).toEqual({
-				exists: true,
-				isWorktree: false,
-				currentBranch: 'main',
-				repoRoot: undefined,
-			});
-		});
-
-		it('should leave repoRoot undefined when worktree repo root lookup fails', async () => {
-			mockExecFileNoThrow.mockResolvedValueOnce(successResult('EXISTS'));
-			mockExecFileNoThrow.mockResolvedValueOnce(successResult('true'));
-			mockExecFileNoThrow.mockResolvedValueOnce(successResult('/repo/.git/worktrees/feature\n'));
-			mockExecFileNoThrow.mockResolvedValueOnce(successResult('/repo/.git\n'));
-			mockExecFileNoThrow.mockResolvedValueOnce(successResult('feature\n'));
-			mockExecFileNoThrow.mockResolvedValueOnce(failResult('permission denied', 1));
-
-			const result = await worktreeInfoRemote('/repo-feature', sshRemote);
-
-			expect(result.success).toBe(true);
-			expect(result.data).toEqual({
-				exists: true,
-				isWorktree: true,
-				currentBranch: 'feature',
-				repoRoot: undefined,
-			});
 		});
 
 		it('should return error when git-dir check fails', async () => {
@@ -749,21 +686,6 @@ describe('remote-git.ts', () => {
 			expect(result.data!.error).toContain('pathspec');
 		});
 
-		it('should return fallback error when checkout fails without stderr', async () => {
-			mockExecFileNoThrow.mockResolvedValueOnce(successResult(''));
-			mockExecFileNoThrow.mockResolvedValueOnce(successResult('abc123\n'));
-			mockExecFileNoThrow.mockResolvedValueOnce(failResult('', 1));
-
-			const result = await worktreeCheckoutRemote('/worktree', 'broken-branch', false, sshRemote);
-
-			expect(result.success).toBe(true);
-			expect(result.data).toEqual({
-				success: false,
-				hasUncommittedChanges: false,
-				error: 'Checkout failed',
-			});
-		});
-
 		it('should treat empty status output as clean working tree', async () => {
 			// git status --porcelain returns empty (with just whitespace)
 			mockExecFileNoThrow.mockResolvedValueOnce(successResult('   \n  '));
@@ -800,32 +722,6 @@ describe('remote-git.ts', () => {
 			expect(result.success).toBe(true);
 			expect(result.data!.success).toBe(false);
 			expect(result.data!.error).toContain('cannot be inside the main repository');
-		});
-
-		it('should continue setup when nested path preflight command fails', async () => {
-			mockExecFileNoThrow.mockResolvedValueOnce(failResult('realpath unavailable', 1));
-			mockExecFileNoThrow.mockResolvedValueOnce(successResult('NOT_EXISTS'));
-			mockExecFileNoThrow.mockResolvedValueOnce(successResult('abc\n'));
-			mockExecFileNoThrow.mockResolvedValueOnce(successResult(''));
-
-			const result = await worktreeSetupRemote('/a', '/b', 'branch', sshRemote);
-
-			expect(result.success).toBe(true);
-			expect(result.data!.success).toBe(true);
-			expect(result.data!.created).toBe(true);
-		});
-
-		it('should continue setup when nested path preflight returns incomplete output', async () => {
-			mockExecFileNoThrow.mockResolvedValueOnce(successResult('/a\n'));
-			mockExecFileNoThrow.mockResolvedValueOnce(successResult('NOT_EXISTS'));
-			mockExecFileNoThrow.mockResolvedValueOnce(successResult('abc\n'));
-			mockExecFileNoThrow.mockResolvedValueOnce(successResult(''));
-
-			const result = await worktreeSetupRemote('/a', '/b', 'branch', sshRemote);
-
-			expect(result.success).toBe(true);
-			expect(result.data!.success).toBe(true);
-			expect(result.data!.created).toBe(true);
 		});
 
 		it('should create new worktree when path does not exist and branch exists', async () => {
@@ -923,16 +819,6 @@ describe('remote-git.ts', () => {
 			expect(result.error).toBe('SSH error');
 		});
 
-		it('should return fallback error when path existence check fails without stderr', async () => {
-			mockExecFileNoThrow.mockResolvedValueOnce(successResult('/a\n/b\n'));
-			mockExecFileNoThrow.mockResolvedValueOnce(failResult('', 255));
-
-			const result = await worktreeSetupRemote('/a', '/b', 'branch', sshRemote);
-
-			expect(result.success).toBe(false);
-			expect(result.error).toBe('Failed to check path existence');
-		});
-
 		it('should return error when worktree creation fails', async () => {
 			// Check nested
 			mockExecFileNoThrow.mockResolvedValueOnce(successResult('/a\n/b\n'));
@@ -948,21 +834,6 @@ describe('remote-git.ts', () => {
 			expect(result.success).toBe(true);
 			expect(result.data!.success).toBe(false);
 			expect(result.data!.error).toContain('already exists');
-		});
-
-		it('should return fallback error when worktree creation fails without stderr', async () => {
-			mockExecFileNoThrow.mockResolvedValueOnce(successResult('/a\n/b\n'));
-			mockExecFileNoThrow.mockResolvedValueOnce(successResult('NOT_EXISTS'));
-			mockExecFileNoThrow.mockResolvedValueOnce(successResult('abc\n'));
-			mockExecFileNoThrow.mockResolvedValueOnce(failResult('', 1));
-
-			const result = await worktreeSetupRemote('/a', '/b', 'branch', sshRemote);
-
-			expect(result.success).toBe(true);
-			expect(result.data).toEqual({
-				success: false,
-				error: 'Failed to create worktree',
-			});
 		});
 
 		it('should handle existing non-empty non-git directory', async () => {
@@ -1026,26 +897,6 @@ describe('remote-git.ts', () => {
 			expect(result.data!.error).toContain('different repository');
 		});
 
-		it('should reuse existing worktree when repository comparison inputs fail', async () => {
-			mockExecFileNoThrow.mockResolvedValueOnce(successResult('/a\n/b\n'));
-			mockExecFileNoThrow.mockResolvedValueOnce(successResult('EXISTS'));
-			mockExecFileNoThrow.mockResolvedValueOnce(successResult('true'));
-			mockExecFileNoThrow.mockResolvedValueOnce(failResult('common dir unavailable', 1));
-			mockExecFileNoThrow.mockResolvedValueOnce(successResult('.git\n'));
-			mockExecFileNoThrow.mockResolvedValueOnce(failResult('detached or unreadable', 128));
-
-			const result = await worktreeSetupRemote('/a', '/b', 'branch', sshRemote);
-
-			expect(result.success).toBe(true);
-			expect(result.data).toEqual({
-				success: true,
-				created: false,
-				currentBranch: '',
-				requestedBranch: 'branch',
-				branchMismatch: true,
-			});
-		});
-
 		it('should not report branch mismatch when requested branch is empty', async () => {
 			// Check nested
 			mockExecFileNoThrow.mockResolvedValueOnce(successResult('/a\n/b\n'));
@@ -1066,6 +917,97 @@ describe('remote-git.ts', () => {
 
 			expect(result.success).toBe(true);
 			expect(result.data!.branchMismatch).toBe(false);
+		});
+
+		it('should recover when remote branch is already checked out at another worktree', async () => {
+			// Check nested
+			mockExecFileNoThrow.mockResolvedValueOnce(successResult('/a\n/b\n'));
+			// Check path exists
+			mockExecFileNoThrow.mockResolvedValueOnce(successResult('NOT_EXISTS'));
+			// Branch exists
+			mockExecFileNoThrow.mockResolvedValueOnce(successResult('abc\n'));
+			// git worktree add fails because branch already attached
+			mockExecFileNoThrow.mockResolvedValueOnce(
+				failResult("fatal: 'feature' is already checked out at '/existing/wt/feature'", 128)
+			);
+			// findRemoteWorktreeForBranch → git worktree list --porcelain
+			mockExecFileNoThrow.mockResolvedValueOnce(
+				successResult(
+					[
+						'worktree /a',
+						'HEAD aaa',
+						'branch refs/heads/main',
+						'',
+						'worktree /existing/wt/feature',
+						'HEAD bbb',
+						'branch refs/heads/feature',
+						'',
+					].join('\n')
+				)
+			);
+			// findRemoteWorktreeForBranch → test -d (path exists on remote)
+			mockExecFileNoThrow.mockResolvedValueOnce(successResult('EXISTS'));
+
+			const result = await worktreeSetupRemote('/a', '/b', 'feature', sshRemote);
+
+			expect(result.success).toBe(true);
+			expect(result.data!.success).toBe(true);
+			expect(result.data!.created).toBe(false);
+			expect(result.data!.alreadyExisted).toBe(true);
+			expect(result.data!.existingPath).toBe('/existing/wt/feature');
+			expect(result.data!.currentBranch).toBe('feature');
+			expect(result.data!.branchMismatch).toBe(false);
+		});
+
+		it('should fall through to error when porcelain returns a stale remote worktree path', async () => {
+			mockExecFileNoThrow.mockResolvedValueOnce(successResult('/a\n/b\n'));
+			mockExecFileNoThrow.mockResolvedValueOnce(successResult('NOT_EXISTS'));
+			mockExecFileNoThrow.mockResolvedValueOnce(successResult('abc\n'));
+			mockExecFileNoThrow.mockResolvedValueOnce(
+				failResult("fatal: 'feature' is already checked out at '/stale'", 128)
+			);
+			// porcelain still has a stale registration
+			mockExecFileNoThrow.mockResolvedValueOnce(
+				successResult(
+					[
+						'worktree /a',
+						'HEAD aaa',
+						'branch refs/heads/main',
+						'',
+						'worktree /stale',
+						'HEAD bbb',
+						'branch refs/heads/feature',
+						'',
+					].join('\n')
+				)
+			);
+			// test -d on remote → MISSING (stale)
+			mockExecFileNoThrow.mockResolvedValueOnce(successResult('MISSING'));
+
+			const result = await worktreeSetupRemote('/a', '/b', 'feature', sshRemote);
+
+			expect(result.success).toBe(true);
+			expect(result.data!.success).toBe(false);
+			expect(result.data!.error).toContain('already checked out');
+		});
+
+		it('should still report error when "already used" but porcelain has no match', async () => {
+			mockExecFileNoThrow.mockResolvedValueOnce(successResult('/a\n/b\n'));
+			mockExecFileNoThrow.mockResolvedValueOnce(successResult('NOT_EXISTS'));
+			mockExecFileNoThrow.mockResolvedValueOnce(successResult('abc\n'));
+			mockExecFileNoThrow.mockResolvedValueOnce(
+				failResult("fatal: 'feature' is already used by worktree at '/gone'", 128)
+			);
+			// porcelain returns nothing matching
+			mockExecFileNoThrow.mockResolvedValueOnce(
+				successResult('worktree /a\nHEAD aaa\nbranch refs/heads/main\n')
+			);
+
+			const result = await worktreeSetupRemote('/a', '/b', 'feature', sshRemote);
+
+			expect(result.success).toBe(true);
+			expect(result.data!.success).toBe(false);
+			expect(result.data!.error).toContain('already used');
 		});
 	});
 

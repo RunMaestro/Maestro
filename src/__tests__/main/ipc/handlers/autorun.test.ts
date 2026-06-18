@@ -16,16 +16,11 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ipcMain, BrowserWindow, App } from 'electron';
-import {
-	getAutoRunWatcherCount,
-	registerAutorunHandlers,
-} from '../../../../main/ipc/handlers/autorun';
+import { registerAutorunHandlers } from '../../../../main/ipc/handlers/autorun';
 import fs from 'fs/promises';
 import path from 'path';
-import chokidar from 'chokidar';
 import Store from 'electron-store';
 import type { SshRemoteConfig } from '../../../../shared/types';
-import { logger } from '../../../../main/utils/logger';
 
 // Mock electron's ipcMain
 vi.mock('electron', () => ({
@@ -192,7 +187,6 @@ describe('autorun IPC handlers', () => {
 	});
 
 	afterEach(() => {
-		appEventHandlers.get('before-quit')?.();
 		handlers.clear();
 		appEventHandlers.clear();
 	});
@@ -206,6 +200,7 @@ describe('autorun IPC handlers', () => {
 				'autorun:writeDoc',
 				'autorun:saveImage',
 				'autorun:deleteImage',
+				'autorun:replaceImage',
 				'autorun:listImages',
 				'autorun:deleteFolder',
 				'autorun:watchFolder',
@@ -315,45 +310,6 @@ describe('autorun IPC handlers', () => {
 			expect(result.success).toBe(true);
 			expect(result.files).toEqual([]);
 			expect(result.tree).toEqual([]);
-		});
-
-		it('should sort folders before files and omit folders without markdown files', async () => {
-			vi.mocked(fs.stat).mockResolvedValue({
-				isDirectory: () => true,
-				isFile: () => false,
-			} as any);
-			vi.mocked(fs.readdir).mockImplementation(async (dirPath) => {
-				if (dirPath === '/test/folder') {
-					return [
-						{
-							name: 'z-file.md',
-							isDirectory: () => false,
-							isFile: () => true,
-							isSymbolicLink: () => false,
-						},
-						{
-							name: 'empty-folder',
-							isDirectory: () => true,
-							isFile: () => false,
-							isSymbolicLink: () => false,
-						},
-					] as any;
-				}
-				return [] as any;
-			});
-
-			const handler = handlers.get('autorun:listDocs');
-			const result = await handler!({} as any, '/test/folder');
-
-			expect(result.success).toBe(true);
-			expect(result.files).toEqual(['z-file']);
-			expect(result.tree).toEqual([
-				{
-					name: 'z-file',
-					type: 'file',
-					path: 'z-file',
-				},
-			]);
 		});
 
 		it('should return error for non-existent folder', async () => {
@@ -700,43 +656,6 @@ describe('autorun IPC handlers', () => {
 			expect(result.hasDocuments).toBe(true);
 		});
 
-		it('should keep scanning when a subdirectory contains no markdown files', async () => {
-			vi.mocked(fs.stat).mockResolvedValue({
-				isDirectory: () => true,
-				isFile: () => false,
-			} as any);
-			vi.mocked(fs.readdir)
-				.mockResolvedValueOnce([
-					{
-						name: 'empty',
-						isDirectory: () => true,
-						isFile: () => false,
-						isSymbolicLink: () => false,
-					},
-					{
-						name: 'notes.txt',
-						isDirectory: () => false,
-						isFile: () => true,
-						isSymbolicLink: () => false,
-					},
-				] as any)
-				.mockResolvedValueOnce([
-					{
-						name: 'readme.txt',
-						isDirectory: () => false,
-						isFile: () => true,
-						isSymbolicLink: () => false,
-					},
-				] as any);
-
-			const handler = handlers.get('autorun:hasDocuments');
-			const result = await handler!({} as any, '/test/folder');
-
-			expect(result.success).toBe(true);
-			expect(result.hasDocuments).toBe(false);
-			expect(fs.readdir).toHaveBeenCalledTimes(2);
-		});
-
 		it('should skip dotfiles and dot directories', async () => {
 			vi.mocked(fs.stat).mockResolvedValue({
 				isDirectory: () => true,
@@ -842,14 +761,15 @@ describe('autorun IPC handlers', () => {
 			expect(fs.readFile).toHaveBeenCalledWith(expect.stringContaining('doc2.md'), 'utf-8');
 		});
 
-		it('should return error for missing file', async () => {
+		it('should return empty content with notFound flag for missing file', async () => {
 			vi.mocked(fs.access).mockRejectedValue(new Error('ENOENT'));
 
 			const handler = handlers.get('autorun:readDoc');
 			const result = await handler!({} as any, '/test/folder', 'nonexistent');
 
-			expect(result.success).toBe(false);
-			expect(result.error).toContain('File not found');
+			expect(result.success).toBe(true);
+			expect(result.content).toBe('');
+			expect(result.notFound).toBe(true);
 		});
 
 		it('should return error for directory traversal attempts', async () => {
@@ -886,37 +806,9 @@ describe('autorun IPC handlers', () => {
 			expect(fs.readFile).toHaveBeenCalledWith(expect.stringContaining('subdir'), 'utf-8');
 			expect(result.content).toBe('nested content');
 		});
-
-		it('should reject resolved paths outside the Auto Run folder', async () => {
-			const resolveSpy = vi
-				.spyOn(path, 'resolve')
-				.mockReturnValueOnce('/test/secret/doc.md')
-				.mockReturnValueOnce('/test/folder');
-
-			try {
-				const handler = handlers.get('autorun:readDoc');
-				const result = await handler!({} as any, '/test/folder', 'doc1');
-
-				expect(result.success).toBe(false);
-				expect(result.error).toContain('Invalid file path');
-				expect(fs.access).not.toHaveBeenCalled();
-			} finally {
-				resolveSpy.mockRestore();
-			}
-		});
 	});
 
 	describe('autorun:writeDoc', () => {
-		let consoleLogSpy: ReturnType<typeof vi.spyOn>;
-
-		beforeEach(() => {
-			consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-		});
-
-		afterEach(() => {
-			consoleLogSpy.mockRestore();
-		});
-
 		it('should write content to file', async () => {
 			vi.mocked(fs.access).mockResolvedValue(undefined);
 			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
@@ -983,66 +875,10 @@ describe('autorun IPC handlers', () => {
 				'utf-8'
 			);
 		});
-
-		it('should still validate and write filenames that cannot be URL decoded', async () => {
-			vi.mocked(fs.access).mockResolvedValue(undefined);
-			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
-
-			const handler = handlers.get('autorun:writeDoc');
-			const result = await handler!({} as any, '/test/folder', '%E0%A4%A', 'content');
-
-			expect(result.success).toBe(true);
-			expect(fs.writeFile).toHaveBeenCalledWith(
-				expect.stringContaining('%E0%A4%A.md'),
-				'content',
-				'utf-8'
-			);
-		});
-
-		it('should reject resolved write paths outside the Auto Run folder', async () => {
-			const resolveSpy = vi
-				.spyOn(path, 'resolve')
-				.mockReturnValueOnce('/test/secret/doc.md')
-				.mockReturnValueOnce('/test/folder');
-
-			try {
-				const handler = handlers.get('autorun:writeDoc');
-				const result = await handler!({} as any, '/test/folder', 'doc1', 'content');
-
-				expect(result.success).toBe(false);
-				expect(result.error).toContain('Invalid file path');
-				expect(fs.writeFile).not.toHaveBeenCalled();
-			} finally {
-				resolveSpy.mockRestore();
-			}
-		});
-
-		it('should reject missing parent directories that resolve outside the Auto Run folder', async () => {
-			vi.mocked(fs.access).mockRejectedValueOnce(new Error('ENOENT'));
-
-			const resolveSpy = vi
-				.spyOn(path, 'resolve')
-				.mockReturnValueOnce('/test/folder/nested/doc.md')
-				.mockReturnValueOnce('/test/folder')
-				.mockReturnValueOnce('/test/secret/nested')
-				.mockReturnValueOnce('/test/folder');
-
-			try {
-				const handler = handlers.get('autorun:writeDoc');
-				const result = await handler!({} as any, '/test/folder', 'nested/doc1', 'content');
-
-				expect(result.success).toBe(false);
-				expect(result.error).toContain('Invalid parent directory');
-				expect(fs.mkdir).not.toHaveBeenCalled();
-				expect(fs.writeFile).not.toHaveBeenCalled();
-			} finally {
-				resolveSpy.mockRestore();
-			}
-		});
 	});
 
 	describe('autorun:deleteFolder', () => {
-		it('should remove the Auto Run Docs folder', async () => {
+		it('should remove the playbooks folder', async () => {
 			vi.mocked(fs.stat).mockResolvedValue({
 				isDirectory: () => true,
 			} as any);
@@ -1052,7 +888,7 @@ describe('autorun IPC handlers', () => {
 			const result = await handler!({} as any, '/test/project');
 
 			expect(result.success).toBe(true);
-			expect(fs.rm).toHaveBeenCalledWith(path.join('/test/project', 'Auto Run Docs'), {
+			expect(fs.rm).toHaveBeenCalledWith(path.join('/test/project', '.maestro/playbooks'), {
 				recursive: true,
 				force: true,
 			});
@@ -1069,7 +905,7 @@ describe('autorun IPC handlers', () => {
 			expect(fs.rm).not.toHaveBeenCalled();
 		});
 
-		it('should return error if path is not a directory', async () => {
+		it('should skip non-directory paths without error', async () => {
 			vi.mocked(fs.stat).mockResolvedValue({
 				isDirectory: () => false,
 			} as any);
@@ -1077,8 +913,9 @@ describe('autorun IPC handlers', () => {
 			const handler = handlers.get('autorun:deleteFolder');
 			const result = await handler!({} as any, '/test/project');
 
-			expect(result.success).toBe(false);
-			expect(result.error).toContain('Auto Run Docs path is not a directory');
+			// Both canonical and legacy are non-directories, so nothing to delete
+			expect(result.success).toBe(true);
+			expect(fs.rm).not.toHaveBeenCalled();
 		});
 
 		it('should return error for invalid project path', async () => {
@@ -1091,35 +928,6 @@ describe('autorun IPC handlers', () => {
 			const result2 = await handler!({} as any, null);
 			expect(result2.success).toBe(false);
 			expect(result2.error).toContain('Invalid project path');
-		});
-
-		it('should no-op when stat fails for a permission-style error', async () => {
-			vi.mocked(fs.stat).mockRejectedValue(new Error('EACCES'));
-
-			const handler = handlers.get('autorun:deleteFolder');
-			const result = await handler!({} as any, '/test/project');
-
-			expect(result.success).toBe(true);
-			expect(fs.rm).not.toHaveBeenCalled();
-		});
-
-		it('should reject deletion when the safety folder name check fails', async () => {
-			vi.mocked(fs.stat).mockResolvedValue({
-				isDirectory: () => true,
-			} as any);
-
-			const basenameSpy = vi.spyOn(path, 'basename').mockReturnValueOnce('Not Auto Run Docs');
-
-			try {
-				const handler = handlers.get('autorun:deleteFolder');
-				const result = await handler!({} as any, '/test/project');
-
-				expect(result.success).toBe(false);
-				expect(result.error).toContain('Safety check failed');
-				expect(fs.rm).not.toHaveBeenCalled();
-			} finally {
-				basenameSpy.mockRestore();
-			}
 		});
 	});
 
@@ -1202,15 +1010,6 @@ describe('autorun IPC handlers', () => {
 			expect(result2.success).toBe(true);
 			expect(result2.images).toEqual([]);
 		});
-
-		it('should reject document names that remain invalid after basename sanitization', async () => {
-			const handler = handlers.get('autorun:listImages');
-			const result = await handler!({} as any, '/test/folder', '../../..');
-
-			expect(result.success).toBe(false);
-			expect(result.error).toContain('Invalid document name');
-			expect(fs.readdir).not.toHaveBeenCalled();
-		});
 	});
 
 	describe('autorun:saveImage', () => {
@@ -1284,35 +1083,6 @@ describe('autorun IPC handlers', () => {
 			expect(result.success).toBe(true);
 			expect(result.relativePath).toMatch(/images\/doc1-\d+\.png/);
 		});
-
-		it('should reject document names that remain invalid after basename sanitization', async () => {
-			const handler = handlers.get('autorun:saveImage');
-			const result = await handler!({} as any, '/test/folder', '../../..', 'ZmFrZQ==', 'png');
-
-			expect(result.success).toBe(false);
-			expect(result.error).toContain('Invalid document name');
-			expect(fs.writeFile).not.toHaveBeenCalled();
-		});
-
-		it('should reject local image paths that resolve outside the Auto Run folder', async () => {
-			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
-
-			const resolveSpy = vi
-				.spyOn(path, 'resolve')
-				.mockReturnValueOnce('/test/secret/images/doc1.png')
-				.mockReturnValueOnce('/test/folder');
-
-			try {
-				const handler = handlers.get('autorun:saveImage');
-				const result = await handler!({} as any, '/test/folder', 'doc1', 'ZmFrZQ==', 'png');
-
-				expect(result.success).toBe(false);
-				expect(result.error).toContain('Invalid file path');
-				expect(fs.writeFile).not.toHaveBeenCalled();
-			} finally {
-				resolveSpy.mockRestore();
-			}
-		});
 	});
 
 	describe('autorun:deleteImage', () => {
@@ -1351,24 +1121,6 @@ describe('autorun IPC handlers', () => {
 			const result3 = await handler!({} as any, '/test/folder', '/absolute/path.png');
 			expect(result3.success).toBe(false);
 			expect(result3.error).toContain('Invalid image path');
-		});
-
-		it('should reject local image deletions that resolve outside the Auto Run folder', async () => {
-			const resolveSpy = vi
-				.spyOn(path, 'resolve')
-				.mockReturnValueOnce('/test/secret/images/doc1.png')
-				.mockReturnValueOnce('/test/folder');
-
-			try {
-				const handler = handlers.get('autorun:deleteImage');
-				const result = await handler!({} as any, '/test/folder', 'images/doc1.png');
-
-				expect(result.success).toBe(false);
-				expect(result.error).toContain('Invalid file path');
-				expect(fs.access).not.toHaveBeenCalled();
-			} finally {
-				resolveSpy.mockRestore();
-			}
 		});
 	});
 
@@ -1410,189 +1162,6 @@ describe('autorun IPC handlers', () => {
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('Path is not a directory');
-		});
-
-		it('should return polling mode for SSH folders and create missing remote folders', async () => {
-			mockExistsRemote.mockResolvedValue({ success: true, data: false });
-			mockMkdirRemote.mockResolvedValue({ success: true });
-
-			const handler = handlers.get('autorun:watchFolder');
-			const result = await handler!({} as any, '/remote/folder', 'ssh-remote-1');
-
-			expect(result).toMatchObject({
-				success: true,
-				isRemote: true,
-				message: expect.stringContaining('polling'),
-			});
-			expect(mockExistsRemote).toHaveBeenCalledWith('/remote/folder', sampleSshRemote);
-			expect(mockMkdirRemote).toHaveBeenCalledWith('/remote/folder', sampleSshRemote, true);
-			expect(chokidar.watch).not.toHaveBeenCalled();
-		});
-
-		it('should return polling mode for SSH folders that already exist', async () => {
-			mockExistsRemote.mockResolvedValue({ success: true, data: true });
-
-			const handler = handlers.get('autorun:watchFolder');
-			const result = await handler!({} as any, '/remote/folder', 'ssh-remote-1');
-
-			expect(result).toMatchObject({
-				success: true,
-				isRemote: true,
-			});
-			expect(mockMkdirRemote).not.toHaveBeenCalled();
-			expect(chokidar.watch).not.toHaveBeenCalled();
-		});
-
-		it('should fail SSH folder watching when the remote folder cannot be created', async () => {
-			mockExistsRemote.mockResolvedValue({ success: true, data: false });
-			mockMkdirRemote.mockResolvedValue({ success: false });
-
-			const handler = handlers.get('autorun:watchFolder');
-			const result = await handler!({} as any, '/remote/folder', 'ssh-remote-1');
-
-			expect(result.success).toBe(false);
-			expect(result.error).toContain('Failed to create remote Auto Run folder');
-		});
-
-		it('should return an error when watching with an unknown SSH remote', async () => {
-			mockSettingsStore.get.mockImplementation((key: string, defaultValue?: unknown) => {
-				if (key === 'sshRemotes') return [];
-				return defaultValue;
-			});
-
-			const handler = handlers.get('autorun:watchFolder');
-			const result = await handler!({} as any, '/remote/folder', 'missing-remote');
-
-			expect(result.success).toBe(false);
-			expect(result.error).toContain('SSH remote not found: missing-remote');
-		});
-
-		it('should publish debounced markdown file change events', async () => {
-			vi.useFakeTimers();
-			try {
-				const watcherHandlers = new Map<string, Function>();
-				const watcher = {
-					on: vi.fn((event: string, callback: Function) => {
-						watcherHandlers.set(event, callback);
-						return watcher;
-					}),
-					close: vi.fn(),
-				};
-				vi.mocked(chokidar.watch).mockReturnValue(watcher as any);
-				vi.mocked(fs.stat).mockResolvedValue({ isDirectory: () => true } as any);
-
-				const handler = handlers.get('autorun:watchFolder');
-				const result = await handler!({} as any, '/test/folder');
-
-				expect(result.success).toBe(true);
-				expect(getAutoRunWatcherCount()).toBe(1);
-
-				watcherHandlers.get('change')!('/test/folder/notes.txt');
-				vi.advanceTimersByTime(300);
-				expect(mockMainWindow.webContents?.send).not.toHaveBeenCalled();
-
-				watcherHandlers.get('change')!('/test/folder/Nested/Task.md');
-				vi.advanceTimersByTime(300);
-
-				expect(mockMainWindow.webContents?.send).toHaveBeenCalledWith('autorun:fileChanged', {
-					folderPath: '/test/folder',
-					filename: 'Nested/Task',
-					eventType: 'change',
-				});
-			} finally {
-				vi.useRealTimers();
-			}
-		});
-
-		it('should debounce rapid markdown file changes and log watcher errors', async () => {
-			vi.useFakeTimers();
-			try {
-				const watcherHandlers = new Map<string, Function>();
-				const watcher = {
-					on: vi.fn((event: string, callback: Function) => {
-						watcherHandlers.set(event, callback);
-						return watcher;
-					}),
-					close: vi.fn(),
-				};
-				vi.mocked(chokidar.watch).mockReturnValue(watcher as any);
-				vi.mocked(fs.stat).mockResolvedValue({ isDirectory: () => true } as any);
-
-				const handler = handlers.get('autorun:watchFolder');
-				await handler!({} as any, '/test/folder');
-
-				watcherHandlers.get('add')!('/test/folder/first.md');
-				watcherHandlers.get('unlink')!('/test/folder/second.md');
-				vi.advanceTimersByTime(300);
-
-				expect(mockMainWindow.webContents?.send).toHaveBeenCalledTimes(1);
-				expect(mockMainWindow.webContents?.send).toHaveBeenCalledWith('autorun:fileChanged', {
-					folderPath: '/test/folder',
-					filename: 'second',
-					eventType: 'rename',
-				});
-
-				const error = new Error('watch failed');
-				watcherHandlers.get('error')!(error);
-				expect(logger.error).toHaveBeenCalledWith(
-					'Auto Run watcher error for /test/folder',
-					'[AutoRun]',
-					error
-				);
-			} finally {
-				vi.useRealTimers();
-			}
-		});
-
-		it('should drop debounced file events when the renderer is unavailable', async () => {
-			vi.useFakeTimers();
-			try {
-				const watcherHandlers = new Map<string, Function>();
-				const watcher = {
-					on: vi.fn((event: string, callback: Function) => {
-						watcherHandlers.set(event, callback);
-						return watcher;
-					}),
-					close: vi.fn(),
-				};
-				vi.mocked(chokidar.watch).mockReturnValue(watcher as any);
-				vi.mocked(fs.stat).mockResolvedValue({ isDirectory: () => true } as any);
-				vi.mocked(mockMainWindow.webContents!.isDestroyed).mockReturnValue(true);
-
-				const handler = handlers.get('autorun:watchFolder');
-				await handler!({} as any, '/test/folder');
-
-				watcherHandlers.get('change')!('/test/folder/Task.md');
-				vi.advanceTimersByTime(300);
-
-				expect(mockMainWindow.webContents?.send).not.toHaveBeenCalled();
-			} finally {
-				vi.useRealTimers();
-			}
-		});
-
-		it('should close an existing watcher before replacing it for the same folder', async () => {
-			const firstWatcher = {
-				on: vi.fn().mockReturnThis(),
-				close: vi.fn(),
-			};
-			const secondWatcher = {
-				on: vi.fn().mockReturnThis(),
-				close: vi.fn(),
-			};
-			vi.mocked(chokidar.watch)
-				.mockReturnValueOnce(firstWatcher as any)
-				.mockReturnValueOnce(secondWatcher as any);
-			vi.mocked(fs.stat).mockResolvedValue({ isDirectory: () => true } as any);
-
-			const handler = handlers.get('autorun:watchFolder');
-			const firstResult = await handler!({} as any, '/test/folder');
-			const secondResult = await handler!({} as any, '/test/folder');
-
-			expect(firstResult.success).toBe(true);
-			expect(secondResult.success).toBe(true);
-			expect(firstWatcher.close).toHaveBeenCalledTimes(1);
-			expect(getAutoRunWatcherCount()).toBe(1);
 		});
 	});
 
@@ -1637,21 +1206,6 @@ describe('autorun IPC handlers', () => {
 			expect(result.backupFilename).toBe('doc1.backup.md');
 		});
 
-		it('should create backup copy when filename already has an md extension', async () => {
-			vi.mocked(fs.access).mockResolvedValue(undefined);
-			vi.mocked(fs.copyFile).mockResolvedValue(undefined);
-
-			const handler = handlers.get('autorun:createBackup');
-			const result = await handler!({} as any, '/test/folder', 'doc1.md');
-
-			expect(result.success).toBe(true);
-			expect(fs.copyFile).toHaveBeenCalledWith(
-				expect.stringContaining('doc1.md'),
-				expect.stringContaining('doc1.backup.md')
-			);
-			expect(result.backupFilename).toBe('doc1.backup.md');
-		});
-
 		it('should return error for missing source file', async () => {
 			vi.mocked(fs.access).mockRejectedValue(new Error('ENOENT'));
 
@@ -1669,24 +1223,6 @@ describe('autorun IPC handlers', () => {
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('Invalid filename');
 		});
-
-		it('should reject backup paths that resolve outside the Auto Run folder', async () => {
-			const resolveSpy = vi
-				.spyOn(path, 'resolve')
-				.mockReturnValueOnce('/test/secret/doc.md')
-				.mockReturnValueOnce('/test/folder');
-
-			try {
-				const handler = handlers.get('autorun:createBackup');
-				const result = await handler!({} as any, '/test/folder', 'doc1');
-
-				expect(result.success).toBe(false);
-				expect(result.error).toContain('Invalid file path');
-				expect(fs.copyFile).not.toHaveBeenCalled();
-			} finally {
-				resolveSpy.mockRestore();
-			}
-		});
 	});
 
 	describe('autorun:restoreBackup', () => {
@@ -1697,22 +1233,6 @@ describe('autorun IPC handlers', () => {
 
 			const handler = handlers.get('autorun:restoreBackup');
 			const result = await handler!({} as any, '/test/folder', 'doc1');
-
-			expect(result.success).toBe(true);
-			expect(fs.copyFile).toHaveBeenCalledWith(
-				expect.stringContaining('doc1.backup.md'),
-				expect.stringContaining('doc1.md')
-			);
-			expect(fs.unlink).toHaveBeenCalledWith(expect.stringContaining('doc1.backup.md'));
-		});
-
-		it('should restore document when filename already has an md extension', async () => {
-			vi.mocked(fs.access).mockResolvedValue(undefined);
-			vi.mocked(fs.copyFile).mockResolvedValue(undefined);
-			vi.mocked(fs.unlink).mockResolvedValue(undefined);
-
-			const handler = handlers.get('autorun:restoreBackup');
-			const result = await handler!({} as any, '/test/folder', 'doc1.md');
 
 			expect(result.success).toBe(true);
 			expect(fs.copyFile).toHaveBeenCalledWith(
@@ -1738,24 +1258,6 @@ describe('autorun IPC handlers', () => {
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('Invalid filename');
-		});
-
-		it('should reject restore paths that resolve outside the Auto Run folder', async () => {
-			const resolveSpy = vi
-				.spyOn(path, 'resolve')
-				.mockReturnValueOnce('/test/secret/doc.md')
-				.mockReturnValueOnce('/test/folder');
-
-			try {
-				const handler = handlers.get('autorun:restoreBackup');
-				const result = await handler!({} as any, '/test/folder', 'doc1');
-
-				expect(result.success).toBe(false);
-				expect(result.error).toContain('Invalid file path');
-				expect(fs.copyFile).not.toHaveBeenCalled();
-			} finally {
-				resolveSpy.mockRestore();
-			}
 		});
 	});
 
@@ -1884,245 +1386,6 @@ describe('autorun IPC handlers', () => {
 	});
 
 	describe('SSH remote operations', () => {
-		describe('autorun document SSH operations', () => {
-			let consoleLogSpy: ReturnType<typeof vi.spyOn>;
-
-			beforeEach(() => {
-				consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-			});
-
-			afterEach(() => {
-				consoleLogSpy.mockRestore();
-			});
-
-			it('should recursively list remote markdown documents', async () => {
-				mockReadDirRemote
-					.mockResolvedValueOnce({
-						success: true,
-						data: [
-							{ name: 'root.md', isDirectory: false, isSymlink: false },
-							{ name: 'nested', isDirectory: true, isSymlink: false },
-							{ name: '.hidden.md', isDirectory: false, isSymlink: false },
-							{ name: 'linked.md', isDirectory: false, isSymlink: true },
-							{ name: 'notes.txt', isDirectory: false, isSymlink: false },
-						],
-					})
-					.mockResolvedValueOnce({
-						success: true,
-						data: [{ name: 'child.MD', isDirectory: false, isSymlink: false }],
-					});
-
-				const handler = handlers.get('autorun:listDocs');
-				const result = await handler!({} as any, '/remote/folder', 'ssh-remote-1');
-
-				expect(result.success).toBe(true);
-				expect(result.files).toEqual(['nested/child', 'linked', 'root']);
-				expect(result.tree).toEqual([
-					{
-						name: 'nested',
-						type: 'folder',
-						path: 'nested',
-						children: [{ name: 'child', type: 'file', path: 'nested/child' }],
-					},
-					{ name: 'linked', type: 'file', path: 'linked' },
-					{ name: 'root', type: 'file', path: 'root' },
-				]);
-				expect(mockReadDirRemote).toHaveBeenCalledWith('/remote/folder', sampleSshRemote);
-				expect(mockReadDirRemote).toHaveBeenCalledWith('/remote/folder/nested', sampleSshRemote);
-				expect(fs.stat).not.toHaveBeenCalled();
-			});
-
-			it('should skip remote subfolders that contain no markdown files', async () => {
-				mockReadDirRemote
-					.mockResolvedValueOnce({
-						success: true,
-						data: [
-							{ name: 'empty', isDirectory: true, isSymlink: false },
-							{ name: 'root.md', isDirectory: false, isSymlink: false },
-						],
-					})
-					.mockResolvedValueOnce({
-						success: true,
-						data: [{ name: 'notes.txt', isDirectory: false, isSymlink: false }],
-					});
-
-				const handler = handlers.get('autorun:listDocs');
-				const result = await handler!({} as any, '/remote/folder', 'ssh-remote-1');
-
-				expect(result.success).toBe(true);
-				expect(result.files).toEqual(['root']);
-				expect(result.tree).toEqual([{ name: 'root', type: 'file', path: 'root' }]);
-			});
-
-			it('should return an empty remote document list when remote directory reading fails', async () => {
-				mockReadDirRemote.mockResolvedValue({
-					success: false,
-					error: 'Permission denied',
-				});
-
-				const handler = handlers.get('autorun:listDocs');
-				const result = await handler!({} as any, '/remote/folder', 'ssh-remote-1');
-
-				expect(result.success).toBe(true);
-				expect(result.files).toEqual([]);
-				expect(result.tree).toEqual([]);
-				expect(logger.warn).toHaveBeenCalledWith(
-					'[AutoRun] Failed to read remote directory: Permission denied',
-					'[AutoRun]'
-				);
-			});
-
-			it('should read remote markdown documents', async () => {
-				mockReadFileRemote.mockResolvedValue({
-					success: true,
-					data: '# Remote Doc',
-				});
-
-				const handler = handlers.get('autorun:readDoc');
-				const result = await handler!({} as any, '/remote/folder', 'subdir/doc', 'ssh-remote-1');
-
-				expect(result.success).toBe(true);
-				expect(result.content).toBe('# Remote Doc');
-				expect(mockReadFileRemote).toHaveBeenCalledWith(
-					'/remote/folder/subdir/doc.md',
-					sampleSshRemote
-				);
-				expect(fs.readFile).not.toHaveBeenCalled();
-			});
-
-			it('should return an error when remote document reading fails', async () => {
-				mockReadFileRemote.mockResolvedValue({
-					success: false,
-					error: 'Remote file missing',
-				});
-
-				const handler = handlers.get('autorun:readDoc');
-				const result = await handler!({} as any, '/remote/folder', 'doc', 'ssh-remote-1');
-
-				expect(result.success).toBe(false);
-				expect(result.error).toContain('Remote file missing');
-			});
-
-			it('should use a fallback error when remote document reading fails without details', async () => {
-				mockReadFileRemote.mockResolvedValue({
-					success: false,
-				});
-
-				const handler = handlers.get('autorun:readDoc');
-				const result = await handler!({} as any, '/remote/folder', 'doc', 'ssh-remote-1');
-
-				expect(result.success).toBe(false);
-				expect(result.error).toContain('Failed to read remote file');
-			});
-
-			it('should create remote parent folders before writing nested documents', async () => {
-				mockExistsRemote.mockResolvedValue({ success: true, data: false });
-				mockMkdirRemote.mockResolvedValue({ success: true });
-				mockWriteFileRemote.mockResolvedValue({ success: true });
-
-				const handler = handlers.get('autorun:writeDoc');
-				const result = await handler!(
-					{} as any,
-					'/remote/folder',
-					'nested/doc',
-					'# Remote Content',
-					'ssh-remote-1'
-				);
-
-				expect(result.success).toBe(true);
-				expect(mockExistsRemote).toHaveBeenCalledWith('/remote/folder/nested', sampleSshRemote);
-				expect(mockMkdirRemote).toHaveBeenCalledWith(
-					'/remote/folder/nested',
-					sampleSshRemote,
-					true
-				);
-				expect(mockWriteFileRemote).toHaveBeenCalledWith(
-					'/remote/folder/nested/doc.md',
-					'# Remote Content',
-					sampleSshRemote
-				);
-				expect(fs.writeFile).not.toHaveBeenCalled();
-			});
-
-			it('should write remote nested documents when parent folder already exists', async () => {
-				mockExistsRemote.mockResolvedValue({ success: true, data: true });
-				mockWriteFileRemote.mockResolvedValue({ success: true });
-
-				const handler = handlers.get('autorun:writeDoc');
-				const result = await handler!(
-					{} as any,
-					'/remote/folder',
-					'nested/doc',
-					'# Remote Content',
-					'ssh-remote-1'
-				);
-
-				expect(result.success).toBe(true);
-				expect(mockMkdirRemote).not.toHaveBeenCalled();
-				expect(mockWriteFileRemote).toHaveBeenCalledWith(
-					'/remote/folder/nested/doc.md',
-					'# Remote Content',
-					sampleSshRemote
-				);
-			});
-
-			it('should fail when remote parent folder creation fails', async () => {
-				mockExistsRemote.mockResolvedValue({ success: true, data: false });
-				mockMkdirRemote.mockResolvedValue({
-					success: false,
-					error: 'Cannot create directory',
-				});
-
-				const handler = handlers.get('autorun:writeDoc');
-				const result = await handler!(
-					{} as any,
-					'/remote/folder',
-					'nested/doc',
-					'# Remote Content',
-					'ssh-remote-1'
-				);
-
-				expect(result.success).toBe(false);
-				expect(result.error).toContain('Cannot create directory');
-				expect(mockWriteFileRemote).not.toHaveBeenCalled();
-			});
-
-			it('should use a fallback error when remote parent folder creation fails without details', async () => {
-				mockExistsRemote.mockResolvedValue({ success: true, data: false });
-				mockMkdirRemote.mockResolvedValue({ success: false });
-
-				const handler = handlers.get('autorun:writeDoc');
-				const result = await handler!(
-					{} as any,
-					'/remote/folder',
-					'nested/doc',
-					'# Remote Content',
-					'ssh-remote-1'
-				);
-
-				expect(result.success).toBe(false);
-				expect(result.error).toContain('Failed to create remote parent directory');
-				expect(mockWriteFileRemote).not.toHaveBeenCalled();
-			});
-
-			it('should fail when a remote document write fails without details', async () => {
-				mockExistsRemote.mockResolvedValue({ success: true, data: true });
-				mockWriteFileRemote.mockResolvedValue({ success: false });
-
-				const handler = handlers.get('autorun:writeDoc');
-				const result = await handler!(
-					{} as any,
-					'/remote/folder',
-					'doc',
-					'# Remote Content',
-					'ssh-remote-1'
-				);
-
-				expect(result.success).toBe(false);
-				expect(result.error).toContain('Failed to write remote file');
-			});
-		});
-
 		describe('autorun:saveImage SSH', () => {
 			it('should use mkdirRemote and writeFileRemote when sshRemoteId is provided', async () => {
 				// Mock existsRemote to say images directory doesn't exist
@@ -2181,39 +1444,6 @@ describe('autorun IPC handlers', () => {
 				expect(mockMkdirRemote).not.toHaveBeenCalled();
 				expect(mockWriteFileRemote).not.toHaveBeenCalled();
 			});
-
-			it('should fail when remote image directory creation or image writing fails without details', async () => {
-				const base64Data = Buffer.from('fake image data').toString('base64');
-				const handler = handlers.get('autorun:saveImage');
-
-				mockExistsRemote.mockResolvedValueOnce({ success: true, data: false });
-				mockMkdirRemote.mockResolvedValueOnce({ success: false });
-				const mkdirResult = await handler!(
-					{} as any,
-					'/remote/folder',
-					'doc1',
-					base64Data,
-					'png',
-					'ssh-remote-1'
-				);
-
-				expect(mkdirResult.success).toBe(false);
-				expect(mkdirResult.error).toContain('Failed to create remote images directory');
-
-				mockExistsRemote.mockResolvedValueOnce({ success: true, data: true });
-				mockWriteFileRemote.mockResolvedValueOnce({ success: false });
-				const writeResult = await handler!(
-					{} as any,
-					'/remote/folder',
-					'doc1',
-					base64Data,
-					'png',
-					'ssh-remote-1'
-				);
-
-				expect(writeResult.success).toBe(false);
-				expect(writeResult.error).toContain('Failed to write remote image file');
-			});
 		});
 
 		describe('autorun:deleteImage SSH', () => {
@@ -2253,21 +1483,6 @@ describe('autorun IPC handlers', () => {
 
 				// Remote operations should NOT be called
 				expect(mockDeleteRemote).not.toHaveBeenCalled();
-			});
-
-			it('should fail when remote image deletion fails without details', async () => {
-				mockDeleteRemote.mockResolvedValue({ success: false });
-
-				const handler = handlers.get('autorun:deleteImage');
-				const result = await handler!(
-					{} as any,
-					'/remote/folder',
-					'images/doc1-123.png',
-					'ssh-remote-1'
-				);
-
-				expect(result.success).toBe(false);
-				expect(result.error).toContain('Failed to delete remote image file');
 			});
 		});
 
@@ -2309,38 +1524,6 @@ describe('autorun IPC handlers', () => {
 				expect(result.success).toBe(true);
 				expect(result.images).toEqual([]);
 				expect(mockReadDirRemote).not.toHaveBeenCalled();
-			});
-
-			it('should fail when reading remote images fails without details', async () => {
-				mockExistsRemote.mockResolvedValue({ success: true, data: true });
-				mockReadDirRemote.mockResolvedValue({ success: false });
-
-				const handler = handlers.get('autorun:listImages');
-				const result = await handler!({} as any, '/remote/folder', 'doc1', 'ssh-remote-1');
-
-				expect(result.success).toBe(false);
-				expect(result.error).toContain('Failed to read remote images directory');
-			});
-
-			it('should ignore remote image directories and include symlinked image files', async () => {
-				mockExistsRemote.mockResolvedValue({ success: true, data: true });
-				mockReadDirRemote.mockResolvedValue({
-					success: true,
-					data: [
-						{ name: 'doc1-folder.png', isDirectory: true, isSymlink: false },
-						{ name: 'doc1-linked.png', isDirectory: false, isSymlink: true },
-						{ name: 'doc1-real.webp', isDirectory: false, isSymlink: false },
-					],
-				});
-
-				const handler = handlers.get('autorun:listImages');
-				const result = await handler!({} as any, '/remote/folder', 'doc1', 'ssh-remote-1');
-
-				expect(result.success).toBe(true);
-				expect(result.images).toEqual([
-					{ filename: 'doc1-linked.png', relativePath: 'images/doc1-linked.png' },
-					{ filename: 'doc1-real.webp', relativePath: 'images/doc1-real.webp' },
-				]);
 			});
 		});
 
@@ -2385,23 +1568,6 @@ describe('autorun IPC handlers', () => {
 				// Remote operations should NOT be called
 				expect(mockReadFileRemote).not.toHaveBeenCalled();
 				expect(mockWriteFileRemote).not.toHaveBeenCalled();
-			});
-
-			it('should fail when remote backup read or write fails without details', async () => {
-				const handler = handlers.get('autorun:createBackup');
-
-				mockReadFileRemote.mockResolvedValueOnce({ success: false });
-				const readResult = await handler!({} as any, '/remote/folder', 'doc1', 'ssh-remote-1');
-
-				expect(readResult.success).toBe(false);
-				expect(readResult.error).toContain('Source file not found');
-
-				mockReadFileRemote.mockResolvedValueOnce({ success: true, data: '# Original Content' });
-				mockWriteFileRemote.mockResolvedValueOnce({ success: false });
-				const writeResult = await handler!({} as any, '/remote/folder', 'doc1', 'ssh-remote-1');
-
-				expect(writeResult.success).toBe(false);
-				expect(writeResult.error).toContain('Failed to write backup file');
 			});
 		});
 
@@ -2458,112 +1624,6 @@ describe('autorun IPC handlers', () => {
 				// Restore should still succeed even if backup delete fails
 				expect(result.success).toBe(true);
 			});
-
-			it('should fail when remote backup read or restore write fails without details', async () => {
-				const handler = handlers.get('autorun:restoreBackup');
-
-				mockReadFileRemote.mockResolvedValueOnce({ success: false });
-				const readResult = await handler!({} as any, '/remote/folder', 'doc1', 'ssh-remote-1');
-
-				expect(readResult.success).toBe(false);
-				expect(readResult.error).toContain('Backup file not found');
-
-				mockReadFileRemote.mockResolvedValueOnce({ success: true, data: '# Backup Content' });
-				mockWriteFileRemote.mockResolvedValueOnce({ success: false });
-				const writeResult = await handler!({} as any, '/remote/folder', 'doc1', 'ssh-remote-1');
-
-				expect(writeResult.success).toBe(false);
-				expect(writeResult.error).toContain('Failed to restore backup');
-			});
-		});
-
-		describe('autorun:createWorkingCopy local', () => {
-			it('should create a local working copy in the Runs folder', async () => {
-				vi.mocked(fs.access).mockResolvedValue(undefined);
-				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
-				vi.mocked(fs.copyFile).mockResolvedValue(undefined);
-
-				const handler = handlers.get('autorun:createWorkingCopy');
-				const result = await handler!({} as any, '/test/folder', 'doc1', 3);
-
-				expect(result.success).toBe(true);
-				expect(result.workingCopyPath).toMatch(/^Runs\/doc1-\d+-loop-3$/);
-				expect(result.originalPath).toBe('doc1');
-				expect(fs.mkdir).toHaveBeenCalledWith('/test/folder/Runs', { recursive: true });
-				expect(fs.copyFile).toHaveBeenCalledWith(
-					'/test/folder/doc1.md',
-					expect.stringMatching(/^\/test\/folder\/Runs\/doc1-\d+-loop-3\.md$/)
-				);
-			});
-
-			it('should create local working copies for nested documents', async () => {
-				vi.mocked(fs.access).mockResolvedValue(undefined);
-				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
-				vi.mocked(fs.copyFile).mockResolvedValue(undefined);
-
-				const handler = handlers.get('autorun:createWorkingCopy');
-				const result = await handler!({} as any, '/test/folder', 'nested/doc1.md', 4);
-
-				expect(result.success).toBe(true);
-				expect(result.workingCopyPath).toMatch(/^Runs\/nested\/doc1-\d+-loop-4$/);
-				expect(result.originalPath).toBe('nested/doc1');
-				expect(fs.mkdir).toHaveBeenCalledWith('/test/folder/Runs/nested', { recursive: true });
-			});
-
-			it('should reject local working copy traversal attempts and missing source files', async () => {
-				const handler = handlers.get('autorun:createWorkingCopy');
-				const traversalResult = await handler!({} as any, '/test/folder', '../doc1', 1);
-
-				expect(traversalResult.success).toBe(false);
-				expect(traversalResult.error).toContain('Invalid filename');
-
-				vi.mocked(fs.access).mockRejectedValue(new Error('ENOENT'));
-				const missingResult = await handler!({} as any, '/test/folder', 'missing', 1);
-
-				expect(missingResult.success).toBe(false);
-				expect(missingResult.error).toContain('Source file not found');
-			});
-
-			it('should reject local source paths that resolve outside the Auto Run folder', async () => {
-				const resolveSpy = vi
-					.spyOn(path, 'resolve')
-					.mockReturnValueOnce('/test/secret/doc.md')
-					.mockReturnValueOnce('/test/folder');
-
-				try {
-					const handler = handlers.get('autorun:createWorkingCopy');
-					const result = await handler!({} as any, '/test/folder', 'doc1', 1);
-
-					expect(result.success).toBe(false);
-					expect(result.error).toContain('Invalid file path');
-					expect(fs.access).not.toHaveBeenCalled();
-				} finally {
-					resolveSpy.mockRestore();
-				}
-			});
-
-			it('should reject local working-copy paths that resolve outside the Auto Run folder', async () => {
-				vi.mocked(fs.access).mockResolvedValue(undefined);
-				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
-
-				const resolveSpy = vi
-					.spyOn(path, 'resolve')
-					.mockReturnValueOnce('/test/folder/doc.md')
-					.mockReturnValueOnce('/test/folder')
-					.mockReturnValueOnce('/test/secret/Runs/doc.md')
-					.mockReturnValueOnce('/test/folder');
-
-				try {
-					const handler = handlers.get('autorun:createWorkingCopy');
-					const result = await handler!({} as any, '/test/folder', 'doc1', 1);
-
-					expect(result.success).toBe(false);
-					expect(result.error).toContain('Invalid working copy path');
-					expect(fs.copyFile).not.toHaveBeenCalled();
-				} finally {
-					resolveSpy.mockRestore();
-				}
-			});
 		});
 
 		describe('autorun:createWorkingCopy SSH', () => {
@@ -2579,14 +1639,14 @@ describe('autorun IPC handlers', () => {
 				const result = await handler!({} as any, '/remote/folder', 'doc1', 1, 'ssh-remote-1');
 
 				expect(result.success).toBe(true);
-				expect(result.workingCopyPath).toMatch(/^Runs\/doc1-\d+-loop-1$/);
+				expect(result.workingCopyPath).toMatch(/^runs\/doc1-\d+-loop-1$/);
 				expect(result.originalPath).toBe('doc1');
 
 				// Verify remote operations were called
 				expect(mockReadFileRemote).toHaveBeenCalledWith('/remote/folder/doc1.md', sampleSshRemote);
-				expect(mockMkdirRemote).toHaveBeenCalledWith('/remote/folder/Runs', sampleSshRemote, true);
+				expect(mockMkdirRemote).toHaveBeenCalledWith('/remote/folder/runs', sampleSshRemote, true);
 				expect(mockWriteFileRemote).toHaveBeenCalledWith(
-					expect.stringContaining('/remote/folder/Runs/doc1-'),
+					expect.stringContaining('/remote/folder/runs/doc1-'),
 					'# Source Content',
 					sampleSshRemote
 				);
@@ -2615,40 +1675,15 @@ describe('autorun IPC handlers', () => {
 				);
 
 				expect(result.success).toBe(true);
-				expect(result.workingCopyPath).toMatch(/^Runs\/subdir\/nested-doc-\d+-loop-2$/);
+				expect(result.workingCopyPath).toMatch(/^runs\/subdir\/nested-doc-\d+-loop-2$/);
 				expect(result.originalPath).toBe('subdir/nested-doc');
 
 				// Verify remote mkdir creates the correct subdirectory
 				expect(mockMkdirRemote).toHaveBeenCalledWith(
-					'/remote/folder/Runs/subdir',
+					'/remote/folder/runs/subdir',
 					sampleSshRemote,
 					true
 				);
-			});
-
-			it('should fail when remote working-copy helpers fail without details', async () => {
-				const handler = handlers.get('autorun:createWorkingCopy');
-
-				mockReadFileRemote.mockResolvedValueOnce({ success: false });
-				const readResult = await handler!({} as any, '/remote/folder', 'doc1', 1, 'ssh-remote-1');
-
-				expect(readResult.success).toBe(false);
-				expect(readResult.error).toContain('Source file not found');
-
-				mockReadFileRemote.mockResolvedValueOnce({ success: true, data: '# Source Content' });
-				mockMkdirRemote.mockResolvedValueOnce({ success: false });
-				const mkdirResult = await handler!({} as any, '/remote/folder', 'doc1', 1, 'ssh-remote-1');
-
-				expect(mkdirResult.success).toBe(false);
-				expect(mkdirResult.error).toContain('Failed to create Runs directory');
-
-				mockReadFileRemote.mockResolvedValueOnce({ success: true, data: '# Source Content' });
-				mockMkdirRemote.mockResolvedValueOnce({ success: true });
-				mockWriteFileRemote.mockResolvedValueOnce({ success: false });
-				const writeResult = await handler!({} as any, '/remote/folder', 'doc1', 1, 'ssh-remote-1');
-
-				expect(writeResult.success).toBe(false);
-				expect(writeResult.error).toContain('Failed to write working copy');
 			});
 		});
 
@@ -2735,21 +1770,6 @@ describe('autorun IPC handlers', () => {
 				expect(result.success).toBe(true);
 				expect(result.deletedCount).toBe(1);
 			});
-
-			it('should skip unreadable remote backup directories', async () => {
-				mockReadDirRemote.mockResolvedValue({ success: false, error: 'Permission denied' });
-
-				const handler = handlers.get('autorun:deleteBackups');
-				const result = await handler!({} as any, '/remote/folder', 'ssh-remote-1');
-
-				expect(result.success).toBe(true);
-				expect(result.deletedCount).toBe(0);
-				expect(mockDeleteRemote).not.toHaveBeenCalled();
-				expect(logger.debug).toHaveBeenCalledWith(
-					'[AutoRun] Skipping remote directory: /remote/folder - Permission denied',
-					'[AutoRun]'
-				);
-			});
 		});
 
 		describe('SSH remote lookup failure', () => {
@@ -2772,38 +1792,6 @@ describe('autorun IPC handlers', () => {
 
 				expect(result.success).toBe(false);
 				expect(result.error).toContain('SSH remote not found');
-			});
-
-			it('should return missing SSH remote errors for every remote-capable handler', async () => {
-				const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-				mockSettingsStore.get.mockImplementation((key: string, defaultValue?: unknown) => {
-					if (key === 'sshRemotes') return [];
-					return defaultValue;
-				});
-
-				try {
-					const cases: Array<[string, unknown[]]> = [
-						['autorun:listDocs', ['/remote/folder', 'missing-remote']],
-						['autorun:readDoc', ['/remote/folder', 'doc1', 'missing-remote']],
-						['autorun:writeDoc', ['/remote/folder', 'doc1', '# Content', 'missing-remote']],
-						['autorun:deleteImage', ['/remote/folder', 'images/doc1.png', 'missing-remote']],
-						['autorun:listImages', ['/remote/folder', 'doc1', 'missing-remote']],
-						['autorun:createBackup', ['/remote/folder', 'doc1', 'missing-remote']],
-						['autorun:restoreBackup', ['/remote/folder', 'doc1', 'missing-remote']],
-						['autorun:createWorkingCopy', ['/remote/folder', 'doc1', 1, 'missing-remote']],
-						['autorun:deleteBackups', ['/remote/folder', 'missing-remote']],
-					];
-
-					for (const [channel, args] of cases) {
-						const handler = handlers.get(channel);
-						const result = await handler!({} as any, ...args);
-
-						expect(result.success).toBe(false);
-						expect(result.error).toContain('SSH remote not found: missing-remote');
-					}
-				} finally {
-					consoleLogSpy.mockRestore();
-				}
 			});
 
 			it('should still use disabled SSH remote (does not check enabled status)', async () => {

@@ -55,12 +55,16 @@ export function useSessionFilterMode(): SessionFilterModeState {
 	useEffect(() => {
 		if (sessionFilterOpen) {
 			// Save current (non-filter) states when filter opens
-			const currentStates = new Map<string, boolean>();
-			groups.forEach((g) => {
-				currentStates.set(g.id, g.collapsed);
-			});
-			setPreFilterGroupStates(currentStates);
-			setPreFilterBookmarksCollapsed(bookmarksCollapsed);
+			if (preFilterGroupStates.size === 0) {
+				const currentStates = new Map<string, boolean>();
+				groups.forEach((g) => {
+					currentStates.set(g.id, g.collapsed);
+				});
+				setPreFilterGroupStates(currentStates);
+			}
+			if (preFilterBookmarksCollapsed === null) {
+				setPreFilterBookmarksCollapsed(bookmarksCollapsed);
+			}
 
 			// Apply filter mode preferences if we have them, otherwise use defaults
 			if (filterModeInitialized && filterModeGroupStates) {

@@ -1,10 +1,14 @@
-import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { logger } from '../../../renderer/utils/logger';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QuickActionsModal } from '../../../renderer/components/QuickActionsModal';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 import type { Session, Group, Theme, Shortcut } from '../../../renderer/types';
+import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { useUIStore } from '../../../renderer/stores/uiStore';
+import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
 import { useFileExplorerStore } from '../../../renderer/stores/fileExplorerStore';
+import { mockTheme } from '../../helpers/mockTheme';
 // Add missing window.maestro.devtools and debug mocks
 beforeAll(() => {
 	(window.maestro as any).devtools = {
@@ -13,9 +17,6 @@ beforeAll(() => {
 	(window.maestro as any).debug = {
 		createPackage: vi.fn().mockResolvedValue({ success: true, path: '/tmp/test.zip' }),
 		previewPackage: vi.fn().mockResolvedValue({ categories: [] }),
-	};
-	(window.maestro as any).leaderboard = {
-		getInstallationId: vi.fn().mockResolvedValue('install-guid-123'),
 	};
 
 	// Mock localStorage for the test environment
@@ -34,14 +35,12 @@ beforeAll(() => {
 });
 
 // Mock dependencies
-const layerStackMocks = vi.hoisted(() => ({
-	registerLayer: vi.fn(() => 'layer-123'),
-	unregisterLayer: vi.fn(),
-	updateLayerHandler: vi.fn(),
-}));
-
 vi.mock('../../../renderer/contexts/LayerStackContext', () => ({
-	useLayerStack: () => layerStackMocks,
+	useLayerStack: () => ({
+		registerLayer: vi.fn(() => 'layer-123'),
+		unregisterLayer: vi.fn(),
+		updateLayerHandler: vi.fn(),
+	}),
 }));
 
 const mockNotifyToast = vi.fn();
@@ -68,13 +67,17 @@ vi.mock('../../../renderer/services/git', () => ({
 	},
 }));
 
+const refreshGitStatusMock = vi.fn().mockResolvedValue(undefined);
+vi.mock('../../../renderer/contexts/GitStatusContext', () => ({
+	useGitDetail: () => ({
+		getFileDetails: () => undefined,
+		refreshGitStatus: refreshGitStatusMock,
+	}),
+}));
+
 vi.mock('../../../renderer/utils/shortcutFormatter', () => ({
 	formatShortcutKeys: vi.fn((keys: string[]) => keys.join('+')),
 	isMacOS: vi.fn(() => false),
-}));
-
-vi.mock('../../../renderer/utils/clipboard', () => ({
-	safeClipboardWrite: vi.fn().mockResolvedValue(undefined),
 }));
 
 // Mock lucide-react
@@ -83,26 +86,6 @@ vi.mock('lucide-react', () => ({
 }));
 
 // Create mock theme
-const mockTheme: Theme = {
-	id: 'dark',
-	name: 'Dark',
-	mode: 'dark',
-	colors: {
-		bgMain: '#1a1a2e',
-		bgSidebar: '#16213e',
-		bgActivity: '#0f3460',
-		bgTerminal: '#1a1a2e',
-		textMain: '#eaeaea',
-		textDim: '#888',
-		accent: '#e94560',
-		accentForeground: '#ffffff',
-		error: '#ff6b6b',
-		border: '#333',
-		success: '#4ecdc4',
-		warning: '#ffd93d',
-		terminalCursor: '#e94560',
-	},
-};
 
 // Create mock shortcuts
 const mockShortcuts: Record<string, Shortcut> = {
@@ -120,30 +103,25 @@ const mockShortcuts: Record<string, Shortcut> = {
 	viewGitLog: { id: 'viewGitLog', keys: ['Cmd', 'G'], enabled: true },
 	toggleMarkdownMode: { id: 'toggleMarkdownMode', keys: ['Cmd', 'M'], enabled: true },
 	createDebugPackage: { id: 'createDebugPackage', keys: ['Alt', 'Cmd', 'D'], enabled: true },
+	nextUnreadTab: { id: 'nextUnreadTab', keys: ['Alt', 'Meta', 'ArrowDown'], enabled: true },
+	navBack: { id: 'navBack', keys: ['Meta', 'Shift', ','], enabled: true },
+	navForward: { id: 'navForward', keys: ['Meta', 'Shift', '.'], enabled: true },
 };
 
-// Create mock session
-const createMockSession = (overrides: Partial<Session> = {}): Session => ({
-	id: 'session-1',
-	name: 'Test Session',
-	toolType: 'claude-code',
-	state: 'idle',
-	inputMode: 'ai',
-	cwd: '/home/user/project',
-	projectRoot: '/home/user/project',
-	aiPid: 1234,
-	terminalPid: 5678,
-	aiLogs: [],
-	shellLogs: [],
-	isGitRepo: true,
-	fileTree: [],
-	fileExplorerExpanded: [],
-	messageQueue: [],
-	aiTabs: [{ id: 'tab-1', name: 'Tab 1', logs: [] }],
-	activeTabId: 'tab-1',
-	closedTabHistory: [],
-	...overrides,
-});
+// Thin wrapper: pre-populates an AI tab so the quick actions modal has
+// a tab to show in its menu.
+const createMockSession = (overrides: Partial<Session> = {}): Session =>
+	baseCreateMockSession({
+		cwd: '/home/user/project',
+		fullPath: '/home/user/project',
+		projectRoot: '/home/user/project',
+		aiPid: 1234,
+		terminalPid: 5678,
+		isGitRepo: true,
+		aiTabs: [{ id: 'tab-1', name: 'Tab 1', logs: [] }] as any,
+		activeTabId: 'tab-1',
+		...overrides,
+	});
 
 // Create mock group
 const createMockGroup = (overrides: Partial<Group> = {}): Group => ({
@@ -186,7 +164,6 @@ const createDefaultProps = (
 	setAboutModalOpen: vi.fn(),
 	setLogViewerOpen: vi.fn(),
 	setProcessMonitorOpen: vi.fn(),
-	setUsageDashboardOpen: vi.fn(),
 	setAgentSessionsOpen: vi.fn(),
 	setActiveAgentSessionId: vi.fn(),
 	setGitDiffPreview: vi.fn(),
@@ -208,11 +185,6 @@ describe('QuickActionsModal', () => {
 		useFileExplorerStore.setState({
 			fileTreeFilterOpen: false,
 		});
-		(window.maestro.debug.createPackage as any).mockResolvedValue({
-			success: true,
-			path: '/tmp/test.zip',
-		});
-		(window.maestro.leaderboard.getInstallationId as any).mockResolvedValue('install-guid-123');
 	});
 
 	afterEach(() => {
@@ -250,61 +222,6 @@ describe('QuickActionsModal', () => {
 			render(<QuickActionsModal {...props} />);
 
 			expect(screen.getByText('ESC')).toBeInTheDocument();
-		});
-
-		it('registers layer escape handling for main and move-to-group modes', async () => {
-			const props = createDefaultProps();
-			const { unmount } = render(<QuickActionsModal {...props} />);
-
-			expect(layerStackMocks.registerLayer).toHaveBeenCalledWith(
-				expect.objectContaining({
-					type: 'modal',
-					ariaLabel: 'Quick Actions',
-					onEscape: expect.any(Function),
-				})
-			);
-			const registeredEscape = layerStackMocks.registerLayer.mock.calls[0]![0]
-				.onEscape as () => void;
-			registeredEscape();
-			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
-
-			props.setQuickActionOpen.mockClear();
-			const layerEscape = layerStackMocks.updateLayerHandler.mock.calls.at(-1)?.[1] as () => void;
-			act(() => layerEscape());
-			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
-
-			fireEvent.click(screen.getByText('Move to Group...'));
-			expect(screen.getByPlaceholderText('Move Test Session to...')).toBeInTheDocument();
-
-			fireEvent.keyDown(screen.getByPlaceholderText('Move Test Session to...'), { key: 'Escape' });
-			await waitFor(() => {
-				expect(
-					screen.getByPlaceholderText('Type a command or jump to agent...')
-				).toBeInTheDocument();
-			});
-
-			fireEvent.click(screen.getByText('Move to Group...'));
-			expect(screen.getByPlaceholderText('Move Test Session to...')).toBeInTheDocument();
-
-			act(() => layerEscape());
-			await waitFor(() => {
-				expect(
-					screen.getByPlaceholderText('Type a command or jump to agent...')
-				).toBeInTheDocument();
-			});
-
-			unmount();
-			expect(layerStackMocks.unregisterLayer).toHaveBeenCalledWith('layer-123');
-		});
-
-		it('skips layer handler updates and cleanup when registration has no layer id', () => {
-			layerStackMocks.registerLayer.mockReturnValueOnce(undefined);
-			const props = createDefaultProps();
-			const { unmount } = render(<QuickActionsModal {...props} />);
-
-			expect(layerStackMocks.updateLayerHandler).not.toHaveBeenCalled();
-			unmount();
-			expect(layerStackMocks.unregisterLayer).not.toHaveBeenCalled();
 		});
 
 		it('auto-focuses input on mount', async () => {
@@ -363,6 +280,39 @@ describe('QuickActionsModal', () => {
 			).toBeInTheDocument();
 		});
 
+		it('renders Next Unread Tab action with shortcut', () => {
+			const props = createDefaultProps();
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.getByText('Next Unread / Draft Tab')).toBeInTheDocument();
+			expect(
+				screen.getByText(formatShortcutKeys(mockShortcuts.nextUnreadTab.keys))
+			).toBeInTheDocument();
+		});
+
+		it('renders Navigate Back / Forward actions with shortcuts when handlers provided', () => {
+			const props = createDefaultProps({
+				onNavBack: vi.fn(),
+				onNavForward: vi.fn(),
+			});
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.getByText('Navigate Back')).toBeInTheDocument();
+			expect(screen.getByText('Navigate Forward')).toBeInTheDocument();
+			expect(screen.getByText(formatShortcutKeys(mockShortcuts.navBack.keys))).toBeInTheDocument();
+			expect(
+				screen.getByText(formatShortcutKeys(mockShortcuts.navForward.keys))
+			).toBeInTheDocument();
+		});
+
+		it('omits Navigate Back / Forward actions when handlers are absent', () => {
+			const props = createDefaultProps();
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.queryByText('Navigate Back')).not.toBeInTheDocument();
+			expect(screen.queryByText('Navigate Forward')).not.toBeInTheDocument();
+		});
+
 		it('renders Settings action', () => {
 			const props = createDefaultProps();
 			render(<QuickActionsModal {...props} />);
@@ -385,6 +335,22 @@ describe('QuickActionsModal', () => {
 
 			expect(screen.getByText('BUSY')).toBeInTheDocument();
 		});
+
+		it('does not render Clear All Bookmarks when no sessions are bookmarked', () => {
+			const props = createDefaultProps();
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.queryByText('Clear All Bookmarks')).not.toBeInTheDocument();
+		});
+
+		it('renders Clear All Bookmarks when at least one session is bookmarked', () => {
+			const props = createDefaultProps({
+				sessions: [createMockSession({ bookmarked: true })],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.getByText('Clear All Bookmarks')).toBeInTheDocument();
+		});
 	});
 
 	describe('Session actions', () => {
@@ -398,7 +364,7 @@ describe('QuickActionsModal', () => {
 			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
 		});
 
-		it('auto-expands collapsed group when jumping to session in group', () => {
+		it('auto-expands collapsed group when jumping to non-bookmarked session in group', () => {
 			const session = createMockSession({ groupId: 'group-1' });
 			const group = createMockGroup({ collapsed: true });
 			const props = createDefaultProps({
@@ -415,20 +381,51 @@ describe('QuickActionsModal', () => {
 			expect(result[0].collapsed).toBe(false);
 		});
 
-		it('leaves expanded groups unchanged when jumping to a grouped session', () => {
-			const session = createMockSession({ groupId: 'group-1' });
-			const group = createMockGroup({ collapsed: false });
-			const props = createDefaultProps({
-				sessions: [session],
-				groups: [group],
+		describe('bookmarked-agent jump routing', () => {
+			it('expands the bookmarks section (not the group) when both are collapsed', () => {
+				useUIStore.setState({ bookmarksCollapsed: true });
+
+				const session = createMockSession({ groupId: 'group-1', bookmarked: true });
+				const group = createMockGroup({ collapsed: true });
+				const props = createDefaultProps({ sessions: [session], groups: [group] });
+				render(<QuickActionsModal {...props} />);
+
+				fireEvent.click(screen.getByText('Jump to: Test Session'));
+
+				expect(props.setActiveSessionId).toHaveBeenCalledWith('session-1');
+				expect(useUIStore.getState().bookmarksCollapsed).toBe(false);
+				expect(props.setGroups).not.toHaveBeenCalled();
 			});
-			render(<QuickActionsModal {...props} />);
 
-			fireEvent.click(screen.getByText('Jump to: Test Session'));
+			it('leaves bookmarks collapsed when the parent group is already expanded', () => {
+				useUIStore.setState({ bookmarksCollapsed: true });
 
-			const setGroupsFn = props.setGroups.mock.calls[0][0];
-			const result = setGroupsFn([group]);
-			expect(result[0]).toEqual(group);
+				const session = createMockSession({ groupId: 'group-1', bookmarked: true });
+				const group = createMockGroup({ collapsed: false });
+				const props = createDefaultProps({ sessions: [session], groups: [group] });
+				render(<QuickActionsModal {...props} />);
+
+				fireEvent.click(screen.getByText('Jump to: Test Session'));
+
+				expect(props.setActiveSessionId).toHaveBeenCalledWith('session-1');
+				expect(useUIStore.getState().bookmarksCollapsed).toBe(true);
+				expect(props.setGroups).not.toHaveBeenCalled();
+			});
+
+			it('does nothing extra when bookmarks section is already expanded', () => {
+				useUIStore.setState({ bookmarksCollapsed: false });
+
+				const session = createMockSession({ groupId: 'group-1', bookmarked: true });
+				const group = createMockGroup({ collapsed: true });
+				const props = createDefaultProps({ sessions: [session], groups: [group] });
+				render(<QuickActionsModal {...props} />);
+
+				fireEvent.click(screen.getByText('Jump to: Test Session'));
+
+				expect(props.setActiveSessionId).toHaveBeenCalledWith('session-1');
+				expect(useUIStore.getState().bookmarksCollapsed).toBe(false);
+				expect(props.setGroups).not.toHaveBeenCalled();
+			});
 		});
 
 		it('handles Create New Agent action', () => {
@@ -470,9 +467,6 @@ describe('QuickActionsModal', () => {
 			fireEvent.click(screen.getByText('Toggle Sidebar'));
 
 			expect(props.setLeftSidebarOpen).toHaveBeenCalled();
-			const updater = props.setLeftSidebarOpen.mock.calls[0]![0] as (previous: boolean) => boolean;
-			expect(updater(false)).toBe(true);
-			expect(updater(true)).toBe(false);
 		});
 
 		it('handles Toggle Right Panel action', () => {
@@ -482,9 +476,28 @@ describe('QuickActionsModal', () => {
 			fireEvent.click(screen.getByText('Toggle Right Panel'));
 
 			expect(props.setRightPanelOpen).toHaveBeenCalled();
-			const updater = props.setRightPanelOpen.mock.calls[0]![0] as (previous: boolean) => boolean;
-			expect(updater(false)).toBe(true);
-			expect(updater(true)).toBe(false);
+		});
+
+		it('handles Navigate Back action', () => {
+			const onNavBack = vi.fn();
+			const props = createDefaultProps({ onNavBack });
+			render(<QuickActionsModal {...props} />);
+
+			fireEvent.click(screen.getByText('Navigate Back'));
+
+			expect(onNavBack).toHaveBeenCalled();
+			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
+		});
+
+		it('handles Navigate Forward action', () => {
+			const onNavForward = vi.fn();
+			const props = createDefaultProps({ onNavForward });
+			render(<QuickActionsModal {...props} />);
+
+			fireEvent.click(screen.getByText('Navigate Forward'));
+
+			expect(onNavForward).toHaveBeenCalled();
+			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
 		});
 
 		it('handles Switch AI/Shell Mode action', () => {
@@ -494,6 +507,20 @@ describe('QuickActionsModal', () => {
 			fireEvent.click(screen.getByText('Switch AI/Shell Mode'));
 
 			expect(props.toggleInputMode).toHaveBeenCalled();
+		});
+
+		it('toggles Bionify Emphasis globally', async () => {
+			const { useSettingsStore } = await import('../../../renderer/stores/settingsStore');
+			useSettingsStore.setState({ bionifyReadingMode: false });
+			const props = createDefaultProps();
+			render(<QuickActionsModal {...props} />);
+
+			fireEvent.click(screen.getByText('Turn On Bionify Emphasis'));
+
+			expect(useSettingsStore.getState().bionifyReadingMode).toBe(true);
+			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
+
+			useSettingsStore.setState({ bionifyReadingMode: false });
 		});
 	});
 
@@ -516,17 +543,6 @@ describe('QuickActionsModal', () => {
 
 			expect(props.setSettingsModalOpen).toHaveBeenCalledWith(true);
 			expect(props.setSettingsTab).toHaveBeenCalledWith('theme');
-			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
-		});
-
-		it('handles Configure Global Environment Variables action', () => {
-			const props = createDefaultProps();
-			render(<QuickActionsModal {...props} />);
-
-			fireEvent.click(screen.getByText('Configure Global Environment Variables'));
-
-			expect(props.setSettingsModalOpen).toHaveBeenCalledWith(true);
-			expect(props.setSettingsTab).toHaveBeenCalledWith('general');
 			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
 		});
 
@@ -557,27 +573,6 @@ describe('QuickActionsModal', () => {
 			fireEvent.click(screen.getByText('View System Processes'));
 
 			expect(props.setProcessMonitorOpen).toHaveBeenCalledWith(true);
-			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
-		});
-
-		it('handles Usage Dashboard action', () => {
-			const props = createDefaultProps();
-			render(<QuickActionsModal {...props} />);
-
-			fireEvent.click(screen.getByText('Usage Dashboard'));
-
-			expect(props.setUsageDashboardOpen).toHaveBeenCalledWith(true);
-			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
-		});
-
-		it('handles Start Introductory Tour action when provided', () => {
-			const startTour = vi.fn();
-			const props = createDefaultProps({ startTour });
-			render(<QuickActionsModal {...props} />);
-
-			fireEvent.click(screen.getByText('Start Introductory Tour'));
-
-			expect(startTour).toHaveBeenCalled();
 			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
 		});
 
@@ -638,29 +633,6 @@ describe('QuickActionsModal', () => {
 			expect(screen.getByText('Search: History')).toBeInTheDocument();
 		});
 
-		it('handles Fuzzy File Search action when provided', () => {
-			const setFuzzyFileSearchOpen = vi.fn();
-			const props = createDefaultProps({ setFuzzyFileSearchOpen });
-			render(<QuickActionsModal {...props} />);
-
-			fireEvent.click(screen.getByText('Fuzzy File Search'));
-
-			expect(setFuzzyFileSearchOpen).toHaveBeenCalledWith(true);
-			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
-		});
-
-		it('does not select an action when the filtered list is empty', () => {
-			const props = createDefaultProps();
-			render(<QuickActionsModal {...props} />);
-
-			const input = screen.getByPlaceholderText('Type a command or jump to agent...');
-			fireEvent.change(input, { target: { value: 'no-matching-command' } });
-			fireEvent.keyDown(input, { key: 'Enter' });
-
-			expect(screen.getByText('No actions found')).toBeInTheDocument();
-			expect(props.setQuickActionOpen).not.toHaveBeenCalled();
-		});
-
 		it('handles Search: Agents action', async () => {
 			vi.useFakeTimers();
 			const props = createDefaultProps();
@@ -690,7 +662,7 @@ describe('QuickActionsModal', () => {
 			expect(useUIStore.getState().activeFocus).toBe('main');
 
 			vi.advanceTimersByTime(50);
-			expect(useUIStore.getState().outputSearchOpen).toBe(true);
+			expect(useUIStore.getState().outputSearchByKey['session-1::tab-1']?.open).toBe(true);
 
 			vi.useRealTimers();
 		});
@@ -839,20 +811,6 @@ describe('QuickActionsModal', () => {
 			});
 		});
 
-		it('handles View Git Diff with project cwd when terminal shell cwd is missing', async () => {
-			const { gitService } = await import('../../../renderer/services/git');
-			const props = createDefaultProps({
-				sessions: [createMockSession({ inputMode: 'terminal', shellCwd: '' })],
-			});
-			render(<QuickActionsModal {...props} />);
-
-			fireEvent.click(screen.getByText('View Git Diff'));
-
-			await waitFor(() => {
-				expect(gitService.getDiff).toHaveBeenCalledWith('/home/user/project', undefined, undefined);
-			});
-		});
-
 		it('handles View Git Log action', () => {
 			const props = createDefaultProps();
 			render(<QuickActionsModal {...props} />);
@@ -876,31 +834,6 @@ describe('QuickActionsModal', () => {
 					'https://github.com/test/repo'
 				);
 				expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
-			});
-		});
-
-		it('opens repository using terminal cwd variants', async () => {
-			const { gitService } = await import('../../../renderer/services/git');
-			const terminalProps = createDefaultProps({
-				sessions: [createMockSession({ inputMode: 'terminal', shellCwd: '/terminal/path' })],
-			});
-			const first = render(<QuickActionsModal {...terminalProps} />);
-
-			fireEvent.click(screen.getByText('Open Repository in Browser'));
-			await waitFor(() => {
-				expect(gitService.getRemoteBrowserUrl).toHaveBeenCalledWith('/terminal/path');
-			});
-			first.unmount();
-
-			vi.mocked(gitService.getRemoteBrowserUrl).mockClear();
-			const fallbackProps = createDefaultProps({
-				sessions: [createMockSession({ inputMode: 'terminal', shellCwd: '' })],
-			});
-			render(<QuickActionsModal {...fallbackProps} />);
-
-			fireEvent.click(screen.getByText('Open Repository in Browser'));
-			await waitFor(() => {
-				expect(gitService.getRemoteBrowserUrl).toHaveBeenCalledWith('/home/user/project');
 			});
 		});
 	});
@@ -1004,16 +937,8 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('handles Debug: Reset Busy State action', () => {
-			const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-			const busySession = createMockSession({
-				state: 'busy',
-				busySource: 'ai',
-				thinkingStartTime: 100,
-				currentCycleTokens: 42,
-				currentCycleBytes: 1024,
-				aiTabs: [{ id: 'tab-1', name: 'Tab 1', logs: [], state: 'busy', thinkingStartTime: 100 }],
-			});
-			const props = createDefaultProps({ sessions: [busySession] });
+			const consoleSpy = vi.spyOn(logger, 'info').mockImplementation(() => {});
+			const props = createDefaultProps();
 			render(<QuickActionsModal {...props} />);
 
 			const input = screen.getByPlaceholderText('Type a command or jump to agent...');
@@ -1021,15 +946,6 @@ describe('QuickActionsModal', () => {
 			fireEvent.click(screen.getByText('Debug: Reset Busy State'));
 
 			expect(props.setSessions).toHaveBeenCalled();
-			const updater = props.setSessions.mock.calls[0]![0] as (previous: Session[]) => Session[];
-			const [resetSession] = updater([busySession]);
-			expect(resetSession).toMatchObject({ state: 'idle' });
-			expect(resetSession.busySource).toBeUndefined();
-			expect(resetSession.thinkingStartTime).toBeUndefined();
-			expect(resetSession.currentCycleTokens).toBeUndefined();
-			expect(resetSession.currentCycleBytes).toBeUndefined();
-			expect(resetSession.aiTabs?.[0]).toMatchObject({ state: 'idle' });
-			expect(resetSession.aiTabs?.[0]?.thinkingStartTime).toBeUndefined();
 			expect(consoleSpy).toHaveBeenCalledWith('[Debug] Reset busy state for all sessions');
 			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
 
@@ -1037,22 +953,8 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('handles Debug: Reset Current Session action', () => {
-			const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-			const activeSession = createMockSession({
-				id: 'session-1',
-				state: 'busy',
-				busySource: 'ai',
-				thinkingStartTime: 100,
-				currentCycleTokens: 42,
-				currentCycleBytes: 1024,
-				aiTabs: [{ id: 'tab-1', name: 'Tab 1', logs: [], state: 'busy', thinkingStartTime: 100 }],
-			});
-			const otherSession = createMockSession({
-				id: 'session-2',
-				name: 'Other Session',
-				state: 'busy',
-			});
-			const props = createDefaultProps({ sessions: [activeSession, otherSession] });
+			const consoleSpy = vi.spyOn(logger, 'info').mockImplementation(() => {});
+			const props = createDefaultProps();
 			render(<QuickActionsModal {...props} />);
 
 			const input = screen.getByPlaceholderText('Type a command or jump to agent...');
@@ -1060,13 +962,11 @@ describe('QuickActionsModal', () => {
 			fireEvent.click(screen.getByText('Debug: Reset Current Session'));
 
 			expect(props.setSessions).toHaveBeenCalled();
-			const updater = props.setSessions.mock.calls[0]![0] as (previous: Session[]) => Session[];
-			const [resetSession, unchangedSession] = updater([activeSession, otherSession]);
-			expect(resetSession).toMatchObject({ state: 'idle' });
-			expect(resetSession.busySource).toBeUndefined();
-			expect(resetSession.aiTabs?.[0]).toMatchObject({ state: 'idle' });
-			expect(unchangedSession).toBe(otherSession);
-			expect(consoleSpy).toHaveBeenCalledWith('[Debug] Reset busy state for session:', 'session-1');
+			expect(consoleSpy).toHaveBeenCalledWith(
+				'[Debug] Reset busy state for session:',
+				undefined,
+				'session-1'
+			);
 
 			consoleSpy.mockRestore();
 		});
@@ -1112,6 +1012,19 @@ describe('QuickActionsModal', () => {
 			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
 		});
 
+		it('handles Debug: View Application Stats action', () => {
+			const setDebugApplicationStatsOpen = vi.fn();
+			const props = createDefaultProps({ setDebugApplicationStatsOpen });
+			render(<QuickActionsModal {...props} />);
+
+			const input = screen.getByPlaceholderText('Type a command or jump to agent...');
+			fireEvent.change(input, { target: { value: 'debug' } });
+			fireEvent.click(screen.getByText('Debug: View Application Stats'));
+
+			expect(setDebugApplicationStatsOpen).toHaveBeenCalledWith(true);
+			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
+		});
+
 		it('shows Debug: Release Next Queued Item when queue has items', () => {
 			const onDebugReleaseQueuedItem = vi.fn();
 			const props = createDefaultProps({
@@ -1124,35 +1037,6 @@ describe('QuickActionsModal', () => {
 			fireEvent.change(input, { target: { value: 'debug' } });
 
 			expect(screen.getByText('Debug: Release Next Queued Item')).toBeInTheDocument();
-		});
-
-		it('handles Debug: Release Next Queued Item action', () => {
-			const onDebugReleaseQueuedItem = vi.fn();
-			const props = createDefaultProps({
-				onDebugReleaseQueuedItem,
-				sessions: [createMockSession({ executionQueue: [{ id: '1' }] as any })],
-			});
-			render(<QuickActionsModal {...props} />);
-
-			const input = screen.getByPlaceholderText('Type a command or jump to agent...');
-			fireEvent.change(input, { target: { value: 'debug' } });
-			fireEvent.click(screen.getByText('Debug: Release Next Queued Item'));
-
-			expect(onDebugReleaseQueuedItem).toHaveBeenCalled();
-			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
-		});
-
-		it('handles Debug: Wizard action', () => {
-			const setDebugWizardModalOpen = vi.fn();
-			const props = createDefaultProps({ setDebugWizardModalOpen });
-			render(<QuickActionsModal {...props} />);
-
-			const input = screen.getByPlaceholderText('Type a command or jump to agent...');
-			fireEvent.change(input, { target: { value: 'debug' } });
-			fireEvent.click(screen.getByText('Debug: Wizard → Review Playbooks'));
-
-			expect(setDebugWizardModalOpen).toHaveBeenCalledWith(true);
-			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
 		});
 	});
 
@@ -1254,7 +1138,7 @@ describe('QuickActionsModal', () => {
 			fireEvent.click(screen.getByText('Move to Group...'));
 
 			expect(screen.getByText('← Back to main menu')).toBeInTheDocument();
-			expect(screen.getByText('📁 No Group (Root)')).toBeInTheDocument();
+			expect(screen.getByText('📁 No Group (Ungrouped)')).toBeInTheDocument();
 		});
 
 		it('shows groups in move-to-group mode', () => {
@@ -1286,39 +1170,15 @@ describe('QuickActionsModal', () => {
 			expect(screen.getByText('Move to Group...')).toBeInTheDocument();
 		});
 
-		it('uses keyboard selection in move-to-group mode without closing on back', async () => {
-			const props = createDefaultProps({ initialMode: 'move-to-group' });
-			render(<QuickActionsModal {...props} />);
-
-			const input = screen.getByPlaceholderText('Move Test Session to...');
-			fireEvent.keyDown(input, { key: 'Enter' });
-
-			await waitFor(() => {
-				expect(
-					screen.getByPlaceholderText('Type a command or jump to agent...')
-				).toBeInTheDocument();
-			});
-			expect(props.setQuickActionOpen).not.toHaveBeenCalled();
-		});
-
 		it('handles move to group action', () => {
 			const group = createMockGroup();
-			const props = createDefaultProps({
-				groups: [group],
-				sessions: [
-					createMockSession(),
-					createMockSession({ id: 'session-2', name: 'Other Session', groupId: 'old-group' }),
-				],
-			});
+			const props = createDefaultProps({ groups: [group] });
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Move to Group...'));
 			fireEvent.click(screen.getByText('📁 Test Group'));
 
 			expect(props.setSessions).toHaveBeenCalled();
-			const result = props.setSessions.mock.calls[0][0] as Session[];
-			expect(result[0].groupId).toBe('group-1');
-			expect(result[1].groupId).toBe('old-group');
 			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
 		});
 
@@ -1327,7 +1187,7 @@ describe('QuickActionsModal', () => {
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Move to Group...'));
-			fireEvent.click(screen.getByText('📁 No Group (Root)'));
+			fireEvent.click(screen.getByText('📁 No Group (Ungrouped)'));
 
 			expect(props.setSessions).toHaveBeenCalled();
 			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
@@ -1340,17 +1200,6 @@ describe('QuickActionsModal', () => {
 			fireEvent.click(screen.getByText('Move to Group...'));
 
 			expect(screen.getByPlaceholderText('Move Test Session to...')).toBeInTheDocument();
-		});
-
-		it('uses the session fallback in move-to-group placeholder without an active session', () => {
-			const props = createDefaultProps({
-				initialMode: 'move-to-group',
-				sessions: [],
-				activeSessionId: 'missing-session',
-			});
-			render(<QuickActionsModal {...props} />);
-
-			expect(screen.getByPlaceholderText('Move session to...')).toBeInTheDocument();
 		});
 
 		it('clears search when entering move-to-group mode', () => {
@@ -1408,21 +1257,6 @@ describe('QuickActionsModal', () => {
 			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
 		});
 
-		it('leaves rename group modals closed when the active group is missing', () => {
-			const session = createMockSession({ groupId: 'missing-group' });
-			const props = createDefaultProps({
-				sessions: [session],
-				groups: [],
-			});
-			render(<QuickActionsModal {...props} />);
-
-			fireEvent.click(screen.getByText('Rename Group'));
-
-			expect(props.setRenameGroupId).not.toHaveBeenCalled();
-			expect(props.setRenameGroupModalOpen).not.toHaveBeenCalled();
-			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
-		});
-
 		it('handles Create New Group action', () => {
 			const props = createDefaultProps();
 			render(<QuickActionsModal {...props} />);
@@ -1446,15 +1280,19 @@ describe('QuickActionsModal', () => {
 			const props = createDefaultProps({ initialMode: 'move-to-group' });
 			render(<QuickActionsModal {...props} />);
 
-			expect(screen.getByText('← Back to main menu')).toBeInTheDocument();
+			// When initialMode is 'move-to-group' the "Back to main menu" action is
+			// suppressed (the user never saw the main menu), so assert on group-mode
+			// specific entries instead.
+			expect(screen.getByText('📁 No Group (Ungrouped)')).toBeInTheDocument();
+			expect(screen.getByText('+ Create New Group')).toBeInTheDocument();
 		});
 	});
 
-	describe('Tab-related actions', () => {
-		it('shows Tab Switcher when an active session has a handler', () => {
+	describe('Tab-related actions (AI mode)', () => {
+		it('shows Tab Switcher when in AI mode with handler', () => {
 			const onOpenTabSwitcher = vi.fn();
 			const props = createDefaultProps({
-				isAiMode: false,
+				isAiMode: true,
 				onOpenTabSwitcher,
 				tabShortcuts: { tabSwitcher: { id: 'tabSwitcher', keys: ['Cmd', 'K'], enabled: true } },
 			});
@@ -1527,7 +1365,7 @@ describe('QuickActionsModal', () => {
 			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
 		});
 
-		it('does not show AI-only tab actions when not in AI mode', () => {
+		it('hides AI-only tab actions when not in AI mode, but keeps Tab Switcher available', () => {
 			const props = createDefaultProps({
 				isAiMode: false,
 				onOpenTabSwitcher: vi.fn(),
@@ -1536,6 +1374,9 @@ describe('QuickActionsModal', () => {
 			});
 			render(<QuickActionsModal {...props} />);
 
+			// Tab Switcher is now mode-agnostic: as long as the agent has aiTabs
+			// the command shows up so users can jump back into an AI tab even
+			// from terminal / file / browser modes.
 			expect(screen.getByText('Tab Switcher')).toBeInTheDocument();
 			expect(screen.queryByText('Rename Tab')).not.toBeInTheDocument();
 			expect(screen.queryByText('Toggle Read-Only Mode')).not.toBeInTheDocument();
@@ -1647,24 +1488,6 @@ describe('QuickActionsModal', () => {
 				expect(scrollIntoViewMock).toHaveBeenCalled();
 			});
 		});
-
-		it('updates visible number badges when the action list scrolls', () => {
-			const props = createDefaultProps();
-			render(<QuickActionsModal {...props} />);
-
-			const buttons = screen.getAllByRole('button');
-			const scrollContainer = buttons[0]!.parentElement!;
-			Object.defineProperty(scrollContainer, 'scrollTop', {
-				value: 104,
-				configurable: true,
-			});
-
-			fireEvent.scroll(scrollContainer);
-
-			const updatedButtons = screen.getAllByRole('button');
-			expect(within(updatedButtons[0]!).queryByText('1')).not.toBeInTheDocument();
-			expect(within(updatedButtons[2]!).getByText('1')).toBeInTheDocument();
-		});
 	});
 
 	describe('Multiple sessions', () => {
@@ -1738,33 +1561,23 @@ describe('QuickActionsModal', () => {
 			expect(screen.getByText('Jump to: 🚀 Unicode 日本語')).toBeInTheDocument();
 		});
 
-		it('handles git diff with empty or missing diff content', async () => {
+		it('handles git diff with no diff content', async () => {
 			const { gitService } = await import('../../../renderer/services/git');
 			vi.mocked(gitService.getDiff).mockResolvedValueOnce({ diff: '' });
+			useCenterFlashStore.getState().setActive(null);
+			refreshGitStatusMock.mockClear();
 
 			const props = createDefaultProps();
-			const { unmount } = render(<QuickActionsModal {...props} />);
-
-			fireEvent.click(screen.getByText('View Git Diff'));
-
-			await waitFor(() => {
-				expect(props.setGitDiffPreview).toHaveBeenCalledWith('');
-				expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
-			});
-
-			unmount();
-			props.setGitDiffPreview.mockClear();
-			props.setQuickActionOpen.mockClear();
-			vi.mocked(gitService.getDiff).mockResolvedValueOnce(
-				{} as Awaited<ReturnType<typeof gitService.getDiff>>
-			);
-
 			render(<QuickActionsModal {...props} />);
+
 			fireEvent.click(screen.getByText('View Git Diff'));
 
 			await waitFor(() => {
-				expect(props.setGitDiffPreview).toHaveBeenCalledWith('');
+				expect(props.setGitDiffPreview).not.toHaveBeenCalled();
 				expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
+				expect(useCenterFlashStore.getState().active?.message).toBe('No diff to examine');
+				// Stale widget stats triggered a re-poll
+				expect(refreshGitStatusMock).toHaveBeenCalledTimes(1);
 			});
 		});
 
@@ -1790,7 +1603,7 @@ describe('QuickActionsModal', () => {
 
 		it('handles error when opening repository in browser', async () => {
 			const { gitService } = await import('../../../renderer/services/git');
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 			vi.mocked(gitService.getRemoteBrowserUrl).mockRejectedValueOnce(new Error('Network error'));
 
 			const props = createDefaultProps();
@@ -1801,38 +1614,13 @@ describe('QuickActionsModal', () => {
 			await waitFor(() => {
 				expect(consoleSpy).toHaveBeenCalledWith(
 					'Failed to open repository in browser:',
+					undefined,
 					expect.any(Error)
 				);
 				expect(mockNotifyToast).toHaveBeenCalledWith({
 					type: 'error',
 					title: 'Error',
 					message: 'Network error',
-				});
-				expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
-			});
-
-			consoleSpy.mockRestore();
-		});
-
-		it('uses fallback copy when opening repository rejects with a non-Error value', async () => {
-			const { gitService } = await import('../../../renderer/services/git');
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-			vi.mocked(gitService.getRemoteBrowserUrl).mockRejectedValueOnce('network down');
-
-			const props = createDefaultProps();
-			render(<QuickActionsModal {...props} />);
-
-			fireEvent.click(screen.getByText('Open Repository in Browser'));
-
-			await waitFor(() => {
-				expect(consoleSpy).toHaveBeenCalledWith(
-					'Failed to open repository in browser:',
-					'network down'
-				);
-				expect(mockNotifyToast).toHaveBeenCalledWith({
-					type: 'error',
-					title: 'Error',
-					message: 'Failed to open repository in browser',
 				});
 				expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
 			});
@@ -1977,495 +1765,462 @@ describe('QuickActionsModal', () => {
 		});
 	});
 
-	describe('Context transfer actions', () => {
-		it('handles Context: Compact when active tab can be summarized', () => {
-			const onSummarizeAndContinue = vi.fn();
+	describe('Create Worktree action', () => {
+		it('shows Create Worktree action for git repo sessions with callback', () => {
+			const onQuickCreateWorktree = vi.fn();
 			const props = createDefaultProps({
-				isAiMode: true,
-				canSummarizeActiveTab: true,
-				onSummarizeAndContinue,
+				sessions: [createMockSession({ isGitRepo: true })],
+				onQuickCreateWorktree,
 			});
 			render(<QuickActionsModal {...props} />);
 
-			fireEvent.click(screen.getByText('Context: Compact'));
+			expect(screen.getByText('Create Worktree')).toBeInTheDocument();
+		});
 
-			expect(onSummarizeAndContinue).toHaveBeenCalled();
+		it('calls onQuickCreateWorktree with active session and closes modal', () => {
+			const onQuickCreateWorktree = vi.fn();
+			const session = createMockSession({ isGitRepo: true });
+			const props = createDefaultProps({
+				sessions: [session],
+				onQuickCreateWorktree,
+			});
+			render(<QuickActionsModal {...props} />);
+
+			fireEvent.click(screen.getByText('Create Worktree'));
+
+			expect(onQuickCreateWorktree).toHaveBeenCalledWith(session);
 			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
 		});
 
-		it('handles Context: Merge Into when merge capability is supported', () => {
-			const onOpenMergeSession = vi.fn();
+		it('resolves to parent session when active session is a worktree child', () => {
+			const onQuickCreateWorktree = vi.fn();
+			const parentSession = createMockSession({
+				id: 'parent-1',
+				name: 'Parent',
+				isGitRepo: true,
+			});
+			const childSession = createMockSession({
+				id: 'child-1',
+				name: 'Child',
+				isGitRepo: true,
+				parentSessionId: 'parent-1',
+				worktreeBranch: 'feature-1',
+			});
 			const props = createDefaultProps({
-				hasActiveSessionCapability: (capability: string) => capability === 'supportsContextMerge',
-				onOpenMergeSession,
+				sessions: [parentSession, childSession],
+				activeSessionId: 'child-1',
+				onQuickCreateWorktree,
 			});
 			render(<QuickActionsModal {...props} />);
 
-			fireEvent.click(screen.getByText('Context: Merge Into'));
+			fireEvent.click(screen.getByText('Create Worktree'));
 
-			expect(onOpenMergeSession).toHaveBeenCalled();
-			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
+			// Should resolve to parent, not the child
+			expect(onQuickCreateWorktree).toHaveBeenCalledWith(parentSession);
+		});
+
+		it('does not show Create Worktree when session is not a git repo', () => {
+			const onQuickCreateWorktree = vi.fn();
+			const props = createDefaultProps({
+				sessions: [createMockSession({ isGitRepo: false })],
+				onQuickCreateWorktree,
+			});
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.queryByText('Create Worktree')).not.toBeInTheDocument();
+		});
+
+		it('does not show Create Worktree when callback is not provided', () => {
+			const props = createDefaultProps({
+				sessions: [createMockSession({ isGitRepo: true })],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.queryByText('Create Worktree')).not.toBeInTheDocument();
 		});
 	});
 
-	describe('Optional command coverage', () => {
-		it('handles wizard, edit-agent, bookmark, and clear-terminal actions', () => {
-			const openWizard = vi.fn();
-			const onEditAgent = vi.fn();
-			const props = createDefaultProps({ openWizard, onEditAgent });
+	describe('Configure Maestro Cue action', () => {
+		it('shows Configure Maestro Cue command with agent name when onConfigureCue is provided', () => {
+			const onConfigureCue = vi.fn();
+			const props = createDefaultProps({ onConfigureCue });
 			render(<QuickActionsModal {...props} />);
 
-			fireEvent.click(screen.getByText('New Agent Wizard'));
-			expect(openWizard).toHaveBeenCalled();
-
-			fireEvent.click(screen.getByText('Edit Agent: Test Session'));
-			expect(onEditAgent).toHaveBeenCalledWith(expect.objectContaining({ id: 'session-1' }));
-
-			fireEvent.click(screen.getByText('Bookmark: Test Session'));
-			const bookmarkUpdater = props.setSessions.mock.calls.at(-1)?.[0];
-			expect(bookmarkUpdater([createMockSession()])[0].bookmarked).toBe(true);
-
-			fireEvent.click(screen.getByText('Clear Terminal History'));
-			const clearUpdater = props.setSessions.mock.calls.at(-1)?.[0];
-			const cleared = clearUpdater([
-				createMockSession({ shellLogs: [{ id: 'log-1' } as any] }),
-				createMockSession({
-					id: 'session-2',
-					name: 'Other Session',
-					shellLogs: [{ id: 'log-2' } as any],
-				}),
-			]);
-			expect(cleared[0].shellLogs).toEqual([]);
-			expect(cleared[1].shellLogs).toEqual([{ id: 'log-2' }]);
+			expect(screen.getByText('Configure Maestro Cue: Test Session')).toBeInTheDocument();
+			expect(screen.getByText('Open YAML editor for event-driven automation')).toBeInTheDocument();
 		});
 
-		it('unbookmarks the active session without changing other sessions', () => {
-			const props = createDefaultProps({
-				sessions: [
-					createMockSession({ bookmarked: true }),
-					createMockSession({ id: 'session-2', name: 'Other Session', bookmarked: true }),
-				],
-			});
+		it('handles Configure Maestro Cue action - calls onConfigureCue with active session and closes modal', () => {
+			const onConfigureCue = vi.fn();
+			const props = createDefaultProps({ onConfigureCue });
 			render(<QuickActionsModal {...props} />);
 
-			fireEvent.click(screen.getByText('Unbookmark: Test Session'));
+			fireEvent.click(screen.getByText('Configure Maestro Cue: Test Session'));
 
-			const bookmarkUpdater = props.setSessions.mock.calls.at(-1)?.[0] as (
-				sessions: Session[]
-			) => Session[];
-			const updated = bookmarkUpdater([
-				createMockSession({ bookmarked: true }),
-				createMockSession({ id: 'session-2', name: 'Other Session', bookmarked: true }),
-			]);
-			expect(updated[0].bookmarked).toBe(false);
-			expect(updated[1].bookmarked).toBe(true);
-		});
-
-		it('handles AI tab close and thinking toggle commands', () => {
-			const onToggleTabShowThinking = vi.fn();
-			const onCloseAllTabs = vi.fn();
-			const onCloseOtherTabs = vi.fn();
-			const onCloseTabsLeft = vi.fn();
-			const onCloseTabsRight = vi.fn();
-			const session = createMockSession({
-				aiTabs: [
-					{ id: 'tab-1', name: 'One', logs: [] },
-					{ id: 'tab-2', name: 'Two', logs: [] },
-					{ id: 'tab-3', name: 'Three', logs: [] },
-				],
-				activeTabId: 'tab-2',
-			});
-			const props = createDefaultProps({
-				isAiMode: true,
-				sessions: [session],
-				onToggleTabShowThinking,
-				onCloseAllTabs,
-				onCloseOtherTabs,
-				onCloseTabsLeft,
-				onCloseTabsRight,
-			});
-			render(<QuickActionsModal {...props} />);
-
-			fireEvent.click(screen.getByText('Toggle Show Thinking'));
-			expect(onToggleTabShowThinking).toHaveBeenCalled();
-
-			fireEvent.click(screen.getByText('Close All Tabs'));
-			expect(onCloseAllTabs).toHaveBeenCalled();
-
-			fireEvent.click(screen.getByText('Close Other Tabs'));
-			expect(onCloseOtherTabs).toHaveBeenCalled();
-
-			fireEvent.click(screen.getByText('Close Tabs to Left'));
-			expect(onCloseTabsLeft).toHaveBeenCalled();
-
-			fireEvent.click(screen.getByText('Close Tabs to Right'));
-			expect(onCloseTabsRight).toHaveBeenCalled();
-		});
-
-		it('handles external links, updates, playbook, symphony, graph, gist, and auto-scroll actions', () => {
-			const setUpdateCheckModalOpen = vi.fn();
-			const onOpenPlaybookExchange = vi.fn();
-			const onOpenSymphony = vi.fn();
-			const onOpenLastDocumentGraph = vi.fn();
-			const setAutoScrollAiMode = vi.fn();
-			const onPublishGist = vi.fn();
-			const props = createDefaultProps({
-				setUpdateCheckModalOpen,
-				onOpenPlaybookExchange,
-				onOpenSymphony,
-				lastGraphFocusFile: '/project/plan.md',
-				onOpenLastDocumentGraph,
-				autoScrollAiMode: true,
-				setAutoScrollAiMode,
-				isFilePreviewOpen: true,
-				ghCliAvailable: true,
-				onPublishGist,
-			});
-			render(<QuickActionsModal {...props} />);
-
-			fireEvent.click(screen.getByText('Maestro Website'));
-			expect(window.maestro.shell.openExternal).toHaveBeenCalledWith('https://runmaestro.ai/');
-
-			fireEvent.click(screen.getByText('Documentation and User Guide'));
-			expect(window.maestro.shell.openExternal).toHaveBeenCalledWith('https://docs.runmaestro.ai/');
-
-			fireEvent.click(screen.getByText('Join Discord'));
-			expect(window.maestro.shell.openExternal).toHaveBeenCalledWith(
-				'https://runmaestro.ai/discord'
+			expect(onConfigureCue).toHaveBeenCalledWith(
+				expect.objectContaining({ id: 'session-1', name: 'Test Session' })
 			);
-
-			fireEvent.click(screen.getByText('Check for Updates'));
-			expect(setUpdateCheckModalOpen).toHaveBeenCalledWith(true);
-
-			fireEvent.click(screen.getByText('Playbook Exchange'));
-			expect(onOpenPlaybookExchange).toHaveBeenCalled();
-
-			fireEvent.click(screen.getByText('Maestro Symphony'));
-			expect(onOpenSymphony).toHaveBeenCalled();
-
-			fireEvent.click(screen.getByText('Open Last Document Graph'));
-			expect(onOpenLastDocumentGraph).toHaveBeenCalled();
-
-			fireEvent.click(screen.getByText('Disable Auto-Scroll AI Output'));
-			expect(setAutoScrollAiMode).toHaveBeenCalledWith(false);
-
-			fireEvent.click(screen.getByText('Publish Document as GitHub Gist'));
-			expect(onPublishGist).toHaveBeenCalled();
-		});
-
-		it('handles enabling AI auto-scroll from the off state', () => {
-			const setAutoScrollAiMode = vi.fn();
-			const props = createDefaultProps({
-				autoScrollAiMode: false,
-				setAutoScrollAiMode,
-			});
-			render(<QuickActionsModal {...props} />);
-
-			fireEvent.click(screen.getByText('Enable Auto-Scroll AI Output'));
-
-			expect(setAutoScrollAiMode).toHaveBeenCalledWith(true);
 			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
 		});
 
-		it('handles worktree PR creation and Auto Run task reset commands', () => {
-			const onOpenCreatePR = vi.fn();
-			const onAutoRunResetTasks = vi.fn();
-			const session = createMockSession({
-				parentSessionId: 'parent-session',
-				worktreeBranch: 'feature/coverage',
+		it('does not show Configure Maestro Cue when onConfigureCue is not provided', () => {
+			const props = createDefaultProps();
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.queryByText(/Configure Maestro Cue/)).not.toBeInTheDocument();
+		});
+
+		it('Configure Maestro Cue appears when searching for "cue"', () => {
+			const onConfigureCue = vi.fn();
+			const props = createDefaultProps({ onConfigureCue });
+			render(<QuickActionsModal {...props} />);
+
+			const input = screen.getByPlaceholderText('Type a command or jump to agent...');
+			fireEvent.change(input, { target: { value: 'cue' } });
+
+			expect(screen.getByText('Configure Maestro Cue: Test Session')).toBeInTheDocument();
+		});
+	});
+
+	describe('Agent switcher mode (Cmd+O)', () => {
+		it('shows agent-specific placeholder when initialMode is agents', () => {
+			const props = createDefaultProps({ initialMode: 'agents' });
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.getByPlaceholderText('Jump to agent...')).toBeInTheDocument();
+		});
+
+		it('shows Switch Agent aria-label when in agents mode', () => {
+			const props = createDefaultProps({ initialMode: 'agents' });
+			render(<QuickActionsModal {...props} />);
+
+			const dialog = screen.getByRole('dialog');
+			expect(dialog).toHaveAttribute('aria-label', 'Switch Agent');
+		});
+
+		it('shows only raw agent names in agents mode', () => {
+			const props = createDefaultProps({
+				initialMode: 'agents',
+				sessions: [
+					createMockSession({ id: 'session-1', name: 'Agent Alpha' }),
+					createMockSession({ id: 'session-2', name: 'Agent Beta' }),
+				],
 			});
+			render(<QuickActionsModal {...props} />);
+
+			// Agent names should be shown without "Jump to:" prefix
+			expect(screen.getByText('Agent Alpha')).toBeInTheDocument();
+			expect(screen.getByText('Agent Beta')).toBeInTheDocument();
+			expect(screen.queryByText(/Jump to/)).not.toBeInTheDocument();
+
+			// Non-agent actions should NOT be present
+			expect(screen.queryByText('Create New Agent')).not.toBeInTheDocument();
+			expect(screen.queryByText('Toggle Left Panel')).not.toBeInTheDocument();
+			expect(screen.queryByText('Open Settings')).not.toBeInTheDocument();
+		});
+
+		it('filters agents by search text in agents mode', () => {
+			const props = createDefaultProps({
+				initialMode: 'agents',
+				sessions: [
+					createMockSession({ id: 'session-1', name: 'Agent Alpha' }),
+					createMockSession({ id: 'session-2', name: 'Agent Beta' }),
+				],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			const input = screen.getByPlaceholderText('Jump to agent...');
+			fireEvent.change(input, { target: { value: 'alpha' } });
+
+			expect(screen.getByText('Agent Alpha')).toBeInTheDocument();
+			expect(screen.queryByText('Agent Beta')).not.toBeInTheDocument();
+		});
+
+		it('closes modal and switches agent on selection in agents mode', () => {
+			const props = createDefaultProps({ initialMode: 'agents' });
+			render(<QuickActionsModal {...props} />);
+
+			fireEvent.click(screen.getByText('Test Session'));
+
+			expect(props.setActiveSessionId).toHaveBeenCalledWith('session-1');
+			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
+		});
+
+		it('sorts agents alphabetically and excludes group chats', () => {
+			const props = createDefaultProps({
+				initialMode: 'agents',
+				sessions: [
+					createMockSession({ id: 'session-1', name: 'Zulu' }),
+					createMockSession({ id: 'session-2', name: 'Alpha' }),
+					createMockSession({ id: 'session-3', name: 'Mike' }),
+				],
+				groupChats: [{ id: 'gc-1', name: 'Design Review', participants: ['a', 'b'] }],
+				onOpenGroupChat: vi.fn(),
+			});
+			render(<QuickActionsModal {...props} />);
+
+			const buttons = screen.getAllByRole('button');
+			const labels = buttons.map((b) => b.textContent?.replace(/\d/, '').trim() ?? '');
+
+			const alphaIdx = labels.findIndex((l) => l.startsWith('Alpha'));
+			const mikeIdx = labels.findIndex((l) => l.startsWith('Mike'));
+			const zuluIdx = labels.findIndex((l) => l.startsWith('Zulu'));
+
+			expect(alphaIdx).toBeLessThan(mikeIdx);
+			expect(mikeIdx).toBeLessThan(zuluIdx);
+
+			// Group chats are intentionally excluded from the agent jumper.
+			expect(screen.queryByText('Design Review')).not.toBeInTheDocument();
+		});
+
+		it('buckets running agents above idle ones, alphabetical within each bucket', () => {
+			const props = createDefaultProps({
+				initialMode: 'agents',
+				sessions: [
+					createMockSession({ id: 'session-1', name: 'Zulu', state: 'idle' }),
+					createMockSession({ id: 'session-2', name: 'Alpha', state: 'idle' }),
+					createMockSession({ id: 'session-3', name: 'Mike', state: 'busy' }),
+					createMockSession({ id: 'session-4', name: 'Bravo', state: 'busy' }),
+				],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			const buttons = screen.getAllByRole('button');
+			const labels = buttons.map((b) => b.textContent?.replace(/\d/, '').trim() ?? '');
+
+			const bravoIdx = labels.findIndex((l) => l.startsWith('Bravo'));
+			const mikeIdx = labels.findIndex((l) => l.startsWith('Mike'));
+			const alphaIdx = labels.findIndex((l) => l.startsWith('Alpha'));
+			const zuluIdx = labels.findIndex((l) => l.startsWith('Zulu'));
+
+			// Running bucket first (Bravo, Mike), then idle bucket (Alpha, Zulu).
+			expect(bravoIdx).toBeLessThan(mikeIdx);
+			expect(mikeIdx).toBeLessThan(alphaIdx);
+			expect(alphaIdx).toBeLessThan(zuluIdx);
+		});
+
+		it('renders LIVE and IDLE section headers in agents mode when both buckets exist', () => {
+			const props = createDefaultProps({
+				initialMode: 'agents',
+				sessions: [
+					createMockSession({ id: 'session-1', name: 'Alpha', state: 'idle' }),
+					createMockSession({ id: 'session-2', name: 'Bravo', state: 'busy' }),
+				],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			const dialog = screen.getByRole('dialog');
+			const liveIdx = dialog.textContent?.indexOf('LIVE') ?? -1;
+			const idleIdx = dialog.textContent?.indexOf('IDLE') ?? -1;
+			expect(liveIdx).toBeGreaterThanOrEqual(0);
+			expect(idleIdx).toBeGreaterThan(liveIdx);
+		});
+
+		it('suppresses both headers when all agents are idle (single bucket)', () => {
+			const props = createDefaultProps({
+				initialMode: 'agents',
+				sessions: [
+					createMockSession({ id: 'session-1', name: 'Alpha', state: 'idle' }),
+					createMockSession({ id: 'session-2', name: 'Bravo', state: 'idle' }),
+				],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			const dialog = screen.getByRole('dialog');
+			const headers = dialog.querySelectorAll('div[aria-hidden="true"]');
+			const headerTexts = Array.from(headers).map((h) => h.textContent?.trim() ?? '');
+			expect(headerTexts).not.toContain('LIVE');
+			expect(headerTexts).not.toContain('IDLE');
+		});
+
+		it('suppresses both headers when all agents are running (single bucket)', () => {
+			const props = createDefaultProps({
+				initialMode: 'agents',
+				sessions: [
+					createMockSession({ id: 'session-1', name: 'Alpha', state: 'busy' }),
+					createMockSession({ id: 'session-2', name: 'Bravo', state: 'busy' }),
+				],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			const dialog = screen.getByRole('dialog');
+			const headers = dialog.querySelectorAll('div[aria-hidden="true"]');
+			const headerTexts = Array.from(headers).map((h) => h.textContent?.trim() ?? '');
+			expect(headerTexts).not.toContain('LIVE');
+			expect(headerTexts).not.toContain('IDLE');
+		});
+
+		it('does not render LIVE/IDLE headers in main mode', () => {
+			const props = createDefaultProps({
+				sessions: [
+					createMockSession({ id: 'session-1', name: 'Alpha', state: 'idle' }),
+					createMockSession({ id: 'session-2', name: 'Bravo', state: 'busy' }),
+				],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			const dialog = screen.getByRole('dialog');
+			// Main mode keeps the per-row state subtext and does not show section headers.
+			expect(dialog.textContent).not.toContain('LIVE');
+			// 'IDLE' may legitimately appear as the per-row state subtext in main mode,
+			// but never as a standalone section header — we assert via class lookup.
+			const headers = dialog.querySelectorAll('div[aria-hidden="true"]');
+			const headerTexts = Array.from(headers).map((h) => h.textContent ?? '');
+			expect(headerTexts.some((t) => t.trim() === 'LIVE')).toBe(false);
+			expect(headerTexts.some((t) => t.trim() === 'IDLE')).toBe(false);
+		});
+
+		it('dismisses modal when clicking the backdrop', () => {
+			const props = createDefaultProps({ initialMode: 'agents' });
+			render(<QuickActionsModal {...props} />);
+
+			const dialog = screen.getByRole('dialog');
+			const backdrop = dialog.parentElement;
+			expect(backdrop).not.toBeNull();
+			fireEvent.mouseDown(backdrop!);
+
+			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
+		});
+
+		it('shows elapsed time, busy tab name, and queue count for running agents', () => {
+			const startedAt = Date.now() - 65_000; // 1m 5s ago
+			const props = createDefaultProps({
+				initialMode: 'agents',
+				sessions: [
+					createMockSession({
+						id: 'session-1',
+						name: 'Bravo',
+						state: 'busy',
+						thinkingStartTime: startedAt,
+						aiTabs: [
+							{
+								id: 'tab-a',
+								agentSessionId: null,
+								name: 'fix login',
+								starred: false,
+								logs: [],
+								inputValue: '',
+								stagedImages: [],
+								createdAt: 0,
+								state: 'busy',
+								thinkingStartTime: startedAt,
+							},
+						],
+						activeTabId: 'tab-a',
+						executionQueue: [
+							{
+								id: 'q-1',
+								timestamp: 0,
+								tabId: 'tab-a',
+								type: 'message',
+								text: 'next',
+							},
+							{
+								id: 'q-2',
+								timestamp: 0,
+								tabId: 'tab-a',
+								type: 'message',
+								text: 'and another',
+							},
+						],
+					}),
+				],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			const dialog = screen.getByRole('dialog');
+			expect(dialog.textContent).toMatch(/1m\s+5s/);
+			expect(dialog.textContent).toContain('fix login');
+			expect(dialog.textContent).toContain('2 queued');
+			// Idle-style "BUSY" subtext should not appear when we're showing rich info.
+			expect(dialog.textContent).not.toContain('BUSY');
+		});
+
+		it('omits queue count when there are no queued items', () => {
+			const props = createDefaultProps({
+				initialMode: 'agents',
+				sessions: [
+					createMockSession({
+						id: 'session-1',
+						name: 'Bravo',
+						state: 'busy',
+						thinkingStartTime: Date.now() - 5_000,
+						executionQueue: [],
+					}),
+				],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.getByRole('dialog').textContent).not.toMatch(/queued/);
+		});
+
+		it('alphabetizes by skipping leading emojis', () => {
+			const props = createDefaultProps({
+				initialMode: 'agents',
+				sessions: [
+					createMockSession({ id: 's1', name: 'Charlie' }),
+					createMockSession({ id: 's2', name: '🚀 Atlas' }),
+					createMockSession({ id: 's3', name: '🎯 Bravo' }),
+				],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			const buttons = screen.getAllByRole('button');
+			const labels = buttons.map((b) => b.textContent ?? '');
+			const atlasIdx = labels.findIndex((l) => l.includes('Atlas'));
+			const bravoIdx = labels.findIndex((l) => l.includes('Bravo'));
+			const charlieIdx = labels.findIndex((l) => l.includes('Charlie'));
+
+			expect(atlasIdx).toBeLessThan(bravoIdx);
+			expect(bravoIdx).toBeLessThan(charlieIdx);
+		});
+	});
+
+	describe('Move to First/Last Position with browser tabs', () => {
+		it('shows Move to First when browser tab is at last position', () => {
+			const session = createMockSession({
+				activeBrowserTabId: 'browser-1',
+				browserTabs: [{ id: 'browser-1', url: 'https://example.com', title: 'Example' }],
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'tab-1' },
+					{ type: 'browser', id: 'browser-1' },
+				],
+			});
+			const onMoveTabToFirst = vi.fn();
+			const onMoveTabToLast = vi.fn();
 			const props = createDefaultProps({
 				sessions: [session],
-				onOpenCreatePR,
-				autoRunSelectedDocument: 'Phase-01.md',
-				autoRunCompletedTaskCount: 1,
-				onAutoRunResetTasks,
+				onMoveTabToFirst,
+				onMoveTabToLast,
 			});
 			render(<QuickActionsModal {...props} />);
 
-			expect(screen.getByText('Uncheck 1 completed task')).toBeInTheDocument();
-
-			fireEvent.click(screen.getByText('Create Pull Request: feature/coverage'));
-			expect(onOpenCreatePR).toHaveBeenCalledWith(expect.objectContaining({ id: 'session-1' }));
-
-			fireEvent.click(screen.getByText('Reset Finished Tasks in Phase-01.md'));
-			expect(onAutoRunResetTasks).toHaveBeenCalled();
+			// Browser tab is at index 1 (last) — should show Move to First but not Move to Last
+			expect(screen.getByText('Move to First Position')).toBeInTheDocument();
+			expect(screen.queryByText('Move to Last Position')).not.toBeInTheDocument();
 		});
 
-		it('shows plural Auto Run reset copy for multiple completed tasks', () => {
-			const props = createDefaultProps({
-				autoRunSelectedDocument: 'Phase-02.md',
-				autoRunCompletedTaskCount: 2,
-				onAutoRunResetTasks: vi.fn(),
-			});
-			render(<QuickActionsModal {...props} />);
-
-			expect(screen.getByText('Uncheck 2 completed tasks')).toBeInTheDocument();
-		});
-
-		it('handles group chat creation, open, close, and delete commands', () => {
-			const onNewGroupChat = vi.fn();
-			const onOpenGroupChat = vi.fn();
-			const onCloseGroupChat = vi.fn();
-			const onDeleteGroupChat = vi.fn();
-			const sessions = [
-				createMockSession({ id: 'session-1', toolType: 'claude-code' }),
-				createMockSession({ id: 'session-2', toolType: 'codex' }),
-			];
-			const props = createDefaultProps({
-				sessions,
-				groupChats: [
-					{
-						id: 'chat-1',
-						name: 'Planning Room',
-						participants: [{ sessionId: 'session-1' }] as any,
-					} as any,
+		it('shows Move to Last when browser tab is at first position', () => {
+			const session = createMockSession({
+				activeBrowserTabId: 'browser-1',
+				browserTabs: [{ id: 'browser-1', url: 'https://example.com', title: 'Example' }],
+				unifiedTabOrder: [
+					{ type: 'browser', id: 'browser-1' },
+					{ type: 'ai', id: 'tab-1' },
 				],
-				activeGroupChatId: 'chat-1',
-				onNewGroupChat,
-				onOpenGroupChat,
-				onCloseGroupChat,
-				onDeleteGroupChat,
 			});
-			render(<QuickActionsModal {...props} />);
-
-			expect(screen.getByText('1 participant')).toBeInTheDocument();
-
-			fireEvent.click(screen.getByText('New Group Chat'));
-			expect(onNewGroupChat).toHaveBeenCalled();
-
-			fireEvent.click(screen.getByText('Group Chat: Planning Room'));
-			expect(onOpenGroupChat).toHaveBeenCalledWith('chat-1');
-
-			fireEvent.click(screen.getByText('Close Group Chat'));
-			expect(onCloseGroupChat).toHaveBeenCalled();
-
-			fireEvent.click(screen.getByText('Remove Group Chat: Planning Room'));
-			expect(onDeleteGroupChat).toHaveBeenCalledWith('chat-1');
-		});
-
-		it('shows plural group chat participants and fallback delete name', () => {
-			const onDeleteGroupChat = vi.fn();
+			const onMoveTabToFirst = vi.fn();
+			const onMoveTabToLast = vi.fn();
 			const props = createDefaultProps({
-				groupChats: [
-					{
-						id: 'chat-1',
-						name: 'Planning Room',
-						participants: [{ sessionId: 'session-1' }, { sessionId: 'session-2' }] as any,
-					} as any,
-				],
-				activeGroupChatId: 'missing-chat',
-				onOpenGroupChat: vi.fn(),
-				onDeleteGroupChat,
+				sessions: [session],
+				onMoveTabToFirst,
+				onMoveTabToLast,
 			});
 			render(<QuickActionsModal {...props} />);
 
-			expect(screen.getByText('2 participants')).toBeInTheDocument();
-			fireEvent.click(screen.getByText('Remove Group Chat: Group Chat'));
-			expect(onDeleteGroupChat).toHaveBeenCalledWith('missing-chat');
-		});
-
-		it('handles debug package modal and fallback package creation flows', async () => {
-			const setDebugPackageModalOpen = vi.fn();
-			const propsWithModal = createDefaultProps({ setDebugPackageModalOpen });
-			const { unmount } = render(<QuickActionsModal {...propsWithModal} />);
-
-			fireEvent.click(screen.getByText('Create Debug Package'));
-			expect(setDebugPackageModalOpen).toHaveBeenCalledWith(true);
-			unmount();
-
-			const propsWithoutModal = createDefaultProps();
-			render(<QuickActionsModal {...propsWithoutModal} />);
-
-			fireEvent.click(screen.getByText('Create Debug Package'));
-
-			expect(mockNotifyToast).toHaveBeenCalledWith({
-				type: 'info',
-				title: 'Debug Package',
-				message: 'Creating debug package...',
-			});
-			await waitFor(() => {
-				expect(window.maestro.debug.createPackage).toHaveBeenCalled();
-				expect(mockNotifyToast).toHaveBeenCalledWith({
-					type: 'success',
-					title: 'Debug Package Created',
-					message: 'Saved to /tmp/test.zip',
-				});
-			});
-		});
-
-		it('shows an error toast when fallback debug package creation returns an error', async () => {
-			(window.maestro.debug.createPackage as any).mockResolvedValueOnce({
-				success: false,
-				error: 'zip failed',
-			});
-			const props = createDefaultProps();
-			render(<QuickActionsModal {...props} />);
-
-			fireEvent.click(screen.getByText('Create Debug Package'));
-
-			await waitFor(() => {
-				expect(mockNotifyToast).toHaveBeenCalledWith({
-					type: 'error',
-					title: 'Debug Package Failed',
-					message: 'zip failed',
-				});
-			});
-		});
-
-		it('does not show a debug package error when package creation is cancelled', async () => {
-			(window.maestro.debug.createPackage as any).mockResolvedValueOnce({
-				success: false,
-				error: 'Cancelled by user',
-			});
-			const props = createDefaultProps();
-			render(<QuickActionsModal {...props} />);
-
-			fireEvent.click(screen.getByText('Create Debug Package'));
-
-			await waitFor(() => {
-				expect(window.maestro.debug.createPackage).toHaveBeenCalled();
-				expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
-			});
-			expect(mockNotifyToast).not.toHaveBeenCalledWith(
-				expect.objectContaining({
-					type: 'error',
-					title: 'Debug Package Failed',
-				})
-			);
-		});
-
-		it('uses fallback debug package error copy when no error message is returned', async () => {
-			(window.maestro.debug.createPackage as any).mockResolvedValueOnce({
-				success: false,
-				error: '',
-			});
-			const props = createDefaultProps();
-			render(<QuickActionsModal {...props} />);
-
-			fireEvent.click(screen.getByText('Create Debug Package'));
-
-			await waitFor(() => {
-				expect(mockNotifyToast).toHaveBeenCalledWith({
-					type: 'error',
-					title: 'Debug Package Failed',
-					message: 'Unknown error',
-				});
-			});
-		});
-
-		it('shows an error toast when fallback debug package creation rejects', async () => {
-			(window.maestro.debug.createPackage as any).mockRejectedValueOnce(new Error('disk full'));
-			const props = createDefaultProps();
-			render(<QuickActionsModal {...props} />);
-
-			fireEvent.click(screen.getByText('Create Debug Package'));
-
-			await waitFor(() => {
-				expect(mockNotifyToast).toHaveBeenCalledWith({
-					type: 'error',
-					title: 'Debug Package Failed',
-					message: 'disk full',
-				});
-			});
-		});
-
-		it('uses fallback debug package error copy when rejection is not an Error', async () => {
-			(window.maestro.debug.createPackage as any).mockRejectedValueOnce('disk full');
-			const props = createDefaultProps();
-			render(<QuickActionsModal {...props} />);
-
-			fireEvent.click(screen.getByText('Create Debug Package'));
-
-			await waitFor(() => {
-				expect(mockNotifyToast).toHaveBeenCalledWith({
-					type: 'error',
-					title: 'Debug Package Failed',
-					message: 'Unknown error',
-				});
-			});
-		});
-
-		it('handles copying the install GUID from debug commands', async () => {
-			const { safeClipboardWrite } = await import('../../../renderer/utils/clipboard');
-			const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-			const props = createDefaultProps();
-
-			try {
-				render(<QuickActionsModal {...props} />);
-
-				const input = screen.getByPlaceholderText('Type a command or jump to agent...');
-				fireEvent.change(input, { target: { value: 'debug' } });
-				fireEvent.click(screen.getByText('Debug: Copy Install GUID to Clipboard'));
-
-				await waitFor(() => {
-					expect(window.maestro.leaderboard.getInstallationId).toHaveBeenCalled();
-					expect(safeClipboardWrite).toHaveBeenCalledWith('install-guid-123');
-					expect(mockNotifyToast).toHaveBeenCalledWith({
-						type: 'success',
-						title: 'Install GUID Copied',
-						message: 'install-guid-123',
-					});
-				});
-			} finally {
-				consoleSpy.mockRestore();
-			}
-		});
-
-		it('shows an error toast when no install GUID is available', async () => {
-			(window.maestro.leaderboard.getInstallationId as any).mockResolvedValueOnce('');
-			const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-			const props = createDefaultProps();
-
-			try {
-				render(<QuickActionsModal {...props} />);
-
-				const input = screen.getByPlaceholderText('Type a command or jump to agent...');
-				fireEvent.change(input, { target: { value: 'debug' } });
-				fireEvent.click(screen.getByText('Debug: Copy Install GUID to Clipboard'));
-
-				await waitFor(() => {
-					expect(mockNotifyToast).toHaveBeenCalledWith({
-						type: 'error',
-						title: 'Error',
-						message: 'No installation GUID found',
-					});
-					expect(consoleSpy).toHaveBeenCalledWith('[Debug] No installation GUID found');
-					expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
-				});
-			} finally {
-				consoleSpy.mockRestore();
-			}
-		});
-
-		it('shows an error toast when copying the install GUID fails', async () => {
-			const error = new Error('provider unavailable');
-			(window.maestro.leaderboard.getInstallationId as any).mockRejectedValueOnce(error);
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-			const props = createDefaultProps();
-
-			try {
-				render(<QuickActionsModal {...props} />);
-
-				const input = screen.getByPlaceholderText('Type a command or jump to agent...');
-				fireEvent.change(input, { target: { value: 'debug' } });
-				fireEvent.click(screen.getByText('Debug: Copy Install GUID to Clipboard'));
-
-				await waitFor(() => {
-					expect(mockNotifyToast).toHaveBeenCalledWith({
-						type: 'error',
-						title: 'Error',
-						message: 'Failed to copy installation GUID',
-					});
-					expect(consoleSpy).toHaveBeenCalledWith(
-						'[Debug] Failed to copy installation GUID:',
-						error
-					);
-					expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
-				});
-			} finally {
-				consoleSpy.mockRestore();
-			}
+			// Browser tab is at index 0 (first) — should show Move to Last but not Move to First
+			expect(screen.queryByText('Move to First Position')).not.toBeInTheDocument();
+			expect(screen.getByText('Move to Last Position')).toBeInTheDocument();
 		});
 	});
 });

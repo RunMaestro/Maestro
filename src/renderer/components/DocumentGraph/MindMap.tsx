@@ -27,6 +27,8 @@ import {
 	EXTERNAL_NODE_WIDTH,
 	EXTERNAL_NODE_HEIGHT,
 } from './mindMapLayouts';
+import { logger } from '../../utils/logger';
+import { GraphMiniMap } from './GraphMiniMap';
 
 // ============================================================================
 // Types
@@ -119,12 +121,16 @@ export interface MindMapProps {
 	previewCharLimit?: number;
 	/** Layout algorithm to use for node positioning */
 	layoutType?: MindMapLayoutType;
+	/** Multiplier applied to per-layout spacing constants (1 = default density). */
+	spacingScale?: number;
 	/** Custom position overrides for nodes (from user drag operations) */
 	nodePositions?: Map<string, NodePositionOverride>;
 	/** Callback when a node position is changed via drag */
 	onNodePositionChange?: (nodeId: string, position: NodePositionOverride) => void;
 	/** Optional ref to the container div for external focus control */
 	containerRef?: React.RefObject<HTMLDivElement>;
+	/** Whether the help/legend drawer is open - slides the minimap clear of it */
+	legendExpanded?: boolean;
 }
 
 // ============================================================================
@@ -466,7 +472,7 @@ function renderDocumentNode(
 		ctx.textBaseline = 'middle';
 
 		const maxPathWidth = width - folderIconSize - 24;
-		const pathText = truncateText(folderPath, Math.floor(maxPathWidth / 5.5));
+		const pathText = truncateText(folderPath || './', Math.floor(maxPathWidth / 5.5));
 		ctx.fillText(
 			pathText,
 			folderIconX + folderIconSize + 6,
@@ -545,7 +551,7 @@ function renderExternalNode(
 	ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
 	ctx.textAlign = 'center';
 	ctx.textBaseline = 'middle';
-	ctx.fillText(truncateText(domain!, 18), x, y);
+	ctx.fillText(truncateText(domain || '', 18), x, y);
 
 	ctx.globalAlpha = 1;
 }
@@ -574,10 +580,12 @@ export function MindMap({
 	onOpenFile,
 	searchQuery,
 	previewCharLimit = 100,
-	layoutType = 'mindmap',
+	layoutType = 'hierarchical',
+	spacingScale = 1,
 	nodePositions,
 	onNodePositionChange,
 	containerRef: externalContainerRef,
+	legendExpanded = false,
 }: MindMapProps) {
 	const canvasRef = useRef<HTMLCanvasElement>(null);
 	const internalContainerRef = useRef<HTMLDivElement>(null);
@@ -618,7 +626,8 @@ export function MindMap({
 			width,
 			height,
 			showExternalLinks,
-			previewCharLimit
+			previewCharLimit,
+			spacingScale
 		);
 	}, [
 		layoutType,
@@ -631,6 +640,7 @@ export function MindMap({
 		height,
 		showExternalLinks,
 		previewCharLimit,
+		spacingScale,
 	]);
 
 	// Set initial focus to center node when center file changes
@@ -671,15 +681,15 @@ export function MindMap({
 
 			if (node.nodeType === 'document') {
 				return (
-					node.label.toLowerCase().includes(query) ||
+					(node.label?.toLowerCase().includes(query) ?? false) ||
 					(node.filePath?.toLowerCase().includes(query) ?? false) ||
 					(node.description?.toLowerCase().includes(query) ?? false) ||
 					(node.contentPreview?.toLowerCase().includes(query) ?? false)
 				);
 			} else {
 				return (
-					node.domain!.toLowerCase().includes(query) ||
-					node.urls!.some((url) => url.toLowerCase().includes(query))
+					(node.domain?.toLowerCase().includes(query) ?? false) ||
+					(node.urls?.some((url) => url.toLowerCase().includes(query)) ?? false)
 				);
 			}
 		},
@@ -726,6 +736,8 @@ export function MindMap({
 	// Check if click is on the open icon
 	const isClickOnOpenIcon = useCallback(
 		(node: MindMapNode, canvasX: number, canvasY: number): boolean => {
+			if (node.nodeType !== 'document') return false;
+
 			const iconX = node.x + node.width / 2 - OPEN_ICON_SIZE - OPEN_ICON_PADDING;
 			const iconY = node.y - node.height / 2 + OPEN_ICON_PADDING;
 
@@ -737,6 +749,18 @@ export function MindMap({
 			);
 		},
 		[]
+	);
+
+	// Recenter the main view on a canvas-space point (used by the minimap).
+	const recenterOnCanvasPoint = useCallback(
+		(canvasX: number, canvasY: number) => {
+			setTransform((prev) => ({
+				...prev,
+				panX: width / 2 - canvasX * prev.zoom,
+				panY: height / 2 - canvasY * prev.zoom,
+			}));
+		},
+		[width, height]
 	);
 
 	// Render the canvas
@@ -763,8 +787,9 @@ export function MindMap({
 		// Render links first (behind nodes)
 		const nodeMap = new Map(nodesWithState.map((n) => [n.id, n]));
 		layout.links.forEach((link) => {
-			const sourceNode = nodeMap.get(link.source)!;
-			const targetNode = nodeMap.get(link.target)!;
+			const sourceNode = nodeMap.get(link.source);
+			const targetNode = nodeMap.get(link.target);
+			if (!sourceNode || !targetNode) return;
 
 			const isHighlighted =
 				sourceNode.id === selectedNodeId ||
@@ -875,15 +900,17 @@ export function MindMap({
 
 	// Center view on mount and when center file changes
 	useEffect(() => {
-		if (layout.nodes.length === 0) return;
-
-		// Layout algorithms mark one focused center node whenever nodes exist.
-		const centerNode = layout.nodes.find((n) => n.isFocused)!;
-		setTransform((prev) => ({
-			...prev,
-			panX: width / 2 - centerNode.x * prev.zoom,
-			panY: height / 2 - centerNode.y * prev.zoom,
-		}));
+		if (layout.nodes.length > 0) {
+			// Center on the center node
+			const centerNode = layout.nodes.find((n) => n.isFocused);
+			if (centerNode) {
+				setTransform((prev) => ({
+					...prev,
+					panX: width / 2 - centerNode.x * prev.zoom,
+					panY: height / 2 - centerNode.y * prev.zoom,
+				}));
+			}
+		}
 	}, [centerFilePath, width, height, layout.nodes]);
 
 	// Mouse event handlers
@@ -958,7 +985,9 @@ export function MindMap({
 				onNodePositionChange(draggingNodeId, { x: newX, y: newY });
 
 				// Update cursor
-				canvasRef.current!.style.cursor = 'grabbing';
+				if (canvasRef.current) {
+					canvasRef.current.style.cursor = 'grabbing';
+				}
 			} else if (isPanning) {
 				setTransform((prev) => ({
 					...prev,
@@ -971,7 +1000,9 @@ export function MindMap({
 				setHoveredNodeId(node?.id ?? null);
 
 				// Update cursor
-				canvasRef.current!.style.cursor = node ? 'grab' : 'default';
+				if (canvasRef.current) {
+					canvasRef.current.style.cursor = node ? 'grab' : 'default';
+				}
 			}
 		},
 		[
@@ -989,7 +1020,9 @@ export function MindMap({
 	const handleMouseUp = useCallback(() => {
 		setDraggingNodeId(null);
 		setIsPanning(false);
-		canvasRef.current!.style.cursor = hoveredNodeId ? 'grab' : 'default';
+		if (canvasRef.current) {
+			canvasRef.current.style.cursor = hoveredNodeId ? 'grab' : 'default';
+		}
 	}, [hoveredNodeId]);
 
 	const handleMouseLeave = useCallback(() => {
@@ -1011,13 +1044,28 @@ export function MindMap({
 		[screenToCanvas, findNodeAtPoint, onNodeContextMenu]
 	);
 
-	// Wheel handler for zooming - must be attached manually with passive: false
-	// Uses functional updater to avoid stale closures and jitter
+	// Wheel handler - must be attached manually with passive: false.
+	// Uses functional updater to avoid stale closures and jitter.
+	// Plain scroll zooms toward the cursor; Shift+scroll pans the canvas
+	// (mirrors the Cue pipeline canvas, where Shift activates panning).
 	const handleWheel = useCallback((e: WheelEvent) => {
 		e.preventDefault();
 
 		const rect = canvasRef.current?.getBoundingClientRect();
 		if (!rect) return;
+
+		// Shift+scroll pans instead of zooming. Browsers translate a vertical
+		// mouse wheel into deltaX while Shift is held, and trackpads report
+		// deltaX/deltaY directly, so subtracting both axes covers every device
+		// (the unused axis is ~0).
+		if (e.shiftKey) {
+			setTransform((prev) => ({
+				...prev,
+				panX: prev.panX - e.deltaX,
+				panY: prev.panY - e.deltaY,
+			}));
+			return;
+		}
 
 		const mouseX = e.clientX - rect.left;
 		const mouseY = e.clientY - rect.top;
@@ -1038,7 +1086,8 @@ export function MindMap({
 
 	// Attach wheel event listener with passive: false to allow preventDefault
 	useEffect(() => {
-		const canvas = canvasRef.current!;
+		const canvas = canvasRef.current;
+		if (!canvas) return;
 
 		canvas.addEventListener('wheel', handleWheel, { passive: false });
 		return () => {
@@ -1233,6 +1282,17 @@ export function MindMap({
 				onMouseLeave={handleMouseLeave}
 				onContextMenu={handleContextMenu}
 			/>
+			<GraphMiniMap
+				nodes={nodesWithState}
+				theme={theme}
+				viewWidth={width}
+				viewHeight={height}
+				transform={transform}
+				onRecenter={recenterOnCanvasPoint}
+				legendExpanded={legendExpanded}
+				selectedNodeId={selectedNodeId}
+				focusedNodeId={focusedNodeId}
+			/>
 		</div>
 	);
 }
@@ -1270,7 +1330,7 @@ export function convertToMindMapData(
 	graphNodes.forEach((node) => {
 		// Skip if we've already processed this node ID
 		if (nodeMap.has(node.id)) {
-			console.warn(`[MindMap] Skipping duplicate node: ${node.id}`);
+			logger.warn(`[MindMap] Skipping duplicate node: ${node.id}`);
 			return;
 		}
 

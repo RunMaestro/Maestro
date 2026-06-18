@@ -1,5 +1,4 @@
-import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
-import type { ChangeEvent, ClipboardEvent, Dispatch, KeyboardEvent, SetStateAction } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
 	X,
 	PenLine,
@@ -11,9 +10,14 @@ import {
 	Brain,
 	Pin,
 	Users,
+	File,
+	Folder,
+	Maximize2,
+	Minimize2,
 } from 'lucide-react';
+import { GhostIconButton } from './ui/GhostIconButton';
 import type { Theme, ThinkingMode, Session, Group } from '../types';
-import { useLayerStack } from '../contexts/LayerStackContext';
+import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { estimateTokenCount } from '../../shared/formatters';
 import { getReadOnlyModeLabel, getReadOnlyModeTooltip } from '../../shared/agentMetadata';
@@ -23,6 +27,8 @@ import {
 	formatEnterToSendTooltip,
 } from '../utils/shortcutFormatter';
 import { normalizeMentionName } from '../utils/participantColors';
+import { useAtMentionCompletion } from '../hooks/input/useAtMentionCompletion';
+import { useModalStore } from '../stores/modalStore';
 
 const EMPTY_STAGED_IMAGES: string[] = [];
 
@@ -35,6 +41,13 @@ type MentionItem =
 			mentionName: string;
 			memberCount: number;
 			memberMentions: string[];
+	  }
+	| {
+			type: 'file';
+			fileType: 'file' | 'folder';
+			displayText: string;
+			fullPath: string;
+			source?: 'project' | 'autorun';
 	  };
 
 interface PromptComposerModalProps {
@@ -47,7 +60,7 @@ interface PromptComposerModalProps {
 	sessionName?: string;
 	// Image attachment props
 	stagedImages?: string[];
-	setStagedImages?: Dispatch<SetStateAction<string[]>>;
+	setStagedImages?: React.Dispatch<React.SetStateAction<string[]>>;
 	onImageAttachBlocked?: () => void;
 	onOpenLightbox?: (image: string, contextImages?: string[], source?: 'staged' | 'history') => void;
 	// Bottom bar toggles
@@ -61,7 +74,8 @@ interface PromptComposerModalProps {
 	supportsThinking?: boolean;
 	enterToSend?: boolean;
 	onToggleEnterToSend?: () => void;
-	// @mention autocomplete (group chat mode)
+	// @mention autocomplete
+	activeSession?: Session | null;
 	sessions?: Session[];
 	groups?: Group[];
 }
@@ -88,10 +102,15 @@ export function PromptComposerModal({
 	supportsThinking = false,
 	enterToSend = false,
 	onToggleEnterToSend,
+	activeSession,
 	sessions,
 	groups,
 }: PromptComposerModalProps) {
 	const [value, setValue] = useState('');
+	// Full-screen state lives in the modal store so the open-composer hotkey can
+	// cycle sizes while the modal is open (see cyclePromptComposer in modalStore).
+	const isFullscreen = useModalStore((s) => s.promptComposerFullscreen);
+	const toggleFullscreen = useModalStore((s) => s.togglePromptComposerFullscreen);
 	const [showMentions, setShowMentions] = useState(false);
 	const [mentionFilter, setMentionFilter] = useState('');
 	const [selectedMentionIndex, setSelectedMentionIndex] = useState(0);
@@ -99,8 +118,10 @@ export function PromptComposerModal({
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const mentionListRef = useRef<HTMLDivElement>(null);
 	const selectedMentionRef = useRef<HTMLButtonElement>(null);
-	const { registerLayer, unregisterLayer } = useLayerStack();
-	const hasMentions = sessions != null && sessions.length > 0;
+	const hasAgentMentions = sessions != null && sessions.length > 0;
+
+	// File @mention completion (same as InputArea)
+	const { getSuggestions: getFileSuggestions } = useAtMentionCompletion(activeSession ?? null);
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
 	const onSubmitRef = useRef(onSubmit);
@@ -112,13 +133,15 @@ export function PromptComposerModal({
 	const showMentionsRef = useRef(showMentions);
 	showMentionsRef.current = showMentions;
 
-	// Sync value when modal opens with new initialValue
+	// Sync value only on mount — while open, the composer owns the value
+	// and syncs back to parent via onSubmit on each keystroke.
+	// Excluding initialValue prevents useDeferredValue lag from overwriting edits.
 	useEffect(() => {
 		if (isOpen) {
 			setValue(initialValue);
 			setShowMentions(false);
 		}
-	}, [isOpen, initialValue]);
+	}, [isOpen]);
 
 	// Focus textarea when modal opens
 	useEffect(() => {
@@ -131,31 +154,24 @@ export function PromptComposerModal({
 	}, [isOpen]);
 
 	// Register with layer stack for Escape handling
-	useEffect(() => {
-		if (isOpen) {
-			const id = registerLayer({
-				type: 'modal',
-				priority: MODAL_PRIORITIES.PROMPT_COMPOSER,
-				blocksLowerLayers: true,
-				capturesFocus: true,
-				focusTrap: 'strict',
-				onEscape: () => {
-					// If mention dropdown is open, close it instead of the modal
-					if (showMentionsRef.current) {
-						setShowMentions(false);
-						return;
-					}
-					// Save the current value back before closing
-					onSubmitRef.current(valueRef.current);
-					onCloseRef.current();
-				},
-			});
-			return () => unregisterLayer(id);
-		}
-	}, [isOpen, registerLayer, unregisterLayer]);
+	useModalLayer(
+		MODAL_PRIORITIES.PROMPT_COMPOSER,
+		undefined,
+		() => {
+			// If mention dropdown is open, close it instead of the modal
+			if (showMentionsRef.current) {
+				setShowMentions(false);
+				return;
+			}
+			// Save the current value back before closing
+			onSubmitRef.current(valueRef.current);
+			onCloseRef.current();
+		},
+		{ enabled: isOpen }
+	);
 
-	// Build mentionable items from sessions and groups (same logic as GroupChatInput)
-	const mentionItems = useMemo(() => {
+	// Build agent/group mentionable items (group chat mode)
+	const agentMentionItems = useMemo(() => {
 		if (!sessions) return [];
 		const items: MentionItem[] = [];
 		if (groups) {
@@ -186,21 +202,41 @@ export function PromptComposerModal({
 		return items;
 	}, [sessions, groups]);
 
+	// Filtered mentions: file suggestions (agent chat) OR agent/group suggestions (group chat)
 	const filteredMentions = useMemo(() => {
-		if (!mentionFilter) return mentionItems;
-		return mentionItems.filter((item) => {
-			if (item.type === 'group') {
-				return (
-					item.group.name.toLowerCase().includes(mentionFilter) ||
-					item.mentionName.toLowerCase().includes(mentionFilter)
-				);
-			}
-			return (
-				item.name.toLowerCase().includes(mentionFilter) ||
-				item.mentionName.toLowerCase().includes(mentionFilter)
-			);
-		});
-	}, [mentionItems, mentionFilter]);
+		// Group chat mode: show agent/group mentions only
+		if (hasAgentMentions) {
+			if (!mentionFilter) return agentMentionItems;
+			const filterLower = mentionFilter.toLowerCase();
+			return agentMentionItems.filter((item) => {
+				if (item.type === 'group') {
+					return (
+						item.group.name.toLowerCase().includes(filterLower) ||
+						item.mentionName.toLowerCase().includes(filterLower)
+					);
+				}
+				if (item.type === 'agent') {
+					return (
+						item.name.toLowerCase().includes(filterLower) ||
+						item.mentionName.toLowerCase().includes(filterLower)
+					);
+				}
+				return false;
+			});
+		}
+
+		// Agent chat mode: show file suggestions only
+		const fileSuggestions = getFileSuggestions(mentionFilter);
+		return fileSuggestions.map(
+			(s): MentionItem => ({
+				type: 'file',
+				fileType: s.type,
+				displayText: s.displayText,
+				fullPath: s.fullPath,
+				source: s.source,
+			})
+		);
+	}, [mentionFilter, getFileSuggestions, hasAgentMentions, agentMentionItems]);
 
 	// Scroll selected mention into view
 	useEffect(() => {
@@ -223,6 +259,8 @@ export function PromptComposerModal({
 			let insertion: string;
 			if (item.type === 'group') {
 				insertion = item.memberMentions.join(' ') + ' ';
+			} else if (item.type === 'file') {
+				insertion = `@${item.fullPath} `;
 			} else {
 				insertion = `@${item.mentionName} `;
 			}
@@ -236,47 +274,43 @@ export function PromptComposerModal({
 		[value]
 	);
 
-	const handleValueChange = useCallback(
-		(newValue: string) => {
-			valueRef.current = newValue;
-			setValue(newValue);
+	const handleValueChange = useCallback((newValue: string) => {
+		setValue(newValue);
+		// Sync every keystroke to parent so the composer is transparent —
+		// typing here is equivalent to typing in the standard input box
+		onSubmitRef.current(newValue);
 
-			if (!hasMentions) return;
+		// Check for @mention trigger (cursor-aware, same as InputArea)
+		const cursorPos = textareaRef.current?.selectionStart ?? newValue.length;
+		const textBeforeCursor = newValue.substring(0, cursorPos);
+		const lastAtIndex = textBeforeCursor.lastIndexOf('@');
 
-			// Check for @mention trigger
-			const lastAtIndex = newValue.lastIndexOf('@');
-			if (lastAtIndex !== -1 && lastAtIndex === newValue.length - 1) {
+		if (lastAtIndex === -1) {
+			setShowMentions(false);
+		} else {
+			const isValidTrigger = lastAtIndex === 0 || /\s/.test(newValue[lastAtIndex - 1]);
+			const textAfterAt = newValue.substring(lastAtIndex + 1, cursorPos);
+			const hasSpaceAfterAt = textAfterAt.includes(' ');
+
+			if (isValidTrigger && !hasSpaceAfterAt) {
 				setShowMentions(true);
-				setMentionFilter('');
+				setMentionFilter(textAfterAt);
 				setSelectedMentionIndex(0);
-			} else if (lastAtIndex !== -1) {
-				const afterAt = newValue.slice(lastAtIndex + 1);
-				if (!/\s/.test(afterAt)) {
-					setShowMentions(true);
-					setMentionFilter(afterAt.toLowerCase());
-					setSelectedMentionIndex(0);
-				} else {
-					setShowMentions(false);
-				}
 			} else {
 				setShowMentions(false);
 			}
-		},
-		[hasMentions]
-	);
+		}
+	}, []);
 
 	if (!isOpen) return null;
 
-	const getCurrentValue = () => textareaRef.current?.value ?? valueRef.current;
-
 	const handleSend = () => {
-		const currentValue = getCurrentValue();
-		if (!currentValue.trim()) return;
-		onSend(currentValue);
+		if (!value.trim()) return;
+		onSend(value);
 		onClose();
 	};
 
-	const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+	const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
 		// Handle mention dropdown navigation
 		if (showMentions && filteredMentions.length > 0) {
 			if (e.key === 'ArrowDown') {
@@ -296,11 +330,20 @@ export function PromptComposerModal({
 			}
 		}
 
-		// Cmd/Ctrl + Enter to send the message
-		if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-			e.preventDefault();
-			handleSend();
-			return;
+		// Send the message. Honors the Expanded AI Interaction Mode setting passed in via `enterToSend`.
+		// When enterToSend === true: plain Enter sends; Shift+Enter inserts newline.
+		// When enterToSend === false: Cmd/Ctrl+Enter sends; plain Enter inserts newline.
+		if (e.key === 'Enter') {
+			if (enterToSend && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+				e.preventDefault();
+				handleSend();
+				return;
+			}
+			if (!enterToSend && (e.metaKey || e.ctrlKey)) {
+				e.preventDefault();
+				handleSend();
+				return;
+			}
 		}
 
 		// Tab key inserts a tab character instead of moving focus
@@ -320,7 +363,7 @@ export function PromptComposerModal({
 		}
 
 		// Cmd/Ctrl + Shift + L to open lightbox (if images are staged)
-		if (e.key.toLowerCase() === 'l' && (e.metaKey || e.ctrlKey) && e.shiftKey) {
+		if (e.key === 'l' && (e.metaKey || e.ctrlKey) && e.shiftKey) {
 			e.preventDefault();
 			if (stagedImages.length > 0 && onOpenLightbox) {
 				onOpenLightbox(stagedImages[0], stagedImages, 'staged');
@@ -329,14 +372,14 @@ export function PromptComposerModal({
 		}
 
 		// Cmd/Ctrl + S to toggle Save to History
-		if (e.key.toLowerCase() === 's' && (e.metaKey || e.ctrlKey) && !e.shiftKey) {
+		if (e.key === 's' && (e.metaKey || e.ctrlKey) && !e.shiftKey) {
 			e.preventDefault();
 			onToggleTabSaveToHistory?.();
 			return;
 		}
 
 		// Cmd/Ctrl + R to toggle Read-only mode
-		if (e.key.toLowerCase() === 'r' && (e.metaKey || e.ctrlKey) && !e.shiftKey) {
+		if (e.key === 'r' && (e.metaKey || e.ctrlKey) && !e.shiftKey) {
 			e.preventDefault();
 			onToggleTabReadOnlyMode?.();
 			return;
@@ -344,7 +387,7 @@ export function PromptComposerModal({
 	};
 
 	// Handle paste for images and text (with whitespace trimming)
-	const handlePaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+	const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
 		const items = e.clipboardData.items;
 		const hasImage = Array.from(items).some((item) => item.type.startsWith('image/'));
 
@@ -356,9 +399,9 @@ export function PromptComposerModal({
 				// Only intercept if trimming actually changed the text
 				if (trimmedText !== text) {
 					e.preventDefault();
-					const target = e.currentTarget;
-					const start = target.selectionStart;
-					const end = target.selectionEnd;
+					const target = e.target as HTMLTextAreaElement;
+					const start = target.selectionStart ?? 0;
+					const end = target.selectionEnd ?? 0;
 					const currentValue = target.value;
 					const pastedValue = currentValue.slice(0, start) + trimmedText + currentValue.slice(end);
 					handleValueChange(pastedValue);
@@ -372,8 +415,10 @@ export function PromptComposerModal({
 		}
 
 		if (!setStagedImages) {
-			e.preventDefault();
-			onImageAttachBlocked?.();
+			if (hasImage) {
+				e.preventDefault();
+				onImageAttachBlocked?.();
+			}
 			return;
 		}
 
@@ -395,13 +440,15 @@ export function PromptComposerModal({
 	};
 
 	// Handle file input change for image attachment
-	const handleFileInputChange = (e: ChangeEvent<HTMLInputElement>) => {
+	const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+		if (!setStagedImages) return;
+
 		const files = Array.from(e.target.files || []);
 		files.forEach((file) => {
 			const reader = new FileReader();
 			reader.onload = (event) => {
 				if (event.target?.result) {
-					setStagedImages!((prev) => [...prev, event.target!.result as string]);
+					setStagedImages((prev) => [...prev, event.target!.result as string]);
 				}
 			};
 			reader.readAsDataURL(file);
@@ -416,7 +463,7 @@ export function PromptComposerModal({
 			className="fixed inset-0 z-50 flex items-center justify-center"
 			style={{ backgroundColor: 'rgba(0,0,0,0.7)' }}
 			onClick={() => {
-				onSubmit(getCurrentValue());
+				onSubmit(value);
 				onClose();
 			}}
 		>
@@ -426,13 +473,17 @@ export function PromptComposerModal({
 				tabIndex={-1}
 				onClick={(e) => {
 					e.stopPropagation();
-					onSubmit(getCurrentValue());
+					onSubmit(value);
 					onClose();
 				}}
 				aria-label="Close prompt composer"
 			/>
 			<div
-				className="relative z-10 w-[90vw] h-[80vh] max-w-5xl rounded-xl border shadow-2xl flex flex-col overflow-hidden"
+				className={`relative z-10 shadow-2xl flex flex-col overflow-hidden rounded-xl border ${
+					// Expanded state is capped at the Maestro Cue modal size (90vw x 90vh),
+					// the app-wide max modal footprint. Compact state caps width at max-w-5xl.
+					isFullscreen ? 'w-[90vw] h-[90vh]' : 'w-[90vw] h-[80vh] max-w-5xl'
+				}`}
 				onClick={(e) => e.stopPropagation()}
 				style={{
 					backgroundColor: theme.colors.bgMain,
@@ -453,17 +504,28 @@ export function PromptComposerModal({
 							— {sessionName}
 						</span>
 					</div>
-					<div className="flex items-center gap-3">
-						<button
+					<div className="flex items-center gap-1">
+						<GhostIconButton
+							onClick={toggleFullscreen}
+							padding="p-1.5"
+							title={isFullscreen ? 'Collapse' : 'Expand to full screen'}
+						>
+							{isFullscreen ? (
+								<Minimize2 className="w-5 h-5" style={{ color: theme.colors.textDim }} />
+							) : (
+								<Maximize2 className="w-5 h-5" style={{ color: theme.colors.textDim }} />
+							)}
+						</GhostIconButton>
+						<GhostIconButton
 							onClick={() => {
-								onSubmit(getCurrentValue());
+								onSubmit(value);
 								onClose();
 							}}
-							className="p-1.5 rounded hover:bg-white/10 transition-colors"
+							padding="p-1.5"
 							title="Close (Escape)"
 						>
 							<X className="w-5 h-5" style={{ color: theme.colors.textDim }} />
-						</button>
+						</GhostIconButton>
 					</div>
 				</div>
 
@@ -523,51 +585,86 @@ export function PromptComposerModal({
 								borderColor: theme.colors.border,
 							}}
 						>
-							{filteredMentions.map((item, index) => (
-								<button
-									key={item.type === 'group' ? `group-${item.group.id}` : item.sessionId}
-									ref={index === selectedMentionIndex ? selectedMentionRef : null}
-									onClick={() => insertMention(item)}
-									className="w-full text-left px-3 py-1.5 rounded text-sm transition-colors flex items-center gap-2"
-									style={{
-										color: theme.colors.textMain,
-										backgroundColor:
-											index === selectedMentionIndex ? `${theme.colors.accent}20` : 'transparent',
-									}}
-								>
-									{item.type === 'group' ? (
-										<>
-											<Users
-												className="w-3.5 h-3.5 shrink-0"
-												style={{ color: theme.colors.accent }}
-											/>
-											<span>{item.group.emoji}</span>
-											<span>@{item.mentionName}</span>
-											<span
-												className="ml-auto text-[10px] px-1.5 py-0.5 rounded-full"
-												style={{
-													backgroundColor: `${theme.colors.accent}20`,
-													color: theme.colors.accent,
-												}}
-											>
-												group · {item.memberCount}
-											</span>
-										</>
-									) : (
-										<>
-											<span>@{item.mentionName}</span>
-											{item.name !== item.mentionName && (
-												<span className="text-xs" style={{ color: theme.colors.textDim }}>
-													({item.name})
+							{filteredMentions.map((item, index) => {
+								const key =
+									item.type === 'group'
+										? `group-${item.group.id}`
+										: item.type === 'file'
+											? `file-${item.fullPath}`
+											: item.sessionId;
+								return (
+									<button
+										key={key}
+										ref={index === selectedMentionIndex ? selectedMentionRef : null}
+										onClick={() => insertMention(item)}
+										className="w-full text-left px-3 py-1.5 rounded text-sm transition-colors flex items-center gap-2"
+										style={{
+											color: theme.colors.textMain,
+											backgroundColor:
+												index === selectedMentionIndex ? `${theme.colors.accent}20` : 'transparent',
+										}}
+									>
+										{item.type === 'file' ? (
+											<>
+												{item.fileType === 'folder' ? (
+													<Folder
+														className="w-3.5 h-3.5 shrink-0"
+														style={{ color: theme.colors.warning }}
+													/>
+												) : (
+													<File
+														className="w-3.5 h-3.5 shrink-0"
+														style={{ color: theme.colors.textDim }}
+													/>
+												)}
+												<span className="flex-1 truncate font-mono">{item.fullPath}</span>
+												{item.source === 'autorun' && (
+													<span
+														className="text-[9px] px-1 py-0.5 rounded shrink-0"
+														style={{
+															backgroundColor: `${theme.colors.accent}30`,
+															color: theme.colors.accent,
+														}}
+													>
+														Auto Run
+													</span>
+												)}
+												<span className="text-[10px] opacity-40 shrink-0">{item.fileType}</span>
+											</>
+										) : item.type === 'group' ? (
+											<>
+												<Users
+													className="w-3.5 h-3.5 shrink-0"
+													style={{ color: theme.colors.accent }}
+												/>
+												<span>{item.group.emoji}</span>
+												<span>@{item.mentionName}</span>
+												<span
+													className="ml-auto text-[10px] px-1.5 py-0.5 rounded-full"
+													style={{
+														backgroundColor: `${theme.colors.accent}20`,
+														color: theme.colors.accent,
+													}}
+												>
+													group · {item.memberCount}
 												</span>
-											)}
-											<span className="ml-auto text-xs" style={{ color: theme.colors.textDim }}>
-												{item.agentId}
-											</span>
-										</>
-									)}
-								</button>
-							))}
+											</>
+										) : (
+											<>
+												<span>@{item.mentionName}</span>
+												{item.name !== item.mentionName && (
+													<span className="text-xs" style={{ color: theme.colors.textDim }}>
+														({item.name})
+													</span>
+												)}
+												<span className="ml-auto text-xs" style={{ color: theme.colors.textDim }}>
+													{item.agentId}
+												</span>
+											</>
+										)}
+									</button>
+								);
+							})}
 						</div>
 					)}
 					<textarea
@@ -579,9 +676,9 @@ export function PromptComposerModal({
 						className="w-full h-full bg-transparent resize-none outline-none text-base leading-relaxed scrollbar-thin"
 						style={{ color: theme.colors.textMain }}
 						placeholder={
-							hasMentions
-								? 'Write your prompt here... (@ to mention agent)'
-								: 'Write your prompt here...'
+							hasAgentMentions
+								? 'Write your prompt here... (@ to mention agents)'
+								: 'Write your prompt here... (@ to reference files)'
 						}
 					/>
 				</div>

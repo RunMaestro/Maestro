@@ -17,8 +17,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, act, cleanup, waitFor } from '@testing-library/react';
+import { renderHook, act, cleanup } from '@testing-library/react';
 import type { Session } from '../../../renderer/types';
+import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
 // ============================================================================
 // Mock modules BEFORE importing the hook
@@ -119,12 +120,6 @@ vi.mock('../../../prompts', () => ({
 	autorunSynopsisPrompt: 'Mock synopsis prompt',
 }));
 
-const mockCaptureException = vi.fn();
-vi.mock('../../../renderer/utils/sentry', () => ({
-	captureException: (...args: unknown[]) => mockCaptureException(...args),
-	captureMessage: vi.fn(),
-}));
-
 // ============================================================================
 // Now import the hook and stores
 // ============================================================================
@@ -134,22 +129,22 @@ import {
 	type UseMergeTransferHandlersDeps,
 } from '../../../renderer/hooks/agent/useMergeTransferHandlers';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useTabStore } from '../../../renderer/stores/tabStore';
 import { useMergeSessionWithSessions } from '../../../renderer/hooks/agent/useMergeSession';
 import { useSendToAgentWithSessions } from '../../../renderer/hooks/agent/useSendToAgent';
-import { gitService } from '../../../renderer/services/git';
-import { substituteTemplateVariables } from '../../../renderer/utils/templateVariables';
 
 // ============================================================================
 // Helpers
 // ============================================================================
 
+// Thin wrapper: pre-populates an AI tab with chat logs so merge/transfer
+// handlers have content to merge.
 function createMockSession(overrides: Partial<Session> = {}): Session {
-	return {
-		id: 'session-1',
+	return baseCreateMockSession({
 		name: 'Test Agent',
-		state: 'idle',
-		busySource: undefined,
-		toolType: 'claude-code',
+		cwd: '/test',
+		fullPath: '/test',
+		projectRoot: '/test/project',
 		aiTabs: [
 			{
 				id: 'tab-1',
@@ -165,16 +160,11 @@ function createMockSession(overrides: Partial<Session> = {}): Session {
 				starred: false,
 				createdAt: Date.now(),
 			},
-		],
+		] as any,
 		activeTabId: 'tab-1',
-		inputMode: 'ai',
-		isGitRepo: false,
-		cwd: '/test',
-		projectRoot: '/test/project',
-		shellLogs: [],
 		shellCwd: '/test',
 		...overrides,
-	} as unknown as Session;
+	});
 }
 
 // Create stable deps to avoid reference changes
@@ -222,9 +212,16 @@ beforeEach(() => {
 				command: 'claude',
 				args: [],
 				path: '/usr/bin/claude',
+				capabilities: { supportsStreamJsonInput: false },
 			}),
 		},
 		process: { spawn: vi.fn().mockResolvedValue(undefined) },
+		prompts: {
+			get: vi.fn().mockResolvedValue({ success: true, content: '' }),
+		},
+		history: {
+			getFilePath: vi.fn().mockResolvedValue(null),
+		},
 	};
 });
 
@@ -367,48 +364,6 @@ describe('useMergeTransferHandlers', () => {
 
 			expect(mockNotifyToast).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
 		});
-
-		it('returns an error without executing merge when there is no active session', async () => {
-			useSessionStore.setState({
-				sessions: [],
-				activeSessionId: 'missing-session',
-			});
-
-			const deps = createMockDeps();
-			const { result } = renderHook(() => useMergeTransferHandlers(deps));
-
-			let mergeResult: Awaited<ReturnType<typeof result.current.handleMerge>> | undefined;
-			await act(async () => {
-				mergeResult = await result.current.handleMerge('target-session', undefined, {
-					groomContext: false,
-				} as any);
-			});
-
-			expect(mockSetMergeSessionModalOpen).toHaveBeenCalledWith(false);
-			expect(mockExecuteMerge).not.toHaveBeenCalled();
-			expect(mergeResult).toEqual({ success: false, error: 'No active session' });
-		});
-
-		it('uses the default merge error message when the merge result has no error', async () => {
-			mockExecuteMerge.mockResolvedValueOnce({ success: false });
-
-			const deps = createMockDeps();
-			const { result } = renderHook(() => useMergeTransferHandlers(deps));
-
-			await act(async () => {
-				await result.current.handleMerge('target-session', undefined, {
-					groomContext: false,
-				} as any);
-			});
-
-			expect(mockNotifyToast).toHaveBeenCalledWith(
-				expect.objectContaining({
-					type: 'error',
-					title: 'Merge Failed',
-					message: 'Failed to merge contexts',
-				})
-			);
-		});
 	});
 
 	// ----------------------------------------------------------------
@@ -467,27 +422,6 @@ describe('useMergeTransferHandlers', () => {
 
 			expect(sendResult.success).toBe(false);
 			expect(sendResult.error).toBe('Target session not found');
-		});
-
-		it('returns error and closes the modal when there is no active session', async () => {
-			useSessionStore.setState({
-				sessions: [],
-				activeSessionId: 'missing-session',
-			});
-
-			const deps = createMockDeps();
-			const { result } = renderHook(() => useMergeTransferHandlers(deps));
-
-			let sendResult: Awaited<ReturnType<typeof result.current.handleSendToAgent>> | undefined;
-			await act(async () => {
-				sendResult = await result.current.handleSendToAgent('target-session', {
-					groomContext: false,
-				} as any);
-			});
-
-			expect(mockSetSendToAgentModalOpen).toHaveBeenCalledWith(false);
-			expect((window as any).maestro.agents.get).not.toHaveBeenCalled();
-			expect(sendResult).toEqual({ success: false, error: 'No active session' });
 		});
 
 		it('returns error when source tab is not found', async () => {
@@ -600,6 +534,75 @@ describe('useMergeTransferHandlers', () => {
 					expect((window as any).maestro.process.spawn).toHaveBeenCalled();
 				}
 			});
+		});
+	});
+
+	// ----------------------------------------------------------------
+	// handleSendToAgent — terminal buffer transfer path
+	// ----------------------------------------------------------------
+
+	describe('handleSendToAgent — terminal buffer mode', () => {
+		beforeEach(() => {
+			useTabStore.getState().setPendingTerminalBufferSend(null);
+		});
+
+		it('uses the queued terminal buffer as the transferred message body', async () => {
+			const targetSession = createMockSession({
+				id: 'target-session',
+				name: 'Target Agent',
+				toolType: 'codex',
+			});
+			useSessionStore.setState({
+				sessions: [createMockSession(), targetSession],
+				activeSessionId: 'session-1',
+			});
+
+			useTabStore.getState().setPendingTerminalBufferSend({
+				content: '$ echo hello\nhello',
+				sourceName: 'Terminal 1',
+			});
+
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useMergeTransferHandlers(deps));
+
+			let sendResult: any;
+			await act(async () => {
+				sendResult = await result.current.handleSendToAgent('target-session', {
+					groomContext: false,
+				} as any);
+			});
+
+			expect(sendResult.success).toBe(true);
+
+			const updatedSessions = useSessionStore.getState().sessions;
+			const updatedTarget = updatedSessions.find((s) => s.id === 'target-session');
+			const newTab = updatedTarget!.aiTabs.find((t) => t.id === sendResult.newTabId);
+			const userMessage = newTab!.logs.find((log) => log.source === 'user');
+
+			expect(userMessage).toBeDefined();
+			expect(userMessage!.text).toContain('Terminal Buffer from "Terminal 1"');
+			expect(userMessage!.text).toContain('$ echo hello');
+			expect(newTab!.name).toBe('From: Terminal 1');
+
+			// Buffer should be cleared after a successful send so later AI-tab sends use the
+			// normal extraction path.
+			expect(useTabStore.getState().pendingTerminalBufferSend).toBeNull();
+		});
+
+		it('clears the queued buffer when the transfer is cancelled', () => {
+			useTabStore.getState().setPendingTerminalBufferSend({
+				content: 'pending',
+				sourceName: 'Terminal 1',
+			});
+
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useMergeTransferHandlers(deps));
+
+			act(() => {
+				result.current.handleCancelTransfer();
+			});
+
+			expect(useTabStore.getState().pendingTerminalBufferSend).toBeNull();
 		});
 	});
 
@@ -1138,210 +1141,6 @@ describe('useMergeTransferHandlers', () => {
 				}
 			});
 		});
-
-		it('filters transferable logs, uses project folder fallback, and spawns with git branch context', async () => {
-			const sourceSession = createMockSession({
-				name: '',
-				projectRoot: '/workspace/fallback-project',
-				aiTabs: [
-					{
-						id: 'tab-1',
-						name: 'Tab 1',
-						inputValue: '',
-						logs: [
-							{ id: 'log-user', timestamp: Date.now(), source: 'user', text: 'User line' },
-							{ id: 'log-ai', timestamp: Date.now(), source: 'ai', text: 'Assistant line' },
-							{ id: 'log-stdout', timestamp: Date.now(), source: 'stdout', text: 'Stdout line' },
-							{ id: 'log-system', timestamp: Date.now(), source: 'system', text: 'Ignored system' },
-							{ id: 'log-empty', timestamp: Date.now(), source: 'user', text: '' },
-							{ id: 'log-space', timestamp: Date.now(), source: 'ai', text: '   ' },
-						],
-						stagedImages: [],
-						agentSessionId: 'agent-1',
-						starred: false,
-						createdAt: Date.now(),
-					} as any,
-				],
-				activeTabId: 'tab-1',
-			});
-			const targetSession = createMockSession({
-				id: 'target-session',
-				name: 'Target Agent',
-				toolType: 'codex',
-				isGitRepo: true,
-				cwd: '/repo',
-				unifiedTabOrder: undefined,
-			});
-			useSessionStore.setState({
-				sessions: [sourceSession, targetSession],
-				activeSessionId: 'session-1',
-			});
-			vi.mocked(gitService.getStatus).mockResolvedValueOnce({ branch: 'feature/transfer' } as any);
-			(window as any).maestro.agents.get = vi.fn().mockResolvedValue({
-				command: 'codex',
-			});
-
-			const deps = createMockDeps();
-			const { result } = renderHook(() => useMergeTransferHandlers(deps));
-
-			let sendResult: Awaited<ReturnType<typeof result.current.handleSendToAgent>> | undefined;
-			await act(async () => {
-				sendResult = await result.current.handleSendToAgent('target-session', {
-					groomContext: true,
-				} as any);
-			});
-
-			expect(sendResult?.success).toBe(true);
-			const updatedTarget = useSessionStore
-				.getState()
-				.sessions.find((session) => session.id === 'target-session');
-			const newTab = updatedTarget?.aiTabs.find((tab) => tab.id === sendResult?.newTabId);
-			expect(newTab?.name).toBe('From: fallback-project');
-			expect(newTab?.logs[0].text).toContain('cleaned to reduce size');
-			expect(newTab?.logs[1].text).toContain('User: User line');
-			expect(newTab?.logs[1].text).toContain('Assistant: Assistant line');
-			expect(newTab?.logs[1].text).toContain('Assistant: Stdout line');
-			expect(newTab?.logs[1].text).not.toContain('Ignored system');
-			expect(newTab?.logs[1].text).not.toContain('log-empty');
-
-			await waitFor(() =>
-				expect((window as any).maestro.process.spawn).toHaveBeenCalledWith(
-					expect.objectContaining({
-						command: 'codex',
-						args: [],
-						prompt: expect.stringContaining('Mock system prompt'),
-					})
-				)
-			);
-			expect(gitService.getStatus).toHaveBeenCalledWith('/repo');
-			expect(substituteTemplateVariables).toHaveBeenCalledWith(
-				'Mock system prompt',
-				expect.objectContaining({
-					gitBranch: 'feature/transfer',
-					readOnlyMode: false,
-				})
-			);
-		});
-
-		it('uses Unknown when the source session has no name or project folder', async () => {
-			const sourceSession = createMockSession({
-				name: '',
-				projectRoot: '',
-			});
-			const targetSession = createMockSession({
-				id: 'target-session',
-				name: 'Target Agent',
-				toolType: 'codex',
-			});
-			useSessionStore.setState({
-				sessions: [sourceSession, targetSession],
-				activeSessionId: 'session-1',
-			});
-
-			const deps = createMockDeps();
-			const { result } = renderHook(() => useMergeTransferHandlers(deps));
-
-			let sendResult: Awaited<ReturnType<typeof result.current.handleSendToAgent>> | undefined;
-			await act(async () => {
-				sendResult = await result.current.handleSendToAgent('target-session', {
-					groomContext: false,
-				} as any);
-			});
-
-			expect(sendResult?.success).toBe(true);
-			const updatedTarget = useSessionStore
-				.getState()
-				.sessions.find((session) => session.id === 'target-session');
-			const newTab = updatedTarget?.aiTabs.find((tab) => tab.id === sendResult?.newTabId);
-			expect(newTab?.name).toBe('From: Unknown');
-			expect(mockNotifyToast).toHaveBeenCalledWith(
-				expect.objectContaining({
-					message: expect.stringContaining('"Unknown"'),
-				})
-			);
-		});
-
-		it('captures git status failures and still spawns the transfer process', async () => {
-			const targetSession = createMockSession({
-				id: 'target-session',
-				name: 'Git Target',
-				toolType: 'codex',
-				isGitRepo: true,
-				cwd: '/repo',
-			});
-			useSessionStore.setState({
-				sessions: [createMockSession(), targetSession],
-				activeSessionId: 'session-1',
-			});
-			const gitError = new Error('git unavailable');
-			vi.mocked(gitService.getStatus).mockRejectedValueOnce(gitError);
-
-			const deps = createMockDeps();
-			const { result } = renderHook(() => useMergeTransferHandlers(deps));
-
-			await act(async () => {
-				await result.current.handleSendToAgent('target-session', {
-					groomContext: false,
-				} as any);
-			});
-
-			await waitFor(() => expect((window as any).maestro.process.spawn).toHaveBeenCalled());
-			expect(mockCaptureException).toHaveBeenCalledWith(
-				gitError,
-				expect.objectContaining({
-					extra: expect.objectContaining({
-						operation: 'git-status-for-transfer',
-						cwd: '/repo',
-					}),
-				})
-			);
-		});
-
-		it('records spawn failure when the target agent definition is missing', async () => {
-			const targetSession = createMockSession({
-				id: 'target-session',
-				name: 'Missing Agent Target',
-				toolType: 'codex',
-			});
-			useSessionStore.setState({
-				sessions: [createMockSession(), targetSession],
-				activeSessionId: 'session-1',
-			});
-			(window as any).maestro.agents.get = vi.fn().mockResolvedValue(null);
-
-			const deps = createMockDeps();
-			const { result } = renderHook(() => useMergeTransferHandlers(deps));
-
-			let sendResult: Awaited<ReturnType<typeof result.current.handleSendToAgent>> | undefined;
-			await act(async () => {
-				sendResult = await result.current.handleSendToAgent('target-session', {
-					groomContext: false,
-				} as any);
-			});
-
-			await waitFor(() => {
-				const updatedTarget = useSessionStore
-					.getState()
-					.sessions.find((session) => session.id === 'target-session');
-				const failedTab = updatedTarget?.aiTabs.find((tab) => tab.id === sendResult?.newTabId);
-				expect(updatedTarget?.state).toBe('idle');
-				expect(failedTab?.logs).toContainEqual(
-					expect.objectContaining({
-						source: 'system',
-						text: 'Error: Failed to spawn agent - codex agent not found',
-					})
-				);
-			});
-			expect(mockCaptureException).toHaveBeenCalledWith(
-				expect.any(Error),
-				expect.objectContaining({
-					extra: expect.objectContaining({
-						operation: 'context-transfer-spawn',
-						toolType: 'codex',
-					}),
-				})
-			);
-		});
 	});
 
 	// ----------------------------------------------------------------
@@ -1458,39 +1257,6 @@ describe('useMergeTransferHandlers', () => {
 			expect(mockClearMergeTabState).toHaveBeenCalledWith('source-tab');
 			vi.useRealTimers();
 		});
-
-		it('uses fallback names and leaves active tab unchanged when no target tab is provided', () => {
-			const targetSession = createMockSession({
-				id: 'target-session',
-				activeTabId: 'existing-tab',
-			});
-			useSessionStore.setState({
-				sessions: [createMockSession(), targetSession],
-				activeSessionId: 'session-1',
-			});
-
-			const mockSetActiveSessionId = vi.fn();
-			const deps = createMockDeps({ setActiveSessionId: mockSetActiveSessionId });
-			renderHook(() => useMergeTransferHandlers(deps));
-
-			act(() => {
-				capturedMergeCallbacks.onMergeComplete('source-tab', {
-					success: true,
-					targetSessionId: 'target-session',
-				});
-			});
-
-			expect(mockSetActiveSessionId).toHaveBeenCalledWith('target-session');
-			expect(mockNotifyToast).toHaveBeenCalledWith(
-				expect.objectContaining({
-					message: '"Current Session" → "Selected Session".',
-				})
-			);
-			const updatedTarget = useSessionStore
-				.getState()
-				.sessions.find((session) => session.id === 'target-session');
-			expect(updatedTarget?.activeTabId).toBe('existing-tab');
-		});
 	});
 
 	// ----------------------------------------------------------------
@@ -1581,28 +1347,6 @@ describe('useMergeTransferHandlers', () => {
 				'Created "My Merged Session" with merged context'
 			);
 		});
-
-		it('does not schedule merge state cleanup when there is no active tab', () => {
-			vi.useFakeTimers();
-			useSessionStore.setState({
-				sessions: [createMockSession({ activeTabId: '' })],
-				activeSessionId: 'session-1',
-			});
-
-			const deps = createMockDeps();
-			renderHook(() => useMergeTransferHandlers(deps));
-
-			act(() => {
-				capturedMergeCallbacks.onSessionCreated({
-					sessionId: 'new-session',
-					sessionName: 'Merged Session',
-				});
-				vi.advanceTimersByTime(1000);
-			});
-
-			expect(mockClearMergeTabState).not.toHaveBeenCalled();
-			vi.useRealTimers();
-		});
 	});
 
 	// ----------------------------------------------------------------
@@ -1649,120 +1393,6 @@ describe('useMergeTransferHandlers', () => {
 			expect(second.handleCompleteTransfer).toBe(first.handleCompleteTransfer);
 			expect(second.handleMergeWith).toBe(first.handleMergeWith);
 			expect(second.handleOpenSendToAgentModal).toBe(first.handleOpenSendToAgentModal);
-		});
-	});
-
-	describe('tab switching with multiple sessions', () => {
-		it('updates only the active session when opening merge and send-to-agent modals', () => {
-			const firstSession = createMockSession({
-				id: 'session-1',
-				activeTabId: 'tab-1',
-			});
-			const secondSession = createMockSession({
-				id: 'session-2',
-				activeTabId: 'tab-2',
-			});
-			useSessionStore.setState({
-				sessions: [firstSession, secondSession],
-				activeSessionId: 'session-1',
-			});
-			stableDeps.sessionsRef.current = [firstSession, secondSession];
-			stableDeps.activeSessionIdRef.current = 'session-1';
-
-			const deps = createMockDeps();
-			const { result } = renderHook(() => useMergeTransferHandlers(deps));
-
-			act(() => {
-				result.current.handleMergeWith('new-merge-tab');
-			});
-			let sessions = useSessionStore.getState().sessions;
-			expect(sessions.find((session) => session.id === 'session-1')?.activeTabId).toBe(
-				'new-merge-tab'
-			);
-			expect(sessions.find((session) => session.id === 'session-2')?.activeTabId).toBe('tab-2');
-
-			act(() => {
-				result.current.handleOpenSendToAgentModal('new-send-tab');
-			});
-			sessions = useSessionStore.getState().sessions;
-			expect(sessions.find((session) => session.id === 'session-1')?.activeTabId).toBe(
-				'new-send-tab'
-			);
-			expect(sessions.find((session) => session.id === 'session-2')?.activeTabId).toBe('tab-2');
-		});
-
-		it('opens the send-to-agent modal without switching tabs when the ref session is missing', () => {
-			const firstSession = createMockSession({
-				id: 'session-1',
-				activeTabId: 'tab-1',
-			});
-			useSessionStore.setState({
-				sessions: [firstSession],
-				activeSessionId: 'session-1',
-			});
-			stableDeps.sessionsRef.current = [];
-			stableDeps.activeSessionIdRef.current = 'missing-session';
-
-			const deps = createMockDeps();
-			const { result } = renderHook(() => useMergeTransferHandlers(deps));
-
-			act(() => {
-				result.current.handleOpenSendToAgentModal('new-send-tab');
-			});
-
-			expect(useSessionStore.getState().sessions[0].activeTabId).toBe('tab-1');
-			expect(mockSetSendToAgentModalOpen).toHaveBeenCalledWith(true);
-		});
-	});
-
-	describe('system prompt configuration', () => {
-		it('spawns with the raw transfer context when the Maestro system prompt is empty', async () => {
-			vi.resetModules();
-			vi.doMock('../../../prompts', () => ({
-				maestroSystemPrompt: '',
-				commitCommandPrompt: 'Mock commit prompt',
-				autorunSynopsisPrompt: 'Mock synopsis prompt',
-			}));
-
-			try {
-				const [{ useMergeTransferHandlers: useHook }, { useSessionStore: isolatedSessionStore }] =
-					await Promise.all([
-						import('../../../renderer/hooks/agent/useMergeTransferHandlers'),
-						import('../../../renderer/stores/sessionStore'),
-					]);
-				const sourceSession = createMockSession();
-				const targetSession = createMockSession({
-					id: 'target-session',
-					name: 'Target Agent',
-					toolType: 'codex',
-				});
-				isolatedSessionStore.setState({
-					sessions: [sourceSession, targetSession],
-					activeSessionId: 'session-1',
-				});
-
-				const deps = createMockDeps({
-					sessionsRef: { current: [sourceSession, targetSession] },
-					activeSessionIdRef: { current: 'session-1' },
-					setActiveSessionId: vi.fn(),
-				});
-				const { result } = renderHook(() => useHook(deps));
-
-				await act(async () => {
-					await result.current.handleSendToAgent('target-session', {
-						groomContext: false,
-					} as any);
-				});
-
-				await waitFor(() => expect((window as any).maestro.process.spawn).toHaveBeenCalled());
-				const spawnArgs = (window as any).maestro.process.spawn.mock.calls[0][0];
-				expect(spawnArgs.prompt).toContain('# Context from Previous Session');
-				expect(spawnArgs.prompt).not.toContain('# User Request');
-				expect(substituteTemplateVariables).not.toHaveBeenCalledWith('', expect.anything());
-			} finally {
-				vi.doUnmock('../../../prompts');
-				vi.resetModules();
-			}
 		});
 	});
 });

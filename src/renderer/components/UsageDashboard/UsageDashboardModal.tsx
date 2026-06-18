@@ -14,17 +14,25 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import type { StatsTimeRange, StatsAggregation } from '../../../shared/stats-types';
 import { X, BarChart3, Calendar, Download, Database } from 'lucide-react';
 import { SummaryCards } from './SummaryCards';
+import { AgentOverviewCards } from './AgentOverviewCards';
+import { AgentDetailModal } from './AgentDetailModal';
 import { ActivityHeatmap } from './ActivityHeatmap';
 import { AgentComparisonChart } from './AgentComparisonChart';
-import { SourceDistributionChart } from './SourceDistributionChart';
+import { ProviderTrendsChart } from './ProviderTrendsChart';
+import { SourceDistributionChart, type CueSourceTotals } from './SourceDistributionChart';
 import { LocationDistributionChart } from './LocationDistributionChart';
-import { PeakHoursChart } from './PeakHoursChart';
+import { RadialActivityChart } from './RadialActivityChart';
+import { YearInPixelsStrip } from './YearInPixelsStrip';
 import { DurationTrendsChart } from './DurationTrendsChart';
 import { AgentUsageChart } from './AgentUsageChart';
 import { AutoRunStats } from './AutoRunStats';
 import { SessionStats } from './SessionStats';
+import { ClaudePlanUsage } from './ClaudePlanUsage';
+import { CodexPlanUsage } from './CodexPlanUsage';
+import { WorktreeAnalytics } from './WorktreeAnalytics';
 import { AgentEfficiencyChart } from './AgentEfficiencyChart';
 import { WeekdayComparisonChart } from './WeekdayComparisonChart';
 import { TasksByHourChart } from './TasksByHourChart';
@@ -32,67 +40,70 @@ import { LongestAutoRunsTable } from './LongestAutoRunsTable';
 import { EmptyState } from './EmptyState';
 import { DashboardSkeleton } from './ChartSkeletons';
 import { ChartErrorBoundary } from './ChartErrorBoundary';
-import type { Theme, Session } from '../../types';
-import { useLayerStack } from '../../contexts/LayerStackContext';
+import { CueStats } from './CueStats';
+import { KeyboardStats } from './KeyboardStats';
+import { PercentilesCard } from './PercentilesCard';
+import { getAgentDisplayName } from '../../../shared/agentMetadata';
+import type {
+	Theme,
+	Session,
+	AutoRunStats as AutoRunStatsType,
+	MaestroUsageStats,
+	LeaderboardRegistration,
+	UsageDashboardViewMode as ViewMode,
+} from '../../types';
+import {
+	AchievementShareButton,
+	type AchievementShareGlobalStats,
+} from '../AchievementShareButton';
+import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
-import { getRendererPerfMetrics } from '../../utils/logger';
+import { useSettingsStore } from '../../stores/settingsStore';
+import { useUIStore } from '../../stores/uiStore';
+import { useClaudeUsageStore, type ClaudeUsageSnapshot } from '../../stores/claudeUsageStore';
+import { useCodexUsageStore, type CodexUsageSnapshot } from '../../stores/codexUsageStore';
+import { useGlobalAgentStats } from '../../hooks/stats/useGlobalAgentStats';
+import { getRendererPerfMetrics, logger } from '../../utils/logger';
 import { PERFORMANCE_THRESHOLDS } from '../../../shared/performance-metrics';
 
 // Section IDs for keyboard navigation
 const OVERVIEW_SECTIONS = [
+	'year-in-pixels',
 	'summary-cards',
+	'query-percentiles',
 	'agent-comparison',
+	'provider-trends',
 	'source-distribution',
 	'location-distribution',
-	'peak-hours',
-	'activity-heatmap',
-	'duration-trends',
+	'radial-activity',
 ] as const;
-const AGENTS_SECTIONS = [
-	'session-stats',
-	'agent-efficiency',
-	'agent-comparison',
-	'agent-usage',
-] as const;
+const AGENTS_SECTIONS = ['agent-overview-cards'] as const;
+const AGENT_OVERVIEW_SECTIONS = ['session-stats', 'agent-efficiency', 'agent-usage'] as const;
 const ACTIVITY_SECTIONS = ['activity-heatmap', 'weekday-comparison', 'duration-trends'] as const;
-const AUTORUN_SECTIONS = ['autorun-stats', 'tasks-by-hour', 'longest-autoruns'] as const;
+const AUTORUN_SECTIONS = [
+	'autorun-stats',
+	'autorun-task-percentiles',
+	'tasks-by-hour',
+	'longest-autoruns',
+] as const;
+const ANTHROPIC_USAGE_SECTIONS = ['anthropic-usage'] as const;
+const CODEX_USAGE_SECTIONS = ['codex-usage'] as const;
 
 type SectionId =
 	| (typeof OVERVIEW_SECTIONS)[number]
 	| (typeof AGENTS_SECTIONS)[number]
+	| (typeof AGENT_OVERVIEW_SECTIONS)[number]
 	| (typeof ACTIVITY_SECTIONS)[number]
-	| (typeof AUTORUN_SECTIONS)[number];
+	| (typeof AUTORUN_SECTIONS)[number]
+	| (typeof ANTHROPIC_USAGE_SECTIONS)[number]
+	| (typeof CODEX_USAGE_SECTIONS)[number];
 
 // Performance metrics instance for dashboard
 const perfMetrics = getRendererPerfMetrics('UsageDashboard');
 
-// Stats time range type matching the backend API
-type StatsTimeRange = 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all';
-
-// Aggregation data shape from the stats API
-interface StatsAggregation {
-	totalQueries: number;
-	totalDuration: number;
-	avgDuration: number;
-	byAgent: Record<string, { count: number; duration: number }>;
-	bySource: { user: number; auto: number };
-	byLocation: { local: number; remote: number };
-	byDay: Array<{ date: string; count: number; duration: number }>;
-	byHour: Array<{ hour: number; count: number; duration: number }>;
-	// Session lifecycle stats
-	totalSessions: number;
-	sessionsByAgent: Record<string, number>;
-	sessionsByDay: Array<{ date: string; count: number }>;
-	avgSessionDuration: number;
-	// Per-provider per-day breakdown for provider comparison
-	byAgentByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
-	// Per-session per-day breakdown for agent usage chart
-	bySessionByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
-}
+// StatsTimeRange and StatsAggregation imported from shared/stats-types above
 
 // View mode options for the dashboard
-type ViewMode = 'overview' | 'agents' | 'activity' | 'autorun';
-
 interface UsageDashboardModalProps {
 	isOpen: boolean;
 	onClose: () => void;
@@ -103,6 +114,16 @@ interface UsageDashboardModalProps {
 	defaultTimeRange?: StatsTimeRange;
 	/** Sessions for displaying session statistics in Agents tab */
 	sessions?: Session[];
+	/** Cumulative AutoRun stats — required for the achievement share button. */
+	autoRunStats?: AutoRunStatsType;
+	/** Optional global stats — drives the Sessions/Tokens row in the share image. */
+	globalStats?: AchievementShareGlobalStats | null;
+	/** Maestro peak-usage stats — drives the bottom row of the share image. */
+	usageStats?: MaestroUsageStats | null;
+	/** Global hands-on time, in ms, sourced from settings. */
+	handsOnTimeMs?: number;
+	/** Leaderboard registration (display name + social handles) for personalization. */
+	leaderboardRegistration?: LeaderboardRegistration | null;
 }
 
 /**
@@ -132,15 +153,42 @@ const TIME_RANGE_OPTIONS: { value: StatsTimeRange; label: string }[] = [
 	{ value: 'all', label: 'All Time' },
 ];
 
-// View mode tabs
-const VIEW_MODE_TABS: { value: ViewMode; label: string }[] = [
+// View mode tabs (base list — Cue is appended dynamically when the Encore flag is on)
+const BASE_VIEW_MODE_TABS: { value: ViewMode; label: string }[] = [
 	{ value: 'overview', label: 'Overview' },
+	{ value: 'agent-overview', label: 'Agent Overview' },
 	{ value: 'agents', label: 'Agents' },
 	{ value: 'activity', label: 'Activity' },
 	{ value: 'autorun', label: 'Auto Run' },
+	{ value: 'shortcuts', label: 'Shortcuts' },
 ];
 
 const EMPTY_SESSIONS: Session[] = [];
+
+function hasValidQuotaWindow(window: { percent: number; resetsAt?: string } | undefined): boolean {
+	if (!window) return false;
+	if (!Number.isFinite(window.percent)) return false;
+	if (window.percent < 0) return false;
+	return typeof window.resetsAt === 'string' && window.resetsAt.length > 0;
+}
+
+function hasUsefulAnthropicQuotaDetails(snapshot: ClaudeUsageSnapshot): boolean {
+	if (snapshot.authState === 'unauthenticated') return false;
+	return (
+		hasValidQuotaWindow(snapshot.session) ||
+		hasValidQuotaWindow(snapshot.weekAllModels) ||
+		hasValidQuotaWindow(snapshot.weekSonnetOnly)
+	);
+}
+
+function hasUsefulCodexQuotaDetails(snapshot: CodexUsageSnapshot): boolean {
+	if (snapshot.authState !== 'authenticated') return false;
+	return (
+		hasValidQuotaWindow(snapshot.session) ||
+		hasValidQuotaWindow(snapshot.weekly) ||
+		(snapshot.additionalLimits ?? []).some(hasValidQuotaWindow)
+	);
+}
 
 export function UsageDashboardModal({
 	isOpen,
@@ -149,10 +197,64 @@ export function UsageDashboardModal({
 	colorBlindMode = false,
 	defaultTimeRange = 'week',
 	sessions = EMPTY_SESSIONS,
+	autoRunStats,
+	globalStats: globalStatsProp,
+	usageStats,
+	handsOnTimeMs,
+	leaderboardRegistration,
 }: UsageDashboardModalProps) {
+	// The Achievement share image (in this modal's header) needs cross-provider
+	// session/token totals. About Modal fetches them on mount via the shared
+	// hook; mirror that here so callers don't have to thread the prop through.
+	// Only fetch while the modal is actually open — the lazy-loaded modal
+	// stays mounted across opens once the user opens it the first time.
+	const { globalStats: fetchedGlobalStats } = useGlobalAgentStats(isOpen && !globalStatsProp);
+	const globalStats = globalStatsProp ?? fetchedGlobalStats;
+	// Tab visibility must match the IPC handler's gating: both Encore flags
+	// have to be on, otherwise the renderer hits a generic error/retry state
+	// instead of the friendly disabled note.
+	const usageStatsTabEnabled = useSettingsStore((s) => s.encoreFeatures.usageStats);
+	const cueTabEnabled = useSettingsStore(
+		(s) => s.encoreFeatures.maestroCue && s.encoreFeatures.usageStats
+	);
+	const claudeUsageSnapshots = useClaudeUsageStore((s) => s.snapshots);
+	const codexUsageSnapshots = useCodexUsageStore((s) => s.snapshots);
+	const hasAnthropicUsageDetails =
+		usageStatsTabEnabled &&
+		Object.values(claudeUsageSnapshots).some(hasUsefulAnthropicQuotaDetails);
+	const hasCodexUsageDetails =
+		usageStatsTabEnabled && Object.values(codexUsageSnapshots).some(hasUsefulCodexQuotaDetails);
+	const VIEW_MODE_TABS = useMemo<{ value: ViewMode; label: string }[]>(() => {
+		const tabs: { value: ViewMode; label: string }[] = [];
+		for (const tab of BASE_VIEW_MODE_TABS) {
+			tabs.push(tab);
+			// Cue sits immediately after Auto Run, before Shortcuts.
+			if (tab.value === 'autorun' && cueTabEnabled) {
+				tabs.push({ value: 'cue', label: 'Cue' });
+			}
+		}
+		if (hasAnthropicUsageDetails) {
+			tabs.push({ value: 'anthropic-usage', label: 'Anthropic Usage' });
+		}
+		if (hasCodexUsageDetails) {
+			tabs.push({ value: 'codex-usage', label: 'OpenAI Usage' });
+		}
+		return tabs;
+	}, [cueTabEnabled, hasAnthropicUsageDetails, hasCodexUsageDetails]);
+
 	const [timeRange, setTimeRange] = useState<StatsTimeRange>(defaultTimeRange);
-	const [viewMode, setViewMode] = useState<ViewMode>('overview');
+	// Restore the tab the user last left off on. The store is in-memory, so this
+	// survives closing and reopening the dashboard but resets to 'overview' on
+	// app restart. Persist every switch back to the store via setUsageDashboardViewMode.
+	const setUsageDashboardViewMode = useUIStore((s) => s.setUsageDashboardViewMode);
+	const [viewMode, setViewMode] = useState<ViewMode>(
+		() => useUIStore.getState().usageDashboardViewMode
+	);
 	const [data, setData] = useState<StatsAggregation | null>(null);
+	// Cue run totals for the Overview "Activity Source" donut. Lives in a
+	// separate stats system from query_events, so it's fetched alongside the
+	// main aggregation only when the Cue tab is enabled. null = no Cue slice.
+	const [cueSourceTotals, setCueSourceTotals] = useState<CueSourceTotals | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 	const [isExporting, setIsExporting] = useState(false);
@@ -160,12 +262,12 @@ export function UsageDashboardModal({
 	const [showNewDataIndicator, setShowNewDataIndicator] = useState(false);
 	const [databaseSize, setDatabaseSize] = useState<number | null>(null);
 	const [focusedSection, setFocusedSection] = useState<SectionId | null>(null);
+	const [detailSession, setDetailSession] = useState<Session | null>(null);
 
 	const containerRef = useRef<HTMLDivElement>(null);
 	const contentRef = useRef<HTMLDivElement>(null);
 	const tabsRef = useRef<HTMLDivElement>(null);
 	const sectionRefs = useRef<Map<SectionId, HTMLDivElement>>(new Map());
-	const { registerLayer, unregisterLayer } = useLayerStack();
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
 	const viewModeRef = useRef(viewMode);
@@ -178,20 +280,18 @@ export function UsageDashboardModal({
 		}
 	}, [isOpen, defaultTimeRange]);
 
-	// Register with layer stack for proper Escape handling
-	useEffect(() => {
-		if (isOpen) {
-			const id = registerLayer({
-				type: 'modal',
-				priority: MODAL_PRIORITIES.USAGE_DASHBOARD,
-				blocksLowerLayers: true,
-				capturesFocus: true,
-				focusTrap: 'lenient',
-				onEscape: () => onCloseRef.current(),
-			});
-			return () => unregisterLayer(id);
+	// Register with layer stack for proper Escape handling.
+	useModalLayer(
+		MODAL_PRIORITIES.USAGE_DASHBOARD,
+		undefined,
+		() => {
+			onCloseRef.current();
+		},
+		{
+			focusTrap: 'lenient',
+			enabled: isOpen,
 		}
-	}, [isOpen, registerLayer, unregisterLayer]);
+	);
 
 	// Fetch stats data when range changes
 	const fetchStats = useCallback(
@@ -204,13 +304,30 @@ export function UsageDashboardModal({
 			setError(null);
 
 			try {
-				// Fetch stats and database size in parallel
-				const [stats, dbSize] = await Promise.all([
+				// Fetch stats and database size in parallel. Cue totals come from a
+				// separate stats system and only when the Cue tab is enabled; a
+				// failure there must not break the rest of the dashboard, so it
+				// resolves to null rather than rejecting the Promise.all.
+				const [stats, dbSize, cueAgg] = await Promise.all([
 					window.maestro.stats.getAggregation(timeRange),
 					window.maestro.stats.getDatabaseSize(),
+					cueTabEnabled
+						? window.maestro.cueStats.getAggregation(timeRange).catch((err) => {
+								logger.warn('Failed to fetch Cue totals for source chart:', undefined, err);
+								return null;
+							})
+						: Promise.resolve(null),
 				]);
 				setData(stats);
 				setDatabaseSize(dbSize);
+				setCueSourceTotals(
+					cueAgg
+						? {
+								occurrences: cueAgg.totals.occurrences,
+								totalDurationMs: cueAgg.totals.totalDurationMs,
+							}
+						: null
+				);
 
 				// Log fetch performance
 				const fetchDuration = perfMetrics.end(fetchStart, 'fetchStats', {
@@ -221,8 +338,9 @@ export function UsageDashboardModal({
 
 				// Warn if fetch is slow
 				if (fetchDuration > PERFORMANCE_THRESHOLDS.DASHBOARD_LOAD) {
-					console.warn(
+					logger.warn(
 						`[UsageDashboard] fetchStats took ${fetchDuration.toFixed(0)}ms (threshold: ${PERFORMANCE_THRESHOLDS.DASHBOARD_LOAD}ms)`,
+						undefined,
 						{ timeRange, totalQueries: stats?.totalQueries }
 					);
 				}
@@ -233,15 +351,73 @@ export function UsageDashboardModal({
 					setTimeout(() => setShowNewDataIndicator(false), 3000);
 				}
 			} catch (err) {
-				console.error('Failed to fetch usage stats:', err);
+				logger.error('Failed to fetch usage stats:', undefined, err);
 				setError(err instanceof Error ? err.message : 'Failed to load stats');
 				perfMetrics.end(fetchStart, 'fetchStats:error', { timeRange, error: String(err) });
 			} finally {
 				setLoading(false);
 			}
 		},
-		[timeRange]
+		[timeRange, cueTabEnabled]
 	);
+
+	// Populate the quota provider tabs when the dashboard opens. We always
+	// mirror cached main-process state first (cheap), then - only for a provider
+	// that still has no useful cached snapshot - trigger one sampling pass so the
+	// tab can appear at all. Without this, the tabs are a closed loop: the tab
+	// only renders once a snapshot exists, but the sampler that would create the
+	// first snapshot never runs (boot sampling uses a strict recent-session
+	// filter and the panels mount with autoRefresh={false}). Sampling is gated
+	// to once per open and skipped entirely when data is already present, so the
+	// expensive paths (Claude's maestro-p spawn, Codex's quota HTTP request) only
+	// fire when there is genuinely nothing to show.
+	const quotaSampledForOpenRef = useRef(false);
+	useEffect(() => {
+		if (!isOpen) {
+			quotaSampledForOpenRef.current = false;
+			return;
+		}
+		if (!usageStatsTabEnabled) return;
+		if (quotaSampledForOpenRef.current) return;
+		quotaSampledForOpenRef.current = true;
+
+		void (async () => {
+			// Mirror first so we don't re-sample a provider that already has data.
+			await Promise.all([
+				useClaudeUsageStore.getState().refresh(),
+				useCodexUsageStore.getState().refresh(),
+			]);
+
+			const claudeHasData = Object.values(useClaudeUsageStore.getState().snapshots).some(
+				hasUsefulAnthropicQuotaDetails
+			);
+			const codexHasData = Object.values(useCodexUsageStore.getState().snapshots).some(
+				hasUsefulCodexQuotaDetails
+			);
+
+			const jobs: Promise<unknown>[] = [];
+			if (!claudeHasData) {
+				jobs.push(
+					window.maestro.agents
+						.refreshClaudeUsageSnapshots()
+						.then(() => useClaudeUsageStore.getState().refresh())
+						.catch(() => {
+							// Sampler failures surface in main logs; the tab simply
+							// stays hidden rather than blocking the dashboard.
+						})
+				);
+			}
+			if (!codexHasData) {
+				jobs.push(
+					window.maestro.agents
+						.refreshCodexUsageSnapshots()
+						.then(() => useCodexUsageStore.getState().refresh())
+						.catch(() => {})
+				);
+			}
+			await Promise.all(jobs);
+		})();
+	}, [isOpen, usageStatsTabEnabled]);
 
 	// Initial fetch and real-time updates subscription
 	useEffect(() => {
@@ -271,10 +447,21 @@ export function UsageDashboardModal({
 		}
 	}, [isOpen]);
 
-	const switchViewMode = useCallback((mode: ViewMode) => {
-		setViewMode(mode);
-		setFocusedSection(null);
-	}, []);
+	const switchViewMode = useCallback(
+		(mode: ViewMode) => {
+			setViewMode(mode);
+			// Remember the selection so reopening the dashboard returns here.
+			setUsageDashboardViewMode(mode);
+			setFocusedSection(null);
+			// Anchor the newly selected tab to the top. The scroll container
+			// (contentRef) persists across tab switches, so without this the new
+			// tab would inherit the previous tab's scroll position.
+			if (contentRef.current) {
+				contentRef.current.scrollTop = 0;
+			}
+		},
+		[setUsageDashboardViewMode]
+	);
 
 	// Handle Cmd+Shift+[ and Cmd+Shift+] for tab navigation
 	useEffect(() => {
@@ -302,7 +489,7 @@ export function UsageDashboardModal({
 
 		window.addEventListener('keydown', handleKeyDown, true);
 		return () => window.removeEventListener('keydown', handleKeyDown, true);
-	}, [isOpen, switchViewMode]);
+	}, [isOpen, switchViewMode, VIEW_MODE_TABS]);
 
 	// Track container width for responsive layout
 	useEffect(() => {
@@ -344,31 +531,57 @@ export function UsageDashboardModal({
 		};
 	}, [containerWidth]);
 
-	// Get sections for current view mode
+	// Get sections for current view mode.
 	const currentSections = useMemo((): readonly SectionId[] => {
 		switch (viewMode) {
 			case 'overview':
 				return OVERVIEW_SECTIONS;
 			case 'agents':
 				return AGENTS_SECTIONS;
+			case 'agent-overview':
+				return AGENT_OVERVIEW_SECTIONS;
 			case 'activity':
 				return ACTIVITY_SECTIONS;
 			case 'autorun':
 				return AUTORUN_SECTIONS;
+			case 'anthropic-usage':
+				return ANTHROPIC_USAGE_SECTIONS;
+			case 'codex-usage':
+				return CODEX_USAGE_SECTIONS;
+			case 'cue':
+				return [];
+			case 'shortcuts':
+				return [];
+			default:
+				return OVERVIEW_SECTIONS;
 		}
 	}, [viewMode]);
+
+	// Fall back to 'overview' if a dynamic provider/Cue tab disappears.
+	useEffect(() => {
+		if (!VIEW_MODE_TABS.some((tab) => tab.value === viewMode)) {
+			switchViewMode('overview');
+		}
+	}, [VIEW_MODE_TABS, viewMode, switchViewMode]);
 
 	// Get section label for accessibility
 	const getSectionLabel = useCallback((sectionId: SectionId): string => {
 		const labels: Record<SectionId, string> = {
+			'year-in-pixels': 'Past Year Activity Strip',
 			'summary-cards': 'Summary Cards',
+			'query-percentiles': 'Query Duration Percentiles',
+			'autorun-task-percentiles': 'Auto Run Task Duration Percentiles',
+			'agent-overview-cards': 'Active Agents Overview',
 			'session-stats': 'Agent Statistics',
+			'anthropic-usage': 'Anthropic Usage',
+			'codex-usage': 'OpenAI Usage',
 			'agent-efficiency': 'Agent Efficiency Chart',
 			'agent-comparison': 'Provider Comparison Chart',
+			'provider-trends': 'Provider Trends Over Time',
 			'agent-usage': 'Agent Usage Chart',
 			'source-distribution': 'Session Type Chart',
 			'location-distribution': 'Location Distribution Chart',
-			'peak-hours': 'Peak Hours Chart',
+			'radial-activity': 'Activity by Hour and Day of Week',
 			'activity-heatmap': 'Activity Heatmap',
 			'weekday-comparison': 'Weekday vs Weekend Chart',
 			'duration-trends': 'Duration Trends Chart',
@@ -376,15 +589,17 @@ export function UsageDashboardModal({
 			'tasks-by-hour': 'Tasks by Time of Day Chart',
 			'longest-autoruns': 'Top 25 Longest Auto Runs',
 		};
-		return labels[sectionId];
+		return labels[sectionId] || sectionId;
 	}, []);
 
 	// Navigate to a section
 	const navigateToSection = useCallback((sectionId: SectionId) => {
 		setFocusedSection(sectionId);
-		const sectionEl = sectionRefs.current.get(sectionId)!;
-		sectionEl.focus();
-		sectionEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+		const sectionEl = sectionRefs.current.get(sectionId);
+		if (sectionEl) {
+			sectionEl.focus();
+			sectionEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+		}
 	}, []);
 
 	// Handle keyboard navigation for view mode tabs
@@ -408,7 +623,7 @@ export function UsageDashboardModal({
 				}
 			}
 		},
-		[viewMode, switchViewMode, currentSections, data, navigateToSection]
+		[viewMode, switchViewMode, currentSections, data, navigateToSection, VIEW_MODE_TABS]
 	);
 
 	// Handle keyboard navigation for chart sections
@@ -479,7 +694,7 @@ export function UsageDashboardModal({
 			const csv = await window.maestro.stats.exportCsv(timeRange);
 			await window.maestro.fs.writeFile(filePath, csv);
 		} catch (err) {
-			console.error('Failed to export CSV:', err);
+			logger.error('Failed to export CSV:', undefined, err);
 		} finally {
 			setIsExporting(false);
 		}
@@ -508,15 +723,15 @@ export function UsageDashboardModal({
 				role="dialog"
 				aria-modal="true"
 				aria-label="Usage Dashboard"
-				className="relative z-10 rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none"
+				className="relative z-10 rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none select-none"
 				onClick={(e) => e.stopPropagation()}
 				style={{
 					backgroundColor: theme.colors.bgActivity,
 					borderColor: theme.colors.border,
 					width: '80vw',
-					maxWidth: '1400px',
+					maxWidth: '2200px',
 					height: '85vh',
-					maxHeight: '900px',
+					maxHeight: '1400px',
 				}}
 			>
 				{/* Header */}
@@ -529,12 +744,6 @@ export function UsageDashboardModal({
 						<h2 className="text-lg font-semibold" style={{ color: theme.colors.textMain }}>
 							Usage Dashboard
 						</h2>
-						<span
-							className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
-							style={{ backgroundColor: theme.colors.warning + '30', color: theme.colors.warning }}
-						>
-							Beta
-						</span>
 						{/* New Data Indicator - appears briefly when real-time data arrives */}
 						{showNewDataIndicator && (
 							<div
@@ -619,6 +828,23 @@ export function UsageDashboardModal({
 							Export CSV
 						</button>
 
+						{/* Share Achievements — sits next to Export CSV. Only renders when
+						    we have AutoRun stats (the achievement system requires them);
+						    if the parent didn't thread them in, the button is hidden so
+						    we don't ship a visibly-broken affordance. */}
+						{autoRunStats && (
+							<AchievementShareButton
+								theme={theme}
+								autoRunStats={autoRunStats}
+								globalStats={globalStats}
+								usageStats={usageStats}
+								handsOnTimeMs={handsOnTimeMs}
+								leaderboardRegistration={leaderboardRegistration}
+								variant="header"
+								title="Share achievements"
+							/>
+						)}
+
 						{/* Close Button */}
 						<button
 							onClick={onClose}
@@ -686,7 +912,15 @@ export function UsageDashboardModal({
 					{loading && !data ? (
 						<DashboardSkeleton
 							theme={theme}
-							viewMode={viewMode}
+							viewMode={
+								viewMode === 'cue' ||
+								viewMode === 'agent-overview' ||
+								viewMode === 'shortcuts' ||
+								viewMode === 'anthropic-usage' ||
+								viewMode === 'codex-usage'
+									? 'overview'
+									: viewMode
+							}
 							chartGridCols={layout.chartGridCols}
 							summaryCardsCols={layout.summaryCardsCols}
 							autoRunStatsCols={layout.autoRunStatsCols}
@@ -708,6 +942,80 @@ export function UsageDashboardModal({
 								Retry
 							</button>
 						</div>
+					) : viewMode === 'shortcuts' ? (
+						// The Shortcuts tab depends on its own data sources (settings store
+						// + shortcut_usage_daily) and renders fine without any AI queries,
+						// so it bypasses the AI-query empty-state gate.
+						<div
+							key={viewMode}
+							className="space-y-6 dashboard-content-enter"
+							data-testid="usage-dashboard-content"
+							role="tabpanel"
+							id={`tabpanel-${viewMode}`}
+							aria-labelledby={`tab-${viewMode}`}
+						>
+							<KeyboardStats timeRange={timeRange} theme={theme} />
+						</div>
+					) : viewMode === 'anthropic-usage' ? (
+						// Quota snapshots come from provider-specific samplers, not stats.db.
+						// Keep this tab visible even when the analytics database has no AI-query rows.
+						<div
+							key={viewMode}
+							className="space-y-6 dashboard-content-enter"
+							data-testid="usage-dashboard-content"
+							role="tabpanel"
+							id={`tabpanel-${viewMode}`}
+							aria-labelledby={`tab-${viewMode}`}
+						>
+							<div
+								ref={setSectionRef('anthropic-usage')}
+								tabIndex={0}
+								role="region"
+								aria-label={getSectionLabel('anthropic-usage')}
+								onKeyDown={(e) => handleSectionKeyDown(e, 'anthropic-usage')}
+								className="outline-none rounded-lg transition-shadow dashboard-section-enter"
+								style={{
+									boxShadow:
+										focusedSection === 'anthropic-usage'
+											? `0 0 0 2px ${theme.colors.accent}`
+											: 'none',
+								}}
+								data-testid="section-anthropic-usage"
+							>
+								<ChartErrorBoundary theme={theme} chartName="Anthropic Usage">
+									<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />
+								</ChartErrorBoundary>
+							</div>
+						</div>
+					) : viewMode === 'codex-usage' ? (
+						// Quota snapshots come from provider-specific samplers, not stats.db.
+						// Keep this tab visible even when the analytics database has no AI-query rows.
+						<div
+							key={viewMode}
+							className="space-y-6 dashboard-content-enter"
+							data-testid="usage-dashboard-content"
+							role="tabpanel"
+							id={`tabpanel-${viewMode}`}
+							aria-labelledby={`tab-${viewMode}`}
+						>
+							<div
+								ref={setSectionRef('codex-usage')}
+								tabIndex={0}
+								role="region"
+								aria-label={getSectionLabel('codex-usage')}
+								onKeyDown={(e) => handleSectionKeyDown(e, 'codex-usage')}
+								className="outline-none rounded-lg transition-shadow dashboard-section-enter"
+								style={{
+									boxShadow:
+										focusedSection === 'codex-usage' ? `0 0 0 2px ${theme.colors.accent}` : 'none',
+								}}
+								data-testid="section-codex-usage"
+							>
+								<ChartErrorBoundary theme={theme} chartName="OpenAI Usage">
+									<CodexPlanUsage theme={theme} showAllAccounts autoRefresh={false} />
+								</ChartErrorBoundary>
+							</div>
+						</div>
 					) : !data ||
 					  (data.totalQueries === 0 && data.bySource.user === 0 && data.bySource.auto === 0) ? (
 						/* Empty State Component */
@@ -724,6 +1032,35 @@ export function UsageDashboardModal({
 							{/* View-specific content based on viewMode */}
 							{viewMode === 'overview' && (
 								<>
+									{/* Year-in-pixels hero strip — single-row signature graphic
+									    showing the past 365 days at a glance. Self-hides when the
+									    user has no activity in the lookback window. */}
+									<div
+										ref={setSectionRef('year-in-pixels')}
+										tabIndex={0}
+										role="region"
+										aria-label={getSectionLabel('year-in-pixels')}
+										onKeyDown={(e) => handleSectionKeyDown(e, 'year-in-pixels')}
+										className="outline-none rounded-lg transition-shadow dashboard-section-enter"
+										style={{
+											boxShadow:
+												focusedSection === 'year-in-pixels'
+													? `0 0 0 2px ${theme.colors.accent}`
+													: 'none',
+											animationDelay: '0ms',
+										}}
+										data-testid="section-year-in-pixels"
+									>
+										<ChartErrorBoundary theme={theme} chartName="Year In Pixels">
+											<YearInPixelsStrip
+												data={data}
+												theme={theme}
+												colorBlindMode={colorBlindMode}
+												timeRange={timeRange}
+											/>
+										</ChartErrorBoundary>
+									</div>
+
 									{/* Summary Stats Cards - Horizontal row at top, responsive */}
 									<div
 										ref={setSectionRef('summary-cards')}
@@ -751,7 +1088,40 @@ export function UsageDashboardModal({
 										</ChartErrorBoundary>
 									</div>
 
-									{/* Agent Comparison Chart - Full width bar chart */}
+									{/* Query Duration Percentiles - long-tail view an average hides */}
+									<div
+										ref={setSectionRef('query-percentiles')}
+										tabIndex={0}
+										role="region"
+										aria-label={getSectionLabel('query-percentiles')}
+										onKeyDown={(e) => handleSectionKeyDown(e, 'query-percentiles')}
+										className="outline-none rounded-lg transition-shadow dashboard-section-enter"
+										style={{
+											boxShadow:
+												focusedSection === 'query-percentiles'
+													? `0 0 0 2px ${theme.colors.accent}`
+													: 'none',
+											animationDelay: '50ms',
+										}}
+										data-testid="section-query-percentiles"
+									>
+										<ChartErrorBoundary theme={theme} chartName="Query Duration Percentiles">
+											<PercentilesCard
+												theme={theme}
+												title="Query Duration Percentiles"
+												unitLabel="queries"
+												distribution={data.queryDurationPercentiles}
+												breakdown={Object.entries(data.queryDurationPercentilesByAgent).map(
+													([agentType, distribution]) => ({
+														label: getAgentDisplayName(agentType),
+														distribution,
+													})
+												)}
+											/>
+										</ChartErrorBoundary>
+									</div>
+
+									{/* Provider Comparison Chart - Full width bar chart */}
 									<div
 										ref={setSectionRef('agent-comparison')}
 										tabIndex={0}
@@ -769,11 +1139,42 @@ export function UsageDashboardModal({
 										}}
 										data-testid="section-agent-comparison"
 									>
-										<ChartErrorBoundary theme={theme} chartName="Agent Comparison">
+										<ChartErrorBoundary theme={theme} chartName="Provider Comparison">
 											<AgentComparisonChart
 												data={data}
 												theme={theme}
 												colorBlindMode={colorBlindMode}
+												sessions={sessions}
+											/>
+										</ChartErrorBoundary>
+									</div>
+
+									{/* Provider Trends Over Time — stacked bars per day so drift
+									    between providers (e.g. Claude Code → Codex) is visible. */}
+									<div
+										ref={setSectionRef('provider-trends')}
+										tabIndex={0}
+										role="region"
+										aria-label={getSectionLabel('provider-trends')}
+										onKeyDown={(e) => handleSectionKeyDown(e, 'provider-trends')}
+										className="outline-none rounded-lg transition-shadow dashboard-section-enter"
+										style={{
+											minHeight: '260px',
+											boxShadow:
+												focusedSection === 'provider-trends'
+													? `0 0 0 2px ${theme.colors.accent}`
+													: 'none',
+											animationDelay: '125ms',
+										}}
+										data-testid="section-provider-trends"
+									>
+										<ChartErrorBoundary theme={theme} chartName="Provider Trends">
+											<ProviderTrendsChart
+												data={data}
+												timeRange={timeRange}
+												theme={theme}
+												colorBlindMode={colorBlindMode}
+												sessions={sessions}
 											/>
 										</ChartErrorBoundary>
 									</div>
@@ -808,6 +1209,7 @@ export function UsageDashboardModal({
 													data={data}
 													theme={theme}
 													colorBlindMode={colorBlindMode}
+													cueTotals={cueSourceTotals}
 												/>
 											</ChartErrorBoundary>
 										</div>
@@ -839,88 +1241,94 @@ export function UsageDashboardModal({
 										</div>
 									</div>
 
-									{/* Peak Hours Chart - Full width compact bar chart */}
+									{/* Radial activity pair — replaces the flat Peak Hours bar chart.
+									    Two side-by-side polar charts: one for hour-of-day, one for
+									    day-of-week. Stacks to a single column on narrow viewports. */}
 									<div
-										ref={setSectionRef('peak-hours')}
+										ref={setSectionRef('radial-activity')}
 										tabIndex={0}
 										role="region"
-										aria-label={getSectionLabel('peak-hours')}
-										onKeyDown={(e) => handleSectionKeyDown(e, 'peak-hours')}
+										aria-label={getSectionLabel('radial-activity')}
+										onKeyDown={(e) => handleSectionKeyDown(e, 'radial-activity')}
 										className="outline-none rounded-lg transition-shadow dashboard-section-enter"
 										style={{
-											minHeight: '180px',
+											minHeight: '320px',
 											boxShadow:
-												focusedSection === 'peak-hours'
+												focusedSection === 'radial-activity'
 													? `0 0 0 2px ${theme.colors.accent}`
 													: 'none',
 											animationDelay: '175ms',
 										}}
-										data-testid="section-peak-hours"
+										data-testid="section-radial-activity"
 									>
-										<ChartErrorBoundary theme={theme} chartName="Peak Hours">
-											<PeakHoursChart data={data} theme={theme} colorBlindMode={colorBlindMode} />
-										</ChartErrorBoundary>
-									</div>
-
-									{/* Activity Heatmap - Full width */}
-									<div
-										ref={setSectionRef('activity-heatmap')}
-										tabIndex={0}
-										role="region"
-										aria-label={getSectionLabel('activity-heatmap')}
-										onKeyDown={(e) => handleSectionKeyDown(e, 'activity-heatmap')}
-										className="outline-none rounded-lg transition-shadow dashboard-section-enter"
-										style={{
-											minHeight: '200px',
-											boxShadow:
-												focusedSection === 'activity-heatmap'
-													? `0 0 0 2px ${theme.colors.accent}`
-													: 'none',
-											animationDelay: '200ms',
-										}}
-										data-testid="section-activity-heatmap"
-									>
-										<ChartErrorBoundary theme={theme} chartName="Activity Heatmap">
-											<ActivityHeatmap
-												data={data}
-												timeRange={timeRange}
-												theme={theme}
-												colorBlindMode={colorBlindMode}
-											/>
-										</ChartErrorBoundary>
-									</div>
-
-									{/* Duration Trends Chart - Full width */}
-									<div
-										ref={setSectionRef('duration-trends')}
-										tabIndex={0}
-										role="region"
-										aria-label={getSectionLabel('duration-trends')}
-										onKeyDown={(e) => handleSectionKeyDown(e, 'duration-trends')}
-										className="outline-none rounded-lg transition-shadow dashboard-section-enter"
-										style={{
-											minHeight: '280px',
-											boxShadow:
-												focusedSection === 'duration-trends'
-													? `0 0 0 2px ${theme.colors.accent}`
-													: 'none',
-											animationDelay: '300ms',
-										}}
-										data-testid="section-duration-trends"
-									>
-										<ChartErrorBoundary theme={theme} chartName="Duration Trends">
-											<DurationTrendsChart
-												data={data}
-												timeRange={timeRange}
-												theme={theme}
-												colorBlindMode={colorBlindMode}
-											/>
-										</ChartErrorBoundary>
+										<div
+											className="grid gap-6"
+											style={{
+												gridTemplateColumns: `repeat(${layout.chartGridCols}, minmax(0, 1fr))`,
+											}}
+										>
+											<ChartErrorBoundary theme={theme} chartName="Activity by Hour">
+												<RadialActivityChart
+													mode="hours"
+													data={data}
+													theme={theme}
+													colorBlindMode={colorBlindMode}
+												/>
+											</ChartErrorBoundary>
+											<ChartErrorBoundary theme={theme} chartName="Activity by Day of Week">
+												<RadialActivityChart
+													mode="weekday"
+													data={data}
+													theme={theme}
+													colorBlindMode={colorBlindMode}
+												/>
+											</ChartErrorBoundary>
+										</div>
 									</div>
 								</>
 							)}
 
 							{viewMode === 'agents' && (
+								<div
+									ref={setSectionRef('agent-overview-cards')}
+									tabIndex={0}
+									role="region"
+									aria-label={getSectionLabel('agent-overview-cards')}
+									onKeyDown={(e) => handleSectionKeyDown(e, 'agent-overview-cards')}
+									className="outline-none rounded-lg transition-shadow dashboard-section-enter"
+									style={{
+										boxShadow:
+											focusedSection === 'agent-overview-cards'
+												? `0 0 0 2px ${theme.colors.accent}`
+												: 'none',
+										animationDelay: '0ms',
+									}}
+									data-testid="section-agent-overview-cards"
+								>
+									{sessions.some((s) => s.toolType !== 'terminal') ? (
+										<ChartErrorBoundary theme={theme} chartName="Agent Overview">
+											<AgentOverviewCards
+												sessions={sessions}
+												data={data}
+												theme={theme}
+												onShowAgentDetails={setDetailSession}
+											/>
+										</ChartErrorBoundary>
+									) : (
+										<div
+											className="p-6 rounded-lg text-center text-sm"
+											style={{
+												backgroundColor: theme.colors.bgMain,
+												color: theme.colors.textDim,
+											}}
+										>
+											No active agents
+										</div>
+									)}
+								</div>
+							)}
+
+							{viewMode === 'agent-overview' && (
 								<>
 									{/* Agent Statistics */}
 									<div
@@ -948,6 +1356,16 @@ export function UsageDashboardModal({
 										</ChartErrorBoundary>
 									</div>
 
+									{/* Worktree Analytics — only shown when at least one worktree
+									    session exists. WorktreeAnalytics provides its own role="region"
+									    + aria-label, so it sits outside the keyboard-navigable sections
+									    (same pattern as AgentOverviewCards in the Overview tab). */}
+									{sessions.some((s) => !!s.parentSessionId) && (
+										<ChartErrorBoundary theme={theme} chartName="Worktree Analytics">
+											<WorktreeAnalytics sessions={sessions} data={data} theme={theme} />
+										</ChartErrorBoundary>
+									)}
+
 									{/* Agent Efficiency */}
 									<div
 										ref={setSectionRef('agent-efficiency')}
@@ -971,33 +1389,7 @@ export function UsageDashboardModal({
 												data={data}
 												theme={theme}
 												colorBlindMode={colorBlindMode}
-											/>
-										</ChartErrorBoundary>
-									</div>
-
-									{/* Provider Comparison */}
-									<div
-										ref={setSectionRef('agent-comparison')}
-										tabIndex={0}
-										role="region"
-										aria-label={getSectionLabel('agent-comparison')}
-										onKeyDown={(e) => handleSectionKeyDown(e, 'agent-comparison')}
-										className="outline-none rounded-lg transition-shadow dashboard-section-enter"
-										style={{
-											minHeight: '180px',
-											boxShadow:
-												focusedSection === 'agent-comparison'
-													? `0 0 0 2px ${theme.colors.accent}`
-													: 'none',
-											animationDelay: '100ms',
-										}}
-										data-testid="section-agent-comparison"
-									>
-										<ChartErrorBoundary theme={theme} chartName="Provider Comparison">
-											<AgentComparisonChart
-												data={data}
-												theme={theme}
-												colorBlindMode={colorBlindMode}
+												sessions={sessions}
 											/>
 										</ChartErrorBoundary>
 									</div>
@@ -1146,6 +1538,36 @@ export function UsageDashboardModal({
 										</ChartErrorBoundary>
 									</div>
 
+									{/* Auto Run Task Duration Percentiles - per-task long-tail */}
+									<div
+										ref={setSectionRef('autorun-task-percentiles')}
+										tabIndex={0}
+										role="region"
+										aria-label={getSectionLabel('autorun-task-percentiles')}
+										onKeyDown={(e) => handleSectionKeyDown(e, 'autorun-task-percentiles')}
+										className="outline-none rounded-lg transition-shadow dashboard-section-enter"
+										style={{
+											boxShadow:
+												focusedSection === 'autorun-task-percentiles'
+													? `0 0 0 2px ${theme.colors.accent}`
+													: 'none',
+											animationDelay: '50ms',
+										}}
+										data-testid="section-autorun-task-percentiles"
+									>
+										<ChartErrorBoundary
+											theme={theme}
+											chartName="Auto Run Task Duration Percentiles"
+										>
+											<PercentilesCard
+												theme={theme}
+												title="Task Duration Percentiles"
+												unitLabel="tasks"
+												distribution={data.autoRunTaskDurationPercentiles}
+											/>
+										</ChartErrorBoundary>
+									</div>
+
 									{/* Tasks by Time of Day */}
 									<div
 										ref={setSectionRef('tasks-by-hour')}
@@ -1191,6 +1613,10 @@ export function UsageDashboardModal({
 									</div>
 								</>
 							)}
+
+							{viewMode === 'cue' && (
+								<CueStats timeRange={timeRange} theme={theme} colorBlindMode={colorBlindMode} />
+							)}
 						</div>
 					)}
 				</div>
@@ -1225,6 +1651,16 @@ export function UsageDashboardModal({
 					<span style={{ opacity: 0.7 }}>Press Esc to close</span>
 				</div>
 			</div>
+
+			{detailSession && data && (
+				<AgentDetailModal
+					session={detailSession}
+					data={data}
+					theme={theme}
+					allSessions={sessions}
+					onClose={() => setDetailSession(null)}
+				/>
+			)}
 		</div>
 	);
 }

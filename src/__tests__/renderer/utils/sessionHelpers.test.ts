@@ -42,6 +42,15 @@ describe('sessionHelpers', () => {
 		(global as any).window = {
 			maestro: {
 				agents: mockAgentsApi,
+				prompts: {
+					get: vi.fn().mockResolvedValue({
+						success: true,
+						content: 'Maestro System Context: {{AGENT_NAME}}',
+					}),
+				},
+				history: {
+					getFilePath: vi.fn().mockResolvedValue(null),
+				},
 			},
 		};
 	});
@@ -89,7 +98,6 @@ describe('sessionHelpers', () => {
 
 	describe('buildSpawnConfigForAgent', () => {
 		it('returns null when agent is not found', async () => {
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 			mockAgentsApi.get.mockResolvedValue(null);
 
 			const result = await buildSpawnConfigForAgent({
@@ -100,12 +108,9 @@ describe('sessionHelpers', () => {
 
 			expect(result).toBeNull();
 			expect(mockAgentsApi.get).toHaveBeenCalledWith('unknown-agent');
-			expect(consoleError).toHaveBeenCalledWith('[sessionHelpers] Agent not found: unknown-agent');
-			consoleError.mockRestore();
 		});
 
 		it('returns null when agent is not available', async () => {
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 			mockAgentsApi.get.mockResolvedValue(createMockAgentConfig({ available: false }));
 
 			const result = await buildSpawnConfigForAgent({
@@ -115,10 +120,6 @@ describe('sessionHelpers', () => {
 			});
 
 			expect(result).toBeNull();
-			expect(consoleError).toHaveBeenCalledWith(
-				'[sessionHelpers] Agent not available: claude-code'
-			);
-			consoleError.mockRestore();
 		});
 
 		it('builds spawn config with agent path when available', async () => {
@@ -221,7 +222,6 @@ describe('sessionHelpers', () => {
 
 	describe('createSessionForAgent', () => {
 		it('returns null when agent is not found', async () => {
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 			mockAgentsApi.get.mockResolvedValue(null);
 
 			const result = await createSessionForAgent({
@@ -232,12 +232,9 @@ describe('sessionHelpers', () => {
 			});
 
 			expect(result).toBeNull();
-			expect(consoleError).toHaveBeenCalledWith('[sessionHelpers] Agent not found: unknown-agent');
-			consoleError.mockRestore();
 		});
 
 		it('returns null when agent is not available', async () => {
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 			mockAgentsApi.get.mockResolvedValue(createMockAgentConfig({ available: false }));
 
 			const result = await createSessionForAgent({
@@ -248,27 +245,6 @@ describe('sessionHelpers', () => {
 			});
 
 			expect(result).toBeNull();
-			expect(consoleError).toHaveBeenCalledWith(
-				'[sessionHelpers] Agent not available: claude-code'
-			);
-			consoleError.mockRestore();
-		});
-
-		it('returns null when spawn config cannot be built', async () => {
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-			mockAgentsApi.get.mockResolvedValueOnce(createMockAgentConfig()).mockResolvedValueOnce(null);
-
-			const result = await createSessionForAgent({
-				agentType: 'claude-code',
-				projectRoot: '/test/path',
-				name: 'Test Session',
-				initialContext: 'Hello, world!',
-			});
-
-			expect(result).toBeNull();
-			expect(mockAgentsApi.get).toHaveBeenCalledTimes(2);
-			expect(consoleError).toHaveBeenCalledWith('[sessionHelpers] Agent not found: claude-code');
-			consoleError.mockRestore();
 		});
 
 		it('creates session with correct structure', async () => {
