@@ -12,11 +12,19 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
 	useThoughtStreamStore,
 	selectIsCapturing,
+	groupThoughtsIntoBlocks,
+	THOUGHT_BLOCK_GAP_MS,
 	MAX_THOUGHTS_PER_SESSION,
+	type ThoughtEntry,
 } from '../../../renderer/stores/thoughtStreamStore';
 
 const SID = 'session-1';
 const TAB = 'tab-a';
+
+/** Build a ThoughtEntry with explicit timestamp/tab for block-grouping tests. */
+function entry(id: string, timestamp: number, text: string, tabId = TAB): ThoughtEntry {
+	return { id, timestamp, tabId, text };
+}
 
 function reset() {
 	useThoughtStreamStore.setState({
@@ -240,5 +248,62 @@ describe('thoughtStreamStore', () => {
 		expect(selectIsCapturing(undefined)(useThoughtStreamStore.getState())).toBe(false);
 		store.closePanel();
 		expect(selectIsCapturing(SID)(useThoughtStreamStore.getState())).toBe(false);
+	});
+});
+
+describe('groupThoughtsIntoBlocks', () => {
+	it('returns an empty list for no entries', () => {
+		expect(groupThoughtsIntoBlocks([])).toEqual([]);
+	});
+
+	it('merges entries within the gap window into one block', () => {
+		const blocks = groupThoughtsIntoBlocks([
+			entry('a', 1000, 'one '),
+			entry('b', 1500, 'two '),
+			entry('c', 2000, 'three'),
+		]);
+		expect(blocks).toHaveLength(1);
+		expect(blocks[0].id).toBe('a'); // keyed by first entry
+		expect(blocks[0].text).toBe('one two three');
+		expect(blocks[0].startTimestamp).toBe(1000);
+		expect(blocks[0].endTimestamp).toBe(2000);
+	});
+
+	it('starts a new block when the gap exceeds THOUGHT_BLOCK_GAP_MS', () => {
+		const blocks = groupThoughtsIntoBlocks([
+			entry('a', 1000, 'first block'),
+			entry('b', 1000 + THOUGHT_BLOCK_GAP_MS + 1, 'second block'),
+		]);
+		expect(blocks).toHaveLength(2);
+		expect(blocks[0].text).toBe('first block');
+		expect(blocks[1].text).toBe('second block');
+		expect(blocks[1].startTimestamp).toBe(1000 + THOUGHT_BLOCK_GAP_MS + 1);
+	});
+
+	it('keeps a gap exactly at the threshold in the same block', () => {
+		const blocks = groupThoughtsIntoBlocks([
+			entry('a', 1000, 'a'),
+			entry('b', 1000 + THOUGHT_BLOCK_GAP_MS, 'b'),
+		]);
+		expect(blocks).toHaveLength(1);
+		expect(blocks[0].text).toBe('ab');
+	});
+
+	it('splits on a tab change even within the gap window', () => {
+		const blocks = groupThoughtsIntoBlocks([
+			entry('a', 1000, 'tab-a thought', 'tab-a'),
+			entry('b', 1200, 'tab-b thought', 'tab-b'),
+		]);
+		expect(blocks).toHaveLength(2);
+		expect(blocks[0].tabId).toBe('tab-a');
+		expect(blocks[1].tabId).toBe('tab-b');
+	});
+
+	it('honors a custom gap argument', () => {
+		const blocks = groupThoughtsIntoBlocks(
+			[entry('a', 0, 'a'), entry('b', 100, 'b')],
+			50 // tighter than the 100ms spacing -> two blocks
+		);
+		expect(blocks).toHaveLength(2);
 	});
 });

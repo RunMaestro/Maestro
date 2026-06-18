@@ -171,6 +171,26 @@ The runner will:
 - Mark tasks as complete (`- [x]`) when done
 - Log each completion to the **History** panel
 
+## Thought Stream
+
+While a run is active, you can watch the agent's live reasoning without changing any settings. In the **Auto Run** card, click **View Thoughts** (the brain icon) to open the **Thought Stream** - a floating, searchable panel that streams the agent's thinking as it works.
+
+It works the same for **Spec-Driven** and **Goal-Driven** runs, because both flow through the same agent. The panel captures the raw reasoning stream directly, so it shows thoughts even when an AI tab's "show thinking" display is turned off.
+
+- **Newest on top** - the live thought sits at the top and grows; scroll down to read the history of the run.
+- **Timestamped blocks** - a continuous burst of thinking is grouped into one block with a time stamp; a pause (or a switch between parallel tabs) starts a new block.
+- **Search** - filter the captured thoughts with the search box; matches are highlighted.
+
+The button doubles as the live indicator: while capturing it pulses and reads **Capturing**.
+
+**Open, minimize, close:**
+
+- **Open** starts capturing for that agent and shows the panel.
+- **Minimize** collapses the panel but **keeps capturing** in the background, so you can reopen it later and review everything since you opened it.
+- **Close** stops capturing and clears that agent's buffer.
+
+Capture is in-memory only - it does not survive an app restart, and the buffer is bounded so a long run can't grow memory without limit (the oldest thoughts are dropped once the cap is reached, noted as "trimmed" in the panel header). Running several Auto Runs at once? Each agent captures into its own independent stream; opening the panel for one agent never mixes in another's thoughts.
+
 ## Session Isolation
 
 Each task executes in a completely fresh AI session with its own unique session ID. This provides:

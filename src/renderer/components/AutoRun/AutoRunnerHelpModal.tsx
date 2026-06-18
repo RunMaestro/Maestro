@@ -20,6 +20,7 @@ import {
 	StopCircle,
 	Layers,
 	Target,
+	Brain,
 } from 'lucide-react';
 import type { Theme } from '../../types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
@@ -520,6 +521,46 @@ export function AutoRunnerHelpModal({ theme, onClose, zIndex = 50 }: AutoRunnerH
 						<p>
 							The stop reason and final progress are recorded in the{' '}
 							<strong style={{ color: theme.colors.textMain }}>History</strong> panel.
+						</p>
+					</div>
+				</section>
+
+				{/* Thought Stream */}
+				<section>
+					<div className="flex items-center gap-2 mb-3">
+						<Brain className="w-5 h-5" style={{ color: theme.colors.accent }} />
+						<h3 className="font-bold">Thought Stream</h3>
+					</div>
+					<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
+						<p>
+							While a run is active, click{' '}
+							<strong style={{ color: theme.colors.textMain }}>View Thoughts</strong> (the brain
+							icon) in the Auto Run card to watch the agent's live reasoning in a floating,
+							searchable panel. It works the same for Spec-Driven and Goal-Driven runs, and captures
+							the reasoning stream directly - so it shows thoughts even when an AI tab's "show
+							thinking" display is off.
+						</p>
+						<ul className="list-disc pl-5 space-y-1">
+							<li>
+								<strong style={{ color: theme.colors.textMain }}>Newest on top</strong> - the live
+								thought sits at the top and grows; scroll down for the run's history.
+							</li>
+							<li>
+								<strong style={{ color: theme.colors.textMain }}>Timestamped blocks</strong> - a
+								continuous burst of thinking is grouped into one time-stamped block; a pause starts
+								a new one.
+							</li>
+							<li>
+								<strong style={{ color: theme.colors.textMain }}>Search</strong> - filter captured
+								thoughts; matches are highlighted.
+							</li>
+						</ul>
+						<p>
+							<strong style={{ color: theme.colors.textMain }}>Minimize</strong> keeps capturing in
+							the background (the button pulses and reads "Capturing"); reopen to review everything
+							since you opened it. <strong style={{ color: theme.colors.textMain }}>Close</strong>{' '}
+							stops capturing and clears that agent's buffer. Capture is in-memory only and each
+							agent captures into its own independent stream, so parallel runs never mix.
 						</p>
 					</div>
 				</section>

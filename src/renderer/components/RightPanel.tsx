@@ -751,18 +751,29 @@ export const RightPanel = memo(
 							/>
 						</div>
 
-						{/* Overall completed count with loop info */}
-						<div className="mt-2 flex items-start justify-between gap-2">
+						{/* Status line on its own row so it can use the full card width and
+						    truncate cleanly, without competing with the controls row below
+						    (which must always show "View History" / "View Thoughts" intact). */}
+						<div className="mt-2">
 							<span
-								className="text-[10px] min-w-0 flex-1 truncate"
+								className="block text-[10px] truncate"
 								style={{
 									color: errorPaused ? theme.colors.error : theme.colors.textDim,
 								}}
-								// Surface the agent's latest rationale on hover so users can see *why*
-								// the goal is at this percent without opening the History panel.
+								// The inline line is kept terse (percent + rationale) because it
+								// shares the row with the Capturing/View History controls. The
+								// full context - iteration count + complete rationale - lives on
+								// hover so nothing is lost to truncation.
 								title={
 									currentSessionBatchState.goalMode
-										? currentSessionBatchState.goalRationale || undefined
+										? [
+												currentSessionBatchState.goalIteration
+													? `Iteration ${currentSessionBatchState.goalIteration}`
+													: undefined,
+												currentSessionBatchState.goalRationale || undefined,
+											]
+												.filter(Boolean)
+												.join(' — ') || undefined
 										: undefined
 								}
 							>
@@ -772,18 +783,19 @@ export const RightPanel = memo(
 										? 'Waiting for current task to complete before stopping...'
 										: currentSessionBatchState.goalMode
 											? `Goal: ${currentSessionBatchState.goalProgress ?? 0}%${
-													currentSessionBatchState.goalIteration
-														? ` · iteration ${currentSessionBatchState.goalIteration}`
-														: ''
-												}${
 													currentSessionBatchState.goalRationale
-														? ` — ${currentSessionBatchState.goalRationale}`
+														? ` · ${currentSessionBatchState.goalRationale}`
 														: ''
 												}`
 											: currentSessionBatchState.totalTasksAcrossAllDocs > 0
 												? `${currentSessionBatchState.completedTasksAcrossAllDocs} of ${currentSessionBatchState.totalTasksAcrossAllDocs} tasks completed`
 												: `${currentSessionBatchState.completedTasks} of ${currentSessionBatchState.totalTasks} tasks completed`}
 							</span>
+						</div>
+
+						{/* Controls row - right-aligned, its own row so the action links are
+						    never clipped by a long status line. */}
+						<div className="mt-1.5 flex items-center justify-end gap-2">
 							{/* Resume/Abort buttons when error-paused */}
 							{errorPaused && (
 								<div className="flex items-center gap-1.5 shrink-0">

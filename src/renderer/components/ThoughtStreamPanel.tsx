@@ -17,7 +17,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Brain, Search, Minus, X } from 'lucide-react';
 import type { Theme } from '../types';
-import { useThoughtStreamStore, type ThoughtEntry } from '../stores/thoughtStreamStore';
+import {
+	useThoughtStreamStore,
+	groupThoughtsIntoBlocks,
+	type ThoughtEntry,
+	type ThoughtBlock,
+} from '../stores/thoughtStreamStore';
 import { useSessionStore } from '../stores/sessionStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useUIStore } from '../stores/uiStore';
@@ -26,6 +31,15 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 
 interface ThoughtStreamPanelProps {
 	theme: Theme;
+}
+
+/** Format a block timestamp as a stable time-of-day stamp (e.g. "3:42:07 PM"). */
+function formatThoughtTime(ts: number): string {
+	return new Date(ts).toLocaleTimeString([], {
+		hour: 'numeric',
+		minute: '2-digit',
+		second: '2-digit',
+	});
 }
 
 /** Split `text` into [before, match, after, before, match, ...] segments for highlighting. */
@@ -72,18 +86,26 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 
 	const [query, setQuery] = useState('');
 	const scrollRef = useRef<HTMLDivElement>(null);
-	const stickToBottomRef = useRef(true);
+	// Newest blocks render on top, so "following" the live stream means staying
+	// pinned to the TOP of the scroll area, not the bottom.
+	const stickToTopRef = useRef(true);
 
 	const entries: ThoughtEntry[] = useMemo(() => buffer?.entries ?? [], [buffer]);
 	const trimmed = buffer?.trimmed ?? false;
 
-	const filtered = useMemo(() => {
-		const q = query.trim().toLowerCase();
-		if (!q) return entries;
-		return entries.filter((e) => e.text.toLowerCase().includes(q));
-	}, [entries, query]);
+	// Group the granular per-flush entries into timestamped blocks, then show
+	// newest-first (the live block sits at the top and grows; older blocks scroll
+	// down into history).
+	const blocks: ThoughtBlock[] = useMemo(() => groupThoughtsIntoBlocks(entries), [entries]);
 
 	const searching = query.trim().length > 0;
+
+	const visibleBlocks = useMemo(() => {
+		const q = query.trim().toLowerCase();
+		const matched = q ? blocks.filter((b) => b.text.toLowerCase().includes(q)) : blocks;
+		// Reverse a copy for newest-on-top display without mutating the memoized list.
+		return [...matched].reverse();
+	}, [blocks, query]);
 
 	// Escape minimizes (keeps capture) rather than closing - the least
 	// destructive default. Only registered while the full panel is open.
@@ -94,13 +116,14 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 		focusTrap: 'none',
 	});
 
-	// Auto-tail: when stuck to bottom and not searching, follow new thoughts.
+	// Auto-tail: when pinned to the top and not searching, follow new thoughts
+	// (newest block is at the top).
 	useEffect(() => {
 		if (minimized || searching) return;
-		if (!stickToBottomRef.current) return;
+		if (!stickToTopRef.current) return;
 		const el = scrollRef.current;
-		if (el) el.scrollTop = el.scrollHeight;
-	}, [filtered, minimized, searching]);
+		if (el) el.scrollTop = 0;
+	}, [visibleBlocks, minimized, searching]);
 
 	if (!panelSessionId) return null;
 
@@ -210,12 +233,12 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 				ref={scrollRef}
 				onScroll={(e) => {
 					const el = e.currentTarget;
-					stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+					stickToTopRef.current = el.scrollTop < 24;
 				}}
 				className="flex-1 overflow-y-auto px-3 py-2 scrollbar-thin select-text"
 				style={{ color: theme.colors.textMain }}
 			>
-				{filtered.length === 0 ? (
+				{visibleBlocks.length === 0 ? (
 					<p className="text-xs italic mt-2" style={{ color: theme.colors.textDim }}>
 						{searching
 							? 'No thoughts match your search.'
@@ -224,25 +247,34 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 								: 'No thoughts captured.'}
 					</p>
 				) : (
-					<div className="font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words">
-						{filtered.map((entry) => (
-							<span key={entry.id}>
-								{highlightSegments(entry.text, query.trim()).map((seg, i) =>
-									seg.match ? (
-										<mark
-											key={i}
-											style={{
-												backgroundColor: theme.colors.warning,
-												color: theme.colors.bgSidebar,
-											}}
-										>
-											{seg.text}
-										</mark>
-									) : (
-										<span key={i}>{seg.text}</span>
-									)
-								)}
-							</span>
+					<div className="flex flex-col gap-3">
+						{visibleBlocks.map((block) => (
+							<div key={block.id}>
+								<div
+									className="text-[10px] font-mono mb-1 select-none"
+									style={{ color: theme.colors.textDim }}
+									title={new Date(block.startTimestamp).toLocaleString()}
+								>
+									{formatThoughtTime(block.startTimestamp)}
+								</div>
+								<div className="font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words">
+									{highlightSegments(block.text, query.trim()).map((seg, i) =>
+										seg.match ? (
+											<mark
+												key={i}
+												style={{
+													backgroundColor: theme.colors.warning,
+													color: theme.colors.bgSidebar,
+												}}
+											>
+												{seg.text}
+											</mark>
+										) : (
+											<span key={i}>{seg.text}</span>
+										)
+									)}
+								</div>
+							</div>
 						))}
 					</div>
 				)}
@@ -253,7 +285,7 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 					className="px-3 py-1.5 border-t text-[10px] shrink-0"
 					style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
 				>
-					{filtered.length} of {totalCount} thought{totalCount === 1 ? '' : 's'} match
+					{visibleBlocks.length} of {blocks.length} block{blocks.length === 1 ? '' : 's'} match
 				</div>
 			)}
 		</div>

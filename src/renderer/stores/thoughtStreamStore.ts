@@ -40,6 +40,61 @@ export interface ThoughtBuffer {
 }
 
 /**
+ * A display-time grouping of consecutive thought entries. The capture path emits
+ * one entry per coalesced stream flush (~per frame), which is far too granular to
+ * stamp individually. We instead group a continuous run of thinking into one
+ * block - a single timestamp + the concatenated text - and start a fresh block
+ * when the agent pauses (gap > THOUGHT_BLOCK_GAP_MS) or a different tab streams.
+ */
+export interface ThoughtBlock {
+	/** Id of the first entry in the block (stable React key). */
+	id: string;
+	/** When the block's first thought arrived. */
+	startTimestamp: number;
+	/** When the block's most recent thought arrived. */
+	endTimestamp: number;
+	/** AI tab the block came from. */
+	tabId: string;
+	/** Concatenated text of every entry in the block. */
+	text: string;
+}
+
+/**
+ * Pause (ms) that ends one thought block and starts the next. Within active
+ * thinking, coalesced flushes arrive sub-second; iteration boundaries, tool
+ * calls, and agent re-spawns leave multi-second gaps. 3s splits those cleanly
+ * without fragmenting a single reasoning paragraph.
+ */
+export const THOUGHT_BLOCK_GAP_MS = 3000;
+
+/**
+ * Group a chronological entry list into display blocks (oldest-first). The
+ * caller reverses for newest-on-top display. Pure - safe to memoize on entries.
+ */
+export function groupThoughtsIntoBlocks(
+	entries: ThoughtEntry[],
+	gapMs: number = THOUGHT_BLOCK_GAP_MS
+): ThoughtBlock[] {
+	const blocks: ThoughtBlock[] = [];
+	for (const entry of entries) {
+		const last = blocks[blocks.length - 1];
+		if (last && last.tabId === entry.tabId && entry.timestamp - last.endTimestamp <= gapMs) {
+			last.text += entry.text;
+			last.endTimestamp = entry.timestamp;
+		} else {
+			blocks.push({
+				id: entry.id,
+				startTimestamp: entry.timestamp,
+				endTimestamp: entry.timestamp,
+				tabId: entry.tabId,
+				text: entry.text,
+			});
+		}
+	}
+	return blocks;
+}
+
+/**
  * Max thoughts retained per session. A long run trims oldest-first past this.
  * ~5k coalesced flushes is plenty of scrollback while bounding memory.
  */
