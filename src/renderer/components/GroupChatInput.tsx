@@ -464,6 +464,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 					theme={theme}
 					onRemoveQueuedItem={onRemoveQueuedItem}
 					onReorderItems={onReorderQueuedItems}
+					onOpenLightbox={onOpenLightbox}
 				/>
 			)}
 
