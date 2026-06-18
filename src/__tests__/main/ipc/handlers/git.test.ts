@@ -172,6 +172,7 @@ describe('Git IPC handlers', () => {
 				'git:diff',
 				'git:isRepo',
 				'git:init',
+				'git:commitAll',
 				'git:numstat',
 				'git:branch',
 				'git:remote',
