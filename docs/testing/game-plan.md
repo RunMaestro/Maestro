@@ -64,11 +64,10 @@ Status: active.
 
 - A direct rebase/merge of the old campaign branch onto current `upstream/main` produced a malformed hybrid tree, so the sync strategy changed to an upstream-shaped tree plus targeted campaign docs/E2E overlay.
 - The upstream-shaped tree passed `npm run validate:push` through format, TypeScript, ESLint, and unit execution.
-- The upstream-shaped unit suite still reports 108 skipped tests, so it does not satisfy the no-skips requirement.
-- `npm run test:coverage` on the upstream-shaped tree fails the enforced 100% thresholds with 66% statements, 60.78% branches, 63.25% functions, and 67.05% lines.
+- The current broad unit suite now passes with 1,174 files, 32,190 tests, and 0 skipped after removing stale skip blocks, removing one optional native-SQLite skip path, replaying 98 compatible restored unit files from the green backup, and adapting the restored Codex/OpenCode storage suites.
+- `npm run test:coverage` on the current upstream-shaped tree still fails the enforced 100% thresholds with 69.79% statements, 64.84% branches, 66.67% functions, and 70.92% lines.
 - Next work:
   - restore 100% unit coverage with current-upstream-compatible tests,
-  - remove or activate unit skips,
   - rerun full integration with SSH and 0 skips,
   - rerun full E2E shards with 0 failures and 0 skips,
   - update this plan and [current-status.md](current-status.md) with final evidence.

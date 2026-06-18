@@ -10,21 +10,21 @@ Measured with `npm run test:coverage` on the current upstream-shaped tree:
 
 | Metric     | Pre-Sync Final Checkpoint | Current Upstream-Sync Check |
 | ---------- | ------------------------: | --------------------------: |
-| Statements |                   100.00% |                      66.00% |
-| Branches   |                   100.00% |                      60.78% |
-| Functions  |                   100.00% |                      63.25% |
-| Lines      |                   100.00% |                      67.05% |
+| Statements |                   100.00% |                      69.79% |
+| Branches   |                   100.00% |                      64.84% |
+| Functions  |                   100.00% |                      66.67% |
+| Lines      |                   100.00% |                      70.92% |
 
 Current upstream-sync coverage result:
 
 - Command: `npm run test:coverage`
 - Result: failed 100% global coverage thresholds
-- Test files: 1,073 passed, 1 skipped
-- Tests: 31,219 passed, 108 skipped
-- Coverage: 66.00% statements, 60.78% branches, 63.25% functions, 67.05% lines
-- Log: `/tmp/maestro-upstream-overlay-test-coverage-20260617232642.log`
+- Test files: 1,174 passed
+- Tests: 32,190 passed, 0 skipped
+- Coverage: 69.79% statements, 64.84% branches, 66.67% functions, 70.92% lines
+- Log: `/tmp/maestro-phase7-coverage-after-storage-20260618004650.log`
 
-Current remaining enforced unit coverage gaps: open. The current tree has 1,667 covered files in `coverage/coverage-final.json`, and the largest gaps include web-server factory/message-handler paths, Codex/OpenCode session storage, `App.tsx`, Document Graph views, and mobile/web remote-event surfaces.
+Current remaining enforced unit coverage gaps: open. The current tree has 1,667 covered files in `coverage/coverage-final.json`, 1,109 files with gaps, and 122 zero-statement files. The largest gaps now include web-server factory/message-handler paths, `App.tsx`, Document Graph views, mobile/web remote-event surfaces, image annotation, file preview, preload process, keyboard handler, and web/mobile app surfaces. Codex/OpenCode session storage moved out of the top gap list after restoring and adapting their unit suites.
 
 Current full integration checkpoint: not rerun after the upstream-sync tree change.
 

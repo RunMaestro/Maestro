@@ -1,6 +1,6 @@
 # Testing Current Status
 
-Last updated: 2026-06-17 23:48 EDT.
+Last updated: 2026-06-18 00:52 EDT.
 
 ## Verdict
 
@@ -8,14 +8,14 @@ The pre-upstream-sync checkpoint was green, but the campaign is not final on the
 
 - Current sync work: `upstream/main` at `7eca62d07` is being merged into `codex/full-e2e-coverage-campaign`.
 - Static/pre-push gate on the clean upstream-shaped tree: passed through format, TypeScript, ESLint, and unit test execution.
-- Unit suite on the upstream-shaped tree: 1,073 files passed, 1 skipped; 31,219 tests passed, 108 skipped.
-- Enforced unit coverage on the upstream-shaped tree: failing the 100% global thresholds.
+- Unit suite on the upstream-shaped tree: 1,174 files passed; 32,190 tests passed; 0 skipped.
+- Enforced unit coverage on the upstream-shaped tree: failing the 100% global thresholds after replaying 100 compatible restored unit test files/suites from the green backup.
 - Integration and E2E have not been rerun after the upstream-sync tree change.
 
 Current blocking gaps before finality:
 
 - Unit coverage must return to 100% statements/branches/functions/lines on the upstream-synced tree.
-- Unit skipped tests must be eliminated or converted into active passing coverage.
+- Unit skipped tests have been eliminated in the current broad unit run; keep this invariant while restoring coverage.
 - Full integration, including the SSH provider path, must be rerun with 0 skips on the upstream-synced tree.
 - Full E2E Phase 6 equivalent shards must be rerun with 0 failed and 0 skipped tests on the upstream-synced tree.
 
@@ -23,15 +23,18 @@ The known non-active residuals at the bottom of this document remain intentional
 
 ## Latest Verification
 
-| Gate                                           |                                                                                  Result | Evidence                                                         |
-| ---------------------------------------------- | --------------------------------------------------------------------------------------: | ---------------------------------------------------------------- |
-| Upstream-shaped `npm run validate:push`        |                   format, TypeScript, ESLint, and unit execution passed; 108 unit skips | `/tmp/maestro-phase7-validate-push-20260617234110.log`           |
-| Upstream-shaped `npm run test:coverage`        | failed 100% thresholds: 66% statements, 60.78% branches, 63.25% functions, 67.05% lines | `/tmp/maestro-upstream-overlay-test-coverage-20260617232642.log` |
-| Pre-upstream-sync unit coverage checkpoint     |         731 files passed, 28,679 tests passed, 100% statements/branches/functions/lines | `/tmp/maestro-final-test-coverage-20260617222450.log`            |
-| Pre-upstream-sync full integration with SSH    |                                                   539 files passed, 12,687 tests passed | `/tmp/maestro-integration-ssh-full-20260617220145.log`           |
-| Pre-upstream-sync final Phase 6 E2E shard A    |                                                         985 passed, 0 failed, 0 skipped | `/tmp/maestro-phase6-final-a.log`                                |
-| Pre-upstream-sync final Phase 6 E2E shard B    |                                                       1,985 passed, 0 failed, 0 skipped | `/tmp/maestro-phase6-final-b.log`                                |
-| Pre-upstream-sync combined Phase 6 E2E runtime |                                                       2,970 passed, 0 failed, 0 skipped | `e2e-results/phase6-final-a`, `e2e-results/phase6-final-b`       |
+| Gate                                           |                                                                                     Result | Evidence                                                         |
+| ---------------------------------------------- | -----------------------------------------------------------------------------------------: | ---------------------------------------------------------------- |
+| Current `npm run test`                         |                                         1,174 files passed; 32,190 tests passed; 0 skipped | `/tmp/maestro-phase7-unit-after-storage-20260618004245.log`      |
+| Current `npm run test:coverage`                | failed 100% thresholds: 69.79% statements, 64.84% branches, 66.67% functions, 70.92% lines | `/tmp/maestro-phase7-coverage-after-storage-20260618004650.log`  |
+| Prior post-skip-cleanup `npm run test`         |                                         1,074 files passed; 31,302 tests passed; 0 skipped | `/tmp/maestro-phase7-unit-noskip-20260618001502.log`             |
+| Upstream-shaped `npm run validate:push`        |                      format, TypeScript, ESLint, and unit execution passed; 108 unit skips | `/tmp/maestro-phase7-validate-push-20260617234110.log`           |
+| Upstream-shaped `npm run test:coverage`        |    failed 100% thresholds: 66% statements, 60.78% branches, 63.25% functions, 67.05% lines | `/tmp/maestro-upstream-overlay-test-coverage-20260617232642.log` |
+| Pre-upstream-sync unit coverage checkpoint     |            731 files passed, 28,679 tests passed, 100% statements/branches/functions/lines | `/tmp/maestro-final-test-coverage-20260617222450.log`            |
+| Pre-upstream-sync full integration with SSH    |                                                      539 files passed, 12,687 tests passed | `/tmp/maestro-integration-ssh-full-20260617220145.log`           |
+| Pre-upstream-sync final Phase 6 E2E shard A    |                                                            985 passed, 0 failed, 0 skipped | `/tmp/maestro-phase6-final-a.log`                                |
+| Pre-upstream-sync final Phase 6 E2E shard B    |                                                          1,985 passed, 0 failed, 0 skipped | `/tmp/maestro-phase6-final-b.log`                                |
+| Pre-upstream-sync combined Phase 6 E2E runtime |                                                          2,970 passed, 0 failed, 0 skipped | `e2e-results/phase6-final-a`, `e2e-results/phase6-final-b`       |
 
 The temporary local SSH daemon used for the pre-sync integration verification was removed after that successful run.
 

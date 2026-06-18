@@ -996,23 +996,21 @@ describe('AutoRun', () => {
 			});
 		});
 
-		// NOTE: Image upload button is currently disabled in the component (wrapped in `false &&`)
-		// These tests are skipped until the feature is re-enabled
-		it.skip('shows image upload button in edit mode', () => {
+		it('does not render the hidden image upload button in edit mode', () => {
 			const props = createDefaultProps({ mode: 'edit' });
 			renderWithProvider(<AutoRun {...props} />);
 
-			expect(screen.getByTitle('Add image (or paste from clipboard)')).toBeInTheDocument();
+			expect(screen.queryByTitle('Add image (or paste from clipboard)')).not.toBeInTheDocument();
 		});
 
-		it.skip('hides image upload button in preview mode', () => {
+		it('hides image upload button in preview mode', () => {
 			const props = createDefaultProps({ mode: 'preview' });
 			renderWithProvider(<AutoRun {...props} />);
 
 			expect(screen.queryByTitle('Add image (or paste from clipboard)')).not.toBeInTheDocument();
 		});
 
-		it.skip('hides image upload button when locked', () => {
+		it('hides image upload button when locked', () => {
 			const batchRunState = createBatchRunState();
 			const props = createDefaultProps({ batchRunState });
 			renderWithProvider(<AutoRun {...props} />);
@@ -1022,12 +1020,6 @@ describe('AutoRun', () => {
 	});
 
 	describe('Image Paste Handling', () => {
-		// TODO: PENDING - NEEDS FIX - FileReader mocking is complex in jsdom
-		it.skip('handles image paste and inserts markdown reference', async () => {
-			// This test requires complex FileReader mocking that doesn't work well in jsdom
-			// The functionality is tested manually
-		});
-
 		it('does not handle paste when locked', async () => {
 			const batchRunState = createBatchRunState();
 			const props = createDefaultProps({ batchRunState });
@@ -1209,16 +1201,6 @@ describe('AutoRun', () => {
 			rerender(<AutoRun {...props} batchRunState={batchRunState} />);
 
 			expect(props.onModeChange).toHaveBeenCalledWith('preview');
-		});
-	});
-
-	describe('Legacy onChange Prop', () => {
-		// TODO: PENDING - NEEDS FIX - Legacy onChange requires deep integration testing
-		// The component's internal state management makes it hard to test the legacy path
-		// without modifying source code to expose internals
-		it.skip('falls back to onChange when onContentChange is not provided', async () => {
-			// This test verifies legacy behavior that is complex to test in isolation
-			// The functionality has been tested manually
 		});
 	});
 
@@ -1994,14 +1976,6 @@ describe('Attachment Management', () => {
 
 		// Should not show attachments section
 		expect(screen.queryByText(/Attached Images/)).not.toBeInTheDocument();
-	});
-
-	// TODO: PENDING - NEEDS FIX - FileReader mocking in jsdom is complex
-	// The file upload functionality works in the real environment but jsdom
-	// doesn't properly support FileReader constructor mocking
-	it.skip('handles image upload via file input', async () => {
-		// This test requires complex FileReader mocking that doesn't work well in jsdom
-		// The functionality is tested manually
 	});
 
 	it('expands and collapses attachments section', async () => {

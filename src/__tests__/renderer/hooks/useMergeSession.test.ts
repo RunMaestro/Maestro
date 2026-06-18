@@ -694,15 +694,3 @@ describe('useMergeSession', () => {
 		});
 	});
 });
-
-// Note: useMergeSessionWithSessions tests are skipped because:
-// 1. The base useMergeSession hook tests cover all core functionality
-// 2. useMergeSessionWithSessions is a thin wrapper that adds session state management
-// 3. Integration tests in the app provide full coverage of the session management flow
-// 4. The concurrent render issues with renderHook cleanup cause flaky tests
-describe.skip('useMergeSessionWithSessions', () => {
-	it('placeholder for wrapper hook tests', () => {
-		// These tests are covered by integration tests
-		expect(true).toBe(true);
-	});
-});
