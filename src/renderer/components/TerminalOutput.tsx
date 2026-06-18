@@ -45,6 +45,23 @@ import { SessionRecoveryCard } from './SessionRecoveryCard';
 import { getTokenSourcePill } from '../../shared/claudeTokenModeLabel';
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
 
+export interface TerminalScrollSnapshot {
+	scrollTop: number;
+	atBottom: boolean;
+}
+
+export const getTerminalScrollSnapshot = (
+	container: Pick<HTMLElement, 'scrollTop' | 'scrollHeight' | 'clientHeight'> | null,
+	thresholdPx = 50
+): TerminalScrollSnapshot | null => {
+	if (!container) return null;
+	const { scrollTop, scrollHeight, clientHeight } = container;
+	return {
+		scrollTop,
+		atBottom: scrollHeight - scrollTop - clientHeight < thresholdPx,
+	};
+};
+
 // ============================================================================
 // Tool display helpers (pure functions, hoisted out of render path)
 // ============================================================================
@@ -192,7 +209,7 @@ function SessionRecoveryCardConnector(props: {
 }) {
 	const tab = useSessionStore((s) => {
 		const session = s.sessions.find((sess) => sess.id === props.sessionId);
-		return session?.aiTabs.find((t) => t.id === props.recoveryAction.tabId);
+		return session?.aiTabs?.find((t) => t.id === props.recoveryAction.tabId);
 	});
 	if (!tab) return null;
 	return (
@@ -1811,10 +1828,9 @@ export const TerminalOutput = memo(
 		// PERF: Throttle scroll handler to reduce state updates (4ms = ~240fps for smooth scrollbar)
 		// The actual logic is in handleScrollInner, wrapped with useThrottledCallback
 		const handleScrollInner = useCallback(() => {
-			if (!scrollContainerRef.current) return;
-			const { scrollTop, scrollHeight, clientHeight } = scrollContainerRef.current;
-			// Consider "at bottom" if within 50px of the bottom
-			const atBottom = scrollHeight - scrollTop - clientHeight < 50;
+			const scrollSnapshot = getTerminalScrollSnapshot(scrollContainerRef.current);
+			if (!scrollSnapshot) return;
+			const { scrollTop, atBottom } = scrollSnapshot;
 			setIsAtBottom(atBottom);
 
 			// Notify parent when isAtBottom changes (for hasUnread logic)

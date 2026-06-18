@@ -96,6 +96,52 @@ let mockWebSocketState = 'connected';
 let mockWebSocketError: string | null = null;
 let mockReconnectAttempts = 0;
 let mockHandlers: Record<string, (...args: unknown[]) => void> = {};
+const mockTerminalWrite = vi.fn();
+const mockTerminalFitAndGetSize = vi.fn(() => ({ cols: 120, rows: 40 }));
+const mockGitStatus = vi.hoisted(() => ({
+	status: null as unknown,
+	diff: null as null | { diff: string },
+	isLoading: false,
+	loadStatus: vi.fn(),
+	loadDiff: vi.fn(),
+	refresh: vi.fn(),
+}));
+const mockGroupChat = vi.hoisted(() => ({
+	chats: [] as any[],
+	activeChat: null as any,
+	isLoading: false,
+	loadChats: vi.fn(),
+	startChat: vi.fn(),
+	loadChatState: vi.fn(),
+	sendMessage: vi.fn(),
+	stopChat: vi.fn(),
+	setActiveChatId: vi.fn(),
+	handleGroupChatMessage: vi.fn(),
+	handleGroupChatStateChange: vi.fn(),
+}));
+const mockAutoRun = vi.hoisted(() => ({
+	documents: [] as any[],
+	autoRunState: null as any,
+	isLoadingDocs: false,
+	selectedDoc: null as any,
+	playbooks: [] as any[],
+	isLoadingPlaybooks: false,
+	loadDocuments: vi.fn(),
+	loadDocumentContent: vi.fn(),
+	saveDocumentContent: vi.fn(),
+	resetDocumentTasks: vi.fn(),
+	launchAutoRun: vi.fn(),
+	stopAutoRun: vi.fn(),
+	loadGitBranches: vi.fn(),
+	listWorktrees: vi.fn(),
+	resumeAutoRunError: vi.fn(),
+	skipAutoRunDocument: vi.fn(),
+	abortAutoRunError: vi.fn(),
+	loadPlaybooks: vi.fn(),
+	createPlaybook: vi.fn(),
+	updatePlaybook: vi.fn(),
+	deletePlaybook: vi.fn(),
+}));
 
 vi.mock('../../../web/hooks/useWebSocket', () => ({
 	useWebSocket: ({ handlers }: { handlers: Record<string, (...args: unknown[]) => void> }) => {
@@ -119,16 +165,29 @@ vi.mock('../../../web/hooks/useWebSocket', () => ({
 
 // Mock useNotifications hook
 const mockShowNotification = vi.fn();
+const mockHandleNotificationEvent = vi.fn();
+const mockSetNotificationPreferences = vi.fn();
 let mockNotificationPermission = 'default';
 
 vi.mock('../../../web/hooks/useNotifications', () => ({
 	useNotifications: () => ({
 		permission: mockNotificationPermission,
+		isSupported: true,
 		showNotification: mockShowNotification,
 		requestPermission: vi.fn(),
 		declineNotifications: vi.fn(),
+		resetPromptState: vi.fn(),
 		hasPrompted: false,
 		hasDeclined: false,
+		preferences: {
+			agentComplete: true,
+			agentError: true,
+			systemAlerts: true,
+			sound: false,
+			vibration: true,
+		},
+		setPreferences: mockSetNotificationPreferences,
+		handleNotificationEvent: mockHandleNotificationEvent,
 	}),
 }));
 
@@ -464,9 +523,41 @@ vi.mock('../../../web/mobile/MessageHistory', () => ({
 }));
 
 vi.mock('../../../web/mobile/AutoRunIndicator', () => ({
-	AutoRunIndicator: ({ state, sessionName }: { state: unknown; sessionName?: string }) => (
-		<div data-testid="autorun-indicator">
+	AutoRunIndicator: ({
+		state,
+		sessionName,
+		onTap,
+		onResume,
+		onSkipDocument,
+		onAbort,
+	}: {
+		state: unknown;
+		sessionName?: string;
+		onTap?: () => void;
+		onResume?: () => void;
+		onSkipDocument?: () => void;
+		onAbort?: () => void;
+	}) => (
+		<div data-testid="autorun-indicator" onClick={onTap}>
 			<span data-testid="autorun-session">{sessionName}</span>
+			<button data-testid="autorun-open-panel" onClick={onTap}>
+				Open Auto Run Panel
+			</button>
+			{onResume && (
+				<button data-testid="autorun-resume" onClick={onResume}>
+					Resume
+				</button>
+			)}
+			{onSkipDocument && (
+				<button data-testid="autorun-skip" onClick={onSkipDocument}>
+					Skip
+				</button>
+			)}
+			{onAbort && (
+				<button data-testid="autorun-abort" onClick={onAbort}>
+					Abort
+				</button>
+			)}
 		</div>
 	),
 }));
@@ -538,49 +629,232 @@ vi.mock('../../../web/mobile/RightDrawer', () => ({
 }));
 
 vi.mock('../../../web/mobile/WebTerminal', () => ({
-	WebTerminal: React.forwardRef((_props: unknown, _ref: unknown) => (
-		<div data-testid="web-terminal">WebTerminal Mock</div>
-	)),
+	WebTerminal: React.forwardRef((_props: unknown, ref: React.ForwardedRef<unknown>) => {
+		React.useImperativeHandle(ref, () => ({
+			write: mockTerminalWrite,
+			fitAndGetSize: mockTerminalFitAndGetSize,
+		}));
+
+		return <div data-testid="web-terminal">WebTerminal Mock</div>;
+	}),
 }));
 
 vi.mock('../../../web/mobile/AutoRunPanel', () => ({
-	AutoRunPanel: () => null,
+	AutoRunPanel: ({
+		onClose,
+		onOpenDocument,
+		onOpenSetup,
+		onResumeAfterError,
+		onSkipAfterError,
+		onAbortAfterError,
+		onOpenMarketplace,
+	}: {
+		onClose: () => void;
+		onOpenDocument: (filename: string) => void;
+		onOpenSetup: () => void;
+		onResumeAfterError?: () => void;
+		onSkipAfterError?: () => void;
+		onAbortAfterError?: () => void;
+		onOpenMarketplace?: () => void;
+	}) => (
+		<div data-testid="autorun-panel">
+			<button data-testid="autorun-panel-open-doc" onClick={() => onOpenDocument('daily.md')}>
+				Open document
+			</button>
+			<button data-testid="autorun-panel-open-setup" onClick={onOpenSetup}>
+				Open setup
+			</button>
+			<button data-testid="autorun-panel-marketplace" onClick={onOpenMarketplace}>
+				Open marketplace
+			</button>
+			<button data-testid="autorun-panel-resume" onClick={onResumeAfterError}>
+				Resume
+			</button>
+			<button data-testid="autorun-panel-skip" onClick={onSkipAfterError}>
+				Skip
+			</button>
+			<button data-testid="autorun-panel-abort" onClick={onAbortAfterError}>
+				Abort
+			</button>
+			<button data-testid="autorun-panel-close" onClick={onClose}>
+				Close panel
+			</button>
+		</div>
+	),
 }));
 
 vi.mock('../../../web/mobile/AutoRunDocumentViewer', () => ({
-	AutoRunDocumentViewer: () => null,
+	AutoRunDocumentViewer: ({
+		filename,
+		isLocked,
+		onBack,
+	}: {
+		filename: string;
+		isLocked: boolean;
+		onBack: () => void;
+	}) => (
+		<div data-testid="autorun-document-viewer">
+			<span data-testid="autorun-document-filename">{filename}</span>
+			<span data-testid="autorun-document-locked">{isLocked ? 'locked' : 'unlocked'}</span>
+			<button data-testid="autorun-document-back" onClick={onBack}>
+				Back
+			</button>
+		</div>
+	),
 }));
 
 vi.mock('../../../web/mobile/AutoRunSetupSheet', () => ({
-	AutoRunSetupSheet: () => null,
+	AutoRunSetupSheet: ({
+		currentDocument,
+		onLaunch,
+		onClose,
+		loadGitBranches,
+		loadWorktrees,
+		onOpenMarketplace,
+	}: {
+		currentDocument?: string | null;
+		onLaunch: (config: any) => void;
+		onClose: () => void;
+		loadGitBranches: () => Promise<unknown>;
+		loadWorktrees: () => Promise<unknown>;
+		onOpenMarketplace?: () => void;
+	}) => (
+		<div data-testid="autorun-setup-sheet">
+			<span data-testid="autorun-current-document">{currentDocument ?? ''}</span>
+			<button data-testid="autorun-load-branches" onClick={() => void loadGitBranches()}>
+				Load branches
+			</button>
+			<button data-testid="autorun-load-worktrees" onClick={() => void loadWorktrees()}>
+				Load worktrees
+			</button>
+			<button data-testid="autorun-launch" onClick={() => void onLaunch({ document: 'daily.md' })}>
+				Launch
+			</button>
+			<button data-testid="autorun-setup-marketplace" onClick={onOpenMarketplace}>
+				Marketplace
+			</button>
+			<button data-testid="autorun-setup-close" onClick={onClose}>
+				Close setup
+			</button>
+		</div>
+	),
 }));
 
 vi.mock('../../../web/mobile/MarketplaceSheet', () => ({
-	MarketplaceSheet: () => null,
+	MarketplaceSheet: ({ onImported, onClose }: { onImported: () => void; onClose: () => void }) => (
+		<div data-testid="marketplace-sheet">
+			<button data-testid="marketplace-imported" onClick={onImported}>
+				Imported
+			</button>
+			<button data-testid="marketplace-close" onClick={onClose}>
+				Close marketplace
+			</button>
+		</div>
+	),
+}));
+
+vi.mock('../../../web/mobile/FolderPickerSheet', () => ({
+	FolderPickerSheet: ({
+		startPath,
+		initialPath,
+		onConfirm,
+		onClose,
+	}: {
+		startPath: string;
+		initialPath?: string | null;
+		onConfirm: (folderPath: string) => void;
+		onClose: () => void;
+	}) => (
+		<div data-testid="folder-picker-sheet">
+			<span data-testid="folder-picker-start">{startPath}</span>
+			<span data-testid="folder-picker-initial">{initialPath ?? ''}</span>
+			<button
+				data-testid="folder-picker-confirm"
+				onClick={() => onConfirm('/tmp/maestro-playbooks')}
+			>
+				Confirm folder
+			</button>
+			<button data-testid="folder-picker-close" onClick={onClose}>
+				Close folder picker
+			</button>
+		</div>
+	),
 }));
 
 vi.mock('../../../web/mobile/NotificationSettingsSheet', () => ({
-	NotificationSettingsSheet: () => null,
+	NotificationSettingsSheet: ({ onClose }: { onClose: () => void }) => (
+		<div data-testid="notification-settings-sheet">
+			<button onClick={onClose}>Close notification settings</button>
+		</div>
+	),
 }));
 
 vi.mock('../../../web/mobile/SettingsPanel', () => ({
-	SettingsPanel: () => null,
+	SettingsPanel: ({ onClose }: { onClose: () => void }) => (
+		<div data-testid="settings-panel">
+			<button onClick={onClose}>Close settings</button>
+		</div>
+	),
 }));
 
 vi.mock('../../../web/mobile/AgentCreationSheet', () => ({
-	AgentCreationSheet: () => null,
+	AgentCreationSheet: ({ onClose }: { onClose: () => void }) => (
+		<div data-testid="agent-creation-sheet">
+			<button onClick={onClose}>Close agent creation</button>
+		</div>
+	),
 }));
 
 vi.mock('../../../web/mobile/GroupChatPanel', () => ({
-	GroupChatPanel: () => null,
+	GroupChatPanel: ({
+		onSendMessage,
+		onStop,
+		onBack,
+	}: {
+		onSendMessage: (message: string) => void;
+		onStop: () => void;
+		onBack: () => void;
+	}) => (
+		<div data-testid="group-chat-panel">
+			<button data-testid="group-chat-send" onClick={() => onSendMessage('hello group')}>
+				Send group message
+			</button>
+			<button data-testid="group-chat-stop" onClick={onStop}>
+				Stop group chat
+			</button>
+			<button data-testid="group-chat-back" onClick={onBack}>
+				Back
+			</button>
+		</div>
+	),
 }));
 
 vi.mock('../../../web/mobile/GroupChatSetupSheet', () => ({
-	GroupChatSetupSheet: () => null,
+	GroupChatSetupSheet: ({
+		onStart,
+		onClose,
+	}: {
+		onStart?: (topic: string, participantIds: string[]) => void;
+		onClose: () => void;
+	}) => (
+		<div data-testid="group-chat-setup-sheet">
+			<button
+				data-testid="start-group-chat"
+				onClick={() => onStart?.('Launch sync', ['session-1'])}
+			>
+				Start group chat
+			</button>
+			<button onClick={onClose}>Close group chat setup</button>
+		</div>
+	),
 }));
 
 vi.mock('../../../web/mobile/ContextManagementSheet', () => ({
-	ContextManagementSheet: () => null,
+	ContextManagementSheet: ({ onClose }: { onClose: () => void }) => (
+		<div data-testid="context-management-sheet">
+			<button onClick={onClose}>Close context management</button>
+		</div>
+	),
 }));
 
 vi.mock('../../../web/mobile/CuePanel', () => ({
@@ -588,35 +862,67 @@ vi.mock('../../../web/mobile/CuePanel', () => ({
 }));
 
 vi.mock('../../../web/mobile/UsageDashboardPanel', () => ({
-	UsageDashboardPanel: () => null,
+	UsageDashboardPanel: ({ onClose }: { onClose: () => void }) => (
+		<div data-testid="usage-dashboard-panel">
+			<button onClick={onClose}>Close usage dashboard</button>
+		</div>
+	),
 }));
 
 vi.mock('../../../web/mobile/AchievementsPanel', () => ({
-	AchievementsPanel: () => null,
+	AchievementsPanel: ({ onClose }: { onClose: () => void }) => (
+		<div data-testid="achievements-panel">
+			<button onClick={onClose}>Close achievements</button>
+		</div>
+	),
 }));
 
 vi.mock('../../../web/mobile/GitDiffViewer', () => ({
-	GitDiffViewer: () => null,
+	GitDiffViewer: ({ filePath, onBack }: { filePath: string; onBack: () => void }) => (
+		<div data-testid="git-diff-viewer">
+			<span data-testid="git-diff-file">{filePath}</span>
+			<button data-testid="git-diff-back" onClick={onBack}>
+				Back
+			</button>
+		</div>
+	),
 }));
 
 vi.mock('../../../web/mobile/QuickActionsMenu', () => ({
-	QuickActionsMenu: () => null,
+	QuickActionsMenu: ({
+		isOpen,
+		onClose,
+		actions,
+	}: {
+		isOpen: boolean;
+		onClose: () => void;
+		actions: Array<{ id: string; label: string; action: () => void; available?: () => boolean }>;
+	}) =>
+		isOpen ? (
+			<div data-testid="quick-actions-menu">
+				{actions
+					.filter((action) => !action.available || action.available())
+					.map((action) => (
+						<button
+							key={action.id}
+							data-testid={`quick-action-${action.id}`}
+							onClick={() => {
+								action.action();
+								onClose();
+							}}
+						>
+							{action.label}
+						</button>
+					))}
+				<button data-testid="quick-actions-close" onClick={onClose}>
+					Close quick actions
+				</button>
+			</div>
+		) : null,
 }));
 
 vi.mock('../../../web/hooks/useGroupChat', () => ({
-	useGroupChat: () => ({
-		chats: [],
-		activeChat: null,
-		isLoading: false,
-		loadChats: vi.fn(),
-		startChat: vi.fn(),
-		loadChatState: vi.fn(),
-		sendMessage: vi.fn(),
-		stopChat: vi.fn(),
-		setActiveChatId: vi.fn(),
-		handleGroupChatMessage: vi.fn(),
-		handleGroupChatStateChange: vi.fn(),
-	}),
+	useGroupChat: () => mockGroupChat,
 }));
 
 vi.mock('../../../web/hooks/useCue', () => ({
@@ -633,29 +939,7 @@ vi.mock('../../../web/hooks/useCue', () => ({
 }));
 
 vi.mock('../../../web/hooks/useAutoRun', () => ({
-	useAutoRun: () => ({
-		documents: [],
-		autoRunState: null,
-		isLoadingDocs: false,
-		selectedDoc: null,
-		playbooks: [],
-		isLoadingPlaybooks: false,
-		loadDocuments: vi.fn(),
-		loadDocumentContent: vi.fn(),
-		saveDocumentContent: vi.fn(),
-		resetDocumentTasks: vi.fn().mockResolvedValue(true),
-		launchAutoRun: vi.fn().mockResolvedValue({ success: true }),
-		stopAutoRun: vi.fn(),
-		loadGitBranches: vi.fn().mockResolvedValue({ branches: [] }),
-		listWorktrees: vi.fn().mockResolvedValue([]),
-		resumeAutoRunError: vi.fn().mockResolvedValue(true),
-		skipAutoRunDocument: vi.fn().mockResolvedValue(true),
-		abortAutoRunError: vi.fn().mockResolvedValue(true),
-		loadPlaybooks: vi.fn(),
-		createPlaybook: vi.fn().mockResolvedValue(null),
-		updatePlaybook: vi.fn().mockResolvedValue(null),
-		deletePlaybook: vi.fn().mockResolvedValue(true),
-	}),
+	useAutoRun: () => mockAutoRun,
 }));
 
 vi.mock('../../../web/hooks/useSettings', () => ({
@@ -695,28 +979,57 @@ vi.mock('../../../web/hooks/useAgentManagement', () => ({
 }));
 
 vi.mock('../../../web/hooks/useGitStatus', () => ({
-	useGitStatus: () => ({
-		status: null,
-		diff: null,
-		isLoading: false,
-		loadStatus: vi.fn(),
-		loadDiff: vi.fn(),
-		refresh: vi.fn(),
-	}),
+	useGitStatus: () => mockGitStatus,
 }));
 
 vi.mock('../../../web/mobile/RightPanel', () => ({
 	RightPanel: ({
 		activeTab,
 		onClose,
+		onAutoRunOpenDocument,
+		onAutoRunOpenSetup,
+		onAutoRunOpenFolderPicker,
+		onAutoRunOpenMarketplace,
+		onAutoRunSelectedDocumentChange,
+		onViewDiff,
 	}: {
 		sessionId: string;
 		activeTab?: string;
 		onClose: () => void;
+		onAutoRunOpenDocument?: (filename: string) => void;
+		onAutoRunOpenSetup?: () => void;
+		onAutoRunOpenFolderPicker?: () => void;
+		onAutoRunOpenMarketplace?: () => void;
+		onAutoRunSelectedDocumentChange?: (filename: string | null) => void;
+		onViewDiff?: (filePath: string) => void;
 	}) => (
 		<div data-testid="right-panel" data-active-tab={activeTab}>
 			<button data-testid="close-right-panel" onClick={onClose}>
 				Close
+			</button>
+			<button
+				data-testid="right-panel-open-doc"
+				onClick={() => onAutoRunOpenDocument?.('daily.md')}
+			>
+				Open AutoRun doc
+			</button>
+			<button data-testid="right-panel-open-setup" onClick={onAutoRunOpenSetup}>
+				Open AutoRun setup
+			</button>
+			<button data-testid="right-panel-open-folder" onClick={onAutoRunOpenFolderPicker}>
+				Open AutoRun folder
+			</button>
+			<button data-testid="right-panel-open-marketplace" onClick={onAutoRunOpenMarketplace}>
+				Open marketplace
+			</button>
+			<button
+				data-testid="right-panel-select-doc"
+				onClick={() => onAutoRunSelectedDocumentChange?.('daily.md')}
+			>
+				Select AutoRun doc
+			</button>
+			<button data-testid="right-panel-view-diff" onClick={() => onViewDiff?.('src/App.tsx')}>
+				View diff
 			</button>
 		</div>
 	),
@@ -753,6 +1066,7 @@ describe('MobileApp', () => {
 	let originalFetch: typeof global.fetch;
 	let originalVisibilityState: PropertyDescriptor | undefined;
 	let originalInnerHeight: PropertyDescriptor | undefined;
+	let originalInnerWidth: PropertyDescriptor | undefined;
 	let originalReadyState: PropertyDescriptor | undefined;
 
 	beforeEach(() => {
@@ -771,6 +1085,49 @@ describe('MobileApp', () => {
 		mockHandlers = {};
 		mockDesktopTheme = null;
 		mockDesktopBionifyReadingMode = false;
+		mockHandleNotificationEvent.mockClear();
+		mockSetNotificationPreferences.mockClear();
+		mockTerminalWrite.mockClear();
+		mockTerminalFitAndGetSize.mockReset();
+		mockTerminalFitAndGetSize.mockReturnValue({ cols: 120, rows: 40 });
+		mockGitStatus.status = null;
+		mockGitStatus.diff = null;
+		mockGitStatus.isLoading = false;
+		mockGitStatus.loadStatus.mockReset();
+		mockGitStatus.loadDiff.mockReset();
+		mockGitStatus.refresh.mockReset();
+		mockGroupChat.chats = [];
+		mockGroupChat.activeChat = null;
+		mockGroupChat.isLoading = false;
+		mockGroupChat.loadChats.mockReset();
+		mockGroupChat.startChat.mockReset();
+		mockGroupChat.loadChatState.mockReset();
+		mockGroupChat.sendMessage.mockReset();
+		mockGroupChat.stopChat.mockReset();
+		mockGroupChat.setActiveChatId.mockReset();
+		mockGroupChat.handleGroupChatMessage.mockReset();
+		mockGroupChat.handleGroupChatStateChange.mockReset();
+		mockAutoRun.documents = [];
+		mockAutoRun.autoRunState = null;
+		mockAutoRun.isLoadingDocs = false;
+		mockAutoRun.selectedDoc = null;
+		mockAutoRun.playbooks = [];
+		mockAutoRun.isLoadingPlaybooks = false;
+		mockAutoRun.loadDocuments.mockReset();
+		mockAutoRun.loadDocumentContent.mockReset();
+		mockAutoRun.saveDocumentContent.mockReset();
+		mockAutoRun.resetDocumentTasks.mockReset().mockResolvedValue(true);
+		mockAutoRun.launchAutoRun.mockReset().mockResolvedValue({ success: true });
+		mockAutoRun.stopAutoRun.mockReset();
+		mockAutoRun.loadGitBranches.mockReset().mockResolvedValue({ branches: [] });
+		mockAutoRun.listWorktrees.mockReset().mockResolvedValue([]);
+		mockAutoRun.resumeAutoRunError.mockReset().mockResolvedValue(true);
+		mockAutoRun.skipAutoRunDocument.mockReset().mockResolvedValue(true);
+		mockAutoRun.abortAutoRunError.mockReset().mockResolvedValue(true);
+		mockAutoRun.loadPlaybooks.mockReset();
+		mockAutoRun.createPlaybook.mockReset().mockResolvedValue(null);
+		mockAutoRun.updatePlaybook.mockReset().mockResolvedValue(null);
+		mockAutoRun.deletePlaybook.mockReset().mockResolvedValue(true);
 
 		// Store original fetch
 		originalFetch = global.fetch;
@@ -782,6 +1139,7 @@ describe('MobileApp', () => {
 		// Store original properties
 		originalVisibilityState = Object.getOwnPropertyDescriptor(document, 'visibilityState');
 		originalInnerHeight = Object.getOwnPropertyDescriptor(window, 'innerHeight');
+		originalInnerWidth = Object.getOwnPropertyDescriptor(window, 'innerWidth');
 		originalReadyState = Object.getOwnPropertyDescriptor(document, 'readyState');
 
 		// Set default inner height
@@ -815,6 +1173,9 @@ describe('MobileApp', () => {
 		}
 		if (originalInnerHeight !== undefined) {
 			Object.defineProperty(window, 'innerHeight', originalInnerHeight);
+		}
+		if (originalInnerWidth !== undefined) {
+			Object.defineProperty(window, 'innerWidth', originalInnerWidth);
 		}
 		if (originalReadyState !== undefined) {
 			Object.defineProperty(document, 'readyState', originalReadyState);
@@ -1262,6 +1623,191 @@ describe('MobileApp', () => {
 			// The handler should be called, internal state is updated
 			expect(mockHandlers.onActiveSessionChanged).toBeDefined();
 		});
+
+		it('selects a session from a notification click event', async () => {
+			render(<MobileApp />);
+
+			await act(async () => {
+				mockHandlers.onSessionsUpdate?.([
+					createMockSession({ id: 'session-1', name: 'Session 1' }),
+					createMockSession({ id: 'session-2', name: 'Session 2' }),
+				]);
+			});
+
+			expect(screen.getByText('Session 1')).toBeInTheDocument();
+
+			act(() => {
+				window.dispatchEvent(
+					new CustomEvent('maestro-notification-click', {
+						detail: { sessionId: 'session-2' },
+					})
+				);
+			});
+
+			expect(screen.getByText('Session 2')).toBeInTheDocument();
+		});
+	});
+
+	describe('header notifications and actions', () => {
+		it('lists completed agents, selects one, and clears the notification list', async () => {
+			render(<MobileApp />);
+
+			await act(async () => {
+				mockHandlers.onSessionsUpdate?.([
+					createMockSession({ id: 'session-1', name: 'Session 1' }),
+					createMockSession({ id: 'session-2', name: 'Session 2' }),
+				]);
+			});
+
+			await act(async () => {
+				mockHandlers.onNotificationEvent?.({
+					eventType: 'agent_complete',
+					sessionId: 'session-2',
+					sessionName: 'Session 2',
+					message: 'Done',
+					severity: 'info',
+				});
+			});
+
+			fireEvent.click(screen.getByLabelText('Notifications'));
+
+			expect(screen.getByText('Completed Agents')).toBeInTheDocument();
+			expect(screen.getByText('Session 2')).toBeInTheDocument();
+			expect(screen.getByText('just now')).toBeInTheDocument();
+
+			fireEvent.click(screen.getByRole('button', { name: /Session 2/ }));
+
+			expect(mockSend).toHaveBeenCalledWith({
+				type: 'select_session',
+				sessionId: 'session-2',
+				tabId: undefined,
+			});
+
+			fireEvent.click(screen.getByLabelText('Notifications'));
+			fireEvent.click(screen.getByText('Clear'));
+			fireEvent.click(screen.getByLabelText('Notifications'));
+
+			expect(screen.getByText('No completed agents yet')).toBeInTheDocument();
+		});
+
+		it('opens notification settings from the notification dropdown', async () => {
+			render(<MobileApp />);
+
+			fireEvent.click(screen.getByLabelText('Notifications'));
+			fireEvent.click(screen.getByTitle('Notification Settings'));
+
+			expect(screen.getByTestId('notification-settings-sheet')).toBeInTheDocument();
+			expect(mockTriggerHaptic).toHaveBeenCalledWith([10]);
+		});
+
+		it('opens narrow-screen overflow actions', async () => {
+			Object.defineProperty(window, 'innerWidth', {
+				value: 500,
+				writable: true,
+				configurable: true,
+			});
+
+			render(<MobileApp />);
+
+			await act(async () => {
+				mockHandlers.onSessionsUpdate?.([
+					createMockSession({ id: 'session-1', name: 'Session 1' }),
+				]);
+			});
+
+			const openMoreActions = () => fireEvent.click(screen.getByLabelText('More actions'));
+
+			openMoreActions();
+			fireEvent.click(screen.getByText('Settings'));
+			expect(screen.getByTestId('settings-panel')).toBeInTheDocument();
+			fireEvent.click(screen.getByText('Close settings'));
+
+			openMoreActions();
+			fireEvent.click(screen.getByText('Group Chat'));
+			expect(screen.getByTestId('group-chat-setup-sheet')).toBeInTheDocument();
+			fireEvent.click(screen.getByText('Close group chat setup'));
+
+			openMoreActions();
+			fireEvent.click(screen.getByText('Usage Dashboard'));
+			expect(screen.getByTestId('usage-dashboard-panel')).toBeInTheDocument();
+			fireEvent.click(screen.getByText('Close usage dashboard'));
+
+			openMoreActions();
+			fireEvent.click(screen.getByText('Achievements'));
+			expect(screen.getByTestId('achievements-panel')).toBeInTheDocument();
+			fireEvent.click(screen.getByText('Close achievements'));
+
+			openMoreActions();
+			fireEvent.click(screen.getByText('Context Management'));
+			expect(screen.getByTestId('context-management-sheet')).toBeInTheDocument();
+			fireEvent.click(screen.getByText('Close context management'));
+
+			openMoreActions();
+			fireEvent.click(screen.getByText('New Agent'));
+			expect(screen.getByTestId('agent-creation-sheet')).toBeInTheDocument();
+		});
+
+		it('opens active group chat list, selects chats, and starts a new group chat', async () => {
+			mockGroupChat.chats = [
+				{
+					id: 'chat-active',
+					topic: 'Active topic',
+					isActive: true,
+					participants: [{ id: 'session-1' }],
+					messages: [{ id: 'm1' }],
+				},
+				{
+					id: 'chat-ended',
+					topic: 'Ended topic',
+					isActive: false,
+					participants: [{ id: 'session-1' }, { id: 'session-2' }],
+					messages: [],
+				},
+			];
+			mockGroupChat.activeChat = { id: 'chat-active', topic: 'Active topic' };
+			mockGroupChat.startChat.mockResolvedValue('chat-new');
+			render(<MobileApp />);
+
+			await act(async () => {
+				mockHandlers.onSessionsUpdate?.([
+					createMockSession({ id: 'session-1', name: 'Session 1' }),
+					createMockSession({ id: 'session-2', name: 'Session 2' }),
+				]);
+			});
+
+			fireEvent.click(screen.getByLabelText('Group Chat'));
+			expect(screen.getByText('Group Chats')).toBeInTheDocument();
+			expect(screen.getByText('Active topic')).toBeInTheDocument();
+			expect(screen.getByText('Ended topic')).toBeInTheDocument();
+
+			fireEvent.click(screen.getByText('Active topic'));
+			expect(mockGroupChat.loadChatState).toHaveBeenCalledWith('chat-active');
+			expect(screen.getByTestId('group-chat-panel')).toBeInTheDocument();
+			fireEvent.click(screen.getByTestId('group-chat-send'));
+			expect(mockGroupChat.sendMessage).toHaveBeenCalledWith('chat-active', 'hello group');
+			await act(async () => {
+				fireEvent.click(screen.getByTestId('group-chat-stop'));
+				await Promise.resolve();
+			});
+			expect(mockGroupChat.stopChat).toHaveBeenCalledWith('chat-active');
+			fireEvent.click(screen.getByTestId('group-chat-back'));
+
+			fireEvent.click(screen.getByLabelText('Group Chat'));
+			fireEvent.click(screen.getByText('Ended topic'));
+			expect(mockGroupChat.loadChatState).toHaveBeenCalledWith('chat-ended');
+			fireEvent.click(screen.getByTestId('group-chat-back'));
+
+			fireEvent.click(screen.getByLabelText('Group Chat'));
+			fireEvent.click(screen.getByRole('button', { name: 'New group chat' }));
+			expect(screen.getByTestId('group-chat-setup-sheet')).toBeInTheDocument();
+			await act(async () => {
+				fireEvent.click(screen.getByTestId('start-group-chat'));
+				await Promise.resolve();
+			});
+
+			expect(mockGroupChat.startChat).toHaveBeenCalledWith('Launch sync', ['session-1']);
+			expect(mockGroupChat.loadChatState).toHaveBeenCalledWith('chat-new');
+		});
 	});
 
 	describe('command submission', () => {
@@ -1377,6 +1923,46 @@ describe('MobileApp', () => {
 			// AI draft should be restored
 			expect(screen.getByTestId('input-mode')).toHaveTextContent('ai');
 			expect(screen.getByTestId('command-input')).toHaveValue('Explain the repo status');
+		});
+
+		it('routes terminal websocket data and ready resize for the active terminal session', async () => {
+			render(<MobileApp />);
+
+			await act(async () => {
+				mockHandlers.onSessionsUpdate?.([
+					createMockSession({
+						id: 'session-1',
+						name: 'Terminal Session',
+						inputMode: 'terminal',
+					}),
+				]);
+			});
+
+			expect(screen.getByTestId('web-terminal')).toBeInTheDocument();
+
+			await act(async () => {
+				mockHandlers.onTerminalData?.('other-session', 'ignored');
+				mockHandlers.onTerminalReady?.('other-session');
+			});
+
+			expect(mockTerminalWrite).not.toHaveBeenCalled();
+			expect(mockTerminalFitAndGetSize).not.toHaveBeenCalled();
+
+			mockSend.mockClear();
+
+			await act(async () => {
+				mockHandlers.onTerminalData?.('session-1', 'hello terminal');
+				mockHandlers.onTerminalReady?.('session-1');
+			});
+
+			expect(mockTerminalWrite).toHaveBeenCalledWith('hello terminal');
+			expect(mockTerminalFitAndGetSize).toHaveBeenCalled();
+			expect(mockSend).toHaveBeenCalledWith({
+				type: 'terminal_resize',
+				sessionId: 'session-1',
+				cols: 120,
+				rows: 40,
+			});
 		});
 	});
 
@@ -1749,6 +2335,62 @@ describe('MobileApp', () => {
 			fireEvent.click(screen.getByLabelText('Files & History'));
 			expect(screen.queryByTestId('right-panel')).not.toBeInTheDocument();
 		});
+
+		it('bridges right panel AutoRun, folder, marketplace, and git actions', async () => {
+			mockGitStatus.diff = { diff: 'diff --git a/src/App.tsx b/src/App.tsx' };
+			mockSendRequest.mockResolvedValue({ success: true });
+			render(<MobileApp />);
+
+			await act(async () => {
+				mockHandlers.onSessionsUpdate?.([
+					createMockSession({
+						id: 'session-1',
+						name: 'Session 1',
+						cwd: '/Users/test/project',
+						autoRunFolderPath: '/Users/test/project/.maestro/playbooks',
+					} as Partial<Session>),
+				]);
+			});
+
+			fireEvent.click(screen.getByLabelText('Files & History'));
+			fireEvent.click(screen.getByTestId('right-panel-select-doc'));
+			fireEvent.click(screen.getByTestId('right-panel-open-setup'));
+
+			expect(screen.getByTestId('autorun-setup-sheet')).toBeInTheDocument();
+			expect(screen.getByTestId('autorun-current-document')).toHaveTextContent('daily.md');
+
+			fireEvent.click(screen.getByTestId('autorun-load-branches'));
+			fireEvent.click(screen.getByTestId('autorun-load-worktrees'));
+			expect(mockAutoRun.loadGitBranches).toHaveBeenCalledWith('session-1');
+			expect(mockAutoRun.listWorktrees).toHaveBeenCalledWith('session-1');
+
+			fireEvent.click(screen.getByTestId('autorun-setup-marketplace'));
+			expect(screen.getByTestId('marketplace-sheet')).toBeInTheDocument();
+			fireEvent.click(screen.getByTestId('marketplace-imported'));
+			expect(mockAutoRun.loadDocuments).toHaveBeenCalledWith('session-1');
+			fireEvent.click(screen.getByTestId('marketplace-close'));
+
+			fireEvent.click(screen.getByTestId('right-panel-open-folder'));
+			expect(screen.getByTestId('folder-picker-sheet')).toBeInTheDocument();
+			expect(screen.getByTestId('folder-picker-start')).toHaveTextContent('/Users/test/project');
+			expect(screen.getByTestId('folder-picker-initial')).toHaveTextContent(
+				'/Users/test/project/.maestro/playbooks'
+			);
+			await act(async () => {
+				fireEvent.click(screen.getByTestId('folder-picker-confirm'));
+				await Promise.resolve();
+			});
+			expect(mockSendRequest).toHaveBeenCalledWith('set_auto_run_folder', {
+				sessionId: 'session-1',
+				folderPath: '/tmp/maestro-playbooks',
+			});
+
+			fireEvent.click(screen.getByTestId('right-panel-view-diff'));
+			expect(mockGitStatus.loadDiff).toHaveBeenCalledWith('session-1', 'src/App.tsx');
+			expect(screen.getByTestId('git-diff-viewer')).toBeInTheDocument();
+			fireEvent.click(screen.getByTestId('git-diff-back'));
+			expect(screen.queryByTestId('git-diff-viewer')).not.toBeInTheDocument();
+		});
 	});
 
 	describe('tab search modal', () => {
@@ -2009,6 +2651,61 @@ describe('MobileApp', () => {
 			});
 
 			expect(screen.queryByTestId('autorun-indicator')).not.toBeInTheDocument();
+		});
+
+		it('opens AutoRun panel from indicator and drives panel recovery and launch callbacks', async () => {
+			render(<MobileApp />);
+
+			await act(async () => {
+				mockHandlers.onSessionsUpdate?.([
+					createMockSession({
+						id: 'session-1',
+						name: 'Session 1',
+						state: 'idle',
+					}),
+				]);
+			});
+
+			await act(async () => {
+				mockHandlers.onAutoRunStateChange?.('session-1', {
+					isRunning: true,
+					totalTasks: 2,
+					currentTaskIndex: 0,
+					completedTasks: 0,
+				});
+			});
+
+			fireEvent.click(screen.getByTestId('autorun-open-panel'));
+			expect(screen.getByTestId('autorun-panel')).toBeInTheDocument();
+
+			fireEvent.click(screen.getByTestId('autorun-panel-resume'));
+			fireEvent.click(screen.getByTestId('autorun-panel-skip'));
+			fireEvent.click(screen.getByTestId('autorun-panel-abort'));
+			expect(mockAutoRun.resumeAutoRunError).toHaveBeenCalledWith('session-1');
+			expect(mockAutoRun.skipAutoRunDocument).toHaveBeenCalledWith('session-1');
+			expect(mockAutoRun.abortAutoRunError).toHaveBeenCalledWith('session-1');
+
+			fireEvent.click(screen.getByTestId('autorun-panel-open-doc'));
+			expect(screen.getByTestId('autorun-document-viewer')).toBeInTheDocument();
+			expect(screen.getByTestId('autorun-document-filename')).toHaveTextContent('daily.md');
+			expect(screen.getByTestId('autorun-document-locked')).toHaveTextContent('locked');
+			fireEvent.click(screen.getByTestId('autorun-document-back'));
+			expect(screen.queryByTestId('autorun-document-viewer')).not.toBeInTheDocument();
+
+			fireEvent.click(screen.getByTestId('autorun-panel-open-setup'));
+			expect(screen.getByTestId('autorun-setup-sheet')).toBeInTheDocument();
+			await act(async () => {
+				fireEvent.click(screen.getByTestId('autorun-launch'));
+				await Promise.resolve();
+			});
+			expect(mockAutoRun.launchAutoRun).toHaveBeenCalledWith('session-1', {
+				document: 'daily.md',
+			});
+
+			fireEvent.click(screen.getByTestId('autorun-panel-marketplace'));
+			expect(screen.getByTestId('marketplace-sheet')).toBeInTheDocument();
+			fireEvent.click(screen.getByTestId('autorun-panel-close'));
+			expect(screen.queryByTestId('autorun-panel')).not.toBeInTheDocument();
 		});
 	});
 

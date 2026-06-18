@@ -769,7 +769,6 @@ export const AnnotatorCanvas = forwardRef<SVGSVGElement, AnnotatorCanvasProps>(
 			const handleColor = '#ffffff';
 			const handleStroke = '#000000';
 			const handleProps = (handle: ResizeHandle, hx: number, hy: number, cur: string) => ({
-				key: handle,
 				x: hx - handleSize / 2,
 				y: hy - handleSize / 2,
 				width: handleSize,
@@ -784,18 +783,18 @@ export const AnnotatorCanvas = forwardRef<SVGSVGElement, AnnotatorCanvasProps>(
 			if (shape.kind === 'arrow') {
 				return (
 					<g>
-						<rect {...handleProps('p1', shape.x1, shape.y1, 'crosshair')} />
-						<rect {...handleProps('p2', shape.x2, shape.y2, 'crosshair')} />
+						<rect key="p1" {...handleProps('p1', shape.x1, shape.y1, 'crosshair')} />
+						<rect key="p2" {...handleProps('p2', shape.x2, shape.y2, 'crosshair')} />
 					</g>
 				);
 			}
 			const { x, y, w, h } = bboxOf(shape);
 			return (
 				<g>
-					<rect {...handleProps('tl', x, y, 'nwse-resize')} />
-					<rect {...handleProps('tr', x + w, y, 'nesw-resize')} />
-					<rect {...handleProps('bl', x, y + h, 'nesw-resize')} />
-					<rect {...handleProps('br', x + w, y + h, 'nwse-resize')} />
+					<rect key="tl" {...handleProps('tl', x, y, 'nwse-resize')} />
+					<rect key="tr" {...handleProps('tr', x + w, y, 'nesw-resize')} />
+					<rect key="bl" {...handleProps('bl', x, y + h, 'nesw-resize')} />
+					<rect key="br" {...handleProps('br', x + w, y + h, 'nwse-resize')} />
 				</g>
 			);
 		};

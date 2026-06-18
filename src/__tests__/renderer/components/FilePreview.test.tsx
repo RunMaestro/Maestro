@@ -5,8 +5,51 @@ import { FilePreview } from '../../../renderer/components/FilePreview';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useImageAnnotatorStore } from '../../../renderer/components/ImageAnnotator/imageAnnotatorStore';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useUIStore } from '../../../renderer/stores/uiStore';
 
 import { mockTheme } from '../../helpers/mockTheme';
+
+const clipboardMocks = vi.hoisted(() => ({
+	safeClipboardWrite: vi.fn(),
+	safeClipboardWriteImage: vi.fn(),
+}));
+
+const flashMocks = vi.hoisted(() => ({
+	flashCopiedToClipboard: vi.fn(),
+}));
+
+const markdownEditorHandle = vi.hoisted(() => ({
+	focus: vi.fn(),
+	scrollToLine: vi.fn(),
+	getTopLine: vi.fn(() => 7),
+	setScrollPercent: vi.fn(),
+	setSearchMatches: vi.fn(),
+}));
+
+const markdownFastHandle = vi.hoisted(() => ({
+	findInContent: vi.fn(() => []),
+	scrollToMatch: vi.fn(),
+	scrollToHeading: vi.fn(() => true),
+}));
+
+const textFastHandle = vi.hoisted(() => ({
+	findInContent: vi.fn(() => []),
+	scrollToMatch: vi.fn(),
+	getTopLine: vi.fn(() => 3),
+	scrollToLine: vi.fn(),
+}));
+
+const giantHandle = vi.hoisted(() => ({
+	findInContent: vi.fn(() => []),
+	scrollToMatch: vi.fn(),
+	getTopLine: vi.fn(() => 4),
+	scrollToLine: vi.fn(),
+}));
+
+vi.mock('../../../renderer/utils/clipboard', () => clipboardMocks);
+vi.mock('../../../renderer/utils/flashCopiedToClipboard', () => flashMocks);
+
 // Mock lucide-react icons
 vi.mock('lucide-react', () => ({
 	FileCode: () => <span data-testid="file-code-icon">FileCode</span>,
@@ -17,6 +60,8 @@ vi.mock('lucide-react', () => ({
 	ChevronRight: () => <span data-testid="chevron-right">ChevronRight</span>,
 	Clipboard: () => <span data-testid="clipboard-icon">Clipboard</span>,
 	Copy: () => <span data-testid="copy-icon">Copy</span>,
+	FilePlus2: () => <span data-testid="file-plus-icon">FilePlus2</span>,
+	FileWarning: () => <span data-testid="file-warning-icon">FileWarning</span>,
 	Loader2: () => <span data-testid="loader-icon">Loader2</span>,
 	Image: () => <span data-testid="image-icon">Image</span>,
 	Globe: () => <span data-testid="globe-icon">Globe</span>,
@@ -30,6 +75,8 @@ vi.mock('lucide-react', () => ({
 	ExternalLink: () => <span data-testid="external-link-icon">ExternalLink</span>,
 	RefreshCw: () => <span data-testid="refresh-icon">RefreshCw</span>,
 	X: () => <span data-testid="x-icon">X</span>,
+	Filter: () => <span data-testid="filter-icon">Filter</span>,
+	Table2: () => <span data-testid="table-icon">Table2</span>,
 	ZoomIn: () => <span data-testid="zoom-in-icon">ZoomIn</span>,
 	ZoomOut: () => <span data-testid="zoom-out-icon">ZoomOut</span>,
 	Maximize2: () => <span data-testid="maximize-icon">Maximize2</span>,
@@ -182,11 +229,51 @@ vi.mock('../../../shared/gitUtils', () => ({
 // the FilePreview wiring tests (controlled vs. internal editContent, onChange
 // fan-out) without coupling to CodeMirror internals.
 vi.mock('../../../renderer/components/FilePreview/markdownEditor', () => ({
-	MarkdownEditor: React.forwardRef<unknown, { value: string; onChange: (v: string) => void }>(
-		({ value, onChange }, _ref) => (
-			<textarea value={value} onChange={(e) => onChange(e.target.value)} />
-		)
-	),
+	MarkdownEditor: React.forwardRef<
+		unknown,
+		{
+			value: string;
+			onChange: (v: string) => void;
+			onLineNumberContextMenu?: (lineNumber: number, event: MouseEvent) => void;
+		}
+	>(({ value, onChange, onLineNumberContextMenu }, ref) => {
+		React.useImperativeHandle(ref, () => markdownEditorHandle);
+		return (
+			<div>
+				<button
+					type="button"
+					onContextMenu={(e) => {
+						e.preventDefault();
+						onLineNumberContextMenu?.(2, e.nativeEvent);
+					}}
+				>
+					Line 2
+				</button>
+				<textarea value={value} onChange={(e) => onChange(e.target.value)} />
+			</div>
+		);
+	}),
+}));
+
+vi.mock('../../../renderer/components/FilePreview/markdownFast', () => ({
+	default: React.forwardRef(({ content }: { content: string }, ref) => {
+		React.useImperativeHandle(ref, () => markdownFastHandle);
+		return <div data-testid="markdown-fast-preview">{content}</div>;
+	}),
+}));
+
+vi.mock('../../../renderer/components/FilePreview/textFast', () => ({
+	default: React.forwardRef(({ content }: { content: string }, ref) => {
+		React.useImperativeHandle(ref, () => textFastHandle);
+		return <div data-testid="text-fast-preview">{content}</div>;
+	}),
+}));
+
+vi.mock('../../../renderer/components/FilePreview/giantPreview', () => ({
+	default: React.forwardRef(({ content }: { content: string }, ref) => {
+		React.useImperativeHandle(ref, () => giantHandle);
+		return <div data-testid="giant-preview">{content}</div>;
+	}),
 }));
 
 const defaultProps = {
@@ -208,6 +295,25 @@ describe('FilePreview', () => {
 		mockContainerClickOutside.enabled = false;
 		mockTocClickOutside.callback = null;
 		mockTocClickOutside.enabled = false;
+		clipboardMocks.safeClipboardWrite.mockResolvedValue(true);
+		clipboardMocks.safeClipboardWriteImage.mockResolvedValue(true);
+		markdownEditorHandle.focus.mockClear();
+		markdownEditorHandle.scrollToLine.mockClear();
+		markdownEditorHandle.getTopLine.mockClear();
+		markdownEditorHandle.setScrollPercent.mockClear();
+		markdownEditorHandle.setSearchMatches.mockClear();
+		markdownFastHandle.findInContent.mockClear();
+		markdownFastHandle.scrollToMatch.mockClear();
+		markdownFastHandle.scrollToHeading.mockClear();
+		textFastHandle.findInContent.mockClear();
+		textFastHandle.scrollToMatch.mockClear();
+		textFastHandle.getTopLine.mockClear();
+		textFastHandle.scrollToLine.mockClear();
+		giantHandle.findInContent.mockClear();
+		giantHandle.scrollToMatch.mockClear();
+		giantHandle.getTopLine.mockClear();
+		giantHandle.scrollToLine.mockClear();
+		useSessionStore.setState({ activeSessionId: '' });
 	});
 
 	// Reset settings store after every test so mid-test `setState({ bionifyReadingMode: true })`
@@ -726,6 +832,270 @@ describe('FilePreview', () => {
 			fireEvent.keyDown(previewContainer!, { key: 'e', metaKey: true });
 
 			expect(openAnnotator).toHaveBeenCalledWith('data:image/png;base64,abc', expect.any(Function));
+		});
+
+		it('overwrites a PNG image edit and refreshes the preview', async () => {
+			const editedDataUrl = 'data:image/png;base64,edited';
+			const onReloadFile = vi.fn();
+			const openAnnotator = vi.fn((_content: string, onSave: (dataUrl: string) => void) => {
+				onSave(editedDataUrl);
+			});
+			useImageAnnotatorStore.setState({ openAnnotator });
+			window.maestro.fs.writeImageFile = vi.fn().mockResolvedValue({ success: true });
+			window.maestro.fs.stat = vi.fn().mockResolvedValue({
+				size: 2048,
+				createdAt: '2024-01-01T00:00:00.000Z',
+				modifiedAt: '2024-02-01T00:00:00.000Z',
+			});
+
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'image.png',
+						content: 'data:image/png;base64,abc',
+						path: '/test/image.png',
+					}}
+					onReloadFile={onReloadFile}
+					shortcuts={{
+						toggleMarkdownMode: {
+							id: 'toggleMarkdownMode',
+							label: 'Toggle Edit/Preview',
+							keys: ['Meta', 'e'],
+						},
+					}}
+				/>
+			);
+
+			fireEvent.keyDown(container.querySelector('[tabindex="0"]')!, { key: 'e', metaKey: true });
+
+			expect(await screen.findByText('Save edited image')).toBeInTheDocument();
+			fireEvent.click(screen.getByRole('button', { name: /Overwrite the existing file/i }));
+
+			await waitFor(() => {
+				expect(window.maestro.fs.writeImageFile).toHaveBeenCalledWith(
+					'/test/image.png',
+					editedDataUrl,
+					undefined
+				);
+			});
+			expect(onReloadFile).toHaveBeenCalledTimes(1);
+		});
+
+		it('writes a sibling PNG when overwriting an edited JPG image', async () => {
+			const editedDataUrl = 'data:image/png;base64,edited';
+			const onReloadFile = vi.fn();
+			const openAnnotator = vi.fn((_content: string, onSave: (dataUrl: string) => void) => {
+				onSave(editedDataUrl);
+			});
+			useImageAnnotatorStore.setState({ openAnnotator });
+			window.maestro.fs.writeImageFile = vi.fn().mockResolvedValue({ success: true });
+
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'photo.jpg',
+						content: 'data:image/jpeg;base64,abc',
+						path: '/test/photo.jpg',
+					}}
+					onReloadFile={onReloadFile}
+					shortcuts={{
+						toggleMarkdownMode: {
+							id: 'toggleMarkdownMode',
+							label: 'Toggle Edit/Preview',
+							keys: ['Meta', 'e'],
+						},
+					}}
+				/>
+			);
+
+			fireEvent.keyDown(container.querySelector('[tabindex="0"]')!, { key: 'e', metaKey: true });
+
+			expect(await screen.findByText(/will create photo\.png instead/i)).toBeInTheDocument();
+			fireEvent.click(screen.getByRole('button', { name: /Overwrite the existing file/i }));
+
+			await waitFor(() => {
+				expect(window.maestro.fs.writeImageFile).toHaveBeenCalledWith(
+					'/test/photo.png',
+					editedDataUrl,
+					undefined
+				);
+			});
+			expect(onReloadFile).not.toHaveBeenCalled();
+		});
+
+		it('saves an edited image to a custom sibling file', async () => {
+			const editedDataUrl = 'data:image/png;base64,edited';
+			const onReloadFile = vi.fn();
+			const openAnnotator = vi.fn((_content: string, onSave: (dataUrl: string) => void) => {
+				onSave(editedDataUrl);
+			});
+			useImageAnnotatorStore.setState({ openAnnotator });
+			window.maestro.fs.writeImageFile = vi.fn().mockResolvedValue({ success: true });
+
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'image.png',
+						content: 'data:image/png;base64,abc',
+						path: '/test/image.png',
+					}}
+					onReloadFile={onReloadFile}
+					shortcuts={{
+						toggleMarkdownMode: {
+							id: 'toggleMarkdownMode',
+							label: 'Toggle Edit/Preview',
+							keys: ['Meta', 'e'],
+						},
+					}}
+				/>
+			);
+
+			fireEvent.keyDown(container.querySelector('[tabindex="0"]')!, { key: 'e', metaKey: true });
+
+			expect(await screen.findByText('Save edited image')).toBeInTheDocument();
+			fireEvent.click(screen.getByRole('button', { name: /Save to a new file/i }));
+			fireEvent.change(screen.getByLabelText('File name'), {
+				target: { value: 'custom-edited.png' },
+			});
+			fireEvent.click(screen.getByRole('button', { name: /^Save$/i }));
+
+			await waitFor(() => {
+				expect(window.maestro.fs.writeImageFile).toHaveBeenCalledWith(
+					'/test/custom-edited.png',
+					editedDataUrl,
+					undefined
+				);
+			});
+			expect(onReloadFile).not.toHaveBeenCalled();
+		});
+
+		it('copies the file path with the configured shortcut', async () => {
+			const onShortcutUsed = vi.fn();
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					onShortcutUsed={onShortcutUsed}
+					shortcuts={{
+						copyFilePath: {
+							id: 'copyFilePath',
+							label: 'Copy File Path',
+							keys: ['Meta', 'p'],
+						},
+					}}
+				/>
+			);
+
+			fireEvent.keyDown(container.querySelector('[tabindex="0"]')!, { key: 'p', metaKey: true });
+
+			await waitFor(() => {
+				expect(clipboardMocks.safeClipboardWrite).toHaveBeenCalledWith('/test/test.md');
+			});
+			expect(flashMocks.flashCopiedToClipboard).toHaveBeenCalledWith(
+				'/test/test.md',
+				'File Path Copied'
+			);
+			expect(onShortcutUsed).toHaveBeenCalledWith('copyFilePath');
+		});
+
+		it('copies image content with Cmd+C while previewing an image', async () => {
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'image.png',
+						content: 'data:image/png;base64,abc',
+						path: '/test/image.png',
+					}}
+				/>
+			);
+
+			fireEvent.keyDown(container.querySelector('[tabindex="0"]')!, { key: 'c', metaKey: true });
+
+			await waitFor(() => {
+				expect(clipboardMocks.safeClipboardWriteImage).toHaveBeenCalledWith(
+					'data:image/png;base64,abc'
+				);
+			});
+			expect(flashMocks.flashCopiedToClipboard).toHaveBeenCalledWith(undefined, 'Image Copied');
+		});
+
+		it('routes graph, fuzzy search, and history shortcuts', () => {
+			const onOpenInGraph = vi.fn();
+			const onOpenFuzzySearch = vi.fn();
+			const onNavigateBack = vi.fn();
+			const onNavigateForward = vi.fn();
+			const onShortcutUsed = vi.fn();
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'notes.md',
+						content: '# Heading\n\nBody',
+						path: '/test/notes.md',
+					}}
+					onOpenInGraph={onOpenInGraph}
+					onOpenFuzzySearch={onOpenFuzzySearch}
+					onNavigateBack={onNavigateBack}
+					onNavigateForward={onNavigateForward}
+					canGoBack
+					canGoForward
+					onShortcutUsed={onShortcutUsed}
+					shortcuts={{
+						fuzzyFileSearch: {
+							id: 'fuzzyFileSearch',
+							label: 'Fuzzy File Search',
+							keys: ['Meta', 'g'],
+						},
+					}}
+				/>
+			);
+			const preview = container.querySelector('[tabindex="0"]')!;
+
+			fireEvent.keyDown(preview, { key: 'g', metaKey: true, shiftKey: true });
+			fireEvent.keyDown(preview, { key: 'g', metaKey: true });
+			fireEvent.keyDown(preview, { key: 'ArrowLeft', metaKey: true });
+			fireEvent.keyDown(preview, { key: 'ArrowRight', metaKey: true });
+
+			expect(onOpenInGraph).toHaveBeenCalledTimes(1);
+			expect(onOpenFuzzySearch).toHaveBeenCalledTimes(1);
+			expect(onNavigateBack).toHaveBeenCalledTimes(1);
+			expect(onNavigateForward).toHaveBeenCalledTimes(1);
+			expect(onShortcutUsed).toHaveBeenCalledWith('filePreviewBack');
+			expect(onShortcutUsed).toHaveBeenCalledWith('filePreviewForward');
+		});
+
+		it('copies a scoped deep link from the editor line menu', async () => {
+			useSessionStore.setState({ activeSessionId: 'session-1' });
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'test.md',
+						content: 'first\nsecond',
+						path: '/test/test.md',
+					}}
+					markdownEditMode
+				/>
+			);
+
+			fireEvent.contextMenu(screen.getByRole('button', { name: 'Line 2' }), {
+				clientX: 11,
+				clientY: 22,
+			});
+			fireEvent.click(await screen.findByRole('button', { name: 'Copy deep link to line 2' }));
+
+			await waitFor(() => {
+				expect(clipboardMocks.safeClipboardWrite).toHaveBeenCalledWith(
+					'maestro://file/session-1/%2Ftest%2Ftest.md#L2'
+				);
+			});
+			expect(flashMocks.flashCopiedToClipboard).toHaveBeenCalledWith(
+				'maestro://file/session-1/%2Ftest%2Ftest.md#L2',
+				'Deep Link Copied (L2)'
+			);
 		});
 
 		it('toggles to edit mode when edit button is clicked', () => {
@@ -1703,6 +2073,246 @@ print("world")
 			);
 			fireEvent.click(screen.getByTestId('html-render-toggle'));
 			expect(onHtmlRenderModeChange).toHaveBeenCalledWith(true);
+		});
+	});
+
+	describe('imperative navigation and preview tiers', () => {
+		it('exposes a focus handle for parent tab activation', () => {
+			const previewRef = React.createRef<{ focus: () => void }>();
+			render(<FilePreview {...defaultProps} ref={previewRef} />);
+
+			act(() => {
+				previewRef.current?.focus();
+			});
+
+			expect(previewRef.current).toBeTruthy();
+		});
+
+		it('enters edit mode for pending line links and scrolls the mounted editor', async () => {
+			const setMarkdownEditMode = vi.fn();
+			const onPendingScrollToLineConsumed = vi.fn();
+			const { rerender } = render(
+				<FilePreview
+					{...defaultProps}
+					pendingScrollToLine={9}
+					setMarkdownEditMode={setMarkdownEditMode}
+				/>
+			);
+
+			expect(setMarkdownEditMode).toHaveBeenCalledWith(true);
+
+			rerender(
+				<FilePreview
+					{...defaultProps}
+					pendingScrollToLine={9}
+					markdownEditMode={true}
+					setMarkdownEditMode={setMarkdownEditMode}
+					onPendingScrollToLineConsumed={onPendingScrollToLineConsumed}
+				/>
+			);
+
+			await waitFor(() => {
+				expect(markdownEditorHandle.focus).toHaveBeenCalled();
+				expect(markdownEditorHandle.scrollToLine).toHaveBeenCalledWith(9);
+				expect(onPendingScrollToLineConsumed).toHaveBeenCalled();
+			});
+		});
+
+		it('renders the fast markdown preview tier and routes TOC heading selection to it', async () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'doc.md',
+						content: '# Heading 1\n## Heading 2\nContent',
+						path: '/test/doc.md',
+					}}
+					previewTierOverride="fast"
+				/>
+			);
+
+			expect(await screen.findByTestId('markdown-fast-preview')).toBeInTheDocument();
+			fireEvent.click(screen.getByTitle('Table of Contents'));
+			fireEvent.click(screen.getByText('Heading 2'));
+
+			expect(markdownFastHandle.scrollToHeading).toHaveBeenCalled();
+		});
+
+		it('renders fast text, fast code, and giant preview overrides', async () => {
+			const { rerender } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'notes.txt', content: 'plain text content', path: '/test/notes.txt' }}
+					previewTierOverride="fast"
+				/>
+			);
+			expect(await screen.findByTestId('text-fast-preview')).toHaveTextContent(
+				'plain text content'
+			);
+
+			rerender(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'source.ts', content: 'const value = 1;', path: '/test/source.ts' }}
+					previewTierOverride="fast"
+				/>
+			);
+			expect(await screen.findByTestId('text-fast-preview')).toHaveTextContent('const value = 1;');
+
+			rerender(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'source.ts', content: 'const value = 2;', path: '/test/source.ts' }}
+					previewTierOverride="giant"
+				/>
+			);
+			expect(await screen.findByTestId('giant-preview')).toHaveTextContent('const value = 2;');
+		});
+	});
+
+	describe('keyboard, search, and save edge cases', () => {
+		it('opens jq mode search for JSON files and handles help, examples, clear, and Escape', async () => {
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'data.json', content: '{"name":"Maestro"}', path: '/test/data.json' }}
+				/>
+			);
+			const root = container.firstElementChild as HTMLElement;
+
+			fireEvent.keyDown(root, { key: 'f', ctrlKey: true });
+			const input = await screen.findByPlaceholderText(/Search in file/);
+			fireEvent.click(screen.getByTitle('Switch to jq filter'));
+			const jqInput = await screen.findByPlaceholderText(/jq filter/);
+
+			fireEvent.focus(jqInput);
+			expect(screen.getByText('jq Filter Syntax')).toBeInTheDocument();
+			fireEvent.click(screen.getByText('?'));
+			expect(screen.queryByText('jq Filter Syntax')).not.toBeInTheDocument();
+
+			fireEvent.change(jqInput, { target: { value: '.name' } });
+			fireEvent.click(screen.getByTitle('Clear filter'));
+			expect(jqInput).toHaveValue('');
+
+			fireEvent.keyDown(jqInput, { key: 'Escape' });
+			expect(input).not.toBeInTheDocument();
+		});
+
+		it('scrolls preview with arrow keys only when the main panel owns focus', () => {
+			useUIStore.setState({ activeFocus: 'main' });
+			const { container } = render(<FilePreview {...defaultProps} />);
+			const root = container.firstElementChild as HTMLElement;
+			const scroller = root.querySelector('.overflow-y-auto') as HTMLElement;
+			Object.defineProperty(scroller, 'clientHeight', { value: 200, configurable: true });
+			Object.defineProperty(scroller, 'scrollHeight', { value: 1000, configurable: true });
+
+			fireEvent.keyDown(root, { key: 'ArrowDown' });
+			expect(scroller.scrollTop).toBe(40);
+
+			fireEvent.keyDown(root, { key: 'ArrowDown', altKey: true });
+			expect(scroller.scrollTop).toBe(240);
+
+			fireEvent.keyDown(root, { key: 'ArrowUp', ctrlKey: true });
+			expect(scroller.scrollTop).toBe(0);
+		});
+
+		it('invokes binary preview open-in-default-app action', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'archive.zip', content: 'PK\u0003\u0004', path: '/test/archive.zip' }}
+				/>
+			);
+
+			fireEvent.click(screen.getByRole('button', { name: 'Open in Default App' }));
+
+			expect(window.maestro.shell.openPath).toHaveBeenCalledWith('/test/archive.zip');
+		});
+
+		it('handles cancelled and failed saves without leaving the save button busy', async () => {
+			const cancelledSave = vi.fn().mockResolvedValue(false);
+			const { rerender } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'notes.txt', content: 'original', path: '/test/notes.txt' }}
+					markdownEditMode
+					onSave={cancelledSave}
+				/>
+			);
+			fireEvent.change(screen.getByRole('textbox'), { target: { value: 'changed' } });
+			fireEvent.click(screen.getByTestId('save-icon').closest('button')!);
+
+			await waitFor(() => expect(cancelledSave).toHaveBeenCalledWith('/test/notes.txt', 'changed'));
+
+			const failedSave = vi.fn().mockRejectedValue(new Error('disk full'));
+			rerender(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'notes.txt', content: 'original', path: '/test/notes.txt' }}
+					markdownEditMode
+					onSave={failedSave}
+				/>
+			);
+			fireEvent.change(screen.getByRole('textbox'), { target: { value: 'changed again' } });
+			fireEvent.click(screen.getByTestId('save-icon').closest('button')!);
+
+			await waitFor(() =>
+				expect(failedSave).toHaveBeenCalledWith('/test/notes.txt', 'changed again')
+			);
+			await waitFor(() =>
+				expect(screen.getByTestId('save-icon').closest('button')).toBeInTheDocument()
+			);
+		});
+
+		it('shows unsaved-change confirmation and confirms discard in overlay mode', () => {
+			const onClose = vi.fn();
+			render(
+				<FilePreview {...defaultProps} onClose={onClose} markdownEditMode isTabMode={false} />
+			);
+			fireEvent.change(screen.getByRole('textbox'), { target: { value: 'dirty content' } });
+
+			act(() => {
+				mockClickOutsideCallback.current?.();
+			});
+
+			expect(screen.getByText('Unsaved Changes')).toBeInTheDocument();
+			fireEvent.click(screen.getByText('Yes, Discard'));
+			expect(onClose).toHaveBeenCalled();
+		});
+	});
+
+	describe('image save edge cases', () => {
+		it('reports edited image save failures and keeps the save modal available', async () => {
+			const editedDataUrl = 'data:image/png;base64,edited';
+			const openAnnotator = vi.fn((_content: string, onSave: (dataUrl: string) => void) =>
+				onSave(editedDataUrl)
+			);
+			useImageAnnotatorStore.setState({ openAnnotator });
+			window.maestro.fs.writeImageFile = vi.fn().mockRejectedValue(new Error('read-only'));
+
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'image.png',
+						content: 'data:image/png;base64,abc',
+						path: '/test/image.png',
+					}}
+				/>
+			);
+
+			fireEvent.click(screen.getByTestId('edit-image-button'));
+			expect(await screen.findByText('Save edited image')).toBeInTheDocument();
+			fireEvent.click(screen.getByText('Overwrite the existing file'));
+
+			await waitFor(() =>
+				expect(window.maestro.fs.writeImageFile).toHaveBeenCalledWith(
+					'/test/image.png',
+					editedDataUrl,
+					undefined
+				)
+			);
+			expect(screen.getByText('Save edited image')).toBeInTheDocument();
 		});
 	});
 });

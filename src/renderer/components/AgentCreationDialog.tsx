@@ -533,7 +533,7 @@ export function AgentCreationDialog({
 															const currentVars = customAgentEnvVars[agent.id] || {};
 															let newKey = 'NEW_VAR';
 															let counter = 1;
-															while (currentVars[newKey]) {
+															while (Object.prototype.hasOwnProperty.call(currentVars, newKey)) {
 																newKey = `NEW_VAR_${counter}`;
 																counter++;
 															}

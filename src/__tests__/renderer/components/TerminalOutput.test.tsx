@@ -16,6 +16,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { TerminalOutput } from '../../../renderer/components/TerminalOutput';
 import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import type { Session, Theme, LogEntry } from '../../../renderer/types';
 
 // Mock dependencies
@@ -180,6 +181,7 @@ describe('TerminalOutput', () => {
 
 	afterEach(() => {
 		vi.useRealTimers();
+		useSessionStore.setState({ sessions: [], activeSessionId: '' });
 	});
 
 	describe('basic rendering', () => {
@@ -1848,6 +1850,194 @@ describe('TerminalOutput', () => {
 	});
 
 	describe('tool log detail extraction', () => {
+		it('renders raw string, command-array, mixed-array, and scalar tool input summaries', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					id: 'tool-raw-string',
+					text: 'ApplyPatch',
+					source: 'tool',
+					metadata: {
+						toolState: {
+							status: 'running',
+							input: '*** Begin Patch',
+						},
+					},
+				}),
+				createLogEntry({
+					id: 'tool-command-array',
+					text: 'Shell',
+					source: 'tool',
+					metadata: {
+						toolState: {
+							status: 'running',
+							input: { command: ['pnpm', 'test', '--run'] },
+						},
+					},
+				}),
+				createLogEntry({
+					id: 'tool-mixed-fields',
+					text: 'Options',
+					source: 'tool',
+					metadata: {
+						toolState: {
+							status: 'running',
+							input: {
+								description: 'Run with options',
+								values: [1, 'two'],
+								count: 2,
+								force: false,
+								empty: '',
+								missing: null,
+								nested: { skip: true },
+							},
+						},
+					},
+				}),
+			];
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('*** Begin Patch')).toBeInTheDocument();
+			expect(screen.getByText('pnpm test --run')).toBeInTheDocument();
+			expect(screen.getByText('Run with options')).toBeInTheDocument();
+			expect(
+				screen.getByText(
+					(content) =>
+						content.includes('values: [2]') &&
+						content.includes('count=2') &&
+						content.includes('force=false')
+				)
+			).toBeInTheDocument();
+			expect(screen.queryByText(/skip/)).not.toBeInTheDocument();
+		});
+
+		it('renders completed tool output previews for strings and objects', () => {
+			const longOutput = Array.from({ length: 10 }, (_, index) => `line-${index + 1}`).join('\n');
+			const circularOutput: Record<string, unknown> = {};
+			circularOutput.self = circularOutput;
+			const logs: LogEntry[] = [
+				createLogEntry({
+					id: 'tool-object-output',
+					text: 'Fetch',
+					source: 'tool',
+					metadata: {
+						toolState: {
+							status: 'completed',
+							output: { ok: true, count: 2 },
+						},
+					},
+				}),
+				createLogEntry({
+					id: 'tool-long-output',
+					text: 'LongOutput',
+					source: 'tool',
+					metadata: {
+						toolState: {
+							status: 'failed',
+							output: longOutput,
+						},
+					},
+				}),
+				createLogEntry({
+					id: 'tool-circular-output',
+					text: 'CircularOutput',
+					source: 'tool',
+					metadata: {
+						toolState: {
+							status: 'error',
+							output: circularOutput,
+						},
+					},
+				}),
+			];
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText(/"ok": true/)).toBeInTheDocument();
+			expect(screen.getByText(/line-1/)).toHaveTextContent('line-8');
+			expect(screen.getByText(/line-1/)).toHaveTextContent('…');
+			expect(screen.getByText('CircularOutput')).toBeInTheDocument();
+			expect(screen.queryByText(/Converting circular structure/)).not.toBeInTheDocument();
+		});
+
+		it('renders session recovery options from the live session store', async () => {
+			const onSessionRecover = vi.fn();
+			const recoveryLog = createLogEntry({
+				id: 'session-not-found',
+				source: 'system',
+				text: 'Session not found',
+				recoveryAction: {
+					tabId: 'tab-1',
+					lastUserPrompt: 'Continue the previous work',
+				},
+			});
+			const tab = {
+				id: 'tab-1',
+				agentSessionId: 'claude-123',
+				logs: [createLogEntry({ source: 'user', text: 'Prior prompt' })],
+				isUnread: false,
+			};
+			const session = createDefaultSession({
+				tabs: [{ ...tab, logs: [recoveryLog] }],
+				aiTabs: [{ ...tab, logs: [createLogEntry({ source: 'user', text: 'Stored prompt' })] }],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+
+			render(
+				<TerminalOutput
+					{...createDefaultProps({
+						session,
+						onSessionRecover,
+						sessionRecoveryError: 'Recovery failed',
+					})}
+				/>
+			);
+
+			expect(screen.getByRole('region', { name: 'Session recovery options' })).toBeInTheDocument();
+			expect(screen.getByRole('alert')).toHaveTextContent('Recovery failed');
+			fireEvent.click(screen.getByRole('checkbox', { name: /Clean context/i }));
+			fireEvent.click(screen.getByRole('button', { name: /Recover Session/i }));
+
+			expect(onSessionRecover).toHaveBeenCalledWith({
+				sessionId: 'session-1',
+				tabId: 'tab-1',
+				lastUserPrompt: 'Continue the previous work',
+				groomContext: false,
+			});
+		});
+
+		it('omits session recovery options when the referenced tab is not live', () => {
+			const recoveryLog = createLogEntry({
+				id: 'session-not-found',
+				source: 'system',
+				text: 'Session not found',
+				recoveryAction: {
+					tabId: 'missing-tab',
+					lastUserPrompt: 'Continue the previous work',
+				},
+			});
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs: [recoveryLog], isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(
+				screen.queryByRole('region', { name: 'Session recovery options' })
+			).not.toBeInTheDocument();
+		});
+
 		it('renders TodoWrite tool with task summary from todos array', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({

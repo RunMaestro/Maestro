@@ -128,8 +128,8 @@ export const LocationDistributionChart = memo(function LocationDistributionChart
 
 	// Calculate location data
 	const locationData = useMemo((): LocationData[] => {
-		const localValue = data.byLocation?.local ?? 0;
-		const remoteValue = data.byLocation?.remote ?? 0;
+		const localValue = Math.max(0, data.byLocation?.local ?? 0);
+		const remoteValue = Math.max(0, data.byLocation?.remote ?? 0);
 		const total = localValue + remoteValue;
 
 		const locations: LocationData[] = [];
@@ -192,7 +192,7 @@ export const LocationDistributionChart = memo(function LocationDistributionChart
 	}, [locationData]);
 
 	// Check if there's any data
-	const hasData = (data.byLocation?.local ?? 0) > 0 || (data.byLocation?.remote ?? 0) > 0;
+	const hasData = total > 0;
 
 	return (
 		<div

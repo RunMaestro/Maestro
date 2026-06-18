@@ -13,7 +13,31 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { useAutoRun, type LaunchWorktreeConfig } from '../../../web/hooks/useAutoRun';
+import {
+	useAutoRun,
+	type LaunchWorktreeConfig,
+	type Playbook,
+	type PlaybookDraft,
+} from '../../../web/hooks/useAutoRun';
+
+const playbook: Playbook = {
+	id: 'playbook-1',
+	name: 'Daily',
+	createdAt: 1,
+	updatedAt: 2,
+	documents: [{ filename: 'plan.md', resetOnCompletion: true }],
+	loopEnabled: false,
+	maxLoops: null,
+	prompt: 'Run it',
+};
+
+const playbookDraft: PlaybookDraft = {
+	name: 'Daily',
+	documents: [{ filename: 'plan.md', resetOnCompletion: true }],
+	loopEnabled: false,
+	maxLoops: null,
+	prompt: 'Run it',
+};
 
 describe('useAutoRun (mobile/web)', () => {
 	const send = vi.fn().mockReturnValue(true);
@@ -233,6 +257,194 @@ describe('useAutoRun (mobile/web)', () => {
 			sendRequest.mockRejectedValueOnce(new Error('boom'));
 			const { result } = renderHook(() => useAutoRun(sendRequest, send));
 			await expect(result.current.listWorktrees('s-1')).rejects.toThrow('boom');
+		});
+	});
+
+	describe('documents and controls', () => {
+		it('loads documents, reads content, and exposes provided Auto Run state', async () => {
+			sendRequest.mockImplementation(async (type: string) => {
+				if (type === 'get_auto_run_docs') {
+					return {
+						documents: [
+							{
+								filename: 'plan.md',
+								path: '/repo/.maestro/plan.md',
+								taskCount: 2,
+								completedCount: 1,
+							},
+						],
+					};
+				}
+				if (type === 'get_auto_run_document') return { content: '# Plan' };
+				return { success: true };
+			});
+
+			const autoRunState = {
+				isRunning: true,
+				currentDocument: 'plan.md',
+				currentTask: 'Task',
+				completedTasks: 1,
+				totalTasks: 2,
+			} as any;
+			const { result } = renderHook(() => useAutoRun(sendRequest, send, autoRunState));
+
+			await act(async () => {
+				await result.current.loadDocuments('s-1');
+				await result.current.loadDocumentContent('s-1', 'plan.md');
+			});
+
+			expect(result.current.autoRunState).toBe(autoRunState);
+			expect(result.current.documents).toEqual([
+				{
+					filename: 'plan.md',
+					path: '/repo/.maestro/plan.md',
+					taskCount: 2,
+					completedCount: 1,
+				},
+			]);
+			expect(result.current.selectedDoc).toEqual({ filename: 'plan.md', content: '# Plan' });
+			expect(result.current.isLoadingDocs).toBe(false);
+			expect(sendRequest).toHaveBeenCalledWith('get_auto_run_docs', { sessionId: 's-1' });
+			expect(sendRequest).toHaveBeenCalledWith('get_auto_run_document', {
+				sessionId: 's-1',
+				filename: 'plan.md',
+			});
+		});
+
+		it('saves, resets, stops, and recovers Auto Run actions', async () => {
+			const { result } = renderHook(() => useAutoRun(sendRequest, send));
+
+			await act(async () => {
+				await expect(
+					result.current.saveDocumentContent('s-1', 'plan.md', '# Updated')
+				).resolves.toBe(true);
+				await expect(result.current.resetDocumentTasks('s-1', 'plan.md')).resolves.toBe(true);
+				await expect(result.current.stopAutoRun('s-1')).resolves.toBe(true);
+				await expect(result.current.resumeAutoRunError('s-1')).resolves.toBe(true);
+				await expect(result.current.skipAutoRunDocument('s-1')).resolves.toBe(true);
+				await expect(result.current.abortAutoRunError('s-1')).resolves.toBe(true);
+			});
+
+			expect(sendRequest).toHaveBeenCalledWith('save_auto_run_document', {
+				sessionId: 's-1',
+				filename: 'plan.md',
+				content: '# Updated',
+			});
+			expect(sendRequest).toHaveBeenCalledWith('reset_auto_run_doc_tasks', {
+				sessionId: 's-1',
+				filename: 'plan.md',
+			});
+			expect(sendRequest).toHaveBeenCalledWith('stop_auto_run', { sessionId: 's-1' });
+			expect(sendRequest).toHaveBeenCalledWith('resume_auto_run_error', { sessionId: 's-1' });
+			expect(sendRequest).toHaveBeenCalledWith('skip_auto_run_document', { sessionId: 's-1' });
+			expect(sendRequest).toHaveBeenCalledWith('abort_auto_run_error', { sessionId: 's-1' });
+		});
+
+		it('uses safe document and control fallbacks on failures', async () => {
+			const { result } = renderHook(() => useAutoRun(sendRequest, send));
+
+			sendRequest.mockRejectedValueOnce(new Error('offline'));
+			await act(async () => {
+				await result.current.loadDocuments('s-1');
+			});
+			expect(result.current.documents).toEqual([]);
+
+			sendRequest.mockRejectedValueOnce(new Error('offline'));
+			await act(async () => {
+				await result.current.loadDocumentContent('s-1', 'plan.md');
+			});
+			expect(result.current.selectedDoc).toEqual({ filename: 'plan.md', content: '' });
+
+			sendRequest.mockRejectedValue(new Error('offline'));
+			await act(async () => {
+				await expect(
+					result.current.saveDocumentContent('s-1', 'plan.md', '# Updated')
+				).resolves.toBe(false);
+				await expect(result.current.resetDocumentTasks('s-1', 'plan.md')).resolves.toBe(false);
+				await expect(result.current.stopAutoRun('s-1')).resolves.toBe(false);
+				await expect(result.current.resumeAutoRunError('s-1')).resolves.toBe(false);
+				await expect(result.current.skipAutoRunDocument('s-1')).resolves.toBe(false);
+				await expect(result.current.abortAutoRunError('s-1')).resolves.toBe(false);
+			});
+		});
+	});
+
+	describe('playbooks', () => {
+		it('loads, creates, updates, and deletes playbooks', async () => {
+			const updatedPlaybook = { ...playbook, name: 'Updated' };
+			sendRequest.mockImplementation(async (type: string) => {
+				if (type === 'list_playbooks') return { playbooks: [playbook] };
+				if (type === 'create_playbook') return { success: true, playbook };
+				if (type === 'update_playbook') return { success: true, playbook: updatedPlaybook };
+				if (type === 'delete_playbook') return { success: true };
+				return { success: true };
+			});
+			const { result } = renderHook(() => useAutoRun(sendRequest, send));
+
+			await act(async () => {
+				await result.current.loadPlaybooks('s-1');
+			});
+			expect(result.current.playbooks).toEqual([playbook]);
+			expect(result.current.isLoadingPlaybooks).toBe(false);
+
+			await act(async () => {
+				await expect(result.current.createPlaybook('s-1', playbookDraft)).resolves.toEqual(
+					playbook
+				);
+				await expect(
+					result.current.updatePlaybook('s-1', 'playbook-1', { name: 'Updated' })
+				).resolves.toEqual(updatedPlaybook);
+				await expect(result.current.deletePlaybook('s-1', 'playbook-1')).resolves.toBe(true);
+			});
+
+			expect(result.current.playbooks).toEqual([]);
+			expect(sendRequest).toHaveBeenCalledWith('list_playbooks', { sessionId: 's-1' });
+			expect(sendRequest).toHaveBeenCalledWith('create_playbook', {
+				sessionId: 's-1',
+				playbook: playbookDraft,
+			});
+			expect(sendRequest).toHaveBeenCalledWith('update_playbook', {
+				sessionId: 's-1',
+				playbookId: 'playbook-1',
+				updates: { name: 'Updated' },
+			});
+			expect(sendRequest).toHaveBeenCalledWith('delete_playbook', {
+				sessionId: 's-1',
+				playbookId: 'playbook-1',
+			});
+		});
+
+		it('uses safe playbook fallbacks on malformed responses and failures', async () => {
+			const { result } = renderHook(() => useAutoRun(sendRequest, send));
+
+			sendRequest.mockResolvedValueOnce({ playbooks: null });
+			await act(async () => {
+				await result.current.loadPlaybooks('s-1');
+			});
+			expect(result.current.playbooks).toEqual([]);
+
+			sendRequest.mockResolvedValueOnce({ success: true, playbook: null });
+			sendRequest.mockResolvedValueOnce({ success: true, playbook: null });
+			sendRequest.mockResolvedValueOnce({ success: false });
+			await act(async () => {
+				await expect(result.current.createPlaybook('s-1', playbookDraft)).resolves.toBeNull();
+				await expect(
+					result.current.updatePlaybook('s-1', 'playbook-1', { name: 'Updated' })
+				).resolves.toBeNull();
+				await expect(result.current.deletePlaybook('s-1', 'playbook-1')).resolves.toBe(false);
+			});
+
+			sendRequest.mockRejectedValue(new Error('offline'));
+			await act(async () => {
+				await result.current.loadPlaybooks('s-1');
+				await expect(result.current.createPlaybook('s-1', playbookDraft)).resolves.toBeNull();
+				await expect(
+					result.current.updatePlaybook('s-1', 'playbook-1', { name: 'Updated' })
+				).resolves.toBeNull();
+				await expect(result.current.deletePlaybook('s-1', 'playbook-1')).resolves.toBe(false);
+			});
+			expect(result.current.playbooks).toEqual([]);
+			expect(result.current.isLoadingPlaybooks).toBe(false);
 		});
 	});
 });
