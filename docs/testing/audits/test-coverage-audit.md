@@ -10,19 +10,27 @@ Measured with `npm run test:coverage` on the current upstream-shaped tree:
 
 | Metric     | Pre-Sync Final Checkpoint | Current Upstream-Sync Check |
 | ---------- | ------------------------: | --------------------------: |
-| Statements |                   100.00% |                      81.47% |
-| Branches   |                   100.00% |                      74.22% |
-| Functions  |                   100.00% |                      80.53% |
-| Lines      |                   100.00% |                      82.75% |
+| Statements |                   100.00% |                      81.68% |
+| Branches   |                   100.00% |                      74.44% |
+| Functions  |                   100.00% |                      80.61% |
+| Lines      |                   100.00% |                      82.97% |
 
 Current upstream-sync coverage result:
 
 - Command: `npm run test:coverage`
 - Result: failed 100% global coverage thresholds
-- Test files: 1,246 passed
-- Tests: 33,519 passed, 0 skipped
-- Coverage: 81.47% statements, 74.22% branches, 80.53% functions, 82.75% lines
-- Log: `/tmp/maestro-phase7-coverage-after-leaderboard-modal-20260619021450.log`
+- Test files: 1,247 passed
+- Tests: 33,564 passed, 0 skipped
+- Coverage: 81.68% statements, 74.44% branches, 80.61% functions, 82.97% lines
+- Log: `/tmp/maestro-phase7-coverage-after-cli-connectivity-20260619023627.log`
+
+Latest focused CLI connectivity command checkpoint:
+
+- Command: `NODE_OPTIONS=--max-old-space-size=8192 npx vitest run --config vitest.config.mts --coverage --coverage.include=src/cli/commands/open-terminal.ts --coverage.include=src/cli/commands/refresh-files.ts --coverage.include=src/cli/commands/refresh-auto-run.ts --coverage.include=src/cli/commands/status.ts --coverage.include=src/cli/commands/open-browser.ts --coverage.include=src/cli/commands/notify-flash.ts --coverage.include=src/cli/commands/notify-toast.ts --coverage.include=src/cli/commands/prompts-get.ts src/__tests__/cli/commands/connectivity-commands.test.ts`
+- Result: tests passed; focused coverage reached 100% across all included files
+- Tests: 45 passed
+- Coverage: 100% statements, branches, functions, and lines
+- Logs: `/tmp/maestro-cli-connectivity-focused-closed-20260619023611.log`, `/tmp/maestro-cli-connectivity-focused-coverage-closed-20260619023612.log`
 
 Latest focused LeaderboardRegistrationModal checkpoint:
 
