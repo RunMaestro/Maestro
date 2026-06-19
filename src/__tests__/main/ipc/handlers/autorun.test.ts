@@ -924,6 +924,21 @@ describe('autorun IPC handlers', () => {
 			expect(result.error).toContain('Invalid filename');
 		});
 
+		it('should fall back to the raw filename when URI decoding fails', async () => {
+			vi.mocked(fs.access).mockResolvedValue(undefined);
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+			const handler = handlers.get('autorun:writeDoc');
+			const result = await handler!({} as any, '/test/folder', '%E0%A4%A', 'content');
+
+			expect(result.success).toBe(true);
+			expect(fs.writeFile).toHaveBeenCalledWith(
+				expect.stringContaining('%E0%A4%A.md'),
+				'content',
+				'utf-8'
+			);
+		});
+
 		it('should overwrite existing file', async () => {
 			vi.mocked(fs.access).mockResolvedValue(undefined);
 			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
@@ -1108,6 +1123,14 @@ describe('autorun IPC handlers', () => {
 			expect(result2.success).toBe(true);
 			expect(result2.images).toEqual([]);
 		});
+
+		it('should reject dot-dot as a listImages document name', async () => {
+			const handler = handlers.get('autorun:listImages');
+			const result = await handler!({} as any, '/test/folder', '..');
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Invalid document name');
+		});
 	});
 
 	describe('autorun:saveImage', () => {
@@ -1169,6 +1192,14 @@ describe('autorun IPC handlers', () => {
 			const result2 = await handler!({} as any, '/test/folder', 'path/to/doc', 'ZmFrZQ==', 'png');
 			expect(result2.success).toBe(true);
 			expect(result2.relativePath).toMatch(/images\/doc-\d+\.png/);
+		});
+
+		it('should reject dot-dot as an image document name', async () => {
+			const handler = handlers.get('autorun:saveImage');
+			const result = await handler!({} as any, '/test/folder', '..', 'ZmFrZQ==', 'png');
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Invalid document name');
 		});
 
 		it('should generate unique filenames with timestamp', async () => {
@@ -1964,6 +1995,49 @@ describe('autorun IPC handlers', () => {
 				expect(fs.writeFile).not.toHaveBeenCalled();
 			});
 
+			it('should return remote image directory creation errors', async () => {
+				mockExistsRemote.mockResolvedValue({ success: true, data: false });
+				mockMkdirRemote.mockResolvedValue({
+					success: false,
+					error: 'image mkdir failed',
+				});
+
+				const handler = handlers.get('autorun:saveImage');
+				const result = await handler!(
+					{} as any,
+					'/remote/folder',
+					'doc1',
+					Buffer.from('fake image data').toString('base64'),
+					'png',
+					'ssh-remote-1'
+				);
+
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('image mkdir failed');
+				expect(mockWriteFileRemote).not.toHaveBeenCalled();
+			});
+
+			it('should return remote image write errors', async () => {
+				mockExistsRemote.mockResolvedValue({ success: true, data: true });
+				mockWriteFileRemote.mockResolvedValue({
+					success: false,
+					error: 'image write failed',
+				});
+
+				const handler = handlers.get('autorun:saveImage');
+				const result = await handler!(
+					{} as any,
+					'/remote/folder',
+					'doc1',
+					Buffer.from('fake image data').toString('base64'),
+					'png',
+					'ssh-remote-1'
+				);
+
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('image write failed');
+			});
+
 			it('should use local fs when sshRemoteId is not provided', async () => {
 				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
 				vi.mocked(fs.writeFile).mockResolvedValue(undefined);
@@ -2006,6 +2080,24 @@ describe('autorun IPC handlers', () => {
 				// Local fs should NOT be called
 				expect(fs.access).not.toHaveBeenCalled();
 				expect(fs.unlink).not.toHaveBeenCalled();
+			});
+
+			it('should return remote delete errors', async () => {
+				mockDeleteRemote.mockResolvedValue({
+					success: false,
+					error: 'delete failed',
+				});
+
+				const handler = handlers.get('autorun:deleteImage');
+				const result = await handler!(
+					{} as any,
+					'/remote/folder',
+					'images/doc1-123.png',
+					'ssh-remote-1'
+				);
+
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('delete failed');
 			});
 
 			it('should use local fs when sshRemoteId is not provided', async () => {
@@ -2106,6 +2198,7 @@ describe('autorun IPC handlers', () => {
 					data: [
 						{ name: 'doc1-123.png', isDirectory: false, isSymlink: false },
 						{ name: 'doc1-456.jpg', isDirectory: false, isSymlink: false },
+						{ name: 'doc1-directory.png', isDirectory: true, isSymlink: false },
 						{ name: 'other-789.png', isDirectory: false, isSymlink: false },
 					],
 				});
@@ -2137,6 +2230,60 @@ describe('autorun IPC handlers', () => {
 				expect(result.images).toEqual([]);
 				expect(mockReadDirRemote).not.toHaveBeenCalled();
 			});
+
+			it('should return remote image directory read errors', async () => {
+				mockExistsRemote.mockResolvedValue({ success: true, data: true });
+				mockReadDirRemote.mockResolvedValue({
+					success: false,
+					error: 'image read failed',
+				});
+
+				const handler = handlers.get('autorun:listImages');
+				const result = await handler!({} as any, '/remote/folder', 'doc1', 'ssh-remote-1');
+
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('image read failed');
+			});
+		});
+
+		describe('autorun:watchFolder SSH', () => {
+			it('should return remote polling mode when the remote folder exists', async () => {
+				mockExistsRemote.mockResolvedValue({ success: true, data: true });
+
+				const handler = handlers.get('autorun:watchFolder');
+				const result = await handler!({} as any, '/remote/folder', 'ssh-remote-1');
+
+				expect(result.success).toBe(true);
+				expect(result.isRemote).toBe(true);
+				expect(result.message).toContain('polling');
+				expect(mockMkdirRemote).not.toHaveBeenCalled();
+			});
+
+			it('should create a missing remote folder before returning polling mode', async () => {
+				mockExistsRemote.mockResolvedValue({ success: true, data: false });
+				mockMkdirRemote.mockResolvedValue({ success: true });
+
+				const handler = handlers.get('autorun:watchFolder');
+				const result = await handler!({} as any, '/remote/folder', 'ssh-remote-1');
+
+				expect(result.success).toBe(true);
+				expect(result.isRemote).toBe(true);
+				expect(mockMkdirRemote).toHaveBeenCalledWith('/remote/folder', sampleSshRemote, true);
+			});
+
+			it('should return remote folder creation errors', async () => {
+				mockExistsRemote.mockResolvedValue({ success: true, data: false });
+				mockMkdirRemote.mockResolvedValue({
+					success: false,
+					error: 'remote mkdir failed',
+				});
+
+				const handler = handlers.get('autorun:watchFolder');
+				const result = await handler!({} as any, '/remote/folder', 'ssh-remote-1');
+
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('remote mkdir failed');
+			});
 		});
 
 		describe('autorun:createBackup SSH', () => {
@@ -2164,6 +2311,37 @@ describe('autorun IPC handlers', () => {
 				// Local fs should NOT be called
 				expect(fs.access).not.toHaveBeenCalled();
 				expect(fs.copyFile).not.toHaveBeenCalled();
+			});
+
+			it('should return remote source read errors', async () => {
+				mockReadFileRemote.mockResolvedValue({
+					success: false,
+					error: 'backup source missing',
+				});
+
+				const handler = handlers.get('autorun:createBackup');
+				const result = await handler!({} as any, '/remote/folder', 'doc1', 'ssh-remote-1');
+
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('backup source missing');
+				expect(mockWriteFileRemote).not.toHaveBeenCalled();
+			});
+
+			it('should return remote backup write errors', async () => {
+				mockReadFileRemote.mockResolvedValue({
+					success: true,
+					data: '# Original Content',
+				});
+				mockWriteFileRemote.mockResolvedValue({
+					success: false,
+					error: 'backup write failed',
+				});
+
+				const handler = handlers.get('autorun:createBackup');
+				const result = await handler!({} as any, '/remote/folder', 'doc1', 'ssh-remote-1');
+
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('backup write failed');
 			});
 
 			it('should use local fs when sshRemoteId is not provided', async () => {
@@ -2217,6 +2395,38 @@ describe('autorun IPC handlers', () => {
 				expect(fs.access).not.toHaveBeenCalled();
 				expect(fs.copyFile).not.toHaveBeenCalled();
 				expect(fs.unlink).not.toHaveBeenCalled();
+			});
+
+			it('should return remote missing backup errors', async () => {
+				mockReadFileRemote.mockResolvedValue({
+					success: false,
+					error: 'missing backup',
+				});
+
+				const handler = handlers.get('autorun:restoreBackup');
+				const result = await handler!({} as any, '/remote/folder', 'doc1', 'ssh-remote-1');
+
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('Backup file not found');
+				expect(mockWriteFileRemote).not.toHaveBeenCalled();
+			});
+
+			it('should return remote restore write errors', async () => {
+				mockReadFileRemote.mockResolvedValue({
+					success: true,
+					data: '# Backup Content',
+				});
+				mockWriteFileRemote.mockResolvedValue({
+					success: false,
+					error: 'restore write failed',
+				});
+
+				const handler = handlers.get('autorun:restoreBackup');
+				const result = await handler!({} as any, '/remote/folder', 'doc1', 'ssh-remote-1');
+
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('restore write failed');
+				expect(mockDeleteRemote).not.toHaveBeenCalled();
 			});
 
 			it('should continue even if remote backup delete fails', async () => {
@@ -2450,22 +2660,47 @@ describe('autorun IPC handlers', () => {
 		});
 
 		describe('SSH remote lookup failure', () => {
-			it('should throw error when SSH remote ID is not found', async () => {
-				// Return empty array - no SSH remotes configured
+			it.each([
+				['autorun:listDocs', ['/remote/folder', 'non-existent-ssh-remote']],
+				['autorun:readDoc', ['/remote/folder', 'doc1', 'non-existent-ssh-remote']],
+				['autorun:writeDoc', ['/remote/folder', 'doc1', '# Content', 'non-existent-ssh-remote']],
+				[
+					'autorun:saveImage',
+					[
+						'/remote/folder',
+						'doc1',
+						Buffer.from('fake image data').toString('base64'),
+						'png',
+						'non-existent-ssh-remote',
+					],
+				],
+				[
+					'autorun:deleteImage',
+					['/remote/folder', 'images/doc1-123.png', 'non-existent-ssh-remote'],
+				],
+				[
+					'autorun:replaceImage',
+					[
+						'/remote/folder',
+						'images/doc1-123.png',
+						Buffer.from('updated image').toString('base64'),
+						'non-existent-ssh-remote',
+					],
+				],
+				['autorun:listImages', ['/remote/folder', 'doc1', 'non-existent-ssh-remote']],
+				['autorun:watchFolder', ['/remote/folder', 'non-existent-ssh-remote']],
+				['autorun:createBackup', ['/remote/folder', 'doc1', 'non-existent-ssh-remote']],
+				['autorun:restoreBackup', ['/remote/folder', 'doc1', 'non-existent-ssh-remote']],
+				['autorun:createWorkingCopy', ['/remote/folder', 'doc1', 1, 'non-existent-ssh-remote']],
+				['autorun:deleteBackups', ['/remote/folder', 'non-existent-ssh-remote']],
+			])('should return error when SSH remote ID is not found for %s', async (channel, args) => {
 				mockSettingsStore.get.mockImplementation((key: string, defaultValue?: unknown) => {
 					if (key === 'sshRemotes') return [];
 					return defaultValue;
 				});
 
-				const handler = handlers.get('autorun:saveImage');
-				const result = await handler!(
-					{} as any,
-					'/remote/folder',
-					'doc1',
-					'ZmFrZQ==',
-					'png',
-					'non-existent-ssh-remote'
-				);
+				const handler = handlers.get(channel);
+				const result = await handler!({} as any, ...(args as unknown[]));
 
 				expect(result.success).toBe(false);
 				expect(result.error).toContain('SSH remote not found');
