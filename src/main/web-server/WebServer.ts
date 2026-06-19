@@ -34,8 +34,9 @@ import { getLocalIpAddress } from '../utils/networkUtils';
 import { captureException } from '../utils/sentry';
 import { WebSocketMessageHandler } from './handlers';
 import { BroadcastService } from './services';
-import { ApiRoutes, StaticRoutes, WsRoute } from './routes';
+import { ApiRoutes, StaticRoutes, WsRoute, MobilePairingRoutes } from './routes';
 import { LiveSessionManager, CallbackRegistry } from './managers';
+import { redeemPairingCode } from '../mobile-pairing';
 
 // Import shared types from canonical location
 import type {
@@ -178,6 +179,7 @@ export class WebServer {
 	private apiRoutes: ApiRoutes;
 	private staticRoutes: StaticRoutes;
 	private wsRoute: WsRoute;
+	private mobilePairingRoutes: MobilePairingRoutes;
 
 	constructor(port: number = 0, securityToken?: string) {
 		// Use port 0 to let OS assign a random available port
@@ -225,6 +227,7 @@ export class WebServer {
 		this.apiRoutes = new ApiRoutes(this.securityToken, this.rateLimitConfig);
 		this.staticRoutes = new StaticRoutes(this.securityToken, this.webAssetsPath);
 		this.wsRoute = new WsRoute(this.securityToken);
+		this.mobilePairingRoutes = new MobilePairingRoutes();
 
 		// Note: setupMiddleware and setupRoutes are called in start() to handle async properly
 	}
@@ -830,6 +833,14 @@ export class WebServer {
 			},
 		});
 		this.wsRoute.registerRoute(this.server);
+
+		// Setup mobile pairing routes (public, no token required)
+		this.mobilePairingRoutes.setCallbacks({
+			redeemPairingCode: async (code, deviceName) => {
+				return redeemPairingCode(code, deviceName);
+			},
+		});
+		this.mobilePairingRoutes.registerRoutes(this.server);
 	}
 
 	private handleWebClientMessage(clientId: string, message: WebClientMessage): void {

@@ -224,6 +224,10 @@ export interface WebClient {
 	id: string;
 	connectedAt: number;
 	subscribedSessionId?: string;
+	/** Whether this is a mobile app client (vs browser) */
+	isMobileClient?: boolean;
+	/** Device ID from mobile-pairings.json for mobile clients */
+	mobileDeviceId?: string;
 }
 
 /**
