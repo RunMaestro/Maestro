@@ -17,22 +17,16 @@ import {
 } from 'lucide-react';
 import type { Session, Theme, LogEntry, FocusArea, AgentError, QueuedItem } from '../types';
 import type { FileNode } from '../types/fileTree';
-import Convert from 'ansi-to-html';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { getActiveTab } from '../utils/tabHelpers';
 import { useDebouncedValue, useThrottledCallback } from '../hooks';
-import {
-	processLogTextHelper,
-	filterTextByLinesHelper,
-	getCachedAnsiHtml,
-} from '../utils/textProcessing';
+import { processLogTextHelper } from '../utils/textProcessing';
 import { jumpToMessageEdge, isTextInputTarget } from '../utils/messageScrollNavigation';
 import { JumpToMessageTopButton } from './JumpToMessageTopButton';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { QueuedItemsList } from './QueuedItemsList';
-import { LogFilterControls } from './LogFilterControls';
 import { SaveMarkdownModal } from './SaveMarkdownModal';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { linkifyNode } from '../utils/linkify';
@@ -232,29 +226,13 @@ function SessionRecoveryCardConnector(props: {
 interface LogItemProps {
 	log: LogEntry;
 	index: number;
-	isTerminal: boolean;
 	isAIMode: boolean;
 	theme: Theme;
 	fontFamily: string;
 	maxOutputLines: number;
-	lastUserCommand?: string;
 	// Expansion state
 	isExpanded: boolean;
 	onToggleExpanded: (logId: string) => void;
-	// Local filter state
-	localFilterQuery: string;
-	filterMode: { mode: 'include' | 'exclude'; regex: boolean };
-	activeLocalFilter: string | null;
-	onToggleLocalFilter: (logId: string) => void;
-	onSetLocalFilterQuery: (logId: string, query: string) => void;
-	onSetFilterMode: (
-		logId: string,
-		update: (current: { mode: 'include' | 'exclude'; regex: boolean }) => {
-			mode: 'include' | 'exclude';
-			regex: boolean;
-		}
-	) => void;
-	onClearLocalFilter: (logId: string) => void;
 	// Delete state
 	deleteConfirmLogId: string | null;
 	onDeleteLog?: (logId: string) => number | null;
@@ -267,8 +245,6 @@ interface LogItemProps {
 		source?: 'staged' | 'history'
 	) => void;
 	copyToClipboard: (text: string) => void;
-	// ANSI converter
-	ansiConverter: Convert;
 	// Markdown rendering mode for AI responses (when true, shows raw text)
 	markdownEditMode: boolean;
 	onToggleMarkdownEditMode: () => void;
@@ -314,28 +290,18 @@ const LogItemComponent = memo(
 	({
 		log,
 		index,
-		isTerminal,
 		isAIMode,
 		theme,
 		fontFamily,
 		maxOutputLines,
-		lastUserCommand,
 		isExpanded,
 		onToggleExpanded,
-		localFilterQuery,
-		filterMode,
-		activeLocalFilter,
-		onToggleLocalFilter,
-		onSetLocalFilterQuery,
-		onSetFilterMode,
-		onClearLocalFilter,
 		deleteConfirmLogId,
 		onDeleteLog,
 		onSetDeleteConfirmLogId,
 		scrollContainerRef,
 		setLightboxImage,
 		copyToClipboard,
-		ansiConverter,
 		markdownEditMode,
 		onToggleMarkdownEditMode,
 		onReplayMessage,
@@ -392,68 +358,14 @@ const LogItemComponent = memo(
 			}
 		}, [isExpanded, log.id, onToggleExpanded, scrollContainerRef]);
 
-		// Strip command echo from terminal output
-		let textToProcess = log.text;
-		if (isTerminal && log.source !== 'user' && lastUserCommand) {
-			if (textToProcess.startsWith(lastUserCommand)) {
-				textToProcess = textToProcess.slice(lastUserCommand.length);
-				if (textToProcess.startsWith('\r\n')) {
-					textToProcess = textToProcess.slice(2);
-				} else if (textToProcess.startsWith('\n') || textToProcess.startsWith('\r')) {
-					textToProcess = textToProcess.slice(1);
-				}
-			}
-		}
-
-		const processedText = processLogTextHelper(textToProcess, isTerminal && log.source !== 'user');
+		const processedText = processLogTextHelper(log.text, false);
 
 		// Skip rendering stderr entries that have no actual content
 		if (log.source === 'stderr' && !processedText.trim()) {
 			return null;
 		}
 
-		// Separate stdout and stderr for terminal output
-		const separated =
-			log.source === 'stderr'
-				? { stdout: '', stderr: processedText }
-				: { stdout: processedText, stderr: '' };
-
-		// Apply local filter if active for this log entry
-		const filteredStdout =
-			localFilterQuery && log.source !== 'user'
-				? filterTextByLinesHelper(
-						separated.stdout,
-						localFilterQuery,
-						filterMode.mode,
-						filterMode.regex
-					)
-				: separated.stdout;
-		const filteredStderr =
-			localFilterQuery && log.source !== 'user'
-				? filterTextByLinesHelper(
-						separated.stderr,
-						localFilterQuery,
-						filterMode.mode,
-						filterMode.regex
-					)
-				: separated.stderr;
-
-		// Check if filter returned no results
-		const hasNoMatches =
-			localFilterQuery && !filteredStdout.trim() && !filteredStderr.trim() && log.source !== 'user';
-
-		// For stderr entries, use stderr content; for all others, use stdout content
-		const contentToDisplay = log.source === 'stderr' ? filteredStderr : filteredStdout;
-
-		// PERF: Convert ANSI codes to HTML using cache.
-		// Search highlighting is now applied at the scroll-container level via CSS Custom
-		// Highlight API in TerminalOutput, so per-log markers are no longer needed.
-		const htmlContent =
-			isTerminal && log.source !== 'user'
-				? getCachedAnsiHtml(contentToDisplay, theme.id, ansiConverter)
-				: contentToDisplay;
-
-		const filteredText = contentToDisplay;
+		const filteredText = processedText;
 
 		// Count lines in the filtered text
 		const lineCount = filteredText.split('\n').length;
@@ -464,13 +376,6 @@ const LogItemComponent = memo(
 			shouldCollapse && !isExpanded
 				? filteredText.split('\n').slice(0, maxOutputLines).join('\n')
 				: filteredText;
-
-		// PERF: Sanitize with DOMPurify, using cache for ANSI conversion.
-		// Search highlighting is handled at the scroll-container level.
-		const displayHtmlContent =
-			shouldCollapse && !isExpanded && isTerminal && log.source !== 'user'
-				? getCachedAnsiHtml(displayText, theme.id, ansiConverter)
-				: htmlContent;
 
 		const isUserMessage = log.source === 'user';
 		const isReversed = isUserMessage
@@ -529,23 +434,6 @@ const LogItemComponent = memo(
 									: theme.colors.border,
 					}}
 				>
-					{/* Local filter icon for system output only */}
-					{log.source !== 'user' && isTerminal && (
-						<div className="absolute top-2 right-2 flex items-center gap-2">
-							<LogFilterControls
-								logId={log.id}
-								fontFamily={fontFamily}
-								theme={theme}
-								filterQuery={localFilterQuery}
-								filterMode={filterMode}
-								isActive={activeLocalFilter === log.id}
-								onToggleFilter={onToggleLocalFilter}
-								onSetFilterQuery={onSetLocalFilterQuery}
-								onSetFilterMode={onSetFilterMode}
-								onClearFilter={onClearLocalFilter}
-							/>
-						</div>
-					)}
 					{log.images && log.images.length > 0 && (
 						<div
 							className="flex gap-2 mb-2 overflow-x-auto scrollbar-thin"
@@ -799,33 +687,19 @@ const LogItemComponent = memo(
 						log.source !== 'error' &&
 						log.source !== 'thinking' &&
 						log.source !== 'tool' &&
-						(hasNoMatches ? (
-							<div
-								className="flex items-center justify-center py-8 text-sm"
-								style={{ color: theme.colors.textDim }}
-							>
-								<span>No matches found for filter</span>
-							</div>
-						) : shouldCollapse && !isExpanded ? (
+						(shouldCollapse && !isExpanded ? (
 							<div>
 								<div
-									className={`${isTerminal && log.source !== 'user' ? 'whitespace-pre text-sm' : 'whitespace-pre-wrap text-sm break-words'}`}
+									className="whitespace-pre-wrap text-sm break-words"
 									style={{
 										maxHeight: `${maxOutputLines * 1.5}em`,
-										overflow: isTerminal && log.source !== 'user' ? 'hidden' : 'hidden',
+										overflow: 'hidden',
 										color: theme.colors.textMain,
 										fontFamily,
-										overflowWrap: isTerminal && log.source !== 'user' ? undefined : 'break-word',
+										overflowWrap: 'break-word',
 									}}
 								>
-									{isTerminal && log.source !== 'user' ? (
-										// Content sanitized with DOMPurify above
-										// Horizontal scroll for terminal output to preserve column alignment
-										<div
-											className="overflow-x-auto scrollbar-thin"
-											dangerouslySetInnerHTML={{ __html: displayHtmlContent }}
-										/>
-									) : isAIMode && !markdownEditMode ? (
+									{isAIMode && !markdownEditMode ? (
 										// Collapsed markdown preview with rendered markdown
 										<MarkdownRenderer
 											content={displayText}
@@ -861,14 +735,14 @@ const LogItemComponent = memo(
 						) : shouldCollapse && isExpanded ? (
 							<div>
 								<div
-									className={`${isTerminal && log.source !== 'user' ? 'whitespace-pre text-sm scrollbar-thin' : 'whitespace-pre-wrap text-sm break-words'}`}
+									className="whitespace-pre-wrap text-sm break-words"
 									style={{
 										maxHeight: '600px',
 										overflow: 'auto',
 										overscrollBehavior: 'contain',
 										color: theme.colors.textMain,
 										fontFamily,
-										overflowWrap: isTerminal && log.source !== 'user' ? undefined : 'break-word',
+										overflowWrap: 'break-word',
 									}}
 									onWheel={(e) => {
 										// Prevent scroll from propagating to parent when this container can scroll
@@ -883,16 +757,7 @@ const LogItemComponent = memo(
 										}
 									}}
 								>
-									{isTerminal && log.source !== 'user' ? (
-										// Content sanitized with DOMPurify above
-										// Horizontal scroll for terminal output to preserve column alignment
-										<div dangerouslySetInnerHTML={{ __html: displayHtmlContent }} />
-									) : log.source === 'user' && isTerminal ? (
-										<div style={{ fontFamily }}>
-											<span style={{ color: theme.colors.accent }}>$ </span>
-											{filteredText}
-										</div>
-									) : log.aiCommand ? (
+									{log.aiCommand ? (
 										<div className="space-y-3">
 											<div
 												className="flex items-center gap-2 px-3 py-2 rounded-lg border"
@@ -948,26 +813,7 @@ const LogItemComponent = memo(
 							</div>
 						) : (
 							<>
-								{isTerminal && log.source !== 'user' ? (
-									// Content sanitized with DOMPurify above
-									<div
-										className="whitespace-pre text-sm overflow-x-auto scrollbar-thin"
-										style={{
-											color: theme.colors.textMain,
-											fontFamily,
-											overscrollBehavior: 'contain',
-										}}
-										dangerouslySetInnerHTML={{ __html: displayHtmlContent }}
-									/>
-								) : log.source === 'user' && isTerminal ? (
-									<div
-										className="whitespace-pre-wrap text-sm break-words"
-										style={{ color: theme.colors.textMain, fontFamily }}
-									>
-										<span style={{ color: theme.colors.accent }}>$ </span>
-										{filteredText}
-									</div>
-								) : log.aiCommand ? (
+								{log.aiCommand ? (
 									<div className="space-y-3">
 										<div
 											className="flex items-center gap-2 px-3 py-2 rounded-lg border"
@@ -1248,10 +1094,6 @@ const LogItemComponent = memo(
 			prevProps.log.metadata?.hiddenProgress === nextProps.log.metadata?.hiddenProgress &&
 			prevProps.log.metadata?.toolState?.status === nextProps.log.metadata?.toolState?.status &&
 			prevProps.isExpanded === nextProps.isExpanded &&
-			prevProps.localFilterQuery === nextProps.localFilterQuery &&
-			prevProps.filterMode.mode === nextProps.filterMode.mode &&
-			prevProps.filterMode.regex === nextProps.filterMode.regex &&
-			prevProps.activeLocalFilter === nextProps.activeLocalFilter &&
 			prevProps.deleteConfirmLogId === nextProps.deleteConfirmLogId &&
 			prevProps.theme === nextProps.theme &&
 			prevProps.maxOutputLines === nextProps.maxOutputLines &&
@@ -1405,24 +1247,6 @@ export const TerminalOutput = memo(
 		// Counter to force re-render of LogItem when expanded state changes
 		const [_expandedTrigger, setExpandedTrigger] = useState(0);
 
-		// Track local filters per log entry (log ID -> filter query)
-		const [localFilters, setLocalFilters] = useState<Map<string, string>>(new Map());
-		// Use refs to access current values without recreating LogItem callback
-		const localFiltersRef = useRef(localFilters);
-		localFiltersRef.current = localFilters;
-		const [activeLocalFilter, setActiveLocalFilter] = useState<string | null>(null);
-		const activeLocalFilterRef = useRef(activeLocalFilter);
-		activeLocalFilterRef.current = activeLocalFilter;
-		// Counter to force re-render when local filter state changes
-		const [_filterTrigger, setFilterTrigger] = useState(0);
-
-		// Track filter modes per log entry (log ID -> {mode: 'include'|'exclude', regex: boolean})
-		const [filterModes, setFilterModes] = useState<
-			Map<string, { mode: 'include' | 'exclude'; regex: boolean }>
-		>(new Map());
-		const filterModesRef = useRef(filterModes);
-		filterModesRef.current = filterModes;
-
 		// Delete confirmation state
 		const [deleteConfirmLogId, setDeleteConfirmLogId] = useState<string | null>(null);
 		const deleteConfirmLogIdRef = useRef(deleteConfirmLogId);
@@ -1539,56 +1363,6 @@ export const TerminalOutput = memo(
 			setExpandedTrigger((t) => t + 1);
 		}, []);
 
-		const toggleLocalFilter = useCallback((logId: string) => {
-			setActiveLocalFilter((prev) => (prev === logId ? null : logId));
-			setFilterTrigger((t) => t + 1);
-		}, []);
-
-		const setLocalFilterQuery = useCallback((logId: string, query: string) => {
-			setLocalFilters((prev) => {
-				const newMap = new Map(prev);
-				if (query) {
-					newMap.set(logId, query);
-				} else {
-					newMap.delete(logId);
-				}
-				return newMap;
-			});
-		}, []);
-
-		// Callback to update filter mode for a log entry
-		const setFilterModeForLog = useCallback(
-			(
-				logId: string,
-				update: (current: { mode: 'include' | 'exclude'; regex: boolean }) => {
-					mode: 'include' | 'exclude';
-					regex: boolean;
-				}
-			) => {
-				setFilterModes((prev) => {
-					const newMap = new Map(prev);
-					const current = newMap.get(logId) || { mode: 'include' as const, regex: false };
-					newMap.set(logId, update(current));
-					return newMap;
-				});
-			},
-			[]
-		);
-
-		// Callback to clear local filter for a log entry
-		const clearLocalFilter = useCallback(
-			(logId: string) => {
-				setActiveLocalFilter(null);
-				setLocalFilterQuery(logId, '');
-				setFilterModes((prev) => {
-					const newMap = new Map(prev);
-					newMap.delete(logId);
-					return newMap;
-				});
-			},
-			[setLocalFilterQuery]
-		);
-
 		// Callback to toggle markdown mode
 		const toggleMarkdownEditMode = useCallback(() => {
 			setMarkdownEditMode(!markdownEditMode);
@@ -1600,36 +1374,6 @@ export const TerminalOutput = memo(
 				terminalOutputRef.current?.querySelector('input')?.focus();
 			}
 		}, [outputSearchOpen]);
-
-		// Create ANSI converter with theme-aware colors
-		const ansiConverter = useMemo(() => {
-			const c = theme.colors;
-			return new Convert({
-				fg: c.textMain,
-				bg: c.bgMain,
-				newline: false,
-				escapeXML: true,
-				stream: false,
-				colors: {
-					0: c.ansiBlack ?? c.textMain,
-					1: c.ansiRed ?? c.error,
-					2: c.ansiGreen ?? c.success,
-					3: c.ansiYellow ?? c.warning,
-					4: c.ansiBlue ?? c.accent,
-					5: c.ansiMagenta ?? c.accentDim,
-					6: c.ansiCyan ?? c.accent,
-					7: c.ansiWhite ?? c.textDim,
-					8: c.ansiBrightBlack ?? c.textDim,
-					9: c.ansiBrightRed ?? c.error,
-					10: c.ansiBrightGreen ?? c.success,
-					11: c.ansiBrightYellow ?? c.warning,
-					12: c.ansiBrightBlue ?? c.accent,
-					13: c.ansiBrightMagenta ?? c.accentText,
-					14: c.ansiBrightCyan ?? c.accentText,
-					15: c.ansiBrightWhite ?? c.textMain,
-				},
-			});
-		}, [theme]);
 
 		// PERF: Memoize active tab lookup to avoid O(n) .find() on every render
 		const activeTab = useMemo(() => getActiveTab(session), [session.aiTabs, session.activeTabId]);
@@ -2045,21 +1789,7 @@ export const TerminalOutput = memo(
 			};
 		}, []);
 
-		// Helper to find last user command for echo stripping in terminal mode
-		const getLastUserCommand = useCallback(
-			(index: number): string | undefined => {
-				for (let i = index - 1; i >= 0; i--) {
-					if (filteredLogs[i]?.source === 'user') {
-						return filteredLogs[i].text;
-					}
-				}
-				return undefined;
-			},
-			[filteredLogs]
-		);
-
 		// TerminalOutput only handles AI mode; terminal mode renders via TerminalView
-		const isTerminal = false;
 		const isAIMode = true;
 
 		// Memoized prose styles - applied once at container level instead of per-log-item
@@ -2310,30 +2040,18 @@ export const TerminalOutput = memo(
 							key={log.id}
 							log={log}
 							index={index}
-							isTerminal={isTerminal}
 							isAIMode={isAIMode}
 							theme={theme}
 							fontFamily={fontFamily}
 							maxOutputLines={maxOutputLines}
-							lastUserCommand={
-								isTerminal && log.source !== 'user' ? getLastUserCommand(index) : undefined
-							}
 							isExpanded={expandedLogs.has(log.id)}
 							onToggleExpanded={toggleExpanded}
-							localFilterQuery={localFilters.get(log.id) || ''}
-							filterMode={filterModes.get(log.id) || { mode: 'include', regex: false }}
-							activeLocalFilter={activeLocalFilter}
-							onToggleLocalFilter={toggleLocalFilter}
-							onSetLocalFilterQuery={setLocalFilterQuery}
-							onSetFilterMode={setFilterModeForLog}
-							onClearLocalFilter={clearLocalFilter}
 							deleteConfirmLogId={deleteConfirmLogId}
 							onDeleteLog={onDeleteLog}
 							onSetDeleteConfirmLogId={setDeleteConfirmLogId}
 							scrollContainerRef={scrollContainerRef}
 							setLightboxImage={setLightboxImage}
 							copyToClipboard={copyToClipboard}
-							ansiConverter={ansiConverter}
 							markdownEditMode={markdownEditMode}
 							onToggleMarkdownEditMode={toggleMarkdownEditMode}
 							onReplayMessage={onReplayMessage}

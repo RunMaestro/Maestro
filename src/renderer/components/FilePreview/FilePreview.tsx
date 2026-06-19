@@ -774,7 +774,7 @@ export const FilePreview = React.memo(
 
 		// Capture-phase scroll listener keeps the top-line refs fresh. Stored in a
 		// ref so the listener (attached once) always runs against current state.
-		const captureTopLineRef = useRef<() => void>(() => {});
+		const captureTopLineRef = useRef<(() => void) | null>(null);
 		captureTopLineRef.current = () => {
 			if (markdownEditMode) {
 				const line = editorRef.current?.getTopLine();
@@ -793,7 +793,7 @@ export const FilePreview = React.memo(
 				if (raf != null) return;
 				raf = requestAnimationFrame(() => {
 					raf = null;
-					captureTopLineRef.current();
+					captureTopLineRef.current?.();
 				});
 			};
 			// Capture phase so scrolls from the nested tier scrollers (CodeMirror,
@@ -1209,12 +1209,11 @@ export const FilePreview = React.memo(
 			const shortcut = shortcuts[shortcutId];
 			if (!shortcut) return false;
 
-			const hasModifier = (key: string) => {
-				if (key === 'Meta') return e.metaKey;
-				if (key === 'Ctrl') return e.ctrlKey;
-				if (key === 'Alt') return e.altKey;
-				if (key === 'Shift') return e.shiftKey;
-				return false;
+			const modifierState: Record<string, boolean> = {
+				Meta: e.metaKey,
+				Ctrl: e.ctrlKey,
+				Alt: e.altKey,
+				Shift: e.shiftKey,
 			};
 
 			const modifiers = shortcut.keys.filter((k: string) =>
@@ -1224,7 +1223,7 @@ export const FilePreview = React.memo(
 				(k: string) => !['Meta', 'Ctrl', 'Alt', 'Shift'].includes(k)
 			);
 
-			const modifiersMatch = modifiers.every((m: string) => hasModifier(m));
+			const modifiersMatch = modifiers.every((m: string) => modifierState[m]);
 			const keyMatches = mainKey?.toLowerCase() === e.key.toLowerCase();
 
 			return modifiersMatch && keyMatches;

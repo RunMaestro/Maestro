@@ -381,6 +381,7 @@ function configureMaestroBridge() {
 	maestro.process.getActiveProcesses = vi.fn().mockResolvedValue([]);
 	maestro.process.interrupt = vi.fn().mockResolvedValue(undefined);
 	maestro.process.sendRemoteNewTabResponse = vi.fn();
+	maestro.git.checkGhCli = vi.fn().mockResolvedValue({ available: false });
 	maestro.git.onWorktreeDiscovered = vi.fn().mockReturnValue(() => {});
 	maestro.sessions.getAll = vi.fn().mockResolvedValue([]);
 	maestro.speckit = {
@@ -642,8 +643,180 @@ describe('MaestroConsole app shell', () => {
 		window.__hideSplash = vi.fn();
 	});
 
-	afterEach(() => {
+	afterEach(async () => {
+		vi.useRealTimers();
+		await new Promise((resolve) => setTimeout(resolve, 200));
 		consoleLog.mockRestore();
+	});
+
+	it('renders the no-session empty state and wires startup bridge subscriptions', async () => {
+		const maestro = configureMaestroBridge();
+
+		const { unmount } = renderApp();
+
+		expect(await screen.findByRole('heading', { name: 'MAESTRO' })).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: /Create your first agent/i })).toBeInTheDocument();
+
+		await waitFor(() => expect(window.__hideSplash).toHaveBeenCalled());
+		expect(maestro.git.checkGhCli).toHaveBeenCalled();
+		expect(maestro.stats.getInitializationResult).toHaveBeenCalled();
+
+		unmount();
+	});
+
+	it('routes empty-state menu actions into app-level modals', async () => {
+		renderApp();
+
+		expect(await screen.findByRole('heading', { name: 'MAESTRO' })).toBeInTheDocument();
+
+		act(() => {
+			useModalStore.getState().openModal('newInstance', { duplicatingSessionId: null });
+		});
+		await waitFor(() => expect(mockAppModalsState.latestProps?.existingSessions).toEqual([]));
+
+		fireEvent.click(screen.getByTitle('Menu'));
+		fireEvent.click(await screen.findByText('Settings'));
+		await waitFor(() => expect(screen.getByTestId('settings-modal')).toBeInTheDocument());
+		expect(mockSettingsState.latestProps?.isOpen).toBe(true);
+
+		fireEvent.click(screen.getByTitle('Menu'));
+		fireEvent.click(await screen.findByText('Keyboard Shortcuts'));
+		await waitFor(() => expect(useModalStore.getState().isOpen('shortcutsHelp')).toBe(true));
+
+		fireEvent.click(screen.getByTitle('Menu'));
+		fireEvent.click(await screen.findByText('Check for Updates'));
+		await waitFor(() => expect(useModalStore.getState().isOpen('updateCheck')).toBe(true));
+
+		fireEvent.click(screen.getByTitle('Menu'));
+		fireEvent.click(await screen.findByText('About Maestro'));
+		await waitFor(() => expect(useModalStore.getState().isOpen('about')).toBe(true));
+	});
+
+	it('renders the active-session workspace when a session exists', async () => {
+		const session = createSession({ groupId: 'group-1' });
+		const maestro = configureMaestroBridge();
+		maestro.sessions.getAll.mockResolvedValue([session]);
+		useSessionStore.setState({
+			activeSessionId: session.id,
+			groups: [{ id: 'group-1', name: 'Core Team', emoji: 'G' }],
+			sessions: [session],
+		});
+
+		const { unmount } = renderApp();
+
+		expect(await screen.findByText('G Core Team | Agent One | Planning')).toBeInTheDocument();
+		expect(maestro.process.onData).toHaveBeenCalled();
+		expect(maestro.history.onExternalChange).toHaveBeenCalled();
+
+		act(() => {
+			useModalStore.getState().openModal('newInstance', { duplicatingSessionId: null });
+		});
+		await waitFor(() => expect(mockAppModalsState.latestProps?.existingSessions).toHaveLength(1));
+
+		unmount();
+	});
+
+	it('renders terminal cwd and title fallbacks for sessions without groups or tab names', async () => {
+		const session = createSession({
+			aiTabs: [
+				{
+					agentSessionId: 'abc123-def456',
+					createdAt: 1,
+					id: 'tab-1',
+					isUnread: false,
+					logs: [],
+					name: '',
+					state: 'idle',
+				},
+			],
+			groupId: undefined,
+			inputMode: 'terminal',
+			shellCwd: '/test/project/shell',
+			state: 'idle',
+			busySource: undefined,
+		});
+		const maestro = configureMaestroBridge();
+		maestro.sessions.getAll.mockResolvedValue([session]);
+		useSessionStore.setState({
+			activeSessionId: session.id,
+			sessions: [session],
+		});
+
+		renderApp();
+
+		expect(await screen.findByText('Agent One | ABC123')).toBeInTheDocument();
+		await waitFor(() => expect(mockAppModalsState.latestProps?.gitViewerCwd).toBe('/test/project'));
+
+		act(() => {
+			const current = getSessionById(session.id);
+			useSessionStore.setState({
+				sessions: [
+					{
+						...current,
+						shellCwd: undefined,
+					},
+				],
+			});
+		});
+		await waitFor(() => expect(mockAppModalsState.latestProps?.gitViewerCwd).toBe('/test/project'));
+
+		act(() => {
+			const current = getSessionById(session.id);
+			useSessionStore.setState({
+				sessions: [
+					{
+						...current,
+						aiTabs: [{ ...current.aiTabs[0], agentSessionId: undefined }],
+					},
+				],
+			});
+		});
+
+		await waitFor(() => expect(screen.getAllByText('Agent One').length).toBeGreaterThan(0));
+
+		act(() => {
+			const current = getSessionById(session.id);
+			useSessionStore.setState({
+				sessions: [
+					{
+						...current,
+						aiTabs: [],
+					},
+				],
+			});
+		});
+		await waitFor(() => expect(screen.getAllByText('Agent One').length).toBeGreaterThan(0));
+	});
+
+	it('uses native title bar spacing for active sessions with staged images', async () => {
+		const session = createSession({
+			aiTabs: [
+				{
+					createdAt: 1,
+					id: 'tab-1',
+					isUnread: false,
+					logs: [],
+					name: 'Draft',
+					state: 'idle',
+					stagedImages: ['data:image/png;base64,one'],
+				},
+			],
+			state: 'idle',
+			busySource: undefined,
+		});
+		const maestro = configureMaestroBridge();
+		maestro.sessions.getAll.mockResolvedValue([session]);
+		useSettingsStore.setState({ useNativeTitleBar: true });
+		useSessionStore.setState({
+			activeSessionId: session.id,
+			sessions: [session],
+		});
+
+		renderApp();
+
+		await screen.findByTestId('main-panel');
+		expect(screen.queryByText(/Maestro Group Chat/)).not.toBeInTheDocument();
+		expect(document.body.querySelector('.pt-0')).toBeInTheDocument();
 	});
 
 	it('uses custom theme colors from settings', async () => {
@@ -1087,6 +1260,425 @@ describe('MaestroConsole app shell', () => {
 		);
 	});
 
+	it('passes aggregated slash commands and error recovery callbacks to the main panel', async () => {
+		const agentError = {
+			agentId: 'claude-code',
+			message: 'Agent failed',
+			recoverable: true,
+			timestamp: Date.now(),
+			type: 'agent_crashed' as const,
+		};
+		const session = createSession({
+			agentCommands: [{ command: '/agent-help', description: 'Agent-specific command' }],
+			agentError,
+			agentErrorTabId: 'tab-1',
+			aiTabs: [
+				{
+					agentError,
+					agentSessionId: 'claude-session-1',
+					createdAt: 1,
+					id: 'tab-1',
+					isUnread: false,
+					logs: [],
+					name: 'Planning',
+					state: 'idle',
+				},
+			],
+			executionQueue: [
+				{
+					id: 'queue-1',
+					tabId: 'tab-1',
+					text: 'Queued prompt',
+					timestamp: 1,
+					type: 'message',
+				},
+			],
+			state: 'idle',
+			busySource: undefined,
+		});
+		const otherSession = createSession({
+			executionQueue: [
+				{
+					id: 'other-queue',
+					tabId: 'tab-1',
+					text: 'Other queued prompt',
+					timestamp: 2,
+					type: 'message',
+				},
+			],
+			id: 'session-other',
+			name: 'Other Agent',
+		});
+		const maestro = configureMaestroBridge();
+		maestro.sessions.getAll.mockResolvedValue([session, otherSession]);
+		maestro.speckit.getPrompts.mockResolvedValue({
+			success: true,
+			commands: [
+				{
+					command: '/specify',
+					description: 'Create a spec',
+					id: 'specify',
+					prompt: 'Write a specification',
+				},
+			],
+		});
+		maestro.openspec.getPrompts.mockResolvedValue({
+			success: true,
+			commands: [
+				{
+					command: '/openspec',
+					description: 'Create an OpenSpec',
+					id: 'openspec',
+					prompt: 'Write an OpenSpec',
+				},
+			],
+		});
+		useSessionStore.setState({
+			activeSessionId: session.id,
+			sessions: [session, otherSession],
+		});
+
+		renderApp();
+		await screen.findByTestId('main-panel');
+
+		await waitFor(() =>
+			expect(mockMainPanelState.latestProps?.slashCommands.map((cmd: any) => cmd.command)).toEqual(
+				expect.arrayContaining(['/specify', '/openspec', '/agent-help'])
+			)
+		);
+		expect(mockMainPanelState.latestProps?.slashCommands).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ command: '/specify', prompt: 'Write a specification' }),
+				expect.objectContaining({ command: '/openspec', prompt: 'Write an OpenSpec' }),
+				expect.objectContaining({ command: '/agent-help' }),
+			])
+		);
+		expect(mockMainPanelState.latestProps?.onClearAgentError).toEqual(expect.any(Function));
+		const onClearAgentError = mockMainPanelState.latestProps?.onClearAgentError as () => void;
+
+		act(() => {
+			onClearAgentError();
+		});
+
+		await waitFor(() => expect(getSessionById(session.id).aiTabs[0].agentError).toBeUndefined());
+		expect(maestro.agentError.clearError).toHaveBeenCalledWith(session.id);
+		act(() => {
+			onClearAgentError();
+		});
+		expect(maestro.agentError.clearError).toHaveBeenCalledTimes(1);
+		act(() => {
+			useSessionStore.setState({ activeSessionId: 'missing-session' });
+			onClearAgentError();
+		});
+		expect(maestro.agentError.clearError).toHaveBeenCalledTimes(1);
+		act(() => {
+			useSessionStore.setState({ activeSessionId: session.id });
+		});
+
+		act(() => {
+			mockMainPanelState.latestProps?.onRemoveQueuedItem('queue-1');
+		});
+		expect(getSessionById(session.id).executionQueue).toEqual([]);
+		expect(getSessionById('session-other').executionQueue).toHaveLength(1);
+
+		const theme = mockMainPanelState.latestProps?.theme;
+		expect(mockMainPanelState.latestProps?.getContextColor(90, theme)).toBe(theme.colors.error);
+
+		act(() => {
+			useSessionStore.setState({
+				sessions: [
+					{ ...getSessionById(session.id), activeTabId: undefined },
+					getSessionById('session-other'),
+				],
+			});
+		});
+		await waitFor(() => expect(mockAppModalsState.latestProps?.canSummarizeActiveTab).toBe(false));
+	});
+
+	it('clears inline wizard errors only from the active tab through MainPanel props', async () => {
+		const session = createSession({
+			aiTabs: [
+				{
+					agentSessionId: 'claude-session-1',
+					createdAt: 1,
+					id: 'tab-1',
+					isUnread: false,
+					logs: [],
+					name: 'Planning',
+					state: 'idle',
+					wizardState: {
+						isActive: true,
+						isWaiting: false,
+						mode: 'new',
+						confidence: 40,
+						ready: false,
+						conversationHistory: [],
+						previousUIState: null,
+						error: 'wizard failed',
+						isGeneratingDocs: false,
+						generatedDocuments: [],
+						streamingContent: '',
+						currentDocumentIndex: 0,
+					} as any,
+				},
+				{
+					agentSessionId: 'claude-session-2',
+					createdAt: 2,
+					id: 'tab-2',
+					isUnread: false,
+					logs: [],
+					name: 'Sibling',
+					state: 'idle',
+					wizardState: {
+						isActive: true,
+						isWaiting: false,
+						mode: 'new',
+						confidence: 20,
+						ready: false,
+						conversationHistory: [],
+						previousUIState: null,
+						error: 'keep sibling error',
+						isGeneratingDocs: false,
+						generatedDocuments: [],
+						streamingContent: '',
+						currentDocumentIndex: 0,
+					} as any,
+				},
+			],
+			activeTabId: 'tab-1',
+		});
+		const otherSession = createSession({
+			id: 'session-other',
+			name: 'Other Agent',
+			aiTabs: [
+				{
+					agentSessionId: 'other-session',
+					createdAt: 3,
+					id: 'other-tab',
+					isUnread: false,
+					logs: [],
+					name: 'Other',
+					state: 'idle',
+					wizardState: {
+						isActive: true,
+						isWaiting: false,
+						mode: 'new',
+						confidence: 10,
+						ready: false,
+						conversationHistory: [],
+						previousUIState: null,
+						error: 'keep other error',
+						isGeneratingDocs: false,
+						generatedDocuments: [],
+						streamingContent: '',
+						currentDocumentIndex: 0,
+					} as any,
+				},
+			],
+			activeTabId: 'other-tab',
+		});
+		const maestro = configureMaestroBridge();
+		maestro.sessions.getAll.mockResolvedValue([session, otherSession]);
+		useSessionStore.setState({
+			activeSessionId: session.id,
+			sessions: [session, otherSession],
+		});
+
+		renderApp();
+		await screen.findByTestId('main-panel');
+
+		act(() => {
+			mockMainPanelState.latestProps?.onWizardClearError();
+		});
+
+		await waitFor(() => {
+			expect(getSessionById(session.id).aiTabs[0].wizardState).toBeUndefined();
+		});
+		expect(getSessionById(session.id).aiTabs[1].wizardState?.error).toBe('keep sibling error');
+		expect(getSessionById(otherSession.id).aiTabs[0].wizardState?.error).toBe('keep other error');
+
+		act(() => {
+			mockMainPanelState.latestProps?.onWizardClearError();
+		});
+		expect(getSessionById(session.id).aiTabs[0].wizardState).toBeUndefined();
+
+		act(() => {
+			useSessionStore.setState({ activeSessionId: 'missing-session' });
+			mockMainPanelState.latestProps?.onWizardClearError();
+		});
+		expect(getSessionById(session.id).aiTabs[1].wizardState?.error).toBe('keep sibling error');
+	});
+
+	it('exposes inline wizard exit callbacks through MainPanel props', async () => {
+		const session = createSession({
+			aiTabs: [
+				{
+					agentSessionId: 'claude-session-1',
+					createdAt: 1,
+					id: 'tab-1',
+					isUnread: false,
+					logs: [],
+					name: 'Planning',
+					state: 'idle',
+					wizardState: {
+						isActive: true,
+						isWaiting: false,
+						mode: 'new',
+						confidence: 70,
+						ready: true,
+						conversationHistory: [],
+						previousUIState: null,
+						error: null,
+						isGeneratingDocs: false,
+						generatedDocuments: [],
+						streamingContent: '',
+						currentDocumentIndex: 0,
+					} as any,
+				},
+				{
+					agentSessionId: 'claude-session-2',
+					createdAt: 2,
+					id: 'tab-2',
+					isUnread: false,
+					logs: [],
+					name: 'Sibling',
+					state: 'idle',
+					wizardState: {
+						isActive: true,
+						isWaiting: false,
+						mode: 'new',
+						confidence: 30,
+						ready: false,
+						conversationHistory: [],
+						previousUIState: null,
+						error: null,
+						isGeneratingDocs: false,
+						generatedDocuments: [],
+						streamingContent: '',
+						currentDocumentIndex: 0,
+					} as any,
+				},
+			],
+			activeTabId: 'tab-1',
+		});
+		const otherSession = createSession({
+			id: 'session-other',
+			name: 'Other Agent',
+			aiTabs: [
+				{
+					agentSessionId: 'other-session',
+					createdAt: 3,
+					id: 'other-tab',
+					isUnread: false,
+					logs: [],
+					name: 'Other',
+					state: 'idle',
+					wizardState: {
+						isActive: true,
+						isWaiting: false,
+						mode: 'new',
+						confidence: 10,
+						ready: false,
+						conversationHistory: [],
+						previousUIState: null,
+						error: null,
+						isGeneratingDocs: false,
+						generatedDocuments: [],
+						streamingContent: '',
+						currentDocumentIndex: 0,
+					} as any,
+				},
+			],
+			activeTabId: 'other-tab',
+		});
+		const maestro = configureMaestroBridge();
+		maestro.sessions.getAll.mockResolvedValue([session, otherSession]);
+		useSessionStore.setState({
+			activeSessionId: session.id,
+			sessions: [session, otherSession],
+		});
+
+		renderApp();
+		await screen.findByTestId('main-panel');
+		expect(mockMainPanelState.latestProps?.onExitWizard).toEqual(expect.any(Function));
+		expect(mockMainPanelState.latestProps?.onWizardCancelGeneration).toEqual(expect.any(Function));
+
+		await act(async () => {
+			await mockMainPanelState.latestProps?.onExitWizard();
+		});
+
+		expect(getSessionById(session.id).aiTabs[0].wizardState).toBeDefined();
+		expect(getSessionById(session.id).aiTabs[1].wizardState).toBeDefined();
+		expect(getSessionById(otherSession.id).aiTabs[0].wizardState).toBeDefined();
+		expect(mockMainPanelState.latestProps?.inputValue).toBe('');
+
+		act(() => {
+			useSessionStore.setState({ activeSessionId: 'missing-session' });
+			mockMainPanelState.latestProps?.onExitWizard();
+		});
+		expect(getSessionById(session.id).aiTabs[1].wizardState).toBeDefined();
+	});
+
+	it('bridges session navigation refs and keyboard summarization state through stores', async () => {
+		const session = createSession({
+			contextUsage: 95,
+			state: 'idle',
+			busySource: undefined,
+		});
+		const maestro = configureMaestroBridge();
+		maestro.sessions.getAll.mockResolvedValue([session]);
+		useSessionStore.setState({
+			activeSessionId: session.id,
+			cyclePosition: 4,
+			sessions: [session],
+		});
+
+		renderApp();
+		await screen.findByTestId('main-panel');
+		await waitFor(() =>
+			expect(mockSessionNavigationState.latestDeps?.cyclePositionRef).toBeTruthy()
+		);
+		await waitFor(() => expect(mockKeyboardHandlerState.latestRef?.current).toBeTruthy());
+
+		const cyclePositionRef = mockSessionNavigationState.latestDeps?.cyclePositionRef;
+		expect(cyclePositionRef.current).toBe(-1);
+
+		act(() => {
+			useSessionStore.getState().setCyclePosition(2);
+		});
+		expect(cyclePositionRef.current).toBe(2);
+
+		act(() => {
+			cyclePositionRef.current = -1;
+		});
+		expect(useSessionStore.getState().cyclePosition).toBe(-1);
+		expect(Reflect.set(cyclePositionRef, 'other', 7)).toBe(false);
+		expect(cyclePositionRef.other).toBeUndefined();
+
+		expect(mockKeyboardHandlerState.latestRef?.current?.canSummarizeActiveTab).toBe(true);
+
+		act(() => {
+			useSessionStore.setState({
+				sessions: [
+					{
+						...getSessionById(session.id),
+						activeTabId: undefined,
+					},
+				],
+			});
+		});
+		await waitFor(() =>
+			expect(mockKeyboardHandlerState.latestRef?.current?.canSummarizeActiveTab).toBe(false)
+		);
+
+		act(() => {
+			useSessionStore.setState({ activeSessionId: 'missing-session' });
+		});
+		await waitFor(() =>
+			expect(mockKeyboardHandlerState.latestRef?.current?.canSummarizeActiveTab).toBe(false)
+		);
+	});
+
 	it('ignores AppModals utility callbacks when no session is active', async () => {
 		renderApp();
 		await screen.findByTestId('app-modals');
@@ -1117,6 +1709,202 @@ describe('MaestroConsole app shell', () => {
 
 		expect(useSessionStore.getState().sessions).toEqual([]);
 		expect(window.maestro.history.add).not.toHaveBeenCalled();
+	});
+
+	it('handles AppModals session navigation, utility, and PR callbacks', async () => {
+		const sessionOne = createSession({
+			activeFileTabId: 'readme-tab',
+			inputMode: 'ai',
+		});
+		const sessionTwo = createSession({
+			activeFileTabId: 'notes-tab',
+			activeTabId: 'tab-a',
+			aiTabs: [
+				{
+					agentSessionId: 'claude-session-a',
+					createdAt: 1,
+					id: 'tab-a',
+					isUnread: false,
+					logs: [],
+					name: 'First Tab',
+					state: 'idle',
+				},
+				{
+					agentSessionId: 'claude-session-b',
+					createdAt: 2,
+					id: 'tab-b',
+					isUnread: false,
+					logs: [],
+					name: 'Second Tab',
+					state: 'idle',
+				},
+			],
+			cwd: '/other/project',
+			id: 'session-2',
+			inputMode: 'shell',
+			name: 'Agent Two',
+			projectRoot: '',
+		});
+		const maestro = configureMaestroBridge();
+		maestro.sessions.getAll.mockResolvedValue([sessionOne, sessionTwo]);
+		useSessionStore.setState({
+			activeSessionId: sessionOne.id,
+			sessions: [sessionOne, sessionTwo],
+		});
+		useSettingsStore.setState({
+			encoreFeatures: { directorNotes: true },
+		});
+		useModalStore.getState().openModal('usageDashboard');
+
+		renderApp();
+		await screen.findByTestId('app-modals');
+
+		await act(async () => {
+			mockAppModalsState.latestProps?.onNavigateToSession('session-2', 'tab-b');
+		});
+
+		await waitFor(() => expect(useSessionStore.getState().activeSessionId).toBe('session-2'));
+		expect(getSessionById('session-2').activeTabId).toBe('tab-b');
+
+		await act(async () => {
+			mockAppModalsState.latestProps?.onNavigateToSession('session-2');
+		});
+		expect(useSessionStore.getState().activeSessionId).toBe('session-2');
+		expect(getSessionById('session-2').activeTabId).toBe('tab-b');
+
+		await waitFor(() =>
+			expect(mockAppModalsState.latestProps?.promptComposerSessionName).toBe('Agent Two')
+		);
+		act(() => {
+			mockAppModalsState.latestProps?.onOpenCreatePR({
+				...getSessionById('session-2'),
+				projectRoot: '',
+			});
+		});
+		await waitFor(() =>
+			expect(mockAppModalsState.latestProps?.createPRSession?.projectRoot).toBe('')
+		);
+		act(() => {
+			mockAppModalsState.latestProps?.onSaveBatchPrompt('Summarize the changed files');
+		});
+		expect(getSessionById('session-2')).toEqual(
+			expect.objectContaining({
+				batchRunnerPrompt: 'Summarize the changed files',
+				batchRunnerPromptModifiedAt: expect.any(Number),
+			})
+		);
+
+		act(() => {
+			mockAppModalsState.latestProps?.onTabSelect('tab-a');
+		});
+		expect(getSessionById('session-2')).toEqual(
+			expect.objectContaining({
+				activeFileTabId: null,
+				activeTabId: 'tab-a',
+			})
+		);
+
+		act(() => {
+			mockAppModalsState.latestProps?.onFileTabSelect('notes-tab');
+		});
+		expect(getSessionById('session-2').activeFileTabId).toBe('notes-tab');
+
+		vi.useFakeTimers();
+		act(() => {
+			mockAppModalsState.latestProps?.onNamedSessionSelect(
+				'agent-session-new',
+				'/other/project',
+				'Named Session',
+				true
+			);
+			vi.advanceTimersByTime(50);
+		});
+		expect(useUIStore.getState().activeFocus).toBe('main');
+		vi.useRealTimers();
+
+		maestro.fs.readFile.mockResolvedValueOnce('Plan body');
+		maestro.fs.stat.mockResolvedValueOnce({ modifiedAt: '2026-01-02T03:04:05.000Z' });
+		await act(async () => {
+			mockAppModalsState.latestProps?.onFileSearchSelect({
+				depth: 0,
+				fullPath: 'docs/plan.md',
+				isFolder: false,
+				name: 'plan.md',
+			});
+			await Promise.resolve();
+			await Promise.resolve();
+		});
+		await waitFor(() =>
+			expect(getSessionById('session-2').filePreviewTabs).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						content: 'Plan body',
+						name: 'plan',
+						path: '/other/project/docs/plan.md',
+					}),
+				])
+			)
+		);
+
+		act(() => {
+			mockAppModalsState.latestProps?.onCloseUsageDashboard();
+			mockAppModalsState.latestProps?.onOpenSymphony?.();
+			mockAppModalsState.latestProps?.onOpenDirectorNotes?.();
+			mockAppModalsState.latestProps?.setCreateGroupModalOpenForQuickActions(true);
+		});
+		expect(useModalStore.getState().isOpen('usageDashboard')).toBe(false);
+		if (mockAppModalsState.latestProps?.onOpenSymphony) {
+			expect(useModalStore.getState().isOpen('symphony')).toBe(true);
+		}
+		if (mockAppModalsState.latestProps?.onOpenDirectorNotes) {
+			expect(useModalStore.getState().isOpen('directorNotes')).toBe(true);
+		}
+		await waitFor(() => expect(mockAppModalsState.latestProps?.createGroupModalOpen).toBe(true));
+		act(() => {
+			mockAppModalsState.latestProps?.onCloseCreateGroupModal();
+		});
+		await waitFor(() => expect(mockAppModalsState.latestProps?.createGroupModalOpen).toBe(false));
+
+		await act(async () => {
+			await mockAppModalsState.latestProps?.onPRCreated({
+				description: 'Adds focused App shell behavior coverage.',
+				sourceBranch: 'coverage/app-shell',
+				targetBranch: 'main',
+				title: 'Improve App shell tests',
+				url: 'https://github.com/example/maestro/pull/42',
+			});
+		});
+
+		expect(maestro.history.add).toHaveBeenCalledWith(
+			expect.objectContaining({
+				fullResponse: expect.stringContaining('Improve App shell tests'),
+				projectPath: '/other/project',
+				sessionId: 'session-2',
+				sessionName: 'Agent Two',
+				summary: 'Created PR: Improve App shell tests',
+				type: 'USER',
+			})
+		);
+		expect(mockRightPanelState.refreshHistoryPanelCalls).toBe(1);
+
+		await act(async () => {
+			await mockAppModalsState.latestProps?.onPRCreated({
+				sourceBranch: 'coverage/no-description',
+				targetBranch: 'main',
+				title: 'PR without description',
+				url: 'https://github.com/example/maestro/pull/43',
+			});
+		});
+
+		expect(maestro.history.add).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				fullResponse: expect.not.stringContaining('Description'),
+				projectPath: '/other/project',
+				sessionId: 'session-2',
+				summary: 'Created PR: PR without description',
+			})
+		);
+		expect(mockRightPanelState.refreshHistoryPanelCalls).toBe(2);
 	});
 
 	it('routes right-panel and toast callbacks through session state', async () => {
@@ -1290,5 +2078,232 @@ describe('MaestroConsole app shell', () => {
 
 		await waitFor(() => expect(useUIStore.getState().activeRightTab).toBe('autorun'));
 		await waitFor(() => expect(useModalStore.getState().isOpen('autoRunSetup')).toBe(true));
+	});
+
+	it('renders active group chat view and routes group chat callbacks', async () => {
+		const session = createSession({
+			id: 'session-1',
+			name: 'Planner',
+			projectRoot: '/test/project',
+		});
+		const maestro = configureMaestroBridge();
+		const groupChat = {
+			createdAt: 1,
+			id: 'chat-1',
+			imagesDir: '/tmp/chat-images',
+			logPath: '/tmp/chat.log',
+			moderatorAgentId: 'codex',
+			moderatorAgentSessionId: 'moderator-agent-session',
+			moderatorSessionId: 'moderator-session',
+			name: 'Design Review',
+			participants: [
+				{
+					addedAt: 1,
+					agentId: 'claude-code',
+					name: 'Planner',
+					sessionId: session.id,
+					totalCost: 1.25,
+				},
+				{
+					addedAt: 2,
+					agentId: 'codex',
+					name: 'Reviewer',
+					sessionId: 'missing-session',
+				},
+			],
+		};
+		maestro.sessions.getAll.mockResolvedValue([session]);
+		maestro.groupChat.list.mockResolvedValue([groupChat]);
+		useSessionStore.setState({
+			activeSessionId: session.id,
+			sessions: [session],
+		});
+		useGroupChatStore.setState({
+			activeGroupChatId: 'chat-1',
+			groupChatExecutionQueue: [
+				{
+					id: 'queue-1',
+					tabId: 'chat-1',
+					text: 'First queued message',
+					timestamp: 1,
+					type: 'message',
+				},
+				{
+					id: 'queue-2',
+					tabId: 'chat-1',
+					text: 'Second queued message',
+					timestamp: 2,
+					type: 'message',
+				},
+			],
+			groupChatMessages: [
+				{ timestamp: '2026-01-01T00:00:00.000Z', from: 'Planner', content: 'Hi' },
+			],
+			groupChatState: 'moderator-thinking',
+			groupChats: [groupChat],
+			moderatorUsage: { contextUsage: 42, tokenCount: 1000, totalCost: 0.75 },
+			participantStates: new Map([['Planner', 'working']]),
+		});
+
+		renderApp();
+
+		expect(await screen.findByText('Maestro Group Chat: Design Review')).toBeInTheDocument();
+		expect(await screen.findByTestId('group-chat-panel')).toHaveTextContent('Design Review');
+		expect(screen.getByTestId('group-chat-right-panel')).toHaveTextContent('participants');
+		expect(mockGroupChatPanelState.latestProps).toEqual(
+			expect.objectContaining({
+				costIncomplete: true,
+				totalCost: 2,
+			})
+		);
+		expect(mockGroupChatRightPanelState.latestProps).toEqual(
+			expect.objectContaining({
+				groupChatId: 'chat-1',
+				moderatorAgentId: 'codex',
+				moderatorAgentSessionId: 'moderator-agent-session',
+				moderatorSessionId: 'moderator-session',
+				moderatorState: 'busy',
+			})
+		);
+		expect(mockGroupChatRightPanelState.latestProps?.participantSessionPaths.get(session.id)).toBe(
+			'/test/project'
+		);
+
+		act(() => {
+			mockGroupChatPanelState.latestProps?.onRename();
+			mockGroupChatPanelState.latestProps?.onShowInfo();
+		});
+		expect(useModalStore.getState().isOpen('renameGroupChat')).toBe(true);
+		expect(useModalStore.getState().isOpen('groupChatInfo')).toBe(true);
+
+		act(() => {
+			mockGroupChatPanelState.latestProps?.onToggleRightPanel();
+		});
+		expect(useUIStore.getState().rightPanelOpen).toBe(false);
+
+		act(() => {
+			mockGroupChatPanelState.latestProps?.onDraftChange('Updated draft');
+			mockGroupChatPanelState.latestProps?.setStagedImages(['data:image/png;base64,one']);
+			mockGroupChatPanelState.latestProps?.setReadOnlyMode(true);
+			mockGroupChatPanelState.latestProps?.onReorderQueuedItems(0, 1);
+		});
+		expect(useGroupChatStore.getState().groupChats[0].draftMessage).toBe('Updated draft');
+		expect(useGroupChatStore.getState().groupChatStagedImages).toEqual([
+			'data:image/png;base64,one',
+		]);
+		expect(useGroupChatStore.getState().groupChatReadOnlyMode).toBe(true);
+		expect(useGroupChatStore.getState().groupChatExecutionQueue.map((item) => item.id)).toEqual([
+			'queue-2',
+			'queue-1',
+		]);
+
+		act(() => {
+			mockGroupChatPanelState.latestProps?.onRemoveQueuedItem('queue-2');
+			mockGroupChatRightPanelState.latestProps?.onToggle();
+			mockGroupChatRightPanelState.latestProps?.onTabChange('history');
+			mockGroupChatRightPanelState.latestProps?.onColorsComputed({ Planner: '#123456' });
+		});
+		expect(useGroupChatStore.getState().groupChatExecutionQueue.map((item) => item.id)).toEqual([
+			'queue-1',
+		]);
+		expect(useUIStore.getState().rightPanelOpen).toBe(true);
+		expect(useGroupChatStore.getState().groupChatRightTab).toBe('history');
+		expect(maestro.settings.set).toHaveBeenCalledWith('groupChatRightTab:chat-1', 'history');
+		expect(useGroupChatStore.getState().groupChatParticipantColors).toEqual({
+			Planner: '#123456',
+		});
+
+		act(() => {
+			mockGroupChatPanelState.latestProps?.onOpenPromptComposer();
+		});
+		await waitFor(() => expect(useModalStore.getState().isOpen('promptComposer')).toBe(true));
+
+		act(() => {
+			mockGroupChatPanelState.latestProps?.onToggleMarkdownEditMode();
+		});
+		await waitFor(() => expect(mockGroupChatPanelState.latestProps?.markdownEditMode).toBe(true));
+
+		act(() => {
+			useGroupChatStore.setState({
+				groupChatState: 'idle',
+				groupChats: [
+					{
+						...groupChat,
+						name: '',
+						moderatorAgentId: undefined,
+						moderatorAgentSessionId: undefined,
+						moderatorSessionId: undefined,
+						participants: [
+							{
+								...groupChat.participants[0],
+								totalCost: undefined,
+							},
+						],
+					},
+				],
+				moderatorUsage: null,
+			});
+		});
+		await waitFor(() =>
+			expect(mockGroupChatPanelState.latestProps).toEqual(
+				expect.objectContaining({
+					costIncomplete: true,
+					totalCost: 0,
+				})
+			)
+		);
+		await waitFor(() =>
+			expect(screen.getByText('Maestro Group Chat: Unknown')).toBeInTheDocument()
+		);
+		expect(mockGroupChatRightPanelState.latestProps).toEqual(
+			expect.objectContaining({
+				moderatorAgentId: 'claude-code',
+				moderatorAgentSessionId: undefined,
+				moderatorSessionId: '',
+			})
+		);
+		act(() => {
+			useGroupChatStore.setState({
+				groupChats: [
+					{
+						...groupChat,
+						participants: groupChat.participants.map((participant) => ({
+							...participant,
+							totalCost: participant.totalCost ?? 0,
+						})),
+					},
+				],
+				moderatorUsage: { contextUsage: 0, tokenCount: 0, totalCost: 0 },
+			});
+		});
+		await waitFor(() =>
+			expect(mockGroupChatPanelState.latestProps).toEqual(
+				expect.objectContaining({
+					costIncomplete: false,
+					totalCost: 1.25,
+				})
+			)
+		);
+		vi.useFakeTimers();
+		act(() => {
+			mockGroupChatPanelState.latestProps?.showFlashNotification('Message queued');
+		});
+		expect(screen.getByText('Message queued')).toBeInTheDocument();
+		vi.useRealTimers();
+	});
+
+	it('renders stale group-chat title state without mounting the chat panel', async () => {
+		const maestro = configureMaestroBridge();
+		maestro.sessions.getAll.mockResolvedValue([]);
+		maestro.groupChat.list.mockResolvedValue([]);
+		useGroupChatStore.setState({
+			activeGroupChatId: 'missing-chat',
+			groupChats: [],
+		});
+
+		renderApp();
+
+		expect(await screen.findByText('Maestro Group Chat: Unknown')).toBeInTheDocument();
+		expect(screen.queryByTestId('group-chat-panel')).not.toBeInTheDocument();
 	});
 });

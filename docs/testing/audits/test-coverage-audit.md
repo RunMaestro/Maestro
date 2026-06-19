@@ -10,21 +10,36 @@ Measured with `npm run test:coverage` on the current upstream-shaped tree:
 
 | Metric     | Pre-Sync Final Checkpoint | Current Upstream-Sync Check |
 | ---------- | ------------------------: | --------------------------: |
-| Statements |                   100.00% |                      69.79% |
-| Branches   |                   100.00% |                      64.84% |
-| Functions  |                   100.00% |                      66.67% |
-| Lines      |                   100.00% |                      70.92% |
+| Statements |                   100.00% |                      81.04% |
+| Branches   |                   100.00% |                      73.75% |
+| Functions  |                   100.00% |                      80.30% |
+| Lines      |                   100.00% |                      82.29% |
 
 Current upstream-sync coverage result:
 
 - Command: `npm run test:coverage`
 - Result: failed 100% global coverage thresholds
-- Test files: 1,174 passed
-- Tests: 32,190 passed, 0 skipped
-- Coverage: 69.79% statements, 64.84% branches, 66.67% functions, 70.92% lines
-- Log: `/tmp/maestro-phase7-coverage-after-storage-20260618004650.log`
+- Test files: 1,246 passed
+- Tests: 33,408 passed, 0 skipped
+- Coverage: 81.04% statements, 73.75% branches, 80.30% functions, 82.29% lines
+- Log: current workspace coverage artifact `coverage/coverage-final.json`
 
-Current remaining enforced unit coverage gaps: open. The current tree has 1,667 covered files in `coverage/coverage-final.json`, 1,109 files with gaps, and 122 zero-statement files. The largest gaps now include web-server factory/message-handler paths, `App.tsx`, Document Graph views, mobile/web remote-event surfaces, image annotation, file preview, preload process, keyboard handler, and web/mobile app surfaces. Codex/OpenCode session storage moved out of the top gap list after restoring and adapting their unit suites.
+Latest focused useInputProcessing checkpoint:
+
+- Command: `NODE_OPTIONS=--max-old-space-size=8192 npx vitest run --config vitest.config.mts --coverage --coverage.include=src/renderer/hooks/input/useInputProcessing.ts src/__tests__/renderer/hooks/useInputProcessing.test.ts`
+- Result: tests passed; focused coverage still fails 100% branch threshold
+- Tests: 104 passed
+- Coverage: 100% statements, 92.71% branches, 100% functions, 100% lines
+
+Latest focused FilePreview checkpoint:
+
+- Command: `NODE_OPTIONS=--max-old-space-size=8192 npx vitest run --config vitest.config.mts --coverage --coverage.include=src/renderer/components/FilePreview/FilePreview.tsx src/__tests__/renderer/components/FilePreview.test.tsx`
+- Result: tests passed; focused coverage still fails 100% thresholds
+- Tests: 137 passed
+- Coverage: 96.73% statements, 88.54% branches, 100% functions, 98.45% lines
+- Logs: `/tmp/maestro-filepreview-focused-scrollbranches2-20260618223444.log`, `/tmp/maestro-filepreview-coverage-scrollbranches-20260618223454.log`
+
+Current remaining enforced unit coverage gaps: open. The current tree has 1,667 covered files in `coverage/coverage-final.json`, 1,092 files with gaps, and 156 zero-statement files. The largest gaps now include main-process entrypoint wiring, Symphony IPC, group-chat routing, web/mobile app surfaces, Auto Run IPC, leaderboard registration, MainPanel, main keyboard handling, feedback chat, web-server factory, TerminalOutput, and remote app event listeners.
 
 Current full integration checkpoint: not rerun after the upstream-sync tree change.
 
@@ -57842,7 +57857,7 @@ Scope:
 - Fixed a context-groomer integration hang where the unavailable-agent helper returned a valid mock agent for `null`, causing the test to spawn a process and wait forever.
 - Fixed production context-groomer cleanup to clear the overall timeout alongside the idle interval, then simplified the now-unreachable stale timeout guard.
 - Added focused branch coverage for `CodexOutputParser` when `CODEX_HOME` is unset and config is read through the default `~/.codex` path.
-- Confirmed the PM2 email reporter `maestro-integration-coverage-email` is online and sends `coverage/integration/coverage-final.json` summaries to `jsward.17@gmail.com` every 3 hours through `mutt`.
+- Historical note: the PM2 email reporter `maestro-integration-coverage-email` was online at this checkpoint and sent `coverage/integration/coverage-final.json` summaries every 3 hours through `mutt`. This is superseded by the current milestone-only email cadence in `docs/testing/current-status.md` and `docs/testing/game-plan.md`.
 - No coverage exclusions were added or widened. E2E was not run.
 
 Validation:
@@ -57885,7 +57900,7 @@ Validation:
 - Focused `AppModals.tsx` integration coverage reached 100% statements (77/77), 100% branches (214/214), 100% functions (42/42), and 100% lines (1,690/1,690).
 - `npx vitest run --config vitest.integration.config.ts --coverage` passed: 169 files passed, 1 skipped; 2,470 tests passed, 56 skipped.
 - `npm run test:coverage` passed with thresholds enabled: statements 100% (63,672/63,672), branches 100% (44,695/44,695), functions 100% (13,680/13,680), lines 100% (59,573/59,573).
-- Re-ran `npx vitest run --config vitest.integration.config.ts --coverage` after `npm run test:coverage` because the full coverage run removes `coverage/integration`; this restored the artifact used by the 3-hour `mutt` email reporter.
+- Re-ran `npx vitest run --config vitest.integration.config.ts --coverage` after `npm run test:coverage` because the full coverage run removes `coverage/integration`; this restored the artifact used by the historical 3-hour `mutt` email reporter. The active cadence is now milestone-only.
 
 Integration coverage:
 

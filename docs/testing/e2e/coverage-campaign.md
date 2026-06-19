@@ -38,6 +38,11 @@ Latest pre-sync verification:
 - Final Phase 6 E2E shard A passed 985 / 985. Log: `/tmp/maestro-phase6-final-a.log`; summary: [execution-results/phase6-final-shard-a.md](execution-results/phase6-final-shard-a.md).
 - Final Phase 6 E2E shard B passed 1,985 / 1,985. Log: `/tmp/maestro-phase6-final-b.log`; summary: [execution-results/phase6-final-shard-b.md](execution-results/phase6-final-shard-b.md).
 
+Latest upstream-sync revalidation checkpoint:
+
+- Unit execution is currently test-clean with 1,246 files and 33,368 tests passed, but enforced coverage still fails the 100% global thresholds at 80.88% statements, 73.56% branches, 80.14% functions, and 82.15% lines. Log: `/tmp/maestro-phase7-coverage-after-filepreview-scrollbranches-20260618223648.log`.
+- Latest focused FilePreview checkpoint passes 137 tests and raises focused `FilePreview.tsx` coverage to 96.73% statements, 88.54% branches, 100% functions, and 98.45% lines. Logs: `/tmp/maestro-filepreview-focused-scrollbranches2-20260618223444.log`, `/tmp/maestro-filepreview-coverage-scrollbranches-20260618223454.log`.
+
 The pre-sync E2E suite reached the canonical 3,025 / 3,025 authored active scenario matrix and the final Phase 6 Playwright/Electron runtime proof was green. The 3,025 matrix count is not one-to-one with the 2,970 runtime Playwright tests because matrix scenario atoms can be covered by a smaller number of runtime tests, and some direct source declarations expand into multiple runtime tests. Current upstream-sync finality remains blocked until unit coverage, full integration, and full E2E are rerun green on the current tree.
 
 ## Scope Rules

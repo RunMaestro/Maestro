@@ -2547,7 +2547,222 @@ describe('WebSocketMessageHandler', () => {
 		});
 	});
 
+	describe('Tab and session callback failures', () => {
+		it('covers star, reorder, and bookmark success payloads', async () => {
+			handler.handleMessage(client, {
+				type: 'star_tab',
+				sessionId: 'session-1',
+				tabId: 'tab-1',
+				starred: true,
+				requestId: 'star-req',
+			});
+			await vi.waitFor(() => {
+				expect(callbacks.starTab).toHaveBeenCalledWith('session-1', 'tab-1', true);
+			});
+			expect(getLastResponse(client)).toMatchObject({
+				type: 'star_tab_result',
+				success: true,
+				sessionId: 'session-1',
+				tabId: 'tab-1',
+				starred: true,
+				requestId: 'star-req',
+			});
+
+			vi.mocked(client.socket.send).mockClear();
+			handler.handleMessage(client, {
+				type: 'reorder_tab',
+				sessionId: 'session-1',
+				fromIndex: 0,
+				toIndex: 2,
+				requestId: 'reorder-req',
+			});
+			await vi.waitFor(() => {
+				expect(callbacks.reorderTab).toHaveBeenCalledWith('session-1', 0, 2);
+			});
+			expect(getLastResponse(client)).toMatchObject({
+				type: 'reorder_tab_result',
+				success: true,
+				sessionId: 'session-1',
+				fromIndex: 0,
+				toIndex: 2,
+				requestId: 'reorder-req',
+			});
+
+			vi.mocked(client.socket.send).mockClear();
+			handler.handleMessage(client, {
+				type: 'toggle_bookmark',
+				sessionId: 'session-1',
+				requestId: 'bookmark-req',
+			});
+			await vi.waitFor(() => {
+				expect(callbacks.toggleBookmark).toHaveBeenCalledWith('session-1');
+			});
+			expect(getLastResponse(client)).toMatchObject({
+				type: 'toggle_bookmark_result',
+				success: true,
+				sessionId: 'session-1',
+				requestId: 'bookmark-req',
+			});
+		});
+
+		it('reports rejected tab and session callbacks', async () => {
+			(callbacks.selectSession as any).mockResolvedValueOnce(false);
+			handler.handleMessage(client, {
+				type: 'select_session',
+				sessionId: 'session-1',
+				requestId: 'select-false-req',
+			});
+			await vi.waitFor(() => {
+				expect(getLastResponse(client)).toMatchObject({
+					type: 'select_session_result',
+					success: false,
+					sessionId: 'session-1',
+					requestId: 'select-false-req',
+				});
+			});
+
+			for (const [callbackName, message, expected] of [
+				[
+					'switchMode',
+					{ type: 'switch_mode', sessionId: 'session-1', mode: 'ai' },
+					'Failed to switch mode',
+				],
+				[
+					'selectSession',
+					{ type: 'select_session', sessionId: 'session-1' },
+					'Failed to select session',
+				],
+				[
+					'selectTab',
+					{ type: 'select_tab', sessionId: 'session-1', tabId: 'tab-1' },
+					'Failed to select tab',
+				],
+				['newTab', { type: 'new_tab', sessionId: 'session-1' }, 'Failed to create tab'],
+				[
+					'closeTab',
+					{ type: 'close_tab', sessionId: 'session-1', tabId: 'tab-1' },
+					'Failed to close tab',
+				],
+				[
+					'renameTab',
+					{ type: 'rename_tab', sessionId: 'session-1', tabId: 'tab-1', newName: 'Name' },
+					'Failed to rename tab',
+				],
+				[
+					'starTab',
+					{ type: 'star_tab', sessionId: 'session-1', tabId: 'tab-1', starred: false },
+					'Failed to star tab',
+				],
+				[
+					'reorderTab',
+					{ type: 'reorder_tab', sessionId: 'session-1', fromIndex: 0, toIndex: 1 },
+					'Failed to reorder tab',
+				],
+				[
+					'toggleBookmark',
+					{ type: 'toggle_bookmark', sessionId: 'session-1' },
+					'Failed to toggle bookmark',
+				],
+			] as Array<[keyof MessageHandlerCallbacks, WebClientMessage, string]>) {
+				vi.mocked(client.socket.send).mockClear();
+				(callbacks[callbackName] as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+					new Error(`${String(callbackName)} boom`)
+				);
+
+				handler.handleMessage(client, message);
+
+				await vi.waitFor(() => {
+					expect(getLastResponse(client).message).toContain(expected);
+				});
+			}
+		});
+	});
+
 	describe('Auto Run document API validation and failures', () => {
+		it('returns Auto Run document/state/save/stop success payloads', async () => {
+			(callbacks.getAutoRunDocs as any).mockResolvedValueOnce([{ filename: 'plan.md' }]);
+			handler.handleMessage(client, {
+				type: 'get_auto_run_docs',
+				sessionId: 'session-1',
+				requestId: 'docs-req',
+			});
+			await vi.waitFor(() => {
+				expect(getLastResponse(client)).toMatchObject({
+					type: 'auto_run_docs',
+					sessionId: 'session-1',
+					documents: [{ filename: 'plan.md' }],
+					requestId: 'docs-req',
+				});
+			});
+
+			vi.mocked(client.socket.send).mockClear();
+			(callbacks.getSessionDetail as any).mockReturnValueOnce({
+				autoRunState: { enabled: true, folderPath: '/repo/.maestro' },
+			});
+			handler.handleMessage(client, {
+				type: 'get_auto_run_state',
+				sessionId: 'session-1',
+				requestId: 'state-req',
+			});
+			expect(getLastResponse(client)).toMatchObject({
+				type: 'auto_run_state',
+				sessionId: 'session-1',
+				state: { enabled: true, folderPath: '/repo/.maestro' },
+				requestId: 'state-req',
+			});
+
+			vi.mocked(client.socket.send).mockClear();
+			(callbacks.getAutoRunDocContent as any).mockResolvedValueOnce('# Plan');
+			handler.handleMessage(client, {
+				type: 'get_auto_run_document',
+				sessionId: 'session-1',
+				filename: 'plan.md',
+				requestId: 'read-req',
+			});
+			await vi.waitFor(() => {
+				expect(getLastResponse(client)).toMatchObject({
+					type: 'auto_run_document_content',
+					sessionId: 'session-1',
+					filename: 'plan.md',
+					content: '# Plan',
+					requestId: 'read-req',
+				});
+			});
+
+			vi.mocked(client.socket.send).mockClear();
+			handler.handleMessage(client, {
+				type: 'save_auto_run_document',
+				sessionId: 'session-1',
+				filename: 'plan.md',
+				content: '# Updated',
+				requestId: 'save-req',
+			});
+			await vi.waitFor(() => {
+				expect(getLastResponse(client)).toMatchObject({
+					type: 'save_auto_run_document_result',
+					success: true,
+					sessionId: 'session-1',
+					filename: 'plan.md',
+					requestId: 'save-req',
+				});
+			});
+
+			vi.mocked(client.socket.send).mockClear();
+			handler.handleMessage(client, {
+				type: 'stop_auto_run',
+				sessionId: 'session-1',
+				requestId: 'stop-req',
+			});
+			await vi.waitFor(() => {
+				expect(getLastResponse(client)).toMatchObject({
+					type: 'stop_auto_run_result',
+					success: true,
+					sessionId: 'session-1',
+					requestId: 'stop-req',
+				});
+			});
+		});
+
 		it('rejects missing session ids for document/state/stop APIs', () => {
 			for (const message of [
 				{ type: 'get_auto_run_docs' },
@@ -2616,6 +2831,22 @@ describe('WebSocketMessageHandler', () => {
 			(callbacks.stopAutoRun as any).mockRejectedValueOnce(new Error('stop boom'));
 			handler.handleMessage(client, { type: 'stop_auto_run', sessionId: 'session-1' });
 			await vi.waitFor(() => expect(getLastResponse(client).message).toContain('stop boom'));
+		});
+
+		it('reports reset_auto_run_doc_tasks callback failure through the shared handler reporter', async () => {
+			(callbacks.resetAutoRunDocTasks as any).mockRejectedValueOnce(new Error('reset boom'));
+
+			handler.handleMessage(client, {
+				type: 'reset_auto_run_doc_tasks',
+				sessionId: 'session-1',
+				filename: 'plan.md',
+			});
+
+			await vi.waitFor(() => {
+				expect(getLastResponse(client).message).toContain(
+					'Failed to reset auto-run doc tasks: reset boom'
+				);
+			});
 		});
 	});
 
@@ -2985,9 +3216,174 @@ describe('WebSocketMessageHandler', () => {
 				error: 'duration must be a positive number of milliseconds',
 			});
 		});
+
+		it('rejects additional toast and flash validation failures before calling desktop callbacks', () => {
+			for (const [message, expectedError] of [
+				[{ type: 'notify_toast' }, 'Missing title'],
+				[{ type: 'notify_toast', title: 'Bad color', color: 'blue' }, 'Invalid toast color: blue'],
+				[
+					{ type: 'notify_toast', title: 'Bad type', toastType: 'notice' },
+					'Invalid toast type: notice',
+				],
+				[
+					{
+						type: 'notify_toast',
+						title: 'Bad jump',
+						clickAction: { kind: 'jump-session' },
+					},
+					"clickAction kind 'jump-session' requires sessionId",
+				],
+				[
+					{
+						type: 'notify_toast',
+						title: 'Bad file',
+						clickAction: { kind: 'open-file', path: 'README.md' },
+					},
+					"clickAction kind 'open-file' requires sessionId",
+				],
+				[
+					{
+						type: 'notify_toast',
+						title: 'Bad URL',
+						clickAction: { kind: 'open-url' },
+					},
+					"clickAction kind 'open-url' requires url",
+				],
+				[
+					{
+						type: 'notify_toast',
+						title: 'Bad action',
+						clickAction: { kind: 'explode' },
+					},
+					'Invalid clickAction kind: explode',
+				],
+				[
+					{ type: 'notify_toast', title: 'Bad duration', duration: 0 },
+					'duration must be a positive number of seconds',
+				],
+				[{ type: 'notify_center_flash' }, 'Missing message'],
+				[
+					{ type: 'notify_center_flash', message: 'Bad variant', variant: 'notice' },
+					'Invalid flash variant: notice',
+				],
+				[
+					{ type: 'notify_center_flash', message: 'Too long', duration: 6000 },
+					'duration cannot exceed 5000 ms',
+				],
+			] as Array<[WebClientMessage, string]>) {
+				vi.mocked(client.socket.send).mockClear();
+
+				handler.handleMessage(client, message);
+
+				expect(getLastResponse(client).error).toContain(expectedError);
+			}
+
+			expect(callbacks.notifyToast).toHaveBeenCalledTimes(0);
+			expect(callbacks.notifyCenterFlash).toHaveBeenCalledTimes(0);
+		});
+
+		it('reports notification callback failures and false results', async () => {
+			(callbacks.notifyToast as any).mockResolvedValueOnce(false);
+			handler.handleMessage(client, {
+				type: 'notify_toast',
+				title: 'No show',
+			});
+			await vi.waitFor(() => {
+				expect(getLastResponse(client)).toMatchObject({
+					type: 'notify_toast_result',
+					success: false,
+					error: 'Failed to show toast',
+				});
+			});
+
+			vi.mocked(client.socket.send).mockClear();
+			(callbacks.notifyToast as any).mockRejectedValueOnce(new Error('toast boom'));
+			handler.handleMessage(client, {
+				type: 'notify_toast',
+				title: 'Reject',
+			});
+			await vi.waitFor(() => {
+				expect(getLastResponse(client).error).toContain('Failed to show toast: toast boom');
+			});
+
+			vi.mocked(client.socket.send).mockClear();
+			(callbacks.notifyCenterFlash as any).mockResolvedValueOnce(false);
+			handler.handleMessage(client, {
+				type: 'notify_center_flash',
+				message: 'No flash',
+			});
+			await vi.waitFor(() => {
+				expect(getLastResponse(client)).toMatchObject({
+					type: 'notify_center_flash_result',
+					success: false,
+					error: 'Failed to show flash',
+				});
+			});
+
+			vi.mocked(client.socket.send).mockClear();
+			(callbacks.notifyCenterFlash as any).mockRejectedValueOnce(new Error('flash boom'));
+			handler.handleMessage(client, {
+				type: 'notify_center_flash',
+				message: 'Reject flash',
+			});
+			await vi.waitFor(() => {
+				expect(getLastResponse(client).error).toContain('Failed to show flash: flash boom');
+			});
+		});
 	});
 
 	describe('Trigger Cue Subscription (sourceAgentId)', () => {
+		it('returns Cue subscription, toggle, and activity payloads', async () => {
+			(callbacks.getCueSubscriptions as any).mockResolvedValueOnce([{ id: 'sub-1' }]);
+			handler.handleMessage(client, {
+				type: 'get_cue_subscriptions',
+				sessionId: 'session-1',
+				requestId: 'subs-req',
+			});
+			await vi.waitFor(() => {
+				expect(getLastResponse(client)).toMatchObject({
+					type: 'cue_subscriptions',
+					subscriptions: [{ id: 'sub-1' }],
+					requestId: 'subs-req',
+				});
+			});
+
+			vi.mocked(client.socket.send).mockClear();
+			handler.handleMessage(client, {
+				type: 'toggle_cue_subscription',
+				subscriptionId: 'sub-1',
+				enabled: false,
+				requestId: 'toggle-req',
+			});
+			await vi.waitFor(() => {
+				expect(callbacks.toggleCueSubscription).toHaveBeenCalledWith('sub-1', false);
+			});
+			expect(getLastResponse(client)).toMatchObject({
+				type: 'toggle_cue_subscription_result',
+				success: true,
+				subscriptionId: 'sub-1',
+				enabled: false,
+				requestId: 'toggle-req',
+			});
+
+			vi.mocked(client.socket.send).mockClear();
+			(callbacks.getCueActivity as any).mockResolvedValueOnce([{ id: 'entry-1' }]);
+			handler.handleMessage(client, {
+				type: 'get_cue_activity',
+				sessionId: 'session-1',
+				limit: 3,
+				requestId: 'activity-req',
+			});
+			await vi.waitFor(() => {
+				expect(callbacks.getCueActivity).toHaveBeenCalledWith('session-1', 3);
+			});
+			expect(getLastResponse(client)).toMatchObject({
+				type: 'cue_activity',
+				entries: [{ id: 'entry-1' }],
+				requestId: 'activity-req',
+			});
+		});
+
 		it('should pass sourceAgentId through to triggerCueSubscription callback', async () => {
 			handler.handleMessage(client, {
 				type: 'trigger_cue_subscription',
@@ -3650,6 +4046,240 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.type).toBe('error');
 			expect(response.message).toContain('sql');
 		});
+
+		it('reports rejected callbacks across session, group, git, context, Cue, and dashboard surfaces', async () => {
+			const cases: Array<{
+				callbackName: keyof MessageHandlerCallbacks;
+				message: WebClientMessage;
+				expected: string;
+				responseField?: 'message' | 'error';
+			}> = [
+				{
+					callbackName: 'setSetting',
+					message: { type: 'set_setting', key: 'fontSize', value: 15 },
+					expected: 'Failed to set setting',
+				},
+				{
+					callbackName: 'createSession',
+					message: { type: 'create_session', name: 'Agent', toolType: 'codex', cwd: '/repo' },
+					expected: 'Failed to create session',
+				},
+				{
+					callbackName: 'createWorktreeSession',
+					message: {
+						type: 'create_worktree_session',
+						parentSessionId: 'session-1',
+						branchName: 'feature/fail',
+					},
+					expected: 'Failed to create worktree session',
+				},
+				{
+					callbackName: 'deleteSession',
+					message: { type: 'delete_session', sessionId: 'session-1' },
+					expected: 'Failed to delete session',
+				},
+				{
+					callbackName: 'renameSession',
+					message: { type: 'rename_session', sessionId: 'session-1', newName: 'Renamed' },
+					expected: 'Failed to rename session',
+				},
+				{
+					callbackName: 'updateSessionCwd',
+					message: { type: 'update_session_cwd', sessionId: 'session-1', newCwd: '/repo' },
+					expected: 'Failed to update session cwd',
+				},
+				{
+					callbackName: 'updateSessionSsh',
+					message: {
+						type: 'update_session_ssh',
+						sessionId: 'session-1',
+						sshPatch: { enabled: true },
+					},
+					expected: 'Failed to update session SSH config',
+				},
+				{
+					callbackName: 'createGroup',
+					message: { type: 'create_group', name: 'Group' },
+					expected: 'Failed to create group',
+				},
+				{
+					callbackName: 'renameGroup',
+					message: { type: 'rename_group', groupId: 'group-1', name: 'Group' },
+					expected: 'Failed to rename group',
+				},
+				{
+					callbackName: 'deleteGroup',
+					message: { type: 'delete_group', groupId: 'group-1' },
+					expected: 'Failed to delete group',
+				},
+				{
+					callbackName: 'moveSessionToGroup',
+					message: { type: 'move_session_to_group', sessionId: 'session-1', groupId: null },
+					expected: 'Failed to move session to group',
+				},
+				{
+					callbackName: 'getGitStatus',
+					message: { type: 'get_git_status', sessionId: 'session-1' },
+					expected: 'Failed to get git status',
+				},
+				{
+					callbackName: 'getGitDiff',
+					message: { type: 'get_git_diff', sessionId: 'session-1', filePath: 'src/a.ts' },
+					expected: 'Failed to get git diff',
+				},
+				{
+					callbackName: 'getGitBranchesForSession',
+					message: { type: 'get_git_branches', sessionId: 'session-1' },
+					expected: 'Failed to get git branches',
+				},
+				{
+					callbackName: 'listWorktreesForSession',
+					message: { type: 'list_worktrees', sessionId: 'session-1' },
+					expected: 'Failed to list worktrees',
+				},
+				{
+					callbackName: 'getGroupChats',
+					message: { type: 'get_group_chats' },
+					expected: 'Failed to get group chats',
+				},
+				{
+					callbackName: 'startGroupChat',
+					message: {
+						type: 'start_group_chat',
+						topic: 'Plan',
+						participantIds: ['session-1', 'session-2'],
+					},
+					expected: 'Failed to start group chat',
+				},
+				{
+					callbackName: 'getGroupChatState',
+					message: { type: 'get_group_chat_state', chatId: 'chat-1' },
+					expected: 'Failed to get group chat state',
+				},
+				{
+					callbackName: 'sendGroupChatMessage',
+					message: { type: 'send_group_chat_message', chatId: 'chat-1', message: 'hello' },
+					expected: 'Failed to send group chat message',
+				},
+				{
+					callbackName: 'stopGroupChat',
+					message: { type: 'stop_group_chat', chatId: 'chat-1' },
+					expected: 'Failed to stop group chat',
+				},
+				{
+					callbackName: 'mergeContext',
+					message: {
+						type: 'merge_context',
+						sourceSessionId: 'session-1',
+						targetSessionId: 'session-2',
+					},
+					expected: 'Failed to merge context',
+				},
+				{
+					callbackName: 'transferContext',
+					message: {
+						type: 'transfer_context',
+						sourceSessionId: 'session-1',
+						targetSessionId: 'session-2',
+					},
+					expected: 'Failed to transfer context',
+				},
+				{
+					callbackName: 'summarizeContext',
+					message: { type: 'summarize_context', sessionId: 'session-1' },
+					expected: 'Failed to summarize context',
+				},
+				{
+					callbackName: 'getCueSubscriptions',
+					message: { type: 'get_cue_subscriptions', sessionId: 'session-1' },
+					expected: 'Failed to get Cue subscriptions',
+				},
+				{
+					callbackName: 'toggleCueSubscription',
+					message: { type: 'toggle_cue_subscription', subscriptionId: 'sub-1', enabled: true },
+					expected: 'Failed to toggle Cue subscription',
+				},
+				{
+					callbackName: 'getCueActivity',
+					message: { type: 'get_cue_activity', sessionId: 'session-1', limit: 5 },
+					expected: 'Failed to get Cue activity',
+				},
+				{
+					callbackName: 'triggerCueSubscription',
+					message: { type: 'trigger_cue_subscription', subscriptionName: 'Daily' },
+					expected: 'Failed to trigger Cue subscription',
+				},
+				{
+					callbackName: 'listCuePipelines',
+					message: { type: 'cue_pipeline_list' },
+					expected: 'Failed to list Cue pipelines',
+				},
+				{
+					callbackName: 'getCuePipeline',
+					message: { type: 'cue_pipeline_get', identifier: 'Daily' },
+					expected: 'Failed to get Cue pipeline',
+				},
+				{
+					callbackName: 'setCuePipeline',
+					message: { type: 'cue_pipeline_set', identifier: 'Daily', policy: 'add', pipeline: {} },
+					expected: 'Failed to set Cue pipeline',
+				},
+				{
+					callbackName: 'removeCuePipeline',
+					message: { type: 'cue_pipeline_remove', identifier: 'Daily' },
+					expected: 'Failed to remove Cue pipeline',
+				},
+				{
+					callbackName: 'getUsageDashboard',
+					message: { type: 'get_usage_dashboard', timeRange: 'week' },
+					expected: 'Failed to get usage dashboard',
+				},
+				{
+					callbackName: 'getAchievements',
+					message: { type: 'get_achievements' },
+					expected: 'Failed to get achievements',
+				},
+				{
+					callbackName: 'generateDirectorNotesSynopsis',
+					message: { type: 'generate_director_notes_synopsis' },
+					expected: 'Synopsis generation failed',
+					responseField: 'error',
+				},
+			];
+
+			for (const { callbackName, message, expected, responseField = 'message' } of cases) {
+				vi.mocked(client.socket.send).mockClear();
+				(callbacks[callbackName] as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+					new Error(`${String(callbackName)} boom`)
+				);
+
+				handler.handleMessage(client, message);
+
+				await vi.waitFor(() => {
+					const response = getLastResponse(client);
+					expect(response[responseField], `${String(callbackName)} rejection`).toContain(expected);
+				});
+			}
+		});
+
+		it('returns set_setting success payloads', async () => {
+			handler.handleMessage(client, {
+				type: 'set_setting',
+				key: 'fontSize',
+				value: 18,
+				requestId: 'setting-req',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.setSetting).toHaveBeenCalledWith('fontSize', 18);
+			});
+			expect(getLastResponse(client)).toMatchObject({
+				type: 'set_setting_result',
+				success: true,
+				key: 'fontSize',
+				requestId: 'setting-req',
+			});
+		});
 	});
 
 	describe('Marketplace (Playbook Exchange)', () => {
@@ -3843,6 +4473,147 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.type).toBe('marketplace_get_manifest_result');
 			expect(response.success).toBe(false);
 			expect(response.error).toContain('not configured');
+		});
+
+		it('returns typed failures for empty marketplace results and callback rejections', async () => {
+			for (const [callbackName, message, expectedType, expectedError] of [
+				[
+					'getMarketplaceManifest',
+					{ type: 'marketplace_get_manifest' },
+					'marketplace_get_manifest_result',
+					'No manifest available',
+				],
+				[
+					'getMarketplaceDocument',
+					{
+						type: 'marketplace_get_document',
+						playbookPath: 'category/sample',
+						filename: 'STEP_1',
+					},
+					'marketplace_get_document_result',
+					'Marketplace not configured',
+				],
+				[
+					'getMarketplaceReadme',
+					{ type: 'marketplace_get_readme', playbookPath: 'category/sample' },
+					'marketplace_get_readme_result',
+					'Marketplace not configured',
+				],
+			] as const) {
+				vi.mocked(client.socket.send).mockClear();
+				(callbacks[callbackName] as ReturnType<typeof vi.fn>).mockResolvedValueOnce(null);
+
+				handler.handleMessage(client, message);
+
+				await vi.waitFor(() => {
+					expect(getLastResponse(client)).toMatchObject({
+						type: expectedType,
+						success: false,
+						error: expectedError,
+					});
+				});
+			}
+
+			for (const [callbackName, message, expectedType, expectedError] of [
+				[
+					'getMarketplaceManifest',
+					{ type: 'marketplace_get_manifest' },
+					'marketplace_get_manifest_result',
+					'Failed to load marketplace: manifest boom',
+				],
+				[
+					'getMarketplaceDocument',
+					{
+						type: 'marketplace_get_document',
+						playbookPath: 'category/sample',
+						filename: 'STEP_1',
+					},
+					'marketplace_get_document_result',
+					'Failed to fetch document: document boom',
+				],
+				[
+					'getMarketplaceReadme',
+					{ type: 'marketplace_get_readme', playbookPath: 'category/sample' },
+					'marketplace_get_readme_result',
+					'Failed to fetch README: readme boom',
+				],
+				[
+					'importMarketplacePlaybook',
+					{
+						type: 'marketplace_import_playbook',
+						sessionId: 'session-1',
+						playbookId: 'pb-1',
+						targetFolderName: 'folder',
+					},
+					'marketplace_import_playbook_result',
+					'Import failed: import boom',
+				],
+			] as const) {
+				vi.mocked(client.socket.send).mockClear();
+				const errorName = expectedError.split(': ')[1];
+				(callbacks[callbackName] as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+					new Error(errorName)
+				);
+
+				handler.handleMessage(client, message);
+
+				await vi.waitFor(() => {
+					expect(getLastResponse(client)).toMatchObject({
+						type: expectedType,
+						success: false,
+						error: expectedError,
+					});
+				});
+			}
+		});
+
+		it('rejects additional marketplace request validation edges with typed results', () => {
+			for (const [message, expectedType, expectedError] of [
+				[
+					{ type: 'marketplace_get_document', filename: 'STEP_1' },
+					'marketplace_get_document_result',
+					'Missing or invalid playbookPath',
+				],
+				[
+					{ type: 'marketplace_get_document', playbookPath: 'category/sample' },
+					'marketplace_get_document_result',
+					'Missing or invalid filename',
+				],
+				[
+					{ type: 'marketplace_get_readme' },
+					'marketplace_get_readme_result',
+					'Missing or invalid playbookPath',
+				],
+				[
+					{ type: 'marketplace_get_readme', playbookPath: '~/private' },
+					'marketplace_get_readme_result',
+					'Local filesystem paths are not allowed',
+				],
+				[
+					{ type: 'marketplace_import_playbook', targetFolderName: 'folder' },
+					'marketplace_import_playbook_result',
+					'Missing sessionId',
+				],
+				[
+					{
+						type: 'marketplace_import_playbook',
+						sessionId: 'session-1',
+						targetFolderName: 'folder',
+					},
+					'marketplace_import_playbook_result',
+					'Missing playbookId',
+				],
+			] as Array<[WebClientMessage, string, string]>) {
+				vi.mocked(client.socket.send).mockClear();
+
+				handler.handleMessage(client, message);
+
+				expect(getLastResponse(client)).toMatchObject({
+					type: expectedType,
+					success: false,
+				});
+				expect(getLastResponse(client).error).toContain(expectedError);
+			}
 		});
 	});
 

@@ -74,8 +74,9 @@ Launch each lane as a one-shot PM2 process with --no-autorestart, using codex ex
 - Allowed checks: static review, TypeScript-aware editor checks, targeted non-E2E lint/type checks if they
   do not run E2E.
 
-- If a lane reaches its quota, send email with mutt to jsward.17@gmail.com, naming the lane, branch,
-  commit range, files touched, and authored scenario count.
+- Do not send routine lane quota emails. Email reports are reserved for major completion milestones that
+  represent at least 6 hours of work or final gate completion; otherwise record the update in the lane
+  progress file and orchestrator status docs.
 
 - Merge one agent branch at a time into the campaign branch, resolve conflicts centrally, update docs and
   ledger, then broadcast any helper/API changes to active agents.
