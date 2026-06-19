@@ -48,6 +48,7 @@ import { SettingCheckbox } from '../../SettingCheckbox';
 import { ToggleSwitch } from '../../ui/ToggleSwitch';
 import { KeyCaptureButton } from '../../ui/KeyCaptureButton';
 import { logger } from '../../../utils/logger';
+import { MobileDevicesSection } from '../MobileDevicesSection';
 
 export interface GeneralTabProps {
 	theme: Theme;
@@ -1478,6 +1479,11 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 						</div>
 					)}
 				</div>
+			</div>
+
+			{/* Mobile Devices - QR pairing for mobile app */}
+			<div data-setting-id="general-mobile-devices">
+				<MobileDevicesSection theme={theme} />
 			</div>
 
 			{/* Settings Storage Location */}
