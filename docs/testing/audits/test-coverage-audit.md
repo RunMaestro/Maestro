@@ -10,19 +10,27 @@ Measured with `npm run test:coverage` on the current upstream-shaped tree:
 
 | Metric     | Pre-Sync Final Checkpoint | Current Upstream-Sync Check |
 | ---------- | ------------------------: | --------------------------: |
-| Statements |                   100.00% |                      81.68% |
-| Branches   |                   100.00% |                      74.44% |
-| Functions  |                   100.00% |                      80.61% |
-| Lines      |                   100.00% |                      82.97% |
+| Statements |                   100.00% |                      81.83% |
+| Branches   |                   100.00% |                      74.58% |
+| Functions  |                   100.00% |                      80.89% |
+| Lines      |                   100.00% |                      83.12% |
 
 Current upstream-sync coverage result:
 
 - Command: `npm run test:coverage`
 - Result: failed 100% global coverage thresholds
 - Test files: 1,247 passed
-- Tests: 33,564 passed, 0 skipped
-- Coverage: 81.68% statements, 74.44% branches, 80.61% functions, 82.97% lines
-- Log: `/tmp/maestro-phase7-coverage-after-cli-connectivity-20260619023627.log`
+- Tests: 33,576 passed, 0 skipped
+- Coverage: 81.83% statements, 74.58% branches, 80.89% functions, 83.12% lines
+- Log: `/tmp/maestro-phase7-coverage-after-remoteintegration-20260619032113.log`
+
+Latest focused useRemoteIntegration checkpoint:
+
+- Command: `npx vitest run src/__tests__/renderer/hooks/useRemoteIntegration.test.ts`
+- Result: tests passed; focused coverage still fails 100% thresholds
+- Tests: 42 passed
+- Coverage: 87.04% statements, 62.01% branches, 90.38% functions, 89.74% lines
+- Logs: `/tmp/maestro-remoteintegration-focused-coverage-20260619032031.log`
 
 Latest focused CLI connectivity command checkpoint:
 
@@ -55,7 +63,7 @@ Latest focused FilePreview checkpoint:
 - Coverage: 96.73% statements, 88.54% branches, 100% functions, 98.45% lines
 - Logs: `/tmp/maestro-filepreview-focused-scrollbranches2-20260618223444.log`, `/tmp/maestro-filepreview-coverage-scrollbranches-20260618223454.log`
 
-Current remaining enforced unit coverage gaps: open. The current tree has 1,667 covered files in `coverage/coverage-final.json`, 1,092 files with gaps, and 156 zero-statement files. The largest gaps now include main-process entrypoint wiring, Symphony IPC, group-chat routing, web/mobile app surfaces, Auto Run IPC, leaderboard registration, MainPanel, main keyboard handling, feedback chat, web-server factory, TerminalOutput, and remote app event listeners.
+Current remaining enforced unit coverage gaps: open. The largest gaps now include main-process entrypoint wiring, web/mobile app surfaces, MainPanel, main keyboard handling, web-server factory, TerminalOutput, remote app event listeners, Claude session storage, SessionList, group-chat routing, DocumentGraphView, XTerminal, Git IPC, and settings store coverage.
 
 Current full integration checkpoint: not rerun after the upstream-sync tree change.
 
