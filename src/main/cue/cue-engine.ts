@@ -1163,20 +1163,36 @@ export class CueEngine {
 					.getSessions()
 					.find((s) => s.id === ownerSessionId)?.projectRoot;
 				if (projectRoot) {
-					const payloads = scanTaskFilesOnce(sub.watch, projectRoot);
-					if (payloads.length > 0) {
-						taskPayload = payloads[0];
-						if (payloads.length > 1) {
+					// walkDir re-throws when projectRoot itself is unreadable
+					// (deleted/unmounted/permission change). Mirror doScan's
+					// graceful degradation: log, report, and dispatch with an empty
+					// task payload rather than aborting the whole trigger group.
+					try {
+						const payloads = scanTaskFilesOnce(sub.watch, projectRoot);
+						if (payloads.length > 0) {
+							taskPayload = payloads[0];
+							if (payloads.length > 1) {
+								this.deps.onLog(
+									'cue',
+									`[CUE] "${sub.name}" manual trigger: ${payloads.length} files match "${sub.watch}"; using ${String(taskPayload.filename)}`
+								);
+							}
+						} else {
 							this.deps.onLog(
 								'cue',
-								`[CUE] "${sub.name}" manual trigger: ${payloads.length} files match "${sub.watch}"; using ${String(taskPayload.filename)}`
+								`[CUE] "${sub.name}" manual trigger: no pending tasks in "${sub.watch}"`
 							);
 						}
-					} else {
+					} catch (err) {
 						this.deps.onLog(
-							'cue',
-							`[CUE] "${sub.name}" manual trigger: no pending tasks in "${sub.watch}"`
+							'warn',
+							`[CUE] "${sub.name}" manual trigger scan failed: ${err instanceof Error ? err.message : String(err)}`
 						);
+						void captureException(err, {
+							operation: 'cue.triggerSubscription.scanTaskFilesOnce',
+							subscriptionName: sub.name,
+							ownerSessionId,
+						});
 					}
 				}
 			}

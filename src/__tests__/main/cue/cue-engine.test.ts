@@ -1624,6 +1624,44 @@ describe('CueEngine', () => {
 
 			engine.stop();
 		});
+
+		it('manual trigger dispatches even when the scan throws (unreadable projectRoot)', () => {
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'task-queue',
+						event: 'task.pending',
+						enabled: true,
+						prompt: 'process tasks',
+						watch: 'tasks/**/*.md',
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(config);
+			// walkDir re-throws when projectRoot is unreadable; the engine must
+			// degrade gracefully rather than abort the trigger.
+			mockScanTaskFilesOnce.mockImplementation(() => {
+				throw new Error('ENOENT: projectRoot gone');
+			});
+
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			engine.start();
+
+			const result = engine.triggerSubscription('task-queue');
+
+			// Still dispatched, with the bare manual payload (no task fields).
+			expect(result).toBe(true);
+			const callArgs = (deps.onCueRun as ReturnType<typeof vi.fn>).mock.calls[0][0];
+			expect(callArgs.event.payload).toMatchObject({ manual: true });
+			expect(callArgs.event.payload).not.toHaveProperty('taskCount');
+			expect(deps.onLog).toHaveBeenCalledWith(
+				'warn',
+				expect.stringContaining('manual trigger scan failed')
+			);
+
+			engine.stop();
+		});
 	});
 
 	describe('getStatus', () => {
