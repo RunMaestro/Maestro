@@ -1,0 +1,114 @@
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/preflight.css' layer(base);
+@import 'tailwindcss/utilities.css';
+
+@import 'uniwind';
+@import './sf.css';
+
+/* ─── Design Tokens ─── */
+
+:root {
+	@variant light {
+		--app-background: oklch(0.985 0 0);
+		--app-foreground: oklch(0.12 0 0);
+		--app-card: oklch(1 0 0);
+		--app-user-bubble: oklch(0.95 0.003 100);
+		--app-muted: oklch(0.955 0 0);
+		--app-muted-foreground: oklch(0.55 0 0);
+		--app-border: oklch(0.88 0 0);
+		--app-secondary: oklch(0.96 0 0);
+		--app-accent: oklch(0.94 0 0);
+		--app-sidebar: oklch(0.97 0 0);
+		--app-shadow-card: 0 1px 3px oklch(0 0 0 / 0.06), 0 1px 2px oklch(0 0 0 / 0.04);
+		--app-shadow-float: 0 4px 16px oklch(0 0 0 / 0.08), 0 1px 4px oklch(0 0 0 / 0.04);
+		--app-shadow-composer: 0 2px 8px oklch(0 0 0 / 0.06), 0 0 0 1px oklch(0 0 0 / 0.03);
+		--app-shadow-composer-focus: 0 4px 16px oklch(0 0 0 / 0.1), 0 0 0 1px oklch(0 0 0 / 0.06);
+	}
+
+	@variant dark {
+		--app-background: oklch(0.195 0 0);
+		--app-foreground: oklch(0.94 0 0);
+		--app-card: oklch(0.225 0 0);
+		--app-user-bubble: oklch(0.14 0 0);
+		--app-muted: oklch(0.27 0 0);
+		--app-muted-foreground: oklch(0.6 0 0);
+		--app-border: oklch(0.32 0 0);
+		--app-secondary: oklch(0.25 0 0);
+		--app-accent: oklch(0.28 0 0);
+		--app-sidebar: oklch(0.175 0 0);
+		--app-shadow-card: 0 1px 3px oklch(0 0 0 / 0.2), 0 1px 2px oklch(0 0 0 / 0.15);
+		--app-shadow-float: 0 4px 16px oklch(0 0 0 / 0.3), 0 1px 4px oklch(0 0 0 / 0.2);
+		--app-shadow-composer: 0 2px 8px oklch(0 0 0 / 0.2), 0 0 0 1px oklch(0 0 0 / 0.1);
+		--app-shadow-composer-focus: 0 4px 16px oklch(0 0 0 / 0.3), 0 0 0 1px oklch(0 0 0 / 0.15);
+	}
+}
+
+@theme {
+	--color-background: var(--app-background);
+	--color-foreground: var(--app-foreground);
+	--color-card: var(--app-card);
+	--color-user-bubble: var(--app-user-bubble);
+	--color-muted: var(--app-muted);
+	--color-muted-foreground: var(--app-muted-foreground);
+	--color-border: var(--app-border);
+	--color-secondary: var(--app-secondary);
+	--color-accent: var(--app-accent);
+	--color-sidebar: var(--app-sidebar);
+
+	--shadow-card: var(--app-shadow-card);
+	--shadow-float: var(--app-shadow-float);
+	--shadow-composer: var(--app-shadow-composer);
+	--shadow-composer-focus: var(--app-shadow-composer-focus);
+
+	--animate-fade-up: fade-up 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+	--animate-shimmer: shimmer 2s infinite linear;
+}
+
+@keyframes fade-up {
+	from {
+		opacity: 0;
+		transform: translateY(8px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+@keyframes shimmer {
+	0% {
+		background-position: -200% 0;
+	}
+	100% {
+		background-position: 200% 0;
+	}
+}
+
+/* Sidebar toggle icon swap on hover */
+.sidebar-toggle-hover {
+	display: none;
+}
+.sidebar-toggle-btn:hover .sidebar-toggle-default {
+	display: none;
+}
+.sidebar-toggle-btn:hover .sidebar-toggle-hover {
+	display: flex;
+}
+
+@media android {
+	:root {
+		--font-mono: monospace;
+		--font-rounded: normal;
+		--font-serif: serif;
+		--font-sans: normal;
+	}
+}
+
+@media ios {
+	:root {
+		--font-mono: ui-monospace;
+		--font-serif: ui-serif;
+		--font-sans: system-ui;
+		--font-rounded: ui-rounded;
+	}
+}

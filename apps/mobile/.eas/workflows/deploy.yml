@@ -1,0 +1,13 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+
+# https://docs.expo.dev/eas/workflows/syntax/#deploy
+jobs:
+  deploy_web:
+    type: deploy
+    params:
+      prod: true

@@ -1,0 +1,18 @@
+{
+	"version": "0.0.1",
+	"configurations": [
+		{
+			"name": "Web",
+			"runtimeExecutable": "npx",
+			"runtimeArgs": ["expo"],
+			"port": 8081,
+			"autoPort": true
+		},
+		{
+			"name": "Apple",
+			"runtimeExecutable": "npx",
+			"runtimeArgs": ["serve-sim"],
+			"port": 3200
+		}
+	]
+}

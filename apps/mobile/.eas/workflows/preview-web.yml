@@ -1,0 +1,13 @@
+name: Web Preview Deployment
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  deploy_preview:
+    name: Deploy Web Preview
+    type: deploy
+    environment: preview
+    params:
+      alias: pr-${{ github.event.pull_request.number }}
