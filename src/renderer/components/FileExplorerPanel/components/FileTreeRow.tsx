@@ -177,7 +177,16 @@ export const FileTreeRow = memo(function FileTreeRow({
 		);
 	}
 
-	const isDropTarget = isFolder && dragOverFolder === fullPath;
+	// A row's drop destination: folders accept the move INTO themselves; files
+	// route the move into their own parent folder. That makes the whole expanded
+	// list of files under a folder a valid drop zone for landing items in that
+	// folder, not just the folder header row itself.
+	const dropDestRelative = isFolder ? fullPath : parentDirOf(fullPath);
+	// Every row whose drop destination is the hovered folder lights up, so the
+	// folder header and its child rows read as one contiguous drop area. The
+	// header gets the extra dashed outline as the primary target.
+	const isInDropGroup = dragOverFolder !== null && dragOverFolder === dropDestRelative;
+	const isDropTargetHeader = isInDropGroup && isFolder;
 
 	return (
 		<div
@@ -190,14 +199,14 @@ export const FileTreeRow = memo(function FileTreeRow({
 				transform: `translateY(${virtualRow.start}px)`,
 				paddingLeft: `${8 + depth * 20}px`,
 				color: hasChange ? theme.colors.textMain : theme.colors.textDim,
-				borderLeftColor: isDropTarget
+				borderLeftColor: isInDropGroup
 					? theme.colors.accent
 					: isKeyboardSelected
 						? theme.colors.accent
 						: isMultiSelected
 							? theme.colors.accent
 							: 'transparent',
-				backgroundColor: isDropTarget
+				backgroundColor: isInDropGroup
 					? `${theme.colors.accent}33`
 					: isMultiSelected
 						? `${theme.colors.accent}22`
@@ -206,8 +215,8 @@ export const FileTreeRow = memo(function FileTreeRow({
 							: isSelected
 								? 'rgba(255,255,255,0.1)'
 								: undefined,
-				outline: isDropTarget ? `1px dashed ${theme.colors.accent}` : undefined,
-				outlineOffset: isDropTarget ? '-2px' : undefined,
+				outline: isDropTargetHeader ? `1px dashed ${theme.colors.accent}` : undefined,
+				outlineOffset: isDropTargetHeader ? '-2px' : undefined,
 			}}
 			draggable
 			onDragStart={(e) => {
@@ -241,10 +250,10 @@ export const FileTreeRow = memo(function FileTreeRow({
 				e.dataTransfer.effectAllowed = 'copyMove';
 			}}
 			onDragEnd={onInternalDragEnd}
-			onDragEnter={isFolder ? (e) => handleFolderDragEnter(e, fullPath) : undefined}
-			onDragOver={isFolder ? (e) => handleFolderDragOver(e, fullPath) : undefined}
-			onDragLeave={isFolder ? handleFolderDragLeave : undefined}
-			onDrop={isFolder ? (e) => handleFolderDrop(e, fullPath) : undefined}
+			onDragEnter={(e) => handleFolderDragEnter(e, dropDestRelative)}
+			onDragOver={(e) => handleFolderDragOver(e, dropDestRelative)}
+			onDragLeave={handleFolderDragLeave}
+			onDrop={(e) => handleFolderDrop(e, dropDestRelative)}
 			onMouseDown={(e) => {
 				if (fileTreeFilter.length > 0) {
 					e.preventDefault();

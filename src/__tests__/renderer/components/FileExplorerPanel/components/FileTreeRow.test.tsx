@@ -78,6 +78,8 @@ const defaultProps = {
 	handleFolderDragOver: vi.fn(),
 	handleFolderDragLeave: vi.fn(),
 	handleFolderDrop: vi.fn(),
+	onInternalDragStart: vi.fn(),
+	onInternalDragEnd: vi.fn(),
 	toggleFolder: vi.fn(),
 	toggleFolderRecursive: vi.fn(),
 	setSessions: vi.fn(),
@@ -123,6 +125,54 @@ describe('FileTreeRow', () => {
 		);
 		const row = container.firstElementChild as HTMLElement;
 		expect(row.style.outline).toContain('dashed');
+	});
+
+	it('highlights a child file row as part of the drop group when dragOverFolder matches its parent', () => {
+		// Dropping anywhere in an expanded folder's list of files should land in
+		// that folder, so the child rows light up alongside the folder header.
+		const nested: FlattenedNode = {
+			node: { name: 'App.tsx', type: 'file' },
+			path: 'src/App.tsx',
+			depth: 1,
+			globalIndex: 1,
+		};
+		const { container } = render(
+			<FileTreeRow {...defaultProps} item={nested} dragOverFolder="src" />
+		);
+		const row = container.firstElementChild as HTMLElement;
+		expect(row.style.backgroundColor).toBeTruthy();
+		expect(row.style.borderLeftColor).not.toBe('transparent');
+		// Only the folder header gets the dashed box, not the child file rows.
+		expect(row.style.outline).not.toContain('dashed');
+	});
+
+	it("routes a drop on a child file row into that file's parent folder", () => {
+		const handleFolderDrop = vi.fn();
+		const nested: FlattenedNode = {
+			node: { name: 'App.tsx', type: 'file' },
+			path: 'src/App.tsx',
+			depth: 1,
+			globalIndex: 1,
+		};
+		const { container } = render(
+			<FileTreeRow {...defaultProps} item={nested} handleFolderDrop={handleFolderDrop} />
+		);
+		fireEvent.drop(container.firstElementChild!);
+		expect(handleFolderDrop).toHaveBeenCalledWith(expect.anything(), 'src');
+	});
+
+	it('does not highlight a child file row whose parent does not match dragOverFolder', () => {
+		const nested: FlattenedNode = {
+			node: { name: 'App.tsx', type: 'file' },
+			path: 'src/App.tsx',
+			depth: 1,
+			globalIndex: 1,
+		};
+		const { container } = render(
+			<FileTreeRow {...defaultProps} item={nested} dragOverFolder="docs" />
+		);
+		const row = container.firstElementChild as HTMLElement;
+		expect(row.style.borderLeftColor).toBe('transparent');
 	});
 
 	it('shows git change indicator dot when file is changed', () => {

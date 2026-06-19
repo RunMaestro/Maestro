@@ -518,6 +518,50 @@ Plus the pre-release ALPHA...
 
 ---
 
+## untagged-9c7859b4a76f81d27a6c.x - Maestro Cue
+
+**Latest: untagged-9c7859b4a76f81d27a6c** | Released January 1, 1
+
+# Major 0.17.x Additions
+
+🔐 Claude Token Source control keeps Claude running on your Max/Pro subscription quota by driving Claude's interactive session instead of the headless API path. A three-way Interactive / API / Dynamic selector is available everywhere agents run (new and existing agents, Cue runs, Group Chat, and background tasks). Dynamic mode uses your subscription quota automatically and only falls back to API billing when that quota is exhausted.
+
+🪄 Maestro Cue is a new trigger-based cross-agent orchestration capability that lets heartbeats, GitHub issues/PRs, file system monitors, and other data sources bring your agents to life and pass work between one another.
+
+💻 Full-featured xterm.js terminal tabs sit alongside your AI and file preview tabs, with support for opening and renaming multiple terminals.
+
+🧑‍✈️ GitHub Copilot-CLI joins Maestro as a first-class agent with end-to-end integration for both local and remote (over SSH) execution.
+
+🛠️ A vastly expanded `maestro-cli` now drives the whole running desktop app, and your agents know how to use it. That means you can just talk to an agent in plain language to create and run Auto Run playbooks, change settings, set up Maestro Cue pipelines, manage groups, agents, tabs, and themes, and much more, instead of clicking through menus yourself.
+
+## 0.17.1 Modifications
+
+🩹 Claude Token Source mode is far more resilient: it survives a dead stdout (EPIPE), reads large pasted images without crashing (EAGAIN), parses `/usage` panels that paint without newlines, and re-anchors limit detection to Claude's real banner. It also detects many more quota and credit-exhaustion messages, stops false-positiving on token/context/rate "limit" lines, and exits fast on a quota hit so Dynamic mode no longer stalls with "no response".
+
+🔁 Desktop turns now honor your Interactive / Dynamic token-mode selection. Previously the per-agent setting was missed on desktop and silently fell through to API billing.
+
+🔓 maestro-p now clears Claude's one-time "Bypass Permissions" acceptance screen automatically instead of quitting on it the first time an agent launches.
+
+🖥️ SSH and startup terminal tabs no longer vanish when their PTY exits.
+
+🧑‍✈️ GitHub Copilot-CLI no longer ends its turn early when you resume a session.
+
+🪄 Maestro Cue pipeline layouts now stay put across Arrange and Save.
+
+🖼️ Images render correctly when viewing files over SSH, and large pasted images no longer crash the driver.
+
+🎨 Open any image in the annotation editor straight from a file-preview tab with Cmd+E, and Mermaid code fences now render as toggleable diagrams in chat.
+
+🛠️ `maestro-cli` can now configure an agent's SSH execution settings, and the process monitor shows the real remote command for SSH spawns.
+
+⌨️ Command-K Context, Buffer, and Content actions are now tab-aware, and the thinking pill follows the active tab during forced-parallel runs.
+
+🎚️ The window title bar is now themeable with a new `bgTitleBar` token.
+
+📋 Auto Run agents stay visible under the Left Bar's unread filter, file-preview tab content is capped to keep `sessions.json` lean, and Adaptive Mode backfill only touches never-configured agents.
+
+---
+
 ## Downloading Releases
 
 All releases are available on the [GitHub Releases page](https://github.com/RunMaestro/Maestro/releases).
