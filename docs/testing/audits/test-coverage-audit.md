@@ -10,19 +10,27 @@ Measured with `npm run test:coverage` on the current upstream-shaped tree:
 
 | Metric     | Pre-Sync Final Checkpoint | Current Upstream-Sync Check |
 | ---------- | ------------------------: | --------------------------: |
-| Statements |                   100.00% |                      81.04% |
-| Branches   |                   100.00% |                      73.75% |
-| Functions  |                   100.00% |                      80.30% |
-| Lines      |                   100.00% |                      82.29% |
+| Statements |                   100.00% |                      81.47% |
+| Branches   |                   100.00% |                      74.22% |
+| Functions  |                   100.00% |                      80.53% |
+| Lines      |                   100.00% |                      82.75% |
 
 Current upstream-sync coverage result:
 
 - Command: `npm run test:coverage`
 - Result: failed 100% global coverage thresholds
 - Test files: 1,246 passed
-- Tests: 33,408 passed, 0 skipped
-- Coverage: 81.04% statements, 73.75% branches, 80.30% functions, 82.29% lines
-- Log: current workspace coverage artifact `coverage/coverage-final.json`
+- Tests: 33,519 passed, 0 skipped
+- Coverage: 81.47% statements, 74.22% branches, 80.53% functions, 82.75% lines
+- Log: `/tmp/maestro-phase7-coverage-after-leaderboard-modal-20260619021450.log`
+
+Latest focused LeaderboardRegistrationModal checkpoint:
+
+- Command: `NODE_OPTIONS=--max-old-space-size=8192 npx vitest run --config vitest.config.mts --coverage --coverage.include=src/renderer/components/LeaderboardRegistrationModal.tsx src/__tests__/renderer/components/LeaderboardRegistrationModal.test.tsx`
+- Result: tests passed; focused coverage still fails 100% statement and branch thresholds
+- Tests: 52 passed
+- Coverage: 98.72% statements, 89.16% branches, 100% functions, 100% lines
+- Logs: `/tmp/maestro-leaderboard-modal-focused-20260619022237.log`, `/tmp/maestro-leaderboard-modal-focused-coverage-20260619022239.log`
 
 Latest focused useInputProcessing checkpoint:
 
