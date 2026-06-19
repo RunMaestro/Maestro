@@ -64963,8 +64963,52 @@ Integration coverage:
 | Functions  |     98.56% (13,484/13,680) |   100.00% (13,680/13,680) |
 | Lines      |     98.98% (58,975/59,579) |   100.00% (59,573/59,573) |
 
-Campaign outcome:
+    Campaign outcome:
 
 - Integration coverage is complete at 100.00% for statements, branches,
   functions, and lines under `vitest.integration.config.ts`.
 - Electron E2E now passes with `npm run test:e2e`: 91 passed, 49 skipped.
+
+## Phase 7 Unit Checkpoint: Feedback Chat Conversation Paths
+
+Date: 2026-06-19 03:01 EDT.
+
+Scope:
+
+- Extended `src/__tests__/renderer/components/FeedbackChatView.test.tsx`.
+- Covered chat send/assistant response rendering, markdown copy callback routing,
+  similar-issue search display, existing-issue subscription with structured
+  context, image attachment submission, support-package opt-in, created-issue
+  URL copy/open actions, and failed issue-creation recovery.
+- No production code changed by this checkpoint. No coverage exclusions were
+  added or widened. Integration and E2E were not run.
+
+Validation:
+
+- Focused unit: `npx vitest run
+src/__tests__/renderer/components/FeedbackChatView.test.tsx` passed with
+  1 file and 12 tests. Log:
+  `/tmp/maestro-feedbackchat-focused-clean-20260619025502.log`.
+- Focused coverage for `src/renderer/components/FeedbackChatView.tsx` reached
+  83.51% statements, 71.88% branches, 76.12% functions, and 86.75% lines.
+  Log: `/tmp/maestro-feedbackchat-focused-coverage-20260619025510.log`.
+- Broad unit coverage run passed test execution with 1,247 files and 33,569
+  tests, with 0 skipped reported, then failed only the enforced 100% coverage
+  thresholds: 81.74% statements, 74.55% branches, 80.71% functions, and 83.03%
+  lines. Log:
+  `/tmp/maestro-phase7-coverage-after-feedbackchat-20260619025552.log`.
+
+Remaining risk:
+
+- Unit coverage is still incomplete; this checkpoint is not finality.
+- The current largest broad unit gaps are `src/main/index.ts`,
+  `src/web/mobile/App.tsx`, `src/renderer/components/MainPanel/MainPanel.tsx`,
+  `src/renderer/hooks/remote/useRemoteIntegration.ts`,
+  `src/main/storage/claude-session-storage.ts`,
+  `src/renderer/components/DocumentGraph/DocumentGraphView.tsx`,
+  `src/renderer/hooks/remote/useAppRemoteEventListeners.ts`,
+  `src/renderer/components/TerminalOutput.tsx`,
+  `src/renderer/components/XTerminal.tsx`,
+  `src/renderer/hooks/keyboard/useMainKeyboardHandler.ts`,
+  `src/renderer/components/SessionList/SessionList.tsx`, and
+  `src/web/mobile/AllSessionsView.tsx`.
