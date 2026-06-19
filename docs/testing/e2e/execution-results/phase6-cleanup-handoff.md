@@ -21,11 +21,9 @@
 - Removed the old cron entry for `/Users/jeffscottward/.codex/scripts/maestro-e2e-status-email.mjs`.
 - Confirmed no live old reporter process was running.
 - Added `/Users/jeffscottward/.codex/scripts/maestro-phase6-status-email.mjs`.
-- Installed the Phase 6 cron entry:
-
-```cron
-15 */3 * * * /Users/jeffscottward/.codex/scripts/maestro-phase6-status-email.mjs >> /Users/jeffscottward/.codex/log/maestro-phase6-status-email.log 2>&1
-```
+- Historical note: a Phase 6 cron entry was briefly used during cleanup. That routine cadence is now superseded. There are no active Maestro status-email cron entries, and real sends are reserved for explicit major milestones.
+- Current email policy: use only explicit milestone sends after roughly 6+ hour completion blocks or gates such as unit coverage complete, full integration complete, full E2E complete, or final branch handoff.
+- Current local reporters are milestone-gated: `/Users/jeffscottward/.codex/scripts/maestro-phase6-status-email.mjs`, `/Users/jeffscottward/.codex/scripts/maestro-e2e-status-email.mjs`, and `/Users/jeffscottward/.codex/scripts/maestro-coverage-email.mjs` require `--milestone` plus `--milestone-hours >= 6` or matching milestone environment variables for real sends.
 
 ## Verification
 
@@ -33,7 +31,8 @@
 - PM2 filter: `NO_MATCHING_PM2_PROCESSES`.
 - Stable process filter: `NO_LIVE_E2E_PROCESSES`.
 - Phase 6 reporter syntax check: passed.
-- Phase 6 reporter dry run: old Phase 5 reporter scheduled `no`; Phase 6 reporter scheduled `yes`; no Maestro E2E PM2 processes listed; no live Maestro E2E Playwright/Electron processes found.
+- Phase 6 reporter dry run: old Phase 5 reporter scheduled `no`; Phase 6 reporter scheduled `yes` at the time of cleanup; no Maestro E2E PM2 processes listed; no live Maestro E2E Playwright/Electron processes found.
+- Current mailer recheck after cadence change: `crontab -l` has no Maestro mail entries, no matching live mailer process is running, and PM2 has no active Maestro email reporter.
 - `git diff --check`: passed.
 
 ## Final Runtime Evidence
