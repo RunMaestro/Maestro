@@ -59,6 +59,69 @@ export function extractPendingTasks(content: string): PendingTask[] {
 }
 
 /**
+ * Build the `task.pending` event payload for a single file's content.
+ * Returns null when the file has no pending tasks (nothing to fire).
+ *
+ * Shared by the polling scanner and the manual-trigger path so both produce
+ * identical payloads (path/taskCount/taskList/tasks/content).
+ */
+export function buildTaskPendingPayload(
+	absPath: string,
+	relPath: string,
+	content: string
+): Record<string, unknown> | null {
+	const pendingTasks = extractPendingTasks(content);
+	if (pendingTasks.length === 0) {
+		return null;
+	}
+
+	const taskList = pendingTasks.map((t) => `L${t.line}: ${t.text}`).join('\n');
+
+	return {
+		path: absPath,
+		filename: path.basename(relPath),
+		directory: path.dirname(absPath),
+		extension: path.extname(relPath),
+		taskCount: pendingTasks.length,
+		taskList,
+		tasks: pendingTasks,
+		content: content.slice(0, 10000),
+	};
+}
+
+/**
+ * One-shot scan: walk `projectRoot`, read every file matching `watchGlob`, and
+ * return a `task.pending` payload for each file that currently has pending
+ * tasks. Unlike the polling scanner this ignores content hashes and seeding —
+ * it always reflects the live on-disk state. Used by the manual trigger
+ * (`maestro-cli cue trigger`) so a hand-fired run sees the same tasks a poll
+ * would.
+ */
+export function scanTaskFilesOnce(
+	watchGlob: string,
+	projectRoot: string
+): Array<Record<string, unknown>> {
+	const isMatch = picomatch(watchGlob);
+	const allFiles = walkDir(projectRoot, projectRoot);
+	const payloads: Array<Record<string, unknown>> = [];
+
+	for (const relPath of allFiles) {
+		if (!isMatch(relPath)) continue;
+		const absPath = path.resolve(projectRoot, relPath);
+		let content: string;
+		try {
+			content = fs.readFileSync(absPath, 'utf-8');
+		} catch {
+			continue;
+		}
+		const payload = buildTaskPendingPayload(absPath, relPath, content);
+		if (payload) payloads.push(payload);
+	}
+
+	return payloads;
+}
+
+/**
  * Recursively walk a directory and return all file paths (relative to root).
  */
 function walkDir(dir: string, root: string): string[] {
@@ -148,23 +211,12 @@ export function createCueTaskScanner(config: CueTaskScannerConfig): () => void {
 				}
 
 				// Extract pending tasks
-				const pendingTasks = extractPendingTasks(content);
-				if (pendingTasks.length === 0) {
+				const payload = buildTaskPendingPayload(absPath, relPath, content);
+				if (!payload) {
 					continue;
 				}
 
-				const taskList = pendingTasks.map((t) => `L${t.line}: ${t.text}`).join('\n');
-
-				const event = createCueEvent('task.pending', triggerName, {
-					path: absPath,
-					filename: path.basename(relPath),
-					directory: path.dirname(absPath),
-					extension: path.extname(relPath),
-					taskCount: pendingTasks.length,
-					taskList,
-					tasks: pendingTasks,
-					content: content.slice(0, 10000),
-				});
+				const event = createCueEvent('task.pending', triggerName, payload);
 
 				onEvent(event);
 			}

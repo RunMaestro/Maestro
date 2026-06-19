@@ -46,8 +46,12 @@ vi.mock('../../../main/cue/cue-github-poller', () => ({
 
 // Mock the task scanner
 const mockCreateCueTaskScanner = vi.fn<(config: unknown) => () => void>();
+const mockScanTaskFilesOnce =
+	vi.fn<(watchGlob: string, projectRoot: string) => Array<Record<string, unknown>>>();
 vi.mock('../../../main/cue/cue-task-scanner', () => ({
 	createCueTaskScanner: (...args: unknown[]) => mockCreateCueTaskScanner(args[0]),
+	scanTaskFilesOnce: (...args: unknown[]) =>
+		mockScanTaskFilesOnce(args[0] as string, args[1] as string),
 }));
 
 // Mock the database
@@ -113,6 +117,7 @@ describe('CueEngine', () => {
 
 		yamlWatcherCleanup = vi.fn();
 		mockWatchCueYaml.mockReturnValue(yamlWatcherCleanup);
+		mockScanTaskFilesOnce.mockReturnValue([]);
 
 		// Default loadCueConfigDetailed: derive from loadCueConfig for tests that
 		// only configure mockLoadCueConfig. Tests that need to inject warnings or
@@ -1534,6 +1539,88 @@ describe('CueEngine', () => {
 			engine.start();
 
 			expect(mockCreateCueTaskScanner).not.toHaveBeenCalled();
+
+			engine.stop();
+		});
+
+		it('manual trigger scans the watched file and populates the task payload', () => {
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'task-queue',
+						event: 'task.pending',
+						enabled: true,
+						prompt: 'process tasks',
+						watch: 'tasks/**/*.md',
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(config);
+			mockScanTaskFilesOnce.mockReturnValue([
+				{
+					path: '/projects/test/tasks/queue.md',
+					filename: 'queue.md',
+					taskCount: 2,
+					taskList: 'L3: first task\nL5: second task',
+					tasks: [
+						{ line: 3, text: 'first task' },
+						{ line: 5, text: 'second task' },
+					],
+				},
+			]);
+
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			engine.start();
+
+			const result = engine.triggerSubscription('task-queue');
+			expect(result).toBe(true);
+
+			// Scanned with the sub's watch glob against the owner's projectRoot.
+			expect(mockScanTaskFilesOnce).toHaveBeenCalledWith('tasks/**/*.md', '/projects/test');
+
+			// The scanned task fields land in the dispatched event payload so the
+			// prompt's {{CUE_TASK_COUNT}}/{{CUE_TASK_LIST}} resolve to real tasks.
+			expect(deps.onCueRun).toHaveBeenCalledWith(
+				expect.objectContaining({
+					event: expect.objectContaining({
+						payload: expect.objectContaining({
+							manual: true,
+							taskCount: 2,
+							taskList: 'L3: first task\nL5: second task',
+							path: '/projects/test/tasks/queue.md',
+						}),
+					}),
+				})
+			);
+
+			engine.stop();
+		});
+
+		it('manual trigger with no pending tasks still dispatches without task fields', () => {
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'task-queue',
+						event: 'task.pending',
+						enabled: true,
+						prompt: 'process tasks',
+						watch: 'tasks/**/*.md',
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(config);
+			mockScanTaskFilesOnce.mockReturnValue([]);
+
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			engine.start();
+
+			engine.triggerSubscription('task-queue');
+
+			const callArgs = (deps.onCueRun as ReturnType<typeof vi.fn>).mock.calls[0][0];
+			expect(callArgs.event.payload).toMatchObject({ manual: true });
+			expect(callArgs.event.payload).not.toHaveProperty('taskCount');
 
 			engine.stop();
 		});
