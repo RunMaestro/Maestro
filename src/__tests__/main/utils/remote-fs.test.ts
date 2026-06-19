@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
 	readDirRemote,
 	readFileRemote,
-	readImageFileRemoteAsBase64,
+	readBinaryFileRemoteAsBase64,
 	readFileTailRemote,
 	statRemote,
 	directorySizeRemote,
@@ -411,7 +411,7 @@ describe('remote-fs', () => {
 		});
 	});
 
-	describe('readImageFileRemoteAsBase64', () => {
+	describe('readBinaryFileRemoteAsBase64', () => {
 		it('runs base64 on the remote and returns a whitespace-free payload', async () => {
 			// GNU base64 wraps at 76 cols; the result must be stripped to one line.
 			const deps = createMockDeps({
@@ -420,7 +420,7 @@ describe('remote-fs', () => {
 				exitCode: 0,
 			});
 
-			const result = await readImageFileRemoteAsBase64('/project/logo.png', baseConfig, deps);
+			const result = await readBinaryFileRemoteAsBase64('/project/logo.png', baseConfig, deps);
 
 			expect(result.success).toBe(true);
 			expect(result.data).toBe('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk');
@@ -437,7 +437,7 @@ describe('remote-fs', () => {
 				exitCode: 1,
 			});
 
-			const result = await readImageFileRemoteAsBase64('/missing.png', baseConfig, deps);
+			const result = await readBinaryFileRemoteAsBase64('/missing.png', baseConfig, deps);
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('File not found');

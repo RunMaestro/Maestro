@@ -51,6 +51,7 @@ interface UseFileContextMenuResult {
 	openRootContextMenu: (e: React.MouseEvent) => void;
 	closeContextMenu: () => void;
 	handleCopyPath: () => void;
+	handleDownloadFile: () => Promise<void>;
 	handleOpenInDefaultApp: () => void;
 	handleOpenInMaestroBrowser: () => void;
 	handleOpenInExplorer: () => void;
@@ -413,6 +414,41 @@ export function useFileContextMenu({
 		setContextMenu(null);
 	}, [contextMenu, session.fullPath]);
 
+	// Download a remote SSH file to a user-chosen local location. Only wired up
+	// for remote sessions (the menu item is hidden when sshRemoteId is undefined);
+	// local files are already on disk and use "Reveal in Finder" instead.
+	const handleDownloadFile = useCallback(async () => {
+		const menu = contextMenu;
+		setContextMenu(null);
+		if (!menu || !menu.node || menu.node.type !== 'file' || !sshRemoteId) return;
+
+		const remotePath = `${session.fullPath}/${menu.path}`;
+		const fileName = menu.node.name;
+		try {
+			const destPath = await window.maestro.dialog.saveFile({
+				defaultPath: fileName,
+				title: 'Download File',
+			});
+			// User cancelled the save dialog.
+			if (!destPath) return;
+
+			await window.maestro.fs.downloadRemoteFile(remotePath, sshRemoteId, destPath);
+			onShowFlash?.(`Downloaded "${fileName}"`);
+		} catch (error) {
+			captureException(error, {
+				extra: {
+					action: 'download-remote-file',
+					path: menu.path,
+					remotePath,
+					nodeName: fileName,
+					sessionId: session.id,
+					sshRemoteId,
+				},
+			});
+			onShowFlash?.(`Download failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+		}
+	}, [contextMenu, session.fullPath, session.id, sshRemoteId, onShowFlash]);
+
 	const handleOpenInDefaultApp = useCallback(() => {
 		if (contextMenu) {
 			const absolutePath = `${session.fullPath}/${contextMenu.path}`;
@@ -506,6 +542,7 @@ export function useFileContextMenu({
 		openRootContextMenu,
 		closeContextMenu,
 		handleCopyPath,
+		handleDownloadFile,
 		handleOpenInDefaultApp,
 		handleOpenInMaestroBrowser,
 		handleOpenInExplorer,

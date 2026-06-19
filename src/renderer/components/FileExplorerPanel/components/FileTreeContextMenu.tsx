@@ -11,6 +11,7 @@ import {
 	FilePlus,
 	FolderPlus,
 	Files,
+	Download,
 } from 'lucide-react';
 import { getRevealLabel } from '../../../utils/platformUtils';
 import { collectPreviewableFiles } from '../utils/pathHelpers';
@@ -28,6 +29,7 @@ interface FileTreeContextMenuProps {
 	isMultiSelectionContext?: boolean;
 	selectedCount?: number;
 	onCopyPath: () => void;
+	onDownloadFile: () => void;
 	onOpenInDefaultApp: () => void;
 	onOpenInMaestroBrowser: () => void;
 	onOpenInExplorer: () => void;
@@ -54,6 +56,7 @@ export function FileTreeContextMenu({
 	isMultiSelectionContext = false,
 	selectedCount = 0,
 	onCopyPath,
+	onDownloadFile,
 	onOpenInDefaultApp,
 	onOpenInMaestroBrowser,
 	onOpenInExplorer,
@@ -240,6 +243,20 @@ export function FileTreeContextMenu({
 							>
 								<ExternalLink className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
 								<span>Open in Default App</span>
+							</button>
+						)}
+
+						{/* Download File option - remote files only; the local counterpart is
+						    "Reveal in Finder" / "Open in Default App", which act on the file
+						    already on disk. Remote files must be pulled down over SSH first. */}
+						{isFile && sshRemoteId && (
+							<button
+								onClick={onDownloadFile}
+								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+								style={{ color: theme.colors.textMain }}
+							>
+								<Download className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+								<span>Download File</span>
 							</button>
 						)}
 

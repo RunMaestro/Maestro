@@ -350,11 +350,18 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 
 			// Get SSH remote ID - use sshRemoteId (set after AI spawns) or fall back to sessionSshRemoteConfig
 			// (set before spawn). This ensures file operations work for both AI and terminal-only SSH sessions.
-			// An absolute path typed into Fuzzy File Search always refers to the local
-			// filesystem, so SSH dispatch is skipped for it.
-			const sshRemoteId = isAbsoluteInput
-				? undefined
-				: activeSession.sshRemoteId || activeSession.sessionSshRemoteConfig?.remoteId || undefined;
+			//
+			// Absolute paths from Fuzzy File Search refer to the LOCAL filesystem, but
+			// only for local sessions. On an SSH-remote session the workspace itself is
+			// absolute (e.g. /opt/Substrate), so every path the user can open - file
+			// tree, fuzzy search, chat/terminal file links - is a remote absolute path.
+			// Forcing those to a local read looks for /opt/Substrate/LOGO.png on the Mac
+			// (where it doesn't exist), which surfaces "Failed to load image" for remote
+			// previews. Whenever the session has a remote, keep routing over SSH
+			// regardless of whether the path is absolute.
+			const sessionSshRemoteId =
+				activeSession.sshRemoteId || activeSession.sessionSshRemoteConfig?.remoteId || undefined;
+			const sshRemoteId = isAbsoluteInput && !sessionSshRemoteId ? undefined : sessionSshRemoteId;
 
 			// Check if file should be opened externally (only for local files)
 			if (!sshRemoteId && shouldOpenExternally(node.name)) {

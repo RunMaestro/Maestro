@@ -55,6 +55,7 @@ const defaultProps = {
 	onFocusFileInGraph: vi.fn(),
 	onOpenBrowserTabAt: vi.fn(),
 	onCopyPath: vi.fn(),
+	onDownloadFile: vi.fn(),
 	onOpenInDefaultApp: vi.fn(),
 	onOpenInMaestroBrowser: vi.fn(),
 	onOpenInExplorer: vi.fn(),
@@ -234,6 +235,41 @@ describe('FileTreeContextMenu', () => {
 		);
 		expect(screen.queryByText('Reveal in Finder')).toBeNull();
 		expect(screen.queryByText('Open in Default App')).toBeNull();
+	});
+
+	it('shows Download File only for remote files and calls onDownloadFile', () => {
+		// Local file: no Download File option (the file is already on disk).
+		const { unmount } = render(
+			<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(fileNode)} />
+		);
+		expect(screen.queryByText('Download File')).toBeNull();
+		unmount();
+
+		// Remote file: Download File appears and is wired to the handler.
+		const onDownloadFile = vi.fn();
+		render(
+			<FileTreeContextMenu
+				{...defaultProps}
+				contextMenu={makeContextMenu(fileNode)}
+				sshRemoteId="remote-1"
+				onDownloadFile={onDownloadFile}
+			/>
+		);
+		const downloadBtn = screen.getByText('Download File');
+		expect(downloadBtn).toBeTruthy();
+		fireEvent.click(downloadBtn);
+		expect(onDownloadFile).toHaveBeenCalledTimes(1);
+	});
+
+	it('hides Download File for remote folders', () => {
+		render(
+			<FileTreeContextMenu
+				{...defaultProps}
+				contextMenu={makeContextMenu(folderNode)}
+				sshRemoteId="remote-1"
+			/>
+		);
+		expect(screen.queryByText('Download File')).toBeNull();
 	});
 
 	it('renders reveal action when the preload bridge is missing', () => {

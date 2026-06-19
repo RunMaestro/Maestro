@@ -84,7 +84,11 @@ const defaultArgs = {
 
 const mockMaestro = {
 	shell: { openPath: vi.fn(), showItemInFolder: vi.fn() },
-	fs: { delete: vi.fn().mockResolvedValue({ success: true }) },
+	fs: {
+		delete: vi.fn().mockResolvedValue({ success: true }),
+		downloadRemoteFile: vi.fn().mockResolvedValue({ success: true, path: '/local/App.tsx' }),
+	},
+	dialog: { saveFile: vi.fn().mockResolvedValue('/local/App.tsx') },
 };
 (window as any).maestro = mockMaestro;
 
@@ -202,6 +206,74 @@ describe('useFileContextMenu', () => {
 			result.current.handleOpenInDefaultApp();
 		});
 		expect(mockMaestro.shell.openPath).toHaveBeenCalledWith('/project/App.tsx');
+	});
+
+	it('handleDownloadFile downloads the remote file to the chosen local path', async () => {
+		const onShowFlash = vi.fn();
+		const { result } = renderHook(() =>
+			useFileContextMenu({ ...defaultArgs, sshRemoteId: 'remote-1', onShowFlash })
+		);
+		const e = {
+			clientX: 10,
+			clientY: 10,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as React.MouseEvent;
+		act(() => {
+			result.current.openContextMenu(e, fileNode, 'src/App.tsx', 0);
+		});
+		await act(async () => {
+			await result.current.handleDownloadFile();
+		});
+		expect(mockMaestro.dialog.saveFile).toHaveBeenCalledWith({
+			defaultPath: 'App.tsx',
+			title: 'Download File',
+		});
+		expect(mockMaestro.fs.downloadRemoteFile).toHaveBeenCalledWith(
+			'/project/src/App.tsx',
+			'remote-1',
+			'/local/App.tsx'
+		);
+		expect(onShowFlash).toHaveBeenCalledWith('Downloaded "App.tsx"');
+		expect(result.current.contextMenu).toBeNull();
+	});
+
+	it('handleDownloadFile skips the download when the save dialog is cancelled', async () => {
+		mockMaestro.dialog.saveFile.mockResolvedValueOnce(null);
+		const { result } = renderHook(() =>
+			useFileContextMenu({ ...defaultArgs, sshRemoteId: 'remote-1' })
+		);
+		const e = {
+			clientX: 10,
+			clientY: 10,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as React.MouseEvent;
+		act(() => {
+			result.current.openContextMenu(e, fileNode, 'src/App.tsx', 0);
+		});
+		await act(async () => {
+			await result.current.handleDownloadFile();
+		});
+		expect(mockMaestro.fs.downloadRemoteFile).not.toHaveBeenCalled();
+	});
+
+	it('handleDownloadFile is a no-op for local sessions (no sshRemoteId)', async () => {
+		const { result } = renderHook(() => useFileContextMenu(defaultArgs));
+		const e = {
+			clientX: 10,
+			clientY: 10,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as React.MouseEvent;
+		act(() => {
+			result.current.openContextMenu(e, fileNode, 'src/App.tsx', 0);
+		});
+		await act(async () => {
+			await result.current.handleDownloadFile();
+		});
+		expect(mockMaestro.dialog.saveFile).not.toHaveBeenCalled();
+		expect(mockMaestro.fs.downloadRemoteFile).not.toHaveBeenCalled();
 	});
 
 	it('handleOpenInExplorer calls shell.showItemInFolder', () => {

@@ -337,6 +337,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		openContextMenu,
 		openRootContextMenu,
 		handleCopyPath,
+		handleDownloadFile,
 		handleOpenInDefaultApp,
 		handleOpenInMaestroBrowser,
 		handleOpenInExplorer,
@@ -907,6 +908,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					isMultiSelectionContext={selectedPaths.size > 1 && selectedPaths.has(contextMenu.path)}
 					selectedCount={selectedPaths.size}
 					onCopyPath={handleCopyPath}
+					onDownloadFile={handleDownloadFile}
 					onOpenInDefaultApp={handleOpenInDefaultApp}
 					onOpenInMaestroBrowser={handleOpenInMaestroBrowser}
 					onOpenInExplorer={handleOpenInExplorer}

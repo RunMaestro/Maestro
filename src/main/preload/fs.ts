@@ -109,6 +109,19 @@ export function createFsApi() {
 			ipcRenderer.invoke('fs:cancelReadFile', requestId),
 
 		/**
+		 * Download a remote SSH file to the local disk (binary-safe). Omit
+		 * `localDestPath` to write to a temp dir (e.g. to then open in the default
+		 * app); pass a path for a user-chosen save location. Resolves with the
+		 * absolute path the file was written to.
+		 */
+		downloadRemoteFile: (
+			remotePath: string,
+			sshRemoteId: string,
+			localDestPath?: string
+		): Promise<{ success: boolean; path: string }> =>
+			ipcRenderer.invoke('fs:downloadRemoteFile', remotePath, sshRemoteId, localDestPath),
+
+		/**
 		 * Write file contents
 		 */
 		writeFile: (

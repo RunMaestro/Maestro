@@ -1778,14 +1778,39 @@ export const FilePreview = React.memo(
 									This file cannot be displayed as text.
 								</p>
 								<button
-									onClick={() => window.maestro.shell.openPath(file.path)}
+									onClick={async () => {
+										// Local files open in place. Remote files don't exist on this
+										// machine, so download a binary-safe copy to a temp dir over SSH
+										// first, then hand the local path to the OS opener.
+										if (!sshRemoteId) {
+											void window.maestro.shell.openPath(file.path);
+											return;
+										}
+										try {
+											notifyCenterFlash({ message: 'Downloading…', color: 'theme' });
+											const { path: localPath } = await window.maestro.fs.downloadRemoteFile(
+												file.path,
+												sshRemoteId
+											);
+											await window.maestro.shell.openPath(localPath);
+										} catch (error) {
+											notifyToast({
+												color: 'red',
+												title: 'Open failed',
+												message:
+													error instanceof Error
+														? error.message
+														: 'Could not download the remote file',
+											});
+										}
+									}}
 									className="mt-4 px-4 py-2 rounded text-sm hover:opacity-80 transition-opacity"
 									style={{
 										backgroundColor: theme.colors.accent,
 										color: theme.colors.accentForeground,
 									}}
 								>
-									Open in Default App
+									{sshRemoteId ? 'Download & Open' : 'Open in Default App'}
 								</button>
 							</div>
 						</div>

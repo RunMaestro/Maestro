@@ -20,6 +20,11 @@ vi.mock('lucide-react', () => ({
 			▼
 		</span>
 	),
+	Download: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<span data-testid="download" className={className} style={style}>
+			⬇
+		</span>
+	),
 	ChevronUp: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<span data-testid="chevron-up" className={className} style={style}>
 			▲

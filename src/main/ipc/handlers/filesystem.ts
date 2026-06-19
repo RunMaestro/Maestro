@@ -31,7 +31,7 @@ import {
 import {
 	readDirRemote,
 	readFileRemote,
-	readImageFileRemoteAsBase64,
+	readBinaryFileRemoteAsBase64,
 	readFileRemoteAbortable,
 	writeFileRemote,
 	mkdirRemote,
@@ -195,7 +195,7 @@ export function registerFilesystemHandlers(): void {
 					// remote `base64` output is pure ASCII and survives the text channel.
 					const imgExt = filePath.split('.').pop()?.toLowerCase();
 					if (IMAGE_EXTENSIONS.includes(imgExt || '')) {
-						const imgResult = await readImageFileRemoteAsBase64(filePath, sshConfig);
+						const imgResult = await readBinaryFileRemoteAsBase64(filePath, sshConfig);
 						if (!imgResult.success) {
 							if (imgResult.error?.startsWith('File not found:')) {
 								return null;
@@ -306,6 +306,38 @@ export function registerFilesystemHandlers(): void {
 			controller.abort();
 		}
 	});
+
+	// Download a remote SSH file to the local disk. The remote bytes are read as
+	// base64 ON THE REMOTE (binary-safe over SSH's text channel) and decoded to
+	// raw bytes locally. SSH-only: there is no local fallback because a local file
+	// is already on disk and needs no download. When `localDestPath` is omitted the
+	// file lands in a temp dir (used by "Open in Default App" for remote binaries);
+	// pass an explicit path for the user-chosen "Download File" save location.
+	// Returns the absolute path the file was written to.
+	ipcMain.handle(
+		'fs:downloadRemoteFile',
+		async (_, remotePath: string, sshRemoteId: string, localDestPath?: string) => {
+			const sshConfig = getSshRemoteById(sshRemoteId);
+			if (!sshConfig) {
+				throw new Error(`SSH remote not found: ${sshRemoteId}`);
+			}
+
+			const result = await readBinaryFileRemoteAsBase64(remotePath, sshConfig);
+			if (!result.success) {
+				throw new Error(result.error || `Failed to download remote file: ${remotePath}`);
+			}
+
+			let destPath = localDestPath;
+			if (!destPath) {
+				const tempDir = path.join(os.tmpdir(), 'maestro-remote-downloads');
+				await fs.mkdir(tempDir, { recursive: true });
+				destPath = path.join(tempDir, path.basename(remotePath));
+			}
+
+			await fs.writeFile(destPath, Buffer.from(result.data ?? '', 'base64'));
+			return { success: true, path: destPath };
+		}
+	);
 
 	// Get file/directory statistics (supports SSH remote)
 	ipcMain.handle('fs:stat', async (_, filePath: string, sshRemoteId?: string) => {

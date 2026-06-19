@@ -976,6 +976,11 @@ interface MaestroAPI {
 			requestId?: string
 		) => Promise<string | null>;
 		cancelReadFile: (requestId: string) => Promise<void>;
+		downloadRemoteFile: (
+			remotePath: string,
+			sshRemoteId: string,
+			localDestPath?: string
+		) => Promise<{ success: boolean; path: string }>;
 		writeFile: (
 			filePath: string,
 			content: string,
