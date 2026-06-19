@@ -635,6 +635,11 @@ export async function readFileRemote(
  * `base64` doesn't, so we strip all whitespace locally to get one contiguous
  * payload regardless of the remote OS.
  *
+ * The file is fed via stdin redirect (`base64 < file`) rather than as a
+ * positional argument. GNU `base64 FILE` works, but BSD/macOS `base64` rejects
+ * a positional path ("base64: invalid argument") and only accepts input via
+ * `-i` or stdin - so the redirect is the portable form that works everywhere.
+ *
  * Used both for inline image previews and for the "Download File" action, which
  * decodes the returned base64 to bytes on the local disk.
  *
@@ -649,7 +654,7 @@ export async function readBinaryFileRemoteAsBase64(
 	deps: RemoteFsDeps = defaultDeps
 ): Promise<RemoteFsResult<string>> {
 	const escapedPath = shellEscapeRemotePath(filePath);
-	const remoteCommand = `base64 ${escapedPath}`;
+	const remoteCommand = `base64 < ${escapedPath}`;
 
 	const result = await execRemoteCommand(sshRemote, remoteCommand, deps);
 
