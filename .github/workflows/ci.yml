@@ -30,3 +30,44 @@ jobs:
           cache: 'npm'
       - run: npm ci
       - run: npm run test
+
+  # Detect if mobile/shared code changed to conditionally run mobile-checks
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      mobile: ${{ steps.filter.outputs.mobile }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            mobile:
+              - 'apps/mobile/**'
+              - 'src/shared/**'
+              - 'src/web/hooks/**'
+
+  # Mobile checks job - runs only when mobile or shared code changes
+  mobile-checks:
+    needs: changes
+    if: needs.changes.outputs.mobile == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/mobile
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: apps/mobile/package-lock.json
+      - run: npm ci
+      - name: TypeScript type check
+        run: npx tsc --noEmit
+      - name: ESLint
+        run: npx eslint .
+      - name: Jest tests
+        run: npm test
+      - name: Expo doctor
+        run: npx expo-doctor
