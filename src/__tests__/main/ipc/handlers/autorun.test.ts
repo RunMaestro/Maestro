@@ -86,6 +86,7 @@ const {
 	mockExistsRemote,
 	mockMkdirRemote,
 	mockDeleteRemote,
+	mockStatRemote,
 } = vi.hoisted(() => ({
 	mockReadDirRemote: vi.fn(),
 	mockReadFileRemote: vi.fn(),
@@ -93,6 +94,7 @@ const {
 	mockExistsRemote: vi.fn(),
 	mockMkdirRemote: vi.fn(),
 	mockDeleteRemote: vi.fn(),
+	mockStatRemote: vi.fn(),
 }));
 
 vi.mock('../../../../main/utils/remote-fs', () => ({
@@ -102,6 +104,7 @@ vi.mock('../../../../main/utils/remote-fs', () => ({
 	existsRemote: mockExistsRemote,
 	mkdirRemote: mockMkdirRemote,
 	deleteRemote: mockDeleteRemote,
+	statRemote: mockStatRemote,
 }));
 
 // Mock the logger
@@ -167,6 +170,7 @@ describe('autorun IPC handlers', () => {
 		mockExistsRemote.mockReset();
 		mockMkdirRemote.mockReset();
 		mockDeleteRemote.mockReset();
+		mockStatRemote.mockReset();
 
 		// Create mock App and capture event handlers
 		appEventHandlers = new Map();
@@ -379,15 +383,15 @@ describe('autorun IPC handlers', () => {
 			vi.mocked(fs.readdir)
 				.mockResolvedValueOnce([
 					{
-						name: 'subfolder',
-						isDirectory: () => true,
-						isFile: () => false,
-						isSymbolicLink: () => false,
-					},
-					{
 						name: 'root.md',
 						isDirectory: () => false,
 						isFile: () => true,
+						isSymbolicLink: () => false,
+					},
+					{
+						name: 'subfolder',
+						isDirectory: () => true,
+						isFile: () => false,
 						isSymbolicLink: () => false,
 					},
 				] as any)
@@ -474,6 +478,47 @@ describe('autorun IPC handlers', () => {
 
 			expect(result.success).toBe(true);
 			expect(result.files).toContain('linked-folder/nested');
+		});
+
+		it('should avoid revisiting symlinked directory cycles by real path', async () => {
+			(fs as any).realpath = vi.fn(async (p: string) => {
+				if (p === '/test/folder') {
+					throw new Error('realpath unavailable');
+				}
+				return path.resolve('/test/folder');
+			});
+			try {
+				vi.mocked(fs.stat).mockImplementation((p: any) => {
+					if (p === '/test/folder' || p === '/test/folder/loop') {
+						return Promise.resolve({ isDirectory: () => true, isFile: () => false } as any);
+					}
+					return Promise.resolve({ isDirectory: () => false, isFile: () => true } as any);
+				});
+
+				vi.mocked(fs.readdir).mockResolvedValueOnce([
+					{
+						name: 'loop',
+						isDirectory: () => false,
+						isFile: () => false,
+						isSymbolicLink: () => true,
+					},
+					{
+						name: 'real.md',
+						isDirectory: () => false,
+						isFile: () => true,
+						isSymbolicLink: () => false,
+					},
+				] as any);
+
+				const handler = handlers.get('autorun:listDocs');
+				const result = await handler!({} as any, '/test/folder');
+
+				expect(result.success).toBe(true);
+				expect(result.files).toEqual(['real']);
+				expect(fs.readdir).toHaveBeenCalledTimes(1);
+			} finally {
+				delete (fs as any).realpath;
+			}
 		});
 
 		it('should skip broken symlinks silently', async () => {
@@ -731,6 +776,41 @@ describe('autorun IPC handlers', () => {
 			// readdir should only be called once (for root)
 			expect(fs.readdir).toHaveBeenCalledTimes(1);
 		});
+
+		it('should avoid revisiting symlinked directory cycles while checking documents', async () => {
+			(fs as any).realpath = vi.fn(async (p: string) => {
+				if (p === '/test/folder') {
+					throw new Error('realpath unavailable');
+				}
+				return path.resolve('/test/folder');
+			});
+			try {
+				vi.mocked(fs.stat).mockImplementation((p: any) => {
+					if (p === '/test/folder' || p === '/test/folder/loop') {
+						return Promise.resolve({ isDirectory: () => true, isFile: () => false } as any);
+					}
+					return Promise.resolve({ isDirectory: () => false, isFile: () => true } as any);
+				});
+
+				vi.mocked(fs.readdir).mockResolvedValueOnce([
+					{
+						name: 'loop',
+						isDirectory: () => false,
+						isFile: () => false,
+						isSymbolicLink: () => true,
+					},
+				] as any);
+
+				const handler = handlers.get('autorun:hasDocuments');
+				const result = await handler!({} as any, '/test/folder');
+
+				expect(result.success).toBe(true);
+				expect(result.hasDocuments).toBe(false);
+				expect(fs.readdir).toHaveBeenCalledTimes(1);
+			} finally {
+				delete (fs as any).realpath;
+			}
+		});
 	});
 
 	describe('autorun:readDoc', () => {
@@ -929,6 +1009,24 @@ describe('autorun IPC handlers', () => {
 			expect(result2.success).toBe(false);
 			expect(result2.error).toContain('Invalid project path');
 		});
+
+		it('should remove the legacy Auto Run Docs folder when canonical playbooks is absent', async () => {
+			vi.mocked(fs.stat)
+				.mockRejectedValueOnce(new Error('ENOENT'))
+				.mockResolvedValueOnce({
+					isDirectory: () => true,
+				} as any);
+			vi.mocked(fs.rm).mockResolvedValue(undefined);
+
+			const handler = handlers.get('autorun:deleteFolder');
+			const result = await handler!({} as any, '/test/project');
+
+			expect(result.success).toBe(true);
+			expect(fs.rm).toHaveBeenCalledWith(path.join('/test/project', 'Auto Run Docs'), {
+				recursive: true,
+				force: true,
+			});
+		});
 	});
 
 	describe('autorun:listImages', () => {
@@ -1124,6 +1222,67 @@ describe('autorun IPC handlers', () => {
 		});
 	});
 
+	describe('autorun:replaceImage', () => {
+		it('should overwrite an existing local image in place', async () => {
+			vi.mocked(fs.access).mockResolvedValue(undefined);
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+			const handler = handlers.get('autorun:replaceImage');
+			const result = await handler!(
+				{} as any,
+				'/test/folder',
+				'images/doc1-123.png',
+				Buffer.from('updated image').toString('base64')
+			);
+
+			expect(result.success).toBe(true);
+			expect(result.relativePath).toBe('images/doc1-123.png');
+			expect(fs.access).toHaveBeenCalledWith(expect.stringContaining('images/doc1-123.png'));
+			expect(fs.writeFile).toHaveBeenCalledWith(
+				expect.stringContaining('images/doc1-123.png'),
+				expect.any(Buffer)
+			);
+		});
+
+		it('should return an error when replacing a missing local image', async () => {
+			vi.mocked(fs.access).mockRejectedValue(new Error('ENOENT'));
+
+			const handler = handlers.get('autorun:replaceImage');
+			const result = await handler!(
+				{} as any,
+				'/test/folder',
+				'images/missing.png',
+				Buffer.from('updated image').toString('base64')
+			);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Image file not found');
+			expect(fs.writeFile).not.toHaveBeenCalled();
+		});
+
+		it('should reject replacement paths outside the images folder', async () => {
+			const handler = handlers.get('autorun:replaceImage');
+
+			const result1 = await handler!(
+				{} as any,
+				'/test/folder',
+				'doc1.png',
+				Buffer.from('updated image').toString('base64')
+			);
+			expect(result1.success).toBe(false);
+			expect(result1.error).toContain('Invalid image path');
+
+			const result2 = await handler!(
+				{} as any,
+				'/test/folder',
+				'../images/doc1.png',
+				Buffer.from('updated image').toString('base64')
+			);
+			expect(result2.success).toBe(false);
+			expect(result2.error).toContain('Invalid image path');
+		});
+	});
+
 	describe('autorun:watchFolder', () => {
 		it('should start watching a folder', async () => {
 			vi.mocked(fs.stat).mockResolvedValue({
@@ -1163,6 +1322,106 @@ describe('autorun IPC handlers', () => {
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('Path is not a directory');
 		});
+
+		it('should ignore non-markdown watcher events', async () => {
+			vi.useFakeTimers();
+			try {
+				vi.mocked(fs.stat).mockResolvedValue({
+					isDirectory: () => true,
+				} as any);
+
+				const callbacks = new Map<string, Function>();
+				const watcher = {
+					on: vi.fn((event: string, callback: Function) => {
+						callbacks.set(event, callback);
+						return watcher;
+					}),
+					close: vi.fn(),
+				};
+				const chokidar = await import('chokidar');
+				vi.mocked(chokidar.default.watch).mockReturnValueOnce(watcher as any);
+
+				const handler = handlers.get('autorun:watchFolder');
+				const result = await handler!({} as any, '/test/folder');
+
+				callbacks.get('change')?.('/test/folder/readme.txt');
+				vi.advanceTimersByTime(301);
+
+				expect(result.success).toBe(true);
+				expect(mockMainWindow.webContents?.send).not.toHaveBeenCalled();
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it('should debounce and flush markdown watcher changes', async () => {
+			vi.useFakeTimers();
+			try {
+				vi.mocked(fs.stat).mockResolvedValue({
+					isDirectory: () => true,
+				} as any);
+
+				const callbacks = new Map<string, Function>();
+				const watcher = {
+					on: vi.fn((event: string, callback: Function) => {
+						callbacks.set(event, callback);
+						return watcher;
+					}),
+					close: vi.fn(),
+				};
+				const chokidar = await import('chokidar');
+				vi.mocked(chokidar.default.watch).mockReturnValueOnce(watcher as any);
+
+				const handler = handlers.get('autorun:watchFolder');
+				const result = await handler!({} as any, '/test/folder');
+
+				callbacks.get('add')?.('/test/folder/new-doc.md');
+				callbacks.get('change')?.('/test/folder/new-doc.md');
+				callbacks.get('error')?.(new Error('watch failed'));
+				vi.advanceTimersByTime(301);
+
+				expect(result.success).toBe(true);
+				expect(mockMainWindow.webContents?.send).toHaveBeenCalledWith('autorun:fileChanged', {
+					folderPath: '/test/folder',
+					filename: 'new-doc',
+					eventType: 'rename',
+				});
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it('should drop debounced watcher changes when the window is unavailable', async () => {
+			vi.useFakeTimers();
+			try {
+				vi.mocked(fs.stat).mockResolvedValue({
+					isDirectory: () => true,
+				} as any);
+
+				const callbacks = new Map<string, Function>();
+				const watcher = {
+					on: vi.fn((event: string, callback: Function) => {
+						callbacks.set(event, callback);
+						return watcher;
+					}),
+					close: vi.fn(),
+				};
+				const chokidar = await import('chokidar');
+				vi.mocked(chokidar.default.watch).mockReturnValueOnce(watcher as any);
+
+				const handler = handlers.get('autorun:watchFolder');
+				const result = await handler!({} as any, '/test/folder');
+
+				vi.mocked(mockMainWindow.isDestroyed as any).mockReturnValue(true);
+				callbacks.get('change')?.('/test/folder/new-doc.md');
+				vi.advanceTimersByTime(301);
+
+				expect(result.success).toBe(true);
+				expect(mockMainWindow.webContents?.send).not.toHaveBeenCalled();
+			} finally {
+				vi.useRealTimers();
+			}
+		});
 	});
 
 	describe('autorun:unwatchFolder', () => {
@@ -1187,6 +1446,45 @@ describe('autorun IPC handlers', () => {
 			const result = await unwatchHandler!({} as any, '/test/other');
 
 			expect(result.success).toBe(true);
+		});
+
+		it('should clear pending debounced change notifications when unwatching', async () => {
+			vi.useFakeTimers();
+			try {
+				vi.mocked(fs.stat).mockResolvedValue({
+					isDirectory: () => true,
+				} as any);
+
+				const callbacks = new Map<string, Function>();
+				const watcher = {
+					on: vi.fn((event: string, callback: Function) => {
+						callbacks.set(event, callback);
+						return watcher;
+					}),
+					close: vi.fn(),
+				};
+				const chokidar = await import('chokidar');
+				vi.mocked(chokidar.default.watch).mockReturnValueOnce(watcher as any);
+
+				const watchHandler = handlers.get('autorun:watchFolder');
+				await watchHandler!({} as any, '/test/folder');
+
+				callbacks.get('add')?.('/test/folder/new-doc.md');
+
+				const unwatchHandler = handlers.get('autorun:unwatchFolder');
+				const result = await unwatchHandler!({} as any, '/test/folder');
+
+				vi.advanceTimersByTime(301);
+
+				expect(result.success).toBe(true);
+				expect(watcher.close).toHaveBeenCalled();
+				expect(mockMainWindow.webContents?.send).not.toHaveBeenCalledWith(
+					'autorun:fileChanged',
+					expect.anything()
+				);
+			} finally {
+				vi.useRealTimers();
+			}
 		});
 	});
 
@@ -1255,6 +1553,63 @@ describe('autorun IPC handlers', () => {
 		it('should return error for directory traversal', async () => {
 			const handler = handlers.get('autorun:restoreBackup');
 			const result = await handler!({} as any, '/test/folder', '../etc/passwd');
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Invalid filename');
+		});
+	});
+
+	describe('autorun:createWorkingCopy', () => {
+		it('should create a local working copy for a document', async () => {
+			vi.mocked(fs.access).mockResolvedValue(undefined);
+			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+			vi.mocked(fs.copyFile).mockResolvedValue(undefined);
+
+			const handler = handlers.get('autorun:createWorkingCopy');
+			const result = await handler!({} as any, '/test/folder', 'doc1', 3);
+
+			expect(result.success).toBe(true);
+			expect(result.workingCopyPath).toMatch(/^runs\/doc1-\d+-loop-3$/);
+			expect(result.originalPath).toBe('doc1');
+			expect(fs.mkdir).toHaveBeenCalledWith(path.join('/test/folder', 'runs'), {
+				recursive: true,
+			});
+			expect(fs.copyFile).toHaveBeenCalledWith(
+				expect.stringContaining('doc1.md'),
+				expect.stringMatching(/doc1-\d+-loop-3\.md$/)
+			);
+		});
+
+		it('should preserve subdirectory structure for local working copies', async () => {
+			vi.mocked(fs.access).mockResolvedValue(undefined);
+			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+			vi.mocked(fs.copyFile).mockResolvedValue(undefined);
+
+			const handler = handlers.get('autorun:createWorkingCopy');
+			const result = await handler!({} as any, '/test/folder', 'phase/doc1.md', 4);
+
+			expect(result.success).toBe(true);
+			expect(result.workingCopyPath).toMatch(/^runs\/phase\/doc1-\d+-loop-4$/);
+			expect(result.originalPath).toBe('phase/doc1');
+			expect(fs.mkdir).toHaveBeenCalledWith(path.join('/test/folder', 'runs', 'phase'), {
+				recursive: true,
+			});
+		});
+
+		it('should return an error for missing local source documents', async () => {
+			vi.mocked(fs.access).mockRejectedValue(new Error('ENOENT'));
+
+			const handler = handlers.get('autorun:createWorkingCopy');
+			const result = await handler!({} as any, '/test/folder', 'missing', 1);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Source file not found');
+			expect(fs.copyFile).not.toHaveBeenCalled();
+		});
+
+		it('should reject traversal paths for local working copies', async () => {
+			const handler = handlers.get('autorun:createWorkingCopy');
+			const result = await handler!({} as any, '/test/folder', '../etc/passwd', 1);
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('Invalid filename');
@@ -1386,6 +1741,189 @@ describe('autorun IPC handlers', () => {
 	});
 
 	describe('SSH remote operations', () => {
+		describe('autorun:listDocs SSH', () => {
+			it('should list remote markdown files and resolve symlinked file entries', async () => {
+				mockReadDirRemote.mockResolvedValue({
+					success: true,
+					data: [
+						{ name: '.hidden.md', isDirectory: false, isSymlink: false },
+						{ name: 'linked-folder', isDirectory: false, isSymlink: true },
+						{ name: 'linked.md', isDirectory: false, isSymlink: true },
+						{ name: 'real.md', isDirectory: false, isSymlink: false },
+						{ name: 'notes.txt', isDirectory: false, isSymlink: false },
+					],
+				});
+				mockStatRemote.mockImplementation(async (target: string) => ({
+					success: true,
+					data: { isDirectory: target.endsWith('linked-folder') },
+				}));
+
+				const handler = handlers.get('autorun:listDocs');
+				const result = await handler!({} as any, '/remote/folder', 'ssh-remote-1');
+
+				expect(result.success).toBe(true);
+				expect(result.files).toEqual(['linked', 'real']);
+				expect(mockReadDirRemote).toHaveBeenCalledWith('/remote/folder', sampleSshRemote);
+				expect(mockStatRemote).toHaveBeenCalledWith('/remote/folder/linked.md', sampleSshRemote);
+				expect(mockStatRemote).toHaveBeenCalledWith(
+					'/remote/folder/linked-folder',
+					sampleSshRemote
+				);
+			});
+
+			it('should include remote folders that contain markdown files', async () => {
+				mockReadDirRemote
+					.mockResolvedValueOnce({
+						success: true,
+						data: [
+							{ name: 'root.md', isDirectory: false, isSymlink: false },
+							{ name: 'subfolder', isDirectory: true, isSymlink: false },
+						],
+					})
+					.mockResolvedValueOnce({
+						success: true,
+						data: [{ name: 'nested.md', isDirectory: false, isSymlink: false }],
+					});
+
+				const handler = handlers.get('autorun:listDocs');
+				const result = await handler!({} as any, '/remote/folder', 'ssh-remote-1');
+
+				expect(result.success).toBe(true);
+				expect(result.files).toEqual(['subfolder/nested', 'root']);
+			});
+
+			it('should skip remote symlinks that cannot be statted', async () => {
+				mockReadDirRemote.mockResolvedValue({
+					success: true,
+					data: [{ name: 'broken.md', isDirectory: false, isSymlink: true }],
+				});
+				mockStatRemote.mockResolvedValue({
+					success: false,
+					error: 'ENOENT',
+				});
+
+				const handler = handlers.get('autorun:listDocs');
+				const result = await handler!({} as any, '/remote/folder', 'ssh-remote-1');
+
+				expect(result.success).toBe(true);
+				expect(result.files).toEqual([]);
+			});
+
+			it('should return an empty remote tree when the directory cannot be read', async () => {
+				mockReadDirRemote.mockResolvedValue({
+					success: false,
+					error: 'Permission denied',
+				});
+
+				const handler = handlers.get('autorun:listDocs');
+				const result = await handler!({} as any, '/remote/folder', 'ssh-remote-1');
+
+				expect(result.success).toBe(true);
+				expect(result.files).toEqual([]);
+				expect(result.tree).toEqual([]);
+			});
+		});
+
+		describe('autorun:readDoc SSH', () => {
+			it('should read a remote markdown document', async () => {
+				mockReadFileRemote.mockResolvedValue({
+					success: true,
+					data: '# Remote Doc',
+				});
+
+				const handler = handlers.get('autorun:readDoc');
+				const result = await handler!({} as any, '/remote/folder', 'doc1', 'ssh-remote-1');
+
+				expect(result.success).toBe(true);
+				expect(result.content).toBe('# Remote Doc');
+				expect(mockReadFileRemote).toHaveBeenCalledWith('/remote/folder/doc1.md', sampleSshRemote);
+				expect(fs.access).not.toHaveBeenCalled();
+			});
+
+			it('should return remote read errors', async () => {
+				mockReadFileRemote.mockResolvedValue({
+					success: false,
+					error: 'Read failed',
+				});
+
+				const handler = handlers.get('autorun:readDoc');
+				const result = await handler!({} as any, '/remote/folder', 'doc1', 'ssh-remote-1');
+
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('Read failed');
+			});
+		});
+
+		describe('autorun:writeDoc SSH', () => {
+			it('should create a missing remote parent directory before writing', async () => {
+				mockExistsRemote.mockResolvedValue({ success: true, data: false });
+				mockMkdirRemote.mockResolvedValue({ success: true });
+				mockWriteFileRemote.mockResolvedValue({ success: true });
+
+				const handler = handlers.get('autorun:writeDoc');
+				const result = await handler!(
+					{} as any,
+					'/remote/folder',
+					'subdir/doc1',
+					'# Remote Content',
+					'ssh-remote-1'
+				);
+
+				expect(result.success).toBe(true);
+				expect(mockExistsRemote).toHaveBeenCalledWith('/remote/folder/subdir', sampleSshRemote);
+				expect(mockMkdirRemote).toHaveBeenCalledWith(
+					'/remote/folder/subdir',
+					sampleSshRemote,
+					true
+				);
+				expect(mockWriteFileRemote).toHaveBeenCalledWith(
+					'/remote/folder/subdir/doc1.md',
+					'# Remote Content',
+					sampleSshRemote
+				);
+			});
+
+			it('should return remote parent directory creation errors', async () => {
+				mockExistsRemote.mockResolvedValue({ success: true, data: false });
+				mockMkdirRemote.mockResolvedValue({
+					success: false,
+					error: 'mkdir failed',
+				});
+
+				const handler = handlers.get('autorun:writeDoc');
+				const result = await handler!(
+					{} as any,
+					'/remote/folder',
+					'subdir/doc1',
+					'# Remote Content',
+					'ssh-remote-1'
+				);
+
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('mkdir failed');
+				expect(mockWriteFileRemote).not.toHaveBeenCalled();
+			});
+
+			it('should return remote write errors', async () => {
+				mockWriteFileRemote.mockResolvedValue({
+					success: false,
+					error: 'write failed',
+				});
+
+				const handler = handlers.get('autorun:writeDoc');
+				const result = await handler!(
+					{} as any,
+					'/remote/folder',
+					'doc1',
+					'# Remote Content',
+					'ssh-remote-1'
+				);
+
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('write failed');
+			});
+		});
+
 		describe('autorun:saveImage SSH', () => {
 			it('should use mkdirRemote and writeFileRemote when sshRemoteId is provided', async () => {
 				// Mock existsRemote to say images directory doesn't exist
@@ -1483,6 +2021,80 @@ describe('autorun IPC handlers', () => {
 
 				// Remote operations should NOT be called
 				expect(mockDeleteRemote).not.toHaveBeenCalled();
+			});
+		});
+
+		describe('autorun:replaceImage SSH', () => {
+			it('should overwrite an existing remote image in place', async () => {
+				mockStatRemote.mockResolvedValue({
+					success: true,
+					data: { isDirectory: false },
+				});
+				mockWriteFileRemote.mockResolvedValue({ success: true });
+
+				const handler = handlers.get('autorun:replaceImage');
+				const result = await handler!(
+					{} as any,
+					'/remote/folder',
+					'images/doc1-123.png',
+					Buffer.from('updated image').toString('base64'),
+					'ssh-remote-1'
+				);
+
+				expect(result.success).toBe(true);
+				expect(result.relativePath).toBe('images/doc1-123.png');
+				expect(mockStatRemote).toHaveBeenCalledWith(
+					'/remote/folder/images/doc1-123.png',
+					sampleSshRemote
+				);
+				expect(mockWriteFileRemote).toHaveBeenCalledWith(
+					'/remote/folder/images/doc1-123.png',
+					expect.any(Buffer),
+					sampleSshRemote
+				);
+			});
+
+			it('should not create a missing remote image while replacing', async () => {
+				mockStatRemote.mockResolvedValue({
+					success: false,
+					error: 'missing',
+				});
+
+				const handler = handlers.get('autorun:replaceImage');
+				const result = await handler!(
+					{} as any,
+					'/remote/folder',
+					'images/doc1-123.png',
+					Buffer.from('updated image').toString('base64'),
+					'ssh-remote-1'
+				);
+
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('Image file not found');
+				expect(mockWriteFileRemote).not.toHaveBeenCalled();
+			});
+
+			it('should return remote replace write errors', async () => {
+				mockStatRemote.mockResolvedValue({
+					success: true,
+					data: { isDirectory: false },
+				});
+				mockWriteFileRemote.mockResolvedValue({
+					success: false,
+					error: 'replace failed',
+				});
+
+				const handler = handlers.get('autorun:replaceImage');
+				const result = await handler!(
+					{} as any,
+					'/remote/folder',
+					'images/doc1-123.png',
+					Buffer.from('updated image').toString('base64'),
+					'ssh-remote-1'
+				);
+
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('replace failed');
 			});
 		});
 
@@ -1685,6 +2297,57 @@ describe('autorun IPC handlers', () => {
 					true
 				);
 			});
+
+			it('should return remote source read errors', async () => {
+				mockReadFileRemote.mockResolvedValue({
+					success: false,
+					error: 'Source missing',
+				});
+
+				const handler = handlers.get('autorun:createWorkingCopy');
+				const result = await handler!({} as any, '/remote/folder', 'doc1', 1, 'ssh-remote-1');
+
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('Source missing');
+				expect(mockMkdirRemote).not.toHaveBeenCalled();
+				expect(mockWriteFileRemote).not.toHaveBeenCalled();
+			});
+
+			it('should return remote runs directory creation errors', async () => {
+				mockReadFileRemote.mockResolvedValue({
+					success: true,
+					data: '# Source Content',
+				});
+				mockMkdirRemote.mockResolvedValue({
+					success: false,
+					error: 'Cannot create runs',
+				});
+
+				const handler = handlers.get('autorun:createWorkingCopy');
+				const result = await handler!({} as any, '/remote/folder', 'doc1', 1, 'ssh-remote-1');
+
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('Cannot create runs');
+				expect(mockWriteFileRemote).not.toHaveBeenCalled();
+			});
+
+			it('should return remote working copy write errors', async () => {
+				mockReadFileRemote.mockResolvedValue({
+					success: true,
+					data: '# Source Content',
+				});
+				mockMkdirRemote.mockResolvedValue({ success: true });
+				mockWriteFileRemote.mockResolvedValue({
+					success: false,
+					error: 'Cannot write copy',
+				});
+
+				const handler = handlers.get('autorun:createWorkingCopy');
+				const result = await handler!({} as any, '/remote/folder', 'doc1', 1, 'ssh-remote-1');
+
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('Cannot write copy');
+			});
 		});
 
 		describe('autorun:deleteBackups SSH', () => {
@@ -1769,6 +2432,20 @@ describe('autorun IPC handlers', () => {
 				// Should still succeed, just with fewer deletions
 				expect(result.success).toBe(true);
 				expect(result.deletedCount).toBe(1);
+			});
+
+			it('should skip unreadable remote backup directories', async () => {
+				mockReadDirRemote.mockResolvedValue({
+					success: false,
+					error: 'Permission denied',
+				});
+
+				const handler = handlers.get('autorun:deleteBackups');
+				const result = await handler!({} as any, '/remote/folder', 'ssh-remote-1');
+
+				expect(result.success).toBe(true);
+				expect(result.deletedCount).toBe(0);
+				expect(mockDeleteRemote).not.toHaveBeenCalled();
 			});
 		});
 
