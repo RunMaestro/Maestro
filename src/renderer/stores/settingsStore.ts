@@ -344,6 +344,9 @@ export interface SettingsStoreState {
 	idleNotificationEnabled: boolean;
 	idleNotificationCommand: string;
 	checkForUpdatesOnStartup: boolean;
+	autoResumeOnLimit: boolean;
+	autoResumeCheckIntervalHours: number;
+	autoResumeGiveUpDays: number;
 	enableBetaUpdates: boolean;
 	crashReportingEnabled: boolean;
 	logViewerSelectedLevels: string[];
@@ -492,6 +495,9 @@ export interface SettingsStoreActions {
 	setIdleNotificationEnabled: (value: boolean) => void;
 	setIdleNotificationCommand: (value: string) => void;
 	setCheckForUpdatesOnStartup: (value: boolean) => void;
+	setAutoResumeOnLimit: (value: boolean) => void;
+	setAutoResumeCheckIntervalHours: (value: number) => void;
+	setAutoResumeGiveUpDays: (value: number) => void;
 	setEnableBetaUpdates: (value: boolean) => void;
 	setCrashReportingEnabled: (value: boolean) => void;
 	setLogViewerSelectedLevels: (value: string[]) => void;
@@ -705,6 +711,9 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		idleNotificationEnabled: false,
 		idleNotificationCommand: 'say Maestro is idle',
 		checkForUpdatesOnStartup: true,
+		autoResumeOnLimit: true,
+		autoResumeCheckIntervalHours: 2,
+		autoResumeGiveUpDays: 7,
 		enableBetaUpdates: false,
 		crashReportingEnabled: true,
 		logViewerSelectedLevels: ['debug', 'info', 'warn', 'error', 'toast'],
@@ -1023,6 +1032,21 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setCheckForUpdatesOnStartup: (value) => {
 			set({ checkForUpdatesOnStartup: value });
 			window.maestro.settings.set('checkForUpdatesOnStartup', value);
+		},
+
+		setAutoResumeOnLimit: (value) => {
+			set({ autoResumeOnLimit: value });
+			window.maestro.settings.set('autoResumeOnLimit', value);
+		},
+
+		setAutoResumeCheckIntervalHours: (value) => {
+			set({ autoResumeCheckIntervalHours: value });
+			window.maestro.settings.set('autoResumeCheckIntervalHours', value);
+		},
+
+		setAutoResumeGiveUpDays: (value) => {
+			set({ autoResumeGiveUpDays: value });
+			window.maestro.settings.set('autoResumeGiveUpDays', value);
 		},
 
 		setEnableBetaUpdates: (value) => {
@@ -2314,6 +2338,15 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['checkForUpdatesOnStartup'] !== undefined)
 			patch.checkForUpdatesOnStartup = allSettings['checkForUpdatesOnStartup'] as boolean;
 
+		if (allSettings['autoResumeOnLimit'] !== undefined)
+			patch.autoResumeOnLimit = allSettings['autoResumeOnLimit'] as boolean;
+
+		if (allSettings['autoResumeCheckIntervalHours'] !== undefined)
+			patch.autoResumeCheckIntervalHours = allSettings['autoResumeCheckIntervalHours'] as number;
+
+		if (allSettings['autoResumeGiveUpDays'] !== undefined)
+			patch.autoResumeGiveUpDays = allSettings['autoResumeGiveUpDays'] as number;
+
 		if (allSettings['enableBetaUpdates'] !== undefined)
 			patch.enableBetaUpdates = allSettings['enableBetaUpdates'] as boolean;
 
@@ -2918,6 +2951,9 @@ export function getSettingsActions() {
 		setAudioFeedbackCommand: state.setAudioFeedbackCommand,
 		setToastDuration: state.setToastDuration,
 		setCheckForUpdatesOnStartup: state.setCheckForUpdatesOnStartup,
+		setAutoResumeOnLimit: state.setAutoResumeOnLimit,
+		setAutoResumeCheckIntervalHours: state.setAutoResumeCheckIntervalHours,
+		setAutoResumeGiveUpDays: state.setAutoResumeGiveUpDays,
 		setEnableBetaUpdates: state.setEnableBetaUpdates,
 		setCrashReportingEnabled: state.setCrashReportingEnabled,
 		setLogViewerSelectedLevels: state.setLogViewerSelectedLevels,

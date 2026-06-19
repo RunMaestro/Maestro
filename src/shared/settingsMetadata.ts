@@ -649,6 +649,26 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: true,
 		category: 'updates',
 	},
+	autoResumeOnLimit: {
+		description:
+			'Automatically resume agents that paused on a token, API, or credit limit once the provider window reopens.',
+		type: 'boolean',
+		default: true,
+		category: 'updates',
+	},
+	autoResumeCheckIntervalHours: {
+		description: 'How often to probe for credit/limit availability before resuming paused agents.',
+		type: 'number',
+		default: 2,
+		category: 'updates',
+	},
+	autoResumeGiveUpDays: {
+		description:
+			'Stop auto-resuming a paused agent after this many days of repeated limits. Probing is cheap, so this is intentionally long.',
+		type: 'number',
+		default: 7,
+		category: 'updates',
+	},
 	enableBetaUpdates: {
 		description: 'Opt in to beta release channel for early access to new features.',
 		type: 'boolean',
