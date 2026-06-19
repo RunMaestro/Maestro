@@ -798,7 +798,8 @@ async function discoverOpenCodeSlashCommandsRemote(
 			if (!jsonStr) continue;
 
 			const config = parseOpenCodeConfig(jsonStr);
-			if (!config?.command || typeof config.command !== 'object') continue;
+			if (!config?.command || typeof config.command !== 'object' || Array.isArray(config.command))
+				continue;
 
 			for (const [name, value] of Object.entries(config.command)) {
 				if (commands.has(name)) continue;

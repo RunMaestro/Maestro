@@ -1,6 +1,6 @@
 # Testing Current Status
 
-Last updated: 2026-06-18 19:34 EDT.
+Last updated: 2026-06-18 20:41 EDT.
 
 ## Verdict
 
@@ -8,15 +8,15 @@ The pre-upstream-sync checkpoint was green, but the campaign is not final on the
 
 - Current sync work: `codex/full-e2e-coverage-campaign` is on the upstream-sync tree derived from `upstream/main` at `7eca62d07`.
 - Static/pre-push gate on the clean upstream-shaped tree: passed through format, TypeScript, ESLint, and unit test execution.
-- Unit suite on the upstream-shaped tree: latest coverage run passed 1,246 files; 33,233 tests passed; 0 skipped.
-- Enforced unit coverage on the upstream-shaped tree: failing the 100% global thresholds after focused Phase 7 restoration batches, deterministic integration coverage wrappers, restored MindMap coverage, expanded agentSessions handler coverage, new AnnotatorCanvas coverage, new `maestro-p` entrypoint coverage, expanded web-server factory bridge coverage, expanded message-handler validation coverage, expanded mobile App header/notification/terminal branch coverage, new Maestro CLI manager coverage, expanded main keyboard handler shortcut coverage, new WebServer delegation coverage, the unconfigured-callback message-handler tranche, expanded Claude handler edge coverage, the FilePreview navigation/search/save tranche, isolated Achievements/Cue/Usage Dashboard/GroupChat/GitDiffViewer mobile panel coverage, new AgentCreation/GroupChatSetup/NotificationSettings/LeftPanel mobile coverage, the expanded AutoRunInline workflow/error-path tranche, the mobile App AutoRun/group-chat/right-panel callback tranche, messageHandlers callback-failure/API-validation tranche, TerminalOutput tool/recovery coverage, DocumentGraphView live-behavior coverage, settingsStore direct-setter/non-React action-helper coverage, new main-process context handler coverage, and new CLI entrypoint coverage.
+- Unit suite on the upstream-shaped tree: latest coverage run passed 1,246 files; 33,311 tests passed; 0 skipped.
+- Enforced unit coverage on the upstream-shaped tree: failing the 100% global thresholds after focused Phase 7 restoration batches, deterministic integration coverage wrappers, restored MindMap coverage, expanded agentSessions handler coverage, new AnnotatorCanvas coverage, new `maestro-p` entrypoint coverage, expanded web-server factory bridge coverage, expanded message-handler validation coverage, expanded mobile App header/notification/terminal branch coverage, new Maestro CLI manager coverage, expanded main keyboard handler shortcut coverage, new WebServer delegation coverage, the unconfigured-callback message-handler tranche, expanded Claude handler edge coverage, the FilePreview navigation/search/save tranche, isolated Achievements/Cue/Usage Dashboard/GroupChat/GitDiffViewer mobile panel coverage, new AgentCreation/GroupChatSetup/NotificationSettings/LeftPanel mobile coverage, the expanded AutoRunInline workflow/error-path tranche, the mobile App AutoRun/group-chat/right-panel callback tranche, messageHandlers callback-failure/API-validation tranche, TerminalOutput tool/recovery coverage, DocumentGraphView live-behavior coverage, settingsStore direct-setter/non-React action-helper coverage, new main-process context handler coverage, new CLI entrypoint coverage, and full focused `agents.ts` IPC handler coverage.
 - Focused restored web-server and mobile integration tranches are green again; the full pre-sync integration suite has not yet been fully restored/ported to this branch, and full integration plus E2E have not been rerun after the upstream-sync tree change.
 
 Current blocking gaps before finality:
 
 - Unit coverage must return to 100% statements/branches/functions/lines on the upstream-synced tree.
 - Unit skipped tests have been eliminated in the current broad unit run; keep this invariant while restoring coverage.
-- The pre-sync integration suite must be restored/ported from `backup/full-e2e-coverage-campaign-119a0997b` before final integration proof. Current local counts under the integration-file matcher: 36 tracked files, 36 working-tree files, and 543 files on the backup branch.
+- The pre-sync integration suite must be restored/ported from `backup/full-e2e-coverage-campaign-119a0997b` before final integration proof. Current local counts under the broad integration-file matcher: 41 tracked files, 53 working-tree files, and 544 files on the backup branch.
 - Full integration, including the SSH provider path, must be rerun with 0 skips on the upstream-synced tree.
 - Full E2E Phase 6 equivalent shards must be rerun with 0 failed and 0 skipped tests on the upstream-synced tree.
 
@@ -26,6 +26,8 @@ The known non-active residuals at the bottom of this document remain intentional
 
 | Gate                                             |                                                                                     Result | Evidence                                                                                                                                                                                          |
 | ------------------------------------------------ | -----------------------------------------------------------------------------------------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Current `npm run test:coverage`                  | failed 100% thresholds: 80.47% statements, 73.14% branches, 79.49% functions, 81.76% lines | `/tmp/maestro-phase7-coverage-after-agents-full-20260618203607.log`                                                                                                                               |
+| Current focused agents IPC handler coverage      |                                              1 file passed; 155 passed; 100% file coverage | `NODE_OPTIONS=--max-old-space-size=8192 npx vitest run --config vitest.config.mts --coverage --coverage.include=src/main/ipc/handlers/agents.ts src/__tests__/main/ipc/handlers/agents.test.ts`   |
 | Current `npm run test:coverage`                  | failed 100% thresholds: 80.26% statements, 72.92% branches, 79.37% functions, 81.55% lines | `/tmp/maestro-phase7-coverage-after-cli-index-20260618192824.log`                                                                                                                                 |
 | Current focused CLI entrypoint coverage          |                                                1 file passed; 4 passed; 100% file coverage | `NODE_OPTIONS=--max-old-space-size=8192 npx vitest run --config vitest.config.mts --coverage --coverage.include=src/cli/index.ts src/__tests__/cli/index.test.ts`                                 |
 | Current focused CLI entrypoint integration       |                                                                    1 file passed; 4 passed | `NODE_OPTIONS=--max-old-space-size=8192 npx vitest run --config vitest.integration.config.ts src/__tests__/integration/cli-entrypoint.integration.test.ts`                                        |

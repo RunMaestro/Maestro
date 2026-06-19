@@ -4,7 +4,7 @@
 
 Branch: `codex/full-e2e-coverage-campaign`
 
-This campaign extends the existing coverage work from unit/integration coverage into app-wide Playwright/Electron E2E coverage. The defined active campaign is now authored and runtime-verified on `codex/full-e2e-coverage-campaign`.
+This campaign extends the existing coverage work from unit/integration coverage into app-wide Playwright/Electron E2E coverage. The pre-upstream-sync checkpoint was authored and runtime-verified on `codex/full-e2e-coverage-campaign`; Phase 7 upstream-sync revalidation is active and current finality is tracked in [../current-status.md](../current-status.md).
 
 Measured inventory:
 
@@ -28,17 +28,17 @@ Measured inventory:
 | Settings metadata keys                  |                          88 |
 | Keyboard shortcut IDs                   |                          77 |
 | High-signal surface files               |                         573 |
-| Current `npm run test:coverage` result  | 28,679 passed, 100% covered |
-| Current full integration result         |               12,687 passed |
+| Pre-sync `npm run test:coverage` result | 28,679 passed, 100% covered |
+| Pre-sync full integration result        |               12,687 passed |
 
-Latest verification:
+Latest pre-sync verification:
 
 - Unit/enforced coverage: `npm run test:coverage` passed with 731 test files, 28,679 tests, and 100% statements/branches/functions/lines. Log: `/tmp/maestro-final-test-coverage-20260617222450.log`.
 - Full integration with SSH enabled passed with 539 test files and 12,687 tests. Log: `/tmp/maestro-integration-ssh-full-20260617220145.log`.
 - Final Phase 6 E2E shard A passed 985 / 985. Log: `/tmp/maestro-phase6-final-a.log`; summary: [execution-results/phase6-final-shard-a.md](execution-results/phase6-final-shard-a.md).
 - Final Phase 6 E2E shard B passed 1,985 / 1,985. Log: `/tmp/maestro-phase6-final-b.log`; summary: [execution-results/phase6-final-shard-b.md](execution-results/phase6-final-shard-b.md).
 
-The current E2E suite reaches the canonical 3,025 / 3,025 authored active scenario matrix and the final Phase 6 Playwright/Electron runtime proof is green. The 3,025 matrix count is not one-to-one with the 2,970 runtime Playwright tests because matrix scenario atoms can be covered by a smaller number of runtime tests, and some direct source declarations expand into multiple runtime tests.
+The pre-sync E2E suite reached the canonical 3,025 / 3,025 authored active scenario matrix and the final Phase 6 Playwright/Electron runtime proof was green. The 3,025 matrix count is not one-to-one with the 2,970 runtime Playwright tests because matrix scenario atoms can be covered by a smaller number of runtime tests, and some direct source declarations expand into multiple runtime tests. Current upstream-sync finality remains blocked until unit coverage, full integration, and full E2E are rerun green on the current tree.
 
 ## Scope Rules
 
