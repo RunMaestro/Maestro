@@ -2095,6 +2095,7 @@ export const TerminalOutput = memo(
 							forcedParallelEnabled={forcedParallelEnabled}
 							getForceSendContext={getForceSendContext}
 							activeTabId={activeTabId || undefined}
+							onOpenLightbox={setLightboxImage}
 						/>
 					)}
 

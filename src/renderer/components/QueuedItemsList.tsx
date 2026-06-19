@@ -1,5 +1,15 @@
 import React, { useState, useCallback, useRef, memo } from 'react';
-import { X, ChevronDown, ChevronUp, Copy, Check, Hammer, Pause, Play } from 'lucide-react';
+import {
+	X,
+	ChevronDown,
+	ChevronUp,
+	Copy,
+	Check,
+	Hammer,
+	Pause,
+	Play,
+	ImageIcon,
+} from 'lucide-react';
 import type { Theme, QueuedItem } from '../types';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { Modal, ModalFooter } from './ui/Modal';
@@ -45,6 +55,10 @@ interface QueuedItemsListProps {
 		targetTabBusy: boolean;
 		otherBusyTabs: BusyTabSummary[];
 	} | null;
+	// Opens the shared full-screen image carousel for a queued item's attachments.
+	// Reuses the same lightbox as history/staged images; pass 'history' source so
+	// the images are read-only (navigable, no delete).
+	onOpenLightbox?: (image: string, contextImages?: string[], source?: 'staged' | 'history') => void;
 }
 
 /**
@@ -68,6 +82,7 @@ export const QueuedItemsList = memo(
 		forcedParallelEnabled = false,
 		onForceSendQueuedItem,
 		getForceSendContext,
+		onOpenLightbox,
 	}: QueuedItemsListProps) => {
 		// Filter to only show items for the active tab if activeTabId is provided
 		const filteredQueue = activeTabId
@@ -239,6 +254,7 @@ export const QueuedItemsList = memo(
 									onCopy={() => handleCopy(item)}
 									showForceSendButton={showForceSendButton}
 									onForceSend={() => setForceSendConfirmId(item.id)}
+									onOpenLightbox={onOpenLightbox}
 									onTogglePause={
 										onTogglePauseQueuedItem ? () => onTogglePauseQueuedItem(item.id) : undefined
 									}
@@ -367,6 +383,7 @@ interface QueuedItemRowProps {
 	onForceSend: () => void;
 	onTogglePause?: () => void;
 	onRequestRemove: () => void;
+	onOpenLightbox?: (image: string, contextImages?: string[], source?: 'staged' | 'history') => void;
 }
 
 function QueuedItemRow({
@@ -388,7 +405,11 @@ function QueuedItemRow({
 	onForceSend,
 	onTogglePause,
 	onRequestRemove,
+	onOpenLightbox,
 }: QueuedItemRowProps) {
+	// Whether the inline thumbnail strip for attached images is expanded. Queued
+	// cards are compact, so images stay collapsed behind a click-to-expand toggle.
+	const [imagesExpanded, setImagesExpanded] = useState(false);
 	const { rowRef, visual, wrapperHandlers, cardHandlers } = useQueueRowDrag({
 		index,
 		canDrag,
@@ -493,10 +514,61 @@ function QueuedItemRow({
 					</button>
 				)}
 
-				{/* Images indicator */}
+				{/* Images: click-to-expand indicator + inline thumbnail strip.
+				    Each thumbnail opens the shared full-screen carousel. */}
 				{item.images && item.images.length > 0 && (
-					<div className="mt-1 text-xs" style={{ color: theme.colors.textDim }}>
-						{item.images.length} image{item.images.length > 1 ? 's' : ''} attached
+					<div className={canDrag ? 'pl-4 mt-1.5' : 'mt-1.5'}>
+						<button
+							type="button"
+							onClick={(e) => {
+								e.stopPropagation();
+								setImagesExpanded((v) => !v);
+							}}
+							className="flex items-center gap-1 text-xs hover:opacity-80 transition-opacity"
+							style={{ color: theme.colors.textDim }}
+							title={imagesExpanded ? 'Hide thumbnails' : 'Show thumbnails'}
+						>
+							<ImageIcon className="w-3.5 h-3.5" />
+							<span>
+								{item.images.length} image{item.images.length > 1 ? 's' : ''} attached
+							</span>
+							{imagesExpanded ? (
+								<ChevronUp className="w-3 h-3" />
+							) : (
+								<ChevronDown className="w-3 h-3" />
+							)}
+						</button>
+						{imagesExpanded && (
+							<div
+								className="flex gap-2 mt-2 overflow-x-auto scrollbar-thin"
+								style={{ overscrollBehavior: 'contain' }}
+							>
+								{item.images.map((img, imgIdx) => (
+									<button
+										key={`${item.id}-img-${imgIdx}`}
+										type="button"
+										className="shrink-0 p-0 bg-transparent outline-none focus-visible:ring-2 focus-visible:ring-accent rounded"
+										onClick={(e) => {
+											e.stopPropagation();
+											onOpenLightbox?.(img, item.images, 'history');
+										}}
+										title="Click to view full size"
+									>
+										<img
+											src={img}
+											alt={`Queued attachment ${imgIdx + 1}`}
+											className="h-16 rounded border block"
+											style={{
+												borderColor: theme.colors.border,
+												objectFit: 'contain',
+												maxWidth: '200px',
+												cursor: onOpenLightbox ? 'zoom-in' : 'default',
+											}}
+										/>
+									</button>
+								))}
+							</div>
+						)}
 					</div>
 				)}
 
