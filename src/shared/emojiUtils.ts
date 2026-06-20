@@ -19,8 +19,13 @@
  */
 export const stripLeadingEmojis = (str: string): string => {
 	// Match emojis at the start: emoji characters, variation selectors, ZWJ sequences, etc.
+	// Note: the variation selector (U+FE0F) is REQUIRED in the \p{Emoji} branch.
+	// ASCII digits 0-9 and #/* carry Unicode Emoji=Yes (they are keycap-emoji bases),
+	// so making \uFE0F optional would strip a bare leading digit (e.g. "0DIN" -> "DIN")
+	// and mis-sort it. Default-emoji glyphs that render without a selector are already
+	// covered by \p{Emoji_Presentation}.
 	const emojiRegex =
-		/^(?:\p{Emoji_Presentation}|\p{Emoji}\uFE0F?|\p{Emoji_Modifier_Base}\p{Emoji_Modifier}?)+\s*/gu;
+		/^(?:\p{Emoji_Presentation}|\p{Emoji}\uFE0F|\p{Emoji_Modifier_Base}\p{Emoji_Modifier}?)+\s*/gu;
 	return str.replace(emojiRegex, '').trim();
 };
 
