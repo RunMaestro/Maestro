@@ -15,7 +15,7 @@ import type {
 	GoalRunConfig,
 } from '../../../../shared/goalDriven/types';
 import { GOAL_RUN_HARD_ITERATION_CAP } from '../../../../shared/goalDriven/types';
-import { parseGoalMarkers } from '../../../../shared/goalDriven/goalMarkers';
+import { parseGoalMarkers, stripMaestroMarkers } from '../../../../shared/goalDriven/goalMarkers';
 import { evaluateGoalExit } from '../../../../shared/goalDriven/goalExitEvaluator';
 import { formatGoalRunDocumentPath } from '../../../../shared/goalDriven/goalRunLabel';
 import { formatElapsedTime, truncateCommand } from '../../../../shared/formatters';
@@ -502,13 +502,16 @@ export function useGoalRunner({
 				// Per-iteration history entry. The headline leads with the goal percent
 				// and the agent's rationale (falling back to its synopsis when no
 				// rationale was reported); the body keeps the agent's full output, which
-				// begins with its synopsis.
+				// begins with its synopsis. Strip the internal `<!-- maestro:... -->`
+				// control markers before storing so they never enter history and can't
+				// leak into any render surface (desktop list/modal, mobile, drawer).
 				const synopsis = result.success
 					? extractGoalSynopsis(result.response, iteration)
 					: `Iteration ${iteration} failed`;
-				const fullResponse = result.success
+				const rawFullResponse = result.success
 					? result.response || synopsis
 					: result.error || result.response || synopsis;
+				const fullResponse = stripMaestroMarkers(rawFullResponse);
 				const rationaleText = markers.rationale?.trim();
 				const iterationSummary = `Goal progress: ${displayProgress}% — ${rationaleText || synopsis}`;
 				onAddHistoryEntry({

@@ -232,6 +232,12 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 		expect(iterationEntries[0].summary).toBe('Goal progress: 30% — scaffolded');
 		expect(iterationEntries[1].summary).toBe('Goal progress: 70% — data layer migrated');
 
+		// The internal `<!-- maestro:... -->` control markers are stripped from the
+		// stored body so they can never leak into any history render surface.
+		for (const entry of iterationEntries) {
+			expect(entry.fullResponse).not.toContain('<!-- maestro:');
+		}
+
 		// Final summary entry reflects completion.
 		const summary = finalSummaryEntry();
 		expect(summary).toBeDefined();

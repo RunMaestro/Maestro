@@ -267,9 +267,13 @@ export async function* runGoal(
 					type: 'AUTO',
 					timestamp: Date.now(),
 					summary: iterationSummary,
-					fullResponse: result.success
-						? result.response || synopsis
-						: result.error || result.response || synopsis,
+					// Strip internal `<!-- maestro:... -->` control markers before storing
+					// so they never enter history or leak into any render surface.
+					fullResponse: stripMaestroMarkers(
+						result.success
+							? result.response || synopsis
+							: result.error || result.response || synopsis
+					),
 					agentSessionId: result.agentSessionId,
 					projectPath: session.cwd,
 					sessionId: session.id,

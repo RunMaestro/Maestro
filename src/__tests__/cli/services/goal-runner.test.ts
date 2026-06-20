@@ -200,6 +200,17 @@ describe('goal-runner (runGoal)', () => {
 		// Displayed percent never regresses despite the 55 -> 35 dip.
 		expect(progresses).toEqual([30, 55, 55, 100]);
 		expect(events.find((e) => e.type === 'goal_complete')?.exitReason).toBe('completed');
+
+		// Internal `<!-- maestro:... -->` control markers are stripped from the stored
+		// per-iteration body so they never leak into any history render surface.
+		const iterationEntries = vi
+			.mocked(addHistoryEntry)
+			.mock.calls.map((c) => c[0])
+			.filter((e) => e.summary?.startsWith('Goal progress:'));
+		expect(iterationEntries.length).toBeGreaterThan(0);
+		for (const entry of iterationEntries) {
+			expect(entry.fullResponse).not.toContain('<!-- maestro:');
+		}
 	});
 
 	it('captures a predecessor handoff and threads it into the next iteration prompt', async () => {
