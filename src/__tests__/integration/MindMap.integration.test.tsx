@@ -12,6 +12,7 @@ import {
 	calculateLayout,
 	LAYOUT_LABELS,
 } from '../../renderer/components/DocumentGraph/mindMapLayouts';
+import { logger } from '../../renderer/utils/logger';
 import type { GraphNodeData } from '../../renderer/components/DocumentGraph/graphDataBuilder';
 import type { Theme } from '../../renderer/types';
 
@@ -78,6 +79,7 @@ function createCanvasContext(): CanvasRenderingContext2D {
 		beginPath: vi.fn(),
 		bezierCurveTo: vi.fn(),
 		closePath: vi.fn(),
+		clearRect: vi.fn(),
 		fill: vi.fn(),
 		fillRect: vi.fn(),
 		fillText: vi.fn(),
@@ -89,8 +91,10 @@ function createCanvasContext(): CanvasRenderingContext2D {
 		restore: vi.fn(),
 		save: vi.fn(),
 		scale: vi.fn(),
+		setTransform: vi.fn(),
 		setLineDash: vi.fn(),
 		stroke: vi.fn(),
+		strokeRect: vi.fn(),
 		translate: vi.fn(),
 	} as unknown as CanvasRenderingContext2D;
 }
@@ -202,7 +206,7 @@ describe('MindMap integration', () => {
 	});
 
 	it('converts graph data and drives document-node mouse and keyboard workflows', async () => {
-		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 		const { nodes: convertedNodes, links: convertedLinks } = convertToMindMapData(
 			[
 				{

@@ -21,6 +21,7 @@ let webContentsSend: ReturnType<typeof vi.fn>;
 let getSessionStorage: ReturnType<typeof vi.fn>;
 let hasSessionStorage: ReturnType<typeof vi.fn>;
 let getAllSessionStorages: ReturnType<typeof vi.fn>;
+let getSshRemoteById: ReturnType<typeof vi.fn>;
 
 function createStore<T extends Record<string, unknown>>(initialData: T): StoreLike<T> {
 	const store: StoreLike<T> = {
@@ -51,6 +52,7 @@ describe('agentSessions IPC integration', () => {
 		getSessionStorage = vi.fn();
 		hasSessionStorage = vi.fn();
 		getAllSessionStorages = vi.fn();
+		getSshRemoteById = vi.fn();
 		webContentsSend = vi.fn();
 		tempRoot = await fs.mkdtemp(path.join(tmpdir(), 'maestro-agent-sessions-ipc-'));
 		homeDir = path.join(tempRoot, 'home');
@@ -84,6 +86,9 @@ describe('agentSessions IPC integration', () => {
 			hasSessionStorage,
 			getAllSessionStorages,
 		}));
+		vi.doMock('../../main/stores', () => ({
+			getSshRemoteById,
+		}));
 		vi.doMock('../../main/utils/logger', () => ({
 			logger: {
 				debug: vi.fn(),
@@ -99,6 +104,7 @@ describe('agentSessions IPC integration', () => {
 		vi.doUnmock('os');
 		vi.doUnmock('electron');
 		vi.doUnmock('../../main/agents');
+		vi.doUnmock('../../main/stores');
 		vi.doUnmock('../../main/utils/logger');
 		vi.resetModules();
 		await fs.rm(tempRoot, { recursive: true, force: true });
@@ -156,9 +162,10 @@ describe('agentSessions IPC integration', () => {
 		);
 		hasSessionStorage.mockImplementation((agentId: string) => agentId === 'codex');
 		getAllSessionStorages.mockReturnValue([storage, failingNamedStorage, { agentId: 'noop' }]);
-		await registerAgentSessions({
-			settingsStore: createStore({ sshRemotes: [sshRemote] }),
-		});
+		getSshRemoteById.mockImplementation((sshRemoteId: string) =>
+			sshRemoteId === 'remote-1' ? sshRemote : undefined
+		);
+		await registerAgentSessions();
 
 		await expect(invoke('agentSessions:list', 'codex', '/repo', 'remote-1')).resolves.toEqual([
 			{ sessionId: 'session-1', projectPath: '/repo', firstMessage: 'Hello' },

@@ -34,6 +34,7 @@ vi.mock('fs/promises', () => ({
 		mkdir: vi.fn(),
 		rm: vi.fn(),
 		access: vi.fn(),
+		rename: vi.fn(),
 	},
 }));
 
@@ -47,7 +48,7 @@ vi.mock('../../../../main/utils/symphony-fork', () => ({
 	ensureForkSetup: vi.fn(),
 }));
 
-// Mock cliDetection — resolveGhPath returns 'gh' so existing assertions still match
+// Mock cliDetection - resolveGhPath returns 'gh' so existing assertions still match
 vi.mock('../../../../main/utils/cliDetection', () => ({
 	resolveGhPath: vi.fn().mockResolvedValue('gh'),
 }));
@@ -123,6 +124,7 @@ describe('Symphony IPC handlers', () => {
 		// Default mock for fs operations
 		vi.mocked(fs.mkdir).mockResolvedValue(undefined);
 		vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+		vi.mocked(fs.rename).mockResolvedValue(undefined);
 
 		// Default: no fork needed (user has push access)
 		vi.mocked(ensureForkSetup).mockResolvedValue({ isFork: false });

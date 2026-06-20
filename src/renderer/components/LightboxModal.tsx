@@ -42,6 +42,12 @@ export function LightboxModal({
 	const [copied, setCopied] = useState(false);
 	const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
+	useEffect(() => {
+		if (!canDelete && showDeleteConfirm) {
+			setShowDeleteConfirm(false);
+		}
+	}, [canDelete, showDeleteConfirm]);
+
 	const copyImageToClipboard = async () => {
 		try {
 			const ok = await safeClipboardWriteImage(image);
@@ -129,7 +135,7 @@ export function LightboxModal({
 
 	// Window-level keyboard handler. The div-level approach only fires when the
 	// lightbox div has focus, which is lost when the annotator (or any other
-	// transient modal layered above) closes — that leaked Cmd+E to the chat
+	// transient modal layered above) closes - that leaked Cmd+E to the chat
 	// behind. Capturing on `window` is focus-independent. Guarded by
 	// `getTopLayer` so the lightbox doesn't react while a higher-priority
 	// layer (annotator, etc.) is on top.

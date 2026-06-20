@@ -153,7 +153,7 @@ describe('LongestAutoRunsTable', () => {
 
 		const row = (await screen.findAllByRole('row'))[1];
 		expect(within(row).getByText('0s')).toBeInTheDocument();
-		expect(within(row).getAllByText('—')).toHaveLength(3);
+		expect(within(row).getAllByText('-')).toHaveLength(3);
 	});
 
 	it('refetches when stats update and unsubscribes on unmount', async () => {

@@ -13,9 +13,15 @@ import {
 	type TemplateContext,
 } from '../../../utils/templateVariables';
 import { getStdinFlags } from '../../../utils/spawnHelpers';
+import { logger } from '../../../utils/logger';
+import { createPlaybookDocumentEmitter } from '../../../services/inlineWizardDocumentGeneration';
+import { PLAYBOOKS_DIR } from '../../../../shared/maestro-paths';
 
 let cachedPhaseGenDocPrompt: string | null = null;
 let phaseGeneratorPromptsLoaded = false;
+
+/** Compatibility alias for older wizard callers. */
+export const AUTO_RUN_FOLDER_NAME = PLAYBOOKS_DIR;
 
 export async function loadPhaseGeneratorPrompts(force = false): Promise<void> {
 	if (phaseGeneratorPromptsLoaded && !force) return;
@@ -164,10 +170,6 @@ interface ParsedDocument {
 	content: string;
 	phase: number;
 }
-
-import { PLAYBOOKS_DIR } from '../../../../shared/maestro-paths';
-import { logger } from '../../../utils/logger';
-import { createPlaybookDocumentEmitter } from '../../../services/inlineWizardDocumentGeneration';
 
 /**
  * Sanitize a filename to prevent path traversal attacks.
@@ -1378,6 +1380,7 @@ export const phaseGenerator = new PhaseGenerator();
 
 // Export utility functions for use elsewhere
 export const phaseGeneratorUtils = {
+	AUTO_RUN_FOLDER_NAME,
 	generateDocumentGenerationPrompt,
 	parseGeneratedDocuments,
 	countTasks,

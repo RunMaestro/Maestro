@@ -93,6 +93,22 @@ function validateGitHubUrl(url: string): { valid: boolean; error?: string } {
 		if (parsed.hostname !== 'github.com' && parsed.hostname !== 'www.github.com') {
 			return { valid: false, error: 'Only GitHub repositories are allowed' };
 		}
+		const rawPath =
+			url.match(/^https:\/\/(?:www\.)?github\.com(?<path>[^?#]*)/i)?.groups?.path ??
+			parsed.pathname;
+		const hasTraversalSegment = rawPath
+			.split('/')
+			.filter(Boolean)
+			.some((segment) => {
+				try {
+					return decodeURIComponent(segment) === '..';
+				} catch {
+					return segment === '..';
+				}
+			});
+		if (hasTraversalSegment) {
+			return { valid: false, error: 'Repository path cannot contain traversal segments' };
+		}
 		// Check for valid repo path format (owner/repo)
 		const pathParts = parsed.pathname.split('/').filter(Boolean);
 		if (pathParts.length < 2) {
@@ -266,6 +282,34 @@ async function writeCache(app: App, cache: SymphonyCache): Promise<void> {
 	await fs.writeFile(getCachePath(app), JSON.stringify(cache, null, 2), 'utf-8');
 }
 
+async function writeJsonFileAtomic(filePath: string, data: unknown): Promise<void> {
+	const tempPath = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
+	try {
+		await fs.writeFile(tempPath, JSON.stringify(data, null, 2), 'utf-8');
+		await fs.rename(tempPath, filePath);
+	} catch (error) {
+		await fs.rm(tempPath, { force: true }).catch(() => {});
+		throw error;
+	}
+}
+
+const stateMutationQueues = new Map<string, Promise<unknown>>();
+
+async function runStateMutation<T>(app: App, task: () => Promise<T>): Promise<T> {
+	const statePath = getStatePath(app);
+	const previous = stateMutationQueues.get(statePath) ?? Promise.resolve();
+	const next = previous.catch(() => {}).then(task);
+	const tracked = next.catch(() => {});
+	stateMutationQueues.set(statePath, tracked);
+	try {
+		return await next;
+	} finally {
+		if (stateMutationQueues.get(statePath) === tracked) {
+			stateMutationQueues.delete(statePath);
+		}
+	}
+}
+
 /**
  * Read symphony state from disk.
  */
@@ -288,7 +332,7 @@ async function readState(app: App): Promise<SymphonyState> {
  */
 async function writeState(app: App, state: SymphonyState): Promise<void> {
 	await ensureSymphonyDir(app);
-	await fs.writeFile(getStatePath(app), JSON.stringify(state, null, 2), 'utf-8');
+	await writeJsonFileAtomic(getStatePath(app), state);
 }
 
 /**
@@ -389,7 +433,7 @@ function parseDocumentPaths(body: string): DocumentReference[] {
  * Returns null on failure instead of throwing (isolated error handling per URL).
  */
 /**
- * Redact a URL for safe logging — strips credentials, query params, and fragments.
+ * Redact a URL for safe logging - strips credentials, query params, and fragments.
  */
 function redactUrlForLog(rawUrl: string): string {
 	try {
@@ -431,7 +475,7 @@ async function fetchSingleRegistry(url: string): Promise<SymphonyRegistry | null
 /**
  * Fetch and merge symphony registries from all configured URLs.
  * Default URL always fetched first (wins on slug conflicts).
- * Custom URL failures are isolated — other registries still load.
+ * Custom URL failures are isolated - other registries still load.
  */
 async function fetchRegistries(customUrls: string[]): Promise<SymphonyRegistry> {
 	logger.info(
@@ -1114,7 +1158,7 @@ export function registerSymphonyHandlers({
 			};
 		}
 
-		// Fetch fresh star counts (non-critical — fall back to stale cache or undefined)
+		// Fetch fresh star counts (non-critical - fall back to stale cache or undefined)
 		try {
 			const counts = await fetchStarCounts(slugs);
 
@@ -1167,7 +1211,7 @@ export function registerSymphonyHandlers({
 					? rawCustomUrls.filter((u): u is string => typeof u === 'string' && u.trim().length > 0)
 					: [];
 
-				// Skip cache when custom sources are configured — cache doesn't track
+				// Skip cache when custom sources are configured - cache doesn't track
 				// which source URLs produced it, so URL changes would serve stale data.
 				const hasCustomSources = customUrls.length > 0;
 
@@ -1713,71 +1757,73 @@ This PR will be updated automatically when the Auto Run completes.`;
 				draftPrNumber?: number;
 				draftPrUrl?: string;
 			}): Promise<{ success: boolean; error?: string }> => {
-				const {
-					contributionId,
-					sessionId,
-					repoSlug,
-					repoName,
-					issueNumber,
-					issueTitle,
-					localPath,
-					branchName,
-					totalDocuments,
-					agentType,
-					draftPrNumber,
-					draftPrUrl,
-				} = params;
-
-				const state = await readState(app);
-
-				// Check if already registered
-				const existing = state.active.find((c) => c.id === contributionId);
-				if (existing) {
-					logger.debug('Contribution already registered', LOG_CONTEXT, { contributionId });
-					return { success: true };
-				}
-
-				// Create active contribution entry
-				const contribution: ActiveContribution = {
-					id: contributionId,
-					repoSlug,
-					repoName,
-					issueNumber,
-					issueTitle,
-					localPath,
-					branchName,
-					draftPrNumber,
-					draftPrUrl,
-					startedAt: new Date().toISOString(),
-					status: 'running',
-					progress: {
+				return runStateMutation(app, async () => {
+					const {
+						contributionId,
+						sessionId,
+						repoSlug,
+						repoName,
+						issueNumber,
+						issueTitle,
+						localPath,
+						branchName,
 						totalDocuments,
-						completedDocuments: 0,
-						totalTasks: 0,
-						completedTasks: 0,
-					},
-					tokenUsage: {
-						inputTokens: 0,
-						outputTokens: 0,
-						estimatedCost: 0,
-					},
-					timeSpent: 0,
-					sessionId,
-					agentType,
-				};
+						agentType,
+						draftPrNumber,
+						draftPrUrl,
+					} = params;
 
-				state.active.push(contribution);
-				await writeState(app, state);
+					const state = await readState(app);
 
-				logger.info('Active contribution registered', LOG_CONTEXT, {
-					contributionId,
-					sessionId,
-					repoSlug,
-					issueNumber,
+					// Check if already registered
+					const existing = state.active.find((c) => c.id === contributionId);
+					if (existing) {
+						logger.debug('Contribution already registered', LOG_CONTEXT, { contributionId });
+						return { success: true };
+					}
+
+					// Create active contribution entry
+					const contribution: ActiveContribution = {
+						id: contributionId,
+						repoSlug,
+						repoName,
+						issueNumber,
+						issueTitle,
+						localPath,
+						branchName,
+						draftPrNumber,
+						draftPrUrl,
+						startedAt: new Date().toISOString(),
+						status: 'running',
+						progress: {
+							totalDocuments,
+							completedDocuments: 0,
+							totalTasks: 0,
+							completedTasks: 0,
+						},
+						tokenUsage: {
+							inputTokens: 0,
+							outputTokens: 0,
+							estimatedCost: 0,
+						},
+						timeSpent: 0,
+						sessionId,
+						agentType,
+					};
+
+					state.active.push(contribution);
+					await writeState(app, state);
+
+					logger.info('Active contribution registered', LOG_CONTEXT, {
+						contributionId,
+						sessionId,
+						repoSlug,
+						issueNumber,
+					});
+
+					broadcastSymphonyUpdate(getMainWindow);
+					return { success: true };
 				});
-
-				broadcastSymphonyUpdate(getMainWindow);
-				return { success: true };
 			}
 		)
 	);

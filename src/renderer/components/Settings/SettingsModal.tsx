@@ -56,7 +56,7 @@ type SettingsTabId =
 	| 'prompts';
 
 // Alphabetized by label (case-insensitive) so the sidebar reads predictably
-// regardless of which tabs ship. Mount-time default is still 'general' —
+// regardless of which tabs ship. Mount-time default is still 'general'  -
 // that's enforced by the useState init below, not by list position.
 const TAB_ITEMS: Array<{
 	id: SettingsTabId;
@@ -69,7 +69,6 @@ const TAB_ITEMS: Array<{
 	{ id: 'encore', label: 'Encore Features', icon: FlaskConical },
 	{ id: 'environment', label: 'Environment', icon: Globe },
 	{ id: 'general', label: 'General', icon: Settings },
-	...(FEATURE_FLAGS.LLM_SETTINGS ? [{ id: 'llm' as const, label: 'LLM', icon: Key }] : []),
 	{ id: 'prompts', label: 'Maestro Prompts', icon: Wand2 },
 	{ id: 'notifications', label: 'Notifications', icon: Bell },
 	{ id: 'shortcuts', label: 'Shortcuts', icon: Keyboard },
@@ -77,12 +76,19 @@ const TAB_ITEMS: Array<{
 	{ id: 'theme', label: 'Themes', icon: Palette },
 ];
 
-// In-memory only — last tab the user was on. Resets on app restart, so the
+const LLM_TAB_ITEM = { id: 'llm' as const, label: 'LLM', icon: Key };
+
+function getTabItems(llmSettingsEnabled: boolean): typeof TAB_ITEMS {
+	if (!llmSettingsEnabled) return TAB_ITEMS;
+	return [...TAB_ITEMS.slice(0, 6), LLM_TAB_ITEM, ...TAB_ITEMS.slice(6)];
+}
+
+// In-memory only - last tab the user was on. Resets on app restart, so the
 // modal still defaults to General on a fresh launch. Honors any explicit
 // `initialTab` prop (e.g. when a caller deep-links into a specific tab).
 let lastOpenSettingsTab: SettingsTabId | null = null;
 
-// In-memory only — last vertical scroll position per tab. Pairs with
+// In-memory only - last vertical scroll position per tab. Pairs with
 // lastOpenSettingsTab so the user can reopen Settings (or flip between tabs)
 // and land exactly where they were, instead of having to re-find the control
 // they were tweaking. Resets on app restart.
@@ -114,8 +120,121 @@ interface SettingsModalProps {
 		| 'prompts';
 	initialSelectedPromptId?: string;
 	hasNoAgents?: boolean;
+	featureFlags?: {
+		llmSettings?: boolean;
+	};
 	onThemeImportError?: (message: string) => void;
 	onThemeImportSuccess?: (message: string) => void;
+}
+
+export async function testSettingsLlmConnection({
+	llmProvider,
+	apiKey,
+	modelSlug,
+	fetchImpl = fetch,
+}: {
+	llmProvider: LLMProvider;
+	apiKey: string;
+	modelSlug: string;
+	fetchImpl?: typeof fetch;
+}): Promise<{ status: 'success' | 'error'; message: string }> {
+	try {
+		const testPrompt = 'Respond with exactly: "Connection successful"';
+
+		if (llmProvider === 'openrouter') {
+			if (!apiKey) throw new Error('API key is required for OpenRouter');
+
+			const response = await fetchImpl('https://openrouter.ai/api/v1/chat/completions', {
+				method: 'POST',
+				headers: {
+					Authorization: `Bearer ${apiKey}`,
+					'Content-Type': 'application/json',
+					'HTTP-Referer': 'https://maestro.local',
+				},
+				body: JSON.stringify({
+					model: modelSlug || 'anthropic/claude-3.5-sonnet',
+					messages: [{ role: 'user', content: testPrompt }],
+					max_tokens: 50,
+				}),
+			});
+
+			if (!response.ok) {
+				const error = await response.json();
+				throw new Error(error.error?.message || `OpenRouter API error: ${response.status}`);
+			}
+
+			const data = await response.json();
+			if (!data.choices?.[0]?.message?.content) {
+				throw new Error('Invalid response from OpenRouter');
+			}
+
+			return { status: 'success', message: 'Successfully connected to OpenRouter!' };
+		}
+
+		if (llmProvider === 'anthropic') {
+			if (!apiKey) throw new Error('API key is required for Anthropic');
+
+			const response = await fetchImpl('https://api.anthropic.com/v1/messages', {
+				method: 'POST',
+				headers: {
+					'x-api-key': apiKey,
+					'anthropic-version': '2023-06-01',
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify({
+					model: modelSlug || 'claude-3-5-sonnet-20241022',
+					max_tokens: 50,
+					messages: [{ role: 'user', content: testPrompt }],
+				}),
+			});
+
+			if (!response.ok) {
+				const error = await response.json();
+				throw new Error(error.error?.message || `Anthropic API error: ${response.status}`);
+			}
+
+			const data = await response.json();
+			if (!data.content?.[0]?.text) {
+				throw new Error('Invalid response from Anthropic');
+			}
+
+			return { status: 'success', message: 'Successfully connected to Anthropic!' };
+		}
+
+		if (llmProvider === 'ollama') {
+			const response = await fetchImpl('http://localhost:11434/api/generate', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify({
+					model: modelSlug || 'llama3:latest',
+					prompt: testPrompt,
+					stream: false,
+				}),
+			});
+
+			if (!response.ok) {
+				throw new Error(
+					`Ollama API error: ${response.status}. Make sure Ollama is running locally.`
+				);
+			}
+
+			const data = await response.json();
+			if (!data.response) {
+				throw new Error('Invalid response from Ollama');
+			}
+
+			return { status: 'success', message: 'Successfully connected to Ollama!' };
+		}
+
+		return { status: 'error', message: 'Unsupported LLM provider' };
+	} catch (error: any) {
+		return {
+			status: 'error',
+			message: error.message || 'Connection failed',
+		};
+	}
 }
 
 export const SettingsModal = memo(function SettingsModal(props: SettingsModalProps) {
@@ -127,9 +246,12 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		initialTab,
 		initialSelectedPromptId,
 		hasNoAgents,
+		featureFlags,
 		onThemeImportError,
 		onThemeImportSuccess,
 	} = props;
+	const llmSettingsEnabled = featureFlags?.llmSettings ?? FEATURE_FLAGS.LLM_SETTINGS;
+	const tabItems = getTabItems(llmSettingsEnabled);
 
 	// All settings from useSettings hook (self-sourced, Tier 1B)
 	// General tab settings are now self-sourced by GeneralTab
@@ -174,7 +296,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 	} = useSettings();
 
 	// Lazy init reads the remembered tab on mount. Doing this in useState (rather
-	// than a restore effect) avoids racing with the persist effect below — under
+	// than a restore effect) avoids racing with the persist effect below - under
 	// React StrictMode a restore-via-effect double-fires and clobbers the saved
 	// value with the initial 'general' before the restored value lands.
 	const [activeTab, setActiveTab] = useState<SettingsTabId>(
@@ -201,7 +323,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 	const jumpAccentRef = useRef(theme.colors.accent);
 	jumpAccentRef.current = theme.colors.accent;
 
-	// Pending scroll target — set when the user picks a search result, consumed
+	// Pending scroll target - set when the user picks a search result, consumed
 	// by the effect below once the content panel is actually visible and the
 	// target tab has rendered. Doing this via state-driven effect (not RAF
 	// chains) avoids a race where scrollIntoView fires while the content div
@@ -220,12 +342,12 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 
 		let cancelled = false;
 		let attempts = 0;
-		const MAX_ATTEMPTS = 30; // ~500ms at 60fps — enough for tab content + lazy renders
+		const MAX_ATTEMPTS = 30; // ~500ms at 60fps - enough for tab content + lazy renders
 
 		const tryScroll = () => {
 			if (cancelled) return;
 			const el = contentRef.current?.querySelector<HTMLElement>(`[data-setting-id="${targetId}"]`);
-			// offsetParent is null while any ancestor is display:none — the most
+			// offsetParent is null while any ancestor is display:none - the most
 			// common reason scroll fails right after exiting search mode.
 			if (el && el.offsetParent !== null) {
 				pendingScrollIdRef.current = null;
@@ -273,7 +395,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 	}, [isOpen, initialTab]);
 
 	// Persist the current tab in module memory so the next open lands here.
-	// In-memory only — resets on app restart by design.
+	// In-memory only - resets on app restart by design.
 	useEffect(() => {
 		lastOpenSettingsTab = activeTab;
 	}, [activeTab]);
@@ -282,7 +404,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 	// the modal reopens on a remembered tab). useLayoutEffect runs after the
 	// new tab's content has committed to the DOM but before paint, so the
 	// scroll lands without a visible flash at the top. `behavior: 'auto'` is
-	// intentional — smooth-scrolling on tab switch reads as sluggish.
+	// intentional - smooth-scrolling on tab switch reads as sluggish.
 	useLayoutEffect(() => {
 		if (!isOpen) return;
 		const el = contentRef.current;
@@ -326,7 +448,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		if (!isOpen) return;
 
 		const handleTabNavigation = (e: KeyboardEvent) => {
-			const tabs = TAB_ITEMS.map((t) => t.id);
+			const tabs = tabItems.map((t) => t.id);
 			const currentIndex = tabs.indexOf(activeTab);
 
 			if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === '[') {
@@ -342,116 +464,19 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 
 		window.addEventListener('keydown', handleTabNavigation);
 		return () => window.removeEventListener('keydown', handleTabNavigation);
-	}, [isOpen, activeTab]);
+	}, [isOpen, activeTab, tabItems]);
 
 	const testLLMConnection = async () => {
 		setTestingLLM(true);
 		setTestResult({ status: null, message: '' });
 
 		try {
-			let response;
-			const testPrompt = 'Respond with exactly: "Connection successful"';
-
-			if (llmProvider === 'openrouter') {
-				if (!apiKey) {
-					throw new Error('API key is required for OpenRouter');
-				}
-
-				response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-					method: 'POST',
-					headers: {
-						Authorization: `Bearer ${apiKey}`,
-						'Content-Type': 'application/json',
-						'HTTP-Referer': 'https://maestro.local',
-					},
-					body: JSON.stringify({
-						model: modelSlug || 'anthropic/claude-3.5-sonnet',
-						messages: [{ role: 'user', content: testPrompt }],
-						max_tokens: 50,
-					}),
-				});
-
-				if (!response.ok) {
-					const error = await response.json();
-					throw new Error(error.error?.message || `OpenRouter API error: ${response.status}`);
-				}
-
-				const data = await response.json();
-				if (!data.choices?.[0]?.message?.content) {
-					throw new Error('Invalid response from OpenRouter');
-				}
-
-				setTestResult({
-					status: 'success',
-					message: 'Successfully connected to OpenRouter!',
-				});
-			} else if (llmProvider === 'anthropic') {
-				if (!apiKey) {
-					throw new Error('API key is required for Anthropic');
-				}
-
-				response = await fetch('https://api.anthropic.com/v1/messages', {
-					method: 'POST',
-					headers: {
-						'x-api-key': apiKey,
-						'anthropic-version': '2023-06-01',
-						'Content-Type': 'application/json',
-					},
-					body: JSON.stringify({
-						model: modelSlug || 'claude-3-5-sonnet-20241022',
-						max_tokens: 50,
-						messages: [{ role: 'user', content: testPrompt }],
-					}),
-				});
-
-				if (!response.ok) {
-					const error = await response.json();
-					throw new Error(error.error?.message || `Anthropic API error: ${response.status}`);
-				}
-
-				const data = await response.json();
-				if (!data.content?.[0]?.text) {
-					throw new Error('Invalid response from Anthropic');
-				}
-
-				setTestResult({
-					status: 'success',
-					message: 'Successfully connected to Anthropic!',
-				});
-			} else if (llmProvider === 'ollama') {
-				response = await fetch('http://localhost:11434/api/generate', {
-					method: 'POST',
-					headers: {
-						'Content-Type': 'application/json',
-					},
-					body: JSON.stringify({
-						model: modelSlug || 'llama3:latest',
-						prompt: testPrompt,
-						stream: false,
-					}),
-				});
-
-				if (!response.ok) {
-					throw new Error(
-						`Ollama API error: ${response.status}. Make sure Ollama is running locally.`
-					);
-				}
-
-				const data = await response.json();
-				if (!data.response) {
-					throw new Error('Invalid response from Ollama');
-				}
-
-				setTestResult({
-					status: 'success',
-					message: 'Successfully connected to Ollama!',
-				});
-			}
-		} catch (error: any) {
-			setTestResult({
-				status: 'error',
-				message: error.message || 'Connection failed',
+			const result = await testSettingsLlmConnection({
+				llmProvider,
+				apiKey,
+				modelSlug,
 			});
+			setTestResult(result);
 		} finally {
 			setTestingLLM(false);
 		}
@@ -512,7 +537,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 						style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
 						aria-label="Settings tabs"
 					>
-						{TAB_ITEMS.map((tab) => {
+						{tabItems.map((tab) => {
 							const Icon = tab.icon;
 							const isActive = activeTab === tab.id;
 							return (
@@ -546,7 +571,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 
 						{activeTab === 'display' && <DisplayTab theme={theme} />}
 
-						{activeTab === 'llm' && FEATURE_FLAGS.LLM_SETTINGS && (
+						{activeTab === 'llm' && llmSettingsEnabled && (
 							<div className="space-y-5">
 								<div>
 									<div className="block text-xs font-bold opacity-70 uppercase mb-2">

@@ -14,17 +14,30 @@ import React, { useState, useCallback } from 'react';
 import { SessionList } from '../../renderer/components/SessionList';
 import { AutoRun, AutoRunHandle } from '../../renderer/components/AutoRun';
 import { LayerStackProvider } from '../../renderer/contexts/LayerStackContext';
+import { InlineWizardProvider } from '../../renderer/contexts/InlineWizardContext';
 import { createMockTheme } from '../helpers/mockTheme';
 import type { Session, Group, Shortcut, BatchRunState, SessionState } from '../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../helpers/mockSession';
+import { useBatchStore } from '../../renderer/stores/batchStore';
+import { useSessionStore } from '../../renderer/stores/sessionStore';
+import { useSettingsStore } from '../../renderer/stores/settingsStore';
+import { useUIStore } from '../../renderer/stores/uiStore';
 
 // Helper to wrap component in LayerStackProvider with custom rerender
 const renderWithProviders = (ui: React.ReactElement) => {
-	const result = render(<LayerStackProvider>{ui}</LayerStackProvider>);
+	const result = render(
+		<LayerStackProvider>
+			<InlineWizardProvider>{ui}</InlineWizardProvider>
+		</LayerStackProvider>
+	);
 	return {
 		...result,
 		rerender: (newUi: React.ReactElement) =>
-			result.rerender(<LayerStackProvider>{newUi}</LayerStackProvider>),
+			result.rerender(
+				<LayerStackProvider>
+					<InlineWizardProvider>{newUi}</InlineWizardProvider>
+				</LayerStackProvider>
+			),
 	};
 };
 
@@ -50,7 +63,7 @@ vi.mock('react-syntax-highlighter/dist/esm/styles/prism', () => ({
 	vs: {},
 }));
 
-vi.mock('../../renderer/components/AutoRunnerHelpModal', () => ({
+vi.mock('../../renderer/components/AutoRun/AutoRunnerHelpModal', () => ({
 	AutoRunnerHelpModal: ({ onClose }: { onClose: () => void }) => (
 		<div data-testid="help-modal">
 			<button onClick={onClose}>Close</button>
@@ -64,7 +77,7 @@ vi.mock('../../renderer/components/MermaidRenderer', () => ({
 	),
 }));
 
-vi.mock('../../renderer/components/AutoRunDocumentSelector', () => ({
+vi.mock('../../renderer/components/AutoRun/AutoRunDocumentSelector', () => ({
 	AutoRunDocumentSelector: ({
 		documents,
 		selectedDocument,
@@ -188,6 +201,9 @@ const setupMaestroMock = () => {
 		settings: {
 			get: vi.fn().mockResolvedValue(null),
 			set: vi.fn().mockResolvedValue(undefined),
+		},
+		cue: {
+			onActivityUpdate: vi.fn(() => vi.fn()),
 		},
 	};
 
@@ -348,6 +364,72 @@ const IntegrationTestWrapper = ({
 		message: string;
 		onConfirm: () => void;
 	} | null>(null);
+	const seededRef = React.useRef(false);
+	const theme = createMockTheme();
+	const shortcuts = createMockShortcuts();
+
+	const seedStores = useCallback(() => {
+		useSessionStore.setState({
+			activeSessionId,
+			groups,
+			sessions,
+		});
+		useUIStore.setState({
+			activeFocus,
+			bookmarksCollapsed,
+			draggingSessionId,
+			editingGroupId,
+			editingSessionId,
+			leftSidebarOpen,
+			selectedSidebarIndex,
+			sessionFilterOpen: false,
+			showUnreadAgentsOnly: false,
+			sidebarExtraSelection: null,
+		});
+		useSettingsStore.setState({
+			groupChatsExpanded: false,
+			leftSidebarWidth,
+			shortcuts,
+			showStarredSessionsSection: true,
+			ungroupedCollapsed,
+		});
+		useBatchStore.setState({
+			batchRunStates: {},
+		});
+	}, [
+		activeFocus,
+		activeSessionId,
+		bookmarksCollapsed,
+		draggingSessionId,
+		editingGroupId,
+		editingSessionId,
+		groups,
+		leftSidebarOpen,
+		leftSidebarWidth,
+		selectedSidebarIndex,
+		sessions,
+		shortcuts,
+		ungroupedCollapsed,
+	]);
+
+	if (!seededRef.current) {
+		seedStores();
+		seededRef.current = true;
+	}
+
+	React.useLayoutEffect(() => {
+		seedStores();
+	}, [seedStores]);
+
+	React.useEffect(
+		() =>
+			useSessionStore.subscribe((state) => {
+				setSessions(state.sessions);
+				setGroups(state.groups);
+				setActiveSessionId(state.activeSessionId);
+			}),
+		[]
+	);
 
 	const activeSession = sessions.find((s) => s.id === activeSessionId) || null;
 
@@ -375,173 +457,176 @@ const IntegrationTestWrapper = ({
 		setShowConfirmDialog({ message, onConfirm });
 	}, []);
 
-	const theme = createMockTheme();
-	const shortcuts = createMockShortcuts();
-
 	return (
 		<LayerStackProvider>
-			<div style={{ display: 'flex', height: '100vh' }}>
-				{/* Session List */}
-				<SessionList
-					theme={theme}
-					sessions={sessions}
-					groups={groups}
-					sortedSessions={sessions}
-					starredItems={[]}
-					activateStarredItem={() => {}}
-					activeSessionId={activeSessionId}
-					leftSidebarOpen={leftSidebarOpen}
-					leftSidebarWidthState={leftSidebarWidth}
-					activeFocus={activeFocus}
-					selectedSidebarIndex={selectedSidebarIndex}
-					editingGroupId={editingGroupId}
-					editingSessionId={editingSessionId}
-					draggingSessionId={draggingSessionId}
-					shortcuts={shortcuts}
-					isLiveMode={false}
-					webInterfaceUrl={null}
-					toggleGlobalLive={() => {}}
-					bookmarksCollapsed={bookmarksCollapsed}
-					setBookmarksCollapsed={setBookmarksCollapsed}
-					ungroupedCollapsed={ungroupedCollapsed}
-					setUngroupedCollapsed={setUngroupedCollapsed}
-					setActiveFocus={(focus) => setActiveFocus(focus as 'sidebar' | 'main' | 'right')}
-					setActiveSessionId={handleSessionSelect}
-					setLeftSidebarOpen={setLeftSidebarOpen}
-					setLeftSidebarWidthState={setLeftSidebarWidth}
-					setShortcutsHelpOpen={() => {}}
-					setSettingsModalOpen={() => {}}
-					setSettingsTab={() => {}}
-					setAboutModalOpen={() => {}}
-					setUpdateCheckModalOpen={() => {}}
-					setLogViewerOpen={() => {}}
-					setProcessMonitorOpen={() => {}}
-					toggleGroup={(groupId) => {
-						setGroups((prev) =>
-							prev.map((g) => (g.id === groupId ? { ...g, collapsed: !g.collapsed } : g))
-						);
-					}}
-					handleDragStart={(sessionId) => setDraggingSessionId(sessionId)}
-					handleDragOver={(e) => e.preventDefault()}
-					handleDropOnGroup={(groupId) => {
-						if (draggingSessionId) {
-							setSessions((prev) =>
-								prev.map((s) => (s.id === draggingSessionId ? { ...s, groupId } : s))
+			<InlineWizardProvider>
+				<div style={{ display: 'flex', height: '100vh' }}>
+					{/* Session List */}
+					<SessionList
+						theme={theme}
+						sessions={sessions}
+						groups={groups}
+						sortedSessions={sessions}
+						starredItems={[]}
+						activateStarredItem={() => {}}
+						activeSessionId={activeSessionId}
+						leftSidebarOpen={leftSidebarOpen}
+						leftSidebarWidthState={leftSidebarWidth}
+						activeFocus={activeFocus}
+						selectedSidebarIndex={selectedSidebarIndex}
+						editingGroupId={editingGroupId}
+						editingSessionId={editingSessionId}
+						draggingSessionId={draggingSessionId}
+						shortcuts={shortcuts}
+						isLiveMode={false}
+						webInterfaceUrl={null}
+						toggleGlobalLive={() => {}}
+						bookmarksCollapsed={bookmarksCollapsed}
+						setBookmarksCollapsed={setBookmarksCollapsed}
+						ungroupedCollapsed={ungroupedCollapsed}
+						setUngroupedCollapsed={setUngroupedCollapsed}
+						setActiveFocus={(focus) => setActiveFocus(focus as 'sidebar' | 'main' | 'right')}
+						setActiveSessionId={handleSessionSelect}
+						setLeftSidebarOpen={setLeftSidebarOpen}
+						setLeftSidebarWidthState={setLeftSidebarWidth}
+						setShortcutsHelpOpen={() => {}}
+						setSettingsModalOpen={() => {}}
+						setSettingsTab={() => {}}
+						setAboutModalOpen={() => {}}
+						setUpdateCheckModalOpen={() => {}}
+						setLogViewerOpen={() => {}}
+						setProcessMonitorOpen={() => {}}
+						toggleGroup={(groupId) => {
+							setGroups((prev) =>
+								prev.map((g) => (g.id === groupId ? { ...g, collapsed: !g.collapsed } : g))
 							);
-							setDraggingSessionId(null);
-						}
-					}}
-					handleDropOnUngrouped={() => {
-						if (draggingSessionId) {
-							setSessions((prev) =>
-								prev.map((s) => (s.id === draggingSessionId ? { ...s, groupId: undefined } : s))
+						}}
+						handleDragStart={(sessionId) => setDraggingSessionId(sessionId)}
+						handleDragOver={(e) => e.preventDefault()}
+						handleDropOnGroup={(groupId) => {
+							if (draggingSessionId) {
+								setSessions((prev) =>
+									prev.map((s) => (s.id === draggingSessionId ? { ...s, groupId } : s))
+								);
+								setDraggingSessionId(null);
+							}
+						}}
+						handleDropOnUngrouped={() => {
+							if (draggingSessionId) {
+								setSessions((prev) =>
+									prev.map((s) => (s.id === draggingSessionId ? { ...s, groupId: undefined } : s))
+								);
+								setDraggingSessionId(null);
+							}
+						}}
+						finishRenamingGroup={(groupId, newName) => {
+							setGroups((prev) =>
+								prev.map((g) => (g.id === groupId ? { ...g, name: newName } : g))
 							);
-							setDraggingSessionId(null);
-						}
-					}}
-					finishRenamingGroup={(groupId, newName) => {
-						setGroups((prev) => prev.map((g) => (g.id === groupId ? { ...g, name: newName } : g)));
-						setEditingGroupId(null);
-					}}
-					finishRenamingSession={(sessId, newName) => {
-						setSessions((prev) => prev.map((s) => (s.id === sessId ? { ...s, name: newName } : s)));
-						setEditingSessionId(null);
-					}}
-					startRenamingGroup={(groupId) => setEditingGroupId(groupId)}
-					startRenamingSession={(sessId) => setEditingSessionId(sessId)}
-					showConfirmation={handleConfirmation}
-					setGroups={setGroups}
-					setSessions={setSessions}
-					createNewGroup={() => {
-						const newGroup: Group = {
-							id: `group-${Date.now()}`,
-							name: 'New Group',
-							emoji: '📁',
-							collapsed: false,
-						};
-						setGroups((prev) => [...prev, newGroup]);
-					}}
-					addNewSession={() => {
-						const newSession = createMockSession({
-							id: `session-${Date.now()}`,
-							name: `New Session`,
-							autoRunFolderPath: undefined,
-							autoRunSelectedFile: undefined,
-							autoRunContent: '',
-						});
-						setSessions((prev) => [...prev, newSession]);
-						setActiveSessionId(newSession.id);
-					}}
-					setRenameInstanceModalOpen={() => {}}
-					setRenameInstanceValue={() => {}}
-					setRenameInstanceSessionId={() => {}}
-				/>
+							setEditingGroupId(null);
+						}}
+						finishRenamingSession={(sessId, newName) => {
+							setSessions((prev) =>
+								prev.map((s) => (s.id === sessId ? { ...s, name: newName } : s))
+							);
+							setEditingSessionId(null);
+						}}
+						startRenamingGroup={(groupId) => setEditingGroupId(groupId)}
+						startRenamingSession={(sessId) => setEditingSessionId(sessId)}
+						showConfirmation={handleConfirmation}
+						setGroups={setGroups}
+						setSessions={setSessions}
+						createNewGroup={() => {
+							const newGroup: Group = {
+								id: `group-${Date.now()}`,
+								name: 'New Group',
+								emoji: '📁',
+								collapsed: false,
+							};
+							setGroups((prev) => [...prev, newGroup]);
+						}}
+						addNewSession={() => {
+							const newSession = createMockSession({
+								id: `session-${Date.now()}`,
+								name: `New Session`,
+								autoRunFolderPath: undefined,
+								autoRunSelectedFile: undefined,
+								autoRunContent: '',
+							});
+							setSessions((prev) => [...prev, newSession]);
+							setActiveSessionId(newSession.id);
+						}}
+						setRenameInstanceModalOpen={() => {}}
+						setRenameInstanceValue={() => {}}
+						setRenameInstanceSessionId={() => {}}
+					/>
 
-				{/* Auto Run Panel (only render if active session exists) */}
-				{activeSession && activeSession.autoRunFolderPath && (
-					<div style={{ flex: 1 }} data-testid="autorun-container">
-						<AutoRun
-							theme={theme}
-							sessionId={activeSession.id}
-							folderPath={activeSession.autoRunFolderPath}
-							selectedFile={activeSession.autoRunSelectedFile || ''}
-							documentList={['Phase 1', 'Phase 2']}
-							content={activeSession.autoRunContent || ''}
-							contentVersion={activeSession.autoRunContentVersion || 0}
-							onContentChange={(content) => {
-								setSessions((prev) =>
-									prev.map((s) =>
-										s.id === activeSessionId ? { ...s, autoRunContent: content } : s
-									)
-								);
-							}}
-							mode={activeSession.autoRunMode || 'edit'}
-							onModeChange={(mode) => {
-								setSessions((prev) =>
-									prev.map((s) => (s.id === activeSessionId ? { ...s, autoRunMode: mode } : s))
-								);
-							}}
-							onOpenSetup={() => {}}
-							onRefresh={() => {}}
-							onSelectDocument={(filename) => {
-								setSessions((prev) =>
-									prev.map((s) =>
-										s.id === activeSessionId ? { ...s, autoRunSelectedFile: filename } : s
-									)
-								);
-							}}
-							onCreateDocument={async () => true}
-							onOpenBatchRunner={() => {}}
-							onStopBatchRun={() => {}}
-							sessionState={activeSession.state}
-						/>
-					</div>
-				)}
+					{/* Auto Run Panel (only render if active session exists) */}
+					{activeSession && activeSession.autoRunFolderPath && (
+						<div style={{ flex: 1 }} data-testid="autorun-container">
+							<AutoRun
+								theme={theme}
+								sessionId={activeSession.id}
+								folderPath={activeSession.autoRunFolderPath}
+								selectedFile={activeSession.autoRunSelectedFile || ''}
+								documentList={['Phase 1', 'Phase 2']}
+								content={activeSession.autoRunContent || ''}
+								contentVersion={activeSession.autoRunContentVersion || 0}
+								onContentChange={(content) => {
+									setSessions((prev) =>
+										prev.map((s) =>
+											s.id === activeSessionId ? { ...s, autoRunContent: content } : s
+										)
+									);
+								}}
+								mode={activeSession.autoRunMode || 'edit'}
+								onModeChange={(mode) => {
+									setSessions((prev) =>
+										prev.map((s) => (s.id === activeSessionId ? { ...s, autoRunMode: mode } : s))
+									);
+								}}
+								onOpenSetup={() => {}}
+								onRefresh={() => {}}
+								onSelectDocument={(filename) => {
+									setSessions((prev) =>
+										prev.map((s) =>
+											s.id === activeSessionId ? { ...s, autoRunSelectedFile: filename } : s
+										)
+									);
+								}}
+								onCreateDocument={async () => true}
+								onOpenBatchRunner={() => {}}
+								onStopBatchRun={() => {}}
+								sessionState={activeSession.state}
+							/>
+						</div>
+					)}
 
-				{/* Auto Run not configured message */}
-				{activeSession && !activeSession.autoRunFolderPath && (
-					<div data-testid="autorun-not-configured">Auto Run not configured for this session</div>
-				)}
+					{/* Auto Run not configured message */}
+					{activeSession && !activeSession.autoRunFolderPath && (
+						<div data-testid="autorun-not-configured">Auto Run not configured for this session</div>
+					)}
 
-				{/* Confirmation Dialog Mock */}
-				{showConfirmDialog && (
-					<div data-testid="confirm-dialog">
-						<p>{showConfirmDialog.message}</p>
-						<button
-							data-testid="confirm-yes"
-							onClick={() => {
-								showConfirmDialog.onConfirm();
-								setShowConfirmDialog(null);
-							}}
-						>
-							Yes
-						</button>
-						<button data-testid="confirm-no" onClick={() => setShowConfirmDialog(null)}>
-							No
-						</button>
-					</div>
-				)}
-			</div>
+					{/* Confirmation Dialog Mock */}
+					{showConfirmDialog && (
+						<div data-testid="confirm-dialog">
+							<p>{showConfirmDialog.message}</p>
+							<button
+								data-testid="confirm-yes"
+								onClick={() => {
+									showConfirmDialog.onConfirm();
+									setShowConfirmDialog(null);
+								}}
+							>
+								Yes
+							</button>
+							<button data-testid="confirm-no" onClick={() => setShowConfirmDialog(null)}>
+								No
+							</button>
+						</div>
+					)}
+				</div>
+			</InlineWizardProvider>
 		</LayerStackProvider>
 	);
 };
@@ -566,8 +651,7 @@ describe('Auto Run + Session List Integration', () => {
 
 	describe('Session Selection Loads Correct Document', () => {
 		it('clicking on a session in the list loads its Auto Run content', async () => {
-			const onSessionChange = vi.fn();
-			render(<IntegrationTestWrapper onSessionChange={onSessionChange} />);
+			render(<IntegrationTestWrapper />);
 
 			// Initially Session 1 is active
 			expect(screen.getByRole('textbox')).toHaveValue('# Session 1\n\n- [ ] Task 1');
@@ -576,8 +660,7 @@ describe('Auto Run + Session List Integration', () => {
 			const session2Item = screen.getByText('Session 2');
 			fireEvent.click(session2Item);
 
-			// Verify callback was called
-			expect(onSessionChange).toHaveBeenCalledWith('session-2');
+			expect(useSessionStore.getState().activeSessionId).toBe('session-2');
 
 			// Wait for AutoRun to update with Session 2 content
 			await waitFor(() => {

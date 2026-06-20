@@ -21,6 +21,15 @@ interface DebugWizardModalProps {
 	onClose: () => void;
 }
 
+function getFolderDisplayName(folderPath: string): string {
+	return (
+		folderPath
+			.split(/[\\/]+/)
+			.filter(Boolean)
+			.pop() || 'My Project'
+	);
+}
+
 export function DebugWizardModal({
 	theme,
 	isOpen,
@@ -58,7 +67,7 @@ export function DebugWizardModal({
 			if (result) {
 				setDirectoryPath(result);
 				// Auto-populate agent name from folder name
-				const folderName = result.split('/').pop() || result.split('\\').pop() || 'My Project';
+				const folderName = getFolderDisplayName(result);
 				if (!agentName) {
 					setAgentName(folderName);
 				}

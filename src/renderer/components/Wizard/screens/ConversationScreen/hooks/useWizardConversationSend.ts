@@ -184,15 +184,16 @@ function applySendFailure(
 	setters: SendStateSetters,
 	alreadyHandled: boolean
 ): void {
+	if (!result.success && result.detectedError) {
+		setters.setDetectedError(result.detectedError);
+	}
+
 	if (alreadyHandled) {
 		return;
 	}
 
 	if (!result.success && result.error) {
 		setConversationError(result.error);
-		if (result.detectedError) {
-			setters.setDetectedError(result.detectedError);
-		}
 		setters.setErrorRetryCount((prev) => prev + 1);
 	}
 }

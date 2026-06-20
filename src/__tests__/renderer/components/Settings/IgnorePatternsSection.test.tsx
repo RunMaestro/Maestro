@@ -141,7 +141,7 @@ describe('IgnorePatternsSection', () => {
 		renderSection({ onIgnorePatternsChange, onReset });
 
 		fireEvent.click(
-			screen.getByRole('button', { name: 'Reset to defaults (.git, node_modules, *.log)' })
+			screen.getByRole('button', { name: 'Reset Local Ignore Patterns to defaults' })
 		);
 
 		expect(onIgnorePatternsChange).toHaveBeenCalledWith(defaultPatterns);
@@ -153,7 +153,7 @@ describe('IgnorePatternsSection', () => {
 		renderSection({ onIgnorePatternsChange, onReset: undefined });
 
 		fireEvent.click(
-			screen.getByRole('button', { name: 'Reset to defaults (.git, node_modules, *.log)' })
+			screen.getByRole('button', { name: 'Reset Local Ignore Patterns to defaults' })
 		);
 
 		expect(onIgnorePatternsChange).toHaveBeenCalledWith(defaultPatterns);

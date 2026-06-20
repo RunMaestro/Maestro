@@ -228,3 +228,14 @@ export function getEarlySettings(syncPath: string): {
 }
 
 // ============================================================================
+// SSH Remote Utilities
+// ============================================================================
+
+export function findSshRemoteById<T extends { id: string }>(
+	sshRemotes: T[],
+	sshRemoteId: string
+): T | undefined {
+	return sshRemotes.find((remote) => remote.id === sshRemoteId);
+}
+
+// ============================================================================

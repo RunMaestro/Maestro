@@ -918,7 +918,7 @@ export function MergeSessionModal({
 					>
 						<div className="flex justify-between">
 							<span style={{ color: theme.colors.textDim }}>
-								Source: {sourceTab?.name || getTabDisplayName(sourceTab!)}
+								Source: {sourceTab ? getTabDisplayName(sourceTab) : 'Context'}
 							</span>
 							<span style={{ color: theme.colors.textMain }}>
 								~{formatTokensCompact(sourceTokens)} tokens

@@ -1,18 +1,22 @@
 import React, { createRef, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { EditorView } from '@codemirror/view';
+import { FilePreview } from '../../renderer/components/FilePreview';
 import {
-	FilePreview,
-	_clearExpiredImageCacheForTesting,
-} from '../../renderer/components/FilePreview';
+	IMAGE_CACHE_TTL,
+	imageCache,
+} from '../../renderer/components/FilePreview/filePreviewUtils';
 import { LayerStackProvider } from '../../renderer/contexts/LayerStackContext';
 import { useSettingsStore } from '../../renderer/stores/settingsStore';
+import { useCenterFlashStore } from '../../renderer/stores/centerFlashStore';
+import { useNotificationStore } from '../../renderer/stores/notificationStore';
 import { getEncoder } from '../../renderer/utils/tokenCounter';
-import { safeClipboardWrite, safeClipboardWriteBlob } from '../../renderer/utils/clipboard';
+import { safeClipboardWrite, safeClipboardWriteImage } from '../../renderer/utils/clipboard';
 
 const clipboardMocks = vi.hoisted(() => ({
 	safeClipboardWrite: vi.fn(),
-	safeClipboardWriteBlob: vi.fn(),
+	safeClipboardWriteImage: vi.fn(),
 }));
 
 vi.mock('../../renderer/utils/clipboard', () => clipboardMocks);
@@ -64,6 +68,8 @@ const shortcuts = {
 const originalClipboardItem = globalThis.ClipboardItem;
 const originalScrollIntoView = Element.prototype.scrollIntoView;
 const originalScrollTo = Element.prototype.scrollTo;
+const originalRangeGetBoundingClientRect = Range.prototype.getBoundingClientRect;
+const originalRangeGetClientRects = Range.prototype.getClientRects;
 
 function renderPreview(
 	props: Partial<React.ComponentProps<typeof FilePreview>> = {},
@@ -81,6 +87,9 @@ function renderPreview(
 	function Harness() {
 		const [markdownEditMode, setMarkdownEditMode] = useState(Boolean(options.initialEditMode));
 		const [editContent, setEditContent] = useState(file?.content ?? '');
+		const [previewTierOverride, setPreviewTierOverride] = useState<
+			React.ComponentProps<typeof FilePreview>['previewTierOverride']
+		>(props.previewTierOverride);
 
 		return (
 			<LayerStackProvider>
@@ -91,6 +100,8 @@ function renderPreview(
 					markdownEditMode={markdownEditMode}
 					setMarkdownEditMode={setMarkdownEditMode}
 					shortcuts={shortcuts}
+					previewTierOverride={previewTierOverride}
+					onPreviewTierChange={setPreviewTierOverride}
 					{...(options.uncontrolledEdit
 						? {}
 						: {
@@ -117,6 +128,32 @@ async function flushPendingPromises() {
 	});
 }
 
+function getEditorView(): EditorView {
+	const editor = document.querySelector('.cm-editor');
+	const view = editor ? EditorView.findFromDOM(editor as HTMLElement) : null;
+	if (!view) {
+		throw new Error('CodeMirror editor view was not mounted');
+	}
+	return view;
+}
+
+function setEditorContent(content: string) {
+	const view = getEditorView();
+	act(() => {
+		view.dispatch({
+			changes: { from: 0, to: view.state.doc.length, insert: content },
+		});
+	});
+}
+
+function clearExpiredImageCacheForTesting(now: number) {
+	for (const [key, value] of imageCache.entries()) {
+		if (now - value.loadedAt > IMAGE_CACHE_TTL) {
+			imageCache.delete(key);
+		}
+	}
+}
+
 describe('FilePreview integration', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -124,11 +161,26 @@ describe('FilePreview integration', () => {
 			encode: vi.fn(() => [1, 2, 3, 4]),
 		} as any);
 		vi.mocked(safeClipboardWrite).mockResolvedValue(true);
-		vi.mocked(safeClipboardWriteBlob).mockResolvedValue(true);
+		vi.mocked(safeClipboardWriteImage).mockResolvedValue(true);
 		globalThis.ClipboardItem = class TestClipboardItem {
 			constructor(public readonly items: Record<string, Blob>) {}
 		} as unknown as typeof ClipboardItem;
 		Element.prototype.scrollIntoView = vi.fn();
+		Range.prototype.getBoundingClientRect = vi.fn(
+			() =>
+				({
+					x: 0,
+					y: 0,
+					width: 0,
+					height: 0,
+					top: 0,
+					right: 0,
+					bottom: 0,
+					left: 0,
+					toJSON: () => ({}),
+				}) as DOMRect
+		);
+		Range.prototype.getClientRects = vi.fn(() => [] as unknown as DOMRectList);
 		vi.mocked(window.maestro.fs.stat).mockResolvedValue({
 			size: 2048,
 			createdAt: '2026-05-01T10:00:00.000Z',
@@ -141,7 +193,9 @@ describe('FilePreview integration', () => {
 			bionifyAlgorithm: '- 0 1 1 2 0.4',
 			spellCheck: false,
 		});
-		_clearExpiredImageCacheForTesting(Number.MAX_SAFE_INTEGER);
+		useCenterFlashStore.getState().setActive(null);
+		useNotificationStore.getState().clearToasts();
+		clearExpiredImageCacheForTesting(Number.MAX_SAFE_INTEGER);
 	});
 
 	afterEach(() => {
@@ -159,6 +213,16 @@ describe('FilePreview integration', () => {
 			Element.prototype.scrollTo = originalScrollTo;
 		} else {
 			delete (Element.prototype as Partial<typeof Element.prototype>).scrollTo;
+		}
+		if (originalRangeGetBoundingClientRect) {
+			Range.prototype.getBoundingClientRect = originalRangeGetBoundingClientRect;
+		} else {
+			delete (Range.prototype as Partial<typeof Range.prototype>).getBoundingClientRect;
+		}
+		if (originalRangeGetClientRects) {
+			Range.prototype.getClientRects = originalRangeGetClientRects;
+		} else {
+			delete (Range.prototype as Partial<typeof Range.prototype>).getClientRects;
 		}
 		vi.restoreAllMocks();
 	});
@@ -192,7 +256,7 @@ describe('FilePreview integration', () => {
 		expect(screen.getByText('plan.md')).toBeInTheDocument();
 		expect(screen.getByRole('heading', { name: 'Release Plan' })).toBeInTheDocument();
 
-		await waitFor(() => expect(screen.getByText('2 KB')).toBeInTheDocument());
+		await waitFor(() => expect(screen.getByText('2.0 KB')).toBeInTheDocument());
 		expect(screen.getByText('4 tokens')).toBeInTheDocument();
 		expect(getByExactTextContent('Tasks: 1 of 3')).toBeInTheDocument();
 		await waitFor(() =>
@@ -216,7 +280,7 @@ describe('FilePreview integration', () => {
 		fireEvent.click(screen.getByRole('link', { name: 'public guide' }));
 		expect(window.maestro.shell.openExternal).toHaveBeenCalledWith('https://example.com/guide');
 
-		fireEvent.click(screen.getByTitle('Show remote images'));
+		fireEvent.click(screen.getByRole('button', { name: 'Show remote images' }));
 		await waitFor(() =>
 			expect(screen.getByAltText('Remote logo')).toHaveAttribute(
 				'src',
@@ -224,22 +288,22 @@ describe('FilePreview integration', () => {
 			)
 		);
 
-		fireEvent.click(screen.getByTitle('Publish as GitHub Gist'));
+		fireEvent.click(screen.getByRole('button', { name: 'Publish as GitHub Gist' }));
 		expect(onPublishGist).toHaveBeenCalledOnce();
 
-		fireEvent.click(screen.getByTitle('View in Document Graph (Ctrl+Shift+G)'));
+		fireEvent.click(screen.getByRole('button', { name: 'View in Document Graph' }));
 		expect(onOpenInGraph).toHaveBeenCalledOnce();
 
-		fireEvent.click(screen.getByTitle('Open in Default App'));
+		fireEvent.click(screen.getByRole('button', { name: 'Open in Default App' }));
 		expect(window.maestro.shell.openPath).toHaveBeenCalledWith('/repo/docs/plan.md');
 
-		fireEvent.click(screen.getByTitle('Copy full path to clipboard'));
+		fireEvent.click(screen.getByRole('button', { name: 'Copy full path to clipboard' }));
 		await waitFor(() => expect(safeClipboardWrite).toHaveBeenCalledWith('/repo/docs/plan.md'));
-		expect(screen.getByText('File Path Copied to Clipboard')).toBeInTheDocument();
+		expect(useCenterFlashStore.getState().active?.message).toBe('File Path Copied');
 
-		fireEvent.click(screen.getByTitle('Copy content to clipboard'));
+		fireEvent.click(screen.getByRole('button', { name: 'Copy content to clipboard' }));
 		await waitFor(() => expect(safeClipboardWrite).toHaveBeenCalledWith(file.content));
-		expect(screen.getByText('Content Copied to Clipboard')).toBeInTheDocument();
+		expect(useCenterFlashStore.getState().active?.message).toBe('Content Copied');
 		cleanup();
 
 		renderPreview({
@@ -248,7 +312,7 @@ describe('FilePreview integration', () => {
 			ghCliAvailable: true,
 			hasGist: true,
 		});
-		fireEvent.click(await screen.findByTitle('View published gist'));
+		fireEvent.click(await screen.findByRole('button', { name: 'View published gist' }));
 		expect(onPublishGist).toHaveBeenCalledTimes(2);
 	});
 
@@ -289,12 +353,12 @@ describe('FilePreview integration', () => {
 			'data:image/png;base64,ZGF0YQ=='
 		);
 		fireEvent.load(screen.getByAltText('Data URL'));
-		_clearExpiredImageCacheForTesting(Date.now());
+		clearExpiredImageCacheForTesting(Date.now());
 		Object.defineProperty(inline, 'naturalWidth', { value: 320, configurable: true });
 		Object.defineProperty(inline, 'naturalHeight', { value: 180, configurable: true });
-		_clearExpiredImageCacheForTesting(Number.MAX_SAFE_INTEGER);
+		clearExpiredImageCacheForTesting(Number.MAX_SAFE_INTEGER);
 		fireEvent.load(inline);
-		_clearExpiredImageCacheForTesting(Date.now());
+		clearExpiredImageCacheForTesting(Date.now());
 
 		await waitFor(() => expect(screen.getByText('Invalid image data')).toBeInTheDocument());
 		expect(screen.getByText('Failed to load image: missing image')).toBeInTheDocument();
@@ -315,23 +379,19 @@ describe('FilePreview integration', () => {
 
 		renderPreview({ file, onSave }, { initialEditMode: true });
 
-		const textarea = screen.getByRole('textbox');
-		expect(textarea).toHaveValue('alpha\nbeta');
-		fireEvent.change(textarea, { target: { value: 'alpha\nbeta\ngamma' } });
+		expect(getEditorView().state.doc.toString()).toBe('alpha\nbeta');
+		setEditorContent('alpha\nbeta\ngamma');
 
-		fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+		fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
 
 		await waitFor(() =>
 			expect(onSave).toHaveBeenCalledWith('/repo/docs/notes.txt', 'alpha\nbeta\ngamma')
 		);
-		expect(screen.getByText('File Saved')).toBeInTheDocument();
+		expect(useCenterFlashStore.getState().active?.message).toBe('File Saved');
 	});
 
-	it('handles edit textarea keyboard save, escape, and cursor movement shortcuts', async () => {
+	it('handles editor keyboard save and search shortcuts', async () => {
 		const onSave = vi.fn().mockResolvedValue(undefined);
-		const styleSpy = vi
-			.spyOn(window, 'getComputedStyle')
-			.mockReturnValue({ lineHeight: '24px' } as CSSStyleDeclaration);
 		const file = {
 			name: 'draft.md',
 			path: '/repo/docs/draft.md',
@@ -339,51 +399,21 @@ describe('FilePreview integration', () => {
 		};
 
 		const { container } = renderPreview({ file, onSave }, { initialEditMode: true });
+		const editor = screen.getByRole('textbox');
 
-		const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
-		Object.defineProperty(textarea, 'clientHeight', { value: 48, configurable: true });
-		Object.defineProperty(textarea, 'scrollHeight', { value: 240, configurable: true });
-
-		textarea.setSelectionRange(5, 5);
-		fireEvent.keyDown(textarea, { key: 'ArrowDown', metaKey: true });
-		expect(textarea.selectionStart).toBe(textarea.value.length);
-
-		textarea.setSelectionRange(12, 12);
-		fireEvent.keyDown(textarea, { key: 'ArrowUp', metaKey: true });
-		expect(textarea.selectionStart).toBe(0);
-
-		textarea.setSelectionRange(textarea.value.length, textarea.value.length, 'backward');
-		fireEvent.keyDown(textarea, { key: 'ArrowUp', metaKey: true, shiftKey: true });
-		expect(textarea.selectionStart).toBe(0);
-		textarea.setSelectionRange(textarea.value.length, textarea.value.length, 'forward');
-		fireEvent.keyDown(textarea, { key: 'ArrowUp', metaKey: true, shiftKey: true });
-		expect(textarea.selectionStart).toBe(0);
-
-		textarea.setSelectionRange(0, 0, 'forward');
-		fireEvent.keyDown(textarea, { key: 'ArrowDown', metaKey: true, shiftKey: true });
-		expect(textarea.selectionEnd).toBe(textarea.value.length);
-		textarea.setSelectionRange(0, 0, 'backward');
-		fireEvent.keyDown(textarea, { key: 'ArrowDown', metaKey: true, shiftKey: true });
-		expect(textarea.selectionEnd).toBe(textarea.value.length);
-
-		textarea.setSelectionRange(14, 14);
-		fireEvent.keyDown(textarea, { key: 'ArrowUp', altKey: true });
-		fireEvent.keyDown(textarea, { key: 'ArrowDown', altKey: true });
-		textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-		Object.defineProperty(textarea, 'clientHeight', { value: 24, configurable: true });
-		fireEvent.keyDown(textarea, { key: 'ArrowUp', altKey: true });
-
-		fireEvent.change(textarea, {
-			target: { value: `${file.content}\nline five` },
-		});
-		fireEvent.keyDown(textarea, { key: 's', metaKey: true });
+		setEditorContent(`${file.content}\nline five`);
+		await waitFor(() =>
+			expect(getEditorView().state.doc.toString()).toBe(`${file.content}\nline five`)
+		);
+		fireEvent.keyDown(editor, { key: 's', metaKey: true });
 		await waitFor(() =>
 			expect(onSave).toHaveBeenCalledWith('/repo/docs/draft.md', `${file.content}\nline five`)
 		);
-		fireEvent.change(textarea, {
-			target: { value: `${file.content}\nline five\nline six` },
-		});
-		fireEvent.keyDown(textarea, { key: 's', ctrlKey: true });
+		setEditorContent(`${file.content}\nline five\nline six`);
+		await waitFor(() =>
+			expect(getEditorView().state.doc.toString()).toBe(`${file.content}\nline five\nline six`)
+		);
+		fireEvent.keyDown(editor, { key: 's', ctrlKey: true });
 		await waitFor(() =>
 			expect(onSave).toHaveBeenCalledWith(
 				'/repo/docs/draft.md',
@@ -391,18 +421,12 @@ describe('FilePreview integration', () => {
 			)
 		);
 
-		styleSpy.mockReturnValue({ lineHeight: '' } as CSSStyleDeclaration);
-		textarea.setSelectionRange(2, 2);
-		fireEvent.keyDown(textarea, { key: 'ArrowUp', altKey: true });
-		fireEvent.keyDown(textarea, { key: 'ArrowDown', altKey: true });
-
 		fireEvent.keyDown(container.firstElementChild!, { key: 'f', metaKey: true });
 		const searchInput = await screen.findByPlaceholderText(/Search in file/);
 		fireEvent.change(searchInput, { target: { value: 'line' } });
 		await waitFor(() => expect(screen.getByText('1/6')).toBeInTheDocument());
 		fireEvent.keyDown(searchInput, { key: 'Enter' });
 		await waitFor(() => expect(screen.getByText('2/6')).toBeInTheDocument());
-		expect(textarea.selectionStart).toBeGreaterThan(0);
 		fireEvent.keyDown(searchInput, { key: 'Enter', shiftKey: true });
 		await waitFor(() => expect(screen.getByText('1/6')).toBeInTheDocument());
 		fireEvent.keyDown(searchInput, { key: 'Enter' });
@@ -415,11 +439,6 @@ describe('FilePreview integration', () => {
 		fireEvent.keyDown(searchInput, { key: 'Enter', shiftKey: true });
 		fireEvent.keyDown(searchInput, { key: 'Escape' });
 		expect(screen.queryByPlaceholderText(/Search in file/)).not.toBeInTheDocument();
-
-		fireEvent.keyDown(textarea, { key: 'Escape' });
-		expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
-		expect(screen.getByText(/line four/)).toBeInTheDocument();
-		styleSpy.mockRestore();
 	});
 
 	it('detects a newer file mtime and delegates reload to the parent', async () => {
@@ -475,9 +494,7 @@ describe('FilePreview integration', () => {
 			modifiedAt: new Date(2000).toISOString(),
 		});
 		renderPreview({ lastModified: 1000, onReloadFile: unsavedReload }, { initialEditMode: true });
-		fireEvent.change(screen.getByRole('textbox'), {
-			target: { value: '# Unsaved before reload' },
-		});
+		setEditorContent('# Unsaved before reload');
 
 		await act(async () => {
 			vi.advanceTimersByTime(3000);
@@ -485,7 +502,7 @@ describe('FilePreview integration', () => {
 		});
 		expect(
 			screen.getByText(
-				'File changed on disk. You have unsaved edits — reloading will discard them.'
+				'File changed on disk. You have unsaved edits - reloading will discard them.'
 			)
 		).toBeInTheDocument();
 	});
@@ -500,13 +517,13 @@ describe('FilePreview integration', () => {
 		const { container } = renderPreview({ file });
 
 		expect(screen.getByAltText('diagram.png')).toHaveAttribute('src', file.content);
-		fireEvent.click(screen.getByTitle(/Copy image to clipboard/));
+		fireEvent.click(screen.getByRole('button', { name: 'Copy image to clipboard' }));
 
-		await waitFor(() => expect(safeClipboardWriteBlob).toHaveBeenCalledOnce());
-		expect(screen.getByText('Image Copied to Clipboard')).toBeInTheDocument();
-		vi.mocked(safeClipboardWriteBlob).mockClear();
+		await waitFor(() => expect(safeClipboardWriteImage).toHaveBeenCalledWith(file.content));
+		expect(useCenterFlashStore.getState().active?.message).toBe('Image Copied');
+		vi.mocked(safeClipboardWriteImage).mockClear();
 		fireEvent.keyDown(container.firstElementChild!, { key: 'c', ctrlKey: true });
-		await waitFor(() => expect(safeClipboardWriteBlob).toHaveBeenCalledOnce());
+		await waitFor(() => expect(safeClipboardWriteImage).toHaveBeenCalledWith(file.content));
 	});
 
 	it('reports clipboard fallback failures for paths, text, and image data', async () => {
@@ -519,16 +536,16 @@ describe('FilePreview integration', () => {
 
 		renderPreview({ file: textFile });
 
-		fireEvent.click(screen.getByTitle('Copy full path to clipboard'));
+		fireEvent.click(screen.getByRole('button', { name: 'Copy full path to clipboard' }));
 		await waitFor(() => expect(safeClipboardWrite).toHaveBeenCalledWith(textFile.path));
-		expect(screen.getByText('Failed to Copy Path')).toBeInTheDocument();
+		expect(useNotificationStore.getState().toasts.at(-1)?.title).toBe('Failed to Copy Path');
 
-		fireEvent.click(screen.getByTitle('Copy content to clipboard'));
+		fireEvent.click(screen.getByRole('button', { name: 'Copy content to clipboard' }));
 		await waitFor(() => expect(safeClipboardWrite).toHaveBeenCalledWith(textFile.content));
-		expect(screen.getByText('Failed to Copy Content')).toBeInTheDocument();
+		expect(useNotificationStore.getState().toasts.at(-1)?.title).toBe('Failed to Copy Content');
 		cleanup();
 
-		vi.mocked(safeClipboardWriteBlob).mockResolvedValue(false);
+		vi.mocked(safeClipboardWriteImage).mockResolvedValue(false);
 		vi.mocked(safeClipboardWrite).mockResolvedValue(false);
 		const imageFile = {
 			name: 'chart.png',
@@ -537,18 +554,17 @@ describe('FilePreview integration', () => {
 		};
 
 		renderPreview({ file: imageFile });
-		fireEvent.click(screen.getByTitle(/Copy image to clipboard/));
-		await waitFor(() => expect(safeClipboardWriteBlob).toHaveBeenCalledOnce());
-		expect(safeClipboardWrite).toHaveBeenCalledWith(imageFile.content);
-		expect(screen.getByText('Failed to Copy Image')).toBeInTheDocument();
+		fireEvent.click(screen.getByRole('button', { name: 'Copy image to clipboard' }));
+		await waitFor(() => expect(safeClipboardWriteImage).toHaveBeenCalledWith(imageFile.content));
+		expect(useNotificationStore.getState().toasts.at(-1)?.title).toBe('Failed to Copy Image');
 		cleanup();
 
-		vi.mocked(safeClipboardWrite).mockResolvedValue(false);
+		vi.mocked(safeClipboardWriteImage).mockResolvedValue(false);
 		vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('fetch failed'));
 		renderPreview({ file: imageFile });
-		fireEvent.click(screen.getByTitle(/Copy image to clipboard/));
-		await waitFor(() => expect(safeClipboardWrite).toHaveBeenCalledWith(imageFile.content));
-		expect(screen.getByText('Failed to Copy Image')).toBeInTheDocument();
+		fireEvent.click(screen.getByRole('button', { name: 'Copy image to clipboard' }));
+		await waitFor(() => expect(safeClipboardWriteImage).toHaveBeenCalledWith(imageFile.content));
+		expect(useNotificationStore.getState().toasts.at(-1)?.title).toBe('Failed to Copy Image');
 	});
 
 	it('shows binary fallback UI and delegates opening to the shell bridge', async () => {
@@ -560,7 +576,7 @@ describe('FilePreview integration', () => {
 
 		renderPreview({ file });
 
-		await waitFor(() => expect(screen.getByText('2 KB')).toBeInTheDocument());
+		await waitFor(() => expect(screen.getByText('2.0 KB')).toBeInTheDocument());
 		expect(screen.getByText('Binary File')).toBeInTheDocument();
 		expect(screen.getByText('This file cannot be displayed as text.')).toBeInTheDocument();
 		fireEvent.click(screen.getByText('Open in Default App'));
@@ -634,7 +650,7 @@ describe('FilePreview integration', () => {
 		Object.defineProperty(scroller, 'scrollHeight', { value: 100, configurable: true });
 		Object.defineProperty(scroller, 'clientHeight', { value: 100, configurable: true });
 		Object.defineProperty(scroller, 'scrollTop', { value: 0, writable: true, configurable: true });
-		fireEvent.click(screen.getByTitle(/Edit file/));
+		fireEvent.click(screen.getByRole('button', { name: 'Edit file' }));
 		expect(await screen.findByRole('textbox')).toHaveFocus();
 		rafSpy.mockRestore();
 	});
@@ -696,9 +712,6 @@ describe('FilePreview integration', () => {
 			)
 		).toBe(true);
 		expect(screen.getByTestId('mermaid-renderer')).toHaveTextContent('graph TD; A-->B;');
-
-		fireEvent.click(screen.getByTitle('Enable Bionify for this preview'));
-		expect(screen.getByTitle('Disable Bionify for this preview')).toBeInTheDocument();
 
 		fireEvent.click(screen.getByTitle('Table of Contents'));
 		expect(screen.getByText('Contents')).toBeInTheDocument();
@@ -890,7 +903,7 @@ describe('FilePreview integration', () => {
 		}
 	});
 
-	it('truncates very large source files and can opt into the full content', async () => {
+	it('uses the fast tier for very large source files and can force rich full content', async () => {
 		const largeContent = `${'const value = 1;\n'.repeat(7000)}const sentinel = true;`;
 		const file = {
 			name: 'large.ts',
@@ -900,7 +913,14 @@ describe('FilePreview integration', () => {
 
 		renderPreview({ file });
 
-		await waitFor(() => expect(screen.getByText('2 KB')).toBeInTheDocument());
+		await waitFor(() => expect(screen.getByText('2.0 KB')).toBeInTheDocument());
+		const tierButton = await screen.findByRole('button', { name: 'Auto · Fast preview' });
+		expect(screen.queryByText(/Large file preview truncated/)).not.toBeInTheDocument();
+		fireEvent.click(tierButton);
+		fireEvent.click(screen.getByRole('menuitem', { name: /Rich/ }));
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: 'Forced Rich preview' })).toBeInTheDocument()
+		);
 		expect(screen.getByText(/Large file preview truncated/)).toBeInTheDocument();
 		expect(screen.queryByText(/sentinel/)).not.toBeInTheDocument();
 		fireEvent.click(screen.getByRole('button', { name: 'Load full file' }));
@@ -1013,11 +1033,14 @@ describe('FilePreview integration', () => {
 		expect(
 			screen.getByText((_content, node) => node?.textContent === '2 of 3 rows match × 2 columns')
 		).toBeInTheDocument();
-		await waitFor(() => expect(screen.getByText('1/2')).toBeInTheDocument());
 		fireEvent.change(screen.getByPlaceholderText(/Search in file/), {
 			target: { value: 'nomatch' },
 		});
-		await waitFor(() => expect(screen.getByText('No matches')).toBeInTheDocument());
+		await waitFor(() =>
+			expect(
+				screen.getByText((_content, node) => node?.textContent === '0 of 3 rows match × 2 columns')
+			).toBeInTheDocument()
+		);
 		act(() => previewRef.current?.focus());
 		expect(document.activeElement).toBe(container.firstElementChild);
 
@@ -1044,7 +1067,6 @@ describe('FilePreview integration', () => {
 	});
 
 	it('handles save failures and confirms discarding overlay edits', async () => {
-		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 		const onClose = vi.fn();
 		const onSave = vi.fn().mockRejectedValue(new Error('disk full'));
 		const file = {
@@ -1058,26 +1080,22 @@ describe('FilePreview integration', () => {
 			{ initialEditMode: true }
 		);
 
-		fireEvent.change(screen.getByRole('textbox'), {
-			target: { value: '# Notes\n\nChanged' },
-		});
-		fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+		setEditorContent('# Notes\n\nChanged');
+		fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
 
 		await waitFor(() =>
 			expect(onSave).toHaveBeenCalledWith('/repo/docs/notes.md', '# Notes\n\nChanged')
 		);
-		expect(consoleError).toHaveBeenCalledWith('Failed to save file:', expect.any(Error));
-		expect(await screen.findByText('Save Failed')).toBeInTheDocument();
+		expect(useNotificationStore.getState().toasts.at(-1)?.title).toBe('Save Failed');
 
 		fireEvent.keyDown(container.firstElementChild!, { key: 'Escape' });
 		expect(screen.getByText('Unsaved Changes')).toBeInTheDocument();
 		fireEvent.click(screen.getByRole('button', { name: 'Yes, Discard' }));
 		expect(onClose).toHaveBeenCalledOnce();
-		consoleError.mockRestore();
 	});
 
-	it('falls back to copying image data when clipboard blob writes fail', async () => {
-		vi.mocked(safeClipboardWriteBlob).mockResolvedValue(false);
+	it('reports image copy failure when the image clipboard write fails', async () => {
+		vi.mocked(safeClipboardWriteImage).mockResolvedValue(false);
 		const file = {
 			name: 'chart.png',
 			path: '/repo/docs/chart.png',
@@ -1088,13 +1106,11 @@ describe('FilePreview integration', () => {
 
 		fireEvent.keyDown(container.firstElementChild!, { key: 'c', metaKey: true });
 
-		await waitFor(() => expect(safeClipboardWriteBlob).toHaveBeenCalledOnce());
-		expect(safeClipboardWrite).toHaveBeenCalledWith(file.content);
-		expect(screen.getByText('Image URL Copied to Clipboard')).toBeInTheDocument();
+		await waitFor(() => expect(safeClipboardWriteImage).toHaveBeenCalledWith(file.content));
+		expect(useNotificationStore.getState().toasts.at(-1)?.title).toBe('Failed to Copy Image');
 	});
 
 	it('keeps readable text usable when file metadata and token counting fail', async () => {
-		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 		vi.mocked(window.maestro.fs.stat).mockRejectedValue(new Error('stat failed'));
 		vi.mocked(getEncoder).mockRejectedValue(new Error('encoder failed'));
 		const file = {
@@ -1107,13 +1123,10 @@ describe('FilePreview integration', () => {
 
 		expect(screen.getByText(/Readable project notes/)).toBeInTheDocument();
 		await waitFor(() =>
-			expect(consoleError).toHaveBeenCalledWith('Failed to get file stats:', expect.any(Error))
+			expect(window.maestro.fs.stat).toHaveBeenCalledWith('/repo/README', undefined)
 		);
-		await waitFor(() =>
-			expect(consoleError).toHaveBeenCalledWith('Failed to count tokens:', expect.any(Error))
-		);
+		await waitFor(() => expect(getEncoder).toHaveBeenCalled());
 		expect(screen.queryByText(/Size:/)).not.toBeInTheDocument();
-		consoleError.mockRestore();
 	});
 
 	it('resolves cached data-url and file-tree markdown images through renderer filesystem boundaries', async () => {
@@ -1201,10 +1214,10 @@ describe('FilePreview integration', () => {
 
 		renderPreview({ file });
 
-		fireEvent.click(screen.getByTitle(/Copy image to clipboard/));
+		fireEvent.click(screen.getByRole('button', { name: 'Copy image to clipboard' }));
 
-		await waitFor(() => expect(safeClipboardWrite).toHaveBeenCalledWith(file.content));
-		expect(screen.getByText('Image URL Copied to Clipboard')).toBeInTheDocument();
+		await waitFor(() => expect(safeClipboardWriteImage).toHaveBeenCalledWith(file.content));
+		expect(useCenterFlashStore.getState().active?.message).toBe('Image Copied');
 	});
 
 	it('handles no-match search, empty CSS highlights, and Escape cleanup paths', async () => {
@@ -1350,16 +1363,16 @@ describe('FilePreview integration', () => {
 		Object.defineProperty(scroller, 'clientHeight', { value: 100, configurable: true });
 		Object.defineProperty(scroller, 'scrollTop', { value: 80, writable: true, configurable: true });
 
-		fireEvent.click(screen.getByTitle(/Edit file/));
-		const textarea = await screen.findByRole('textbox');
+		fireEvent.click(screen.getByRole('button', { name: 'Edit file' }));
+		await screen.findByRole('textbox');
 		fireEvent.keyDown(root, { key: 's', metaKey: true });
 		expect(onSave).not.toHaveBeenCalled();
-		fireEvent.change(textarea, { target: { value: `${file.content}\nzeta` } });
+		setEditorContent(`${file.content}\nzeta`);
 		fireEvent.keyDown(root, { key: 's', metaKey: true });
 		await waitFor(() =>
 			expect(onSave).toHaveBeenCalledWith('/repo/docs/keyboard.txt', `${file.content}\nzeta`)
 		);
-		fireEvent.change(textarea, { target: { value: `${file.content}\neta` } });
+		setEditorContent(`${file.content}\neta`);
 		fireEvent.keyDown(root, { key: 's', ctrlKey: true });
 		await waitFor(() =>
 			expect(onSave).toHaveBeenCalledWith('/repo/docs/keyboard.txt', `${file.content}\neta`)
@@ -1410,8 +1423,8 @@ describe('FilePreview integration', () => {
 			{ initialEditMode: true, uncontrolledEdit: true }
 		);
 		await flushPendingPromises();
-		expect(screen.getByRole('textbox')).toHaveValue(file.content);
-		expect(screen.getByTitle('View file ()')).toBeInTheDocument();
+		expect(getEditorView().state.doc.toString()).toBe(file.content);
+		expect(screen.getByRole('button', { name: 'View file' })).toBeInTheDocument();
 
 		cleanup();
 		const markdownFile = {
@@ -1487,13 +1500,13 @@ describe('FilePreview integration', () => {
 			file: { name: 'copy.txt', path: '/repo/copy.txt', content: 'copy me' },
 		});
 		await flushPendingPromises();
-		fireEvent.click(screen.getByTitle('Copy content to clipboard'));
+		fireEvent.click(screen.getByRole('button', { name: 'Copy content to clipboard' }));
 		await act(async () => {
 			await Promise.resolve();
 		});
-		expect(screen.getByText('Content Copied to Clipboard')).toBeInTheDocument();
+		expect(useCenterFlashStore.getState().active?.message).toBe('Content Copied');
 		act(() => vi.advanceTimersByTime(2000));
-		expect(screen.queryByText('Content Copied to Clipboard')).not.toBeInTheDocument();
+		expect(useCenterFlashStore.getState().active).toBeNull();
 		cleanup();
 		vi.useRealTimers();
 
@@ -1521,7 +1534,7 @@ describe('FilePreview integration', () => {
 			{ initialEditMode: true }
 		);
 		await flushPendingPromises();
-		fireEvent.change(screen.getByRole('textbox'), { target: { value: '# Changed' } });
+		setEditorContent('# Changed');
 		fireEvent.keyDown(overlay.container.firstElementChild!, { key: 'Escape' });
 		expect(screen.getByText('Unsaved Changes')).toBeInTheDocument();
 		fireEvent.click(screen.getByRole('button', { name: 'No, Stay' }));

@@ -18,7 +18,7 @@
  * - Haptic feedback triggers
  */
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 // Import from constants directly to avoid circular dependency with mobile/index.tsx
 import { GESTURE_THRESHOLDS } from '../mobile/constants';
 
@@ -159,6 +159,7 @@ export function useSwipeGestures(options: UseSwipeGesturesOptions = {}): UseSwip
 	const touchStartTime = useRef<number>(0);
 	const isTracking = useRef<boolean>(false);
 	const lockedDirection = useRef<'horizontal' | 'vertical' | null>(null);
+	const resetTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 	// Visual feedback state
 	const [offsetX, setOffsetX] = useState(0);
@@ -166,16 +167,26 @@ export function useSwipeGestures(options: UseSwipeGesturesOptions = {}): UseSwip
 	const [isSwiping, setIsSwiping] = useState(false);
 	const [swipeDirection, setSwipeDirection] = useState<SwipeDirection>(null);
 
+	const clearResetTimeout = useCallback(() => {
+		if (resetTimeout.current) {
+			clearTimeout(resetTimeout.current);
+			resetTimeout.current = null;
+		}
+	}, []);
+
 	/**
 	 * Reset offset state
 	 */
 	const resetOffset = useCallback(() => {
+		clearResetTimeout();
 		setOffsetX(0);
 		setOffsetY(0);
 		setIsSwiping(false);
 		setSwipeDirection(null);
 		lockedDirection.current = null;
-	}, []);
+	}, [clearResetTimeout]);
+
+	useEffect(() => () => clearResetTimeout(), [clearResetTimeout]);
 
 	/**
 	 * Apply resistance to offset (diminishing returns as you drag further)
@@ -197,6 +208,7 @@ export function useSwipeGestures(options: UseSwipeGesturesOptions = {}): UseSwip
 	const handleTouchStart = useCallback(
 		(e: React.TouchEvent) => {
 			if (!enabled) return;
+			clearResetTimeout();
 
 			const touch = e.touches[0];
 			touchStartX.current = touch.clientX;
@@ -207,7 +219,7 @@ export function useSwipeGestures(options: UseSwipeGesturesOptions = {}): UseSwip
 			setIsSwiping(true);
 			setSwipeDirection(null);
 		},
-		[enabled]
+		[clearResetTimeout, enabled]
 	);
 
 	/**
@@ -350,7 +362,9 @@ export function useSwipeGestures(options: UseSwipeGesturesOptions = {}): UseSwip
 				setOffsetY(0);
 			} else {
 				// Auto-reset after a short delay if no action taken
-				setTimeout(() => {
+				clearResetTimeout();
+				resetTimeout.current = setTimeout(() => {
+					resetTimeout.current = null;
 					setOffsetX(0);
 					setOffsetY(0);
 				}, 50);
@@ -368,6 +382,7 @@ export function useSwipeGestures(options: UseSwipeGesturesOptions = {}): UseSwip
 			onSwipeUp,
 			onSwipeDown,
 			trackOffset,
+			clearResetTimeout,
 			resetOffset,
 		]
 	);

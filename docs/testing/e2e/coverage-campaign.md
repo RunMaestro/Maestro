@@ -10,8 +10,8 @@ Measured inventory:
 
 | Area                                    |               Current Count |
 | --------------------------------------- | --------------------------: |
-| E2E spec files                          |                          15 |
-| Direct static `test(...)` calls         |                       2,373 |
+| E2E spec files                          |                          16 |
+| Direct static `test(...)` calls         |                       2,375 |
 | Static `test.skip(...)` calls           |                           0 |
 | Static `test.fixme(...)` calls          |                           0 |
 | Static `test.only(...)` calls           |                           0 |
@@ -40,8 +40,10 @@ Latest pre-sync verification:
 
 Latest upstream-sync revalidation checkpoint:
 
-- Unit execution is currently test-clean with 1,246 files and 33,368 tests passed, but enforced coverage still fails the 100% global thresholds at 80.88% statements, 73.56% branches, 80.14% functions, and 82.15% lines. Log: `/tmp/maestro-phase7-coverage-after-filepreview-scrollbranches-20260618223648.log`.
-- Latest focused FilePreview checkpoint passes 137 tests and raises focused `FilePreview.tsx` coverage to 96.73% statements, 88.54% branches, 100% functions, and 98.45% lines. Logs: `/tmp/maestro-filepreview-focused-scrollbranches2-20260618223444.log`, `/tmp/maestro-filepreview-coverage-scrollbranches-20260618223454.log`.
+- Unit execution is currently test-clean with 1,247 files and 33,609 tests passed, but enforced coverage still fails the 100% global thresholds at 81.88% statements, 74.67% branches, 80.69% functions, and 83.19% lines. Logs: `/tmp/maestro-unit-full-202606192335.log` and `/tmp/maestro-unit-coverage-202606192341.log`.
+- Deterministic integration excluding the live provider probe is green with 534 files and 12,509 tests passed. Log: `/tmp/maestro-integration-no-provider-202606192327.log`.
+- Live provider integration remains blocked by the first Claude Code live call in `provider-integration.test.ts`. Log: `/tmp/maestro-provider-integration-20260619225928.log`.
+- Current E2E static inventory is 16 spec files, 2,375 active direct declarations, and 0 static skip/fixme/only declarations. No Maestro E2E PM2 jobs are currently listed.
 
 The pre-sync E2E suite reached the canonical 3,025 / 3,025 authored active scenario matrix and the final Phase 6 Playwright/Electron runtime proof was green. The 3,025 matrix count is not one-to-one with the 2,970 runtime Playwright tests because matrix scenario atoms can be covered by a smaller number of runtime tests, and some direct source declarations expand into multiple runtime tests. Current upstream-sync finality remains blocked until unit coverage, full integration, and full E2E are rerun green on the current tree.
 

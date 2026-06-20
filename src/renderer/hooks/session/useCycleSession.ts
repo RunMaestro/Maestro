@@ -1,5 +1,5 @@
 /**
- * useCycleSession — extracted from App.tsx
+ * useCycleSession - extracted from App.tsx
  *
  * Provides session cycling functionality (Cmd+Shift+[/]):
  *   - Cycles through sessions and group chats in visual sidebar order
@@ -59,8 +59,13 @@ export interface UseCycleSessionReturn {
 // ============================================================================
 
 export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionReturn {
-	const { sortedSessions, handleOpenGroupChat, starredItems, activateStarredItem, navIndexMap } =
-		deps;
+	const {
+		sortedSessions,
+		handleOpenGroupChat,
+		starredItems = [],
+		activateStarredItem = () => undefined,
+		navIndexMap = new Map(),
+	} = deps;
 
 	// --- Reactive subscriptions ---
 	const sessions = useSessionStore((s) => s.sessions);

@@ -82,6 +82,17 @@ function splitVersionParts(version: string): [string, string | undefined] {
 }
 
 /**
+ * Parse a version string into numeric parts.
+ *
+ * Strips a leading "v" and ignores any pre-release suffix.
+ */
+export function parseVersion(version: string): number[] {
+	const clean = version.replace(/^v/, '');
+	const [numericPart] = splitVersionParts(clean);
+	return numericPart.split('.').map((n) => parseInt(n, 10) || 0);
+}
+
+/**
  * Compare two version strings following semver pre-release rules.
  *
  * Returns: 1 if a > b, -1 if a < b, 0 if equal.
@@ -119,8 +130,8 @@ export function compareVersions(a: string, b: string): number {
 	const [numA, preA] = splitVersionParts(cleanA);
 	const [numB, preB] = splitVersionParts(cleanB);
 
-	const partsA = numA.split('.').map((n) => parseInt(n, 10) || 0);
-	const partsB = numB.split('.').map((n) => parseInt(n, 10) || 0);
+	const partsA = parseVersion(numA);
+	const partsB = parseVersion(numB);
 
 	const maxLength = Math.max(partsA.length, partsB.length);
 
@@ -132,13 +143,13 @@ export function compareVersions(a: string, b: string): number {
 		if (na < nb) return -1;
 	}
 
-	// Numeric parts are equal — apply semver pre-release rules:
+	// Numeric parts are equal - apply semver pre-release rules:
 	// A version without a pre-release suffix has higher precedence
 	if (!preA && preB) return 1; // 0.15.0 > 0.15.0-rc.1
 	if (preA && !preB) return -1; // 0.15.0-rc.1 < 0.15.0
 	if (!preA && !preB) return 0; // both stable, equal
 
-	// Both have pre-release suffixes — compare lexically
+	// Both have pre-release suffixes - compare lexically
 	if (preA! < preB!) return -1;
 	if (preA! > preB!) return 1;
 	return 0;

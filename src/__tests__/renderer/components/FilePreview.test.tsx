@@ -892,7 +892,7 @@ describe('FilePreview', () => {
 
 			const callsAfterMount = mockStat.mock.calls.length;
 
-			// Advance timers past multiple poll intervals — no additional calls should happen
+			// Advance timers past multiple poll intervals - no additional calls should happen
 			await act(async () => {
 				vi.advanceTimersByTime(6000);
 			});
@@ -1484,7 +1484,7 @@ describe('FilePreview', () => {
 	// `edit mode keyboard navigation` tests were removed when FilePreview's edit
 	// surface was swapped from a raw <textarea> to CodeMirror. Cmd+Up/Down and
 	// Cmd+Shift+Up/Down are now provided by CodeMirror's `defaultKeymap`
-	// (cursorDocStart / cursorDocEnd / selectDocStart / selectDocEnd) — there's
+	// (cursorDocStart / cursorDocEnd / selectDocStart / selectDocEnd) - there's
 	// no FilePreview-level handler to test, so the old tests would have only
 	// exercised our mock.
 
@@ -3363,7 +3363,8 @@ print("world")
 				/>
 			);
 
-			fireEvent.click(screen.getByRole('button', { name: 'Open in Default App' }));
+			const openButtons = screen.getAllByRole('button', { name: 'Open in Default App' });
+			fireEvent.click(openButtons[openButtons.length - 1]);
 
 			expect(window.maestro.shell.openPath).toHaveBeenCalledWith('/test/archive.zip');
 		});

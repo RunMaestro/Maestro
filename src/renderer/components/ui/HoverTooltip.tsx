@@ -10,7 +10,15 @@
  * and clipped by ancestors with `overflow:hidden`.
  */
 
-import { useState, useRef, useLayoutEffect, type ReactNode } from 'react';
+import {
+	cloneElement,
+	isValidElement,
+	useState,
+	useRef,
+	useLayoutEffect,
+	type ReactElement,
+	type ReactNode,
+} from 'react';
 import { createPortal } from 'react-dom';
 import type { Theme } from '../../types';
 
@@ -48,6 +56,12 @@ export function HoverTooltip({
 	const tooltipRef = useRef<HTMLDivElement>(null);
 	const [open, setOpen] = useState(false);
 	const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+	const labelledChild =
+		typeof label === 'string' && isValidElement(children)
+			? cloneElement(children as ReactElement<Record<string, unknown>>, {
+					'aria-label': children.props['aria-label'] ?? label,
+				})
+			: children;
 
 	useLayoutEffect(() => {
 		if (!open || !triggerRef.current || !tooltipRef.current) {
@@ -106,7 +120,7 @@ export function HoverTooltip({
 				onMouseEnter={() => setOpen(true)}
 				onMouseLeave={() => setOpen(false)}
 			>
-				{children}
+				{labelledChild}
 			</span>
 			{open &&
 				portalTarget &&

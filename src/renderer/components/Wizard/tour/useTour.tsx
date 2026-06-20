@@ -119,7 +119,7 @@ interface UseTourReturn {
  * Calculate element position for spotlight
  * Supports multiple selectors separated by commas - combines their bounding boxes
  */
-function getElementRect(selector: string | null): DOMRect | null {
+export function getElementRect(selector: string | null): DOMRect | null {
 	if (!selector) return null;
 
 	// Support multiple selectors separated by commas

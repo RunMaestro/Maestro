@@ -20,7 +20,7 @@ import { logger } from '../utils/logger';
 // ============================================================================
 
 /**
- * Five canonical Toast colors — same design language as Center Flash.
+ * Five canonical Toast colors - same design language as Center Flash.
  * `theme` adapts to the active Maestro theme.
  *
  *   green  - succeeded
@@ -78,7 +78,7 @@ export interface Toast {
 	 */
 	duration?: number;
 	/**
-	 * Sticky toast — no auto-dismiss timer, requires the user to click the
+	 * Sticky toast - no auto-dismiss timer, requires the user to click the
 	 * close button (or the toast itself, if it has session navigation) to
 	 * dismiss. Use for critical messages the user must see.
 	 */
@@ -95,10 +95,10 @@ export interface Toast {
 	actionLabel?: string; // Label for the action link (defaults to URL)
 	// Skip custom notification command for this toast (used for synopsis messages)
 	skipCustomNotification?: boolean;
-	// Generic click handler — if set, clicking the toast invokes this callback.
-	// Renderer-only — not serializable across the CLI/web bridge.
+	// Generic click handler - if set, clicking the toast invokes this callback.
+	// Renderer-only - not serializable across the CLI/web bridge.
 	onClick?: () => void;
-	// Data-driven click intent — preferred for externally-fired toasts since it
+	// Data-driven click intent - preferred for externally-fired toasts since it
 	// crosses the IPC boundary. If both `onClick` and `clickAction` are set,
 	// `onClick` wins (it can do anything; `clickAction` is the limited subset
 	// that survives serialization).
@@ -131,7 +131,7 @@ export interface NotificationStoreState {
 }
 
 export interface NotificationStoreActions {
-	/** Push a fully-formed toast to the visible queue. Internal — callers should use notifyToast(). */
+	/** Push a fully-formed toast to the visible queue. Internal - callers should use notifyToast(). */
 	addToast: (toast: Toast) => void;
 	/** Remove a toast by ID. */
 	removeToast: (id: string) => void;
@@ -212,10 +212,14 @@ export const useNotificationStore = create<NotificationStore>()((set) => ({
 }));
 
 // ============================================================================
-// notifyToast — public API for firing toasts (handles side effects)
+// notifyToast - public API for firing toasts (handles side effects)
 // ============================================================================
 
 let toastIdCounter = 0;
+
+export function resetToastIdCounter(): void {
+	toastIdCounter = 0;
+}
 
 /** Active auto-dismiss timers keyed by toast ID. Cleared on manual removal. */
 const autoDismissTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -254,7 +258,7 @@ export function notifyToast(toast: NotifyToastInput): string {
 	const toastsDisabled = config.defaultDuration === -1;
 
 	const color = resolveToastColor(toast);
-	// Legacy `type` field — derive from color for callers that still read it.
+	// Legacy `type` field - derive from color for callers that still read it.
 	const legacyType: ToastType =
 		toast.type ??
 		(color === 'green'
@@ -265,7 +269,7 @@ export function notifyToast(toast: NotifyToastInput): string {
 					? 'error'
 					: 'info');
 
-	// Dismissible toasts have no auto-dismiss — duration is forced to 0.
+	// Dismissible toasts have no auto-dismiss - duration is forced to 0.
 	// Otherwise: explicit duration wins, then config default, then 0.
 	const durationMs = toast.dismissible
 		? 0

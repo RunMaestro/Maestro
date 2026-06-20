@@ -71,7 +71,9 @@ describe('SshRemoteIgnoreSection', () => {
 			onIgnorePatternsChange,
 		});
 
-		fireEvent.click(screen.getByRole('button', { name: 'Reset to defaults (.git, *cache*)' }));
+		fireEvent.click(
+			screen.getByRole('button', { name: 'Reset Remote Ignore Patterns to defaults' })
+		);
 
 		expect(onIgnorePatternsChange).toHaveBeenCalledWith(['.git', '*cache*']);
 		expect(onHonorGitignoreChange).toHaveBeenCalledWith(true);

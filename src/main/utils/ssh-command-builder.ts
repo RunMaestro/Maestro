@@ -209,7 +209,8 @@ const DEFAULT_SSH_OPTIONS: Record<string, string> = {
  * // => "cd '/home/user/project' && ANTHROPIC_API_KEY='sk-...' 'claude' '--print' '--verbose'"
  */
 export function buildRemoteCommand(options: RemoteCommandOptions): string {
-	const { command, args, cwd, env } = options;
+	const { command, cwd, env } = options;
+	const args = options.args || [];
 
 	const parts: string[] = [];
 
@@ -262,6 +263,14 @@ export function buildRemoteCommand(options: RemoteCommandOptions): string {
 
 	// Join with && to ensure cd succeeds before running command
 	return parts.join(' && ');
+}
+
+export function getRemoteImageExtension(mediaType: string): string {
+	return mediaType.split('/')[1] || 'png';
+}
+
+export function buildSshScriptPreview(script: string): string {
+	return script.length > 500 ? script.substring(0, 500) + '...' : script;
 }
 
 /**
@@ -395,7 +404,7 @@ export async function buildSshCommandWithStdin(
 		for (let i = 0; i < remoteOptions.images.length; i++) {
 			const parsed = parseDataUrl(remoteOptions.images[i]);
 			if (!parsed) continue;
-			const ext = parsed.mediaType.split('/')[1] || 'png';
+			const ext = getRemoteImageExtension(parsed.mediaType);
 			const remoteTempPath = `/tmp/maestro-image-${timestamp}-${i}.${ext}`;
 			allRemoteTempPaths.push(remoteTempPath);
 			// Use heredoc + base64 decode to create the file on the remote host
@@ -490,8 +499,7 @@ export async function buildSshCommandWithStdin(
 		stdinLength: stdinScript.length,
 		hasStdinInput,
 		stdinInputLength: remoteOptions.stdinInput?.length,
-		// Show first part of script for debugging (truncate if long)
-		scriptPreview: stdinScript.length > 500 ? stdinScript.substring(0, 500) + '...' : stdinScript,
+		scriptPreview: buildSshScriptPreview(stdinScript),
 	});
 
 	return {
@@ -697,6 +705,6 @@ export async function buildSshCommand(
 		args,
 		// Bare agent invocation (command + args) for display in Process Details,
 		// without the cd/env prefix or the bash PATH bootstrap wrapper.
-		remoteCommandLine: buildShellCommand(remoteOptions.command, remoteOptions.args),
+		remoteCommandLine: buildShellCommand(remoteOptions.command, remoteOptions.args || []),
 	};
 }

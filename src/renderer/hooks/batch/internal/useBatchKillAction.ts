@@ -44,7 +44,7 @@ export interface UseBatchKillActionReturn {
  *    `COMPLETE_BATCH`, broadcast null to web clients, then `stopTracking`
  *    and `power.removeReason`.
  *
- * `stopRequestedRefs[sessionId]` is intentionally NOT deleted here — the
+ * `stopRequestedRefs[sessionId]` is intentionally NOT deleted here - the
  * async loop is mid-iteration and re-checks this flag at boundaries.
  * Deleting it before the loop observes it would let the loop spawn a fresh
  * agent for the next task and the kill would effectively do nothing.
@@ -64,7 +64,7 @@ export function useBatchKillAction({
 	const killBatchRun = useCallback(
 		async (sessionId: string) => {
 			// console.assert is a no-op in production builds and silently continues
-			// on failure — use logger.warn so the precondition violation reaches
+			// on failure - use logger.warn so the precondition violation reaches
 			// the same telemetry pipeline as the rest of this file.
 			if (sessionId.includes('-batch-')) {
 				logger.warn(
@@ -77,7 +77,7 @@ export function useBatchKillAction({
 			// Set the stop flag synchronously, before any await. The processing loop
 			// checks this flag at iteration boundaries; setting it early gives the loop
 			// the earliest possible chance to exit during the awaits below (stats,
-			// history, process enumeration). Intentionally NOT deleted later — see
+			// history, process enumeration). Intentionally NOT deleted later - see
 			// the comment on the trailing power.removeReason call.
 			stopRequestedRefs.current[sessionId] = true;
 
@@ -176,7 +176,18 @@ export function useBatchKillAction({
 					batchProcessIds.push(sessionId);
 				}
 
-				await Promise.allSettled(batchProcessIds.map((id) => window.maestro.process.kill(id)));
+				const killResults = await Promise.allSettled(
+					batchProcessIds.map((id) => window.maestro.process.kill(id))
+				);
+				for (const killResult of killResults) {
+					if (killResult.status === 'rejected') {
+						logger.error(
+							'[BatchProcessor:killBatchRun] Failed to kill process:',
+							undefined,
+							killResult.reason
+						);
+					}
+				}
 			} catch (error) {
 				logger.error('[BatchProcessor:killBatchRun] Failed to kill process:', undefined, error);
 			}

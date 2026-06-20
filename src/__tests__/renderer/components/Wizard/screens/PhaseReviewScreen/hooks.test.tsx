@@ -147,7 +147,7 @@ describe('PhaseReviewScreen hooks', () => {
 		);
 
 		await act(async () => {
-			await expect(launch.current.handleLaunch(false)).rejects.toThrow('no launch');
+			await launch.current.handleLaunch(false);
 		});
 		expect(launch.current.launchError).toBe('no launch');
 		expect(sentryMocks.captureException).toHaveBeenCalledWith(

@@ -54,7 +54,6 @@ export function ConversationScreen({
 	);
 	const [initialQuestion] = useState(() => getInitialQuestion());
 	const [errorRetryCount, setErrorRetryCount] = useState(0);
-	const [autoSentInitialMessage, setAutoSentInitialMessage] = useState(false);
 	const [streamingText, setStreamingText] = useState('');
 	const [fillerPhrase, setFillerPhrase] = useState('');
 	const [detectedError, setDetectedError] = useState<WizardError | null>(null);
@@ -66,6 +65,7 @@ export function ConversationScreen({
 	const inputRef = useRef<HTMLTextAreaElement>(null);
 	const isSendingRef = useRef(false);
 	const autoContinueTriggeredRef = useRef(false);
+	const autoSentInitialMessageRef = useRef(false);
 	const initialQuestionAddedRef = useRef(false);
 	const showThinkingRef = useRef(showThinking);
 	const handleSendMessageRef = useRef<(() => void) | null>(null);
@@ -152,10 +152,10 @@ export function ConversationScreen({
 		if (
 			conversationStarted &&
 			state.existingDocsChoice === 'continue' &&
-			!autoSentInitialMessage &&
+			!autoSentInitialMessageRef.current &&
 			state.conversationHistory.length === 0
 		) {
-			setAutoSentInitialMessage(true);
+			autoSentInitialMessageRef.current = true;
 			const timer = setTimeout(() => {
 				sendInitialContinueMessage();
 			}, 100);
@@ -164,7 +164,6 @@ export function ConversationScreen({
 	}, [
 		conversationStarted,
 		state.existingDocsChoice,
-		autoSentInitialMessage,
 		state.conversationHistory.length,
 		sendInitialContinueMessage,
 	]);

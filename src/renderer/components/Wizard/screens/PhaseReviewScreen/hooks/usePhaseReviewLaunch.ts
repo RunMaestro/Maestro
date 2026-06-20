@@ -69,7 +69,7 @@ export function usePhaseReviewLaunch({
 							filename: currentDoc?.filename,
 						},
 					});
-					throw err;
+					return;
 				}
 
 				captureMessage('Phase review launch failed with a non-Error value', {
@@ -81,7 +81,6 @@ export function usePhaseReviewLaunch({
 						error: String(err),
 					},
 				});
-				throw new Error(errorMessage);
 			}
 		},
 		[

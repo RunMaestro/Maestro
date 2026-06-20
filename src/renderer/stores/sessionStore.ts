@@ -75,7 +75,7 @@ export interface SessionStoreActions {
 
 	/**
 	 * Set the active session ID from persisted state on startup.
-	 * Updates local state only — does not write back to disk.
+	 * Updates local state only - does not write back to disk.
 	 */
 	hydrateActiveSessionId: (id: string) => void;
 
@@ -214,7 +214,7 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 		// a starred row (see useCycleSession.activateVisualItem).
 		useUIStore.getState().setSidebarExtraSelection(null);
 		// Fire-and-forget: persist to disk for restore on next launch.
-		// Not awaited — UI state must update synchronously; if the write
+		// Not awaited - UI state must update synchronously; if the write
 		// fails the only consequence is the session won't be pre-selected
 		// on next launch (falls back to first session).
 		window.maestro?.sessions?.setActiveSessionId(id);
@@ -357,6 +357,27 @@ export const selectSessionById =
 	(state: SessionStore): Session | undefined =>
 		state.sessions.find((s) => s.id === id);
 
+export const selectBookmarkedSessions = (state: SessionStore): Session[] =>
+	state.sessions.filter((s) => s.bookmarked);
+
+export const selectSessionsByGroup =
+	(groupId: string) =>
+	(state: SessionStore): Session[] =>
+		state.sessions.filter((s) => s.groupId === groupId);
+
+export const selectUngroupedSessions = (state: SessionStore): Session[] =>
+	state.sessions.filter((s) => !s.groupId && !s.parentSessionId);
+
+export const selectGroupById =
+	(id: string) =>
+	(state: SessionStore): Group | undefined =>
+		state.groups.find((g) => g.id === id);
+
+export const selectSessionCount = (state: SessionStore): number => state.sessions.length;
+
+export const selectIsReady = (state: SessionStore): boolean =>
+	state.sessionsLoaded && state.initialLoadComplete;
+
 export const selectIsAnySessionBusy = (state: SessionStore): boolean =>
 	state.sessions.some((s) => s.state === 'busy');
 
@@ -364,12 +385,45 @@ export const selectIsAnySessionBusy = (state: SessionStore): boolean =>
 // Non-React Access
 // ============================================================================
 
+/** Return the current store state for non-React call sites. */
+export function getSessionState(): SessionStore {
+	return useSessionStore.getState();
+}
+
+/** Return current action references for non-React call sites. */
+export function getSessionActions(): SessionStoreActions {
+	const state = useSessionStore.getState();
+	return {
+		setSessions: state.setSessions,
+		addSession: state.addSession,
+		removeSession: state.removeSession,
+		updateSession: state.updateSession,
+		setActiveSessionId: state.setActiveSessionId,
+		hydrateActiveSessionId: state.hydrateActiveSessionId,
+		setActiveSessionIdInternal: state.setActiveSessionIdInternal,
+		setGroups: state.setGroups,
+		addGroup: state.addGroup,
+		removeGroup: state.removeGroup,
+		updateGroup: state.updateGroup,
+		toggleGroupCollapsed: state.toggleGroupCollapsed,
+		setSessionsLoaded: state.setSessionsLoaded,
+		setInitialLoadComplete: state.setInitialLoadComplete,
+		setInitialFileTreeReady: state.setInitialFileTreeReady,
+		toggleBookmark: state.toggleBookmark,
+		addRemovedWorktreePath: state.addRemovedWorktreePath,
+		setRemovedWorktreePaths: state.setRemovedWorktreePaths,
+		setCyclePosition: state.setCyclePosition,
+		resetCyclePosition: state.resetCyclePosition,
+		addLogToTab: state.addLogToTab,
+	};
+}
+
 /**
  * Update a session by ID using a mapper function.
  * Convenience helper for call sites that need a full session → session transform
  * rather than just a Partial<Session> update.
  *
- * Operates directly on the store outside of React — safe to call from callbacks.
+ * Operates directly on the store outside of React - safe to call from callbacks.
  *
  * @example
  * updateSessionWith(activeSession.id, (s) => ({ ...s, batchRunnerPrompt: prompt }));
@@ -384,7 +438,7 @@ export function updateSessionWith(sessionId: string, updater: (session: Session)
  * Update a specific AI tab within a session using a mapper function.
  * Convenience helper for tab-level updates that need a full tab → tab transform.
  *
- * Operates directly on the store outside of React — safe to call from callbacks.
+ * Operates directly on the store outside of React - safe to call from callbacks.
  *
  * @example
  * updateAiTab(sessionId, tabId, (tab) => ({ ...tab, autoSendOnActivate: false }));

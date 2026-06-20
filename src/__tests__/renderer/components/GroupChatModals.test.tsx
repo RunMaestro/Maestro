@@ -60,6 +60,16 @@ vi.mock('lucide-react', () => ({
 			⚙
 		</span>
 	),
+	Monitor: ({ className }: { className?: string }) => (
+		<span data-testid="monitor-icon" className={className}>
+			M
+		</span>
+	),
+	History: ({ className }: { className?: string }) => (
+		<span data-testid="history-icon" className={className}>
+			H
+		</span>
+	),
 	ArrowLeft: ({ className }: { className?: string }) => (
 		<span data-testid="arrow-left-icon" className={className}>
 			←

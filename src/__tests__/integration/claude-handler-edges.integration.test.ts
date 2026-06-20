@@ -89,6 +89,18 @@ vi.mock('../../main/constants', () => ({
 
 // Mock pricing utility
 vi.mock('../../main/utils/pricing', () => ({
+	calculateModelCost: vi.fn(
+		(tokens: {
+			inputTokens: number;
+			outputTokens: number;
+			cacheReadTokens: number;
+			cacheCreationTokens: number;
+		}) =>
+			(tokens.inputTokens / 1_000_000) * 3 +
+			(tokens.outputTokens / 1_000_000) * 15 +
+			(tokens.cacheReadTokens / 1_000_000) * 0.3 +
+			(tokens.cacheCreationTokens / 1_000_000) * 3.75
+	),
 	calculateClaudeCost: vi.fn(
 		(input: number, output: number, cacheRead: number, cacheCreation: number) => {
 			const inputCost = (input / 1_000_000) * 3;
@@ -98,6 +110,38 @@ vi.mock('../../main/utils/pricing', () => ({
 			return inputCost + outputCost + cacheReadCost + cacheCreationCost;
 		}
 	),
+	computeClaudeUsageCost: vi.fn((content: string) => {
+		const totals = {
+			inputTokens: 0,
+			outputTokens: 0,
+			cacheReadTokens: 0,
+			cacheCreationTokens: 0,
+		};
+
+		for (const line of content.split('\n')) {
+			if (!line.includes('"usage"')) continue;
+			try {
+				const entry = JSON.parse(line);
+				const usage = entry.message?.usage ?? entry.usage;
+				if (!usage) continue;
+				totals.inputTokens += usage.input_tokens || 0;
+				totals.outputTokens += usage.output_tokens || 0;
+				totals.cacheReadTokens += usage.cache_read_input_tokens || 0;
+				totals.cacheCreationTokens += usage.cache_creation_input_tokens || 0;
+			} catch {
+				// Ignore malformed JSONL lines.
+			}
+		}
+
+		return {
+			...totals,
+			costUsd:
+				(totals.inputTokens / 1_000_000) * 3 +
+				(totals.outputTokens / 1_000_000) * 15 +
+				(totals.cacheReadTokens / 1_000_000) * 0.3 +
+				(totals.cacheCreationTokens / 1_000_000) * 3.75,
+		};
+	}),
 }));
 
 vi.mock('../../main/utils/safe-send', () => ({
@@ -2947,7 +2991,7 @@ not valid json at all
 	});
 
 	describe('claude:getSkills', () => {
-		it('parses project and user skill metadata and skips unreadable skills', async () => {
+		it('parses project and user skill metadata and skips missing skills', async () => {
 			const fs = await import('fs/promises');
 			const projectSkillContent = [
 				'---',
@@ -2975,13 +3019,13 @@ not valid json at all
 			});
 			vi.mocked(fs.default.readFile).mockImplementation(async (filePath) => {
 				const pathValue = String(filePath);
-				if (pathValue.endsWith('/planner/skill.md')) {
+				if (pathValue.endsWith('/planner/SKILL.md') || pathValue.endsWith('/planner/skill.md')) {
 					return projectSkillContent;
 				}
-				if (pathValue.endsWith('/fallback/skill.md')) {
+				if (pathValue.endsWith('/fallback/SKILL.md') || pathValue.endsWith('/fallback/skill.md')) {
 					return 'Body only skill content';
 				}
-				throw new Error('Unreadable skill');
+				throw Object.assign(new Error('Missing skill'), { code: 'ENOENT' });
 			});
 
 			const result = await handlers.get('claude:getSkills')!({} as any, '/test/project');
