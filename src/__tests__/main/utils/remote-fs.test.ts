@@ -425,9 +425,11 @@ describe('remote-fs', () => {
 			expect(result.success).toBe(true);
 			expect(result.data).toBe('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk');
 			// Must invoke `base64`, not `cat` (which would mangle binary bytes). The
-			// remote command is the last element of the ssh args array.
+			// remote command is the last element of the ssh args array. The file must
+			// be fed via stdin redirect (`base64 < file`), not a positional path -
+			// BSD/macOS `base64` rejects a positional argument.
 			const sshArgs = (deps.execSsh as any).mock.calls[0][1] as string[];
-			expect(sshArgs[sshArgs.length - 1]).toContain('base64 ');
+			expect(sshArgs[sshArgs.length - 1]).toContain('base64 < ');
 		});
 
 		it('maps a missing remote image to a file-not-found error', async () => {
