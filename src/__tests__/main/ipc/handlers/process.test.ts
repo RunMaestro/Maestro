@@ -12,6 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import * as path from 'path';
 import { ipcMain } from 'electron';
 import {
 	registerProcessHandlers,
@@ -725,6 +726,7 @@ describe('process IPC handlers', () => {
 				id: 'claude-code',
 				name: 'Claude Code',
 				command: 'claude',
+				path: '/opt/homebrew/bin/claude',
 				args: ['--print', '--verbose', '--output-format', 'stream-json'],
 				apiCommand: 'claude',
 				interactiveCommand: 'maestro-p',
@@ -751,6 +753,115 @@ describe('process IPC handlers', () => {
 				expect(spawnCall.args).toContain('--verbose');
 				expect(spawnCall.args).toContain('--output-format');
 				expect(spawnCall.args).toContain('stream-json');
+				expect(spawnCall.customEnvVars?.ELECTRON_RUN_AS_NODE).toBeUndefined();
+			});
+
+			it('passes Electron Node mode env for local interactive maestro-p desktop spawn', async () => {
+				const maestroPPath = path.join(process.cwd(), 'src', 'maestro-p', 'index.ts');
+				mockAgentDetector.getAgent.mockResolvedValue(claudeCodeAgent);
+				mockProcessManager.spawn.mockReturnValue({ pid: 4243, success: true });
+				mockSessionsStore.get.mockImplementation((key: string, defaultValue: unknown) => {
+					if (key === 'sessions') {
+						return [
+							{
+								id: 'session-tui',
+								enableMaestroP: true,
+								maestroPMode: 'interactive',
+								maestroPPath,
+							},
+						];
+					}
+					return defaultValue;
+				});
+
+				const handler = handlers.get('process:spawn');
+				await handler!({} as any, {
+					sessionId: 'session-tui-ai-tab-1',
+					toolType: 'claude-code',
+					cwd: '/test',
+					command: '/usr/local/bin/claude',
+					args: claudeCodeAgent.args,
+					prompt: 'hi',
+				});
+
+				const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+				expect(spawnCall.command).toBe(process.execPath);
+				expect(spawnCall.args[0]).toBe(maestroPPath);
+				expect(spawnCall.args).toContain('--dangerously-skip-permissions');
+				expect(spawnCall.customEnvVars).toEqual(
+					expect.objectContaining({
+						ELECTRON_RUN_AS_NODE: '1',
+						MAESTRO_CLAUDE_BIN: '/usr/local/bin/claude',
+					})
+				);
+				expect(spawnCall.customEnvVars?.NODE_PATH).toBeUndefined();
+			});
+
+			it('adds packaged NODE_PATH while preserving Electron Node mode env', async () => {
+				const maestroPPath = path.join(process.cwd(), 'src', 'maestro-p', 'index.ts');
+				const resourcesPath = '/Applications/Maestro.app/Contents/Resources';
+				const existingNodePath = '/already/on/node-path';
+				const originalNodePath = process.env.NODE_PATH;
+				const originalResourcesDescriptor = Object.getOwnPropertyDescriptor(
+					process,
+					'resourcesPath'
+				);
+
+				Object.defineProperty(process, 'resourcesPath', {
+					configurable: true,
+					value: resourcesPath,
+				});
+				process.env.NODE_PATH = existingNodePath;
+
+				try {
+					mockAgentDetector.getAgent.mockResolvedValue(claudeCodeAgent);
+					mockProcessManager.spawn.mockReturnValue({ pid: 4242, success: true });
+					mockSessionsStore.get.mockImplementation((key: string, defaultValue: unknown) => {
+						if (key === 'sessions') {
+							return [
+								{
+									id: 'session-packaged-tui',
+									enableMaestroP: true,
+									maestroPMode: 'interactive',
+									maestroPPath,
+								},
+							];
+						}
+						return defaultValue;
+					});
+
+					const handler = handlers.get('process:spawn');
+					await handler!({} as any, {
+						sessionId: 'session-packaged-tui',
+						toolType: 'claude-code',
+						cwd: '/test',
+						command: 'claude',
+						args: claudeCodeAgent.args,
+						prompt: 'hi',
+					});
+
+					const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+					const expectedAsarModules = path.join(resourcesPath, 'app.asar', 'node_modules');
+					expect(spawnCall.command).toBe(process.execPath);
+					expect(spawnCall.customEnvVars).toEqual(
+						expect.objectContaining({
+							ELECTRON_RUN_AS_NODE: '1',
+							MAESTRO_CLAUDE_BIN: '/opt/homebrew/bin/claude',
+							NODE_PATH: `${expectedAsarModules}${path.delimiter}${existingNodePath}`,
+						})
+					);
+				} finally {
+					if (originalNodePath === undefined) {
+						delete process.env.NODE_PATH;
+					} else {
+						process.env.NODE_PATH = originalNodePath;
+					}
+					if (originalResourcesDescriptor) {
+						Object.defineProperty(process, 'resourcesPath', originalResourcesDescriptor);
+					} else {
+						delete (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+					}
+				}
 			});
 
 			it('emits interactive resolution when Path is wired directly at maestro-p', async () => {
@@ -793,6 +904,10 @@ describe('process IPC handlers', () => {
 				expect(sessionId).toBe('session-direct-mp');
 				expect(payload.mode).toBe('interactive');
 				expect(payload.reason).toBe('auto');
+
+				const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+				expect(spawnCall.command).toBe('/Users/x/dist/cli/maestro-p.js');
+				expect(spawnCall.customEnvVars?.ELECTRON_RUN_AS_NODE).toBeUndefined();
 			});
 
 			it('clears stale claudeInteractive=interactive when neither toggle nor maestro-p Path is active', async () => {
@@ -2030,6 +2145,7 @@ describe('process IPC handlers', () => {
 			// The sshStdinScript should contain the env var export
 			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
 			expect(spawnCall.sshStdinScript).toContain('CUSTOM_API_KEY=');
+			expect(spawnCall.sshStdinScript).not.toContain('ELECTRON_RUN_AS_NODE');
 		});
 
 		it('should run locally when session SSH is explicitly disabled', async () => {

@@ -14,6 +14,7 @@ import {
 	resolveClaudeSpawnMode,
 	buildRemoteInteractiveSpawn,
 } from '../../agents/resolveClaudeSpawnMode';
+import { isMaestroPBinaryPath } from '../../agents/claude-usage-startup';
 import { getClaudeTokenMode } from '../../../shared/claudeTokenMode';
 import { resolveConfigDirKey } from '../../stores/claudeUsageStore';
 import { isWindows } from '../../../shared/platformDetection';
@@ -381,9 +382,21 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					resolvedMaestroPBinPath &&
 					agent?.interactiveModeArgs
 				) {
+					const detectedClaudePath =
+						agent.path && !isMaestroPBinaryPath(agent.path) ? agent.path : undefined;
+					const decisionClaudePath =
+						claudeDecisionRealBinPath && !isMaestroPBinaryPath(claudeDecisionRealBinPath)
+							? claudeDecisionRealBinPath
+							: undefined;
 					// Preserve the original claude path so maestro-p can find the TUI binary.
+					// Prefer the detector's absolute path when the spawn payload only has
+					// the bare `claude` command, matching the user's shell `which claude`.
 					claudeRealBinPath =
-						claudeDecisionRealBinPath ?? config.sessionCustomPath ?? config.command;
+						(path.isAbsolute(decisionClaudePath ?? '') ? decisionClaudePath : undefined) ??
+						detectedClaudePath ??
+						decisionClaudePath ??
+						config.sessionCustomPath ??
+						config.command;
 					effectiveCommand = process.execPath;
 					effectiveSessionCustomPath = undefined;
 					baseArgsForSpawn = [resolvedMaestroPBinPath, ...agent.interactiveModeArgs];

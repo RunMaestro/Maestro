@@ -76,6 +76,7 @@ describe('ClaudeOutputParser', () => {
 			expect(event?.text).toBe('Partial response...');
 			expect(event?.sessionId).toBe('sess-abc123');
 			expect(event?.isPartial).toBe(true);
+			expect(event?.isReasoning).toBeUndefined();
 		});
 
 		it('should handle assistant messages with content array', () => {
@@ -425,6 +426,7 @@ describe('ClaudeOutputParser', () => {
 			expect(event?.type).toBe('text');
 			expect(event?.text).toBe('Let me analyze this codebase...');
 			expect(event?.isPartial).toBe(true);
+			expect(event?.isReasoning).toBe(true);
 		});
 
 		it('should prioritize thinking content over text content', () => {
@@ -441,6 +443,7 @@ describe('ClaudeOutputParser', () => {
 			const event = parser.parseJsonLine(line);
 			// Thinking content should be emitted for thinking-chunk events
 			expect(event?.text).toBe('Analyzing the problem...');
+			expect(event?.isReasoning).toBe(true);
 		});
 
 		it('should extract multiple thinking blocks', () => {
@@ -456,6 +459,7 @@ describe('ClaudeOutputParser', () => {
 
 			const event = parser.parseJsonLine(line);
 			expect(event?.text).toBe('First I will analyze the code structure.');
+			expect(event?.isReasoning).toBe(true);
 		});
 
 		it('should fall back to text content when no thinking blocks', () => {
@@ -468,6 +472,7 @@ describe('ClaudeOutputParser', () => {
 
 			const event = parser.parseJsonLine(line);
 			expect(event?.text).toBe('Here is my response.');
+			expect(event?.isReasoning).toBeUndefined();
 		});
 
 		it('should ignore redacted_thinking blocks', () => {
@@ -484,6 +489,7 @@ describe('ClaudeOutputParser', () => {
 			const event = parser.parseJsonLine(line);
 			// Should fall back to text since redacted_thinking is ignored
 			expect(event?.text).toBe('Response after redacted thinking');
+			expect(event?.isReasoning).toBeUndefined();
 		});
 
 		it('should handle thinking blocks alongside tool_use blocks', () => {
@@ -499,6 +505,7 @@ describe('ClaudeOutputParser', () => {
 
 			const event = parser.parseJsonLine(line);
 			expect(event?.text).toBe('I need to read the file.');
+			expect(event?.isReasoning).toBe(true);
 			expect(event?.toolUseBlocks).toHaveLength(1);
 			expect(event?.toolUseBlocks?.[0].name).toBe('Read');
 		});
