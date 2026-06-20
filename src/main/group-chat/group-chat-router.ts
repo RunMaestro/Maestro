@@ -904,6 +904,9 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 					processManager,
 					readOnlyMode: true,
 					debugLabel: 'moderator',
+					// Match maestro-p's idle budget to the moderator supervising timeout
+					// so a still-working moderator isn't killed at maestro-p's 300s default.
+					maxWaitSeconds: Math.ceil(MODERATOR_RESPONSE_TIMEOUT_MS / 1000),
 				});
 
 				logger.debug(`[GroupChat:Debug] Spawn result: ${JSON.stringify(spawnResult)}`);
@@ -1348,6 +1351,9 @@ export async function routeModeratorResponse(
 					processManager,
 					readOnlyMode: readOnly ?? false, // Propagate read-only mode from caller
 					debugLabel: `participant: ${participantName}`,
+					// Match maestro-p's idle budget to the participant supervising timeout
+					// so a still-working participant isn't killed at maestro-p's 300s default.
+					maxWaitSeconds: Math.ceil(PARTICIPANT_RESPONSE_TIMEOUT_MS / 1000),
 				});
 
 				logger.debug(
@@ -1735,6 +1741,9 @@ Review the agent responses above. Either:
 			processManager,
 			readOnlyMode: true,
 			debugLabel: 'synthesis moderator',
+			// Match maestro-p's idle budget to the moderator supervising timeout
+			// so a still-working synthesis turn isn't killed at maestro-p's 300s default.
+			maxWaitSeconds: Math.ceil(MODERATOR_RESPONSE_TIMEOUT_MS / 1000),
 		});
 
 		logger.debug(`[GroupChat:Debug] Synthesis spawn result: ${JSON.stringify(spawnResult)}`);
@@ -1900,6 +1909,9 @@ export async function respawnParticipantWithRecovery(
 		processManager,
 		readOnlyMode: readOnly ?? false,
 		debugLabel: `recovery of ${participantName}`,
+		// Match maestro-p's idle budget to the participant supervising timeout
+		// so a still-working recovery turn isn't killed at maestro-p's 300s default.
+		maxWaitSeconds: Math.ceil(PARTICIPANT_RESPONSE_TIMEOUT_MS / 1000),
 	});
 
 	logger.debug(`[GroupChat:Debug] Recovery spawn result: ${JSON.stringify(spawnResult)}`);
