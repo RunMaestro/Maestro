@@ -90,12 +90,25 @@ export type PreviewTier = 'rich' | 'fast' | 'giant';
  *     GIANT_TIER_LINES — used for markdown, text, and code alike.
  *   - Long-line escalation: lines above LINE_LENGTH_GIANT_THRESHOLD jump to
  *     Giant regardless of byte / line count to avoid wide-layer freeze.
+ *
+ * `isMarkdown` opts out of the long-line escalation: that jump exists to spare
+ * CodeMirror's syntax highlighter and Fast tier's pre-rendered DOM from a
+ * pathologically wide layer, but markdown renders to wrapping HTML (Rich/Fast)
+ * which has no wide layer to freeze. A long prose line (e.g. a pasted
+ * transcript) would otherwise demote a perfectly renderable note to Giant's
+ * raw-source view, so markdown keeps the byte/line thresholds but ignores
+ * maxLineLength.
  */
-export function pickPreviewTier(bytes: number, lines: number, maxLineLength = 0): PreviewTier {
+export function pickPreviewTier(
+	bytes: number,
+	lines: number,
+	maxLineLength = 0,
+	isMarkdown = false
+): PreviewTier {
 	if (
 		bytes > GIANT_TIER_BYTES ||
 		lines > GIANT_TIER_LINES ||
-		maxLineLength > LINE_LENGTH_GIANT_THRESHOLD
+		(!isMarkdown && maxLineLength > LINE_LENGTH_GIANT_THRESHOLD)
 	) {
 		return 'giant';
 	}

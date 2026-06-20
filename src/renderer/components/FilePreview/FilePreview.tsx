@@ -354,8 +354,8 @@ export const FilePreview = React.memo(
 			if (!file?.content || isImage || isBinary) return 'rich' as const;
 			const bytes = file.content.length;
 			const { lines, maxLineLength } = scanLineStats(file.content);
-			return pickPreviewTier(bytes, lines, maxLineLength);
-		}, [file?.path, file?.content, isImage, isBinary]);
+			return pickPreviewTier(bytes, lines, maxLineLength, isMarkdown);
+		}, [file?.path, file?.content, isImage, isBinary, isMarkdown]);
 
 		// Effective tier respects the user's per-tab override, falling back to
 		// the auto-picked tier. The PreviewTierChip in the header lets the user
