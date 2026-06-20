@@ -15,11 +15,9 @@ Maestro can update itself automatically! This feature was introduced in **v0.8.7
 
 ## v0.17.x - Maestro Cue
 
-**Latest: v0.17.0** | Released June 15, 2026
+**Latest: v0.17.1** | Released June 20, 2026
 
 # Major 0.17.x Additions
-
-> ⚠️ **Please update before June 15.** Anthropic is reclassifying Claude's headless `--print` mode as API-billed. On older Maestro versions that means every Claude interaction quietly spends pay-as-you-go API credits instead of drawing on the Claude Max/Pro subscription you already pay for. v0.17.0 keeps your Claude usage on your subscription quota.
 
 🔐 Claude Token Source control keeps Claude running on your Max/Pro subscription quota by driving Claude's interactive session instead of the headless API path. A three-way Interactive / API / Dynamic selector is available everywhere agents run (new and existing agents, Cue runs, Group Chat, and background tasks). Dynamic mode uses your subscription quota automatically and only falls back to API billing when that quota is exhausted.
 
@@ -31,35 +29,33 @@ Maestro can update itself automatically! This feature was introduced in **v0.8.7
 
 🛠️ A vastly expanded `maestro-cli` now drives the whole running desktop app, and your agents know how to use it. That means you can just talk to an agent in plain language to create and run Auto Run playbooks, change settings, set up Maestro Cue pipelines, manage groups, agents, tabs, and themes, and much more, instead of clicking through menus yourself.
 
-## Also in 0.17.0
+## 0.17.1 Modifications
 
-🌍 Browser tabs open web pages directly inside Maestro as first-class tabs with a full address bar, navigation controls, in-page find, and session persistence across restarts.
+🩹 Claude Token Source mode is far more resilient: it survives a dead stdout (EPIPE), reads large pasted images without crashing (EAGAIN), parses `/usage` panels that paint without newlines, and re-anchors limit detection to Claude's real banner. It also detects many more quota and credit-exhaustion messages, stops false-positiving on token/context/rate "limit" lines, and exits fast on a quota hit so Dynamic mode no longer stalls with "no response".
 
-🔗 SSH Shared History synchronizes Maestro instances working on the same project, with each host writing per-hostname history files so participants see each other's work.
+🔁 Desktop turns now honor your Interactive / Dynamic token-mode selection. Previously the per-agent setting was missed on desktop and silently fell through to API billing.
 
-🌐 The web/mobile interface gained real PTY terminals, swipeable panels, notification dropdowns, and dozens of desktop-equivalent features for a full touch-friendly experience on tablets and phones.
+🔓 maestro-p now clears Claude's one-time "Bypass Permissions" acceptance screen automatically instead of quitting on it the first time an agent launches.
 
-📊 A new Usage Dashboard tracks Claude and Codex token consumption over time with p50 to p99 duration percentiles, and read-only `maestro-cli stats` brings the same metrics to your terminal.
+🖥️ SSH and startup terminal tabs no longer vanish when their PTY exits.
 
-✏️ All core system prompts (Auto Run, commit messages, Group Chat moderation, Spec-Kit/OpenSpec, and more) are now fully editable.
+🧑‍✈️ GitHub Copilot-CLI no longer ends its turn early when you resume a session.
 
-🎨 New Image Annotation tool for marking up screenshots with freehand strokes, pan/zoom, and configurable pen styling.
+🪄 Maestro Cue pipeline layouts now stay put across Arrange and Save.
 
-📝 File preview was rebuilt on CodeMirror 6 with shared Shiki syntax highlighting across every code surface.
+🖼️ Images render correctly when viewing files over SSH, and large pasted images no longer crash the driver.
 
-🧠 A Claude per-project memory viewer lets you see and manage what your agent remembers across sessions.
+🎨 Open any image in the annotation editor straight from a file-preview tab with Cmd+E, and Mermaid code fences now render as toggleable diagrams in chat.
 
-🎚️ Model and reasoning-effort quick-change pills let you switch model and effort from the input area without opening settings.
+🛠️ `maestro-cli` can now configure an agent's SSH execution settings, and the process monitor shows the real remote command for SSH spawns.
 
-🧮 Auto Run now auto-picks fresh context per Document or per Task based on your agent's context window, letting wider-window models like Opus 4.8 and GPT-5.5 absorb more tasks per fresh context before splitting them up.
+⌨️ Command-K Context, Buffer, and Content actions are now tab-aware, and the thinking pill follows the active tab during forced-parallel runs.
 
-🔎 A new JSONL viewer opens `.jsonl`/`.ndjson` files in a sortable, schema-aware table with per-row tree expansion and a built-in jq-style filter syntax (`select()`, `map()`, `group_by()`, pipes, and 40+ more) with live evaluation.
+🎚️ The window title bar is now themeable with a new `bgTitleBar` token.
 
-🔱 Fork a brand-new session off any point in an AI message's history without disturbing the original thread.
+### Previous Releases in this Series
 
-🔍 Type-to-filter Settings search, with full keyboard navigation, instantly surfaces any setting across every tab.
-
-⭐ A Starred Sessions list in the Left Bar keeps special sessions pinned up top, with Cmd+[ and Cmd+] to cycle straight through them from the keyboard.
+- **v0.17.0** (June 15, 2026) - Maestro Cue
 
 ---
 
@@ -515,50 +511,6 @@ Plus the pre-release ALPHA...
 - **v0.1.2** (November 27, 2025)
 - **v0.1.1** (November 27, 2025)
 - **v0.1.0** (November 27, 2025)
-
----
-
-## untagged-9c7859b4a76f81d27a6c.x - Maestro Cue
-
-**Latest: untagged-9c7859b4a76f81d27a6c** | Released January 1, 1
-
-# Major 0.17.x Additions
-
-🔐 Claude Token Source control keeps Claude running on your Max/Pro subscription quota by driving Claude's interactive session instead of the headless API path. A three-way Interactive / API / Dynamic selector is available everywhere agents run (new and existing agents, Cue runs, Group Chat, and background tasks). Dynamic mode uses your subscription quota automatically and only falls back to API billing when that quota is exhausted.
-
-🪄 Maestro Cue is a new trigger-based cross-agent orchestration capability that lets heartbeats, GitHub issues/PRs, file system monitors, and other data sources bring your agents to life and pass work between one another.
-
-💻 Full-featured xterm.js terminal tabs sit alongside your AI and file preview tabs, with support for opening and renaming multiple terminals.
-
-🧑‍✈️ GitHub Copilot-CLI joins Maestro as a first-class agent with end-to-end integration for both local and remote (over SSH) execution.
-
-🛠️ A vastly expanded `maestro-cli` now drives the whole running desktop app, and your agents know how to use it. That means you can just talk to an agent in plain language to create and run Auto Run playbooks, change settings, set up Maestro Cue pipelines, manage groups, agents, tabs, and themes, and much more, instead of clicking through menus yourself.
-
-## 0.17.1 Modifications
-
-🩹 Claude Token Source mode is far more resilient: it survives a dead stdout (EPIPE), reads large pasted images without crashing (EAGAIN), parses `/usage` panels that paint without newlines, and re-anchors limit detection to Claude's real banner. It also detects many more quota and credit-exhaustion messages, stops false-positiving on token/context/rate "limit" lines, and exits fast on a quota hit so Dynamic mode no longer stalls with "no response".
-
-🔁 Desktop turns now honor your Interactive / Dynamic token-mode selection. Previously the per-agent setting was missed on desktop and silently fell through to API billing.
-
-🔓 maestro-p now clears Claude's one-time "Bypass Permissions" acceptance screen automatically instead of quitting on it the first time an agent launches.
-
-🖥️ SSH and startup terminal tabs no longer vanish when their PTY exits.
-
-🧑‍✈️ GitHub Copilot-CLI no longer ends its turn early when you resume a session.
-
-🪄 Maestro Cue pipeline layouts now stay put across Arrange and Save.
-
-🖼️ Images render correctly when viewing files over SSH, and large pasted images no longer crash the driver.
-
-🎨 Open any image in the annotation editor straight from a file-preview tab with Cmd+E, and Mermaid code fences now render as toggleable diagrams in chat.
-
-🛠️ `maestro-cli` can now configure an agent's SSH execution settings, and the process monitor shows the real remote command for SSH spawns.
-
-⌨️ Command-K Context, Buffer, and Content actions are now tab-aware, and the thinking pill follows the active tab during forced-parallel runs.
-
-🎚️ The window title bar is now themeable with a new `bgTitleBar` token.
-
-📋 Auto Run agents stay visible under the Left Bar's unread filter, file-preview tab content is capped to keep `sessions.json` lean, and Adaptive Mode backfill only touches never-configured agents.
 
 ---
 

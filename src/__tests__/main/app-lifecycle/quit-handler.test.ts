@@ -73,6 +73,15 @@ vi.mock('../../../main/cue/cue-executor', () => ({
 	stopAllCueRuns: (...args: unknown[]) => mockStopAllCueRuns(...args),
 }));
 
+// Platform is controllable per-test: the update-install hard-exit only applies
+// on macOS (Squirrel.Mac/ShipIt), while Windows/Linux keep the graceful path.
+let mockIsMacOS = true;
+vi.mock('../../../shared/platformDetection', () => ({
+	isMacOS: () => mockIsMacOS,
+	isWindows: () => false,
+	isLinux: () => false,
+}));
+
 describe('app-lifecycle/quit-handler', () => {
 	let mockMainWindow: {
 		isDestroyed: ReturnType<typeof vi.fn>;
@@ -113,6 +122,7 @@ describe('app-lifecycle/quit-handler', () => {
 		vi.clearAllMocks();
 		beforeQuitHandler = null;
 		ipcHandlers.clear();
+		mockIsMacOS = true;
 
 		// Stub process.kill so the production hardExit() (SIGKILL to self) never
 		// actually terminates the test runner. Restored by vi.restoreAllMocks().
@@ -301,24 +311,51 @@ describe('app-lifecycle/quit-handler', () => {
 			expect(mockQuit).toHaveBeenCalled();
 		});
 
-		it('should perform cleanup on the update-install path without force-exiting', async () => {
+		it('should hard-exit on the macOS update-install path after the grace window', async () => {
+			mockIsMacOS = true;
 			vi.useFakeTimers();
 			const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
 
 			const quitHandler = createQuitHandler(deps as Parameters<typeof createQuitHandler>[0]);
 			quitHandler.setup();
-			// confirmQuit() is the auto-updater path — graceful teardown must proceed
-			// so electron-updater can apply the update.
+			// confirmQuit() is the auto-updater path. On macOS the bundle swap is done
+			// by an external ShipIt helper that quitAndInstall already spawned, so we
+			// hard-exit rather than risk the graceful-teardown finalizer deadlock that
+			// left the app "not responding" after Restart to Update.
 			quitHandler.confirmQuit();
 
 			const mockEvent = { preventDefault: vi.fn() };
 			beforeQuitHandler!(mockEvent);
 
-			// On the update path we must NOT hold the loop open or hard-exit, so the
-			// native will-quit/quit teardown can run the installer handoff.
+			// We hold the loop open and SIGKILL ourselves once the helper has settled.
+			expect(mockEvent.preventDefault).toHaveBeenCalled();
+			expect(process.kill).not.toHaveBeenCalled();
+			vi.advanceTimersByTime(2000);
+			expect(process.kill).toHaveBeenCalledWith(process.pid, 'SIGKILL');
+			expect(mockExit).not.toHaveBeenCalled();
+			vi.useRealTimers();
+		});
+
+		it('should perform cleanup on the update-install path without force-exiting off macOS', async () => {
+			mockIsMacOS = false;
+			vi.useFakeTimers();
+			const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
+
+			const quitHandler = createQuitHandler(deps as Parameters<typeof createQuitHandler>[0]);
+			quitHandler.setup();
+			// confirmQuit() is the auto-updater path — on Windows/Linux the graceful
+			// teardown must proceed so electron-updater can apply the update.
+			quitHandler.confirmQuit();
+
+			const mockEvent = { preventDefault: vi.fn() };
+			beforeQuitHandler!(mockEvent);
+
+			// Off macOS we must NOT hold the loop open or hard-exit, so the native
+			// will-quit/quit teardown can run the installer handoff.
 			expect(mockEvent.preventDefault).not.toHaveBeenCalled();
 			vi.advanceTimersByTime(60_000);
 			expect(mockExit).not.toHaveBeenCalled();
+			expect(process.kill).not.toHaveBeenCalled();
 			vi.useRealTimers();
 
 			// Should perform cleanup

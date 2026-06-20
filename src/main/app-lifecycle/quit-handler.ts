@@ -17,6 +17,7 @@ import { stopAllCueCliRuns } from '../cue/cue-cli-executor';
 import { flushTelemetry } from '../cue/cue-telemetry';
 import { captureException } from '../utils/sentry';
 import { powerManager as powerManagerInstance } from '../power-manager';
+import { isMacOS } from '../../shared/platformDetection';
 
 /**
  * Safety timeout for quit confirmation from the renderer.
@@ -35,6 +36,19 @@ const QUIT_CONFIRMATION_TIMEOUT_MS = 5000;
  * still feels instant; the trade is a sub-second delay for a guaranteed exit.
  */
 const FORCE_EXIT_GRACE_MS = 750;
+
+/**
+ * Grace window for the macOS update-install path before hard-exiting.
+ *
+ * By the time before-quit fires, `autoUpdater.quitAndInstall()` has already
+ * spawned Squirrel.Mac's ShipIt helper, which only waits for our PID to die
+ * before swapping the .app bundle and relaunching - it needs nothing from our
+ * in-process teardown. We give the spawned helper a slightly longer settle
+ * window than a normal quit (the cost of a failed update is high), then
+ * hardExit() to dodge the native-addon finalizer deadlock that the *graceful*
+ * teardown hits (see hardExit() and the before-quit handler).
+ */
+const UPDATE_EXIT_GRACE_MS = 2000;
 
 /**
  * Terminates the process immediately, bypassing Electron's Node-environment
@@ -248,18 +262,35 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 				// Proceed with cleanup (async operations are fire-and-forget).
 				performCleanup();
 
-				// On the update-install path, let Electron's graceful teardown run so
-				// electron-updater can apply the update. Otherwise, take control of the
-				// exit: hold the event loop open (preventDefault) and hardExit() after a
-				// short grace window. This dodges the native Node-environment teardown
-				// that can deadlock on native addon finalizers and hang the process
-				// forever (see hardExit() and FORCE_EXIT_GRACE_MS).
-				if (!state.installingUpdate) {
+				// Take control of the exit on every path that can deadlock: hold the
+				// event loop open (preventDefault) and hardExit() after a grace window.
+				// This dodges the native Node-environment teardown that can hang the
+				// process forever on node-pty / fsevents ThreadSafeFunction finalizers
+				// (see hardExit() and FORCE_EXIT_GRACE_MS).
+				//
+				// The update-install path used to opt out of this and let Electron's
+				// graceful teardown run "so electron-updater can apply the update". On
+				// macOS that was wrong: Squirrel.Mac applies the update from an external
+				// ShipIt helper that quitAndInstall already spawned before this handler
+				// fires - it only needs our PID to die, not a graceful exit. Routing it
+				// through the graceful path instead reintroduced the very deadlock the
+				// hardExit() change was made to avoid, leaving "Maestro (not responding)"
+				// after "Restart to Update" until the user force-quit. So on macOS we
+				// hard-exit here too (after a longer settle window). Windows/Linux keep
+				// the graceful teardown their updater handoffs are written against.
+				const forceExitOnInstall = state.installingUpdate && isMacOS();
+				if (!state.installingUpdate || forceExitOnInstall) {
 					event.preventDefault();
+					const graceMs = state.installingUpdate ? UPDATE_EXIT_GRACE_MS : FORCE_EXIT_GRACE_MS;
 					setTimeout(() => {
-						logger.info('Hard-exiting after cleanup grace window', 'Shutdown');
+						logger.info(
+							forceExitOnInstall
+								? 'Hard-exiting after update-install grace window (ShipIt armed; dodging teardown deadlock)'
+								: 'Hard-exiting after cleanup grace window',
+							'Shutdown'
+						);
 						hardExit();
-					}, FORCE_EXIT_GRACE_MS);
+					}, graceMs);
 				}
 			});
 		},
