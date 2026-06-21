@@ -516,7 +516,7 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	// --- LLM / Provider ---
 	llmProvider: {
 		description:
-			'LLM provider for built-in AI features. E.g., openrouter, requesty, anthropic, openai.',
+			'LLM provider for built-in AI features. E.g., openrouter, requesty, anthropic, ollama.',
 		type: 'string',
 		default: 'openrouter',
 		category: 'advanced',
