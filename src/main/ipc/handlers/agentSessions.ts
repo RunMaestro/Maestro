@@ -999,8 +999,19 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 						sendUpdate(cache, false);
 					}
 				} catch (error) {
-					void captureException(error);
-					logger.warn(`Failed to parse Claude session: ${file.sessionKey}`, LOG_CONTEXT, { error });
+					// RangeError: Invalid string length is thrown when a session file is too
+					// large for V8 to read into a single string. This is an expected, recoverable
+					// data condition (the file is simply skipped), not worth reporting to Sentry.
+					if (error instanceof RangeError) {
+						logger.warn(`Claude session file too large to parse: ${file.sessionKey}`, LOG_CONTEXT, {
+							filePath: file.filePath,
+						});
+					} else {
+						void captureException(error);
+						logger.warn(`Failed to parse Claude session: ${file.sessionKey}`, LOG_CONTEXT, {
+							error,
+						});
+					}
 				}
 			}
 
@@ -1024,8 +1035,19 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 						sendUpdate(cache, false);
 					}
 				} catch (error) {
-					void captureException(error);
-					logger.warn(`Failed to parse Codex session: ${file.sessionKey}`, LOG_CONTEXT, { error });
+					// RangeError: Invalid string length is thrown when a session file is too
+					// large for V8 to read into a single string. This is an expected, recoverable
+					// data condition (the file is simply skipped), not worth reporting to Sentry.
+					if (error instanceof RangeError) {
+						logger.warn(`Codex session file too large to parse: ${file.sessionKey}`, LOG_CONTEXT, {
+							filePath: file.filePath,
+						});
+					} else {
+						void captureException(error);
+						logger.warn(`Failed to parse Codex session: ${file.sessionKey}`, LOG_CONTEXT, {
+							error,
+						});
+					}
 				}
 			}
 
