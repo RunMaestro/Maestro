@@ -15,6 +15,8 @@ sm/
 
 # Tests
 coverage/
+!src/__tests__/coverage/
+!src/__tests__/coverage/**
 do-wishlist.sh
 do-housekeeping.sh
 e2e-results/

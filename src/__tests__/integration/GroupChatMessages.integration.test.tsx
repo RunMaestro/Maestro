@@ -11,6 +11,7 @@ import type {
 	GroupChatState,
 	Theme,
 } from '../../renderer/types';
+import { useMessageGistStore } from '../../renderer/stores/messageGistStore';
 
 const mocks = vi.hoisted(() => ({
 	safeClipboardWrite: vi.fn(),
@@ -130,6 +131,7 @@ describe('GroupChatMessages', () => {
 		cleanup();
 		vi.useRealTimers();
 		Element.prototype.scrollIntoView = originalScrollIntoView;
+		useMessageGistStore.getState().clearAll();
 	});
 
 	it('renders empty state and typing indicators for active group chat states', () => {
@@ -352,5 +354,110 @@ describe('GroupChatMessages', () => {
 			behavior: 'smooth',
 			block: 'center',
 		});
+	});
+
+	it('handles keyboard scroll shortcuts on the message region', () => {
+		renderMessages({
+			messages: [
+				createMessage({ timestamp: '2026-05-13T12:00:00.000Z', content: 'First message' }),
+				createMessage({ timestamp: '2026-05-13T12:00:01.000Z', content: 'Second message' }),
+			],
+		});
+		const region = screen.getByRole('region', { name: 'Group chat messages' });
+		const scrollBy = vi.fn();
+		Object.defineProperty(region, 'scrollBy', { configurable: true, value: scrollBy });
+
+		fireEvent.keyDown(region, { key: 'Escape' });
+		expect(scrollBy).not.toHaveBeenCalled();
+
+		fireEvent.keyDown(region, { key: 'ArrowDown' });
+		fireEvent.keyDown(region, { key: 'ArrowUp' });
+		expect(scrollBy).toHaveBeenNthCalledWith(1, { top: 100 });
+		expect(scrollBy).toHaveBeenNthCalledWith(2, { top: -100 });
+
+		fireEvent.keyDown(region, { key: 'ArrowUp', shiftKey: true });
+		fireEvent.keyDown(region, { key: 'ArrowDown', shiftKey: true });
+		expect(scrollBy).toHaveBeenCalledTimes(2);
+	});
+
+	it('renders image attachments and sends history context to the lightbox', () => {
+		const onOpenLightbox = vi.fn();
+		const images = ['maestro://first-image.png', 'maestro://second-image.png'];
+		renderMessages({
+			onOpenLightbox,
+			messages: [createMessage({ images })],
+		});
+
+		const imageButtons = screen.getAllByRole('button', { name: /Attached image/ });
+		expect(imageButtons).toHaveLength(2);
+
+		fireEvent.click(imageButtons[1]);
+		expect(onOpenLightbox).toHaveBeenCalledWith(images[1], images, 'history');
+	});
+
+	it('does not require a lightbox handler for image attachment clicks', () => {
+		renderMessages({
+			messages: [createMessage({ images: ['maestro://first-image.png'] })],
+		});
+
+		expect(() => {
+			fireEvent.click(screen.getByRole('button', { name: 'Attached image 1' }));
+		}).not.toThrow();
+	});
+
+	it('publishes non-user messages as gists and reflects existing gist state', () => {
+		const onPublishGist = vi.fn();
+		const publishedTimestamp = '2026-05-13T12:01:00.000Z';
+		const unpublishedTimestamp = '2026-05-13T12:02:00.000Z';
+		const gistUrl = 'https://gist.github.com/test/published';
+		useMessageGistStore.getState().setMessageGist(`${publishedTimestamp}-0`, {
+			gistUrl,
+			isPublic: false,
+			publishedAt: 1700000000000,
+		});
+
+		renderMessages({
+			ghCliAvailable: true,
+			onPublishGist,
+			messages: [
+				createMessage({ timestamp: publishedTimestamp, content: 'Published content' }),
+				createMessage({ timestamp: unpublishedTimestamp, content: 'Fresh content' }),
+			],
+		});
+
+		fireEvent.click(screen.getByTitle(`Published as Gist: ${gistUrl}`));
+		fireEvent.click(screen.getByTitle('Publish as GitHub Gist'));
+
+		expect(onPublishGist).toHaveBeenNthCalledWith(
+			1,
+			'Published content',
+			`${publishedTimestamp}-0`
+		);
+		expect(onPublishGist).toHaveBeenNthCalledWith(2, 'Fresh content', `${unpublishedTimestamp}-1`);
+	});
+
+	it('does not show gist publishing actions on user messages', () => {
+		renderMessages({
+			ghCliAvailable: true,
+			onPublishGist: vi.fn(),
+			messages: [createMessage({ from: 'user', content: 'User message' })],
+		});
+
+		expect(screen.queryByTitle('Publish as GitHub Gist')).not.toBeInTheDocument();
+	});
+
+	it('keeps user-authored markdown edit text literal in raw mode', () => {
+		renderMessages({
+			markdownEditMode: true,
+			messages: [
+				createMessage({
+					from: 'user',
+					content: ['**line one**', '_line two_'].join('\n'),
+				}),
+			],
+		});
+
+		expect(screen.getByText('**line one**', { exact: false })).toBeInTheDocument();
+		expect(screen.getByText('_line two_', { exact: false })).toBeInTheDocument();
 	});
 });

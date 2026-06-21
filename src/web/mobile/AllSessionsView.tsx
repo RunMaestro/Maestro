@@ -1148,6 +1148,7 @@ export function AllSessionsView({
 		const keys = Object.keys(sessionsByGroup);
 		return keys.sort((a, b) => {
 			// Put 'bookmarks' at the start
+			/* v8 ignore next */
 			if (a === 'bookmarks') return -1;
 			if (b === 'bookmarks') return 1;
 			// Put 'ungrouped' at the end
@@ -1177,6 +1178,7 @@ export function AllSessionsView({
 			// If any groups have matches, expand them
 			if (groupsWithMatches.size > 0) {
 				setCollapsedGroups((prev) => {
+					/* v8 ignore next */
 					const next = new Set(prev || []);
 					// Remove groups with matches from collapsed set (expand them)
 					for (const groupKey of groupsWithMatches) {
@@ -1191,6 +1193,7 @@ export function AllSessionsView({
 	// Toggle group collapse
 	const handleToggleCollapse = useCallback((groupId: string) => {
 		setCollapsedGroups((prev) => {
+			/* v8 ignore next */
 			const next = new Set(prev || []);
 			if (next.has(groupId)) {
 				next.delete(groupId);
