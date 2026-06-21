@@ -39,7 +39,8 @@ export function isLikelyConcatenatedToolNames(text: string): boolean {
 	let remaining = text.trim();
 
 	// Also handle MCP tools with pattern mcp__<provider>__<tool>
-	const mcpPattern = /^mcp__[a-zA-Z0-9_]+__[a-zA-Z0-9_]+/;
+	const mcpPattern = /^mcp__[a-zA-Z0-9_]+?__[a-zA-Z0-9_]+?(?=mcp__|$)/;
+	const toolNamesByLength = [...KNOWN_TOOL_NAMES].sort((a, b) => b.length - a.length);
 
 	while (remaining.length > 0) {
 		let foundMatch = false;
@@ -52,7 +53,7 @@ export function isLikelyConcatenatedToolNames(text: string): boolean {
 			foundMatch = true;
 		} else {
 			// Check for known tool names
-			for (const toolName of KNOWN_TOOL_NAMES) {
+			for (const toolName of toolNamesByLength) {
 				if (remaining.startsWith(toolName)) {
 					matchCount++;
 					remaining = remaining.substring(toolName.length);

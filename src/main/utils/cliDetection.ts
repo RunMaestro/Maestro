@@ -98,6 +98,17 @@ export async function resolveGhPath(customPath?: string): Promise<string> {
 	return ghPathCache || 'gh';
 }
 
+export function getGhPath(): string | null {
+	return ghPathCache;
+}
+
+export function clearGhCache(): void {
+	ghInstalledCache = null;
+	ghPathCache = null;
+	ghAuthenticatedCache = null;
+	ghStatusCacheTime = null;
+}
+
 /**
  * Get cached gh CLI status (installed + authenticated).
  * Returns null if cache is empty or expired.
@@ -183,4 +194,13 @@ export async function detectSshPath(): Promise<string | null> {
 export async function resolveSshPath(): Promise<string> {
 	await detectSshPath();
 	return sshPathCache || 'ssh';
+}
+
+export function getSshPath(): string | null {
+	return sshPathCache;
+}
+
+export function clearSshCache(): void {
+	sshPathCache = null;
+	sshDetectionDone = false;
 }

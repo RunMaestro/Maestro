@@ -177,15 +177,21 @@ export function useKeyboardNavigation(
 		showUnreadAgentsOnly,
 	} = deps;
 
+	const safeSortedSessions = Array.isArray(sortedSessions) ? sortedSessions : [];
+	const safeNavSessions = Array.isArray(navSessions) ? navSessions : safeSortedSessions;
+	const safeBookmarkNavSize = typeof bookmarkNavSize === 'number' ? bookmarkNavSize : 0;
+	const safeStarredItems = Array.isArray(starredItems) ? starredItems : [];
+	const safeGroupChats = Array.isArray(groupChats) ? groupChats : [];
+
 	// Use refs for values that change frequently to avoid stale closures
-	const sortedSessionsRef = useRef(sortedSessions);
-	sortedSessionsRef.current = sortedSessions;
+	const sortedSessionsRef = useRef(safeSortedSessions);
+	sortedSessionsRef.current = safeSortedSessions;
 
-	const navSessionsRef = useRef(navSessions);
-	navSessionsRef.current = navSessions;
+	const navSessionsRef = useRef(safeNavSessions);
+	navSessionsRef.current = safeNavSessions;
 
-	const bookmarkNavSizeRef = useRef(bookmarkNavSize);
-	bookmarkNavSizeRef.current = bookmarkNavSize;
+	const bookmarkNavSizeRef = useRef(safeBookmarkNavSize);
+	bookmarkNavSizeRef.current = safeBookmarkNavSize;
 
 	const selectedSidebarIndexRef = useRef(selectedSidebarIndex);
 	selectedSidebarIndexRef.current = selectedSidebarIndex;
@@ -202,14 +208,14 @@ export function useKeyboardNavigation(
 	const activeFocusRef = useRef(activeFocus);
 	activeFocusRef.current = activeFocus;
 
-	const starredItemsRef = useRef(starredItems);
-	starredItemsRef.current = starredItems;
+	const starredItemsRef = useRef(safeStarredItems);
+	starredItemsRef.current = safeStarredItems;
 
 	const starredSectionCollapsedRef = useRef(starredSectionCollapsed);
 	starredSectionCollapsedRef.current = starredSectionCollapsed;
 
-	const groupChatsRef = useRef(groupChats);
-	groupChatsRef.current = groupChats;
+	const groupChatsRef = useRef(safeGroupChats);
+	groupChatsRef.current = safeGroupChats;
 
 	const groupChatsExpandedRef = useRef(groupChatsExpanded);
 	groupChatsExpandedRef.current = groupChatsExpanded;
@@ -367,10 +373,11 @@ export function useKeyboardNavigation(
 				return false;
 			}
 
-			e.preventDefault();
-
 			const order = buildVirtualOrder();
-			if (order.length === 0) return true;
+			if (order.length === 0) {
+				e.preventDefault();
+				return true;
+			}
 
 			let currentPos = findCurrentPos(order);
 			// Cursor not found (e.g. just focused the sidebar) - seed it on the first
@@ -380,6 +387,15 @@ export function useKeyboardNavigation(
 				currentPos = firstVisible === -1 ? 0 : firstVisible;
 			}
 			const currentEntry = order[currentPos];
+
+			if (
+				e.key === ' ' &&
+				(currentEntry.type !== 'session' || !currentEntry.section.startsWith('group:'))
+			) {
+				return false;
+			}
+
+			e.preventDefault();
 
 			// ArrowLeft: collapse the current entry's section.
 			if (e.key === 'ArrowLeft') {
@@ -427,6 +443,7 @@ export function useKeyboardNavigation(
 				if (currentEntry.type !== 'session' || !currentEntry.section.startsWith('group:')) {
 					return true;
 				}
+
 				const groupId = currentEntry.session.groupId;
 				const group = groupsRef.current.find((g) => g.id === groupId);
 				if (!group || group.collapsed) return true;
@@ -630,8 +647,8 @@ export function useKeyboardNavigation(
 	useEffect(() => {
 		if (sidebarExtraSelectionRef.current) return;
 		const cur = selectedSidebarIndexRef.current;
-		if (cur >= 0 && navSessions[cur]?.id === activeSessionId) return;
-		const currentIndex = navSessions.findIndex((s) => s.id === activeSessionId);
+		if (cur >= 0 && safeNavSessions[cur]?.id === activeSessionId) return;
+		const currentIndex = safeNavSessions.findIndex((s) => s.id === activeSessionId);
 		if (currentIndex !== -1) {
 			setSelectedSidebarIndex(currentIndex);
 		}

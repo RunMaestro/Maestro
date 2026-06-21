@@ -239,6 +239,7 @@ export async function groomContext(
 		let responseBuffer = '';
 		let lastDataTime = Date.now();
 		let idleCheckInterval: NodeJS.Timeout | null = null;
+		let overallTimeout: ReturnType<typeof setTimeout> | null = null;
 		let resolved = false;
 		let chunkCount = 0;
 		let cancelled = false;
@@ -247,6 +248,10 @@ export async function groomContext(
 			if (idleCheckInterval) {
 				clearInterval(idleCheckInterval);
 				idleCheckInterval = null;
+			}
+			if (overallTimeout) {
+				clearTimeout(overallTimeout);
+				overallTimeout = null;
 			}
 			processManager.off('data', onData);
 			processManager.off('exit', onExit);
@@ -348,7 +353,7 @@ export async function groomContext(
 			if (!resolved) {
 				resolved = true;
 				// `agent-error` emits an AgentError plain object (sessionId, type,
-				// message, ...), not a real Error — `String(error)` would yield
+				// message, ...), not a real Error - `String(error)` would yield
 				// "[object Object]". Pull `.message` out when present.
 				const errorMsg =
 					error instanceof Error
@@ -408,7 +413,7 @@ export async function groomContext(
 		}, 1000);
 
 		// Overall timeout
-		setTimeout(() => {
+		overallTimeout = setTimeout(() => {
 			if (!resolved) {
 				logger.warn('Grooming timeout', LOG_CONTEXT, {
 					groomerSessionId,

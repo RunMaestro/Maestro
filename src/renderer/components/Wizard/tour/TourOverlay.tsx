@@ -134,7 +134,6 @@ export function TourOverlay({
 		nextStep,
 		previousStep,
 		goToStep,
-		skipTour: internalSkipTour,
 		isLastStep,
 	} = useTour({
 		isOpen,
@@ -149,8 +148,8 @@ export function TourOverlay({
 		if (onTourSkipRef.current) {
 			onTourSkipRef.current(maxStepViewedRef.current);
 		}
-		internalSkipTour();
-	}, [internalSkipTour]);
+		onCloseRef.current();
+	}, []);
 
 	// Track tour start when it opens
 	// Uses ref for onTourStart to avoid effect re-running on callback changes
@@ -203,7 +202,7 @@ export function TourOverlay({
 					if (showWelcome) {
 						handleStartTour();
 					} else if (isLastStep) {
-						skipTour(); // Finish tour
+						nextStep();
 					} else {
 						nextStep();
 					}

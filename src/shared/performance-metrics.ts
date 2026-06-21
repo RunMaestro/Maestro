@@ -320,6 +320,13 @@ export class PerformanceMetrics {
 }
 
 /**
+ * Create a disabled metrics collector with a silent logger.
+ */
+export function createNoOpMetrics(context = 'NoOp'): PerformanceMetrics {
+	return new PerformanceMetrics(context, () => {}, false);
+}
+
+/**
  * Format duration for display.
  *
  * @param durationMs - Duration in milliseconds

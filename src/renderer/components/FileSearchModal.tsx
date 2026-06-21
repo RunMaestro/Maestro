@@ -227,6 +227,7 @@ export function FileSearchModal({
 	const [search, setSearch] = useState('');
 	const [selectedIndex, setSelectedIndex] = useState(0);
 	const [viewMode, setViewMode] = useState<ViewMode>('visible');
+	const [scrollTop, setScrollTop] = useState(0);
 	const inputRef = useRef<HTMLInputElement>(null);
 	const scrollContainerRef = useRef<HTMLDivElement>(null);
 	const onCloseRef = useRef(onClose);
@@ -351,16 +352,20 @@ export function FileSearchModal({
 		handleViewModeChange(viewMode === 'visible' ? 'all' : 'visible');
 	}, [handleViewModeChange, viewMode]);
 
+	const handleListScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
+		setScrollTop(event.currentTarget.scrollTop);
+	}, []);
+
 	// Scroll selected item into view via virtualizer
 	useEffect(() => {
 		virtualizer.scrollToIndex(selectedIndex, { align: 'auto', behavior: 'smooth' });
 	}, [selectedIndex, virtualizer]);
 
-	// Derive first visible index from virtualizer for Cmd+1-9 badges
+	// Derive the first fully visible row for Cmd+1-9 badges. The virtualizer's
+	// first item can be an overscan row that is above the viewport.
 	const firstVisibleIndex = useMemo(() => {
-		const items = virtualizer.getVirtualItems();
-		return items.length > 0 ? items[0].index : 0;
-	}, [virtualizer.getVirtualItems()]);
+		return Math.ceil(scrollTop / ROW_HEIGHT);
+	}, [scrollTop]);
 
 	const handleItemSelect = useCallback(
 		(file: FlatFileItem) => {
@@ -371,7 +376,7 @@ export function FileSearchModal({
 	);
 
 	// Open the absolute path currently typed in the search box. No-op unless it
-	// has resolved to an existing file — folders and missing paths can't preview.
+	// has resolved to an existing file - folders and missing paths can't preview.
 	const handleAbsoluteOpen = useCallback(() => {
 		if (absDisplay.status !== 'file') return;
 		onFileSelect({
@@ -475,7 +480,7 @@ export function FileSearchModal({
 					</div>
 				</div>
 
-				{/* Mode Toggle Pills — hidden in absolute-path mode (no list to scope) */}
+				{/* Mode Toggle Pills - hidden in absolute-path mode (no list to scope) */}
 				{!isAbsoluteQuery && (
 					<div
 						className="px-4 py-2 flex items-center gap-2 border-b"
@@ -511,7 +516,7 @@ export function FileSearchModal({
 					</div>
 				)}
 
-				{/* Absolute-path open panel — replaces the file list when the query
+				{/* Absolute-path open panel - replaces the file list when the query
 				    is a full filesystem path that points at an existing file. */}
 				{isAbsoluteQuery && (
 					<div className="flex-1 flex flex-col items-center justify-center px-8 py-12 text-center gap-3">
@@ -565,7 +570,11 @@ export function FileSearchModal({
 
 				{/* Virtualized File List */}
 				{!isAbsoluteQuery && (
-					<div ref={scrollContainerRef} className="overflow-y-auto py-2 scrollbar-thin flex-1">
+					<div
+						ref={scrollContainerRef}
+						className="overflow-y-auto py-2 scrollbar-thin flex-1"
+						onScroll={handleListScroll}
+					>
 						<div
 							style={{
 								height: `${virtualizer.getTotalSize()}px`,

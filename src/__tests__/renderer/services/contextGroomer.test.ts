@@ -1,7 +1,3 @@
-/**
- * TODO: These tests need to be updated to match the current service implementation.
- * The IPC API changed from window.maestro.context.* to a different approach.
- */
 import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest';
 import {
 	ContextGroomingService,
@@ -20,16 +16,13 @@ import type {
 import type { LogEntry } from '../../../renderer/types';
 import type { ToolType } from '../../../shared/types';
 
-// Mock window.maestro for IPC calls
-const mockCreateGroomingSession = vi.fn();
-const mockSendGroomingPrompt = vi.fn();
+const mockGroomContext = vi.fn();
 const mockCleanupGroomingSession = vi.fn();
 
 vi.stubGlobal('window', {
 	maestro: {
 		context: {
-			createGroomingSession: mockCreateGroomingSession,
-			sendGroomingPrompt: mockSendGroomingPrompt,
+			groomContext: mockGroomContext,
 			cleanupGroomingSession: mockCleanupGroomingSession,
 		},
 		prompts: {
@@ -81,8 +74,7 @@ function createMockContext(overrides: Partial<ContextSource> = {}): ContextSourc
 	};
 }
 
-// TODO: Skip until IPC API is updated to match implementation
-describe.skip('ContextGroomingService', () => {
+describe('ContextGroomingService', () => {
 	let service: ContextGroomingService;
 	let progressUpdates: GroomingProgress[];
 
@@ -92,8 +84,7 @@ describe.skip('ContextGroomingService', () => {
 		vi.clearAllMocks();
 
 		// Default mock implementations
-		mockCreateGroomingSession.mockResolvedValue('grooming-session-123');
-		mockSendGroomingPrompt.mockResolvedValue(`## Summary
+		mockGroomContext.mockResolvedValue(`## Summary
 Implemented feature X with proper error handling.
 
 ## Key Decisions
@@ -159,7 +150,6 @@ Add tests and documentation.`);
 			const stages = progressUpdates.map((p) => p.stage);
 			expect(stages).toContain('collecting');
 			expect(stages).toContain('grooming');
-			expect(stages).toContain('creating');
 			expect(stages).toContain('complete');
 
 			// Progress should end at 100%
@@ -176,10 +166,11 @@ Add tests and documentation.`);
 
 			await service.groomContexts(request, (progress) => progressUpdates.push(progress));
 
-			// Verify IPC calls were made in order
-			expect(mockCreateGroomingSession).toHaveBeenCalledWith('/test/project', 'claude-code');
-			expect(mockSendGroomingPrompt).toHaveBeenCalled();
-			expect(mockCleanupGroomingSession).toHaveBeenCalledWith('grooming-session-123');
+			expect(mockGroomContext).toHaveBeenCalledWith(
+				'/test/project',
+				'claude-code',
+				expect.any(String)
+			);
 		});
 
 		it('should use custom grooming prompt when provided', async () => {
@@ -193,7 +184,7 @@ Add tests and documentation.`);
 
 			await service.groomContexts(request, (progress) => progressUpdates.push(progress));
 
-			const sentPrompt = mockSendGroomingPrompt.mock.calls[0][1];
+			const sentPrompt = mockGroomContext.mock.calls[0][2];
 			expect(sentPrompt).toContain(customPrompt);
 		});
 
@@ -216,7 +207,7 @@ Add tests and documentation.`);
 			};
 
 			// Mock a short groomed response to show token savings
-			mockSendGroomingPrompt.mockResolvedValue('## Summary\nShort summary.');
+			mockGroomContext.mockResolvedValue('## Summary\nShort summary.');
 
 			const result = await service.groomContexts(request, (progress) =>
 				progressUpdates.push(progress)
@@ -227,7 +218,7 @@ Add tests and documentation.`);
 		});
 
 		it('should handle IPC errors gracefully', async () => {
-			mockSendGroomingPrompt.mockRejectedValue(new Error('IPC connection failed'));
+			mockGroomContext.mockRejectedValue(new Error('IPC connection failed'));
 
 			const request: MergeRequest = {
 				sources: [createMockContext()],
@@ -246,7 +237,7 @@ Add tests and documentation.`);
 		});
 
 		it('should cleanup grooming session on error', async () => {
-			mockSendGroomingPrompt.mockRejectedValue(new Error('Processing failed'));
+			mockGroomContext.mockRejectedValue(new Error('Processing failed'));
 
 			const request: MergeRequest = {
 				sources: [createMockContext()],
@@ -256,8 +247,7 @@ Add tests and documentation.`);
 
 			await service.groomContexts(request, (progress) => progressUpdates.push(progress));
 
-			// Should still attempt cleanup even on error
-			expect(mockCleanupGroomingSession).toHaveBeenCalled();
+			expect(mockCleanupGroomingSession).not.toHaveBeenCalled();
 		});
 
 		it('should include context metadata in formatted output', async () => {
@@ -275,7 +265,7 @@ Add tests and documentation.`);
 
 			await service.groomContexts(request, (progress) => progressUpdates.push(progress));
 
-			const sentPrompt = mockSendGroomingPrompt.mock.calls[0][1];
+			const sentPrompt = mockGroomContext.mock.calls[0][2];
 			expect(sentPrompt).toContain('Feature Branch Work');
 			expect(sentPrompt).toContain('claude-code');
 			expect(sentPrompt).toContain('/my/project');
@@ -284,29 +274,12 @@ Add tests and documentation.`);
 
 	describe('cancelGrooming', () => {
 		it('should cleanup active grooming session', async () => {
-			// Start a grooming operation that we'll cancel
-			const request: MergeRequest = {
-				sources: [createMockContext()],
-				targetAgent: 'claude-code',
-				targetProjectRoot: '/test/project',
-			};
+			(service as any).activeGroomingSessionId = 'grooming-session-123';
 
-			// Don't await - let it run
-			const groomingPromise = service.groomContexts(request, (progress) =>
-				progressUpdates.push(progress)
-			);
-
-			// Give it time to create the session
-			await new Promise((resolve) => setTimeout(resolve, 10));
-
-			// Cancel while in progress
 			await service.cancelGrooming();
 
-			// Wait for the original promise to complete (may error)
-			await groomingPromise.catch(() => {});
-
-			// Cleanup should have been called
-			expect(mockCleanupGroomingSession).toHaveBeenCalled();
+			expect(mockCleanupGroomingSession).toHaveBeenCalledWith('grooming-session-123');
+			expect(service.isGroomingActive()).toBe(false);
 		});
 
 		it('should handle cancel when no session is active', async () => {
@@ -340,15 +313,14 @@ Add tests and documentation.`);
 	});
 });
 
-describe.skip('ContextGroomingService edge cases', () => {
+describe('ContextGroomingService edge cases', () => {
 	let service: ContextGroomingService;
 
 	beforeEach(() => {
 		service = new ContextGroomingService();
 		vi.clearAllMocks();
 
-		mockCreateGroomingSession.mockResolvedValue('grooming-session-456');
-		mockSendGroomingPrompt.mockResolvedValue('## Summary\nGroomed content.');
+		mockGroomContext.mockResolvedValue('## Summary\nGroomed content.');
 		mockCleanupGroomingSession.mockResolvedValue(undefined);
 	});
 
@@ -404,7 +376,7 @@ describe.skip('ContextGroomingService edge cases', () => {
 		const result = await service.groomContexts(request, () => {});
 
 		expect(result.success).toBe(true);
-		expect(mockSendGroomingPrompt.mock.calls[0][1]).toContain(longText);
+		expect(mockGroomContext.mock.calls[0][2]).toContain(longText);
 	});
 
 	it('should handle contexts from different agent types', async () => {
@@ -420,7 +392,7 @@ describe.skip('ContextGroomingService edge cases', () => {
 		const result = await service.groomContexts(request, () => {});
 
 		expect(result.success).toBe(true);
-		const sentPrompt = mockSendGroomingPrompt.mock.calls[0][1];
+		const sentPrompt = mockGroomContext.mock.calls[0][2];
 		expect(sentPrompt).toContain('claude-code');
 		expect(sentPrompt).toContain('opencode');
 	});
@@ -441,8 +413,7 @@ describe.skip('ContextGroomingService edge cases', () => {
 	});
 
 	it('should handle session creation failure', async () => {
-		mockCreateGroomingSession.mockRejectedValue(new Error('Session creation failed'));
-		mockSendGroomingPrompt.mockRejectedValue(new Error('Context grooming IPC not available'));
+		mockGroomContext.mockRejectedValue(new Error('Context grooming IPC not available'));
 
 		const request: MergeRequest = {
 			sources: [createMockContext()],
@@ -466,7 +437,7 @@ describe.skip('ContextGroomingService edge cases', () => {
 		];
 
 		for (const output of outputs) {
-			mockSendGroomingPrompt.mockResolvedValueOnce(output);
+			mockGroomContext.mockResolvedValueOnce(output);
 
 			const request: MergeRequest = {
 				sources: [createMockContext()],

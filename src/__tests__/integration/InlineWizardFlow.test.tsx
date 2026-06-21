@@ -25,8 +25,17 @@ import {
 } from '../../renderer/contexts/InlineWizardContext';
 import { WizardConversationView } from '../../renderer/components/InlineWizard/WizardConversationView';
 import { parseWizardIntent } from '../../renderer/services/wizardIntentParser';
+import {
+	clearCapabilitiesCache,
+	DEFAULT_CAPABILITIES,
+	setCapabilitiesCache,
+} from '../../renderer/hooks/agent/useAgentCapabilities';
 
 import { createMockTheme } from '../helpers/mockTheme';
+
+type InlineWizardHookResult = {
+	current: ReturnType<typeof useInlineWizard>;
+};
 
 // Mock the maestro API
 const mockMaestro = {
@@ -50,6 +59,11 @@ const mockMaestro = {
 beforeEach(() => {
 	(window as any).maestro = mockMaestro;
 	vi.clearAllMocks();
+	clearCapabilitiesCache();
+	setCapabilitiesCache('claude-code', {
+		...DEFAULT_CAPABILITIES,
+		supportsWizard: true,
+	});
 });
 
 afterEach(() => {
@@ -65,6 +79,10 @@ function createWrapper() {
 	return function Wrapper({ children }: { children: React.ReactNode }) {
 		return <InlineWizardProvider>{children}</InlineWizardProvider>;
 	};
+}
+
+async function waitForWizardMode(result: InlineWizardHookResult, mode: InlineWizardMode) {
+	await waitFor(() => expect(result.current.wizardMode).toBe(mode));
 }
 
 describe('Inline Wizard Integration Flow', () => {
@@ -160,7 +178,7 @@ describe('Inline Wizard Integration Flow', () => {
 			});
 
 			expect(result.current.isWizardActive).toBe(true);
-			expect(result.current.wizardMode).toBe('new');
+			await waitForWizardMode(result, 'new');
 		});
 
 		it('sets mode to "ask" when docs exist and no input provided', async () => {
@@ -182,7 +200,7 @@ describe('Inline Wizard Integration Flow', () => {
 				);
 			});
 
-			expect(result.current.wizardMode).toBe('ask');
+			await waitForWizardMode(result, 'ask');
 		});
 
 		it('sets mode to "iterate" with goal when iterate input provided', async () => {
@@ -208,8 +226,8 @@ describe('Inline Wizard Integration Flow', () => {
 				);
 			});
 
-			expect(result.current.wizardMode).toBe('iterate');
-			expect(result.current.wizardGoal).toBe('user authentication');
+			await waitForWizardMode(result, 'iterate');
+			await waitFor(() => expect(result.current.wizardGoal).toBe('user authentication'));
 		});
 
 		it('stores previous UI state for later restoration', async () => {
@@ -226,7 +244,7 @@ describe('Inline Wizard Integration Flow', () => {
 				);
 			});
 
-			expect(result.current.state.previousUIState).toEqual(previousUIState);
+			await waitFor(() => expect(result.current.state.previousUIState).toEqual(previousUIState));
 		});
 	});
 
@@ -782,14 +800,14 @@ describe('Inline Wizard Integration Flow', () => {
 				);
 			});
 
-			expect(result.current.wizardMode).toBe('new');
+			await waitForWizardMode(result, 'new');
 
 			// Change mode
 			await act(async () => {
 				result.current.setMode('iterate');
 			});
 
-			expect(result.current.wizardMode).toBe('iterate');
+			await waitForWizardMode(result, 'iterate');
 		});
 
 		it('setGoal updates the iterate mode goal', async () => {
@@ -844,8 +862,8 @@ describe('Inline Wizard Integration Flow', () => {
 				);
 			});
 
-			expect(result.current.wizardMode).toBe('iterate');
-			expect(result.current.existingDocuments).toHaveLength(2);
+			await waitForWizardMode(result, 'iterate');
+			await waitFor(() => expect(result.current.existingDocuments).toHaveLength(2));
 		});
 	});
 
@@ -890,8 +908,8 @@ describe('Inline Wizard Integration Flow', () => {
 			});
 
 			expect(result.current.isWizardActive).toBe(true);
-			expect(result.current.wizardMode).toBe('new');
-			expect(result.current.state.previousUIState).toEqual(previousUIState);
+			await waitForWizardMode(result, 'new');
+			await waitFor(() => expect(result.current.state.previousUIState).toEqual(previousUIState));
 
 			// Step 2: Simulate AI responses with increasing confidence
 			await act(async () => {
@@ -949,9 +967,11 @@ describe('Inline Wizard Integration Flow', () => {
 			});
 
 			// Verify iterate mode
-			expect(result.current.wizardMode).toBe('iterate');
-			expect(result.current.wizardGoal).toBe('user authentication and API endpoints');
-			expect(result.current.existingDocuments).toHaveLength(1);
+			await waitForWizardMode(result, 'iterate');
+			await waitFor(() =>
+				expect(result.current.wizardGoal).toBe('user authentication and API endpoints')
+			);
+			await waitFor(() => expect(result.current.existingDocuments).toHaveLength(1));
 		});
 	});
 });

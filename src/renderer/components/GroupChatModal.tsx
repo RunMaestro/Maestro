@@ -20,6 +20,7 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal, ModalFooter, FormInput } from './ui';
 import { AGENT_TILES } from './Wizard/screens/AgentSelectionScreen';
 import { AgentConfigPanel } from './shared/AgentConfigPanel';
+import { SshRemoteSelector } from './shared/SshRemoteSelector';
 import { useAgentConfiguration } from '../hooks/agent';
 
 interface GroupChatModalCreateProps {
@@ -512,8 +513,16 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 									/* Local state only */
 								}}
 								detectedMaestroPPath={detectedMaestroPPath}
+								isSshEnabled={!!ac.sshRemoteConfig?.enabled}
+								sshRemoteId={ac.sshRemoteConfig?.remoteId ?? undefined}
 								compact
 								showBuiltInEnvVars
+							/>
+							<SshRemoteSelector
+								theme={theme}
+								sshRemotes={ac.sshRemotes}
+								sshRemoteConfig={ac.sshRemoteConfig}
+								onSshRemoteConfigChange={ac.setSshRemoteConfig}
 							/>
 						</div>
 					)}

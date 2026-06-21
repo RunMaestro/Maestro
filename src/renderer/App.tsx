@@ -1674,7 +1674,7 @@ function MaestroConsoleInner() {
 			if (currentSession.id !== activeSessionIdRef.current || currentTab?.id !== targetTabId)
 				return;
 
-			processInput();
+			processInput(activeTab.inputValue ?? '');
 		}, 100);
 
 		return () => clearTimeout(timeoutId);

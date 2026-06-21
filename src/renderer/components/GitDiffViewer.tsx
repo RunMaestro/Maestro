@@ -2,7 +2,12 @@ import { useState, useMemo, useEffect, useRef, memo } from 'react';
 import { Diff, Hunk } from 'react-diff-view';
 import { Plus, Minus, ImageIcon, Columns2, AlignJustify } from 'lucide-react';
 import type { Theme } from '../types';
-import { parseGitDiff, getFileName, getDiffStats } from '../utils/gitDiffParser';
+import {
+	parseGitDiff,
+	getFileName,
+	getDiffStats,
+	type ParsedFileDiff,
+} from '../utils/gitDiffParser';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { ImageDiffViewer } from './ImageDiffViewer';
@@ -29,7 +34,7 @@ function writeStoredViewType(value: GitDiffViewType): void {
 	try {
 		window.localStorage.setItem(VIEW_TYPE_STORAGE_KEY, value);
 	} catch {
-		// Ignore quota / privacy-mode errors — preference just won't persist.
+		// Ignore quota / privacy-mode errors - preference just won't persist.
 	}
 }
 
@@ -46,6 +51,10 @@ function isFormControl(target: EventTarget | null): boolean {
 		return true;
 	}
 	return target.isContentEditable;
+}
+
+function getFileDisplayPath(file: ParsedFileDiff, index: number): string {
+	return file.newPath || file.oldPath || `file-${index}`;
 }
 
 interface GitDiffViewerProps {
@@ -96,6 +105,13 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 
 	// Parse the diff into separate files
 	const parsedFiles = useMemo(() => parseGitDiff(diffText), [diffText]);
+	const activeIndex = parsedFiles.length > 0 ? Math.min(activeTab, parsedFiles.length - 1) : 0;
+
+	useEffect(() => {
+		if (parsedFiles.length > 0 && activeTab !== activeIndex) {
+			setActiveTab(activeIndex);
+		}
+	}, [activeIndex, activeTab, parsedFiles.length]);
 
 	// Register layer on mount
 	// Note: Using 'modal' type so App.tsx blocks all shortcuts and lets this component
@@ -111,7 +127,7 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 
 	// Auto-scroll to active tab when it changes
 	useEffect(() => {
-		const activeTabElement = tabRefs.current[activeTab];
+		const activeTabElement = tabRefs.current[activeIndex];
 		if (activeTabElement) {
 			activeTabElement.scrollIntoView({
 				behavior: 'smooth',
@@ -119,7 +135,7 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 				inline: 'center',
 			});
 		}
-	}, [activeTab]);
+	}, [activeIndex]);
 
 	// Handle keyboard shortcuts (tab navigation + view toggle)
 	useEffect(() => {
@@ -127,11 +143,13 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 			// Cmd+[ or Cmd+Shift+[ - Previous tab
 			if ((e.metaKey || e.ctrlKey) && e.key === '[') {
 				e.preventDefault();
+				if (parsedFiles.length === 0) return;
 				setActiveTab((prev) => (prev === 0 ? parsedFiles.length - 1 : prev - 1));
 			}
 			// Cmd+] or Cmd+Shift+] - Next tab
 			else if ((e.metaKey || e.ctrlKey) && e.key === ']') {
 				e.preventDefault();
+				if (parsedFiles.length === 0) return;
 				setActiveTab((prev) => (prev + 1) % parsedFiles.length);
 			}
 			// Enter - Toggle unified / side-by-side. Skip when a focused control
@@ -198,7 +216,8 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 		);
 	}
 
-	const activeFile = parsedFiles[activeTab];
+	const activeFile = parsedFiles[activeIndex];
+	const activeFileDisplayPath = activeFile ? getFileDisplayPath(activeFile, activeIndex) : '';
 	const stats = activeFile ? getDiffStats(activeFile.parsedDiff) : { additions: 0, deletions: 0 };
 
 	return (
@@ -236,7 +255,7 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 							{cwd}
 						</span>
 						<span className="text-xs" style={{ color: theme.colors.textDim }}>
-							File {activeTab + 1} of {parsedFiles.length}
+							File {activeIndex + 1} of {parsedFiles.length}
 						</span>
 					</div>
 					<div className="flex items-center gap-2">
@@ -285,19 +304,19 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 								ref={(el) => (tabRefs.current[index] = el)}
 								onClick={() => setActiveTab(index)}
 								className={`px-4 py-3 text-sm whitespace-nowrap transition-colors ${
-									activeTab === index ? 'border-b-2' : 'hover:bg-white/5'
+									activeIndex === index ? 'border-b-2' : 'hover:bg-white/5'
 								}`}
 								style={{
-									color: activeTab === index ? theme.colors.accent : theme.colors.textDim,
-									borderColor: activeTab === index ? theme.colors.accent : 'transparent',
-									backgroundColor: activeTab === index ? theme.colors.bgMain : 'transparent',
+									color: activeIndex === index ? theme.colors.accent : theme.colors.textDim,
+									borderColor: activeIndex === index ? theme.colors.accent : 'transparent',
+									backgroundColor: activeIndex === index ? theme.colors.bgMain : 'transparent',
 								}}
 							>
 								<div className="flex items-center gap-2">
 									{file.isImage && (
 										<ImageIcon className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 									)}
-									<span className="font-mono">{getFileName(file.newPath)}</span>
+									<span className="font-mono">{getFileName(getFileDisplayPath(file, index))}</span>
 									<div className="flex items-center gap-1 text-xs">
 										{file.isBinary ? (
 											<span style={{ color: theme.colors.textDim }}>binary</span>
@@ -349,7 +368,7 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 								Binary file changed
 							</p>
 							<p className="text-xs" style={{ color: theme.colors.textDim }}>
-								{activeFile.newPath}
+								{activeFileDisplayPath}
 							</p>
 						</div>
 					) : activeFile && activeFile.parsedDiff.length > 0 ? (
@@ -393,7 +412,7 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 						<span style={{ color: theme.colors.textDim }}>
 							Current file:{' '}
 							<span className="font-mono" style={{ color: theme.colors.textMain }}>
-								{getFileName(activeFile.newPath)}
+								{getFileName(activeFileDisplayPath)}
 							</span>
 						</span>
 						{activeFile.isBinary ? (

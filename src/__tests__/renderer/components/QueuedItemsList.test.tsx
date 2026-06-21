@@ -49,6 +49,29 @@ describe('QueuedItemsList pause/hold', () => {
 	});
 });
 
+describe('QueuedItemsList image attachments', () => {
+	it('expands queued image thumbnails and opens the shared lightbox context', () => {
+		const onOpenLightbox = vi.fn();
+		const images = ['data:image/png;base64,first', 'data:image/png;base64,second'];
+		setup({
+			executionQueue: [item({ images })],
+			onOpenLightbox,
+		});
+
+		expect(screen.queryByAltText('Queued attachment 1')).toBeNull();
+
+		fireEvent.click(screen.getByTitle('Show thumbnails'));
+
+		expect(screen.getByAltText('Queued attachment 1')).toHaveAttribute('src', images[0]);
+		expect(screen.getByAltText('Queued attachment 2')).toHaveAttribute('src', images[1]);
+		expect(screen.getByTitle('Hide thumbnails')).toBeInTheDocument();
+
+		fireEvent.click(screen.getAllByTitle('Click to view full size')[0]);
+
+		expect(onOpenLightbox).toHaveBeenCalledWith(images[0], images, 'history');
+	});
+});
+
 describe('QueuedItemsList drag-to-reorder', () => {
 	afterEach(() => {
 		vi.useRealTimers();

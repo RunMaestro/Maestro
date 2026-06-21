@@ -235,6 +235,16 @@ const mockMaestro = {
 		isTerminalBusy: vi.fn().mockResolvedValue(false),
 		onOutput: vi.fn().mockReturnValue(() => {}),
 		onExit: vi.fn().mockReturnValue(() => {}),
+		onRemoteOpenFileTab: vi.fn().mockReturnValue(() => {}),
+		onRemoteNewAITabWithPrompt: vi.fn().mockReturnValue(() => {}),
+		onRemoteRefreshFileTree: vi.fn().mockReturnValue(() => {}),
+		onRemoteNotifyToast: vi.fn().mockReturnValue(() => {}),
+		onRemoteNotifyCenterFlash: vi.fn().mockReturnValue(() => {}),
+		onRemoteOpenBrowserTab: vi.fn().mockReturnValue(() => {}),
+		sendRemoteOpenBrowserTabResponse: vi.fn(),
+		onRemoteOpenTerminalTab: vi.fn().mockReturnValue(() => {}),
+		sendRemoteOpenTerminalTabResponse: vi.fn(),
+		sendRemoteNewAITabWithPromptResponse: vi.fn(),
 	},
 	feedback: {
 		checkGhAuth: vi.fn().mockResolvedValue({ authenticated: true }),
@@ -267,6 +277,8 @@ const mockMaestro = {
 		show: vi.fn().mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 }),
 		getRemoteUrl: vi.fn().mockResolvedValue(null),
 		scanWorktreeDirectory: vi.fn().mockResolvedValue({ gitSubdirs: [] }),
+		onWorktreeDiscovered: vi.fn().mockReturnValue(() => {}),
+		onWorktreeRemoved: vi.fn().mockReturnValue(() => {}),
 		info: vi.fn().mockResolvedValue({
 			branch: 'main',
 			remote: '',
@@ -403,6 +415,7 @@ const mockMaestro = {
 		getSessionOrigins: vi.fn().mockResolvedValue({}),
 		getOrigins: vi.fn().mockResolvedValue({}),
 		setSessionName: vi.fn().mockResolvedValue(undefined),
+		setSessionStarred: vi.fn().mockResolvedValue(undefined),
 		updateSessionName: vi.fn().mockResolvedValue(undefined),
 		updateSessionStarred: vi.fn().mockResolvedValue(undefined),
 		registerSessionOrigin: vi.fn().mockResolvedValue(undefined),
@@ -583,6 +596,7 @@ const mockMaestro = {
 	},
 	app: {
 		onQuitConfirmationRequest: vi.fn().mockReturnValue(() => {}),
+		onDeepLink: vi.fn().mockReturnValue(() => {}),
 		confirmQuit: vi.fn(),
 		cancelQuit: vi.fn(),
 		onSystemResume: vi.fn().mockReturnValue(() => {}),
@@ -607,6 +621,7 @@ const mockMaestro = {
 		enable: vi.fn().mockResolvedValue(undefined),
 		disable: vi.fn().mockResolvedValue(undefined),
 		setActive: vi.fn().mockResolvedValue(undefined),
+		removeSession: vi.fn().mockResolvedValue(undefined),
 		stopRun: vi.fn().mockResolvedValue(false),
 		stopAll: vi.fn().mockResolvedValue(undefined),
 		refreshSession: vi.fn().mockResolvedValue(undefined),
@@ -628,6 +643,75 @@ const mockMaestro = {
 	// Synchronous platform string (replaces async os.getPlatform IPC)
 	platform: 'darwin',
 };
+
+const remoteBridgeListenerNames = [
+	'onRemoteAbortAutoRunError',
+	'onRemoteCloseTab',
+	'onRemoteCommand',
+	'onRemoteConfigureAutoRun',
+	'onRemoteCreateGist',
+	'onRemoteCreateGroup',
+	'onRemoteCreatePlaybook',
+	'onRemoteCreateSession',
+	'onRemoteCreateWorktreeSession',
+	'onRemoteDeleteGroup',
+	'onRemoteDeletePlaybook',
+	'onRemoteDeleteSession',
+	'onRemoteGetAutoRunDocContent',
+	'onRemoteGetAutoRunDocs',
+	'onRemoteGetGitDiff',
+	'onRemoteGetGitStatus',
+	'onRemoteInterrupt',
+	'onRemoteListPlaybooks',
+	'onRemoteMoveSessionToGroup',
+	'onRemoteNewAITabWithPrompt',
+	'onRemoteNewTab',
+	'onRemoteNotifyCenterFlash',
+	'onRemoteNotifyToast',
+	'onRemoteOpenBrowserTab',
+	'onRemoteOpenFileTab',
+	'onRemoteOpenTerminalTab',
+	'onRemoteRefreshAutoRunDocs',
+	'onRemoteRefreshFileTree',
+	'onRemoteRenameGroup',
+	'onRemoteRenameSession',
+	'onRemoteRenameTab',
+	'onRemoteReorderTab',
+	'onRemoteResetAutoRunDocTasks',
+	'onRemoteResumeAutoRunError',
+	'onRemoteSaveAutoRunDoc',
+	'onRemoteSelectSession',
+	'onRemoteSelectTab',
+	'onRemoteSetAutoRunFolder',
+	'onRemoteSetSetting',
+	'onRemoteSkipAutoRunDocument',
+	'onRemoteStarTab',
+	'onRemoteStopAutoRun',
+	'onRemoteSwitchMode',
+	'onRemoteToggleBookmark',
+	'onRemoteTriggerCueSubscription',
+	'onRemoteUpdatePlaybook',
+	'onRemoteUpdateSessionCwd',
+	'onRemoteUpdateSessionSsh',
+] as const;
+
+const remoteBridgeResponseNames = [
+	'sendRemoteCreateGistResponse',
+	'sendRemoteGetGitDiffResponse',
+	'sendRemoteGetGitStatusResponse',
+	'sendRemoteNewAITabWithPromptResponse',
+	'sendRemoteNewTabResponse',
+	'sendRemoteSetSettingResponse',
+	'sendRemoteTriggerCueSubscriptionResponse',
+] as const;
+
+Object.assign(
+	mockMaestro.process,
+	Object.fromEntries(
+		remoteBridgeListenerNames.map((name) => [name, vi.fn().mockReturnValue(() => {})])
+	),
+	Object.fromEntries(remoteBridgeResponseNames.map((name) => [name, vi.fn()]))
+);
 
 // Only mock window.maestro if window exists (jsdom environment)
 if (typeof window !== 'undefined') {

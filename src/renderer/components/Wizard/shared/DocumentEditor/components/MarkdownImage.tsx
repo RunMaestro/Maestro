@@ -72,7 +72,6 @@ export function MarkdownImage({
 								absolutePath,
 							},
 						});
-						throw error;
 					}
 				});
 		} else if (src.startsWith('data:') || src.startsWith('http')) {

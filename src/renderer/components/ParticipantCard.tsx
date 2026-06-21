@@ -135,6 +135,12 @@ export function ParticipantCard({
 
 	const showRemoveButton = onRemove && groupChatId && !isRemoving;
 
+	useEffect(() => {
+		if (!onRemove || !groupChatId) {
+			setConfirmRemove(false);
+		}
+	}, [onRemove, groupChatId]);
+
 	return (
 		<div
 			className="rounded-lg border p-3"

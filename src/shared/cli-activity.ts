@@ -22,7 +22,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
-interface CliActivityStatus {
+export interface CliActivityStatus {
 	sessionId: string;
 	playbookId: string;
 	playbookName: string;
@@ -60,7 +60,7 @@ function getActivityFilePath(): string {
 /**
  * Read all CLI activities
  */
-function readCliActivities(): CliActivityStatus[] {
+export function readCliActivities(): CliActivityStatus[] {
 	try {
 		const filePath = getActivityFilePath();
 		const content = fs.readFileSync(filePath, 'utf-8');
@@ -108,6 +108,26 @@ export function unregisterCliActivity(sessionId: string): void {
 }
 
 /**
+ * Update CLI activity fields for a session.
+ */
+export function updateCliActivity(
+	sessionId: string,
+	updates: Partial<Omit<CliActivityStatus, 'sessionId'>>
+): void {
+	const activities = readCliActivities();
+	let found = false;
+	const updated = activities.map((activity) => {
+		if (activity.sessionId !== sessionId) return activity;
+		found = true;
+		return { ...activity, ...updates, sessionId };
+	});
+
+	if (found) {
+		writeCliActivities(updated);
+	}
+}
+
+/**
  * Get CLI activity for a specific session
  */
 export function getCliActivityForSession(sessionId: string): CliActivityStatus | undefined {
@@ -130,5 +150,26 @@ export function isSessionBusyWithCli(sessionId: string): boolean {
 		// Process not running, clean up stale entry
 		unregisterCliActivity(sessionId);
 		return false;
+	}
+}
+
+/**
+ * Remove activity records whose owning process no longer exists.
+ */
+export function cleanupStaleActivities(): void {
+	const activities = readCliActivities();
+	if (activities.length === 0) return;
+
+	const activeActivities = activities.filter((activity) => {
+		try {
+			process.kill(activity.pid, 0);
+			return true;
+		} catch {
+			return false;
+		}
+	});
+
+	if (activeActivities.length !== activities.length) {
+		writeCliActivities(activeActivities);
 	}
 }

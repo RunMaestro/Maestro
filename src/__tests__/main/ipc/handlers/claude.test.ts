@@ -138,6 +138,10 @@ vi.mock('../../../../main/utils/pricing', () => {
 	};
 });
 
+vi.mock('../../../../main/utils/safe-send', () => ({
+	isWebContentsAvailable: vi.fn((win) => Boolean(win)),
+}));
+
 describe('Claude IPC handlers', () => {
 	let handlers: Map<string, Function>;
 	let mockClaudeSessionOriginsStore: {
@@ -178,6 +182,21 @@ describe('Claude IPC handlers', () => {
 	afterEach(() => {
 		handlers.clear();
 	});
+
+	const fileEntry = (name: string) => ({
+		name,
+		isFile: () => true,
+		isDirectory: () => false,
+	});
+
+	const dirEntry = (name: string) => ({
+		name,
+		isFile: () => false,
+		isDirectory: () => true,
+	});
+
+	const sessionJsonl = (lines: Array<Record<string, unknown>>) =>
+		lines.map((line) => JSON.stringify(line)).join('\n');
 
 	describe('registration', () => {
 		it('should register all claude handlers', () => {
@@ -1796,6 +1815,623 @@ not valid json at all
 			const writtenContent = vi.mocked(fs.default.writeFile).mock.calls[0][1] as string;
 			// Only newline should remain (empty file basically)
 			expect(writtenContent.trim()).toBe('');
+		});
+	});
+
+	describe('claude:getProjectStats', () => {
+		it('preserves archived cache entries, reparses changed sessions, and sends progress updates', async () => {
+			const fs = await import('fs/promises');
+			const statsCache = await import('../../../../main/utils/statsCache');
+			const webContentsSend = vi.fn();
+
+			mockGetMainWindow.mockReturnValue({
+				webContents: { send: webContentsSend },
+			} as unknown as BrowserWindow);
+			vi.mocked(fs.default.access).mockResolvedValue(undefined);
+			vi.mocked(statsCache.loadStatsCache).mockResolvedValue({
+				version: 1,
+				sessions: {
+					'cached-current': {
+						fileMtimeMs: 100,
+						messages: 3,
+						costUsd: 1,
+						sizeBytes: 100,
+						tokens: 30,
+						oldestTimestamp: '2024-01-02T00:00:00.000Z',
+						archived: true,
+					},
+					'archived-deleted': {
+						fileMtimeMs: 50,
+						messages: 5,
+						costUsd: 2,
+						sizeBytes: 200,
+						tokens: 70,
+						oldestTimestamp: '2024-01-01T00:00:00.000Z',
+						archived: false,
+					},
+				},
+				totals: {
+					totalSessions: 2,
+					totalMessages: 8,
+					totalCostUsd: 3,
+					totalSizeBytes: 300,
+					totalTokens: 100,
+					oldestTimestamp: '2024-01-01T00:00:00.000Z',
+				},
+				lastUpdated: 123,
+			});
+			vi.mocked(fs.default.readdir).mockResolvedValue([
+				'cached-current.jsonl',
+				'new-session.jsonl',
+				'empty-session.jsonl',
+			] as unknown as Awaited<ReturnType<typeof fs.default.readdir>>);
+			vi.mocked(fs.default.stat).mockImplementation(async (filePath) => {
+				const filename = String(filePath).split('/').pop();
+				if (filename === 'empty-session.jsonl') {
+					return {
+						size: 0,
+						mtimeMs: 300,
+						mtime: new Date('2024-01-03T00:00:00.000Z'),
+					} as unknown as Awaited<ReturnType<typeof fs.default.stat>>;
+				}
+				if (filename === 'new-session.jsonl') {
+					return {
+						size: 240,
+						mtimeMs: 200,
+						mtime: new Date('2024-01-04T00:00:00.000Z'),
+					} as unknown as Awaited<ReturnType<typeof fs.default.stat>>;
+				}
+				return {
+					size: 100,
+					mtimeMs: 100,
+					mtime: new Date('2024-01-02T00:00:00.000Z'),
+				} as unknown as Awaited<ReturnType<typeof fs.default.stat>>;
+			});
+			vi.mocked(fs.default.readFile).mockResolvedValue(
+				sessionJsonl([
+					{
+						type: 'user',
+						message: { role: 'user', content: 'New question' },
+						timestamp: '2024-01-04T09:00:00.000Z',
+					},
+					{
+						type: 'assistant',
+						message: { role: 'assistant', content: 'New answer' },
+						timestamp: '2024-01-04T09:01:00.000Z',
+						usage: {
+							input_tokens: 100,
+							output_tokens: 40,
+							cache_read_input_tokens: 10,
+							cache_creation_input_tokens: 5,
+						},
+					},
+				])
+			);
+			vi.mocked(statsCache.saveStatsCache).mockResolvedValue(undefined);
+
+			const result = await handlers.get('claude:getProjectStats')!({} as any, '/test/project');
+
+			expect(result).toMatchObject({
+				totalSessions: 3,
+				totalMessages: 10,
+				totalSizeBytes: 540,
+				totalTokens: 240,
+				oldestTimestamp: '2024-01-01T00:00:00.000Z',
+				isComplete: true,
+			});
+			expect(result.totalCostUsd).toBeCloseTo(3.00092175, 8);
+			expect(webContentsSend).toHaveBeenCalledWith(
+				'claude:projectStatsUpdate',
+				expect.objectContaining({
+					projectPath: '/test/project',
+					totalSessions: 2,
+					isComplete: false,
+				})
+			);
+			expect(webContentsSend).toHaveBeenCalledWith(
+				'claude:projectStatsUpdate',
+				expect.objectContaining({
+					projectPath: '/test/project',
+					totalSessions: 3,
+					processedCount: 1,
+					isComplete: true,
+				})
+			);
+			const savedCache = vi.mocked(statsCache.saveStatsCache).mock.calls[0][1];
+			expect(savedCache.sessions['cached-current'].archived).toBe(false);
+			expect(savedCache.sessions['archived-deleted'].archived).toBe(true);
+			expect(savedCache.sessions['new-session']).toMatchObject({
+				messages: 2,
+				tokens: 140,
+				archived: false,
+			});
+		});
+
+		it('returns zero totals when the encoded project directory is missing', async () => {
+			const fs = await import('fs/promises');
+
+			vi.mocked(fs.default.access).mockRejectedValue(new Error('ENOENT'));
+
+			const result = await handlers.get('claude:getProjectStats')!({} as any, '/missing');
+
+			expect(result).toEqual({
+				totalSessions: 0,
+				totalMessages: 0,
+				totalCostUsd: 0,
+				totalSizeBytes: 0,
+				totalTokens: 0,
+				oldestTimestamp: null,
+			});
+		});
+	});
+
+	describe('claude:getSessionTimestamps', () => {
+		it('returns cached non-null oldest timestamps before scanning the filesystem', async () => {
+			const fs = await import('fs/promises');
+			const statsCache = await import('../../../../main/utils/statsCache');
+
+			vi.mocked(statsCache.loadStatsCache).mockResolvedValue({
+				version: 1,
+				sessions: {
+					'with-timestamp': {
+						fileMtimeMs: 1,
+						messages: 1,
+						costUsd: 0,
+						sizeBytes: 1,
+						tokens: 1,
+						oldestTimestamp: '2024-02-01T00:00:00.000Z',
+					},
+					'without-timestamp': {
+						fileMtimeMs: 1,
+						messages: 1,
+						costUsd: 0,
+						sizeBytes: 1,
+						tokens: 1,
+						oldestTimestamp: null,
+					},
+				},
+				totals: {
+					totalSessions: 2,
+					totalMessages: 2,
+					totalCostUsd: 0,
+					totalSizeBytes: 2,
+					totalTokens: 2,
+					oldestTimestamp: '2024-02-01T00:00:00.000Z',
+				},
+				lastUpdated: 123,
+			});
+
+			const result = await handlers.get('claude:getSessionTimestamps')!({} as any, '/test/project');
+
+			expect(result).toEqual([
+				{ sessionId: 'with-timestamp', timestamp: '2024-02-01T00:00:00.000Z' },
+			]);
+			expect(fs.default.readdir).not.toHaveBeenCalled();
+		});
+
+		it('falls back to file mtimes and skips sessions that cannot be statted', async () => {
+			const fs = await import('fs/promises');
+			const statsCache = await import('../../../../main/utils/statsCache');
+
+			vi.mocked(statsCache.loadStatsCache).mockResolvedValue(null);
+			vi.mocked(fs.default.access).mockResolvedValue(undefined);
+			vi.mocked(fs.default.readdir).mockResolvedValue([
+				'session-a.jsonl',
+				'session-b.jsonl',
+				'notes.txt',
+			] as unknown as Awaited<ReturnType<typeof fs.default.readdir>>);
+			vi.mocked(fs.default.stat).mockImplementation(async (filePath) => {
+				if (String(filePath).endsWith('session-b.jsonl')) {
+					throw new Error('EACCES');
+				}
+				return {
+					mtime: new Date('2024-02-02T10:00:00.000Z'),
+				} as unknown as Awaited<ReturnType<typeof fs.default.stat>>;
+			});
+
+			const result = await handlers.get('claude:getSessionTimestamps')!({} as any, '/test/project');
+
+			expect(result).toEqual([{ sessionId: 'session-a', timestamp: '2024-02-02T10:00:00.000Z' }]);
+		});
+	});
+
+	describe('claude:getGlobalStats', () => {
+		it('reuses valid legacy cache entries, processes changed sessions, and saves totals', async () => {
+			const fs = await import('fs/promises');
+			const webContentsSend = vi.fn();
+
+			mockGetMainWindow.mockReturnValue({
+				webContents: { send: webContentsSend },
+			} as unknown as BrowserWindow);
+			vi.mocked(fs.default.access).mockResolvedValue(undefined);
+			vi.mocked(fs.default.readFile).mockImplementation(async (filePath) => {
+				const pathValue = String(filePath);
+				if (pathValue.endsWith('legacy-global-stats.json')) {
+					return JSON.stringify({
+						version: 1,
+						lastUpdated: 1,
+						sessions: {
+							'project-a/cached': {
+								fileMtimeMs: 100,
+								messages: 2,
+								inputTokens: 20,
+								outputTokens: 10,
+								cacheReadTokens: 5,
+								cacheCreationTokens: 2,
+								sizeBytes: 100,
+							},
+							'project-a/missing': {
+								fileMtimeMs: 90,
+								messages: 9,
+								inputTokens: 90,
+								outputTokens: 90,
+								cacheReadTokens: 0,
+								cacheCreationTokens: 0,
+								sizeBytes: 900,
+							},
+						},
+						totals: {
+							totalSessions: 2,
+							totalMessages: 11,
+							totalInputTokens: 110,
+							totalOutputTokens: 100,
+							totalCacheReadTokens: 5,
+							totalCacheCreationTokens: 2,
+							totalCostUsd: 0,
+							totalSizeBytes: 1000,
+						},
+					});
+				}
+				if (pathValue.endsWith('new.jsonl')) {
+					return sessionJsonl([
+						{ type: 'user', message: { content: 'Hi' } },
+						{
+							type: 'assistant',
+							message: { content: 'Hello' },
+							usage: {
+								input_tokens: 100,
+								output_tokens: 50,
+								cache_read_input_tokens: 25,
+								cache_creation_input_tokens: 10,
+							},
+						},
+					]);
+				}
+				throw new Error('Unreadable session');
+			});
+			vi.mocked(fs.default.readdir).mockImplementation(async (dir) => {
+				const dirPath = String(dir);
+				if (dirPath === '/mock/home/.claude/projects') {
+					return ['project-a', 'project-b', 'not-dir'] as unknown as Awaited<
+						ReturnType<typeof fs.default.readdir>
+					>;
+				}
+				if (dirPath.endsWith('project-a')) {
+					return ['cached.jsonl', 'new.jsonl', 'empty.jsonl'] as unknown as Awaited<
+						ReturnType<typeof fs.default.readdir>
+					>;
+				}
+				if (dirPath.endsWith('project-b')) {
+					return ['broken.jsonl'] as unknown as Awaited<ReturnType<typeof fs.default.readdir>>;
+				}
+				return [] as unknown as Awaited<ReturnType<typeof fs.default.readdir>>;
+			});
+			vi.mocked(fs.default.stat).mockImplementation(async (targetPath) => {
+				const pathValue = String(targetPath);
+				if (pathValue.endsWith('not-dir')) {
+					return {
+						isDirectory: () => false,
+					} as unknown as Awaited<ReturnType<typeof fs.default.stat>>;
+				}
+				if (pathValue.endsWith('project-a') || pathValue.endsWith('project-b')) {
+					return {
+						isDirectory: () => true,
+					} as unknown as Awaited<ReturnType<typeof fs.default.stat>>;
+				}
+				if (pathValue.endsWith('empty.jsonl')) {
+					return {
+						size: 0,
+						mtimeMs: 300,
+					} as unknown as Awaited<ReturnType<typeof fs.default.stat>>;
+				}
+				if (pathValue.endsWith('new.jsonl')) {
+					return {
+						size: 220,
+						mtimeMs: 200,
+					} as unknown as Awaited<ReturnType<typeof fs.default.stat>>;
+				}
+				if (pathValue.endsWith('broken.jsonl')) {
+					return {
+						size: 200,
+						mtimeMs: 200,
+					} as unknown as Awaited<ReturnType<typeof fs.default.stat>>;
+				}
+				return {
+					size: 100,
+					mtimeMs: 100,
+				} as unknown as Awaited<ReturnType<typeof fs.default.stat>>;
+			});
+			vi.mocked(fs.default.mkdir).mockResolvedValue(undefined);
+			vi.mocked(fs.default.writeFile).mockResolvedValue(undefined);
+
+			const result = await handlers.get('claude:getGlobalStats')!({} as any);
+
+			expect(result).toMatchObject({
+				totalSessions: 2,
+				totalMessages: 4,
+				totalInputTokens: 120,
+				totalOutputTokens: 60,
+				totalCacheReadTokens: 30,
+				totalCacheCreationTokens: 12,
+				totalSizeBytes: 320,
+				isComplete: true,
+			});
+			expect(result.totalCostUsd).toBeCloseTo(0.001314, 8);
+			expect(webContentsSend).toHaveBeenCalledWith(
+				'claude:globalStatsUpdate',
+				expect.objectContaining({
+					totalSessions: 2,
+					isComplete: false,
+				})
+			);
+			expect(fs.default.mkdir).toHaveBeenCalledWith('/mock/app/path/stats-cache', {
+				recursive: true,
+			});
+			const savedCache = JSON.parse(vi.mocked(fs.default.writeFile).mock.calls[0][1] as string);
+			expect(savedCache.sessions).toHaveProperty('project-a/cached');
+			expect(savedCache.sessions).toHaveProperty('project-a/new');
+			expect(savedCache.sessions).not.toHaveProperty('project-a/missing');
+			expect(savedCache.sessions).not.toHaveProperty('project-b/broken');
+		});
+
+		it('returns complete zero totals when the Claude projects directory is unavailable', async () => {
+			const fs = await import('fs/promises');
+
+			vi.mocked(fs.default.access).mockRejectedValue(new Error('ENOENT'));
+
+			const result = await handlers.get('claude:getGlobalStats')!({} as any);
+
+			expect(result).toEqual({
+				totalSessions: 0,
+				totalMessages: 0,
+				totalInputTokens: 0,
+				totalOutputTokens: 0,
+				totalCacheReadTokens: 0,
+				totalCacheCreationTokens: 0,
+				totalCostUsd: 0,
+				totalSizeBytes: 0,
+				isComplete: true,
+			});
+		});
+	});
+
+	describe('claude:getCommands', () => {
+		it('discovers user, project, and enabled plugin commands with descriptions', async () => {
+			const fs = await import('fs/promises');
+
+			vi.mocked(fs.default.readdir).mockImplementation(async (dir) => {
+				const dirPath = String(dir);
+				if (dirPath === '/mock/home/.claude/commands') {
+					return [fileEntry('user.md'), fileEntry('notes.txt')] as unknown as Awaited<
+						ReturnType<typeof fs.default.readdir>
+					>;
+				}
+				if (dirPath === '/test/project/.claude/commands') {
+					return [fileEntry('deploy.md')] as unknown as Awaited<
+						ReturnType<typeof fs.default.readdir>
+					>;
+				}
+				if (dirPath === '/mock/plugin/commands') {
+					return [fileEntry('ship.md')] as unknown as Awaited<
+						ReturnType<typeof fs.default.readdir>
+					>;
+				}
+				throw new Error('missing command dir');
+			});
+			vi.mocked(fs.default.readFile).mockImplementation(async (filePath) => {
+				const pathValue = String(filePath);
+				if (pathValue.endsWith('/settings.json')) {
+					return JSON.stringify({
+						enabledPlugins: {
+							'team@local': true,
+							'off@local': false,
+						},
+					});
+				}
+				if (pathValue.endsWith('/installed_plugins.json')) {
+					return JSON.stringify({
+						plugins: {
+							'team@local': { installPath: '/mock/plugin' },
+							'off@local': { installPath: '/mock/off-plugin' },
+						},
+					});
+				}
+				if (pathValue.endsWith('/user.md')) {
+					return ['---', 'allowed-tools: Bash', '---', '# User command summary'].join('\n');
+				}
+				if (pathValue.endsWith('/deploy.md')) {
+					return 'Deploy the current project';
+				}
+				if (pathValue.endsWith('/ship.md')) {
+					return 'Ship from plugin';
+				}
+				throw new Error('missing markdown');
+			});
+
+			const result = await handlers.get('claude:getCommands')!({} as any, '/test/project');
+
+			expect(result).toEqual([
+				{ command: '/user', description: 'User command summary' },
+				{ command: '/deploy', description: 'Deploy the current project' },
+				{ command: '/team:ship', description: 'Ship from plugin' },
+			]);
+		});
+
+		it('returns No description when command files have no readable body', async () => {
+			const fs = await import('fs/promises');
+
+			vi.mocked(fs.default.readdir).mockImplementation(async (dir) => {
+				if (String(dir) === '/mock/home/.claude/commands') {
+					return [fileEntry('frontmatter-only.md'), fileEntry('broken.md')] as unknown as Awaited<
+						ReturnType<typeof fs.default.readdir>
+					>;
+				}
+				return [] as unknown as Awaited<ReturnType<typeof fs.default.readdir>>;
+			});
+			vi.mocked(fs.default.readFile).mockImplementation(async (filePath) => {
+				const pathValue = String(filePath);
+				if (pathValue.endsWith('/settings.json')) {
+					return JSON.stringify({});
+				}
+				if (pathValue.endsWith('/frontmatter-only.md')) {
+					return ['---', 'allowed-tools: Bash', '---', ''].join('\n');
+				}
+				throw new Error('EACCES');
+			});
+
+			const result = await handlers.get('claude:getCommands')!({} as any, '/test/project');
+
+			expect(result).toEqual([
+				{ command: '/frontmatter-only', description: 'No description' },
+				{ command: '/broken', description: 'No description' },
+			]);
+		});
+	});
+
+	describe('Claude session origins', () => {
+		it('registers named and unnamed origins', async () => {
+			mockClaudeSessionOriginsStore.get.mockReturnValue({});
+
+			await handlers.get('claude:registerSessionOrigin')!(
+				{} as any,
+				'/test/project',
+				'session-named',
+				'auto',
+				'Auto Run'
+			);
+			expect(mockClaudeSessionOriginsStore.set).toHaveBeenLastCalledWith('origins', {
+				'/test/project': {
+					'session-named': { origin: 'auto', sessionName: 'Auto Run' },
+				},
+			});
+
+			mockClaudeSessionOriginsStore.get.mockReturnValue({});
+			await handlers.get('claude:registerSessionOrigin')!(
+				{} as any,
+				'/test/project',
+				'session-user',
+				'user'
+			);
+			expect(mockClaudeSessionOriginsStore.set).toHaveBeenLastCalledWith('origins', {
+				'/test/project': {
+					'session-user': 'user',
+				},
+			});
+		});
+
+		it('updates existing and unknown session metadata', async () => {
+			const originsData = {
+				'/test/project': {
+					named: { origin: 'auto' as const, sessionName: 'Before' },
+					'star-string': 'user' as const,
+					'context-string': 'auto' as const,
+				},
+			};
+			mockClaudeSessionOriginsStore.get.mockReturnValue(originsData);
+
+			await handlers.get('claude:updateSessionName')!({} as any, '/test/project', 'named', 'After');
+			await handlers.get('claude:updateSessionStarred')!(
+				{} as any,
+				'/brand/new/project',
+				'fresh-star',
+				true
+			);
+			await handlers.get('claude:updateSessionStarred')!(
+				{} as any,
+				'/test/project',
+				'star-string',
+				true
+			);
+			await handlers.get('claude:updateSessionContextUsage')!(
+				{} as any,
+				'/another/new/project',
+				'fresh-context',
+				42
+			);
+			await handlers.get('claude:updateSessionContextUsage')!(
+				{} as any,
+				'/test/project',
+				'context-string',
+				64
+			);
+
+			expect(mockClaudeSessionOriginsStore.set).toHaveBeenLastCalledWith('origins', {
+				'/test/project': {
+					named: { origin: 'auto', sessionName: 'After' },
+					'star-string': { origin: 'user', starred: true },
+					'context-string': { origin: 'auto', contextUsage: 64 },
+				},
+				'/brand/new/project': {
+					'fresh-star': { origin: 'user', starred: true },
+				},
+				'/another/new/project': {
+					'fresh-context': { origin: 'user', contextUsage: 42 },
+				},
+			});
+		});
+
+		it('returns project origins and named sessions with best-effort last activity', async () => {
+			const fs = await import('fs/promises');
+
+			mockClaudeSessionOriginsStore.get.mockReturnValue({
+				'/test/project': {
+					'named-a': { origin: 'user', sessionName: 'Named A', starred: true },
+					unnamed: 'auto',
+				},
+				'/other/project': {
+					'named-b': { origin: 'auto', sessionName: 'Named B' },
+				},
+			});
+			vi.mocked(fs.default.stat).mockImplementation(async (filePath) => {
+				if (String(filePath).includes('named-b')) {
+					throw new Error('ENOENT');
+				}
+				return {
+					mtime: new Date('2024-03-03T03:03:03.000Z'),
+				} as unknown as Awaited<ReturnType<typeof fs.default.stat>>;
+			});
+
+			const projectOrigins = await handlers.get('claude:getSessionOrigins')!(
+				{} as any,
+				'/test/project'
+			);
+			const missingOrigins = await handlers.get('claude:getSessionOrigins')!(
+				{} as any,
+				'/missing/project'
+			);
+			const namedSessions = await handlers.get('claude:getAllNamedSessions')!({} as any);
+
+			expect(projectOrigins).toEqual({
+				'named-a': { origin: 'user', sessionName: 'Named A', starred: true },
+				unnamed: 'auto',
+			});
+			expect(missingOrigins).toEqual({});
+			expect(namedSessions).toEqual([
+				{
+					agentSessionId: 'named-a',
+					projectPath: '/test/project',
+					sessionName: 'Named A',
+					starred: true,
+					lastActivityAt: new Date('2024-03-03T03:03:03.000Z').getTime(),
+				},
+				{
+					agentSessionId: 'named-b',
+					projectPath: '/other/project',
+					sessionName: 'Named B',
+					starred: undefined,
+					lastActivityAt: undefined,
+				},
+			]);
 		});
 	});
 

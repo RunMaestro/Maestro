@@ -4,10 +4,10 @@ import { Spinner } from '../ui/Spinner';
 import { imageCache } from '../../hooks';
 import type { Theme } from '../../types';
 
-// Safe wrapper around safeDecodeURIComponent that falls back to original string on malformed URIs
+// Safe wrapper around decodeURIComponent that falls back to the original string on malformed URIs.
 function safeDecodeURIComponent(str: string): string {
 	try {
-		return safeDecodeURIComponent(str);
+		return decodeURIComponent(str);
 	} catch {
 		return str;
 	}

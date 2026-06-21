@@ -11,12 +11,19 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import React, { createRef, useState } from 'react';
-import { RightPanel, RightPanelHandle } from '../../renderer/components/RightPanel';
+import {
+	RightPanel as BaseRightPanel,
+	RightPanelHandle,
+} from '../../renderer/components/RightPanel';
 import { AutoRun, AutoRunHandle } from '../../renderer/components/AutoRun';
-import type { Session, Shortcut, BatchRunState, RightPanelTab } from '../../renderer/types';
 import type { Session, Shortcut, BatchRunState, RightPanelTab } from '../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../helpers/mockSession';
 import { LayerStackProvider } from '../../renderer/contexts/LayerStackContext';
+import { useBatchStore } from '../../renderer/stores/batchStore';
+import { useFileExplorerStore } from '../../renderer/stores/fileExplorerStore';
+import { useSessionStore } from '../../renderer/stores/sessionStore';
+import { useSettingsStore } from '../../renderer/stores/settingsStore';
+import { useUIStore } from '../../renderer/stores/uiStore';
 
 import { createMockTheme } from '../helpers/mockTheme';
 
@@ -42,7 +49,7 @@ vi.mock('react-syntax-highlighter/dist/esm/styles/prism', () => ({
 	vs: {},
 }));
 
-vi.mock('../../renderer/components/AutoRunnerHelpModal', () => ({
+vi.mock('../../renderer/components/AutoRun/AutoRunnerHelpModal', () => ({
 	AutoRunnerHelpModal: ({ onClose }: { onClose: () => void }) => (
 		<div data-testid="help-modal">
 			<button onClick={onClose}>Close</button>
@@ -66,7 +73,7 @@ vi.mock('../../renderer/components/HistoryPanel', () => ({
 	HistoryPanel: vi.fn(() => <div data-testid="history-panel">HistoryPanel</div>),
 }));
 
-vi.mock('../../renderer/components/AutoRunDocumentSelector', () => ({
+vi.mock('../../renderer/components/AutoRun/AutoRunDocumentSelector', () => ({
 	AutoRunDocumentSelector: ({
 		documents,
 		selectedDocument,
@@ -191,6 +198,133 @@ const createMockShortcuts = (): Record<string, Shortcut> => ({
 	},
 });
 
+type RightPanelHarnessProps = React.ComponentProps<typeof BaseRightPanel> & {
+	activeFocus?: string;
+	activeRightTab?: RightPanelTab;
+	autoRunContent?: string;
+	autoRunContentVersion?: number;
+	autoRunDocumentList?: string[];
+	autoRunDocumentTree?: unknown[];
+	autoRunIsLoadingDocuments?: boolean;
+	fileTreeFilter?: string;
+	fileTreeFilterOpen?: boolean;
+	filteredFileTree?: unknown[];
+	rightPanelOpen?: boolean;
+	rightPanelWidth?: number;
+	selectedFileIndex?: number;
+	session?: Session | null;
+	setActiveFocus?: (focus: string) => void;
+	setActiveRightTab?: (tab: RightPanelTab) => void;
+	setRightPanelOpen?: (open: boolean) => void;
+	setRightPanelWidthState?: (width: number) => void;
+	setSelectedFileIndex?: (index: number) => void;
+	setShowHiddenFiles?: (show: boolean) => void;
+	shortcuts?: Record<string, Shortcut>;
+	showHiddenFiles?: boolean;
+};
+
+const RightPanel = React.forwardRef<RightPanelHandle, RightPanelHarnessProps>(
+	function RightPanelHarness(
+		{
+			activeFocus = 'right',
+			activeRightTab = 'files',
+			autoRunContent,
+			autoRunContentVersion = 0,
+			autoRunDocumentList = [],
+			autoRunDocumentTree = [],
+			autoRunIsLoadingDocuments = false,
+			fileTreeFilter = '',
+			fileTreeFilterOpen = false,
+			filteredFileTree = [],
+			rightPanelOpen = true,
+			rightPanelWidth = 400,
+			selectedFileIndex = 0,
+			session,
+			setActiveRightTab,
+			shortcuts = createMockShortcuts(),
+			showHiddenFiles = false,
+			...props
+		},
+		ref
+	) {
+		const seededRef = React.useRef(false);
+		const seedStores = React.useCallback(() => {
+			const sessionWithAutoRun = session
+				? {
+						...session,
+						autoRunContent: autoRunContent ?? session.autoRunContent ?? '',
+						autoRunContentVersion,
+					}
+				: null;
+
+			useSessionStore.setState({
+				activeSessionId: sessionWithAutoRun?.id ?? '',
+				groups: [],
+				sessions: sessionWithAutoRun ? [sessionWithAutoRun] : [],
+			});
+			useUIStore.setState({
+				activeFocus: activeFocus as any,
+				activeRightTab,
+				rightPanelOpen,
+			});
+			useSettingsStore.setState({
+				autoRunDisabled: false,
+				fileExplorerIconTheme: 'classic',
+				rightPanelWidth,
+				shortcuts: {
+					...useSettingsStore.getState().shortcuts,
+					...shortcuts,
+				},
+				showHiddenFiles,
+			});
+			useFileExplorerStore.setState({
+				fileTreeFilter,
+				fileTreeFilterOpen,
+				filteredFileTree: filteredFileTree as any,
+				selectedFileIndex,
+			});
+			useBatchStore.setState({
+				documentList: autoRunDocumentList,
+				documentTree: autoRunDocumentTree as any,
+				isLoadingDocuments: autoRunIsLoadingDocuments,
+			});
+		}, [
+			activeFocus,
+			activeRightTab,
+			autoRunContent,
+			autoRunContentVersion,
+			autoRunDocumentList,
+			autoRunDocumentTree,
+			autoRunIsLoadingDocuments,
+			fileTreeFilter,
+			fileTreeFilterOpen,
+			filteredFileTree,
+			rightPanelOpen,
+			rightPanelWidth,
+			selectedFileIndex,
+			session,
+			shortcuts,
+			showHiddenFiles,
+		]);
+
+		if (!seededRef.current) {
+			seedStores();
+			seededRef.current = true;
+		}
+
+		React.useLayoutEffect(() => {
+			seedStores();
+		}, [seedStores]);
+
+		const handleSetActiveRightTab = (tab: RightPanelTab) => {
+			useUIStore.setState({ activeRightTab: tab });
+			setActiveRightTab?.(tab);
+		};
+
+		return <BaseRightPanel ref={ref} {...props} setActiveRightTab={handleSetActiveRightTab} />;
+	}
+);
+
 // Wrapper component to test RightPanel with state management
 const RightPanelTestWrapper = ({
 	initialTab = 'autorun' as RightPanelTab,
@@ -210,7 +344,12 @@ const RightPanelTestWrapper = ({
 	const [activeRightTab, setActiveRightTab] = useState<RightPanelTab>(initialTab);
 	const [rightPanelWidth, setRightPanelWidth] = useState(initialWidth);
 	const [autoRunContent, setAutoRunContent] = useState(initialContent);
-	const [session, setSession] = useState(() => createMockSession());
+	const [session, setSession] = useState(() =>
+		createMockSession({
+			autoRunContent: initialContent,
+			autoRunContentVersion: 0,
+		})
+	);
 	const [rightPanelOpen, setRightPanelOpen] = useState(true);
 	const [activeFocus, setActiveFocus] = useState('right');
 
@@ -219,6 +358,7 @@ const RightPanelTestWrapper = ({
 
 	const handleContentChange = (content: string) => {
 		setAutoRunContent(content);
+		setSession((prev) => ({ ...prev, autoRunContent: content }));
 		onContentChange?.(content);
 	};
 
@@ -439,8 +579,13 @@ describe('Auto Run + RightPanel Integration', () => {
 			const onModeChange = vi.fn();
 			render(<RightPanelTestWrapper onModeChange={onModeChange} />);
 
-			// Find the mode toggle and switch to preview
-			const previewButton = screen.getByRole('button', { name: /preview/i });
+			const initialToggle = screen.getByTitle(/Switch to (edit|preview)/);
+			if (initialToggle.getAttribute('title') === 'Switch to edit') {
+				fireEvent.click(initialToggle);
+				expect(onModeChange).toHaveBeenCalledWith('edit');
+			}
+
+			const previewButton = screen.getByTitle('Switch to preview');
 			fireEvent.click(previewButton);
 			expect(onModeChange).toHaveBeenCalledWith('preview');
 
@@ -452,9 +597,8 @@ describe('Auto Run + RightPanel Integration', () => {
 			const autorunTab = screen.getByRole('button', { name: 'Auto Run' });
 			fireEvent.click(autorunTab);
 
-			// Preview mode should still be active (button should be styled as selected)
-			const previewButtonAfter = screen.getByRole('button', { name: /preview/i });
-			expect(previewButtonAfter).toHaveClass('font-semibold');
+			// Preview mode should still be active.
+			expect(screen.getByTitle('Switch to edit')).toBeInTheDocument();
 		});
 
 		it('preserves cursor position when switching tabs', async () => {
@@ -611,8 +755,13 @@ describe('Auto Run + RightPanel Integration', () => {
 			const onModeChange = vi.fn();
 			const { container } = render(<RightPanelTestWrapper onModeChange={onModeChange} />);
 
+			const initialToggle = screen.getByTitle(/Switch to (edit|preview)/);
+			if (initialToggle.getAttribute('title') === 'Switch to edit') {
+				fireEvent.click(initialToggle);
+			}
+
 			// Switch to preview mode
-			const previewButton = screen.getByRole('button', { name: /preview/i });
+			const previewButton = screen.getByTitle('Switch to preview');
 			fireEvent.click(previewButton);
 
 			// Simulate resize
@@ -621,9 +770,8 @@ describe('Auto Run + RightPanel Integration', () => {
 			fireEvent.mouseMove(document, { clientX: 600 });
 			fireEvent.mouseUp(document);
 
-			// Mode should still be preview
-			const previewButtonAfter = screen.getByRole('button', { name: /preview/i });
-			expect(previewButtonAfter).toHaveClass('font-semibold');
+			// Mode should still be preview.
+			expect(screen.getByTitle('Switch to edit')).toBeInTheDocument();
 		});
 
 		it('maintains scroll position during resize', async () => {
@@ -783,14 +931,19 @@ describe('Auto Run + RightPanel Integration', () => {
 			const onModeChange = vi.fn();
 			render(<RightPanelTestWrapper onModeChange={onModeChange} />);
 
+			const initialToggle = screen.getByTitle(/Switch to (edit|preview)/);
+			if (initialToggle.getAttribute('title') === 'Switch to edit') {
+				fireEvent.click(initialToggle);
+			}
+
 			// Switch to preview
-			const previewButton = screen.getByRole('button', { name: /preview/i });
+			const previewButton = screen.getByTitle('Switch to preview');
 			fireEvent.click(previewButton);
 
 			expect(onModeChange).toHaveBeenCalledWith('preview');
 
-			// Switch back to edit - use title selector to be more specific
-			const editButton = screen.getByTitle('Edit document');
+			// Switch back to edit.
+			const editButton = screen.getByTitle('Switch to edit');
 			fireEvent.click(editButton);
 
 			expect(onModeChange).toHaveBeenCalledWith('edit');

@@ -44,7 +44,7 @@ function writeStoredPromptComposerFullscreen(value: boolean): void {
 	try {
 		window.localStorage.setItem(PROMPT_COMPOSER_FULLSCREEN_KEY, String(value));
 	} catch {
-		// Ignore quota / privacy-mode errors — preference just won't persist.
+		// Ignore quota / privacy-mode errors - preference just won't persist.
 	}
 }
 
@@ -86,7 +86,7 @@ export interface SettingsModalData {
 /** New instance modal data */
 export interface NewInstanceModalData {
 	duplicatingSessionId: string | null;
-	/** When set, the new agent is created inside this group (ignored if duplicatingSessionId is set — duplicates inherit the source's group). */
+	/** When set, the new agent is created inside this group (ignored if duplicatingSessionId is set - duplicates inherit the source's group). */
 	presetGroupId?: string | null;
 }
 
@@ -206,7 +206,7 @@ export interface KeyboardMasteryData {
 	level: number;
 }
 
-/** Batch Runner modal data — used to pre-seed the doc list when opened programmatically (e.g. from the inline wizard's "Start Auto Run" button). */
+/** Batch Runner modal data - used to pre-seed the doc list when opened programmatically (e.g. from the inline wizard's "Start Auto Run" button). */
 export interface BatchRunnerModalData {
 	/** Document filenames (without `.md`) to pre-populate the run list with. When omitted, the run list opens empty. */
 	presetDocuments?: string[];
@@ -347,7 +347,7 @@ type ModalDataFor<T extends ModalId> = T extends keyof ModalDataMap ? ModalDataM
 // Store Types
 // ============================================================================
 
-interface ModalEntry<T = unknown> {
+export interface ModalEntry<T = unknown> {
 	open: boolean;
 	data?: T;
 }
@@ -405,7 +405,7 @@ interface ModalStoreActions {
 	/**
 	 * Keyboard entry point for the open-composer hotkey. Opens the Prompt
 	 * Composer when it's closed, otherwise cycles it between windowed and
-	 * full-screen — so repeated presses switch sizes instead of doing nothing.
+	 * full-screen - so repeated presses switch sizes instead of doing nothing.
 	 */
 	cyclePromptComposer: () => void;
 }
@@ -553,6 +553,17 @@ export const selectModalData =
 	(state: ModalStore): ModalDataFor<T> | undefined =>
 		state.modals.get(id)?.data as ModalDataFor<T> | undefined;
 
+/**
+ * Create a selector for a specific modal's full entry.
+ *
+ * @example
+ * const settingsModal = useModalStore(selectModal('settings'));
+ */
+export const selectModal =
+	<T extends ModalId>(id: T) =>
+	(state: ModalStore): ModalEntry<ModalDataFor<T>> | undefined =>
+		state.modals.get(id) as ModalEntry<ModalDataFor<T>> | undefined;
+
 // ============================================================================
 // ModalContext Compatibility Layer
 // ============================================================================
@@ -569,7 +580,7 @@ export function getModalActions() {
 	return {
 		// Settings Modal
 		// Pass `tab: undefined` (not a default of 'general') when no tab is
-		// requested — the modal restores the last tab the user viewed in this
+		// requested - the modal restores the last tab the user viewed in this
 		// session and falls back to General internally.
 		setSettingsModalOpen: (open: boolean) =>
 			open ? openModal('settings', { tab: undefined }) : closeModal('settings'),
@@ -931,7 +942,7 @@ export function getModalActions() {
  * reactive API shape as the old ModalContext. Each selector returns a primitive
  * (boolean) so Zustand's Object.is equality prevents re-renders unless the
  * specific value changes. However, the component calling this hook (App.tsx)
- * will re-evaluate all selectors on any modal state change — the same behavior
+ * will re-evaluate all selectors on any modal state change - the same behavior
  * as the old Context. This is intentionally transitional: as components migrate
  * to direct useModalStore(selectModalOpen('xyz')) calls, they decouple from
  * App.tsx's prop-drilling and get truly granular subscriptions.
@@ -1021,7 +1032,7 @@ export function useModalActions() {
 	return {
 		// Settings Modal
 		settingsModalOpen,
-		// `undefined` means "no explicit tab requested" — SettingsModal restores
+		// `undefined` means "no explicit tab requested" - SettingsModal restores
 		// the last in-session tab, falling back to 'general' on first open.
 		settingsTab: settingsData?.tab,
 		settingsPromptId: settingsData?.promptId,

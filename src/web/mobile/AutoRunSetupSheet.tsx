@@ -1281,9 +1281,9 @@ export function AutoRunSetupSheet({
 									overflowY: 'auto',
 								}}
 							>
-								{TEMPLATE_VARIABLES.filter((v) => !v.cueOnly).map((tv) => (
+								{TEMPLATE_VARIABLES.filter((v) => !v.cueOnly).map((tv, index) => (
 									<button
-										key={tv.variable}
+										key={`${tv.variable}-${index}`}
 										type="button"
 										onClick={() => insertTemplateVariable(tv.variable)}
 										style={{

@@ -30,6 +30,11 @@ export function usePhaseReviewDocumentState({
 	const prevDocumentIndexRef = useRef<number>(currentDocumentIndex);
 
 	useEffect(() => {
+		if (generatedDocuments.length > 0 && !generatedDocuments[currentDocumentIndex]) {
+			setCurrentDocumentIndex(0);
+			return;
+		}
+
 		const newContent =
 			currentDocumentIndex === 0
 				? getPhase1Content()
@@ -40,7 +45,7 @@ export function usePhaseReviewDocumentState({
 			setMode('preview');
 			prevDocumentIndexRef.current = currentDocumentIndex;
 		}
-	}, [currentDocumentIndex, generatedDocuments, getPhase1Content]);
+	}, [currentDocumentIndex, generatedDocuments, getPhase1Content, setCurrentDocumentIndex]);
 
 	const handleDocumentSelect = useCallback(
 		(index: number) => {
@@ -73,10 +78,11 @@ export function usePhaseReviewDocumentState({
 			setAttachments((prev) => prev.filter((attachment) => attachment.filename !== filename));
 			await window.maestro.autorun.deleteImage(folderPath, filename);
 
-			const escapedPath = filename.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 			const fname = filename.split('/').pop() || filename;
 			const escapedFilename = fname.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-			const regex = new RegExp(`!\\[${escapedFilename}\\]\\(${escapedPath}\\)\\n?`, 'g');
+			const escapedPath = filename.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+			const pathPattern = filename === fname ? `(?:[^)]+/)?${escapedFilename}` : escapedPath;
+			const regex = new RegExp(`!\\[${escapedFilename}\\]\\(${pathPattern}\\)\\n?`, 'g');
 			setLocalContent((prev) => prev.replace(regex, ''));
 		},
 		[folderPath]
