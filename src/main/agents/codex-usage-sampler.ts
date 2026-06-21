@@ -96,9 +96,13 @@ export async function sampleCodexUsage(opts: SampleCodexUsageOptions): Promise<C
 			},
 			signal: controller.signal,
 		});
-	} catch (err) {
+	} catch {
 		clearTimeout(timeout);
-		void reportCodexUsageFailure(codexHomeKey, `request: ${formatError(err)}`);
+		// A thrown fetch means the request never completed: the user is offline,
+		// DNS/TLS failed, the endpoint is unreachable, or our own abort timeout
+		// fired. All are expected, recoverable, user-environment conditions - not
+		// Maestro bugs - so don't report them to Sentry. The UI still reflects the
+		// failure via the returned `error` field. (MAESTRO-RR)
 		return {
 			sampledAt,
 			codexHomeKey,

@@ -14,6 +14,15 @@ import type {
 	BrowserTab,
 } from '../../../../renderer/types';
 
+// The renderer sentry module only exports these two helpers, so a full mock is
+// safe and avoids pulling @sentry/electron/renderer into jsdom. Lets us assert
+// what does / doesn't reach Sentry on a failed flush (MAESTRO-QF).
+const { captureExceptionMock } = vi.hoisted(() => ({ captureExceptionMock: vi.fn() }));
+vi.mock('../../../../renderer/utils/sentry', () => ({
+	captureException: captureExceptionMock,
+	captureMessage: vi.fn(),
+}));
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -2252,6 +2261,44 @@ describe('useDebouncedPersistence', () => {
 			});
 
 			expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('failed-flush Sentry reporting (MAESTRO-QF)', () => {
+		it('does not report a recoverable disk error to Sentry', async () => {
+			// `setAll` returning false is the main process deliberately signalling a
+			// recoverable disk error (e.g. transient ENOSPC). persistInternal throws
+			// only to preserve `isPending` for retry — it's an expected user-env
+			// condition, not a Maestro bug, so it must stay out of Sentry.
+			vi.mocked(window.maestro.sessions.setAll).mockResolvedValueOnce(false);
+			const session = makeSession({ id: 'session-qf' });
+			const initialLoadRef = makeInitialLoadRef(true);
+			const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+
+			await act(async () => {
+				result.current.flushNow([session]);
+				await vi.runAllTimersAsync();
+			});
+
+			expect(window.maestro.sessions.setAll).toHaveBeenCalled();
+			expect(captureExceptionMock).not.toHaveBeenCalled();
+		});
+
+		it('reports a genuine flush failure to Sentry', async () => {
+			vi.mocked(window.maestro.sessions.setAll).mockRejectedValueOnce(new Error('boom'));
+			const session = makeSession({ id: 'session-qf-2' });
+			const initialLoadRef = makeInitialLoadRef(true);
+			const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+
+			await act(async () => {
+				result.current.flushNow([session]);
+				await vi.runAllTimersAsync();
+			});
+
+			expect(captureExceptionMock).toHaveBeenCalledTimes(1);
+			const reported = captureExceptionMock.mock.calls[0][0] as Error;
+			expect(reported).toBeInstanceOf(Error);
+			expect(reported.message).toBe('boom');
 		});
 	});
 });
