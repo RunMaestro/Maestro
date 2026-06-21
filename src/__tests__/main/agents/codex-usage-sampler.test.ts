@@ -148,6 +148,23 @@ describe('codex-usage-sampler', () => {
 		expect(captureMessageMock).not.toHaveBeenCalled();
 	});
 
+	it('does not report network request failures to Sentry (MAESTRO-RR)', async () => {
+		await fs.writeFile(
+			path.join(TEST_ROOT, 'auth.json'),
+			JSON.stringify({ tokens: { access_token: 'redacted-token' } })
+		);
+		// A thrown fetch (offline, DNS/TLS failure, unreachable endpoint, or our
+		// own abort timeout) is the dominant MAESTRO-RR cause - an expected,
+		// recoverable user-environment condition, not a Sentry-worthy crash.
+		vi.mocked(globalThis.fetch).mockRejectedValue(new TypeError('fetch failed'));
+
+		const snapshot = await sampleCodexUsage({ codexHome: TEST_ROOT });
+
+		expect(snapshot.authState).toBe('error');
+		expect(snapshot.error).toContain('Failed to request Codex quota metadata');
+		expect(captureMessageMock).not.toHaveBeenCalled();
+	});
+
 	it('reports unexpected HTTP errors to Sentry (MAESTRO-RR)', async () => {
 		await fs.writeFile(
 			path.join(TEST_ROOT, 'auth.json'),

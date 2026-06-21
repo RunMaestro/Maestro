@@ -102,6 +102,8 @@ describe('stats IPC handlers', () => {
 			recordSessionCreated: vi.fn().mockReturnValue('session-lifecycle-id'),
 			recordSessionClosed: vi.fn().mockReturnValue(true),
 			getSessionLifecycleEvents: vi.fn().mockReturnValue([]),
+			incrementShortcutUsage: vi.fn().mockReturnValue('2026-06-21'),
+			isReady: vi.fn().mockReturnValue(true),
 		};
 
 		vi.mocked(statsDbModule.getStatsDB).mockReturnValue(mockStatsDB as unknown as StatsDB);
@@ -321,6 +323,34 @@ describe('stats IPC handlers', () => {
 				expect(mockStatsDB.insertAutoRunTask).toHaveBeenCalledWith(task);
 				expect(mockMainWindow.webContents.send).toHaveBeenCalledWith('stats:updated');
 				expect(mockMainWindow.webContents.send).toHaveBeenCalledTimes(1);
+			});
+		});
+
+		describe('stats:record-shortcut-usage', () => {
+			it('records usage and broadcasts when the stats DB is ready', async () => {
+				const handler = handlers.get('stats:record-shortcut-usage');
+				const firedAt = Date.UTC(2026, 5, 21, 12, 0, 0);
+
+				const result = await handler!({} as any, firedAt);
+
+				expect(result).toBe('2026-06-21');
+				expect(mockStatsDB.incrementShortcutUsage).toHaveBeenCalledWith(firedAt);
+				expect(mockMainWindow.webContents.send).toHaveBeenCalledWith('stats:updated');
+			});
+
+			// MAESTRO-SP: a shortcut can fire before the stats DB finishes
+			// initializing. The handler must skip silently rather than throw
+			// "Database not initialized" (which would otherwise propagate across
+			// the IPC bridge into the renderer and Sentry).
+			it('skips silently without throwing when the stats DB is not yet ready', async () => {
+				vi.mocked(mockStatsDB.isReady!).mockReturnValue(false);
+				const handler = handlers.get('stats:record-shortcut-usage');
+
+				const result = await handler!({} as any, Date.now());
+
+				expect(result).toBeNull();
+				expect(mockStatsDB.incrementShortcutUsage).not.toHaveBeenCalled();
+				expect(mockMainWindow.webContents.send).not.toHaveBeenCalled();
 			});
 		});
 	});
