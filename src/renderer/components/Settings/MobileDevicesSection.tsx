@@ -14,6 +14,8 @@ import { Smartphone, Plus, Trash2, QrCode, Clock, AlertCircle } from 'lucide-rea
 import { QRCodeSVG } from 'qrcode.react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { Spinner } from '../ui/Spinner';
+import { useModalLayer } from '../../hooks/ui/useModalLayer';
+import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import type { Theme } from '../../types';
 import { formatRelativeTime } from '../../../shared/formatters';
 
@@ -43,19 +45,17 @@ export function MobileDevicesSection({ theme }: MobileDevicesSectionProps) {
 	const [pairingExpiresAt, setPairingExpiresAt] = useState<number | null>(null);
 	const [pairingError, setPairingError] = useState<string | null>(null);
 	const [generatingCode, setGeneratingCode] = useState(false);
-
-	// Countdown state
 	const [secondsRemaining, setSecondsRemaining] = useState<number>(0);
-	const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-	// Polling state for device list refresh while modal is open
-	const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
 	// Revoke state
 	const [revokingId, setRevokingId] = useState<string | null>(null);
 
-	// Load devices on mount
+	// Dedupe concurrent listDevices calls (mount + 2s poll can overlap on a slow disk).
+	const loadInFlightRef = useRef(false);
+
 	const loadDevices = useCallback(async () => {
+		if (loadInFlightRef.current) return;
+		loadInFlightRef.current = true;
 		try {
 			const result = await window.maestro.mobilePairing.listDevices();
 			if (result.success && result.devices) {
@@ -68,6 +68,7 @@ export function MobileDevicesSection({ theme }: MobileDevicesSectionProps) {
 			setError(err instanceof Error ? err.message : 'Failed to load devices');
 		} finally {
 			setLoading(false);
+			loadInFlightRef.current = false;
 		}
 	}, []);
 
@@ -75,46 +76,29 @@ export function MobileDevicesSection({ theme }: MobileDevicesSectionProps) {
 		loadDevices();
 	}, [loadDevices]);
 
-	// Start polling when modal is open
+	// Poll the device list while the pairing modal is open so a successful
+	// scan from the phone shows up without the user closing/reopening.
 	useEffect(() => {
-		if (showPairingModal) {
-			pollRef.current = setInterval(loadDevices, 2000);
-		} else if (pollRef.current) {
-			clearInterval(pollRef.current);
-			pollRef.current = null;
-		}
-		return () => {
-			if (pollRef.current) {
-				clearInterval(pollRef.current);
-			}
-		};
+		if (!showPairingModal) return;
+		const id = setInterval(loadDevices, 2000);
+		return () => clearInterval(id);
 	}, [showPairingModal, loadDevices]);
 
-	// Countdown timer
+	// Countdown timer. Runs while the modal is open and an active code is in
+	// memory; clears the code (and surfaces an error) when it hits 0.
 	useEffect(() => {
-		if (pairingExpiresAt && showPairingModal) {
-			const updateCountdown = () => {
-				const remaining = Math.max(0, Math.floor((pairingExpiresAt - Date.now()) / 1000));
-				setSecondsRemaining(remaining);
-				if (remaining === 0) {
-					// Code expired
-					setPairingCode(null);
-					setPairingError('Pairing code expired. Generate a new one.');
-					if (countdownRef.current) {
-						clearInterval(countdownRef.current);
-						countdownRef.current = null;
-					}
-				}
-			};
-			updateCountdown();
-			countdownRef.current = setInterval(updateCountdown, 1000);
-		}
-		return () => {
-			if (countdownRef.current) {
-				clearInterval(countdownRef.current);
-				countdownRef.current = null;
+		if (!pairingExpiresAt || !showPairingModal) return;
+		const tick = () => {
+			const remaining = Math.max(0, Math.floor((pairingExpiresAt - Date.now()) / 1000));
+			setSecondsRemaining(remaining);
+			if (remaining === 0) {
+				setPairingCode(null);
+				setPairingError('Pairing code expired. Generate a new one.');
 			}
 		};
+		tick();
+		const id = setInterval(tick, 1000);
+		return () => clearInterval(id);
 	}, [pairingExpiresAt, showPairingModal]);
 
 	// Generate pairing code
@@ -278,92 +262,125 @@ export function MobileDevicesSection({ theme }: MobileDevicesSectionProps) {
 				</div>
 			)}
 
-			{/* Pairing Modal */}
 			{showPairingModal && (
-				<div
-					className="fixed inset-0 flex items-center justify-center z-[10000]"
-					style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)' }}
-					onClick={handleClosePairingModal}
-				>
+				<PairingModal
+					theme={theme}
+					pairingCode={pairingCode}
+					qrPayload={qrPayload}
+					pairingError={pairingError}
+					generatingCode={generatingCode}
+					secondsRemaining={secondsRemaining}
+					onClose={handleClosePairingModal}
+					onRegenerate={handleGenerateCode}
+					formatCountdown={formatCountdown}
+				/>
+			)}
+		</div>
+	);
+}
+
+interface PairingModalProps {
+	theme: Theme;
+	pairingCode: string | null;
+	qrPayload: string;
+	pairingError: string | null;
+	generatingCode: boolean;
+	secondsRemaining: number;
+	onClose: () => void;
+	onRegenerate: () => void;
+	formatCountdown: (seconds: number) => string;
+}
+
+function PairingModal({
+	theme,
+	pairingCode,
+	qrPayload,
+	pairingError,
+	generatingCode,
+	secondsRemaining,
+	onClose,
+	onRegenerate,
+	formatCountdown,
+}: PairingModalProps) {
+	// Register with the layer stack so Escape closes the dialog, focus is
+	// trapped, and lower layers stop receiving keyboard events.
+	useModalLayer(MODAL_PRIORITIES.MOBILE_PAIRING, 'Pair New Device', onClose);
+
+	return (
+		<div
+			className="fixed inset-0 flex items-center justify-center modal-overlay select-none"
+			onClick={onClose}
+		>
+			<div
+				className="w-[400px] rounded-xl border p-6 shadow-2xl"
+				style={{
+					backgroundColor: theme.colors.bgSidebar,
+					borderColor: theme.colors.border,
+				}}
+				onClick={(e) => e.stopPropagation()}
+				role="dialog"
+				aria-modal="true"
+				aria-label="Pair New Device"
+			>
+				<div className="flex items-center justify-between mb-4">
+					<div className="flex items-center gap-2">
+						<QrCode className="w-5 h-5" />
+						<span className="text-lg font-bold">Pair New Device</span>
+					</div>
+					<button onClick={onClose} className="text-sm opacity-50 hover:opacity-100 cursor-pointer">
+						Cancel
+					</button>
+				</div>
+
+				{pairingError && (
 					<div
-						className="w-[400px] rounded-xl border p-6 shadow-2xl"
-						style={{
-							backgroundColor: theme.colors.bgSidebar,
-							borderColor: theme.colors.border,
-						}}
-						onClick={(e) => e.stopPropagation()}
+						className="flex items-center gap-2 p-3 rounded-md text-sm mb-4 select-text"
+						style={{ backgroundColor: `${theme.colors.error}20`, color: theme.colors.error }}
 					>
-						<div className="flex items-center justify-between mb-4">
-							<div className="flex items-center gap-2">
-								<QrCode className="w-5 h-5" />
-								<span className="text-lg font-bold">Pair New Device</span>
-							</div>
-							<button
-								onClick={handleClosePairingModal}
-								className="text-sm opacity-50 hover:opacity-100 cursor-pointer"
-							>
-								Cancel
-							</button>
+						<AlertCircle className="w-4 h-4" />
+						<span>{pairingError}</span>
+					</div>
+				)}
+
+				{generatingCode && !pairingCode && (
+					<div className="flex flex-col items-center justify-center py-8">
+						<Spinner size={32} color={theme.colors.textMain} />
+						<p className="text-sm opacity-50 mt-3">Generating pairing code...</p>
+					</div>
+				)}
+
+				{pairingCode && qrPayload && (
+					<div className="flex flex-col items-center">
+						<div className="p-4 rounded-lg mb-4" style={{ backgroundColor: 'white' }}>
+							<QRCodeSVG value={qrPayload} size={200} level="M" includeMargin={false} />
 						</div>
 
-						{/* Error */}
-						{pairingError && (
-							<div
-								className="flex items-center gap-2 p-3 rounded-md text-sm mb-4"
-								style={{ backgroundColor: `${theme.colors.error}20`, color: theme.colors.error }}
-							>
-								<AlertCircle className="w-4 h-4" />
-								{pairingError}
-							</div>
-						)}
+						<p className="text-sm text-center opacity-70 mb-3">
+							Open the Maestro mobile app and scan this QR code to pair your device.
+						</p>
 
-						{/* Generating */}
-						{generatingCode && !pairingCode && (
-							<div className="flex flex-col items-center justify-center py-8">
-								<Spinner size={32} color={theme.colors.textMain} />
-								<p className="text-sm opacity-50 mt-3">Generating pairing code...</p>
-							</div>
-						)}
+						<div
+							className="flex items-center gap-2 px-3 py-1.5 rounded-full text-sm"
+							style={{
+								backgroundColor:
+									secondsRemaining < 60 ? `${theme.colors.warning}30` : `${theme.colors.accent}20`,
+								color: secondsRemaining < 60 ? theme.colors.warning : theme.colors.accent,
+							}}
+						>
+							<Clock className="w-4 h-4" />
+							Expires in {formatCountdown(secondsRemaining)}
+						</div>
 
-						{/* QR Code Display */}
-						{pairingCode && qrPayload && (
-							<div className="flex flex-col items-center">
-								<div className="p-4 rounded-lg mb-4" style={{ backgroundColor: 'white' }}>
-									<QRCodeSVG value={qrPayload} size={200} level="M" includeMargin={false} />
-								</div>
-
-								<p className="text-sm text-center opacity-70 mb-3">
-									Open the Maestro mobile app and scan this QR code to pair your device.
-								</p>
-
-								{/* Countdown */}
-								<div
-									className="flex items-center gap-2 px-3 py-1.5 rounded-full text-sm"
-									style={{
-										backgroundColor:
-											secondsRemaining < 60
-												? `${theme.colors.warning}30`
-												: `${theme.colors.accent}20`,
-										color: secondsRemaining < 60 ? theme.colors.warning : theme.colors.accent,
-									}}
-								>
-									<Clock className="w-4 h-4" />
-									Expires in {formatCountdown(secondsRemaining)}
-								</div>
-
-								{/* Regenerate button */}
-								<button
-									onClick={handleGenerateCode}
-									disabled={generatingCode}
-									className="mt-4 text-sm opacity-50 hover:opacity-100 cursor-pointer underline"
-								>
-									Generate new code
-								</button>
-							</div>
-						)}
+						<button
+							onClick={onRegenerate}
+							disabled={generatingCode}
+							className="mt-4 text-sm opacity-50 hover:opacity-100 cursor-pointer underline"
+						>
+							Generate new code
+						</button>
 					</div>
-				</div>
-			)}
+				)}
+			</div>
 		</div>
 	);
 }

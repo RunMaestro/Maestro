@@ -14,6 +14,12 @@ import { logger } from '../../utils/logger';
 // Logger context for all mobile pairing route logs
 const LOG_CONTEXT = 'WebServer:MobilePairing';
 
+// Surface-level validation. The module enforces the same bounds, but rejecting
+// junk at the HTTP boundary keeps log noise down and short-circuits map lookups
+// on oversized strings.
+const CODE_PATTERN = /^[A-Z2-7]{6}$/;
+const MAX_DEVICE_NAME_LENGTH = 200;
+
 /**
  * Result of redeeming a pairing code
  */
@@ -66,16 +72,43 @@ export class MobilePairingRoutes {
 			},
 			async (request, reply) => {
 				const body = request.body as { code?: string; deviceName?: string } | undefined;
-				const code = body?.code;
-				const deviceName = body?.deviceName;
+				const rawCode = body?.code;
+				const rawDeviceName = body?.deviceName;
 
-				if (!code || typeof code !== 'string') {
+				if (typeof rawCode !== 'string') {
 					return reply.code(400).send({
 						error: 'Bad Request',
 						message: 'Pairing code is required',
 						timestamp: Date.now(),
 					});
 				}
+				const normalizedCode = rawCode.toUpperCase().trim();
+				if (!CODE_PATTERN.test(normalizedCode)) {
+					return reply.code(400).send({
+						error: 'Bad Request',
+						message: 'Pairing code must be 6 base32 characters',
+						timestamp: Date.now(),
+					});
+				}
+
+				if (rawDeviceName !== undefined && typeof rawDeviceName !== 'string') {
+					return reply.code(400).send({
+						error: 'Bad Request',
+						message: 'deviceName must be a string',
+						timestamp: Date.now(),
+					});
+				}
+				if (typeof rawDeviceName === 'string' && rawDeviceName.length > MAX_DEVICE_NAME_LENGTH) {
+					return reply.code(400).send({
+						error: 'Bad Request',
+						message: `deviceName must be at most ${MAX_DEVICE_NAME_LENGTH} characters`,
+						timestamp: Date.now(),
+					});
+				}
+				const deviceName =
+					typeof rawDeviceName === 'string' && rawDeviceName.trim().length > 0
+						? rawDeviceName.trim()
+						: 'Unknown Device';
 
 				if (!this.callbacks.redeemPairingCode) {
 					return reply.code(503).send({
@@ -86,10 +119,7 @@ export class MobilePairingRoutes {
 				}
 
 				try {
-					const result = await this.callbacks.redeemPairingCode(
-						code,
-						deviceName || 'Unknown Device'
-					);
+					const result = await this.callbacks.redeemPairingCode(normalizedCode, deviceName);
 
 					if (!result) {
 						// Code not found, expired, or already used

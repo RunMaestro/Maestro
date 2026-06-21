@@ -17,7 +17,7 @@
 import crypto from 'crypto';
 import path from 'path';
 import { app } from 'electron';
-import { readFile, writeFile, mkdir } from 'fs/promises';
+import { readFile, writeFile, mkdir, rename } from 'fs/promises';
 
 // Types
 
@@ -50,6 +50,9 @@ const CODE_LENGTH = 6;
 const CODE_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes
 const TOKEN_EXPIRY_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
 const PAIRINGS_FILENAME = 'mobile-pairings.json';
+const CODE_PATTERN = /^[A-Z2-7]{6}$/;
+const MAX_DEVICE_NAME_LENGTH = 200;
+const DEFAULT_DEVICE_NAME = 'Unknown Device';
 
 // In-memory store for pending pairing codes
 const pendingPairings = new Map<string, PendingPairing>();
@@ -96,7 +99,23 @@ async function writePairings(devices: PairedDevice[]): Promise<void> {
 	const filePath = getPairingsFilePath();
 	const dir = path.dirname(filePath);
 	await mkdir(dir, { recursive: true });
-	await writeFile(filePath, JSON.stringify(devices, null, '\t'), 'utf-8');
+	// Atomic write: stage to a tmp file, then rename. Prevents readers from seeing
+	// a half-written file if the process dies mid-write.
+	const tmpPath = `${filePath}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
+	await writeFile(tmpPath, JSON.stringify(devices, null, '\t'), 'utf-8');
+	await rename(tmpPath, filePath);
+}
+
+// Serializes all read-modify-write mutations of mobile-pairings.json so concurrent
+// callers (e.g. redeem racing updateDeviceLastUsed) can't lose writes. Node is
+// single-threaded but the awaits between read and write open an interleaving
+// window; the chained promise enforces strict ordering.
+let pairingsLock: Promise<unknown> = Promise.resolve();
+
+function withPairingsLock<T>(fn: () => Promise<T>): Promise<T> {
+	const next = pairingsLock.then(fn, fn);
+	pairingsLock = next.catch(() => undefined);
+	return next;
 }
 
 // Cleanup expired pending codes periodically
@@ -138,10 +157,17 @@ export async function redeemPairingCode(
 	code: string,
 	deviceName: string
 ): Promise<{ token: string; deviceId: string } | null> {
+	if (typeof code !== 'string') {
+		return null;
+	}
 	const normalizedCode = code.toUpperCase().trim();
+	if (!CODE_PATTERN.test(normalizedCode)) {
+		return null;
+	}
+
 	const pending = pendingPairings.get(normalizedCode);
 
-	// Validate code exists, not expired, not used
+	// Validate code exists, not expired, not used.
 	if (!pending) {
 		return null;
 	}
@@ -155,26 +181,31 @@ export async function redeemPairingCode(
 		return null;
 	}
 
-	// Mark as used
+	// Single-threaded JS guarantees these two ops are atomic w.r.t. other JS,
+	// so two parallel redeems of the same code can't both pass `!pending.used`.
 	pending.used = true;
 
-	// Create device record
+	const safeDeviceName =
+		typeof deviceName === 'string' && deviceName.trim().length > 0
+			? deviceName.trim().slice(0, MAX_DEVICE_NAME_LENGTH)
+			: DEFAULT_DEVICE_NAME;
+
 	const now = Date.now();
 	const device: PairedDevice = {
 		id: generateUUID(),
-		deviceName: deviceName || 'Unknown Device',
+		deviceName: safeDeviceName,
 		tokenHash: hashToken(pending.pendingToken),
 		createdAt: now,
 		lastUsedAt: now,
 		expiresAt: now + TOKEN_EXPIRY_MS,
 	};
 
-	// Read-modify-write pairings file
-	const devices = await readPairings();
-	devices.push(device);
-	await writePairings(devices);
+	await withPairingsLock(async () => {
+		const devices = await readPairings();
+		devices.push(device);
+		await writePairings(devices);
+	});
 
-	// Clean up the pending code
 	pendingPairings.delete(normalizedCode);
 
 	return { token: pending.pendingToken, deviceId: device.id };
@@ -187,23 +218,36 @@ export async function validateMobileToken(token: string): Promise<PairedDevice |
 	}
 
 	const tokenHash = hashToken(token);
+	const tokenHashBuf = Buffer.from(tokenHash, 'hex');
 	const devices = await readPairings();
 	const now = Date.now();
 
-	const device = devices.find((d) => d.tokenHash === tokenHash && d.expiresAt > now);
+	// Constant-time compare. The hash makes a real timing attack exotic, but
+	// avoiding short-circuit `===` on secret-derived values is cheap hygiene.
+	for (const d of devices) {
+		if (d.expiresAt <= now) continue;
+		const candidate = Buffer.from(d.tokenHash, 'hex');
+		if (
+			candidate.length === tokenHashBuf.length &&
+			crypto.timingSafeEqual(candidate, tokenHashBuf)
+		) {
+			return d;
+		}
+	}
 
-	return device || null;
+	return null;
 }
 
 /** Update lastUsedAt timestamp when a device successfully authenticates. */
 export async function updateDeviceLastUsed(deviceId: string): Promise<void> {
-	const devices = await readPairings();
-	const device = devices.find((d) => d.id === deviceId);
-
-	if (device) {
-		device.lastUsedAt = Date.now();
-		await writePairings(devices);
-	}
+	await withPairingsLock(async () => {
+		const devices = await readPairings();
+		const device = devices.find((d) => d.id === deviceId);
+		if (device) {
+			device.lastUsedAt = Date.now();
+			await writePairings(devices);
+		}
+	});
 }
 
 /** List all paired devices (without exposing token hashes). */
@@ -217,14 +261,16 @@ export async function listPairedDevices(): Promise<Omit<PairedDevice, 'tokenHash
 
 /** Revoke a paired device by ID. */
 export async function revokeDevice(deviceId: string): Promise<boolean> {
-	const devices = await readPairings();
-	const initialLength = devices.length;
-	const filtered = devices.filter((d) => d.id !== deviceId);
+	return withPairingsLock(async () => {
+		const devices = await readPairings();
+		const initialLength = devices.length;
+		const filtered = devices.filter((d) => d.id !== deviceId);
 
-	if (filtered.length < initialLength) {
-		await writePairings(filtered);
-		return true;
-	}
+		if (filtered.length < initialLength) {
+			await writePairings(filtered);
+			return true;
+		}
 
-	return false;
+		return false;
+	});
 }
