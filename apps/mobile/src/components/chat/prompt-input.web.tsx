@@ -1,5 +1,5 @@
 import { ArrowUp, Paperclip } from 'lucide-react';
-import { Children, type ReactNode, isValidElement } from 'react';
+import { Children, cloneElement, type ReactElement, type ReactNode, isValidElement } from 'react';
 import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native';
 
 import { useChatContext } from './chat-context';
@@ -8,22 +8,24 @@ import { useConversationContext } from './conversation';
 /**
  * Root container for the message composer matching Vercel chatbot design.
  * Centered max-w-4xl card with rounded-2xl border/shadow.
- * Collects PromptInputAction children and renders them in a footer row.
+ * Collects PromptInputAction children and forwards them into PromptInputBody.
  */
 export function PromptInput({ children }: { children: ReactNode }) {
 	const { onPromptInputLayout } = useConversationContext();
 
 	// Separate action buttons from body (which contains textarea + submit)
 	const actions: ReactNode[] = [];
-	let body: ReactNode = null;
+	let body: ReactElement<PromptInputBodyProps> | null = null;
 
 	Children.forEach(children, (child) => {
 		if (isValidElement(child) && (child.type as any) === PromptInputAction) {
 			actions.push(child);
 		} else if (isValidElement(child) && (child.type as any) === PromptInputBody) {
-			body = child;
+			body = child as ReactElement<PromptInputBodyProps>;
 		}
 	});
+
+	const bodyWithActions = body ? cloneElement(body, { actions }) : null;
 
 	return (
 		<View
@@ -31,7 +33,7 @@ export function PromptInput({ children }: { children: ReactNode }) {
 			className="sticky bottom-0 z-10 mx-auto flex w-full max-w-4xl gap-2 bg-background px-2 pb-3 md:px-4 md:pb-4"
 		>
 			<View className="flex w-full flex-col rounded-2xl border border-border/30 bg-card/70 shadow-composer transition-shadow duration-300 focus-within:shadow-composer-focus">
-				{body}
+				{bodyWithActions}
 			</View>
 		</View>
 	);
@@ -57,11 +59,16 @@ export function PromptInputAction({
 	);
 }
 
+type PromptInputBodyProps = {
+	children: ReactNode;
+	actions?: ReactNode[];
+};
+
 /**
  * Container wrapping the textarea and the footer row with submit + tools.
  * On web, PromptInputBody renders the textarea children PLUS a footer row.
  */
-export function PromptInputBody({ children }: { children: ReactNode }) {
+export function PromptInputBody({ children, actions = [] }: PromptInputBodyProps) {
 	// Separate textarea from submit button
 	const textarea: ReactNode[] = [];
 	let submit: ReactNode = null;
@@ -81,6 +88,7 @@ export function PromptInputBody({ children }: { children: ReactNode }) {
 			{/* Footer row: tools on left, submit on right */}
 			<View className="flex flex-row items-center justify-between px-3 pb-3">
 				<View className="flex flex-row items-center gap-1">
+					{actions}
 					{/* Attachments button */}
 					<Pressable className="flex h-7 w-7 items-center justify-center rounded-lg border border-border/40 transition-colors hover:bg-accent">
 						<Paperclip size={14} className="text-muted-foreground" />
@@ -107,7 +115,7 @@ export function PromptInputTextarea({
 	placeholder?: string;
 	maxLength?: number;
 }) {
-	const { input, setInput, onSend } = useChatContext();
+	const { input, setInput, isGenerating, onSend } = useChatContext();
 
 	return (
 		<TextInput
@@ -121,9 +129,13 @@ export function PromptInputTextarea({
 			multiline
 			maxLength={maxLength}
 			onKeyPress={(e) => {
-				if ((e as any).nativeEvent.key === 'Enter' && !(e as any).nativeEvent.shiftKey) {
+				const key = (e as any).nativeEvent.key;
+				const shiftKey = !!(e as any).nativeEvent.shiftKey;
+				if (key === 'Enter' && !shiftKey) {
 					e.preventDefault();
-					onSend();
+					if (input.trim().length > 0 && !isGenerating) {
+						onSend();
+					}
 				}
 			}}
 		/>

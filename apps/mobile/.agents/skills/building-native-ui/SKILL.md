@@ -11,7 +11,7 @@ license: MIT
 
 Consult these resources as needed:
 
-```
+```text
 references/
   animations.md          Reanimated: entering, exiting, layout, scroll-driven, gestures
   controls.md            Native iOS: Switch, Slider, SegmentedControl, DateTimePicker, Picker
@@ -31,33 +31,24 @@ references/
 
 ## Running the App
 
-**CRITICAL: Always try Expo Go first before creating custom builds.**
+**CRITICAL: This app requires a custom Expo development build and will not work in Expo Go.**
 
-Most Expo apps work in Expo Go without any custom native code. Before running `npx expo run:ios` or `npx expo run:android`:
+Do not attempt to run this app with the Expo Go client - it relies on native modules and configuration that Expo Go does not ship with. Use a custom dev build instead:
 
-1. **Start with Expo Go**: Run `npx expo start` and scan the QR code with Expo Go
-2. **Check if features work**: Test your app thoroughly in Expo Go
-3. **Only create custom builds when required** - see below
+1. **iOS**: `npx expo run:ios` (or `npx serve-sim` for the simulator verification flow used in this repo)
+2. **Android**: `npx expo run:android`
+3. **Web**: `npx agent-browser`
 
-### When Custom Builds Are Required
+### Why a Custom Build Is Required
 
-You need `npx expo run:ios/android` or `eas build` ONLY when using:
+This project pulls in capabilities Expo Go does not support, including:
 
 - **Local Expo modules** (custom native code in `modules/`)
 - **Apple targets** (widgets, app clips, extensions via `@bacons/apple-targets`)
-- **Third-party native modules** not included in Expo Go
-- **Custom native configuration** that can't be expressed in `app.json`
+- **Third-party native modules** not bundled with Expo Go
+- **Custom native configuration** that can't be expressed in `app.json` alone
 
-### When Expo Go Works
-
-Expo Go supports a huge range of features out of the box:
-
-- All `expo-*` packages (camera, location, notifications, etc.)
-- Expo Router navigation
-- Most UI libraries (reanimated, gesture handler, etc.)
-- Push notifications, deep links, and more
-
-**If you're unsure, try Expo Go first.** Creating custom builds adds complexity, slower iteration, and requires Xcode/Android Studio setup.
+If a build fails, fix the native config or run `npx expo prebuild` - do not fall back to Expo Go.
 
 ## Code Style
 
@@ -246,13 +237,13 @@ Present a screen as a dynamic form sheet:
 
 A standard app layout with tabs and stacks inside each tab:
 
-```
+```text
 app/
-  _layout.tsx — <NativeTabs />
+  _layout.tsx - <NativeTabs />
   (index,search)/
-    _layout.tsx — <Stack />
-    index.tsx — Main list
-    search.tsx — Search view
+    _layout.tsx - <Stack />
+    index.tsx - Main list
+    search.tsx - Search view
 ```
 
 ```tsx

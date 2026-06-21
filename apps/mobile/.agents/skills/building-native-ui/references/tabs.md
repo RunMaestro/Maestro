@@ -302,7 +302,7 @@ export default function HomeStack() {
 
 Use platform-specific files for separate native and web tab layouts:
 
-```
+```text
 app/
   _layout.tsx          # NativeTabs for iOS/Android
   _layout.web.tsx      # Headless tabs for web (expo-router/ui)

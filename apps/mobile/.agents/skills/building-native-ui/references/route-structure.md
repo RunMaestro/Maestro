@@ -15,7 +15,7 @@
 
 Use square brackets for dynamic segments:
 
-```
+```text
 app/
   users/
     [id].tsx        # Matches /users/123, /users/abc
@@ -27,7 +27,7 @@ app/
 
 Use `[...slug]` for catch-all routes:
 
-```
+```text
 app/
   docs/
     [...slug].tsx   # Matches /docs/a, /docs/a/b, /docs/a/b/c
@@ -66,7 +66,7 @@ function Component() {
 
 Use parentheses for groups that don't affect the URL:
 
-```
+```text
 app/
   (auth)/
     login.tsx       # URL: /login
@@ -92,30 +92,30 @@ When an app has tabs, the header and title should be set in a Stack that is nest
 
 Example structure:
 
-```
+```text
 app/
-  _layout.tsx — <Tabs />
+  _layout.tsx - <Tabs />
   (home)/
-    _layout.tsx — <Stack />
-    index.tsx — <ScrollView />
+    _layout.tsx - <Stack />
+    index.tsx - <ScrollView />
   (settings)/
-    _layout.tsx — <Stack />
-    index.tsx — <ScrollView />
+    _layout.tsx - <Stack />
+    index.tsx - <ScrollView />
   (home,settings)/
-    info.tsx — <ScrollView /> (shared across tabs)
+    info.tsx - <ScrollView /> (shared across tabs)
 ```
 
 ## Array Routes for Multiple Stacks
 
 Use array routes '(index,settings)' to create multiple stacks. This is useful for tabs that need to share screens across stacks.
 
-```
+```text
 app/
-  _layout.tsx — <Tabs />
+  _layout.tsx - <Tabs />
   (index,settings)/
-    _layout.tsx — <Stack />
-    index.tsx — <ScrollView />
-    settings.tsx — <ScrollView />
+    _layout.tsx - <Stack />
+    index.tsx - <ScrollView />
+    settings.tsx - <ScrollView />
 ```
 
 This requires a specialized layout with explicit anchor routes:
@@ -152,14 +152,14 @@ export default function Layout({ segment }: { segment: string }) {
 
 ## Complete App Structure Example
 
-```
+```text
 app/
-  _layout.tsx — <NativeTabs />
+  _layout.tsx - <NativeTabs />
   (index,search)/
-    _layout.tsx — <Stack />
-    index.tsx — Main list
-    search.tsx — Search view
-    i/[id].tsx — Detail page
+    _layout.tsx - <Stack />
+    index.tsx - Main list
+    search.tsx - Search view
+    i/[id].tsx - Detail page
 components/
   theme.tsx
   list.tsx
