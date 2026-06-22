@@ -23,6 +23,8 @@ export interface TabNamingConfig {
 		remoteId: string | null;
 		workingDirOverride?: string;
 	};
+	/** Session-level custom env vars, forwarded so naming inherits the same provider auth as the chat. */
+	sessionCustomEnvVars?: Record<string, string>;
 	/** Claude token-source selection, forwarded so tab naming honors TUI/Dynamic/API. */
 	enableMaestroP?: boolean;
 	maestroPMode?: 'interactive' | 'dynamic';

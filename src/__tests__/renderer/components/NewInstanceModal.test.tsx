@@ -3064,7 +3064,11 @@ describe('NewInstanceModal', () => {
 				}),
 				undefined,
 				undefined,
-				undefined, // enableMaestroP unset: API is the default for Claude Code (Adaptive Mode off)
+				// Duplicating materializes the source's unset token source into an explicit
+				// `false` (API) - the modal collapses `undefined ?? isAdaptiveModeDefaultOn()`
+				// to a concrete choice so the duplicate doesn't drift onto the TUI default over
+				// SSH (which would spawn maestro-p on a remote that may not have it).
+				false, // enableMaestroP: explicit API (Adaptive Mode off)
 				undefined, // maestroPPath
 				undefined // maestroPMode unset until the user opts into TUI/Dynamic
 			);

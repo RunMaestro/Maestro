@@ -39,6 +39,11 @@ vi.mock('lucide-react', () => ({
 	Database: () => <span data-testid="database-icon">Database</span>,
 	WrapText: () => <span data-testid="wraptext-icon">WrapText</span>,
 	AppWindow: () => <span data-testid="appwindow-icon">AppWindow</span>,
+	// Icons added by the search-kind toggle (text/regex/literal).
+	Filter: () => <span data-testid="filter-icon">Filter</span>,
+	Type: () => <span data-testid="type-icon">Type</span>,
+	Regex: () => <span data-testid="regex-icon">Regex</span>,
+	Hash: () => <span data-testid="hash-icon">Hash</span>,
 }));
 
 // Mock react-markdown
