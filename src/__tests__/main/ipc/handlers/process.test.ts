@@ -78,7 +78,7 @@ vi.mock('../../../../main/utils/ssh-command-builder', () => ({
 		const args: string[] = [];
 		const escapeRemotePath = (remotePath: string) => {
 			if (remotePath === '~') return '"$HOME"';
-			if (remotePath.startsWith('~/')) return `"$HOME"/${remotePath.slice(2)}`;
+			if (remotePath.startsWith('~/')) return `"$HOME"/'${remotePath.slice(2)}'`;
 			return `'${remotePath}'`;
 		};
 
@@ -2196,7 +2196,7 @@ describe('process IPC handlers', () => {
 
 			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
 			expect(spawnCall.command).toBe('ssh');
-			expect(spawnCall.sshStdinScript).toContain('cd "$HOME"/git-projects || exit 1');
+			expect(spawnCall.sshStdinScript).toContain('cd "$HOME"/\'git-projects\' || exit 1');
 			expect(spawnCall.sshStdinScript).not.toContain('/Users/tester/git-projects');
 		});
 

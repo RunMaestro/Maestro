@@ -296,6 +296,8 @@ export function EditAgentModal({
 	}, [isSshEnabled, sshRemoteConfig?.remoteId, sshRemotes]);
 
 	const remoteWorkingDir = sshRemoteConfig?.workingDirOverride ?? session?.projectRoot ?? '';
+	const trimmedRemoteWorkingDir = remoteWorkingDir.trim();
+	const isRemoteWorkingDirValid = !isSshEnabled || trimmedRemoteWorkingDir.length > 0;
 
 	// Validate remote path when SSH is enabled (debounced)
 	// Prefer workingDirOverride (user-specified remote path) over session.projectRoot
@@ -309,6 +311,7 @@ export function EditAgentModal({
 		if (!session) return;
 		const name = instanceName.trim();
 		if (!name) return;
+		if (isSshEnabled && !trimmedRemoteWorkingDir) return;
 
 		// Validate before saving
 		const result = validateEditSession(name, session.id, existingSessions);
@@ -331,10 +334,7 @@ export function EditAgentModal({
 				? {
 						enabled: true,
 						remoteId: sshRemoteConfig.remoteId,
-						// Ensure workingDirOverride is set: prefer explicit override, then session's
-						// projectRoot (which is the remote path the user originally configured).
-						workingDirOverride:
-							sshRemoteConfig.workingDirOverride?.trim() || session?.projectRoot || undefined,
+						workingDirOverride: trimmedRemoteWorkingDir,
 						syncHistory: sshRemoteConfig.syncHistory,
 						shareHistoryToProjectDir: sshRemoteConfig.shareHistoryToProjectDir,
 					}
@@ -377,6 +377,8 @@ export function EditAgentModal({
 		maestroPPath,
 		agentConfig,
 		sshRemoteConfig,
+		isSshEnabled,
+		trimmedRemoteWorkingDir,
 		selectedToolType,
 		providerChanged,
 		onSave,
@@ -416,8 +418,8 @@ export function EditAgentModal({
 	const isFormValid = useMemo(() => {
 		// Remote path validation is informational only - don't block save
 		// Users may want to configure SSH remote before the path exists
-		return !!instanceName.trim() && validation.valid;
-	}, [instanceName, validation.valid]);
+		return !!instanceName.trim() && validation.valid && isRemoteWorkingDirValid;
+	}, [instanceName, validation.valid, isRemoteWorkingDirValid]);
 
 	// Handle keyboard shortcuts via window listener (Modal stops propagation on its backdrop)
 	useEffect(() => {
@@ -567,6 +569,11 @@ export function EditAgentModal({
 									}));
 								}}
 								placeholder="~/git-projects/project"
+								error={
+									isSshEnabled && !trimmedRemoteWorkingDir
+										? 'Remote working directory is required'
+										: undefined
+								}
 								monospace
 								heightClass="p-2"
 							/>
