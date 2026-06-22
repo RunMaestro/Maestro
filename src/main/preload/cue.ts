@@ -126,7 +126,8 @@ export function createCueApi() {
 			projectRoot: string,
 			content: string,
 			promptFiles?: Record<string, string>
-		): Promise<void> => ipcRenderer.invoke('cue:writeYaml', { projectRoot, content, promptFiles }),
+		): Promise<{ changed: boolean }> =>
+			ipcRenderer.invoke('cue:writeYaml', { projectRoot, content, promptFiles }),
 
 		// Delete a session's cue.yaml config file
 		deleteYaml: (projectRoot: string): Promise<boolean> =>

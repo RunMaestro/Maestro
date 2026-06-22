@@ -20,6 +20,7 @@ import { cueDebugLog } from '../../../shared/cueDebug';
 import {
 	deleteCueConfigFile,
 	readCueConfigFile,
+	readCuePromptFile,
 	pruneOrphanedPromptFiles,
 	removeEmptyMaestroDir,
 	removeEmptyPromptsDir,
@@ -300,12 +301,30 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 				projectRoot: string;
 				content: string;
 				promptFiles?: Record<string, string>;
-			}): Promise<void> => {
+			}): Promise<{ changed: boolean }> => {
 				cueDebugLog('main:writeYaml:received', {
 					projectRoot: options.projectRoot,
 					yamlBytes: options.content.length,
 					promptFileCount: Object.keys(options.promptFiles ?? {}).length,
 				});
+				// Snapshot what's already on disk BEFORE writing so we can tell the
+				// caller whether this save actually changed anything. A pipeline-
+				// editor save that only moved nodes (layout) emits byte-identical
+				// YAML and prompt files; in that case we skip the rewrites entirely
+				// (no mtime bump → the cue.yaml/prompt watchers don't fire a reload)
+				// and report `changed: false` so the renderer skips the engine
+				// refresh that would otherwise re-arm triggers and re-execute the
+				// pipeline.
+				let existingYaml: string | null = null;
+				try {
+					existingYaml = readCueConfigFile(options.projectRoot)?.raw ?? null;
+				} catch {
+					// Existing file unreadable for some reason → assume changed so the
+					// write proceeds and the engine refreshes (conservative default).
+					existingYaml = null;
+				}
+				const yamlChanged = existingYaml !== options.content;
+				let promptsChanged = false;
 				const keepPaths = new Set<string>();
 				if (options.promptFiles) {
 					const promptsBase = path.resolve(options.projectRoot, '.maestro/prompts');
@@ -356,7 +375,13 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 						if (path.extname(target).toLowerCase() !== '.md') {
 							throw new Error(`cue:writeYaml: promptFiles key "${relativePath}" must end with .md`);
 						}
-						writeCuePromptFile(options.projectRoot, normalizedKey, content);
+						// Skip the write when the prompt file already holds identical
+						// content - avoids an mtime bump that would wake the prompt
+						// watcher and trigger a needless reload/re-execution.
+						if (readCuePromptFile(options.projectRoot, normalizedKey) !== content) {
+							writeCuePromptFile(options.projectRoot, normalizedKey, content);
+							promptsChanged = true;
+						}
 						keepPaths.add(normalizedKey);
 					}
 				}
@@ -413,7 +438,12 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 					});
 				}
 
-				writeCueConfigFile(options.projectRoot, options.content);
+				// Only rewrite cue.yaml when its content actually changed. Writing
+				// identical bytes still bumps mtime and wakes the config watcher,
+				// which refreshes the session and re-arms its triggers.
+				if (yamlChanged) {
+					writeCueConfigFile(options.projectRoot, options.content);
+				}
 
 				try {
 					const validation = validateCueConfig(parsed);
@@ -449,8 +479,9 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 				// YAML actually references — running prune anyway risks
 				// mass-deleting files we'd lose forever. The next successful save
 				// (with valid YAML) will catch up.
+				let prunedCount = 0;
 				if (parseSucceeded) {
-					pruneOrphanedPromptFiles(options.projectRoot, keepPaths);
+					prunedCount = pruneOrphanedPromptFiles(options.projectRoot, keepPaths).length;
 					// If the user saved an empty pipeline state (no prompts left)
 					// collapse `.maestro/prompts/` too so the on-disk footprint
 					// matches the empty UI. Non-empty dirs are left alone.
@@ -458,6 +489,11 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 						removeEmptyPromptsDir(options.projectRoot);
 					}
 				}
+
+				// `changed` drives whether the renderer refreshes the affected
+				// session(s). Deleting an orphaned prompt is itself a content change
+				// (a downstream agent's prompt_file vanished), so a prune counts.
+				return { changed: yamlChanged || promptsChanged || prunedCount > 0 };
 			}
 		)
 	);

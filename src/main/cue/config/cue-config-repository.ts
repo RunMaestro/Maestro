@@ -172,6 +172,31 @@ export function writeCuePromptFile(
 }
 
 /**
+ * Read a Cue prompt file's content. Returns `null` if the file does not exist
+ * (or the path resolves outside `.maestro/prompts/`).
+ *
+ * Used by the `cue:writeYaml` handler to detect whether a save actually
+ * changes prompt-file content. A pipeline-editor save that only moved nodes
+ * around emits byte-identical prompt files; comparing against this lets the
+ * handler skip the rewrite (no mtime bump → no watcher-driven reload) and
+ * report `changed: false` so the caller can skip the engine refresh that would
+ * otherwise re-arm triggers and re-execute the pipeline.
+ */
+export function readCuePromptFile(projectRoot: string, relativePath: string): string | null {
+	if (path.isAbsolute(relativePath)) return null;
+	const promptsDir = path.resolve(path.join(projectRoot, CUE_PROMPTS_DIR));
+	const absPath = path.resolve(path.join(projectRoot, relativePath));
+	if (!absPath.startsWith(promptsDir + path.sep)) return null;
+	try {
+		return fs.readFileSync(absPath, 'utf-8');
+	} catch {
+		// Missing/unreadable file → treat as "no existing content" so the caller
+		// writes (and counts it as a change). Best-effort; never fails a save.
+		return null;
+	}
+}
+
+/**
  * Remove `.md` files under `.maestro/prompts/` that are not referenced by the
  * current YAML. Called after a successful `cue:writeYaml` so that renames and
  * deletions do not leave orphan prompt files behind.
