@@ -557,6 +557,31 @@ The run writes an immediate "started" history entry (recording the goal and exit
 
 **JSON event stream:** `goal_start`, `goal_iteration_start`, `goal_iteration_complete` (carries `progress`, `rationale`, `complete`, `deadlock`), and `goal_complete` (carries `success`, `exitReason`, `finalProgress`, `iterations`).
 
+### Running Documents Without a Playbook (`run-doc`)
+
+`run-doc` runs one or more Auto Run `.md` documents directly, without saving a playbook first. Like `playbook`, it runs **headlessly** - it spawns the target agent itself and streams events, so it works whether or not the Maestro desktop window is open. This is the reliable way to execute a document an agent just wrote.
+
+```bash
+# Run a single document on an agent (by ID or name)
+maestro-cli run-doc plans/frontend-plan.md --agent "Frontend"
+
+# The path may be relative to the agent's Auto Run folder, relative to the
+# current directory, or absolute. Multiple documents run in sequence.
+maestro-cli run-doc plan-a.md plan-b.md --agent <agent-id>
+
+# Wait for the agent if it is busy, loop until all tasks are done
+maestro-cli run-doc plans/migrate.md --agent <agent-id> --wait --loop
+
+# JSON output for scripting; skip history writes
+maestro-cli run-doc plans/spec.md --agent <agent-id> --json --no-history
+```
+
+`run-doc` accepts the same execution flags as `playbook` (`--dry-run`, `--no-history`, `--json`, `--debug`, `--verbose`, `--no-synopsis`, `--wait`) plus `--prompt`, `--loop`, `--max-loops`, and `--reset-on-completion`. When no `--prompt` is given it uses the default Auto Run prompt.
+
+> **`playbook` vs `run-doc` vs `auto-run --launch`:** use `playbook <id>` for a saved playbook and `run-doc <docs>` for raw documents - both run headlessly with no desktop dependency. `auto-run --launch` instead hands the run to the running desktop app (needed only when you want the run to appear and be controlled in the desktop UI).
+
+> **`--agent` accepts a name:** the `-a, --agent` flag on these commands resolves an agent by ID (full or partial) **or** by display name. This lets a group-chat participant target itself with `--agent "<its name>"`.
+
 ### Prompt Customization
 
 The CLI uses the same core system prompts as the desktop app. When you customize prompts via Settings → **Maestro Prompts**, those customizations are stored in `core-prompts-customizations.json` in the Maestro data directory and are automatically picked up by the CLI during playbook runs.

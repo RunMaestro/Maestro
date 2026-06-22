@@ -736,9 +736,9 @@ describe('NewInstanceModal', () => {
 				expect.objectContaining({ enabled: false, remoteId: null }),
 				undefined,
 				undefined,
-				true, // enableMaestroP defaults on for Claude Code (Adaptive Mode)
+				undefined, // enableMaestroP unset: API is the default for Claude Code (Adaptive Mode off)
 				undefined, // maestroPPath
-				'dynamic' // maestroPMode defaults to dynamic when Adaptive on
+				undefined // maestroPMode unset until the user opts into TUI/Dynamic
 			);
 		});
 
@@ -788,9 +788,9 @@ describe('NewInstanceModal', () => {
 				expect.objectContaining({ enabled: false, remoteId: null }),
 				undefined,
 				undefined,
-				true, // enableMaestroP defaults on for Claude Code (Adaptive Mode)
+				undefined, // enableMaestroP unset: API is the default for Claude Code (Adaptive Mode off)
 				undefined, // maestroPPath
-				'dynamic' // maestroPMode defaults to dynamic when Adaptive on
+				undefined // maestroPMode unset until the user opts into TUI/Dynamic
 			);
 		});
 
@@ -840,9 +840,9 @@ describe('NewInstanceModal', () => {
 				expect.objectContaining({ enabled: false, remoteId: null }),
 				undefined,
 				undefined,
-				true, // enableMaestroP defaults on for Claude Code (Adaptive Mode)
+				undefined, // enableMaestroP unset: API is the default for Claude Code (Adaptive Mode off)
 				undefined, // maestroPPath
-				'dynamic' // maestroPMode defaults to dynamic when Adaptive on
+				undefined // maestroPMode unset until the user opts into TUI/Dynamic
 			);
 		});
 	});
@@ -893,9 +893,9 @@ describe('NewInstanceModal', () => {
 				expect.objectContaining({ enabled: false, remoteId: null }),
 				undefined,
 				undefined,
-				true, // enableMaestroP defaults on for Claude Code (Adaptive Mode)
+				undefined, // enableMaestroP unset: API is the default for Claude Code (Adaptive Mode off)
 				undefined, // maestroPPath
-				'dynamic' // maestroPMode defaults to dynamic when Adaptive on
+				undefined // maestroPMode unset until the user opts into TUI/Dynamic
 			);
 			expect(onClose).toHaveBeenCalled();
 		});
@@ -1409,9 +1409,9 @@ describe('NewInstanceModal', () => {
 				expect.objectContaining({ enabled: false, remoteId: null }),
 				undefined,
 				undefined,
-				true, // enableMaestroP defaults on for Claude Code (Adaptive Mode)
+				undefined, // enableMaestroP unset: API is the default for Claude Code (Adaptive Mode off)
 				undefined, // maestroPPath
-				'dynamic' // maestroPMode defaults to dynamic when Adaptive on
+				undefined // maestroPMode unset until the user opts into TUI/Dynamic
 			);
 		});
 
@@ -1561,9 +1561,9 @@ describe('NewInstanceModal', () => {
 				expect.objectContaining({ enabled: false, remoteId: null }),
 				undefined,
 				undefined,
-				true, // enableMaestroP defaults on for Claude Code (Adaptive Mode)
+				undefined, // enableMaestroP unset: API is the default for Claude Code (Adaptive Mode off)
 				undefined, // maestroPPath
-				'dynamic' // maestroPMode defaults to dynamic when Adaptive on
+				undefined // maestroPMode unset until the user opts into TUI/Dynamic
 			);
 		});
 	});
@@ -2949,9 +2949,9 @@ describe('NewInstanceModal', () => {
 				}),
 				undefined,
 				undefined,
-				true, // enableMaestroP defaults on for Claude Code (Adaptive Mode)
+				undefined, // enableMaestroP unset: API is the default for Claude Code (Adaptive Mode off)
 				undefined, // maestroPPath
-				'dynamic' // maestroPMode defaults to dynamic when Adaptive on
+				undefined // maestroPMode unset until the user opts into TUI/Dynamic
 			);
 		});
 
@@ -3064,9 +3064,9 @@ describe('NewInstanceModal', () => {
 				}),
 				undefined,
 				undefined,
-				true, // enableMaestroP defaults on for Claude Code (Adaptive Mode)
+				undefined, // enableMaestroP unset: API is the default for Claude Code (Adaptive Mode off)
 				undefined, // maestroPPath
-				'dynamic' // maestroPMode defaults to dynamic when Adaptive on
+				undefined // maestroPMode unset until the user opts into TUI/Dynamic
 			);
 		});
 
