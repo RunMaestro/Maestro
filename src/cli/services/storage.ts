@@ -458,11 +458,25 @@ export function resolveAgentId(partialId: string): string {
 		throw new Error(`Ambiguous agent ID '${partialId}'. Matches:\n${matchList}`);
 	}
 
-	if (!resolution.id) {
-		throw new Error(`Agent not found: ${partialId}`);
+	if (resolution.id) {
+		return resolution.id;
 	}
 
-	return resolution.id;
+	// Fall back to an exact, case-insensitive display-name match so callers can
+	// pass an agent's name and not just its ID. Group-chat participants know
+	// their own name (via {{PARTICIPANT_NAME}}) but not their session ID, so
+	// `--agent "<name>"` must work for them.
+	const lower = partialId.toLowerCase();
+	const byName = sessions.filter((s) => s.name.toLowerCase() === lower);
+	if (byName.length === 1) {
+		return byName[0].id;
+	}
+	if (byName.length > 1) {
+		const matchList = byName.map((s) => `  ${s.id.slice(0, 8)}  ${s.name}`).join('\n');
+		throw new Error(`Ambiguous agent name '${partialId}'. Matches:\n${matchList}`);
+	}
+
+	throw new Error(`Agent not found: ${partialId}`);
 }
 
 /**

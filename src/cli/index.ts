@@ -152,6 +152,33 @@ program
 		return runPlaybook(playbookId, options);
 	});
 
+// Run-doc command - run raw Auto Run documents headlessly without saving a
+// playbook first. Self-contained (spawns the agent itself); unlike
+// `auto-run --launch` it does not route through the desktop renderer, so it
+// works whether or not the Maestro window is open.
+program
+	.command('run-doc <docs...>')
+	.description('Run one or more Auto Run documents headlessly (no saved playbook required)')
+	.requiredOption(
+		'-a, --agent <id>',
+		'Target agent by ID or name (use "maestro-cli list agents" to find agents)'
+	)
+	.option('-p, --prompt <text>', 'Custom prompt for the run (defaults to the Auto Run prompt)')
+	.option('--loop', 'Enable looping')
+	.option('--max-loops <n>', 'Maximum loop count (implies --loop)')
+	.option('--reset-on-completion', 'Enable reset-on-completion for all documents')
+	.option('--dry-run', 'Show what would be executed without running')
+	.option('--no-history', 'Do not write history entries')
+	.option('--json', 'Output as JSON lines (for scripting)')
+	.option('--debug', 'Show detailed debug output for troubleshooting')
+	.option('--verbose', 'Show full prompt sent to agent on each iteration')
+	.option('--no-synopsis', 'Skip synopsis generation after each task (reduces overhead)')
+	.option('--wait', 'Wait for agent to become available if busy')
+	.action(async (docs: string[], options: Record<string, unknown>) => {
+		const { runDoc } = await import('./commands/run-doc');
+		return runDoc(docs, options as never);
+	});
+
 // Clean command
 const clean = program.command('clean').description('Clean up orphaned resources');
 

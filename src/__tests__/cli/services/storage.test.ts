@@ -540,6 +540,47 @@ describe('storage service', () => {
 				expect((error as Error).message).toContain('Named Agent');
 			}
 		});
+
+		it('should fall back to an exact, case-insensitive name match', () => {
+			vi.mocked(fs.readFileSync).mockReturnValue(
+				JSON.stringify({
+					sessions: [
+						mockSession({ id: 'abc-111', name: 'Frontend' }),
+						mockSession({ id: 'def-222', name: 'Backend' }),
+					],
+				})
+			);
+
+			expect(resolveAgentId('Frontend')).toBe('abc-111');
+			expect(resolveAgentId('frontend')).toBe('abc-111');
+		});
+
+		it('should prefer an ID match over a name match', () => {
+			vi.mocked(fs.readFileSync).mockReturnValue(
+				JSON.stringify({
+					sessions: [
+						mockSession({ id: 'frontend-id', name: 'Other' }),
+						mockSession({ id: 'xyz-999', name: 'frontend-id' }),
+					],
+				})
+			);
+
+			// 'frontend-id' is an exact ID of the first session, so it wins
+			expect(resolveAgentId('frontend-id')).toBe('frontend-id');
+		});
+
+		it('should throw an ambiguous-name error when multiple agents share a name', () => {
+			vi.mocked(fs.readFileSync).mockReturnValue(
+				JSON.stringify({
+					sessions: [
+						mockSession({ id: 'aaa-1', name: 'Worker' }),
+						mockSession({ id: 'bbb-2', name: 'Worker' }),
+					],
+				})
+			);
+
+			expect(() => resolveAgentId('Worker')).toThrow(/Ambiguous agent name 'Worker'/);
+		});
 	});
 
 	describe('resolveGroupId', () => {

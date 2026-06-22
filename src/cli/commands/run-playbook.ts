@@ -7,61 +7,8 @@ import { runPlaybook as executePlaybook } from '../services/batch-processor';
 import { detectAgent } from '../services/agent-spawner';
 import { getAgentDefinition } from '../../main/agents/definitions';
 import { emitError } from '../output/jsonl';
-import {
-	formatRunEvent,
-	formatError,
-	formatInfo,
-	formatWarning,
-	RunEvent,
-} from '../output/formatter';
-import { isSessionBusyWithCli, getCliActivityForSession } from '../../shared/cli-activity';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as os from 'os';
-
-/**
- * Check if desktop app has the session in busy state.
- *
- * NOTE: This function uses lowercase "maestro" config directory, which matches
- * the electron-store default (from package.json "name": "maestro"). This is
- * intentionally different from cli/services/storage.ts which uses "Maestro"
- * (capitalized) for CLI-specific storage. This function needs to read the
- * desktop app's session state, not CLI storage.
- *
- * @internal
- */
-function isSessionBusyInDesktop(sessionId: string): { busy: boolean; reason?: string } {
-	try {
-		const platform = os.platform();
-		const home = os.homedir();
-		let configDir: string;
-
-		if (platform === 'darwin') {
-			configDir = path.join(home, 'Library', 'Application Support', 'maestro');
-		} else if (platform === 'win32') {
-			configDir = path.join(
-				process.env.APPDATA || path.join(home, 'AppData', 'Roaming'),
-				'maestro'
-			);
-		} else {
-			configDir = path.join(process.env.XDG_CONFIG_HOME || path.join(home, '.config'), 'maestro');
-		}
-
-		const sessionsPath = path.join(configDir, 'maestro-sessions.json');
-		const content = fs.readFileSync(sessionsPath, 'utf-8');
-		const data = JSON.parse(content);
-		const sessions = data.sessions || [];
-
-		const session = sessions.find((s: { id: string }) => s.id === sessionId);
-		if (session && session.state === 'busy') {
-			return { busy: true, reason: 'Desktop app shows agent is busy' };
-		}
-		return { busy: false };
-	} catch {
-		// Can't read sessions file, assume not busy
-		return { busy: false };
-	}
-}
+import { formatRunEvent, formatError, formatInfo, RunEvent } from '../output/formatter';
+import { checkAgentBusy, waitForAgentAvailable } from '../services/agent-busy';
 
 interface RunPlaybookOptions {
 	dryRun?: boolean;
@@ -71,58 +18,6 @@ interface RunPlaybookOptions {
 	verbose?: boolean;
 	synopsis?: boolean; // commander uses --no-synopsis which becomes synopsis: false
 	wait?: boolean;
-}
-
-/**
- * Format wait duration in human-readable format.
- *
- * NOTE: This is intentionally different from shared/formatters.ts formatElapsedTime,
- * which uses a combined format like "5m 12s". This function uses a simpler format
- * (e.g., "5s", "2m 30s") appropriate for CLI wait messages.
- *
- * @internal
- */
-function formatWaitDuration(ms: number): string {
-	if (ms < 1000) return `${ms}ms`;
-	const seconds = Math.floor(ms / 1000);
-	if (seconds < 60) return `${seconds}s`;
-	const minutes = Math.floor(seconds / 60);
-	const remainingSeconds = seconds % 60;
-	return `${minutes}m ${remainingSeconds}s`;
-}
-
-/**
- * Pause execution for the specified duration.
- * @internal
- */
-function sleep(ms: number): Promise<void> {
-	return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/**
- * Check if agent is busy (either from another CLI instance or desktop app).
- * @internal
- */
-function checkAgentBusy(agentId: string, _agentName: string): { busy: boolean; reason?: string } {
-	// Check CLI activity first
-	const cliActivity = getCliActivityForSession(agentId);
-	if (cliActivity && isSessionBusyWithCli(agentId)) {
-		return {
-			busy: true,
-			reason: `Running playbook "${cliActivity.playbookName}" from CLI (PID: ${cliActivity.pid})`,
-		};
-	}
-
-	// Check desktop state
-	const desktopBusy = isSessionBusyInDesktop(agentId);
-	if (desktopBusy.busy) {
-		return {
-			busy: true,
-			reason: 'Busy in desktop app',
-		};
-	}
-
-	return { busy: false };
 }
 
 export async function runPlaybook(playbookId: string, options: RunPlaybookOptions): Promise<void> {
@@ -174,47 +69,12 @@ export async function runPlaybook(playbookId: string, options: RunPlaybookOption
 		}
 
 		// Check if agent is busy (either from desktop or another CLI instance)
-		let busyCheck = checkAgentBusy(agent.id, agent.name);
+		const busyCheck = checkAgentBusy(agent.id);
 
 		if (busyCheck.busy) {
 			if (options.wait) {
 				// Wait mode - poll until agent becomes available
-				const waitStartTime = Date.now();
-				const pollIntervalMs = 5000; // Check every 5 seconds
-
-				if (!useJson) {
-					console.log(formatWarning(`Agent "${agent.name}" is busy: ${busyCheck.reason}`));
-					console.log(formatInfo('Waiting for agent to become available...'));
-				}
-
-				let lastReason = busyCheck.reason;
-				while (busyCheck.busy) {
-					await sleep(pollIntervalMs);
-					busyCheck = checkAgentBusy(agent.id, agent.name);
-
-					// Log if reason changed (e.g., different playbook now running)
-					if (busyCheck.busy && busyCheck.reason !== lastReason && !useJson) {
-						console.log(formatWarning(`Still waiting: ${busyCheck.reason}`));
-						lastReason = busyCheck.reason;
-					}
-				}
-
-				const waitDuration = Date.now() - waitStartTime;
-				if (!useJson) {
-					console.log(
-						formatInfo(`Agent available after waiting ${formatWaitDuration(waitDuration)}`)
-					);
-					console.log('');
-				} else {
-					// Emit wait event in JSON mode
-					console.log(
-						JSON.stringify({
-							type: 'wait_complete',
-							timestamp: Date.now(),
-							waitDurationMs: waitDuration,
-						})
-					);
-				}
+				await waitForAgentAvailable(agent, busyCheck, { useJson });
 			} else {
 				// No wait mode - fail immediately
 				const message = `Agent "${agent.name}" is busy: ${busyCheck.reason}. Use --wait to wait for availability.`;
