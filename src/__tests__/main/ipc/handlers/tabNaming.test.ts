@@ -1115,6 +1115,39 @@ describe('Tab Naming IPC Handlers', () => {
 			await resultPromise;
 		});
 
+		it('forwards global shell env + session env so naming inherits the same provider auth as the chat', async () => {
+			// Regression: the chat spawn applies global Settings shell env (lowest layer,
+			// via shellEnvVars) plus session-level env, where subscription auth lives
+			// (CLAUDE_CODE_CONFIG_DIR / ANTHROPIC_API_KEY). Tab naming used to drop both,
+			// so a working chat could still fail naming with "Not logged in".
+			mockAgentDetector.getAgent.mockResolvedValue(interactiveClaudeAgent);
+			mockSettingsStore.get.mockImplementation((key: string, fallback?: unknown) =>
+				key === 'shellEnvVars' ? { CLAUDE_CONFIG_DIR: '/home/u/.claude' } : (fallback ?? {})
+			);
+			const finish = wireProcessEvents();
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Help me implement a login form',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+				enableMaestroP: false,
+				sessionCustomEnvVars: { ANTHROPIC_API_KEY: 'sk-session' },
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+			// Global shell env threaded as the lowest layer, exactly like the chat spawn.
+			expect(spawnCall.shellEnvVars).toMatchObject({ CLAUDE_CONFIG_DIR: '/home/u/.claude' });
+			// Session-level env merged into customEnvVars.
+			expect(spawnCall.customEnvVars).toMatchObject({ ANTHROPIC_API_KEY: 'sk-session' });
+
+			finish();
+			await resultPromise;
+		});
+
 		it('runs maestro-p on the remote host when an SSH agent selected interactive (TUI) mode', async () => {
 			// SSH used to be force-downgraded to `claude --print`. It now honors the
 			// selection: TUI routes to maestro-p on the REMOTE host (driving the

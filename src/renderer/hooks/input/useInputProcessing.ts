@@ -860,6 +860,8 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							agentType: activeSession.toolType,
 							cwd: activeSession.cwd,
 							sessionSshRemoteConfig: activeSession.sessionSshRemoteConfig,
+							// Forward session env so naming uses the same provider auth as the chat.
+							sessionCustomEnvVars: activeSession.customEnvVars,
 							// Honor the agent's Claude token source for the naming spawn.
 							enableMaestroP: activeSession.enableMaestroP,
 							maestroPMode: activeSession.maestroPMode,

@@ -373,7 +373,7 @@ describe('ThinkingStatusPill', () => {
 		it('has correct tooltip on +N indicator', () => {
 			const items = [createThinkingItem({ id: 'sess-1' }), createThinkingItem({ id: 'sess-2' })];
 			render(<ThinkingStatusPill thinkingItems={items} theme={mockTheme} />);
-			expect(screen.getByTitle('+1 more thinking')).toBeInTheDocument();
+			expect(screen.getByTitle('+1 more running')).toBeInTheDocument();
 		});
 
 		it('expands dropdown on mouse enter', () => {
@@ -1005,6 +1005,126 @@ describe('ThinkingStatusPill', () => {
 			fireEvent.click(parallelRow!);
 
 			expect(onSessionClick).toHaveBeenCalledWith('other-session', 'tab-parallel');
+		});
+	});
+
+	// When AutoRun runs in the background but the user fires their own request (force-send) in the
+	// tab they're viewing, the pill must describe THAT tab so its Stop interrupts what's on screen.
+	// AutoRun is demoted into the "Running Processes" dropdown, keeping its own Stop affordance.
+	describe('focused-tab request demotes AutoRun', () => {
+		const runningAutoRun: BatchRunState = {
+			isRunning: true,
+			isPaused: false,
+			isStopping: false,
+			currentTaskIndex: 0,
+			totalTasks: 5,
+			completedTasks: 2,
+			startTime: Date.now(),
+			tasks: [],
+			batchName: 'Batch',
+		};
+
+		it('shows the focused busy tab as primary instead of the AutoRun pill', () => {
+			const focused = createThinkingItemWithTab(
+				{ id: 'sess-focus', name: 'Focused Agent' },
+				{ id: 'tab-focus', name: 'Force Sent' }
+			);
+			render(
+				<ThinkingStatusPill
+					thinkingItems={[focused]}
+					theme={mockTheme}
+					autoRunState={runningAutoRun}
+					activeSessionId="sess-focus"
+					activeTabId="tab-focus"
+					onInterrupt={() => {}}
+					onStopAutoRun={() => {}}
+				/>
+			);
+			// Primary pill describes the focused tab, not the accent AutoRun pill.
+			expect(screen.getByText('Force Sent')).toBeInTheDocument();
+			// The interrupt Stop button (for the focused tab) is present.
+			expect(screen.getByText('Stop')).toBeInTheDocument();
+			// AutoRun is demoted: its label only lives in the collapsed dropdown, so it is
+			// not rendered as the primary pill label.
+			expect(screen.queryByText('AutoRun')).not.toBeInTheDocument();
+		});
+
+		it('interrupt Stop targets the focused tab (does not stop AutoRun) when both are running', () => {
+			const onInterrupt = vi.fn();
+			const onStopAutoRun = vi.fn();
+			const focused = createThinkingItemWithTab(
+				{ id: 'sess-focus', name: 'Focused Agent' },
+				{ id: 'tab-focus', name: 'Force Sent' }
+			);
+			render(
+				<ThinkingStatusPill
+					thinkingItems={[focused]}
+					theme={mockTheme}
+					autoRunState={runningAutoRun}
+					activeSessionId="sess-focus"
+					activeTabId="tab-focus"
+					onInterrupt={onInterrupt}
+					onStopAutoRun={onStopAutoRun}
+				/>
+			);
+			fireEvent.click(screen.getByText('Stop'));
+			expect(onInterrupt).toHaveBeenCalledTimes(1);
+			expect(onStopAutoRun).not.toHaveBeenCalled();
+		});
+
+		it('still surfaces demoted AutoRun in the dropdown with its own Stop button', () => {
+			const onStopAutoRun = vi.fn();
+			const focused = createThinkingItemWithTab(
+				{ id: 'sess-focus', name: 'Focused Agent' },
+				{ id: 'tab-focus', name: 'Force Sent' }
+			);
+			render(
+				<ThinkingStatusPill
+					thinkingItems={[focused]}
+					theme={mockTheme}
+					autoRunState={runningAutoRun}
+					activeSessionId="sess-focus"
+					activeTabId="tab-focus"
+					onInterrupt={() => {}}
+					onStopAutoRun={onStopAutoRun}
+				/>
+			);
+			// AutoRun is the single "extra" process, so the +1 badge expands to the dropdown.
+			const badge = screen.getByText('+1');
+			fireEvent.mouseEnter(badge.parentElement!);
+
+			expect(screen.getByText('Running Processes')).toBeInTheDocument();
+			expect(screen.getByText('2/5 tasks')).toBeInTheDocument();
+
+			// The AutoRun row carries its own Stop button; clicking it stops AutoRun.
+			const rows = screen.getAllByRole('button');
+			const autoRunStop = rows.find(
+				(row) => row.textContent === 'Stop' && row.closest('[class*="justify-between"]')
+			);
+			expect(autoRunStop).toBeDefined();
+			fireEvent.click(autoRunStop!);
+			expect(onStopAutoRun).toHaveBeenCalledTimes(1);
+		});
+
+		it('keeps the AutoRun pill when the focused tab is NOT busy', () => {
+			// A concurrent request in a different (non-focused) tab should not demote AutoRun.
+			const other = createThinkingItemWithTab(
+				{ id: 'sess-other', name: 'Other Agent' },
+				{ id: 'tab-other', name: 'Background Read' }
+			);
+			render(
+				<ThinkingStatusPill
+					thinkingItems={[other]}
+					theme={mockTheme}
+					autoRunState={runningAutoRun}
+					activeSessionId="sess-focus"
+					activeTabId="tab-focus"
+					onInterrupt={() => {}}
+					onStopAutoRun={() => {}}
+				/>
+			);
+			// Focused tab has no live request → AutoRun stays primary.
+			expect(screen.getByText('AutoRun')).toBeInTheDocument();
 		});
 	});
 
