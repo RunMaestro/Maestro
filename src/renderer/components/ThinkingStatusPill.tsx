@@ -156,6 +156,80 @@ const ThinkingItemRow = memo(
 
 ThinkingItemRow.displayName = 'ThinkingItemRow';
 
+// Resolve AutoRun task progress: prefer multi-doc aggregate counts when available,
+// fall back to single-doc legacy fields. Mirrors RightPanel.tsx so displays stay in sync.
+function getAutoRunTaskCounts(autoRunState: BatchRunState): { completed: number; total: number } {
+	const { totalTasksAcrossAllDocs } = autoRunState;
+	const useAggregate = !!totalTasksAcrossAllDocs && totalTasksAcrossAllDocs > 0;
+	return {
+		completed: useAggregate
+			? autoRunState.completedTasksAcrossAllDocs
+			: autoRunState.completedTasks,
+		total: useAggregate ? totalTasksAcrossAllDocs : autoRunState.totalTasks,
+	};
+}
+
+// AutoRun entry inside a "Running Processes" dropdown. When onStop is provided it renders a
+// per-row Stop button — used when AutoRun is demoted from the pill (because the focused tab is
+// busy) so the user can still stop AutoRun without losing it to a navigation-only list.
+const AutoRunRow = memo(
+	({
+		theme,
+		completedTasks,
+		totalTasks,
+		isStopping,
+		onStop,
+	}: {
+		theme: Theme;
+		completedTasks: number;
+		totalTasks: number;
+		isStopping?: boolean;
+		onStop?: () => void;
+	}) => (
+		<div
+			className="flex items-center justify-between gap-3 w-full px-3 py-2"
+			style={{ color: theme.colors.textMain }}
+		>
+			<div className="flex items-center gap-2 min-w-0">
+				<div
+					className="w-2 h-2 rounded-full shrink-0 animate-pulse"
+					style={{ backgroundColor: theme.colors.accent }}
+				/>
+				<span className="text-xs font-medium">{isStopping ? 'AutoRun Stopping' : 'AutoRun'}</span>
+			</div>
+			<div className="flex items-center gap-2 shrink-0">
+				<span className="text-xs" style={{ color: theme.colors.textDim }}>
+					{completedTasks}/{totalTasks} tasks
+				</span>
+				{onStop && (
+					<button
+						onClick={() => !isStopping && onStop()}
+						disabled={isStopping}
+						className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors ${
+							isStopping ? 'cursor-not-allowed' : 'hover:opacity-80'
+						}`}
+						style={{
+							backgroundColor: isStopping ? theme.colors.warning : theme.colors.error,
+							color: isStopping ? theme.colors.bgMain : 'white',
+							pointerEvents: isStopping ? 'none' : 'auto',
+						}}
+						title={
+							isStopping ? 'Stopping after current task...' : 'Stop auto-run after current task'
+						}
+					>
+						<svg className="w-2.5 h-2.5" viewBox="0 0 24 24" fill="currentColor">
+							<rect x="6" y="6" width="12" height="12" rx="1" />
+						</svg>
+						{isStopping ? 'Stopping' : 'Stop'}
+					</button>
+				)}
+			</div>
+		</div>
+	)
+);
+
+AutoRunRow.displayName = 'AutoRunRow';
+
 /**
  * AutoRunPill - Shows when AutoRun is active
  * Displays total elapsed time since AutoRun started, with task progress.
@@ -180,17 +254,8 @@ const AutoRunPill = memo(
 		const [isExpanded, setIsExpanded] = useState(false);
 		const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 		const startTime = autoRunState.startTime || Date.now();
-		const { isStopping, totalTasksAcrossAllDocs } = autoRunState;
-		// Prefer multi-doc aggregate counts when available; fall back to single-doc legacy
-		// fields. Mirrors the logic in RightPanel.tsx so both displays stay in sync.
-		const completedTasks =
-			totalTasksAcrossAllDocs && totalTasksAcrossAllDocs > 0
-				? autoRunState.completedTasksAcrossAllDocs
-				: autoRunState.completedTasks;
-		const totalTasks =
-			totalTasksAcrossAllDocs && totalTasksAcrossAllDocs > 0
-				? totalTasksAcrossAllDocs
-				: autoRunState.totalTasks;
+		const { isStopping } = autoRunState;
+		const { completed: completedTasks, total: totalTasks } = getAutoRunTaskCounts(autoRunState);
 		const concurrentCount = thinkingItems?.length || 0;
 
 		const handleHoverEnter = () => {
@@ -355,22 +420,13 @@ const AutoRunPill = memo(
 								>
 									Running Processes
 								</div>
-								{/* AutoRun entry */}
-								<div
-									className="flex items-center justify-between gap-3 w-full px-3 py-2"
-									style={{ color: theme.colors.textMain }}
-								>
-									<div className="flex items-center gap-2 min-w-0">
-										<div
-											className="w-2 h-2 rounded-full shrink-0 animate-pulse"
-											style={{ backgroundColor: theme.colors.accent }}
-										/>
-										<span className="text-xs font-medium">AutoRun</span>
-									</div>
-									<span className="text-xs" style={{ color: theme.colors.textDim }}>
-										{completedTasks}/{totalTasks} tasks
-									</span>
-								</div>
+								{/* AutoRun entry — stop lives on the pill itself, so no per-row Stop here */}
+								<AutoRunRow
+									theme={theme}
+									completedTasks={completedTasks}
+									totalTasks={totalTasks}
+									isStopping={isStopping}
+								/>
 								{/* Concurrent thinking items */}
 								{thinkingItems?.map((item) => (
 									<ThinkingItemRow
@@ -436,13 +492,22 @@ function ThinkingStatusPillInner({
 		};
 	}, []);
 
-	// If AutoRun is active for the current session, show the AutoRun pill
-	// with concurrent thinking items badge for parallel operations.
-	// AutoRun spawns its agent in isolation and does NOT mark any tab as state='busy'
-	// (see useAgentExecution.spawnAgentForSession). Every entry in thinkingItems is
-	// therefore legitimate concurrent work (e.g. a plan-mode / read-only tab, or a
-	// force-parallel write tab) and must surface via the +N badge.
-	if (autoRunState?.isRunning) {
+	// Does the tab the user is currently viewing have its own live request? AutoRun spawns its
+	// agent in isolation and does NOT mark any tab as state='busy' (see
+	// useAgentExecution.spawnAgentForSession), so a matching entry here is a real, separately
+	// interruptible request (e.g. a force-send the user fired while AutoRun runs in the background).
+	const focusedTabBusy = Boolean(
+		activeTabId &&
+		thinkingItems.some(
+			(item) => item.session.id === activeSessionId && item.tab?.id === activeTabId
+		)
+	);
+
+	// If AutoRun is active for the current session, show the AutoRun pill with concurrent
+	// thinking items badge for parallel operations — UNLESS the focused tab has its own live
+	// request. In that case the pill must describe the focused tab so its Stop button interrupts
+	// what the user is looking at; AutoRun is demoted into the dropdown (with its own Stop) below.
+	if (autoRunState?.isRunning && !focusedTabBusy) {
 		return (
 			<AutoRunPill
 				theme={theme}
@@ -460,6 +525,9 @@ function ThinkingStatusPillInner({
 		return null;
 	}
 
+	// AutoRun is running but demoted because the focused tab is busy — surface it in the dropdown.
+	const demotedAutoRun = autoRunState?.isRunning ? autoRunState : null;
+
 	// Primary item selection (each layer falls back to the next):
 	//   1. The exact active tab in the active session — when forced-parallel runs two busy
 	//      tabs in the same agent, this keeps the pill (name, elapsed time) describing the
@@ -474,7 +542,10 @@ function ThinkingStatusPillInner({
 		thinkingItems.find((item) => item.session.id === activeSessionId);
 	const primaryItem = activeItem || thinkingItems[0];
 	const additionalItems = thinkingItems.filter((item) => item !== primaryItem);
-	const hasMultiple = additionalItems.length > 0;
+	// The dropdown lists every other running process. A demoted AutoRun counts as one entry, so the
+	// +N badge and dropdown appear even when the focused tab is the only thinking item.
+	const extraCount = additionalItems.length + (demotedAutoRun ? 1 : 0);
+	const hasMultiple = extraCount > 0;
 
 	const { session: primarySession, tab: primaryTab } = primaryItem;
 
@@ -597,10 +668,10 @@ function ThinkingStatusPillInner({
 							backgroundColor: theme.colors.warning + '40',
 							border: `1px solid ${theme.colors.warning}60`,
 						}}
-						title={`+${additionalItems.length} more thinking`}
+						title={`+${extraCount} more running`}
 					>
 						<span className="text-[10px] font-bold" style={{ color: theme.colors.warning }}>
-							+{additionalItems.length}
+							+{extraCount}
 						</span>
 					</div>
 				)}
@@ -648,8 +719,17 @@ function ThinkingStatusPillInner({
 									backgroundColor: theme.colors.bgActivity,
 								}}
 							>
-								All Thinking Sessions
+								{demotedAutoRun ? 'Running Processes' : 'All Thinking Sessions'}
 							</div>
+							{demotedAutoRun && (
+								<AutoRunRow
+									theme={theme}
+									completedTasks={getAutoRunTaskCounts(demotedAutoRun).completed}
+									totalTasks={getAutoRunTaskCounts(demotedAutoRun).total}
+									isStopping={demotedAutoRun.isStopping}
+									onStop={onStopAutoRun}
+								/>
+							)}
 							{thinkingItems.map((item) => (
 								<ThinkingItemRow
 									key={`${item.session.id}-${item.tab?.id ?? 'legacy'}`}
@@ -691,7 +771,10 @@ export const ThinkingStatusPill = memo(ThinkingStatusPillInner, (prevProps, next
 		}
 		// Also check concurrent thinking items (shown as +N badge on AutoRun pill).
 		// AutoRun doesn't mark its tab as busy, so every thinkingItem is a concurrent item.
+		// activeTabId / currentCycleTokens matter too: when the focused tab has its own live
+		// request, AutoRun is demoted and the pill renders that tab's primary item live.
 		if (prevProps.activeSessionId !== nextProps.activeSessionId) return false;
+		if (prevProps.activeTabId !== nextProps.activeTabId) return false;
 		const prevConcurrent = prevProps.thinkingItems;
 		const nextConcurrent = nextProps.thinkingItems;
 		if (prevConcurrent.length !== nextConcurrent.length) return false;
@@ -701,6 +784,7 @@ export const ThinkingStatusPill = memo(ThinkingStatusPillInner, (prevProps, next
 			if (
 				prev.session.id !== next.session.id ||
 				prev.session.name !== next.session.name ||
+				prev.session.currentCycleTokens !== next.session.currentCycleTokens ||
 				prev.tab?.id !== next.tab?.id ||
 				prev.tab?.name !== next.tab?.name ||
 				prev.tab?.thinkingStartTime !== next.tab?.thinkingStartTime

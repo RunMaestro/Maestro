@@ -7,6 +7,19 @@ vi.mock('../../../../main/stores/getters', () => ({
 vi.mock('../../../../main/utils/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
+// The product default for Adaptive Mode is currently OFF for every agent
+// (`isAdaptiveModeDefaultOn` returns false - new Claude Code agents default to the
+// API token source). This migration exists to backfill existing agents IF that
+// default is on, so we pin the historical "on for Claude Code" behavior here to
+// exercise the backfill mechanism itself, decoupled from today's default value.
+// Codex stays off so the "other agents are untouched" assertions still hold.
+vi.mock('../../../../shared/agentConstants', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../../shared/agentConstants')>();
+	return {
+		...actual,
+		isAdaptiveModeDefaultOn: (agentId: string) => agentId === 'claude-code',
+	};
+});
 
 import {
 	migrateAdaptiveModeDefault,

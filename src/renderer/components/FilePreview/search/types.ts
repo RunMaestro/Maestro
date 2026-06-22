@@ -25,6 +25,14 @@ export interface SearchHit {
 	offsetWithinBlock: number;
 }
 
+/** Options controlling how a query string is matched against content. */
+export interface SearchHitOptions {
+	/** Case-insensitive by default; opt in to exact case. */
+	caseSensitive?: boolean;
+	/** When true, treat the query as a raw regex source instead of a literal. */
+	regex?: boolean;
+}
+
 /**
  * Pluggable search source supplied by a tier component. The hook calls
  * `findHits` once per query change and `scrollToMatch` once per navigation.
@@ -32,9 +40,11 @@ export interface SearchHit {
  * Implementations MUST be pure with respect to `findHits` — no side effects,
  * no caching of stale state — because the hook may call it concurrently with
  * tier remounts. `scrollToMatch` is allowed (and expected) to mutate the
- * viewport.
+ * viewport. `scrollToLine` (optional) jumps the viewport to a 1-based source
+ * line for the bar's line-number search mode.
  */
 export interface FilePreviewSearchAdapter {
-	findHits(query: string): SearchHit[];
+	findHits(query: string, options?: SearchHitOptions): SearchHit[];
 	scrollToMatch(hit: SearchHit): void;
+	scrollToLine?(line: number): void;
 }
