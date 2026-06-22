@@ -933,6 +933,12 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						sessionSshConfig: sessionSshRemoteConfig,
 					});
 
+					if (!sshResult.config) {
+						throw new Error(
+							`SSH remote configuration could not be resolved for remote "${sessionSshRemoteConfig.remoteId ?? 'unknown'}"`
+						);
+					}
+
 					if (sshResult.config) {
 						// SSH remote is configured - use stdin-based execution
 						// This completely bypasses shell escaping issues by sending the script via stdin

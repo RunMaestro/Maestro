@@ -18,11 +18,17 @@ import { logger } from './logger';
 
 const LOG_CONTEXT = '[SshSpawnWrapper]';
 const WORKING_DIR_VALUE_FLAGS = new Set(['-C', '--cwd', '--working-directory', '--directory']);
+const WORKING_DIR_INLINE_PREFIXES = ['--cwd=', '--working-directory=', '--directory='];
 
 function normalizeSshWorkingDirArgs(args: string[], localCwd: string): string[] {
 	return args.map((arg, index) => {
 		if (index > 0 && WORKING_DIR_VALUE_FLAGS.has(args[index - 1]) && arg === localCwd) {
 			return '.';
+		}
+		for (const prefix of WORKING_DIR_INLINE_PREFIXES) {
+			if (arg.startsWith(prefix) && arg.slice(prefix.length) === localCwd) {
+				return `${prefix}.`;
+			}
 		}
 		return arg;
 	});

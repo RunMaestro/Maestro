@@ -104,4 +104,30 @@ describe('ssh-spawn-wrapper', () => {
 			})
 		);
 	});
+
+	it('normalizes inline local working directory args to current directory for SSH commands', async () => {
+		await wrapSpawnWithSsh(
+			{
+				command: 'codex',
+				args: ['--cwd=/Users/jta/git-projects/agents/rai', 'exec'],
+				cwd: '/Users/jta/git-projects/agents/rai',
+				prompt: 'hi',
+				agentBinaryName: 'codex',
+			},
+			{
+				enabled: true,
+				remoteId: 'remote-1',
+				workingDirOverride: '/home/rai/git-projects/agents/rai',
+			},
+			sshStore
+		);
+
+		expect(buildSshCommand).toHaveBeenCalledWith(
+			remote,
+			expect.objectContaining({
+				args: ['--cwd=.', 'exec', '--', 'hi'],
+				cwd: '/home/rai/git-projects/agents/rai',
+			})
+		);
+	});
 });

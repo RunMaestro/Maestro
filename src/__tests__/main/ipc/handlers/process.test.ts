@@ -76,6 +76,11 @@ vi.mock('../../../../main/process-manager/utils/streamJsonBuilder', () => ({
 vi.mock('../../../../main/utils/ssh-command-builder', () => ({
 	buildSshCommandWithStdin: vi.fn().mockImplementation(async (config, remoteOptions) => {
 		const args: string[] = [];
+		const escapeRemotePath = (remotePath: string) => {
+			if (remotePath === '~') return '"$HOME"';
+			if (remotePath.startsWith('~/')) return `"$HOME"/${remotePath.slice(2)}`;
+			return `'${remotePath}'`;
+		};
 
 		// Add identity file if provided
 		if (config.privateKeyPath) {
@@ -110,7 +115,7 @@ vi.mock('../../../../main/utils/ssh-command-builder', () => ({
 		);
 
 		if (remoteOptions.cwd) {
-			scriptLines.push(`cd '${remoteOptions.cwd}' || exit 1`);
+			scriptLines.push(`cd ${escapeRemotePath(remoteOptions.cwd)} || exit 1`);
 		}
 
 		// Add env vars if present
@@ -1011,6 +1016,21 @@ describe('process IPC handlers', () => {
 
 			it('does not sanitize SSH-enabled spawns (transcript lives on remote, not local disk)', async () => {
 				mockAgentDetector.getAgent.mockResolvedValue(claudeCodeAgent);
+				mockSettingsStore.get.mockImplementation((key, defaultValue) => {
+					if (key === 'sshRemotes') {
+						return [
+							{
+								id: 'remote-1',
+								name: 'Dev Server',
+								host: 'dev.example.com',
+								port: 22,
+								username: 'devuser',
+								enabled: true,
+							},
+						];
+					}
+					return defaultValue;
+				});
 				mockProcessManager.spawn.mockReturnValue({ pid: 4250, success: true });
 
 				const handler = handlers.get('process:spawn');
@@ -2067,7 +2087,7 @@ describe('process IPC handlers', () => {
 			);
 		});
 
-		it('should run locally when no SSH remotes are configured', async () => {
+		it('should fail when SSH is enabled but no SSH remote resolves', async () => {
 			const mockAgent = {
 				id: 'claude-code',
 				requiresPty: true,
@@ -2081,26 +2101,22 @@ describe('process IPC handlers', () => {
 			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
 
 			const handler = handlers.get('process:spawn');
-			await handler!({} as any, {
-				sessionId: 'session-1',
-				toolType: 'claude-code',
-				cwd: '/local/project',
-				command: 'claude',
-				args: ['--print'],
-				// Session config points to non-existent remote
-				sessionSshRemoteConfig: {
-					enabled: true,
-					remoteId: 'remote-1',
-				},
-			});
-
-			// No matching SSH remote, should run locally
-			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
-				expect.objectContaining({
+			await expect(
+				handler!({} as any, {
+					sessionId: 'session-1',
+					toolType: 'claude-code',
+					cwd: '/local/project',
 					command: 'claude',
-					requiresPty: true, // Preserved when running locally
+					args: ['--print'],
+					// Session config points to non-existent remote
+					sessionSshRemoteConfig: {
+						enabled: true,
+						remoteId: 'remote-1',
+					},
 				})
-			);
+			).rejects.toThrow('SSH remote configuration could not be resolved');
+
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
 		});
 
 		it('should use local home directory as cwd when spawning SSH (fixes ENOENT for remote-only paths)', async () => {
@@ -2180,7 +2196,7 @@ describe('process IPC handlers', () => {
 
 			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
 			expect(spawnCall.command).toBe('ssh');
-			expect(spawnCall.sshStdinScript).toContain("cd '~/git-projects' || exit 1");
+			expect(spawnCall.sshStdinScript).toContain('cd "$HOME"/git-projects || exit 1');
 			expect(spawnCall.sshStdinScript).not.toContain('/Users/tester/git-projects');
 		});
 
