@@ -418,10 +418,14 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					});
 				}
 
+				const isSshRemoteSpawn =
+					config.toolType !== 'terminal' && !!config.sessionSshRemoteConfig?.enabled;
+				const agentWorkingDirArgCwd = isSshRemoteSpawn ? '.' : config.cwd;
+
 				let finalArgs = buildAgentArgs(agent, {
 					baseArgs: baseArgsForSpawn,
 					prompt: config.prompt,
-					cwd: config.cwd,
+					cwd: agentWorkingDirArgCwd,
 					readOnlyMode: config.readOnlyMode,
 					modelId: config.modelId,
 					yoloMode: config.yoloMode,
@@ -913,18 +917,20 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						willUseSsh: config.toolType !== 'terminal' && config.sessionSshRemoteConfig?.enabled,
 					});
 				}
-				if (config.toolType !== 'terminal' && config.sessionSshRemoteConfig?.enabled) {
+				if (isSshRemoteSpawn && config.sessionSshRemoteConfig) {
+					const sessionSshRemoteConfig = config.sessionSshRemoteConfig;
 					// Session-level SSH config provided - resolve and use it
 					logger.info(`Using session-level SSH config`, LOG_CONTEXT, {
 						sessionId: config.sessionId,
-						enabled: config.sessionSshRemoteConfig.enabled,
-						remoteId: config.sessionSshRemoteConfig.remoteId,
+						enabled: sessionSshRemoteConfig.enabled,
+						remoteId: sessionSshRemoteConfig.remoteId,
 					});
+					const remoteCwd = sessionSshRemoteConfig.workingDirOverride?.trim() || config.cwd;
 
 					// Resolve effective SSH remote configuration
 					const sshStoreAdapter = createSshRemoteStoreAdapter(settingsStore);
 					const sshResult = getSshRemoteConfig(sshStoreAdapter, {
-						sessionSshConfig: config.sessionSshRemoteConfig,
+						sessionSshConfig: sessionSshRemoteConfig,
 					});
 
 					if (sshResult.config) {
@@ -1022,7 +1028,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						const sshCommand = await buildSshCommandWithStdin(sshResult.config, {
 							command: remoteCommand,
 							args: sshArgs,
-							cwd: config.cwd,
+							cwd: remoteCwd,
 							env: mergedSshEnvVars,
 							// prompt is not passed as CLI arg - it goes via stdinInput
 							stdinInput,
@@ -1068,7 +1074,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 							sshBinary: sshCommand.command,
 							sshArgsCount: sshCommand.args.length,
 							remoteCommand,
-							remoteCwd: config.cwd,
+							remoteCwd,
 							promptLength: config.prompt?.length,
 							stdinScriptLength: sshCommand.stdinScript?.length,
 							hasImages,
