@@ -284,12 +284,20 @@ export function NewInstanceModal({
 					...prev,
 					[source.toolType]: source.customEnvVars || {},
 				}));
-				// Mirror the source agent's Adaptive Mode setting (falling back to the
-				// per-agent default) so a duplicate inherits it instead of the form default.
-				setEnableMaestroPByAgent((prev) => ({
-					...prev,
-					[source.toolType]: source.enableMaestroP ?? isAdaptiveModeDefaultOn(source.toolType),
-				}));
+				// Mirror the source agent's EXPLICIT Adaptive Mode choice so a duplicate
+				// inherits it. When the source never configured a token source, leave the
+				// entry unset so the duplicate falls through to the same default path as a
+				// fresh agent (see agentEnableMaestroP below) instead of pinning a falsy
+				// default as if it were an explicit "API" choice.
+				setEnableMaestroPByAgent((prev) => {
+					const next = { ...prev };
+					if (source.enableMaestroP === undefined) {
+						delete next[source.toolType];
+					} else {
+						next[source.toolType] = source.enableMaestroP;
+					}
+					return next;
+				});
 				setMaestroPModeByAgent((prev) => ({
 					...prev,
 					[source.toolType]: source.maestroPMode ?? 'dynamic',
