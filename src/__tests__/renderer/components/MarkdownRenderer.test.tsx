@@ -1327,6 +1327,163 @@ describe('MarkdownRenderer', () => {
 		});
 	});
 
+	describe('rendered chat copy normalization (#1101)', () => {
+		function copyRenderedSelection(root: HTMLElement, configureRange?: (range: Range) => void) {
+			const range = document.createRange();
+			if (configureRange) {
+				configureRange(range);
+			} else {
+				range.selectNodeContents(root);
+			}
+			const selection = window.getSelection()!;
+			selection.removeAllRanges();
+			selection.addRange(range);
+
+			const clipboardData = { setData: vi.fn() };
+			fireEvent.copy(root, { clipboardData });
+			selection.removeAllRanges();
+			return clipboardData.setData;
+		}
+
+		it('copies prose soft wraps as spaces instead of literal newlines', () => {
+			const { container } = renderMd('This line was wrapped\nby terminal output.', {
+				chatLineBreaks: true,
+			});
+			const prose = container.querySelector('.prose') as HTMLElement;
+
+			expect(container.querySelector('br')).not.toBeNull();
+			expect(copyRenderedSelection(prose)).toHaveBeenCalledWith(
+				'text/plain',
+				'This line was wrapped by terminal output.'
+			);
+		});
+
+		it('rejoins URLs split by chat soft wraps', () => {
+			const { container } = renderMd(
+				'Open https://example.com/docs/really-long-\npath?query=1 when ready.',
+				{ chatLineBreaks: true }
+			);
+			const prose = container.querySelector('.prose') as HTMLElement;
+
+			expect(copyRenderedSelection(prose)).toHaveBeenCalledWith(
+				'text/plain',
+				'Open https://example.com/docs/really-long-path?query=1 when ready.'
+			);
+		});
+
+		it('rejoins URLs split inside box-drawing text', () => {
+			const { container } = renderMd(
+				'│ https://example.com/docs/really-long- │\n│ path?query=1 │',
+				{ chatLineBreaks: true }
+			);
+			const prose = container.querySelector('.prose') as HTMLElement;
+
+			expect(copyRenderedSelection(prose)).toHaveBeenCalledWith(
+				'text/plain',
+				'│ https://example.com/docs/really-long-path?query=1 │'
+			);
+		});
+
+		it('does not join a complete URL path to prose on the next soft-wrapped line', () => {
+			const { container } = renderMd(
+				'Open https://example.com/docs\nnow that the deploy is ready.',
+				{ chatLineBreaks: true }
+			);
+			const prose = container.querySelector('.prose') as HTMLElement;
+
+			expect(copyRenderedSelection(prose)).toHaveBeenCalledWith(
+				'text/plain',
+				'Open https://example.com/docs now that the deploy is ready.'
+			);
+		});
+
+		it('preserves paragraph boundaries while removing soft wraps inside each paragraph', () => {
+			const { container } = renderMd(
+				'First paragraph\nwraps here.\n\nSecond paragraph\nwraps too.',
+				{
+					chatLineBreaks: true,
+				}
+			);
+			const prose = container.querySelector('.prose') as HTMLElement;
+
+			expect(copyRenderedSelection(prose)).toHaveBeenCalledWith(
+				'text/plain',
+				'First paragraph wraps here.\n\nSecond paragraph wraps too.'
+			);
+		});
+
+		it('keeps list items on separate lines', () => {
+			const { container } = renderMd('- First item\n- Second item');
+			const prose = container.querySelector('.prose') as HTMLElement;
+
+			expect(copyRenderedSelection(prose)).toHaveBeenCalledWith(
+				'text/plain',
+				'First item\nSecond item'
+			);
+		});
+
+		it('keeps table cells tab-separated and rows line-separated', () => {
+			const { container } = renderMd(
+				['| Name | Status |', '| --- | --- |', '| Build | Passing |'].join('\n')
+			);
+			const prose = container.querySelector('.prose') as HTMLElement;
+
+			expect(copyRenderedSelection(prose)).toHaveBeenCalledWith(
+				'text/plain',
+				'Name\tStatus\nBuild\tPassing'
+			);
+		});
+
+		it('does not override native copy for code block selections', () => {
+			const { container } = renderMd('```\nline one\nline two\n```');
+			const pre = container.querySelector('pre') as HTMLElement;
+
+			expect(copyRenderedSelection(pre)).not.toHaveBeenCalled();
+		});
+
+		it('does not override native copy for mixed prose and code block selections', () => {
+			const { container } = renderMd(
+				[
+					'Before the code:',
+					'',
+					'```ts',
+					'function example() {',
+					'    return 1;',
+					'}',
+					'```',
+					'',
+					'After the code.',
+				].join('\n')
+			);
+			const prose = container.querySelector('.prose') as HTMLElement;
+
+			expect(copyRenderedSelection(prose)).not.toHaveBeenCalled();
+		});
+
+		it('does not override native copy for selections crossing the markdown container boundary', () => {
+			const { container } = render(
+				<div>
+					<span data-testid="outside-copy-boundary">Outside</span>
+					<MarkdownRenderer
+						{...defaultProps}
+						content="Inside line one\ninside line two."
+						chatLineBreaks
+					/>
+				</div>
+			);
+			const outside = screen.getByTestId('outside-copy-boundary').firstChild as Text;
+			const prose = container.querySelector('.prose') as HTMLElement;
+			const paragraphText = prose.querySelector('p')!.firstChild as Text;
+
+			expect(
+				copyRenderedSelection(prose, (range) => {
+					range.setStart(outside, 0);
+					range.setEnd(paragraphText, paragraphText.textContent!.length);
+				})
+			).not.toHaveBeenCalled();
+		});
+	});
+
 	describe('chatMath (#622)', () => {
 		it('does not parse $...$ as math by default (document semantics)', () => {
 			const content = 'price is $5 and $10 today';

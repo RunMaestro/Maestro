@@ -176,6 +176,7 @@ describe('group-chat-router', () => {
 		// Clear mocks
 		vi.clearAllMocks();
 		groupChatEmitters.emitMessage = undefined;
+		setGetSessionsCallback(() => []);
 	});
 
 	// Helper to track created chats for cleanup
@@ -299,6 +300,63 @@ describe('group-chat-router', () => {
 			const mentions = extractMentions('@日本語-agent and @émoji-✨-test', participants);
 			expect(mentions).toEqual(['日本語-agent', 'émoji-✨-test']);
 		});
+
+		it('handles mention-safe aliases for participants with parentheses', () => {
+			const participants: GroupChatParticipant[] = [
+				{
+					name: 'CIA Agent (Super Cool)',
+					agentId: 'claude-code',
+					sessionId: '1',
+					addedAt: 0,
+				},
+			];
+
+			const mentions = extractMentions('@CIA-Agent-Super-Cool please investigate', participants);
+			expect(mentions).toEqual(['CIA Agent (Super Cool)']);
+		});
+
+		it('handles legacy normalized mentions that include parentheses', () => {
+			const participants: GroupChatParticipant[] = [
+				{
+					name: 'CIA Agent (Super Cool)',
+					agentId: 'claude-code',
+					sessionId: '1',
+					addedAt: 0,
+				},
+			];
+
+			const mentions = extractMentions('@CIA-Agent-(Super-Cool): please investigate', participants);
+			expect(mentions).toEqual(['CIA Agent (Super Cool)']);
+		});
+
+		it('uses legacy aliases to disambiguate normalized-name collisions', () => {
+			const participants: GroupChatParticipant[] = [
+				{ name: 'CIA Agent Super Cool', agentId: 'claude-code', sessionId: '1', addedAt: 0 },
+				{ name: 'CIA Agent (Super Cool)', agentId: 'claude-code', sessionId: '2', addedAt: 0 },
+			];
+
+			const mentions = extractMentions('@CIA-Agent-(Super-Cool): please investigate', participants);
+			expect(mentions).toEqual(['CIA Agent (Super Cool)']);
+		});
+
+		it('handles legacy aliases that include square brackets', () => {
+			const participants: GroupChatParticipant[] = [
+				{ name: 'Review Bot [Linux]', agentId: 'claude-code', sessionId: '1', addedAt: 0 },
+			];
+
+			const mentions = extractMentions('@Review-Bot-[Linux]: please investigate', participants);
+			expect(mentions).toEqual(['Review Bot [Linux]']);
+		});
+
+		it('does not pick an arbitrary participant for ambiguous safe aliases', () => {
+			const participants: GroupChatParticipant[] = [
+				{ name: 'Review Bot [Linux]', agentId: 'claude-code', sessionId: '1', addedAt: 0 },
+				{ name: 'Review Bot (Linux)', agentId: 'claude-code', sessionId: '2', addedAt: 0 },
+			];
+
+			const mentions = extractMentions('@Review-Bot-Linux: please investigate', participants);
+			expect(mentions).toEqual([]);
+		});
 	});
 
 	// ===========================================================================
@@ -418,6 +476,16 @@ describe('group-chat-router', () => {
 			const mentions = extractAllMentions('@** is not a real mention');
 			expect(mentions).toEqual([]);
 		});
+
+		it('keeps mention-safe aliases for names with parentheses', () => {
+			const mentions = extractAllMentions('@CIA-Agent-Super-Cool should handle this');
+			expect(mentions).toEqual(['CIA-Agent-Super-Cool']);
+		});
+
+		it('keeps legacy parenthesized aliases intact for matching', () => {
+			const mentions = extractAllMentions('@CIA-Agent-(Super-Cool) should handle this');
+			expect(mentions).toEqual(['CIA-Agent-(Super-Cool)']);
+		});
 	});
 
 	// ===========================================================================
@@ -433,6 +501,27 @@ describe('group-chat-router', () => {
 			const result = extractAutoRunDirectives('!autorun @*controlplane*:plan.md');
 			expect(result.autoRunDirectives).toEqual([
 				{ participantName: 'controlplane', filename: 'plan.md' },
+			]);
+		});
+
+		it('handles autorun mention-safe aliases with filenames', () => {
+			const result = extractAutoRunDirectives('!autorun @CIA-Agent-Super-Cool:plan.md');
+			expect(result.autoRunDirectives).toEqual([
+				{ participantName: 'CIA-Agent-Super-Cool', filename: 'plan.md' },
+			]);
+		});
+
+		it('handles autorun legacy parenthesized aliases with filenames', () => {
+			const result = extractAutoRunDirectives('!autorun @CIA-Agent-(Super-Cool):plan.md');
+			expect(result.autoRunDirectives).toEqual([
+				{ participantName: 'CIA-Agent-(Super-Cool)', filename: 'plan.md' },
+			]);
+		});
+
+		it('handles autorun target filenames that contain parentheses', () => {
+			const result = extractAutoRunDirectives('!autorun @CIA-Agent-Super-Cool:Phase-01-(Setup).md');
+			expect(result.autoRunDirectives).toEqual([
+				{ participantName: 'CIA-Agent-Super-Cool', filename: 'Phase-01-(Setup).md' },
 			]);
 		});
 	});
@@ -507,6 +596,62 @@ describe('group-chat-router', () => {
 				true
 			);
 		});
+
+		it('auto-adds sessions with parentheses from user mentions', async () => {
+			const chat = await createTestChatWithModerator('User Parentheses Mention Test');
+			setGetSessionsCallback(() => [
+				{
+					id: 'session-cia',
+					name: 'CIA Agent (Super Cool)',
+					toolType: 'claude-code',
+					cwd: '/tmp/project',
+				},
+			]);
+
+			await routeUserMessage(
+				chat.id,
+				'@CIA-Agent-Super-Cool: please help',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			const updatedChat = await loadGroupChat(chat.id);
+			expect(updatedChat?.participants).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						name: 'CIA Agent (Super Cool)',
+					}),
+				])
+			);
+		});
+
+		it('does not auto-add a user mention with an ambiguous safe alias', async () => {
+			const chat = await createTestChatWithModerator('User Ambiguous Mention Test');
+			setGetSessionsCallback(() => [
+				{
+					id: 'session-review-linux-square',
+					name: 'Review Bot [Linux]',
+					toolType: 'claude-code',
+					cwd: '/tmp/project',
+				},
+				{
+					id: 'session-review-linux-round',
+					name: 'Review Bot (Linux)',
+					toolType: 'claude-code',
+					cwd: '/tmp/project',
+				},
+			]);
+
+			await routeUserMessage(
+				chat.id,
+				'@Review-Bot-Linux: please help',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			const updatedChat = await loadGroupChat(chat.id);
+			expect(updatedChat?.participants).toEqual([]);
+		});
 	});
 
 	// ===========================================================================
@@ -528,6 +673,75 @@ describe('group-chat-router', () => {
 				call[0]?.prompt?.includes('login form')
 			);
 			expect(spawnCall).toBeDefined();
+		});
+
+		it('auto-adds and spawns sessions with parentheses from moderator mentions', async () => {
+			const chat = await createTestChatWithModerator('Moderator Parentheses Mention Test');
+			setGetSessionsCallback(() => [
+				{
+					id: 'session-cia',
+					name: 'CIA Agent (Super Cool)',
+					toolType: 'claude-code',
+					cwd: '/tmp/project',
+				},
+			]);
+
+			mockProcessManager.spawn.mockClear();
+
+			await routeModeratorResponse(
+				chat.id,
+				'@CIA-Agent-Super-Cool: review the login form',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			const updatedChat = await loadGroupChat(chat.id);
+			expect(updatedChat?.participants).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						name: 'CIA Agent (Super Cool)',
+					}),
+				])
+			);
+
+			const spawnCall = mockProcessManager.spawn.mock.calls.find((call) =>
+				call[0]?.prompt?.includes('review the login form')
+			);
+			expect(spawnCall).toBeDefined();
+		});
+
+		it('auto-adds the parenthesized session when moderator uses its legacy alias', async () => {
+			const chat = await createTestChatWithModerator('Moderator Legacy Collision Test');
+			setGetSessionsCallback(() => [
+				{
+					id: 'session-cia-plain',
+					name: 'CIA Agent Super Cool',
+					toolType: 'claude-code',
+					cwd: '/tmp/project',
+				},
+				{
+					id: 'session-cia-parenthesized',
+					name: 'CIA Agent (Super Cool)',
+					toolType: 'claude-code',
+					cwd: '/tmp/project',
+				},
+			]);
+
+			mockProcessManager.spawn.mockClear();
+
+			await routeModeratorResponse(
+				chat.id,
+				'@CIA-Agent-(Super-Cool): review the login form',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			const updatedChat = await loadGroupChat(chat.id);
+			expect(updatedChat?.participants).toEqual([
+				expect.objectContaining({
+					name: 'CIA Agent (Super Cool)',
+				}),
+			]);
 		});
 
 		it('logs moderator message', async () => {

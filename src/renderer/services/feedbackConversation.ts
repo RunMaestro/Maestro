@@ -9,6 +9,7 @@
 
 import type { ToolType } from '../types';
 import { getStdinFlags } from '../utils/spawnHelpers';
+import { stripAnsiCodes } from '../../shared/stringUtils';
 
 // ============================================================================
 // Types
@@ -165,6 +166,54 @@ function normalizeResponse(raw: any): FeedbackParsedResponse {
 	};
 }
 
+function redactProviderSecrets(output: string): string {
+	return output
+		.replace(
+			/\b((?:[A-Z][A-Z0-9_]*_)?(?:API_KEY|TOKEN|ACCESS_TOKEN|SECRET)\b\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s\r\n]+)/g,
+			'$1[REDACTED]'
+		)
+		.replace(/\b(Authorization\s*:\s*Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, '$1[REDACTED]')
+		.replace(/\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{20,}\b/g, '[REDACTED_GITHUB_TOKEN]')
+		.replace(/\bgithub_pat_[A-Za-z0-9_]{20,}\b/g, '[REDACTED_GITHUB_TOKEN]')
+		.replace(/\bsk-[A-Za-z0-9][A-Za-z0-9_-]{8,}\b/g, '[REDACTED_API_KEY]');
+}
+
+function summarizeProcessFailure(output: string): string {
+	const cleaned = redactProviderSecrets(stripAnsiCodes(output))
+		.split('\n')
+		.map((line) => line.trimEnd())
+		.filter((line) => line.trim().length > 0);
+	if (cleaned.length === 0) return '';
+
+	const tail = cleaned.slice(-8).join('\n');
+	const maxLength = 600;
+	return tail.length > maxLength ? `...${tail.slice(-maxLength)}` : tail;
+}
+
+function indentForMarkdownCode(output: string): string {
+	return output
+		.split('\n')
+		.map((line) => `    ${line}`)
+		.join('\n');
+}
+
+function buildProviderFailureMessage(params: {
+	agentName: string;
+	binaryPath: string;
+	reason: string;
+	output?: string;
+}): string {
+	const detail = params.output ? summarizeProcessFailure(params.output) : '';
+
+	return (
+		`The ${params.agentName} provider ${params.reason}.\n\n` +
+		`**Binary:** ${params.binaryPath}\n\n` +
+		(detail
+			? `**Output:**\n\n${indentForMarkdownCode(detail)}`
+			: 'No output was captured. The binary may have failed to launch, may need authentication, or may be the wrong install. If you have multiple installs, confirm the selected provider path.')
+	);
+}
+
 // ============================================================================
 // FeedbackConversationManager
 // ============================================================================
@@ -206,28 +255,46 @@ export class FeedbackConversationManager {
 			throw new Error('No active feedback conversation. Call start() first.');
 		}
 
+		const currentSessionId = this.sessionId;
+		const currentAgentType = this.agentType;
+		const currentSystemPrompt = this.systemPrompt;
+		const currentSshRemoteConfig = this.sshRemoteConfig;
 		this.outputBuffer = '';
 
-		const agent = await window.maestro.agents.get(this.agentType);
+		const agent = await window.maestro.agents.get(currentAgentType);
 		if (!agent) {
-			throw new Error(`Agent ${this.agentType} not found`);
+			throw new Error(`The ${currentAgentType} provider could not be found.`);
 		}
 
-		const isRemote = this.sshRemoteConfig?.enabled && this.sshRemoteConfig?.remoteId;
+		const binaryPath = agent.path || agent.command || currentAgentType;
+		const agentName = agent.name || currentAgentType;
+		const isRemote = currentSshRemoteConfig?.enabled && currentSshRemoteConfig?.remoteId;
 		if (!isRemote && !agent.available) {
-			throw new Error(`Agent ${this.agentType} is not available`);
+			throw new Error(
+				`The ${agentName} provider is not available. Maestro resolved its binary to "${binaryPath}", but it reported as not runnable. Check that it is installed, on your PATH, and authenticated.`
+			);
 		}
 
-		const prompt = this.buildPrompt(userMessage, history);
+		const prompt = this.buildPrompt(userMessage, history, currentSystemPrompt);
 
-		const currentSessionId = this.sessionId;
+		let outputBuffer = '';
+		let settled = false;
 		return new Promise<FeedbackParsedResponse>((resolve) => {
+			const resolveOnce = (response: FeedbackParsedResponse) => {
+				if (settled) return;
+				settled = true;
+				if (this.sessionId === currentSessionId) {
+					this.outputBuffer = outputBuffer;
+					this.cleanupListeners();
+				}
+				resolve(response);
+			};
+
 			// Activity timeout
 			const resetTimeout = () => {
 				if (this.timeoutId) clearTimeout(this.timeoutId);
 				this.timeoutId = setTimeout(() => {
-					this.cleanupListeners();
-					resolve({
+					resolveOnce({
 						...DEFAULT_FEEDBACK_RESPONSE,
 						message: 'The agent took too long to respond. Please try again.',
 					});
@@ -237,8 +304,9 @@ export class FeedbackConversationManager {
 
 			// Data listener
 			this.dataCleanup = window.maestro.process.onData((sid: string, data: string) => {
-				if (sid === this.sessionId) {
-					this.outputBuffer += data;
+				if (sid === currentSessionId) {
+					outputBuffer += data;
+					this.outputBuffer = outputBuffer;
 					resetTimeout();
 					callbacks?.onChunk?.(data);
 				}
@@ -248,7 +316,7 @@ export class FeedbackConversationManager {
 			if (callbacks?.onThinkingChunk) {
 				this.thinkingCleanup = window.maestro.process.onThinkingChunk?.(
 					(sid: string, content: string) => {
-						if (sid === this.sessionId && content) {
+						if (sid === currentSessionId && content) {
 							resetTimeout();
 							callbacks.onThinkingChunk?.(content);
 						}
@@ -258,30 +326,35 @@ export class FeedbackConversationManager {
 
 			// Exit listener
 			this.exitCleanup = window.maestro.process.onExit((sid: string, code: number) => {
-				if (sid !== this.sessionId) return;
-				this.cleanupListeners();
+				if (sid !== currentSessionId) return;
 
 				if (code === 0) {
-					const parsed = extractJsonFromOutput(this.outputBuffer);
+					const parsed = extractJsonFromOutput(outputBuffer);
 					const response = parsed ?? DEFAULT_FEEDBACK_RESPONSE;
 					callbacks?.onComplete?.(response);
-					resolve(response);
+					resolveOnce(response);
 				} else {
+					const message = buildProviderFailureMessage({
+						agentName,
+						binaryPath,
+						reason: `exited with code ${code} before it could respond`,
+						output: outputBuffer,
+					});
 					const errorResponse = {
 						...DEFAULT_FEEDBACK_RESPONSE,
-						message: 'Something went wrong processing your message. Please try again.',
+						message,
 					};
-					callbacks?.onError?.(`Agent exited with code ${code}`);
-					resolve(errorResponse);
+					const detail = summarizeProcessFailure(outputBuffer);
+					callbacks?.onError?.(`Agent exited with code ${code}: ${detail || '(no output)'}`);
+					resolveOnce(errorResponse);
 				}
 			});
 
 			// Build args based on agent type
 			const argsForSpawn = this.buildArgsForAgent(agent);
-			const commandToUse = agent.path || agent.command;
 
 			// Get stdin flags for Windows
-			const isSshSession = Boolean(this.sshRemoteConfig?.enabled);
+			const isSshSession = Boolean(currentSshRemoteConfig?.enabled);
 			const stdinFlags = getStdinFlags({
 				isSshSession,
 				supportsStreamJsonInput: Boolean(agent?.capabilities?.supportsStreamJsonInput),
@@ -289,15 +362,30 @@ export class FeedbackConversationManager {
 			});
 
 			// Spawn agent
-			window.maestro.process.spawn({
-				sessionId: currentSessionId,
-				toolType: this.agentType!,
-				cwd: '.',
-				command: commandToUse,
-				args: argsForSpawn,
-				prompt,
-				...stdinFlags,
-			} as any);
+			window.maestro.process
+				.spawn({
+					sessionId: currentSessionId,
+					toolType: currentAgentType,
+					cwd: '.',
+					command: binaryPath,
+					args: argsForSpawn,
+					prompt,
+					...stdinFlags,
+					sessionSshRemoteConfig: currentSshRemoteConfig,
+				} as any)
+				.catch((error: Error) => {
+					const output = redactProviderSecrets(
+						error instanceof Error ? error.message : String(error)
+					);
+					const message = buildProviderFailureMessage({
+						agentName,
+						binaryPath,
+						reason: 'could not be started',
+						output,
+					});
+					callbacks?.onError?.(output);
+					resolveOnce({ ...DEFAULT_FEEDBACK_RESPONSE, message });
+				});
 		});
 	}
 
@@ -337,8 +425,12 @@ export class FeedbackConversationManager {
 	/**
 	 * Build the full prompt with conversation context
 	 */
-	private buildPrompt(userMessage: string, history: FeedbackMessage[]): string {
-		let prompt = this.systemPrompt + '\n\n';
+	private buildPrompt(
+		userMessage: string,
+		history: FeedbackMessage[],
+		systemPrompt: string
+	): string {
+		let prompt = systemPrompt + '\n\n';
 
 		if (history.length > 0) {
 			prompt += '## Conversation So Far\n\n';

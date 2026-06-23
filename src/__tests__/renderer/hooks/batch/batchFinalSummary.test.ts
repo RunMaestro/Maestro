@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { buildFinalSummary } from '../../../../renderer/hooks/batch/internal/batchFinalSummary';
+import {
+	aggregateAutoRunHistoryTotals,
+	buildFinalSummary,
+	mergeFinalSummaryTotals,
+} from '../../../../renderer/hooks/batch/internal/batchFinalSummary';
 
 const docs = (...names: string[]) => names.map((filename) => ({ filename }));
 
@@ -173,5 +177,176 @@ describe('buildFinalSummary', () => {
 		});
 		expect(result.details).toContain('- **plan.md**: 3 consecutive runs with no progress');
 		expect(result.details).toContain('- **todo.md**: watchdog timeout');
+	});
+
+	it('aggregates persisted Auto Run task history after the previous final summary', () => {
+		const totals = aggregateAutoRunHistoryTotals([
+			{
+				type: 'AUTO',
+				timestamp: 1,
+				summary: 'first old task',
+				elapsedTimeMs: 100,
+				usageStats: {
+					inputTokens: 10,
+					outputTokens: 5,
+					cacheReadInputTokens: 0,
+					cacheCreationInputTokens: 0,
+					totalCostUsd: 0.01,
+					contextWindow: 0,
+				},
+			},
+			{
+				type: 'AUTO',
+				timestamp: 2,
+				summary: 'Auto Run completed: 1 task in 0:00',
+			},
+			{
+				type: 'AUTO',
+				timestamp: 3,
+				summary: 'Loop 1 completed: 2 tasks accomplished',
+				elapsedTimeMs: 1000,
+				usageStats: {
+					inputTokens: 999,
+					outputTokens: 999,
+					cacheReadInputTokens: 0,
+					cacheCreationInputTokens: 0,
+					totalCostUsd: 99,
+					contextWindow: 0,
+				},
+			},
+			{
+				type: 'AUTO',
+				timestamp: 4,
+				summary: 'current task one',
+				elapsedTimeMs: 200,
+				usageStats: {
+					inputTokens: 20,
+					outputTokens: 7,
+					cacheReadInputTokens: 0,
+					cacheCreationInputTokens: 0,
+					totalCostUsd: 0.02,
+					contextWindow: 0,
+				},
+			},
+			{
+				type: 'AUTO',
+				timestamp: 5,
+				summary: 'current task two',
+				elapsedTimeMs: 300,
+				usageStats: {
+					inputTokens: 30,
+					outputTokens: 8,
+					cacheReadInputTokens: 0,
+					cacheCreationInputTokens: 0,
+					totalCostUsd: 0.03,
+					contextWindow: 0,
+				},
+			},
+		]);
+
+		expect(totals).toEqual({
+			totalCompletedTasks: 2,
+			totalElapsedMs: 500,
+			totalInputTokens: 50,
+			totalOutputTokens: 15,
+			totalCost: 0.05,
+			entryCount: 2,
+		});
+	});
+
+	it('excludes Auto Run and goal-run control history from persisted task totals', () => {
+		const totals = aggregateAutoRunHistoryTotals([
+			{
+				type: 'AUTO',
+				timestamp: 1,
+				summary: 'Auto Run started in worktree',
+				elapsedTimeMs: 1000,
+				usageStats: {
+					inputTokens: 1000,
+					outputTokens: 1000,
+					cacheReadInputTokens: 0,
+					cacheCreationInputTokens: 0,
+					totalCostUsd: 99,
+					contextWindow: 0,
+				},
+			},
+			{
+				type: 'AUTO',
+				timestamp: 2,
+				summary: 'Goal-Driven Auto Run started',
+				elapsedTimeMs: 1000,
+			},
+			{
+				type: 'AUTO',
+				timestamp: 3,
+				summary: 'Goal progress: 40% - implemented storage',
+				elapsedTimeMs: 1000,
+				usageStats: {
+					inputTokens: 1000,
+					outputTokens: 1000,
+					cacheReadInputTokens: 0,
+					cacheCreationInputTokens: 0,
+					totalCostUsd: 99,
+					contextWindow: 0,
+				},
+			},
+			{
+				type: 'AUTO',
+				timestamp: 4,
+				summary: 'Goal run stopped by user (40%)',
+				elapsedTimeMs: 1000,
+			},
+			{
+				type: 'AUTO',
+				timestamp: 5,
+				summary: 'implemented current task',
+				elapsedTimeMs: 250,
+				usageStats: {
+					inputTokens: 25,
+					outputTokens: 10,
+					cacheReadInputTokens: 0,
+					cacheCreationInputTokens: 0,
+					totalCostUsd: 0.04,
+					contextWindow: 0,
+				},
+			},
+		]);
+
+		expect(totals).toEqual({
+			totalCompletedTasks: 1,
+			totalElapsedMs: 250,
+			totalInputTokens: 25,
+			totalOutputTokens: 10,
+			totalCost: 0.04,
+			entryCount: 1,
+		});
+	});
+
+	it('merges final summary totals using persisted history as an upper-bound source', () => {
+		const merged = mergeFinalSummaryTotals(
+			{
+				totalCompletedTasks: 1,
+				totalElapsedMs: 100,
+				totalInputTokens: 10,
+				totalOutputTokens: 5,
+				totalCost: 0.01,
+			},
+			{
+				totalCompletedTasks: 3,
+				totalElapsedMs: 1000,
+				totalInputTokens: 100,
+				totalOutputTokens: 50,
+				totalCost: 0.2,
+				entryCount: 3,
+			}
+		);
+
+		expect(merged).toEqual({
+			totalCompletedTasks: 3,
+			totalElapsedMs: 1000,
+			totalInputTokens: 100,
+			totalOutputTokens: 50,
+			totalCost: 0.2,
+		});
 	});
 });

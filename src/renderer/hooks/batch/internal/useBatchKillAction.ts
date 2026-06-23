@@ -7,6 +7,7 @@ import type { BatchAction } from '../batchReducer';
 import { claimFlushState, type AutoRunFlushStateRefs } from './batchFlushState';
 import type { ErrorResolutionEntry } from './useBatchControlActions';
 import type { BatchCompleteInfo } from '../useBatchProcessor';
+import { aggregateAutoRunHistoryTotals, mergeFinalSummaryTotals } from './batchFinalSummary';
 
 interface TimeTrackingApi {
 	getElapsedTime: (sessionId: string) => number;
@@ -87,13 +88,37 @@ export function useBatchKillAction({
 			const flushState = claimFlushState(autoRunFlushStateRefs, sessionId);
 			if (flushState) {
 				const elapsedMs = timeTracking.getElapsedTime(sessionId);
-				const completedTasks = flushState.getCompletedTasks();
+				let finalTotals = {
+					totalCompletedTasks: flushState.getCompletedTasks(),
+					totalElapsedMs: elapsedMs,
+					totalInputTokens: flushState.getInputTokens(),
+					totalOutputTokens: flushState.getOutputTokens(),
+					totalCost: flushState.getTotalCost(),
+				};
+				try {
+					if (window.maestro.history?.getAll) {
+						const historyEntries = await window.maestro.history.getAll(
+							flushState.projectPath,
+							sessionId
+						);
+						finalTotals = mergeFinalSummaryTotals(
+							finalTotals,
+							aggregateAutoRunHistoryTotals(historyEntries)
+						);
+					}
+				} catch (historyError) {
+					logger.warn(
+						'[BatchProcessor:killBatchRun] Failed to aggregate Auto Run history totals:',
+						undefined,
+						{ sessionId, error: historyError }
+					);
+				}
 				if (flushState.statsAutoRunId) {
 					try {
 						await window.maestro.stats.endAutoRun(
 							flushState.statsAutoRunId,
-							elapsedMs,
-							completedTasks
+							finalTotals.totalElapsedMs,
+							finalTotals.totalCompletedTasks
 						);
 					} catch (statsError) {
 						logger.warn(
@@ -107,18 +132,35 @@ export function useBatchKillAction({
 					await onAddHistoryEntry({
 						type: 'AUTO',
 						timestamp: Date.now(),
-						summary: `Auto Run killed: ${completedTasks} task${completedTasks !== 1 ? 's' : ''} in ${formatElapsedTime(elapsedMs)}`,
+						summary: `Auto Run killed: ${finalTotals.totalCompletedTasks} task${finalTotals.totalCompletedTasks !== 1 ? 's' : ''} in ${formatElapsedTime(finalTotals.totalElapsedMs)}`,
 						fullResponse: [
 							'**Auto Run Summary**',
 							'',
 							'- **Status:** Killed by user',
-							`- **Tasks Completed:** ${completedTasks}`,
-							`- **Total Duration:** ${formatElapsedTime(elapsedMs)}`,
+							`- **Tasks Completed:** ${finalTotals.totalCompletedTasks}`,
+							`- **Total Duration:** ${formatElapsedTime(finalTotals.totalElapsedMs)}`,
+							finalTotals.totalInputTokens > 0 || finalTotals.totalOutputTokens > 0
+								? `- **Total Tokens:** ${(finalTotals.totalInputTokens + finalTotals.totalOutputTokens).toLocaleString()} (${finalTotals.totalInputTokens.toLocaleString()} in / ${finalTotals.totalOutputTokens.toLocaleString()} out)`
+								: '',
+							finalTotals.totalCost > 0
+								? `- **Total Cost:** $${finalTotals.totalCost.toFixed(4)}`
+								: '',
 						].join('\n'),
 						projectPath: flushState.projectPath,
 						sessionId,
 						success: false,
-						elapsedTimeMs: elapsedMs,
+						elapsedTimeMs: finalTotals.totalElapsedMs,
+						usageStats:
+							finalTotals.totalInputTokens > 0 || finalTotals.totalOutputTokens > 0
+								? {
+										inputTokens: finalTotals.totalInputTokens,
+										outputTokens: finalTotals.totalOutputTokens,
+										cacheReadInputTokens: 0,
+										cacheCreationInputTokens: 0,
+										totalCostUsd: finalTotals.totalCost,
+										contextWindow: 0,
+									}
+								: undefined,
 					});
 				} catch (historyError) {
 					logger.warn(
@@ -139,13 +181,13 @@ export function useBatchKillAction({
 						onComplete({
 							sessionId,
 							sessionName: flushState.sessionName,
-							completedTasks,
-							totalTasks: flushState.getTotalTasks(),
+							completedTasks: finalTotals.totalCompletedTasks,
+							totalTasks: Math.max(flushState.getTotalTasks(), finalTotals.totalCompletedTasks),
 							wasStopped: true,
-							elapsedTimeMs: elapsedMs,
-							inputTokens: flushState.getInputTokens(),
-							outputTokens: flushState.getOutputTokens(),
-							totalCostUsd: flushState.getTotalCost(),
+							elapsedTimeMs: finalTotals.totalElapsedMs,
+							inputTokens: finalTotals.totalInputTokens,
+							outputTokens: finalTotals.totalOutputTokens,
+							totalCostUsd: finalTotals.totalCost,
 							documentsProcessed: flushState.getDocumentsProcessed(),
 						});
 					} catch (completeError) {

@@ -2311,7 +2311,7 @@ interface MaestroAPI {
 			message: string,
 			images?: string[]
 		) => Promise<void>;
-		removeParticipant: (id: string, name: string) => Promise<void>;
+		removeParticipant: (id: string, name: string) => Promise<GroupChatData | null>;
 		resetParticipantContext: (
 			id: string,
 			name: string,

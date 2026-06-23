@@ -23,6 +23,8 @@ import { formatCost } from '../utils/formatters';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { parsePeekOutput, formatPeekLines } from '../utils/peekOutputParser';
 import { formatTimestamp } from '../../shared/formatters';
+import { notifyToast } from '../stores/notificationStore';
+import { logger } from '../utils/logger';
 
 interface ParticipantCardProps {
 	theme: Theme;
@@ -31,7 +33,7 @@ interface ParticipantCardProps {
 	color?: string;
 	groupChatId?: string;
 	onContextReset?: (participantName: string) => void;
-	onRemove?: (participantName: string) => void;
+	onRemove?: (participantName: string) => boolean | Promise<boolean>;
 	liveOutput?: string;
 }
 
@@ -126,10 +128,20 @@ export function ParticipantCard({
 		if (!onRemove || !groupChatId) return;
 		setIsRemoving(true);
 		try {
-			await onRemove(participant.name);
+			const removed = await onRemove(participant.name);
+			if (!removed) {
+				throw new Error(`Participant ${participant.name} was not removed`);
+			}
+			setConfirmRemove(false);
+		} catch (error) {
+			logger.error(`Failed to remove participant ${participant.name}:`, undefined, error);
+			notifyToast({
+				type: 'error',
+				title: 'Group Chat',
+				message: `Failed to remove ${participant.name}`,
+			});
 		} finally {
 			setIsRemoving(false);
-			setConfirmRemove(false);
 		}
 	}, [onRemove, groupChatId, participant.name]);
 

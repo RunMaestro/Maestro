@@ -105,6 +105,11 @@ export type GroupChatUpdate = Partial<
 	>
 >;
 
+export interface ParticipantRemovalResult {
+	chat: GroupChat;
+	removed: boolean;
+}
+
 /**
  * Get the Maestro config directory path.
  * Uses custom sync path if configured, otherwise falls back to Electron's userData.
@@ -382,22 +387,42 @@ export function addParticipantToChat(
  * @returns The updated GroupChat object
  */
 export function removeParticipantFromChat(id: string, participantName: string): Promise<GroupChat> {
+	return removeParticipantFromChatWithResult(id, participantName).then((result) => result.chat);
+}
+
+/**
+ * Remove a participant from a group chat by name and report whether storage changed.
+ *
+ * @param id - The group chat ID
+ * @param participantName - The name of the participant to remove
+ * @returns The updated group chat and whether a participant was removed
+ */
+export function removeParticipantFromChatWithResult(
+	id: string,
+	participantName: string
+): Promise<ParticipantRemovalResult> {
 	return enqueueWrite(id, async () => {
 		const chat = await loadGroupChat(id);
 		if (!chat) {
 			throw new Error(`Group chat not found: ${id}`);
 		}
 
+		const participants = chat.participants.filter((p) => p.name !== participantName);
+		const removed = participants.length !== chat.participants.length;
+		if (!removed) {
+			return { chat, removed };
+		}
+
 		const updated: GroupChat = {
 			...chat,
-			participants: chat.participants.filter((p) => p.name !== participantName),
+			participants,
 			updatedAt: Date.now(),
 		};
 
 		const metadataPath = getMetadataPath(id);
 		await atomicWriteJson(metadataPath, updated);
 
-		return updated;
+		return { chat: updated, removed };
 	});
 }
 

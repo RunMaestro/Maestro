@@ -4,7 +4,12 @@ import {
 	getNextBadge,
 	formatTimeRemaining,
 } from '../../../constants/conductorBadges';
-import type { AutoRunStats } from '../../../types';
+import type { AutoRunStats, HistoryEntry } from '../../../types';
+
+type AutoRunHistoryEntry = Pick<
+	HistoryEntry,
+	'type' | 'summary' | 'usageStats' | 'elapsedTimeMs' | 'timestamp'
+>;
 
 export interface FinalSummaryParams {
 	wasStopped: boolean;
@@ -25,6 +30,112 @@ export interface FinalSummaryResult {
 	details: string;
 	isSuccess: boolean;
 	statusText: string;
+}
+
+export interface FinalSummaryTotals {
+	totalCompletedTasks: number;
+	totalElapsedMs: number;
+	totalInputTokens: number;
+	totalOutputTokens: number;
+	totalCost: number;
+}
+
+export interface AutoRunHistoryTotals extends FinalSummaryTotals {
+	entryCount: number;
+}
+
+const FINAL_AUTORUN_SUMMARY_RE =
+	/^Auto Run (completed|completed with stalls|stalled|stopped|killed):/;
+const LOOP_SUMMARY_RE = /^Loop \d+(?: \(final\))? completed:/;
+const CONTROL_SUMMARY_PREFIXES = [
+	'Auto Run started in worktree',
+	'PR created:',
+	'PR creation failed:',
+	'Document stalled:',
+	'Goal-Driven Auto Run started',
+	'Goal progress:',
+	'Goal completed',
+	'Goal run hit a deadlock',
+	'Goal run reached its iteration limit',
+	'Goal run stalled',
+	'Goal run stopped by user',
+];
+
+function isFinalAutoRunSummary(entry: AutoRunHistoryEntry): boolean {
+	return entry.type === 'AUTO' && FINAL_AUTORUN_SUMMARY_RE.test(entry.summary);
+}
+
+function isAutoRunControlEntry(entry: AutoRunHistoryEntry): boolean {
+	if (entry.type !== 'AUTO') return true;
+	if (isFinalAutoRunSummary(entry)) return true;
+	if (LOOP_SUMMARY_RE.test(entry.summary)) return true;
+	return CONTROL_SUMMARY_PREFIXES.some((prefix) => entry.summary.startsWith(prefix));
+}
+
+/**
+ * Reconstruct cumulative Auto Run work stats from persisted history entries.
+ *
+ * The runner keeps in-memory counters, but those reset if an Auto Run spans
+ * process/runtime boundaries. The history file is the durable source for the
+ * final summary, so aggregate entries after the previous final summary and
+ * exclude summary/control rows that would double-count task work.
+ */
+export function aggregateAutoRunHistoryTotals(
+	entries: ReadonlyArray<AutoRunHistoryEntry>
+): AutoRunHistoryTotals | null {
+	const orderedEntries = [...entries]
+		.filter((entry) => entry.type === 'AUTO')
+		.sort((a, b) => a.timestamp - b.timestamp);
+	let previousFinalSummaryIndex = -1;
+	for (let i = orderedEntries.length - 1; i >= 0; i--) {
+		if (isFinalAutoRunSummary(orderedEntries[i])) {
+			previousFinalSummaryIndex = i;
+			break;
+		}
+	}
+	const currentRunEntries = orderedEntries.slice(previousFinalSummaryIndex + 1);
+	const taskEntries = currentRunEntries.filter((entry) => !isAutoRunControlEntry(entry));
+
+	if (taskEntries.length === 0) return null;
+
+	return taskEntries.reduce<AutoRunHistoryTotals>(
+		(totals, entry) => {
+			const usageStats = entry.usageStats;
+			totals.totalCompletedTasks += 1;
+			totals.totalElapsedMs += entry.elapsedTimeMs || 0;
+			totals.totalInputTokens += usageStats?.inputTokens || 0;
+			totals.totalOutputTokens += usageStats?.outputTokens || 0;
+			totals.totalCost += usageStats?.totalCostUsd || 0;
+			totals.entryCount += 1;
+			return totals;
+		},
+		{
+			totalCompletedTasks: 0,
+			totalElapsedMs: 0,
+			totalInputTokens: 0,
+			totalOutputTokens: 0,
+			totalCost: 0,
+			entryCount: 0,
+		}
+	);
+}
+
+export function mergeFinalSummaryTotals(
+	runtimeTotals: FinalSummaryTotals,
+	historyTotals: AutoRunHistoryTotals | null
+): FinalSummaryTotals {
+	if (!historyTotals) return runtimeTotals;
+
+	return {
+		totalCompletedTasks: Math.max(
+			runtimeTotals.totalCompletedTasks,
+			historyTotals.totalCompletedTasks
+		),
+		totalElapsedMs: Math.max(runtimeTotals.totalElapsedMs, historyTotals.totalElapsedMs),
+		totalInputTokens: Math.max(runtimeTotals.totalInputTokens, historyTotals.totalInputTokens),
+		totalOutputTokens: Math.max(runtimeTotals.totalOutputTokens, historyTotals.totalOutputTokens),
+		totalCost: Math.max(runtimeTotals.totalCost, historyTotals.totalCost),
+	};
 }
 
 /**

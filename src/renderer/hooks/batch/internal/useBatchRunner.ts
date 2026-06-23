@@ -20,7 +20,11 @@ import { useSettingsStore } from '../../../stores/settingsStore';
 import { countUnfinishedTasks, findPendingHitlGate, uncheckAllTasks } from '../batchUtils';
 import { DEFAULT_BATCH_STATE, type BatchAction } from '../batchReducer';
 import { createLoopSummaryEntry } from './batchLoopSummary';
-import { buildFinalSummary } from './batchFinalSummary';
+import {
+	aggregateAutoRunHistoryTotals,
+	buildFinalSummary,
+	mergeFinalSummaryTotals,
+} from './batchFinalSummary';
 import { createProgressPoll } from './batchProgressPoll';
 import { claimFlushState, type AutoRunFlushStateRefs } from './batchFlushState';
 import type { ErrorResolutionEntry } from './useBatchControlActions';
@@ -985,21 +989,28 @@ export function useBatchRunner({
 								};
 							});
 
-							// Add history entry
-							// Use effectiveCwd for projectPath so clicking the session link looks in the right place
-							onAddHistoryEntry({
-								type: 'AUTO',
-								timestamp: Date.now(),
-								summary: shortSummary,
-								fullResponse: fullSynopsis,
-								agentSessionId,
-								projectPath: effectiveCwd,
-								sessionId: sessionId,
-								success,
-								usageStats,
-								contextUsage,
-								elapsedTimeMs,
-							});
+							// Add history entry. Await the write so the final cumulative
+							// aggregation sees the latest task before writing the summary.
+							try {
+								await onAddHistoryEntry({
+									type: 'AUTO',
+									timestamp: Date.now(),
+									summary: shortSummary,
+									fullResponse: fullSynopsis,
+									agentSessionId,
+									projectPath: effectiveCwd,
+									sessionId: sessionId,
+									success,
+									usageStats,
+									contextUsage,
+									elapsedTimeMs,
+								});
+							} catch (historyError) {
+								logger.warn('[BatchProcessor] Failed to add task history entry:', undefined, {
+									sessionId,
+									error: historyError,
+								});
+							}
 
 							// Speak the synopsis via TTS if audio feedback is enabled
 							// Use refs to get latest setting values (user may toggle mid-run)
@@ -1374,6 +1385,26 @@ export function useBatchRunner({
 			// Calculate visibility-aware elapsed time using the extracted time tracking hook
 			// (excludes time when laptop was sleeping/suspended)
 			const totalElapsedMs = timeTracking.getElapsedTime(sessionId);
+			let finalTotals = {
+				totalCompletedTasks,
+				totalElapsedMs,
+				totalInputTokens,
+				totalOutputTokens,
+				totalCost,
+			};
+
+			try {
+				const historyEntries = await window.maestro.history.getAll(session.cwd, sessionId);
+				finalTotals = mergeFinalSummaryTotals(
+					finalTotals,
+					aggregateAutoRunHistoryTotals(historyEntries)
+				);
+			} catch (historyError) {
+				logger.warn('[BatchProcessor] Failed to aggregate Auto Run history totals:', undefined, {
+					sessionId,
+					error: historyError,
+				});
+			}
 
 			const {
 				summary: finalSummary,
@@ -1381,15 +1412,15 @@ export function useBatchRunner({
 				isSuccess,
 			} = buildFinalSummary({
 				wasStopped,
-				totalCompletedTasks,
-				totalElapsedMs,
+				totalCompletedTasks: finalTotals.totalCompletedTasks,
+				totalElapsedMs: finalTotals.totalElapsedMs,
 				stalledDocuments,
 				documents,
 				loopEnabled,
 				loopIteration,
-				totalInputTokens,
-				totalOutputTokens,
-				totalCost,
+				totalInputTokens: finalTotals.totalInputTokens,
+				totalOutputTokens: finalTotals.totalOutputTokens,
+				totalCost: finalTotals.totalCost,
 				autoRunStats,
 			});
 
@@ -1407,15 +1438,15 @@ export function useBatchRunner({
 						projectPath: session.cwd,
 						sessionId, // Include sessionId so the summary appears in session's history
 						success: isSuccess,
-						elapsedTimeMs: totalElapsedMs,
+						elapsedTimeMs: finalTotals.totalElapsedMs,
 						usageStats:
-							totalInputTokens > 0 || totalOutputTokens > 0
+							finalTotals.totalInputTokens > 0 || finalTotals.totalOutputTokens > 0
 								? {
-										inputTokens: totalInputTokens,
-										outputTokens: totalOutputTokens,
+										inputTokens: finalTotals.totalInputTokens,
+										outputTokens: finalTotals.totalOutputTokens,
 										cacheReadInputTokens: 0,
 										cacheCreationInputTokens: 0,
-										totalCostUsd: totalCost,
+										totalCostUsd: finalTotals.totalCost,
 										contextWindow: 0,
 									}
 								: undefined,
@@ -1430,8 +1461,8 @@ export function useBatchRunner({
 					try {
 						await window.maestro.stats.endAutoRun(
 							statsAutoRunId,
-							totalElapsedMs,
-							totalCompletedTasks
+							finalTotals.totalElapsedMs,
+							finalTotals.totalCompletedTasks
 						);
 					} catch (statsError) {
 						// Don't fail cleanup if stats tracking fails
@@ -1463,13 +1494,13 @@ export function useBatchRunner({
 				onComplete({
 					sessionId,
 					sessionName: session.name || session.cwd.split('/').pop() || 'Unknown',
-					completedTasks: totalCompletedTasks,
-					totalTasks: initialTotalTasks,
+					completedTasks: finalTotals.totalCompletedTasks,
+					totalTasks: Math.max(initialTotalTasks, finalTotals.totalCompletedTasks),
 					wasStopped,
-					elapsedTimeMs: totalElapsedMs,
-					inputTokens: totalInputTokens,
-					outputTokens: totalOutputTokens,
-					totalCostUsd: totalCost,
+					elapsedTimeMs: finalTotals.totalElapsedMs,
+					inputTokens: finalTotals.totalInputTokens,
+					outputTokens: finalTotals.totalOutputTokens,
+					totalCostUsd: finalTotals.totalCost,
 					documentsProcessed: documents.length,
 				});
 			}

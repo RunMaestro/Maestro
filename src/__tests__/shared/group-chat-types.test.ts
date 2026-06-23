@@ -5,7 +5,12 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { normalizeMentionName, mentionMatches } from '../../shared/group-chat-types';
+import {
+	getMentionMatchPriority,
+	mentionMatches,
+	normalizeLegacyMentionName,
+	normalizeMentionName,
+} from '../../shared/group-chat-types';
 import type {
 	GroupChatParticipant,
 	GroupChat,
@@ -41,6 +46,20 @@ describe('normalizeMentionName', () => {
 		expect(normalizeMentionName('Very Long Agent Name')).toBe('Very-Long-Agent-Name');
 	});
 
+	it('should remove bracket punctuation from mention-safe names', () => {
+		expect(normalizeMentionName('CIA Agent (Super Cool)')).toBe('CIA-Agent-Super-Cool');
+		expect(normalizeMentionName('Review Bot [Linux]')).toBe('Review-Bot-Linux');
+	});
+
+	it('should keep legacy aliases available for bracketed names', () => {
+		expect(normalizeLegacyMentionName('CIA Agent (Super Cool)')).toBe('CIA-Agent-(Super-Cool)');
+		expect(normalizeLegacyMentionName('Review Bot [Linux]')).toBe('Review-Bot-[Linux]');
+	});
+
+	it('should normalize unicode compatibility forms', () => {
+		expect(normalizeMentionName('ＣＩＡ Agent')).toBe('CIA-Agent');
+	});
+
 	it('should handle leading and trailing spaces', () => {
 		expect(normalizeMentionName(' Agent ')).toBe('-Agent-');
 		expect(normalizeMentionName('  Test  ')).toBe('-Test-');
@@ -74,6 +93,29 @@ describe('mentionMatches', () => {
 	it('should match hyphenated mention to spaced name', () => {
 		expect(mentionMatches('My-Agent', 'My Agent')).toBe(true);
 		expect(mentionMatches('Test-Name', 'Test Name')).toBe(true);
+	});
+
+	it('should match mention-safe names for actual names with parentheses', () => {
+		expect(mentionMatches('CIA-Agent-Super-Cool', 'CIA Agent (Super Cool)')).toBe(true);
+	});
+
+	it('should match legacy parenthesized aliases for actual names with parentheses', () => {
+		expect(mentionMatches('CIA-Agent-(Super-Cool)', 'CIA Agent (Super Cool)')).toBe(true);
+	});
+
+	it('should match unicode composed and decomposed names', () => {
+		expect(mentionMatches('Café-Agent', 'Café Agent')).toBe(true);
+	});
+
+	it('should ignore trailing sentence punctuation on extracted mentions', () => {
+		expect(mentionMatches('Client.', 'Client')).toBe(true);
+		expect(mentionMatches('CIA-Agent-(Super-Cool).', 'CIA Agent (Super Cool)')).toBe(true);
+	});
+
+	it('should rank exact and legacy matches above normalized safe matches', () => {
+		expect(getMentionMatchPriority('CIA-Agent-(Super-Cool)', 'CIA Agent (Super Cool)')).toBe(3);
+		expect(getMentionMatchPriority('CIA-Agent-Super-Cool', 'CIA Agent (Super Cool)')).toBe(2);
+		expect(getMentionMatchPriority('CIA-Agent-(Super-Cool)', 'CIA Agent Super Cool')).toBe(1);
 	});
 
 	it('should match hyphenated mention to spaced name case-insensitively', () => {

@@ -54,6 +54,7 @@ const initialGroupChatState = {
 	groupChatRightTab: 'participants' as const,
 	groupChatParticipantColors: {},
 	groupChatStagedImages: [],
+	participantLiveOutput: new Map(),
 	groupChatError: null,
 };
 
@@ -1123,6 +1124,52 @@ describe('useGroupChatHandlers', () => {
 			act(() => participantsCallback('gc-1', newParticipants));
 
 			expect(useGroupChatStore.getState().groupChats[0].participants).toEqual(newParticipants);
+		});
+
+		it('onParticipantsChanged prunes removed participant state for the active chat', () => {
+			useGroupChatStore.setState({
+				activeGroupChatId: 'gc-1',
+				groupChats: [
+					{
+						id: 'gc-1',
+						name: 'Chat',
+						participants: [{ name: 'Agent A' }, { name: 'Agent B' }],
+					} as any,
+				],
+				participantStates: new Map([
+					['Agent A', 'working'],
+					['Agent B', 'working'],
+				]),
+				allGroupChatParticipantStates: new Map([
+					[
+						'gc-1',
+						new Map([
+							['Agent A', 'working'],
+							['Agent B', 'working'],
+						]),
+					],
+				]),
+				participantLiveOutput: new Map([
+					['gc-1:Agent A', 'kept'],
+					['gc-1:Agent B', 'removed'],
+				]),
+			});
+
+			let participantsCallback: any;
+			mockGroupChat.onParticipantsChanged.mockImplementationOnce((cb: any) => {
+				participantsCallback = cb;
+				return () => {};
+			});
+
+			renderHook(() => useGroupChatHandlers());
+			act(() => participantsCallback('gc-1', [{ name: 'Agent A' }]));
+
+			const state = useGroupChatStore.getState();
+			expect(state.groupChats[0].participants).toEqual([{ name: 'Agent A' }]);
+			expect(state.participantStates.has('Agent B')).toBe(false);
+			expect(state.allGroupChatParticipantStates.get('gc-1')?.has('Agent B')).toBe(false);
+			expect(state.participantLiveOutput.has('gc-1:Agent B')).toBe(false);
+			expect(state.participantLiveOutput.get('gc-1:Agent A')).toBe('kept');
 		});
 
 		it('onModeratorSessionIdChanged callback updates the moderator agent session id', () => {

@@ -16,8 +16,9 @@ import {
 	GroupChatParticipant,
 	loadGroupChat,
 	addParticipantToChat,
-	removeParticipantFromChat,
+	removeParticipantFromChatWithResult,
 	getParticipant,
+	type ParticipantRemovalResult,
 } from './group-chat-storage';
 import { appendToLog } from './group-chat-log';
 import { IProcessManager, isModeratorActive } from './group-chat-moderator';
@@ -206,20 +207,18 @@ export async function sendToParticipant(
  * @param groupChatId - The ID of the group chat
  * @param participantName - The name of the participant to remove
  * @param processManager - The process manager (optional, for killing the process)
+ * @returns The persisted removal result, or null if the chat no longer exists
  */
 export async function removeParticipant(
 	groupChatId: string,
 	participantName: string,
 	processManager?: IProcessManager
-): Promise<void> {
+): Promise<ParticipantRemovalResult | null> {
 	// Removal is idempotent: the UI may fire this for a stale participant that was
 	// already removed (e.g. a duplicate click, or removal via another code path).
 	// Treat chat-missing and participant-missing as no-ops rather than throwing.
 	const chat = await loadGroupChat(groupChatId);
-	if (!chat) return;
-
-	const participant = await getParticipant(groupChatId, participantName);
-	if (!participant) return;
+	if (!chat) return null;
 
 	// Get the session ID from our active sessions map
 	const key = getParticipantKey(groupChatId, participantName);
@@ -233,8 +232,8 @@ export async function removeParticipant(
 	// Remove from active sessions
 	activeParticipantSessions.delete(key);
 
-	// Remove from group chat
-	await removeParticipantFromChat(groupChatId, participantName);
+	// Remove from group chat and return the persisted state to callers.
+	return removeParticipantFromChatWithResult(groupChatId, participantName);
 }
 
 /**

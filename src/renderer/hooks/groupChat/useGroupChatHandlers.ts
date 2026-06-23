@@ -194,9 +194,44 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 		});
 
 		const unsubParticipants = window.maestro.groupChat.onParticipantsChanged((id, participants) => {
+			const participantNames = new Set(participants.map((participant) => participant.name));
+			const previousChat = useGroupChatStore.getState().groupChats.find((chat) => chat.id === id);
+			const removedNames =
+				previousChat?.participants
+					.map((participant) => participant.name)
+					.filter((name) => !participantNames.has(name)) ?? [];
+
 			setGroupChats((prev) =>
 				prev.map((chat) => (chat.id === id ? { ...chat, participants } : chat))
 			);
+
+			if (removedNames.length > 0) {
+				setAllGroupChatParticipantStates((prev) => {
+					const chatStates = prev.get(id);
+					if (!chatStates) return prev;
+					const nextChatStates = new Map(chatStates);
+					for (const name of removedNames) {
+						nextChatStates.delete(name);
+					}
+					const next = new Map(prev);
+					next.set(id, nextChatStates);
+					return next;
+				});
+
+				if (id === useGroupChatStore.getState().activeGroupChatId) {
+					setParticipantStates((prev) => {
+						const next = new Map(prev);
+						for (const name of removedNames) {
+							next.delete(name);
+						}
+						return next;
+					});
+				}
+
+				for (const name of removedNames) {
+					clearParticipantLiveOutput(`${id}:${name}`);
+				}
+			}
 		});
 
 		const unsubParticipantState = window.maestro.groupChat.onParticipantState?.(

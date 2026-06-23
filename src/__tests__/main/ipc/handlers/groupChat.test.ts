@@ -865,16 +865,90 @@ describe('groupChat IPC handlers', () => {
 	});
 
 	describe('groupChat:removeParticipant', () => {
-		it('should remove participant from group chat', async () => {
-			vi.mocked(groupChatAgent.removeParticipant).mockResolvedValue(undefined);
+		it('should remove participant from group chat and emit persisted participants', async () => {
+			const remainingParticipant: GroupChatParticipant = {
+				name: 'Worker 2',
+				agentId: 'opencode',
+				sessionId: 'session-2',
+				addedAt: Date.now(),
+			};
+			const updatedChat: GroupChat = {
+				id: 'gc-remove',
+				name: 'Remove Chat',
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+				moderatorAgentId: 'claude-code',
+				moderatorSessionId: 'moderator-session',
+				participants: [remainingParticipant],
+				logPath: '/path/to/chat.log',
+				imagesDir: '/path/to/images',
+			};
+			vi.mocked(groupChatAgent.removeParticipant).mockResolvedValue({
+				chat: updatedChat,
+				removed: true,
+			});
 
 			const handler = handlers.get('groupChat:removeParticipant');
-			await handler!({} as any, 'gc-remove', 'Worker 1');
+			const result = await handler!({} as any, 'gc-remove', 'Worker 1');
 
 			expect(groupChatAgent.removeParticipant).toHaveBeenCalledWith(
 				'gc-remove',
 				'Worker 1',
 				mockProcessManager
+			);
+			expect(mockMainWindow.webContents.send).toHaveBeenCalledWith(
+				'groupChat:participantsChanged',
+				'gc-remove',
+				[remainingParticipant]
+			);
+			expect(result).toBe(updatedChat);
+		});
+
+		it('should return current chat without emitting when removal is a no-op', async () => {
+			const existingParticipant: GroupChatParticipant = {
+				name: 'Worker 2',
+				agentId: 'opencode',
+				sessionId: 'session-2',
+				addedAt: Date.now(),
+			};
+			const currentChat: GroupChat = {
+				id: 'gc-remove-noop',
+				name: 'Remove NoOp Chat',
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+				moderatorAgentId: 'claude-code',
+				moderatorSessionId: 'moderator-session',
+				participants: [existingParticipant],
+				logPath: '/path/to/chat.log',
+				imagesDir: '/path/to/images',
+			};
+			vi.mocked(groupChatAgent.removeParticipant).mockResolvedValue({
+				chat: currentChat,
+				removed: false,
+			});
+
+			const handler = handlers.get('groupChat:removeParticipant');
+			const result = await handler!({} as any, 'gc-remove-noop', 'Worker 1');
+
+			expect(result).toBe(currentChat);
+			expect(mockMainWindow.webContents.send).not.toHaveBeenCalledWith(
+				'groupChat:participantsChanged',
+				expect.anything(),
+				expect.anything()
+			);
+		});
+
+		it('should return null without emitting when chat is missing', async () => {
+			vi.mocked(groupChatAgent.removeParticipant).mockResolvedValue(null);
+
+			const handler = handlers.get('groupChat:removeParticipant');
+			const result = await handler!({} as any, 'missing-chat', 'Worker 1');
+
+			expect(result).toBeNull();
+			expect(mockMainWindow.webContents.send).not.toHaveBeenCalledWith(
+				'groupChat:participantsChanged',
+				expect.anything(),
+				expect.anything()
 			);
 		});
 	});

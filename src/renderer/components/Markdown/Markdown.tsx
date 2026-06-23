@@ -32,6 +32,7 @@ import { FileContextMenu, type FileContextMenuState } from '../FileContextMenu';
 import { buildMarkdownPlugins } from './plugins';
 import { preprocessMarkdown } from './preprocess';
 import { createChatMarkdownComponents } from './chatComponents';
+import { writeRenderedChatSelectionToClipboard } from './renderedCopy';
 import type { MarkdownPreset } from './config';
 
 export interface MarkdownProps {
@@ -266,6 +267,9 @@ export const Markdown = memo(function Markdown({
 		<div
 			className={`prose prose-sm max-w-none text-sm ${className}`}
 			style={{ color: theme.colors.textMain, lineHeight: 1.4, paddingLeft: '0.5em' }}
+			onCopy={(event) => {
+				writeRenderedChatSelectionToClipboard(event.nativeEvent, event.currentTarget);
+			}}
 		>
 			{markdown}
 			{linkMenu && <LinkContextMenu menu={linkMenu} theme={theme} onDismiss={dismissLinkMenu} />}

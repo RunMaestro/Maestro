@@ -22,7 +22,9 @@ import { appendToLog, readLog, saveImage } from './group-chat-log';
 import {
 	type GroupChatMessage,
 	type GroupChatHistoryEntry,
+	getMentionMatchPriority,
 	mentionMatches,
+	normalizeLegacyMentionName,
 	normalizeMentionName,
 } from '../../shared/group-chat-types';
 import {
@@ -459,6 +461,48 @@ function stripMarkdownFormatting(name: string): string {
 	return name.replace(/^[*_`~]+|[*_`~]+$/g, '');
 }
 
+function findUniqueMentionMatch<T>(
+	mentionedName: string,
+	items: T[],
+	getName: (item: T) => string
+): T | undefined {
+	let bestPriority = 0;
+	let bestMatches: T[] = [];
+
+	for (const item of items) {
+		const priority = getMentionMatchPriority(mentionedName, getName(item));
+		if (priority === 0) continue;
+
+		if (priority > bestPriority) {
+			bestPriority = priority;
+			bestMatches = [item];
+			continue;
+		}
+
+		if (priority === bestPriority) {
+			bestMatches.push(item);
+		}
+	}
+
+	return bestMatches.length === 1 ? bestMatches[0] : undefined;
+}
+
+function getMentionNameForContext(name: string, peerNames: string[]): string {
+	const safeName = normalizeMentionName(name);
+	const foldedSafeName = safeName.toLocaleLowerCase();
+	const hasSafeNameCollision = peerNames.some(
+		(peerName) =>
+			peerName !== name && normalizeMentionName(peerName).toLocaleLowerCase() === foldedSafeName
+	);
+
+	if (!hasSafeNameCollision) {
+		return safeName;
+	}
+
+	const legacyName = normalizeLegacyMentionName(name);
+	return legacyName.toLocaleLowerCase() === foldedSafeName ? safeName : legacyName;
+}
+
 /**
  * Extracts @mentions from text that match known participants.
  * Supports hyphenated names matching participants with spaces.
@@ -473,17 +517,17 @@ export function extractMentions(text: string, participants: GroupChatParticipant
 
 	// Match @Name patterns - captures characters after @ excluding:
 	// - Whitespace and @
-	// - Common punctuation that typically follows mentions: :,;!?()[]{}'"<>
-	// This supports names with emojis, Unicode characters, dots, hyphens, underscores, etc.
-	// Examples: @RunMaestro.ai, @my-agent, @✅-autorun-wizard, @日本語
-	const mentionPattern = /@([^\s@:,;!?()\[\]{}'"<>]+)/g;
+	// - Common punctuation that typically follows mentions: :,;!?'"<>
+	// This supports names with emojis, Unicode characters, dots, hyphens, underscores,
+	// and bracket punctuation from legacy normalized display names.
+	// Examples: @RunMaestro.ai, @my-agent, @CIA-Agent-(Super-Cool), @日本語
+	const mentionPattern = /@([^\s@:,;!?'"<>]+)/g;
 	let match;
 
 	while ((match = mentionPattern.exec(text)) !== null) {
 		const mentionedName = stripMarkdownFormatting(match[1]);
 		if (!mentionedName) continue;
-		// Find participant that matches (either exact or normalized)
-		const matchingParticipant = participants.find((p) => mentionMatches(mentionedName, p.name));
+		const matchingParticipant = findUniqueMentionMatch(mentionedName, participants, (p) => p.name);
 		if (matchingParticipant && !mentions.includes(matchingParticipant.name)) {
 			mentions.push(matchingParticipant.name);
 		}
@@ -504,10 +548,11 @@ export function extractAllMentions(text: string): string[] {
 
 	// Match @Name patterns - captures characters after @ excluding:
 	// - Whitespace and @
-	// - Common punctuation that typically follows mentions: :,;!?()[]{}'"<>
-	// This supports names with emojis, Unicode characters, dots, hyphens, underscores, etc.
-	// Examples: @RunMaestro.ai, @my-agent, @✅-autorun-wizard, @日本語
-	const mentionPattern = /@([^\s@:,;!?()\[\]{}'"<>]+)/g;
+	// - Common punctuation that typically follows mentions: :,;!?'"<>
+	// This supports names with emojis, Unicode characters, dots, hyphens, underscores,
+	// and bracket punctuation from legacy normalized display names.
+	// Examples: @RunMaestro.ai, @my-agent, @CIA-Agent-(Super-Cool), @日本語
+	const mentionPattern = /@([^\s@:,;!?'"<>]+)/g;
 	let match;
 
 	while ((match = mentionPattern.exec(text)) !== null) {
@@ -543,7 +588,7 @@ export function extractAutoRunDirectives(text: string): {
 } {
 	const autoRunDirectives: AutoRunDirective[] = [];
 	// Matches: !autorun @AgentName  OR  !autorun @AgentName:filename.md
-	const autoRunPattern = /!autorun\s+@([^\s@:,;!?()\[\]{}'"<>]+)(?::([^\s,;!?()\[\]{}'"<>]+))?/g;
+	const autoRunPattern = /!autorun\s+@([^\s@:,;!?'"<>]+)(?::([^\s,;!?'"<>]+))?/g;
 	let match;
 
 	while ((match = autoRunPattern.exec(text)) !== null) {
@@ -557,7 +602,7 @@ export function extractAutoRunDirectives(text: string): {
 
 	// Remove !autorun lines from the message for display
 	const cleanedText = text
-		.replace(/^.*!autorun\s+@[^\s@:,;!?()\[\]{}'"<>]+.*$/gm, '')
+		.replace(/^.*!autorun\s+@[^\s@:,;!?'"<>]+.*$/gm, '')
 		.replace(/\n{3,}/g, '\n\n')
 		.trim();
 
@@ -622,16 +667,20 @@ export async function routeUserMessage(
 
 		for (const mentionedName of userMentions) {
 			// Skip if already a participant (check both exact and normalized names)
-			const alreadyParticipant = Array.from(existingParticipantNames).some((existingName) =>
-				mentionMatches(mentionedName, existingName)
+			const alreadyParticipant = findUniqueMentionMatch(
+				mentionedName,
+				Array.from(existingParticipantNames),
+				(name) => name
 			);
 			if (alreadyParticipant) {
 				continue;
 			}
 
 			// Find matching session by name (supports both exact and hyphenated names)
-			const matchingSession = sessions.find(
-				(s) => mentionMatches(mentionedName, s.name) && s.toolType !== 'terminal'
+			const matchingSession = findUniqueMentionMatch(
+				mentionedName,
+				sessions.filter((s) => s.toolType !== 'terminal'),
+				(s) => s.name
 			);
 
 			if (matchingSession) {
@@ -765,11 +814,15 @@ export async function routeUserMessage(
 
 			// Build participant context
 			// Use normalized names (spaces → hyphens) so moderator can @mention them properly
+			const participantNamesForMentions = chat.participants.map((p) => p.name);
 			const participantContext =
 				chat.participants.length > 0
 					? chat.participants
 							.map((p) => {
-								return `- @${normalizeMentionName(p.name)} (${p.agentId} session)`;
+								return `- @${getMentionNameForContext(
+									p.name,
+									participantNamesForMentions
+								)} (${p.agentId} session)`;
 							})
 							.join('\n')
 					: '(No agents currently in this group chat)';
@@ -787,7 +840,8 @@ export async function routeUserMessage(
 				);
 				if (availableSessions.length > 0) {
 					// Use normalized names (spaces → hyphens) so moderator can @mention them properly
-					availableSessionsContext = `\n\n## Available Maestro Sessions (can be added via @mention):\n${availableSessions.map((s) => `- @${normalizeMentionName(s.name)} (${s.toolType})`).join('\n')}`;
+					const availableSessionNamesForMentions = availableSessions.map((s) => s.name);
+					availableSessionsContext = `\n\n## Available Maestro Sessions (can be added via @mention):\n${availableSessions.map((s) => `- @${getMentionNameForContext(s.name, availableSessionNamesForMentions)} (${s.toolType})`).join('\n')}`;
 				}
 			}
 
@@ -1030,16 +1084,20 @@ export async function routeModeratorResponse(
 
 		for (const mentionedName of allMentions) {
 			// Skip if already a participant (check both exact and normalized names)
-			const alreadyParticipant = Array.from(existingParticipantNames).some((existingName) =>
-				mentionMatches(mentionedName, existingName)
+			const alreadyParticipant = findUniqueMentionMatch(
+				mentionedName,
+				Array.from(existingParticipantNames),
+				(name) => name
 			);
 			if (alreadyParticipant) {
 				continue;
 			}
 
 			// Find matching session by name (supports both exact and hyphenated names)
-			const matchingSession = sessions.find(
-				(s) => mentionMatches(mentionedName, s.name) && s.toolType !== 'terminal'
+			const matchingSession = findUniqueMentionMatch(
+				mentionedName,
+				sessions.filter((s) => s.toolType !== 'terminal'),
+				(s) => s.name
 			);
 
 			if (matchingSession) {
@@ -1647,11 +1705,15 @@ export async function spawnModeratorSynthesis(
 
 	// Build participant context for potential follow-up @mentions
 	// Use normalized names (spaces → hyphens) so moderator can @mention them properly
+	const participantNamesForMentions = chat.participants.map((p) => p.name);
 	const participantContext =
 		chat.participants.length > 0
 			? chat.participants
 					.map((p) => {
-						return `- @${normalizeMentionName(p.name)} (${p.agentId} session)`;
+						return `- @${getMentionNameForContext(
+							p.name,
+							participantNamesForMentions
+						)} (${p.agentId} session)`;
 					})
 					.join('\n')
 			: '(No agents currently in this group chat)';

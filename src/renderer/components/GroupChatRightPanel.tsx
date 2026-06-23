@@ -194,8 +194,21 @@ export function GroupChatRightPanel({
 
 	// Handle removing a participant from the group chat
 	const handleRemoveParticipant = useCallback(
-		async (participantName: string) => {
-			await window.maestro.groupChat.removeParticipant(groupChatId, participantName);
+		async (participantName: string): Promise<boolean> => {
+			const updatedChat = await window.maestro.groupChat.removeParticipant(
+				groupChatId,
+				participantName
+			);
+			if (!updatedChat) {
+				throw new Error(`Group chat not found: ${groupChatId}`);
+			}
+
+			useGroupChatStore
+				.getState()
+				.setGroupChats((prev) =>
+					prev.map((chat) => (chat.id === groupChatId ? updatedChat : chat))
+				);
+			return !updatedChat.participants.some((participant) => participant.name === participantName);
 		},
 		[groupChatId]
 	);

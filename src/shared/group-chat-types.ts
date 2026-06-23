@@ -10,13 +10,49 @@
 
 /**
  * Normalize a name for use in @mentions.
- * Replaces spaces with hyphens so names can be referenced without quotes.
+ * Replaces spaces with hyphens and drops bracket punctuation so names can be
+ * referenced without quotes.
  *
  * @param name - Original name (may contain spaces)
- * @returns Normalized name with hyphens instead of spaces
+ * @returns Normalized mention-safe name
  */
 export function normalizeMentionName(name: string): string {
-	return name.replace(/\s+/g, '-');
+	return name
+		.normalize('NFKC')
+		.replace(/[()[\]{}]/g, '')
+		.replace(/\s+/g, '-');
+}
+
+/**
+ * Legacy group-chat aliases only replaced whitespace. Keep accepting them so
+ * saved moderator prompts and older chat history can still target agents whose
+ * names contain parentheses.
+ */
+export function normalizeLegacyMentionName(name: string): string {
+	return name.normalize('NFKC').replace(/\s+/g, '-');
+}
+
+function cleanMentionName(name: string): string {
+	return name.normalize('NFKC').replace(/^[*_`~]+|[*_`~.,;:!?]+$/g, '');
+}
+
+function foldMentionName(name: string): string {
+	return name.toLocaleLowerCase();
+}
+
+export function getMentionMatchPriority(mentionedName: string, actualName: string): number {
+	const cleanedMention = cleanMentionName(mentionedName);
+	const foldedMention = foldMentionName(cleanedMention);
+	const foldedActual = foldMentionName(actualName.normalize('NFKC'));
+	const foldedLegacyActual = foldMentionName(normalizeLegacyMentionName(actualName));
+	const foldedSafeActual = foldMentionName(normalizeMentionName(actualName));
+	const foldedSafeMention = foldMentionName(normalizeMentionName(cleanedMention));
+
+	if (foldedMention === foldedActual) return 4;
+	if (foldedMention === foldedLegacyActual) return 3;
+	if (foldedMention === foldedSafeActual) return 2;
+	if (foldedSafeMention === foldedSafeActual) return 1;
+	return 0;
 }
 
 /**
@@ -27,10 +63,7 @@ export function normalizeMentionName(name: string): string {
  * @returns True if they match
  */
 export function mentionMatches(mentionedName: string, actualName: string): boolean {
-	return (
-		mentionedName.toLowerCase() === actualName.toLowerCase() ||
-		mentionedName.toLowerCase() === normalizeMentionName(actualName).toLowerCase()
-	);
+	return getMentionMatchPriority(mentionedName, actualName) > 0;
 }
 
 // ============================================================================
