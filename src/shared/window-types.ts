@@ -34,6 +34,17 @@ export interface WindowState {
 }
 
 /**
+ * The collapsed state of a window's two side panels. This is the per-window UI
+ * slice the renderer reads on mount and writes back through
+ * `window.maestro.windows.setPanelState`, so each window remembers its own
+ * collapsed panels rather than sharing one global setting.
+ */
+export interface WindowPanelState {
+	leftPanelCollapsed: boolean;
+	rightPanelCollapsed: boolean;
+}
+
+/**
  * Top-level persisted multi-window state: every known window plus a pointer to
  * the primary window. Exactly one of `windows` has `id === primaryWindowId`.
  */

@@ -2,18 +2,27 @@
 
 import { EventEmitter } from 'events';
 import type { BrowserWindow } from 'electron';
+import type { WindowPanelState } from '../shared/window-types';
 import { generateUUID } from '../shared/uuid';
 
 /**
  * A single window tracked by the registry. `sessionIds` are agent IDs (what
  * Maestro surfaces to users as "sessions") owned by this window. Exactly one
  * registered window is the primary one (`isMain`).
+ *
+ * `leftPanelCollapsed` / `rightPanelCollapsed` are the window's per-window UI
+ * state (its side-panel collapse). The registry is the per-session source of
+ * truth for window state this phase, so it holds these alongside ownership; the
+ * renderer reads them via `windows:getState` and writes them via
+ * `windows:setPanelState`. They default to expanded (`false`).
  */
 export interface RegisteredWindow {
 	id: string;
 	browserWindow: BrowserWindow;
 	sessionIds: string[];
 	isMain: boolean;
+	leftPanelCollapsed: boolean;
+	rightPanelCollapsed: boolean;
 }
 
 /** The kinds of mutations the registry emits a change signal for. */
@@ -62,6 +71,8 @@ export class WindowRegistry extends EventEmitter {
 			browserWindow: options.browserWindow,
 			sessionIds: [...(options.sessionIds ?? [])],
 			isMain: options.isMain ?? false,
+			leftPanelCollapsed: false,
+			rightPanelCollapsed: false,
 		});
 		this.emitChange({ type: 'created', windowId: id });
 		return id;
@@ -106,6 +117,24 @@ export class WindowRegistry extends EventEmitter {
 		if (!entry) return;
 		entry.sessionIds = [...sessionIds];
 		this.emitChange({ type: 'sessions-changed', windowId });
+	}
+
+	/**
+	 * Update a window's per-window panel-collapse UI state. Only the provided
+	 * fields are changed (partial merge); a `false`/`true` value is applied, an
+	 * omitted field is left untouched. No-op if the window is unknown. This emits
+	 * no change signal - panel collapse is window-local UI that does not affect
+	 * session ownership, the cross-window badges, or any other window's view.
+	 */
+	setPanelState(windowId: string, panel: Partial<WindowPanelState>): void {
+		const entry = this.windows.get(windowId);
+		if (!entry) return;
+		if (panel.leftPanelCollapsed !== undefined) {
+			entry.leftPanelCollapsed = panel.leftPanelCollapsed;
+		}
+		if (panel.rightPanelCollapsed !== undefined) {
+			entry.rightPanelCollapsed = panel.rightPanelCollapsed;
+		}
 	}
 
 	/**

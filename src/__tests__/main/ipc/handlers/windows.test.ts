@@ -121,6 +121,7 @@ describe('Windows IPC Handlers', () => {
 				'windows:moveSession',
 				'windows:focusWindow',
 				'windows:getState',
+				'windows:setPanelState',
 				'windows:getBounds',
 				'windows:findWindowAtPoint',
 			]) {
@@ -338,6 +339,60 @@ describe('Windows IPC Handlers', () => {
 		it('returns null when the calling window is not registered', async () => {
 			const result = await handlers.get('windows:getState')!(makeEvent(makeFakeWindow()));
 			expect(result).toBeNull();
+		});
+
+		it('reflects panel state persisted via windows:setPanelState', async () => {
+			const win = makeFakeWindow();
+			registry.create({ browserWindow: win, sessionIds: [], isMain: false });
+
+			// Defaults to expanded panels before any write.
+			const before = (await handlers.get('windows:getState')!(makeEvent(win))) as {
+				leftPanelCollapsed: boolean;
+				rightPanelCollapsed: boolean;
+			};
+			expect(before.leftPanelCollapsed).toBe(false);
+			expect(before.rightPanelCollapsed).toBe(false);
+
+			await handlers.get('windows:setPanelState')!(makeEvent(win), {
+				leftPanelCollapsed: true,
+				rightPanelCollapsed: true,
+			});
+
+			const after = (await handlers.get('windows:getState')!(makeEvent(win))) as {
+				leftPanelCollapsed: boolean;
+				rightPanelCollapsed: boolean;
+			};
+			expect(after.leftPanelCollapsed).toBe(true);
+			expect(after.rightPanelCollapsed).toBe(true);
+		});
+	});
+
+	describe('windows:setPanelState', () => {
+		it('persists only the provided fields (partial merge)', async () => {
+			const win = makeFakeWindow();
+			registry.create({ browserWindow: win, sessionIds: [], isMain: false });
+
+			await handlers.get('windows:setPanelState')!(makeEvent(win), { leftPanelCollapsed: true });
+			await handlers.get('windows:setPanelState')!(makeEvent(win), { rightPanelCollapsed: true });
+			// A later partial write must not reset the field it omits.
+			await handlers.get('windows:setPanelState')!(makeEvent(win), { rightPanelCollapsed: false });
+
+			const state = (await handlers.get('windows:getState')!(makeEvent(win))) as {
+				leftPanelCollapsed: boolean;
+				rightPanelCollapsed: boolean;
+			};
+			expect(state.leftPanelCollapsed).toBe(true);
+			expect(state.rightPanelCollapsed).toBe(false);
+		});
+
+		it('is a no-op when the calling window is not registered', () => {
+			// An unregistered caller resolves to no window, so nothing is written and
+			// nothing throws.
+			expect(() =>
+				handlers.get('windows:setPanelState')!(makeEvent(makeFakeWindow()), {
+					leftPanelCollapsed: true,
+				})
+			).not.toThrow();
 		});
 	});
 

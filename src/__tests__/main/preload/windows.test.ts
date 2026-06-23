@@ -103,6 +103,25 @@ describe('Windows Preload API', () => {
 		expect(mockInvoke).toHaveBeenCalledWith('windows:getState');
 	});
 
+	it('setPanelState forwards the panel state', async () => {
+		mockInvoke.mockResolvedValue(undefined);
+
+		await api.setPanelState({ leftPanelCollapsed: true, rightPanelCollapsed: false });
+
+		expect(mockInvoke).toHaveBeenCalledWith('windows:setPanelState', {
+			leftPanelCollapsed: true,
+			rightPanelCollapsed: false,
+		});
+	});
+
+	it('setPanelState forwards a partial update', async () => {
+		mockInvoke.mockResolvedValue(undefined);
+
+		await api.setPanelState({ rightPanelCollapsed: true });
+
+		expect(mockInvoke).toHaveBeenCalledWith('windows:setPanelState', { rightPanelCollapsed: true });
+	});
+
 	it('getBounds defaults windowId to undefined', async () => {
 		mockInvoke.mockResolvedValue({ x: 0, y: 0, width: 100, height: 100 });
 

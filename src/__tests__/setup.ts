@@ -643,6 +643,7 @@ const mockMaestro = {
 		moveSession: vi.fn().mockResolvedValue({ moved: true }),
 		focusWindow: vi.fn().mockResolvedValue({ focused: true }),
 		getState: vi.fn().mockResolvedValue(null),
+		setPanelState: vi.fn().mockResolvedValue(undefined),
 		getBounds: vi.fn().mockResolvedValue(null),
 		findWindowAtPoint: vi.fn().mockResolvedValue(null),
 		// Returns an unsubscribe fn (default no-op) so WindowProvider's effect can

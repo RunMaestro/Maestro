@@ -8,7 +8,12 @@
  */
 
 import { ipcRenderer } from 'electron';
-import type { WindowInfo, WindowSessionMovedPayload, WindowState } from '../../shared/window-types';
+import type {
+	WindowInfo,
+	WindowPanelState,
+	WindowSessionMovedPayload,
+	WindowState,
+} from '../../shared/window-types';
 
 /** On-screen rectangle returned by the bounds queries. */
 export interface WindowBounds {
@@ -70,8 +75,18 @@ export function createWindowsApi() {
 		focusWindow: (windowId: string): Promise<{ focused: boolean; error?: string }> =>
 			ipcRenderer.invoke('windows:focusWindow', windowId),
 
-		/** The calling window's full state (bounds + owned agents). */
+		/** The calling window's full state (bounds + owned agents + panel collapse). */
 		getState: (): Promise<WindowState | null> => ipcRenderer.invoke('windows:getState'),
+
+		/**
+		 * Persist the calling window's panel-collapse UI state. Per-window (keyed to
+		 * the calling window in the main process), not a global setting, so each
+		 * window remembers its own collapsed side panels. Only the provided fields
+		 * change (partial merge).
+		 * @param panel - Collapse flags to write (omit a field to leave it unchanged)
+		 */
+		setPanelState: (panel: Partial<WindowPanelState>): Promise<void> =>
+			ipcRenderer.invoke('windows:setPanelState', panel),
 
 		/**
 		 * On-screen bounds of a window. Defaults to the calling window.

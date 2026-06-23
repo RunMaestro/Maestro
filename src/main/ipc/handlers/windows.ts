@@ -15,6 +15,7 @@
 import { BrowserWindow, ipcMain } from 'electron';
 import type {
 	WindowInfo,
+	WindowPanelState,
 	WindowSessionMovedPayload,
 	WindowState,
 } from '../../../shared/window-types';
@@ -68,9 +69,10 @@ function toWindowInfo(entry: RegisteredWindow): WindowInfo {
 
 /**
  * Build the full {@link WindowState} for a window from its live `BrowserWindow`
- * bounds plus the registry's session ownership. Panel-collapse and active-agent
- * state are renderer-driven and not yet tracked, so they fall back to sensible
- * defaults (expanded panels, no active agent) for this phase.
+ * bounds plus the registry's session ownership and per-window panel-collapse
+ * state. Active-agent state is renderer-driven and not yet tracked, so it falls
+ * back to `null` for this phase; panel collapse round-trips through the registry
+ * (seeded expanded, written by `windows:setPanelState`).
  */
 function toWindowState(entry: RegisteredWindow): WindowState {
 	const { browserWindow } = entry;
@@ -85,8 +87,8 @@ function toWindowState(entry: RegisteredWindow): WindowState {
 		isFullScreen: browserWindow.isFullScreen(),
 		sessionIds: [...entry.sessionIds],
 		activeSessionId: null,
-		leftPanelCollapsed: false,
-		rightPanelCollapsed: false,
+		leftPanelCollapsed: entry.leftPanelCollapsed,
+		rightPanelCollapsed: entry.rightPanelCollapsed,
 	};
 }
 
@@ -268,6 +270,19 @@ export function registerWindowsHandlers(deps: WindowsHandlerDependencies): void 
 		const entry = resolveCallingWindow(event, registry);
 		return entry ? toWindowState(entry) : null;
 	});
+
+	// Persist the calling window's panel-collapse UI state (per-window, not a
+	// global setting). Resolved from event.sender so a window only ever writes its
+	// own state; an unregistered caller is a silent no-op. A later read via
+	// windows:getState reflects the new value.
+	ipcMain.handle(
+		'windows:setPanelState',
+		(event: Electron.IpcMainInvokeEvent, panel: Partial<WindowPanelState>): void => {
+			const registry = requireDependency(getWindowRegistry, 'Window registry');
+			const entry = resolveCallingWindow(event, registry);
+			if (entry) registry.setPanelState(entry.id, panel);
+		}
+	);
 
 	// On-screen bounds of a window. Defaults to the calling window; pass a
 	// windowId to query a specific one (Phase 3 tab drag).
