@@ -45,6 +45,48 @@ export interface WindowPanelState {
 }
 
 /**
+ * On-screen rectangle of a window in screen (DIP) coordinates. Returned by the
+ * `windows:getBounds` IPC query and consumed by the Phase 3 tab drag-out
+ * hit-testing on both sides of the bridge (renderer drag-exit detection +
+ * main-process `findWindowAtPoint`), so they share one rectangle shape.
+ */
+export interface WindowBounds {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+}
+
+/**
+ * Whether a screen point lies within a window's bounds. The left/top edges are
+ * inclusive and the right/bottom edges are exclusive, so two adjacent (touching)
+ * windows never both claim a shared border pixel.
+ *
+ * This is the single containment rule shared by the main-process window
+ * hit-test ({@link WindowBounds} via `WindowRegistry.findWindowAtPoint`) and the
+ * renderer's tab drag-exit detection, guaranteeing both agree on edge cases.
+ */
+export function isPointInWindowBounds(
+	point: { x: number; y: number },
+	bounds: WindowBounds
+): boolean {
+	return (
+		point.x >= bounds.x &&
+		point.x < bounds.x + bounds.width &&
+		point.y >= bounds.y &&
+		point.y < bounds.y + bounds.height
+	);
+}
+
+/** Convenience negation of {@link isPointInWindowBounds}. */
+export function isPointOutsideWindowBounds(
+	point: { x: number; y: number },
+	bounds: WindowBounds
+): boolean {
+	return !isPointInWindowBounds(point, bounds);
+}
+
+/**
  * Top-level persisted multi-window state: every known window plus a pointer to
  * the primary window. Exactly one of `windows` has `id === primaryWindowId`.
  */

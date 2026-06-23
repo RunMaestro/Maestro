@@ -17,3 +17,8 @@ export type {
 	UseTabHoverOverlayOptions,
 	UseTabHoverOverlayReturn,
 } from './useTabHoverOverlay';
+
+// Tab drag-out detection (Phase 3 multi-window): tracks a tab drag in screen
+// coordinates and reports when the cursor leaves the owning window's bounds.
+export { useTabDragOut } from './useTabDragOut';
+export type { DragOutPoint, UseTabDragOutReturn } from './useTabDragOut';

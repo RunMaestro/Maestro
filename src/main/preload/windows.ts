@@ -9,19 +9,14 @@
 
 import { ipcRenderer } from 'electron';
 import type {
+	WindowBounds,
 	WindowInfo,
 	WindowPanelState,
 	WindowSessionMovedPayload,
 	WindowState,
 } from '../../shared/window-types';
 
-/** On-screen rectangle returned by the bounds queries. */
-export interface WindowBounds {
-	x: number;
-	y: number;
-	width: number;
-	height: number;
-}
+export type { WindowBounds };
 
 /**
  * Creates the windows API object for preload exposure.

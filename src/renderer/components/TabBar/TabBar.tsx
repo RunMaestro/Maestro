@@ -12,6 +12,7 @@ import { NewTabPopover } from './NewTabPopover';
 import { SearchPopover } from './SearchPopover';
 import { isUnifiedTabActive, getShortcutHint } from './tabBarUtils';
 import { buildFileTabDisplayNames } from '../../hooks/tabs/internal/filePreviewTabHelpers';
+import { useTabDragOut } from '../../hooks/tabs/useTabDragOut';
 import { useWindowOwnsSession } from '../../contexts/WindowContext';
 import type { TabBarProps } from './types';
 import { logger } from '../../utils/logger';
@@ -118,6 +119,12 @@ function TabBarInner({
 	// sessionId, this resolves to true - single-window behaviour is unchanged.
 	const ownsActiveAgent = useWindowOwnsSession(sessionId);
 
+	// Drag-out detection (Phase 3 multi-window): tracks a tab drag in screen
+	// coordinates and flips `isDraggingOut` once the cursor leaves this window's
+	// bounds. In-bar reordering is unaffected - it runs on onDragOver/onDrop
+	// against sibling tabs and never consults this state.
+	const { isDraggingOut, beginDragOut, trackDragOut, endDragOut } = useTabDragOut();
+
 	// Scroll active tab into view
 	useEffect(() => {
 		requestAnimationFrame(() => {
@@ -217,11 +224,18 @@ function TabBarInner({
 	]);
 
 	// Drag handlers
-	const handleDragStart = useCallback((tabId: string, e: React.DragEvent) => {
-		e.dataTransfer.effectAllowed = 'move';
-		e.dataTransfer.setData('text/plain', tabId);
-		setDraggingTabId(tabId);
-	}, []);
+	const handleDragStart = useCallback(
+		(tabId: string, e: React.DragEvent) => {
+			e.dataTransfer.effectAllowed = 'move';
+			e.dataTransfer.setData('text/plain', tabId);
+			setDraggingTabId(tabId);
+			// Snapshot this window's bounds so onDrag can detect when the cursor
+			// leaves it. Harmless for non-AI tabs (which don't wire onDrag): the
+			// snapshot is just never consulted.
+			beginDragOut();
+		},
+		[beginDragOut]
+	);
 
 	const handleDragOver = useCallback(
 		(tabId: string, e: React.DragEvent) => {
@@ -232,10 +246,20 @@ function TabBarInner({
 		[draggingTabId]
 	);
 
+	// Continuous drag sampling (HTML5 onDrag) - screenX/screenY are screen-relative,
+	// so they compare directly against the window bounds captured on drag start.
+	const handleDrag = useCallback(
+		(e: React.DragEvent) => {
+			trackDragOut(e.screenX, e.screenY);
+		},
+		[trackDragOut]
+	);
+
 	const handleDragEnd = useCallback(() => {
 		setDraggingTabId(null);
 		setDragOverTabId(null);
-	}, []);
+		endDragOut();
+	}, [endDragOut]);
 
 	const handleDrop = useCallback(
 		(targetTabId: string, e: React.DragEvent) => {
@@ -383,6 +407,7 @@ function TabBarInner({
 		onSelect: onTabSelect,
 		onClose: onTabClose,
 		onDragStart: handleDragStart,
+		onDrag: handleDrag,
 		onDragOver: handleDragOver,
 		onDragEnd: handleDragEnd,
 		onDrop: handleDrop,
@@ -425,6 +450,10 @@ function TabBarInner({
 			ref={tabBarRef}
 			className="flex items-end gap-0.5 pt-2 border-b overflow-x-auto overflow-y-hidden no-scrollbar"
 			data-tour="tab-bar"
+			// Surfaces drag-out detection: 'true' while a tab is being dragged beyond
+			// this window's bounds. Drives the cross-window move / detach feedback
+			// wired in later Phase 3 tasks.
+			data-dragging-out={isDraggingOut ? 'true' : undefined}
 			style={{ backgroundColor: theme.colors.bgSidebar, borderColor: theme.colors.border }}
 		>
 			{/* Sticky left: search + unread filter */}

@@ -2,7 +2,7 @@
 
 import { EventEmitter } from 'events';
 import type { BrowserWindow } from 'electron';
-import type { WindowPanelState } from '../shared/window-types';
+import { isPointInWindowBounds, type WindowPanelState } from '../shared/window-types';
 import { generateUUID } from '../shared/uuid';
 
 /**
@@ -166,8 +166,7 @@ export class WindowRegistry extends EventEmitter {
 	findWindowAtPoint(screenX: number, screenY: number): string | null {
 		for (const entry of this.windows.values()) {
 			if (entry.browserWindow.isDestroyed()) continue;
-			const { x, y, width, height } = entry.browserWindow.getBounds();
-			if (screenX >= x && screenX < x + width && screenY >= y && screenY < y + height) {
+			if (isPointInWindowBounds({ x: screenX, y: screenY }, entry.browserWindow.getBounds())) {
 				return entry.id;
 			}
 		}

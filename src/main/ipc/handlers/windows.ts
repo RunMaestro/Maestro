@@ -14,6 +14,7 @@
 
 import { BrowserWindow, ipcMain } from 'electron';
 import type {
+	WindowBounds,
 	WindowInfo,
 	WindowPanelState,
 	WindowSessionMovedPayload,
@@ -33,14 +34,6 @@ const LOG_CONTEXT = '[Windows]';
  * surfaces plus the Left Bar's cross-window badges.
  */
 export const WINDOW_SESSION_MOVED_CHANNEL = 'windows:sessionMoved';
-
-/** On-screen rectangle returned by the bounds queries (Phase 3 tab drag). */
-interface WindowBounds {
-	x: number;
-	y: number;
-	width: number;
-	height: number;
-}
 
 /**
  * Dependencies for the windows handlers. Both are getters because the registry
