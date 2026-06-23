@@ -32,6 +32,7 @@
 
 import { useEffect, useRef, useCallback, useState } from 'react';
 import type { Session } from '../../types';
+import { isLimitError } from '../../../shared/types';
 import { sanitizeBrowserTabForPersistence } from '../../utils/browserTabPersistence';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
@@ -56,6 +57,16 @@ const MAX_PERSISTED_PREVIEW_CONTENT = 256 * 1024;
  * 3. Resetting runtime-only state (busy state, thinking time, etc.)
  * 4. Excluding runtime-only fields (closedTabHistory, agentError, etc.)
  *
+ * Exception: a limit pause (a token/API/credit/rate limit the agent can resume
+ * from) is deliberately persisted - `state: 'error'`, `agentError`,
+ * `agentErrorPaused`, `agentErrorTabId`, and the paused tab's `agentError`. This
+ * is what lets Auto-Resume On Limit survive an app restart: on a cold start the
+ * coordinator re-finds the paused session and resumes the agent conversation
+ * (via the agent's native `--resume`) once its provider window reopens. Every
+ * OTHER error stays stripped - a stale auth/crash error must not survive a
+ * restart. Note: the in-memory Auto Run / goal-run ORCHESTRATION loop is NOT
+ * persisted; only the agent session and its `executionQueue` resume.
+ *
  * This ensures sessions don't get stuck in busy state after app restart,
  * since underlying processes are gone after restart.
  *
@@ -78,6 +89,12 @@ const prepareSessionForPersistence = (session: Session): Session => {
 	// presence so a stuck busy state can't survive a restart.
 	const sourceTabs = session.aiTabs ?? [];
 	const nonWizardTabs = sourceTabs.filter((tab) => !tab.wizardState?.isActive);
+
+	// A limit pause is the one error state we persist so Auto-Resume On Limit can
+	// re-attach after an app restart (see the block comment above). All other
+	// error state stays stripped below.
+	const isLimitPause =
+		!!session.agentError && session.agentErrorPaused === true && isLimitError(session.agentError);
 
 	// "All tabs were wizard tabs" fallback — only fires when there were
 	// originally tabs but every one was a wizard. For truly-empty input
@@ -114,7 +131,16 @@ const prepareSessionForPersistence = (session: Session): Session => {
 		// Reset runtime-only tab state - processes don't survive app restart
 		state: 'idle' as const,
 		thinkingStartTime: undefined,
-		agentError: undefined,
+		// Keep the paused tab's limit-pause error so it round-trips a restart;
+		// every other tab error is transient and stripped. Gate on the paused tab
+		// id so a stale limit error on a non-paused tab can't revive error UI.
+		agentError:
+			isLimitPause &&
+			tab.id === session.agentErrorTabId &&
+			tab.agentError &&
+			isLimitError(tab.agentError)
+				? tab.agentError
+				: undefined,
 		// Clear wizard state entirely from persistence (even inactive wizard state)
 		wizardState: undefined,
 	}));
@@ -181,8 +207,20 @@ const prepareSessionForPersistence = (session: Session): Session => {
 		activeTerminalTabId: newActiveTerminalTabId,
 		browserTabs: cleanedBrowserTabs,
 		activeBrowserTabId: newActiveBrowserTabId,
-		// Reset runtime-only session state - processes don't survive app restart
-		state: 'idle',
+		// Reset runtime-only session state - processes don't survive app restart.
+		// A limit pause is the exception: keep it in 'error' so Auto-Resume can
+		// re-find it on restart (see the block comment above).
+		state: isLimitPause ? 'error' : 'idle',
+		// Restore the limit-pause fields stripped by the destructuring above so
+		// they round-trip to disk. Only set on a limit pause; otherwise they stay
+		// undefined (stripped).
+		...(isLimitPause
+			? {
+					agentError: session.agentError,
+					agentErrorPaused: true,
+					agentErrorTabId: session.agentErrorTabId,
+				}
+			: {}),
 		busySource: undefined,
 		thinkingStartTime: undefined,
 		currentCycleTokens: undefined,

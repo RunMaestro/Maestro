@@ -510,3 +510,27 @@ Each AI tab within a session:
 | `agentError`     | `AgentError?`  | Per-tab error state                                                                |
 
 **Model/effort resolution chain** (used at user-facing spawn time in `useInputProcessing` and `agentStore.processQueuedItem`): `tab.customModel ?? session.customModel ?? agentConfig.model`. The MainPanel model/effort pill writes to the active tab via `tabStore.setTabModel`/`setTabEffort` - only the Edit Agent modal mutates `session.customModel`/`customEffort`. Programmatic spawns (Auto Run batch, synopsis, Cue, group chat, fork/merge) intentionally read the session value only.
+
+## Auto-Resume On Limit
+
+When an agent pauses on a provider limit (a rate / token / credit limit - `isLimitError(err)` in `src/shared/types.ts`, true for `rate_limited` and `token_exhaustion`), Maestro can auto-resume it once the window reopens. The coordinator is a renderer singleton, `useAutoResumeCoordinator` (`src/renderer/hooks/agent/useAutoResumeCoordinator.ts`), mounted once in `App.tsx` beside the other agent listeners.
+
+**Settings** (General tab → "Auto-Resume on Limit"; metadata in `settingsMetadata.ts`, defaults in `main/stores/defaults.ts`):
+
+| Setting                        | Default | Meaning                                                      |
+| ------------------------------ | ------- | ------------------------------------------------------------ |
+| `autoResumeOnLimit`            | `true`  | Master toggle. Off = no timer, nothing scheduled.            |
+| `autoResumeCheckIntervalHours` | `2`     | How often the coordinator probes every limit-paused session. |
+| `autoResumeGiveUpDays`         | `7`     | Time-based give-up window measured from the first pause.     |
+
+**Lifecycle** - limit-pause → probe → resume:
+
+1. **Pause** (Phase 2): `useAgentErrorListener` sets `agentError` + `agentErrorPaused: true` + `state: 'error'`, seeds `resumeAttemptCount`, and best-effort stamps `limitResetAt` (when the provider window reopens, via `agents:getLimitResetAt`).
+2. **Probe** (on the interval; a kickoff tick fires ~10s after mount so a restart probes fast). The coordinator selects sessions matching `isLimitPausedSession` and past their `limitResetAt`, then calls `probeAvailability`:
+   - **Claude** (local): reads a freshly re-sampled usage snapshot and returns available only when both the session and weekly windows are below `LIMIT_THRESHOLD`. Missing/unauthenticated snapshot → stay paused.
+   - **All other providers** (and **SSH-backed Claude**): no trustworthy usage signal, so availability is **unknown** and the coordinator falls back to **resume-as-probe** - the resume attempt itself is the probe; if it re-hits the limit, Phase 2 re-pauses it and the next interval retries. (The usage sampler `maestro-p --status` runs locally only and does not honor `sessionSshRemoteConfig`, so it can't describe a remote account - see `claude-usage-sampler.ts`.)
+3. **Resume**: dispatched by run kind. Spec-/goal-driven Auto Runs resolve the shared `errorResolution` promise both runners await (`resumeAfterError`); a standard query clears the error so the persisted `executionQueue` drains (re-firing any captured in-flight direct send). A green "Resumed" toast fires.
+
+**Restart behavior**: a limit pause is the ONE error state that survives an app restart. `prepareSessionForPersistence` (`useDebouncedPersistence.ts`) and `restoreSession` (`useSessionRestoration.ts`) preserve `agentError`/`agentErrorPaused`/`agentErrorTabId`/`state: 'error'` only for limit pauses (every other error stays stripped). On a cold start the coordinator re-finds the session with no extra wiring and resumes the **agent conversation** (the agent re-spawns with its native `--resume <agentSessionId>` and the persisted queue drains). The in-memory **Auto Run / goal-run orchestration loop is NOT reconstructed** (`batchStore` is in-memory by design), so even a formerly Auto-Run session resumes via the standard queue-drain path - the agent continues from its own transcript, the loop controller does not resume.
+
+**Give-up (time-based)**: the coordinator keeps probing on the normal interval the entire window - there is NO attempt-count cap (`resumeAttemptCount` is telemetry only). Only once `limitPausedAt + autoResumeGiveUpDays` elapses does it stop retrying that session, leave it paused, and fire ONE distinct orange "Auto-resume stopped" toast. The window anchor survives a resume-then-re-hit (so "N days of repeated limits" actually elapses), and resets on any successful resume or manual clear (`clearAgentError`) so a later limit starts fresh. Any manual recovery action drops the session from consideration (its selector no longer matches).

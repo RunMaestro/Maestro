@@ -88,6 +88,10 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	annotatorTextFont: 'sans-serif',
 	annotatorTextBgColor: '',
 	globalShowHotkey: [],
+	// Auto-resume agents that paused on a token/API/credit limit
+	autoResumeOnLimit: true,
+	autoResumeCheckIntervalHours: 2,
+	autoResumeGiveUpDays: 7,
 };
 
 export const SESSIONS_DEFAULTS: SessionsData = {

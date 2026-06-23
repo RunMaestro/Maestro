@@ -496,6 +496,39 @@ export interface AgentError {
 
 	/** Parsed JSON error details (if the error contains structured JSON) */
 	parsedJson?: unknown;
+
+	/**
+	 * For limit/credit/rate-limit errors: epoch ms when the provider window is
+	 * expected to reopen. Used by auto-resume to schedule the next probe. May be
+	 * undefined when the reset time is unknown (probe on the fixed interval instead).
+	 */
+	limitResetAt?: number;
+
+	/**
+	 * Number of resume attempts made for this paused agent so far. Used for
+	 * backoff and to enforce the give-up window after repeated limits.
+	 */
+	resumeAttemptCount?: number;
+
+	/**
+	 * Epoch ms marking when auto-resume first observed this limit pause. The
+	 * coordinator stamps it once (seeded from `timestamp`, the moment the limit
+	 * fired) and never overwrites it while the pause persists. Phase 4's give-up
+	 * decision is time-based off this stamp and the `autoResumeGiveUpDays`
+	 * setting, NOT a raw attempt count.
+	 */
+	limitPausedAt?: number;
+}
+
+/**
+ * True when an agent error is a provider "limit pause" - a token/API/credit or
+ * rate limit the agent can resume from once the window reopens. Both
+ * `rate_limited` and `token_exhaustion` count (some providers surface credit
+ * exhaustion as the latter). Single source of truth so every call site (error
+ * listener, goal runner, auto-resume coordinator) agrees on what to pause on.
+ */
+export function isLimitError(err: AgentError): boolean {
+	return err.type === 'rate_limited' || err.type === 'token_exhaustion';
 }
 
 /**

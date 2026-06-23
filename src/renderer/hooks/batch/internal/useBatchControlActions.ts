@@ -153,6 +153,15 @@ export function useBatchControlActions({
 
 	/**
 	 * Resume the batch run after the user resolves an error.
+	 *
+	 * AUTO-RESUME (Phase 3): this is the resume entry point the auto-resume
+	 * coordinator calls for BOTH spec-driven and goal-driven limit pauses. The
+	 * runner parks on the in-memory `errorResolution` promise while paused (the
+	 * document/task loop in useBatchRunner and the iteration loop in useGoalRunner
+	 * both await `errorResolutionRefs.current[sessionId].promise`); resolving it
+	 * with `'resume'` here unblocks the loop with its state fully preserved - no
+	 * checkpoint reconstruction needed. Spec-driven already preserved resumable
+	 * state via `pauseBatchOnError` + this promise; no gap was found.
 	 */
 	const resumeAfterError = useCallback(
 		(sessionId: string) => {

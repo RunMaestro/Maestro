@@ -665,6 +665,40 @@ describe('restoreSession — Runtime state reset', () => {
 		expect(restored!.agentErrorPaused).toBe(false);
 	});
 
+	it('preserves a limit pause so auto-resume re-attaches after restart', async () => {
+		// Auto-Resume On Limit: a persisted limit pause must come back live (state
+		// 'error', paused, error intact) so the Phase 3 coordinator's startup tick
+		// re-finds it. The give-up/backoff fields (limitPausedAt, resumeAttemptCount,
+		// limitResetAt) must survive the round-trip too.
+		const limitError = {
+			type: 'rate_limited',
+			message: 'Rate limited',
+			recoverable: true,
+			agentId: 'claude-code',
+			timestamp: 1000,
+			resumeAttemptCount: 2,
+			limitResetAt: 5000,
+			limitPausedAt: 1000,
+		};
+		const session = createMockSession({
+			state: 'error' as any,
+			agentError: limitError as any,
+			agentErrorPaused: true,
+			agentErrorTabId: 'tab-1',
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.state).toBe('error');
+		expect(restored!.agentErrorPaused).toBe(true);
+		expect(restored!.agentError).toEqual(limitError);
+		expect(restored!.agentErrorTabId).toBe('tab-1');
+	});
+
 	it('resets isLive and liveUrl', async () => {
 		const session = createMockSession({ isLive: true, liveUrl: 'http://localhost:3000' });
 		const { result } = renderHook(() => useSessionRestoration());

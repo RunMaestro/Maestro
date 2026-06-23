@@ -318,6 +318,7 @@ export function useBatchProcessor({
 		autoRunFlushStateRefs,
 		stopRequestedRefs,
 		isMountedRef,
+		errorResolutionRefs,
 		updateBatchStateAndBroadcastRef,
 		broadcastAutoRunState,
 		flushDebouncedUpdate,

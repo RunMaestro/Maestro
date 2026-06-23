@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook } from '@testing-library/react';
+import { renderHook, waitFor } from '@testing-library/react';
 import { useAgentErrorListener } from '../../../../../renderer/hooks/agent/internal/useAgentErrorListener';
 import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
 import { useModalStore } from '../../../../../renderer/stores/modalStore';
@@ -189,6 +189,69 @@ describe('useAgentErrorListener', () => {
 		handler!('sess-1-ai-tab-1', baseError);
 
 		expect(deps.activeHiddenToolRef.current.has('sess-1:tab-1')).toBe(false);
+	});
+
+	it('seeds auto-resume metadata and stashes the last prompt on a limit error', async () => {
+		const getLimitResetAt = vi.fn().mockResolvedValue(1700000123456);
+		(window as any).maestro.agents = { getLimitResetAt };
+
+		const userLog = {
+			id: 'log-user',
+			timestamp: 100,
+			source: 'user' as const,
+			text: 'do the rate-limited thing',
+		};
+		const tab = createMockAITab({ id: 'tab-1', logs: [userLog] });
+		const session = createMockSession({ id: 'sess-1', aiTabs: [tab], activeTabId: 'tab-1' });
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		renderHook(() => useAgentErrorListener(makeDeps()));
+		handler!('sess-1-ai-tab-1', { ...baseError, type: 'rate_limited', message: 'usage limit' });
+
+		// Synchronous pause: error stamped, paused, retry counter seeded to 0.
+		const paused = useSessionStore.getState().sessions[0];
+		expect(paused.state).toBe('error');
+		expect(paused.agentErrorPaused).toBe(true);
+		expect(paused.agentError?.type).toBe('rate_limited');
+		expect(paused.agentError?.resumeAttemptCount).toBe(0);
+
+		// The captured prompt rides along on the error log so Phase 3 can re-fire it.
+		const errorLog = paused.aiTabs[0].logs.find((l) => l.source === 'error');
+		expect(errorLog?.recoveryAction).toEqual({
+			lastUserPrompt: 'do the rate-limited thing',
+			tabId: 'tab-1',
+		});
+
+		// Best-effort reset estimate is patched in asynchronously.
+		expect(getLimitResetAt).toHaveBeenCalledWith('claude-code');
+		await waitFor(() => {
+			expect(useSessionStore.getState().sessions[0].agentError?.limitResetAt).toBe(1700000123456);
+		});
+	});
+
+	it('does not stamp a local reset estimate on an SSH-backed session', async () => {
+		const getLimitResetAt = vi.fn().mockResolvedValue(1700000123456);
+		(window as any).maestro.agents = { getLimitResetAt };
+
+		const tab = createMockAITab({ id: 'tab-1' });
+		// SSH-backed: the local usage snapshot reflects the wrong account, so the
+		// estimate must be skipped and the session left to the interval fallback.
+		const session = createMockSession({
+			id: 'sess-1',
+			aiTabs: [tab],
+			activeTabId: 'tab-1',
+			sshRemoteId: 'remote-1',
+		});
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		renderHook(() => useAgentErrorListener(makeDeps()));
+		handler!('sess-1-ai-tab-1', { ...baseError, type: 'rate_limited', message: 'usage limit' });
+
+		// Still pauses synchronously; only the local reset probe is skipped.
+		const paused = useSessionStore.getState().sessions[0];
+		expect(paused.agentErrorPaused).toBe(true);
+		expect(getLimitResetAt).not.toHaveBeenCalled();
+		expect(paused.agentError?.limitResetAt).toBeUndefined();
 	});
 
 	it('skips synopsis-process errors', () => {
