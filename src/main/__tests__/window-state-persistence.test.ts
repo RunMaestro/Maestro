@@ -17,6 +17,7 @@ import {
 	buildMultiWindowState,
 	registeredWindowToWindowState,
 	saveAllWindowStates,
+	saveWindowState,
 } from '../window-state-persistence';
 
 // Hoisted so the mock factory can reference it: the static import of the module
@@ -193,6 +194,70 @@ describe('window-state-persistence', () => {
 			registry.create({ windowId: 'w1', browserWindow: makeWindow(), isMain: true });
 
 			expect(() => saveAllWindowStates(store, registry)).not.toThrow();
+			expect(mockLogger.error).toHaveBeenCalledWith(
+				expect.stringContaining('Failed to save multi-window state'),
+				expect.any(String),
+				expect.any(Error)
+			);
+		});
+	});
+
+	describe('saveWindowState', () => {
+		it('snapshots the full live layout when the triggering window exists', () => {
+			const store = makeStore();
+			registry.create({
+				windowId: 'primary',
+				browserWindow: makeWindow({ bounds: { x: 0, y: 0, width: 1000, height: 700 } }),
+				sessionIds: ['s1'],
+				isMain: true,
+			});
+			registry.create({
+				windowId: 'secondary',
+				browserWindow: makeWindow({ bounds: { x: 50, y: 60, width: 600, height: 400 } }),
+				sessionIds: ['s2'],
+				isMain: false,
+			});
+
+			// A move on the secondary persists the whole layout, not just that window.
+			saveWindowState(store, registry, 'secondary');
+
+			expect(store.set).toHaveBeenCalledTimes(1);
+			const [key, value] = store.set.mock.calls[0];
+			expect(key).toBe('multiWindow');
+			expect(value.primaryWindowId).toBe('primary');
+			expect(value.windows.map((w: { id: string }) => w.id)).toEqual(['primary', 'secondary']);
+		});
+
+		it('no-ops when the triggering window is unknown', () => {
+			const store = makeStore();
+			registry.create({ windowId: 'live', browserWindow: makeWindow(), isMain: true });
+
+			saveWindowState(store, registry, 'ghost');
+
+			expect(store.set).not.toHaveBeenCalled();
+		});
+
+		it('no-ops when the triggering window has been destroyed', () => {
+			const store = makeStore();
+			registry.create({
+				windowId: 'dead',
+				browserWindow: makeWindow({ destroyed: true }),
+				isMain: true,
+			});
+
+			saveWindowState(store, registry, 'dead');
+
+			expect(store.set).not.toHaveBeenCalled();
+		});
+
+		it('never throws when the store write fails - logs instead', () => {
+			const store = makeStore();
+			store.set.mockImplementation(() => {
+				throw new Error('ENOSPC');
+			});
+			registry.create({ windowId: 'w1', browserWindow: makeWindow(), isMain: true });
+
+			expect(() => saveWindowState(store, registry, 'w1')).not.toThrow();
 			expect(mockLogger.error).toHaveBeenCalledWith(
 				expect.stringContaining('Failed to save multi-window state'),
 				expect.any(String),

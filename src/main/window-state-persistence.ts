@@ -23,6 +23,14 @@ import { logger } from './utils/logger';
 const LOG_CONTEXT = 'WindowState';
 
 /**
+ * Debounce window for per-window state saves driven by `move`/`resize`/maximize/
+ * fullscreen events. Held in the 300-500ms band so a drag or live-resize that
+ * fires dozens of events collapses into a single store write once the user
+ * settles, rather than a write storm.
+ */
+export const WINDOW_STATE_SAVE_DEBOUNCE_MS = 400;
+
+/**
  * Build the persisted {@link WindowState} for one registered window from its
  * live `BrowserWindow` bounds plus the registry's session ownership and
  * per-window panel-collapse state.
@@ -97,4 +105,26 @@ export function saveAllWindowStates(
 	} catch (error) {
 		logger.error('Failed to save multi-window state', LOG_CONTEXT, error);
 	}
+}
+
+/**
+ * Persist the layout after one window changed (moved, resized, or toggled
+ * maximize/fullscreen). `windowId` identifies the window that triggered the save
+ * so a stale event from an already-removed or destroyed window is ignored.
+ *
+ * Window ids are minted fresh each launch (`generateUUID`), so a targeted
+ * merge into the previously persisted blob would key off ids that no longer
+ * match and resurrect last session's dead windows. Snapshotting the whole live
+ * registry instead is always correct and self-healing - the moved window's new
+ * bounds are captured along with every other open window's current state. Like
+ * {@link saveAllWindowStates}, this never throws.
+ */
+export function saveWindowState(
+	store: Store<WindowStateStoreData>,
+	registry: WindowRegistry,
+	windowId: string
+): void {
+	const entry = registry.get(windowId);
+	if (!entry || entry.browserWindow.isDestroyed()) return;
+	saveAllWindowStates(store, registry);
 }

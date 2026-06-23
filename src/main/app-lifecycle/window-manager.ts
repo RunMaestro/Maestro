@@ -19,6 +19,8 @@ import { logger } from '../utils/logger';
 import { initAutoUpdater } from '../auto-updater';
 import { generateUUID } from '../../shared/uuid';
 import type { WindowRegistry } from '../window-registry';
+import { saveWindowState, WINDOW_STATE_SAVE_DEBOUNCE_MS } from '../window-state-persistence';
+import { debounce } from '../utils/debounce';
 
 const BROWSER_TAB_PARTITION_PREFIX = 'persist:maestro-browser-session-';
 // `file:` is allowed so users can open local HTML they just generated
@@ -344,10 +346,10 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 		});
 
 		// Save window state before closing. Only the primary window backs the
-		// legacy single-window store; secondary-window persistence arrives in a
-		// later phase via the multi-window state.
+		// legacy single-window store; secondary-window persistence rides on the
+		// multi-window state wired below.
 		if (isMain) {
-			const saveWindowState = () => {
+			const saveLegacySingleWindowState = () => {
 				try {
 					const isMaximized = browserWindow.isMaximized();
 					const isFullScreen = browserWindow.isFullScreen();
@@ -370,7 +372,41 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 				}
 			};
 
-			browserWindow.on('close', saveWindowState);
+			browserWindow.on('close', saveLegacySingleWindowState);
+		}
+
+		// Multi-window persistence: keep this window's entry in the persisted
+		// MultiWindowState current as the user drags, resizes, or toggles
+		// maximize/fullscreen. Debounced so a live drag/resize (which fires a
+		// flood of move/resize events) collapses into one store write once the
+		// user settles. Each window gets its own debounced closure, so one
+		// window's activity never delays another's save. Only wired when a
+		// registry is present (the window-state blob is keyed off registered
+		// windows); the quit handler still takes the authoritative final snapshot.
+		if (windowRegistry) {
+			const persistWindowState = debounce(() => {
+				saveWindowState(windowStateStore, windowRegistry, windowId);
+			}, WINDOW_STATE_SAVE_DEBOUNCE_MS);
+
+			const PERSIST_EVENTS = [
+				'move',
+				'resize',
+				'maximize',
+				'unmaximize',
+				'enter-full-screen',
+				'leave-full-screen',
+			] as const;
+			// Electron types `.on` with a distinct overload per event name, so a
+			// union loop variable matches none of them. The cast is safe: every
+			// listed event delivers a listener compatible with our `() => void`.
+			for (const eventName of PERSIST_EVENTS) {
+				browserWindow.on(eventName as 'resize', persistWindowState);
+			}
+
+			// Drop any queued save when the window goes away. The quit handler and
+			// later removal-driven saves own the post-close layout; a debounced
+			// callback firing after the window left the registry would just no-op.
+			browserWindow.on('closed', () => persistWindowState.cancel());
 		}
 
 		// Load the app
