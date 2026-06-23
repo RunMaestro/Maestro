@@ -35,10 +35,19 @@ export interface UseTabDragOutReturn {
 	trackDragOut: (screenX: number, screenY: number) => void;
 	/**
 	 * The last cursor sample in screen coordinates, or `null` when no drag is in
-	 * flight. Read on drop (`onDragEnd`) by later phases to decide the drop
-	 * target / new-window position.
+	 * flight. Read on drop (`onDragEnd`) to position a spawned new window at the
+	 * drop point.
 	 */
 	getDragOutPoint: () => DragOutPoint | null;
+	/**
+	 * Synchronous read of whether the latest sample sits outside the owning
+	 * window's bounds - the same fact as {@link UseTabDragOutReturn.isDraggingOut}
+	 * but readable inside a `dragend` handler without a stale closure or a reliance
+	 * on React having flushed the last `isDraggingOut` render. Used on drop to tell
+	 * an empty-space release (spawn a new window) apart from an in-bar reorder
+	 * (both leave {@link UseTabDragOutReturn.getTargetWindowId} `null`).
+	 */
+	isOutsideOwningWindow: () => boolean;
 	/**
 	 * The ID of another Maestro window currently under the drag cursor, or `null`
 	 * when the cursor is over empty space (or still inside the owning window).
@@ -81,6 +90,10 @@ export function useTabDragOut(): UseTabDragOutReturn {
 	// re-render and it must be live for the very next trackDragOut call.
 	const boundsRef = useRef<WindowBounds | null>(null);
 	const pointRef = useRef<DragOutPoint | null>(null);
+	// Synchronous mirror of isDraggingOut: the drop handler reads it without a
+	// stale closure (the React state may not have re-rendered between the last
+	// onDrag and dragend). Drives the empty-space-vs-reorder decision on drop.
+	const isOutsideRef = useRef(false);
 	// The other Maestro window under the cursor while dragging out, or null over
 	// empty space / inside the owning window. Ref, not state: read synchronously
 	// on drop, and the cross-window highlight (a later task) drives off broadcasts.
@@ -129,6 +142,7 @@ export function useTabDragOut(): UseTabDragOutReturn {
 	const beginDragOut = useCallback(() => {
 		boundsRef.current = null;
 		pointRef.current = null;
+		isOutsideRef.current = false;
 		resetLookup();
 		setIsDraggingOut(false);
 		// getBounds is absent outside the Electron preload (web build / unit tests);
@@ -162,6 +176,7 @@ export function useTabDragOut(): UseTabDragOutReturn {
 				// Inside the owning window (or bounds unresolved): no dock target.
 				targetWindowIdRef.current = null;
 			}
+			isOutsideRef.current = outside;
 			setIsDraggingOut((prev) => (prev === outside ? prev : outside));
 		},
 		[resolveTargetWindow]
@@ -169,11 +184,14 @@ export function useTabDragOut(): UseTabDragOutReturn {
 
 	const getDragOutPoint = useCallback(() => pointRef.current, []);
 
+	const isOutsideOwningWindow = useCallback(() => isOutsideRef.current, []);
+
 	const getTargetWindowId = useCallback(() => targetWindowIdRef.current, []);
 
 	const endDragOut = useCallback(() => {
 		boundsRef.current = null;
 		pointRef.current = null;
+		isOutsideRef.current = false;
 		resetLookup();
 		setIsDraggingOut(false);
 	}, [resetLookup]);
@@ -183,6 +201,7 @@ export function useTabDragOut(): UseTabDragOutReturn {
 		beginDragOut,
 		trackDragOut,
 		getDragOutPoint,
+		isOutsideOwningWindow,
 		getTargetWindowId,
 		endDragOut,
 	};

@@ -21,6 +21,14 @@ import { logger } from '../../utils/logger';
 const STICKY_RIGHT_WIDTH = 48;
 
 /**
+ * Offset (px) applied to the drop point when spawning a new window from a tab
+ * dragged onto empty space. Shifts the window's top-left up and left of the
+ * cursor so the released tab lands near where the pointer is, rather than the
+ * window's corner snapping under the cursor.
+ */
+const DRAG_OUT_NEW_WINDOW_OFFSET = { x: 100, y: 50 };
+
+/**
  * TabBar component for displaying the unified tab strip.
  * Shows AI, file, browser, and terminal tabs within a Maestro session.
  */
@@ -129,8 +137,15 @@ function TabBarInner({
 	// bounds, resolving which other Maestro window (if any) sits under the cursor.
 	// In-bar reordering is unaffected - it runs on onDragOver/onDrop against
 	// sibling tabs and never consults this state.
-	const { isDraggingOut, beginDragOut, trackDragOut, getTargetWindowId, endDragOut } =
-		useTabDragOut();
+	const {
+		isDraggingOut,
+		beginDragOut,
+		trackDragOut,
+		getDragOutPoint,
+		isOutsideOwningWindow,
+		getTargetWindowId,
+		endDragOut,
+	} = useTabDragOut();
 
 	// Scroll active tab into view
 	useEffect(() => {
@@ -264,18 +279,33 @@ function TabBarInner({
 
 	const handleDragEnd = useCallback(() => {
 		// Cross-window drop: a tab dragged out of this window and released over
-		// another Maestro window docks the agent there. The drag-out hook resolved
-		// the window under the cursor as samples arrived; read it now (it is null
-		// over empty space or inside this window). Dropping on empty space to spawn
-		// a NEW window is a later Phase 3 task, so a null target is a no-op here.
+		// another Maestro window docks the agent there; released over empty space it
+		// detaches into a brand-new window at the drop point. The drag-out hook
+		// resolved the window under the cursor as samples arrived; read it now (it is
+		// null over empty space or inside this window).
 		const targetWindowId = getTargetWindowId();
-		if (targetWindowId && sessionId && windowCtx) {
-			void windowCtx.moveSessionToWindow(sessionId, targetWindowId);
+		if (sessionId && windowCtx) {
+			if (targetWindowId) {
+				// Dock into the existing window under the cursor.
+				void windowCtx.moveSessionToWindow(sessionId, targetWindowId);
+			} else if (isOutsideOwningWindow()) {
+				// Released outside this window with no window under the cursor: spawn a
+				// new window at the drop point. A null target while still inside the bar
+				// is an in-bar reorder (handled by onDrop), so isOutsideOwningWindow()
+				// gates out that case.
+				const point = getDragOutPoint();
+				if (point) {
+					void windowCtx.moveSessionToNewWindow(sessionId, {
+						x: point.x - DRAG_OUT_NEW_WINDOW_OFFSET.x,
+						y: point.y - DRAG_OUT_NEW_WINDOW_OFFSET.y,
+					});
+				}
+			}
 		}
 		setDraggingTabId(null);
 		setDragOverTabId(null);
 		endDragOut();
-	}, [getTargetWindowId, sessionId, windowCtx, endDragOut]);
+	}, [getTargetWindowId, isOutsideOwningWindow, getDragOutPoint, sessionId, windowCtx, endDragOut]);
 
 	const handleDrop = useCallback(
 		(targetTabId: string, e: React.DragEvent) => {

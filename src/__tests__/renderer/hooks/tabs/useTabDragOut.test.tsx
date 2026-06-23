@@ -44,6 +44,7 @@ describe('useTabDragOut', () => {
 	it('starts idle with no exit state, tracked point, or dock target', () => {
 		const { result } = renderHook(() => useTabDragOut());
 		expect(result.current.isDraggingOut).toBe(false);
+		expect(result.current.isOutsideOwningWindow()).toBe(false);
 		expect(result.current.getDragOutPoint()).toBeNull();
 		expect(result.current.getTargetWindowId()).toBeNull();
 	});
@@ -58,17 +59,21 @@ describe('useTabDragOut', () => {
 		const { result } = renderHook(() => useTabDragOut());
 		await armWithBounds(result);
 
-		// Inside the window -> not dragging out.
+		// Inside the window -> not dragging out. The synchronous getter agrees with
+		// the reactive flag at every step (it is what the drop handler reads).
 		act(() => result.current.trackDragOut(200, 200));
 		expect(result.current.isDraggingOut).toBe(false);
+		expect(result.current.isOutsideOwningWindow()).toBe(false);
 
 		// Left of x=100 -> outside.
 		act(() => result.current.trackDragOut(50, 200));
 		expect(result.current.isDraggingOut).toBe(true);
+		expect(result.current.isOutsideOwningWindow()).toBe(true);
 
 		// Back inside -> disengages.
 		act(() => result.current.trackDragOut(200, 200));
 		expect(result.current.isDraggingOut).toBe(false);
+		expect(result.current.isOutsideOwningWindow()).toBe(false);
 	});
 
 	it('records the latest cursor sample in screen coordinates', async () => {
@@ -121,6 +126,7 @@ describe('useTabDragOut', () => {
 
 		act(() => result.current.endDragOut());
 		expect(result.current.isDraggingOut).toBe(false);
+		expect(result.current.isOutsideOwningWindow()).toBe(false);
 		expect(result.current.getDragOutPoint()).toBeNull();
 		expect(result.current.getTargetWindowId()).toBeNull();
 	});

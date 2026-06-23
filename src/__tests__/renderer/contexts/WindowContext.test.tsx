@@ -260,11 +260,37 @@ describe('WindowContext', () => {
 				await result.current.moveSessionToNewWindow('a');
 			});
 
-			expect(windows().create).toHaveBeenCalledWith(['a']);
+			// No bounds passed -> the main process picks a default position.
+			expect(windows().create).toHaveBeenCalledWith(['a'], undefined);
 			expect(windows().moveSession).toHaveBeenCalledWith('a', 'win-1', 'win-3');
 			expect(result.current.sessionIds).toEqual(['b']);
 			// 'a' was active and left, so focus moves to the surviving neighbour.
 			expect(result.current.activeSessionId).toBe('b');
+		});
+
+		it('positions the new window at the provided drop-point bounds', async () => {
+			setUrl('/?windowId=win-1');
+			vi.mocked(windows().getState).mockResolvedValue(
+				makeState({ id: 'win-1', sessionIds: ['a', 'b'], activeSessionId: 'a' })
+			);
+			vi.mocked(windows().create).mockResolvedValue({
+				id: 'win-3',
+				isMain: false,
+				sessionIds: ['a'],
+				activeSessionId: null,
+			});
+
+			const { result } = renderHook(() => useWindowContext(), { wrapper });
+			await waitFor(() => expect(result.current.windowId).toBe('win-1'));
+
+			await act(async () => {
+				await result.current.moveSessionToNewWindow('a', { x: 540, y: 260 });
+			});
+
+			// The drop-point bounds are threaded straight through to windows.create.
+			expect(windows().create).toHaveBeenCalledWith(['a'], { x: 540, y: 260 });
+			expect(windows().moveSession).toHaveBeenCalledWith('a', 'win-1', 'win-3');
+			expect(result.current.sessionIds).toEqual(['b']);
 		});
 
 		it('does nothing if the new window could not be created', async () => {

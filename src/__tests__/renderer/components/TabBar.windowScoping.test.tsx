@@ -154,12 +154,14 @@ describe('TabBar - window scoping', () => {
 		expect(await screen.findByText('My Tab')).toBeInTheDocument();
 	});
 
-	// Drag an agent's tab out of this window and release it over another Maestro
-	// window: the agent docks into that window. The flow threads through the real
-	// useTabDragOut hook (bounds snapshot -> drag-exit -> findWindowAtPoint -> drop)
-	// and the real WindowContext.moveSessionToWindow, so it exercises the wiring
-	// end to end. A microtask flush is needed after dragStart/drag because the
-	// bounds and target-window lookups are async IPC.
+	// Drag an agent's tab out of this window and release it: over another Maestro
+	// window the agent docks into that window; over empty space it detaches into a
+	// brand-new window at the drop point; and a drag that never leaves the window
+	// is an in-bar reorder (no cross-window action). The flow threads through the
+	// real useTabDragOut hook (bounds snapshot -> drag-exit -> findWindowAtPoint ->
+	// drop) and the real WindowContext move helpers, so it exercises the wiring end
+	// to end. A microtask flush is needed after dragStart/drag because the bounds
+	// and target-window lookups are async IPC.
 	describe('cross-window drag-out drop', () => {
 		/** Let the hook's async bounds / findWindowAtPoint promises settle. */
 		const flush = async () => {
@@ -214,7 +216,7 @@ describe('TabBar - window scoping', () => {
 			);
 		});
 
-		it('does not move the agent when released over empty space', async () => {
+		it('spawns a new window at the drop point when released over empty space', async () => {
 			setUrl('/');
 			vi.mocked(windows().getState).mockResolvedValue(
 				makeState({ id: 'primary-1', sessionIds: ['agent-A'], activeSessionId: 'agent-A' })
@@ -223,8 +225,11 @@ describe('TabBar - window scoping', () => {
 				makeInfo({ id: 'primary-1', isMain: true, sessionIds: ['agent-A'] }),
 			]);
 			vi.mocked(windows().getBounds).mockResolvedValue({ x: 0, y: 0, width: 1000, height: 800 });
-			// No Maestro window under the cursor: drop-on-empty is a later Phase 3 task.
+			// No Maestro window under the cursor -> empty space -> spawn a new window.
 			vi.mocked(windows().findWindowAtPoint).mockResolvedValue(null);
+			vi.mocked(windows().create).mockResolvedValue(
+				makeInfo({ id: 'win-new', sessionIds: ['agent-A'] })
+			);
 
 			renderInWindow('agent-A');
 			const tab = (await screen.findByText('My Tab')).closest('[data-tab-id]')!;
@@ -242,8 +247,49 @@ describe('TabBar - window scoping', () => {
 			await flush();
 
 			fireEvent.dragEnd(tab);
+
+			// Released over empty space at (2000, 2000): a new window spawns offset
+			// up/left of the drop point so the released tab lands near the cursor, and
+			// the agent transfers into it (leaving the source window).
+			await waitFor(() =>
+				expect(windows().create).toHaveBeenCalledWith(['agent-A'], { x: 1900, y: 1950 })
+			);
+			await waitFor(() =>
+				expect(windows().moveSession).toHaveBeenCalledWith('agent-A', 'primary-1', 'win-new')
+			);
+		});
+
+		it('does not spawn or move when the drag never leaves the window (in-bar reorder)', async () => {
+			setUrl('/');
+			vi.mocked(windows().getState).mockResolvedValue(
+				makeState({ id: 'primary-1', sessionIds: ['agent-A'], activeSessionId: 'agent-A' })
+			);
+			vi.mocked(windows().list).mockResolvedValue([
+				makeInfo({ id: 'primary-1', isMain: true, sessionIds: ['agent-A'] }),
+			]);
+			vi.mocked(windows().getBounds).mockResolvedValue({ x: 0, y: 0, width: 1000, height: 800 });
+
+			renderInWindow('agent-A');
+			const tab = (await screen.findByText('My Tab')).closest('[data-tab-id]')!;
+			await waitFor(() => expect(windows().list).toHaveBeenCalled());
 			await flush();
 
+			fireEvent.dragStart(tab, {
+				dataTransfer: { effectAllowed: '', setData: vi.fn() },
+			});
+			await waitFor(() => expect(windows().getBounds).toHaveBeenCalled());
+			await flush();
+
+			// Cursor stays inside the snapshotted bounds for the whole drag, so the tab
+			// never "leaves" the window - no hit-test, no spawn, no move.
+			fireDragAt(tab, 500, 400);
+			await flush();
+
+			fireEvent.dragEnd(tab);
+			await flush();
+
+			expect(windows().findWindowAtPoint).not.toHaveBeenCalled();
+			expect(windows().create).not.toHaveBeenCalled();
 			expect(windows().moveSession).not.toHaveBeenCalled();
 		});
 	});

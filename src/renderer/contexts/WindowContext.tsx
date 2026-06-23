@@ -92,8 +92,13 @@ export interface WindowContextValue {
 	openSession: (sessionId: string) => Promise<void>;
 	/** Remove an agent's tab strip from this window (does not delete the agent). */
 	closeTab: (sessionId: string) => void;
-	/** Detach an agent into a brand-new window, leaving this one. */
-	moveSessionToNewWindow: (sessionId: string) => Promise<void>;
+	/**
+	 * Detach an agent into a brand-new window, leaving this one. Pass `bounds` to
+	 * position the new window (e.g. at a tab drag-out drop point); omit it to let
+	 * the main process pick a default position (the right-click "Move to New
+	 * Window" path).
+	 */
+	moveSessionToNewWindow: (sessionId: string, bounds?: { x: number; y: number }) => Promise<void>;
 	/**
 	 * Dock an agent into an EXISTING window (the tab drag-out drop target),
 	 * leaving this one. The destination surfaces the agent in its tab bar and
@@ -254,9 +259,9 @@ export function WindowProvider({ children }: { children: ReactNode }) {
 	}, []);
 
 	const moveSessionToNewWindow = useCallback(
-		async (sessionId: string) => {
+		async (sessionId: string, bounds?: { x: number; y: number }) => {
 			if (!windowId) return;
-			const created = await window.maestro.windows.create([sessionId]);
+			const created = await window.maestro.windows.create([sessionId], bounds);
 			if (!created) return;
 			// The new window already owns the agent; this transfer just removes it
 			// from THIS window's registry ownership (enforcing single-window-per-agent)
