@@ -9,6 +9,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+// Type-only import (erased at runtime, so it does not interfere with the
+// per-test `vi.resetModules()` + dynamic `import()` pattern used below).
+import type { WindowManagerDependencies } from '../../../main/app-lifecycle/window-manager';
 
 // Track event handlers
 let windowCloseHandler: (() => void) | null = null;
@@ -1486,6 +1489,181 @@ describe('app-lifecycle/window-manager', () => {
 					)
 				);
 			});
+		});
+	});
+
+	// Registry-backed creation (multi-window). The primary registers as isMain
+	// and keeps its bare renderer URL ("exactly as before"); secondary windows
+	// self-identify via a ?windowId= query and are tracked in the registry.
+	describe('registry-backed creation', () => {
+		type Deps = WindowManagerDependencies;
+
+		function makeRegistry() {
+			return {
+				create: vi.fn(),
+				remove: vi.fn(),
+				get: vi.fn(),
+				getAll: vi.fn(() => []),
+				getPrimary: vi.fn(),
+			};
+		}
+
+		async function makeManager(overrides: Partial<Deps> = {}) {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+			return createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Deps['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererProductionUrl: 'app://app/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+				...overrides,
+			});
+		}
+
+		/** The most recently registered 'closed' handler on the created window. */
+		function lastClosedHandler(): (() => void) | undefined {
+			return mockWindowInstance.on.mock.calls
+				.filter((call: unknown[]) => call[0] === 'closed')
+				.at(-1)?.[1] as (() => void) | undefined;
+		}
+
+		it('exposes createSecondaryWindow on the window manager', async () => {
+			const windowManager = await makeManager();
+			expect(typeof windowManager.createSecondaryWindow).toBe('function');
+		});
+
+		it('registers the primary window as isMain when a registry is provided', async () => {
+			const registry = makeRegistry();
+			const windowManager = await makeManager({
+				windowRegistry: registry as unknown as Deps['windowRegistry'],
+			});
+
+			windowManager.createWindow();
+
+			expect(registry.create).toHaveBeenCalledTimes(1);
+			expect(registry.create).toHaveBeenCalledWith(
+				expect.objectContaining({ isMain: true, sessionIds: [] })
+			);
+		});
+
+		it('keeps the primary renderer URL free of a windowId query (exactly as before)', async () => {
+			const registry = makeRegistry();
+			const windowManager = await makeManager({
+				windowRegistry: registry as unknown as Deps['windowRegistry'],
+			});
+
+			windowManager.createWindow();
+
+			expect(mockWindowInstance.loadURL).toHaveBeenCalledWith('app://app/index.html');
+		});
+
+		it('works without a registry (primary is simply not tracked)', async () => {
+			const windowManager = await makeManager();
+			expect(() => windowManager.createWindow()).not.toThrow();
+		});
+
+		it('appends ?windowId= to a secondary renderer URL and registers it (isMain:false)', async () => {
+			const registry = makeRegistry();
+			const windowManager = await makeManager({
+				windowRegistry: registry as unknown as Deps['windowRegistry'],
+			});
+
+			windowManager.createSecondaryWindow(['agent-1', 'agent-2']);
+
+			const loadedUrl = mockWindowInstance.loadURL.mock.calls.at(-1)?.[0] as string;
+			expect(loadedUrl).toMatch(/^app:\/\/app\/index\.html\?windowId=.+/);
+
+			expect(registry.create).toHaveBeenCalledTimes(1);
+			const createArg = registry.create.mock.calls[0][0] as {
+				windowId: string;
+				isMain: boolean;
+				sessionIds: string[];
+			};
+			expect(createArg).toMatchObject({ isMain: false, sessionIds: ['agent-1', 'agent-2'] });
+			// The id in the URL is exactly the id tracked in the registry.
+			expect(loadedUrl).toContain(`windowId=${createArg.windowId}`);
+		});
+
+		it('off-screen guards a secondary window the same as the primary', async () => {
+			const registry = makeRegistry();
+			const windowManager = await makeManager({
+				windowRegistry: registry as unknown as Deps['windowRegistry'],
+			});
+
+			// -32000 is the Windows minimized-window sentinel; it must be dropped so
+			// the secondary window can never spawn off every visible display.
+			windowManager.createSecondaryWindow(['agent-1'], { x: -32000, y: -32000 });
+
+			expect(lastBrowserWindowOptions?.x).toBeUndefined();
+			expect(lastBrowserWindowOptions?.y).toBeUndefined();
+		});
+
+		it('allows reloading a secondary window to its own windowId URL, blocks others', async () => {
+			const registry = makeRegistry();
+			const windowManager = await makeManager({
+				windowRegistry: registry as unknown as Deps['windowRegistry'],
+			});
+
+			windowManager.createSecondaryWindow(['agent-1']);
+			const loadedUrl = mockWindowInstance.loadURL.mock.calls.at(-1)?.[0] as string;
+
+			const willNavigateCall = mockWebContents.on.mock.calls.find(
+				(call: unknown[]) => call[0] === 'will-navigate'
+			);
+			const navigateHandler = willNavigateCall![1];
+
+			// The window's own entry URL (with ?windowId=) is allowed so a
+			// programmatic reload to the same URL is not blocked.
+			const allowed = { preventDefault: vi.fn() };
+			navigateHandler(allowed, loadedUrl);
+			expect(allowed.preventDefault).not.toHaveBeenCalled();
+
+			// The bare entry URL (a different document for this window) is blocked.
+			const blocked = { preventDefault: vi.fn() };
+			navigateHandler(blocked, 'app://app/index.html');
+			expect(blocked.preventDefault).toHaveBeenCalled();
+		});
+
+		it('removes a secondary window from the registry when it closes', async () => {
+			const registry = makeRegistry();
+			const windowManager = await makeManager({
+				windowRegistry: registry as unknown as Deps['windowRegistry'],
+			});
+
+			windowManager.createSecondaryWindow(['agent-1']);
+			const createArg = registry.create.mock.calls[0][0] as { windowId: string };
+
+			const closedHandler = lastClosedHandler();
+			expect(closedHandler).toBeDefined();
+			closedHandler!();
+
+			expect(registry.remove).toHaveBeenCalledWith(createArg.windowId);
+		});
+
+		it('skips secondary-window registry cleanup on close while the app is quitting', async () => {
+			const registry = makeRegistry();
+			const windowManager = await makeManager({
+				windowRegistry: registry as unknown as Deps['windowRegistry'],
+				getIsQuitting: () => true,
+			});
+
+			windowManager.createSecondaryWindow(['agent-1']);
+			lastClosedHandler()?.();
+
+			expect(registry.remove).not.toHaveBeenCalled();
+		});
+
+		it('does not initialize the auto-updater for secondary windows', async () => {
+			const registry = makeRegistry();
+			const windowManager = await makeManager({
+				windowRegistry: registry as unknown as Deps['windowRegistry'],
+			});
+
+			windowManager.createSecondaryWindow(['agent-1']);
+
+			expect(mockInitAutoUpdater).not.toHaveBeenCalled();
 		});
 	});
 });
