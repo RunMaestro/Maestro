@@ -30,6 +30,9 @@ vi.mock('../../../renderer/stores/notificationStore', async () => {
 
 const windows = () => window.maestro.windows;
 
+/** The descriptive title the renderer HTML ships with (primary-window baseline). */
+const PRIMARY_HTML_TITLE = 'Maestro - Agent Orchestration Command Center';
+
 /** Replace the live agent list the guard reads when counting a window's agents. */
 function seedSessions(ids: string[]): void {
 	useSessionStore.setState({ sessions: ids.map((id) => createMockSession({ id })) });
@@ -75,6 +78,9 @@ describe('WindowContext', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		setUrl('/');
+		// Start each test from the HTML baseline so the title-badge assertions see a
+		// clean slate (the provider only overrides it for secondary windows).
+		document.title = PRIMARY_HTML_TITLE;
 		// The empty-primary guard reads the live agent list; start each test from a
 		// clean store so a prior test's seed can't leak into one that doesn't seed.
 		useSessionStore.setState({ sessions: [] });
@@ -148,6 +154,78 @@ describe('WindowContext', () => {
 			expect(result.current.windowId).toBe('win-9');
 			expect(result.current.sessionIds).toEqual([]);
 			expect(result.current.activeSessionId).toBeNull();
+		});
+	});
+
+	describe('window number + title badge', () => {
+		it('reports the primary window as number 1 and leaves its title untouched', async () => {
+			setUrl('/');
+			vi.mocked(windows().getState).mockResolvedValue(makeState({ id: 'primary-1' }));
+			vi.mocked(windows().list).mockResolvedValue([makeInfo({ id: 'primary-1', isMain: true })]);
+
+			const { result } = renderHook(() => useWindowContext(), { wrapper });
+			await waitFor(() => expect(result.current.windowId).toBe('primary-1'));
+
+			expect(result.current.windowNumber).toBe(1);
+			// The primary keeps its descriptive HTML title - no "[N]" badge.
+			expect(document.title).toBe(PRIMARY_HTML_TITLE);
+		});
+
+		it('numbers a secondary window by its registry position and badges its title', async () => {
+			setUrl('/?windowId=win-2');
+			vi.mocked(windows().getState).mockResolvedValue(
+				makeState({ id: 'win-2', sessionIds: ['a'], activeSessionId: 'a' })
+			);
+			vi.mocked(windows().list).mockResolvedValue([
+				makeInfo({ id: 'primary-1', isMain: true }),
+				makeInfo({ id: 'win-2', sessionIds: ['a'], activeSessionId: 'a' }),
+			]);
+
+			const { result } = renderHook(() => useWindowContext(), { wrapper });
+
+			await waitFor(() => expect(result.current.windowNumber).toBe(2));
+			await waitFor(() => expect(document.title).toBe('Maestro [2]'));
+		});
+
+		it('numbers the third window as 3 and badges it accordingly', async () => {
+			setUrl('/?windowId=win-3');
+			vi.mocked(windows().getState).mockResolvedValue(makeState({ id: 'win-3' }));
+			vi.mocked(windows().list).mockResolvedValue([
+				makeInfo({ id: 'primary-1', isMain: true }),
+				makeInfo({ id: 'win-2' }),
+				makeInfo({ id: 'win-3' }),
+			]);
+
+			const { result } = renderHook(() => useWindowContext(), { wrapper });
+
+			await waitFor(() => expect(result.current.windowNumber).toBe(3));
+			await waitFor(() => expect(document.title).toBe('Maestro [3]'));
+		});
+
+		it('re-badges the title when a registry shift changes this window number', async () => {
+			setUrl('/?windowId=win-3');
+			vi.mocked(windows().getState).mockResolvedValue(makeState({ id: 'win-3' }));
+			vi.mocked(windows().list).mockResolvedValue([
+				makeInfo({ id: 'primary-1', isMain: true }),
+				makeInfo({ id: 'win-2' }),
+				makeInfo({ id: 'win-3' }),
+			]);
+
+			const { result } = renderHook(() => useWindowContext(), { wrapper });
+			await waitFor(() => expect(document.title).toBe('Maestro [3]'));
+
+			// win-2 closes: this window slides up to position 2 on the next hydrate.
+			vi.mocked(windows().list).mockResolvedValue([
+				makeInfo({ id: 'primary-1', isMain: true }),
+				makeInfo({ id: 'win-3' }),
+			]);
+			const handler = vi.mocked(windows().onSessionMoved).mock.calls[0][0];
+			await act(async () => {
+				handler({ type: 'session-moved' });
+			});
+
+			await waitFor(() => expect(result.current.windowNumber).toBe(2));
+			await waitFor(() => expect(document.title).toBe('Maestro [2]'));
 		});
 	});
 

@@ -35,7 +35,7 @@ import {
 	useState,
 	type ReactNode,
 } from 'react';
-import type { WindowInfo } from '../../shared/window-types';
+import { formatWindowTitle, type WindowInfo } from '../../shared/window-types';
 import { useSessionStore } from '../stores/sessionStore';
 import { notifyToast } from '../stores/notificationStore';
 
@@ -67,6 +67,14 @@ export interface WindowContextValue {
 	windowId: string | null;
 	/** True for the primary window (loaded without a `windowId` param). */
 	isMainWindow: boolean;
+	/**
+	 * This window's own 1-based number in registry order (primary = 1), matching
+	 * the Left Bar's WindowBadge numbering. Drives the OS window-title badge so
+	 * users can tell windows apart in Cmd+Tab / Mission Control. `null` only
+	 * briefly before the first hydrate populates the window list (a secondary
+	 * knows it is not the primary but not yet its position).
+	 */
+	windowNumber: number | null;
 	/** Agent (session) IDs whose tab strips belong to THIS window. */
 	sessionIds: string[];
 	/** The agent currently focused in this window, or `null` when it owns none. */
@@ -230,6 +238,29 @@ export function WindowProvider({ children }: { children: ReactNode }) {
 		return set;
 	}, [windows, windowId]);
 
+	// This window's own 1-based number, derived from its position in the registry
+	// order (primary first) so it always matches the Left Bar's cross-window
+	// badge. Before the first hydrate the window list is empty: the primary is
+	// known to be #1 from the URL, while a secondary's position is not yet known.
+	const windowNumber = useMemo<number | null>(() => {
+		if (windowId && windows.length > 0) {
+			const idx = windows.findIndex((win) => win.id === windowId);
+			if (idx !== -1) return idx + 1;
+		}
+		return isMainWindow ? 1 : null;
+	}, [windowId, windows, isMainWindow]);
+
+	// Reflect a secondary window's number in its OS title ("Maestro [2]") so users
+	// can tell windows apart in Cmd+Tab / Mission Control. Only secondary windows
+	// get the badge; the primary keeps its descriptive HTML title untouched. The
+	// number tracks registry order, so the title re-renders whenever a hydrate
+	// (e.g. a window opening/closing) shifts this window's position.
+	useEffect(() => {
+		if (typeof document === 'undefined') return;
+		if (isMainWindow || windowNumber === null) return;
+		document.title = formatWindowTitle(windowNumber);
+	}, [isMainWindow, windowNumber]);
+
 	const ownsSession = useCallback(
 		(sessionId: string): boolean =>
 			// The primary window surfaces every agent that no secondary window has
@@ -356,6 +387,7 @@ export function WindowProvider({ children }: { children: ReactNode }) {
 		() => ({
 			windowId,
 			isMainWindow,
+			windowNumber,
 			sessionIds: scope.sessionIds,
 			activeSessionId: scope.activeSessionId,
 			ownsSession,
@@ -369,6 +401,7 @@ export function WindowProvider({ children }: { children: ReactNode }) {
 		[
 			windowId,
 			isMainWindow,
+			windowNumber,
 			scope.sessionIds,
 			scope.activeSessionId,
 			ownsSession,

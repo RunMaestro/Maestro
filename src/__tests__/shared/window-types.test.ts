@@ -11,6 +11,8 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+	APP_WINDOW_TITLE_BASE,
+	formatWindowTitle,
 	isPointInWindowBounds,
 	isPointOutsideWindowBounds,
 	type WindowBounds,
@@ -48,6 +50,23 @@ describe('isPointInWindowBounds', () => {
 		const atOrigin: WindowBounds = { x: 0, y: 0, width: 100, height: 100 };
 		expect(isPointInWindowBounds({ x: 0, y: 0 }, atOrigin)).toBe(true);
 		expect(isPointInWindowBounds({ x: 100, y: 100 }, atOrigin)).toBe(false);
+	});
+});
+
+describe('formatWindowTitle', () => {
+	it('keeps the bare product name for the primary window (number 1)', () => {
+		expect(formatWindowTitle(1)).toBe(APP_WINDOW_TITLE_BASE);
+	});
+
+	it('appends a "[N]" badge for secondary windows (number >= 2)', () => {
+		expect(formatWindowTitle(2)).toBe('Maestro [2]');
+		expect(formatWindowTitle(3)).toBe('Maestro [3]');
+		expect(formatWindowTitle(10)).toBe('Maestro [10]');
+	});
+
+	it('falls back to the bare name for a non-positive/defensive number', () => {
+		// A primary should never render "[1]"; anything <= 1 stays unbadged.
+		expect(formatWindowTitle(0)).toBe(APP_WINDOW_TITLE_BASE);
 	});
 });
 

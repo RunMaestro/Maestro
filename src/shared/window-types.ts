@@ -86,6 +86,21 @@ export function isPointOutsideWindowBounds(
 	return !isPointInWindowBounds(point, bounds);
 }
 
+/** The product name shown as the base of every window's OS title. */
+export const APP_WINDOW_TITLE_BASE = 'Maestro';
+
+/**
+ * The OS-level window title for a window given its 1-based number (primary = 1,
+ * registry order, matching the Left Bar's WindowBadge numbering). Secondary
+ * windows (number >= 2) get a "Maestro [N]" badge so users can tell windows
+ * apart in Cmd+Tab / Mission Control; the primary window keeps the bare product
+ * name. A defensive fall-through for `1` (or anything lower) returns the bare
+ * name so a primary never accidentally renders "[1]".
+ */
+export function formatWindowTitle(windowNumber: number): string {
+	return windowNumber > 1 ? `${APP_WINDOW_TITLE_BASE} [${windowNumber}]` : APP_WINDOW_TITLE_BASE;
+}
+
 /**
  * Top-level persisted multi-window state: every known window plus a pointer to
  * the primary window. Exactly one of `windows` has `id === primaryWindowId`.
