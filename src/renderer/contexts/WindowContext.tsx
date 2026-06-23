@@ -32,6 +32,7 @@ import {
 	useState,
 	type ReactNode,
 } from 'react';
+import type { WindowInfo } from '../../shared/window-types';
 
 /**
  * Reads the `windowId` query param from the renderer URL. Returns `null` for
@@ -72,6 +73,15 @@ export interface WindowContextValue {
 	 * main tab bar uses this to scope which agent's tabs it renders.
 	 */
 	ownsSession: (sessionId: string) => boolean;
+	/**
+	 * If the given agent is currently surfaced by a DIFFERENT window than this
+	 * one, returns that window's id plus its human-facing number (1-based, primary
+	 * = 1, in registry order). Returns `null` when this window already surfaces the
+	 * agent (or nothing is hydrated yet). Drives the Left Bar's "open in window N"
+	 * badge and routes a row click to focus that window instead of stealing the
+	 * agent (single-window-per-agent).
+	 */
+	getSessionWindow: (sessionId: string) => { windowId: string; windowNumber: number } | null;
 	/**
 	 * Open/focus an agent in THIS window. If the agent already lives in another
 	 * window, focuses that window instead of stealing it (single-window-per-agent).
@@ -120,18 +130,16 @@ export function WindowProvider({ children }: { children: ReactNode }) {
 	const isMainWindow = paramWindowId === null;
 	const [windowId, setWindowId] = useState<string | null>(paramWindowId);
 	const [scope, setScope] = useState<WindowScope>({ sessionIds: [], activeSessionId: null });
-	// Agents claimed by OTHER windows. The primary window is the catch-all owner,
-	// so it needs to know which agents a secondary window has taken over to scope
-	// its tab bar correctly. Empty in the common single-window case.
-	const [sessionsOwnedElsewhere, setSessionsOwnedElsewhere] = useState<Set<string>>(
-		() => new Set()
-	);
+	// Every open window, in registry order (primary first). This is the single
+	// source for cross-window ownership: which window surfaces an agent and its
+	// 1-based number. Empty (single-window common case) until the first hydrate.
+	const [windows, setWindows] = useState<WindowInfo[]>([]);
 
 	/**
 	 * Pull this window's owned agents + active agent from the main-process
-	 * registry, plus the agents owned by every other window. Reused on mount and
-	 * (later Phase 2 task) when a `windows:sessionMoved` broadcast says ownership
-	 * changed.
+	 * registry, plus the full window list (for cross-window ownership). Reused on
+	 * mount and (later Phase 2 task) when a `windows:sessionMoved` broadcast says
+	 * ownership changed.
 	 */
 	const hydrate = useCallback(async () => {
 		const [state, allWindows] = await Promise.all([
@@ -142,18 +150,24 @@ export function WindowProvider({ children }: { children: ReactNode }) {
 		// The primary window has no URL param, so adopt the registry's id for it.
 		setWindowId((prev) => prev ?? state.id);
 		setScope({ sessionIds: state.sessionIds, activeSessionId: state.activeSessionId });
-		// Build the set of agents owned by windows other than this one.
-		const elsewhere = new Set<string>();
-		for (const win of allWindows ?? []) {
-			if (win.id === state.id) continue;
-			for (const sid of win.sessionIds) elsewhere.add(sid);
-		}
-		setSessionsOwnedElsewhere(elsewhere);
+		setWindows(allWindows ?? []);
 	}, []);
 
 	useEffect(() => {
 		void hydrate();
 	}, [hydrate]);
+
+	// Agents claimed by OTHER windows. The primary window is the catch-all owner,
+	// so it needs to know which agents a secondary window has taken over to scope
+	// its tab bar correctly. Derived from the window list so there is one source.
+	const sessionsOwnedElsewhere = useMemo(() => {
+		const set = new Set<string>();
+		for (const win of windows) {
+			if (win.id === windowId) continue;
+			for (const sid of win.sessionIds) set.add(sid);
+		}
+		return set;
+	}, [windows, windowId]);
 
 	const ownsSession = useCallback(
 		(sessionId: string): boolean =>
@@ -161,6 +175,32 @@ export function WindowProvider({ children }: { children: ReactNode }) {
 			// explicitly claimed; a secondary window owns exactly its scoped set.
 			isMainWindow ? !sessionsOwnedElsewhere.has(sessionId) : scope.sessionIds.includes(sessionId),
 		[isMainWindow, sessionsOwnedElsewhere, scope.sessionIds]
+	);
+
+	const getSessionWindow = useCallback(
+		(sessionId: string): { windowId: string; windowNumber: number } | null => {
+			if (windows.length === 0) return null;
+			// A secondary window's explicit claim wins; otherwise the primary window
+			// is the catch-all owner. Window number is the 1-based position in the
+			// registry's window list (primary first).
+			let ownerIdx = -1;
+			let primaryIdx = -1;
+			for (let i = 0; i < windows.length; i++) {
+				const win = windows[i];
+				if (win.isMain) primaryIdx = i;
+				if (!win.isMain && win.sessionIds.includes(sessionId)) {
+					ownerIdx = i;
+					break;
+				}
+			}
+			const idx = ownerIdx !== -1 ? ownerIdx : primaryIdx;
+			if (idx === -1) return null;
+			const owner = windows[idx];
+			// No badge for an agent this window already surfaces.
+			if (owner.id === windowId) return null;
+			return { windowId: owner.id, windowNumber: idx + 1 };
+		},
+		[windows, windowId]
 	);
 
 	const openSession = useCallback(
@@ -207,6 +247,7 @@ export function WindowProvider({ children }: { children: ReactNode }) {
 			sessionIds: scope.sessionIds,
 			activeSessionId: scope.activeSessionId,
 			ownsSession,
+			getSessionWindow,
 			openSession,
 			closeTab,
 			moveSessionToNewWindow,
@@ -217,6 +258,7 @@ export function WindowProvider({ children }: { children: ReactNode }) {
 			scope.sessionIds,
 			scope.activeSessionId,
 			ownsSession,
+			getSessionWindow,
 			openSession,
 			closeTab,
 			moveSessionToNewWindow,

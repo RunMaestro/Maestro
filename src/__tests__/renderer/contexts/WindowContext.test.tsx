@@ -339,6 +339,95 @@ describe('WindowContext', () => {
 		});
 	});
 
+	describe('getSessionWindow - cross-window ownership + numbering', () => {
+		it('returns null for every agent in the common single-window case', async () => {
+			setUrl('/');
+			vi.mocked(windows().getState).mockResolvedValue(
+				makeState({ id: 'primary-1', sessionIds: ['a', 'b'], activeSessionId: 'a' })
+			);
+			vi.mocked(windows().list).mockResolvedValue([makeInfo({ id: 'primary-1', isMain: true })]);
+
+			const { result } = renderHook(() => useWindowContext(), { wrapper });
+			await waitFor(() => expect(result.current.windowId).toBe('primary-1'));
+
+			// The lone primary surfaces every agent, so nothing lives "elsewhere".
+			expect(result.current.getSessionWindow('a')).toBeNull();
+			expect(result.current.getSessionWindow('anything')).toBeNull();
+		});
+
+		it('from the primary window: badges agents a secondary has claimed', async () => {
+			setUrl('/');
+			vi.mocked(windows().getState).mockResolvedValue(
+				makeState({ id: 'primary-1', sessionIds: [], activeSessionId: null })
+			);
+			vi.mocked(windows().list).mockResolvedValue([
+				makeInfo({ id: 'primary-1', isMain: true }),
+				makeInfo({ id: 'win-2', sessionIds: ['claimed'], activeSessionId: 'claimed' }),
+			]);
+
+			const { result } = renderHook(() => useWindowContext(), { wrapper });
+			await waitFor(() => expect(result.current.windowId).toBe('primary-1'));
+
+			// The secondary is the 2nd window in registry order -> number 2.
+			await waitFor(() =>
+				expect(result.current.getSessionWindow('claimed')).toEqual({
+					windowId: 'win-2',
+					windowNumber: 2,
+				})
+			);
+			// A catch-all agent the primary itself surfaces gets no badge.
+			expect(result.current.getSessionWindow('free-agent')).toBeNull();
+		});
+
+		it('from a secondary window: catch-all agents belong to the primary (window 1)', async () => {
+			setUrl('/?windowId=win-2');
+			vi.mocked(windows().getState).mockResolvedValue(
+				makeState({ id: 'win-2', sessionIds: ['claimed'], activeSessionId: 'claimed' })
+			);
+			vi.mocked(windows().list).mockResolvedValue([
+				makeInfo({ id: 'primary-1', isMain: true }),
+				makeInfo({ id: 'win-2', sessionIds: ['claimed'], activeSessionId: 'claimed' }),
+			]);
+
+			const { result } = renderHook(() => useWindowContext(), { wrapper });
+			await waitFor(() => expect(result.current.sessionIds).toEqual(['claimed']));
+
+			// An unclaimed agent is surfaced by the primary catch-all -> window 1.
+			await waitFor(() =>
+				expect(result.current.getSessionWindow('free-agent')).toEqual({
+					windowId: 'primary-1',
+					windowNumber: 1,
+				})
+			);
+			// This window's own agent gets no badge.
+			expect(result.current.getSessionWindow('claimed')).toBeNull();
+		});
+
+		it('from a secondary window: badges an agent owned by ANOTHER secondary', async () => {
+			setUrl('/?windowId=win-2');
+			vi.mocked(windows().getState).mockResolvedValue(
+				makeState({ id: 'win-2', sessionIds: ['a'], activeSessionId: 'a' })
+			);
+			vi.mocked(windows().list).mockResolvedValue([
+				makeInfo({ id: 'primary-1', isMain: true }),
+				makeInfo({ id: 'win-2', sessionIds: ['a'], activeSessionId: 'a' }),
+				makeInfo({ id: 'win-3', sessionIds: ['b'], activeSessionId: 'b' }),
+			]);
+
+			const { result } = renderHook(() => useWindowContext(), { wrapper });
+			await waitFor(() => expect(result.current.sessionIds).toEqual(['a']));
+
+			// win-3 is the 3rd window in registry order -> number 3.
+			await waitFor(() =>
+				expect(result.current.getSessionWindow('b')).toEqual({
+					windowId: 'win-3',
+					windowNumber: 3,
+				})
+			);
+			expect(result.current.getSessionWindow('a')).toBeNull();
+		});
+	});
+
 	describe('useWindowContextOptional', () => {
 		it('returns null outside a provider instead of throwing', () => {
 			const { result } = renderHook(() => useWindowContextOptional());
