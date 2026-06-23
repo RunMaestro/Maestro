@@ -125,3 +125,17 @@ export interface WindowSessionMovedPayload {
 	fromWindowId?: string;
 	toWindowId?: string;
 }
+
+/**
+ * Payload pushed to a window on the `windows:highlightDropZone` channel while a
+ * tab is being dragged out of another window and hovers over this one. The
+ * source window's drag-out tracking toggles `active` as the cursor enters
+ * (`true`) and leaves (`false`) a candidate drop target, so the target's tab bar
+ * can light up to advertise "drop here to dock". `windowId` is the window the
+ * highlight applies to (the main process sends only to that window; renderers may
+ * also compare defensively against their own id).
+ */
+export interface WindowHighlightDropZonePayload {
+	windowId: string;
+	active: boolean;
+}

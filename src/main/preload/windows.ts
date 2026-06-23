@@ -10,6 +10,7 @@
 import { ipcRenderer } from 'electron';
 import type {
 	WindowBounds,
+	WindowHighlightDropZonePayload,
 	WindowInfo,
 	WindowPanelState,
 	WindowSessionMovedPayload,
@@ -112,6 +113,35 @@ export function createWindowsApi() {
 			ipcRenderer.on('windows:sessionMoved', handler);
 			return () => {
 				ipcRenderer.removeListener('windows:sessionMoved', handler);
+			};
+		},
+
+		/**
+		 * Toggle the drop-zone highlight on a target window's tab bar while a tab is
+		 * dragged over it from another window (Phase 3 tab drag-out feedback). Called
+		 * by the source window's drag-out tracking as the cursor enters/leaves a
+		 * candidate window.
+		 * @param windowId - The window whose tab bar should (un)highlight
+		 * @param active - True to light it up, false to clear it
+		 */
+		highlightDropZone: (windowId: string, active: boolean): Promise<void> =>
+			ipcRenderer.invoke('windows:highlightDropZone', windowId, active),
+
+		/**
+		 * Subscribe to `windows:highlightDropZone` pushes for THIS window. The main
+		 * process sends one only to the window being hovered as a drop target, so the
+		 * renderer can light up / clear its tab-bar drop zone.
+		 * @param callback - Invoked with `{ windowId, active }` on every push
+		 * @returns An unsubscribe function
+		 */
+		onHighlightDropZone: (
+			callback: (payload: WindowHighlightDropZonePayload) => void
+		): (() => void) => {
+			const handler = (_event: unknown, payload: WindowHighlightDropZonePayload) =>
+				callback(payload);
+			ipcRenderer.on('windows:highlightDropZone', handler);
+			return () => {
+				ipcRenderer.removeListener('windows:highlightDropZone', handler);
 			};
 		},
 	};

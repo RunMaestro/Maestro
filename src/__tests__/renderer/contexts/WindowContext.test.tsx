@@ -70,6 +70,8 @@ describe('WindowContext', () => {
 		// Default the broadcast subscription to a no-op unsubscribe; the refresh
 		// tests capture the registered callback to simulate a broadcast.
 		vi.mocked(windows().onSessionMoved).mockReturnValue(() => {});
+		// Same for the drop-zone highlight push; highlight tests capture the callback.
+		vi.mocked(windows().onHighlightDropZone).mockReturnValue(() => {});
 	});
 
 	afterEach(() => {
@@ -561,6 +563,59 @@ describe('WindowContext', () => {
 
 			const { unmount } = renderHook(() => useWindowContext(), { wrapper });
 			await waitFor(() => expect(windows().onSessionMoved).toHaveBeenCalled());
+
+			unmount();
+			expect(unsubscribe).toHaveBeenCalled();
+		});
+	});
+
+	describe('windows:highlightDropZone (drop-zone highlight)', () => {
+		it('defaults isDropTarget to false', async () => {
+			setUrl('/?windowId=win-1');
+			vi.mocked(windows().getState).mockResolvedValue(makeState({ id: 'win-1' }));
+
+			const { result } = renderHook(() => useWindowContext(), { wrapper });
+			await waitFor(() => expect(result.current.windowId).toBe('win-1'));
+
+			expect(result.current.isDropTarget).toBe(false);
+		});
+
+		it('lights up and clears when a push targets this window', async () => {
+			setUrl('/?windowId=win-1');
+			vi.mocked(windows().getState).mockResolvedValue(makeState({ id: 'win-1' }));
+
+			const { result } = renderHook(() => useWindowContext(), { wrapper });
+			await waitFor(() => expect(result.current.windowId).toBe('win-1'));
+
+			// Fire the push the preload would deliver on the IPC channel.
+			const handler = vi.mocked(windows().onHighlightDropZone).mock.calls[0][0];
+			act(() => handler({ windowId: 'win-1', active: true }));
+			expect(result.current.isDropTarget).toBe(true);
+
+			act(() => handler({ windowId: 'win-1', active: false }));
+			expect(result.current.isDropTarget).toBe(false);
+		});
+
+		it('ignores a push targeting a different window', async () => {
+			setUrl('/?windowId=win-1');
+			vi.mocked(windows().getState).mockResolvedValue(makeState({ id: 'win-1' }));
+
+			const { result } = renderHook(() => useWindowContext(), { wrapper });
+			await waitFor(() => expect(result.current.windowId).toBe('win-1'));
+
+			const handler = vi.mocked(windows().onHighlightDropZone).mock.calls[0][0];
+			act(() => handler({ windowId: 'win-2', active: true }));
+			expect(result.current.isDropTarget).toBe(false);
+		});
+
+		it('subscribes on mount and unsubscribes on unmount', async () => {
+			const unsubscribe = vi.fn();
+			vi.mocked(windows().onHighlightDropZone).mockReturnValue(unsubscribe);
+			setUrl('/?windowId=win-1');
+			vi.mocked(windows().getState).mockResolvedValue(makeState({ id: 'win-1' }));
+
+			const { unmount } = renderHook(() => useWindowContext(), { wrapper });
+			await waitFor(() => expect(windows().onHighlightDropZone).toHaveBeenCalled());
 
 			unmount();
 			expect(unsubscribe).toHaveBeenCalled();

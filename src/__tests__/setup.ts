@@ -646,9 +646,11 @@ const mockMaestro = {
 		setPanelState: vi.fn().mockResolvedValue(undefined),
 		getBounds: vi.fn().mockResolvedValue(null),
 		findWindowAtPoint: vi.fn().mockResolvedValue(null),
+		highlightDropZone: vi.fn().mockResolvedValue(undefined),
 		// Returns an unsubscribe fn (default no-op) so WindowProvider's effect can
 		// clean up. Window tests capture the registered callback to fire broadcasts.
 		onSessionMoved: vi.fn(() => () => {}),
+		onHighlightDropZone: vi.fn(() => () => {}),
 	},
 	// Synchronous platform string (replaces async os.getPlatform IPC)
 	platform: 'darwin',

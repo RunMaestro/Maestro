@@ -124,6 +124,7 @@ describe('Windows IPC Handlers', () => {
 				'windows:setPanelState',
 				'windows:getBounds',
 				'windows:findWindowAtPoint',
+				'windows:highlightDropZone',
 			]) {
 				expect(handlers.has(channel)).toBe(true);
 			}
@@ -438,6 +439,51 @@ describe('Windows IPC Handlers', () => {
 
 			expect(inside).toBe(id);
 			expect(outside).toBeNull();
+		});
+	});
+
+	describe('windows:highlightDropZone', () => {
+		it('pushes the toggle only to the target window', async () => {
+			const target = makeFakeWindow();
+			const other = makeFakeWindow();
+			const id = registry.create({ browserWindow: target, sessionIds: [], isMain: true });
+			registry.create({ browserWindow: other, sessionIds: [], isMain: false });
+
+			await handlers.get('windows:highlightDropZone')!({}, id, true);
+
+			expect(sendOf(target)).toHaveBeenCalledWith('windows:highlightDropZone', {
+				windowId: id,
+				active: true,
+			});
+			// Only the hovered window hears it - this is not a broadcast.
+			expect(sendOf(other)).not.toHaveBeenCalled();
+		});
+
+		it('forwards the clear (active=false) toggle', async () => {
+			const target = makeFakeWindow();
+			const id = registry.create({ browserWindow: target, sessionIds: [], isMain: false });
+
+			await handlers.get('windows:highlightDropZone')!({}, id, false);
+
+			expect(sendOf(target)).toHaveBeenCalledWith('windows:highlightDropZone', {
+				windowId: id,
+				active: false,
+			});
+		});
+
+		it('is a no-op for an unknown window', async () => {
+			await expect(
+				handlers.get('windows:highlightDropZone')!({}, 'missing', true)
+			).resolves.toBeUndefined();
+		});
+
+		it('skips a destroyed window without sending', async () => {
+			const win = makeFakeWindow({ isDestroyed: vi.fn(() => true) });
+			const id = registry.create({ browserWindow: win, sessionIds: [], isMain: false });
+
+			await handlers.get('windows:highlightDropZone')!({}, id, true);
+
+			expect(sendOf(win)).not.toHaveBeenCalled();
 		});
 	});
 

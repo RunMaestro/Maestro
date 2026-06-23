@@ -147,6 +147,12 @@ function TabBarInner({
 		endDragOut,
 	} = useTabDragOut();
 
+	// Cross-window drop-zone highlight (Phase 3): true while a tab from ANOTHER
+	// window is being dragged over THIS one as a dock target. Driven by the
+	// `windows:highlightDropZone` push the WindowContext subscribes to. Outside a
+	// WindowProvider (single-window app / isolation tests) it is simply false.
+	const isDropTarget = windowCtx?.isDropTarget ?? false;
+
 	// Scroll active tab into view
 	useEffect(() => {
 		requestAnimationFrame(() => {
@@ -494,13 +500,20 @@ function TabBarInner({
 	return (
 		<div
 			ref={tabBarRef}
-			className="flex items-end gap-0.5 pt-2 border-b overflow-x-auto overflow-y-hidden no-scrollbar"
+			className="flex items-end gap-0.5 pt-2 border-b overflow-x-auto overflow-y-hidden no-scrollbar transition-shadow duration-150"
 			data-tour="tab-bar"
 			// Surfaces drag-out detection: 'true' while a tab is being dragged beyond
-			// this window's bounds. Drives the cross-window move / detach feedback
-			// wired in later Phase 3 tasks.
+			// this window's bounds. Drives the cross-window move / detach feedback.
 			data-dragging-out={isDraggingOut ? 'true' : undefined}
-			style={{ backgroundColor: theme.colors.bgSidebar, borderColor: theme.colors.border }}
+			// 'true' while a tab from another window is dragged over this one - lights
+			// up the drop zone (accent inset ring) to advertise "drop here to dock".
+			data-drop-target={isDropTarget ? 'true' : undefined}
+			style={{
+				backgroundColor: isDropTarget ? `${theme.colors.accent}14` : theme.colors.bgSidebar,
+				borderColor: theme.colors.border,
+				// Accent inset ring on hover-as-drop-target, themed to match the tab bar.
+				boxShadow: isDropTarget ? `inset 0 0 0 2px ${theme.colors.accent}` : undefined,
+			}}
 		>
 			{/* Sticky left: search + unread filter */}
 			<div

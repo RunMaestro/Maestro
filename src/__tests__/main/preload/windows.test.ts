@@ -147,6 +147,44 @@ describe('Windows Preload API', () => {
 		expect(result).toBe('w6');
 	});
 
+	it('highlightDropZone forwards the window id and active flag', async () => {
+		mockInvoke.mockResolvedValue(undefined);
+
+		await api.highlightDropZone('w7', true);
+		expect(mockInvoke).toHaveBeenCalledWith('windows:highlightDropZone', 'w7', true);
+
+		await api.highlightDropZone('w7', false);
+		expect(mockInvoke).toHaveBeenCalledWith('windows:highlightDropZone', 'w7', false);
+	});
+
+	describe('onHighlightDropZone', () => {
+		it('subscribes to the windows:highlightDropZone channel and forwards the payload', () => {
+			const callback = vi.fn();
+
+			api.onHighlightDropZone(callback);
+
+			expect(mockOn).toHaveBeenCalledWith('windows:highlightDropZone', expect.any(Function));
+
+			// The preload strips the IPC event arg and hands the renderer just the payload.
+			const handler = mockOn.mock.calls[0][1] as (event: unknown, payload: unknown) => void;
+			const payload = { windowId: 'w7', active: true };
+			handler({}, payload);
+
+			expect(callback).toHaveBeenCalledWith(payload);
+		});
+
+		it('returns an unsubscribe function that removes the same listener', () => {
+			const callback = vi.fn();
+
+			const unsubscribe = api.onHighlightDropZone(callback);
+			const handler = mockOn.mock.calls[0][1];
+
+			unsubscribe();
+
+			expect(mockRemoveListener).toHaveBeenCalledWith('windows:highlightDropZone', handler);
+		});
+	});
+
 	describe('onSessionMoved', () => {
 		it('subscribes to the windows:sessionMoved channel and forwards the payload', () => {
 			const callback = vi.fn();

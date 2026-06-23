@@ -15,6 +15,7 @@
 import { BrowserWindow, ipcMain } from 'electron';
 import type {
 	WindowBounds,
+	WindowHighlightDropZonePayload,
 	WindowInfo,
 	WindowPanelState,
 	WindowSessionMovedPayload,
@@ -34,6 +35,15 @@ const LOG_CONTEXT = '[Windows]';
  * surfaces plus the Left Bar's cross-window badges.
  */
 export const WINDOW_SESSION_MOVED_CHANNEL = 'windows:sessionMoved';
+
+/**
+ * Channel the main process pushes to a single window's renderer to toggle its
+ * tab-bar drop-zone highlight while a tab is dragged over it from another window
+ * (Phase 3 tab drag-out feedback). Unlike {@link WINDOW_SESSION_MOVED_CHANNEL}
+ * (broadcast to all), this is sent only to the window named in the payload - it
+ * is a transient hover affordance, not an ownership change every window must see.
+ */
+export const WINDOW_HIGHLIGHT_DROP_ZONE_CHANNEL = 'windows:highlightDropZone';
 
 /**
  * Dependencies for the windows handlers. Both are getters because the registry
@@ -249,6 +259,25 @@ export function registerWindowsHandlers(deps: WindowsHandlerDependencies): void 
 			async (screenX: number, screenY: number): Promise<string | null> => {
 				const registry = requireDependency(getWindowRegistry, 'Window registry');
 				return registry.findWindowAtPoint(screenX, screenY);
+			}
+		)
+	);
+
+	// Toggle a window's tab-bar drop-zone highlight (Phase 3 tab drag-out). Sent
+	// only to the target window's renderer; an unknown/destroyed window is a silent
+	// no-op so a stale highlight request can never throw mid-drag.
+	ipcMain.handle(
+		'windows:highlightDropZone',
+		withIpcErrorLogging(
+			{ context: LOG_CONTEXT, operation: 'highlightDropZone' },
+			async (windowId: string, active: boolean): Promise<void> => {
+				const registry = requireDependency(getWindowRegistry, 'Window registry');
+				const entry = registry.get(windowId);
+				if (!entry || entry.browserWindow.isDestroyed()) return;
+				const { webContents } = entry.browserWindow;
+				if (webContents.isDestroyed()) return;
+				const payload: WindowHighlightDropZonePayload = { windowId, active };
+				webContents.send(WINDOW_HIGHLIGHT_DROP_ZONE_CHANNEL, payload);
 			}
 		)
 	);

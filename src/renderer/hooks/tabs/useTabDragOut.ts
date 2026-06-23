@@ -102,44 +102,82 @@ export function useTabDragOut(): UseTabDragOutReturn {
 	// arrived during that window is parked here and replayed once it resolves.
 	const lookupInFlightRef = useRef(false);
 	const pendingLookupRef = useRef<DragOutPoint | null>(null);
+	// True between beginDragOut and endDragOut. Guards a findWindowAtPoint that
+	// resolves AFTER the drag ended from re-lighting a window that can no longer be
+	// cleared (the drop handler already read the target and tore the drag down).
+	const isDraggingRef = useRef(false);
+
+	// Fire-and-forget toggle of the drop-zone highlight on another window's tab
+	// bar. Absent outside the Electron preload (web build / unit tests) -> no-op.
+	const highlightDropZone = useCallback((windowId: string, active: boolean) => {
+		const toggle = window.maestro?.windows?.highlightDropZone;
+		if (!toggle) return;
+		void toggle(windowId, active).catch((error) => {
+			logger.warn('[useTabDragOut] failed to toggle drop-zone highlight', error);
+		});
+	}, []);
+
+	// Single writer for the resolved dock target. On every transition it also
+	// drives the cross-window drop-zone highlight: dim the window we just left,
+	// light the one we just entered. Keeping this the only mutator of
+	// targetWindowIdRef (read synchronously on drop) guarantees a highlight can
+	// never outlive its hover.
+	const applyTargetWindow = useCallback(
+		(id: string | null) => {
+			const prev = targetWindowIdRef.current;
+			if (prev === id) return;
+			targetWindowIdRef.current = id;
+			if (prev) highlightDropZone(prev, false);
+			if (id) highlightDropZone(id, true);
+		},
+		[highlightDropZone]
+	);
 
 	const resetLookup = useCallback(() => {
-		targetWindowIdRef.current = null;
+		// Clears targetWindowIdRef and any active highlight in one step.
+		applyTargetWindow(null);
 		lookupInFlightRef.current = false;
 		pendingLookupRef.current = null;
-	}, []);
+	}, [applyTargetWindow]);
 
 	// Named function expression so the trailing replay can self-reference without
 	// a ref dance or an exhaustive-deps cycle.
-	const resolveTargetWindow = useCallback(function resolveTargetWindow(point: DragOutPoint): void {
-		// findWindowAtPoint is absent outside the Electron preload (web build / unit
-		// tests); degrade to "no dock target" rather than throwing mid-drag.
-		const findWindowAtPoint = window.maestro?.windows?.findWindowAtPoint;
-		if (!findWindowAtPoint) return;
-		// Only one lookup in flight: park the newest point and replay it on settle.
-		if (lookupInFlightRef.current) {
-			pendingLookupRef.current = point;
-			return;
-		}
-		lookupInFlightRef.current = true;
-		void findWindowAtPoint(point.x, point.y)
-			.then((windowId) => {
-				targetWindowIdRef.current = windowId;
-			})
-			.catch((error) => {
-				logger.warn('[useTabDragOut] failed to resolve target window', error);
-				targetWindowIdRef.current = null;
-			})
-			.finally(() => {
-				lookupInFlightRef.current = false;
-				const pending = pendingLookupRef.current;
-				pendingLookupRef.current = null;
-				// A newer sample arrived mid-flight - resolve it now the IPC is free.
-				if (pending) resolveTargetWindow(pending);
-			});
-	}, []);
+	const resolveTargetWindow = useCallback(
+		function resolveTargetWindow(point: DragOutPoint): void {
+			// findWindowAtPoint is absent outside the Electron preload (web build / unit
+			// tests); degrade to "no dock target" rather than throwing mid-drag.
+			const findWindowAtPoint = window.maestro?.windows?.findWindowAtPoint;
+			if (!findWindowAtPoint) return;
+			// Only one lookup in flight: park the newest point and replay it on settle.
+			if (lookupInFlightRef.current) {
+				pendingLookupRef.current = point;
+				return;
+			}
+			lookupInFlightRef.current = true;
+			void findWindowAtPoint(point.x, point.y)
+				.then((windowId) => {
+					// A result that lands after the drag ended would re-light a window with
+					// no drag left to clear it; drop it.
+					if (!isDraggingRef.current) return;
+					applyTargetWindow(windowId);
+				})
+				.catch((error) => {
+					logger.warn('[useTabDragOut] failed to resolve target window', error);
+					applyTargetWindow(null);
+				})
+				.finally(() => {
+					lookupInFlightRef.current = false;
+					const pending = pendingLookupRef.current;
+					pendingLookupRef.current = null;
+					// A newer sample arrived mid-flight - resolve it now the IPC is free.
+					if (pending && isDraggingRef.current) resolveTargetWindow(pending);
+				});
+		},
+		[applyTargetWindow]
+	);
 
 	const beginDragOut = useCallback(() => {
+		isDraggingRef.current = true;
 		boundsRef.current = null;
 		pointRef.current = null;
 		isOutsideRef.current = false;
@@ -173,13 +211,14 @@ export function useTabDragOut(): UseTabDragOutReturn {
 				// a drop can dock there, else fall back to spawning a new window.
 				resolveTargetWindow(point);
 			} else {
-				// Inside the owning window (or bounds unresolved): no dock target.
-				targetWindowIdRef.current = null;
+				// Inside the owning window (or bounds unresolved): no dock target, and
+				// clear any highlight we lit on a window we have since moved back off.
+				applyTargetWindow(null);
 			}
 			isOutsideRef.current = outside;
 			setIsDraggingOut((prev) => (prev === outside ? prev : outside));
 		},
-		[resolveTargetWindow]
+		[resolveTargetWindow, applyTargetWindow]
 	);
 
 	const getDragOutPoint = useCallback(() => pointRef.current, []);
@@ -189,6 +228,10 @@ export function useTabDragOut(): UseTabDragOutReturn {
 	const getTargetWindowId = useCallback(() => targetWindowIdRef.current, []);
 
 	const endDragOut = useCallback(() => {
+		// Mark the drag done BEFORE resetLookup so any still-in-flight findWindowAtPoint
+		// is dropped instead of re-lighting a window; resetLookup then clears the
+		// current highlight via applyTargetWindow(null).
+		isDraggingRef.current = false;
 		boundsRef.current = null;
 		pointRef.current = null;
 		isOutsideRef.current = false;

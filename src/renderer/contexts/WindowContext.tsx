@@ -107,6 +107,14 @@ export interface WindowContextValue {
 	 * the target is this window or this window has no id yet.
 	 */
 	moveSessionToWindow: (sessionId: string, targetWindowId: string) => Promise<void>;
+	/**
+	 * True while a tab from ANOTHER window is being dragged over THIS window as a
+	 * candidate dock target. The main process pushes the toggle on
+	 * `windows:highlightDropZone` (sent only to the hovered window); the tab bar
+	 * reads this to light up its drop zone. False whenever no cross-window drag is
+	 * hovering this window.
+	 */
+	isDropTarget: boolean;
 }
 
 const WindowContext = createContext<WindowContextValue | null>(null);
@@ -150,6 +158,10 @@ export function WindowProvider({ children }: { children: ReactNode }) {
 	// source for cross-window ownership: which window surfaces an agent and its
 	// 1-based number. Empty (single-window common case) until the first hydrate.
 	const [windows, setWindows] = useState<WindowInfo[]>([]);
+	// True while a tab from another window is being dragged over this one as a
+	// dock target (driven by the `windows:highlightDropZone` push). Transient
+	// drag-feedback state; cleared by the source window on drag end.
+	const [isDropTarget, setIsDropTarget] = useState(false);
 
 	/**
 	 * Pull this window's owned agents + active agent from the main-process
@@ -188,6 +200,21 @@ export function WindowProvider({ children }: { children: ReactNode }) {
 		});
 		return unsubscribe;
 	}, [hydrate]);
+
+	// Light up this window's tab-bar drop zone while a tab from another window is
+	// dragged over it. The main process sends the toggle only to the hovered
+	// window; we still compare against our own id defensively. Null-safe so a
+	// preload without the channel (web build / isolation tests) simply never
+	// highlights instead of throwing.
+	useEffect(() => {
+		const subscribe = window.maestro?.windows?.onHighlightDropZone;
+		if (!subscribe) return;
+		const unsubscribe = subscribe((payload) => {
+			if (windowId && payload.windowId && payload.windowId !== windowId) return;
+			setIsDropTarget(payload.active);
+		});
+		return unsubscribe;
+	}, [windowId]);
 
 	// Agents claimed by OTHER windows. The primary window is the catch-all owner,
 	// so it needs to know which agents a secondary window has taken over to scope
@@ -297,6 +324,7 @@ export function WindowProvider({ children }: { children: ReactNode }) {
 			closeTab,
 			moveSessionToNewWindow,
 			moveSessionToWindow,
+			isDropTarget,
 		}),
 		[
 			windowId,
@@ -309,6 +337,7 @@ export function WindowProvider({ children }: { children: ReactNode }) {
 			closeTab,
 			moveSessionToNewWindow,
 			moveSessionToWindow,
+			isDropTarget,
 		]
 	);
 

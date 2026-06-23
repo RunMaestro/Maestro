@@ -17,6 +17,7 @@ import type { WindowBounds } from '../../../../shared/window-types';
 
 const getBounds = () => vi.mocked(window.maestro.windows.getBounds);
 const findWindowAtPoint = () => vi.mocked(window.maestro.windows.findWindowAtPoint);
+const highlightDropZone = () => vi.mocked(window.maestro.windows.highlightDropZone);
 
 const WINDOW_BOUNDS: WindowBounds = { x: 100, y: 100, width: 800, height: 600 };
 
@@ -233,6 +234,96 @@ describe('useTabDragOut', () => {
 				expect(result.current.getTargetWindowId()).toBeNull();
 			} finally {
 				window.maestro.windows.findWindowAtPoint = original;
+			}
+		});
+	});
+
+	describe('drop-zone highlight', () => {
+		it('lights up the target window once the cursor hovers it', async () => {
+			const { result } = renderHook(() => useTabDragOut());
+			await armWithBounds(result);
+			findWindowAtPoint().mockResolvedValue('window-2');
+
+			await act(async () => result.current.trackDragOut(50, 200)); // over window-2
+			expect(highlightDropZone()).toHaveBeenCalledWith('window-2', true);
+		});
+
+		it('dims the previous window and lights the new one when the target changes', async () => {
+			const { result } = renderHook(() => useTabDragOut());
+			await armWithBounds(result);
+
+			findWindowAtPoint().mockResolvedValue('window-2');
+			await act(async () => result.current.trackDragOut(50, 200));
+			expect(highlightDropZone()).toHaveBeenCalledWith('window-2', true);
+
+			findWindowAtPoint().mockResolvedValue('window-3');
+			await act(async () => result.current.trackDragOut(40, 250));
+			// Old target cleared, new target lit - never two highlights at once.
+			expect(highlightDropZone()).toHaveBeenCalledWith('window-2', false);
+			expect(highlightDropZone()).toHaveBeenCalledWith('window-3', true);
+		});
+
+		it('clears the highlight when the cursor returns inside the owning window', async () => {
+			const { result } = renderHook(() => useTabDragOut());
+			await armWithBounds(result);
+			findWindowAtPoint().mockResolvedValue('window-2');
+
+			await act(async () => result.current.trackDragOut(50, 200)); // over window-2
+			expect(highlightDropZone()).toHaveBeenCalledWith('window-2', true);
+
+			act(() => result.current.trackDragOut(200, 200)); // back inside -> clears
+			expect(highlightDropZone()).toHaveBeenCalledWith('window-2', false);
+		});
+
+		it('clears the active highlight on endDragOut', async () => {
+			const { result } = renderHook(() => useTabDragOut());
+			await armWithBounds(result);
+			findWindowAtPoint().mockResolvedValue('window-2');
+
+			await act(async () => result.current.trackDragOut(50, 200));
+			expect(highlightDropZone()).toHaveBeenCalledWith('window-2', true);
+
+			act(() => result.current.endDragOut());
+			expect(highlightDropZone()).toHaveBeenCalledWith('window-2', false);
+		});
+
+		it('does not re-light a window when the lookup settles after the drag ended', async () => {
+			const { result } = renderHook(() => useTabDragOut());
+			await armWithBounds(result);
+
+			// A lookup is in flight but unresolved when the drag ends.
+			let resolveLate!: (id: string | null) => void;
+			findWindowAtPoint().mockReturnValueOnce(
+				new Promise<string | null>((resolve) => {
+					resolveLate = resolve;
+				})
+			);
+
+			act(() => result.current.trackDragOut(50, 200)); // outside -> lookup dispatched
+			act(() => result.current.endDragOut()); // drag torn down first
+			highlightDropZone().mockClear();
+
+			// The stale resolution arrives - it must NOT light a window that can no
+			// longer be cleared.
+			await act(async () => {
+				resolveLate('window-2');
+			});
+			expect(highlightDropZone()).not.toHaveBeenCalled();
+			expect(result.current.getTargetWindowId()).toBeNull();
+		});
+
+		it('does not throw when highlightDropZone is unavailable', async () => {
+			const { result } = renderHook(() => useTabDragOut());
+			await armWithBounds(result);
+			findWindowAtPoint().mockResolvedValue('window-2');
+			const original = window.maestro.windows.highlightDropZone;
+			(window.maestro.windows as { highlightDropZone?: unknown }).highlightDropZone = undefined;
+			try {
+				await act(async () => result.current.trackDragOut(50, 200));
+				// The target still resolves; only the highlight side-effect is skipped.
+				expect(result.current.getTargetWindowId()).toBe('window-2');
+			} finally {
+				window.maestro.windows.highlightDropZone = original;
 			}
 		});
 	});
