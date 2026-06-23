@@ -16,7 +16,10 @@ vi.mock('../../../main/utils/logger', () => ({
 	},
 }));
 
-// Mock the web-desktop bridge so safeSend's unconditional fan-out is a no-op here.
+// Mock the web-desktop bridge. The fan-out is the web/mobile feed's lifeline, so
+// the mock is a spy we assert on (not just a no-op silencer): the "web feed stays
+// unified" cases below verify safeSend always fires it exactly once per push,
+// independent of how many desktop windows exist.
 vi.mock('../../../main/web-server/handlers/bridgeHandlers', () => ({
 	broadcastBridgeEvent: vi.fn(),
 }));
@@ -28,6 +31,7 @@ import {
 	type SafeSendFn,
 } from '../../../main/utils/safe-send';
 import { logger } from '../../../main/utils/logger';
+import { broadcastBridgeEvent } from '../../../main/web-server/handlers/bridgeHandlers';
 
 /** Build a fresh mock window whose webContents.send is independently spy-able. */
 function makeMockWindow(): { window: BrowserWindow; webContents: Partial<WebContents> } {
@@ -172,6 +176,62 @@ describe('utils/safe-send', () => {
 					'IPC',
 					expect.objectContaining({ error: expect.any(String) })
 				);
+			});
+		});
+
+		describe('web-desktop bridge fan-out (web feed stays unified)', () => {
+			// Phase 5, task 5: the web/mobile interface must remain a unified view of
+			// ALL agents regardless of which desktop window owns them. safeSend's bridge
+			// fan-out is the chokepoint that delivers every push to web clients, so these
+			// cases pin it: it fires exactly once per push, before/independent of the
+			// per-window broadcast loop, even when no live desktop window exists. A future
+			// "optimize into per-window targeting" change would break one of these.
+			it('fans out every push to the web-desktop bridge exactly once, with channel + args', () => {
+				safeSend('process:data', 'agent-1-ai-tab1', 'hello');
+
+				expect(broadcastBridgeEvent).toHaveBeenCalledTimes(1);
+				expect(broadcastBridgeEvent).toHaveBeenCalledWith('process:data', [
+					'agent-1-ai-tab1',
+					'hello',
+				]);
+			});
+
+			it('still reaches the web feed when no desktop windows are open', () => {
+				const safeSendNoWindows = createSafeSend(() => []);
+
+				safeSendNoWindows('process:exit', 'agent-1', 0);
+
+				expect(broadcastBridgeEvent).toHaveBeenCalledTimes(1);
+				expect(broadcastBridgeEvent).toHaveBeenCalledWith('process:exit', ['agent-1', 0]);
+			});
+
+			it('still reaches the web feed when every desktop window is destroyed', () => {
+				const dead = makeMockWindow();
+				vi.mocked(dead.window.isDestroyed!).mockReturnValue(true);
+				const safeSendDead = createSafeSend(() => [dead.window]);
+
+				safeSendDead('process:status', 'agent-1', 'busy');
+
+				// Renderer push is skipped (window dead) but the web feed is untouched.
+				expect(dead.webContents.send).not.toHaveBeenCalled();
+				expect(broadcastBridgeEvent).toHaveBeenCalledTimes(1);
+				expect(broadcastBridgeEvent).toHaveBeenCalledWith('process:status', ['agent-1', 'busy']);
+			});
+
+			it('fans out to the bridge once, not once per window (web feed is not narrowed or multiplied)', () => {
+				const a = makeMockWindow();
+				const b = makeMockWindow();
+				const c = makeMockWindow();
+				const broadcast = createSafeSend(() => [a.window, b.window, c.window]);
+
+				broadcast('session_output', 'agent-7', 'chunk');
+
+				// Each window's renderer receives the push (it filters to its own agents)...
+				expect(a.webContents.send).toHaveBeenCalledTimes(1);
+				expect(b.webContents.send).toHaveBeenCalledTimes(1);
+				expect(c.webContents.send).toHaveBeenCalledTimes(1);
+				// ...but web clients receive exactly one bridge.event regardless of window count.
+				expect(broadcastBridgeEvent).toHaveBeenCalledTimes(1);
 			});
 		});
 
