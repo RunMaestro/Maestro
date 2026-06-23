@@ -1,0 +1,236 @@
+/**
+ * Multi-Window IPC Handlers
+ *
+ * Exposes the `windows:*` channel surface that lets the renderer enumerate,
+ * create, focus, and close windows, and inspect/move the agents (sessions) each
+ * window owns. The {@link WindowRegistry} is the single source of truth for
+ * window<->session ownership; these handlers are a thin transport layer over it
+ * plus the window manager's secondary-window factory.
+ *
+ * Window construction (with all its security hardening) stays in
+ * `app-lifecycle/window-manager.ts` - `windows:create` delegates to the
+ * manager's `createSecondaryWindow`, which registers the new window itself.
+ */
+
+import { BrowserWindow, ipcMain } from 'electron';
+import type { WindowInfo, WindowState } from '../../../shared/window-types';
+import type { RegisteredWindow, WindowRegistry } from '../../window-registry';
+import type { WindowManager } from '../../app-lifecycle/window-manager';
+import { requireDependency, withIpcErrorLogging } from '../../utils/ipcHandler';
+import { logger } from '../../utils/logger';
+
+const LOG_CONTEXT = '[Windows]';
+
+/** On-screen rectangle returned by the bounds queries (Phase 3 tab drag). */
+interface WindowBounds {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+}
+
+/**
+ * Dependencies for the windows handlers. Both are getters because the registry
+ * and window manager are constructed at app-ready, after handler registration
+ * runs; a getter lets the handlers resolve the live instance lazily (and report
+ * a clear "not initialized" error if called before wiring).
+ */
+export interface WindowsHandlerDependencies {
+	getWindowRegistry: () => WindowRegistry | null;
+	getWindowManager: () => WindowManager | null;
+}
+
+/**
+ * Lightweight runtime view of a window for `windows:list` / `windows:create`.
+ * `activeSessionId` is renderer-driven state the registry does not track yet, so
+ * it is reported as `null` until later phases wire per-window active-agent state.
+ */
+function toWindowInfo(entry: RegisteredWindow): WindowInfo {
+	return {
+		id: entry.id,
+		isMain: entry.isMain,
+		sessionIds: [...entry.sessionIds],
+		activeSessionId: null,
+	};
+}
+
+/**
+ * Build the full {@link WindowState} for a window from its live `BrowserWindow`
+ * bounds plus the registry's session ownership. Panel-collapse and active-agent
+ * state are renderer-driven and not yet tracked, so they fall back to sensible
+ * defaults (expanded panels, no active agent) for this phase.
+ */
+function toWindowState(entry: RegisteredWindow): WindowState {
+	const { browserWindow } = entry;
+	const bounds = browserWindow.getBounds();
+	return {
+		id: entry.id,
+		x: bounds.x,
+		y: bounds.y,
+		width: bounds.width,
+		height: bounds.height,
+		isMaximized: browserWindow.isMaximized(),
+		isFullScreen: browserWindow.isFullScreen(),
+		sessionIds: [...entry.sessionIds],
+		activeSessionId: null,
+		leftPanelCollapsed: false,
+		rightPanelCollapsed: false,
+	};
+}
+
+/** Resolve the registry entry for the window that sent an IPC message. */
+function resolveCallingWindow(
+	event: Electron.IpcMainInvokeEvent,
+	registry: WindowRegistry
+): RegisteredWindow | undefined {
+	const browserWindow = BrowserWindow.fromWebContents(event.sender);
+	if (!browserWindow) return undefined;
+	return registry.getAll().find((entry) => entry.browserWindow === browserWindow);
+}
+
+/**
+ * Register all `windows:*` IPC handlers.
+ */
+export function registerWindowsHandlers(deps: WindowsHandlerDependencies): void {
+	const { getWindowRegistry, getWindowManager } = deps;
+
+	// Create a secondary window (optionally owning some agents / sized to bounds).
+	// The window manager builds + registers the window; we return its WindowInfo.
+	ipcMain.handle(
+		'windows:create',
+		withIpcErrorLogging(
+			{ context: LOG_CONTEXT, operation: 'create' },
+			async (sessionIds?: string[], bounds?: Partial<WindowState>): Promise<WindowInfo | null> => {
+				const manager = requireDependency(getWindowManager, 'Window manager');
+				const registry = requireDependency(getWindowRegistry, 'Window registry');
+				const browserWindow = manager.createSecondaryWindow(sessionIds ?? [], bounds);
+				const entry = registry
+					.getAll()
+					.find((candidate) => candidate.browserWindow === browserWindow);
+				if (!entry) {
+					// createSecondaryWindow registers the window itself, so this should
+					// not happen; if the manager was built without the registry the
+					// window opened untracked - surface it rather than fabricate an id.
+					logger.warn('Created window is not tracked by the registry', LOG_CONTEXT);
+					return null;
+				}
+				return toWindowInfo(entry);
+			}
+		)
+	);
+
+	// Close a window by ID. The primary window can never be closed this way -
+	// quitting the app is the primary's only teardown path.
+	ipcMain.handle(
+		'windows:close',
+		withIpcErrorLogging(
+			{ context: LOG_CONTEXT, operation: 'close' },
+			async (windowId: string): Promise<{ closed: boolean; error?: string }> => {
+				const registry = requireDependency(getWindowRegistry, 'Window registry');
+				const entry = registry.get(windowId);
+				if (!entry) return { closed: false, error: 'Window not found' };
+				if (entry.isMain) return { closed: false, error: 'Cannot close the primary window' };
+				if (!entry.browserWindow.isDestroyed()) entry.browserWindow.close();
+				return { closed: true };
+			}
+		)
+	);
+
+	// Enumerate every open window.
+	ipcMain.handle(
+		'windows:list',
+		withIpcErrorLogging(
+			{ context: LOG_CONTEXT, operation: 'list' },
+			async (): Promise<WindowInfo[]> => {
+				const registry = requireDependency(getWindowRegistry, 'Window registry');
+				return registry.getAll().map(toWindowInfo);
+			}
+		)
+	);
+
+	// Which window owns a given agent (session), or null if none does.
+	ipcMain.handle(
+		'windows:getForSession',
+		withIpcErrorLogging(
+			{ context: LOG_CONTEXT, operation: 'getForSession' },
+			async (sessionId: string): Promise<string | null> => {
+				const registry = requireDependency(getWindowRegistry, 'Window registry');
+				return registry.getWindowForSession(sessionId);
+			}
+		)
+	);
+
+	// Move an agent from one window to another.
+	ipcMain.handle(
+		'windows:moveSession',
+		withIpcErrorLogging(
+			{ context: LOG_CONTEXT, operation: 'moveSession' },
+			async (
+				sessionId: string,
+				fromWindowId: string,
+				toWindowId: string
+			): Promise<{ moved: boolean; error?: string }> => {
+				const registry = requireDependency(getWindowRegistry, 'Window registry');
+				if (!registry.get(fromWindowId) || !registry.get(toWindowId)) {
+					return { moved: false, error: 'Unknown source or destination window' };
+				}
+				registry.moveSession(sessionId, fromWindowId, toWindowId);
+				return { moved: true };
+			}
+		)
+	);
+
+	// Bring a window to the foreground (restoring it first if minimized).
+	ipcMain.handle(
+		'windows:focusWindow',
+		withIpcErrorLogging(
+			{ context: LOG_CONTEXT, operation: 'focusWindow' },
+			async (windowId: string): Promise<{ focused: boolean; error?: string }> => {
+				const registry = requireDependency(getWindowRegistry, 'Window registry');
+				const entry = registry.get(windowId);
+				if (!entry || entry.browserWindow.isDestroyed()) {
+					return { focused: false, error: 'Window not found' };
+				}
+				const { browserWindow } = entry;
+				if (browserWindow.isMinimized()) browserWindow.restore();
+				browserWindow.focus();
+				return { focused: true };
+			}
+		)
+	);
+
+	// Find the window whose screen bounds contain a point (Phase 3 tab drag).
+	ipcMain.handle(
+		'windows:findWindowAtPoint',
+		withIpcErrorLogging(
+			{ context: LOG_CONTEXT, operation: 'findWindowAtPoint' },
+			async (screenX: number, screenY: number): Promise<string | null> => {
+				const registry = requireDependency(getWindowRegistry, 'Window registry');
+				return registry.findWindowAtPoint(screenX, screenY);
+			}
+		)
+	);
+
+	// The remaining two handlers resolve the *calling* window from event.sender,
+	// so they take the raw (event, ...) form rather than withIpcErrorLogging
+	// (which strips the event). Unexpected errors bubble to Sentry per policy.
+
+	// Current window's full WindowState (bounds + owned agents).
+	ipcMain.handle('windows:getState', (event: Electron.IpcMainInvokeEvent): WindowState | null => {
+		const registry = requireDependency(getWindowRegistry, 'Window registry');
+		const entry = resolveCallingWindow(event, registry);
+		return entry ? toWindowState(entry) : null;
+	});
+
+	// On-screen bounds of a window. Defaults to the calling window; pass a
+	// windowId to query a specific one (Phase 3 tab drag).
+	ipcMain.handle(
+		'windows:getBounds',
+		(event: Electron.IpcMainInvokeEvent, windowId?: string): WindowBounds | null => {
+			const registry = requireDependency(getWindowRegistry, 'Window registry');
+			const entry = windowId ? registry.get(windowId) : resolveCallingWindow(event, registry);
+			if (!entry || entry.browserWindow.isDestroyed()) return null;
+			return entry.browserWindow.getBounds();
+		}
+	);
+}

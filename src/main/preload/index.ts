@@ -57,6 +57,7 @@ import { createWakatimeApi } from './wakatime';
 import { createMaestroCliApi } from './maestroCli';
 import { createPromptsApi } from './prompts';
 import { createMemoryApi } from './memory';
+import { createWindowsApi } from './windows';
 
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
@@ -218,6 +219,9 @@ contextBridge.exposeInMainWorld('maestro', {
 	prompts: createPromptsApi(),
 	// Per-project Memory API (Claude Code memory viewer)
 	memory: createMemoryApi(),
+
+	// Multi-window API (window.maestro.windows.* — enumerate/create/move windows)
+	windows: createWindowsApi(),
 });
 
 // Re-export factory functions for external consumers (e.g., tests)
@@ -306,6 +310,8 @@ export {
 	createPromptsApi,
 	// Memory Viewer
 	createMemoryApi,
+	// Multi-window
+	createWindowsApi,
 };
 
 // Re-export types for TypeScript consumers
@@ -545,3 +551,8 @@ export type {
 	PromptsApi,
 	CorePromptData,
 } from './prompts';
+export type {
+	// From windows
+	WindowsApi,
+	WindowBounds,
+} from './windows';

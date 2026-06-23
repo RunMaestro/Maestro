@@ -3751,6 +3751,63 @@ interface MaestroAPI {
 			agentId?: string
 		) => Promise<{ success: boolean; path?: string; error?: string }>;
 	};
+	// Multi-window API — enumerate/create/focus/close windows and inspect or
+	// move the agents (sessions) each window owns. `sessionIds` are agent IDs.
+	windows: {
+		create: (
+			sessionIds?: string[],
+			bounds?: Partial<{
+				x: number;
+				y: number;
+				width: number;
+				height: number;
+				isMaximized: boolean;
+				isFullScreen: boolean;
+				sessionIds: string[];
+				activeSessionId: string | null;
+				leftPanelCollapsed: boolean;
+				rightPanelCollapsed: boolean;
+			}>
+		) => Promise<{
+			id: string;
+			isMain: boolean;
+			sessionIds: string[];
+			activeSessionId: string | null;
+		} | null>;
+		close: (windowId: string) => Promise<{ closed: boolean; error?: string }>;
+		list: () => Promise<
+			Array<{
+				id: string;
+				isMain: boolean;
+				sessionIds: string[];
+				activeSessionId: string | null;
+			}>
+		>;
+		getForSession: (sessionId: string) => Promise<string | null>;
+		moveSession: (
+			sessionId: string,
+			fromWindowId: string,
+			toWindowId: string
+		) => Promise<{ moved: boolean; error?: string }>;
+		focusWindow: (windowId: string) => Promise<{ focused: boolean; error?: string }>;
+		getState: () => Promise<{
+			id: string;
+			x: number;
+			y: number;
+			width: number;
+			height: number;
+			isMaximized: boolean;
+			isFullScreen: boolean;
+			sessionIds: string[];
+			activeSessionId: string | null;
+			leftPanelCollapsed: boolean;
+			rightPanelCollapsed: boolean;
+		} | null>;
+		getBounds: (
+			windowId?: string
+		) => Promise<{ x: number; y: number; width: number; height: number } | null>;
+		findWindowAtPoint: (screenX: number, screenY: number) => Promise<string | null>;
+	};
 }
 
 declare global {
