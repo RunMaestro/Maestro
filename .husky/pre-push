@@ -1,7 +1,7 @@
 #!/bin/sh
 
-# Run repo-wide validation before allowing a push.
-# This mirrors the main CI gate: prompts, repo-wide Prettier, type checks, ESLint, and tests.
+# Run changed-file validation before allowing a push.
+# Use MAESTRO_FULL_PUSH_VALIDATE=1 to run repo-wide format, type checks, ESLint, and tests.
 #
 # Skip validation when the push only DELETES refs (no new commits to validate).
 # Git feeds ref updates on stdin as: <local ref> <local sha> <remote ref> <remote sha>
@@ -9,9 +9,12 @@
 z40=0000000000000000000000000000000000000000
 only_deletes=1
 saw_ref=0
+ref_updates=
 while read -r local_ref local_sha remote_ref remote_sha; do
 	[ -z "$local_ref$remote_ref" ] && continue
 	saw_ref=1
+	ref_updates="${ref_updates}${local_ref} ${local_sha} ${remote_ref} ${remote_sha}
+"
 	case "$local_sha" in
 		"$z40" | "") : ;; # deletion, nothing to validate
 		*) only_deletes=0 ;;
@@ -23,4 +26,10 @@ if [ "$saw_ref" -eq 1 ] && [ "$only_deletes" -eq 1 ]; then
 	exit 0
 fi
 
-npm run validate:push
+if [ "${MAESTRO_FULL_PUSH_VALIDATE:-}" = "1" ]; then
+	echo "[pre-push] Running full push validation."
+	bun run validate:push:full
+else
+	echo "[pre-push] Running fast changed-file validation. Set MAESTRO_FULL_PUSH_VALIDATE=1 for the full gate."
+	printf '%s' "$ref_updates" | bun run validate:push:fast
+fi
