@@ -153,6 +153,7 @@ import { useLayerStack } from './contexts/LayerStackContext';
 import { notifyToast } from './stores/notificationStore';
 import { useModalActions, useModalStore } from './stores/modalStore';
 import { GitStatusProvider } from './contexts/GitStatusContext';
+import { WindowProvider } from './contexts/WindowContext';
 import { InputProvider, useInputContext } from './contexts/InputContext';
 import { useGroupChatStore } from './stores/groupChatStore';
 import { useBatchStore } from './stores/batchStore';
@@ -3571,6 +3572,10 @@ function GitStatusProviderFromStore({ children }: { children: ReactNode }) {
  * MaestroConsole - Main application component with context providers
  *
  * Wraps MaestroConsoleInner with context providers for centralized state management.
+ * WindowProvider - per-window identity (windowId/isMainWindow) and the agents
+ *   scoped to this window. Outermost so every descendant can read its window
+ *   identity; additive, so the primary window behaves exactly as before when
+ *   only one window exists.
  * InputProvider - centralized input state management
  * InlineWizardProvider - inline /wizard command state management
  */
@@ -3593,12 +3598,14 @@ export default function MaestroConsole() {
 	}
 
 	return (
-		<InlineWizardProvider>
-			<InputProvider>
-				<GitStatusProviderFromStore>
-					<MaestroConsoleInner />
-				</GitStatusProviderFromStore>
-			</InputProvider>
-		</InlineWizardProvider>
+		<WindowProvider>
+			<InlineWizardProvider>
+				<InputProvider>
+					<GitStatusProviderFromStore>
+						<MaestroConsoleInner />
+					</GitStatusProviderFromStore>
+				</InputProvider>
+			</InlineWizardProvider>
+		</WindowProvider>
 	);
 }
