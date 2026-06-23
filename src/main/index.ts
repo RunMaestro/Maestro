@@ -89,6 +89,7 @@ import {
 	registerMaestroCliHandlers,
 	registerPromptsHandlers,
 	registerMemoryHandlers,
+	registerWindowsHandlers,
 	setupLoggerEventForwarding,
 	cleanupAllGroomingSessions,
 	getActiveGroomingSessionCount,
@@ -155,6 +156,8 @@ import {
 	createQuitHandler,
 	type QuitHandler,
 } from './app-lifecycle';
+// Multi-window registry (single source of truth for window<->session ownership)
+import { WindowRegistry } from './window-registry';
 // Phase 3 refactoring - process listeners
 import { setupProcessListeners as setupProcessListenersModule } from './process-listeners';
 import { setupWakaTimeListener } from './process-listeners/wakatime-listener';
@@ -390,6 +393,13 @@ const devServerUrl = `http://localhost:${devServerPort}`;
 // installer is orphaned by before-quit preventDefault).
 let quitHandler: QuitHandler | null = null;
 
+// Registry that tracks every BrowserWindow and which agents (sessions) live in
+// each - the single source of truth for window<->session ownership. The object
+// is constructed here (it has no app-ready dependencies); it stays empty until
+// the primary window registers itself as `isMain` when createWindow() runs on
+// app-ready, and secondary windows register via createSecondaryWindow.
+const windowRegistry = new WindowRegistry();
+
 // Create window manager with dependency injection (Phase 4 refactoring)
 const windowManager = createWindowManager({
 	windowStateStore,
@@ -400,6 +410,14 @@ const windowManager = createWindowManager({
 	useNativeTitleBar,
 	autoHideMenuBar,
 	getConfirmQuit: () => quitHandler?.confirmQuit,
+	// Multi-window wiring: the manager registers the primary as `isMain` and every
+	// secondary window it builds. `getIsQuitting` lets a closing secondary skip
+	// registry churn once a quit is already in flight (the registry dies with the
+	// process anyway). `settingsStore` is threaded for the per-window panel/session
+	// persistence later phases consume.
+	windowRegistry,
+	settingsStore: store,
+	getIsQuitting: () => quitHandler?.isQuitConfirmed() ?? false,
 });
 
 // Create web server factory with dependency injection (Phase 2 refactoring)
@@ -437,6 +455,20 @@ function createWindow() {
 	// Handle closed event to clear the reference
 	mainWindow.on('closed', () => {
 		mainWindow = null;
+
+		// The primary window is the app's anchor: it owns the auto-updater, the
+		// global hotkey, the deep-link target, and the quit-confirmation surface.
+		// When it closes while secondary windows are still open (multi-window),
+		// those windows are orphaned, so quit the whole app. app.quit() routes
+		// through the existing quit handler, preserving the updater/confirmation
+		// flow. When the primary is the LAST window, we defer to
+		// 'window-all-closed' instead (macOS stays alive for dock relaunch), and
+		// we skip if a quit is already in flight to avoid re-entrancy.
+		const otherWindowsOpen = BrowserWindow.getAllWindows().length > 0;
+		if (otherWindowsOpen && !quitHandler?.isQuitConfirmed()) {
+			logger.info('Primary window closed with secondary windows open, quitting app', 'Window');
+			app.quit();
+		}
 	});
 
 	// Kill all managed processes before the renderer reloads after a crash.
@@ -1242,6 +1274,11 @@ app
 	});
 
 app.on('window-all-closed', () => {
+	// This fires only when every window (primary + any secondary windows) is
+	// closed, so the primary is necessarily gone by now. Closing a single
+	// secondary window while the primary stays open does NOT fire this event, so
+	// secondary windows never trigger a quit here (the primary's own `closed`
+	// handler covers the "primary gone, secondaries still open" case above).
 	if (!isMacOS()) {
 		app.quit();
 	} else {
@@ -1454,6 +1491,15 @@ function setupIpcHandlers() {
 
 	// Register project Memory handlers (Claude Code per-project memory viewer)
 	registerMemoryHandlers();
+
+	// Register multi-window handlers (windows:* channel surface). Registered here
+	// because the running app wires handlers through setupIpcHandlers(), not
+	// registerAllHandlers(). The registry and window manager are module-scope
+	// instances; lazy getters resolve the live instance at call time.
+	registerWindowsHandlers({
+		getWindowRegistry: () => windowRegistry,
+		getWindowManager: () => windowManager,
+	});
 
 	// Register Context Merge handlers for session context transfer and grooming
 	registerContextHandlers({
