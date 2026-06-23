@@ -319,6 +319,9 @@ export const FilePreview = React.memo(
 		const language = file ? getLanguageFromFilename(file.name) : '';
 		const isMarkdown = language === 'markdown';
 		const isHtml = file ? /\.html?$/i.test(file.name) : false;
+		// Mermaid diagram files render as a diagram by default (like markdown);
+		// Cmd+E drops into source editing since they're plain editable text.
+		const isMermaid = file ? /\.(mmd|mermaid)$/i.test(file.name) : false;
 		const isReadableText = file ? !isMarkdown && isReadableTextPreview(file.name) : false;
 		const isCsv = language === 'csv';
 		const isJsonl = language === 'jsonl';
@@ -419,6 +422,7 @@ export const FilePreview = React.memo(
 			if (isEditableText && markdownEditMode) return true; // CM6 editor
 			if (markdownEditMode) return false;
 			if (isMarkdown || isCsv || isJsonl) return false;
+			if (isMermaid) return false; // rendered diagram has no source gutter
 			if (isJson && searchMode === 'jq') return false;
 			if (isHtml && htmlRenderMode) return false;
 			// Rich-tier readable text uses a wrapped prose block with no gutter; the
@@ -432,6 +436,7 @@ export const FilePreview = React.memo(
 			isEditableText,
 			markdownEditMode,
 			isMarkdown,
+			isMermaid,
 			isCsv,
 			isJsonl,
 			isJson,
@@ -744,6 +749,7 @@ export const FilePreview = React.memo(
 		// below so it agrees with what's actually on screen.
 		const previewSyncSource = (): 'giant' | 'text-fast' | 'text-dom' | 'markdown-dom' | null => {
 			if (isHtml && htmlRenderMode) return null;
+			if (isMermaid) return null;
 			if (isCsv) return null;
 			if (isJsonl || (isJson && searchMode === 'jq')) return null;
 			if (previewTier === 'giant') return 'giant';
@@ -1979,6 +1985,13 @@ export const FilePreview = React.memo(
 								backgroundColor: '#fff',
 							}}
 						/>
+					) : isMermaid && !markdownEditMode ? (
+						// Rendered Mermaid diagram. Reuses the same theme-aware,
+						// DOMPurify-sanitized renderer that draws ```mermaid``` blocks
+						// inside markdown. Cmd+E toggles to source editing.
+						<div className="p-4">
+							<MermaidRenderer chart={file.content} theme={theme} />
+						</div>
 					) : isCsv && !markdownEditMode ? (
 						<CsvTableRenderer
 							content={file.content}

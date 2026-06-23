@@ -3447,7 +3447,7 @@ interface MaestroAPI {
 			projectRoot: string,
 			content: string,
 			promptFiles?: Record<string, string>
-		) => Promise<void>;
+		) => Promise<{ changed: boolean }>;
 		deleteYaml: (projectRoot: string) => Promise<boolean>;
 		validateYaml: (content: string) => Promise<{ valid: boolean; errors: string[] }>;
 		savePipelineLayout: (layout: Record<string, unknown>) => Promise<void>;

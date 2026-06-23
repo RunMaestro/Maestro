@@ -321,6 +321,38 @@ describe('FilePreview', () => {
 		});
 	});
 
+	describe('Mermaid (.mmd) preview', () => {
+		const mermaidFile = {
+			name: 'diagram.mmd',
+			content: 'flowchart TB\n  A[Start] --> B[End]',
+			path: '/test/diagram.mmd',
+		};
+
+		it('renders .mmd files as a diagram instead of raw text', () => {
+			render(<FilePreview {...defaultProps} file={mermaidFile} />);
+
+			expect(screen.getByTestId('mermaid-renderer')).toBeInTheDocument();
+			expect(screen.queryByTestId('syntax-highlighter')).not.toBeInTheDocument();
+		});
+
+		it('also renders the uppercase .MERMAID extension as a diagram', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ ...mermaidFile, name: 'diagram.MERMAID', path: '/test/diagram.MERMAID' }}
+				/>
+			);
+
+			expect(screen.getByTestId('mermaid-renderer')).toBeInTheDocument();
+		});
+
+		it('shows the raw source instead of the diagram in edit mode', () => {
+			render(<FilePreview {...defaultProps} file={mermaidFile} markdownEditMode={true} />);
+
+			expect(screen.queryByTestId('mermaid-renderer')).not.toBeInTheDocument();
+		});
+	});
+
 	describe('readable text preview', () => {
 		it('applies Bionify spans to .txt previews when reading mode is enabled', () => {
 			useSettingsStore.setState({ bionifyReadingMode: true });
