@@ -17,8 +17,23 @@ import {
 	useWindowOwnsSession,
 } from '../../../renderer/contexts/WindowContext';
 import type { WindowInfo, WindowState } from '../../../shared/window-types';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { notifyToast } from '../../../renderer/stores/notificationStore';
+import { createMockSession } from '../../helpers/mockSession';
+
+// The primary-window-empty guard surfaces a toast; mock it so tests assert the
+// guard fired without the real toast's side effects (logger/notification IPC).
+vi.mock('../../../renderer/stores/notificationStore', async () => {
+	const actual = await vi.importActual('../../../renderer/stores/notificationStore');
+	return { ...actual, notifyToast: vi.fn() };
+});
 
 const windows = () => window.maestro.windows;
+
+/** Replace the live agent list the guard reads when counting a window's agents. */
+function seedSessions(ids: string[]): void {
+	useSessionStore.setState({ sessions: ids.map((id) => createMockSession({ id })) });
+}
 
 /** Build a full WindowState, overriding only the fields a test cares about. */
 function makeState(partial: Partial<WindowState> & Pick<WindowState, 'id'>): WindowState {
@@ -60,6 +75,9 @@ describe('WindowContext', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		setUrl('/');
+		// The empty-primary guard reads the live agent list; start each test from a
+		// clean store so a prior test's seed can't leak into one that doesn't seed.
+		useSessionStore.setState({ sessions: [] });
 		// Reset the windows IPC mocks to their neutral baseline; tests override.
 		vi.mocked(windows().getState).mockResolvedValue(null);
 		vi.mocked(windows().list).mockResolvedValue([]);
@@ -374,6 +392,102 @@ describe('WindowContext', () => {
 			// Move rejected: the agent stays put rather than being stranded.
 			expect(result.current.sessionIds).toEqual(['a', 'b']);
 			expect(result.current.activeSessionId).toBe('a');
+		});
+	});
+
+	describe('primary-window-empty guard', () => {
+		it('blocks detaching the last agent out of the primary window (toast shown)', async () => {
+			setUrl('/');
+			vi.mocked(windows().getState).mockResolvedValue(
+				makeState({ id: 'primary-1', sessionIds: [], activeSessionId: null })
+			);
+			vi.mocked(windows().list).mockResolvedValue([makeInfo({ id: 'primary-1', isMain: true })]);
+			// The primary surfaces exactly one agent (catch-all owner, nothing claimed).
+			seedSessions(['only']);
+
+			const { result } = renderHook(() => useWindowContext(), { wrapper });
+			await waitFor(() => expect(result.current.windowId).toBe('primary-1'));
+
+			await act(async () => {
+				await result.current.moveSessionToNewWindow('only');
+			});
+
+			// Move is blocked: no window is created and the user is told why.
+			expect(windows().create).not.toHaveBeenCalled();
+			expect(windows().moveSession).not.toHaveBeenCalled();
+			expect(notifyToast).toHaveBeenCalledWith(expect.objectContaining({ color: 'yellow' }));
+		});
+
+		it('blocks docking the last agent out of the primary window (toast shown)', async () => {
+			setUrl('/');
+			vi.mocked(windows().getState).mockResolvedValue(
+				makeState({ id: 'primary-1', sessionIds: [], activeSessionId: null })
+			);
+			vi.mocked(windows().list).mockResolvedValue([
+				makeInfo({ id: 'primary-1', isMain: true }),
+				makeInfo({ id: 'win-2' }),
+			]);
+			seedSessions(['only']);
+
+			const { result } = renderHook(() => useWindowContext(), { wrapper });
+			await waitFor(() => expect(result.current.windowId).toBe('primary-1'));
+
+			await act(async () => {
+				await result.current.moveSessionToWindow('only', 'win-2');
+			});
+
+			expect(windows().moveSession).not.toHaveBeenCalled();
+			expect(notifyToast).toHaveBeenCalledWith(expect.objectContaining({ color: 'yellow' }));
+		});
+
+		it('allows the move when the primary keeps another agent', async () => {
+			setUrl('/');
+			vi.mocked(windows().getState).mockResolvedValue(
+				makeState({ id: 'primary-1', sessionIds: [], activeSessionId: null })
+			);
+			vi.mocked(windows().list).mockResolvedValue([makeInfo({ id: 'primary-1', isMain: true })]);
+			// Two unclaimed agents -> moving one still leaves the primary populated.
+			seedSessions(['a', 'b']);
+			vi.mocked(windows().create).mockResolvedValue(makeInfo({ id: 'win-3', sessionIds: ['a'] }));
+
+			const { result } = renderHook(() => useWindowContext(), { wrapper });
+			await waitFor(() => expect(result.current.windowId).toBe('primary-1'));
+
+			await act(async () => {
+				await result.current.moveSessionToNewWindow('a');
+			});
+
+			expect(windows().create).toHaveBeenCalledWith(['a'], undefined);
+			expect(windows().moveSession).toHaveBeenCalledWith('a', 'primary-1', 'win-3');
+			expect(notifyToast).not.toHaveBeenCalled();
+		});
+
+		it('allows emptying a SECONDARY window (only the primary is guarded)', async () => {
+			setUrl('/?windowId=win-2');
+			vi.mocked(windows().getState).mockResolvedValue(
+				makeState({ id: 'win-2', sessionIds: ['only'], activeSessionId: 'only' })
+			);
+			vi.mocked(windows().list).mockResolvedValue([
+				makeInfo({ id: 'primary-1', isMain: true }),
+				makeInfo({ id: 'win-2', sessionIds: ['only'], activeSessionId: 'only' }),
+			]);
+			// 'only' is this secondary's lone agent; a secondary may be emptied.
+			seedSessions(['only']);
+			vi.mocked(windows().create).mockResolvedValue(
+				makeInfo({ id: 'win-3', sessionIds: ['only'] })
+			);
+
+			const { result } = renderHook(() => useWindowContext(), { wrapper });
+			await waitFor(() => expect(result.current.sessionIds).toEqual(['only']));
+
+			await act(async () => {
+				await result.current.moveSessionToNewWindow('only');
+			});
+
+			expect(windows().create).toHaveBeenCalledWith(['only'], undefined);
+			expect(windows().moveSession).toHaveBeenCalledWith('only', 'win-2', 'win-3');
+			expect(notifyToast).not.toHaveBeenCalled();
+			expect(result.current.sessionIds).toEqual([]);
 		});
 	});
 

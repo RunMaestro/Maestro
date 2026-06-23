@@ -36,6 +36,8 @@ import {
 	type ReactNode,
 } from 'react';
 import type { WindowInfo } from '../../shared/window-types';
+import { useSessionStore } from '../stores/sessionStore';
+import { notifyToast } from '../stores/notificationStore';
 
 /**
  * Reads the `windowId` query param from the renderer URL. Returns `null` for
@@ -285,9 +287,46 @@ export function WindowProvider({ children }: { children: ReactNode }) {
 		setScope((prev) => removeFromScope(prev, sessionId));
 	}, []);
 
+	/**
+	 * Guard against emptying the primary window. The primary is the catch-all
+	 * owner, so it must always surface at least one agent; moving the last agent
+	 * out of it is blocked (with a toast) rather than leaving the user with no
+	 * primary tab strip. Secondary windows are NOT guarded - they may be emptied
+	 * and auto-close (Phase 6).
+	 *
+	 * The primary's agent count is the set of sessions no secondary window has
+	 * claimed, read live from the session store at gesture time (this runs on a
+	 * user move, so a snapshot read is correct and needs no reactivity). The move
+	 * empties the primary only when the agent leaving is the single agent it still
+	 * owns; an agent the store doesn't track (e.g. isolation tests) fails open so a
+	 * legitimate move is never wrongly blocked.
+	 *
+	 * Returns `true` when the move was blocked (and the toast fired) so callers can
+	 * bail before mutating any window state.
+	 */
+	const blocksEmptyingPrimary = useCallback(
+		(sessionId: string): boolean => {
+			if (!isMainWindow) return false;
+			const primaryAgents = useSessionStore
+				.getState()
+				.sessions.filter((session) => !sessionsOwnedElsewhere.has(session.id));
+			const isLastInPrimary =
+				primaryAgents.length <= 1 && primaryAgents.some((session) => session.id === sessionId);
+			if (!isLastInPrimary) return false;
+			notifyToast({
+				color: 'yellow',
+				title: "Can't empty the primary window",
+				message: 'This is the last agent in the primary window. Keep at least one agent here.',
+			});
+			return true;
+		},
+		[isMainWindow, sessionsOwnedElsewhere]
+	);
+
 	const moveSessionToNewWindow = useCallback(
 		async (sessionId: string, bounds?: { x: number; y: number }) => {
 			if (!windowId) return;
+			if (blocksEmptyingPrimary(sessionId)) return;
 			const created = await window.maestro.windows.create([sessionId], bounds);
 			if (!created) return;
 			// The new window already owns the agent; this transfer just removes it
@@ -296,20 +335,21 @@ export function WindowProvider({ children }: { children: ReactNode }) {
 			await window.maestro.windows.moveSession(sessionId, windowId, created.id);
 			setScope((prev) => removeFromScope(prev, sessionId));
 		},
-		[windowId]
+		[windowId, blocksEmptyingPrimary]
 	);
 
 	const moveSessionToWindow = useCallback(
 		async (sessionId: string, targetWindowId: string) => {
 			// No identity yet, or a "move" onto this same window: nothing to do.
 			if (!windowId || targetWindowId === windowId) return;
+			if (blocksEmptyingPrimary(sessionId)) return;
 			const result = await window.maestro.windows.moveSession(sessionId, windowId, targetWindowId);
 			// Only drop the agent from this window once the registry confirms the move,
 			// so a failed transfer never strands the agent (owned by no window).
 			if (!result?.moved) return;
 			setScope((prev) => removeFromScope(prev, sessionId));
 		},
-		[windowId]
+		[windowId, blocksEmptyingPrimary]
 	);
 
 	const value = useMemo<WindowContextValue>(
