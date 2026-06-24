@@ -142,7 +142,12 @@ export function useBatchKillAction({
 							finalTotals.totalCost > 0
 								? `- **Total Cost:** $${finalTotals.totalCost.toFixed(4)}`
 								: '',
-						].join('\n'),
+						]
+							// Drop the conditional token/cost placeholders so zero-cost,
+							// zero-token kills don't render trailing blank lines, matching
+							// buildFinalSummary's filter-then-join.
+							.filter(Boolean)
+							.join('\n'),
 						projectPath: flushState.projectPath,
 						sessionId,
 						success: false,

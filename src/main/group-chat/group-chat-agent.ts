@@ -233,7 +233,18 @@ export async function removeParticipant(
 	activeParticipantSessions.delete(key);
 
 	// Remove from group chat and return the persisted state to callers.
-	return removeParticipantFromChatWithResult(groupChatId, participantName);
+	// The pre-check above and this write run under separate awaits, so the chat
+	// can disappear in between (the storage helper reloads and throws if so).
+	// Preserve the idempotent "chat-missing is a no-op" contract rather than
+	// leaking that race to IPC callers.
+	try {
+		return await removeParticipantFromChatWithResult(groupChatId, participantName);
+	} catch (error) {
+		if (error instanceof Error && error.message === `Group chat not found: ${groupChatId}`) {
+			return null;
+		}
+		throw error;
+	}
 }
 
 /**

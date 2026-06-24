@@ -33,6 +33,14 @@ const BLOCK_TAGS = new Set([
 
 const SKIP_TAGS = new Set(['BUTTON', 'SCRIPT', 'STYLE']);
 
+// Surfaces whose own selection text should be copied natively (we bail out of
+// custom normalization when the selection touches one). GFM task-list checkbox
+// and radio inputs are excluded: they carry no copyable text and would
+// otherwise suppress normalization for ordinary prose selections that happen to
+// include a checklist item.
+const NATIVE_COPY_SURFACE_SELECTOR =
+	'pre, textarea, input:not([type="checkbox"]):not([type="radio"])';
+
 function trimHorizontalEnd(text: string): string {
 	return text.replace(/[ \t\u00a0]+$/g, '');
 }
@@ -95,8 +103,8 @@ function serializeRenderedChatNode(node: Node): string {
 
 function selectionIntersectsNativeCopySurface(range: Range, container: HTMLElement): boolean {
 	const surfaces = [
-		...(container.matches('pre, textarea, input') ? [container] : []),
-		...Array.from(container.querySelectorAll('pre, textarea, input')),
+		...(container.matches(NATIVE_COPY_SURFACE_SELECTOR) ? [container] : []),
+		...Array.from(container.querySelectorAll(NATIVE_COPY_SURFACE_SELECTOR)),
 	];
 
 	return surfaces.some((surface) => range.intersectsNode(surface));
@@ -187,7 +195,7 @@ export function getRenderedChatSelectionText(container: HTMLElement): string | n
 			? (range.commonAncestorContainer as Element)
 			: range.commonAncestorContainer.parentElement;
 
-	if (common?.closest('pre, textarea, input')) {
+	if (common?.closest(NATIVE_COPY_SURFACE_SELECTOR)) {
 		return null;
 	}
 

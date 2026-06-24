@@ -63,11 +63,18 @@ const CONTROL_SUMMARY_PREFIXES = [
 ];
 
 function isFinalAutoRunSummary(entry: AutoRunHistoryEntry): boolean {
+	// Real per-task rows carry completedTaskCount; summary/control rows never do.
+	// A genuine task summary can still read like a control phrase (e.g.
+	// "Auto Run completed: ..." pasted into a task), so trust the field first.
+	if (entry.completedTaskCount !== undefined) return false;
 	return entry.type === 'AUTO' && FINAL_AUTORUN_SUMMARY_RE.test(entry.summary);
 }
 
 function isAutoRunControlEntry(entry: AutoRunHistoryEntry): boolean {
 	if (entry.type !== 'AUTO') return true;
+	// A persisted task row (completedTaskCount set) is real work, never a control
+	// row, regardless of how its free-form summary happens to read.
+	if (entry.completedTaskCount !== undefined) return false;
 	if (isFinalAutoRunSummary(entry)) return true;
 	if (LOOP_SUMMARY_RE.test(entry.summary)) return true;
 	return CONTROL_SUMMARY_PREFIXES.some((prefix) => entry.summary.startsWith(prefix));
@@ -80,6 +87,13 @@ function isAutoRunControlEntry(entry: AutoRunHistoryEntry): boolean {
  * process/runtime boundaries. The history file is the durable source for the
  * final summary, so aggregate entries after the previous final summary and
  * exclude summary/control rows that would double-count task work.
+ *
+ * Known limitation: the run boundary is the last persisted final-summary row.
+ * If a prior run crashed or was force-quit before writing its final summary,
+ * its task rows fall inside this window and inflate the totals. Because callers
+ * merge with `Math.max`, that inflation wins over the live counter. Filtering by
+ * a per-run start timestamp would close this gap; until every run writes a start
+ * marker, treat the aggregate as an upper bound rather than an exact count.
  */
 export function aggregateAutoRunHistoryTotals(
 	entries: ReadonlyArray<AutoRunHistoryEntry>

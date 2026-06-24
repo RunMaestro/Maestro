@@ -24,6 +24,7 @@ import {
 	type GroupChatHistoryEntry,
 	cleanMentionName,
 	findUniqueMentionMatch,
+	getMentionMatchPriority,
 	normalizeLegacyMentionName,
 	normalizeMentionName,
 } from '../../shared/group-chat-types';
@@ -514,7 +515,31 @@ function findSessionForParticipantName(
 	participantName: string,
 	sessions: readonly GroupChatSessionInfo[]
 ): GroupChatSessionInfo | undefined {
-	return findUniqueMentionMatch(participantName, sessions, (session) => session.name);
+	// This receives a persisted participant name, not a user-typed mention, so it
+	// must match the originating session conservatively. Priority-1 ("safe folded")
+	// matches collapse bracket styles (e.g. "Review Bot [Linux]" vs
+	// "Review Bot (Linux)") and could borrow the wrong session's cwd / custom args /
+	// SSH config. Only accept exact (4), legacy (3), or safe-normalized (2) matches,
+	// and bail on ties so an ambiguous lookup never silently picks one.
+	let bestPriority = 0;
+	let bestMatches: GroupChatSessionInfo[] = [];
+
+	for (const session of sessions) {
+		const priority = getMentionMatchPriority(participantName, session.name);
+		if (priority < 2) continue;
+
+		if (priority > bestPriority) {
+			bestPriority = priority;
+			bestMatches = [session];
+			continue;
+		}
+
+		if (priority === bestPriority) {
+			bestMatches.push(session);
+		}
+	}
+
+	return bestMatches.length === 1 ? bestMatches[0] : undefined;
 }
 
 /**
@@ -1191,6 +1216,14 @@ export async function routeModeratorResponse(
 					from: 'system',
 					content: `⚠️ Could not find participant @${autoRunName} for !autorun. Make sure the agent is added to the group chat.`,
 				});
+				continue;
+			}
+
+			// Multiple aliases can resolve to the same canonical participant
+			// (e.g. "@CIA-Agent-Super-Cool" and "@CIA-Agent-(Super-Cool)").
+			// extractAutoRunDirectives only dedupes raw aliases, so guard here to
+			// avoid emitting duplicate autoRunTriggered events for one agent.
+			if (autoRunParticipantNames.has(participant.name)) {
 				continue;
 			}
 			autoRunParticipantNames.add(participant.name);

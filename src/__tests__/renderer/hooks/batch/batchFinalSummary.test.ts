@@ -350,6 +350,62 @@ describe('buildFinalSummary', () => {
 		});
 	});
 
+	it('keeps real task rows whose summary reads like a control phrase (completedTaskCount set)', () => {
+		const totals = aggregateAutoRunHistoryTotals([
+			{
+				// A genuine task whose model-written summary happens to start with a
+				// reserved control prefix. completedTaskCount marks it as real work, so
+				// it must not be misclassified as a control/delimiter row and dropped.
+				type: 'AUTO',
+				timestamp: 1,
+				summary: 'PR created: wired up the new endpoint',
+				completedTaskCount: 2,
+				elapsedTimeMs: 250,
+				usageStats: {
+					inputTokens: 25,
+					outputTokens: 10,
+					cacheReadInputTokens: 0,
+					cacheCreationInputTokens: 0,
+					totalCostUsd: 0.04,
+					contextWindow: 0,
+				},
+			},
+		]);
+
+		expect(totals).toEqual({
+			totalCompletedTasks: 2,
+			totalElapsedMs: 250,
+			totalInputTokens: 25,
+			totalOutputTokens: 10,
+			totalCost: 0.04,
+			entryCount: 1,
+		});
+	});
+
+	it('does not treat a task row with completedTaskCount as the previous-run boundary', () => {
+		// A "...completed:" task row carrying completedTaskCount must not be read as
+		// the final-summary delimiter, otherwise later rows would be split off the run.
+		const totals = aggregateAutoRunHistoryTotals([
+			{
+				type: 'AUTO',
+				timestamp: 1,
+				summary: 'Auto Run completed: rewrote the parser',
+				completedTaskCount: 1,
+				elapsedTimeMs: 100,
+			},
+			{
+				type: 'AUTO',
+				timestamp: 2,
+				summary: 'second task',
+				completedTaskCount: 1,
+				elapsedTimeMs: 100,
+			},
+		]);
+
+		expect(totals?.totalCompletedTasks).toBe(2);
+		expect(totals?.entryCount).toBe(2);
+	});
+
 	it('merges final summary totals using persisted history as an upper-bound source', () => {
 		const merged = mergeFinalSummaryTotals(
 			{

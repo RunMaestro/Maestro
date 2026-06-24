@@ -361,18 +361,29 @@ export class FeedbackConversationManager {
 				hasImages: false,
 			});
 
-			// Spawn agent
-			window.maestro.process
-				.spawn({
-					sessionId: currentSessionId,
-					toolType: currentAgentType,
-					cwd: '.',
-					command: binaryPath,
-					args: argsForSpawn,
-					prompt,
-					...stdinFlags,
-					sessionSshRemoteConfig: currentSshRemoteConfig,
-				} as any)
+			// Spawn agent. A synchronous throw here (before a promise is returned)
+			// would bypass the .then/.catch chain below and leave resolveOnce
+			// unreached, hanging the turn until the inactivity timeout. Promise
+			// resolution funnels both sync and async failures through one path.
+			let spawnPromise: Promise<{ success?: boolean; pid?: number } | undefined>;
+			try {
+				spawnPromise = Promise.resolve(
+					window.maestro.process.spawn({
+						sessionId: currentSessionId,
+						toolType: currentAgentType,
+						cwd: '.',
+						command: binaryPath,
+						args: argsForSpawn,
+						prompt,
+						...stdinFlags,
+						sessionSshRemoteConfig: currentSshRemoteConfig,
+					} as any)
+				);
+			} catch (error: unknown) {
+				spawnPromise = Promise.reject(error);
+			}
+
+			spawnPromise
 				.then((spawnResult: { success?: boolean; pid?: number } | undefined) => {
 					if (spawnResult?.success !== false) return;
 
@@ -388,7 +399,7 @@ export class FeedbackConversationManager {
 					callbacks?.onError?.(output);
 					resolveOnce({ ...DEFAULT_FEEDBACK_RESPONSE, message });
 				})
-				.catch((error: Error) => {
+				.catch((error: unknown) => {
 					const output = redactProviderSecrets(
 						error instanceof Error ? error.message : String(error)
 					);

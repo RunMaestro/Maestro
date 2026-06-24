@@ -241,15 +241,21 @@ describe('FeedbackConversationManager provider startup errors', () => {
 			workingDirOverride: '/srv/app',
 		};
 		const manager = new FeedbackConversationManager();
-		manager.start({
+		const sessionId = manager.start({
 			agentType: 'codex',
 			systemPrompt: 'system prompt',
 			sshRemoteConfig,
 		});
 
-		void manager.sendMessage('hi', []);
+		const responsePromise = manager.sendMessage('hi', []);
 		await tick();
 
 		expect(processMock.spawn.mock.calls[0][0].sessionSshRemoteConfig).toEqual(sshRemoteConfig);
+
+		// Settle the in-flight turn so its inactivity timeout and listeners are
+		// torn down before the test ends (avoids open-handle flakiness).
+		const exitCallback = processMock.onExit.mock.calls[0][0];
+		exitCallback(sessionId, 0);
+		await responsePromise;
 	});
 });
