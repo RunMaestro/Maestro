@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 import type { ShellInfo } from '../../../../../types';
 import { logger } from '../../../../../utils/logger';
+import { captureException } from '../../../../../utils/sentry';
 import type { ShellSettingsState } from '../types';
 
 interface UseShellSettingsStateArgs {
@@ -21,11 +22,14 @@ export function useShellSettingsState({
 		try {
 			const detected = await window.maestro.shells.detect();
 			setShells(detected);
-			if (detected && detected.length > 0) {
+			if (detected.length > 0) {
 				setShellsLoaded(true);
 			}
 		} catch (error) {
 			logger.error('Failed to load shells:', undefined, error);
+			captureException(error instanceof Error ? error : new Error(String(error)), {
+				extra: { action: 'maestro.shells.detect' },
+			});
 		} finally {
 			setShellsLoading(false);
 		}

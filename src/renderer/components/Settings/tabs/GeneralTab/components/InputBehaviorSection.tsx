@@ -31,7 +31,7 @@ export function InputBehaviorSection({
 }: InputBehaviorSectionProps) {
 	const forcedParallelShortcut = shortcuts?.forcedParallelSend
 		? formatShortcutKeys(shortcuts.forcedParallelSend.keys)
-		: '⌘ ⇧ ↩';
+		: formatShortcutKeys(['Meta', 'Shift', 'Enter']);
 
 	return (
 		<div data-setting-id="general-input-behavior">

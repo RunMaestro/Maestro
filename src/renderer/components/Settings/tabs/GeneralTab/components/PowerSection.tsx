@@ -1,6 +1,6 @@
 import { Battery } from 'lucide-react';
+import { isLinux } from '../../../../../../shared/platformDetection';
 import type { Theme } from '../../../../../types';
-import { isLinuxPlatform } from '../../../../../utils/platformUtils';
 import { ToggleSwitch } from '../../../../ui/ToggleSwitch';
 
 interface PowerSectionProps {
@@ -53,7 +53,7 @@ export function PowerSection({
 					/>
 				</div>
 
-				{isLinuxPlatform() && (
+				{isLinux() && (
 					<div
 						className="text-xs p-2 rounded"
 						style={{

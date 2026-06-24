@@ -87,7 +87,8 @@ describe('GeneralTab hooks', () => {
 		});
 
 		it('keeps the fallback shell view after detection failure', async () => {
-			vi.mocked(window.maestro.shells.detect).mockRejectedValue(new Error('no shells'));
+			const error = new Error('no shells');
+			vi.mocked(window.maestro.shells.detect).mockRejectedValue(error);
 			const { result } = renderHook(() => useShellSettingsState({ setDefaultShell: vi.fn() }));
 
 			act(() => {
@@ -97,6 +98,9 @@ describe('GeneralTab hooks', () => {
 			await waitFor(() => expect(result.current.shellsLoading).toBe(false));
 			expect(result.current.shellsLoaded).toBe(false);
 			expect(result.current.shells).toEqual([]);
+			expect(captureException).toHaveBeenCalledWith(error, {
+				extra: { action: 'maestro.shells.detect' },
+			});
 		});
 
 		it('selects a shell and expands custom config when unavailable', () => {

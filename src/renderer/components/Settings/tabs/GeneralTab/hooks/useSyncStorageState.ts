@@ -62,9 +62,6 @@ export function useSyncStorageState({ isOpen }: UseSyncStorageStateArgs): SyncSt
 				} else {
 					setSyncError(syncResultErrorMessage(result, 'Failed to change storage location'));
 				}
-				if (result.errors && result.errors.length > 0) {
-					setSyncError(result.errors.join(', '));
-				}
 			} catch (error) {
 				setSyncError(error instanceof Error ? error.message : String(error));
 			} finally {

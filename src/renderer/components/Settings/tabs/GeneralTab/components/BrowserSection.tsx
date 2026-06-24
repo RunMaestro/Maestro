@@ -140,7 +140,9 @@ export function BrowserSection({
 							max={100}
 							value={browserTabKeepAliveLimit}
 							onChange={(e) =>
-								setBrowserTabKeepAliveLimit(Math.max(1, parseInt(e.target.value, 10) || 1))
+								setBrowserTabKeepAliveLimit(
+									Math.min(100, Math.max(1, parseInt(e.target.value, 10) || 1))
+								)
 							}
 							className="w-20 p-1.5 rounded border bg-transparent outline-none text-xs"
 							style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}

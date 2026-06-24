@@ -35,6 +35,13 @@ vi.mock('../../../../../renderer/utils/platformUtils', () => ({
 	isLinuxPlatform: vi.fn(() => false),
 }));
 
+vi.mock('../../../../../shared/platformDetection', () => ({
+	isLinux: vi.fn(() => false),
+	isMacOS: vi.fn(() => false),
+	isWindows: vi.fn(() => false),
+	getWhichCommand: vi.fn(() => 'which'),
+}));
+
 // Shared mock fns so tests can assert on useSettings setters
 const mockSetConductorProfile = vi.fn();
 const mockSetDefaultShell = vi.fn();
@@ -197,6 +204,7 @@ describe('GeneralTab', () => {
 
 			const textarea = screen.getByPlaceholderText(/I'm a senior developer/);
 			expect(textarea).toBeInTheDocument();
+			expect(screen.getByRole('textbox', { name: 'Conductor Profile' })).toBe(textarea);
 		});
 
 		it('should display character count as 0/5000 when empty', async () => {
@@ -1018,8 +1026,8 @@ describe('GeneralTab', () => {
 		});
 
 		it('should show Linux-specific note when on Linux platform', async () => {
-			const { isLinuxPlatform } = await import('../../../../../renderer/utils/platformUtils');
-			vi.mocked(isLinuxPlatform).mockReturnValue(true);
+			const { isLinux } = await import('../../../../../shared/platformDetection');
+			vi.mocked(isLinux).mockReturnValue(true);
 
 			render(<GeneralTab theme={mockTheme} isOpen={true} />);
 
@@ -1031,7 +1039,7 @@ describe('GeneralTab', () => {
 				screen.getByText(/limited support on some Linux desktop environments/)
 			).toBeInTheDocument();
 
-			vi.mocked(isLinuxPlatform).mockReturnValue(false);
+			vi.mocked(isLinux).mockReturnValue(false);
 		});
 
 		it('should not show Linux-specific note on non-Linux platforms', async () => {

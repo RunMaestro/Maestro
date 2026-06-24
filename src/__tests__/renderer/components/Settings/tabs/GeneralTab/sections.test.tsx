@@ -92,6 +92,23 @@ describe('GeneralTab section components', () => {
 		expect(screen.getAllByText('Ctrl+Shift+Enter')).toHaveLength(2);
 	});
 
+	it('uses the platform-aware default forced parallel shortcut fallback', () => {
+		render(
+			<InputBehaviorSection
+				theme={mockTheme}
+				enterToSendAI={true}
+				setEnterToSendAI={vi.fn()}
+				enterToSendAIExpanded={false}
+				setEnterToSendAIExpanded={vi.fn()}
+				forcedParallelExecution={false}
+				shortcuts={undefined as any}
+				forcedParallelWarning={forcedParallelState()}
+			/>
+		);
+
+		expect(screen.getAllByText('Ctrl+Shift+Enter')).toHaveLength(2);
+	});
+
 	it('shows and changes history synopsis debounce only when history is enabled', () => {
 		const setDefaultSaveToHistory = vi.fn();
 		const setSynopsisDebounceSeconds = vi.fn();
@@ -291,6 +308,10 @@ describe('GeneralTab section components', () => {
 
 		fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '0' } });
 		expect(setBrowserTabKeepAliveLimit).toHaveBeenCalledWith(1);
+
+		setBrowserTabKeepAliveLimit.mockClear();
+		fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '150' } });
+		expect(setBrowserTabKeepAliveLimit).toHaveBeenCalledWith(100);
 	});
 
 	it('hides browser keep-alive limit unless recent mode is selected', () => {

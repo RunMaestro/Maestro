@@ -24,6 +24,7 @@ export function ConductorProfileSection({
 				(Optional, max 5000 characters)
 			</p>
 			<textarea
+				aria-label="Conductor Profile"
 				value={conductorProfile}
 				onChange={(e) => setConductorProfile(e.target.value)}
 				placeholder="e.g., I'm a senior developer working on a React/TypeScript project. I prefer concise explanations and clean code patterns..."
