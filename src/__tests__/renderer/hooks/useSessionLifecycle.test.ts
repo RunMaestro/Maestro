@@ -192,6 +192,103 @@ describe('useSessionLifecycle', () => {
 			});
 		});
 
+		it('moves SSH project state to edited remote cwd and clears stale file and git caches', () => {
+			const session = createMockSession({
+				id: 'session-1',
+				cwd: '/home/dev/old-project',
+				fullPath: '/home/dev/old-project',
+				projectRoot: '/Users/jta/git-projects/old-project',
+				remoteCwd: '/home/dev/old-project',
+				sshRemoteId: 'remote-1',
+				sshRemote: {
+					id: 'remote-1',
+					name: 'Dev Server',
+					host: 'dev.example.com',
+				},
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'remote-1',
+					workingDirOverride: '/home/dev/old-project',
+					syncHistory: true,
+				},
+				fileTree: [{ name: 'old-file.ts', type: 'file' }],
+				fileExplorerExpanded: ['src'],
+				fileExplorerScrollPos: 42,
+				fileTreeStats: {
+					fileCount: 12,
+					folderCount: 3,
+					totalSize: 1024,
+				},
+				fileTreeTruncated: true,
+				fileTreeLoadedCap: 500,
+				fileTreeLoading: false,
+				fileTreeLoadingProgress: {
+					directoriesScanned: 3,
+					filesFound: 12,
+					currentDirectory: '/home/dev/old-project/src',
+				},
+				fileTreeLastScanTime: 12345,
+				fileTreeError: 'old error',
+				fileTreeRetryAt: 99999,
+				isGitRepo: true,
+				gitBranches: ['main', 'old-branch'],
+				gitTags: ['v1.0.0'],
+				gitRefsCacheTime: 54321,
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				result.current.handleSaveEditAgent(
+					'session-1',
+					'Remote Agent',
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					{
+						enabled: true,
+						remoteId: 'remote-1',
+						workingDirOverride: '/home/dev/new-project',
+						syncHistory: true,
+					}
+				);
+			});
+
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.cwd).toBe('/home/dev/new-project');
+			expect(updated.fullPath).toBe('/home/dev/new-project');
+			expect(updated.remoteCwd).toBe('/home/dev/new-project');
+			expect(updated.sessionSshRemoteConfig).toEqual({
+				enabled: true,
+				remoteId: 'remote-1',
+				workingDirOverride: '/home/dev/new-project',
+				syncHistory: true,
+			});
+			expect(updated.sshRemote).toBeUndefined();
+			expect(updated.sshRemoteId).toBeUndefined();
+			expect(updated.fileTree).toEqual([]);
+			expect(updated.fileExplorerExpanded).toEqual([]);
+			expect(updated.fileExplorerScrollPos).toBe(0);
+			expect(updated.fileTreeStats).toBeUndefined();
+			expect(updated.fileTreeTruncated).toBeUndefined();
+			expect(updated.fileTreeLoadedCap).toBeUndefined();
+			expect(updated.fileTreeLoading).toBeUndefined();
+			expect(updated.fileTreeLoadingProgress).toBeUndefined();
+			expect(updated.fileTreeLastScanTime).toBeUndefined();
+			expect(updated.fileTreeError).toBeUndefined();
+			expect(updated.fileTreeRetryAt).toBeUndefined();
+			expect(updated.isGitRepo).toBe(false);
+			expect(updated.gitBranches).toBeUndefined();
+			expect(updated.gitTags).toBeUndefined();
+			expect(updated.gitRefsCacheTime).toBeUndefined();
+		});
+
 		it('only modifies the targeted session', () => {
 			const session1 = createMockSession({ id: 'session-1', name: 'Session 1' });
 			const session2 = createMockSession({ id: 'session-2', name: 'Session 2' });

@@ -70,7 +70,7 @@ describe('ssh-command-builder', () => {
 				args: ['--print'],
 				cwd: '~/git-projects',
 			});
-			expect(result).toBe('cd "$HOME"/\'git-projects\' && claude \'--print\'');
+			expect(result).toBe("cd \"$HOME\"/'git-projects' && claude '--print'");
 		});
 
 		it('builds a command with environment variables', async () => {
