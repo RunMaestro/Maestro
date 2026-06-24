@@ -45,6 +45,7 @@ vi.mock('chokidar', () => ({
 import {
 	deleteCueConfigFile,
 	readCueConfigFile,
+	readCuePromptFile,
 	removeEmptyPromptsDir,
 	resolveCueConfigPath,
 	writeCueConfigFile,
@@ -242,6 +243,38 @@ describe('cue-config-repository', () => {
 				writeCuePromptFile(PROJECT_ROOT, '.maestro/prompts/../../etc/passwd', 'content')
 			).toThrow('resolves outside the prompts directory');
 			expect(mockWriteFileSync).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('readCuePromptFile', () => {
+		it('returns the file content when the prompt file exists', () => {
+			mockReadFileSync.mockReturnValue('body on disk');
+
+			const result = readCuePromptFile(PROJECT_ROOT, '.maestro/prompts/sub-1.md');
+
+			expect(result).toBe('body on disk');
+			expect(mockReadFileSync).toHaveBeenCalledWith(
+				path.join(PROJECT_ROOT, '.maestro/prompts/sub-1.md'),
+				'utf-8'
+			);
+		});
+
+		it('returns null when the prompt file is missing (read throws)', () => {
+			mockReadFileSync.mockImplementation(() => {
+				throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+			});
+
+			expect(readCuePromptFile(PROJECT_ROOT, '.maestro/prompts/missing.md')).toBeNull();
+		});
+
+		it('returns null for a path outside the prompts directory without reading', () => {
+			expect(readCuePromptFile(PROJECT_ROOT, '.maestro/other/file.md')).toBeNull();
+			expect(mockReadFileSync).not.toHaveBeenCalled();
+		});
+
+		it('returns null for an absolute path without reading', () => {
+			expect(readCuePromptFile(PROJECT_ROOT, '/etc/passwd')).toBeNull();
+			expect(mockReadFileSync).not.toHaveBeenCalled();
 		});
 	});
 

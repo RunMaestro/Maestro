@@ -185,6 +185,7 @@ describe('agents IPC handlers', () => {
 				'agents:getRemoteMaestroPAvailable',
 				'agents:getClaudeUsageSnapshots',
 				'agents:getClaudeUsageAccountKeys',
+				'agents:getLimitResetAt',
 				'claude:usage:refresh-all',
 				'agents:getCodexUsageSnapshots',
 				'agents:getCodexUsageAccountKeys',

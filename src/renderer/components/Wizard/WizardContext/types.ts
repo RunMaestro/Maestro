@@ -41,6 +41,12 @@ export interface WizardState {
 	customPath?: string;
 	customArgs?: string;
 	customEnvVars?: Record<string, string>;
+	// Claude token-source choice (claude-code only). Mirrors the per-session
+	// fields so the wizard-created session inherits the user's API/TUI/Dynamic
+	// pick. Undefined means "never chosen" - the per-agent default applies.
+	enableMaestroP?: boolean;
+	maestroPMode?: 'interactive' | 'dynamic';
+	maestroPPath?: string;
 	sessionSshRemoteConfig?: WizardSessionSshRemoteConfig;
 	directoryPath: string;
 	isGitRepo: boolean;
@@ -78,6 +84,9 @@ export type WizardAction =
 	| { type: 'SET_CUSTOM_PATH'; path: string | undefined }
 	| { type: 'SET_CUSTOM_ARGS'; args: string | undefined }
 	| { type: 'SET_CUSTOM_ENV_VARS'; envVars: Record<string, string> | undefined }
+	| { type: 'SET_ENABLE_MAESTRO_P'; value: boolean | undefined }
+	| { type: 'SET_MAESTRO_P_MODE'; mode: 'interactive' | 'dynamic' }
+	| { type: 'SET_MAESTRO_P_PATH'; path: string | undefined }
 	| {
 			type: 'SET_SESSION_SSH_REMOTE_CONFIG';
 			config: WizardSessionSshRemoteConfig | undefined;
@@ -136,6 +145,9 @@ export interface WizardContextAPI {
 	setCustomPath: (path: string | undefined) => void;
 	setCustomArgs: (args: string | undefined) => void;
 	setCustomEnvVars: (envVars: Record<string, string> | undefined) => void;
+	setEnableMaestroP: (value: boolean | undefined) => void;
+	setMaestroPMode: (mode: 'interactive' | 'dynamic') => void;
+	setMaestroPPath: (path: string | undefined) => void;
 	setSessionSshRemoteConfig: (config: WizardSessionSshRemoteConfig | undefined) => void;
 	setDirectoryPath: (path: string) => void;
 	setIsGitRepo: (isGitRepo: boolean) => void;

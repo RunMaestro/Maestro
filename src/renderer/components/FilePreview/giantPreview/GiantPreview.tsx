@@ -106,13 +106,13 @@ export const GiantPreview = forwardRef<GiantPreviewHandle, GiantPreviewProps>(fu
 	useImperativeHandle(
 		ref,
 		() => ({
-			findInContent: (query: string) => {
+			findInContent: (query: string, options) => {
 				// Search the ORIGINAL content (not view.state.doc which has the
 				// soft-wrap newlines). This keeps matches that straddle a wrap
 				// boundary findable. The search is pure on `content`, so it
 				// must run even before CM6 has mounted — scrollToMatch handles
 				// mount-state on its own.
-				return findAllInDoc(content, query);
+				return findAllInDoc(content, query, options);
 			},
 			scrollToMatch: (hit) => {
 				const view = viewRef.current;

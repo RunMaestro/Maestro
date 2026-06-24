@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AgentConfig } from '../../../../../types';
 import type { AgentSshRemoteConfig } from '../../../../../../shared/types';
 import { logger } from '../../../../../utils/logger';
@@ -59,6 +59,17 @@ export function useAgentConfigurationPanel({
 	const [availableModels, setAvailableModels] = useState<string[]>([]);
 	const [loadingModels, setLoadingModels] = useState(false);
 	const [refreshingAgent, setRefreshingAgent] = useState(false);
+	// Auto-detected maestro-p path, shown as helper text under the Claude Token
+	// Source path override (mirrors EditAgentModal). Local-only; the override is
+	// hidden over SSH where maestro-p is resolved on the remote PATH.
+	const [detectedMaestroPPath, setDetectedMaestroPPath] = useState<string | undefined>(undefined);
+
+	useEffect(() => {
+		void window.maestro.agents
+			.getMaestroPDetectedPath()
+			.then((p) => setDetectedMaestroPPath(p ?? undefined))
+			.catch(() => setDetectedMaestroPPath(undefined));
+	}, []);
 
 	const setCustomPath = useCallback(
 		(value: string) => setWizardCustomPath(normalizeOptionalWizardString(value)),
@@ -222,6 +233,7 @@ export function useAgentConfigurationPanel({
 		availableModels,
 		loadingModels,
 		refreshingAgent,
+		detectedMaestroPPath,
 		configuringTile,
 		detectedConfigAgent,
 		setCustomPath,

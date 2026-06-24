@@ -3,7 +3,6 @@ import {
 	useRef,
 	useEffect,
 	useCallback,
-	useMemo,
 	memo,
 	forwardRef,
 	useImperativeHandle,
@@ -49,6 +48,7 @@ import { AutoRunErrorBanner } from './AutoRunErrorBanner';
 import { AutoRunBottomPanel } from './AutoRunBottomPanel';
 import { NoFolderState, EmptyFolderState } from './AutoRunEmptyStates';
 import { useBatchStore } from '../../stores/batchStore';
+import { useThoughtStreamStore } from '../../stores/thoughtStreamStore';
 import { AutoRunAttachmentsPanel } from './AutoRunAttachmentsPanel';
 import { useTemplateAutocomplete, useAutoRunUndo, useAutoRunImageHandling } from '../../hooks';
 import { TemplateAutocompleteDropdown } from '../TemplateAutocompleteDropdown';
@@ -58,7 +58,7 @@ import { useAutoRunSearch } from '../../hooks/batch/useAutoRunSearch';
 import { useAutoRunKeyboard } from '../../hooks/batch/useAutoRunKeyboard';
 import { useAutoRunMarkdown } from '../../hooks/batch/useAutoRunMarkdown';
 import { useAutoRunScrollSync } from '../../hooks/batch/useAutoRunScrollSync';
-import { Maximize2, Edit as EditIcon, Eye, Search } from 'lucide-react';
+import { Maximize2, Edit as EditIcon, Eye, Search, Brain } from 'lucide-react';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { logger } from '../../utils/logger';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -127,6 +127,18 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		isRunningRef.current = isAutoRunActive;
 	}, [isAutoRunActive]);
 	const isStopping = batchRunState?.isStopping || false;
+
+	// Thought Stream restore affordance. While a run is active the brain /
+	// "View Thoughts" button lives on the Right Panel's active-run card, but that
+	// card is gated on `isRunning` and disappears once the run completes. If the
+	// user had minimized the Thought Stream, it would be left with no way back -
+	// so once the run is done we surface a restore button in the footer for this
+	// session's minimized stream, until they dismiss it with the panel's X.
+	const thoughtStreamSessionId = useThoughtStreamStore((s) => s.panelSessionId);
+	const thoughtStreamMinimized = useThoughtStreamStore((s) => s.minimized);
+	const restoreThoughtStream = useThoughtStreamStore((s) => s.restorePanel);
+	const showRestoreThoughtStream =
+		!isAutoRunActive && thoughtStreamMinimized && thoughtStreamSessionId === sessionId;
 	// Error state (Phase 5.10)
 	// Subscribe directly to the Zustand store to bypass the multi-hop prop chain
 	// (store → useBatchProcessor → useBatchHandlers → App → RightPanel → AutoRun)
@@ -536,26 +548,6 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 			bionifyAlgorithm,
 		});
 
-	// Goal-Driven progress slice for the bottom panel. Present only while a goal
-	// run is active; replaces the "X of Y tasks" readout with the agent's
-	// self-reported percent + iteration + rationale.
-	const goalInfo = useMemo(
-		() =>
-			batchRunState?.goalMode
-				? {
-						progress: batchRunState.goalProgress ?? 0,
-						iteration: batchRunState.goalIteration ?? 0,
-						rationale: batchRunState.goalRationale,
-					}
-				: null,
-		[
-			batchRunState?.goalMode,
-			batchRunState?.goalProgress,
-			batchRunState?.goalIteration,
-			batchRunState?.goalRationale,
-		]
-	);
-
 	// Keep the document selector badge in sync with the bottom-panel counter.
 	// The file watcher's refresh path can be stale (debounced/missed events, SSH poll lag),
 	// but savedContent for the selected doc is always authoritative — mirror it into the store.
@@ -841,20 +833,38 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 							</>
 						)}
 					</button>
+					{/* Thought Stream restore: a temporary home for a minimized stream once the run completes and the Right Panel's active-run card (with its brain button) is gone. Vanishes when dismissed via the panel's X (which clears panelSessionId). */}
+					{showRestoreThoughtStream && (
+						<button
+							onClick={restoreThoughtStream}
+							className="flex-1 flex items-center justify-center gap-1.5 px-2 py-1 rounded text-xs font-medium transition-colors hover:bg-white/10"
+							style={{
+								color: theme.colors.accent,
+								border: `1px solid ${theme.colors.accent}40`,
+								backgroundColor: `${theme.colors.accent}15`,
+							}}
+							title="Restore the minimized Thought Stream"
+						>
+							<Brain className="w-3 h-3" />
+							Thoughts
+						</button>
+					)}
 				</div>
 			)}
 
-			{/* Bottom Panel - shown when folder selected AND (there are tasks, an active
-			    goal run, unsaved changes, or content with token count) */}
+			{/* Bottom Panel - shown when folder selected AND (there are tasks, unsaved
+			    changes, or content with token count). Suppressed during goal runs:
+			    the active-run card in the Right Panel already shows goal % +
+			    rationale, so this footer would only restate it. */}
 			{folderPath &&
-				(taskCounts.total > 0 || goalInfo || (isDirty && !isLocked) || tokenCount !== null) && (
+				!batchRunState?.goalMode &&
+				(taskCounts.total > 0 || (isDirty && !isLocked) || tokenCount !== null) && (
 					<AutoRunBottomPanel
 						theme={theme}
 						taskCounts={taskCounts}
 						tokenCount={tokenCount}
 						isDirty={isDirty}
 						isLocked={isLocked}
-						goal={goalInfo}
 						onSave={handleSave}
 						onRevert={handleRevert}
 						onOpenResetTasksModal={() => setResetTasksModalOpen(true)}

@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import {
+	AutoResumeSection,
 	BrowserSection,
 	HistorySection,
 	InputBehaviorSection,
@@ -121,6 +122,51 @@ describe('GeneralTab section components', () => {
 		);
 		fireEvent.click(screen.getByRole('button', { name: '1 min' }));
 		expect(setSynopsisDebounceSeconds).toHaveBeenCalledWith(60);
+	});
+
+	it('wires auto-resume toggle and numeric interval controls', () => {
+		const setAutoResumeOnLimit = vi.fn();
+		const setAutoResumeCheckIntervalHours = vi.fn();
+		const setAutoResumeGiveUpDays = vi.fn();
+		const { rerender } = render(
+			<AutoResumeSection
+				theme={mockTheme}
+				autoResumeOnLimit={false}
+				setAutoResumeOnLimit={setAutoResumeOnLimit}
+				autoResumeCheckIntervalHours={2}
+				setAutoResumeCheckIntervalHours={setAutoResumeCheckIntervalHours}
+				autoResumeGiveUpDays={7}
+				setAutoResumeGiveUpDays={setAutoResumeGiveUpDays}
+			/>
+		);
+
+		expect(screen.queryByText('Check for availability every (hours)')).not.toBeInTheDocument();
+
+		fireEvent.click(
+			screen.getByRole('switch', {
+				name: 'Resume paused sessions when token/API credits are available',
+			})
+		);
+		expect(setAutoResumeOnLimit).toHaveBeenCalledWith(true);
+
+		rerender(
+			<AutoResumeSection
+				theme={mockTheme}
+				autoResumeOnLimit={true}
+				setAutoResumeOnLimit={setAutoResumeOnLimit}
+				autoResumeCheckIntervalHours={2}
+				setAutoResumeCheckIntervalHours={setAutoResumeCheckIntervalHours}
+				autoResumeGiveUpDays={7}
+				setAutoResumeGiveUpDays={setAutoResumeGiveUpDays}
+			/>
+		);
+
+		const inputs = screen.getAllByRole('spinbutton');
+		fireEvent.change(inputs[0], { target: { value: '0' } });
+		fireEvent.change(inputs[1], { target: { value: '14' } });
+
+		expect(setAutoResumeCheckIntervalHours).toHaveBeenCalledWith(1);
+		expect(setAutoResumeGiveUpDays).toHaveBeenCalledWith(14);
 	});
 
 	it('wires tab naming and placement controls', () => {

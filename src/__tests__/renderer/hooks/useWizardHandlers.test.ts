@@ -1892,6 +1892,113 @@ describe('useWizardHandlers', () => {
 			);
 		});
 
+		it('inherits the wizard Claude Token Source pick (TUI) on the new session', async () => {
+			useSessionStore.setState({ sessions: [], activeSessionId: null });
+
+			const deps = createMockDeps({
+				wizardContext: {
+					state: {
+						currentStep: 'review' as any,
+						isOpen: true,
+						selectedAgent: 'claude-code',
+						availableAgents: [],
+						agentName: 'TUI Project',
+						directoryPath: '/projects/tui-app',
+						isGitRepo: false,
+						detectedAgentPath: null,
+						directoryError: null,
+						hasExistingAutoRunDocs: false,
+						existingDocsCount: 0,
+						existingDocsChoice: null,
+						conversationHistory: [],
+						confidenceLevel: 90,
+						isReadyToProceed: true,
+						isConversationLoading: false,
+						conversationError: null,
+						generatedDocuments: [],
+						currentDocumentIndex: 0,
+						isGeneratingDocuments: false,
+						generationError: null,
+						editedPhase1Content: null,
+						wantsTour: false,
+						isComplete: false,
+						createdSessionId: null,
+						// User picked "TUI" in the wizard config panel.
+						enableMaestroP: true,
+						maestroPMode: 'interactive',
+						maestroPPath: '  /custom/maestro-p  ',
+					} as any,
+					completeWizard: vi.fn().mockResolvedValue(undefined),
+					clearResumeState: vi.fn().mockResolvedValue(undefined),
+				},
+			});
+
+			const { result } = renderHook(() => useWizardHandlers(deps));
+
+			await act(async () => {
+				await result.current.handleWizardLaunchSession(false);
+			});
+
+			const newSession = useSessionStore.getState().sessions[0];
+			expect(newSession.enableMaestroP).toBe(true);
+			expect(newSession.maestroPMode).toBe('interactive');
+			// Path is trimmed before it lands on the session.
+			expect(newSession.maestroPPath).toBe('/custom/maestro-p');
+		});
+
+		it('honors an explicit API pick and clears mode/path on the new session', async () => {
+			useSessionStore.setState({ sessions: [], activeSessionId: null });
+
+			const deps = createMockDeps({
+				wizardContext: {
+					state: {
+						currentStep: 'review' as any,
+						isOpen: true,
+						selectedAgent: 'claude-code',
+						availableAgents: [],
+						agentName: 'API Project',
+						directoryPath: '/projects/api-app',
+						isGitRepo: false,
+						detectedAgentPath: null,
+						directoryError: null,
+						hasExistingAutoRunDocs: false,
+						existingDocsCount: 0,
+						existingDocsChoice: null,
+						conversationHistory: [],
+						confidenceLevel: 90,
+						isReadyToProceed: true,
+						isConversationLoading: false,
+						conversationError: null,
+						generatedDocuments: [],
+						currentDocumentIndex: 0,
+						isGeneratingDocuments: false,
+						generationError: null,
+						editedPhase1Content: null,
+						wantsTour: false,
+						isComplete: false,
+						createdSessionId: null,
+						// User picked "API": enableMaestroP false collapses mode/path away.
+						enableMaestroP: false,
+						maestroPMode: 'dynamic',
+						maestroPPath: '/custom/maestro-p',
+					} as any,
+					completeWizard: vi.fn().mockResolvedValue(undefined),
+					clearResumeState: vi.fn().mockResolvedValue(undefined),
+				},
+			});
+
+			const { result } = renderHook(() => useWizardHandlers(deps));
+
+			await act(async () => {
+				await result.current.handleWizardLaunchSession(false);
+			});
+
+			const newSession = useSessionStore.getState().sessions[0];
+			expect(newSession.enableMaestroP).toBe(false);
+			expect(newSession.maestroPMode).toBeUndefined();
+			expect(newSession.maestroPPath).toBeUndefined();
+		});
+
 		it('auto-starts batch run with first document that has tasks', async () => {
 			useSessionStore.setState({ sessions: [], activeSessionId: null });
 

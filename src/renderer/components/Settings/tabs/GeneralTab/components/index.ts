@@ -1,4 +1,5 @@
 export { AutoRunInactivitySection } from './AutoRunInactivitySection';
+export { AutoResumeSection } from './AutoResumeSection';
 export { BrowserSection } from './BrowserSection';
 export { ConductorProfileSection } from './ConductorProfileSection';
 export { GitHubCliSection } from './GitHubCliSection';

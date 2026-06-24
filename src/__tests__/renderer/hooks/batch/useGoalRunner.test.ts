@@ -12,6 +12,7 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 import type { Session, Group, BatchRunConfig } from '../../../../renderer/types';
 import { useBatchProcessor } from '../../../../renderer/hooks';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
+import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import { createMockSession as baseCreateMockSession } from '../../../helpers/mockSession';
 import { GOAL_RUN_HARD_ITERATION_CAP } from '../../../../shared/goalDriven/types';
 
@@ -697,6 +698,87 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 
 		const prompt = mockOnSpawnAgent.mock.calls[0][1] as string;
 		expect(prompt.startsWith('Always check linting first.\n\n---\n\n')).toBe(true);
+	});
+
+	it('pauses on a limit error without consuming an iteration, then resumes the same iteration', async () => {
+		// Start each run from a clean session store so the limit re-read is deterministic.
+		useSessionStore.setState({ sessions: [] } as any);
+
+		let spawnCalls = 0;
+		mockOnSpawnAgent.mockImplementation(async () => {
+			spawnCalls++;
+			if (spawnCalls === 1) {
+				// Mimic the agent-error listener stamping the session into the
+				// limit-paused state that the goal runner re-reads from the store.
+				useSessionStore.setState({
+					sessions: [
+						{
+							...createMockSession(),
+							agentError: {
+								type: 'rate_limited',
+								message: 'Usage limit reached',
+								recoverable: true,
+								agentId: 'claude-code',
+								timestamp: Date.now(),
+							},
+						},
+					],
+				} as any);
+				return { success: false, error: 'Usage limit reached' };
+			}
+			// The retried (same) iteration succeeds and completes the goal.
+			return {
+				success: true,
+				agentSessionId: 'goal-agent',
+				response: progressResponse(100, 'done'),
+			};
+		});
+
+		const { result } = renderProcessor([createMockSession()], [createMockGroup()]);
+
+		let finished = false;
+		act(() => {
+			void result.current
+				.startBatchRun(SESSION_ID, goalConfig('Ship it', 'Done when X', null), '/test/folder')
+				.then(() => {
+					finished = true;
+				});
+		});
+
+		// First spawn hit the limit; the loop parks awaiting an unblock signal.
+		await waitFor(() => {
+			expect(mockOnSpawnAgent).toHaveBeenCalledTimes(1);
+		});
+		expect(finished).toBe(false);
+		expect(result.current.getBatchState(SESSION_ID).isRunning).toBe(true);
+
+		// The coordinator (or the user's Resume button) unblocks the run.
+		act(() => {
+			result.current.resumeAfterError(SESSION_ID);
+		});
+
+		await waitFor(() => {
+			expect(finished).toBe(true);
+		});
+
+		// Two spawns total: the limited attempt + the retried successful attempt.
+		expect(mockOnSpawnAgent).toHaveBeenCalledTimes(2);
+
+		// Exactly ONE per-iteration progress entry: the limited attempt did not
+		// consume an iteration (no failed-iteration entry was recorded for it).
+		const progressEntries = mockOnAddHistoryEntry.mock.calls
+			.map((c) => c[0])
+			.filter((e) => typeof e?.summary === 'string' && e.summary.startsWith('Goal progress:'));
+		expect(progressEntries).toHaveLength(1);
+		expect(progressEntries[0].summary).toContain('Goal progress: 100%');
+		expect(progressEntries[0].summary).toContain('done');
+
+		// Run completed normally after resume.
+		expect(mockOnComplete).toHaveBeenCalledWith(
+			expect.objectContaining({ sessionId: SESSION_ID, completedTasks: 100, wasStopped: false })
+		);
+
+		useSessionStore.setState({ sessions: [] } as any);
 	});
 
 	it('does not start when Auto Run is globally disabled', async () => {

@@ -124,15 +124,18 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 	// on the Auto Run card's "View Thoughts" button, which re-expands on click.
 	if (minimized) return null;
 
+	// The Thought Stream lives inside the Right Panel, so it folds away with it:
+	// when the Right Panel is collapsed we render nothing and the panel returns
+	// when it re-opens. Capture is unaffected (the store/listener are independent
+	// of this panel mounting).
+	if (!rightPanelOpen) return null;
+
 	// Inset the panel within the Right Panel: a gutter on each side keeps it
 	// narrower than the panel and centers it (the Right Panel hugs the viewport's
 	// right edge, so an equal `right` offset and width reduction = centered). The
-	// gutter scales with panel width so it tracks resize. When the Right Panel is
-	// closed, fall back to a fixed width anchored near the right edge.
-	const gutter = rightPanelOpen
-		? Math.round(Math.min(40, Math.max(12, rightPanelWidth * 0.06)))
-		: 16;
-	const panelWidth = rightPanelOpen ? Math.max(280, rightPanelWidth - gutter * 2) : 440;
+	// gutter scales with panel width so it tracks resize.
+	const gutter = Math.round(Math.min(40, Math.max(12, rightPanelWidth * 0.06)));
+	const panelWidth = Math.max(280, rightPanelWidth - gutter * 2);
 
 	// --- Full panel ---------------------------------------------------------
 	return (

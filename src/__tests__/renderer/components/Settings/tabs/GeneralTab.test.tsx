@@ -45,6 +45,9 @@ const mockSetGhPath = vi.fn();
 const mockSetLogLevel = vi.fn();
 const mockSetEnterToSendAI = vi.fn();
 const mockSetEnterToSendAIExpanded = vi.fn();
+const mockSetAutoResumeOnLimit = vi.fn();
+const mockSetAutoResumeCheckIntervalHours = vi.fn();
+const mockSetAutoResumeGiveUpDays = vi.fn();
 const mockSetDefaultSaveToHistory = vi.fn();
 const mockSetDefaultShowThinking = vi.fn();
 const mockSetAutomaticTabNamingEnabled = vi.fn();
@@ -84,6 +87,12 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		setEnterToSendAI: mockSetEnterToSendAI,
 		enterToSendAIExpanded: false,
 		setEnterToSendAIExpanded: mockSetEnterToSendAIExpanded,
+		autoResumeOnLimit: false,
+		setAutoResumeOnLimit: mockSetAutoResumeOnLimit,
+		autoResumeCheckIntervalHours: 6,
+		setAutoResumeCheckIntervalHours: mockSetAutoResumeCheckIntervalHours,
+		autoResumeGiveUpDays: 21,
+		setAutoResumeGiveUpDays: mockSetAutoResumeGiveUpDays,
 		defaultSaveToHistory: true,
 		setDefaultSaveToHistory: mockSetDefaultSaveToHistory,
 		defaultShowThinking: 'off',
@@ -151,6 +160,7 @@ describe('GeneralTab', () => {
 			expect(screen.getByText('System Log Level')).toBeInTheDocument();
 			expect(screen.getByText('GitHub CLI (gh) Path')).toBeInTheDocument();
 			expect(screen.getByText('Input Send Behavior')).toBeInTheDocument();
+			expect(screen.getByText('Auto-Resume on Limit')).toBeInTheDocument();
 			expect(screen.getByText('Default History Toggle')).toBeInTheDocument();
 			expect(screen.getByText('Default Thinking Mode')).toBeInTheDocument();
 			expect(screen.getByText('Tab Behavior')).toBeInTheDocument();

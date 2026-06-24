@@ -281,6 +281,18 @@ Click the **Stop** button at any time. The runner will:
 - Preserve all completed work
 - Allow you to resume later by clicking Run again
 
+## Auto-Resume on Limit
+
+If an agent pauses mid-run because it hit a provider limit (a rate, token, or credit limit), Maestro can pick the run back up on its own once the window reopens - so you can queue a batch of work, walk away, and come back to it finished. Enable it in **Settings → General → Auto-Resume on Limit**. Three settings drive it:
+
+- **Auto-Resume on Limit** (on by default) - the master toggle.
+- **Check interval** (default 2 hours) - how often Maestro re-checks each paused agent.
+- **Give up after** (default 7 days) - if an agent is still stuck this long after the first pause, Maestro stops retrying it, leaves it paused, and posts a one-time notice so you can resume manually.
+
+How it decides to resume: for Claude it reads your actual plan usage and only resumes when credits are genuinely available again; for every other provider (and Claude on an SSH remote) it simply retries on the interval - if the limit is still in force the agent re-pauses and the next check tries again. Probing is cheap, so it keeps trying the whole window.
+
+This survives a full app restart. If you reboot while an agent is limit-paused, Maestro restores the pause and resumes the **agent's conversation** (it continues from its own transcript) and drains any work you had queued. One caveat: the Auto Run / Goal-Driven **loop controller** does not survive a restart - the agent session and its queued messages resume, but the orchestration loop that was stepping through your document does not pick back up automatically. Manually resolving the error, or manually resuming or stopping the agent, always takes precedence and cancels auto-resume for that agent.
+
 ## Halt Marker (Agent Early Exit)
 
 Sometimes the agent itself discovers that the rest of the playbook cannot meaningfully proceed - a missing dependency, a broken precondition, an ambiguous spec it cannot resolve, or a destructive change it refuses to make. In that case the agent can abort the entire run by writing a halt marker into the current document:

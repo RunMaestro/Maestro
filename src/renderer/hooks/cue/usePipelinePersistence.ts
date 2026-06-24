@@ -296,6 +296,12 @@ export function usePipelinePersistence({
 		try {
 			const touchedRoots = new Set<string>([...currentRoots, ...previousRoots]);
 			let rootsCleared = 0;
+			// Roots whose on-disk content actually changed this save. Only these
+			// get a session refresh - a layout-only save (nodes moved, identical
+			// YAML/prompts) leaves this empty, so the engine never re-arms triggers
+			// and the pipeline does NOT re-execute. writeYaml reports per-root
+			// `changed`; cleared (deleted) roots are added below.
+			const changedRoots = new Set<string>();
 
 			// Convert all writable pipelines to per-cwd yaml in one shot. Each
 			// subscription record carries `agent_id` (set by the records
@@ -383,7 +389,8 @@ export function usePipelinePersistence({
 						promptFileKeys: Object.keys(promptFilesObj),
 						yaml: yamlContent,
 					});
-					await cueService.writeYaml(cwd, yamlContent, promptFilesObj);
+					const writeResult = await cueService.writeYaml(cwd, yamlContent, promptFilesObj);
+					if (writeResult?.changed) changedRoots.add(cwd);
 
 					// Write-back verification: read the YAML we just wrote and
 					// confirm our content is on disk. Guards against any silent
@@ -440,6 +447,9 @@ export function usePipelinePersistence({
 				})
 			);
 			rootsCleared = rootsToClear.length;
+			// A deleted cue.yaml is unambiguously a content change for that root,
+			// so its session must refresh to tear down the removed subscriptions.
+			for (const root of rootsToClear) changedRoots.add(root);
 
 			// Refresh every session whose project root was touched so the engine
 			// reloads the freshly written YAML, in parallel. Under the
@@ -453,6 +463,12 @@ export function usePipelinePersistence({
 				sessions.map(async (session) => {
 					if (!session.projectRoot) return;
 					if (!touchedRoots.has(session.projectRoot)) return;
+					// Skip the refresh when this root's content didn't change. This
+					// is the layout-only guard: moving nodes around re-emits
+					// byte-identical YAML, so writeYaml reported changed=false and we
+					// must NOT re-arm the session's triggers (which re-executes the
+					// pipeline). Real content edits still land here.
+					if (!changedRoots.has(session.projectRoot)) return;
 					cueDebugLog('save:refreshSession', {
 						sessionId: session.id,
 						sessionName: session.name,

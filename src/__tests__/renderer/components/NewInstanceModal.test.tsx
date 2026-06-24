@@ -3064,6 +3064,11 @@ describe('NewInstanceModal', () => {
 				}),
 				undefined,
 				undefined,
+				// The source's token source is unset, so the duplicate falls through to the
+				// same default path as a fresh agent: `undefined ?? (isAdaptiveModeDefaultOn() ||
+				// undefined)`. On rc Adaptive Mode defaults OFF, so this stays unset rather than
+				// pinning a falsy default as an explicit "API" choice. Matches the fresh-agent
+				// SSH case above.
 				undefined, // enableMaestroP unset: API is the default for Claude Code (Adaptive Mode off)
 				undefined, // maestroPPath
 				undefined // maestroPMode unset until the user opts into TUI/Dynamic

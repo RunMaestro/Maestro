@@ -1135,6 +1135,7 @@ interface MaestroAPI {
 			>
 		>;
 		getClaudeUsageAccountKeys: () => Promise<string[]>;
+		getLimitResetAt: (agentId: string, claudeConfigDir?: string) => Promise<number | undefined>;
 		getCodexUsageSnapshots: () => Promise<
 			Record<
 				string,
@@ -3286,6 +3287,8 @@ interface MaestroAPI {
 				workingDirOverride?: string;
 				syncHistory?: boolean;
 			};
+			// Session-level custom env vars, forwarded so naming inherits the same provider auth as the chat.
+			sessionCustomEnvVars?: Record<string, string>;
 			// Claude token-source selection, forwarded so tab naming honors TUI/Dynamic/API.
 			enableMaestroP?: boolean;
 			maestroPMode?: 'interactive' | 'dynamic';
@@ -3444,7 +3447,7 @@ interface MaestroAPI {
 			projectRoot: string,
 			content: string,
 			promptFiles?: Record<string, string>
-		) => Promise<void>;
+		) => Promise<{ changed: boolean }>;
 		deleteYaml: (projectRoot: string) => Promise<boolean>;
 		validateYaml: (content: string) => Promise<{ valid: boolean; errors: string[] }>;
 		savePipelineLayout: (layout: Record<string, unknown>) => Promise<void>;

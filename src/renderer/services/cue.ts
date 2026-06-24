@@ -215,7 +215,7 @@ export const cueService = {
 		projectRoot: string,
 		content: string,
 		promptFiles?: Record<string, string>
-	): Promise<void> {
+	): Promise<{ changed: boolean }> {
 		return createIpcMethod({
 			call: () => window.maestro.cue.writeYaml(projectRoot, content, promptFiles),
 			errorContext: 'Cue writeYaml',

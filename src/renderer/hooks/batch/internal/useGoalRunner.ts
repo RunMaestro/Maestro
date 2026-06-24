@@ -15,6 +15,7 @@ import type {
 	GoalRunConfig,
 } from '../../../../shared/goalDriven/types';
 import { GOAL_RUN_HARD_ITERATION_CAP } from '../../../../shared/goalDriven/types';
+import { isLimitError } from '../../../../shared/types';
 import { parseGoalMarkers, stripMaestroMarkers } from '../../../../shared/goalDriven/goalMarkers';
 import { evaluateGoalExit } from '../../../../shared/goalDriven/goalExitEvaluator';
 import { formatGoalRunDocumentPath } from '../../../../shared/goalDriven/goalRunLabel';
@@ -30,6 +31,7 @@ import { notifyToast } from '../../../stores/notificationStore';
 import { useSessionStore, selectSessionById } from '../../../stores/sessionStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import type { BatchAction } from '../batchReducer';
+import type { ErrorResolutionAction, ErrorResolutionEntry } from './useBatchControlActions';
 import { claimFlushState, type AutoRunFlushStateRefs } from './batchFlushState';
 import type { BatchCompleteInfo } from '../useBatchProcessor';
 import type { UseTimeTrackingReturn } from '../useTimeTracking';
@@ -62,6 +64,10 @@ export interface UseGoalRunnerDeps {
 	autoRunFlushStateRefs: AutoRunFlushStateRefs;
 	stopRequestedRefs: MutableRefObject<Record<string, boolean>>;
 	isMountedRef: MutableRefObject<boolean>;
+	// Shared error-resolution registry (same instance the spec-driven runner and
+	// the UI controls use). A limit pause awaits the promise here; `resumeAfterError`
+	// (or the Phase 3 coordinator) resolves it to unblock the loop.
+	errorResolutionRefs: MutableRefObject<Record<string, ErrorResolutionEntry>>;
 	updateBatchStateAndBroadcastRef: MutableRefObject<UpdateBatchStateFn | null>;
 	// Hook outputs
 	broadcastAutoRunState: (sessionId: string, state: BatchRunState | null) => void;
@@ -147,6 +153,7 @@ export function useGoalRunner({
 	autoRunFlushStateRefs,
 	stopRequestedRefs,
 	isMountedRef,
+	errorResolutionRefs,
 	updateBatchStateAndBroadcastRef,
 	broadcastAutoRunState,
 	flushDebouncedUpdate,
@@ -437,6 +444,66 @@ export function useGoalRunner({
 				}
 				const elapsedTimeMs = Date.now() - iterationStart;
 
+				// Limit pause: if this iteration's spawn hit a token/API/credit or rate
+				// limit, do NOT consume the iteration. The agent-error listener has
+				// already stamped the session into the paused state (agentError +
+				// agentErrorPaused); here we mirror the spec-driven runner by awaiting an
+				// unblock signal on the shared errorResolution promise. On resume we retry
+				// the SAME iteration with the same prompt. Restart durability is out of
+				// scope (Phase 4): the loop is still alive in memory, it just parks here.
+				if (!result.success) {
+					// The limit error arrives via a separate IPC event (agent-error) that
+					// the listener commits to the store. That event and this spawn's invoke
+					// reply race; if the reply settled first, the store isn't stamped yet.
+					// Re-read across a few short ticks before concluding this wasn't a limit
+					// pause, so detection is order-independent. Guard on the timestamp so a
+					// stale agentError from an earlier iteration can't be mistaken for this
+					// spawn's failure. Bounded so a genuine non-limit failure still falls
+					// through quickly to regular failure handling.
+					const readLimitError = () => {
+						const paused = selectSessionById(sessionId)(useSessionStore.getState());
+						const err = paused?.agentError;
+						return err && isLimitError(err) && err.timestamp >= iterationStart ? err : undefined;
+					};
+					let pausedError = readLimitError();
+					for (let attempt = 0; !pausedError && attempt < 5; attempt++) {
+						await new Promise((resolve) => setTimeout(resolve, 10));
+						pausedError = readLimitError();
+					}
+					if (pausedError) {
+						// Ensure an unblock promise exists. The agent-error listener usually
+						// creates it via pauseBatchOnError (the goal batch is "running"), but
+						// create it here too in case we observed the failure first.
+						if (!errorResolutionRefs.current[sessionId]) {
+							let resolveFn: (action: ErrorResolutionAction) => void = () => {};
+							const promise = new Promise<ErrorResolutionAction>((resolve) => {
+								resolveFn = resolve;
+							});
+							errorResolutionRefs.current[sessionId] = { promise, resolve: resolveFn };
+						}
+
+						window.maestro.logger.autorun(
+							`Goal run paused on ${pausedError.type}; awaiting resume`,
+							session.name,
+							{ iteration, errorType: pausedError.type }
+						);
+
+						const action = await errorResolutionRefs.current[sessionId].promise;
+						delete errorResolutionRefs.current[sessionId];
+
+						if (action === 'abort' || action === 'skip-document') {
+							exitReason = 'stopped-by-user';
+							exitDetail = 'Stopped by user.';
+							break;
+						}
+
+						// Resume: retry the SAME iteration. Revert the counter so the limited
+						// attempt is not counted, then loop back to re-spawn the same prompt.
+						iteration--;
+						continue;
+					}
+				}
+
 				if (result.agentSessionId) {
 					agentSessionIds.push(result.agentSessionId);
 					// Register origin so the spawned session can be located later.
@@ -704,6 +771,7 @@ export function useGoalRunner({
 			autoRunFlushStateRefs,
 			broadcastAutoRunState,
 			dispatch,
+			errorResolutionRefs,
 			flushDebouncedUpdate,
 			groups,
 			isMountedRef,

@@ -249,6 +249,14 @@ export function createAgentsApi() {
 			ipcRenderer.invoke('agents:getClaudeUsageAccountKeys'),
 
 		/**
+		 * Best-effort epoch-ms estimate of when a paused agent's provider limit
+		 * window reopens (Claude only - undefined for other providers). Used by
+		 * auto-resume to schedule the next probe; callers treat it as advisory.
+		 */
+		getLimitResetAt: (agentId: string, claudeConfigDir?: string): Promise<number | undefined> =>
+			ipcRenderer.invoke('agents:getLimitResetAt', agentId, claudeConfigDir),
+
+		/**
 		 * Fetch sanitized Codex quota snapshots keyed by canonical CODEX_HOME.
 		 * Main owns auth.json reads and quota endpoint calls.
 		 */

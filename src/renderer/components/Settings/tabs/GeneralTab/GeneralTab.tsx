@@ -1,6 +1,7 @@
 import { useSettings } from '../../../../hooks';
 import {
 	AutoRunInactivitySection,
+	AutoResumeSection,
 	BrowserSection,
 	ConductorProfileSection,
 	GitHubCliSection,
@@ -87,6 +88,15 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				theme={theme}
 				autoRunInactivityTimeoutMin={settings.autoRunInactivityTimeoutMin}
 				setAutoRunInactivityTimeoutMin={settings.setAutoRunInactivityTimeoutMin}
+			/>
+			<AutoResumeSection
+				theme={theme}
+				autoResumeOnLimit={settings.autoResumeOnLimit}
+				setAutoResumeOnLimit={settings.setAutoResumeOnLimit}
+				autoResumeCheckIntervalHours={settings.autoResumeCheckIntervalHours}
+				setAutoResumeCheckIntervalHours={settings.setAutoResumeCheckIntervalHours}
+				autoResumeGiveUpDays={settings.autoResumeGiveUpDays}
+				setAutoResumeGiveUpDays={settings.setAutoResumeGiveUpDays}
 			/>
 			<HistorySection
 				theme={theme}

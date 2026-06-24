@@ -330,13 +330,11 @@ export function notifyToast(toast: NotifyToastInput): string {
 		});
 	}
 
-	// Custom notification command (audio/TTS)
-	if (willTriggerCustomNotification) {
-		if (typeof window !== 'undefined' && window.maestro?.notification?.speak) {
-			window.maestro.notification.speak(toast.message, config.audioFeedbackCommand).catch((err) => {
-				logger.error('[notificationStore] Custom notification failed:', undefined, err);
-			});
-		}
+	// Custom notification command (audio/TTS). The actual enabled/command/content
+	// gate lives in triggerCustomNotification so it can be reused by callers that
+	// fire audio without a visual toast (e.g. completion while viewing the tab).
+	if (!toast.skipCustomNotification) {
+		triggerCustomNotification(toast.message);
 	}
 
 	// OS desktop notification
@@ -382,4 +380,28 @@ export function notifyToast(toast: NotifyToastInput): string {
 	}
 
 	return id;
+}
+
+/**
+ * Fire the user's custom notification command (audio/TTS) for a message,
+ * honoring the audioFeedbackEnabled / audioFeedbackCommand settings and skipping
+ * empty content. Single source of truth for the audio gate so it can be invoked
+ * both from notifyToast (visual + audio together) and from completion handlers
+ * that need the audio cue even when no visual toast is shown.
+ *
+ * @returns true if a command was dispatched, false if gated out.
+ */
+export function triggerCustomNotification(message: string | undefined): boolean {
+	const { config } = useNotificationStore.getState();
+	const hasContent = !!message && message.trim().length > 0;
+	const shouldFire = config.audioFeedbackEnabled && !!config.audioFeedbackCommand && hasContent;
+	if (!shouldFire) return false;
+
+	if (typeof window !== 'undefined' && window.maestro?.notification?.speak) {
+		window.maestro.notification.speak(message!, config.audioFeedbackCommand).catch((err) => {
+			logger.error('[notificationStore] Custom notification failed:', undefined, err);
+		});
+		return true;
+	}
+	return false;
 }

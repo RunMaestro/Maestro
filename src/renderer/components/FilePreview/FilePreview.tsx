@@ -23,6 +23,9 @@ import {
 	RefreshCw,
 	X,
 	Filter,
+	Type,
+	Regex,
+	Hash,
 } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { captureException } from '../../utils/sentry';
@@ -316,6 +319,9 @@ export const FilePreview = React.memo(
 		const language = file ? getLanguageFromFilename(file.name) : '';
 		const isMarkdown = language === 'markdown';
 		const isHtml = file ? /\.html?$/i.test(file.name) : false;
+		// Mermaid diagram files render as a diagram by default (like markdown);
+		// Cmd+E drops into source editing since they're plain editable text.
+		const isMermaid = file ? /\.(mmd|mermaid)$/i.test(file.name) : false;
 		const isReadableText = file ? !isMarkdown && isReadableTextPreview(file.name) : false;
 		const isCsv = language === 'csv';
 		const isJsonl = language === 'jsonl';
@@ -407,6 +413,40 @@ export const FilePreview = React.memo(
 			return undefined;
 		}, [previewTier, isMarkdown, markdownEditMode, isImage, isBinary]);
 
+		// Whether the active preview shows line numbers; gates the regex / line
+		// search chip (left of the Cmd+F input). True for the code editor and the
+		// code/text preview tiers; false for rendered markdown, CSV, JSON-jq, HTML
+		// render, and images.
+		const viewHasLineNumbers = useMemo(() => {
+			if (isImage || isBinary) return false;
+			if (isEditableText && markdownEditMode) return true; // CM6 editor
+			if (markdownEditMode) return false;
+			if (isMarkdown || isCsv || isJsonl) return false;
+			if (isMermaid) return false; // rendered diagram has no source gutter
+			if (isJson && searchMode === 'jq') return false;
+			if (isHtml && htmlRenderMode) return false;
+			// Rich-tier readable text uses a wrapped prose block with no gutter; the
+			// Fast and Giant tiers render a numbered gutter, so exclude readable text
+			// only when it falls outside those tiers.
+			if (isReadableText && previewTier !== 'fast' && previewTier !== 'giant') return false;
+			return true;
+		}, [
+			isImage,
+			isBinary,
+			isEditableText,
+			markdownEditMode,
+			isMarkdown,
+			isMermaid,
+			isCsv,
+			isJsonl,
+			isJson,
+			searchMode,
+			isHtml,
+			htmlRenderMode,
+			isReadableText,
+			previewTier,
+		]);
+
 		// Search state and effects (code highlighting, markdown CSS Highlight API, edit textarea)
 		const {
 			searchQuery,
@@ -419,6 +459,9 @@ export const FilePreview = React.memo(
 			goToPrevMatch,
 			searchInputRef,
 			setMatchCount,
+			searchKind,
+			cycleSearchKind,
+			regexError,
 		} = useFilePreviewSearch({
 			codeContainerRef,
 			markdownContainerRef,
@@ -436,6 +479,7 @@ export const FilePreview = React.memo(
 			fileContent: file?.content,
 			accentColor: theme.colors.accent,
 			searchMode,
+			supportsLineSearch: viewHasLineNumbers,
 			displayedContentLength: displayContent.length,
 			initialSearchQuery,
 			onSearchQueryChange,
@@ -705,6 +749,7 @@ export const FilePreview = React.memo(
 		// below so it agrees with what's actually on screen.
 		const previewSyncSource = (): 'giant' | 'text-fast' | 'text-dom' | 'markdown-dom' | null => {
 			if (isHtml && htmlRenderMode) return null;
+			if (isMermaid) return null;
 			if (isCsv) return null;
 			if (isJsonl || (isJson && searchMode === 'jq')) return null;
 			if (previewTier === 'giant') return 'giant';
@@ -1581,6 +1626,42 @@ export const FilePreview = React.memo(
 											jq
 										</button>
 									)}
+									{/* Search-kind chip: plain text → regex → line number.
+									    Only shown for line-numbered code/text views. */}
+									{searchMode !== 'jq' && viewHasLineNumbers && (
+										<button
+											onClick={() => {
+												cycleSearchKind();
+												setTimeout(() => searchInputRef.current?.focus(), 0);
+											}}
+											className="flex items-center gap-1 px-2 rounded border text-xs font-medium whitespace-nowrap transition-colors self-stretch"
+											style={{
+												borderColor:
+													searchKind === 'text' ? theme.colors.border : theme.colors.accent,
+												backgroundColor:
+													searchKind === 'text'
+														? theme.colors.bgSidebar
+														: theme.colors.accent + '20',
+												color: searchKind === 'text' ? theme.colors.textDim : theme.colors.accent,
+											}}
+											title={
+												searchKind === 'text'
+													? 'Plain-text search (click to switch to regex)'
+													: searchKind === 'regex'
+														? 'Regex search (click to switch to line-number jump)'
+														: 'Go to line (click to switch to plain-text search)'
+											}
+										>
+											{searchKind === 'text' ? (
+												<Type className="w-3 h-3" />
+											) : searchKind === 'regex' ? (
+												<Regex className="w-3 h-3" />
+											) : (
+												<Hash className="w-3 h-3" />
+											)}
+											{searchKind === 'text' ? 'Text' : searchKind === 'regex' ? 'Regex' : 'Line'}
+										</button>
+									)}
 									<input
 										ref={searchInputRef}
 										type="text"
@@ -1599,7 +1680,7 @@ export const FilePreview = React.memo(
 													setJqError(null);
 													containerRef.current?.focus();
 												}
-											} else if (searchMode === 'text') {
+											} else if (searchMode === 'text' && searchKind !== 'line') {
 												if (e.key === 'Enter' && !e.shiftKey) {
 													e.preventDefault();
 													goToNextMatch();
@@ -1615,7 +1696,11 @@ export const FilePreview = React.memo(
 										placeholder={
 											searchMode === 'jq'
 												? 'jq filter — .field, select(.x == "y"), keys, contains("...")'
-												: 'Search in file... (Enter: next, Shift+Enter: prev)'
+												: searchKind === 'line'
+													? 'Go to line number…'
+													: searchKind === 'regex'
+														? 'Search by regex... (Enter: next, Shift+Enter: prev)'
+														: 'Search in file... (Enter: next, Shift+Enter: prev)'
 										}
 										className="flex-1 px-3 py-2 rounded border bg-transparent outline-none text-sm"
 										style={{
@@ -1626,7 +1711,9 @@ export const FilePreview = React.memo(
 														: searchQuery
 															? theme.colors.accent + '60'
 															: theme.colors.border
-													: theme.colors.accent,
+													: regexError
+														? theme.colors.error + '80'
+														: theme.colors.accent,
 											color: theme.colors.textMain,
 											backgroundColor: theme.colors.bgSidebar,
 											fontFamily:
@@ -1638,8 +1725,9 @@ export const FilePreview = React.memo(
 										spellCheck={searchMode === 'jq' ? false : undefined}
 										autoFocus
 									/>
-									{/* Text search: match count + prev/next navigation */}
-									{searchMode === 'text' && searchQuery.trim() && (
+									{/* Text / regex search: match count + prev/next navigation
+									    (line-number mode jumps live and shows no match chrome) */}
+									{searchMode === 'text' && searchKind !== 'line' && searchQuery.trim() && (
 										<>
 											<span
 												className="text-xs whitespace-nowrap"
@@ -1702,6 +1790,15 @@ export const FilePreview = React.memo(
 										</>
 									)}
 								</div>
+								{/* regex error */}
+								{searchMode !== 'jq' && searchKind === 'regex' && regexError && (
+									<div
+										className="mt-1 px-2 py-1 rounded text-xs"
+										style={{ color: theme.colors.error }}
+									>
+										{regexError}
+									</div>
+								)}
 								{/* jq error */}
 								{searchMode === 'jq' && jqError && (
 									<div
@@ -1888,6 +1985,13 @@ export const FilePreview = React.memo(
 								backgroundColor: '#fff',
 							}}
 						/>
+					) : isMermaid && !markdownEditMode ? (
+						// Rendered Mermaid diagram. Reuses the same theme-aware,
+						// DOMPurify-sanitized renderer that draws ```mermaid``` blocks
+						// inside markdown. Cmd+E toggles to source editing.
+						<div className="p-4">
+							<MermaidRenderer chart={file.content} theme={theme} />
+						</div>
 					) : isCsv && !markdownEditMode ? (
 						<CsvTableRenderer
 							content={file.content}

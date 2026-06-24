@@ -142,6 +142,7 @@ import { useChatFileDropZone } from './hooks/ui/useChatFileDropZone';
 import { useMainPanelProps, useSessionListProps, useRightPanelProps } from './hooks/props';
 import { useAgentListeners } from './hooks/agent/useAgentListeners';
 import { useSessionRecovery } from './hooks/agent/useSessionRecovery';
+import { useAutoResumeCoordinator } from './hooks/agent/useAutoResumeCoordinator';
 import { useSymphonyContribution } from './hooks/symphony/useSymphonyContribution';
 import { useCueAutoDiscovery } from './hooks/useCueAutoDiscovery';
 import { useCueVisibilityWiring } from './hooks/cue/useCueVisibilityWiring';
@@ -1504,6 +1505,14 @@ function MaestroConsoleInner() {
 		processQueuedItemRef,
 		contextWarningYellowThreshold: contextManagementSettings.contextWarningYellowThreshold,
 	});
+
+	// --- AUTO-RESUME ON LIMIT (Phase 3) ---
+	// Renderer singleton: on the autoResumeCheckIntervalHours interval, probe
+	// every limit-paused agent and resume the ones whose provider window has
+	// reopened. Reads its own settings from the store; early-returns + clears
+	// the timer when autoResumeOnLimit is off. `resumeAutoRunAfterError` is the
+	// shared entry point that unblocks both spec- and goal-driven Auto Runs.
+	useAutoResumeCoordinator({ resumeAutoRunAfterError });
 
 	const handleRemoveQueuedItem = useCallback((itemId: string) => {
 		updateSessionWith(activeSessionIdRef.current, (s) => ({
