@@ -25,6 +25,7 @@ import * as path from 'path';
 import { parseArgs, type ParsedArgs } from './args';
 import { JsonEmitter, type EmitResultOptions } from './json-emitter';
 import { JsonlTailer, type ParseErrorPayload } from './jsonl-tailer';
+import { extractExitPlanText } from './plan-mode';
 import { discoverSessionId, cwdSlug } from './session-watcher';
 import { cleanupStreamJsonImages, translateStreamJsonInput } from './stream-json-input';
 import { TuiDriver } from './tui-driver';
@@ -453,6 +454,22 @@ async function runMode(args: ParsedArgs): Promise<never> {
 			aggregatedText += collectAssistantText(message);
 			addUsage(usage, message.usage);
 			emitter.emitAssistantMessage(message);
+
+			// Plan/read-only mode (`--permission-mode plan`) ends the turn with an
+			// ExitPlanMode tool call that parks the TUI on a blocking approval
+			// dialog maestro-p can't answer, so `end_turn` never arrives and the
+			// idle watchdog would otherwise kill the turn at --max-wait (exitCode 3,
+			// dropping the plan we captured). The plan is the deliverable here, just
+			// like `claude --print --permission-mode plan`: fold its body into the
+			// result and finalize cleanly.
+			const planText = extractExitPlanText(message);
+			if (planText !== null) {
+				if (planText && !aggregatedText.includes(planText)) {
+					aggregatedText += (aggregatedText ? '\n\n' : '') + planText;
+				}
+				finalize({ isError: false, exitCode: 0 });
+				return;
+			}
 
 			if (message.stop_reason === 'end_turn') {
 				graceTimer = setTimeout(() => {

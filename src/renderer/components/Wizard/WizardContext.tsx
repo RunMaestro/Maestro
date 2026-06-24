@@ -143,6 +143,18 @@ export function WizardProvider({ children }: WizardProviderProps) {
 		dispatch({ type: 'SET_CUSTOM_ENV_VARS', envVars });
 	}, []);
 
+	const setEnableMaestroP = useCallback((value: boolean | undefined) => {
+		dispatch({ type: 'SET_ENABLE_MAESTRO_P', value });
+	}, []);
+
+	const setMaestroPMode = useCallback((mode: 'interactive' | 'dynamic') => {
+		dispatch({ type: 'SET_MAESTRO_P_MODE', mode });
+	}, []);
+
+	const setMaestroPPath = useCallback((path: string | undefined) => {
+		dispatch({ type: 'SET_MAESTRO_P_PATH', path });
+	}, []);
+
 	const setSessionSshRemoteConfig = useCallback(
 		(config: WizardSessionSshRemoteConfig | undefined) => {
 			dispatch({ type: 'SET_SESSION_SSH_REMOTE_CONFIG', config });
@@ -319,6 +331,9 @@ export function WizardProvider({ children }: WizardProviderProps) {
 			setCustomPath,
 			setCustomArgs,
 			setCustomEnvVars,
+			setEnableMaestroP,
+			setMaestroPMode,
+			setMaestroPPath,
 			setSessionSshRemoteConfig,
 			setDirectoryPath,
 			setIsGitRepo,
@@ -364,6 +379,9 @@ export function WizardProvider({ children }: WizardProviderProps) {
 			setCustomPath,
 			setCustomArgs,
 			setCustomEnvVars,
+			setEnableMaestroP,
+			setMaestroPMode,
+			setMaestroPPath,
 			setSessionSshRemoteConfig,
 			setDirectoryPath,
 			setIsGitRepo,

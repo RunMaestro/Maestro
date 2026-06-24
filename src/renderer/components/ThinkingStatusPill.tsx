@@ -313,16 +313,32 @@ const AutoRunPill = memo(
 					{/* Divider */}
 					<div className="w-px h-4 shrink-0" style={{ backgroundColor: theme.colors.border }} />
 
-					{/* Task progress */}
-					<div
-						className="flex items-center gap-1 shrink-0 text-xs"
-						style={{ color: theme.colors.textDim }}
-					>
-						<span>Tasks:</span>
-						<span className="font-medium" style={{ color: theme.colors.textMain }}>
-							{completedTasks}/{totalTasks}
-						</span>
-					</div>
+					{/* Progress — goal percent for goal runs, task count otherwise */}
+					{autoRunState.goalMode ? (
+						<div
+							className="flex items-center gap-1 shrink-0 text-xs"
+							style={{ color: theme.colors.textDim }}
+							title={autoRunState.goalRationale || undefined}
+						>
+							<span>Goal:</span>
+							<span className="font-medium" style={{ color: theme.colors.textMain }}>
+								{autoRunState.goalProgress ?? 0}%
+							</span>
+							{autoRunState.goalIteration ? (
+								<span className="opacity-70">· iteration {autoRunState.goalIteration}</span>
+							) : null}
+						</div>
+					) : (
+						<div
+							className="flex items-center gap-1 shrink-0 text-xs"
+							style={{ color: theme.colors.textDim }}
+						>
+							<span>Tasks:</span>
+							<span className="font-medium" style={{ color: theme.colors.textMain }}>
+								{completedTasks}/{totalTasks}
+							</span>
+						</div>
+					)}
 
 					{/* Divider */}
 					<div className="w-px h-4 shrink-0" style={{ backgroundColor: theme.colors.border }} />
@@ -765,7 +781,12 @@ export const ThinkingStatusPill = memo(ThinkingStatusPillInner, (prevProps, next
 			prevAutoRun?.completedTasksAcrossAllDocs !== nextAutoRun?.completedTasksAcrossAllDocs ||
 			prevAutoRun?.totalTasksAcrossAllDocs !== nextAutoRun?.totalTasksAcrossAllDocs ||
 			prevAutoRun?.isStopping !== nextAutoRun?.isStopping ||
-			prevAutoRun?.startTime !== nextAutoRun?.startTime
+			prevAutoRun?.startTime !== nextAutoRun?.startTime ||
+			// Goal-Driven progress fields drive the goal readout on the pill
+			prevAutoRun?.goalMode !== nextAutoRun?.goalMode ||
+			prevAutoRun?.goalProgress !== nextAutoRun?.goalProgress ||
+			prevAutoRun?.goalIteration !== nextAutoRun?.goalIteration ||
+			prevAutoRun?.goalRationale !== nextAutoRun?.goalRationale
 		) {
 			return false;
 		}

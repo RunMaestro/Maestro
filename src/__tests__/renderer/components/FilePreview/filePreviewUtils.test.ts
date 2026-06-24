@@ -415,6 +415,25 @@ describe('filePreviewUtils', () => {
 			it('long-line signal does not downgrade tiers (Giant stays Giant)', () => {
 				expect(pickPreviewTier(20 * 1024 * 1024, 1_000_000, 5_000)).toBe('giant');
 			});
+
+			it('does not escalate markdown to Giant on a long line (renders instead of showing source)', () => {
+				// A small markdown note with one pathologically long prose line
+				// (e.g. a pasted transcript) stays renderable: markdown wraps in
+				// HTML, so the long-line jump is skipped and it lands in Rich.
+				expect(pickPreviewTier(1024, 50, LINE_LENGTH_GIANT_THRESHOLD + 1, true)).toBe('rich');
+			});
+
+			it('still honors byte/line Giant thresholds for markdown', () => {
+				// The carve-out only drops the long-line signal; genuinely huge
+				// markdown (over 8MB / 500k lines) still falls through to Giant.
+				expect(pickPreviewTier(GIANT_TIER_BYTES + 1, 100, 5_000, true)).toBe('giant');
+			});
+
+			it('markdown with a long line over Fast byte threshold lands in Fast (still rendered)', () => {
+				// Over 256 KB but under Giant byte/line limits: markdown skips the
+				// long-line escalation and renders via Fast tier, not Giant source.
+				expect(pickPreviewTier(500_000, 1, LINE_LENGTH_GIANT_THRESHOLD + 1, true)).toBe('fast');
+			});
 		});
 	});
 

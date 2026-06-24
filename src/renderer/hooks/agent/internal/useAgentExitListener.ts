@@ -21,7 +21,7 @@
 import { useEffect, useRef } from 'react';
 import { useSessionStore } from '../../../stores/sessionStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
-import { notifyToast } from '../../../stores/notificationStore';
+import { notifyToast, triggerCustomNotification } from '../../../stores/notificationStore';
 import { REGEX_AI_TAB } from '../../../utils/sessionIdParser';
 import {
 	getActiveTab,
@@ -807,6 +807,14 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 							sessionId: toastData!.sessionId,
 							tabId: toastData!.tabId,
 						});
+					} else {
+						// Viewing the completed tab: the visual toast is suppressed (no need
+						// to pop a toast about the tab you're already watching), but the
+						// audio/TTS cue must still fire. Otherwise custom notifications are
+						// silently dropped whenever you watch an agent finish - the synopsis
+						// toast that does appear sets skipCustomNotification, so without this
+						// the completion would make no sound at all.
+						triggerCustomNotification(toastData!.summary);
 					}
 				}, 0);
 			}

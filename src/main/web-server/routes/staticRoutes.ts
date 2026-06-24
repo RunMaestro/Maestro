@@ -9,8 +9,9 @@
  * - /health - Health check endpoint
  * - /$TOKEN/manifest.json - PWA manifest
  * - /$TOKEN/sw.js - PWA service worker
- * - /$TOKEN - Dashboard (list all sessions)
- * - /$TOKEN/session/:sessionId - Single session view
+ * - /$TOKEN - Web-desktop interface (the default UI)
+ * - /$TOKEN/desktop - Legacy alias for the web-desktop interface
+ * - /$TOKEN/session/:sessionId - Deprecated deep link, serves the desktop interface
  * - /:token - Invalid token catch-all, redirect to GitHub
  */
 
@@ -71,11 +72,17 @@ function getCachedFile(filePath: string): string | null {
  */
 export class StaticRoutes {
 	private securityToken: string;
+	// Legacy mobile-web bundle root. Retained for the PWA manifest/service
+	// worker/icons it still ships; its index.html is no longer served.
 	private webAssetsPath: string | null;
+	// Web-desktop bundle root — the default browser interface, served at the
+	// token root and at /<token>/desktop. Null when the bundle hasn't been built.
+	private webDesktopPath: string | null;
 
-	constructor(securityToken: string, webAssetsPath: string | null) {
+	constructor(securityToken: string, webAssetsPath: string | null, webDesktopPath: string | null) {
 		this.securityToken = securityToken;
 		this.webAssetsPath = webAssetsPath;
+		this.webDesktopPath = webDesktopPath;
 	}
 
 	/**
@@ -86,39 +93,27 @@ export class StaticRoutes {
 	}
 
 	/**
-	 * Sanitize a string for safe injection into HTML/JavaScript
-	 * Only allows alphanumeric characters, hyphens, and underscores (valid for UUIDs and IDs)
-	 * Returns null if the input contains invalid characters
+	 * Serve the web-desktop bundle's index.html for SPA routes.
+	 *
+	 * The bundle's asset references are rewritten to the absolute
+	 * `/<token>/desktop/assets/` prefix (matching the asset mount in
+	 * WebServer), so the same HTML renders correctly whether it is served from
+	 * the token root or from `/<token>/desktop`.
 	 */
-	private sanitizeId(input: string | undefined | null): string | null {
-		if (!input) return null;
-		// Only allow characters that are safe for UUID-style IDs
-		// This prevents XSS attacks via malicious sessionId/tabId parameters
-		if (!/^[a-zA-Z0-9_-]+$/.test(input)) {
-			logger.warn(`Rejected potentially unsafe ID: ${input.substring(0, 50)}`, LOG_CONTEXT);
-			return null;
-		}
-		return input;
-	}
-
-	/**
-	 * Serve the index.html file for SPA routes
-	 * Rewrites asset paths to include the security token
-	 */
-	private serveIndexHtml(reply: FastifyReply, sessionId?: string, tabId?: string | null): void {
-		if (!this.webAssetsPath) {
+	private serveDesktopIndex(reply: FastifyReply): void {
+		if (!this.webDesktopPath) {
 			reply.code(503).send({
 				error: 'Service Unavailable',
-				message: 'Web interface not built. Run "npm run build:web" to build web assets.',
+				message: 'Web-Desktop bundle not built. Run "npm run build:web-desktop".',
 			});
 			return;
 		}
 
-		const indexPath = path.join(this.webAssetsPath, 'index.html');
+		const indexPath = path.join(this.webDesktopPath, 'index.html');
 		if (!existsSync(indexPath)) {
 			reply.code(404).send({
 				error: 'Not Found',
-				message: 'Web interface index.html not found.',
+				message: 'Web-Desktop bundle index.html not found.',
 			});
 			return;
 		}
@@ -126,26 +121,23 @@ export class StaticRoutes {
 		try {
 			// Read index.html fresh so rebuilt asset hashes are reflected immediately.
 			let html = readFileSync(indexPath, 'utf-8');
+			const token = this.securityToken;
 
-			// Transform relative paths to use the token-prefixed absolute paths
-			html = html.replace(/\.\/assets\//g, `/${this.securityToken}/assets/`);
-			html = html.replace(/\.\/manifest\.json/g, `/${this.securityToken}/manifest.json`);
-			html = html.replace(/\.\/icons\//g, `/${this.securityToken}/icons/`);
-			html = html.replace(/\.\/sw\.js/g, `/${this.securityToken}/sw.js`);
+			// Rewrite the bundle's relative asset references to the absolute
+			// token-prefixed path the asset mount serves from.
+			html = html.replace(/\.\/assets\//g, `/${token}/desktop/assets/`);
+			html = html.replace(/="\/assets\//g, `="/${token}/desktop/assets/`);
 
-			// Sanitize sessionId and tabId to prevent XSS attacks
-			// Only allow safe characters (alphanumeric, hyphens, underscores)
-			const safeSessionId = this.sanitizeId(sessionId);
-			const safeTabId = this.sanitizeId(tabId);
-
-			// Inject config for the React app to know the token and session context
+			// Inject config so the renderer's electron-shim knows where to open
+			// the WebSocket bridge. The desktop app manages its own session
+			// selection, so sessionId/tabId are intentionally null.
 			const configScript = `<script>
         window.__MAESTRO_CONFIG__ = {
-          securityToken: "${this.securityToken}",
-          sessionId: ${safeSessionId ? `"${safeSessionId}"` : 'null'},
-          tabId: ${safeTabId ? `"${safeTabId}"` : 'null'},
-          apiBase: "/${this.securityToken}/api",
-          wsUrl: "/${this.securityToken}/ws"
+          securityToken: ${JSON.stringify(token)},
+          sessionId: null,
+          tabId: null,
+          apiBase: "/${token}/api",
+          wsUrl: "/${token}/ws"
         };
       </script>`;
 			html = html.replace('</head>', `${configScript}</head>`);
@@ -153,10 +145,10 @@ export class StaticRoutes {
 			reply.type('text/html').send(html);
 		} catch (err) {
 			void captureException(err);
-			logger.error('Error serving index.html', LOG_CONTEXT, err);
+			logger.error('Error serving web-desktop index.html', LOG_CONTEXT, err);
 			reply.code(500).send({
 				error: 'Internal Server Error',
-				message: 'Failed to serve web interface.',
+				message: 'Failed to serve web-desktop interface.',
 			});
 		}
 	}
@@ -203,23 +195,29 @@ export class StaticRoutes {
 			return reply.type('application/javascript').send(content);
 		});
 
-		// Dashboard - list all live sessions
+		// Web-desktop interface - the default UI at the token root.
 		server.get(`/${token}`, async (_request, reply) => {
-			this.serveIndexHtml(reply);
+			this.serveDesktopIndex(reply);
 		});
 
-		// Dashboard with trailing slash
+		// Token root with trailing slash
 		server.get(`/${token}/`, async (_request, reply) => {
-			this.serveIndexHtml(reply);
+			this.serveDesktopIndex(reply);
 		});
 
-		// Single session view - works for any valid session (security token protects access)
-		// Supports ?tabId=xxx query parameter for deep-linking to specific tabs
-		server.get(`/${token}/session/:sessionId`, async (request, reply) => {
-			const { sessionId } = request.params as { sessionId: string };
-			const { tabId } = request.query as { tabId?: string };
-			// Note: Session validation happens in the frontend via the sessions list
-			this.serveIndexHtml(reply, sessionId, tabId || null);
+		// Legacy /desktop alias - kept so URLs from before the desktop bundle
+		// became the default (when it lived at /<token>/desktop) still resolve.
+		server.get(`/${token}/desktop`, async (_request, reply) => {
+			this.serveDesktopIndex(reply);
+		});
+		server.get(`/${token}/desktop/`, async (_request, reply) => {
+			this.serveDesktopIndex(reply);
+		});
+
+		// Deprecated single-session deep link. The desktop app manages its own
+		// session selection, so this just serves the full interface.
+		server.get(`/${token}/session/:sessionId`, async (_request, reply) => {
+			this.serveDesktopIndex(reply);
 		});
 
 		// Catch-all for invalid tokens - redirect to GitHub
@@ -228,8 +226,8 @@ export class StaticRoutes {
 			if (!this.validateToken(reqToken)) {
 				return reply.redirect(302, REDIRECT_URL);
 			}
-			// Valid token but no specific route - serve dashboard
-			this.serveIndexHtml(reply);
+			// Valid token but no specific route - serve the desktop interface
+			this.serveDesktopIndex(reply);
 		});
 
 		logger.debug('Static routes registered', LOG_CONTEXT);

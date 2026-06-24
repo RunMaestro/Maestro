@@ -420,6 +420,34 @@ export function formatRunEvent(event: RunEvent, options?: { debug?: boolean }): 
 			return `${separator}\n${header}\n${separator}\n${prompt}\n${separator}`;
 		}
 
+		case 'goal_start':
+			return `${timeStr} ${c('cyan', '🎯')} ${bold('Starting Goal-Driven Auto Run')} ${dim(
+				truncate((event.goal as string) || '', 60)
+			)}`;
+
+		case 'goal_iteration_start': {
+			const iteration = event.iteration as number;
+			return `${timeStr} ${c('yellow', '⏳')} Iteration ${iteration}`;
+		}
+
+		case 'goal_iteration_complete': {
+			const iteration = event.iteration as number;
+			const progress = event.progress as number;
+			const summary = truncate((event.summary as string) || '', 70);
+			return `${timeStr}    ${c('green', '✓')} Iteration ${iteration} ${bold(`${progress}%`)} ${dim(summary)}`;
+		}
+
+		case 'goal_complete': {
+			const success = event.success as boolean;
+			const finalProgress = event.finalProgress as number;
+			const iterations = event.iterations as number;
+			const reason = event.exitReason as string;
+			const icon = success ? c('green', '✓') : c('yellow', '■');
+			return `${timeStr} ${icon} ${bold('Goal run finished')} ${dim(
+				`(${reason}, ${finalProgress}%, ${iterations} iteration${iterations === 1 ? '' : 's'})`
+			)}`;
+		}
+
 		default:
 			return `${timeStr} ${dim(event.type)}`;
 	}

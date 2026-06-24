@@ -10,7 +10,7 @@
  */
 
 import type { ToolType, ProcessConfig } from '../types';
-import type { InlineWizardMessage } from '../hooks/batch/useInlineWizard';
+import type { InlineWizardMessage } from '../hooks/batch/inlineWizard/types';
 import type { ExistingDocument as BaseExistingDocument } from '../utils/existingDocsDetector';
 import { logger } from '../utils/logger';
 import { getStdinFlags } from '../utils/spawnHelpers';

@@ -1,5 +1,15 @@
-import React, { memo } from 'react';
-import { Brain, Eye, History, ImageIcon, Keyboard, PenLine, Pin } from 'lucide-react';
+import React, { memo, useState } from 'react';
+import {
+	Brain,
+	Eye,
+	History,
+	ImageIcon,
+	Keyboard,
+	MoreHorizontal,
+	PenLine,
+	Pin,
+	X,
+} from 'lucide-react';
 import type { Shortcut, Session, Theme, ThinkingMode } from '../../../types';
 import {
 	formatEnterToSend,
@@ -8,6 +18,7 @@ import {
 } from '../../../utils/shortcutFormatter';
 import { getReadOnlyModeLabel, getReadOnlyModeTooltip } from '../../../../shared/agentMetadata';
 import { captureException } from '../../../utils/sentry';
+import { useViewportBreakpoint } from '../../../hooks/ui';
 import { addStagedImageIfUnique } from '../utils/stagedImages';
 import { formatTerminalCwd } from '../utils/terminalPath';
 import { ModelEffortPills } from './ModelEffortPills';
@@ -78,13 +89,16 @@ export const ToolbarControls = memo(function ToolbarControls({
 	effortMenuRef,
 }: ToolbarControlsProps) {
 	const isAiMode = session.inputMode === 'ai';
+	const { isNarrow: isNarrowViewport } = useViewportBreakpoint();
+	const [toolbarExpanded, setToolbarExpanded] = useState(false);
+	const showToggleGroup = !isNarrowViewport || toolbarExpanded;
 
 	return (
-		<div className="flex flex-wrap items-center gap-1 px-2 pb-2 pt-1">
-			<div className="flex gap-1 items-center">
+		<div className="flex min-w-0 flex-wrap items-center gap-1 px-2 pb-2 pt-1">
+			<div className="flex min-w-0 flex-1 gap-1 items-center">
 				{isTerminalMode && (
 					<div
-						className="text-xs font-mono opacity-60 px-2"
+						className="text-xs font-mono opacity-60 px-2 truncate"
 						style={{ color: theme.colors.textDim }}
 					>
 						{formatTerminalCwd(session)}
@@ -174,11 +188,34 @@ export const ToolbarControls = memo(function ToolbarControls({
 				/>
 			</div>
 
-			<div className="flex items-center gap-2 ml-auto" data-tour="toolbar-toggles">
+			{isNarrowViewport && (
+				<button
+					type="button"
+					onClick={() => setToolbarExpanded((v) => !v)}
+					className="ml-auto flex h-7 w-7 items-center justify-center rounded-full transition-all opacity-60 hover:opacity-100"
+					style={{
+						color: theme.colors.textDim,
+						border: `1px solid ${theme.colors.border}`,
+					}}
+					title={toolbarExpanded ? 'Hide options' : 'Show options'}
+					aria-label={toolbarExpanded ? 'Hide toolbar options' : 'Show toolbar options'}
+				>
+					{toolbarExpanded ? (
+						<X className="w-3.5 h-3.5" />
+					) : (
+						<MoreHorizontal className="w-3.5 h-3.5" />
+					)}
+				</button>
+			)}
+
+			<div
+				className={`flex items-center gap-2 ${isNarrowViewport ? '' : 'ml-auto'} ${showToggleGroup ? '' : 'hidden'}`}
+				data-tour="toolbar-toggles"
+			>
 				{isAiMode && onToggleTabSaveToHistory && (
 					<button
 						onClick={onToggleTabSaveToHistory}
-						className={`flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-full cursor-pointer transition-all ${
+						className={`flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-full cursor-pointer transition-all whitespace-nowrap ${
 							tabSaveToHistory ? '' : 'opacity-40 hover:opacity-70'
 						}`}
 						style={{
@@ -197,7 +234,7 @@ export const ToolbarControls = memo(function ToolbarControls({
 				{isAiMode && onToggleTabReadOnlyMode && hasReadOnlyCapability && (
 					<button
 						onClick={onToggleTabReadOnlyMode}
-						className={`flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-full cursor-pointer transition-all ${
+						className={`flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-full cursor-pointer transition-all whitespace-nowrap ${
 							isReadOnlyMode ? '' : 'opacity-40 hover:opacity-70'
 						}`}
 						style={{
@@ -216,7 +253,7 @@ export const ToolbarControls = memo(function ToolbarControls({
 				{isAiMode && supportsThinking && onToggleTabShowThinking && (
 					<button
 						onClick={onToggleTabShowThinking}
-						className={`flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-full cursor-pointer transition-all ${
+						className={`flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-full cursor-pointer transition-all whitespace-nowrap ${
 							tabShowThinking !== 'off' ? '' : 'opacity-40 hover:opacity-70'
 						}`}
 						style={{

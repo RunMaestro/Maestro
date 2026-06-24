@@ -23,10 +23,12 @@ import { useAgentCommandExitListener } from './internal/useAgentCommandExitListe
 import { useAgentUsageListener } from './internal/useAgentUsageListener';
 import { useAgentSessionIdListener } from './internal/useAgentSessionIdListener';
 import { useAgentThinkingListener } from './internal/useAgentThinkingListener';
+import { useThoughtStreamCaptureListener } from './internal/useThoughtStreamCaptureListener';
 import { useAgentSshRemoteListener } from './internal/useAgentSshRemoteListener';
 import { useAgentClaudeModeResolvedListener } from './internal/useAgentClaudeModeResolvedListener';
 import { useAgentToolExecutionListener } from './internal/useAgentToolExecutionListener';
 import { useAgentDataListener } from './internal/useAgentDataListener';
+import { useAgentUserInputListener } from './internal/useAgentUserInputListener';
 import { useAgentErrorListener } from './internal/useAgentErrorListener';
 import { useAgentExitListener } from './internal/useAgentExitListener';
 
@@ -67,6 +69,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 	// preserves any cross-listener event ordering the existing tests depend on.
 	// ----------------------------------------------------------------
 	useAgentDataListener({ batchedUpdater: deps.batchedUpdater, activeHiddenToolRef });
+	useAgentUserInputListener();
 	useAgentExitListener({
 		getBatchStateRef: deps.getBatchStateRef,
 		processQueuedItemRef: deps.processQueuedItemRef,
@@ -91,6 +94,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 		activeHiddenToolRef,
 	});
 	useAgentThinkingListener();
+	useThoughtStreamCaptureListener();
 	useAgentSshRemoteListener();
 	useAgentClaudeModeResolvedListener();
 	useAgentToolExecutionListener();

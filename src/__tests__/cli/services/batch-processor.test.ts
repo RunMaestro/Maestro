@@ -369,6 +369,24 @@ describe('batch-processor', () => {
 			expect(taskSpawnOpts?.appendSystemPrompt).toBe('the maestro context');
 		});
 
+		it('prefixes the agent New Session Message onto the task spawn prompt', async () => {
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 3) return { content: '- [ ] Task', taskCount: 1 };
+				return { content: '', taskCount: 0 };
+			});
+
+			const session = mockSession({ newSessionMessage: 'Always check linting first.' });
+			const playbook = mockPlaybook();
+
+			await collectEvents(runPlaybook(session, playbook, '/playbooks'));
+
+			// Spawn call #0 is the task spawn — its prompt must start with the message.
+			const taskPrompt = vi.mocked(spawnAgent).mock.calls[0][2];
+			expect(taskPrompt.startsWith('Always check linting first.\n\n---\n\n')).toBe(true);
+		});
+
 		it('omits the Maestro system prompt from the synopsis spawn (resume reuses the existing transcript)', async () => {
 			vi.mocked(prepareMaestroSystemPromptCli).mockResolvedValue('the maestro context');
 			let callCount = 0;

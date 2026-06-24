@@ -134,6 +134,10 @@ describe('searchableSettings', () => {
 			// General tab
 			['Auto Run Inactivity Timeout', 'general-autorun-inactivity-timeout'],
 			['refactor', 'general-autorun-inactivity-timeout'],
+			['resume paused', 'general-auto-resume'],
+			['rate limit', 'general-auto-resume'],
+			['quota', 'general-auto-resume'],
+			['give up', 'general-auto-resume-interval'],
 			['forced parallel execution', 'general-input-behavior'],
 			['shift+enter', 'general-input-behavior'],
 			['prompt composer', 'general-input-behavior'],

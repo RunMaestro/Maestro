@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Maestro (Web Desktop)</title>
+		<!-- Load JetBrains Mono so this bundle matches the desktop app. Without it the
+		     renderer's `font-family: 'JetBrains Mono'` falls back to Courier New. -->
+		<link rel="preconnect" href="https://fonts.googleapis.com" crossorigin />
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+		<link
+			rel="preload"
+			href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap"
+			as="style"
+		/>
+		<link
+			href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap"
+			rel="stylesheet"
+		/>
+		<style>
+			html,
+			body,
+			#root {
+				margin: 0;
+				padding: 0;
+				height: 100%;
+				background: #0a0a0a;
+				color: #eee;
+				font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+				-webkit-font-smoothing: antialiased;
+				-moz-osx-font-smoothing: grayscale;
+			}
+		</style>
+	</head>
+	<body>
+		<div id="root">
+			<div style="padding: 24px; font-family: monospace">Loading Maestro web-desktop bundle…</div>
+		</div>
+		<script>
+			// Server may inject __MAESTRO_CONFIG__ via /<token>/desktop/config.js.
+			// If absent (e.g. dev or local file load), the shim derives URLs from
+			// window.location at runtime.
+		</script>
+		<script type="module" src="./bootstrap.ts"></script>
+	</body>
+</html>

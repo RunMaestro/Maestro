@@ -1,25 +1,31 @@
-// Shared agent busy-state checks and wait loop for headless Auto Run commands.
-// Used by `maestro-cli playbook` (run-playbook) and `maestro-cli run-doc`
-// (run-doc) so both share one source of truth for busy detection and --wait.
+// Agent busy-state detection and wait loop for CLI run commands.
+//
+// Shared by `run-playbook`, `run-doc`, and `goal-run` so a CLI run never starts
+// on an agent that is already busy in the desktop app or another CLI instance.
+// Extracted to avoid duplicating the (subtle) desktop config-path logic and the
+// --wait poll loop across commands.
 
-import { getCliActivityForSession, isSessionBusyWithCli } from '../../shared/cli-activity';
-import { formatWarning, formatInfo } from '../output/formatter';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { isSessionBusyWithCli, getCliActivityForSession } from '../../shared/cli-activity';
+import { formatWarning, formatInfo } from '../output/formatter';
+
+export interface BusyCheckResult {
+	busy: boolean;
+	reason?: string;
+}
 
 /**
  * Check if the desktop app has the session in a busy state.
  *
- * NOTE: This function uses lowercase "maestro" config directory, which matches
- * the electron-store default (from package.json "name": "maestro"). This is
- * intentionally different from cli/services/storage.ts which uses "Maestro"
- * (capitalized) for CLI-specific storage. This function needs to read the
- * desktop app's session state, not CLI storage.
- *
- * @internal
+ * NOTE: This reads the desktop app's lowercase "maestro" config directory (the
+ * electron-store default from package.json "name": "maestro"), which is
+ * intentionally different from cli/services/storage.ts using "Maestro"
+ * (capitalized) for CLI-specific storage. We need the desktop's session state,
+ * not CLI storage.
  */
-function isSessionBusyInDesktop(sessionId: string): { busy: boolean; reason?: string } {
+export function isSessionBusyInDesktop(sessionId: string): BusyCheckResult {
 	try {
 		const platform = os.platform();
 		const home = os.homedir();
@@ -47,32 +53,28 @@ function isSessionBusyInDesktop(sessionId: string): { busy: boolean; reason?: st
 		}
 		return { busy: false };
 	} catch {
-		// Can't read sessions file, assume not busy
+		// Can't read sessions file, assume not busy.
 		return { busy: false };
 	}
 }
 
 /**
- * Check if an agent is busy, either from another CLI instance running a
- * playbook/doc or from the desktop app.
+ * Check if an agent is busy from another CLI instance or the desktop app.
  */
-export function checkAgentBusy(agentId: string): { busy: boolean; reason?: string } {
-	// Check CLI activity first
+export function checkAgentBusy(agentId: string): BusyCheckResult {
+	// Check CLI activity first.
 	const cliActivity = getCliActivityForSession(agentId);
 	if (cliActivity && isSessionBusyWithCli(agentId)) {
 		return {
 			busy: true,
-			reason: `Running playbook "${cliActivity.playbookName}" from CLI (PID: ${cliActivity.pid})`,
+			reason: `Running "${cliActivity.playbookName}" from CLI (PID: ${cliActivity.pid})`,
 		};
 	}
 
-	// Check desktop state
+	// Then desktop state.
 	const desktopBusy = isSessionBusyInDesktop(agentId);
 	if (desktopBusy.busy) {
-		return {
-			busy: true,
-			reason: 'Busy in desktop app',
-		};
+		return { busy: true, reason: 'Busy in desktop app' };
 	}
 
 	return { busy: false };
@@ -109,7 +111,7 @@ function sleep(ms: number): Promise<void> {
  */
 export async function waitForAgentAvailable(
 	agent: { id: string; name: string },
-	initialBusy: { busy: boolean; reason?: string },
+	initialBusy: BusyCheckResult,
 	options: { useJson?: boolean } = {}
 ): Promise<void> {
 	const { useJson } = options;

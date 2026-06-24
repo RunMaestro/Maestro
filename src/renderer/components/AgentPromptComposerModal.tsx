@@ -15,6 +15,17 @@ interface AgentPromptComposerModalProps {
 	theme: Theme;
 	initialValue: string;
 	onSubmit: (value: string) => void;
+	/** Header label. Defaults to "Agent Prompt Editor". */
+	title?: string;
+	/** Textarea placeholder. */
+	placeholder?: string;
+	/**
+	 * Show the collapsible template-variable panel + `{{` autocomplete. Defaults
+	 * to true (agent prompts support template substitution). Set false for plain
+	 * free-text fields like the Goal-Driven goal / exit criteria, which are fed to
+	 * the goal engine verbatim rather than substituted.
+	 */
+	showTemplateVariables?: boolean;
 }
 
 export function AgentPromptComposerModal({
@@ -23,6 +34,9 @@ export function AgentPromptComposerModal({
 	theme,
 	initialValue,
 	onSubmit,
+	title = 'Agent Prompt Editor',
+	placeholder = 'Enter your agent prompt... (type {{ for variables)',
+	showTemplateVariables = true,
 }: AgentPromptComposerModalProps) {
 	const [value, setValue] = useState(initialValue);
 	const [variablesExpanded, setVariablesExpanded] = useState(false);
@@ -146,7 +160,7 @@ export function AgentPromptComposerModal({
 					<div className="flex items-center gap-2">
 						<FileText className="w-5 h-5" style={{ color: theme.colors.accent }} />
 						<span className="font-medium" style={{ color: theme.colors.textMain }}>
-							Agent Prompt Editor
+							{title}
 						</span>
 					</div>
 					<div className="flex items-center gap-3">
@@ -156,92 +170,101 @@ export function AgentPromptComposerModal({
 					</div>
 				</div>
 
-				{/* Template Variables - Collapsible */}
-				<div
-					className="border-b shrink-0"
-					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
-				>
-					<button
-						onClick={() => setVariablesExpanded(!variablesExpanded)}
-						className="w-full px-4 py-2 flex items-center justify-between hover:bg-white/5 transition-colors"
+				{/* Template Variables - Collapsible (agent prompts only) */}
+				{showTemplateVariables && (
+					<div
+						className="border-b shrink-0"
+						style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
 					>
-						<div className="flex items-center gap-2">
-							<Variable className="w-4 h-4" style={{ color: theme.colors.accent }} />
-							<span className="text-xs font-bold uppercase" style={{ color: theme.colors.textDim }}>
-								Template Variables
-							</span>
-						</div>
-						{variablesExpanded ? (
-							<ChevronDown className="w-4 h-4" style={{ color: theme.colors.textDim }} />
-						) : (
-							<ChevronRight className="w-4 h-4" style={{ color: theme.colors.textDim }} />
-						)}
-					</button>
-					{variablesExpanded && (
-						<div className="px-4 pb-3 pt-1">
-							<p className="text-xs mb-2" style={{ color: theme.colors.textDim }}>
-								Use these variables in your prompt. They will be replaced with actual values at
-								runtime.
-							</p>
-							<div className="grid grid-cols-2 gap-x-6 gap-y-1 max-h-40 overflow-y-auto scrollbar-thin">
-								{TEMPLATE_VARIABLES.map(({ variable, description }) => (
-									<div key={variable} className="flex items-center gap-2 py-0.5 min-w-0">
-										<code
-											className="text-xs font-mono px-1.5 py-0.5 rounded shrink-0 cursor-pointer hover:opacity-80"
-											style={{
-												backgroundColor: theme.colors.bgActivity,
-												color: theme.colors.accent,
-											}}
-											onClick={() => {
-												// Insert variable at cursor position
-												if (textareaRef.current) {
-													const start = textareaRef.current.selectionStart;
-													const end = textareaRef.current.selectionEnd;
-													const newValue =
-														value.substring(0, start) + variable + value.substring(end);
-													setValue(newValue);
-													// Restore focus and set cursor position after the inserted variable
-													requestAnimationFrame(() => {
-														if (textareaRef.current) {
-															textareaRef.current.focus();
-															textareaRef.current.selectionStart = start + variable.length;
-															textareaRef.current.selectionEnd = start + variable.length;
-														}
-													});
-												}
-											}}
-											title="Click to insert"
-										>
-											{variable}
-										</code>
-										<span className="text-xs" style={{ color: theme.colors.textDim }}>
-											{description}
-										</span>
-									</div>
-								))}
+						<button
+							onClick={() => setVariablesExpanded(!variablesExpanded)}
+							className="w-full px-4 py-2 flex items-center justify-between hover:bg-white/5 transition-colors"
+						>
+							<div className="flex items-center gap-2">
+								<Variable className="w-4 h-4" style={{ color: theme.colors.accent }} />
+								<span
+									className="text-xs font-bold uppercase"
+									style={{ color: theme.colors.textDim }}
+								>
+									Template Variables
+								</span>
 							</div>
-						</div>
-					)}
-				</div>
+							{variablesExpanded ? (
+								<ChevronDown className="w-4 h-4" style={{ color: theme.colors.textDim }} />
+							) : (
+								<ChevronRight className="w-4 h-4" style={{ color: theme.colors.textDim }} />
+							)}
+						</button>
+						{variablesExpanded && (
+							<div className="px-4 pb-3 pt-1">
+								<p className="text-xs mb-2" style={{ color: theme.colors.textDim }}>
+									Use these variables in your prompt. They will be replaced with actual values at
+									runtime.
+								</p>
+								<div className="grid grid-cols-2 gap-x-6 gap-y-1 max-h-40 overflow-y-auto scrollbar-thin">
+									{TEMPLATE_VARIABLES.map(({ variable, description }) => (
+										<div key={variable} className="flex items-center gap-2 py-0.5 min-w-0">
+											<code
+												className="text-xs font-mono px-1.5 py-0.5 rounded shrink-0 cursor-pointer hover:opacity-80"
+												style={{
+													backgroundColor: theme.colors.bgActivity,
+													color: theme.colors.accent,
+												}}
+												onClick={() => {
+													// Insert variable at cursor position
+													if (textareaRef.current) {
+														const start = textareaRef.current.selectionStart;
+														const end = textareaRef.current.selectionEnd;
+														const newValue =
+															value.substring(0, start) + variable + value.substring(end);
+														setValue(newValue);
+														// Restore focus and set cursor position after the inserted variable
+														requestAnimationFrame(() => {
+															if (textareaRef.current) {
+																textareaRef.current.focus();
+																textareaRef.current.selectionStart = start + variable.length;
+																textareaRef.current.selectionEnd = start + variable.length;
+															}
+														});
+													}
+												}}
+												title="Click to insert"
+											>
+												{variable}
+											</code>
+											<span className="text-xs" style={{ color: theme.colors.textDim }}>
+												{description}
+											</span>
+										</div>
+									))}
+								</div>
+							</div>
+						)}
+					</div>
+				)}
 
 				{/* Textarea */}
 				<div className="flex-1 p-4 overflow-hidden relative">
 					<textarea
 						ref={textareaRef}
 						value={value}
-						onChange={handleAutocompleteChange}
+						onChange={
+							showTemplateVariables ? handleAutocompleteChange : (e) => setValue(e.target.value)
+						}
 						onKeyDown={handleTextareaKeyDown}
 						className="w-full h-full bg-transparent resize-none outline-none text-sm leading-relaxed scrollbar-thin font-mono"
 						style={{ color: theme.colors.textMain }}
-						placeholder="Enter your agent prompt... (type {{ for variables)"
+						placeholder={placeholder}
 					/>
 					{/* Template Variable Autocomplete Dropdown */}
-					<TemplateAutocompleteDropdown
-						ref={autocompleteRef}
-						theme={theme}
-						state={autocompleteState}
-						onSelect={selectVariable}
-					/>
+					{showTemplateVariables && (
+						<TemplateAutocompleteDropdown
+							ref={autocompleteRef}
+							theme={theme}
+							state={autocompleteState}
+							onSelect={selectVariable}
+						/>
+					)}
 				</div>
 
 				{/* Footer */}

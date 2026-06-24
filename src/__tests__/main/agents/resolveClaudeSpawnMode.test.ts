@@ -431,6 +431,12 @@ describe('applyClaudeSpawnDecision (batch surfaces)', () => {
 
 	it('adds NODE_PATH to the unpacked modules dir when running packaged (resourcesPath set)', () => {
 		const original = process.resourcesPath;
+		// The source prepends the asar path to any EXISTING NODE_PATH, so this
+		// assertion is only deterministic on a clean slate. A developer's shell may
+		// export NODE_PATH (e.g. pointing at a packaged Maestro), which would
+		// otherwise leak in and double the value - isolate it for the duration.
+		const originalNodePath = process.env.NODE_PATH;
+		delete process.env.NODE_PATH;
 		try {
 			// Simulate a packaged app: resourcesPath points at the app Resources dir.
 			Object.defineProperty(process, 'resourcesPath', {
@@ -462,6 +468,11 @@ describe('applyClaudeSpawnDecision (batch surfaces)', () => {
 				value: original,
 				configurable: true,
 			});
+			if (originalNodePath === undefined) {
+				delete process.env.NODE_PATH;
+			} else {
+				process.env.NODE_PATH = originalNodePath;
+			}
 		}
 	});
 

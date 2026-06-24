@@ -271,6 +271,11 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 				currentDocumentIndex?: number;
 				totalTasksAcrossAllDocs?: number;
 				completedTasksAcrossAllDocs?: number;
+				// Goal-Driven mode fields
+				goalMode?: boolean;
+				goalProgress?: number;
+				goalRationale?: string;
+				goalIteration?: number;
 			} | null
 		) => {
 			const webServer = getWebServer();

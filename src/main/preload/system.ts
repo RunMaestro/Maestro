@@ -49,6 +49,7 @@ export function createShellApi() {
 		openPath: (itemPath: string) => ipcRenderer.invoke('shell:openPath', itemPath),
 		trashItem: (itemPath: string) => ipcRenderer.invoke('shell:trashItem', itemPath),
 		showItemInFolder: (itemPath: string) => ipcRenderer.invoke('shell:showItemInFolder', itemPath),
+		copyTextToClipboard: (text: string) => ipcRenderer.invoke('clipboard:writeText', text),
 		copyImageToClipboard: (dataUrl: string) => ipcRenderer.invoke('clipboard:writeImage', dataUrl),
 		readImageFromClipboard: (): Promise<string | null> => ipcRenderer.invoke('clipboard:readImage'),
 	};

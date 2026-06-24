@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useEffect, useMemo, useRef } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import {
 	ChevronUp,
@@ -93,6 +93,30 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 	const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
 	const htmlDoubleClickOpensInBrowser = useSettingsStore((s) => s.htmlDoubleClickOpensInBrowser);
 	const compact = rightPanelWidth < RIGHT_PANEL_COMPACT_THRESHOLD;
+
+	const [isTouchPointer, setIsTouchPointer] = useState<boolean>(() =>
+		typeof window !== 'undefined' && window.matchMedia
+			? window.matchMedia('(pointer: coarse)').matches
+			: false
+	);
+	const longPressTimerRef = useRef<number | null>(null);
+	const longPressFiredRef = useRef(false);
+
+	useEffect(() => {
+		if (typeof window === 'undefined' || !window.matchMedia) return;
+		const mql = window.matchMedia('(pointer: coarse)');
+		const handler = (e: MediaQueryListEvent) => setIsTouchPointer(e.matches);
+		mql.addEventListener?.('change', handler);
+		return () => mql.removeEventListener?.('change', handler);
+	}, []);
+
+	useEffect(() => {
+		return () => {
+			if (longPressTimerRef.current) {
+				window.clearTimeout(longPressTimerRef.current);
+			}
+		};
+	}, []);
 
 	// Live git status comes from GitStatusProvider, which polls per session via
 	// useGitStatusPolling. The legacy session.changedFiles field is never
@@ -309,6 +333,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		isMultiDeleting,
 		contextMenuRef,
 		contextMenuPos,
+		openContextMenuAt,
 		openContextMenu,
 		openRootContextMenu,
 		handleCopyPath,
@@ -763,9 +788,13 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 											fileTreeFilter={fileTreeFilter}
 											htmlDoubleClickOpensInBrowser={htmlDoubleClickOpensInBrowser}
 											sshRemoteId={sshRemoteId}
+											isTouchPointer={isTouchPointer}
+											longPressTimerRef={longPressTimerRef}
+											longPressFiredRef={longPressFiredRef}
 											lastClickedUnderFilterRef={lastClickedUnderFilterRef}
 											setActiveFocus={setActiveFocus}
 											handleRowSelectionClick={handleRowSelectionClick}
+											openContextMenuAt={openContextMenuAt}
 											handleContextMenu={openContextMenu}
 											handleFolderDragEnter={handleFolderDragEnter}
 											handleFolderDragOver={handleFolderDragOver}

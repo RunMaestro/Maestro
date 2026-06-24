@@ -40,6 +40,13 @@ interface UseFileContextMenuResult {
 	isMultiDeleting: boolean;
 	contextMenuRef: React.RefObject<HTMLDivElement>;
 	contextMenuPos: { top: number; left: number; ready?: boolean };
+	openContextMenuAt: (
+		x: number,
+		y: number,
+		node: FileNode,
+		path: string,
+		globalIndex: number
+	) => void;
 	openContextMenu: (e: React.MouseEvent, node: FileNode, path: string, globalIndex: number) => void;
 	openRootContextMenu: (e: React.MouseEvent) => void;
 	closeContextMenu: () => void;
@@ -116,17 +123,24 @@ export function useFileContextMenu({
 		{ enabled: contextMenu !== null }
 	);
 
-	const openContextMenu = useCallback(
-		(e: React.MouseEvent, node: FileNode, path: string, globalIndex: number) => {
-			e.preventDefault();
-			e.stopPropagation();
+	const openContextMenuAt = useCallback(
+		(x: number, y: number, node: FileNode, path: string, globalIndex: number) => {
 			setSelectedFileIndex(globalIndex);
 			if (selectedPathsRef.current.size > 0 && !selectedPathsRef.current.has(path)) {
 				setSelectedPaths(new Set());
 			}
-			setContextMenu({ x: e.clientX, y: e.clientY, node, path });
+			setContextMenu({ x, y, node, path });
 		},
 		[setSelectedFileIndex, selectedPathsRef, setSelectedPaths]
+	);
+
+	const openContextMenu = useCallback(
+		(e: React.MouseEvent, node: FileNode, path: string, globalIndex: number) => {
+			e.preventDefault();
+			e.stopPropagation();
+			openContextMenuAt(e.clientX, e.clientY, node, path, globalIndex);
+		},
+		[openContextMenuAt]
 	);
 
 	// Right-click on the panel's empty space (no row under the cursor). Opens a
@@ -523,6 +537,7 @@ export function useFileContextMenu({
 		isMultiDeleting,
 		contextMenuRef,
 		contextMenuPos,
+		openContextMenuAt,
 		openContextMenu,
 		openRootContextMenu,
 		closeContextMenu,

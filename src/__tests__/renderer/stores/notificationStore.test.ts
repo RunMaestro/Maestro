@@ -20,6 +20,7 @@ import {
 	selectToasts,
 	selectToastCount,
 	selectConfig,
+	triggerCustomNotification,
 } from '../../../renderer/stores/notificationStore';
 import type { Toast } from '../../../renderer/stores/notificationStore';
 
@@ -421,6 +422,37 @@ describe('notificationStore', () => {
 					message: 'Hello',
 					skipCustomNotification: true,
 				});
+				expect(mockSpeak).not.toHaveBeenCalled();
+			});
+		});
+
+		describe('triggerCustomNotification (audio without a visual toast)', () => {
+			it('fires the command and returns true when enabled with content', () => {
+				useNotificationStore.getState().setAudioFeedback(true, 'say');
+				const fired = triggerCustomNotification('Task complete');
+				expect(fired).toBe(true);
+				expect(mockSpeak).toHaveBeenCalledWith('Task complete', 'say');
+			});
+
+			it('does not fire and returns false when disabled', () => {
+				useNotificationStore.getState().setAudioFeedback(false, 'say');
+				const fired = triggerCustomNotification('Task complete');
+				expect(fired).toBe(false);
+				expect(mockSpeak).not.toHaveBeenCalled();
+			});
+
+			it('does not fire when no command is configured', () => {
+				useNotificationStore.getState().setAudioFeedback(true, '');
+				const fired = triggerCustomNotification('Task complete');
+				expect(fired).toBe(false);
+				expect(mockSpeak).not.toHaveBeenCalled();
+			});
+
+			it('does not fire when message is empty or whitespace only', () => {
+				useNotificationStore.getState().setAudioFeedback(true, 'say');
+				expect(triggerCustomNotification('')).toBe(false);
+				expect(triggerCustomNotification('   ')).toBe(false);
+				expect(triggerCustomNotification(undefined)).toBe(false);
 				expect(mockSpeak).not.toHaveBeenCalled();
 			});
 		});

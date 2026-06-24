@@ -38,6 +38,14 @@ interface AgentConfigurationViewProps {
 	onRefreshModels: () => Promise<void>;
 	onRefreshAgent: () => Promise<void>;
 	refreshingAgent: boolean;
+	// Claude Token Source (claude-code only; AgentConfigPanel gates on agent.id)
+	enableMaestroP?: boolean;
+	onEnableMaestroPChange: (value: boolean | undefined) => void;
+	maestroPMode?: 'interactive' | 'dynamic';
+	onMaestroPModeChange: (mode: 'interactive' | 'dynamic') => void;
+	maestroPPath: string;
+	onMaestroPPathChange: (value: string) => void;
+	detectedMaestroPPath?: string;
 }
 
 export function AgentConfigurationView({
@@ -72,7 +80,16 @@ export function AgentConfigurationView({
 	onRefreshModels,
 	onRefreshAgent,
 	refreshingAgent,
+	enableMaestroP,
+	onEnableMaestroPChange,
+	maestroPMode,
+	onMaestroPModeChange,
+	maestroPPath,
+	onMaestroPPathChange,
+	detectedMaestroPPath,
 }: AgentConfigurationViewProps): JSX.Element {
+	const isSshEnabled = !!(sshRemoteConfig?.enabled && sshRemoteConfig?.remoteId);
+	const sshRemoteId = sshRemoteConfig?.remoteId ?? undefined;
 	return (
 		<div
 			ref={containerRef}
@@ -149,6 +166,18 @@ export function AgentConfigurationView({
 						refreshingAgent={refreshingAgent}
 						compact
 						showBuiltInEnvVars
+						isSshEnabled={isSshEnabled}
+						sshRemoteId={sshRemoteId}
+						enableMaestroP={enableMaestroP}
+						onEnableMaestroPChange={onEnableMaestroPChange}
+						maestroPMode={maestroPMode}
+						onMaestroPModeChange={onMaestroPModeChange}
+						maestroPPath={maestroPPath}
+						onMaestroPPathChange={onMaestroPPathChange}
+						onMaestroPPathBlur={() => {
+							/* Persisted when the wizard creates the session */
+						}}
+						detectedMaestroPPath={detectedMaestroPPath}
 					/>
 				</div>
 			</div>

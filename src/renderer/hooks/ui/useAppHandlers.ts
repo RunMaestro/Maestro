@@ -402,12 +402,33 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 			}
 
 			try {
-				// Pass SSH remote ID for remote sessions
-				// Fetch both content and stat for lastModified timestamp
-				const [content, stat] = await Promise.all([
+				// Fetch content and stat independently. `stat` failing must not
+				// drop a successfully-read content (was an issue when running
+				// over the bridge: a stat-only failure would reject the whole
+				// Promise.all and the catch path would log "Failed to read
+				// file:" with the read content thrown away).
+				const [contentResult, statResult] = await Promise.allSettled([
 					window.maestro.fs.readFile(fullPath, sshRemoteId, loadRequestId),
 					window.maestro.fs.stat(fullPath, sshRemoteId),
 				]);
+
+				if (contentResult.status === 'rejected') {
+					logger.error(
+						`Failed to read file: ${
+							contentResult.reason instanceof Error
+								? contentResult.reason.message
+								: String(contentResult.reason)
+						}`,
+						undefined,
+						contentResult.reason
+					);
+					if (loadRequestId) {
+						closeLoadingTabIfStillLoading(targetSessionId, fullPath, loadRequestId);
+					}
+					return;
+				}
+
+				const content = contentResult.value;
 
 				// content === null means either the file is missing or the SSH read
 				// was cancelled (user closed the loading tab). In both cases the tab
@@ -420,6 +441,18 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 					return;
 				}
 
+				const stat = statResult.status === 'fulfilled' ? statResult.value : null;
+				if (statResult.status === 'rejected') {
+					// Non-fatal — content is fine, just log so the failure is visible.
+					logger.warn(
+						`fs.stat failed for ${fullPath}: ${
+							statResult.reason instanceof Error
+								? statResult.reason.message
+								: String(statResult.reason)
+						}`,
+						undefined
+					);
+				}
 				const lastModified = stat?.modifiedAt ? new Date(stat.modifiedAt).getTime() : Date.now();
 
 				// Fill the per-session tab with content. For SSH this hits the
@@ -437,7 +470,11 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 				);
 				setActiveFocus('main');
 			} catch (error) {
-				logger.error('Failed to read file:', undefined, error);
+				logger.error(
+					`Failed to read file: ${error instanceof Error ? error.message : String(error)}`,
+					undefined,
+					error
+				);
 				// Don't strand a loading tab if the SSH read errored out.
 				if (loadRequestId) {
 					closeLoadingTabIfStillLoading(targetSessionId, fullPath, loadRequestId);

@@ -1030,7 +1030,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 						</div>
 					</div>
 					<div
-						className={`relative w-10 h-5 rounded-full transition-colors ${encoreFeatures.directorNotes ? '' : 'opacity-50'}`}
+						className={`relative w-10 h-5 shrink-0 rounded-full transition-colors ${encoreFeatures.directorNotes ? '' : 'opacity-50'}`}
 						style={{
 							backgroundColor: encoreFeatures.directorNotes
 								? theme.colors.accent

@@ -71,8 +71,18 @@ export function AutoRunIndicator({
 		errorMessage,
 		errorRecoverable,
 		errorTaskDescription,
+		goalMode,
+		goalProgress,
+		goalRationale,
+		goalIteration,
 	} = state;
-	const progress = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+	// Goal runs report a self-reported percent directly; task runs derive it from
+	// the completed/total ratio. Both feed the same badge + progress bar below.
+	const progress = goalMode
+		? Math.min(100, Math.max(0, Math.round(goalProgress ?? 0)))
+		: totalTasks > 0
+			? Math.round((completedTasks / totalTasks) * 100)
+			: 0;
 	const currentTask = currentTaskIndex + 1;
 
 	// errorPaused takes visual precedence over isStopping — the user can still
@@ -201,11 +211,25 @@ export function AutoRunIndicator({
 									fontSize: '12px',
 									color: 'rgba(255,255,255,0.85)',
 									marginTop: '2px',
+									whiteSpace: 'nowrap',
+									overflow: 'hidden',
+									textOverflow: 'ellipsis',
 								}}
+								title={goalMode ? goalRationale || undefined : undefined}
 							>
 								{sessionName && <span>{sessionName} - </span>}
-								Task {currentTask} of {totalTasks}
-								{completedTasks > 0 && ` (${completedTasks} done)`}
+								{goalMode ? (
+									<>
+										Goal
+										{goalIteration ? ` · iteration ${goalIteration}` : ''}
+										{goalRationale ? ` — ${goalRationale}` : ''}
+									</>
+								) : (
+									<>
+										Task {currentTask} of {totalTasks}
+										{completedTasks > 0 && ` (${completedTasks} done)`}
+									</>
+								)}
 							</div>
 						</div>
 

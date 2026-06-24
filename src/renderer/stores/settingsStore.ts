@@ -344,6 +344,9 @@ export interface SettingsStoreState {
 	idleNotificationEnabled: boolean;
 	idleNotificationCommand: string;
 	checkForUpdatesOnStartup: boolean;
+	autoResumeOnLimit: boolean;
+	autoResumeCheckIntervalHours: number;
+	autoResumeGiveUpDays: number;
 	enableBetaUpdates: boolean;
 	crashReportingEnabled: boolean;
 	logViewerSelectedLevels: string[];
@@ -492,6 +495,9 @@ export interface SettingsStoreActions {
 	setIdleNotificationEnabled: (value: boolean) => void;
 	setIdleNotificationCommand: (value: string) => void;
 	setCheckForUpdatesOnStartup: (value: boolean) => void;
+	setAutoResumeOnLimit: (value: boolean) => void;
+	setAutoResumeCheckIntervalHours: (value: number) => void;
+	setAutoResumeGiveUpDays: (value: number) => void;
 	setEnableBetaUpdates: (value: boolean) => void;
 	setCrashReportingEnabled: (value: boolean) => void;
 	setLogViewerSelectedLevels: (value: string[]) => void;
@@ -705,6 +711,9 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		idleNotificationEnabled: false,
 		idleNotificationCommand: 'say Maestro is idle',
 		checkForUpdatesOnStartup: true,
+		autoResumeOnLimit: true,
+		autoResumeCheckIntervalHours: 2,
+		autoResumeGiveUpDays: 7,
 		enableBetaUpdates: false,
 		crashReportingEnabled: true,
 		logViewerSelectedLevels: ['debug', 'info', 'warn', 'error', 'toast'],
@@ -1023,6 +1032,27 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setCheckForUpdatesOnStartup: (value) => {
 			set({ checkForUpdatesOnStartup: value });
 			window.maestro.settings.set('checkForUpdatesOnStartup', value);
+		},
+
+		setAutoResumeOnLimit: (value) => {
+			set({ autoResumeOnLimit: value });
+			window.maestro.settings.set('autoResumeOnLimit', value);
+		},
+
+		setAutoResumeCheckIntervalHours: (value) => {
+			// Guard against 0/negative/non-finite values (CLI or manual store edits)
+			// that would destabilize the coordinator cadence.
+			const normalized = Number.isFinite(value) ? Math.max(1, Math.floor(value)) : 2;
+			set({ autoResumeCheckIntervalHours: normalized });
+			window.maestro.settings.set('autoResumeCheckIntervalHours', normalized);
+		},
+
+		setAutoResumeGiveUpDays: (value) => {
+			// Guard against 0/negative/non-finite values that would cause immediate
+			// give-up behavior.
+			const normalized = Number.isFinite(value) ? Math.max(1, Math.floor(value)) : 7;
+			set({ autoResumeGiveUpDays: normalized });
+			window.maestro.settings.set('autoResumeGiveUpDays', normalized);
 		},
 
 		setEnableBetaUpdates: (value) => {
@@ -2314,6 +2344,21 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['checkForUpdatesOnStartup'] !== undefined)
 			patch.checkForUpdatesOnStartup = allSettings['checkForUpdatesOnStartup'] as boolean;
 
+		if (allSettings['autoResumeOnLimit'] !== undefined)
+			patch.autoResumeOnLimit = allSettings['autoResumeOnLimit'] as boolean;
+
+		if (allSettings['autoResumeCheckIntervalHours'] !== undefined) {
+			const raw = allSettings['autoResumeCheckIntervalHours'];
+			if (typeof raw === 'number' && Number.isFinite(raw))
+				patch.autoResumeCheckIntervalHours = Math.max(1, Math.floor(raw));
+		}
+
+		if (allSettings['autoResumeGiveUpDays'] !== undefined) {
+			const raw = allSettings['autoResumeGiveUpDays'];
+			if (typeof raw === 'number' && Number.isFinite(raw))
+				patch.autoResumeGiveUpDays = Math.max(1, Math.floor(raw));
+		}
+
 		if (allSettings['enableBetaUpdates'] !== undefined)
 			patch.enableBetaUpdates = allSettings['enableBetaUpdates'] as boolean;
 
@@ -2918,6 +2963,9 @@ export function getSettingsActions() {
 		setAudioFeedbackCommand: state.setAudioFeedbackCommand,
 		setToastDuration: state.setToastDuration,
 		setCheckForUpdatesOnStartup: state.setCheckForUpdatesOnStartup,
+		setAutoResumeOnLimit: state.setAutoResumeOnLimit,
+		setAutoResumeCheckIntervalHours: state.setAutoResumeCheckIntervalHours,
+		setAutoResumeGiveUpDays: state.setAutoResumeGiveUpDays,
 		setEnableBetaUpdates: state.setEnableBetaUpdates,
 		setCrashReportingEnabled: state.setCrashReportingEnabled,
 		setLogViewerSelectedLevels: state.setLogViewerSelectedLevels,

@@ -772,9 +772,27 @@ export class WebSocketMessageHandler {
 				this.handleGetSessionHistory(client, message);
 				break;
 
+			case 'bridge.invoke':
+				void this.handleBridgeInvoke(client, message);
+				break;
+
 			default:
 				this.handleUnknown(client, message);
 		}
+	}
+
+	/**
+	 * Generic IPC bridge — dispatch a bridge.invoke message to the matching
+	 * ipcMain handler and return the result/error as a bridge.response. This
+	 * backs the web-desktop bundle, the default browser interface.
+	 */
+	private async handleBridgeInvoke(client: WebClient, message: WebClientMessage): Promise<void> {
+		const { handleBridgeInvoke } = await import('./bridgeHandlers');
+		await handleBridgeInvoke(
+			client,
+			message as unknown as Parameters<typeof handleBridgeInvoke>[1],
+			(c, payload) => c.socket.send(JSON.stringify(payload))
+		);
 	}
 
 	/**

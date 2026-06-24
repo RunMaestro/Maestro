@@ -953,6 +953,25 @@ svg.wand-sparkle-active path:nth-child(8) {
 }
 
 /* Below 300px: Hide session name */
+@container header (max-width: 480px) {
+	/* Drop secondary header buttons (Memory Viewer + Agent Sessions) so the
+	 * right group fits — both are still reachable via the Menu drawer. */
+	.header-secondary-btn {
+		display: none !important;
+	}
+}
+
+/*
+ * Tighten the MainPanel header padding on narrow viewports. The container
+ * query above can't restyle its own container, so we drive padding off the
+ * `data-bp` attribute that useViewportBreakpoint writes on <html>.
+ */
+:root[data-bp='xs'] .header-container,
+:root[data-bp='sm'] .header-container {
+	padding-left: 0.5rem !important;
+	padding-right: 0.5rem !important;
+}
+
 @container header (max-width: 300px) {
 	.header-session-name {
 		display: none;
@@ -1164,4 +1183,97 @@ svg.wand-sparkle-active path:nth-child(8) {
 
 .code-fence .shiki-host pre.shiki .line {
 	color: unset;
+}
+
+/*
+ * Narrow-viewport (xs / sm) overlay behavior.
+ *
+ * The desktop layout assumes a 3-column flex row. Below 768px the inline
+ * widths squeeze MainPanel to nothing. These rules turn the left and right
+ * sidebars into fixed-position drawers (full height, fixed width, transform
+ * to hide). data-bp is set by useViewportBreakpoint on <html>. data-panel
+ * is set by SessionList / RightPanel root divs. Inline width is overridden
+ * with !important because the components set it via the style prop.
+ */
+/*
+ * App shell height: use dynamic viewport so iOS Safari's collapsible URL bar
+ * and bottom toolbar don't occlude the input area. Falls back to 100vh on
+ * older browsers. The bottom safe-area inset (iPhone home indicator + Safari
+ * bottom bar where it overlays) is reserved as padding so toolbar pills stay
+ * tappable.
+ */
+.maestro-app-shell {
+	height: 100vh;
+	height: 100dvh;
+	padding-bottom: env(safe-area-inset-bottom);
+}
+
+/*
+ * Tri-state left sidebar.
+ *
+ * Closed (data-collapsed='true') keeps the inline 64px status-dot strip so
+ * users can see all sessions at a glance. Hidden (data-hidden='true') drops
+ * the panel entirely — used when the user wants maximum room for the main
+ * content. Hidden state applies at every breakpoint, including desktop.
+ */
+[data-panel='left'][data-hidden='true'] {
+	display: none !important;
+}
+
+/*
+ * Left sidebar on narrow viewports: only the OPEN state floats as a drawer.
+ * Closed state stays inline at its natural 64px width so the collapsed-mode
+ * status-dot strip is always visible.
+ */
+:root[data-bp='xs'] [data-panel='left'][data-collapsed='false'][data-hidden='false'],
+:root[data-bp='sm'] [data-panel='left'][data-collapsed='false'][data-hidden='false'] {
+	position: fixed !important;
+	top: 0;
+	bottom: 0;
+	left: 0;
+	width: min(85vw, 320px) !important;
+	max-width: 85vw;
+	z-index: 50;
+	transform: translateX(0);
+	transition: transform 200ms ease;
+	box-shadow: 4px 0 20px rgba(0, 0, 0, 0.4);
+}
+
+:root[data-bp='xs'] [data-panel='right'],
+:root[data-bp='sm'] [data-panel='right'] {
+	position: fixed !important;
+	top: 0;
+	bottom: 0;
+	right: 0;
+	width: min(85vw, 320px) !important;
+	max-width: 85vw;
+	z-index: 50;
+	transform: translateX(0);
+	transition: transform 200ms ease;
+	box-shadow: -4px 0 20px rgba(0, 0, 0, 0.4);
+	opacity: 1 !important;
+}
+
+:root[data-bp='xs'] [data-panel='right'][data-open='false'],
+:root[data-bp='sm'] [data-panel='right'][data-open='false'] {
+	transform: translateX(100%);
+	box-shadow: none;
+	pointer-events: none;
+}
+
+.maestro-mobile-backdrop {
+	position: fixed;
+	inset: 0;
+	background: rgba(0, 0, 0, 0.55);
+	z-index: 40;
+	animation: maestro-fade-in 150ms ease;
+}
+
+@keyframes maestro-fade-in {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
+	}
 }

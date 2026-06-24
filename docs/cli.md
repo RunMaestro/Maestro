@@ -520,6 +520,43 @@ maestro-cli clean playbooks
 maestro-cli clean playbooks --dry-run
 ```
 
+### Goal-Driven Auto Run
+
+Spec-Driven runs (the `playbook` command above) work through a checklist of documents. Goal-Driven runs instead pursue a single free-text objective: each iteration spawns a fresh agent that makes one increment of progress, reports how far along it is, and exits, repeating until the goal is reached, a deadlock is declared, the iteration limit is hit, or progress stalls.
+
+```bash
+# Run until the goal is reached or a deadlock is detected (infinite iterations)
+maestro-cli goal-run <agent-id> "Migrate the settings store from Redux to Zustand and keep all tests green"
+
+# Spell out what "done" looks like (guides the agent; not matched automatically)
+maestro-cli goal-run <agent-id> "Improve test coverage" \
+  --exit-criteria "Done when coverage is above 90% and all tests pass"
+
+# Cap the number of iterations
+maestro-cli goal-run <agent-id> "Refactor the auth module" --max-iterations 10
+
+# Machine-parseable JSON lines for scripting / CI
+maestro-cli goal-run <agent-id> "Fix all lint errors" --json
+
+# Show the full prompt sent to the agent each iteration
+maestro-cli goal-run <agent-id> "Tidy the codebase" --verbose
+
+# Run without writing history entries
+maestro-cli goal-run <agent-id> "Quick experiment" --no-history
+```
+
+| Option                   | Description                                              | Default    |
+| ------------------------ | -------------------------------------------------------- | ---------- |
+| `--exit-criteria <text>` | What "done" looks like and when to declare a deadlock    | _(none)_   |
+| `--max-iterations <n>`   | Cap the number of iterations                             | Infinite   |
+| `--no-history`           | Do not write history entries                             | Writes     |
+| `--json`                 | Output as JSON lines (for scripting)                     | Human text |
+| `--verbose`              | Show the full prompt sent to the agent on each iteration | Off        |
+
+The run writes an immediate "started" history entry (recording the goal and exit criteria), one entry per iteration, and a final summary with the stop reason and final progress. Goal-Driven runs honor the same per-agent SSH remote and model/effort/args overrides as `playbook`, and refuse to start if the agent is already busy in the desktop app or another CLI instance.
+
+**JSON event stream:** `goal_start`, `goal_iteration_start`, `goal_iteration_complete` (carries `progress`, `rationale`, `complete`, `deadlock`), and `goal_complete` (carries `success`, `exitReason`, `finalProgress`, `iterations`).
+
 ### Running Documents Without a Playbook (`run-doc`)
 
 `run-doc` runs one or more Auto Run `.md` documents directly, without saving a playbook first. Like `playbook`, it runs **headlessly** - it spawns the target agent itself and streams events, so it works whether or not the Maestro desktop window is open. This is the reliable way to execute a document an agent just wrote.

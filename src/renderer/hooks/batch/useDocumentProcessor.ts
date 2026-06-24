@@ -15,6 +15,7 @@
 import { useCallback } from 'react';
 import type { Session, TaskSelectionMode, UsageStats } from '../../types';
 import { substituteTemplateVariables, TemplateContext } from '../../utils/templateVariables';
+import { prependNewSessionMessage } from '../../../shared/newSessionMessage';
 import { countMarkdownTasks, getTaskSelectionBlock } from './batchUtils';
 import type { AgentSpawnErrorKind } from '../agent/useAgentExecution';
 import { logger } from '../../utils/logger';
@@ -359,8 +360,13 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 				getTaskSelectionBlock(taskSelectionMode)
 			);
 
-			// Substitute template variables in the prompt
-			const finalPrompt = substituteTemplateVariables(promptWithSelectionBlock, templateContext);
+			// Substitute template variables in the prompt. Each task spawns a fresh
+			// provider session, so prefix the agent's New Session Message onto every
+			// spawn (matches interactive behavior).
+			const finalPrompt = prependNewSessionMessage(
+				substituteTemplateVariables(promptWithSelectionBlock, templateContext),
+				session.newSessionMessage
+			);
 
 			// Capture start time for elapsed time tracking
 			const taskStartTime = Date.now();

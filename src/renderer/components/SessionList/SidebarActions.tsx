@@ -1,8 +1,9 @@
 import { memo } from 'react';
-import { PanelLeftClose, PanelLeftOpen, Bell, Bot, MessageSquarePlus } from 'lucide-react';
+import { PanelLeftClose, Bell, Bot, MessageSquarePlus } from 'lucide-react';
 import type { Theme, Shortcut } from '../../types';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { useFeedbackDraftStore } from '../../stores/feedbackDraftStore';
+import { useUIStore } from '../../stores/uiStore';
 
 interface SidebarActionsProps {
 	theme: Theme;
@@ -14,7 +15,6 @@ interface SidebarActionsProps {
 	sidebarWidth: number;
 	addNewSession: () => void;
 	openFeedback?: () => void;
-	setLeftSidebarOpen: (open: boolean) => void;
 	toggleShowUnreadAgentsOnly: () => void;
 }
 
@@ -28,11 +28,11 @@ export const SidebarActions = memo(function SidebarActions({
 	sidebarWidth,
 	addNewSession,
 	openFeedback,
-	setLeftSidebarOpen,
 	toggleShowUnreadAgentsOnly,
 }: SidebarActionsProps) {
 	const compact = sidebarWidth < 320;
 	const feedbackMinimized = useFeedbackDraftStore((s) => s.isMinimized);
+	const cycleLeftSidebar = useUIStore((s) => s.cycleLeftSidebar);
 	const toggleSidebarShortcutLabel = shortcuts.toggleSidebar?.keys?.length
 		? ` (${formatShortcutKeys(shortcuts.toggleSidebar.keys)})`
 		: '';
@@ -48,19 +48,22 @@ export const SidebarActions = memo(function SidebarActions({
 			<button
 				type="button"
 				disabled={hasNoSessions && leftSidebarOpen}
-				onClick={() => setLeftSidebarOpen(!leftSidebarOpen)}
+				onClick={() => cycleLeftSidebar()}
 				className={`flex items-center justify-center p-2 rounded transition-colors w-8 h-8 shrink-0 ${hasNoSessions && leftSidebarOpen ? 'opacity-20 cursor-not-allowed' : 'hover:bg-white/5'}`}
 				title={
 					hasNoSessions && leftSidebarOpen
 						? 'Add an agent first to collapse sidebar'
-						: `${leftSidebarOpen ? 'Collapse' : 'Expand'} Sidebar${toggleSidebarShortcutLabel}`
+						: leftSidebarOpen
+							? `Collapse to status strip${toggleSidebarShortcutLabel}`
+							: `Hide sidebar${toggleSidebarShortcutLabel}`
 				}
 			>
-				{leftSidebarOpen ? (
-					<PanelLeftClose className="w-4 h-4 opacity-50" />
-				) : (
-					<PanelLeftOpen className="w-4 h-4 opacity-50" />
-				)}
+				{/* Both 'open' and 'collapsed' states show the close icon because the
+				    next click pushes the sidebar further (collapsed → hidden), not
+				    backward. PanelLeftOpen would only appear in the fully-hidden state,
+				    but at that point this button isn't rendered — the floating edge
+				    button takes over. */}
+				<PanelLeftClose className="w-4 h-4 opacity-50" />
 			</button>
 
 			{leftSidebarOpen && (

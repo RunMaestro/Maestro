@@ -210,6 +210,7 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		agentConfigsStore: deps.agentConfigsStore,
 		settingsStore: deps.settingsStore,
 		getMainWindow: deps.getMainWindow,
+		safeSend: createSafeSend(deps.getMainWindow),
 		sessionsStore: deps.sessionsStore,
 	});
 	registerPersistenceHandlers({

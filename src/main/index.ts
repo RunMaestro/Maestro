@@ -1361,6 +1361,7 @@ function setupIpcHandlers() {
 		agentConfigsStore,
 		settingsStore: store,
 		getMainWindow: () => mainWindow,
+		safeSend,
 		sessionsStore,
 		interactiveReplayController: interactiveReplayController ?? undefined,
 		getCueProcesses: () => {

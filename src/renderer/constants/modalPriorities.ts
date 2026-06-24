@@ -256,6 +256,10 @@ export const MODAL_PRIORITIES = {
 	/** Settings modal */
 	SETTINGS: 450,
 
+	/** Thought Stream introspection panel - floating, non-blocking; sits below
+	 * real modals so they take Escape/focus first, above git overlays. */
+	THOUGHT_STREAM: 210,
+
 	/** Git diff preview overlay */
 	GIT_DIFF: 200,
 

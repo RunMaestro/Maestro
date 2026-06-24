@@ -9,6 +9,7 @@ import React, {
 	type ReactNode,
 } from 'react';
 import { useFocusAfterRender } from './hooks/utils/useFocusAfterRender';
+import { isWebDesktop } from './utils/runtimeContext';
 // SettingsModal is now lazy-loaded inside AppStandaloneModals
 import { SessionList } from './components/SessionList';
 import { RightPanel, RightPanelHandle } from './components/RightPanel';
@@ -79,6 +80,7 @@ import {
 	useCliActivityMonitoring,
 	useMobileLandscape,
 	useAppRemoteEventListeners,
+	useViewportBreakpoint,
 	// UI
 	useThemeStyles,
 	useAppHandlers,
@@ -140,6 +142,7 @@ import { useChatFileDropZone } from './hooks/ui/useChatFileDropZone';
 import { useMainPanelProps, useSessionListProps, useRightPanelProps } from './hooks/props';
 import { useAgentListeners } from './hooks/agent/useAgentListeners';
 import { useSessionRecovery } from './hooks/agent/useSessionRecovery';
+import { useAutoResumeCoordinator } from './hooks/agent/useAutoResumeCoordinator';
 import { useSymphonyContribution } from './hooks/symphony/useSymphonyContribution';
 import { useCueAutoDiscovery } from './hooks/useCueAutoDiscovery';
 import { useCueVisibilityWiring } from './hooks/cue/useCueVisibilityWiring';
@@ -166,6 +169,7 @@ import { useActiveSession } from './hooks/session/useActiveSession';
 import { InlineWizardProvider, useInlineWizardContext } from './contexts/InlineWizardContext';
 import { ToastContainer } from './components/Toast';
 import { CenterFlash } from './components/CenterFlash';
+import { ThoughtStreamPanel } from './components/ThoughtStreamPanel';
 import { useQuitWhenIdle } from './hooks/useQuitWhenIdle';
 
 // Import services
@@ -197,6 +201,7 @@ import {
 	hasActiveWizard,
 	findNextUnreadSession,
 	getTabDisplayName,
+	isSoleAiTabReplacement,
 } from './utils/tabHelpers';
 // validateNewSession moved to useSymphonyContribution, useSessionCrud hooks
 // formatLogsForClipboard moved to useTabExportHandlers hook
@@ -351,6 +356,11 @@ function MaestroConsoleInner() {
 
 	// --- MOBILE LANDSCAPE MODE (reading-only view) ---
 	const isMobileLandscape = useMobileLandscape();
+
+	// --- RESPONSIVE BREAKPOINT (drives drawer-mode sidebars on narrow viewports) ---
+	const { isNarrow: isNarrowViewport, isMdDown: isMdDownViewport } = useViewportBreakpoint();
+	// Auto-collapse / mutual-exclusion effects live further down, after
+	// leftSidebarOpen / rightPanelOpen are pulled from the UI store.
 
 	// --- NAVIGATION HISTORY (back/forward through sessions and tabs) ---
 	const { pushNavigation, navigateBack, navigateForward } = useNavigationHistory();
@@ -574,6 +584,36 @@ function MaestroConsoleInner() {
 	// State: individual selectors for granular re-render control
 	const leftSidebarOpen = useUIStore((s) => s.leftSidebarOpen);
 	const rightPanelOpen = useUIStore((s) => s.rightPanelOpen);
+
+	// Auto-collapse both sidebars when the viewport is narrow (fresh load OR
+	// transition). MainPanel needs the full width. Users can still toggle
+	// either drawer open; on narrow widths opening one auto-closes the other
+	// (the mutual-exclusion effect right below).
+	useEffect(() => {
+		if (isNarrowViewport) {
+			useUIStore.getState().setLeftSidebarOpen(false);
+			useUIStore.getState().setRightPanelOpen(false);
+		}
+	}, [isNarrowViewport]);
+
+	// Mutual exclusion on narrow: opening one drawer closes the OTHER one.
+	// Track previous values so we react to the transition that just opened a
+	// drawer, not the steady state. The old "if both open, close right" version
+	// was biased: opening the right while the left was already open would
+	// immediately re-close the right.
+	const prevLeftSidebarOpenRef = useRef(leftSidebarOpen);
+	const prevRightPanelOpenRef = useRef(rightPanelOpen);
+	useEffect(() => {
+		const leftJustOpened = !prevLeftSidebarOpenRef.current && leftSidebarOpen;
+		const rightJustOpened = !prevRightPanelOpenRef.current && rightPanelOpen;
+		if (isNarrowViewport && leftJustOpened && rightPanelOpen) {
+			useUIStore.getState().setRightPanelOpen(false);
+		} else if (isNarrowViewport && rightJustOpened && leftSidebarOpen) {
+			useUIStore.getState().setLeftSidebarOpen(false);
+		}
+		prevLeftSidebarOpenRef.current = leftSidebarOpen;
+		prevRightPanelOpenRef.current = rightPanelOpen;
+	}, [isNarrowViewport, leftSidebarOpen, rightPanelOpen]);
 	const activeRightTab = useUIStore((s) => s.activeRightTab);
 	const activeFocus = useUIStore((s) => s.activeFocus);
 	const bookmarksCollapsed = useUIStore((s) => s.bookmarksCollapsed);
@@ -1140,6 +1180,25 @@ function MaestroConsoleInner() {
 		prevInputModeRef.current = activeSession?.inputMode;
 	}, [activeSession?.inputMode]);
 
+	// Auto-focus the AI input when closing the last tab spawns a fresh chat tab.
+	// closeTab() replaces the sole remaining AI tab with a new empty one, so the
+	// session still has one tab but its id changed; land the caret in the input
+	// just like a manual new tab does (the close paths don't reach inputRef).
+	const prevFocusSessionIdRef = useRef(activeSession?.id);
+	const prevAiTabIdsRef = useRef<string[]>(
+		activeSession ? activeSession.aiTabs.map((t) => t.id) : []
+	);
+	const shouldFocusOnLastTabReplaced = isSoleAiTabReplacement(
+		prevFocusSessionIdRef.current,
+		prevAiTabIdsRef.current,
+		activeSession
+	);
+	useFocusAfterRender(inputRef, shouldFocusOnLastTabReplaced, 0);
+	useEffect(() => {
+		prevFocusSessionIdRef.current = activeSession?.id;
+		prevAiTabIdsRef.current = activeSession ? activeSession.aiTabs.map((t) => t.id) : [];
+	}, [activeSession?.id, activeSession?.aiTabs]);
+
 	// PERF: Memoize sessions for NewInstanceModal validation (only recompute when modal is open)
 	// This prevents re-renders of the modal's validation logic on every session state change
 	const sessionsForValidation = useMemo(
@@ -1446,6 +1505,14 @@ function MaestroConsoleInner() {
 		processQueuedItemRef,
 		contextWarningYellowThreshold: contextManagementSettings.contextWarningYellowThreshold,
 	});
+
+	// --- AUTO-RESUME ON LIMIT (Phase 3) ---
+	// Renderer singleton: on the autoResumeCheckIntervalHours interval, probe
+	// every limit-paused agent and resume the ones whose provider window has
+	// reopened. Reads its own settings from the store; early-returns + clears
+	// the timer when autoResumeOnLimit is off. `resumeAutoRunAfterError` is the
+	// shared entry point that unblocks both spec- and goal-driven Auto Runs.
+	useAutoResumeCoordinator({ resumeAutoRunAfterError });
 
 	const handleRemoveQueuedItem = useCallback((itemId: string) => {
 		updateSessionWith(activeSessionIdRef.current, (s) => ({
@@ -2796,8 +2863,10 @@ function MaestroConsoleInner() {
 	return (
 		<>
 			<div
-				className={`flex h-screen w-full font-mono overflow-hidden transition-colors duration-300 ${
-					isMobileLandscape || useNativeTitleBar ? 'pt-0' : 'pt-10'
+				className={`flex maestro-app-shell w-full font-mono overflow-hidden transition-colors duration-300 ${
+					isMobileLandscape || useNativeTitleBar || isMdDownViewport || isWebDesktop()
+						? 'pt-0'
+						: 'pt-10'
 				}`}
 				style={{
 					backgroundColor: theme.colors.bgMain,
@@ -2811,8 +2880,10 @@ function MaestroConsoleInner() {
 				    while the Files panel imports into the tree. The left bar and the
 				    History/Auto Run panel intentionally do nothing. */}
 
-				{/* --- DRAGGABLE TITLE BAR (hidden in mobile landscape or when using native title bar) --- */}
-				{!isMobileLandscape && !useNativeTitleBar && (
+				{/* --- DRAGGABLE TITLE BAR --- hidden in mobile landscape, native title bar,
+				    narrow viewport, the legacy web build, OR the web-desktop bundle
+				    (no Electron host = nothing to drag, just visual clutter). */}
+				{!isMobileLandscape && !useNativeTitleBar && !isMdDownViewport && !isWebDesktop() && (
 					<div
 						className="fixed top-0 left-0 right-0 h-10 flex items-center justify-center"
 						style={
@@ -3272,6 +3343,25 @@ function MaestroConsoleInner() {
 					</ErrorBoundary>
 				)}
 
+				{/* --- MOBILE BACKDROP (taps anywhere outside a drawer to close it) --- */}
+				{isNarrowViewport && sessions.length > 0 && (leftSidebarOpen || rightPanelOpen) && (
+					<div
+						className="maestro-mobile-backdrop"
+						onClick={() => {
+							setLeftSidebarOpen(false);
+							setRightPanelOpen(false);
+						}}
+						aria-hidden
+					/>
+				)}
+
+				{/* Sidebar-show opener is now rendered inline inside the
+				    MainPanelHeader (left edge of the header row) so it shifts
+				    content instead of overlapping the session name. */}
+
+				{/* Right-edge mobile button removed — the existing top-right panel
+				    toggle in MainPanelHeader already handles opening Files. */}
+
 				{/* --- SYSTEM LOG VIEWER (replaces center content when open, lazy-loaded) --- */}
 				{logViewerOpen && (
 					<div
@@ -3442,6 +3532,9 @@ function MaestroConsoleInner() {
 
 				{/* --- CENTER FLASH (single, app-wide; mounted via portal) --- */}
 				<CenterFlash theme={theme} />
+
+				{/* --- THOUGHT STREAM (single, app-wide; persists across tab switches) --- */}
+				<ThoughtStreamPanel theme={theme} />
 			</div>
 		</>
 	);

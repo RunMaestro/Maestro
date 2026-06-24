@@ -233,8 +233,10 @@ const mockMaestro = {
 		resize: vi.fn().mockResolvedValue(undefined),
 		getActiveProcesses: vi.fn().mockResolvedValue([]),
 		isTerminalBusy: vi.fn().mockResolvedValue(false),
+		broadcastUserInput: vi.fn().mockResolvedValue(undefined),
 		onOutput: vi.fn().mockReturnValue(() => {}),
 		onExit: vi.fn().mockReturnValue(() => {}),
+		onUserInput: vi.fn().mockReturnValue(() => {}),
 	},
 	feedback: {
 		checkGhAuth: vi.fn().mockResolvedValue({ authenticated: true }),
@@ -252,6 +254,7 @@ const mockMaestro = {
 		status: vi.fn().mockResolvedValue({ files: [], branch: 'main', stdout: '' }),
 		diff: vi.fn().mockResolvedValue(''),
 		isRepo: vi.fn().mockResolvedValue(true),
+		commitAll: vi.fn().mockResolvedValue({ success: true, committed: true, commitHash: 'abc1234' }),
 		numstat: vi.fn().mockResolvedValue([]),
 		getStatus: vi.fn().mockResolvedValue({ branch: 'main', status: [] }),
 		worktreeSetup: vi.fn().mockResolvedValue({ success: true }),

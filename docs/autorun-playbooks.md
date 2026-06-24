@@ -4,7 +4,12 @@ description: Process markdown checklists with AI agents using Auto Run documents
 icon: play
 ---
 
-Auto Run is a file-system-based document runner that lets you process tasks using AI agents. Select a folder containing markdown documents with task checkboxes, and Maestro will work through them one by one, spawning a fresh AI session for each task.
+Auto Run automates AI-driven work in one of two modes, chosen with the **Spec-Driven** / **Goal-Driven** toggle at the top of the Run dialog:
+
+- **Spec-Driven** runs markdown checklist documents to completion. You write the work as checkbox tasks in a folder of `.md` files, and Maestro works through them one by one, spawning a fresh AI session for each task (or each document). A reusable collection of these documents is a **Playbook**. Reach for this when you already know the steps.
+- **Goal-Driven** pursues a single free-text objective with no checklist. Each iteration spawns a fresh agent that makes one increment of progress, reports how far along it is, and exits, repeating until the goal is reached or the run stops. Reach for this for open-ended work where you can't list the steps up front.
+
+Most of this guide covers Spec-Driven documents and Playbooks. Jump to [Goal-Driven Mode](#goal-driven-mode) for that workflow.
 
 ![Auto Run](./screenshots/autorun-1.png)
 
@@ -117,6 +122,45 @@ The Inline Wizard creates documents in a unique subfolder under your Auto Run fo
 
 Looking for pre-built playbooks? The [Playbook Exchange](./playbook-exchange) offers community-contributed playbooks for common workflows like security audits, code reviews, and documentation generation. Open it via Quick Actions (`Cmd+K`) or click the Exchange button in the Auto Run panel.
 
+## Goal-Driven Mode
+
+Everything above describes **Spec-Driven** runs - documents of checkboxes worked to completion. **Goal-Driven** mode is the alternative: switch to the **Goal-Driven** tab in the Run dialog to chase a free-text objective instead of a document of checkboxes.
+
+Each iteration spawns a fresh agent that makes one increment of real progress toward the goal, reports how far along it is, and exits. The next iteration picks up where it left off, until the goal is reached or the run stops. Because there are no checklist documents, the playbook controls and the "Follow active task" option don't appear in this mode.
+
+![Goal-Driven Auto Run](./screenshots/autorun-goal.png)
+
+### Configuring a Goal Run
+
+Three inputs configure a run:
+
+- **Goal** - what you want accomplished, in plain language (e.g., "Migrate the settings store from Redux to Zustand and keep all tests green").
+- **Exit Criteria** - what "done" looks like and when the agent should declare a deadlock instead of spinning. This guides the agent; it is **not** matched automatically.
+- **Iteration Limit** - a cap on how many iterations may run, or **Infinite** to run until the goal is reached or a deadlock is detected.
+
+Like Spec-Driven runs, a goal run can be [dispatched into an isolated git worktree](#run-in-worktree) so your main working tree stays clean.
+
+### Progress Markers
+
+At the end of every iteration the agent reports an honest 0-100 self-assessment on its own line. The engine reads this to drive the progress bar and decide whether to run again:
+
+```html
+<!-- maestro:progress 45 | refactored auth, tests still pending -->
+```
+
+The `| rationale` note after the number is optional but shows up in the progress UI. A response with no progress marker is treated as zero progress and counts toward a stall.
+
+### How a Goal Run Stops
+
+A goal run ends on any of four conditions:
+
+- **Completed** - the agent reports `progress 100`, or emits the explicit marker `<!-- maestro:goal-complete -->`.
+- **Deadlock** - the agent hits a true blocker it cannot work around and declares it with `<!-- maestro:deadlock: brief reason you cannot proceed -->`.
+- **Max iterations** - a finite iteration limit is reached before the goal completes.
+- **Stalled** - progress doesn't move upward for three iterations in a row, so the run stops instead of spinning.
+
+The stop reason and final progress are recorded in the **History** panel.
+
 ## Progress Tracking
 
 The runner will:
@@ -126,6 +170,27 @@ The runner will:
 - Show progress: "Document X of Y" and "Task X of Y"
 - Mark tasks as complete (`- [x]`) when done
 - Log each completion to the **History** panel
+
+## Thought Stream
+
+While a run is active, you can watch the agent's live reasoning without changing any settings. In the **Auto Run** card, click **View Thoughts** (the brain icon) to open the **Thought Stream** - a floating, searchable panel that streams the agent's thinking as it works.
+
+It works the same for **Spec-Driven** and **Goal-Driven** runs, because both flow through the same agent. The panel captures the raw reasoning stream directly, so it shows thoughts even when an AI tab's "show thinking" display is turned off.
+
+- **Newest on top** - the live thought sits at the top and grows; scroll down to read the history of the run.
+- **Timestamped blocks** - a continuous burst of thinking is grouped into one block with a time stamp; a pause (or a switch between parallel tabs) starts a new block.
+- **Formatted** - thoughts render as formatted markdown (headings, lists, bold, inline code, code fences), so structured reasoning stays readable.
+- **Search** - filter the captured thoughts with the search box; matches are highlighted.
+
+The button doubles as the live indicator: while capturing it pulses and reads **Capturing**.
+
+**Open, minimize, close:**
+
+- **Open** starts capturing for that agent and shows the panel.
+- **Minimize** collapses the panel but **keeps capturing** in the background, so you can reopen it later and review everything since you opened it.
+- **Close** stops capturing and clears that agent's buffer.
+
+Capture is in-memory only - it does not survive an app restart, and the buffer is bounded so a long run can't grow memory without limit (the oldest thoughts are dropped once the cap is reached, noted as "trimmed" in the panel header). Running several Auto Runs at once? Each agent captures into its own independent stream; opening the panel for one agent never mixes in another's thoughts.
 
 ## Session Isolation
 
@@ -215,6 +280,18 @@ Click the **Stop** button at any time. The runner will:
 - Complete the current task before stopping
 - Preserve all completed work
 - Allow you to resume later by clicking Run again
+
+## Auto-Resume on Limit
+
+If an agent pauses mid-run because it hit a provider limit (a rate, token, or credit limit), Maestro can pick the run back up on its own once the window reopens - so you can queue a batch of work, walk away, and come back to it finished. Enable it in **Settings → General → Auto-Resume on Limit**. Three settings drive it:
+
+- **Auto-Resume on Limit** (on by default) - the master toggle.
+- **Check interval** (default 2 hours) - how often Maestro re-checks each paused agent.
+- **Give up after** (default 7 days) - if an agent is still stuck this long after the first pause, Maestro stops retrying it, leaves it paused, and posts a one-time notice so you can resume manually.
+
+How it decides to resume: for Claude it reads your actual plan usage and only resumes when credits are genuinely available again; for every other provider (and Claude on an SSH remote) it simply retries on the interval - if the limit is still in force the agent re-pauses and the next check tries again. Probing is cheap, so it keeps trying the whole window.
+
+This survives a full app restart. If you reboot while an agent is limit-paused, Maestro restores the pause and resumes the **agent's conversation** (it continues from its own transcript) and drains any work you had queued. One caveat: the Auto Run / Goal-Driven **loop controller** does not survive a restart - the agent session and its queued messages resume, but the orchestration loop that was stepping through your document does not pick back up automatically. Manually resolving the error, or manually resuming or stopping the agent, always takes precedence and cancels auto-resume for that agent.
 
 ## Halt Marker (Agent Early Exit)
 

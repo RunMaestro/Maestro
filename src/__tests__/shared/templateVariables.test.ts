@@ -449,6 +449,22 @@ describe('substituteTemplateVariables', () => {
 			const result = substituteTemplateVariables('Loop: {{LOOP_NUMBER}}', context);
 			expect(result).toBe('Loop: 00000');
 		});
+
+		it('should replace {{LOOP_NUMBER_HUMAN}} with the unpadded loopNumber', () => {
+			const context = createTestContext({
+				loopNumber: 5,
+			});
+			const result = substituteTemplateVariables('Iteration: {{LOOP_NUMBER_HUMAN}}', context);
+			expect(result).toBe('Iteration: 5');
+		});
+
+		it('should replace {{LOOP_NUMBER_HUMAN}} with "1" when loopNumber is undefined', () => {
+			const context = createTestContext({
+				loopNumber: undefined,
+			});
+			const result = substituteTemplateVariables('Iteration: {{LOOP_NUMBER_HUMAN}}', context);
+			expect(result).toBe('Iteration: 1');
+		});
 	});
 
 	describe('Date/Time Variables', () => {

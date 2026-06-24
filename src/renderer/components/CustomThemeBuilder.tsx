@@ -37,6 +37,8 @@ const COLOR_CONFIG: { key: keyof ThemeColors; label: string; description: string
 	{ key: 'error', label: 'Error', description: 'Red states' },
 ];
 
+const OPTIONAL_IMPORT_COLOR_KEYS = new Set<string>(['bgTitleBar']);
+
 // Mini UI Preview component
 function MiniUIPreview({ colors }: { colors: ThemeColors }) {
 	return (
@@ -365,11 +367,12 @@ export function CustomThemeBuilder({
 				try {
 					const data = JSON.parse(e.target?.result as string);
 					if (data.colors && typeof data.colors === 'object') {
-						// Validate all required color keys exist. bgTitleBar is
-						// optional (older/partial theme exports may omit it; the UI
-						// falls back to bgMain), so it must not be required here.
-						const requiredKeys = COLOR_CONFIG.map((c) => c.key).filter(
-							(key) => key !== 'bgTitleBar'
+						// Validate all required color keys exist. Optional keys (e.g.
+						// bgTitleBar, which older/partial exports may omit; the UI falls
+						// back to bgMain) are excluded so their absence isn't an error.
+						const colorKeys = COLOR_CONFIG.map((c) => c.key);
+						const requiredKeys = colorKeys.filter(
+							(key) => !OPTIONAL_IMPORT_COLOR_KEYS.has(String(key))
 						);
 						const hasAllKeys = requiredKeys.every((key) => key in data.colors);
 
@@ -381,8 +384,8 @@ export function CustomThemeBuilder({
 						}
 
 						// Validate color values for every key that is present (including
-						// the optional bgTitleBar when supplied).
-						const presentKeys = COLOR_CONFIG.map((c) => c.key).filter((key) => key in data.colors);
+						// optional keys like bgTitleBar when supplied).
+						const presentKeys = colorKeys.filter((key) => key in data.colors);
 						const invalidColors = presentKeys.filter((key) => !isValidCssColor(data.colors[key]));
 						if (invalidColors.length > 0) {
 							const errorMsg = `Invalid theme file: invalid color values for ${invalidColors.slice(0, 3).join(', ')}${invalidColors.length > 3 ? '...' : ''}`;

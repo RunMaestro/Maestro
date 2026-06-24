@@ -90,6 +90,16 @@ vi.mock('lucide-react', () => ({
 			Square
 		</span>
 	),
+	Brain: ({ className }: { className?: string }) => (
+		<span data-testid="brain" className={className}>
+			Brain
+		</span>
+	),
+	ScrollText: ({ className }: { className?: string }) => (
+		<span data-testid="scroll-text" className={className}>
+			ScrollText
+		</span>
+	),
 }));
 
 describe('RightPanel', () => {
@@ -1196,7 +1206,7 @@ describe('RightPanel', () => {
 			const props = createDefaultProps({ currentSessionBatchState, setActiveRightTab });
 			render(<RightPanel {...props} />);
 
-			const link = screen.getByText('View history');
+			const link = screen.getByText('View History');
 			expect(link).toBeInTheDocument();
 			fireEvent.click(link);
 			expect(setActiveRightTab).toHaveBeenCalledWith('history');
@@ -1222,7 +1232,7 @@ describe('RightPanel', () => {
 			const props = createDefaultProps({ currentSessionBatchState, setActiveRightTab });
 			render(<RightPanel {...props} />);
 
-			const link = screen.getByText('View history');
+			const link = screen.getByText('View History');
 			expect(link).toBeInTheDocument();
 			fireEvent.click(link);
 			expect(setActiveRightTab).toHaveBeenCalledWith('history');
@@ -1247,7 +1257,7 @@ describe('RightPanel', () => {
 			const props = createDefaultProps({ currentSessionBatchState });
 			render(<RightPanel {...props} />);
 
-			expect(screen.queryByText('View history')).not.toBeInTheDocument();
+			expect(screen.queryByText('View History')).not.toBeInTheDocument();
 		});
 	});
 

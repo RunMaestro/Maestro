@@ -19,6 +19,7 @@ import { buildApiUrl } from '../utils/config';
 import { webLogger } from '../utils/logger';
 import { HistoryEntry } from '../../shared/types';
 import { stripAnsiCodes } from '../../shared/stringUtils';
+import { stripMaestroMarkers } from '../../shared/goalDriven/goalMarkers';
 import { formatElapsedTime, formatTimestamp } from '../../shared/formatters';
 import { useSwipeGestures } from '../hooks/useSwipeGestures';
 import { calculateDisplayInputTokens } from '../../renderer/utils/contextUsage';
@@ -328,9 +329,11 @@ function HistoryDetailView({
 
 	const pillColors = getPillColor();
 
-	// Clean up the response for display - remove ANSI codes
+	// Clean up the response for display - remove ANSI codes and the internal
+	// `<!-- maestro:... -->` Auto Run control markers (legacy entries stored them
+	// in fullResponse; users should never see them).
 	const rawResponse = entry.fullResponse || entry.summary || '';
-	const cleanResponse = stripAnsiCodes(rawResponse);
+	const cleanResponse = stripMaestroMarkers(stripAnsiCodes(rawResponse));
 
 	// Handle keyboard navigation (Escape to close, Arrow keys to navigate)
 	useEffect(() => {

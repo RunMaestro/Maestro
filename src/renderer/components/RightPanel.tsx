@@ -16,6 +16,8 @@ import {
 	Play,
 	XCircle,
 	Square,
+	Brain,
+	ScrollText,
 } from 'lucide-react';
 import { Spinner } from './ui/Spinner';
 import type { Session, Theme, RightPanelTab, BatchRunState } from '../types';
@@ -32,6 +34,7 @@ import { useUIStore } from '../stores/uiStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { useBatchStore } from '../stores/batchStore';
+import { useThoughtStreamStore } from '../stores/thoughtStreamStore';
 import { useSessionStore, selectActiveSession } from '../stores/sessionStore';
 import type { FileNode } from '../types/fileTree';
 import { RIGHT_PANEL_MIN_WIDTH, RIGHT_PANEL_MAX_WIDTH } from '../constants/rightPanel';
@@ -165,6 +168,16 @@ export const RightPanel = memo(
 		);
 		const batchError = useBatchStore(
 			useCallback((s) => s.batchRunStates[sessionId ?? '']?.error, [sessionId])
+		);
+
+		// Thought Stream: brain button on the Auto Run card opens a persistent,
+		// searchable view of the agent's live thinking stream for this session.
+		// While capturing, the same button doubles as the (minimized) status
+		// indicator - it animates and reads "Capturing", and clicking re-expands
+		// the panel. There is no separate floating pill.
+		const openThoughtStream = useThoughtStreamStore((s) => s.openPanel);
+		const isCapturingThoughts = useThoughtStreamStore(
+			(s) => !!sessionId && !!s.capturing[sessionId]
 		);
 
 		// === Props (domain-hook handlers + theme + batch state + refs) ===
@@ -419,7 +432,9 @@ export const RightPanel = memo(
 			<div
 				ref={panelRef}
 				tabIndex={0}
-				className={`border-l flex flex-col ${rightPanelTransitionClass} outline-none relative ${rightPanelOpen ? '' : 'w-0 overflow-hidden opacity-0'}`}
+				data-panel="right"
+				data-open={rightPanelOpen ? 'true' : 'false'}
+				className={`border-l flex flex-col ${rightPanelTransitionClass} outline-none relative ${rightPanelOpen ? '' : 'w-0 overflow-hidden opacity-0'} maestro-side-panel maestro-side-panel--right`}
 				style={
 					{
 						width: rightPanelOpen ? `${rightPanelWidth}px` : '0',
@@ -712,15 +727,21 @@ export const RightPanel = memo(
 								className="h-full transition-all duration-500 ease-out"
 								style={{
 									width: `${
-										currentSessionBatchState.totalTasksAcrossAllDocs > 0
-											? (currentSessionBatchState.completedTasksAcrossAllDocs /
-													currentSessionBatchState.totalTasksAcrossAllDocs) *
-												100
-											: currentSessionBatchState.totalTasks > 0
-												? (currentSessionBatchState.completedTasks /
-														currentSessionBatchState.totalTasks) *
+										// Goal mode drives the bar straight from the self-reported percent.
+										// (Phase 02 also mirrors progress into completedTasksAcrossAllDocs/100,
+										// so the task ratio below would coincide — but branch explicitly so
+										// the value is unambiguous and the label below reads "Goal: N%".)
+										currentSessionBatchState.goalMode
+											? Math.min(100, Math.max(0, currentSessionBatchState.goalProgress ?? 0))
+											: currentSessionBatchState.totalTasksAcrossAllDocs > 0
+												? (currentSessionBatchState.completedTasksAcrossAllDocs /
+														currentSessionBatchState.totalTasksAcrossAllDocs) *
 													100
-												: 0
+												: currentSessionBatchState.totalTasks > 0
+													? (currentSessionBatchState.completedTasks /
+															currentSessionBatchState.totalTasks) *
+														100
+													: 0
 									}%`,
 									backgroundColor:
 										currentSessionBatchState.isStopping || errorPaused
@@ -730,54 +751,71 @@ export const RightPanel = memo(
 							/>
 						</div>
 
-						{/* Overall completed count with loop info */}
-						<div className="mt-2 flex items-start justify-between gap-2">
+						{/* Status line on its own row so it can use the full card width and
+						    truncate cleanly, without competing with the controls row below
+						    (which must always show "View History" / "View Thoughts" intact). */}
+						<div className="mt-2">
 							<span
-								className="text-[10px] min-w-0 flex-1 truncate"
+								className="block text-[10px] truncate"
 								style={{
 									color: errorPaused ? theme.colors.error : theme.colors.textDim,
 								}}
+								// The inline line is kept terse (percent + rationale) because it
+								// shares the row with the Capturing/View History controls. The
+								// full context - iteration count + complete rationale - lives on
+								// hover so nothing is lost to truncation.
+								title={
+									currentSessionBatchState.goalMode
+										? [
+												currentSessionBatchState.goalIteration
+													? `Iteration ${currentSessionBatchState.goalIteration}`
+													: undefined,
+												currentSessionBatchState.goalRationale || undefined,
+											]
+												.filter(Boolean)
+												.join(' — ') || undefined
+										: undefined
+								}
 							>
 								{errorPaused
 									? batchError?.message || 'Paused due to error'
 									: currentSessionBatchState.isStopping
 										? 'Waiting for current task to complete before stopping...'
-										: currentSessionBatchState.totalTasksAcrossAllDocs > 0
-											? `${currentSessionBatchState.completedTasksAcrossAllDocs} of ${currentSessionBatchState.totalTasksAcrossAllDocs} tasks completed`
-											: `${currentSessionBatchState.completedTasks} of ${currentSessionBatchState.totalTasks} tasks completed`}
+										: currentSessionBatchState.goalMode
+											? `Goal: ${currentSessionBatchState.goalProgress ?? 0}%${
+													currentSessionBatchState.goalRationale
+														? ` · ${currentSessionBatchState.goalRationale}`
+														: ''
+												}`
+											: currentSessionBatchState.totalTasksAcrossAllDocs > 0
+												? `${currentSessionBatchState.completedTasksAcrossAllDocs} of ${currentSessionBatchState.totalTasksAcrossAllDocs} tasks completed`
+												: `${currentSessionBatchState.completedTasks} of ${currentSessionBatchState.totalTasks} tasks completed`}
 							</span>
-							{/* Resume/Abort buttons when error-paused */}
-							{errorPaused && (
-								<div className="flex items-center gap-1.5 shrink-0">
-									{batchError?.recoverable && onResumeAfterError && (
-										<button
-											onClick={onResumeAfterError}
-											className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-colors hover:opacity-80"
-											style={{
-												backgroundColor: theme.colors.accent,
-												color: theme.colors.accentForeground,
-											}}
-											title="Resume Auto Run after re-authenticating"
-										>
-											<Play className="w-3 h-3" />
-											Resume
-										</button>
-									)}
-									{onAbortBatchOnError && (
-										<button
-											onClick={onAbortBatchOnError}
-											className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-colors hover:opacity-80"
-											style={{
-												backgroundColor: theme.colors.error,
-												color: 'white',
-											}}
-											title="Stop Auto Run completely"
-										>
-											<XCircle className="w-3 h-3" />
-											Abort
-										</button>
-									)}
-								</div>
+						</div>
+
+						{/* Action row - left: the (spec-only) follow-task toggle; right: the
+						    action links + Stop, all on one plane to keep the card compact.
+						    Kept off the status-line row so a long rationale can't clip it. */}
+						<div className="mt-1.5 flex items-center justify-between gap-2">
+							{/* "Follow active task" only applies to task-based runs that step
+							    through a document. Goal mode iterates a single goal with no
+							    discrete task list to follow, so hide the checkbox there (empty
+							    spacer keeps the controls right-aligned). */}
+							{currentSessionBatchState.goalMode ? (
+								<div />
+							) : (
+								<label className="flex items-center gap-1.5 cursor-pointer shrink-0">
+									<input
+										type="checkbox"
+										checked={autoFollowEnabled}
+										onChange={(e) => setAutoFollowEnabled(e.target.checked)}
+										className="w-3 h-3 rounded cursor-pointer accent-current"
+										style={{ accentColor: theme.colors.accent }}
+									/>
+									<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
+										Follow active task
+									</span>
+								</label>
 							)}
 							<div className="flex items-center gap-2 shrink-0">
 								{/* Loop iteration indicator */}
@@ -793,49 +831,92 @@ export const RightPanel = memo(
 										{currentSessionBatchState.maxLoops ?? '∞'}
 									</span>
 								)}
+								{/* Thought Stream - peer into the agent's live reasoning. Opens a
+								    persistent, searchable panel; works for goal and task runs. */}
+								{sessionId && (
+									<button
+										className="flex items-center gap-1 text-[10px] whitespace-nowrap bg-transparent border-none p-0 cursor-pointer hover:opacity-80"
+										style={{
+											color: isCapturingThoughts ? theme.colors.accent : theme.colors.textDim,
+											textDecoration: 'underline',
+										}}
+										onClick={() => openThoughtStream(sessionId)}
+										title={
+											isCapturingThoughts
+												? 'Capturing thoughts - click to expand'
+												: "Peer into the agent's thought stream"
+										}
+									>
+										<Brain className={`w-3 h-3 ${isCapturingThoughts ? 'animate-pulse' : ''}`} />
+										{isCapturingThoughts ? 'Capturing' : 'View Thoughts'}
+									</button>
+								)}
 								{/* View history link - shown on all tabs except history */}
 								{activeRightTab !== 'history' && (
 									<button
-										className="text-[10px] whitespace-nowrap bg-transparent border-none p-0 cursor-pointer"
+										className="flex items-center gap-1 text-[10px] whitespace-nowrap bg-transparent border-none p-0 cursor-pointer hover:opacity-80"
 										style={{
 											color: theme.colors.textDim,
 											textDecoration: 'underline',
 										}}
 										onClick={() => setActiveRightTab('history')}
 									>
-										View history
+										<ScrollText className="w-3 h-3" />
+										View History
 									</button>
 								)}
+								{/* Resume/Abort when error-paused; otherwise the Stop button -
+								    all share this row with the action links. */}
+								{errorPaused ? (
+									<>
+										{batchError?.recoverable && onResumeAfterError && (
+											<button
+												onClick={onResumeAfterError}
+												className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-colors hover:opacity-80"
+												style={{
+													backgroundColor: theme.colors.accent,
+													color: theme.colors.accentForeground,
+												}}
+												title="Resume Auto Run after re-authenticating"
+											>
+												<Play className="w-3 h-3" />
+												Resume
+											</button>
+										)}
+										{onAbortBatchOnError && (
+											<button
+												onClick={onAbortBatchOnError}
+												className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-colors hover:opacity-80"
+												style={{
+													backgroundColor: theme.colors.error,
+													color: 'white',
+												}}
+												title="Stop Auto Run completely"
+											>
+												<XCircle className="w-3 h-3" />
+												Abort
+											</button>
+										)}
+									</>
+								) : (
+									!currentSessionBatchState.isStopping &&
+									onStopBatchRun && (
+										<button
+											onClick={() => onStopBatchRun(session.id)}
+											className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-colors hover:opacity-80"
+											style={{
+												backgroundColor: theme.colors.error,
+												color: 'white',
+												border: `1px solid ${theme.colors.error}`,
+											}}
+											title="Stop auto-run after the current task finishes"
+										>
+											<Square className="w-3 h-3" />
+											Stop
+										</button>
+									)
+								)}
 							</div>
-						</div>
-						<div className="mt-2 flex items-center justify-between gap-2">
-							<label className="flex items-center gap-1.5 cursor-pointer">
-								<input
-									type="checkbox"
-									checked={autoFollowEnabled}
-									onChange={(e) => setAutoFollowEnabled(e.target.checked)}
-									className="w-3 h-3 rounded cursor-pointer accent-current"
-									style={{ accentColor: theme.colors.accent }}
-								/>
-								<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
-									Follow active task
-								</span>
-							</label>
-							{!errorPaused && !currentSessionBatchState.isStopping && onStopBatchRun && (
-								<button
-									onClick={() => onStopBatchRun(session.id)}
-									className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-colors hover:opacity-80"
-									style={{
-										backgroundColor: theme.colors.error,
-										color: 'white',
-										border: `1px solid ${theme.colors.error}`,
-									}}
-									title="Stop auto-run after the current task finishes"
-								>
-									<Square className="w-3 h-3" />
-									Stop
-								</button>
-							)}
 						</div>
 					</div>
 				)}
