@@ -157,6 +157,48 @@ describe('MainPanelHeader', () => {
 		expect(screen.getByText('prod-server')).toBeInTheDocument();
 	});
 
+	it('shows the branch name alongside the SSH pill for remote/container git agents', () => {
+		// Regression for #1124: the SSH host pill replaced the branch badge, so
+		// agents running in a container over SSH lost the branch name that local
+		// agents show. Both the remote name and the branch must be visible.
+		render(
+			<MainPanelHeader
+				{...defaultProps}
+				activeSession={makeSession({
+					isGitRepo: true,
+					sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+				} as any)}
+				sshRemoteName="harness-sandbox"
+				gitInfo={{
+					branch: 'feature/login',
+					remote: '',
+					ahead: 0,
+					behind: 0,
+					uncommittedChanges: 0,
+				}}
+			/>
+		);
+		expect(screen.getByText('harness-sandbox')).toBeInTheDocument();
+		expect(screen.getByText('feature/login')).toBeInTheDocument();
+	});
+
+	it('does not render a branch badge for a non-git SSH agent', () => {
+		render(
+			<MainPanelHeader
+				{...defaultProps}
+				activeSession={makeSession({
+					isGitRepo: false,
+					sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+				} as any)}
+				sshRemoteName="prod-server"
+				gitInfo={null}
+			/>
+		);
+		expect(screen.getByText('prod-server')).toBeInTheDocument();
+		// No GIT fallback badge when the remote dir isn't a repo.
+		expect(screen.queryByText('GIT')).not.toBeInTheDocument();
+	});
+
 	it('renders AUTO mode indicator when batch is running', () => {
 		render(
 			<MainPanelHeader
