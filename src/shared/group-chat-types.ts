@@ -32,8 +32,33 @@ export function normalizeLegacyMentionName(name: string): string {
 	return name.normalize('NFKC').replace(/\s+/g, '-');
 }
 
-function cleanMentionName(name: string): string {
-	return name.normalize('NFKC').replace(/^[*_`~]+|[*_`~.,;:!?]+$/g, '');
+const CLOSING_BRACKET_PAIRS: Record<string, string> = {
+	')': '(',
+	']': '[',
+	'}': '{',
+};
+
+function countCharacter(value: string, character: string): number {
+	return [...value].filter((current) => current === character).length;
+}
+
+function stripUnmatchedTrailingClosers(name: string): string {
+	let cleaned = name;
+	while (cleaned.length > 0) {
+		const closing = cleaned[cleaned.length - 1];
+		const opening = CLOSING_BRACKET_PAIRS[closing];
+		if (!opening) break;
+
+		if (countCharacter(cleaned, closing) <= countCharacter(cleaned, opening)) break;
+		cleaned = cleaned.slice(0, -1);
+	}
+
+	return cleaned;
+}
+
+export function cleanMentionName(name: string): string {
+	const withoutMarkdown = name.normalize('NFKC').replace(/^[*_`~]+|[*_`~.,;:!?]+$/g, '');
+	return stripUnmatchedTrailingClosers(withoutMarkdown);
 }
 
 function foldMentionName(name: string): string {
@@ -64,6 +89,32 @@ export function getMentionMatchPriority(mentionedName: string, actualName: strin
  */
 export function mentionMatches(mentionedName: string, actualName: string): boolean {
 	return getMentionMatchPriority(mentionedName, actualName) > 0;
+}
+
+export function findUniqueMentionMatch<T>(
+	mentionedName: string,
+	items: readonly T[],
+	getName: (item: T) => string
+): T | undefined {
+	let bestPriority = 0;
+	let bestMatches: T[] = [];
+
+	for (const item of items) {
+		const priority = getMentionMatchPriority(mentionedName, getName(item));
+		if (priority === 0) continue;
+
+		if (priority > bestPriority) {
+			bestPriority = priority;
+			bestMatches = [item];
+			continue;
+		}
+
+		if (priority === bestPriority) {
+			bestMatches.push(item);
+		}
+	}
+
+	return bestMatches.length === 1 ? bestMatches[0] : undefined;
 }
 
 // ============================================================================

@@ -169,7 +169,7 @@ function normalizeResponse(raw: any): FeedbackParsedResponse {
 function redactProviderSecrets(output: string): string {
 	return output
 		.replace(
-			/\b((?:[A-Z][A-Z0-9_]*_)?(?:API_KEY|TOKEN|ACCESS_TOKEN|SECRET)\b\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s\r\n]+)/g,
+			/\b((?:[A-Z][A-Z0-9_]*_)?(?:API_KEY|TOKEN|ACCESS_TOKEN|SECRET)\b\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s\r\n]+)/gi,
 			'$1[REDACTED]'
 		)
 		.replace(/\b(Authorization\s*:\s*Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, '$1[REDACTED]')

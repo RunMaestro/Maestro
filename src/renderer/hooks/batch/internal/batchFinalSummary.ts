@@ -8,7 +8,7 @@ import type { AutoRunStats, HistoryEntry } from '../../../types';
 
 type AutoRunHistoryEntry = Pick<
 	HistoryEntry,
-	'type' | 'summary' | 'usageStats' | 'elapsedTimeMs' | 'timestamp'
+	'type' | 'summary' | 'usageStats' | 'elapsedTimeMs' | 'timestamp' | 'completedTaskCount'
 >;
 
 export interface FinalSummaryParams {
@@ -101,7 +101,7 @@ export function aggregateAutoRunHistoryTotals(
 	return taskEntries.reduce<AutoRunHistoryTotals>(
 		(totals, entry) => {
 			const usageStats = entry.usageStats;
-			totals.totalCompletedTasks += 1;
+			totals.totalCompletedTasks += Math.max(0, entry.completedTaskCount ?? 1);
 			totals.totalElapsedMs += entry.elapsedTimeMs || 0;
 			totals.totalInputTokens += usageStats?.inputTokens || 0;
 			totals.totalOutputTokens += usageStats?.outputTokens || 0;

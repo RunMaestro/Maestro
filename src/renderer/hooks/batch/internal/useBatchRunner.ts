@@ -1004,6 +1004,7 @@ export function useBatchRunner({
 									usageStats,
 									contextUsage,
 									elapsedTimeMs,
+									completedTaskCount: tasksCompletedThisRun,
 								});
 							} catch (historyError) {
 								logger.warn('[BatchProcessor] Failed to add task history entry:', undefined, {

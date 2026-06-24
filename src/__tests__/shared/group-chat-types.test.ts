@@ -6,6 +6,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+	findUniqueMentionMatch,
 	getMentionMatchPriority,
 	mentionMatches,
 	normalizeLegacyMentionName,
@@ -109,7 +110,10 @@ describe('mentionMatches', () => {
 
 	it('should ignore trailing sentence punctuation on extracted mentions', () => {
 		expect(mentionMatches('Client.', 'Client')).toBe(true);
+		expect(mentionMatches('Client)', 'Client')).toBe(true);
+		expect(mentionMatches('Client]', 'Client')).toBe(true);
 		expect(mentionMatches('CIA-Agent-(Super-Cool).', 'CIA Agent (Super Cool)')).toBe(true);
+		expect(mentionMatches('CIA-Agent-(Super-Cool))', 'CIA Agent (Super Cool)')).toBe(true);
 	});
 
 	it('should rank exact and legacy matches above normalized safe matches', () => {
@@ -142,6 +146,28 @@ describe('mentionMatches', () => {
 	it('should handle already hyphenated actual names', () => {
 		expect(mentionMatches('test-agent', 'test-agent')).toBe(true);
 		expect(mentionMatches('Test-Agent', 'test-agent')).toBe(true);
+	});
+});
+
+describe('findUniqueMentionMatch', () => {
+	it('returns the unique highest-priority legacy alias match when safe aliases collide', () => {
+		const participants = [{ name: 'CIA Agent Super Cool' }, { name: 'CIA Agent (Super Cool)' }];
+
+		expect(
+			findUniqueMentionMatch(
+				'CIA-Agent-(Super-Cool)',
+				participants,
+				(participant) => participant.name
+			)
+		).toBe(participants[1]);
+	});
+
+	it('rejects ambiguous mention-safe aliases instead of returning the first match', () => {
+		const participants = [{ name: 'Review Bot [Linux]' }, { name: 'Review Bot (Linux)' }];
+
+		expect(
+			findUniqueMentionMatch('Review-Bot-Linux', participants, (participant) => participant.name)
+		).toBeUndefined();
 	});
 });
 

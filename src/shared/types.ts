@@ -241,6 +241,7 @@ export interface HistoryEntry {
 	usageStats?: UsageStats;
 	success?: boolean;
 	elapsedTimeMs?: number;
+	completedTaskCount?: number;
 	validated?: boolean;
 	cueTriggerName?: string;
 	cueEventType?: string;

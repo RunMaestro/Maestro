@@ -357,6 +357,19 @@ describe('group-chat-router', () => {
 			const mentions = extractMentions('@Review-Bot-Linux: please investigate', participants);
 			expect(mentions).toEqual([]);
 		});
+
+		it('handles plain mentions wrapped in closing punctuation', () => {
+			const participants: GroupChatParticipant[] = [
+				{ name: 'Client', agentId: 'claude-code', sessionId: '1', addedAt: 0 },
+				{ name: 'Server', agentId: 'claude-code', sessionId: '2', addedAt: 0 },
+			];
+
+			const mentions = extractMentions(
+				'Please coordinate with (@Client) and @Server)',
+				participants
+			);
+			expect(mentions).toEqual(['Client', 'Server']);
+		});
 	});
 
 	// ===========================================================================
@@ -485,6 +498,11 @@ describe('group-chat-router', () => {
 		it('keeps legacy parenthesized aliases intact for matching', () => {
 			const mentions = extractAllMentions('@CIA-Agent-(Super-Cool) should handle this');
 			expect(mentions).toEqual(['CIA-Agent-(Super-Cool)']);
+		});
+
+		it('strips unmatched closing punctuation from plain mentions', () => {
+			const mentions = extractAllMentions('Please ask (@Client) and @Server)');
+			expect(mentions).toEqual(['Client', 'Server']);
 		});
 	});
 

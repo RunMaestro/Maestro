@@ -232,6 +232,7 @@ describe('buildFinalSummary', () => {
 				type: 'AUTO',
 				timestamp: 5,
 				summary: 'current task two',
+				completedTaskCount: 3,
 				elapsedTimeMs: 300,
 				usageStats: {
 					inputTokens: 30,
@@ -245,13 +246,26 @@ describe('buildFinalSummary', () => {
 		]);
 
 		expect(totals).toEqual({
-			totalCompletedTasks: 2,
+			totalCompletedTasks: 4,
 			totalElapsedMs: 500,
 			totalInputTokens: 50,
 			totalOutputTokens: 15,
 			totalCost: 0.05,
 			entryCount: 2,
 		});
+	});
+
+	it('falls back to one completed task for older Auto Run task history rows', () => {
+		const totals = aggregateAutoRunHistoryTotals([
+			{
+				type: 'AUTO',
+				timestamp: 1,
+				summary: 'older task row without completedTaskCount',
+				elapsedTimeMs: 100,
+			},
+		]);
+
+		expect(totals?.totalCompletedTasks).toBe(1);
 	});
 
 	it('excludes Auto Run and goal-run control history from persisted task totals', () => {

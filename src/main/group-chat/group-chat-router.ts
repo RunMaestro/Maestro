@@ -22,8 +22,8 @@ import { appendToLog, readLog, saveImage } from './group-chat-log';
 import {
 	type GroupChatMessage,
 	type GroupChatHistoryEntry,
-	getMentionMatchPriority,
-	mentionMatches,
+	cleanMentionName,
+	findUniqueMentionMatch,
 	normalizeLegacyMentionName,
 	normalizeMentionName,
 } from '../../shared/group-chat-types';
@@ -458,33 +458,7 @@ export function setSshStore(store: SshRemoteSettingsStore): void {
  * attached to the extracted name and breaks participant matching.
  */
 function stripMarkdownFormatting(name: string): string {
-	return name.replace(/^[*_`~]+|[*_`~]+$/g, '');
-}
-
-function findUniqueMentionMatch<T>(
-	mentionedName: string,
-	items: T[],
-	getName: (item: T) => string
-): T | undefined {
-	let bestPriority = 0;
-	let bestMatches: T[] = [];
-
-	for (const item of items) {
-		const priority = getMentionMatchPriority(mentionedName, getName(item));
-		if (priority === 0) continue;
-
-		if (priority > bestPriority) {
-			bestPriority = priority;
-			bestMatches = [item];
-			continue;
-		}
-
-		if (priority === bestPriority) {
-			bestMatches.push(item);
-		}
-	}
-
-	return bestMatches.length === 1 ? bestMatches[0] : undefined;
+	return cleanMentionName(name);
 }
 
 function getMentionNameForContext(name: string, peerNames: string[]): string {
@@ -534,6 +508,13 @@ export function extractMentions(text: string, participants: GroupChatParticipant
 	}
 
 	return mentions;
+}
+
+function findSessionForParticipantName(
+	participantName: string,
+	sessions: readonly GroupChatSessionInfo[]
+): GroupChatSessionInfo | undefined {
+	return findUniqueMentionMatch(participantName, sessions, (session) => session.name);
 }
 
 /**
@@ -1038,11 +1019,7 @@ export async function routeModeratorResponse(
 	// Strip internal !autorun directives from the message before logging/display.
 	// These are machine-to-machine commands; storing them in the chat log causes
 	// the synthesis moderator to see them in history and potentially re-trigger them.
-	const {
-		autoRunDirectives,
-		autoRunParticipants,
-		cleanedText: displayMessage,
-	} = extractAutoRunDirectives(message);
+	const { autoRunDirectives, cleanedText: displayMessage } = extractAutoRunDirectives(message);
 
 	// Only persist/emit the moderator message if it has visible content after stripping directives
 	const shouldPersistModeratorMessage = displayMessage.trim().length > 0;
@@ -1179,6 +1156,7 @@ export async function routeModeratorResponse(
 
 	// Track participants that will need to respond for synthesis round
 	const participantsToRespond = new Set<string>();
+	const autoRunParticipantNames = new Set<string>();
 
 	// Use the !autorun directives already extracted above (same `message` input)
 	if (autoRunDirectives.length > 0) {
@@ -1196,7 +1174,11 @@ export async function routeModeratorResponse(
 
 		for (const directive of autoRunDirectives) {
 			const { participantName: autoRunName, filename: targetFilename } = directive;
-			const participant = updatedChat.participants.find((p) => mentionMatches(autoRunName, p.name));
+			const participant = findUniqueMentionMatch(
+				autoRunName,
+				updatedChat.participants,
+				(p) => p.name
+			);
 			if (!participant) {
 				console.warn(
 					`[GroupChat:Debug] Autorun participant ${autoRunName} not found in chat - skipping`
@@ -1208,10 +1190,9 @@ export async function routeModeratorResponse(
 				});
 				continue;
 			}
+			autoRunParticipantNames.add(participant.name);
 
-			const matchingSession = sessions.find(
-				(s) => mentionMatches(s.name, participant.name) || s.name === participant.name
-			);
+			const matchingSession = findSessionForParticipantName(participant.name, sessions);
 
 			if (!matchingSession?.autoRunFolderPath) {
 				console.warn(
@@ -1260,9 +1241,7 @@ export async function routeModeratorResponse(
 	}
 
 	// Spawn batch processes for each mentioned participant (exclude autorun participants)
-	const mentionsToSpawn = mentions.filter(
-		(name) => !autoRunParticipants.some((arName) => mentionMatches(arName, name))
-	);
+	const mentionsToSpawn = mentions.filter((name) => !autoRunParticipantNames.has(name));
 	if (processManager && agentDetector && mentionsToSpawn.length > 0) {
 		logger.debug(`[GroupChat:Debug] ========== SPAWNING PARTICIPANT AGENTS ==========`);
 		logger.debug(`[GroupChat:Debug] Will spawn ${mentionsToSpawn.length} participant agent(s)`);
@@ -1294,9 +1273,7 @@ export async function routeModeratorResponse(
 			logger.debug(`[GroupChat:Debug] Participant agent ID: ${participant.agentId}`);
 
 			// Find matching session to get cwd
-			const matchingSession = sessions.find(
-				(s) => mentionMatches(s.name, participantName) || s.name === participantName
-			);
+			const matchingSession = findSessionForParticipantName(participantName, sessions);
 			const cwd = matchingSession?.cwd || os.homedir();
 			logger.debug(`[GroupChat:Debug] CWD for participant: ${cwd}`);
 
@@ -1890,9 +1867,7 @@ export async function respawnParticipantWithRecovery(
 
 	// Find matching session for cwd
 	const sessions = getSessionsCallback?.() || [];
-	const matchingSession = sessions.find(
-		(s) => mentionMatches(s.name, participantName) || s.name === participantName
-	);
+	const matchingSession = findSessionForParticipantName(participantName, sessions);
 	const cwd = matchingSession?.cwd || os.homedir();
 
 	// Build the prompt with recovery context

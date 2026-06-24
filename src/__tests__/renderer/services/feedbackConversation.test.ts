@@ -155,6 +155,9 @@ describe('FeedbackConversationManager provider startup errors', () => {
 			[
 				'OPENAI_API_KEY: sk-openai-secret-key',
 				'ANTHROPIC_API_KEY=sk-anthropic-secret-key',
+				'api_key=sk-lowercase-secret-key',
+				'access_token: lower-access-token',
+				'secret=lower-secret-value',
 				'Authorization: Bearer bearer-secret-token',
 				'GitHub token ghp_1234567890abcdefghijklmnopqrst',
 				'Fine path /Users/jeff/.nvm/versions/node/v25.3.0/bin/codex',
@@ -168,11 +171,17 @@ describe('FeedbackConversationManager provider startup errors', () => {
 
 		expect(response.message).toContain('OPENAI_API_KEY: [REDACTED]');
 		expect(response.message).toContain('ANTHROPIC_API_KEY=[REDACTED]');
+		expect(response.message).toContain('api_key=[REDACTED]');
+		expect(response.message).toContain('access_token: [REDACTED]');
+		expect(response.message).toContain('secret=[REDACTED]');
 		expect(response.message).toContain('Authorization: Bearer [REDACTED]');
 		expect(response.message).toContain('[REDACTED_GITHUB_TOKEN]');
 		expect(response.message).toContain('/Users/jeff/.nvm/versions/node/v25.3.0/bin/codex');
 		expect(response.message).not.toContain('sk-openai-secret-key');
 		expect(response.message).not.toContain('sk-anthropic-secret-key');
+		expect(response.message).not.toContain('sk-lowercase-secret-key');
+		expect(response.message).not.toContain('lower-access-token');
+		expect(response.message).not.toContain('lower-secret-value');
 		expect(response.message).not.toContain('bearer-secret-token');
 		expect(response.message).not.toContain('ghp_1234567890abcdefghijklmnopqrst');
 		expect(onErrorMessage).not.toContain('sk-openai-secret-key');
