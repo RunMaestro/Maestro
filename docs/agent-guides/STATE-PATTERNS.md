@@ -251,7 +251,7 @@ The current union in `src/renderer/stores/modalStore.ts` lists ~55 modal identif
 - **Group chat:** `newGroupChat`, `deleteGroupChat`, `renameGroupChat`, `editGroupChat`, `groupChatInfo`
 - **Git:** `gitDiff`, `gitLog`
 - **Wizard / onboarding:** `wizardResume`, `tour`
-- **Debug / diagnostic:** `debugWizard`, `debugPackage`, `playground`, `logViewer`, `processMonitor`, `usageDashboard`
+- **Debug / diagnostic:** `debugPackage`, `playground`, `logViewer`, `processMonitor`, `usageDashboard`
 - **Confirm / celebration:** `confirm`, `quitConfirm`, `standingOvation`, `firstRunCelebration`, `keyboardMastery`, `leaderboard`, `lightbox`
 - **Feature-specific:** `symphony`, `windowsWarning`, `directorNotes`, `cueModal`, `cueYamlEditor`
 

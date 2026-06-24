@@ -477,7 +477,6 @@ describe('QuickActions command builders', () => {
 			setPlaygroundOpen: vi.fn(),
 			setDebugApplicationStatsOpen: vi.fn(),
 			setDebugAgentProbeOpen: vi.fn(),
-			setDebugWizardModalOpen: vi.fn(),
 			onDebugReleaseQueuedItem: vi.fn(),
 			getInstallationId: vi.fn().mockResolvedValue('install-1'),
 			safeClipboardWrite: vi.fn().mockResolvedValue(true),
