@@ -140,6 +140,28 @@ describe('FeedbackConversationManager provider startup errors', () => {
 		expect(onError).toHaveBeenCalledWith('spawn ENOENT C:\\missing\\codex.exe');
 	});
 
+	it('returns an actionable error when spawning resolves with failure', async () => {
+		const processMock = window.maestro.process as any;
+		const codexBinary = 'C:\\missing\\codex.exe';
+		processMock.spawn.mockResolvedValue({ success: false, pid: -1 });
+		window.maestro.agents.get.mockResolvedValue(
+			mockCodexAgent({
+				path: codexBinary,
+			})
+		);
+
+		const manager = new FeedbackConversationManager();
+		manager.start({ agentType: 'codex', systemPrompt: 'system prompt' });
+		const onError = vi.fn();
+
+		const response = await manager.sendMessage('hi', [], { onError });
+
+		expect(response.message).toContain(codexBinary);
+		expect(response.message).toContain('could not be started');
+		expect(response.message).toContain('success=false');
+		expect(onError).toHaveBeenCalledWith('Process spawn returned success=false (pid -1)');
+	});
+
 	it('redacts obvious secrets from provider output before surfacing failure details', async () => {
 		const processMock = window.maestro.process as any;
 		const manager = new FeedbackConversationManager();

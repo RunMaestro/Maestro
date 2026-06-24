@@ -155,7 +155,6 @@ export function normalizeRenderedChatCopy(text: string): string {
 		.replace(new RegExp(`[ \\t]*${SOFT_BREAK}[ \\t]*`, 'g'), ' ')
 		.replace(/[ \t]+\n/g, '\n')
 		.replace(/\n[ \t]+/g, '\n')
-		.replace(/[ \t]{2,}/g, ' ')
 		.replace(/\n{3,}/g, '\n\n')
 		.trim();
 }

@@ -588,6 +588,33 @@ describe('group-chat-router', () => {
 			);
 		});
 
+		it('disambiguates available-session aliases against current participants', async () => {
+			const chat = await createTestChatWithModerator('Available Alias Collision Test');
+			await addParticipant(chat.id, 'Review Bot [Linux]', 'claude-code', mockProcessManager);
+			setGetSessionsCallback(() => [
+				{
+					id: 'session-existing',
+					name: 'Review Bot [Linux]',
+					toolType: 'claude-code',
+					cwd: '/tmp/project',
+				},
+				{
+					id: 'session-available',
+					name: 'Review Bot (Linux)',
+					toolType: 'codex',
+					cwd: '/tmp/project',
+				},
+			]);
+			mockProcessManager.spawn.mockClear();
+
+			await routeUserMessage(chat.id, 'Who can help?', mockProcessManager, mockAgentDetector);
+
+			const moderatorPrompt = mockProcessManager.spawn.mock.calls[0]?.[0]?.prompt ?? '';
+			expect(moderatorPrompt).toContain('- @Review-Bot-Linux (claude-code session)');
+			expect(moderatorPrompt).toContain('- @Review-Bot-(Linux) (codex)');
+			expect(moderatorPrompt.match(/@Review-Bot-Linux/g)).toHaveLength(1);
+		});
+
 		it('throws for non-existent chat', async () => {
 			await expect(
 				routeUserMessage('non-existent-id', 'Hello', mockProcessManager, mockAgentDetector)

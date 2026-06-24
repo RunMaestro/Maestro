@@ -49,6 +49,7 @@ const FINAL_AUTORUN_SUMMARY_RE =
 const LOOP_SUMMARY_RE = /^Loop \d+(?: \(final\))? completed:/;
 const CONTROL_SUMMARY_PREFIXES = [
 	'Auto Run started in worktree',
+	'Auto Run error:',
 	'PR created:',
 	'PR creation failed:',
 	'Document stalled:',

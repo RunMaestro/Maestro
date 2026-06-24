@@ -1395,7 +1395,7 @@ export function useBatchRunner({
 			};
 
 			try {
-				const historyEntries = await window.maestro.history.getAll(session.cwd, sessionId);
+				const historyEntries = await window.maestro.history.getAll(undefined, sessionId);
 				finalTotals = mergeFinalSummaryTotals(
 					finalTotals,
 					aggregateAutoRunHistoryTotals(historyEntries)

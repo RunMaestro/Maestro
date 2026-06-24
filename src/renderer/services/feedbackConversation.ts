@@ -373,6 +373,21 @@ export class FeedbackConversationManager {
 					...stdinFlags,
 					sessionSshRemoteConfig: currentSshRemoteConfig,
 				} as any)
+				.then((spawnResult: { success?: boolean; pid?: number } | undefined) => {
+					if (spawnResult?.success !== false) return;
+
+					const output = `Process spawn returned success=false${
+						typeof spawnResult.pid === 'number' ? ` (pid ${spawnResult.pid})` : ''
+					}`;
+					const message = buildProviderFailureMessage({
+						agentName,
+						binaryPath,
+						reason: 'could not be started',
+						output,
+					});
+					callbacks?.onError?.(output);
+					resolveOnce({ ...DEFAULT_FEEDBACK_RESPONSE, message });
+				})
 				.catch((error: Error) => {
 					const output = redactProviderSecrets(
 						error instanceof Error ? error.message : String(error)

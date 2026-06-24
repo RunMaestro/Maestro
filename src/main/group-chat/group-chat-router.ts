@@ -463,10 +463,10 @@ function stripMarkdownFormatting(name: string): string {
 
 function getMentionNameForContext(name: string, peerNames: string[]): string {
 	const safeName = normalizeMentionName(name);
-	const foldedSafeName = safeName.toLocaleLowerCase();
+	const foldedSafeName = safeName.toLowerCase();
 	const hasSafeNameCollision = peerNames.some(
 		(peerName) =>
-			peerName !== name && normalizeMentionName(peerName).toLocaleLowerCase() === foldedSafeName
+			peerName !== name && normalizeMentionName(peerName).toLowerCase() === foldedSafeName
 	);
 
 	if (!hasSafeNameCollision) {
@@ -474,7 +474,7 @@ function getMentionNameForContext(name: string, peerNames: string[]): string {
 	}
 
 	const legacyName = normalizeLegacyMentionName(name);
-	return legacyName.toLocaleLowerCase() === foldedSafeName ? safeName : legacyName;
+	return legacyName.toLowerCase() === foldedSafeName ? safeName : legacyName;
 }
 
 /**
@@ -821,7 +821,10 @@ export async function routeUserMessage(
 				);
 				if (availableSessions.length > 0) {
 					// Use normalized names (spaces → hyphens) so moderator can @mention them properly
-					const availableSessionNamesForMentions = availableSessions.map((s) => s.name);
+					const availableSessionNamesForMentions = [
+						...chat.participants.map((p) => p.name),
+						...availableSessions.map((s) => s.name),
+					];
 					availableSessionsContext = `\n\n## Available Maestro Sessions (can be added via @mention):\n${availableSessions.map((s) => `- @${getMentionNameForContext(s.name, availableSessionNamesForMentions)} (${s.toolType})`).join('\n')}`;
 				}
 			}

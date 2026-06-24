@@ -62,7 +62,7 @@ export function cleanMentionName(name: string): string {
 }
 
 function foldMentionName(name: string): string {
-	return name.toLocaleLowerCase();
+	return name.toLowerCase();
 }
 
 export function getMentionMatchPriority(mentionedName: string, actualName: string): number {

@@ -313,6 +313,20 @@ describe('buildFinalSummary', () => {
 			{
 				type: 'AUTO',
 				timestamp: 5,
+				summary: 'Auto Run error: Rate limited (plan.md)',
+				elapsedTimeMs: 1000,
+				usageStats: {
+					inputTokens: 1000,
+					outputTokens: 1000,
+					cacheReadInputTokens: 0,
+					cacheCreationInputTokens: 0,
+					totalCostUsd: 99,
+					contextWindow: 0,
+				},
+			},
+			{
+				type: 'AUTO',
+				timestamp: 6,
 				summary: 'implemented current task',
 				elapsedTimeMs: 250,
 				usageStats: {

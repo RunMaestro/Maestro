@@ -97,10 +97,7 @@ export function useBatchKillAction({
 				};
 				try {
 					if (window.maestro.history?.getAll) {
-						const historyEntries = await window.maestro.history.getAll(
-							flushState.projectPath,
-							sessionId
-						);
+						const historyEntries = await window.maestro.history.getAll(undefined, sessionId);
 						finalTotals = mergeFinalSummaryTotals(
 							finalTotals,
 							aggregateAutoRunHistoryTotals(historyEntries)

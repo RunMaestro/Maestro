@@ -189,7 +189,7 @@ describe('useBatchKillAction', () => {
 			await hook.result.current.killBatchRun('sess');
 		});
 
-		expect(getHistory).toHaveBeenCalledWith('/repo', 'sess');
+		expect(getHistory).toHaveBeenCalledWith(undefined, 'sess');
 		expect(endAutoRun).toHaveBeenCalledWith('stats-1', 50_000, 2);
 		const entry = onAddHistoryEntry.mock.calls[0][0];
 		expect(entry.summary).toContain('Auto Run killed: 2 tasks in');

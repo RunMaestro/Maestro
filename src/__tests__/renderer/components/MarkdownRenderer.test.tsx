@@ -1412,6 +1412,18 @@ describe('MarkdownRenderer', () => {
 			);
 		});
 
+		it('preserves repeated spaces in inline command text', () => {
+			const { container } = renderMd('Run `tool --flag  value` before retrying.', {
+				chatLineBreaks: true,
+			});
+			const prose = container.querySelector('.prose') as HTMLElement;
+
+			expect(copyRenderedSelection(prose)).toHaveBeenCalledWith(
+				'text/plain',
+				'Run tool --flag  value before retrying.'
+			);
+		});
+
 		it('keeps list items on separate lines', () => {
 			const { container } = renderMd('- First item\n- Second item');
 			const prose = container.querySelector('.prose') as HTMLElement;
