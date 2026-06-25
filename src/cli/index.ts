@@ -76,7 +76,7 @@ import { setTheme } from './commands/set-theme';
 import { themeShow, themeExport, themeImport, themeSet } from './commands/theme';
 import { encoreList, encoreSet } from './commands/encore';
 import { setVerbosity } from './output/verbosity';
-import { pianolaWatch, pianolaRules, pianolaLog } from './commands/pianola';
+import { pianolaWatch, pianolaRules, pianolaAddRule, pianolaLog } from './commands/pianola';
 
 // Injected at build time by scripts/build-cli.mjs via esbuild `define`.
 // The typeof guard keeps non-esbuild execution paths (ts-node, plain tsc output) from
@@ -932,6 +932,24 @@ pianola
 	.description('List the configured Pianola rules')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => pianolaRules(options));
+
+pianola
+	.command('add-rule')
+	.description(
+		'Add a Pianola rule (how the manager agent turns a conversation into a durable rule)'
+	)
+	.option('--scope <scope>', 'global | project | tab (default global)')
+	.option('--scope-id <id>', 'Project path (scope project) or tab id (scope tab)')
+	.option('--action <action>', 'auto_answer | escalate | ignore (required)')
+	.option('--answer <text>', 'Reply text (required for auto_answer)')
+	.option('--max-risk <risk>', 'Only fire when risk is at most: low | medium | high')
+	.option('--kinds <list>', 'Comma list of signal kinds: question,blocked,none')
+	.option('--topic-includes <list>', 'Comma list of case-insensitive topic substrings')
+	.option('--priority <n>', 'Lower runs first (default 100)')
+	.option('--description <text>', 'Human-readable description')
+	.option('--disabled', 'Create the rule disabled')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => pianolaAddRule(options));
 
 pianola
 	.command('log')

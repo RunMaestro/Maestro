@@ -62,6 +62,26 @@ export function readPianolaRules(): PianolaRule[] {
 	return readPianolaRulesResult().rules;
 }
 
+/**
+ * Validate and persist the rules array. Mirrors the desktop store's writeRules:
+ * invalid entries are dropped at the boundary, and the file is written
+ * atomically (temp file + rename) so a crash mid-write cannot leave a truncated
+ * rules file that the watcher would then treat as malformed. Returns the
+ * validated rules that were actually written.
+ */
+export function writePianolaRules(rules: unknown): PianolaRule[] {
+	const validated = validatePianolaRules(rules);
+	const dir = getConfigDirectory();
+	if (!fs.existsSync(dir)) {
+		fs.mkdirSync(dir, { recursive: true });
+	}
+	const target = rulesPath();
+	const tmp = `${target}.tmp`;
+	fs.writeFileSync(tmp, `${JSON.stringify(validated, null, 2)}\n`, 'utf-8');
+	fs.renameSync(tmp, target);
+	return validated;
+}
+
 /** Append one decision record to the audit log as a JSON line. */
 export function appendPianolaDecision(record: PianolaDecisionRecord): void {
 	const dir = getConfigDirectory();
