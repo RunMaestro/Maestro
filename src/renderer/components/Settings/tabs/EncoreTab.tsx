@@ -1256,6 +1256,70 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 					</div>
 				)}
 			</div>
+
+			{/* Pianola Feature Section */}
+			<div
+				data-setting-id="encore-pianola"
+				className="rounded-lg border"
+				style={{
+					borderColor: encoreFeatures.pianola ? theme.colors.accent : theme.colors.border,
+					backgroundColor: encoreFeatures.pianola ? `${theme.colors.accent}08` : 'transparent',
+				}}
+			>
+				<button
+					className="w-full flex items-center justify-between p-4 text-left"
+					onClick={() =>
+						setEncoreFeatures({
+							...encoreFeatures,
+							pianola: !encoreFeatures.pianola,
+						})
+					}
+				>
+					<div className="flex items-center gap-3">
+						<Music
+							className="w-5 h-5"
+							style={{
+								color: encoreFeatures.pianola ? theme.colors.accent : theme.colors.textDim,
+							}}
+						/>
+						<div>
+							<div
+								className="text-sm font-bold flex items-center gap-2"
+								style={{ color: theme.colors.textMain }}
+							>
+								Pianola
+								<span
+									className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
+									style={{
+										backgroundColor: theme.colors.warning + '30',
+										color: theme.colors.warning,
+									}}
+								>
+									Beta
+								</span>
+							</div>
+							<div className="text-xs mt-0.5" style={{ color: theme.colors.textDim }}>
+								Autonomous manager agent. Watches your agents, auto-answers low-risk prompts from
+								your rules, and escalates uncertain or high-risk ones. It can send messages to
+								agents on your behalf.
+							</div>
+						</div>
+					</div>
+					<div
+						className={`relative w-10 h-5 rounded-full transition-colors ${encoreFeatures.pianola ? '' : 'opacity-50'}`}
+						style={{
+							backgroundColor: encoreFeatures.pianola ? theme.colors.accent : theme.colors.border,
+						}}
+					>
+						<div
+							className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform"
+							style={{
+								transform: encoreFeatures.pianola ? 'translateX(22px)' : 'translateX(2px)',
+							}}
+						/>
+					</div>
+				</button>
+			</div>
 		</div>
 	);
 }

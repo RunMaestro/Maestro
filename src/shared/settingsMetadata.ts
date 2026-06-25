@@ -1011,7 +1011,13 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	encoreFeatures: {
 		description: 'Feature flags for experimental/encore features. Object with boolean flags.',
 		type: 'object',
-		default: { directorNotes: false, usageStats: true, symphony: true, maestroCue: false },
+		default: {
+			directorNotes: false,
+			usageStats: true,
+			symphony: true,
+			maestroCue: false,
+			pianola: false,
+		},
 		category: 'advanced',
 	},
 	directorNotesSettings: {
