@@ -249,6 +249,12 @@ export const MODAL_PRIORITIES = {
 	/** Maestro Cue dashboard modal */
 	CUE_MODAL: 460,
 
+	/** Pianola dashboard modal (autonomous manager: rules + decision log) */
+	PIANOLA_MODAL: 459,
+
+	/** Pianola rule editor (above the Pianola dashboard so Escape closes it first) */
+	PIANOLA_RULE_EDITOR: 461,
+
 	/** SSH Remote configuration modal (above settings) */
 	SSH_REMOTE: 458,
 

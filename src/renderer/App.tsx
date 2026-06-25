@@ -349,6 +349,8 @@ function MaestroConsoleInner() {
 		setDirectorNotesOpen,
 		// Maestro Cue Modal — cueModalOpen now self-sourced in AppStandaloneModals
 		setCueModalOpen,
+		// Pianola Modal — pianolaModalOpen now self-sourced in AppStandaloneModals
+		setPianolaModalOpen,
 		// Maestro Cue YAML Editor — open state, sessionId, projectRoot self-sourced in AppStandaloneModals
 		closeCueYamlEditor,
 	} = useModalActions();
@@ -487,6 +489,10 @@ function MaestroConsoleInner() {
 			closeCueYamlEditor();
 		}
 	}, [encoreFeatures.maestroCue, setCueModalOpen, closeCueYamlEditor]);
+
+	useEffect(() => {
+		if (!encoreFeatures.pianola) setPianolaModalOpen(false);
+	}, [encoreFeatures.pianola, setPianolaModalOpen]);
 
 	// --- KEYBOARD SHORTCUT HELPERS ---
 	const { isShortcut, isTabShortcut } = useKeyboardShortcutHelpers({
@@ -3155,6 +3161,7 @@ function MaestroConsoleInner() {
 						encoreFeatures.directorNotes ? () => setDirectorNotesOpen(true) : undefined
 					}
 					onOpenMaestroCue={encoreFeatures.maestroCue ? () => setCueModalOpen(true) : undefined}
+					onOpenPianola={encoreFeatures.pianola ? () => setPianolaModalOpen(true) : undefined}
 					onConfigureCue={encoreFeatures.maestroCue ? handleConfigureCue : undefined}
 					onCloseTabSwitcher={handleCloseTabSwitcher}
 					onTabSelect={handleUtilityTabSelect}

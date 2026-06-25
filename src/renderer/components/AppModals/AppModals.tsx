@@ -311,6 +311,8 @@ export interface AppModalsProps {
 	onOpenDirectorNotes?: () => void;
 	// Maestro Cue
 	onOpenMaestroCue?: () => void;
+	// Pianola
+	onOpenPianola?: () => void;
 	onConfigureCue?: (session: Session) => void;
 	onCloseTabSwitcher: () => void;
 	onTabSelect: (tabId: string) => void;
@@ -776,6 +778,8 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onOpenDirectorNotes,
 		// Maestro Cue
 		onOpenMaestroCue,
+		// Pianola
+		onOpenPianola,
 		onConfigureCue,
 		onCloseTabSwitcher,
 		onTabSelect,
@@ -1100,6 +1104,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onOpenSymphony={onOpenSymphony}
 				onOpenDirectorNotes={onOpenDirectorNotes}
 				onOpenMaestroCue={onOpenMaestroCue}
+				onOpenPianola={onOpenPianola}
 				onConfigureCue={onConfigureCue}
 				lightboxImage={lightboxImage}
 				lightboxImages={lightboxImages}
