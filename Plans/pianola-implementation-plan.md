@@ -48,12 +48,20 @@ Files (verified line refs):
 - Tests: fixture transcripts in `src/__tests__/main/pianola/` covering question/blocked/none + low/med/high.
   Pure functions, no I/O, no app - the brain, fully unit-tested first.
 
-### Step 2 - Structured awaiting-input signal (narrow) [NEXT]
+### Step 2 - Structured awaiting-input signal (narrow) [DONE]
 
-- Extend `ParsedEvent` (`src/main/parsers/agent-output-parser.ts`) with `awaitingInput?: { kind; prompt?; options? }`.
-- Populate in `claude-output-parser.ts` for unambiguous cases (plan-mode confirm, explicit `[y/n]`, known permission strings).
-- Thread through `LogEntry` and the WS `SessionHistoryMessage` payload (`web-server/types.ts`) so the watcher sees it.
-- Tests against captured transcripts.
+Refinement vs the original plan: implemented as a pure detector module
+(`src/main/pianola/pianola-awaiting-detector.ts`) instead of surgery on the
+parser hot path. Rationale (maintainability-first): the watcher consumes
+`session show --json` (the `SessionHistoryMessage` shape, which has no
+awaiting-input field), so deriving the signal in a pure, isolated, fully-tested
+module keeps Pianola cohesive and avoids changing the parser / IPC / WebSocket
+contracts. `detectAwaitingInput(content)` returns a typed `AwaitingInputSignal`
+(plan_review > permission > choice > question) with extracted options;
+`enrichWithAwaitingInput(messages)` fills it onto assistant turns before the
+classifier runs (which already treats a present signal as authoritative).
+Threading a signal through the parser/WS layers remains a possible future
+optimization but is not needed for the feature to work.
 
 ### Step 3 - Storage [NEXT]
 
