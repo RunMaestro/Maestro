@@ -7,16 +7,20 @@
  * tested against fixture transcripts.
  *
  * Detection prefers a structured AwaitingInputSignal (authoritative, high
- * confidence) and falls back to conservative heuristics over message text.
+ * confidence) and falls back to conservative heuristics over message text. Risk
+ * rating lives in pianola-risk.ts.
  */
 
 import type {
 	AwaitingInputSignal,
 	PianolaClassification,
 	PianolaMessage,
-	PianolaRisk,
 	PianolaSignalKind,
 } from '../../shared/pianola/types';
+import { maxRisk, rateRisk } from './pianola-risk';
+
+// Re-exported for convenience so callers can pull risk helpers from the classifier.
+export { riskAtMost, maxRisk } from './pianola-risk';
 
 /** Phrases that strongly suggest the assistant is asking the user to decide. */
 const QUESTION_PHRASES = [
@@ -51,80 +55,21 @@ const BLOCKED_PHRASES = [
 	'needs approval',
 ];
 
-/** High-risk: destructive, security-sensitive, or irreversible/outward-facing. */
-const HIGH_RISK_TERMS = [
-	'delete',
-	'rm -rf',
-	'drop table',
-	'drop database',
-	'truncate',
-	'force push',
-	'force-push',
-	'git push --force',
-	'reset --hard',
-	'deploy',
-	'production',
-	'prod ',
-	'secret',
-	'secrets',
-	'password',
-	'credential',
-	'api key',
-	'api-key',
-	'token',
-	'auth',
-	'payment',
-	'charge',
-	'invoice',
-	'migrate',
-	'migration',
-	'wipe',
-	'overwrite',
-	'revoke',
-	'sudo',
-];
+/** Slash/paren choice markers: [y/n], (yes/no), [approve/cancel]. */
+const SLASH_CHOICE_RE = /\[[^\]]*\/[^\]]*\]|\((?:y\/n|yes\/no)\)/i;
 
-/** Medium-risk: meaningful but recoverable engineering choices. */
-const MEDIUM_RISK_TERMS = [
-	'install',
-	'upgrade',
-	'downgrade',
-	'bump',
-	'dependency',
-	'dependencies',
-	'package',
-	'refactor',
-	'rename',
-	'move file',
-	'delete comment',
-	'test strategy',
-	'restructure',
-	'schema',
-	'config',
-];
-
-const RISK_ORDER: Record<PianolaRisk, number> = { low: 0, medium: 1, high: 2 };
-
-/** True if risk `a` is at most as severe as `b`. */
-export function riskAtMost(a: PianolaRisk, b: PianolaRisk): boolean {
-	return RISK_ORDER[a] <= RISK_ORDER[b];
-}
-
-/** The more severe of two risks. */
-export function maxRisk(a: PianolaRisk, b: PianolaRisk): PianolaRisk {
-	return RISK_ORDER[a] >= RISK_ORDER[b] ? a : b;
-}
+/** Two or more numbered options: "1) approve", "2. cancel" at line/segment starts. */
+const NUMBERED_CHOICE_RE = /(?:^|\n|\s)\d+[.)]\s+\S/g;
 
 function containsAny(haystack: string, needles: readonly string[]): boolean {
 	return needles.some((n) => haystack.includes(n));
 }
 
-/** Rate risk from free text. */
-function rateRisk(text: string): PianolaRisk {
-	const lower = text.toLowerCase();
-	if (containsAny(lower, HIGH_RISK_TERMS)) return 'high';
-	if (containsAny(lower, MEDIUM_RISK_TERMS)) return 'medium';
-	return 'low';
+/** True if the text presents an explicit set of choices. */
+function hasChoiceMarker(content: string): boolean {
+	if (SLASH_CHOICE_RE.test(content)) return true;
+	const numbered = content.match(NUMBERED_CHOICE_RE);
+	return !!numbered && numbered.length >= 2;
 }
 
 /** Build a short topic summary from a prompt: first sentence/line, trimmed. */
@@ -171,7 +116,8 @@ function classifyFromStructured(
 ): PianolaClassification {
 	const promptText = signal.prompt ?? message.content;
 	const kind: PianolaSignalKind = signal.kind === 'question' ? 'question' : 'blocked';
-	// Permission/plan-review prompts inherit risk from what is being requested.
+	// Permission/plan-review prompts inherit risk from what is being requested,
+	// but are never less than medium since they gate an action.
 	let risk = rateRisk(promptText);
 	if (signal.kind === 'permission' || signal.kind === 'plan_review') {
 		risk = maxRisk(risk, 'medium');
@@ -192,25 +138,26 @@ function classifyFromStructured(
 function classifyHeuristic(message: PianolaMessage): PianolaClassification {
 	const content = message.content ?? '';
 	const lower = content.toLowerCase();
-	const hasQuestionMark = content.includes('?');
+	// "trailing question mark only" means the message ends with '?', not that it
+	// contains one somewhere (diagnostic text often contains stray '?').
+	const endsWithQuestion = content.trimEnd().endsWith('?');
 	const hasQuestionPhrase = containsAny(lower, QUESTION_PHRASES);
 	const hasBlockedPhrase = containsAny(lower, BLOCKED_PHRASES);
-	// Bracketed prompts like [y/n], (yes/no), 1) ... 2) ...
-	const hasChoiceMarker = /\[[^\]]*\/[^\]]*\]|\((?:y\/n|yes\/no)\)/i.test(content);
+	const choiceMarker = hasChoiceMarker(content);
 
 	let kind: PianolaSignalKind = 'none';
 	let confidence: PianolaClassification['confidence'] = 'low';
 	let reason = 'no question or blocked signal detected';
 
-	if (hasQuestionPhrase || hasChoiceMarker) {
+	if (hasQuestionPhrase || choiceMarker) {
 		kind = 'question';
 		confidence = 'medium';
-		reason = hasChoiceMarker ? 'explicit choice marker in text' : 'question phrase in text';
+		reason = choiceMarker ? 'explicit choice marker in text' : 'question phrase in text';
 	} else if (hasBlockedPhrase) {
 		kind = 'blocked';
 		confidence = 'medium';
 		reason = 'blocked phrase in text';
-	} else if (hasQuestionMark) {
+	} else if (endsWithQuestion) {
 		kind = 'question';
 		confidence = 'low';
 		reason = 'trailing question mark only';

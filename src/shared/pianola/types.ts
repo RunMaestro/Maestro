@@ -106,11 +106,12 @@ export interface PianolaRule {
 	description?: string;
 }
 
-/** Decision the policy engine produced for a classification. */
-export interface PianolaDecision {
-	action: PianolaActionKind;
-	/** Present iff action === 'auto_answer'. */
-	answer?: string;
-	matchedRuleId: string | null;
-	reason: string;
-}
+/**
+ * Decision the policy engine produced for a classification. Discriminated on
+ * `action` so `answer` only exists on an auto_answer decision - impossible
+ * states (e.g. an escalate carrying an answer) are unrepresentable.
+ */
+export type PianolaDecision =
+	| { action: 'auto_answer'; answer: string; matchedRuleId: string | null; reason: string }
+	| { action: 'escalate'; matchedRuleId: string | null; reason: string }
+	| { action: 'ignore'; matchedRuleId: string | null; reason: string };

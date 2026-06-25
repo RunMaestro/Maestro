@@ -141,3 +141,64 @@ describe('classifyMessages - risk rating', () => {
 		expect(c.risk).toBe('high');
 	});
 });
+
+describe('classifyMessages - risk lexicon coverage', () => {
+	const highCases = [
+		'Should I push to origin and deploy to production?',
+		'Should I publish the release now?',
+		'Should I merge the PR?',
+		'Should I send an email to the team?',
+		'Should I commit the .env file?',
+		'Should I add the private key to the repo?',
+		'Should I force push?',
+		'Should I run git push?',
+	];
+	for (const text of highCases) {
+		it(`rates high: "${text}"`, () => {
+			expect(classifyMessages([msg('assistant', text)]).risk).toBe('high');
+		});
+	}
+
+	const mediumCases = [
+		'Should I rename the helper function?',
+		'Should I install the dependency?',
+		'Should I refactor this module?',
+	];
+	for (const text of mediumCases) {
+		it(`rates medium: "${text}"`, () => {
+			expect(classifyMessages([msg('assistant', text)]).risk).toBe('medium');
+		});
+	}
+
+	it('does not treat "author" as auth/high risk (word boundary)', () => {
+		const c = classifyMessages([msg('assistant', 'Should I credit the author in the header?')]);
+		expect(c.risk).toBe('low');
+	});
+
+	it('does not treat "tokenizer" as token/high risk (word boundary)', () => {
+		const c = classifyMessages([msg('assistant', 'Should I add a tokenizer to the parser?')]);
+		expect(c.risk).toBe('low');
+	});
+});
+
+describe('classifyMessages - choice and question-mark precision', () => {
+	it('detects two or more numbered options as a question', () => {
+		const c = classifyMessages([
+			msg('assistant', 'How to handle this. Options: 1) keep it 2) remove it 3) rename it'),
+		]);
+		expect(c.kind).toBe('question');
+		expect(c.confidence).toBe('medium');
+	});
+
+	it('does not treat a single numbered item as a choice', () => {
+		const c = classifyMessages([msg('assistant', 'I did step 1) refactor the parser.')]);
+		expect(c.kind).toBe('none');
+	});
+
+	it('ignores a question mark that is not at the end of the message', () => {
+		const c = classifyMessages([
+			msg('assistant', 'Is the value correct? I updated the file accordingly.'),
+		]);
+		expect(c.kind).toBe('none');
+	});
+});
