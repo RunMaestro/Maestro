@@ -70,6 +70,32 @@ describe('detectAwaitingInput - kinds', () => {
 	});
 });
 
+describe('detectAwaitingInput - false-positive hardening', () => {
+	it('does not treat a markdown link as options', () => {
+		expect(detectAwaitingInput('See the guide at [docs/api](https://x.example). Done.')).toBeNull();
+	});
+
+	it('does not treat a bracketed file path as options', () => {
+		expect(detectAwaitingInput('I edited [src/foo.ts] as requested.')).toBeNull();
+	});
+
+	it('does not treat a version number as a numbered choice', () => {
+		expect(detectAwaitingInput('Bumped the package to 1.2.3 today.')).toBeNull();
+	});
+
+	it('does not treat a changelog-style numbered list without a question as a choice', () => {
+		expect(
+			detectAwaitingInput('Changes in this release: 1) fixed a bug 2) added a feature')
+		).toBeNull();
+	});
+
+	it('still treats a genuine bracketed choice with asking context as a choice', () => {
+		const s = detectAwaitingInput('Proceed? [approve/cancel]');
+		expect(s?.kind).toBe('choice');
+		expect(s?.options).toEqual(['approve', 'cancel']);
+	});
+});
+
 describe('enrichWithAwaitingInput', () => {
 	it('fills awaitingInput on assistant messages without mutating inputs', () => {
 		const input = [msg('user', 'go'), msg('assistant', 'Do you want me to deploy to production?')];

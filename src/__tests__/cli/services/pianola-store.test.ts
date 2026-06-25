@@ -149,4 +149,21 @@ describe('decision audit log', () => {
 		appendPianolaDecision(decisionRecord('d2'));
 		expect(readPianolaDecisions().map((r) => r.id)).toEqual(['d1', 'd2']);
 	});
+
+	it('skips a schema-invalid JSON line', () => {
+		appendPianolaDecision(decisionRecord('d1'));
+		fs.appendFileSync(path.join(tmpDir, PIANOLA_DECISIONS_FILENAME), '{"foo":1}\n', 'utf-8');
+		expect(readPianolaDecisions().map((r) => r.id)).toEqual(['d1']);
+	});
+
+	it('folds an intent and outcome record sharing an id (last wins, position kept)', () => {
+		const intent = { ...decisionRecord('same'), dispatched: false };
+		const outcome = { ...decisionRecord('same'), dispatched: true };
+		appendPianolaDecision(decisionRecord('first'));
+		appendPianolaDecision(intent);
+		appendPianolaDecision(outcome);
+		const records = readPianolaDecisions();
+		expect(records.map((r) => r.id)).toEqual(['first', 'same']);
+		expect(records[1].dispatched).toBe(true);
+	});
 });

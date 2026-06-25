@@ -18,6 +18,7 @@ import type {
 	PianolaSignalKind,
 } from './types';
 import { maxRisk, rateRisk } from './pianola-risk';
+import { extractOptions, looksLikeAsking } from './pianola-awaiting-detector';
 
 // Re-exported for convenience so callers can pull risk helpers from the classifier.
 export { riskAtMost, maxRisk } from './pianola-risk';
@@ -55,21 +56,17 @@ const BLOCKED_PHRASES = [
 	'needs approval',
 ];
 
-/** Slash/paren choice markers: [y/n], (yes/no), [approve/cancel]. */
-const SLASH_CHOICE_RE = /\[[^\]]*\/[^\]]*\]|\((?:y\/n|yes\/no)\)/i;
-
-/** Two or more numbered options: "1) approve", "2. cancel" at line/segment starts. */
-const NUMBERED_CHOICE_RE = /(?:^|\n|\s)\d+[.)]\s+\S/g;
-
 function containsAny(haystack: string, needles: readonly string[]): boolean {
 	return needles.some((n) => haystack.includes(n));
 }
 
-/** True if the text presents an explicit set of choices. */
+/**
+ * True if the text presents an explicit set of choices. Reuses the detector's
+ * hardened option extraction and asking-context check so both tiers agree (a
+ * changelog-style numbered list or an incidental bracket is not a choice).
+ */
 function hasChoiceMarker(content: string): boolean {
-	if (SLASH_CHOICE_RE.test(content)) return true;
-	const numbered = content.match(NUMBERED_CHOICE_RE);
-	return !!numbered && numbered.length >= 2;
+	return extractOptions(content).length >= 2 && looksLikeAsking(content);
 }
 
 /** Build a short topic summary from a prompt: first sentence/line, trimmed. */

@@ -116,6 +116,45 @@ export function validatePianolaRule(raw: unknown): PianolaRule | null {
 	return rule;
 }
 
+const CONFIDENCES = ['low', 'medium', 'high'] as const;
+
+function isValidClassification(raw: unknown): raw is PianolaClassification {
+	if (!isRecord(raw)) return false;
+	if (!SIGNAL_KINDS.includes(raw.kind as PianolaSignalKind)) return false;
+	if (!RISKS.includes(raw.risk as PianolaRisk)) return false;
+	if (typeof raw.topic !== 'string') return false;
+	if (!CONFIDENCES.includes(raw.confidence as (typeof CONFIDENCES)[number])) return false;
+	if (!isRecord(raw.evidence)) return false;
+	return true;
+}
+
+function isValidDecision(raw: unknown): raw is PianolaDecision {
+	if (!isRecord(raw)) return false;
+	if (!ACTION_KINDS.includes(raw.action as PianolaActionKind)) return false;
+	if (raw.matchedRuleId !== null && typeof raw.matchedRuleId !== 'string') return false;
+	if (typeof raw.reason !== 'string') return false;
+	if (raw.action === 'auto_answer' && typeof raw.answer !== 'string') return false;
+	return true;
+}
+
+/**
+ * Validate one untrusted decision-audit record. Returns the typed record or null
+ * so a malformed JSONL line (hand-edited or from an older schema) is skipped
+ * rather than crashing a reader that dereferences nested fields.
+ */
+export function validatePianolaDecisionRecord(raw: unknown): PianolaDecisionRecord | null {
+	if (!isRecord(raw)) return null;
+	if (typeof raw.id !== 'string' || raw.id.length === 0) return null;
+	if (typeof raw.timestamp !== 'string') return null;
+	if (typeof raw.tabId !== 'string' || typeof raw.agentId !== 'string') return null;
+	if (typeof raw.dispatched !== 'boolean' || typeof raw.dryRun !== 'boolean') return null;
+	if (raw.projectPath !== undefined && typeof raw.projectPath !== 'string') return null;
+	if (raw.error !== undefined && typeof raw.error !== 'string') return null;
+	if (!isValidClassification(raw.classification)) return null;
+	if (!isValidDecision(raw.decision)) return null;
+	return raw as unknown as PianolaDecisionRecord;
+}
+
 /** Validate an untrusted rules payload, dropping any malformed entries. */
 export function validatePianolaRules(raw: unknown): PianolaRule[] {
 	if (!Array.isArray(raw)) return [];

@@ -14,6 +14,7 @@
 import { readSettingValue } from '../services/storage';
 import {
 	readPianolaRules,
+	readPianolaRulesResult,
 	appendPianolaDecision,
 	readPianolaDecisions,
 } from '../services/pianola-store';
@@ -57,6 +58,7 @@ interface SessionHistoryResponse {
 	sessionId?: string;
 	agentId?: string;
 	agentSessionId?: string | null;
+	projectPath?: string;
 	messages?: PianolaMessage[];
 }
 
@@ -123,6 +125,10 @@ export async function pianolaWatch(tabId: string, options: PianolaWatchOptions):
 		return;
 	}
 
+	if (readPianolaRulesResult().malformed) {
+		console.error('[pianola] warning: rules file is invalid JSON; no rules will apply until fixed');
+	}
+
 	if (!once) {
 		console.log(
 			`[pianola] watching tab ${tabId} every ${intervalMs / 1000}s${dryRun ? ' (dry-run)' : ''}. Ctrl+C to stop.`
@@ -158,10 +164,17 @@ export async function pianolaWatch(tabId: string, options: PianolaWatchOptions):
 				break;
 			}
 
-			const target: WatchTarget = { tabId, agentId };
+			const target: WatchTarget = { tabId, agentId, projectPath: resp.projectPath };
 			const messages = resp.messages ?? [];
-			const iteration = await runWatchIteration(messages, target, state, deps, { dryRun });
-			state = iteration.state;
+			try {
+				const iteration = await runWatchIteration(messages, target, state, deps, { dryRun });
+				state = iteration.state;
+			} catch (error) {
+				// Unexpected failure (e.g. an audit write failed before dispatch).
+				// Fail closed: log and keep watching rather than crashing the loop.
+				const message = error instanceof Error ? error.message : String(error);
+				console.error(`[pianola] iteration error: ${message}`);
+			}
 
 			if (once || stopped) break;
 			await sleep(intervalMs);

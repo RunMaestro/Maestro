@@ -15,9 +15,17 @@ import {
 	PIANOLA_RULES_FILENAME,
 	PIANOLA_DECISIONS_FILENAME,
 	validatePianolaRules,
+	validatePianolaDecisionRecord,
 	type PianolaDecisionRecord,
 } from '../../shared/pianola/storage';
 import type { PianolaRule } from '../../shared/pianola/types';
+
+/** Result of loading rules, distinguishing "no rules" from "file is malformed". */
+export interface RulesLoadResult {
+	rules: PianolaRule[];
+	/** True when the rules file exists but could not be parsed as JSON. */
+	malformed: boolean;
+}
 
 function rulesPath(): string {
 	return path.join(getConfigDirectory(), PIANOLA_RULES_FILENAME);
@@ -28,29 +36,34 @@ function decisionsPath(): string {
 }
 
 /**
- * Read and validate the rules file. Returns an empty list when the file is
- * missing or malformed, and drops any individual invalid rule, so a bad
- * hand-edit cannot break the watcher.
+ * Read and validate the rules file, reporting whether the file was present but
+ * unparseable. Individual invalid rules are dropped, so a bad hand-edit cannot
+ * break the watcher; callers can surface `malformed` as a warning.
  */
-export function readPianolaRules(): PianolaRule[] {
+export function readPianolaRulesResult(): RulesLoadResult {
 	let content: string;
 	try {
 		content = fs.readFileSync(rulesPath(), 'utf-8');
 	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { rules: [], malformed: false };
 		throw error;
 	}
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(content);
 	} catch {
-		return [];
+		return { rules: [], malformed: true };
 	}
 	// Accept either a bare array or an electron-store style { rules: [...] }.
 	const raw = Array.isArray(parsed)
 		? parsed
 		: ((parsed as { rules?: unknown } | null)?.rules ?? []);
-	return validatePianolaRules(raw);
+	return { rules: validatePianolaRules(raw), malformed: false };
+}
+
+/** Read and validate the rules file. Returns [] when missing or malformed. */
+export function readPianolaRules(): PianolaRule[] {
+	return readPianolaRulesResult().rules;
 }
 
 /** Append one decision record to the audit log as a JSON line. */
@@ -63,8 +76,10 @@ export function appendPianolaDecision(record: PianolaDecisionRecord): void {
 }
 
 /**
- * Read recent decision records (most recent last). Malformed lines are skipped.
- * When `limit` is given, only the last `limit` records are returned.
+ * Read recent decision records (most recent last). Malformed and schema-invalid
+ * lines are skipped. Records sharing an id (an auto-answer's intent line and its
+ * dispatch-outcome line) are folded so the latest wins, keeping the original
+ * position. When `limit` is given, only the last `limit` records are returned.
  */
 export function readPianolaDecisions(limit?: number): PianolaDecisionRecord[] {
 	let content: string;
@@ -74,16 +89,20 @@ export function readPianolaDecisions(limit?: number): PianolaDecisionRecord[] {
 		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
 		throw error;
 	}
-	const records: PianolaDecisionRecord[] = [];
+	const byId = new Map<string, PianolaDecisionRecord>();
 	for (const line of content.split('\n')) {
 		const trimmed = line.trim();
 		if (!trimmed) continue;
+		let parsed: unknown;
 		try {
-			records.push(JSON.parse(trimmed) as PianolaDecisionRecord);
+			parsed = JSON.parse(trimmed);
 		} catch {
-			// Skip a corrupt line rather than failing the whole read.
+			continue; // skip a corrupt line rather than failing the whole read
 		}
+		const record = validatePianolaDecisionRecord(parsed);
+		if (record) byId.set(record.id, record); // last write for an id wins, position kept
 	}
+	const records = [...byId.values()];
 	if (limit !== undefined && limit >= 0 && records.length > limit) {
 		return records.slice(records.length - limit);
 	}
