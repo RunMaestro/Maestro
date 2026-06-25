@@ -304,6 +304,23 @@ export function PianolaModal({ theme, onClose }: PianolaModalProps) {
 						/>
 					)}
 				</div>
+
+				{/* Footer: how the autonomous runtime is started. Pianola watches and
+				    answers agents from the CLI watcher; this dashboard configures the
+				    rules it uses and shows what it did. */}
+				<div
+					className="shrink-0 px-5 py-2.5 border-t text-[11px] select-text"
+					style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
+				>
+					Pianola watches an agent and acts on these rules when you run{' '}
+					<code
+						className="px-1 rounded"
+						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textMain }}
+					>
+						maestro pianola watch &lt;tab-id&gt;
+					</code>
+					. Every decision it makes, here or from the CLI, is recorded above.
+				</div>
 			</div>
 
 			{/* Rule editor (create or edit) */}
