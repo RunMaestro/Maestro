@@ -63,6 +63,7 @@ import { registerTabNamingHandlers, TabNamingHandlerDependencies } from './tabNa
 import { registerDirectorNotesHandlers, DirectorNotesHandlerDependencies } from './director-notes';
 import { registerCueHandlers, CueHandlerDependencies } from './cue';
 import { registerCueBackupHandlers } from './cue-backup';
+import { registerPianolaHandlers, PianolaHandlerDependencies } from './pianola';
 import { registerWakatimeHandlers } from './wakatime';
 import { registerFeedbackHandlers } from './feedback';
 import { registerMaestroCliHandlers } from './maestro-cli';
@@ -125,6 +126,8 @@ export type { DirectorNotesHandlerDependencies };
 export { registerCueHandlers };
 export type { CueHandlerDependencies };
 export { registerCueBackupHandlers };
+export { registerPianolaHandlers };
+export type { PianolaHandlerDependencies };
 export { registerWakatimeHandlers };
 export { registerFeedbackHandlers };
 export { registerMaestroCliHandlers };
@@ -323,6 +326,10 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	// Register Cue Backup handlers (Cue modal Backup tab)
 	registerCueBackupHandlers({
 		sessionsStore: deps.sessionsStore,
+	});
+	// Register Pianola handlers (autonomous manager: rules CRUD + decision log)
+	registerPianolaHandlers({
+		settingsStore: deps.settingsStore,
 	});
 	// Register Core Prompts handlers (no dependencies needed)
 	registerPromptsHandlers();

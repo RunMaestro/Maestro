@@ -163,6 +163,8 @@ import type { CueStatsAggregation, CueStatsTimeRange } from '../shared/cue-stats
 import type { DurationPercentiles } from '../shared/percentiles';
 import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestro-cli';
 import type { GitWorktreeSetupResult, GitWorktreeCheckoutResult } from '../main/preload/git';
+import type { PianolaRule } from '../shared/pianola/types';
+import type { PianolaDecisionRecord } from '../shared/pianola/storage';
 
 interface MaestroAPI {
 	// Context merging API (for session context transfer and grooming)
@@ -3474,6 +3476,14 @@ interface MaestroAPI {
 			filePath: string
 		) => Promise<import('../shared/cue-backup-types').CueBackupDiffStatusMap>;
 		delete: (filePath: string) => Promise<void>;
+	};
+
+	// Pianola API (autonomous manager: rules + decision log)
+	// All channels reject with 'PianolaDisabled' when the Encore flag is off.
+	pianola: {
+		getRules: () => Promise<PianolaRule[]>;
+		saveRules: (rules: PianolaRule[]) => Promise<PianolaRule[]>;
+		getDecisions: (limit?: number) => Promise<PianolaDecisionRecord[]>;
 	};
 
 	// WakaTime API (CLI check, API key validation)
