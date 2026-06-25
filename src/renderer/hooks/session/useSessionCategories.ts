@@ -104,6 +104,10 @@ export function useSessionCategories(
 			// Exclude worktree children from main list (they appear under parent)
 			if (s.parentSessionId) continue;
 
+			// Pianola is the pinned manager agent: it renders in its own top
+			// section, never in Bookmarks/Groups/Ungrouped, so exclude it here.
+			if (s.isPianola) continue;
+
 			// Apply unread agents filter (also keep busy/working agents visible)
 			// Always keep the active session (or its parent) visible so user doesn't lose their place
 			const isActiveOrParentOfActive =

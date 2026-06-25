@@ -178,6 +178,8 @@ function SessionListInner(props: SessionListProps) {
 	const ungroupedCollapsed = useSettingsStore((s) => s.ungroupedCollapsed);
 	const starredSectionCollapsed = useSettingsStore((s) => s.starredSessionsCollapsed);
 	const showStarredSessionsSection = useSettingsStore((s) => s.showStarredSessionsSection);
+	const pianolaEnabled = useSettingsStore((s) => s.encoreFeatures?.pianola);
+	const pianolaSession = useSessionStore((s) => s.sessions.find((x) => x.isPianola));
 	const showLeftPanelGroupMemberCount = useSettingsStore((s) => s.showLeftPanelGroupMemberCount);
 	const leftPanelCollapsedPillsPerRow = useSettingsStore((s) => s.leftPanelCollapsedPillsPerRow);
 	const autoRunStats = useSettingsStore((s) => s.autoRunStats);
@@ -1162,6 +1164,29 @@ function SessionListInner(props: SessionListProps) {
 						>
 							<Bot className="w-8 h-8 opacity-30" />
 							<span className="text-xs italic">No unread or working agents</span>
+						</div>
+					)}
+
+					{/* PIANOLA SECTION - the single pinned manager agent, rendered at the
+					    very top of the list. Gated by the pianola Encore flag; hidden when
+					    filtering by unread agents. Excluded from all normal categories. */}
+					{pianolaEnabled && pianolaSession && !showUnreadAgentsOnly && (
+						<div className="mb-1">
+							<div
+								className="w-full px-3 py-1.5 flex items-center gap-2 text-xs font-bold uppercase tracking-wider"
+								style={{ color: theme.colors.accent }}
+							>
+								<Bot className="w-3.5 h-3.5" />
+								<span>Pianola</span>
+							</div>
+							<div
+								className="flex flex-col border-l ml-4"
+								style={{ borderColor: theme.colors.accent }}
+							>
+								{renderSessionWithWorktrees(pianolaSession, 'ungrouped', {
+									keyPrefix: 'pianola',
+								})}
+							</div>
 						</div>
 					)}
 
