@@ -60,6 +60,9 @@ const CueModal = lazy(() => import('./CueModal').then((m) => ({ default: m.CueMo
 const CueYamlEditor = lazy(() =>
 	import('./CueYamlEditor').then((m) => ({ default: m.CueYamlEditor }))
 );
+const PianolaModal = lazy(() =>
+	import('./PianolaModal').then((m) => ({ default: m.PianolaModal }))
+);
 
 /**
  * Props for the AppStandaloneModals component.
@@ -240,6 +243,8 @@ function AppStandaloneModalsInner({
 		setDirectorNotesOpen,
 		cueModalOpen,
 		setCueModalOpen,
+		pianolaModalOpen,
+		setPianolaModalOpen,
 		cueYamlEditorOpen,
 		cueYamlEditorSessionId,
 		cueYamlEditorProjectRoot,
@@ -391,6 +396,13 @@ function AppStandaloneModalsInner({
 						onClose={() => setCueModalOpen(false)}
 						cueShortcutKeys={shortcuts.maestroCue?.keys}
 					/>
+				</Suspense>
+			)}
+
+			{/* --- PIANOLA MODAL (lazy-loaded, Encore Feature) --- */}
+			{encoreFeatures.pianola && pianolaModalOpen && (
+				<Suspense fallback={null}>
+					<PianolaModal theme={theme} onClose={() => setPianolaModalOpen(false)} />
 				</Suspense>
 			)}
 

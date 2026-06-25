@@ -168,6 +168,8 @@ export interface AppUtilityModalsProps {
 
 	// Maestro Cue
 	onOpenMaestroCue?: () => void;
+	// Pianola
+	onOpenPianola?: () => void;
 	onConfigureCue?: (session: Session) => void;
 
 	// LightboxModal
@@ -404,6 +406,8 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	onOpenDirectorNotes,
 	// Maestro Cue
 	onOpenMaestroCue,
+	// Pianola
+	onOpenPianola,
 	onConfigureCue,
 	// LightboxModal
 	lightboxImage,
@@ -598,6 +602,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					onOpenSymphony={onOpenSymphony}
 					onOpenDirectorNotes={onOpenDirectorNotes}
 					onOpenMaestroCue={onOpenMaestroCue}
+					onOpenPianola={onOpenPianola}
 					onConfigureCue={onConfigureCue}
 					onOpenQueueBrowser={onOpenQueueBrowser}
 					onNewTab={onQuickActionsNewTab}

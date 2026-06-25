@@ -618,6 +618,12 @@ const mockMaestro = {
 		validateYaml: vi.fn().mockResolvedValue({ valid: true, errors: [] }),
 		onActivityUpdate: vi.fn().mockReturnValue(() => {}),
 	},
+	// Pianola API (autonomous manager: rules + decision log)
+	pianola: {
+		getRules: vi.fn().mockResolvedValue([]),
+		saveRules: vi.fn().mockImplementation((rules: unknown) => Promise.resolve(rules)),
+		getDecisions: vi.fn().mockResolvedValue([]),
+	},
 	// Core Prompts API (disk-based prompts loaded at runtime)
 	prompts: {
 		get: vi.fn().mockResolvedValue({ success: true, content: '' }),

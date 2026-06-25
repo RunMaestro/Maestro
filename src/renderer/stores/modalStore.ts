@@ -301,7 +301,9 @@ export type ModalId =
 	| 'directorNotes'
 	// Maestro Cue
 	| 'cueModal'
-	| 'cueYamlEditor';
+	| 'cueYamlEditor'
+	// Pianola (autonomous manager)
+	| 'pianolaModal';
 
 /**
  * Type mapping from ModalId to its data type.
@@ -917,6 +919,10 @@ export function getModalActions() {
 			openModal('cueYamlEditor', { sessionId, projectRoot }),
 		closeCueYamlEditor: () => closeModal('cueYamlEditor'),
 
+		// Pianola Modal (autonomous manager: rules + decision log)
+		setPianolaModalOpen: (open: boolean) =>
+			open ? openModal('pianolaModal') : closeModal('pianolaModal'),
+
 		// Lightbox refs replacement - use updateModalData instead
 		setLightboxIsGroupChat: (isGroupChat: boolean) => updateModalData('lightbox', { isGroupChat }),
 		setLightboxAllowDelete: (allowDelete: boolean) => updateModalData('lightbox', { allowDelete }),
@@ -1014,6 +1020,7 @@ export function useModalActions() {
 	const cueModalOpen = useModalStore(selectModalOpen('cueModal'));
 	const cueYamlEditorOpen = useModalStore(selectModalOpen('cueYamlEditor'));
 	const cueYamlEditorData = useModalStore(selectModalData('cueYamlEditor'));
+	const pianolaModalOpen = useModalStore(selectModalOpen('pianolaModal'));
 
 	// Get stable actions
 	const actions = getModalActions();
@@ -1205,6 +1212,9 @@ export function useModalActions() {
 		cueYamlEditorOpen,
 		cueYamlEditorSessionId: cueYamlEditorData?.sessionId ?? null,
 		cueYamlEditorProjectRoot: cueYamlEditorData?.projectRoot ?? null,
+
+		// Pianola Modal (autonomous manager)
+		pianolaModalOpen,
 
 		// Lightbox ref replacements (now stored as data)
 		lightboxIsGroupChat: lightboxData?.isGroupChat ?? false,

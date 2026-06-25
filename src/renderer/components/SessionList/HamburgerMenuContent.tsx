@@ -50,6 +50,7 @@ export function HamburgerMenuContent({
 		setSymphonyModalOpen,
 		setDirectorNotesOpen,
 		setCueModalOpen,
+		setPianolaModalOpen,
 		setUpdateCheckModalOpen,
 		setAboutModalOpen,
 		setQuickActionOpen,
@@ -344,6 +345,25 @@ export function HamburgerMenuContent({
 							{formatShortcutKeys(shortcuts.openCue.keys)}
 						</span>
 					)}
+				</button>
+			)}
+			{encoreFeatures.pianola && (
+				<button
+					onClick={() => {
+						setPianolaModalOpen(true);
+						setMenuOpen(false);
+					}}
+					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
+				>
+					<Music className="w-5 h-5" style={{ color: theme.colors.accent }} />
+					<div className="flex-1">
+						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+							Pianola
+						</div>
+						<div className="text-xs" style={{ color: theme.colors.textDim }}>
+							Autonomous manager
+						</div>
+					</div>
 				</button>
 			)}
 			<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />

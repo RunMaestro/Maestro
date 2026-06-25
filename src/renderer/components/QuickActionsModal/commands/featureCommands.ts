@@ -35,6 +35,7 @@ interface BuildFeatureCommandsArgs {
 	onOpenSymphony?: () => void;
 	onOpenDirectorNotes?: () => void;
 	onOpenMaestroCue?: () => void;
+	onOpenPianola?: () => void;
 	onConfigureCue?: (session: Session) => void;
 	onOpenLastDocumentGraph?: () => void;
 	onOpenCurrentFileInGraph?: () => void;
@@ -95,6 +96,7 @@ export function buildFeatureCommands({
 	onOpenSymphony,
 	onOpenDirectorNotes,
 	onOpenMaestroCue,
+	onOpenPianola,
 	onConfigureCue,
 	onOpenLastDocumentGraph,
 	onOpenCurrentFileInGraph,
@@ -328,6 +330,18 @@ export function buildFeatureCommands({
 			subtext: 'Event-driven automation dashboard',
 			action: () => {
 				onOpenMaestroCue();
+				setQuickActionOpen(false);
+			},
+		});
+	}
+
+	if (onOpenPianola) {
+		commands.push({
+			id: 'pianola',
+			label: 'Pianola',
+			subtext: 'Autonomous manager: rules and decision log',
+			action: () => {
+				onOpenPianola();
 				setQuickActionOpen(false);
 			},
 		});
