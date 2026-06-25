@@ -9,21 +9,26 @@ agent is awaiting the user, classifies the ask + its risk, and either auto-answe
 prompts from rules or escalates. Built additively as `src/main/pianola/`, decoupled from Cue,
 reusing the existing dispatch primitive, parser infra, and storage patterns.
 
-## Module layout (target)
+## Module layout (as built)
 
 ```
-src/shared/pianola/
-  types.ts                  # contracts shared renderer<->main<->cli (classification, rules, decisions)
-src/main/pianola/
-  pianola-engine.ts         # thin facade; owns isEncoreEnabled gate, start/stop
-  pianola-watcher.ts        # per-tab poll loop + cursor (session history --since)
+src/shared/pianola/                  # PURE + runtime-agnostic (renderer<->main<->cli)
+  types.ts                  # contracts (classification, rules, decisions, signals)
   pianola-classifier.ts     # PURE: messages -> { kind, risk, topic, confidence }
-  pianola-policy.ts         # PURE: (classification, rules) -> action (auto-answer|escalate|ignore)
-  pianola-rules-store.ts    # JSON via electron-store (editable rules)
-  pianola-decisions-db.ts   # SQLite via better-sqlite3 (append-only audit)
-  pianola-dispatcher.ts     # safe wrapper over runDispatch / send_command
-  pianola-ipc.ts            # renderer APIs (UI phase)
-src/cli/commands/pianola-watch.ts   # gated `maestro-cli pianola watch`
+  pianola-policy.ts         # PURE: (classification, rules, ctx) -> decision
+  pianola-risk.ts           # PURE: risk rating + ordering helpers
+  pianola-awaiting-detector.ts # PURE: derive AwaitingInputSignal from content
+  pianola-watcher.ts        # one DI watch iteration (audit-before-dispatch, bounded retry)
+  storage.ts                # filenames, record type, RulesLoadResult, validators
+src/cli/
+  services/pianola-store.ts # fs: read rules + RulesLoadResult, append/read decisions
+  commands/pianola.ts       # gated `maestro pianola watch|rules|log`
+src/main/
+  pianola/pianola-store-main.ts  # fs store (same files as CLI), reuses shared validators
+  ipc/handlers/pianola.ts        # gated IPC: get-rules/save-rules/get-decisions
+  preload/pianola.ts             # window.maestro.pianola bridge
+src/renderer/components/PianolaModal/
+  PianolaModal.tsx, RuleEditor.tsx # decision log + rules editor (Encore-gated modal)
 ```
 
 ## Build order (each step independently shippable + tested)
@@ -63,19 +68,47 @@ classifier runs (which already treats a present signal as authoritative).
 Threading a signal through the parser/WS layers remains a possible future
 optimization but is not needed for the feature to work.
 
-### Step 3 - Storage [NEXT]
+### Step 3 - Storage [DONE]
 
-- `pianola-rules-store.ts` (electron-store + atomic-json-store), `pianola-decisions-db.ts` (copy stats-db.ts pattern + migrations).
+Refinement vs the original plan: the audit log is JSON Lines, not SQLite. Rationale
+(maintainability + CLI/desktop sharing): the CLI watcher and the desktop must read
+and write the same files in the Maestro config dir, and a JSONL append-only log
+needs no native dependency (`better-sqlite3`), is human-readable, and appends
+safely from a plain Node process. The contract lives in `src/shared/pianola/storage.ts`
+(filenames, `PianolaDecisionRecord`, `RulesLoadResult`, and pure validators); the
+fs specifics are duplicated in `src/cli/services/pianola-store.ts` and
+`src/main/pianola/pianola-store-main.ts` because `src/shared` is also bundled into
+the renderer (no `fs` there). Rules are a JSON array; decisions are JSONL folded by
+id (intent + outcome).
 
-### Step 4 - CLI `pianola watch` [NEXT]
+### Step 4 - CLI `pianola watch` [DONE]
 
-- Gated command polling `session show --since`, classify -> policy -> `runDispatch` (low-risk) / record. `--dry-run`, `--interval`, `--rules`, `--agent`, `--tab`.
+Gated `maestro pianola watch <tab-id>` polls `get_session_history`, runs the shared
+`runWatchIteration` (enrich -> classify -> decide -> dispatch via `runDispatch`),
+and records to the audit log. Plus `pianola rules` and `pianola log` read views.
+Flags: `--agent`, `--interval`, `--dry-run`, `--once`, `--json`. This is the single
+autonomous runtime (see decision below).
 
-### Step 5 - Engine/daemon + IPC + UI panel [LATER]
+### Step 5 - Desktop integration [DONE]
 
-- Main-process engine mirroring Cue gating; Right Bar tab + modal; Zustand store; toast escalations.
+Scoped to the desktop CONTROL CENTER, not a second runtime: main-process store +
+gated IPC (`pianola:get-rules|save-rules|get-decisions`) + preload, and a management
+modal (`PianolaModal` + `RuleEditor`) for reviewing decisions/escalations and editing
+rules. Wired like Maestro Cue: modalStore entry, lazy render in `AppStandaloneModals`,
+encore gate + cleanup in `App.tsx`, Quick Actions command, and a hamburger entry.
 
-### Later - Cue integration (shared signal), ACP, adapter generator, webhook trigger.
+### Architecture decision: one runtime (CLI watcher), desktop is the control center
+
+We deliberately did NOT build a second always-on watch+dispatch engine inside the
+main process. The CLI watcher already implements the full loop and dispatches through
+the same vetted send-message path the mobile app uses; duplicating it in main would
+risk divergence and double the maintenance surface, against the "most maintainable"
+goal. The desktop configures the rules the watcher uses and shows what it did; the
+modal footer tells the user how to start the watcher. If in-app autonomy is wanted
+later, the engine can reuse the shared, tested `runWatchIteration` with main-process
+deps - the brain and storage are already runtime-agnostic.
+
+### Later - in-app engine (reusing `runWatchIteration`), Cue integration (shared signal), ACP, adapter generator, webhook trigger.
 
 ## Conventions
 
