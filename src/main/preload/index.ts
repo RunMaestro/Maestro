@@ -53,6 +53,7 @@ import { createTabNamingApi } from './tabNaming';
 import { createDirectorNotesApi } from './directorNotes';
 import { createCueApi } from './cue';
 import { createCueBackupApi } from './cueBackup';
+import { createPianolaApi } from './pianola';
 import { createWakatimeApi } from './wakatime';
 import { createMaestroCliApi } from './maestroCli';
 import { createPromptsApi } from './prompts';
@@ -209,6 +210,9 @@ contextBridge.exposeInMainWorld('maestro', {
 	// Cue Backup API (Cue modal Backup tab — snapshot/restore cue.yaml + prompts)
 	cueBackup: createCueBackupApi(),
 
+	// Pianola API (autonomous manager: rules + decision log)
+	pianola: createPianolaApi(),
+
 	// WakaTime API (CLI check, API key validation)
 	wakatime: createWakatimeApi(),
 
@@ -298,6 +302,8 @@ export {
 	createCueApi,
 	// Cue Backup
 	createCueBackupApi,
+	// Pianola
+	createPianolaApi,
 	// WakaTime
 	createWakatimeApi,
 	// Maestro CLI
@@ -532,6 +538,10 @@ export type {
 	CueEventType,
 	CueRunStatus,
 } from './cue';
+export type {
+	// From pianola
+	PianolaApi,
+} from './pianola';
 export type {
 	// From wakatime
 	WakatimeApi,
