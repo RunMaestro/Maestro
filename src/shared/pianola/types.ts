@@ -7,7 +7,7 @@
  * rules or escalates. These contracts are shared across main, renderer, and CLI.
  *
  * The classifier and policy engine that consume these types are pure functions
- * (see src/main/pianola/pianola-classifier.ts and pianola-policy.ts).
+ * (see src/shared/pianola/pianola-classifier.ts and pianola-policy.ts).
  */
 
 /** Risk of acting on a detected prompt, ordered low < medium < high. */

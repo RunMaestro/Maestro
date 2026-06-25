@@ -7,8 +7,8 @@ import { describe, it, expect } from 'vitest';
 import {
 	detectAwaitingInput,
 	enrichWithAwaitingInput,
-} from '../../../main/pianola/pianola-awaiting-detector';
-import { classifyMessages } from '../../../main/pianola/pianola-classifier';
+} from '../../../shared/pianola/pianola-awaiting-detector';
+import { classifyMessages } from '../../../shared/pianola/pianola-classifier';
 import type { PianolaMessage } from '../../../shared/pianola/types';
 
 let seq = 0;

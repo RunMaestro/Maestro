@@ -9,7 +9,7 @@ import {
 	selectRule,
 	ruleAppliesToScope,
 	ruleMatchesClassification,
-} from '../../../main/pianola/pianola-policy';
+} from '../../../shared/pianola/pianola-policy';
 import type {
 	PianolaClassification,
 	PianolaRisk,

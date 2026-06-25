@@ -15,7 +15,7 @@
  * something dangerous (unsafe).
  */
 
-import type { PianolaRisk } from '../../shared/pianola/types';
+import type { PianolaRisk } from './types';
 
 const RISK_ORDER: Record<PianolaRisk, number> = { low: 0, medium: 1, high: 2 };
 

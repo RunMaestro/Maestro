@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { classifyMessages, riskAtMost, maxRisk } from '../../../main/pianola/pianola-classifier';
+import { classifyMessages, riskAtMost, maxRisk } from '../../../shared/pianola/pianola-classifier';
 import type { AwaitingInputSignal, PianolaMessage } from '../../../shared/pianola/types';
 
 let seq = 0;
