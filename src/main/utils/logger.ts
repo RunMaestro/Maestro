@@ -149,11 +149,11 @@ class Logger extends EventEmitter {
 
 					if (!fs.existsSync(targetPath)) {
 						fs.renameSync(legacyPath, targetPath);
-						console.log(`[Logger] Migrated legacy log file to maestro-debug-${mtimeDate}.log`);
+						console.error(`[Logger] Migrated legacy log file to maestro-debug-${mtimeDate}.log`);
 					} else {
 						// Target dated file already exists; remove the legacy file to prevent orphans
 						fs.unlinkSync(legacyPath);
-						console.log(`[Logger] Removed legacy log file (dated file already exists)`);
+						console.error(`[Logger] Removed legacy log file (dated file already exists)`);
 					}
 				}
 			} catch (migrationError) {
@@ -171,7 +171,7 @@ class Logger extends EventEmitter {
 			// Clean up old log files
 			this.cleanOldLogs();
 
-			console.log(`[Logger] File logging enabled: ${this.logFilePath}`);
+			console.error(`[Logger] File logging enabled: ${this.logFilePath}`);
 		} catch (error) {
 			console.error(`[Logger] Failed to enable file logging:`, error);
 		}
@@ -259,7 +259,7 @@ class Logger extends EventEmitter {
 				if (ageInDays > 7) {
 					try {
 						fs.unlinkSync(path.join(logsDir, file));
-						console.log(`[Logger] Cleaned up old log file: ${file}`);
+						console.error(`[Logger] Cleaned up old log file: ${file}`);
 					} catch (deleteError) {
 						console.error(`[Logger] Failed to delete old log file ${file}:`, deleteError);
 					}

@@ -110,6 +110,47 @@ deps - the brain and storage are already runtime-agnostic.
 
 ### Later - in-app engine (reusing `runWatchIteration`), Cue integration (shared signal), ACP, adapter generator, webhook trigger.
 
+## v2 - conversational orchestrator (as built)
+
+Pianola became a pinned, chattable manager agent that orchestrates the user's other
+agents through the existing maestro-cli surface (the chosen action layer over MCP).
+
+- L1: pinned `isPianola` claude-code agent at the top of the Left Bar (Encore-gated),
+  excluded from categories, guarded from rename/duplicate/bookmark/move/delete.
+- L2-L4: a `pianola-system` prompt (identity, exact CLI invocations, task-dump
+  orchestration, Hybrid confirmation discipline) appended for the Pianola agent;
+  spawn injects `MAESTRO_CLI_JS` + `MAESTRO_AGENT_ID` env so its Bash reaches the
+  bundled CLI; new `maestro-cli pianola add-rule` so a conversation becomes a rule.
+  Babysitting reuses `pianola watch` (the one-runtime decision holds).
+
+## v3 - learning from history (as designed, hybrid decision engine)
+
+Goal: on setup Pianola crawls the installed CLIs' native transcripts and learns to
+decide the way the user actually does. Decision engine is HYBRID (locked):
+
+- A learned **decision profile** (human-readable markdown, stored in the config dir,
+  user-editable) is the bulk of the value and powers thought-based judgment for novel
+  situations.
+- A handful of **high-confidence hard rules** (existing PianolaRule auto_answer) cover
+  the dominant, unambiguous, high-frequency cases for an instant deterministic path.
+- High-risk ALWAYS escalates to the user, regardless of profile or rules (invariant).
+
+Babysit decision flow: high-risk -> escalate; matching hard rule -> apply; else ->
+judge against the profile, auto-answer only if confident and not high-risk, else escalate.
+
+Sources for v1 of learning: Claude Code + Codex native transcripts.
+
+Phases (each independently verifiable):
+
+1. Crawler CLI (`maestro-cli pianola learn`): scan Claude Code + Codex transcripts,
+   pair each awaiting-input assistant turn with the user's reply, classify via the
+   existing pure classifier, emit a labeled decision corpus (JSON) + aggregates.
+2. Synthesis: Pianola reads the corpus, writes the decision profile (markdown) and
+   proposes a few hard rules via `add-rule`; user approves. Profile loaded into the
+   Pianola system prompt; onboarding behavior offers to learn from history on setup.
+3. Thought-based watcher path: when babysitting and no hard rule matches and risk is
+   not high, consult the profile (LLM judgment) to auto-answer-if-confident else escalate.
+
 ## Conventions
 
 - Tabs for indentation. No em/en dashes. Immutable updates. Files < 800 lines.

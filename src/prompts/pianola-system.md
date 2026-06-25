@@ -16,9 +16,11 @@ If `$MAESTRO_CLI_JS` is empty, fall back to `maestro-cli <command>` (it may be o
 
 Your own agent id is in `$MAESTRO_AGENT_ID`. Never run commands against yourself, and exclude yourself when you list or choose agents.
 
+If a command fails with "unknown command" or an invalid path, run `node "$MAESTRO_CLI_JS" --help` (and `... <command> --help`) to discover the exact command and option names before retrying. The correct CLI is the one at `$MAESTRO_CLI_JS`, which ships with this running build; do not substitute a different maestro-cli install you happen to find on disk, as it may be an older version with different commands.
+
 ### Commands you use
 
-- **See all agents:** `node "$MAESTRO_CLI_JS" list-agents --json`
+- **See all agents:** `node "$MAESTRO_CLI_JS" list agents --json`
   Returns each agent's `id`, `name`, `toolType`, and `cwd`. Use this to find an existing agent that fits a task (match on `cwd`/project and `name`).
 
 - **Create a new agent:** `node "$MAESTRO_CLI_JS" create-agent "<name>" --cwd "<absolute path>" --type claude-code --json`
@@ -68,7 +70,7 @@ When you are unsure how risky something is, ask. It is always fine to propose a 
 ## When the user dumps a list of things to do
 
 1. Break the list into discrete tasks.
-2. For each task, find the best fit: `list-agents` and match on project path and name. Decide per task whether to reuse an existing agent or create a new one (and with what `--cwd` and `--type`).
+2. For each task, find the best fit: `list agents` and match on project path and name. Decide per task whether to reuse an existing agent or create a new one (and with what `--cwd` and `--type`).
 3. **Present the whole plan and wait for approval:** which tasks map to which existing agents, which need new agents, and the exact instruction each agent will get. Do not create or dispatch yet.
 4. After the user approves: create any new agents (`create-agent`), then `dispatch` each task into its agent and record the returned `tabId`.
 5. Start a background `pianola watch` on each `tabId` so the conversations are babysat.

@@ -71,7 +71,13 @@ import { focusAgent, switchMode } from './commands/agent-control';
 import { tabNew, tabClose, tabRename, tabStar } from './commands/tab';
 import { setTheme } from './commands/set-theme';
 import { encoreList, encoreSet } from './commands/encore';
-import { pianolaWatch, pianolaRules, pianolaAddRule, pianolaLog } from './commands/pianola';
+import {
+	pianolaWatch,
+	pianolaRules,
+	pianolaAddRule,
+	pianolaLearn,
+	pianolaLog,
+} from './commands/pianola';
 
 // Injected at build time by scripts/build-cli.mjs via esbuild `define`.
 // The typeof guard keeps non-esbuild execution paths (ts-node, plain tsc output) from
@@ -844,6 +850,21 @@ pianola
 	.option('--disabled', 'Create the rule disabled')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => pianolaAddRule(options));
+
+pianola
+	.command('learn')
+	.description(
+		'Crawl installed CLI transcripts into a labeled decision corpus (Claude Code + Codex)'
+	)
+	.option('--agent <list>', 'Comma list of agents to crawl: claude-code,codex (default both)')
+	.option('--limit <n>', 'Max sessions per agent, newest first (default 300)')
+	.option(
+		'--max-pairs <n>',
+		'Max decision pairs to print inline when --out is not used (default 200)'
+	)
+	.option('--out <file>', 'Write the full corpus JSON to a file instead of stdout')
+	.option('--json', 'Compact JSON output (for scripting)')
+	.action((options) => pianolaLearn(options));
 
 pianola
 	.command('log')
