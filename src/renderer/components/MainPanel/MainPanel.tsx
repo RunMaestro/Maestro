@@ -33,6 +33,8 @@ import { useChatFileDropZone } from '../../hooks/ui/useChatFileDropZone';
 import { MainPanelHeader } from './MainPanelHeader';
 import { MainPanelContent } from './MainPanelContent';
 import { AgentErrorBanner } from './AgentErrorBanner';
+import { PianolaDashboard } from '../PianolaDashboard';
+import { PianolaWorkspaceTabs } from '../PianolaDashboard/PianolaWorkspaceTabs';
 import type { MainPanelHandle, MainPanelProps } from './types';
 
 // PERFORMANCE: Wrap with React.memo to prevent re-renders when parent (App.tsx) re-renders
@@ -149,6 +151,16 @@ export const MainPanel = React.memo(
 			(s) => s.contextManagementSettings.contextWarningRedThreshold ?? 80
 		);
 		const showUnreadOnly = useUIStore((s) => s.showUnreadOnly);
+
+		// Pianola workspace: the pinned Chat/Dashboard view toggle and a live count
+		// of agents waiting on the user (badged on the Dashboard tab).
+		const pianolaView = useUIStore((s) => s.pianolaView);
+		const setPianolaView = useUIStore((s) => s.setPianolaView);
+		const pianolaNeedsInputCount = useSessionStore(
+			(s) =>
+				s.sessions.filter((x) => !x.isPianola && !x.parentSessionId && x.state === 'waiting_input')
+					.length
+		);
 
 		// isCurrentSessionAutoMode: THIS session has active batch run (for all UI indicators)
 		const isCurrentSessionAutoMode = currentSessionBatchState?.isRunning || false;
@@ -819,8 +831,19 @@ export const MainPanel = React.memo(
 							/>
 						)}
 
-						{/* Tab Bar - shown in AI and terminal modes when we have tabs (AI + file + terminal) */}
-						{activeSession.aiTabs &&
+						{/* Pianola is a manager surface: its workspace shows two pinned views
+						    (Dashboard | Chat) instead of the normal file/terminal/browser tab
+						    bar. Every other agent keeps the normal TabBar. */}
+						{activeSession.isPianola ? (
+							<PianolaWorkspaceTabs
+								theme={theme}
+								activeView={pianolaView}
+								onSelect={setPianolaView}
+								needsInputCount={pianolaNeedsInputCount}
+							/>
+						) : (
+							/* Tab Bar - shown in AI and terminal modes when we have tabs (AI + file + terminal) */
+							activeSession.aiTabs &&
 							activeSession.aiTabs.length > 0 &&
 							onTabSelect &&
 							onTabClose &&
@@ -890,178 +913,193 @@ export const MainPanel = React.memo(
 									// Hide local-only OS actions (Reveal in Finder) when the agent runs over SSH
 									sshRemote={Boolean(filePreviewSshRemoteId)}
 								/>
-							)}
-
-						{/* Agent Error Banner */}
-						{activeTabError && (
-							<AgentErrorBanner
-								error={activeTabError}
-								theme={theme}
-								onShowDetails={
-									props.onShowAgentErrorModal ? () => props.onShowAgentErrorModal?.() : undefined
-								}
-								onClear={props.onClearAgentError}
-							/>
+							)
 						)}
 
-						{/* Content area */}
-						<MainPanelContent
-							activeSession={activeSession}
-							activeTab={activeTab}
-							theme={theme}
-							activeFileTabId={activeFileTabId}
-							activeFileTab={activeFileTab}
-							activeBrowserTabId={activeBrowserTabId}
-							memoizedFilePreviewFile={memoizedFilePreviewFile}
-							filePreviewCwd={filePreviewCwd}
-							filePreviewSshRemoteId={filePreviewSshRemoteId}
-							filePreviewContainerRef={filePreviewContainerRef}
-							filePreviewRef={filePreviewRef}
-							handleFilePreviewClose={handleFilePreviewClose}
-							handleFilePreviewEditModeChange={handleFilePreviewEditModeChange}
-							handleFilePreviewSave={handleFilePreviewSave}
-							handleFilePreviewEditContentChange={handleFilePreviewEditContentChange}
-							handleFilePreviewScrollPositionChange={handleFilePreviewScrollPositionChange}
-							handleFilePreviewSearchQueryChange={handleFilePreviewSearchQueryChange}
-							handleFilePreviewReload={handleFilePreviewReload}
-							handleBrowserTabUpdate={onBrowserTabUpdate}
-							browserViewRef={browserViewRef}
-							terminalViewRefs={terminalViewRefs}
-							mountedTerminalSessionIds={mountedTerminalSessionIds}
-							mountedTerminalSessionsRef={mountedTerminalSessionsRef}
-							terminalSearchOpen={terminalSearchOpen}
-							setTerminalSearchOpen={setTerminalSearchOpen}
-							onTerminalCopySelection={props.onCopyText ? handleCopyTerminalSelection : undefined}
-							onTerminalSendSelectionToAgent={
-								props.onSendTextToAgent ? handleSendTerminalSelectionToAgent : undefined
-							}
-							isMobileLandscape={isMobileLandscape}
-							activeTabContextUsage={activeTabContextUsage}
-							contextWarningsEnabled={contextWarningsEnabled}
-							contextWarningYellowThreshold={contextWarningYellowThreshold}
-							contextWarningRedThreshold={contextWarningRedThreshold}
-							handleInputFocus={handleInputFocus}
-							handleSessionClick={handleSessionClick}
-							isCurrentSessionAutoMode={isCurrentSessionAutoMode}
-							currentSessionBatchState={currentSessionBatchState}
-							hasCapability={hasCapability}
-							inputValue={inputValue}
-							setInputValue={setInputValue}
-							stagedImages={stagedImages}
-							setStagedImages={setStagedImages}
-							setLightboxImage={setLightboxImage}
-							commandHistoryOpen={commandHistoryOpen}
-							setCommandHistoryOpen={setCommandHistoryOpen}
-							commandHistoryFilter={commandHistoryFilter}
-							setCommandHistoryFilter={setCommandHistoryFilter}
-							commandHistorySelectedIndex={commandHistorySelectedIndex}
-							setCommandHistorySelectedIndex={setCommandHistorySelectedIndex}
-							slashCommandOpen={slashCommandOpen}
-							setSlashCommandOpen={setSlashCommandOpen}
-							slashCommands={slashCommands}
-							selectedSlashCommandIndex={selectedSlashCommandIndex}
-							setSelectedSlashCommandIndex={setSelectedSlashCommandIndex}
-							tabCompletionOpen={tabCompletionOpen}
-							setTabCompletionOpen={setTabCompletionOpen}
-							tabCompletionSuggestions={tabCompletionSuggestions}
-							selectedTabCompletionIndex={selectedTabCompletionIndex}
-							setSelectedTabCompletionIndex={setSelectedTabCompletionIndex}
-							tabCompletionFilter={tabCompletionFilter}
-							setTabCompletionFilter={setTabCompletionFilter}
-							atMentionOpen={atMentionOpen}
-							setAtMentionOpen={setAtMentionOpen}
-							atMentionFilter={atMentionFilter}
-							setAtMentionFilter={setAtMentionFilter}
-							atMentionStartIndex={atMentionStartIndex}
-							setAtMentionStartIndex={setAtMentionStartIndex}
-							atMentionSuggestions={atMentionSuggestions}
-							selectedAtMentionIndex={selectedAtMentionIndex}
-							setSelectedAtMentionIndex={setSelectedAtMentionIndex}
-							inputRef={inputRef}
-							logsEndRef={logsEndRef}
-							terminalOutputRef={terminalOutputRef}
-							toggleInputMode={toggleInputMode}
-							processInput={processInput}
-							handleInterrupt={handleInterrupt}
-							handleInputKeyDown={handleInputKeyDown}
-							handlePaste={handlePaste}
-							handleDrop={handleDrop}
-							thinkingItems={thinkingItems}
-							onStopBatchRun={onStopBatchRun}
-							onRemoveQueuedItem={onRemoveQueuedItem}
-							onTogglePauseQueuedItem={onTogglePauseQueuedItem}
-							onReorderQueuedItem={onReorderQueuedItem}
-							onForceSendQueuedItem={onForceSendQueuedItem}
-							forcedParallelEnabled={forcedParallelEnabled}
-							getForceSendContext={getForceSendContext}
-							onOpenQueueBrowser={onOpenQueueBrowser}
-							showFlashNotification={showFlashNotification}
-							summarizeProgress={summarizeProgress}
-							summarizeResult={summarizeResult}
-							summarizeStartTime={summarizeStartTime}
-							isSummarizing={isSummarizing}
-							onCancelSummarize={onCancelSummarize}
-							onSummarizeAndContinue={onSummarizeAndContinue}
-							mergeProgress={mergeProgress}
-							mergeResult={mergeResult}
-							mergeStartTime={mergeStartTime}
-							isMerging={isMerging}
-							mergeSourceName={mergeSourceName}
-							mergeTargetName={mergeTargetName}
-							onCancelMerge={onCancelMerge}
-							onExitWizard={onExitWizard}
-							onDeleteLog={props.onDeleteLog}
-							onScrollPositionChange={props.onScrollPositionChange}
-							onAtBottomChange={props.onAtBottomChange}
-							onInputBlur={props.onInputBlur}
-							onOpenPromptComposer={props.onOpenPromptComposer}
-							onReplayMessage={props.onReplayMessage}
-							onForkConversation={props.onForkConversation}
-							onSessionRecover={props.onSessionRecover}
-							isRecoveringSession={props.isRecoveringSession}
-							sessionRecoveryError={props.sessionRecoveryError}
-							fileTree={props.fileTree}
-							onFileClick={props.onFileClick}
-							refreshFileTree={props.refreshFileTree}
-							onOpenSavedFileInTab={props.onOpenSavedFileInTab}
-							onShowAgentErrorModal={props.onShowAgentErrorModal}
-							canGoBack={props.canGoBack}
-							canGoForward={props.canGoForward}
-							onNavigateBack={props.onNavigateBack}
-							onNavigateForward={props.onNavigateForward}
-							backHistory={props.backHistory}
-							forwardHistory={props.forwardHistory}
-							currentHistoryIndex={props.currentHistoryIndex}
-							onNavigateToIndex={props.onNavigateToIndex}
-							onOpenFuzzySearch={props.onOpenFuzzySearch}
-							onShortcutUsed={props.onShortcutUsed}
-							ghCliAvailable={props.ghCliAvailable}
-							onPublishGist={props.onPublishGist}
-							hasGist={props.hasGist}
-							onOpenInGraph={props.onOpenInGraph}
-							onOpenInBrowser={props.onOpenInBrowser}
-							onPublishMessageGist={props.onPublishMessageGist}
-							onToggleTabReadOnlyMode={props.onToggleTabReadOnlyMode}
-							onToggleTabSaveToHistory={props.onToggleTabSaveToHistory}
-							onToggleTabShowThinking={props.onToggleTabShowThinking}
-							onToggleTabEnterToSend={props.onToggleTabEnterToSend}
-							onWizardComplete={props.onWizardComplete}
-							onWizardCompleteAndStartAutoRun={props.onWizardCompleteAndStartAutoRun}
-							onWizardDocumentSelect={props.onWizardDocumentSelect}
-							onWizardContentChange={props.onWizardContentChange}
-							onWizardLetsGo={props.onWizardLetsGo}
-							onWizardRetry={props.onWizardRetry}
-							onWizardClearError={props.onWizardClearError}
-							onToggleWizardShowThinking={props.onToggleWizardShowThinking}
-							onWizardCancelGeneration={props.onWizardCancelGeneration}
-							// Model/Effort quick-change pills
-							currentModel={resolvedModel}
-							currentEffort={resolvedEffort}
-							availableModels={pillModels}
-							availableEfforts={pillEfforts}
-							onModelChange={handleModelChange}
-							onEffortChange={handleEffortChange}
-						/>
+						{/* Pianola's Dashboard view replaces the chat content while selected; the
+						    Chat view (and every non-Pianola agent) renders the normal content. */}
+						{activeSession.isPianola && pianolaView === 'dashboard' ? (
+							<ErrorBoundary>
+								<PianolaDashboard theme={theme} onJumpToAgent={setActiveSessionId} />
+							</ErrorBoundary>
+						) : (
+							<>
+								{/* Agent Error Banner */}
+								{activeTabError && (
+									<AgentErrorBanner
+										error={activeTabError}
+										theme={theme}
+										onShowDetails={
+											props.onShowAgentErrorModal
+												? () => props.onShowAgentErrorModal?.()
+												: undefined
+										}
+										onClear={props.onClearAgentError}
+									/>
+								)}
+
+								{/* Content area */}
+								<MainPanelContent
+									activeSession={activeSession}
+									activeTab={activeTab}
+									theme={theme}
+									activeFileTabId={activeFileTabId}
+									activeFileTab={activeFileTab}
+									activeBrowserTabId={activeBrowserTabId}
+									memoizedFilePreviewFile={memoizedFilePreviewFile}
+									filePreviewCwd={filePreviewCwd}
+									filePreviewSshRemoteId={filePreviewSshRemoteId}
+									filePreviewContainerRef={filePreviewContainerRef}
+									filePreviewRef={filePreviewRef}
+									handleFilePreviewClose={handleFilePreviewClose}
+									handleFilePreviewEditModeChange={handleFilePreviewEditModeChange}
+									handleFilePreviewSave={handleFilePreviewSave}
+									handleFilePreviewEditContentChange={handleFilePreviewEditContentChange}
+									handleFilePreviewScrollPositionChange={handleFilePreviewScrollPositionChange}
+									handleFilePreviewSearchQueryChange={handleFilePreviewSearchQueryChange}
+									handleFilePreviewReload={handleFilePreviewReload}
+									handleBrowserTabUpdate={onBrowserTabUpdate}
+									browserViewRef={browserViewRef}
+									terminalViewRefs={terminalViewRefs}
+									mountedTerminalSessionIds={mountedTerminalSessionIds}
+									mountedTerminalSessionsRef={mountedTerminalSessionsRef}
+									terminalSearchOpen={terminalSearchOpen}
+									setTerminalSearchOpen={setTerminalSearchOpen}
+									onTerminalCopySelection={
+										props.onCopyText ? handleCopyTerminalSelection : undefined
+									}
+									onTerminalSendSelectionToAgent={
+										props.onSendTextToAgent ? handleSendTerminalSelectionToAgent : undefined
+									}
+									isMobileLandscape={isMobileLandscape}
+									activeTabContextUsage={activeTabContextUsage}
+									contextWarningsEnabled={contextWarningsEnabled}
+									contextWarningYellowThreshold={contextWarningYellowThreshold}
+									contextWarningRedThreshold={contextWarningRedThreshold}
+									handleInputFocus={handleInputFocus}
+									handleSessionClick={handleSessionClick}
+									isCurrentSessionAutoMode={isCurrentSessionAutoMode}
+									currentSessionBatchState={currentSessionBatchState}
+									hasCapability={hasCapability}
+									inputValue={inputValue}
+									setInputValue={setInputValue}
+									stagedImages={stagedImages}
+									setStagedImages={setStagedImages}
+									setLightboxImage={setLightboxImage}
+									commandHistoryOpen={commandHistoryOpen}
+									setCommandHistoryOpen={setCommandHistoryOpen}
+									commandHistoryFilter={commandHistoryFilter}
+									setCommandHistoryFilter={setCommandHistoryFilter}
+									commandHistorySelectedIndex={commandHistorySelectedIndex}
+									setCommandHistorySelectedIndex={setCommandHistorySelectedIndex}
+									slashCommandOpen={slashCommandOpen}
+									setSlashCommandOpen={setSlashCommandOpen}
+									slashCommands={slashCommands}
+									selectedSlashCommandIndex={selectedSlashCommandIndex}
+									setSelectedSlashCommandIndex={setSelectedSlashCommandIndex}
+									tabCompletionOpen={tabCompletionOpen}
+									setTabCompletionOpen={setTabCompletionOpen}
+									tabCompletionSuggestions={tabCompletionSuggestions}
+									selectedTabCompletionIndex={selectedTabCompletionIndex}
+									setSelectedTabCompletionIndex={setSelectedTabCompletionIndex}
+									tabCompletionFilter={tabCompletionFilter}
+									setTabCompletionFilter={setTabCompletionFilter}
+									atMentionOpen={atMentionOpen}
+									setAtMentionOpen={setAtMentionOpen}
+									atMentionFilter={atMentionFilter}
+									setAtMentionFilter={setAtMentionFilter}
+									atMentionStartIndex={atMentionStartIndex}
+									setAtMentionStartIndex={setAtMentionStartIndex}
+									atMentionSuggestions={atMentionSuggestions}
+									selectedAtMentionIndex={selectedAtMentionIndex}
+									setSelectedAtMentionIndex={setSelectedAtMentionIndex}
+									inputRef={inputRef}
+									logsEndRef={logsEndRef}
+									terminalOutputRef={terminalOutputRef}
+									toggleInputMode={toggleInputMode}
+									processInput={processInput}
+									handleInterrupt={handleInterrupt}
+									handleInputKeyDown={handleInputKeyDown}
+									handlePaste={handlePaste}
+									handleDrop={handleDrop}
+									thinkingItems={thinkingItems}
+									onStopBatchRun={onStopBatchRun}
+									onRemoveQueuedItem={onRemoveQueuedItem}
+									onTogglePauseQueuedItem={onTogglePauseQueuedItem}
+									onReorderQueuedItem={onReorderQueuedItem}
+									onForceSendQueuedItem={onForceSendQueuedItem}
+									forcedParallelEnabled={forcedParallelEnabled}
+									getForceSendContext={getForceSendContext}
+									onOpenQueueBrowser={onOpenQueueBrowser}
+									showFlashNotification={showFlashNotification}
+									summarizeProgress={summarizeProgress}
+									summarizeResult={summarizeResult}
+									summarizeStartTime={summarizeStartTime}
+									isSummarizing={isSummarizing}
+									onCancelSummarize={onCancelSummarize}
+									onSummarizeAndContinue={onSummarizeAndContinue}
+									mergeProgress={mergeProgress}
+									mergeResult={mergeResult}
+									mergeStartTime={mergeStartTime}
+									isMerging={isMerging}
+									mergeSourceName={mergeSourceName}
+									mergeTargetName={mergeTargetName}
+									onCancelMerge={onCancelMerge}
+									onExitWizard={onExitWizard}
+									onDeleteLog={props.onDeleteLog}
+									onScrollPositionChange={props.onScrollPositionChange}
+									onAtBottomChange={props.onAtBottomChange}
+									onInputBlur={props.onInputBlur}
+									onOpenPromptComposer={props.onOpenPromptComposer}
+									onReplayMessage={props.onReplayMessage}
+									onForkConversation={props.onForkConversation}
+									onSessionRecover={props.onSessionRecover}
+									isRecoveringSession={props.isRecoveringSession}
+									sessionRecoveryError={props.sessionRecoveryError}
+									fileTree={props.fileTree}
+									onFileClick={props.onFileClick}
+									refreshFileTree={props.refreshFileTree}
+									onOpenSavedFileInTab={props.onOpenSavedFileInTab}
+									onShowAgentErrorModal={props.onShowAgentErrorModal}
+									canGoBack={props.canGoBack}
+									canGoForward={props.canGoForward}
+									onNavigateBack={props.onNavigateBack}
+									onNavigateForward={props.onNavigateForward}
+									backHistory={props.backHistory}
+									forwardHistory={props.forwardHistory}
+									currentHistoryIndex={props.currentHistoryIndex}
+									onNavigateToIndex={props.onNavigateToIndex}
+									onOpenFuzzySearch={props.onOpenFuzzySearch}
+									onShortcutUsed={props.onShortcutUsed}
+									ghCliAvailable={props.ghCliAvailable}
+									onPublishGist={props.onPublishGist}
+									hasGist={props.hasGist}
+									onOpenInGraph={props.onOpenInGraph}
+									onOpenInBrowser={props.onOpenInBrowser}
+									onPublishMessageGist={props.onPublishMessageGist}
+									onToggleTabReadOnlyMode={props.onToggleTabReadOnlyMode}
+									onToggleTabSaveToHistory={props.onToggleTabSaveToHistory}
+									onToggleTabShowThinking={props.onToggleTabShowThinking}
+									onToggleTabEnterToSend={props.onToggleTabEnterToSend}
+									onWizardComplete={props.onWizardComplete}
+									onWizardCompleteAndStartAutoRun={props.onWizardCompleteAndStartAutoRun}
+									onWizardDocumentSelect={props.onWizardDocumentSelect}
+									onWizardContentChange={props.onWizardContentChange}
+									onWizardLetsGo={props.onWizardLetsGo}
+									onWizardRetry={props.onWizardRetry}
+									onWizardClearError={props.onWizardClearError}
+									onToggleWizardShowThinking={props.onToggleWizardShowThinking}
+									onWizardCancelGeneration={props.onWizardCancelGeneration}
+									// Model/Effort quick-change pills
+									currentModel={resolvedModel}
+									currentEffort={resolvedEffort}
+									availableModels={pillModels}
+									availableEfforts={pillEfforts}
+									onModelChange={handleModelChange}
+									onEffortChange={handleEffortChange}
+								/>
+							</>
+						)}
 					</div>
 				</ErrorBoundary>
 			</>

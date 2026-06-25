@@ -54,6 +54,9 @@ export interface UIStoreState {
 	preFilterActiveTabId: string | null;
 	preTerminalFileTabId: string | null;
 
+	// Pianola workspace: which pinned view is showing (its chat or the agent dashboard).
+	pianolaView: 'chat' | 'dashboard';
+
 	// Session sidebar selection
 	selectedSidebarIndex: number;
 	// Keyboard cursor when it lands on a Starred / Group Chat row (see type docs).
@@ -129,6 +132,7 @@ export interface UIStoreActions {
 	toggleShowUnreadAgentsOnly: () => void;
 	setPreFilterActiveTabId: (id: string | null) => void;
 	setPreTerminalFileTabId: (id: string | null) => void;
+	setPianolaView: (view: 'chat' | 'dashboard') => void;
 
 	// Session sidebar selection
 	setSelectedSidebarIndex: (index: number | ((prev: number) => number)) => void;
@@ -258,6 +262,7 @@ export const useUIStore = create<UIStore>()((set) => ({
 	showUnreadAgentsOnly: false,
 	preFilterActiveTabId: null,
 	preTerminalFileTabId: null,
+	pianolaView: 'dashboard',
 	selectedSidebarIndex: 0,
 	sidebarExtraSelection: null,
 	outputSearchByKey: {},
@@ -310,6 +315,7 @@ export const useUIStore = create<UIStore>()((set) => ({
 	toggleShowUnreadAgentsOnly: () => set((s) => ({ showUnreadAgentsOnly: !s.showUnreadAgentsOnly })),
 	setPreFilterActiveTabId: (id) => set({ preFilterActiveTabId: id }),
 	setPreTerminalFileTabId: (id) => set({ preTerminalFileTabId: id }),
+	setPianolaView: (view) => set({ pianolaView: view }),
 
 	setSelectedSidebarIndex: (v) =>
 		set((s) => ({ selectedSidebarIndex: resolve(v, s.selectedSidebarIndex) })),
