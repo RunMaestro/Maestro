@@ -152,18 +152,20 @@ export function SessionContextMenu({
 				minWidth: '10rem',
 			}}
 		>
-			<button
-				type="button"
-				onClick={() => {
-					onRename();
-					onDismiss();
-				}}
-				className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-				style={{ color: theme.colors.textMain }}
-			>
-				<Edit3 className="w-3.5 h-3.5" />
-				Rename
-			</button>
+			{!session.isPianola && (
+				<button
+					type="button"
+					onClick={() => {
+						onRename();
+						onDismiss();
+					}}
+					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+					style={{ color: theme.colors.textMain }}
+				>
+					<Edit3 className="w-3.5 h-3.5" />
+					Rename
+				</button>
+			)}
 
 			<button
 				type="button"
@@ -178,20 +180,22 @@ export function SessionContextMenu({
 				Edit Agent...
 			</button>
 
-			<button
-				type="button"
-				onClick={() => {
-					onDuplicate();
-					onDismiss();
-				}}
-				className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-				style={{ color: theme.colors.textMain }}
-			>
-				<Copy className="w-3.5 h-3.5" />
-				Duplicate...
-			</button>
+			{!session.isPianola && (
+				<button
+					type="button"
+					onClick={() => {
+						onDuplicate();
+						onDismiss();
+					}}
+					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+					style={{ color: theme.colors.textMain }}
+				>
+					<Copy className="w-3.5 h-3.5" />
+					Duplicate...
+				</button>
+			)}
 
-			{!session.parentSessionId && (
+			{!session.parentSessionId && !session.isPianola && (
 				<button
 					type="button"
 					onClick={() => {
@@ -206,7 +210,7 @@ export function SessionContextMenu({
 				</button>
 			)}
 
-			{!session.parentSessionId && (
+			{!session.parentSessionId && !session.isPianola && (
 				<div
 					ref={moveToGroupRef}
 					className="relative"
@@ -417,7 +421,7 @@ export function SessionContextMenu({
 				Copy Agent GUID to Clipboard
 			</button>
 
-			{!session.parentSessionId && (
+			{!session.parentSessionId && !session.isPianola && (
 				<button
 					type="button"
 					onClick={() => {

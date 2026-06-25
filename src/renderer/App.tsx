@@ -165,6 +165,7 @@ import {
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { sidebarSessionEquality } from './stores/sessionEquality';
 import { useActiveSession } from './hooks/session/useActiveSession';
+import { usePianolaAgent } from './hooks/session/usePianolaAgent';
 // useAgentStore moved to useQueueProcessing hook
 import { InlineWizardProvider, useInlineWizardContext } from './contexts/InlineWizardContext';
 import { ToastContainer } from './components/Toast';
@@ -863,6 +864,11 @@ function MaestroConsoleInner() {
 
 	// --- CUE AUTO-DISCOVERY (gated by Encore Feature) ---
 	useCueAutoDiscovery(sessions, encoreFeatures);
+
+	// --- PIANOLA AGENT (pinned manager agent, gated by Encore Feature) ---
+	// Ensures the single pinned Pianola agent exists once sessions are loaded and
+	// the pianola flag is on. Does not steal focus from the active agent.
+	usePianolaAgent(encoreFeatures);
 
 	// --- CUE VISIBILITY WIRING (PR-B 1.4) ---
 	// Forwards document visibility to the main-process Cue scanner
