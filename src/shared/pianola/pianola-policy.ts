@@ -13,11 +13,7 @@
  * silence a high-risk prompt. No I/O, no Electron, no app state.
  */
 
-import type {
-	PianolaClassification,
-	PianolaDecision,
-	PianolaRule,
-} from '../../shared/pianola/types';
+import type { PianolaClassification, PianolaDecision, PianolaRule } from './types';
 import { riskAtMost } from './pianola-risk';
 
 /** Context needed to scope-filter rules to the current tab/project. */

@@ -76,6 +76,7 @@ import { setTheme } from './commands/set-theme';
 import { themeShow, themeExport, themeImport, themeSet } from './commands/theme';
 import { encoreList, encoreSet } from './commands/encore';
 import { setVerbosity } from './output/verbosity';
+import { pianolaWatch, pianolaRules, pianolaLog } from './commands/pianola';
 
 // Injected at build time by scripts/build-cli.mjs via esbuild `define`.
 // The typeof guard keeps non-esbuild execution paths (ts-node, plain tsc output) from
@@ -899,7 +900,9 @@ encore
 
 encore
 	.command('enable <feature>')
-	.description('Enable an Encore feature (directorNotes, usageStats, symphony, maestroCue)')
+	.description(
+		'Enable an Encore feature (directorNotes, usageStats, symphony, maestroCue, pianola)'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((feature, options) => encoreSet(feature, true, options));
 
@@ -908,6 +911,34 @@ encore
 	.description('Disable an Encore feature')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((feature, options) => encoreSet(feature, false, options));
+
+// Pianola - the autonomous manager agent (Encore-gated, off by default).
+const pianola = program
+	.command('pianola')
+	.description('Pianola manager agent: watch tabs, auto-answer or escalate per your rules');
+
+pianola
+	.command('watch <tab-id>')
+	.description('Watch a desktop tab and act on awaiting-input prompts per your rules')
+	.option('--agent <agent-id>', 'Agent id to dispatch answers to (defaults to the tab owner)')
+	.option('--interval <seconds>', 'Polling interval in seconds (default 5)')
+	.option('--dry-run', 'Classify and record decisions but never send a message')
+	.option('--once', 'Run a single iteration instead of looping')
+	.option('--json', 'Reserved for scripting; affects the disabled-feature error only')
+	.action((tabId, options) => pianolaWatch(tabId, options));
+
+pianola
+	.command('rules')
+	.description('List the configured Pianola rules')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => pianolaRules(options));
+
+pianola
+	.command('log')
+	.description('Show recent Pianola decisions from the audit log')
+	.option('--limit <n>', 'Maximum number of records to show (default 20)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => pianolaLog(options));
 
 // Prompts command — read Maestro's bundled or user-customized system prompts.
 // Designed for agent self-fetch: parent prompts reference includes via `{{REF:_name}}`

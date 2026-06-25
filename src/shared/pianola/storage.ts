@@ -1,0 +1,132 @@
+/**
+ * Pianola storage contract - shared constants, the audit record type, and a
+ * pure validator. The fs/electron specifics live in the CLI store
+ * (src/cli/services/pianola-store.ts) and, later, a desktop store; both import
+ * these so the filenames, record shape, and validation stay in one place.
+ */
+
+import type {
+	PianolaClassification,
+	PianolaDecision,
+	PianolaRule,
+	PianolaRuleScope,
+	PianolaSignalKind,
+	PianolaActionKind,
+	PianolaRisk,
+} from './types';
+
+/** Editable rules file (JSON array of PianolaRule), in the Maestro config dir. */
+export const PIANOLA_RULES_FILENAME = 'maestro-pianola-rules.json';
+
+/** Append-only decision audit log (JSON Lines), in the Maestro config dir. */
+export const PIANOLA_DECISIONS_FILENAME = 'pianola-decisions.jsonl';
+
+/** One recorded decision in the audit log. */
+export interface PianolaDecisionRecord {
+	id: string;
+	/** ISO-8601 timestamp of when the decision was made. */
+	timestamp: string;
+	tabId: string;
+	agentId: string;
+	projectPath?: string;
+	classification: PianolaClassification;
+	decision: PianolaDecision;
+	/** True if Pianola actually sent a message (auto-answer that was dispatched). */
+	dispatched: boolean;
+	/** True if running in dry-run mode (never dispatches). */
+	dryRun: boolean;
+	/** Populated when a dispatch attempt failed. */
+	error?: string;
+}
+
+const RULE_SCOPES: readonly PianolaRuleScope[] = ['global', 'project', 'tab'];
+const ACTION_KINDS: readonly PianolaActionKind[] = ['auto_answer', 'escalate', 'ignore'];
+const RISKS: readonly PianolaRisk[] = ['low', 'medium', 'high'];
+const SIGNAL_KINDS: readonly PianolaSignalKind[] = ['question', 'blocked', 'none'];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isStringArray(value: unknown): value is string[] {
+	return Array.isArray(value) && value.every((v) => typeof v === 'string');
+}
+
+function validateMatch(raw: unknown): PianolaRule['match'] | null {
+	if (raw === undefined) return {};
+	if (!isRecord(raw)) return null;
+	const match: PianolaRule['match'] = {};
+
+	if (raw.maxRisk !== undefined) {
+		if (!RISKS.includes(raw.maxRisk as PianolaRisk)) return null;
+		match.maxRisk = raw.maxRisk as PianolaRisk;
+	}
+	if (raw.kinds !== undefined) {
+		if (
+			!isStringArray(raw.kinds) ||
+			!raw.kinds.every((k) => SIGNAL_KINDS.includes(k as PianolaSignalKind))
+		)
+			return null;
+		match.kinds = raw.kinds as PianolaSignalKind[];
+	}
+	if (raw.topicIncludes !== undefined) {
+		if (!isStringArray(raw.topicIncludes)) return null;
+		match.topicIncludes = raw.topicIncludes;
+	}
+
+	return match;
+}
+
+/**
+ * Validate one untrusted rule object. Returns a typed PianolaRule, or null if
+ * the shape is invalid (callers drop invalid rules rather than throwing, so one
+ * bad hand-edited rule cannot break the whole engine).
+ */
+export function validatePianolaRule(raw: unknown): PianolaRule | null {
+	if (!isRecord(raw)) return null;
+
+	if (typeof raw.id !== 'string' || raw.id.length === 0) return null;
+	if (typeof raw.enabled !== 'boolean') return null;
+	if (!RULE_SCOPES.includes(raw.scope as PianolaRuleScope)) return null;
+	if (!ACTION_KINDS.includes(raw.action as PianolaActionKind)) return null;
+	if (typeof raw.priority !== 'number' || !Number.isFinite(raw.priority)) return null;
+	if (typeof raw.createdAt !== 'number' || typeof raw.updatedAt !== 'number') return null;
+
+	const match = validateMatch(raw.match);
+	if (match === null) return null;
+
+	if (raw.scopeId !== undefined && typeof raw.scopeId !== 'string') return null;
+	if (raw.answer !== undefined && typeof raw.answer !== 'string') return null;
+	if (raw.description !== undefined && typeof raw.description !== 'string') return null;
+
+	const rule: PianolaRule = {
+		id: raw.id,
+		enabled: raw.enabled,
+		scope: raw.scope as PianolaRuleScope,
+		match,
+		action: raw.action as PianolaActionKind,
+		priority: raw.priority,
+		createdAt: raw.createdAt,
+		updatedAt: raw.updatedAt,
+	};
+	if (typeof raw.scopeId === 'string') rule.scopeId = raw.scopeId;
+	if (typeof raw.answer === 'string') rule.answer = raw.answer;
+	if (typeof raw.description === 'string') rule.description = raw.description;
+
+	return rule;
+}
+
+/** Validate an untrusted rules payload, dropping any malformed entries. */
+export function validatePianolaRules(raw: unknown): PianolaRule[] {
+	if (!Array.isArray(raw)) return [];
+	const rules: PianolaRule[] = [];
+	for (const item of raw) {
+		const rule = validatePianolaRule(item);
+		if (rule) rules.push(rule);
+	}
+	return rules;
+}
+
+// Re-exported so storage consumers get the decision/classification types from
+// one import site.
+export type { PianolaClassification, PianolaDecision, PianolaRule };

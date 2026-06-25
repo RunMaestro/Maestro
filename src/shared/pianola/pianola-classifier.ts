@@ -16,7 +16,7 @@ import type {
 	PianolaClassification,
 	PianolaMessage,
 	PianolaSignalKind,
-} from '../../shared/pianola/types';
+} from './types';
 import { maxRisk, rateRisk } from './pianola-risk';
 
 // Re-exported for convenience so callers can pull risk helpers from the classifier.

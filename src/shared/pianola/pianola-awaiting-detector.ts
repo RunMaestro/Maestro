@@ -16,7 +16,7 @@
  * Precedence: plan_review > permission > choice > question.
  */
 
-import type { AwaitingInputSignal, PianolaMessage } from '../../shared/pianola/types';
+import type { AwaitingInputSignal, PianolaMessage } from './types';
 
 /** Plan-mode review: agent is presenting a plan and asking to proceed. */
 const PLAN_REVIEW_RE =
