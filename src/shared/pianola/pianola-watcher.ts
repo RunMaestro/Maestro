@@ -17,7 +17,7 @@
  */
 
 import type { PianolaClassification, PianolaDecision, PianolaMessage, PianolaRule } from './types';
-import type { PianolaDecisionRecord } from './storage';
+import type { PianolaDecisionRecord, PianolaProfileEntry } from './storage';
 import { classifyMessages } from './pianola-classifier';
 import { enrichWithAwaitingInput } from './pianola-awaiting-detector';
 import { decide } from './pianola-policy';
@@ -32,6 +32,21 @@ export interface WatchTarget {
 	projectPath?: string;
 }
 
+/**
+ * An ask the rules did not cover, handed to Pianola (an LLM agent) to judge
+ * against the user's learned decision profile rather than escalating straight to
+ * the user. The watcher provides everything Pianola needs to decide.
+ */
+export interface PianolaJudgmentRequest {
+	target: WatchTarget;
+	classification: PianolaClassification;
+	profile: PianolaProfileEntry;
+	/** The agent's awaiting-input prompt text, when extractable. */
+	promptText?: string;
+	/** Discrete options the agent offered, if any. */
+	options?: string[];
+}
+
 /** Injected side effects. */
 export interface WatchDeps {
 	readRules: () => PianolaRule[];
@@ -44,6 +59,17 @@ export interface WatchDeps {
 	genId: () => string;
 	/** Human-readable progress line. */
 	log: (line: string) => void;
+	/**
+	 * Resolve the learned decision profile for a project (null when none). Its
+	 * presence, together with `requestJudgment`, enables the thought-based handoff
+	 * path; omit both to keep the watcher purely rule-driven (the default for a
+	 * plain CLI watch with no Pianola agent to hand off to).
+	 */
+	resolveProfile?: (projectPath?: string) => PianolaProfileEntry | null;
+	/** Hand an uncovered, non-high-risk ask to Pianola to judge against the profile. */
+	requestJudgment?: (
+		request: PianolaJudgmentRequest
+	) => Promise<{ success: boolean; error?: string }>;
 }
 
 /** Per-tab loop state, carried between iterations. */
@@ -67,6 +93,8 @@ export interface IterationResult {
 	acted: boolean;
 	/** True when an auto-answer was sent successfully. */
 	dispatched: boolean;
+	/** True when the ask was handed to Pianola to judge against the profile. */
+	handoff?: boolean;
 	/** Reason an actionable prompt was skipped (e.g. already handled). */
 	skipped?: string;
 }
@@ -79,6 +107,10 @@ function describe(result: IterationResult, error?: string): string {
 			: `[pianola] none (${c.evidence.reason})`;
 	}
 	const detail = c.topic ? `: ${c.topic}` : '';
+	if (result.handoff) {
+		const errSuffix = error ? ` (handoff error: ${error})` : '';
+		return `[pianola] ${c.kind}/${c.risk} -> handoff to Pianola${detail}${errSuffix}`;
+	}
 	const errSuffix = error ? ` (dispatch error: ${error})` : '';
 	return `[pianola] ${c.kind}/${c.risk} -> ${decision.action}${detail}${errSuffix}`;
 }
@@ -151,6 +183,75 @@ export async function runWatchIteration(
 		projectPath: target.projectPath,
 		tabId: target.tabId,
 	});
+
+	// Thought-based handoff. When the rules did not cover this ask (the policy fell
+	// through to a default escalate, matchedRuleId === null) and it is not high
+	// risk, hand the decision to Pianola (an LLM agent) to judge against the user's
+	// learned profile instead of escalating straight to the user. High risk always
+	// escalates; a dry run never hands off; and we only hand off when both handoff
+	// deps are wired and a profile actually exists for this project.
+	const uncoveredEscalation = decision.action === 'escalate' && decision.matchedRuleId === null;
+	if (
+		uncoveredEscalation &&
+		classification.risk !== 'high' &&
+		!options.dryRun &&
+		deps.resolveProfile &&
+		deps.requestJudgment
+	) {
+		const profile = deps.resolveProfile(target.projectPath);
+		if (profile) {
+			const handoffDecision: PianolaDecision = {
+				action: 'escalate',
+				matchedRuleId: null,
+				reason: 'handed off to Pianola for profile-based judgment',
+			};
+			// Audit the intent BEFORE the side effect, mirroring the auto-answer path,
+			// so a handoff is never sent without an audit trail. Intent and outcome
+			// share an id; readers fold the two.
+			const id = deps.genId();
+			const intent = buildRecord(deps, target, classification, handoffDecision, {
+				id,
+				dispatched: false,
+				dryRun: false,
+			});
+			deps.recordDecision(intent); // throws here => no handoff
+
+			const relevant = messageId ? messages.find((m) => m.id === messageId) : undefined;
+			const res = await deps.requestJudgment({
+				target,
+				classification,
+				profile,
+				promptText: relevant?.awaitingInput?.prompt ?? relevant?.content,
+				options: relevant?.awaitingInput?.options,
+			});
+			const error = res.success ? undefined : (res.error ?? 'handoff failed');
+
+			const outcome = buildRecord(deps, target, classification, handoffDecision, {
+				id,
+				dispatched: false,
+				dryRun: false,
+				error,
+			});
+			deps.recordDecision(outcome);
+
+			const result: IterationResult = {
+				classification,
+				decision: handoffDecision,
+				record: outcome,
+				acted: true,
+				dispatched: false,
+				handoff: true,
+			};
+			deps.log(describe(result, error));
+			return {
+				state: {
+					lastHandledMessageId: messageId ?? state.lastHandledMessageId,
+					pendingRetry: null,
+				},
+				result,
+			};
+		}
+	}
 
 	const willDispatch = decision.action === 'auto_answer' && !options.dryRun;
 

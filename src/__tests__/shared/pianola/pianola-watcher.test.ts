@@ -14,7 +14,7 @@ import {
 	type WatchTarget,
 } from '../../../shared/pianola/pianola-watcher';
 import type { PianolaMessage, PianolaRule } from '../../../shared/pianola/types';
-import type { PianolaDecisionRecord } from '../../../shared/pianola/storage';
+import type { PianolaDecisionRecord, PianolaProfileEntry } from '../../../shared/pianola/storage';
 
 let seq = 0;
 function assistant(content: string): PianolaMessage {
@@ -66,6 +66,48 @@ function makeDeps(over: Partial<WatchDeps> = {}): {
 		...over,
 	};
 	return { deps, records, dispatch };
+}
+
+function escalateRule(): PianolaRule {
+	return {
+		id: 'rule-esc',
+		enabled: true,
+		scope: 'global',
+		match: { kinds: ['question'] },
+		action: 'escalate',
+		priority: 1,
+		createdAt: 1,
+		updatedAt: 1,
+	};
+}
+
+function profileEntry(): PianolaProfileEntry {
+	return {
+		profile: 'Auto-approves tests, builds, reads. Cautious about deletes and prod.',
+		updatedAt: 1,
+		pairCount: 10,
+	};
+}
+
+/** Wire the optional handoff deps so the thought-based path is active. */
+function withHandoff(
+	over: Partial<WatchDeps> = {},
+	profile: PianolaProfileEntry | null = profileEntry()
+): {
+	deps: WatchDeps;
+	records: PianolaDecisionRecord[];
+	requestJudgment: ReturnType<typeof vi.fn>;
+} {
+	const requestJudgment = vi.fn(async () => ({
+		success: true as boolean,
+		error: undefined as string | undefined,
+	}));
+	const base = makeDeps({
+		resolveProfile: () => profile,
+		requestJudgment,
+		...over,
+	});
+	return { deps: base.deps, records: base.records, requestJudgment };
 }
 
 const target: WatchTarget = { tabId: 'tab-1', agentId: 'agent-1' };
@@ -233,5 +275,148 @@ describe('runWatchIteration - dedup and retry', () => {
 		const outcome = records[records.length - 1];
 		expect(outcome.dispatched).toBe(false);
 		expect(outcome.error).toBe('session busy');
+	});
+});
+
+describe('runWatchIteration - thought-based handoff', () => {
+	it('hands an uncovered, non-high-risk ask to Pianola when a profile exists', async () => {
+		const { deps, requestJudgment } = withHandoff();
+		const { result } = await runWatchIteration(
+			[assistant('Should I name it count or total?')],
+			target,
+			initialWatchState(),
+			deps,
+			{ dryRun: false }
+		);
+		expect(result.handoff).toBe(true);
+		expect(result.decision?.action).toBe('escalate');
+		expect(requestJudgment).toHaveBeenCalledTimes(1);
+		const req = requestJudgment.mock.calls[0][0];
+		expect(req.profile).toEqual(profileEntry());
+		expect(req.promptText).toContain('count or total');
+	});
+
+	it('marks the prompt handled so it is not handed off again', async () => {
+		const { deps, requestJudgment } = withHandoff();
+		const messages = [assistant('Should I name it count or total?')];
+		const first = await runWatchIteration(messages, target, initialWatchState(), deps, {
+			dryRun: false,
+		});
+		const second = await runWatchIteration(messages, target, first.state, deps, { dryRun: false });
+		expect(second.result.skipped).toContain('already handled');
+		expect(requestJudgment).toHaveBeenCalledTimes(1);
+	});
+
+	it('records intent before the handoff side effect, then an outcome (one id)', async () => {
+		const order: string[] = [];
+		const requestJudgment = vi.fn(async () => {
+			order.push('handoff');
+			return { success: true, error: undefined };
+		});
+		const records: PianolaDecisionRecord[] = [];
+		const { deps } = makeDeps({
+			resolveProfile: () => profileEntry(),
+			requestJudgment,
+			recordDecision: (r) => {
+				order.push('record');
+				records.push(r);
+			},
+		});
+		await runWatchIteration(
+			[assistant('Should I name it count or total?')],
+			target,
+			initialWatchState(),
+			deps,
+			{ dryRun: false }
+		);
+		expect(order).toEqual(['record', 'handoff', 'record']);
+		expect(records).toHaveLength(2);
+		expect(records[0].id).toBe(records[1].id);
+		expect(records[1].dispatched).toBe(false); // a handoff never answers the watched tab
+	});
+
+	it('records the handoff error on the outcome entry when delivery fails', async () => {
+		const requestJudgment = vi.fn(async () => ({ success: false, error: 'pianola busy' }));
+		const { deps, records } = withHandoff({ requestJudgment });
+		const { result } = await runWatchIteration(
+			[assistant('Should I name it count or total?')],
+			target,
+			initialWatchState(),
+			deps,
+			{ dryRun: false }
+		);
+		expect(result.handoff).toBe(true);
+		expect(records[records.length - 1].error).toBe('pianola busy');
+	});
+
+	it('does NOT hand off a high-risk ask; it escalates to the user', async () => {
+		const { deps, records, requestJudgment } = withHandoff();
+		const { result } = await runWatchIteration(
+			[assistant('Should I deploy to production?')],
+			target,
+			initialWatchState(),
+			deps,
+			{ dryRun: false }
+		);
+		expect(result.handoff).toBeFalsy();
+		expect(result.decision?.action).toBe('escalate');
+		expect(requestJudgment).not.toHaveBeenCalled();
+		expect(records).toHaveLength(1);
+	});
+
+	it('does NOT hand off when no profile exists; it escalates to the user', async () => {
+		const { deps, records, requestJudgment } = withHandoff({}, null);
+		const { result } = await runWatchIteration(
+			[assistant('Should I name it count or total?')],
+			target,
+			initialWatchState(),
+			deps,
+			{ dryRun: false }
+		);
+		expect(result.handoff).toBeFalsy();
+		expect(requestJudgment).not.toHaveBeenCalled();
+		expect(records).toHaveLength(1);
+	});
+
+	it('does NOT hand off when a rule already covers the ask (matchedRuleId set)', async () => {
+		const { deps, requestJudgment } = withHandoff({ readRules: () => [escalateRule()] });
+		const { result } = await runWatchIteration(
+			[assistant('Should I name it count or total?')],
+			target,
+			initialWatchState(),
+			deps,
+			{ dryRun: false }
+		);
+		expect(result.handoff).toBeFalsy();
+		expect(result.decision?.matchedRuleId).toBe('rule-esc');
+		expect(requestJudgment).not.toHaveBeenCalled();
+	});
+
+	it('does NOT hand off on a dry run', async () => {
+		const { deps, requestJudgment } = withHandoff();
+		const { result } = await runWatchIteration(
+			[assistant('Should I name it count or total?')],
+			target,
+			initialWatchState(),
+			deps,
+			{ dryRun: true }
+		);
+		expect(result.handoff).toBeFalsy();
+		expect(requestJudgment).not.toHaveBeenCalled();
+	});
+
+	it('stays purely rule-driven when handoff deps are not wired', async () => {
+		const { deps, records, dispatch } = makeDeps();
+		const { result } = await runWatchIteration(
+			[assistant('Should I name it count or total?')],
+			target,
+			initialWatchState(),
+			deps,
+			{ dryRun: false }
+		);
+		expect(result.handoff).toBeFalsy();
+		expect(result.decision?.action).toBe('escalate');
+		expect(dispatch).not.toHaveBeenCalled();
+		expect(records).toHaveLength(1);
 	});
 });

@@ -33,6 +33,7 @@ import {
 	type WatchDeps,
 	type WatchState,
 	type WatchTarget,
+	type PianolaJudgmentRequest,
 } from '../../shared/pianola/pianola-watcher';
 import { matchHasNarrowingPredicate } from '../../shared/pianola/pianola-policy';
 import {
@@ -116,6 +117,41 @@ function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * Build the message handed to Pianola when the rules do not cover an ask. It
+ * gives Pianola the waiting agent, the ask, and the user's decision profile for
+ * that project, and tells it how to either answer the agent or escalate to the
+ * user. Pianola runs this in its own chat, so `$MAESTRO_CLI_JS` is written
+ * literally for Pianola's shell to expand.
+ */
+function buildPianolaHandoffPrompt(request: PianolaJudgmentRequest): string {
+	const { target, classification, profile, promptText, options } = request;
+	const lines: string[] = [
+		'A watched agent is waiting on a decision and no rule covers it. Judge it the way the user would, using their decision profile for this project.',
+		'',
+		`Agent: ${target.agentId}`,
+		`Tab: ${target.tabId}`,
+		`Project: ${target.projectPath ?? '(unknown)'}`,
+		`Ask (${classification.kind}, risk ${classification.risk}): ${classification.topic}`,
+	];
+	if (promptText) lines.push('', 'The agent said:', promptText.trim());
+	if (options && options.length > 0) lines.push('', `Options offered: ${options.join(' | ')}`);
+	lines.push(
+		'',
+		"User's decision profile for this project:",
+		'---',
+		profile.profile.trim(),
+		'---',
+		'',
+		'Decide:',
+		'- If the profile makes the right answer clear and this is safe and reversible, answer the agent now:',
+		`  node "$MAESTRO_CLI_JS" dispatch ${target.agentId} "<your answer>" --tab ${target.tabId}`,
+		'- If you are not confident, or it is sensitive or irreversible, do NOT answer. Tell the user what is waiting and ask them to decide.',
+		'Never answer a high-risk ask without the user.'
+	);
+	return lines.join('\n');
+}
+
 /** Watch a tab and act on awaiting-input prompts per the configured rules. */
 export async function pianolaWatch(tabId: string, options: PianolaWatchOptions): Promise<void> {
 	ensurePianolaEnabled(options.json);
@@ -135,6 +171,24 @@ export async function pianolaWatch(tabId: string, options: PianolaWatchOptions):
 		genId: () => generateUUID(),
 		log: (line) => console.log(line),
 	};
+
+	// Thought-based handoff path: only when we know which agent IS Pianola (set in
+	// the watch process's env when Pianola spawns the watch). Without it, the watch
+	// stays purely rule-driven and uncovered asks escalate to the user as before.
+	const pianolaAgentId = process.env.MAESTRO_AGENT_ID;
+	if (pianolaAgentId) {
+		deps.resolveProfile = (projectPath) => getPianolaProfile(projectPath).entry;
+		deps.requestJudgment = async (request) => {
+			// Never hand an ask back to Pianola's own tab (it never watches itself,
+			// but guard against a misconfigured --agent pointing at Pianola).
+			if (request.target.agentId === pianolaAgentId) {
+				return { success: false, error: 'target agent is Pianola itself' };
+			}
+			const message = buildPianolaHandoffPrompt(request);
+			const res = await runDispatch(pianolaAgentId, message, {});
+			return { success: !!res.success, error: res.error };
+		};
+	}
 
 	let state: WatchState = initialWatchState();
 	let stopped = false;
