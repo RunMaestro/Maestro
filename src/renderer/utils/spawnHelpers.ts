@@ -57,7 +57,7 @@ export async function prepareMaestroSystemPrompt(opts: {
 
 	const conductorProfile = useSettingsStore.getState().conductorProfile;
 
-	return substituteTemplateVariables(result.content, {
+	const base = substituteTemplateVariables(result.content, {
 		session: opts.session as any,
 		gitBranch,
 		groupId: opts.session.groupId,
@@ -65,6 +65,20 @@ export async function prepareMaestroSystemPrompt(opts: {
 		historyFilePath,
 		conductorProfile,
 	});
+
+	// The pinned Pianola manager agent gets its manager instructions appended on
+	// top of the standard Maestro system context. This is what turns a plain
+	// Claude Code chat into Maestro's orchestrator. The CLI path and the agent's
+	// own id are supplied to the spawn as env vars (see process.ts), so the
+	// prompt references them as shell variables, not template variables.
+	if (opts.session.isPianola) {
+		const pianola = await window.maestro.prompts.get('pianola-system');
+		if (pianola.success && pianola.content) {
+			return `${base}\n\n---\n\n${pianola.content}`;
+		}
+	}
+
+	return base;
 }
 
 /**

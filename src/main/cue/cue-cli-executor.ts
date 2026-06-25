@@ -75,7 +75,7 @@ export interface CliSendResult {
  * `process.resourcesPath` is undefined or points at electron's built-in
  * resources) still find the compiled script at `dist/cli/maestro-cli.js`.
  */
-function resolveMaestroCliScriptPath(): string {
+export function resolveMaestroCliScriptPath(): string {
 	const candidates: string[] = [];
 	if (process.resourcesPath) {
 		candidates.push(path.join(process.resourcesPath, 'maestro-cli.js'));

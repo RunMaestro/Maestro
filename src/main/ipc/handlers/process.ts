@@ -6,6 +6,7 @@ import * as fsp from 'fs/promises';
 import * as path from 'path';
 import { ProcessManager } from '../../process-manager';
 import { AgentDetector } from '../../agents';
+import { resolveMaestroCliScriptPath } from '../../cue/cue-cli-executor';
 import type { InteractiveReplayController } from '../../agents/claude-interactive-replay';
 import { stripThinkingFromTranscript } from '../../agents/claude-transcript-sanitizer';
 import type { ProcessConfig as ProcessSpawnConfig } from '../../process-manager/types';
@@ -491,6 +492,23 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						LOG_CONTEXT,
 						{ keys: Object.keys(effectiveCustomEnvVars) }
 					);
+				}
+
+				// Pianola manager agent: expose the bundled maestro-cli to the agent's
+				// Bash (via MAESTRO_CLI_JS) so it can orchestrate other agents - list,
+				// create, dispatch, watch, and set rules - without any PATH assumptions,
+				// and tell it its own id (MAESTRO_AGENT_ID) so it never acts on itself.
+				// Injected into effectiveCustomEnvVars so it flows through both the local
+				// and SSH env-merge paths below.
+				const isPianolaSession = (
+					deps.sessionsStore.get('sessions', []) as Array<{ id?: string; isPianola?: boolean }>
+				).some((s) => s?.id === baseSessionId && s?.isPianola === true);
+				if (isPianolaSession) {
+					effectiveCustomEnvVars = {
+						...(effectiveCustomEnvVars || {}),
+						MAESTRO_CLI_JS: resolveMaestroCliScriptPath(),
+						MAESTRO_AGENT_ID: baseSessionId,
+					};
 				}
 
 				// ========================================================================

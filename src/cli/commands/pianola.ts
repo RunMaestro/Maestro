@@ -15,6 +15,7 @@ import { readSettingValue } from '../services/storage';
 import {
 	readPianolaRules,
 	readPianolaRulesResult,
+	writePianolaRules,
 	appendPianolaDecision,
 	readPianolaDecisions,
 } from '../services/pianola-store';
@@ -28,7 +29,20 @@ import {
 	type WatchState,
 	type WatchTarget,
 } from '../../shared/pianola/pianola-watcher';
-import type { PianolaMessage } from '../../shared/pianola/types';
+import { matchHasNarrowingPredicate } from '../../shared/pianola/pianola-policy';
+import type {
+	PianolaMessage,
+	PianolaRule,
+	PianolaRuleScope,
+	PianolaActionKind,
+	PianolaRisk,
+	PianolaSignalKind,
+} from '../../shared/pianola/types';
+
+const RULE_SCOPES: PianolaRuleScope[] = ['global', 'project', 'tab'];
+const RULE_ACTIONS: PianolaActionKind[] = ['auto_answer', 'escalate', 'ignore'];
+const RULE_RISKS: PianolaRisk[] = ['low', 'medium', 'high'];
+const RULE_KINDS: PianolaSignalKind[] = ['question', 'blocked', 'none'];
 
 const DEFAULT_INTERVAL_SECONDS = 5;
 const POLL_TAIL = 40;
@@ -203,6 +217,141 @@ export function pianolaRules(options: PianolaListOptions): void {
 		const label = rule.description ?? rule.id;
 		console.log(
 			`  ${rule.enabled ? 'on ' : 'off'} [p${rule.priority}] ${scope} ${rule.action} ${label}`
+		);
+	}
+}
+
+export interface PianolaAddRuleOptions {
+	scope?: string;
+	scopeId?: string;
+	action?: string;
+	answer?: string;
+	maxRisk?: string;
+	kinds?: string;
+	topicIncludes?: string;
+	priority?: string;
+	description?: string;
+	disabled?: boolean;
+	json?: boolean;
+}
+
+/** Split a comma-separated flag value into trimmed, non-empty items. */
+function parseCsv(raw?: string): string[] | undefined {
+	if (!raw) return undefined;
+	const items = raw
+		.split(',')
+		.map((s) => s.trim())
+		.filter(Boolean);
+	return items.length > 0 ? items : undefined;
+}
+
+/**
+ * Add a Pianola rule from the CLI. This is how the Pianola manager agent turns a
+ * conversation with the user ("always let agents run the test suite") into a
+ * durable rule the watcher applies. Validates the assembled rule the same way
+ * the desktop editor does (auto_answer needs both a narrowing predicate and an
+ * answer) so a rule that could never safely fire is rejected with a clear error
+ * rather than silently written.
+ */
+export function pianolaAddRule(options: PianolaAddRuleOptions): void {
+	ensurePianolaEnabled(options.json);
+
+	const fail = (message: string): never => {
+		if (options.json) {
+			console.log(JSON.stringify({ success: false, error: message }));
+		} else {
+			console.error(message);
+		}
+		process.exit(1);
+	};
+
+	const scope = (options.scope ?? 'global') as PianolaRuleScope;
+	if (!RULE_SCOPES.includes(scope)) {
+		fail(`--scope must be one of: ${RULE_SCOPES.join(', ')}`);
+	}
+	if (scope !== 'global' && !options.scopeId) {
+		fail(
+			`--scope ${scope} requires --scope-id (the ${scope === 'project' ? 'project path' : 'tab id'})`
+		);
+	}
+
+	const action = options.action as PianolaActionKind | undefined;
+	if (!action || !RULE_ACTIONS.includes(action)) {
+		fail(`--action is required and must be one of: ${RULE_ACTIONS.join(', ')}`);
+	}
+	// fail() exits the process, but its return type does not narrow `action` here,
+	// so pin the validated value explicitly for the rest of the function.
+	const resolvedAction: PianolaActionKind = action as PianolaActionKind;
+
+	const maxRisk = options.maxRisk as PianolaRisk | undefined;
+	if (maxRisk && !RULE_RISKS.includes(maxRisk)) {
+		fail(`--max-risk must be one of: ${RULE_RISKS.join(', ')}`);
+	}
+
+	const kinds = parseCsv(options.kinds) as PianolaSignalKind[] | undefined;
+	if (kinds) {
+		const bad = kinds.filter((k) => !RULE_KINDS.includes(k));
+		if (bad.length > 0) {
+			fail(`--kinds has invalid value(s): ${bad.join(', ')}. Valid: ${RULE_KINDS.join(', ')}`);
+		}
+	}
+
+	const topicIncludes = parseCsv(options.topicIncludes);
+
+	const match: PianolaRule['match'] = {};
+	if (maxRisk) match.maxRisk = maxRisk;
+	if (kinds) match.kinds = kinds;
+	if (topicIncludes) match.topicIncludes = topicIncludes;
+
+	// An auto_answer rule that matches everything is dangerous: it would let the
+	// watcher reply to prompts the user never anticipated. Require both a
+	// narrowing predicate and an answer, matching the desktop RuleEditor.
+	if (resolvedAction === 'auto_answer') {
+		if (!matchHasNarrowingPredicate(match)) {
+			fail(
+				'auto_answer rules need a narrowing predicate: set at least one of --max-risk, --kinds, --topic-includes'
+			);
+		}
+		if (!options.answer || options.answer.trim().length === 0) {
+			fail('auto_answer rules need --answer "<reply text>"');
+		}
+	}
+
+	let priority = 100;
+	if (options.priority !== undefined) {
+		const parsed = parseInt(options.priority, 10);
+		if (isNaN(parsed)) fail('--priority must be an integer');
+		priority = parsed;
+	}
+
+	const now = Date.now();
+	const rule: PianolaRule = {
+		id: generateUUID(),
+		enabled: !options.disabled,
+		scope,
+		match,
+		action: resolvedAction,
+		priority,
+		createdAt: now,
+		updatedAt: now,
+	};
+	if (scope !== 'global' && options.scopeId) rule.scopeId = options.scopeId;
+	if (resolvedAction === 'auto_answer' && options.answer) rule.answer = options.answer;
+	if (options.description) rule.description = options.description;
+
+	const existing = readPianolaRules();
+	const written = writePianolaRules([...existing, rule]);
+	// writePianolaRules drops anything that fails validation; if our new rule did
+	// not survive, surface that instead of reporting a phantom success.
+	if (!written.some((r) => r.id === rule.id)) {
+		fail('Rule failed validation and was not saved');
+	}
+
+	if (options.json) {
+		console.log(JSON.stringify({ success: true, rule, ruleCount: written.length }));
+	} else {
+		console.log(
+			`Added Pianola rule ${rule.id} (${rule.scope} ${rule.action}). Total rules: ${written.length}`
 		);
 	}
 }
