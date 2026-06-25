@@ -65,19 +65,33 @@ describe('decide - safety defaults', () => {
 		expect(d.matchedRuleId).toBe(r.id);
 		expect(d.reason).toContain('high-risk');
 	});
+
+	it('never lets an ignore rule suppress a high-risk prompt', () => {
+		// Regression: high-risk override must run before rule actions, so a broad
+		// ignore rule cannot silence the most important alerts.
+		const r = rule({ action: 'ignore', match: {} });
+		const d = decide(classification({ kind: 'blocked', risk: 'high' }), [r]);
+		expect(d.action).toBe('escalate');
+		expect(d.reason).toContain('high-risk');
+	});
 });
 
 describe('decide - rule actions', () => {
 	it('auto-answers a low-risk prompt matched by a rule', () => {
 		const r = rule({ match: { maxRisk: 'low' }, action: 'auto_answer', answer: 'Use tabs.' });
 		const d = decide(classification({ kind: 'question', risk: 'low' }), [r]);
-		expect(d.action).toBe('auto_answer');
-		expect(d.answer).toBe('Use tabs.');
-		expect(d.matchedRuleId).toBe(r.id);
+		expect(d).toMatchObject({ action: 'auto_answer', answer: 'Use tabs.', matchedRuleId: r.id });
+	});
+
+	it('escalates an auto-answer rule that has no narrowing predicate (too broad)', () => {
+		const r = rule({ match: {}, action: 'auto_answer', answer: 'sure' });
+		const d = decide(classification({ kind: 'question', risk: 'low' }), [r]);
+		expect(d.action).toBe('escalate');
+		expect(d.reason).toContain('narrowing predicate');
 	});
 
 	it('escalates when matched auto-answer rule has no answer text', () => {
-		const r = rule({ action: 'auto_answer', answer: '   ' });
+		const r = rule({ match: { maxRisk: 'low' }, action: 'auto_answer', answer: '   ' });
 		const d = decide(classification({ kind: 'question', risk: 'low' }), [r]);
 		expect(d.action).toBe('escalate');
 		expect(d.reason).toContain('no answer');
@@ -90,8 +104,8 @@ describe('decide - rule actions', () => {
 		expect(d.matchedRuleId).toBe(r.id);
 	});
 
-	it('honors an explicit ignore rule', () => {
-		const r = rule({ action: 'ignore' });
+	it('honors an explicit ignore rule for a non-high-risk prompt', () => {
+		const r = rule({ action: 'ignore', match: { maxRisk: 'low' } });
 		const d = decide(classification({ kind: 'blocked', risk: 'low' }), [r]);
 		expect(d.action).toBe('ignore');
 		expect(d.matchedRuleId).toBe(r.id);
