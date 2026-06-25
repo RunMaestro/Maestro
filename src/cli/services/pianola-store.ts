@@ -14,14 +14,20 @@ import { getConfigDirectory } from './storage';
 import {
 	PIANOLA_RULES_FILENAME,
 	PIANOLA_DECISIONS_FILENAME,
+	PIANOLA_PROFILES_FILENAME,
 	validatePianolaRules,
 	validatePianolaDecisionRecord,
+	validatePianolaProfiles,
+	resolveProfile,
 	type PianolaDecisionRecord,
 	type RulesLoadResult,
+	type PianolaProfiles,
+	type PianolaProfileEntry,
+	type PianolaProfileSource,
 } from '../../shared/pianola/storage';
 import type { PianolaRule } from '../../shared/pianola/types';
 
-export type { RulesLoadResult };
+export type { RulesLoadResult, PianolaProfiles, PianolaProfileEntry };
 
 function rulesPath(): string {
 	return path.join(getConfigDirectory(), PIANOLA_RULES_FILENAME);
@@ -123,4 +129,72 @@ export function readPianolaDecisions(limit?: number): PianolaDecisionRecord[] {
 		return records.slice(records.length - limit);
 	}
 	return records;
+}
+
+function profilesPath(): string {
+	return path.join(getConfigDirectory(), PIANOLA_PROFILES_FILENAME);
+}
+
+/**
+ * Read and validate the per-project decision profiles. Returns an empty,
+ * well-formed object when the file is missing or malformed so callers never have
+ * to null-check (a bad hand-edit degrades to "no learned profiles", not a crash).
+ */
+export function readPianolaProfiles(): PianolaProfiles {
+	let content: string;
+	try {
+		content = fs.readFileSync(profilesPath(), 'utf-8');
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { projects: {} };
+		throw error;
+	}
+	try {
+		return validatePianolaProfiles(JSON.parse(content));
+	} catch {
+		return { projects: {} };
+	}
+}
+
+/** Validate and atomically persist the profiles object. */
+export function writePianolaProfiles(profiles: PianolaProfiles): PianolaProfiles {
+	const validated = validatePianolaProfiles(profiles);
+	const dir = getConfigDirectory();
+	if (!fs.existsSync(dir)) {
+		fs.mkdirSync(dir, { recursive: true });
+	}
+	const target = profilesPath();
+	const tmp = `${target}.tmp`;
+	fs.writeFileSync(tmp, `${JSON.stringify(validated, null, 2)}\n`, 'utf-8');
+	fs.renameSync(tmp, target);
+	return validated;
+}
+
+/** Resolve the profile for a project path (project profile, else global, else none). */
+export function getPianolaProfile(projectPath?: string): {
+	source: PianolaProfileSource;
+	entry: PianolaProfileEntry | null;
+} {
+	return resolveProfile(readPianolaProfiles(), projectPath);
+}
+
+/**
+ * Write one profile: per-project when `projectPath` is given, otherwise the
+ * global fallback. Returns the persisted profiles. Immutable: builds a new object
+ * rather than mutating the read result.
+ */
+export function setPianolaProfile(
+	entry: PianolaProfileEntry,
+	projectPath?: string
+): PianolaProfiles {
+	const current = readPianolaProfiles();
+	const next: PianolaProfiles = {
+		global: current.global,
+		projects: { ...current.projects },
+	};
+	if (projectPath) {
+		next.projects[projectPath] = entry;
+	} else {
+		next.global = entry;
+	}
+	return writePianolaProfiles(next);
 }

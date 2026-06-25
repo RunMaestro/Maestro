@@ -76,6 +76,8 @@ import {
 	pianolaRules,
 	pianolaAddRule,
 	pianolaLearn,
+	pianolaProfile,
+	pianolaSetProfile,
 	pianolaLog,
 } from './commands/pianola';
 
@@ -871,6 +873,22 @@ pianola
 	.option('--out <file>', 'Write the full corpus JSON to a file instead of stdout')
 	.option('--json', 'Compact JSON output (for scripting)')
 	.action((options) => pianolaLearn(options));
+
+pianola
+	.command('profile')
+	.description('Read a learned decision profile (per-project with --project, else global)')
+	.option('--project <path>', 'Project path to read the profile for (falls back to global)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => pianolaProfile(options));
+
+pianola
+	.command('set-profile')
+	.description('Save a learned decision profile from --file or stdin (per-project or global)')
+	.option('--project <path>', 'Project path this profile is for (omit for the global profile)')
+	.option('--file <path>', 'Read the profile markdown from this file (else reads stdin)')
+	.option('--pair-count <n>', 'How many decision pairs this profile was synthesized from')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => pianolaSetProfile(options));
 
 pianola
 	.command('log')

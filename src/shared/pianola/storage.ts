@@ -21,6 +21,35 @@ export const PIANOLA_RULES_FILENAME = 'maestro-pianola-rules.json';
 /** Append-only decision audit log (JSON Lines), in the Maestro config dir. */
 export const PIANOLA_DECISIONS_FILENAME = 'pianola-decisions.jsonl';
 
+/** Learned decision profiles (JSON), in the Maestro config dir. */
+export const PIANOLA_PROFILES_FILENAME = 'maestro-pianola-profiles.json';
+
+/** Max characters stored for a single profile (guards against runaway writes). */
+export const PIANOLA_PROFILE_MAX_CHARS = 100_000;
+
+/** One learned decision profile: narrative guidance Pianola reasons against. */
+export interface PianolaProfileEntry {
+	/** Human-readable markdown describing how the user decides. */
+	profile: string;
+	/** Epoch ms of the last write. */
+	updatedAt: number;
+	/** How many decision pairs this profile was synthesized from, if known. */
+	pairCount?: number;
+}
+
+/**
+ * Per-project decision profiles plus an optional global fallback. Keyed by the
+ * session's project path (the cwd from `list agents`). Projects without their own
+ * profile fall back to `global` at read time.
+ */
+export interface PianolaProfiles {
+	global?: PianolaProfileEntry;
+	projects: Record<string, PianolaProfileEntry>;
+}
+
+/** Where a resolved profile came from. */
+export type PianolaProfileSource = 'project' | 'global' | 'none';
+
 /** Result of loading rules, distinguishing "no rules" from "file is malformed". */
 export interface RulesLoadResult {
 	rules: PianolaRule[];
@@ -171,6 +200,56 @@ export function validatePianolaRules(raw: unknown): PianolaRule[] {
 		if (rule) rules.push(rule);
 	}
 	return rules;
+}
+
+/** Validate one untrusted profile entry, or null if the shape is invalid. */
+export function validatePianolaProfileEntry(raw: unknown): PianolaProfileEntry | null {
+	if (!isRecord(raw)) return null;
+	if (typeof raw.profile !== 'string') return null;
+	if (typeof raw.updatedAt !== 'number' || !Number.isFinite(raw.updatedAt)) return null;
+	const entry: PianolaProfileEntry = {
+		profile: raw.profile.slice(0, PIANOLA_PROFILE_MAX_CHARS),
+		updatedAt: raw.updatedAt,
+	};
+	if (typeof raw.pairCount === 'number' && Number.isFinite(raw.pairCount)) {
+		entry.pairCount = raw.pairCount;
+	}
+	return entry;
+}
+
+/**
+ * Validate an untrusted profiles payload, dropping any malformed entries. Always
+ * returns a well-formed object so callers never have to null-check the shape.
+ */
+export function validatePianolaProfiles(raw: unknown): PianolaProfiles {
+	const result: PianolaProfiles = { projects: {} };
+	if (!isRecord(raw)) return result;
+	const globalEntry = validatePianolaProfileEntry(raw.global);
+	if (globalEntry) result.global = globalEntry;
+	if (isRecord(raw.projects)) {
+		for (const [key, value] of Object.entries(raw.projects)) {
+			const entry = validatePianolaProfileEntry(value);
+			if (entry) result.projects[key] = entry;
+		}
+	}
+	return result;
+}
+
+/**
+ * Resolve the profile for a project path: the project's own profile if present,
+ * else the global fallback, else none. Pure so the CLI store and watcher agree.
+ */
+export function resolveProfile(
+	profiles: PianolaProfiles,
+	projectPath?: string
+): { source: PianolaProfileSource; entry: PianolaProfileEntry | null } {
+	if (projectPath && profiles.projects[projectPath]) {
+		return { source: 'project', entry: profiles.projects[projectPath] };
+	}
+	if (profiles.global) {
+		return { source: 'global', entry: profiles.global };
+	}
+	return { source: 'none', entry: null };
 }
 
 // Re-exported so storage consumers get the decision/classification types from
