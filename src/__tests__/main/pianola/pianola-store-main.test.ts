@@ -16,6 +16,7 @@ vi.mock('electron', () => ({
 
 import {
 	readRules,
+	readRulesResult,
 	writeRules,
 	appendDecision,
 	readDecisions,
@@ -110,6 +111,24 @@ describe('rules read/write', () => {
 	it('returns [] for malformed JSON', () => {
 		fs.writeFileSync(path.join(tmpDir, PIANOLA_RULES_FILENAME), '{ not json', 'utf-8');
 		expect(readRules()).toEqual([]);
+	});
+});
+
+describe('readRulesResult malformed signal', () => {
+	it('reports malformed=false when the file is missing', () => {
+		expect(readRulesResult()).toEqual({ rules: [], malformed: false });
+	});
+
+	it('reports malformed=true when the file exists but is unparseable', () => {
+		fs.writeFileSync(path.join(tmpDir, PIANOLA_RULES_FILENAME), '{ not json', 'utf-8');
+		expect(readRulesResult()).toEqual({ rules: [], malformed: true });
+	});
+
+	it('reports malformed=false for a valid file', () => {
+		writeRules([autoAnswerRule('r1')]);
+		const result = readRulesResult();
+		expect(result.malformed).toBe(false);
+		expect(result.rules.map((r) => r.id)).toEqual(['r1']);
 	});
 });
 

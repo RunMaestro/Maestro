@@ -46,14 +46,22 @@ export function ruleAppliesToScope(rule: PianolaRule, ctx: PianolaPolicyContext)
 	}
 }
 
-/** True if a rule constrains what it matches (vs matching everything). */
-export function hasNarrowingPredicate(rule: PianolaRule): boolean {
-	const { match } = rule;
+/**
+ * True if a match block constrains what it matches (vs matching everything).
+ * Exported on its own so the desktop rule editor can apply the exact same
+ * safety check the policy uses, without first constructing a full rule.
+ */
+export function matchHasNarrowingPredicate(match: PianolaRule['match']): boolean {
 	return (
 		!!match.maxRisk ||
 		(!!match.kinds && match.kinds.length > 0) ||
 		(!!match.topicIncludes && match.topicIncludes.length > 0)
 	);
+}
+
+/** True if a rule constrains what it matches (vs matching everything). */
+export function hasNarrowingPredicate(rule: PianolaRule): boolean {
+	return matchHasNarrowingPredicate(rule.match);
 }
 
 /** True if a rule's match conditions are satisfied by the classification. */

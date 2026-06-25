@@ -17,15 +17,11 @@ import {
 	validatePianolaRules,
 	validatePianolaDecisionRecord,
 	type PianolaDecisionRecord,
+	type RulesLoadResult,
 } from '../../shared/pianola/storage';
 import type { PianolaRule } from '../../shared/pianola/types';
 
-/** Result of loading rules, distinguishing "no rules" from "file is malformed". */
-export interface RulesLoadResult {
-	rules: PianolaRule[];
-	/** True when the rules file exists but could not be parsed as JSON. */
-	malformed: boolean;
-}
+export type { RulesLoadResult };
 
 function rulesPath(): string {
 	return path.join(getConfigDirectory(), PIANOLA_RULES_FILENAME);

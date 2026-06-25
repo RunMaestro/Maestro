@@ -16,8 +16,12 @@
 
 import { ipcMain } from 'electron';
 import { withIpcErrorLogging, type CreateHandlerOptions } from '../../utils/ipcHandler';
-import { readRules, writeRules, readDecisions } from '../../pianola/pianola-store-main';
-import { validatePianolaRules } from '../../../shared/pianola/storage';
+import {
+	readRulesResult,
+	writeRules,
+	readDecisions,
+	type RulesLoadResult,
+} from '../../pianola/pianola-store-main';
 import type { PianolaDecisionRecord } from '../../../shared/pianola/storage';
 import type { PianolaRule } from '../../../shared/pianola/types';
 
@@ -55,18 +59,21 @@ export function registerPianolaHandlers(deps: PianolaHandlerDependencies): void 
 
 	const wrappedGetRules = withIpcErrorLogging(
 		handlerOpts('getRules'),
-		async (): Promise<PianolaRule[]> => readRules()
+		// Returns { rules, malformed } so the UI can warn before overwriting a
+		// corrupt hand-edited file rather than silently showing "no rules".
+		async (): Promise<RulesLoadResult> => readRulesResult()
 	);
 	const wrappedSaveRules = withIpcErrorLogging(
 		handlerOpts('saveRules'),
-		async (rules: unknown): Promise<PianolaRule[]> => writeRules(validatePianolaRules(rules))
+		// writeRules validates the untrusted payload at the persistence boundary.
+		async (rules: unknown): Promise<PianolaRule[]> => writeRules(rules)
 	);
 	const wrappedGetDecisions = withIpcErrorLogging(
 		handlerOpts('getDecisions'),
 		async (limit?: number): Promise<PianolaDecisionRecord[]> => readDecisions(limit)
 	);
 
-	ipcMain.handle('pianola:get-rules', async (event): Promise<PianolaRule[]> => {
+	ipcMain.handle('pianola:get-rules', async (event): Promise<RulesLoadResult> => {
 		if (!isPianolaEnabled(settingsStore)) throw new Error('PianolaDisabled');
 		return wrappedGetRules(event);
 	});

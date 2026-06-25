@@ -26,7 +26,13 @@ import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { generateId } from '../../utils/ids';
 import { notifyToast } from '../../stores/notificationStore';
 import { logger } from '../../utils/logger';
+import { captureException } from '../../utils/sentry';
 import { RuleEditor } from './RuleEditor';
+
+/** A 'PianolaDisabled' rejection is the expected feature-off path, not a bug. */
+function isExpectedError(error: unknown): boolean {
+	return error instanceof Error && error.message.includes('PianolaDisabled');
+}
 
 export interface PianolaModalProps {
 	theme: Theme;
@@ -81,18 +87,31 @@ export function PianolaModal({ theme, onClose }: PianolaModalProps) {
 	const [loading, setLoading] = useState(true);
 	const [editing, setEditing] = useState<PianolaRule | null>(null);
 	const [creating, setCreating] = useState(false);
+	// True when the rules file exists but is unparseable. We then block writes so
+	// a corrupt hand-edited file is not silently overwritten with an empty list.
+	const [rulesMalformed, setRulesMalformed] = useState(false);
 
 	const load = useCallback(async () => {
 		setLoading(true);
 		try {
-			const [loadedRules, loadedDecisions] = await Promise.all([
+			const [rulesResult, loadedDecisions] = await Promise.all([
 				window.maestro.pianola.getRules(),
 				window.maestro.pianola.getDecisions(500),
 			]);
-			setRules(loadedRules);
+			setRules(rulesResult.rules);
+			setRulesMalformed(rulesResult.malformed);
 			setDecisions(loadedDecisions);
+			if (rulesResult.malformed) {
+				notifyToast({
+					color: 'orange',
+					title: 'Pianola',
+					message: 'The rules file could not be parsed. Fix it on disk; editing is disabled.',
+					dismissible: true,
+				});
+			}
 		} catch (error) {
 			logger.error('[Pianola] Failed to load', undefined, error);
+			if (!isExpectedError(error)) void captureException(error, { tags: { feature: 'pianola' } });
 			notifyToast({
 				color: 'red',
 				title: 'Pianola',
@@ -109,18 +128,28 @@ export function PianolaModal({ theme, onClose }: PianolaModalProps) {
 
 	const persistRules = useCallback(
 		async (next: PianolaRule[]) => {
+			// Refuse to write over a file we could not read, to avoid clobbering it.
+			if (rulesMalformed) {
+				notifyToast({
+					color: 'orange',
+					title: 'Pianola',
+					message: 'Rules file is malformed. Fix it on disk before editing here.',
+				});
+				return false;
+			}
 			try {
 				const saved = await window.maestro.pianola.saveRules(next);
 				setRules(saved);
 				return true;
 			} catch (error) {
 				logger.error('[Pianola] Failed to save rules', undefined, error);
+				if (!isExpectedError(error)) void captureException(error, { tags: { feature: 'pianola' } });
 				notifyToast({ color: 'red', title: 'Pianola', message: 'Could not save rules.' });
 				void load();
 				return false;
 			}
 		},
-		[load]
+		[load, rulesMalformed]
 	);
 
 	const handleToggleRule = useCallback(
@@ -267,6 +296,7 @@ export function PianolaModal({ theme, onClose }: PianolaModalProps) {
 							theme={theme}
 							rules={sortedRules}
 							loading={loading}
+							malformed={rulesMalformed}
 							onAdd={() => setCreating(true)}
 							onEdit={setEditing}
 							onToggle={handleToggleRule}
@@ -279,6 +309,7 @@ export function PianolaModal({ theme, onClose }: PianolaModalProps) {
 			{/* Rule editor (create or edit) */}
 			{(creating || editing) && (
 				<RuleEditor
+					key={editing?.id ?? 'new'}
 					theme={theme}
 					rule={editing}
 					onCancel={() => {
@@ -430,25 +461,53 @@ interface RulesViewProps {
 	theme: Theme;
 	rules: PianolaRule[];
 	loading: boolean;
+	/** True when the on-disk rules file is corrupt; editing is disabled to avoid clobbering it. */
+	malformed: boolean;
 	onAdd: () => void;
 	onEdit: (rule: PianolaRule) => void;
 	onToggle: (id: string) => void;
 	onDelete: (id: string) => void;
 }
 
-function RulesView({ theme, rules, loading, onAdd, onEdit, onToggle, onDelete }: RulesViewProps) {
+function RulesView({
+	theme,
+	rules,
+	loading,
+	malformed,
+	onAdd,
+	onEdit,
+	onToggle,
+	onDelete,
+}: RulesViewProps) {
 	return (
 		<div className="p-4 space-y-3">
+			{malformed && (
+				<div
+					className="flex items-start gap-2 rounded-md border p-3 text-xs select-text"
+					style={{ borderColor: '#f59e0b55', backgroundColor: '#f59e0b15', color: '#f59e0b' }}
+				>
+					<AlertTriangle className="w-4 h-4 shrink-0" />
+					<span>
+						The rules file on disk is malformed and could not be parsed. Editing is disabled here so
+						it is not overwritten. Fix or remove the file, then refresh.
+					</span>
+				</div>
+			)}
 			<div className="flex items-center justify-between">
 				<p className="text-xs max-w-xl" style={{ color: theme.colors.textDim }}>
 					Rules let Pianola auto-answer low-risk prompts. High-risk prompts always escalate to you,
-					no matter the rules. An auto-answer rule needs a narrowing condition (a kind or topic) and
-					reply text.
+					no matter the rules. An auto-answer rule needs a narrowing condition (max risk, kind, or
+					topic) and reply text.
 				</p>
 				<button
 					onClick={onAdd}
+					disabled={malformed}
 					className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md shrink-0 transition-colors"
-					style={{ backgroundColor: theme.colors.accent, color: theme.colors.bgMain }}
+					style={{
+						backgroundColor: malformed ? theme.colors.border : theme.colors.accent,
+						color: malformed ? theme.colors.textDim : theme.colors.bgMain,
+						cursor: malformed ? 'not-allowed' : 'pointer',
+					}}
 				>
 					<Plus className="w-4 h-4" />
 					Add rule
