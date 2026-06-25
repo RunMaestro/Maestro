@@ -18,8 +18,11 @@ import {
 	validatePianolaRules,
 	validatePianolaDecisionRecord,
 	type PianolaDecisionRecord,
+	type RulesLoadResult,
 } from '../../shared/pianola/storage';
 import type { PianolaRule } from '../../shared/pianola/types';
+
+export type { RulesLoadResult };
 
 /** Resolve the Maestro data dir, matching the CLI's getConfigDir semantics. */
 function pianolaDir(): string {
@@ -35,33 +38,44 @@ function decisionsPath(): string {
 	return path.join(pianolaDir(), PIANOLA_DECISIONS_FILENAME);
 }
 
-/** Read and validate the rules, dropping malformed entries. */
-export function readRules(): PianolaRule[] {
+/**
+ * Read and validate the rules, reporting whether the file was present but
+ * unparseable. Mirrors the CLI's readPianolaRulesResult so the desktop can warn
+ * (and avoid silently overwriting) a corrupt hand-edited file. Individual invalid
+ * rules are still dropped.
+ */
+export function readRulesResult(): RulesLoadResult {
 	let content: string;
 	try {
 		content = fs.readFileSync(rulesPath(), 'utf-8');
 	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { rules: [], malformed: false };
 		throw error;
 	}
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(content);
 	} catch {
-		return [];
+		return { rules: [], malformed: true };
 	}
 	const raw = Array.isArray(parsed)
 		? parsed
 		: ((parsed as { rules?: unknown } | null)?.rules ?? []);
-	return validatePianolaRules(raw);
+	return { rules: validatePianolaRules(raw), malformed: false };
+}
+
+/** Read and validate the rules, dropping malformed entries. */
+export function readRules(): PianolaRule[] {
+	return readRulesResult().rules;
 }
 
 /**
- * Persist the full rules list (validated first; invalid entries are rejected).
- * Written atomically via a temp file + rename so a concurrent reader never sees
- * a partial file.
+ * Persist the full rules list. Accepts untrusted input (the renderer sends it
+ * over IPC): it is validated here, the persistence boundary, so invalid entries
+ * are dropped and one bad rule cannot corrupt the file. Written atomically via a
+ * temp file + rename so a concurrent reader never sees a partial file.
  */
-export function writeRules(rules: PianolaRule[]): PianolaRule[] {
+export function writeRules(rules: unknown): PianolaRule[] {
 	const validated = validatePianolaRules(rules);
 	const dir = pianolaDir();
 	if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });

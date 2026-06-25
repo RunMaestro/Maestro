@@ -21,6 +21,13 @@ export const PIANOLA_RULES_FILENAME = 'maestro-pianola-rules.json';
 /** Append-only decision audit log (JSON Lines), in the Maestro config dir. */
 export const PIANOLA_DECISIONS_FILENAME = 'pianola-decisions.jsonl';
 
+/** Result of loading rules, distinguishing "no rules" from "file is malformed". */
+export interface RulesLoadResult {
+	rules: PianolaRule[];
+	/** True when the rules file exists but could not be parsed as JSON. */
+	malformed: boolean;
+}
+
 /** One recorded decision in the audit log. */
 export interface PianolaDecisionRecord {
 	id: string;

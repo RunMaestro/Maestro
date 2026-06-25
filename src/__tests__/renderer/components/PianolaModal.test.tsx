@@ -76,7 +76,7 @@ describe('newBlankRule', () => {
 describe('PianolaModal', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
-		vi.mocked(window.maestro.pianola.getRules).mockResolvedValue([]);
+		vi.mocked(window.maestro.pianola.getRules).mockResolvedValue({ rules: [], malformed: false });
 		vi.mocked(window.maestro.pianola.getDecisions).mockResolvedValue([]);
 	});
 
@@ -110,6 +110,17 @@ describe('PianolaModal', () => {
 		expect(await screen.findByText('New rule')).toBeInTheDocument();
 		// The default auto-answer needs reply text, so Save is blocked until provided.
 		expect(screen.getByText('An auto-answer rule needs reply text.')).toBeInTheDocument();
+	});
+
+	it('warns and disables editing when the rules file is malformed', async () => {
+		vi.mocked(window.maestro.pianola.getRules).mockResolvedValue({ rules: [], malformed: true });
+		render(<PianolaModal theme={theme} onClose={vi.fn()} />);
+		await screen.findByText('No decisions recorded yet.');
+		fireEvent.click(screen.getByText('Rules (0)'));
+
+		expect(await screen.findByText(/rules file on disk is malformed/i)).toBeInTheDocument();
+		const addButton = screen.getByText('Add rule').closest('button');
+		expect(addButton).toBeDisabled();
 	});
 
 	it('renders a high-risk escalation decision', async () => {

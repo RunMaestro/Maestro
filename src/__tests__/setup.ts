@@ -620,7 +620,7 @@ const mockMaestro = {
 	},
 	// Pianola API (autonomous manager: rules + decision log)
 	pianola: {
-		getRules: vi.fn().mockResolvedValue([]),
+		getRules: vi.fn().mockResolvedValue({ rules: [], malformed: false }),
 		saveRules: vi.fn().mockImplementation((rules: unknown) => Promise.resolve(rules)),
 		getDecisions: vi.fn().mockResolvedValue([]),
 	},

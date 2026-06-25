@@ -9,6 +9,7 @@ import type {
 	PianolaActionKind,
 	PianolaRisk,
 } from '../../../shared/pianola/types';
+import { matchHasNarrowingPredicate } from '../../../shared/pianola/pianola-policy';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { RULE_SCOPES, RULE_ACTIONS, RULE_RISKS, RULE_KINDS, newBlankRule } from './PianolaModal';
@@ -63,20 +64,33 @@ export function RuleEditor({ theme, rule, onCancel, onSave }: RuleEditorProps) {
 	const [draft, setDraft] = useState<Draft>(() => toDraft(base));
 
 	const isAutoAnswer = draft.action === 'auto_answer';
-	const hasNarrowing =
-		draft.kinds.length > 0 ||
-		draft.topicIncludes
+	const answerTrimmed = draft.answer.trim();
+
+	// Build the match block exactly as it will be persisted, so the narrowing
+	// check uses the same shape the policy engine evaluates.
+	const match = useMemo<PianolaRule['match']>(() => {
+		const topicIncludes = draft.topicIncludes
 			.split(',')
 			.map((s) => s.trim())
-			.filter(Boolean).length > 0;
-	const answerTrimmed = draft.answer.trim();
+			.filter(Boolean);
+		const m: PianolaRule['match'] = {};
+		if (draft.maxRisk) m.maxRisk = draft.maxRisk;
+		if (draft.kinds.length > 0) m.kinds = draft.kinds;
+		if (topicIncludes.length > 0) m.topicIncludes = topicIncludes;
+		return m;
+	}, [draft.maxRisk, draft.kinds, draft.topicIncludes]);
+
+	// Mirror the policy's safety contract exactly (see hasNarrowingPredicate in
+	// pianola-policy.ts): max risk also counts as a narrowing predicate, so a
+	// max-risk-only auto-answer rule the watcher would honor is savable here too.
+	const hasNarrowing = matchHasNarrowingPredicate(match);
 
 	const validationError = useMemo(() => {
 		if (draft.scope !== 'global' && draft.scopeId.trim().length === 0) {
 			return `A ${draft.scope} rule needs a ${draft.scope === 'project' ? 'project path' : 'tab id'}.`;
 		}
 		if (isAutoAnswer && !hasNarrowing) {
-			return 'An auto-answer rule needs a narrowing condition: pick a kind or add a topic.';
+			return 'An auto-answer rule needs a narrowing condition: set a max risk, pick a kind, or add a topic.';
 		}
 		if (isAutoAnswer && answerTrimmed.length === 0) {
 			return 'An auto-answer rule needs reply text.';
@@ -86,14 +100,6 @@ export function RuleEditor({ theme, rule, onCancel, onSave }: RuleEditorProps) {
 
 	const handleSave = () => {
 		if (validationError) return;
-		const topicIncludes = draft.topicIncludes
-			.split(',')
-			.map((s) => s.trim())
-			.filter(Boolean);
-		const match: PianolaRule['match'] = {};
-		if (draft.maxRisk) match.maxRisk = draft.maxRisk;
-		if (draft.kinds.length > 0) match.kinds = draft.kinds;
-		if (topicIncludes.length > 0) match.topicIncludes = topicIncludes;
 
 		const next: PianolaRule = {
 			id: base.id,
@@ -258,8 +264,7 @@ export function RuleEditor({ theme, rule, onCancel, onSave }: RuleEditorProps) {
 					{/* Match: kinds */}
 					<div>
 						<label className="block text-xs mb-1" style={labelStyle}>
-							Kinds{' '}
-							{isAutoAnswer && <span style={{ color: theme.colors.textDim }}>(narrowing)</span>}
+							Kinds
 						</label>
 						<div className="flex gap-1">
 							{RULE_KINDS.map((k) => {

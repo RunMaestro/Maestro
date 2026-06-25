@@ -164,7 +164,7 @@ import type { DurationPercentiles } from '../shared/percentiles';
 import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestro-cli';
 import type { GitWorktreeSetupResult, GitWorktreeCheckoutResult } from '../main/preload/git';
 import type { PianolaRule } from '../shared/pianola/types';
-import type { PianolaDecisionRecord } from '../shared/pianola/storage';
+import type { PianolaDecisionRecord, RulesLoadResult } from '../shared/pianola/storage';
 
 interface MaestroAPI {
 	// Context merging API (for session context transfer and grooming)
@@ -3481,7 +3481,7 @@ interface MaestroAPI {
 	// Pianola API (autonomous manager: rules + decision log)
 	// All channels reject with 'PianolaDisabled' when the Encore flag is off.
 	pianola: {
-		getRules: () => Promise<PianolaRule[]>;
+		getRules: () => Promise<RulesLoadResult>;
 		saveRules: (rules: PianolaRule[]) => Promise<PianolaRule[]>;
 		getDecisions: (limit?: number) => Promise<PianolaDecisionRecord[]>;
 	};

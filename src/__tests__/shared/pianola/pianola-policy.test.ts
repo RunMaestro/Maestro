@@ -9,6 +9,8 @@ import {
 	selectRule,
 	ruleAppliesToScope,
 	ruleMatchesClassification,
+	hasNarrowingPredicate,
+	matchHasNarrowingPredicate,
 } from '../../../shared/pianola/pianola-policy';
 import type {
 	PianolaClassification,
@@ -109,6 +111,24 @@ describe('decide - rule actions', () => {
 		const d = decide(classification({ kind: 'blocked', risk: 'low' }), [r]);
 		expect(d.action).toBe('ignore');
 		expect(d.matchedRuleId).toBe(r.id);
+	});
+});
+
+describe('matchHasNarrowingPredicate', () => {
+	it('treats maxRisk, kinds, or topicIncludes as narrowing', () => {
+		expect(matchHasNarrowingPredicate({ maxRisk: 'low' })).toBe(true);
+		expect(matchHasNarrowingPredicate({ kinds: ['question'] })).toBe(true);
+		expect(matchHasNarrowingPredicate({ topicIncludes: ['naming'] })).toBe(true);
+	});
+
+	it('treats an empty match as not narrowing', () => {
+		expect(matchHasNarrowingPredicate({})).toBe(false);
+		expect(matchHasNarrowingPredicate({ kinds: [], topicIncludes: [] })).toBe(false);
+	});
+
+	it('hasNarrowingPredicate delegates to the match check', () => {
+		expect(hasNarrowingPredicate(rule({ match: { maxRisk: 'low' } }))).toBe(true);
+		expect(hasNarrowingPredicate(rule({ match: {} }))).toBe(false);
 	});
 });
 

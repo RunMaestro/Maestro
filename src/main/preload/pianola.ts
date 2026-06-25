@@ -9,15 +9,19 @@
 
 import { ipcRenderer } from 'electron';
 import type { PianolaRule } from '../../shared/pianola/types';
-import type { PianolaDecisionRecord } from '../../shared/pianola/storage';
+import type { PianolaDecisionRecord, RulesLoadResult } from '../../shared/pianola/storage';
 
 /**
  * Creates the Pianola API object for contextBridge exposure.
  */
 export function createPianolaApi() {
 	return {
-		/** Read all auto-answer rules (validated; malformed entries dropped). */
-		getRules: (): Promise<PianolaRule[]> => ipcRenderer.invoke('pianola:get-rules'),
+		/**
+		 * Read auto-answer rules. Returns { rules, malformed }: `malformed` is true
+		 * when the rules file exists but is unparseable, so the UI can warn instead
+		 * of silently showing "no rules" (and risking an overwrite).
+		 */
+		getRules: (): Promise<RulesLoadResult> => ipcRenderer.invoke('pianola:get-rules'),
 
 		/** Persist the full rules list. Returns the validated, saved rules. */
 		saveRules: (rules: PianolaRule[]): Promise<PianolaRule[]> =>
