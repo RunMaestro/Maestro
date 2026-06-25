@@ -378,6 +378,9 @@ export interface PianolaLearnOptions {
 	limit?: string;
 	out?: string;
 	maxPairs?: string;
+	since?: string;
+	project?: string;
+	exclude?: string;
 	json?: boolean;
 }
 
@@ -469,6 +472,25 @@ export function pianolaLearn(options: PianolaLearnOptions): void {
 	const sessionLimit = options.limit
 		? Math.max(1, parseInt(options.limit, 10) || LEARN_DEFAULT_SESSION_LIMIT)
 		: LEARN_DEFAULT_SESSION_LIMIT;
+
+	// --since filters transcripts by last-modified date (cheap, before parsing).
+	let sinceMs = 0;
+	if (options.since) {
+		const parsed = Date.parse(options.since);
+		if (isNaN(parsed)) {
+			const message = `--since must be a date (e.g. 2026-06-01), got "${options.since}"`;
+			if (options.json) console.log(JSON.stringify({ success: false, error: message }));
+			else console.error(message);
+			process.exit(1);
+		}
+		sinceMs = parsed;
+	}
+
+	// --project / --exclude scope by the session's originating path (cwd), so the
+	// user can learn from representative work and drop noise (e.g. dev sessions).
+	const projectNeedle = options.project?.toLowerCase();
+	const excludeNeedle = options.exclude?.toLowerCase();
+
 	const home = os.homedir();
 	const allPairs: DecisionPair[] = [];
 	const scanned: Record<string, { files: number; sessionsWithDecisions: number }> = {};
@@ -483,11 +505,21 @@ export function pianolaLearn(options: PianolaLearnOptions): void {
 				? (n: string): boolean => n.endsWith('.jsonl')
 				: (n: string): boolean => /^rollout-.*\.jsonl$/i.test(n);
 		const files = collectTranscriptFiles(dir, match)
+			.filter((f) => f.mtime >= sinceMs)
 			.sort((a, b) => b.mtime - a.mtime)
 			.slice(0, sessionLimit);
 		let sessionsWithDecisions = 0;
 		for (const file of files) {
-			const pairs = minePairsFromFile(agent, file.path);
+			let pairs = minePairsFromFile(agent, file.path);
+			// Path-scope filters: a pair with no known projectPath is kept only when
+			// no --project filter is set (we cannot confirm a match), and is never
+			// dropped by --exclude (we cannot confirm exclusion).
+			if (projectNeedle) {
+				pairs = pairs.filter((p) => p.projectPath?.toLowerCase().includes(projectNeedle));
+			}
+			if (excludeNeedle) {
+				pairs = pairs.filter((p) => !p.projectPath?.toLowerCase().includes(excludeNeedle));
+			}
 			if (pairs.length > 0) sessionsWithDecisions += 1;
 			allPairs.push(...pairs);
 		}

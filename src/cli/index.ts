@@ -858,6 +858,12 @@ pianola
 	)
 	.option('--agent <list>', 'Comma list of agents to crawl: claude-code,codex (default both)')
 	.option('--limit <n>', 'Max sessions per agent, newest first (default 300)')
+	.option('--since <date>', 'Only crawl transcripts modified on/after this date (e.g. 2026-06-01)')
+	.option(
+		'--project <substr>',
+		'Only keep decisions from sessions whose path contains this substring'
+	)
+	.option('--exclude <substr>', 'Drop decisions from sessions whose path contains this substring')
 	.option(
 		'--max-pairs <n>',
 		'Max decision pairs to print inline when --out is not used (default 200)'

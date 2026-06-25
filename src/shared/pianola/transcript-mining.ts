@@ -13,12 +13,7 @@
  * Parsing reuses the existing pure brain: enrichWithAwaitingInput + classifyMessages.
  */
 
-import type {
-	PianolaMessage,
-	PianolaClassification,
-	PianolaSignalKind,
-	PianolaRisk,
-} from './types';
+import type { PianolaMessage, PianolaClassification } from './types';
 import { classifyMessages } from './pianola-classifier';
 import { enrichWithAwaitingInput } from './pianola-awaiting-detector';
 
@@ -45,22 +40,18 @@ export interface DecisionPair {
 	repliedAt: string;
 }
 
-/** Per-topic rollup with polarity split, for surfacing dominant patterns. */
-export interface TopicRollup {
-	topic: string;
-	count: number;
-	affirmative: number;
-	negative: number;
-	other: number;
-}
-
 /** Aggregate view over a set of decision pairs. */
 export interface DecisionAggregates {
 	total: number;
-	byKind: Record<string, number>;
 	byRisk: Record<string, number>;
 	byPolarity: Record<ReplyPolarity, number>;
-	topTopics: TopicRollup[];
+	/**
+	 * risk -> polarity -> count. The meaningful cross-tab: it shows how the user
+	 * tends to respond at each risk level (e.g. low-risk asks are mostly approved,
+	 * high-risk asks get substantive replies). Replaces topic clustering, which was
+	 * noise: the classifier's `topic` is a per-ask snippet, not a stable category.
+	 */
+	byRiskPolarity: Record<string, Record<ReplyPolarity, number>>;
 }
 
 /** Max characters kept for ask/reply excerpts in the corpus. */
@@ -194,9 +185,15 @@ export function replyPolarity(reply: string): ReplyPolarity {
 
 /**
  * Extract decision pairs from one transcript's normalized messages. For each
- * assistant turn flagged as awaiting input, classify a short window ending at
- * that turn and pair it with the next non-empty user turn. Turns that classify
- * as 'none' (no real ask) are skipped.
+ * assistant turn followed by a user reply, classify a short window ending at
+ * that turn; if it reads as a real ask (kind !== 'none'), pair it with the reply.
+ *
+ * The trigger is the classifier itself, not the strict structured awaiting-input
+ * detector. classifyMessages uses the structured signal when present and falls
+ * back to heuristics (question phrases, choice markers, trailing '?'), so this
+ * captures prose-style asks the structured detector misses. That is the right
+ * recall for mining: the LLM filters false positives downstream in Phase 2, and
+ * the live watcher is untouched (it keeps its own conservative gating).
  */
 export function extractDecisionPairs(
 	messages: readonly PianolaMessage[],
@@ -207,7 +204,7 @@ export function extractDecisionPairs(
 
 	for (let i = 0; i < enriched.length; i++) {
 		const turn = enriched[i];
-		if (turn.role !== 'assistant' || !turn.awaitingInput) continue;
+		if (turn.role !== 'assistant') continue;
 
 		// Find the user's reply: the next non-empty user turn after the ask.
 		let reply: PianolaMessage | undefined;
@@ -239,37 +236,23 @@ export function extractDecisionPairs(
 	return pairs;
 }
 
-/** Roll a set of decision pairs up into counts and dominant topics. */
-export function aggregateDecisionPairs(
-	pairs: readonly DecisionPair[],
-	topN = 15
-): DecisionAggregates {
-	const byKind: Record<string, number> = {};
+function emptyPolarityCounts(): Record<ReplyPolarity, number> {
+	return { affirmative: 0, negative: 0, other: 0 };
+}
+
+/** Roll a set of decision pairs up into risk counts and a risk x polarity cross-tab. */
+export function aggregateDecisionPairs(pairs: readonly DecisionPair[]): DecisionAggregates {
 	const byRisk: Record<string, number> = {};
-	const byPolarity: Record<ReplyPolarity, number> = { affirmative: 0, negative: 0, other: 0 };
-	const topicMap = new Map<string, TopicRollup>();
+	const byPolarity = emptyPolarityCounts();
+	const byRiskPolarity: Record<string, Record<ReplyPolarity, number>> = {};
 
 	for (const pair of pairs) {
-		const kind: PianolaSignalKind = pair.classification.kind;
-		const risk: PianolaRisk = pair.classification.risk;
-		byKind[kind] = (byKind[kind] ?? 0) + 1;
+		const risk = pair.classification.risk;
 		byRisk[risk] = (byRisk[risk] ?? 0) + 1;
 		byPolarity[pair.polarity] += 1;
-
-		const topic = pair.classification.topic || '(untopiced)';
-		const rollup = topicMap.get(topic) ?? {
-			topic,
-			count: 0,
-			affirmative: 0,
-			negative: 0,
-			other: 0,
-		};
-		rollup.count += 1;
-		rollup[pair.polarity] += 1;
-		topicMap.set(topic, rollup);
+		if (!byRiskPolarity[risk]) byRiskPolarity[risk] = emptyPolarityCounts();
+		byRiskPolarity[risk][pair.polarity] += 1;
 	}
 
-	const topTopics = [...topicMap.values()].sort((a, b) => b.count - a.count).slice(0, topN);
-
-	return { total: pairs.length, byKind, byRisk, byPolarity, topTopics };
+	return { total: pairs.length, byRisk, byPolarity, byRiskPolarity };
 }

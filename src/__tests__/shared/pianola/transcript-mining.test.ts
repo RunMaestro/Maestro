@@ -204,40 +204,52 @@ describe('extractDecisionPairs', () => {
 			0
 		);
 	});
+	it('captures heuristic prose asks the strict structured detector would miss', () => {
+		// "let me know" is a question phrase the classifier catches heuristically,
+		// even without a structured awaiting-input signal - this is the recall gain.
+		const messages: PianolaMessage[] = [
+			msg('user', 'Wire up the export.'),
+			msg('assistant', 'I can keep the old format or switch to JSON. Let me know how to proceed.'),
+			msg('user', 'switch to JSON'),
+		];
+		const pairs = extractDecisionPairs(messages, { agent: 'claude-code', sessionId: 's4' });
+		expect(pairs).toHaveLength(1);
+		expect(pairs[0].classification.kind).not.toBe('none');
+		expect(pairs[0].reply).toBe('switch to JSON');
+	});
 });
 
 describe('aggregateDecisionPairs', () => {
-	it('rolls up counts and dominant topics with polarity splits', () => {
-		const base: Omit<DecisionPair, 'polarity' | 'reply'> = {
+	function pair(risk: 'low' | 'medium' | 'high', polarity: DecisionPair['polarity']): DecisionPair {
+		return {
 			agent: 'claude-code',
 			sessionId: 's',
 			classification: {
 				kind: 'question',
-				risk: 'low',
-				topic: 'run tests',
+				risk,
+				topic: 't',
 				confidence: 'high',
 				evidence: { messageId: null, reason: 'test', structured: true },
 			},
-			ask: 'run tests?',
+			ask: 'ask?',
+			reply: 'r',
+			polarity,
 			askedAt: 't1',
 			repliedAt: 't2',
 		};
+	}
+	it('rolls up risk counts, polarity counts, and the risk x polarity cross-tab', () => {
 		const pairs: DecisionPair[] = [
-			{ ...base, reply: 'yes', polarity: 'affirmative' },
-			{ ...base, reply: 'yep', polarity: 'affirmative' },
-			{ ...base, reply: 'no', polarity: 'negative' },
+			pair('low', 'affirmative'),
+			pair('low', 'affirmative'),
+			pair('low', 'negative'),
+			pair('high', 'other'),
 		];
 		const agg = aggregateDecisionPairs(pairs);
-		expect(agg.total).toBe(3);
-		expect(agg.byKind.question).toBe(3);
-		expect(agg.byRisk.low).toBe(3);
-		expect(agg.byPolarity.affirmative).toBe(2);
-		expect(agg.byPolarity.negative).toBe(1);
-		expect(agg.topTopics[0]).toMatchObject({
-			topic: 'run tests',
-			count: 3,
-			affirmative: 2,
-			negative: 1,
-		});
+		expect(agg.total).toBe(4);
+		expect(agg.byRisk).toEqual({ low: 3, high: 1 });
+		expect(agg.byPolarity).toEqual({ affirmative: 2, negative: 1, other: 1 });
+		expect(agg.byRiskPolarity.low).toEqual({ affirmative: 2, negative: 1, other: 0 });
+		expect(agg.byRiskPolarity.high).toEqual({ affirmative: 0, negative: 0, other: 1 });
 	});
 });
