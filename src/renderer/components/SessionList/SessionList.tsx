@@ -1162,26 +1162,18 @@ function SessionListInner(props: SessionListProps) {
 						</div>
 					)}
 
-					{/* PIANOLA SECTION - the single pinned manager agent, rendered at the
-					    very top of the list. Gated by the pianola Encore flag; hidden when
-					    filtering by unread agents. Excluded from all normal categories. */}
+					{/* PIANOLA - the single pinned manager agent, rendered as one clean row at
+					    the very top of the list (no section header or bordered box, so it reads
+					    as "the manager, pinned" rather than a category). A pin marker on the row
+					    distinguishes it; a divider sets it apart from the sections below. Gated by
+					    the pianola Encore flag; hidden when filtering by unread agents. Excluded
+					    from all normal categories. */}
 					{pianolaEnabled && pianolaSession && !showUnreadAgentsOnly && (
 						<div className="mb-1">
-							<div
-								className="w-full px-3 py-1.5 flex items-center gap-2 text-xs font-bold uppercase tracking-wider"
-								style={{ color: theme.colors.accent }}
-							>
-								<Bot className="w-3.5 h-3.5" />
-								<span>Pianola</span>
-							</div>
-							<div
-								className="flex flex-col border-l ml-4"
-								style={{ borderColor: theme.colors.accent }}
-							>
-								{renderSessionWithWorktrees(pianolaSession, 'ungrouped', {
-									keyPrefix: 'pianola',
-								})}
-							</div>
+							{renderSessionWithWorktrees(pianolaSession, 'flat', {
+								keyPrefix: 'pianola',
+							})}
+							<div className="mx-3 mt-1 border-t" style={{ borderColor: theme.colors.border }} />
 						</div>
 					)}
 

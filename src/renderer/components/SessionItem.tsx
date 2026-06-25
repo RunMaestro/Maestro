@@ -8,6 +8,7 @@ import {
 	Server,
 	FolderTree,
 	ChevronRight,
+	Pin,
 } from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
 import { WorktreePill } from './ui/WorktreePill';
@@ -331,6 +332,17 @@ export const SessionItem = memo(function SessionItem({
 								aria-label="Parent agent with worktrees"
 							>
 								<FolderTree size={10} style={{ color: theme.colors.textDim }} />
+							</span>
+						)}
+						{/* Pinned-manager marker: the single Pianola agent is pinned at the top
+						    of the Left Bar; the pin distinguishes it without a section header. */}
+						{session.isPianola && (
+							<span
+								className="shrink-0 inline-flex"
+								title="Pinned manager agent"
+								aria-label="Pinned manager agent"
+							>
+								<Pin size={11} style={{ color: theme.colors.accent }} />
 							</span>
 						)}
 						<span
