@@ -76,6 +76,63 @@ When you are unsure how risky something is, ask. It is always fine to propose a 
 5. Start a background `pianola watch` on each `tabId` so the conversations are babysat.
 6. Report back: each task, the agent and tab handling it, and that watching is on. Tell the user that low-risk prompts will be auto-answered per their rules and anything else will be escalated to them.
 
+The flow above is for INDEPENDENT tasks you dispatch and babysit yourself. When the tasks depend on each other, use a plan and the orchestrator instead (next section).
+
+## Orchestrating a task DAG
+
+When the user gives you several tasks that are INTERDEPENDENT (one cannot start until another finishes), do not hand-dispatch and babysit each one. Author a plan and let the orchestrator drive it. The orchestrator dispatches each task only once its `dependsOn` tasks are done, caps how many run at once, notices when a task completes or fails, and blocks the dependents of any failed task so nothing runs on a broken foundation.
+
+A plan is JSON with this shape:
+
+```json
+{
+	"id": "ship-feature-x",
+	"title": "Ship feature X",
+	"createdAt": 1719000000000,
+	"tasks": [
+		{
+			"id": "schema",
+			"title": "Add the DB schema",
+			"prompt": "Add the users table migration and run it.",
+			"dependsOn": [],
+			"status": "pending"
+		},
+		{
+			"id": "api",
+			"title": "Build the API",
+			"prompt": "Add the REST endpoints for users.",
+			"dependsOn": ["schema"],
+			"status": "pending",
+			"agentType": "claude-code"
+		},
+		{
+			"id": "tests",
+			"title": "Write the tests",
+			"prompt": "Write integration tests for the users API.",
+			"dependsOn": ["api"],
+			"status": "pending"
+		}
+	]
+}
+```
+
+Every task starts with `"status": "pending"`. `dependsOn` lists the ids that must reach `done` first (an empty array means it can start immediately). Optional per task: `agentType` (provider for a freshly created agent, defaults to `claude-code`), `agentId` (reuse an existing agent instead of creating one), and `cwd` (working directory for a created agent).
+
+To run a plan:
+
+1. Write the plan JSON to a temp file, then save it (the CLI validates it and rejects cycles, unknown dependencies, and bad shape):
+   ```bash
+   node "$MAESTRO_CLI_JS" pianola plan set --file /tmp/plan.json --json
+   ```
+   Inspect saved plans with `node "$MAESTRO_CLI_JS" pianola plan list --json` and one plan with `node "$MAESTRO_CLI_JS" pianola plan show <planId> --json`.
+2. After the user approves the plan, run it:
+   ```bash
+   node "$MAESTRO_CLI_JS" pianola orchestrate <planId>
+   ```
+   Use `--concurrency <n>` to cap how many tasks run at once (default 3), and `--interval <seconds>` to set the poll cadence. Run it in the background with `nohup ... &` if you want to stay free to talk, the same way you background a `pianola watch`.
+
+The orchestrator creates or reuses an agent per task, dispatches the task's prompt when its dependencies are done, and advances the DAG as tasks finish. A failed task fires a red notification and blocks everything downstream of it. Authoring and running a plan creates and dispatches work, so confirm the plan with the user first, exactly as you would before any dispatch.
+
 ## When the user states a standing preference
 
 If the user says something like "always let agents run the test suite" or "never auto-approve deleting files," translate it into a rule with `add-rule`, then tell the user exactly what you created (scope, action, conditions). Suggest `escalate` when they want to be asked rather than auto-answered.
