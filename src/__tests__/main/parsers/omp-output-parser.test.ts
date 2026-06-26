@@ -80,4 +80,31 @@ describe('OmpOutputParser', () => {
 		expect(parser.isResultMessage(finalEvent!)).toBe(true);
 		expect(finalEvent).toMatchObject({ type: 'result', text: 'ok' });
 	});
+
+	it('does not emit an empty result when agent_end has an empty messages array', () => {
+		const event = parser.parseJsonObject({ type: 'agent_end', messages: [] });
+
+		expect(event).not.toBeNull();
+		expect(event!.type).toBe('system');
+		expect(parser.isResultMessage(event!)).toBe(false);
+	});
+
+	it('does not emit an empty result when agent_end omits the messages array', () => {
+		const event = parser.parseJsonObject({ type: 'agent_end' });
+
+		expect(event).not.toBeNull();
+		expect(event!.type).toBe('system');
+		expect(parser.isResultMessage(event!)).toBe(false);
+	});
+
+	it('does not emit a result when agent_end carries only a user message', () => {
+		const event = parser.parseJsonObject({
+			type: 'agent_end',
+			messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+		});
+
+		expect(event).not.toBeNull();
+		expect(event!.type).toBe('system');
+		expect(parser.isResultMessage(event!)).toBe(false);
+	});
 });

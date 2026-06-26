@@ -156,9 +156,16 @@ export class OmpOutputParser implements AgentOutputParser {
 						raw: event,
 					};
 				}
+				if (!finalMessage) {
+					// No assistant message in the final transcript (empty or missing
+					// `messages`). Return a non-result event so the stdout handler does
+					// not mark output as emitted with an empty string; the exit fallback
+					// then flushes the assembled streamed text the user already saw.
+					return { type: 'system', sessionId, raw: event };
+				}
 				return {
 					type: 'result',
-					text: finalMessage ? this.extractMessageText(finalMessage) : '',
+					text: this.extractMessageText(finalMessage),
 					sessionId,
 					raw: event,
 				};

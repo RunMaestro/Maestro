@@ -429,8 +429,11 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		args: [],
 		batchModePrefix: ['-p'],
 		jsonOutputArgs: ['--mode', 'json'],
-		noPromptSeparator: true,
+		// No noPromptSeparator: use Maestro's default '--' end-of-options separator
+		// before the prompt. omp supports '--', so prompts beginning with '-' or
+		// '---' (markdown front matter) reach the model instead of being parsed as flags.
 		resumeArgs: (sessionId: string) => ['--resume', sessionId],
+		noToolsArgs: ['--no-tools'], // Tab naming disables all tools so a task-like first message yields a name, not a real agentic run (mirrors Pi)
 		modelArgs: (modelId: string) => ['--model', modelId],
 		workingDirArgs: (dir: string) => ['--cwd', dir],
 		imageArgs: (imagePath: string) => [`@${imagePath}`],

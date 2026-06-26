@@ -295,6 +295,10 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsGroupChatModeration: false,
 		usesJsonLineOutput: true,
 		usesCombinedContextWindow: false,
+		// omp exposes only the inline `--append-system-prompt` flag, not the
+		// `--append-system-prompt-file` variant that Maestro's Windows-local
+		// delivery path emits when this is true. Enabling it would break omp on
+		// Windows (unknown flag), and the flag name is not overridable per agent.
 		supportsAppendSystemPrompt: false,
 		supportsProjectMemory: false,
 	},
