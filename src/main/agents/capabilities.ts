@@ -170,15 +170,15 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 	 *
 	 * Qwen Code is a Gemini CLI fork that exposes the same stream-json headless
 	 * interface. Capabilities mirror the Gemini/Claude stream-json integration.
-	 * Resume and session storage are deferred until verified against a live
+	 * Session storage is deferred until verified against a live
 	 * Coding-plan account (beta scope).
 	 */
 	'qwen3-coder': {
-		supportsResume: false, // Defer until --resume verified in headless mode
+		supportsResume: true, // --resume <sessionId> headless resume (resumeArgs wired)
 		supportsReadOnlyMode: false, // Prompt-only enforcement via -y
 		supportsJsonOutput: true,
 		supportsSessionId: true,
-		supportsImageInput: true, // Qwen is multimodal; imageArgs unset for beta
+		supportsImageInput: false, // No image CLI args wired (imageArgs undefined); enable when wired
 		supportsImageInputOnResume: false,
 		supportsSlashCommands: false,
 		supportsSessionStorage: false, // Deferred to keep beta scope

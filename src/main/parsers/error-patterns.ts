@@ -1062,6 +1062,18 @@ const QWEN_ERROR_PATTERNS: AgentErrorPatterns = {
 			recoverable: false,
 		},
 	],
+	session_not_found: [
+		{
+			pattern: /session.*not found|no conversation found with session id/i,
+			message: 'Session not found. Starting fresh conversation.',
+			recoverable: true,
+		},
+		{
+			pattern: /invalid.*session/i,
+			message: 'Invalid session. Starting fresh conversation.',
+			recoverable: true,
+		},
+	],
 };
 
 // ============================================================================
