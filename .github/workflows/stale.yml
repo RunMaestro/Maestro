@@ -24,6 +24,7 @@ on:
         default: true
 
 permissions:
+  actions: write
   issues: write
   pull-requests: write
 
@@ -40,6 +41,7 @@ jobs:
       # sure it exists (idempotent: --force creates or updates) so the policy
       # actually takes effect on a repo that has no "stale" label yet.
       - name: Ensure the "stale" label exists
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run == false }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: >
@@ -59,7 +61,7 @@ jobs:
           days-before-issue-stale: 60
           days-before-issue-close: 14
           stale-issue-label: stale
-          exempt-issue-labels: 'pinned,security,up next,back burner,approved,blocking'
+          exempt-issue-labels: 'pinned,security,up next,back burner,approved,blocking,high-priority'
           stale-issue-message: >
             This issue has been automatically marked as stale because it has had
             no activity for 60 days. It will be closed in 14 days if no further
@@ -74,7 +76,7 @@ jobs:
           days-before-pr-stale: 60
           days-before-pr-close: 14
           stale-pr-label: stale
-          exempt-pr-labels: 'pinned,security,approved,blocking,dependencies'
+          exempt-pr-labels: 'pinned,security,approved,blocking,dependencies,high-priority'
           exempt-draft-pr: true
           stale-pr-message: >
             This pull request has been automatically marked as stale because it
