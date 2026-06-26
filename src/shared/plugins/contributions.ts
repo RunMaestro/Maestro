@@ -109,6 +109,28 @@ export interface PanelContribution {
 	entry: string;
 }
 
+/**
+ * A runtime agent a (tier-1) plugin registers - a new entry in the Left Bar
+ * backed by a plugin-declared CLI. This is the additive runtime counterpart to
+ * the compile-time AGENT_IDS tuple: built-in agents keep their static union (and
+ * exhaustiveness), runtime agents are looked up by id at runtime.
+ *
+ * `binaryName` + `baseArgs` describe how to launch the CLI. `capabilities` is a
+ * boolean feature map (unknown keys dropped); the host fills sane defaults for
+ * any it does not recognize. NOTE: actually SPAWNING a runtime agent is a
+ * separate, security-reviewed wiring step (arbitrary binary execution) and is
+ * intentionally not enabled by registration alone.
+ */
+export interface AgentContribution {
+	id: string;
+	localId: string;
+	pluginId: string;
+	displayName: string;
+	binaryName: string;
+	baseArgs: string[];
+	capabilities: Record<string, boolean>;
+}
+
 /** All contributions a single plugin declared, plus any per-item errors. */
 export interface PluginContributions {
 	themes: ThemeContribution[];
@@ -118,6 +140,7 @@ export interface PluginContributions {
 	cueTriggers: CueTriggerContribution[];
 	commands: CommandContribution[];
 	panels: PanelContribution[];
+	agents: AgentContribution[];
 	/** Human-readable reasons individual contributions were dropped. */
 	errors: string[];
 }
@@ -131,6 +154,7 @@ export interface AggregatedContributions {
 	cueTriggers: CueTriggerContribution[];
 	commands: CommandContribution[];
 	panels: PanelContribution[];
+	agents: AgentContribution[];
 	/** Per-plugin errors keyed by plugin id (only plugins with errors appear). */
 	errorsByPlugin: Record<string, string[]>;
 }
@@ -168,6 +192,7 @@ export function collectContributions(manifest: PluginManifest): PluginContributi
 		cueTriggers: [],
 		commands: [],
 		panels: [],
+		agents: [],
 		errors: [],
 	};
 	const contributes = manifest.contributes;
@@ -216,6 +241,16 @@ export function collectContributions(manifest: PluginManifest): PluginContributi
 			}
 		}
 	}
+	if (contributes.agents !== undefined) {
+		if (!isCodeTier) {
+			out.errors.push(`[${pluginId}] agents require tier >= 1 (they launch a CLI)`);
+		} else {
+			for (const raw of asArray(contributes.agents)) {
+				const agent = parseAgent(pluginId, raw, out.errors);
+				if (agent) out.agents.push(agent);
+			}
+		}
+	}
 	return out;
 }
 
@@ -233,6 +268,7 @@ export function aggregateContributions(manifests: PluginManifest[]): AggregatedC
 		cueTriggers: [],
 		commands: [],
 		panels: [],
+		agents: [],
 		errorsByPlugin: {},
 	};
 	const seen = new Set<string>();
@@ -257,6 +293,7 @@ export function aggregateContributions(manifests: PluginManifest[]): AggregatedC
 		c.cueTriggers.forEach((t) => pushUnique(agg.cueTriggers, t));
 		c.commands.forEach((cmd) => pushUnique(agg.commands, cmd));
 		c.panels.forEach((panel) => pushUnique(agg.panels, panel));
+		c.agents.forEach((agent) => pushUnique(agg.agents, agent));
 	}
 	return agg;
 }
@@ -536,5 +573,51 @@ function parsePanel(pluginId: string, raw: unknown, errors: string[]): PanelCont
 		pluginId,
 		title: raw.title.trim(),
 		entry: raw.entry.trim(),
+	};
+}
+
+/** A binary name must be a bare command - no path separators, no traversal,
+ * no shell metacharacters. The host resolves it on PATH; absolute paths and
+ * relative climbs are rejected so a plugin cannot point at an arbitrary file. */
+function isSafeBinaryName(name: string): boolean {
+	if (name.includes('/') || name.includes('\\')) return false;
+	if (name.includes('..') || name.startsWith('~')) return false;
+	return /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(name);
+}
+
+function parseAgent(pluginId: string, raw: unknown, errors: string[]): AgentContribution | null {
+	if (!isPlainObject(raw)) {
+		errors.push(`[${pluginId}] an agent contribution is not an object`);
+		return null;
+	}
+	const localId = parseLocalId(pluginId, raw, errors);
+	if (!localId) return null;
+	if (!isNonEmptyString(raw.displayName)) {
+		errors.push(`[${pluginId}] agent "${localId}" is missing a displayName`);
+		return null;
+	}
+	if (!isNonEmptyString(raw.binaryName) || !isSafeBinaryName(raw.binaryName.trim())) {
+		errors.push(`[${pluginId}] agent "${localId}" binaryName must be a bare command name`);
+		return null;
+	}
+	// baseArgs: keep only string entries; a non-array or stray non-strings are dropped silently.
+	const baseArgs = Array.isArray(raw.baseArgs)
+		? raw.baseArgs.filter((a): a is string => typeof a === 'string')
+		: [];
+	// capabilities: keep only boolean-valued keys; unknown shapes collapse to {}.
+	const capabilities: Record<string, boolean> = {};
+	if (isPlainObject(raw.capabilities)) {
+		for (const [k, v] of Object.entries(raw.capabilities)) {
+			if (typeof v === 'boolean') capabilities[k] = v;
+		}
+	}
+	return {
+		id: namespaced(pluginId, localId),
+		localId,
+		pluginId,
+		displayName: raw.displayName.trim(),
+		binaryName: raw.binaryName.trim(),
+		baseArgs,
+		capabilities,
 	};
 }

@@ -60,6 +60,34 @@ Append-only, dated. Newest at the bottom of each section.
 - 2026-06-25: PluginsPanel.tsx is growing; if it crosses ~800 lines, split the
   row + commands/panels section into a child component.
 
+## Phase 5 (runtime agent registration)
+
+- 2026-06-25: DESIGN CALL - kept the compile-time `AGENT_IDS` tuple as the
+  built-in core instead of converting it wholesale to a runtime structure. A full
+  tuple->runtime conversion would erase the `AgentId` union's exhaustiveness
+  across every `Record<AgentId, X>`, switch, parser, storage and capability table
+  (a sweeping, destabilizing change). Instead `src/shared/plugins/agent-registry.ts`
+  layers plugin-contributed agents ALONGSIDE the built-ins: built-ins stay fully
+  type-checked, runtime agents are plain string ids looked up via the registry.
+  The registry refuses to let a plugin shadow a built-in id.
+- 2026-06-25: `agent-completeness.test.ts` was NOT loosened in its assertions; it
+  already only validated the static tables. I documented the scope boundary in its
+  header and added a `runtime agents live outside the static core` block asserting
+  a registered runtime agent is known to the registry but absent from AGENT_IDS /
+  AGENT_DEFINITIONS. The relaxation is: plugin agents are explicitly exempt from
+  the static completeness invariant (covered by the registry instead).
+- 2026-06-25: SECURITY/DEFERRED - registration does NOT enable spawning. A
+  runtime agent's `binaryName` is validated to a bare command name (no path
+  separators, no `..`, no `~`, charset-restricted) but `PluginManager.getAgentRegistry()`
+  only exposes agents for discovery/UI. Actually launching one is arbitrary binary
+  execution and must go through the same dedicated review as `agents.dispatch` /
+  `process.spawn` (still unwired). Spawn wiring + Left Bar creation of plugin
+  agents is the follow-on. `src/main/plugins/plugin-manager.ts:getAgentRegistry`.
+- 2026-06-25: `contributes.agents` is tier-1 gated (like commands/panels) since a
+  runtime agent runs a CLI. The registry is not yet surfaced over IPC to the
+  renderer - the Left Bar "new agent" picker does not list plugin agents yet
+  (pairs with the deferred spawn wiring above).
+
 ## Deferred / unwired
 
 - 2026-06-25: Phase 1 contributions (themes/prompts/settings/command-macros) are
