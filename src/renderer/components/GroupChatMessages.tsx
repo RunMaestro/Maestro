@@ -24,6 +24,7 @@ import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { formatTimestamp as formatTimestampShared } from '../../shared/formatters';
 import { useMessageGistStore } from '../stores/messageGistStore';
+import { useSettingsStore } from '../stores/settingsStore';
 import { jumpToMessageEdge, isTextInputTarget } from '../utils/messageScrollNavigation';
 import { JumpToMessageTopButton } from './JumpToMessageTopButton';
 
@@ -132,6 +133,7 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 		}, []);
 
 		const publishedGists = useMessageGistStore((s) => s.published);
+		const groupChatAutoScroll = useSettingsStore((s) => s.groupChatAutoScroll);
 
 		const toggleExpanded = useCallback((msgKey: string) => {
 			setExpandedMessages((prev) => {
@@ -151,12 +153,13 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 			[theme]
 		);
 
-		// Auto-scroll on new messages
+		// Auto-scroll on new messages (unless disabled via the global setting)
 		useEffect(() => {
+			if (!groupChatAutoScroll) return;
 			if (containerRef.current) {
 				containerRef.current.scrollTop = containerRef.current.scrollHeight;
 			}
-		}, [messages]);
+		}, [messages, groupChatAutoScroll]);
 
 		// Use external colors if provided, otherwise generate locally
 		// Include 'Moderator' at index 0 to match the participant panel's color assignment

@@ -20,6 +20,7 @@ import {
 	HelpCircle,
 	WrapText,
 	ListFilter,
+	MessagesSquare,
 	PanelTop,
 	PanelLeft,
 	Palette,
@@ -87,6 +88,8 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 		setBionifyAlgorithm,
 		userMessageAlignment,
 		setUserMessageAlignment,
+		groupChatAutoScroll,
+		setGroupChatAutoScroll,
 		fileExplorerIconTheme,
 		setFileExplorerIconTheme,
 		showStarredInUnreadFilter,
@@ -309,6 +312,46 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 					Position your messages on the left or right side of the chat. AI responses appear on the
 					opposite side.
 				</p>
+			</div>
+
+			{/* Group Chats */}
+			<div data-setting-id="display-group-chat-auto-scroll">
+				<SettingsSectionHeading icon={MessagesSquare}>Group Chats</SettingsSectionHeading>
+				<div
+					className="p-3 rounded border space-y-3"
+					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+				>
+					<div className="flex items-center justify-between">
+						<div>
+							<p className="text-sm" style={{ color: theme.colors.textMain }}>
+								Auto-scroll to newest message
+							</p>
+							<p className="text-xs opacity-50 mt-0.5">
+								Automatically scroll a group chat to the bottom when new messages arrive. Turn off
+								to keep your scroll position while reading earlier messages.
+							</p>
+						</div>
+						<button
+							onClick={() => setGroupChatAutoScroll(!groupChatAutoScroll)}
+							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
+							tabIndex={0}
+							style={{
+								backgroundColor: groupChatAutoScroll
+									? theme.colors.accent
+									: theme.colors.bgActivity,
+							}}
+							role="switch"
+							aria-checked={groupChatAutoScroll}
+							aria-label="Auto-scroll group chats to newest message"
+						>
+							<span
+								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+									groupChatAutoScroll ? 'translate-x-5' : 'translate-x-0.5'
+								}`}
+							/>
+						</button>
+					</div>
+				</div>
 			</div>
 
 			<div data-setting-id="display-icon-theme">

@@ -191,6 +191,7 @@ describe('settingsStore', () => {
 			expect(state.rightPanelWidth).toBe(384);
 			expect(state.markdownEditMode).toBe(false);
 			expect(state.chatRawTextMode).toBe(false);
+			expect(state.groupChatAutoScroll).toBe(true);
 			expect(state.showHiddenFiles).toBe(true);
 			expect(state.fileExplorerIconTheme).toBe('default');
 			expect(state.terminalWidth).toBe(100);
@@ -385,6 +386,12 @@ describe('settingsStore', () => {
 				useSettingsStore.getState().setChatRawTextMode(true);
 				expect(useSettingsStore.getState().chatRawTextMode).toBe(true);
 				expect(window.maestro.settings.set).toHaveBeenCalledWith('chatRawTextMode', true);
+			});
+
+			it('setGroupChatAutoScroll updates state and persists', () => {
+				useSettingsStore.getState().setGroupChatAutoScroll(false);
+				expect(useSettingsStore.getState().groupChatAutoScroll).toBe(false);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('groupChatAutoScroll', false);
 			});
 
 			it('setShowHiddenFiles updates state and persists', () => {

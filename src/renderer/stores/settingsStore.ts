@@ -327,6 +327,7 @@ export interface SettingsStoreState {
 	rightPanelWidth: number;
 	markdownEditMode: boolean;
 	chatRawTextMode: boolean;
+	groupChatAutoScroll: boolean;
 	bionifyReadingMode: boolean;
 	bionifyIntensity: number;
 	bionifyAlgorithm: string;
@@ -480,6 +481,7 @@ export interface SettingsStoreActions {
 	setRightPanelWidth: (value: number) => void;
 	setMarkdownEditMode: (value: boolean) => void;
 	setChatRawTextMode: (value: boolean) => void;
+	setGroupChatAutoScroll: (value: boolean) => void;
 	setBionifyReadingMode: (value: boolean) => void;
 	setBionifyIntensity: (value: number) => void;
 	setBionifyAlgorithm: (value: string) => void;
@@ -694,6 +696,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		rightPanelWidth: 384,
 		markdownEditMode: false,
 		chatRawTextMode: false,
+		groupChatAutoScroll: true,
 		bionifyReadingMode: false,
 		bionifyIntensity: 1,
 		bionifyAlgorithm: '- 0 1 1 2 0.4',
@@ -953,6 +956,10 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setChatRawTextMode: (value) => {
 			set({ chatRawTextMode: value });
 			window.maestro.settings.set('chatRawTextMode', value);
+		},
+		setGroupChatAutoScroll: (value) => {
+			set({ groupChatAutoScroll: value });
+			window.maestro.settings.set('groupChatAutoScroll', value);
 		},
 
 		setBionifyReadingMode: (value) => {
@@ -2279,6 +2286,8 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['chatRawTextMode'] !== undefined)
 			patch.chatRawTextMode = allSettings['chatRawTextMode'] as boolean;
+		if (allSettings['groupChatAutoScroll'] !== undefined)
+			patch.groupChatAutoScroll = allSettings['groupChatAutoScroll'] as boolean;
 
 		if (allSettings['bionifyReadingMode'] !== undefined)
 			patch.bionifyReadingMode = allSettings['bionifyReadingMode'] as boolean;
