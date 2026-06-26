@@ -8,10 +8,13 @@ import { describe, it, expect, vi } from 'vitest';
 import {
 	runWatchIteration,
 	initialWatchState,
+	rehydrateWatchState,
 	MAX_DISPATCH_ATTEMPTS,
+	HANDOFF_TIMEOUT_POLLS,
 	type WatchDeps,
 	type WatchState,
 	type WatchTarget,
+	type PianolaNotifyEvent,
 } from '../../../shared/pianola/pianola-watcher';
 import type { PianolaMessage, PianolaRule } from '../../../shared/pianola/types';
 import type { PianolaDecisionRecord, PianolaProfileEntry } from '../../../shared/pianola/storage';
@@ -296,15 +299,35 @@ describe('runWatchIteration - thought-based handoff', () => {
 		expect(req.promptText).toContain('count or total');
 	});
 
-	it('marks the prompt handled so it is not handed off again', async () => {
+	it('does not re-hand-off while awaiting Pianola, and tracks a pending handoff', async () => {
 		const { deps, requestJudgment } = withHandoff();
 		const messages = [assistant('Should I name it count or total?')];
 		const first = await runWatchIteration(messages, target, initialWatchState(), deps, {
 			dryRun: false,
 		});
+		expect(first.state.pendingHandoff?.messageId).toBeTruthy();
 		const second = await runWatchIteration(messages, target, first.state, deps, { dryRun: false });
-		expect(second.result.skipped).toContain('already handled');
-		expect(requestJudgment).toHaveBeenCalledTimes(1);
+		expect(second.result.skipped).toContain('awaiting Pianola');
+		expect(requestJudgment).toHaveBeenCalledTimes(1); // not handed off again
+		expect(second.state.pendingHandoff?.polls).toBe(1);
+	});
+
+	it('escalates to the user when a pending handoff times out', async () => {
+		const notify = vi.fn();
+		const { deps } = withHandoff({ notify });
+		const messages = [assistant('Should I name it count or total?')];
+		let out = await runWatchIteration(messages, target, initialWatchState(), deps, {
+			dryRun: false,
+		});
+		// Poll until the timeout fires.
+		for (let i = 0; i < HANDOFF_TIMEOUT_POLLS; i += 1) {
+			out = await runWatchIteration(messages, target, out.state, deps, { dryRun: false });
+		}
+		expect(out.result.handoffTimedOut).toBe(true);
+		expect(out.result.decision?.action).toBe('escalate');
+		expect(out.result.decision?.reason).toContain('timed out');
+		expect(out.state.pendingHandoff).toBeNull();
+		expect(notify).toHaveBeenCalled();
 	});
 
 	it('records intent before the handoff side effect, then an outcome (one id)', async () => {
@@ -335,9 +358,34 @@ describe('runWatchIteration - thought-based handoff', () => {
 		expect(records[1].dispatched).toBe(false); // a handoff never answers the watched tab
 	});
 
-	it('records the handoff error on the outcome entry when delivery fails', async () => {
+	it('falls back to a user escalation (audited + notified) when handoff delivery fails', async () => {
 		const requestJudgment = vi.fn(async () => ({ success: false, error: 'pianola busy' }));
-		const { deps, records } = withHandoff({ requestJudgment });
+		const notify = vi.fn();
+		const { deps, records } = withHandoff({ requestJudgment, notify });
+		const { result, state } = await runWatchIteration(
+			[assistant('Should I name it count or total?')],
+			target,
+			initialWatchState(),
+			deps,
+			{ dryRun: false }
+		);
+		expect(result.handoffFailed).toBe(true);
+		expect(result.handoff).toBeFalsy();
+		expect(result.decision?.action).toBe('escalate');
+		expect(result.decision?.reason).toContain('escalated to user');
+		expect(records[records.length - 1].error).toBe('pianola busy');
+		expect(notify).toHaveBeenCalledTimes(1);
+		// The ask is now fully handled (no pending handoff, cursor advanced).
+		expect(state.pendingHandoff).toBeNull();
+		expect(state.lastHandledMessageId).toBe('m' + seq);
+	});
+
+	it('does not crash the loop when notify itself throws', async () => {
+		const requestJudgment = vi.fn(async () => ({ success: false, error: 'pianola busy' }));
+		const notify = vi.fn(() => {
+			throw new Error('toast bridge down');
+		});
+		const { deps } = withHandoff({ requestJudgment, notify });
 		const { result } = await runWatchIteration(
 			[assistant('Should I name it count or total?')],
 			target,
@@ -345,8 +393,8 @@ describe('runWatchIteration - thought-based handoff', () => {
 			deps,
 			{ dryRun: false }
 		);
-		expect(result.handoff).toBe(true);
-		expect(records[records.length - 1].error).toBe('pianola busy');
+		expect(result.handoffFailed).toBe(true);
+		expect(result.notified).toBe(false); // notify threw, swallowed
 	});
 
 	it('does NOT hand off a high-risk ask; it escalates to the user', async () => {
@@ -418,5 +466,133 @@ describe('runWatchIteration - thought-based handoff', () => {
 		expect(result.decision?.action).toBe('escalate');
 		expect(dispatch).not.toHaveBeenCalled();
 		expect(records).toHaveLength(1);
+	});
+});
+
+describe('runWatchIteration - escalation notifications', () => {
+	it('fires a notification when a plain escalation reaches the user', async () => {
+		const events: PianolaNotifyEvent[] = [];
+		const { deps } = makeDeps({ notify: (e) => void events.push(e) });
+		const { result } = await runWatchIteration(
+			[assistant('Should I name it count or total?')],
+			target,
+			initialWatchState(),
+			deps,
+			{ dryRun: false }
+		);
+		expect(result.notified).toBe(true);
+		expect(events).toHaveLength(1);
+		expect(events[0].kind).toBe('escalate');
+		expect(events[0].highRisk).toBe(false);
+	});
+
+	it('marks a high-risk escalation as highRisk for a sticky notification', async () => {
+		const events: PianolaNotifyEvent[] = [];
+		const { deps } = makeDeps({ notify: (e) => void events.push(e) });
+		await runWatchIteration(
+			[assistant('Should I deploy to production?')],
+			target,
+			initialWatchState(),
+			deps,
+			{ dryRun: false }
+		);
+		expect(events[0].highRisk).toBe(true);
+	});
+
+	it('does NOT notify on a dry run', async () => {
+		const notify = vi.fn();
+		const { deps } = makeDeps({ notify });
+		await runWatchIteration(
+			[assistant('Should I name it count or total?')],
+			target,
+			initialWatchState(),
+			deps,
+			{ dryRun: true }
+		);
+		expect(notify).not.toHaveBeenCalled();
+	});
+});
+
+describe('rehydrateWatchState', () => {
+	function record(over: Partial<PianolaDecisionRecord>): PianolaDecisionRecord {
+		return {
+			id: 'r',
+			timestamp: '2026-01-01T00:00:00.000Z',
+			tabId: 'tab-1',
+			agentId: 'agent-1',
+			classification: {
+				kind: 'question',
+				risk: 'low',
+				topic: 't',
+				confidence: 'high',
+				evidence: { messageId: 'mX', reason: 'r', structured: false },
+			},
+			decision: { action: 'escalate', matchedRuleId: null, reason: 'no rule' },
+			dispatched: false,
+			dryRun: false,
+			...over,
+		};
+	}
+
+	it('seeds the cursor from the most recent handled prompt for the tab', () => {
+		const state = rehydrateWatchState(
+			[
+				record({
+					classification: {
+						...record({}).classification,
+						evidence: { messageId: 'm1', reason: 'r', structured: false },
+					},
+				}),
+				record({
+					classification: {
+						...record({}).classification,
+						evidence: { messageId: 'm2', reason: 'r', structured: false },
+					},
+				}),
+			],
+			'tab-1'
+		);
+		expect(state.lastHandledMessageId).toBe('m2');
+		expect(state.pendingHandoff).toBeNull();
+	});
+
+	it('ignores records for other tabs', () => {
+		const state = rehydrateWatchState([record({ tabId: 'other' })], 'tab-1');
+		expect(state.lastHandledMessageId).toBeNull();
+	});
+
+	it('restores a pending handoff so its timeout resumes after restart', () => {
+		const state = rehydrateWatchState(
+			[
+				record({
+					decision: {
+						action: 'escalate',
+						matchedRuleId: null,
+						reason: 'handed off to Pianola for profile-based judgment',
+					},
+				}),
+			],
+			'tab-1'
+		);
+		expect(state.pendingHandoff?.messageId).toBe('mX');
+		expect(state.lastHandledMessageId).toBeNull(); // kept behind so timeout can fire
+	});
+
+	it('does NOT restore a pending handoff for a failed handoff record', () => {
+		const state = rehydrateWatchState(
+			[
+				record({
+					decision: {
+						action: 'escalate',
+						matchedRuleId: null,
+						reason: 'handoff to Pianola failed (busy); escalated to user',
+					},
+					error: 'busy',
+				}),
+			],
+			'tab-1'
+		);
+		expect(state.pendingHandoff).toBeNull();
+		expect(state.lastHandledMessageId).toBe('mX');
 	});
 });

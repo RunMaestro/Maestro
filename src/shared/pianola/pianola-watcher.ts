@@ -25,6 +25,25 @@ import { decide } from './pianola-policy';
 /** Max dispatch attempts for a single prompt before giving up. */
 export const MAX_DISPATCH_ATTEMPTS = 3;
 
+/**
+ * How many polls to wait for Pianola to answer a handed-off prompt before giving
+ * up and escalating to the user. Prevents a stalled Pianola from blocking a
+ * waiting agent forever. At the default 5s interval this is ~1 minute.
+ */
+export const HANDOFF_TIMEOUT_POLLS = 12;
+
+/** Why Pianola is pushing a blocking ask to the user's attention. */
+export type PianolaNotifyKind = 'escalate' | 'handoff_failed' | 'handoff_timeout';
+
+/** A user-facing notification request (a blocking ask the user must see). */
+export interface PianolaNotifyEvent {
+	kind: PianolaNotifyKind;
+	target: WatchTarget;
+	classification: PianolaClassification;
+	/** True for high-risk asks (notification should be sticky / louder). */
+	highRisk: boolean;
+}
+
 /** The tab Pianola is watching and the agent it would dispatch to. */
 export interface WatchTarget {
 	tabId: string;
@@ -70,6 +89,12 @@ export interface WatchDeps {
 	requestJudgment?: (
 		request: PianolaJudgmentRequest
 	) => Promise<{ success: boolean; error?: string }>;
+	/**
+	 * Push a blocking ask to the user's attention (e.g. a desktop toast). Optional:
+	 * when omitted, escalations are recorded to the audit log only (the old
+	 * behavior). Fired on escalate, handoff delivery failure, and handoff timeout.
+	 */
+	notify?: (event: PianolaNotifyEvent) => void | Promise<void>;
 }
 
 /** Per-tab loop state, carried between iterations. */
@@ -78,10 +103,52 @@ export interface WatchState {
 	lastHandledMessageId: string | null;
 	/** A prompt whose dispatch failed and is awaiting another attempt. */
 	pendingRetry: { messageId: string; attempts: number } | null;
+	/**
+	 * A prompt handed off to Pianola and awaiting its reply. While set, we do not
+	 * re-hand-off the same prompt; if Pianola does not answer within
+	 * HANDOFF_TIMEOUT_POLLS we escalate to the user instead of blocking forever.
+	 */
+	pendingHandoff: { messageId: string; polls: number } | null;
 }
 
 export function initialWatchState(): WatchState {
-	return { lastHandledMessageId: null, pendingRetry: null };
+	return { lastHandledMessageId: null, pendingRetry: null, pendingHandoff: null };
+}
+
+/**
+ * Seed watch state from the decision audit log so a restarted watcher does not
+ * re-act on a prompt it already handled. Without this, `initialWatchState()`
+ * starts with no cursor and the still-waiting prompt is re-classified and
+ * (critically) auto-answered a SECOND time. We take the most recent recorded
+ * prompt for this tab as the handled cursor. A prompt mid-handoff is restored to
+ * `pendingHandoff` so its timeout is honored across the restart.
+ *
+ * Pure: callers pass the records (chronological, oldest first) they read.
+ */
+export function rehydrateWatchState(
+	records: readonly PianolaDecisionRecord[],
+	tabId: string
+): WatchState {
+	let lastHandledMessageId: string | null = null;
+	let pendingHandoff: WatchState['pendingHandoff'] = null;
+	for (const r of records) {
+		if (r.tabId !== tabId) continue;
+		const mid = r.classification.evidence.messageId;
+		if (!mid) continue;
+		lastHandledMessageId = mid;
+		// A successfully-delivered handoff (escalate decision, not dispatched, no
+		// error) means we were awaiting Pianola's reply when we stopped. Restore the
+		// pending-handoff so the timeout resumes rather than re-handing-off.
+		const isHandoff =
+			r.decision.action === 'escalate' && /handed off/i.test(r.decision.reason) && !r.error;
+		pendingHandoff = isHandoff ? { messageId: mid, polls: 0 } : null;
+	}
+	// If the last handled prompt is mid-handoff, do NOT treat it as fully handled:
+	// keep the cursor behind it so the pending-handoff branch can time it out.
+	if (pendingHandoff) {
+		return { lastHandledMessageId: null, pendingRetry: null, pendingHandoff };
+	}
+	return { lastHandledMessageId, pendingRetry: null, pendingHandoff: null };
 }
 
 export interface IterationResult {
@@ -95,6 +162,12 @@ export interface IterationResult {
 	dispatched: boolean;
 	/** True when the ask was handed to Pianola to judge against the profile. */
 	handoff?: boolean;
+	/** True when a handoff was attempted but delivery to Pianola failed. */
+	handoffFailed?: boolean;
+	/** True when a pending handoff timed out and was escalated to the user. */
+	handoffTimedOut?: boolean;
+	/** True when this iteration escalated to the user and fired a notification. */
+	notified?: boolean;
 	/** Reason an actionable prompt was skipped (e.g. already handled). */
 	skipped?: string;
 }
@@ -113,6 +186,18 @@ function describe(result: IterationResult, error?: string): string {
 	}
 	const errSuffix = error ? ` (dispatch error: ${error})` : '';
 	return `[pianola] ${c.kind}/${c.risk} -> ${decision.action}${detail}${errSuffix}`;
+}
+
+/** Fire a user notification, swallowing errors so a notify failure never breaks the loop. */
+async function safeNotify(deps: WatchDeps, event: PianolaNotifyEvent): Promise<boolean> {
+	if (!deps.notify) return false;
+	try {
+		await deps.notify(event);
+		return true;
+	} catch {
+		// A failed toast must not crash autonomous watching; the audit record stands.
+		return false;
+	}
 }
 
 function buildRecord(
@@ -191,14 +276,75 @@ export async function runWatchIteration(
 	// escalates; a dry run never hands off; and we only hand off when both handoff
 	// deps are wired and a profile actually exists for this project.
 	const uncoveredEscalation = decision.action === 'escalate' && decision.matchedRuleId === null;
-	if (
+	const handoffEligible =
 		uncoveredEscalation &&
 		classification.risk !== 'high' &&
 		!options.dryRun &&
-		deps.resolveProfile &&
-		deps.requestJudgment
-	) {
-		const profile = deps.resolveProfile(target.projectPath);
+		!!deps.resolveProfile &&
+		!!deps.requestJudgment;
+
+	// A handoff already in flight for THIS prompt: do not re-hand-off. Wait for
+	// Pianola to answer (the agent will move on, changing messageId), and time out
+	// to a user escalation if it never does.
+	if (handoffEligible && state.pendingHandoff && state.pendingHandoff.messageId === messageId) {
+		const polls = state.pendingHandoff.polls + 1;
+		if (polls < HANDOFF_TIMEOUT_POLLS) {
+			const result: IterationResult = {
+				classification,
+				decision: null,
+				record: null,
+				acted: false,
+				dispatched: false,
+				skipped: `awaiting Pianola (${polls}/${HANDOFF_TIMEOUT_POLLS})`,
+			};
+			deps.log(describe(result));
+			return {
+				state: { ...state, pendingHandoff: { messageId: messageId!, polls } },
+				result,
+			};
+		}
+		// Timed out: Pianola never answered. Escalate to the user.
+		const timeoutDecision: PianolaDecision = {
+			action: 'escalate',
+			matchedRuleId: null,
+			reason: 'handoff to Pianola timed out; escalated to user',
+		};
+		const record = buildRecord(deps, target, classification, timeoutDecision, {
+			id: deps.genId(),
+			dispatched: false,
+			dryRun: false,
+		});
+		deps.recordDecision(record);
+		const notified = await safeNotify(deps, {
+			kind: 'handoff_timeout',
+			target,
+			classification,
+			highRisk: classification.risk === 'high',
+		});
+		const result: IterationResult = {
+			classification,
+			decision: timeoutDecision,
+			record,
+			acted: true,
+			dispatched: false,
+			handoffTimedOut: true,
+			notified,
+		};
+		deps.log(describe(result));
+		return {
+			state: {
+				lastHandledMessageId: messageId ?? state.lastHandledMessageId,
+				pendingRetry: null,
+				pendingHandoff: null,
+			},
+			result,
+		};
+	}
+
+	// Fresh handoff: rules did not cover this ask, it is not high risk, a profile
+	// exists, and Pianola is reachable. Hand the decision to Pianola to judge.
+	if (handoffEligible) {
+		const profile = deps.resolveProfile!(target.projectPath);
 		if (profile) {
 			const handoffDecision: PianolaDecision = {
 				action: 'escalate',
@@ -217,36 +363,80 @@ export async function runWatchIteration(
 			deps.recordDecision(intent); // throws here => no handoff
 
 			const relevant = messageId ? messages.find((m) => m.id === messageId) : undefined;
-			const res = await deps.requestJudgment({
+			const res = await deps.requestJudgment!({
 				target,
 				classification,
 				profile,
 				promptText: relevant?.awaitingInput?.prompt ?? relevant?.content,
 				options: relevant?.awaitingInput?.options,
 			});
-			const error = res.success ? undefined : (res.error ?? 'handoff failed');
 
-			const outcome = buildRecord(deps, target, classification, handoffDecision, {
+			if (res.success) {
+				const outcome = buildRecord(deps, target, classification, handoffDecision, {
+					id,
+					dispatched: false,
+					dryRun: false,
+				});
+				deps.recordDecision(outcome);
+				const result: IterationResult = {
+					classification,
+					decision: handoffDecision,
+					record: outcome,
+					acted: true,
+					dispatched: false,
+					handoff: true,
+				};
+				deps.log(describe(result));
+				// Do NOT advance lastHandledMessageId: track the pending handoff so we
+				// can time it out if Pianola never answers. The pending-handoff guard
+				// above prevents re-handing-off the same prompt next poll.
+				return {
+					state: {
+						lastHandledMessageId: state.lastHandledMessageId,
+						pendingRetry: null,
+						pendingHandoff: { messageId: messageId!, polls: 0 },
+					},
+					result,
+				};
+			}
+
+			// Handoff delivery to Pianola failed: do NOT drop the ask. Fall back to a
+			// user escalation, audited and notified, so the waiting agent is never
+			// silently abandoned.
+			const error = res.error ?? 'handoff failed';
+			const fallbackDecision: PianolaDecision = {
+				action: 'escalate',
+				matchedRuleId: null,
+				reason: `handoff to Pianola failed (${error}); escalated to user`,
+			};
+			const outcome = buildRecord(deps, target, classification, fallbackDecision, {
 				id,
 				dispatched: false,
 				dryRun: false,
 				error,
 			});
 			deps.recordDecision(outcome);
-
+			const notified = await safeNotify(deps, {
+				kind: 'handoff_failed',
+				target,
+				classification,
+				highRisk: classification.risk === 'high',
+			});
 			const result: IterationResult = {
 				classification,
-				decision: handoffDecision,
+				decision: fallbackDecision,
 				record: outcome,
 				acted: true,
 				dispatched: false,
-				handoff: true,
+				handoffFailed: true,
+				notified,
 			};
 			deps.log(describe(result, error));
 			return {
 				state: {
 					lastHandledMessageId: messageId ?? state.lastHandledMessageId,
 					pendingRetry: null,
+					pendingHandoff: null,
 				},
 				result,
 			};
@@ -256,7 +446,9 @@ export async function runWatchIteration(
 	const willDispatch = decision.action === 'auto_answer' && !options.dryRun;
 
 	// Non-dispatch decisions (escalate / ignore / dry-run auto-answer): a single
-	// audit record, and the prompt is considered handled.
+	// audit record, and the prompt is considered handled. A real escalation (not a
+	// dry-run preview, not ignore) pushes a notification so the blocking ask reaches
+	// the user instead of dying in the audit log.
 	if (!willDispatch) {
 		const record = buildRecord(deps, target, classification, decision, {
 			id: deps.genId(),
@@ -264,16 +456,30 @@ export async function runWatchIteration(
 			dryRun: options.dryRun,
 		});
 		deps.recordDecision(record);
+		let notified = false;
+		if (decision.action === 'escalate' && !options.dryRun) {
+			notified = await safeNotify(deps, {
+				kind: 'escalate',
+				target,
+				classification,
+				highRisk: classification.risk === 'high',
+			});
+		}
 		const result: IterationResult = {
 			classification,
 			decision,
 			record,
 			acted: true,
 			dispatched: false,
+			notified,
 		};
 		deps.log(describe(result));
 		return {
-			state: { lastHandledMessageId: messageId ?? state.lastHandledMessageId, pendingRetry: null },
+			state: {
+				lastHandledMessageId: messageId ?? state.lastHandledMessageId,
+				pendingRetry: null,
+				pendingHandoff: null,
+			},
 			result,
 		};
 	}
@@ -316,7 +522,11 @@ export async function runWatchIteration(
 
 	if (res.success) {
 		return {
-			state: { lastHandledMessageId: messageId ?? state.lastHandledMessageId, pendingRetry: null },
+			state: {
+				lastHandledMessageId: messageId ?? state.lastHandledMessageId,
+				pendingRetry: null,
+				pendingHandoff: null,
+			},
 			result,
 		};
 	}
@@ -326,7 +536,11 @@ export async function runWatchIteration(
 	if (!messageId || attempts >= MAX_DISPATCH_ATTEMPTS) {
 		deps.log(`[pianola] giving up on prompt after ${attempts} dispatch attempt(s)`);
 		return {
-			state: { lastHandledMessageId: messageId ?? state.lastHandledMessageId, pendingRetry: null },
+			state: {
+				lastHandledMessageId: messageId ?? state.lastHandledMessageId,
+				pendingRetry: null,
+				pendingHandoff: null,
+			},
 			result,
 		};
 	}
@@ -334,6 +548,7 @@ export async function runWatchIteration(
 		state: {
 			lastHandledMessageId: state.lastHandledMessageId,
 			pendingRetry: { messageId, attempts },
+			pendingHandoff: null,
 		},
 		result,
 	};
