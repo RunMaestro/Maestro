@@ -138,6 +138,7 @@ export function GroupChatPanel({
 				ref={messagesRef}
 				theme={theme}
 				messages={messages}
+				chatId={groupChat.id}
 				participants={groupChat.participants}
 				state={state}
 				markdownEditMode={markdownEditMode}

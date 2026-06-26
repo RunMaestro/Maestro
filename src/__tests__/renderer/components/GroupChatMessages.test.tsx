@@ -42,11 +42,12 @@ function instrumentScroll(el: HTMLElement) {
 	return state;
 }
 
-function renderChat(messages: GroupChatMessage[]) {
+function renderChat(messages: GroupChatMessage[], chatId?: string) {
 	const result = render(
 		<GroupChatMessages
 			theme={mockTheme}
 			messages={messages}
+			chatId={chatId}
 			participants={participants}
 			state="idle"
 		/>
@@ -127,6 +128,51 @@ describe('GroupChatMessages auto-scroll setting', () => {
 		act(() => {
 			useSettingsStore.setState({ groupChatAutoScroll: true });
 		});
+
+		expect(scroll.scrollTop).toBe(0);
+	});
+
+	it('scrolls to the newest message when switching chats even when auto-scroll is disabled', () => {
+		useSettingsStore.setState({ groupChatAutoScroll: false });
+		// Open chat A: its history loads and lands at the newest message.
+		const { rerender, container } = renderChat(makeMessages(3), 'chat-a');
+		const scroll = instrumentScroll(container);
+		// Reader scrolls up to read earlier messages in chat A.
+		scroll.scrollTop = 0;
+
+		// The component instance is reused (props swap, no remount) when the
+		// active chat changes. The newly opened chat must still land at its
+		// newest message.
+		rerender(
+			<GroupChatMessages
+				theme={mockTheme}
+				messages={makeMessages(4)}
+				chatId="chat-b"
+				participants={participants}
+				state="idle"
+			/>
+		);
+
+		expect(scroll.scrollTop).toBe(1000);
+	});
+
+	it('does not re-scroll on new messages within the same chat when auto-scroll is disabled', () => {
+		useSettingsStore.setState({ groupChatAutoScroll: false });
+		const { rerender, container } = renderChat(makeMessages(3), 'chat-a');
+		const scroll = instrumentScroll(container);
+		scroll.scrollTop = 0;
+
+		// Same chat, a new message arrives: must not yank the reader to the
+		// bottom (the per-chat initial scroll already ran for this chat).
+		rerender(
+			<GroupChatMessages
+				theme={mockTheme}
+				messages={makeMessages(4)}
+				chatId="chat-a"
+				participants={participants}
+				state="idle"
+			/>
+		);
 
 		expect(scroll.scrollTop).toBe(0);
 	});

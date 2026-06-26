@@ -33,6 +33,12 @@ interface GroupChatMessagesProps {
 	messages: GroupChatMessage[];
 	participants: GroupChatParticipant[];
 	state: GroupChatState;
+	/**
+	 * Stable identifier for the active group chat. The component instance is
+	 * reused (props swap, no remount) when the active chat changes, so this is
+	 * used to reset the one-time initial scroll-to-bottom per conversation.
+	 */
+	chatId?: string;
 	markdownEditMode?: boolean;
 	onToggleMarkdownEditMode?: () => void;
 	maxOutputLines?: number;
@@ -58,6 +64,7 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 			messages,
 			participants,
 			state,
+			chatId,
 			markdownEditMode,
 			onToggleMarkdownEditMode,
 			maxOutputLines = 30,
@@ -160,6 +167,16 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 		groupChatAutoScrollRef.current = groupChatAutoScroll;
 		// Whether the one-time scroll-to-bottom for the loaded conversation ran.
 		const hasAutoScrolledRef = useRef(false);
+		// The component instance is reused when the active chat changes (props
+		// swap without a remount), so reset the one-time initial-scroll flag when
+		// the chat identity changes. Done during render (before the scroll effect
+		// runs) so each newly opened chat still lands at its newest message even
+		// when auto-scroll is disabled.
+		const prevChatIdRef = useRef(chatId);
+		if (prevChatIdRef.current !== chatId) {
+			prevChatIdRef.current = chatId;
+			hasAutoScrolledRef.current = false;
+		}
 
 		// Auto-scroll to the newest message. The first scroll for a loaded chat
 		// (initial mount / first messages load) always lands at the bottom so an
