@@ -30,10 +30,12 @@ import { generateUUID } from '../../shared/uuid';
 import {
 	runWatchIteration,
 	initialWatchState,
+	rehydrateWatchState,
 	type WatchDeps,
 	type WatchState,
 	type WatchTarget,
 	type PianolaJudgmentRequest,
+	type PianolaNotifyEvent,
 } from '../../shared/pianola/pianola-watcher';
 import { matchHasNarrowingPredicate } from '../../shared/pianola/pianola-policy';
 import {
@@ -103,6 +105,44 @@ function ensurePianolaEnabled(json?: boolean): void {
 		console.error(message);
 	}
 	process.exit(1);
+}
+
+/**
+ * Non-throwing Encore check, re-read each poll so revoking consent in Settings
+ * actually halts an in-flight watcher (the startup `ensurePianolaEnabled` guard
+ * only runs once).
+ */
+function pianolaEnabledNow(): boolean {
+	const flags = readSettingValue('encoreFeatures') as Record<string, unknown> | undefined;
+	return flags?.pianola === true;
+}
+
+/** Build the desktop toast for a blocking ask the user must see. */
+function buildNotifyToastCommand(event: PianolaNotifyEvent): Record<string, unknown> {
+	const topic = event.classification.topic || 'a decision';
+	const prefix =
+		event.kind === 'handoff_failed'
+			? "Couldn't reach Pianola; an agent needs you"
+			: event.kind === 'handoff_timeout'
+				? "Pianola didn't respond; an agent needs you"
+				: 'An agent needs your input';
+	return {
+		type: 'notify_toast',
+		title: 'Pianola',
+		message: `${prefix}: ${topic}`,
+		// High-risk asks are red and sticky (must be acknowledged); others are
+		// orange and auto-dismiss.
+		color: event.highRisk ? 'red' : 'orange',
+		dismissible: event.highRisk,
+		sessionId: event.target.agentId,
+		tabId: event.target.tabId,
+		sourceAgent: 'Pianola',
+		clickAction: {
+			kind: 'jump-session',
+			sessionId: event.target.agentId,
+			tabId: event.target.tabId,
+		},
+	};
 }
 
 /** Parse `--interval` as seconds ("5" or "5s"); defaults to 5, minimum 1. */
@@ -208,6 +248,20 @@ export async function pianolaWatch(tabId: string, options: PianolaWatchOptions):
 		return;
 	}
 
+	// Push blocking asks to the user via a desktop toast, reusing the open client.
+	deps.notify = async (event) => {
+		await client.sendCommand(buildNotifyToastCommand(event), 'notify_toast_result');
+	};
+
+	// Seed the dedup cursor from the audit log so a restarted watcher does not
+	// re-answer a prompt it already handled before the restart.
+	try {
+		state = rehydrateWatchState(readPianolaDecisions(), tabId);
+	} catch {
+		// A read failure just means we start cold; the worst case is one duplicate
+		// escalation, never a duplicate auto-answer beyond what dedup catches.
+	}
+
 	if (readPianolaRulesResult().malformed) {
 		console.error('[pianola] warning: rules file is invalid JSON; no rules will apply until fixed');
 	}
@@ -220,6 +274,13 @@ export async function pianolaWatch(tabId: string, options: PianolaWatchOptions):
 
 	try {
 		for (;;) {
+			// Re-check consent each poll: if Pianola was toggled off in Settings,
+			// stop acting immediately rather than running until the process is killed.
+			if (!pianolaEnabledNow()) {
+				console.error('[pianola] Pianola disabled in Settings; stopping watch.');
+				break;
+			}
+
 			let resp: SessionHistoryResponse;
 			try {
 				resp = await client.sendCommand<SessionHistoryResponse>(
