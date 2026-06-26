@@ -105,7 +105,6 @@ export interface AppUtilityModalsProps {
 	setUpdateCheckModalOpen?: (open: boolean) => void;
 	openWizard: () => void;
 	wizardGoToStep: (step: WizardStep) => void;
-	setDebugWizardModalOpen?: (open: boolean) => void;
 	setDebugPackageModalOpen?: (open: boolean) => void;
 	setDebugApplicationStatsOpen?: (open: boolean) => void;
 	startTour: () => void;
@@ -354,7 +353,6 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	setUpdateCheckModalOpen,
 	openWizard,
 	wizardGoToStep,
-	setDebugWizardModalOpen,
 	setDebugPackageModalOpen,
 	setDebugApplicationStatsOpen,
 	startTour,
@@ -554,7 +552,6 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					setUpdateCheckModalOpen={setUpdateCheckModalOpen}
 					openWizard={openWizard}
 					wizardGoToStep={wizardGoToStep}
-					setDebugWizardModalOpen={setDebugWizardModalOpen}
 					setDebugPackageModalOpen={setDebugPackageModalOpen}
 					setDebugApplicationStatsOpen={setDebugApplicationStatsOpen}
 					startTour={startTour}

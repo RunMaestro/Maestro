@@ -13,7 +13,6 @@ interface BuildDebugCommandsArgs {
 	setPlaygroundOpen?: (open: boolean) => void;
 	setDebugApplicationStatsOpen?: (open: boolean) => void;
 	setDebugAgentProbeOpen?: (open: boolean) => void;
-	setDebugWizardModalOpen?: (open: boolean) => void;
 	onDebugReleaseQueuedItem?: () => void;
 	getInstallationId: () => Promise<string | null | undefined>;
 	safeClipboardWrite: (text: string) => Promise<boolean>;
@@ -51,7 +50,6 @@ export function buildDebugCommands({
 	setPlaygroundOpen,
 	setDebugApplicationStatsOpen,
 	setDebugAgentProbeOpen,
-	setDebugWizardModalOpen,
 	onDebugReleaseQueuedItem,
 	getInstallationId,
 	safeClipboardWrite,
@@ -196,18 +194,6 @@ export function buildDebugCommands({
 			subtext: `Process next item from queue (${activeSession.executionQueue.length} queued)`,
 			action: () => {
 				onDebugReleaseQueuedItem();
-				setQuickActionOpen(false);
-			},
-		});
-	}
-
-	if (setDebugWizardModalOpen) {
-		commands.push({
-			id: 'debugWizardPhaseReview',
-			label: 'Debug: Wizard → Review Playbooks',
-			subtext: 'Jump directly to Phase Review step (requires existing Auto Run docs)',
-			action: () => {
-				setDebugWizardModalOpen(true);
 				setQuickActionOpen(false);
 			},
 		});

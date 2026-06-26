@@ -112,7 +112,6 @@ vi.mock('../../../renderer/components/WizardResumeModal', () => ({
 	WizardResumeModal: () => null,
 }));
 vi.mock('../../../renderer/components/MarketplaceModal', () => ({ MarketplaceModal: () => null }));
-vi.mock('../../../renderer/components/DebugWizardModal', () => ({ DebugWizardModal: () => null }));
 vi.mock('../../../renderer/components/DebugPackageModal', () => ({
 	DebugPackageModal: () => null,
 }));
@@ -334,10 +333,6 @@ function createDefaultProps(overrides: Record<string, unknown> = {}) {
 		marketplaceModalOpen: false,
 		onCloseMarketplace: vi.fn(),
 		onImportPlaybook: vi.fn(),
-		// Debug wizard
-		debugWizardModalOpen: false,
-		onCloseDebugWizard: vi.fn(),
-		onStartDebugPlaybook: vi.fn(),
 		// Debug package
 		debugPackageModalOpen: false,
 		onCloseDebugPackage: vi.fn(),

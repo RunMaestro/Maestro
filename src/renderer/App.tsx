@@ -19,7 +19,7 @@ import { AppStandaloneModals } from './components/AppStandaloneModals';
 import { initializeRendererPrompts } from './services/promptInit';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { MainPanel, type MainPanelHandle } from './components/MainPanel';
-// AppOverlays, PlaygroundPanel, DebugWizardModal, DebugPackageModal, WindowsWarningModal,
+// AppOverlays, PlaygroundPanel, DebugPackageModal, WindowsWarningModal,
 // GistPublishModal, MaestroWizard, WizardResumeModal, TourOverlay are now rendered
 // inside AppStandaloneModals
 import { useWizard, type SerializableWizardState, type WizardStep } from './components/Wizard';
@@ -262,8 +262,6 @@ function MaestroConsoleInner() {
 		// pendingKeyboardMasteryLevel — now self-sourced in AppOverlays (Tier 1A)
 		// Playground Panel — playgroundOpen now self-sourced in AppStandaloneModals
 		setPlaygroundOpen,
-		// Debug Wizard Modal — debugWizardModalOpen now self-sourced in AppStandaloneModals
-		setDebugWizardModalOpen,
 		// Debug Package Modal — debugPackageModalOpen now self-sourced in AppStandaloneModals
 		setDebugPackageModalOpen,
 		// Debug Application Stats Modal — self-sourced in AppStandaloneModals
@@ -776,7 +774,6 @@ function MaestroConsoleInner() {
 	// Expose debug helpers to window for console access
 	// No dependency array - always keep functions fresh
 	(window as any).__maestroDebug = {
-		openDebugWizard: () => setDebugWizardModalOpen(true),
 		openCommandK: () => setQuickActionOpen(true),
 		openWizard: () => openWizardModal(),
 		openSettings: () => setSettingsModalOpen(true),
@@ -3068,7 +3065,6 @@ function MaestroConsoleInner() {
 					setUpdateCheckModalOpenForQuickActions={setUpdateCheckModalOpen}
 					openWizard={openWizardModal}
 					wizardGoToStep={wizardGoToStep}
-					setDebugWizardModalOpen={setDebugWizardModalOpen}
 					setDebugPackageModalOpen={setDebugPackageModalOpen}
 					setDebugApplicationStatsOpen={setDebugApplicationStatsOpen}
 					startTour={handleQuickActionsStartTour}

@@ -275,7 +275,6 @@ export type ModalId =
 	| 'wizardResume'
 	| 'tour'
 	// Debug & Dev
-	| 'debugWizard'
 	| 'debugPackage'
 	| 'debugApplicationStats'
 	| 'debugAgentProbe'
@@ -678,10 +677,6 @@ export function getModalActions() {
 		setPlaygroundOpen: (open: boolean) =>
 			open ? openModal('playground') : closeModal('playground'),
 
-		// Debug Wizard Modal
-		setDebugWizardModalOpen: (open: boolean) =>
-			open ? openModal('debugWizard') : closeModal('debugWizard'),
-
 		// Debug Package Modal
 		setDebugPackageModalOpen: (open: boolean) =>
 			open ? openModal('debugPackage') : closeModal('debugPackage'),
@@ -963,7 +958,6 @@ export function useModalActions() {
 	const usageDashboardOpen = useModalStore(selectModalOpen('usageDashboard'));
 	const keyboardMasteryData = useModalStore(selectModalData('keyboardMastery'));
 	const playgroundOpen = useModalStore(selectModalOpen('playground'));
-	const debugWizardModalOpen = useModalStore(selectModalOpen('debugWizard'));
 	const debugPackageModalOpen = useModalStore(selectModalOpen('debugPackage'));
 	const debugApplicationStatsOpen = useModalStore(selectModalOpen('debugApplicationStats'));
 	const debugAgentProbeOpen = useModalStore(selectModalOpen('debugAgentProbe'));
@@ -1081,9 +1075,6 @@ export function useModalActions() {
 
 		// Playground Panel
 		playgroundOpen,
-
-		// Debug Wizard Modal
-		debugWizardModalOpen,
 
 		// Debug Package Modal
 		debugPackageModalOpen,

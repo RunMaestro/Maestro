@@ -104,7 +104,6 @@ export interface QuickActionsModalProps {
 	setUpdateCheckModalOpen?: (open: boolean) => void;
 	openWizard?: () => void;
 	wizardGoToStep?: (step: WizardStep) => void;
-	setDebugWizardModalOpen?: (open: boolean) => void;
 	setDebugPackageModalOpen?: (open: boolean) => void;
 	setDebugApplicationStatsOpen?: (open: boolean) => void;
 	startTour?: () => void;
