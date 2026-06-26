@@ -25,7 +25,11 @@ import {
 	type PluginRecord,
 	type PluginRegistry,
 } from '../../shared/plugins/plugin-registry';
-import { validatePluginManifest } from '../../shared/plugins/plugin-manifest';
+import { validatePluginManifest, type PluginManifest } from '../../shared/plugins/plugin-manifest';
+import {
+	aggregateContributions,
+	type AggregatedContributions,
+} from '../../shared/plugins/contributions';
 import {
 	pluginsDir,
 	readPluginState,
@@ -69,6 +73,18 @@ export class PluginManager {
 	getActiveRecords(): PluginRecord[] {
 		if (!this.deps.isEnabled()) return [];
 		return listActive(this.registry);
+	}
+
+	/**
+	 * Tier 0 contributions aggregated across all active plugins. Empty when the
+	 * Encore flag is off. This is the single seam host registries (theme picker,
+	 * prompt catalog, command palette) read plugin-supplied data from.
+	 */
+	getContributions(): AggregatedContributions {
+		const manifests = this.getActiveRecords()
+			.map((r) => r.manifest)
+			.filter((m): m is PluginManifest => m !== null);
+		return aggregateContributions(manifests);
 	}
 
 	/**

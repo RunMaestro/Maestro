@@ -33,6 +33,7 @@ import { isBetaAgent } from '../../../../shared/agentMetadata';
 import { SYMPHONY_REGISTRY_URL } from '../../../../shared/symphony-constants';
 import { DEFAULT_CUE_SETTINGS, type CueSettings } from '../../../../shared/cue';
 import { cueService } from '../../../services/cue';
+import { PluginsPanel } from '../PluginsPanel';
 
 export interface EncoreTabProps {
 	theme: Theme;
@@ -1384,6 +1385,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 						/>
 					</div>
 				</button>
+				{encoreFeatures.plugins && <PluginsPanel theme={theme} />}
 			</div>
 		</div>
 	);

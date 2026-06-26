@@ -15,6 +15,7 @@ import { ipcMain } from 'electron';
 import { withIpcErrorLogging, type CreateHandlerOptions } from '../../utils/ipcHandler';
 import { HOST_API_VERSION } from '../../../shared/plugins/host-api';
 import type { PluginRecord, PluginRegistry } from '../../../shared/plugins/plugin-registry';
+import type { AggregatedContributions } from '../../../shared/plugins/contributions';
 import type { PluginManager, InstallResult } from '../../plugins/plugin-manager';
 
 const LOG_CONTEXT = '[Plugins]';
@@ -78,6 +79,13 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 			return manager.uninstall(id);
 		}
 	);
+	const wrappedContributions = withIpcErrorLogging(
+		handlerOpts('contributions'),
+		async (): Promise<AggregatedContributions> => {
+			manager.refresh();
+			return manager.getContributions();
+		}
+	);
 
 	ipcMain.handle('plugins:list', async (event): Promise<PluginListSnapshot> => {
 		if (!isPluginsEnabled(settingsStore)) throw new Error('PluginsDisabled');
@@ -104,4 +112,9 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 			return wrappedUninstall(event, id);
 		}
 	);
+
+	ipcMain.handle('plugins:contributions', async (event): Promise<AggregatedContributions> => {
+		if (!isPluginsEnabled(settingsStore)) throw new Error('PluginsDisabled');
+		return wrappedContributions(event);
+	});
 }

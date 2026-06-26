@@ -14,6 +14,7 @@
 import { ipcRenderer } from 'electron';
 import type { PluginListSnapshot } from '../ipc/handlers/plugins';
 import type { InstallResult } from '../plugins/plugin-manager';
+import type { AggregatedContributions } from '../../shared/plugins/contributions';
 
 /** Creates the plugins API object for contextBridge exposure. */
 export function createPluginsApi() {
@@ -36,6 +37,14 @@ export function createPluginsApi() {
 		/** Uninstall a plugin by id (removes its directory and forgets its toggle). */
 		uninstall: (id: string): Promise<{ success: boolean; error?: string }> =>
 			ipcRenderer.invoke('plugins:uninstall', id),
+
+		/**
+		 * Tier 0 contributions (themes, prompts, settings, command macros)
+		 * aggregated across all active plugins, plus per-plugin errors. This is the
+		 * read seam host registries consume plugin-supplied data from.
+		 */
+		contributions: (): Promise<AggregatedContributions> =>
+			ipcRenderer.invoke('plugins:contributions'),
 	};
 }
 
