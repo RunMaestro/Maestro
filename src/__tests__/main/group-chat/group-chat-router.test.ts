@@ -615,6 +615,21 @@ describe('group-chat-router', () => {
 			expect(moderatorPrompt.match(/@Review-Bot-Linux/g)).toHaveLength(1);
 		});
 
+		it('does not advertise a participant alias that exact-matches a different participant', async () => {
+			// "Agent-(X)" owns the literal "@Agent-(X)" alias (exact match). The
+			// spaced "Agent (X)" must not also advertise "@Agent-(X)" via its legacy
+			// fallback — that would route the moderator to the wrong participant.
+			const chat = await createTestChatWithModerator('Participant Alias Collision Test');
+			await addParticipant(chat.id, 'Agent (X)', 'claude-code', mockProcessManager);
+			await addParticipant(chat.id, 'Agent-(X)', 'claude-code', mockProcessManager);
+			mockProcessManager.spawn.mockClear();
+
+			await routeUserMessage(chat.id, 'Who can help?', mockProcessManager, mockAgentDetector);
+
+			const moderatorPrompt = mockProcessManager.spawn.mock.calls[0]?.[0]?.prompt ?? '';
+			expect(moderatorPrompt.match(/@Agent-\(X\)/g)).toHaveLength(1);
+		});
+
 		it('throws for non-existent chat', async () => {
 			await expect(
 				routeUserMessage('non-existent-id', 'Hello', mockProcessManager, mockAgentDetector)
@@ -787,6 +802,41 @@ describe('group-chat-router', () => {
 					name: 'CIA Agent (Super Cool)',
 				}),
 			]);
+		});
+
+		it('auto-adds a stronger-matching session despite a weak existing participant alias', async () => {
+			// An existing "Review Bot [Linux]" participant only safe-folds (priority 1)
+			// against "@Review-Bot-(Linux)", so it must not shadow the legacy
+			// (priority 3) match to the available "Review Bot (Linux)" session.
+			const chat = await createTestChatWithModerator('Weak Participant Shadow Test');
+			await addParticipant(chat.id, 'Review Bot [Linux]', 'claude-code', mockProcessManager);
+			setGetSessionsCallback(() => [
+				{
+					id: 'session-square',
+					name: 'Review Bot [Linux]',
+					toolType: 'claude-code',
+					cwd: '/tmp/project',
+				},
+				{
+					id: 'session-round',
+					name: 'Review Bot (Linux)',
+					toolType: 'codex',
+					cwd: '/tmp/project',
+				},
+			]);
+			mockProcessManager.spawn.mockClear();
+
+			await routeModeratorResponse(
+				chat.id,
+				'@Review-Bot-(Linux): please investigate',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			const updatedChat = await loadGroupChat(chat.id);
+			expect(updatedChat?.participants).toEqual(
+				expect.arrayContaining([expect.objectContaining({ name: 'Review Bot (Linux)' })])
+			);
 		});
 
 		it('logs moderator message', async () => {

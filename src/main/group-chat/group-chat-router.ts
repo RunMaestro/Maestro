@@ -463,19 +463,22 @@ function stripMarkdownFormatting(name: string): string {
 }
 
 function getMentionNameForContext(name: string, peerNames: string[]): string {
-	const safeName = normalizeMentionName(name);
-	const foldedSafeName = safeName.toLowerCase();
-	const hasSafeNameCollision = peerNames.some(
-		(peerName) =>
-			peerName !== name && normalizeMentionName(peerName).toLowerCase() === foldedSafeName
-	);
-
-	if (!hasSafeNameCollision) {
-		return safeName;
+	// Advertise the highest-fidelity alias that resolves *uniquely back to this
+	// exact name* among the peers. Normalized collisions (e.g. "A (B)" vs
+	// "A-(B)", or "Review Bot [Linux]" vs "Review Bot (Linux)") can make a
+	// candidate fold onto — or worse, exactly match — a different peer, which
+	// would route the moderator's mention to the wrong agent.
+	const candidates = [normalizeMentionName(name), normalizeLegacyMentionName(name)];
+	for (const candidate of candidates) {
+		if (!candidate) continue;
+		if (findUniqueMentionMatch(candidate, peerNames, (peer) => peer) === name) {
+			return candidate;
+		}
 	}
-
-	const legacyName = normalizeLegacyMentionName(name);
-	return legacyName.toLowerCase() === foldedSafeName ? safeName : legacyName;
+	// No single-token alias resolves unambiguously to this name. Fall back to the
+	// safe name; findUniqueMentionMatch sees the tie and refuses to route it, so
+	// the mention safely no-ops instead of targeting the wrong peer.
+	return normalizeMentionName(name);
 }
 
 /**
@@ -540,6 +543,32 @@ function findSessionForParticipantName(
 	}
 
 	return bestMatches.length === 1 ? bestMatches[0] : undefined;
+}
+
+/**
+ * Resolve a moderator/user @mention to the session that should be auto-added.
+ *
+ * Resolves against existing participants AND available (non-terminal) sessions
+ * together so a weak (safe-folded) participant match can't shadow a stronger
+ * (exact/legacy) session match — e.g. an existing "Review Bot [Linux]"
+ * participant must not block auto-adding a mentioned "Review Bot (Linux)"
+ * session. Returns the session to add, or undefined when the mention is already
+ * an existing participant or resolves ambiguously (a tie refuses to route).
+ */
+function resolveSessionToAutoAdd(
+	mentionedName: string,
+	existingParticipantNames: ReadonlySet<string>,
+	sessions: readonly GroupChatSessionInfo[]
+): GroupChatSessionInfo | undefined {
+	type Candidate = { name: string; session: GroupChatSessionInfo | null };
+	const candidates: Candidate[] = [
+		...Array.from(existingParticipantNames, (name): Candidate => ({ name, session: null })),
+		...sessions
+			.filter((s) => s.toolType !== 'terminal')
+			.map((s): Candidate => ({ name: s.name, session: s })),
+	];
+	const best = findUniqueMentionMatch(mentionedName, candidates, (c) => c.name);
+	return best?.session ?? undefined;
 }
 
 /**
@@ -672,21 +701,14 @@ export async function routeUserMessage(
 		const existingParticipantNames = new Set(chat.participants.map((p) => p.name));
 
 		for (const mentionedName of userMentions) {
-			// Skip if already a participant (check both exact and normalized names)
-			const alreadyParticipant = findUniqueMentionMatch(
+			// Resolve against existing participants AND available sessions together
+			// so a weak participant match can't shadow a stronger session match.
+			// Returns undefined when the mention is already a participant or
+			// resolves ambiguously.
+			const matchingSession = resolveSessionToAutoAdd(
 				mentionedName,
-				Array.from(existingParticipantNames),
-				(name) => name
-			);
-			if (alreadyParticipant) {
-				continue;
-			}
-
-			// Find matching session by name (supports both exact and hyphenated names)
-			const matchingSession = findUniqueMentionMatch(
-				mentionedName,
-				sessions.filter((s) => s.toolType !== 'terminal'),
-				(s) => s.name
+				existingParticipantNames,
+				sessions
 			);
 
 			if (matchingSession) {
@@ -1088,21 +1110,14 @@ export async function routeModeratorResponse(
 		);
 
 		for (const mentionedName of allMentions) {
-			// Skip if already a participant (check both exact and normalized names)
-			const alreadyParticipant = findUniqueMentionMatch(
+			// Resolve against existing participants AND available sessions together
+			// so a weak participant match can't shadow a stronger session match.
+			// Returns undefined when the mention is already a participant or
+			// resolves ambiguously.
+			const matchingSession = resolveSessionToAutoAdd(
 				mentionedName,
-				Array.from(existingParticipantNames),
-				(name) => name
-			);
-			if (alreadyParticipant) {
-				continue;
-			}
-
-			// Find matching session by name (supports both exact and hyphenated names)
-			const matchingSession = findUniqueMentionMatch(
-				mentionedName,
-				sessions.filter((s) => s.toolType !== 'terminal'),
-				(s) => s.name
+				existingParticipantNames,
+				sessions
 			);
 
 			if (matchingSession) {
