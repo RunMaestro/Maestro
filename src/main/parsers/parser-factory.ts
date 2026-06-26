@@ -18,6 +18,7 @@ import { CodexOutputParser } from './codex-output-parser';
 import { FactoryDroidOutputParser } from './factory-droid-output-parser';
 import { CopilotOutputParser } from './copilot-output-parser';
 import { PiOutputParser } from './pi-output-parser';
+import { QwenOutputParser } from './qwen-output-parser';
 
 const PARSER_CONSTRUCTORS: Record<string, () => AgentOutputParser> = {
 	'claude-code': () => new ClaudeOutputParser(),
@@ -26,6 +27,7 @@ const PARSER_CONSTRUCTORS: Record<string, () => AgentOutputParser> = {
 	'factory-droid': () => new FactoryDroidOutputParser(),
 	'copilot-cli': () => new CopilotOutputParser(),
 	pi: () => new PiOutputParser(),
+	'qwen3-coder': () => new QwenOutputParser(),
 };
 
 /**

@@ -22,6 +22,7 @@ export const DEFAULT_CONTEXT_WINDOWS: Partial<Record<AgentId, number>> = {
 	hermes: 200000, // Conservative fallback until runtime-specific reporting lands
 	pi: 200000, // Conservative fallback until runtime-specific reporting lands
 	'copilot-cli': 200000, // Copilot-CLI (varies by model, defaults to Claude Sonnet)
+	'qwen3-coder': 262144, // Qwen3-Coder native 256K context window
 	terminal: 0, // Terminal has no context window
 };
 

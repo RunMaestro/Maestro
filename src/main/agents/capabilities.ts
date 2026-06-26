@@ -166,35 +166,37 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 	},
 
 	/**
-	 * Qwen3 Coder - Alibaba's Qwen coding model
+	 * Qwen3 Coder - Alibaba's Qwen coding agent (Qwen Code CLI)
 	 *
-	 * PLACEHOLDER: Most capabilities set to false until Qwen3 Coder CLI is available
-	 * and can be tested. Update this configuration when integrating the agent.
+	 * Qwen Code is a Gemini CLI fork that exposes the same stream-json headless
+	 * interface. Capabilities mirror the Gemini/Claude stream-json integration.
+	 * Resume and session storage are deferred until verified against a live
+	 * Coding-plan account (beta scope).
 	 */
 	'qwen3-coder': {
-		supportsResume: false,
-		supportsReadOnlyMode: false,
-		supportsJsonOutput: false,
-		supportsSessionId: false,
-		supportsImageInput: false,
+		supportsResume: false, // Defer until --resume verified in headless mode
+		supportsReadOnlyMode: false, // Prompt-only enforcement via -y
+		supportsJsonOutput: true,
+		supportsSessionId: true,
+		supportsImageInput: true, // Qwen is multimodal; imageArgs unset for beta
 		supportsImageInputOnResume: false,
 		supportsSlashCommands: false,
-		supportsSessionStorage: false,
-		supportsCostTracking: false, // Local model - no cost
-		supportsUsageStats: false,
-		supportsBatchMode: false,
-		requiresPromptToStart: false, // Not yet investigated
-		supportsStreaming: true, // Likely streams
-		supportsResultMessages: false,
-		supportsModelSelection: false, // Not yet investigated
+		supportsSessionStorage: false, // Deferred to keep beta scope
+		supportsCostTracking: false, // Local/plan model - no cost
+		supportsUsageStats: true,
+		supportsBatchMode: true,
+		requiresPromptToStart: false,
+		supportsStreaming: true,
+		supportsResultMessages: true,
+		supportsModelSelection: true,
 		supportsStreamJsonInput: false,
-		supportsThinkingDisplay: false, // Not yet investigated
-		supportsContextMerge: false, // Not yet investigated - PLACEHOLDER
-		supportsContextExport: false, // Not yet investigated - PLACEHOLDER
-		supportsWizard: false, // PLACEHOLDER
-		supportsGroupChatModeration: false, // PLACEHOLDER
-		usesJsonLineOutput: false, // PLACEHOLDER
-		usesCombinedContextWindow: false, // PLACEHOLDER
+		supportsThinkingDisplay: true,
+		supportsContextMerge: true,
+		supportsContextExport: false,
+		supportsWizard: false,
+		supportsGroupChatModeration: false,
+		usesJsonLineOutput: true,
+		usesCombinedContextWindow: false,
 		supportsAppendSystemPrompt: false,
 		supportsProjectMemory: false,
 	},

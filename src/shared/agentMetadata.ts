@@ -76,6 +76,7 @@ export const BETA_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>([
 	'hermes',
 	'pi',
 	'copilot-cli',
+	'qwen3-coder',
 ]);
 
 /**

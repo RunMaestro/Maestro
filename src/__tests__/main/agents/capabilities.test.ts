@@ -117,9 +117,11 @@ describe('agent-capabilities', () => {
 		it('should have capabilities for qwen3-coder', () => {
 			const capabilities = AGENT_CAPABILITIES['qwen3-coder'];
 			expect(capabilities).toBeDefined();
-			// Local model - no cost tracking
+			// Local/plan model - no cost tracking
 			expect(capabilities.supportsCostTracking).toBe(false);
 			expect(capabilities.supportsStreaming).toBe(true);
+			expect(capabilities.supportsJsonOutput).toBe(true);
+			expect(capabilities.supportsModelSelection).toBe(true);
 		});
 
 		it('should have capabilities for opencode', () => {

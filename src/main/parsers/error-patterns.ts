@@ -1026,6 +1026,44 @@ const PI_ERROR_PATTERNS: AgentErrorPatterns = {
 	],
 };
 
+const QWEN_ERROR_PATTERNS: AgentErrorPatterns = {
+	auth_expired: [
+		{
+			pattern: /invalid api key|authentication failed|unauthorized|not authenticated|401/i,
+			message: 'Qwen Code authentication failed. Re-authenticate your Qwen account or API key.',
+			recoverable: true,
+		},
+	],
+	rate_limited: [
+		{
+			pattern: /rate limit|too many requests|\b429\b|quota exceeded/i,
+			message: 'Qwen Code rate limit exceeded. Please wait and try again.',
+			recoverable: true,
+		},
+	],
+	token_exhaustion: [
+		{
+			pattern: /context.*(exceeded|too long)|maximum.*tokens|prompt.*too long/i,
+			message: 'Qwen Code context limit exceeded. Start a new session.',
+			recoverable: true,
+		},
+	],
+	network_error: [
+		{
+			pattern: /connection (failed|refused|reset)|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND/i,
+			message: 'Qwen Code could not reach the model provider. Check your network connection.',
+			recoverable: true,
+		},
+	],
+	agent_crashed: [
+		{
+			pattern: /\b(fatal|unexpected|internal|unhandled)\s+error\b/i,
+			message: 'An unexpected error occurred in the agent.',
+			recoverable: false,
+		},
+	],
+};
+
 // ============================================================================
 // Pattern Registry
 // ============================================================================
@@ -1037,6 +1075,7 @@ const patternRegistry = new Map<ToolType, AgentErrorPatterns>([
 	['factory-droid', FACTORY_DROID_ERROR_PATTERNS],
 	['copilot-cli', COPILOT_ERROR_PATTERNS],
 	['pi', PI_ERROR_PATTERNS],
+	['qwen3-coder', QWEN_ERROR_PATTERNS],
 ]);
 
 /**

@@ -348,6 +348,34 @@ describe('agent-definitions', () => {
 		});
 	});
 
+	describe('Qwen3 Coder agent', () => {
+		it('should be a visible, real agent (not hidden)', () => {
+			const qwen = getAgentDefinition('qwen3-coder');
+			expect(qwen).toBeDefined();
+			expect(qwen?.hidden).toBeFalsy();
+			expect(qwen?.binaryName).toBe('qwen');
+			expect(qwen?.command).toBe('qwen');
+		});
+
+		it('should build modelArgs and stream-json output args', () => {
+			const qwen = getAgentDefinition('qwen3-coder');
+			expect(qwen?.modelArgs?.('qwen3-coder-plus')).toEqual(['-m', 'qwen3-coder-plus']);
+			expect(qwen?.jsonOutputArgs).toEqual(['--output-format', 'stream-json']);
+			expect(qwen?.promptArgs?.('hello')).toEqual(['-p', 'hello']);
+		});
+
+		it('should expose a model select config option with trimming argBuilder', () => {
+			const qwen = getAgentDefinition('qwen3-coder');
+			const modelOption = qwen?.configOptions?.find((opt) => opt.key === 'model');
+			expect(modelOption).toBeDefined();
+			expect(modelOption?.type).toBe('select');
+			expect(modelOption?.default).toBe('');
+			expect(modelOption?.argBuilder?.('qwen3-coder-plus')).toEqual(['-m', 'qwen3-coder-plus']);
+			expect(modelOption?.argBuilder?.('')).toEqual([]);
+			expect(modelOption?.argBuilder?.('  ')).toEqual([]);
+		});
+	});
+
 	describe('Type definitions', () => {
 		it('should export AgentDefinition type', () => {
 			const def: AgentDefinition = {

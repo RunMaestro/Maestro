@@ -349,10 +349,50 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 	{
 		id: 'qwen3-coder',
 		name: 'Qwen3 Coder',
-		hidden: true, // Not shipping. Kept for type/back-compat, hidden from UI.
-		binaryName: 'qwen3-coder',
-		command: 'qwen3-coder',
+		binaryName: 'qwen',
+		command: 'qwen',
 		args: [],
+		batchModePrefix: [],
+		batchModeArgs: ['-y'],
+		jsonOutputArgs: ['--output-format', 'stream-json'],
+		resumeArgs: (sessionId: string) => ['--resume', sessionId],
+		// Qwen Code is a Gemini CLI fork; read-only behavior is enforced via system prompt
+		// instructions. The -y flag is still needed for non-interactive execution to prevent
+		// approval prompts from hanging batch mode.
+		readOnlyArgs: ['-y'],
+		readOnlyCliEnforced: false, // No CLI-level read-only enforcement; prompt-only
+		yoloModeArgs: ['-y'],
+		workingDirArgs: (dir: string) => ['--include-directories', dir],
+		imageArgs: undefined,
+		modelArgs: (modelId: string) => ['-m', modelId],
+		promptArgs: (prompt: string) => ['-p', prompt],
+		configOptions: [
+			{
+				key: 'model',
+				type: 'select' as const,
+				label: 'Model',
+				description:
+					'Model to use. Leave blank to use the Qwen Code default for your account or plan.',
+				options: [
+					'',
+					'qwen3-coder-plus',
+					'qwen3-coder-flash',
+					'qwen-max',
+					'qwen-plus',
+					'qwen-turbo',
+				],
+				default: '',
+				argBuilder: (value: string) => (value && value.trim() ? ['-m', value.trim()] : []),
+			},
+			{
+				key: 'contextWindow',
+				type: 'number' as const,
+				label: 'Context Window Size',
+				description:
+					'Maximum context window size in tokens. Qwen3-Coder supports a native 256K (262144) context window.',
+				default: 262144,
+			},
+		],
 	},
 	{
 		id: 'hermes',
