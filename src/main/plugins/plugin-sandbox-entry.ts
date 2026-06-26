@@ -14,10 +14,14 @@
  * escapes), so it is defense-in-depth, not the primary defense. The primary
  * defenses are: (1) signature trust + explicit install-time consent gating which
  * code runs at all, and (2) the permission broker, which default-denies every
- * host effect regardless of what the plugin code manages to call. This child
- * holds no secrets and no privileged handles; the worst a realm escape buys is
- * the (already untrusted) utilityProcess's own Node context, still firewalled
- * from the host by the broker for anything that touches the user's data.
+ * brokered host effect. IMPORTANT: a successful realm escape that reaches this
+ * child's real `process`/`require` gets full Node in THIS utilityProcess and can
+ * call fs/net/child_process DIRECTLY, bypassing the broker - so we work to make
+ * escape hard (no host intrinsics, no require/process in the context, wrapped
+ * timers, codeGeneration disabled). The child is launched with an empty env and
+ * holds no Maestro secrets or handles, which bounds the damage of an escape to
+ * the user's ambient OS permissions, but escape is not "harmless". Treat closing
+ * escape vectors here as load-bearing, not cosmetic.
  *
  * The host (plugin-sandbox-host.ts) treats every message from here as hostile:
  * it validates the method, size, and shape, and authorizes via the broker before
@@ -106,35 +110,21 @@ function runPluginCode(pluginId: string, code: string): void {
 	const sdk = buildSdk(pluginId);
 	const moduleShim: { exports: Record<string, unknown> } = { exports: {} };
 
-	// Curated globals: pure ECMAScript + a console routed to the host log, the
-	// SDK, and the module shim. Everything else (require, process, Buffer,
-	// globalThis, setImmediate, etc.) is intentionally omitted.
+	// Curated globals. We deliberately do NOT inject host intrinsics (Object,
+	// Array, Promise, URL, ...): doing so would share the HOST's prototype chain
+	// with plugin code (prototype pollution of this process) and hand it the host
+	// Function constructor (`URL.constructor('return process')()` -> full Node).
+	// vm.createContext gives the new context its OWN native intrinsics for free,
+	// isolated from the host realm. Timers are wrapped (not passed by reference)
+	// so the plugin cannot reach the host Function via `setTimeout.constructor`.
+	// require/process/Buffer/module-loading/globalThis are intentionally absent.
 	const sandboxGlobal: Record<string, unknown> = {
 		maestro: sdk,
 		module: moduleShim,
 		exports: moduleShim.exports,
 		console: makeSandboxConsole(),
-		setTimeout,
-		clearTimeout,
-		Promise,
-		JSON,
-		Math,
-		Date,
-		Object,
-		Array,
-		String,
-		Number,
-		Boolean,
-		RegExp,
-		Map,
-		Set,
-		Symbol,
-		Error,
-		TypeError,
-		URL,
-		URLSearchParams,
-		TextEncoder,
-		TextDecoder,
+		setTimeout: (fn: () => void, ms?: number) => setTimeout(fn, ms),
+		clearTimeout: (handle: ReturnType<typeof setTimeout>) => clearTimeout(handle),
 	};
 
 	const context = vm.createContext(sandboxGlobal, {

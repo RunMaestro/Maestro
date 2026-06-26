@@ -252,7 +252,13 @@ export class PluginManager {
 		if (fs.existsSync(dest)) {
 			return { success: false, error: `plugin "${manifest.id}" is already installed` };
 		}
+		// Reject a source tree containing symlinks: they can point outside the
+		// plugin dir (a read/write escape) and would otherwise be copied verbatim.
+		if (containsSymlink(sourceDir)) {
+			return { success: false, error: 'plugin source contains symlinks, which are not allowed' };
+		}
 		fs.mkdirSync(pluginsDir(), { recursive: true });
+		// dereference:false keeps the copy faithful; we already rejected symlinks.
 		fs.cpSync(sourceDir, dest, { recursive: true });
 		this.refresh();
 		const record = this.registry.records.find((r) => r.id === manifest.id);
@@ -304,4 +310,20 @@ export class PluginManager {
 			return null;
 		}
 	}
+}
+
+/** Does a directory tree contain any symbolic link? Used to refuse installing a
+ * plugin whose files could escape the plugin directory via a symlink. */
+function containsSymlink(dir: string): boolean {
+	let entries: fs.Dirent[];
+	try {
+		entries = fs.readdirSync(dir, { withFileTypes: true });
+	} catch {
+		return false;
+	}
+	for (const entry of entries) {
+		if (entry.isSymbolicLink()) return true;
+		if (entry.isDirectory() && containsSymlink(path.join(dir, entry.name))) return true;
+	}
+	return false;
 }

@@ -49,9 +49,13 @@ function grantsPath(): string {
  * Discovery only ever reads names from readdir, but the installer accepts ids,
  * so a single strict guard here keeps every join inside the plugins dir.
  */
+/** Windows reserved device names that must never become a folder name. */
+const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)/i;
+
 export function isSafePluginFolderName(name: string): boolean {
 	if (!name || name.trim() === '') return false;
 	const trimmed = name.trim();
+	if (WINDOWS_RESERVED.test(trimmed)) return false;
 	return !(
 		trimmed.includes('..') ||
 		trimmed.includes('/') ||

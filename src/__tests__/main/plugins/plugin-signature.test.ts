@@ -78,6 +78,18 @@ describe('verifyPluginSignature', () => {
 		expect(verifyPluginSignature(dir, [publicKeyB64]).status).toBe('invalid');
 	});
 
+	it('reports invalid when the tree contains a symlink (cannot be signed safely)', () => {
+		signDir(dir, publicKeyB64, privateKey);
+		// Add a symlink AFTER signing; it is not in the signed set and must fail.
+		try {
+			fs.symlinkSync(os.tmpdir(), path.join(dir, 'link'));
+		} catch {
+			// Some CI/Windows environments forbid symlink creation; skip if so.
+			return;
+		}
+		expect(verifyPluginSignature(dir, [publicKeyB64]).status).toBe('invalid');
+	});
+
 	it('reports invalid for a forged signature from a different key', () => {
 		const other = generateKeyPairSync('ed25519');
 		// sign with `other` but claim the trusted publicKeyB64

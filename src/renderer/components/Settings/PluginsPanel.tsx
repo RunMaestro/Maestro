@@ -4,7 +4,8 @@
  * Lists installed community plugins and lets the user enable/disable, install
  * (by picking a folder that contains a plugin.json), and uninstall them. Reads
  * window.maestro.plugins, which is gated in the main process on the `plugins`
- * Encore flag. Phase 1: data-only, plugins do not execute code yet.
+ * Encore flag. Tier 0 (data) plugins apply on enable; tier 1 (code) plugins run
+ * sandboxed and require permission consent before they are enabled.
  */
 
 import { useState, useEffect, useCallback } from 'react';
@@ -178,8 +179,8 @@ export function PluginsPanel({ theme }: PluginsPanelProps) {
 		>
 			<div className="flex items-center justify-between pt-3 pb-2">
 				<div className="text-xs" style={{ color: theme.colors.textDim }}>
-					Host API {snapshot?.hostApiVersion ?? '...'} - plugins are listed and managed but do not
-					execute code yet.
+					Host API {snapshot?.hostApiVersion ?? '...'} - data plugins apply on enable; code plugins
+					run sandboxed and ask for permission first.
 				</div>
 				<div className="flex items-center gap-2">
 					<button

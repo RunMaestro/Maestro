@@ -42,10 +42,18 @@ export interface PluginSandboxHostDeps {
 const MAX_MESSAGE_BYTES = 1_000_000;
 /** Grace period between a graceful shutdown message and a hard kill. */
 const SHUTDOWN_GRACE_MS = 2000;
+/** Max concurrent in-flight host calls per plugin (backpressure). */
+const MAX_IN_FLIGHT = 32;
+/** Sliding-window rate limit: max requests per window per plugin. */
+const RATE_WINDOW_MS = 1000;
+const RATE_MAX_PER_WINDOW = 200;
 
 interface RunningPlugin {
 	proc: UtilityProcess;
 	shutdownTimer?: NodeJS.Timeout;
+	inFlight: number;
+	windowStart: number;
+	windowCount: number;
 }
 
 export class PluginSandboxHost {
@@ -85,7 +93,7 @@ export class PluginSandboxHost {
 			env: {},
 		});
 
-		const record: RunningPlugin = { proc };
+		const record: RunningPlugin = { proc, inFlight: 0, windowStart: Date.now(), windowCount: 0 };
 		this.running.set(pluginId, record);
 
 		proc.on('message', (data: unknown) => {
@@ -154,6 +162,25 @@ export class PluginSandboxHost {
 			}
 		};
 
+		// Backpressure + rate limiting against a flooding child.
+		const record = this.running.get(pluginId);
+		if (record) {
+			const now = Date.now();
+			if (now - record.windowStart > RATE_WINDOW_MS) {
+				record.windowStart = now;
+				record.windowCount = 0;
+			}
+			record.windowCount += 1;
+			if (record.inFlight >= MAX_IN_FLIGHT) {
+				respond({ ok: false, error: 'too many concurrent host calls' });
+				return;
+			}
+			if (record.windowCount > RATE_MAX_PER_WINDOW) {
+				respond({ ok: false, error: 'host call rate limit exceeded' });
+				return;
+			}
+		}
+
 		// Bound message size from a hostile child.
 		let serializedSize = 0;
 		try {
@@ -180,11 +207,14 @@ export class PluginSandboxHost {
 			return;
 		}
 
+		if (record) record.inFlight += 1;
 		try {
 			const result = await handler(pluginId, request.params);
 			respond({ ok: true, result });
 		} catch (err) {
 			respond({ ok: false, error: err instanceof Error ? err.message : String(err) });
+		} finally {
+			if (record) record.inFlight = Math.max(0, record.inFlight - 1);
 		}
 	}
 }
