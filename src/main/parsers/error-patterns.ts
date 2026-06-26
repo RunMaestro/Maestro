@@ -690,6 +690,15 @@ const FACTORY_DROID_ERROR_PATTERNS: AgentErrorPatterns = {
 // ============================================================================
 
 /**
+ * Actionable message shown when an SSH remote host appears to be Windows.
+ * Maestro currently builds the remote command for a POSIX shell only
+ * (see ssh-command-builder.ts: /bin/bash --norc --noprofile + single-quote
+ * escaping), so Windows remotes are not yet supported. Tracked by issue #995.
+ */
+const WINDOWS_REMOTE_UNSUPPORTED_MESSAGE =
+	'SSH execution to Windows remote hosts is not yet supported (Maestro builds the remote command for a POSIX shell). See issue #995.';
+
+/**
  * Error patterns for SSH remote execution errors.
  * These are checked separately from agent-specific patterns because they can
  * occur when ANY agent runs via SSH remote execution.
@@ -793,6 +802,30 @@ export const SSH_ERROR_PATTERNS: AgentErrorPatterns = {
 	],
 
 	agent_crashed: [
+		// Windows remote host detection (issue #995).
+		// Maestro builds the remote command for a POSIX shell. When the SSH
+		// remote is Windows, its default shell (cmd.exe or PowerShell) cannot
+		// run /bin/bash and the process dies with a bare exit 1. The phrases
+		// below are emitted ONLY by Windows shells, never by a POSIX shell, so
+		// POSIX remotes are never affected by these patterns.
+		{
+			// cmd.exe: "'/bin/bash' is not recognized as an internal or external command"
+			pattern: /is not recognized as an internal or external command/i,
+			message: WINDOWS_REMOTE_UNSUPPORTED_MESSAGE,
+			recoverable: false,
+		},
+		{
+			// PowerShell: "The term '/bin/bash' is not recognized as the name of a cmdlet"
+			pattern: /is not recognized as the name of a cmdlet/i,
+			message: WINDOWS_REMOTE_UNSUPPORTED_MESSAGE,
+			recoverable: false,
+		},
+		{
+			// cmd.exe / Windows API: "The system cannot find the path specified"
+			pattern: /the system cannot find the path specified/i,
+			message: WINDOWS_REMOTE_UNSUPPORTED_MESSAGE,
+			recoverable: false,
+		},
 		{
 			// Agent command not found (shell reports command not found)
 			// bash/sh format: "bash: claude: command not found"
