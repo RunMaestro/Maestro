@@ -13,6 +13,7 @@
  */
 
 import { isHostApiCompatible } from './host-api';
+import { parsePermissions, type PermissionRequest } from './permissions';
 
 /**
  * Plugin trust/capability tier. Determines what the host will let a plugin do.
@@ -57,6 +58,17 @@ export interface PluginManifest {
 	homepage?: string;
 	/** Declarative contributions. Structurally validated; semantics land later. */
 	contributes?: Record<string, unknown>;
+	/**
+	 * Relative path (within the plugin dir) to the sandboxed code entrypoint.
+	 * Required for tier >= 1; forbidden for tier 0 (data-only plugins run no code).
+	 */
+	entry?: string;
+	/**
+	 * Capabilities the plugin requests. Only meaningful for tier >= 1. Validated
+	 * against the fixed capability vocabulary; the user grants these at install
+	 * and the broker enforces them at runtime.
+	 */
+	permissions?: PermissionRequest[];
 }
 
 /** Outcome of validating one manifest. */
@@ -101,8 +113,20 @@ export function validatePluginManifest(input: unknown): ManifestValidationResult
 		return { manifest: null, errors: ['manifest is not a JSON object'] };
 	}
 
-	const { id, name, version, tier, maestro, description, author, license, homepage, contributes } =
-		input as Record<string, unknown>;
+	const {
+		id,
+		name,
+		version,
+		tier,
+		maestro,
+		description,
+		author,
+		license,
+		homepage,
+		contributes,
+		entry,
+		permissions,
+	} = input as Record<string, unknown>;
 
 	if (!isNonEmptyString(id)) {
 		errors.push('id is required and must be a non-empty string');
@@ -158,6 +182,36 @@ export function validatePluginManifest(input: unknown): ManifestValidationResult
 		errors.push('contributes, when present, must be an object');
 	}
 
+	// Tier-gated code fields. Tier 0 is data-only: it must not declare an entry
+	// or permissions. Tier >= 1 runs sandboxed code: it must declare an entry,
+	// and its permissions (if any) must parse against the capability vocabulary.
+	const isCodeTier = normalizedTier === 1 || normalizedTier === 2;
+	let safeEntry: string | undefined;
+	if (entry !== undefined && typeof entry !== 'string') {
+		errors.push('entry, when present, must be a string');
+	} else if (typeof entry === 'string') {
+		const trimmed = entry.trim();
+		if (trimmed === '') {
+			errors.push('entry, when present, must be a non-empty string');
+		} else if (!isSafeRelativeEntry(trimmed)) {
+			errors.push(`entry "${entry}" must be a relative path inside the plugin (no .. or absolute)`);
+		} else {
+			safeEntry = trimmed;
+		}
+	}
+	if (isCodeTier && !safeEntry) {
+		errors.push(`tier ${normalizedTier} plugins require an "entry" file`);
+	}
+	if (!isCodeTier && entry !== undefined) {
+		errors.push('tier 0 plugins are data-only and must not declare an entry');
+	}
+
+	const parsedPermissions = parsePermissions(permissions);
+	for (const e of parsedPermissions.errors) errors.push(`permissions: ${e}`);
+	if (!isCodeTier && parsedPermissions.requests.length > 0) {
+		errors.push('tier 0 plugins are data-only and must not request permissions');
+	}
+
 	if (errors.length > 0) {
 		return { manifest: null, errors };
 	}
@@ -173,8 +227,23 @@ export function validatePluginManifest(input: unknown): ManifestValidationResult
 		...(isNonEmptyString(license) ? { license: (license as string).trim() } : {}),
 		...(isNonEmptyString(homepage) ? { homepage: (homepage as string).trim() } : {}),
 		...(isPlainObject(contributes) ? { contributes } : {}),
+		...(safeEntry ? { entry: safeEntry } : {}),
+		...(parsedPermissions.requests.length > 0 ? { permissions: parsedPermissions.requests } : {}),
 	};
 	return { manifest, errors: [] };
+}
+
+/**
+ * An entry path must be relative and stay inside the plugin directory. Rejects
+ * absolute paths, `..` traversal, and a leading `~`. Forward or back slashes are
+ * allowed as internal separators.
+ */
+function isSafeRelativeEntry(entry: string): boolean {
+	if (entry.startsWith('~')) return false;
+	if (entry.startsWith('/') || entry.startsWith('\\')) return false;
+	if (/^[a-zA-Z]:[\\/]/.test(entry)) return false; // windows drive-absolute
+	const parts = entry.split(/[\\/]+/);
+	return !parts.includes('..');
 }
 
 /** Convenience: is this manifest loadable on the given host API version? */

@@ -16,7 +16,14 @@ import { withIpcErrorLogging, type CreateHandlerOptions } from '../../utils/ipcH
 import { HOST_API_VERSION } from '../../../shared/plugins/host-api';
 import type { PluginRecord, PluginRegistry } from '../../../shared/plugins/plugin-registry';
 import type { AggregatedContributions } from '../../../shared/plugins/contributions';
+import {
+	grantsFromRequests,
+	isPluginCapability,
+	type PermissionRequest,
+	type PermissionGrant,
+} from '../../../shared/plugins/permissions';
 import type { PluginManager, InstallResult } from '../../plugins/plugin-manager';
+import { readGrants, setGrants, forgetGrants } from '../../plugins/plugin-store-main';
 
 const LOG_CONTEXT = '[Plugins]';
 
@@ -29,6 +36,12 @@ const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 
 export interface PluginListSnapshot {
 	hostApiVersion: string;
 	plugins: PluginRecord[];
+}
+
+/** A plugin's requested permissions plus what the user has currently granted. */
+export interface PluginGrantsSnapshot {
+	requested: PermissionRequest[];
+	granted: PermissionGrant[];
 }
 
 export interface PluginsHandlerDependencies {
@@ -86,6 +99,38 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 			return manager.getContributions();
 		}
 	);
+	const wrappedGetGrants = withIpcErrorLogging(
+		handlerOpts('getGrants'),
+		async (id: unknown): Promise<PluginGrantsSnapshot> => {
+			if (typeof id !== 'string' || id.length === 0) throw new Error('InvalidPluginId');
+			return { requested: manager.getRequestedPermissions(id) ?? [], granted: readGrants(id) };
+		}
+	);
+	const wrappedSetGrants = withIpcErrorLogging(
+		handlerOpts('setGrants'),
+		// The consent action: the user approves a subset of the plugin's REQUESTED
+		// permissions. We never grant a capability the manifest did not request
+		// (an over-broad grant cannot be smuggled in via the renderer), and only
+		// known capabilities survive.
+		async (id: unknown, approvedCapabilities: unknown): Promise<PluginGrantsSnapshot> => {
+			if (typeof id !== 'string' || id.length === 0) throw new Error('InvalidPluginId');
+			if (!Array.isArray(approvedCapabilities)) throw new Error('InvalidApproval');
+			const approved = new Set(approvedCapabilities.filter(isPluginCapability));
+			const requested = manager.getRequestedPermissions(id) ?? [];
+			const toGrant = requested.filter((r) => approved.has(r.capability));
+			const grants = grantsFromRequests(toGrant, Date.now());
+			setGrants(id, grants);
+			return { requested, granted: grants };
+		}
+	);
+	const wrappedRevokeGrants = withIpcErrorLogging(
+		handlerOpts('revokeGrants'),
+		async (id: unknown): Promise<PluginGrantsSnapshot> => {
+			if (typeof id !== 'string' || id.length === 0) throw new Error('InvalidPluginId');
+			forgetGrants(id);
+			return { requested: manager.getRequestedPermissions(id) ?? [], granted: [] };
+		}
+	);
 
 	ipcMain.handle('plugins:list', async (event): Promise<PluginListSnapshot> => {
 		if (!isPluginsEnabled(settingsStore)) throw new Error('PluginsDisabled');
@@ -117,4 +162,28 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 		if (!isPluginsEnabled(settingsStore)) throw new Error('PluginsDisabled');
 		return wrappedContributions(event);
 	});
+
+	ipcMain.handle(
+		'plugins:get-grants',
+		async (event, id: unknown): Promise<PluginGrantsSnapshot> => {
+			if (!isPluginsEnabled(settingsStore)) throw new Error('PluginsDisabled');
+			return wrappedGetGrants(event, id);
+		}
+	);
+
+	ipcMain.handle(
+		'plugins:set-grants',
+		async (event, id: unknown, approvedCapabilities: unknown): Promise<PluginGrantsSnapshot> => {
+			if (!isPluginsEnabled(settingsStore)) throw new Error('PluginsDisabled');
+			return wrappedSetGrants(event, id, approvedCapabilities);
+		}
+	);
+
+	ipcMain.handle(
+		'plugins:revoke-grants',
+		async (event, id: unknown): Promise<PluginGrantsSnapshot> => {
+			if (!isPluginsEnabled(settingsStore)) throw new Error('PluginsDisabled');
+			return wrappedRevokeGrants(event, id);
+		}
+	);
 }

@@ -8,11 +8,13 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { Puzzle, Trash2, FolderPlus, RefreshCw, AlertTriangle } from 'lucide-react';
+import { Puzzle, Trash2, FolderPlus, RefreshCw, AlertTriangle, ShieldCheck } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { PluginListSnapshot } from '../../../main/ipc/handlers/plugins';
 import type { PluginRecord } from '../../../shared/plugins/plugin-registry';
+import type { PermissionRequest } from '../../../shared/plugins/permissions';
 import { notifyToast } from '../../stores/notificationStore';
+import { PluginConsentDialog } from './PluginConsentDialog';
 
 interface PluginsPanelProps {
 	theme: Theme;
@@ -30,6 +32,10 @@ export function PluginsPanel({ theme }: PluginsPanelProps) {
 	const [snapshot, setSnapshot] = useState<PluginListSnapshot | null>(null);
 	const [loading, setLoading] = useState(false);
 	const [busyId, setBusyId] = useState<string | null>(null);
+	const [consent, setConsent] = useState<{
+		record: PluginRecord;
+		requested: PermissionRequest[];
+	} | null>(null);
 
 	const load = useCallback(async () => {
 		setLoading(true);
@@ -51,11 +57,10 @@ export function PluginsPanel({ theme }: PluginsPanelProps) {
 		void load();
 	}, [load]);
 
-	const handleToggle = useCallback(async (record: PluginRecord) => {
-		if (record.loadStatus !== 'ok') return;
-		setBusyId(record.id);
+	const applyEnabled = useCallback(async (id: string, enabled: boolean) => {
+		setBusyId(id);
 		try {
-			const snap = await window.maestro.plugins.setEnabled(record.id, !record.enabled);
+			const snap = await window.maestro.plugins.setEnabled(id, enabled);
 			setSnapshot(snap);
 		} catch (err) {
 			notifyToast({ color: 'red', title: 'Plugins', message: `Toggle failed: ${String(err)}` });
@@ -63,6 +68,49 @@ export function PluginsPanel({ theme }: PluginsPanelProps) {
 			setBusyId(null);
 		}
 	}, []);
+
+	const handleToggle = useCallback(
+		async (record: PluginRecord) => {
+			if (record.loadStatus !== 'ok') return;
+			// Disabling is always immediate. Enabling a code tier (>= 1) goes through
+			// the consent dialog so the user grants permissions before it runs.
+			const isCodeTier = (record.manifest?.tier ?? 0) >= 1;
+			if (record.enabled || !isCodeTier) {
+				await applyEnabled(record.id, !record.enabled);
+				return;
+			}
+			try {
+				const grants = await window.maestro.plugins.getGrants(record.id);
+				setConsent({ record, requested: grants.requested });
+			} catch (err) {
+				notifyToast({
+					color: 'red',
+					title: 'Plugins',
+					message: `Could not load permissions: ${String(err)}`,
+				});
+			}
+		},
+		[applyEnabled]
+	);
+
+	const handleConsentApprove = useCallback(
+		async (approvedCapabilities: string[]) => {
+			if (!consent) return;
+			const id = consent.record.id;
+			setConsent(null);
+			setBusyId(id);
+			try {
+				await window.maestro.plugins.setGrants(id, approvedCapabilities);
+				const snap = await window.maestro.plugins.setEnabled(id, true);
+				setSnapshot(snap);
+			} catch (err) {
+				notifyToast({ color: 'red', title: 'Plugins', message: `Enable failed: ${String(err)}` });
+			} finally {
+				setBusyId(null);
+			}
+		},
+		[consent]
+	);
 
 	const handleInstall = useCallback(async () => {
 		const dir = await window.maestro.dialog.selectFolder();
@@ -200,6 +248,23 @@ export function PluginsPanel({ theme }: PluginsPanelProps) {
 												>
 													{status.text}
 												</span>
+												{record.signature && record.signature.status !== 'unsigned' && (
+													<span
+														className="inline-flex items-center gap-0.5 text-[10px]"
+														style={{
+															color:
+																record.signature.status === 'trusted'
+																	? theme.colors.success
+																	: record.signature.status === 'invalid'
+																		? theme.colors.error
+																		: theme.colors.warning,
+														}}
+														title={record.signature.detail ?? record.signature.status}
+													>
+														<ShieldCheck className="w-3 h-3" />
+														{record.signature.status}
+													</span>
+												)}
 											</div>
 											<div
 												className="text-[11px] mt-0.5 truncate"
@@ -260,6 +325,16 @@ export function PluginsPanel({ theme }: PluginsPanelProps) {
 						);
 					})}
 				</div>
+			)}
+
+			{consent && (
+				<PluginConsentDialog
+					theme={theme}
+					record={consent.record}
+					requested={consent.requested}
+					onApprove={(caps) => void handleConsentApprove(caps)}
+					onCancel={() => setConsent(null)}
+				/>
 			)}
 		</div>
 	);
