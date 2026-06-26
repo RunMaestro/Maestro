@@ -21,6 +21,10 @@ import {
 import { CueEngine } from './cue/cue-engine';
 import { PianolaSupervisor } from './pianola/pianola-supervisor';
 import { PluginManager } from './plugins/plugin-manager';
+import { PermissionBroker } from './plugins/permission-broker';
+import { PluginSandboxHost } from './plugins/plugin-sandbox-host';
+import { buildHostCallHandlers } from './plugins/plugin-host-handlers';
+import { readGrants } from './plugins/plugin-store-main';
 import { configureCueTelemetry } from './cue/cue-telemetry';
 import {
 	executeCuePrompt,
@@ -1036,15 +1040,64 @@ app
 			},
 		});
 
-		// Plugin manager: discovers installed community plugins and tracks their
-		// enable state. Self-gates on encoreFeatures.plugins. Phase 0 is list-only:
-		// it does not execute plugin code, only enumerates and manages them. The
-		// startup refresh below primes the in-memory registry from disk.
+		// Plugin manager: discovers installed community plugins, tracks their
+		// enable state, verifies signatures, and (tier 1) runs their sandboxed
+		// code. Self-gates on encoreFeatures.plugins. The permission broker is the
+		// single authorization gate for every sandbox host call; the sandbox host
+		// forks one utilityProcess per running tier-1 plugin.
+		const pluginBroker = new PermissionBroker({
+			getGrants: (pluginId) => readGrants(pluginId),
+			onDecision: (pluginId, method, decision) => {
+				if (!decision.allowed) {
+					logger.warn(
+						`[Plugins] denied ${method} for "${pluginId}": ${decision.reason ?? ''}`,
+						'[Plugins]'
+					);
+				}
+			},
+		});
+		const pluginSandboxHost = new PluginSandboxHost({
+			broker: pluginBroker,
+			handlers: buildHostCallHandlers({
+				settingsStore: store,
+				listAgents: () => {
+					const sessions = sessionsStore.get('sessions', []) as Array<{
+						id?: string;
+						name?: string;
+						cwd?: string;
+						toolType?: string;
+					}>;
+					return sessions
+						.filter((s) => typeof s?.id === 'string')
+						.map((s) => ({
+							id: s.id as string,
+							name: s.name ?? '',
+							...(s.cwd ? { cwd: s.cwd } : {}),
+							...(s.toolType ? { toolType: s.toolType } : {}),
+						}));
+				},
+				// agents.dispatch and process.spawn are intentionally NOT wired yet:
+				// they are the highest-risk capabilities and need a dedicated review
+				// of the dispatch/SSH path before plugins can drive them. Until then
+				// the broker may grant them but the host returns "not implemented".
+			}),
+			onLog: (pluginId, level, message) => {
+				logger.info(`[Plugin:${pluginId}] ${level}: ${message}`, '[Plugins]');
+			},
+			onCrash: (pluginId, code) => {
+				logger.warn(`[Plugins] plugin "${pluginId}" crashed (code ${code})`, '[Plugins]');
+			},
+		});
 		pluginManager = new PluginManager({
 			isEnabled: () => {
 				const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
 				return ef.plugins === true;
 			},
+			trustedKeys: () => {
+				const keys = store.get('pluginTrustedKeys', []) as unknown;
+				return Array.isArray(keys) ? keys.filter((k): k is string => typeof k === 'string') : [];
+			},
+			sandbox: pluginSandboxHost,
 			onChange: (registry) => {
 				try {
 					mainWindow?.webContents.send('plugins:changed', registry);
@@ -1342,6 +1395,8 @@ quitHandler = createQuitHandler({
 		// Kill all Pianola supervised children (watchers/orchestrations) and tear
 		// down the store-file watcher so nothing is orphaned on quit. Idempotent.
 		pianolaSupervisor?.stopAll();
+		// Tear down any running plugin sandboxes (utilityProcess children).
+		pluginManager?.stopAllSandboxes();
 		// Tear down the background quota refresh timers.
 		usageRefreshScheduler?.stop();
 	},

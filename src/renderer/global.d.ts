@@ -170,7 +170,7 @@ import type {
 	PianolaSupervisedTarget,
 } from '../shared/pianola/storage';
 import type { PianolaSupervisorSnapshot } from '../main/ipc/handlers/pianola';
-import type { PluginListSnapshot } from '../main/ipc/handlers/plugins';
+import type { PluginListSnapshot, PluginGrantsSnapshot } from '../main/ipc/handlers/plugins';
 import type { InstallResult as PluginInstallResult } from '../main/plugins/plugin-manager';
 import type { AggregatedContributions as PluginContributions } from '../shared/plugins/contributions';
 
@@ -3691,6 +3691,9 @@ interface MaestroAPI {
 		install: (sourceDir: string) => Promise<PluginInstallResult>;
 		uninstall: (id: string) => Promise<{ success: boolean; error?: string }>;
 		contributions: () => Promise<PluginContributions>;
+		getGrants: (id: string) => Promise<PluginGrantsSnapshot>;
+		setGrants: (id: string, approvedCapabilities: string[]) => Promise<PluginGrantsSnapshot>;
+		revokeGrants: (id: string) => Promise<PluginGrantsSnapshot>;
 	};
 
 	// WakaTime API (CLI check, API key validation)

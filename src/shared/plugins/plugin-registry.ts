@@ -37,6 +37,18 @@ export interface PluginRecord {
 	enabled: boolean;
 	/** Validation errors or the incompatibility reason (empty when ok). */
 	errors: string[];
+	/**
+	 * Signature trust status, attached by the main-process manager after disk
+	 * verification (the pure builder cannot read files). Absent until verified.
+	 */
+	signature?: PluginSignatureInfo;
+}
+
+/** Minimal signature info carried on a record (decoupled from the verifier). */
+export interface PluginSignatureInfo {
+	status: 'unsigned' | 'invalid' | 'untrusted' | 'trusted';
+	signerKey?: string;
+	detail?: string;
 }
 
 /** The full registry value. */

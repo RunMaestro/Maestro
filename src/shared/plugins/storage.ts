@@ -16,6 +16,9 @@
 /** Filename of the persisted plugin enable-state, in the Maestro user data dir. */
 export const PLUGIN_STATE_FILENAME = 'pianola-plugins.json';
 
+/** Filename of the persisted per-plugin permission grants. */
+export const PLUGIN_GRANTS_FILENAME = 'pianola-plugin-grants.json';
+
 /**
  * Directory name (under user data) where installed plugins live, one folder per
  * plugin, each containing a plugin.json. Kept as a constant so discovery, the
@@ -105,6 +108,54 @@ export const PLUGIN_STATE_MIGRATIONS: readonly MigrationStep[] = [
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** Current schema version of the plugin grants file. */
+export const PLUGIN_GRANTS_SCHEMA_VERSION = 1;
+
+/** Persisted per-plugin permission grants. Keyed by plugin id. */
+export interface PluginGrantsFile {
+	schemaVersion: number;
+	grants: Record<string, PersistedGrant[]>;
+}
+
+/** Minimal persisted grant shape (kept independent of the permissions module so
+ * this storage contract stays free of cross-module coupling). */
+export interface PersistedGrant {
+	capability: string;
+	scope?: string;
+	grantedAt: number;
+}
+
+/**
+ * Validate (and migrate) a parsed grants file. Always returns a well-formed
+ * file; malformed grants are dropped. Like the state file, a corrupt hand-edit
+ * degrades to an empty grant set rather than throwing, but because grants are a
+ * SECURITY boundary, an unparseable entry is dropped (deny) rather than guessed.
+ */
+export function validatePluginGrantsFile(input: unknown): PluginGrantsFile {
+	const raw = isPlainObject(input) ? input : {};
+	const grantsRaw = isPlainObject(raw.grants) ? raw.grants : {};
+	const grants: Record<string, PersistedGrant[]> = {};
+	for (const [pluginId, list] of Object.entries(grantsRaw)) {
+		if (!Array.isArray(list)) continue;
+		const validated: PersistedGrant[] = [];
+		for (const entry of list) {
+			if (!isPlainObject(entry)) continue;
+			if (typeof entry.capability !== 'string' || entry.capability.trim() === '') continue;
+			if (entry.scope !== undefined && typeof entry.scope !== 'string') continue;
+			const grantedAt = typeof entry.grantedAt === 'number' ? entry.grantedAt : 0;
+			validated.push({
+				capability: entry.capability,
+				...(typeof entry.scope === 'string' && entry.scope.trim() !== ''
+					? { scope: entry.scope }
+					: {}),
+				grantedAt,
+			});
+		}
+		if (validated.length > 0) grants[pluginId] = validated;
+	}
+	return { schemaVersion: PLUGIN_GRANTS_SCHEMA_VERSION, grants };
 }
 
 /**

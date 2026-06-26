@@ -35,16 +35,35 @@ import {
 	readPluginState,
 	setPluginEnabled,
 	forgetPlugin,
+	forgetGrants,
 	isSafePluginFolderName,
 } from './plugin-store-main';
+import { verifyPluginSignature } from './plugin-signature';
 
 const MANIFEST_FILENAME = 'plugin.json';
+
+/**
+ * The sandbox lifecycle the manager drives. PluginSandboxHost implements this
+ * structurally; it is injected (optional) so the manager stays testable and the
+ * heavy Electron wiring lives in main/index.ts.
+ */
+export interface PluginSandboxLifecycle {
+	start: (pluginId: string, pluginDir: string, entryRelPath: string) => void;
+	stop: (pluginId: string) => void;
+	stopAll: () => void;
+	isRunning: (pluginId: string) => boolean;
+	runningIds: () => string[];
+}
 
 export interface PluginManagerDeps {
 	/** Whether the `plugins` Encore flag is currently on. Re-read on every call. */
 	isEnabled: () => boolean;
 	/** Optional change hook (e.g. to broadcast to the renderer) after mutations. */
 	onChange?: (registry: PluginRegistry) => void;
+	/** Trusted publisher public keys (base64) for signature verification. */
+	trustedKeys?: () => string[];
+	/** Optional sandbox controller for running tier-1 plugin code. */
+	sandbox?: PluginSandboxLifecycle;
 }
 
 export interface InstallResult {
@@ -116,6 +135,7 @@ export class PluginManager {
 		}
 
 		const state = readPluginState();
+		const trustedKeys = this.deps.trustedKeys?.() ?? [];
 		let next = emptyRegistry();
 		for (const folder of folders) {
 			const source = path.join(dir, folder);
@@ -124,8 +144,11 @@ export class PluginManager {
 			// can see (and uninstall) it; buildRecord marks it invalid.
 			const parsed = validatePluginManifest(rawManifest);
 			const id = parsed.manifest?.id;
-			// Default a never-seen plugin to enabled; respect a stored toggle otherwise.
-			const enabled = id && id in state.plugins ? state.plugins[id].enabled : true;
+			const tier = parsed.manifest?.tier ?? 0;
+			// Default: tier 0 (data-only) auto-enables on discovery; tier >= 1 runs
+			// code, so it stays DISABLED until the user explicitly enables it (the
+			// consent gate). A stored toggle always wins over the default.
+			const enabled = id && id in state.plugins ? state.plugins[id].enabled : tier === 0;
 			const record = buildRecord({
 				source,
 				folderName: folder,
@@ -133,21 +156,81 @@ export class PluginManager {
 				enabled,
 				hostVersion: HOST_API_VERSION,
 			});
-			next = upsertRecord(next, record);
+			// Attach signature trust (the pure builder cannot read files).
+			let signed = record;
+			try {
+				const check = verifyPluginSignature(source, trustedKeys);
+				signed = {
+					...record,
+					signature: {
+						status: check.status,
+						...(check.signerKey ? { signerKey: check.signerKey } : {}),
+						...(check.detail ? { detail: check.detail } : {}),
+					},
+				};
+			} catch {
+				// Verification failure is non-fatal for listing; leave signature unset.
+			}
+			next = upsertRecord(next, signed);
 		}
 
 		this.registry = next;
+		this.reconcileSandboxes();
 		this.deps.onChange?.(this.registry);
 		return this.registry;
 	}
 
-	/** Toggle a plugin on/off, persist, and rebuild the in-memory registry. */
+	/** Toggle a plugin on/off, persist, rebuild the registry, and reconcile the
+	 * sandbox (start a newly-enabled tier-1 plugin, stop a disabled one). */
 	setEnabled(id: string, enabled: boolean): PluginRegistry {
 		if (!this.deps.isEnabled()) return this.registry;
 		setPluginEnabled(id, enabled);
 		this.registry = setEnabled(this.registry, id, enabled);
+		this.reconcileSandboxes();
 		this.deps.onChange?.(this.registry);
 		return this.registry;
+	}
+
+	/**
+	 * Whether a record is allowed to RUN sandboxed code: enabled, loadable, a
+	 * code tier, has an entry, and its signature is not invalid (tampered code is
+	 * never run; unsigned/untrusted may run once the user has enabled = consented).
+	 */
+	private isRunnable(record: PluginRecord): boolean {
+		return (
+			record.enabled &&
+			record.loadStatus === 'ok' &&
+			!!record.manifest &&
+			record.manifest.tier >= 1 &&
+			!!record.manifest.entry &&
+			record.signature?.status !== 'invalid'
+		);
+	}
+
+	/**
+	 * Start sandboxes that should be running and stop those that should not. Safe
+	 * to call repeatedly; no-op when no sandbox controller is injected.
+	 */
+	private reconcileSandboxes(): void {
+		const sandbox = this.deps.sandbox;
+		if (!sandbox) return;
+		const shouldRun = new Set<string>();
+		for (const record of this.registry.records) {
+			if (!this.isRunnable(record) || !record.manifest?.entry) continue;
+			shouldRun.add(record.id);
+			if (!sandbox.isRunning(record.id)) {
+				try {
+					sandbox.start(record.id, record.source, record.manifest.entry);
+				} catch {
+					// A failed start is isolated to that plugin; leave it stopped.
+				}
+			}
+		}
+		// Stop anything running that should no longer run (disabled, uninstalled,
+		// or now-invalid), using the sandbox's own view of what is alive.
+		for (const id of sandbox.runningIds()) {
+			if (!shouldRun.has(id)) sandbox.stop(id);
+		}
 	}
 
 	/**
@@ -190,11 +273,26 @@ export class PluginManager {
 		if (resolved !== path.resolve(dir, path.basename(resolved)) || !resolved.startsWith(dir)) {
 			return { success: false, error: 'refusing to remove a path outside the plugins directory' };
 		}
+		// Stop any running sandbox for this plugin before removing its files, and
+		// forget both its enable toggle and its permission grants.
+		this.deps.sandbox?.stop(id);
 		fs.rmSync(resolved, { recursive: true, force: true });
 		forgetPlugin(id);
+		forgetGrants(id);
 		this.registry = removeRecord(this.registry, id);
 		this.deps.onChange?.(this.registry);
 		return { success: true };
+	}
+
+	/** Stop all sandboxes (app shutdown / feature disable). */
+	stopAllSandboxes(): void {
+		this.deps.sandbox?.stopAll();
+	}
+
+	/** The permissions a plugin's manifest requests (empty for tier 0 / unknown). */
+	getRequestedPermissions(id: string): PluginManifest['permissions'] {
+		const record = this.registry.records.find((r) => r.id === id);
+		return record?.manifest?.permissions ?? [];
 	}
 
 	/** Read and JSON-parse a plugin's manifest, or null when absent/unreadable. */

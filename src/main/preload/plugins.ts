@@ -12,7 +12,7 @@
  */
 
 import { ipcRenderer } from 'electron';
-import type { PluginListSnapshot } from '../ipc/handlers/plugins';
+import type { PluginListSnapshot, PluginGrantsSnapshot } from '../ipc/handlers/plugins';
 import type { InstallResult } from '../plugins/plugin-manager';
 import type { AggregatedContributions } from '../../shared/plugins/contributions';
 
@@ -45,6 +45,22 @@ export function createPluginsApi() {
 		 */
 		contributions: (): Promise<AggregatedContributions> =>
 			ipcRenderer.invoke('plugins:contributions'),
+
+		/** Read a plugin's requested permissions and what the user has granted. */
+		getGrants: (id: string): Promise<PluginGrantsSnapshot> =>
+			ipcRenderer.invoke('plugins:get-grants', id),
+
+		/**
+		 * The consent action: approve a subset of the plugin's requested
+		 * capabilities. The main process only grants capabilities the manifest
+		 * actually requested, so this cannot over-grant.
+		 */
+		setGrants: (id: string, approvedCapabilities: string[]): Promise<PluginGrantsSnapshot> =>
+			ipcRenderer.invoke('plugins:set-grants', id, approvedCapabilities),
+
+		/** Revoke all of a plugin's grants. */
+		revokeGrants: (id: string): Promise<PluginGrantsSnapshot> =>
+			ipcRenderer.invoke('plugins:revoke-grants', id),
 	};
 }
 
