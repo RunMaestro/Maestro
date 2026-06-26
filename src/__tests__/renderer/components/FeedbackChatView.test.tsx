@@ -1,6 +1,10 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { FeedbackChatView } from '../../../renderer/components/FeedbackChatView';
+import {
+	useFeedbackDraftStore,
+	type FeedbackDraft,
+} from '../../../renderer/stores/feedbackDraftStore';
 import type { Theme, Session } from '../../../renderer/types';
 
 const theme: Theme = {
@@ -201,5 +205,98 @@ describe('FeedbackChatView', () => {
 		expect(closeButton).toBeTruthy();
 		closeButton.click();
 		expect(onCancel).toHaveBeenCalledOnce();
+	});
+
+	it('hydrates the chat from a resumed draft (messages + attachments)', async () => {
+		const draft: FeedbackDraft = {
+			id: 'draft-1',
+			suggestedName: 'Crash on save',
+			category: 'bug_report',
+			summary: 'Crash on save',
+			confidence: 60,
+			agentType: 'claude-code',
+			messages: [{ role: 'user', content: 'Steps to reproduce the crash', timestamp: 1000 }],
+			attachments: [
+				{ id: 'a1', name: 'crash.png', dataUrl: 'data:image/png;base64,abc123', sizeBytes: 10 },
+			],
+			inputDraft: 'one more thing',
+			includeDebugPackage: false,
+			createdAt: 1000,
+			updatedAt: 1000,
+		};
+		useFeedbackDraftStore.setState({ drafts: [draft], activeDraftId: null, resumeDraftId: null });
+
+		window.maestro.feedback.checkGhAuth.mockResolvedValue({ authenticated: true });
+		window.maestro.agents.detect.mockResolvedValue([
+			{ id: 'claude-code', name: 'Claude Code', available: true },
+		]);
+		window.maestro.feedback.getConversationPrompt.mockResolvedValue({
+			prompt: 'system prompt',
+			environment: '- Maestro version: 1.0.0',
+		});
+
+		render(
+			<FeedbackChatView
+				theme={theme}
+				sessions={sessions}
+				onCancel={vi.fn()}
+				onSubmitSuccess={vi.fn()}
+				resumeDraftId="draft-1"
+			/>
+		);
+
+		await waitFor(() => {
+			expect(screen.getByText('Steps to reproduce the crash')).toBeTruthy();
+		});
+		expect(screen.getByAltText('crash.png')).toBeTruthy();
+	});
+
+	it('saves the current conversation as a draft when Save draft is clicked', async () => {
+		const draft: FeedbackDraft = {
+			id: 'draft-1',
+			suggestedName: 'Crash on save',
+			category: 'bug_report',
+			summary: 'Crash on save',
+			confidence: 60,
+			agentType: 'claude-code',
+			messages: [{ role: 'user', content: 'Steps to reproduce the crash', timestamp: 1000 }],
+			attachments: [
+				{ id: 'a1', name: 'crash.png', dataUrl: 'data:image/png;base64,abc123', sizeBytes: 10 },
+			],
+			inputDraft: '',
+			includeDebugPackage: false,
+			createdAt: 1000,
+			updatedAt: 1000,
+		};
+		useFeedbackDraftStore.setState({ drafts: [draft], activeDraftId: null, resumeDraftId: null });
+
+		window.maestro.feedback.checkGhAuth.mockResolvedValue({ authenticated: true });
+		window.maestro.agents.detect.mockResolvedValue([
+			{ id: 'claude-code', name: 'Claude Code', available: true },
+		]);
+		window.maestro.feedback.getConversationPrompt.mockResolvedValue({
+			prompt: 'system prompt',
+			environment: '- Maestro version: 1.0.0',
+		});
+
+		render(
+			<FeedbackChatView
+				theme={theme}
+				sessions={sessions}
+				onCancel={vi.fn()}
+				onSubmitSuccess={vi.fn()}
+				resumeDraftId="draft-1"
+			/>
+		);
+
+		const saveButton = await screen.findByText('Save draft');
+		saveButton.click();
+
+		await waitFor(() => {
+			expect(window.maestro.feedback.drafts.save).toHaveBeenCalled();
+		});
+		const payload = window.maestro.feedback.drafts.save.mock.calls[0][0];
+		expect(payload.messages[0].content).toBe('Steps to reproduce the crash');
+		expect(payload.attachments[0].name).toBe('crash.png');
 	});
 });

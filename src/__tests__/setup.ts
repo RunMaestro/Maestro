@@ -248,6 +248,11 @@ const mockMaestro = {
 		submitConversation: vi.fn().mockResolvedValue({ success: true }),
 		searchIssues: vi.fn().mockResolvedValue({ issues: [] }),
 		subscribeIssue: vi.fn().mockResolvedValue({ success: true }),
+		drafts: {
+			list: vi.fn().mockResolvedValue({ drafts: [] }),
+			save: vi.fn((draft: unknown) => Promise.resolve({ draft })),
+			delete: vi.fn().mockResolvedValue({}),
+		},
 	},
 	git: {
 		branch: vi.fn().mockResolvedValue({ stdout: 'main' }),

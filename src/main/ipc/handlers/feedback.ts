@@ -10,6 +10,7 @@ import { ipcMain, app } from 'electron';
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
+import { randomUUID } from 'crypto';
 import { logger } from '../../utils/logger';
 import { getPrompt } from '../../prompt-manager';
 import { withIpcErrorLogging, CreateHandlerOptions } from '../../utils/ipcHandler';
@@ -27,6 +28,11 @@ const LOG_CONTEXT = '[Feedback]';
 const ATTACHMENTS_REPO = 'maestro-feedback-attachments';
 const MAX_SUMMARY_LENGTH = 120;
 const MAX_FEEDBACK_FIELD_LENGTH = 5000;
+const MAX_DRAFTS = 30;
+const MAX_DRAFT_ATTACHMENTS = 5;
+const MAX_DRAFT_MESSAGES = 200;
+const MAX_DRAFT_MESSAGE_LENGTH = 20000;
+const DRAFTS_FILE_NAME = 'feedback-drafts.json';
 
 type FeedbackCategory = 'bug_report' | 'feature_request' | 'improvement' | 'general_feedback';
 
@@ -66,6 +72,37 @@ export interface FeedbackHandlerDependencies {
 export interface FeedbackAttachmentInput {
 	name: string;
 	dataUrl: string;
+}
+
+export interface FeedbackDraftAttachment {
+	id: string;
+	name: string;
+	dataUrl: string;
+	sizeBytes: number;
+}
+
+export interface FeedbackDraftMessage {
+	role: 'user' | 'assistant' | 'system';
+	content: string;
+	timestamp: number;
+	confidence?: number;
+	category?: FeedbackCategory;
+	summary?: string;
+}
+
+export interface FeedbackDraft {
+	id: string;
+	suggestedName: string;
+	category: FeedbackCategory;
+	summary: string;
+	confidence: number;
+	agentType: string;
+	messages: FeedbackDraftMessage[];
+	attachments: FeedbackDraftAttachment[];
+	inputDraft: string;
+	includeDebugPackage: boolean;
+	createdAt: number;
+	updatedAt: number;
 }
 
 interface FeedbackSubmitPayload {
@@ -154,6 +191,129 @@ function readOptionalField(
 	}
 
 	return { value: sanitized };
+}
+
+/**
+ * Resolve the path to the persisted feedback drafts file (a single
+ * app-global JSON document under userData, mirroring playbooks' storage).
+ */
+function getDraftsFilePath(): string {
+	return path.join(app.getPath('userData'), DRAFTS_FILE_NAME);
+}
+
+/**
+ * Read all persisted feedback drafts. Returns an empty array when the file is
+ * missing or malformed, matching readPlaybooks() in playbooks.ts.
+ */
+async function readDrafts(): Promise<FeedbackDraft[]> {
+	try {
+		const content = await fs.readFile(getDraftsFilePath(), 'utf-8');
+		const data = JSON.parse(content);
+		return Array.isArray(data.drafts) ? data.drafts : [];
+	} catch {
+		return [];
+	}
+}
+
+/**
+ * Persist the full drafts list. Ensures the parent directory exists for parity
+ * with writePlaybooks(); userData itself already exists at runtime.
+ */
+async function writeDrafts(drafts: FeedbackDraft[]): Promise<void> {
+	const filePath = getDraftsFilePath();
+	await fs.mkdir(path.dirname(filePath), { recursive: true });
+	await fs.writeFile(filePath, JSON.stringify({ drafts }, null, 2), 'utf-8');
+}
+
+/**
+ * Validate + clamp a single draft attachment, dropping anything that is not a
+ * base64 image data URL (reuses the submit handler's attachment filter style).
+ */
+function normalizeDraftAttachments(raw: unknown): FeedbackDraftAttachment[] {
+	if (!Array.isArray(raw)) return [];
+	return raw
+		.filter(
+			(a): a is FeedbackDraftAttachment =>
+				Boolean(a) &&
+				typeof a.id === 'string' &&
+				typeof a.name === 'string' &&
+				typeof a.dataUrl === 'string' &&
+				a.dataUrl.startsWith('data:image/') &&
+				typeof a.sizeBytes === 'number'
+		)
+		.slice(0, MAX_DRAFT_ATTACHMENTS)
+		.map((a) => ({
+			id: a.id,
+			name: sanitizeTextInput(a.name).slice(0, MAX_SUMMARY_LENGTH) || a.name,
+			dataUrl: a.dataUrl,
+			sizeBytes: a.sizeBytes,
+		}));
+}
+
+/**
+ * Validate + clamp a single draft message. Returns null for non-object input.
+ */
+function normalizeDraftMessage(raw: unknown): FeedbackDraftMessage | null {
+	if (!raw || typeof raw !== 'object') return null;
+	const m = raw as Record<string, unknown>;
+	const role: FeedbackDraftMessage['role'] =
+		m.role === 'assistant' ? 'assistant' : m.role === 'system' ? 'system' : 'user';
+	const content = typeof m.content === 'string' ? m.content.slice(0, MAX_DRAFT_MESSAGE_LENGTH) : '';
+	const message: FeedbackDraftMessage = {
+		role,
+		content,
+		timestamp: typeof m.timestamp === 'number' ? m.timestamp : Date.now(),
+	};
+	if (typeof m.confidence === 'number') {
+		message.confidence = m.confidence;
+	}
+	if (isFeedbackCategory(m.category)) {
+		message.category = m.category;
+	}
+	if (typeof m.summary === 'string') {
+		message.summary = m.summary.slice(0, MAX_SUMMARY_LENGTH);
+	}
+	return message;
+}
+
+/**
+ * Sanitize an incoming draft payload into a fully-formed FeedbackDraft,
+ * minting an id when one is not supplied (the renderer normally supplies it).
+ */
+function normalizeDraft(raw: unknown): FeedbackDraft {
+	const d = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+	const now = Date.now();
+	const messages = Array.isArray(d.messages)
+		? (d.messages
+				.map(normalizeDraftMessage)
+				.filter((m): m is FeedbackDraftMessage => m !== null)
+				.slice(0, MAX_DRAFT_MESSAGES) as FeedbackDraftMessage[])
+		: [];
+	const confidence =
+		typeof d.confidence === 'number' ? Math.max(0, Math.min(100, Math.round(d.confidence))) : 0;
+	return {
+		id: typeof d.id === 'string' && d.id ? d.id : randomUUID(),
+		suggestedName:
+			typeof d.suggestedName === 'string'
+				? sanitizeTextInput(d.suggestedName).slice(0, MAX_SUMMARY_LENGTH)
+				: '',
+		category: isFeedbackCategory(d.category) ? d.category : 'general_feedback',
+		summary:
+			typeof d.summary === 'string'
+				? sanitizeTextInput(d.summary).slice(0, MAX_SUMMARY_LENGTH)
+				: '',
+		confidence,
+		agentType: typeof d.agentType === 'string' && d.agentType ? d.agentType : 'claude-code',
+		messages,
+		attachments: normalizeDraftAttachments(d.attachments),
+		inputDraft:
+			typeof d.inputDraft === 'string'
+				? sanitizeTextInput(d.inputDraft).slice(0, MAX_FEEDBACK_FIELD_LENGTH)
+				: '',
+		includeDebugPackage: d.includeDebugPackage === true,
+		createdAt: typeof d.createdAt === 'number' ? d.createdAt : now,
+		updatedAt: typeof d.updatedAt === 'number' ? d.updatedAt : now,
+	};
 }
 
 function getPlatformLabel(platform: NodeJS.Platform): string {
@@ -1033,6 +1193,66 @@ export function registerFeedbackHandlers(_deps: FeedbackHandlerDependencies): vo
 				const { prompt } = await composeFeedbackPrompt(trimmedFeedback, normalizedAttachments);
 
 				return { prompt };
+			}
+		)
+	);
+
+	// List persisted feedback drafts, most-recently-updated first so the
+	// renderer can treat drafts[0] as the "most recent" draft.
+	ipcMain.handle(
+		'feedback:drafts:list',
+		withIpcErrorLogging(
+			handlerOpts('drafts-list'),
+			async (): Promise<{ drafts: FeedbackDraft[] }> => {
+				const drafts = await readDrafts();
+				drafts.sort((a, b) => b.updatedAt - a.updatedAt);
+				return { drafts };
+			}
+		)
+	);
+
+	// Upsert a draft by id (renderer supplies the id; a new one is minted when
+	// missing), then persist the trimmed, most-recent-first list.
+	ipcMain.handle(
+		'feedback:drafts:save',
+		withIpcErrorLogging(
+			handlerOpts('drafts-save'),
+			async (draft: unknown): Promise<{ draft: FeedbackDraft }> => {
+				const incoming = normalizeDraft(draft);
+				const drafts = await readDrafts();
+				const now = Date.now();
+				const index = drafts.findIndex((d) => d.id === incoming.id);
+				let saved: FeedbackDraft;
+				if (index >= 0) {
+					saved = {
+						...drafts[index],
+						...incoming,
+						createdAt: drafts[index].createdAt,
+						updatedAt: now,
+					};
+					drafts[index] = saved;
+				} else {
+					saved = { ...incoming, createdAt: now, updatedAt: now };
+					drafts.push(saved);
+				}
+				drafts.sort((a, b) => b.updatedAt - a.updatedAt);
+				await writeDrafts(drafts.slice(0, MAX_DRAFTS));
+				return { draft: saved };
+			}
+		)
+	);
+
+	// Delete a draft by id, then persist the remaining list.
+	ipcMain.handle(
+		'feedback:drafts:delete',
+		withIpcErrorLogging(
+			handlerOpts('drafts-delete'),
+			async (payload: { id?: string }): Promise<Record<string, never>> => {
+				const id = typeof payload?.id === 'string' ? payload.id : '';
+				const drafts = await readDrafts();
+				const next = drafts.filter((d) => d.id !== id);
+				await writeDrafts(next);
+				return {};
 			}
 		)
 	);

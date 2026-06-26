@@ -25,6 +25,7 @@ import {
 	PlusCircle,
 	Check,
 	Copy,
+	Save,
 } from 'lucide-react';
 import { Spinner } from './ui/Spinner';
 import { safeClipboardWrite } from '../utils/clipboard';
@@ -39,7 +40,7 @@ import {
 } from '../services/feedbackConversation';
 import { openUrl } from '../utils/openUrl';
 import { captureException } from '../utils/sentry';
-import { useFeedbackDraftStore } from '../stores/feedbackDraftStore';
+import { useFeedbackDraftStore, type FeedbackDraft } from '../stores/feedbackDraftStore';
 
 // ============================================================================
 // Constants
@@ -101,6 +102,8 @@ interface FeedbackChatViewProps {
 	onSubmitSuccess: (sessionId: string) => void;
 	/** Called when the view's desired modal width changes */
 	onWidthChange?: (width: number) => void;
+	/** When set, hydrate the view from this persisted draft on mount */
+	resumeDraftId?: string | null;
 }
 
 // ============================================================================
@@ -118,7 +121,21 @@ interface ExistingIssue {
 	commentCount: number;
 }
 
-export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackChatViewProps) {
+export function FeedbackChatView({
+	theme,
+	onCancel,
+	onWidthChange,
+	resumeDraftId,
+}: FeedbackChatViewProps) {
+	// Resolve the draft to resume exactly once, at mount, so initial state can
+	// be seeded synchronously before the auto-start effect picks an agent.
+	const resumeDraftRef = useRef<FeedbackDraft | null>(
+		resumeDraftId
+			? (useFeedbackDraftStore.getState().drafts.find((d) => d.id === resumeDraftId) ?? null)
+			: null
+	);
+	const resumeDraft = resumeDraftRef.current;
+
 	// --- State ---
 	const [step, setStep] = useState<'gh-check' | 'chat' | 'matching' | 'submitting' | 'done'>(
 		'gh-check'
@@ -127,25 +144,33 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 		checking: true,
 		ok: false,
 	});
-	const [selectedAgent, setSelectedAgent] = useState<ToolType>('claude-code');
+	const [selectedAgent, setSelectedAgent] = useState<ToolType>(
+		() => (resumeDraft?.agentType as ToolType) ?? 'claude-code'
+	);
 	const [detectedAgents, setDetectedAgents] = useState<Set<string>>(new Set());
 	const [agentsLoaded, setAgentsLoaded] = useState(false);
 	const [agentsDetectError, setAgentsDetectError] = useState<string | null>(null);
-	const [messages, setMessages] = useState<FeedbackMessage[]>([]);
-	const [inputValue, setInputValue] = useState('');
+	const [messages, setMessages] = useState<FeedbackMessage[]>(() => resumeDraft?.messages ?? []);
+	const [inputValue, setInputValue] = useState(() => resumeDraft?.inputDraft ?? '');
 	const [isLoading, setIsLoading] = useState(false);
-	const [confidence, setConfidence] = useState(0);
+	const [confidence, setConfidence] = useState(() => resumeDraft?.confidence ?? 0);
 	const [isReady, setIsReady] = useState(false);
 	const [lastResponse, setLastResponse] = useState<FeedbackParsedResponse | null>(null);
-	const [attachments, setAttachments] = useState<FeedbackAttachment[]>([]);
+	const [attachments, setAttachments] = useState<FeedbackAttachment[]>(
+		() => resumeDraft?.attachments ?? []
+	);
 	const [isDragging, setIsDragging] = useState(false);
-	const [includeDebugPackage, setIncludeDebugPackage] = useState(false);
+	const [includeDebugPackage, setIncludeDebugPackage] = useState(
+		() => resumeDraft?.includeDebugPackage ?? false
+	);
 	const [submitError, setSubmitError] = useState('');
 	const [matchingIssues, setMatchingIssues] = useState<ExistingIssue[]>([]);
 	const [searchingIssues, setSearchingIssues] = useState(false);
 	const [subscribingTo, setSubscribingTo] = useState<number | null>(null);
 	const [createdIssueUrl, setCreatedIssueUrl] = useState<string | null>(null);
 	const [copiedUrl, setCopiedUrl] = useState(false);
+	const [isSavingDraft, setIsSavingDraft] = useState(false);
+	const [draftSaved, setDraftSaved] = useState(false);
 	const lastSearchQueryRef = useRef<string | null>(null);
 	const searchAbortRef = useRef(0); // Monotonic counter to discard stale searches
 
@@ -192,7 +217,7 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 					setDetectedAgents(available);
 					// Auto-select first available
 					const firstAvailable = AGENT_TILES.find((t) => t.supported && available.has(t.id));
-					if (firstAvailable) setSelectedAgent(firstAvailable.id);
+					if (firstAvailable && !resumeDraft) setSelectedAgent(firstAvailable.id);
 					setAgentsLoaded(true);
 				}
 			} catch (error) {
@@ -233,16 +258,26 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 		};
 	}, []);
 
-	// --- Publish draft state so the sidebar Feedback button + close handler
-	//     know whether the user has unsaved work that would be lost. We only
-	//     count it as a draft once the user has actually sent a message —
-	//     unsubmitted typing or staged attachments don't count. Once the
-	//     issue is submitted (step === 'done') there's nothing left to lose.
+	// --- Resume bookkeeping: bind this editor to the resumed draft's id so
+	//     saves upsert (not duplicate), and consume the one-shot resume flag.
 	useEffect(() => {
-		const hasSentMessage = messages.some((m) => m.role === 'user');
-		const hasDraft = hasSentMessage && step !== 'done';
+		if (!resumeDraft) return;
+		useFeedbackDraftStore.setState({ activeDraftId: resumeDraft.id });
+		useFeedbackDraftStore.getState().clearResume();
+	}, [resumeDraft]);
+
+	// --- Publish draft state so the sidebar Feedback button + close handler
+	//     know whether the user has work worth keeping. Typed-but-unsent input
+	//     and staged attachments count too, so closing offers to save them.
+	//     Once the issue is submitted (step === 'done') there's nothing left.
+	useEffect(() => {
+		const hasContent =
+			messages.some((m) => m.role === 'user') ||
+			attachments.length > 0 ||
+			inputValue.trim().length > 0;
+		const hasDraft = hasContent && step !== 'done';
 		useFeedbackDraftStore.getState().setHasDraft(hasDraft);
-	}, [messages, step]);
+	}, [messages, attachments, inputValue, step]);
 
 	// --- Background issue search — fires after every agent response ---
 	const runIssueSearch = useCallback(async (query: string) => {
@@ -522,6 +557,58 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 		},
 		[sendMessage]
 	);
+
+	// --- Persisted draft helpers ---
+	const serializeDraft = useCallback((): FeedbackDraft => {
+		const firstUserMessage = messages.find((m) => m.role === 'user');
+		const rawName =
+			lastResponse?.summary || firstUserMessage?.content || inputValue || 'Untitled feedback';
+		const suggestedName = rawName.trim().slice(0, 60) || 'Untitled feedback';
+		const now = Date.now();
+		return {
+			id: useFeedbackDraftStore.getState().activeDraftId ?? '',
+			suggestedName,
+			category: lastResponse?.category ?? 'general_feedback',
+			summary: lastResponse?.summary ?? '',
+			confidence,
+			agentType: selectedAgent,
+			messages,
+			attachments,
+			inputDraft: inputValue,
+			includeDebugPackage,
+			createdAt: now,
+			updatedAt: now,
+		};
+	}, [
+		messages,
+		attachments,
+		inputValue,
+		lastResponse,
+		confidence,
+		selectedAgent,
+		includeDebugPackage,
+	]);
+
+	// Keep a live snapshot in the store so FeedbackModal can persist on
+	// minimize/close without reaching into this component's local state.
+	useEffect(() => {
+		const hasContent =
+			messages.some((m) => m.role === 'user') ||
+			attachments.length > 0 ||
+			inputValue.trim().length > 0;
+		useFeedbackDraftStore.getState().setActiveDraft(hasContent ? serializeDraft() : null);
+	}, [serializeDraft, messages, attachments, inputValue]);
+
+	const handleSaveDraft = useCallback(async () => {
+		setIsSavingDraft(true);
+		try {
+			await useFeedbackDraftStore.getState().saveDraft(serializeDraft());
+			setDraftSaved(true);
+			window.setTimeout(() => setDraftSaved(false), 2000);
+		} finally {
+			setIsSavingDraft(false);
+		}
+	}, [serializeDraft]);
 
 	// ========================================================================
 	// Render
@@ -889,6 +976,21 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 						</span>
 					)}
 					<div className="flex-1" />
+					<button
+						type="button"
+						onClick={handleSaveDraft}
+						disabled={isSavingDraft || step === 'submitting'}
+						className="flex items-center gap-1.5 px-3 py-1 rounded text-xs font-bold transition-colors hover:opacity-90 disabled:opacity-40 shrink-0 border"
+						style={{
+							backgroundColor: theme.colors.bgMain,
+							color: theme.colors.textDim,
+							borderColor: theme.colors.border,
+						}}
+						title="Save this feedback as a resumable draft"
+					>
+						{isSavingDraft ? <Spinner size={12} /> : <Save className="w-3 h-3" />}
+						{draftSaved ? 'Saved' : 'Save draft'}
+					</button>
 					{isReady && (
 						<button
 							type="button"

@@ -1,0 +1,99 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+	useFeedbackDraftStore,
+	type FeedbackDraft,
+} from '../../../renderer/stores/feedbackDraftStore';
+
+const makeDraft = (overrides: Partial<FeedbackDraft> = {}): FeedbackDraft => ({
+	id: 'd1',
+	suggestedName: 'Draft one',
+	category: 'bug_report',
+	summary: '',
+	confidence: 0,
+	agentType: 'claude-code',
+	messages: [],
+	attachments: [],
+	inputDraft: '',
+	includeDebugPackage: false,
+	createdAt: 1,
+	updatedAt: 1,
+	...overrides,
+});
+
+describe('feedbackDraftStore', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		useFeedbackDraftStore.setState({
+			isMinimized: false,
+			hasDraft: false,
+			drafts: [],
+			resumeDraftId: null,
+			activeDraftId: null,
+			activeDraft: null,
+		});
+		window.maestro.feedback.drafts.list.mockResolvedValue({ drafts: [] });
+		window.maestro.feedback.drafts.save.mockImplementation((draft: FeedbackDraft) =>
+			Promise.resolve({ draft })
+		);
+		window.maestro.feedback.drafts.delete.mockResolvedValue({});
+	});
+
+	it('loadDrafts populates the drafts list from the IPC bridge', async () => {
+		const draft = makeDraft();
+		window.maestro.feedback.drafts.list.mockResolvedValue({ drafts: [draft] });
+
+		await useFeedbackDraftStore.getState().loadDrafts();
+
+		expect(window.maestro.feedback.drafts.list).toHaveBeenCalled();
+		expect(useFeedbackDraftStore.getState().drafts).toEqual([draft]);
+	});
+
+	it('saveDraft persists, refreshes the list, and tracks the active id', async () => {
+		const draft = makeDraft({ id: 'saved-1' });
+		window.maestro.feedback.drafts.save.mockResolvedValue({ draft });
+		window.maestro.feedback.drafts.list.mockResolvedValue({ drafts: [draft] });
+
+		const id = await useFeedbackDraftStore.getState().saveDraft(draft);
+
+		expect(window.maestro.feedback.drafts.save).toHaveBeenCalledWith(draft);
+		expect(window.maestro.feedback.drafts.list).toHaveBeenCalled();
+		expect(id).toBe('saved-1');
+		expect(useFeedbackDraftStore.getState().activeDraftId).toBe('saved-1');
+		expect(useFeedbackDraftStore.getState().drafts).toEqual([draft]);
+	});
+
+	it('deleteDraft removes via IPC, refreshes, and clears a matching active id', async () => {
+		useFeedbackDraftStore.setState({ activeDraftId: 'd1' });
+		window.maestro.feedback.drafts.list.mockResolvedValue({ drafts: [] });
+
+		await useFeedbackDraftStore.getState().deleteDraft('d1');
+
+		expect(window.maestro.feedback.drafts.delete).toHaveBeenCalledWith('d1');
+		expect(window.maestro.feedback.drafts.list).toHaveBeenCalled();
+		expect(useFeedbackDraftStore.getState().drafts).toEqual([]);
+		expect(useFeedbackDraftStore.getState().activeDraftId).toBeNull();
+	});
+
+	it('reset clears the ephemeral session flags but preserves the persisted drafts', () => {
+		const drafts = [makeDraft()];
+		useFeedbackDraftStore.setState({
+			isMinimized: true,
+			hasDraft: true,
+			drafts,
+			activeDraftId: 'd1',
+			activeDraft: drafts[0],
+			resumeDraftId: 'd1',
+		});
+
+		useFeedbackDraftStore.getState().reset();
+
+		const state = useFeedbackDraftStore.getState();
+		expect(state.isMinimized).toBe(false);
+		expect(state.hasDraft).toBe(false);
+		expect(state.activeDraftId).toBeNull();
+		expect(state.activeDraft).toBeNull();
+		expect(state.resumeDraftId).toBeNull();
+		// The persisted drafts list must survive a reset so it stays resumable.
+		expect(state.drafts).toEqual(drafts);
+	});
+});

@@ -62,4 +62,44 @@ describe('Feedback Preload API', () => {
 		});
 		expect(result.prompt).toBe('rendered prompt');
 	});
+
+	it('invokes feedback:drafts:list', async () => {
+		mockInvoke.mockResolvedValue({ drafts: [] });
+
+		const result = await api.drafts.list();
+
+		expect(mockInvoke).toHaveBeenCalledWith('feedback:drafts:list');
+		expect(result.drafts).toEqual([]);
+	});
+
+	it('invokes feedback:drafts:save with the draft payload', async () => {
+		const draft = {
+			id: 'draft-1',
+			suggestedName: 'Crash on save',
+			category: 'bug_report' as const,
+			summary: 'Crash on save',
+			confidence: 75,
+			agentType: 'claude-code',
+			messages: [{ role: 'user' as const, content: 'It crashes', timestamp: 1 }],
+			attachments: [],
+			inputDraft: '',
+			includeDebugPackage: false,
+			createdAt: 1,
+			updatedAt: 1,
+		};
+		mockInvoke.mockResolvedValue({ draft });
+
+		const result = await api.drafts.save(draft);
+
+		expect(mockInvoke).toHaveBeenCalledWith('feedback:drafts:save', draft);
+		expect(result.draft).toEqual(draft);
+	});
+
+	it('invokes feedback:drafts:delete with the id wrapped in an object', async () => {
+		mockInvoke.mockResolvedValue({});
+
+		await api.drafts.delete('draft-1');
+
+		expect(mockInvoke).toHaveBeenCalledWith('feedback:drafts:delete', { id: 'draft-1' });
+	});
 });

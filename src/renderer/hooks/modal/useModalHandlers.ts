@@ -501,6 +501,8 @@ export function useModalHandlers(
 		// If the modal is minimized to the sidebar Feedback button, restore it
 		// instead of opening a fresh one (preserves the in-flight draft).
 		const draft = useFeedbackDraftStore.getState();
+		// Refresh the persisted drafts list so it is current when the modal opens.
+		void draft.loadDrafts();
 		if (draft.isMinimized) {
 			draft.setMinimized(false);
 			return;
