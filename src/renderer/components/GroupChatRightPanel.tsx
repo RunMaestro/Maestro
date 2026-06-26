@@ -205,7 +205,21 @@ export function GroupChatRightPanel({
 
 			const store = useGroupChatStore.getState();
 			store.setGroupChats((prev) =>
-				prev.map((chat) => (chat.id === groupChatId ? updatedChat : chat))
+				prev.map((chat) => {
+					if (chat.id !== groupChatId) return chat;
+					// Merge only the removed participant out of the current store
+					// state. A concurrent participantsChanged event (for example a
+					// participant added while this removal IPC was in flight) may
+					// have already written a newer participant list; replacing the
+					// whole chat with the older removal snapshot would drop that
+					// addition until the chat is reloaded.
+					return {
+						...chat,
+						participants: chat.participants.filter(
+							(participant) => participant.name !== participantName
+						),
+					};
+				})
 			);
 
 			const removed = !updatedChat.participants.some(
