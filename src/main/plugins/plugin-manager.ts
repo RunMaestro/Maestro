@@ -53,6 +53,7 @@ export interface PluginSandboxLifecycle {
 	stopAll: () => void;
 	isRunning: (pluginId: string) => boolean;
 	runningIds: () => string[];
+	invokeCommand: (pluginId: string, commandId: string, args?: unknown) => boolean;
 }
 
 export interface PluginManagerDeps {
@@ -299,6 +300,40 @@ export class PluginManager {
 	getRequestedPermissions(id: string): PluginManifest['permissions'] {
 		const record = this.registry.records.find((r) => r.id === id);
 		return record?.manifest?.permissions ?? [];
+	}
+
+	/**
+	 * Invoke a contributed command. `commandId` is the namespaced contribution id
+	 * (`<pluginId>/<localId>`); the local part is dispatched into the plugin's
+	 * sandbox. Returns false if the plugin is not running or the id is malformed.
+	 */
+	invokeCommand(commandId: string, args?: unknown): boolean {
+		const sep = commandId.indexOf('/');
+		if (sep <= 0) return false;
+		const pluginId = commandId.slice(0, sep);
+		const localId = commandId.slice(sep + 1);
+		return this.deps.sandbox?.invokeCommand(pluginId, localId, args) ?? false;
+	}
+
+	/**
+	 * Read a contributed panel's HTML, for rendering in a sandboxed iframe. Reads
+	 * the panel entry file from inside the (active) plugin's directory, with a
+	 * containment check. Returns null if the panel id is unknown or unreadable.
+	 */
+	getPanelHtml(panelId: string): string | null {
+		const contributions = this.getContributions();
+		const panel = contributions.panels.find((p) => p.id === panelId);
+		if (!panel) return null;
+		const record = this.registry.records.find((r) => r.id === panel.pluginId);
+		if (!record) return null;
+		const dir = path.resolve(record.source);
+		const entryAbs = path.resolve(dir, panel.entry);
+		if (entryAbs !== dir && !entryAbs.startsWith(dir + path.sep)) return null;
+		try {
+			return fs.readFileSync(entryAbs, 'utf-8');
+		} catch {
+			return null;
+		}
 	}
 
 	/** Read and JSON-parse a plugin's manifest, or null when absent/unreadable. */

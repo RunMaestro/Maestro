@@ -32,6 +32,34 @@ Append-only, dated. Newest at the bottom of each section.
   invalid-signature plugin lands on disk (marked invalid, never runs) until
   uninstalled. Acceptable but could verify-before-copy. `plugin-manager.ts:install`.
 
+## Phase 2 (scheduler)
+
+- 2026-06-25: Deeper Cue-engine integration is deferred. The Cue engine is
+  strictly per-project (cue.yaml per session/root) and flagged complex
+  (CLAUDE-CUE.md). Plugin `cueTriggers` are global, so they run on a separate
+  supervised scheduler (`plugin-scheduler-host.ts`) instead of being injected
+  into the Cue engine. File/agent-completion EVENT triggers (vs time-based) and
+  the `dispatch` action are NOT wired - dispatch needs the agents:dispatch
+  capability review. Scheduler state is in-memory: interval triggers re-seed on
+  app restart (a long interval effectively restarts its clock each launch).
+
+## Phase 4 (UI contributions)
+
+- 2026-06-25: SECURITY CAVEAT - a plugin PANEL's iframe (`PluginPanelHost.tsx`)
+  runs with `sandbox="allow-scripts"` (no allow-same-origin, opaque origin, no
+  app DOM/cookies/storage access, no top-nav). BUT iframe script can still make
+  arbitrary `fetch`/network requests directly - that path is NOT the permission
+  broker (the broker only gates the utilityProcess sandbox's RPC). A panel can
+  therefore exfiltrate over the network outside the capability model. Reasonable
+  mitigation later: serve panel assets over a custom Electron protocol with a
+  strict CSP response header (a CSP cannot be trusted from inside srcDoc). For
+  now, enabling a tier-1 plugin is the consent gate. `PluginPanelHost.tsx`.
+- 2026-06-25: Plugin commands/panels are surfaced in the Plugins settings panel
+  only (per-plugin buttons). They are NOT yet merged into the global command
+  palette (QuickActions) - that is consumption item 4.
+- 2026-06-25: PluginsPanel.tsx is growing; if it crosses ~800 lines, split the
+  row + commands/panels section into a child component.
+
 ## Deferred / unwired
 
 - 2026-06-25: Phase 1 contributions (themes/prompts/settings/command-macros) are

@@ -131,6 +131,22 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 			return { requested: manager.getRequestedPermissions(id) ?? [], granted: [] };
 		}
 	);
+	const wrappedInvokeCommand = withIpcErrorLogging(
+		handlerOpts('invokeCommand'),
+		async (commandId: unknown, args: unknown): Promise<{ dispatched: boolean }> => {
+			if (typeof commandId !== 'string' || commandId.length === 0) {
+				throw new Error('InvalidCommandId');
+			}
+			return { dispatched: manager.invokeCommand(commandId, args) };
+		}
+	);
+	const wrappedPanelHtml = withIpcErrorLogging(
+		handlerOpts('panelHtml'),
+		async (panelId: unknown): Promise<{ html: string | null }> => {
+			if (typeof panelId !== 'string' || panelId.length === 0) throw new Error('InvalidPanelId');
+			return { html: manager.getPanelHtml(panelId) };
+		}
+	);
 
 	ipcMain.handle('plugins:list', async (event): Promise<PluginListSnapshot> => {
 		if (!isPluginsEnabled(settingsStore)) throw new Error('PluginsDisabled');
@@ -184,6 +200,22 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 		async (event, id: unknown): Promise<PluginGrantsSnapshot> => {
 			if (!isPluginsEnabled(settingsStore)) throw new Error('PluginsDisabled');
 			return wrappedRevokeGrants(event, id);
+		}
+	);
+
+	ipcMain.handle(
+		'plugins:invoke-command',
+		async (event, commandId: unknown, args: unknown): Promise<{ dispatched: boolean }> => {
+			if (!isPluginsEnabled(settingsStore)) throw new Error('PluginsDisabled');
+			return wrappedInvokeCommand(event, commandId, args);
+		}
+	);
+
+	ipcMain.handle(
+		'plugins:panel-html',
+		async (event, panelId: unknown): Promise<{ html: string | null }> => {
+			if (!isPluginsEnabled(settingsStore)) throw new Error('PluginsDisabled');
+			return wrappedPanelHtml(event, panelId);
 		}
 	);
 }

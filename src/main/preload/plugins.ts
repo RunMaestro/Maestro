@@ -61,6 +61,14 @@ export function createPluginsApi() {
 		/** Revoke all of a plugin's grants. */
 		revokeGrants: (id: string): Promise<PluginGrantsSnapshot> =>
 			ipcRenderer.invoke('plugins:revoke-grants', id),
+
+		/** Invoke a contributed command (`<pluginId>/<localId>`) in its sandbox. */
+		invokeCommand: (commandId: string, args?: unknown): Promise<{ dispatched: boolean }> =>
+			ipcRenderer.invoke('plugins:invoke-command', commandId, args),
+
+		/** Read a contributed panel's HTML for rendering in a sandboxed iframe. */
+		panelHtml: (panelId: string): Promise<{ html: string | null }> =>
+			ipcRenderer.invoke('plugins:panel-html', panelId),
 	};
 }
 

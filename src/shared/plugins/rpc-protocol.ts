@@ -75,6 +75,7 @@ export interface HostResponse {
 /** Control messages the host sends to the sandbox (not request/response). */
 export type HostControlMessage =
 	| { kind: 'init'; pluginId: string; entryCode?: string }
+	| { kind: 'invokeCommand'; commandId: string; args?: unknown }
 	| { kind: 'shutdown' };
 
 /**

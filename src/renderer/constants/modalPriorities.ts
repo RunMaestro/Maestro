@@ -258,6 +258,12 @@ export const MODAL_PRIORITIES = {
 	/** SSH Remote configuration modal (above settings) */
 	SSH_REMOTE: 458,
 
+	/** Reserved band for community-plugin panels/modals. Plugin UI is allocated
+	 * sequentially from PLUGIN_PANEL_BASE up to (but not reaching) SSH_REMOTE/
+	 * Settings, so plugins always sit below first-party settings-level modals and
+	 * never above critical/confirmation modals. Use pluginPanelPriority(index). */
+	PLUGIN_PANEL_BASE: 420,
+
 	/** Custom theme base-theme picker dropdown (above settings so Escape closes
 	 * the dropdown first, leaving the Settings modal open for a second Esc). */
 	CUSTOM_THEME_BASE_SELECTOR: 451,
@@ -297,6 +303,21 @@ export const MODAL_PRIORITIES = {
 	/** File tree filter input */
 	FILE_TREE_FILTER: 30,
 } as const;
+
+/** Top of the reserved plugin band (exclusive). Plugin priorities are clamped
+ * below this so a plugin can never outrank SSH_REMOTE (458) / Settings (450). */
+const PLUGIN_PANEL_BAND_TOP = 449;
+
+/**
+ * Allocate a modal priority for the Nth open plugin panel within the reserved
+ * plugin band. Later panels sit above earlier ones, but the whole band stays
+ * below first-party settings-level modals. Clamped so it cannot escape the band.
+ */
+export function pluginPanelPriority(index: number): number {
+	const base = MODAL_PRIORITIES.PLUGIN_PANEL_BASE;
+	const safeIndex = Number.isFinite(index) && index > 0 ? Math.floor(index) : 0;
+	return Math.min(base + safeIndex, PLUGIN_PANEL_BAND_TOP);
+}
 
 /**
  * Type for modal priority keys

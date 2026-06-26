@@ -9,13 +9,27 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { Puzzle, Trash2, FolderPlus, RefreshCw, AlertTriangle, ShieldCheck } from 'lucide-react';
+import {
+	Puzzle,
+	Trash2,
+	FolderPlus,
+	RefreshCw,
+	AlertTriangle,
+	ShieldCheck,
+	Play,
+	PanelTop,
+} from 'lucide-react';
 import type { Theme } from '../../types';
 import type { PluginListSnapshot } from '../../../main/ipc/handlers/plugins';
 import type { PluginRecord } from '../../../shared/plugins/plugin-registry';
 import type { PermissionRequest } from '../../../shared/plugins/permissions';
+import type {
+	AggregatedContributions,
+	PanelContribution,
+} from '../../../shared/plugins/contributions';
 import { notifyToast } from '../../stores/notificationStore';
 import { PluginConsentDialog } from './PluginConsentDialog';
+import { PluginPanelHost } from './PluginPanelHost';
 
 interface PluginsPanelProps {
 	theme: Theme;
@@ -37,12 +51,20 @@ export function PluginsPanel({ theme }: PluginsPanelProps) {
 		record: PluginRecord;
 		requested: PermissionRequest[];
 	} | null>(null);
+	const [contributions, setContributions] = useState<AggregatedContributions | null>(null);
+	const [openPanel, setOpenPanel] = useState<PanelContribution | null>(null);
 
 	const load = useCallback(async () => {
 		setLoading(true);
 		try {
 			const snap = await window.maestro.plugins.list();
 			setSnapshot(snap);
+			// Contributions (commands/panels) are best-effort; ignore failures.
+			try {
+				setContributions(await window.maestro.plugins.contributions());
+			} catch {
+				setContributions(null);
+			}
 		} catch (err) {
 			notifyToast({
 				color: 'red',
@@ -51,6 +73,19 @@ export function PluginsPanel({ theme }: PluginsPanelProps) {
 			});
 		} finally {
 			setLoading(false);
+		}
+	}, []);
+
+	const invokeCommand = useCallback(async (commandId: string, title: string) => {
+		try {
+			const result = await window.maestro.plugins.invokeCommand(commandId);
+			notifyToast({
+				color: result.dispatched ? 'green' : 'orange',
+				title: 'Plugins',
+				message: result.dispatched ? `Ran "${title}"` : `"${title}" is not running`,
+			});
+		} catch (err) {
+			notifyToast({ color: 'red', title: 'Plugins', message: `Command failed: ${String(err)}` });
 		}
 	}, []);
 
@@ -322,6 +357,52 @@ export function PluginsPanel({ theme }: PluginsPanelProps) {
 										</button>
 									</div>
 								</div>
+
+								{record.enabled &&
+									(() => {
+										const cmds =
+											contributions?.commands.filter((c) => c.pluginId === record.id) ?? [];
+										const panels =
+											contributions?.panels.filter((p) => p.pluginId === record.id) ?? [];
+										if (cmds.length === 0 && panels.length === 0) return null;
+										return (
+											<div
+												className="mt-2.5 pt-2.5 flex flex-wrap gap-1.5"
+												style={{ borderTop: `1px solid ${theme.colors.border}` }}
+											>
+												{cmds.map((cmd) => (
+													<button
+														key={cmd.id}
+														className="flex items-center gap-1 px-2 py-1 rounded text-[11px]"
+														style={{
+															backgroundColor: theme.colors.accent + '18',
+															color: theme.colors.accent,
+														}}
+														onClick={() => void invokeCommand(cmd.id, cmd.title)}
+														title={cmd.description ?? cmd.title}
+													>
+														<Play className="w-3 h-3" />
+														{cmd.title}
+													</button>
+												))}
+												{panels.map((panel) => (
+													<button
+														key={panel.id}
+														className="flex items-center gap-1 px-2 py-1 rounded text-[11px]"
+														style={{
+															backgroundColor: theme.colors.accent + '18',
+															color: theme.colors.accent,
+														}}
+														onClick={() => setOpenPanel(panel)}
+														title={`Open ${panel.title}`}
+													>
+														<PanelTop className="w-3 h-3" />
+														{panel.title}
+													</button>
+												))}
+											</div>
+										);
+									})()}
 							</div>
 						);
 					})}
@@ -336,6 +417,10 @@ export function PluginsPanel({ theme }: PluginsPanelProps) {
 					onApprove={(caps) => void handleConsentApprove(caps)}
 					onCancel={() => setConsent(null)}
 				/>
+			)}
+
+			{openPanel && (
+				<PluginPanelHost theme={theme} panel={openPanel} onClose={() => setOpenPanel(null)} />
 			)}
 		</div>
 	);
