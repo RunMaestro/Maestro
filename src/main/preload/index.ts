@@ -54,6 +54,7 @@ import { createDirectorNotesApi } from './directorNotes';
 import { createCueApi } from './cue';
 import { createCueBackupApi } from './cueBackup';
 import { createPianolaApi } from './pianola';
+import { createPluginsApi } from './plugins';
 import { createWakatimeApi } from './wakatime';
 import { createMaestroCliApi } from './maestroCli';
 import { createPromptsApi } from './prompts';
@@ -213,6 +214,9 @@ contextBridge.exposeInMainWorld('maestro', {
 	// Pianola API (autonomous manager: rules + decision log)
 	pianola: createPianolaApi(),
 
+	// Plugins API (community plugin subsystem: list/toggle/install/uninstall)
+	plugins: createPluginsApi(),
+
 	// WakaTime API (CLI check, API key validation)
 	wakatime: createWakatimeApi(),
 
@@ -304,6 +308,8 @@ export {
 	createCueBackupApi,
 	// Pianola
 	createPianolaApi,
+	// Plugins
+	createPluginsApi,
 	// WakaTime
 	createWakatimeApi,
 	// Maestro CLI

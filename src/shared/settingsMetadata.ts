@@ -1023,6 +1023,7 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 			symphony: true,
 			maestroCue: false,
 			pianola: false,
+			plugins: false,
 		},
 		category: 'advanced',
 	},

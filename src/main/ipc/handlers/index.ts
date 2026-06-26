@@ -65,6 +65,8 @@ import { registerCueHandlers, CueHandlerDependencies } from './cue';
 import { registerCueBackupHandlers } from './cue-backup';
 import { registerPianolaHandlers, PianolaHandlerDependencies } from './pianola';
 import { PianolaSupervisor } from '../../pianola/pianola-supervisor';
+import { registerPluginsHandlers, PluginsHandlerDependencies } from './plugins';
+import { PluginManager } from '../../plugins/plugin-manager';
 import { registerWakatimeHandlers } from './wakatime';
 import { registerFeedbackHandlers } from './feedback';
 import { registerMaestroCliHandlers } from './maestro-cli';
@@ -129,6 +131,8 @@ export type { CueHandlerDependencies };
 export { registerCueBackupHandlers };
 export { registerPianolaHandlers };
 export type { PianolaHandlerDependencies };
+export { registerPluginsHandlers };
+export type { PluginsHandlerDependencies };
 export { registerWakatimeHandlers };
 export { registerFeedbackHandlers };
 export { registerMaestroCliHandlers };
@@ -349,6 +353,20 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	registerPianolaHandlers({
 		settingsStore: deps.settingsStore,
 		supervisor: pianolaSupervisor,
+	});
+	// Register Plugins handlers (community plugin subsystem, list-only in Phase 0).
+	// Like the Pianola supervisor above, the production manager is owned by
+	// src/main/index.ts (which refreshes it on startup); this aggregate registrar
+	// builds a local manager only to satisfy the dependency.
+	const pluginManager = new PluginManager({
+		isEnabled: () => {
+			const ef = (deps.settingsStore.get('encoreFeatures') ?? {}) as Record<string, unknown>;
+			return ef.plugins === true;
+		},
+	});
+	registerPluginsHandlers({
+		settingsStore: deps.settingsStore,
+		manager: pluginManager,
 	});
 	// Register Core Prompts handlers (no dependencies needed)
 	registerPromptsHandlers();
