@@ -15,19 +15,22 @@ import {
 	PIANOLA_RULES_FILENAME,
 	PIANOLA_DECISIONS_FILENAME,
 	PIANOLA_PROFILES_FILENAME,
+	PIANOLA_PLANS_FILENAME,
 	validatePianolaRules,
 	validatePianolaDecisionRecord,
 	validatePianolaProfiles,
+	validatePianolaPlansFile,
 	resolveProfile,
 	type PianolaDecisionRecord,
 	type RulesLoadResult,
 	type PianolaProfiles,
 	type PianolaProfileEntry,
 	type PianolaProfileSource,
+	type PianolaPlan,
 } from '../../shared/pianola/storage';
 import type { PianolaRule } from '../../shared/pianola/types';
 
-export type { RulesLoadResult, PianolaProfiles, PianolaProfileEntry };
+export type { RulesLoadResult, PianolaProfiles, PianolaProfileEntry, PianolaPlan };
 
 function rulesPath(): string {
 	return path.join(getConfigDirectory(), PIANOLA_RULES_FILENAME);
@@ -197,4 +200,62 @@ export function setPianolaProfile(
 		next.global = entry;
 	}
 	return writePianolaProfiles(next);
+}
+
+function plansPath(): string {
+	return path.join(getConfigDirectory(), PIANOLA_PLANS_FILENAME);
+}
+
+/**
+ * Read and validate the persisted plans. Returns [] when the file is missing or
+ * malformed; individual invalid plans are dropped, so one bad plan cannot break
+ * the orchestrator's view of the rest.
+ */
+export function readPianolaPlans(): PianolaPlan[] {
+	let content: string;
+	try {
+		content = fs.readFileSync(plansPath(), 'utf-8');
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+		throw error;
+	}
+	try {
+		return validatePianolaPlansFile(JSON.parse(content)).plans;
+	} catch {
+		return [];
+	}
+}
+
+/**
+ * Validate and atomically persist the plans array (temp file + rename so a crash
+ * mid-write cannot leave a truncated file). Invalid plans are dropped at this
+ * boundary. Returns the plans that were actually written.
+ */
+export function writePianolaPlans(plans: PianolaPlan[]): PianolaPlan[] {
+	const validated = validatePianolaPlansFile({ plans }).plans;
+	const dir = getConfigDirectory();
+	if (!fs.existsSync(dir)) {
+		fs.mkdirSync(dir, { recursive: true });
+	}
+	const target = plansPath();
+	const tmp = `${target}.tmp`;
+	fs.writeFileSync(tmp, `${JSON.stringify({ plans: validated }, null, 2)}\n`, 'utf-8');
+	fs.renameSync(tmp, target);
+	return validated;
+}
+
+/** Read one plan by id, or null if no plan with that id is persisted. */
+export function getPianolaPlan(planId: string): PianolaPlan | null {
+	return readPianolaPlans().find((p) => p.id === planId) ?? null;
+}
+
+/**
+ * Insert or replace a plan by id and persist. Immutable: builds a new array
+ * rather than mutating the read result. Returns the persisted plans.
+ */
+export function upsertPianolaPlan(plan: PianolaPlan): PianolaPlan[] {
+	const current = readPianolaPlans();
+	const index = current.findIndex((p) => p.id === plan.id);
+	const next = index >= 0 ? current.map((p, i) => (i === index ? plan : p)) : [...current, plan];
+	return writePianolaPlans(next);
 }

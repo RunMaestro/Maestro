@@ -14,9 +14,13 @@ import type {
 	PianolaActionKind,
 	PianolaRisk,
 } from './types';
+import { validatePlan, type PianolaPlan, type PianolaTask } from './pianola-tasks';
 
 /** Editable rules file (JSON array of PianolaRule), in the Maestro config dir. */
 export const PIANOLA_RULES_FILENAME = 'maestro-pianola-rules.json';
+
+/** Persisted orchestrator plans (JSON), in the Maestro config dir. */
+export const PIANOLA_PLANS_FILENAME = 'maestro-pianola-plans.json';
 
 /** Append-only decision audit log (JSON Lines), in the Maestro config dir. */
 export const PIANOLA_DECISIONS_FILENAME = 'pianola-decisions.jsonl';
@@ -252,6 +256,29 @@ export function resolveProfile(
 	return { source: 'none', entry: null };
 }
 
+/** Persisted plans file: a JSON object wrapping the plan array. */
+export interface PianolaPlansFile {
+	plans: PianolaPlan[];
+}
+
+/**
+ * Validate an untrusted plans payload, dropping any malformed plans (reusing
+ * validatePlan and keeping only plans that validate cleanly). Always returns a
+ * well-formed object so callers never have to null-check the shape - a bad
+ * hand-edit degrades to "no plans", not a crash.
+ */
+export function validatePianolaPlansFile(raw: unknown): PianolaPlansFile {
+	const result: PianolaPlansFile = { plans: [] };
+	if (!isRecord(raw)) return result;
+	if (!Array.isArray(raw.plans)) return result;
+	for (const item of raw.plans) {
+		const { plan } = validatePlan(item);
+		if (plan) result.plans.push(plan);
+	}
+	return result;
+}
+
 // Re-exported so storage consumers get the decision/classification types from
 // one import site.
 export type { PianolaClassification, PianolaDecision, PianolaRule };
+export type { PianolaPlan, PianolaTask };

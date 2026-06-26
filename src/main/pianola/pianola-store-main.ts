@@ -15,14 +15,17 @@ import * as path from 'path';
 import {
 	PIANOLA_RULES_FILENAME,
 	PIANOLA_DECISIONS_FILENAME,
+	PIANOLA_PLANS_FILENAME,
 	validatePianolaRules,
 	validatePianolaDecisionRecord,
+	validatePianolaPlansFile,
 	type PianolaDecisionRecord,
 	type RulesLoadResult,
+	type PianolaPlan,
 } from '../../shared/pianola/storage';
 import type { PianolaRule } from '../../shared/pianola/types';
 
-export type { RulesLoadResult };
+export type { RulesLoadResult, PianolaPlan };
 
 /** Resolve the Maestro data dir, matching the CLI's getConfigDir semantics. */
 function pianolaDir(): string {
@@ -123,4 +126,60 @@ export function readDecisions(limit?: number): PianolaDecisionRecord[] {
 		return records.slice(records.length - limit);
 	}
 	return records;
+}
+
+function plansPath(): string {
+	return path.join(pianolaDir(), PIANOLA_PLANS_FILENAME);
+}
+
+/**
+ * Read and validate the persisted plans. Returns [] when missing or malformed;
+ * individual invalid plans are dropped. Mirrors the CLI's readPianolaPlans so
+ * desktop and CLI agree on the on-disk shape.
+ */
+export function readPlans(): PianolaPlan[] {
+	let content: string;
+	try {
+		content = fs.readFileSync(plansPath(), 'utf-8');
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+		throw error;
+	}
+	try {
+		return validatePianolaPlansFile(JSON.parse(content)).plans;
+	} catch {
+		return [];
+	}
+}
+
+/**
+ * Persist the plans list. Accepts untrusted input: it is validated here, the
+ * persistence boundary, so invalid plans are dropped. Written atomically via a
+ * temp file + rename so a concurrent reader never sees a partial file.
+ */
+export function writePlans(plans: PianolaPlan[]): PianolaPlan[] {
+	const validated = validatePianolaPlansFile({ plans }).plans;
+	const dir = pianolaDir();
+	if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+	const target = plansPath();
+	const tmp = `${target}.tmp`;
+	fs.writeFileSync(tmp, JSON.stringify({ plans: validated }, null, '\t'), 'utf-8');
+	fs.renameSync(tmp, target);
+	return validated;
+}
+
+/** Read one plan by id, or null if no plan with that id is persisted. */
+export function getPlan(planId: string): PianolaPlan | null {
+	return readPlans().find((p) => p.id === planId) ?? null;
+}
+
+/**
+ * Insert or replace a plan by id and persist. Immutable: builds a new array
+ * rather than mutating the read result. Returns the persisted plans.
+ */
+export function upsertPlan(plan: PianolaPlan): PianolaPlan[] {
+	const current = readPlans();
+	const index = current.findIndex((p) => p.id === plan.id);
+	const next = index >= 0 ? current.map((p, i) => (i === index ? plan : p)) : [...current, plan];
+	return writePlans(next);
 }
