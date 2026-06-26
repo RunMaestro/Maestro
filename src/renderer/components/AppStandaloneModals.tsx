@@ -1,4 +1,4 @@
-import { lazy, memo, Suspense } from 'react';
+import { lazy, memo, Suspense, useMemo } from 'react';
 import { useModalActions } from '../stores/modalStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { useTabStore } from '../stores/tabStore';
@@ -8,6 +8,8 @@ import { useSessionStore } from '../stores/sessionStore';
 import { notifyToast } from '../stores/notificationStore';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { THEMES } from '../constants/themes';
+import { usePluginContributions } from '../hooks/usePluginContributions';
+import { pluginThemesRecord } from '../utils/pluginThemes';
 import { DebugPackageModal } from './DebugPackageModal';
 import { DebugApplicationStatsModal } from './DebugApplicationStatsModal';
 import { DebugAgentProbeModal } from './DebugAgentProbeModal';
@@ -270,6 +272,14 @@ function AppStandaloneModalsInner({
 
 	// Self-source active session
 	const activeSession = useActiveSession();
+
+	// Merge plugin-contributed themes into the picker list. Empty (so identical to
+	// THEMES) when the plugins Encore flag is off.
+	const pluginContributions = usePluginContributions();
+	const mergedThemes = useMemo(
+		() => ({ ...THEMES, ...pluginThemesRecord(pluginContributions.themes) }),
+		[pluginContributions.themes]
+	);
 
 	return (
 		<>
@@ -589,7 +599,7 @@ function AppStandaloneModalsInner({
 						isOpen={settingsModalOpen}
 						onClose={onCloseSettings}
 						theme={theme}
-						themes={THEMES}
+						themes={mergedThemes}
 						initialTab={settingsTab}
 						initialSelectedPromptId={settingsPromptId}
 						hasNoAgents={hasNoAgents}

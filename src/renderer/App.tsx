@@ -180,6 +180,8 @@ import { useQuitWhenIdle } from './hooks/useQuitWhenIdle';
 // Note: GroupChat, GroupChatState are imported from types (re-exported from shared)
 import type { RightPanelTab, Session, QueuedItem, CustomAICommand, ThinkingItem } from './types';
 import { THEMES } from './constants/themes';
+import { usePluginContributions } from './hooks/usePluginContributions';
+import { resolvePluginTheme } from './utils/pluginThemes';
 import { generateId } from './utils/ids';
 import { getActiveOutputSearchKey } from './utils/outputSearch';
 import { reorderQueueItem } from './utils/executionQueue';
@@ -1156,6 +1158,10 @@ function MaestroConsoleInner() {
 		onOpenFileTab: handleOpenFileTab,
 	});
 
+	// Active plugin contributions (themes/prompts/macros). Empty when the plugins
+	// Encore flag is off, so this is inert by default.
+	const pluginContributions = usePluginContributions();
+
 	// Use custom colors when custom theme is selected, otherwise use the standard theme
 	const theme = useMemo(() => {
 		if (activeThemeId === 'custom') {
@@ -1164,8 +1170,14 @@ function MaestroConsoleInner() {
 				colors: customThemeColors,
 			};
 		}
-		return THEMES[activeThemeId];
-	}, [activeThemeId, customThemeColors]);
+		const builtIn = THEMES[activeThemeId];
+		if (builtIn) return builtIn;
+		// A plugin-contributed theme may be active (its id is outside the built-in
+		// union). Resolve it from contributions; fall back to dracula so the app
+		// never renders with an undefined theme if the plugin was removed.
+		const pluginTheme = pluginContributions.themes.find((t) => t.id === activeThemeId);
+		return pluginTheme ? resolvePluginTheme(pluginTheme) : THEMES.dracula;
+	}, [activeThemeId, customThemeColors, pluginContributions.themes]);
 
 	// Ref for theme (for use in memoized callbacks that need current theme without re-creating)
 	const themeRef = useRef(theme);
