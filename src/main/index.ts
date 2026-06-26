@@ -1059,6 +1059,7 @@ app
 		const pluginSandboxHost = new PluginSandboxHost({
 			broker: pluginBroker,
 			handlers: buildHostCallHandlers({
+				broker: pluginBroker,
 				settingsStore: store,
 				listAgents: () => {
 					const sessions = sessionsStore.get('sessions', []) as Array<{

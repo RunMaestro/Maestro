@@ -13,11 +13,18 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { logger } from '../utils/logger';
 import type { HostCallHandlers } from './plugin-sandbox-host';
+import type { PermissionBroker } from './permission-broker';
+import type { HostMethod } from '../../shared/plugins/rpc-protocol';
 
 /** Cap a fetched response body so a hostile/huge response cannot exhaust memory. */
 const MAX_FETCH_BYTES = 5_000_000;
+/** Cap a single fs.read so a plugin cannot exhaust memory reading a huge file. */
+const MAX_READ_BYTES = 10_000_000;
 
 export interface HostHandlerDeps {
+	/** The broker, so fs handlers can RE-authorize the real (symlink-resolved)
+	 * path after the initial string-based authorization (TOCTOU/symlink defense). */
+	broker: PermissionBroker;
 	settingsStore: { get: (key: string) => unknown };
 	/** Read-only agent listing (no secrets): id/name/cwd/toolType only. */
 	listAgents: () => Array<{ id: string; name: string; cwd?: string; toolType?: string }>;
@@ -31,30 +38,84 @@ function asObject(params: unknown): Record<string, unknown> {
 	return typeof params === 'object' && params !== null ? (params as Record<string, unknown>) : {};
 }
 
-/** Keys we never expose through settings.get, even if asked (defense in depth). */
-const SECRET_KEY_PATTERN = /key|token|secret|password|credential|apikey/i;
+/** Keys we never expose through settings.get, even if asked (defense in depth).
+ * A denylist always has gaps, so this is intentionally broad; secret-bearing
+ * settings should also live behind dedicated channels, never plain settings. */
+const SECRET_KEY_PATTERN =
+	/key|token|secret|password|credential|apikey|sk$|^sk[_.]|auth|bearer|oauth|jwt|pat$|[._-]pat([._-]|$)|private|cert|signing/i;
+
+/**
+ * Resolve the real absolute path for a target, following symlinks for the
+ * deepest existing ancestor (so a not-yet-created file still resolves through a
+ * symlinked parent). Used to re-authorize the TRUE path against the grant after
+ * the broker's string-based check, closing symlink/`..` escapes.
+ */
+function resolveRealPath(target: string): string {
+	const abs = path.resolve(target);
+	const missing: string[] = [];
+	let cursor = abs;
+	while (!fs.existsSync(cursor)) {
+		missing.unshift(path.basename(cursor));
+		const parent = path.dirname(cursor);
+		if (parent === cursor) break;
+		cursor = parent;
+	}
+	const realBase = fs.existsSync(cursor) ? fs.realpathSync(cursor) : cursor;
+	return missing.length > 0 ? path.join(realBase, ...missing) : realBase;
+}
 
 export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
+	/**
+	 * Re-authorize the symlink-resolved real path against the plugin's grant.
+	 * The broker first authorized the raw string; an attacker can defeat that
+	 * with a symlink inside the granted scope pointing out, or a path that only
+	 * resolves out after the OS follows links. We resolve the true path and ask
+	 * the broker again, throwing if the real path is no longer permitted.
+	 */
+	const authorizeRealPath = (pluginId: string, method: HostMethod, realPath: string): void => {
+		const decision = deps.broker.authorize(pluginId, method, { path: realPath });
+		if (!decision.allowed) {
+			throw new Error(decision.reason ?? 'permission denied for resolved path');
+		}
+	};
+
 	const handlers: HostCallHandlers = {
-		'fs.read': async (_pluginId, params) => {
+		'fs.read': async (pluginId, params) => {
 			const p = asObject(params);
 			if (typeof p.path !== 'string') throw new Error('path is required');
-			return fs.readFileSync(p.path, 'utf-8');
+			const real = resolveRealPath(p.path);
+			authorizeRealPath(pluginId, 'fs.read', real);
+			const stat = fs.statSync(real);
+			if (stat.size > MAX_READ_BYTES) throw new Error('file exceeds read size limit');
+			return fs.readFileSync(real, 'utf-8');
 		},
 
-		'fs.write': async (_pluginId, params) => {
+		'fs.write': async (pluginId, params) => {
 			const p = asObject(params);
 			if (typeof p.path !== 'string') throw new Error('path is required');
 			if (typeof p.contents !== 'string') throw new Error('contents must be a string');
-			fs.mkdirSync(path.dirname(p.path), { recursive: true });
-			fs.writeFileSync(p.path, p.contents, 'utf-8');
+			const real = resolveRealPath(p.path);
+			authorizeRealPath(pluginId, 'fs.write', real);
+			fs.mkdirSync(path.dirname(real), { recursive: true });
+			fs.writeFileSync(real, p.contents, 'utf-8');
 			return { ok: true };
 		},
 
 		'net.fetch': async (_pluginId, params) => {
 			const p = asObject(params);
 			if (typeof p.url !== 'string') throw new Error('url is required');
-			const init = (typeof p.init === 'object' && p.init !== null ? p.init : {}) as RequestInit;
+			const rawInit = asObject(p.init);
+			// Allowlist init fields and FORCE redirect:'error' so a 3xx to a
+			// non-granted host (SSRF to metadata/localhost) cannot be followed -
+			// the broker only authorized the initial URL's host.
+			const init: RequestInit = {
+				method: typeof rawInit.method === 'string' ? rawInit.method : 'GET',
+				...(rawInit.body !== undefined ? { body: rawInit.body as RequestInit['body'] } : {}),
+				...(typeof rawInit.headers === 'object' && rawInit.headers !== null
+					? { headers: rawInit.headers as RequestInit['headers'] }
+					: {}),
+				redirect: 'error',
+			};
 			const response = await fetch(p.url, init);
 			const reader = response.body?.getReader();
 			let received = 0;

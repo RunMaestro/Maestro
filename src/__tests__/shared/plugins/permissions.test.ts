@@ -64,6 +64,18 @@ describe('isPermitted (default deny + scope matching)', () => {
 		expect(isPermitted([grant('fs:read', '/data/foo')], 'fs:read', '/data/foobar')).toBe(false);
 	});
 
+	it('collapses .. so traversal cannot escape the scope', () => {
+		const g = [grant('fs:read', '/data')];
+		expect(isPermitted(g, 'fs:read', '/data/../etc/passwd')).toBe(false);
+		expect(isPermitted(g, 'fs:read', '/data/../../etc/passwd')).toBe(false);
+		expect(isPermitted(g, 'fs:read', '/data/sub/../ok.txt')).toBe(true);
+		expect(isPermitted(g, 'fs:read', '/data/./ok.txt')).toBe(true);
+	});
+
+	it('collapses .. in the grant scope too', () => {
+		expect(isPermitted([grant('fs:read', '/a/b/../data')], 'fs:read', '/a/data/x')).toBe(true);
+	});
+
 	it('a scoped path grant denies when no concrete target is given', () => {
 		expect(isPermitted([grant('fs:read', '/data')], 'fs:read', undefined)).toBe(false);
 	});

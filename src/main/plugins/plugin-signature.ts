@@ -34,15 +34,22 @@ function hashFile(absPath: string): string {
 
 /**
  * Recursively map every file in `dir` to its plugin-relative POSIX path and
- * SHA-256, excluding the signature file itself. Symlinks are skipped (a symlink
- * could point outside the plugin and is never legitimate plugin content).
+ * SHA-256, excluding the signature file itself.
+ *
+ * Symlinks are NOT skipped silently: a symlink can point outside the plugin and
+ * is never legitimate signed content, and silently skipping it would let a
+ * signed plugin ship an unsigned symlink (a real escape - see the security
+ * review). Encountering ANY symlink throws, and the caller maps that to an
+ * `invalid` signature so the plugin will not run.
  */
 function hashTree(dir: string): Record<string, string> {
 	const out: Record<string, string> = {};
 	const walk = (current: string): void => {
 		for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
 			const abs = path.join(current, entry.name);
-			if (entry.isSymbolicLink()) continue;
+			if (entry.isSymbolicLink()) {
+				throw new Error(`plugin contains a symlink: ${normalizeRelPath(path.relative(dir, abs))}`);
+			}
 			if (entry.isDirectory()) {
 				walk(abs);
 				continue;
@@ -124,7 +131,17 @@ export function verifyPluginSignature(
 		return { status: 'invalid', detail: errors.join('; ') };
 	}
 
-	const actual = hashTree(pluginDir);
+	let actual: Record<string, string>;
+	try {
+		actual = hashTree(pluginDir);
+	} catch (err) {
+		// A symlink (or unreadable tree) makes the signed file set unverifiable.
+		return {
+			status: 'invalid',
+			signerKey: manifest.publicKey,
+			detail: err instanceof Error ? err.message : 'could not hash plugin files',
+		};
+	}
 	if (!fileSetsMatch(actual, manifest.files)) {
 		return {
 			status: 'invalid',

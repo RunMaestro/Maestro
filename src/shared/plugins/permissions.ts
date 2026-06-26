@@ -172,13 +172,33 @@ export function grantsFromRequests(
 }
 
 /**
- * Normalize a path for prefix comparison: forward slashes, no trailing slash,
- * collapsed. NOT a security canonicalizer - the broker still resolves real
- * paths before calling here. This only makes prefix matching consistent.
+ * Normalize a path for prefix comparison: forward slashes, and - critically -
+ * collapse `.` and `..` segments so a target like `/scope/../../etc/passwd`
+ * cannot prefix-match `/scope`. A leading `..` on an absolute path is dropped
+ * (you cannot escape root). This is the broker's first line of defense; the fs
+ * handlers ALSO resolve real paths (symlinks) and re-authorize, because this
+ * pure function cannot see the filesystem.
  */
 function normalizePath(p: string): string {
-	const unified = p.replace(/\\/g, '/').replace(/\/+$/g, '');
-	return unified.length === 0 ? '/' : unified;
+	const unified = p.replace(/\\/g, '/');
+	const isAbsolute = unified.startsWith('/');
+	const segments: string[] = [];
+	for (const seg of unified.split('/')) {
+		if (seg === '' || seg === '.') continue;
+		if (seg === '..') {
+			if (segments.length > 0 && segments[segments.length - 1] !== '..') {
+				segments.pop();
+			} else if (!isAbsolute) {
+				segments.push('..');
+			}
+			// On an absolute path a leading `..` is discarded (cannot go above root).
+			continue;
+		}
+		segments.push(seg);
+	}
+	const joined = (isAbsolute ? '/' : '') + segments.join('/');
+	if (joined === '') return isAbsolute ? '/' : '.';
+	return joined;
 }
 
 /** Does `scope` (a directory) contain `target` (a path)? Prefix match with a
@@ -233,7 +253,7 @@ export function describeCapability(capability: PluginCapability): string {
 		case 'fs:write':
 			return 'Create and modify files';
 		case 'net:fetch':
-			return 'Make network requests';
+			return 'Make network requests (unscoped includes localhost and your internal network)';
 		case 'agents:read':
 			return 'See your agents and their status';
 		case 'agents:dispatch':
