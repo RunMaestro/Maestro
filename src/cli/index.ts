@@ -80,6 +80,12 @@ import {
 	pianolaSetProfile,
 	pianolaLog,
 } from './commands/pianola';
+import {
+	pianolaPlanSet,
+	pianolaPlanList,
+	pianolaPlanShow,
+	pianolaOrchestrate,
+} from './commands/pianola-orchestrate';
 
 // Injected at build time by scripts/build-cli.mjs via esbuild `define`.
 // The typeof guard keeps non-esbuild execution paths (ts-node, plain tsc output) from
@@ -896,6 +902,39 @@ pianola
 	.option('--limit <n>', 'Maximum number of records to show (default 20)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => pianolaLog(options));
+
+// Pianola plan - author and inspect task DAGs the orchestrator runs.
+const pianolaPlan = pianola
+	.command('plan')
+	.description('Author and inspect Pianola task plans (DAGs)');
+
+pianolaPlan
+	.command('set')
+	.description('Save a plan from --file or piped stdin (validated before write)')
+	.option('--file <path>', 'Read the plan JSON from this file (else reads stdin)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => pianolaPlanSet(options));
+
+pianolaPlan
+	.command('list')
+	.description('List saved plans with a progress summary')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => pianolaPlanList(options));
+
+pianolaPlan
+	.command('show <planId>')
+	.description('Show one plan: its tasks, statuses, and dependencies')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((planId, options) => pianolaPlanShow(planId, options));
+
+pianola
+	.command('orchestrate <planId>')
+	.description('Run a saved plan to completion, dispatching tasks as their dependencies finish')
+	.option('--interval <seconds>', 'Polling interval in seconds (default 5)')
+	.option('--concurrency <n>', 'Max tasks running at once (default 3)')
+	.option('--once', 'Run a single iteration instead of looping')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((planId, options) => pianolaOrchestrate(planId, options));
 
 // Prompts command — read Maestro's bundled or user-customized system prompts.
 // Designed for agent self-fetch: parent prompts reference includes via `{{REF:_name}}`
