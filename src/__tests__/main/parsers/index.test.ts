@@ -66,21 +66,29 @@ describe('parsers/index', () => {
 			expect(hasOutputParser('pi')).toBe(true);
 		});
 
-		it('should register exactly 6 parsers', () => {
+		it('should register Qwen parser', () => {
+			expect(hasOutputParser('qwen3-coder')).toBe(false);
+
+			initializeOutputParsers();
+
+			expect(hasOutputParser('qwen3-coder')).toBe(true);
+		});
+
+		it('should register exactly 7 parsers', () => {
 			initializeOutputParsers();
 
 			const parsers = getAllOutputParsers();
-			expect(parsers.length).toBe(6);
+			expect(parsers.length).toBe(7);
 		});
 
 		it('should clear existing parsers before registering', () => {
 			// First initialization
 			initializeOutputParsers();
-			expect(getAllOutputParsers().length).toBe(6);
+			expect(getAllOutputParsers().length).toBe(7);
 
-			// Second initialization should still have exactly 5
+			// Second initialization should still have exactly 7
 			initializeOutputParsers();
-			expect(getAllOutputParsers().length).toBe(6);
+			expect(getAllOutputParsers().length).toBe(7);
 		});
 	});
 
