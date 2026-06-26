@@ -59,12 +59,35 @@ export interface CommandMacroContribution {
 	description?: string;
 }
 
+/**
+ * A scheduled trigger a plugin declares (Cue-style, but plugin-scoped and run by
+ * the supervised plugin scheduler rather than the per-project Cue engine).
+ *
+ * Tier 0 supports only the safe `notify` action (raise a toast). The `dispatch`
+ * action (send a prompt to an agent) is part of the shape but requires the
+ * agents:dispatch capability and is not executed until that capability is wired.
+ */
+export interface CueTriggerContribution {
+	id: string;
+	localId: string;
+	pluginId: string;
+	title: string;
+	/** Recurring every N minutes, or at fixed local clock times (HH:MM). */
+	schedule: { kind: 'interval'; everyMinutes: number } | { kind: 'dailyTimes'; times: string[] };
+	action: 'notify' | 'dispatch';
+	/** notify: the toast message. dispatch: the prompt (requires capability). */
+	payload: string;
+	/** dispatch only: the target agent id. */
+	agentId?: string;
+}
+
 /** All contributions a single plugin declared, plus any per-item errors. */
 export interface PluginContributions {
 	themes: ThemeContribution[];
 	prompts: PromptContribution[];
 	settings: SettingContribution[];
 	commandMacros: CommandMacroContribution[];
+	cueTriggers: CueTriggerContribution[];
 	/** Human-readable reasons individual contributions were dropped. */
 	errors: string[];
 }
@@ -75,6 +98,7 @@ export interface AggregatedContributions {
 	prompts: PromptContribution[];
 	settings: SettingContribution[];
 	commandMacros: CommandMacroContribution[];
+	cueTriggers: CueTriggerContribution[];
 	/** Per-plugin errors keyed by plugin id (only plugins with errors appear). */
 	errorsByPlugin: Record<string, string[]>;
 }
@@ -109,6 +133,7 @@ export function collectContributions(manifest: PluginManifest): PluginContributi
 		prompts: [],
 		settings: [],
 		commandMacros: [],
+		cueTriggers: [],
 		errors: [],
 	};
 	const contributes = manifest.contributes;
@@ -131,6 +156,10 @@ export function collectContributions(manifest: PluginManifest): PluginContributi
 		const m = parseCommandMacro(pluginId, raw, out.errors);
 		if (m) out.commandMacros.push(m);
 	}
+	for (const raw of asArray(contributes.cueTriggers)) {
+		const t = parseCueTrigger(pluginId, raw, out.errors);
+		if (t) out.cueTriggers.push(t);
+	}
 	return out;
 }
 
@@ -145,6 +174,7 @@ export function aggregateContributions(manifests: PluginManifest[]): AggregatedC
 		prompts: [],
 		settings: [],
 		commandMacros: [],
+		cueTriggers: [],
 		errorsByPlugin: {},
 	};
 	const seen = new Set<string>();
@@ -166,6 +196,7 @@ export function aggregateContributions(manifests: PluginManifest[]): AggregatedC
 		c.prompts.forEach((p) => pushUnique(agg.prompts, p));
 		c.settings.forEach((s) => pushUnique(agg.settings, s));
 		c.commandMacros.forEach((m) => pushUnique(agg.commandMacros, m));
+		c.cueTriggers.forEach((t) => pushUnique(agg.cueTriggers, t));
 	}
 	return agg;
 }
@@ -314,5 +345,81 @@ function parseCommandMacro(
 		title: raw.title.trim(),
 		prompt: raw.prompt,
 		...(isNonEmptyString(raw.description) ? { description: raw.description.trim() } : {}),
+	};
+}
+
+/** HH:MM 24-hour clock time. */
+const DAILY_TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+function parseCueTrigger(
+	pluginId: string,
+	raw: unknown,
+	errors: string[]
+): CueTriggerContribution | null {
+	if (!isPlainObject(raw)) {
+		errors.push(`[${pluginId}] a cueTrigger contribution is not an object`);
+		return null;
+	}
+	const localId = parseLocalId(pluginId, raw, errors);
+	if (!localId) return null;
+	if (!isNonEmptyString(raw.title)) {
+		errors.push(`[${pluginId}] cueTrigger "${localId}" is missing a title`);
+		return null;
+	}
+
+	const sched = isPlainObject(raw.schedule) ? raw.schedule : undefined;
+	if (!sched) {
+		errors.push(`[${pluginId}] cueTrigger "${localId}" is missing a schedule`);
+		return null;
+	}
+	let schedule: CueTriggerContribution['schedule'];
+	if (sched.kind === 'interval') {
+		const every = sched.everyMinutes;
+		if (typeof every !== 'number' || !Number.isFinite(every) || every < 1) {
+			errors.push(`[${pluginId}] cueTrigger "${localId}" everyMinutes must be a number >= 1`);
+			return null;
+		}
+		schedule = { kind: 'interval', everyMinutes: Math.floor(every) };
+	} else if (sched.kind === 'dailyTimes') {
+		const times = Array.isArray(sched.times)
+			? sched.times.filter((t): t is string => typeof t === 'string' && DAILY_TIME_PATTERN.test(t))
+			: [];
+		if (times.length === 0) {
+			errors.push(`[${pluginId}] cueTrigger "${localId}" needs at least one HH:MM time`);
+			return null;
+		}
+		schedule = { kind: 'dailyTimes', times };
+	} else {
+		errors.push(
+			`[${pluginId}] cueTrigger "${localId}" schedule.kind must be interval or dailyTimes`
+		);
+		return null;
+	}
+
+	const action = raw.action === 'dispatch' ? 'dispatch' : raw.action === 'notify' ? 'notify' : null;
+	if (!action) {
+		errors.push(`[${pluginId}] cueTrigger "${localId}" action must be notify or dispatch`);
+		return null;
+	}
+	if (!isNonEmptyString(raw.payload)) {
+		errors.push(`[${pluginId}] cueTrigger "${localId}" is missing a payload`);
+		return null;
+	}
+	if (action === 'dispatch' && !isNonEmptyString(raw.agentId)) {
+		errors.push(`[${pluginId}] cueTrigger "${localId}" dispatch action requires an agentId`);
+		return null;
+	}
+
+	return {
+		id: namespaced(pluginId, localId),
+		localId,
+		pluginId,
+		title: raw.title.trim(),
+		schedule,
+		action,
+		payload: raw.payload,
+		...(action === 'dispatch' && isNonEmptyString(raw.agentId)
+			? { agentId: raw.agentId.trim() }
+			: {}),
 	};
 }

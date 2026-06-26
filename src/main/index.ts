@@ -23,6 +23,7 @@ import { PianolaSupervisor } from './pianola/pianola-supervisor';
 import { PluginManager } from './plugins/plugin-manager';
 import { PermissionBroker } from './plugins/permission-broker';
 import { PluginSandboxHost } from './plugins/plugin-sandbox-host';
+import { PluginSchedulerHost } from './plugins/plugin-scheduler-host';
 import { buildHostCallHandlers } from './plugins/plugin-host-handlers';
 import { readGrants } from './plugins/plugin-store-main';
 import { configureCueTelemetry } from './cue/cue-telemetry';
@@ -365,6 +366,7 @@ let agentDetector: AgentDetector | null = null;
 let cueEngine: CueEngine | null = null;
 let pianolaSupervisor: PianolaSupervisor | null = null;
 let pluginManager: PluginManager | null = null;
+let pluginScheduler: PluginSchedulerHost | null = null;
 let usageRefreshScheduler: UsageRefreshScheduler | null = null;
 let interactiveReplayController: InteractiveReplayController<ProcessSpawnConfig> | null = null;
 
@@ -1108,6 +1110,19 @@ app
 			},
 		});
 
+		// Supervised plugin scheduler: fires plugins' declarative cue triggers
+		// (interval / daily-time) on a poll loop. Self-gates on the plugins flag.
+		// notify -> toast; dispatch is left unwired (needs agents:dispatch review).
+		const schedulerManager = pluginManager;
+		pluginScheduler = new PluginSchedulerHost({
+			isEnabled: () => {
+				const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
+				return ef.plugins === true;
+			},
+			getTriggers: () => schedulerManager.getContributions().cueTriggers,
+			notify: (trigger) => logger.toast(trigger.payload, `Plugin: ${trigger.pluginId}`),
+		});
+
 		logger.info('Core services initialized', 'Startup');
 
 		// Initialize history manager (handles migration from legacy format if needed)
@@ -1194,6 +1209,9 @@ app
 				logger.error(`Plugin manager failed to refresh at boot: ${err}`, 'Startup');
 			}
 		}
+		// Start the plugin scheduler unconditionally: it self-gates per tick on the
+		// plugins flag, so enabling the feature later begins firing without a restart.
+		pluginScheduler?.start();
 
 		// Set custom application menu to prevent macOS from injecting native
 		// "Show Previous Tab" (Cmd+Shift+{) and "Show Next Tab" (Cmd+Shift+})
@@ -1398,6 +1416,8 @@ quitHandler = createQuitHandler({
 		pianolaSupervisor?.stopAll();
 		// Tear down any running plugin sandboxes (utilityProcess children).
 		pluginManager?.stopAllSandboxes();
+		// Stop the plugin scheduler poll loop.
+		pluginScheduler?.stop();
 		// Tear down the background quota refresh timers.
 		usageRefreshScheduler?.stop();
 	},

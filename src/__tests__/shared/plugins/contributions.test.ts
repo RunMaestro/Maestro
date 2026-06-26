@@ -65,6 +65,72 @@ describe('collectContributions', () => {
 		expect(c.errors.length).toBe(4);
 	});
 
+	it('parses interval and dailyTimes cue triggers and rejects bad ones', () => {
+		const c = collectContributions(
+			manifest('com.acme', {
+				cueTriggers: [
+					{
+						id: 'tick',
+						title: 'Tick',
+						schedule: { kind: 'interval', everyMinutes: 15 },
+						action: 'notify',
+						payload: 'tick!',
+					},
+					{
+						id: 'morning',
+						title: 'AM',
+						schedule: { kind: 'dailyTimes', times: ['09:00', '25:00'] },
+						action: 'notify',
+						payload: 'gm',
+					},
+					{
+						id: 'nopayload',
+						title: 'X',
+						schedule: { kind: 'interval', everyMinutes: 5 },
+						action: 'notify',
+					},
+					{
+						id: 'baddispatch',
+						title: 'Y',
+						schedule: { kind: 'interval', everyMinutes: 5 },
+						action: 'dispatch',
+						payload: 'go',
+					},
+					{
+						id: 'zeromin',
+						title: 'Z',
+						schedule: { kind: 'interval', everyMinutes: 0 },
+						action: 'notify',
+						payload: 'p',
+					},
+				],
+			})
+		);
+		expect(c.cueTriggers.map((t) => t.localId)).toEqual(['tick', 'morning']);
+		// invalid HH:MM dropped from the times list, valid one kept
+		const morning = c.cueTriggers.find((t) => t.localId === 'morning');
+		expect(morning?.schedule).toEqual({ kind: 'dailyTimes', times: ['09:00'] });
+		expect(c.errors.length).toBe(3); // nopayload, baddispatch (no agentId), zeromin
+	});
+
+	it('accepts a dispatch trigger with an agentId', () => {
+		const c = collectContributions(
+			manifest('com.acme', {
+				cueTriggers: [
+					{
+						id: 'd',
+						title: 'D',
+						schedule: { kind: 'interval', everyMinutes: 60 },
+						action: 'dispatch',
+						payload: 'run',
+						agentId: 'agent-1',
+					},
+				],
+			})
+		);
+		expect(c.cueTriggers[0]).toMatchObject({ action: 'dispatch', agentId: 'agent-1' });
+	});
+
 	it('rejects an invalid local id', () => {
 		const c = collectContributions(
 			manifest('com.acme', {
