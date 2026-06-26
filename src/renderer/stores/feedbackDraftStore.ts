@@ -70,6 +70,10 @@ interface FeedbackDraftState {
 	reset: () => void;
 }
 
+// Tracks the in-flight save of a brand-new (unsaved) draft so concurrent first
+// saves reuse the minted id instead of each creating a duplicate draft row.
+let pendingNewDraftSave: Promise<string | null> | null = null;
+
 export const useFeedbackDraftStore = create<FeedbackDraftState>((set, get) => ({
 	isMinimized: false,
 	hasDraft: false,
@@ -90,22 +94,51 @@ export const useFeedbackDraftStore = create<FeedbackDraftState>((set, get) => ({
 		}
 	},
 	saveDraft: async (draft) => {
+		// A brand-new draft (no persisted id yet) can be saved from several
+		// paths at once - the Save Draft button plus minimize/Save & Close -
+		// before the first save resolves and patches the active id. Each such
+		// call would otherwise reach the IPC handler with an empty id, which
+		// mints a fresh UUID per call and creates a DUPLICATE row. Serialize
+		// new-draft saves: the first mints the id; a concurrent save reuses it
+		// to upsert the same row instead of creating another.
+		const isNewDraft = !draft.id;
+		if (isNewDraft && pendingNewDraftSave) {
+			const mintedId = await pendingNewDraftSave;
+			if (mintedId) {
+				return get().saveDraft({ ...draft, id: mintedId });
+			}
+			// The in-flight first save failed; fall through and retry as new.
+		}
+		const run = async (): Promise<string | null> => {
+			try {
+				const { draft: saved } = await window.maestro.feedback.drafts.save(draft);
+				await get().loadDrafts();
+				set((state) => ({
+					activeDraftId: saved.id,
+					// Patch the live snapshot's id too, so a later save/minimize without
+					// an intervening edit upserts this draft instead of duplicating it.
+					activeDraft: state.activeDraft
+						? { ...state.activeDraft, id: saved.id }
+						: state.activeDraft,
+					saveError: null,
+				}));
+				return saved.id;
+			} catch {
+				// Surface the failure so callers do NOT report success or close the
+				// modal while the draft only lives in memory.
+				set({ saveError: 'Could not save your draft. Your changes are still here; try again.' });
+				return null;
+			}
+		};
+		if (!isNewDraft) {
+			return run();
+		}
+		const pending = run();
+		pendingNewDraftSave = pending;
 		try {
-			const { draft: saved } = await window.maestro.feedback.drafts.save(draft);
-			await get().loadDrafts();
-			set((state) => ({
-				activeDraftId: saved.id,
-				// Patch the live snapshot's id too, so a later save/minimize without
-				// an intervening edit upserts this draft instead of duplicating it.
-				activeDraft: state.activeDraft ? { ...state.activeDraft, id: saved.id } : state.activeDraft,
-				saveError: null,
-			}));
-			return saved.id;
-		} catch {
-			// Surface the failure so callers do NOT report success or close the
-			// modal while the draft only lives in memory.
-			set({ saveError: 'Could not save your draft. Your changes are still here; try again.' });
-			return null;
+			return await pending;
+		} finally {
+			if (pendingNewDraftSave === pending) pendingNewDraftSave = null;
 		}
 	},
 	deleteDraft: async (id) => {

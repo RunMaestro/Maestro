@@ -120,4 +120,34 @@ describe('feedbackDraftStore', () => {
 		expect(state.activeDraft?.id).toBe('minted-1');
 		expect(state.saveError).toBeNull();
 	});
+
+	it('dedupes concurrent first-saves of a new draft into a single draft row', async () => {
+		// Mirror the main-process handler: an empty id mints a fresh UUID per
+		// call, while an existing id upserts the matching row in place.
+		const persisted: FeedbackDraft[] = [];
+		let mintCounter = 0;
+		window.maestro.feedback.drafts.save.mockImplementation(async (incoming: FeedbackDraft) => {
+			const id = incoming.id || `minted-${++mintCounter}`;
+			const existing = persisted.findIndex((d) => d.id === id);
+			const saved = { ...incoming, id };
+			if (existing >= 0) persisted[existing] = saved;
+			else persisted.push(saved);
+			return { draft: saved };
+		});
+		window.maestro.feedback.drafts.list.mockImplementation(async () => ({
+			drafts: [...persisted],
+		}));
+
+		// Both saves fire before the first resolves, so both serialize an empty id.
+		const { saveDraft } = useFeedbackDraftStore.getState();
+		const newDraft = makeDraft({ id: '' });
+		const [id1, id2] = await Promise.all([saveDraft(newDraft), saveDraft(newDraft)]);
+
+		// Exactly one row is created and both calls resolve to the same minted id.
+		expect(mintCounter).toBe(1);
+		expect(persisted).toHaveLength(1);
+		expect(id1).toBe('minted-1');
+		expect(id2).toBe('minted-1');
+		expect(useFeedbackDraftStore.getState().activeDraftId).toBe('minted-1');
+	});
 });
