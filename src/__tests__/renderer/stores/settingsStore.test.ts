@@ -87,6 +87,7 @@ function resetStore() {
 		rightPanelWidth: 384,
 		markdownEditMode: false,
 		chatRawTextMode: false,
+		groupChatAutoScroll: true,
 		showHiddenFiles: true,
 		fileExplorerIconTheme: 'default',
 		terminalWidth: 100,

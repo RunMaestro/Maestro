@@ -2957,6 +2957,7 @@ export function getSettingsActions() {
 		setRightPanelWidth: state.setRightPanelWidth,
 		setMarkdownEditMode: state.setMarkdownEditMode,
 		setChatRawTextMode: state.setChatRawTextMode,
+		setGroupChatAutoScroll: state.setGroupChatAutoScroll,
 		setBionifyReadingMode: state.setBionifyReadingMode,
 		setBionifyIntensity: state.setBionifyIntensity,
 		setBionifyAlgorithm: state.setBionifyAlgorithm,
