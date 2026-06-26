@@ -27,6 +27,7 @@ import {
 	getMentionMatchPriority,
 	normalizeLegacyMentionName,
 	normalizeMentionName,
+	stripUnmatchedTrailingClosers,
 } from '../../shared/group-chat-types';
 import {
 	IProcessManager,
@@ -466,7 +467,7 @@ function getMentionNameForContext(name: string, peerNames: string[]): string {
 	// Advertise the highest-fidelity alias that resolves *uniquely back to this
 	// exact name* among the peers. Normalized collisions (e.g. "A (B)" vs
 	// "A-(B)", or "Review Bot [Linux]" vs "Review Bot (Linux)") can make a
-	// candidate fold onto — or worse, exactly match — a different peer, which
+	// candidate fold onto (or worse, exactly match) a different peer, which
 	// would route the moderator's mention to the wrong agent.
 	const candidates = [normalizeMentionName(name), normalizeLegacyMentionName(name)];
 	for (const candidate of candidates) {
@@ -550,7 +551,7 @@ function findSessionForParticipantName(
  *
  * Resolves against existing participants AND available (non-terminal) sessions
  * together so a weak (safe-folded) participant match can't shadow a stronger
- * (exact/legacy) session match — e.g. an existing "Review Bot [Linux]"
+ * (exact/legacy) session match, e.g. an existing "Review Bot [Linux]"
  * participant must not block auto-adding a mentioned "Review Bot (Linux)"
  * session. Returns the session to add, or undefined when the mention is already
  * an existing participant or resolves ambiguously (a tie refuses to route).
@@ -629,7 +630,10 @@ export function extractAutoRunDirectives(text: string): {
 	while ((match = autoRunPattern.exec(text)) !== null) {
 		const participantName = stripMarkdownFormatting(match[1]);
 		if (!participantName) continue;
-		const filename = match[2]; // undefined when no :filename suffix
+		// Trim unmatched trailing closers so a directive wrapped in punctuation,
+		// e.g. "(!autorun @Agent:plan.md)", yields "plan.md" not "plan.md)" while
+		// balanced brackets in names like "Phase-01-(Setup).md" are preserved.
+		const filename = match[2] ? stripUnmatchedTrailingClosers(match[2]) || undefined : undefined;
 		if (!autoRunDirectives.some((d) => d.participantName === participantName)) {
 			autoRunDirectives.push({ participantName, filename });
 		}

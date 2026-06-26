@@ -287,6 +287,10 @@ export class FeedbackConversationManager {
 					this.outputBuffer = outputBuffer;
 					this.cleanupListeners();
 				}
+				// Surface the terminal response to the caller for *every* outcome
+				// (success, provider failure, timeout) so UI state like feedback
+				// readiness always reflects the final result instead of going stale.
+				callbacks?.onComplete?.(response);
 				resolve(response);
 			};
 
@@ -331,7 +335,6 @@ export class FeedbackConversationManager {
 				if (code === 0) {
 					const parsed = extractJsonFromOutput(outputBuffer);
 					const response = parsed ?? DEFAULT_FEEDBACK_RESPONSE;
-					callbacks?.onComplete?.(response);
 					resolveOnce(response);
 				} else {
 					const message = buildProviderFailureMessage({

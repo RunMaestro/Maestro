@@ -11,6 +11,7 @@ import {
 	mentionMatches,
 	normalizeLegacyMentionName,
 	normalizeMentionName,
+	stripUnmatchedTrailingClosers,
 } from '../../shared/group-chat-types';
 import type {
 	GroupChatParticipant,
@@ -72,6 +73,24 @@ describe('normalizeMentionName', () => {
 
 	it('should handle spaces only', () => {
 		expect(normalizeMentionName('   ')).toBe('-');
+	});
+});
+
+describe('stripUnmatchedTrailingClosers', () => {
+	it('drops an unmatched trailing closer', () => {
+		expect(stripUnmatchedTrailingClosers('Client)')).toBe('Client');
+		expect(stripUnmatchedTrailingClosers('plan.md)')).toBe('plan.md');
+	});
+
+	it('keeps balanced trailing brackets', () => {
+		expect(stripUnmatchedTrailingClosers('CIA-Agent-(Super-Cool)')).toBe('CIA-Agent-(Super-Cool)');
+		expect(stripUnmatchedTrailingClosers('Phase-01-(Setup).md')).toBe('Phase-01-(Setup).md');
+	});
+
+	it('strips only the wrapper when an earlier closer is unmatched', () => {
+		// A global bracket count would over-strip the balanced "(1)" here; the
+		// positional scan keeps it and removes only the trailing wrapper ")".
+		expect(stripUnmatchedTrailingClosers('foo)-bar(1))')).toBe('foo)-bar(1)');
 	});
 });
 

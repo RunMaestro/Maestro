@@ -542,6 +542,13 @@ describe('group-chat-router', () => {
 				{ participantName: 'CIA-Agent-Super-Cool', filename: 'Phase-01-(Setup).md' },
 			]);
 		});
+
+		it('trims unmatched trailing closers from a parenthesized directive filename', () => {
+			const result = extractAutoRunDirectives('(!autorun @CIA-Agent-Super-Cool:plan.md)');
+			expect(result.autoRunDirectives).toEqual([
+				{ participantName: 'CIA-Agent-Super-Cool', filename: 'plan.md' },
+			]);
+		});
 	});
 
 	// ===========================================================================
@@ -618,7 +625,7 @@ describe('group-chat-router', () => {
 		it('does not advertise a participant alias that exact-matches a different participant', async () => {
 			// "Agent-(X)" owns the literal "@Agent-(X)" alias (exact match). The
 			// spaced "Agent (X)" must not also advertise "@Agent-(X)" via its legacy
-			// fallback — that would route the moderator to the wrong participant.
+			// fallback, which would route the moderator to the wrong participant.
 			const chat = await createTestChatWithModerator('Participant Alias Collision Test');
 			await addParticipant(chat.id, 'Agent (X)', 'claude-code', mockProcessManager);
 			await addParticipant(chat.id, 'Agent-(X)', 'claude-code', mockProcessManager);

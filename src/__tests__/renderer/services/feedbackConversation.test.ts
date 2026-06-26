@@ -162,6 +162,23 @@ describe('FeedbackConversationManager provider startup errors', () => {
 		expect(onError).toHaveBeenCalledWith('Process spawn returned success=false (pid -1)');
 	});
 
+	it('notifies onComplete with a not-ready response when spawning fails', async () => {
+		const processMock = window.maestro.process as any;
+		processMock.spawn.mockResolvedValue({ success: false, pid: -1 });
+		window.maestro.agents.get.mockResolvedValue(mockCodexAgent({ path: 'C:\\missing\\codex.exe' }));
+
+		const manager = new FeedbackConversationManager();
+		manager.start({ agentType: 'codex', systemPrompt: 'system prompt' });
+		const onComplete = vi.fn();
+
+		await manager.sendMessage('hi', [], { onComplete });
+
+		// Failure paths must reset readiness so a prior "ready" turn can't be
+		// submitted after a provider startup failure.
+		expect(onComplete).toHaveBeenCalledTimes(1);
+		expect(onComplete.mock.calls[0][0]).toMatchObject({ ready: false });
+	});
+
 	it('redacts obvious secrets from provider output before surfacing failure details', async () => {
 		const processMock = window.maestro.process as any;
 		const manager = new FeedbackConversationManager();

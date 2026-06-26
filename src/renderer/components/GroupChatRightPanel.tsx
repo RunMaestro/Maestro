@@ -203,12 +203,39 @@ export function GroupChatRightPanel({
 				throw new Error(`Group chat not found: ${groupChatId}`);
 			}
 
-			useGroupChatStore
-				.getState()
-				.setGroupChats((prev) =>
-					prev.map((chat) => (chat.id === groupChatId ? updatedChat : chat))
-				);
-			return !updatedChat.participants.some((participant) => participant.name === participantName);
+			const store = useGroupChatStore.getState();
+			store.setGroupChats((prev) =>
+				prev.map((chat) => (chat.id === groupChatId ? updatedChat : chat))
+			);
+
+			const removed = !updatedChat.participants.some(
+				(participant) => participant.name === participantName
+			);
+			if (removed) {
+				// Proactively clear the removed participant's transient state. The
+				// participantsChanged event also clears it, but if this optimistic
+				// local update lands first the event sees the participant already
+				// gone, computes no removedNames, and skips cleanup, leaving a
+				// removed working participant stuck marked busy in the sidebar.
+				store.setAllGroupChatParticipantStates((prev) => {
+					const chatStates = prev.get(groupChatId);
+					if (!chatStates) return prev;
+					const nextChatStates = new Map(chatStates);
+					nextChatStates.delete(participantName);
+					const next = new Map(prev);
+					next.set(groupChatId, nextChatStates);
+					return next;
+				});
+				if (groupChatId === store.activeGroupChatId) {
+					store.setParticipantStates((prev) => {
+						const next = new Map(prev);
+						next.delete(participantName);
+						return next;
+					});
+				}
+				store.clearParticipantLiveOutput(`${groupChatId}:${participantName}`);
+			}
+			return removed;
 		},
 		[groupChatId]
 	);

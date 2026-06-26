@@ -38,22 +38,40 @@ const CLOSING_BRACKET_PAIRS: Record<string, string> = {
 	'}': '{',
 };
 
-function countCharacter(value: string, character: string): number {
-	return [...value].filter((current) => current === character).length;
-}
+const OPENING_BRACKET_PAIRS: Record<string, string> = {
+	'(': ')',
+	'[': ']',
+	'{': '}',
+};
 
-function stripUnmatchedTrailingClosers(name: string): string {
-	let cleaned = name;
-	while (cleaned.length > 0) {
-		const closing = cleaned[cleaned.length - 1];
-		const opening = CLOSING_BRACKET_PAIRS[closing];
-		if (!opening) break;
-
-		if (countCharacter(cleaned, closing) <= countCharacter(cleaned, opening)) break;
-		cleaned = cleaned.slice(0, -1);
+export function stripUnmatchedTrailingClosers(name: string): string {
+	// Determine which brackets are matched by scanning left-to-right with a
+	// per-type opener stack, then drop only trailing closers that have no
+	// matching opener. A positional scan (not global counts) is required so an
+	// unmatched closer earlier in the string can't make a balanced trailing
+	// group look unmatched, e.g. "foo)-bar(1))" must yield "foo)-bar(1)".
+	const matched = new Array<boolean>(name.length).fill(false);
+	const openStacks: Record<string, number[]> = { ')': [], ']': [], '}': [] };
+	for (let i = 0; i < name.length; i++) {
+		const char = name[i];
+		const expectedCloser = OPENING_BRACKET_PAIRS[char];
+		if (expectedCloser) {
+			openStacks[expectedCloser].push(i);
+			continue;
+		}
+		const stack = openStacks[char];
+		if (stack && stack.length > 0) {
+			const openIndex = stack.pop()!;
+			matched[openIndex] = true;
+			matched[i] = true;
+		}
 	}
 
-	return cleaned;
+	let end = name.length;
+	while (end > 0 && CLOSING_BRACKET_PAIRS[name[end - 1]] && !matched[end - 1]) {
+		end--;
+	}
+	return name.slice(0, end);
 }
 
 export function cleanMentionName(name: string): string {
