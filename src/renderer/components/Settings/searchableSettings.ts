@@ -1187,6 +1187,27 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 			'unified',
 		],
 	},
+	{
+		id: 'encore-plugins',
+		tab: 'encore',
+		tabLabel: 'Encore Features',
+		label: 'Plugins',
+		description:
+			'Community plugin subsystem (Alpha) — discover, enable, disable, install, and uninstall plugins. Foundation only: plugins are listed and managed but do not execute code yet',
+		keywords: [
+			'plugin',
+			'plugins',
+			'extension',
+			'extend',
+			'addon',
+			'add-on',
+			'community',
+			'marketplace',
+			'install',
+			'uninstall',
+			'alpha',
+		],
+	},
 ];
 
 // ---------------------------------------------------------------------------

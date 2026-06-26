@@ -213,6 +213,7 @@ const DEFAULT_ENCORE_FEATURES: EncoreFeatureFlags = {
 	symphony: true,
 	maestroCue: false,
 	pianola: false,
+	plugins: false,
 };
 
 // File Preview / Edit toolbar buttons. Each key maps to a visibility toggle in

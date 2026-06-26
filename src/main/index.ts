@@ -20,6 +20,7 @@ import {
 } from './global-hotkey-manager';
 import { CueEngine } from './cue/cue-engine';
 import { PianolaSupervisor } from './pianola/pianola-supervisor';
+import { PluginManager } from './plugins/plugin-manager';
 import { configureCueTelemetry } from './cue/cue-telemetry';
 import {
 	executeCuePrompt,
@@ -91,6 +92,7 @@ import {
 	registerPromptsHandlers,
 	registerMemoryHandlers,
 	registerPianolaHandlers,
+	registerPluginsHandlers,
 	setupLoggerEventForwarding,
 	cleanupAllGroomingSessions,
 	getActiveGroomingSessionCount,
@@ -358,6 +360,7 @@ let webServer: WebServer | null = null;
 let agentDetector: AgentDetector | null = null;
 let cueEngine: CueEngine | null = null;
 let pianolaSupervisor: PianolaSupervisor | null = null;
+let pluginManager: PluginManager | null = null;
 let usageRefreshScheduler: UsageRefreshScheduler | null = null;
 let interactiveReplayController: InteractiveReplayController<ProcessSpawnConfig> | null = null;
 
@@ -1033,6 +1036,24 @@ app
 			},
 		});
 
+		// Plugin manager: discovers installed community plugins and tracks their
+		// enable state. Self-gates on encoreFeatures.plugins. Phase 0 is list-only:
+		// it does not execute plugin code, only enumerates and manages them. The
+		// startup refresh below primes the in-memory registry from disk.
+		pluginManager = new PluginManager({
+			isEnabled: () => {
+				const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
+				return ef.plugins === true;
+			},
+			onChange: (registry) => {
+				try {
+					mainWindow?.webContents.send('plugins:changed', registry);
+				} catch {
+					// Renderer may be gone during shutdown; ignore.
+				}
+			},
+		});
+
 		logger.info('Core services initialized', 'Startup');
 
 		// Initialize history manager (handles migration from legacy format if needed)
@@ -1106,6 +1127,17 @@ app
 			} catch (err) {
 				void captureException(err);
 				logger.error(`Pianola supervisor failed to start at boot: ${err}`, 'Startup');
+			}
+		}
+
+		// Prime the plugin registry from disk. refresh() is a no-op (empty registry)
+		// when the plugins Encore flag is off, so this is safe to call unconditionally.
+		if (pluginManager) {
+			try {
+				pluginManager.refresh();
+			} catch (err) {
+				void captureException(err);
+				logger.error(`Plugin manager failed to refresh at boot: ${err}`, 'Startup');
 			}
 		}
 
@@ -1500,6 +1532,15 @@ function setupIpcHandlers() {
 		registerPianolaHandlers({
 			settingsStore: store,
 			supervisor: pianolaSupervisor,
+		});
+	}
+
+	// Register Plugins handlers (community plugin subsystem, list-only in Phase 0).
+	// The manager is constructed during core-service init above; guard for types.
+	if (pluginManager) {
+		registerPluginsHandlers({
+			settingsStore: store,
+			manager: pluginManager,
 		});
 	}
 
