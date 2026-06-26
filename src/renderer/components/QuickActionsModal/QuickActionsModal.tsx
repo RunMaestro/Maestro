@@ -4,6 +4,7 @@ import type { Session } from '../../types';
 import type { QuickAction, QuickActionsModalProps } from './types';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { useFocusAfterRender } from '../../hooks/utils/useFocusAfterRender';
+import { usePluginContributions } from '../../hooks/usePluginContributions';
 import { notifyToast } from '../../stores/notificationStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
@@ -38,6 +39,7 @@ import { buildGitWorktreeCommands } from './commands/gitWorktreeCommands';
 import { buildGroupChatCommands, buildGroupChatJumpCommands } from './commands/groupChatCommands';
 import { buildMoveToGroupCommands } from './commands/moveToGroupCommands';
 import { buildNavigationCommands } from './commands/navigationCommands';
+import { buildPluginMacroCommands } from './commands/pluginMacroCommands';
 import { buildRightPanelCommands } from './commands/rightPanelCommands';
 import { buildSearchCommands } from './commands/searchCommands';
 import {
@@ -118,6 +120,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		onQuickCreateWorktree,
 		onOpenCreatePR,
 		onSummarizeAndContinue,
+		onRunPromptMacro,
 		canSummarizeActiveTab,
 		autoRunSelectedDocument,
 		autoRunCompletedTaskCount,
@@ -166,6 +169,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 
 	// UI store actions for search commands (avoid threading more props through 3-layer chain)
 	const setActiveFocus = useUIStore((s) => s.setActiveFocus);
+	// Plugin command macros (empty when the plugins Encore flag is off).
+	const pluginContributions = usePluginContributions();
 	// Sourced from the modal store directly to skip the 3-layer prop chain.
 	const openModal = useModalStore((s) => s.openModal);
 	const closeModal = useModalStore((s) => s.closeModal);
@@ -622,6 +627,11 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			flashCopiedToClipboard,
 			notifyToast,
 			logger,
+		}),
+		...buildPluginMacroCommands({
+			macros: pluginContributions.commandMacros,
+			onRunPromptMacro,
+			setQuickActionOpen,
 		}),
 	];
 
