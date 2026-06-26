@@ -95,7 +95,7 @@ interface SessionHistoryResponse {
 }
 
 /** Exit with a clear message if the Pianola Encore feature is disabled. */
-function ensurePianolaEnabled(json?: boolean): void {
+export function ensurePianolaEnabled(json?: boolean): void {
 	const flags = readSettingValue('encoreFeatures') as Record<string, unknown> | undefined;
 	if (flags?.pianola === true) return;
 	const message = 'Pianola is not enabled. Enable it with: maestro-cli encore set pianola on';

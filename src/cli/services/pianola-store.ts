@@ -16,10 +16,12 @@ import {
 	PIANOLA_DECISIONS_FILENAME,
 	PIANOLA_PROFILES_FILENAME,
 	PIANOLA_PLANS_FILENAME,
+	PIANOLA_SUPERVISOR_FILENAME,
 	validatePianolaRules,
 	validatePianolaDecisionRecord,
 	validatePianolaProfiles,
 	validatePianolaPlansFile,
+	validatePianolaSupervisorFile,
 	resolveProfile,
 	type PianolaDecisionRecord,
 	type RulesLoadResult,
@@ -27,10 +29,12 @@ import {
 	type PianolaProfileEntry,
 	type PianolaProfileSource,
 	type PianolaPlan,
+	type PianolaSupervisedTarget,
 } from '../../shared/pianola/storage';
 import type { PianolaRule } from '../../shared/pianola/types';
 
 export type { RulesLoadResult, PianolaProfiles, PianolaProfileEntry, PianolaPlan };
+export type { PianolaSupervisedTarget };
 
 function rulesPath(): string {
 	return path.join(getConfigDirectory(), PIANOLA_RULES_FILENAME);
@@ -258,4 +262,71 @@ export function upsertPianolaPlan(plan: PianolaPlan): PianolaPlan[] {
 	const index = current.findIndex((p) => p.id === plan.id);
 	const next = index >= 0 ? current.map((p, i) => (i === index ? plan : p)) : [...current, plan];
 	return writePianolaPlans(next);
+}
+
+function supervisorPath(): string {
+	return path.join(getConfigDirectory(), PIANOLA_SUPERVISOR_FILENAME);
+}
+
+/**
+ * Read and validate the supervised targets the desktop daemon keeps alive.
+ * Returns [] when the file is missing or malformed; individual invalid targets
+ * are dropped, so one bad hand-edit cannot hide the rest of the registry.
+ */
+export function readPianolaSupervisorTargets(): PianolaSupervisedTarget[] {
+	let content: string;
+	try {
+		content = fs.readFileSync(supervisorPath(), 'utf-8');
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+		throw error;
+	}
+	try {
+		return validatePianolaSupervisorFile(JSON.parse(content)).targets;
+	} catch {
+		return [];
+	}
+}
+
+/**
+ * Validate and atomically persist the supervised targets (temp file + rename so
+ * a crash mid-write cannot leave a truncated file the desktop watcher would read
+ * as empty). Invalid targets are dropped at this boundary. Returns what was
+ * written. Both the CLI and the desktop watcher read this same file, so a write
+ * here triggers the desktop supervisor's file-watch reconcile within ~1s.
+ */
+export function writePianolaSupervisorTargets(
+	targets: PianolaSupervisedTarget[]
+): PianolaSupervisedTarget[] {
+	const validated = validatePianolaSupervisorFile({ targets }).targets;
+	const dir = getConfigDirectory();
+	if (!fs.existsSync(dir)) {
+		fs.mkdirSync(dir, { recursive: true });
+	}
+	const target = supervisorPath();
+	const tmp = `${target}.tmp`;
+	fs.writeFileSync(tmp, `${JSON.stringify({ targets: validated }, null, 2)}\n`, 'utf-8');
+	fs.renameSync(tmp, target);
+	return validated;
+}
+
+/**
+ * Insert or replace a target by id and persist. Immutable: builds a new array
+ * rather than mutating the read result. Returns the persisted targets.
+ */
+export function upsertPianolaSupervisorTarget(
+	target: PianolaSupervisedTarget
+): PianolaSupervisedTarget[] {
+	const current = readPianolaSupervisorTargets();
+	const index = current.findIndex((t) => t.id === target.id);
+	const next =
+		index >= 0 ? current.map((t, i) => (i === index ? target : t)) : [...current, target];
+	return writePianolaSupervisorTargets(next);
+}
+
+/** Remove a target by id and persist. Returns the persisted targets. */
+export function removePianolaSupervisorTarget(id: string): PianolaSupervisedTarget[] {
+	const current = readPianolaSupervisorTargets();
+	const next = current.filter((t) => t.id !== id);
+	return writePianolaSupervisorTargets(next);
 }

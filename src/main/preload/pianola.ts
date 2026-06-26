@@ -9,7 +9,12 @@
 
 import { ipcRenderer } from 'electron';
 import type { PianolaRule } from '../../shared/pianola/types';
-import type { PianolaDecisionRecord, RulesLoadResult } from '../../shared/pianola/storage';
+import type {
+	PianolaDecisionRecord,
+	RulesLoadResult,
+	PianolaSupervisedTarget,
+} from '../../shared/pianola/storage';
+import type { PianolaSupervisorSnapshot } from '../ipc/handlers/pianola';
 
 /**
  * Creates the Pianola API object for contextBridge exposure.
@@ -33,6 +38,25 @@ export function createPianolaApi() {
 		 */
 		getDecisions: (limit?: number): Promise<PianolaDecisionRecord[]> =>
 			ipcRenderer.invoke('pianola:get-decisions', limit),
+
+		/**
+		 * Control the desktop supervised daemon (the watchers and orchestrations the
+		 * app keeps alive across crashes and restarts). Every channel returns a fresh
+		 * snapshot of persisted targets plus their live health.
+		 */
+		supervisor: {
+			/** List persisted supervised targets and their current health. */
+			list: (): Promise<PianolaSupervisorSnapshot> => ipcRenderer.invoke('pianola:supervisor-list'),
+			/** Register a supervised target (id/createdAt filled in when omitted). */
+			add: (target: Partial<PianolaSupervisedTarget>): Promise<PianolaSupervisorSnapshot> =>
+				ipcRenderer.invoke('pianola:supervisor-add', target),
+			/** Enable or disable a target by id; the daemon reconciles immediately. */
+			setEnabled: (id: string, enabled: boolean): Promise<PianolaSupervisorSnapshot> =>
+				ipcRenderer.invoke('pianola:supervisor-set-enabled', id, enabled),
+			/** Remove a target by id; the daemon stops its child if running. */
+			remove: (id: string): Promise<PianolaSupervisorSnapshot> =>
+				ipcRenderer.invoke('pianola:supervisor-remove', id),
+		},
 	};
 }
 

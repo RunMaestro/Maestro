@@ -86,6 +86,13 @@ import {
 	pianolaPlanShow,
 	pianolaOrchestrate,
 } from './commands/pianola-orchestrate';
+import {
+	pianolaSuperviseWatch,
+	pianolaSuperviseOrchestrate,
+	pianolaSuperviseList,
+	pianolaSuperviseRemove,
+	pianolaSuperviseSetEnabled,
+} from './commands/pianola-supervise';
 
 // Injected at build time by scripts/build-cli.mjs via esbuild `define`.
 // The typeof guard keeps non-esbuild execution paths (ts-node, plain tsc output) from
@@ -935,6 +942,55 @@ pianola
 	.option('--once', 'Run a single iteration instead of looping')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((planId, options) => pianolaOrchestrate(planId, options));
+
+// Pianola supervise - register background targets the desktop keeps alive
+// (restart on crash, relaunch on app start, visible health). These write the
+// shared supervisor store; the running app reconciles within ~1s.
+const pianolaSupervise = pianola
+	.command('supervise')
+	.description(
+		'Register desktop-supervised watchers and orchestrations (survive crashes/restarts)'
+	);
+
+pianolaSupervise
+	.command('watch <tabId>')
+	.description('Register a supervised tab watcher the desktop keeps alive')
+	.option('--agent <agent-id>', 'Agent id to dispatch answers to (required)')
+	.option('--interval <seconds>', 'Polling interval in seconds (default 5)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((tabId, options) => pianolaSuperviseWatch(tabId, options));
+
+pianolaSupervise
+	.command('orchestrate <planId>')
+	.description('Register a supervised plan orchestration the desktop keeps alive')
+	.option('--concurrency <n>', 'Max tasks running at once (default 3)')
+	.option('--interval <seconds>', 'Polling interval in seconds (default 5)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((planId, options) => pianolaSuperviseOrchestrate(planId, options));
+
+pianolaSupervise
+	.command('list')
+	.description('List registered supervised targets')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => pianolaSuperviseList(options));
+
+pianolaSupervise
+	.command('remove <id>')
+	.description('Unregister a supervised target by id (the desktop stops its child)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((id, options) => pianolaSuperviseRemove(id, options));
+
+pianolaSupervise
+	.command('enable <id>')
+	.description('Enable a supervised target by id')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((id, options) => pianolaSuperviseSetEnabled(id, true, options));
+
+pianolaSupervise
+	.command('disable <id>')
+	.description('Disable a supervised target by id (the desktop stops its child)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((id, options) => pianolaSuperviseSetEnabled(id, false, options));
 
 // Prompts command — read Maestro's bundled or user-customized system prompts.
 // Designed for agent self-fetch: parent prompts reference includes via `{{REF:_name}}`

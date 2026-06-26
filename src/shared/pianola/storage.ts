@@ -278,6 +278,101 @@ export function validatePianolaPlansFile(raw: unknown): PianolaPlansFile {
 	return result;
 }
 
+/** Filename for the persisted supervised-target registry, in the Maestro config dir. */
+export const PIANOLA_SUPERVISOR_FILENAME = 'maestro-pianola-supervisor.json';
+
+/** The two kinds of background process the desktop supervisor keeps alive. */
+export type PianolaSupervisedKind = 'watch' | 'orchestrate';
+
+/**
+ * One persisted background target the desktop supervisor manages. A 'watch'
+ * target babysits a tab and needs both tabId and agentId; an 'orchestrate'
+ * target drives a saved plan to completion and needs planId. The optional
+ * intervalSeconds / concurrency tune the spawned CLI command.
+ */
+export interface PianolaSupervisedTarget {
+	id: string;
+	kind: PianolaSupervisedKind;
+	enabled: boolean;
+	createdAt: number;
+	tabId?: string;
+	agentId?: string;
+	planId?: string;
+	intervalSeconds?: number;
+	concurrency?: number;
+}
+
+/** Persisted supervisor registry file: a JSON object wrapping the target array. */
+export interface PianolaSupervisorFile {
+	targets: PianolaSupervisedTarget[];
+}
+
+/**
+ * Validate one untrusted supervised-target object, or null when the shape is
+ * invalid. Kind-specific required fields are enforced (watch needs tabId +
+ * agentId, orchestrate needs planId) so a target that could never spawn a valid
+ * CLI command is dropped rather than persisted.
+ */
+export function validatePianolaSupervisedTarget(raw: unknown): PianolaSupervisedTarget | null {
+	if (!isRecord(raw)) return null;
+	if (typeof raw.id !== 'string' || raw.id.length === 0) return null;
+	if (raw.kind !== 'watch' && raw.kind !== 'orchestrate') return null;
+	if (typeof raw.enabled !== 'boolean') return null;
+	if (typeof raw.createdAt !== 'number' || !Number.isFinite(raw.createdAt)) return null;
+
+	const target: PianolaSupervisedTarget = {
+		id: raw.id,
+		kind: raw.kind,
+		enabled: raw.enabled,
+		createdAt: raw.createdAt,
+	};
+
+	if (raw.tabId !== undefined) {
+		if (typeof raw.tabId !== 'string') return null;
+		target.tabId = raw.tabId;
+	}
+	if (raw.agentId !== undefined) {
+		if (typeof raw.agentId !== 'string') return null;
+		target.agentId = raw.agentId;
+	}
+	if (raw.planId !== undefined) {
+		if (typeof raw.planId !== 'string') return null;
+		target.planId = raw.planId;
+	}
+	if (raw.intervalSeconds !== undefined) {
+		if (typeof raw.intervalSeconds !== 'number' || !Number.isFinite(raw.intervalSeconds)) {
+			return null;
+		}
+		target.intervalSeconds = raw.intervalSeconds;
+	}
+	if (raw.concurrency !== undefined) {
+		if (typeof raw.concurrency !== 'number' || !Number.isFinite(raw.concurrency)) return null;
+		target.concurrency = raw.concurrency;
+	}
+
+	// Drop targets that lack the fields their kind needs to spawn a valid command.
+	if (target.kind === 'watch' && (!target.tabId || !target.agentId)) return null;
+	if (target.kind === 'orchestrate' && !target.planId) return null;
+
+	return target;
+}
+
+/**
+ * Validate an untrusted supervisor payload, dropping any malformed targets.
+ * Always returns a well-formed object so callers never have to null-check the
+ * shape - a bad hand-edit degrades to "no targets", not a crash.
+ */
+export function validatePianolaSupervisorFile(raw: unknown): PianolaSupervisorFile {
+	const result: PianolaSupervisorFile = { targets: [] };
+	if (!isRecord(raw)) return result;
+	if (!Array.isArray(raw.targets)) return result;
+	for (const item of raw.targets) {
+		const target = validatePianolaSupervisedTarget(item);
+		if (target) result.targets.push(target);
+	}
+	return result;
+}
+
 // Re-exported so storage consumers get the decision/classification types from
 // one import site.
 export type { PianolaClassification, PianolaDecision, PianolaRule };

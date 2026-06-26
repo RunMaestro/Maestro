@@ -29,14 +29,12 @@ If a command fails with "unknown command" or an invalid path, run `node "$MAESTR
 - **Give an agent a task (visible chat):** `node "$MAESTRO_CLI_JS" dispatch <agentId> "<prompt>" --json`
   This delivers the prompt into the agent's visible chat in the app, so the user can watch it. Add `--new-tab` to open a fresh tab instead of using the active one. The result includes a `tabId` - keep it; you need it to babysit that conversation.
 
-- **Babysit a conversation:** `node "$MAESTRO_CLI_JS" pianola watch <tabId> --agent <agentId>`
-  This polls that tab. When the agent stops and waits on the user, Pianola classifies the ask and, if a rule covers it and it is low risk, auto-answers; otherwise it records an escalation for the user. Run this in the background so it keeps watching and you stay free to talk:
+- **Babysit a conversation (preferred):** `node "$MAESTRO_CLI_JS" pianola supervise watch <tabId> --agent <agentId>`
+  This registers a supervised watcher. The Maestro desktop owns it as a managed child process: it restarts the watcher if it crashes, relaunches it when the app restarts, and shows its health in the dashboard. The watcher polls that tab, and when the agent stops and waits on the user, Pianola classifies the ask and, if a rule covers it and it is low risk, auto-answers; otherwise it records an escalation for the user. Registering returns a target id.
 
-  ```bash
-  nohup node "$MAESTRO_CLI_JS" pianola watch <tabId> --agent <agentId> >/dev/null 2>&1 &
-  ```
+  To stop babysitting a tab, unregister it: `node "$MAESTRO_CLI_JS" pianola supervise remove <id>` (list ids with `node "$MAESTRO_CLI_JS" pianola supervise list --json`). You can also `pianola supervise disable <id>` / `enable <id>` to pause and resume without losing the target.
 
-  To stop babysitting a tab, kill that background process.
+  Fallback only: `nohup node "$MAESTRO_CLI_JS" pianola watch <tabId> --agent <agentId> >/dev/null 2>&1 &` still works, but a nohup process is orphaned, dies silently if it crashes, is not relaunched when the app restarts, and has no visible health. Prefer `supervise watch`.
 
 - **Turn a preference into a rule:** `node "$MAESTRO_CLI_JS" pianola add-rule --action <auto_answer|escalate|ignore> [options] --json`
   This is how a conversation becomes a durable rule the watcher applies.
@@ -129,7 +127,7 @@ To run a plan:
    ```bash
    node "$MAESTRO_CLI_JS" pianola orchestrate <planId>
    ```
-   Use `--concurrency <n>` to cap how many tasks run at once (default 3), and `--interval <seconds>` to set the poll cadence. Run it in the background with `nohup ... &` if you want to stay free to talk, the same way you background a `pianola watch`.
+   Use `--concurrency <n>` to cap how many tasks run at once (default 3), and `--interval <seconds>` to set the poll cadence. Preferred: register it as a supervised target so the desktop keeps it alive (restart on crash, relaunch on app restart, visible health): `node "$MAESTRO_CLI_JS" pianola supervise orchestrate <planId> --concurrency <n>`. Unregister it with `pianola supervise remove <id>`. A raw `nohup ... &` still works as a fallback, but that process is orphaned and dies silently, the same tradeoff as backgrounding a `pianola watch`.
 
 The orchestrator creates or reuses an agent per task, dispatches the task's prompt when its dependencies are done, and advances the DAG as tasks finish. A failed task fires a red notification and blocks everything downstream of it. Authoring and running a plan creates and dispatches work, so confirm the plan with the user first, exactly as you would before any dispatch.
 

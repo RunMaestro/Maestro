@@ -19,6 +19,7 @@ import {
 	disposeGlobalHotkey,
 } from './global-hotkey-manager';
 import { CueEngine } from './cue/cue-engine';
+import { PianolaSupervisor } from './pianola/pianola-supervisor';
 import { configureCueTelemetry } from './cue/cue-telemetry';
 import {
 	executeCuePrompt,
@@ -89,6 +90,7 @@ import {
 	registerMaestroCliHandlers,
 	registerPromptsHandlers,
 	registerMemoryHandlers,
+	registerPianolaHandlers,
 	setupLoggerEventForwarding,
 	cleanupAllGroomingSessions,
 	getActiveGroomingSessionCount,
@@ -355,6 +357,7 @@ let processManager: ProcessManager | null = null;
 let webServer: WebServer | null = null;
 let agentDetector: AgentDetector | null = null;
 let cueEngine: CueEngine | null = null;
+let pianolaSupervisor: PianolaSupervisor | null = null;
 let usageRefreshScheduler: UsageRefreshScheduler | null = null;
 let interactiveReplayController: InteractiveReplayController<ProcessSpawnConfig> | null = null;
 
@@ -1011,6 +1014,25 @@ app
 			},
 		});
 
+		// Initialize the Pianola supervised daemon. It owns Pianola's background
+		// watchers and orchestrations as supervised child processes (restart on
+		// crash, relaunch on app start, visible health), replacing the unmanaged
+		// nohup model. It self-gates on encoreFeatures.pianola and reconciles from a
+		// shared store file that both the CLI and renderer write.
+		pianolaSupervisor = new PianolaSupervisor({
+			isEnabled: () => {
+				const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
+				return ef.pianola === true;
+			},
+			getPianolaAgentId: () => {
+				const sessions = sessionsStore.get('sessions', []) as Array<{
+					id?: string;
+					isPianola?: boolean;
+				}>;
+				return sessions.find((s) => s?.isPianola === true)?.id;
+			},
+		});
+
 		logger.info('Core services initialized', 'Startup');
 
 		// Initialize history manager (handles migration from legacy format if needed)
@@ -1070,6 +1092,20 @@ app
 					`Cue engine failed to start at boot — will remain available for retry via Settings: ${err}`,
 					'Startup'
 				);
+			}
+		}
+
+		// Start the Pianola supervisor unconditionally: it self-gates on the
+		// pianola Encore flag (reconcile kills everything and spawns nothing when
+		// off), and starting it always means its file-watch reconcile picks up
+		// CLI/renderer changes the moment the feature is enabled, plus enabled
+		// targets are relaunched on every app start.
+		if (pianolaSupervisor) {
+			try {
+				pianolaSupervisor.start();
+			} catch (err) {
+				void captureException(err);
+				logger.error(`Pianola supervisor failed to start at boot: ${err}`, 'Startup');
 			}
 		}
 
@@ -1271,6 +1307,9 @@ quitHandler = createQuitHandler({
 		if (cueEngine?.isEnabled()) {
 			cueEngine.stop();
 		}
+		// Kill all Pianola supervised children (watchers/orchestrations) and tear
+		// down the store-file watcher so nothing is orphaned on quit. Idempotent.
+		pianolaSupervisor?.stopAll();
 		// Tear down the background quota refresh timers.
 		usageRefreshScheduler?.stop();
 	},
@@ -1453,6 +1492,16 @@ function setupIpcHandlers() {
 
 	// Register project Memory handlers (Claude Code per-project memory viewer)
 	registerMemoryHandlers();
+
+	// Register Pianola handlers (autonomous manager: rules, decisions, and the
+	// supervised daemon). The supervisor is constructed during core-service init
+	// above, so it is available here; guard anyway to keep types honest.
+	if (pianolaSupervisor) {
+		registerPianolaHandlers({
+			settingsStore: store,
+			supervisor: pianolaSupervisor,
+		});
+	}
 
 	// Register Context Merge handlers for session context transfer and grooming
 	registerContextHandlers({

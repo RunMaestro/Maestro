@@ -164,7 +164,12 @@ import type { DurationPercentiles } from '../shared/percentiles';
 import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestro-cli';
 import type { GitWorktreeSetupResult, GitWorktreeCheckoutResult } from '../main/preload/git';
 import type { PianolaRule } from '../shared/pianola/types';
-import type { PianolaDecisionRecord, RulesLoadResult } from '../shared/pianola/storage';
+import type {
+	PianolaDecisionRecord,
+	RulesLoadResult,
+	PianolaSupervisedTarget,
+} from '../shared/pianola/storage';
+import type { PianolaSupervisorSnapshot } from '../main/ipc/handlers/pianola';
 
 interface MaestroAPI {
 	// Context merging API (for session context transfer and grooming)
@@ -3484,6 +3489,12 @@ interface MaestroAPI {
 		getRules: () => Promise<RulesLoadResult>;
 		saveRules: (rules: PianolaRule[]) => Promise<PianolaRule[]>;
 		getDecisions: (limit?: number) => Promise<PianolaDecisionRecord[]>;
+		supervisor: {
+			list: () => Promise<PianolaSupervisorSnapshot>;
+			add: (target: Partial<PianolaSupervisedTarget>) => Promise<PianolaSupervisorSnapshot>;
+			setEnabled: (id: string, enabled: boolean) => Promise<PianolaSupervisorSnapshot>;
+			remove: (id: string) => Promise<PianolaSupervisorSnapshot>;
+		};
 	};
 
 	// WakaTime API (CLI check, API key validation)
