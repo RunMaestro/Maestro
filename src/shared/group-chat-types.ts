@@ -74,9 +74,20 @@ export function stripUnmatchedTrailingClosers(name: string): string {
 	return name.slice(0, end);
 }
 
+/**
+ * Drops a trailing Markdown link tail so a mention used as link text resolves.
+ * `[@Client](https://example.com)` is captured as `Client](https` by the mention
+ * scanner (brackets and `(` are allowed for legacy bracketed names); everything
+ * from the `](` link syntax onward can never be part of a real name, so cut it.
+ */
+function stripMarkdownLinkTail(name: string): string {
+	const linkSyntaxIndex = name.indexOf('](');
+	return linkSyntaxIndex === -1 ? name : name.slice(0, linkSyntaxIndex);
+}
+
 export function cleanMentionName(name: string): string {
 	const withoutMarkdown = name.normalize('NFKC').replace(/^[*_`~]+|[*_`~.,;:!?]+$/g, '');
-	return stripUnmatchedTrailingClosers(withoutMarkdown);
+	return stripUnmatchedTrailingClosers(stripMarkdownLinkTail(withoutMarkdown));
 }
 
 function foldMentionName(name: string): string {
@@ -133,6 +144,26 @@ export function findUniqueMentionMatch<T>(
 	}
 
 	return bestMatches.length === 1 ? bestMatches[0] : undefined;
+}
+
+/**
+ * Pick the highest-fidelity @mention alias that resolves *uniquely back to this
+ * exact name* among the given peers. Normalized collisions (e.g. "Review Bot
+ * [Linux]" vs "Review Bot (Linux)", which both safe-normalize to
+ * "Review-Bot-Linux") would otherwise advertise an ambiguous alias that
+ * findUniqueMentionMatch refuses to route. Falls back to the safe name when no
+ * single-token alias disambiguates, so the mention safely no-ops instead of
+ * targeting the wrong peer.
+ */
+export function getMentionNameForContext(name: string, peerNames: readonly string[]): string {
+	const candidates = [normalizeMentionName(name), normalizeLegacyMentionName(name)];
+	for (const candidate of candidates) {
+		if (!candidate) continue;
+		if (findUniqueMentionMatch(candidate, peerNames, (peer) => peer) === name) {
+			return candidate;
+		}
+	}
+	return normalizeMentionName(name);
 }
 
 // ============================================================================

@@ -24,9 +24,8 @@ import {
 	type GroupChatHistoryEntry,
 	cleanMentionName,
 	findUniqueMentionMatch,
+	getMentionNameForContext,
 	getMentionMatchPriority,
-	normalizeLegacyMentionName,
-	normalizeMentionName,
 	stripUnmatchedTrailingClosers,
 } from '../../shared/group-chat-types';
 import {
@@ -461,25 +460,6 @@ export function setSshStore(store: SshRemoteSettingsStore): void {
  */
 function stripMarkdownFormatting(name: string): string {
 	return cleanMentionName(name);
-}
-
-function getMentionNameForContext(name: string, peerNames: string[]): string {
-	// Advertise the highest-fidelity alias that resolves *uniquely back to this
-	// exact name* among the peers. Normalized collisions (e.g. "A (B)" vs
-	// "A-(B)", or "Review Bot [Linux]" vs "Review Bot (Linux)") can make a
-	// candidate fold onto (or worse, exactly match) a different peer, which
-	// would route the moderator's mention to the wrong agent.
-	const candidates = [normalizeMentionName(name), normalizeLegacyMentionName(name)];
-	for (const candidate of candidates) {
-		if (!candidate) continue;
-		if (findUniqueMentionMatch(candidate, peerNames, (peer) => peer) === name) {
-			return candidate;
-		}
-	}
-	// No single-token alias resolves unambiguously to this name. Fall back to the
-	// safe name; findUniqueMentionMatch sees the tie and refuses to route it, so
-	// the mention safely no-ops instead of targeting the wrong peer.
-	return normalizeMentionName(name);
 }
 
 /**

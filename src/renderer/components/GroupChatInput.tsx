@@ -32,7 +32,7 @@ import {
 import { QueuedItemsList } from './QueuedItemsList';
 import { NotificationPopover } from './NotificationPopover';
 import { useImageAnnotatorStore } from './ImageAnnotator/imageAnnotatorStore';
-import { normalizeMentionName } from '../utils/participantColors';
+import { normalizeMentionName, getMentionNameForContext } from '../utils/participantColors';
 import { logger } from '../utils/logger';
 
 /** Maximum image file size in bytes (10MB) */
@@ -145,6 +145,9 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 	// Groups expand into all their member @mentions when selected
 	const mentionItems = useMemo(() => {
 		const items: MentionItem[] = [];
+		const sessionNamesForMentions = sessions
+			.filter((s) => s.toolType !== 'terminal')
+			.map((s) => s.name);
 
 		// Add groups (only those with at least 1 non-terminal member)
 		if (groups) {
@@ -156,7 +159,9 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 						group,
 						mentionName: normalizeMentionName(group.name),
 						memberCount: members.length,
-						memberMentions: members.map((m) => `@${normalizeMentionName(m.name)}`),
+						memberMentions: members.map(
+							(m) => `@${getMentionNameForContext(m.name, sessionNamesForMentions)}`
+						),
 					});
 				}
 			}
@@ -168,7 +173,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 				items.push({
 					type: 'agent',
 					name: s.name,
-					mentionName: normalizeMentionName(s.name),
+					mentionName: getMentionNameForContext(s.name, sessionNamesForMentions),
 					agentId: s.toolType,
 					sessionId: s.id,
 				});

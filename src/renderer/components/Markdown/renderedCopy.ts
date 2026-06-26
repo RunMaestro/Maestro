@@ -49,6 +49,44 @@ function serializeChildren(element: Element | DocumentFragment): string {
 	return Array.from(element.childNodes).map(serializeRenderedChatNode).join('');
 }
 
+function parseIntAttribute(element: Element, attribute: string): number | null {
+	const raw = element.getAttribute(attribute);
+	if (raw === null || raw.trim() === '') return null;
+	const value = Number(raw);
+	return Number.isInteger(value) ? value : null;
+}
+
+function orderedListItemNumber(item: Element, list: Element): number {
+	const explicit = parseIntAttribute(item, 'value');
+	if (explicit !== null) return explicit;
+	let ordinal = parseIntAttribute(list, 'start') ?? 1;
+	for (const child of Array.from(list.children)) {
+		if (child.tagName !== 'LI') continue;
+		if (child === item) break;
+		ordinal += 1;
+	}
+	return ordinal;
+}
+
+// Re-attach the list marker that CSS renders but textContent drops, so copied
+// bullet, numbered, and task-list items keep their `- `, `1. `, `- [ ] `
+// prefixes instead of collapsing into bare lines.
+function listItemMarker(item: Element): string {
+	if (item.classList.contains('task-list-item')) {
+		const checkbox = item.querySelector('input[type="checkbox"]');
+		const checked =
+			checkbox instanceof HTMLInputElement
+				? checkbox.checked
+				: (checkbox?.hasAttribute('checked') ?? false);
+		return checked ? '- [x] ' : '- [ ] ';
+	}
+	const list = item.parentElement;
+	if (list && list.tagName === 'OL') {
+		return `${orderedListItemNumber(item, list)}. `;
+	}
+	return '- ';
+}
+
 function serializeRenderedChatNode(node: Node): string {
 	if (node.nodeType === Node.TEXT_NODE) {
 		return (node.textContent ?? '').replace(/\n/g, SOFT_BREAK);
@@ -82,7 +120,10 @@ function serializeRenderedChatNode(node: Node): string {
 	}
 
 	if (tag === 'LI') {
-		return `${trimHorizontalEnd(serializeChildren(element))}\n`;
+		// Trim leading horizontal whitespace so the marker (e.g. "- [ ] ") does not
+		// double up with the space that precedes task-list/inline content.
+		const body = serializeChildren(element).replace(/^[ \t\u00a0]+/, '');
+		return `${listItemMarker(element)}${trimHorizontalEnd(body)}\n`;
 	}
 
 	if (tag === 'TR') {

@@ -26,7 +26,7 @@ import {
 	formatEnterToSend,
 	formatEnterToSendTooltip,
 } from '../utils/shortcutFormatter';
-import { normalizeMentionName } from '../utils/participantColors';
+import { normalizeMentionName, getMentionNameForContext } from '../utils/participantColors';
 import { useAtMentionCompletion } from '../hooks/input/useAtMentionCompletion';
 import { useModalStore } from '../stores/modalStore';
 
@@ -174,6 +174,9 @@ export function PromptComposerModal({
 	const agentMentionItems = useMemo(() => {
 		if (!sessions) return [];
 		const items: MentionItem[] = [];
+		const sessionNamesForMentions = sessions
+			.filter((s) => s.toolType !== 'terminal')
+			.map((s) => s.name);
 		if (groups) {
 			for (const group of groups) {
 				const members = sessions.filter((s) => s.groupId === group.id && s.toolType !== 'terminal');
@@ -183,7 +186,9 @@ export function PromptComposerModal({
 						group,
 						mentionName: normalizeMentionName(group.name),
 						memberCount: members.length,
-						memberMentions: members.map((m) => `@${normalizeMentionName(m.name)}`),
+						memberMentions: members.map(
+							(m) => `@${getMentionNameForContext(m.name, sessionNamesForMentions)}`
+						),
 					});
 				}
 			}
@@ -193,7 +198,7 @@ export function PromptComposerModal({
 				items.push({
 					type: 'agent',
 					name: s.name,
-					mentionName: normalizeMentionName(s.name),
+					mentionName: getMentionNameForContext(s.name, sessionNamesForMentions),
 					agentId: s.toolType,
 					sessionId: s.id,
 				});

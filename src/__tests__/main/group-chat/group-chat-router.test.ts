@@ -370,6 +370,18 @@ describe('group-chat-router', () => {
 			);
 			expect(mentions).toEqual(['Client', 'Server']);
 		});
+
+		it('resolves a mention used as Markdown link text', () => {
+			const participants: GroupChatParticipant[] = [
+				{ name: 'Client', agentId: 'claude-code', sessionId: '1', addedAt: 0 },
+			];
+
+			const mentions = extractMentions(
+				'See [@Client](https://example.com/path) for details',
+				participants
+			);
+			expect(mentions).toEqual(['Client']);
+		});
 	});
 
 	// ===========================================================================
@@ -502,6 +514,13 @@ describe('group-chat-router', () => {
 
 		it('strips unmatched closing punctuation from plain mentions', () => {
 			const mentions = extractAllMentions('Please ask (@Client) and @Server)');
+			expect(mentions).toEqual(['Client', 'Server']);
+		});
+
+		it('drops the markdown link tail from mention names', () => {
+			const mentions = extractAllMentions(
+				'See [@Client](https://example.com) and [@Server](/relative/path)'
+			);
 			expect(mentions).toEqual(['Client', 'Server']);
 		});
 	});

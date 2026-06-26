@@ -7,6 +7,7 @@
 import { describe, it, expect } from 'vitest';
 import {
 	findUniqueMentionMatch,
+	getMentionNameForContext,
 	getMentionMatchPriority,
 	mentionMatches,
 	normalizeLegacyMentionName,
@@ -135,6 +136,13 @@ describe('mentionMatches', () => {
 		expect(mentionMatches('CIA-Agent-(Super-Cool))', 'CIA Agent (Super Cool)')).toBe(true);
 	});
 
+	it('matches a mention captured from Markdown link text', () => {
+		// `[@Client](https://example.com)` is scanned as `Client](https` because
+		// brackets and `(` stay in the mention token; the link tail must be dropped.
+		expect(mentionMatches('Client](https', 'Client')).toBe(true);
+		expect(mentionMatches('CIA-Agent-(Super-Cool)](https', 'CIA Agent (Super Cool)')).toBe(true);
+	});
+
 	it('should rank exact and legacy matches above normalized safe matches', () => {
 		expect(getMentionMatchPriority('CIA-Agent-(Super-Cool)', 'CIA Agent (Super Cool)')).toBe(3);
 		expect(getMentionMatchPriority('CIA-Agent-Super-Cool', 'CIA Agent (Super Cool)')).toBe(2);
@@ -187,6 +195,36 @@ describe('findUniqueMentionMatch', () => {
 		expect(
 			findUniqueMentionMatch('Review-Bot-Linux', participants, (participant) => participant.name)
 		).toBeUndefined();
+	});
+});
+
+describe('getMentionNameForContext', () => {
+	it('returns the plain safe alias for a unique name', () => {
+		expect(getMentionNameForContext('My Agent', ['My Agent'])).toBe('My-Agent');
+		expect(getMentionNameForContext('CIA Agent (Super Cool)', ['CIA Agent (Super Cool)'])).toBe(
+			'CIA-Agent-Super-Cool'
+		);
+	});
+
+	it('keeps a disambiguating bracketed alias when safe aliases collide', () => {
+		const peers = ['Review Bot [Linux]', 'Review Bot (Linux)'];
+		expect(getMentionNameForContext('Review Bot [Linux]', peers)).toBe('Review-Bot-[Linux]');
+		expect(getMentionNameForContext('Review Bot (Linux)', peers)).toBe('Review-Bot-(Linux)');
+	});
+
+	it('round-trips each disambiguated alias back to its own session', () => {
+		const peers = ['Review Bot [Linux]', 'Review Bot (Linux)'];
+		const aliasA = getMentionNameForContext('Review Bot [Linux]', peers);
+		const aliasB = getMentionNameForContext('Review Bot (Linux)', peers);
+		expect(findUniqueMentionMatch(aliasA, peers, (p) => p)).toBe('Review Bot [Linux]');
+		expect(findUniqueMentionMatch(aliasB, peers, (p) => p)).toBe('Review Bot (Linux)');
+	});
+
+	it('falls back to the safe alias when nothing disambiguates', () => {
+		// Identical names cannot be told apart; fall back to the safe alias so the
+		// mention safely no-ops instead of targeting an arbitrary peer.
+		const peers = ['My Agent', 'My Agent'];
+		expect(getMentionNameForContext('My Agent', peers)).toBe('My-Agent');
 	});
 });
 
