@@ -42,7 +42,7 @@
 		"clean": "rm -rf dist release node_modules/.vite",
 		"preinstall": "node scripts/check-python.mjs",
 		"prepare": "node scripts/setup-git-hooks.mjs",
-		"postinstall": "patch-package && electron-rebuild -f -w node-pty,better-sqlite3",
+		"postinstall": "patch-package && node scripts/ensure-electron.mjs && electron-rebuild -f -w node-pty,better-sqlite3",
 		"lint": "tsc -p tsconfig.lint.json && tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.cli.json --noEmit",
 		"lint:eslint": "eslint src/",
 		"format": "prettier --write \"src/**/*.{ts,tsx}\"",
