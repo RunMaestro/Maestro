@@ -347,7 +347,7 @@ function normalizeDraft(raw: unknown): FeedbackDraft {
 		? (d.messages
 				.map(normalizeDraftMessage)
 				.filter((m): m is FeedbackDraftMessage => m !== null)
-				.slice(0, MAX_DRAFT_MESSAGES) as FeedbackDraftMessage[])
+				.slice(-MAX_DRAFT_MESSAGES) as FeedbackDraftMessage[])
 		: [];
 	const confidence =
 		typeof d.confidence === 'number' ? Math.max(0, Math.min(100, Math.round(d.confidence))) : 0;
@@ -368,7 +368,7 @@ function normalizeDraft(raw: unknown): FeedbackDraft {
 		attachments: normalizeDraftAttachments(d.attachments),
 		inputDraft:
 			typeof d.inputDraft === 'string'
-				? sanitizeTextInput(d.inputDraft).slice(0, MAX_FEEDBACK_FIELD_LENGTH)
+				? sanitizeTextInput(d.inputDraft).slice(0, MAX_DRAFT_MESSAGE_LENGTH)
 				: '',
 		includeDebugPackage: d.includeDebugPackage === true,
 		createdAt: typeof d.createdAt === 'number' ? d.createdAt : now,

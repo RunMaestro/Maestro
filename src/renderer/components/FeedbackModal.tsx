@@ -184,10 +184,17 @@ export function FeedbackModal({ theme, sessions, onClose, onSwitchToSession }: F
 	}, [onClose]);
 
 	const handleResume = useCallback(async (id: string) => {
+		const { activeDraft, activeDraftId, saveDraft } = useFeedbackDraftStore.getState();
+		// Clicking the already-active draft is a no-op: remounting the editor from
+		// the persisted copy would silently discard the user's unsaved in-progress
+		// edits, so leave the live editor untouched and just close the list.
+		if (activeDraftId === id) {
+			setShowDrafts(false);
+			return;
+		}
 		// Preserve any unsaved in-progress editor before we unmount it to resume a
 		// different draft, so switching drafts never silently discards work.
-		const { activeDraft, activeDraftId, saveDraft } = useFeedbackDraftStore.getState();
-		if (activeDraft && activeDraftId !== id) {
+		if (activeDraft) {
 			const savedId = await saveDraft(activeDraft);
 			if (savedId === null) {
 				// Saving the current draft failed; stay on the editor and surface

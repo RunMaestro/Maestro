@@ -667,4 +667,47 @@ describe('feedback drafts handlers', () => {
 			.sort();
 		expect(ids).toEqual(['first', 'second']);
 	});
+
+	it('keeps the newest messages when trimming beyond the cap', async () => {
+		vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({ drafts: [] }) as any);
+		vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+		vi.mocked(fs.rename).mockResolvedValue(undefined);
+
+		// 205 messages: only the last 200 (MAX_DRAFT_MESSAGES) survive, and they
+		// must be the newest ones, not the oldest. Trimming from the front would
+		// drop a user's most recent exchange on resume.
+		const messages = Array.from({ length: 205 }, (_, i) => ({
+			role: 'user' as const,
+			content: `msg-${i}`,
+			timestamp: 1000 + i,
+		}));
+
+		const handler = registeredHandlers.get('feedback:drafts:save');
+		const result = await handler!({}, { ...sampleDraft, messages });
+
+		expect(result.draft.messages).toHaveLength(200);
+		// Oldest five (msg-0..msg-4) dropped; newest message survives at the end.
+		expect(result.draft.messages[0].content).toBe('msg-5');
+		expect(result.draft.messages[199].content).toBe('msg-204');
+	});
+
+	it('preserves long unsent composer input up to the draft message cap', async () => {
+		vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({ drafts: [] }) as any);
+		vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+		vi.mocked(fs.rename).mockResolvedValue(undefined);
+
+		const handler = registeredHandlers.get('feedback:drafts:save');
+
+		// 8000 chars exceeds the 5000 field cap but fits the 20000 message cap:
+		// composer text in that range must survive a save/resume round-trip
+		// instead of being silently truncated to the field limit.
+		const longInput = 'a'.repeat(8000);
+		const result = await handler!({}, { ...sampleDraft, inputDraft: longInput });
+		expect(result.draft.inputDraft).toHaveLength(8000);
+
+		// Beyond the message cap it is still clamped to MAX_DRAFT_MESSAGE_LENGTH.
+		const hugeInput = 'a'.repeat(25000);
+		const clamped = await handler!({}, { ...sampleDraft, inputDraft: hugeInput });
+		expect(clamped.draft.inputDraft).toHaveLength(20000);
+	});
 });
