@@ -409,5 +409,13 @@
 		"*.{js,cjs,mjs,jsx,ts,tsx,mts,cts}": [
 			"eslint --fix"
 		]
+	},
+	"allowScripts": {
+		"better-sqlite3": true,
+		"canvas": true,
+		"electron": true,
+		"esbuild": true,
+		"lzma-native": true,
+		"node-pty": true
 	}
 }
