@@ -69,6 +69,19 @@ export function createPluginsApi() {
 		/** Read a contributed panel's HTML for rendering in a sandboxed iframe. */
 		panelHtml: (panelId: string): Promise<{ html: string | null }> =>
 			ipcRenderer.invoke('plugins:panel-html', panelId),
+
+		/**
+		 * Subscribe to plugin-registry changes (install/uninstall/enable/disable/
+		 * refresh). The callback receives no payload - it is a signal to re-read
+		 * `list()` / `contributions()`. Returns an unsubscribe function.
+		 */
+		onChanged: (callback: () => void): (() => void) => {
+			const handler = (): void => callback();
+			ipcRenderer.on('plugins:changed', handler);
+			return () => {
+				ipcRenderer.removeListener('plugins:changed', handler);
+			};
+		},
 	};
 }
 

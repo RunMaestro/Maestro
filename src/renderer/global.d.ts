@@ -3512,6 +3512,7 @@ interface MaestroAPI {
 		revokeGrants: (id: string) => Promise<PluginGrantsSnapshot>;
 		invokeCommand: (commandId: string, args?: unknown) => Promise<{ dispatched: boolean }>;
 		panelHtml: (panelId: string) => Promise<{ html: string | null }>;
+		onChanged: (callback: () => void) => () => void;
 	};
 
 	// WakaTime API (CLI check, API key validation)
