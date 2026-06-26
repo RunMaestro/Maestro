@@ -1430,7 +1430,7 @@ describe('MarkdownRenderer', () => {
 
 			expect(copyRenderedSelection(prose)).toHaveBeenCalledWith(
 				'text/plain',
-				'First item\nSecond item'
+				'- First item\n- Second item'
 			);
 		});
 
