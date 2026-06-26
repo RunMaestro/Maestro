@@ -167,6 +167,63 @@ describe('collectContributions', () => {
 		expect(c.errors.some((e) => e.includes('relative path inside the plugin'))).toBe(true);
 	});
 
+	it('rejects agents for tier 0 and accepts them for tier 1', () => {
+		const tier0 = collectContributions(
+			manifest('com.acme', {
+				agents: [{ id: 'bot', displayName: 'Bot', binaryName: 'mybot' }],
+			})
+		);
+		expect(tier0.agents).toEqual([]);
+		expect(tier0.errors.some((e) => e.includes('agents require tier'))).toBe(true);
+
+		const tier1 = collectContributions(
+			manifest(
+				'com.acme',
+				{
+					agents: [
+						{
+							id: 'bot',
+							displayName: 'My Bot',
+							binaryName: 'mybot',
+							baseArgs: ['--json', 5, 'ok'],
+							capabilities: { resume: true, stream: 'yes', json: false },
+						},
+					],
+				},
+				1
+			)
+		);
+		expect(tier1.agents).toHaveLength(1);
+		const agent = tier1.agents[0];
+		expect(agent.id).toBe('com.acme/bot');
+		expect(agent.localId).toBe('bot');
+		expect(agent.displayName).toBe('My Bot');
+		expect(agent.binaryName).toBe('mybot');
+		// non-string baseArgs dropped
+		expect(agent.baseArgs).toEqual(['--json', 'ok']);
+		// non-boolean capability values dropped
+		expect(agent.capabilities).toEqual({ resume: true, json: false });
+	});
+
+	it('rejects an agent with an unsafe binaryName', () => {
+		const c = collectContributions(
+			manifest(
+				'com.acme',
+				{
+					agents: [
+						{ id: 'a', displayName: 'A', binaryName: '../evil' },
+						{ id: 'b', displayName: 'B', binaryName: '/usr/bin/x' },
+						{ id: 'd', displayName: 'D', binaryName: 'sub/dir' },
+						{ id: 'ok', displayName: 'OK', binaryName: 'good-bin' },
+					],
+				},
+				1
+			)
+		);
+		expect(c.agents.map((a) => a.localId)).toEqual(['ok']);
+		expect(c.errors.filter((e) => e.includes('binaryName')).length).toBe(3);
+	});
+
 	it('rejects an invalid local id', () => {
 		const c = collectContributions(
 			manifest('com.acme', {
