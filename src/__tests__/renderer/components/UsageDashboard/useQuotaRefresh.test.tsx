@@ -1,5 +1,5 @@
 import { act, renderHook } from '@testing-library/react';
-import { StrictMode, type ReactNode } from 'react';
+import { StrictMode, type ReactNode, useEffect, useRef } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useQuotaRefresh } from '../../../../renderer/components/UsageDashboard/quota/useQuotaRefresh';
 import { useUIStore } from '../../../../renderer/stores/uiStore';
@@ -43,24 +43,29 @@ describe('useQuotaRefresh', () => {
 		vi.useFakeTimers();
 		const doRefresh = vi.fn().mockResolvedValue(undefined);
 		const wrapper = ({ children }: { children: ReactNode }) => <StrictMode>{children}</StrictMode>;
-
-		const { result } = renderHook(
-			() =>
-				useQuotaRefresh({
-					providerId: 'claude-code',
-					refreshing: false,
-					autoRefresh: false,
-					accountCount: 0,
-					snapshotCount: 0,
-					doRefresh,
-				}),
-			{ wrapper }
-		);
-
 		let refreshPromise!: Promise<void>;
-		act(() => {
-			refreshPromise = result.current.handleRefresh();
-		});
+
+		const useAutoStartedQuotaRefresh = () => {
+			const refresh = useQuotaRefresh({
+				providerId: 'claude-code',
+				refreshing: false,
+				autoRefresh: false,
+				accountCount: 0,
+				snapshotCount: 0,
+				doRefresh,
+			});
+			const startedRef = useRef(false);
+
+			useEffect(() => {
+				if (startedRef.current) return;
+				startedRef.current = true;
+				refreshPromise = refresh.handleRefresh();
+			}, [refresh]);
+
+			return refresh;
+		};
+
+		const { result } = renderHook(() => useAutoStartedQuotaRefresh(), { wrapper });
 		expect(result.current.isBusy).toBe(true);
 
 		await Promise.resolve();
