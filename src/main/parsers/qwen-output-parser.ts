@@ -22,6 +22,7 @@ import { ClaudeOutputParser } from './claude-output-parser';
 import type { ToolType, AgentError } from '../../shared/types';
 import type { ParsedEvent } from './agent-output-parser';
 import { getErrorPatterns, matchErrorPattern } from './error-patterns';
+import { FALLBACK_CONTEXT_WINDOW } from '../../shared/agentConstants';
 
 /**
  * Qwen Code Output Parser Implementation
@@ -34,17 +35,50 @@ import { getErrorPatterns, matchErrorPattern } from './error-patterns';
  * successful response, so these overrides reclassify a failed result as an
  * error event and surface it as a structured AgentError. Without this, a
  * failure payload would render as a normal assistant response and callers
- * relying on parsed results would miss the failure state.
+ * relying on parsed results would miss the failure state. The failed-result text
+ * is also populated from Qwen's `error.message` when no `result`/`message.content`
+ * is present, so the actionable provider message is surfaced rather than lost.
+ *
+ * Usage parsing additionally strips the Claude fallback context window (200000)
+ * that the inherited aggregateModelUsage injects, so Qwen's configured 256K
+ * (262144) window drives the context meter instead of Claude's default.
  */
 export class QwenOutputParser extends ClaudeOutputParser {
 	readonly agentId: ToolType = 'qwen3-coder';
 
 	parseJsonObject(parsed: unknown): ParsedEvent | null {
 		const event = super.parseJsonObject(parsed);
-		if (event && event.type === 'result' && this.isFailedResult(parsed)) {
+		if (!event) {
+			return event;
+		}
+
+		// Qwen's native context window is 256K (262144). The inherited
+		// ClaudeOutputParser routes usage through aggregateModelUsage, which injects
+		// a Claude fallback contextWindow of 200000 whenever a Qwen event reports
+		// only top-level usage (no per-model context window). StdoutHandler.buildUsageStats
+		// then prefers that parser-supplied window over the spawned process's configured
+		// Qwen window, so the context meter and summarization thresholds would be driven
+		// from the wrong limit. Drop the injected fallback so the configured 262144 window
+		// wins; keep any genuinely larger window a model actually reports.
+		if (event.usage && event.usage.contextWindow === FALLBACK_CONTEXT_WINDOW) {
+			const usage = { ...event.usage };
+			delete usage.contextWindow;
+			event.usage = usage;
+		}
+
+		if (event.type === 'result' && this.isFailedResult(parsed)) {
 			// Reclassify a failed terminal result so downstream handlers (and
 			// isResultMessage) treat it as an error rather than a successful response.
-			return { ...event, type: 'error' };
+			const errorEvent: ParsedEvent = { ...event, type: 'error' };
+			// Qwen carries its failure message in `error.message` (its stream-json
+			// protocol), which the inherited Claude text extraction (result /
+			// message.content) does not read. When the base text is empty, surface the
+			// provider message so callers that record errors from event.text get the
+			// actionable Qwen error instead of a generic exit/code fallback.
+			if (!errorEvent.text?.trim()) {
+				errorEvent.text = this.extractResultErrorText(parsed);
+			}
+			return errorEvent;
 		}
 		return event;
 	}
@@ -78,13 +112,34 @@ export class QwenOutputParser extends ClaudeOutputParser {
 
 	/** Human-readable error text from a failed result, with a stable fallback. */
 	private extractResultErrorText(parsed: unknown): string {
-		const msg = parsed as { result?: unknown; subtype?: unknown };
+		const msg = parsed as { result?: unknown; subtype?: unknown; error?: unknown };
 		if (typeof msg.result === 'string' && msg.result.trim()) {
 			return msg.result;
+		}
+		// Qwen's stream-json failure payload carries the provider message in
+		// `error.message` (mirrors the Qwen SDK's `error.get("message", ...)`),
+		// which the inherited Claude extraction (result / message.content) never inspects.
+		const errorMessage = this.extractErrorMessage(msg.error);
+		if (errorMessage) {
+			return errorMessage;
 		}
 		if (typeof msg.subtype === 'string' && msg.subtype.trim()) {
 			return `Qwen Code result failed: ${msg.subtype}`;
 		}
 		return 'Qwen Code reported a failed result.';
+	}
+
+	/** Non-empty message string from a Qwen `error` field (string or `{ message }`). */
+	private extractErrorMessage(error: unknown): string | null {
+		if (typeof error === 'string' && error.trim()) {
+			return error;
+		}
+		if (error && typeof error === 'object') {
+			const message = (error as { message?: unknown }).message;
+			if (typeof message === 'string' && message.trim()) {
+				return message;
+			}
+		}
+		return null;
 	}
 }

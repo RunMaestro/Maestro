@@ -97,6 +97,49 @@ describe('QwenOutputParser', () => {
 			expect(usage?.inputTokens).toBe(1000);
 			expect(usage?.outputTokens).toBe(500);
 		});
+
+		it('does not carry the Claude 200000 fallback context window', () => {
+			// A Qwen result with only top-level usage should NOT inherit Claude's
+			// 200000 fallback context window: StdoutHandler.buildUsageStats prefers a
+			// parser-supplied window over the spawned process's configured 262144,
+			// so the fallback must be omitted to let the configured window win.
+			const event = parser.parseJsonLine(
+				JSON.stringify({
+					type: 'result',
+					subtype: 'success',
+					result: 'done',
+					usage: {
+						input_tokens: 1000,
+						output_tokens: 500,
+					},
+				})
+			);
+
+			const usage = parser.extractUsage(event!);
+			expect(usage).not.toBeNull();
+			expect(usage?.contextWindow).toBeUndefined();
+		});
+
+		it('preserves a genuinely larger reported context window', () => {
+			// When a model actually reports its own (larger) window, keep it.
+			const event = parser.parseJsonLine(
+				JSON.stringify({
+					type: 'result',
+					subtype: 'success',
+					result: 'done',
+					modelUsage: {
+						'qwen3-coder-plus': {
+							inputTokens: 1000,
+							outputTokens: 500,
+							contextWindow: 262144,
+						},
+					},
+				})
+			);
+
+			const usage = parser.extractUsage(event!);
+			expect(usage?.contextWindow).toBe(262144);
+		});
 	});
 
 	describe('is_error handling', () => {
@@ -115,6 +158,41 @@ describe('QwenOutputParser', () => {
 			expect(event?.text).toBe('something went wrong');
 			expect(event?.sessionId).toBe('qwen-sess-err');
 			expect(parser.isResultMessage(event!)).toBe(false);
+		});
+
+		it('populates error text from error.message when result is absent', () => {
+			// Qwen failures carry the actionable message in error.message; the base
+			// Claude extraction (result / message.content) misses it, so the error
+			// event would otherwise have empty text and downstream callers (which
+			// record errors from event.text) would lose the provider message.
+			const line = JSON.stringify({
+				type: 'result',
+				subtype: 'error_during_execution',
+				is_error: true,
+				error: { message: 'Qwen provider quota exceeded' },
+				session_id: 'qwen-sess-err2',
+			});
+
+			const event = parser.parseJsonLine(line);
+			expect(event?.type).toBe('error');
+			expect(event?.text).toBe('Qwen provider quota exceeded');
+			expect(event?.sessionId).toBe('qwen-sess-err2');
+		});
+
+		it('surfaces error.message through detectErrorFromParsed when result is absent', () => {
+			// A message with no known error-pattern match flows through verbatim,
+			// confirming detectErrorFromParsed now reads error.message (not just result).
+			const error = parser.detectErrorFromParsed({
+				type: 'result',
+				subtype: 'error_during_execution',
+				is_error: true,
+				error: { message: 'the upstream model returned an unexpected failure' },
+			});
+
+			expect(error).not.toBeNull();
+			expect(error?.type).toBe('agent_crashed');
+			expect(error?.message).toBe('the upstream model returned an unexpected failure');
+			expect(error?.agentId).toBe('qwen3-coder');
 		});
 
 		it('keeps a successful result (is_error false) as a result event', () => {
