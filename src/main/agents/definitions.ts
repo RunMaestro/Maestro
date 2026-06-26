@@ -422,6 +422,40 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		],
 	},
 	{
+		id: 'omp',
+		name: 'Oh My Pi',
+		binaryName: 'omp',
+		command: 'omp',
+		args: [],
+		batchModePrefix: ['-p'],
+		jsonOutputArgs: ['--mode', 'json'],
+		noPromptSeparator: true,
+		resumeArgs: (sessionId: string) => ['--resume', sessionId],
+		modelArgs: (modelId: string) => ['--model', modelId],
+		workingDirArgs: (dir: string) => ['--cwd', dir],
+		imageArgs: (imagePath: string) => [`@${imagePath}`],
+		configOptions: [
+			{
+				key: 'model',
+				type: 'select' as const,
+				label: 'Model',
+				description:
+					'Fuzzy model selector passed to --model (for example, opus, sonnet, or anthropic/claude-opus-4-8). Leave empty for the CLI default.',
+				options: ['', 'opus', 'sonnet', 'haiku', 'gpt-5', 'gemini-2.5-pro'],
+				default: '',
+				argBuilder: (value: string) => (value && value.trim() ? ['--model', value.trim()] : []),
+			},
+			{
+				key: 'contextWindow',
+				type: 'number',
+				label: 'Context Window Size',
+				description:
+					'Fallback context window size in tokens until Oh My Pi reports a runtime-specific value.',
+				default: 200000,
+			},
+		],
+	},
+	{
 		id: 'opencode',
 		name: 'OpenCode',
 		binaryName: 'opencode',

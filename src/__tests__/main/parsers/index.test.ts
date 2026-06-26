@@ -10,6 +10,7 @@ import {
 	CodexOutputParser,
 	CopilotOutputParser,
 	PiOutputParser,
+	OmpOutputParser,
 } from '../../../main/parsers';
 
 describe('parsers/index', () => {
@@ -66,21 +67,29 @@ describe('parsers/index', () => {
 			expect(hasOutputParser('pi')).toBe(true);
 		});
 
-		it('should register exactly 6 parsers', () => {
+		it('should register Omp parser', () => {
+			expect(hasOutputParser('omp')).toBe(false);
+
+			initializeOutputParsers();
+
+			expect(hasOutputParser('omp')).toBe(true);
+		});
+
+		it('should register exactly 7 parsers', () => {
 			initializeOutputParsers();
 
 			const parsers = getAllOutputParsers();
-			expect(parsers.length).toBe(6);
+			expect(parsers.length).toBe(7);
 		});
 
 		it('should clear existing parsers before registering', () => {
 			// First initialization
 			initializeOutputParsers();
-			expect(getAllOutputParsers().length).toBe(6);
+			expect(getAllOutputParsers().length).toBe(7);
 
-			// Second initialization should still have exactly 5
+			// Second initialization should still have exactly 7
 			initializeOutputParsers();
-			expect(getAllOutputParsers().length).toBe(6);
+			expect(getAllOutputParsers().length).toBe(7);
 		});
 	});
 
@@ -128,6 +137,12 @@ describe('parsers/index', () => {
 			expect(parser).not.toBeNull();
 			expect(parser).toBeInstanceOf(PiOutputParser);
 		});
+
+		it('should return OmpOutputParser for omp', () => {
+			const parser = getOutputParser('omp');
+			expect(parser).not.toBeNull();
+			expect(parser).toBeInstanceOf(OmpOutputParser);
+		});
 	});
 
 	describe('parser exports', () => {
@@ -154,6 +169,11 @@ describe('parsers/index', () => {
 		it('should export PiOutputParser class', () => {
 			const parser = new PiOutputParser();
 			expect(parser.agentId).toBe('pi');
+		});
+
+		it('should export OmpOutputParser class', () => {
+			const parser = new OmpOutputParser();
+			expect(parser.agentId).toBe('omp');
 		});
 	});
 
