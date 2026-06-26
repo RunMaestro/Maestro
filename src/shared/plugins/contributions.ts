@@ -81,6 +81,34 @@ export interface CueTriggerContribution {
 	agentId?: string;
 }
 
+/**
+ * A command a (tier-1) plugin exposes to the command palette. Invoking it sends
+ * an `invokeCommand` RPC to the plugin's sandbox, where the plugin registered a
+ * handler via `maestro.commands.register(localId, fn)`. Distinct from a
+ * commandMacro (tier-0, just dispatches a prompt - no code).
+ */
+export interface CommandContribution {
+	id: string;
+	localId: string;
+	pluginId: string;
+	title: string;
+	description?: string;
+}
+
+/**
+ * A UI panel a (tier-1) plugin contributes. Rendered in a locked-down sandboxed
+ * iframe (no same-origin, no top navigation) in the reserved plugin modal band.
+ * `entry` is a plugin-relative HTML file (traversal-checked like manifest entry).
+ */
+export interface PanelContribution {
+	id: string;
+	localId: string;
+	pluginId: string;
+	title: string;
+	/** Plugin-relative path to the panel's HTML entry. */
+	entry: string;
+}
+
 /** All contributions a single plugin declared, plus any per-item errors. */
 export interface PluginContributions {
 	themes: ThemeContribution[];
@@ -88,6 +116,8 @@ export interface PluginContributions {
 	settings: SettingContribution[];
 	commandMacros: CommandMacroContribution[];
 	cueTriggers: CueTriggerContribution[];
+	commands: CommandContribution[];
+	panels: PanelContribution[];
 	/** Human-readable reasons individual contributions were dropped. */
 	errors: string[];
 }
@@ -99,6 +129,8 @@ export interface AggregatedContributions {
 	settings: SettingContribution[];
 	commandMacros: CommandMacroContribution[];
 	cueTriggers: CueTriggerContribution[];
+	commands: CommandContribution[];
+	panels: PanelContribution[];
 	/** Per-plugin errors keyed by plugin id (only plugins with errors appear). */
 	errorsByPlugin: Record<string, string[]>;
 }
@@ -134,11 +166,15 @@ export function collectContributions(manifest: PluginManifest): PluginContributi
 		settings: [],
 		commandMacros: [],
 		cueTriggers: [],
+		commands: [],
+		panels: [],
 		errors: [],
 	};
 	const contributes = manifest.contributes;
 	if (!contributes) return out;
 	const pluginId = manifest.id;
+	// commands and panels run plugin code; only tier >= 1 may declare them.
+	const isCodeTier = manifest.tier >= 1;
 
 	for (const raw of asArray(contributes.themes)) {
 		const t = parseTheme(pluginId, raw, out.errors);
@@ -160,6 +196,26 @@ export function collectContributions(manifest: PluginManifest): PluginContributi
 		const t = parseCueTrigger(pluginId, raw, out.errors);
 		if (t) out.cueTriggers.push(t);
 	}
+	if (contributes.commands !== undefined) {
+		if (!isCodeTier) {
+			out.errors.push(`[${pluginId}] commands require tier >= 1 (they run plugin code)`);
+		} else {
+			for (const raw of asArray(contributes.commands)) {
+				const cmd = parseCommand(pluginId, raw, out.errors);
+				if (cmd) out.commands.push(cmd);
+			}
+		}
+	}
+	if (contributes.panels !== undefined) {
+		if (!isCodeTier) {
+			out.errors.push(`[${pluginId}] panels require tier >= 1 (they run plugin UI)`);
+		} else {
+			for (const raw of asArray(contributes.panels)) {
+				const panel = parsePanel(pluginId, raw, out.errors);
+				if (panel) out.panels.push(panel);
+			}
+		}
+	}
 	return out;
 }
 
@@ -175,6 +231,8 @@ export function aggregateContributions(manifests: PluginManifest[]): AggregatedC
 		settings: [],
 		commandMacros: [],
 		cueTriggers: [],
+		commands: [],
+		panels: [],
 		errorsByPlugin: {},
 	};
 	const seen = new Set<string>();
@@ -197,6 +255,8 @@ export function aggregateContributions(manifests: PluginManifest[]): AggregatedC
 		c.settings.forEach((s) => pushUnique(agg.settings, s));
 		c.commandMacros.forEach((m) => pushUnique(agg.commandMacros, m));
 		c.cueTriggers.forEach((t) => pushUnique(agg.cueTriggers, t));
+		c.commands.forEach((cmd) => pushUnique(agg.commands, cmd));
+		c.panels.forEach((panel) => pushUnique(agg.panels, panel));
 	}
 	return agg;
 }
@@ -421,5 +481,60 @@ function parseCueTrigger(
 		...(action === 'dispatch' && isNonEmptyString(raw.agentId)
 			? { agentId: raw.agentId.trim() }
 			: {}),
+	};
+}
+
+function parseCommand(
+	pluginId: string,
+	raw: unknown,
+	errors: string[]
+): CommandContribution | null {
+	if (!isPlainObject(raw)) {
+		errors.push(`[${pluginId}] a command contribution is not an object`);
+		return null;
+	}
+	const localId = parseLocalId(pluginId, raw, errors);
+	if (!localId) return null;
+	if (!isNonEmptyString(raw.title)) {
+		errors.push(`[${pluginId}] command "${localId}" is missing a title`);
+		return null;
+	}
+	return {
+		id: namespaced(pluginId, localId),
+		localId,
+		pluginId,
+		title: raw.title.trim(),
+		...(isNonEmptyString(raw.description) ? { description: raw.description.trim() } : {}),
+	};
+}
+
+/** A panel entry must be a relative path inside the plugin (no traversal). */
+function isSafeRelativeEntry(entry: string): boolean {
+	if (entry.startsWith('~') || entry.startsWith('/') || entry.startsWith('\\')) return false;
+	if (/^[a-zA-Z]:[\\/]/.test(entry)) return false;
+	return !entry.split(/[\\/]+/).includes('..');
+}
+
+function parsePanel(pluginId: string, raw: unknown, errors: string[]): PanelContribution | null {
+	if (!isPlainObject(raw)) {
+		errors.push(`[${pluginId}] a panel contribution is not an object`);
+		return null;
+	}
+	const localId = parseLocalId(pluginId, raw, errors);
+	if (!localId) return null;
+	if (!isNonEmptyString(raw.title)) {
+		errors.push(`[${pluginId}] panel "${localId}" is missing a title`);
+		return null;
+	}
+	if (!isNonEmptyString(raw.entry) || !isSafeRelativeEntry(raw.entry.trim())) {
+		errors.push(`[${pluginId}] panel "${localId}" entry must be a relative path inside the plugin`);
+		return null;
+	}
+	return {
+		id: namespaced(pluginId, localId),
+		localId,
+		pluginId,
+		title: raw.title.trim(),
+		entry: raw.entry.trim(),
 	};
 }

@@ -54,6 +54,8 @@ interface PendingCall {
 const pending = new Map<number, PendingCall>();
 let nextId = 1;
 let deactivate: (() => void | Promise<void>) | undefined;
+/** Command handlers the plugin registered via maestro.commands.register. */
+const commandHandlers = new Map<string, (args: unknown) => unknown>();
 
 /** Send a brokered host call and await its response. */
 function hostCall(method: HostMethod, params: unknown): Promise<unknown> {
@@ -92,6 +94,14 @@ function buildSdk(pluginId: string) {
 		}),
 		settings: Object.freeze({
 			get: (key: string): Promise<unknown> => call('settings.get', { key }),
+		}),
+		commands: Object.freeze({
+			/** Register a handler invoked when the host dispatches this command. */
+			register: (commandId: string, handler: (args: unknown) => unknown): void => {
+				if (typeof commandId === 'string' && typeof handler === 'function') {
+					commandHandlers.set(commandId, handler);
+				}
+			},
 		}),
 		process: Object.freeze({
 			spawn: (command: string, opts?: unknown): Promise<unknown> =>
@@ -182,6 +192,22 @@ if (parentPort) {
 				} catch (err) {
 					log('error', `failed to start plugin: ${String(err)}`);
 				}
+			}
+			return;
+		}
+		if (msg.kind === 'invokeCommand') {
+			const commandId = typeof msg.commandId === 'string' ? msg.commandId : '';
+			const handler = commandHandlers.get(commandId);
+			if (handler) {
+				try {
+					void Promise.resolve(handler(msg.args)).catch((err) =>
+						log('error', `command "${commandId}" threw: ${String(err)}`)
+					);
+				} catch (err) {
+					log('error', `command "${commandId}" threw: ${String(err)}`);
+				}
+			} else {
+				log('warn', `no handler registered for command "${commandId}"`);
 			}
 			return;
 		}

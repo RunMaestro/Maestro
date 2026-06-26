@@ -112,6 +112,22 @@ export class PluginSandboxHost {
 		proc.postMessage({ kind: 'init', pluginId, entryCode });
 	}
 
+	/**
+	 * Dispatch a command into a running plugin's sandbox. The local command id
+	 * (the part after `<pluginId>/`) is sent; the plugin's registered handler
+	 * runs. No-op (returns false) if the plugin is not running.
+	 */
+	invokeCommand(pluginId: string, commandId: string, args?: unknown): boolean {
+		const record = this.running.get(pluginId);
+		if (!record) return false;
+		try {
+			record.proc.postMessage({ kind: 'invokeCommand', commandId, args });
+			return true;
+		} catch {
+			return false;
+		}
+	}
+
 	/** Stop a plugin: ask it to shut down, then hard-kill after a grace period. */
 	stop(pluginId: string): void {
 		const record = this.running.get(pluginId);

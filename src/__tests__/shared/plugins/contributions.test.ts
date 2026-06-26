@@ -5,12 +5,16 @@ import {
 } from '../../../shared/plugins/contributions';
 import type { PluginManifest } from '../../../shared/plugins/plugin-manifest';
 
-function manifest(id: string, contributes: Record<string, unknown> | undefined): PluginManifest {
+function manifest(
+	id: string,
+	contributes: Record<string, unknown> | undefined,
+	tier: 0 | 1 | 2 = 0
+): PluginManifest {
 	return {
 		id,
 		name: id,
 		version: '1.0.0',
-		tier: 0,
+		tier,
 		maestro: { minHostApi: '1.0.0' },
 		...(contributes ? { contributes } : {}),
 	};
@@ -129,6 +133,38 @@ describe('collectContributions', () => {
 			})
 		);
 		expect(c.cueTriggers[0]).toMatchObject({ action: 'dispatch', agentId: 'agent-1' });
+	});
+
+	it('rejects commands/panels for tier 0 (they run code/UI)', () => {
+		const c = collectContributions(
+			manifest('com.acme', {
+				commands: [{ id: 'cmd', title: 'Cmd' }],
+				panels: [{ id: 'pan', title: 'Pan', entry: 'panel.html' }],
+			})
+		);
+		expect(c.commands).toEqual([]);
+		expect(c.panels).toEqual([]);
+		expect(c.errors.some((e) => e.includes('commands require tier'))).toBe(true);
+		expect(c.errors.some((e) => e.includes('panels require tier'))).toBe(true);
+	});
+
+	it('accepts commands/panels for tier 1 and validates panel entry paths', () => {
+		const c = collectContributions(
+			manifest(
+				'com.acme',
+				{
+					commands: [{ id: 'cmd', title: 'Run It', description: 'does a thing' }],
+					panels: [
+						{ id: 'good', title: 'Good', entry: 'ui/panel.html' },
+						{ id: 'evil', title: 'Evil', entry: '../../../etc/passwd' },
+					],
+				},
+				1
+			)
+		);
+		expect(c.commands.map((x) => x.id)).toEqual(['com.acme/cmd']);
+		expect(c.panels.map((x) => x.localId)).toEqual(['good']);
+		expect(c.errors.some((e) => e.includes('relative path inside the plugin'))).toBe(true);
 	});
 
 	it('rejects an invalid local id', () => {
