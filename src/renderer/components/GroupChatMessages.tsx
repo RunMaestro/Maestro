@@ -153,13 +153,27 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 			[theme]
 		);
 
-		// Auto-scroll on new messages (unless disabled via the global setting)
+		// Mirror the auto-scroll setting into a ref so toggling it does not re-run
+		// the scroll effect below; only message changes drive a scroll, so turning
+		// the setting on or off never yanks the reader away from their position.
+		const groupChatAutoScrollRef = useRef(groupChatAutoScroll);
+		groupChatAutoScrollRef.current = groupChatAutoScroll;
+		// Whether the one-time scroll-to-bottom for the loaded conversation ran.
+		const hasAutoScrolledRef = useRef(false);
+
+		// Auto-scroll to the newest message. The first scroll for a loaded chat
+		// (initial mount / first messages load) always lands at the bottom so an
+		// existing conversation opens at its latest message; later new-message
+		// scrolls are gated by the global setting.
 		useEffect(() => {
-			if (!groupChatAutoScroll) return;
+			if (messages.length === 0) return;
+			const isInitialScroll = !hasAutoScrolledRef.current;
+			if (!isInitialScroll && !groupChatAutoScrollRef.current) return;
+			hasAutoScrolledRef.current = true;
 			if (containerRef.current) {
 				containerRef.current.scrollTop = containerRef.current.scrollHeight;
 			}
-		}, [messages, groupChatAutoScroll]);
+		}, [messages]);
 
 		// Use external colors if provided, otherwise generate locally
 		// Include 'Moderator' at index 0 to match the participant panel's color assignment

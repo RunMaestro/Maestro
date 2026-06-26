@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render } from '@testing-library/react';
+import { render, act } from '@testing-library/react';
 
 import { GroupChatMessages } from '../../../renderer/components/GroupChatMessages';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
@@ -91,6 +91,42 @@ describe('GroupChatMessages auto-scroll setting', () => {
 				state="idle"
 			/>
 		);
+
+		expect(scroll.scrollTop).toBe(0);
+	});
+
+	it('scrolls to the bottom on the first messages load even when auto-scroll is disabled', () => {
+		useSettingsStore.setState({ groupChatAutoScroll: false });
+		// Mount empty, then let the first batch of history load. This mirrors
+		// opening an existing chat: the initial scroll must land at the newest
+		// message even though subsequent auto-scroll is disabled.
+		const { rerender, container } = renderChat([]);
+		const scroll = instrumentScroll(container);
+		scroll.scrollTop = 0;
+
+		rerender(
+			<GroupChatMessages
+				theme={mockTheme}
+				messages={makeMessages(3)}
+				participants={participants}
+				state="idle"
+			/>
+		);
+
+		expect(scroll.scrollTop).toBe(1000);
+	});
+
+	it('does not scroll when the setting is toggled on without new messages', () => {
+		useSettingsStore.setState({ groupChatAutoScroll: false });
+		const { container } = renderChat(makeMessages(3));
+		const scroll = instrumentScroll(container);
+		scroll.scrollTop = 0;
+
+		// Turning the setting back on while reading older messages must not yank
+		// the reader to the bottom; only a new message may trigger a scroll.
+		act(() => {
+			useSettingsStore.setState({ groupChatAutoScroll: true });
+		});
 
 		expect(scroll.scrollTop).toBe(0);
 	});
