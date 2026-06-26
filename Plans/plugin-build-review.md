@@ -88,9 +88,30 @@ Append-only, dated. Newest at the bottom of each section.
   renderer - the Left Bar "new agent" picker does not list plugin agents yet
   (pairs with the deferred spawn wiring above).
 
-## Deferred / unwired
+## Consumption wiring (item 4)
 
-- 2026-06-25: Phase 1 contributions (themes/prompts/settings/command-macros) are
-  validated, aggregated, and exposed via `plugins:contributions`, but NOT yet
-  consumed by the host registries (theme picker, prompt catalog, command palette).
-  That consumption is item 4 of the build plan.
+- 2026-06-25: Built the renderer read seam: `usePluginContributions` hook
+  (fetch on mount + re-fetch on a new `plugins.onChanged` preload event; empty
+  when Encore off) and `theme-bridge.ts` (pure: overlay a plugin theme's loose
+  colors onto a base palette, filtering to recognized ThemeColors keys).
+- 2026-06-25: THEMES - plugin themes now appear in the Settings theme picker
+  (`AppStandaloneModals` merges them into the `themes` prop) and are selectable.
+  `App.tsx` resolves an active plugin theme id (outside the built-in ThemeId
+  union) and falls back to dracula if the plugin was removed, so the app never
+  renders an undefined theme. Base palettes: dracula (dark), github-light (light)
+  via `renderer/utils/pluginThemes.ts`. Plugin themes are not editable like the
+  custom theme; that is acceptable (contributions are read-only).
+- 2026-06-25: COMMAND MACROS - surfaced in the Cmd-K palette as
+  'Macro: <title>' actions; selecting one sends the templated prompt to the
+  active agent via `processInput` (threaded App -> AppModals -> AppUtilityModals
+  -> QuickActionsModal as `onRunPromptMacro`). `processInput(text)` is the same
+  path a typed message takes, so this is the canonical send, not a fragile
+  inputValue/autoSend hack.
+- 2026-06-25: PROMPTS - plugin prompts appear in Settings > Maestro Prompts under
+  a read-only 'Plugin Prompts' category (save/reset/edit/preview disabled, content
+  shown read-only). DEFERRED: plugin prompts are view-only there; one-click
+  "insert/run this prompt" (like macros) is a possible later enhancement. Kept the
+  explicit catalog-vs-palette split from the directive. `MaestroPromptsTab.tsx`.
+- 2026-06-25: `contributes.settings` is aggregated/exposed but still NOT consumed
+  by any settings UI (no host surface renders plugin-declared settings yet). The
+  other three Phase 1 buckets (themes/prompts/commandMacros) are now consumed.
