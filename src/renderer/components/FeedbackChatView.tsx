@@ -154,8 +154,10 @@ export function FeedbackChatView({
 	const [inputValue, setInputValue] = useState(() => resumeDraft?.inputDraft ?? '');
 	const [isLoading, setIsLoading] = useState(false);
 	const [confidence, setConfidence] = useState(() => resumeDraft?.confidence ?? 0);
-	const [isReady, setIsReady] = useState(false);
-	const [lastResponse, setLastResponse] = useState<FeedbackParsedResponse | null>(null);
+	const [isReady, setIsReady] = useState(() => resumeDraft?.lastResponse?.ready ?? false);
+	const [lastResponse, setLastResponse] = useState<FeedbackParsedResponse | null>(
+		() => resumeDraft?.lastResponse ?? null
+	);
 	const [attachments, setAttachments] = useState<FeedbackAttachment[]>(
 		() => resumeDraft?.attachments ?? []
 	);
@@ -171,6 +173,11 @@ export function FeedbackChatView({
 	const [copiedUrl, setCopiedUrl] = useState(false);
 	const [isSavingDraft, setIsSavingDraft] = useState(false);
 	const [draftSaved, setDraftSaved] = useState(false);
+	// Subscribe so the live snapshot re-publishes with the freshly minted id
+	// after a save (preventing duplicate drafts) and so the editor can surface
+	// draft-save failures.
+	const activeDraftId = useFeedbackDraftStore((s) => s.activeDraftId);
+	const saveError = useFeedbackDraftStore((s) => s.saveError);
 	const lastSearchQueryRef = useRef<string | null>(null);
 	const searchAbortRef = useRef(0); // Monotonic counter to discard stale searches
 
@@ -215,9 +222,14 @@ export function FeedbackChatView({
 				if (mounted) {
 					const available = new Set<string>(agents.filter((a) => a.available).map((a) => a.id));
 					setDetectedAgents(available);
-					// Auto-select first available
+					// Auto-select the first available provider for a fresh editor. When
+					// resuming, keep the saved provider only if it is still available;
+					// otherwise fall back so submit/auto-start does not throw on a
+					// provider that is no longer installed.
 					const firstAvailable = AGENT_TILES.find((t) => t.supported && available.has(t.id));
-					if (firstAvailable && !resumeDraft) setSelectedAgent(firstAvailable.id);
+					if (firstAvailable && (!resumeDraft || !available.has(resumeDraft.agentType))) {
+						setSelectedAgent(firstAvailable.id);
+					}
 					setAgentsLoaded(true);
 				}
 			} catch (error) {
@@ -566,7 +578,7 @@ export function FeedbackChatView({
 		const suggestedName = rawName.trim().slice(0, 60) || 'Untitled feedback';
 		const now = Date.now();
 		return {
-			id: useFeedbackDraftStore.getState().activeDraftId ?? '',
+			id: activeDraftId ?? '',
 			suggestedName,
 			category: lastResponse?.category ?? 'general_feedback',
 			summary: lastResponse?.summary ?? '',
@@ -578,6 +590,7 @@ export function FeedbackChatView({
 			includeDebugPackage,
 			createdAt: now,
 			updatedAt: now,
+			lastResponse,
 		};
 	}, [
 		messages,
@@ -587,6 +600,7 @@ export function FeedbackChatView({
 		confidence,
 		selectedAgent,
 		includeDebugPackage,
+		activeDraftId,
 	]);
 
 	// Keep a live snapshot in the store so FeedbackModal can persist on
@@ -602,9 +616,13 @@ export function FeedbackChatView({
 	const handleSaveDraft = useCallback(async () => {
 		setIsSavingDraft(true);
 		try {
-			await useFeedbackDraftStore.getState().saveDraft(serializeDraft());
-			setDraftSaved(true);
-			window.setTimeout(() => setDraftSaved(false), 2000);
+			const savedId = await useFeedbackDraftStore.getState().saveDraft(serializeDraft());
+			if (savedId !== null) {
+				setDraftSaved(true);
+				window.setTimeout(() => setDraftSaved(false), 2000);
+			}
+			// On failure the store sets `saveError`, surfaced as a banner below;
+			// do not flash "Saved" for a write that did not persist.
 		} finally {
 			setIsSavingDraft(false);
 		}
@@ -1004,6 +1022,15 @@ export function FeedbackChatView({
 						</button>
 					)}
 				</div>
+				{saveError && (
+					<div
+						className="mt-1.5 text-[10px] font-medium"
+						style={{ color: theme.colors.error }}
+						role="alert"
+					>
+						{saveError}
+					</div>
+				)}
 				<div
 					className="h-1.5 rounded-full overflow-hidden"
 					style={{ backgroundColor: theme.colors.border }}

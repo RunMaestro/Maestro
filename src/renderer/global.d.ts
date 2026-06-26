@@ -684,6 +684,19 @@ interface MaestroAPI {
 					includeDebugPackage: boolean;
 					createdAt: number;
 					updatedAt: number;
+					lastResponse?: {
+						confidence: number;
+						ready: boolean;
+						message: string;
+						category: 'bug_report' | 'feature_request' | 'improvement' | 'general_feedback';
+						summary: string;
+						structured: {
+							expectedBehavior: string;
+							actualBehavior: string;
+							reproductionSteps: string;
+							additionalContext: string;
+						};
+					} | null;
 				}>;
 			}>;
 			save: (draft: {
@@ -706,6 +719,19 @@ interface MaestroAPI {
 				includeDebugPackage: boolean;
 				createdAt: number;
 				updatedAt: number;
+				lastResponse?: {
+					confidence: number;
+					ready: boolean;
+					message: string;
+					category: 'bug_report' | 'feature_request' | 'improvement' | 'general_feedback';
+					summary: string;
+					structured: {
+						expectedBehavior: string;
+						actualBehavior: string;
+						reproductionSteps: string;
+						additionalContext: string;
+					};
+				} | null;
 			}) => Promise<{
 				draft: {
 					id: string;
@@ -727,6 +753,19 @@ interface MaestroAPI {
 					includeDebugPackage: boolean;
 					createdAt: number;
 					updatedAt: number;
+					lastResponse?: {
+						confidence: number;
+						ready: boolean;
+						message: string;
+						category: 'bug_report' | 'feature_request' | 'improvement' | 'general_feedback';
+						summary: string;
+						structured: {
+							expectedBehavior: string;
+							actualBehavior: string;
+							reproductionSteps: string;
+							additionalContext: string;
+						};
+					} | null;
 				};
 			}>;
 			delete: (id: string) => Promise<Record<string, never>>;

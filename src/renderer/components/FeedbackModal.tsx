@@ -85,11 +85,15 @@ export function FeedbackModal({ theme, sessions, onClose, onSwitchToSession }: F
 	}, []);
 
 	// --- Minimize handler ---
-	const handleMinimize = useCallback(() => {
+	const handleMinimize = useCallback(async () => {
 		// Persist the in-flight draft so it survives an app restart, not just the
-		// in-memory minimized state.
+		// in-memory minimized state. If the write fails, do NOT minimize (which
+		// would hide the failure); keep the modal open so the error surfaces.
 		const { activeDraft, saveDraft } = useFeedbackDraftStore.getState();
-		if (activeDraft) void saveDraft(activeDraft);
+		if (activeDraft) {
+			const savedId = await saveDraft(activeDraft);
+			if (savedId === null) return;
+		}
 
 		// Make sure the Feedback button is in the DOM so we have a target.
 		setLeftSidebarOpen(true);
@@ -163,21 +167,35 @@ export function FeedbackModal({ theme, sessions, onClose, onSwitchToSession }: F
 		setConfirmCloseOpen(false);
 		const { activeDraft, saveDraft } = useFeedbackDraftStore.getState();
 		if (activeDraft) {
-			await saveDraft(activeDraft);
+			const savedId = await saveDraft(activeDraft);
+			// Persist failed: keep the modal open (the editor surfaces the error)
+			// instead of closing and losing the in-memory draft.
+			if (savedId === null) return;
 		}
 		onClose();
 	}, [onClose]);
 
-	const handleDiscard = useCallback(async () => {
+	const handleDiscard = useCallback(() => {
+		// "Discard" abandons the unsaved in-progress edits and closes. It must NOT
+		// delete an already-saved draft: a resumed draft keeps its last saved
+		// state, and deletion is an explicit action from the Drafts list.
 		setConfirmCloseOpen(false);
-		const { activeDraftId, deleteDraft } = useFeedbackDraftStore.getState();
-		if (activeDraftId) {
-			await deleteDraft(activeDraftId);
-		}
 		onClose();
 	}, [onClose]);
 
-	const handleResume = useCallback((id: string) => {
+	const handleResume = useCallback(async (id: string) => {
+		// Preserve any unsaved in-progress editor before we unmount it to resume a
+		// different draft, so switching drafts never silently discards work.
+		const { activeDraft, activeDraftId, saveDraft } = useFeedbackDraftStore.getState();
+		if (activeDraft && activeDraftId !== id) {
+			const savedId = await saveDraft(activeDraft);
+			if (savedId === null) {
+				// Saving the current draft failed; stay on the editor and surface
+				// the error rather than dropping the user's work.
+				setShowDrafts(false);
+				return;
+			}
+		}
 		setShowDrafts(false);
 		useFeedbackDraftStore.getState().requestResume(id);
 		setResumeNonce((n) => n + 1);

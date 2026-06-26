@@ -20,14 +20,18 @@ vi.mock('electron', () => ({
 	},
 }));
 
-vi.mock('fs/promises', () => ({
-	default: {
+vi.mock('fs/promises', () => {
+	const mock = {
 		readFile: vi.fn(),
 		writeFile: vi.fn(),
 		unlink: vi.fn(),
 		mkdir: vi.fn(),
-	},
-}));
+		rename: vi.fn(),
+	};
+	// Provide both default (feedback.ts) and named (atomic-json-store) shapes,
+	// sharing the same vi.fn instances so assertions see every write.
+	return { ...mock, default: mock };
+});
 
 vi.mock('../../../../main/utils/logger', () => ({
 	logger: {
@@ -575,5 +579,92 @@ describe('feedback drafts handlers', () => {
 			.mock.calls.find(([p]) => String(p).includes('feedback-drafts.json'));
 		const written = JSON.parse(String(writeCall?.[1]));
 		expect(written.drafts).toEqual([]);
+	});
+
+	it('persists and clamps the submit-ready response on save', async () => {
+		vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({ drafts: [] }) as any);
+		vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+		vi.mocked(fs.rename).mockResolvedValue(undefined);
+
+		const handler = registeredHandlers.get('feedback:drafts:save');
+		const result = await handler!(
+			{},
+			{
+				...sampleDraft,
+				lastResponse: {
+					confidence: 95,
+					ready: true,
+					message: 'Looks good',
+					category: 'bug_report',
+					summary: 'Crash on save',
+					structured: {
+						expectedBehavior: 'no crash',
+						actualBehavior: 'crash',
+						reproductionSteps: 'save',
+						additionalContext: '',
+					},
+				},
+			}
+		);
+
+		expect(result.draft.lastResponse?.ready).toBe(true);
+		expect(result.draft.lastResponse?.structured.expectedBehavior).toBe('no crash');
+
+		const writeCall = vi
+			.mocked(fs.writeFile)
+			.mock.calls.find(([p]) => String(p).includes('feedback-drafts.json'));
+		const written = JSON.parse(String(writeCall?.[1]));
+		expect(written.drafts[0].lastResponse.ready).toBe(true);
+		expect(written.drafts[0].lastResponse.structured.actualBehavior).toBe('crash');
+	});
+
+	it('normalizes a malformed lastResponse to null', async () => {
+		vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({ drafts: [] }) as any);
+		vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+		vi.mocked(fs.rename).mockResolvedValue(undefined);
+
+		const handler = registeredHandlers.get('feedback:drafts:save');
+		const result = await handler!({}, { ...sampleDraft, lastResponse: 'not-an-object' });
+
+		expect(result.draft.lastResponse).toBeNull();
+	});
+
+	it('serializes overlapping saves so neither draft is lost (read-modify-write race)', async () => {
+		// Back the mocked fs with an in-memory file so an unserialized
+		// read-modify-write would clobber: both saves would read the empty base
+		// and the later write would drop the earlier draft.
+		const norm = (p: unknown): string => String(p).replace(/\\/g, '/');
+		const draftsFile = '/mock/userData/feedback-drafts.json';
+		const files = new Map<string, string>([[draftsFile, JSON.stringify({ drafts: [] })]]);
+		const tmps = new Map<string, string>();
+		vi.mocked(fs.mkdir).mockResolvedValue(undefined as any);
+		vi.mocked(fs.readFile).mockImplementation(async (p: any) => {
+			await new Promise((r) => setTimeout(r, 0));
+			const content = files.get(norm(p));
+			if (content === undefined) throw new Error('ENOENT');
+			return content as any;
+		});
+		vi.mocked(fs.writeFile).mockImplementation(async (p: any, data: any) => {
+			await new Promise((r) => setTimeout(r, 0));
+			tmps.set(norm(p), String(data));
+			return undefined as any;
+		});
+		vi.mocked(fs.rename).mockImplementation(async (from: any, to: any) => {
+			const content = tmps.get(norm(from));
+			if (content !== undefined) files.set(norm(to), content);
+			tmps.delete(norm(from));
+			return undefined as any;
+		});
+
+		const save = registeredHandlers.get('feedback:drafts:save');
+		await Promise.all([
+			save!({}, { ...sampleDraft, id: 'first' }),
+			save!({}, { ...sampleDraft, id: 'second' }),
+		]);
+
+		const ids = JSON.parse(String(files.get(draftsFile)))
+			.drafts.map((d: { id: string }) => d.id)
+			.sort();
+		expect(ids).toEqual(['first', 'second']);
 	});
 });

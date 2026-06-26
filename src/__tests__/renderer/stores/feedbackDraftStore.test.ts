@@ -30,6 +30,7 @@ describe('feedbackDraftStore', () => {
 			resumeDraftId: null,
 			activeDraftId: null,
 			activeDraft: null,
+			saveError: null,
 		});
 		window.maestro.feedback.drafts.list.mockResolvedValue({ drafts: [] });
 		window.maestro.feedback.drafts.save.mockImplementation((draft: FeedbackDraft) =>
@@ -95,5 +96,28 @@ describe('feedbackDraftStore', () => {
 		expect(state.resumeDraftId).toBeNull();
 		// The persisted drafts list must survive a reset so it stays resumable.
 		expect(state.drafts).toEqual(drafts);
+	});
+
+	it('saveDraft surfaces a failure as null and records a saveError', async () => {
+		window.maestro.feedback.drafts.save.mockRejectedValue(new Error('disk full'));
+
+		const id = await useFeedbackDraftStore.getState().saveDraft(makeDraft());
+
+		expect(id).toBeNull();
+		expect(useFeedbackDraftStore.getState().saveError).toBeTruthy();
+	});
+
+	it('saveDraft patches the live snapshot id so later saves upsert instead of duplicating', async () => {
+		const snapshot = makeDraft({ id: '' });
+		useFeedbackDraftStore.setState({ activeDraft: snapshot, saveError: 'stale error' });
+		window.maestro.feedback.drafts.save.mockResolvedValue({ draft: makeDraft({ id: 'minted-1' }) });
+
+		const id = await useFeedbackDraftStore.getState().saveDraft(snapshot);
+
+		expect(id).toBe('minted-1');
+		const state = useFeedbackDraftStore.getState();
+		expect(state.activeDraftId).toBe('minted-1');
+		expect(state.activeDraft?.id).toBe('minted-1');
+		expect(state.saveError).toBeNull();
 	});
 });

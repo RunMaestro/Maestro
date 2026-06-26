@@ -10,7 +10,7 @@ import { ipcMain, app } from 'electron';
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
-import { randomUUID } from 'crypto';
+import { generateUUID } from '../../../shared/uuid';
 import { logger } from '../../utils/logger';
 import { getPrompt } from '../../prompt-manager';
 import { withIpcErrorLogging, CreateHandlerOptions } from '../../utils/ipcHandler';
@@ -23,6 +23,7 @@ import {
 import { execFileNoThrow } from '../../utils/execFile';
 import { generateDebugPackage, type DebugPackageDependencies } from '../../debug-package';
 import { captureException } from '../../utils/sentry';
+import { atomicWriteJson, createKeyedWriteQueue } from '../../utils/atomic-json-store';
 
 const LOG_CONTEXT = '[Feedback]';
 const ATTACHMENTS_REPO = 'maestro-feedback-attachments';
@@ -90,6 +91,27 @@ export interface FeedbackDraftMessage {
 	summary?: string;
 }
 
+export interface FeedbackDraftStructured {
+	expectedBehavior: string;
+	actualBehavior: string;
+	reproductionSteps: string;
+	additionalContext: string;
+}
+
+/**
+ * The parsed assistant response captured when a draft reaches the submit-ready
+ * state. Persisting it lets a resumed draft stay submittable without forcing
+ * the user to send another message to regenerate the structured fields.
+ */
+export interface FeedbackDraftResponse {
+	confidence: number;
+	ready: boolean;
+	message: string;
+	category: FeedbackCategory;
+	summary: string;
+	structured: FeedbackDraftStructured;
+}
+
 export interface FeedbackDraft {
 	id: string;
 	suggestedName: string;
@@ -103,6 +125,7 @@ export interface FeedbackDraft {
 	includeDebugPackage: boolean;
 	createdAt: number;
 	updatedAt: number;
+	lastResponse?: FeedbackDraftResponse | null;
 }
 
 interface FeedbackSubmitPayload {
@@ -201,6 +224,14 @@ function getDraftsFilePath(): string {
 	return path.join(app.getPath('userData'), DRAFTS_FILE_NAME);
 }
 
+// Serialize every read-modify-write cycle against the single drafts file so
+// concurrent autosave + manual saves (and deletes) cannot interleave and
+// clobber each other. Backed by the shared keyed-write-queue utility, with
+// atomicWriteJson giving partial-read-safe writes (mirrors group-chat-storage).
+const draftsWriteQueue = createKeyedWriteQueue();
+const enqueueDraftWrite = <T>(fn: () => Promise<T>): Promise<T> =>
+	draftsWriteQueue.enqueue(DRAFTS_FILE_NAME, fn);
+
 /**
  * Read all persisted feedback drafts. Returns an empty array when the file is
  * missing or malformed, matching readPlaybooks() in playbooks.ts.
@@ -222,7 +253,7 @@ async function readDrafts(): Promise<FeedbackDraft[]> {
 async function writeDrafts(drafts: FeedbackDraft[]): Promise<void> {
 	const filePath = getDraftsFilePath();
 	await fs.mkdir(path.dirname(filePath), { recursive: true });
-	await fs.writeFile(filePath, JSON.stringify({ drafts }, null, 2), 'utf-8');
+	await atomicWriteJson(filePath, { drafts });
 }
 
 /**
@@ -277,6 +308,35 @@ function normalizeDraftMessage(raw: unknown): FeedbackDraftMessage | null {
 }
 
 /**
+ * Validate + clamp the persisted submit-ready response. Returns null when the
+ * payload is absent or malformed so a resumed draft simply behaves as not-ready.
+ */
+function normalizeDraftResponse(raw: unknown): FeedbackDraftResponse | null {
+	if (!raw || typeof raw !== 'object') return null;
+	const r = raw as Record<string, unknown>;
+	const structuredRaw =
+		r.structured && typeof r.structured === 'object'
+			? (r.structured as Record<string, unknown>)
+			: {};
+	const clampField = (value: unknown): string =>
+		typeof value === 'string' ? value.slice(0, MAX_DRAFT_MESSAGE_LENGTH) : '';
+	return {
+		confidence:
+			typeof r.confidence === 'number' ? Math.max(0, Math.min(100, Math.round(r.confidence))) : 0,
+		ready: r.ready === true,
+		message: typeof r.message === 'string' ? r.message.slice(0, MAX_DRAFT_MESSAGE_LENGTH) : '',
+		category: isFeedbackCategory(r.category) ? r.category : 'general_feedback',
+		summary: typeof r.summary === 'string' ? r.summary.slice(0, MAX_SUMMARY_LENGTH) : '',
+		structured: {
+			expectedBehavior: clampField(structuredRaw.expectedBehavior),
+			actualBehavior: clampField(structuredRaw.actualBehavior),
+			reproductionSteps: clampField(structuredRaw.reproductionSteps),
+			additionalContext: clampField(structuredRaw.additionalContext),
+		},
+	};
+}
+
+/**
  * Sanitize an incoming draft payload into a fully-formed FeedbackDraft,
  * minting an id when one is not supplied (the renderer normally supplies it).
  */
@@ -292,7 +352,7 @@ function normalizeDraft(raw: unknown): FeedbackDraft {
 	const confidence =
 		typeof d.confidence === 'number' ? Math.max(0, Math.min(100, Math.round(d.confidence))) : 0;
 	return {
-		id: typeof d.id === 'string' && d.id ? d.id : randomUUID(),
+		id: typeof d.id === 'string' && d.id ? d.id : generateUUID(),
 		suggestedName:
 			typeof d.suggestedName === 'string'
 				? sanitizeTextInput(d.suggestedName).slice(0, MAX_SUMMARY_LENGTH)
@@ -313,6 +373,7 @@ function normalizeDraft(raw: unknown): FeedbackDraft {
 		includeDebugPackage: d.includeDebugPackage === true,
 		createdAt: typeof d.createdAt === 'number' ? d.createdAt : now,
 		updatedAt: typeof d.updatedAt === 'number' ? d.updatedAt : now,
+		lastResponse: normalizeDraftResponse(d.lastResponse),
 	};
 }
 
@@ -1219,25 +1280,27 @@ export function registerFeedbackHandlers(_deps: FeedbackHandlerDependencies): vo
 			handlerOpts('drafts-save'),
 			async (draft: unknown): Promise<{ draft: FeedbackDraft }> => {
 				const incoming = normalizeDraft(draft);
-				const drafts = await readDrafts();
-				const now = Date.now();
-				const index = drafts.findIndex((d) => d.id === incoming.id);
-				let saved: FeedbackDraft;
-				if (index >= 0) {
-					saved = {
-						...drafts[index],
-						...incoming,
-						createdAt: drafts[index].createdAt,
-						updatedAt: now,
-					};
-					drafts[index] = saved;
-				} else {
-					saved = { ...incoming, createdAt: now, updatedAt: now };
-					drafts.push(saved);
-				}
-				drafts.sort((a, b) => b.updatedAt - a.updatedAt);
-				await writeDrafts(drafts.slice(0, MAX_DRAFTS));
-				return { draft: saved };
+				return enqueueDraftWrite(async () => {
+					const drafts = await readDrafts();
+					const now = Date.now();
+					const index = drafts.findIndex((d) => d.id === incoming.id);
+					let saved: FeedbackDraft;
+					if (index >= 0) {
+						saved = {
+							...drafts[index],
+							...incoming,
+							createdAt: drafts[index].createdAt,
+							updatedAt: now,
+						};
+						drafts[index] = saved;
+					} else {
+						saved = { ...incoming, createdAt: now, updatedAt: now };
+						drafts.push(saved);
+					}
+					drafts.sort((a, b) => b.updatedAt - a.updatedAt);
+					await writeDrafts(drafts.slice(0, MAX_DRAFTS));
+					return { draft: saved };
+				});
 			}
 		)
 	);
@@ -1249,9 +1312,11 @@ export function registerFeedbackHandlers(_deps: FeedbackHandlerDependencies): vo
 			handlerOpts('drafts-delete'),
 			async (payload: { id?: string }): Promise<Record<string, never>> => {
 				const id = typeof payload?.id === 'string' ? payload.id : '';
-				const drafts = await readDrafts();
-				const next = drafts.filter((d) => d.id !== id);
-				await writeDrafts(next);
+				await enqueueDraftWrite(async () => {
+					const drafts = await readDrafts();
+					const next = drafts.filter((d) => d.id !== id);
+					await writeDrafts(next);
+				});
 				return {};
 			}
 		)

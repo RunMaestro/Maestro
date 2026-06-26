@@ -52,6 +52,22 @@ export interface FeedbackDraftMessage {
 	summary?: string;
 }
 
+export interface FeedbackDraftStructured {
+	expectedBehavior: string;
+	actualBehavior: string;
+	reproductionSteps: string;
+	additionalContext: string;
+}
+
+export interface FeedbackDraftResponse {
+	confidence: number;
+	ready: boolean;
+	message: string;
+	category: FeedbackCategory;
+	summary: string;
+	structured: FeedbackDraftStructured;
+}
+
 export interface FeedbackDraft {
 	id: string;
 	suggestedName: string;
@@ -65,6 +81,7 @@ export interface FeedbackDraft {
 	includeDebugPackage: boolean;
 	createdAt: number;
 	updatedAt: number;
+	lastResponse?: FeedbackDraftResponse | null;
 }
 
 export interface FeedbackSubmissionPayload {

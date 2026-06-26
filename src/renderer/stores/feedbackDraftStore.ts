@@ -8,7 +8,7 @@
  */
 
 import { create } from 'zustand';
-import type { FeedbackMessage } from '../services/feedbackConversation';
+import type { FeedbackMessage, FeedbackParsedResponse } from '../services/feedbackConversation';
 
 export type FeedbackDraftCategory =
 	| 'bug_report'
@@ -36,6 +36,8 @@ export interface FeedbackDraft {
 	includeDebugPackage: boolean;
 	createdAt: number;
 	updatedAt: number;
+	/** Parsed submit-ready response, persisted so a resumed draft stays submittable */
+	lastResponse?: FeedbackParsedResponse | null;
 }
 
 interface FeedbackDraftState {
@@ -51,6 +53,8 @@ interface FeedbackDraftState {
 	activeDraftId: string | null;
 	/** Live in-memory snapshot of the open editor, published by FeedbackChatView */
 	activeDraft: FeedbackDraft | null;
+	/** Last draft-save error, surfaced by the editor; null when the last save succeeded */
+	saveError: string | null;
 	setMinimized: (minimized: boolean) => void;
 	setHasDraft: (hasDraft: boolean) => void;
 	setActiveDraft: (draft: FeedbackDraft | null) => void;
@@ -73,6 +77,7 @@ export const useFeedbackDraftStore = create<FeedbackDraftState>((set, get) => ({
 	resumeDraftId: null,
 	activeDraftId: null,
 	activeDraft: null,
+	saveError: null,
 	setMinimized: (minimized) => set({ isMinimized: minimized }),
 	setHasDraft: (hasDraft) => set({ hasDraft }),
 	setActiveDraft: (draft) => set({ activeDraft: draft }),
@@ -88,9 +93,18 @@ export const useFeedbackDraftStore = create<FeedbackDraftState>((set, get) => ({
 		try {
 			const { draft: saved } = await window.maestro.feedback.drafts.save(draft);
 			await get().loadDrafts();
-			set({ activeDraftId: saved.id });
+			set((state) => ({
+				activeDraftId: saved.id,
+				// Patch the live snapshot's id too, so a later save/minimize without
+				// an intervening edit upserts this draft instead of duplicating it.
+				activeDraft: state.activeDraft ? { ...state.activeDraft, id: saved.id } : state.activeDraft,
+				saveError: null,
+			}));
 			return saved.id;
 		} catch {
+			// Surface the failure so callers do NOT report success or close the
+			// modal while the draft only lives in memory.
+			set({ saveError: 'Could not save your draft. Your changes are still here; try again.' });
 			return null;
 		}
 	},
@@ -114,5 +128,6 @@ export const useFeedbackDraftStore = create<FeedbackDraftState>((set, get) => ({
 			activeDraft: null,
 			activeDraftId: null,
 			resumeDraftId: null,
+			saveError: null,
 		}),
 }));
