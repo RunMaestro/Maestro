@@ -3,14 +3,25 @@ name: Mark stale issues and PRs
 # Implements the policy requested in issue #574:
 #   - Mark issues/PRs stale after 60 days of inactivity
 #   - Auto-close 14 days after being marked stale (≈74 days total)
-#   - Exempt "pinned" and "security" (and a few maintainer-controlled labels)
-# Runs daily; also exposes workflow_dispatch so maintainers can trigger a
-# dry-run / manual pass and verify behaviour before relying on the schedule.
+#   - Exempt "security" plus the repo's active triage labels.
+#     ("pinned" is included for forward compatibility; it is a no-op until a
+#     maintainer creates/applies a "pinned" label, and GitHub's pinned-issue UI
+#     state is intentionally NOT covered by exempt-*-labels.)
+#
+# Runs daily. Manual runs (workflow_dispatch) default to a DRY RUN: actions/stale
+# is invoked with debug-only, so it logs what it *would* mark/close without
+# touching anything - maintainers can validate the policy safely, then re-dispatch
+# with dry_run=false (or wait for the schedule) to apply it for real.
 
 on:
   schedule:
     - cron: '0 0 * * *'
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run: log what would happen without labeling or closing anything'
+        type: boolean
+        default: true
 
 permissions:
   issues: write
@@ -25,8 +36,25 @@ jobs:
   stale:
     runs-on: ubuntu-latest
     steps:
+      # actions/stale only *applies* the stale label; it does not create it. Make
+      # sure it exists (idempotent: --force creates or updates) so the policy
+      # actually takes effect on a repo that has no "stale" label yet.
+      - name: Ensure the "stale" label exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh label create stale
+          --repo "$GITHUB_REPOSITORY"
+          --color ededed
+          --description "No recent activity; will be auto-closed if it stays inactive"
+          --force
+
       - uses: actions/stale@v9
         with:
+          # Manual dispatch defaults to a non-destructive dry run; the schedule
+          # always runs live.
+          debug-only: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+
           # --- Issues ---
           days-before-issue-stale: 60
           days-before-issue-close: 14
