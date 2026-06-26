@@ -250,6 +250,8 @@ export interface AppModalsProps {
 	onQuickCreateWorktree: (session: Session) => void;
 	onOpenCreatePR: (session: Session) => void;
 	onSummarizeAndContinue: () => void;
+	/** Send a plugin command-macro's templated prompt to the active agent. */
+	onRunPromptMacro?: (prompt: string) => void;
 	canSummarizeActiveTab: boolean;
 	onToggleRemoteControl: () => Promise<void>;
 	autoRunSelectedDocument: string | null;
@@ -723,6 +725,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onQuickCreateWorktree,
 		onOpenCreatePR,
 		onSummarizeAndContinue,
+		onRunPromptMacro,
 		canSummarizeActiveTab,
 		onToggleRemoteControl,
 		autoRunSelectedDocument,
@@ -1079,6 +1082,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onQuickCreateWorktree={onQuickCreateWorktree}
 				onOpenCreatePR={onOpenCreatePR}
 				onSummarizeAndContinue={onSummarizeAndContinue}
+				onRunPromptMacro={onRunPromptMacro}
 				canSummarizeActiveTab={canSummarizeActiveTab}
 				onToggleRemoteControl={onToggleRemoteControl}
 				autoRunSelectedDocument={autoRunSelectedDocument}

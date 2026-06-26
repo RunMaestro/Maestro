@@ -1737,6 +1737,16 @@ function MaestroConsoleInner() {
 		[processInput]
 	);
 
+	// Run a plugin command macro: send its templated prompt to the active agent
+	// through the same input path as a typed message. Empty/whitespace prompts are
+	// ignored by processInput's own emptiness check.
+	const handleRunPromptMacro = useCallback(
+		(prompt: string) => {
+			processInput(prompt);
+		},
+		[processInput]
+	);
+
 	// Build (tab→busy summary) lookup used by the Force Send button to decide
 	// visibility and to populate the confirmation modal's "other tabs working"
 	// list. Computed from the current session's tab states at call time.
@@ -3118,6 +3128,7 @@ function MaestroConsoleInner() {
 					onQuickCreateWorktree={handleQuickCreateWorktree}
 					onOpenCreatePR={handleQuickActionsOpenCreatePR}
 					onSummarizeAndContinue={handleQuickActionsSummarizeAndContinue}
+					onRunPromptMacro={handleRunPromptMacro}
 					canSummarizeActiveTab={
 						activeSession
 							? canSummarize(

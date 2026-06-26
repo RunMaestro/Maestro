@@ -128,6 +128,8 @@ export interface QuickActionsModalProps {
 	onQuickCreateWorktree?: (session: Session) => void;
 	onOpenCreatePR?: (session: Session) => void;
 	onSummarizeAndContinue?: () => void;
+	/** Send a plugin command-macro's templated prompt to the active agent. */
+	onRunPromptMacro?: (prompt: string) => void;
 	canSummarizeActiveTab?: boolean;
 	autoRunSelectedDocument?: string | null;
 	autoRunCompletedTaskCount?: number;
