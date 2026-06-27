@@ -218,24 +218,27 @@ Only `action: 'notify'` runs on tier 0. `action: 'dispatch'` needs `agents:dispa
 
 Request these in `permissions` as `{ capability, scope?, reason? }`. `scope` narrows `fs:*` (a directory) and `net:fetch` (a host); absent means the broad form. `reason` shows at the consent prompt.
 
-| Capability            | Risk   | Scope | What it allows                                      | How to request                                          |
-| --------------------- | ------ | ----- | --------------------------------------------------- | ------------------------------------------------------- |
-| `fs:read`             | medium | path  | read files under the scope path                     | `{ "capability": "fs:read", "scope": "/abs/dir" }`      |
-| `fs:write`            | high   | path  | write files under the scope path                    | `{ "capability": "fs:write", "scope": "/abs/dir" }`     |
-| `net:fetch`           | medium | host  | HTTP(S) fetch to the scope host                     | `{ "capability": "net:fetch", "scope": "example.com" }` |
-| `agents:read`         | low    | none  | list/read agent metadata                            | `{ "capability": "agents:read" }`                       |
-| `agents:dispatch`     | high   | none  | send a prompt to an agent (INERT today)             | `{ "capability": "agents:dispatch" }`                   |
-| `notifications:toast` | low    | none  | raise a toast                                       | `{ "capability": "notifications:toast" }`               |
-| `settings:read`       | low    | none  | read non-secret app settings + own `plugins.<id>.*` | `{ "capability": "settings:read" }`                     |
-| `settings:write`      | low    | none  | write ONLY own `plugins.<id>.*` keys                | `{ "capability": "settings:write" }`                    |
-| `sessions:read`       | medium | none  | list session METADATA (never transcript)            | `{ "capability": "sessions:read" }`                     |
-| `storage:read`        | low    | none  | read own private key-value store                    | `{ "capability": "storage:read" }`                      |
-| `storage:write`       | low    | none  | write own private key-value store                   | `{ "capability": "storage:write" }`                     |
-| `ui:command`          | low    | none  | invoke a registered palette command                 | `{ "capability": "ui:command" }`                        |
-| `events:subscribe`    | medium | none  | subscribe to metadata-only host topics              | `{ "capability": "events:subscribe" }`                  |
-| `process:spawn`       | high   | none  | run a shell command (INERT today)                   | `{ "capability": "process:spawn" }`                     |
+| Capability            | Risk   | Scope | What it allows                                      | How to request                                                  |
+| --------------------- | ------ | ----- | --------------------------------------------------- | --------------------------------------------------------------- |
+| `fs:read`             | medium | path  | read files under the scope path                     | `{ "capability": "fs:read", "scope": "/abs/dir" }`              |
+| `fs:write`            | high   | path  | write files under the scope path                    | `{ "capability": "fs:write", "scope": "/abs/dir" }`             |
+| `net:fetch`           | medium | host  | HTTP(S) fetch to the scope host                     | `{ "capability": "net:fetch", "scope": "example.com" }`         |
+| `agents:read`         | low    | none  | list/read agent metadata                            | `{ "capability": "agents:read" }`                               |
+| `agents:dispatch`     | high   | none  | send a prompt to an agent (INERT today)             | `{ "capability": "agents:dispatch" }`                           |
+| `notifications:toast` | low    | none  | raise a toast                                       | `{ "capability": "notifications:toast" }`                       |
+| `settings:read`       | low    | none  | read non-secret app settings + own `plugins.<id>.*` | `{ "capability": "settings:read" }`                             |
+| `settings:write`      | low    | none  | write ONLY own `plugins.<id>.*` keys                | `{ "capability": "settings:write" }`                            |
+| `sessions:read`       | medium | none  | list session METADATA (never transcript)            | `{ "capability": "sessions:read" }`                             |
+| `transcripts:read`    | high   | path  | read PROJECTED session content (you declare fields) | `{ "capability": "transcripts:read", "scope": "/abs/project" }` |
+| `storage:read`        | low    | none  | read own private key-value store                    | `{ "capability": "storage:read" }`                              |
+| `storage:write`       | low    | none  | write own private key-value store                   | `{ "capability": "storage:write" }`                             |
+| `ui:command`          | low    | none  | invoke a registered palette command                 | `{ "capability": "ui:command" }`                                |
+| `events:subscribe`    | medium | none  | subscribe to metadata-only host topics              | `{ "capability": "events:subscribe" }`                          |
+| `process:spawn`       | high   | none  | run a shell command (INERT today)                   | `{ "capability": "process:spawn" }`                             |
 
 `agents:dispatch` and `process:spawn` have no production handler; the SDK methods exist but reject. The broker re-reads grants on every call, so a revoke takes effect immediately, and it re-authorizes `fs:*` paths against the symlink-resolved real path.
+
+`transcripts:read` is project-scoped: `scope` is a project path, and an absent scope means all projects (presented as such at consent). It is refused for an untrusted plugin that also holds `net:fetch` or `process:spawn` (the content-exfiltration combination) - sign with a trusted key to allow both. Reads are rate-limited as a high-risk verb and every read is audited.
 
 ---
 
@@ -272,32 +275,35 @@ module.exports = {
 
 Every method below is broker-gated and needs the matching capability granted. Signatures are copied from `buildSdk` (`src/main/plugins/plugin-sandbox-entry.ts`).
 
-| SDK method                                                        | Capability                   |
-| ----------------------------------------------------------------- | ---------------------------- |
-| `maestro.pluginId` (string)                                       | -                            |
-| `maestro.fs.read(path)` -> `Promise<string>`                      | `fs:read`                    |
-| `maestro.fs.write(path, contents)` -> `Promise<void>`             | `fs:write`                   |
-| `maestro.net.fetch(url, init?)` -> `Promise<unknown>`             | `net:fetch`                  |
-| `maestro.agents.list()`                                           | `agents:read`                |
-| `maestro.agents.get(agentId)`                                     | `agents:read`                |
-| `maestro.agents.dispatch(agentId, prompt, opts?)` (INERT)         | `agents:dispatch`            |
-| `maestro.notifications.toast(message, opts?)` -> `Promise<void>`  | `notifications:toast`        |
-| `maestro.settings.get(key)`                                       | `settings:read`              |
-| `maestro.settings.set(key, value)` (key must be `plugins.<id>.*`) | `settings:write`             |
-| `maestro.sessions.list()` (metadata only)                         | `sessions:read`              |
-| `maestro.sessions.get(sessionId)` (metadata only)                 | `sessions:read`              |
-| `maestro.storage.get(key)`                                        | `storage:read`               |
-| `maestro.storage.keys()`                                          | `storage:read`               |
-| `maestro.storage.set(key, value)` (value is a string)             | `storage:write`              |
-| `maestro.storage.delete(key)`                                     | `storage:write`              |
-| `maestro.ui.runCommand(commandId, args?)`                         | `ui:command`                 |
-| `maestro.events.on(topic, handler(payload, meta))`                | - (delivery needs subscribe) |
-| `maestro.events.subscribe(topics[])`                              | `events:subscribe`           |
-| `maestro.events.unsubscribe(topics?)`                             | `events:subscribe`           |
-| `maestro.commands.register(commandId, handler(args))`             | - (invoked by host)          |
-| `maestro.process.spawn(command, opts?)` (INERT)                   | `process:spawn`              |
+| SDK method                                                                      | Capability                   |
+| ------------------------------------------------------------------------------- | ---------------------------- |
+| `maestro.pluginId` (string)                                                     | -                            |
+| `maestro.fs.read(path)` -> `Promise<string>`                                    | `fs:read`                    |
+| `maestro.fs.write(path, contents)` -> `Promise<void>`                           | `fs:write`                   |
+| `maestro.net.fetch(url, init?)` -> `Promise<unknown>`                           | `net:fetch`                  |
+| `maestro.agents.list()`                                                         | `agents:read`                |
+| `maestro.agents.get(agentId)`                                                   | `agents:read`                |
+| `maestro.agents.dispatch(agentId, prompt, opts?)` (INERT)                       | `agents:dispatch`            |
+| `maestro.notifications.toast(message, opts?)` -> `Promise<void>`                | `notifications:toast`        |
+| `maestro.settings.get(key)`                                                     | `settings:read`              |
+| `maestro.settings.set(key, value)` (key must be `plugins.<id>.*`)               | `settings:write`             |
+| `maestro.sessions.list()` (metadata only)                                       | `sessions:read`              |
+| `maestro.sessions.get(sessionId)` (metadata only)                               | `sessions:read`              |
+| `maestro.transcripts.read({ sessionId, fields, projectPath?, limit?, since? })` | `transcripts:read`           |
+| `maestro.storage.get(key)`                                                      | `storage:read`               |
+| `maestro.storage.keys()`                                                        | `storage:read`               |
+| `maestro.storage.set(key, value)` (value is a string)                           | `storage:write`              |
+| `maestro.storage.delete(key)`                                                   | `storage:write`              |
+| `maestro.ui.runCommand(commandId, args?)`                                       | `ui:command`                 |
+| `maestro.events.on(topic, handler(payload, meta))`                              | - (delivery needs subscribe) |
+| `maestro.events.subscribe(topics[])`                                            | `events:subscribe`           |
+| `maestro.events.unsubscribe(topics?)`                                           | `events:subscribe`           |
+| `maestro.commands.register(commandId, handler(args))`                           | - (invoked by host)          |
+| `maestro.process.spawn(command, opts?)` (INERT)                                 | `process:spawn`              |
 
 `net.fetch` returns `{ status, statusText, headers, body }` (body is text, capped at 5 MB). Requests are egress-guarded: loopback, link-local, RFC1918, cloud-metadata, and the app's own port are blocked, and redirects are not followed (`redirect: 'error'`), so a 3xx to a non-granted host fails.
+
+`transcripts.read` returns only the `fields` you declare for each entry (projection, not redaction); allowlisted fields include `summary`, `fullResponse`, `timestamp`, `type`, `sessionName`, and `agentSessionId`. Pass `projectPath` (from `sessions.list` metadata) so a project-scoped grant authorizes; the handler re-checks the session's real project before returning. It is bounded as a high-risk verb and audited per read.
 
 ---
 
@@ -411,7 +417,22 @@ An integral-but-untrusted plugin still runs once the user enables = consents. A 
 - **`entry` rules:** required for tier >= 1, forbidden for tier 0, must stay inside the plugin folder.
 - **Inert capabilities:** `agents:dispatch` and `process:spawn` are declared but have no production handler; do not build on them yet.
 
----
+## 14. Tooling: the SDK package and the `maestro plugin` CLI
+
+**`@maestro/plugin-sdk`** (`packages/plugin-sdk/`) is the typed authoring surface: it provides the manifest, capability, contribution, and event types, the `MaestroSdk` runtime shape, and `defineManifest()` / `definePlugin()` helpers so your editor type-checks the manifest and entry code. Add it as a dev dependency and import the types:
+
+```ts
+import { defineManifest, type PluginModule, type MaestroSdk } from '@maestro/plugin-sdk';
+```
+
+**The `maestro plugin` CLI** scaffolds, validates, signs, and packages a plugin:
+
+- `maestro plugin init [dir] --tier <0|1|2> --id <id> --name <name>` - scaffold a valid `plugin.json` (plus `entry.js`, README, and an SDK-typed `tsconfig.json` + `package.json` for code tiers). Refuses a non-empty dir without `--force`.
+- `maestro plugin validate [dir]` - run `validatePluginManifest`, report errors, and resolve the `signature.json` trust status (`unsigned` / `invalid` / `untrusted` / `trusted`).
+- `maestro plugin sign <dir> --key <pem|base64>` (or `--gen-key --key-out <path>` to generate an ed25519 keypair) - write a `signature.json` whose payload is byte-identical to what the host verifies.
+- `maestro plugin pack <dir> --out <file>` - build a distributable `.tgz` (excludes `node_modules`, `.git`, and key files).
+
+## Typical flow: `init` -> edit -> `validate` -> `sign --gen-key --key-out key.pem` -> `pack`.
 
 ## See also
 
@@ -423,3 +444,5 @@ An integral-but-untrusted plugin still runs once the user enables = consents. A 
 - `src/main/plugins/plugin-sandbox-entry.ts` - the `maestro` SDK (`buildSdk`) and sandbox globals.
 - `src/main/plugins/plugin-host-handlers.ts` - what each brokered call actually does.
 - `src/renderer/components/plugins/PluginPanelFrame.tsx` - panel lockdown, CSP, and the postMessage bridge.
+- `packages/plugin-sdk/` - the `@maestro/plugin-sdk` typed authoring package.
+- `src/cli/commands/plugin.ts` - the `maestro plugin` init/validate/sign/pack CLI.

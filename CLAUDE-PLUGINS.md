@@ -26,6 +26,7 @@ Pure, bundle-safe contracts (no Electron, no fs) in `src/shared/plugins/`:
 | `host-api.ts`                                                                                          | `HOST_API_VERSION`, `isHostApiCompatible` (semver gate)                                                                                     |
 | `rpc-protocol.ts`                                                                                      | `HOST_API` method->capability table, `HostRequest`/`HostResponse`/`HostControlMessage`, `extractTarget`                                     |
 | `signing.ts`                                                                                           | `SIGNATURE_FILENAME`, `SignatureStatus`, canonical signing payload                                                                          |
+| `capability-policy.ts`                                                                                 | cross-capability rules (`transcripts:read` + egress mutual-exclusion)                                                                       |
 | `contribution-registry.ts`, `plugin-registry.ts`, `agent-registry.ts`, `storage.ts`, `theme-bridge.ts` | registry merge + record/storage shapes                                                                                                      |
 
 Main-process runtime in `src/main/plugins/`:
@@ -100,6 +101,7 @@ HostResponse { id, ok, result?, error? } <---postMessage---
   - `settings.get`: denies secret-looking keys (`SECRET_KEY_PATTERN`), the `encoreFeatures` gate, and any `plugins.<other>.*` namespace that is not the caller's own.
   - `settings.set`: only `plugins.<id>.*` keys; same secret/proto/gate guards; value must be JSON-storable and `<= MAX_SETTINGS_VALUE_BYTES = 64 * 1024`.
   - `sessions.list` / `sessions.get`: projected through `toSessionMetadata` - metadata only, never transcript/prompt text.
+  - `transcripts.read`: PROJECTED session content - the caller declares which fields it needs and only allowlisted fields are returned (projection, not redaction). Resolves the session's REAL `projectPath` and RE-authorizes against it (the caller-claimed path is only a broker hint), refuses an untrusted plugin that also holds `net:fetch`/`process:spawn` (the exfiltration combination), runs under the `ActionGuard` (high-risk rate/concurrency cap), and writes a per-read audit line. The metadata-only event bus is untouched.
   - `storage.*`: per-plugin KV via `kvStore` (values are strings).
   - `events.subscribe` / `unsubscribe`: filtered to the fixed `PLUGIN_EVENT_TOPICS` catalog.
   - `agents.dispatch` and `process.spawn`: INERT. They only exist as handlers when `deps.dispatch` / `deps.spawn` are injected, which is intentionally left unwired in Phase 1-2. The SDK methods exist but reject.
@@ -108,22 +110,23 @@ HostResponse { id, ok, result?, error? } <---postMessage---
 
 `PLUGIN_CAPABILITIES` (`permissions.ts`), with risk and scope kind:
 
-| Capability            | Risk   | Scope | Notes                                                                        |
-| --------------------- | ------ | ----- | ---------------------------------------------------------------------------- |
-| `fs:read`             | medium | path  | re-authorized against symlink-real path                                      |
-| `fs:write`            | high   | path  | re-authorized; runs under ActionGuard                                        |
-| `net:fetch`           | medium | host  | egress-guarded (SSRF/rebind)                                                 |
-| `agents:read`         | low    | none  | list/read agent metadata                                                     |
-| `agents:dispatch`     | high   | none  | INERT (no production handler)                                                |
-| `notifications:toast` | low    | none  | raise a toast                                                                |
-| `settings:read`       | low    | none  | non-secret app settings; not the feature gate, not a peer plugin's namespace |
-| `settings:write`      | low    | none  | ONLY `plugins.<id>.*` keys                                                   |
-| `sessions:read`       | medium | none  | METADATA only, never transcript text                                         |
-| `storage:read`        | low    | none  | own KV                                                                       |
-| `storage:write`       | low    | none  | own KV                                                                       |
-| `ui:command`          | low    | none  | invoke a registered palette command                                          |
-| `events:subscribe`    | medium | none  | metadata-only topics                                                         |
-| `process:spawn`       | high   | none  | INERT (no production handler)                                                |
+| Capability            | Risk   | Scope | Notes                                                                                                                                           |
+| --------------------- | ------ | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fs:read`             | medium | path  | re-authorized against symlink-real path                                                                                                         |
+| `fs:write`            | high   | path  | re-authorized; runs under ActionGuard                                                                                                           |
+| `net:fetch`           | medium | host  | egress-guarded (SSRF/rebind)                                                                                                                    |
+| `agents:read`         | low    | none  | list/read agent metadata                                                                                                                        |
+| `agents:dispatch`     | high   | none  | INERT (no production handler)                                                                                                                   |
+| `notifications:toast` | low    | none  | raise a toast                                                                                                                                   |
+| `settings:read`       | low    | none  | non-secret app settings; not the feature gate, not a peer plugin's namespace                                                                    |
+| `settings:write`      | low    | none  | ONLY `plugins.<id>.*` keys                                                                                                                      |
+| `sessions:read`       | medium | none  | METADATA only, never transcript text                                                                                                            |
+| `transcripts:read`    | high   | path  | PROJECTED session content; project-scoped, re-authorized on the resolved path; refused with egress unless trusted; ActionGuard-bounded; audited |
+| `storage:read`        | low    | none  | own KV                                                                                                                                          |
+| `storage:write`       | low    | none  | own KV                                                                                                                                          |
+| `ui:command`          | low    | none  | invoke a registered palette command                                                                                                             |
+| `events:subscribe`    | medium | none  | metadata-only topics                                                                                                                            |
+| `process:spawn`       | high   | none  | INERT (no production handler)                                                                                                                   |
 
 `PermissionRequest = { capability, scope?, reason? }`. Path/host scopes narrow `fs:*`/`net:fetch`; an absent scope means the broad form (the consent UI must present it as such). The user grants a subset at the consent dialog (`plugins:set-grants`).
 
@@ -176,7 +179,7 @@ Integrity ("files match what was signed") and trust ("key is recognized") are la
 3. **Default deny.** Add a host method only by adding it to the `HOST_API` table with its capability; the broker derives authorization from that table. A method missing from the table is unreachable.
 4. **fs is re-authorized after symlink resolution.** Never trust the raw path string; resolve the real path and re-`authorize`. The userData/config tree is excluded even under a broad grant.
 5. **Net scope alone is not enough.** Hostname scope plus the egress guard (resolved-IP block list + connection pinning + `redirect: 'error'`) together defend `net:fetch`. Do not loosen any one of them in isolation.
-6. **Events and sessions are metadata only.** Payloads NEVER contain transcript/prompt text or file contents. Redaction is not a boundary for free-form text.
+6. **Events and sessions are metadata only.** Payloads NEVER contain transcript/prompt text or file contents. Redaction is not a boundary for free-form text. Content is reachable ONLY through the separate, consented, project-scoped, ActionGuard-bounded, audited `transcripts:read` capability - never the event bus.
 7. **Built-in wins.** Plugin agents/contributions can never shadow first-party ids.
 8. **Uninstall purges everything** (dir, toggle, grants, KV, `plugins.<id>.*` settings, event subs). Add any new per-plugin state to `purgePluginData`.
 9. **Inert by design.** `agents:dispatch` and `process:spawn` have no production handler; do not wire them without the documented security review.
@@ -185,6 +188,13 @@ Integrity ("files match what was signed") and trust ("key is recognized") are la
 
 The `vm` sandbox is realm-escapable. The intrinsics Maestro injects (the SDK, `console`, `setTimeout`) are host-realm functions, so `someInjected.constructor("return process")()` reaches the real `process`, and `codeGeneration.strings: false` only disables code-gen for the context's own `Function`, not the host's. The `vm` is DEFENSE-IN-DEPTH, never the boundary. The real controls are: the separate `utilityProcess` (process + crash isolation), the default-deny broker (which still gates ambient fs/net/exec authority), and signature/consent gating on which code runs at all. Closing the escape fully (an OS-level sandbox dropping ambient authority) is the documented Phase-3 decision. Until then, **enabling a tier-1 code plugin is a full-trust decision - only install plugins you trust.**
 
+## Authoring surface (SDK + CLI)
+
+External authors do not read this repo; two artifacts hand them the contract:
+
+- **`@maestro/plugin-sdk`** (`packages/plugin-sdk/`) - a standalone, dependency-free package that VENDORS the frozen contracts (types, the small runtime values, and the `MaestroSdk` shape) so a plugin project type-checks against the same surface. A drift-guard test keeps the vendored copies in parity with `src/shared/plugins/`; bump the package version in lockstep with `HOST_API_VERSION`.
+- **`maestro plugin` CLI** (`src/cli/commands/plugin.ts`) - `init` (scaffold), `validate` (manifest + signature status), `sign` (ed25519, payload byte-identical to `plugin-signature.ts`), `pack` (distributable tgz). See the authoring guide for the workflow.
+
 ## See also
 
 - `src/shared/plugins/` - pure contracts (`plugin-manifest.ts`, `permissions.ts`, `contributions.ts`, `events.ts`, `host-api.ts`, `rpc-protocol.ts`, `signing.ts`).
@@ -192,3 +202,5 @@ The `vm` sandbox is realm-escapable. The intrinsics Maestro injects (the SDK, `c
 - `src/main/ipc/handlers/plugins.ts` - IPC channels and the pure-reads invariant.
 - `src/renderer/components/plugins/PluginPanelFrame.tsx` - panel lockdown + the postMessage bridge.
 - [docs/agent-guides/PLUGIN-DEVELOPMENT.md](docs/agent-guides/PLUGIN-DEVELOPMENT.md) - the practical authoring guide.
+- `packages/plugin-sdk/` - the `@maestro/plugin-sdk` typed authoring package (vendored contracts + drift guard).
+- `src/cli/commands/plugin.ts` - the `maestro plugin` init/validate/sign/pack CLI.
