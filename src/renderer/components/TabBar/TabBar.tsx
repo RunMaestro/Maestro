@@ -124,6 +124,7 @@ function TabBarInner({
 	const showStarredInUnreadFilter = useSettingsStore((s) => s.showStarredInUnreadFilter);
 	const showFilePreviewsInUnreadFilter = useSettingsStore((s) => s.showFilePreviewsInUnreadFilter);
 	const useCmd0AsLastTab = useSettingsStore((s) => s.useCmd0AsLastTab);
+	const tabBarWheelScroll = useSettingsStore((s) => s.tabBarWheelScroll);
 
 	const tabBarRef = useRef<HTMLDivElement>(null);
 	const stickyLeftRef = useRef<HTMLDivElement>(null);
@@ -187,6 +188,26 @@ function TabBarInner({
 		activeTabName,
 		showUnreadOnly,
 	]);
+
+	// Pan the horizontally-overflowing tab strip with the mouse wheel. A plain
+	// vertical wheel (deltaY) is translated into horizontal scroll, matching the
+	// VS Code convention; trackpads and Shift+wheel emit deltaX, so we follow
+	// whichever axis the device reports. Attached as a native, non-passive
+	// listener because React's synthetic onWheel runs passively and cannot call
+	// preventDefault — without it the wheel would also scroll an outer container.
+	useEffect(() => {
+		const el = tabBarRef.current;
+		if (!el || !tabBarWheelScroll) return;
+		const handleWheel = (e: WheelEvent) => {
+			if (el.scrollWidth <= el.clientWidth) return; // nothing to pan
+			const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+			if (delta === 0) return;
+			el.scrollLeft += delta;
+			e.preventDefault();
+		};
+		el.addEventListener('wheel', handleWheel, { passive: false });
+		return () => el.removeEventListener('wheel', handleWheel);
+	}, [tabBarWheelScroll]);
 
 	// Filter tabs for display. Memoized so the filter only re-runs when the
 	// inputs actually change - without this, every TabBar render (e.g. on input
