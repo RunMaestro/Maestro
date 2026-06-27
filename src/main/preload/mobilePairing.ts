@@ -47,6 +47,8 @@ export interface DeviceListResponse {
 export interface RevokeDeviceResponse {
 	success: boolean;
 	revoked?: boolean;
+	/** Number of active mobile WebSocket connections that were closed for the revoked device. */
+	disconnected?: number;
 	error?: string;
 }
 

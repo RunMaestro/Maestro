@@ -102,6 +102,11 @@ export function useSessionChat(targetSessionId: string): UseSessionChatReturn {
 		sessionIdRef.current = targetSessionId;
 	}, [targetSessionId]);
 
+	// Stable reference to the active tab id so streaming subscribers can filter
+	// out output produced for inactive tabs. Without this, a busy background tab
+	// would append its tokens to the visible tab's message list.
+	const activeTabIdRef = useRef<string | null>(null);
+
 	// Commit the in-flight streaming buffer to the assistant message and clear
 	// streaming state. Used by both session_state_change=idle and session_exit.
 	const commitStreaming = useCallback(() => {
@@ -145,9 +150,13 @@ export function useSessionChat(targetSessionId: string): UseSessionChatReturn {
 
 	// Subscribe to session output (streamed assistant tokens).
 	useEffect(() => {
-		return subscribeSessionOutput((outputSessionId, data, source) => {
+		return subscribeSessionOutput((outputSessionId, data, source, tabId) => {
 			if (outputSessionId !== sessionIdRef.current) return;
 			if (source !== 'ai') return;
+			// Drop output from non-active tabs. The desktop fans out tokens for
+			// every running tab; we only render the one the user is looking at.
+			const currentTabId = activeTabIdRef.current;
+			if (tabId && currentTabId && tabId !== currentTabId) return;
 
 			if (!streamingMessageIdRef.current) {
 				const messageId = `assistant-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -243,6 +252,7 @@ export function useSessionChat(targetSessionId: string): UseSessionChatReturn {
 	// asked for it.
 	const activeTabId = session?.activeTabId ?? null;
 	useEffect(() => {
+		activeTabIdRef.current = activeTabId;
 		setMessages([]);
 		streamingRef.current = '';
 		streamingStore.set('');

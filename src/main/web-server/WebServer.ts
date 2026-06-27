@@ -1173,6 +1173,42 @@ export class WebServer {
 		return this.webClients.size;
 	}
 
+	/**
+	 * Close any open WebSocket connections tied to a revoked mobile device id.
+	 * The pairing record is the only thing that lets the next reconnect succeed;
+	 * an already-open socket keeps working because it authenticated at handshake.
+	 * Callers that revoke a device must invoke this to drop the live sockets too.
+	 *
+	 * Returns the number of sockets that were closed.
+	 */
+	disconnectMobileDevice(deviceId: string, reason: string = 'Device revoked'): number {
+		if (!deviceId) return 0;
+		let closed = 0;
+		for (const [clientId, client] of this.webClients) {
+			if (!client.isMobileClient || client.mobileDeviceId !== deviceId) continue;
+			try {
+				client.socket.send(
+					JSON.stringify({
+						type: 'error',
+						message: reason,
+						code: 'AUTH_FAILED',
+					})
+				);
+				client.socket.close(4001, reason);
+			} catch (err) {
+				logger.warn(
+					`Failed to close socket for revoked client ${clientId}: ${String(err)}`,
+					LOG_CONTEXT
+				);
+			}
+			closed++;
+		}
+		if (closed > 0) {
+			logger.info(`Closed ${closed} mobile socket(s) for revoked device ${deviceId}`, LOG_CONTEXT);
+		}
+		return closed;
+	}
+
 	async start(): Promise<{ port: number; token: string; url: string }> {
 		if (this.isRunning) {
 			return {

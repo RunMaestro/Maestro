@@ -123,6 +123,13 @@ export interface WebSocketHandlers {
 	/** Called when theme is received or updated from Maestro desktop */
 	onThemeUpdate?: (theme: Theme) => void;
 	onError?: (error: string) => void;
+	/**
+	 * Fired when the desktop rejects the stored token (revoked, expired, or
+	 * never paired). After this fires, the hook stops auto-reconnecting so a
+	 * stale token can't loop. Callers should clear credentials and route the
+	 * user back to pairing.
+	 */
+	onAuthFailed?: (reason: string) => void;
 }
 
 export interface UseMaestroWebSocketOptions {
@@ -215,7 +222,9 @@ export function useMaestroWebSocket(
 
 				case 'auth_failed':
 					setError(message.message);
+					shouldReconnectRef.current = false;
 					handlersRef.current?.onError?.(message.message);
+					handlersRef.current?.onAuthFailed?.(message.message || 'Authentication failed');
 					break;
 
 				case 'sessions_list':
@@ -277,6 +286,10 @@ export function useMaestroWebSocket(
 
 				case 'error':
 					setError(message.message);
+					if (message.code === 'AUTH_FAILED') {
+						shouldReconnectRef.current = false;
+						handlersRef.current?.onAuthFailed?.(message.message || 'Authentication failed');
+					}
 					handlersRef.current?.onError?.(message.message);
 					break;
 
@@ -380,6 +393,13 @@ export function useMaestroWebSocket(
 				wsRef.current = null;
 				setState('disconnected');
 				handlersRef.current?.onConnectionChange?.('disconnected');
+
+				// 4001 = desktop rejected the token. Looping a rejected token just
+				// burns CPU and shows the same error forever, so latch off.
+				if (event.code === 4001) {
+					shouldReconnectRef.current = false;
+					handlersRef.current?.onAuthFailed?.(event.reason || 'Authentication failed');
+				}
 
 				// Attempt to reconnect if not a clean close
 				if (event.code !== 1000 && shouldReconnectRef.current) {

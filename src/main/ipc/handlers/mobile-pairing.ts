@@ -114,20 +114,28 @@ export function registerMobilePairingHandlers(deps: MobilePairingHandlerDependen
 	/**
 	 * Revoke a paired device by ID.
 	 *
-	 * Removes the device from the paired devices list.
+	 * Removes the device from the paired devices list and closes any open
+	 * WebSocket connections that already authenticated with this device's
+	 * token. Without the second step, a live mobile socket would keep
+	 * authority until it reconnected on its own.
 	 */
 	ipcMain.handle(
 		'mobile-pairing:revoke-device',
 		createIpcHandler(
 			handlerOpts('revoke-device'),
-			async (id: string): Promise<{ revoked: boolean }> => {
+			async (id: string): Promise<{ revoked: boolean; disconnected: number }> => {
 				const revoked = await revokeDevice(id);
+				let disconnected = 0;
 				if (revoked) {
 					logger.info(`Revoked paired device: ${id}`, LOG_CONTEXT);
+					const webServer = getWebServer();
+					if (webServer && webServer.isActive()) {
+						disconnected = webServer.disconnectMobileDevice(id);
+					}
 				} else {
 					logger.warn(`Device not found for revocation: ${id}`, LOG_CONTEXT);
 				}
-				return { revoked };
+				return { revoked, disconnected };
 			}
 		)
 	);

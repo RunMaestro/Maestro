@@ -16,8 +16,10 @@ import React, {
 	useEffect,
 	useMemo,
 } from 'react';
+import { useRouter } from 'expo-router';
+import { useMaestroConnection } from '@/hooks/useMaestroConnection';
+import { clearCredentials } from './credentials';
 import {
-	useMaestroWebSocket,
 	type AITabData,
 	type SessionData,
 	type SessionHistoryResult,
@@ -128,6 +130,8 @@ interface SessionsProviderProps {
 }
 
 export function SessionsProvider({ children, onThemeUpdate }: SessionsProviderProps) {
+	const router = useRouter();
+
 	// Sessions state
 	const [sessions, setSessions] = useState<SessionData[]>([]);
 	const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -137,6 +141,9 @@ export function SessionsProvider({ children, onThemeUpdate }: SessionsProviderPr
 
 	// Track theme callback in ref for callback stability
 	const onThemeUpdateRef = useRef(onThemeUpdate);
+
+	// Latch so we only route back to /pair once per AUTH_FAILED event.
+	const authFailedHandledRef = useRef(false);
 
 	// One-shot resolvers for in-flight refreshSessions() calls. Drained when the
 	// next `sessions_list` arrives so pull-to-refresh resolves on real data.
@@ -159,18 +166,33 @@ export function SessionsProvider({ children, onThemeUpdate }: SessionsProviderPr
 		onThemeUpdateRef.current = onThemeUpdate;
 	}, [onThemeUpdate]);
 
-	// WebSocket connection
+	// WebSocket connection — wrapped in useMaestroConnection so AppState/NetInfo
+	// transitions tear down the socket on background and reconnect on foreground,
+	// and so the streaming buffer gets marked stale after a long pause.
 	const {
-		state: connectionState,
+		wsState: connectionState,
 		isAuthenticated,
 		error,
 		connect,
 		disconnect,
 		send,
 		requestSessionHistory,
-	} = useMaestroWebSocket({
+	} = useMaestroConnection({
 		autoReconnect: true,
 		handlers: {
+			onAuthFailed: () => {
+				// Desktop revoked the token (or it expired). Wipe credentials and
+				// kick the user back to the pairing screen instead of looping.
+				if (authFailedHandledRef.current) return;
+				authFailedHandledRef.current = true;
+				void clearCredentials()
+					.catch((err) => {
+						console.warn('[SessionsContext] Failed to clear credentials after AUTH_FAILED', err);
+					})
+					.finally(() => {
+						router.replace('/pair');
+					});
+			},
 			onSessionsUpdate: (newSessions: SessionData[]) => {
 				setSessions(newSessions);
 
@@ -324,12 +346,13 @@ export function SessionsProvider({ children, onThemeUpdate }: SessionsProviderPr
 		},
 	});
 
-	// Auto-connect on mount
+	// Reset the AUTH_FAILED latch once we're authenticated again, so a later
+	// revoke still triggers the navigation back to /pair.
 	useEffect(() => {
-		if (connectionState === 'disconnected') {
-			connect();
+		if (connectionState === 'authenticated') {
+			authFailedHandledRef.current = false;
 		}
-	}, [connectionState, connect]);
+	}, [connectionState]);
 
 	// Derived active session
 	const activeSession = useMemo(

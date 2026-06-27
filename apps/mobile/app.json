@@ -1,17 +1,21 @@
 {
 	"expo": {
-		"name": "chat",
-		"slug": "chat",
+		"name": "Maestro",
+		"slug": "maestro-mobile",
 		"version": "1.0.0",
 		"orientation": "portrait",
-		"scheme": "chat",
+		"scheme": "maestro",
 		"userInterfaceStyle": "automatic",
 		"ios": {
 			"infoPlist": {
 				"UIViewControllerBasedStatusBarAppearance": true,
-				"ITSAppUsesNonExemptEncryption": false
+				"ITSAppUsesNonExemptEncryption": false,
+				"NSLocalNetworkUsageDescription": "Maestro connects to your desktop over your local network to pair and stream chat sessions.",
+				"NSAppTransportSecurity": {
+					"NSAllowsLocalNetworking": true
+				}
 			},
-			"bundleIdentifier": "com.ashraf-ali-aa.chat"
+			"bundleIdentifier": "com.ashraf-ali-aa.maestro"
 		},
 		"android": {
 			"predictiveBackGestureEnabled": false
@@ -20,6 +24,7 @@
 			"output": "server"
 		},
 		"plugins": [
+			"./plugins/with-android-cleartext",
 			"expo-router",
 			[
 				"expo-splash-screen",
