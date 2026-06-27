@@ -14,6 +14,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import semver from 'semver';
 import { HOST_API_VERSION } from '../../shared/plugins/host-api';
 import {
 	buildRecord,
@@ -282,6 +283,97 @@ export class PluginManager {
 		this.refresh();
 		const record = this.registry.records.find((r) => r.id === manifest.id);
 		return { success: true, ...(record ? { record } : {}) };
+	}
+
+	/**
+	 * Update an already-installed plugin in place from a new source directory.
+	 *
+	 * This is NOT install: the manifest id MUST already be installed. Updating an
+	 * id that is not installed REJECTS (callers use install() for a first-time
+	 * add) - update never creates a plugin, it only replaces the bytes of one the
+	 * user already has. The source version MUST be strictly greater (semver) than
+	 * the installed version; a downgrade or an equal version is REJECTED.
+	 * Symlinks in the source tree are refused (the same escape guard install()
+	 * uses). The running sandbox for the id is stopped before the files are
+	 * swapped.
+	 *
+	 * The swap is atomic and OS-agnostic: the new tree is staged in a temp dir
+	 * INSIDE the plugins dir (same filesystem, so fs.renameSync is a real atomic
+	 * move on Windows/macOS/Linux), the old dir is moved aside, the staged dir is
+	 * renamed into place, and the old dir is only then discarded. On any failure
+	 * mid-swap the old dir is restored, so a partial update can never leave the
+	 * plugin half-replaced.
+	 *
+	 * Trust is NOT carried forward: the persisted enable toggle survives (we never
+	 * touch the state file, so an enabled plugin stays enabled), but refresh()
+	 * re-validates the manifest and re-verifies the signature from the NEW bytes,
+	 * so a new (possibly unsigned or tampered) version never inherits the old
+	 * version's trust.
+	 */
+	async update(sourceDir: string): Promise<PluginRegistry> {
+		if (!this.deps.isEnabled()) throw new Error('plugins feature is disabled');
+		const rawManifest = this.readManifest(sourceDir);
+		const { manifest, errors } = validatePluginManifest(rawManifest);
+		if (!manifest) {
+			throw new Error(`invalid plugin.json: ${errors.join('; ')}`);
+		}
+		const id = manifest.id;
+		if (!isSafePluginFolderName(id)) {
+			throw new Error(`plugin id "${id}" is not a safe folder name`);
+		}
+		const dir = pluginsDir();
+		const dest = path.join(dir, id);
+		// Update is not install: the id must already be installed on disk.
+		if (!fs.existsSync(dest)) {
+			throw new Error(`plugin "${id}" is not installed; install it before updating`);
+		}
+		const installed = validatePluginManifest(this.readManifest(dest)).manifest;
+		if (!installed) {
+			throw new Error(`installed plugin "${id}" has an unreadable manifest; cannot update`);
+		}
+		// Require a strictly newer version. Refuse a downgrade or an equal version.
+		if (!semver.valid(manifest.version) || !semver.valid(installed.version)) {
+			throw new Error(
+				`cannot compare versions "${installed.version}" -> "${manifest.version}" (not valid semver)`
+			);
+		}
+		if (!semver.gt(manifest.version, installed.version)) {
+			throw new Error(
+				`update version ${manifest.version} is not newer than installed ${installed.version}`
+			);
+		}
+		// Reject a source tree containing symlinks (same escape guard as install()).
+		if (containsSymlink(sourceDir)) {
+			throw new Error('plugin source contains symlinks, which are not allowed');
+		}
+		// Stage the new tree on the SAME filesystem (inside the plugins dir) so the
+		// rename into place is a real atomic move everywhere.
+		fs.mkdirSync(dir, { recursive: true });
+		const staging = fs.mkdtempSync(path.join(dir, `.update-${id}-`));
+		const staged = path.join(staging, id);
+		const backup = path.join(staging, `${id}.old`);
+		try {
+			// dereference:false keeps the copy faithful; we already rejected symlinks.
+			fs.cpSync(sourceDir, staged, { recursive: true });
+			// Stop the running sandbox before swapping files (mirrors uninstall's stop
+			// path); refresh() below restarts it if the new version is still runnable.
+			this.deps.sandbox?.stop(id);
+			// Move the old dir aside, then move the new one into place. If the second
+			// rename fails, restore the old dir so we never leave a partial state.
+			fs.renameSync(dest, backup);
+			try {
+				fs.renameSync(staged, dest);
+			} catch (swapError) {
+				fs.renameSync(backup, dest);
+				throw swapError;
+			}
+		} finally {
+			fs.rmSync(staging, { recursive: true, force: true });
+		}
+		// refresh() re-reads the NEW bytes: re-validates the manifest and recomputes
+		// signature trust from scratch. The enable toggle survives because we never
+		// touched the persisted state, so an enabled plugin stays enabled.
+		return this.refresh();
 	}
 
 	/**

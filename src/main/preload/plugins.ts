@@ -38,6 +38,14 @@ export function createPluginsApi() {
 		install: (sourceDir: string): Promise<InstallResult> =>
 			ipcRenderer.invoke('plugins:install', sourceDir),
 
+		/**
+		 * Update an already-installed plugin to a newer version by copying a new
+		 * source directory over it. Rejects unless the id is already installed and
+		 * the source version is strictly newer (semver). Returns the updated list.
+		 */
+		update: (sourceDir: string): Promise<PluginListSnapshot> =>
+			ipcRenderer.invoke('plugins:update', sourceDir),
+
 		/** Uninstall a plugin by id (removes its directory and forgets its toggle). */
 		uninstall: (id: string): Promise<{ success: boolean; error?: string }> =>
 			ipcRenderer.invoke('plugins:uninstall', id),
