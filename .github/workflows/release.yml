@@ -18,7 +18,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest
+          # Pinned to macos-15 (not macos-latest). On 2026-06-15 the macos-latest
+          # label began migrating to macOS 26, and electron-builder's macOS
+          # packaging/signing step dies silently on the macOS 26 image (the build
+          # aborts right after native-module collection with no error). macos-15 is
+          # the last known-good image. Revisit unpinning once macOS 26 signing works.
+          - os: macos-15
             platform: mac
             arch: universal
           - os: ubuntu-latest
