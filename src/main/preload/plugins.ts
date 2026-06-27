@@ -78,6 +78,15 @@ export function createPluginsApi() {
 		invokeCommand: (commandId: string, args?: unknown): Promise<{ dispatched: boolean }> =>
 			ipcRenderer.invoke('plugins:invoke-command', commandId, args),
 
+		/**
+		 * Invoke a contributed tool (`<pluginId>/<localId>`) and await its result.
+		 * Unlike invokeCommand (fire-and-forget), this is a brokered request/
+		 * response round-trip: the resolved value carries the plugin handler's
+		 * return value under `result`.
+		 */
+		invokeTool: (toolId: string, args?: unknown): Promise<{ result: unknown }> =>
+			ipcRenderer.invoke('plugins:invoke-tool', toolId, args),
+
 		/** Read a contributed panel's HTML for rendering in a sandboxed iframe. */
 		panelHtml: (panelId: string): Promise<{ html: string | null }> =>
 			ipcRenderer.invoke('plugins:panel-html', panelId),

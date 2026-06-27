@@ -45,9 +45,9 @@ describe('@maestro/plugin-sdk vendored-contract drift guard', () => {
 		expect(HOST_METHODS).toEqual(SRC_HOST_METHODS);
 	});
 
-	it('HOST_API_VERSION matches the source and is pinned to 1.2.0', () => {
+	it('HOST_API_VERSION matches the source and is pinned to 1.3.0', () => {
 		expect(HOST_API_VERSION).toBe(SRC_HOST_API_VERSION);
-		expect(HOST_API_VERSION).toBe('1.2.0');
+		expect(HOST_API_VERSION).toBe('1.3.0');
 	});
 
 	it('PLUGIN_ID_PATTERN source string matches', () => {

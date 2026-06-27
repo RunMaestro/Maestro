@@ -22,6 +22,7 @@ import {
 	type HostMethod,
 	type HostRequest,
 	type HostResponse,
+	type ToolResult,
 } from '../../shared/plugins/rpc-protocol';
 import type { PluginEvent } from '../../shared/plugins/events';
 
@@ -77,6 +78,18 @@ const RATE_WINDOW_MS = 1000;
 const RATE_MAX_PER_WINDOW = 200;
 /** Bounded ring-buffer size for per-plugin recent log lines (observability). */
 const ACTIVITY_LOG_LIMIT = 50;
+/** How long the host waits for a child's `toolResult` before rejecting. */
+const TOOL_INVOKE_TIMEOUT_MS = 30_000;
+/** Max concurrent in-flight tool invocations per plugin (bounds the pending map
+ *  against a stuck/hostile child that never replies). */
+const MAX_PENDING_TOOLS = 64;
+
+/** One outstanding `invokeTool` round-trip awaiting the child's `toolResult`. */
+interface PendingTool {
+	resolve: (value: unknown) => void;
+	reject: (err: Error) => void;
+	timer: NodeJS.Timeout;
+}
 
 interface RunningPlugin {
 	proc: UtilityProcess;
@@ -84,6 +97,10 @@ interface RunningPlugin {
 	inFlight: number;
 	windowStart: number;
 	windowCount: number;
+	/** Outstanding tool invocations keyed by correlation id. */
+	pendingTools: Map<number, PendingTool>;
+	/** Monotonic correlation id for the next tool invocation. */
+	nextToolId: number;
 }
 
 /** Mutable per-plugin observability accumulator. Kept separate from `running`
@@ -193,7 +210,14 @@ export class PluginSandboxHost {
 			env: {},
 		});
 
-		const record: RunningPlugin = { proc, inFlight: 0, windowStart: Date.now(), windowCount: 0 };
+		const record: RunningPlugin = {
+			proc,
+			inFlight: 0,
+			windowStart: Date.now(),
+			windowCount: 0,
+			pendingTools: new Map(),
+			nextToolId: 1,
+		};
 		this.running.set(pluginId, record);
 		// Ensure an observability record exists so a freshly started plugin shows
 		// up in getActivity() even before it makes its first host call.
@@ -205,6 +229,10 @@ export class PluginSandboxHost {
 		proc.on('exit', (code: number) => {
 			const existing = this.running.get(pluginId);
 			if (existing?.shutdownTimer) clearTimeout(existing.shutdownTimer);
+			// Fail every outstanding tool round-trip: the child that owed a reply
+			// is gone, so the awaiting caller must reject rather than hang.
+			if (existing)
+				this.rejectPendingTools(existing, 'plugin exited before returning a tool result');
 			this.running.delete(pluginId);
 			const act = this.activity.get(pluginId);
 			if (act) act.inFlight = 0;
@@ -241,6 +269,65 @@ export class PluginSandboxHost {
 		} catch {
 			return false;
 		}
+	}
+
+	/**
+	 * Invoke a tool in a running plugin's sandbox and await its result. Unlike
+	 * {@link invokeCommand} (fire-and-forget), this is a brokered request/response
+	 * round-trip: a correlation id is assigned, an `invokeTool` control message is
+	 * posted to the child, and the returned promise settles when the matching
+	 * `toolResult` arrives (resolve `result` / reject `error`). Rejects if the
+	 * plugin is not running, the args cannot be serialized or exceed the size cap,
+	 * too many tool calls are already in flight, the round-trip exceeds
+	 * {@link TOOL_INVOKE_TIMEOUT_MS}, or the child exits before replying.
+	 */
+	invokeTool(pluginId: string, commandId: string, args?: unknown): Promise<unknown> {
+		const record = this.running.get(pluginId);
+		if (!record) return Promise.reject(new Error(`plugin "${pluginId}" is not running`));
+		// Bound the host->child payload exactly like invokeCommand / HostRequest.
+		let serialized: string;
+		try {
+			serialized = JSON.stringify(args ?? null);
+		} catch {
+			return Promise.reject(new Error('tool args are not serializable'));
+		}
+		if (serialized.length > MAX_MESSAGE_BYTES) {
+			return Promise.reject(new Error('tool args exceed size limit'));
+		}
+		if (record.pendingTools.size >= MAX_PENDING_TOOLS) {
+			return Promise.reject(new Error('too many concurrent tool invocations'));
+		}
+		const id = record.nextToolId++;
+		return new Promise<unknown>((resolve, reject) => {
+			const timer = setTimeout(() => {
+				record.pendingTools.delete(id);
+				reject(new Error(`tool "${commandId}" timed out after ${TOOL_INVOKE_TIMEOUT_MS}ms`));
+			}, TOOL_INVOKE_TIMEOUT_MS);
+			// Never let a pending tool timer keep the process alive on shutdown.
+			if (typeof timer.unref === 'function') timer.unref();
+			record.pendingTools.set(id, { resolve, reject, timer });
+			try {
+				record.proc.postMessage({ kind: 'invokeTool', id, commandId, args });
+			} catch (err) {
+				record.pendingTools.delete(id);
+				clearTimeout(timer);
+				reject(
+					new Error(
+						`failed to post tool invocation: ${err instanceof Error ? err.message : String(err)}`
+					)
+				);
+			}
+		});
+	}
+
+	/** Reject and clear every outstanding tool round-trip for a plugin (called
+	 *  when the child exits so awaiting callers never hang). */
+	private rejectPendingTools(record: RunningPlugin, reason: string): void {
+		for (const pending of record.pendingTools.values()) {
+			clearTimeout(pending.timer);
+			pending.reject(new Error(reason));
+		}
+		record.pendingTools.clear();
 	}
 
 	/**
@@ -306,6 +393,12 @@ export class PluginSandboxHost {
 			const message = String(msg.message ?? '');
 			this.recordLog(pluginId, level, message);
 			this.deps.onLog?.(pluginId, level, message);
+			return;
+		}
+
+		// Child reply to one of our outstanding invokeTool round-trips.
+		if (msg.kind === 'toolResult') {
+			this.handleToolResult(pluginId, msg as unknown as ToolResult);
 			return;
 		}
 
@@ -380,6 +473,25 @@ export class PluginSandboxHost {
 		} finally {
 			if (record) record.inFlight = Math.max(0, record.inFlight - 1);
 			act.inFlight = Math.max(0, act.inFlight - 1);
+		}
+	}
+
+	/** Correlate a child's `toolResult` to its pending round-trip and settle it.
+	 *  Ignored when the plugin/id is unknown (late reply after timeout/exit). */
+	private handleToolResult(pluginId: string, res: ToolResult): void {
+		const record = this.running.get(pluginId);
+		if (!record) return;
+		if (typeof res.id !== 'number') return;
+		const pending = record.pendingTools.get(res.id);
+		if (!pending) return;
+		record.pendingTools.delete(res.id);
+		clearTimeout(pending.timer);
+		if (res.ok === true) {
+			pending.resolve(res.result);
+		} else {
+			pending.reject(
+				new Error(typeof res.error === 'string' ? res.error : 'tool invocation failed')
+			);
 		}
 	}
 }

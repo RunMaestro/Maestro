@@ -21,6 +21,12 @@ export interface CueDispatchServiceDeps {
 		notify?: CueNotifyConfig
 	) => void;
 	onLog: (level: MainLogLevel, message: string, data?: unknown) => void;
+	/**
+	 * Optional metadata-only hook fired once per subscription dispatch, carrying
+	 * the source event TYPE only (never prompt text). Used to surface `cue.fired`
+	 * to subscribed plugins; best-effort and must never throw into dispatch.
+	 */
+	onTriggerFired?: (eventType: string) => void;
 }
 
 /**
@@ -81,6 +87,9 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 				pipelineName: sub.pipeline_name,
 				triggerName: event.triggerName,
 			});
+
+			// Surface `cue.fired` to subscribed plugins (type only, no prompt text).
+			deps.onTriggerFired?.(event.type);
 
 			if (sub.fan_out && sub.fan_out.length > 0) {
 				const targetNames = sub.fan_out.join(', ');

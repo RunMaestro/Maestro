@@ -139,6 +139,35 @@ export interface AgentContribution {
 	capabilities: Record<string, boolean>;
 }
 
+/** A tool a (tier-1) plugin exposes for an agent to call: a named, described,
+ * optionally schema-typed operation. The plugin registers a handler (like a
+ * command) that the brokered request/response invoke runs, returning a result.
+ * Surfacing a tool to a specific agent's model is a separate wiring step. */
+export interface AgentToolContribution {
+	id: string;
+	localId: string;
+	pluginId: string;
+	name: string;
+	description: string;
+	/** Optional JSON-schema-ish description of the tool's input (stored loosely). */
+	inputSchema?: Record<string, unknown>;
+}
+
+/** A keyboard shortcut a (tier-1) plugin binds to one of its commands. Parsed and
+ * aggregated here so the host can register it; like agent contributions, the
+ * registration is the additive foundation and actually binding the chord is a
+ * separate consumption step. */
+export interface KeybindingContribution {
+	id: string;
+	localId: string;
+	pluginId: string;
+	/** The shortcut chord, e.g. "Ctrl+Shift+P" (validated as a non-empty string). */
+	key: string;
+	/** The plugin-local command id to invoke when the chord fires. */
+	command: string;
+	description?: string;
+}
+
 /** All contributions a single plugin declared, plus any per-item errors. */
 export interface PluginContributions {
 	themes: ThemeContribution[];
@@ -149,6 +178,8 @@ export interface PluginContributions {
 	commands: CommandContribution[];
 	panels: PanelContribution[];
 	agents: AgentContribution[];
+	tools: AgentToolContribution[];
+	keybindings: KeybindingContribution[];
 	/** Human-readable reasons individual contributions were dropped. */
 	errors: string[];
 }
@@ -163,6 +194,8 @@ export interface AggregatedContributions {
 	commands: CommandContribution[];
 	panels: PanelContribution[];
 	agents: AgentContribution[];
+	tools: AgentToolContribution[];
+	keybindings: KeybindingContribution[];
 	/** Per-plugin errors keyed by plugin id (only plugins with errors appear). */
 	errorsByPlugin: Record<string, string[]>;
 }
@@ -201,6 +234,8 @@ export function collectContributions(manifest: PluginManifest): PluginContributi
 		commands: [],
 		panels: [],
 		agents: [],
+		tools: [],
+		keybindings: [],
 		errors: [],
 	};
 	const contributes = manifest.contributes;
@@ -259,6 +294,26 @@ export function collectContributions(manifest: PluginManifest): PluginContributi
 			}
 		}
 	}
+	if (contributes.tools !== undefined) {
+		if (!isCodeTier) {
+			out.errors.push(`[${pluginId}] tools require tier >= 1 (they run plugin code)`);
+		} else {
+			for (const raw of asArray(contributes.tools)) {
+				const tool = parseTool(pluginId, raw, out.errors);
+				if (tool) out.tools.push(tool);
+			}
+		}
+	}
+	if (contributes.keybindings !== undefined) {
+		if (!isCodeTier) {
+			out.errors.push(`[${pluginId}] keybindings require tier >= 1 (they invoke plugin commands)`);
+		} else {
+			for (const raw of asArray(contributes.keybindings)) {
+				const kb = parseKeybinding(pluginId, raw, out.errors);
+				if (kb) out.keybindings.push(kb);
+			}
+		}
+	}
 	return out;
 }
 
@@ -277,6 +332,8 @@ export function aggregateContributions(manifests: PluginManifest[]): AggregatedC
 		commands: [],
 		panels: [],
 		agents: [],
+		tools: [],
+		keybindings: [],
 		errorsByPlugin: {},
 	};
 	const seen = new Set<string>();
@@ -302,6 +359,8 @@ export function aggregateContributions(manifests: PluginManifest[]): AggregatedC
 		c.commands.forEach((cmd) => pushUnique(agg.commands, cmd));
 		c.panels.forEach((panel) => pushUnique(agg.panels, panel));
 		c.agents.forEach((agent) => pushUnique(agg.agents, agent));
+		c.tools.forEach((t) => pushUnique(agg.tools, t));
+		c.keybindings.forEach((k) => pushUnique(agg.keybindings, k));
 	}
 	return agg;
 }
@@ -574,6 +633,60 @@ function parseCommand(
 		localId,
 		pluginId,
 		title: raw.title.trim(),
+		...(isNonEmptyString(raw.description) ? { description: raw.description.trim() } : {}),
+	};
+}
+
+function parseTool(pluginId: string, raw: unknown, errors: string[]): AgentToolContribution | null {
+	if (!isPlainObject(raw)) {
+		errors.push(`[${pluginId}] a tool contribution is not an object`);
+		return null;
+	}
+	const localId = parseLocalId(pluginId, raw, errors);
+	if (!localId) return null;
+	if (!isNonEmptyString(raw.name)) {
+		errors.push(`[${pluginId}] tool "${localId}" is missing a name`);
+		return null;
+	}
+	if (!isNonEmptyString(raw.description)) {
+		errors.push(`[${pluginId}] tool "${localId}" is missing a description`);
+		return null;
+	}
+	return {
+		id: namespaced(pluginId, localId),
+		localId,
+		pluginId,
+		name: raw.name.trim(),
+		description: raw.description.trim(),
+		...(isPlainObject(raw.inputSchema) ? { inputSchema: raw.inputSchema } : {}),
+	};
+}
+
+function parseKeybinding(
+	pluginId: string,
+	raw: unknown,
+	errors: string[]
+): KeybindingContribution | null {
+	if (!isPlainObject(raw)) {
+		errors.push(`[${pluginId}] a keybinding contribution is not an object`);
+		return null;
+	}
+	const localId = parseLocalId(pluginId, raw, errors);
+	if (!localId) return null;
+	if (!isNonEmptyString(raw.key)) {
+		errors.push(`[${pluginId}] keybinding "${localId}" is missing a key chord`);
+		return null;
+	}
+	if (!isNonEmptyString(raw.command) || !LOCAL_ID_PATTERN.test(raw.command.trim())) {
+		errors.push(`[${pluginId}] keybinding "${localId}" command must be a plugin-local command id`);
+		return null;
+	}
+	return {
+		id: namespaced(pluginId, localId),
+		localId,
+		pluginId,
+		key: raw.key.trim(),
+		command: raw.command.trim(),
 		...(isNonEmptyString(raw.description) ? { description: raw.description.trim() } : {}),
 	};
 }

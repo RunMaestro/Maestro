@@ -10,6 +10,8 @@ import {
 	type MaestroSdk,
 	type PluginManifest,
 	type PluginModule,
+	type AgentToolContribution,
+	type KeybindingContribution,
 } from '../index';
 
 describe('@maestro/plugin-sdk authoring surface', () => {
@@ -80,5 +82,12 @@ describe('@maestro/plugin-sdk authoring surface', () => {
 		expectTypeOf<MaestroSdk['transcripts']['read']>().returns.resolves.toEqualTypeOf<
 			Array<Record<string, unknown>>
 		>();
+	});
+
+	it('exports the new tool + keybinding contribution types', () => {
+		expectTypeOf<AgentToolContribution>().toHaveProperty('inputSchema');
+		expectTypeOf<KeybindingContribution>().toHaveProperty('key');
+		expectTypeOf<MaestroSdk>().toHaveProperty('tools');
+		expectTypeOf<MaestroSdk['tools']>().toHaveProperty('register');
 	});
 });

@@ -307,3 +307,66 @@ describe('contributed setting key validation', () => {
 		expect(c.errors).toEqual([]);
 	});
 });
+
+describe('keybinding contributions', () => {
+	it('parses + namespaces a tier-1 keybinding capturing key and command', () => {
+		const c = collectContributions(
+			manifest(
+				'com.acme',
+				{
+					keybindings: [
+						{ id: 'palette', key: 'Ctrl+Shift+P', command: 'open-palette', description: 'Open it' },
+					],
+				},
+				1
+			)
+		);
+		expect(c.keybindings).toEqual([
+			{
+				id: 'com.acme/palette',
+				localId: 'palette',
+				pluginId: 'com.acme',
+				key: 'Ctrl+Shift+P',
+				command: 'open-palette',
+				description: 'Open it',
+			},
+		]);
+		expect(c.errors).toEqual([]);
+	});
+
+	it('rejects keybindings for tier 0 (they invoke plugin commands)', () => {
+		const c = collectContributions(
+			manifest('com.acme', {
+				keybindings: [{ id: 'palette', key: 'Ctrl+Shift+P', command: 'open-palette' }],
+			})
+		);
+		expect(c.keybindings).toEqual([]);
+		expect(c.errors.some((e) => e.includes('keybindings require tier'))).toBe(true);
+	});
+
+	it('drops a keybinding missing its key chord or command id', () => {
+		const c = collectContributions(
+			manifest(
+				'com.acme',
+				{
+					keybindings: [
+						{ id: 'nokey', command: 'do-thing' },
+						{ id: 'nocmd', key: 'Ctrl+K' },
+					],
+				},
+				1
+			)
+		);
+		expect(c.keybindings).toEqual([]);
+		expect(c.errors.length).toBe(2);
+	});
+
+	it('aggregates keybindings across plugins via plugins:contributions surface', () => {
+		const agg = aggregateContributions([
+			manifest('com.a', { keybindings: [{ id: 'k', key: 'Ctrl+1', command: 'one' }] }, 1),
+			manifest('com.b', { keybindings: [{ id: 'k', key: 'Ctrl+2', command: 'two' }] }, 1),
+		]);
+		expect(agg.keybindings.map((k) => k.id).sort()).toEqual(['com.a/k', 'com.b/k']);
+		expect(agg.keybindings.map((k) => k.key).sort()).toEqual(['Ctrl+1', 'Ctrl+2']);
+	});
+});

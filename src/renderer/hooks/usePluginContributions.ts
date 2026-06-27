@@ -21,6 +21,8 @@ const EMPTY: AggregatedContributions = {
 	commands: [],
 	panels: [],
 	agents: [],
+	tools: [],
+	keybindings: [],
 	errorsByPlugin: {},
 };
 

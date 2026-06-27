@@ -164,6 +164,15 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 			return { dispatched: manager.invokeCommand(commandId, args) };
 		}
 	);
+	const wrappedInvokeTool = withIpcErrorLogging(
+		handlerOpts('invokeTool'),
+		async (toolId: unknown, args: unknown): Promise<{ result: unknown }> => {
+			if (typeof toolId !== 'string' || toolId.length === 0) {
+				throw new Error('InvalidToolId');
+			}
+			return { result: await manager.invokeTool(toolId, args) };
+		}
+	);
 	const wrappedPanelHtml = withIpcErrorLogging(
 		handlerOpts('panelHtml'),
 		async (panelId: unknown): Promise<{ html: string | null }> => {
@@ -244,6 +253,14 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 		async (event, commandId: unknown, args: unknown): Promise<{ dispatched: boolean }> => {
 			if (!isPluginsEnabled(settingsStore)) throw new Error('PluginsDisabled');
 			return wrappedInvokeCommand(event, commandId, args);
+		}
+	);
+
+	ipcMain.handle(
+		'plugins:invoke-tool',
+		async (event, toolId: unknown, args: unknown): Promise<{ result: unknown }> => {
+			if (!isPluginsEnabled(settingsStore)) throw new Error('PluginsDisabled');
+			return wrappedInvokeTool(event, toolId, args);
 		}
 	);
 
