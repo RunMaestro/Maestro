@@ -212,6 +212,14 @@ Only `action: 'notify'` runs on tier 0. `action: 'dispatch'` needs `agents:dispa
 }
 ```
 
+### tools (tier 1)
+
+`{ id, name, description, inputSchema? }` - a named operation an agent can call. Register a handler with `maestro.tools.register(localId, fn)`; the host invokes it via a brokered request/response (`plugins:invoke-tool`) and your handler's return value is returned to the caller. Exposing a tool to a specific agent's model is a separate wiring step.
+
+### keybindings (tier 1)
+
+`{ id, key, command, description? }` where `key` is a chord (e.g. `"Ctrl+Shift+P"`) and `command` is one of YOUR plugin-local command ids (validated as a local id, so it cannot target another plugin's command or a built-in). Parsed and discoverable now; actually binding the chord is a separate consumption step.
+
 ---
 
 ## 5. Capabilities
@@ -299,6 +307,7 @@ Every method below is broker-gated and needs the matching capability granted. Si
 | `maestro.events.subscribe(topics[])`                                            | `events:subscribe`           |
 | `maestro.events.unsubscribe(topics?)`                                           | `events:subscribe`           |
 | `maestro.commands.register(commandId, handler(args))`                           | - (invoked by host)          |
+| `maestro.tools.register(toolId, handler(args))` (result returned to host)       | - (invoked by host)          |
 | `maestro.process.spawn(command, opts?)` (INERT)                                 | `process:spawn`              |
 
 `net.fetch` returns `{ status, statusText, headers, body }` (body is text, capped at 5 MB). Requests are egress-guarded: loopback, link-local, RFC1918, cloud-metadata, and the app's own port are blocked, and redirects are not followed (`redirect: 'error'`), so a 3xx to a non-granted host fails.
