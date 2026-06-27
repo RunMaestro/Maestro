@@ -178,6 +178,7 @@ describe('agent-definitions', () => {
 				'gemini-cli',
 				'copilot-cli',
 				'omp',
+				'qwen3-coder',
 			];
 			for (const agentId of knownAgents) {
 				const def = getAgentDefinition(agentId);

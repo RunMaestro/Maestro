@@ -60,7 +60,21 @@ export class QwenOutputParser extends ClaudeOutputParser {
 		// Qwen window, so the context meter and summarization thresholds would be driven
 		// from the wrong limit. Drop the injected fallback so the configured 262144 window
 		// wins; keep any genuinely larger window a model actually reports.
-		if (event.usage && event.usage.contextWindow === FALLBACK_CONTEXT_WINDOW) {
+		// Strip the parent-injected Claude fallback ONLY when the raw payload reported
+		// no per-model context window. If a Qwen model genuinely reports 200000 (equal
+		// to the fallback), preserve it instead of deleting a real limit.
+		const rawModelUsage = (parsed as { modelUsage?: Record<string, { contextWindow?: number }> })
+			.modelUsage;
+		const reportedContextWindow =
+			!!rawModelUsage &&
+			Object.values(rawModelUsage).some(
+				(m) => typeof m?.contextWindow === 'number' && m.contextWindow > 0
+			);
+		if (
+			event.usage &&
+			event.usage.contextWindow === FALLBACK_CONTEXT_WINDOW &&
+			!reportedContextWindow
+		) {
 			const usage = { ...event.usage };
 			delete usage.contextWindow;
 			event.usage = usage;

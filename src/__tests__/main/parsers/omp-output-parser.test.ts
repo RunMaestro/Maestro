@@ -6,7 +6,7 @@ import type { ParsedEvent } from '../../../main/parsers/agent-output-parser';
  * Captured `omp -p --mode json "Reply with exactly the two characters: ok"` output.
  * Source: local://omp-sample.jsonl (real run on this machine).
  */
-const OMP_SAMPLE = `{"type":"session","version":3,"id":"019f053e-8426-7000-8d2a-b62b4fb55545","timestamp":"2026-06-26T18:43:30.984Z","cwd":"C:\\\\Users\\\\sydor\\\\AppData\\\\Local\\\\Temp\\\\omp-probe"}
+const OMP_SAMPLE = `{"type":"session","version":3,"id":"019f053e-8426-7000-8d2a-b62b4fb55545","timestamp":"2026-06-26T18:43:30.984Z","cwd":"C:\\\\Users\\\\example\\\\AppData\\\\Local\\\\Temp\\\\omp-probe"}
 {"type":"agent_start"}
 {"type":"turn_start"}
 {"type":"message_start","message":{"role":"user","content":[{"type":"text","text":"Reply with exactly the two characters: ok"}],"attribution":"user","timestamp":1782499411936}}
@@ -106,5 +106,18 @@ describe('OmpOutputParser', () => {
 		expect(event).not.toBeNull();
 		expect(event!.type).toBe('system');
 		expect(parser.isResultMessage(event!)).toBe(false);
+	});
+	it('does not surface a retrying agent_end as a user-facing error', () => {
+		const retrying = {
+			type: 'agent_end',
+			willRetry: true,
+			error: 'overloaded: retrying request',
+		};
+
+		const event = parser.parseJsonObject(retrying);
+		expect(event).not.toBeNull();
+		expect(event!.type).toBe('system');
+
+		expect(parser.detectErrorFromParsed(retrying)).toBeNull();
 	});
 });

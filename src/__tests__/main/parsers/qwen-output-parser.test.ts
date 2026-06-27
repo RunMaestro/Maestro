@@ -140,6 +140,27 @@ describe('QwenOutputParser', () => {
 			const usage = parser.extractUsage(event!);
 			expect(usage?.contextWindow).toBe(262144);
 		});
+		it('preserves a model-reported 200000 context window (not the Claude fallback)', () => {
+			// 200000 equals the injected Claude fallback, but here a model reports it
+			// explicitly via modelUsage, so it must be preserved rather than stripped.
+			const event = parser.parseJsonLine(
+				JSON.stringify({
+					type: 'result',
+					subtype: 'success',
+					result: 'done',
+					modelUsage: {
+						'qwen-plus': {
+							inputTokens: 1000,
+							outputTokens: 500,
+							contextWindow: 200000,
+						},
+					},
+				})
+			);
+
+			const usage = parser.extractUsage(event!);
+			expect(usage?.contextWindow).toBe(200000);
+		});
 	});
 
 	describe('is_error handling', () => {

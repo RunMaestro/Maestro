@@ -319,6 +319,13 @@ export class AgentDetector {
 		// Run agent-specific model discovery command
 		const models = await this.runModelDiscovery(agentId, agent);
 
+		// A transient `omp models --json` failure returns an empty list. Don't cache
+		// that, or the picker stays empty for the whole TTL even after the CLI
+		// recovers; let the next call retry. (omp always has a non-empty catalog.)
+		if (agentId === 'omp' && models.length === 0) {
+			return models;
+		}
+
 		// Cache the results
 		this.modelCache.set(agentId, { models, timestamp: Date.now() });
 
@@ -487,6 +494,10 @@ export class AgentDetector {
 							result.stdout
 						);
 					} catch (parseError) {
+						captureException(parseError, {
+							operation: 'agent:modelDiscovery',
+							agentId,
+						});
 						logger.warn('Failed to parse omp models --json output', LOG_CONTEXT, {
 							error: parseError,
 						});

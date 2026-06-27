@@ -1414,6 +1414,39 @@ describe('agent-detector', () => {
 			// Prefers the provider-qualified selector and de-duplicates entries
 			expect(models).toEqual(['anthropic/claude-opus-4-8', 'openai-codex/gpt-5.2']);
 		});
+
+		it('does not cache a transient empty omp discovery failure', async () => {
+			let attempt = 0;
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				if (cmd === '/usr/bin/omp' && args[0] === 'models' && args[1] === '--json') {
+					attempt += 1;
+					if (attempt === 1) {
+						return { stdout: '', stderr: 'transient failure', exitCode: 1 };
+					}
+					return {
+						stdout: JSON.stringify({ models: [{ selector: 'anthropic/claude-opus-4-8' }] }),
+						stderr: '',
+						exitCode: 0,
+					};
+				}
+				if (args[0] === 'omp') {
+					return { stdout: '/usr/bin/omp\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: '', exitCode: 1 };
+			});
+
+			detector.clearCache();
+			detector.clearModelCache();
+			await detector.detectAgents();
+
+			const first = await detector.discoverModels('omp');
+			expect(first).toEqual([]);
+
+			// The empty failure must NOT be cached: a second call (no forceRefresh)
+			// re-runs discovery and now succeeds.
+			const second = await detector.discoverModels('omp');
+			expect(second).toEqual(['anthropic/claude-opus-4-8']);
+		});
 	});
 
 	describe('OpenCode batch mode configuration', () => {

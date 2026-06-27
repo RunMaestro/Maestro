@@ -19,7 +19,7 @@
 import type { AgentError, ToolType } from '../../shared/types';
 import type { AgentOutputParser, ParsedEvent } from './agent-output-parser';
 import { getErrorPatterns, matchErrorPattern } from './error-patterns';
-import { stripAllAnsiCodes } from '../utils/terminalFilter';
+import { stripAnsiCodes } from '../../shared/stringUtils';
 
 interface OmpUsage {
 	input?: number;
@@ -95,7 +95,7 @@ export class OmpOutputParser implements AgentOutputParser {
 		const sessionId =
 			event.sessionId || event.session_id || (event.type === 'session' ? event.id : undefined);
 
-		if (event.error || event.message?.errorMessage) {
+		if ((event.error || event.message?.errorMessage) && !event.willRetry) {
 			return {
 				type: 'error',
 				text: this.extractErrorText(event),
@@ -243,6 +243,9 @@ export class OmpOutputParser implements AgentOutputParser {
 		}
 
 		const event = parsed as OmpRawEvent;
+		if (event.willRetry) {
+			return null;
+		}
 		const errorText = this.extractErrorText(event);
 		if (!errorText) {
 			return null;
@@ -264,7 +267,7 @@ export class OmpOutputParser implements AgentOutputParser {
 			return null;
 		}
 
-		const cleanedOutput = stripAllAnsiCodes(`${stderr}\n${stdout}`).trim();
+		const cleanedOutput = stripAnsiCodes(`${stderr}\n${stdout}`).trim();
 		const match = matchErrorPattern(getErrorPatterns(this.agentId), cleanedOutput, {
 			minLength: 0,
 		});

@@ -11,6 +11,7 @@ import {
 	CopilotOutputParser,
 	PiOutputParser,
 	OmpOutputParser,
+	QwenOutputParser,
 } from '../../../main/parsers';
 
 describe('parsers/index', () => {
@@ -151,6 +152,11 @@ describe('parsers/index', () => {
 			expect(parser).not.toBeNull();
 			expect(parser).toBeInstanceOf(OmpOutputParser);
 		});
+		it('should return QwenOutputParser for qwen3-coder', () => {
+			const parser = getOutputParser('qwen3-coder');
+			expect(parser).not.toBeNull();
+			expect(parser).toBeInstanceOf(QwenOutputParser);
+		});
 	});
 
 	describe('parser exports', () => {
@@ -182,6 +188,10 @@ describe('parsers/index', () => {
 		it('should export OmpOutputParser class', () => {
 			const parser = new OmpOutputParser();
 			expect(parser.agentId).toBe('omp');
+		});
+		it('should export QwenOutputParser class', () => {
+			const parser = new QwenOutputParser();
+			expect(parser.agentId).toBe('qwen3-coder');
 		});
 	});
 
