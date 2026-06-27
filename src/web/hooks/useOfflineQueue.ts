@@ -52,6 +52,12 @@ export interface QueuedCommand {
 	command: string;
 	/** Target session ID */
 	sessionId: string;
+	/**
+	 * Target AI tab ID at queue time. Persisted so that when the queue replays
+	 * after reconnect the command lands in the same tab the user was looking
+	 * at, even if the desktop's active tab changed in the meantime.
+	 */
+	tabId?: string;
 	/** Timestamp when command was queued */
 	timestamp: number;
 	/** Input mode (ai or terminal) */
@@ -75,8 +81,12 @@ export interface UseOfflineQueueOptions {
 	isOnline: boolean;
 	/** Whether connected to the WebSocket server */
 	isConnected: boolean;
-	/** Function to send a command to the server */
-	sendCommand: (sessionId: string, command: string) => boolean;
+	/**
+	 * Function to send a command to the server. `tabId` is supplied during
+	 * queue replay when the queued command carried a target tab, so the
+	 * replay lands in the same conversation the user originally targeted.
+	 */
+	sendCommand: (sessionId: string, command: string, tabId?: string) => boolean;
 	/** Maximum retry attempts per command (default: 3) */
 	maxRetries?: number;
 	/** Storage adapter for queue persistence. When null/undefined, persistence is disabled. */
@@ -105,7 +115,8 @@ export interface UseOfflineQueueReturn {
 	queueCommand: (
 		sessionId: string,
 		command: string,
-		inputMode: 'ai' | 'terminal'
+		inputMode: 'ai' | 'terminal',
+		tabId?: string
 	) => QueuedCommand | null;
 	/** Remove a specific command from the queue */
 	removeCommand: (commandId: string) => void;
@@ -289,7 +300,12 @@ export function useOfflineQueue(options: UseOfflineQueueOptions): UseOfflineQueu
 	 * Queue a command for later sending
 	 */
 	const queueCommand = useCallback(
-		(sessionId: string, command: string, inputMode: 'ai' | 'terminal'): QueuedCommand | null => {
+		(
+			sessionId: string,
+			command: string,
+			inputMode: 'ai' | 'terminal',
+			tabId?: string
+		): QueuedCommand | null => {
 			// Check if we're at capacity
 			if (queue.length >= MAX_QUEUE_SIZE) {
 				webLogger.warn('Queue at maximum capacity, cannot add more commands', 'OfflineQueue');
@@ -300,6 +316,7 @@ export function useOfflineQueue(options: UseOfflineQueueOptions): UseOfflineQueu
 				id: generateId(),
 				command,
 				sessionId,
+				tabId,
 				timestamp: Date.now(),
 				inputMode,
 				attempts: 0,
@@ -379,7 +396,7 @@ export function useOfflineQueue(options: UseOfflineQueueOptions): UseOfflineQueu
 			const updatedCmd = { ...cmd, attempts: cmd.attempts + 1 };
 
 			try {
-				const success = sendCommandRef.current(cmd.sessionId, cmd.command);
+				const success = sendCommandRef.current(cmd.sessionId, cmd.command, cmd.tabId);
 
 				if (success) {
 					successCount++;

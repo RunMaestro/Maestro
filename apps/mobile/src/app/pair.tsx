@@ -10,6 +10,7 @@
 
 import { Icon } from '@/components/icon';
 import { storeCredentials } from '@/lib/credentials';
+import { useSessions } from '@/lib/SessionsContext';
 import { useToast } from '@/lib/ToastContext';
 import {
 	parseQrPayload,
@@ -111,6 +112,7 @@ type ManualMode = 'url' | 'fields';
 export default function PairScreen() {
 	const router = useRouter();
 	const { showToast } = useToast();
+	const { connect: connectSessions } = useSessions();
 	const [permission, requestPermission] = useCameraPermissions();
 	const [isProcessing, setIsProcessing] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -147,6 +149,12 @@ export default function PairScreen() {
 
 				clearCredentialsCache();
 
+				// SessionsProvider mounted before credentials existed, so its one-shot
+				// mount effect bailed with "No credentials". Kick off a fresh connect
+				// now that credentials are persisted so the user lands on home with
+				// an active socket instead of a stuck disconnected state.
+				connectSessions();
+
 				showToast({
 					message: 'Successfully paired with Maestro desktop',
 					color: 'green',
@@ -167,7 +175,7 @@ export default function PairScreen() {
 				setIsProcessing(false);
 			}
 		},
-		[router, showToast]
+		[router, showToast, connectSessions]
 	);
 
 	const handleBarCodeScanned = useCallback(

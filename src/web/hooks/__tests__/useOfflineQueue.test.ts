@@ -543,7 +543,7 @@ describe('useOfflineQueue', () => {
 				await vi.advanceTimersByTimeAsync(200); // SEND_DELAY
 			});
 
-			expect(sendCommand).toHaveBeenCalledWith('session-1', 'test command');
+			expect(sendCommand).toHaveBeenCalledWith('session-1', 'test command', undefined);
 			expect(onCommandSent).toHaveBeenCalled();
 		});
 

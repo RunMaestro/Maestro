@@ -57,7 +57,7 @@ export function Conversation({
 	emptyState,
 	children,
 }: {
-	/** Render callback for each message – passed to the underlying list. */
+	/** Render callback for each message, passed to the underlying list. */
 	renderMessage: (info: { item: ChatMessage }) => ReactElement;
 	/** Element shown when the message list is empty. */
 	emptyState?: ReactElement;
@@ -271,7 +271,7 @@ export function Conversation({
 							padding: 16,
 							// Reserve physical space below the last message for the floating
 							// PromptInput + iOS home-indicator safe area. `contentInset.bottom`
-							// only adds rubber-band scroll area on iOS — it does NOT push
+							// only adds rubber-band scroll area on iOS, it does NOT push
 							// visible content up, so without this padding the last bubble
 							// renders behind the input bar at rest. Matches the .web variant.
 							paddingBottom: composerOffsetHeight + insets.bottom + 8,

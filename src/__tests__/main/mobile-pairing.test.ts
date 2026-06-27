@@ -173,7 +173,7 @@ describe('mobile-pairing', () => {
 		it('rejects empty / non-string input', async () => {
 			const { validateMobileToken } = await freshModule();
 			expect(await validateMobileToken('')).toBeNull();
-			// @ts-expect-error – exercise runtime guard for non-string input
+			// @ts-expect-error - exercise runtime guard for non-string input
 			expect(await validateMobileToken(123)).toBeNull();
 		});
 

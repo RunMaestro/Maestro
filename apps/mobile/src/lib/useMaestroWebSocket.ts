@@ -173,6 +173,11 @@ export function useMaestroWebSocket(
 	const handlersRef = useRef(handlers);
 	const shouldReconnectRef = useRef(true);
 	const reconnectAttemptsRef = useRef(0);
+	// In-flight connect guard. AppState/NetInfo/mount effects can all call
+	// connect() during the credential-loading await window, before wsRef is set.
+	// Without this guard two sockets could open concurrently and the older one's
+	// onclose would clear wsRef even when the newer socket is the active one.
+	const connectInFlightRef = useRef(false);
 
 	// In-flight `get_session_history` requests, keyed by requestId. The desktop
 	// echoes the same requestId in `session_history_result`, so we resolve the
@@ -350,6 +355,15 @@ export function useMaestroWebSocket(
 	}, [autoReconnect]);
 
 	const connectInternal = useCallback(async () => {
+		// Bail if another connect is already mid-flight. Otherwise the second
+		// caller would open a second socket while the first one is still
+		// awaiting credential load, and the older socket's onclose would later
+		// clear wsRef even after the newer socket became the active one.
+		if (connectInFlightRef.current) {
+			return;
+		}
+		connectInFlightRef.current = true;
+
 		// Clean up existing connection
 		if (wsRef.current) {
 			wsRef.current.close();
@@ -369,12 +383,14 @@ export function useMaestroWebSocket(
 			handlersRef.current?.onError?.('No credentials - please pair with Maestro desktop');
 			setState('disconnected');
 			handlersRef.current?.onConnectionChange?.('disconnected');
+			connectInFlightRef.current = false;
 			return;
 		}
 
 		try {
 			const ws = new WebSocket(url);
 			wsRef.current = ws;
+			connectInFlightRef.current = false;
 
 			ws.onopen = () => {
 				// Wait for 'connected' message from server
@@ -390,9 +406,14 @@ export function useMaestroWebSocket(
 
 			ws.onclose = (event) => {
 				clearTimers();
-				wsRef.current = null;
-				setState('disconnected');
-				handlersRef.current?.onConnectionChange?.('disconnected');
+				// Only clear wsRef if this is still the active socket. A stale
+				// onclose from a superseded connect attempt must not wipe a newer
+				// live socket out from under send().
+				if (wsRef.current === ws) {
+					wsRef.current = null;
+					setState('disconnected');
+					handlersRef.current?.onConnectionChange?.('disconnected');
+				}
 
 				// 4001 = desktop rejected the token. Looping a rejected token just
 				// burns CPU and shows the same error forever, so latch off.
@@ -402,7 +423,7 @@ export function useMaestroWebSocket(
 				}
 
 				// Attempt to reconnect if not a clean close
-				if (event.code !== 1000 && shouldReconnectRef.current) {
+				if (event.code !== 1000 && shouldReconnectRef.current && wsRef.current === null) {
 					attemptReconnect();
 				}
 			};
@@ -412,6 +433,7 @@ export function useMaestroWebSocket(
 			handlersRef.current?.onError?.('Failed to create WebSocket connection');
 			setState('disconnected');
 			handlersRef.current?.onConnectionChange?.('disconnected');
+			connectInFlightRef.current = false;
 		}
 	}, [clearTimers, handleMessage, attemptReconnect]);
 

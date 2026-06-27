@@ -2,14 +2,14 @@
  * Tests for useSessionChat history-load behavior.
  *
  * Regression context: the Expo mobile chat screen used to start empty whenever
- * a session was opened — the hook was purely event-driven and never asked the
+ * a session was opened; the hook was purely event-driven and never asked the
  * desktop for the existing conversation backlog. Fixing it added a
  * `get_session_history` request on session/tab change and a small dedupe-merge
  * step so the late-arriving response doesn't double-insert streaming events
  * that landed first.
  *
  * Per the codebase convention (see `messageRouting.test.ts`), these tests
- * mirror the production helpers rather than importing the hook directly —
+ * mirror the production helpers rather than importing the hook directly:
  * pulling in `useSessionChat.ts` would drag in expo-haptics, React Context,
  * and the rest of the RN module graph. The helpers below are KEPT IN SYNC
  * INTENTIONALLY with `src/hooks/useSessionChat.ts` and

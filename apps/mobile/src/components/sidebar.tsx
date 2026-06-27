@@ -1,4 +1,4 @@
-// Native fallback — the sidebar is only used on web.
+// Native fallback - the sidebar is only used on web.
 // On native, the Drawer navigator in _layout.tsx handles navigation.
 
 export function Sidebar(_props: {

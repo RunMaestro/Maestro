@@ -38,7 +38,7 @@ export default function RootLayout() {
 						<View className="flex flex-1 min-w-0 flex-col">
 							{/* Chat header */}
 							<View className="flex h-14 shrink-0 flex-row items-center gap-2 bg-sidebar px-3">
-								{/* Mobile sidebar toggle only — desktop uses the collapsed rail */}
+								{/* Mobile sidebar toggle only - desktop uses the collapsed rail */}
 								<View className="md:hidden">
 									<SidebarToggle onPress={() => setSidebarOpen(true)} />
 								</View>

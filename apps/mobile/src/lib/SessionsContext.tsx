@@ -79,6 +79,13 @@ export interface SessionsContextValue {
 
 	// Actions
 	setActiveSessionId: (sessionId: string) => void;
+	/**
+	 * Tell the desktop this client wants live `tool_event` / per-session
+	 * messages for `sessionId`. The desktop's `broadcastToolEvent` only fans
+	 * out to clients whose `subscribedSessionId` matches, so without this the
+	 * mobile UI misses Running/Completed tool updates mid-turn.
+	 */
+	subscribeToSession: (sessionId: string) => boolean;
 	setActiveTab: (sessionId: string, tabId: string) => boolean;
 	/** Create a new AI tab within a session. Returns false if the socket is down. */
 	newTab: (sessionId: string) => boolean;
@@ -92,7 +99,7 @@ export interface SessionsContextValue {
 	 * socket is down, so a spinner never hangs.
 	 */
 	refreshSessions: () => Promise<void>;
-	sendCommand: (sessionId: string, command: string) => boolean;
+	sendCommand: (sessionId: string, command: string, tabId?: string) => boolean;
 	/**
 	 * Fetch a tab's conversation backlog from the desktop. Resolves with the
 	 * history payload (oldest first) or rejects if the desktop returns an error,
@@ -166,7 +173,7 @@ export function SessionsProvider({ children, onThemeUpdate }: SessionsProviderPr
 		onThemeUpdateRef.current = onThemeUpdate;
 	}, [onThemeUpdate]);
 
-	// WebSocket connection — wrapped in useMaestroConnection so AppState/NetInfo
+	// WebSocket connection, wrapped in useMaestroConnection so AppState/NetInfo
 	// transitions tear down the socket on background and reconnect on foreground,
 	// and so the streaming buffer gets marked stale after a long pause.
 	const {
@@ -382,15 +389,34 @@ export function SessionsProvider({ children, onThemeUpdate }: SessionsProviderPr
 		});
 	}, [send]);
 
-	// Send command to a session
-	const sendCommand = useCallback(
-		(sessionId: string, command: string): boolean => {
+	// Tell the desktop to start fanning tool events for this session. The
+	// desktop's broadcastToolEvent is gated on subscribedSessionId, and select_tab
+	// (which the mobile already sends) does NOT update that subscription on the
+	// server. Without this explicit subscribe, mobile users see Running/Completed
+	// tool updates only after history reloads.
+	const subscribeToSession = useCallback(
+		(sessionId: string): boolean => {
 			return send({
+				type: 'subscribe',
+				sessionId,
+			});
+		},
+		[send]
+	);
+
+	// Send command to a session. tabId pins delivery to a specific AI tab so a
+	// background tab the user queued into still receives the prompt even if the
+	// foreground tab changed between queue and replay.
+	const sendCommand = useCallback(
+		(sessionId: string, command: string, tabId?: string): boolean => {
+			const message: Record<string, unknown> = {
 				type: 'send_command',
 				sessionId,
 				command,
 				inputMode: 'ai',
-			});
+			};
+			if (tabId) message.tabId = tabId;
+			return send(message);
 		},
 		[send]
 	);
@@ -484,6 +510,7 @@ export function SessionsProvider({ children, onThemeUpdate }: SessionsProviderPr
 		activeSessionId,
 		activeSession,
 		setActiveSessionId,
+		subscribeToSession,
 		setActiveTab,
 		newTab,
 		closeTab,

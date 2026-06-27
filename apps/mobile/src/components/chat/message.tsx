@@ -5,7 +5,7 @@ import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 
 /**
  * Wrapper for a single chat message. Styles automatically based on the sender
- * role – user messages render as right-aligned blue bubbles, assistant messages
+ * role: user messages render as right-aligned blue bubbles, assistant messages
  * render full-width.
  */
 export function Message({ from, children }: { from: 'user' | 'assistant'; children: ReactNode }) {

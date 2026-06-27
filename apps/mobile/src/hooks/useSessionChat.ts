@@ -30,7 +30,7 @@ const STREAMING_THROTTLE_MS = 32;
  * shape the UI expects. The mobile UI only renders `user` / `assistant`, plus
  * "tool" messages identified by a `tool-` id prefix (matches the existing
  * convention in renderMessage). Other roles (system/thinking/error/unknown)
- * are dropped here for parity with the streaming path — those don't show up
+ * are dropped here for parity with the streaming path; those don't show up
  * mid-conversation either, so we'd be the only surface to render them.
  */
 function historyToChatMessages(history: SessionHistoryMessage[]): ChatMessage[] {
@@ -71,6 +71,7 @@ export function useSessionChat(targetSessionId: string): UseSessionChatReturn {
 		connectionState: wsConnectionState,
 		sessions,
 		setActiveSessionId,
+		subscribeToSession,
 		sendCommand,
 		requestSessionHistory,
 		subscribeSessionOutput,
@@ -132,8 +133,8 @@ export function useSessionChat(targetSessionId: string): UseSessionChatReturn {
 	// Derive screen-level connection state from the shared WS state plus whether
 	// the target session has actually shown up in the sessions list.
 	// Note: the desktop sends a bare `connected` message (no `authenticated: true`),
-	// so we treat both 'connected' and 'authenticated' as fully ready for I/O —
-	// the WS handshake itself already validated the mobile pairing token.
+	// so we treat both 'connected' and 'authenticated' as fully ready for I/O.
+	// The WS handshake itself already validated the mobile pairing token.
 	const connectionState = useMemo<ChatConnectionState>(() => {
 		if (wsConnectionState === 'disconnected') return 'disconnected';
 		if (wsConnectionState === 'connecting') return 'connecting';
@@ -246,19 +247,46 @@ export function useSessionChat(targetSessionId: string): UseSessionChatReturn {
 		}
 	}, [targetSessionId, setActiveSessionId]);
 
-	// Load history (and reset streaming state) when the session or active tab
-	// changes. Without this the screen would be empty until the user sends a
-	// new message — the desktop already has the conversation, we just never
-	// asked for it.
+	// Tell the desktop to fan tool_event messages for this session to us. The
+	// desktop's broadcastToolEvent is subscribed-only, so without this the
+	// Running/Completed tool bubbles never arrive mid-turn. Re-fires on
+	// reconnect because the subscription is per-socket and doesn't survive.
+	useEffect(() => {
+		if (!targetSessionId) return;
+		if (wsConnectionState !== 'connected' && wsConnectionState !== 'authenticated') return;
+		subscribeToSession(targetSessionId);
+	}, [targetSessionId, wsConnectionState, subscribeToSession]);
+
+	// Reset chat state only when the user actually navigates to a different
+	// session or tab. Previously this effect was keyed on wsConnectionState
+	// too, so a reconnect (e.g. backgrounded -> foreground) would blow away
+	// the local message list before the offline queue had a chance to replay,
+	// making queued user bubbles flash and disappear.
 	const activeTabId = session?.activeTabId ?? null;
+	const prevTargetRef = useRef<{ sessionId: string; tabId: string | null } | null>(null);
 	useEffect(() => {
 		activeTabIdRef.current = activeTabId;
-		setMessages([]);
-		streamingRef.current = '';
-		streamingStore.set('');
-		streamingMessageIdRef.current = null;
-		setIsGenerating(false);
+		const prev = prevTargetRef.current;
+		const isInitial = prev === null;
+		const targetChanged =
+			!isInitial && (prev.sessionId !== targetSessionId || prev.tabId !== activeTabId);
 
+		if (isInitial || targetChanged) {
+			setMessages([]);
+			streamingRef.current = '';
+			streamingStore.set('');
+			streamingMessageIdRef.current = null;
+			setIsGenerating(false);
+		}
+		prevTargetRef.current = { sessionId: targetSessionId, tabId: activeTabId };
+	}, [targetSessionId, activeTabId, streamingStore]);
+
+	// Load (or reload) the conversation backlog whenever the target or
+	// connection state changes. The dedupe-merge below keeps queued user
+	// bubbles and any streaming/user/tool events that landed while the request
+	// was in flight, so a reconnect refreshes history without wiping pending
+	// local state.
+	useEffect(() => {
 		if (!targetSessionId || !activeTabId) return;
 		if (wsConnectionState !== 'connected' && wsConnectionState !== 'authenticated') return;
 
@@ -285,14 +313,17 @@ export function useSessionChat(targetSessionId: string): UseSessionChatReturn {
 		return () => {
 			cancelled = true;
 		};
-	}, [targetSessionId, activeTabId, wsConnectionState, requestSessionHistory, streamingStore]);
+	}, [targetSessionId, activeTabId, wsConnectionState, requestSessionHistory]);
 
 	const isConnected = connectionState === 'connected' || connectionState === 'ready';
 
-	// Offline queue for queueing commands when disconnected.
+	// Offline queue for queueing commands when disconnected. Threads through
+	// the optional tabId from the queued entry so replays land in the same tab
+	// the user was on when offline, not whatever tab happens to be active when
+	// the socket comes back.
 	const queueSend = useCallback(
-		(sessionId: string, command: string) => {
-			return sendCommand(sessionId, command);
+		(sessionId: string, command: string, tabId?: string) => {
+			return sendCommand(sessionId, command, tabId);
 		},
 		[sendCommand]
 	);
@@ -311,16 +342,31 @@ export function useSessionChat(targetSessionId: string): UseSessionChatReturn {
 
 		Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
+		const trimmed = input.trim();
 		const userMessageId = `user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-		setMessages((prev) => [...prev, { id: userMessageId, role: 'user', content: input.trim() }]);
+		setMessages((prev) => [...prev, { id: userMessageId, role: 'user', content: trimmed }]);
+
+		// Capture the tab id at submit time so a later replay (offline queue, or
+		// the fallback below when a socket write loses to a race) targets the
+		// same conversation the user is looking at right now.
+		const targetTabId = activeTabIdRef.current ?? undefined;
 
 		if (!isConnected) {
-			queueCommand(targetSessionId, input.trim(), 'ai');
+			queueCommand(targetSessionId, trimmed, 'ai', targetTabId);
 			setInput('');
 			return;
 		}
 
-		sendCommand(targetSessionId, input.trim());
+		// Socket could have closed between the render that set isConnected and
+		// here (NetInfo lag, background transition, etc.). sendCommand returns
+		// false in that case; fall back to the offline queue instead of silently
+		// dropping the prompt while clearing the input and pinning isGenerating.
+		const sent = sendCommand(targetSessionId, trimmed, targetTabId);
+		if (!sent) {
+			queueCommand(targetSessionId, trimmed, 'ai', targetTabId);
+			setInput('');
+			return;
+		}
 		setInput('');
 		setIsGenerating(true);
 	}, [input, isGenerating, targetSessionId, sendCommand, isConnected, queueCommand]);

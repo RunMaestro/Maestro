@@ -26,8 +26,13 @@ export interface UseMaestroOfflineQueueOptions {
 	isOnline: boolean;
 	/** Whether WebSocket is authenticated and ready */
 	isConnected: boolean;
-	/** Send function that dispatches to WebSocket */
-	sendCommand: (sessionId: string, command: string) => boolean;
+	/**
+	 * Send function that dispatches to WebSocket. The optional `tabId` is
+	 * supplied during queue replay so the command lands in the same AI tab the
+	 * user originally targeted, even if the desktop's active tab moved while
+	 * offline.
+	 */
+	sendCommand: (sessionId: string, command: string, tabId?: string) => boolean;
 	/** Callback when a queued command is sent */
 	onCommandSent?: () => void;
 	/** Callback when a queued command fails */

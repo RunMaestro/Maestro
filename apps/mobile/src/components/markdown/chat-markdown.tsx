@@ -55,7 +55,7 @@ export function ChatMarkdown({ children }: { children: string }) {
 	const baseFontSize = isWeb ? 13 : 16;
 	const baseLineHeight = isWeb ? 21.5 : 22;
 
-	// Only overrides — defaults from utils.ts are merged automatically
+	// Only overrides; defaults from utils.ts are merged automatically
 	// Heading sizes: scaled for mobile readability (base 16pt)
 	const markdownStyles = {
 		heading1: {
