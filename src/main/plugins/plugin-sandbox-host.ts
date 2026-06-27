@@ -39,6 +39,33 @@ export interface PluginSandboxHostDeps {
 	onCrash?: (pluginId: string, code: number) => void;
 }
 
+/** One bounded recent-log entry observed for a running plugin. */
+export interface ActivityLogLine {
+	level: string;
+	message: string;
+	/** Epoch ms when the line was observed. */
+	at: number;
+}
+
+/**
+ * Read-only observability snapshot for one plugin (running tier-1). Pure data,
+ * safe to serialize across IPC; produced by {@link PluginSandboxHost.getActivity}.
+ */
+export interface ActivitySnapshot {
+	/** Total host calls dispatched to a handler for this plugin (cumulative). */
+	totalCalls: number;
+	/** Host calls currently executing. */
+	inFlight: number;
+	/** Highest concurrent in-flight count observed. */
+	peakInFlight: number;
+	/** Epoch ms of the last observed activity (host call or log line). */
+	lastActivity: number;
+	/** Times this plugin's child exited non-zero since the host started. */
+	crashCount: number;
+	/** Bounded ring buffer (oldest first) of the most recent log lines. */
+	recentLogs: ActivityLogLine[];
+}
+
 /** Hard cap on a single RPC message to bound memory from a hostile child. */
 const MAX_MESSAGE_BYTES = 1_000_000;
 /** Grace period between a graceful shutdown message and a hard kill. */
@@ -48,6 +75,8 @@ const MAX_IN_FLIGHT = 32;
 /** Sliding-window rate limit: max requests per window per plugin. */
 const RATE_WINDOW_MS = 1000;
 const RATE_MAX_PER_WINDOW = 200;
+/** Bounded ring-buffer size for per-plugin recent log lines (observability). */
+const ACTIVITY_LOG_LIMIT = 50;
 
 interface RunningPlugin {
 	proc: UtilityProcess;
@@ -57,8 +86,34 @@ interface RunningPlugin {
 	windowCount: number;
 }
 
+/** Mutable per-plugin observability accumulator. Kept separate from `running`
+ *  so a crash count outlives the child that produced it. */
+interface Activity {
+	totalCalls: number;
+	inFlight: number;
+	peakInFlight: number;
+	lastActivity: number;
+	crashCount: number;
+	recentLogs: ActivityLogLine[];
+}
+
+/** Project a mutable accumulator into a serializable read-only snapshot. */
+function toActivitySnapshot(a: Activity): ActivitySnapshot {
+	return {
+		totalCalls: a.totalCalls,
+		inFlight: a.inFlight,
+		peakInFlight: a.peakInFlight,
+		lastActivity: a.lastActivity,
+		crashCount: a.crashCount,
+		recentLogs: a.recentLogs.map((l) => ({ ...l })),
+	};
+}
+
 export class PluginSandboxHost {
 	private running = new Map<string, RunningPlugin>();
+	/** Per-plugin observability, keyed by plugin id. Separate from `running` so
+	 *  it survives a crashed child (crash counts must persist). */
+	private activity = new Map<string, Activity>();
 
 	constructor(private readonly deps: PluginSandboxHostDeps) {}
 
@@ -68,6 +123,50 @@ export class PluginSandboxHost {
 
 	runningIds(): string[] {
 		return [...this.running.keys()];
+	}
+
+	/**
+	 * Read-only observability for plugins (running tier-1). With no argument,
+	 * returns a snapshot map keyed by plugin id; with an id, returns that
+	 * plugin's snapshot (or undefined). Snapshots are copies, so mutating them
+	 * never affects host state and the ring buffer is safe to serialize.
+	 */
+	getActivity(): Record<string, ActivitySnapshot>;
+	getActivity(pluginId: string): ActivitySnapshot | undefined;
+	getActivity(pluginId?: string): Record<string, ActivitySnapshot> | ActivitySnapshot | undefined {
+		if (typeof pluginId === 'string') {
+			const a = this.activity.get(pluginId);
+			return a ? toActivitySnapshot(a) : undefined;
+		}
+		const out: Record<string, ActivitySnapshot> = {};
+		for (const [id, a] of this.activity) out[id] = toActivitySnapshot(a);
+		return out;
+	}
+
+	/** Get-or-create the observability accumulator for a plugin. */
+	private activityFor(pluginId: string): Activity {
+		let a = this.activity.get(pluginId);
+		if (!a) {
+			a = {
+				totalCalls: 0,
+				inFlight: 0,
+				peakInFlight: 0,
+				lastActivity: Date.now(),
+				crashCount: 0,
+				recentLogs: [],
+			};
+			this.activity.set(pluginId, a);
+		}
+		return a;
+	}
+
+	/** Append a log line to a plugin's bounded ring buffer and bump activity. */
+	private recordLog(pluginId: string, level: string, message: string): void {
+		const a = this.activityFor(pluginId);
+		const now = Date.now();
+		a.recentLogs.push({ level, message, at: now });
+		if (a.recentLogs.length > ACTIVITY_LOG_LIMIT) a.recentLogs.shift();
+		a.lastActivity = now;
 	}
 
 	/**
@@ -96,6 +195,9 @@ export class PluginSandboxHost {
 
 		const record: RunningPlugin = { proc, inFlight: 0, windowStart: Date.now(), windowCount: 0 };
 		this.running.set(pluginId, record);
+		// Ensure an observability record exists so a freshly started plugin shows
+		// up in getActivity() even before it makes its first host call.
+		this.activityFor(pluginId).lastActivity = Date.now();
 
 		proc.on('message', (data: unknown) => {
 			void this.handleChildMessage(pluginId, proc, data);
@@ -104,7 +206,10 @@ export class PluginSandboxHost {
 			const existing = this.running.get(pluginId);
 			if (existing?.shutdownTimer) clearTimeout(existing.shutdownTimer);
 			this.running.delete(pluginId);
+			const act = this.activity.get(pluginId);
+			if (act) act.inFlight = 0;
 			if (code !== 0) {
+				if (act) act.crashCount += 1;
 				logger.warn(`[Plugins] sandbox "${pluginId}" exited with code ${code}`, '[Plugins]');
 				this.deps.onCrash?.(pluginId, code);
 			}
@@ -197,7 +302,10 @@ export class PluginSandboxHost {
 
 		// Child log line (not a host call).
 		if (msg.kind === 'log') {
-			this.deps.onLog?.(pluginId, String(msg.level ?? 'info'), String(msg.message ?? ''));
+			const level = String(msg.level ?? 'info');
+			const message = String(msg.message ?? '');
+			this.recordLog(pluginId, level, message);
+			this.deps.onLog?.(pluginId, level, message);
 			return;
 		}
 
@@ -259,6 +367,11 @@ export class PluginSandboxHost {
 		}
 
 		if (record) record.inFlight += 1;
+		const act = this.activityFor(pluginId);
+		act.totalCalls += 1;
+		act.inFlight += 1;
+		act.lastActivity = Date.now();
+		if (act.inFlight > act.peakInFlight) act.peakInFlight = act.inFlight;
 		try {
 			const result = await handler(pluginId, request.params);
 			respond({ ok: true, result });
@@ -266,6 +379,7 @@ export class PluginSandboxHost {
 			respond({ ok: false, error: err instanceof Error ? err.message : String(err) });
 		} finally {
 			if (record) record.inFlight = Math.max(0, record.inFlight - 1);
+			act.inFlight = Math.max(0, act.inFlight - 1);
 		}
 	}
 }

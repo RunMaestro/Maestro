@@ -31,6 +31,7 @@ import { notifyToast } from '../../stores/notificationStore';
 import { PluginConsentDialog } from './PluginConsentDialog';
 import { PluginPanelHost } from './PluginPanelHost';
 import { PluginPanelSlot } from '../plugins/PluginPanelSlot';
+import { PluginActivityView } from './PluginActivityView';
 
 interface PluginsPanelProps {
 	theme: Theme;
@@ -409,6 +410,9 @@ export function PluginsPanel({ theme }: PluginsPanelProps) {
 					})}
 				</div>
 			)}
+
+			{/* Read-only per-plugin observability for running tier-1 plugins. */}
+			<PluginActivityView theme={theme} records={records} />
 
 			{/* Plugin panels that dock into Settings (placement: 'settings'). Each
 			    renders in the same locked-down sandboxed iframe with provenance. */}

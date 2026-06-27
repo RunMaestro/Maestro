@@ -171,7 +171,11 @@ import type {
 	PianolaSuggestionsFile,
 } from '../shared/pianola/storage';
 import type { PianolaSupervisorSnapshot } from '../main/ipc/handlers/pianola';
-import type { PluginListSnapshot, PluginGrantsSnapshot } from '../main/ipc/handlers/plugins';
+import type {
+	PluginListSnapshot,
+	PluginGrantsSnapshot,
+	PluginActivityMap,
+} from '../main/ipc/handlers/plugins';
 import type { InstallResult as PluginInstallResult } from '../main/plugins/plugin-manager';
 import type { AggregatedContributions as PluginContributions } from '../shared/plugins/contributions';
 
@@ -3518,6 +3522,7 @@ interface MaestroAPI {
 		revokeGrants: (id: string) => Promise<PluginGrantsSnapshot>;
 		invokeCommand: (commandId: string, args?: unknown) => Promise<{ dispatched: boolean }>;
 		panelHtml: (panelId: string) => Promise<{ html: string | null }>;
+		getActivity: () => Promise<PluginActivityMap>;
 		onChanged: (callback: () => void) => () => void;
 	};
 

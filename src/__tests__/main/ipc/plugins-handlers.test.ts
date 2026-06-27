@@ -12,6 +12,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { AggregatedContributions } from '../../../shared/plugins/contributions';
 import type { PluginRegistry } from '../../../shared/plugins/plugin-registry';
 import type { PluginManager } from '../../../main/plugins/plugin-manager';
+import type {
+	PluginActivityMap,
+	PluginsHandlerDependencies,
+} from '../../../main/ipc/handlers/plugins';
 
 const handlers = new Map<string, (...args: unknown[]) => unknown>();
 
@@ -56,11 +60,12 @@ function settingsStore(plugins: boolean): { get: (key: string) => unknown } {
 	return { get: (key: string) => (key === 'encoreFeatures' ? { plugins } : undefined) };
 }
 
-function register(plugins: boolean) {
+function register(plugins: boolean, sandboxHost?: PluginsHandlerDependencies['sandboxHost']) {
 	const manager = fakeManager();
 	registerPluginsHandlers({
 		settingsStore: settingsStore(plugins),
 		manager: manager as unknown as PluginManager,
+		sandboxHost,
 	});
 	return manager;
 }
@@ -126,5 +131,43 @@ describe('plugins IPC read channels are pure (no refresh -> no feedback loop)', 
 		await expect(handler!(event)).rejects.toThrow('PluginsDisabled');
 		expect(manager.getContributions).not.toHaveBeenCalled();
 		expect(manager.refresh).not.toHaveBeenCalled();
+	});
+});
+
+describe('plugins:get-activity (gated read-only observability)', () => {
+	const sample: PluginActivityMap = {
+		demo: {
+			totalCalls: 3,
+			inFlight: 1,
+			peakInFlight: 2,
+			lastActivity: 1_700_000_000_000,
+			crashCount: 0,
+			recentLogs: [{ level: 'info', message: 'hi', at: 1_700_000_000_000 }],
+		},
+	};
+
+	it('returns the sandbox host snapshot when the flag is on', async () => {
+		const getActivity = vi.fn(() => sample);
+		register(true, { getActivity });
+		const handler = handlers.get('plugins:get-activity');
+		expect(handler).toBeDefined();
+		await expect(handler!(event)).resolves.toEqual(sample);
+		expect(getActivity).toHaveBeenCalledTimes(1);
+	});
+
+	it('returns {} when no sandbox host is wired', async () => {
+		register(true);
+		const handler = handlers.get('plugins:get-activity');
+		expect(handler).toBeDefined();
+		await expect(handler!(event)).resolves.toEqual({});
+	});
+
+	it('throws PluginsDisabled when the flag is off and never reads the sandbox host', async () => {
+		const getActivity = vi.fn(() => sample);
+		register(false, { getActivity });
+		const handler = handlers.get('plugins:get-activity');
+		expect(handler).toBeDefined();
+		await expect(handler!(event)).rejects.toThrow('PluginsDisabled');
+		expect(getActivity).not.toHaveBeenCalled();
 	});
 });

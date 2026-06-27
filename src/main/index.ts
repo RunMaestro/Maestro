@@ -28,6 +28,7 @@ import type { PianolaRule } from '../shared/pianola/types';
 import { spawn, type ChildProcess } from 'child_process';
 import { PluginManager } from './plugins/plugin-manager';
 import { transcriptReadEgressConflict } from '../shared/plugins/capability-policy';
+import { evaluatePluginDispatch } from '../shared/plugins/plugin-dispatch-gate';
 import { PermissionBroker } from './plugins/permission-broker';
 import { PluginSandboxHost } from './plugins/plugin-sandbox-host';
 import { PluginSchedulerHost } from './plugins/plugin-scheduler-host';
@@ -1328,6 +1329,19 @@ app
 			},
 			getTriggers: () => schedulerManager.getContributions().cueTriggers,
 			notify: (trigger) => logger.toast(trigger.payload, `Plugin: ${trigger.pluginId}`),
+			evaluateDispatch: (trigger) => {
+				const verdict = evaluatePluginDispatch(trigger.payload);
+				// The risk gate is necessary but NOT sufficient: auto-dispatch also
+				// requires the plugin to hold a live agents:dispatch grant, so a
+				// low-risk verdict can never bypass the consent/broker model.
+				if (!verdict.eligible) return verdict;
+				if (isPermitted(readGrants(trigger.pluginId), 'agents:dispatch')) return verdict;
+				return {
+					eligible: false,
+					risk: verdict.risk,
+					reason: 'plugin lacks the agents:dispatch grant',
+				};
+			},
 		});
 
 		logger.info('Core services initialized', 'Startup');
@@ -1838,6 +1852,7 @@ function setupIpcHandlers() {
 		registerPluginsHandlers({
 			settingsStore: store,
 			manager: pluginManager,
+			sandboxHost: pluginSandboxHost ?? undefined,
 		});
 	}
 

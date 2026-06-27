@@ -20,6 +20,7 @@ import {
 	type TriggerState,
 } from '../../shared/plugins/plugin-scheduler';
 import type { CueTriggerContribution } from '../../shared/plugins/contributions';
+import type { PluginDispatchVerdict } from '../../shared/plugins/plugin-dispatch-gate';
 
 const DEFAULT_POLL_MS = 30_000;
 
@@ -32,6 +33,10 @@ export interface PluginSchedulerDeps {
 	notify: (trigger: CueTriggerContribution) => void;
 	/** Optional: dispatch a prompt to an agent (dispatch action). */
 	dispatch?: (trigger: CueTriggerContribution) => void;
+	/** Risk gate for a dispatch trigger (the Pianola risk engine). When it judges
+	 * a prompt ineligible (high-risk) - or when no `dispatch` sink is wired - the
+	 * trigger is surfaced to the user via `notify` instead of being auto-run. */
+	evaluateDispatch?: (trigger: CueTriggerContribution) => PluginDispatchVerdict;
 	/** Poll cadence; defaults to 30s. */
 	pollMs?: number;
 }
@@ -79,10 +84,20 @@ export class PluginSchedulerHost {
 				if (trigger.action === 'notify') {
 					this.deps.notify(trigger);
 				} else if (trigger.action === 'dispatch') {
-					if (this.deps.dispatch) this.deps.dispatch(trigger);
-					else {
+					const verdict = this.deps.evaluateDispatch?.(trigger);
+					if (verdict?.eligible && this.deps.dispatch) {
+						this.deps.dispatch(trigger);
 						logger.info(
-							`[Plugins] skipping dispatch trigger "${trigger.id}" (agents:dispatch not wired)`,
+							`[Plugins] dispatched cue trigger "${trigger.id}" (risk ${verdict.risk})`,
+							'[Plugins]'
+						);
+					} else {
+						// Blocked by risk, or auto-execution not wired (agents:dispatch
+						// stays inert pending the Phase-3 sandbox): surface the intent to
+						// the user instead of silently dropping it.
+						this.deps.notify(trigger);
+						logger.info(
+							`[Plugins] cue trigger "${trigger.id}" not auto-dispatched (${verdict?.reason ?? 'dispatch gate not wired'})`,
 							'[Plugins]'
 						);
 					}

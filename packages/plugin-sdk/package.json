@@ -18,7 +18,11 @@
 		"dist"
 	],
 	"scripts": {
-		"build": "tsc -p tsconfig.json"
+		"build": "tsc -p tsconfig.json",
+		"prepublishOnly": "tsc -p tsconfig.json"
+	},
+	"publishConfig": {
+		"access": "public"
 	},
 	"sideEffects": false
 }

@@ -12,7 +12,11 @@
  */
 
 import { ipcRenderer } from 'electron';
-import type { PluginListSnapshot, PluginGrantsSnapshot } from '../ipc/handlers/plugins';
+import type {
+	PluginListSnapshot,
+	PluginGrantsSnapshot,
+	PluginActivityMap,
+} from '../ipc/handlers/plugins';
 import type { InstallResult } from '../plugins/plugin-manager';
 import type { AggregatedContributions } from '../../shared/plugins/contributions';
 
@@ -69,6 +73,13 @@ export function createPluginsApi() {
 		/** Read a contributed panel's HTML for rendering in a sandboxed iframe. */
 		panelHtml: (panelId: string): Promise<{ html: string | null }> =>
 			ipcRenderer.invoke('plugins:panel-html', panelId),
+
+		/**
+		 * Read-only per-plugin observability for running tier-1 plugins: total
+		 * host calls, current/peak in-flight, last-activity timestamp, crash count,
+		 * and a bounded buffer of recent log lines. Keyed by plugin id.
+		 */
+		getActivity: (): Promise<PluginActivityMap> => ipcRenderer.invoke('plugins:get-activity'),
 
 		/**
 		 * Subscribe to plugin-registry changes (install/uninstall/enable/disable/
