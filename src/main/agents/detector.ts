@@ -468,6 +468,43 @@ export class AgentDetector {
 					return userModel ? [userModel] : [];
 				}
 
+				case 'omp': {
+					// Oh My Pi: `omp models --json` returns { models: [{ id, selector, ... }] }
+					// across every configured provider. Prefer the provider-qualified `selector`
+					// (e.g. anthropic/claude-opus-4-8), which is unambiguous for --model.
+					const result = await execFileNoThrow(command, ['models', '--json'], undefined, env);
+					if (result.exitCode !== 0) {
+						logger.warn(
+							`CLI model discovery failed for ${agentId}: exit code ${result.exitCode}`,
+							LOG_CONTEXT,
+							{ stderr: result.stderr }
+						);
+						return [];
+					}
+					let parsed: { models?: Array<{ id?: string; selector?: string }> };
+					try {
+						parsed = parseJsonWithBom<{ models?: Array<{ id?: string; selector?: string }> }>(
+							result.stdout
+						);
+					} catch (parseError) {
+						logger.warn('Failed to parse omp models --json output', LOG_CONTEXT, {
+							error: parseError,
+						});
+						return [];
+					}
+					const seen = new Set<string>();
+					const models: string[] = [];
+					for (const entry of parsed.models ?? []) {
+						const modelId = entry.selector || entry.id;
+						if (modelId && !seen.has(modelId)) {
+							seen.add(modelId);
+							models.push(modelId);
+						}
+					}
+					logger.info(`Discovered ${models.length} models for ${agentId}`, LOG_CONTEXT);
+					return models;
+				}
+
 				default:
 					// For agents without model discovery implemented, return empty array
 					logger.debug(`No model discovery implemented for ${agentId}`, LOG_CONTEXT);

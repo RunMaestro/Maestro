@@ -454,6 +454,42 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		],
 	},
 	{
+		id: 'omp',
+		name: 'Oh My Pi',
+		binaryName: 'omp',
+		command: 'omp',
+		args: [],
+		batchModePrefix: ['-p'],
+		jsonOutputArgs: ['--mode', 'json'],
+		// No noPromptSeparator: use Maestro's default '--' end-of-options separator
+		// before the prompt. omp supports '--', so prompts beginning with '-' or
+		// '---' (markdown front matter) reach the model instead of being parsed as flags.
+		resumeArgs: (sessionId: string) => ['--resume', sessionId],
+		noToolsArgs: ['--no-tools'], // Tab naming disables all tools so a task-like first message yields a name, not a real agentic run (mirrors Pi)
+		modelArgs: (modelId: string) => ['--model', modelId],
+		workingDirArgs: (dir: string) => ['--cwd', dir],
+		imageArgs: (imagePath: string) => [`@${imagePath}`],
+		configOptions: [
+			{
+				key: 'model',
+				type: 'text',
+				label: 'Model',
+				description:
+					'Fuzzy model override passed to --model (for example, opus, gpt-5.2, or openai/gpt-5.2). Multi-provider; leave empty for the CLI default.',
+				default: '',
+				argBuilder: (value: string) => (value && value.trim() ? ['--model', value.trim()] : []),
+			},
+			{
+				key: 'contextWindow',
+				type: 'number',
+				label: 'Context Window Size',
+				description:
+					'Fallback context window size in tokens until Oh My Pi reports a runtime-specific value.',
+				default: 200000,
+			},
+		],
+	},
+	{
 		id: 'opencode',
 		name: 'OpenCode',
 		binaryName: 'opencode',

@@ -1076,6 +1076,45 @@ const QWEN_ERROR_PATTERNS: AgentErrorPatterns = {
 	],
 };
 
+const OMP_ERROR_PATTERNS: AgentErrorPatterns = {
+	auth_expired: [
+		{
+			pattern:
+				/invalid api key|authentication failed|unauthorized|not authenticated|missing api key/i,
+			message: 'Oh My Pi authentication failed. Check the selected provider credentials.',
+			recoverable: true,
+		},
+	],
+	rate_limited: [
+		{
+			pattern: /rate limit|too many requests|\b429\b|quota exceeded/i,
+			message: 'Oh My Pi provider rate limit exceeded. Please wait and try again.',
+			recoverable: true,
+		},
+	],
+	token_exhaustion: [
+		{
+			pattern: /context.*(exceeded|too long)|maximum.*tokens|prompt.*too long/i,
+			message: 'Oh My Pi context limit exceeded. Start a new session.',
+			recoverable: true,
+		},
+	],
+	network_error: [
+		{
+			pattern: /connection (failed|refused|reset)|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND/i,
+			message: 'Oh My Pi could not reach the selected provider. Check your network connection.',
+			recoverable: true,
+		},
+	],
+	agent_crashed: [
+		{
+			pattern: /panic|fatal error|unhandled exception|segmentation fault/i,
+			message: 'Oh My Pi crashed unexpectedly. Check the logs and try again.',
+			recoverable: true,
+		},
+	],
+};
+
 // ============================================================================
 // Pattern Registry
 // ============================================================================
@@ -1088,6 +1127,7 @@ const patternRegistry = new Map<ToolType, AgentErrorPatterns>([
 	['copilot-cli', COPILOT_ERROR_PATTERNS],
 	['pi', PI_ERROR_PATTERNS],
 	['qwen3-coder', QWEN_ERROR_PATTERNS],
+	['omp', OMP_ERROR_PATTERNS],
 ]);
 
 /**

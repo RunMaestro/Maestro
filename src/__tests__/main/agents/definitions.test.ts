@@ -28,6 +28,20 @@ describe('agent-definitions', () => {
 			expect(agentIds).toContain('copilot-cli');
 			expect(agentIds).toContain('hermes');
 			expect(agentIds).toContain('pi');
+			expect(agentIds).toContain('omp');
+		});
+
+		it('should have omp with batch mode and json output configuration', () => {
+			const omp = AGENT_DEFINITIONS.find((def) => def.id === 'omp');
+			expect(omp).toBeDefined();
+			expect(omp?.name).toBe('Oh My Pi');
+			expect(omp?.command).toBe('omp');
+			expect(omp?.binaryName).toBe('omp');
+			expect(omp?.batchModePrefix).toEqual(['-p']);
+			expect(omp?.jsonOutputArgs).toEqual(['--mode', 'json']);
+			expect(omp?.resumeArgs?.('abc')).toEqual(['--resume', 'abc']);
+			expect(omp?.modelArgs?.('opus')).toEqual(['--model', 'opus']);
+			expect(omp?.hidden).toBeFalsy();
 		});
 
 		it('should have required properties on all definitions', () => {
@@ -163,6 +177,7 @@ describe('agent-definitions', () => {
 				'opencode',
 				'gemini-cli',
 				'copilot-cli',
+				'omp',
 			];
 			for (const agentId of knownAgents) {
 				const def = getAgentDefinition(agentId);

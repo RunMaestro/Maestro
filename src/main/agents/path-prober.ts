@@ -349,6 +349,13 @@ function getWindowsKnownPaths(binaryName: string): string[] {
 			...npmGlobal('pi'),
 			...localBin('pi'),
 		],
+		omp: [
+			// Bun global installation (primary method for Oh My Pi)
+			path.join(home, '.bun', 'bin', 'omp.exe'),
+			// npm global installation
+			...npmGlobal('omp'),
+			...localBin('omp'),
+		],
 		gh: [
 			// GitHub CLI official installer (MSI)
 			path.join(programFiles, 'GitHub CLI', 'gh.exe'),
@@ -490,6 +497,15 @@ function getUnixKnownPaths(binaryName: string): string[] {
 			...npmGlobal('pi'),
 			path.join(home, 'bin', 'pi'),
 			...nodeVersionManagers('pi'),
+		],
+		omp: [
+			// Bun global installation (primary method for Oh My Pi)
+			path.join(home, '.bun', 'bin', 'omp'),
+			...localBin('omp'),
+			...homebrew('omp'),
+			...npmGlobal('omp'),
+			path.join(home, 'bin', 'omp'),
+			...nodeVersionManagers('omp'),
 		],
 		gh: [
 			// Homebrew (Apple Silicon + Intel)

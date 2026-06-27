@@ -60,6 +60,7 @@ import { FactoryDroidOutputParser } from './factory-droid-output-parser';
 import { CopilotOutputParser } from './copilot-output-parser';
 import { PiOutputParser } from './pi-output-parser';
 import { QwenOutputParser } from './qwen-output-parser';
+import { OmpOutputParser } from './omp-output-parser';
 import {
 	registerOutputParser,
 	clearParserRegistry,
@@ -75,6 +76,7 @@ export { FactoryDroidOutputParser } from './factory-droid-output-parser';
 export { CopilotOutputParser } from './copilot-output-parser';
 export { PiOutputParser } from './pi-output-parser';
 export { QwenOutputParser } from './qwen-output-parser';
+export { OmpOutputParser } from './omp-output-parser';
 
 const LOG_CONTEXT = '[OutputParsers]';
 
@@ -94,6 +96,7 @@ export function initializeOutputParsers(): void {
 	registerOutputParser(new CopilotOutputParser());
 	registerOutputParser(new PiOutputParser());
 	registerOutputParser(new QwenOutputParser());
+	registerOutputParser(new OmpOutputParser());
 
 	// Log registered parsers for debugging
 	const registeredParsers = getAllOutputParsers().map((p) => p.agentId);

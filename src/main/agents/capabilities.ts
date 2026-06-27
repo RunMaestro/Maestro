@@ -268,6 +268,44 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 	},
 
 	/**
+	 * Oh My Pi - JSON event-stream batch integration via `omp -p --mode json`.
+	 * Oh My Pi emits a session id, streaming message deltas, tool lifecycle
+	 * events, and per-message usage/cost. It resumes sessions through `--resume`
+	 * and selects models with a fuzzy `--model` matcher.
+	 */
+	omp: {
+		supportsResume: true,
+		supportsReadOnlyMode: false,
+		supportsJsonOutput: true,
+		supportsSessionId: true,
+		supportsImageInput: true,
+		supportsImageInputOnResume: true,
+		supportsSlashCommands: false,
+		supportsSessionStorage: false,
+		supportsCostTracking: true,
+		supportsUsageStats: true,
+		supportsBatchMode: true,
+		requiresPromptToStart: true,
+		supportsStreaming: true,
+		supportsResultMessages: true,
+		supportsModelSelection: true,
+		supportsStreamJsonInput: false,
+		supportsThinkingDisplay: true,
+		supportsContextMerge: true,
+		supportsContextExport: false,
+		supportsWizard: false,
+		supportsGroupChatModeration: false,
+		usesJsonLineOutput: true,
+		usesCombinedContextWindow: false,
+		// omp exposes only the inline `--append-system-prompt` flag, not the
+		// `--append-system-prompt-file` variant that Maestro's Windows-local
+		// delivery path emits when this is true. Enabling it would break omp on
+		// Windows (unknown flag), and the flag name is not overridable per agent.
+		supportsAppendSystemPrompt: false,
+		supportsProjectMemory: false,
+	},
+
+	/**
 	 * OpenCode - Open source coding assistant
 	 * https://github.com/opencode-ai/opencode
 	 *

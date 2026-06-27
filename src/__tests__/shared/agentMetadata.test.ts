@@ -33,6 +33,7 @@ describe('agentMetadata', () => {
 			expect(AGENT_DISPLAY_NAMES['gemini-cli']).toBe('Gemini CLI');
 			expect(AGENT_DISPLAY_NAMES['qwen3-coder']).toBe('Qwen3 Coder');
 			expect(AGENT_DISPLAY_NAMES['copilot-cli']).toBe('Copilot-CLI');
+			expect(AGENT_DISPLAY_NAMES['omp']).toBe('Oh My Pi');
 			expect(AGENT_DISPLAY_NAMES['terminal']).toBe('Terminal');
 		});
 
@@ -82,6 +83,7 @@ describe('agentMetadata', () => {
 			expect(BETA_AGENTS.has('pi')).toBe(true);
 			expect(BETA_AGENTS.has('copilot-cli')).toBe(true);
 			expect(BETA_AGENTS.has('qwen3-coder')).toBe(true);
+			expect(BETA_AGENTS.has('omp')).toBe(true);
 		});
 
 		it('should not contain non-beta agents', () => {
@@ -106,6 +108,7 @@ describe('agentMetadata', () => {
 			expect(isBetaAgent('pi')).toBe(true);
 			expect(isBetaAgent('copilot-cli')).toBe(true);
 			expect(isBetaAgent('qwen3-coder')).toBe(true);
+			expect(isBetaAgent('omp')).toBe(true);
 		});
 
 		it('should return false for non-beta agents', () => {

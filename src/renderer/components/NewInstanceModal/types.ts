@@ -13,6 +13,7 @@ export const SUPPORTED_AGENTS = [
 	'factory-droid',
 	'copilot-cli',
 	'qwen3-coder',
+	'omp',
 ];
 
 export interface AgentDebugInfo {
