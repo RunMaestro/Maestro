@@ -440,11 +440,10 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		configOptions: [
 			{
 				key: 'model',
-				type: 'select' as const,
+				type: 'text',
 				label: 'Model',
 				description:
-					'Fuzzy model selector passed to --model (for example, opus, sonnet, or anthropic/claude-opus-4-8). Leave empty for the CLI default.',
-				options: ['', 'opus', 'sonnet', 'haiku', 'gpt-5', 'gemini-2.5-pro'],
+					'Fuzzy model override passed to --model (for example, opus, gpt-5.2, or openai/gpt-5.2). Multi-provider; leave empty for the CLI default.',
 				default: '',
 				argBuilder: (value: string) => (value && value.trim() ? ['--model', value.trim()] : []),
 			},
