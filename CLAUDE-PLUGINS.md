@@ -137,13 +137,13 @@ HostResponse { id, ok, result?, error? } <---postMessage---
 - Every contributed id is namespaced `<pluginId>/<localId>`. The manifest author writes the bare local `id`; the loader stores both `localId` and the namespaced `id`.
 - Invalid individual items are dropped with a recorded error rather than failing the whole plugin (a typo in one theme must not hide good prompts).
 - On a namespaced-id collision the first wins (defended even though ids are plugin-scoped). For runtime agents, built-in agents always win, so a plugin can never shadow a first-party agent.
-- Contribution types: `themes`, `prompts`, `settings`, `commandMacros`, `cueTriggers` (tier 0); `commands`, `panels`, `agents` (tier 1). `cueTriggers` with `action: 'notify'` run on tier 0; `action: 'dispatch'` needs `agents:dispatch` (inert). Registering an `agents` contribution does NOT enable spawning it - that is a separate, security-reviewed step (arbitrary binary execution).
+- Contribution types: `themes`, `prompts`, `settings`, `commandMacros`, `cueTriggers` (tier 0); `commands`, `panels`, `agents`, `tools`, `keybindings` (tier 1). `cueTriggers` with `action: 'notify'` run on tier 0; `action: 'dispatch'` is risk-gated (the Pianola risk engine) and surfaced to the user, never auto-fired when high-risk. A `tools` contribution is invokable with a result via the brokered `plugins:invoke-tool` round-trip; a `keybindings` contribution's `command` must be a plugin-local id. Registering `agents`/`tools`/`keybindings` does NOT by itself wire spawning / model-exposure / chord-binding - each is a separate step.
 
 ## IPC surface (`src/main/ipc/handlers/plugins.ts`)
 
 Channels (all gated on `encoreFeatures.plugins`):
 
-`plugins:list`, `plugins:set-enabled`, `plugins:install`, `plugins:uninstall`, `plugins:contributions`, `plugins:get-grants`, `plugins:set-grants`, `plugins:revoke-grants`, `plugins:invoke-command`, `plugins:panel-html`.
+`plugins:list`, `plugins:set-enabled`, `plugins:install`, `plugins:update`, `plugins:uninstall`, `plugins:contributions`, `plugins:get-grants`, `plugins:set-grants`, `plugins:revoke-grants`, `plugins:invoke-command`, `plugins:invoke-tool`, `plugins:get-activity`, `plugins:panel-html`.
 
 - **Pure-reads invariant.** `plugins:list` and `plugins:contributions` MUST NOT call `refresh()`. `refresh()` reconciles sandboxes and fires `onChange` -> `plugins:changed` -> renderer re-fetch -> read again, an infinite IPC loop that freezes the app. Discovery happens at startup and on mutations only.
 - **Consent (`plugins:set-grants`).** The user approves a SUBSET of the plugin's REQUESTED permissions. The handler intersects approved capabilities with the manifest's requests, so an over-broad grant can never be smuggled in via the renderer, and only known capabilities survive. `plugins:revoke-grants` calls `forgetGrants`.
