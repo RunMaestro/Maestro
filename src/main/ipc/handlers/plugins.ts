@@ -95,6 +95,15 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 			return manager.install(sourceDir);
 		}
 	);
+	const wrappedUpdate = withIpcErrorLogging(
+		handlerOpts('update'),
+		async (sourceDir: unknown): Promise<PluginListSnapshot> => {
+			if (typeof sourceDir !== 'string' || sourceDir.length === 0) {
+				throw new Error('InvalidSourceDir');
+			}
+			return snapshotOf(await manager.update(sourceDir));
+		}
+	);
 	const wrappedUninstall = withIpcErrorLogging(
 		handlerOpts('uninstall'),
 		async (id: unknown): Promise<{ success: boolean; error?: string }> => {
@@ -184,6 +193,14 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 		if (!isPluginsEnabled(settingsStore)) throw new Error('PluginsDisabled');
 		return wrappedInstall(event, sourceDir);
 	});
+
+	ipcMain.handle(
+		'plugins:update',
+		async (event, sourceDir: unknown): Promise<PluginListSnapshot> => {
+			if (!isPluginsEnabled(settingsStore)) throw new Error('PluginsDisabled');
+			return wrappedUpdate(event, sourceDir);
+		}
+	);
 
 	ipcMain.handle(
 		'plugins:uninstall',

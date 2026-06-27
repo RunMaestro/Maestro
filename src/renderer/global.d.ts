@@ -3515,6 +3515,7 @@ interface MaestroAPI {
 		list: () => Promise<PluginListSnapshot>;
 		setEnabled: (id: string, enabled: boolean) => Promise<PluginListSnapshot>;
 		install: (sourceDir: string) => Promise<PluginInstallResult>;
+		update: (sourceDir: string) => Promise<PluginListSnapshot>;
 		uninstall: (id: string) => Promise<{ success: boolean; error?: string }>;
 		contributions: () => Promise<PluginContributions>;
 		getGrants: (id: string) => Promise<PluginGrantsSnapshot>;
