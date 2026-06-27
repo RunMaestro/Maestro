@@ -371,6 +371,7 @@ export interface SettingsStoreState {
 	showFilePreviewsInUnreadFilter: boolean;
 	useCmd0AsLastTab: boolean;
 	showBrowserTabDomain: boolean;
+	tabBarWheelScroll: boolean;
 	documentGraphShowExternalLinks: boolean;
 	documentGraphMaxNodes: number;
 	documentGraphPreviewCharLimit: number;
@@ -513,6 +514,7 @@ export interface SettingsStoreActions {
 	setShowFilePreviewsInUnreadFilter: (value: boolean) => void;
 	setUseCmd0AsLastTab: (value: boolean) => void;
 	setShowBrowserTabDomain: (value: boolean) => void;
+	setTabBarWheelScroll: (value: boolean) => void;
 	setDocumentGraphShowExternalLinks: (value: boolean) => void;
 	setDocumentGraphMaxNodes: (value: number) => void;
 	setDocumentGraphPreviewCharLimit: (value: number) => void;
@@ -732,6 +734,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		showFilePreviewsInUnreadFilter: false,
 		useCmd0AsLastTab: true,
 		showBrowserTabDomain: true,
+		tabBarWheelScroll: true,
 		documentGraphShowExternalLinks: false,
 		documentGraphMaxNodes: 50,
 		documentGraphPreviewCharLimit: 100,
@@ -1193,6 +1196,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setUseCmd0AsLastTab: (value) => {
 			set({ useCmd0AsLastTab: value });
 			window.maestro.settings.set('useCmd0AsLastTab', value);
+		},
+
+		setTabBarWheelScroll: (value) => {
+			set({ tabBarWheelScroll: value });
+			window.maestro.settings.set('tabBarWheelScroll', value);
 		},
 
 		setShowBrowserTabDomain: (value) => {
@@ -2525,6 +2533,9 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['showBrowserTabDomain'] !== undefined)
 			patch.showBrowserTabDomain = allSettings['showBrowserTabDomain'] as boolean;
+
+		if (allSettings['tabBarWheelScroll'] !== undefined)
+			patch.tabBarWheelScroll = allSettings['tabBarWheelScroll'] as boolean;
 
 		// Document Graph settings (with validation)
 		if (allSettings['documentGraphShowExternalLinks'] !== undefined)
