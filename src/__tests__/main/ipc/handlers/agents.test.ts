@@ -29,6 +29,7 @@ vi.mock('../../../../main/agents', async () => {
 			{ id: 'claude-code', name: 'Claude Code', binaryName: 'claude', configOptions: [] },
 			{ id: 'codex', name: 'Codex', binaryName: 'codex', configOptions: [] },
 			{ id: 'opencode', name: 'OpenCode', binaryName: 'opencode', configOptions: [] },
+			{ id: 'omp', name: 'Oh My Pi', binaryName: 'omp', configOptions: [] },
 			{ id: 'terminal', name: 'Terminal', binaryName: 'bash', configOptions: [] },
 		],
 		DEFAULT_CAPABILITIES: {
@@ -1127,6 +1128,42 @@ describe('agents IPC handlers', () => {
 				);
 				expect(result).toEqual(['opencode/gpt-5-nano', 'ollama/qwen3:8b']);
 				expect(mockAgentDetector.discoverModels).not.toHaveBeenCalled();
+			});
+
+			it('should discover omp models over SSH via models --json', async () => {
+				mockSettingsStore.get.mockReturnValue([
+					{
+						id: 'remote-1',
+						host: 'dev.example.com',
+						user: 'dev',
+						enabled: true,
+					},
+				]);
+
+				vi.mocked(buildSshCommand).mockResolvedValue({
+					command: 'ssh',
+					args: ['-o', 'BatchMode=yes', 'dev@dev.example.com', 'omp models --json'],
+				});
+
+				vi.mocked(execFileNoThrow).mockResolvedValue({
+					exitCode: 0,
+					stdout: JSON.stringify({
+						models: [
+							{ id: 'claude-opus-4-8', selector: 'anthropic/claude-opus-4-8' },
+							{ id: 'gpt-5.2', selector: 'openai-codex/gpt-5.2' },
+						],
+					}),
+					stderr: '',
+				});
+
+				const handler = handlers.get('agents:getModels');
+				const result = await handler!({} as any, 'omp', false, 'remote-1');
+
+				expect(buildSshCommand).toHaveBeenCalledWith(
+					expect.objectContaining({ id: 'remote-1', host: 'dev.example.com' }),
+					expect.objectContaining({ command: 'omp', args: ['models', '--json'] })
+				);
+				expect(result).toEqual(['anthropic/claude-opus-4-8', 'openai-codex/gpt-5.2']);
 			});
 
 			it('should throw when SSH remote not found', async () => {

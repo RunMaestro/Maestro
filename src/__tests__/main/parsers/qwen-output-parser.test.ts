@@ -161,6 +161,27 @@ describe('QwenOutputParser', () => {
 			const usage = parser.extractUsage(event!);
 			expect(usage?.contextWindow).toBe(200000);
 		});
+		it('preserves a model-reported context window below the Claude fallback', () => {
+			// A custom OpenAI-compatible model can report a window < 200000; the aggregator
+			// clamps it up to the fallback, so the parser must restore the real value.
+			const event = parser.parseJsonLine(
+				JSON.stringify({
+					type: 'result',
+					subtype: 'success',
+					result: 'done',
+					modelUsage: {
+						'custom/small-model': {
+							inputTokens: 1000,
+							outputTokens: 500,
+							contextWindow: 128000,
+						},
+					},
+				})
+			);
+
+			const usage = parser.extractUsage(event!);
+			expect(usage?.contextWindow).toBe(128000);
+		});
 	});
 
 	describe('is_error handling', () => {

@@ -29,6 +29,7 @@ import { stripAnsi } from '../../utils/stripAnsi';
 import { SshRemoteConfig } from '../../../shared/types';
 import { MaestroSettings } from './persistence';
 import { captureException } from '../../utils/sentry';
+import { parseJsonWithBom } from '../../../shared/jsonUtils';
 import {
 	getAllSnapshots as getAllClaudeUsageSnapshots,
 	resolveConfigDirKey,
@@ -607,7 +608,7 @@ async function discoverModelsRemote(
 
 	const remoteOptions: RemoteCommandOptions = {
 		command: agentDef.binaryName,
-		args: ['models'],
+		args: agentId === 'omp' ? ['models', '--json'] : ['models'],
 		env: sshRemote.remoteEnv,
 	};
 
@@ -646,15 +647,38 @@ async function discoverModelsRemote(
 		const seen = new Set<string>();
 		const models: string[] = [];
 
-		// Source 1: CLI-discovered models
-		const cliModels = stripAnsi(result.stdout)
-			.split('\n')
-			.map((l) => l.trim())
-			.filter((l) => l.length > 0);
-		for (const m of cliModels) {
-			if (!seen.has(m)) {
-				seen.add(m);
-				models.push(m);
+		if (agentId === 'omp') {
+			// `omp models` prints a human table; the machine-readable form is
+			// `omp models --json` -> { models: [{ selector, id, ... }] }. Use the
+			// provider-qualified selector, mirroring the local discovery path so the
+			// remote picker is not filled with table headings/box rows.
+			try {
+				const parsed = parseJsonWithBom<{ models?: Array<{ id?: string; selector?: string }> }>(
+					result.stdout
+				);
+				for (const entry of parsed.models ?? []) {
+					const modelId = entry.selector || entry.id;
+					if (modelId && !seen.has(modelId)) {
+						seen.add(modelId);
+						models.push(modelId);
+					}
+				}
+			} catch (parseError) {
+				logger.warn('Failed to parse remote omp models --json output', LOG_CONTEXT, {
+					error: parseError,
+				});
+			}
+		} else {
+			// Source 1: CLI-discovered models (one per line)
+			const cliModels = stripAnsi(result.stdout)
+				.split('\n')
+				.map((l) => l.trim())
+				.filter((l) => l.length > 0);
+			for (const m of cliModels) {
+				if (!seen.has(m)) {
+					seen.add(m);
+					models.push(m);
+				}
 			}
 		}
 

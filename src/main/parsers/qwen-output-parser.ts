@@ -52,32 +52,35 @@ export class QwenOutputParser extends ClaudeOutputParser {
 			return event;
 		}
 
-		// Qwen's native context window is 256K (262144). The inherited
-		// ClaudeOutputParser routes usage through aggregateModelUsage, which injects
-		// a Claude fallback contextWindow of 200000 whenever a Qwen event reports
-		// only top-level usage (no per-model context window). StdoutHandler.buildUsageStats
-		// then prefers that parser-supplied window over the spawned process's configured
-		// Qwen window, so the context meter and summarization thresholds would be driven
-		// from the wrong limit. Drop the injected fallback so the configured 262144 window
-		// wins; keep any genuinely larger window a model actually reports.
-		// Strip the parent-injected Claude fallback ONLY when the raw payload reported
-		// no per-model context window. If a Qwen model genuinely reports 200000 (equal
-		// to the fallback), preserve it instead of deleting a real limit.
+		// Qwen's native context window is 256K (262144). The inherited ClaudeOutputParser
+		// routes usage through aggregateModelUsage, which initializes contextWindow to the
+		// Claude fallback (200000) and only overrides it with a per-model value LARGER than
+		// the fallback. So any window a Qwen / OpenAI-compatible model actually reports at
+		// <= 200000 is collapsed to 200000, and a payload that reports no window stays at the
+		// injected fallback. StdoutHandler.buildUsageStats then prefers this parser-supplied
+		// window over the configured Qwen window, skewing the context meter.
+		//
+		// Recover the real value from the raw payload: if any model reported a positive
+		// contextWindow, use the largest reported value verbatim; otherwise drop the injected
+		// fallback so the configured 262144 window drives the meter.
 		const rawModelUsage = (parsed as { modelUsage?: Record<string, { contextWindow?: number }> })
 			.modelUsage;
-		const reportedContextWindow =
-			!!rawModelUsage &&
-			Object.values(rawModelUsage).some(
-				(m) => typeof m?.contextWindow === 'number' && m.contextWindow > 0
-			);
-		if (
-			event.usage &&
-			event.usage.contextWindow === FALLBACK_CONTEXT_WINDOW &&
-			!reportedContextWindow
-		) {
-			const usage = { ...event.usage };
-			delete usage.contextWindow;
-			event.usage = usage;
+		const reportedContextWindow = rawModelUsage
+			? Math.max(
+					0,
+					...Object.values(rawModelUsage).map((m) =>
+						typeof m?.contextWindow === 'number' ? m.contextWindow : 0
+					)
+				)
+			: 0;
+		if (event.usage) {
+			if (reportedContextWindow > 0) {
+				event.usage = { ...event.usage, contextWindow: reportedContextWindow };
+			} else if (event.usage.contextWindow === FALLBACK_CONTEXT_WINDOW) {
+				const usage = { ...event.usage };
+				delete usage.contextWindow;
+				event.usage = usage;
+			}
 		}
 
 		if (event.type === 'result' && this.isFailedResult(parsed)) {
