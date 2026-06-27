@@ -216,7 +216,7 @@ Only `action: 'notify'` runs on tier 0. `action: 'dispatch'` needs `agents:dispa
 
 ## 5. Capabilities
 
-Request these in `permissions` as `{ capability, scope?, reason? }`. `scope` narrows `fs:*` (a directory) and `net:fetch` (a host); absent means the broad form. `reason` shows at the consent prompt.
+Request these in `permissions` as `{ capability, scope?, reason? }`. `scope` narrows `fs:*` (a directory), `net:fetch` (a host), and `transcripts:read` (a project path); absent means the broad form. `reason` shows at the consent prompt.
 
 | Capability            | Risk   | Scope | What it allows                                      | How to request                                                  |
 | --------------------- | ------ | ----- | --------------------------------------------------- | --------------------------------------------------------------- |
@@ -432,7 +432,7 @@ import { defineManifest, type PluginModule, type MaestroSdk } from '@maestro/plu
 - `maestro plugin sign <dir> --key <pem|base64>` (or `--gen-key --key-out <path>` to generate an ed25519 keypair) - write a `signature.json` whose payload is byte-identical to what the host verifies.
 - `maestro plugin pack <dir> --out <file>` - build a distributable `.tgz` (excludes `node_modules`, `.git`, and key files).
 
-## Typical flow: `init` -> edit -> `validate` -> `sign --gen-key --key-out key.pem` -> `pack`.
+Typical flow: `init` -> edit -> `validate` -> `sign --gen-key --key-out key.pem` -> `pack`.
 
 ## See also
 
