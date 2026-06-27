@@ -646,6 +646,7 @@ async function discoverModelsRemote(
 
 		const seen = new Set<string>();
 		const models: string[] = [];
+		const sanitizedStdout = stripAnsi(result.stdout);
 
 		if (agentId === 'omp') {
 			// `omp models` prints a human table; the machine-readable form is
@@ -654,7 +655,7 @@ async function discoverModelsRemote(
 			// remote picker is not filled with table headings/box rows.
 			try {
 				const parsed = parseJsonWithBom<{ models?: Array<{ id?: string; selector?: string }> }>(
-					result.stdout
+					sanitizedStdout
 				);
 				for (const entry of parsed.models ?? []) {
 					const modelId = entry.selector || entry.id;
@@ -670,7 +671,7 @@ async function discoverModelsRemote(
 			}
 		} else {
 			// Source 1: CLI-discovered models (one per line)
-			const cliModels = stripAnsi(result.stdout)
+			const cliModels = sanitizedStdout
 				.split('\n')
 				.map((l) => l.trim())
 				.filter((l) => l.length > 0);

@@ -356,11 +356,12 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		batchModeArgs: ['-y'],
 		jsonOutputArgs: ['--output-format', 'stream-json'],
 		resumeArgs: (sessionId: string) => ['--resume', sessionId],
-		// Qwen Code is a Gemini CLI fork; read-only behavior is enforced via system prompt
-		// instructions. The -y flag is still needed for non-interactive execution to prevent
-		// approval prompts from hanging batch mode.
-		readOnlyArgs: ['-y'],
-		readOnlyCliEnforced: false, // No CLI-level read-only enforcement; prompt-only
+		// Qwen Code (qwen-code v0.19.x) ships a first-class `--approval-mode plan` that denies
+		// write/shell/edit tools in non-interactive mode (read-only analysis). It does not need
+		// `-y` to avoid hangs (non-interactive plan/default denies tools rather than prompting),
+		// and `-y` (YOLO) would auto-approve writes, defeating read-only intent.
+		readOnlyArgs: ['--approval-mode', 'plan'],
+		readOnlyCliEnforced: true, // CLI enforces read-only via --approval-mode plan
 		yoloModeArgs: ['-y'],
 		workingDirArgs: (dir: string) => ['--include-directories', dir],
 		imageArgs: undefined,
@@ -465,6 +466,8 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		// before the prompt. omp supports '--', so prompts beginning with '-' or
 		// '---' (markdown front matter) reach the model instead of being parsed as flags.
 		resumeArgs: (sessionId: string) => ['--resume', sessionId],
+		readOnlyArgs: ['--tools', 'read,grep,glob'], // Read-only: restrict to read/search tools (search->grep, find->glob aliases)
+		readOnlyCliEnforced: true,
 		noToolsArgs: ['--no-tools'], // Tab naming disables all tools so a task-like first message yields a name, not a real agentic run (mirrors Pi)
 		modelArgs: (modelId: string) => ['--model', modelId],
 		workingDirArgs: (dir: string) => ['--cwd', dir],

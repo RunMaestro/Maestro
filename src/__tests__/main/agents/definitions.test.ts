@@ -390,6 +390,21 @@ describe('agent-definitions', () => {
 			expect(modelOption?.argBuilder?.('')).toEqual([]);
 			expect(modelOption?.argBuilder?.('  ')).toEqual([]);
 		});
+
+		it('should use --approval-mode plan for CLI-enforced read-only (never -y)', () => {
+			const qwen = getAgentDefinition('qwen3-coder');
+			expect(qwen?.readOnlyArgs).toEqual(['--approval-mode', 'plan']);
+			expect(qwen?.readOnlyCliEnforced).toBe(true);
+			expect(qwen?.readOnlyArgs).not.toContain('-y');
+		});
+	});
+
+	describe('Oh My Pi agent', () => {
+		it('should restrict to read-only tools for CLI-enforced read-only', () => {
+			const omp = getAgentDefinition('omp');
+			expect(omp?.readOnlyArgs).toEqual(['--tools', 'read,grep,glob']);
+			expect(omp?.readOnlyCliEnforced).toBe(true);
+		});
 	});
 
 	describe('Type definitions', () => {

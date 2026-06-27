@@ -275,7 +275,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 	 */
 	omp: {
 		supportsResume: true,
-		supportsReadOnlyMode: false,
+		supportsReadOnlyMode: true, // --tools read,grep,glob restricts to read-only tools - Verified
 		supportsJsonOutput: true,
 		supportsSessionId: true,
 		supportsImageInput: true,

@@ -188,6 +188,7 @@ describe('agent-capabilities', () => {
 			expect(capabilities.supportsStreaming).toBe(true);
 			expect(capabilities.supportsResultMessages).toBe(true);
 			expect(capabilities.supportsThinkingDisplay).toBe(true);
+			expect(capabilities.supportsReadOnlyMode).toBe(true);
 			expect(capabilities.usesJsonLineOutput).toBe(true);
 		});
 

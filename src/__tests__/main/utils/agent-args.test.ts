@@ -437,6 +437,32 @@ describe('buildAgentArgs', () => {
 		).toEqual(['--model', 'gpt-5']);
 	});
 
+	it('builds Qwen read-only args with --approval-mode plan and never -y', () => {
+		const qwen = AGENT_DEFINITIONS.find((agent) => agent.id === 'qwen3-coder');
+		expect(qwen).toBeDefined();
+		const result = buildAgentArgs(qwen!, {
+			baseArgs: [],
+			prompt: 'review this code',
+			readOnlyMode: true,
+		});
+		// batchModeArgs (-y) is skipped in read-only; plan mode denies write/shell/edit
+		expect(result).toContain('--approval-mode');
+		expect(result).toContain('plan');
+		expect(result).not.toContain('-y');
+	});
+
+	it('builds omp read-only args restricting tools to read/search', () => {
+		const omp = AGENT_DEFINITIONS.find((agent) => agent.id === 'omp');
+		expect(omp).toBeDefined();
+		const result = buildAgentArgs(omp!, {
+			baseArgs: [],
+			prompt: 'review this code',
+			readOnlyMode: true,
+		});
+		expect(result).toContain('--tools');
+		expect(result).toContain('read,grep,glob');
+	});
+
 	// -- readOnlyMode + batchModeArgs interaction (TASK-S05) --
 	it('skips batchModeArgs when readOnlyMode is true even with empty readOnlyArgs', () => {
 		// Gemini CLI scenario: readOnlyArgs is [] but -y should still be skipped
