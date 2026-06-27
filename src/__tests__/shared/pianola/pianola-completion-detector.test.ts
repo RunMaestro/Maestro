@@ -180,3 +180,75 @@ describe('FAILURE_MARKER_PATTERNS', () => {
 		expect(hasFailureMarker([msg('assistant', 'The build is green and tests pass.')])).toBe(false);
 	});
 });
+
+describe('detectTaskOutcome - failure lexicon precision', () => {
+	it('does not fail a task on benign failed/aborted narration', () => {
+		const benign = [
+			'All tests pass; 0 failed.',
+			'The test failed earlier but now passes.',
+			'I aborted the old approach and finished the new one.',
+			'No failures found.',
+		];
+		for (const text of benign) {
+			expect(detectTaskOutcome(input('idle', 'busy', [msg('assistant', text)])).outcome).toBe(
+				'done'
+			);
+		}
+	});
+
+	it('still fails on tool/exit-shaped failure signals', () => {
+		const failing = [
+			'error: ENOENT: no such file or directory',
+			'fatal: not a git repository',
+			'Traceback (most recent call last):',
+			'panic: runtime error',
+			'the process exited with exit code 1',
+			'command not found: foo',
+		];
+		for (const text of failing) {
+			expect(detectTaskOutcome(input('idle', 'busy', [msg('assistant', text)])).outcome).toBe(
+				'failed'
+			);
+		}
+	});
+
+	it('treats an error-role message as failure regardless of wording', () => {
+		expect(detectTaskOutcome(input('idle', 'busy', [msg('error', 'all good here')])).outcome).toBe(
+			'failed'
+		);
+	});
+});
+
+describe('FAILURE_MARKER_PATTERNS - exception/error-prefix precision (Q7)', () => {
+	const negatives = [
+		'Added exception handling; task complete.',
+		'Completed without exception.',
+		'Result: no error: all tests pass',
+		'0 errors, build succeeded',
+	];
+	for (const text of negatives) {
+		it(`does not fire on benign prose: ${text}`, () => {
+			expect(hasFailureMarker([msg('assistant', text)])).toBe(false);
+			expect(detectTaskOutcome(input('idle', 'busy', [msg('assistant', text)])).outcome).toBe(
+				'done'
+			);
+		});
+	}
+
+	const positives = [
+		'Uncaught exception: TypeError',
+		'Traceback (most recent call last):',
+		'error: cannot find module',
+		'Build failed: 3 errors',
+		'exit code 1',
+		'command not found',
+	];
+	for (const text of positives) {
+		it(`still detects a real failure signal: ${text}`, () => {
+			expect(hasFailureMarker([msg('assistant', text)])).toBe(true);
+			expect(detectTaskOutcome(input('idle', 'busy', [msg('assistant', text)])).outcome).toBe(
+				'failed'
+			);
+		});
+	}
+});

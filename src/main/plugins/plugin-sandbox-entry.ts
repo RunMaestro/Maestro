@@ -56,16 +56,25 @@ let nextId = 1;
 let deactivate: (() => void | Promise<void>) | undefined;
 /** Command handlers the plugin registered via maestro.commands.register. */
 const commandHandlers = new Map<string, (args: unknown) => unknown>();
+/** A plugin's local handler for a delivered host event (metadata-only payload). */
+type PluginEventHandler = (payload: unknown, meta: { topic: string; at: string }) => void;
+/** Per-topic event handlers the plugin registered via maestro.events.on. */
+const eventHandlers = new Map<string, Set<PluginEventHandler>>();
 
 /** Send a brokered host call and await its response. */
 function hostCall(method: HostMethod, params: unknown): Promise<unknown> {
 	if (!parentPort) return Promise.reject(new Error('sandbox has no parent port'));
 	const id = nextId++;
 	const request: HostRequest = { id, method, params };
-	return new Promise<unknown>((resolve, reject) => {
-		pending.set(id, { resolve, reject });
-		parentPort.postMessage(request);
+	let resolve!: (value: unknown) => void;
+	let reject!: (reason?: unknown) => void;
+	const promise = new Promise<unknown>((res, rej) => {
+		resolve = res;
+		reject = rej;
 	});
+	pending.set(id, { resolve, reject });
+	parentPort.postMessage(request);
+	return promise;
 }
 
 /** Build the `maestro` SDK object exposed to plugin code. Every method is a
@@ -94,6 +103,45 @@ function buildSdk(pluginId: string) {
 		}),
 		settings: Object.freeze({
 			get: (key: string): Promise<unknown> => call('settings.get', { key }),
+			/** Write the plugin's OWN namespaced (plugins.<id>.*) non-secret setting. */
+			set: (key: string, value: unknown): Promise<void> =>
+				call('settings.set', { key, value }) as Promise<void>,
+		}),
+		sessions: Object.freeze({
+			/** List session METADATA (never message content). */
+			list: (): Promise<unknown> => call('sessions.list', {}),
+			get: (sessionId: string): Promise<unknown> => call('sessions.get', { sessionId }),
+		}),
+		storage: Object.freeze({
+			get: (key: string): Promise<unknown> => call('storage.get', { key }),
+			set: (key: string, value: string): Promise<void> =>
+				call('storage.set', { key, value }) as Promise<void>,
+			delete: (key: string): Promise<unknown> => call('storage.delete', { key }),
+			keys: (): Promise<unknown> => call('storage.keys', {}),
+		}),
+		ui: Object.freeze({
+			/** Invoke a registered command-palette command. */
+			runCommand: (commandId: string, args?: unknown): Promise<unknown> =>
+				call('ui.runCommand', { commandId, args }),
+		}),
+		events: Object.freeze({
+			/** Register a local handler for a host event topic (call subscribe to
+			 * start delivery). Payloads are metadata-only. */
+			on: (topic: string, handler: PluginEventHandler): void => {
+				if (typeof topic !== 'string' || typeof handler !== 'function') return;
+				let set = eventHandlers.get(topic);
+				if (!set) {
+					set = new Set<PluginEventHandler>();
+					eventHandlers.set(topic, set);
+				}
+				set.add(handler);
+			},
+			/** Ask the host to start delivering the given topics to this plugin. */
+			subscribe: (topics: readonly string[]): Promise<unknown> =>
+				call('events.subscribe', { topics }),
+			/** Stop delivery for the given topics, or all topics when omitted. */
+			unsubscribe: (topics?: readonly string[]): Promise<unknown> =>
+				call('events.unsubscribe', topics ? { topics } : {}),
 		}),
 		commands: Object.freeze({
 			/** Register a handler invoked when the host dispatches this command. */
@@ -120,14 +168,22 @@ function runPluginCode(pluginId: string, code: string): void {
 	const sdk = buildSdk(pluginId);
 	const moduleShim: { exports: Record<string, unknown> } = { exports: {} };
 
-	// Curated globals. We deliberately do NOT inject host intrinsics (Object,
-	// Array, Promise, URL, ...): doing so would share the HOST's prototype chain
-	// with plugin code (prototype pollution of this process) and hand it the host
-	// Function constructor (`URL.constructor('return process')()` -> full Node).
-	// vm.createContext gives the new context its OWN native intrinsics for free,
-	// isolated from the host realm. Timers are wrapped (not passed by reference)
-	// so the plugin cannot reach the host Function via `setTimeout.constructor`.
-	// require/process/Buffer/module-loading/globalThis are intentionally absent.
+	// Curated globals. We deliberately do NOT inject host intrinsics (Object, Array,
+	// Promise, URL, ...): doing so would share the HOST's prototype chain with plugin
+	// code (prototype pollution of this process). vm.createContext gives the context
+	// its OWN native intrinsics, isolated from the host realm.
+	//
+	// HONEST THREAT MODEL: the values we DO inject (the maestro SDK, console,
+	// setTimeout/clearTimeout) are host-realm functions, so `someInjected.constructor`
+	// is the HOST `Function` constructor, and `codeGeneration.strings:false` only
+	// disables code-gen for the CONTEXT's own Function - NOT the host's. A determined
+	// plugin can therefore still realm-escape (e.g. `console.log.constructor("return
+	// process")()` reaches the real `process`). vm is DEFENSE-IN-DEPTH, never the
+	// boundary: the real isolation is the separate utilityProcess + the default-deny
+	// broker + signature/consent gating on which code runs at all. Closing the escape
+	// fully (an OS-level sandbox dropping ambient fs/net/exec authority) is the
+	// documented Phase-3 decision; until then, enabling a tier-1 code plugin is a
+	// full-trust decision. require/process/Buffer/module-loading/globalThis are absent.
 	const sandboxGlobal: Record<string, unknown> = {
 		maestro: sdk,
 		module: moduleShim,
@@ -208,6 +264,23 @@ if (parentPort) {
 				}
 			} else {
 				log('warn', `no handler registered for command "${commandId}"`);
+			}
+			return;
+		}
+		if (msg.kind === 'event') {
+			const topic = typeof msg.topic === 'string' ? msg.topic : '';
+			const handlers = eventHandlers.get(topic);
+			if (handlers) {
+				const meta = { topic, at: typeof msg.at === 'string' ? msg.at : '' };
+				for (const handler of handlers) {
+					try {
+						void Promise.resolve(handler(msg.payload, meta)).catch((err) =>
+							log('error', `event "${topic}" handler threw: ${String(err)}`)
+						);
+					} catch (err) {
+						log('error', `event "${topic}" handler threw: ${String(err)}`);
+					}
+				}
 			}
 			return;
 		}

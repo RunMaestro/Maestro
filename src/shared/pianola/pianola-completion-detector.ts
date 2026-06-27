@@ -44,29 +44,43 @@ export interface CompletionInput {
 }
 
 /**
- * Failure markers in agent output. Ported from the shared error lexicon in
- * src/main/parsers/error-patterns.ts and kept word-boundary anchored (like
- * pianola-risk.ts) so words such as "errorless" or a stray "failed to reproduce"
- * narrative do not over-fire. These signal a botched task even when the agent
- * otherwise settled to idle.
+ * Failure markers in agent output. Tool/exit-shaped signals ONLY: an `error`-role
+ * message (handled in hasFailureMarker), an `error:`/`fatal:` lead-in, a crash, a
+ * non-zero process exit, or a "command failed/not found". We deliberately do NOT
+ * match bare `failed`/`failure`/`aborted`: those words appear constantly in
+ * successful narration ("0 failed", "the test failed earlier but now passes", "I
+ * aborted the old approach and finished"), and a false failure here cascades
+ * propagateBlocked() across a task's dependents and stalls the whole plan. For
+ * the same reason `exception` only counts in failure-shaped context, and the
+ * `error:`/`fatal:` lead-in is guarded against benign negations ("no error:").
  */
 export const FAILURE_MARKER_PATTERNS: readonly RegExp[] = [
 	// General agent error (verbatim from error-patterns.ts unknown_error tier).
 	/\b(fatal|unexpected|internal|unhandled)\s+error\b/i,
-	// "error: ..." lead-in, the classic tool/compiler failure prefix.
-	/\berror:\s/i,
-	// Explicit failure verbs.
-	/\b(failed|failure)\b/i,
-	/\bfatal\b/i,
-	// Runtime crashes.
-	/\b(exception|traceback|stack\s*trace)\b/i,
+	// "error: ..." / "fatal: ..." lead-in: the classic tool/compiler/git prefix.
+	// The negative lookbehinds keep benign negations ("no error: ...", "without
+	// error: ...") from tripping a false failure while a real prefix still fires.
+	/(?<!\bno\s)(?<!\bwithout\s)\b(error|fatal):\s/i,
+	// Runtime crashes. `exception` is matched ONLY in failure-shaped context - an
+	// uncaught/unhandled/fatal exception, a thrown/raised/throwing one, or an
+	// "Exception:" line prefix - so benign prose ("added exception handling",
+	// "completed without exception") does NOT fire. Traceback/panic/segfault are
+	// strong signals on their own.
+	/\b(uncaught|unhandled|fatal)\s+exception\b/i,
+	/\b(threw|raised|throwing)\s+(an?\s+)?exception\b/i,
+	/(^|\n)\s*exception:\s/i,
+	/\b(traceback|stack\s*trace)\b/i,
 	/\bpanic(ked)?\b/i,
 	/\bsegmentation\s+fault\b/i,
-	/\baborted\b/i,
 	// Process exit signals.
 	/\bnon-?zero\s+exit\b/i,
 	/\bexit\s+code\s+[1-9]\b/i,
 	/\bcommand\s+(not\s+found|failed)\b/i,
+	// Report-shaped "<subject> failed" - immediately followed by `:`, `(`, "with",
+	// or end-of-string - so a tool/build report ("Build failed:", "compilation
+	// failed: see log") counts, but mid-sentence success narration ("the test
+	// failed earlier but now passes", "0 failed") does NOT.
+	/\b(build|compil\w+|tests?|lint|typecheck|command|task|job|deploy\w*|install\w*|migration)\s+failed\b(?=\s*[:(]|\s+with\b|\s*$)/i,
 ];
 
 function matchesAny(text: string, patterns: readonly RegExp[]): boolean {

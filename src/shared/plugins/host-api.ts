@@ -21,7 +21,7 @@
 import semver from 'semver';
 
 /** The host API version this Maestro build implements. */
-export const HOST_API_VERSION = '1.0.0';
+export const HOST_API_VERSION = '1.1.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {

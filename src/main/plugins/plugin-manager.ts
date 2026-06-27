@@ -66,6 +66,12 @@ export interface PluginManagerDeps {
 	trustedKeys?: () => string[];
 	/** Optional sandbox controller for running tier-1 plugin code. */
 	sandbox?: PluginSandboxLifecycle;
+	/** Optional: purge a plugin's host-owned data (KV store, plugins.<id>.*
+	 * settings, live event subscriptions) on uninstall. The integrator wires this
+	 * to plugin-host-handlers' purgePluginData so uninstall leaves nothing behind
+	 * (invariant #8). Separate from forgetPlugin/forgetGrants below, which handle
+	 * the enable-state and grants files. */
+	purgePluginData?: (pluginId: string) => void;
 }
 
 export interface InstallResult {
@@ -292,12 +298,15 @@ export class PluginManager {
 		if (resolved !== path.resolve(dir, path.basename(resolved)) || !resolved.startsWith(dir)) {
 			return { success: false, error: 'refusing to remove a path outside the plugins directory' };
 		}
-		// Stop any running sandbox for this plugin before removing its files, and
-		// forget both its enable toggle and its permission grants.
+		// Stop any running sandbox for this plugin before removing its files, then
+		// purge everything it owns: enable toggle, permission grants, and (via the
+		// injected host-data purge) its KV store, plugins.<id>.* settings, and live
+		// event subscriptions - so uninstall leaves nothing behind (invariant #8).
 		this.deps.sandbox?.stop(id);
 		fs.rmSync(resolved, { recursive: true, force: true });
 		forgetPlugin(id);
 		forgetGrants(id);
+		this.deps.purgePluginData?.(id);
 		this.registry = removeRecord(this.registry, id);
 		this.deps.onChange?.(this.registry);
 		return { success: true };

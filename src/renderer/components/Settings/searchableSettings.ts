@@ -1188,6 +1188,28 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 		],
 	},
 	{
+		id: 'encore-pianola',
+		tab: 'encore',
+		tabLabel: 'Encore Features',
+		label: 'Pianola',
+		description:
+			'Autonomous manager agent (Beta). Watches your agents, auto-answers low-risk prompts from your rules, and escalates uncertain or high-risk ones. Can send messages to agents on your behalf',
+		keywords: [
+			'pianola',
+			'autonomous',
+			'manager',
+			'agent',
+			'watch',
+			'auto-answer',
+			'auto answer',
+			'escalate',
+			'rules',
+			'supervise',
+			'orchestrate',
+			'beta',
+		],
+	},
+	{
 		id: 'encore-plugins',
 		tab: 'encore',
 		tabLabel: 'Encore Features',

@@ -64,7 +64,6 @@ import { registerDirectorNotesHandlers, DirectorNotesHandlerDependencies } from 
 import { registerCueHandlers, CueHandlerDependencies } from './cue';
 import { registerCueBackupHandlers } from './cue-backup';
 import { registerPianolaHandlers, PianolaHandlerDependencies } from './pianola';
-import { PianolaSupervisor } from '../../pianola/pianola-supervisor';
 import { registerPluginsHandlers, PluginsHandlerDependencies } from './plugins';
 import { PluginManager } from '../../plugins/plugin-manager';
 import { registerWakatimeHandlers } from './wakatime';
@@ -332,32 +331,10 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	registerCueBackupHandlers({
 		sessionsStore: deps.sessionsStore,
 	});
-	// Register Pianola handlers (autonomous manager: rules CRUD, decision log, and
-	// the supervised daemon). NOTE: the production wiring lives in src/main/index.ts,
-	// which constructs the supervisor once and owns its start()/stopAll() lifecycle.
-	// This aggregate registrar builds a local supervisor only so the dependency is
-	// satisfied; it does not start a second file watcher.
-	const pianolaSupervisor = new PianolaSupervisor({
-		isEnabled: () => {
-			const ef = (deps.settingsStore.get('encoreFeatures') ?? {}) as Record<string, unknown>;
-			return ef.pianola === true;
-		},
-		getPianolaAgentId: () => {
-			const sessions = deps.sessionsStore.get('sessions', []) as Array<{
-				id?: string;
-				isPianola?: boolean;
-			}>;
-			return sessions.find((s) => s?.isPianola === true)?.id;
-		},
-	});
-	registerPianolaHandlers({
-		settingsStore: deps.settingsStore,
-		supervisor: pianolaSupervisor,
-	});
 	// Register Plugins handlers (community plugin subsystem, list-only in Phase 0).
-	// Like the Pianola supervisor above, the production manager is owned by
-	// src/main/index.ts (which refreshes it on startup); this aggregate registrar
-	// builds a local manager only to satisfy the dependency.
+	// The production manager is owned by src/main/index.ts (which refreshes it on
+	// startup); this aggregate registrar builds a local manager only to satisfy
+	// the dependency.
 	const pluginManager = new PluginManager({
 		isEnabled: () => {
 			const ef = (deps.settingsStore.get('encoreFeatures') ?? {}) as Record<string, unknown>;

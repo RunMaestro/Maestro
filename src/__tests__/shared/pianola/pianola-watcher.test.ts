@@ -596,3 +596,86 @@ describe('rehydrateWatchState', () => {
 		expect(state.lastHandledMessageId).toBe('mX');
 	});
 });
+
+describe('runWatchIteration - give-up escalates instead of abandoning', () => {
+	it('records an escalate decision and notifies after the dispatch attempt cap', async () => {
+		const notifyEvents: PianolaNotifyEvent[] = [];
+		const dispatch = vi.fn(async () => ({
+			success: false as boolean,
+			error: 'down' as string | undefined,
+		}));
+		const { deps, records } = makeDeps({
+			readRules: () => [autoAnswerRule()],
+			dispatch,
+			notify: async (e) => {
+				notifyEvents.push(e);
+				return true;
+			},
+		});
+		const messages = [assistant('Should I name it count or total?')];
+		let state = initialWatchState();
+		let last: Awaited<ReturnType<typeof runWatchIteration>> | undefined;
+		for (let i = 0; i < MAX_DISPATCH_ATTEMPTS; i += 1) {
+			last = await runWatchIteration(messages, target, state, deps, { dryRun: false });
+			state = last.state;
+		}
+		expect(last?.result.decision.action).toBe('escalate');
+		expect(notifyEvents.some((e) => e.kind === 'handoff_failed')).toBe(true);
+		expect(records.some((r) => r.decision.action === 'escalate')).toBe(true);
+	});
+});
+
+describe('runWatchIteration - handoff resolution', () => {
+	it('records the observed answer and clears the handoff when the agent advances', async () => {
+		const { deps, records, requestJudgment } = withHandoff();
+		const prompt = assistant('Should I name it count or total?');
+
+		// Poll 1: uncovered, non-high-risk ask is handed off to Pianola.
+		const first = await runWatchIteration([prompt], target, initialWatchState(), deps, {
+			dryRun: false,
+		});
+		expect(first.result.handoff).toBe(true);
+		expect(first.state.pendingHandoff?.messageId).toBe(prompt.id);
+		expect(requestJudgment).toHaveBeenCalledTimes(1);
+
+		// Poll 2: the agent advanced - Pianola's answer landed as a user message, so
+		// the prompt is no longer awaiting. The handoff resolves and is audited with
+		// the original ask's classification and the observed answer.
+		const answer: PianolaMessage = {
+			id: 'm-answer',
+			role: 'user',
+			source: 'user',
+			content: 'Use count',
+			timestamp: new Date(Date.UTC(2026, 0, 1, 0, 1, 0)).toISOString(),
+		};
+		const second = await runWatchIteration([prompt, answer], target, first.state, deps, {
+			dryRun: false,
+		});
+
+		expect(second.result.handoffResolved).toBe(true);
+		expect(second.result.decision).toMatchObject({ action: 'auto_answer', answer: 'Use count' });
+		expect(second.state.pendingHandoff).toBeNull();
+		expect(second.state.lastHandledMessageId).toBe(prompt.id);
+		expect(requestJudgment).toHaveBeenCalledTimes(1); // not re-handed-off on resolution
+
+		const last = records[records.length - 1];
+		expect(last.classification.kind).toBe('question'); // original ask, not 'none'
+		expect(last.decision.action).toBe('auto_answer');
+		expect(last.dispatched).toBe(true);
+	});
+
+	it('does not record a resolution when no handoff is pending', async () => {
+		const { deps, records } = makeDeps();
+		const { result, state } = await runWatchIteration(
+			[assistant('All tests pass and the build is green.')],
+			target,
+			initialWatchState(),
+			deps,
+			{ dryRun: false }
+		);
+		expect(result.handoffResolved).toBeUndefined();
+		expect(result.acted).toBe(false);
+		expect(records).toHaveLength(0);
+		expect(state.pendingHandoff).toBeNull();
+	});
+});

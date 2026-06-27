@@ -24,6 +24,8 @@ import {
 import {
 	PIANOLA_RULES_FILENAME,
 	PIANOLA_DECISIONS_FILENAME,
+	PIANOLA_DECISIONS_MAX_RECORDS,
+	PIANOLA_DECISIONS_COMPACT_BYTES,
 	type PianolaDecisionRecord,
 } from '../../../shared/pianola/storage';
 import type { PianolaRule } from '../../../shared/pianola/types';
@@ -164,5 +166,40 @@ describe('decision audit log', () => {
 		const records = readDecisions();
 		expect(records.map((r) => r.id)).toEqual(['same']);
 		expect(records[0].dispatched).toBe(true);
+	});
+});
+
+describe('decision audit log compaction (LOW-7)', () => {
+	const decisionsFile = (): string => path.join(tmpDir, PIANOLA_DECISIONS_FILENAME);
+
+	function paddedRecord(id: string, pad: string): PianolaDecisionRecord {
+		const r = decisionRecord(id);
+		return { ...r, classification: { ...r.classification, topic: pad } };
+	}
+
+	it('compacts to the most recent records once the log exceeds the size gate', () => {
+		const total = PIANOLA_DECISIONS_MAX_RECORDS + 50;
+		// Pad each record so the file clears the byte gate that arms compaction.
+		const pad = 'x'.repeat(Math.ceil(PIANOLA_DECISIONS_COMPACT_BYTES / total) + 64);
+		let bulk = '';
+		for (let i = 0; i < total; i++) bulk += `${JSON.stringify(paddedRecord(`old-${i}`, pad))}\n`;
+		fs.writeFileSync(decisionsFile(), bulk, 'utf-8');
+
+		appendDecision(paddedRecord('newest', pad));
+
+		const lines = fs.readFileSync(decisionsFile(), 'utf-8').split('\n').filter(Boolean);
+		expect(lines.length).toBeLessThanOrEqual(PIANOLA_DECISIONS_MAX_RECORDS);
+		expect(fs.statSync(decisionsFile()).size).toBeLessThanOrEqual(PIANOLA_DECISIONS_COMPACT_BYTES);
+		const ids = lines.map((l) => JSON.parse(l).id as string);
+		expect(ids).toContain('newest');
+		expect(ids).not.toContain('old-0');
+		expect(fs.existsSync(`${decisionsFile()}.${process.pid}.tmp`)).toBe(false);
+	});
+
+	it('leaves a small log untouched (no compaction under the gate)', () => {
+		appendDecision(decisionRecord('d1'));
+		appendDecision(decisionRecord('d2'));
+		const lines = fs.readFileSync(decisionsFile(), 'utf-8').split('\n').filter(Boolean);
+		expect(lines.length).toBe(2);
 	});
 });

@@ -9,7 +9,7 @@ import { notifyToast } from '../stores/notificationStore';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { THEMES } from '../constants/themes';
 import { usePluginContributions } from '../hooks/usePluginContributions';
-import { pluginThemesRecord } from '../utils/pluginThemes';
+import { mergePluginThemes } from '../utils/pluginThemes';
 import { DebugPackageModal } from './DebugPackageModal';
 import { DebugApplicationStatsModal } from './DebugApplicationStatsModal';
 import { DebugAgentProbeModal } from './DebugAgentProbeModal';
@@ -273,11 +273,12 @@ function AppStandaloneModalsInner({
 	// Self-source active session
 	const activeSession = useActiveSession();
 
-	// Merge plugin-contributed themes into the picker list. Empty (so identical to
-	// THEMES) when the plugins Encore flag is off.
+	// Merge plugin-contributed themes into the picker list through the shared
+	// contribution registry (built-in always wins an id collision). Identical to
+	// THEMES when the plugins Encore flag is off (no contributions).
 	const pluginContributions = usePluginContributions();
 	const mergedThemes = useMemo(
-		() => ({ ...THEMES, ...pluginThemesRecord(pluginContributions.themes) }),
+		() => mergePluginThemes(THEMES, pluginContributions.themes),
 		[pluginContributions.themes]
 	);
 

@@ -24,6 +24,7 @@ import {
 } from '../../../shared/plugins/permissions';
 import type { PluginManager, InstallResult } from '../../plugins/plugin-manager';
 import { readGrants, setGrants, forgetGrants } from '../../plugins/plugin-store-main';
+import { PLUGIN_ID_PATTERN } from '../../../shared/plugins/plugin-manifest';
 
 const LOG_CONTEXT = '[Plugins]';
 
@@ -66,12 +67,13 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 
 	const wrappedList = withIpcErrorLogging(
 		handlerOpts('list'),
-		async (): Promise<PluginListSnapshot> => snapshotOf(manager.refresh())
+		async (): Promise<PluginListSnapshot> => snapshotOf(manager.getRegistry())
 	);
 	const wrappedSetEnabled = withIpcErrorLogging(
 		handlerOpts('setEnabled'),
 		async (id: unknown, enabled: unknown): Promise<PluginListSnapshot> => {
 			if (typeof id !== 'string' || id.length === 0) throw new Error('InvalidPluginId');
+			if (!PLUGIN_ID_PATTERN.test(id)) throw new Error('InvalidPluginId');
 			if (typeof enabled !== 'boolean') throw new Error('InvalidEnabledFlag');
 			return snapshotOf(manager.setEnabled(id, enabled));
 		}
@@ -89,20 +91,23 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 		handlerOpts('uninstall'),
 		async (id: unknown): Promise<{ success: boolean; error?: string }> => {
 			if (typeof id !== 'string' || id.length === 0) throw new Error('InvalidPluginId');
+			if (!PLUGIN_ID_PATTERN.test(id)) throw new Error('InvalidPluginId');
 			return manager.uninstall(id);
 		}
 	);
 	const wrappedContributions = withIpcErrorLogging(
 		handlerOpts('contributions'),
-		async (): Promise<AggregatedContributions> => {
-			manager.refresh();
-			return manager.getContributions();
-		}
+		// Reads are pure: they MUST NOT call refresh(), which reconciles sandboxes
+		// and fires onChange -> 'plugins:changed' -> renderer re-fetch -> read again
+		// (an infinite IPC loop that freezes the app). Discovery happens at startup
+		// and on mutations (install/uninstall/setEnabled).
+		async (): Promise<AggregatedContributions> => manager.getContributions()
 	);
 	const wrappedGetGrants = withIpcErrorLogging(
 		handlerOpts('getGrants'),
 		async (id: unknown): Promise<PluginGrantsSnapshot> => {
 			if (typeof id !== 'string' || id.length === 0) throw new Error('InvalidPluginId');
+			if (!PLUGIN_ID_PATTERN.test(id)) throw new Error('InvalidPluginId');
 			return { requested: manager.getRequestedPermissions(id) ?? [], granted: readGrants(id) };
 		}
 	);
@@ -114,6 +119,7 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 		// known capabilities survive.
 		async (id: unknown, approvedCapabilities: unknown): Promise<PluginGrantsSnapshot> => {
 			if (typeof id !== 'string' || id.length === 0) throw new Error('InvalidPluginId');
+			if (!PLUGIN_ID_PATTERN.test(id)) throw new Error('InvalidPluginId');
 			if (!Array.isArray(approvedCapabilities)) throw new Error('InvalidApproval');
 			const approved = new Set(approvedCapabilities.filter(isPluginCapability));
 			const requested = manager.getRequestedPermissions(id) ?? [];
@@ -127,6 +133,7 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 		handlerOpts('revokeGrants'),
 		async (id: unknown): Promise<PluginGrantsSnapshot> => {
 			if (typeof id !== 'string' || id.length === 0) throw new Error('InvalidPluginId');
+			if (!PLUGIN_ID_PATTERN.test(id)) throw new Error('InvalidPluginId');
 			forgetGrants(id);
 			return { requested: manager.getRequestedPermissions(id) ?? [], granted: [] };
 		}

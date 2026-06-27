@@ -107,8 +107,14 @@ export interface WatchState {
 	 * A prompt handed off to Pianola and awaiting its reply. While set, we do not
 	 * re-hand-off the same prompt; if Pianola does not answer within
 	 * HANDOFF_TIMEOUT_POLLS we escalate to the user instead of blocking forever.
+	 * Carries the original ask's classification so the resolution (recorded when
+	 * the agent advances) is auditable with the same kind/risk/topic as the ask.
 	 */
-	pendingHandoff: { messageId: string; polls: number } | null;
+	pendingHandoff: {
+		messageId: string;
+		polls: number;
+		classification: PianolaClassification;
+	} | null;
 }
 
 export function initialWatchState(): WatchState {
@@ -141,7 +147,9 @@ export function rehydrateWatchState(
 		// pending-handoff so the timeout resumes rather than re-handing-off.
 		const isHandoff =
 			r.decision.action === 'escalate' && /handed off/i.test(r.decision.reason) && !r.error;
-		pendingHandoff = isHandoff ? { messageId: mid, polls: 0 } : null;
+		pendingHandoff = isHandoff
+			? { messageId: mid, polls: 0, classification: r.classification }
+			: null;
 	}
 	// If the last handled prompt is mid-handoff, do NOT treat it as fully handled:
 	// keep the cursor behind it so the pending-handoff branch can time it out.
@@ -162,6 +170,8 @@ export interface IterationResult {
 	dispatched: boolean;
 	/** True when the ask was handed to Pianola to judge against the profile. */
 	handoff?: boolean;
+	/** True when a pending handoff resolved (agent advanced) and was recorded. */
+	handoffResolved?: boolean;
 	/** True when a handoff was attempted but delivery to Pianola failed. */
 	handoffFailed?: boolean;
 	/** True when a pending handoff timed out and was escalated to the user. */
@@ -180,6 +190,9 @@ function describe(result: IterationResult, error?: string): string {
 			: `[pianola] none (${c.evidence.reason})`;
 	}
 	const detail = c.topic ? `: ${c.topic}` : '';
+	if (result.handoffResolved) {
+		return `[pianola] ${c.kind}/${c.risk} -> handoff resolved${detail}`;
+	}
 	if (result.handoff) {
 		const errSuffix = error ? ` (handoff error: ${error})` : '';
 		return `[pianola] ${c.kind}/${c.risk} -> handoff to Pianola${detail}${errSuffix}`;
@@ -222,6 +235,28 @@ function buildRecord(
 }
 
 /**
+ * Best-effort answer for a resolved handoff: the reply Pianola dispatched shows
+ * up as the first user-role message after the awaiting prompt in the agent's
+ * transcript tail. Truncated for the audit log; falls back to a clear marker
+ * when the prompt has already scrolled out of the polled tail.
+ */
+function observeHandoffAnswer(
+	messages: readonly PianolaMessage[],
+	promptMessageId: string
+): string {
+	const idx = messages.findIndex((m) => m.id === promptMessageId);
+	if (idx >= 0) {
+		for (let i = idx + 1; i < messages.length; i++) {
+			if (messages[i].role === 'user') {
+				const text = messages[i].content.trim();
+				return text.length > 200 ? `${text.slice(0, 197)}...` : text;
+			}
+		}
+	}
+	return '(answer not in polled transcript tail)';
+}
+
+/**
  * Run one watch iteration over the latest transcript for a tab. Returns the next
  * state and a structured result. Never throws for an expected dispatch failure
  * (it is recorded on the audit entry and retried). An audit-write failure is
@@ -238,6 +273,42 @@ export async function runWatchIteration(
 	const classification = classifyMessages(enriched);
 
 	if (classification.kind === 'none') {
+		// A pending handoff resolves when the agent stops awaiting input: it
+		// advanced past the handed-off prompt, so Pianola (or the user) answered.
+		// Record the observed resolution so handoff-driven answers are auditable
+		// like rule-driven ones, then clear the handoff and advance the cursor.
+		if (state.pendingHandoff) {
+			const resolved = state.pendingHandoff;
+			const resolution: PianolaDecision = {
+				action: 'auto_answer',
+				answer: observeHandoffAnswer(messages, resolved.messageId),
+				matchedRuleId: null,
+				reason: 'handed-off ask resolved; agent advanced',
+			};
+			const record = buildRecord(deps, target, resolved.classification, resolution, {
+				id: deps.genId(),
+				dispatched: true,
+				dryRun: false,
+			});
+			deps.recordDecision(record);
+			const result: IterationResult = {
+				classification: resolved.classification,
+				decision: resolution,
+				record,
+				acted: true,
+				dispatched: true,
+				handoffResolved: true,
+			};
+			deps.log(describe(result));
+			return {
+				state: {
+					lastHandledMessageId: resolved.messageId,
+					pendingRetry: null,
+					pendingHandoff: null,
+				},
+				result,
+			};
+		}
 		const result: IterationResult = {
 			classification,
 			decision: null,
@@ -299,7 +370,14 @@ export async function runWatchIteration(
 			};
 			deps.log(describe(result));
 			return {
-				state: { ...state, pendingHandoff: { messageId: messageId!, polls } },
+				state: {
+					...state,
+					pendingHandoff: {
+						messageId: messageId!,
+						polls,
+						classification: state.pendingHandoff.classification,
+					},
+				},
 				result,
 			};
 		}
@@ -394,7 +472,7 @@ export async function runWatchIteration(
 					state: {
 						lastHandledMessageId: state.lastHandledMessageId,
 						pendingRetry: null,
-						pendingHandoff: { messageId: messageId!, polls: 0 },
+						pendingHandoff: { messageId: messageId!, polls: 0, classification },
 					},
 					result,
 				};
@@ -531,17 +609,39 @@ export async function runWatchIteration(
 		};
 	}
 
-	// Dispatch failed. Retry on the next poll until we hit the attempt cap, then
-	// give up on this prompt so we do not loop on it forever.
+	// Dispatch failed at the attempt cap. Give up on retrying, but NEVER silently:
+	// record an escalate decision and notify the user, because the dedup cursor is
+	// about to advance past this prompt (so it will be skipped as "already handled"
+	// forever). Without this the blocked agent dies in the audit log.
 	if (!messageId || attempts >= MAX_DISPATCH_ATTEMPTS) {
-		deps.log(`[pianola] giving up on prompt after ${attempts} dispatch attempt(s)`);
+		deps.log(`[pianola] giving up on prompt after ${attempts} dispatch attempt(s); escalating`);
+		const giveUpDecision: PianolaDecision = {
+			action: 'escalate',
+			matchedRuleId: decision.matchedRuleId,
+			reason: `auto-answer dispatch failed after ${attempts} attempt(s); escalating to user`,
+		};
+		const escalation = buildRecord(deps, target, classification, giveUpDecision, {
+			id: deps.genId(),
+			dispatched: false,
+			dryRun: false,
+			error,
+		});
+		deps.recordDecision(escalation);
+		const notified = options.dryRun
+			? false
+			: await safeNotify(deps, {
+					kind: 'handoff_failed',
+					target,
+					classification,
+					highRisk: classification.risk === 'high',
+				});
 		return {
 			state: {
 				lastHandledMessageId: messageId ?? state.lastHandledMessageId,
 				pendingRetry: null,
 				pendingHandoff: null,
 			},
-			result,
+			result: { ...result, decision: giveUpDecision, record: escalation, notified },
 		};
 	}
 	return {

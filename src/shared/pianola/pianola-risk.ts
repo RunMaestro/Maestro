@@ -44,29 +44,62 @@ const HIGH_RISK_PATTERNS: readonly RegExp[] = [
 	/\bforce[-\s]?push(ing)?\b/i,
 	/\bgit\s+push\b/i,
 	/\bpush\s+(to|--force|origin|remote|upstream)\b/i,
+	/\bpush\s+(the\s+|my\s+|these\s+|all\s+|your\s+|this\s+)?(branch|branches|code|commit|commits|change|changes|it|up)\b/i,
 	/\breset\s+--hard\b/i,
 	/\b(rebase|rebasing)\b/i,
-	/\bmerge\s+(the\s+)?(pr|pull\s+request|branch|into\s+\w+|to\s+main|to\s+master)\b/i,
+	/\bmerge\s+(the\s+|this\s+|that\s+|my\s+|your\s+)?(pr|pull\s+request|branch|branches|into\s+\w+|to\s+main|to\s+master|it|changes?)\b/i,
 	/\b(revert|reverting|revoke|revoking)\b/i,
 	// Deploy / publish / release
 	/\b(deploy|deploying|deployment|publish|publishing|release|releasing)\b/i,
 	/\bproduction\b/i,
-	/\bprod\b/i,
+	/\b(to|on|in|into)\s+prod\b/i,
 	/\bship\s+(it|to)\b/i,
 	// Secrets / auth / permissions
 	/\b(secret|secrets|password|passwords|credential|credentials|passphrase)\b/i,
 	/\bapi[-\s]?keys?\b/i,
 	/\bprivate\s+keys?\b/i,
-	/\b(access|auth)\s+tokens?\b/i,
-	/\btokens?\b/i,
-	/\bauth(entication|orization|orize)?\b/i,
+	/\b(access|auth|api|secret|bearer|refresh|session)\s+tokens?\b/i,
+	/\b(disable|bypass|skip|remove|drop|change|reset|grant|revoke|update|modify)\s+(the\s+|all\s+|my\s+)?(auth(?:entication|orization)?|permissions?|access\s+control|rbac)\b/i,
 	/\.env\b/i,
 	/\b(chmod|chown|sudo)\b/i,
 	// Financial / outward communication
 	/\b(payment|payments|charge|charging|invoice|billing|refund)\b/i,
 	/\bsend\s+(an?\s+)?(email|message|slack|text|dm)\b/i,
-	/\b(email|emailing)\b/i,
+	/\bemail(?:ing)?\s+(the\s+|a\s+|an\s+|all\s+)?(team|users?|customers?|clients?|report|them|everyone|list|stakeholders?)\b/i,
 	/\bpublish\s+(a\s+)?(post|article|comment)\b/i,
+	// Disk / device / data destruction
+	/\bdd\s+if=/i,
+	/\bmkfs(\.\w+)?\b/i,
+	/\b(fdisk|parted)\b/i,
+	/\bformat\s+[a-z]:/i,
+	/>\s*\/dev\/(sd|nvme|disk)/i,
+	/\bof=\/dev\/(sd|nvme|disk)/i,
+	// Process / machine control
+	// Qualified so dev prose ("graceful shutdown hook", "reboot my understanding")
+	// does not trip; only command-shaped uses (sudo/flag/target/now) rate high.
+	/\bsudo\s+(shutdown|reboot|poweroff|halt)\b/i,
+	/\b(shutdown|reboot|poweroff)\s+(now\b|-\w|the\s+(server|machine|system|box|host|vm|instance|node|pod))/i,
+	/\bkill\s+-9\b/i,
+	/\b(pkill|killall)\s+-?\w/i,
+	/\bsystemctl\s+(stop|disable|mask)\b/i,
+	// Containers / orchestration / infrastructure-as-code
+	/\bkubectl\s+(delete|drain|cordon)\b/i,
+	/\bhelm\s+(delete|uninstall)\b/i,
+	/\bdocker\s+(rm|rmi|prune|volume\s+rm|system\s+prune)\b/i,
+	/\bdocker[-\s]?compose\s+down\b/i,
+	/\bterraform\s+(apply|destroy)\b/i,
+	/\bpulumi\s+(up|destroy)\b/i,
+	// Cloud object-store / resource deletion
+	/\baws\s+s3\s+(rb|rm)\b/i,
+	/\b(gcloud|az)\b[^\n]*\bdelete\b/i,
+	// Remote-code execution / supply chain
+	/\b(curl|wget)\b[^\n|]*\|\s*(sudo\s+)?(sh|bash|zsh)\b/i,
+	/\bnpm\s+publish\b/i,
+	// Git destructive / history-rewriting
+	/\bgit\s+clean\s+-[a-z]*f/i,
+	/\bgit\s+stash\s+(drop|clear)\b/i,
+	/\bgit\s+branch\s+-D\b/i,
+	/\bgit\s+update-ref\s+-d\b/i,
 ];
 
 /**

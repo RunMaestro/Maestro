@@ -1,33 +1,34 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import {
-	X,
-	Music,
-	ShieldAlert,
-	Send,
-	Ban,
-	Plus,
-	Trash2,
-	Pencil,
-	RefreshCw,
-	AlertTriangle,
-} from 'lucide-react';
+import { X, Music, RefreshCw } from 'lucide-react';
 import type { Theme } from '../../types';
+import type { PianolaRule } from '../../../shared/pianola/types';
 import type {
-	PianolaRule,
-	PianolaRuleScope,
-	PianolaSignalKind,
-	PianolaActionKind,
-	PianolaRisk,
-} from '../../../shared/pianola/types';
-import type { PianolaDecisionRecord } from '../../../shared/pianola/storage';
+	PianolaDecisionRecord,
+	PianolaSuggestionsFile,
+} from '../../../shared/pianola/storage';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
-import { generateId } from '../../utils/ids';
 import { notifyToast } from '../../stores/notificationStore';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
 import { RuleEditor } from './RuleEditor';
+import { DecisionsView } from './DecisionsView';
+import { RulesView } from './RulesView';
+import { SuggestionsView } from './SuggestionsView';
+import type { PianolaTab, DecisionFilter } from './shared';
+
+// Shared helpers live in ./shared (one source for the views and RuleEditor); the
+// dashboard's public surface keeps exposing them so the barrel, tests, and the
+// editor can import them from this module.
+export {
+	describeRuleMatch,
+	newBlankRule,
+	RULE_SCOPES,
+	RULE_ACTIONS,
+	RULE_RISKS,
+	RULE_KINDS,
+} from './shared';
 
 /** A 'PianolaDisabled' rejection is the expected feature-off path, not a bug. */
 function isExpectedError(error: unknown): boolean {
@@ -37,39 +38,6 @@ function isExpectedError(error: unknown): boolean {
 export interface PianolaModalProps {
 	theme: Theme;
 	onClose: () => void;
-}
-
-type PianolaTab = 'decisions' | 'rules';
-type DecisionFilter = 'all' | 'escalate' | 'auto_answer';
-
-const ACTION_META: Record<PianolaActionKind, { label: string; color: string; Icon: typeof Send }> =
-	{
-		auto_answer: { label: 'Auto-answered', color: '#22c55e', Icon: Send },
-		escalate: { label: 'Escalated', color: '#f59e0b', Icon: ShieldAlert },
-		ignore: { label: 'Ignored', color: '#94a3b8', Icon: Ban },
-	};
-
-const RISK_COLOR: Record<PianolaRisk, string> = {
-	low: '#22c55e',
-	medium: '#f59e0b',
-	high: '#ef4444',
-};
-
-/** One-line, human-readable summary of a rule's match conditions. */
-export function describeRuleMatch(rule: PianolaRule): string {
-	const parts: string[] = [];
-	if (rule.match.maxRisk) parts.push(`risk <= ${rule.match.maxRisk}`);
-	if (rule.match.kinds && rule.match.kinds.length > 0)
-		parts.push(`kind: ${rule.match.kinds.join(', ')}`);
-	if (rule.match.topicIncludes && rule.match.topicIncludes.length > 0)
-		parts.push(`topic ~ ${rule.match.topicIncludes.join(' / ')}`);
-	return parts.length > 0 ? parts.join('  -  ') : 'any prompt';
-}
-
-function scopeLabel(rule: PianolaRule): string {
-	if (rule.scope === 'global') return 'global';
-	if (rule.scope === 'project') return `project: ${rule.scopeId ?? '(unset)'}`;
-	return `tab: ${rule.scopeId ?? '(unset)'}`;
 }
 
 /**
@@ -90,17 +58,20 @@ export function PianolaModal({ theme, onClose }: PianolaModalProps) {
 	// True when the rules file exists but is unparseable. We then block writes so
 	// a corrupt hand-edited file is not silently overwritten with an empty list.
 	const [rulesMalformed, setRulesMalformed] = useState(false);
+	const [suggestions, setSuggestions] = useState<PianolaSuggestionsFile | null>(null);
 
 	const load = useCallback(async () => {
 		setLoading(true);
 		try {
-			const [rulesResult, loadedDecisions] = await Promise.all([
+			const [rulesResult, loadedDecisions, loadedSuggestions] = await Promise.all([
 				window.maestro.pianola.getRules(),
 				window.maestro.pianola.getDecisions(500),
+				window.maestro.pianola.getSuggestions(),
 			]);
 			setRules(rulesResult.rules);
 			setRulesMalformed(rulesResult.malformed);
 			setDecisions(loadedDecisions);
+			setSuggestions(loadedSuggestions);
 			if (rulesResult.malformed) {
 				notifyToast({
 					color: 'orange',
@@ -181,6 +152,37 @@ export function PianolaModal({ theme, onClose }: PianolaModalProps) {
 		},
 		[rules, persistRules]
 	);
+
+	const handleApproveRule = useCallback(async (rule: PianolaRule) => {
+		try {
+			const res = await window.maestro.pianola.applySuggestion({ rule });
+			setRules(res.rules);
+			setSuggestions((prev) =>
+				prev ? { ...prev, proposals: prev.proposals.filter((p) => p.id !== rule.id) } : prev
+			);
+			notifyToast({ color: 'green', title: 'Pianola', message: 'Rule added from suggestion.' });
+		} catch (error) {
+			logger.error('[Pianola] Failed to apply suggestion', undefined, error);
+			if (!isExpectedError(error)) void captureException(error, { tags: { feature: 'pianola' } });
+			notifyToast({ color: 'red', title: 'Pianola', message: 'Could not apply suggestion.' });
+		}
+	}, []);
+
+	const handleApplyProfile = useCallback(async (text: string) => {
+		try {
+			await window.maestro.pianola.applySuggestion({ profile: { text } });
+			setSuggestions((prev) => (prev ? { ...prev, previousProfile: text } : prev));
+			notifyToast({
+				color: 'green',
+				title: 'Pianola',
+				message: 'Profile updated from suggestion.',
+			});
+		} catch (error) {
+			logger.error('[Pianola] Failed to apply profile', undefined, error);
+			if (!isExpectedError(error)) void captureException(error, { tags: { feature: 'pianola' } });
+			notifyToast({ color: 'red', title: 'Pianola', message: 'Could not apply profile.' });
+		}
+	}, []);
 
 	const sortedRules = useMemo(
 		() => [...rules].sort((a, b) => a.priority - b.priority || a.createdAt - b.createdAt),
@@ -265,6 +267,10 @@ export function PianolaModal({ theme, onClose }: PianolaModalProps) {
 						[
 							['decisions', `Decisions${escalationCount ? ` (${escalationCount} escalated)` : ''}`],
 							['rules', `Rules (${rules.length})`],
+							[
+								'suggestions',
+								`Suggestions${suggestions?.proposals.length ? ` (${suggestions.proposals.length})` : ''}`,
+							],
 						] as const
 					).map(([id, label]) => (
 						<button
@@ -283,7 +289,7 @@ export function PianolaModal({ theme, onClose }: PianolaModalProps) {
 
 				{/* Body */}
 				<div className="flex-1 overflow-y-auto scrollbar-thin">
-					{tab === 'decisions' ? (
+					{tab === 'decisions' && (
 						<DecisionsView
 							theme={theme}
 							decisions={filteredDecisions}
@@ -291,7 +297,8 @@ export function PianolaModal({ theme, onClose }: PianolaModalProps) {
 							onFilterChange={setFilter}
 							loading={loading}
 						/>
-					) : (
+					)}
+					{tab === 'rules' && (
 						<RulesView
 							theme={theme}
 							rules={sortedRules}
@@ -301,6 +308,15 @@ export function PianolaModal({ theme, onClose }: PianolaModalProps) {
 							onEdit={setEditing}
 							onToggle={handleToggleRule}
 							onDelete={handleDeleteRule}
+						/>
+					)}
+					{tab === 'suggestions' && (
+						<SuggestionsView
+							theme={theme}
+							suggestions={suggestions}
+							loading={loading}
+							onApproveRule={handleApproveRule}
+							onApplyProfile={handleApplyProfile}
 						/>
 					)}
 				</div>
@@ -340,326 +356,3 @@ export function PianolaModal({ theme, onClose }: PianolaModalProps) {
 		document.body
 	);
 }
-
-interface DecisionsViewProps {
-	theme: Theme;
-	decisions: PianolaDecisionRecord[];
-	filter: DecisionFilter;
-	onFilterChange: (f: DecisionFilter) => void;
-	loading: boolean;
-}
-
-function DecisionsView({ theme, decisions, filter, onFilterChange, loading }: DecisionsViewProps) {
-	return (
-		<div className="p-4 space-y-3">
-			<div className="flex items-center gap-1">
-				{(
-					[
-						['all', 'All'],
-						['escalate', 'Escalations'],
-						['auto_answer', 'Auto-answered'],
-					] as const
-				).map(([id, label]) => (
-					<button
-						key={id}
-						onClick={() => onFilterChange(id)}
-						className="px-2.5 py-1 text-xs rounded-md transition-colors"
-						style={{
-							backgroundColor: filter === id ? theme.colors.accent + '22' : 'transparent',
-							color: filter === id ? theme.colors.accent : theme.colors.textDim,
-							border: `1px solid ${filter === id ? theme.colors.accent + '55' : theme.colors.border}`,
-						}}
-					>
-						{label}
-					</button>
-				))}
-			</div>
-
-			{decisions.length === 0 ? (
-				<div className="text-sm text-center py-12" style={{ color: theme.colors.textDim }}>
-					{loading ? 'Loading...' : 'No decisions recorded yet.'}
-				</div>
-			) : (
-				<div className="space-y-2 select-text">
-					{decisions.map((d) => {
-						const meta = ACTION_META[d.decision.action];
-						return (
-							<div
-								key={d.id}
-								className="rounded-lg border p-3"
-								style={{
-									backgroundColor: theme.colors.bgActivity,
-									borderColor: theme.colors.border,
-								}}
-							>
-								<div className="flex items-center justify-between gap-3">
-									<div className="flex items-center gap-2 min-w-0">
-										<meta.Icon className="w-4 h-4 shrink-0" style={{ color: meta.color }} />
-										<span className="text-sm font-medium" style={{ color: meta.color }}>
-											{meta.label}
-										</span>
-										<span
-											className="text-xs px-1.5 py-0.5 rounded shrink-0"
-											style={{
-												backgroundColor: RISK_COLOR[d.classification.risk] + '22',
-												color: RISK_COLOR[d.classification.risk],
-											}}
-										>
-											{d.classification.kind} / {d.classification.risk}
-										</span>
-										{d.dryRun && (
-											<span
-												className="text-[10px] px-1.5 py-0.5 rounded shrink-0"
-												style={{
-													backgroundColor: theme.colors.border,
-													color: theme.colors.textDim,
-												}}
-											>
-												dry-run
-											</span>
-										)}
-									</div>
-									<span className="text-xs shrink-0" style={{ color: theme.colors.textDim }}>
-										{new Date(d.timestamp).toLocaleString()}
-									</span>
-								</div>
-
-								{d.classification.topic && (
-									<div className="mt-1.5 text-sm" style={{ color: theme.colors.textMain }}>
-										{d.classification.topic}
-									</div>
-								)}
-
-								<div className="mt-1 text-xs" style={{ color: theme.colors.textDim }}>
-									{d.decision.reason}
-									{d.decision.action === 'auto_answer' && (
-										<>
-											{' '}
-											&rarr; replied:{' '}
-											<span style={{ color: theme.colors.textMain }}>
-												&ldquo;{d.decision.answer}&rdquo;
-											</span>
-										</>
-									)}
-								</div>
-
-								<div
-									className="mt-1.5 flex items-center gap-3 text-[11px]"
-									style={{ color: theme.colors.textDim }}
-								>
-									<span>agent: {d.agentId}</span>
-									<span>tab: {d.tabId}</span>
-									{d.decision.action === 'auto_answer' && (
-										<span style={{ color: d.dispatched ? '#22c55e' : '#ef4444' }}>
-											{d.dispatched ? 'sent' : 'not sent'}
-										</span>
-									)}
-								</div>
-
-								{d.error && (
-									<div
-										className="mt-1.5 flex items-center gap-1.5 text-xs"
-										style={{ color: '#ef4444' }}
-									>
-										<AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-										{d.error}
-									</div>
-								)}
-							</div>
-						);
-					})}
-				</div>
-			)}
-		</div>
-	);
-}
-
-interface RulesViewProps {
-	theme: Theme;
-	rules: PianolaRule[];
-	loading: boolean;
-	/** True when the on-disk rules file is corrupt; editing is disabled to avoid clobbering it. */
-	malformed: boolean;
-	onAdd: () => void;
-	onEdit: (rule: PianolaRule) => void;
-	onToggle: (id: string) => void;
-	onDelete: (id: string) => void;
-}
-
-function RulesView({
-	theme,
-	rules,
-	loading,
-	malformed,
-	onAdd,
-	onEdit,
-	onToggle,
-	onDelete,
-}: RulesViewProps) {
-	return (
-		<div className="p-4 space-y-3">
-			{malformed && (
-				<div
-					className="flex items-start gap-2 rounded-md border p-3 text-xs select-text"
-					style={{ borderColor: '#f59e0b55', backgroundColor: '#f59e0b15', color: '#f59e0b' }}
-				>
-					<AlertTriangle className="w-4 h-4 shrink-0" />
-					<span>
-						The rules file on disk is malformed and could not be parsed. Editing is disabled here so
-						it is not overwritten. Fix or remove the file, then refresh.
-					</span>
-				</div>
-			)}
-			<div className="flex items-center justify-between">
-				<p className="text-xs max-w-xl" style={{ color: theme.colors.textDim }}>
-					Rules let Pianola auto-answer low-risk prompts. High-risk prompts always escalate to you,
-					no matter the rules. An auto-answer rule needs a narrowing condition (max risk, kind, or
-					topic) and reply text.
-				</p>
-				<button
-					onClick={onAdd}
-					disabled={malformed}
-					className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md shrink-0 transition-colors"
-					style={{
-						backgroundColor: malformed ? theme.colors.border : theme.colors.accent,
-						color: malformed ? theme.colors.textDim : theme.colors.bgMain,
-						cursor: malformed ? 'not-allowed' : 'pointer',
-					}}
-				>
-					<Plus className="w-4 h-4" />
-					Add rule
-				</button>
-			</div>
-
-			{rules.length === 0 ? (
-				<div className="text-sm text-center py-12" style={{ color: theme.colors.textDim }}>
-					{loading ? 'Loading...' : 'No rules yet. Without rules, Pianola escalates everything.'}
-				</div>
-			) : (
-				<div className="space-y-2">
-					{rules.map((rule) => {
-						const meta = ACTION_META[rule.action];
-						return (
-							<div
-								key={rule.id}
-								className="rounded-lg border p-3 flex items-start gap-3"
-								style={{
-									backgroundColor: theme.colors.bgActivity,
-									borderColor: theme.colors.border,
-									opacity: rule.enabled ? 1 : 0.55,
-								}}
-							>
-								{/* Enable toggle */}
-								<button
-									onClick={() => onToggle(rule.id)}
-									className="mt-0.5 shrink-0 rounded-full transition-colors"
-									style={{
-										width: 36,
-										height: 20,
-										backgroundColor: rule.enabled ? theme.colors.accent : theme.colors.border,
-										position: 'relative',
-									}}
-									aria-label={rule.enabled ? 'Disable rule' : 'Enable rule'}
-									title={rule.enabled ? 'Enabled' : 'Disabled'}
-								>
-									<span
-										className="block rounded-full transition-transform"
-										style={{
-											width: 16,
-											height: 16,
-											backgroundColor: '#fff',
-											position: 'absolute',
-											top: 2,
-											left: 2,
-											transform: rule.enabled ? 'translateX(16px)' : 'translateX(0)',
-										}}
-									/>
-								</button>
-
-								<div className="min-w-0 flex-1">
-									<div className="flex items-center gap-2">
-										<meta.Icon className="w-4 h-4 shrink-0" style={{ color: meta.color }} />
-										<span className="text-sm font-medium" style={{ color: meta.color }}>
-											{meta.label}
-										</span>
-										<span className="text-[11px]" style={{ color: theme.colors.textDim }}>
-											{scopeLabel(rule)}
-										</span>
-										<span className="text-[11px]" style={{ color: theme.colors.textDim }}>
-											priority {rule.priority}
-										</span>
-									</div>
-									<div
-										className="mt-1 text-xs select-text"
-										style={{ color: theme.colors.textMain }}
-									>
-										when {describeRuleMatch(rule)}
-									</div>
-									{rule.action === 'auto_answer' && rule.answer && (
-										<div
-											className="mt-0.5 text-xs select-text"
-											style={{ color: theme.colors.textDim }}
-										>
-											reply: &ldquo;{rule.answer}&rdquo;
-										</div>
-									)}
-									{rule.description && (
-										<div
-											className="mt-0.5 text-[11px] select-text"
-											style={{ color: theme.colors.textDim }}
-										>
-											{rule.description}
-										</div>
-									)}
-								</div>
-
-								<div className="flex items-center gap-1 shrink-0">
-									<button
-										onClick={() => onEdit(rule)}
-										className="p-1.5 rounded-md hover:bg-white/10 transition-colors"
-										style={{ color: theme.colors.textDim }}
-										aria-label="Edit rule"
-										title="Edit"
-									>
-										<Pencil className="w-4 h-4" />
-									</button>
-									<button
-										onClick={() => onDelete(rule.id)}
-										className="p-1.5 rounded-md hover:bg-white/10 transition-colors"
-										style={{ color: '#ef4444' }}
-										aria-label="Delete rule"
-										title="Delete"
-									>
-										<Trash2 className="w-4 h-4" />
-									</button>
-								</div>
-							</div>
-						);
-					})}
-				</div>
-			)}
-		</div>
-	);
-}
-
-/** Factory for a blank rule, used when creating. */
-export function newBlankRule(): PianolaRule {
-	const now = Date.now();
-	return {
-		id: generateId(),
-		enabled: true,
-		scope: 'global',
-		match: { maxRisk: 'low', kinds: ['question'] },
-		action: 'auto_answer',
-		answer: '',
-		priority: 100,
-		createdAt: now,
-		updatedAt: now,
-	};
-}
-
-// Re-export the option constants so RuleEditor and tests share one source.
-export const RULE_SCOPES: readonly PianolaRuleScope[] = ['global', 'project', 'tab'];
-export const RULE_ACTIONS: readonly PianolaActionKind[] = ['auto_answer', 'escalate', 'ignore'];
-export const RULE_RISKS: readonly PianolaRisk[] = ['low', 'medium', 'high'];
-export const RULE_KINDS: readonly PianolaSignalKind[] = ['question', 'blocked'];

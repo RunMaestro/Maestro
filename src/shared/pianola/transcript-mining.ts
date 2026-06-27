@@ -59,6 +59,25 @@ const EXCERPT_LIMIT = 400;
 /** How many messages of context to classify ending at the awaiting turn. */
 const CLASSIFY_WINDOW = 5;
 
+/**
+ * Max bytes for a single JSONL transcript line we will parse. A pathologically
+ * large line (e.g. a multi-megabyte tool dump serialized onto one line) is
+ * skipped before any parse/regex-heavy classification runs, bounding CPU and
+ * memory regardless of how hostile a local transcript is. We compare UTF-16
+ * code-unit length, a lower bound on UTF-8 byte length, so a line over this many
+ * code units is always over the byte cap and safe to drop.
+ */
+const MAX_MINED_LINE_BYTES = 256 * 1024;
+/** Max chars of flattened message content handed to the classifier. */
+const MAX_FLATTENED_MESSAGE_CHARS = 100_000;
+
+/** Cap flattened content so one huge message cannot dominate classification. */
+function capFlattened(text: string): string {
+	return text.length > MAX_FLATTENED_MESSAGE_CHARS
+		? text.slice(0, MAX_FLATTENED_MESSAGE_CHARS)
+		: text;
+}
+
 function truncate(text: string, limit = EXCERPT_LIMIT): string {
 	const trimmed = text.trim();
 	if (trimmed.length <= limit) return trimmed;
@@ -72,7 +91,7 @@ function truncate(text: string, limit = EXCERPT_LIMIT): string {
  * that is purely a tool result flattens to empty and is dropped as non-human.
  */
 export function flattenContent(content: unknown): string {
-	if (typeof content === 'string') return content;
+	if (typeof content === 'string') return capFlattened(content);
 	if (!Array.isArray(content)) return '';
 	const parts: string[] = [];
 	for (const block of content) {
@@ -85,10 +104,12 @@ export function flattenContent(content: unknown): string {
 			if (typeof text === 'string' && text.length > 0) parts.push(text);
 		}
 	}
-	return parts.join('\n').trim();
+	return capFlattened(parts.join('\n').trim());
 }
 
 function safeParse(line: string): Record<string, unknown> | null {
+	// Skip pathologically large lines before any parse/regex work touches them.
+	if (line.length > MAX_MINED_LINE_BYTES) return null;
 	const trimmed = line.trim();
 	if (!trimmed) return null;
 	try {

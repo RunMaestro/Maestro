@@ -156,8 +156,12 @@ export async function runOrchestratorIteration(
 
 		const res = await deps.dispatch(task, agentResult.agentId);
 		if (!res.success) {
-			// Expected failure: dispatch did not land. Leave pending; retry next tick.
-			// The slot is not consumed, so another ready task can take it.
+			// Expected failure: dispatch did not land. Persist the agent we just
+			// bound onto the still-pending task so the retry next tick REUSES it via
+			// ensureAgent's `task.agentId` short-circuit, instead of creating (and
+			// orphaning) a fresh session every iteration. The slot is not consumed,
+			// so another ready task can take it.
+			plan = markTaskStatus(plan, task.id, 'pending', { agentId: agentResult.agentId });
 			deps.log(
 				`[orchestrator] task "${task.id}" pending (dispatch failed: ${res.error ?? 'unknown error'})`
 			);

@@ -113,9 +113,22 @@ export function PluginConsentDialog({
 						</div>
 					) : (
 						<>
+							<div
+								className="text-xs mb-3 flex items-start gap-2 rounded-lg p-2.5"
+								style={{
+									color: theme.colors.warning,
+									backgroundColor: theme.colors.warning + '12',
+								}}
+							>
+								<AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+								<span>
+									This plugin runs its own code on your computer. Code plugins are isolated in a
+									separate process but are NOT fully sandboxed from the system - only enable a
+									plugin you trust.
+								</span>
+							</div>
 							<div className="text-xs mb-3" style={{ color: theme.colors.textDim }}>
-								This plugin runs sandboxed code and requests the following abilities. Grant only
-								what you trust; you can revoke later.
+								It requests the abilities below. Grant only what you need; you can revoke later.
 							</div>
 							{requested.length === 0 ? (
 								<div className="text-xs italic" style={{ color: theme.colors.textDim }}>

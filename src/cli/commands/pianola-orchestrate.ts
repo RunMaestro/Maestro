@@ -35,6 +35,10 @@ import {
 	type PianolaTask,
 } from '../../shared/pianola/pianola-tasks';
 import type { PianolaMessage, PianolaMessageRole } from '../../shared/pianola/types';
+import { selectAgentForTask, type AgentCandidate } from '../../shared/pianola/pianola-agent-select';
+import { DEFAULT_CAPABILITIES } from '../../shared/types';
+import { enrichWithAwaitingInput } from '../../shared/pianola/pianola-awaiting-detector';
+import { classifyMessages } from '../../shared/pianola/pianola-classifier';
 
 const DEFAULT_INTERVAL_SECONDS = 5;
 const DEFAULT_CONCURRENCY = 3;
@@ -52,6 +56,7 @@ interface CreateSessionResult {
 interface DesktopSessionEntry {
 	tabId: string;
 	agentId: string;
+	toolType: string;
 	state: 'idle' | 'busy';
 }
 
@@ -337,38 +342,104 @@ export async function pianolaOrchestrate(
 		return entries;
 	};
 
+	// Short-lived per-tab transcript cache so getRunState (awaiting-input check)
+	// and getRecentMessages share one get_session_history round-trip per tick.
+	const historyCache = new Map<string, { at: number; messages: PianolaMessage[] }>();
+	const getHistory = async (tabId: string): Promise<PianolaMessage[]> => {
+		const now = Date.now();
+		const cached = historyCache.get(tabId);
+		if (cached && now - cached.at < SESSION_LIST_TTL_MS) return cached.messages;
+		const result = await client.sendCommand<SessionHistoryResult>(
+			{ type: 'get_session_history', tabId, tail: HISTORY_TAIL },
+			'session_history_result'
+		);
+		const messages = (result.messages ?? []).map(
+			(m): PianolaMessage => ({
+				id: m.id,
+				role: m.role,
+				source: m.source ?? '',
+				content: m.content,
+				timestamp: m.timestamp,
+			})
+		);
+		historyCache.set(tabId, { at: now, messages });
+		return messages;
+	};
+
 	const deps: OrchestratorDeps = {
 		getRunState: async (task) => {
 			if (!task.tabId) return 'idle';
 			const entries = await listDesktopSessions();
 			const entry = entries.find((e) => e.tabId === task.tabId);
 			if (!entry) return 'idle';
-			return entry.state === 'busy' ? 'busy' : 'idle';
+			if (entry.state === 'busy') return 'busy';
+			// The desktop collapses waiting_input to idle, so before treating idle as
+			// a completion signal, check whether the agent is actually awaiting the
+			// user. If so report waiting_input - the detector then keeps the task
+			// running instead of marking it done and launching dependents on an
+			// unanswered question.
+			const messages = await getHistory(task.tabId);
+			const classification = classifyMessages(enrichWithAwaitingInput(messages));
+			return classification.kind === 'none' ? 'idle' : 'waiting_input';
 		},
 		getRecentMessages: async (task) => {
 			if (!task.tabId) return [];
-			const result = await client.sendCommand<SessionHistoryResult>(
-				{ type: 'get_session_history', tabId: task.tabId, tail: HISTORY_TAIL },
-				'session_history_result'
-			);
-			const messages = result.messages ?? [];
-			return messages.map(
-				(m): PianolaMessage => ({
-					id: m.id,
-					role: m.role,
-					source: m.source ?? '',
-					content: m.content,
-					timestamp: m.timestamp,
-				})
-			);
+			return getHistory(task.tabId);
 		},
 		ensureAgent: async (task) => {
 			if (task.agentId) return { agentId: task.agentId };
+
+			// Capability/load-aware selection: pick a ready, least-loaded tool type
+			// from the live session pool instead of always spawning the default
+			// agent. One candidate per distinct live tool type (present in the pool
+			// means runnable, status 'ok'); load is this plan's tasks currently
+			// running on that type; a type counts as busy only when every one of its
+			// sessions is mid-turn. Selection creates a FRESH session of the chosen
+			// type (no cross-task reuse, so task transcripts never bleed together).
+			let toolType = task.agentType;
+			if (!toolType) {
+				const sessions = await listDesktopSessions();
+				const running: Record<string, number> = {};
+				for (const t of state.plan.tasks) {
+					if (t.status === 'running' && t.agentType) {
+						running[t.agentType] = (running[t.agentType] ?? 0) + 1;
+					}
+				}
+				const pool = new Map<string, { total: number; busy: number }>();
+				for (const s of sessions) {
+					const e = pool.get(s.toolType) ?? { total: 0, busy: 0 };
+					e.total += 1;
+					if (s.state === 'busy') e.busy += 1;
+					pool.set(s.toolType, e);
+				}
+				const candidates: AgentCandidate[] = [...pool.entries()].map(([type, e]) => ({
+					agentId: type,
+					capabilities: DEFAULT_CAPABILITIES,
+					status: 'ok',
+					busy: e.total > 0 && e.busy === e.total,
+					inFlight: running[type] ?? 0,
+				}));
+				const selection = selectAgentForTask(task, candidates);
+				if ('agentId' in selection) {
+					toolType = selection.agentId;
+				} else {
+					// No reusable ready tool type in the live pool (cold start = empty pool,
+					// or every live type is mid-turn). Create a fresh default session rather
+					// than returning { error } / leaving the task pending: on a cold start the
+					// pool is empty until WE create the first session, so failing here would
+					// deadlock the plan (no session would ever appear). A freshly created
+					// session is never itself "busy", and total parallelism is already bounded
+					// by options.concurrencyLimit in the dispatch loop. Noted for observability.
+					console.log(`[orchestrator] ${selection.escalate}; defaulting to claude-code`);
+					toolType = 'claude-code';
+				}
+			}
+
 			const result = await client.sendCommand<CreateSessionResult>(
 				{
 					type: 'create_session',
 					name: task.title,
-					toolType: task.agentType || 'claude-code',
+					toolType: toolType || 'claude-code',
 					cwd: task.cwd || process.cwd(),
 				},
 				'create_session_result'

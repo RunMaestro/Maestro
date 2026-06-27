@@ -12,7 +12,7 @@ import type {
 import { matchHasNarrowingPredicate } from '../../../shared/pianola/pianola-policy';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
-import { RULE_SCOPES, RULE_ACTIONS, RULE_RISKS, RULE_KINDS, newBlankRule } from './PianolaModal';
+import { RULE_SCOPES, RULE_ACTIONS, RULE_RISKS, RULE_KINDS, newBlankRule } from './shared';
 
 export interface RuleEditorProps {
 	theme: Theme;

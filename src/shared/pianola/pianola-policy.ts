@@ -5,16 +5,25 @@
  * in this exact precedence:
  *   1. kind 'none'                  -> ignore
  *   2. risk 'high'                  -> ALWAYS escalate (no rule can suppress it)
- *   3. matched auto_answer rule     -> auto-answer (rule must narrow its scope + have answer text)
+ *   3. matched auto_answer rule     -> auto-answer, but ONLY when confidence is
+ *                                      not 'low' and the rule narrows its scope
+ *                                      and carries answer text; else escalate
  *   4. matched escalate/ignore rule -> as the rule says
  *   5. no matching rule             -> escalate (we never auto-answer without an explicit rule)
  *
  * The high-risk guard runs before rule actions so an `ignore` rule can never
  * silence a high-risk prompt. No I/O, no Electron, no app state.
+ *
+ * Trust boundary: the rules file and the Settings consent toggle are
+ * LOCAL-TRUST inputs - Pianola trusts whoever can write them to the same degree
+ * as the user's own shell. Transcript content is NOT trusted: it may echo
+ * attacker- or tool-authored text, which is why risk is rated over the full
+ * message and a high-risk read always escalates.
  */
 
 import type { PianolaClassification, PianolaDecision, PianolaRule } from './types';
 import { riskAtMost } from './pianola-risk';
+import { isWindows } from '../platformDetection';
 
 /** Context needed to scope-filter rules to the current tab/project. */
 export interface PianolaPolicyContext {
@@ -23,13 +32,17 @@ export interface PianolaPolicyContext {
 }
 
 /**
- * Normalize a scope identifier for comparison: trim, unify path separators,
- * drop a trailing slash, and lowercase. This makes project-path matching robust
- * to Windows casing and slash differences; tab ids (uuids) are unaffected.
+ * Normalize a scope identifier for comparison: trim, unify path separators, and
+ * drop a trailing slash. Case is folded ONLY on Windows, whose filesystem is
+ * case-insensitive; on Linux (and case-sensitive macOS volumes) /repo/App and
+ * /repo/app are DIFFERENT projects, so lowercasing here would let a rule scoped
+ * to one fire in the other - a scope bleed across distinct projects. Tab ids
+ * (uuids) are case-stable either way.
  */
 function normalizeScopeId(value: string | undefined): string {
 	if (!value) return '';
-	return value.trim().replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+	const normalized = value.trim().replace(/\\/g, '/').replace(/\/+$/, '');
+	return isWindows() ? normalized.toLowerCase() : normalized;
 }
 
 /** True if a rule's scope applies in the given context. */
@@ -144,6 +157,15 @@ export function decide(
 	}
 
 	// rule.action === 'auto_answer'
+	// A low-confidence read (e.g. a stray trailing '?') is too weak to act on
+	// automatically: escalate to the user rather than auto-answering on a guess.
+	if (classification.confidence === 'low') {
+		return {
+			action: 'escalate',
+			matchedRuleId: rule.id,
+			reason: 'low-confidence classification; escalating instead of auto-answering',
+		};
+	}
 	if (!hasNarrowingPredicate(rule)) {
 		return {
 			action: 'escalate',

@@ -14,7 +14,10 @@ import type {
 	PianolaActionKind,
 	PianolaRisk,
 } from './types';
+// Runtime enum arrays are single-sourced from types.ts; the union types derive from them.
+import { RULE_SCOPES, ACTION_KINDS, RISKS, SIGNAL_KINDS } from './types';
 import { validatePlan, type PianolaPlan, type PianolaTask } from './pianola-tasks';
+import { matchHasNarrowingPredicate } from './pianola-policy';
 
 /** Editable rules file (JSON array of PianolaRule), in the Maestro config dir. */
 export const PIANOLA_RULES_FILENAME = 'maestro-pianola-rules.json';
@@ -28,8 +31,60 @@ export const PIANOLA_DECISIONS_FILENAME = 'pianola-decisions.jsonl';
 /** Learned decision profiles (JSON), in the Maestro config dir. */
 export const PIANOLA_PROFILES_FILENAME = 'maestro-pianola-profiles.json';
 
+/** Staged learning suggestions (JSON), in the Maestro config dir. */
+export const PIANOLA_SUGGESTIONS_FILENAME = 'maestro-pianola-suggestions.json';
+
 /** Max characters stored for a single profile (guards against runaway writes). */
 export const PIANOLA_PROFILE_MAX_CHARS = 100_000;
+
+/**
+ * Cap on retained decision-audit records. The log is append-only and read in
+ * full on every watcher restart, so it is compacted to the most recent records
+ * once it grows past the byte gate below.
+ */
+export const PIANOLA_DECISIONS_MAX_RECORDS = 5000;
+
+/** Compact the decisions log only after it grows past this size (cheap stat gate). */
+export const PIANOLA_DECISIONS_COMPACT_BYTES = 4_000_000;
+
+/**
+ * Keep only the most recent `max` non-empty JSONL lines. Pure: returns the
+ * trimmed content (trailing newline preserved) so a store can write it back
+ * atomically. Returns the input unchanged when already within the cap or when
+ * `max` is not a positive integer.
+ */
+export function trimJsonlToLastRecords(content: string, max: number): string {
+	if (!Number.isInteger(max) || max <= 0) return content;
+	const lines = content.split('\n').filter((line) => line.trim().length > 0);
+	if (lines.length <= max) return content;
+	return `${lines.slice(lines.length - max).join('\n')}\n`;
+}
+
+/**
+ * Keep only the most recent lines that fit BOTH a record cap and a byte budget:
+ * at most `maxRecords` non-empty lines AND total length <= `maxBytes` (trailing
+ * newline included). Pure. Drops oldest first. Returns the input unchanged when
+ * already within both caps. Fixes the cap/byte-gate mismatch where trimming by
+ * record count alone could leave the file still over the byte gate and thrash.
+ */
+export function trimJsonlToFit(content: string, maxRecords: number, maxBytes: number): string {
+	const lines = content.split('\n').filter((line) => line.trim().length > 0);
+	let kept = lines;
+	if (Number.isInteger(maxRecords) && maxRecords > 0 && kept.length > maxRecords) {
+		kept = kept.slice(kept.length - maxRecords);
+	}
+	if (Number.isInteger(maxBytes) && maxBytes > 0) {
+		let total = kept.reduce((sum, line) => sum + line.length + 1, 0);
+		let start = 0;
+		while (start < kept.length && total > maxBytes) {
+			total -= kept[start].length + 1;
+			start += 1;
+		}
+		if (start > 0) kept = kept.slice(start);
+	}
+	if (kept.length === lines.length) return content;
+	return kept.length > 0 ? `${kept.join('\n')}\n` : '';
+}
 
 /** One learned decision profile: narrative guidance Pianola reasons against. */
 export interface PianolaProfileEntry {
@@ -78,11 +133,6 @@ export interface PianolaDecisionRecord {
 	/** Populated when a dispatch attempt failed. */
 	error?: string;
 }
-
-const RULE_SCOPES: readonly PianolaRuleScope[] = ['global', 'project', 'tab'];
-const ACTION_KINDS: readonly PianolaActionKind[] = ['auto_answer', 'escalate', 'ignore'];
-const RISKS: readonly PianolaRisk[] = ['low', 'medium', 'high'];
-const SIGNAL_KINDS: readonly PianolaSignalKind[] = ['question', 'blocked', 'none'];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -139,6 +189,15 @@ export function validatePianolaRule(raw: unknown): PianolaRule | null {
 	if (raw.answer !== undefined && typeof raw.answer !== 'string') return null;
 	if (raw.description !== undefined && typeof raw.description !== 'string') return null;
 
+	// Mirror the CLI/UI/policy safety contract at the storage boundary: an
+	// auto_answer rule MUST narrow what it matches and carry reply text, or it
+	// could blanket-answer prompts the user never anticipated. Drop such a rule
+	// here so a hand-edited rules file cannot smuggle one past the editor checks.
+	if (raw.action === 'auto_answer') {
+		if (!matchHasNarrowingPredicate(match)) return null;
+		if (typeof raw.answer !== 'string' || raw.answer.trim().length === 0) return null;
+	}
+
 	const rule: PianolaRule = {
 		id: raw.id,
 		enabled: raw.enabled,
@@ -165,6 +224,14 @@ function isValidClassification(raw: unknown): raw is PianolaClassification {
 	if (typeof raw.topic !== 'string') return false;
 	if (!CONFIDENCES.includes(raw.confidence as (typeof CONFIDENCES)[number])) return false;
 	if (!isRecord(raw.evidence)) return false;
+	// Validate the evidence fields the readers depend on. In particular the watcher's
+	// restart-rehydrate keys its dedup cursor off evidence.messageId, so a line with a
+	// missing/mistyped messageId must be dropped, not accepted (else the cursor is lost
+	// and a still-awaiting prompt could be re-acted on).
+	const ev = raw.evidence;
+	if (ev.messageId !== null && typeof ev.messageId !== 'string') return false;
+	if (typeof ev.reason !== 'string') return false;
+	if (typeof ev.structured !== 'boolean') return false;
 	return true;
 }
 
@@ -369,6 +436,55 @@ export function validatePianolaSupervisorFile(raw: unknown): PianolaSupervisorFi
 	for (const item of raw.targets) {
 		const target = validatePianolaSupervisedTarget(item);
 		if (target) result.targets.push(target);
+	}
+	return result;
+}
+
+/**
+ * Staged learning suggestions: hard-rule proposals plus a proposed profile draft,
+ * written by the scheduled re-learn job and read by the in-app suggestions UI.
+ * Nothing here is live; the user approves individual items to persist them.
+ */
+export interface PianolaSuggestionsFile {
+	/** Epoch ms the suggestions were generated. */
+	generatedAt: number;
+	/** How many mined decision pairs they were synthesized from. */
+	pairCount: number;
+	/** Approvable auto_answer rule proposals (each valid per validatePianolaRule). */
+	proposals: PianolaRule[];
+	/** Proposed decision-profile markdown draft. */
+	proposedProfile: string;
+	/** The profile that was current when this draft was generated. */
+	previousProfile: string;
+}
+
+/**
+ * Validate an untrusted suggestions payload, dropping malformed proposals.
+ * Always returns a well-formed object so callers never null-check the shape.
+ */
+export function validatePianolaSuggestionsFile(raw: unknown): PianolaSuggestionsFile {
+	const result: PianolaSuggestionsFile = {
+		generatedAt: 0,
+		pairCount: 0,
+		proposals: [],
+		proposedProfile: '',
+		previousProfile: '',
+	};
+	if (!isRecord(raw)) return result;
+	if (typeof raw.generatedAt === 'number' && Number.isFinite(raw.generatedAt)) {
+		result.generatedAt = raw.generatedAt;
+	}
+	if (typeof raw.pairCount === 'number' && Number.isFinite(raw.pairCount)) {
+		result.pairCount = raw.pairCount;
+	}
+	if (Array.isArray(raw.proposals)) {
+		result.proposals = validatePianolaRules(raw.proposals);
+	}
+	if (typeof raw.proposedProfile === 'string') {
+		result.proposedProfile = raw.proposedProfile.slice(0, PIANOLA_PROFILE_MAX_CHARS);
+	}
+	if (typeof raw.previousProfile === 'string') {
+		result.previousProfile = raw.previousProfile.slice(0, PIANOLA_PROFILE_MAX_CHARS);
 	}
 	return result;
 }

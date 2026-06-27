@@ -95,9 +95,15 @@ export interface CommandContribution {
 	description?: string;
 }
 
+/** Where a contributed panel docks. `modal` (default) preserves today's
+ * Settings-launched behavior; the others dock the same sandboxed iframe into a
+ * UI slot via the contribution registry. */
+export type PanelPlacement = 'modal' | 'left' | 'right' | 'main' | 'settings';
+
 /**
  * A UI panel a (tier-1) plugin contributes. Rendered in a locked-down sandboxed
- * iframe (no same-origin, no top navigation) in the reserved plugin modal band.
+ * iframe (no same-origin, no top navigation) in the reserved plugin modal band,
+ * or docked into a UI slot when `placement` is set.
  * `entry` is a plugin-relative HTML file (traversal-checked like manifest entry).
  */
 export interface PanelContribution {
@@ -107,6 +113,8 @@ export interface PanelContribution {
 	title: string;
 	/** Plugin-relative path to the panel's HTML entry. */
 	entry: string;
+	/** Where the panel docks. Defaults to `modal`. */
+	placement: PanelPlacement;
 }
 
 /**
@@ -392,6 +400,31 @@ function parseSetting(
 		errors.push(`[${pluginId}] setting "${localId}" is missing a key`);
 		return null;
 	}
+	const settingKey = raw.key.trim();
+	// The declarative path must mirror the runtime settings.set guards: a contributed
+	// key is namespaced by the consumer, so reject anything that could escape that
+	// namespace or hit a sensitive target - prototype-polluting segments, the feature
+	// gate, secret-looking names, or path-style separators/traversal.
+	if (/(^|\.)(__proto__|prototype|constructor)(\.|$)/.test(settingKey)) {
+		errors.push(`[${pluginId}] setting "${localId}" key uses a reserved prototype segment`);
+		return null;
+	}
+	if (/encorefeatures/i.test(settingKey)) {
+		errors.push(`[${pluginId}] setting "${localId}" key may not target the feature gate`);
+		return null;
+	}
+	if (
+		/key|token|secret|password|credential|apikey|auth|bearer|oauth|jwt|private|cert|signing/i.test(
+			settingKey
+		)
+	) {
+		errors.push(`[${pluginId}] setting "${localId}" key looks secret-bearing and is not allowed`);
+		return null;
+	}
+	if (/[\\/]|\.\./.test(settingKey)) {
+		errors.push(`[${pluginId}] setting "${localId}" key may not contain path separators`);
+		return null;
+	}
 	if (raw.type !== 'boolean' && raw.type !== 'string' && raw.type !== 'number') {
 		errors.push(`[${pluginId}] setting "${localId}" type must be boolean, string, or number`);
 		return null;
@@ -552,6 +585,24 @@ function isSafeRelativeEntry(entry: string): boolean {
 	return !entry.split(/[\\/]+/).includes('..');
 }
 
+const PANEL_PLACEMENTS: readonly PanelPlacement[] = ['modal', 'left', 'right', 'main', 'settings'];
+
+/** Parse an optional panel placement, defaulting to `modal`; an invalid value is
+ * an error but never drops the panel (it docks in the safe default slot). */
+function parsePanelPlacement(
+	pluginId: string,
+	localId: string,
+	raw: unknown,
+	errors: string[]
+): PanelPlacement {
+	if (raw === undefined) return 'modal';
+	if (typeof raw === 'string' && (PANEL_PLACEMENTS as readonly string[]).includes(raw)) {
+		return raw as PanelPlacement;
+	}
+	errors.push(`[${pluginId}] panel "${localId}" has an invalid placement; defaulting to modal`);
+	return 'modal';
+}
+
 function parsePanel(pluginId: string, raw: unknown, errors: string[]): PanelContribution | null {
 	if (!isPlainObject(raw)) {
 		errors.push(`[${pluginId}] a panel contribution is not an object`);
@@ -567,12 +618,14 @@ function parsePanel(pluginId: string, raw: unknown, errors: string[]): PanelCont
 		errors.push(`[${pluginId}] panel "${localId}" entry must be a relative path inside the plugin`);
 		return null;
 	}
+	const placement = parsePanelPlacement(pluginId, localId, raw.placement, errors);
 	return {
 		id: namespaced(pluginId, localId),
 		localId,
 		pluginId,
 		title: raw.title.trim(),
 		entry: raw.entry.trim(),
+		placement,
 	};
 }
 

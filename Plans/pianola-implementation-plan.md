@@ -123,7 +123,7 @@ agents through the existing maestro-cli surface (the chosen action layer over MC
   bundled CLI; new `maestro-cli pianola add-rule` so a conversation becomes a rule.
   Babysitting reuses `pianola watch` (the one-runtime decision holds).
 
-## v3 - learning from history (as designed, hybrid decision engine)
+## v3 - learning from history (BUILT, hybrid decision engine)
 
 Goal: on setup Pianola crawls the installed CLIs' native transcripts and learns to
 decide the way the user actually does. Decision engine is HYBRID (locked):
@@ -151,8 +151,43 @@ Phases (each independently verifiable):
 3. Thought-based watcher path: when babysitting and no hard rule matches and risk is
    not high, consult the profile (LLM judgment) to auto-answer-if-confident else escalate.
 
+Status (2026-06-26): all three phases are BUILT - crawler `pianolaLearn` over the pure
+`transcript-mining.ts`; profile read/write (`pianolaProfile`/`pianolaSetProfile`, per-project
+with global fallback); and the thought-based handoff in the watcher (`requestJudgment` /
+`PianolaJudgmentRequest`, gated on a profile existing for the project).
+
 ## Conventions
 
 - Tabs for indentation. No em/en dashes. Immutable updates. Files < 800 lines.
 - Pure functions for classifier/policy. Let unexpected exceptions bubble (Sentry); handle known cases.
 - Validate before push: `npm run lint`, `npm run lint:eslint`, `npm run test` for touched areas.
+
+## Audit resolutions (2026-06-26)
+
+Security/correctness audit of the manager-agent feature - all 9 findings resolved, with tests:
+
+- HIGH: risk is now rated over the FULL assistant message, not the truncated prompt extract
+  (`pianola-classifier.ts`), so a destructive clause hidden behind a benign trailing question
+  can no longer bypass the high-risk-always-escalates guard or harvest an auto-answer.
+- MED: `decide()` escalates low-confidence reads instead of auto-answering; the risk taxonomy
+  is expanded (shell/infra/cloud/git-destructive) and tightened against dev-prose false
+  positives (`shutdown`/`reboot` qualified, `/dev/null` excluded).
+- LOW: `validatePianolaRule` enforces the auto_answer narrowing+answer invariant at the storage
+  boundary; scope ids fold case only on Windows (no cross-project bleed on Linux/macOS); the
+  decision audit log is bounded by compaction (see the multi-writer caveat in the store).
+- INFO: the trust boundary is documented in `pianola-policy.ts` (rules + consent are
+  local-trust; transcript content is untrusted).
+
+Orchestrator-audit Sprint 0 (P0): all 4 items shipped - see pianola-orchestrator-audit.md.
+
+## Track A Phase 2 (shipped 2026-06-26)
+
+Built per Plans/pianola-phase2-goal.md:
+
+- Step 0: consolidated the duplicate `AgentCapabilities` interface in `src/shared/types.ts` to one canonical declaration.
+- Step 1: capability/load-aware agent selection - pure `selectAgentForTask` (`src/shared/pianola/pianola-agent-select.ts`) filters to ready (status `ok`), not-busy, capability-matching candidates, picks lowest `inFlight` then a deterministic id tiebreak, and escalates when none qualify. Wired into the orchestrate CLI shell (`pianola-orchestrate.ts` ensureAgent) so it picks a ready, least-loaded tool type instead of always spawning the default.
+- Step 2: scheduled re-learn + relaunch - `runRelearnJob` (`src/main/pianola/pianola-relearn.ts`, pure composition, Encore-gated, PROPOSAL-only) mines via the CLI crawler, synthesizes staged suggestions, and relaunches stale supervised targets; driven by `PianolaRelearnScheduler` (6h cadence, self-gating) wired in `index.ts`. Stale detection is a pure `staleTargets` helper on the supervisor.
+- Step 3: in-app learning suggestions - pure `synthesizeSuggestions` (`src/shared/pianola/pianola-synthesis.ts`) turns the mined corpus into approvable low-risk auto_answer rule proposals (each valid per `validatePianolaRule`) plus a profile draft and diff, staged in `maestro-pianola-suggestions.json`. Gated IPC `pianola:get-suggestions` / `pianola:apply-suggestion` and a "Suggestions" tab in `PianolaModal` let the user approve a rule or profile one at a time. Approving only writes config; high-risk still escalates at `decide()`.
+- Optional (multi-writer audit-log hardening): SKIPPED. Single-tab supervision is the norm and the current best-effort compaction is acceptable for an audit log; the limitation stays documented in the stores.
+
+Invariants held: high-risk always escalates; audit-before-dispatch; Encore-gated with consent re-read each tick; pure core (selection/synthesis) free of fs/electron. Nothing auto-applies a suggestion.

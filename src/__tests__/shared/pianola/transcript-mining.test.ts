@@ -253,3 +253,71 @@ describe('aggregateDecisionPairs', () => {
 		expect(agg.byRiskPolarity.high).toEqual({ affirmative: 0, negative: 0, other: 1 });
 	});
 });
+
+describe('size caps (Q8 robustness)', () => {
+	it('truncates flattened string content to the classifier cap', () => {
+		const flat = flattenContent('x'.repeat(150_000));
+		expect(flat.length).toBe(100_000);
+	});
+
+	it('truncates flattened array text content to the classifier cap', () => {
+		const flat = flattenContent([{ type: 'text', text: 'y'.repeat(150_000) }]);
+		expect(flat.length).toBe(100_000);
+	});
+
+	it('leaves normal-sized content unaffected', () => {
+		expect(flattenContent('regular reply')).toBe('regular reply');
+		expect(flattenContent([{ type: 'text', text: 'a normal block' }])).toBe('a normal block');
+	});
+
+	it('skips an oversized Claude JSONL line before parsing', () => {
+		const line = JSON.stringify({
+			isSidechain: false,
+			type: 'assistant',
+			message: { role: 'assistant', content: 'z'.repeat(300_000) },
+			uuid: 'big1',
+			timestamp: 't',
+		});
+		expect(line.length).toBeGreaterThan(256 * 1024);
+		expect(parseClaudeTranscriptLine(line)).toBeNull();
+	});
+
+	it('skips an oversized Codex JSONL line before parsing', () => {
+		const line = JSON.stringify({
+			type: 'response_item',
+			payload: {
+				type: 'message',
+				role: 'assistant',
+				content: [{ type: 'output_text', text: 'z'.repeat(300_000) }],
+			},
+			timestamp: 't',
+		});
+		expect(line.length).toBeGreaterThan(256 * 1024);
+		expect(parseCodexTranscriptLine(line)).toBeNull();
+	});
+
+	it('parses a line under the byte cap but truncates its large content', () => {
+		const line = JSON.stringify({
+			isSidechain: false,
+			type: 'assistant',
+			message: { role: 'assistant', content: 'w'.repeat(150_000) },
+			uuid: 'mid1',
+			timestamp: 't',
+		});
+		expect(line.length).toBeLessThan(256 * 1024);
+		const m = parseClaudeTranscriptLine(line);
+		expect(m).not.toBeNull();
+		expect(m?.content.length).toBe(100_000);
+	});
+
+	it('parses a normal line unaffected by the caps', () => {
+		const line = JSON.stringify({
+			isSidechain: false,
+			type: 'assistant',
+			message: { role: 'assistant', content: 'short and sweet' },
+			uuid: 'ok1',
+			timestamp: 't',
+		});
+		expect(parseClaudeTranscriptLine(line)?.content).toBe('short and sweet');
+	});
+});

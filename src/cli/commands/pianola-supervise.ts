@@ -65,11 +65,17 @@ export function pianolaSuperviseWatch(tabId: string, options: PianolaSuperviseWa
 		fail('supervise watch requires --agent <agent-id>', options.json);
 	}
 
+	// Reuse an existing watcher for the same (kind, tabId, agentId) so registering
+	// the same tab twice replaces it in place instead of spawning a second watcher
+	// that would double-answer the same prompt.
+	const existing = readPianolaSupervisorTargets().find(
+		(t) => t.kind === 'watch' && t.tabId === tabId && t.agentId === options.agent
+	);
 	const target: PianolaSupervisedTarget = {
-		id: generateUUID(),
+		id: existing?.id ?? generateUUID(),
 		kind: 'watch',
 		enabled: true,
-		createdAt: Date.now(),
+		createdAt: existing?.createdAt ?? Date.now(),
 		tabId,
 		agentId: options.agent,
 	};

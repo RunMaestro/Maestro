@@ -11,13 +11,16 @@
  */
 
 /** Risk of acting on a detected prompt, ordered low < medium < high. */
-export type PianolaRisk = 'low' | 'medium' | 'high';
+export const RISKS = ['low', 'medium', 'high'] as const;
+export type PianolaRisk = (typeof RISKS)[number];
 
 /** What Pianola decides to do about a detected prompt. */
-export type PianolaActionKind = 'auto_answer' | 'escalate' | 'ignore';
+export const ACTION_KINDS = ['auto_answer', 'escalate', 'ignore'] as const;
+export type PianolaActionKind = (typeof ACTION_KINDS)[number];
 
 /** What the classifier detected in the transcript tail. */
-export type PianolaSignalKind = 'question' | 'blocked' | 'none';
+export const SIGNAL_KINDS = ['question', 'blocked', 'none'] as const;
+export type PianolaSignalKind = (typeof SIGNAL_KINDS)[number];
 
 /** Role of a message, mirroring the WS SessionHistoryMessage contract. */
 export type PianolaMessageRole =
@@ -76,7 +79,8 @@ export interface PianolaClassification {
 }
 
 /** Scope a rule applies to. */
-export type PianolaRuleScope = 'global' | 'project' | 'tab';
+export const RULE_SCOPES = ['global', 'project', 'tab'] as const;
+export type PianolaRuleScope = (typeof RULE_SCOPES)[number];
 
 /**
  * Editable user rule. Matched against a classification to decide an action.

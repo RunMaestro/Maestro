@@ -367,3 +367,37 @@ describe('runOrchestratorIteration - prevStates carry-across', () => {
 		expect(r.state.prevStates).toEqual({ A: 'busy' });
 	});
 });
+
+describe('runOrchestratorIteration - dispatch failure does not leak agents', () => {
+	it('persists the bound agent on a failed dispatch so the retry reuses it', async () => {
+		const p = plan([task({ id: 'A' })]);
+		let created = 0;
+		const ensureAgent: OrchestratorDeps['ensureAgent'] = vi.fn(async (t: PianolaTask) => {
+			if (t.agentId) return { agentId: t.agentId };
+			created += 1;
+			return { agentId: `created-${created}` };
+		});
+		let failNext = true;
+		const dispatch: OrchestratorDeps['dispatch'] = vi.fn(async () => {
+			if (failNext) {
+				failNext = false;
+				return { success: false, error: 'transient' };
+			}
+			return { success: true, tabId: 'tab-1' };
+		});
+
+		let state = initialOrchestratorState(p);
+		let r = await runOrchestratorIteration(state, makeDeps({ ensureAgent, dispatch }), {
+			concurrencyLimit: 1,
+		});
+		expect(statusOf(r.state, 'A')).toBe('pending');
+		expect(r.state.plan.tasks.find((t) => t.id === 'A')?.agentId).toBe('created-1');
+		state = r.state;
+
+		r = await runOrchestratorIteration(state, makeDeps({ ensureAgent, dispatch }), {
+			concurrencyLimit: 1,
+		});
+		expect(statusOf(r.state, 'A')).toBe('running');
+		expect(created).toBe(1);
+	});
+});

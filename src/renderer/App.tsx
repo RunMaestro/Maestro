@@ -182,6 +182,7 @@ import type { RightPanelTab, Session, QueuedItem, CustomAICommand, ThinkingItem 
 import { THEMES } from './constants/themes';
 import { usePluginContributions } from './hooks/usePluginContributions';
 import { resolvePluginTheme } from './utils/pluginThemes';
+import { PluginPanelSlot } from './components/plugins/PluginPanelSlot';
 import { generateId } from './utils/ids';
 import { getActiveOutputSearchKey } from './utils/outputSearch';
 import { reorderQueueItem } from './utils/executionQueue';
@@ -3379,6 +3380,13 @@ function MaestroConsoleInner() {
 					</ErrorBoundary>
 				)}
 
+				{/* --- PLUGIN LEFT DOCK (sandboxed iframe panels; null when none/off) --- */}
+				<PluginPanelSlot
+					theme={theme}
+					placement="left"
+					className="flex flex-col shrink-0 overflow-hidden border-r w-[320px]"
+				/>
+
 				{/* --- MOBILE BACKDROP (taps anywhere outside a drawer to close it) --- */}
 				{isNarrowViewport && sessions.length > 0 && (leftSidebarOpen || rightPanelOpen) && (
 					<div
@@ -3554,12 +3562,22 @@ function MaestroConsoleInner() {
 					<MainPanel ref={mainPanelRef} {...mainPanelProps} />
 				)}
 
+				{/* --- PLUGIN MAIN DOCK (sandboxed iframe panels; null when none/off) --- */}
+				<PluginPanelSlot
+					theme={theme}
+					placement="main"
+					className="flex flex-col flex-1 min-w-0 overflow-hidden"
+				/>
+
 				{/* --- RIGHT PANEL (hidden in mobile landscape, when no sessions, group chat is active, or log viewer is open) --- */}
 				{!isMobileLandscape && sessions.length > 0 && !activeGroupChatId && !logViewerOpen && (
 					<ErrorBoundary>
 						<RightPanel ref={rightPanelRef} {...rightPanelProps} />
 					</ErrorBoundary>
 				)}
+
+				{/* --- PLUGIN RIGHT DOCK (sandboxed iframe panels; null when none/off) --- */}
+				<PluginPanelSlot theme={theme} placement="right" />
 
 				{/* NOTE: Settings, Wizard, Tour, and flash notifications are now rendered via AppStandaloneModals */}
 

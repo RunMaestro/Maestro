@@ -28,11 +28,16 @@ export function usePluginContributions(): AggregatedContributions {
 	const [contributions, setContributions] = useState<AggregatedContributions>(EMPTY);
 
 	useEffect(() => {
+		// The plugins API is absent in the web build (and before the preload bridge
+		// is ready); treat that exactly like feature-off and stay on empty buckets.
+		const plugins = window.maestro?.plugins;
+		if (!plugins) return;
+
 		let cancelled = false;
 
 		const load = async (): Promise<void> => {
 			try {
-				const next = await window.maestro.plugins.contributions();
+				const next = await plugins.contributions();
 				if (!cancelled) setContributions(next);
 			} catch {
 				// 'PluginsDisabled' or any read failure -> behave as feature-off.
@@ -41,7 +46,7 @@ export function usePluginContributions(): AggregatedContributions {
 		};
 
 		void load();
-		const unsubscribe = window.maestro.plugins.onChanged(() => {
+		const unsubscribe = plugins.onChanged(() => {
 			void load();
 		});
 

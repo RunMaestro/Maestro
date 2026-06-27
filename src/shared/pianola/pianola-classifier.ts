@@ -113,9 +113,15 @@ function classifyFromStructured(
 ): PianolaClassification {
 	const promptText = signal.prompt ?? message.content;
 	const kind: PianolaSignalKind = signal.kind === 'question' ? 'question' : 'blocked';
-	// Permission/plan-review prompts inherit risk from what is being requested,
-	// but are never less than medium since they gate an action.
-	let risk = rateRisk(promptText);
+	// Risk MUST be rated over the FULL assistant message, never just the
+	// extracted prompt. `extractPrompt` keeps only the last question sentence, so
+	// "Delete the prod database and drop all tables. Shall I proceed?" collapses
+	// to "Shall I proceed?" and loses every destructive keyword. Rating that
+	// slice let an attacker- or agent-authored transcript slip a high-risk action
+	// past decide()'s high-risk guard and harvest an auto-answer approval. Rate
+	// the whole message and the prompt, then keep the most severe, so a truncated
+	// prompt can only ever raise the rating, never lower it.
+	let risk = maxRisk(rateRisk(message.content ?? ''), rateRisk(promptText));
 	if (signal.kind === 'permission' || signal.kind === 'plan_review') {
 		risk = maxRisk(risk, 'medium');
 	}

@@ -13,6 +13,7 @@ import type {
 	PianolaDecisionRecord,
 	RulesLoadResult,
 	PianolaSupervisedTarget,
+	PianolaSuggestionsFile,
 } from '../../shared/pianola/storage';
 import type { PianolaSupervisorSnapshot } from '../ipc/handlers/pianola';
 
@@ -38,6 +39,17 @@ export function createPianolaApi() {
 		 */
 		getDecisions: (limit?: number): Promise<PianolaDecisionRecord[]> =>
 			ipcRenderer.invoke('pianola:get-decisions', limit),
+
+		/** Read the staged learning suggestions (rule proposals + profile draft). */
+		getSuggestions: (): Promise<PianolaSuggestionsFile> =>
+			ipcRenderer.invoke('pianola:get-suggestions'),
+
+		/** Approve a suggestion: persist a rule and/or a profile draft. Returns updated rules. */
+		applySuggestion: (payload: {
+			rule?: PianolaRule;
+			profile?: { text: string; projectPath?: string };
+		}): Promise<{ rules: PianolaRule[] }> =>
+			ipcRenderer.invoke('pianola:apply-suggestion', payload),
 
 		/**
 		 * Control the desktop supervised daemon (the watchers and orchestrations the

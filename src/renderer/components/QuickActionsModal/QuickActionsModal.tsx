@@ -39,7 +39,8 @@ import { buildGitWorktreeCommands } from './commands/gitWorktreeCommands';
 import { buildGroupChatCommands, buildGroupChatJumpCommands } from './commands/groupChatCommands';
 import { buildMoveToGroupCommands } from './commands/moveToGroupCommands';
 import { buildNavigationCommands } from './commands/navigationCommands';
-import { buildPluginMacroCommands } from './commands/pluginMacroCommands';
+import { buildPluginCommandPaletteCommands } from './commands/pluginCommandPaletteCommands';
+import { mergePluginContributions } from '../../utils/pluginContributionMerge';
 import { buildRightPanelCommands } from './commands/rightPanelCommands';
 import { buildSearchCommands } from './commands/searchCommands';
 import {
@@ -628,12 +629,32 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			notifyToast,
 			logger,
 		}),
-		...buildPluginMacroCommands({
-			macros: pluginContributions.commandMacros,
-			onRunPromptMacro,
-			setQuickActionOpen,
-		}),
 	];
+
+	// Surface plugin-contributed palette entries (tier-0 macros + tier-1
+	// commands) and merge them against the built-in actions under the shared
+	// contribution contract: a built-in always wins a colliding id, and earlier
+	// plugins win a later duplicate. Provenance ("from <plugin>") rides in each
+	// entry's subtext. Empty when the plugins Encore flag is off.
+	const pluginPaletteActions = buildPluginCommandPaletteCommands({
+		commands: pluginContributions.commands,
+		macros: pluginContributions.commandMacros,
+		onRunPromptMacro,
+		invokeCommand: (commandId) => window.maestro.plugins.invokeCommand(commandId),
+		onCommandResult: ({ dispatched, title }) =>
+			notifyToast({
+				color: dispatched ? 'green' : 'orange',
+				title: 'Plugins',
+				message: dispatched ? `Ran "${title}"` : `"${title}" is not running`,
+			}),
+		onCommandError: ({ error }) =>
+			notifyToast({ color: 'red', title: 'Plugins', message: `Command failed: ${String(error)}` }),
+		setQuickActionOpen,
+	});
+	const mainActionsWithPlugins = mergePluginContributions(
+		mainActions,
+		pluginPaletteActions
+	).items.map((entry) => entry.item);
 
 	const groupActions = buildMoveToGroupCommands({
 		initialMode,
@@ -651,7 +672,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		revealJumpTarget,
 	});
 
-	const actions = mode === 'agents' ? agentActions : mode === 'main' ? mainActions : groupActions;
+	const actions =
+		mode === 'agents' ? agentActions : mode === 'main' ? mainActionsWithPlugins : groupActions;
 
 	const filtered = filterAndSortQuickActions(actions, search, mode);
 

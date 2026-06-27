@@ -279,3 +279,31 @@ describe('aggregateContributions', () => {
 		expect(agg.themes.map((t) => t.id).sort()).toEqual(['com.a/midnight', 'com.b/midnight']);
 	});
 });
+
+describe('contributed setting key validation', () => {
+	const settingsFor = (key: string) =>
+		collectContributions(
+			manifest('com.acme', {
+				settings: [{ id: 'opt', key, type: 'boolean', default: true }],
+			})
+		);
+
+	it.each([
+		['prototype-polluting __proto__', '__proto__'],
+		['prototype-polluting a.constructor', 'a.constructor'],
+		['the feature gate encoreFeatures', 'encoreFeatures'],
+		['a secret-looking apiKey', 'apiKey'],
+		['a path-separated a/b', 'a/b'],
+		['a traversal ../x', '../x'],
+	])('drops a setting whose key is %s and records an error', (_label, key) => {
+		const c = settingsFor(key);
+		expect(c.settings).toEqual([]);
+		expect(c.errors.length).toBe(1);
+	});
+
+	it('accepts a setting with a normal key', () => {
+		const c = settingsFor('verbose');
+		expect(c.settings.map((s) => s.key)).toEqual(['verbose']);
+		expect(c.errors).toEqual([]);
+	});
+});

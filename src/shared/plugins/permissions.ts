@@ -35,6 +35,12 @@ export type PluginCapability =
 	| 'agents:dispatch' // send a prompt to an agent
 	| 'notifications:toast' // raise a toast notification
 	| 'settings:read' // read non-secret settings
+	| 'settings:write' // write the plugin's OWN namespaced (plugins.<id>.*) non-secret settings
+	| 'sessions:read' // list sessions + read their metadata (NEVER raw transcript content)
+	| 'storage:read' // read the plugin's OWN private key-value store
+	| 'storage:write' // write the plugin's OWN private key-value store
+	| 'ui:command' // invoke a registered Maestro command (a palette action)
+	| 'events:subscribe' // subscribe to host event topics (metadata-only payloads)
 	| 'process:spawn'; // run a shell command (highest risk)
 
 export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
@@ -45,6 +51,12 @@ export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
 	'agents:dispatch',
 	'notifications:toast',
 	'settings:read',
+	'settings:write',
+	'sessions:read',
+	'storage:read',
+	'storage:write',
+	'ui:command',
+	'events:subscribe',
 	'process:spawn',
 ];
 
@@ -55,8 +67,14 @@ const CAPABILITY_RISK: Record<PluginCapability, CapabilityRisk> = {
 	'notifications:toast': 'low',
 	'settings:read': 'low',
 	'agents:read': 'low',
+	'storage:read': 'low',
+	'storage:write': 'low',
+	'settings:write': 'low',
+	'ui:command': 'low',
 	'fs:read': 'medium',
 	'net:fetch': 'medium',
+	'sessions:read': 'medium',
+	'events:subscribe': 'medium',
 	'agents:dispatch': 'high',
 	'fs:write': 'high',
 	'process:spawn': 'high',
@@ -73,6 +91,15 @@ const CAPABILITY_SCOPE_KIND: Record<PluginCapability, ScopeKind> = {
 	'agents:dispatch': 'none',
 	'notifications:toast': 'none',
 	'settings:read': 'none',
+	// New caps are structurally namespaced/confined by their host handler (the
+	// plugin's own KV dir, its own plugins.<id>.* settings keys, the fixed safe
+	// event-topic catalog), so they take no user-facing scope.
+	'settings:write': 'none',
+	'sessions:read': 'none',
+	'storage:read': 'none',
+	'storage:write': 'none',
+	'ui:command': 'none',
+	'events:subscribe': 'none',
 	'process:spawn': 'none',
 };
 
@@ -257,11 +284,23 @@ export function describeCapability(capability: PluginCapability): string {
 		case 'agents:read':
 			return 'See your agents and their status';
 		case 'agents:dispatch':
-			return 'Send prompts to your agents';
+			return 'Send prompts to your agents (this can run code an agent is allowed to run)';
 		case 'notifications:toast':
 			return 'Show notifications';
 		case 'settings:read':
 			return 'Read non-secret settings';
+		case 'settings:write':
+			return "Save the plugin's own settings";
+		case 'sessions:read':
+			return 'See your sessions and their details (not the message contents)';
+		case 'storage:read':
+			return "Read the plugin's own saved data";
+		case 'storage:write':
+			return "Save the plugin's own data";
+		case 'ui:command':
+			return 'Run Maestro commands available in the command palette';
+		case 'events:subscribe':
+			return 'Be notified when things happen in Maestro (session, agent, and cue events)';
 		case 'process:spawn':
 			return 'Run shell commands';
 	}

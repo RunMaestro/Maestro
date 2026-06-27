@@ -16,6 +16,20 @@
 
 These close consent-safety and correctness holes that undermine the whole HITL premise.
 
+Status (2026-06-26): ALL 4 Sprint 0 items are SHIPPED. (1) `rehydrateWatchState` seeds the
+cursor from the audit log and is wired in `pianola.ts`; (2) the watch loop re-reads
+`encoreFeatures.pianola` each poll and self-stops; (3) `deps.notify` + `safeNotify` fire toasts;
+(4) `pendingHandoff` + `HANDOFF_TIMEOUT_POLLS` give handoff-failure fallback and timeout.
+
+Track status (2026-06-26): Track A Phase 1 is BUILT + tested (`pianola-tasks.ts`,
+`pianola-completion-detector.ts`, `pianola-orchestrator.ts` + `pianola orchestrate`,
+`pianola-supervisor.ts` + `supervise`). Track B is substantially BUILT (`main/plugins/`:
+PluginManager, PermissionBroker, PluginSandboxHost, PluginSchedulerHost; `shared/plugins/`:
+registry/manifest/contributions/host-api/signing; `PluginsPanel.tsx`; gated on
+`encoreFeatures.plugins`) - the verdict's "NOT plugin-ready" predates this work. Remaining:
+Track A Phase 2 (capability/load-aware selection, scheduled re-learn + relaunch, in-app
+learning suggestions) and the open forks below.
+
 1. **Durable watch-state rehydration across restart** (S). `WatchState` is fresh on every watch start (`src/cli/commands/pianola.ts`), so a restarted watcher re-answers the still-waiting prompt a SECOND time. Add pure `rehydrateWatchState(records, target)` that folds the audit log to seed `lastHandledMessageId` before the poll loop. Files: `src/shared/pianola/pianola-watcher.ts`, `src/cli/commands/pianola.ts`, `src/cli/services/pianola-store.ts`.
 2. **Watcher self-stop when the Encore flag is revoked** (S). `ensurePianolaEnabled()` is checked once at startup and never re-read in the loop, so toggling Pianola off does not halt in-flight autonomous answering. Re-read `encoreFeatures.pianola` at the top of each poll iteration and break cleanly. File: `src/cli/commands/pianola.ts`.
 3. **Proactive escalation notifications** (M). Escalations only land in a passive dashboard badge. Add optional `deps.notify` to the pure watcher; the CLI fires `notifyToast` (clickAction jump-session, `sourceAgent: 'Pianola'`, dismissible for high-risk). Files: `src/shared/pianola/pianola-watcher.ts`, `src/cli/commands/pianola.ts`, `src/renderer/stores/notificationStore.ts`.

@@ -3,7 +3,7 @@
  * @description Unit tests for the pure Pianola policy engine.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import {
 	decide,
 	selectRule,
@@ -207,5 +207,40 @@ describe('selectRule precedence', () => {
 			ok,
 		]);
 		expect(picked?.id).toBe(ok.id);
+	});
+});
+
+describe('decide - confidence gating', () => {
+	it('escalates instead of auto-answering a low-confidence classification', () => {
+		const r = rule({ match: { maxRisk: 'low' }, action: 'auto_answer', answer: 'go' });
+		const d = decide(classification({ kind: 'question', risk: 'low', confidence: 'low' }), [r]);
+		expect(d.action).toBe('escalate');
+		expect(d.reason).toContain('low-confidence');
+	});
+
+	it('still auto-answers a medium-confidence classification matched by a rule', () => {
+		const r = rule({ match: { maxRisk: 'low' }, action: 'auto_answer', answer: 'go' });
+		const d = decide(classification({ kind: 'question', risk: 'low', confidence: 'medium' }), [r]);
+		expect(d.action).toBe('auto_answer');
+	});
+});
+
+describe('scope normalization case-sensitivity', () => {
+	const originalPlatform = process.platform;
+	afterEach(() => {
+		Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+	});
+
+	it('folds case on Windows (case-insensitive filesystem)', () => {
+		Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+		const r = rule({ scope: 'project', scopeId: 'C:/Repo/App' });
+		expect(ruleAppliesToScope(r, { projectPath: 'c:/repo/app' })).toBe(true);
+	});
+
+	it('does NOT fold case off Windows (case-sensitive filesystem)', () => {
+		Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+		const r = rule({ scope: 'project', scopeId: '/repo/App' });
+		expect(ruleAppliesToScope(r, { projectPath: '/repo/app' })).toBe(false);
+		expect(ruleAppliesToScope(r, { projectPath: '/repo/App' })).toBe(true);
 	});
 });

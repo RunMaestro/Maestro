@@ -71,15 +71,9 @@ import { focusAgent, switchMode } from './commands/agent-control';
 import { tabNew, tabClose, tabRename, tabStar } from './commands/tab';
 import { setTheme } from './commands/set-theme';
 import { encoreList, encoreSet } from './commands/encore';
-import {
-	pianolaWatch,
-	pianolaRules,
-	pianolaAddRule,
-	pianolaLearn,
-	pianolaProfile,
-	pianolaSetProfile,
-	pianolaLog,
-} from './commands/pianola';
+import { pianolaWatch, pianolaRules, pianolaAddRule, pianolaLog } from './commands/pianola';
+import { pianolaLearn } from './commands/pianola-learn';
+import { pianolaProfile, pianolaSetProfile } from './commands/pianola-profile';
 import {
 	pianolaPlanSet,
 	pianolaPlanList,

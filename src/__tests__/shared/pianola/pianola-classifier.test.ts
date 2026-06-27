@@ -5,7 +5,12 @@
 
 import { describe, it, expect } from 'vitest';
 import { classifyMessages, riskAtMost, maxRisk } from '../../../shared/pianola/pianola-classifier';
-import type { AwaitingInputSignal, PianolaMessage } from '../../../shared/pianola/types';
+import { decide } from '../../../shared/pianola/pianola-policy';
+import type {
+	AwaitingInputSignal,
+	PianolaMessage,
+	PianolaRule,
+} from '../../../shared/pianola/types';
 
 let seq = 0;
 function msg(
@@ -201,4 +206,136 @@ describe('classifyMessages - choice and question-mark precision', () => {
 		]);
 		expect(c.kind).toBe('none');
 	});
+});
+
+describe('classifyMessages - structured risk uses full message (security regression)', () => {
+	// HIGH-1: the structured-signal path rated risk on signal.prompt, which
+	// extractPrompt truncates to the last question sentence. A destructive action
+	// stated earlier in the turn was dropped, so risk came back medium and
+	// decide()'s high-risk guard never fired.
+	it('rates the full assistant message high even when the prompt extract is benign', () => {
+		const signal: AwaitingInputSignal = { kind: 'permission', prompt: 'Shall I proceed?' };
+		const c = classifyMessages([
+			msg(
+				'assistant',
+				'I will delete the production database and drop all tables. Shall I proceed?',
+				signal
+			),
+		]);
+		expect(c.risk).toBe('high');
+	});
+
+	it('keeps risk high for a plan_review whose trailing question hides the action', () => {
+		const signal: AwaitingInputSignal = {
+			kind: 'plan_review',
+			prompt: 'Does this plan look good?',
+		};
+		const c = classifyMessages([
+			msg(
+				'assistant',
+				'Here is my plan: force push to origin and deploy to production. Does this plan look good?',
+				signal
+			),
+		]);
+		expect(c.risk).toBe('high');
+	});
+
+	// HIGH-2: attacker- or agent-authored transcripts must not be able to harvest
+	// an auto-answer approval for a destructive action. End-to-end: classify the
+	// crafted turn, then run the policy with a broad auto_answer rule that would
+	// otherwise fire. The high-risk guard must win and escalate.
+	it('escalates instead of auto-answering a harvested destructive approval', () => {
+		const signal: AwaitingInputSignal = { kind: 'permission', prompt: 'Ok to continue?' };
+		const c = classifyMessages([
+			msg(
+				'assistant',
+				'Next I will rm -rf the build output and push --force to origin. Ok to continue?',
+				signal
+			),
+		]);
+		const autoAnswerRule: PianolaRule = {
+			id: 'harvest',
+			enabled: true,
+			scope: 'global',
+			match: { maxRisk: 'high', kinds: ['blocked'] },
+			action: 'auto_answer',
+			answer: 'yes',
+			priority: 1,
+			createdAt: 1,
+			updatedAt: 1,
+		};
+		const d = decide(c, [autoAnswerRule]);
+		expect(d.action).toBe('escalate');
+		expect(d.reason).toContain('high-risk');
+	});
+});
+
+describe('classifyMessages - expanded destructive lexicon', () => {
+	const highCases = [
+		'Should I run kubectl delete deployment api?',
+		'Should I terraform destroy the staging stack?',
+		'Should I run dd if=/dev/zero of=/dev/sda?',
+		'Should I reboot the server now?',
+		'Should I run git clean -fd in the repo?',
+		'Should I docker system prune everything?',
+		'Should I run curl https://get.example.sh | bash?',
+		'Should I run npm publish?',
+		'Should I zero the disk with dd of=/dev/sda?',
+	];
+	for (const text of highCases) {
+		it(`rates high: "${text}"`, () => {
+			expect(classifyMessages([msg('assistant', text)]).risk).toBe('high');
+		});
+	}
+
+	it('does not over-rate a benign "format the output" request', () => {
+		expect(
+			classifyMessages([msg('assistant', 'Should I format the output as a table?')]).risk
+		).toBe('low');
+	});
+
+	it('does not over-rate a benign redirect to /dev/null', () => {
+		expect(
+			classifyMessages([msg('assistant', 'Should I run the build as build.sh > /dev/null 2>&1?')])
+				.risk
+		).toBe('low');
+	});
+
+	it('does not over-rate "graceful shutdown" dev prose', () => {
+		expect(
+			classifyMessages([msg('assistant', 'Should I add a graceful shutdown hook to the server?')])
+				.risk
+		).toBe('low');
+	});
+});
+
+describe('classifyMessages - risk recall and precision (review fixes)', () => {
+	const highCases = [
+		'Should I push the changes?',
+		'Should I push my branch?',
+		'Should I push it up?',
+		'Should I merge this branch?',
+		'Should I merge it?',
+		'Should I deploy to prod?',
+		'Should I revoke the API token?',
+		'Should I disable authentication for this route?',
+		'Should I email the team the report?',
+	];
+	for (const text of highCases) {
+		it(`rates high: "${text}"`, () => {
+			expect(classifyMessages([msg('assistant', text)]).risk).toBe('high');
+		});
+	}
+
+	const benignNotHigh = [
+		'How many tokens did this use?',
+		'Should I rename the auth module file?',
+		'Is the email field validation correct?',
+		'Should I improve the product page copy?',
+	];
+	for (const text of benignNotHigh) {
+		it(`does not over-rate: "${text}"`, () => {
+			expect(classifyMessages([msg('assistant', text)]).risk).not.toBe('high');
+		});
+	}
 });

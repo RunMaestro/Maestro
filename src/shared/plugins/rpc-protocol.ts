@@ -15,42 +15,45 @@
 
 import type { PluginCapability } from './permissions';
 
-/** The fixed set of host methods a sandbox may call. */
-export type HostMethod =
-	| 'fs.read'
-	| 'fs.write'
-	| 'net.fetch'
-	| 'agents.list'
-	| 'agents.get'
-	| 'agents.dispatch'
-	| 'notifications.toast'
-	| 'settings.get'
-	| 'process.spawn';
+/**
+ * The host API surface as ONE data-driven table: method -> { capability }. The
+ * method-name union, the runtime method list, and the method->capability map are
+ * all DERIVED from this single source, so adding a verb is one row and the three
+ * can never drift. `satisfies` makes a typo'd capability a compile error. There
+ * is no generic eval/exec/invoke(channel): a method absent from this table can
+ * never be called - the broker denies it and no handler is registered for it.
+ */
+export const HOST_API = {
+	'fs.read': { capability: 'fs:read' },
+	'fs.write': { capability: 'fs:write' },
+	'net.fetch': { capability: 'net:fetch' },
+	'agents.list': { capability: 'agents:read' },
+	'agents.get': { capability: 'agents:read' },
+	'agents.dispatch': { capability: 'agents:dispatch' },
+	'notifications.toast': { capability: 'notifications:toast' },
+	'settings.get': { capability: 'settings:read' },
+	'settings.set': { capability: 'settings:write' },
+	'sessions.list': { capability: 'sessions:read' },
+	'sessions.get': { capability: 'sessions:read' },
+	'storage.get': { capability: 'storage:read' },
+	'storage.keys': { capability: 'storage:read' },
+	'storage.set': { capability: 'storage:write' },
+	'storage.delete': { capability: 'storage:write' },
+	'ui.runCommand': { capability: 'ui:command' },
+	'events.subscribe': { capability: 'events:subscribe' },
+	'events.unsubscribe': { capability: 'events:subscribe' },
+	'process.spawn': { capability: 'process:spawn' },
+} as const satisfies Record<string, { capability: PluginCapability }>;
 
-export const HOST_METHODS: readonly HostMethod[] = [
-	'fs.read',
-	'fs.write',
-	'net.fetch',
-	'agents.list',
-	'agents.get',
-	'agents.dispatch',
-	'notifications.toast',
-	'settings.get',
-	'process.spawn',
-];
+/** The fixed set of host methods a sandbox may call (derived from HOST_API). */
+export type HostMethod = keyof typeof HOST_API;
 
-/** Which capability each host method requires. */
-export const HOST_METHOD_CAPABILITY: Record<HostMethod, PluginCapability> = {
-	'fs.read': 'fs:read',
-	'fs.write': 'fs:write',
-	'net.fetch': 'net:fetch',
-	'agents.list': 'agents:read',
-	'agents.get': 'agents:read',
-	'agents.dispatch': 'agents:dispatch',
-	'notifications.toast': 'notifications:toast',
-	'settings.get': 'settings:read',
-	'process.spawn': 'process:spawn',
-};
+export const HOST_METHODS: readonly HostMethod[] = Object.keys(HOST_API) as HostMethod[];
+
+/** Which capability each host method requires (derived from HOST_API). */
+export const HOST_METHOD_CAPABILITY: Record<HostMethod, PluginCapability> = Object.fromEntries(
+	(Object.keys(HOST_API) as HostMethod[]).map((m) => [m, HOST_API[m].capability])
+) as Record<HostMethod, PluginCapability>;
 
 export function isHostMethod(value: unknown): value is HostMethod {
 	return typeof value === 'string' && (HOST_METHODS as readonly string[]).includes(value);
@@ -76,6 +79,7 @@ export interface HostResponse {
 export type HostControlMessage =
 	| { kind: 'init'; pluginId: string; entryCode?: string }
 	| { kind: 'invokeCommand'; commandId: string; args?: unknown }
+	| { kind: 'event'; topic: string; at: string; payload: unknown }
 	| { kind: 'shutdown' };
 
 /**

@@ -168,6 +168,7 @@ import type {
 	PianolaDecisionRecord,
 	RulesLoadResult,
 	PianolaSupervisedTarget,
+	PianolaSuggestionsFile,
 } from '../shared/pianola/storage';
 import type { PianolaSupervisorSnapshot } from '../main/ipc/handlers/pianola';
 import type { PluginListSnapshot, PluginGrantsSnapshot } from '../main/ipc/handlers/plugins';
@@ -3492,6 +3493,11 @@ interface MaestroAPI {
 		getRules: () => Promise<RulesLoadResult>;
 		saveRules: (rules: PianolaRule[]) => Promise<PianolaRule[]>;
 		getDecisions: (limit?: number) => Promise<PianolaDecisionRecord[]>;
+		getSuggestions: () => Promise<PianolaSuggestionsFile>;
+		applySuggestion: (payload: {
+			rule?: PianolaRule;
+			profile?: { text: string; projectPath?: string };
+		}) => Promise<{ rules: PianolaRule[] }>;
 		supervisor: {
 			list: () => Promise<PianolaSupervisorSnapshot>;
 			add: (target: Partial<PianolaSupervisedTarget>) => Promise<PianolaSupervisorSnapshot>;

@@ -6,11 +6,14 @@
 import { describe, it, expect } from 'vitest';
 import {
 	validatePianolaRule,
+	validatePianolaDecisionRecord,
 	validatePianolaRules,
 	validatePianolaProfileEntry,
 	validatePianolaProfiles,
 	resolveProfile,
 	PIANOLA_PROFILE_MAX_CHARS,
+	trimJsonlToLastRecords,
+	trimJsonlToFit,
 	type PianolaProfiles,
 } from '../../../shared/pianola/storage';
 
@@ -64,6 +67,18 @@ describe('validatePianolaRule', () => {
 		expect(validatePianolaRule(null)).toBeNull();
 		expect(validatePianolaRule('rule')).toBeNull();
 		expect(validatePianolaRule([])).toBeNull();
+	});
+
+	it('rejects an auto_answer rule with no narrowing predicate', () => {
+		expect(validatePianolaRule(validRaw({ match: {} }))).toBeNull();
+	});
+
+	it('rejects an auto_answer rule with blank answer text', () => {
+		expect(validatePianolaRule(validRaw({ answer: '   ' }))).toBeNull();
+	});
+
+	it('rejects an auto_answer rule with no answer', () => {
+		expect(validatePianolaRule(validRaw({ answer: undefined }))).toBeNull();
 	});
 });
 
@@ -170,5 +185,120 @@ describe('resolveProfile', () => {
 
 	it('returns none when neither project nor global exists', () => {
 		expect(resolveProfile({ projects: {} }, '/proj')).toEqual({ source: 'none', entry: null });
+	});
+});
+
+describe('trimJsonlToLastRecords', () => {
+	it('returns content unchanged when within the cap', () => {
+		const content = 'a\nb\nc\n';
+		expect(trimJsonlToLastRecords(content, 5)).toBe(content);
+	});
+
+	it('keeps only the most recent records when over the cap', () => {
+		expect(trimJsonlToLastRecords('l1\nl2\nl3\nl4\n', 2)).toBe('l3\nl4\n');
+	});
+
+	it('ignores blank lines when counting', () => {
+		expect(trimJsonlToLastRecords('l1\n\nl2\n\nl3\n', 2)).toBe('l2\nl3\n');
+	});
+
+	it('returns content unchanged for a non-positive cap', () => {
+		expect(trimJsonlToLastRecords('l1\nl2\n', 0)).toBe('l1\nl2\n');
+		expect(trimJsonlToLastRecords('l1\nl2\n', -1)).toBe('l1\nl2\n');
+	});
+});
+
+describe('trimJsonlToFit', () => {
+	it('returns content unchanged when within both caps', () => {
+		const content = 'a\nb\nc\n';
+		expect(trimJsonlToFit(content, 10, 1000)).toBe(content);
+	});
+
+	it('trims by record cap', () => {
+		expect(trimJsonlToFit('l1\nl2\nl3\nl4\n', 2, 100000)).toBe('l3\nl4\n');
+	});
+
+	it('trims further to fit the byte budget', () => {
+		// Four 5-byte lines ("xxxx\n"); a 10-byte budget keeps the last two.
+		expect(trimJsonlToFit('xxxx\nxxxx\nxxxx\nxxxx\n', 100, 10)).toBe('xxxx\nxxxx\n');
+	});
+
+	it('applies the tighter of record cap and byte budget', () => {
+		// record cap 3 keeps last 3 (15 bytes); byte budget 12 drops one more.
+		expect(trimJsonlToFit('aaaa\nbbbb\ncccc\ndddd\n', 3, 12)).toBe('cccc\ndddd\n');
+	});
+});
+
+function decisionRecord(over: Record<string, unknown> = {}): Record<string, unknown> {
+	return {
+		id: 'd1',
+		timestamp: '2026-01-01T00:00:00.000Z',
+		tabId: 't1',
+		agentId: 'a1',
+		dispatched: false,
+		dryRun: true,
+		classification: {
+			kind: 'question',
+			risk: 'low',
+			topic: 'tabs or spaces?',
+			confidence: 'high',
+			evidence: { messageId: 'm1', reason: 'asked about indentation', structured: true },
+		},
+		decision: { action: 'escalate', matchedRuleId: null, reason: 'no rule matched' },
+		...over,
+	};
+}
+
+function withEvidence(evidence: unknown): Record<string, unknown> {
+	return decisionRecord({
+		classification: {
+			kind: 'question',
+			risk: 'low',
+			topic: 'tabs or spaces?',
+			confidence: 'high',
+			evidence,
+		},
+	});
+}
+
+describe('validatePianolaDecisionRecord', () => {
+	it('accepts a fully valid record', () => {
+		const rec = validatePianolaDecisionRecord(decisionRecord());
+		expect(rec).not.toBeNull();
+		expect(rec?.id).toBe('d1');
+		expect(rec?.classification.evidence.messageId).toBe('m1');
+	});
+
+	it('accepts a record whose evidence.messageId is null', () => {
+		const rec = validatePianolaDecisionRecord(
+			withEvidence({ messageId: null, reason: 'heuristic', structured: false })
+		);
+		expect(rec).not.toBeNull();
+		expect(rec?.classification.evidence.messageId).toBeNull();
+	});
+
+	it('rejects evidence missing messageId', () => {
+		expect(
+			validatePianolaDecisionRecord(withEvidence({ reason: 'r', structured: true }))
+		).toBeNull();
+	});
+
+	it('rejects a non-string evidence.reason', () => {
+		expect(
+			validatePianolaDecisionRecord(withEvidence({ messageId: 'm1', reason: 42, structured: true }))
+		).toBeNull();
+	});
+
+	it('rejects a non-boolean evidence.structured', () => {
+		expect(
+			validatePianolaDecisionRecord(
+				withEvidence({ messageId: 'm1', reason: 'r', structured: 'yes' })
+			)
+		).toBeNull();
+	});
+
+	it('rejects evidence that is not an object', () => {
+		expect(validatePianolaDecisionRecord(withEvidence('nope'))).toBeNull();
+		expect(validatePianolaDecisionRecord(withEvidence(null))).toBeNull();
 	});
 });

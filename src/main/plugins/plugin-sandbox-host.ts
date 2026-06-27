@@ -23,6 +23,7 @@ import {
 	type HostRequest,
 	type HostResponse,
 } from '../../shared/plugins/rpc-protocol';
+import type { PluginEvent } from '../../shared/plugins/events';
 
 /** An injected implementation of one host method. Receives the calling plugin
  * id (for per-plugin scoping) and the validated params. */
@@ -120,8 +121,42 @@ export class PluginSandboxHost {
 	invokeCommand(pluginId: string, commandId: string, args?: unknown): boolean {
 		const record = this.running.get(pluginId);
 		if (!record) return false;
+		// Cap the host->child payload the same way HostRequest params are bounded:
+		// a non-serializable or oversized args object is dropped, never posted.
+		let serialized: string;
+		try {
+			serialized = JSON.stringify(args ?? null);
+		} catch {
+			return false;
+		}
+		if (serialized.length > MAX_MESSAGE_BYTES) return false;
 		try {
 			record.proc.postMessage({ kind: 'invokeCommand', commandId, args });
+			return true;
+		} catch {
+			return false;
+		}
+	}
+
+	/**
+	 * Push a host event into a running plugin's sandbox (the event-bus sink).
+	 * Sends the metadata-only `{ kind:'event', topic, at, payload }` control
+	 * message and applies the SAME hostile-child posture as every other path:
+	 * it never hands the child a handle, only a structured-clone message, and
+	 * swallows post failures (a dead/gone child just yields false so the bus can
+	 * prune the subscription). No-op (returns false) when the plugin is not
+	 * running. Re-authorization happens in the bus BEFORE this is ever called.
+	 */
+	pushEvent(pluginId: string, event: PluginEvent): boolean {
+		const record = this.running.get(pluginId);
+		if (!record) return false;
+		try {
+			record.proc.postMessage({
+				kind: 'event',
+				topic: event.topic,
+				at: event.at,
+				payload: event.payload,
+			});
 			return true;
 		} catch {
 			return false;

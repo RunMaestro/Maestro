@@ -149,3 +149,57 @@ describe('PianolaModal', () => {
 		expect(screen.getAllByText('Escalated').length).toBeGreaterThan(0);
 	});
 });
+
+describe('PianolaModal suggestions tab', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		vi.mocked(window.maestro.pianola.getRules).mockResolvedValue({ rules: [], malformed: false });
+		vi.mocked(window.maestro.pianola.getDecisions).mockResolvedValue([]);
+		vi.mocked(window.maestro.pianola.getSuggestions).mockResolvedValue({
+			generatedAt: 0,
+			pairCount: 0,
+			proposals: [],
+			proposedProfile: '',
+			previousProfile: '',
+		});
+		vi.mocked(window.maestro.pianola.applySuggestion).mockResolvedValue({ rules: [] });
+	});
+
+	it('lists a proposed rule and approves it', async () => {
+		const proposal = rule({
+			id: 'suggested-low-question',
+			match: { kinds: ['question'], maxRisk: 'low' },
+			action: 'auto_answer',
+			answer: 'Yes, go ahead.',
+			description: 'Auto-approve low-risk question prompts',
+		});
+		vi.mocked(window.maestro.pianola.getSuggestions).mockResolvedValue({
+			generatedAt: 1,
+			pairCount: 10,
+			proposals: [proposal],
+			proposedProfile: '',
+			previousProfile: '',
+		});
+		const applySpy = vi
+			.mocked(window.maestro.pianola.applySuggestion)
+			.mockResolvedValue({ rules: [proposal] });
+
+		render(<PianolaModal theme={theme} onClose={vi.fn()} />);
+		await screen.findByText('No decisions recorded yet.');
+
+		fireEvent.click(screen.getByText('Suggestions (1)'));
+		expect(await screen.findByText('Auto-approve low-risk question prompts')).toBeInTheDocument();
+
+		fireEvent.click(screen.getByText('Approve'));
+		await waitFor(() => {
+			expect(applySpy).toHaveBeenCalledWith({ rule: proposal });
+		});
+	});
+
+	it('shows the empty suggestions state when there is nothing to propose', async () => {
+		render(<PianolaModal theme={theme} onClose={vi.fn()} />);
+		await screen.findByText('No decisions recorded yet.');
+		fireEvent.click(screen.getByText('Suggestions'));
+		expect(await screen.findByText(/No learning suggestions yet/)).toBeInTheDocument();
+	});
+});

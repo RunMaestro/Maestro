@@ -23,12 +23,17 @@ import {
 	readSupervisorTargets,
 	upsertSupervisorTarget,
 	removeSupervisorTarget,
+	readSuggestions,
+	writeSuggestions,
+	setProfile,
 	type RulesLoadResult,
 } from '../../pianola/pianola-store-main';
 import {
 	validatePianolaSupervisedTarget,
 	type PianolaDecisionRecord,
 	type PianolaSupervisedTarget,
+	validatePianolaRule,
+	type PianolaSuggestionsFile,
 } from '../../../shared/pianola/storage';
 import type { PianolaRule } from '../../../shared/pianola/types';
 import type { PianolaSupervisor, PianolaSupervisorHealth } from '../../pianola/pianola-supervisor';
@@ -99,6 +104,47 @@ export function registerPianolaHandlers(deps: PianolaHandlerDependencies): void 
 		handlerOpts('getDecisions'),
 		async (limit?: number): Promise<PianolaDecisionRecord[]> => readDecisions(limit)
 	);
+	const wrappedGetSuggestions = withIpcErrorLogging(
+		handlerOpts('getSuggestions'),
+		async (): Promise<PianolaSuggestionsFile> => readSuggestions()
+	);
+	const wrappedApplySuggestion = withIpcErrorLogging(
+		handlerOpts('applySuggestion'),
+		// Approving a suggestion only writes config: an approved rule is appended to
+		// the rules file (still subject to decide() at runtime, so high-risk always
+		// escalates), and an approved profile draft is persisted. Nothing here ever
+		// auto-answers or bypasses the policy.
+		async (raw: unknown): Promise<{ rules: PianolaRule[] }> => {
+			if (!isRecord(raw)) throw new Error('InvalidSuggestionPayload');
+			let rules = readRulesResult().rules;
+			if (raw.rule !== undefined) {
+				const rule = validatePianolaRule(raw.rule);
+				if (!rule) throw new Error('InvalidSuggestionRule');
+				const idx = rules.findIndex((r) => r.id === rule.id);
+				const next = idx >= 0 ? rules.map((r, i) => (i === idx ? rule : r)) : [...rules, rule];
+				rules = writeRules(next);
+				// Best-effort: drop the now-applied proposal from staging so a
+				// refresh does not re-surface an already-approved suggestion. A
+				// staging-prune failure must never fail the apply (the rule is
+				// already persisted above).
+				try {
+					const staged = readSuggestions();
+					writeSuggestions({
+						...staged,
+						proposals: staged.proposals.filter((p) => p.id !== rule.id),
+					});
+				} catch {
+					// Ignore: staging is advisory; the persisted rule is authoritative.
+				}
+			}
+			if (isRecord(raw.profile) && typeof raw.profile.text === 'string') {
+				const projectPath =
+					typeof raw.profile.projectPath === 'string' ? raw.profile.projectPath : undefined;
+				setProfile({ profile: raw.profile.text, updatedAt: Date.now() }, projectPath);
+			}
+			return { rules };
+		}
+	);
 
 	const wrappedSupervisorList = withIpcErrorLogging(
 		handlerOpts('supervisorList'),
@@ -160,6 +206,19 @@ export function registerPianolaHandlers(deps: PianolaHandlerDependencies): void 
 		async (event, limit?: number): Promise<PianolaDecisionRecord[]> => {
 			if (!isPianolaEnabled(settingsStore)) throw new Error('PianolaDisabled');
 			return wrappedGetDecisions(event, limit);
+		}
+	);
+
+	ipcMain.handle('pianola:get-suggestions', async (event): Promise<PianolaSuggestionsFile> => {
+		if (!isPianolaEnabled(settingsStore)) throw new Error('PianolaDisabled');
+		return wrappedGetSuggestions(event);
+	});
+
+	ipcMain.handle(
+		'pianola:apply-suggestion',
+		async (event, payload: unknown): Promise<{ rules: PianolaRule[] }> => {
+			if (!isPianolaEnabled(settingsStore)) throw new Error('PianolaDisabled');
+			return wrappedApplySuggestion(event, payload);
 		}
 	);
 

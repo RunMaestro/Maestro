@@ -18,7 +18,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { spawn, execFile, execFileSync, type ChildProcess } from 'child_process';
+import { spawn, execFile, execFileSync, type ChildProcess, type SpawnOptions } from 'child_process';
 import { resolveMaestroCliScriptPath } from '../cue/cue-cli-executor';
 import { captureException } from '../utils/sentry';
 import { logger } from '../utils/logger';
@@ -30,6 +30,8 @@ const LOG_CONTEXT = '[PianolaSupervisor]';
 
 /** Bounded per-target ring buffer of stdout/stderr lines. */
 const MAX_LOG_LINES = 200;
+/** Bounded slice of a child's ring buffer exposed in the health snapshot. */
+const MAX_HEALTH_LOG_LINES = 50;
 /** Consecutive unexpected exits before a target is marked failed and abandoned. */
 const MAX_RESTARTS = 5;
 /** Backoff base: 1s, then doubles each consecutive failure. */
@@ -55,6 +57,8 @@ export interface PianolaSupervisorHealth {
 	restarts: number;
 	lastError?: string;
 	startedAt?: number;
+	/** Bounded tail of the child's stdout/stderr ring buffer (most recent last). */
+	recentLogs: string[];
 }
 
 /** Internal, mutable per-target bookkeeping. */
@@ -72,11 +76,37 @@ interface SupervisedChild {
 	stopping: boolean;
 }
 
+/**
+ * Spawns a supervised child process. Injectable so the spawn/exit/backoff/
+ * reconcile logic is unit-testable with a fake ChildProcess; defaults to
+ * node:child_process spawn in production.
+ */
+export type PianolaChildSpawner = (
+	command: string,
+	args: readonly string[],
+	opts: SpawnOptions
+) => ChildProcess;
+
 export interface PianolaSupervisorDeps {
 	/** Reads `encoreFeatures.pianola`; checked on every reconcile and restart. */
 	isEnabled: () => boolean;
 	/** Resolves the isPianola session id, injected as MAESTRO_AGENT_ID for handoffs. */
 	getPianolaAgentId: () => string | undefined;
+	/** Spawns a supervised child; defaults to node:child_process spawn. Injectable for tests. */
+	spawnChild?: PianolaChildSpawner;
+}
+
+/**
+ * Pure stale-detection: of the persisted targets, which enabled ones have no
+ * live supervised child? `isAlive(id)` reports whether the supervisor currently
+ * has a healthy/managed child for that target. Exported and pure so the relaunch
+ * decision is unit-testable without spawning a real process.
+ */
+export function staleTargets(
+	targets: readonly PianolaSupervisedTarget[],
+	isAlive: (id: string) => boolean
+): PianolaSupervisedTarget[] {
+	return targets.filter((t) => t.enabled && !isAlive(t.id));
 }
 
 /**
@@ -89,9 +119,11 @@ export class PianolaSupervisor {
 	private watcher: fs.FSWatcher | null = null;
 	private reconcileTimer: ReturnType<typeof setTimeout> | undefined;
 	private started = false;
+	private readonly spawnChild: PianolaChildSpawner;
 
 	constructor(deps: PianolaSupervisorDeps) {
 		this.deps = deps;
+		this.spawnChild = deps.spawnChild ?? ((command, args, opts) => spawn(command, args, opts));
 	}
 
 	/** Begin watching the store file and reconcile immediately. Idempotent. */
@@ -140,6 +172,57 @@ export class PianolaSupervisor {
 		}
 	}
 
+	/**
+	 * Re-read the persisted targets and (re)start any enabled target that should
+	 * be running but whose supervised child is not alive - one that crashed and
+	 * gave up after the restart cap, or was never spawned. Returns the count
+	 * relaunched. No-op when the Encore flag is off. The rapid-flap protection is
+	 * preserved: a target mid-backoff (a restart already scheduled) and a target
+	 * that finished cleanly are both treated as alive and left alone. Because a
+	 * cadenced relaunch is not rapid flapping, a relaunched target's failure
+	 * streak is reset so it gets a full restart budget again.
+	 */
+	relaunchStale(): number {
+		if (!this.deps.isEnabled()) return 0;
+		const targets = readSupervisorTargets();
+		const stale = staleTargets(targets, (id) => this.isAlive(id));
+		for (const target of stale) {
+			const existing = this.children.get(target.id);
+			if (existing) {
+				existing.restarts = 0;
+				if (existing.backoffTimer) {
+					clearTimeout(existing.backoffTimer);
+					existing.backoffTimer = undefined;
+				}
+			}
+			this.spawn(target);
+		}
+		if (stale.length > 0) {
+			logger.info(`Relaunched ${stale.length} stale supervised target(s)`, LOG_CONTEXT);
+		}
+		return stale.length;
+	}
+
+	/**
+	 * Whether a supervised child for `id` is currently alive or in a managed state
+	 * that must not be disturbed. A live process is alive; a target mid-backoff
+	 * (restart pending) is alive regardless of kind. A cleanly/intentionally
+	 * stopped target is kind-aware: a 'watch' should keep running, so a stopped
+	 * watch is NOT alive (stale -> relaunch); an 'orchestrate' clean exit is
+	 * terminal, so a stopped orchestrate stays alive. A failed or never-spawned
+	 * target is not alive and therefore stale.
+	 */
+	private isAlive(id: string): boolean {
+		const entry = this.children.get(id);
+		if (!entry) return false;
+		const child = entry.child;
+		const hasLiveChild = !!child && child.exitCode === null && child.signalCode === null;
+		if (hasLiveChild) return true;
+		if (entry.state === 'backing-off') return true;
+		if (entry.state === 'stopped') return entry.target.kind === 'orchestrate';
+		return false;
+	}
+
 	/** Per-target health for the dashboard. Returns fresh objects (no internal refs). */
 	getHealth(): PianolaSupervisorHealth[] {
 		const out: PianolaSupervisorHealth[] = [];
@@ -149,6 +232,7 @@ export class PianolaSupervisor {
 				kind: entry.target.kind,
 				state: entry.state,
 				restarts: entry.restarts,
+				recentLogs: entry.logs.slice(-MAX_HEALTH_LOG_LINES),
 			};
 			const pid = entry.child?.pid;
 			if (typeof pid === 'number') health.pid = pid;
@@ -271,7 +355,7 @@ export class PianolaSupervisor {
 
 		let child: ChildProcess;
 		try {
-			child = spawn(process.execPath, [cliScriptPath, ...args], {
+			child = this.spawnChild(process.execPath, [cliScriptPath, ...args], {
 				env: {
 					...process.env,
 					// In packaged Electron, process.execPath is the app binary, not

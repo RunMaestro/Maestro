@@ -30,6 +30,7 @@ import type {
 import { notifyToast } from '../../stores/notificationStore';
 import { PluginConsentDialog } from './PluginConsentDialog';
 import { PluginPanelHost } from './PluginPanelHost';
+import { PluginPanelSlot } from '../plugins/PluginPanelSlot';
 
 interface PluginsPanelProps {
 	theme: Theme;
@@ -408,6 +409,14 @@ export function PluginsPanel({ theme }: PluginsPanelProps) {
 					})}
 				</div>
 			)}
+
+			{/* Plugin panels that dock into Settings (placement: 'settings'). Each
+			    renders in the same locked-down sandboxed iframe with provenance. */}
+			<PluginPanelSlot
+				theme={theme}
+				placement="settings"
+				className="mt-4 flex flex-col overflow-hidden rounded-lg border h-[440px]"
+			/>
 
 			{consent && (
 				<PluginConsentDialog

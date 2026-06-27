@@ -623,6 +623,14 @@ const mockMaestro = {
 		getRules: vi.fn().mockResolvedValue({ rules: [], malformed: false }),
 		saveRules: vi.fn().mockImplementation((rules: unknown) => Promise.resolve(rules)),
 		getDecisions: vi.fn().mockResolvedValue([]),
+		getSuggestions: vi.fn().mockResolvedValue({
+			generatedAt: 0,
+			pairCount: 0,
+			proposals: [],
+			proposedProfile: '',
+			previousProfile: '',
+		}),
+		applySuggestion: vi.fn().mockImplementation(() => Promise.resolve({ rules: [] })),
 	},
 	// Core Prompts API (disk-based prompts loaded at runtime)
 	prompts: {

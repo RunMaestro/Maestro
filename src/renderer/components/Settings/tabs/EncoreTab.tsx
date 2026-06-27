@@ -349,7 +349,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 						</div>
 					</div>
 					<div
-						className={`relative w-10 h-5 rounded-full transition-colors ${encoreFeatures.usageStats ? '' : 'opacity-50'}`}
+						className={`relative w-10 h-5 shrink-0 rounded-full transition-colors ${encoreFeatures.usageStats ? '' : 'opacity-50'}`}
 						style={{
 							backgroundColor: encoreFeatures.usageStats
 								? theme.colors.accent
@@ -596,7 +596,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 						</div>
 					</div>
 					<div
-						className={`relative w-10 h-5 rounded-full transition-colors ${encoreFeatures.symphony ? '' : 'opacity-50'}`}
+						className={`relative w-10 h-5 shrink-0 rounded-full transition-colors ${encoreFeatures.symphony ? '' : 'opacity-50'}`}
 						style={{
 							backgroundColor: encoreFeatures.symphony ? theme.colors.accent : theme.colors.border,
 						}}
@@ -777,7 +777,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 						</div>
 					</div>
 					<div
-						className={`relative w-10 h-5 rounded-full transition-colors ${encoreFeatures.maestroCue ? '' : 'opacity-50'}`}
+						className={`relative w-10 h-5 shrink-0 rounded-full transition-colors ${encoreFeatures.maestroCue ? '' : 'opacity-50'}`}
 						style={{
 							backgroundColor: encoreFeatures.maestroCue
 								? theme.colors.accent
@@ -1308,7 +1308,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 						</div>
 					</div>
 					<div
-						className={`relative w-10 h-5 rounded-full transition-colors ${encoreFeatures.pianola ? '' : 'opacity-50'}`}
+						className={`relative w-10 h-5 shrink-0 rounded-full transition-colors ${encoreFeatures.pianola ? '' : 'opacity-50'}`}
 						style={{
 							backgroundColor: encoreFeatures.pianola ? theme.colors.accent : theme.colors.border,
 						}}
@@ -1372,7 +1372,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 						</div>
 					</div>
 					<div
-						className={`relative w-10 h-5 rounded-full transition-colors ${encoreFeatures.plugins ? '' : 'opacity-50'}`}
+						className={`relative w-10 h-5 shrink-0 rounded-full transition-colors ${encoreFeatures.plugins ? '' : 'opacity-50'}`}
 						style={{
 							backgroundColor: encoreFeatures.plugins ? theme.colors.accent : theme.colors.border,
 						}}
