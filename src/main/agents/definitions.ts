@@ -369,18 +369,10 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		configOptions: [
 			{
 				key: 'model',
-				type: 'select' as const,
+				type: 'text',
 				label: 'Model',
 				description:
-					'Model to use. Leave blank to use the Qwen Code default for your account or plan.',
-				options: [
-					'',
-					'qwen3-coder-plus',
-					'qwen3-coder-flash',
-					'qwen-max',
-					'qwen-plus',
-					'qwen-turbo',
-				],
+					'Model passed to -m. Qwen Code is multi-provider, so any model id works (e.g. coder-model, qwen3-coder-plus, qwen3.5-plus, or an OpenAI-compatible id like openai/gpt-4o). Leave blank for the account/plan default.',
 				default: '',
 				argBuilder: (value: string) => (value && value.trim() ? ['-m', value.trim()] : []),
 			},

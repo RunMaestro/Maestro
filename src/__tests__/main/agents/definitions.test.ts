@@ -364,11 +364,11 @@ describe('agent-definitions', () => {
 			expect(qwen?.promptArgs?.('hello')).toEqual(['-p', 'hello']);
 		});
 
-		it('should expose a model select config option with trimming argBuilder', () => {
+		it('should expose a free-text model config option with trimming argBuilder', () => {
 			const qwen = getAgentDefinition('qwen3-coder');
 			const modelOption = qwen?.configOptions?.find((opt) => opt.key === 'model');
 			expect(modelOption).toBeDefined();
-			expect(modelOption?.type).toBe('select');
+			expect(modelOption?.type).toBe('text');
 			expect(modelOption?.default).toBe('');
 			expect(modelOption?.argBuilder?.('qwen3-coder-plus')).toEqual(['-m', 'qwen3-coder-plus']);
 			expect(modelOption?.argBuilder?.('')).toEqual([]);
