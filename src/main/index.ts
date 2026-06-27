@@ -1095,6 +1095,14 @@ app
 				const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
 				return ef.usageStats === true;
 			},
+			// Surface `cue.fired` to subscribed plugins (events:subscribe). Type
+			// only - NEVER prompt text. Null-safe; no-op when plugins are disabled.
+			onTriggerFired: (cueType) =>
+				pluginEventBus?.emit({
+					topic: 'cue.fired',
+					at: new Date().toISOString(),
+					payload: { cueType },
+				}),
 		});
 
 		// Configure Cue telemetry submitter. Reads installationId / encore flags
@@ -1773,6 +1781,10 @@ function setupIpcHandlers() {
 		sessionsStore,
 		groupsStore,
 		getWebServer: () => webServer,
+		// Metadata-only session/agent lifecycle -> subscribed plugins. Null-safe:
+		// the bus is created during plugin init and re-authorizes every delivery
+		// against live grants, so this is a no-op when plugins are disabled.
+		emitPluginEvent: (event) => pluginEventBus?.emit(event),
 	});
 
 	// System operations - extracted to src/main/ipc/handlers/system.ts

@@ -205,9 +205,10 @@ export function describeCapability(capability: PluginCapability): string {
 
 // --- Host API version (from shared/plugins/host-api.ts) ---------------------
 
-/** The host API version this Maestro build implements. Bumped to 1.2.0 for the
- * backward-compatible `transcripts:read` capability + `transcripts.read` method. */
-export const HOST_API_VERSION = '1.2.0';
+/** The host API version this Maestro build implements. Bumped to 1.3.0 for the
+ * backward-compatible `tools` + `keybindings` contribution points (1.2.0 added
+ * the `transcripts:read` capability + `transcripts.read` host method). */
+export const HOST_API_VERSION = '1.3.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {
@@ -551,6 +552,35 @@ export interface AgentContribution {
 	capabilities: Record<string, boolean>;
 }
 
+/** A tool a (tier-1) plugin exposes for an agent to call: a named, described,
+ * optionally schema-typed operation. The plugin registers a handler (like a
+ * command) that the brokered request/response invoke runs, returning a result.
+ * Surfacing a tool to a specific agent's model is a separate wiring step. */
+export interface AgentToolContribution {
+	id: string;
+	localId: string;
+	pluginId: string;
+	name: string;
+	description: string;
+	/** Optional JSON-schema-ish description of the tool's input (stored loosely). */
+	inputSchema?: Record<string, unknown>;
+}
+
+/** A keyboard shortcut a (tier-1) plugin binds to one of its commands. Parsed and
+ * aggregated here so the host can register it; like agent contributions, the
+ * registration is the additive foundation and actually binding the chord is a
+ * separate consumption step. */
+export interface KeybindingContribution {
+	id: string;
+	localId: string;
+	pluginId: string;
+	/** The shortcut chord, e.g. "Ctrl+Shift+P" (validated as a non-empty string). */
+	key: string;
+	/** The plugin-local command id to invoke when the chord fires. */
+	command: string;
+	description?: string;
+}
+
 /** All contributions a single plugin declared, plus any per-item errors. */
 export interface PluginContributions {
 	themes: ThemeContribution[];
@@ -561,6 +591,8 @@ export interface PluginContributions {
 	commands: CommandContribution[];
 	panels: PanelContribution[];
 	agents: AgentContribution[];
+	tools: AgentToolContribution[];
+	keybindings: KeybindingContribution[];
 	errors: string[];
 }
 
@@ -574,6 +606,8 @@ export interface AggregatedContributions {
 	commands: CommandContribution[];
 	panels: PanelContribution[];
 	agents: AgentContribution[];
+	tools: AgentToolContribution[];
+	keybindings: KeybindingContribution[];
 	/** Per-plugin errors keyed by plugin id (only plugins with errors appear). */
 	errorsByPlugin: Record<string, string[]>;
 }
@@ -736,6 +770,11 @@ export interface MaestroCommandsApi {
 	register(commandId: string, handler: (args: unknown) => unknown): void;
 }
 
+/** Register handlers for agent tools the host invokes on this plugin. */
+export interface MaestroToolsApi {
+	register(localId: string, handler: (args: unknown) => unknown): void;
+}
+
 /** Run a shell command (`process:spawn`, highest risk). */
 export interface MaestroProcessApi {
 	spawn(command: string, opts?: unknown): Promise<unknown>;
@@ -756,6 +795,7 @@ export interface MaestroSdk {
 	readonly ui: MaestroUiApi;
 	readonly events: MaestroEventsApi;
 	readonly commands: MaestroCommandsApi;
+	readonly tools: MaestroToolsApi;
 	readonly process: MaestroProcessApi;
 }
 

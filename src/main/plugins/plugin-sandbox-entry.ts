@@ -35,6 +35,7 @@ import {
 	type HostRequest,
 	type HostResponse,
 	type HostControlMessage,
+	type ToolResult,
 } from '../../shared/plugins/rpc-protocol';
 
 // utilityProcess exposes a message channel on process.parentPort (not in the
@@ -166,6 +167,17 @@ function buildSdk(pluginId: string) {
 				}
 			},
 		}),
+		tools: Object.freeze({
+			/** Register a tool handler. A tool IS a command-with-result: the host
+			 * invokes it via a brokered request/response round-trip and resolves the
+			 * caller with the awaited return value. Delegates to the same handler map
+			 * as commands, so a single local id can be both a command and a tool. */
+			register: (localId: string, handler: (args: unknown) => unknown): void => {
+				if (typeof localId === 'string' && typeof handler === 'function') {
+					commandHandlers.set(localId, handler);
+				}
+			},
+		}),
 		process: Object.freeze({
 			spawn: (command: string, opts?: unknown): Promise<unknown> =>
 				call('process.spawn', { command, opts }),
@@ -279,6 +291,32 @@ if (parentPort) {
 				}
 			} else {
 				log('warn', `no handler registered for command "${commandId}"`);
+			}
+			return;
+		}
+		if (msg.kind === 'invokeTool') {
+			const id = typeof msg.id === 'number' ? msg.id : -1;
+			const commandId = typeof msg.commandId === 'string' ? msg.commandId : '';
+			const reply = (res: Omit<ToolResult, 'kind' | 'id'>): void => {
+				parentPort?.postMessage({ kind: 'toolResult', id, ...res });
+			};
+			const handler = commandHandlers.get(commandId);
+			if (!handler) {
+				log('warn', `no handler registered for tool "${commandId}"`);
+				reply({ ok: false, error: `no handler registered for tool "${commandId}"` });
+				return;
+			}
+			try {
+				void Promise.resolve(handler(msg.args)).then(
+					(result) => reply({ ok: true, result }),
+					(err) => {
+						log('error', `tool "${commandId}" threw: ${String(err)}`);
+						reply({ ok: false, error: err instanceof Error ? err.message : String(err) });
+					}
+				);
+			} catch (err) {
+				log('error', `tool "${commandId}" threw: ${String(err)}`);
+				reply({ ok: false, error: err instanceof Error ? err.message : String(err) });
 			}
 			return;
 		}

@@ -142,6 +142,12 @@ export interface CueEngineDeps {
 	 * store; tests typically pass `() => true` or omit (defaults to off).
 	 */
 	getUsageStatsEnabled?: () => boolean;
+	/**
+	 * Optional metadata-only hook fired once per subscription dispatch with the
+	 * source event TYPE only. Threaded to the dispatch service to surface
+	 * `cue.fired` to subscribed plugins; never carries prompt text.
+	 */
+	onTriggerFired?: (eventType: string) => void;
 }
 
 export class CueEngine {
@@ -363,6 +369,7 @@ export class CueEngine {
 				);
 			},
 			onLog: meteredOnLog,
+			onTriggerFired: deps.onTriggerFired,
 		});
 		this.sessionRuntimeService = createCueSessionRuntimeService({
 			enabled: () => this.enabled,

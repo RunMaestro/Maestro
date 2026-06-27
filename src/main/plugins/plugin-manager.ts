@@ -56,6 +56,7 @@ export interface PluginSandboxLifecycle {
 	isRunning: (pluginId: string) => boolean;
 	runningIds: () => string[];
 	invokeCommand: (pluginId: string, commandId: string, args?: unknown) => boolean;
+	invokeTool: (pluginId: string, commandId: string, args?: unknown) => Promise<unknown>;
 }
 
 export interface PluginManagerDeps {
@@ -426,6 +427,25 @@ export class PluginManager {
 		const pluginId = commandId.slice(0, sep);
 		const localId = commandId.slice(sep + 1);
 		return this.deps.sandbox?.invokeCommand(pluginId, localId, args) ?? false;
+	}
+
+	/**
+	 * Invoke a contributed tool and await its result. `toolId` is the namespaced
+	 * contribution id (`<pluginId>/<localId>`); the local part is dispatched into
+	 * the sandbox via a brokered request/response round-trip and the plugin
+	 * handler's awaited return value is returned. Rejects if the id is malformed,
+	 * no sandbox is wired, or the sandbox rejects (plugin not running, timeout,
+	 * early child exit, handler error).
+	 */
+	invokeTool(toolId: string, args?: unknown): Promise<unknown> {
+		const sep = toolId.indexOf('/');
+		if (sep <= 0 || sep === toolId.length - 1) {
+			return Promise.reject(new Error('InvalidToolId'));
+		}
+		const pluginId = toolId.slice(0, sep);
+		const localId = toolId.slice(sep + 1);
+		if (!this.deps.sandbox) return Promise.reject(new Error('sandbox not available'));
+		return this.deps.sandbox.invokeTool(pluginId, localId, args);
 	}
 
 	/**

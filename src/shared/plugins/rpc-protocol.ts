@@ -80,8 +80,23 @@ export interface HostResponse {
 export type HostControlMessage =
 	| { kind: 'init'; pluginId: string; entryCode?: string }
 	| { kind: 'invokeCommand'; commandId: string; args?: unknown }
+	| { kind: 'invokeTool'; id: number; commandId: string; args?: unknown }
 	| { kind: 'event'; topic: string; at: string; payload: unknown }
 	| { kind: 'shutdown' };
+
+/**
+ * The sandbox's reply to an `invokeTool` control message. Unlike `invokeCommand`
+ * (fire-and-forget), a tool is a command-with-result: the host correlates this
+ * reply to its request by `id` and resolves/rejects the awaiting caller with the
+ * plugin handler's return value (`ok:true, result`) or its error (`ok:false`).
+ */
+export interface ToolResult {
+	kind: 'toolResult';
+	id: number;
+	ok: boolean;
+	result?: unknown;
+	error?: string;
+}
 
 /**
  * Extract the scope-relevant target from a call's params, for the broker's
