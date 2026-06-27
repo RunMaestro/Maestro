@@ -461,7 +461,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 
 	return (
 		<div
-			className="fixed inset-0 modal-overlay flex items-center justify-center z-[9999]"
+			className="fixed inset-0 modal-overlay flex items-center justify-center z-[9999] p-4"
 			role="dialog"
 			aria-modal="true"
 			aria-label="Settings"
@@ -470,6 +470,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 				className="h-[900px] rounded-xl border shadow-2xl overflow-hidden flex flex-col select-none"
 				style={{
 					width: 'min(calc(980px * var(--font-scale, 1)), 95vw)',
+					maxHeight: 'calc(100vh - 2rem)',
 					backgroundColor: theme.colors.bgSidebar,
 					borderColor: theme.colors.border,
 				}}
