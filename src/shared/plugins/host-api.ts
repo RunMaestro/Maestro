@@ -20,8 +20,9 @@
 
 import semver from 'semver';
 
-/** The host API version this Maestro build implements. */
-export const HOST_API_VERSION = '1.1.0';
+/** The host API version this Maestro build implements. Bumped to 1.2.0 for the
+ * backward-compatible `transcripts:read` capability + `transcripts.read` host method. */
+export const HOST_API_VERSION = '1.2.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {

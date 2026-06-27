@@ -37,6 +37,7 @@ export type PluginCapability =
 	| 'settings:read' // read non-secret settings
 	| 'settings:write' // write the plugin's OWN namespaced (plugins.<id>.*) non-secret settings
 	| 'sessions:read' // list sessions + read their metadata (NEVER raw transcript content)
+	| 'transcripts:read' // read PROJECTED session content (consented, audited, egress-locked)
 	| 'storage:read' // read the plugin's OWN private key-value store
 	| 'storage:write' // write the plugin's OWN private key-value store
 	| 'ui:command' // invoke a registered Maestro command (a palette action)
@@ -53,6 +54,7 @@ export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
 	'settings:read',
 	'settings:write',
 	'sessions:read',
+	'transcripts:read',
 	'storage:read',
 	'storage:write',
 	'ui:command',
@@ -78,6 +80,7 @@ const CAPABILITY_RISK: Record<PluginCapability, CapabilityRisk> = {
 	'agents:dispatch': 'high',
 	'fs:write': 'high',
 	'process:spawn': 'high',
+	'transcripts:read': 'high',
 };
 
 /** Whether a capability's scope is a filesystem path, a network host, or none. */
@@ -101,6 +104,7 @@ const CAPABILITY_SCOPE_KIND: Record<PluginCapability, ScopeKind> = {
 	'ui:command': 'none',
 	'events:subscribe': 'none',
 	'process:spawn': 'none',
+	'transcripts:read': 'path', // scope is a project path; the handler enforces the session's projectPath against the grant
 };
 
 export function capabilityRisk(capability: PluginCapability): CapabilityRisk {
@@ -303,5 +307,7 @@ export function describeCapability(capability: PluginCapability): string {
 			return 'Be notified when things happen in Maestro (session, agent, and cue events)';
 		case 'process:spawn':
 			return 'Run shell commands';
+		case 'transcripts:read':
+			return 'Read the full conversation content of your sessions (messages, prompts, and agent output)';
 	}
 }

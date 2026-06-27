@@ -87,6 +87,7 @@ import {
 	pianolaSuperviseRemove,
 	pianolaSuperviseSetEnabled,
 } from './commands/pianola-supervise';
+import { pluginInit, pluginValidate, pluginSign, pluginPack } from './commands/plugin';
 
 // Injected at build time by scripts/build-cli.mjs via esbuild `define`.
 // The typeof guard keeps non-esbuild execution paths (ts-node, plain tsc output) from
@@ -1088,6 +1089,50 @@ program
 	)
 	.option('--json', 'Output rows as JSON instead of a tab-separated table')
 	.action(statsQuery);
+
+// Plugin authoring commands - scaffold, validate, sign, and package a Maestro
+// plugin from the command line. The manifest/signature contracts are the shared
+// pure modules the host loads against, so what validates and signs here is what
+// the desktop app verifies at install time.
+const plugin = program
+	.command('plugin')
+	.description('Author, validate, sign, and package Maestro plugins');
+
+plugin
+	.command('init [dir]')
+	.description('Scaffold a new plugin in <dir> (defaults to the current directory)')
+	.option('--tier <0|1|2>', 'Plugin trust/capability tier (default 1)')
+	.option('--id <id>', 'Plugin id (defaults to a slug of the directory name)')
+	.option('--name <name>', 'Human-readable plugin name (defaults to the id)')
+	.option('--force', 'Scaffold into a non-empty directory')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((dir, options) => pluginInit(dir, options));
+
+plugin
+	.command('validate [dir]')
+	.description('Validate <dir>/plugin.json and, when present, its signature.json')
+	.option(
+		'--trusted-key <keys>',
+		'Comma-separated base64 public keys to treat as trusted when resolving signature status'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((dir, options) => pluginValidate(dir, options));
+
+plugin
+	.command('sign <dir>')
+	.description('Sign <dir> with ed25519 and write signature.json')
+	.option('--key <path>', 'Private key to sign with (PEM, or base64-encoded PKCS8 DER)')
+	.option('--gen-key', 'Generate a fresh ed25519 keypair (requires --key-out)')
+	.option('--key-out <path>', 'Where to write the generated private key (with --gen-key)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((dir, options) => pluginSign(dir, options));
+
+plugin
+	.command('pack <dir>')
+	.description('Package <dir> into a distributable archive (excludes node_modules/.git/keys)')
+	.option('--out <file>', 'Output archive path (default <id>-<version>.tgz)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((dir, options) => pluginPack(dir, options));
 
 // Commander auto-switches to from: 'electron' when process.versions.electron is
 // set, which is still true under ELECTRON_RUN_AS_NODE=1. In that mode Commander

@@ -23,7 +23,7 @@ Phases 3-4. The shared-contract SPINE is already committed (do not modify it). B
   (`'modal'|'left'|'right'|'main'|'settings'`, default `modal`).
 - `src/main/plugins/action-guard.ts` — `ActionGuard.begin(pluginId, capability, target?)` →
   `{ok,release}|{ok:false,reason}`: rate + concurrency + audit-before-action for high-risk verbs.
-- `src/shared/plugins/host-api.ts` — `HOST_API_VERSION = '1.1.0'`.
+- `src/shared/plugins/host-api.ts` — `HOST_API_VERSION = '1.2.0'`.
 
 ## NON-NEGOTIABLE security invariants (every workstream MUST honor)
 

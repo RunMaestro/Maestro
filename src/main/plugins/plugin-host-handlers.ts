@@ -27,6 +27,7 @@ import {
 	type PluginEventTopic,
 } from '../../shared/plugins/events';
 import type { PluginCapability } from '../../shared/plugins/permissions';
+import type { HistoryEntry } from '../../shared/types';
 
 /** Cap a fetched response body so a hostile/huge response cannot exhaust memory. */
 const MAX_FETCH_BYTES = 5_000_000;
@@ -81,6 +82,26 @@ export interface HostHandlerDeps {
 	/** Session METADATA listing (NEVER transcript/message content). */
 	sessionsList: () => PluginSessionMetadata[];
 	sessionsGet: (sessionId: string) => PluginSessionMetadata | null;
+
+	/** Read a session's transcript entries (the `transcripts:read` capability).
+	 * Backed by the history store; the handler projects to declared fields and
+	 * re-authorizes the session's RESOLVED projectPath before returning. */
+	readSessionTranscript: (sessionId: string) => Promise<HistoryEntry[]>;
+	/** Throw when an UNTRUSTED plugin holds transcripts:read together with an
+	 * egress capability (net:fetch/process:spawn). Re-checked on every call so a
+	 * later grant/trust change takes effect immediately. */
+	assertTranscriptReadAllowed: (pluginId: string) => void;
+	/** Append a per-read audit record for a transcripts:read call. */
+	auditTranscriptRead: (
+		pluginId: string,
+		info: {
+			sessionId: string;
+			projectPath: string | null;
+			fields: readonly string[];
+			count: number;
+			at: number;
+		}
+	) => void;
 
 	/** Invoke a REGISTERED command-palette command. Returns false for an unknown
 	 * or non-invokable command. The runner must only ever resolve palette
@@ -137,6 +158,36 @@ function toSessionMetadata(s: PluginSessionMetadata): PluginSessionMetadata {
 		...(s.updatedAt !== undefined ? { updatedAt: s.updatedAt } : {}),
 		...(s.projectPath !== undefined ? { projectPath: s.projectPath } : {}),
 	};
+}
+
+/** The transcript fields a `transcripts:read` plugin may project. Anything not
+ * listed is dropped even if requested - projection, not redaction. Content lives
+ * in `summary`/`fullResponse`; the rest is light entry metadata. */
+const TRANSCRIPT_PROJECTABLE_FIELDS: ReadonlySet<string> = new Set([
+	'id',
+	'type',
+	'timestamp',
+	'summary',
+	'fullResponse',
+	'sessionName',
+	'agentSessionId',
+	'success',
+	'cueTriggerName',
+	'cueEventType',
+	'cueSourceSession',
+]);
+
+/** Pick only the allowed, requested fields off a history entry. */
+function projectTranscriptEntry(
+	entry: HistoryEntry,
+	fields: readonly string[]
+): Record<string, unknown> {
+	const rec = entry as unknown as Record<string, unknown>;
+	const out: Record<string, unknown> = {};
+	for (const f of fields) {
+		if (rec[f] !== undefined) out[f] = rec[f];
+	}
+	return out;
 }
 
 /**
@@ -327,6 +378,59 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 			if (typeof p.sessionId !== 'string') throw new Error('sessionId is required');
 			const session = deps.sessionsGet(p.sessionId);
 			return session ? toSessionMetadata(session) : null;
+		},
+
+		'transcripts.read': async (pluginId, params) => {
+			const p = asObject(params);
+			if (typeof p.sessionId !== 'string') throw new Error('sessionId is required');
+			const sessionId = p.sessionId;
+			// Projection, not redaction: the caller MUST declare which fields it
+			// needs; we return only those, and only from the allowlist.
+			const requested = Array.isArray(p.fields)
+				? p.fields.filter((f): f is string => typeof f === 'string')
+				: [];
+			const fields = requested.filter((f) => TRANSCRIPT_PROJECTABLE_FIELDS.has(f));
+			if (fields.length === 0) {
+				throw new Error('fields is required: declare which transcript fields to read');
+			}
+			// Untrusted content-read may NOT coexist with egress (exfiltration path).
+			deps.assertTranscriptReadAllowed(pluginId);
+			// Resolve the session's REAL project, then RE-AUTHORIZE against it. The
+			// broker's first pass used the caller-claimed projectPath (a hint); the
+			// authoritative scope check is the resolved path, so a granted project
+			// can never be used to read a session that lives in another project.
+			const meta = deps.sessionsGet(sessionId);
+			if (!meta) return [];
+			const realProject = typeof meta.projectPath === 'string' ? meta.projectPath : undefined;
+			const decision = deps.broker.authorize(pluginId, 'transcripts.read', {
+				...(realProject !== undefined ? { projectPath: realProject } : {}),
+			});
+			if (!decision.allowed) {
+				throw new Error(decision.reason ?? "permission denied for the session's project");
+			}
+			// High-risk READ: bound the blast radius via the ActionGuard (rate +
+			// concurrency cap + audit-before-action) so a compromised-but-permitted
+			// plugin cannot dump every transcript at the sandbox host's poll rate.
+			return underGuard(deps.actionGuard, pluginId, 'transcripts:read', realProject, async () => {
+				const entries = await deps.readSessionTranscript(sessionId);
+				let rows = entries;
+				if (typeof p.since === 'number') {
+					const since = p.since;
+					rows = rows.filter((e) => typeof e.timestamp === 'number' && e.timestamp >= since);
+				}
+				if (typeof p.limit === 'number' && Number.isFinite(p.limit) && p.limit >= 0) {
+					rows = rows.slice(-Math.floor(p.limit));
+				}
+				const projected = rows.map((e) => projectTranscriptEntry(e, fields));
+				deps.auditTranscriptRead(pluginId, {
+					sessionId,
+					projectPath: realProject ?? null,
+					fields,
+					count: projected.length,
+					at: Date.now(),
+				});
+				return projected;
+			});
 		},
 
 		'storage.get': async (pluginId, params) => {

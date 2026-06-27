@@ -35,6 +35,7 @@ export const HOST_API = {
 	'settings.set': { capability: 'settings:write' },
 	'sessions.list': { capability: 'sessions:read' },
 	'sessions.get': { capability: 'sessions:read' },
+	'transcripts.read': { capability: 'transcripts:read' },
 	'storage.get': { capability: 'storage:read' },
 	'storage.keys': { capability: 'storage:read' },
 	'storage.set': { capability: 'storage:write' },
@@ -102,6 +103,12 @@ export function extractTarget(method: HostMethod, params: unknown): string | und
 			if (!url) return undefined;
 			return hostnameOf(url);
 		}
+		case 'transcripts.read':
+			// Scope target is a PROJECT PATH the plugin claims (obtained from
+			// sessions.list metadata). This is only the broker's first-pass hint;
+			// the host handler re-authorizes against the session's RESOLVED real
+			// projectPath before reading any content (plugin-host-handlers.ts).
+			return typeof p.projectPath === 'string' ? p.projectPath : undefined;
 		default:
 			return undefined;
 	}

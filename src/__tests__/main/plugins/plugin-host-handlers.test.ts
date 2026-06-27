@@ -45,6 +45,9 @@ function makeDeps(over: Partial<HostHandlerDeps> = {}): HostHandlerDeps {
 		sessionsGet: () => null,
 		runUiCommand: () => true,
 		listAgents: () => [],
+		readSessionTranscript: async () => [],
+		assertTranscriptReadAllowed: () => {},
+		auditTranscriptRead: () => {},
 	};
 	return { ...base, ...over };
 }
@@ -283,5 +286,109 @@ describe('settings.get scoping', () => {
 		);
 		await expect(h['settings.get']!('p1', { key: 'plugins.p1.x' })).resolves.toBe('V:plugins.p1.x');
 		await expect(h['settings.get']!('p1', { key: 'theme' })).resolves.toBe('V:theme');
+	});
+});
+
+describe('transcripts.read', () => {
+	const rows = [
+		{
+			id: 'e1',
+			type: 'USER',
+			timestamp: 100,
+			summary: 's1',
+			fullResponse: 'full one',
+			projectPath: '/repo/a',
+			hostname: 'host-x',
+		},
+		{
+			id: 'e2',
+			type: 'AUTO',
+			timestamp: 200,
+			summary: 's2',
+			fullResponse: 'full two',
+			projectPath: '/repo/a',
+			hostname: 'host-x',
+		},
+	];
+	const readSessionTranscript = (async () => rows) as HostHandlerDeps['readSessionTranscript'];
+	const sessionsGet = ((id: string) =>
+		id === 's1'
+			? ({ id: 's1', projectPath: '/repo/a' } as PluginSessionMetadata)
+			: null) as HostHandlerDeps['sessionsGet'];
+
+	it('requires an explicit fields projection', async () => {
+		const h = buildHostCallHandlers(makeDeps({ readSessionTranscript, sessionsGet }));
+		await expect(h['transcripts.read']!('p', { sessionId: 's1' })).rejects.toThrow(
+			/fields is required/
+		);
+		await expect(h['transcripts.read']!('p', { sessionId: 's1', fields: [] })).rejects.toThrow(
+			/fields is required/
+		);
+	});
+
+	it('projects ONLY declared + allowlisted fields and audits the read', async () => {
+		const audit = vi.fn();
+		const h = buildHostCallHandlers(
+			makeDeps({ readSessionTranscript, sessionsGet, auditTranscriptRead: audit })
+		);
+		const out = (await h['transcripts.read']!('p', {
+			sessionId: 's1',
+			fields: ['summary', 'fullResponse', 'hostname'],
+		})) as Array<Record<string, unknown>>;
+		expect(out).toEqual([
+			{ summary: 's1', fullResponse: 'full one' },
+			{ summary: 's2', fullResponse: 'full two' },
+		]);
+		expect(audit).toHaveBeenCalledWith(
+			'p',
+			expect.objectContaining({ sessionId: 's1', projectPath: '/repo/a', count: 2 })
+		);
+	});
+
+	it("re-authorizes against the session's RESOLVED project, not the caller's claim", async () => {
+		const broker = {
+			authorize: () => ({
+				allowed: false,
+				capability: 'transcripts:read',
+				reason: 'permission denied: transcripts:read (/repo/a)',
+			}),
+		} as unknown as HostHandlerDeps['broker'];
+		const h = buildHostCallHandlers(makeDeps({ readSessionTranscript, sessionsGet, broker }));
+		await expect(
+			h['transcripts.read']!('p', {
+				sessionId: 's1',
+				fields: ['summary'],
+				projectPath: '/repo/granted',
+			})
+		).rejects.toThrow(/permission denied/);
+	});
+
+	it('refuses when the untrusted content+egress guard throws', async () => {
+		const assertTranscriptReadAllowed = () => {
+			throw new Error('transcripts:read cannot be combined with net:fetch');
+		};
+		const h = buildHostCallHandlers(
+			makeDeps({ readSessionTranscript, sessionsGet, assertTranscriptReadAllowed })
+		);
+		await expect(
+			h['transcripts.read']!('p', { sessionId: 's1', fields: ['summary'] })
+		).rejects.toThrow(/cannot be combined with net:fetch/);
+	});
+
+	it('returns empty for an unknown session', async () => {
+		const h = buildHostCallHandlers(makeDeps({ readSessionTranscript, sessionsGet }));
+		await expect(
+			h['transcripts.read']!('p', { sessionId: 'nope', fields: ['summary'] })
+		).resolves.toEqual([]);
+	});
+
+	it('applies since and limit', async () => {
+		const h = buildHostCallHandlers(makeDeps({ readSessionTranscript, sessionsGet }));
+		await expect(
+			h['transcripts.read']!('p', { sessionId: 's1', fields: ['summary'], since: 150 })
+		).resolves.toEqual([{ summary: 's2' }]);
+		await expect(
+			h['transcripts.read']!('p', { sessionId: 's1', fields: ['summary'], limit: 1 })
+		).resolves.toEqual([{ summary: 's2' }]);
 	});
 });

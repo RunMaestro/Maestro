@@ -112,6 +112,21 @@ function buildSdk(pluginId: string) {
 			list: (): Promise<unknown> => call('sessions.list', {}),
 			get: (sessionId: string): Promise<unknown> => call('sessions.get', { sessionId }),
 		}),
+		transcripts: Object.freeze({
+			/** Read PROJECTED conversation content for a session visible via
+			 * sessions.list. Declare exactly the `fields` you need; only those are
+			 * returned. Requires the high-risk `transcripts:read` capability and is
+			 * project-scoped + audited. Pass `projectPath` (from session metadata)
+			 * so a project-scoped grant authorizes; omit it only with an unscoped
+			 * grant. */
+			read: (params: {
+				sessionId: string;
+				fields: readonly string[];
+				projectPath?: string;
+				limit?: number;
+				since?: number;
+			}): Promise<unknown> => call('transcripts.read', params),
+		}),
 		storage: Object.freeze({
 			get: (key: string): Promise<unknown> => call('storage.get', { key }),
 			set: (key: string, value: string): Promise<void> =>

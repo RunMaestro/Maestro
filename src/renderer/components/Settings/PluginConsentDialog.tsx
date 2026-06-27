@@ -17,7 +17,9 @@ import {
 	capabilityRisk,
 	describeCapability,
 	type CapabilityRisk,
+	type PluginCapability,
 } from '../../../shared/plugins/permissions';
+import { transcriptReadEgressConflict } from '../../../shared/plugins/capability-policy';
 
 interface PluginConsentDialogProps {
 	theme: Theme;
@@ -77,6 +79,15 @@ export function PluginConsentDialog({
 			return next;
 		});
 	};
+
+	// An untrusted plugin may not hold transcripts:read together with an egress
+	// capability (net:fetch/process:spawn) - that is the content-exfiltration
+	// path. Recomputed from the live approved set so unchecking a cap clears it.
+	const trusted = record.signature?.status === 'trusted';
+	const egressConflict = transcriptReadEgressConflict(
+		[...approved].map((c) => ({ capability: c as PluginCapability })),
+		{ trusted }
+	);
 
 	return (
 		<div
@@ -187,6 +198,15 @@ export function PluginConsentDialog({
 							)}
 						</>
 					)}
+					{!isTampered && egressConflict && (
+						<div
+							className="text-xs mt-3 flex items-start gap-2 rounded-lg p-2.5"
+							style={{ color: theme.colors.error, backgroundColor: theme.colors.error + '12' }}
+						>
+							<AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+							<span>{egressConflict} Uncheck one to continue.</span>
+						</div>
+					)}
 				</div>
 
 				<div
@@ -200,7 +220,7 @@ export function PluginConsentDialog({
 					>
 						Cancel
 					</button>
-					{!isTampered && (
+					{!isTampered && !egressConflict && (
 						<button
 							className="px-3 py-1.5 rounded text-sm font-medium"
 							style={{ backgroundColor: theme.colors.accent, color: '#fff' }}

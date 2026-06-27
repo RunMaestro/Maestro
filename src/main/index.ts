@@ -27,6 +27,7 @@ import type { DecisionPair } from '../shared/pianola/transcript-mining';
 import type { PianolaRule } from '../shared/pianola/types';
 import { spawn, type ChildProcess } from 'child_process';
 import { PluginManager } from './plugins/plugin-manager';
+import { transcriptReadEgressConflict } from '../shared/plugins/capability-policy';
 import { PermissionBroker } from './plugins/permission-broker';
 import { PluginSandboxHost } from './plugins/plugin-sandbox-host';
 import { PluginSchedulerHost } from './plugins/plugin-scheduler-host';
@@ -1243,6 +1244,20 @@ app
 				settingsDeleteNamespace: pluginSettingsDeleteNamespace,
 				sessionsList: pluginSessionsList,
 				sessionsGet: pluginSessionsGet,
+				readSessionTranscript: (sessionId) => getHistoryManager().getEntries(sessionId),
+				assertTranscriptReadAllowed: (pluginId) => {
+					const reg = pluginManager?.getRegistry();
+					const rec = reg?.records?.find((r) => r.id === pluginId);
+					const trusted = rec?.signature?.status === 'trusted';
+					const reason = transcriptReadEgressConflict(readGrants(pluginId), { trusted });
+					if (reason) throw new Error(reason);
+				},
+				auditTranscriptRead: (pluginId, info) => {
+					logger.info(
+						`transcripts.read by "${pluginId}" session=${info.sessionId} project=${info.projectPath ?? '(none)'} fields=[${info.fields.join(',')}] rows=${info.count}`,
+						'[PluginAudit]'
+					);
+				},
 				// ui.runCommand: invoking a registered palette command from a plugin
 				// needs a renderer command-registry bridge (a small follow-on). Until
 				// it lands the verb is present + gated but returns "unknown command"

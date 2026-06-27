@@ -47,7 +47,7 @@ One folder per plugin. The folder name and the manifest `id` must agree on insta
 | `name`        | string                   | yes       | display name                                                    |
 | `version`     | string                   | yes       | semver (distinct from `minHostApi`)                             |
 | `tier`        | `0 \| 1 \| 2`            | yes       | trust/capability tier                                           |
-| `maestro`     | `{ minHostApi: string }` | yes       | minimum host API (current host is `1.1.0`)                      |
+| `maestro`     | `{ minHostApi: string }` | yes       | minimum host API (current host is `1.2.0`)                      |
 | `description` | string                   | no        |                                                                 |
 | `author`      | string                   | no        |                                                                 |
 | `license`     | string                   | no        |                                                                 |
@@ -66,7 +66,7 @@ One folder per plugin. The folder name and the manifest `id` must agree on insta
 	"name": "Maestro Vet (Data)",
 	"version": "1.0.0",
 	"tier": 0,
-	"maestro": { "minHostApi": "1.1.0" },
+	"maestro": { "minHostApi": "1.2.0" },
 	"description": "Data-only contributions for the vet workflow.",
 	"contributes": {
 		"themes": [
@@ -100,7 +100,7 @@ One folder per plugin. The folder name and the manifest `id` must agree on insta
 	"name": "Maestro Vet (Code)",
 	"version": "1.0.0",
 	"tier": 1,
-	"maestro": { "minHostApi": "1.1.0" },
+	"maestro": { "minHostApi": "1.2.0" },
 	"entry": "entry.js",
 	"permissions": [
 		{ "capability": "storage:read", "reason": "Remember the last greeting." },
