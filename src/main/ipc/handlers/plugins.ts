@@ -23,6 +23,7 @@ import {
 	type PermissionGrant,
 } from '../../../shared/plugins/permissions';
 import type { PluginManager, InstallResult } from '../../plugins/plugin-manager';
+import type { ActivitySnapshot } from '../../plugins/plugin-sandbox-host';
 import { readGrants, setGrants, forgetGrants } from '../../plugins/plugin-store-main';
 import { PLUGIN_ID_PATTERN } from '../../../shared/plugins/plugin-manifest';
 
@@ -45,11 +46,18 @@ export interface PluginGrantsSnapshot {
 	granted: PermissionGrant[];
 }
 
+/** Per-plugin read-only observability keyed by plugin id (running tier-1 only). */
+export type PluginActivityMap = Record<string, ActivitySnapshot>;
+export type { ActivitySnapshot };
+
 export interface PluginsHandlerDependencies {
 	settingsStore: {
 		get: (key: string) => unknown;
 	};
 	manager: PluginManager;
+	/** Optional read-only observability source for running tier-1 plugins. When
+	 *  absent (e.g. before the sandbox host is constructed), activity reads as {}. */
+	sandboxHost?: { getActivity(): PluginActivityMap };
 }
 
 /** True only when `encoreFeatures.plugins` is explicitly enabled. Read per call. */
@@ -63,7 +71,7 @@ function snapshotOf(registry: PluginRegistry): PluginListSnapshot {
 }
 
 export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void {
-	const { settingsStore, manager } = deps;
+	const { settingsStore, manager, sandboxHost } = deps;
 
 	const wrappedList = withIpcErrorLogging(
 		handlerOpts('list'),
@@ -154,6 +162,10 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 			return { html: manager.getPanelHtml(panelId) };
 		}
 	);
+	const wrappedGetActivity = withIpcErrorLogging(
+		handlerOpts('getActivity'),
+		async (): Promise<PluginActivityMap> => sandboxHost?.getActivity() ?? {}
+	);
 
 	ipcMain.handle('plugins:list', async (event): Promise<PluginListSnapshot> => {
 		if (!isPluginsEnabled(settingsStore)) throw new Error('PluginsDisabled');
@@ -225,4 +237,9 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 			return wrappedPanelHtml(event, panelId);
 		}
 	);
+
+	ipcMain.handle('plugins:get-activity', async (event): Promise<PluginActivityMap> => {
+		if (!isPluginsEnabled(settingsStore)) throw new Error('PluginsDisabled');
+		return wrappedGetActivity(event);
+	});
 }
