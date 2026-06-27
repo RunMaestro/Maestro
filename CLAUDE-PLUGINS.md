@@ -128,7 +128,7 @@ HostResponse { id, ok, result?, error? } <---postMessage---
 | `events:subscribe`    | medium | none  | metadata-only topics                                                                                                                            |
 | `process:spawn`       | high   | none  | INERT (no production handler)                                                                                                                   |
 
-`PermissionRequest = { capability, scope?, reason? }`. Path/host scopes narrow `fs:*`/`net:fetch`; an absent scope means the broad form (the consent UI must present it as such). The user grants a subset at the consent dialog (`plugins:set-grants`).
+`PermissionRequest = { capability, scope?, reason? }`. Scopes narrow `fs:*` (a directory), `net:fetch` (a host), and `transcripts:read` (a project path); an absent scope means the broad form (the consent UI must present it as such). The user grants a subset at the consent dialog (`plugins:set-grants`).
 
 ## Contributions + registry merge
 
