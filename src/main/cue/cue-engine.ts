@@ -73,6 +73,7 @@ import {
 	parseCueSubscriptionId,
 	pipelineKeyForSubscription,
 } from '../../shared/cue/subscription-id';
+import { scanTaskFilesOnce } from './cue-task-scanner';
 
 const MAX_CHAIN_DEPTH = 10;
 
@@ -1152,8 +1153,53 @@ export class CueEngine {
 
 		let totalDispatched = 0;
 		for (const { ownerSessionId, state, sub } of toDispatch) {
+			// task.pending subs carry their tasks in the event payload. A manual
+			// trigger has no scanner run behind it, so scan the watched file(s)
+			// now — otherwise the prompt's {{CUE_TASK_COUNT}}/{{CUE_TASK_LIST}}
+			// fall back to "0"/"" and the run sees no work to do.
+			let taskPayload: Record<string, unknown> = {};
+			if (sub.event === 'task.pending' && sub.watch) {
+				const projectRoot = this.deps
+					.getSessions()
+					.find((s) => s.id === ownerSessionId)?.projectRoot;
+				if (projectRoot) {
+					// walkDir re-throws when projectRoot itself is unreadable
+					// (deleted/unmounted/permission change). Mirror doScan's
+					// graceful degradation: log, report, and dispatch with an empty
+					// task payload rather than aborting the whole trigger group.
+					try {
+						const payloads = scanTaskFilesOnce(sub.watch, projectRoot);
+						if (payloads.length > 0) {
+							taskPayload = payloads[0];
+							if (payloads.length > 1) {
+								this.deps.onLog(
+									'cue',
+									`[CUE] "${sub.name}" manual trigger: ${payloads.length} files match "${sub.watch}"; using ${String(taskPayload.filename)}`
+								);
+							}
+						} else {
+							this.deps.onLog(
+								'cue',
+								`[CUE] "${sub.name}" manual trigger: no pending tasks in "${sub.watch}"`
+							);
+						}
+					} catch (err) {
+						this.deps.onLog(
+							'warn',
+							`[CUE] "${sub.name}" manual trigger scan failed: ${err instanceof Error ? err.message : String(err)}`
+						);
+						void captureException(err, {
+							operation: 'cue.triggerSubscription.scanTaskFilesOnce',
+							subscriptionName: sub.name,
+							ownerSessionId,
+						});
+					}
+				}
+			}
+
 			const event = createCueEvent(sub.event, sub.name, {
 				manual: true,
+				...taskPayload,
 				...(sourceAgentId ? { sourceAgentId } : {}),
 				...(promptOverride ? { cliPrompt: promptOverride } : {}),
 			});
