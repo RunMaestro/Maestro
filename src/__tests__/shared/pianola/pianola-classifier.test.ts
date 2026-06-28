@@ -339,3 +339,59 @@ describe('classifyMessages - risk recall and precision (review fixes)', () => {
 		});
 	}
 });
+
+describe('classifyMessages - full-turn risk (per-message bypass fix)', () => {
+	function lowRiskAutoAnswerRule(): PianolaRule {
+		return {
+			id: 'r',
+			enabled: true,
+			scope: 'global',
+			match: { maxRisk: 'low', kinds: ['question'] },
+			action: 'auto_answer',
+			answer: 'yes',
+			priority: 1,
+			createdAt: 1,
+			updatedAt: 1,
+		};
+	}
+
+	it('rates the awaiting question alone as low (the per-message view that would auto-answer)', () => {
+		const c = classifyMessages([msg('assistant', 'Should I continue? Reply yes or no.')]);
+		expect(c.kind).toBe('question');
+		expect(c.risk).toBe('low');
+		// Confirms the bypass: on the per-message view a permissive rule auto-answers.
+		expect(decide(c, [lowRiskAutoAnswerRule()]).action).toBe('auto_answer');
+	});
+
+	it('keeps the MOST SEVERE risk across all assistant messages since the last user turn', () => {
+		const c = classifyMessages([
+			msg('assistant', 'Plan: run rm -rf /tmp/build to clean up the workspace.'),
+			msg('assistant', 'Should I continue? Reply yes or no.'),
+		]);
+		// The destructive intent lives in the earlier message; the awaiting question
+		// reads low on its own, but the full-turn max must rate the turn high.
+		expect(c.kind).toBe('question');
+		expect(c.risk).toBe('high');
+	});
+
+	it('escalates a low-risk question when an earlier turn message is destructive (no per-message bypass)', () => {
+		const c = classifyMessages([
+			msg('assistant', 'Plan: run rm -rf /tmp/build to clean up the workspace.'),
+			msg('assistant', 'Should I continue? Reply yes or no.'),
+		]);
+		// high-risk guard fires before any rule action - the permissive rule cannot auto-answer.
+		expect(decide(c, [lowRiskAutoAnswerRule()]).action).toBe('escalate');
+	});
+
+	it('only folds in assistant messages from the CURRENT turn (after the last user reply)', () => {
+		const c = classifyMessages([
+			msg('assistant', 'Earlier I ran rm -rf on the old build dir.'),
+			msg('user', 'ok, thanks'),
+			msg('assistant', 'Should I continue? Reply yes or no.'),
+		]);
+		// The destructive message is in a PRIOR turn (a user reply intervened), so it
+		// must not bleed into this turn's risk.
+		expect(c.kind).toBe('question');
+		expect(c.risk).toBe('low');
+	});
+});

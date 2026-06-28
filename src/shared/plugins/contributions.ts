@@ -337,12 +337,22 @@ export function aggregateContributions(manifests: PluginManifest[]): AggregatedC
 		errorsByPlugin: {},
 	};
 	const seen = new Set<string>();
-	const pushUnique = <T extends { id: string; pluginId: string }>(list: T[], item: T): void => {
-		if (seen.has(item.id)) {
-			(agg.errorsByPlugin[item.pluginId] ??= []).push(`duplicate contribution id "${item.id}"`);
+	const pushUnique = <T extends { id: string; pluginId: string }>(
+		bucket: string,
+		list: T[],
+		item: T
+	): void => {
+		// Uniqueness is per contribution TYPE: one plugin may legitimately reuse a
+		// localId across types (a keybinding bound to its own command, or a tool
+		// sharing a command's name), so key the dedup by bucket, not id alone.
+		const key = `${bucket}:${item.id}`;
+		if (seen.has(key)) {
+			(agg.errorsByPlugin[item.pluginId] ??= []).push(
+				`duplicate ${bucket} contribution id "${item.id}"`
+			);
 			return;
 		}
-		seen.add(item.id);
+		seen.add(key);
 		list.push(item);
 	};
 
@@ -351,16 +361,16 @@ export function aggregateContributions(manifests: PluginManifest[]): AggregatedC
 		if (c.errors.length > 0) {
 			(agg.errorsByPlugin[manifest.id] ??= []).push(...c.errors);
 		}
-		c.themes.forEach((t) => pushUnique(agg.themes, t));
-		c.prompts.forEach((p) => pushUnique(agg.prompts, p));
-		c.settings.forEach((s) => pushUnique(agg.settings, s));
-		c.commandMacros.forEach((m) => pushUnique(agg.commandMacros, m));
-		c.cueTriggers.forEach((t) => pushUnique(agg.cueTriggers, t));
-		c.commands.forEach((cmd) => pushUnique(agg.commands, cmd));
-		c.panels.forEach((panel) => pushUnique(agg.panels, panel));
-		c.agents.forEach((agent) => pushUnique(agg.agents, agent));
-		c.tools.forEach((t) => pushUnique(agg.tools, t));
-		c.keybindings.forEach((k) => pushUnique(agg.keybindings, k));
+		c.themes.forEach((t) => pushUnique('themes', agg.themes, t));
+		c.prompts.forEach((p) => pushUnique('prompts', agg.prompts, p));
+		c.settings.forEach((s) => pushUnique('settings', agg.settings, s));
+		c.commandMacros.forEach((m) => pushUnique('commandMacros', agg.commandMacros, m));
+		c.cueTriggers.forEach((t) => pushUnique('cueTriggers', agg.cueTriggers, t));
+		c.commands.forEach((cmd) => pushUnique('commands', agg.commands, cmd));
+		c.panels.forEach((panel) => pushUnique('panels', agg.panels, panel));
+		c.agents.forEach((agent) => pushUnique('agents', agg.agents, agent));
+		c.tools.forEach((t) => pushUnique('tools', agg.tools, t));
+		c.keybindings.forEach((k) => pushUnique('keybindings', agg.keybindings, k));
 	}
 	return agg;
 }

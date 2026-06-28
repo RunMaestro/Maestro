@@ -22,6 +22,7 @@ import {
 	type PermissionRequest,
 	type PermissionGrant,
 } from '../../../shared/plugins/permissions';
+import { transcriptReadEgressConflict } from '../../../shared/plugins/capability-policy';
 import type { PluginManager, InstallResult } from '../../plugins/plugin-manager';
 import type { ActivitySnapshot } from '../../plugins/plugin-sandbox-host';
 import { readGrants, setGrants, forgetGrants } from '../../plugins/plugin-store-main';
@@ -142,6 +143,15 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 			const requested = manager.getRequestedPermissions(id) ?? [];
 			const toGrant = requested.filter((r) => approved.has(r.capability));
 			const grants = grantsFromRequests(toGrant, Date.now());
+			// Enforce the transcripts:read + egress mutual-exclusion at the consent
+			// boundary itself (not only in the renderer dialog / at runtime): a direct
+			// IPC call must not persist a plugin holding transcripts:read together with
+			// net:fetch / process:spawn unless it is trusted-signed. Trust counts only
+			// when the signature actually verifies as trusted.
+			const record = manager.getRegistry().records.find((r) => r.id === id);
+			const trusted = record?.signature?.status === 'trusted';
+			const conflict = transcriptReadEgressConflict(grants, { trusted });
+			if (conflict) throw new Error(`GrantConflict: ${conflict}`);
 			setGrants(id, grants);
 			return { requested, granted: grants };
 		}

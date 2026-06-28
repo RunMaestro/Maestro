@@ -595,6 +595,39 @@ describe('rehydrateWatchState', () => {
 		expect(state.pendingHandoff).toBeNull();
 		expect(state.lastHandledMessageId).toBe('mX');
 	});
+
+	const autoAnswer = {
+		action: 'auto_answer' as const,
+		answer: 'Use tabs.',
+		matchedRuleId: 'rule-1',
+		reason: 'matched auto-answer rule',
+	};
+
+	it('does NOT adopt a failed (non-dry-run) auto_answer as the handled cursor', () => {
+		const state = rehydrateWatchState(
+			[record({ decision: autoAnswer, dispatched: false, dryRun: false, error: 'agent down' })],
+			'tab-1'
+		);
+		// The dispatch failed, so the prompt was never answered: re-attempt on restart.
+		expect(state.lastHandledMessageId).toBeNull();
+		expect(state.pendingHandoff).toBeNull();
+	});
+
+	it('adopts a successfully dispatched auto_answer as the handled cursor', () => {
+		const state = rehydrateWatchState(
+			[record({ decision: autoAnswer, dispatched: true, dryRun: false })],
+			'tab-1'
+		);
+		expect(state.lastHandledMessageId).toBe('mX');
+	});
+
+	it('adopts a dry-run auto_answer as the handled cursor (dry-run is not a failure)', () => {
+		const state = rehydrateWatchState(
+			[record({ decision: autoAnswer, dispatched: false, dryRun: true })],
+			'tab-1'
+		);
+		expect(state.lastHandledMessageId).toBe('mX');
+	});
 });
 
 describe('runWatchIteration - give-up escalates instead of abandoning', () => {

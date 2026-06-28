@@ -32,6 +32,7 @@ vi.mock('../../../main/plugins/plugin-store-main', () => ({
 }));
 
 import { registerPluginsHandlers } from '../../../main/ipc/handlers/plugins';
+import { setGrants } from '../../../main/plugins/plugin-store-main';
 
 const EMPTY: AggregatedContributions = {
 	themes: [],
@@ -169,5 +170,49 @@ describe('plugins:get-activity (gated read-only observability)', () => {
 		expect(handler).toBeDefined();
 		await expect(handler!(event)).rejects.toThrow('PluginsDisabled');
 		expect(getActivity).not.toHaveBeenCalled();
+	});
+});
+
+describe('plugins:set-grants enforces the transcripts:read + egress conflict at the consent boundary', () => {
+	function setupGrants(opts: { requested: string[]; trusted?: boolean }) {
+		const manager = {
+			refresh: vi.fn(() => emptyRegistry),
+			getContributions: vi.fn(() => EMPTY),
+			setEnabled: vi.fn(() => emptyRegistry),
+			getRequestedPermissions: vi.fn(() => opts.requested.map((capability) => ({ capability }))),
+			getRegistry: vi.fn(() => ({
+				records: [{ id: 'com.p', signature: { status: opts.trusted ? 'trusted' : 'unsigned' } }],
+			})),
+		};
+		registerPluginsHandlers({
+			settingsStore: settingsStore(true),
+			manager: manager as unknown as PluginManager,
+		});
+		return manager;
+	}
+
+	it('rejects an untrusted plugin granted transcripts:read + net:fetch, without persisting', async () => {
+		setupGrants({ requested: ['transcripts:read', 'net:fetch'] });
+		const handler = handlers.get('plugins:set-grants');
+		await expect(handler!(event, 'com.p', ['transcripts:read', 'net:fetch'])).rejects.toThrow(
+			/GrantConflict/
+		);
+		expect(vi.mocked(setGrants)).not.toHaveBeenCalled();
+	});
+
+	it('allows transcripts:read alone (no egress to conflict with)', async () => {
+		setupGrants({ requested: ['transcripts:read'] });
+		const handler = handlers.get('plugins:set-grants');
+		await expect(handler!(event, 'com.p', ['transcripts:read'])).resolves.toBeDefined();
+		expect(vi.mocked(setGrants)).toHaveBeenCalled();
+	});
+
+	it('allows transcripts:read + net:fetch when the plugin is trusted-signed', async () => {
+		setupGrants({ requested: ['transcripts:read', 'net:fetch'], trusted: true });
+		const handler = handlers.get('plugins:set-grants');
+		await expect(
+			handler!(event, 'com.p', ['transcripts:read', 'net:fetch'])
+		).resolves.toBeDefined();
+		expect(vi.mocked(setGrants)).toHaveBeenCalled();
 	});
 });

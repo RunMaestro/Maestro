@@ -48,6 +48,16 @@ export const PIANOLA_DECISIONS_MAX_RECORDS = 5000;
 export const PIANOLA_DECISIONS_COMPACT_BYTES = 4_000_000;
 
 /**
+ * Per-record serialized byte cap. Most decision-record fields are bounded
+ * upstream (the classifier caps `topic` at 140 chars; evidence/decision reasons
+ * are fixed strings), but `decision.answer` is copied verbatim from a rule and a
+ * dispatch `error` string is unbounded, so a single hostile/huge record could
+ * serialize past the whole file budget on its own. appendDecisionLine drops any
+ * line over this cap, keeping one record well under PIANOLA_DECISIONS_COMPACT_BYTES.
+ */
+export const PIANOLA_DECISION_RECORD_MAX_BYTES = 64_000;
+
+/**
  * Keep only the most recent `max` non-empty JSONL lines. Pure: returns the
  * trimmed content (trailing newline preserved) so a store can write it back
  * atomically. Returns the input unchanged when already within the cap or when

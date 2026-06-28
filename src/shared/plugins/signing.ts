@@ -71,6 +71,33 @@ export function normalizeRelPath(path: string): string {
 }
 
 /**
+ * Directory names pruned from a plugin's signed file set AND its pack archive.
+ * Dependency installs (node_modules) and VCS metadata (.git) are never part of
+ * distributable, signed content: large, non-deterministic, and (for
+ * node_modules) routinely full of symlinks the signer rejects.
+ */
+export const SIGNATURE_EXCLUDED_DIRS: ReadonlySet<string> = new Set(['node_modules', '.git']);
+
+/** Signing-key / secret files (*.pem, *.key): never signed and never packed. */
+const SIGNATURE_SECRET_FILE = /\.(pem|key)$/i;
+
+/**
+ * Single exclusion policy shared by the CLI signer, the CLI packer, and the host
+ * verifier so all three agree on a plugin's file set. A path is excluded when it
+ * lives under an excluded directory (node_modules/, .git/) or is a secret key
+ * file (*.pem, *.key).
+ *
+ * `signature.json` is intentionally NOT covered here: the signer omits it from
+ * the hashed payload (a file cannot sign its own hash) while the packer SHIPS it
+ * so the host can verify. That single special case is handled at each call site.
+ */
+export function isExcludedSignaturePath(rel: string): boolean {
+	const norm = normalizeRelPath(rel);
+	if (norm.split('/').some((segment) => SIGNATURE_EXCLUDED_DIRS.has(segment))) return true;
+	return SIGNATURE_SECRET_FILE.test(norm);
+}
+
+/**
  * Validate a parsed signature.json. Returns the typed manifest or a list of
  * errors. Strict: a malformed signature manifest is treated as no usable
  * signature (the caller maps that to 'invalid'/'unsigned' as appropriate).

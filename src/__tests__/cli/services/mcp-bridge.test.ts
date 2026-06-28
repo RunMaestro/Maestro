@@ -49,17 +49,33 @@ describe('createMcpBridge - listTools', () => {
 
 describe('createMcpBridge - callTool', () => {
 	it('maps a risk-gate block to an isError result', async () => {
-		const request = vi.fn(async () => ({ ok: false, blocked: true, reason: 'high-risk prompt' }));
-		const r = await createMcpBridge({ serverInfo, request, log }).callTool('p__a', {});
+		const request = vi.fn();
+		request.mockResolvedValueOnce({ tools: [{ name: 'p__a', toolId: 'p/a' }] });
+		const bridge = createMcpBridge({ serverInfo, request, log });
+		await bridge.listTools();
+		request.mockResolvedValueOnce({ ok: false, blocked: true, reason: 'high-risk prompt' });
+		const r = await bridge.callTool('p__a', {});
 		expect(r.isError).toBe(true);
 		expect(r.content[0].text).toContain('risk gate');
 	});
 
 	it('maps a tool failure to an isError result', async () => {
-		const request = vi.fn(async () => ({ ok: false, error: 'boom' }));
-		const r = await createMcpBridge({ serverInfo, request, log }).callTool('p__a', {});
+		const request = vi.fn();
+		request.mockResolvedValueOnce({ tools: [{ name: 'p__a', toolId: 'p/a' }] });
+		const bridge = createMcpBridge({ serverInfo, request, log });
+		await bridge.listTools();
+		request.mockResolvedValueOnce({ ok: false, error: 'boom' });
+		const r = await bridge.callTool('p__a', {});
 		expect(r.isError).toBe(true);
 		expect(r.content[0].text).toContain('boom');
+	});
+
+	it('rejects an unmapped tool name without calling the app', async () => {
+		const request = vi.fn();
+		const r = await createMcpBridge({ serverInfo, request, log }).callTool('never-listed', {});
+		expect(r.isError).toBe(true);
+		expect(r.content[0].text).toContain('Unknown tool');
+		expect(request).not.toHaveBeenCalled();
 	});
 
 	it('maps a success to text content, with mapped toolId and the long call timeout', async () => {
