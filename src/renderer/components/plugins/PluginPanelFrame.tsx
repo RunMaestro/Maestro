@@ -39,12 +39,17 @@ interface PluginPanelFrameProps {
  * `form-action 'none'` blocks form posts - so a panel's only intended way out stays
  * the narrow `maestro:invokeCommand` postMessage bridge below.
  *
- * KNOWN RESIDUAL: a meta CSP cannot block frame self-navigation, so a panel could
- * still set `window.location`/meta-refresh to a remote URL and leak data it already
- * obtained via its granted capabilities through the query string. Top-frame nav is
- * already blocked (sandbox has no `allow-top-navigation`); fully blocking self-nav
- * egress needs main-process `will-frame-navigate` filtering on the plugin frame
- * (tracked follow-up).
+ * Self-navigation egress (a panel setting `window.location`/meta-refresh to a
+ * remote URL to leak data through it) is mitigated in depth: top-frame nav is
+ * blocked (the sandbox has no `allow-top-navigation`), the SPA's own frame CSP
+ * constrains where subframes may load, and the bridge below rejects any message
+ * whose origin is not the opaque `null` - so a navigated frame can no longer reuse
+ * the bridge. As an additional main-process backstop, the window's
+ * `will-frame-navigate` guard (see `blocksSubframeNavigation`) blocks a subframe
+ * navigating away from its initial `about:srcdoc` document. (Sandboxed-srcdoc
+ * self-navigation does not reliably surface through `will-frame-navigate`, so the
+ * sandbox + CSP + origin-gated bridge are the load-bearing barriers; the guard is
+ * belt-and-suspenders.)
  */
 export function withPanelCsp(html: string): string {
 	const meta =
@@ -84,11 +89,16 @@ export function PluginPanelFrame({ theme, panel, iframeClassName }: PluginPanelF
 	}, [panel.id]);
 
 	// Bridge: accept only `maestro:invokeCommand` from THIS iframe and forward it
-	// to the plugin's command handler via the broker-gated RPC. Everything else
-	// is ignored. We cannot check origin (opaque = "null"), so we gate on source.
+	// to the plugin's command handler via the broker-gated RPC. Everything else is
+	// ignored. Gate on BOTH the source (this frame's contentWindow) AND an opaque
+	// origin: a sandboxed srcDoc frame's origin is "null", so if the panel ever
+	// self-navigates to a real origin (e.g. https://evil) - where the WindowProxy
+	// source can survive - the navigated page's messages carry a non-null origin and
+	// are rejected here, so a navigated frame can never reuse the bridge.
 	useEffect(() => {
 		const onMessage = (event: MessageEvent): void => {
 			if (event.source !== iframeRef.current?.contentWindow) return;
+			if (event.origin !== 'null') return;
 			const data = event.data;
 			if (typeof data !== 'object' || data === null) return;
 			const msg = data as Record<string, unknown>;
