@@ -70,6 +70,14 @@ export function createPluginsApi() {
 		setGrants: (id: string, approvedCapabilities: string[]): Promise<PluginGrantsSnapshot> =>
 			ipcRenderer.invoke('plugins:set-grants', id, approvedCapabilities),
 
+		/**
+		 * Ask the MAIN process to open the dedicated, host-owned consent window for
+		 * a plugin. The window (not this renderer) collects the approval and mints
+		 * the grant through the isolated minter; the renderer never sees the nonce.
+		 */
+		requestConsent: (id: string): Promise<{ opened: boolean }> =>
+			ipcRenderer.invoke('plugins:request-consent', id),
+
 		/** Revoke all of a plugin's grants. */
 		revokeGrants: (id: string): Promise<PluginGrantsSnapshot> =>
 			ipcRenderer.invoke('plugins:revoke-grants', id),

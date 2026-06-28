@@ -1,4 +1,13 @@
-import { app, BrowserWindow, Menu, powerMonitor, protocol } from 'electron';
+import {
+	app,
+	BrowserWindow,
+	Menu,
+	powerMonitor,
+	protocol,
+	safeStorage,
+	ipcMain,
+	type IpcMainInvokeEvent,
+} from 'electron';
 import { isMacOS } from '../shared/platformDetection';
 import path from 'path';
 import os from 'os';
@@ -42,8 +51,23 @@ import { ActionGuard } from './plugins/action-guard';
 import { PluginKvStore } from './plugins/plugin-kv-store';
 import { PluginEventBusImpl } from './plugins/plugin-event-bus';
 import { createEgressGuard } from './plugins/net-egress-guard';
-import { isPermitted } from '../shared/plugins/permissions';
+import {
+	isPermitted,
+	describeCapability,
+	capabilityRisk,
+	isPluginCapability,
+} from '../shared/plugins/permissions';
 import { readGrants } from './plugins/plugin-store-main';
+import { createAuthorizationStore } from './plugins/authorization-ledger';
+import { pluginIdentity } from './plugins/plugin-identity';
+import { PLUGIN_ID_PATTERN } from '../shared/plugins/plugin-manifest';
+import { ConsentNonceRegistry, ConsentMinter } from './plugins/consent-minter';
+import {
+	openConsentWindow,
+	consentSurfacePaths,
+	type ConsentOffer,
+	type OpenedConsentWindow,
+} from './plugins/consent-window';
 import { configureCueTelemetry } from './cue/cue-telemetry';
 import {
 	executeCuePrompt,
@@ -1329,6 +1353,117 @@ app
 					// Renderer may be gone during shutdown; ignore.
 				}
 			},
+		});
+
+		// Sealed plugin authorization ledger. The consent window's minter is the
+		// ONLY writer (mint), binding each granted subset to the plugin's
+		// content+signature identity. safeStorage seals the contents; the default
+		// noAnchor() keeps it session-only (re-consent each launch) until the keyring
+		// anchor / packaging step lands. The read-flip (broker/manager/getGrants
+		// reading this instead of the on-disk store) is the next step; the ledger is
+		// populated here first so that switch is clean.
+		const authStore = createAuthorizationStore({
+			safeStorage,
+			ledgerPath: path.join(app.getPath('userData'), 'plugin-authorization.bin'),
+		});
+		const trustedKeysFor = (): string[] => {
+			const keys = store.get('pluginTrustedKeys', []) as unknown;
+			return Array.isArray(keys) ? keys.filter((k): k is string => typeof k === 'string') : [];
+		};
+		let consentWindowRef: OpenedConsentWindow | null = null;
+		const closeConsentWindow = (): void => {
+			try {
+				consentWindowRef?.window.close();
+			} catch {
+				// Already destroyed; ignore.
+			}
+			consentWindowRef = null;
+		};
+		// The isolated authorization minter: issues a one-time nonce inside this
+		// main-owned open path, opens the dedicated consent window, and accepts a
+		// confirm ONLY from that window's frame before minting the approved subset.
+		const consentMinter = new ConsentMinter({
+			registry: new ConsentNonceRegistry(),
+			store: authStore,
+			requested: (pluginId) => pluginManager?.getRequestedPermissions(pluginId) ?? [],
+			identityOf: (pluginId) => {
+				const record = pluginManager?.getRegistry().records.find((r) => r.id === pluginId);
+				return record ? pluginIdentity(record.source, trustedKeysFor()) : null;
+			},
+			openPrompt: async ({ pluginId, offered, nonce }) => {
+				const record = pluginManager?.getRegistry().records.find((r) => r.id === pluginId);
+				const requested = pluginManager?.getRequestedPermissions(pluginId) ?? [];
+				const offer: ConsentOffer = {
+					pluginId,
+					pluginName: record?.manifest?.name ?? pluginId,
+					nonce,
+					offered: offered.map((cap) => {
+						const req = requested.find((r) => r.capability === cap);
+						return {
+							capability: cap,
+							risk: capabilityRisk(cap),
+							...(req?.scope ? { scope: req.scope } : {}),
+							...(req?.reason ? { reason: req.reason } : {}),
+							description: describeCapability(cap),
+						};
+					}),
+				};
+				// Supersede any consent window still open (its nonce is now stale) so a
+				// second request can never leave a live window that closes the new one.
+				closeConsentWindow();
+				const paths = consentSurfacePaths(__dirname);
+				const opened = await openConsentWindow(offer, {
+					parent: mainWindow ?? null,
+					preloadPath: paths.preloadPath,
+					htmlPath: paths.htmlPath,
+				});
+				consentWindowRef = opened;
+				return opened.sender;
+			},
+		});
+		const senderTokenOf = (event: IpcMainInvokeEvent) => ({
+			webContentsId: event.sender.id,
+			frameId: event.senderFrame?.routingId ?? -1,
+			url: event.senderFrame?.url,
+		});
+		// Open the consent window. Only the trusted main renderer may ask.
+		ipcMain.handle('plugins:request-consent', async (event, pluginId: unknown) => {
+			if (event.sender !== mainWindow?.webContents) throw new Error('UntrustedConsentRequester');
+			const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
+			if (ef.plugins !== true) throw new Error('PluginsDisabled');
+			if (typeof pluginId !== 'string' || !PLUGIN_ID_PATTERN.test(pluginId)) {
+				throw new Error('InvalidPluginId');
+			}
+			await consentMinter.requestConsent(pluginId);
+			return { opened: true };
+		});
+		// Confirm from the consent window: the minter validates the sender frame +
+		// one-time nonce before minting. The window is closed either way.
+		ipcMain.handle('plugins:confirm-consent', (event, payload: unknown) => {
+			const p = (payload ?? {}) as { pluginId?: unknown; nonce?: unknown; approved?: unknown };
+			const pluginId = typeof p.pluginId === 'string' ? p.pluginId : '';
+			const nonce = typeof p.nonce === 'string' ? p.nonce : '';
+			const approved = Array.isArray(p.approved) ? p.approved.filter(isPluginCapability) : [];
+			const outcome = consentMinter.confirm(senderTokenOf(event), { pluginId, nonce, approved });
+			closeConsentWindow();
+			if (outcome.ok) {
+				logger.info(
+					`[Plugins] consent minted for "${pluginId}": ${outcome.grants.map((g) => g.capability).join(', ') || '(none)'}`,
+					'[Plugins]'
+				);
+				try {
+					mainWindow?.webContents.send('plugins:changed', pluginManager?.getRegistry());
+				} catch {
+					// Renderer gone during shutdown; ignore.
+				}
+				return { ok: true, granted: outcome.grants };
+			}
+			logger.warn(`[Plugins] consent confirm rejected: ${outcome.reason}`, '[Plugins]');
+			return { ok: false, reason: outcome.reason };
+		});
+		ipcMain.handle('plugins:cancel-consent', () => {
+			closeConsentWindow();
+			return { ok: false, reason: 'cancelled' as const };
 		});
 
 		// Supervised plugin scheduler: fires plugins' declarative cue triggers
