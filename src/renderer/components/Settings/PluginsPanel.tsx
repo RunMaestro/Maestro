@@ -22,13 +22,11 @@ import {
 import type { Theme } from '../../types';
 import type { PluginListSnapshot } from '../../../main/ipc/handlers/plugins';
 import type { PluginRecord } from '../../../shared/plugins/plugin-registry';
-import type { PermissionRequest } from '../../../shared/plugins/permissions';
 import type {
 	AggregatedContributions,
 	PanelContribution,
 } from '../../../shared/plugins/contributions';
 import { notifyToast } from '../../stores/notificationStore';
-import { PluginConsentDialog } from './PluginConsentDialog';
 import { PluginPanelHost } from './PluginPanelHost';
 import { PluginPanelSlot } from '../plugins/PluginPanelSlot';
 import { PluginActivityView } from './PluginActivityView';
@@ -49,10 +47,6 @@ export function PluginsPanel({ theme }: PluginsPanelProps) {
 	const [snapshot, setSnapshot] = useState<PluginListSnapshot | null>(null);
 	const [loading, setLoading] = useState(false);
 	const [busyId, setBusyId] = useState<string | null>(null);
-	const [consent, setConsent] = useState<{
-		record: PluginRecord;
-		requested: PermissionRequest[];
-	} | null>(null);
 	const [contributions, setContributions] = useState<AggregatedContributions | null>(null);
 	const [openPanel, setOpenPanel] = useState<PanelContribution | null>(null);
 
@@ -110,44 +104,28 @@ export function PluginsPanel({ theme }: PluginsPanelProps) {
 	const handleToggle = useCallback(
 		async (record: PluginRecord) => {
 			if (record.loadStatus !== 'ok') return;
-			// Disabling is always immediate. Enabling a code tier (>= 1) goes through
-			// the consent dialog so the user grants permissions before it runs.
+			// Disabling is always immediate. Enabling a tier-0 (data) plugin applies
+			// directly. Enabling a code-tier plugin routes through the host-owned consent
+			// window (plugins:request-consent): it collects per-capability approval and
+			// mints the sealed grant, then the main process enables the plugin and pushes
+			// a 'plugins:changed' update that reloads this panel. The renderer never
+			// grants or enables code directly.
 			const isCodeTier = (record.manifest?.tier ?? 0) >= 1;
 			if (record.enabled || !isCodeTier) {
 				await applyEnabled(record.id, !record.enabled);
 				return;
 			}
 			try {
-				const grants = await window.maestro.plugins.getGrants(record.id);
-				setConsent({ record, requested: grants.requested });
+				await window.maestro.plugins.requestConsent(record.id);
 			} catch (err) {
 				notifyToast({
 					color: 'red',
 					title: 'Plugins',
-					message: `Could not load permissions: ${String(err)}`,
+					message: `Could not open the permission prompt: ${String(err)}`,
 				});
 			}
 		},
 		[applyEnabled]
-	);
-
-	const handleConsentApprove = useCallback(
-		async (approvedCapabilities: string[]) => {
-			if (!consent) return;
-			const id = consent.record.id;
-			setConsent(null);
-			setBusyId(id);
-			try {
-				await window.maestro.plugins.setGrants(id, approvedCapabilities);
-				const snap = await window.maestro.plugins.setEnabled(id, true);
-				setSnapshot(snap);
-			} catch (err) {
-				notifyToast({ color: 'red', title: 'Plugins', message: `Enable failed: ${String(err)}` });
-			} finally {
-				setBusyId(null);
-			}
-		},
-		[consent]
 	);
 
 	const handleInstall = useCallback(async () => {
@@ -421,16 +399,6 @@ export function PluginsPanel({ theme }: PluginsPanelProps) {
 				placement="settings"
 				className="mt-4 flex flex-col overflow-hidden rounded-lg border h-[440px]"
 			/>
-
-			{consent && (
-				<PluginConsentDialog
-					theme={theme}
-					record={consent.record}
-					requested={consent.requested}
-					onApprove={(caps) => void handleConsentApprove(caps)}
-					onCancel={() => setConsent(null)}
-				/>
-			)}
 
 			{openPanel && (
 				<PluginPanelHost theme={theme} panel={openPanel} onClose={() => setOpenPanel(null)} />

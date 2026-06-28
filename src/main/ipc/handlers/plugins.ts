@@ -16,16 +16,9 @@ import { withIpcErrorLogging, type CreateHandlerOptions } from '../../utils/ipcH
 import { HOST_API_VERSION } from '../../../shared/plugins/host-api';
 import type { PluginRecord, PluginRegistry } from '../../../shared/plugins/plugin-registry';
 import type { AggregatedContributions } from '../../../shared/plugins/contributions';
-import {
-	grantsFromRequests,
-	isPluginCapability,
-	type PermissionRequest,
-	type PermissionGrant,
-} from '../../../shared/plugins/permissions';
-import { transcriptReadEgressConflict } from '../../../shared/plugins/capability-policy';
+import type { PermissionRequest, PermissionGrant } from '../../../shared/plugins/permissions';
 import type { PluginManager, InstallResult } from '../../plugins/plugin-manager';
 import type { ActivitySnapshot } from '../../plugins/plugin-sandbox-host';
-import { readGrants, setGrants, forgetGrants } from '../../plugins/plugin-store-main';
 import { PLUGIN_ID_PATTERN } from '../../../shared/plugins/plugin-manifest';
 
 const LOG_CONTEXT = '[Plugins]';
@@ -59,6 +52,16 @@ export interface PluginsHandlerDependencies {
 	/** Optional read-only observability source for running tier-1 plugins. When
 	 *  absent (e.g. before the sandbox host is constructed), activity reads as {}. */
 	sandboxHost?: { getActivity(): PluginActivityMap };
+	/** The sealed authorization ledger - the live grant source. `get-grants` reads
+	 * it, `revoke`/`uninstall` mutate it, and `set-enabled` gates code-tier
+	 * activation on it (a tier>=1 plugin may only be enabled once it holds a
+	 * consented ledger grant, minted by the consent window). */
+	authStore: {
+		readGrants: (pluginId: string) => PermissionGrant[];
+		revoke: (pluginId: string) => void;
+		uninstall: (pluginId: string) => void;
+		isEnabled: (pluginId: string) => boolean;
+	};
 }
 
 /** True only when `encoreFeatures.plugins` is explicitly enabled. Read per call. */
@@ -72,7 +75,7 @@ function snapshotOf(registry: PluginRegistry): PluginListSnapshot {
 }
 
 export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void {
-	const { settingsStore, manager, sandboxHost } = deps;
+	const { settingsStore, manager, sandboxHost, authStore } = deps;
 
 	const wrappedList = withIpcErrorLogging(
 		handlerOpts('list'),
@@ -84,6 +87,14 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 			if (typeof id !== 'string' || id.length === 0) throw new Error('InvalidPluginId');
 			if (!PLUGIN_ID_PATTERN.test(id)) throw new Error('InvalidPluginId');
 			if (typeof enabled !== 'boolean') throw new Error('InvalidEnabledFlag');
+			if (enabled) {
+				const record = manager.getRegistry().records.find((r) => r.id === id);
+				const tier = record?.manifest?.tier ?? 0;
+				// A code-tier plugin runs sandboxed code, so it may only be enabled once
+				// it holds a consented ledger grant (minted by the host-owned consent
+				// window via plugins:request-consent). The renderer cannot flip it on.
+				if (tier >= 1 && !authStore.isEnabled(id)) throw new Error('PluginNotAuthorized');
+			}
 			return snapshotOf(manager.setEnabled(id, enabled));
 		}
 	);
@@ -110,7 +121,11 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 		async (id: unknown): Promise<{ success: boolean; error?: string }> => {
 			if (typeof id !== 'string' || id.length === 0) throw new Error('InvalidPluginId');
 			if (!PLUGIN_ID_PATTERN.test(id)) throw new Error('InvalidPluginId');
-			return manager.uninstall(id);
+			const result = manager.uninstall(id);
+			// Authoritative removal in the ledger too (tombstone), so a restored folder
+			// is recognized as removed-by-user and cannot silently re-enable.
+			authStore.uninstall(id);
+			return result;
 		}
 	);
 	const wrappedContributions = withIpcErrorLogging(
@@ -126,34 +141,10 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 		async (id: unknown): Promise<PluginGrantsSnapshot> => {
 			if (typeof id !== 'string' || id.length === 0) throw new Error('InvalidPluginId');
 			if (!PLUGIN_ID_PATTERN.test(id)) throw new Error('InvalidPluginId');
-			return { requested: manager.getRequestedPermissions(id) ?? [], granted: readGrants(id) };
-		}
-	);
-	const wrappedSetGrants = withIpcErrorLogging(
-		handlerOpts('setGrants'),
-		// The consent action: the user approves a subset of the plugin's REQUESTED
-		// permissions. We never grant a capability the manifest did not request
-		// (an over-broad grant cannot be smuggled in via the renderer), and only
-		// known capabilities survive.
-		async (id: unknown, approvedCapabilities: unknown): Promise<PluginGrantsSnapshot> => {
-			if (typeof id !== 'string' || id.length === 0) throw new Error('InvalidPluginId');
-			if (!PLUGIN_ID_PATTERN.test(id)) throw new Error('InvalidPluginId');
-			if (!Array.isArray(approvedCapabilities)) throw new Error('InvalidApproval');
-			const approved = new Set(approvedCapabilities.filter(isPluginCapability));
-			const requested = manager.getRequestedPermissions(id) ?? [];
-			const toGrant = requested.filter((r) => approved.has(r.capability));
-			const grants = grantsFromRequests(toGrant, Date.now());
-			// Enforce the transcripts:read + egress mutual-exclusion at the consent
-			// boundary itself (not only in the renderer dialog / at runtime): a direct
-			// IPC call must not persist a plugin holding transcripts:read together with
-			// net:fetch / process:spawn unless it is trusted-signed. Trust counts only
-			// when the signature actually verifies as trusted.
-			const record = manager.getRegistry().records.find((r) => r.id === id);
-			const trusted = record?.signature?.status === 'trusted';
-			const conflict = transcriptReadEgressConflict(grants, { trusted });
-			if (conflict) throw new Error(`GrantConflict: ${conflict}`);
-			setGrants(id, grants);
-			return { requested, granted: grants };
+			return {
+				requested: manager.getRequestedPermissions(id) ?? [],
+				granted: authStore.readGrants(id),
+			};
 		}
 	);
 	const wrappedRevokeGrants = withIpcErrorLogging(
@@ -161,7 +152,10 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 		async (id: unknown): Promise<PluginGrantsSnapshot> => {
 			if (typeof id !== 'string' || id.length === 0) throw new Error('InvalidPluginId');
 			if (!PLUGIN_ID_PATTERN.test(id)) throw new Error('InvalidPluginId');
-			forgetGrants(id);
+			// Revoke drops the sealed grant AND disables the plugin: a code-tier plugin
+			// must not keep running without grants.
+			authStore.revoke(id);
+			manager.setEnabled(id, false);
 			return { requested: manager.getRequestedPermissions(id) ?? [], granted: [] };
 		}
 	);
@@ -239,14 +233,6 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 		async (event, id: unknown): Promise<PluginGrantsSnapshot> => {
 			if (!isPluginsEnabled(settingsStore)) throw new Error('PluginsDisabled');
 			return wrappedGetGrants(event, id);
-		}
-	);
-
-	ipcMain.handle(
-		'plugins:set-grants',
-		async (event, id: unknown, approvedCapabilities: unknown): Promise<PluginGrantsSnapshot> => {
-			if (!isPluginsEnabled(settingsStore)) throw new Error('PluginsDisabled');
-			return wrappedSetGrants(event, id, approvedCapabilities);
 		}
 	);
 

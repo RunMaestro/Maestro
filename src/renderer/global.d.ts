@@ -3519,7 +3519,6 @@ interface MaestroAPI {
 		uninstall: (id: string) => Promise<{ success: boolean; error?: string }>;
 		contributions: () => Promise<PluginContributions>;
 		getGrants: (id: string) => Promise<PluginGrantsSnapshot>;
-		setGrants: (id: string, approvedCapabilities: string[]) => Promise<PluginGrantsSnapshot>;
 		requestConsent: (id: string) => Promise<{ opened: boolean }>;
 		revokeGrants: (id: string) => Promise<PluginGrantsSnapshot>;
 		invokeCommand: (commandId: string, args?: unknown) => Promise<{ dispatched: boolean }>;
