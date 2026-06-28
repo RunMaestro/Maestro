@@ -8,12 +8,12 @@
  * an env var pointing at a temp file we own). This module is the single source of
  * truth for how each agent is injected.
  *
- * The installed agents' strategies were verified against the live CLIs
- * (`claude/codex/opencode --help`): claude has `--mcp-config <json>` +
- * `--strict-mcp-config`; codex has `-c, --config <key=value>` overrides that also
- * apply to `exec`; opencode reads a config file pointed at by `OPENCODE_CONFIG`.
- * Other agents are best-guess from public docs and flagged `verified: false` - the
- * spawn wiring only auto-injects verified strategies.
+ * The installed agents claude + codex were verified against the live CLIs and
+ * auto-inject: claude has `--mcp-config <json>` + `--strict-mcp-config`; codex has
+ * `-c, --config <key=value>` overrides that also apply to `exec` (both additive /
+ * isolated, so they can't disturb Maestro's existing spawn flags). opencode and
+ * the remaining agents are best-guess (`verified: false`) and are NOT auto-injected
+ * - the spawn wiring only injects verified strategies.
  *
  * Pure: no Node, no Electron. The caller writes `files`, merges `env`, and
  * prepends `globalArgs` to the agent argv.
@@ -154,11 +154,11 @@ export function buildMcpInjection(
 }
 
 /**
- * MCP-config strategy per Maestro agent id. The installed CLIs
- * (claude/codex/opencode) were verified against `--help`; the rest are
- * best-guess from public docs and flagged `verified: false`. The spawn wiring
- * auto-injects ONLY verified strategies, so a wrong best-guess shape can never
- * break an unverified agent's startup - it stays inert metadata until confirmed.
+ * MCP-config strategy per Maestro agent id. claude + codex were verified against
+ * `--help` and auto-inject; the rest (incl. opencode - see its note) are
+ * best-guess, flagged `verified: false`. The spawn wiring auto-injects ONLY
+ * verified strategies, so a wrong/uncertain shape can never break an agent's
+ * startup - it stays inert metadata until confirmed.
  *
  * Static string-keyed table -> `Record` (not a Map): membership is fixed at
  * authoring time.
@@ -167,9 +167,15 @@ export const MCP_CONFIG_BY_AGENT: Record<string, McpConfigCapability> = {
 	// Verified against the installed CLIs.
 	'claude-code': { strategy: 'claude-mcp-config', verified: true },
 	codex: { strategy: 'codex-config-override', verified: true },
+	// opencode: installed, and the config strategy is written + tested - BUT Maestro
+	// drives opencode in batch mode via `OPENCODE_CONFIG_CONTENT` (inline JSON that
+	// sets permission/`question: deny` to stop prompt hangs). It is unconfirmed
+	// whether a separate `OPENCODE_CONFIG` file MERGES with that inline content or
+	// replaces it; replacing would re-enable prompts and hang the agent. Kept
+	// best-guess (not auto-injected) until a live run confirms the merge.
 	opencode: {
 		strategy: 'opencode-env-config',
-		verified: true,
+		verified: false,
 		envVar: 'OPENCODE_CONFIG',
 		fileName: 'maestro-opencode-mcp.json',
 	},
