@@ -70,6 +70,19 @@ function hashTree(dir: string): Record<string, string> {
 	return out;
 }
 
+/**
+ * A stable content digest of a plugin directory — the same file set and hashing
+ * the signer uses, hashed once more into a single hex digest. The authorization
+ * ledger binds a grant to this value, so if ANY plugin file changes after
+ * consent the digest changes and the plugin must be re-consented. Throws on a
+ * symlink (same policy as the signer); the caller treats a throw as
+ * un-authorizable (disabled).
+ */
+export function computePluginContentHash(dir: string): string {
+	const payload = buildSigningPayload(hashTree(dir));
+	return createHash('sha256').update(payload, 'utf-8').digest('hex');
+}
+
 /** Do two file-hash maps describe exactly the same files with the same hashes? */
 function fileSetsMatch(a: Record<string, string>, b: Record<string, string>): boolean {
 	const aKeys = Object.keys(a).sort();
