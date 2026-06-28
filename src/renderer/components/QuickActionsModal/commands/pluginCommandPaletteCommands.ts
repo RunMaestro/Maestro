@@ -1,6 +1,7 @@
 import type {
 	CommandContribution,
 	CommandMacroContribution,
+	UiItemContribution,
 } from '../../../../shared/plugins/contributions';
 import type { QuickAction } from '../types';
 
@@ -13,6 +14,8 @@ interface BuildPluginCommandPaletteCommandsArgs {
 	commands: readonly CommandContribution[];
 	/** Tier-0 `commandMacros` (templated-prompt) aggregated across active plugins. */
 	macros: readonly CommandMacroContribution[];
+	/** Tier-1 `ui:contribute` items; the `menu`-surface ones surface as palette entries. */
+	uiItems?: readonly UiItemContribution[];
 	/** Send a macro's templated prompt to the active agent (same path as typing). */
 	onRunPromptMacro?: (prompt: string) => void;
 	/** Invoke a tier-1 plugin command over the EXISTING invokeCommand RPC. */
@@ -40,6 +43,7 @@ interface BuildPluginCommandPaletteCommandsArgs {
 export function buildPluginCommandPaletteCommands({
 	commands,
 	macros,
+	uiItems,
 	onRunPromptMacro,
 	invokeCommand,
 	onCommandResult,
@@ -78,6 +82,27 @@ export function buildPluginCommandPaletteCommands({
 					void invokeCommand(command.id).then(
 						(result) => onCommandResult?.({ dispatched: result.dispatched, title: command.title }),
 						(error) => onCommandError?.({ title: command.title, error })
+					);
+					setQuickActionOpen(false);
+				},
+			});
+		}
+	}
+
+	if (invokeCommand && uiItems) {
+		for (const item of uiItems) {
+			// Other surfaces (status-bar, sidebar, toolbar) render in their own
+			// regions; the palette is the menu surface.
+			if (item.surface !== 'menu') continue;
+			actions.push({
+				id: item.id,
+				pluginId: item.pluginId,
+				label: item.label,
+				subtext: `from ${item.pluginId}`,
+				action: () => {
+					void invokeCommand(`${item.pluginId}/${item.command}`).then(
+						(result) => onCommandResult?.({ dispatched: result.dispatched, title: item.label }),
+						(error) => onCommandError?.({ title: item.label, error })
 					);
 					setQuickActionOpen(false);
 				},

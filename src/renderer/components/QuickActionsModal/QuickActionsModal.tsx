@@ -639,6 +639,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const pluginPaletteActions = buildPluginCommandPaletteCommands({
 		commands: pluginContributions.commands,
 		macros: pluginContributions.commandMacros,
+		uiItems: pluginContributions.uiItems,
 		onRunPromptMacro,
 		invokeCommand: (commandId) => window.maestro.plugins.invokeCommand(commandId),
 		onCommandResult: ({ dispatched, title }) =>
