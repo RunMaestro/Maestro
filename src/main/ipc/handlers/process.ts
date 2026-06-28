@@ -7,6 +7,11 @@ import * as path from 'path';
 import { ProcessManager } from '../../process-manager';
 import { AgentDetector } from '../../agents';
 import { resolveMaestroCliScriptPath } from '../../cue/cue-cli-executor';
+import {
+	getActivePluginManager,
+	isPluginsFeatureEnabled,
+} from '../../plugins/plugin-manager-singleton';
+import { buildMcpInjection, MCP_CONFIG_BY_AGENT } from '../../../shared/plugins/mcp-agent-config';
 import type { InteractiveReplayController } from '../../agents/claude-interactive-replay';
 import { stripThinkingFromTranscript } from '../../agents/claude-transcript-sanitizer';
 import type { ProcessConfig as ProcessSpawnConfig } from '../../process-manager/types';
@@ -509,6 +514,65 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						MAESTRO_CLI_JS: resolveMaestroCliScriptPath(),
 						MAESTRO_AGENT_ID: baseSessionId,
 					};
+				}
+
+				// MCP plugin-tool bridge: when the plugins feature is on, this agent
+				// supports a verified ephemeral MCP config, and at least one plugin tool
+				// is registered, point the agent at `maestro-cli mcp serve` so its model
+				// can call plugin tools (each call risk-gated in the app). Local spawns
+				// only - the bridge reaches the app over a localhost WebSocket + discovery
+				// file an SSH-remote agent cannot see. Best-guess (unverified) agents are
+				// intentionally skipped to avoid breaking their startup with a wrong shape.
+				const mcpCap = MCP_CONFIG_BY_AGENT[config.toolType];
+				if (
+					mcpCap?.verified &&
+					isPluginsFeatureEnabled() &&
+					!config.sessionSshRemoteConfig?.enabled
+				) {
+					const mcpTools = getActivePluginManager()?.getContributions().tools ?? [];
+					if (mcpTools.length > 0) {
+						const mcpSpec = {
+							command: process.execPath,
+							args: [resolveMaestroCliScriptPath(), 'mcp', 'serve', '--tab', baseSessionId],
+							env: { ELECTRON_RUN_AS_NODE: '1' },
+						};
+						// Cheap pure pre-build to learn whether this strategy needs temp
+						// files; only then allocate a unique per-spawn dir (so concurrent
+						// spawns never share/clobber a config) and rebuild with real paths.
+						let mcpInjection = buildMcpInjection(mcpCap, mcpSpec, {
+							tmpDir: os.tmpdir(),
+							join: path.join,
+						});
+						if (mcpInjection.files.length > 0) {
+							const mcpTmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'maestro-mcp-'));
+							mcpInjection = buildMcpInjection(mcpCap, mcpSpec, {
+								tmpDir: mcpTmpDir,
+								join: path.join,
+							});
+							for (const file of mcpInjection.files) {
+								await fsp.writeFile(file.path, file.content, 'utf-8');
+							}
+							setTimeout(() => {
+								fsp.rm(mcpTmpDir, { recursive: true, force: true }).catch((err: unknown) => {
+									if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+										captureException(err instanceof Error ? err : new Error(String(err)), {
+											context: 'mcp config temp dir cleanup',
+											dir: mcpTmpDir,
+										});
+									}
+								});
+							}, 30_000);
+						}
+						finalArgs = [...mcpInjection.globalArgs, ...finalArgs];
+						effectiveCustomEnvVars = {
+							...(effectiveCustomEnvVars || {}),
+							...mcpInjection.env,
+						};
+						logger.debug(
+							`[Plugins] MCP tool bridge enabled for ${config.toolType} (${mcpTools.length} tools)`,
+							LOG_CONTEXT
+						);
+					}
 				}
 
 				// ========================================================================

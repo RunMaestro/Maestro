@@ -88,6 +88,7 @@ import {
 	pianolaSuperviseSetEnabled,
 } from './commands/pianola-supervise';
 import { pluginInit, pluginValidate, pluginSign, pluginPack } from './commands/plugin';
+import { mcpServe } from './commands/mcp';
 
 // Injected at build time by scripts/build-cli.mjs via esbuild `define`.
 // The typeof guard keeps non-esbuild execution paths (ts-node, plain tsc output) from
@@ -1133,6 +1134,23 @@ plugin
 	.option('--out <file>', 'Output archive path (default <id>-<version>.tgz)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((dir, options) => pluginPack(dir, options));
+
+// MCP bridge command - an MCP stdio server that exposes the running app's
+// registered plugin tools to an agent's model. Agents spawn this via their
+// per-invocation MCP config (see src/shared/plugins/mcp-agent-config.ts); it
+// bridges tools/list + tools/call to the desktop over the CLI WebSocket, each
+// call risk-gated before the broker invokes the plugin handler.
+const mcp = program
+	.command('mcp')
+	.description('Model Context Protocol bridge for Maestro plugin tools');
+
+mcp
+	.command('serve')
+	.description(
+		'Run an MCP stdio server exposing registered plugin tools (spawned by an agent via its MCP config)'
+	)
+	.option('--tab <id>', 'Originating desktop tab id (diagnostics only)')
+	.action((options) => mcpServe(options));
 
 // Commander auto-switches to from: 'electron' when process.versions.electron is
 // set, which is still true under ELECTRON_RUN_AS_NODE=1. In that mode Commander

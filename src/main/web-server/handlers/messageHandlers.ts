@@ -114,6 +114,11 @@ const EXTERNAL_FLASH_MAX_DURATION_MS = 5000;
  */
 const EXTERNAL_TOAST_MAX_DURATION_SECONDS = 60;
 import { AGENT_IDS } from '../../../shared/agentIds';
+import {
+	getActivePluginManager,
+	isPluginsFeatureEnabled,
+} from '../../plugins/plugin-manager-singleton';
+import { evaluatePluginDispatch } from '../../../shared/plugins/plugin-dispatch-gate';
 
 // Logger context for all message handler logs
 const LOG_CONTEXT = 'WebServer';
@@ -766,6 +771,14 @@ export class WebSocketMessageHandler {
 
 			case 'list_desktop_sessions':
 				this.handleListDesktopSessions(client, message);
+				break;
+
+			case 'plugins_list_tools':
+				this.handlePluginsListTools(client, message);
+				break;
+
+			case 'plugins_call_tool':
+				void this.handlePluginsCallTool(client, message);
 				break;
 
 			case 'get_session_history':
@@ -4848,6 +4861,86 @@ export class WebSocketMessageHandler {
 			sessions,
 			requestId: message.requestId,
 		});
+	}
+
+	/**
+	 * Handle plugins_list_tools — project the registered plugin `tools`
+	 * contributions into MCP tool defs for the `maestro-cli mcp serve` bridge.
+	 * Returns an MCP-safe `name` (namespaced id, `/`->`__`) plus the real
+	 * `toolId` so the bridge can reverse-map on call. Empty when the plugins flag
+	 * is off or no manager is wired.
+	 */
+	private handlePluginsListTools(client: WebClient, message: WebClientMessage): void {
+		const manager = getActivePluginManager();
+		let tools: Array<{
+			name: string;
+			toolId: string;
+			description: string;
+			inputSchema: Record<string, unknown>;
+		}> = [];
+		if (manager && isPluginsFeatureEnabled()) {
+			try {
+				tools = manager.getContributions().tools.map((t) => ({
+					name: t.id.replace(/\//g, '__').replace(/[^a-zA-Z0-9_-]/g, '_'),
+					toolId: t.id,
+					description: t.description,
+					inputSchema: t.inputSchema ?? { type: 'object' },
+				}));
+			} catch (error) {
+				const reason = error instanceof Error ? error.message : String(error);
+				logger.warn(`[Web] plugins_list_tools failed: ${reason}`, LOG_CONTEXT);
+			}
+		}
+		this.send(client, {
+			type: 'plugins_list_tools_result',
+			success: true,
+			tools,
+			requestId: message.requestId,
+		});
+	}
+
+	/**
+	 * Handle plugins_call_tool — risk-gate a model-initiated plugin tool call,
+	 * then invoke it via the broker. A HIGH-risk verdict from the shared Pianola
+	 * dispatch gate is surfaced and NEVER executed, so an injected/compromised
+	 * agent transcript cannot drive a destructive plugin tool. Tool failures come
+	 * back as `{ ok:false, error }`; blocks as `{ ok:false, blocked:true }`.
+	 */
+	private async handlePluginsCallTool(client: WebClient, message: WebClientMessage): Promise<void> {
+		const respond = (extra: Record<string, unknown>): void =>
+			this.send(client, {
+				type: 'plugins_call_tool_result',
+				requestId: message.requestId,
+				...extra,
+			});
+		const toolId = typeof message.toolId === 'string' ? message.toolId : '';
+		if (!toolId) {
+			respond({ ok: false, error: 'Missing toolId' });
+			return;
+		}
+		const manager = getActivePluginManager();
+		if (!manager || !isPluginsFeatureEnabled()) {
+			respond({ ok: false, error: 'PluginsDisabled' });
+			return;
+		}
+		const args = 'args' in message ? message.args : undefined;
+		let argText = '';
+		try {
+			argText = JSON.stringify(args ?? {});
+		} catch {
+			argText = '';
+		}
+		const verdict = evaluatePluginDispatch(`${toolId} ${argText}`);
+		if (!verdict.eligible) {
+			respond({ ok: false, blocked: true, risk: verdict.risk, reason: verdict.reason });
+			return;
+		}
+		try {
+			const result = await manager.invokeTool(toolId, args);
+			respond({ ok: true, result });
+		} catch (error) {
+			respond({ ok: false, error: error instanceof Error ? error.message : String(error) });
+		}
 	}
 
 	/**

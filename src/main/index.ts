@@ -31,6 +31,7 @@ import { transcriptReadEgressConflict } from '../shared/plugins/capability-polic
 import { evaluatePluginDispatch } from '../shared/plugins/plugin-dispatch-gate';
 import { PermissionBroker } from './plugins/permission-broker';
 import { PluginSandboxHost } from './plugins/plugin-sandbox-host';
+import { setActivePluginManager } from './plugins/plugin-manager-singleton';
 import { PluginSchedulerHost } from './plugins/plugin-scheduler-host';
 import {
 	buildHostCallHandlers,
@@ -1330,6 +1331,13 @@ app
 		// (interval / daily-time) on a poll loop. Self-gates on the plugins flag.
 		// notify -> toast; dispatch is left unwired (needs agents:dispatch review).
 		const schedulerManager = pluginManager;
+		// Expose the live manager + plugins-flag predicate to the web-server
+		// message handlers (the MCP tool bridge) without threading it through
+		// their constructor; mirrors the StatsDB singleton.
+		setActivePluginManager(pluginManager, () => {
+			const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
+			return ef.plugins === true;
+		});
 		pluginScheduler = new PluginSchedulerHost({
 			isEnabled: () => {
 				const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
