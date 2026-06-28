@@ -392,3 +392,42 @@ describe('transcripts.read', () => {
 		).resolves.toEqual([{ summary: 's2' }]);
 	});
 });
+
+describe('arbitrary-code-execution-grade verbs stay inert (E-InertCaps)', () => {
+	// SECURITY INVARIANT: `agents.dispatch` (send a prompt -> agent code runs) and
+	// `process.spawn` (run a shell command) are arbitrary-code-execution-grade.
+	// They are deliberately UNWIRED until the Phase-3 OS sandbox lands; a confined
+	// cwd + minimal-env child_process is NOT a sandbox. The single gate is that the
+	// integrator (src/main/index.ts) omits the optional `dispatch`/`spawn` deps, so
+	// `buildHostCallHandlers` never registers the handlers and any call is rejected
+	// upstream as an unimplemented host method. These tests pin the factory contract
+	// (the deps are the only gate); the production integration site is locked
+	// separately by the source guard in plugin-host-deps-wiring.test.ts.
+	it('does NOT register agents.dispatch or process.spawn with default deps', () => {
+		const h = buildHostCallHandlers(makeDeps());
+		expect(h['agents.dispatch']).toBeUndefined();
+		expect(h['process.spawn']).toBeUndefined();
+	});
+
+	it('still exposes the read-only agents.get verb (gating is verb-specific, not namespace-wide)', () => {
+		const h = buildHostCallHandlers(makeDeps());
+		expect(typeof h['agents.get']).toBe('function');
+	});
+
+	it('the dispatch/spawn deps are the ONLY gate — present only when explicitly provided', async () => {
+		// This documents the wiring mechanism without endorsing it: the verbs become
+		// reachable IF AND ONLY IF the integrator passes the deps. Production code
+		// (index.ts) must keep omitting them until the sandbox exists.
+		const dispatch = vi.fn(async () => 'dispatched');
+		const spawn = vi.fn(async () => 'spawned');
+		const h = buildHostCallHandlers(makeDeps({ dispatch, spawn }));
+		expect(typeof h['agents.dispatch']).toBe('function');
+		expect(typeof h['process.spawn']).toBe('function');
+		await expect(h['agents.dispatch']!('p', { agentId: 'a', prompt: 'hi' })).resolves.toBe(
+			'dispatched'
+		);
+		await expect(h['process.spawn']!('p', { command: 'ls' })).resolves.toBe('spawned');
+		expect(dispatch).toHaveBeenCalledWith('a', 'hi', undefined);
+		expect(spawn).toHaveBeenCalledWith('p', 'ls', undefined);
+	});
+});
