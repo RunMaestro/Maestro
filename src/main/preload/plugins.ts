@@ -63,14 +63,6 @@ export function createPluginsApi() {
 			ipcRenderer.invoke('plugins:get-grants', id),
 
 		/**
-		 * The consent action: approve a subset of the plugin's requested
-		 * capabilities. The main process only grants capabilities the manifest
-		 * actually requested, so this cannot over-grant.
-		 */
-		setGrants: (id: string, approvedCapabilities: string[]): Promise<PluginGrantsSnapshot> =>
-			ipcRenderer.invoke('plugins:set-grants', id, approvedCapabilities),
-
-		/**
 		 * Ask the MAIN process to open the dedicated, host-owned consent window for
 		 * a plugin. The window (not this renderer) collects the approval and mints
 		 * the grant through the isolated minter; the renderer never sees the nonce.

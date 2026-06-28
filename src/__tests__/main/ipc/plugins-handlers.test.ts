@@ -32,7 +32,6 @@ vi.mock('../../../main/plugins/plugin-store-main', () => ({
 }));
 
 import { registerPluginsHandlers } from '../../../main/ipc/handlers/plugins';
-import { setGrants } from '../../../main/plugins/plugin-store-main';
 
 const EMPTY: AggregatedContributions = {
 	themes: [],
@@ -67,6 +66,12 @@ function register(plugins: boolean, sandboxHost?: PluginsHandlerDependencies['sa
 		settingsStore: settingsStore(plugins),
 		manager: manager as unknown as PluginManager,
 		sandboxHost,
+		authStore: {
+			readGrants: vi.fn(() => []),
+			revoke: vi.fn(),
+			uninstall: vi.fn(),
+			isEnabled: vi.fn(() => false),
+		},
 	});
 	return manager;
 }
@@ -173,46 +178,53 @@ describe('plugins:get-activity (gated read-only observability)', () => {
 	});
 });
 
-describe('plugins:set-grants enforces the transcripts:read + egress conflict at the consent boundary', () => {
-	function setupGrants(opts: { requested: string[]; trusted?: boolean }) {
+describe('plugins:set-enabled gates code-tier activation on ledger authorization', () => {
+	function setup(opts: { tier: 0 | 1; authorized: boolean }) {
+		const setEnabledMock = vi.fn(() => emptyRegistry);
 		const manager = {
 			refresh: vi.fn(() => emptyRegistry),
 			getContributions: vi.fn(() => EMPTY),
-			setEnabled: vi.fn(() => emptyRegistry),
-			getRequestedPermissions: vi.fn(() => opts.requested.map((capability) => ({ capability }))),
-			getRegistry: vi.fn(() => ({
-				records: [{ id: 'com.p', signature: { status: opts.trusted ? 'trusted' : 'unsigned' } }],
-			})),
+			getRegistry: vi.fn(() => ({ records: [{ id: 'com.p', manifest: { tier: opts.tier } }] })),
+			setEnabled: setEnabledMock,
 		};
 		registerPluginsHandlers({
 			settingsStore: settingsStore(true),
 			manager: manager as unknown as PluginManager,
+			authStore: {
+				readGrants: vi.fn(() => []),
+				revoke: vi.fn(),
+				uninstall: vi.fn(),
+				isEnabled: vi.fn(() => opts.authorized),
+			},
 		});
-		return manager;
+		return { setEnabledMock };
 	}
 
-	it('rejects an untrusted plugin granted transcripts:read + net:fetch, without persisting', async () => {
-		setupGrants({ requested: ['transcripts:read', 'net:fetch'] });
-		const handler = handlers.get('plugins:set-grants');
-		await expect(handler!(event, 'com.p', ['transcripts:read', 'net:fetch'])).rejects.toThrow(
-			/GrantConflict/
-		);
-		expect(vi.mocked(setGrants)).not.toHaveBeenCalled();
+	it('rejects enabling a code-tier plugin that holds no ledger grant', async () => {
+		const { setEnabledMock } = setup({ tier: 1, authorized: false });
+		const handler = handlers.get('plugins:set-enabled');
+		await expect(handler!(event, 'com.p', true)).rejects.toThrow(/PluginNotAuthorized/);
+		expect(setEnabledMock).not.toHaveBeenCalled();
 	});
 
-	it('allows transcripts:read alone (no egress to conflict with)', async () => {
-		setupGrants({ requested: ['transcripts:read'] });
-		const handler = handlers.get('plugins:set-grants');
-		await expect(handler!(event, 'com.p', ['transcripts:read'])).resolves.toBeDefined();
-		expect(vi.mocked(setGrants)).toHaveBeenCalled();
+	it('allows enabling a code-tier plugin once it is authorized in the ledger', async () => {
+		const { setEnabledMock } = setup({ tier: 1, authorized: true });
+		const handler = handlers.get('plugins:set-enabled');
+		await expect(handler!(event, 'com.p', true)).resolves.toBeDefined();
+		expect(setEnabledMock).toHaveBeenCalledWith('com.p', true);
 	});
 
-	it('allows transcripts:read + net:fetch when the plugin is trusted-signed', async () => {
-		setupGrants({ requested: ['transcripts:read', 'net:fetch'], trusted: true });
-		const handler = handlers.get('plugins:set-grants');
-		await expect(
-			handler!(event, 'com.p', ['transcripts:read', 'net:fetch'])
-		).resolves.toBeDefined();
-		expect(vi.mocked(setGrants)).toHaveBeenCalled();
+	it('does not gate disabling a code-tier plugin', async () => {
+		const { setEnabledMock } = setup({ tier: 1, authorized: false });
+		const handler = handlers.get('plugins:set-enabled');
+		await expect(handler!(event, 'com.p', false)).resolves.toBeDefined();
+		expect(setEnabledMock).toHaveBeenCalledWith('com.p', false);
+	});
+
+	it('does not gate enabling a tier-0 data plugin', async () => {
+		const { setEnabledMock } = setup({ tier: 0, authorized: false });
+		const handler = handlers.get('plugins:set-enabled');
+		await expect(handler!(event, 'com.p', true)).resolves.toBeDefined();
+		expect(setEnabledMock).toHaveBeenCalledWith('com.p', true);
 	});
 });

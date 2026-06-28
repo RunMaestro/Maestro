@@ -57,8 +57,7 @@ import {
 	capabilityRisk,
 	isPluginCapability,
 } from '../shared/plugins/permissions';
-import { readGrants } from './plugins/plugin-store-main';
-import { createAuthorizationStore } from './plugins/authorization-ledger';
+import { createAuthorizationStore, type AuthorizationStore } from './plugins/authorization-ledger';
 import { pluginIdentity } from './plugins/plugin-identity';
 import { PLUGIN_ID_PATTERN } from '../shared/plugins/plugin-manifest';
 import { ConsentNonceRegistry, ConsentMinter } from './plugins/consent-minter';
@@ -411,6 +410,7 @@ let pianolaRelearnScheduler: PianolaRelearnScheduler | null = null;
 let pluginManager: PluginManager | null = null;
 let pluginScheduler: PluginSchedulerHost | null = null;
 let pluginSandboxHost: PluginSandboxHost | null = null;
+let pluginAuthStore: AuthorizationStore | null = null;
 let pluginEventBus: PluginEventBusImpl | null = null;
 let usageRefreshScheduler: UsageRefreshScheduler | null = null;
 let interactiveReplayController: InteractiveReplayController<ProcessSpawnConfig> | null = null;
@@ -1194,8 +1194,26 @@ app
 		// code. Self-gates on encoreFeatures.plugins. The permission broker is the
 		// single authorization gate for every sandbox host call; the sandbox host
 		// forks one utilityProcess per running tier-1 plugin.
+		// Sealed plugin authorization ledger - the LIVE grant source for the broker,
+		// contribution gating, and the refresh verifier. The consent window's minter
+		// is the only writer; safeStorage seals the contents and the default noAnchor()
+		// keeps it session-only (re-consent each launch) until the keyring anchor lands.
+		const authStore = createAuthorizationStore({
+			safeStorage,
+			ledgerPath: path.join(app.getPath('userData'), 'plugin-authorization.bin'),
+		});
+		// Expose the same instance to the IPC registration phase below.
+		pluginAuthStore = authStore;
+		const trustedKeysFor = (): string[] => {
+			const keys = store.get('pluginTrustedKeys', []) as unknown;
+			return Array.isArray(keys) ? keys.filter((k): k is string => typeof k === 'string') : [];
+		};
+		// The live grant source every enforcement seam now reads (sealed, identity-
+		// bound, anti-rollback) instead of the forgeable on-disk store.
+		const grantsOf = (pluginId: string) => authStore.readGrants(pluginId);
+
 		const pluginBroker = new PermissionBroker({
-			getGrants: (pluginId) => readGrants(pluginId),
+			getGrants: (pluginId) => grantsOf(pluginId),
 			// Structurally exclude the entire Maestro userData/config tree (grants,
 			// enable-state, encoreFeatures + every setting, agent-configs,
 			// cli-server.json token, the plugins dir, plugin KV, supervisor targets,
@@ -1260,7 +1278,7 @@ app
 			pluginSessionsList().find((s) => s.id === sessionId) ?? null;
 
 		const eventBus = new PluginEventBusImpl({
-			isPermitted: (pluginId) => isPermitted(readGrants(pluginId), 'events:subscribe'),
+			isPermitted: (pluginId) => isPermitted(grantsOf(pluginId), 'events:subscribe'),
 			push: (pluginId, event) => pluginSandboxHost?.pushEvent(pluginId, event) ?? false,
 		});
 		pluginEventBus = eventBus;
@@ -1283,7 +1301,7 @@ app
 					const reg = pluginManager?.getRegistry();
 					const rec = reg?.records?.find((r) => r.id === pluginId);
 					const trusted = rec?.signature?.status === 'trusted';
-					const reason = transcriptReadEgressConflict(readGrants(pluginId), { trusted });
+					const reason = transcriptReadEgressConflict(grantsOf(pluginId), { trusted });
 					if (reason) throw new Error(reason);
 				},
 				auditTranscriptRead: (pluginId, info) => {
@@ -1334,10 +1352,21 @@ app
 				return Array.isArray(keys) ? keys.filter((k): k is string => typeof k === 'string') : [];
 			},
 			sandbox: sandboxHost,
-			// Gate capability-scoped contributions by the SAME grant source the broker
-			// uses (line ~1174, currently the on-disk grants store); both move to the
-			// verified authorization ledger together when that wiring lands.
-			getGrants: (pluginId) => readGrants(pluginId),
+			// Gate capability-scoped contributions by the SAME live grant source the
+			// broker uses: the sealed authorization ledger.
+			getGrants: (pluginId) => grantsOf(pluginId),
+			// Refresh-time verifier: force-disable an enabled code-tier plugin whose
+			// consented identity no longer matches the bytes on disk (tamper), or that
+			// was removed, by checking it against the sealed ledger.
+			verifyRecord: (record) => {
+				const identity = pluginIdentity(record.source, trustedKeysFor());
+				if (!identity) return { disable: true };
+				const requested = (record.manifest?.permissions ?? []).map((p) => p.capability);
+				const result = authStore.verify(record.id, identity, requested);
+				return {
+					disable: result.reason === 'identity-changed' || result.reason === 'removed',
+				};
+			},
 			// Complete uninstall (invariant #8): purge the plugin's KV store, its
 			// plugins.<id>.* settings, and its event subscriptions.
 			purgePluginData: (id) =>
@@ -1355,21 +1384,6 @@ app
 			},
 		});
 
-		// Sealed plugin authorization ledger. The consent window's minter is the
-		// ONLY writer (mint), binding each granted subset to the plugin's
-		// content+signature identity. safeStorage seals the contents; the default
-		// noAnchor() keeps it session-only (re-consent each launch) until the keyring
-		// anchor / packaging step lands. The read-flip (broker/manager/getGrants
-		// reading this instead of the on-disk store) is the next step; the ledger is
-		// populated here first so that switch is clean.
-		const authStore = createAuthorizationStore({
-			safeStorage,
-			ledgerPath: path.join(app.getPath('userData'), 'plugin-authorization.bin'),
-		});
-		const trustedKeysFor = (): string[] => {
-			const keys = store.get('pluginTrustedKeys', []) as unknown;
-			return Array.isArray(keys) ? keys.filter((k): k is string => typeof k === 'string') : [];
-		};
 		let consentWindowRef: OpenedConsentWindow | null = null;
 		const closeConsentWindow = (): void => {
 			try {
@@ -1452,9 +1466,12 @@ app
 					'[Plugins]'
 				);
 				try {
-					mainWindow?.webContents.send('plugins:changed', pluginManager?.getRegistry());
+					// Minting IS consent: flip the enable toggle + reconcile the sandbox now
+					// that the plugin holds sealed ledger grants. setEnabled fires onChange
+					// -> plugins:changed for the renderer.
+					pluginManager?.setEnabled(pluginId, true);
 				} catch {
-					// Renderer gone during shutdown; ignore.
+					// Best-effort; the grant is already minted.
 				}
 				return { ok: true, granted: outcome.grants };
 			}
@@ -1490,7 +1507,7 @@ app
 				// requires the plugin to hold a live agents:dispatch grant, so a
 				// low-risk verdict can never bypass the consent/broker model.
 				if (!verdict.eligible) return verdict;
-				if (isPermitted(readGrants(trigger.pluginId), 'agents:dispatch')) return verdict;
+				if (isPermitted(grantsOf(trigger.pluginId), 'agents:dispatch')) return verdict;
 				return {
 					eligible: false,
 					risk: verdict.risk,
@@ -2008,11 +2025,12 @@ function setupIpcHandlers() {
 
 	// Register Plugins handlers (community plugin subsystem, list-only in Phase 0).
 	// The manager is constructed during core-service init above; guard for types.
-	if (pluginManager) {
+	if (pluginManager && pluginAuthStore) {
 		registerPluginsHandlers({
 			settingsStore: store,
 			manager: pluginManager,
 			sandboxHost: pluginSandboxHost ?? undefined,
+			authStore: pluginAuthStore,
 		});
 	}
 

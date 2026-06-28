@@ -65,7 +65,6 @@ import { registerCueHandlers, CueHandlerDependencies } from './cue';
 import { registerCueBackupHandlers } from './cue-backup';
 import { registerPianolaHandlers, PianolaHandlerDependencies } from './pianola';
 import { registerPluginsHandlers, PluginsHandlerDependencies } from './plugins';
-import { PluginManager } from '../../plugins/plugin-manager';
 import { registerWakatimeHandlers } from './wakatime';
 import { registerFeedbackHandlers } from './feedback';
 import { registerMaestroCliHandlers } from './maestro-cli';
@@ -330,20 +329,6 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	// Register Cue Backup handlers (Cue modal Backup tab)
 	registerCueBackupHandlers({
 		sessionsStore: deps.sessionsStore,
-	});
-	// Register Plugins handlers (community plugin subsystem, list-only in Phase 0).
-	// The production manager is owned by src/main/index.ts (which refreshes it on
-	// startup); this aggregate registrar builds a local manager only to satisfy
-	// the dependency.
-	const pluginManager = new PluginManager({
-		isEnabled: () => {
-			const ef = (deps.settingsStore.get('encoreFeatures') ?? {}) as Record<string, unknown>;
-			return ef.plugins === true;
-		},
-	});
-	registerPluginsHandlers({
-		settingsStore: deps.settingsStore,
-		manager: pluginManager,
 	});
 	// Register Core Prompts handlers (no dependencies needed)
 	registerPromptsHandlers();
