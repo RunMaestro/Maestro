@@ -385,7 +385,33 @@ export function useSessionChat(targetSessionId: string): UseSessionChatReturn {
 				// request was in flight stay at the end of the conversation.
 				setMessages((prev) => {
 					const seen = new Set(prev.map((m) => m.id));
-					const deduped = initial.filter((m) => !seen.has(m.id));
+					// Optimistic local user bubbles use a generated `user-...` id, while
+					// the persisted history copy of the same prompt carries the log id, so
+					// an id-only dedupe would show the prompt twice after a reconnect or
+					// history reload. Match history user messages against pending optimistic
+					// bubbles by content and drop the duplicate, consuming each bubble once
+					// so legitimately repeated prompts are preserved.
+					const optimisticUserCounts = new Map<string, number>();
+					for (const m of prev) {
+						if (
+							m.role === 'user' &&
+							m.id.startsWith('user-') &&
+							!m.id.startsWith('user-desktop-')
+						) {
+							optimisticUserCounts.set(m.content, (optimisticUserCounts.get(m.content) ?? 0) + 1);
+						}
+					}
+					const deduped = initial.filter((m) => {
+						if (seen.has(m.id)) return false;
+						if (m.role === 'user') {
+							const remaining = optimisticUserCounts.get(m.content) ?? 0;
+							if (remaining > 0) {
+								optimisticUserCounts.set(m.content, remaining - 1);
+								return false;
+							}
+						}
+						return true;
+					});
 					return deduped.length === 0 ? prev : [...deduped, ...prev];
 				});
 			})

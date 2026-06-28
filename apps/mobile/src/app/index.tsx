@@ -23,6 +23,7 @@ import {
 	StreamingMessage,
 	type ChatMessage,
 } from '@/components/chat';
+import { AITabStrip } from '@/components/AITabStrip';
 import { ConnectionStatusPill } from '@/components/ConnectionStatusPill';
 import { Icon } from '@/components/icon';
 import { MainHeader } from '@/components/main-header';
@@ -79,6 +80,7 @@ export default function ChatScreen() {
 		<>
 			<ChatProvider value={chatContextValue}>
 				<ConnectionStatusPill connectionState={connectionState} />
+				<AITabStrip />
 				<Conversation
 					renderMessage={renderMessage}
 					emptyState={

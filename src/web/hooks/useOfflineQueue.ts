@@ -260,7 +260,15 @@ export function useOfflineQueue(options: UseOfflineQueueOptions): UseOfflineQueu
 				if (stored) {
 					const parsed = JSON.parse(stored);
 					if (Array.isArray(parsed)) {
-						setQueue(parsed);
+						// queueCommand is usable before this async read resolves (cold
+						// start, or replay adding state). Merge instead of overwriting so a
+						// command queued during the load window isn't clobbered by the
+						// persisted snapshot. Dedupe by id; stored entries come first.
+						setQueue((current) => {
+							if (current.length === 0) return parsed;
+							const storedIds = new Set(parsed.map((cmd: QueuedCommand) => cmd.id));
+							return [...parsed, ...current.filter((cmd) => !storedIds.has(cmd.id))];
+						});
 					}
 				}
 			} catch (error) {

@@ -184,7 +184,18 @@ export function ChatMarkdown({ children }: { children: string }) {
 				// Wiki-link renderer: detect maestro://file/ URLs and style distinctly
 				link: ({ node, styles, children, extras }) => {
 					const isWikiLink = node.url?.startsWith('maestro://file/');
-					const onPress = () => extras?.onPress?.(node.url) ?? Linking.openURL(node.url);
+					// `extras.onPress` is `handleLinkPress`, which fully handles the link
+					// (wiki toast or WebBrowser/Linking) and returns void. Returning after
+					// it runs avoids falling through to `Linking.openURL` - which otherwise
+					// opens regular links twice and tries the unsupported `maestro://file/`
+					// URL after the wiki toast.
+					const onPress = () => {
+						if (extras?.onPress) {
+							extras.onPress(node.url);
+							return;
+						}
+						Linking.openURL(node.url);
+					};
 
 					if (isWikiLink) {
 						// Wiki-links render with file icon and accent color
