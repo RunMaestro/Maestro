@@ -94,7 +94,7 @@ One folder per plugin. The folder name and the manifest `id` must agree on insta
 | `name`        | string                   | yes       | display name                                                    |
 | `version`     | string                   | yes       | semver (distinct from `minHostApi`)                             |
 | `tier`        | `0 \| 1 \| 2`            | yes       | trust/capability tier                                           |
-| `maestro`     | `{ minHostApi: string }` | yes       | minimum host API (current host is `1.3.0`)                      |
+| `maestro`     | `{ minHostApi: string }` | yes       | minimum host API (current host is `1.4.0`)                      |
 | `description` | string                   | no        |                                                                 |
 | `author`      | string                   | no        |                                                                 |
 | `license`     | string                   | no        |                                                                 |
@@ -113,7 +113,7 @@ One folder per plugin. The folder name and the manifest `id` must agree on insta
 	"name": "Maestro Vet (Data)",
 	"version": "1.0.0",
 	"tier": 0,
-	"maestro": { "minHostApi": "1.3.0" },
+	"maestro": { "minHostApi": "1.4.0" },
 	"description": "Data-only contributions for the vet workflow.",
 	"contributes": {
 		"themes": [
@@ -147,7 +147,7 @@ One folder per plugin. The folder name and the manifest `id` must agree on insta
 	"name": "Maestro Vet (Code)",
 	"version": "1.0.0",
 	"tier": 1,
-	"maestro": { "minHostApi": "1.3.0" },
+	"maestro": { "minHostApi": "1.4.0" },
 	"entry": "entry.js",
 	"permissions": [
 		{ "capability": "storage:read", "reason": "Remember the last greeting." },
@@ -273,27 +273,32 @@ Only `action: 'notify'` runs on tier 0. `action: 'dispatch'` needs `agents:dispa
 
 Request these in `permissions` as `{ capability, scope?, reason? }`. `scope` narrows `fs:*` (a directory), `net:fetch` (a host), and `transcripts:read` (a project path); absent means the broad form. `reason` shows at the consent prompt.
 
-| Capability            | Risk   | Scope | What it allows                                      | How to request                                                  |
-| --------------------- | ------ | ----- | --------------------------------------------------- | --------------------------------------------------------------- |
-| `fs:read`             | medium | path  | read files under the scope path                     | `{ "capability": "fs:read", "scope": "/abs/dir" }`              |
-| `fs:write`            | high   | path  | write files under the scope path                    | `{ "capability": "fs:write", "scope": "/abs/dir" }`             |
-| `net:fetch`           | medium | host  | HTTP(S) fetch to the scope host                     | `{ "capability": "net:fetch", "scope": "example.com" }`         |
-| `agents:read`         | low    | none  | list/read agent metadata                            | `{ "capability": "agents:read" }`                               |
-| `agents:dispatch`     | high   | none  | send a prompt to an agent (INERT today)             | `{ "capability": "agents:dispatch" }`                           |
-| `notifications:toast` | low    | none  | raise a toast                                       | `{ "capability": "notifications:toast" }`                       |
-| `settings:read`       | low    | none  | read non-secret app settings + own `plugins.<id>.*` | `{ "capability": "settings:read" }`                             |
-| `settings:write`      | low    | none  | write ONLY own `plugins.<id>.*` keys                | `{ "capability": "settings:write" }`                            |
-| `sessions:read`       | medium | none  | list session METADATA (never transcript)            | `{ "capability": "sessions:read" }`                             |
-| `transcripts:read`    | high   | path  | read PROJECTED session content (you declare fields) | `{ "capability": "transcripts:read", "scope": "/abs/project" }` |
-| `storage:read`        | low    | none  | read own private key-value store                    | `{ "capability": "storage:read" }`                              |
-| `storage:write`       | low    | none  | write own private key-value store                   | `{ "capability": "storage:write" }`                             |
-| `ui:command`          | low    | none  | invoke a registered palette command                 | `{ "capability": "ui:command" }`                                |
-| `events:subscribe`    | medium | none  | subscribe to metadata-only host topics              | `{ "capability": "events:subscribe" }`                          |
-| `process:spawn`       | high   | none  | run a shell command (INERT today)                   | `{ "capability": "process:spawn" }`                             |
+| Capability            | Risk   | Scope | What it allows                                                       | How to request                                                  |
+| --------------------- | ------ | ----- | -------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `fs:read`             | medium | path  | read files under the scope path                                      | `{ "capability": "fs:read", "scope": "/abs/dir" }`              |
+| `fs:write`            | high   | path  | write files under the scope path                                     | `{ "capability": "fs:write", "scope": "/abs/dir" }`             |
+| `net:fetch`           | medium | host  | HTTP(S) fetch to the scope host                                      | `{ "capability": "net:fetch", "scope": "example.com" }`         |
+| `agents:read`         | low    | none  | list/read agent metadata                                             | `{ "capability": "agents:read" }`                               |
+| `agents:dispatch`     | high   | none  | send a prompt to an agent (INERT today)                              | `{ "capability": "agents:dispatch" }`                           |
+| `notifications:toast` | low    | none  | raise a toast                                                        | `{ "capability": "notifications:toast" }`                       |
+| `settings:read`       | low    | none  | read non-secret app settings + own `plugins.<id>.*`                  | `{ "capability": "settings:read" }`                             |
+| `settings:write`      | low    | none  | write ONLY own `plugins.<id>.*` keys                                 | `{ "capability": "settings:write" }`                            |
+| `sessions:read`       | medium | none  | list session METADATA (never transcript)                             | `{ "capability": "sessions:read" }`                             |
+| `transcripts:read`    | high   | path  | read PROJECTED session content (you declare fields)                  | `{ "capability": "transcripts:read", "scope": "/abs/project" }` |
+| `storage:read`        | low    | none  | read own private key-value store                                     | `{ "capability": "storage:read" }`                              |
+| `storage:write`       | low    | none  | write own private key-value store                                    | `{ "capability": "storage:write" }`                             |
+| `ui:command`          | low    | none  | invoke a registered palette command                                  | `{ "capability": "ui:command" }`                                |
+| `events:subscribe`    | medium | none  | subscribe to metadata-only host topics                               | `{ "capability": "events:subscribe" }`                          |
+| `process:spawn`       | high   | none  | run a shell command (INERT today)                                    | `{ "capability": "process:spawn" }`                             |
+| `ui:contribute`       | medium | none  | add host-rendered items to Maestro's UI (menus, sidebar, status bar) | `{ "capability": "ui:contribute" }`                             |
+| `ui:panel`            | medium | none  | render its own sandboxed interactive panels                          | `{ "capability": "ui:panel" }`                                  |
+| `ui:render-unsafe`    | high   | none  | render custom UI with full interface access (escape hatch)           | `{ "capability": "ui:render-unsafe" }`                          |
 
 `agents:dispatch` and `process:spawn` have no production handler; the SDK methods exist but reject. The broker re-reads grants on every call, so a revoke takes effect immediately, and it re-authorizes `fs:*` paths against the symlink-resolved real path.
 
 `transcripts:read` is project-scoped: `scope` is a project path, and an absent scope means all projects (presented as such at consent). It is refused for an untrusted plugin that also holds `net:fetch` or `process:spawn` (the content-exfiltration combination) - sign with a trusted key to allow both. Reads are rate-limited as a high-risk verb and every read is audited.
+
+The `ui:*` capabilities gate what the host accepts and renders, not a brokered SDK call: `ui:contribute` admits your declarative `uiItems` into host surfaces, `ui:panel` admits your sandboxed `panels`, and `ui:render-unsafe` is the high-trust escape hatch for full custom UI. An enabled plugin WITHOUT the matching grant contributes none of that surface.
 
 ---
 

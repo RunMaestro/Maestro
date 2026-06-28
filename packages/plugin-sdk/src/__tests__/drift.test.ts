@@ -8,6 +8,7 @@ import {
 	HOST_METHODS,
 	HOST_API_VERSION,
 	PLUGIN_ID_PATTERN,
+	UI_SURFACES,
 	validatePluginManifest,
 } from '../index';
 
@@ -22,6 +23,7 @@ import {
 import { PLUGIN_EVENT_TOPICS as SRC_PLUGIN_EVENT_TOPICS } from '../../../../src/shared/plugins/events';
 import { HOST_METHODS as SRC_HOST_METHODS } from '../../../../src/shared/plugins/rpc-protocol';
 import { HOST_API_VERSION as SRC_HOST_API_VERSION } from '../../../../src/shared/plugins/host-api';
+import { UI_SURFACES as SRC_UI_SURFACES } from '../../../../src/shared/plugins/contributions';
 
 // This package VENDORS the frozen plugin contracts so it can publish standalone
 // (no imports outside the package). That copy must never silently fall behind
@@ -45,9 +47,13 @@ describe('@maestro/plugin-sdk vendored-contract drift guard', () => {
 		expect(HOST_METHODS).toEqual(SRC_HOST_METHODS);
 	});
 
-	it('HOST_API_VERSION matches the source and is pinned to 1.3.0', () => {
+	it('HOST_API_VERSION matches the source and is pinned to 1.4.0', () => {
 		expect(HOST_API_VERSION).toBe(SRC_HOST_API_VERSION);
-		expect(HOST_API_VERSION).toBe('1.3.0');
+		expect(HOST_API_VERSION).toBe('1.4.0');
+	});
+
+	it('UI_SURFACES matches the source render-surface catalog', () => {
+		expect(UI_SURFACES).toEqual(SRC_UI_SURFACES);
 	});
 
 	it('PLUGIN_ID_PATTERN source string matches', () => {

@@ -40,7 +40,10 @@ export type PluginCapability =
 	| 'storage:write' // write the plugin's OWN private key-value store
 	| 'ui:command' // invoke a registered Maestro command (a palette action)
 	| 'events:subscribe' // subscribe to host event topics (metadata-only payloads)
-	| 'process:spawn'; // run a shell command (highest risk)
+	| 'process:spawn' // run a shell command (highest risk)
+	| 'ui:contribute' // add host-rendered items to Maestro's UI (menus, panels, theming, …)
+	| 'ui:panel' // show its own sandboxed interactive panels
+	| 'ui:render-unsafe'; // render arbitrary UI with full interface access (escape hatch)
 
 export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
 	'fs:read',
@@ -58,6 +61,9 @@ export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
 	'ui:command',
 	'events:subscribe',
 	'process:spawn',
+	'ui:contribute',
+	'ui:panel',
+	'ui:render-unsafe',
 ];
 
 /** Coarse risk tier for sorting/coloring the consent UI. */
@@ -79,6 +85,9 @@ const CAPABILITY_RISK: Record<PluginCapability, CapabilityRisk> = {
 	'fs:write': 'high',
 	'process:spawn': 'high',
 	'transcripts:read': 'high',
+	'ui:contribute': 'medium',
+	'ui:panel': 'medium',
+	'ui:render-unsafe': 'high',
 };
 
 /** Whether a capability's scope is a filesystem path, a network host, or none. */
@@ -102,6 +111,9 @@ const CAPABILITY_SCOPE_KIND: Record<PluginCapability, ScopeKind> = {
 	'events:subscribe': 'none',
 	'process:spawn': 'none',
 	'transcripts:read': 'path', // scope is a project path; the handler enforces the session's projectPath against the grant
+	'ui:contribute': 'none',
+	'ui:panel': 'none',
+	'ui:render-unsafe': 'none',
 };
 
 export function capabilityRisk(capability: PluginCapability): CapabilityRisk {
@@ -200,15 +212,22 @@ export function describeCapability(capability: PluginCapability): string {
 			return 'Run shell commands';
 		case 'transcripts:read':
 			return 'Read the full conversation content of your sessions (messages, prompts, and agent output)';
+		case 'ui:contribute':
+			return "Add items to Maestro's interface (menus, sidebar, status bar, settings, themes)";
+		case 'ui:panel':
+			return 'Show its own panels inside Maestro';
+		case 'ui:render-unsafe':
+			return "Render its own custom UI with full access to Maestro's interface (advanced — only enable for authors you fully trust)";
 	}
 }
 
 // --- Host API version (from shared/plugins/host-api.ts) ---------------------
 
-/** The host API version this Maestro build implements. Bumped to 1.3.0 for the
- * backward-compatible `tools` + `keybindings` contribution points (1.2.0 added
- * the `transcripts:read` capability + `transcripts.read` host method). */
-export const HOST_API_VERSION = '1.3.0';
+/** The host API version this Maestro build implements. Bumped to 1.4.0 for the
+ * backward-compatible `ui:contribute` / `ui:panel` / `ui:render-unsafe` UI
+ * capabilities (1.3.0 added the `tools` + `keybindings` contribution points;
+ * 1.2.0 added the `transcripts:read` capability + `transcripts.read` host method). */
+export const HOST_API_VERSION = '1.4.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {
@@ -581,6 +600,45 @@ export interface KeybindingContribution {
 	description?: string;
 }
 
+/** Where a `ui:contribute` item renders. The renderer maps each surface to a
+ * concrete region (status bar, menus, sidebar/activity bar, toolbar). */
+export type UiSurface = 'status-bar' | 'menu' | 'sidebar' | 'activity-bar' | 'toolbar';
+
+export const UI_SURFACES: readonly UiSurface[] = [
+	'status-bar',
+	'menu',
+	'sidebar',
+	'activity-bar',
+	'toolbar',
+];
+
+/** Type guard: is `value` one of the known UI surfaces? */
+export function isUiSurface(value: unknown): value is UiSurface {
+	return typeof value === 'string' && (UI_SURFACES as readonly string[]).includes(value);
+}
+
+/**
+ * A declarative UI item a (tier-1) plugin renders into a host surface. The item
+ * is pure data (label / icon / placement) the host renders; activating it invokes
+ * one of the plugin's OWN commands through the broker. Gated by the
+ * `ui:contribute` capability, so an enabled plugin WITHOUT that grant
+ * contributes none.
+ */
+export interface UiItemContribution {
+	id: string;
+	localId: string;
+	pluginId: string;
+	surface: UiSurface;
+	label: string;
+	/** Plugin-local command id invoked on activation. */
+	command: string;
+	/** Optional icon keyword the renderer maps to its icon set. */
+	icon?: string;
+	/** Optional grouping / ordering hints within the surface. */
+	group?: string;
+	priority?: number;
+}
+
 /** All contributions a single plugin declared, plus any per-item errors. */
 export interface PluginContributions {
 	themes: ThemeContribution[];
@@ -593,6 +651,7 @@ export interface PluginContributions {
 	agents: AgentContribution[];
 	tools: AgentToolContribution[];
 	keybindings: KeybindingContribution[];
+	uiItems: UiItemContribution[];
 	errors: string[];
 }
 
@@ -608,6 +667,7 @@ export interface AggregatedContributions {
 	agents: AgentContribution[];
 	tools: AgentToolContribution[];
 	keybindings: KeybindingContribution[];
+	uiItems: UiItemContribution[];
 	/** Per-plugin errors keyed by plugin id (only plugins with errors appear). */
 	errorsByPlugin: Record<string, string[]>;
 }
