@@ -483,7 +483,19 @@ export async function pianolaOrchestrate(
 				break;
 			}
 
-			const result = await runOrchestratorIteration(state, deps, { concurrencyLimit });
+			let result: Awaited<ReturnType<typeof runOrchestratorIteration>>;
+			try {
+				result = await runOrchestratorIteration(state, deps, { concurrencyLimit });
+			} catch (error) {
+				// A transient failure (e.g. a WS sendCommand timeout) must not tear down
+				// the whole run. Mirror the watcher: log and keep orchestrating - the next
+				// tick re-polls and re-dispatches from the persisted plan.
+				const message = error instanceof Error ? error.message : String(error);
+				console.error(`[orchestrator] iteration error: ${message}`);
+				if (once || stopped) break;
+				await sleep(intervalMs);
+				continue;
+			}
 			state = result.state;
 			console.log(`[orchestrator] ${progressLine(state.plan)}`);
 

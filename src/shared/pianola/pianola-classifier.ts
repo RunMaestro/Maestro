@@ -15,6 +15,7 @@ import type {
 	AwaitingInputSignal,
 	PianolaClassification,
 	PianolaMessage,
+	PianolaRisk,
 	PianolaSignalKind,
 } from './types';
 import { maxRisk, rateRisk } from './pianola-risk';
@@ -175,6 +176,27 @@ function classifyHeuristic(message: PianolaMessage): PianolaClassification {
 	};
 }
 
+/**
+ * Max risk across EVERY assistant message since the last user turn (the whole
+ * current turn), not just the single message we classify. An agent can split a
+ * destructive intent ("I'll drop the prod database.") into an earlier assistant
+ * message and leave only an innocuous awaiting question ("Ready to continue?") in
+ * the last one - the per-message rating would read low and a permissive low-risk
+ * auto_answer rule could auto-advance straight into the destructive action,
+ * bypassing decide()'s "high-risk always escalates" guard. Folding in the max
+ * risk of the full turn means a later question can only ever raise the rating,
+ * never launder a high-risk earlier statement down to low.
+ */
+function currentTurnMaxRisk(messages: readonly PianolaMessage[]): PianolaRisk {
+	let risk: PianolaRisk = 'low';
+	for (let i = messages.length - 1; i >= 0; i -= 1) {
+		const m = messages[i];
+		if (m.role === 'user') break;
+		if (isAssistant(m)) risk = maxRisk(risk, rateRisk(m.content ?? ''));
+	}
+	return risk;
+}
+
 /** A classification meaning "nothing actionable". */
 export function noneClassification(reason: string): PianolaClassification {
 	return {
@@ -205,9 +227,16 @@ export function classifyMessages(messages: readonly PianolaMessage[]): PianolaCl
 		return noneClassification('user has replied since the last assistant turn');
 	}
 
-	if (assistant.awaitingInput) {
-		return classifyFromStructured(assistant, assistant.awaitingInput);
-	}
+	const classification = assistant.awaitingInput
+		? classifyFromStructured(assistant, assistant.awaitingInput)
+		: classifyHeuristic(assistant);
 
-	return classifyHeuristic(assistant);
+	// Nothing actionable - leave the (low) risk untouched; decide() ignores it.
+	if (classification.kind === 'none') return classification;
+
+	// Rate risk over the FULL current turn and keep the most severe, so a
+	// destructive intent in an earlier assistant message of this turn still
+	// escalates even when the awaiting question itself reads low-risk. Preserves
+	// the existing kind/topic; only the risk severity incorporates the turn max.
+	return { ...classification, risk: maxRisk(classification.risk, currentTurnMaxRisk(messages)) };
 }

@@ -20,7 +20,7 @@
  */
 
 import * as fs from 'fs';
-import { trimJsonlToFit } from './storage';
+import { trimJsonlToFit, PIANOLA_DECISION_RECORD_MAX_BYTES } from './storage';
 
 /** A held lock older than this is treated as abandoned (a crashed compactor). */
 const LOCK_STALE_MS = 30_000;
@@ -29,8 +29,16 @@ const LOCK_STALE_MS = 30_000;
  * the record-cap gate skip the line count when the file is too small to possibly
  * exceed maxRecords, keeping the hot append path read-free for small logs. */
 const MIN_DECISION_RECORD_BYTES = 50;
-/** Append one already-newline-terminated JSONL line to the log. */
+/**
+ * Append one already-newline-terminated JSONL line to the log. A single record
+ * over PIANOLA_DECISION_RECORD_MAX_BYTES is DROPPED (not appended): most fields
+ * are bounded upstream, but `decision.answer` and a dispatch `error` are not, so
+ * this guarantees one hostile/oversized record can never blow the file byte
+ * budget on its own. The dropped record is a pathological outlier - a legitimate
+ * decision serializes to a few hundred bytes, far under the cap.
+ */
 export function appendDecisionLine(filePath: string, line: string): void {
+	if (Buffer.byteLength(line, 'utf-8') > PIANOLA_DECISION_RECORD_MAX_BYTES) return;
 	fs.appendFileSync(filePath, line, 'utf-8');
 }
 

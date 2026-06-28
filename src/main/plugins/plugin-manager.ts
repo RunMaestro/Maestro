@@ -463,7 +463,14 @@ export class PluginManager {
 		const entryAbs = path.resolve(dir, panel.entry);
 		if (entryAbs !== dir && !entryAbs.startsWith(dir + path.sep)) return null;
 		try {
-			return fs.readFileSync(entryAbs, 'utf-8');
+			// Re-resolve symlinks and re-check containment against the REAL path: the
+			// string check above is necessary but not sufficient (a symlink placed
+			// inside the plugin dir could resolve outside it). Mirrors the fs broker's
+			// realpath re-authorization; install()/update() also reject symlinked trees.
+			const realDir = fs.realpathSync(dir);
+			const realEntry = fs.realpathSync(entryAbs);
+			if (realEntry !== realDir && !realEntry.startsWith(realDir + path.sep)) return null;
+			return fs.readFileSync(realEntry, 'utf-8');
 		} catch {
 			return null;
 		}

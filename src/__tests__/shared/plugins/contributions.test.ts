@@ -370,3 +370,38 @@ describe('keybinding contributions', () => {
 		expect(agg.keybindings.map((k) => k.key).sort()).toEqual(['Ctrl+1', 'Ctrl+2']);
 	});
 });
+
+describe('aggregateContributions per-bucket id uniqueness', () => {
+	it('keeps a tool and a command that share a localId (cross-type is not a collision)', () => {
+		const agg = aggregateContributions([
+			manifest(
+				'com.p',
+				{
+					commands: [{ id: 'run', title: 'Run' }],
+					tools: [{ id: 'run', name: 'Run', description: 'run it' }],
+				},
+				1
+			),
+		]);
+		expect(agg.commands.map((c) => c.id)).toContain('com.p/run');
+		expect(agg.tools.map((t) => t.id)).toContain('com.p/run');
+		expect(agg.errorsByPlugin['com.p']).toBeUndefined();
+	});
+
+	it('still drops a true within-type duplicate id', () => {
+		const agg = aggregateContributions([
+			manifest(
+				'com.p',
+				{
+					commands: [
+						{ id: 'run', title: 'A' },
+						{ id: 'run', title: 'B' },
+					],
+				},
+				1
+			),
+		]);
+		expect(agg.commands.filter((c) => c.id === 'com.p/run')).toHaveLength(1);
+		expect(agg.errorsByPlugin['com.p']?.some((e) => e.includes('duplicate'))).toBe(true);
+	});
+});

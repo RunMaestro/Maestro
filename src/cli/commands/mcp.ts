@@ -55,7 +55,15 @@ export async function mcpServe(options: McpServeOptions): Promise<void> {
 		try {
 			parsed = JSON.parse(trimmed);
 		} catch {
-			log('[mcp] dropped non-JSON line on stdin');
+			// Malformed JSON-RPC frame: per the spec, answer with a Parse Error
+			// (id null) rather than silently dropping it, which can hang clients.
+			log('[mcp] malformed JSON-RPC frame on stdin');
+			const parseError = {
+				jsonrpc: '2.0',
+				id: null,
+				error: { code: -32700, message: 'Parse error' },
+			};
+			process.stdout.write(`${JSON.stringify(parseError)}\n`);
 			return;
 		}
 		void server

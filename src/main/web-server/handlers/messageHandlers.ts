@@ -4884,7 +4884,10 @@ export class WebSocketMessageHandler {
 					name: t.id.replace(/\//g, '__').replace(/[^a-zA-Z0-9_-]/g, '_'),
 					toolId: t.id,
 					description: t.description,
-					inputSchema: t.inputSchema ?? { type: 'object' },
+					inputSchema:
+						t.inputSchema && typeof t.inputSchema === 'object' && !Array.isArray(t.inputSchema)
+							? t.inputSchema
+							: { type: 'object' },
 				}));
 			} catch (error) {
 				const reason = error instanceof Error ? error.message : String(error);
@@ -4901,10 +4904,10 @@ export class WebSocketMessageHandler {
 
 	/**
 	 * Handle plugins_call_tool — risk-gate a model-initiated plugin tool call,
-	 * then invoke it via the broker. A HIGH-risk verdict from the shared Pianola
-	 * dispatch gate is surfaced and NEVER executed, so an injected/compromised
-	 * agent transcript cannot drive a destructive plugin tool. Tool failures come
-	 * back as `{ ok:false, error }`; blocks as `{ ok:false, blocked:true }`.
+	 * then invoke it via the broker. The toolId MUST be a declared `tools`
+	 * contribution (never an arbitrary command handler), and risk is rated on the
+	 * model's ARGUMENTS via the shared Pianola gate - a HIGH verdict is surfaced
+	 * and NEVER executed. Tool failures: `{ ok:false, error }`; blocks: `{ blocked:true }`.
 	 */
 	private async handlePluginsCallTool(client: WebClient, message: WebClientMessage): Promise<void> {
 		const respond = (extra: Record<string, unknown>): void =>
@@ -4923,6 +4926,13 @@ export class WebSocketMessageHandler {
 			respond({ ok: false, error: 'PluginsDisabled' });
 			return;
 		}
+		const declaredTool = manager.getContributions().tools.find((t) => t.id === toolId);
+		if (!declaredTool) {
+			// Only DECLARED `tools` are model-callable; never let a tools/call name
+			// resolve to an arbitrary command handler in the sandbox's shared map.
+			respond({ ok: false, error: `Unknown tool: ${toolId}` });
+			return;
+		}
 		const args = 'args' in message ? message.args : undefined;
 		let argText = '';
 		try {
@@ -4930,7 +4940,12 @@ export class WebSocketMessageHandler {
 		} catch {
 			argText = '';
 		}
-		const verdict = evaluatePluginDispatch(`${toolId} ${argText}`);
+		// Rate risk on the declared tool's human name + description + the model's
+		// args: catches a destructive tool by identity AND destructive args, without
+		// the slug noise of the raw toolId. Follow-up: per-tool risk metadata + a
+		// user-approval path for HIGH instead of a hard block.
+		const riskText = `${declaredTool.name} ${declaredTool.description} ${argText}`;
+		const verdict = evaluatePluginDispatch(riskText);
 		if (!verdict.eligible) {
 			respond({ ok: false, blocked: true, risk: verdict.risk, reason: verdict.reason });
 			return;

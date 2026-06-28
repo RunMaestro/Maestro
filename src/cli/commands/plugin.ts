@@ -34,6 +34,8 @@ import type { PluginTier } from '../../shared/plugins/plugin-manifest';
 import {
 	SIGNATURE_FILENAME,
 	SIGNATURE_ALGORITHM,
+	SIGNATURE_EXCLUDED_DIRS,
+	isExcludedSignaturePath,
 	buildSigningPayload,
 	validateSignatureManifest,
 	isTrustedKey,
@@ -128,9 +130,10 @@ function hashFile(absPath: string): string {
 
 /**
  * Map every file under `dir` to its plugin-relative POSIX path and SHA-256,
- * excluding signature.json. Mirrors the host verifier: a symlink is never
- * legitimate signed content, so encountering one throws (the caller maps that to
- * an invalid signature, exactly as the main process does).
+ * excluding signature.json and the shared exclusion set (node_modules/, .git/,
+ * *.pem, *.key). Mirrors the host verifier: the same shared policy and an
+ * identical symlink rule (a symlink is never legitimate signed content, so
+ * encountering one throws and the caller maps that to an invalid signature).
  */
 function hashTree(dir: string): Record<string, string> {
 	const out: Record<string, string> = {};
@@ -141,12 +144,14 @@ function hashTree(dir: string): Record<string, string> {
 				throw new Error(`plugin contains a symlink: ${normalizeRelPath(path.relative(dir, abs))}`);
 			}
 			if (entry.isDirectory()) {
+				if (SIGNATURE_EXCLUDED_DIRS.has(entry.name)) continue;
 				walk(abs);
 				continue;
 			}
 			if (!entry.isFile()) continue;
 			const rel = normalizeRelPath(path.relative(dir, abs));
 			if (rel === SIGNATURE_FILENAME) continue;
+			if (isExcludedSignaturePath(rel)) continue;
 			out[rel] = hashFile(abs);
 		}
 	};
@@ -614,14 +619,13 @@ export function pluginSign(dir: string, options: PluginSignOptions): void {
 	}
 }
 
-const PACK_EXCLUDE_DIRS = new Set(['node_modules', '.git']);
-
-/** True if a relative file path is an excluded signing-key/secret file. */
-function isExcludedPackFile(rel: string): boolean {
-	return /\.(pem|key)$/i.test(rel);
-}
-
-/** Collect plugin-relative POSIX file paths to pack (skips secrets and junk). */
+/**
+ * Collect plugin-relative POSIX file paths to pack. Uses the SAME shared
+ * exclusion policy as the signer and host verifier (node_modules/, .git/,
+ * *.pem, *.key) so the packed archive's file set matches what was signed and
+ * what the host re-hashes. `signature.json` is kept: the host needs it to
+ * verify (the shared policy intentionally does not strip it).
+ */
 function collectPackFiles(dir: string): string[] {
 	const out: string[] = [];
 	const walk = (current: string): void => {
@@ -629,13 +633,13 @@ function collectPackFiles(dir: string): string[] {
 			if (entry.isSymbolicLink()) continue;
 			const abs = path.join(current, entry.name);
 			if (entry.isDirectory()) {
-				if (PACK_EXCLUDE_DIRS.has(entry.name)) continue;
+				if (SIGNATURE_EXCLUDED_DIRS.has(entry.name)) continue;
 				walk(abs);
 				continue;
 			}
 			if (!entry.isFile()) continue;
 			const rel = normalizeRelPath(path.relative(dir, abs));
-			if (isExcludedPackFile(rel)) continue;
+			if (isExcludedSignaturePath(rel)) continue;
 			out.push(rel);
 		}
 	};

@@ -19,12 +19,12 @@ const spec: McpServerSpec = {
 const opts = { tmpDir: '/tmp', join: (...p: string[]) => p.join('/') };
 
 describe('buildMcpInjection - claude-mcp-config', () => {
-	it('emits inline --mcp-config JSON + --strict-mcp-config, no temp files', () => {
+	it('emits inline --mcp-config JSON (additive, no --strict, no temp files)', () => {
 		const inj = buildMcpInjection({ strategy: 'claude-mcp-config', verified: true }, spec, opts);
 		expect(inj.files).toEqual([]);
 		expect(inj.env).toEqual({});
 		expect(inj.globalArgs[0]).toBe('--mcp-config');
-		expect(inj.globalArgs[2]).toBe('--strict-mcp-config');
+		expect(inj.globalArgs).toHaveLength(2);
 		expect(JSON.parse(inj.globalArgs[1])).toEqual({
 			mcpServers: { [MCP_SERVER_NAME]: { command: spec.command, args: spec.args, env: spec.env } },
 		});

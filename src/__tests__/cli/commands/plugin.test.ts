@@ -9,9 +9,11 @@ import { describe, it, expect, beforeEach, afterEach, vi, type MockInstance } fr
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import * as zlib from 'zlib';
 
 import { pluginInit, pluginValidate, pluginSign, pluginPack } from '../../../cli/commands/plugin';
 import { validatePluginManifest } from '../../../shared/plugins/plugin-manifest';
+import { verifyPluginSignature } from '../../../main/plugins/plugin-signature';
 
 let consoleSpy: MockInstance;
 let errorSpy: MockInstance;
@@ -246,5 +248,102 @@ describe('plugin pack', () => {
 		const outPath = asString(out, 'out');
 		expect(path.basename(outPath)).toBe('named.pack-0.1.0.tgz');
 		expect(fs.existsSync(outPath)).toBe(true);
+	});
+});
+
+/** Recursively list a directory's files as plugin-relative POSIX paths. */
+function listFilesRel(dir: string): string[] {
+	const out: string[] = [];
+	const walk = (cur: string): void => {
+		for (const entry of fs.readdirSync(cur, { withFileTypes: true })) {
+			const abs = path.join(cur, entry.name);
+			if (entry.isDirectory()) {
+				walk(abs);
+				continue;
+			}
+			out.push(path.relative(dir, abs).replace(/\\/g, '/'));
+		}
+	};
+	walk(dir);
+	return out.sort();
+}
+
+/**
+ * Extract a gzip-tar archive (what pluginPack writes) into destDir. Minimal
+ * ustar reader: file entries only, which is all the packer emits. Reading the
+ * REAL archive bytes is what proves pack's on-disk file set, not a re-derived one.
+ */
+function extractTgz(tgzPath: string, destDir: string): void {
+	const buf = zlib.gunzipSync(fs.readFileSync(tgzPath));
+	let offset = 0;
+	while (offset + 512 <= buf.length) {
+		const header = buf.subarray(offset, offset + 512);
+		if (header.every((b) => b === 0)) break; // two zero blocks terminate the archive
+		const name = header.subarray(0, 100).toString('utf-8').replace(/\0.*$/, '');
+		const size = parseInt(
+			header.subarray(124, 136).toString('utf-8').replace(/\0.*$/, '').trim() || '0',
+			8
+		);
+		const typeFlag = String.fromCharCode(header[156]);
+		offset += 512;
+		const data = buf.subarray(offset, offset + size);
+		offset += Math.ceil(size / 512) * 512;
+		if (typeFlag === '0' || typeFlag === '\0') {
+			const abs = path.join(destDir, name);
+			fs.mkdirSync(path.dirname(abs), { recursive: true });
+			fs.writeFileSync(abs, data);
+		}
+	}
+}
+
+describe('plugin sign + pack + host verify agree on one file set', () => {
+	it('applies the same exclusions across sign/pack/verify for a .pem + node_modules tree', async () => {
+		const dir = makeTmpDir();
+		pluginInit(dir, { tier: '1', id: 'roundtrip.me', name: 'Roundtrip', json: true });
+
+		// Reproduce the scaffold README flow: --gen-key writes the private key
+		// INTO the plugin dir, and `bun install` leaves a node_modules/. Both are
+		// present at sign time and must be stripped consistently everywhere.
+		fs.mkdirSync(path.join(dir, 'node_modules'), { recursive: true });
+		fs.writeFileSync(path.join(dir, 'node_modules', 'x.js'), 'module.exports = 1;\n', 'utf-8');
+		const keyOut = path.join(dir, 'signing-key.pem');
+
+		consoleSpy.mockClear();
+		pluginSign(dir, { genKey: true, keyOut, json: true });
+		expect(exitSpy).not.toHaveBeenCalled();
+		const publicKey = asString(lastJson(), 'publicKey');
+		expect(fs.existsSync(keyOut)).toBe(true);
+
+		// SIGN: the signed set excludes the secret key and node_modules.
+		const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'signature.json'), 'utf-8')) as {
+			files: Record<string, string>;
+		};
+		const signedFiles = Object.keys(manifest.files).sort();
+		expect(signedFiles).not.toContain('signing-key.pem');
+		expect(signedFiles.some((f) => f.startsWith('node_modules/'))).toBe(false);
+
+		// PACK the dir and extract the REAL archive into a fresh install dir.
+		const outPath = path.join(makeTmpDir(), 'roundtrip.tgz');
+		consoleSpy.mockClear();
+		await pluginPack(dir, { out: outPath, json: true });
+		expect(exitSpy).not.toHaveBeenCalled();
+
+		const installDir = makeTmpDir();
+		extractTgz(outPath, installDir);
+		const packed = listFilesRel(installDir);
+
+		// PACK strips the same secrets/junk SIGN did but ships signature.json.
+		expect(packed).toContain('signature.json');
+		expect(packed).not.toContain('signing-key.pem');
+		expect(packed.some((f) => f.startsWith('node_modules/'))).toBe(false);
+
+		// The packed set minus signature.json is EXACTLY the signed set.
+		expect(packed.filter((f) => f !== 'signature.json')).toEqual(signedFiles);
+
+		// VERIFY: the host re-hashes the installed tree and it matches the
+		// signature - the bug ("plugin files do not match the signed file set")
+		// is gone end to end.
+		const check = verifyPluginSignature(installDir, [publicKey]);
+		expect(check.status).toBe('trusted');
 	});
 });

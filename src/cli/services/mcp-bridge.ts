@@ -95,8 +95,15 @@ export function createMcpBridge(deps: McpBridgeDeps): McpBridge {
 	}
 
 	async function callTool(name: string, args: unknown): Promise<McpToolCallResult> {
-		// Fall back to the raw name if the client calls without listing first.
-		const toolId = nameToId.get(name) ?? name;
+		// Reject any name not in the current tools/list map - never guess a toolId,
+		// which could resolve to a non-tool command handler in the sandbox's map.
+		const toolId = nameToId.get(name);
+		if (!toolId) {
+			return {
+				content: [{ type: 'text', text: `Unknown tool: ${name}` }],
+				isError: true,
+			};
+		}
 		const res = await deps.request<{
 			ok?: boolean;
 			result?: unknown;

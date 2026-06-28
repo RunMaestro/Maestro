@@ -9,7 +9,7 @@
  * truth for how each agent is injected.
  *
  * The installed agents claude + codex were verified against the live CLIs and
- * auto-inject: claude has `--mcp-config <json>` + `--strict-mcp-config`; codex has
+ * auto-inject: claude uses `--mcp-config <json>` (additive - the user's own MCP servers stay loaded); codex has
  * `-c, --config <key=value>` overrides that also apply to `exec` (both additive /
  * isolated, so they can't disturb Maestro's existing spawn flags). opencode and
  * the remaining agents are best-guess (`verified: false`) and are NOT auto-injected
@@ -20,7 +20,7 @@
  */
 
 export type McpInjectionStrategy =
-	/** claude: `--mcp-config <inline-json>` + `--strict-mcp-config` (no temp file). */
+	/** claude: `--mcp-config <inline-json>` (additive, no temp file; user MCP servers preserved). */
 	| 'claude-mcp-config'
 	/** codex: `-c mcp_servers.<name>.*` overrides, placed before the subcommand. */
 	| 'codex-config-override'
@@ -94,7 +94,7 @@ export function buildMcpInjection(
 	switch (cap.strategy) {
 		case 'claude-mcp-config':
 			return {
-				globalArgs: ['--mcp-config', mcpServersJson(spec), '--strict-mcp-config'],
+				globalArgs: ['--mcp-config', mcpServersJson(spec)],
 				env: {},
 				files: [],
 			};

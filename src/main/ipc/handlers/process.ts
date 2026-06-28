@@ -527,14 +527,32 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				if (
 					mcpCap?.verified &&
 					isPluginsFeatureEnabled() &&
-					!config.sessionSshRemoteConfig?.enabled
+					!config.sessionSshRemoteConfig?.enabled &&
+					// Skip the electron-as-node interactive path (claude maestro-p): there
+					// argv[0] is a script path, so prepending global flags ahead of it would
+					// make Node reject the launch. API-mode/codex spawn the agent binary
+					// directly, where leading flags are valid.
+					effectiveCommand !== process.execPath
 				) {
 					const mcpTools = getActivePluginManager()?.getContributions().tools ?? [];
 					if (mcpTools.length > 0) {
 						const mcpSpec = {
 							command: process.execPath,
 							args: [resolveMaestroCliScriptPath(), 'mcp', 'serve', '--tab', baseSessionId],
-							env: { ELECTRON_RUN_AS_NODE: '1' },
+							env: {
+								ELECTRON_RUN_AS_NODE: '1',
+								// The agent's MCP client forwards only a sanitized env subset to
+								// the spawned bridge; forward the data-dir overrides the app
+								// itself honors so the bridge resolves the SAME discovery file
+								// (else custom-data-dir / dev installs silently connect nowhere
+								// and advertise zero tools).
+								...(process.env.MAESTRO_USER_DATA
+									? { MAESTRO_USER_DATA: process.env.MAESTRO_USER_DATA }
+									: {}),
+								...(process.env.XDG_CONFIG_HOME
+									? { XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME }
+									: {}),
+							},
 						};
 						// Cheap pure pre-build to learn whether this strategy needs temp
 						// files; only then allocate a unique per-spawn dir (so concurrent

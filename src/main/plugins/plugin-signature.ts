@@ -17,6 +17,8 @@ import * as path from 'path';
 import { createHash, createPublicKey, verify as cryptoVerify } from 'crypto';
 import {
 	SIGNATURE_FILENAME,
+	SIGNATURE_EXCLUDED_DIRS,
+	isExcludedSignaturePath,
 	buildSigningPayload,
 	validateSignatureManifest,
 	isTrustedKey,
@@ -34,7 +36,9 @@ function hashFile(absPath: string): string {
 
 /**
  * Recursively map every file in `dir` to its plugin-relative POSIX path and
- * SHA-256, excluding the signature file itself.
+ * SHA-256, excluding the signature file itself and anything the shared
+ * exclusion policy strips (node_modules/, .git/, *.pem, *.key) so the signer,
+ * packer, and verifier agree on one file set.
  *
  * Symlinks are NOT skipped silently: a symlink can point outside the plugin and
  * is never legitimate signed content, and silently skipping it would let a
@@ -51,12 +55,14 @@ function hashTree(dir: string): Record<string, string> {
 				throw new Error(`plugin contains a symlink: ${normalizeRelPath(path.relative(dir, abs))}`);
 			}
 			if (entry.isDirectory()) {
+				if (SIGNATURE_EXCLUDED_DIRS.has(entry.name)) continue;
 				walk(abs);
 				continue;
 			}
 			if (!entry.isFile()) continue;
 			const rel = normalizeRelPath(path.relative(dir, abs));
 			if (rel === SIGNATURE_FILENAME) continue;
+			if (isExcludedSignaturePath(rel)) continue;
 			out[rel] = hashFile(abs);
 		}
 	};

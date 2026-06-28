@@ -127,7 +127,9 @@ export function initialWatchState(): WatchState {
  * starts with no cursor and the still-waiting prompt is re-classified and
  * (critically) auto-answered a SECOND time. We take the most recent recorded
  * prompt for this tab as the handled cursor. A prompt mid-handoff is restored to
- * `pendingHandoff` so its timeout is honored across the restart.
+ * `pendingHandoff` so its timeout is honored across the restart. A latest record
+ * whose auto_answer dispatch FAILED (dispatched===false, non-dry-run) is NOT
+ * adopted as handled, so the still-waiting prompt is re-attempted/escalated.
  *
  * Pure: callers pass the records (chronological, oldest first) they read.
  */
@@ -135,28 +137,46 @@ export function rehydrateWatchState(
 	records: readonly PianolaDecisionRecord[],
 	tabId: string
 ): WatchState {
-	let lastHandledMessageId: string | null = null;
-	let pendingHandoff: WatchState['pendingHandoff'] = null;
+	let lastRecord: PianolaDecisionRecord | null = null;
+	let lastMid: string | null = null;
 	for (const r of records) {
 		if (r.tabId !== tabId) continue;
 		const mid = r.classification.evidence.messageId;
 		if (!mid) continue;
-		lastHandledMessageId = mid;
-		// A successfully-delivered handoff (escalate decision, not dispatched, no
-		// error) means we were awaiting Pianola's reply when we stopped. Restore the
-		// pending-handoff so the timeout resumes rather than re-handing-off.
-		const isHandoff =
-			r.decision.action === 'escalate' && /handed off/i.test(r.decision.reason) && !r.error;
-		pendingHandoff = isHandoff
-			? { messageId: mid, polls: 0, classification: r.classification }
-			: null;
+		lastRecord = r;
+		lastMid = mid;
 	}
-	// If the last handled prompt is mid-handoff, do NOT treat it as fully handled:
-	// keep the cursor behind it so the pending-handoff branch can time it out.
-	if (pendingHandoff) {
-		return { lastHandledMessageId: null, pendingRetry: null, pendingHandoff };
+	if (!lastRecord || !lastMid) {
+		return { lastHandledMessageId: null, pendingRetry: null, pendingHandoff: null };
 	}
-	return { lastHandledMessageId, pendingRetry: null, pendingHandoff: null };
+	// A successfully-delivered handoff (escalate decision, not dispatched, no
+	// error) means we were awaiting Pianola's reply when we stopped. Restore the
+	// pending-handoff so the timeout resumes rather than re-handing-off, and keep
+	// the cursor behind it so the pending-handoff branch can time it out.
+	const isHandoff =
+		lastRecord.decision.action === 'escalate' &&
+		/handed off/i.test(lastRecord.decision.reason) &&
+		!lastRecord.error;
+	if (isHandoff) {
+		return {
+			lastHandledMessageId: null,
+			pendingRetry: null,
+			pendingHandoff: { messageId: lastMid, polls: 0, classification: lastRecord.classification },
+		};
+	}
+	// A non-dry-run auto_answer that was NOT dispatched means the dispatch FAILED:
+	// the waiting prompt was never actually answered. Do NOT adopt it as the
+	// handled cursor - otherwise on restart the still-awaiting prompt is skipped as
+	// "already handled" and silently dropped. Leaving the cursor behind it lets the
+	// next iteration re-attempt and ultimately escalate the prompt.
+	const failedAutoAnswer =
+		lastRecord.decision.action === 'auto_answer' &&
+		lastRecord.dispatched === false &&
+		lastRecord.dryRun === false;
+	if (failedAutoAnswer) {
+		return { lastHandledMessageId: null, pendingRetry: null, pendingHandoff: null };
+	}
+	return { lastHandledMessageId: lastMid, pendingRetry: null, pendingHandoff: null };
 }
 
 export interface IterationResult {

@@ -10,6 +10,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { compactDecisionLog, appendDecisionLine } from '../../../shared/pianola/decision-log';
+import { PIANOLA_DECISION_RECORD_MAX_BYTES } from '../../../shared/pianola/storage';
 
 let dir: string;
 let file: string;
@@ -69,5 +70,34 @@ describe('compactDecisionLog', () => {
 		expect(lines.length).toBeGreaterThanOrEqual(1);
 		expect(lines.length).toBeLessThanOrEqual(10);
 		expect(fs.statSync(file).size).toBeLessThanOrEqual(byteCap);
+	});
+});
+
+/** A record line whose serialized byte length exceeds the per-record cap. */
+function oversizedLine(): string {
+	const answer = 'x'.repeat(PIANOLA_DECISION_RECORD_MAX_BYTES);
+	return `${JSON.stringify({ id: 'huge', answer })}\n`;
+}
+
+describe('appendDecisionLine - per-record byte cap', () => {
+	it('appends a normal within-cap record', () => {
+		appendDecisionLine(file, jsonLine(0));
+		expect(nonEmptyLines().length).toBe(1);
+	});
+
+	it('drops a single record over the per-record byte cap (never written)', () => {
+		appendDecisionLine(file, oversizedLine());
+		expect(fs.existsSync(file)).toBe(false);
+	});
+
+	it('keeps small records around a dropped oversized one', () => {
+		appendDecisionLine(file, jsonLine(1));
+		appendDecisionLine(file, oversizedLine());
+		appendDecisionLine(file, jsonLine(2));
+		const lines = nonEmptyLines();
+		expect(lines.length).toBe(2);
+		expect(lines.some((l) => l.includes('huge'))).toBe(false);
+		expect(lines.some((l) => l.includes('rec-00001'))).toBe(true);
+		expect(lines.some((l) => l.includes('rec-00002'))).toBe(true);
 	});
 });
