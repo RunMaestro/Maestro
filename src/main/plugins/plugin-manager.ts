@@ -83,6 +83,15 @@ export interface PluginManagerDeps {
 	 * anti-rollback grants rather than the forgeable plain-JSON store.
 	 */
 	getGrants?: (pluginId: string) => PermissionGrant[];
+	/**
+	 * Optional refresh-time authorization gate. For an enabled, runnable code-tier
+	 * record, returns whether it must be force-DISABLED because its consented
+	 * authorization no longer matches the plugin on disk (identity changed) or the
+	 * plugin was removed/tombstoned. Production wires this to the sealed ledger's
+	 * `verify()` + `pluginIdentity()`; absent => no extra gate (the enable toggle and
+	 * consent govern). It only ever force-disables — never force-enables.
+	 */
+	verifyRecord?: (record: PluginRecord) => { disable: boolean };
 }
 
 export interface InstallResult {
@@ -107,10 +116,13 @@ export class PluginManager {
 	}
 
 	/** Records the host should activate (enabled AND loadable). Empty when the
-	 * Encore flag is off, regardless of what is on disk. */
+	 * Encore flag is off, regardless of what is on disk. Tampered code (signature
+	 * `invalid`) is excluded here — the single authoritative "active" filter — so
+	 * no path (refresh, setEnabled, or any future toggle) can make it contribute,
+	 * since `listActive` itself does not check the signature. */
 	getActiveRecords(): PluginRecord[] {
 		if (!this.deps.isEnabled()) return [];
-		return listActive(this.registry);
+		return listActive(this.registry).filter((r) => r.signature?.status !== 'invalid');
 	}
 
 	/**
@@ -209,7 +221,25 @@ export class PluginManager {
 			} catch {
 				// Verification failure is non-fatal for listing; leave signature unset.
 			}
-			next = upsertRecord(next, signed);
+			// Refresh-time LEDGER authorization gate: a code plugin eligible to be
+			// active (enabled, loadable, tier>=1, has entry) is force-DISABLED when the
+			// injected gate rejects it (consented identity no longer matches the bytes
+			// on disk, or it was removed). Absent by default. Tampered code (signature
+			// `invalid`) is enforced separately and centrally in getActiveRecords() +
+			// isRunnable(), so it is inert regardless of this gate or the enable toggle.
+			let gated = signed;
+			if (this.deps.verifyRecord) {
+				const eligibleCode =
+					signed.enabled &&
+					signed.loadStatus === 'ok' &&
+					!!signed.manifest &&
+					signed.manifest.tier >= 1 &&
+					!!signed.manifest.entry;
+				if (eligibleCode && this.deps.verifyRecord(signed).disable) {
+					gated = { ...signed, enabled: false };
+				}
+			}
+			next = upsertRecord(next, gated);
 		}
 
 		this.registry = next;
