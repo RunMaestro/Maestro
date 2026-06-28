@@ -112,14 +112,14 @@ describe('buildMcpInjection - mcp-json-file', () => {
 });
 
 describe('MCP_CONFIG_BY_AGENT', () => {
-	it('marks the installed CLIs verified', () => {
+	it('marks the auto-injected installed CLIs (claude, codex) verified', () => {
 		expect(MCP_CONFIG_BY_AGENT['claude-code'].verified).toBe(true);
 		expect(MCP_CONFIG_BY_AGENT.codex.verified).toBe(true);
-		expect(MCP_CONFIG_BY_AGENT.opencode.verified).toBe(true);
 	});
 
 	it('marks the other agents as best-guess (unverified)', () => {
 		for (const id of [
+			'opencode',
 			'gemini-cli',
 			'qwen3-coder',
 			'copilot-cli',
