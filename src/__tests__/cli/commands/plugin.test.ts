@@ -10,6 +10,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as zlib from 'zlib';
+import * as vm from 'vm';
 
 import { pluginInit, pluginValidate, pluginSign, pluginPack } from '../../../cli/commands/plugin';
 import { validatePluginManifest } from '../../../shared/plugins/plugin-manifest';
@@ -88,13 +89,35 @@ describe('plugin init', () => {
 		expect(fs.existsSync(path.join(dir, 'entry.js'))).toBe(true);
 		const entry = fs.readFileSync(path.join(dir, 'entry.js'), 'utf-8');
 		expect(entry).toContain('@maestro/plugin-sdk');
-		expect(entry).toContain('export function activate');
-		expect(entry).toContain('export function deactivate');
+		expect(entry).toContain('function activate(maestro)');
+		expect(entry).toContain('module.exports = { activate, deactivate }');
+		// The sandbox runs entry.js via `new vm.Script` (CommonJS, no module loader),
+		// so the scaffold must not use ESM `export` syntax or it fails to parse.
+		expect(entry).not.toContain('export ');
 		const pkg = fs.readFileSync(path.join(dir, 'package.json'), 'utf-8');
 		expect(pkg).toContain('@maestro/plugin-sdk');
 		expect(fs.existsSync(path.join(dir, 'tsconfig.json'))).toBe(true);
 
 		expect(lastJson().success).toBe(true);
+	});
+
+	it('scaffolds an entry.js that loads under the CommonJS sandbox', () => {
+		const dir = makeTmpDir();
+		pluginInit(dir, { tier: '1', id: 'com.example.run', name: 'Run', json: true });
+		const code = fs.readFileSync(path.join(dir, 'entry.js'), 'utf-8');
+
+		// Mirror plugin-sandbox-entry.ts: a CommonJS script in a vm context with a
+		// bare `module` shim and no `require`. This is the real loader, so a parse
+		// failure here is a dead-on-arrival plugin (regression guard for the ESM bug).
+		const moduleShim: { exports: Record<string, unknown> } = { exports: {} };
+		const context = vm.createContext({
+			module: moduleShim,
+			exports: moduleShim.exports,
+			console: { log() {}, warn() {}, error() {} },
+		});
+		expect(() => new vm.Script(code).runInContext(context)).not.toThrow();
+		expect(typeof moduleShim.exports.activate).toBe('function');
+		expect(typeof moduleShim.exports.deactivate).toBe('function');
 	});
 
 	it('scaffolds a valid tier-0 (data-only) manifest with no entry', () => {
