@@ -122,17 +122,25 @@ function emptyLedger(installSecret: string): AuthorizationLedger {
 
 function isLedger(value: unknown): value is AuthorizationLedger {
 	if (typeof value !== 'object' || value === null) return false;
-	const v = value as Record<string, unknown>;
+	if (
+		!('version' in value) ||
+		!('epoch' in value) ||
+		!('installSecret' in value) ||
+		!('entries' in value) ||
+		!('tombstones' in value)
+	) {
+		return false;
+	}
 	return (
-		v.version === LEDGER_VERSION &&
-		typeof v.epoch === 'number' &&
-		Number.isInteger(v.epoch) &&
-		v.epoch >= 0 &&
-		typeof v.installSecret === 'string' &&
-		typeof v.entries === 'object' &&
-		v.entries !== null &&
-		!Array.isArray(v.entries) &&
-		Array.isArray(v.tombstones)
+		value.version === LEDGER_VERSION &&
+		typeof value.epoch === 'number' &&
+		Number.isInteger(value.epoch) &&
+		value.epoch >= 0 &&
+		typeof value.installSecret === 'string' &&
+		typeof value.entries === 'object' &&
+		value.entries !== null &&
+		!Array.isArray(value.entries) &&
+		Array.isArray(value.tombstones)
 	);
 }
 
@@ -220,19 +228,18 @@ export class AuthorizationStore {
 			return;
 		}
 
-		let raw: AuthorizationLedger | null = null;
+		let parsed: unknown = null;
 		try {
 			const blob = fs.readFileSync(this.ledgerPath);
-			raw = JSON.parse(this.seal.unseal(blob)) as AuthorizationLedger;
+			parsed = JSON.parse(this.seal.unseal(blob));
 		} catch {
-			raw = null; // missing, unsealable (tampered/foreign), or unparseable
+			parsed = null; // missing, unsealable (tampered/foreign), or unparseable
 		}
 
 		if (
-			!raw ||
-			!isLedger(raw) ||
-			raw.installSecret !== anchor.installSecret || // anchor reset / foreign ledger
-			raw.epoch !== anchor.epoch // ROLLBACK: restored an old sealed ledger
+			!isLedger(parsed) ||
+			parsed.installSecret !== anchor.installSecret || // anchor reset / foreign ledger
+			parsed.epoch !== anchor.epoch // ROLLBACK: restored an old sealed ledger
 		) {
 			// Drop the untrusted persisted state; keep the anchor authoritative.
 			// Re-mint the ledger empty at the anchor's epoch so future writes are
@@ -244,7 +251,7 @@ export class AuthorizationStore {
 			return;
 		}
 
-		this.ledger = raw;
+		this.ledger = parsed;
 		this.storageMode = 'persistent';
 	}
 
@@ -412,11 +419,18 @@ export function keyringAnchor(entryFactory: () => KeyringEntry | null): AnchorSt
 			try {
 				const raw = e.getPassword();
 				if (!raw) return null;
-				const parsed = JSON.parse(raw) as Anchor;
-				if (typeof parsed.installSecret !== 'string' || typeof parsed.epoch !== 'number') {
+				const parsed: unknown = JSON.parse(raw);
+				if (
+					typeof parsed !== 'object' ||
+					parsed === null ||
+					!('installSecret' in parsed) ||
+					!('epoch' in parsed) ||
+					typeof parsed.installSecret !== 'string' ||
+					typeof parsed.epoch !== 'number'
+				) {
 					return null;
 				}
-				return parsed;
+				return { installSecret: parsed.installSecret, epoch: parsed.epoch };
 			} catch {
 				return null;
 			}
