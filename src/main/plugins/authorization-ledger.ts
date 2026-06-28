@@ -33,7 +33,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { randomBytes } from 'crypto';
-import type { PermissionGrant } from '../../shared/plugins/permissions';
+import type { PermissionGrant, PluginCapability } from '../../shared/plugins/permissions';
 import type { SignatureStatus } from '../../shared/plugins/signing';
 
 /** Schema version of the sealed ledger payload. */
@@ -144,10 +144,22 @@ function isLedger(value: unknown): value is AuthorizationLedger {
 	);
 }
 
+/** Why a plugin's verification resolved the way it did (for the UI / audit). */
+export type VerifyReason = 'ok' | 'not-authorized' | 'identity-changed' | 'removed';
+
+/** Result of verifying a discovered plugin against its consented authorization. */
+export interface VerifyResult {
+	authorized: boolean;
+	reason: VerifyReason;
+	/** Caps to hand the broker — empty unless `authorized`. */
+	caps: PermissionGrant[];
+}
+
 /**
  * The authorization gate. Holds the verified in-memory view of the ledger plus,
  * in session-only mode, the ephemeral grants minted this run.
  */
+
 export class AuthorizationStore {
 	private readonly seal: SealProvider;
 	private readonly anchor: AnchorStore;
@@ -366,6 +378,43 @@ export class AuthorizationStore {
 	authorizedIds(): string[] {
 		this.ensureLoaded();
 		return Object.keys(this.ledger.entries).filter((id) => this.ledger.entries[id].enabled);
+	}
+
+	/**
+	 * Verify a discovered plugin against its consented authorization. The caller
+	 * (plugin-manager.refresh) passes the plugin's CURRENT identity and the
+	 * manifest's requested capabilities; this returns the caps to honor, or a
+	 * reason the plugin must be disabled / re-consented. Pure given the loaded
+	 * ledger — no I/O.
+	 */
+	verify(
+		pluginId: string,
+		current: AuthIdentity,
+		manifestRequested: readonly PluginCapability[]
+	): VerifyResult {
+		this.ensureLoaded();
+		if (this.isTombstoned(pluginId)) return { authorized: false, reason: 'removed', caps: [] };
+		const entry = this.ledger.entries[pluginId];
+		if (!entry || !entry.enabled) {
+			return { authorized: false, reason: 'not-authorized', caps: [] };
+		}
+		const id = entry.identity;
+		if (
+			id.contentHash !== current.contentHash ||
+			id.signatureStatus !== current.signatureStatus ||
+			id.signerKey !== current.signerKey
+		) {
+			return { authorized: false, reason: 'identity-changed', caps: [] };
+		}
+		// Defense in depth: never hand the broker a cap the CURRENT manifest no longer
+		// requests. (A plugin.json change also moves contentHash → identity-changed
+		// above, but this keeps grants ⊆ the manifest regardless.)
+		const requested = new Set(manifestRequested);
+		const kept = entry.caps.filter((c) => requested.has(c.capability));
+		if (kept.length !== entry.caps.length) {
+			return { authorized: false, reason: 'identity-changed', caps: [] };
+		}
+		return { authorized: true, reason: 'ok', caps: kept.map((c) => ({ ...c })) };
 	}
 }
 

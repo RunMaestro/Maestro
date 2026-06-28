@@ -255,3 +255,60 @@ describe('AuthorizationStore — persist failure (locked keyring) fails safe', (
 		expect(store.readGrants('b')).toHaveLength(1); // usable in-memory
 	});
 });
+
+describe('AuthorizationStore — verify (refresh-time gate)', () => {
+	const newStore = () => makeStore(fakeSeal(), fakeAnchor({ value: null as Anchor | null }));
+
+	it('authorizes when identity matches and caps are still requested', () => {
+		const store = newStore();
+		store.mint('a', caps('fs:read', '/d'), ident('h1', 'trusted', 'key1'));
+		const r = store.verify('a', ident('h1', 'trusted', 'key1'), ['fs:read']);
+		expect(r.authorized).toBe(true);
+		expect(r.reason).toBe('ok');
+		expect(r.caps).toHaveLength(1);
+	});
+
+	it('rejects on content-hash change', () => {
+		const store = newStore();
+		store.mint('a', caps('fs:read', '/d'), ident('h1'));
+		expect(store.verify('a', ident('h2'), ['fs:read'])).toMatchObject({
+			authorized: false,
+			reason: 'identity-changed',
+		});
+	});
+
+	it('rejects on signer/trust change even when files are unchanged', () => {
+		const store = newStore();
+		store.mint('a', caps('fs:read', '/d'), ident('h1', 'untrusted', 'keyX'));
+		expect(store.verify('a', ident('h1', 'trusted', 'keyY'), ['fs:read'])).toMatchObject({
+			authorized: false,
+			reason: 'identity-changed',
+		});
+	});
+
+	it('not-authorized when never minted', () => {
+		expect(newStore().verify('a', ident('h1'), ['fs:read'])).toMatchObject({
+			authorized: false,
+			reason: 'not-authorized',
+		});
+	});
+
+	it('removed when tombstoned (post-uninstall)', () => {
+		const store = newStore();
+		store.mint('a', caps('fs:read', '/d'), ident('h1'));
+		store.uninstall('a');
+		expect(store.verify('a', ident('h1'), ['fs:read'])).toMatchObject({
+			authorized: false,
+			reason: 'removed',
+		});
+	});
+
+	it('rejects when a granted cap is no longer requested by the manifest', () => {
+		const store = newStore();
+		store.mint('a', caps('fs:write', '/d'), ident('h1'));
+		expect(store.verify('a', ident('h1'), ['fs:read'])).toMatchObject({
+			authorized: false,
+			reason: 'identity-changed',
+		});
+	});
+});
