@@ -284,10 +284,12 @@ function entryJsTemplate(): string {
 	return [
 		'// Maestro plugin entrypoint (tier 1).',
 		'//',
-		'// Maestro loads this module in a sandbox: activate() runs once when the',
-		'// plugin is enabled and receives the brokered host API; deactivate() runs',
-		'// once when the plugin is unloaded. Everything you can do is mediated by the',
-		'// capabilities you declare in plugin.json and the user grants at install.',
+		'// Maestro loads this file in a sandbox as a CommonJS-style script (no',
+		'// bundler and no Node `require`): assign an object with optional',
+		'// activate() / deactivate() to `module.exports`. activate() runs once when',
+		'// the plugin is enabled and receives the brokered host API; deactivate()',
+		'// runs once on unload. Everything you can do is mediated by the capabilities',
+		'// you declare in plugin.json and the user grants at install.',
 		'//',
 		'// Types come from @maestro/plugin-sdk via the JSDoc @import tag below, so',
 		'// editors type-check this plain-JS entrypoint without a build step.',
@@ -299,7 +301,7 @@ function entryJsTemplate(): string {
 		' * @param {MaestroSdk} maestro The brokered Maestro host API.',
 		' * @returns {void | Promise<void>}',
 		' */',
-		'export function activate(maestro) {',
+		'function activate(maestro) {',
 		'\t// Your plugin code goes here.',
 		'\tvoid maestro;',
 		'}',
@@ -309,10 +311,10 @@ function entryJsTemplate(): string {
 		' * and any other resources here.',
 		' * @returns {void | Promise<void>}',
 		' */',
-		'export function deactivate() {}',
+		'function deactivate() {}',
 		'',
 		'/** @type {PluginModule} */',
-		'export default { activate, deactivate };',
+		'module.exports = { activate, deactivate };',
 		'',
 	].join('\n');
 }
@@ -323,7 +325,7 @@ function packageJsonTemplate(id: string): string {
 		name: id,
 		version: '0.1.0',
 		private: true,
-		type: 'module',
+		type: 'commonjs',
 		main: 'entry.js',
 		devDependencies: {
 			'@maestro/plugin-sdk': `^${PLUGIN_SDK_VERSION}`,
@@ -337,8 +339,8 @@ function tsconfigTemplate(): string {
 	const tsconfig = {
 		compilerOptions: {
 			target: 'ES2020',
-			module: 'ESNext',
-			moduleResolution: 'bundler',
+			module: 'NodeNext',
+			moduleResolution: 'NodeNext',
 			allowJs: true,
 			checkJs: true,
 			strict: true,
