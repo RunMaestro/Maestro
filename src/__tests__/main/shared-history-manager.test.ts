@@ -60,6 +60,7 @@ import {
 	__resetSharedHistoryCacheForTest,
 } from '../../main/shared-history-manager';
 import * as remoteFs from '../../main/utils/remote-fs';
+import { captureException } from '../../main/utils/sentry';
 import type { HistoryEntry, SshRemoteConfig } from '../../shared/types';
 
 const LOCAL_HOSTNAME = os.hostname();
@@ -110,6 +111,33 @@ describe('SharedHistoryManager', () => {
 			const parsed = JSON.parse(writtenContent.trim());
 			expect(parsed.id).toBe('entry-1');
 			expect(parsed.hostname).toBe(LOCAL_HOSTNAME);
+		});
+
+		// MAESTRO-FM: best-effort sync writes into a permission-restricted or
+		// non-existent project dir must not spam Sentry with expected fs errors.
+		it('does not report expected filesystem errors (EACCES) to Sentry', () => {
+			vi.mocked(fs.existsSync).mockReturnValue(false);
+			const eacces = Object.assign(new Error('EACCES: permission denied, mkdir'), {
+				code: 'EACCES',
+			});
+			vi.mocked(fs.mkdirSync).mockImplementation(() => {
+				throw eacces;
+			});
+
+			// Best-effort write swallows the error (does not throw).
+			expect(() => writeEntryLocal('/test/project', createMockEntry())).not.toThrow();
+			expect(captureException).not.toHaveBeenCalled();
+		});
+
+		it('still reports unexpected write errors to Sentry', () => {
+			vi.mocked(fs.existsSync).mockReturnValue(false);
+			vi.mocked(fs.mkdirSync).mockReturnValue(undefined);
+			vi.mocked(fs.appendFileSync).mockImplementation(() => {
+				throw new TypeError('unexpected non-fs failure');
+			});
+
+			expect(() => writeEntryLocal('/test/project', createMockEntry())).not.toThrow();
+			expect(captureException).toHaveBeenCalledTimes(1);
 		});
 	});
 
