@@ -31,6 +31,7 @@ import {
 	aggregateContributions,
 	type AggregatedContributions,
 } from '../../shared/plugins/contributions';
+import { isPermitted, type PermissionGrant } from '../../shared/plugins/permissions';
 import { createAgentRegistry, type AgentRegistry } from '../../shared/plugins/agent-registry';
 import {
 	pluginsDir,
@@ -39,6 +40,7 @@ import {
 	forgetPlugin,
 	forgetGrants,
 	isSafePluginFolderName,
+	readGrants,
 } from './plugin-store-main';
 import { verifyPluginSignature } from './plugin-signature';
 
@@ -74,6 +76,13 @@ export interface PluginManagerDeps {
 	 * (invariant #8). Separate from forgetPlugin/forgetGrants below, which handle
 	 * the enable-state and grants files. */
 	purgePluginData?: (pluginId: string) => void;
+	/**
+	 * Source of a plugin's VERIFIED granted capabilities, used to gate
+	 * capability-scoped contributions. Defaults to the on-disk grants store;
+	 * production injects the authorization ledger so gating reads sealed,
+	 * anti-rollback grants rather than the forgeable plain-JSON store.
+	 */
+	getGrants?: (pluginId: string) => PermissionGrant[];
 }
 
 export interface InstallResult {
@@ -113,7 +122,15 @@ export class PluginManager {
 		const manifests = this.getActiveRecords()
 			.map((r) => r.manifest)
 			.filter((m): m is PluginManifest => m !== null);
-		return aggregateContributions(manifests);
+		// Secure-by-default: gate capability-scoped contributions (ui:contribute
+		// items, ui:panel panels) by each plugin's VERIFIED grants. The grant source
+		// is injected (`deps.getGrants`); production supplies the authorization
+		// ledger, so this reads sealed, anti-rollback grants rather than the
+		// forgeable plain-JSON store the default falls back to.
+		const getGrants = this.deps.getGrants ?? readGrants;
+		return aggregateContributions(manifests, (pluginId, cap) =>
+			isPermitted(getGrants(pluginId), cap)
+		);
 	}
 
 	/**

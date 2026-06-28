@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	collectContributions,
 	aggregateContributions,
+	gateContributions,
 } from '../../../shared/plugins/contributions';
 import type { PluginManifest } from '../../../shared/plugins/plugin-manifest';
 
@@ -403,5 +404,100 @@ describe('aggregateContributions per-bucket id uniqueness', () => {
 		]);
 		expect(agg.commands.filter((c) => c.id === 'com.p/run')).toHaveLength(1);
 		expect(agg.errorsByPlugin['com.p']?.some((e) => e.includes('duplicate'))).toBe(true);
+	});
+});
+
+describe('uiItems contribution (ui:contribute surface items)', () => {
+	const withItem = (over: Record<string, unknown> = {}) =>
+		manifest(
+			'com.ui',
+			{ uiItems: [{ id: 'go', surface: 'status-bar', label: 'Go', command: 'run', ...over }] },
+			1
+		);
+
+	it('parses a valid uiItem at tier 1', () => {
+		const c = collectContributions(withItem());
+		expect(c.errors).toEqual([]);
+		expect(c.uiItems).toHaveLength(1);
+		expect(c.uiItems[0]).toMatchObject({
+			id: 'com.ui/go',
+			surface: 'status-bar',
+			label: 'Go',
+			command: 'run',
+		});
+	});
+
+	it('requires tier >= 1', () => {
+		const c = collectContributions(
+			manifest(
+				'com.ui',
+				{ uiItems: [{ id: 'go', surface: 'menu', label: 'Go', command: 'run' }] },
+				0
+			)
+		);
+		expect(c.uiItems).toEqual([]);
+		expect(c.errors.join(' ')).toContain('tier >= 1');
+	});
+
+	it('rejects an invalid surface', () => {
+		const c = collectContributions(withItem({ surface: 'nowhere' }));
+		expect(c.uiItems).toEqual([]);
+		expect(c.errors.join(' ')).toContain('surface');
+	});
+
+	it('rejects a non-plugin-local command', () => {
+		const c = collectContributions(withItem({ command: 'other-plugin/cmd' }));
+		expect(c.uiItems).toEqual([]);
+		expect(c.errors.join(' ')).toContain('command');
+	});
+});
+
+describe('gateContributions (per-capability customization gate)', () => {
+	const built = collectContributions(
+		manifest(
+			'com.g',
+			{
+				uiItems: [{ id: 'go', surface: 'status-bar', label: 'Go', command: 'run' }],
+				panels: [{ id: 'p', title: 'P', entry: 'panel.html' }],
+				commands: [{ id: 'run', title: 'Run' }],
+			},
+			1
+		)
+	);
+
+	it('drops uiItems without ui:contribute and panels without ui:panel', () => {
+		const none = gateContributions(built, () => false);
+		expect(none.uiItems).toEqual([]);
+		expect(none.panels).toEqual([]);
+		expect(none.commands).toHaveLength(1); // ungated category passes through
+	});
+
+	it('keeps uiItems with ui:contribute and panels with ui:panel', () => {
+		const all = gateContributions(built, (cap) => cap === 'ui:contribute' || cap === 'ui:panel');
+		expect(all.uiItems).toHaveLength(1);
+		expect(all.panels).toHaveLength(1);
+	});
+
+	it('gates each capability independently', () => {
+		const onlyItems = gateContributions(built, (cap) => cap === 'ui:contribute');
+		expect(onlyItems.uiItems).toHaveLength(1);
+		expect(onlyItems.panels).toEqual([]);
+	});
+});
+
+describe('aggregateContributions — gated aggregation', () => {
+	it('gates capability-scoped contributions per plugin when given the predicate', () => {
+		const m = manifest(
+			'com.g2',
+			{
+				uiItems: [{ id: 'go', surface: 'menu', label: 'Go', command: 'run' }],
+				commands: [{ id: 'run', title: 'Run' }],
+			},
+			1
+		);
+		expect(aggregateContributions([m]).uiItems).toHaveLength(1); // ungated (back-compat)
+		const gated = aggregateContributions([m], () => false);
+		expect(gated.uiItems).toEqual([]); // gated out without ui:contribute
+		expect(gated.commands).toHaveLength(1); // ungated category survives
 	});
 });

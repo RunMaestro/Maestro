@@ -13,6 +13,7 @@
  */
 
 import type { PluginManifest } from './plugin-manifest';
+import type { PluginCapability } from './permissions';
 
 /** A theme a plugin adds to the theme picker. Colors are validated loosely
  * (a string map) here; the renderer maps them onto its ThemeColors shape. */
@@ -168,6 +169,45 @@ export interface KeybindingContribution {
 	description?: string;
 }
 
+/** Where a `ui:contribute` item renders. The renderer maps each surface to a
+ * concrete region (status bar, menus, sidebar/activity bar, toolbar). */
+export type UiSurface = 'status-bar' | 'menu' | 'sidebar' | 'activity-bar' | 'toolbar';
+
+export const UI_SURFACES: readonly UiSurface[] = [
+	'status-bar',
+	'menu',
+	'sidebar',
+	'activity-bar',
+	'toolbar',
+];
+
+/** Type guard: is `value` one of the known UI surfaces? */
+export function isUiSurface(value: unknown): value is UiSurface {
+	return typeof value === 'string' && (UI_SURFACES as readonly string[]).includes(value);
+}
+
+/**
+ * A declarative UI item a (tier-1) plugin renders into a host surface. The item
+ * is pure data (label / icon / placement) the host renders; activating it invokes
+ * one of the plugin's OWN commands through the broker. Gated by the
+ * `ui:contribute` capability (see `gateContributions`), so an enabled plugin
+ * WITHOUT that grant contributes none.
+ */
+export interface UiItemContribution {
+	id: string;
+	localId: string;
+	pluginId: string;
+	surface: UiSurface;
+	label: string;
+	/** Plugin-local command id invoked on activation. */
+	command: string;
+	/** Optional icon keyword the renderer maps to its icon set. */
+	icon?: string;
+	/** Optional grouping / ordering hints within the surface. */
+	group?: string;
+	priority?: number;
+}
+
 /** All contributions a single plugin declared, plus any per-item errors. */
 export interface PluginContributions {
 	themes: ThemeContribution[];
@@ -180,6 +220,7 @@ export interface PluginContributions {
 	agents: AgentContribution[];
 	tools: AgentToolContribution[];
 	keybindings: KeybindingContribution[];
+	uiItems: UiItemContribution[];
 	/** Human-readable reasons individual contributions were dropped. */
 	errors: string[];
 }
@@ -196,6 +237,7 @@ export interface AggregatedContributions {
 	agents: AgentContribution[];
 	tools: AgentToolContribution[];
 	keybindings: KeybindingContribution[];
+	uiItems: UiItemContribution[];
 	/** Per-plugin errors keyed by plugin id (only plugins with errors appear). */
 	errorsByPlugin: Record<string, string[]>;
 }
@@ -236,6 +278,7 @@ export function collectContributions(manifest: PluginManifest): PluginContributi
 		agents: [],
 		tools: [],
 		keybindings: [],
+		uiItems: [],
 		errors: [],
 	};
 	const contributes = manifest.contributes;
@@ -314,15 +357,31 @@ export function collectContributions(manifest: PluginManifest): PluginContributi
 			}
 		}
 	}
+	if (contributes.uiItems !== undefined) {
+		if (!isCodeTier) {
+			out.errors.push(`[${pluginId}] uiItems require tier >= 1 (they invoke plugin commands)`);
+		} else {
+			for (const raw of asArray(contributes.uiItems)) {
+				const item = parseUiItem(pluginId, raw, out.errors);
+				if (item) out.uiItems.push(item);
+			}
+		}
+	}
 	return out;
 }
 
 /**
  * Aggregate contributions across active plugins. On a namespaced-id collision
  * (should be impossible since ids are plugin-scoped, but defended anyway) the
- * first wins and the duplicate is recorded as an error.
+ * first wins and the duplicate is recorded as an error. Pass `hasCapabilityFor`
+ * (the verified per-plugin grants) to gate capability-scoped contributions
+ * (`ui:contribute` items, `ui:panel` panels) DURING aggregation — the secure
+ * default for the production path, so a render host can't forget to filter.
  */
-export function aggregateContributions(manifests: PluginManifest[]): AggregatedContributions {
+export function aggregateContributions(
+	manifests: PluginManifest[],
+	hasCapabilityFor?: (pluginId: string, capability: PluginCapability) => boolean
+): AggregatedContributions {
 	const agg: AggregatedContributions = {
 		themes: [],
 		prompts: [],
@@ -334,6 +393,7 @@ export function aggregateContributions(manifests: PluginManifest[]): AggregatedC
 		agents: [],
 		tools: [],
 		keybindings: [],
+		uiItems: [],
 		errorsByPlugin: {},
 	};
 	const seen = new Set<string>();
@@ -357,7 +417,10 @@ export function aggregateContributions(manifests: PluginManifest[]): AggregatedC
 	};
 
 	for (const manifest of manifests) {
-		const c = collectContributions(manifest);
+		const collected = collectContributions(manifest);
+		const c = hasCapabilityFor
+			? gateContributions(collected, (cap) => hasCapabilityFor(manifest.id, cap))
+			: collected;
 		if (c.errors.length > 0) {
 			(agg.errorsByPlugin[manifest.id] ??= []).push(...c.errors);
 		}
@@ -371,6 +434,7 @@ export function aggregateContributions(manifests: PluginManifest[]): AggregatedC
 		c.agents.forEach((agent) => pushUnique('agents', agg.agents, agent));
 		c.tools.forEach((t) => pushUnique('tools', agg.tools, t));
 		c.keybindings.forEach((k) => pushUnique('keybindings', agg.keybindings, k));
+		c.uiItems.forEach((u) => pushUnique('uiItems', agg.uiItems, u));
 	}
 	return agg;
 }
@@ -698,6 +762,57 @@ function parseKeybinding(
 		key: raw.key.trim(),
 		command: raw.command.trim(),
 		...(isNonEmptyString(raw.description) ? { description: raw.description.trim() } : {}),
+	};
+}
+
+function parseUiItem(pluginId: string, raw: unknown, errors: string[]): UiItemContribution | null {
+	if (!isPlainObject(raw)) {
+		errors.push(`[${pluginId}] a uiItem contribution is not an object`);
+		return null;
+	}
+	const localId = parseLocalId(pluginId, raw, errors);
+	if (!localId) return null;
+	if (!isUiSurface(raw.surface)) {
+		errors.push(`[${pluginId}] uiItem "${localId}" has an invalid or missing surface`);
+		return null;
+	}
+	if (!isNonEmptyString(raw.label)) {
+		errors.push(`[${pluginId}] uiItem "${localId}" is missing a label`);
+		return null;
+	}
+	if (!isNonEmptyString(raw.command) || !LOCAL_ID_PATTERN.test(raw.command.trim())) {
+		errors.push(`[${pluginId}] uiItem "${localId}" command must be a plugin-local command id`);
+		return null;
+	}
+	const priority =
+		typeof raw.priority === 'number' && Number.isFinite(raw.priority) ? raw.priority : undefined;
+	return {
+		id: namespaced(pluginId, localId),
+		localId,
+		pluginId,
+		surface: raw.surface,
+		label: raw.label.trim(),
+		command: raw.command.trim(),
+		...(isNonEmptyString(raw.icon) ? { icon: raw.icon.trim() } : {}),
+		...(isNonEmptyString(raw.group) ? { group: raw.group.trim() } : {}),
+		...(priority !== undefined ? { priority } : {}),
+	};
+}
+
+/**
+ * Drop capability-gated contributions a plugin does NOT hold the grant for. The
+ * render host calls this with the plugin's VERIFIED grants so customization is
+ * gated per-capability, not merely by the plugin being enabled: UI items need
+ * `ui:contribute`, panels need `ui:panel`. Other categories pass through.
+ */
+export function gateContributions(
+	plugin: PluginContributions,
+	hasCapability: (capability: PluginCapability) => boolean
+): PluginContributions {
+	return {
+		...plugin,
+		uiItems: hasCapability('ui:contribute') ? plugin.uiItems : [],
+		panels: hasCapability('ui:panel') ? plugin.panels : [],
 	};
 }
 

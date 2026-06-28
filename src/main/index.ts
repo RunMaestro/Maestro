@@ -1310,6 +1310,10 @@ app
 				return Array.isArray(keys) ? keys.filter((k): k is string => typeof k === 'string') : [];
 			},
 			sandbox: sandboxHost,
+			// Gate capability-scoped contributions by the SAME grant source the broker
+			// uses (line ~1174, currently the on-disk grants store); both move to the
+			// verified authorization ledger together when that wiring lands.
+			getGrants: (pluginId) => readGrants(pluginId),
 			// Complete uninstall (invariant #8): purge the plugin's KV store, its
 			// plugins.<id>.* settings, and its event subscriptions.
 			purgePluginData: (id) =>
