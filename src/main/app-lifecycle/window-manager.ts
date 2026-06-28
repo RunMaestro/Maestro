@@ -8,6 +8,7 @@ import type Store from 'electron-store';
 import type { WindowState } from '../stores/types';
 import { logger } from '../utils/logger';
 import { initAutoUpdater } from '../auto-updater';
+import { blocksSubframeNavigation } from '../../shared/plugins/panel-navigation';
 
 const BROWSER_TAB_PARTITION_PREFIX = 'persist:maestro-browser-session-';
 // `file:` is allowed so users can open local HTML they just generated
@@ -467,6 +468,18 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 				}
 				event.preventDefault();
 				logger.warn(`Blocked navigation to: ${url}`, 'Window');
+			});
+
+			// Subframe egress guard. Plugin panels and the file-preview renderer are
+			// sandboxed `srcDoc` subframes whose only intended channel out is the
+			// brokered postMessage bridge. A meta CSP cannot stop such a frame from
+			// navigating ITSELF to a remote URL and leaking data through it, so block
+			// any subframe navigation away from its initial document here (the top
+			// frame is handled by `will-navigate` above).
+			mainWindow.webContents.on('will-frame-navigate', (event) => {
+				if (!blocksSubframeNavigation(event.isMainFrame, event.url)) return;
+				event.preventDefault();
+				logger.warn(`Blocked subframe navigation to: ${event.url}`, 'Window');
 			});
 
 			// Deny most browser permission requests (camera, mic, geolocation, etc.)
