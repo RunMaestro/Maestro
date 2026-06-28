@@ -11,7 +11,7 @@ A plugin is one folder under `<userData>/plugins/` containing a `plugin.json` ma
 - Entire system is gated on `encoreFeatures.plugins === true` (off by default), re-read per call.
 - Every `plugins:*` IPC channel throws the sentinel `'PluginsDisabled'` when the flag is off, so the renderer can distinguish "feature off" from "no plugins installed". The gate runs OUTSIDE `withIpcErrorLogging` so the sentinel is not logged as a real failure.
 - `PluginManager.getActiveRecords()`, `getContributions()`, and `getAgentRegistry()` all return empty when the flag is off, regardless of what is on disk.
-- `HOST_API_VERSION = '1.3.0'` (`src/shared/plugins/host-api.ts`) is the single source of truth for the host surface version.
+- `HOST_API_VERSION = '1.4.0'` (`src/shared/plugins/host-api.ts`) is the single source of truth for the host surface version.
 
 ## File map
 
@@ -127,6 +127,9 @@ HostResponse { id, ok, result?, error? } <---postMessage---
 | `ui:command`          | low    | none  | invoke a registered palette command                                                                                                             |
 | `events:subscribe`    | medium | none  | metadata-only topics                                                                                                                            |
 | `process:spawn`       | high   | none  | INERT (no production handler)                                                                                                                   |
+| `ui:contribute`       | medium | none  | gates accepting declarative `uiItems` into host surfaces (menus, sidebar, status bar)                                                           |
+| `ui:panel`            | medium | none  | gates accepting the plugin's sandboxed `panels`                                                                                                 |
+| `ui:render-unsafe`    | high   | none  | escape hatch: full custom UI with interface access (high-trust)                                                                                 |
 
 `PermissionRequest = { capability, scope?, reason? }`. Scopes narrow `fs:*` (a directory), `net:fetch` (a host), and `transcripts:read` (a project path); an absent scope means the broad form (the consent UI must present it as such). The user grants a subset at the consent dialog (`plugins:set-grants`).
 
