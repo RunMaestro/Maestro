@@ -11,5 +11,13 @@ export default defineConfig({
 		globals: true,
 		environment: 'node',
 		include: ['src/**/*.{test,spec}.ts'],
+		// Compile-time shape-parity guard (drift.test-d.ts): caught only when tsc
+		// runs, so wire vitest typecheck with the test-only tsconfig that may reach
+		// into the host sources. A normal `vitest run` then runs both.
+		typecheck: {
+			enabled: true,
+			tsconfig: './tsconfig.test.json',
+			include: ['src/**/*.test-d.ts'],
+		},
 	},
 });
