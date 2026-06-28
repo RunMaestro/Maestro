@@ -500,3 +500,40 @@ export function keyringAnchor(entryFactory: () => KeyringEntry | null): AnchorSt
 		},
 	};
 }
+
+/** A no-op anchor — `available() === false`, so the store runs session-only. The
+ * default until the OS keyring (the named freshness anchor) is injected. */
+export function noAnchor(): AnchorStore {
+	return {
+		available: () => false,
+		read: () => null,
+		write: () => {},
+		clear: () => {},
+	};
+}
+
+/** Electron `safeStorage`-shaped surface the production seal needs. */
+export interface SafeStorageLike {
+	isEncryptionAvailable(): boolean;
+	encryptString(s: string): Buffer;
+	decryptString(b: Buffer): string;
+}
+
+/**
+ * Build the production authorization store: a `safeStorage` seal plus a freshness
+ * anchor. Inject a keyring-backed `anchor` (see `keyringAnchor`) to enable
+ * persistence across restarts; the default `noAnchor()` runs session-only
+ * (re-consent each launch) with zero native dependencies, so the gate is fully
+ * functional before the keyring/packaging step lands.
+ */
+export function createAuthorizationStore(opts: {
+	safeStorage: SafeStorageLike;
+	ledgerPath: string;
+	anchor?: AnchorStore;
+}): AuthorizationStore {
+	return new AuthorizationStore({
+		seal: safeStorageSeal(opts.safeStorage),
+		anchor: opts.anchor ?? noAnchor(),
+		ledgerPath: opts.ledgerPath,
+	});
+}
