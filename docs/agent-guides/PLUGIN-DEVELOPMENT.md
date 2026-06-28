@@ -8,6 +8,53 @@ A plugin is one folder under `<userData>/plugins/` with a `plugin.json` manifest
 
 ---
 
+## Quickstart: scaffold your first plugin
+
+Use the `maestro plugin` CLI rather than hand-writing files - `init` produces a manifest that already passes validation and (for code tiers) a runnable entrypoint.
+
+```bash
+# data-only plugin (no code, tier 0)
+maestro plugin init my-data --tier 0 --id com.example.data --name "My Data"
+
+# code plugin (tier 1)
+maestro plugin init my-plugin --tier 1 --id com.example.demo --name "Demo"
+```
+
+What `init` writes:
+
+- **Tier 0** - `plugin.json`, `README.md`, `.gitignore`. No code; the host runs nothing.
+- **Tier 1/2** - the above plus `entry.js` (the sandboxed entrypoint), `package.json` (`"type": "commonjs"`, pins `@maestro/plugin-sdk` as a dev dependency), and `tsconfig.json` (`NodeNext`, `checkJs`) so your editor type-checks `entry.js` with no build step.
+
+The scaffolded `entry.js` is plain **CommonJS**. The sandbox loads it as a classic script (no ESM, no bundler, no `require`), so you assign `activate`/`deactivate` to `module.exports` and pull SDK types in through a JSDoc `@import` tag:
+
+```js
+/** @import { MaestroSdk, PluginModule } from '@maestro/plugin-sdk' */
+
+/** @param {MaestroSdk} maestro The brokered Maestro host API. */
+function activate(maestro) {
+	// your plugin code here
+	void maestro;
+}
+function deactivate() {}
+
+/** @type {PluginModule} */
+module.exports = { activate, deactivate };
+```
+
+> Do NOT use ESM in `entry.js` (`export function activate`, `import ... from`). The sandbox runs the file through `new vm.Script` and reads `module.exports`; `export`/`import` syntax fails to parse and the plugin never activates.
+
+Then iterate and ship:
+
+```bash
+maestro plugin validate ./my-plugin
+maestro plugin sign ./my-plugin --gen-key --key-out ./signing-key.pem
+maestro plugin pack ./my-plugin            # -> com.example.demo-0.1.0.tgz
+```
+
+Drop the folder into `<userData>/plugins/` (or install the `.tgz` from Settings -> Plugins). Tier 0 is active immediately; tier 1/2 stay disabled until you enable them and approve capabilities. Each step is detailed below.
+
+---
+
 ## 1. Pick a tier
 
 | Tier | What it is                                                                                     | Code?                  | Risk          |
@@ -252,7 +299,7 @@ Request these in `permissions` as `{ capability, scope?, reason? }`. `scope` nar
 
 ## 6. Tier-1 entry code + the maestro SDK
 
-Your `entry` file is run inside a confined `vm` context (it is NOT `require`d). Assign `module.exports = { activate(maestro) {}, deactivate() {} }`. `activate` receives the frozen `maestro` SDK.
+Your `entry` file is plain **CommonJS** JavaScript run inside a confined `vm` context (it is NOT `require`d, and ESM `export`/`import` will not parse). Assign `module.exports = { activate(maestro) {}, deactivate() {} }`; `activate` receives the frozen `maestro` SDK. Pull SDK types into the plain-JS file with a JSDoc `@import` tag (shown below).
 
 **Sandbox globals available:** `maestro`, `module`, `exports`, `console` (`log`/`info`/`warn`/`error` route to the host log), `setTimeout`, `clearTimeout`. `async`/`await`/`Promise` work.
 
@@ -265,18 +312,22 @@ Your `entry` file is run inside a confined `vm` context (it is NOT `require`d). 
 ### Minimal entry.js
 
 ```js
-module.exports = {
-	async activate(maestro) {
-		maestro.commands.register('say-hello', async () => {
-			await maestro.notifications.toast('Hello from the vet plugin');
-		});
-		maestro.events.on('session.updated', (payload, meta) => {
-			console.log('session updated', payload.sessionId, meta.topic);
-		});
-		await maestro.events.subscribe(['session.updated']);
-	},
-	deactivate() {},
-};
+/** @import { MaestroSdk, PluginModule } from '@maestro/plugin-sdk' */
+
+/** @param {MaestroSdk} maestro */
+async function activate(maestro) {
+	maestro.commands.register('say-hello', async () => {
+		await maestro.notifications.toast('Hello from the vet plugin');
+	});
+	maestro.events.on('session.updated', (payload, meta) => {
+		console.log('session updated', payload.sessionId, meta.topic);
+	});
+	await maestro.events.subscribe(['session.updated']);
+}
+function deactivate() {}
+
+/** @type {PluginModule} */
+module.exports = { activate, deactivate };
 ```
 
 ### SDK reference
@@ -428,7 +479,13 @@ An integral-but-untrusted plugin still runs once the user enables = consents. A 
 
 ## 14. Tooling: the SDK package and the `maestro plugin` CLI
 
-**`@maestro/plugin-sdk`** (`packages/plugin-sdk/`) is the typed authoring surface: it provides the manifest, capability, contribution, and event types, the `MaestroSdk` runtime shape, and `defineManifest()` / `definePlugin()` helpers so your editor type-checks the manifest and entry code. Add it as a dev dependency and import the types:
+**`@maestro/plugin-sdk`** (`packages/plugin-sdk/`) is the typed authoring surface: the manifest, capability, contribution, and event types, the `MaestroSdk` runtime shape, and `defineManifest()` / `definePlugin()` helpers. The scaffold adds it as a dev dependency so your editor type-checks the manifest and entry code. Because the runtime `entry.js` is plain CommonJS, reference the types with a JSDoc `@import` tag - no runtime import, no build step:
+
+```js
+/** @import { MaestroSdk, PluginModule } from '@maestro/plugin-sdk' */
+```
+
+If you instead author in TypeScript and compile down to a CommonJS `entry.js`, the ESM type imports work too:
 
 ```ts
 import { defineManifest, type PluginModule, type MaestroSdk } from '@maestro/plugin-sdk';
