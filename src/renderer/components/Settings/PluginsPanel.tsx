@@ -89,6 +89,17 @@ export function PluginsPanel({ theme }: PluginsPanelProps) {
 		void load();
 	}, [load]);
 
+	// The host-owned consent window mints the grant and the main process then
+	// enables the plugin, broadcasting 'plugins:changed'. Subscribe so the panel
+	// reflects the new enabled/grant state without a manual reload (e.g. after the
+	// user approves a code-tier plugin's permission prompt).
+	useEffect(() => {
+		const unsubscribe = window.maestro.plugins.onChanged(() => {
+			void load();
+		});
+		return unsubscribe;
+	}, [load]);
+
 	const applyEnabled = useCallback(async (id: string, enabled: boolean) => {
 		setBusyId(id);
 		try {

@@ -1476,6 +1476,18 @@ app
 				return { ok: true, granted: outcome.grants };
 			}
 			logger.warn(`[Plugins] consent confirm rejected: ${outcome.reason}`, '[Plugins]');
+			// The consent window has already closed, so the rejection would otherwise be
+			// silent. Surface why, and leave the plugin disabled (no setEnabled here).
+			const reasonMsg =
+				outcome.reason === 'conflict'
+					? `an untrusted plugin can't combine transcripts:read with net:fetch or process:spawn (only a trusted, signed plugin can).`
+					: outcome.reason === 'bad-nonce'
+						? `the consent request expired or was superseded — try again.`
+						: `consent was rejected (${outcome.reason}).`;
+			logger.toast(
+				`Couldn't enable "${pluginId}": ${reasonMsg} Re-enable it to choose a different set.`,
+				'Plugins'
+			);
 			return { ok: false, reason: outcome.reason };
 		});
 		ipcMain.handle('plugins:cancel-consent', () => {
