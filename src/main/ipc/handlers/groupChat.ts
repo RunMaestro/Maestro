@@ -760,7 +760,15 @@ Respond with ONLY the summary text, no additional commentary.`;
 						durationMs: result.durationMs,
 					});
 				} catch (error) {
-					void captureException(error);
+					// A summary that fails because the participant's session was already
+					// deleted ("Session not found ...") is an expected, fully-recovered
+					// condition - we fall back to a fresh session just below. Don't
+					// report that to Sentry (MAESTRO-JB); only surface unexpected
+					// grooming failures.
+					const message = error instanceof Error ? error.message : String(error);
+					if (!/Session not found/i.test(message)) {
+						void captureException(error);
+					}
 					logger.warn(`Summary generation failed for ${participantName}: ${error}`, LOG_CONTEXT);
 					summaryResponse = 'No summary available - starting fresh session.';
 				}
