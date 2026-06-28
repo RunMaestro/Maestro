@@ -7,7 +7,14 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { ConsentNonceRegistry } from '../../../main/plugins/consent-minter';
+import {
+	ConsentNonceRegistry,
+	ConsentMinter,
+	sameConsentSender,
+	type ConsentSender,
+} from '../../../main/plugins/consent-minter';
+import type { AuthIdentity } from '../../../main/plugins/authorization-ledger';
+import type { PermissionRequest, PermissionGrant } from '../../../shared/plugins/permissions';
 
 function reg(now: { t: number }, seq = { n: 0 }, ttlMs = 1000): ConsentNonceRegistry {
 	return new ConsentNonceRegistry({
@@ -84,5 +91,210 @@ describe('ConsentNonceRegistry', () => {
 		now.t = 2000;
 		r.issue('q', ['fs:read']); // triggers prune of the expired first ticket
 		expect(r.outstanding()).toBe(1);
+	});
+});
+
+const SENDER: ConsentSender = { webContentsId: 7, frameId: 1, url: 'app://consent' };
+const UNTRUSTED: AuthIdentity = { contentHash: 'h', signatureStatus: 'untrusted', signerKey: null };
+const TRUSTED: AuthIdentity = { contentHash: 'h', signatureStatus: 'trusted', signerKey: 'k' };
+
+function setup(opts?: {
+	requested?: PermissionRequest[];
+	identity?: AuthIdentity | null;
+	sender?: ConsentSender;
+}) {
+	const requested = opts?.requested ?? [{ capability: 'fs:read' }, { capability: 'net:fetch' }];
+	const identity = opts && 'identity' in opts ? opts.identity! : UNTRUSTED;
+	const sender = opts?.sender ?? SENDER;
+	const registry = new ConsentNonceRegistry({ now: () => 0, newNonce: () => 'NONCE', ttlMs: 1000 });
+	const mints: { pluginId: string; caps: PermissionGrant[]; identity: AuthIdentity }[] = [];
+	const captured: { nonce?: string } = {};
+	const minter = new ConsentMinter({
+		registry,
+		store: { mint: (pluginId, caps, id) => mints.push({ pluginId, caps, identity: id }) },
+		requested: () => requested,
+		identityOf: () => identity,
+		openPrompt: async ({ nonce }) => {
+			captured.nonce = nonce;
+			return sender;
+		},
+		now: () => 1234,
+	});
+	return { minter, registry, mints, captured, sender };
+}
+
+describe('ConsentMinter', () => {
+	it('mints when a confirm from the consent frame echoes the nonce and approves a subset', async () => {
+		const { minter, mints, captured } = setup();
+		await minter.requestConsent('p');
+		const out = minter.confirm(SENDER, {
+			pluginId: 'p',
+			nonce: captured.nonce!,
+			approved: ['fs:read'],
+		});
+		expect(out.ok).toBe(true);
+		expect(mints).toHaveLength(1);
+		expect(mints[0].pluginId).toBe('p');
+		expect(mints[0].caps.map((c) => c.capability)).toEqual(['fs:read']); // only the approved subset
+		expect(mints[0].caps[0].grantedAt).toBe(1234); // stamped with the minter clock
+		expect(mints[0].identity).toEqual(UNTRUSTED);
+	});
+
+	it('issues the nonce only inside the main-owned open path', async () => {
+		const { minter, registry } = setup();
+		expect(registry.outstanding()).toBe(0); // nothing issuable without opening a prompt
+		await minter.requestConsent('p');
+		expect(registry.outstanding()).toBe(1);
+	});
+
+	it('rejects a confirm from any frame that is not the recorded consent frame', async () => {
+		const { minter, mints, captured } = setup();
+		await minter.requestConsent('p');
+		const out = minter.confirm(
+			{ webContentsId: 99, frameId: 1, url: 'app://consent' }, // different webContents
+			{ pluginId: 'p', nonce: captured.nonce!, approved: ['fs:read'] }
+		);
+		expect(out).toEqual({ ok: false, reason: 'untrusted-sender' });
+		expect(mints).toHaveLength(0);
+	});
+
+	it('rejects a confirm naming a different plugin than the open prompt', async () => {
+		const { minter, mints, captured } = setup();
+		await minter.requestConsent('p');
+		const out = minter.confirm(SENDER, {
+			pluginId: 'other',
+			nonce: captured.nonce!,
+			approved: ['fs:read'],
+		});
+		expect(out).toEqual({ ok: false, reason: 'plugin-mismatch' });
+		expect(mints).toHaveLength(0);
+	});
+
+	it('rejects a forged / wrong nonce', async () => {
+		const { minter, mints } = setup();
+		await minter.requestConsent('p');
+		const out = minter.confirm(SENDER, { pluginId: 'p', nonce: 'WRONG', approved: ['fs:read'] });
+		expect(out).toEqual({ ok: false, reason: 'bad-nonce' });
+		expect(mints).toHaveLength(0);
+	});
+
+	it('rejects approving a capability the prompt never offered', async () => {
+		const { minter, mints, captured } = setup({ requested: [{ capability: 'fs:read' }] });
+		await minter.requestConsent('p');
+		const out = minter.confirm(SENDER, {
+			pluginId: 'p',
+			nonce: captured.nonce!,
+			approved: ['fs:read', 'net:fetch'], // net:fetch was not offered
+		});
+		expect(out).toEqual({ ok: false, reason: 'bad-nonce' });
+		expect(mints).toHaveLength(0);
+	});
+
+	it('is one-shot: a second confirm after a successful mint finds no prompt', async () => {
+		const { minter, mints, captured } = setup();
+		await minter.requestConsent('p');
+		expect(
+			minter.confirm(SENDER, { pluginId: 'p', nonce: captured.nonce!, approved: ['fs:read'] }).ok
+		).toBe(true);
+		const again = minter.confirm(SENDER, {
+			pluginId: 'p',
+			nonce: captured.nonce!,
+			approved: ['fs:read'],
+		});
+		expect(again).toEqual({ ok: false, reason: 'no-prompt' });
+		expect(mints).toHaveLength(1); // not re-minted
+	});
+
+	it('rejects a confirm when no prompt is open', () => {
+		const { minter } = setup();
+		expect(minter.confirm(SENDER, { pluginId: 'p', nonce: 'x', approved: [] })).toEqual({
+			ok: false,
+			reason: 'no-prompt',
+		});
+	});
+
+	it('refuses to mint a plugin whose identity is unhashable (symlink escape)', async () => {
+		const { minter, mints, captured } = setup({ identity: null });
+		await minter.requestConsent('p');
+		const out = minter.confirm(SENDER, {
+			pluginId: 'p',
+			nonce: captured.nonce!,
+			approved: ['fs:read'],
+		});
+		expect(out).toEqual({ ok: false, reason: 'no-identity' });
+		expect(mints).toHaveLength(0);
+	});
+
+	it('rejects transcripts:read + egress for an untrusted plugin, but mints it when trusted', async () => {
+		const requested: PermissionRequest[] = [
+			{ capability: 'transcripts:read' },
+			{ capability: 'net:fetch' },
+		];
+		const untrusted = setup({ requested, identity: UNTRUSTED });
+		await untrusted.minter.requestConsent('p');
+		const blocked = untrusted.minter.confirm(SENDER, {
+			pluginId: 'p',
+			nonce: untrusted.captured.nonce!,
+			approved: ['transcripts:read', 'net:fetch'],
+		});
+		expect(blocked).toEqual({ ok: false, reason: 'conflict' });
+		expect(untrusted.mints).toHaveLength(0);
+
+		const trusted = setup({ requested, identity: TRUSTED });
+		await trusted.minter.requestConsent('p');
+		const ok = trusted.minter.confirm(SENDER, {
+			pluginId: 'p',
+			nonce: trusted.captured.nonce!,
+			approved: ['transcripts:read', 'net:fetch'],
+		});
+		expect(ok.ok).toBe(true);
+		expect(trusted.mints).toHaveLength(1);
+	});
+
+	it('binds the confirm to the current prompt nonce, not a superseded one', async () => {
+		const { minter, mints } = setup();
+		// Re-issue the captured nonce per call so the two prompts get distinct nonces.
+		const registry = new ConsentNonceRegistry({
+			now: () => 0,
+			newNonce: (() => {
+				let n = 0;
+				return () => `n-${++n}`;
+			})(),
+			ttlMs: 1000,
+		});
+		const captured: string[] = [];
+		const m = new ConsentMinter({
+			registry,
+			store: { mint: () => mints.push({} as never) },
+			requested: () => [{ capability: 'fs:read' }],
+			identityOf: () => UNTRUSTED,
+			openPrompt: async ({ nonce }) => {
+				captured.push(nonce);
+				return SENDER;
+			},
+		});
+		await m.requestConsent('p'); // nonce n-1 (still live, never consumed)
+		await m.requestConsent('p'); // supersedes; current nonce is n-2
+		const stale = m.confirm(SENDER, { pluginId: 'p', nonce: captured[0], approved: ['fs:read'] });
+		expect(stale).toEqual({ ok: false, reason: 'bad-nonce' });
+		expect(mints).toHaveLength(0);
+	});
+});
+
+describe('sameConsentSender', () => {
+	it('matches the same frame in the same state', () => {
+		expect(sameConsentSender(SENDER, { webContentsId: 7, frameId: 1, url: 'app://consent' })).toBe(
+			true
+		);
+	});
+	it('distinguishes a different subframe in the same webContents', () => {
+		expect(sameConsentSender(SENDER, { webContentsId: 7, frameId: 2, url: 'app://consent' })).toBe(
+			false
+		);
+	});
+	it('distinguishes an in-frame navigation (different url)', () => {
+		expect(sameConsentSender(SENDER, { webContentsId: 7, frameId: 1, url: 'app://evil' })).toBe(
+			false
+		);
 	});
 });
