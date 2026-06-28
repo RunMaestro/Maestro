@@ -4,6 +4,9 @@ import {
 	grantsFromRequests,
 	isPermitted,
 	capabilityRisk,
+	describeCapability,
+	isPluginCapability,
+	PLUGIN_CAPABILITIES,
 	type PermissionGrant,
 } from '../../../shared/plugins/permissions';
 
@@ -102,5 +105,28 @@ describe('grantsFromRequests + capabilityRisk', () => {
 	it('classifies risk', () => {
 		expect(capabilityRisk('process:spawn')).toBe('high');
 		expect(capabilityRisk('notifications:toast')).toBe('low');
+	});
+});
+
+describe('UI customization capabilities', () => {
+	it('recognizes the new UI capabilities', () => {
+		for (const cap of ['ui:contribute', 'ui:panel', 'ui:render-unsafe'] as const) {
+			expect(isPluginCapability(cap)).toBe(true);
+			expect(PLUGIN_CAPABILITIES).toContain(cap);
+			expect(describeCapability(cap)).toBeTruthy();
+		}
+	});
+
+	it('risk tiers: contribute/panel medium, render-unsafe high', () => {
+		expect(capabilityRisk('ui:contribute')).toBe('medium');
+		expect(capabilityRisk('ui:panel')).toBe('medium');
+		expect(capabilityRisk('ui:render-unsafe')).toBe('high');
+	});
+
+	it('UI capabilities take no scope (none → any grant permits)', () => {
+		const grant = (capability: string): PermissionGrant =>
+			({ capability, grantedAt: 1 }) as PermissionGrant;
+		expect(isPermitted([grant('ui:contribute')], 'ui:contribute')).toBe(true);
+		expect(isPermitted([grant('ui:render-unsafe')], 'ui:render-unsafe')).toBe(true);
 	});
 });

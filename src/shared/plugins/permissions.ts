@@ -42,7 +42,10 @@ export type PluginCapability =
 	| 'storage:write' // write the plugin's OWN private key-value store
 	| 'ui:command' // invoke a registered Maestro command (a palette action)
 	| 'events:subscribe' // subscribe to host event topics (metadata-only payloads)
-	| 'process:spawn'; // run a shell command (highest risk)
+	| 'process:spawn' // run a shell command (highest risk)
+	| 'ui:contribute' // add host-rendered items to Maestro's UI (menus, panels, theming, …)
+	| 'ui:panel' // show its own sandboxed interactive panels
+	| 'ui:render-unsafe'; // render arbitrary UI with full interface access (escape hatch)
 
 export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
 	'fs:read',
@@ -60,6 +63,9 @@ export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
 	'ui:command',
 	'events:subscribe',
 	'process:spawn',
+	'ui:contribute',
+	'ui:panel',
+	'ui:render-unsafe',
 ];
 
 /** Coarse risk tier for sorting/coloring the consent UI. */
@@ -81,6 +87,9 @@ const CAPABILITY_RISK: Record<PluginCapability, CapabilityRisk> = {
 	'fs:write': 'high',
 	'process:spawn': 'high',
 	'transcripts:read': 'high',
+	'ui:contribute': 'medium',
+	'ui:panel': 'medium',
+	'ui:render-unsafe': 'high',
 };
 
 /** Whether a capability's scope is a filesystem path, a network host, or none. */
@@ -105,6 +114,9 @@ const CAPABILITY_SCOPE_KIND: Record<PluginCapability, ScopeKind> = {
 	'events:subscribe': 'none',
 	'process:spawn': 'none',
 	'transcripts:read': 'path', // scope is a project path; the handler enforces the session's projectPath against the grant
+	'ui:contribute': 'none',
+	'ui:panel': 'none',
+	'ui:render-unsafe': 'none',
 };
 
 export function capabilityRisk(capability: PluginCapability): CapabilityRisk {
@@ -309,5 +321,11 @@ export function describeCapability(capability: PluginCapability): string {
 			return 'Run shell commands';
 		case 'transcripts:read':
 			return 'Read the full conversation content of your sessions (messages, prompts, and agent output)';
+		case 'ui:contribute':
+			return "Add items to Maestro's interface (menus, sidebar, status bar, settings, themes)";
+		case 'ui:panel':
+			return 'Show its own panels inside Maestro';
+		case 'ui:render-unsafe':
+			return "Render its own custom UI with full access to Maestro's interface (advanced — only enable for authors you fully trust)";
 	}
 }
