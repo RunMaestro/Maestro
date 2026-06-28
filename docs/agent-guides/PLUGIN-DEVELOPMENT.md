@@ -214,7 +214,7 @@ Only `action: 'notify'` runs on tier 0. `action: 'dispatch'` needs `agents:dispa
 
 ### tools (tier 1)
 
-`{ id, name, description, inputSchema? }` - a named operation an agent can call. Register a handler with `maestro.tools.register(localId, fn)`; the host invokes it via a brokered request/response (`plugins:invoke-tool`) and your handler's return value is returned to the caller. Exposing a tool to a specific agent's model is a separate wiring step.
+`{ id, name, description, inputSchema? }` - a named operation an agent can call. Register a handler with `maestro.tools.register(localId, fn)`; the host invokes it via a brokered request/response (`plugins:invoke-tool`) and your handler's return value is returned to the caller. When the `plugins` feature is on, registered tools are also exposed to a spawned agent's model over MCP: the host points the agent at `maestro-cli mcp serve` (claude and codex auto-inject the ephemeral config; other agents are best-guess), and every model-initiated call is risk-gated before the broker runs it.
 
 ### keybindings (tier 1)
 
