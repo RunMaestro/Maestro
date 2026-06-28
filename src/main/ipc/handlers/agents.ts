@@ -33,6 +33,7 @@ import {
 	getAllSnapshots as getAllClaudeUsageSnapshots,
 	resolveConfigDirKey,
 } from '../../stores/claudeUsageStore';
+import { getLimitResetAt } from '../../agents/limitResetEstimator';
 import { getAllCodexUsageSnapshots, resolveCodexHomeKey } from '../../stores/codexUsageStore';
 import type { UsageSnapshot } from '../../agents/claude-mode-selector';
 import type { CodexUsageSnapshot } from '../../stores/codexUsageStore';
@@ -1668,6 +1669,20 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 			const configDirs = await discoverClaudeConfigDirs();
 			return configDirs.map((configDir) => resolveConfigDirKey({ CLAUDE_CONFIG_DIR: configDir }));
 		})
+	);
+
+	// Best-effort estimate of when a paused agent's provider limit window reopens,
+	// used by auto-resume (Phase 3) to schedule its next probe. Claude reads its
+	// cached usage snapshot; other providers return undefined (fixed-interval
+	// fallback). Never throws - the renderer treats the result as advisory.
+	ipcMain.handle(
+		'agents:getLimitResetAt',
+		withIpcErrorLogging(
+			handlerOpts('getLimitResetAt'),
+			async (agentId: string, claudeConfigDir?: string): Promise<number | undefined> => {
+				return getLimitResetAt(agentId, claudeConfigDir);
+			}
+		)
 	);
 
 	// On-demand re-sampler. Delegates to the same `runStartupUsageSampling()`

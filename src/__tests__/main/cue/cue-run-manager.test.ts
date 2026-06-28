@@ -427,6 +427,66 @@ describe('createCueRunManager', () => {
 		});
 	});
 
+	describe('self-overlap guard', () => {
+		it('queues a same-subscription re-trigger even when a concurrency slot is free', () => {
+			const deps = createDeps({
+				getSessionSettings: vi.fn(() => ({ ...defaultSettings, max_concurrent: 3 })),
+				onCueRun: vi.fn(() => new Promise<CueRunResult>(() => {})), // never resolves
+			});
+			const manager = createCueRunManager(deps);
+
+			manager.execute('session-1', 'prompt', createEvent(), 'poster');
+			expect(deps.onCueRun).toHaveBeenCalledTimes(1);
+
+			// Same subscription fires again — slots 2 and 3 are free, but it must
+			// NOT overlap the in-flight run, so it queues instead. This is the
+			// double-fire regression guard.
+			manager.execute('session-1', 'prompt', createEvent(), 'poster');
+			expect(deps.onCueRun).toHaveBeenCalledTimes(1);
+			expect(manager.getQueueStatus().get('session-1')).toBe(1);
+		});
+
+		it('drains the queued same-subscription run after the in-flight one completes', async () => {
+			let resolveRun: ((val: CueRunResult) => void) | undefined;
+			const deps = createDeps({
+				getSessionSettings: vi.fn(() => ({ ...defaultSettings, max_concurrent: 3 })),
+				onCueRun: vi.fn(
+					() =>
+						new Promise<CueRunResult>((resolve) => {
+							resolveRun = resolve;
+						})
+				),
+			});
+			const manager = createCueRunManager(deps);
+
+			manager.execute('session-1', 'prompt', createEvent(), 'poster');
+			manager.execute('session-1', 'prompt', createEvent(), 'poster'); // queued
+			expect(deps.onCueRun).toHaveBeenCalledTimes(1);
+			expect(manager.getQueueStatus().get('session-1')).toBe(1);
+
+			// Completing the in-flight run releases the guard; the queued
+			// same-root run now dispatches.
+			resolveRun!(makeResult());
+			await vi.advanceTimersByTimeAsync(0);
+			expect(deps.onCueRun).toHaveBeenCalledTimes(2);
+			expect(manager.getQueueStatus().size).toBe(0);
+		});
+
+		it('lets a different subscription use a free slot while a root is busy', () => {
+			const deps = createDeps({
+				getSessionSettings: vi.fn(() => ({ ...defaultSettings, max_concurrent: 3 })),
+				onCueRun: vi.fn(() => new Promise<CueRunResult>(() => {})),
+			});
+			const manager = createCueRunManager(deps);
+
+			manager.execute('session-1', 'prompt', createEvent(), 'poster');
+			manager.execute('session-1', 'prompt', createEvent(), 'poster'); // queued (same root)
+			manager.execute('session-1', 'prompt', createEvent(), 'reporter'); // different root → runs
+			expect(deps.onCueRun).toHaveBeenCalledTimes(2);
+			expect(manager.getQueueStatus().get('session-1')).toBe(1);
+		});
+	});
+
 	describe('DB recording', () => {
 		it('updates DB status on natural completion', async () => {
 			const deps = createDeps();

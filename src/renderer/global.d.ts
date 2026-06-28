@@ -240,6 +240,21 @@ interface MaestroAPI {
 			};
 		}) => Promise<{ pid: number; success: boolean }>;
 		write: (sessionId: string, data: string) => Promise<boolean>;
+		broadcastUserInput: (payload: {
+			originId: string;
+			sessionId: string;
+			tabId?: string;
+			inputMode: 'ai' | 'terminal';
+			entry: {
+				id: string;
+				timestamp: number;
+				source: 'user';
+				text: string;
+				images?: string[];
+				readOnly?: boolean;
+				forceParallel?: boolean;
+			};
+		}) => Promise<void>;
 		interrupt: (sessionId: string) => Promise<boolean>;
 		kill: (sessionId: string) => Promise<boolean>;
 		resize: (sessionId: string, cols: number, rows: number) => Promise<boolean>;
@@ -276,6 +291,23 @@ interface MaestroAPI {
 		>;
 		isTerminalBusy: (sessionId: string) => Promise<boolean>;
 		onData: (callback: (sessionId: string, data: string) => void) => () => void;
+		onUserInput: (
+			callback: (payload: {
+				originId: string;
+				sessionId: string;
+				tabId?: string;
+				inputMode: 'ai' | 'terminal';
+				entry: {
+					id: string;
+					timestamp: number;
+					source: 'user';
+					text: string;
+					images?: string[];
+					readOnly?: boolean;
+					forceParallel?: boolean;
+				};
+			}) => void
+		) => () => void;
 		onExit: (callback: (sessionId: string, code: number) => void) => () => void;
 		onSessionId: (callback: (sessionId: string, agentSessionId: string) => void) => () => void;
 		onSlashCommands: (callback: (sessionId: string, slashCommands: string[]) => void) => () => void;
@@ -667,6 +699,11 @@ interface MaestroAPI {
 				errorRecoverable?: boolean;
 				errorDocumentIndex?: number;
 				errorTaskDescription?: string;
+				// Goal-Driven mode fields — surfaced so web/mobile show goal percent + iteration
+				goalMode?: boolean;
+				goalProgress?: number;
+				goalRationale?: string;
+				goalIteration?: number;
 			} | null
 		) => Promise<void>;
 		broadcastTabsChange: (
@@ -715,6 +752,12 @@ interface MaestroAPI {
 			sshRemoteId?: string,
 			remoteCwd?: string
 		) => Promise<{ success: boolean; error?: string }>;
+		commitAll: (
+			cwd: string,
+			message: string,
+			sshRemoteId?: string,
+			remoteCwd?: string
+		) => Promise<{ success: boolean; committed: boolean; commitHash?: string; error?: string }>;
 		numstat: (
 			cwd: string,
 			sshRemoteId?: string,
@@ -1092,6 +1135,7 @@ interface MaestroAPI {
 			>
 		>;
 		getClaudeUsageAccountKeys: () => Promise<string[]>;
+		getLimitResetAt: (agentId: string, claudeConfigDir?: string) => Promise<number | undefined>;
 		getCodexUsageSnapshots: () => Promise<
 			Record<
 				string,
@@ -1324,6 +1368,7 @@ interface MaestroAPI {
 		openPath: (itemPath: string) => Promise<void>;
 		trashItem: (itemPath: string) => Promise<void>;
 		showItemInFolder: (itemPath: string) => Promise<void>;
+		copyTextToClipboard: (text: string) => Promise<void>;
 		copyImageToClipboard: (dataUrl: string) => Promise<void>;
 		readImageFromClipboard: () => Promise<string | null>;
 	};
@@ -3242,6 +3287,8 @@ interface MaestroAPI {
 				workingDirOverride?: string;
 				syncHistory?: boolean;
 			};
+			// Session-level custom env vars, forwarded so naming inherits the same provider auth as the chat.
+			sessionCustomEnvVars?: Record<string, string>;
 			// Claude token-source selection, forwarded so tab naming honors TUI/Dynamic/API.
 			enableMaestroP?: boolean;
 			maestroPMode?: 'interactive' | 'dynamic';
@@ -3400,7 +3447,7 @@ interface MaestroAPI {
 			projectRoot: string,
 			content: string,
 			promptFiles?: Record<string, string>
-		) => Promise<void>;
+		) => Promise<{ changed: boolean }>;
 		deleteYaml: (projectRoot: string) => Promise<boolean>;
 		validateYaml: (content: string) => Promise<{ valid: boolean; errors: string[] }>;
 		savePipelineLayout: (layout: Record<string, unknown>) => Promise<void>;

@@ -1163,6 +1163,9 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				customPath,
 				customArgs,
 				customEnvVars,
+				enableMaestroP,
+				maestroPMode,
+				maestroPPath,
 				sessionSshRemoteConfig,
 				autoRunMode,
 			} = wizardState;
@@ -1232,6 +1235,13 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			const firstDoc = generatedDocuments[0];
 			const autoRunSelectedFile = firstDoc ? firstDoc.filename.replace(/\.md$/, '') : undefined;
 
+			// Claude Token Source: honor the wizard's explicit pick when the user
+			// touched the selector (enableMaestroP defined), otherwise fall back to
+			// the per-agent default. maestroPMode/maestroPPath only matter when the
+			// source isn't pure API, mirroring EditAgentModal's save logic.
+			const resolvedEnableMaestroP =
+				enableMaestroP ?? (isAdaptiveModeDefaultOn(selectedAgent) || undefined);
+
 			const newSession: Session = {
 				id: newId,
 				name: sessionName,
@@ -1288,9 +1298,10 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				customArgs,
 				customEnvVars,
 				sessionSshRemoteConfig,
-				// New agents default Adaptive Mode on for Claude Code (the wizard has no
-				// toggle, so this is purely the default).
-				enableMaestroP: isAdaptiveModeDefaultOn(selectedAgent) || undefined,
+				enableMaestroP: resolvedEnableMaestroP,
+				maestroPMode: resolvedEnableMaestroP ? maestroPMode : undefined,
+				maestroPPath:
+					resolvedEnableMaestroP && maestroPPath?.trim() ? maestroPPath.trim() : undefined,
 				claudeInteractive:
 					selectedAgent === 'claude-code' ? { mode: 'api', modeReason: 'auto' } : undefined,
 			};

@@ -14,6 +14,13 @@
  *   the binary's node-script-with-shebang packaging stays valid on Windows
  *   where shebangs aren't honored.
  *
+ * - SSH limitation: this spawn is always LOCAL - it does NOT honor a session's
+ *   `sshRemoteConfig` / `wrapSpawnWithSsh`, so the snapshot reflects the local
+ *   account keyed by `CLAUDE_CONFIG_DIR`, never a remote host's Claude account.
+ *   Consumers that act per remote session (notably Auto-Resume On Limit's
+ *   `probeAvailability`) must NOT trust this snapshot for an SSH-backed session;
+ *   they fall back to a resume-as-probe interval attempt instead.
+ *
  * - Env precedence: `process.env` < `customEnvVars` < explicit `configDir`.
  *   Explicit `configDir` wins so a caller cannot accidentally smuggle a
  *   `CLAUDE_CONFIG_DIR` through `customEnvVars` that contradicts the path the

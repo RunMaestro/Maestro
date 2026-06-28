@@ -9,8 +9,9 @@ import type {
 } from '../../types';
 import { getActiveTab, getBusyTabs, extractQuickTabName } from '../../utils/tabHelpers';
 import { getStdinFlags, prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
-import { generateId } from '../../utils/ids';
+import { generateId, getInputBroadcastOriginId } from '../../utils/ids';
 import { substituteTemplateVariables } from '../../utils/templateVariables';
+import { prependNewSessionMessage } from '../../../shared/newSessionMessage';
 import { filterYoloArgs } from '../../utils/agentArgs';
 import { hasCapabilityCached } from '../agent/useAgentCapabilities';
 import { gitService } from '../../services/git';
@@ -569,7 +570,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				currentBatchState.isRunning && !currentBatchState.worktreeActive && !isForceParallelEntry;
 			const isReadOnlyEntry = activeTabForEntry?.readOnlyMode === true || isAutoRunReadOnly;
 
-			const newEntry: LogEntry = {
+			const newEntry = {
 				id: generateId(),
 				timestamp: Date.now(),
 				source: 'user',
@@ -577,6 +578,13 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				images: [...effectiveImages],
 				...(isReadOnlyEntry && { readOnly: true }),
 				...(isForceParallelEntry && { forceParallel: true }),
+			} satisfies LogEntry;
+			const userInputBroadcast = {
+				originId: getInputBroadcastOriginId(),
+				sessionId: activeSession.id,
+				tabId: activeTabForEntry?.id,
+				inputMode: currentMode,
+				entry: newEntry,
 			};
 
 			// Track shell CWD changes when in terminal mode
@@ -860,6 +868,8 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							agentType: activeSession.toolType,
 							cwd: activeSession.cwd,
 							sessionSshRemoteConfig: activeSession.sessionSshRemoteConfig,
+							// Forward session env so naming uses the same provider auth as the chat.
+							sessionCustomEnvVars: activeSession.customEnvVars,
 							// Honor the agent's Claude token source for the naming spawn.
 							enableMaestroP: activeSession.enableMaestroP,
 							maestroPMode: activeSession.maestroPMode,
@@ -975,6 +985,9 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 
 			// Broadcast user input to web clients so they stay in sync
 			// Use effectiveInputValue (without nudge) since nudge should be hidden from UI
+			window.maestro.process.broadcastUserInput(userInputBroadcast).catch((error) => {
+				logger.error('[processInput] Failed to broadcast user input:', undefined, error);
+			});
 			window.maestro.web.broadcastUserInput(activeSession.id, effectiveInputValue, currentMode);
 
 			setInputValue('');
@@ -1073,9 +1086,11 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							hasImages && hasNoText ? DEFAULT_IMAGE_ONLY_PROMPT : capturedInputValue;
 
 						// Prefix new session message if present (only for the first message in a new session)
-						const newSessionMsg = freshSession.newSessionMessage;
-						if (newSessionMsg && !tabAgentSessionId) {
-							effectivePrompt = `${newSessionMsg}\n\n---\n\n${effectivePrompt}`;
+						if (!tabAgentSessionId) {
+							effectivePrompt = prependNewSessionMessage(
+								effectivePrompt,
+								freshSession.newSessionMessage
+							);
 						}
 
 						// For read-only mode, append instruction to return plan in response instead of writing files

@@ -34,6 +34,9 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 		setCustomPath: setWizardCustomPath,
 		setCustomArgs: setWizardCustomArgs,
 		setCustomEnvVars: setWizardCustomEnvVars,
+		setEnableMaestroP,
+		setMaestroPMode,
+		setMaestroPPath,
 		setSessionSshRemoteConfig: setWizardSessionSshRemoteConfig,
 		nextStep,
 		canProceedToNext,
@@ -236,6 +239,13 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 					onRefreshModels={configPanel.handleRefreshModels}
 					onRefreshAgent={configPanel.handleRefreshAgent}
 					refreshingAgent={configPanel.refreshingAgent}
+					enableMaestroP={state.enableMaestroP}
+					onEnableMaestroPChange={setEnableMaestroP}
+					maestroPMode={state.maestroPMode}
+					onMaestroPModeChange={setMaestroPMode}
+					maestroPPath={state.maestroPPath ?? ''}
+					onMaestroPPathChange={setMaestroPPath}
+					detectedMaestroPPath={configPanel.detectedMaestroPPath}
 				/>
 			</>
 		);

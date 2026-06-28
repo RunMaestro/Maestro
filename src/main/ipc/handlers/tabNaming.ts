@@ -106,6 +106,12 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 					remoteId: string | null;
 					workingDirOverride?: string;
 				};
+				// Session-level custom env vars from the triggering agent, forwarded so
+				// the naming spawn inherits the SAME provider auth as the chat. The chat
+				// spawn merges global shell env (Settings) -> agent-level -> session-level;
+				// dropping this layer here was why naming could fail "Not logged in" while
+				// the chat (which carries CLAUDE_CONFIG_DIR / ANTHROPIC_API_KEY) worked.
+				sessionCustomEnvVars?: Record<string, string>;
 				// Claude token-source selection for the triggering agent, forwarded
 				// from the renderer's session (tab naming has no sessionId to look up
 				// the persisted session by, so the caller passes these inline). When
@@ -176,8 +182,20 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 					// Determine command and working directory
 					let command = agent.path || agent.command;
 					let cwd = config.cwd;
-					let customEnvVars: Record<string, string> | undefined =
-						configResolution.effectiveCustomEnvVars;
+					// Match the chat spawn's env layering so naming uses the SAME provider
+					// auth. The chat merges global shell env (Settings) -> agent-level ->
+					// session-level (see process.ts). globalShellEnvVars is threaded
+					// separately as `shellEnvVars` into processManager.spawn (the lowest
+					// layer, applied by buildChildProcessEnv); customEnvVars carries the
+					// agent-level overrides merged with the session-level overrides.
+					const globalShellEnvVars = settingsStore.get('shellEnvVars', {}) as Record<
+						string,
+						string
+					>;
+					let customEnvVars: Record<string, string> | undefined = {
+						...(configResolution.effectiveCustomEnvVars ?? {}),
+						...(config.sessionCustomEnvVars ?? {}),
+					};
 
 					// Resolve the triggering agent's Claude token source ONCE, up front,
 					// so BOTH the SSH-remote path (maestro-p on the remote host) and the
@@ -458,6 +476,11 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 							command,
 							args: finalArgs,
 							prompt: fullPrompt,
+							// Global shell env vars (Settings -> Shell Configuration) are the
+							// lowest env layer the chat applies; without them a subscription
+							// auth carried via CLAUDE_CONFIG_DIR / ANTHROPIC_API_KEY never
+							// reaches the naming spawn and claude exits "Not logged in".
+							shellEnvVars: globalShellEnvVars,
 							customEnvVars,
 							promptArgs: agent.promptArgs,
 							noPromptSeparator: agent.noPromptSeparator,

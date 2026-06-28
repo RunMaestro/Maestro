@@ -105,7 +105,6 @@ export interface AppUtilityModalsProps {
 	setUpdateCheckModalOpen?: (open: boolean) => void;
 	openWizard: () => void;
 	wizardGoToStep: (step: WizardStep) => void;
-	setDebugWizardModalOpen?: (open: boolean) => void;
 	setDebugPackageModalOpen?: (open: boolean) => void;
 	setDebugApplicationStatsOpen?: (open: boolean) => void;
 	startTour: () => void;
@@ -187,6 +186,9 @@ export interface AppUtilityModalsProps {
 	// GitLogViewer
 	gitLogOpen: boolean;
 	onCloseGitLog: () => void;
+
+	// Shared by both git viewers: open a clicked file path as a preview tab.
+	onOpenGitFile?: (absolutePath: string, fileName: string) => void;
 
 	// AutoRunSetupModal
 	autoRunSetupModalOpen: boolean;
@@ -354,7 +356,6 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	setUpdateCheckModalOpen,
 	openWizard,
 	wizardGoToStep,
-	setDebugWizardModalOpen,
 	setDebugPackageModalOpen,
 	setDebugApplicationStatsOpen,
 	startTour,
@@ -420,6 +421,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	// GitLogViewer
 	gitLogOpen,
 	onCloseGitLog,
+	onOpenGitFile,
 	// AutoRunSetupModal
 	autoRunSetupModalOpen,
 	onCloseAutoRunSetup,
@@ -554,7 +556,6 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					setUpdateCheckModalOpen={setUpdateCheckModalOpen}
 					openWizard={openWizard}
 					wizardGoToStep={wizardGoToStep}
-					setDebugWizardModalOpen={setDebugWizardModalOpen}
 					setDebugPackageModalOpen={setDebugPackageModalOpen}
 					setDebugApplicationStatsOpen={setDebugApplicationStatsOpen}
 					startTour={startTour}
@@ -631,6 +632,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 						cwd={gitViewerCwd}
 						theme={theme}
 						onClose={onCloseGitDiff}
+						onOpenFile={onOpenGitFile}
 					/>
 				</Suspense>
 			)}
@@ -642,6 +644,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 						cwd={gitViewerCwd}
 						theme={theme}
 						onClose={onCloseGitLog}
+						onOpenFile={onOpenGitFile}
 						sshRemoteId={
 							activeSession?.sshRemoteId ||
 							(activeSession?.sessionSshRemoteConfig?.enabled

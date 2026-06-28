@@ -19,6 +19,8 @@ export const DEFAULT_CONTEXT_WINDOWS: Partial<Record<AgentId, number>> = {
 	codex: 200000, // OpenAI o3/o4-mini context window
 	opencode: 128000, // OpenCode (depends on model, 128k is conservative default)
 	'factory-droid': 200000, // Factory Droid (varies by model, defaults to Claude Opus)
+	hermes: 200000, // Conservative fallback until runtime-specific reporting lands
+	pi: 200000, // Conservative fallback until runtime-specific reporting lands
 	'copilot-cli': 200000, // Copilot-CLI (varies by model, defaults to Claude Sonnet)
 	terminal: 0, // Terminal has no context window
 };
@@ -58,13 +60,18 @@ export function getModelContextWindowOverride(model: string | null | undefined):
 /**
  * Whether Adaptive Mode (a.k.a. maestro-p / automatic Claude token-source
  * management, persisted as `enableMaestroP`) is enabled by default for newly
- * created agents of the given type. Currently Claude Code only — the spawner
- * ignores `enableMaestroP` for every other agent. This is the single source of
- * truth for the "default on for new agents" rule; the one-shot migration in
- * `src/main/stores/migrations/` backfills the same default onto existing agents.
+ * created agents of the given type. This is the single source of truth for the
+ * "default on for new agents" rule; the one-shot migration in
+ * `src/main/stores/migrations/` keeps existing agents aligned with it.
+ *
+ * Currently OFF for every agent: new Claude Code agents default to the API
+ * token source (`claude --print`). TUI/Dynamic remain available but are now
+ * opt-in per agent - the maestro-p TUI path has been a recurring source of
+ * trouble, so we no longer flip anyone onto it automatically. Kept as a
+ * function so re-enabling a default later is a one-line change.
  */
-export function isAdaptiveModeDefaultOn(agentId: string): boolean {
-	return agentId === 'claude-code';
+export function isAdaptiveModeDefaultOn(_agentId: string): boolean {
+	return false;
 }
 
 /**

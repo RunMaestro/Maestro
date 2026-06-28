@@ -22,6 +22,12 @@ import { fuzzyMatchWithScore } from '../../utils/search';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 
+// Module-level cache so the user's expand/collapse choices survive the dropdown
+// closing/reopening and the component remounting (e.g. switching agents) until
+// the app restarts. Folders start collapsed; only paths the user explicitly
+// expands land here.
+const persistedExpandedFolders = new Set<string>();
+
 // Tree node type for folder structure
 export interface DocTreeNode {
 	name: string;
@@ -76,7 +82,9 @@ export const AutoRunDocumentSelector = forwardRef<
 	const [newDocName, setNewDocName] = useState('');
 	const [isCreating, setIsCreating] = useState(false);
 	const [selectedCreateFolder, setSelectedCreateFolder] = useState<string>(''); // For creating in subfolder
-	const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+	const [expandedFolders, setExpandedFolders] = useState<Set<string>>(
+		() => new Set(persistedExpandedFolders)
+	);
 	const dropdownRef = useRef<HTMLDivElement>(null);
 	const buttonRef = useRef<HTMLButtonElement>(null);
 	const createInputRef = useRef<HTMLInputElement>(null);
@@ -175,6 +183,9 @@ export const AutoRunDocumentSelector = forwardRef<
 			const next = new Set(prev);
 			if (next.has(folderPath)) next.delete(folderPath);
 			else next.add(folderPath);
+			// Mirror into the module-level cache so the choice survives reopen/remount.
+			persistedExpandedFolders.clear();
+			for (const f of next) persistedExpandedFolders.add(f);
 			return next;
 		});
 	};
@@ -185,29 +196,8 @@ export const AutoRunDocumentSelector = forwardRef<
 	useEffect(() => {
 		if (isOpen) {
 			setFilterQuery('');
-			// Expand every folder on open so nested documents are visible by
-			// default (restores parity with the pre-tree flat list). Without this,
-			// docs that live only in subfolders are hidden behind collapsed
-			// folders, and an empty visibleFiles set looks like "no documents".
-			if (documentTree) {
-				const allFolders: string[] = [];
-				const collect = (nodes: DocTreeNode[]) => {
-					for (const n of nodes) {
-						if (n.type === 'folder') {
-							allFolders.push(n.path);
-							if (n.children) collect(n.children);
-						}
-					}
-				};
-				collect(documentTree);
-				if (allFolders.length > 0) {
-					setExpandedFolders((prev) => {
-						const next = new Set(prev);
-						for (const f of allFolders) next.add(f);
-						return next;
-					});
-				}
-			}
+			// Folders start collapsed and only open when the user expands them;
+			// their state is remembered across reopens via persistedExpandedFolders.
 			// Focus the filter input shortly after open so keystrokes flow into it.
 			requestAnimationFrame(() => {
 				filterInputRef.current?.focus();

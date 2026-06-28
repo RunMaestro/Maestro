@@ -227,7 +227,6 @@ export interface AppModalsProps {
 	setUpdateCheckModalOpenForQuickActions?: (open: boolean) => void;
 	openWizard: () => void;
 	wizardGoToStep: (step: WizardStep) => void;
-	setDebugWizardModalOpen?: (open: boolean) => void;
 	setDebugPackageModalOpen?: (open: boolean) => void;
 	setDebugApplicationStatsOpen?: (open: boolean) => void;
 	startTour: () => void;
@@ -286,6 +285,8 @@ export interface AppModalsProps {
 	gitDiffPreview: string | null;
 	gitViewerCwd: string;
 	onCloseGitDiff: () => void;
+	/** Open a file clicked in either git viewer as a preview tab. */
+	onOpenGitFile?: (absolutePath: string, fileName: string) => void;
 	onCloseGitLog: () => void;
 	onCloseAutoRunSetup: () => void;
 	onAutoRunFolderSelected: (folderPath: string) => void;
@@ -700,7 +701,6 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		setUpdateCheckModalOpenForQuickActions,
 		openWizard,
 		wizardGoToStep,
-		setDebugWizardModalOpen,
 		setDebugPackageModalOpen,
 		setDebugApplicationStatsOpen,
 		startTour,
@@ -753,6 +753,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		gitViewerCwd,
 		onCloseGitDiff,
 		onCloseGitLog,
+		onOpenGitFile,
 		onCloseAutoRunSetup,
 		onAutoRunFolderSelected,
 		onCloseBatchRunner,
@@ -1053,7 +1054,6 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				setUpdateCheckModalOpen={setUpdateCheckModalOpenForQuickActions}
 				openWizard={openWizard}
 				wizardGoToStep={wizardGoToStep}
-				setDebugWizardModalOpen={setDebugWizardModalOpen}
 				setDebugPackageModalOpen={setDebugPackageModalOpen}
 				setDebugApplicationStatsOpen={setDebugApplicationStatsOpen}
 				startTour={startTour}
@@ -1109,6 +1109,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onCloseGitDiff={onCloseGitDiff}
 				gitLogOpen={gitLogOpen}
 				onCloseGitLog={onCloseGitLog}
+				onOpenGitFile={onOpenGitFile}
 				autoRunSetupModalOpen={autoRunSetupModalOpen}
 				onCloseAutoRunSetup={onCloseAutoRunSetup}
 				onAutoRunFolderSelected={onAutoRunFolderSelected}

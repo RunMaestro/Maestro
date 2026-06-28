@@ -10,6 +10,9 @@ export const initialState: WizardState = {
 	customPath: undefined,
 	customArgs: undefined,
 	customEnvVars: undefined,
+	enableMaestroP: undefined,
+	maestroPMode: undefined,
+	maestroPPath: undefined,
 	sessionSshRemoteConfig: undefined,
 	directoryPath: '',
 	isGitRepo: false,
@@ -64,6 +67,12 @@ export function wizardReducer(state: WizardState, action: WizardAction): WizardS
 			return { ...state, customArgs: action.args };
 		case 'SET_CUSTOM_ENV_VARS':
 			return { ...state, customEnvVars: action.envVars };
+		case 'SET_ENABLE_MAESTRO_P':
+			return { ...state, enableMaestroP: action.value };
+		case 'SET_MAESTRO_P_MODE':
+			return { ...state, maestroPMode: action.mode };
+		case 'SET_MAESTRO_P_PATH':
+			return { ...state, maestroPPath: action.path };
 		case 'SET_SESSION_SSH_REMOTE_CONFIG':
 			return { ...state, sessionSshRemoteConfig: action.config };
 		case 'SET_DIRECTORY_PATH':

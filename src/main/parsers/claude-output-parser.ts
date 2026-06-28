@@ -165,6 +165,7 @@ export class ClaudeOutputParser implements AgentOutputParser {
 				text: contentToEmit,
 				sessionId: msg.session_id,
 				isPartial: true,
+				isReasoning: thinkingText.length > 0 || undefined,
 				toolUseBlocks: toolUseBlocks.length > 0 ? toolUseBlocks : undefined,
 				raw: msg,
 			};

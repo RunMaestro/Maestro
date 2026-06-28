@@ -433,3 +433,152 @@ describe('useFilePreviewSearch — gutter exclusion (B5)', () => {
 		expect(handle.getTotalMatches()).toBe(1);
 	});
 });
+
+describe('useFilePreviewSearch - search kind (text / regex / line)', () => {
+	interface KindHandle extends HostHandle {
+		setSearchKind: (k: 'text' | 'regex' | 'line') => void;
+		getSearchKind: () => string;
+	}
+
+	function KindHost(props: {
+		adapter: FilePreviewSearchAdapter;
+		supportsLineSearch: boolean;
+		expose: (h: KindHandle) => void;
+	}) {
+		const containerRef = useRef<HTMLDivElement>(null);
+		const codeRef = useRef<HTMLDivElement>(null);
+		const contentRef = useRef<HTMLDivElement>(null);
+		const editorRef = useRef<MarkdownEditorHandle>(null);
+		const hook = useFilePreviewSearch({
+			codeContainerRef: codeRef,
+			markdownContainerRef: containerRef,
+			contentRef,
+			editorRef,
+			isMarkdown: true,
+			isReadableText: false,
+			isImage: false,
+			isCsv: false,
+			isJsonl: false,
+			isJson: false,
+			isEditableText: false,
+			markdownEditMode: false,
+			editContent: '',
+			fileContent: 'axb a.b\nline three',
+			accentColor: '#ff0000',
+			searchMode: 'text',
+			supportsLineSearch: props.supportsLineSearch,
+			searchAdapter: props.adapter,
+		});
+		props.expose({
+			setSearchQuery: hook.setSearchQuery,
+			goToNextMatch: hook.goToNextMatch,
+			goToPrevMatch: hook.goToPrevMatch,
+			getTotalMatches: () => hook.totalMatches,
+			getCurrentMatchIndex: () => hook.currentMatchIndex,
+			setSearchKind: hook.setSearchKind,
+			getSearchKind: () => hook.searchKind,
+		});
+		return (
+			<div>
+				<div ref={contentRef}>
+					<div ref={containerRef}>
+						<p>axb a.b</p>
+						<p>line three</p>
+					</div>
+				</div>
+				<div ref={codeRef} />
+			</div>
+		);
+	}
+
+	function renderKindHost(adapter: FilePreviewSearchAdapter, supportsLineSearch = true) {
+		const ref: { current: KindHandle | undefined } = { current: undefined };
+		render(
+			<KindHost
+				adapter={adapter}
+				supportsLineSearch={supportsLineSearch}
+				expose={(h) => (ref.current = h)}
+			/>
+		);
+		if (!ref.current) throw new Error('KindHost failed to expose handle');
+		return ref.current;
+	}
+
+	it('forwards { regex: true } to the adapter in regex mode', async () => {
+		const findHits = vi.fn((): SearchHit[] => []);
+		const adapter: FilePreviewSearchAdapter = {
+			findHits: findHits as unknown as FilePreviewSearchAdapter['findHits'],
+			scrollToMatch: vi.fn(),
+		};
+		const handle = renderKindHost(adapter);
+
+		await act(async () => {
+			handle.setSearchKind('regex');
+		});
+		await act(async () => {
+			handle.setSearchQuery('a.b');
+		});
+
+		expect(findHits).toHaveBeenLastCalledWith('a.b', { regex: true });
+	});
+
+	it('jumps via adapter.scrollToLine in line mode and reports no text matches', async () => {
+		const scrollToLine = vi.fn();
+		const adapter: FilePreviewSearchAdapter = {
+			findHits: vi.fn(() => [{ sourceOffset: 0, length: 3, blockIndex: 0, offsetWithinBlock: 0 }]),
+			scrollToMatch: vi.fn(),
+			scrollToLine,
+		};
+		const handle = renderKindHost(adapter);
+
+		await act(async () => {
+			handle.setSearchKind('line');
+		});
+		await act(async () => {
+			handle.setSearchQuery('2');
+		});
+
+		expect(scrollToLine).toHaveBeenLastCalledWith(2);
+		// Line mode shows no match count / navigation chrome.
+		expect(handle.getTotalMatches()).toBe(0);
+	});
+
+	it('ignores a non-numeric query in line mode (no jump)', async () => {
+		const scrollToLine = vi.fn();
+		const adapter: FilePreviewSearchAdapter = {
+			findHits: vi.fn(() => []),
+			scrollToMatch: vi.fn(),
+			scrollToLine,
+		};
+		const handle = renderKindHost(adapter);
+
+		await act(async () => {
+			handle.setSearchKind('line');
+		});
+		await act(async () => {
+			handle.setSearchQuery('not-a-line');
+		});
+
+		expect(scrollToLine).not.toHaveBeenCalled();
+	});
+
+	it('collapses to plain text when the view does not support line search', async () => {
+		const findHits = vi.fn((): SearchHit[] => []);
+		const adapter: FilePreviewSearchAdapter = {
+			findHits: findHits as unknown as FilePreviewSearchAdapter['findHits'],
+			scrollToMatch: vi.fn(),
+		};
+		const handle = renderKindHost(adapter, /* supportsLineSearch */ false);
+
+		await act(async () => {
+			handle.setSearchKind('regex');
+		});
+		// Even after requesting regex, an unsupported view reports plain 'text'.
+		expect(handle.getSearchKind()).toBe('text');
+
+		await act(async () => {
+			handle.setSearchQuery('a.b');
+		});
+		expect(findHits).toHaveBeenLastCalledWith('a.b', { regex: false });
+	});
+});

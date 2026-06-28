@@ -134,6 +134,22 @@ export interface ToolExecutionEvent {
 	toolCallId?: string;
 }
 
+export interface ProcessUserInputBroadcast {
+	originId: string;
+	sessionId: string;
+	tabId?: string;
+	inputMode: 'ai' | 'terminal';
+	entry: {
+		id: string;
+		timestamp: number;
+		source: 'user';
+		text: string;
+		images?: string[];
+		readOnly?: boolean;
+		forceParallel?: boolean;
+	};
+}
+
 /**
  * SSH remote info
  */
@@ -181,6 +197,9 @@ export function createProcessApi() {
 		write: (sessionId: string, data: string): Promise<boolean> =>
 			ipcRenderer.invoke('process:write', sessionId, data),
 
+		broadcastUserInput: (payload: ProcessUserInputBroadcast): Promise<void> =>
+			ipcRenderer.invoke('process:broadcast-user-input', payload),
+
 		/**
 		 * Send interrupt signal (Ctrl+C) to a process
 		 */
@@ -227,6 +246,12 @@ export function createProcessApi() {
 			const handler = (_: unknown, sessionId: string, data: string) => callback(sessionId, data);
 			ipcRenderer.on('process:data', handler);
 			return () => ipcRenderer.removeListener('process:data', handler);
+		},
+
+		onUserInput: (callback: (payload: ProcessUserInputBroadcast) => void): (() => void) => {
+			const handler = (_: unknown, payload: ProcessUserInputBroadcast) => callback(payload);
+			ipcRenderer.on('process:user-input', handler);
+			return () => ipcRenderer.removeListener('process:user-input', handler);
 		},
 
 		/**

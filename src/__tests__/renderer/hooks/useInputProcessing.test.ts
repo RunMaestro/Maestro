@@ -94,6 +94,8 @@ describe('useInputProcessing', () => {
 				spawn: vi.fn().mockResolvedValue(undefined),
 				write: vi.fn().mockResolvedValue(undefined),
 				runCommand: vi.fn().mockResolvedValue(undefined),
+				broadcastUserInput: vi.fn().mockResolvedValue(undefined),
+				onUserInput: vi.fn().mockReturnValue(() => {}),
 			},
 			agents: {
 				...window.maestro?.agents,

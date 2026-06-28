@@ -729,6 +729,11 @@ export function AutoRunInline({
 					onPlayBooks={onOpenSetup}
 					onHelp={() => setShowHelp(true)}
 				/>
+				{/* Goal runs need not have any documents — surface live goal progress
+					even in the empty-document state (reuses AutoRunIndicator). */}
+				{!isErrorPaused && isRunning && autoRunState?.goalMode && (
+					<AutoRunIndicator state={autoRunState} />
+				)}
 				<div
 					style={{
 						flex: 1,
@@ -898,6 +903,15 @@ export function AutoRunInline({
 						onSkipDocument={onSkipAfterError}
 						onAbort={onAbortAfterError}
 					/>
+				</div>
+			)}
+
+			{/* Goal-Driven progress banner — goal runs report a percent rather than
+				document task counts, so surface the live goal readout here (reuses
+				AutoRunIndicator). Hidden when error-paused (handled above). */}
+			{!isErrorPaused && isRunning && autoRunState?.goalMode && (
+				<div style={{ padding: '0 8px 8px 8px', flexShrink: 0 }}>
+					<AutoRunIndicator state={autoRunState} />
 				</div>
 			)}
 

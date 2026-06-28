@@ -48,6 +48,7 @@ vi.mock('../../../main/cue/cue-yaml-loader', () => ({
 
 vi.mock('../../../main/cue/config/cue-config-repository', () => ({
 	readCueConfigFile: vi.fn(),
+	readCuePromptFile: vi.fn(),
 	writeCueConfigFile: vi.fn(),
 	deleteCueConfigFile: vi.fn(),
 	writeCuePromptFile: vi.fn(),
@@ -69,6 +70,7 @@ import { registerCueHandlers } from '../../../main/ipc/handlers/cue';
 import { validateCueConfig } from '../../../main/cue/cue-yaml-loader';
 import {
 	readCueConfigFile,
+	readCuePromptFile,
 	writeCueConfigFile,
 	deleteCueConfigFile,
 	writeCuePromptFile,
@@ -111,6 +113,12 @@ describe('Cue IPC Handlers', () => {
 	beforeEach(() => {
 		registeredHandlers.clear();
 		vi.clearAllMocks();
+		// clearAllMocks wipes call history but NOT return values, so the
+		// change-detection reads in cue:writeYaml could otherwise inherit a
+		// mockReturnValue from a prior test and silently skip a write. Reset the
+		// read mocks to their "nothing on disk" default each test.
+		vi.mocked(readCueConfigFile).mockReturnValue(null);
+		vi.mocked(readCuePromptFile).mockReturnValue(null);
 		mockEngine = createMockEngine();
 	});
 
@@ -311,6 +319,78 @@ describe('Cue IPC Handlers', () => {
 			const handler = registerAndGetHandler('cue:writeYaml');
 			await handler(null, { projectRoot: '/projects/test', content });
 			expect(writeCueConfigFile).toHaveBeenCalledWith('/projects/test', content);
+		});
+
+		it('returns changed=true and writes when YAML differs from disk', async () => {
+			vi.mocked(readCueConfigFile).mockReturnValue({
+				filePath: '/projects/test/.maestro/cue.yaml',
+				raw: 'subscriptions: []',
+			});
+			const content = 'subscriptions:\n  - name: new';
+
+			const handler = registerAndGetHandler('cue:writeYaml');
+			const result = await handler(null, { projectRoot: '/projects/test', content });
+
+			expect(writeCueConfigFile).toHaveBeenCalledWith('/projects/test', content);
+			expect(result).toEqual({ changed: true });
+		});
+
+		it('skips the write and returns changed=false when YAML is byte-identical (layout-only save)', async () => {
+			const content = 'subscriptions:\n  - name: same';
+			vi.mocked(readCueConfigFile).mockReturnValue({
+				filePath: '/projects/test/.maestro/cue.yaml',
+				raw: content,
+			});
+
+			const handler = registerAndGetHandler('cue:writeYaml');
+			const result = await handler(null, { projectRoot: '/projects/test', content });
+
+			// Identical content must NOT touch cue.yaml: no mtime bump → the config
+			// watcher stays quiet → the session never re-arms → no re-execution.
+			expect(writeCueConfigFile).not.toHaveBeenCalled();
+			expect(result).toEqual({ changed: false });
+		});
+
+		it('skips an identical prompt file but still reports changed when YAML differs', async () => {
+			vi.mocked(readCueConfigFile).mockReturnValue({
+				filePath: '/projects/test/.maestro/cue.yaml',
+				raw: 'old yaml',
+			});
+			vi.mocked(readCuePromptFile).mockReturnValue('identical body');
+
+			const handler = registerAndGetHandler('cue:writeYaml');
+			const result = await handler(null, {
+				projectRoot: '/projects/test',
+				content: 'subscriptions: []',
+				promptFiles: { '.maestro/prompts/sub-1.md': 'identical body' },
+			});
+
+			expect(writeCuePromptFile).not.toHaveBeenCalled();
+			expect(result).toEqual({ changed: true });
+		});
+
+		it('returns changed=true when only a prompt file changed (YAML identical)', async () => {
+			const content = 'subscriptions: []';
+			vi.mocked(readCueConfigFile).mockReturnValue({
+				filePath: '/projects/test/.maestro/cue.yaml',
+				raw: content,
+			});
+			vi.mocked(readCuePromptFile).mockReturnValue('old body');
+
+			const handler = registerAndGetHandler('cue:writeYaml');
+			const result = await handler(null, {
+				projectRoot: '/projects/test',
+				content,
+				promptFiles: { '.maestro/prompts/sub-1.md': 'new body' },
+			});
+
+			expect(writeCueConfigFile).not.toHaveBeenCalled();
+			expect(writeCuePromptFile).toHaveBeenCalledWith(
+				'/projects/test',
+				'.maestro/prompts/sub-1.md',
+				'new body'
+			);
+			expect(result).toEqual({ changed: true });
 		});
 
 		it('adds fan_out_prompt_files entries to the prune keep-set', async () => {

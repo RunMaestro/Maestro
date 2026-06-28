@@ -54,6 +54,14 @@ export function useQuotaRefresh(opts: UseQuotaRefreshOptions): UseQuotaRefreshRe
 	// Visual gate kept independent of `refreshing` so a fast sample still
 	// animates the button for a full beat instead of flashing.
 	const [visualBusy, setVisualBusy] = useState(false);
+	const mountedRef = useRef(true);
+
+	useEffect(() => {
+		mountedRef.current = true;
+		return () => {
+			mountedRef.current = false;
+		};
+	}, []);
 
 	// Interval is persisted per provider in uiStore (alongside the hidden-account
 	// map) so the dropdown survives closing the dashboard / switching tabs. The
@@ -80,10 +88,12 @@ export function useQuotaRefresh(opts: UseQuotaRefreshOptions): UseQuotaRefreshRe
 			// Provider logs carry the detail; keep the last good snapshot map
 			// rather than blowing up the dashboard.
 		}
+		if (!mountedRef.current) return;
 		const elapsed = Date.now() - start;
 		if (elapsed < MIN_VISIBLE_MS) {
 			await new Promise((r) => setTimeout(r, MIN_VISIBLE_MS - elapsed));
 		}
+		if (!mountedRef.current) return;
 		setVisualBusy(false);
 	}, [refreshing, visualBusy]);
 

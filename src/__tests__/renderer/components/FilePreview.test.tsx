@@ -39,6 +39,11 @@ vi.mock('lucide-react', () => ({
 	Database: () => <span data-testid="database-icon">Database</span>,
 	WrapText: () => <span data-testid="wraptext-icon">WrapText</span>,
 	AppWindow: () => <span data-testid="appwindow-icon">AppWindow</span>,
+	// Icons added by the search-kind toggle (text/regex/literal).
+	Filter: () => <span data-testid="filter-icon">Filter</span>,
+	Type: () => <span data-testid="type-icon">Type</span>,
+	Regex: () => <span data-testid="regex-icon">Regex</span>,
+	Hash: () => <span data-testid="hash-icon">Hash</span>,
 }));
 
 // Mock react-markdown
@@ -313,6 +318,38 @@ describe('FilePreview', () => {
 			render(<FilePreview {...defaultProps} sshRemoteId="remote-host-1" />);
 
 			expect(screen.queryByTestId('external-link-icon')).not.toBeInTheDocument();
+		});
+	});
+
+	describe('Mermaid (.mmd) preview', () => {
+		const mermaidFile = {
+			name: 'diagram.mmd',
+			content: 'flowchart TB\n  A[Start] --> B[End]',
+			path: '/test/diagram.mmd',
+		};
+
+		it('renders .mmd files as a diagram instead of raw text', () => {
+			render(<FilePreview {...defaultProps} file={mermaidFile} />);
+
+			expect(screen.getByTestId('mermaid-renderer')).toBeInTheDocument();
+			expect(screen.queryByTestId('syntax-highlighter')).not.toBeInTheDocument();
+		});
+
+		it('also renders the uppercase .MERMAID extension as a diagram', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ ...mermaidFile, name: 'diagram.MERMAID', path: '/test/diagram.MERMAID' }}
+				/>
+			);
+
+			expect(screen.getByTestId('mermaid-renderer')).toBeInTheDocument();
+		});
+
+		it('shows the raw source instead of the diagram in edit mode', () => {
+			render(<FilePreview {...defaultProps} file={mermaidFile} markdownEditMode={true} />);
+
+			expect(screen.queryByTestId('mermaid-renderer')).not.toBeInTheDocument();
 		});
 	});
 

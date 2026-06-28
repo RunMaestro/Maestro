@@ -21,6 +21,7 @@ src/cli/
 │   ├── create-agent.ts       # Create agent via WebSocket (requires running app)
 │   ├── create-worktree.ts    # Create worktree agent off a parent via WebSocket (requires running app)
 │   ├── create-ssh-remote.ts  # Create SSH remote via disk I/O
+│   ├── goal-run.ts            # Goal-Driven Auto Run (free-text objective)
 │   ├── list-agents.ts
 │   ├── list-groups.ts
 │   ├── list-playbooks.ts
@@ -33,6 +34,7 @@ src/cli/
 │   ├── update-agent.ts       # Move agent to group / change cwd via WebSocket (requires running app)
 │   ├── remove-ssh-remote.ts  # Remove SSH remote via disk I/O
 │   ├── run-playbook.ts
+│   ├── run-doc.ts            # Run raw Auto Run docs headlessly (no saved playbook)
 │   ├── send.ts
 │   ├── settings-agent.ts
 │   ├── settings-get.ts
@@ -43,9 +45,12 @@ src/cli/
 │   ├── show-playbook.ts
 │   └── status.ts
 ├── services/               # Business logic
+│   ├── agent-busy.ts        # Shared busy-state check (desktop + CLI activity)
 │   ├── agent-sessions.ts    # Read Claude Code session files
+│   ├── agent-busy.ts        # Busy-state checks + --wait loop (shared by playbook/run-doc)
 │   ├── agent-spawner.ts     # Spawn agent CLIs
-│   ├── batch-processor.ts   # Playbook execution engine
+│   ├── batch-processor.ts   # Playbook (Spec-Driven) execution engine
+│   ├── goal-runner.ts       # Goal-Driven Auto Run engine (shared goalDriven core)
 │   ├── maestro-client.ts    # IPC client to running Maestro desktop app
 │   ├── session-command.ts   # Shared helpers for desktop-driving commands (see below)
 │   ├── playbooks.ts         # Playbook file management
@@ -75,6 +80,7 @@ The CLI imports directly from `src/shared/` and some `src/main/` modules:
 - **Output parsers**: `src/main/parsers/` (Claude, Codex, OpenCode, Factory Droid)
 - **Template variables**: `src/shared/templateVariables.ts`
 - **Prompt templates**: `src/prompts/` (auto-run prompts)
+- **Goal-Driven core**: `src/shared/goalDriven/` (marker parsing + exit evaluation shared by the CLI `goal-runner` and the desktop `useGoalRunner` hook)
 
 The CLI avoids Electron-specific imports (no `electron`, no `electron-store`, no IPC).
 
@@ -171,6 +177,39 @@ Options:
 - `--wait` - Wait for agent to become available if busy
 
 This command is lazy-loaded to avoid eager resolution of prompt templates.
+
+### `goal-run <agent-id> <goal>`
+
+Launch a Goal-Driven Auto Run: instead of working through a checklist of documents (the `playbook` command), pursue a single free-text objective. Each iteration spawns a FRESH agent that makes one increment of progress, self-reports how far along it is via Maestro markers, and exits, repeating until the goal is reached, a deadlock is declared, the iteration limit is hit, or progress stalls.
+
+```bash
+maestro-cli goal-run <agent-id> "<goal>" [--exit-criteria <text>] [--max-iterations <n>] [--no-history] [--json] [--verbose]
+```
+
+Options:
+
+- `--exit-criteria <text>` - What "done" looks like and when to declare a deadlock (guides the agent; not matched automatically)
+- `--max-iterations <n>` - Cap iterations (default: infinite, bounded by `GOAL_RUN_HARD_ITERATION_CAP`)
+- `--no-history` - Skip writing history entries
+- `--json` - Output as JSON Lines (events: `goal_start`, `goal_iteration_start`, `goal_iteration_complete`, `goal_complete`)
+- `--verbose` - Show full prompt sent to agent on each iteration
+
+Implemented by `services/goal-runner.ts` (`runGoal`), the CLI counterpart to the desktop `useGoalRunner` hook. Both drive the SAME pure engine in `src/shared/goalDriven/*` (marker parsing + exit evaluation) so CLI and desktop behave identically. Like `playbook`, it is lazy-loaded, refuses to start when the agent is busy (`services/agent-busy.ts`), and threads per-agent SSH remote + model/effort/args/env overrides into every spawn.
+
+### `run-doc <docs...>`
+
+Run one or more raw Auto Run `.md` documents without a saved playbook. Mirrors `playbook` but builds an ephemeral `Playbook` on the fly (`src/cli/commands/run-doc.ts`), then drives it through the same `batch-processor` generator. Headless and self-contained - it does **not** route through the desktop renderer (unlike `auto-run --launch`), so it runs whether or not the Maestro window is open. This is the path group-chat participants use to execute a document they just wrote.
+
+```bash
+maestro-cli run-doc <docs...> --agent <id-or-name> [--prompt <text>] [--loop] [--max-loops <n>] [--reset-on-completion] [--dry-run] [--no-history] [--json] [--debug] [--verbose] [--no-synopsis] [--wait]
+```
+
+- `-a, --agent <id>` (required) - target agent by ID (full/partial) or display name
+- Document paths may be relative to the agent's Auto Run folder, relative to cwd, or absolute; all must share one folder, which becomes the run's `folderPath`.
+- An empty `--prompt` falls back to the default Auto Run prompt (`PROMPT_IDS.AUTORUN_DEFAULT`), handled inside `batch-processor`.
+- Busy-state detection and `--wait` are shared with `playbook` via `src/cli/services/agent-busy.ts` (`checkAgentBusy`, `waitForAgentAvailable`).
+
+Note: `resolveAgentId()` in `src/cli/services/storage.ts` resolves `--agent` by ID first, then falls back to an exact case-insensitive display-name match, so name targeting works across `run-doc`, `playbook` lookups, `list playbooks`, and `auto-run`.
 
 ### `send <agent-id> <message>`
 

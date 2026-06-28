@@ -33,14 +33,19 @@ describe('migrateAdaptiveModeDefault', () => {
 		vi.clearAllMocks();
 	});
 
-	it('backfills only never-configured Claude Code agents, preserving explicit choices and other agents', () => {
+	// rc keeps Adaptive Mode default OFF for every agent type
+	// (`isAdaptiveModeDefaultOn` returns false - the maestro-p TUI path has been a
+	// recurring source of trouble, so we never flip anyone onto it automatically).
+	// With the default off the migration backfills nobody: it leaves every
+	// agent's explicit/undefined choice untouched and only stamps the marker.
+	it('does not backfill any agent while the Adaptive Mode default is off, but still sets the marker', () => {
 		const sessionsStore = makeStore({
 			sessions: [
 				{ id: 'a', toolType: 'claude-code', name: 'Claude' },
 				{ id: 'b', toolType: 'codex', name: 'Codex' },
 				{ id: 'c', toolType: 'claude-code', name: 'Already on', enableMaestroP: true },
-				// Explicit API choice (false) must survive the backfill - flipping it
-				// on would silently revert the user's token source to Dynamic.
+				// Explicit API choice (false) must survive untouched - flipping it on
+				// would silently revert the user's token source to Dynamic.
 				{ id: 'd', toolType: 'claude-code', name: 'Picked API', enableMaestroP: false },
 			],
 		});
@@ -49,13 +54,7 @@ describe('migrateAdaptiveModeDefault', () => {
 
 		migrateAdaptiveModeDefault(settingsStore as any);
 
-		const written = sessionsStore.set.mock.calls[0][1];
-		expect(written).toEqual([
-			{ id: 'a', toolType: 'claude-code', name: 'Claude', enableMaestroP: true },
-			{ id: 'b', toolType: 'codex', name: 'Codex' },
-			{ id: 'c', toolType: 'claude-code', name: 'Already on', enableMaestroP: true },
-			{ id: 'd', toolType: 'claude-code', name: 'Picked API', enableMaestroP: false },
-		]);
+		expect(sessionsStore.set).not.toHaveBeenCalled();
 		expect(settingsStore.data[ADAPTIVE_MODE_DEFAULT_MIGRATION_MARKER]).toBe(true);
 	});
 

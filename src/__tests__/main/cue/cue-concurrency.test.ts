@@ -674,10 +674,65 @@ describe('CueEngine Concurrency Control', () => {
 	});
 
 	describe('multi-concurrent slots', () => {
-		it('allows multiple concurrent runs up to max_concurrent', async () => {
+		it('allows DIFFERENT subscriptions to run concurrently up to max_concurrent', async () => {
 			const deps = createMockDeps({
 				onCueRun: vi.fn(() => new Promise<CueRunResult>(() => {})),
 			});
+			// Three distinct subscriptions, each firing on start — they are
+			// different roots, so the self-overlap guard does not apply and all
+			// three may run in parallel.
+			const config = createMockConfig({
+				settings: {
+					timeout_minutes: 30,
+					timeout_on_fail: 'break',
+					max_concurrent: 3,
+					queue_size: 10,
+				},
+				subscriptions: [
+					{
+						name: 'timer-a',
+						event: 'time.heartbeat',
+						enabled: true,
+						prompt: 'test',
+						interval_minutes: 60,
+					},
+					{
+						name: 'timer-b',
+						event: 'time.heartbeat',
+						enabled: true,
+						prompt: 'test',
+						interval_minutes: 60,
+					},
+					{
+						name: 'timer-c',
+						event: 'time.heartbeat',
+						enabled: true,
+						prompt: 'test',
+						interval_minutes: 60,
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(config);
+			const engine = new CueEngine(deps);
+			engine.start();
+
+			await vi.advanceTimersByTimeAsync(10);
+			// All three distinct subscriptions dispatch concurrently (3 slots).
+			expect(deps.onCueRun).toHaveBeenCalledTimes(3);
+			expect(engine.getQueueStatus().size).toBe(0); // Nothing queued
+
+			engine.stopAll();
+			engine.stop();
+		});
+
+		it('serializes the SAME subscription even when slots are free (no self-overlap)', async () => {
+			const deps = createMockDeps({
+				onCueRun: vi.fn(() => new Promise<CueRunResult>(() => {})),
+			});
+			// A single subscription at max_concurrent: 3. Even though slots are
+			// free, repeated firings of the SAME root must NOT overlap — the
+			// re-trigger is queued and runs only after the in-flight one finishes.
+			// This is the regression guard for the "double-fire" bug.
 			const config = createMockConfig({
 				settings: {
 					timeout_minutes: 30,
@@ -702,16 +757,12 @@ describe('CueEngine Concurrency Control', () => {
 			await vi.advanceTimersByTimeAsync(10);
 			expect(deps.onCueRun).toHaveBeenCalledTimes(1); // Initial fire
 
-			// Trigger 2 more intervals — all should dispatch (3 slots)
+			// Two more ticks of the SAME subscription — both queue rather than
+			// dispatching into the 2 free slots.
 			vi.advanceTimersByTime(1 * 60 * 1000);
 			vi.advanceTimersByTime(1 * 60 * 1000);
-			expect(deps.onCueRun).toHaveBeenCalledTimes(3);
-			expect(engine.getQueueStatus().size).toBe(0); // Nothing queued
-
-			// 4th trigger should be queued
-			vi.advanceTimersByTime(1 * 60 * 1000);
-			expect(deps.onCueRun).toHaveBeenCalledTimes(3);
-			expect(engine.getQueueStatus().get('session-1')).toBe(1);
+			expect(deps.onCueRun).toHaveBeenCalledTimes(1); // still only the first run
+			expect(engine.getQueueStatus().get('session-1')).toBe(2);
 
 			engine.stopAll();
 			engine.stop();

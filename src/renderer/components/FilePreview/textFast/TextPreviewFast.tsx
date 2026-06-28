@@ -119,7 +119,8 @@ export const TextPreviewFast = forwardRef<TextPreviewFastHandle, TextPreviewFast
 			ref,
 			() => ({
 				getPageCount: () => pagesRef.current.length,
-				findInContent: (query: string) => findTextHits(contentRef.current, query, pagesRef.current),
+				findInContent: (query: string, options) =>
+					findTextHits(contentRef.current, query, pagesRef.current, options),
 				scrollToMatch: (hit) => {
 					// Defensive: same-render race between the count effect's
 					// setCurrentMatchIndex(0) and the navigate effect's dispatch

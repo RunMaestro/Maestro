@@ -167,7 +167,9 @@ describe('GitDiffViewer', () => {
 
 			expect(screen.getByText('No changes to display')).toBeInTheDocument();
 			expect(screen.getByText('Git Diff')).toBeInTheDocument();
-			expect(screen.getByText('Close (Esc)')).toBeInTheDocument();
+			// Close button renders as either "Close (Esc)" (md+) or "×" (narrow);
+			// accessible name from aria-label catches both.
+			expect(screen.getByRole('button', { name: /close diff viewer/i })).toBeInTheDocument();
 		});
 
 		it('renders with dialog role and aria attributes', () => {
@@ -352,7 +354,7 @@ describe('GitDiffViewer', () => {
 				/>
 			);
 
-			fireEvent.click(screen.getByRole('button', { name: 'Close (Esc)' }));
+			fireEvent.click(screen.getByRole('button', { name: /close diff viewer/i }));
 			expect(onClose).toHaveBeenCalled();
 		});
 
@@ -398,8 +400,75 @@ describe('GitDiffViewer', () => {
 
 			render(<GitDiffViewer diffText="" cwd="/test/project" theme={mockTheme} onClose={onClose} />);
 
-			fireEvent.click(screen.getByRole('button', { name: 'Close (Esc)' }));
+			fireEvent.click(screen.getByRole('button', { name: /close diff viewer/i }));
 			expect(onClose).toHaveBeenCalled();
+		});
+	});
+
+	describe('File header open-in-preview', () => {
+		it('dismisses the viewer and opens the file as a preview tab on header click', () => {
+			const onClose = vi.fn();
+			const onOpenFile = vi.fn();
+			mockParseGitDiff.mockReturnValue([
+				createMockParsedFile({ oldPath: 'src/app.ts', newPath: 'src/app.ts' }),
+			]);
+
+			render(
+				<GitDiffViewer
+					diffText="mock diff"
+					cwd="/test/project"
+					theme={mockTheme}
+					onClose={onClose}
+					onOpenFile={onOpenFile}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle('Open src/app.ts in a preview tab'));
+
+			expect(onClose).toHaveBeenCalledTimes(1);
+			expect(onOpenFile).toHaveBeenCalledWith('/test/project/src/app.ts', 'app.ts');
+		});
+
+		it('does not make a deleted file header clickable', () => {
+			const onClose = vi.fn();
+			const onOpenFile = vi.fn();
+			mockParseGitDiff.mockReturnValue([
+				createMockParsedFile({
+					oldPath: 'src/gone.ts',
+					newPath: 'src/gone.ts',
+					isDeletedFile: true,
+				}),
+			]);
+
+			render(
+				<GitDiffViewer
+					diffText="mock diff"
+					cwd="/test/project"
+					theme={mockTheme}
+					onClose={onClose}
+					onOpenFile={onOpenFile}
+				/>
+			);
+
+			expect(screen.queryByTitle(/Open .* in a preview tab/)).toBeNull();
+		});
+
+		it('renders a non-interactive file header when onOpenFile is omitted', () => {
+			const onClose = vi.fn();
+			mockParseGitDiff.mockReturnValue([
+				createMockParsedFile({ oldPath: 'src/app.ts', newPath: 'src/app.ts' }),
+			]);
+
+			render(
+				<GitDiffViewer
+					diffText="mock diff"
+					cwd="/test/project"
+					theme={mockTheme}
+					onClose={onClose}
+				/>
+			);
+
+			expect(screen.queryByTitle(/Open .* in a preview tab/)).toBeNull();
 		});
 	});
 
@@ -1286,7 +1355,7 @@ describe('GitDiffViewer', () => {
 				/>
 			);
 
-			const closeButton = screen.getByText('Close (Esc)');
+			const closeButton = screen.getByRole('button', { name: /close diff viewer/i });
 			expect(closeButton.tagName).toBe('BUTTON');
 		});
 
@@ -1573,7 +1642,7 @@ describe('GitDiffViewer', () => {
 				/>
 			);
 
-			const closeButton = screen.getByRole('button', { name: 'Close (Esc)' });
+			const closeButton = screen.getByRole('button', { name: /close diff viewer/i });
 
 			act(() => {
 				closeButton.focus();

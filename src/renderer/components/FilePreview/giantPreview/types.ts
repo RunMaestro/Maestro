@@ -1,5 +1,5 @@
 import type { Theme } from '../../../constants/themes';
-import type { SearchHit } from '../search/types';
+import type { SearchHit, SearchHitOptions } from '../search/types';
 
 /**
  * Imperative handle exposed by `GiantPreview`. The parent FilePreview wires
@@ -14,7 +14,7 @@ import type { SearchHit } from '../search/types';
  */
 export interface GiantPreviewHandle {
 	/** Find every occurrence of `query` in the loaded source. Empty query → []. */
-	findInContent(query: string): SearchHit[];
+	findInContent(query: string, options?: SearchHitOptions): SearchHit[];
 	/** Select + scroll the matched range into view. No-op on out-of-range offsets. */
 	scrollToMatch(hit: SearchHit): void;
 	/** 1-based *source* line at the top of the viewport (soft-wrap aware). */

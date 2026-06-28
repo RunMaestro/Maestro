@@ -149,6 +149,7 @@ const mockMaestro = {
 	agents: {
 		detect: vi.fn(),
 		get: vi.fn(),
+		getMaestroPDetectedPath: vi.fn().mockResolvedValue(null),
 	},
 	git: {
 		isRepo: vi.fn(),

@@ -1,6 +1,6 @@
 {
 	"name": "maestro",
-	"version": "0.17.1",
+	"version": "0.18.3-RC",
 	"description": "Maestro hones fractured attention into focused intent.",
 	"main": "dist/main/index.js",
 	"author": {
@@ -27,8 +27,10 @@
 		"dev:mobile:ios": "cd apps/mobile && npx expo run:ios --device 'iPhone 16 Pro'",
 		"dev:mobile:android": "cd apps/mobile && npx expo run:android",
 		"dev:mobile:start": "cd apps/mobile && npx expo start --dev-client",
+		"dev:web-desktop": "vite --config vite.config.web-desktop.mts",
+		"build:web-desktop": "vite build --config vite.config.web-desktop.mts",
 		"dev:win": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/start-dev.ps1",
-		"build": "npm run build:main && npm run build:preload && npm run build:renderer && npm run build:web && npm run build:cli && npm run build:maestro-p",
+		"build": "npm run build:main && npm run build:preload && npm run build:renderer && npm run build:web && npm run build:web-desktop && npm run build:cli && npm run build:maestro-p",
 		"build:main": "tsc -p tsconfig.main.json",
 		"build:preload": "node scripts/build-preload.mjs",
 		"build:cli": "node scripts/build-cli.mjs",
@@ -43,7 +45,7 @@
 		"clean": "rm -rf dist release node_modules/.vite",
 		"preinstall": "node scripts/check-python.mjs",
 		"prepare": "node scripts/setup-git-hooks.mjs",
-		"postinstall": "patch-package && electron-rebuild -f -w node-pty,better-sqlite3",
+		"postinstall": "patch-package && node scripts/ensure-electron.mjs && electron-rebuild -f -w node-pty,better-sqlite3",
 		"lint": "tsc -p tsconfig.lint.json && tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.cli.json --noEmit",
 		"lint:eslint": "eslint src/",
 		"lint:mobile": "cd apps/mobile && npx eslint .",
@@ -305,22 +307,22 @@
 		"adm-zip": "^0.5.16",
 		"ansi-to-html": "^0.7.2",
 		"archiver": "^7.0.1",
-		"better-sqlite3": "^12.9.0",
+		"better-sqlite3": "^12.11.1",
 		"canvas-confetti": "^1.9.4",
 		"chokidar": "^3.6.0",
 		"commander": "^14.0.2",
 		"d3-force": "^3.0.0",
 		"date-fns": "^4.1.0",
 		"diff": "^8.0.2",
-		"dompurify": "^3.3.0",
+		"dompurify": "^3.4.11",
 		"electron-store": "^8.2.0",
 		"electron-updater": "^6.8.3",
 		"fastify": "^4.25.2",
 		"highlight.js": "^11.11.1",
 		"js-tiktoken": "^1.0.21",
-		"js-yaml": "^4.1.1",
+		"js-yaml": "^4.2.0",
 		"katex": "^0.16.46",
-		"markdown-it": "^14.1.1",
+		"markdown-it": "^14.2.0",
 		"marked": "^17.0.1",
 		"mermaid": "^11.12.1",
 		"node-pty": "1.2.0-beta.12",
@@ -412,5 +414,13 @@
 		"*.{js,cjs,mjs,jsx,ts,tsx,mts,cts}": [
 			"eslint --fix"
 		]
+	},
+	"allowScripts": {
+		"better-sqlite3": true,
+		"canvas": true,
+		"electron": true,
+		"esbuild": true,
+		"lzma-native": true,
+		"node-pty": true
 	}
 }

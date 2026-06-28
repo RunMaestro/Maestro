@@ -28,6 +28,8 @@ describe('agentMetadata', () => {
 			expect(AGENT_DISPLAY_NAMES['codex']).toBe('Codex');
 			expect(AGENT_DISPLAY_NAMES['opencode']).toBe('OpenCode');
 			expect(AGENT_DISPLAY_NAMES['factory-droid']).toBe('Factory Droid');
+			expect(AGENT_DISPLAY_NAMES['hermes']).toBe('Hermes');
+			expect(AGENT_DISPLAY_NAMES['pi']).toBe('Pi');
 			expect(AGENT_DISPLAY_NAMES['gemini-cli']).toBe('Gemini CLI');
 			expect(AGENT_DISPLAY_NAMES['qwen3-coder']).toBe('Qwen3 Coder');
 			expect(AGENT_DISPLAY_NAMES['copilot-cli']).toBe('Copilot-CLI');
@@ -76,6 +78,8 @@ describe('agentMetadata', () => {
 		it('should contain the expected beta agents', () => {
 			expect(BETA_AGENTS.has('opencode')).toBe(true);
 			expect(BETA_AGENTS.has('factory-droid')).toBe(true);
+			expect(BETA_AGENTS.has('hermes')).toBe(true);
+			expect(BETA_AGENTS.has('pi')).toBe(true);
 			expect(BETA_AGENTS.has('copilot-cli')).toBe(true);
 		});
 
@@ -98,6 +102,8 @@ describe('agentMetadata', () => {
 		it('should return true for beta agents', () => {
 			expect(isBetaAgent('opencode')).toBe(true);
 			expect(isBetaAgent('factory-droid')).toBe(true);
+			expect(isBetaAgent('hermes')).toBe(true);
+			expect(isBetaAgent('pi')).toBe(true);
 			expect(isBetaAgent('copilot-cli')).toBe(true);
 		});
 

@@ -61,6 +61,16 @@ export interface SpawnGroupChatAgentConfig {
 	readOnlyMode?: boolean;
 	/** Optional label for debug logs (e.g. 'moderator', 'participant: Alice') */
 	debugLabel?: string;
+	/**
+	 * Overall idle budget for a maestro-p (interactive/dynamic) run, in seconds,
+	 * forwarded as `--max-wait`. Group Chat is a background/orchestrated caller, so
+	 * it MUST pass this to match the router's own supervising timeout - otherwise
+	 * maestro-p falls back to its 300s idle default and silently kills a
+	 * still-working moderator/participant whose JSONL output stalls past 300s
+	 * (long tool runs or extended thinking), even though the router would wait the
+	 * full 10 minutes. Same contract Cue follows. Ignored on the API path.
+	 */
+	maxWaitSeconds?: number;
 }
 
 export interface SpawnGroupChatAgentResult {
@@ -146,6 +156,7 @@ export async function spawnGroupChatAgent(
 			command: baseCommand,
 			args,
 			customEnvVars,
+			maxWaitSeconds: config.maxWaitSeconds,
 		});
 		spawnCommand = applied.command;
 		spawnArgs = applied.args;
@@ -174,6 +185,7 @@ export async function spawnGroupChatAgent(
 			decision: claudeDecision,
 			interactiveModeArgs: agent.interactiveModeArgs,
 			remoteClaudeBin: claudeDecision.claudeRealBinPath,
+			maxWaitSeconds: config.maxWaitSeconds,
 		});
 		if (remoteInteractive && debugLabel) {
 			console.log(

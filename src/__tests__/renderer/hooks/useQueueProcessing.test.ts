@@ -1287,6 +1287,100 @@ describe('runtime queue recovery', () => {
 
 		expect(mockSetSessions).not.toHaveBeenCalled();
 	});
+
+	it('after auto-resume, dispatches only the runnable item and leaves paused items held', async () => {
+		// Auto-Resume On Limit (Phase 4): when the coordinator clears a limit pause
+		// the session goes idle and this effect drains the persisted queue. Items the
+		// user individually held (paused: true) must stay skipped - the resume must
+		// not un-pause them.
+		vi.useFakeTimers();
+
+		mockSessionStoreState.sessionsLoaded = true;
+		mockSessionStoreState.sessions = [createSession({ state: 'idle', executionQueue: [] })];
+
+		const { rerender } = renderHook(() => useQueueProcessing(createDeps()));
+
+		// Complete startup recovery so runtime recovery is allowed to fire.
+		act(() => {
+			vi.advanceTimersByTime(600);
+		});
+
+		mockSetSessions.mockClear();
+		mockAgentStoreProcessQueuedItem.mockClear();
+
+		const tab = createTab({ id: 'tab-1', state: 'idle' });
+		const heldItem = createQueuedItem({ id: 'held', tabId: 'tab-1', paused: true });
+		const runnableItem = createQueuedItem({ id: 'runnable', tabId: 'tab-1' });
+		const session = createSession({
+			id: 'session-1',
+			state: 'idle',
+			aiTabs: [tab],
+			activeTabId: 'tab-1',
+			// Held item is ahead of the runnable one in the queue.
+			executionQueue: [heldItem, runnableItem],
+		});
+
+		mockSessionStoreState.sessions = [session];
+		mockGetActiveTab.mockReturnValue(tab);
+
+		let capturedUpdater: ((prev: Session[]) => Session[]) | null = null;
+		mockSetSessions.mockImplementation((updater: any) => {
+			capturedUpdater = updater;
+		});
+
+		await act(async () => {
+			rerender();
+			await Promise.resolve();
+		});
+
+		// Only the runnable item was dispatched; the held one was skipped.
+		expect(mockAgentStoreProcessQueuedItem).toHaveBeenCalledOnce();
+		expect(mockAgentStoreProcessQueuedItem.mock.calls[0][1].id).toBe('runnable');
+
+		// The held item stays in the queue (still paused); the runnable one is removed.
+		const updated = capturedUpdater!([session]);
+		expect(updated[0].executionQueue.map((i) => i.id)).toEqual(['held']);
+		expect(updated[0].executionQueue[0].paused).toBe(true);
+	});
+
+	it('does not dispatch at all when every queued item is paused', () => {
+		vi.useFakeTimers();
+
+		mockSessionStoreState.sessionsLoaded = true;
+		mockSessionStoreState.sessions = [createSession({ state: 'idle', executionQueue: [] })];
+
+		const { rerender } = renderHook(() => useQueueProcessing(createDeps()));
+
+		act(() => {
+			vi.advanceTimersByTime(600);
+		});
+
+		mockSetSessions.mockClear();
+		mockAgentStoreProcessQueuedItem.mockClear();
+
+		const tab = createTab({ id: 'tab-1', state: 'idle' });
+		mockSessionStoreState.sessions = [
+			createSession({
+				id: 'session-1',
+				state: 'idle',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+				executionQueue: [
+					createQueuedItem({ id: 'held-a', tabId: 'tab-1', paused: true }),
+					createQueuedItem({ id: 'held-b', tabId: 'tab-1', paused: true }),
+				],
+			}),
+		];
+		mockGetActiveTab.mockReturnValue(tab);
+
+		act(() => {
+			rerender();
+		});
+
+		// All held → queue reads as drained → nothing dispatched, session stays put.
+		expect(mockSetSessions).not.toHaveBeenCalled();
+		expect(mockAgentStoreProcessQueuedItem).not.toHaveBeenCalled();
+	});
 });
 
 // ============================================================================

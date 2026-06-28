@@ -91,4 +91,33 @@ describe('findTextHits', () => {
 		expect(hits[0].sourceOffset).toBeLessThan(ps[1].sourceStart);
 		expect(hits[0].sourceOffset + hits[0].length).toBeGreaterThan(ps[1].sourceStart);
 	});
+
+	describe('regex mode', () => {
+		it('matches a regex pattern and tags hits with their page', () => {
+			const hits = findTextHits(content, 'h\\w+o', pages, { regex: true });
+			// Matches 'Hello' (x2 on page 0) and 'HELLO' (page 1), case-insensitive.
+			expect(hits.map((h) => h.blockIndex)).toEqual([0, 0, 1]);
+			expect(hits[0].sourceOffset).toBe(0);
+		});
+
+		it('reports the matched length, not the query length', () => {
+			const hits = findTextHits('abc abcd', 'abc\\w*', pages, { regex: true });
+			expect(hits.map((h) => h.length)).toEqual([3, 4]);
+		});
+
+		it('honors caseSensitive in regex mode', () => {
+			const hits = findTextHits(content, 'hello', pages, { regex: true, caseSensitive: true });
+			expect(hits.length).toBe(1);
+		});
+
+		it('returns [] for an invalid regex instead of throwing', () => {
+			expect(findTextHits(content, '[', pages, { regex: true })).toEqual([]);
+		});
+
+		it('skips zero-length matches without looping forever', () => {
+			const hits = findTextHits('baaa', 'a*', paginate('baaa', 10), { regex: true });
+			expect(hits.every((h) => h.length > 0)).toBe(true);
+			expect(hits.map((h) => [h.sourceOffset, h.length])).toEqual([[1, 3]]);
+		});
+	});
 });

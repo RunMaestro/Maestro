@@ -108,4 +108,43 @@ describe('findAllInDoc', () => {
 		expect(hits[1].sourceOffset).toBe(2);
 		expect(hits.at(-1)!.sourceOffset).toBe(19998);
 	});
+
+	describe('regex mode', () => {
+		it('matches a regex pattern when options.regex is set', () => {
+			const hits = findAllInDoc('foo123 bar45 baz6', '\\d+', { regex: true });
+			expect(hits.map((h) => [h.sourceOffset, h.length])).toEqual([
+				[3, 3],
+				[10, 2],
+				[16, 1],
+			]);
+		});
+
+		it('treats metacharacters literally in non-regex mode', () => {
+			// In literal mode, '.' matches only a real dot, not any char.
+			const hits = findAllInDoc('a.b acb', '.');
+			expect(hits.length).toBe(1);
+			expect(hits[0].sourceOffset).toBe(1);
+		});
+
+		it('is case-insensitive by default in regex mode', () => {
+			const hits = findAllInDoc('Cat cat CAT', 'cat', { regex: true });
+			expect(hits.length).toBe(3);
+		});
+
+		it('honors caseSensitive in regex mode', () => {
+			const hits = findAllInDoc('Cat cat CAT', 'cat', { regex: true, caseSensitive: true });
+			expect(hits.map((h) => h.sourceOffset)).toEqual([4]);
+		});
+
+		it('returns [] for an invalid regex instead of throwing', () => {
+			expect(findAllInDoc('anything', '(', { regex: true })).toEqual([]);
+		});
+
+		it('skips zero-length matches without looping forever', () => {
+			// 'a*' can match empty strings; the engine must not emit empty hits.
+			const hits = findAllInDoc('baaa b', 'a*', { regex: true });
+			expect(hits.every((h) => h.length > 0)).toBe(true);
+			expect(hits.map((h) => [h.sourceOffset, h.length])).toEqual([[1, 3]]);
+		});
+	});
 });

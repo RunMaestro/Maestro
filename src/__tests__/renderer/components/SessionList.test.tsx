@@ -366,21 +366,22 @@ describe('SessionList', () => {
 			expect(addNewSession).toHaveBeenCalled();
 		});
 
-		it('toggles sidebar open/closed', () => {
+		it('cycles sidebar through open → collapsed strip → hidden', () => {
 			const session = createMockSession();
 			useSessionStore.setState({ sessions: [session] });
-			useUIStore.setState({ leftSidebarOpen: true });
-			const setLeftSidebarOpen = vi.spyOn(useUIStore.getState(), 'setLeftSidebarOpen');
+			useUIStore.setState({ leftSidebarOpen: true, leftSidebarHidden: false });
 			const props = createDefaultProps({
 				sortedSessions: [session],
 			});
 			render(<SessionList {...props} />);
 
-			// Find collapse button by its title
-			const collapseButton = screen.getByTitle(/Collapse.*Sidebar/i);
+			// Single button cycles open → collapsed-strip → hidden. The first
+			// click transitions to the collapsed-strip state.
+			const collapseButton = screen.getByTitle(/Collapse to status strip/i);
 			fireEvent.click(collapseButton);
 
-			expect(setLeftSidebarOpen).toHaveBeenCalledWith(false);
+			expect(useUIStore.getState().leftSidebarOpen).toBe(false);
+			expect(useUIStore.getState().leftSidebarHidden).toBe(false);
 		});
 	});
 

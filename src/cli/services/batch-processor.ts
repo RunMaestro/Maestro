@@ -12,6 +12,7 @@ import {
 } from './agent-spawner';
 import { addHistoryEntry, readGroups } from './storage';
 import { substituteTemplateVariables, TemplateContext } from '../../shared/templateVariables';
+import { prependNewSessionMessage } from '../../shared/newSessionMessage';
 import { registerCliActivity, unregisterCliActivity } from '../../shared/cli-activity';
 import { logger } from '../../main/utils/logger';
 import { parseSynopsis } from '../../shared/synopsis';
@@ -455,8 +456,13 @@ export async function* runPlaybook(
 					}
 
 					// Combine prompt with document content - agent works on what it's given
-					// Include explicit file path so agent knows where to save changes
-					const finalPrompt = `${basePrompt}\n\n---\n\n# Current Document: ${docFilePath}\n\nProcess tasks from this document and save changes back to the file above.\n\n${expandedDocContent}`;
+					// Include explicit file path so agent knows where to save changes.
+					// Each task spawns a fresh provider session, so prefix the agent's
+					// New Session Message onto every spawn (matches interactive behavior).
+					const finalPrompt = prependNewSessionMessage(
+						`${basePrompt}\n\n---\n\n# Current Document: ${docFilePath}\n\nProcess tasks from this document and save changes back to the file above.\n\n${expandedDocContent}`,
+						session.newSessionMessage
+					);
 
 					// Emit verbose event with full prompt
 					if (verbose) {

@@ -1134,6 +1134,45 @@ describe('useBatchProcessor hook', () => {
 			// Should have added history entry with failure
 			expect(mockOnAddHistoryEntry).toHaveBeenCalled();
 		});
+
+		it('prefixes the agent New Session Message onto the task spawn prompt', async () => {
+			const sessions = [createMockSession({ newSessionMessage: 'Always check linting first.' })];
+			const groups = [createMockGroup()];
+
+			let callCount = 0;
+			mockReadDoc.mockImplementation(async () => {
+				callCount++;
+				if (callCount <= 3) {
+					return { success: true, content: '# Tasks\n- [ ] Task 1' };
+				}
+				return { success: true, content: '# Tasks\n- [x] Task 1' };
+			});
+
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+				})
+			);
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+						prompt: 'Complete the task',
+						loopEnabled: false,
+					},
+					'/test/folder'
+				);
+			});
+
+			const prompt = mockOnSpawnAgent.mock.calls[0][1] as string;
+			expect(prompt.startsWith('Always check linting first.\n\n---\n\n')).toBe(true);
+		});
 	});
 
 	describe('stopBatchRun', () => {

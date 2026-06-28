@@ -18,6 +18,8 @@ describe('agentIds', () => {
 			expect(AGENT_IDS).toContain('codex');
 			expect(AGENT_IDS).toContain('opencode');
 			expect(AGENT_IDS).toContain('factory-droid');
+			expect(AGENT_IDS).toContain('hermes');
+			expect(AGENT_IDS).toContain('pi');
 			expect(AGENT_IDS).toContain('terminal');
 		});
 

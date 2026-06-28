@@ -3,9 +3,11 @@ import { Diff, Hunk } from 'react-diff-view';
 import { Plus, Minus, ImageIcon, Columns2, AlignJustify } from 'lucide-react';
 import type { Theme } from '../types';
 import { parseGitDiff, getFileName, getDiffStats } from '../utils/gitDiffParser';
+import { getBasename } from '../../shared/formatters';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { ImageDiffViewer } from './ImageDiffViewer';
+import { GitFilePathHeader } from './GitFilePathHeader';
 import { generateDiffViewStyles } from '../utils/markdownConfig';
 import { useSettingsStore } from '../stores/settingsStore';
 import 'react-diff-view/style/index.css';
@@ -62,6 +64,12 @@ interface GitDiffViewerProps {
 	/** Optional title shown in the header instead of the default "Git Diff". */
 	title?: string;
 	/**
+	 * Open a file as a preview tab. Given an absolute path and the display name.
+	 * When provided, file-path headers become clickable; the viewer dismisses
+	 * itself via `onClose` first, then calls this to open the file.
+	 */
+	onOpenFile?: (absolutePath: string, fileName: string) => void;
+	/**
 	 * Optional modal-layer priority override. Defaults to GIT_DIFF (200).
 	 * Use a higher priority when opening this viewer from inside another
 	 * modal so it captures Escape and focus correctly.
@@ -77,6 +85,7 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 	initialViewType = 'unified',
 	title = 'Git Diff',
 	priority,
+	onOpenFile,
 }: GitDiffViewerProps) {
 	const [activeTab, setActiveTab] = useState(0);
 	const [viewType, setViewType] = useState<GitDiffViewType>(
@@ -96,6 +105,13 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 
 	// Parse the diff into separate files
 	const parsedFiles = useMemo(() => parseGitDiff(diffText), [diffText]);
+
+	// Dismiss the viewer and open the given repo-relative file as a preview tab.
+	const openFileInPreview = (relPath: string) => {
+		if (!onOpenFile) return;
+		onClose();
+		onOpenFile(`${cwd}/${relPath}`, getBasename(relPath));
+	};
 
 	// Register layer on mount
 	// Note: Using 'modal' type so App.tsx blocks all shortcuts and lets this component
@@ -184,8 +200,10 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 							onClick={onClose}
 							className="px-3 py-1 rounded text-sm hover:bg-white/10 transition-colors"
 							style={{ color: theme.colors.textDim }}
+							aria-label="Close diff viewer"
 						>
-							Close (Esc)
+							<span className="hidden md:inline">Close (Esc)</span>
+							<span className="md:hidden text-base leading-none">×</span>
 						</button>
 					</div>
 					<div className="flex-1 flex items-center justify-center">
@@ -222,27 +240,37 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 			>
 				{/* Header */}
 				<div
-					className="flex items-center justify-between px-6 py-4 border-b"
+					className="flex items-center justify-between gap-2 px-3 sm:px-6 py-3 sm:py-4 border-b"
 					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
 				>
-					<div className="flex items-center gap-3">
-						<span className="text-lg font-semibold" style={{ color: theme.colors.textMain }}>
+					<div className="flex items-center gap-3 min-w-0">
+						<span
+							className="text-lg font-semibold shrink-0"
+							style={{ color: theme.colors.textMain }}
+						>
 							{title}
 						</span>
 						<span
-							className="text-xs px-2 py-1 rounded"
+							className="text-xs px-2 py-1 rounded truncate min-w-0"
 							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
 						>
 							{cwd}
 						</span>
-						<span className="text-xs" style={{ color: theme.colors.textDim }}>
+						{/* File counter hidden on narrow viewports — the per-file tab bar
+						    below already shows which file is active and the total count. */}
+						<span
+							className="hidden md:inline text-xs shrink-0"
+							style={{ color: theme.colors.textDim }}
+						>
 							File {activeTab + 1} of {parsedFiles.length}
 						</span>
 					</div>
-					<div className="flex items-center gap-2">
+					<div className="flex items-center gap-2 shrink-0">
+						{/* Layout toggle hidden on narrow viewports — unified is the only
+						    practical view at small widths. */}
 						<button
 							onClick={() => setViewType((v) => (v === 'unified' ? 'split' : 'unified'))}
-							className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs hover:bg-white/10 transition-colors"
+							className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded text-xs hover:bg-white/10 transition-colors"
 							style={{
 								color: theme.colors.textDim,
 								border: `1px solid ${theme.colors.border}`,
@@ -266,8 +294,10 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 							onClick={onClose}
 							className="px-3 py-1 rounded text-sm hover:bg-white/10 transition-colors"
 							style={{ color: theme.colors.textDim }}
+							aria-label="Close diff viewer"
 						>
-							Close (Esc)
+							<span className="hidden md:inline">Close (Esc)</span>
+							<span className="md:hidden text-base leading-none">×</span>
 						</button>
 					</div>
 				</div>
@@ -357,16 +387,23 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 							<style>{generateDiffViewStyles(theme, colorBlindMode)}</style>
 							{activeFile.parsedDiff.map((file, fileIndex) => (
 								<div key={fileIndex}>
-									{/* File header */}
-									<div
-										className="mb-4 p-2 rounded font-semibold text-xs"
-										style={{
-											backgroundColor: theme.colors.bgActivity,
-											color: theme.colors.textMain,
-										}}
+									{/* File header (click to open the file as a preview tab) */}
+									<GitFilePathHeader
+										theme={theme}
+										className="mb-4"
+										onOpen={
+											onOpenFile && !activeFile.isDeletedFile
+												? () => openFileInPreview(activeFile.newPath)
+												: undefined
+										}
+										title={
+											activeFile.isDeletedFile
+												? undefined
+												: `Open ${activeFile.newPath} in a preview tab`
+										}
 									>
 										{file.oldPath} → {file.newPath}
-									</div>
+									</GitFilePathHeader>
 
 									{/* Render each hunk */}
 									<Diff viewType={viewType} diffType={file.type} hunks={file.hunks}>

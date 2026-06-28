@@ -406,9 +406,7 @@ describe('run-playbook command', () => {
 			await expect(runPlaybook('pb-123', {})).rejects.toThrow('process.exit(1)');
 
 			expect(formatError).toHaveBeenCalledWith(
-				expect.stringContaining(
-					'Agent "Test Agent" is busy: Running playbook "Other Playbook" from CLI'
-				)
+				expect.stringContaining('Agent "Test Agent" is busy: Running "Other Playbook" from CLI')
 			);
 		});
 

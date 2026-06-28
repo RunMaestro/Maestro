@@ -21,7 +21,7 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { useActiveSession } from './useActiveSession';
 import { useUIStore } from '../../stores/uiStore';
 import { useFileExplorerStore } from '../../stores/fileExplorerStore';
-import { aiTabFocusFields } from '../../utils/tabHelpers';
+import { aiTabFocusFields, reopenClosedAiTabById } from '../../utils/tabHelpers';
 import { subscribeToInAppDeepLinks } from '../../utils/openMaestroLink';
 import type { ParsedDeepLink } from '../../../shared/types';
 
@@ -164,10 +164,22 @@ export function useSessionSwitchCallbacks(
 			// rendering its previous non-AI view (the bug: clicking a toast while a browser tab
 			// is active silently leaves the user on the browser tab).
 			updateSession(sessionId, (s) => {
-				// If a specific tab ID is provided but doesn't exist, force the AI view
+				// Fast path: the toast's tab is still open - just focus it.
+				if (tabId && s.aiTabs?.some((t) => t.id === tabId)) {
+					return { ...s, ...aiTabFocusFields(tabId) };
+				}
+				// The toast fired from a tab the user has since closed. Reopen it from
+				// the closed-tab history so the click restores that conversation rather
+				// than silently landing on whatever tab happens to be active.
+				if (tabId) {
+					const reopened = reopenClosedAiTabById(s, tabId);
+					if (reopened) {
+						return { ...reopened.session, ...aiTabFocusFields(reopened.tabId) };
+					}
+				}
+				// No specific tab, or it aged out of history - just force the AI view
 				// without changing which AI tab is active.
-				const targetTabId = tabId && s.aiTabs?.some((t) => t.id === tabId) ? tabId : undefined;
-				return { ...s, ...aiTabFocusFields(targetTabId) };
+				return { ...s, ...aiTabFocusFields() };
 			});
 		},
 		[setActiveSessionId]

@@ -777,9 +777,20 @@ describe('Cue Sleep Prevention', () => {
 						max_concurrent: 2,
 						queue_size: 10,
 					},
+					// Two DISTINCT subscriptions so both run concurrently. The
+					// self-overlap guard serializes repeated firings of the SAME
+					// subscription, so two ticks of one heartbeat would no longer
+					// yield two concurrent runs.
 					subscriptions: [
 						{
-							name: 'heartbeat',
+							name: 'heartbeat-a',
+							event: 'time.heartbeat',
+							interval_minutes: 5,
+							prompt: 'check',
+							enabled: true,
+						},
+						{
+							name: 'heartbeat-b',
 							event: 'time.heartbeat',
 							interval_minutes: 5,
 							prompt: 'check',
@@ -793,10 +804,7 @@ describe('Cue Sleep Prevention', () => {
 			engine.start();
 			await vi.advanceTimersByTimeAsync(100);
 
-			// Trigger a second run by advancing to next heartbeat
-			vi.advanceTimersByTime(5 * 60 * 1000);
-			await vi.advanceTimersByTimeAsync(100);
-
+			// Both distinct subscriptions fire on start → two concurrent runs.
 			const activeRuns = engine.getActiveRuns();
 			expect(activeRuns.length).toBe(2);
 
@@ -921,9 +929,27 @@ describe('Cue Sleep Prevention', () => {
 						max_concurrent: 3,
 						queue_size: 10,
 					},
+					// Three DISTINCT subscriptions so all three run concurrently.
+					// Repeated firings of one subscription now serialize (the
+					// self-overlap guard), so they would not produce three
+					// concurrent runs each with its own sleep-block reason.
 					subscriptions: [
 						{
-							name: 'heartbeat',
+							name: 'heartbeat-a',
+							event: 'time.heartbeat',
+							interval_minutes: 1,
+							prompt: 'check',
+							enabled: true,
+						},
+						{
+							name: 'heartbeat-b',
+							event: 'time.heartbeat',
+							interval_minutes: 1,
+							prompt: 'check',
+							enabled: true,
+						},
+						{
+							name: 'heartbeat-c',
 							event: 'time.heartbeat',
 							interval_minutes: 1,
 							prompt: 'check',
@@ -937,12 +963,7 @@ describe('Cue Sleep Prevention', () => {
 			engine.start();
 			await vi.advanceTimersByTimeAsync(100);
 
-			// Trigger more runs
-			vi.advanceTimersByTime(60 * 1000);
-			await vi.advanceTimersByTimeAsync(100);
-			vi.advanceTimersByTime(60 * 1000);
-			await vi.advanceTimersByTimeAsync(100);
-
+			// All three distinct subscriptions fire on start → three concurrent runs.
 			const runReasons = onPreventSleep.mock.calls
 				.filter((call) => typeof call[0] === 'string' && call[0].startsWith('cue:run:'))
 				.map((call) => call[0]);

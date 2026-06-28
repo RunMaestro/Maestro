@@ -1124,8 +1124,8 @@ describe('MainPanel', () => {
 		it('should display context window widget in AI mode', () => {
 			render(<MainPanel {...defaultProps} />);
 
-			// Label shows "Context" or "Context Window" depending on panel width
-			expect(screen.getAllByText(/^Context( Window)?$/)[0]).toBeInTheDocument();
+			// Widget now shows a plain "X%" readout instead of a labeled gauge bar.
+			expect(screen.getByTestId('header-context-widget')).toBeInTheDocument();
 		});
 
 		it('should not display context window in terminal mode', () => {
@@ -1133,8 +1133,7 @@ describe('MainPanel', () => {
 
 			render(<MainPanel {...defaultProps} activeSession={session} />);
 
-			// Target the full "Context Window" label (compact "Context" label is also rendered but hidden via CSS)
-			expect(screen.queryByText('Context Window')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('header-context-widget')).not.toBeInTheDocument();
 		});
 
 		it('should not display context window widget when agent does not support usage stats', () => {
@@ -1161,8 +1160,7 @@ describe('MainPanel', () => {
 
 			render(<MainPanel {...defaultProps} />);
 
-			// Context Window widget should not be present
-			expect(screen.queryByText('Context Window')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('header-context-widget')).not.toBeInTheDocument();
 		});
 	});
 
@@ -1854,9 +1852,8 @@ describe('MainPanel', () => {
 		it('should show context tooltip on hover', async () => {
 			render(<MainPanel {...defaultProps} />);
 
-			// Label shows "Context" or "Context Window" depending on panel width
-			const contextWidget = screen.getAllByText(/^Context( Window)?$/)[0];
-			fireEvent.mouseEnter(contextWidget.parentElement!);
+			const contextWidget = screen.getByTestId('header-context-widget');
+			fireEvent.mouseEnter(contextWidget);
 
 			await waitFor(() => {
 				expect(screen.getByText('Context Details')).toBeInTheDocument();
@@ -1866,15 +1863,14 @@ describe('MainPanel', () => {
 		it('should hide context tooltip on mouse leave after delay', async () => {
 			render(<MainPanel {...defaultProps} />);
 
-			// Label shows "Context" or "Context Window" depending on panel width
-			const contextWidget = screen.getAllByText(/^Context( Window)?$/)[0];
-			fireEvent.mouseEnter(contextWidget.parentElement!);
+			const contextWidget = screen.getByTestId('header-context-widget');
+			fireEvent.mouseEnter(contextWidget);
 
 			await waitFor(() => {
 				expect(screen.getByText('Context Details')).toBeInTheDocument();
 			});
 
-			fireEvent.mouseLeave(contextWidget.parentElement!);
+			fireEvent.mouseLeave(contextWidget);
 
 			// Wait for the tooltip to disappear after the 150ms delay
 			await waitFor(
@@ -1888,9 +1884,7 @@ describe('MainPanel', () => {
 		it('should keep tooltip open when re-entering context widget quickly', async () => {
 			render(<MainPanel {...defaultProps} />);
 
-			// Label shows "Context" or "Context Window" depending on panel width
-			const contextWidget = screen.getAllByText(/^Context( Window)?$/)[0];
-			const contextContainer = contextWidget.parentElement!;
+			const contextContainer = screen.getByTestId('header-context-widget');
 
 			// Hover to open
 			fireEvent.mouseEnter(contextContainer);
@@ -1931,9 +1925,8 @@ describe('MainPanel', () => {
 
 			render(<MainPanel {...defaultProps} activeSession={session} />);
 
-			// Label shows "Context" or "Context Window" depending on panel width
-			const contextWidget = screen.getAllByText(/^Context( Window)?$/)[0];
-			fireEvent.mouseEnter(contextWidget.parentElement!);
+			const contextWidget = screen.getByTestId('header-context-widget');
+			fireEvent.mouseEnter(contextWidget);
 
 			await waitFor(() => {
 				expect(screen.getByText('Input Tokens')).toBeInTheDocument();
@@ -2491,7 +2484,7 @@ describe('MainPanel', () => {
 			render(<MainPanel {...defaultProps} activeSession={session} />);
 
 			// Should render without crashing - Context Window widget is hidden when contextWindow is not configured
-			expect(screen.queryByText('Context Window')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('header-context-widget')).not.toBeInTheDocument();
 		});
 
 		it('should handle missing git status from context gracefully', async () => {
@@ -2592,7 +2585,7 @@ describe('MainPanel', () => {
 			render(<MainPanel {...defaultProps} activeSession={session} />);
 
 			// Context Window widget should be hidden when contextWindow is 0 (not configured)
-			expect(screen.queryByText('Context Window')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('header-context-widget')).not.toBeInTheDocument();
 		});
 
 		it('should use preserved session.contextUsage when accumulated values exceed window', () => {

@@ -65,7 +65,7 @@ export function useCue(options?: UseCueOptions): UseCueReturn {
 			const [statusData, runsData, logData, queueData, eventCountData] = await Promise.all([
 				window.maestro.cue.getStatus(),
 				window.maestro.cue.getActiveRuns(),
-				window.maestro.cue.getActivityLog(100),
+				window.maestro.cue.getActivityLog(1000),
 				window.maestro.cue.getQueueStatus(),
 				window.maestro.cue.getEventCount(),
 			]);

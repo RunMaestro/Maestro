@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Maestro (Web Desktop)</title>
+		<!-- Load JetBrains Mono so this bundle matches the desktop app. Without it the
+		     renderer's `font-family: 'JetBrains Mono'` falls back to Courier New.
+		     Loaded non-render-blocking (media=print + onload swap) so a slow or
+		     blocked Google Fonts request on mobile Safari can't stall first paint. -->
+		<link rel="preconnect" href="https://fonts.googleapis.com" crossorigin />
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+		<link
+			rel="stylesheet"
+			href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap"
+			media="print"
+			onload="this.media = 'all'"
+		/>
+		<style>
+			html,
+			body,
+			#root {
+				margin: 0;
+				padding: 0;
+				height: 100%;
+				background: #0a0a0a;
+				color: #eee;
+				font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+				-webkit-font-smoothing: antialiased;
+				-moz-osx-font-smoothing: grayscale;
+			}
+
+			/* Pre-React branded splash. Lives inside #root and is replaced
+			   automatically when React mounts (createRoot clears the container on
+			   first render), so it never needs JS to dismiss and can't hang. */
+			.md-splash {
+				height: 100%;
+				display: flex;
+				flex-direction: column;
+				align-items: center;
+				justify-content: center;
+				gap: 20px;
+			}
+			.md-splash__wordmark {
+				font-weight: 700;
+				font-size: 22px;
+				letter-spacing: 0.35em;
+				/* Optical centering for the tracked-out wordmark. */
+				padding-left: 0.35em;
+				color: #f5f5f5;
+			}
+			.md-splash__spinner {
+				width: 28px;
+				height: 28px;
+				border: 3px solid rgba(255, 255, 255, 0.15);
+				border-top-color: rgba(255, 255, 255, 0.7);
+				border-radius: 50%;
+				animation: md-spin 0.8s linear infinite;
+			}
+			@keyframes md-spin {
+				to {
+					transform: rotate(360deg);
+				}
+			}
+
+			/* Error surface — shown by the global handler below when the bundle
+			   fails to boot, so a failure reads as a real message instead of a
+			   blank screen or a browser's generic "Failed to load". */
+			.md-error {
+				min-height: 100vh;
+				box-sizing: border-box;
+				padding: 24px;
+				color: #f88;
+				background: #111;
+			}
+			.md-error h2 {
+				margin: 0 0 12px;
+				font-size: 16px;
+			}
+			.md-error pre {
+				white-space: pre-wrap;
+				word-break: break-word;
+				font-size: 12px;
+				color: #fbb;
+			}
+			.md-error__hint {
+				margin-top: 16px;
+				font-size: 12px;
+				color: #aaa;
+			}
+		</style>
+		<script>
+			// Surface boot failures on screen. Mobile Safari (and older WebKit) can
+			// fail to parse a lazily-loaded chunk or be unable to reach the LAN
+			// server, leaving only a blank page or a generic browser error. Both
+			// window 'error' (covers SyntaxError in the entry module, which a
+			// try/catch in bootstrap can't see) and 'unhandledrejection' (covers a
+			// rejected dynamic import) route here.
+			(function () {
+				var shown = false;
+				function showError(title, detail) {
+					if (shown) return;
+					shown = true;
+					var root = document.getElementById('root');
+					if (!root) return;
+					var safe = String(detail == null ? '' : detail).replace(/[&<>]/g, function (c) {
+						return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c];
+					});
+					root.innerHTML =
+						'<div class="md-error"><h2>' +
+						title +
+						'</h2><pre>' +
+						safe +
+						'</pre><div class="md-error__hint">If this device is on a different Wi-Fi network than the computer running Maestro, or the network blocks device-to-device traffic, the page can fail to load. Confirm both are on the same network and retry.</div></div>';
+				}
+				window.addEventListener('error', function (e) {
+					// Ignore resource-load errors that bubble as generic Events with
+					// no error object (e.g. an image); only surface real script errors.
+					if (e && (e.error || e.message)) {
+						showError(
+							'Maestro web-desktop failed to load',
+							(e.error && (e.error.stack || e.error.message)) || e.message
+						);
+					}
+				});
+				window.addEventListener('unhandledrejection', function (e) {
+					var reason = e && e.reason;
+					showError(
+						'Maestro web-desktop failed to load',
+						(reason && (reason.stack || reason.message)) || String(reason)
+					);
+				});
+				window.__maestroShowBootError = showError;
+			})();
+		</script>
+	</head>
+	<body>
+		<div id="root">
+			<div class="md-splash">
+				<div class="md-splash__wordmark">MAESTRO</div>
+				<div class="md-splash__spinner"></div>
+			</div>
+		</div>
+		<script>
+			// Server may inject __MAESTRO_CONFIG__ via /<token>/desktop/config.js.
+			// If absent (e.g. dev or local file load), the shim derives URLs from
+			// window.location at runtime.
+		</script>
+		<script type="module" src="./bootstrap.ts"></script>
+	</body>
+</html>

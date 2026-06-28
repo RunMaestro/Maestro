@@ -17,18 +17,20 @@
  *   Trade-offs vs the panel:
  *     + Single coherent search UI across all three tiers
  *     + Match count visible in the app bar (chip-style)
- *     − No regex / case-sensitive toggle / replace (panel had these)
  *
- *   The trade is intentional per the search-hardening plan. Regex etc. can
- *   be added to the shared bar later if needed.
+ *   Regex matching is supported via `options.regex` (the shared bar's regex
+ *   mode); case-sensitive toggle / replace from the old panel are not.
  *
  * Pure (no DOM, no CM6 view), exhaustively tested.
  */
 
 import type { SearchHit } from '../search/types';
+import { compileSearchRegex } from '../search/queryMatch';
 
 export interface FindAllInDocOptions {
 	caseSensitive?: boolean;
+	/** When true, treat `query` as a regex source. Invalid patterns yield []. */
+	regex?: boolean;
 }
 
 /**
@@ -52,6 +54,30 @@ export function findAllInDoc(
 	options: FindAllInDocOptions = {}
 ): SearchHit[] {
 	if (!query) return [];
+
+	if (options.regex) {
+		const { regex } = compileSearchRegex(query, {
+			regex: true,
+			caseSensitive: options.caseSensitive,
+		});
+		if (!regex) return [];
+		const regexHits: SearchHit[] = [];
+		let match: RegExpExecArray | null;
+		while ((match = regex.exec(docText)) !== null) {
+			// Skip zero-length matches so we don't emit empty hits or loop forever.
+			if (match[0].length === 0) {
+				regex.lastIndex++;
+				continue;
+			}
+			regexHits.push({
+				sourceOffset: match.index,
+				length: match[0].length,
+				blockIndex: 0,
+				offsetWithinBlock: match.index,
+			});
+		}
+		return regexHits;
+	}
 
 	const needle = options.caseSensitive ? query : query.toLowerCase();
 	const haystack = options.caseSensitive ? docText : docText.toLowerCase();

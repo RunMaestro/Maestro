@@ -939,6 +939,31 @@ diff --git a/src/test.ts b/src/test.ts
 
 			expect(screen.getByText('src/test.ts')).toBeInTheDocument();
 		});
+
+		it('should dismiss and open the file as a preview tab when the diff header is clicked', async () => {
+			const onClose = vi.fn();
+			const onOpenFile = vi.fn();
+			render(<GitLogViewer {...defaultProps} onClose={onClose} onOpenFile={onOpenFile} />);
+
+			await waitFor(() => {
+				expect(screen.queryByText('Loading diff...')).not.toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByTitle('Open src/test.ts in a preview tab'));
+
+			expect(onClose).toHaveBeenCalledTimes(1);
+			expect(onOpenFile).toHaveBeenCalledWith('/test/project/src/test.ts', 'test.ts');
+		});
+
+		it('should render a non-interactive diff header when onOpenFile is omitted', async () => {
+			render(<GitLogViewer {...defaultProps} />);
+
+			await waitFor(() => {
+				expect(screen.queryByText('Loading diff...')).not.toBeInTheDocument();
+			});
+
+			expect(screen.queryByTitle(/Open .* in a preview tab/)).toBeNull();
+		});
 	});
 
 	describe('Commit body parsing', () => {

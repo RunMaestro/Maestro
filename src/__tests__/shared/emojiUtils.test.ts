@@ -100,6 +100,19 @@ describe('emojiUtils', () => {
 			it('should handle CJK characters after emoji', () => {
 				expect(stripLeadingEmojis('🎉 日本語')).toBe('日本語');
 			});
+
+			it('should NOT strip a leading ASCII digit (digits are keycap-emoji bases)', () => {
+				// Regression: ASCII digits 0-9 carry Unicode Emoji=Yes, so an optional
+				// variation selector in the regex used to eat the leading digit and
+				// mis-sort names like "0DIN Weekly" under "D".
+				expect(stripLeadingEmojis('0DIN Weekly')).toBe('0DIN Weekly');
+				expect(stripLeadingEmojis('9Lives')).toBe('9Lives');
+			});
+
+			it('should NOT strip a leading # or * (also keycap-emoji bases)', () => {
+				expect(stripLeadingEmojis('#tag')).toBe('#tag');
+				expect(stripLeadingEmojis('*star')).toBe('*star');
+			});
 		});
 	});
 
@@ -155,6 +168,14 @@ describe('emojiUtils', () => {
 				const names = ['🎉 Test', '', 'Alpha'];
 				const sorted = [...names].sort(compareNamesIgnoringEmojis);
 				expect(sorted).toEqual(['', 'Alpha', '🎉 Test']);
+			});
+
+			it('should sort a digit-prefixed name by its digit, not the following letter', () => {
+				// Regression: "0DIN Weekly" must sort ahead of "Cyber Stocks"/"Maestro"
+				// instead of landing under "D" from a stripped leading "0".
+				const names = ['Cyber Stocks', '0DIN Weekly', 'Maestro', 'BJJ Sensei'];
+				const sorted = [...names].sort(compareNamesIgnoringEmojis);
+				expect(sorted).toEqual(['0DIN Weekly', 'BJJ Sensei', 'Cyber Stocks', 'Maestro']);
 			});
 		});
 

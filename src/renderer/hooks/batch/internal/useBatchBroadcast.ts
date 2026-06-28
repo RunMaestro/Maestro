@@ -57,6 +57,12 @@ export function useBatchBroadcast({ dispatch }: UseBatchBroadcastDeps): UseBatch
 				errorRecoverable: state.error?.recoverable,
 				errorDocumentIndex: state.errorDocumentIndex,
 				errorTaskDescription: state.errorTaskDescription,
+				// Goal-Driven mode — web/mobile render goal percent + iteration in
+				// place of task counts when goalMode is true.
+				goalMode: state.goalMode,
+				goalProgress: state.goalProgress,
+				goalRationale: state.goalRationale,
+				goalIteration: state.goalIteration,
 			});
 		} else {
 			window.maestro.web.broadcastAutoRunState(sessionId, null);
@@ -138,6 +144,27 @@ export function useBatchBroadcast({ dispatch }: UseBatchBroadcastDeps): UseBatch
 									loopIteration:
 										newStateForSession.loopIteration !== prevSessionState.loopIteration
 											? newStateForSession.loopIteration
+											: undefined,
+									// Goal-Driven mode fields (only ever change in goal mode)
+									goalMode:
+										newStateForSession.goalMode !== prevSessionState.goalMode
+											? newStateForSession.goalMode
+											: undefined,
+									goalProgress:
+										newStateForSession.goalProgress !== prevSessionState.goalProgress
+											? newStateForSession.goalProgress
+											: undefined,
+									goalRationale:
+										newStateForSession.goalRationale !== prevSessionState.goalRationale
+											? newStateForSession.goalRationale
+											: undefined,
+									goalIteration:
+										newStateForSession.goalIteration !== prevSessionState.goalIteration
+											? newStateForSession.goalIteration
+											: undefined,
+									goalExitReason:
+										newStateForSession.goalExitReason !== prevSessionState.goalExitReason
+											? newStateForSession.goalExitReason
 											: undefined,
 								},
 							});

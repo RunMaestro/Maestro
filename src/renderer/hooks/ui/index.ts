@@ -62,3 +62,7 @@ export { useIdleNotification } from './useIdleNotification';
 
 // Deferred update-restart (installs downloaded update on idle transition)
 export { useRestartWhenIdle } from './useRestartWhenIdle';
+
+// Responsive viewport breakpoint (drives drawer-mode sidebars on narrow widths)
+export { useViewportBreakpoint } from './useViewportBreakpoint';
+export type { Breakpoint } from './useViewportBreakpoint';

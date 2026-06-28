@@ -389,24 +389,24 @@ describe('CueEngine session lifecycle', () => {
 		// Refresh the session (tears down old timers, re-inits)
 		engine.refreshSession('session-1', '/projects/test');
 
-		// The immediate heartbeat during refresh is dispatched directly because
-		// the session is registered before trigger sources start, so maxConcurrent=2
-		// is read and activeRunCount=1 < 2 allows immediate dispatch.
-		expect(onCueRun).toHaveBeenCalledTimes(2);
+		// The orphaned in-flight 'heartbeat' run is still active, so the
+		// self-overlap guard queues the refresh's immediate same-subscription
+		// heartbeat rather than dispatching a second concurrent copy of it (even
+		// though a slot is free at max_concurrent=2). It dispatched directly
+		// before the guard existed; queueing is the correct behavior now.
+		expect(onCueRun).toHaveBeenCalledTimes(1);
 
-		// Nothing in the queue — the heartbeat was dispatched, not queued
-		expect(engine.getQueueStatus().get('session-1') ?? 0).toBe(0);
+		// The refresh heartbeat is held in the queue behind the in-flight run.
+		expect(engine.getQueueStatus().get('session-1') ?? 0).toBe(1);
 
-		// Advance timer to trigger the interval heartbeat (60 min).
-		// Now the session state IS in the map, so max_concurrent=2 is read.
-		// activeRunCount=1 (orphaned) < max_concurrent=2, so it dispatches.
+		// Advance timer to trigger the interval heartbeat (60 min). The orphaned
+		// run never resolves, so its rootKey stays active and the interval
+		// heartbeat is also queued rather than overlapping itself.
 		vi.advanceTimersByTime(60 * 60 * 1000);
 
-		// We should have exactly 2 dispatched calls total: initial + interval
-		// (the queued immediate fire from refresh was drained when the interval fired
-		// or may remain queued depending on ordering — but no infinite loop or double-count)
-		expect(onCueRun.mock.calls.length).toBeGreaterThanOrEqual(1);
-		expect(onCueRun.mock.calls.length).toBeLessThanOrEqual(3);
+		// onCueRun is never called again while the orphaned same-root run holds
+		// the guard: no double-count, no infinite dispatch loop.
+		expect(onCueRun).toHaveBeenCalledTimes(1);
 
 		engine.stop();
 	});

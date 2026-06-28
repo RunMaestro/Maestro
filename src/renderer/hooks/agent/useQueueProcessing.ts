@@ -231,6 +231,15 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 	// while items remain in the queue. This handles cases where onExit skipped queue
 	// processing because the session was in error state (e.g., agent errored then exited,
 	// user clears the error → session goes idle but nobody dispatches the queue).
+	//
+	// This is also the standard-query auto-resume path for a limit pause: the
+	// execution queue is preserved and persisted across the pause, so the
+	// auto-resume coordinator (Phase 3) only has to clear the paused error and let
+	// the session fall back to idle - this effect then re-dispatches the queued
+	// item that the limit interrupted. A direct (non-queued) send that hit the
+	// limit isn't in the queue, so it's captured separately as
+	// `recoveryAction.lastUserPrompt` in useAgentErrorListener for the coordinator
+	// to re-fire.
 	useEffect(() => {
 		if (!sessionsLoaded || !startupRecoveryComplete.current) return;
 

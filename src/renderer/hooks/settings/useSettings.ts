@@ -153,6 +153,13 @@ export interface UseSettingsReturn {
 	// Update settings
 	checkForUpdatesOnStartup: boolean;
 	setCheckForUpdatesOnStartup: (value: boolean) => void;
+	// Auto-resume paused agents when provider limits/credits become available again
+	autoResumeOnLimit: boolean;
+	setAutoResumeOnLimit: (value: boolean) => void;
+	autoResumeCheckIntervalHours: number;
+	setAutoResumeCheckIntervalHours: (value: number) => void;
+	autoResumeGiveUpDays: number;
+	setAutoResumeGiveUpDays: (value: number) => void;
 	enableBetaUpdates: boolean;
 	setEnableBetaUpdates: (value: boolean) => void;
 

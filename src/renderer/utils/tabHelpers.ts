@@ -1295,6 +1295,166 @@ export interface ReopenUnifiedClosedTabResult {
 }
 
 /**
+ * Restore a closed AI tab into a session, handling orphan re-attach and
+ * duplicate detection. Does NOT mutate either closed-tab history list - the
+ * caller is responsible for popping/removing the entry it pulled this tab from
+ * and patching the appropriate history field on the returned session. This is
+ * the shared core behind both `reopenUnifiedClosedTab` (most-recent) and
+ * `reopenClosedAiTabById` (targeted, e.g. clicking a notification toast whose
+ * tab was since closed).
+ *
+ * @param session - The Maestro session
+ * @param tabToRestore - The closed AI tab to restore
+ * @param unifiedIndex - Original position in the unified tab order
+ */
+function restoreClosedAiTab(
+	session: Session,
+	tabToRestore: AITab,
+	unifiedIndex: number
+): ReopenUnifiedClosedTabResult {
+	// If this closed tab is still tracked as an orphan, restore the orphan
+	// (preserving its original ID so the still-running agent re-attaches)
+	// instead of creating a duplicate tab with a fresh ID.
+	const matchingOrphan = session.orphanedThinkingTabs?.find(
+		(t) =>
+			t.id === tabToRestore.id ||
+			(t.agentSessionId !== null && t.agentSessionId === tabToRestore.agentSessionId)
+	);
+	if (matchingOrphan) {
+		const restored = restoreOrphanedTab(session, matchingOrphan.id);
+		if (restored) {
+			return {
+				tabType: 'ai',
+				tabId: restored.tab.id,
+				session: restored.session,
+				wasDuplicate: false,
+			};
+		}
+	}
+
+	// Check for duplicate: does a tab with the same agentSessionId already exist?
+	if (tabToRestore.agentSessionId !== null) {
+		const existingTab = session.aiTabs.find(
+			(tab) => tab.agentSessionId === tabToRestore.agentSessionId
+		);
+
+		if (existingTab) {
+			// Duplicate found - switch to existing tab instead of restoring
+			return {
+				tabType: 'ai',
+				tabId: existingTab.id,
+				session: {
+					...session,
+					activeTabId: existingTab.id,
+					activeFileTabId: null,
+					unifiedTabOrder: ensureInUnifiedTabOrder(session.unifiedTabOrder, 'ai', existingTab.id),
+				},
+				wasDuplicate: true,
+			};
+		}
+	}
+
+	// No duplicate - restore the tab
+	const restoredTab: AITab = {
+		...tabToRestore,
+		id: generateId(),
+	};
+
+	// Calculate insert position in aiTabs based on unified index
+	// Find where this tab should go in unifiedTabOrder
+	const targetUnifiedIndex = Math.min(unifiedIndex, session.unifiedTabOrder.length);
+
+	// Count how many AI tabs come before this position
+	let aiTabsBeforeIndex = 0;
+	for (let i = 0; i < targetUnifiedIndex && i < session.unifiedTabOrder.length; i++) {
+		if (session.unifiedTabOrder[i].type === 'ai') {
+			aiTabsBeforeIndex++;
+		}
+	}
+	const insertIndex = Math.min(aiTabsBeforeIndex, session.aiTabs.length);
+
+	const updatedAiTabs = [
+		...session.aiTabs.slice(0, insertIndex),
+		restoredTab,
+		...session.aiTabs.slice(insertIndex),
+	];
+
+	// Insert into unifiedTabOrder at the original position
+	const newTabRef: UnifiedTabRef = { type: 'ai', id: restoredTab.id };
+	const updatedUnifiedTabOrder = [
+		...session.unifiedTabOrder.slice(0, targetUnifiedIndex),
+		newTabRef,
+		...session.unifiedTabOrder.slice(targetUnifiedIndex),
+	];
+
+	return {
+		tabType: 'ai',
+		tabId: restoredTab.id,
+		session: {
+			...session,
+			aiTabs: updatedAiTabs,
+			activeTabId: restoredTab.id,
+			activeFileTabId: null,
+			unifiedTabOrder: updatedUnifiedTabOrder,
+		},
+		wasDuplicate: false,
+	};
+}
+
+/**
+ * Reopen a specific closed AI tab by its original tab ID, restoring it from
+ * whichever closed-tab history list it lives in (unified first, legacy as a
+ * fallback). Returns null when no closed AI tab with that ID is on record (it
+ * was never closed, or has aged out of both histories).
+ *
+ * Used by the notification toast click path: a toast can carry the AI tab it
+ * fired from, and if the user closed that tab before clicking the toast we
+ * reopen it rather than silently landing on whatever tab happens to be active.
+ *
+ * @param session - The Maestro session that owned the tab
+ * @param tabId - The original AITab.id recorded on the toast
+ */
+export function reopenClosedAiTabById(
+	session: Session,
+	tabId: string
+): ReopenUnifiedClosedTabResult | null {
+	// Prefer the unified history (the current closed-tab store).
+	const unifiedHistory = session.unifiedClosedTabHistory || [];
+	const unifiedIdx = unifiedHistory.findIndex((e) => e.type === 'ai' && e.tab.id === tabId);
+	if (unifiedIdx !== -1) {
+		const entry = unifiedHistory[unifiedIdx] as Extract<ClosedTabEntry, { type: 'ai' }>;
+		const remainingHistory = [
+			...unifiedHistory.slice(0, unifiedIdx),
+			...unifiedHistory.slice(unifiedIdx + 1),
+		];
+		const result = restoreClosedAiTab(session, entry.tab, entry.unifiedIndex);
+		return {
+			...result,
+			session: { ...result.session, unifiedClosedTabHistory: remainingHistory },
+		};
+	}
+
+	// Fall back to the legacy AI-only history for older sessions. Legacy entries
+	// predate unified ordering, so restore at the end of the unified order.
+	const legacyHistory = session.closedTabHistory || [];
+	const legacyIdx = legacyHistory.findIndex((e) => e.tab.id === tabId);
+	if (legacyIdx !== -1) {
+		const entry = legacyHistory[legacyIdx];
+		const remainingLegacy = [
+			...legacyHistory.slice(0, legacyIdx),
+			...legacyHistory.slice(legacyIdx + 1),
+		];
+		const result = restoreClosedAiTab(session, entry.tab, session.unifiedTabOrder.length);
+		return {
+			...result,
+			session: { ...result.session, closedTabHistory: remainingLegacy },
+		};
+	}
+
+	return null;
+}
+
+/**
  * Reopen the most recently closed tab from the unified closed tab history.
  * Handles both AI tabs and file preview tabs with appropriate duplicate detection:
  * - For AI tabs: checks if a tab with the same agentSessionId already exists
@@ -1337,97 +1497,12 @@ export function reopenUnifiedClosedTab(session: Session): ReopenUnifiedClosedTab
 	const [closedEntry, ...remainingHistory] = session.unifiedClosedTabHistory;
 
 	if (closedEntry.type === 'ai') {
-		// Restoring an AI tab
-		const tabToRestore = closedEntry.tab;
-
-		// If this closed tab is still tracked as an orphan, restore the orphan
-		// (preserving its original ID so the still-running agent re-attaches)
-		// instead of creating a duplicate tab with a fresh ID.
-		const matchingOrphan = session.orphanedThinkingTabs?.find(
-			(t) =>
-				t.id === tabToRestore.id ||
-				(t.agentSessionId !== null && t.agentSessionId === tabToRestore.agentSessionId)
-		);
-		if (matchingOrphan) {
-			const restored = restoreOrphanedTab(session, matchingOrphan.id);
-			if (restored) {
-				return {
-					tabType: 'ai',
-					tabId: restored.tab.id,
-					session: { ...restored.session, unifiedClosedTabHistory: remainingHistory },
-					wasDuplicate: false,
-				};
-			}
-		}
-
-		// Check for duplicate: does a tab with the same agentSessionId already exist?
-		if (tabToRestore.agentSessionId !== null) {
-			const existingTab = session.aiTabs.find(
-				(tab) => tab.agentSessionId === tabToRestore.agentSessionId
-			);
-
-			if (existingTab) {
-				// Duplicate found - switch to existing tab instead of restoring
-				return {
-					tabType: 'ai',
-					tabId: existingTab.id,
-					session: {
-						...session,
-						activeTabId: existingTab.id,
-						activeFileTabId: null,
-						unifiedTabOrder: ensureInUnifiedTabOrder(session.unifiedTabOrder, 'ai', existingTab.id),
-						unifiedClosedTabHistory: remainingHistory,
-					},
-					wasDuplicate: true,
-				};
-			}
-		}
-
-		// No duplicate - restore the tab
-		const restoredTab: AITab = {
-			...tabToRestore,
-			id: generateId(),
-		};
-
-		// Calculate insert position in aiTabs based on unified index
-		// Find where this tab should go in unifiedTabOrder
-		const targetUnifiedIndex = Math.min(closedEntry.unifiedIndex, session.unifiedTabOrder.length);
-
-		// Count how many AI tabs come before this position
-		let aiTabsBeforeIndex = 0;
-		for (let i = 0; i < targetUnifiedIndex && i < session.unifiedTabOrder.length; i++) {
-			if (session.unifiedTabOrder[i].type === 'ai') {
-				aiTabsBeforeIndex++;
-			}
-		}
-		const insertIndex = Math.min(aiTabsBeforeIndex, session.aiTabs.length);
-
-		const updatedAiTabs = [
-			...session.aiTabs.slice(0, insertIndex),
-			restoredTab,
-			...session.aiTabs.slice(insertIndex),
-		];
-
-		// Insert into unifiedTabOrder at the original position
-		const newTabRef: UnifiedTabRef = { type: 'ai', id: restoredTab.id };
-		const updatedUnifiedTabOrder = [
-			...session.unifiedTabOrder.slice(0, targetUnifiedIndex),
-			newTabRef,
-			...session.unifiedTabOrder.slice(targetUnifiedIndex),
-		];
-
+		// Restoring an AI tab. The shared helper handles orphan re-attach and
+		// duplicate detection; we layer on the popped history afterward.
+		const result = restoreClosedAiTab(session, closedEntry.tab, closedEntry.unifiedIndex);
 		return {
-			tabType: 'ai',
-			tabId: restoredTab.id,
-			session: {
-				...session,
-				aiTabs: updatedAiTabs,
-				activeTabId: restoredTab.id,
-				activeFileTabId: null,
-				unifiedTabOrder: updatedUnifiedTabOrder,
-				unifiedClosedTabHistory: remainingHistory,
-			},
-			wasDuplicate: false,
+			...result,
+			session: { ...result.session, unifiedClosedTabHistory: remainingHistory },
 		};
 	} else if (closedEntry.type === 'file') {
 		// Restoring a file tab
@@ -1594,6 +1669,32 @@ export function aiTabFocusFields(tabId?: string): Partial<Session> {
 		activeBrowserTabId: null,
 		inputMode: 'ai',
 	};
+}
+
+/**
+ * Detects the "closed the last tab" transition produced by closeTab(): when the
+ * sole remaining AI tab is closed, closeTab() replaces it with a brand-new empty
+ * tab, so the session still has exactly one AI tab but its id changed. Callers use
+ * this to land the caret in the chat input on that fresh tab (same as a manual new
+ * tab), without stealing focus on unrelated single-tab states like agent switches.
+ *
+ * @param prevSessionId - The active session id from the previous render.
+ * @param prevAiTabIds  - The active session's AI tab ids from the previous render.
+ * @param session       - The current active session.
+ */
+export function isSoleAiTabReplacement(
+	prevSessionId: string | undefined,
+	prevAiTabIds: readonly string[],
+	session: Session | null | undefined
+): boolean {
+	return (
+		!!session &&
+		session.inputMode === 'ai' &&
+		prevSessionId === session.id &&
+		prevAiTabIds.length === 1 &&
+		session.aiTabs.length === 1 &&
+		session.aiTabs[0].id !== prevAiTabIds[0]
+	);
 }
 
 export interface SetActiveTabResult {

@@ -51,6 +51,7 @@ import { useSessionCategories } from '../../hooks/session/useSessionCategories';
 import { useSessionFilterMode } from '../../hooks/session/useSessionFilterMode';
 import { cueService } from '../../services/cue';
 import { captureException } from '../../utils/sentry';
+import { isWebDesktop } from '../../utils/runtimeContext';
 import { useEventListener } from '../../hooks/utils/useEventListener';
 import type { StarredItem } from '../../hooks/session/useStarredItems';
 
@@ -169,6 +170,7 @@ function SessionListInner(props: SessionListProps) {
 	const groupChatSortAlphabetical = useSettingsStore((s) => s.groupChatSortAlphabetical);
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
 	const leftSidebarWidthState = useSettingsStore((s) => s.leftSidebarWidth);
+	const leftSidebarHidden = useUIStore((s) => s.leftSidebarHidden);
 	const persistentWebLink = useSettingsStore((s) => s.persistentWebLink);
 	const webInterfaceUseCustomPort = useSettingsStore((s) => s.webInterfaceUseCustomPort);
 	const webInterfaceCustomPort = useSettingsStore((s) => s.webInterfaceCustomPort);
@@ -319,7 +321,6 @@ function SessionListInner(props: SessionListProps) {
 
 	// Stable store actions
 	const setActiveFocus = useUIStore.getState().setActiveFocus;
-	const setLeftSidebarOpen = useUIStore.getState().setLeftSidebarOpen;
 	const setBookmarksCollapsed = useUIStore.getState().setBookmarksCollapsed;
 	const setGroupChatsExpanded = useSettingsStore.getState().setGroupChatsExpanded;
 	const setGroupChatSortAlphabetical = useSettingsStore.getState().setGroupChatSortAlphabetical;
@@ -889,7 +890,10 @@ function SessionListInner(props: SessionListProps) {
 		<div
 			ref={sidebarContainerRef}
 			tabIndex={0}
-			className={`border-r flex flex-col shrink-0 ${sidebarTransitionClass} outline-none relative z-20`}
+			data-panel="left"
+			data-collapsed={leftSidebarOpen ? 'false' : 'true'}
+			data-hidden={leftSidebarHidden ? 'true' : 'false'}
+			className={`border-r flex flex-col shrink-0 ${sidebarTransitionClass} outline-none relative z-20 maestro-side-panel maestro-side-panel--left`}
 			style={
 				{
 					width: leftSidebarOpen ? `${leftSidebarWidthState}px` : '64px',
@@ -981,62 +985,66 @@ function SessionListInner(props: SessionListProps) {
 									<span>{autoRunStats.currentBadgeLevel}</span>
 								</button>
 							)}
-							{/* Global LIVE Toggle */}
-							<div className="ml-2 relative z-10" ref={liveOverlayRef} data-tour="remote-control">
-								<button
-									onClick={() => {
-										if (!isLiveMode) {
-											void toggleGlobalLive();
-											setLiveOverlayOpen(true);
-										} else {
-											setLiveOverlayOpen(!liveOverlayOpen);
+							{/* Global LIVE Toggle — hidden in the web-desktop bundle, where
+							    toggling it would kill the webserver the user's browser is
+							    currently connected to. */}
+							{!isWebDesktop() && (
+								<div className="ml-2 relative z-10" ref={liveOverlayRef} data-tour="remote-control">
+									<button
+										onClick={() => {
+											if (!isLiveMode) {
+												void toggleGlobalLive();
+												setLiveOverlayOpen(true);
+											} else {
+												setLiveOverlayOpen(!liveOverlayOpen);
+											}
+										}}
+										className={`flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold transition-colors ${
+											isLiveMode
+												? 'bg-green-500/20 text-green-500 hover:bg-green-500/30'
+												: 'text-gray-500 hover:bg-white/10'
+										}`}
+										title={
+											isLiveMode
+												? 'Web interface active - Click to show URL'
+												: 'Click to enable web interface'
 										}
-									}}
-									className={`flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold transition-colors ${
-										isLiveMode
-											? 'bg-green-500/20 text-green-500 hover:bg-green-500/30'
-											: 'text-gray-500 hover:bg-white/10'
-									}`}
-									title={
-										isLiveMode
-											? 'Web interface active - Click to show URL'
-											: 'Click to enable web interface'
-									}
-								>
-									<Radio className={`w-3 h-3 ${isLiveMode ? 'animate-pulse' : ''}`} />
-									{leftSidebarWidthState >=
-										(autoRunStats && autoRunStats.currentBadgeLevel > 0 ? 295 : 256) &&
-										(isLiveMode ? 'LIVE' : 'OFFLINE')}
-								</button>
+									>
+										<Radio className={`w-3 h-3 ${isLiveMode ? 'animate-pulse' : ''}`} />
+										{leftSidebarWidthState >=
+											(autoRunStats && autoRunStats.currentBadgeLevel > 0 ? 295 : 256) &&
+											(isLiveMode ? 'LIVE' : 'OFFLINE')}
+									</button>
 
-								{/* LIVE Overlay with URL and QR Code */}
-								{isLiveMode && liveOverlayOpen && webInterfaceUrl && (
-									<LiveOverlayPanel
-										theme={theme}
-										webInterfaceUrl={webInterfaceUrl}
-										tunnelStatus={tunnelStatus}
-										tunnelUrl={tunnelUrl}
-										tunnelError={tunnelError}
-										cloudflaredInstalled={cloudflaredInstalled}
-										activeUrlTab={activeUrlTab}
-										setActiveUrlTab={setActiveUrlTab}
-										copyFlash={copyFlash}
-										setCopyFlash={setCopyFlash}
-										handleTunnelToggle={handleTunnelToggle}
-										persistentWebLink={persistentWebLink}
-										setPersistentWebLink={setPersistentWebLink}
-										webInterfaceUseCustomPort={webInterfaceUseCustomPort}
-										webInterfaceCustomPort={webInterfaceCustomPort}
-										setWebInterfaceUseCustomPort={setWebInterfaceUseCustomPort}
-										setWebInterfaceCustomPort={setWebInterfaceCustomPort}
-										isLiveMode={isLiveMode}
-										toggleGlobalLive={toggleGlobalLive}
-										setLiveOverlayOpen={setLiveOverlayOpen}
-										restartWebServer={restartWebServer}
-										restartTunnel={restartTunnel}
-									/>
-								)}
-							</div>
+									{/* LIVE Overlay with URL and QR Code */}
+									{isLiveMode && liveOverlayOpen && webInterfaceUrl && (
+										<LiveOverlayPanel
+											theme={theme}
+											webInterfaceUrl={webInterfaceUrl}
+											tunnelStatus={tunnelStatus}
+											tunnelUrl={tunnelUrl}
+											tunnelError={tunnelError}
+											cloudflaredInstalled={cloudflaredInstalled}
+											activeUrlTab={activeUrlTab}
+											setActiveUrlTab={setActiveUrlTab}
+											copyFlash={copyFlash}
+											setCopyFlash={setCopyFlash}
+											handleTunnelToggle={handleTunnelToggle}
+											persistentWebLink={persistentWebLink}
+											setPersistentWebLink={setPersistentWebLink}
+											webInterfaceUseCustomPort={webInterfaceUseCustomPort}
+											webInterfaceCustomPort={webInterfaceCustomPort}
+											setWebInterfaceUseCustomPort={setWebInterfaceUseCustomPort}
+											setWebInterfaceCustomPort={setWebInterfaceCustomPort}
+											isLiveMode={isLiveMode}
+											toggleGlobalLive={toggleGlobalLive}
+											setLiveOverlayOpen={setLiveOverlayOpen}
+											restartWebServer={restartWebServer}
+											restartTunnel={restartTunnel}
+										/>
+									)}
+								</div>
+							)}
 						</div>
 						<div className="flex items-center">
 							{/* Hamburger Menu */}
@@ -1703,7 +1711,6 @@ function SessionListInner(props: SessionListProps) {
 				sidebarWidth={leftSidebarWidthState}
 				addNewSession={addNewSession}
 				openFeedback={props.openFeedback}
-				setLeftSidebarOpen={setLeftSidebarOpen}
 				toggleShowUnreadAgentsOnly={toggleShowUnreadAgentsOnly}
 			/>
 

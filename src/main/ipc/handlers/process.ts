@@ -14,6 +14,7 @@ import {
 	resolveClaudeSpawnMode,
 	buildRemoteInteractiveSpawn,
 } from '../../agents/resolveClaudeSpawnMode';
+import { isMaestroPBinaryPath } from '../../agents/claude-usage-startup';
 import { getClaudeTokenMode } from '../../../shared/claudeTokenMode';
 import { resolveConfigDirKey } from '../../stores/claudeUsageStore';
 import { isWindows } from '../../../shared/platformDetection';
@@ -129,6 +130,7 @@ export interface ProcessHandlerDependencies {
 	agentConfigsStore: Store<AgentConfigsData>;
 	settingsStore: Store<MaestroSettings>;
 	getMainWindow: () => BrowserWindow | null;
+	safeSend?: (channel: string, ...args: unknown[]) => void;
 	sessionsStore: Store<{ sessions: any[] }>;
 	/** Optional callback to get active Cue run processes for Process Monitor */
 	getCueProcesses?: () => CueProcessEntry[];
@@ -155,8 +157,14 @@ export interface ProcessHandlerDependencies {
  * - runCommand: Execute a single command and capture output
  */
 export function registerProcessHandlers(deps: ProcessHandlerDependencies): void {
-	const { getProcessManager, getAgentDetector, agentConfigsStore, settingsStore, getMainWindow } =
-		deps;
+	const {
+		getProcessManager,
+		getAgentDetector,
+		agentConfigsStore,
+		settingsStore,
+		getMainWindow,
+		safeSend,
+	} = deps;
 
 	// Spawn a new process for a session
 	// Supports agent-specific argument builders for batch mode, JSON output, resume, read-only mode, YOLO mode
@@ -374,9 +382,21 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					resolvedMaestroPBinPath &&
 					agent?.interactiveModeArgs
 				) {
+					const detectedClaudePath =
+						agent.path && !isMaestroPBinaryPath(agent.path) ? agent.path : undefined;
+					const decisionClaudePath =
+						claudeDecisionRealBinPath && !isMaestroPBinaryPath(claudeDecisionRealBinPath)
+							? claudeDecisionRealBinPath
+							: undefined;
 					// Preserve the original claude path so maestro-p can find the TUI binary.
+					// Prefer the detector's absolute path when the spawn payload only has
+					// the bare `claude` command, matching the user's shell `which claude`.
 					claudeRealBinPath =
-						claudeDecisionRealBinPath ?? config.sessionCustomPath ?? config.command;
+						(path.isAbsolute(decisionClaudePath ?? '') ? decisionClaudePath : undefined) ??
+						detectedClaudePath ??
+						decisionClaudePath ??
+						config.sessionCustomPath ??
+						config.command;
 					effectiveCommand = process.execPath;
 					effectiveSessionCustomPath = undefined;
 					baseArgsForSpawn = [resolvedMaestroPBinPath, ...agent.interactiveModeArgs];
@@ -1302,6 +1322,37 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 			});
 			return processManager.write(sessionId, data);
 		})
+	);
+
+	ipcMain.handle(
+		'process:broadcast-user-input',
+		withIpcErrorLogging(
+			handlerOpts('broadcast-user-input'),
+			async (payload: {
+				originId: string;
+				sessionId: string;
+				tabId?: string;
+				inputMode: 'ai' | 'terminal';
+				entry: {
+					id: string;
+					timestamp: number;
+					source: 'user';
+					text: string;
+					images?: string[];
+					readOnly?: boolean;
+					forceParallel?: boolean;
+				};
+			}) => {
+				if (safeSend) {
+					safeSend('process:user-input', payload);
+					return;
+				}
+				const mainWindow = getMainWindow();
+				if (mainWindow && isWebContentsAvailable(mainWindow)) {
+					mainWindow.webContents.send('process:user-input', payload);
+				}
+			}
+		)
 	);
 
 	// Send SIGINT to a process

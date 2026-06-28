@@ -169,8 +169,11 @@ Configure and optionally launch an auto-run using documents you've created:
 - **When the user asks you to _run_ or _kick off_ an auto-run, you must launch it via this command with `--launch`.** Do not read the document and execute its tasks yourself in chat - that bypasses the Auto Run engine, leaves no record in the UI, and loses the per-task fresh-context isolation. The whole point of an auto-run is that it shows up in the Auto Run panel and the engine drives it.
 
 ```bash
-# Run a saved playbook by id (find ids with `list playbooks`)
+# Run a saved playbook by id (find ids with `list playbooks`) - Spec-Driven (checklist documents)
 {{MAESTRO_CLI_PATH}} playbook <playbook-id> [--dry-run] [--no-history] [--debug] [--verbose] [--wait] [--json]
+
+# Launch a Goal-Driven Auto Run - pursue a free-text goal until done (no checklist documents)
+{{MAESTRO_CLI_PATH}} goal-run <agent-id> "<goal>" [--exit-criteria "<text>"] [--max-iterations <n>] [--no-history] [--verbose] [--json]
 
 # Clean up orphaned playbook data
 {{MAESTRO_CLI_PATH}} clean playbooks [--dry-run]

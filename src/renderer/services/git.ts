@@ -62,6 +62,26 @@ export const gitService = {
 	},
 
 	/**
+	 * Stage all changes and commit them in one shot. A clean working tree is not
+	 * an error: it resolves `{ success: true, committed: false }`. Used by Auto
+	 * Run to checkpoint each iteration.
+	 * @param cwd Working directory path
+	 * @param message Commit message
+	 * @param sshRemoteId Optional SSH remote ID for remote execution
+	 */
+	async commitAll(
+		cwd: string,
+		message: string,
+		sshRemoteId?: string
+	): Promise<{ success: boolean; committed: boolean; commitHash?: string; error?: string }> {
+		return createIpcMethod({
+			call: () => window.maestro.git.commitAll(cwd, message, sshRemoteId),
+			errorContext: 'Git commitAll',
+			defaultValue: { success: false, committed: false, error: 'git commit failed' },
+		});
+	},
+
+	/**
 	 * Get git status (porcelain format) and current branch
 	 * @param cwd Working directory path
 	 * @param sshRemoteId Optional SSH remote ID for remote execution

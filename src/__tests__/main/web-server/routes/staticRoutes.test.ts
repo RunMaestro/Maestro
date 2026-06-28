@@ -1,16 +1,15 @@
 /**
  * Tests for StaticRoutes
  *
- * Static Routes handle dashboard views, PWA files, and security redirects.
- * Routes are protected by a security token prefix.
- *
- * Note: Tests that require fs mocking are skipped due to ESM module limitations.
- * The fs-dependent functionality is tested via integration tests.
+ * Static Routes serve the web-desktop interface (the default browser UI),
+ * PWA files, and security redirects. Routes are protected by a security token
+ * prefix.
  *
  * Routes tested:
  * - / - Redirect to website (no access without token)
  * - /health - Health check endpoint
  * - /:token - Invalid token catch-all, redirect to website
+ * - /$TOKEN - Web-desktop interface served from the web-desktop bundle
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -60,21 +59,23 @@ function createMockReply() {
 describe('StaticRoutes', () => {
 	const securityToken = 'test-token-123';
 	const webAssetsPath = '/path/to/web/assets';
+	const webDesktopPath = '/path/to/web-desktop';
 
 	let staticRoutes: StaticRoutes;
 	let mockFastify: ReturnType<typeof createMockFastify>;
 
 	beforeEach(() => {
 		vi.clearAllMocks();
-		staticRoutes = new StaticRoutes(securityToken, webAssetsPath);
+		staticRoutes = new StaticRoutes(securityToken, webAssetsPath, webDesktopPath);
 		mockFastify = createMockFastify();
 		staticRoutes.registerRoutes(mockFastify as any);
 	});
 
 	describe('Route Registration', () => {
 		it('should register all static routes', () => {
-			// 8 routes: /, /health, manifest.json, sw.js, dashboard, dashboard/, session/:id, /:token
-			expect(mockFastify.get).toHaveBeenCalledTimes(8);
+			// 10 routes: /, /health, manifest.json, sw.js, token root, token root/,
+			// /desktop, /desktop/, session/:id, /:token
+			expect(mockFastify.get).toHaveBeenCalledTimes(10);
 		});
 
 		it('should register routes with correct paths', () => {
@@ -84,6 +85,8 @@ describe('StaticRoutes', () => {
 			expect(mockFastify.routes.has(`GET:/${securityToken}/sw.js`)).toBe(true);
 			expect(mockFastify.routes.has(`GET:/${securityToken}`)).toBe(true);
 			expect(mockFastify.routes.has(`GET:/${securityToken}/`)).toBe(true);
+			expect(mockFastify.routes.has(`GET:/${securityToken}/desktop`)).toBe(true);
+			expect(mockFastify.routes.has(`GET:/${securityToken}/desktop/`)).toBe(true);
 			expect(mockFastify.routes.has(`GET:/${securityToken}/session/:sessionId`)).toBe(true);
 			expect(mockFastify.routes.has('GET:/:token')).toBe(true);
 		});
@@ -109,9 +112,9 @@ describe('StaticRoutes', () => {
 		});
 	});
 
-	describe('Null webAssetsPath handling', () => {
+	describe('Null path handling', () => {
 		it('should return 404 for manifest.json when webAssetsPath is null', async () => {
-			const noAssetsRoutes = new StaticRoutes(securityToken, null);
+			const noAssetsRoutes = new StaticRoutes(securityToken, null, webDesktopPath);
 			const noAssetsFastify = createMockFastify();
 			noAssetsRoutes.registerRoutes(noAssetsFastify as any);
 
@@ -123,7 +126,7 @@ describe('StaticRoutes', () => {
 		});
 
 		it('should return 404 for sw.js when webAssetsPath is null', async () => {
-			const noAssetsRoutes = new StaticRoutes(securityToken, null);
+			const noAssetsRoutes = new StaticRoutes(securityToken, null, webDesktopPath);
 			const noAssetsFastify = createMockFastify();
 			noAssetsRoutes.registerRoutes(noAssetsFastify as any);
 
@@ -134,12 +137,12 @@ describe('StaticRoutes', () => {
 			expect(reply.code).toHaveBeenCalledWith(404);
 		});
 
-		it('should return 503 for dashboard when webAssetsPath is null', async () => {
-			const noAssetsRoutes = new StaticRoutes(securityToken, null);
-			const noAssetsFastify = createMockFastify();
-			noAssetsRoutes.registerRoutes(noAssetsFastify as any);
+		it('should return 503 for the token root when the web-desktop bundle is missing', async () => {
+			const noDesktopRoutes = new StaticRoutes(securityToken, webAssetsPath, null);
+			const noDesktopFastify = createMockFastify();
+			noDesktopRoutes.registerRoutes(noDesktopFastify as any);
 
-			const route = noAssetsFastify.getRoute('GET', `/${securityToken}`);
+			const route = noDesktopFastify.getRoute('GET', `/${securityToken}`);
 			const reply = createMockReply();
 			await route!.handler({}, reply);
 
@@ -163,24 +166,25 @@ describe('StaticRoutes', () => {
 	describe('Security Token Validation', () => {
 		it('should use provided security token in routes', () => {
 			const customToken = 'custom-secure-token-456';
-			const customRoutes = new StaticRoutes(customToken, webAssetsPath);
+			const customRoutes = new StaticRoutes(customToken, webAssetsPath, webDesktopPath);
 			const customFastify = createMockFastify();
 			customRoutes.registerRoutes(customFastify as any);
 
 			expect(customFastify.routes.has(`GET:/${customToken}`)).toBe(true);
+			expect(customFastify.routes.has(`GET:/${customToken}/desktop`)).toBe(true);
 			expect(customFastify.routes.has(`GET:/${customToken}/manifest.json`)).toBe(true);
 			expect(customFastify.routes.has(`GET:/${customToken}/sw.js`)).toBe(true);
 			expect(customFastify.routes.has(`GET:/${customToken}/session/:sessionId`)).toBe(true);
 		});
 	});
 
-	describe('Index HTML freshness', () => {
-		it('should serve updated index.html content after the file changes on disk', async () => {
+	describe('Web-desktop index serving', () => {
+		it('should serve the web-desktop index with token-prefixed desktop asset paths', async () => {
 			const tempRoot = mkdtempSync(path.join(tmpdir(), 'maestro-static-routes-'));
-			const tempAssetsPath = path.join(tempRoot, 'web');
-			const tempIndexPath = path.join(tempAssetsPath, 'index.html');
+			const tempDesktopPath = path.join(tempRoot, 'web-desktop');
+			const tempIndexPath = path.join(tempDesktopPath, 'index.html');
 
-			mkdirSync(tempAssetsPath, { recursive: true });
+			mkdirSync(tempDesktopPath, { recursive: true });
 
 			try {
 				writeFileSync(
@@ -189,7 +193,7 @@ describe('StaticRoutes', () => {
 					'utf8'
 				);
 
-				const freshRoutes = new StaticRoutes(securityToken, tempAssetsPath);
+				const freshRoutes = new StaticRoutes(securityToken, webAssetsPath, tempDesktopPath);
 				const freshFastify = createMockFastify();
 				freshRoutes.registerRoutes(freshFastify as any);
 
@@ -199,9 +203,12 @@ describe('StaticRoutes', () => {
 
 				expect(firstReply.type).toHaveBeenCalledWith('text/html');
 				expect(firstReply.send).toHaveBeenCalledWith(
-					expect.stringContaining(`/${securityToken}/assets/main-old.js`)
+					expect.stringContaining(`/${securityToken}/desktop/assets/main-old.js`)
 				);
+				// Config is injected so the electron-shim can open the WS bridge.
+				expect(firstReply.send).toHaveBeenCalledWith(expect.stringContaining('__MAESTRO_CONFIG__'));
 
+				// Read fresh from disk so rebuilt asset hashes are reflected immediately.
 				writeFileSync(
 					tempIndexPath,
 					'<!doctype html><html><head><script type="module" src="./assets/main-new.js"></script></head><body></body></html>',
@@ -212,77 +219,42 @@ describe('StaticRoutes', () => {
 				await route!.handler({}, secondReply);
 
 				expect(secondReply.send).toHaveBeenCalledWith(
-					expect.stringContaining(`/${securityToken}/assets/main-new.js`)
+					expect.stringContaining(`/${securityToken}/desktop/assets/main-new.js`)
 				);
 			} finally {
 				rmSync(tempRoot, { recursive: true, force: true });
 			}
 		});
-	});
 
-	describe('XSS Sanitization (sanitizeId)', () => {
-		// Access private method via type casting for testing
-		const getSanitizeId = (routes: StaticRoutes) => {
-			return (routes as any).sanitizeId.bind(routes);
-		};
+		it('should serve the same desktop index from the legacy /desktop alias', async () => {
+			const tempRoot = mkdtempSync(path.join(tmpdir(), 'maestro-static-routes-'));
+			const tempDesktopPath = path.join(tempRoot, 'web-desktop');
+			const tempIndexPath = path.join(tempDesktopPath, 'index.html');
 
-		it('should allow valid UUID-style IDs', () => {
-			const sanitizeId = getSanitizeId(staticRoutes);
-			expect(sanitizeId('abc123')).toBe('abc123');
-			expect(sanitizeId('session-1')).toBe('session-1');
-			expect(sanitizeId('tab_abc_123')).toBe('tab_abc_123');
-			expect(sanitizeId('a1b2c3d4-e5f6-7890-abcd-ef1234567890')).toBe(
-				'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
-			);
-		});
+			mkdirSync(tempDesktopPath, { recursive: true });
 
-		it('should return null for null/undefined input', () => {
-			const sanitizeId = getSanitizeId(staticRoutes);
-			expect(sanitizeId(null)).toBeNull();
-			expect(sanitizeId(undefined)).toBeNull();
-			expect(sanitizeId('')).toBeNull();
-		});
+			try {
+				writeFileSync(
+					tempIndexPath,
+					'<!doctype html><html><head><script type="module" src="./assets/main.js"></script></head><body></body></html>',
+					'utf8'
+				);
 
-		it('should reject XSS payloads with script tags', () => {
-			const sanitizeId = getSanitizeId(staticRoutes);
-			expect(sanitizeId('<script>alert(1)</script>')).toBeNull();
-			expect(sanitizeId('session<script>')).toBeNull();
-			expect(sanitizeId('tab</script>')).toBeNull();
-		});
+				const freshRoutes = new StaticRoutes(securityToken, webAssetsPath, tempDesktopPath);
+				const freshFastify = createMockFastify();
+				freshRoutes.registerRoutes(freshFastify as any);
 
-		it('should reject XSS payloads with JavaScript URLs', () => {
-			const sanitizeId = getSanitizeId(staticRoutes);
-			expect(sanitizeId('javascript:alert(1)')).toBeNull();
-			expect(sanitizeId('session:javascript')).toBeNull();
-		});
+				const route = freshFastify.getRoute('GET', `/${securityToken}/desktop`);
+				const reply = createMockReply();
+				await route!.handler({}, reply);
 
-		it('should reject XSS payloads with HTML entities', () => {
-			const sanitizeId = getSanitizeId(staticRoutes);
-			expect(sanitizeId('&lt;script&gt;')).toBeNull();
-			expect(sanitizeId('session&#x3C;')).toBeNull();
-		});
-
-		it('should reject special characters that could break HTML/JS', () => {
-			const sanitizeId = getSanitizeId(staticRoutes);
-			expect(sanitizeId('"onload="alert(1)')).toBeNull();
-			expect(sanitizeId("'onclick='alert(1)")).toBeNull();
-			expect(sanitizeId('session;alert(1)')).toBeNull();
-			expect(sanitizeId('session&alert=1')).toBeNull();
-			expect(sanitizeId('session?alert=1')).toBeNull();
-			expect(sanitizeId('session#alert')).toBeNull();
-		});
-
-		it('should reject whitespace', () => {
-			const sanitizeId = getSanitizeId(staticRoutes);
-			expect(sanitizeId('session 1')).toBeNull();
-			expect(sanitizeId('tab\t1')).toBeNull();
-			expect(sanitizeId('tab\n1')).toBeNull();
-		});
-
-		it('should reject path traversal attempts', () => {
-			const sanitizeId = getSanitizeId(staticRoutes);
-			expect(sanitizeId('../../../etc/passwd')).toBeNull();
-			expect(sanitizeId('..%2F..%2F')).toBeNull();
+				expect(reply.type).toHaveBeenCalledWith('text/html');
+				expect(reply.send).toHaveBeenCalledWith(
+					expect.stringContaining(`/${securityToken}/desktop/assets/main.js`)
+				);
+			} finally {
+				rmSync(tempRoot, { recursive: true, force: true });
+			}
 		});
 	});
 });

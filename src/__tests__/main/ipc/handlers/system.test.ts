@@ -252,6 +252,7 @@ describe('system IPC handlers', () => {
 				'power:addReason',
 				'power:removeReason',
 				// Clipboard handlers
+				'clipboard:writeText',
 				'clipboard:writeImage',
 				'clipboard:readImage',
 			];
