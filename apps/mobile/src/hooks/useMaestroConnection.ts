@@ -72,7 +72,11 @@ export function useMaestroConnection(
 	const wrappedHandlers = {
 		...handlers,
 		onConnectionChange: (state: WebSocketState) => {
-			if (state === 'authenticated') {
+			// The mobile pairing handshake settles as a bare `connected` (the
+			// desktop never sends `authenticated: true` for it), so treat both as
+			// "reconnected" - otherwise the reconnecting flag and the stale-buffer
+			// discard would never clear on mobile.
+			if (state === 'authenticated' || state === 'connected') {
 				setIsReconnecting(false);
 				// Check for stale buffer on reconnect
 				if (hasStaleBufferRef.current) {

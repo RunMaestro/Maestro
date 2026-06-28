@@ -552,9 +552,15 @@ export function setupExitListener(
 		if (webServer) {
 			// Extract base session ID from formats: {id}-ai-{tabId}, {id}-terminal, {id}-batch-{timestamp}, {id}-synopsis-{timestamp}
 			const baseSessionId = sessionId.replace(/-ai-.+$|-terminal$|-batch-\d+$|-synopsis-\d+$/, '');
+			// Carry the AI tab id when present so multi-tab clients can scope the
+			// turn-complete signal to the tab that actually exited instead of
+			// applying it to whatever tab they currently have in view.
+			const aiTabMatch = sessionId.match(/-ai-(.+)$/);
+			const tabId = aiTabMatch?.[1];
 			webServer.broadcastToSessionClients(baseSessionId, {
 				type: 'session_exit',
 				sessionId: baseSessionId,
+				...(tabId ? { tabId } : {}),
 				exitCode: code,
 				timestamp: Date.now(),
 			});

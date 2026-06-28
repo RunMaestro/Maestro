@@ -50,7 +50,7 @@ export type SessionOutputHandler = (
 
 export type SessionStateChangeHandler = (sessionId: string, state: string) => void;
 
-export type SessionExitHandler = (sessionId: string) => void;
+export type SessionExitHandler = (sessionId: string, tabId?: string) => void;
 
 export type ToolEventHandler = (sessionId: string, tabId: string, toolLog: ToolEventLog) => void;
 
@@ -59,6 +59,11 @@ export type UserInputHandler = (
 	command: string,
 	inputMode: 'ai' | 'terminal'
 ) => void;
+
+export type CommandResultHandler = (sessionId: string, success: boolean, tabId?: string) => void;
+
+/** Fired when a long background pause invalidated any in-flight streaming buffer. */
+export type StaleBufferHandler = () => void;
 
 export type Unsubscribe = () => void;
 
@@ -118,6 +123,14 @@ export interface SessionsContextValue {
 	subscribeSessionExit: (handler: SessionExitHandler) => Unsubscribe;
 	subscribeToolEvent: (handler: ToolEventHandler) => Unsubscribe;
 	subscribeUserInput: (handler: UserInputHandler) => Unsubscribe;
+	subscribeCommandResult: (handler: CommandResultHandler) => Unsubscribe;
+	/**
+	 * Subscribe to stale-buffer notifications. Fired once after the app returns
+	 * to the foreground following a background pause long enough to invalidate
+	 * any in-flight streaming turn, so chat screens can drop the partial
+	 * assistant bubble and unstick `isGenerating`.
+	 */
+	subscribeStaleBuffer: (handler: StaleBufferHandler) => Unsubscribe;
 }
 
 // ============================================================================
@@ -163,6 +176,8 @@ export function SessionsProvider({ children, onThemeUpdate }: SessionsProviderPr
 	const sessionExitSubs = useRef(new Set<SessionExitHandler>());
 	const toolEventSubs = useRef(new Set<ToolEventHandler>());
 	const userInputSubs = useRef(new Set<UserInputHandler>());
+	const commandResultSubs = useRef(new Set<CommandResultHandler>());
+	const staleBufferSubs = useRef(new Set<StaleBufferHandler>());
 
 	// Keep refs in sync with props/state (must be in useEffect per React 19 rules)
 	useEffect(() => {
@@ -186,6 +201,20 @@ export function SessionsProvider({ children, onThemeUpdate }: SessionsProviderPr
 		requestSessionHistory,
 	} = useMaestroConnection({
 		autoReconnect: true,
+		// A long background pause invalidates any half-streamed assistant turn:
+		// the desktop has likely finished (or moved on) by the time we foreground
+		// and reconnect. Fan that out so chat screens drop the stale partial
+		// bubble and unstick `isGenerating` instead of staying blocked until some
+		// later idle/exit event arrives.
+		onStaleBufferDiscarded: () => {
+			staleBufferSubs.current.forEach((handler) => {
+				try {
+					handler();
+				} catch (err) {
+					console.error('[SessionsContext] onStaleBufferDiscarded subscriber threw', err);
+				}
+			});
+		},
 		handlers: {
 			onAuthFailed: () => {
 				// Desktop revoked the token (or it expired). Wipe credentials and
@@ -267,12 +296,21 @@ export function SessionsProvider({ children, onThemeUpdate }: SessionsProviderPr
 					}
 				});
 			},
-			onSessionExit: (sessionId) => {
+			onSessionExit: (sessionId, tabId) => {
 				sessionExitSubs.current.forEach((handler) => {
 					try {
-						handler(sessionId);
+						handler(sessionId, tabId);
 					} catch (err) {
 						console.error('[SessionsContext] onSessionExit subscriber threw', err);
+					}
+				});
+			},
+			onCommandResult: (sessionId, success, tabId) => {
+				commandResultSubs.current.forEach((handler) => {
+					try {
+						handler(sessionId, success, tabId);
+					} catch (err) {
+						console.error('[SessionsContext] onCommandResult subscriber threw', err);
 					}
 				});
 			},
@@ -353,10 +391,13 @@ export function SessionsProvider({ children, onThemeUpdate }: SessionsProviderPr
 		},
 	});
 
-	// Reset the AUTH_FAILED latch once we're authenticated again, so a later
-	// revoke still triggers the navigation back to /pair.
+	// Reset the AUTH_FAILED latch once the socket handshakes again, so a later
+	// revoke still triggers the navigation back to /pair. The mobile pairing
+	// handshake settles as a bare `connected` (the desktop never sends
+	// `authenticated: true` for it), so latching only on `authenticated` would
+	// leave the flag stuck after a successful re-pair and swallow the next revoke.
 	useEffect(() => {
-		if (connectionState === 'authenticated') {
+		if (connectionState === 'authenticated' || connectionState === 'connected') {
 			authFailedHandledRef.current = false;
 		}
 	}, [connectionState]);
@@ -502,6 +543,20 @@ export function SessionsProvider({ children, onThemeUpdate }: SessionsProviderPr
 		};
 	}, []);
 
+	const subscribeCommandResult = useCallback((handler: CommandResultHandler): Unsubscribe => {
+		commandResultSubs.current.add(handler);
+		return () => {
+			commandResultSubs.current.delete(handler);
+		};
+	}, []);
+
+	const subscribeStaleBuffer = useCallback((handler: StaleBufferHandler): Unsubscribe => {
+		staleBufferSubs.current.add(handler);
+		return () => {
+			staleBufferSubs.current.delete(handler);
+		};
+	}, []);
+
 	const value: SessionsContextValue = {
 		connectionState,
 		isAuthenticated,
@@ -524,6 +579,8 @@ export function SessionsProvider({ children, onThemeUpdate }: SessionsProviderPr
 		subscribeSessionExit,
 		subscribeToolEvent,
 		subscribeUserInput,
+		subscribeCommandResult,
+		subscribeStaleBuffer,
 	};
 
 	return <SessionsContext.Provider value={value}>{children}</SessionsContext.Provider>;

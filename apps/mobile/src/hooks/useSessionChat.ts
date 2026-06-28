@@ -25,6 +25,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 // Throttle interval for streaming UI updates (~30fps)
 const STREAMING_THROTTLE_MS = 32;
 
+// How long a locally-sent prompt stays eligible to absorb its own `user_input`
+// echo from the desktop. Long enough to cover an offline-queue replay landing
+// after reconnect, short enough that it can't shadow an unrelated desktop-typed
+// message with the same text much later.
+const ECHO_DEDUP_WINDOW_MS = 60_000;
+
 /**
  * Convert the desktop's `SessionHistoryMessage[]` into the mobile `ChatMessage`
  * shape the UI expects. The mobile UI only renders `user` / `assistant`, plus
@@ -79,6 +85,8 @@ export function useSessionChat(targetSessionId: string): UseSessionChatReturn {
 		subscribeSessionExit,
 		subscribeToolEvent,
 		subscribeUserInput,
+		subscribeCommandResult,
+		subscribeStaleBuffer,
 	} = useSessions();
 
 	const session = useMemo(
@@ -108,6 +116,14 @@ export function useSessionChat(targetSessionId: string): UseSessionChatReturn {
 	// would append its tokens to the visible tab's message list.
 	const activeTabIdRef = useRef<string | null>(null);
 
+	// Prompts we dispatched locally, awaiting their own `user_input` echo from
+	// the desktop (which fans out to every subscriber, including this socket).
+	// Recorded at dispatch time so an offline-queue replay still matches its echo.
+	const pendingEchoesRef = useRef<{ command: string; ts: number }[]>([]);
+	const recordPendingEcho = useCallback((command: string) => {
+		pendingEchoesRef.current.push({ command, ts: Date.now() });
+	}, []);
+
 	// Commit the in-flight streaming buffer to the assistant message and clear
 	// streaming state. Used by both session_state_change=idle and session_exit.
 	const commitStreaming = useCallback(() => {
@@ -123,6 +139,22 @@ export function useSessionChat(targetSessionId: string): UseSessionChatReturn {
 				return updated;
 			});
 			Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+		}
+		streamingRef.current = '';
+		streamingStore.set('');
+		streamingMessageIdRef.current = null;
+		setIsGenerating(false);
+	}, [streamingStore]);
+
+	// Drop an in-flight streaming turn without committing it. Used when a long
+	// background pause invalidated the buffer: the desktop has likely already
+	// finished, so the partial assistant bubble is abandoned (history reload on
+	// reconnect re-fetches the final message) and isGenerating is unstuck so the
+	// user can send again.
+	const discardStreaming = useCallback(() => {
+		const msgId = streamingMessageIdRef.current;
+		if (msgId) {
+			setMessages((prev) => prev.filter((m) => m.id !== msgId));
 		}
 		streamingRef.current = '';
 		streamingStore.set('');
@@ -195,16 +227,29 @@ export function useSessionChat(targetSessionId: string): UseSessionChatReturn {
 	// spinner stuck forever and onSend early-returned because isGenerating stayed
 	// true.
 	useEffect(() => {
-		return subscribeSessionExit((exitSessionId) => {
+		return subscribeSessionExit((exitSessionId, tabId) => {
 			if (exitSessionId !== sessionIdRef.current) return;
+			// A background tab can finish while the visible tab is still
+			// generating. The desktop tags the exit with its AI tab id, so ignore
+			// exits for any tab other than the one on screen - otherwise we'd
+			// commit/clear the active tab's turn early and let the user send into
+			// a still-running conversation.
+			const currentTabId = activeTabIdRef.current;
+			if (tabId && currentTabId && tabId !== currentTabId) return;
 			commitStreaming();
 		});
 	}, [subscribeSessionExit, commitStreaming]);
 
 	// Subscribe to tool events.
 	useEffect(() => {
-		return subscribeToolEvent((toolSessionId, _tabId, toolLog: ToolEventLog) => {
+		return subscribeToolEvent((toolSessionId, tabId, toolLog: ToolEventLog) => {
 			if (toolSessionId !== sessionIdRef.current) return;
+			// Drop tool events for non-active tabs, mirroring the session_output
+			// filter. The desktop fans tool_event for every running tab, so without
+			// this a background tab's Running/Completed bubbles land in the visible
+			// tab's list and disagree with its history until reload.
+			const currentTabId = activeTabIdRef.current;
+			if (tabId && currentTabId && tabId !== currentTabId) return;
 
 			const toolName = toolLog.metadata?.toolState?.name || 'tool';
 			const status = toolLog.metadata?.toolState?.status || 'running';
@@ -235,10 +280,49 @@ export function useSessionChat(targetSessionId: string): UseSessionChatReturn {
 			if (inputSessionId !== sessionIdRef.current) return;
 			if (inputMode !== 'ai') return;
 
+			// The desktop broadcasts `user_input` to every session subscriber,
+			// including the socket that sent it. We already rendered an optimistic
+			// bubble for our own prompts, so absorb one matching pending echo and
+			// skip the duplicate. Only echoes with no pending local match (i.e.
+			// prompts typed on the desktop) get appended.
+			const pending = pendingEchoesRef.current;
+			const now = Date.now();
+			while (pending.length > 0 && now - pending[0].ts > ECHO_DEDUP_WINDOW_MS) {
+				pending.shift();
+			}
+			const matchIdx = pending.findIndex((e) => e.command === command);
+			if (matchIdx >= 0) {
+				pending.splice(matchIdx, 1);
+				return;
+			}
+
 			const messageId = `user-desktop-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 			setMessages((prev) => [...prev, { id: messageId, role: 'user', content: command }]);
 		});
 	}, [subscribeUserInput]);
+
+	// Subscribe to send_command acknowledgements. A `success: false` result means
+	// the desktop rejected the prompt (session busy or removed), so roll back the
+	// optimistic generating state instead of leaving the user stuck behind a
+	// spinner waiting on output that will never arrive.
+	useEffect(() => {
+		return subscribeCommandResult((resultSessionId, success, tabId) => {
+			if (resultSessionId !== sessionIdRef.current) return;
+			if (success) return;
+			const currentTabId = activeTabIdRef.current;
+			if (tabId && currentTabId && tabId !== currentTabId) return;
+			setIsGenerating(false);
+		});
+	}, [subscribeCommandResult]);
+
+	// Subscribe to stale-buffer notifications. After a long background pause the
+	// in-flight streaming turn is no longer trustworthy, so drop it and unstick
+	// isGenerating; the history reload on reconnect restores the final message.
+	useEffect(() => {
+		return subscribeStaleBuffer(() => {
+			discardStreaming();
+		});
+	}, [subscribeStaleBuffer, discardStreaming]);
 
 	// Sync active session in context so the drawer + tab strip stay in sync.
 	useEffect(() => {
@@ -323,9 +407,13 @@ export function useSessionChat(targetSessionId: string): UseSessionChatReturn {
 	// the socket comes back.
 	const queueSend = useCallback(
 		(sessionId: string, command: string, tabId?: string) => {
-			return sendCommand(sessionId, command, tabId);
+			const sent = sendCommand(sessionId, command, tabId);
+			// Record at actual dispatch (offline-queue replay can fire long after
+			// the user typed) so the prompt's own echo is still absorbed.
+			if (sent) recordPendingEcho(command);
+			return sent;
 		},
-		[sendCommand]
+		[sendCommand, recordPendingEcho]
 	);
 
 	const { queueCommand, queueLength } = useMaestroOfflineQueue({
@@ -367,9 +455,18 @@ export function useSessionChat(targetSessionId: string): UseSessionChatReturn {
 			setInput('');
 			return;
 		}
+		recordPendingEcho(trimmed);
 		setInput('');
 		setIsGenerating(true);
-	}, [input, isGenerating, targetSessionId, sendCommand, isConnected, queueCommand]);
+	}, [
+		input,
+		isGenerating,
+		targetSessionId,
+		sendCommand,
+		isConnected,
+		queueCommand,
+		recordPendingEcho,
+	]);
 
 	// Cleanup throttle timeout on unmount.
 	useEffect(() => {

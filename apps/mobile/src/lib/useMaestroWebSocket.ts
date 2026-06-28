@@ -100,11 +100,20 @@ export interface WebSocketHandlers {
 	/**
 	 * Fired when the desktop signals a session has finished its current turn.
 	 * Used as a fallback turn-complete signal when session_state_change is not
-	 * emitted for the active code path.
+	 * emitted for the active code path. `tabId` is the AI tab that exited when
+	 * the desktop includes it, so multi-tab screens can ignore exits for tabs
+	 * other than the one the user is looking at.
 	 */
-	onSessionExit?: (sessionId: string) => void;
+	onSessionExit?: (sessionId: string, tabId?: string) => void;
 	onToolEvent?: (sessionId: string, tabId: string, toolLog: ToolEventLog) => void;
 	onUserInput?: (sessionId: string, command: string, inputMode: 'ai' | 'terminal') => void;
+	/**
+	 * Fired when the desktop acknowledges a `send_command`. `success` is false
+	 * when the desktop rejected the command (e.g. the session was busy or has
+	 * been removed), so the UI can roll back an optimistic "generating" state
+	 * instead of waiting forever for output that will never arrive.
+	 */
+	onCommandResult?: (sessionId: string, success: boolean, tabId?: string) => void;
 	onTabsChanged?: (sessionId: string, aiTabs: AITabData[], activeTabId: string) => void;
 	/**
 	 * Fired when the desktop acknowledges a `new_tab` request with success. The
@@ -258,7 +267,15 @@ export function useMaestroWebSocket(
 					break;
 
 				case 'session_exit':
-					handlersRef.current?.onSessionExit?.(message.sessionId);
+					handlersRef.current?.onSessionExit?.(message.sessionId, message.tabId);
+					break;
+
+				case 'command_result':
+					handlersRef.current?.onCommandResult?.(
+						message.sessionId,
+						message.success !== false,
+						message.tabId
+					);
 					break;
 
 				case 'tool_event':
@@ -376,6 +393,18 @@ export function useMaestroWebSocket(
 
 		// Build URL without a specific sessionId - session is selected after connection
 		const url = await buildWebSocketUrl();
+
+		// disconnect() may have run while we were awaiting the credential read
+		// (e.g. the app backgrounded mid-SecureStore-load). It flips
+		// shouldReconnectRef off, so honor that here instead of opening a socket
+		// the lifecycle wrapper already asked us to tear down - otherwise a live
+		// socket leaks in the background and keeps receiving events.
+		if (!shouldReconnectRef.current) {
+			setState('disconnected');
+			handlersRef.current?.onConnectionChange?.('disconnected');
+			connectInFlightRef.current = false;
+			return;
+		}
 
 		if (!url) {
 			// No credentials available - need pairing
