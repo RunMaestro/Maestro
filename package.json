@@ -31,6 +31,7 @@
 		"build:main": "tsc -p tsconfig.main.json",
 		"build:preload": "node scripts/build-preload.mjs",
 		"build:cli": "node scripts/build-cli.mjs",
+		"gen:cli-reference": "node scripts/gen-cli-reference.mjs",
 		"build:maestro-p": "node scripts/build-maestro-p.mjs",
 		"build:renderer": "vite build",
 		"build:web": "vite build --config vite.config.web.mts",
@@ -42,7 +43,7 @@
 		"clean": "rm -rf dist release node_modules/.vite",
 		"preinstall": "node scripts/check-python.mjs",
 		"prepare": "node scripts/setup-git-hooks.mjs",
-		"postinstall": "patch-package && electron-rebuild -f -w node-pty,better-sqlite3",
+		"postinstall": "patch-package && node scripts/ensure-electron.mjs && electron-rebuild -f -w node-pty,better-sqlite3",
 		"lint": "tsc -p tsconfig.lint.json && tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.cli.json --noEmit",
 		"lint:eslint": "eslint src/",
 		"format": "prettier --write \"src/**/*.{ts,tsx}\"",
@@ -302,7 +303,7 @@
 		"adm-zip": "^0.5.16",
 		"ansi-to-html": "^0.7.2",
 		"archiver": "^7.0.1",
-		"better-sqlite3": "^12.9.0",
+		"better-sqlite3": "^12.11.1",
 		"canvas-confetti": "^1.9.4",
 		"chokidar": "^3.6.0",
 		"commander": "^14.0.2",
@@ -409,5 +410,13 @@
 		"*.{js,cjs,mjs,jsx,ts,tsx,mts,cts}": [
 			"eslint --fix"
 		]
+	},
+	"allowScripts": {
+		"better-sqlite3": true,
+		"canvas": true,
+		"electron": true,
+		"esbuild": true,
+		"lzma-native": true,
+		"node-pty": true
 	}
 }

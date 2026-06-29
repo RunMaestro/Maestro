@@ -44,17 +44,15 @@ export interface SearchResultInfo {
 export interface SessionListItemProps {
 	/** The Claude session data */
 	session: ClaudeSession;
-	/** Zero-based index in the list */
-	index: number;
-	/** Currently selected index for keyboard navigation */
-	selectedIndex: number;
+	/** Whether this row is the selected item for keyboard navigation */
+	isSelected: boolean;
 	/** Whether this session is starred */
 	isStarred: boolean;
 	/** Currently active Claude session ID (if any) */
 	activeAgentSessionId: string | null;
-	/** ID of session currently being renamed (if any) */
-	renamingSessionId: string | null;
-	/** Current rename input value */
+	/** Whether this session row is currently being renamed */
+	isRenaming: boolean;
+	/** Current rename input value (only meaningful when isRenaming) */
 	renameValue: string;
 	/** Current search mode for conditional display */
 	searchMode: 'title' | 'user' | 'assistant' | 'all';
@@ -124,13 +122,12 @@ function renderHighlightedPreview(
 	});
 }
 
-export function SessionListItem({
+export const SessionListItem = React.memo(function SessionListItem({
 	session,
-	index,
-	selectedIndex,
+	isSelected,
 	isStarred,
 	activeAgentSessionId,
-	renamingSessionId,
+	isRenaming,
 	renameValue,
 	searchMode,
 	searchQuery,
@@ -146,8 +143,6 @@ export function SessionListItem({
 	onSubmitRename,
 	onCancelRename,
 }: SessionListItemProps) {
-	const isSelected = index === selectedIndex;
-	const isRenaming = renamingSessionId === session.sessionId;
 	const isActive = activeAgentSessionId === session.sessionId;
 
 	return (
@@ -367,4 +362,4 @@ export function SessionListItem({
 			)}
 		</div>
 	);
-}
+});

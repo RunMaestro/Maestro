@@ -32,6 +32,26 @@ node "/Applications/Maestro.app/Contents/Resources/maestro-cli.js" list groups
 
 ## Usage
 
+### Global Flags and Exit Codes
+
+Two flags work on every command:
+
+| Flag          | Description                                                                    |
+| ------------- | ------------------------------------------------------------------------------ |
+| `-q, --quiet` | Suppress incidental success output (errors still print). Never gates `--json`. |
+| `--verbose`   | Print extra detail where available                                             |
+
+Commands exit with a standardized code so scripts and CI can branch on the failure class:
+
+| Code | Meaning                                                    |
+| ---- | ---------------------------------------------------------- |
+| `0`  | Success                                                    |
+| `1`  | Generic / uncategorized failure                            |
+| `2`  | Invalid usage (unknown flag, bad argument, nothing to do)  |
+| `3`  | The Maestro desktop app is not running or not reachable    |
+| `4`  | The running app does not support the command (older build) |
+| `5`  | The app was reachable but did not respond in time          |
+
 ### Sending Messages to Agents
 
 Send a message to an agent and receive a structured JSON response. Supports creating new sessions or resuming existing ones for multi-turn conversations.
@@ -351,15 +371,54 @@ maestro-cli update-agent <agent-id> --cwd /new/path/to/project
 
 # Combine both in a single call
 maestro-cli update-agent <agent-id> --group <group-id> --cwd /new/path
+
+# Edit the agent's settings - the same fields as the Edit Agent modal
+maestro-cli update-agent <agent-id> --nudge "Always write tests"
+maestro-cli update-agent <agent-id> --new-session-message "You are a senior engineer"
+maestro-cli update-agent <agent-id> --model opus --effort high --context-window 200000
+maestro-cli update-agent <agent-id> --env DEBUG=true --env LOG_LEVEL=info
+maestro-cli update-agent <agent-id> --custom-path /usr/local/bin/claude --custom-args "--verbose"
+
+# Clear a field by passing an empty string; --clear-env empties the env map
+maestro-cli update-agent <agent-id> --nudge ""
+maestro-cli update-agent <agent-id> --clear-env
+
+# Set the Claude token source (Claude Code agents only): api | tui | dynamic
+maestro-cli update-agent <agent-id> --token-source tui
+
+# Update SSH execution config (use "none" to revert to local)
+maestro-cli update-agent <agent-id> --ssh-remote <remote-id> --ssh-cwd /remote/workdir
+maestro-cli update-agent <agent-id> --ssh-remote none
+maestro-cli update-agent <agent-id> --sync-history-to-remote true
 ```
 
-`update-agent` mutates an existing agent in place. The group update reuses the same write path as drag-and-drop in the Left Bar. The cwd update only moves the UI-facing working directory (`cwd`/`fullPath`) - `projectRoot` is preserved so historical provider sessions stay addressable, which keeps prior conversation history attached when you relocate an archived project folder. Stop the agent before changing its cwd; the underlying PTY's working directory is fixed at spawn time, so the renderer refuses the update while the process is alive and surfaces the reason on stderr.
+`update-agent` mutates an existing agent in place, writing the same live desktop Session the Edit Agent modal edits (not the per-agent config store that `settings agent set` writes). Read the current values back with `maestro-cli show agent <id> --json`.
 
-| Flag               | Description                                                                           | Default |
-| ------------------ | ------------------------------------------------------------------------------------- | ------- |
-| `-g, --group <id>` | Move the agent to this group; supports partial IDs. Use `none` (or `null`) to ungroup | -       |
-| `-d, --cwd <path>` | New working directory (resolved to absolute). Agent must be stopped                   | -       |
-| `--json`           | Machine-readable JSON output                                                          | -       |
+The group update reuses the same write path as drag-and-drop in the Left Bar. The cwd update only moves the UI-facing working directory (`cwd`/`fullPath`) - `projectRoot` is preserved so historical provider sessions stay addressable, which keeps prior conversation history attached when you relocate an archived project folder. Stop the agent before changing its cwd or SSH config; the underlying PTY's working directory and spawn target are fixed at launch time, so the renderer refuses those updates while the process is alive and surfaces the reason on stderr. The remaining settings (nudge, messages, model, effort, env, token source, etc.) are spawn-time values and apply on the next launch, so they are accepted even while the agent is running.
+
+For text fields, passing an empty string (for example `--nudge ""`) clears the field. `--env` replaces the environment map with the provided pairs; `--clear-env` empties it. `--context-window 0` (or `none`) clears the context-window override. `--token-source` only carries meaning for Claude Code agents: `api` uses `claude --print` (per-token API credit), `tui` drives the maestro-p TUI (Max-plan quota), and `dynamic` starts on the TUI and falls back to API when a usage window hits its limit.
+
+| Flag                              | Description                                                                                                                                        | Default |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `-g, --group <id>`                | Move the agent to this group; supports partial IDs. Use `none` (or `null`) to ungroup                                                              | -       |
+| `-d, --cwd <path>`                | New working directory (resolved to absolute). Agent must be stopped                                                                                | -       |
+| `--ssh-remote <id>`               | SSH remote for remote execution. Use `none` to revert to local. Agent must be stopped                                                              | -       |
+| `--ssh-cwd <path>`                | Working directory override on the SSH remote                                                                                                       | -       |
+| `--sync-history-to-remote <bool>` | Sync history entries to `.maestro/history/` on the remote host                                                                                     | -       |
+| `--nudge <message>`               | Nudge message appended to every message. Empty string clears                                                                                       | -       |
+| `--new-session-message <message>` | Message prefixed to the first message of new sessions. Empty string clears                                                                         | -       |
+| `--custom-path <path>`            | Override the agent binary path. Empty string clears                                                                                                | -       |
+| `--custom-args <args>`            | Custom CLI arguments. Empty string clears                                                                                                          | -       |
+| `--env <KEY=VALUE>`               | Set an environment variable (repeatable; replaces the env map)                                                                                     | -       |
+| `--clear-env`                     | Clear all per-agent environment variables                                                                                                          | -       |
+| `--model <model>`                 | Model override (e.g. sonnet, opus). Empty string clears                                                                                            | -       |
+| `--effort <level>`                | Effort/reasoning level override. Empty string clears                                                                                               | -       |
+| `--context-window <size>`         | Context window size in tokens. `0` or `none` clears                                                                                                | -       |
+| `--token-source <mode>`           | Claude Code token source: `api`, `tui`, or `dynamic` (Claude Code agents only)                                                                     | -       |
+| `--maestro-p-path <path>`         | Override the maestro-p binary path. Empty string clears                                                                                            | -       |
+| `--provider <type>`               | Switch the agent's provider. Destructive: resets tabs and clears provider config. Requires `--force`. Cannot be combined with other settings edits | -       |
+| `--force`                         | Confirm a destructive change (required for `--provider`)                                                                                           | -       |
+| `--json`                          | Machine-readable JSON output                                                                                                                       | -       |
 
 The flag table below covers `create-agent`:
 
@@ -723,9 +782,45 @@ maestro-cli encore disable maestroCue
 
 Encore feature IDs: `directorNotes`, `usageStats`, `symphony`, `maestroCue`. Friendly aliases are accepted (for example `group-chat` for `symphony`, `cue` for `maestroCue`).
 
+### Custom Theme Palette
+
+`set-theme` only switches between built-in themes. The `theme` command group manages the user-configurable **Custom** theme palette (the same two settings the in-app Custom Theme Builder edits: `customThemeColors` and `customThemeBaseId`). Activate the result with `set-theme custom`.
+
+```bash
+# Print the current custom palette and its base theme (reads from disk; works offline)
+maestro-cli theme show
+maestro-cli theme show --json
+
+# Export the custom theme as portable JSON (stdout, or to a file)
+maestro-cli theme export
+maestro-cli theme export --file my-theme.json
+
+# Import a theme JSON file, apply it live, and activate it
+maestro-cli theme import my-theme.json
+maestro-cli theme import my-theme.json --no-activate   # save the palette without switching to it
+
+# Set individual colors (key=value); optionally re-base from a built-in theme first
+maestro-cli theme set accent=#ff0000 bgMain=#1a1a1a
+maestro-cli theme set --base dracula accent=#ff79c6 --activate
+```
+
+Export files are byte-compatible with the in-app Custom Theme Builder, so a palette round-trips between the UI and CLI. `theme show` and `theme export` read the on-disk settings store directly (no running app required); `theme import` and `theme set` apply live through the running desktop app. Imports are validated the same way as the in-app importer: every required color key must be present and every value must be a valid CSS color.
+
+| Command        | Flag                | Description                                                |
+| -------------- | ------------------- | ---------------------------------------------------------- |
+| `theme show`   | `--json`            | Machine-readable output                                    |
+| `theme export` | `-f, --file <path>` | Write the theme JSON to this file instead of stdout        |
+| `theme import` | `--no-activate`     | Save the palette without switching to the Custom theme     |
+| `theme set`    | `-b, --base <id>`   | Initialize from a built-in theme before applying overrides |
+| `theme set`    | `-a, --activate`    | Switch to the Custom theme after applying                  |
+
 ### Managing Agent Configuration
 
 Each agent (Claude Code, Codex, OpenCode, Factory Droid) can have its own configuration for custom paths, CLI arguments, environment variables, and model overrides.
+
+<Info>
+`settings agent set` writes the per-agent-type configuration store (defaults applied to newly created agents and headless CLI spawns). To change the settings of a specific existing agent shown in the Left Bar - its nudge message, model, env vars, Claude token source, and so on - use [`update-agent`](#creating-updating-and-removing-agents) instead, which writes that agent's live desktop Session.
+</Info>
 
 ```bash
 # List all agent configurations
@@ -1127,6 +1222,44 @@ maestro-cli status
 ```
 
 Returns the app version, uptime, and connection status.
+
+### Diagnosing Problems (`doctor`)
+
+When a command isn't working, `doctor` runs a checklist covering the most common causes in one shot: the desktop app reachable, the running build's version vs. this CLI's, whether the running app understands newer commands, and whether configured SSH remotes are well-formed.
+
+```bash
+maestro-cli doctor
+maestro-cli doctor --json
+```
+
+```
+  ✓ Discovery file present - port 54748
+  ✓ App process alive - pid 10510
+  ⚠ Version match - App is 0.17.1 but CLI is 0.17.2. Rebuild/restart whichever is behind.
+  ✓ WebSocket reachable
+  ✓ App handles commands
+  ✓ SSH remotes - 2 configured, all well-formed
+```
+
+The version and "App handles commands" checks catch the most common gotcha: a freshly-built CLI talking to an older desktop app that's still running. When the app is behind, new commands fail because their handlers don't exist in the running build - rebuild and restart the desktop app. The CLI surfaces this directly: a command the running app doesn't recognize fails fast with "The running Maestro app does not support the '...' command" instead of a generic timeout.
+
+### Shell Completions
+
+Generate a completion script for your shell and source it:
+
+```bash
+# zsh - add to a directory on your fpath, or source from ~/.zshrc
+maestro-cli completions zsh > ~/.maestro-cli-completion.zsh
+echo 'source ~/.maestro-cli-completion.zsh' >> ~/.zshrc
+
+# bash
+maestro-cli completions bash >> ~/.bashrc
+
+# fish
+maestro-cli completions fish > ~/.config/fish/completions/maestro-cli.fish
+```
+
+The script is generated by introspecting the live command tree, so regenerating it after a CLI upgrade picks up new commands and flags automatically. The full command list is also available as `maestro-cli reference` (Markdown or `--format json`); [docs/cli-reference.md](cli-reference.md) is generated from it via `npm run gen:cli-reference`.
 
 ## Cue Automation
 

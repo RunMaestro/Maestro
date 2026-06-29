@@ -1074,6 +1074,8 @@ export interface DirectorNotesSettings {
 	provider: ToolType;
 	/** Default lookback period in days (1-90) */
 	defaultLookbackDays: number;
+	/** Default AI Overview reading mode (Rich widget dashboard vs Plain markdown). Defaults to 'rich'. */
+	defaultMode?: 'rich' | 'plain';
 	/** Custom path to the agent binary */
 	customPath?: string;
 	/** Custom arguments for the agent */

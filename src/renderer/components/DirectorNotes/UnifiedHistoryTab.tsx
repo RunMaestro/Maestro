@@ -19,7 +19,6 @@ import {
 	HistoryStatsBar,
 	ESTIMATED_ROW_HEIGHT,
 	estimateHistoryRowHeight,
-	LOOKBACK_OPTIONS,
 } from '../History';
 import type { GraphBucket } from '../History/ActivityGraph';
 import type { HistoryStats } from '../History';
@@ -30,7 +29,7 @@ import type { PaginatedPage } from '../../hooks/history/useHistoryPagination';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import type { TabFocusHandle } from './OverviewTab';
-import { lookbackHoursToDays } from './lookback';
+import { lookbackHoursToDays, bucketCountForLookback } from './lookback';
 import { logger } from '../../utils/logger';
 import { trackShortcutUsage } from '../../utils/shortcutTracking';
 
@@ -39,16 +38,6 @@ const PAGE_SIZE = 100;
 
 /** Distance from bottom (in px) at which to trigger loading the next page */
 const SCROLL_LOAD_THRESHOLD = 500;
-
-/**
- * Resolve the bucket count for a given lookback selection. Each lookback
- * option carries its own preferred resolution (24 for short windows, 28
- * for "1 week", 30 for "1 month", etc.).
- */
-function bucketCountForLookback(hours: number | null): number {
-	const config = LOOKBACK_OPTIONS.find((o) => o.hours === hours);
-	return config?.bucketCount ?? 24;
-}
 
 interface UnifiedHistoryEntry extends HistoryEntry {
 	agentName?: string;
@@ -689,6 +678,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 						viewportRange={graphViewportRange}
 						alwaysShowViewportLabel
 						onBarClick={handleGraphBarClick}
+						activeFilters={activeFilters}
 					/>
 					{/* Entry count badge — shows window position when jumped, total otherwise */}
 					{!isLoading && totalEntries > 0 && (

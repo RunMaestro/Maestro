@@ -15,7 +15,7 @@ Maestro can update itself automatically! This feature was introduced in **v0.8.7
 
 ## v0.17.x - Maestro Cue
 
-**Latest: v0.17.1** | Released June 20, 2026
+**Latest: v0.17.2** | Released June 27, 2026
 
 # Major 0.17.x Additions
 
@@ -29,32 +29,35 @@ Maestro can update itself automatically! This feature was introduced in **v0.8.7
 
 🛠️ A vastly expanded `maestro-cli` now drives the whole running desktop app, and your agents know how to use it. That means you can just talk to an agent in plain language to create and run Auto Run playbooks, change settings, set up Maestro Cue pipelines, manage groups, agents, tabs, and themes, and much more, instead of clicking through menus yourself.
 
-## 0.17.1 Modifications
+## 0.17.2 Modifications
 
-🩹 Claude Token Source mode is far more resilient: it survives a dead stdout (EPIPE), reads large pasted images without crashing (EAGAIN), parses `/usage` panels that paint without newlines, and re-anchors limit detection to Claude's real banner. It also detects many more quota and credit-exhaustion messages, stops false-positiving on token/context/rate "limit" lines, and exits fast on a quota hit so Dynamic mode no longer stalls with "no response".
+🔑 New Claude Code agents now default to the API token source, and every existing agent has been reverted to it. The Max-plan TUI path stays available but is opt-in per agent.
 
-🔁 Desktop turns now honor your Interactive / Dynamic token-mode selection. Previously the per-agent setting was missed on desktop and silently fell through to API billing.
+🪄 The New Agent Wizard now exposes the same Interactive / API / Dynamic Claude Token Source selector as the Edit Agent modal, so wizard-created agents inherit your pick instead of silently falling through to API billing.
 
-🔓 maestro-p now clears Claude's one-time "Bypass Permissions" acceptance screen automatically instead of quitting on it the first time an agent launches.
+🧠 Plan-mode turns under the Interactive token source no longer stall and get killed at the timeout. Maestro now finalizes the turn and keeps the captured plan when the model exits plan mode. (#1117)
 
-🖥️ SSH and startup terminal tabs no longer vanish when their PTY exits.
+💬 Group Chat participants can now run their own Auto Run playbooks and documents headlessly through `maestro-cli`, with a new `run-doc` command, `--agent` lookup by name, and a `--max-wait` that matches the moderator's window so long-running turns aren't cut short.
 
-🧑‍✈️ GitHub Copilot-CLI no longer ends its turn early when you resume a session.
+🪄 Saving a Cue pipeline after only moving nodes around no longer re-runs the pipeline. Layout-only saves are now detected and skipped.
 
-🪄 Maestro Cue pipeline layouts now stay put across Arrange and Save.
+🔁 A Cue pipeline set to `max_concurrent` greater than 1 no longer overlaps a run with itself, so a slow heartbeat tick can't stack duplicate runs of the same pipeline.
 
-🖼️ Images render correctly when viewing files over SSH, and large pasted images no longer crash the driver.
+📊 `.mmd` and `.mermaid` files render as themeable, sanitized diagrams in the file preview by default, with Cmd+E to drop into source editing.
 
-🎨 Open any image in the annotation editor straight from a file-preview tab with Cmd+E, and Mermaid code fences now render as toggleable diagrams in chat.
+🔍 File preview search gains a three-way Text / Regex / Line toggle, with friendly errors on bad patterns and jump-to-line support across every preview tier.
 
-🛠️ `maestro-cli` can now configure an agent's SSH execution settings, and the process monitor shows the real remote command for SSH spawns.
+🖼️ Images from SSH-remote agents now render inline in the AI terminal, and a stray cache-key prefix that was corrupting remote file reads is fixed.
 
-⌨️ Command-K Context, Buffer, and Content actions are now tab-aware, and the thinking pill follows the active tab during forced-parallel runs.
+🔐 Tab auto-naming now inherits the same provider auth as the chat, so it no longer fails with "Not logged in" when the chat itself is signed in.
 
-🎚️ The window title bar is now themeable with a new `bgTitleBar` token.
+🍎 "Restart to Update" on macOS no longer hangs or trips the crash reporter while quitting to apply the update.
+
+🛡️ Bumped dompurify, markdown-it, and js-yaml to clear three moderate security advisories in the markdown, YAML, and AI-output rendering path.
 
 ### Previous Releases in this Series
 
+- **v0.17.1** (June 20, 2026) - Maestro Cue
 - **v0.17.0** (June 15, 2026) - Maestro Cue
 
 ---

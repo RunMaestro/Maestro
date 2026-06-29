@@ -405,6 +405,73 @@ describe('GitDiffViewer', () => {
 		});
 	});
 
+	describe('File header open-in-preview', () => {
+		it('dismisses the viewer and opens the file as a preview tab on header click', () => {
+			const onClose = vi.fn();
+			const onOpenFile = vi.fn();
+			mockParseGitDiff.mockReturnValue([
+				createMockParsedFile({ oldPath: 'src/app.ts', newPath: 'src/app.ts' }),
+			]);
+
+			render(
+				<GitDiffViewer
+					diffText="mock diff"
+					cwd="/test/project"
+					theme={mockTheme}
+					onClose={onClose}
+					onOpenFile={onOpenFile}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle('Open src/app.ts in a preview tab'));
+
+			expect(onClose).toHaveBeenCalledTimes(1);
+			expect(onOpenFile).toHaveBeenCalledWith('/test/project/src/app.ts', 'app.ts');
+		});
+
+		it('does not make a deleted file header clickable', () => {
+			const onClose = vi.fn();
+			const onOpenFile = vi.fn();
+			mockParseGitDiff.mockReturnValue([
+				createMockParsedFile({
+					oldPath: 'src/gone.ts',
+					newPath: 'src/gone.ts',
+					isDeletedFile: true,
+				}),
+			]);
+
+			render(
+				<GitDiffViewer
+					diffText="mock diff"
+					cwd="/test/project"
+					theme={mockTheme}
+					onClose={onClose}
+					onOpenFile={onOpenFile}
+				/>
+			);
+
+			expect(screen.queryByTitle(/Open .* in a preview tab/)).toBeNull();
+		});
+
+		it('renders a non-interactive file header when onOpenFile is omitted', () => {
+			const onClose = vi.fn();
+			mockParseGitDiff.mockReturnValue([
+				createMockParsedFile({ oldPath: 'src/app.ts', newPath: 'src/app.ts' }),
+			]);
+
+			render(
+				<GitDiffViewer
+					diffText="mock diff"
+					cwd="/test/project"
+					theme={mockTheme}
+					onClose={onClose}
+				/>
+			);
+
+			expect(screen.queryByTitle(/Open .* in a preview tab/)).toBeNull();
+		});
+	});
+
 	describe('Tab navigation', () => {
 		it('renders tabs for each file', () => {
 			const onClose = vi.fn();

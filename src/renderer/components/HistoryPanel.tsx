@@ -770,6 +770,7 @@ export const HistoryPanel = React.memo(
 								onBarClick={handleGraphBarClickVirtualized}
 								lookbackHours={graphLookbackHours}
 								onLookbackChange={handleLookbackChange}
+								activeFilters={activeFilters}
 							/>
 						)}
 
@@ -801,6 +802,7 @@ export const HistoryPanel = React.memo(
 							precomputedBuckets={selectedHost ? undefined : graphBuckets}
 							precomputedRange={selectedHost ? undefined : graphRange}
 							alwaysShowViewportLabel
+							activeFilters={activeFilters}
 						/>
 					)}
 				</div>

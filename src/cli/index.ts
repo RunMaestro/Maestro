@@ -19,6 +19,9 @@ import { openTerminal } from './commands/open-terminal';
 import { refreshFiles } from './commands/refresh-files';
 import { refreshAutoRun } from './commands/refresh-auto-run';
 import { status } from './commands/status';
+import { doctor } from './commands/doctor';
+import { completions } from './commands/completions';
+import { reference } from './commands/reference';
 import { autoRun } from './commands/auto-run';
 import { cueTrigger } from './commands/cue-trigger';
 import { cueList } from './commands/cue-list';
@@ -70,7 +73,9 @@ import { removePlaybook } from './commands/remove-playbook';
 import { focusAgent, switchMode } from './commands/agent-control';
 import { tabNew, tabClose, tabRename, tabStar } from './commands/tab';
 import { setTheme } from './commands/set-theme';
+import { themeShow, themeExport, themeImport, themeSet } from './commands/theme';
 import { encoreList, encoreSet } from './commands/encore';
+import { setVerbosity } from './output/verbosity';
 
 // Injected at build time by scripts/build-cli.mjs via esbuild `define`.
 // The typeof guard keeps non-esbuild execution paths (ts-node, plain tsc output) from
@@ -82,6 +87,19 @@ const cliVersion: string =
 const program = new Command();
 
 program.name('maestro-cli').description('Command-line interface for Maestro').version(cliVersion);
+
+// Global verbosity flags. `--verbose` has no short alias on purpose: several
+// subcommands already use `-v` for their own verbose option, and a global `-v`
+// would shadow them. The preAction hook below copies the parsed values into the
+// shared verbosity module before any command action runs.
+program
+	.option('-q, --quiet', 'Suppress incidental success output (errors still print)')
+	.option('--verbose', 'Print extra detail where available');
+
+program.hook('preAction', (thisCommand) => {
+	const opts = thisCommand.opts();
+	setVerbosity({ quiet: Boolean(opts.quiet), verbose: Boolean(opts.verbose) });
+});
 
 // List commands
 const list = program.command('list').description('List resources');
@@ -267,6 +285,7 @@ program
 	.description('Open a file as a preview tab in the Maestro desktop app')
 	.option('-a, --agent <id>', "Target agent (defaults to auto-detect by file path's owning agent)")
 	.option('--no-switch', "Don't switch the Maestro UI to the target agent/tab")
+	.option('--json', 'Output as JSON (for scripting)')
 	.action(openFile);
 
 // Open browser command - open a URL in a browser tab in the Maestro desktop app
@@ -274,6 +293,7 @@ program
 	.command('open-browser <url>')
 	.description('Open a URL as a browser tab in the Maestro desktop app')
 	.option('-a, --agent <id>', 'Target agent by ID (defaults to active)')
+	.option('--json', 'Output as JSON (for scripting)')
 	.action(openBrowser);
 
 // Open terminal command - open a new terminal tab in the Maestro desktop app
@@ -284,6 +304,7 @@ program
 	.option('--cwd <path>', "Working directory for the terminal (must be within the agent's cwd)")
 	.option('--shell <shell>', 'Shell binary to use (default: zsh)')
 	.option('--name <name>', 'Display name for the tab')
+	.option('--json', 'Output as JSON (for scripting)')
 	.action(openTerminal);
 
 // Refresh files command - refresh the file tree in the Maestro desktop app
@@ -291,6 +312,7 @@ program
 	.command('refresh-files')
 	.description('Refresh the file tree in the Maestro desktop app')
 	.option('-a, --agent <id>', 'Target agent by ID (defaults to active)')
+	.option('--json', 'Output as JSON (for scripting)')
 	.action(refreshFiles);
 
 // Refresh auto-run command - refresh Auto Run documents in the Maestro desktop app
@@ -298,6 +320,7 @@ program
 	.command('refresh-auto-run')
 	.description('Refresh Auto Run documents in the Maestro desktop app')
 	.option('-a, --agent <id>', 'Target agent by ID (defaults to active)')
+	.option('--json', 'Output as JSON (for scripting)')
 	.action(refreshAutoRun);
 
 // Auto-run command - configure and optionally launch an auto-run session
@@ -496,6 +519,26 @@ program
 	.description('Check if the Maestro desktop app is running and reachable')
 	.action(status);
 
+// Doctor command - diagnose connection, version skew, handler support, SSH config
+program
+	.command('doctor')
+	.description('Diagnose CLI connectivity, version skew, and configuration')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => doctor(cliVersion, options));
+
+// Completions command - emit a shell completion script (introspects the program)
+program
+	.command('completions <shell>')
+	.description('Print a shell completion script (bash, zsh, or fish)')
+	.action((shell: string) => completions(program, shell));
+
+// Reference command - emit the full command reference (introspects the program)
+program
+	.command('reference')
+	.description('Print the full command reference (Markdown, or --format json)')
+	.option('--format <format>', 'Output format: md (default) or json')
+	.action((options) => reference(program, options));
+
 // Create agent command - create a new agent in the Maestro desktop app
 program
 	.command('create-agent <name>')
@@ -597,7 +640,7 @@ program
 // refused while the agent process is alive (PTY cwd is fixed at spawn time).
 program
 	.command('update-agent <agent-id>')
-	.description("Update an existing agent's group and/or working directory")
+	.description("Update an existing agent's group, working directory, and per-agent settings")
 	.option(
 		'-g, --group <id>',
 		'Move the agent to this group (use "none" to ungroup; supports partial IDs)'
@@ -615,6 +658,35 @@ program
 		'--sync-history-to-remote <bool>',
 		'Sync history entries to .maestro/history/ on the remote host (true/false)'
 	)
+	// Editable per-agent settings (the Edit Agent modal). Pass an empty string to
+	// clear a text field (e.g. --nudge "").
+	.option('--nudge <message>', 'Nudge message appended to every message (empty string clears)')
+	.option(
+		'--new-session-message <message>',
+		'Message prefixed to the first message of new sessions (empty string clears)'
+	)
+	.option('--custom-path <path>', 'Override the agent binary path (empty string clears)')
+	.option('--custom-args <args>', 'Custom CLI arguments for the agent (empty string clears)')
+	.option(
+		'--env <KEY=VALUE>',
+		'Set an environment variable (repeatable; replaces the env map)',
+		(value: string, prev: string[]) => [...(prev ?? []), value],
+		[] as string[]
+	)
+	.option('--clear-env', 'Clear all per-agent environment variables')
+	.option('--model <model>', 'Model override (e.g. sonnet, opus; empty string clears)')
+	.option('--effort <level>', 'Effort/reasoning level override (empty string clears)')
+	.option('--context-window <size>', 'Context window size in tokens (0 or "none" clears)')
+	.option(
+		'--token-source <mode>',
+		'Claude token source: api | tui | dynamic (Claude Code agents only)'
+	)
+	.option('--maestro-p-path <path>', 'Override the maestro-p binary path (empty string clears)')
+	.option(
+		'--provider <type>',
+		'Switch the agent provider (resets tabs + clears provider config; requires --force)'
+	)
+	.option('--force', 'Confirm a destructive change (required for --provider)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(updateAgent);
 
@@ -779,6 +851,40 @@ program
 	.option('-l, --list', 'List available themes')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((nameOrId, options) => setTheme(nameOrId, options));
+
+// Theme commands - manage the user-configurable "Custom" theme palette
+// (the customThemeColors / customThemeBaseId settings). Mirrors the in-app
+// Custom Theme Builder; export files round-trip with the UI. Activate the
+// result with "set-theme custom" (or the --activate flag on import/set).
+const theme = program.command('theme').description('Manage the custom theme palette');
+
+theme
+	.command('show')
+	.description('Print the current custom theme palette and base (reads from disk)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => themeShow(options));
+
+theme
+	.command('export')
+	.description('Export the custom theme as portable JSON (stdout, or --file <path>)')
+	.option('-f, --file <path>', 'Write the theme JSON to this file instead of stdout')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => themeExport(options));
+
+theme
+	.command('import <file>')
+	.description('Import a theme JSON file, apply it live, and activate it')
+	.option('--no-activate', 'Save the palette without switching to the Custom theme')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, options) => themeImport(file, options));
+
+theme
+	.command('set [assignments...]')
+	.description('Set custom theme colors (key=value, e.g. accent=#ff0000) and/or re-base')
+	.option('-b, --base <id>', 'Initialize from a built-in theme before applying overrides')
+	.option('-a, --activate', 'Switch to the Custom theme after applying')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((assignments, options) => themeSet(assignments, options));
 
 // Encore commands - list and toggle experimental Encore features (applies live)
 const encore = program

@@ -13,6 +13,7 @@
 import { ChevronDown, Monitor, Cloud, History } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../../shared/types';
+import { formatSshTarget } from '../../../shared/formatters';
 
 export interface SshRemoteSelectorProps {
 	theme: Theme;
@@ -137,7 +138,7 @@ function SshRemoteDropdown({
 						.filter((r) => r.enabled)
 						.map((remote) => (
 							<option key={remote.id} value={remote.id}>
-								{remote.name} ({remote.host})
+								{remote.name} ({formatSshTarget(remote)})
 							</option>
 						))}
 				</select>
@@ -157,7 +158,10 @@ function SshRemoteDropdown({
 						<Cloud className="w-3 h-3" style={{ color: theme.colors.success }} />
 						<span style={{ color: theme.colors.textMain }}>
 							Agent will run on <span className="font-medium">{selectedRemote.name}</span>
-							<span style={{ color: theme.colors.textDim }}> ({selectedRemote.host})</span>
+							<span style={{ color: theme.colors.textDim }}>
+								{' '}
+								({formatSshTarget(selectedRemote)})
+							</span>
 						</span>
 					</>
 				) : (

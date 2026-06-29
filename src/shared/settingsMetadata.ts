@@ -1021,9 +1021,9 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		category: 'advanced',
 	},
 	directorNotesSettings: {
-		description: "Director's Notes settings: provider, lookback window.",
+		description: "Director's Notes settings: provider, lookback window, default reading mode.",
 		type: 'object',
-		default: { provider: 'claude-code', defaultLookbackDays: 7 },
+		default: { provider: 'claude-code', defaultLookbackDays: 7, defaultMode: 'rich' },
 		category: 'advanced',
 	},
 

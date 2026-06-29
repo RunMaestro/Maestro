@@ -22,7 +22,7 @@
  * Extracted from main/index.ts to improve code organization.
  */
 
-import { ipcMain } from 'electron';
+import { ipcMain, app } from 'electron';
 import { logger } from '../../utils/logger';
 import { WebServer } from '../../web-server';
 import type { AITabData } from '../../web-server/services/broadcastService';
@@ -64,6 +64,9 @@ function refreshCliDiscoveryFile(port: number, token: string): void {
 		token,
 		pid: process.pid,
 		startedAt: Date.now(),
+		// Stamp the running build's version so the CLI can detect version skew
+		// (e.g. a freshly-built CLI talking to an older still-running app).
+		version: app.getVersion(),
 	});
 }
 

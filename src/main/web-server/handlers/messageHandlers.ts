@@ -298,6 +298,10 @@ export interface MessageHandlerCallbacks {
 		sessionId: string,
 		sshPatch: Record<string, unknown>
 	) => Promise<{ success: boolean; error?: string }>;
+	updateSessionConfig: (
+		sessionId: string,
+		configPatch: Record<string, unknown>
+	) => Promise<{ success: boolean; error?: string }>;
 	getGitStatus: (sessionId: string) => Promise<GitStatusResult>;
 	getGitDiff: (sessionId: string, filePath?: string) => Promise<GitDiffResult>;
 	getGitBranchesForSession: (sessionId: string) => Promise<GitBranchesResult>;
@@ -606,6 +610,10 @@ export class WebSocketMessageHandler {
 
 			case 'update_session_ssh':
 				this.handleUpdateSessionSsh(client, message);
+				break;
+
+			case 'update_session_config':
+				this.handleUpdateSessionConfig(client, message);
 				break;
 
 			case 'get_groups':
@@ -2752,6 +2760,8 @@ export class WebSocketMessageHandler {
 	 */
 	private static readonly ALLOWED_SETTING_KEYS = new Set([
 		'activeThemeId',
+		'customThemeColors',
+		'customThemeBaseId',
 		'fontSize',
 		'enterToSendAI',
 		'defaultSaveToHistory',
@@ -3107,6 +3117,50 @@ export class WebSocketMessageHandler {
 			})
 			.catch((error) => {
 				this.sendError(client, `Failed to update session SSH config: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle update_session_config message - update an agent's editable
+	 * per-session config (nudge / new-session message, custom path / args / env
+	 * vars, model, effort, context window, Claude token-source tri-state). Only
+	 * the keys present in `configPatch` are applied; a key with value `null`
+	 * clears that field. These are spawn-time settings (they take effect on the
+	 * next launch), so unlike cwd/SSH the renderer applies them even while the
+	 * agent process is alive.
+	 */
+	private handleUpdateSessionConfig(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+		const configPatch = message.configPatch as Record<string, unknown> | undefined;
+
+		if (!sessionId) {
+			this.sendError(client, 'Missing sessionId');
+			return;
+		}
+
+		if (!configPatch || typeof configPatch !== 'object') {
+			this.sendError(client, 'Missing or invalid configPatch');
+			return;
+		}
+
+		if (!this.callbacks.updateSessionConfig) {
+			this.sendError(client, 'Session config updates not configured');
+			return;
+		}
+
+		this.callbacks
+			.updateSessionConfig(sessionId, configPatch)
+			.then((result) => {
+				this.send(client, {
+					type: 'update_session_config_result',
+					success: result.success,
+					error: result.error,
+					sessionId,
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				this.sendError(client, `Failed to update session config: ${error.message}`);
 			});
 	}
 

@@ -5,6 +5,8 @@ import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Diff, Hunk } from 'react-diff-view';
 import { parseGitDiff } from '../utils/gitDiffParser';
+import { getBasename } from '../../shared/formatters';
+import { GitFilePathHeader } from './GitFilePathHeader';
 import { useListNavigation } from '../hooks';
 import { generateDiffViewStyles } from '../utils/markdownConfig';
 import { useSettingsStore } from '../stores/settingsStore';
@@ -26,6 +28,12 @@ interface GitLogViewerProps {
 	theme: Theme;
 	onClose: () => void;
 	sshRemoteId?: string;
+	/**
+	 * Open a file as a preview tab. Given an absolute path and the display name.
+	 * When provided, the per-file diff headers become clickable; the viewer
+	 * dismisses itself via `onClose` first, then calls this to open the file.
+	 */
+	onOpenFile?: (absolutePath: string, fileName: string) => void;
 }
 
 export const GitLogViewer = memo(function GitLogViewer({
@@ -33,6 +41,7 @@ export const GitLogViewer = memo(function GitLogViewer({
 	theme,
 	onClose,
 	sshRemoteId,
+	onOpenFile,
 }: GitLogViewerProps) {
 	const [entries, setEntries] = useState<GitLogEntry[]>([]);
 	const [totalCommits, setTotalCommits] = useState<number | null>(null);
@@ -56,6 +65,13 @@ export const GitLogViewer = memo(function GitLogViewer({
 
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
+
+	// Dismiss the viewer and open the given repo-relative file as a preview tab.
+	const openFileInPreview = (relPath: string) => {
+		if (!onOpenFile) return;
+		onClose();
+		onOpenFile(`${cwd}/${relPath}`, getBasename(relPath));
+	};
 
 	// Load git log on mount
 	useEffect(() => {
@@ -491,16 +507,21 @@ export const GitLogViewer = memo(function GitLogViewer({
 										<style>{generateDiffViewStyles(theme, colorBlindMode)}</style>
 										{parsedDiff.map((file, fileIndex) => (
 											<div key={fileIndex} className="mb-6">
-												{/* File header */}
-												<div
-													className="mb-2 p-2 rounded font-semibold text-xs"
-													style={{
-														backgroundColor: theme.colors.bgActivity,
-														color: theme.colors.textMain,
-													}}
+												{/* File header (click to open the file as a preview tab) */}
+												<GitFilePathHeader
+													theme={theme}
+													className="mb-2"
+													onOpen={
+														onOpenFile && !file.isDeletedFile
+															? () => openFileInPreview(file.newPath)
+															: undefined
+													}
+													title={
+														file.isDeletedFile ? undefined : `Open ${file.newPath} in a preview tab`
+													}
 												>
 													{file.newPath}
-												</div>
+												</GitFilePathHeader>
 
 												{/* Render hunks */}
 												{file.parsedDiff.map((parsedFile, pIndex) => (

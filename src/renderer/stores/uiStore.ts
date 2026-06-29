@@ -86,6 +86,11 @@ export interface UIStoreState {
 	// Auto-follow active task during batch runs
 	autoFollowEnabled: boolean;
 
+	// Whether a performance-profiling recording is active. Drives the animated
+	// wand indicator in the Left Bar header. Source of truth is the main process
+	// (contentTracing singleton); the command palette reconciles this on open.
+	profilingActive: boolean;
+
 	// Last-selected Usage Dashboard tab. In-memory only: survives closing and
 	// reopening the dashboard within a session, resets to 'overview' on restart.
 	usageDashboardViewMode: UsageDashboardViewMode;
@@ -173,6 +178,9 @@ export interface UIStoreActions {
 
 	// Auto-follow
 	setAutoFollowEnabled: (enabled: boolean | ((prev: boolean) => boolean)) => void;
+
+	// Performance-profiling indicator (drives the wand animation)
+	setProfilingActive: (active: boolean | ((prev: boolean) => boolean)) => void;
 
 	// Usage Dashboard last-selected tab
 	setUsageDashboardViewMode: (
@@ -268,6 +276,7 @@ export const useUIStore = create<UIStore>()((set) => ({
 	editingGroupId: null,
 	editingSessionId: null,
 	autoFollowEnabled: false,
+	profilingActive: false,
 	usageDashboardViewMode: 'overview',
 	hiddenQuotaAccounts: {},
 	usageRefreshIntervals: {},
@@ -365,6 +374,8 @@ export const useUIStore = create<UIStore>()((set) => ({
 	setEditingSessionId: (v) => set((s) => ({ editingSessionId: resolve(v, s.editingSessionId) })),
 
 	setAutoFollowEnabled: (v) => set((s) => ({ autoFollowEnabled: resolve(v, s.autoFollowEnabled) })),
+
+	setProfilingActive: (v) => set((s) => ({ profilingActive: resolve(v, s.profilingActive) })),
 
 	setUsageDashboardViewMode: (v) =>
 		set((s) => ({ usageDashboardViewMode: resolve(v, s.usageDashboardViewMode) })),

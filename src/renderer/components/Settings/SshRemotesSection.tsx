@@ -34,6 +34,7 @@ import { GhostIconButton } from '../ui/GhostIconButton';
 import { Spinner } from '../ui/Spinner';
 import type { Theme } from '../../types';
 import type { SshRemoteConfig } from '../../../shared/types';
+import { formatSshTarget } from '../../../shared/formatters';
 import { useSshRemotes } from '../../hooks';
 import { SshRemoteModal } from './SshRemoteModal';
 import { logger } from '../../utils/logger';
@@ -239,7 +240,7 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 													className="text-xs font-mono truncate"
 													style={{ color: theme.colors.textDim }}
 												>
-													{config.username}@{config.host}:{config.port}
+													{formatSshTarget(config)}
 												</div>
 
 												{/* Test Result */}

@@ -8,6 +8,7 @@
 import { ipcMain, dialog, BrowserWindow, app } from 'electron';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import fs from 'fs';
 import path from 'path';
 import Store from 'electron-store';
 import { logger } from '../../utils/logger';
@@ -18,6 +19,12 @@ import {
 	DebugPackageOptions,
 	DebugPackageDependencies,
 } from '../../debug-package';
+import {
+	startProfiling,
+	stopProfiling,
+	getProfilingStatus,
+	finalizeCapture,
+} from '../../profiling';
 import { AgentDetector } from '../../agents';
 import { ProcessManager } from '../../process-manager';
 import { WebServer } from '../../web-server';
@@ -209,6 +216,88 @@ export function registerDebugHandlers(deps: DebugHandlerDependencies): void {
 				electronProcesses,
 				managedProcesses: managedWithMemory,
 			};
+		})
+	);
+
+	// --- Performance profiling (Chromium contentTracing) ---------------------
+	// Off by default with zero steady-state cost: Chromium's trace points are
+	// dormant until a recording enables their category.
+
+	// Whether a recording is currently in flight (drives the palette toggle).
+	ipcMain.handle(
+		'debug:getProfilingStatus',
+		createIpcHandler(handlerOpts('getProfilingStatus', false), async () => {
+			const s = getProfilingStatus();
+			return {
+				active: s.active,
+				startedAt: s.startedAt,
+				elapsedMs: s.elapsedMs,
+				categories: s.categories,
+			};
+		})
+	);
+
+	// Begin capturing a trace across all Electron processes.
+	ipcMain.handle(
+		'debug:startProfiling',
+		createIpcHandler(handlerOpts('startProfiling'), async () => {
+			const s = await startProfiling();
+			return {
+				active: s.active,
+				startedAt: s.startedAt,
+				elapsedMs: s.elapsedMs,
+				categories: s.categories,
+			};
+		})
+	);
+
+	// Stop the recording, then prompt for a save location and write the bundle
+	// (raw trace + capture metadata) as a compressed .zip. Analysis is a
+	// development-time activity - see scripts/analyze-perf-trace.mjs.
+	ipcMain.handle(
+		'debug:stopProfiling',
+		createIpcHandler(handlerOpts('stopProfiling'), async () => {
+			const mainWindow = getMainWindow();
+			if (!mainWindow) {
+				throw new Error('No main window available');
+			}
+
+			const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+			// Flush the trace to a temp file first so recording (and its overhead)
+			// ends immediately, before the user fiddles with the save dialog.
+			const tracePath = path.join(app.getPath('temp'), `maestro-trace-${timestamp}.json`);
+			const { durationMs, categories } = await stopProfiling(tracePath);
+
+			const result = await dialog.showSaveDialog(mainWindow, {
+				title: 'Save Performance Profile',
+				defaultPath: path.join(app.getPath('desktop'), `maestro-profile-${timestamp}.zip`),
+				filters: [{ name: 'Zip Files', extensions: ['zip'] }],
+			});
+
+			if (result.canceled || !result.filePath) {
+				await fs.promises.unlink(tracePath).catch(() => {});
+				return {
+					path: null,
+					cancelled: true,
+					bundleSizeBytes: 0,
+					traceSizeBytes: 0,
+					durationMs,
+				};
+			}
+
+			try {
+				const finalized = await finalizeCapture(tracePath, result.filePath, durationMs, categories);
+				logger.info(`${LOG_CONTEXT} Performance profile saved: ${finalized.path}`);
+				return {
+					path: finalized.path,
+					cancelled: false,
+					bundleSizeBytes: finalized.bundleSizeBytes,
+					traceSizeBytes: finalized.traceSizeBytes,
+					durationMs,
+				};
+			} finally {
+				await fs.promises.unlink(tracePath).catch(() => {});
+			}
 		})
 	);
 

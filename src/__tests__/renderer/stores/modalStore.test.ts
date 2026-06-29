@@ -434,7 +434,6 @@ describe('modalStore', () => {
 				'gitDiff',
 				'gitLog',
 				'tour',
-				'debugWizard',
 				'debugPackage',
 				'playground',
 				'logViewer',

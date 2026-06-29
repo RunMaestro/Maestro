@@ -33,13 +33,14 @@ export const MarkdownImage = React.memo(function MarkdownImage({
 	const [loading, setLoading] = useState(true);
 	const isRemoteUrl = src?.startsWith('http://') || src?.startsWith('https://');
 
-	// Compute the cache key based on resolved path
-	// Namespace cache keys by sshRemoteId so the same path on different remotes doesn't collide
-	const cacheKey = useMemo(() => {
+	// Resolve the image's source to a clean, absolute path (no ssh: namespacing).
+	// This is what actually gets read from disk / fetched over SSH, so it must
+	// NOT carry the cache-key prefix - otherwise the literal `ssh:<id>:` string
+	// leaks into the remote `base64 < <path>` command and the shell can't find it.
+	const resolvedPath = useMemo(() => {
 		if (!src) return null;
-		const prefix = sshRemoteId ? `ssh:${sshRemoteId}:` : '';
 		if (src.startsWith('data:')) return src; // data URLs are self-contained
-		if (isRemoteUrl) return `${prefix}${src}`;
+		if (isRemoteUrl) return src;
 
 		let decodedSrc = src;
 		try {
@@ -49,10 +50,20 @@ export const MarkdownImage = React.memo(function MarkdownImage({
 		}
 
 		if (isFromFileTree && projectRoot) {
-			return `${prefix}${projectRoot}/${decodedSrc}`;
+			return `${projectRoot}/${decodedSrc}`;
 		}
-		return `${prefix}${resolveImagePath(decodedSrc, markdownFilePath)}`;
-	}, [src, markdownFilePath, isFromFileTree, projectRoot, isRemoteUrl, sshRemoteId]);
+		return resolveImagePath(decodedSrc, markdownFilePath);
+	}, [src, markdownFilePath, isFromFileTree, projectRoot, isRemoteUrl]);
+
+	// Cache key namespaces the resolved path by sshRemoteId so the same path on
+	// different remotes (or local vs remote) doesn't collide in the shared cache.
+	// Used ONLY as a map key - never passed to readFile.
+	const cacheKey = useMemo(() => {
+		if (!resolvedPath) return null;
+		if (resolvedPath.startsWith('data:')) return resolvedPath;
+		const prefix = sshRemoteId ? `ssh:${sshRemoteId}:` : '';
+		return `${prefix}${resolvedPath}`;
+	}, [resolvedPath, sshRemoteId]);
 
 	useEffect(() => {
 		setError(null);
@@ -92,10 +103,11 @@ export const MarkdownImage = React.memo(function MarkdownImage({
 			return;
 		}
 
-		// For local files, load via IPC (supports SSH remote)
+		// For local files, load via IPC (supports SSH remote). Pass the clean
+		// resolved path - the cache key's ssh: prefix must never reach the shell.
 		setLoading(true);
 		window.maestro.fs
-			.readFile(cacheKey, sshRemoteId)
+			.readFile(resolvedPath ?? cacheKey, sshRemoteId)
 			.then((result) => {
 				if (result && result.startsWith('data:')) {
 					setDataUrl(result);
@@ -109,7 +121,7 @@ export const MarkdownImage = React.memo(function MarkdownImage({
 				setError(`Failed to load image: ${err.message || 'Unknown error'}`);
 				setLoading(false);
 			});
-	}, [src, cacheKey, showRemoteImages, isRemoteUrl, sshRemoteId]);
+	}, [src, cacheKey, resolvedPath, showRemoteImages, isRemoteUrl, sshRemoteId]);
 
 	// Handle image load to get dimensions and update cache
 	const handleImageLoad = useCallback(

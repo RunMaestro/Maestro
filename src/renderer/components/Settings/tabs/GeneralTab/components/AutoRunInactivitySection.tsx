@@ -1,0 +1,41 @@
+import { Clock } from 'lucide-react';
+import type { Theme } from '../../../../../types';
+import { ToggleButtonGroup } from '../../../../ToggleButtonGroup';
+
+interface AutoRunInactivitySectionProps {
+	theme: Theme;
+	autoRunInactivityTimeoutMin: number;
+	setAutoRunInactivityTimeoutMin: (minutes: number) => void;
+}
+
+export function AutoRunInactivitySection({
+	theme,
+	autoRunInactivityTimeoutMin,
+	setAutoRunInactivityTimeoutMin,
+}: AutoRunInactivitySectionProps) {
+	return (
+		<div data-setting-id="general-autorun-inactivity-timeout">
+			<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
+				<Clock className="w-3 h-3" />
+				Auto Run Inactivity Timeout
+			</div>
+			<ToggleButtonGroup
+				options={[
+					{ value: 30, label: '30 min' },
+					{ value: 60, label: '1 hr' },
+					{ value: 240, label: '4 hr' },
+					{ value: 480, label: '8 hr' },
+					{ value: 0, label: 'Unlimited' },
+				]}
+				value={autoRunInactivityTimeoutMin}
+				onChange={setAutoRunInactivityTimeoutMin}
+				theme={theme}
+			/>
+			<p className="text-xs opacity-50 mt-2">
+				Auto Run force-kills a task if the agent produces no output for this long. Increase for long
+				refactors, heavy test runs, or web-research tasks driving a browser. Choose Unlimited to
+				disable the watchdog entirely.
+			</p>
+		</div>
+	);
+}

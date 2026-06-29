@@ -549,6 +549,17 @@ interface MaestroAPI {
 			responseChannel: string,
 			result: { success: boolean; error?: string }
 		) => void;
+		onRemoteUpdateSessionConfig: (
+			callback: (
+				sessionId: string,
+				configPatch: Record<string, unknown>,
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendRemoteUpdateSessionConfigResponse: (
+			responseChannel: string,
+			result: { success: boolean; error?: string }
+		) => void;
 		onRemoteCreateGroup: (
 			callback: (name: string, emoji: string | undefined, responseChannel: string) => void
 		) => () => void;
@@ -2201,6 +2212,32 @@ interface MaestroAPI {
 				rssBytes?: number;
 			}>;
 		}>;
+		// Performance profiling (Chromium contentTracing)
+		getProfilingStatus: () => Promise<{
+			success: boolean;
+			active: boolean;
+			startedAt: number;
+			elapsedMs: number;
+			categories: string[];
+			error?: string;
+		}>;
+		startProfiling: () => Promise<{
+			success: boolean;
+			active: boolean;
+			startedAt: number;
+			elapsedMs: number;
+			categories: string[];
+			error?: string;
+		}>;
+		stopProfiling: () => Promise<{
+			success: boolean;
+			path: string | null;
+			cancelled: boolean;
+			bundleSizeBytes: number;
+			traceSizeBytes: number;
+			durationMs: number;
+			error?: string;
+		}>;
 	};
 	// Sync API (custom storage location)
 	sync: {
@@ -3366,6 +3403,33 @@ interface MaestroAPI {
 				filter?: 'AUTO' | 'USER' | 'CUE' | Array<'AUTO' | 'USER' | 'CUE'> | null;
 			}
 		) => Promise<number>;
+		/**
+		 * Deterministic Rich Mode stats computed in the main process over
+		 * history entries (never inferred by the AI synopsis).
+		 */
+		getRichOverviewStats: (options: { lookbackDays: number; bucketCount?: number }) => Promise<{
+			totalEntries: number;
+			agentCount: number;
+			sessionCount: number;
+			autoCount: number;
+			userCount: number;
+			cueCount: number;
+			successCount: number;
+			failureCount: number;
+			successRate: number;
+			totalElapsedMs: number;
+			avgElapsedMs: number;
+			timelineBuckets: Array<{ startTime: number; auto: number; user: number; cue: number }>;
+			perAgent: Array<{
+				sessionId: string;
+				agentName: string;
+				entryCount: number;
+				successCount: number;
+				failureCount: number;
+			}>;
+			lookbackDays: number;
+			generatedAt: number;
+		}>;
 		generateSynopsis: (options: {
 			lookbackDays: number;
 			provider: string;
@@ -3382,6 +3446,10 @@ interface MaestroAPI {
 				durationMs: number;
 			};
 			error?: string;
+			/** Parsed structured narrative for Rich Mode (present only on clean parse). */
+			narrative?: import('../shared/directorNotesNarrative').DirectorNotesNarrative;
+			/** Set when the raw synopsis could not be parsed into a structured narrative. */
+			narrativeError?: string;
 		}>;
 		/** Subscribe to synopsis generation progress updates. Returns cleanup function. */
 		onSynopsisProgress: (

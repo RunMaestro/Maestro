@@ -62,6 +62,7 @@ import type {
 	RenameSessionCallback,
 	UpdateSessionCwdCallback,
 	UpdateSessionSshCallback,
+	UpdateSessionConfigCallback,
 	WebSettings,
 	SettingValue,
 	GroupData,
@@ -169,6 +170,7 @@ export interface WebServerCallbacks {
 	renameSession: RenameSessionCallback | null;
 	updateSessionCwd: UpdateSessionCwdCallback | null;
 	updateSessionSsh: UpdateSessionSshCallback | null;
+	updateSessionConfig: UpdateSessionConfigCallback | null;
 	getGitStatus: GetGitStatusCallback | null;
 	getGitDiff: GetGitDiffCallback | null;
 	getGitBranchesForSession: GetGitBranchesForSessionCallback | null;
@@ -252,6 +254,7 @@ export class CallbackRegistry {
 		renameSession: null,
 		updateSessionCwd: null,
 		updateSessionSsh: null,
+		updateSessionConfig: null,
 		getGitStatus: null,
 		getGitDiff: null,
 		getGitBranchesForSession: null,
@@ -614,6 +617,16 @@ export class CallbackRegistry {
 			return { success: false, error: 'Session SSH updates not configured' };
 		}
 		return this.callbacks.updateSessionSsh(sessionId, sshPatch);
+	}
+
+	async updateSessionConfig(
+		sessionId: string,
+		configPatch: Record<string, unknown>
+	): Promise<{ success: boolean; error?: string }> {
+		if (!this.callbacks.updateSessionConfig) {
+			return { success: false, error: 'Session config updates not configured' };
+		}
+		return this.callbacks.updateSessionConfig(sessionId, configPatch);
 	}
 
 	async getGitStatus(sessionId: string): Promise<GitStatusResult> {
@@ -1006,6 +1019,10 @@ export class CallbackRegistry {
 
 	setUpdateSessionSshCallback(callback: UpdateSessionSshCallback): void {
 		this.callbacks.updateSessionSsh = callback;
+	}
+
+	setUpdateSessionConfigCallback(callback: UpdateSessionConfigCallback): void {
+		this.callbacks.updateSessionConfig = callback;
 	}
 
 	setGetGitStatusCallback(callback: GetGitStatusCallback): void {

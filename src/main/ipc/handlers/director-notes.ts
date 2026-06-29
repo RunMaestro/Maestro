@@ -24,6 +24,10 @@ import {
 } from '../../utils/ipcHandler';
 import { groomContext } from '../../utils/context-groomer';
 import { buildDirectorNotesSynopsisPrompt } from '../../utils/director-notes-prompt';
+import {
+	parseDirectorNotesNarrative,
+	type DirectorNotesNarrative,
+} from '../../../shared/directorNotesNarrative';
 import { getPrompt } from '../../prompt-manager';
 import type { ProcessManager } from '../../process-manager';
 import type { AgentDetector } from '../../agents';
@@ -144,6 +148,55 @@ export interface UnifiedHistoryStats {
 	totalCount: number; // Total entries (autoCount + userCount + cueCount)
 }
 
+/** Options for the deterministic Rich Overview stats IPC */
+export interface RichOverviewStatsOptions {
+	/** Lookback window in days; <= 0 means "all time" (mirrors getUnifiedHistory). */
+	lookbackDays: number;
+	/** Number of timeline buckets to compute (default 24). */
+	bucketCount?: number;
+}
+
+/** One activity time-slice in the Rich Overview timeline, with its start time. */
+export interface RichTimelineBucket {
+	startTime: number;
+	auto: number;
+	user: number;
+	cue: number;
+}
+
+/** Per-agent activity rollup for the Rich Overview, sorted by entryCount desc. */
+export interface RichAgentStat {
+	sessionId: string;
+	agentName: string;
+	entryCount: number;
+	successCount: number;
+	failureCount: number;
+}
+
+/**
+ * Fully deterministic stats for Director's Notes Rich Mode. Every field is
+ * computed in the main process from history entries so the Rich widgets never
+ * depend on the AI synopsis for a number. Additive: separate from SynopsisStats
+ * and UnifiedHistoryStats, which keep their existing shapes.
+ */
+export interface RichOverviewStats {
+	totalEntries: number;
+	agentCount: number; // Distinct Maestro agents with entries in the window
+	sessionCount: number; // Distinct provider sessions across all agents
+	autoCount: number;
+	userCount: number;
+	cueCount: number;
+	successCount: number; // Entries with success === true
+	failureCount: number; // Entries with success === false (missing success is neither)
+	successRate: number; // successCount / (successCount + failureCount); 0 when no outcomes
+	totalElapsedMs: number; // Summed entry elapsedTimeMs across the window
+	avgElapsedMs: number; // totalElapsedMs / entries-with-timing; 0 when none
+	timelineBuckets: RichTimelineBucket[];
+	perAgent: RichAgentStat[];
+	lookbackDays: number;
+	generatedAt: number; // Unix ms timestamp of computation
+}
+
 export interface SynopsisOptions {
 	lookbackDays: number;
 	provider: ToolType;
@@ -164,6 +217,19 @@ export interface SynopsisResult {
 	generatedAt?: number; // Unix ms timestamp of when the synopsis was generated
 	stats?: SynopsisStats;
 	error?: string;
+	/**
+	 * Parsed structured narrative for Rich Mode. Present only when the raw
+	 * `synopsis` parsed cleanly. Plain Mode and copy/save never read this - they
+	 * use `synopsis` verbatim.
+	 */
+	narrative?: DirectorNotesNarrative;
+	/**
+	 * Set when the raw `synopsis` could NOT be parsed into a structured
+	 * narrative. The synopsis call still succeeds (raw output is preserved) so
+	 * the renderer can show an overt failure banner while keeping the raw text
+	 * reachable. Never a reason to fail the whole call.
+	 */
+	narrativeError?: string;
 }
 
 /**
@@ -474,6 +540,132 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 		)
 	);
 
+	// Deterministic Rich Mode stats: every number the Rich widgets render is
+	// computed here over the raw history entries, never inferred by the AI
+	// synopsis. Mirrors getUnifiedHistory's lookback cutoff and reuses
+	// buildBucketAggregate for the timeline so there is a single bucketer.
+	ipcMain.handle(
+		'director-notes:getRichOverviewStats',
+		withIpcErrorLogging(
+			handlerOpts('getRichOverviewStats'),
+			async (options: RichOverviewStatsOptions): Promise<RichOverviewStats> => {
+				const { lookbackDays } = options;
+				const bucketCount = Math.max(1, (options.bucketCount ?? 24) | 0);
+				const now = Date.now();
+				// lookbackDays <= 0 means "all time" — no cutoff (matches getUnifiedHistory).
+				const cutoffTime = lookbackDays > 0 ? now - lookbackDays * 24 * 60 * 60 * 1000 : 0;
+				const lookbackMs = lookbackDays > 0 ? lookbackDays * 24 * 60 * 60 * 1000 : null;
+
+				const sessionIds = await historyManager.listSessionsWithHistory();
+				const sessionNameMap = buildSessionNameMap();
+
+				// Parallel reads — independent files.
+				const sessionEntries = await Promise.all(
+					sessionIds.map((sid) => historyManager.getEntries(sid))
+				);
+
+				const windowEntries: HistoryEntry[] = [];
+				const agentSet = new Set<string>();
+				const providerSessionSet = new Set<string>();
+				let autoCount = 0;
+				let userCount = 0;
+				let cueCount = 0;
+				let successCount = 0;
+				let failureCount = 0;
+				let totalElapsedMs = 0;
+				let elapsedSampleCount = 0;
+				const perAgentMap = new Map<string, RichAgentStat>();
+
+				for (let i = 0; i < sessionIds.length; i++) {
+					const sid = sessionIds[i];
+					const entries = sessionEntries[i];
+					for (const entry of entries) {
+						if (cutoffTime > 0 && entry.timestamp < cutoffTime) continue;
+
+						windowEntries.push(entry);
+						agentSet.add(sid);
+						if (entry.agentSessionId) providerSessionSet.add(entry.agentSessionId);
+
+						if (entry.type === 'AUTO') autoCount++;
+						else if (entry.type === 'USER') userCount++;
+						else if (entry.type === 'CUE') cueCount++;
+
+						// Only explicit booleans count; a missing success is neither.
+						if (entry.success === true) successCount++;
+						else if (entry.success === false) failureCount++;
+
+						if (typeof entry.elapsedTimeMs === 'number') {
+							totalElapsedMs += entry.elapsedTimeMs;
+							elapsedSampleCount++;
+						}
+
+						let agentStat = perAgentMap.get(sid);
+						if (!agentStat) {
+							agentStat = {
+								sessionId: sid,
+								agentName: sessionNameMap.get(sid) ?? sid,
+								entryCount: 0,
+								successCount: 0,
+								failureCount: 0,
+							};
+							perAgentMap.set(sid, agentStat);
+						}
+						agentStat.entryCount++;
+						if (entry.success === true) agentStat.successCount++;
+						else if (entry.success === false) agentStat.failureCount++;
+					}
+				}
+
+				// Reuse the shared bucketer for the timeline; derive each bucket's
+				// startTime from the aggregate window endpoints. With lookbackMs set,
+				// the window is [now - lookbackMs, now]; for "all time" it spans the
+				// entries' [earliest, latest].
+				const agg = buildBucketAggregate(windowEntries, bucketCount, {
+					lookbackMs,
+					endTime: now,
+				});
+				const bucketSpan = (agg.latestTimestamp - agg.earliestTimestamp) / bucketCount;
+				const timelineBuckets: RichTimelineBucket[] = agg.buckets.map((b, i) => ({
+					startTime: Math.round(agg.earliestTimestamp + i * bucketSpan),
+					auto: b.auto,
+					user: b.user,
+					cue: b.cue,
+				}));
+
+				const perAgent = Array.from(perAgentMap.values()).sort(
+					(a, b) => b.entryCount - a.entryCount
+				);
+
+				const outcomeTotal = successCount + failureCount;
+				const successRate = outcomeTotal > 0 ? successCount / outcomeTotal : 0;
+				const avgElapsedMs = elapsedSampleCount > 0 ? totalElapsedMs / elapsedSampleCount : 0;
+
+				logger.debug(
+					`Rich overview stats: ${windowEntries.length} entries across ${agentSet.size} agents (lookback=${lookbackDays}d)`,
+					LOG_CONTEXT
+				);
+
+				return {
+					totalEntries: windowEntries.length,
+					agentCount: agentSet.size,
+					sessionCount: providerSessionSet.size,
+					autoCount,
+					userCount,
+					cueCount,
+					successCount,
+					failureCount,
+					successRate,
+					totalElapsedMs,
+					avgElapsedMs,
+					timelineBuckets,
+					perAgent,
+					lookbackDays,
+					generatedAt: now,
+				};
+			}
+		)
+	);
+
 	// Generate AI synopsis via batch-mode agent
 	ipcMain.handle(
 		'director-notes:generateSynopsis',
@@ -570,6 +762,19 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 						completionReason: result.completionReason,
 					});
 
+					// Parse the raw output into the structured narrative for Rich Mode.
+					// `synopsis` stays the verbatim raw string (Plain Mode + copy/save
+					// depend on that). A parse failure is NOT a synopsis failure: we
+					// still return success with the raw text and a populated
+					// `narrativeError` so the renderer can show an overt error while
+					// keeping the raw output reachable.
+					const parsed = parseDirectorNotesNarrative(synopsis);
+					if (!parsed.ok) {
+						logger.warn('Synopsis narrative parse failed', LOG_CONTEXT, {
+							narrativeError: parsed.error,
+						});
+					}
+
 					return {
 						success: true,
 						synopsis,
@@ -579,6 +784,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 							entryCount,
 							durationMs: result.durationMs,
 						},
+						...(parsed.ok ? { narrative: parsed.narrative } : { narrativeError: parsed.error }),
 					};
 				} catch (err) {
 					const errorMsg = err instanceof Error ? err.message : String(err);

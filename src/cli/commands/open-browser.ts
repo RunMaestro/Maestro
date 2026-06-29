@@ -5,6 +5,7 @@ import { resolveAgentId } from '../services/storage';
 
 interface OpenBrowserOptions {
 	agent?: string;
+	json?: boolean;
 }
 
 export async function openBrowser(url: string, options: OpenBrowserOptions): Promise<void> {
@@ -62,13 +63,19 @@ export async function openBrowser(url: string, options: OpenBrowserOptions): Pro
 		});
 
 		if (result.success) {
-			console.log(`Opened ${parsed.toString()} in Maestro`);
+			if (options.json)
+				console.log(JSON.stringify({ success: true, sessionId, url: parsed.toString() }));
+			else console.log(`Opened ${parsed.toString()} in Maestro`);
 		} else {
-			console.error(`Error: ${result.error || 'Failed to open browser tab'}`);
+			const error = result.error || 'Failed to open browser tab';
+			if (options.json) console.log(JSON.stringify({ success: false, error }));
+			else console.error(`Error: ${error}`);
 			process.exit(1);
 		}
 	} catch (error) {
-		console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+		const msg = error instanceof Error ? error.message : String(error);
+		if (options.json) console.log(JSON.stringify({ success: false, error: msg }));
+		else console.error(`Error: ${msg}`);
 		process.exit(1);
 	}
 }

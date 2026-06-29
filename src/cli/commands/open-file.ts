@@ -9,6 +9,7 @@ import { getSessionById, getSessionHistoryMtimeMs, readSessions } from '../servi
 interface OpenFileOptions {
 	agent?: string;
 	switch?: boolean;
+	json?: boolean;
 }
 
 interface ResolvedTarget {
@@ -40,13 +41,25 @@ export async function openFile(filePath: string, options: OpenFileOptions): Prom
 		});
 
 		if (result.success) {
-			console.log(`Opened ${path.basename(target.absolutePath)} in Maestro`);
+			if (options.json)
+				console.log(
+					JSON.stringify({
+						success: true,
+						sessionId: target.sessionId,
+						path: target.absolutePath,
+					})
+				);
+			else console.log(`Opened ${path.basename(target.absolutePath)} in Maestro`);
 		} else {
-			console.error(`Error: ${result.error || 'Failed to open file'}`);
+			const error = result.error || 'Failed to open file';
+			if (options.json) console.log(JSON.stringify({ success: false, error }));
+			else console.error(`Error: ${error}`);
 			process.exit(1);
 		}
 	} catch (error) {
-		console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+		const msg = error instanceof Error ? error.message : String(error);
+		if (options.json) console.log(JSON.stringify({ success: false, error: msg }));
+		else console.error(`Error: ${msg}`);
 		process.exit(1);
 	}
 }

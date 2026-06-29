@@ -280,11 +280,16 @@ Both commands accept `--variant` (toast: `--type`) as a deprecated alias for cal
 
 Prefer toast for anything the user should be able to act on after the fact; prefer flash for fire-and-forget acknowledgement of an action they just took. Do not fire a flash from a long-running background task - by the time it appears the user is no longer looking at the screen. Reach for `--dismissible` only when the message is genuinely critical - every sticky toast is a tiny piece of homework you're handing the user.
 
-### Status
+### Status and Diagnostics
 
 ```bash
 {{MAESTRO_CLI_PATH}} status
+{{MAESTRO_CLI_PATH}} doctor [--json]          # checklist: reachability, version skew, handler support, SSH config
+{{MAESTRO_CLI_PATH}} completions <bash|zsh|fish>   # print a shell completion script
+{{MAESTRO_CLI_PATH}} reference [--format md|json]  # full command reference (introspected; never drifts)
 ```
+
+If a write command fails with "does not support the '...' command", the running desktop app is an older build than the CLI - tell the user to rebuild and restart the app. `doctor` surfaces this directly. Global flags `-q, --quiet` and `--verbose` work on every command; exit codes are standardized (0 ok, 2 invalid usage, 3 app not running, 4 unsupported command, 5 timeout).
 
 ### Usage Stats (introspect the Usage Dashboard)
 
@@ -325,6 +330,17 @@ Lifecycle management of Maestro agents and remote-execution targets.
 {{MAESTRO_CLI_PATH}} focus-agent <agent-id> [--tab <tab-id>] [--json]   # select/focus the agent in the UI
 {{MAESTRO_CLI_PATH}} switch-mode <agent-id> <ai|terminal> [--json]
 
+# Update a live agent's settings (the Edit Agent modal). Reads back via "show agent --json".
+# Group/cwd/SSH are refused while the agent process is running; the rest apply on next spawn.
+# Pass an empty string ("") to clear a text field; --token-source is Claude Code only.
+{{MAESTRO_CLI_PATH}} update-agent <agent-id> [-g, --group <id|none>] [-d, --cwd <path>] \
+    [--ssh-remote <id|none>] [--ssh-cwd <path>] [--sync-history-to-remote <bool>] \
+    [--nudge <message>] [--new-session-message <message>] [--custom-path <path>] \
+    [--custom-args <args>] [--env KEY=VALUE]... [--clear-env] [--model <model>] \
+    [--effort <level>] [--context-window <size|none>] \
+    [--token-source <api|tui|dynamic>] [--maestro-p-path <path>] \
+    [--provider <type> --force] [--json]   # --provider switches provider (destructive: resets tabs/config; needs --force, used alone)
+
 # Groups (use the returned group ID with create-agent -g / update-agent --group)
 {{MAESTRO_CLI_PATH}} create-group <name> [-e, --emoji <emoji>] [--json]
 {{MAESTRO_CLI_PATH}} remove-group <group-id> [-f, --force] [--json]   # agents inside are ungrouped, not deleted; --force required if non-empty
@@ -341,6 +357,12 @@ Lifecycle management of Maestro agents and remote-execution targets.
 {{MAESTRO_CLI_PATH}} set-theme <name|id> [--json]      # or: set-theme --list
 {{MAESTRO_CLI_PATH}} encore list [--json]
 {{MAESTRO_CLI_PATH}} encore enable|disable <feature>   # directorNotes, usageStats, symphony, maestroCue
+
+# Custom theme palette (the in-app Custom Theme Builder). Activate with "set-theme custom".
+{{MAESTRO_CLI_PATH}} theme show [--json]                          # current palette + base (reads disk)
+{{MAESTRO_CLI_PATH}} theme export [-f, --file <path>] [--json]    # portable JSON (UI-compatible); stdout if no --file
+{{MAESTRO_CLI_PATH}} theme import <file> [--no-activate] [--json] # validate, apply live, activate
+{{MAESTRO_CLI_PATH}} theme set <key=value>... [-b, --base <id>] [-a, --activate] [--json]  # e.g. accent=#ff0000
 
 # SSH remotes (used by agents that execute on a remote host)
 {{MAESTRO_CLI_PATH}} list ssh-remotes [--json]

@@ -129,7 +129,7 @@ describe('searchableSettings', () => {
 		// Each query below is a string a user would naturally type after seeing it
 		// rendered in the Settings UI (section headings, sub-headings, button
 		// labels). When you add a new setting, add the visible strings here so
-		// they remain findable — keyword drift from UI text is silent otherwise.
+		// they remain findable - keyword drift from UI text is silent otherwise.
 		it.each([
 			// General tab
 			['Auto Run Inactivity Timeout', 'general-autorun-inactivity-timeout'],
@@ -194,9 +194,13 @@ describe('searchableSettings', () => {
 			// Encore tab
 			['lookback', 'encore-usage-stats'],
 			['coding activity', 'encore-usage-stats'],
+			['wakatime', 'encore-usage-stats'],
+			['registry sources', 'encore-symphony'],
 			['github pr', 'encore-cue'],
 			['cron', 'encore-cue'],
+			['global cue settings', 'encore-cue'],
 			['playbook registry', 'encore-symphony'],
+			['synopsis provider', 'encore-director-notes'],
 
 			// Prompts tab
 			['wizard prompt', 'prompts-editor'],

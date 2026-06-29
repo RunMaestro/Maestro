@@ -12,6 +12,7 @@ vi.mock('../../../cli/services/maestro-client', () => ({
 vi.mock('../../../cli/services/storage', () => ({
 	resolveAgentId: vi.fn(),
 	resolveGroupId: vi.fn(),
+	getSessionById: vi.fn(),
 }));
 
 vi.mock('../../../cli/output/formatter', () => ({
@@ -21,7 +22,7 @@ vi.mock('../../../cli/output/formatter', () => ({
 
 import { updateAgent } from '../../../cli/commands/update-agent';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
-import { resolveAgentId, resolveGroupId } from '../../../cli/services/storage';
+import { resolveAgentId, resolveGroupId, getSessionById } from '../../../cli/services/storage';
 import { formatError, formatSuccess } from '../../../cli/output/formatter';
 
 describe('update-agent command', () => {
@@ -39,7 +40,7 @@ describe('update-agent command', () => {
 		await updateAgent('agent-1', {});
 
 		expect(formatError).toHaveBeenCalledWith(
-			'Specify at least one of --group, --cwd, --ssh-remote, --ssh-cwd, or --sync-history-to-remote'
+			expect.stringContaining('Specify at least one field to update')
 		);
 		expect(processExitSpy).toHaveBeenCalledWith(1);
 	});
@@ -172,6 +173,156 @@ describe('update-agent command', () => {
 				sshPatch: { syncHistory: true },
 			}),
 			'update_session_ssh_result'
+		);
+	});
+
+	it('sends update_session_config for editable settings (nudge, model, env)', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
+		const sendCommand = vi.fn().mockResolvedValue({
+			type: 'update_session_config_result',
+			success: true,
+		});
+		vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+			return action({ sendCommand } as never);
+		});
+
+		await updateAgent('agent-1', {
+			nudge: 'stay focused',
+			model: 'opus',
+			env: ['FOO=bar', 'BAZ=qux'],
+		});
+
+		expect(sendCommand).toHaveBeenCalledWith(
+			expect.objectContaining({
+				type: 'update_session_config',
+				sessionId: 'full-session-id',
+				configPatch: {
+					nudgeMessage: 'stay focused',
+					customModel: 'opus',
+					customEnvVars: { FOO: 'bar', BAZ: 'qux' },
+				},
+			}),
+			'update_session_config_result'
+		);
+	});
+
+	it('maps an empty-string text field to a null clear in the config patch', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
+		const sendCommand = vi.fn().mockResolvedValue({
+			type: 'update_session_config_result',
+			success: true,
+		});
+		vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+			return action({ sendCommand } as never);
+		});
+
+		await updateAgent('agent-1', { nudge: '' });
+
+		expect(sendCommand).toHaveBeenCalledWith(
+			expect.objectContaining({
+				type: 'update_session_config',
+				configPatch: { nudgeMessage: null },
+			}),
+			'update_session_config_result'
+		);
+	});
+
+	it('encodes --token-source tui as the enableMaestroP/maestroPMode pair', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
+		const sendCommand = vi.fn().mockResolvedValue({
+			type: 'update_session_config_result',
+			success: true,
+		});
+		vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+			return action({ sendCommand } as never);
+		});
+
+		await updateAgent('agent-1', { tokenSource: 'tui' });
+
+		expect(sendCommand).toHaveBeenCalledWith(
+			expect.objectContaining({
+				type: 'update_session_config',
+				configPatch: { enableMaestroP: true, maestroPMode: 'interactive' },
+			}),
+			'update_session_config_result'
+		);
+	});
+
+	it('rejects an invalid --token-source value before contacting the app', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
+		const sendCommand = vi.fn();
+		vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+			return action({ sendCommand } as never);
+		});
+
+		await updateAgent('agent-1', { tokenSource: 'bogus' });
+
+		expect(formatError).toHaveBeenCalledWith(expect.stringContaining('--token-source expects'));
+		expect(processExitSpy).toHaveBeenCalledWith(1);
+		expect(sendCommand).not.toHaveBeenCalled();
+	});
+
+	it('rejects --token-source on a non-Claude agent', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
+		vi.mocked(getSessionById).mockReturnValue({
+			id: 'full-session-id',
+			toolType: 'codex',
+		} as never);
+		const sendCommand = vi.fn();
+		vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+			action({ sendCommand } as never)
+		);
+
+		await updateAgent('agent-1', { tokenSource: 'tui' });
+
+		// The guard fires before any send (in production process.exit terminates;
+		// the test's exit mock is a no-op, so we assert the guard itself fired).
+		expect(formatError).toHaveBeenCalledWith(
+			expect.stringContaining('only applies to Claude Code agents')
+		);
+		expect(processExitSpy).toHaveBeenCalledWith(1);
+	});
+
+	it('refuses --provider without --force', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
+		vi.mocked(getSessionById).mockReturnValue({
+			id: 'full-session-id',
+			toolType: 'claude-code',
+		} as never);
+		const sendCommand = vi.fn();
+		vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+			action({ sendCommand } as never)
+		);
+
+		await updateAgent('agent-1', { provider: 'codex' });
+
+		expect(formatError).toHaveBeenCalledWith(expect.stringContaining('--force to confirm'));
+		expect(processExitSpy).toHaveBeenCalledWith(1);
+	});
+
+	it('sends a toolType patch for --provider with --force', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
+		vi.mocked(getSessionById).mockReturnValue({
+			id: 'full-session-id',
+			toolType: 'claude-code',
+		} as never);
+		const sendCommand = vi.fn().mockResolvedValue({
+			type: 'update_session_config_result',
+			success: true,
+		});
+		vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+			action({ sendCommand } as never)
+		);
+
+		await updateAgent('agent-1', { provider: 'codex', force: true });
+
+		expect(sendCommand).toHaveBeenCalledWith(
+			expect.objectContaining({
+				type: 'update_session_config',
+				sessionId: 'full-session-id',
+				configPatch: { toolType: 'codex' },
+			}),
+			'update_session_config_result'
 		);
 	});
 

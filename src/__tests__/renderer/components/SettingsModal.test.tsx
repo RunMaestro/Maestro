@@ -934,16 +934,16 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			fireEvent.click(screen.getByRole('button', { name: '1000' }));
+			fireEvent.click(screen.getByRole('button', { name: '1.0K' }));
 			expect(mockSetMaxLogBuffer).toHaveBeenCalledWith(1000);
 
-			fireEvent.click(screen.getByRole('button', { name: '5000' }));
+			fireEvent.click(screen.getByRole('button', { name: '5.0K' }));
 			expect(mockSetMaxLogBuffer).toHaveBeenCalledWith(5000);
 
-			fireEvent.click(screen.getByRole('button', { name: '10000' }));
+			fireEvent.click(screen.getByRole('button', { name: '10.0K' }));
 			expect(mockSetMaxLogBuffer).toHaveBeenCalledWith(10000);
 
-			fireEvent.click(screen.getByRole('button', { name: '25000' }));
+			fireEvent.click(screen.getByRole('button', { name: '25.0K' }));
 			expect(mockSetMaxLogBuffer).toHaveBeenCalledWith(25000);
 		});
 	});

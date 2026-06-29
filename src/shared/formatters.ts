@@ -24,6 +24,7 @@
  * - formatTimestamp: Format timestamps in various styles (time, datetime, smart, full)
  * - truncatePath: Truncate file paths for display (.../<parent>/<current>)
  * - truncateCommand: Truncate command text for display with ellipsis
+ * - formatSshTarget: SSH connection target for display (user@host:port)
  * - abbreviateGroupName: Shorten a group name for badge/pill display
  */
 
@@ -408,6 +409,28 @@ export function getBasename(path: string): string {
 	const trimmed = path.replace(/[/\\]+$/, '');
 	const parts = trimmed.split(/[/\\]/);
 	return parts[parts.length - 1] || trimmed;
+}
+
+/**
+ * Format an SSH remote's connection target for display, e.g. "pedram@10.0.50.63:2222".
+ *
+ * The username prefix is omitted when none is set (SSH falls back to ~/.ssh/config or
+ * the current user). The port is always shown because an agent connects to the *saved*
+ * port: a remote saved with port 22 looks identical to one saved with 2222 unless the
+ * port is visible, which is a common source of "it connected to the wrong port"
+ * confusion when the display name doesn't match the actual port field.
+ *
+ * @param remote - SSH remote fields (host required; port/username optional)
+ * @returns Display target string (e.g. "pedram@host:2222" or "host:22")
+ */
+export function formatSshTarget(remote: {
+	host: string;
+	port?: number;
+	username?: string;
+}): string {
+	const user = remote.username?.trim();
+	const prefix = user ? `${user}@` : '';
+	return `${prefix}${remote.host}:${remote.port ?? 22}`;
 }
 
 /**

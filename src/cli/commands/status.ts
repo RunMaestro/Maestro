@@ -2,17 +2,18 @@
 
 import { readCliServerInfo, isCliServerRunning } from '../../shared/cli-server-discovery';
 import { withMaestroClient } from '../services/maestro-client';
+import { ExitCode } from '../exit-codes';
 
 export async function status(): Promise<void> {
 	const info = readCliServerInfo();
 	if (!info) {
 		console.log('Maestro desktop app is not running');
-		process.exit(1);
+		process.exit(ExitCode.NotRunning);
 	}
 
 	if (!isCliServerRunning()) {
 		console.log('Maestro discovery file is stale (app may have crashed)');
-		process.exit(1);
+		process.exit(ExitCode.NotRunning);
 	}
 
 	try {
@@ -33,6 +34,6 @@ export async function status(): Promise<void> {
 		});
 	} catch (error) {
 		console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
-		process.exit(1);
+		process.exit(ExitCode.NotRunning);
 	}
 }

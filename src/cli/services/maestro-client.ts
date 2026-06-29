@@ -8,11 +8,46 @@ import { readSessions, resolveAgentId } from './storage';
 const CONNECT_TIMEOUT_MS = 5000;
 const DEFAULT_COMMAND_TIMEOUT_MS = 10000;
 
+/**
+ * Thrown when the running app echoes a command back unhandled - i.e. it does
+ * not recognize the message type. This almost always means the desktop app is
+ * an older build than this CLI (a new command was added since the app was last
+ * built/restarted). Carrying a distinct type lets callers map it to the
+ * `Unsupported` exit code and print a "rebuild/restart the app" hint instead of
+ * a generic timeout.
+ */
+export class UnsupportedCommandError extends Error {
+	readonly commandType: string;
+	constructor(commandType: string) {
+		super(
+			`The running Maestro app does not support the '${commandType}' command. ` +
+				'It is likely an older build - rebuild and restart the desktop app, then retry.'
+		);
+		this.name = 'UnsupportedCommandError';
+		this.commandType = commandType;
+	}
+}
+
+/** Thrown when the app was reachable but did not answer a command in time. */
+export class CommandTimeoutError extends Error {
+	readonly responseType: string;
+	constructor(responseType: string) {
+		super(
+			`Timed out waiting for the Maestro app to respond (expected '${responseType}'). ` +
+				'The app is reachable but its renderer did not reply - it may be busy or unresponsive.'
+		);
+		this.name = 'CommandTimeoutError';
+		this.responseType = responseType;
+	}
+}
+
 interface PendingRequest {
 	resolve: (value: unknown) => void;
 	reject: (reason: Error) => void;
 	timeout: ReturnType<typeof setTimeout>;
 	expectedType: string;
+	/** The `type` of the message that was sent, used to match unhandled echoes. */
+	sentType: string;
 }
 
 export class MaestroClient {
@@ -85,11 +120,12 @@ export class MaestroClient {
 		}
 
 		const requestId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+		const sentType = typeof message.type === 'string' ? message.type : 'unknown';
 
 		return new Promise<T>((resolve, reject) => {
 			const timeout = setTimeout(() => {
 				this.pendingRequests.delete(requestId);
-				reject(new Error(`Command timed out waiting for ${responseType}`));
+				reject(new CommandTimeoutError(responseType));
 			}, timeoutMs);
 
 			this.pendingRequests.set(requestId, {
@@ -97,6 +133,7 @@ export class MaestroClient {
 				reject,
 				timeout,
 				expectedType: responseType,
+				sentType,
 			});
 
 			this.ws!.send(JSON.stringify({ ...message, requestId }));
@@ -141,6 +178,40 @@ export class MaestroClient {
 				const msg = JSON.parse(data.toString()) as Record<string, unknown>;
 				const msgType = msg.type as string;
 				const msgRequestId = msg.requestId as string | undefined;
+
+				// An `echo` reply means the app didn't recognize the message type
+				// (handleUnknown). Reject the matching request immediately with a
+				// clear "unsupported command" error instead of waiting for the
+				// full timeout - this is the signal that the running app is an
+				// older build than this CLI. The original message (with its
+				// requestId) is echoed back under `data`.
+				if (msgType === 'echo') {
+					const original = msg.data as Record<string, unknown> | undefined;
+					const originalReqId =
+						(original?.requestId as string | undefined) ??
+						(msg.originalRequestId as string | undefined);
+					const originalType =
+						(msg.originalType as string | undefined) ??
+						(original?.type as string | undefined) ??
+						'unknown';
+					if (originalReqId && this.pendingRequests.has(originalReqId)) {
+						const pending = this.pendingRequests.get(originalReqId)!;
+						clearTimeout(pending.timeout);
+						this.pendingRequests.delete(originalReqId);
+						pending.reject(new UnsupportedCommandError(originalType));
+						return;
+					}
+					// Fall back to matching by the echoed command type.
+					for (const [reqId, pending] of this.pendingRequests) {
+						if (pending.sentType === originalType) {
+							clearTimeout(pending.timeout);
+							this.pendingRequests.delete(reqId);
+							pending.reject(new UnsupportedCommandError(originalType));
+							return;
+						}
+					}
+					return;
+				}
 
 				// Try matching by requestId first (exact match)
 				if (msgRequestId && this.pendingRequests.has(msgRequestId)) {

@@ -8,6 +8,7 @@ interface OpenTerminalOptions {
 	cwd?: string;
 	shell?: string;
 	name?: string;
+	json?: boolean;
 }
 
 export async function openTerminal(options: OpenTerminalOptions): Promise<void> {
@@ -38,13 +39,18 @@ export async function openTerminal(options: OpenTerminalOptions): Promise<void> 
 		});
 
 		if (result.success) {
-			console.log('Terminal tab opened in Maestro');
+			if (options.json) console.log(JSON.stringify({ success: true, sessionId }));
+			else console.log('Terminal tab opened in Maestro');
 		} else {
-			console.error(`Error: ${result.error || 'Failed to open terminal tab'}`);
+			const error = result.error || 'Failed to open terminal tab';
+			if (options.json) console.log(JSON.stringify({ success: false, error }));
+			else console.error(`Error: ${error}`);
 			process.exit(1);
 		}
 	} catch (error) {
-		console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+		const msg = error instanceof Error ? error.message : String(error);
+		if (options.json) console.log(JSON.stringify({ success: false, error: msg }));
+		else console.error(`Error: ${msg}`);
 		process.exit(1);
 	}
 }

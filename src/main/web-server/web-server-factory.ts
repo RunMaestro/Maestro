@@ -1576,6 +1576,64 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			}
 		);
 
+		// Set up callback for web server to update an agent's editable per-session
+		// config (nudge/new-session message, custom path/args/env, model, effort,
+		// context window, Claude token source). Same IPC request-response shape as
+		// updateSessionSsh; the renderer merges the partial patch and flushes to
+		// disk. Applied even while the agent runs (these are spawn-time settings).
+		server.setUpdateSessionConfigCallback(
+			async (sessionId: string, configPatch: Record<string, unknown>) => {
+				const mainWindow = getMainWindow();
+				if (!mainWindow) {
+					logger.warn('mainWindow is null for updateSessionConfig', 'WebServer');
+					return { success: false, error: 'Desktop window unavailable' };
+				}
+
+				return new Promise((resolve) => {
+					const responseChannel = `remote:updateSessionConfig:response:${randomUUID()}`;
+					let resolved = false;
+
+					const handleResponse = (
+						_event: Electron.IpcMainEvent,
+						result: { success?: boolean; error?: string } | undefined
+					) => {
+						if (resolved) return;
+						resolved = true;
+						clearTimeout(timeoutId);
+						resolve({
+							success: Boolean(result?.success),
+							error: result?.error,
+						});
+					};
+
+					ipcMain.once(responseChannel, handleResponse);
+					if (!isWebContentsAvailable(mainWindow)) {
+						logger.warn('webContents is not available for updateSessionConfig', 'WebServer');
+						ipcMain.removeListener(responseChannel, handleResponse);
+						resolve({ success: false, error: 'Desktop renderer unavailable' });
+						return;
+					}
+					mainWindow.webContents.send(
+						'remote:updateSessionConfig',
+						sessionId,
+						configPatch,
+						responseChannel
+					);
+
+					const timeoutId = setTimeout(() => {
+						if (resolved) return;
+						resolved = true;
+						ipcMain.removeListener(responseChannel, handleResponse);
+						logger.warn(
+							`updateSessionConfig callback timed out for session ${sessionId}`,
+							'WebServer'
+						);
+						resolve({ success: false, error: 'Renderer did not respond in time' });
+					}, 5000);
+				});
+			}
+		);
+
 		// Set up callback for web server to create a group
 		// Uses IPC request-response pattern
 		server.setCreateGroupCallback(async (name: string, emoji?: string) => {

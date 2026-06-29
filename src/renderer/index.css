@@ -308,6 +308,34 @@ textarea::placeholder {
 	pointer-events: none;
 }
 
+/*
+ * Theme-aware, keyboard-only focus ring.
+ *
+ * Pairs with the CLAUDE.md focus pattern ("outline-none + custom ring"): the
+ * default `:focus` outline is suppressed so mouse clicks stay quiet, while
+ * keyboard `:focus-visible` paints an accent-colored ring. Color resolves from
+ * a local `--focus-ring-color` override (set inline when an element needs a
+ * higher-contrast ring on a filled background) and otherwise falls back to the
+ * app accent (`--accent-color`, kept in sync with the active theme by
+ * useThemeStyles). Use `.focus-ring` for standalone controls and
+ * `.focus-ring-inset` for controls inside an `overflow-hidden` / rounded
+ * container that would clip an outset ring (e.g. a segmented toggle).
+ */
+.focus-ring:focus,
+.focus-ring-inset:focus {
+	outline: none;
+}
+
+.focus-ring:focus-visible {
+	outline: 2px solid var(--focus-ring-color, var(--accent-color, rgba(99, 102, 241, 0.9)));
+	outline-offset: 2px;
+}
+
+.focus-ring-inset:focus-visible {
+	outline: 2px solid var(--focus-ring-color, var(--accent-color, rgba(99, 102, 241, 0.9)));
+	outline-offset: -2px;
+}
+
 @keyframes check-pop {
 	0% {
 		transform: scale(0);
@@ -829,6 +857,59 @@ svg.wand-sparkle-active path:nth-child(8) {
 
 @media (prefers-reduced-motion: reduce) {
 	svg.wand-sparkle-active path:nth-child(n + 3) {
+		animation: none;
+	}
+}
+
+/* Performance-profiling indicator: while a trace is being captured the wand
+   glows recording-red so it's unmistakable that profiling is on. The red is
+   forced over the inline theme accent for this debug-only state. A slow (1.5s)
+   pulse is deliberate - it keeps the indicator's own paint cost low and out of
+   the trace it is helping to capture. */
+@keyframes wand-profiling-pulse {
+	0%,
+	100% {
+		filter: drop-shadow(0 0 1px rgba(239, 68, 68, 0.6));
+	}
+	50% {
+		filter: drop-shadow(0 0 5px rgba(239, 68, 68, 0.95));
+	}
+}
+
+svg.wand-profiling-active {
+	color: #ef4444 !important;
+	animation: wand-profiling-pulse 1.5s ease-in-out infinite;
+}
+
+/* Keep the sparkles dancing during profiling even when nothing else is busy */
+svg.wand-profiling-active path:nth-child(n + 3) {
+	animation: wand-sparkle 1.6s ease-in-out infinite;
+}
+svg.wand-profiling-active path:nth-child(3) {
+	animation-delay: 0s;
+}
+svg.wand-profiling-active path:nth-child(4) {
+	animation-delay: 0.25s;
+}
+svg.wand-profiling-active path:nth-child(5) {
+	animation-delay: 0.5s;
+}
+svg.wand-profiling-active path:nth-child(6) {
+	animation-delay: 0.75s;
+}
+svg.wand-profiling-active path:nth-child(7) {
+	animation-delay: 0.35s;
+}
+svg.wand-profiling-active path:nth-child(8) {
+	animation-delay: 0.6s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	svg.wand-profiling-active {
+		animation: none;
+		filter: drop-shadow(0 0 3px rgba(239, 68, 68, 0.9));
+	}
+	svg.wand-profiling-active path:nth-child(n + 3) {
 		animation: none;
 	}
 }

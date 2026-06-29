@@ -221,7 +221,9 @@ describe('MaestroClient', () => {
 			// Advance past timeout
 			vi.advanceTimersByTime(2001);
 
-			await expect(commandPromise).rejects.toThrow('Command timed out waiting for pong');
+			// The error names the expected response type so callers can tell which
+			// command stalled.
+			await expect(commandPromise).rejects.toThrow("expected 'pong'");
 		});
 
 		it('should use default 10s timeout', async () => {
@@ -235,7 +237,27 @@ describe('MaestroClient', () => {
 			// At 10.1s it should timeout
 			vi.advanceTimersByTime(200);
 
-			await expect(commandPromise).rejects.toThrow('Command timed out');
+			await expect(commandPromise).rejects.toThrow('Timed out waiting for the Maestro app');
+		});
+
+		it('rejects immediately with UnsupportedCommandError when the app echoes back', async () => {
+			const client = await createConnectedClient();
+
+			const commandPromise = client.sendCommand({ type: 'brand_new_cmd' }, 'brand_new_cmd_result');
+
+			// The app does not recognize the type and replies with an echo carrying
+			// the original message (and its requestId) under `data`.
+			const sent = JSON.parse((mockWsInstance.send as ReturnType<typeof vi.fn>).mock.calls[0][0]);
+			mockWsInstance.emit(
+				'message',
+				JSON.stringify({
+					type: 'echo',
+					originalType: 'brand_new_cmd',
+					data: { type: 'brand_new_cmd', requestId: sent.requestId },
+				})
+			);
+
+			await expect(commandPromise).rejects.toThrow("does not support the 'brand_new_cmd' command");
 		});
 
 		it('should ignore non-matching response types', async () => {

@@ -44,11 +44,22 @@ async function boot(): Promise<void> {
 }
 
 void boot().catch((err) => {
-	const root = document.getElementById('root');
-	if (root) {
-		root.innerHTML = `<div style="padding:24px;font-family:monospace;color:#f88;background:#111;min-height:100vh"><h2>Web-Desktop bootstrap failed</h2><pre>${
-			(err && (err.stack || err.message)) || String(err)
-		}</pre></div>`;
+	const detail = (err && (err.stack || err.message)) || String(err);
+	// Prefer the shared error surface from index.html (HTML-escaped, styled, and
+	// includes the same-network hint). Fall back to a minimal inline render if
+	// the inline script somehow didn't run.
+	const showBootError = (
+		window as unknown as {
+			__maestroShowBootError?: (title: string, detail: string) => void;
+		}
+	).__maestroShowBootError;
+	if (showBootError) {
+		showBootError('Maestro web-desktop failed to load', detail);
+	} else {
+		const root = document.getElementById('root');
+		if (root) {
+			root.textContent = `Maestro web-desktop failed to load: ${detail}`;
+		}
 	}
 	console.error('[bootstrap] boot failed', err);
 });

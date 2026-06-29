@@ -7,6 +7,8 @@ import { useFocusAfterRender } from '../../hooks/utils/useFocusAfterRender';
 import { notifyToast } from '../../stores/notificationStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
+import { captureException } from '../../utils/sentry';
+import { formatSize } from '../../../shared/formatters';
 import { useModalStore } from '../../stores/modalStore';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { gitService } from '../../services/git';
@@ -100,7 +102,6 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		setUpdateCheckModalOpen,
 		openWizard,
 		wizardGoToStep: _wizardGoToStep,
-		setDebugWizardModalOpen,
 		setDebugPackageModalOpen,
 		setDebugApplicationStatsOpen,
 		startTour,
@@ -210,6 +211,82 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		const id = window.setInterval(() => setNow(Date.now()), 1000);
 		return () => window.clearInterval(id);
 	}, [hasRunningAgent]);
+
+	// Performance profiling status. The main process owns the source of truth
+	// (contentTracing is a process-global singleton); we mirror it into the
+	// uiStore so the Left Bar wand can animate, and reconcile on palette open.
+	const profilingActive = useUIStore((s) => s.profilingActive);
+	const setProfilingActive = useUIStore((s) => s.setProfilingActive);
+	useEffect(() => {
+		let cancelled = false;
+		// Optional-chained: this runs on every palette open, so tolerate a bridge
+		// that isn't ready rather than throwing out of the effect.
+		const statusPromise = window.maestro?.debug?.getProfilingStatus?.();
+		if (!statusPromise) return;
+		statusPromise
+			.then((res) => {
+				if (!cancelled && res?.success) setProfilingActive(res.active);
+			})
+			.catch(() => {});
+		return () => {
+			cancelled = true;
+		};
+	}, [setProfilingActive]);
+	const handleStartProfiling = useCallback(async () => {
+		try {
+			const res = await window.maestro.debug.startProfiling();
+			if (res?.success && res.active) {
+				setProfilingActive(true);
+				notifyCenterFlash({
+					message: 'Performance profiling started',
+					color: 'green',
+					detail: 'Reproduce the lag, then run "End Performance Profiling"',
+				});
+			} else {
+				notifyToast({
+					color: 'red',
+					title: 'Profiling',
+					message: res?.error || 'Failed to start profiling',
+				});
+			}
+		} catch (err) {
+			notifyToast({ color: 'red', title: 'Profiling', message: 'Failed to start profiling' });
+			captureException(err);
+		}
+	}, [setProfilingActive]);
+	const handleStopProfiling = useCallback(async () => {
+		try {
+			const res = await window.maestro.debug.stopProfiling();
+			setProfilingActive(false);
+			if (!res?.success) {
+				notifyToast({
+					color: 'red',
+					title: 'Profiling',
+					message: res?.error || 'Failed to save profile',
+				});
+				return;
+			}
+			if (res.cancelled) {
+				notifyCenterFlash({ message: 'Profiling stopped (not saved)', color: 'yellow' });
+				return;
+			}
+			const durationLabel = `${(res.durationMs / 1000).toFixed(1)}s`;
+			const sizeLabel = res.bundleSizeBytes ? ` (${formatSize(res.bundleSizeBytes)})` : '';
+			notifyToast({
+				color: 'green',
+				title: 'Performance profile saved',
+				message: `Captured ${durationLabel} trace${sizeLabel}.${
+					res.path ? `\nSaved to ${res.path}` : ''
+				}`,
+				dismissible: true,
+			});
+		} catch (err) {
+			setProfilingActive(false);
+			notifyToast({ color: 'red', title: 'Profiling', message: 'Failed to save profile' });
+			captureException(err);
+		}
+	}, [setProfilingActive]);
+
 	const inputRef = useRef<HTMLInputElement>(null);
 	const selectedItemRef = useRef<HTMLButtonElement>(null);
 	const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -613,8 +690,10 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			setPlaygroundOpen,
 			setDebugApplicationStatsOpen,
 			setDebugAgentProbeOpen,
-			setDebugWizardModalOpen,
 			onDebugReleaseQueuedItem,
+			profilingActive,
+			onStartProfiling: handleStartProfiling,
+			onStopProfiling: handleStopProfiling,
 			getInstallationId: () => window.maestro.leaderboard.getInstallationId(),
 			safeClipboardWrite,
 			flashCopiedToClipboard,

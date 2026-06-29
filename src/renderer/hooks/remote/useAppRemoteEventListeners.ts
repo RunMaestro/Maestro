@@ -1236,6 +1236,140 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		window.maestro.process.sendRemoteUpdateSessionSshResponse(responseChannel, { success: true });
 	});
 
+	// Handle remote update of an agent's editable per-session config from the CLI
+	// (nudge / new-session message, custom path / args / env vars, model, effort,
+	// context window, Claude token-source tri-state). Only the keys present in the
+	// patch are applied; a key whose value is `null` clears that field to
+	// undefined. These are spawn-time settings (they take effect on the next
+	// launch), so unlike cwd/SSH they are applied even while the agent runs. The
+	// new config is flushed to disk before signaling success so a follow-up CLI
+	// read sees it rather than the 2s-debounced stale value.
+	useEventListener('maestro:remoteUpdateSessionConfig', async (e: Event) => {
+		const { sessionId, configPatch, responseChannel } = (e as CustomEvent).detail;
+		const session = sessionsRef.current.find((s) => s.id === sessionId);
+		if (!session) {
+			window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+				success: false,
+				error: 'Agent not found',
+			});
+			return;
+		}
+
+		const patchObj = configPatch as Record<string, unknown>;
+
+		// Provider switch (toolType change) is destructive and handled separately
+		// from plain settings edits: it resets tabs, clears provider-specific
+		// config, and kills the running agent process - mirroring the Edit Agent
+		// modal's toolType-change branch. The CLI gates this behind --force. When a
+		// toolType is present and actually differs, do the switch and ignore any
+		// other keys in the same patch (the CLI sends it exclusively).
+		const requestedToolType =
+			typeof patchObj.toolType === 'string' ? (patchObj.toolType as ToolType) : undefined;
+		if (requestedToolType && requestedToolType !== session.toolType) {
+			const newTabId = generateId();
+			const freshTab: AITab = {
+				id: newTabId,
+				agentSessionId: null,
+				name: null,
+				starred: false,
+				logs: [],
+				inputValue: '',
+				stagedImages: [],
+				createdAt: Date.now(),
+				state: 'idle',
+				saveToHistory: true,
+			};
+			const providerSwitch: Partial<Session> = {
+				toolType: requestedToolType,
+				aiTabs: [freshTab],
+				activeTabId: newTabId,
+				closedTabHistory: [],
+				// Clear provider-specific overrides - they don't carry across providers.
+				customPath: undefined,
+				customArgs: undefined,
+				customEnvVars: undefined,
+				customModel: undefined,
+				customContextWindow: undefined,
+				enableMaestroP: undefined,
+				maestroPPath: undefined,
+				maestroPMode: undefined,
+				// Reset file preview tabs and unified tab order to just the new AI tab.
+				filePreviewTabs: [],
+				activeFileTabId: null,
+				unifiedTabOrder: [{ type: 'ai' as const, id: newTabId }],
+				unifiedClosedTabHistory: [],
+				// Reset runtime state.
+				state: 'idle' as const,
+				aiPid: 0,
+				executionQueue: [],
+			};
+
+			// Kill the existing AI process for the old provider (no-op if none).
+			window.maestro.process.kill(`${sessionId}-ai`).catch(() => {});
+
+			setSessions((prev: Session[]) =>
+				prev.map((s) => (s.id === sessionId ? { ...s, ...providerSwitch } : s))
+			);
+			try {
+				await window.maestro.sessions.setMany([{ ...session, ...providerSwitch } as any], []);
+			} catch (persistErr) {
+				logger.error('[Remote] Failed to persist provider switch:', undefined, persistErr);
+			}
+			window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+				success: true,
+			});
+			return;
+		}
+
+		// Allowlist of editable session config keys. Anything else in the patch is
+		// ignored so the CLI can't write arbitrary Session internals.
+		const EDITABLE_KEYS = new Set([
+			'nudgeMessage',
+			'newSessionMessage',
+			'customPath',
+			'customArgs',
+			'customEnvVars',
+			'customModel',
+			'customEffort',
+			'customContextWindow',
+			'enableMaestroP',
+			'maestroPMode',
+			'maestroPPath',
+		]);
+
+		// Build the field patch. A `null` value clears the field (sets undefined);
+		// any other provided value is written through as-is.
+		const patch = patchObj;
+		const updated: Partial<Session> = {};
+		for (const key of Object.keys(patch)) {
+			if (!EDITABLE_KEYS.has(key)) continue;
+			const value = patch[key];
+			(updated as Record<string, unknown>)[key] = value === null ? undefined : value;
+		}
+
+		if (Object.keys(updated).length === 0) {
+			window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+				success: false,
+				error: 'No editable config fields in patch',
+			});
+			return;
+		}
+
+		setSessions((prev: Session[]) =>
+			prev.map((s) => (s.id === sessionId ? { ...s, ...updated } : s))
+		);
+
+		try {
+			await window.maestro.sessions.setMany([{ ...session, ...updated } as any], []);
+		} catch (persistErr) {
+			logger.error('[Remote] Failed to persist session config:', undefined, persistErr);
+		}
+
+		window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+			success: true,
+		});
+	});
+
 	// Handle remote rename session from web interface
 	useEventListener('maestro:remoteRenameSession', async (e: Event) => {
 		const { sessionId, newName, responseChannel } = (e as CustomEvent).detail;

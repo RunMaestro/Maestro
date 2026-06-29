@@ -11,6 +11,9 @@ vi.mock('electron', () => ({
 			registeredHandlers.set(channel, handler);
 		}),
 	},
+	app: {
+		getVersion: vi.fn(() => '0.0.0-test'),
+	},
 }));
 
 // Mock logger

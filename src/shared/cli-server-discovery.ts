@@ -13,11 +13,18 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
-interface CliServerInfo {
+export interface CliServerInfo {
 	port: number;
 	token: string;
 	pid: number;
 	startedAt: number;
+	/**
+	 * Version of the desktop app that wrote this file (`app.getVersion()`).
+	 * Optional: older builds did not write it, so a missing value itself signals
+	 * an app predating version-skew detection. Read by `maestro-cli doctor` /
+	 * `status` to compare against the CLI's own build version.
+	 */
+	version?: string;
 }
 
 // Get the Maestro config directory path (lowercase "maestro")

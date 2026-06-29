@@ -246,6 +246,7 @@ export const DEFAULT_FILE_PREVIEW_TOOLBAR_VISIBILITY: FilePreviewToolbarVisibili
 const DEFAULT_DIRECTOR_NOTES_SETTINGS: DirectorNotesSettings = {
 	provider: 'claude-code',
 	defaultLookbackDays: 7,
+	defaultMode: 'rich',
 };
 
 // Uses `let` so the binding updates after loadSettingsStorePrompts() populates the cache

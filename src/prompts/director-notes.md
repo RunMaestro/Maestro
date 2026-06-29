@@ -36,47 +36,71 @@ You will receive a list of session history file paths below. Each file is a JSON
 
 ## Output Format
 
-Generate a markdown synopsis with the following sections:
+Return a single JSON object (and nothing else) that matches this exact shape:
 
-### Accomplishments
+```json
+{
+	"version": 1,
+	"sections": [
+		{
+			"kind": "accomplishments",
+			"title": "Accomplishments",
+			"items": [
+				{ "text": "Bullet describing completed work", "severity": "info", "agent": "Agent name" }
+			]
+		},
+		{
+			"kind": "challenges",
+			"title": "Challenges",
+			"items": [
+				{
+					"text": "Bullet describing a blocker or failure",
+					"severity": "critical",
+					"agent": "Agent name"
+				}
+			]
+		},
+		{
+			"kind": "nextSteps",
+			"title": "Next Steps",
+			"items": [
+				{ "text": "Bullet describing a follow-up", "severity": "info", "agent": "Agent name" }
+			]
+		}
+	]
+}
+```
 
-Summarize what has been completed, grouped by project/agent when patterns emerge. Order by activity volume (most active first). Include:
+Shape rules:
 
-- Key features implemented
-- Bugs fixed
-- Refactoring completed
-- Documentation written
+- `version` must be the number `1`.
+- Include the three sections in this order, with `kind` values `"accomplishments"`, `"challenges"`, and `"nextSteps"`.
+- Each `items` entry needs a `text` string. `severity` is optional and must be one of `"info"`, `"warn"`, or `"critical"`. `agent` is optional and names the agent/session the bullet relates to.
+- Use `"critical"` for failed tasks and hard blockers, `"warn"` for risks or repeated attempts, and `"info"` (or omit `severity`) for routine items.
 
-### Challenges
+### Section semantics
 
-Identify recurring problems, failed tasks, and blockers, grouped by project/agent (same grouping as Accomplishments). Include:
+**Accomplishments** - what has been completed. Order items by activity volume (most active agent first). Cover key features implemented, bugs fixed, refactoring completed, and documentation written. Set `agent` to the project/agent each item belongs to when patterns emerge.
 
-- Failed automated tasks (look for success: false)
-- Patterns in error types
-- Areas with repeated attempts
+**Challenges** - recurring problems, failed tasks, and blockers (look for `success: false`), patterns in error types, and areas with repeated attempts. Use the same agent grouping as Accomplishments.
 
-### Next Steps
-
-Based on incomplete work and patterns observed, suggest next steps grouped by project/agent (same grouping as Accomplishments). Include:
-
-- Unfinished tasks that should be continued
-- Areas that need attention based on failure patterns
-- Logical follow-ups to completed work
+**Next Steps** - unfinished tasks that should be continued, areas needing attention based on failure patterns, and logical follow-ups to completed work. Use the same agent grouping as Accomplishments.
 
 ## Guidelines
 
-- Be concise but comprehensive
-- Use bullet points for readability
-- Include specific details when available (file names, feature names)
-- If there's limited data, acknowledge it and provide what insights you can
-- If a history file cannot be read, note it and continue with available files
-- The lookback period and stats are displayed separately in the UI - do not repeat them in the synopsis
+- Be concise but comprehensive.
+- Keep each item to a single, specific bullet.
+- Include specific details when available (file names, feature names).
+- If there's limited data, provide what insights you can; it is fine for a section's `items` to be empty when there is nothing to report.
+- If a history file cannot be read, skip it and continue with available files.
+- The lookback period and stats are displayed separately in the UI - do not repeat them in the items.
 
 ## CRITICAL: Output Format Rules
 
-- Your response must start IMMEDIATELY with `### Accomplishments` - no text before it
-- Do NOT include ANY thinking, reasoning, or analysis preamble before the synopsis
-- Do NOT narrate your process (e.g., "Let me identify the qualifying entries...", "Now I can generate...", "I see X agents with Y entries...")
-- Do NOT echo timestamps, cutoff values, entry counts, or intermediate calculations
-- Do NOT list which entries qualify or don't qualify - just use them silently
-- Your ENTIRE response must be the formatted synopsis and nothing else
+- Your response must start IMMEDIATELY with `{` - no text, prose, or code fences before it.
+- Your response must end with `}` - nothing after it.
+- Do NOT wrap the JSON in a markdown code fence.
+- Do NOT include ANY thinking, reasoning, or analysis preamble.
+- Do NOT narrate your process (e.g., "Let me identify the qualifying entries...", "Now I can generate...", "I see X agents with Y entries...").
+- Do NOT echo timestamps, cutoff values, entry counts, or intermediate calculations.
+- Your ENTIRE response must be the JSON object and nothing else.

@@ -1302,6 +1302,39 @@ export function createProcessApi() {
 		},
 
 		/**
+		 * Subscribe to remote requests to update an agent's editable per-session
+		 * config (nudge/new-session message, custom path/args/env vars, model,
+		 * effort, context window, Claude token source). The renderer merges the
+		 * partial patch and responds with { success, error? }.
+		 */
+		onRemoteUpdateSessionConfig: (
+			callback: (
+				sessionId: string,
+				configPatch: Record<string, unknown>,
+				responseChannel: string
+			) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				configPatch: Record<string, unknown>,
+				responseChannel: string
+			) => callback(sessionId, configPatch, responseChannel);
+			ipcRenderer.on('remote:updateSessionConfig', handler);
+			return () => ipcRenderer.removeListener('remote:updateSessionConfig', handler);
+		},
+
+		/**
+		 * Send response for remote update session config
+		 */
+		sendRemoteUpdateSessionConfigResponse: (
+			responseChannel: string,
+			result: { success: boolean; error?: string }
+		): void => {
+			ipcRenderer.send(responseChannel, result);
+		},
+
+		/**
 		 * Subscribe to remote create group from web interface
 		 * Uses request-response pattern with a unique responseChannel
 		 */

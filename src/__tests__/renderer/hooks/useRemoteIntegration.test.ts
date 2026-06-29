@@ -189,6 +189,10 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		sendRemoteUpdateSessionSshResponse: vi.fn(),
+		onRemoteUpdateSessionConfig: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
+		sendRemoteUpdateSessionConfigResponse: vi.fn(),
 		onRemoteCreateGroup: vi.fn().mockImplementation(() => {
 			return () => {};
 		}),

@@ -133,6 +133,7 @@ describe('director-notes IPC handlers', () => {
 		it('should register all director-notes handlers', () => {
 			const expectedChannels = [
 				'director-notes:getUnifiedHistory',
+				'director-notes:getRichOverviewStats',
 				'director-notes:generateSynopsis',
 			];
 
@@ -865,6 +866,69 @@ describe('director-notes IPC handlers', () => {
 			const promptArg = vi.mocked(groomContext).mock.calls[0][0].prompt;
 			expect(promptArg).toContain('Lookback period: 14 days');
 			expect(promptArg).toContain('Timestamp cutoff:');
+		});
+
+		it('parses a well-formed JSON response into narrative (no narrativeError)', async () => {
+			const { groomContext } = await import('../../../../main/utils/context-groomer');
+			const json = JSON.stringify({
+				version: 1,
+				sections: [
+					{
+						kind: 'accomplishments',
+						title: 'Accomplishments',
+						items: [{ text: 'Shipped the feature', severity: 'info', agent: 'alpha' }],
+					},
+					{ kind: 'challenges', title: 'Challenges', items: [] },
+					{ kind: 'nextSteps', title: 'Next Steps', items: [] },
+				],
+			});
+			vi.mocked(groomContext).mockResolvedValue({
+				response: json,
+				durationMs: 1000,
+				completionReason: 'process exited with code 0',
+			});
+
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getHistoryFilePath).mockReturnValue(
+				'/data/history/session-1.json'
+			);
+
+			const handler = handlers.get('director-notes:generateSynopsis');
+			const result = await handler!({} as any, { lookbackDays: 7, provider: 'claude-code' });
+
+			expect(result.success).toBe(true);
+			// Raw synopsis is preserved verbatim for Plain Mode / copy / save.
+			expect(result.synopsis).toBe(json);
+			expect(result.narrativeError).toBeUndefined();
+			expect(result.narrative).toBeDefined();
+			expect(result.narrative.version).toBe(1);
+			expect(result.narrative.sections).toHaveLength(3);
+			expect(result.narrative.sections[0].items[0].text).toBe('Shipped the feature');
+			expect(result.narrative.sections[0].items[0].agent).toBe('alpha');
+		});
+
+		it('returns success with narrativeError (raw preserved) when output is not valid narrative JSON', async () => {
+			const { groomContext } = await import('../../../../main/utils/context-groomer');
+			vi.mocked(groomContext).mockResolvedValue({
+				response: '# Synopsis\n\nThis is markdown, not JSON.',
+				durationMs: 1000,
+				completionReason: 'process exited with code 0',
+			});
+
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getHistoryFilePath).mockReturnValue(
+				'/data/history/session-1.json'
+			);
+
+			const handler = handlers.get('director-notes:generateSynopsis');
+			const result = await handler!({} as any, { lookbackDays: 7, provider: 'claude-code' });
+
+			// A parse failure is NOT a synopsis failure: still success, raw kept.
+			expect(result.success).toBe(true);
+			expect(result.synopsis).toBe('# Synopsis\n\nThis is markdown, not JSON.');
+			expect(result.narrative).toBeUndefined();
+			expect(result.narrativeError).toBeTypeOf('string');
+			expect(result.narrativeError.length).toBeGreaterThan(0);
 		});
 
 		it('excludes sessions with no entries inside the lookback window', async () => {

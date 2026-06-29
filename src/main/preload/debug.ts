@@ -62,6 +62,31 @@ export interface AppStatsSnapshot {
 }
 
 /**
+ * Live performance-profiling status (debug:getProfilingStatus / startProfiling).
+ */
+export interface ProfilingStatusResponse {
+	success: boolean;
+	active: boolean;
+	startedAt: number;
+	elapsedMs: number;
+	categories: string[];
+	error?: string;
+}
+
+/**
+ * Result of stopping a recording and saving the bundle (debug:stopProfiling).
+ */
+export interface StopProfilingResponse {
+	success: boolean;
+	path: string | null;
+	cancelled: boolean;
+	bundleSizeBytes: number;
+	traceSizeBytes: number;
+	durationMs: number;
+	error?: string;
+}
+
+/**
  * Creates the Debug API object for preload exposure
  */
 export function createDebugApi() {
@@ -72,6 +97,16 @@ export function createDebugApi() {
 		previewPackage: () => ipcRenderer.invoke('debug:previewPackage'),
 
 		getAppStats: (): Promise<AppStatsSnapshot> => ipcRenderer.invoke('debug:getAppStats'),
+
+		// Performance profiling (Chromium contentTracing). Off by default with no
+		// steady-state cost; see src/main/profiling.
+		getProfilingStatus: (): Promise<ProfilingStatusResponse> =>
+			ipcRenderer.invoke('debug:getProfilingStatus'),
+
+		startProfiling: (): Promise<ProfilingStatusResponse> =>
+			ipcRenderer.invoke('debug:startProfiling'),
+
+		stopProfiling: (): Promise<StopProfilingResponse> => ipcRenderer.invoke('debug:stopProfiling'),
 	};
 }
 

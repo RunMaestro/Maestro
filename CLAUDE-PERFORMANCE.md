@@ -372,3 +372,77 @@ This occurs because Electron 28 doesn't fully support the File System Access API
    ```
 
 3. **Right-click context menu** - Right-click on the flame graph and select "Save profile..." which may use a different code path.
+
+### Field Performance Traces (Cmd+K capture)
+
+Maestro can capture a Chromium performance trace from any install (dev or
+production) without DevTools. This is the mechanism for collecting field data
+when a user reports lag.
+
+**How a user captures one:**
+
+1. `Cmd+K` -> **Debug: Start Performance Profiling**. The animated wand in the
+   top-left Left Bar header turns recording-red and pulses for as long as the
+   capture is running, so it's obvious profiling is on.
+2. Reproduce the slow interaction (type in the prompt, switch agents, open a
+   file, etc.).
+3. `Cmd+K` -> **Debug: End Performance Profiling** (this entry only appears while
+   recording). A native Save dialog writes a compressed `.zip` (default to the
+   Desktop, `maestro-profile-<timestamp>.zip`).
+
+The capture uses Electron `contentTracing` (Chromium's built-in trace engine).
+When profiling is off the trace points compile to a disabled-flag check, so
+there is no steady-state cost. Implementation: `src/main/profiling/`, wired
+through `debug:startProfiling` / `debug:stopProfiling` / `debug:getProfilingStatus`.
+
+**What's in the bundle (`.zip`):**
+
+| File            | Purpose                                                                                                     |
+| --------------- | ----------------------------------------------------------------------------------------------------------- |
+| `trace.json`    | Full Chromium trace (Trace Event format). The raw data.                                                     |
+| `metadata.json` | Capture context: app/Electron/Chrome versions, hardware, CPU, memory, recording duration, trace categories. |
+| `README.md`     | Short pointer back to this workflow.                                                                        |
+
+Trace analysis is intentionally **not** done in the app - it is a development /
+agent activity. Do not add in-app trace parsing.
+
+**How to analyze a harvested trace (agent workflow):**
+
+1. **Read `metadata.json` first.** It tells you the machine (CPU/cores/RAM,
+   platform), the app version, and how long the recording ran. A slow trace on a
+   2-core / low-RAM box implies different fixes than one on a fast machine.
+2. **Run the repo dev script for a text summary** (no deps beyond the repo):
+
+   ```bash
+   node scripts/analyze-perf-trace.mjs ~/Desktop/maestro-profile-<timestamp>.zip
+   # accepts a .zip bundle, a raw trace.json, or a trace.json.gz
+   ```
+
+   It prints, in Markdown: the longest main-thread tasks (the jank the user
+   feels), self-time grouped by subsystem (Layout / RecalcStyles / Paint /
+   FunctionCall / GC), and the hottest JS functions with `url:line` when the
+   trace carried script coordinates. Pipe to a file and read it, or let the
+   script's output drive the fix.
+
+3. **For frame-level detail**, load `trace.json` into <https://ui.perfetto.dev>
+   (or `chrome://tracing`) and jump to the task start times the script reported.
+
+**How to turn the analysis into fixes (what the numbers mean):**
+
+- **Long tasks on `CrRendererMain`** are the user-perceived lag: a single task
+  over ~50 ms blocks input and frame production for its whole duration. Rank by
+  duration, start with the worst.
+- **High `FunctionCall` / `EvaluateScript` self-time** -> JavaScript is the
+  cost. Map the hottest `url:line` back to `src/renderer/`. Usual suspects:
+  unmemoized React re-renders, work done in a render body, state lifted too high
+  so a keystroke re-renders the whole tree (see "React Component Optimization"
+  above), synchronous IPC on a hot path.
+- **High `Layout` / `RecalcStyles` self-time** -> forced synchronous layout.
+  Look for reads of `offsetWidth` / `getBoundingClientRect` interleaved with
+  style writes in a loop.
+- **High `GC` / `MinorGC`** -> allocation pressure. Look for per-render object/
+  array allocation, large `.map()` chains on hot paths.
+- A function that recurs across many long tasks is the highest-leverage fix.
+
+Cross-reference the fix patterns in the sections at the top of this file
+(memoization, debouncing, update batching, IPC payload hygiene).

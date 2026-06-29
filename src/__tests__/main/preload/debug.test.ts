@@ -101,6 +101,56 @@ describe('Debug Preload API', () => {
 				expect(result).toEqual(snapshot);
 			});
 		});
+
+		describe('profiling', () => {
+			it('should invoke debug:getProfilingStatus and pass through the status', async () => {
+				const status = {
+					success: true,
+					active: true,
+					startedAt: 1000,
+					elapsedMs: 4200,
+					categories: ['toplevel', 'v8'],
+				};
+				mockInvoke.mockResolvedValue(status);
+
+				const result = await api.getProfilingStatus();
+
+				expect(mockInvoke).toHaveBeenCalledWith('debug:getProfilingStatus');
+				expect(result).toEqual(status);
+			});
+
+			it('should invoke debug:startProfiling', async () => {
+				mockInvoke.mockResolvedValue({
+					success: true,
+					active: true,
+					startedAt: 1000,
+					elapsedMs: 0,
+					categories: ['toplevel'],
+				});
+
+				const result = await api.startProfiling();
+
+				expect(mockInvoke).toHaveBeenCalledWith('debug:startProfiling');
+				expect(result.active).toBe(true);
+			});
+
+			it('should invoke debug:stopProfiling and pass through the bundle result', async () => {
+				const stopResult = {
+					success: true,
+					path: '/Users/me/Desktop/maestro-profile.zip',
+					cancelled: false,
+					bundleSizeBytes: 2048,
+					traceSizeBytes: 20480,
+					durationMs: 5000,
+				};
+				mockInvoke.mockResolvedValue(stopResult);
+
+				const result = await api.stopProfiling();
+
+				expect(mockInvoke).toHaveBeenCalledWith('debug:stopProfiling');
+				expect(result).toEqual(stopResult);
+			});
+		});
 	});
 
 	describe('createDocumentGraphApi', () => {

@@ -11,10 +11,10 @@ import { THEMES } from '../constants/themes';
 import { DebugPackageModal } from './DebugPackageModal';
 import { DebugApplicationStatsModal } from './DebugApplicationStatsModal';
 import { DebugAgentProbeModal } from './DebugAgentProbeModal';
+import { WidgetGallery } from './widgets/WidgetGallery';
 import { WindowsWarningModal } from './WindowsWarningModal';
 import { AppOverlays } from './AppOverlays';
 import { PlaygroundPanel } from './PlaygroundPanel';
-import { DebugWizardModal } from './DebugWizardModal';
 import { GistPublishModal } from './GistPublishModal';
 import type { GistInfo } from './GistPublishModal';
 import { DeleteAgentConfirmModal } from './DeleteAgentConfirmModal';
@@ -230,8 +230,6 @@ function AppStandaloneModalsInner({
 		setDebugAgentProbeOpen,
 		playgroundOpen,
 		setPlaygroundOpen,
-		debugWizardModalOpen,
-		setDebugWizardModalOpen,
 		marketplaceModalOpen,
 		setMarketplaceModalOpen,
 		symphonyModalOpen,
@@ -306,13 +304,6 @@ function AppStandaloneModalsInner({
 				/>
 			)}
 
-			{/* --- DEBUG WIZARD MODAL --- */}
-			<DebugWizardModal
-				theme={theme}
-				isOpen={debugWizardModalOpen}
-				onClose={() => setDebugWizardModalOpen(false)}
-			/>
-
 			{/* --- DEBUG: VIEW APPLICATION STATS --- */}
 			{debugApplicationStatsOpen && (
 				<DebugApplicationStatsModal
@@ -325,6 +316,9 @@ function AppStandaloneModalsInner({
 			{debugAgentProbeOpen && (
 				<DebugAgentProbeModal theme={theme} onClose={() => setDebugAgentProbeOpen(false)} />
 			)}
+
+			{/* --- DEBUG: WIDGET GALLERY (self-subscribes to the widgetGallery modal) --- */}
+			<WidgetGallery theme={theme} />
 
 			{/* --- MARKETPLACE MODAL (lazy-loaded) --- */}
 			{activeSession && activeSession.autoRunFolderPath && marketplaceModalOpen && (

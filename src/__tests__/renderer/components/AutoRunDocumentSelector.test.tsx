@@ -315,11 +315,10 @@ describe('AutoRunDocumentSelector', () => {
 	});
 
 	describe('Tree Rendering (nested-only docs)', () => {
-		// Regression: when every document lives inside a subfolder and nothing is
-		// selected, the dropdown used to show "No matches for ''" because the
-		// folder was collapsed (visibleFiles empty) and the empty-state check
-		// fired before the tree rendered. Folders now auto-expand on open and the
-		// "No matches" message is gated on an active filter.
+		// Folders start collapsed on open and only reveal their files when the user
+		// expands them. The empty-state ("No matches") is gated on an active filter,
+		// so a collapsed folder with nothing selected must NOT show a false empty
+		// state.
 		const nestedTree: DocTreeNode[] = [
 			{
 				name: '2026-06-01-AI-Census',
@@ -341,7 +340,7 @@ describe('AutoRunDocumentSelector', () => {
 		];
 		const nestedDocuments = ['2026-06-01-AI-Census/CENSUS-01', '2026-06-01-AI-Census/CENSUS-02'];
 
-		it('shows nested documents on open without a selected document', () => {
+		it('keeps folders collapsed on open and reveals files when expanded', () => {
 			render(
 				<AutoRunDocumentSelector
 					{...defaultProps}
@@ -354,10 +353,15 @@ describe('AutoRunDocumentSelector', () => {
 			const button = screen.getByRole('button', { name: /select a document/i });
 			fireEvent.click(button);
 
-			// Folder auto-expanded -> nested files visible, no false empty state.
+			// Folder starts collapsed -> nested files hidden, but no false empty state.
+			expect(screen.queryByText('CENSUS-01.md')).not.toBeInTheDocument();
+			expect(screen.queryByText('CENSUS-02.md')).not.toBeInTheDocument();
+			expect(screen.queryByText(/No matches for/i)).not.toBeInTheDocument();
+
+			// Expanding the folder reveals its files.
+			fireEvent.click(screen.getByText('2026-06-01-AI-Census'));
 			expect(screen.getByText('CENSUS-01.md')).toBeInTheDocument();
 			expect(screen.getByText('CENSUS-02.md')).toBeInTheDocument();
-			expect(screen.queryByText(/No matches for/i)).not.toBeInTheDocument();
 		});
 
 		it('shows "No matches" only when a filter query excludes everything', () => {

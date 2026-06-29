@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Check } from 'lucide-react';
-import type { Theme, HistoryEntry } from '../../types';
+import type { Theme, HistoryEntry, HistoryEntryType } from '../../types';
 import { LOOKBACK_OPTIONS, CUE_COLOR } from './historyConstants';
 import { useContextMenuPosition } from '../../hooks/ui/useContextMenuPosition';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -33,6 +33,13 @@ export interface ActivityGraphProps {
 	precomputedRange?: { start: number; end: number };
 	/** Always show the viewport date label, repositioning near edges instead of hiding */
 	alwaysShowViewportLabel?: boolean;
+	/**
+	 * Active entry-type filters from the surrounding panel. When provided,
+	 * deselected types are zeroed out of every bucket so the graph stays in
+	 * sync with the list below (e.g. turning off the CUE chip hides the cyan
+	 * segments). Omit to show all types unconditionally.
+	 */
+	activeFilters?: Set<HistoryEntryType>;
 }
 
 export const ActivityGraph: React.FC<ActivityGraphProps> = ({
@@ -45,6 +52,7 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 	precomputedBuckets,
 	precomputedRange,
 	alwaysShowViewportLabel = false,
+	activeFilters,
 }) => {
 	const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 	const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
@@ -99,40 +107,46 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 	// Group entries into buckets — use precomputed data from backend when available
 	const bucketData = useMemo(() => {
 		// Prefer backend-computed buckets (covers all entries, not just first page)
-		if (precomputedBuckets && precomputedBuckets.length === bucketCount) {
-			return precomputedBuckets;
-		}
+		const rawBuckets =
+			precomputedBuckets && precomputedBuckets.length === bucketCount
+				? precomputedBuckets
+				: (() => {
+						// Fallback: client-side bucketing from available entries
+						const buckets: GraphBucket[] = Array.from({ length: bucketCount }, () => ({
+							auto: 0,
+							user: 0,
+							cue: 0,
+						}));
 
-		// Fallback: client-side bucketing from available entries
-		const buckets: { auto: number; user: number; cue: number }[] = Array.from(
-			{ length: bucketCount },
-			() => ({
-				auto: 0,
-				user: 0,
-				cue: 0,
-			})
-		);
+						entries.forEach((entry) => {
+							if (entry.timestamp >= startTime && entry.timestamp <= endTime) {
+								const bucketIndex = Math.min(
+									bucketCount - 1,
+									Math.floor((entry.timestamp - startTime) / msPerBucket)
+								);
+								if (bucketIndex >= 0 && bucketIndex < bucketCount) {
+									if (entry.type === 'AUTO') {
+										buckets[bucketIndex].auto++;
+									} else if (entry.type === 'USER') {
+										buckets[bucketIndex].user++;
+									} else if (entry.type === 'CUE') {
+										buckets[bucketIndex].cue++;
+									}
+								}
+							}
+						});
 
-		entries.forEach((entry) => {
-			if (entry.timestamp >= startTime && entry.timestamp <= endTime) {
-				const bucketIndex = Math.min(
-					bucketCount - 1,
-					Math.floor((entry.timestamp - startTime) / msPerBucket)
-				);
-				if (bucketIndex >= 0 && bucketIndex < bucketCount) {
-					if (entry.type === 'AUTO') {
-						buckets[bucketIndex].auto++;
-					} else if (entry.type === 'USER') {
-						buckets[bucketIndex].user++;
-					} else if (entry.type === 'CUE') {
-						buckets[bucketIndex].cue++;
-					}
-				}
-			}
-		});
+						return buckets;
+					})();
 
-		return buckets;
-	}, [precomputedBuckets, entries, startTime, endTime, msPerBucket, bucketCount]);
+		// Mask out deselected types so the graph mirrors the filtered list.
+		if (!activeFilters) return rawBuckets;
+		return rawBuckets.map((b) => ({
+			auto: activeFilters.has('AUTO') ? b.auto : 0,
+			user: activeFilters.has('USER') ? b.user : 0,
+			cue: activeFilters.has('CUE') ? b.cue : 0,
+		}));
+	}, [precomputedBuckets, entries, startTime, endTime, msPerBucket, bucketCount, activeFilters]);
 
 	// Find max value for scaling
 	const maxValue = useMemo(() => {

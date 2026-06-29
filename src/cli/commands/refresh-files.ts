@@ -4,6 +4,7 @@ import { withMaestroClient, resolveTargetSessionId } from '../services/maestro-c
 
 interface RefreshFilesOptions {
 	agent?: string;
+	json?: boolean;
 }
 
 export async function refreshFiles(options: RefreshFilesOptions): Promise<void> {
@@ -18,13 +19,18 @@ export async function refreshFiles(options: RefreshFilesOptions): Promise<void> 
 		});
 
 		if (result.success) {
-			console.log('File tree refreshed');
+			if (options.json) console.log(JSON.stringify({ success: true, sessionId }));
+			else console.log('File tree refreshed');
 		} else {
-			console.error(`Error: ${result.error || 'Failed to refresh file tree'}`);
+			const error = result.error || 'Failed to refresh file tree';
+			if (options.json) console.log(JSON.stringify({ success: false, error }));
+			else console.error(`Error: ${error}`);
 			process.exit(1);
 		}
 	} catch (error) {
-		console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+		const msg = error instanceof Error ? error.message : String(error);
+		if (options.json) console.log(JSON.stringify({ success: false, error: msg }));
+		else console.error(`Error: ${msg}`);
 		process.exit(1);
 	}
 }

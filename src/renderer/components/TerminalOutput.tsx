@@ -262,6 +262,10 @@ interface LogItemProps {
 	cwd?: string;
 	projectRoot?: string;
 	onFileClick?: (path: string) => void;
+	// SSH remote ID for resolving image/file paths emitted by an agent running
+	// on a remote host. Without it, LocalImage reads the path from the local
+	// filesystem (which doesn't have the remote file) and the image fails.
+	sshRemoteId?: string;
 	// Error details callback - receives the specific AgentError from the log entry
 	onShowErrorDetails?: (error: AgentError) => void;
 	// Save to file callback (AI mode only, non-user messages)
@@ -326,6 +330,7 @@ const LogItemComponent = memo(
 		cwd,
 		projectRoot,
 		onFileClick,
+		sshRemoteId,
 		onShowErrorDetails,
 		onSaveToFile,
 		ghCliAvailable,
@@ -582,6 +587,7 @@ const LogItemComponent = memo(
 									cwd={cwd}
 									projectRoot={projectRoot}
 									onFileClick={onFileClick}
+									sshRemoteId={sshRemoteId}
 									chatLineBreaks
 									chatMath
 								/>
@@ -635,6 +641,7 @@ const LogItemComponent = memo(
 										cwd={cwd}
 										projectRoot={projectRoot}
 										onFileClick={onFileClick}
+										sshRemoteId={sshRemoteId}
 										chatLineBreaks
 										chatMath
 									/>
@@ -821,6 +828,7 @@ const LogItemComponent = memo(
 											cwd={cwd}
 											projectRoot={projectRoot}
 											onFileClick={onFileClick}
+											sshRemoteId={sshRemoteId}
 											chatLineBreaks
 											chatMath
 										/>
@@ -909,6 +917,7 @@ const LogItemComponent = memo(
 											cwd={cwd}
 											projectRoot={projectRoot}
 											onFileClick={onFileClick}
+											sshRemoteId={sshRemoteId}
 											chatLineBreaks
 											chatMath
 										/>
@@ -989,6 +998,7 @@ const LogItemComponent = memo(
 										cwd={cwd}
 										projectRoot={projectRoot}
 										onFileClick={onFileClick}
+										sshRemoteId={sshRemoteId}
 										chatLineBreaks
 										chatMath
 									/>
@@ -2330,6 +2340,11 @@ export const TerminalOutput = memo(
 							cwd={cwd}
 							projectRoot={projectRoot}
 							onFileClick={onFileClick}
+							sshRemoteId={
+								session.sessionSshRemoteConfig?.enabled
+									? (session.sessionSshRemoteConfig?.remoteId ?? undefined)
+									: undefined
+							}
 							onShowErrorDetails={onShowErrorDetails}
 							onSaveToFile={handleSaveToFile}
 							ghCliAvailable={ghCliAvailable}

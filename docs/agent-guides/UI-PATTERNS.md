@@ -745,6 +745,39 @@ Portal-rendered toast notification stack. Rendered in `App.tsx`:
 <ToastContainer theme={theme} onSessionClick={handleSessionClick} />
 ```
 
+### Output Widget Library (`src/renderer/components/widgets/`)
+
+Shared, theme-aware, **presentational-only** display widgets. Every widget is
+memoized, takes its data via props (no IPC, no store reads), and is independent
+of any Encore flag - so it can be composed onto any surface. Import from the
+barrel (`components/widgets`), not from `output/` directly. Reuse these before
+hand-rolling stat cards, bar charts, donuts, or activity timelines.
+
+| Widget              | Use for                                                              |
+| ------------------- | -------------------------------------------------------------------- |
+| `StatCard`          | Headline metric: large value, label, optional `Sparkline` + icon     |
+| `StatCardGrid`      | Responsive auto-fit grid of `StatCard`s from a `StatCardDatum[]`     |
+| `SectionCard`       | Titled content card (icon + accent + action slot) framing a block    |
+| `ActivityTimeline`  | Compact stacked AUTO/USER/CUE bar timeline from `TimelineBucket[]`   |
+| `TypeBreakdown`     | Donut breakdown of `DonutSlice[]` with center total + legend %       |
+| `AgentActivityBars` | Horizontal bars from `BarDatum[]`: sorted desc, top-N + overflow row |
+
+Shared prop types live in `widgets/types.ts` (`WidgetProps` carries `theme`;
+plus `StatCardDatum`, `BarDatum`, `TimelineBucket`, `DonutSlice`). Colors follow
+the unified-history language (AUTO = `theme.colors.warning`, USER =
+`theme.colors.accent`, CUE = `CUE_COLOR`); pass a `colors` override for
+colorblind palettes. `StatCard`/`TypeBreakdown` reuse `Sparkline` and
+`formatNumber` rather than re-implementing SVG paths or number formatting.
+
+First consumer: Director's Notes Rich Mode (`DirectorNotes/RichOverview.tsx`),
+which composes the widgets from deterministic IPC data (`getGraphData` /
+`getUnifiedHistory`) and wraps each chart in `ChartErrorBoundary`.
+
+Full reference (all output + input widget props, the input-family contract, the
+presentational-only/Encore-flag-independent rules, and the Widget Gallery dev
+command): [WIDGET-LIBRARY.md](WIDGET-LIBRARY.md). Reuse a widget from there
+before hand-rolling a stat card, chart, sparkline, or input control.
+
 ---
 
 ## Menu / Popover Sizing - Use rem, Not px

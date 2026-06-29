@@ -165,6 +165,7 @@ function SessionListInner(props: SessionListProps) {
 	const editingGroupId = useUIStore((s) => s.editingGroupId);
 	const editingSessionId = useUIStore((s) => s.editingSessionId);
 	const draggingSessionId = useUIStore((s) => s.draggingSessionId);
+	const profilingActive = useUIStore((s) => s.profilingActive);
 	const bookmarksCollapsed = useUIStore((s) => s.bookmarksCollapsed);
 	const groupChatsExpanded = useSettingsStore((s) => s.groupChatsExpanded);
 	const groupChatSortAlphabetical = useSettingsStore((s) => s.groupChatSortAlphabetical);
@@ -961,7 +962,9 @@ function SessionListInner(props: SessionListProps) {
 								aria-label="Switch agent"
 							>
 								<Wand2
-									className={`w-5 h-5${isAnyBusy ? ' wand-sparkle-active' : ''}`}
+									className={`w-5 h-5${isAnyBusy ? ' wand-sparkle-active' : ''}${
+										profilingActive ? ' wand-profiling-active' : ''
+									}`}
 									style={{ color: theme.colors.accent }}
 								/>
 							</button>
@@ -1084,7 +1087,9 @@ function SessionListInner(props: SessionListProps) {
 					<div className="w-full flex flex-col items-center gap-2 relative z-30" ref={menuRef}>
 						<GhostIconButton onClick={() => setMenuOpen(!menuOpen)} padding="p-2" title="Menu">
 							<Wand2
-								className={`w-6 h-6${isAnyBusy ? ' wand-sparkle-active' : ''}`}
+								className={`w-6 h-6${isAnyBusy ? ' wand-sparkle-active' : ''}${
+									profilingActive ? ' wand-profiling-active' : ''
+								}`}
 								style={{ color: theme.colors.accent }}
 							/>
 						</GhostIconButton>

@@ -8,6 +8,7 @@
 import { withMaestroClient } from './maestro-client';
 import { resolveAgentId } from './storage';
 import { formatError, formatSuccess } from '../output/formatter';
+import { isQuiet } from '../output/verbosity';
 
 export interface SimpleResult {
 	success: boolean;
@@ -41,7 +42,8 @@ export function reportResult(
 	if (result.success) {
 		if (options.json) {
 			console.log(JSON.stringify({ success: true, ...options.jsonExtra }));
-		} else {
+		} else if (!isQuiet()) {
+			// --quiet suppresses incidental success lines (JSON is never gated).
 			console.log(formatSuccess(options.successMessage));
 		}
 		return;

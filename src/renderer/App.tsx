@@ -19,12 +19,13 @@ import { AppStandaloneModals } from './components/AppStandaloneModals';
 import { initializeRendererPrompts } from './services/promptInit';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { MainPanel, type MainPanelHandle } from './components/MainPanel';
-// AppOverlays, PlaygroundPanel, DebugWizardModal, DebugPackageModal, WindowsWarningModal,
+// AppOverlays, PlaygroundPanel, DebugPackageModal, WindowsWarningModal,
 // GistPublishModal, MaestroWizard, WizardResumeModal, TourOverlay are now rendered
 // inside AppStandaloneModals
 import { useWizard, type SerializableWizardState, type WizardStep } from './components/Wizard';
 // CONDUCTOR_BADGES moved to useAutoRunAchievements hook
 import { EmptyStateView } from './components/EmptyStateView';
+import { AgentsLoadingView } from './components/AgentsLoadingView';
 // DeleteAgentConfirmModal, MarketplaceModal, SymphonyModal, DocumentGraphView,
 // DirectorNotesModal, CueModal, CueYamlEditor are now lazy-loaded inside AppStandaloneModals
 
@@ -262,8 +263,6 @@ function MaestroConsoleInner() {
 		// pendingKeyboardMasteryLevel — now self-sourced in AppOverlays (Tier 1A)
 		// Playground Panel — playgroundOpen now self-sourced in AppStandaloneModals
 		setPlaygroundOpen,
-		// Debug Wizard Modal — debugWizardModalOpen now self-sourced in AppStandaloneModals
-		setDebugWizardModalOpen,
 		// Debug Package Modal — debugPackageModalOpen now self-sourced in AppStandaloneModals
 		setDebugPackageModalOpen,
 		// Debug Application Stats Modal — self-sourced in AppStandaloneModals
@@ -512,7 +511,11 @@ function MaestroConsoleInner() {
 	);
 	const groups = useSessionStore((s) => s.groups);
 	const activeSessionId = useSessionStore((s) => s.activeSessionId);
-	// sessionsLoaded moved to useQueueProcessing hook
+	// Whether the initial agent list has finished loading. On desktop the splash
+	// covers startup until this flips true; on Web Desktop (no splash) we use it
+	// to show a loading spinner instead of flashing the empty "create your first
+	// agent" state while sessions stream in over the WebSocket bridge.
+	const sessionsLoaded = useSessionStore((s) => s.sessionsLoaded);
 	const activeSession = useActiveSession();
 
 	// Actions — stable references from store, never trigger re-renders
@@ -776,7 +779,6 @@ function MaestroConsoleInner() {
 	// Expose debug helpers to window for console access
 	// No dependency array - always keep functions fresh
 	(window as any).__maestroDebug = {
-		openDebugWizard: () => setDebugWizardModalOpen(true),
 		openCommandK: () => setQuickActionOpen(true),
 		openWizard: () => openWizardModal(),
 		openSettings: () => setSettingsModalOpen(true),
@@ -1169,6 +1171,17 @@ function MaestroConsoleInner() {
 				: '',
 
 		[activeSession?.inputMode, activeSession?.shellCwd, activeSession?.cwd]
+	);
+
+	// Open a file path clicked in the Git Log / Git Diff viewers as a preview tab.
+	// The viewer dismisses itself first (via its own onClose); here we just read
+	// and open the file. The path arrives absolute (resolved against the viewer's
+	// cwd) so handleFileClick uses it verbatim and still honors SSH remotes.
+	const handleOpenGitFile = useCallback(
+		(absolutePath: string, fileName: string) => {
+			void handleFileClick({ name: fileName, type: 'file' }, absolutePath);
+		},
+		[handleFileClick]
 	);
 
 	// Auto-focus the AI input box when switching from terminal to AI mode
@@ -3068,7 +3081,6 @@ function MaestroConsoleInner() {
 					setUpdateCheckModalOpenForQuickActions={setUpdateCheckModalOpen}
 					openWizard={openWizardModal}
 					wizardGoToStep={wizardGoToStep}
-					setDebugWizardModalOpen={setDebugWizardModalOpen}
 					setDebugPackageModalOpen={setDebugPackageModalOpen}
 					setDebugApplicationStatsOpen={setDebugApplicationStatsOpen}
 					startTour={handleQuickActionsStartTour}
@@ -3128,6 +3140,7 @@ function MaestroConsoleInner() {
 					gitViewerCwd={gitViewerCwd}
 					onCloseGitDiff={handleCloseGitDiff}
 					onCloseGitLog={handleCloseGitLog}
+					onOpenGitFile={handleOpenGitFile}
 					onCloseAutoRunSetup={handleCloseAutoRunSetup}
 					onAutoRunFolderSelected={handleAutoRunFolderSelected}
 					onCloseBatchRunner={handleCloseBatchRunner}
@@ -3319,8 +3332,13 @@ function MaestroConsoleInner() {
 					recordTourSkip={recordTourSkip}
 				/>
 
-				{/* --- EMPTY STATE VIEW (when no sessions) --- */}
-				{sessions.length === 0 && !isMobileLandscape ? (
+				{/* --- LOADING VIEW (agent list still streaming in, no splash) --- */}
+				{sessions.length === 0 && !sessionsLoaded && !isMobileLandscape ? (
+					<AgentsLoadingView theme={theme} />
+				) : null}
+
+				{/* --- EMPTY STATE VIEW (loaded, genuinely no sessions) --- */}
+				{sessions.length === 0 && sessionsLoaded && !isMobileLandscape ? (
 					<EmptyStateView
 						theme={theme}
 						shortcuts={shortcuts}

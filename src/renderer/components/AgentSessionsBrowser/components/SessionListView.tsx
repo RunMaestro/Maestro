@@ -92,12 +92,11 @@ export const SessionListView = React.memo(function SessionListView({
 						<SessionListItem
 							key={session.sessionId}
 							session={session}
-							index={i}
-							selectedIndex={selectedIndex}
+							isSelected={i === selectedIndex}
 							isStarred={starredSessions.has(session.sessionId)}
 							activeAgentSessionId={activeAgentSessionId}
-							renamingSessionId={renamingSessionId}
-							renameValue={renameValue}
+							isRenaming={renamingSessionId === session.sessionId}
+							renameValue={renamingSessionId === session.sessionId ? renameValue : ''}
 							searchMode={searchMode}
 							searchQuery={search}
 							searchResultInfo={getSearchResultInfo(session.sessionId)}

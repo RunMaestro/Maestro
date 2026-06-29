@@ -202,10 +202,22 @@ export interface SessionInfo {
 	customArgs?: string;
 	/** Per-session env vars merged over agent-level customEnvVars and agent defaults. */
 	customEnvVars?: Record<string, string>;
+	/** Prefixed to the first message of every new session (not shown in chat). */
+	newSessionMessage?: string;
+	/** Appended to every message sent to the agent (not shown in chat). */
+	nudgeMessage?: string;
+	/** Per-session override of the agent binary path. */
+	customPath?: string;
+	/** Per-session context window size in tokens. */
+	customContextWindow?: number;
+	/** Claude token-source opt-in: drives the maestro-p TUI (Max quota) when on. */
+	enableMaestroP?: boolean;
+	/** Refines {@link enableMaestroP}: 'interactive' = always TUI, 'dynamic' = TUI then API fallback. */
+	maestroPMode?: 'interactive' | 'dynamic';
+	/** Per-session override of the maestro-p binary path. */
+	maestroPPath?: string;
 	/** Per-session SSH remote config — when enabled, CLI spawns via SSH. */
 	sessionSshRemoteConfig?: AgentSshRemoteConfig;
-	/** User-authored text prefixed onto the first turn of each fresh provider session. */
-	newSessionMessage?: string;
 }
 
 // Usage statistics from AI agent CLI (Claude Code, Codex, etc.)

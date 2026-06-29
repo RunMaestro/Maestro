@@ -21,6 +21,7 @@ import {
 	abbreviateGroupName,
 	isAbsolutePath,
 	getBasename,
+	formatSshTarget,
 } from '../../shared/formatters';
 
 describe('shared/formatters', () => {
@@ -657,6 +658,35 @@ describe('shared/formatters', () => {
 
 		it('handles empty input', () => {
 			expect(getBasename('')).toBe('');
+		});
+	});
+
+	// ==========================================================================
+	// formatSshTarget tests
+	// ==========================================================================
+	describe('formatSshTarget', () => {
+		it('shows user@host:port when all fields are present', () => {
+			expect(formatSshTarget({ host: '10.0.50.63', port: 2222, username: 'linvsw' })).toBe(
+				'linvsw@10.0.50.63:2222'
+			);
+		});
+
+		it('always shows the port, including the default 22 (the bug this prevents)', () => {
+			// A remote named "wsl ubuntu 2222" but saved with port 22 must reveal :22
+			expect(formatSshTarget({ host: '10.0.50.63', port: 22, username: 'linvsw' })).toBe(
+				'linvsw@10.0.50.63:22'
+			);
+		});
+
+		it('omits the user@ prefix when no username is set (no leading @)', () => {
+			expect(formatSshTarget({ host: 'maestro.gosubstrate.com', port: 22 })).toBe(
+				'maestro.gosubstrate.com:22'
+			);
+			expect(formatSshTarget({ host: 'host', port: 22, username: '   ' })).toBe('host:22');
+		});
+
+		it('defaults the port to 22 when omitted', () => {
+			expect(formatSshTarget({ host: 'host', username: 'me' })).toBe('me@host:22');
 		});
 	});
 });
