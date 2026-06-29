@@ -7,6 +7,7 @@ export { FileIndexingSection } from './FileIndexingSection';
 export { FontFamilySection } from './FontFamilySection';
 export { FontSizeSection } from './FontSizeSection';
 export { IconThemeSection } from './IconThemeSection';
+export { GroupChatSection } from './GroupChatSection';
 export { LeftSidePanelSection } from './LeftSidePanelSection';
 export { MainHeaderPanelSection } from './MainHeaderPanelSection';
 export { MaxLogBufferSection } from './MaxLogBufferSection';

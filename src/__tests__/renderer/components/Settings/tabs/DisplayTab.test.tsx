@@ -35,6 +35,7 @@ const mockSetBionifyReadingMode = vi.fn();
 const mockSetBionifyIntensity = vi.fn();
 const mockSetBionifyAlgorithm = vi.fn();
 const mockSetUserMessageAlignment = vi.fn();
+const mockSetGroupChatAutoScroll = vi.fn();
 const mockSetFileExplorerIconTheme = vi.fn();
 const mockSetUseNativeTitleBar = vi.fn();
 const mockSetAutoHideMenuBar = vi.fn();
@@ -75,6 +76,8 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		setBionifyAlgorithm: mockSetBionifyAlgorithm,
 		userMessageAlignment: 'right',
 		setUserMessageAlignment: mockSetUserMessageAlignment,
+		groupChatAutoScroll: true,
+		setGroupChatAutoScroll: mockSetGroupChatAutoScroll,
 		fileExplorerIconTheme: 'default',
 		setFileExplorerIconTheme: mockSetFileExplorerIconTheme,
 		useNativeTitleBar: false,
@@ -206,6 +209,22 @@ describe('DisplayTab', () => {
 		vi.useRealTimers();
 		vi.clearAllMocks();
 		mockUseSettingsOverrides = {};
+	});
+
+	describe('Group Chats', () => {
+		it('should render and toggle the auto-scroll setting', () => {
+			render(<DisplayTab theme={mockTheme} />);
+
+			expect(screen.getByText('Group Chats')).toBeInTheDocument();
+			const toggle = screen.getByRole('switch', {
+				name: 'Auto-scroll group chats to newest message',
+			});
+			expect(toggle).toHaveAttribute('aria-checked', 'true');
+
+			fireEvent.click(toggle);
+
+			expect(mockSetGroupChatAutoScroll).toHaveBeenCalledWith(false);
+		});
 	});
 
 	describe('Files Pane Icon Theme', () => {

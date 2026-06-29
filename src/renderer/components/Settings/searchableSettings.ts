@@ -507,6 +507,23 @@ export const DISPLAY_SETTINGS: SearchableSetting[] = [
 		],
 	},
 	{
+		id: 'display-group-chat-auto-scroll',
+		tab: 'display',
+		tabLabel: 'Display',
+		label: 'Group Chat Auto-Scroll',
+		description: 'Automatically scroll group chats to the newest message when new messages arrive.',
+		keywords: [
+			'group chat',
+			'auto-scroll',
+			'autoscroll',
+			'scroll',
+			'follow',
+			'bottom',
+			'newest',
+			'messages',
+		],
+	},
+	{
 		id: 'display-colorblind-mode',
 		tab: 'display',
 		tabLabel: 'Display',

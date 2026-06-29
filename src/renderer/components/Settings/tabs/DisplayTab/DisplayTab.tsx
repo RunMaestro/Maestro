@@ -9,6 +9,7 @@ import {
 	FileIndexingSection,
 	FontFamilySection,
 	FontSizeSection,
+	GroupChatSection,
 	IconThemeSection,
 	LeftSidePanelSection,
 	MainHeaderPanelSection,
@@ -59,6 +60,11 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 				theme={theme}
 				userMessageAlignment={settings.userMessageAlignment}
 				setUserMessageAlignment={settings.setUserMessageAlignment}
+			/>
+			<GroupChatSection
+				theme={theme}
+				groupChatAutoScroll={settings.groupChatAutoScroll}
+				setGroupChatAutoScroll={settings.setGroupChatAutoScroll}
 			/>
 			<IconThemeSection
 				theme={theme}

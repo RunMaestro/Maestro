@@ -109,6 +109,7 @@ export interface UseSettingsReturn {
 	rightPanelWidth: number;
 	markdownEditMode: boolean;
 	chatRawTextMode: boolean;
+	groupChatAutoScroll: boolean;
 	bionifyReadingMode: boolean;
 	bionifyIntensity: number;
 	bionifyAlgorithm: string;
@@ -116,6 +117,7 @@ export interface UseSettingsReturn {
 	setRightPanelWidth: (value: number) => void;
 	setMarkdownEditMode: (value: boolean) => void;
 	setChatRawTextMode: (value: boolean) => void;
+	setGroupChatAutoScroll: (value: boolean) => void;
 	setBionifyReadingMode: (value: boolean) => void;
 	setBionifyIntensity: (value: number) => void;
 	setBionifyAlgorithm: (value: string) => void;

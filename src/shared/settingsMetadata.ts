@@ -427,6 +427,12 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: false,
 		category: 'editor',
 	},
+	groupChatAutoScroll: {
+		description: 'Automatically scroll group chats to the newest message when new messages arrive.',
+		type: 'boolean',
+		default: true,
+		category: 'appearance',
+	},
 	bionifyReadingMode: {
 		description:
 			'Apply Bionify reading emphasis to opted-in long-form reading surfaces like File Preview and Auto Run.',
