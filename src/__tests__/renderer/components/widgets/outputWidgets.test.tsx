@@ -200,8 +200,9 @@ describe('SuccessFailureWidget', () => {
 
 	it('rounds the success rate to a whole percentage', () => {
 		render(<SuccessFailureWidget theme={mockTheme} successCount={1} failureCount={2} />);
-		// 1 / 3 = 33.33% -> 33%, failure 67%.
-		expect(screen.getByText('33%')).toBeInTheDocument();
+		// 1 / 3 = 33.33% -> 33% (shown in both the headline and the success
+		// legend row), failure 67% (legend only).
+		expect(screen.getAllByText('33%').length).toBeGreaterThanOrEqual(1);
 		expect(screen.getByText('67%')).toBeInTheDocument();
 	});
 
