@@ -1,0 +1,26 @@
+{
+	"id": "maestro.e2e.selftest",
+	"name": "Maestro E2E Self-Test",
+	"version": "1.0.0",
+	"tier": 1,
+	"maestro": { "minHostApi": "1.0.0" },
+	"description": "E2E fixture: exercises a representative capability set and logs PASS/DENY/INERT per capability so tests can validate the broker + sandbox + consent chain end-to-end.",
+	"author": "maestro-e2e",
+	"license": "MIT",
+	"entry": "entry.js",
+	"permissions": [
+		{ "capability": "fs:read", "scope": "__FS_SCOPE__", "reason": "e2e self-test read-back" },
+		{ "capability": "fs:write", "scope": "__FS_SCOPE__", "reason": "e2e self-test write" },
+		{ "capability": "net:fetch", "scope": "example.com", "reason": "e2e self-test egress" },
+		{ "capability": "notifications:toast", "reason": "e2e self-test toast" },
+		{ "capability": "settings:read", "reason": "e2e self-test settings read" },
+		{ "capability": "settings:write", "reason": "e2e self-test settings write" },
+		{ "capability": "storage:read", "reason": "e2e self-test storage read" },
+		{ "capability": "storage:write", "reason": "e2e self-test storage write" },
+		{ "capability": "events:subscribe", "reason": "e2e self-test event subscription" },
+		{ "capability": "ui:command", "reason": "e2e self-test palette invoke" }
+	],
+	"contributes": {
+		"commands": [{ "id": "selftest", "title": "E2E: Run self-test" }]
+	}
+}
