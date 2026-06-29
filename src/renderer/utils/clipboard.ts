@@ -26,6 +26,9 @@ import { isWebDesktop } from './runtimeContext';
  * Returns true on success.
  */
 function legacyExecCommandCopy(text: string): boolean {
+	// Remember what had focus so we can hand it back; selecting the hidden
+	// textarea steals focus from the control that initiated the copy.
+	const previouslyFocused = document.activeElement as HTMLElement | null;
 	const textarea = document.createElement('textarea');
 	textarea.value = text;
 	// Keep it out of view and from scrolling/zooming the page.
@@ -49,6 +52,11 @@ function legacyExecCommandCopy(text: string): boolean {
 		return false;
 	} finally {
 		document.body.removeChild(textarea);
+		// Restore focus to whatever held it before the copy so the next
+		// keystroke returns to the originating control.
+		if (previouslyFocused && typeof previouslyFocused.focus === 'function') {
+			previouslyFocused.focus();
+		}
 	}
 }
 

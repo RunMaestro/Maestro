@@ -140,6 +140,24 @@ describe('safeClipboardWrite', () => {
 
 			expect(await safeClipboardWrite('hello')).toBe(false);
 		});
+
+		it('restores focus to the originating control after the legacy copy', async () => {
+			// The hidden textarea steals focus; it must be handed back so the next
+			// keystroke returns to the control that triggered the copy.
+			clipboardMock.writeText.mockRejectedValue(new Error('not focused'));
+			const execCommand = vi.fn().mockReturnValue(true);
+			Object.assign(document, { execCommand });
+
+			const input = document.createElement('input');
+			document.body.appendChild(input);
+			input.focus();
+			expect(document.activeElement).toBe(input);
+
+			expect(await safeClipboardWrite('hello')).toBe(true);
+			expect(document.activeElement).toBe(input);
+
+			document.body.removeChild(input);
+		});
 	});
 });
 
