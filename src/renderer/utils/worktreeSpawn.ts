@@ -110,6 +110,22 @@ export async function spawnWorktreeAgentAndDispatch(
 				message: `Opened existing worktree at ${worktreePath}`,
 			});
 		}
+
+		// Refresh the dedup mark on the RESOLVED path. Two reasons this is not
+		// redundant with the mark above:
+		//   1. The original 10s TTL started BEFORE `git worktree add`, which can be
+		//      slow (large repo, cold disk, SSH remote). The chokidar discovery then
+		//      fires during the `getBranches`/`buildWorktreeSession` window below,
+		//      AFTER the mark has aged out — letting a sibling agent watching the
+		//      same basePath adopt this worktree under the wrong parent (PR #946).
+		//   2. When the branch was already attached elsewhere, `worktreePath` was
+		//      reassigned to `result.existingPath`, which the original mark (and the
+		//      clear just above) never covered.
+		// Re-marking restarts the TTL from after the slow disk operation, so the
+		// mark stays live until the owning session is committed to the store below.
+		// Only for create-new: existing-closed worktrees are already on disk and
+		// fire no addDir event, so there is nothing to race with.
+		markWorktreePathAsRecentlyCreated(worktreePath);
 	} else {
 		// existing-closed: worktree already on disk
 		worktreePath = target.worktreePath!;

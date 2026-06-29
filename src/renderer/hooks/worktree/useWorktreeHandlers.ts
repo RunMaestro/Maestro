@@ -867,14 +867,19 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 			if (!parentSession) return;
 
 			const normalizedWorktreePath = normalizePath(worktree.path);
-			const existingSession = latestSessions.find((s) => {
-				const normalizedCwd = normalizePath(s.cwd);
-				return (
-					normalizedCwd === normalizedWorktreePath ||
-					(s.parentSessionId === sessionId && s.worktreeBranch === worktree.branch)
-				);
-			});
-			if (existingSession) return;
+			// Per-parent dedup: only skip if THIS watching agent already owns a child
+			// for this worktree. Each agent in the repo runs its own watcher over the
+			// shared basePath and fires its own discovery event, so scoping the dedup
+			// to the firing parent lets every agent in the cwd pick up the new worktree
+			// as its own child — instead of the first watcher to fire claiming it
+			// globally and the others silently dropping it.
+			const existingForParent = latestSessions.find(
+				(s) =>
+					s.parentSessionId === sessionId &&
+					(sessionMatchesWorktreeRoot(s, normalizedWorktreePath) ||
+						s.worktreeBranch === worktree.branch)
+			);
+			if (existingForParent) return;
 
 			const sshRemoteId = getSshRemoteId(parentSession);
 
@@ -931,7 +936,17 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 			});
 
 			useSessionStore.getState().setSessions((prev) => {
-				if (prev.some((s) => normalizePath(s.cwd) === normalizedWorktreePath)) return prev;
+				// Per-parent guard (mirrors the existingForParent check above): another
+				// agent may already own a child at this cwd, but THIS parent should
+				// still get its own. Only collapse if this same parent raced to add a
+				// duplicate between the check above and here.
+				if (
+					prev.some(
+						(s) =>
+							s.parentSessionId === sessionId && normalizePath(s.cwd) === normalizedWorktreePath
+					)
+				)
+					return prev;
 				return [...prev, worktreeSession];
 			});
 

@@ -435,6 +435,7 @@ export interface SettingsStoreState {
 	autoRunDisabled: boolean;
 	dotfilesToggleHidden: boolean;
 	autoRunInactivityTimeoutMin: number;
+	autoRunMaxTaskDurationMin: number;
 	speckitEnabled: boolean;
 	openspecEnabled: boolean;
 	bmadEnabled: boolean;
@@ -578,6 +579,7 @@ export interface SettingsStoreActions {
 	setAutoRunDisabled: (value: boolean) => void;
 	setDotfilesToggleHidden: (value: boolean) => void;
 	setAutoRunInactivityTimeoutMin: (value: number) => void;
+	setAutoRunMaxTaskDurationMin: (value: number) => void;
 	setSpeckitEnabled: (value: boolean) => void;
 	setOpenspecEnabled: (value: boolean) => void;
 	setBmadEnabled: (value: boolean) => void;
@@ -801,6 +803,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		autoRunDisabled: false,
 		dotfilesToggleHidden: false,
 		autoRunInactivityTimeoutMin: 240,
+		autoRunMaxTaskDurationMin: 480,
 		speckitEnabled: true,
 		openspecEnabled: true,
 		bmadEnabled: true,
@@ -1563,6 +1566,14 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 			const clamped = rounded <= 0 ? 0 : Math.max(1, Math.min(1440, rounded));
 			set({ autoRunInactivityTimeoutMin: clamped });
 			window.maestro.settings.set('autoRunInactivityTimeoutMin', clamped);
+		},
+
+		setAutoRunMaxTaskDurationMin: (value) => {
+			// 0 is a sentinel for "unlimited" (no absolute cap). Any positive value is clamped to a sane range.
+			const rounded = Math.round(value);
+			const clamped = rounded <= 0 ? 0 : Math.max(1, Math.min(1440, rounded));
+			set({ autoRunMaxTaskDurationMin: clamped });
+			window.maestro.settings.set('autoRunMaxTaskDurationMin', clamped);
 		},
 
 		setLastSelectedPromptId: (value) => {
@@ -2857,6 +2868,9 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['autoRunInactivityTimeoutMin'] !== undefined)
 			patch.autoRunInactivityTimeoutMin = allSettings['autoRunInactivityTimeoutMin'] as number;
 
+		if (allSettings['autoRunMaxTaskDurationMin'] !== undefined)
+			patch.autoRunMaxTaskDurationMin = allSettings['autoRunMaxTaskDurationMin'] as number;
+
 		if (allSettings['speckitEnabled'] !== undefined)
 			patch.speckitEnabled = allSettings['speckitEnabled'] as boolean;
 
@@ -3056,6 +3070,7 @@ export function getSettingsActions() {
 		setAutoRunDisabled: state.setAutoRunDisabled,
 		setDotfilesToggleHidden: state.setDotfilesToggleHidden,
 		setAutoRunInactivityTimeoutMin: state.setAutoRunInactivityTimeoutMin,
+		setAutoRunMaxTaskDurationMin: state.setAutoRunMaxTaskDurationMin,
 		setLastSelectedPromptId: state.setLastSelectedPromptId,
 		setAnnotatorPenColor: state.setAnnotatorPenColor,
 		setAnnotatorPenSize: state.setAnnotatorPenSize,
