@@ -196,3 +196,39 @@ export function parseDirectorNotesNarrative(raw: string): ParseNarrativeResult {
 
 	return { ok: true, narrative: { version: 1, sections } };
 }
+
+/** Render one bullet as Markdown, mirroring Rich Mode's emphasis without colors. */
+function narrativeItemToMarkdown(item: NarrativeItem): string {
+	// `critical` reads as bold (Rich Mode shows it red + bold); `warn`/`info`
+	// stay plain. An item's `agent` is appended as a light italic attribution -
+	// the prose analogue of Rich Mode's agent pill.
+	const text = item.severity === 'critical' ? `**${item.text}**` : item.text;
+	const attribution = item.agent ? ` _(${item.agent})_` : '';
+	return `- ${text}${attribution}`;
+}
+
+/**
+ * Render a parsed narrative as clean Markdown prose. This is the qualitative
+ * counterpart to {@link parseDirectorNotesNarrative}: the agent now emits the
+ * structured JSON object, so Director's Notes "Plain Mode" (and the Copy/Save
+ * outputs) feed the raw string back through here to reproduce the pre-Rich-Mode
+ * reading experience instead of dumping the JSON.
+ *
+ * Each section becomes a `##` heading followed by a bullet list. Empty sections
+ * still render their heading plus a "Nothing to report." note so the three-part
+ * Accomplishments / Challenges / Next Steps structure is always recognizable.
+ */
+export function narrativeToMarkdown(narrative: DirectorNotesNarrative): string {
+	const blocks = narrative.sections.map((section) => {
+		const lines = [`## ${section.title}`, ''];
+		if (section.items.length === 0) {
+			lines.push('_Nothing to report._');
+		} else {
+			for (const item of section.items) {
+				lines.push(narrativeItemToMarkdown(item));
+			}
+		}
+		return lines.join('\n');
+	});
+	return blocks.join('\n\n').trim() + '\n';
+}

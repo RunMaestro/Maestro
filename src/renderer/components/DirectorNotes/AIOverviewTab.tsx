@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
 	RefreshCw,
 	Save,
@@ -21,7 +21,10 @@ import { generateTerminalProseStyles } from '../../utils/markdownConfig';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { notifyToast } from '../../stores/notificationStore';
 import { useModalStore } from '../../stores/modalStore';
-import type { DirectorNotesNarrative } from '../../../shared/directorNotesNarrative';
+import {
+	narrativeToMarkdown,
+	type DirectorNotesNarrative,
+} from '../../../shared/directorNotesNarrative';
 
 type SynopsisStats = NonNullable<
 	Awaited<ReturnType<typeof window.maestro.directorNotes.generateSynopsis>>['stats']
@@ -54,8 +57,10 @@ function loadFontScale(): number {
 
 // Rich vs Plain reading mode for the AI Overview. Rich is a widget dashboard
 // (stat cards, timeline, breakdowns) rendered from deterministic data. Plain
-// reproduces today's exact markdown wall-of-text so the copy/save/JSON output
-// path stays byte-for-byte identical.
+// reproduces the pre-Rich-Mode reading experience: a markdown synopsis. The
+// agent now emits the structured JSON narrative, so Plain Mode (and Copy/Save)
+// render `narrativeToMarkdown(narrative)` rather than the raw JSON string,
+// falling back to the raw `synopsis` for legacy/no-data/parse-failure results.
 //
 // Mode resolution layers two sources: the persisted `directorNotesSettings.
 // defaultMode` is the baseline default (a real product setting), and the
@@ -190,15 +195,24 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 		});
 	};
 
-	// Copy synopsis markdown to clipboard
+	// Human-readable markdown for Plain Mode, Copy, and Save. The agent emits the
+	// structured JSON narrative now, so render that as prose; only fall back to
+	// the raw `synopsis` for legacy markdown, the no-data message, or a parse
+	// failure (when there is no parsed narrative to convert).
+	const plainContent = useMemo(
+		() => (narrative ? narrativeToMarkdown(narrative) : synopsis),
+		[narrative, synopsis]
+	);
+
+	// Copy the readable synopsis markdown to clipboard
 	const copyToClipboard = useCallback(async () => {
-		if (!synopsis) return;
-		const ok = await safeClipboardWrite(synopsis);
+		if (!plainContent) return;
+		const ok = await safeClipboardWrite(plainContent);
 		if (ok) {
 			setCopied(true);
 			setTimeout(() => setCopied(false), 2000);
 		}
-	}, [synopsis]);
+	}, [plainContent]);
 
 	// Generate synopsis — the handler reads history files directly via file paths,
 	// so the renderer only needs to make a single IPC call.
@@ -549,7 +563,7 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 						<div className="director-notes-content select-text">
 							<style>{proseStyles}</style>
 							<MarkdownRenderer
-								content={synopsis}
+								content={plainContent}
 								theme={theme}
 								onCopy={(text) => safeClipboardWrite(text)}
 								enableBionifyReadingMode={bionifyReadingMode}
@@ -572,7 +586,7 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 			{showSaveModal && (
 				<SaveMarkdownModal
 					theme={theme}
-					content={synopsis}
+					content={plainContent}
 					onClose={() => setShowSaveModal(false)}
 					defaultFolder=""
 				/>

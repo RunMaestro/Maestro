@@ -71,9 +71,10 @@ An AI-generated synopsis of recent activity across all agents. This tab uses a c
 **Controls:**
 
 - **Lookback slider** - Adjust from 1 to 90 days to control the analysis window
+- **Rich / Plain toggle** - Switch between the Rich dashboard and the Plain markdown view (see [Reading modes](#reading-modes-rich-and-plain) below)
 - **Refresh** - Regenerate the synopsis with current settings
 - **Save** - Export the synopsis as a markdown file
-- **Copy** - Copy the raw markdown to clipboard
+- **Copy** - Copy the synopsis to the clipboard as readable markdown
 
 **Stats Bar:**
 After generation, a stats bar shows:
@@ -89,7 +90,16 @@ The AI produces a structured report organized by agent/project with sections for
 - **Challenges** - Issues encountered or unresolved
 - **Next Steps** - Recommended follow-up actions
 
-The synopsis is rendered as rich markdown with full formatting support.
+#### Reading modes: Rich and Plain
+
+The AI Overview renders the same synopsis two ways, switchable with the **Rich / Plain** toggle:
+
+- **Rich** (default) is a dashboard. Deterministic widgets - stat cards, an activity timeline, success/failure and source breakdowns, and per-agent activity - are computed directly from your history (never inferred by the AI), and the Accomplishments / Challenges / Next Steps narrative renders as styled section cards beneath them.
+- **Plain** is the classic reading view: the narrative as a clean markdown document, with no widgets.
+
+**Copy** and **Save** always export the Plain markdown regardless of the mode you're viewing, so a copied or saved synopsis is the readable report - not the dashboard's underlying data.
+
+You can set which mode opens by default in **Settings > Encore Features > Director's Notes**; the in-tab toggle overrides it for the current session.
 
 **Provider Configuration:**
 Configure which AI provider generates the synopsis in **Settings > Encore Features**. Any installed agent (Claude Code, Codex, OpenCode) can be used. The default lookback window is also configurable there.
@@ -137,6 +147,7 @@ Access Director's Notes settings via **Settings > Encore Features** (enable Dire
 | -------------------- | ---------------------------------------------------------- |
 | **AI Provider**      | Which agent generates the AI Overview synopsis             |
 | **Default Lookback** | Default number of days for the AI Overview lookback slider |
+| **Default Mode**     | Whether the AI Overview opens in Rich or Plain mode        |
 | **Custom Path**      | Optional custom binary path for the synopsis provider      |
 | **Custom Args**      | Optional custom arguments for the synopsis provider        |
 

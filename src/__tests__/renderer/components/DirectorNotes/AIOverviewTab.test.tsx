@@ -721,4 +721,86 @@ describe('AIOverviewTab', () => {
 			);
 		});
 	});
+
+	// The agent emits the structured JSON narrative now. Plain Mode (and the
+	// Copy/Save outputs) must convert it back to readable markdown prose instead
+	// of dumping the raw JSON object - the regression that made Plain Mode look
+	// like an error.
+	describe('Plain Mode renders the structured narrative as prose', () => {
+		const narrative = {
+			version: 1 as const,
+			sections: [
+				{
+					kind: 'accomplishments' as const,
+					title: 'Accomplishments',
+					items: [{ text: 'Shipped Plain Mode', severity: 'info' as const, agent: 'Maestro' }],
+				},
+				{
+					kind: 'challenges' as const,
+					title: 'Challenges',
+					items: [{ text: 'Build broke', severity: 'critical' as const, agent: 'rc' }],
+				},
+			],
+		};
+		// What the agent actually returns as the raw synopsis string.
+		const rawJson = JSON.stringify(narrative);
+
+		beforeEach(() => {
+			mockGenerateSynopsis.mockResolvedValue({
+				success: true,
+				synopsis: rawJson,
+				narrative,
+				stats: { agentCount: 2, entryCount: 9, durationMs: 5000 },
+			});
+		});
+
+		it('renders converted markdown prose, not the raw JSON object', async () => {
+			render(<AIOverviewTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('rich-overview')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByRole('button', { name: /^plain$/i }));
+
+			const md = screen.getByTestId('markdown-renderer');
+			expect(md.textContent).toContain('## Accomplishments');
+			expect(md.textContent).toContain('- Shipped Plain Mode _(Maestro)_');
+			expect(md.textContent).toContain('- **Build broke** _(rc)_');
+			// Regression guard: Plain Mode must NOT dump the raw JSON object.
+			expect(md.textContent).not.toContain('"version"');
+			expect(md.textContent).not.toContain('"sections"');
+		});
+
+		it('Copy exports the readable prose, not the raw JSON', async () => {
+			render(<AIOverviewTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('rich-overview')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByText('Copy'));
+
+			await waitFor(() => {
+				expect(mockWriteText).toHaveBeenCalled();
+			});
+			const copied = mockWriteText.mock.calls[0][0] as string;
+			expect(copied).toContain('## Accomplishments');
+			expect(copied).not.toContain('"version"');
+		});
+
+		it('Save hands the readable prose to the modal, not the raw JSON', async () => {
+			render(<AIOverviewTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('rich-overview')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByText('Save'));
+
+			const content = screen.getByTestId('save-markdown-modal').getAttribute('data-content') || '';
+			expect(content).toContain('## Accomplishments');
+			expect(content).not.toContain('"version"');
+		});
+	});
 });

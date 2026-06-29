@@ -18,6 +18,7 @@
 import { describe, it, expect } from 'vitest';
 import {
 	parseDirectorNotesNarrative,
+	narrativeToMarkdown,
 	type DirectorNotesNarrative,
 } from '../../shared/directorNotesNarrative';
 
@@ -281,6 +282,88 @@ describe('parseDirectorNotesNarrative', () => {
 				// Every one of these is invalid, so all must report failure.
 				expect(parseDirectorNotesNarrative(input).ok).toBe(false);
 			}
+		});
+	});
+
+	describe('narrativeToMarkdown', () => {
+		it('renders each section as a `##` heading with bullet items', () => {
+			const md = narrativeToMarkdown({
+				version: 1,
+				sections: [
+					{
+						kind: 'accomplishments',
+						title: 'Accomplishments',
+						items: [{ text: 'Shipped Plain Mode' }, { text: 'Fixed the JSON leak' }],
+					},
+				],
+			});
+			expect(md).toContain('## Accomplishments');
+			expect(md).toContain('- Shipped Plain Mode');
+			expect(md).toContain('- Fixed the JSON leak');
+		});
+
+		it('bolds critical items and appends the agent as italic attribution', () => {
+			const md = narrativeToMarkdown({
+				version: 1,
+				sections: [
+					{
+						kind: 'challenges',
+						title: 'Challenges',
+						items: [
+							{ text: 'Build pipeline broke', severity: 'critical', agent: 'rc' },
+							{ text: 'Routine cleanup', agent: 'Maestro' },
+						],
+					},
+				],
+			});
+			expect(md).toContain('- **Build pipeline broke** _(rc)_');
+			expect(md).toContain('- Routine cleanup _(Maestro)_');
+		});
+
+		it('keeps warn/info items plain (no bold)', () => {
+			const md = narrativeToMarkdown({
+				version: 1,
+				sections: [
+					{
+						kind: 'challenges',
+						title: 'Challenges',
+						items: [
+							{ text: 'A risk', severity: 'warn' },
+							{ text: 'A note', severity: 'info' },
+						],
+					},
+				],
+			});
+			expect(md).toContain('- A risk');
+			expect(md).toContain('- A note');
+			expect(md).not.toContain('**A risk**');
+			expect(md).not.toContain('**A note**');
+		});
+
+		it('renders an empty section with a "Nothing to report." note under its heading', () => {
+			const md = narrativeToMarkdown({
+				version: 1,
+				sections: [{ kind: 'nextSteps', title: 'Next Steps', items: [] }],
+			});
+			expect(md).toContain('## Next Steps');
+			expect(md).toContain('_Nothing to report._');
+		});
+
+		it('never emits the raw JSON keys (proves Plain Mode is prose, not the object)', () => {
+			const md = narrativeToMarkdown({
+				version: 1,
+				sections: [
+					{
+						kind: 'accomplishments',
+						title: 'Accomplishments',
+						items: [{ text: 'Did the thing', severity: 'info', agent: 'Maestro' }],
+					},
+				],
+			});
+			expect(md).not.toContain('"version"');
+			expect(md).not.toContain('"sections"');
+			expect(md).not.toContain('"kind"');
+			expect(md).not.toContain('"items"');
 		});
 	});
 });

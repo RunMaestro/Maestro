@@ -5,6 +5,10 @@
 import { withMaestroClient } from '../services/maestro-client';
 import { readSettings } from '../services/storage';
 import { formatError } from '../output/formatter';
+import {
+	parseDirectorNotesNarrative,
+	narrativeToMarkdown,
+} from '../../shared/directorNotesNarrative';
 
 type OutputFormat = 'json' | 'markdown' | 'text';
 
@@ -51,6 +55,18 @@ function checkEncoreFeatureEnabled(): void {
 	if (!encoreFeatures?.directorNotes) {
 		throw new Error("Director's Notes is not enabled. Enable it in Settings > Encore Features.");
 	}
+}
+
+/**
+ * The agent emits the structured JSON narrative now. For the human-readable
+ * `markdown`/`text` formats, convert it back to markdown prose (the pre-Rich-Mode
+ * output). Falls back to the raw string for legacy markdown or unparseable
+ * output, so this never makes the CLI output worse than the raw synopsis.
+ * (`-f json` stays untouched - it intentionally returns the raw `synopsis`.)
+ */
+function synopsisToReadableMarkdown(synopsis: string): string {
+	const parsed = parseDirectorNotesNarrative(synopsis);
+	return parsed.ok ? narrativeToMarkdown(parsed.narrative) : synopsis;
 }
 
 function stripMarkdownFormatting(md: string): string {
@@ -127,10 +143,11 @@ export async function directorNotesSynopsis(options: DirectorNotesSynopsisOption
 				)
 			);
 		} else if (format === 'markdown') {
-			console.log(result.synopsis);
+			console.log(synopsisToReadableMarkdown(result.synopsis));
 		} else {
-			// Text: strip markdown formatting for clean terminal output
-			console.log(stripMarkdownFormatting(result.synopsis));
+			// Text: render the narrative as markdown, then strip formatting for
+			// clean terminal output.
+			console.log(stripMarkdownFormatting(synopsisToReadableMarkdown(result.synopsis)));
 
 			if (result.stats) {
 				const duration = result.stats.durationMs
