@@ -132,6 +132,9 @@ export interface CueRunManagerDeps {
 	) => void;
 	/** Called when a run is manually stopped — pushes to activity log only (no chain propagation) */
 	onRunStopped: (result: CueRunResult) => void;
+	/** Optional metadata-only hook fired once when a run starts — threaded to the
+	 * plugin event bus to surface `cue.runStarted` to subscribed plugins; ids only. */
+	onRunStarted?: (info: { runId: string; sessionId: string; subscriptionName: string }) => void;
 	/** Called to prevent system sleep (e.g., when a Cue run starts) */
 	onPreventSleep?: (reason: string) => void;
 	/** Called to allow system sleep (e.g., when a Cue run ends) */
@@ -442,6 +445,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			sessionId,
 			subscriptionName,
 		} satisfies CueLogPayload);
+		deps.onRunStarted?.({ runId, sessionId, subscriptionName });
 
 		try {
 			const runResult = await deps.onCueRun({

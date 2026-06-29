@@ -3667,4 +3667,92 @@ describe('CueEngine', () => {
 			engine.stop();
 		});
 	});
+	describe('plugin event emission', () => {
+		const heartbeatConfig = () =>
+			createMockConfig({
+				subscriptions: [
+					{
+						name: 'periodic',
+						event: 'time.heartbeat',
+						enabled: true,
+						prompt: 'Run check',
+						interval_minutes: 5,
+					},
+				],
+			});
+
+		it('emits cue.runStarted then cue.runFinished for a completed run', async () => {
+			mockLoadCueConfig.mockReturnValue(heartbeatConfig());
+			const emitPluginEvent =
+				vi.fn<(event: { topic: string; payload: Record<string, unknown> }) => void>();
+			const engine = new CueEngine(createMockDeps({ emitPluginEvent }));
+			engine.start();
+			await vi.advanceTimersByTimeAsync(10);
+
+			const topics = emitPluginEvent.mock.calls.map((c) => c[0].topic);
+			expect(topics).toContain('cue.runStarted');
+			expect(topics).toContain('cue.runFinished');
+
+			const started = emitPluginEvent.mock.calls.find((c) => c[0].topic === 'cue.runStarted')![0];
+			expect(started.payload).toMatchObject({
+				sessionId: 'session-1',
+				subscriptionName: 'periodic',
+			});
+			expect(started.payload).toHaveProperty('runId');
+
+			const finished = emitPluginEvent.mock.calls.find((c) => c[0].topic === 'cue.runFinished')![0];
+			expect(finished.payload).toMatchObject({
+				sessionId: 'session-1',
+				subscriptionName: 'periodic',
+				status: 'completed',
+			});
+
+			engine.stop();
+		});
+
+		it('emits cue.runFinished with status "stopped" when a run is manually stopped', async () => {
+			mockLoadCueConfig.mockReturnValue(heartbeatConfig());
+			const emitPluginEvent =
+				vi.fn<(event: { topic: string; payload: Record<string, unknown> }) => void>();
+			const engine = new CueEngine(
+				createMockDeps({
+					emitPluginEvent,
+					onCueRun: vi.fn(() => new Promise<CueRunResult>(() => {})),
+				})
+			);
+			engine.start();
+			await vi.advanceTimersByTimeAsync(10);
+
+			const activeRun = engine.getActiveRuns()[0];
+			expect(activeRun).toBeDefined();
+			engine.stopRun(activeRun.runId);
+
+			const finished = emitPluginEvent.mock.calls
+				.map((c) => c[0])
+				.filter((e) => e.topic === 'cue.runFinished');
+			expect(finished).toHaveLength(1);
+			expect(finished[0].payload).toMatchObject({ runId: activeRun.runId, status: 'stopped' });
+
+			engine.stop();
+		});
+
+		it('does not let a throwing plugin bus break the run lifecycle', async () => {
+			mockLoadCueConfig.mockReturnValue(heartbeatConfig());
+			const emitPluginEvent = vi.fn(() => {
+				throw new Error('plugin bus down');
+			});
+			const deps = createMockDeps({ emitPluginEvent });
+			const engine = new CueEngine(deps);
+
+			expect(() => engine.start()).not.toThrow();
+			await vi.advanceTimersByTimeAsync(10);
+
+			// The run still reached a natural completion despite the throwing sink.
+			expect(deps.onCueRun).toHaveBeenCalledTimes(1);
+			expect(engine.getActivityLog()).toHaveLength(1);
+			expect(engine.getActivityLog()[0].status).toBe('completed');
+
+			engine.stop();
+		});
+	});
 });
