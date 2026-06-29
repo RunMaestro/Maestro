@@ -37,7 +37,7 @@ import type { PianolaRule } from '../shared/pianola/types';
 import { spawn, type ChildProcess } from 'child_process';
 import { PluginManager } from './plugins/plugin-manager';
 import { transcriptReadEgressConflict } from '../shared/plugins/capability-policy';
-import { evaluatePluginDispatch } from '../shared/plugins/plugin-dispatch-gate';
+import { evaluateScheduledDispatch } from '../shared/plugins/plugin-dispatch-gate';
 import { PermissionBroker } from './plugins/permission-broker';
 import { PluginSandboxHost } from './plugins/plugin-sandbox-host';
 import { setActivePluginManager } from './plugins/plugin-manager-singleton';
@@ -1497,7 +1497,11 @@ app
 
 		// Supervised plugin scheduler: fires plugins' declarative cue triggers
 		// (interval / daily-time) on a poll loop. Self-gates on the plugins flag.
-		// notify -> toast; dispatch is left unwired (needs agents:dispatch review).
+		// notify -> toast. Dispatch is risk-gated (evaluateScheduledDispatch): a
+		// trigger is auto-eligible only when low/medium risk AND the plugin holds
+		// agents:dispatch AND is trusted (signed). Eligible triggers are surfaced to
+		// the user (notify); a blind auto-send sink is deliberately NOT wired because
+		// a static manifest cueTrigger cannot safely address a runtime session id.
 		const schedulerManager = pluginManager;
 		// Expose the live manager + plugins-flag predicate to the web-server
 		// message handlers (the MCP tool bridge) without threading it through
@@ -1514,17 +1518,11 @@ app
 			getTriggers: () => schedulerManager.getContributions().cueTriggers,
 			notify: (trigger) => logger.toast(trigger.payload, `Plugin: ${trigger.pluginId}`),
 			evaluateDispatch: (trigger) => {
-				const verdict = evaluatePluginDispatch(trigger.payload);
-				// The risk gate is necessary but NOT sufficient: auto-dispatch also
-				// requires the plugin to hold a live agents:dispatch grant, so a
-				// low-risk verdict can never bypass the consent/broker model.
-				if (!verdict.eligible) return verdict;
-				if (isPermitted(grantsOf(trigger.pluginId), 'agents:dispatch')) return verdict;
-				return {
-					eligible: false,
-					risk: verdict.risk,
-					reason: 'plugin lacks the agents:dispatch grant',
-				};
+				const rec = pluginManager?.getRegistry().records.find((r) => r.id === trigger.pluginId);
+				return evaluateScheduledDispatch(trigger.payload, {
+					hasDispatchGrant: isPermitted(grantsOf(trigger.pluginId), 'agents:dispatch'),
+					trusted: rec?.signature?.status === 'trusted',
+				});
 			},
 		});
 
@@ -2209,6 +2207,7 @@ function setupProcessListeners() {
 			safeSend,
 			powerManager,
 			groupChatEmitters,
+			emitPluginEvent: (event) => pluginEventBus?.emit(event),
 			groupChatRouter: {
 				routeModeratorResponse,
 				routeAgentResponse,

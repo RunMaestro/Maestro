@@ -35,6 +35,7 @@ import {
 	useResolvedClaudeConfigDirKey,
 } from '../../stores/claudeUsageStore';
 import { formatFutureTime } from '../../../shared/formatters';
+import { PluginUiItemsSlot } from '../plugins/PluginUiItemsSlot';
 
 export interface MainPanelHeaderProps {
 	activeSession: Session;
@@ -777,6 +778,8 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 							)}
 						</div>
 					)}
+
+				<PluginUiItemsSlot surface="toolbar" />
 
 				{/* Memory Viewer Button - only show if agent maintains per-project memory */}
 				{hasCapability('supportsProjectMemory') && (

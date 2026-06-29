@@ -223,11 +223,12 @@ export function describeCapability(capability: PluginCapability): string {
 
 // --- Host API version (from shared/plugins/host-api.ts) ---------------------
 
-/** The host API version this Maestro build implements. Bumped to 1.4.0 for the
- * backward-compatible `ui:contribute` / `ui:panel` / `ui:render-unsafe` UI
- * capabilities (1.3.0 added the `tools` + `keybindings` contribution points;
- * 1.2.0 added the `transcripts:read` capability + `transcripts.read` host method). */
-export const HOST_API_VERSION = '1.4.0';
+/** The host API version this Maestro build implements. Bumped to 1.5.0 for the
+ * backward-compatible event topics `agent.exited` / `agent.error` / `usage.updated`
+ * / `run.completed` (metadata-only) and functional sidebar/activity-bar/toolbar uiItem
+ * surfaces. (1.4.0 added `ui:contribute` / `ui:panel` / `ui:render-unsafe`; 1.3.0 added
+ * `tools` + `keybindings`; 1.2.0 added `transcripts:read`.) */
+export const HOST_API_VERSION = '1.5.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {
@@ -682,6 +683,10 @@ export const PLUGIN_EVENT_TOPICS = [
 	'agent.awaiting', // an agent is blocked waiting on input (no prompt text)
 	'agent.statusChanged',
 	'cue.fired', // a Maestro Cue trigger fired (type only)
+	'agent.exited', // an agent process exited (sessionId + exit code, no output)
+	'agent.error', // an agent surfaced an error (type + recoverable, no message body)
+	'usage.updated', // token/cost usage update for a session (counts only)
+	'run.completed', // a batch query/auto-run completed (timing + source, no output)
 ] as const;
 
 export type PluginEventTopic = (typeof PLUGIN_EVENT_TOPICS)[number];
@@ -699,6 +704,26 @@ export interface PluginEventPayloads {
 	'agent.awaiting': { agentId: string; tabId?: string; kind?: string; risk?: string };
 	'agent.statusChanged': { agentId: string; tabId?: string; status: string };
 	'cue.fired': { cueType: string; projectPath?: string };
+	'agent.exited': { sessionId: string; exitCode: number };
+	'agent.error': { sessionId: string; agentId?: string; errorType: string; recoverable: boolean };
+	'usage.updated': {
+		sessionId: string;
+		inputTokens: number;
+		outputTokens: number;
+		cacheReadInputTokens: number;
+		cacheCreationInputTokens: number;
+		totalCostUsd: number;
+		contextWindow: number;
+		reasoningTokens?: number;
+	};
+	'run.completed': {
+		sessionId: string;
+		agentType: string;
+		source: 'user' | 'auto';
+		durationMs: number;
+		projectPath?: string;
+		tabId?: string;
+	};
 }
 
 /** A typed host event. */

@@ -3,6 +3,7 @@ import type { Session, Group, Theme } from '../../types';
 import { getStatusColor } from '../../utils/theme';
 import { hasNoClaudeProviderSession } from '../SessionItem';
 import { SessionTooltipContent } from './SessionTooltipContent';
+import { PluginUiItemsSlot } from '../plugins/PluginUiItemsSlot';
 
 interface SkinnySidebarProps {
 	theme: Theme;
@@ -40,6 +41,7 @@ export const SkinnySidebar = memo(function SkinnySidebar({
 
 	return (
 		<div className="flex-1 min-h-0 flex flex-col items-center py-4 gap-2 overflow-y-auto overflow-x-visible no-scrollbar">
+			<PluginUiItemsSlot surface="activity-bar" />
 			{visibleSessions.map((session) => {
 				const isInBatch = activeBatchSessionIds.includes(session.id);
 				const hasUnreadTabs = session.aiTabs?.some((tab) => tab.hasUnread);
