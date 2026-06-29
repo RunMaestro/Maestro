@@ -2,25 +2,38 @@
 // Maestro E2E self-test plugin (versioned fixture).
 //
 // Runs in the tier-1 sandbox; every maestro.* call is a broker-gated RPC
-// authorized against the plugin's live grants. It probes a representative
-// capability set and logs one line per capability:
-//   [e2e-selftest] <cap>: PASS | DENY | INERT | ERROR
-// followed by a SUMMARY line. console.* is injected by the sandbox and
-// forwarded to the host debug log, so the results are observable from the
-// demo `logs/` directory WITHOUT the plugin holding any grant — which is what
-// lets the e2e assert the default-deny model (ungranted => DENY) and, after
-// consent, the granted model (granted => PASS).
+// authorized against the plugin's live grants. It probes the full callable
+// capability surface and logs one line per capability:
+//   [e2e-selftest:<runId>] <cap>: PASS | DENY | INERT | ERROR
+// followed by a SUMMARY line, and logs every delivered event as
+//   [e2e-selftest:<runId>] EVENT <topic> <json>
+// console.* is injected by the sandbox and forwarded to the host debug log,
+// so results are observable from the captured main-process output WITHOUT the
+// plugin holding any grant. The runId marker prevents stale-log false-passes.
 //
-// __FS_SCOPE__ is substituted by the e2e harness with a real, forward-slashed
-// directory OUTSIDE the Maestro userData tree (the broker structurally denies
-// fs access into userData even with a grant).
+// Classification:
+//   DENY  = broker refused (ungranted)            -> "permission denied"
+//   INERT = granted, but host side is unwired       -> "not implemented" /
+//           (agents:dispatch, process:spawn, ui:command) "not a registered palette command"
+//   PASS  = granted and the call actually functioned
+//   ERROR = anything else (e.g. net:fetch offline)
+//
+// __FS_SCOPE__ / __RUN_ID__ are substituted by the harness. The fs scope is a
+// directory OUTSIDE userData (the broker structurally denies fs into userData).
 const SCOPE = '__FS_SCOPE__';
 const TAG = '[e2e-selftest:__RUN_ID__]';
+const EVENT_TOPICS = ['session.updated', 'session.created', 'cue.runStarted', 'cue.runFinished'];
 
 function classify(err) {
 	const m = String((err && err.message) || err);
 	if (/permission denied/i.test(m)) return 'DENY';
-	if (/not implemented|unknown host method|is not implemented/i.test(m)) return 'INERT';
+	if (
+		/not implemented|unknown host method|is not implemented|not a registered palette command|no such command/i.test(
+			m
+		)
+	) {
+		return 'INERT';
+	}
 	return 'ERROR';
 }
 
@@ -36,19 +49,24 @@ async function runSelfTest(maestro) {
 		console.log(TAG + ' ' + cap + ': ' + results[cap]);
 	}
 
+	const settingsKey = 'plugins.' + maestro.pluginId + '.e2e';
 	await probe('fs:write', () => maestro.fs.write(SCOPE + '/probe.txt', 'v-' + Date.now()));
 	await probe('fs:read', () => maestro.fs.read(SCOPE + '/probe.txt'));
 	await probe('net:fetch', () => maestro.net.fetch('https://example.com'));
-	const settingsKey = 'plugins.' + maestro.pluginId + '.e2e';
+	await probe('agents:read', () => maestro.agents.list());
+	await probe('agents:dispatch', () => maestro.agents.dispatch('none', 'hi'));
+	await probe('notifications:toast', () => maestro.notifications.toast('e2e self-test'));
 	await probe('settings:write', () => maestro.settings.set(settingsKey, 'v'));
 	await probe('settings:read', () => maestro.settings.get(settingsKey));
+	await probe('sessions:read', () => maestro.sessions.list());
+	await probe('transcripts:read', () =>
+		maestro.transcripts.read({ sessionId: 'none', fields: ['summary'], projectPath: SCOPE })
+	);
 	await probe('storage:write', () => maestro.storage.set('e2e', 'v'));
 	await probe('storage:read', () => maestro.storage.keys());
-	await probe('notifications:toast', () => maestro.notifications.toast('e2e self-test'));
-	await probe('events:subscribe', () =>
-		maestro.events.subscribe(['cue.runStarted', 'cue.runFinished'])
-	);
 	await probe('ui:command', () => maestro.ui.runCommand('maestro.e2e.noop'));
+	await probe('events:subscribe', () => maestro.events.subscribe(EVENT_TOPICS));
+	await probe('process:spawn', () => maestro.process.spawn('echo hi'));
 
 	console.log(TAG + ' SUMMARY ' + JSON.stringify(results));
 	return results;
@@ -56,15 +74,33 @@ async function runSelfTest(maestro) {
 
 module.exports = {
 	async activate(maestro) {
-		// Re-runnable on demand via window.maestro.plugins.invokeCommand(
-		//   'maestro.e2e.selftest/selftest') so the e2e can force a fresh run
-		// after granting consent.
-		maestro.commands.register('selftest', async () => {
-			const results = await runSelfTest(maestro);
-			return { ok: true, results };
+		// Event delivery: log any subscribed event that actually arrives so a test
+		// can trigger a host event and assert end-to-end delivery into the sandbox.
+		for (const topic of EVENT_TOPICS) {
+			maestro.events.on(topic, (evt) => {
+				console.log(TAG + ' EVENT ' + topic + ' ' + JSON.stringify(evt || {}));
+			});
+		}
+
+		// Re-runnable self-test (after granting consent the test re-invokes this).
+		maestro.commands.register('selftest', async () => ({
+			ok: true,
+			results: await runSelfTest(maestro),
+		}));
+
+		// Re-subscribe on demand: activation runs before consent, so events.subscribe
+		// is denied at first; the test invokes this AFTER granting events:subscribe.
+		maestro.commands.register('resubscribe', async () => {
+			try {
+				await maestro.events.subscribe(EVENT_TOPICS);
+				console.log(TAG + ' RESUBSCRIBED');
+				return { ok: true };
+			} catch (err) {
+				console.log(TAG + ' RESUBSCRIBE-FAIL ' + String((err && err.message) || err));
+				return { ok: false };
+			}
 		});
-		// Also run once at activation so the ungranted (default-deny) smoke test
-		// has log output without invoking anything.
+
 		await runSelfTest(maestro);
 	},
 	deactivate() {},
