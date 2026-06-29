@@ -20,6 +20,8 @@ import {
 } from './global-hotkey-manager';
 import { CueEngine } from './cue/cue-engine';
 import { configureCueTelemetry } from './cue/cue-telemetry';
+import { startMaeBridge } from './mae/mae-bridge';
+import type { BridgeHost } from '../mae/mae-bridge-host';
 import {
 	executeCuePrompt,
 	recordCueHistoryEntry,
@@ -355,6 +357,7 @@ let processManager: ProcessManager | null = null;
 let webServer: WebServer | null = null;
 let agentDetector: AgentDetector | null = null;
 let cueEngine: CueEngine | null = null;
+let maeBridge: BridgeHost | null = null;
 let usageRefreshScheduler: UsageRefreshScheduler | null = null;
 let interactiveReplayController: InteractiveReplayController<ProcessSpawnConfig> | null = null;
 
@@ -1161,6 +1164,25 @@ app
 		// Create main window
 		logger.info('Creating main window', 'Startup');
 		createWindow();
+
+		// Start the Maestro TUI (`mae`) bridge: a loopback-only host that lets an
+		// external omp/`mae` session be tracked and use the Maestro toolset. Best
+		// effort - a failure must never block app startup.
+		try {
+			maeBridge = await startMaeBridge({
+				getMainWindow: () => mainWindow,
+				getCueEngine: () => cueEngine,
+			});
+			app.once('before-quit', () => {
+				void maeBridge?.close();
+				maeBridge = null;
+			});
+		} catch (error) {
+			logger.error(
+				`Failed to start mae bridge: ${error instanceof Error ? error.message : String(error)}`,
+				'Startup'
+			);
+		}
 
 		// Wire the global "summon Maestro" hotkey. Register the saved binding (if
 		// any) and re-register live when the setting changes from any source

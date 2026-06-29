@@ -52,6 +52,9 @@ export const AGENT_ICONS: Record<string, string> = {
 
 	// Terminal/shell (internal)
 	terminal: '💻',
+
+	// Maestro-branded TUI (omp)
+	mae: '🎼',
 };
 
 /**

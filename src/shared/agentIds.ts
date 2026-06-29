@@ -23,6 +23,7 @@ export const AGENT_IDS = [
 	'factory-droid',
 	'hermes',
 	'pi',
+	'mae',
 	'copilot-cli',
 ] as const;
 

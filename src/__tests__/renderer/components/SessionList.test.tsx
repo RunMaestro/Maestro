@@ -339,6 +339,29 @@ describe('SessionList', () => {
 			expect(header).toHaveClass('relative');
 		});
 
+		it('renders an external mae session row (Maestro TUI, process-less, aiPid 0)', () => {
+			// Mirrors the synthetic Session useMaeBridge upserts for a tracked
+			// external run; verifies it renders in the list (acceptance step 2)
+			// without the running app, and that a process-less `mae` session is safe.
+			const maeSession = createMockSession({
+				id: 'mae:/s/a.jsonl',
+				name: 'omp session',
+				toolType: 'mae',
+				state: 'busy',
+				aiPid: 0,
+				terminalPid: 0,
+				isLive: false,
+			});
+			useSessionStore.setState({ sessions: [maeSession] });
+			useUIStore.setState({ leftSidebarOpen: true });
+			const props = createDefaultProps({
+				sortedSessions: [maeSession],
+				visibleSessions: [maeSession],
+			});
+			render(<SessionList {...props} />);
+			expect(screen.getByText('omp session')).toBeInTheDocument();
+		});
+
 		it('renders collapsed sidebar mode', () => {
 			useUIStore.setState({ leftSidebarOpen: false });
 			const props = createDefaultProps({});

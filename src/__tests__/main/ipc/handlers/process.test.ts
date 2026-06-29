@@ -410,6 +410,26 @@ describe('process IPC handlers', () => {
 			expect(result).toEqual({ pid: 12345, success: true });
 		});
 
+		it('refuses to spawn a Maestro TUI (mae) session — externally tracked, never spawned', async () => {
+			const handler = handlers.get('process:spawn');
+			const result = await handler!({} as any, {
+				sessionId: 'mae:/s/a.jsonl',
+				toolType: 'mae',
+				cwd: '/test/project',
+				command: 'mae',
+				args: [],
+			});
+
+			expect(result).toEqual({
+				pid: -1,
+				success: false,
+				error: expect.stringContaining('Maestro TUI'),
+			});
+			// Never resolves an agent definition or reaches the spawner.
+			expect(mockAgentDetector.getAgent).not.toHaveBeenCalled();
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+		});
+
 		it('should return pid on successful spawn', async () => {
 			const mockAgent = { id: 'terminal', requiresPty: true };
 

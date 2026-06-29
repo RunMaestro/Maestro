@@ -158,6 +158,19 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		hidden: true, // Internal agent, not shown in UI
 	},
 	{
+		id: 'mae',
+		name: 'Maestro TUI',
+		// The Maestro-branded omp TUI. Tracked/PTY identity (like `terminal`),
+		// launched via the `mae` binary in a terminal tab - NOT the JSON-line agent
+		// path (excluded from create/spawn VALID_TYPES). `hidden` until the GUI
+		// New-Instance launch entry lands (goal doc section 11, item 1).
+		binaryName: 'mae',
+		command: 'mae',
+		args: [],
+		requiresPty: true,
+		hidden: true,
+	},
+	{
 		id: 'claude-code',
 		name: 'Claude Code',
 		binaryName: 'claude',

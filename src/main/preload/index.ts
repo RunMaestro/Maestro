@@ -57,6 +57,7 @@ import { createWakatimeApi } from './wakatime';
 import { createMaestroCliApi } from './maestroCli';
 import { createPromptsApi } from './prompts';
 import { createMemoryApi } from './memory';
+import { createMaeApi } from './mae';
 
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
@@ -218,6 +219,8 @@ contextBridge.exposeInMainWorld('maestro', {
 	prompts: createPromptsApi(),
 	// Per-project Memory API (Claude Code memory viewer)
 	memory: createMemoryApi(),
+	// Maestro TUI (`mae`) bridge: live tracked-session subscriptions
+	mae: createMaeApi(),
 });
 
 // Re-export factory functions for external consumers (e.g., tests)

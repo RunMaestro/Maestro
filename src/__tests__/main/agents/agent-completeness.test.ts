@@ -135,4 +135,19 @@ describe('Agent Completeness', () => {
 			}
 		});
 	});
+
+	describe('mae is a hidden tracking/PTY identity (not a JSON-spawn agent)', () => {
+		const mae = AGENT_DEFINITIONS.find((d) => d.id === 'mae');
+		it('has a hidden, PTY definition', () => {
+			expect(mae).toBeDefined();
+			expect(mae?.hidden).toBe(true);
+			expect(mae?.requiresPty).toBe(true);
+		});
+		it('is not driven as a JSON/batch agent', () => {
+			const caps = getAgentCapabilities('mae');
+			expect(caps.supportsJsonOutput).toBe(false);
+			expect(caps.supportsBatchMode).toBe(false);
+			expect(caps.usesJsonLineOutput).toBe(false);
+		});
+	});
 });

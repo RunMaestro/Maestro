@@ -5,7 +5,9 @@ import { withMaestroClient } from '../services/maestro-client';
 import { formatError, formatSuccess } from '../output/formatter';
 import { AGENT_IDS } from '../../shared/agentIds';
 
-const VALID_TYPES: Set<string> = new Set(AGENT_IDS.filter((id) => id !== 'terminal'));
+const VALID_TYPES: Set<string> = new Set(
+	AGENT_IDS.filter((id) => id !== 'terminal' && id !== 'mae')
+);
 
 interface CreateAgentOptions {
 	cwd: string;

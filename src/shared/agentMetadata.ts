@@ -24,6 +24,7 @@ export const AGENT_DISPLAY_NAMES: Record<AgentId, string> = {
 	'factory-droid': 'Factory Droid',
 	hermes: 'Hermes',
 	pi: 'Pi',
+	mae: 'Maestro TUI',
 	'copilot-cli': 'Copilot-CLI',
 };
 
@@ -75,6 +76,7 @@ export const BETA_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>([
 	'factory-droid',
 	'hermes',
 	'pi',
+	'mae',
 	'copilot-cli',
 ]);
 

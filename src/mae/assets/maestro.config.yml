@@ -1,0 +1,17 @@
+# Maestro TUI config overlay (loaded by omp via --config).
+#
+# IMPORTANT: omp applies --config as a CLI overlay that OUTRANKS the user's
+# global and project settings (precedence: defaults <- global <- project <-
+# CLI overlay <- runtime overrides; see omp `config-usage.md`). Because `mae`
+# passes this file on EVERY launch, anything set here would silently override
+# the user's own configuration. So this overlay intentionally sets NO
+# behavior-changing keys - it must not, e.g., flip a user's `tools.approvalMode`.
+#
+# Per-session tuning is done with passthrough flags instead, e.g.:
+#   mae --approval-mode write
+#   mae --thinking high
+#   mae --model opus
+#
+# Add a key here ONLY for a Maestro-wide default that is genuinely intended to
+# override user settings on every TUI launch (a deliberate product decision).
+# Keys are validated against omp's SETTINGS_SCHEMA; invalid keys are rejected.

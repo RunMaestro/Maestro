@@ -223,6 +223,22 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				const processManager = requireProcessManager(getProcessManager);
 				const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
 
+				// Maestro TUI (`mae`) sessions are externally tracked (registered via
+				// the bridge), never agent-spawned. A stored `toolType:'mae'` reaching
+				// the spawner would launch `mae` recursively on send. GUI launch (when
+				// added) runs mae as a terminal tab, not through this agent path.
+				if (config.toolType === 'mae') {
+					logger.warn('Refusing to spawn a Maestro TUI (mae) session', LOG_CONTEXT, {
+						sessionId: config.sessionId,
+					});
+					return {
+						pid: -1,
+						success: false,
+						error:
+							'Maestro TUI (mae) sessions are externally managed and cannot be spawned directly.',
+					};
+				}
+
 				// Get agent definition to access config options and argument builders
 				const agent = await agentDetector.getAgent(config.toolType);
 				// Use INFO level on Windows for better visibility in logs

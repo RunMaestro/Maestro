@@ -19,6 +19,7 @@ export default defineConfig({
 			'src/__tests__/integration/**',
 			'src/__tests__/e2e/**',
 			'src/__tests__/performance/**',
+			'src/mae/**',
 		],
 		testTimeout: 10000,
 		hookTimeout: 10000,
@@ -34,6 +35,7 @@ export default defineConfig({
 				'src/__tests__/**',
 				'**/*.d.ts',
 				'src/main/preload.ts', // Electron preload script
+				'src/mae/**', // mae (Bun TUI) is verified by `bun test src/mae`
 			],
 		},
 	},

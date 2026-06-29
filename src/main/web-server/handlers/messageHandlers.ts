@@ -2825,10 +2825,11 @@ export class WebSocketMessageHandler {
 
 	/**
 	 * Known agent types for validation — derived from the canonical AGENT_IDS list.
-	 * Excludes 'terminal' since it's an internal-only agent type.
+	 * Excludes 'terminal' and 'mae' (internal/display-only types not spawned via
+	 * the JSON-line agent path).
 	 */
 	private static readonly VALID_AGENT_TYPES: Set<string> = new Set(
-		AGENT_IDS.filter((id) => id !== 'terminal')
+		AGENT_IDS.filter((id) => id !== 'terminal' && id !== 'mae')
 	);
 
 	/**

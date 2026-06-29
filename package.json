@@ -14,7 +14,8 @@
 	},
 	"bin": {
 		"maestro-cli": "./dist/cli/maestro-cli.js",
-		"maestro-p": "./dist/cli/maestro-p.js"
+		"maestro-p": "./dist/cli/maestro-p.js",
+		"mae": "./dist/cli/mae.js"
 	},
 	"scripts": {
 		"dev": "node scripts/dev.mjs",
@@ -27,11 +28,13 @@
 		"dev:web-desktop": "vite --config vite.config.web-desktop.mts",
 		"build:web-desktop": "vite build --config vite.config.web-desktop.mts",
 		"dev:win": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/start-dev.ps1",
-		"build": "npm run build:main && npm run build:preload && npm run build:renderer && npm run build:web && npm run build:web-desktop && npm run build:cli && npm run build:maestro-p",
+		"build": "npm run build:main && npm run build:preload && npm run build:renderer && npm run build:web && npm run build:web-desktop && npm run build:cli && npm run build:maestro-p && npm run build:mae",
 		"build:main": "tsc -p tsconfig.main.json",
 		"build:preload": "node scripts/build-preload.mjs",
 		"build:cli": "node scripts/build-cli.mjs",
 		"build:maestro-p": "node scripts/build-maestro-p.mjs",
+		"build:mae": "node scripts/build-mae.mjs",
+		"typecheck:mae": "tsc -p tsconfig.mae.json",
 		"build:renderer": "vite build",
 		"build:web": "vite build --config vite.config.web.mts",
 		"package": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --mac --win --linux",
@@ -43,7 +46,7 @@
 		"preinstall": "node scripts/check-python.mjs",
 		"prepare": "node scripts/setup-git-hooks.mjs",
 		"postinstall": "patch-package && electron-rebuild -f -w node-pty,better-sqlite3",
-		"lint": "tsc -p tsconfig.lint.json && tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.cli.json --noEmit",
+		"lint": "tsc -p tsconfig.lint.json && tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.cli.json --noEmit && npm run typecheck:mae",
 		"lint:eslint": "eslint src/",
 		"format": "prettier --write \"src/**/*.{ts,tsx}\"",
 		"format:all": "prettier --write .",
@@ -59,6 +62,7 @@
 		"test:integration": "vitest run --config vitest.integration.config.ts",
 		"test:integration:watch": "vitest --config vitest.integration.config.ts",
 		"test:performance": "vitest run --config vitest.performance.config.mts",
+		"test:mae": "bun test src/mae",
 		"refresh-speckit": "node scripts/refresh-speckit.mjs",
 		"refresh-openspec": "node scripts/refresh-openspec.mjs",
 		"refresh-bmad": "node scripts/refresh-bmad.mjs"
@@ -115,6 +119,14 @@
 					"to": "maestro-p.js"
 				},
 				{
+					"from": "dist/cli/mae.js",
+					"to": "mae.js"
+				},
+				{
+					"from": "dist/mae",
+					"to": "mae"
+				},
+				{
 					"from": "src/prompts",
 					"to": "prompts/core",
 					"filter": [
@@ -162,6 +174,14 @@
 					"to": "maestro-p.js"
 				},
 				{
+					"from": "dist/cli/mae.js",
+					"to": "mae.js"
+				},
+				{
+					"from": "dist/mae",
+					"to": "mae"
+				},
+				{
 					"from": "src/prompts",
 					"to": "prompts/core",
 					"filter": [
@@ -199,6 +219,14 @@
 				{
 					"from": "dist/cli/maestro-p.js",
 					"to": "maestro-p.js"
+				},
+				{
+					"from": "dist/cli/mae.js",
+					"to": "mae.js"
+				},
+				{
+					"from": "dist/mae",
+					"to": "mae"
 				},
 				{
 					"from": "src/prompts",

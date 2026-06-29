@@ -96,6 +96,40 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 	},
 
 	/**
+	 * Maestro TUI (`mae`) - the Maestro-branded omp TUI, tracked as an external
+	 * PTY session. Conservative caps mirroring `terminal`: Maestro does not drive
+	 * it via the JSON-agent path. Resume is handled by `mae resume` / ompSessionId,
+	 * deliberately NOT exposed as a generic capability.
+	 */
+	mae: {
+		supportsResume: false,
+		supportsReadOnlyMode: false,
+		supportsJsonOutput: false,
+		supportsSessionId: false,
+		supportsImageInput: false,
+		supportsImageInputOnResume: false,
+		supportsSlashCommands: false,
+		supportsSessionStorage: false,
+		supportsCostTracking: false,
+		supportsUsageStats: false,
+		supportsBatchMode: false,
+		requiresPromptToStart: false,
+		supportsStreaming: true,
+		supportsResultMessages: false,
+		supportsModelSelection: false,
+		supportsStreamJsonInput: false,
+		supportsThinkingDisplay: false,
+		supportsContextMerge: false,
+		supportsContextExport: false,
+		supportsWizard: false,
+		supportsGroupChatModeration: false,
+		usesJsonLineOutput: false,
+		usesCombinedContextWindow: false,
+		supportsAppendSystemPrompt: false,
+		supportsProjectMemory: false,
+	},
+
+	/**
 	 * Codex - OpenAI's Codex CLI
 	 * https://github.com/openai/codex
 	 *

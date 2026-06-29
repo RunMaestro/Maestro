@@ -30,3 +30,10 @@ jobs:
           cache: 'npm'
       - run: npm ci
       - run: npm run test
+
+  test-mae:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+      - run: bun test src/mae

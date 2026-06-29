@@ -141,6 +141,7 @@ import {
 import { useChatFileDropZone } from './hooks/ui/useChatFileDropZone';
 import { useMainPanelProps, useSessionListProps, useRightPanelProps } from './hooks/props';
 import { useAgentListeners } from './hooks/agent/useAgentListeners';
+import { useMaeBridge } from './hooks/session/useMaeBridge';
 import { useSessionRecovery } from './hooks/agent/useSessionRecovery';
 import { useAutoResumeCoordinator } from './hooks/agent/useAutoResumeCoordinator';
 import { useSymphonyContribution } from './hooks/symphony/useSymphonyContribution';
@@ -684,6 +685,9 @@ function MaestroConsoleInner() {
 		bmadCommands,
 		saveFileGistUrl,
 	} = useAppInitialization();
+
+	// Surface externally-run omp/`mae` sessions live in the session list (W3).
+	useMaeBridge();
 
 	// Wrapper for setActiveSessionId that also dismisses active group chat
 	const setActiveSessionId = useCallback(

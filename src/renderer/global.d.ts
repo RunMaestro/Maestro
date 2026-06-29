@@ -197,6 +197,13 @@ interface MaestroAPI {
 		sendGroomingPrompt: (sessionId: string, prompt: string) => Promise<string>;
 		cleanupGroomingSession: (sessionId: string) => Promise<void>;
 	};
+	// Maestro TUI (`mae`) bridge: live tracked-session subscriptions (payloads are
+	// validated in the renderer; see src/mae/protocol.ts parseSession*).
+	mae: {
+		onSessionRegistered: (callback: (payload: unknown) => void) => () => void;
+		onSessionEvent: (callback: (payload: unknown) => void) => () => void;
+		onSessionEnded: (callback: (payload: unknown) => void) => () => void;
+	};
 	settings: {
 		get: (key: string) => Promise<unknown>;
 		set: (key: string, value: unknown) => Promise<boolean>;
