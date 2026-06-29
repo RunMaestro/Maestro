@@ -9,6 +9,7 @@
 
 import type { ToolType } from '../types';
 import { getStdinFlags } from '../utils/spawnHelpers';
+import { stripAnsiCodes } from '../../shared/stringUtils';
 
 // ============================================================================
 // Types
@@ -165,6 +166,25 @@ function normalizeResponse(raw: any): FeedbackParsedResponse {
 	};
 }
 
+/**
+ * Distil a failed provider's raw output into a short, human-readable error
+ * detail. Strips ANSI, drops blank lines, and keeps the tail - where CLIs
+ * print the actual failure (auth prompts, "command not found", stack traces) -
+ * capped to a sane length. Lets the feedback UI surface the real cause instead
+ * of a generic "something went wrong", e.g. when the wrong Codex binary is
+ * selected among multiple installs.
+ */
+function summarizeProcessFailure(output: string): string {
+	const cleaned = stripAnsiCodes(output)
+		.split('\n')
+		.map((line) => line.trimEnd())
+		.filter((line) => line.trim().length > 0);
+	if (cleaned.length === 0) return '';
+	const tail = cleaned.slice(-8).join('\n');
+	const MAX = 600;
+	return tail.length > MAX ? `...${tail.slice(-MAX)}` : tail;
+}
+
 // ============================================================================
 // FeedbackConversationManager
 // ============================================================================
@@ -210,12 +230,21 @@ export class FeedbackConversationManager {
 
 		const agent = await window.maestro.agents.get(this.agentType);
 		if (!agent) {
-			throw new Error(`Agent ${this.agentType} not found`);
+			throw new Error(`The ${this.agentType} provider could not be found.`);
 		}
+
+		// The binary Maestro resolved for this provider. Surfaced in every
+		// failure path below so the user can tell which install was used -
+		// critical when multiple Codex binaries (incl. wrappers) are present.
+		const binaryPath = agent.path || agent.command;
 
 		const isRemote = this.sshRemoteConfig?.enabled && this.sshRemoteConfig?.remoteId;
 		if (!isRemote && !agent.available) {
-			throw new Error(`Agent ${this.agentType} is not available`);
+			throw new Error(
+				`The ${agent.name || this.agentType} provider isn't available. Maestro resolved its ` +
+					`binary to "${binaryPath}", but it reported as not runnable - check that it's installed, ` +
+					`on your PATH, and authenticated.`
+			);
 		}
 
 		const prompt = this.buildPrompt(userMessage, history);
@@ -267,18 +296,26 @@ export class FeedbackConversationManager {
 					callbacks?.onComplete?.(response);
 					resolve(response);
 				} else {
-					const errorResponse = {
-						...DEFAULT_FEEDBACK_RESPONSE,
-						message: 'Something went wrong processing your message. Please try again.',
-					};
-					callbacks?.onError?.(`Agent exited with code ${code}`);
-					resolve(errorResponse);
+					// Surface the binary that was used plus whatever the provider
+					// printed before dying, instead of a generic "something went
+					// wrong". This is the common failure when the wrong Codex install
+					// is auto-selected and can't start (missing auth, shadowed path).
+					const detail = summarizeProcessFailure(this.outputBuffer);
+					const message =
+						`The ${agent.name || this.agentType} provider exited with code ${code} before it could respond.\n\n` +
+						`**Binary:** \`${binaryPath}\`\n\n` +
+						(detail
+							? `**Output:**\n\n\`\`\`\n${detail}\n\`\`\``
+							: 'No output was captured - the binary may have failed to launch (wrong path, ' +
+								'missing auth, or a shadowing install). If you have multiple installs, confirm the ' +
+								'right one is selected.');
+					callbacks?.onError?.(`Agent exited with code ${code}: ${detail || '(no output)'}`);
+					resolve({ ...DEFAULT_FEEDBACK_RESPONSE, message });
 				}
 			});
 
 			// Build args based on agent type
 			const argsForSpawn = this.buildArgsForAgent(agent);
-			const commandToUse = agent.path || agent.command;
 
 			// Get stdin flags for Windows
 			const isSshSession = Boolean(this.sshRemoteConfig?.enabled);
@@ -293,7 +330,7 @@ export class FeedbackConversationManager {
 				sessionId: currentSessionId,
 				toolType: this.agentType!,
 				cwd: '.',
-				command: commandToUse,
+				command: binaryPath,
 				args: argsForSpawn,
 				prompt,
 				...stdinFlags,

@@ -355,12 +355,19 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 					summary: response.summary,
 				},
 			]);
-		} catch {
+		} catch (error) {
+			// Surface the real reason (e.g. provider binary not found / not
+			// runnable, with its resolved path) rather than a generic message,
+			// so multi-install / auth problems are actionable.
+			const detail =
+				error instanceof Error && error.message
+					? error.message
+					: 'Something went wrong. Please try again.';
 			setMessages((prev) => [
 				...prev,
 				{
 					role: 'assistant',
-					content: 'Something went wrong. Please try again.',
+					content: detail,
 					timestamp: Date.now(),
 				},
 			]);
