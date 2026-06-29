@@ -20,6 +20,8 @@ export const PLUGIN_EVENT_TOPICS = [
 	'agent.error', // an agent surfaced an error (type + recoverable, no message body)
 	'usage.updated', // token/cost usage update for a session (counts only)
 	'run.completed', // a batch query/auto-run completed (timing + source, no output)
+	'cue.runStarted', // a Cue automation run started (ids only)
+	'cue.runFinished', // a Cue automation run reached a terminal state (status only)
 ] as const;
 
 export type PluginEventTopic = (typeof PLUGIN_EVENT_TOPICS)[number];
@@ -59,6 +61,15 @@ export interface PluginEventPayloads {
 		durationMs: number;
 		projectPath?: string;
 		tabId?: string;
+	};
+	'cue.runStarted': { runId: string; sessionId: string; subscriptionName: string };
+	'cue.runFinished': {
+		runId: string;
+		sessionId: string;
+		subscriptionName: string;
+		status: string;
+		pipelineName?: string;
+		durationMs?: number;
 	};
 }
 

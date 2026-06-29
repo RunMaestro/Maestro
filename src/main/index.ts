@@ -1128,6 +1128,9 @@ app
 					at: new Date().toISOString(),
 					payload: { cueType },
 				}),
+			// Surface Cue run lifecycle (`cue.runStarted` / `cue.runFinished`) to
+			// subscribed plugins (events:subscribe). Metadata-only; null-safe.
+			emitPluginEvent: (event) => pluginEventBus?.emit(event),
 		});
 
 		// Configure Cue telemetry submitter. Reads installationId / encore flags

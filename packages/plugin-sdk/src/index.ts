@@ -223,12 +223,13 @@ export function describeCapability(capability: PluginCapability): string {
 
 // --- Host API version (from shared/plugins/host-api.ts) ---------------------
 
-/** The host API version this Maestro build implements. Bumped to 1.5.0 for the
- * backward-compatible event topics `agent.exited` / `agent.error` / `usage.updated`
- * / `run.completed` (metadata-only) and functional sidebar/activity-bar/toolbar uiItem
- * surfaces. (1.4.0 added `ui:contribute` / `ui:panel` / `ui:render-unsafe`; 1.3.0 added
- * `tools` + `keybindings`; 1.2.0 added `transcripts:read`.) */
-export const HOST_API_VERSION = '1.5.0';
+/** The host API version this Maestro build implements. Bumped to 1.6.0 for the
+ * backward-compatible event topics `cue.runStarted` / `cue.runFinished` (metadata-only
+ * automation-run lifecycle). (1.5.0 added `agent.exited` / `agent.error` / `usage.updated`
+ * / `run.completed` + functional sidebar/activity-bar/toolbar uiItem surfaces; 1.4.0 added
+ * `ui:contribute` / `ui:panel` / `ui:render-unsafe`; 1.3.0 added `tools` + `keybindings`;
+ * 1.2.0 added `transcripts:read`.) */
+export const HOST_API_VERSION = '1.6.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {
@@ -687,6 +688,8 @@ export const PLUGIN_EVENT_TOPICS = [
 	'agent.error', // an agent surfaced an error (type + recoverable, no message body)
 	'usage.updated', // token/cost usage update for a session (counts only)
 	'run.completed', // a batch query/auto-run completed (timing + source, no output)
+	'cue.runStarted', // a Cue automation run started (ids only)
+	'cue.runFinished', // a Cue automation run reached a terminal state (status only)
 ] as const;
 
 export type PluginEventTopic = (typeof PLUGIN_EVENT_TOPICS)[number];
@@ -723,6 +726,15 @@ export interface PluginEventPayloads {
 		durationMs: number;
 		projectPath?: string;
 		tabId?: string;
+	};
+	'cue.runStarted': { runId: string; sessionId: string; subscriptionName: string };
+	'cue.runFinished': {
+		runId: string;
+		sessionId: string;
+		subscriptionName: string;
+		status: string;
+		pipelineName?: string;
+		durationMs?: number;
 	};
 }
 
