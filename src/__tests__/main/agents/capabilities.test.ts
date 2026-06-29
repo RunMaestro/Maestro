@@ -117,9 +117,11 @@ describe('agent-capabilities', () => {
 		it('should have capabilities for qwen3-coder', () => {
 			const capabilities = AGENT_CAPABILITIES['qwen3-coder'];
 			expect(capabilities).toBeDefined();
-			// Local model - no cost tracking
+			// Local/plan model - no cost tracking
 			expect(capabilities.supportsCostTracking).toBe(false);
 			expect(capabilities.supportsStreaming).toBe(true);
+			expect(capabilities.supportsJsonOutput).toBe(true);
+			expect(capabilities.supportsModelSelection).toBe(true);
 		});
 
 		it('should have capabilities for opencode', () => {
@@ -171,6 +173,25 @@ describe('agent-capabilities', () => {
 			expect(capabilities.usesJsonLineOutput).toBe(true);
 		});
 
+		it('should expose Oh My Pi capabilities backed by its JSON event protocol', () => {
+			const capabilities = AGENT_CAPABILITIES.omp;
+
+			expect(capabilities).toBeDefined();
+			expect(capabilities.supportsResume).toBe(true);
+			expect(capabilities.supportsJsonOutput).toBe(true);
+			expect(capabilities.supportsSessionId).toBe(true);
+			expect(capabilities.supportsImageInput).toBe(true);
+			expect(capabilities.supportsModelSelection).toBe(true);
+			expect(capabilities.supportsCostTracking).toBe(true);
+			expect(capabilities.supportsUsageStats).toBe(true);
+			expect(capabilities.supportsBatchMode).toBe(true);
+			expect(capabilities.supportsStreaming).toBe(true);
+			expect(capabilities.supportsResultMessages).toBe(true);
+			expect(capabilities.supportsThinkingDisplay).toBe(true);
+			expect(capabilities.supportsReadOnlyMode).toBe(true);
+			expect(capabilities.usesJsonLineOutput).toBe(true);
+		});
+
 		it('should define capabilities for all known agents', () => {
 			const knownAgents = [
 				'claude-code',
@@ -181,6 +202,7 @@ describe('agent-capabilities', () => {
 				'opencode',
 				'factory-droid',
 				'copilot-cli',
+				'omp',
 			];
 
 			for (const agentId of knownAgents) {

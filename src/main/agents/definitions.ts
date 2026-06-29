@@ -349,10 +349,43 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 	{
 		id: 'qwen3-coder',
 		name: 'Qwen3 Coder',
-		hidden: true, // Not shipping. Kept for type/back-compat, hidden from UI.
-		binaryName: 'qwen3-coder',
-		command: 'qwen3-coder',
+		binaryName: 'qwen',
+		command: 'qwen',
 		args: [],
+		batchModePrefix: [],
+		batchModeArgs: ['-y'],
+		jsonOutputArgs: ['--output-format', 'stream-json'],
+		resumeArgs: (sessionId: string) => ['--resume', sessionId],
+		// Qwen Code (qwen-code v0.19.x) ships a first-class `--approval-mode plan` that denies
+		// write/shell/edit tools in non-interactive mode (read-only analysis). It does not need
+		// `-y` to avoid hangs (non-interactive plan/default denies tools rather than prompting),
+		// and `-y` (YOLO) would auto-approve writes, defeating read-only intent.
+		readOnlyArgs: ['--approval-mode', 'plan'],
+		readOnlyCliEnforced: true, // CLI enforces read-only via --approval-mode plan
+		yoloModeArgs: ['-y'],
+		workingDirArgs: (dir: string) => ['--include-directories', dir],
+		imageArgs: undefined,
+		modelArgs: (modelId: string) => ['-m', modelId],
+		promptArgs: (prompt: string) => ['-p', prompt],
+		configOptions: [
+			{
+				key: 'model',
+				type: 'text',
+				label: 'Model',
+				description:
+					'Model passed to -m. Qwen Code is multi-provider, so any model id works (e.g. coder-model, qwen3-coder-plus, qwen3.5-plus, or an OpenAI-compatible id like openai/gpt-4o). Leave blank for the account/plan default.',
+				default: '',
+				argBuilder: (value: string) => (value && value.trim() ? ['-m', value.trim()] : []),
+			},
+			{
+				key: 'contextWindow',
+				type: 'number' as const,
+				label: 'Context Window Size',
+				description:
+					'Maximum context window size in tokens. Qwen3-Coder supports a native 256K (262144) context window.',
+				default: 262144,
+			},
+		],
 	},
 	{
 		id: 'hermes',
@@ -417,6 +450,44 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 				label: 'Context Window Size',
 				description:
 					'Fallback context window size in tokens until Pi reports a runtime-specific value.',
+				default: 200000,
+			},
+		],
+	},
+	{
+		id: 'omp',
+		name: 'Oh My Pi',
+		binaryName: 'omp',
+		command: 'omp',
+		args: [],
+		batchModePrefix: ['-p'],
+		jsonOutputArgs: ['--mode', 'json'],
+		// No noPromptSeparator: use Maestro's default '--' end-of-options separator
+		// before the prompt. omp supports '--', so prompts beginning with '-' or
+		// '---' (markdown front matter) reach the model instead of being parsed as flags.
+		resumeArgs: (sessionId: string) => ['--resume', sessionId],
+		readOnlyArgs: ['--tools', 'read,grep,glob'], // Read-only: restrict to read/search tools (search->grep, find->glob aliases)
+		readOnlyCliEnforced: true,
+		noToolsArgs: ['--no-tools'], // Tab naming disables all tools so a task-like first message yields a name, not a real agentic run (mirrors Pi)
+		modelArgs: (modelId: string) => ['--model', modelId],
+		workingDirArgs: (dir: string) => ['--cwd', dir],
+		imageArgs: (imagePath: string) => [`@${imagePath}`],
+		configOptions: [
+			{
+				key: 'model',
+				type: 'text',
+				label: 'Model',
+				description:
+					'Fuzzy model override passed to --model (for example, opus, gpt-5.2, or openai/gpt-5.2). Multi-provider; leave empty for the CLI default.',
+				default: '',
+				argBuilder: (value: string) => (value && value.trim() ? ['--model', value.trim()] : []),
+			},
+			{
+				key: 'contextWindow',
+				type: 'number',
+				label: 'Context Window Size',
+				description:
+					'Fallback context window size in tokens until Oh My Pi reports a runtime-specific value.',
 				default: 200000,
 			},
 		],

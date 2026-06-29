@@ -25,6 +25,7 @@ export const AGENT_DISPLAY_NAMES: Record<AgentId, string> = {
 	hermes: 'Hermes',
 	pi: 'Pi',
 	'copilot-cli': 'Copilot-CLI',
+	omp: 'Oh My Pi',
 };
 
 /**
@@ -76,6 +77,8 @@ export const BETA_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>([
 	'hermes',
 	'pi',
 	'copilot-cli',
+	'qwen3-coder',
+	'omp',
 ]);
 
 /**

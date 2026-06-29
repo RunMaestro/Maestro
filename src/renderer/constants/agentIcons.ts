@@ -44,6 +44,9 @@ export const AGENT_ICONS: Record<string, string> = {
 	hermes: '⚕',
 	pi: 'π',
 
+	// Oh My Pi
+	omp: '🦉',
+
 	// Enterprise
 	'factory-droid': '🏭',
 

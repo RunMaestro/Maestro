@@ -30,6 +30,7 @@ describe('agentIds', () => {
 
 		it('should contain beta agents', () => {
 			expect(AGENT_IDS).toContain('copilot-cli');
+			expect(AGENT_IDS).toContain('omp');
 		});
 
 		it('should have no duplicates', () => {

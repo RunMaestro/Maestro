@@ -24,6 +24,7 @@ export const AGENT_IDS = [
 	'hermes',
 	'pi',
 	'copilot-cli',
+	'omp',
 ] as const;
 
 /**

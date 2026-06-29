@@ -166,35 +166,37 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 	},
 
 	/**
-	 * Qwen3 Coder - Alibaba's Qwen coding model
+	 * Qwen3 Coder - Alibaba's Qwen coding agent (Qwen Code CLI)
 	 *
-	 * PLACEHOLDER: Most capabilities set to false until Qwen3 Coder CLI is available
-	 * and can be tested. Update this configuration when integrating the agent.
+	 * Qwen Code is a Gemini CLI fork that exposes the same stream-json headless
+	 * interface. Capabilities mirror the Gemini/Claude stream-json integration.
+	 * Session storage is deferred until verified against a live
+	 * Coding-plan account (beta scope).
 	 */
 	'qwen3-coder': {
-		supportsResume: false,
-		supportsReadOnlyMode: false,
-		supportsJsonOutput: false,
-		supportsSessionId: false,
-		supportsImageInput: false,
+		supportsResume: true, // --resume <sessionId> headless resume (resumeArgs wired)
+		supportsReadOnlyMode: false, // Prompt-only enforcement via -y
+		supportsJsonOutput: true,
+		supportsSessionId: true,
+		supportsImageInput: false, // No image CLI args wired (imageArgs undefined); enable when wired
 		supportsImageInputOnResume: false,
 		supportsSlashCommands: false,
-		supportsSessionStorage: false,
-		supportsCostTracking: false, // Local model - no cost
-		supportsUsageStats: false,
-		supportsBatchMode: false,
-		requiresPromptToStart: false, // Not yet investigated
-		supportsStreaming: true, // Likely streams
-		supportsResultMessages: false,
-		supportsModelSelection: false, // Not yet investigated
+		supportsSessionStorage: false, // Deferred to keep beta scope
+		supportsCostTracking: false, // Local/plan model - no cost
+		supportsUsageStats: true,
+		supportsBatchMode: true,
+		requiresPromptToStart: false,
+		supportsStreaming: true,
+		supportsResultMessages: true,
+		supportsModelSelection: true,
 		supportsStreamJsonInput: false,
-		supportsThinkingDisplay: false, // Not yet investigated
-		supportsContextMerge: false, // Not yet investigated - PLACEHOLDER
-		supportsContextExport: false, // Not yet investigated - PLACEHOLDER
-		supportsWizard: false, // PLACEHOLDER
-		supportsGroupChatModeration: false, // PLACEHOLDER
-		usesJsonLineOutput: false, // PLACEHOLDER
-		usesCombinedContextWindow: false, // PLACEHOLDER
+		supportsThinkingDisplay: true,
+		supportsContextMerge: true,
+		supportsContextExport: false,
+		supportsWizard: false,
+		supportsGroupChatModeration: false,
+		usesJsonLineOutput: true,
+		usesCombinedContextWindow: false,
 		supportsAppendSystemPrompt: false,
 		supportsProjectMemory: false,
 	},
@@ -261,6 +263,44 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsGroupChatModeration: false,
 		usesJsonLineOutput: true,
 		usesCombinedContextWindow: false,
+		supportsAppendSystemPrompt: false,
+		supportsProjectMemory: false,
+	},
+
+	/**
+	 * Oh My Pi - JSON event-stream batch integration via `omp -p --mode json`.
+	 * Oh My Pi emits a session id, streaming message deltas, tool lifecycle
+	 * events, and per-message usage/cost. It resumes sessions through `--resume`
+	 * and selects models with a fuzzy `--model` matcher.
+	 */
+	omp: {
+		supportsResume: true,
+		supportsReadOnlyMode: true, // --tools read,grep,glob restricts to read-only tools - Verified
+		supportsJsonOutput: true,
+		supportsSessionId: true,
+		supportsImageInput: true,
+		supportsImageInputOnResume: true,
+		supportsSlashCommands: false,
+		supportsSessionStorage: false,
+		supportsCostTracking: true,
+		supportsUsageStats: true,
+		supportsBatchMode: true,
+		requiresPromptToStart: true,
+		supportsStreaming: true,
+		supportsResultMessages: true,
+		supportsModelSelection: true,
+		supportsStreamJsonInput: false,
+		supportsThinkingDisplay: true,
+		supportsContextMerge: true,
+		supportsContextExport: false,
+		supportsWizard: false,
+		supportsGroupChatModeration: false,
+		usesJsonLineOutput: true,
+		usesCombinedContextWindow: false,
+		// omp exposes only the inline `--append-system-prompt` flag, not the
+		// `--append-system-prompt-file` variant that Maestro's Windows-local
+		// delivery path emits when this is true. Enabling it would break omp on
+		// Windows (unknown flag), and the flag name is not overridable per agent.
 		supportsAppendSystemPrompt: false,
 		supportsProjectMemory: false,
 	},
