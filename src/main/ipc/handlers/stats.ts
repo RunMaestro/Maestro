@@ -345,6 +345,14 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 			}
 
 			const db = getStatsDB();
+			// Shortcut usage is fire-and-forget analytics. A shortcut can fire
+			// during early startup before the stats DB has finished initializing;
+			// skip silently in that window rather than throwing "Database not
+			// initialized" - an unactionable error that otherwise propagates
+			// across the IPC bridge and into Sentry. (MAESTRO-SP)
+			if (!db.isReady()) {
+				return null;
+			}
 			const date = db.incrementShortcutUsage(firedAt);
 			broadcastStatsUpdate(getMainWindow);
 			return date;

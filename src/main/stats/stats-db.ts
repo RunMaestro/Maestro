@@ -93,6 +93,17 @@ export class StatsDB {
 		return this.db;
 	}
 
+	/**
+	 * True once the underlying database handle is open and usable. Lets
+	 * best-effort callers (e.g. fire-and-forget analytics writes) skip
+	 * gracefully instead of throwing "Database not initialized" when a write
+	 * races app startup (the handle is created in `initialize()`, called on
+	 * app-ready). (MAESTRO-SP)
+	 */
+	isReady(): boolean {
+		return this.db !== null;
+	}
+
 	// ============================================================================
 	// Lifecycle
 	// ============================================================================
