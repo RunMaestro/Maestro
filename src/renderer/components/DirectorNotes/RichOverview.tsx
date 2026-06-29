@@ -26,7 +26,6 @@ import {
 } from 'lucide-react';
 import type { Theme } from '../../types';
 import { MarkdownRenderer } from '../MarkdownRenderer';
-import { ChartErrorBoundary } from '../UsageDashboard/ChartErrorBoundary';
 import { Spinner } from '../ui/Spinner';
 import { CUE_COLOR } from '../../../shared/cue-pipeline-types';
 import { formatNumber } from '../../../shared/formatters';
@@ -47,6 +46,7 @@ import {
 	TypeBreakdown,
 	AgentActivityBars,
 	SuccessFailureWidget,
+	ChartErrorBoundary,
 	type StatCardDatum,
 	type BarDatum,
 	type DonutSlice,

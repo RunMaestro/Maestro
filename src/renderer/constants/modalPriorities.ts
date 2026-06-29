@@ -204,6 +204,9 @@ export const MODAL_PRIORITIES = {
 	/** Debug: Re-Probe Agents modal */
 	DEBUG_AGENT_PROBE: 603,
 
+	/** Debug: Widget Gallery (shared widget-library preview) */
+	DEBUG_WIDGET_GALLERY: 602,
+
 	/** Windows warning modal - shown on startup for Windows users */
 	WINDOWS_WARNING: 615,
 

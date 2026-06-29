@@ -2,6 +2,7 @@ import type React from 'react';
 import type { Session } from '../../../types';
 import type { NotifyToastInput } from '../../../stores/notificationStore';
 import { captureException } from '../../../utils/sentry';
+import { useModalStore } from '../../../stores/modalStore';
 import type { QuickAction } from '../types';
 
 interface BuildDebugCommandsArgs {
@@ -89,6 +90,15 @@ export function buildDebugCommands({
 						})),
 					}))
 				);
+				setQuickActionOpen(false);
+			},
+		},
+		{
+			id: 'debugWidgetGallery',
+			label: 'Debug: Widget Gallery',
+			subtext: 'Preview the shared output/input widget library (theme-aware, no Encore flag)',
+			action: () => {
+				useModalStore.getState().openModal('widgetGallery');
 				setQuickActionOpen(false);
 			},
 		},

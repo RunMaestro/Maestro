@@ -9,7 +9,7 @@
  */
 
 import { memo } from 'react';
-import { Sparkline } from '../../UsageDashboard/Sparkline';
+import { Sparkline } from './Sparkline';
 import { formatNumber } from '../../../../shared/formatters';
 import type { StatCardDatum, WidgetProps } from '../types';
 

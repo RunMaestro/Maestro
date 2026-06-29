@@ -11,6 +11,7 @@ import { THEMES } from '../constants/themes';
 import { DebugPackageModal } from './DebugPackageModal';
 import { DebugApplicationStatsModal } from './DebugApplicationStatsModal';
 import { DebugAgentProbeModal } from './DebugAgentProbeModal';
+import { WidgetGallery } from './widgets/WidgetGallery';
 import { WindowsWarningModal } from './WindowsWarningModal';
 import { AppOverlays } from './AppOverlays';
 import { PlaygroundPanel } from './PlaygroundPanel';
@@ -315,6 +316,9 @@ function AppStandaloneModalsInner({
 			{debugAgentProbeOpen && (
 				<DebugAgentProbeModal theme={theme} onClose={() => setDebugAgentProbeOpen(false)} />
 			)}
+
+			{/* --- DEBUG: WIDGET GALLERY (self-subscribes to the widgetGallery modal) --- */}
+			<WidgetGallery theme={theme} />
 
 			{/* --- MARKETPLACE MODAL (lazy-loaded) --- */}
 			{activeSession && activeSession.autoRunFolderPath && marketplaceModalOpen && (

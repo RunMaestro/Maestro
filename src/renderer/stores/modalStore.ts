@@ -278,6 +278,7 @@ export type ModalId =
 	| 'debugPackage'
 	| 'debugApplicationStats'
 	| 'debugAgentProbe'
+	| 'widgetGallery'
 	| 'playground'
 	| 'logViewer'
 	| 'processMonitor'
