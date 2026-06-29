@@ -54,8 +54,8 @@ export interface UseInputProcessingDeps {
 	activeSessionId: string;
 	/** Session state setter */
 	setSessions: React.Dispatch<React.SetStateAction<Session[]>>;
-	/** Current input value */
-	inputValue: string;
+	/** Read the current input value at call time (non-reactive; reads the store) */
+	getInputValue: () => string;
 	/** Input value setter */
 	setInputValue: (value: string) => void;
 	/** Staged images for the current message */
@@ -144,7 +144,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 		activeSession,
 		activeSessionId,
 		setSessions,
-		inputValue,
+		getInputValue,
 		setInputValue,
 		stagedImages,
 		setStagedImages,
@@ -189,7 +189,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			// This ensures AI output appears before the user's new message
 			flushBatchedUpdates?.();
 
-			const effectiveInputValue = overrideInputValue ?? inputValue;
+			const effectiveInputValue = overrideInputValue ?? getInputValue();
 			// When the caller passes explicit images (e.g. Force Send button replaying a
 			// queued item), use those instead of the active tab's stagedImages. This avoids
 			// the stale-closure race when the caller does setStagedImages() right before
@@ -1303,7 +1303,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 		[
 			activeSession,
 			activeSessionId,
-			inputValue,
+			getInputValue,
 			stagedImages,
 			customAICommands,
 			setInputValue,

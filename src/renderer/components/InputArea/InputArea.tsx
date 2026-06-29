@@ -1,5 +1,10 @@
 import React, { useEffect, useMemo } from 'react';
 import { useSettingsStore } from '../../stores/settingsStore';
+import {
+	useComposerInputStore,
+	selectAiComposerValue,
+	selectTerminalComposerValue,
+} from '../../stores/composerInputStore';
 import { ThinkingStatusPill } from '../ThinkingStatusPill';
 import { QuitWhenIdleIndicator } from '../QuitWhenIdleIndicator';
 import { MergeProgressOverlay } from '../MergeProgressOverlay';
@@ -28,7 +33,6 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	const {
 		session,
 		theme,
-		inputValue,
 		setInputValue,
 		enterToSend,
 		setEnterToSend,
@@ -175,6 +179,13 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 
 	// Filter slash commands based on input and current mode
 	const isTerminalMode = session.inputMode === 'terminal';
+
+	// Live composer text. This is the SOLE subscriber to the draft store: a
+	// keystroke re-renders only this (memoized) leaf, not App. See
+	// useComposerInputStore / CLAUDE-PERFORMANCE.md.
+	const inputValue = useComposerInputStore(
+		isTerminalMode ? selectTerminalComposerValue : selectAiComposerValue
+	);
 
 	// thinkingItems is now passed directly from App.tsx (pre-filtered) for better performance
 

@@ -58,9 +58,15 @@ import type { InputKeyDownDeps } from '../../../renderer/hooks/input/useInputKey
 // Test Helpers
 // ============================================================================
 
-function createMockDeps(overrides: Partial<InputKeyDownDeps> = {}): InputKeyDownDeps {
+// `inputValue` is a test convenience: the hook reads the live value via
+// getInputValue() (the draft moved to useComposerInputStore for perf), so we
+// translate the override into a getter and keep call sites unchanged.
+function createMockDeps(
+	overrides: Partial<InputKeyDownDeps> & { inputValue?: string } = {}
+): InputKeyDownDeps {
+	const { inputValue = '', ...rest } = overrides;
 	return {
-		inputValue: '',
+		getInputValue: () => inputValue,
 		setInputValue: vi.fn(),
 		tabCompletionSuggestions: [],
 		atMentionSuggestions: [],
@@ -70,7 +76,7 @@ function createMockDeps(overrides: Partial<InputKeyDownDeps> = {}): InputKeyDown
 		getTabCompletionSuggestions: vi.fn().mockReturnValue([]),
 		inputRef: { current: { focus: vi.fn(), blur: vi.fn() } } as any,
 		terminalOutputRef: { current: { focus: vi.fn() } } as any,
-		...overrides,
+		...rest,
 	};
 }
 

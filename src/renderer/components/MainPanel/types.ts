@@ -67,7 +67,6 @@ export interface MainPanelProps {
 	thinkingItems: ThinkingItem[];
 	theme: Theme;
 	isMobileLandscape?: boolean;
-	inputValue: string;
 	stagedImages: string[];
 	commandHistoryOpen: boolean;
 	commandHistoryFilter: string;

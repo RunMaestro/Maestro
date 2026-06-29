@@ -26,8 +26,8 @@ import { outputSearchKeyFor } from '../../utils/outputSearch';
 // ============================================================================
 
 export interface InputKeyDownDeps {
-	/** Current input value */
-	inputValue: string;
+	/** Read the current input value at call time (non-reactive; reads the store) */
+	getInputValue: () => string;
 	/** Set input value */
 	setInputValue: (value: string | ((prev: string) => string)) => void;
 	/** Memoized tab completion suggestions (already filtered) */
@@ -67,7 +67,7 @@ export interface InputKeyDownReturn {
 
 export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 	const {
-		inputValue,
+		getInputValue,
 		setInputValue,
 		tabCompletionSuggestions,
 		atMentionSuggestions,
@@ -108,6 +108,9 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 	const handleInputKeyDown = useCallback(
 		(e: React.KeyboardEvent) => {
 			const activeSession = selectActiveSession(useSessionStore.getState());
+			// Snapshot the live composer text once at call time (it lives in the
+			// store now, not in a reactive prop).
+			const inputValue = getInputValue();
 
 			// Cmd+F opens output search from input field. Search is scoped per
 			// agent+AI-tab, so target the active window's slot.
@@ -341,7 +344,7 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 			}
 		},
 		[
-			inputValue,
+			getInputValue,
 			setInputValue,
 			tabCompletionSuggestions,
 			atMentionSuggestions,

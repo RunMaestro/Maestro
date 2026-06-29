@@ -111,7 +111,6 @@ export interface MainPanelContentProps {
 
 	// Pass-through props from MainPanelProps
 	// (grouped to avoid enumerating every single prop)
-	inputValue: string;
 	setInputValue: (value: string) => void;
 	stagedImages: string[];
 	setStagedImages: React.Dispatch<React.SetStateAction<string[]>>;
@@ -303,7 +302,6 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		isCurrentSessionAutoMode,
 		currentSessionBatchState,
 		hasCapability,
-		inputValue,
 		setInputValue,
 		stagedImages,
 		setStagedImages,
@@ -702,7 +700,6 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 								<InputArea
 									session={activeSession}
 									theme={theme}
-									inputValue={inputValue}
 									setInputValue={setInputValue}
 									enterToSend={activeTab?.enterToSend ?? enterToSendAI}
 									setEnterToSend={

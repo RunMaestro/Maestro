@@ -47,7 +47,6 @@ export const MainPanel = React.memo(
 			activeSession,
 			thinkingItems,
 			theme,
-			inputValue,
 			stagedImages,
 			commandHistoryOpen,
 			commandHistoryFilter,
@@ -945,7 +944,6 @@ export const MainPanel = React.memo(
 							isCurrentSessionAutoMode={isCurrentSessionAutoMode}
 							currentSessionBatchState={currentSessionBatchState}
 							hasCapability={hasCapability}
-							inputValue={inputValue}
 							setInputValue={setInputValue}
 							stagedImages={stagedImages}
 							setStagedImages={setStagedImages}

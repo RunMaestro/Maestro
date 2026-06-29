@@ -409,7 +409,6 @@ describe('MainPanel', () => {
 		thinkingItems: [] as ThinkingItem[],
 		theme,
 		isMobileLandscape: false,
-		inputValue: '',
 		stagedImages: [],
 		commandHistoryOpen: false,
 		commandHistoryFilter: '',

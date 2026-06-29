@@ -49,7 +49,6 @@ export interface UseMainPanelPropsDeps {
 	thinkingItems: ThinkingItem[];
 	theme: Theme;
 	isMobileLandscape: boolean;
-	inputValue: string;
 	stagedImages: string[];
 	commandHistoryOpen: boolean;
 	commandHistoryFilter: string;
@@ -340,7 +339,6 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			thinkingItems: deps.thinkingItems,
 			theme: deps.theme,
 			isMobileLandscape: deps.isMobileLandscape,
-			inputValue: deps.inputValue,
 			stagedImages: deps.stagedImages,
 			commandHistoryOpen: deps.commandHistoryOpen,
 			commandHistoryFilter: deps.commandHistoryFilter,
@@ -576,7 +574,6 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.thinkingItems,
 			deps.theme,
 			deps.isMobileLandscape,
-			deps.inputValue,
 			deps.stagedImages,
 			deps.commandHistoryOpen,
 			deps.commandHistoryFilter,

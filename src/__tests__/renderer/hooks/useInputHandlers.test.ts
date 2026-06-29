@@ -117,6 +117,7 @@ import {
 	type UseInputHandlersDeps,
 } from '../../../renderer/hooks/input/useInputHandlers';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useComposerInputStore } from '../../../renderer/stores/composerInputStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
@@ -202,9 +203,20 @@ function createMockDeps(overrides: Partial<UseInputHandlersDeps> = {}): UseInput
 // Setup / Teardown
 // ============================================================================
 
+// Faithful drop-in for the old `inputVal()`: the live draft now
+// lives in useComposerInputStore, read by the active session's mode - exactly
+// what the hook's (removed) `inputValue` used to derive.
+const inputVal = (): string => {
+	const { sessions, activeSessionId } = useSessionStore.getState();
+	const mode = sessions.find((s) => s.id === activeSessionId)?.inputMode;
+	const composer = useComposerInputStore.getState();
+	return mode === 'terminal' ? composer.terminalValue : composer.aiValue;
+};
+
 beforeEach(() => {
 	vi.clearAllMocks();
 	vi.useFakeTimers();
+	useComposerInputStore.setState({ aiValue: '', terminalValue: '' });
 
 	// Reset InputContext mock
 	Object.assign(mockInputContext, {
@@ -266,8 +278,9 @@ describe('useInputHandlers', () => {
 		it('returns all expected properties', () => {
 			const { result } = renderHook(() => useInputHandlers(createMockDeps()));
 
-			expect(result.current).toHaveProperty('inputValue');
-			expect(result.current).toHaveProperty('deferredInputValue');
+			// inputValue / deferredInputValue intentionally removed: the live draft
+			// now lives in useComposerInputStore (read by InputArea), not on the
+			// hook return. setInputValue still dispatches writes into that store.
 			expect(result.current).toHaveProperty('setInputValue');
 			expect(result.current).toHaveProperty('stagedImages');
 			expect(result.current).toHaveProperty('setStagedImages');
@@ -284,8 +297,8 @@ describe('useInputHandlers', () => {
 		});
 
 		it('initializes with empty input value in AI mode', () => {
-			const { result } = renderHook(() => useInputHandlers(createMockDeps()));
-			expect(result.current.inputValue).toBe('');
+			renderHook(() => useInputHandlers(createMockDeps()));
+			expect(inputVal()).toBe('');
 		});
 
 		it('initializes with empty staged images', () => {
@@ -312,7 +325,7 @@ describe('useInputHandlers', () => {
 				result.current.setInputValue('hello AI');
 			});
 
-			expect(result.current.inputValue).toBe('hello AI');
+			expect(inputVal()).toBe('hello AI');
 		});
 
 		it('setInputValue updates terminal input in terminal mode', () => {
@@ -327,7 +340,7 @@ describe('useInputHandlers', () => {
 				result.current.setInputValue('ls -la');
 			});
 
-			expect(result.current.inputValue).toBe('ls -la');
+			expect(inputVal()).toBe('ls -la');
 		});
 
 		it('setInputValue accepts function updater', () => {
@@ -340,18 +353,7 @@ describe('useInputHandlers', () => {
 				result.current.setInputValue((prev) => prev + ' world');
 			});
 
-			expect(result.current.inputValue).toBe('hello world');
-		});
-
-		it('deferredInputValue matches inputValue', () => {
-			const { result } = renderHook(() => useInputHandlers(createMockDeps()));
-
-			act(() => {
-				result.current.setInputValue('test input');
-			});
-
-			// useDeferredValue in tests should match (no concurrent rendering)
-			expect(result.current.deferredInputValue).toBe('test input');
+			expect(inputVal()).toBe('hello world');
 		});
 	});
 
@@ -469,7 +471,7 @@ describe('useInputHandlers', () => {
 			const { result, rerender } = renderHook(() => useInputHandlers(createMockDeps()));
 
 			// Initially empty (hook doesn't load on first mount, only on tab switch)
-			expect(result.current.inputValue).toBe('');
+			expect(inputVal()).toBe('');
 
 			// Switch to tab-2 — this triggers the effect
 			act(() => {
@@ -500,7 +502,7 @@ describe('useInputHandlers', () => {
 			});
 
 			rerender();
-			expect(result.current.inputValue).toBe('tab2 text');
+			expect(inputVal()).toBe('tab2 text');
 		});
 
 		it('saves current input to previous tab on switch', () => {
@@ -589,7 +591,7 @@ describe('useInputHandlers', () => {
 			});
 
 			rerender();
-			expect(result.current.inputValue).toBe('session2 cmd');
+			expect(inputVal()).toBe('session2 cmd');
 		});
 	});
 
@@ -884,7 +886,7 @@ describe('useInputHandlers', () => {
 			});
 
 			expect(mockPreventDefault).toHaveBeenCalled();
-			expect(result.current.inputValue).toBe('trimmed text');
+			expect(inputVal()).toBe('trimmed text');
 		});
 
 		it('does not intercept text paste when no trimming needed', () => {
@@ -1126,7 +1128,7 @@ describe('useInputHandlers', () => {
 				result.current.setInputValue('terminal text');
 			});
 
-			expect(result.current.inputValue).toBe('terminal text');
+			expect(inputVal()).toBe('terminal text');
 		});
 	});
 
@@ -1304,7 +1306,7 @@ describe('useInputHandlers', () => {
 			rerender();
 
 			// Should default to empty string
-			expect(result.current.inputValue).toBe('');
+			expect(inputVal()).toBe('');
 		});
 	});
 
@@ -1632,7 +1634,7 @@ describe('useInputHandlers', () => {
 				result.current.handleDrop(dropEvent);
 			});
 
-			expect(result.current.inputValue).toBe('@src/main/index.ts ');
+			expect(inputVal()).toBe('@src/main/index.ts ');
 		});
 
 		it('inserts one @<path> per file when a multi-selection Files-panel drag is dropped', () => {
@@ -1658,7 +1660,7 @@ describe('useInputHandlers', () => {
 				result.current.handleDrop(dropEvent);
 			});
 
-			expect(result.current.inputValue).toBe('@src/a.ts @src/b.ts @src/c.ts ');
+			expect(inputVal()).toBe('@src/a.ts @src/b.ts @src/c.ts ');
 		});
 
 		it('appends @<path> with a separating space when input already has content', () => {
@@ -1682,7 +1684,7 @@ describe('useInputHandlers', () => {
 				result.current.handleDrop(dropEvent);
 			});
 
-			expect(result.current.inputValue).toBe('look at @README.md ');
+			expect(inputVal()).toBe('look at @README.md ');
 		});
 
 		it('ignores internal Files-panel drag when group chat is active', () => {
@@ -1707,7 +1709,7 @@ describe('useInputHandlers', () => {
 				result.current.handleDrop(dropEvent);
 			});
 
-			expect(result.current.inputValue).toBe('');
+			expect(inputVal()).toBe('');
 		});
 
 		it('inserts @<relative-path> when an external file inside the project is dropped in AI mode', () => {
@@ -1729,7 +1731,7 @@ describe('useInputHandlers', () => {
 				result.current.handleDrop(dropEvent);
 			});
 
-			expect(result.current.inputValue).toBe('@docs/README.md ');
+			expect(inputVal()).toBe('@docs/README.md ');
 		});
 
 		it('inserts an absolute @<path> when an external file outside the project is dropped', () => {
@@ -1751,7 +1753,7 @@ describe('useInputHandlers', () => {
 				result.current.handleDrop(dropEvent);
 			});
 
-			expect(result.current.inputValue).toBe('@/Users/somebody/notes ');
+			expect(inputVal()).toBe('@/Users/somebody/notes ');
 		});
 
 		it('joins multiple external file drops with spaces', () => {
@@ -1774,7 +1776,7 @@ describe('useInputHandlers', () => {
 				result.current.handleDrop(dropEvent);
 			});
 
-			expect(result.current.inputValue).toBe('@src/a.ts @docs ');
+			expect(inputVal()).toBe('@src/a.ts @docs ');
 		});
 
 		it('updates group chat draftMessage when external files are dropped during group chat', () => {
@@ -1882,7 +1884,7 @@ describe('useInputHandlers', () => {
 				result.current.handleDrop(dropEvent);
 			});
 
-			expect(result.current.inputValue).toBe('');
+			expect(inputVal()).toBe('');
 		});
 
 		it('stages an image when an image path is dragged from the Files panel', async () => {
@@ -1912,7 +1914,7 @@ describe('useInputHandlers', () => {
 			const tab = sessions[0].aiTabs.find((t: any) => t.id === 'tab-1');
 			expect(tab?.stagedImages).toEqual([dataUrl]);
 			// Image staging path must NOT also insert an @-mention.
-			expect(result.current.inputValue).toBe('');
+			expect(inputVal()).toBe('');
 		});
 
 		it('does not stage anything when the IPC returns a non-data-url string for an image path', async () => {
@@ -1939,7 +1941,7 @@ describe('useInputHandlers', () => {
 			const sessions = useSessionStore.getState().sessions;
 			const tab = sessions[0].aiTabs.find((t: any) => t.id === 'tab-1');
 			expect(tab?.stagedImages ?? []).toEqual([]);
-			expect(result.current.inputValue).toBe('');
+			expect(inputVal()).toBe('');
 		});
 
 		it('still inserts @<path> for non-image extensions dragged from the Files panel', () => {
@@ -1959,7 +1961,7 @@ describe('useInputHandlers', () => {
 				result.current.handleDrop(dropEvent);
 			});
 
-			expect(result.current.inputValue).toBe('@src/util.ts ');
+			expect(inputVal()).toBe('@src/util.ts ');
 			expect(window.maestro.fs.readFile).not.toHaveBeenCalled();
 		});
 
@@ -1995,7 +1997,7 @@ describe('useInputHandlers', () => {
 				result.current.handleDrop(dropEvent);
 			});
 
-			expect(result.current.inputValue).toBe('@src/index.ts ');
+			expect(inputVal()).toBe('@src/index.ts ');
 		});
 
 		it('falls back to the absolute (forward-slash) path when Windows casing does not match', () => {
@@ -2032,7 +2034,7 @@ describe('useInputHandlers', () => {
 
 			// Casing differs from projectRoot — relative match must NOT fire.
 			// The path is still emitted, just absolute, slash-normalised.
-			expect(result.current.inputValue).toBe('@c:/users/alice/proj/src/index.ts ');
+			expect(inputVal()).toBe('@c:/users/alice/proj/src/index.ts ');
 		});
 	});
 
@@ -2067,7 +2069,7 @@ describe('useInputHandlers', () => {
 				result.current.setInputValue('my draft message');
 			});
 
-			expect(result.current.inputValue).toBe('my draft message');
+			expect(inputVal()).toBe('my draft message');
 
 			// Simulate processInput clearing the input (as it does in real usage)
 			mockProcessInput.mockImplementation(() => {
@@ -2084,7 +2086,7 @@ describe('useInputHandlers', () => {
 			});
 
 			// Draft should be restored after replay
-			expect(result.current.inputValue).toBe('my draft message');
+			expect(inputVal()).toBe('my draft message');
 			expect(mockProcessInput).toHaveBeenCalledWith('replayed message');
 
 			// Clean up mock

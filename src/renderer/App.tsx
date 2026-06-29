@@ -159,6 +159,7 @@ import {
 	updateSessionWith,
 	updateAiTab,
 } from './stores/sessionStore';
+import { useComposerInputStore } from './stores/composerInputStore';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { sidebarSessionEquality } from './stores/sessionEquality';
 import { useActiveSession } from './hooks/session/useActiveSession';
@@ -1565,8 +1566,6 @@ function MaestroConsoleInner() {
 
 	// --- INPUT HANDLERS (state, completion, processing, keyboard, paste/drop) ---
 	const {
-		inputValue,
-		deferredInputValue,
 		setInputValue,
 		stagedImages,
 		setStagedImages,
@@ -2453,7 +2452,6 @@ function MaestroConsoleInner() {
 		thinkingItems,
 		theme,
 		isMobileLandscape,
-		inputValue,
 		stagedImages,
 		commandHistoryOpen,
 		commandHistoryFilter,
@@ -3097,7 +3095,11 @@ function MaestroConsoleInner() {
 					promptComposerInitialValue={
 						activeGroupChatId
 							? groupChats.find((c) => c.id === activeGroupChatId)?.draftMessage || ''
-							: deferredInputValue
+							: // Non-reactive read: PromptComposerModal seeds its value only when it
+								// opens (which re-renders App), so getState() is fresh at that moment.
+								useComposerInputStore.getState()[
+									activeSession?.inputMode === 'terminal' ? 'terminalValue' : 'aiValue'
+								]
 					}
 					onPromptComposerSubmit={handlePromptComposerSubmit}
 					onPromptComposerSend={handlePromptComposerSend}

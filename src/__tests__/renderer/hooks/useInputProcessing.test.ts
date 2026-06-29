@@ -115,8 +115,14 @@ describe('useInputProcessing', () => {
 		Object.assign(window.maestro, originalMaestro);
 	});
 
-	// Helper to create hook dependencies
-	const createDeps = (overrides: Partial<Parameters<typeof useInputProcessing>[0]> = {}) => {
+	// Helper to create hook dependencies.
+	// `inputValue` is a test convenience: the hook now reads the live value via
+	// getInputValue() (the draft moved to useComposerInputStore for perf), so we
+	// translate the override into a getter and keep call sites unchanged.
+	const createDeps = (
+		overrides: Partial<Parameters<typeof useInputProcessing>[0]> & { inputValue?: string } = {}
+	) => {
+		const { inputValue = '', ...rest } = overrides;
 		const session = createMockSession();
 		const sessionsRef = { current: [session] };
 
@@ -124,7 +130,7 @@ describe('useInputProcessing', () => {
 			activeSession: session,
 			activeSessionId: session.id,
 			setSessions: mockSetSessions,
-			inputValue: '',
+			getInputValue: () => inputValue,
 			setInputValue: mockSetInputValue,
 			stagedImages: [],
 			setStagedImages: mockSetStagedImages,
@@ -140,7 +146,7 @@ describe('useInputProcessing', () => {
 			processQueuedItemRef: mockProcessQueuedItemRef,
 			flushBatchedUpdates: mockFlushBatchedUpdates,
 			onHistoryCommand: mockOnHistoryCommand,
-			...overrides,
+			...rest,
 		};
 	};
 

@@ -13,7 +13,7 @@
  *             fileExplorerStore, InputContext
  */
 
-import { useState, useCallback, useEffect, useRef, useMemo, useDeferredValue } from 'react';
+import { useCallback, useEffect, useRef, useMemo } from 'react';
 import type { Session, BatchRunState, QueuedItem, CustomAICommand } from '../../types';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -23,6 +23,7 @@ import { useFileExplorerStore } from '../../stores/fileExplorerStore';
 import { useInputContext } from '../../contexts/InputContext';
 import { getActiveTab } from '../../utils/tabHelpers';
 import { setLiveDraft } from '../../utils/liveDraftStore';
+import { useComposerInputStore } from '../../stores/composerInputStore';
 import { useDebouncedValue } from '../utils';
 import { useInputSync } from './useInputSync';
 import { useTabCompletion } from './useTabCompletion';
@@ -117,11 +118,11 @@ export interface UseInputHandlersDeps {
 // ============================================================================
 
 export interface UseInputHandlersReturn {
-	/** Current input value (AI or terminal, depending on mode) */
-	inputValue: string;
-	/** Deferred input value for expensive consumers (slash command filtering, etc.) */
-	deferredInputValue: string;
-	/** Set current input value (dispatches to AI or terminal state based on mode) */
+	/**
+	 * Set current input value (dispatches to AI or terminal slice based on mode).
+	 * The live value itself lives in useComposerInputStore; read it there
+	 * (InputArea subscribes; non-reactive readers use getState()).
+	 */
 	setInputValue: (value: string | ((prev: string) => string)) => void;
 	/** Staged images for the current message */
 	stagedImages: string[];
@@ -224,46 +225,59 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	// Input State
 	// ====================================================================
 
-	const [terminalInputValue, setTerminalInputValue] = useState('');
-	const [aiInputValueLocal, setAiInputValueLocal] = useState('');
+	// PERF: live composer text lives in useComposerInputStore, NOT useState here.
+	// A keystroke updates the store, which re-renders only the memoized InputArea
+	// leaf that subscribes to it - this hook (and App) no longer re-render per
+	// keystroke. The store setters are stable; grab them once.
+	const setAiValue = useMemo(() => useComposerInputStore.getState().setAiValue, []);
+	const setTerminalValue = useMemo(() => useComposerInputStore.getState().setTerminalValue, []);
 
-	// PERF: Refs to access current input values without triggering re-renders
-	const terminalInputValueRef = useRef(terminalInputValue);
-	const aiInputValueLocalRef = useRef(aiInputValueLocal);
-	// Ref-mirror of activeTab.id so the live-draft sync below isn't re-triggered
-	// on tab-switch alone (which would briefly write the OLD tab's text into the
-	// NEW tab's slot before setAiInputValueLocal lands).
+	// Ref-mirror of activeTab.id so the live-draft mirror attributes text to the
+	// correct tab, and the tab-switch effect can flush the OLD tab's text without
+	// re-triggering on tab-switch alone.
 	const activeTabIdRef = useRef<string | undefined>(activeTab?.id);
 	useEffect(() => {
 		activeTabIdRef.current = activeTab?.id;
 	}, [activeTab?.id]);
-	useEffect(() => {
-		terminalInputValueRef.current = terminalInputValue;
-	}, [terminalInputValue]);
-	useEffect(() => {
-		aiInputValueLocalRef.current = aiInputValueLocal;
-		// Mirror the live value into liveDraftStore so hasDraft() reflects what's
-		// on screen for the active tab (tab.inputValue only updates on blur/submit).
-		const currentTabId = activeTabIdRef.current;
-		if (currentTabId) {
-			setLiveDraft(currentTabId, aiInputValueLocal);
-		}
-	}, [aiInputValueLocal]);
 
-	// Derived input value
-	const inputValue = isAiMode ? aiInputValueLocal : terminalInputValue;
-	const deferredInputValue = useDeferredValue(inputValue);
+	// Ref-mirror of the current mode so non-reactive readers (getInputValue) pick
+	// the right slice at call time without subscribing.
+	const isAiModeRef = useRef(isAiMode);
+	useEffect(() => {
+		isAiModeRef.current = isAiMode;
+	}, [isAiMode]);
 
-	// Memoized setter that dispatches to the correct state
+	// Mirror the live AI draft into liveDraftStore so hasDraft() reflects what's
+	// on screen for the active tab (tab.inputValue only updates on blur/submit).
+	// Subscribing outside React render keeps this off the re-render path.
+	useEffect(() => {
+		const mirror = (aiValue: string) => {
+			const currentTabId = activeTabIdRef.current;
+			if (currentTabId) setLiveDraft(currentTabId, aiValue);
+		};
+		mirror(useComposerInputStore.getState().aiValue);
+		return useComposerInputStore.subscribe((state, prev) => {
+			if (state.aiValue !== prev.aiValue) mirror(state.aiValue);
+		});
+	}, []);
+
+	// Read the live value non-reactively (at call time) for handlers and sub-hooks
+	// so they never need a reactive `inputValue` dependency.
+	const getInputValue = useCallback(() => {
+		const s = useComposerInputStore.getState();
+		return isAiModeRef.current ? s.aiValue : s.terminalValue;
+	}, []);
+
+	// Memoized setter that dispatches to the correct slice based on current mode.
 	const setInputValue = useCallback(
 		(value: string | ((prev: string) => string)) => {
 			if (activeSession?.inputMode === 'ai') {
-				setAiInputValueLocal(value);
+				setAiValue(value);
 			} else {
-				setTerminalInputValue(value);
+				setTerminalValue(value);
 			}
 		},
-		[activeSession?.inputMode]
+		[activeSession?.inputMode, setAiValue, setTerminalValue]
 	);
 
 	// ====================================================================
@@ -328,18 +342,19 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 
 			// Save current AI input to the PREVIOUS tab
 			if (prevTabId) {
+				const currentAiValue = useComposerInputStore.getState().aiValue;
 				setSessions((prev) =>
 					prev.map((s) => ({
 						...s,
 						aiTabs: s.aiTabs.map((tab) =>
-							tab.id === prevTabId ? { ...tab, inputValue: aiInputValueLocal } : tab
+							tab.id === prevTabId ? { ...tab, inputValue: currentAiValue } : tab
 						),
 					}))
 				);
 			}
 
 			// Load new tab's persisted input value
-			setAiInputValueLocal(activeTab.inputValue ?? '');
+			setAiValue(activeTab.inputValue ?? '');
 			prevActiveTabIdRef.current = activeTab.id;
 
 			// Clear hasUnread indicator on newly active tab
@@ -365,15 +380,16 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 
 			// Save terminal input to the previous session (including empty string to persist cleared input)
 			if (prevSessionId) {
+				const currentTerminalValue = useComposerInputStore.getState().terminalValue;
 				setSessions((prev) =>
 					prev.map((s) =>
-						s.id === prevSessionId ? { ...s, terminalDraftInput: terminalInputValue } : s
+						s.id === prevSessionId ? { ...s, terminalDraftInput: currentTerminalValue } : s
 					)
 				);
 			}
 
 			// Load terminal input from the new session
-			setTerminalInputValue(activeSession.terminalDraftInput ?? '');
+			setTerminalValue(activeSession.terminalDraftInput ?? '');
 			prevActiveSessionIdRef.current = activeSession.id;
 		}
 	}, [activeSession?.id]);
@@ -382,7 +398,14 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	// Completion suggestions (memoized)
 	// ====================================================================
 
-	const debouncedInputForTabCompletion = useDebouncedValue(tabCompletionOpen ? inputValue : '', 50);
+	// Gated store subscription: returns '' (a stable primitive) unless the
+	// terminal tab-completion dropdown is open, so zustand's Object.is bail-out
+	// means normal typing does NOT re-render this hook. Only while the dropdown
+	// is open do we track the live text to refresh suggestions.
+	const tabCompletionInput = useComposerInputStore((s) =>
+		tabCompletionOpen ? s.terminalValue : ''
+	);
+	const debouncedInputForTabCompletion = useDebouncedValue(tabCompletionInput, 50);
 	const tabCompletionSuggestions = useMemo(() => {
 		if (!tabCompletionOpen || !activeSessionId || activeSessionInputMode !== 'terminal') {
 			return [];
@@ -439,7 +462,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		activeSession,
 		activeSessionId,
 		setSessions,
-		inputValue,
+		getInputValue,
 		setInputValue,
 		stagedImages,
 		setStagedImages,
@@ -476,7 +499,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	// ====================================================================
 
 	const { handleInputKeyDown } = useInputKeyDown({
-		inputValue,
+		getInputValue,
 		setInputValue,
 		tabCompletionSuggestions,
 		atMentionSuggestions,
@@ -495,17 +518,18 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	const handleMainPanelInputBlur = useCallback(() => {
 		const currentIsAiMode =
 			sessionsRef.current.find((s) => s.id === activeSessionIdRef.current)?.inputMode === 'ai';
+		const composer = useComposerInputStore.getState();
 		if (currentIsAiMode) {
-			syncAiInputToSession(aiInputValueLocalRef.current);
+			syncAiInputToSession(composer.aiValue);
 		} else {
-			syncTerminalInputToSession(terminalInputValueRef.current);
+			syncTerminalInputToSession(composer.terminalValue);
 		}
 	}, [syncAiInputToSession, syncTerminalInputToSession]);
 
 	const handleReplayMessage = useCallback(
 		(text: string, images?: string[]) => {
 			// Preserve draft input so replay doesn't clobber what the user was typing
-			const draftInput = aiInputValueLocalRef.current;
+			const draftInput = useComposerInputStore.getState().aiValue;
 			const draftImages = activeTab?.stagedImages ? [...activeTab.stagedImages] : [];
 
 			if (images && images.length > 0) {
@@ -779,8 +803,6 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	// ====================================================================
 
 	return {
-		inputValue,
-		deferredInputValue,
 		setInputValue,
 		stagedImages,
 		setStagedImages,

@@ -33,7 +33,6 @@ export interface AtMentionSuggestion {
 export interface InputAreaProps {
 	session: Session;
 	theme: Theme;
-	inputValue: string;
 	setInputValue: (value: string) => void;
 	enterToSend: boolean;
 	setEnterToSend: (value: boolean) => void;
