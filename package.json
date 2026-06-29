@@ -20,6 +20,7 @@
 		"dev": "node scripts/dev.mjs",
 		"dev:prod-data": "USE_PROD_DATA=1 node scripts/dev.mjs",
 		"dev:demo": "MAESTRO_DEMO_DIR=/tmp/maestro-demo npm run dev",
+		"dev:showcase": "node scripts/showcase/launch.js",
 		"dev:main": "tsc -p tsconfig.main.json && npm run build:preload && NODE_ENV=development electron .",
 		"dev:main:prod-data": "tsc -p tsconfig.main.json && npm run build:preload && NODE_ENV=development USE_PROD_DATA=1 electron .",
 		"dev:renderer": "vite",

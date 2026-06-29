@@ -1,0 +1,28 @@
+{
+	"origins": {
+		"opencode": {
+			"/tmp/showcase-projects/opencode-app": {
+				"00000000-0000-4000-a000-00000000000b": {
+					"origin": "user",
+					"sessionName": "OpenCode"
+				}
+			}
+		},
+		"codex": {
+			"/tmp/showcase-projects/openapi-spec": {
+				"00000000-0000-4000-a000-000000000017": {
+					"origin": "user",
+					"sessionName": "OpenAPI"
+				}
+			}
+		},
+		"factory-droid": {
+			"/tmp/showcase-projects/fixinator": {
+				"00000000-0000-4000-a000-000000000045": {
+					"origin": "user",
+					"sessionName": "FIXinator"
+				}
+			}
+		}
+	}
+}

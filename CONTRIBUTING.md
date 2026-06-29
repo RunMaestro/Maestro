@@ -27,6 +27,7 @@ See [Performance Guidelines](#performance-guidelines) for specific practices.
 - [Encore Features (Feature Gating)](#encore-features-feature-gating)
 - [Adding a New AI Agent](#adding-a-new-ai-agent)
 - [Code Style](#code-style)
+- [Contributing Themes](#contributing-themes)
 - [Performance Guidelines](#performance-guidelines)
 - [Debugging Guide](#debugging-guide)
 - [Commit Messages](#commit-messages)
@@ -679,6 +680,12 @@ For detailed implementation guide, see [AGENT_SUPPORT.md](AGENT_SUPPORT.md).
 - Use preload script for all IPC
 - Sanitize all user inputs
 - Use `spawn()` with `shell: false`
+
+## Contributing Themes
+
+Theme definitions live in `src/shared/themes.ts` (colors and palettes) and `src/shared/theme-types.ts` (ThemeId type). To add a new theme, add the definition in those files and update the theme test in `src/__tests__/renderer/constants/themes.test.ts`.
+
+For theme screenshots and the showcase workflow (launching the app with a specific theme at screenshot-ready window size), see [THEMES.md — Showcase Commands](THEMES.md#showcase-commands).
 
 ## Performance Guidelines
 

@@ -1,0 +1,1466 @@
+{
+	"sessions": [
+		{
+			"id": "00000000-0000-4000-a000-000000000003",
+			"name": "DATA AI",
+			"toolType": "claude-code",
+			"state": "idle",
+			"cwd": "/tmp/showcase-projects/data-ai",
+			"fullPath": "/tmp/showcase-projects/data-ai",
+			"projectRoot": "/tmp/showcase-projects/data-ai",
+			"isGitRepo": true,
+			"gitBranches": [],
+			"gitTags": [],
+			"gitRefsCacheTime": 1774000800000,
+			"aiLogs": [],
+			"shellLogs": [
+				{
+					"id": "00000000-0000-4000-a000-000000000008",
+					"timestamp": 1773568800000,
+					"source": "system",
+					"text": "Shell Session Ready."
+				}
+			],
+			"workLog": [],
+			"contextUsage": 5,
+			"inputMode": "ai",
+			"aiPid": 0,
+			"terminalPid": 0,
+			"port": 3040,
+			"isLive": false,
+			"changedFiles": [],
+			"fileTree": [],
+			"fileExplorerExpanded": [],
+			"fileExplorerScrollPos": 0,
+			"fileTreeAutoRefreshInterval": 180,
+			"shellCwd": "/tmp/showcase-projects/data-ai",
+			"aiCommandHistory": ["Analyze our user engagement data and set up a processing pipeline."],
+			"shellCommandHistory": [],
+			"executionQueue": [],
+			"activeTimeMs": 900000,
+			"aiTabs": [
+				{
+					"id": "00000000-0000-4000-a000-000000000004",
+					"agentSessionId": "00000000-0000-4000-a000-000000000005",
+					"name": "Pipeline Analysis",
+					"starred": false,
+					"logs": [
+						{
+							"id": "00000000-0000-4000-a000-000000000006",
+							"timestamp": 1773568805000,
+							"source": "user",
+							"text": "Analyze our user engagement data and set up a processing pipeline.\n",
+							"images": [],
+							"delivered": true
+						},
+						{
+							"id": "1773568813000-showcase6",
+							"timestamp": 1773568813000,
+							"source": "stdout",
+							"text": "\n\nI'll set up a data pipeline for processing user engagement metrics. Here's the plan:\n\n1. **Ingestion**: Read raw events from the `user_events` table (clicks, page views, session duration)\n2. **Transform**: Aggregate by user cohort (weekly, monthly) and compute retention rates\n3. **Load**: Write summary tables to `engagement_metrics` for dashboard consumption\n\nKey metrics to track:\n- **DAU/MAU ratio**: Currently at 0.34, healthy range is 0.25–0.50\n- **Session duration**: Median 4.2 min, trending up 8% month-over-month\n- **Feature adoption**: Auto Run used by 62% of active users\n\nI've created the pipeline config at `src/pipelines/engagement.yaml`. Want me to set up the scheduling?"
+						}
+					],
+					"inputValue": "",
+					"stagedImages": [],
+					"createdAt": 1773568800000,
+					"state": "idle",
+					"saveToHistory": true,
+					"showThinking": "off",
+					"awaitingSessionId": false,
+					"isGeneratingName": false,
+					"usageStats": {
+						"inputTokens": 45,
+						"cacheReadInputTokens": 18200,
+						"cacheCreationInputTokens": 12400,
+						"outputTokens": 680,
+						"contextWindow": 1000000,
+						"totalCostUsd": 0.048
+					},
+					"hasUnread": false
+				}
+			],
+			"activeTabId": "00000000-0000-4000-a000-000000000004",
+			"filePreviewTabs": [],
+			"activeFileTabId": null,
+			"terminalTabs": [],
+			"activeTerminalTabId": null,
+			"unifiedTabOrder": [
+				{
+					"type": "ai",
+					"id": "00000000-0000-4000-a000-000000000004"
+				}
+			],
+			"sessionSshRemoteConfig": {
+				"enabled": false,
+				"remoteId": null
+			},
+			"agentCommands": [],
+			"agentSessionId": "00000000-0000-4000-a000-000000000005",
+			"usageStats": {
+				"inputTokens": 45,
+				"cacheReadInputTokens": 18200,
+				"cacheCreationInputTokens": 12400,
+				"outputTokens": 680,
+				"contextWindow": 1000000,
+				"totalCostUsd": 0.048
+			},
+			"groupId": "00000000-0000-4000-a000-000000000001"
+		},
+		{
+			"id": "00000000-0000-4000-a000-000000000009",
+			"name": "OpenCode",
+			"toolType": "opencode",
+			"state": "idle",
+			"cwd": "/tmp/showcase-projects/opencode-app",
+			"fullPath": "/tmp/showcase-projects/opencode-app",
+			"projectRoot": "/tmp/showcase-projects/opencode-app",
+			"isGitRepo": true,
+			"gitBranches": [],
+			"gitTags": [],
+			"gitRefsCacheTime": 1774087200000,
+			"aiLogs": [],
+			"shellLogs": [
+				{
+					"id": "00000000-0000-4000-a000-00000000000e",
+					"timestamp": 1773655200000,
+					"source": "system",
+					"text": "Shell Session Ready."
+				}
+			],
+			"workLog": [],
+			"contextUsage": 5,
+			"inputMode": "ai",
+			"aiPid": 0,
+			"terminalPid": 0,
+			"port": 3041,
+			"isLive": false,
+			"changedFiles": [],
+			"fileTree": [],
+			"fileExplorerExpanded": [],
+			"fileExplorerScrollPos": 0,
+			"fileTreeAutoRefreshInterval": 180,
+			"shellCwd": "/tmp/showcase-projects/opencode-app",
+			"aiCommandHistory": [
+				"Help me refactor the authentication middleware to support JWT refresh tokens."
+			],
+			"shellCommandHistory": [],
+			"executionQueue": [],
+			"activeTimeMs": 720000,
+			"aiTabs": [
+				{
+					"id": "00000000-0000-4000-a000-00000000000a",
+					"agentSessionId": "00000000-0000-4000-a000-00000000000b",
+					"name": "Auth Refactor",
+					"starred": false,
+					"logs": [
+						{
+							"id": "00000000-0000-4000-a000-00000000000c",
+							"timestamp": 1773655205000,
+							"source": "user",
+							"text": "Help me refactor the authentication middleware to support JWT refresh tokens.\n",
+							"images": [],
+							"delivered": true
+						},
+						{
+							"id": "1773655213000-showcase12",
+							"timestamp": 1773655213000,
+							"source": "stdout",
+							"text": "\n\nI'll refactor the auth middleware to add JWT refresh token support. Here's what I'll change:\n\n**Current flow**: Single access token, 24h expiry, no refresh mechanism.\n\n**New flow**:\n- Access token: 15min expiry (short-lived)\n- Refresh token: 7-day expiry, stored in httpOnly cookie\n- Token rotation: New refresh token issued on each refresh\n\nFiles to modify:\n- `src/middleware/auth.ts` — Add refresh token validation\n- `src/routes/auth.ts` — Add `/auth/refresh` endpoint\n- `src/models/token.ts` — New model for refresh token storage\n\nWant me to proceed with the implementation?"
+						}
+					],
+					"inputValue": "",
+					"stagedImages": [],
+					"createdAt": 1773655200000,
+					"state": "idle",
+					"saveToHistory": true,
+					"showThinking": "off",
+					"awaitingSessionId": false,
+					"isGeneratingName": false,
+					"usageStats": {
+						"inputTokens": 38,
+						"cacheReadInputTokens": 15600,
+						"cacheCreationInputTokens": 10200,
+						"outputTokens": 520,
+						"contextWindow": 1000000,
+						"totalCostUsd": 0.035
+					},
+					"hasUnread": false
+				}
+			],
+			"activeTabId": "00000000-0000-4000-a000-00000000000a",
+			"filePreviewTabs": [],
+			"activeFileTabId": null,
+			"terminalTabs": [],
+			"activeTerminalTabId": null,
+			"unifiedTabOrder": [
+				{
+					"type": "ai",
+					"id": "00000000-0000-4000-a000-00000000000a"
+				}
+			],
+			"sessionSshRemoteConfig": {
+				"enabled": false,
+				"remoteId": null
+			},
+			"agentCommands": [],
+			"agentSessionId": "00000000-0000-4000-a000-00000000000b",
+			"usageStats": {
+				"inputTokens": 38,
+				"cacheReadInputTokens": 15600,
+				"cacheCreationInputTokens": 10200,
+				"outputTokens": 520,
+				"contextWindow": 1000000,
+				"totalCostUsd": 0.035
+			},
+			"groupId": "00000000-0000-4000-a000-000000000001"
+		},
+		{
+			"id": "00000000-0000-4000-a000-00000000000f",
+			"name": "INVESTOR",
+			"toolType": "claude-code",
+			"state": "idle",
+			"cwd": "/tmp/showcase-projects/investor-portal",
+			"fullPath": "/tmp/showcase-projects/investor-portal",
+			"projectRoot": "/tmp/showcase-projects/investor-portal",
+			"isGitRepo": true,
+			"gitBranches": [],
+			"gitTags": [],
+			"gitRefsCacheTime": 1774173600000,
+			"aiLogs": [],
+			"shellLogs": [
+				{
+					"id": "00000000-0000-4000-a000-000000000014",
+					"timestamp": 1773741600000,
+					"source": "system",
+					"text": "Shell Session Ready."
+				}
+			],
+			"workLog": [],
+			"contextUsage": 5,
+			"inputMode": "ai",
+			"aiPid": 0,
+			"terminalPid": 0,
+			"port": 3042,
+			"isLive": false,
+			"changedFiles": [],
+			"fileTree": [],
+			"fileExplorerExpanded": [],
+			"fileExplorerScrollPos": 0,
+			"fileTreeAutoRefreshInterval": 180,
+			"shellCwd": "/tmp/showcase-projects/investor-portal",
+			"aiCommandHistory": ["Draft a Q1 investor update highlighting our key growth metrics."],
+			"shellCommandHistory": [],
+			"executionQueue": [],
+			"activeTimeMs": 480000,
+			"aiTabs": [
+				{
+					"id": "00000000-0000-4000-a000-000000000010",
+					"agentSessionId": "00000000-0000-4000-a000-000000000011",
+					"name": "Q1 Update Draft",
+					"starred": false,
+					"logs": [
+						{
+							"id": "00000000-0000-4000-a000-000000000012",
+							"timestamp": 1773741605000,
+							"source": "user",
+							"text": "Draft a Q1 investor update highlighting our key growth metrics.\n",
+							"images": [],
+							"delivered": true
+						},
+						{
+							"id": "1773741613000-showcase18",
+							"timestamp": 1773741613000,
+							"source": "stdout",
+							"text": "\n\n# Q1 2026 Investor Update — Draft\n\n## Headline Numbers\n- **MRR**: $142K (+38% QoQ)\n- **Active Users**: 8,400 (+52% QoQ)\n- **Net Revenue Retention**: 124%\n\n## Product Highlights\n- Launched **Maestro Cue** — event-driven automation engine, our most-requested feature\n- Added 3 new agent integrations (Factory Droid, Qwen3 Coder, Aider)\n- **Enterprise pipeline**: 12 qualified leads, 3 in POC stage\n\n## What's Working\n- Self-serve conversion rate improved from 4.2% → 6.8% after onboarding wizard redesign\n- Power users (5+ agents) grew 3x — validates the multi-agent thesis\n- Community contributions up 200% after open-sourcing the agent SDK\n\n## Key Risks\n- Burn rate increased 15% due to new hires — runway at 18 months\n- Enterprise sales cycle longer than expected (avg 45 days)\n\nShall I refine any section or adjust the tone?"
+						}
+					],
+					"inputValue": "",
+					"stagedImages": [],
+					"createdAt": 1773741600000,
+					"state": "idle",
+					"saveToHistory": true,
+					"showThinking": "off",
+					"awaitingSessionId": false,
+					"isGeneratingName": false,
+					"usageStats": {
+						"inputTokens": 62,
+						"cacheReadInputTokens": 22100,
+						"cacheCreationInputTokens": 14800,
+						"outputTokens": 890,
+						"contextWindow": 1000000,
+						"totalCostUsd": 0.062
+					},
+					"hasUnread": false
+				}
+			],
+			"activeTabId": "00000000-0000-4000-a000-000000000010",
+			"filePreviewTabs": [],
+			"activeFileTabId": null,
+			"terminalTabs": [],
+			"activeTerminalTabId": null,
+			"unifiedTabOrder": [
+				{
+					"type": "ai",
+					"id": "00000000-0000-4000-a000-000000000010"
+				}
+			],
+			"sessionSshRemoteConfig": {
+				"enabled": false,
+				"remoteId": null
+			},
+			"agentCommands": [],
+			"agentSessionId": "00000000-0000-4000-a000-000000000011",
+			"usageStats": {
+				"inputTokens": 62,
+				"cacheReadInputTokens": 22100,
+				"cacheCreationInputTokens": 14800,
+				"outputTokens": 890,
+				"contextWindow": 1000000,
+				"totalCostUsd": 0.062
+			},
+			"groupId": "00000000-0000-4000-a000-000000000001"
+		},
+		{
+			"id": "00000000-0000-4000-a000-000000000015",
+			"name": "OpenAPI",
+			"toolType": "codex",
+			"state": "idle",
+			"cwd": "/tmp/showcase-projects/openapi-spec",
+			"fullPath": "/tmp/showcase-projects/openapi-spec",
+			"projectRoot": "/tmp/showcase-projects/openapi-spec",
+			"isGitRepo": true,
+			"gitBranches": [],
+			"gitTags": [],
+			"gitRefsCacheTime": 1774260000000,
+			"aiLogs": [],
+			"shellLogs": [
+				{
+					"id": "00000000-0000-4000-a000-00000000001a",
+					"timestamp": 1773828000000,
+					"source": "system",
+					"text": "Shell Session Ready."
+				}
+			],
+			"workLog": [],
+			"contextUsage": 5,
+			"inputMode": "ai",
+			"aiPid": 0,
+			"terminalPid": 0,
+			"port": 3043,
+			"isLive": false,
+			"changedFiles": [],
+			"fileTree": [],
+			"fileExplorerExpanded": [],
+			"fileExplorerScrollPos": 0,
+			"fileTreeAutoRefreshInterval": 180,
+			"shellCwd": "/tmp/showcase-projects/openapi-spec",
+			"aiCommandHistory": ["Generate an OpenAPI 3.0 spec for our REST API endpoints."],
+			"shellCommandHistory": [],
+			"executionQueue": [],
+			"activeTimeMs": 540000,
+			"aiTabs": [
+				{
+					"id": "00000000-0000-4000-a000-000000000016",
+					"agentSessionId": "00000000-0000-4000-a000-000000000017",
+					"name": "API Spec Generation",
+					"starred": false,
+					"logs": [
+						{
+							"id": "00000000-0000-4000-a000-000000000018",
+							"timestamp": 1773828005000,
+							"source": "user",
+							"text": "Generate an OpenAPI 3.0 spec for our REST API endpoints.\n",
+							"images": [],
+							"delivered": true
+						},
+						{
+							"id": "1773828013000-showcase24",
+							"timestamp": 1773828013000,
+							"source": "stdout",
+							"text": "\n\nI've analyzed the route files and generated an OpenAPI 3.0 specification. Here's a summary:\n\n**Endpoints documented**: 24 routes across 5 resource groups\n\n| Group | Endpoints | Auth Required |\n|-------|-----------|---------------|\n| /api/agents | 6 (CRUD + start/stop) | Yes |\n| /api/sessions | 5 (CRUD + fork) | Yes |\n| /api/playbooks | 4 (CRUD) | Yes |\n| /api/stats | 3 (read-only) | Yes |\n| /api/auth | 4 (login, refresh, logout, verify) | Partial |\n| /api/health | 2 (liveness, readiness) | No |\n\nThe spec is written to `docs/openapi.yaml`. Includes request/response schemas derived from the TypeScript types in `src/shared/types.ts`.\n\nRun `npx @redocly/cli preview docs/openapi.yaml` to view the interactive documentation."
+						}
+					],
+					"inputValue": "",
+					"stagedImages": [],
+					"createdAt": 1773828000000,
+					"state": "idle",
+					"saveToHistory": true,
+					"showThinking": "off",
+					"awaitingSessionId": false,
+					"isGeneratingName": false,
+					"usageStats": {
+						"inputTokens": 52,
+						"cacheReadInputTokens": 19800,
+						"cacheCreationInputTokens": 13100,
+						"outputTokens": 740,
+						"contextWindow": 1000000,
+						"totalCostUsd": 0.051
+					},
+					"hasUnread": false
+				}
+			],
+			"activeTabId": "00000000-0000-4000-a000-000000000016",
+			"filePreviewTabs": [],
+			"activeFileTabId": null,
+			"terminalTabs": [],
+			"activeTerminalTabId": null,
+			"unifiedTabOrder": [
+				{
+					"type": "ai",
+					"id": "00000000-0000-4000-a000-000000000016"
+				}
+			],
+			"sessionSshRemoteConfig": {
+				"enabled": false,
+				"remoteId": null
+			},
+			"agentCommands": [],
+			"agentSessionId": "00000000-0000-4000-a000-000000000017",
+			"usageStats": {
+				"inputTokens": 52,
+				"cacheReadInputTokens": 19800,
+				"cacheCreationInputTokens": 13100,
+				"outputTokens": 740,
+				"contextWindow": 1000000,
+				"totalCostUsd": 0.051
+			},
+			"groupId": "00000000-0000-4000-a000-000000000001"
+		},
+		{
+			"id": "00000000-0000-4000-a000-00000000001b",
+			"name": "Maestro MCS",
+			"toolType": "claude-code",
+			"state": "idle",
+			"cwd": "/tmp/showcase-projects/maestro-mcs",
+			"fullPath": "/tmp/showcase-projects/maestro-mcs",
+			"projectRoot": "/tmp/showcase-projects/maestro-mcs",
+			"isGitRepo": true,
+			"gitBranches": [],
+			"gitTags": [],
+			"gitRefsCacheTime": 1774346400000,
+			"aiLogs": [],
+			"shellLogs": [
+				{
+					"id": "00000000-0000-4000-a000-000000000020",
+					"timestamp": 1773914400000,
+					"source": "system",
+					"text": "Shell Session Ready."
+				}
+			],
+			"workLog": [],
+			"contextUsage": 5,
+			"inputMode": "ai",
+			"aiPid": 0,
+			"terminalPid": 0,
+			"port": 3044,
+			"isLive": false,
+			"changedFiles": [],
+			"fileTree": [],
+			"fileExplorerExpanded": [],
+			"fileExplorerScrollPos": 0,
+			"fileTreeAutoRefreshInterval": 180,
+			"shellCwd": "/tmp/showcase-projects/maestro-mcs",
+			"aiCommandHistory": [
+				"Set up the MCP server configuration for our documentation search tool."
+			],
+			"shellCommandHistory": [],
+			"executionQueue": [],
+			"activeTimeMs": 1200000,
+			"aiTabs": [
+				{
+					"id": "00000000-0000-4000-a000-00000000001c",
+					"agentSessionId": "00000000-0000-4000-a000-00000000001d",
+					"name": "MCP Server Setup",
+					"starred": false,
+					"logs": [
+						{
+							"id": "00000000-0000-4000-a000-00000000001e",
+							"timestamp": 1773914405000,
+							"source": "user",
+							"text": "Set up the MCP server configuration for our documentation search tool.\n",
+							"images": [],
+							"delivered": true
+						},
+						{
+							"id": "1773914413000-showcase30",
+							"timestamp": 1773914413000,
+							"source": "stdout",
+							"text": "\n\nI've configured the MCP (Model Context Protocol) server for documentation search. Here's what's set up:\n\n**Server config** (`mcp-server.json`):\n```json\n{\n  \"name\": \"maestro-docs\",\n  \"version\": \"1.0.0\",\n  \"tools\": [{\n    \"name\": \"SearchMaestro\",\n    \"description\": \"Search Maestro documentation and guides\",\n    \"inputSchema\": { \"type\": \"object\", \"properties\": { \"query\": { \"type\": \"string\" } } }\n  }]\n}\n```\n\n**Indexing**: Documentation from `docs/` is indexed using embeddings, stored in a local SQLite vector store.\n\n**Connection**: The server listens on stdio for local connections and HTTPS for remote. Registered at `https://docs.runmaestro.ai/mcp`.\n\nTo test locally: `npx @anthropic-ai/mcp-inspector mcp-server.json`"
+						}
+					],
+					"inputValue": "",
+					"stagedImages": [],
+					"createdAt": 1773914400000,
+					"state": "idle",
+					"saveToHistory": true,
+					"showThinking": "off",
+					"awaitingSessionId": false,
+					"isGeneratingName": false,
+					"usageStats": {
+						"inputTokens": 78,
+						"cacheReadInputTokens": 28400,
+						"cacheCreationInputTokens": 19600,
+						"outputTokens": 1050,
+						"contextWindow": 1000000,
+						"totalCostUsd": 0.078
+					},
+					"hasUnread": false
+				}
+			],
+			"activeTabId": "00000000-0000-4000-a000-00000000001c",
+			"filePreviewTabs": [],
+			"activeFileTabId": null,
+			"terminalTabs": [],
+			"activeTerminalTabId": null,
+			"unifiedTabOrder": [
+				{
+					"type": "ai",
+					"id": "00000000-0000-4000-a000-00000000001c"
+				}
+			],
+			"sessionSshRemoteConfig": {
+				"enabled": false,
+				"remoteId": null
+			},
+			"agentCommands": [],
+			"agentSessionId": "00000000-0000-4000-a000-00000000001d",
+			"usageStats": {
+				"inputTokens": 78,
+				"cacheReadInputTokens": 28400,
+				"cacheCreationInputTokens": 19600,
+				"outputTokens": 1050,
+				"contextWindow": 1000000,
+				"totalCostUsd": 0.078
+			},
+			"groupId": "00000000-0000-4000-a000-000000000002"
+		},
+		{
+			"id": "00000000-0000-4000-a000-000000000021",
+			"name": "Kinesis MCS",
+			"toolType": "claude-code",
+			"state": "idle",
+			"cwd": "/tmp/showcase-projects/kinesis-mcs",
+			"fullPath": "/tmp/showcase-projects/kinesis-mcs",
+			"projectRoot": "/tmp/showcase-projects/kinesis-mcs",
+			"isGitRepo": true,
+			"gitBranches": [],
+			"gitTags": [],
+			"gitRefsCacheTime": 1774432800000,
+			"aiLogs": [],
+			"shellLogs": [
+				{
+					"id": "00000000-0000-4000-a000-000000000026",
+					"timestamp": 1774000800000,
+					"source": "system",
+					"text": "Shell Session Ready."
+				}
+			],
+			"workLog": [],
+			"contextUsage": 5,
+			"inputMode": "ai",
+			"aiPid": 0,
+			"terminalPid": 0,
+			"port": 3045,
+			"isLive": false,
+			"changedFiles": [],
+			"fileTree": [],
+			"fileExplorerExpanded": [],
+			"fileExplorerScrollPos": 0,
+			"fileTreeAutoRefreshInterval": 180,
+			"shellCwd": "/tmp/showcase-projects/kinesis-mcs",
+			"aiCommandHistory": [
+				"Configure the Kinesis data stream consumer with proper error handling and backpressure."
+			],
+			"shellCommandHistory": [],
+			"executionQueue": [],
+			"activeTimeMs": 660000,
+			"aiTabs": [
+				{
+					"id": "00000000-0000-4000-a000-000000000022",
+					"agentSessionId": "00000000-0000-4000-a000-000000000023",
+					"name": "Stream Consumer",
+					"starred": false,
+					"logs": [
+						{
+							"id": "00000000-0000-4000-a000-000000000024",
+							"timestamp": 1774000805000,
+							"source": "user",
+							"text": "Configure the Kinesis data stream consumer with proper error handling and backpressure.\n",
+							"images": [],
+							"delivered": true
+						},
+						{
+							"id": "1774000813000-showcase36",
+							"timestamp": 1774000813000,
+							"source": "stdout",
+							"text": "\n\nI've set up the Kinesis stream consumer with robust error handling. Key configuration:\n\n**Consumer settings**:\n- Shard iterator type: `TRIM_HORIZON` (process from earliest available)\n- Batch size: 100 records per poll\n- Poll interval: 1 second\n- Max retries: 3 with exponential backoff\n\n**Error handling**:\n- Deserialization failures → dead letter queue (`kinesis-dlq`)\n- Transient errors → retry with backoff (1s, 4s, 16s)\n- Poison messages → skip after 3 failures, log to CloudWatch\n\n**Backpressure**:\n- In-flight limit: 500 records\n- When limit reached: pause polling until buffer drains below 200\n- Circuit breaker: if DLQ exceeds 100 messages/hour, pause consumer and alert\n\nConfig written to `src/consumers/kinesis-config.ts`. The consumer is idempotent — safe to restart at any time."
+						}
+					],
+					"inputValue": "",
+					"stagedImages": [],
+					"createdAt": 1774000800000,
+					"state": "idle",
+					"saveToHistory": true,
+					"showThinking": "off",
+					"awaitingSessionId": false,
+					"isGeneratingName": false,
+					"usageStats": {
+						"inputTokens": 55,
+						"cacheReadInputTokens": 20100,
+						"cacheCreationInputTokens": 13800,
+						"outputTokens": 780,
+						"contextWindow": 1000000,
+						"totalCostUsd": 0.055
+					},
+					"hasUnread": false
+				}
+			],
+			"activeTabId": "00000000-0000-4000-a000-000000000022",
+			"filePreviewTabs": [],
+			"activeFileTabId": null,
+			"terminalTabs": [],
+			"activeTerminalTabId": null,
+			"unifiedTabOrder": [
+				{
+					"type": "ai",
+					"id": "00000000-0000-4000-a000-000000000022"
+				}
+			],
+			"sessionSshRemoteConfig": {
+				"enabled": false,
+				"remoteId": null
+			},
+			"agentCommands": [],
+			"agentSessionId": "00000000-0000-4000-a000-000000000023",
+			"usageStats": {
+				"inputTokens": 55,
+				"cacheReadInputTokens": 20100,
+				"cacheCreationInputTokens": 13800,
+				"outputTokens": 780,
+				"contextWindow": 1000000,
+				"totalCostUsd": 0.055
+			},
+			"groupId": "00000000-0000-4000-a000-000000000002"
+		},
+		{
+			"id": "00000000-0000-4000-a000-000000000027",
+			"name": "Maestro",
+			"toolType": "claude-code",
+			"state": "idle",
+			"cwd": "$CWD",
+			"fullPath": "$CWD",
+			"projectRoot": "$CWD",
+			"isGitRepo": true,
+			"gitBranches": [],
+			"gitTags": [],
+			"gitRefsCacheTime": 1774519200000,
+			"aiLogs": [],
+			"shellLogs": [
+				{
+					"id": "00000000-0000-4000-a000-00000000003c",
+					"timestamp": 1774087200000,
+					"source": "system",
+					"text": "Shell Session Ready."
+				}
+			],
+			"workLog": [],
+			"contextUsage": 42,
+			"inputMode": "ai",
+			"aiPid": 0,
+			"terminalPid": 0,
+			"port": 3046,
+			"isLive": false,
+			"changedFiles": [],
+			"fileTree": [],
+			"fileExplorerExpanded": [],
+			"fileExplorerScrollPos": 0,
+			"fileTreeAutoRefreshInterval": 180,
+			"shellCwd": "$CWD",
+			"aiCommandHistory": [
+				"Give me a project setup report. Build health, dependencies, and configuration status.",
+				"How has this project grown? Show me contributor activity, commit velocity, and codebase size.",
+				"Summarize this month's development activity.",
+				"pitch me on Maestro. what is it all about? why should I use it? Who is it for? what can it do?",
+				"Explain the architecture of this codebase. How is everything organized?"
+			],
+			"shellCommandHistory": [],
+			"executionQueue": [],
+			"activeTimeMs": 3600000,
+			"aiTabs": [
+				{
+					"id": "00000000-0000-4000-a000-000000000028",
+					"agentSessionId": "00000000-0000-4000-a000-000000000029",
+					"name": "Setup Report",
+					"starred": false,
+					"logs": [
+						{
+							"id": "00000000-0000-4000-a000-00000000002a",
+							"timestamp": 1774087205000,
+							"source": "user",
+							"text": "Give me a project setup report. Build health, dependencies, and configuration status.\n",
+							"images": [],
+							"delivered": true
+						},
+						{
+							"id": "1774087213000-showcase42",
+							"timestamp": 1774087213000,
+							"source": "stdout",
+							"text": "\n\n# Project Setup Report: Maestro\n\n## Build Status ✅\n\n- **TypeScript compilation**: Clean (0 errors across 3 tsconfig files)\n- **Vite dev server**: Ready (renderer + web configs)\n- **Electron main process**: Compiles successfully\n- **Preload scripts**: Built and up to date\n\n## Dependencies\n\n| Category | Count | Outdated | Critical |\n|----------|-------|----------|----------|\n| Production | 47 | 3 | 0 |\n| Development | 38 | 5 | 0 |\n| Peer | 4 | 0 | 0 |\n\n**Notable updates available:**\n- `electron`: 33.2.0 → 34.0.1 (major)\n- `vite`: 6.0.7 → 6.1.2 (minor)\n- `@sentry/electron`: 5.10.0 → 5.12.1 (minor)\n\n## Configuration\n\n- **Electron Builder**: Configured for macOS (DMG, ZIP), Windows (NSIS), Linux (AppImage, deb)\n- **Code Signing**: macOS notarization enabled, Windows signing configured\n- **Auto-Update**: Enabled via electron-updater, pointing to GitHub releases\n- **Sentry**: DSN configured for both main and renderer processes\n\n## Test Suite\n\n- **Framework**: Vitest\n- **Test files**: 24\n- **Total tests**: 156 passing, 0 failing\n- **Coverage**: Not configured (recommend adding)"
+						}
+					],
+					"inputValue": "",
+					"stagedImages": [],
+					"createdAt": 1774087200000,
+					"state": "idle",
+					"saveToHistory": true,
+					"showThinking": "off",
+					"awaitingSessionId": false,
+					"isGeneratingName": false,
+					"usageStats": {
+						"inputTokens": 98,
+						"cacheReadInputTokens": 38400,
+						"cacheCreationInputTokens": 28500,
+						"outputTokens": 1920,
+						"contextWindow": 1000000,
+						"totalCostUsd": 0.31
+					},
+					"hasUnread": false
+				},
+				{
+					"id": "00000000-0000-4000-a000-00000000002c",
+					"agentSessionId": "00000000-0000-4000-a000-00000000002d",
+					"name": "Growth Check",
+					"starred": false,
+					"logs": [
+						{
+							"id": "00000000-0000-4000-a000-00000000002e",
+							"timestamp": 1774094405000,
+							"source": "user",
+							"text": "How has this project grown? Show me contributor activity, commit velocity, and codebase size.\n",
+							"images": [],
+							"delivered": true
+						},
+						{
+							"id": "1774094413000-showcase46",
+							"timestamp": 1774094413000,
+							"source": "stdout",
+							"text": "\n\n# Growth Check: Maestro Repository\n\n## Codebase Size\n\n| Metric | Current | 3 Months Ago | Change |\n|--------|---------|--------------|--------|\n| TypeScript LOC | 42,850 | 28,200 | +52% |\n| Components | 87 | 54 | +61% |\n| Test files | 24 | 12 | +100% |\n| Total files | 312 | 198 | +58% |\n\n## Commit Activity (Last 90 Days)\n\n- **Total commits**: 487\n- **Average per week**: ~38\n- **Peak week**: Mar 10–16 (72 commits — Cue engine launch)\n- **Merge commits**: 89 PRs merged\n\n## Contributor Activity\n\n| Contributor | Commits | Lines Added | Focus Area |\n|------------|---------|-------------|------------|\n| Primary maintainer | 312 | +38,400 | Core architecture |\n| Contributor 2 | 98 | +12,100 | Agent integrations |\n| Contributor 3 | 45 | +5,800 | UI/UX, themes |\n| Community (12 others) | 32 | +3,200 | Bug fixes, docs |\n\n## Feature Velocity\n\n- **v0.12 → v0.16**: 4 minor releases in 90 days\n- **Major features shipped**: Cue engine, Document Graph, Usage Dashboard, Factory Droid, Tabbed terminals\n- **Release cadence**: ~biweekly"
+						}
+					],
+					"inputValue": "",
+					"stagedImages": [],
+					"createdAt": 1774094400000,
+					"state": "idle",
+					"saveToHistory": true,
+					"showThinking": "off",
+					"awaitingSessionId": false,
+					"isGeneratingName": false,
+					"usageStats": {
+						"inputTokens": 84,
+						"cacheReadInputTokens": 35200,
+						"cacheCreationInputTokens": 25100,
+						"outputTokens": 1650,
+						"contextWindow": 1000000,
+						"totalCostUsd": 0.27
+					},
+					"hasUnread": false
+				},
+				{
+					"id": "00000000-0000-4000-a000-000000000030",
+					"agentSessionId": "00000000-0000-4000-a000-000000000031",
+					"name": "Monthly Stats",
+					"starred": false,
+					"logs": [
+						{
+							"id": "00000000-0000-4000-a000-000000000032",
+							"timestamp": 1774101605000,
+							"source": "user",
+							"text": "Summarize this month's development activity.\n",
+							"images": [],
+							"delivered": true
+						},
+						{
+							"id": "1774101613000-showcase50",
+							"timestamp": 1774101613000,
+							"source": "stdout",
+							"text": "\n\n# Monthly Development Summary — April 2026\n\n## Sprint Highlights\n\n### Features Shipped\n- ✅ **Maestro Cue**: Event-driven automation engine (file watch, GitHub events, cron triggers)\n- ✅ **Showcase Mode**: Curated demo environment for presentations\n- ✅ **Factory Droid**: New agent integration (beta)\n- ✅ **Terminal Tabs**: Multiple PTY sessions per agent\n\n### Bug Fixes\n- Fixed Auto Run button layout overflow on narrow windows\n- Fixed tab display fallback for sessions without names\n- Fixed unread navigation badge not clearing on focus\n- Resolved SSH spawn wrapper failing on custom agent paths\n\n### Infrastructure\n- Migrated CI to parallel test execution (2.5x faster)\n- Added Sentry breadcrumbs for IPC handler failures\n- Reduced bundle size by 12% via tree-shaking unused parsers\n\n## Metrics\n\n| Metric | This Month | Last Month | Delta |\n|--------|------------|------------|-------|\n| Commits | 142 | 118 | +20% |\n| PRs merged | 34 | 27 | +26% |\n| Issues closed | 48 | 31 | +55% |\n| New issues | 22 | 35 | -37% |\n| Active contributors | 8 | 6 | +33% |"
+						}
+					],
+					"inputValue": "",
+					"stagedImages": [],
+					"createdAt": 1774101600000,
+					"state": "idle",
+					"saveToHistory": true,
+					"showThinking": "off",
+					"awaitingSessionId": false,
+					"isGeneratingName": false,
+					"usageStats": {
+						"inputTokens": 72,
+						"cacheReadInputTokens": 31800,
+						"cacheCreationInputTokens": 22400,
+						"outputTokens": 1480,
+						"contextWindow": 1000000,
+						"totalCostUsd": 0.24
+					},
+					"hasUnread": false
+				},
+				{
+					"id": "00000000-0000-4000-a000-000000000034",
+					"agentSessionId": "00000000-0000-4000-a000-000000000035",
+					"name": "Demo Tab",
+					"starred": true,
+					"logs": [
+						{
+							"id": "00000000-0000-4000-a000-000000000036",
+							"timestamp": 1774108805000,
+							"source": "user",
+							"text": "pitch me on Maestro. what is it all about? why should I use it? Who is it for? what can it do?\n",
+							"images": [],
+							"delivered": true
+						},
+						{
+							"id": "1774108813000-showcase54",
+							"timestamp": 1774108813000,
+							"source": "stdout",
+							"text": "\n\n# Maestro: Multi-Agent AI Coding Assistant Manager\n\n## What Is It?\n\nMaestro is an Electron desktop app that lets you run and manage multiple AI coding assistants simultaneously through a unified, keyboard-first interface. Think of it as a command center for AI-powered development.\n\n## Who Is It For?\n\n- **Power users** who work across multiple projects or repositories at once\n- **Developers** who want to leverage multiple AI coding assistants without constant context-switching\n- **Teams** exploring different AI tools (Claude Code, Codex, Gemini CLI, etc.)\n- Anyone who prefers **keyboard-driven workflows** over mouse clicking\n\n## Key Capabilities\n\n### 1. Multi-Agent Management\n- Run Claude Code, Codex, OpenCode, Gemini CLI, and Factory Droid side by side\n- Each agent gets its own workspace with independent tabs, file trees, and terminal\n- Switch between agents instantly with keyboard shortcuts (Ctrl+1-9)\n\n### 2. Tabbed Conversations\n- Multiple AI conversation tabs per agent (like browser tabs)\n- Star important conversations, rename tabs, drag to reorder\n- Session history with full conversation replay\n\n### 3. Auto Run (Batch Processing)\n- Queue markdown \"playbook\" documents for sequential execution\n- Monitor progress across multiple agents simultaneously\n- Pause, resume, or cancel runs at any time\n\n### 4. Keyboard-First Design\n- Every action accessible via keyboard shortcuts\n- Command palette (Cmd+K) for quick navigation\n- Vim-style navigation between agents and tabs\n\n### 5. Built-in Terminal\n- Integrated terminal per agent with full PTY support\n- Switch between AI and shell mode seamlessly\n- Terminal tabs alongside AI conversation tabs\n\n### 6. Smart File Explorer\n- Live file tree synced to each agent's working directory\n- Click-to-preview any file without leaving the conversation\n- Git-aware change tracking\n\n### 7. Group Organization\n- Organize agents into named groups (e.g., \"Frontend\", \"Backend\", \"DevOps\")\n- Collapse/expand groups in the sidebar\n- Drag and drop agents between groups\n\n### 8. Web Interface & SSH Remote\n- Access any agent remotely via built-in web server\n- Run agents on remote hosts via SSH transparently\n- Mobile-responsive interface for monitoring on the go\n\n### 9. Maestro Cue (Event-Driven Automation)\n- Watch for file changes, GitHub events, or time intervals\n- Automatically trigger agent prompts based on events\n- Configure via YAML, manage via built-in dashboard"
+						}
+					],
+					"inputValue": "",
+					"stagedImages": [],
+					"createdAt": 1774108800000,
+					"state": "idle",
+					"saveToHistory": true,
+					"showThinking": "off",
+					"awaitingSessionId": false,
+					"isGeneratingName": false,
+					"usageStats": {
+						"inputTokens": 156,
+						"cacheReadInputTokens": 45230,
+						"cacheCreationInputTokens": 32100,
+						"outputTokens": 2847,
+						"contextWindow": 1000000,
+						"totalCostUsd": 0.42
+					},
+					"hasUnread": false
+				},
+				{
+					"id": "00000000-0000-4000-a000-000000000038",
+					"agentSessionId": "00000000-0000-4000-a000-000000000039",
+					"name": "Understanding the Architecture",
+					"starred": false,
+					"logs": [
+						{
+							"id": "00000000-0000-4000-a000-00000000003a",
+							"timestamp": 1774116005000,
+							"source": "user",
+							"text": "Explain the architecture of this codebase. How is everything organized?\n",
+							"images": [],
+							"delivered": true
+						},
+						{
+							"id": "1774116013000-showcase58",
+							"timestamp": 1774116013000,
+							"source": "stdout",
+							"text": "\n\n# Maestro Architecture Overview\n\n## High-Level Structure\n\nMaestro follows Electron's standard two-process model with a clear separation of concerns:\n\n```\nsrc/\n├── main/          # Electron main process (Node.js)\n├── renderer/      # React frontend (Chromium)\n├── shared/        # Types and utilities shared between processes\n├── web/           # Web/mobile interface (separate Vite build)\n├── cli/           # CLI tooling for batch automation\n└── prompts/       # System prompts (editable .md files)\n```\n\n## Main Process (`src/main/`)\n\nThe Node.js backend handles all system-level operations:\n\n- **Process Management** (`process-manager.ts`): Spawns and manages AI agent processes via PTY (node-pty) or child_process. Handles lifecycle, signal forwarding, and cleanup.\n- **Agent System** (`agents/`): Agent detection, capabilities registry, session storage. Each agent type has its own parser and storage adapter.\n- **IPC Handlers** (`ipc/handlers/`): Modular handler files for each domain (git, stats, playbooks, cue, etc.). All registered in `index.ts`.\n- **Cue Engine** (`cue/`): Event-driven automation — watches files, GitHub webhooks, cron schedules, and triggers agent prompts.\n\n## Renderer Process (`src/renderer/`)\n\nThe React frontend provides the user interface:\n\n- **App.tsx**: Main coordinator — keyboard handling, session management, layout orchestration.\n- **Components**: Modular UI pieces (SessionList, MainPanel, RightPanel, XTerminal, etc.)\n- **Hooks**: Custom React hooks for settings, sessions, keyboard shortcuts, resize handling.\n- **Stores**: Zustand-based state management (settingsStore, tabStore).\n\n## IPC Bridge\n\nCommunication between processes flows through Electron's contextBridge:\n\n1. Renderer calls `window.maestro.<namespace>.<method>()`\n2. Preload script (`preload.ts`) forwards via `ipcRenderer.invoke()`\n3. Main process handler in `ipc/handlers/` processes and returns\n\n## Data Flow\n\n```\nUser Input → Renderer → IPC → Main Process → Agent Process (PTY)\nAgent Output → Parser → Structured Logs → IPC → Renderer → UI\n```\n\n## Key Design Decisions\n\n- **PTY over stdio**: Agents run in pseudo-terminals for full terminal emulation\n- **Tab-per-conversation**: Each AI tab maps to an independent agent session\n- **Unified tab system**: AI, file preview, and terminal tabs share a single tab bar\n- **Agent-agnostic design**: New agents added via configuration without changing core logic"
+						}
+					],
+					"inputValue": "",
+					"stagedImages": [],
+					"createdAt": 1774116000000,
+					"state": "idle",
+					"saveToHistory": true,
+					"showThinking": "off",
+					"awaitingSessionId": false,
+					"isGeneratingName": false,
+					"usageStats": {
+						"inputTokens": 110,
+						"cacheReadInputTokens": 41200,
+						"cacheCreationInputTokens": 30800,
+						"outputTokens": 2100,
+						"contextWindow": 1000000,
+						"totalCostUsd": 0.35
+					},
+					"hasUnread": false
+				}
+			],
+			"activeTabId": "00000000-0000-4000-a000-000000000034",
+			"filePreviewTabs": [],
+			"activeFileTabId": null,
+			"terminalTabs": [],
+			"activeTerminalTabId": null,
+			"unifiedTabOrder": [
+				{
+					"type": "ai",
+					"id": "00000000-0000-4000-a000-000000000028"
+				},
+				{
+					"type": "ai",
+					"id": "00000000-0000-4000-a000-00000000002c"
+				},
+				{
+					"type": "ai",
+					"id": "00000000-0000-4000-a000-000000000030"
+				},
+				{
+					"type": "ai",
+					"id": "00000000-0000-4000-a000-000000000034"
+				},
+				{
+					"type": "ai",
+					"id": "00000000-0000-4000-a000-000000000038"
+				}
+			],
+			"sessionSshRemoteConfig": {
+				"enabled": false,
+				"remoteId": null
+			},
+			"agentCommands": [],
+			"agentSessionId": "00000000-0000-4000-a000-000000000035",
+			"usageStats": {
+				"inputTokens": 156,
+				"cacheReadInputTokens": 45230,
+				"cacheCreationInputTokens": 32100,
+				"outputTokens": 2847,
+				"contextWindow": 1000000,
+				"totalCostUsd": 0.42
+			},
+			"groupId": "00000000-0000-4000-a000-000000000002"
+		},
+		{
+			"id": "00000000-0000-4000-a000-00000000003d",
+			"name": "Prototyper",
+			"toolType": "claude-code",
+			"state": "idle",
+			"cwd": "/tmp/showcase-projects/prototyper",
+			"fullPath": "/tmp/showcase-projects/prototyper",
+			"projectRoot": "/tmp/showcase-projects/prototyper",
+			"isGitRepo": true,
+			"gitBranches": [],
+			"gitTags": [],
+			"gitRefsCacheTime": 1774692000000,
+			"aiLogs": [],
+			"shellLogs": [
+				{
+					"id": "00000000-0000-4000-a000-000000000042",
+					"timestamp": 1774260000000,
+					"source": "system",
+					"text": "Shell Session Ready."
+				}
+			],
+			"workLog": [],
+			"contextUsage": 5,
+			"inputMode": "ai",
+			"aiPid": 0,
+			"terminalPid": 0,
+			"port": 3047,
+			"isLive": false,
+			"changedFiles": [],
+			"fileTree": [],
+			"fileExplorerExpanded": [],
+			"fileExplorerScrollPos": 0,
+			"fileTreeAutoRefreshInterval": 180,
+			"shellCwd": "/tmp/showcase-projects/prototyper",
+			"aiCommandHistory": ["Create a quick prototype for the new analytics dashboard layout."],
+			"shellCommandHistory": [],
+			"executionQueue": [],
+			"activeTimeMs": 1500000,
+			"aiTabs": [
+				{
+					"id": "00000000-0000-4000-a000-00000000003e",
+					"agentSessionId": "00000000-0000-4000-a000-00000000003f",
+					"name": "Dashboard Prototype",
+					"starred": false,
+					"logs": [
+						{
+							"id": "00000000-0000-4000-a000-000000000040",
+							"timestamp": 1774260005000,
+							"source": "user",
+							"text": "Create a quick prototype for the new analytics dashboard layout.\n",
+							"images": [],
+							"delivered": true
+						},
+						{
+							"id": "1774260013000-showcase64",
+							"timestamp": 1774260013000,
+							"source": "stdout",
+							"text": "\n\nI've scaffolded a dashboard prototype at `src/prototypes/analytics-dashboard/`:\n\n**Layout** (3-column grid):\n- **Left**: Filter sidebar (date range, agent type, project)\n- **Center**: Main chart area (stacked area chart for token usage over time)\n- **Right**: Summary cards (total cost, active agents, context efficiency)\n\n**Components created**:\n- `DashboardLayout.tsx` — CSS Grid container with responsive breakpoints\n- `TokenUsageChart.tsx` — Recharts area chart with tooltip and legend\n- `SummaryCard.tsx` — Reusable metric card with trend indicator\n- `FilterSidebar.tsx` — Date picker + multi-select dropdowns\n\n**Mock data**: Generated 30 days of realistic usage data in `mockData.ts`.\n\nPreview: `npm run dev` then navigate to `/prototype/dashboard`. The layout adapts down to 768px width."
+						}
+					],
+					"inputValue": "",
+					"stagedImages": [],
+					"createdAt": 1774260000000,
+					"state": "idle",
+					"saveToHistory": true,
+					"showThinking": "off",
+					"awaitingSessionId": false,
+					"isGeneratingName": false,
+					"usageStats": {
+						"inputTokens": 65,
+						"cacheReadInputTokens": 24500,
+						"cacheCreationInputTokens": 16200,
+						"outputTokens": 920,
+						"contextWindow": 1000000,
+						"totalCostUsd": 0.065
+					},
+					"hasUnread": false
+				}
+			],
+			"activeTabId": "00000000-0000-4000-a000-00000000003e",
+			"filePreviewTabs": [],
+			"activeFileTabId": null,
+			"terminalTabs": [],
+			"activeTerminalTabId": null,
+			"unifiedTabOrder": [
+				{
+					"type": "ai",
+					"id": "00000000-0000-4000-a000-00000000003e"
+				}
+			],
+			"sessionSshRemoteConfig": {
+				"enabled": false,
+				"remoteId": null
+			},
+			"agentCommands": [],
+			"agentSessionId": "00000000-0000-4000-a000-00000000003f",
+			"usageStats": {
+				"inputTokens": 65,
+				"cacheReadInputTokens": 24500,
+				"cacheCreationInputTokens": 16200,
+				"outputTokens": 920,
+				"contextWindow": 1000000,
+				"totalCostUsd": 0.065
+			},
+			"groupId": "00000000-0000-4000-a000-000000000002"
+		},
+		{
+			"id": "00000000-0000-4000-a000-000000000043",
+			"name": "FIXinator",
+			"toolType": "factory-droid",
+			"state": "idle",
+			"cwd": "/tmp/showcase-projects/fixinator",
+			"fullPath": "/tmp/showcase-projects/fixinator",
+			"projectRoot": "/tmp/showcase-projects/fixinator",
+			"isGitRepo": true,
+			"gitBranches": [],
+			"gitTags": [],
+			"gitRefsCacheTime": 1774778400000,
+			"aiLogs": [],
+			"shellLogs": [
+				{
+					"id": "00000000-0000-4000-a000-000000000048",
+					"timestamp": 1774346400000,
+					"source": "system",
+					"text": "Shell Session Ready."
+				}
+			],
+			"workLog": [],
+			"contextUsage": 5,
+			"inputMode": "ai",
+			"aiPid": 0,
+			"terminalPid": 0,
+			"port": 3048,
+			"isLive": false,
+			"changedFiles": [],
+			"fileTree": [],
+			"fileExplorerExpanded": [],
+			"fileExplorerScrollPos": 0,
+			"fileTreeAutoRefreshInterval": 180,
+			"shellCwd": "/tmp/showcase-projects/fixinator",
+			"aiCommandHistory": ["Find and fix the memory leak in the background worker service."],
+			"shellCommandHistory": [],
+			"executionQueue": [],
+			"activeTimeMs": 1080000,
+			"aiTabs": [
+				{
+					"id": "00000000-0000-4000-a000-000000000044",
+					"agentSessionId": "00000000-0000-4000-a000-000000000045",
+					"name": "Memory Leak Investigation",
+					"starred": false,
+					"logs": [
+						{
+							"id": "00000000-0000-4000-a000-000000000046",
+							"timestamp": 1774346405000,
+							"source": "user",
+							"text": "Find and fix the memory leak in the background worker service.\n",
+							"images": [],
+							"delivered": true
+						},
+						{
+							"id": "1774346413000-showcase70",
+							"timestamp": 1774346413000,
+							"source": "stdout",
+							"text": "\n\nFound the memory leak. Root cause: **event listeners accumulating on reconnection**.\n\n**Investigation**:\n1. Heap snapshot comparison showed `EventEmitter` listener arrays growing unbounded\n2. Each WebSocket reconnect added new `message` and `error` handlers without removing old ones\n3. After 24h uptime: ~4,200 orphaned listeners holding references to closed connections\n\n**Fix** (`src/workers/connection-manager.ts`):\n```typescript\n// Before: listeners leaked on reconnect\nws.on('message', handleMessage);\n\n// After: clean up before reconnecting\nfunction reconnect() {\n  ws.removeAllListeners();\n  ws = new WebSocket(url);\n  ws.on('message', handleMessage);\n  ws.on('error', handleError);\n}\n```\n\n**Verification**: Memory stable at ~180MB after 8 hours (was growing to 2GB+). Listener count stays below 50.\n\nI've also added a `--max-listeners` warning threshold in the health check endpoint."
+						}
+					],
+					"inputValue": "",
+					"stagedImages": [],
+					"createdAt": 1774346400000,
+					"state": "idle",
+					"saveToHistory": true,
+					"showThinking": "off",
+					"awaitingSessionId": false,
+					"isGeneratingName": false,
+					"usageStats": {
+						"inputTokens": 88,
+						"cacheReadInputTokens": 32100,
+						"cacheCreationInputTokens": 21500,
+						"outputTokens": 1240,
+						"contextWindow": 1000000,
+						"totalCostUsd": 0.082
+					},
+					"hasUnread": false
+				}
+			],
+			"activeTabId": "00000000-0000-4000-a000-000000000044",
+			"filePreviewTabs": [],
+			"activeFileTabId": null,
+			"terminalTabs": [],
+			"activeTerminalTabId": null,
+			"unifiedTabOrder": [
+				{
+					"type": "ai",
+					"id": "00000000-0000-4000-a000-000000000044"
+				}
+			],
+			"sessionSshRemoteConfig": {
+				"enabled": false,
+				"remoteId": null
+			},
+			"agentCommands": [],
+			"agentSessionId": "00000000-0000-4000-a000-000000000045",
+			"usageStats": {
+				"inputTokens": 88,
+				"cacheReadInputTokens": 32100,
+				"cacheCreationInputTokens": 21500,
+				"outputTokens": 1240,
+				"contextWindow": 1000000,
+				"totalCostUsd": 0.082
+			},
+			"groupId": "00000000-0000-4000-a000-000000000002"
+		},
+		{
+			"id": "00000000-0000-4000-a000-000000000049",
+			"name": "MiriX MCP",
+			"toolType": "claude-code",
+			"state": "idle",
+			"cwd": "/tmp/showcase-projects/mirix-mcp",
+			"fullPath": "/tmp/showcase-projects/mirix-mcp",
+			"projectRoot": "/tmp/showcase-projects/mirix-mcp",
+			"isGitRepo": true,
+			"gitBranches": [],
+			"gitTags": [],
+			"gitRefsCacheTime": 1774864800000,
+			"aiLogs": [],
+			"shellLogs": [
+				{
+					"id": "00000000-0000-4000-a000-00000000004e",
+					"timestamp": 1774432800000,
+					"source": "system",
+					"text": "Shell Session Ready."
+				}
+			],
+			"workLog": [],
+			"contextUsage": 5,
+			"inputMode": "ai",
+			"aiPid": 0,
+			"terminalPid": 0,
+			"port": 3049,
+			"isLive": false,
+			"changedFiles": [],
+			"fileTree": [],
+			"fileExplorerExpanded": [],
+			"fileExplorerScrollPos": 0,
+			"fileTreeAutoRefreshInterval": 180,
+			"shellCwd": "/tmp/showcase-projects/mirix-mcp",
+			"aiCommandHistory": [
+				"Implement the MCP tool integration for our internal search and retrieval system."
+			],
+			"shellCommandHistory": [],
+			"executionQueue": [],
+			"activeTimeMs": 840000,
+			"aiTabs": [
+				{
+					"id": "00000000-0000-4000-a000-00000000004a",
+					"agentSessionId": "00000000-0000-4000-a000-00000000004b",
+					"name": "Tool Integration",
+					"starred": false,
+					"logs": [
+						{
+							"id": "00000000-0000-4000-a000-00000000004c",
+							"timestamp": 1774432805000,
+							"source": "user",
+							"text": "Implement the MCP tool integration for our internal search and retrieval system.\n",
+							"images": [],
+							"delivered": true
+						},
+						{
+							"id": "1774432813000-showcase76",
+							"timestamp": 1774432813000,
+							"source": "stdout",
+							"text": "\n\nI've implemented the MCP tool integration for the search/retrieval system. Three tools registered:\n\n**1. `SearchDocuments`** — Full-text search across indexed documents\n- Input: `{ query: string, limit?: number, filters?: { type, date_range } }`\n- Returns: Ranked results with snippets and relevance scores\n\n**2. `GetDocument`** — Retrieve a single document by ID\n- Input: `{ id: string, include_metadata?: boolean }`\n- Returns: Full document content with optional metadata\n\n**3. `ListCollections`** — Enumerate available document collections\n- Input: `{ include_stats?: boolean }`\n- Returns: Collection names, document counts, last updated timestamps\n\n**Architecture**: Tools connect to the existing Elasticsearch backend via the `search-service` API. Authentication uses service-to-service JWT tokens.\n\nTests added in `tests/mcp-tools.test.ts` — all 12 test cases passing."
+						}
+					],
+					"inputValue": "",
+					"stagedImages": [],
+					"createdAt": 1774432800000,
+					"state": "idle",
+					"saveToHistory": true,
+					"showThinking": "off",
+					"awaitingSessionId": false,
+					"isGeneratingName": false,
+					"usageStats": {
+						"inputTokens": 60,
+						"cacheReadInputTokens": 21800,
+						"cacheCreationInputTokens": 14500,
+						"outputTokens": 850,
+						"contextWindow": 1000000,
+						"totalCostUsd": 0.058
+					},
+					"hasUnread": false
+				}
+			],
+			"activeTabId": "00000000-0000-4000-a000-00000000004a",
+			"filePreviewTabs": [],
+			"activeFileTabId": null,
+			"terminalTabs": [],
+			"activeTerminalTabId": null,
+			"unifiedTabOrder": [
+				{
+					"type": "ai",
+					"id": "00000000-0000-4000-a000-00000000004a"
+				}
+			],
+			"sessionSshRemoteConfig": {
+				"enabled": false,
+				"remoteId": null
+			},
+			"agentCommands": [],
+			"agentSessionId": "00000000-0000-4000-a000-00000000004b",
+			"usageStats": {
+				"inputTokens": 60,
+				"cacheReadInputTokens": 21800,
+				"cacheCreationInputTokens": 14500,
+				"outputTokens": 850,
+				"contextWindow": 1000000,
+				"totalCostUsd": 0.058
+			},
+			"groupId": "00000000-0000-4000-a000-000000000002"
+		},
+		{
+			"id": "00000000-0000-4000-a000-00000000004f",
+			"name": "Stripe MCP",
+			"toolType": "claude-code",
+			"state": "idle",
+			"cwd": "/tmp/showcase-projects/stripe-mcp",
+			"fullPath": "/tmp/showcase-projects/stripe-mcp",
+			"projectRoot": "/tmp/showcase-projects/stripe-mcp",
+			"isGitRepo": true,
+			"gitBranches": [],
+			"gitTags": [],
+			"gitRefsCacheTime": 1774951200000,
+			"aiLogs": [],
+			"shellLogs": [
+				{
+					"id": "00000000-0000-4000-a000-000000000054",
+					"timestamp": 1774519200000,
+					"source": "system",
+					"text": "Shell Session Ready."
+				}
+			],
+			"workLog": [],
+			"contextUsage": 5,
+			"inputMode": "ai",
+			"aiPid": 0,
+			"terminalPid": 0,
+			"port": 3050,
+			"isLive": false,
+			"changedFiles": [],
+			"fileTree": [],
+			"fileExplorerExpanded": [],
+			"fileExplorerScrollPos": 0,
+			"fileTreeAutoRefreshInterval": 180,
+			"shellCwd": "/tmp/showcase-projects/stripe-mcp",
+			"aiCommandHistory": [
+				"Set up the Stripe webhook handler for payment and subscription events."
+			],
+			"shellCommandHistory": [],
+			"executionQueue": [],
+			"activeTimeMs": 780000,
+			"aiTabs": [
+				{
+					"id": "00000000-0000-4000-a000-000000000050",
+					"agentSessionId": "00000000-0000-4000-a000-000000000051",
+					"name": "Payment Webhooks",
+					"starred": false,
+					"logs": [
+						{
+							"id": "00000000-0000-4000-a000-000000000052",
+							"timestamp": 1774519205000,
+							"source": "user",
+							"text": "Set up the Stripe webhook handler for payment and subscription events.\n",
+							"images": [],
+							"delivered": true
+						},
+						{
+							"id": "1774519213000-showcase82",
+							"timestamp": 1774519213000,
+							"source": "stdout",
+							"text": "\n\nStripe webhook handler is configured and ready. Here's the setup:\n\n**Endpoint**: `POST /webhooks/stripe`\n**Signature verification**: Using `stripe.webhooks.constructEvent()` with the webhook signing secret.\n\n**Events handled**:\n| Event | Action |\n|-------|--------|\n| `checkout.session.completed` | Provision account, send welcome email |\n| `invoice.paid` | Update billing status, extend subscription |\n| `invoice.payment_failed` | Send dunning email, flag account |\n| `customer.subscription.updated` | Sync plan changes to our DB |\n| `customer.subscription.deleted` | Trigger offboarding flow |\n\n**Idempotency**: Each event is deduplicated by `event.id` in Redis (24h TTL). Safe to replay.\n\n**Error handling**: Failed processing retries 3x, then moves to manual review queue with full event payload for debugging.\n\nFiles: `src/webhooks/stripe.ts`, `src/services/billing.ts`. Tests in `tests/webhooks/stripe.test.ts`."
+						}
+					],
+					"inputValue": "",
+					"stagedImages": [],
+					"createdAt": 1774519200000,
+					"state": "idle",
+					"saveToHistory": true,
+					"showThinking": "off",
+					"awaitingSessionId": false,
+					"isGeneratingName": false,
+					"usageStats": {
+						"inputTokens": 58,
+						"cacheReadInputTokens": 20500,
+						"cacheCreationInputTokens": 13900,
+						"outputTokens": 810,
+						"contextWindow": 1000000,
+						"totalCostUsd": 0.054
+					},
+					"hasUnread": false
+				}
+			],
+			"activeTabId": "00000000-0000-4000-a000-000000000050",
+			"filePreviewTabs": [],
+			"activeFileTabId": null,
+			"terminalTabs": [],
+			"activeTerminalTabId": null,
+			"unifiedTabOrder": [
+				{
+					"type": "ai",
+					"id": "00000000-0000-4000-a000-000000000050"
+				}
+			],
+			"sessionSshRemoteConfig": {
+				"enabled": false,
+				"remoteId": null
+			},
+			"agentCommands": [],
+			"agentSessionId": "00000000-0000-4000-a000-000000000051",
+			"usageStats": {
+				"inputTokens": 58,
+				"cacheReadInputTokens": 20500,
+				"cacheCreationInputTokens": 13900,
+				"outputTokens": 810,
+				"contextWindow": 1000000,
+				"totalCostUsd": 0.054
+			},
+			"groupId": "00000000-0000-4000-a000-000000000002"
+		},
+		{
+			"id": "00000000-0000-4000-a000-000000000055",
+			"name": "Development",
+			"toolType": "claude-code",
+			"state": "idle",
+			"cwd": "/tmp/showcase-projects/dev-sandbox",
+			"fullPath": "/tmp/showcase-projects/dev-sandbox",
+			"projectRoot": "/tmp/showcase-projects/dev-sandbox",
+			"isGitRepo": true,
+			"gitBranches": [],
+			"gitTags": [],
+			"gitRefsCacheTime": 1775037600000,
+			"aiLogs": [],
+			"shellLogs": [
+				{
+					"id": "00000000-0000-4000-a000-00000000005a",
+					"timestamp": 1774605600000,
+					"source": "system",
+					"text": "Shell Session Ready."
+				}
+			],
+			"workLog": [],
+			"contextUsage": 5,
+			"inputMode": "ai",
+			"aiPid": 0,
+			"terminalPid": 0,
+			"port": 3051,
+			"isLive": false,
+			"changedFiles": [],
+			"fileTree": [],
+			"fileExplorerExpanded": [],
+			"fileExplorerScrollPos": 0,
+			"fileTreeAutoRefreshInterval": 180,
+			"shellCwd": "/tmp/showcase-projects/dev-sandbox",
+			"aiCommandHistory": [
+				"Help me set up the development environment for a new team member joining next week."
+			],
+			"shellCommandHistory": [],
+			"executionQueue": [],
+			"activeTimeMs": 420000,
+			"aiTabs": [
+				{
+					"id": "00000000-0000-4000-a000-000000000056",
+					"agentSessionId": "00000000-0000-4000-a000-000000000057",
+					"name": "Dev Environment",
+					"starred": false,
+					"logs": [
+						{
+							"id": "00000000-0000-4000-a000-000000000058",
+							"timestamp": 1774605605000,
+							"source": "user",
+							"text": "Help me set up the development environment for a new team member joining next week.\n",
+							"images": [],
+							"delivered": true
+						},
+						{
+							"id": "1774605613000-showcase88",
+							"timestamp": 1774605613000,
+							"source": "stdout",
+							"text": "\n\nHere's a complete dev environment setup checklist:\n\n## Prerequisites\n- Node.js 20+ (`nvm install 20`)\n- Git configured with SSH key for GitHub\n- macOS: Xcode CLI tools (`xcode-select --install`)\n\n## Repository Setup\n```bash\ngit clone git@github.com:user/project.git\ncd project\nnpm install\ncp .env.example .env.local  # Fill in local secrets\nnpm run dev                  # Verify everything starts\n```\n\n## IDE Configuration\n- VS Code extensions: ESLint, Prettier, TypeScript, GitLens\n- Settings synced via `.vscode/settings.json` (committed)\n- Recommended: install Maestro for AI-assisted development\n\n## Access & Permissions\n- [ ] GitHub org invite (admin to send)\n- [ ] Sentry project access\n- [ ] Staging environment credentials (in 1Password vault \"Engineering\")\n- [ ] Slack channels: #engineering, #deploys, #incidents\n\n## First Tasks\nI'd suggest starting with a small bug fix to get familiar with the codebase and PR flow. Issue #247 (tooltip clipping) is a good candidate — isolated scope, touches the renderer only."
+						}
+					],
+					"inputValue": "",
+					"stagedImages": [],
+					"createdAt": 1774605600000,
+					"state": "idle",
+					"saveToHistory": true,
+					"showThinking": "off",
+					"awaitingSessionId": false,
+					"isGeneratingName": false,
+					"usageStats": {
+						"inputTokens": 42,
+						"cacheReadInputTokens": 16800,
+						"cacheCreationInputTokens": 11200,
+						"outputTokens": 620,
+						"contextWindow": 1000000,
+						"totalCostUsd": 0.042
+					},
+					"hasUnread": false
+				}
+			],
+			"activeTabId": "00000000-0000-4000-a000-000000000056",
+			"filePreviewTabs": [],
+			"activeFileTabId": null,
+			"terminalTabs": [],
+			"activeTerminalTabId": null,
+			"unifiedTabOrder": [
+				{
+					"type": "ai",
+					"id": "00000000-0000-4000-a000-000000000056"
+				}
+			],
+			"sessionSshRemoteConfig": {
+				"enabled": false,
+				"remoteId": null
+			},
+			"agentCommands": [],
+			"agentSessionId": "00000000-0000-4000-a000-000000000057",
+			"usageStats": {
+				"inputTokens": 42,
+				"cacheReadInputTokens": 16800,
+				"cacheCreationInputTokens": 11200,
+				"outputTokens": 620,
+				"contextWindow": 1000000,
+				"totalCostUsd": 0.042
+			}
+		}
+	],
+	"activeSessionId": "00000000-0000-4000-a000-000000000027"
+}
