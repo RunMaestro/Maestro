@@ -4,6 +4,7 @@ import type { Theme, Shortcut } from '../../types';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { useFeedbackDraftStore } from '../../stores/feedbackDraftStore';
 import { useUIStore } from '../../stores/uiStore';
+import { PluginUiItemsSlot } from '../plugins/PluginUiItemsSlot';
 
 interface SidebarActionsProps {
 	theme: Theme;
@@ -45,6 +46,7 @@ export const SidebarActions = memo(function SidebarActions({
 			className="p-2 border-t flex gap-2 items-center shrink-0"
 			style={{ borderColor: theme.colors.border }}
 		>
+			<PluginUiItemsSlot surface="sidebar" />
 			<button
 				type="button"
 				disabled={hasNoSessions && leftSidebarOpen}

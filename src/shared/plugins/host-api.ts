@@ -20,11 +20,12 @@
 
 import semver from 'semver';
 
-/** The host API version this Maestro build implements. Bumped to 1.4.0 for the
- * backward-compatible `ui:contribute` / `ui:panel` / `ui:render-unsafe` UI
- * capabilities (1.3.0 added the `tools` + `keybindings` contribution points;
- * 1.2.0 added the `transcripts:read` capability + `transcripts.read` host method). */
-export const HOST_API_VERSION = '1.4.0';
+/** The host API version this Maestro build implements. Bumped to 1.5.0 for the
+ * backward-compatible event topics `agent.exited` / `agent.error` / `usage.updated`
+ * / `run.completed` (metadata-only) and functional `sidebar`/`activity-bar`/`toolbar`
+ * uiItem surfaces. (1.4.0 added the `ui:contribute` / `ui:panel` / `ui:render-unsafe`
+ * UI capabilities; 1.3.0 added `tools` + `keybindings`; 1.2.0 added `transcripts:read`.) */
+export const HOST_API_VERSION = '1.5.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {

@@ -42,3 +42,35 @@ export function evaluatePluginDispatch(payload: string): PluginDispatchVerdict {
 	}
 	return { eligible: true, risk, reason: `risk ${risk}: eligible for dispatch` };
 }
+
+/**
+ * Scheduler-side eligibility for a plugin cue-trigger dispatch. The risk gate is
+ * necessary but NOT sufficient: auto-dispatching a prompt to an agent is
+ * high-trust, so it additionally requires a live `agents:dispatch` grant (the
+ * high-risk capability the user consented to) AND a trusted (signed) plugin.
+ * Untrusted/unsigned plugins can never become auto-dispatch-eligible, even
+ * holding the grant — the trust posture while the OS sandbox is deferred. Pure so
+ * the policy is unit-testable; the scheduler supplies the grant/trust booleans.
+ */
+export function evaluateScheduledDispatch(
+	payload: string,
+	ctx: { hasDispatchGrant: boolean; trusted: boolean }
+): PluginDispatchVerdict {
+	const verdict = evaluatePluginDispatch(payload);
+	if (!verdict.eligible) return verdict;
+	if (!ctx.hasDispatchGrant) {
+		return {
+			eligible: false,
+			risk: verdict.risk,
+			reason: 'plugin lacks the agents:dispatch grant',
+		};
+	}
+	if (!ctx.trusted) {
+		return {
+			eligible: false,
+			risk: verdict.risk,
+			reason: 'auto-dispatch requires a trusted (signed) plugin',
+		};
+	}
+	return verdict;
+}
