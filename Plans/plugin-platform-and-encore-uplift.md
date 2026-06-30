@@ -22,17 +22,18 @@ and the Pianola first-party plugin lift.
 
 ## Workstreams (layered; each WS = one worktree/branch + an acceptance test that extends the e2e harness)
 
-### P0 — Contracts (lands FIRST, single owner = main; everyone rebases)
+### P0 — Contracts (done; single owner = main; everyone rebases)
 
-Pure additive contract changes so feature worktrees build against stable types.
+Pure additive contract changes are implemented so feature worktrees build against stable types.
 
-- **WS-contracts**: capability vocab (`history:read`, `sessions:create`, `sessions:write`, `tabs:manage`,
-  `transcripts:write`, `decisions:write`, `shell:openExternal`, `storage:sql`, `fs:watch`,
-  `power:preventSleep`, `background:service`) in `permissions.ts`; matching HOST\*API methods in
-  `rpc-protocol.ts`; event topics + richer payloads (`history.entryAdded`, `agent.completed` w/ output,
-  chain lineage / token totals / provider session id / queue depth) in `events.ts`; optional manifest
-  `category` field; bump `HOST_API_VERSION`; re-vendor `@maestro/plugin-sdk` + drift test.
-  _Acceptance:_ drift test green; contract unit tests; no behavior yet.
+- **WS-contracts**: DONE. Capability vocab (`history:read`, `sessions:create`, `sessions:write`,
+  `tabs:manage`, `transcripts:write`, `decisions:write`, `shell:openExternal`, `storage:sql`,
+  `fs:watch`, `power:preventSleep`, `background:service`) lives in `permissions.ts`; matching
+  `HOST_API` methods live in `rpc-protocol.ts`; event topics + richer payloads (`history.entryAdded`,
+  `agent.completed` w/ output, chain lineage / token totals / provider session id / queue depth) live in
+  `events.ts`; optional manifest `category` is mirrored; `HOST_API_VERSION` is `1.7.0`; the
+  `@maestro/plugin-sdk` mirror is re-vendored and drift-tested.
+  _Acceptance verified:_ `bunx vitest run src/__tests__/shared/plugins/plugin-manifest.test.ts src/__tests__/shared/plugins/plugin-dispatch-gate.test.ts src/__tests__/main/plugins/plugin-host-handlers.test.ts src/__tests__/main/plugins/plugin-event-bus.test.ts src/__tests__/main/ipc/plugin-session-events.test.ts` (5 files, 73 tests passed) and `bunx vitest run --config vitest.config.ts src/__tests__/drift.test-d.ts src/__tests__/sdk.test.ts` in `packages/plugin-sdk` (2 files, 9 tests passed, type errors 0).
 
 ### P1 — Foundations (parallel worktrees, buildable now, independent)
 
