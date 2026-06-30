@@ -15,7 +15,10 @@ import {
 	estimateAccumulatedGrowth,
 	calculateContextTokens,
 } from '../../../utils/contextUsage';
-import { getContextWindowForAgent } from '../../../../shared/agentConstants';
+import {
+	getContextWindowForAgent,
+	getModelContextWindowOverride,
+} from '../../../../shared/agentConstants';
 import { useAgentStore } from '../../../stores/agentStore';
 import { useOwnedSessionGate } from './useOwnedSessionGate';
 import { useContextTimelineStore } from '../../../stores/contextTimelineStore';
@@ -58,19 +61,30 @@ export function useAgentUsageListener(deps: UseAgentUsageListenerDeps): void {
 				: sessionForUsage.sshRemoteId;
 			const contextPercentage = estimateContextUsage(usageStats, agentToolType, sessionRemoteId);
 
-			// Resolve the effective context window ONCE (live stats > capability
-			// snapshot > static table; terminal has no window). Shared by the
-			// Context Timeline point and the accumulated-growth fallback below, so
-			// the two can never disagree on the denominator.
+			// Resolve the effective context window ONCE, matching the header gauge's
+			// precedence (resolveConfiguredContextWindow): a per-agent custom window
+			// or a `[1m]` model marker wins over the reported/static window, so a
+			// session configured for e.g. 1M isn't sized against a 200k denominator.
+			// The async agent-config step is intentionally skipped on this hot
+			// per-turn path; the two synchronous sources cover the configured cases
+			// that would otherwise mis-size. Shared by the timeline point and the
+			// accumulated-growth fallback so they can never disagree.
+			const configuredWindow =
+				typeof sessionForUsage.customContextWindow === 'number' &&
+				sessionForUsage.customContextWindow > 0
+					? sessionForUsage.customContextWindow
+					: getModelContextWindowOverride(sessionForUsage.customModel) || 0;
 			const resolvedWindow =
-				usageStats.contextWindow > 0
-					? usageStats.contextWindow
-					: agentToolType && agentToolType !== 'terminal'
-						? getContextWindowForAgent(
-								agentToolType,
-								useAgentStore.getState().getCapabilitySnapshot(agentToolType, sessionRemoteId)
-							)
-						: 0;
+				configuredWindow > 0
+					? configuredWindow
+					: usageStats.contextWindow > 0
+						? usageStats.contextWindow
+						: agentToolType && agentToolType !== 'terminal'
+							? getContextWindowForAgent(
+									agentToolType,
+									useAgentStore.getState().getCapabilitySnapshot(agentToolType, sessionRemoteId)
+								)
+							: 0;
 
 			deps.batchedUpdater.updateUsage(actualSessionId, tabId, usageStats);
 			deps.batchedUpdater.updateUsage(actualSessionId, null, usageStats);
@@ -99,6 +113,15 @@ export function useAgentUsageListener(deps: UseAgentUsageListenerDeps): void {
 				(usageStats.cacheCreationInputTokens || 0) === 0 &&
 				usageStats.outputTokens > 0;
 			if (isInteractiveRun && !isOutputOnlyDelta) {
+				const contextTokens = calculateContextTokens(usageStats, agentToolType);
+				// Percentage against the SAME (configured-aware) window the point
+				// stores, so the row is internally consistent and matches the header.
+				// null when tokens exceed the window (accumulated multi-tool turn) -
+				// the panel renders that as "~" plus an accumulated flag.
+				const pointPercentage =
+					resolvedWindow > 0 && contextTokens <= resolvedWindow
+						? Math.round((contextTokens / resolvedWindow) * 100)
+						: null;
 				useContextTimelineStore.getState().appendPoint(baseSessionId, {
 					tabId,
 					inputTokens: usageStats.inputTokens,
@@ -107,9 +130,9 @@ export function useAgentUsageListener(deps: UseAgentUsageListenerDeps): void {
 					cacheCreationInputTokens: usageStats.cacheCreationInputTokens || 0,
 					reasoningTokens: usageStats.reasoningTokens || 0,
 					totalCostUsd: usageStats.totalCostUsd || 0,
-					contextTokens: calculateContextTokens(usageStats, agentToolType),
+					contextTokens,
 					contextWindow: resolvedWindow,
-					percentage: contextPercentage,
+					percentage: pointPercentage,
 				});
 			}
 
