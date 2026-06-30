@@ -62,7 +62,11 @@ import {
 	capabilityRisk,
 	isPluginCapability,
 } from '../shared/plugins/permissions';
-import { createAuthorizationStore, type AuthorizationStore } from './plugins/authorization-ledger';
+import {
+	createAuthorizationStore,
+	createKeyringAnchor,
+	type AuthorizationStore,
+} from './plugins/authorization-ledger';
 import { pluginIdentity } from './plugins/plugin-identity';
 import { PLUGIN_ID_PATTERN } from '../shared/plugins/plugin-manifest';
 import { ConsentNonceRegistry, ConsentMinter } from './plugins/consent-minter';
@@ -1205,10 +1209,13 @@ app
 		// forks one utilityProcess per running tier-1 plugin.
 		// Sealed plugin authorization ledger - the LIVE grant source for the broker,
 		// contribution gating, and the refresh verifier. The consent window's minter
-		// is the only writer; safeStorage seals the contents and the default noAnchor()
-		// keeps it session-only (re-consent each launch) until the keyring anchor lands.
+		// is the only writer; safeStorage seals the contents and the fixed OS-keyring
+		// anchor makes rollback freshness survive app restarts. If native keyring is
+		// unavailable, the lazy factory degrades to session-only without crashing app
+		// startup.
 		const authStore = createAuthorizationStore({
 			safeStorage,
+			anchor: createKeyringAnchor('com.maestro.plugin-authorization', 'freshness'),
 			ledgerPath: path.join(app.getPath('userData'), 'plugin-authorization.bin'),
 		});
 		// Expose the same instance to the IPC registration phase below.

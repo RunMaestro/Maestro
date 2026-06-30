@@ -97,6 +97,19 @@ export interface PluginEventPayloads {
 		costUsd?: number;
 		runId?: string;
 		parentRunId?: string;
+		providerSessionId?: string;
+		queueDepth?: number;
+		inputTokens?: number;
+		outputTokens?: number;
+		cacheReadInputTokens?: number;
+		cacheCreationInputTokens?: number;
+		reasoningTokens?: number;
+		totalTokens?: number;
+		chainRootId?: string;
+		parentEventId?: string;
+		pipelineId?: string;
+		pipelineName?: string;
+		lineageDepth?: number;
 	};
 }
 
