@@ -38,9 +38,14 @@ function isExpectedTeardownIpcError(err: unknown): boolean {
 
 function reportIfUnexpected(err: unknown, scope: string): void {
 	if (isExpectedTeardownIpcError(err)) return;
-	void captureException(err instanceof Error ? err : new Error(String(err)), {
+	const error = err instanceof Error ? err : new Error(String(err));
+	void captureException(error, {
 		extra: { scope: `useCoworkingRegistrySync:${scope}` },
 	});
+	// Surface unexpected failures instead of swallowing them: a silently dropped
+	// sync would leave the main-process registry stale. Callers roll back their
+	// optimistic cache before this throws so the next effect run still retries.
+	throw error;
 }
 
 /** Build the per-session record list from a Session, with cwd fallbacks so the
@@ -94,7 +99,14 @@ export function useCoworkingRegistrySync(): void {
 						try {
 							await bridge.removeSession(sid);
 						} catch (err) {
-							reportIfUnexpected(err, 'disable-clear');
+							// Best-effort teardown while disabling the feature: capture
+							// unexpected failures but keep clearing the remaining sessions
+							// (don't abort the loop on one bad removeSession).
+							if (!isExpectedTeardownIpcError(err)) {
+								void captureException(err instanceof Error ? err : new Error(String(err)), {
+									extra: { scope: 'useCoworkingRegistrySync:disable-clear' },
+								});
+							}
 						}
 					}
 				})();
@@ -130,11 +142,12 @@ export function useCoworkingRegistrySync(): void {
 					await bridge.syncSessionTerminals(sessionId, records);
 				}
 			} catch (err) {
-				reportIfUnexpected(err, 'sync');
-				// Roll back the optimistic payload-cache write so the next effect run
-				// retries instead of treating the same payload as already-synced and
-				// leaving the main-process registry stale forever.
+				// Roll back the optimistic payload-cache write FIRST so the next effect
+				// run retries instead of treating the same payload as already-synced and
+				// leaving the main-process registry stale. Then surface the failure
+				// (teardown IPC errors stay quiet; anything else re-throws).
 				lastPayloadRef.current = '';
+				reportIfUnexpected(err, 'sync');
 			}
 		})();
 	}, [enabled, sessions]);
