@@ -29,6 +29,7 @@ import {
 } from '../stores/contextTimelineStore';
 import { useSessionStore } from '../stores/sessionStore';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
+import { useLayerStack } from '../hooks/ui/useLayerStack';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { getContextColor } from '../utils/theme';
 import { formatTokensCompact, formatCost } from '../../shared/formatters';
@@ -85,13 +86,23 @@ export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 	const latestWindow = latest?.contextWindow ?? 0;
 	const latestPercent = latest?.percentage ?? null;
 
-	// Escape minimizes (least destructive). Only while the full panel is open.
+	// Register as an OVERLAY, not a modal: this is a passive inspector, so it
+	// must take Escape (to minimize) without counting toward hasOpenModal() -
+	// otherwise merely opening it would suppress global shortcuts and file-tree
+	// navigation. Escape minimizes (least destructive). Only while open.
 	useModalLayer(MODAL_PRIORITIES.CONTEXT_TIMELINE, 'Context Timeline', minimizePanel, {
 		enabled: !!panelSessionId && !minimized,
 		blocksLowerLayers: false,
 		capturesFocus: false,
 		focusTrap: 'none',
+		layerType: 'overlay',
 	});
+
+	// Hide while any real modal is open. The inspector floats at a high z-index,
+	// so without this it would sit above lower-z modals (Create PR, expanded Auto
+	// Run) that actually own the foreground. It stays registered (Escape still
+	// minimizes) but renders nothing until the modal closes.
+	const { hasOpenModal } = useLayerStack();
 
 	// Auto-tail: when pinned to the top, follow new turns (newest is at the top).
 	useEffect(() => {
@@ -102,6 +113,7 @@ export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 	}, [ordered, minimized]);
 
 	if (!panelSessionId || minimized) return null;
+	if (hasOpenModal()) return null;
 
 	const label = sessionName || panelSessionId.slice(0, 8);
 
