@@ -264,6 +264,10 @@ let nextRpcId = 1;
 // tools/call indefinitely. 10s comfortably accommodates a renderer round-trip
 // (the main-process side caps the buffer-fetch at 5s) plus jitter.
 const BRIDGE_RPC_TIMEOUT_MS = 10000;
+// Interaction ops (browserInteract) can block on a human approval dialog, so they
+// get a much longer cap than reads. Kept slightly above the main-process browser-op
+// timeout so the main side fails first with a clean message.
+const BRIDGE_INTERACT_TIMEOUT_MS = 330000;
 
 function rejectAllPending(err) {
   for (const p of pending.values()) p.reject(err);
@@ -326,7 +330,7 @@ function connectBridge() {
 // Send a single RPC against an already-open bridge connection. No handshake
 // gating here — the gate lives in bridgeCall() so this primitive can also be
 // used to perform the handshake itself.
-function rpc(conn, method, params) {
+function rpc(conn, method, params, timeoutMs) {
   const id = nextRpcId++;
   let timeoutHandle = null;
   const promise = new Promise((resolve, reject) => {
@@ -334,7 +338,7 @@ function rpc(conn, method, params) {
       // Drop the pending entry first so the response (if it ever arrives) is a no-op.
       pending.delete(id);
       reject(new Error('coworking bridge: rpc timed out'));
-    }, BRIDGE_RPC_TIMEOUT_MS);
+    }, timeoutMs || BRIDGE_RPC_TIMEOUT_MS);
     pending.set(id, {
       resolve: (value) => {
         if (timeoutHandle) clearTimeout(timeoutHandle);
@@ -375,7 +379,7 @@ function bridgeHello(conn) {
   return helloPromise;
 }
 
-async function bridgeCall(method, params) {
+async function bridgeCall(method, params, timeoutMs) {
   // Capture the resolved socket locally so that if bridgeConn is nulled out
   // between the await and the write (e.g. by a synchronous error handler), we
   // either succeed or surface the failure immediately instead of leaking the
@@ -385,7 +389,7 @@ async function bridgeCall(method, params) {
     throw new Error('coworking bridge: not connected');
   }
   await bridgeHello(conn);
-  return rpc(conn, method, params);
+  return rpc(conn, method, params, timeoutMs);
 }
 
 // ---------- MCP stdio framing ----------
@@ -500,7 +504,7 @@ async function handleMessage(msg) {
       }
       if (Object.prototype.hasOwnProperty.call(BROWSER_INTERACTION_OPS, name)) {
         const op = BROWSER_INTERACTION_OPS[name](args);
-        const result = await bridgeCall('browserInteract', { id: args.id, op: op });
+        const result = await bridgeCall('browserInteract', { id: args.id, op: op }, BRIDGE_INTERACT_TIMEOUT_MS);
         if (op.kind === 'screenshot' && result && result.dataUrl) {
           const base64 = String(result.dataUrl).replace(/^data:image\/[^;]+;base64,/, '');
           send(rpcResult(id, { content: [{ type: 'image', data: base64, mimeType: 'image/png' }] }));

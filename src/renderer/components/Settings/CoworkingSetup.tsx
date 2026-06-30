@@ -46,6 +46,16 @@ export function CoworkingSetup({ theme }: CoworkingSetupProps) {
 		},
 		[browserInteractionAgents, setBrowserInteractionAgents]
 	);
+	const browserConfirm = useSettingsStore((s) => s.coworkingBrowserInteractionConfirm);
+	const setBrowserConfirm = useSettingsStore((s) => s.setCoworkingBrowserInteractionConfirm);
+	const cycleConfirmPolicy = useCallback(
+		(agentId: string) => {
+			const current = browserConfirm[agentId] ?? 'dangerous';
+			const next = current === 'dangerous' ? 'all' : current === 'all' ? 'off' : 'dangerous';
+			setBrowserConfirm({ ...browserConfirm, [agentId]: next });
+		},
+		[browserConfirm, setBrowserConfirm]
+	);
 
 	const refresh = useCallback(async () => {
 		// Defensive: in test harnesses (or older preload bundles) the namespace
@@ -249,6 +259,20 @@ export function CoworkingSetup({ theme }: CoworkingSetupProps) {
 										{browserInteractionAgents.includes(s.agentId)
 											? 'Interaction: on'
 											: 'Interaction: off'}
+									</button>
+								)}
+								{s.installed && browserInteractionAgents.includes(s.agentId) && (
+									<button
+										onClick={() => cycleConfirmPolicy(s.agentId)}
+										title="Per-call approval for browser actions. dangerous = confirm navigate + eval (default); all = confirm every action; off = no per-call confirm."
+										className="text-[10px] px-2 py-1 rounded transition-colors"
+										style={{
+											backgroundColor: 'transparent',
+											color: theme.colors.textDim,
+											border: `1px solid ${theme.colors.border}`,
+										}}
+									>
+										{`Confirm: ${browserConfirm[s.agentId] ?? 'dangerous'}`}
 									</button>
 								)}
 								{s.installed ? (

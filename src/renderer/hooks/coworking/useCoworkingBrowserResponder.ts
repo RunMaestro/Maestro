@@ -19,8 +19,14 @@ import { useEffect } from 'react';
 import type { MutableRefObject } from 'react';
 import type { BrowserTabViewHandle } from '../../components/MainPanel/BrowserTabView';
 import type { BrowserOp, BrowserOpResult } from '../../../shared/coworkingBrowser';
+import {
+	browserOpNeedsConfirm,
+	DEFAULT_BROWSER_CONFIRM_POLICY,
+} from '../../../shared/coworkingBrowser';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { captureException } from '../../utils/sentry';
+import { useSettingsStore } from '../../stores/settingsStore';
+import { requestCoworkingApproval } from '../../stores/coworkingApprovalStore';
 
 /** Promise-based delay (ES2024 Promise.withResolvers, ambient-typed for the
  *  project's ES2020 lib). Used to poll for the activated tab's handle. */
@@ -28,6 +34,60 @@ function delay(ms: number): Promise<void> {
 	const { promise, resolve } = Promise.withResolvers<void>();
 	setTimeout(resolve, ms);
 	return promise;
+}
+
+/** Decides whether a browser op needs per-call approval and, if so, prompts the
+ *  user. Returns true to proceed, false to decline. */
+export type BrowserApprovalRequester = (
+	op: BrowserOp,
+	ctx: { agentId: string; sessionId: string }
+) => Promise<boolean>;
+
+/** Human-readable phrase describing what a browser op will do (for the approval
+ *  dialog). Truncates free-form text/code so the dialog stays readable. */
+function describeBrowserOp(op: BrowserOp): string {
+	switch (op.kind) {
+		case 'navigate':
+			return `navigate the browser to ${op.url}`;
+		case 'click':
+			return `click the element ${op.selector}`;
+		case 'type':
+			return `type into ${op.selector}: "${op.text.slice(0, 120)}"`;
+		case 'eval':
+			return `run JavaScript in the page:\n${op.code.slice(0, 300)}`;
+		case 'back':
+			return 'navigate the browser back';
+		case 'forward':
+			return 'navigate the browser forward';
+		case 'reload':
+			return 'reload the browser page';
+		case 'stop':
+			return 'stop the browser load';
+		case 'screenshot':
+			return 'capture a screenshot of the page';
+		case 'read':
+			return 'read the page content';
+		default:
+			return 'perform a browser action';
+	}
+}
+
+/** Default approval requester: reads the per-agent confirm policy and, when the
+ *  op needs approval, shows the confirm dialog and awaits the user's decision. */
+async function defaultRequestApproval(
+	op: BrowserOp,
+	ctx: { agentId: string; sessionId: string }
+): Promise<boolean> {
+	if (op.kind === 'read') return true;
+	const policyMap = useSettingsStore.getState().coworkingBrowserInteractionConfirm;
+	const policy = policyMap[ctx.agentId] ?? DEFAULT_BROWSER_CONFIRM_POLICY;
+	if (!browserOpNeedsConfirm(policy, op.kind)) return true;
+	return requestCoworkingApproval({
+		agentId: ctx.agentId,
+		sessionId: ctx.sessionId,
+		title: 'Allow browser action?',
+		message: `The "${ctx.agentId}" agent wants to ${describeBrowserOp(op)}.`,
+	});
 }
 
 export async function applyBrowserOp(
@@ -102,7 +162,8 @@ export async function resolveAndRun(
 	selectBrowserTab: (sessionId: string, tabUuid: string) => void,
 	tabUuid: string,
 	sessionId: string,
-	op: BrowserOp
+	op: BrowserOp,
+	requestApproval: BrowserApprovalRequester
 ): Promise<BrowserOpResult> {
 	const active = selectActiveSession(useSessionStore.getState());
 	if (!active || active.id !== sessionId) {
@@ -112,6 +173,15 @@ export async function resolveAndRun(
 				'Browser tab is not live: its Maestro agent is not currently focused. ' +
 				'list_browsers and get_browser_url still work; focus this agent to read or drive its browser tabs.',
 		};
+	}
+
+	// Per-call approval for state-changing ops, BEFORE any focus change or side
+	// effect. read ops are never gated.
+	if (op.kind !== 'read') {
+		const approved = await requestApproval(op, { agentId: active.toolType, sessionId });
+		if (!approved) {
+			return { ok: false, content: 'Browser action declined by the user.' };
+		}
 	}
 
 	// Fast path: the tab is already mounted (visible or kept-alive hidden) - use
@@ -161,7 +231,14 @@ export function useCoworkingBrowserResponder(
 			void (async () => {
 				let result: BrowserOpResult;
 				try {
-					result = await resolveAndRun(browserViewRefs, selectBrowserTab, tabUuid, sessionId, op);
+					result = await resolveAndRun(
+						browserViewRefs,
+						selectBrowserTab,
+						tabUuid,
+						sessionId,
+						op,
+						defaultRequestApproval
+					);
 				} catch (err) {
 					// Unexpected failures degrade to a clear ok:false for the agent, but
 					// are captured so they're visible in production instead of swallowed.

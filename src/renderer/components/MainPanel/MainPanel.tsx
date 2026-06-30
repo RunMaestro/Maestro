@@ -36,6 +36,7 @@ import { useChatFileDropZone } from '../../hooks/ui/useChatFileDropZone';
 import { MainPanelHeader } from './MainPanelHeader';
 import { MainPanelContent } from './MainPanelContent';
 import { AgentErrorBanner } from './AgentErrorBanner';
+import { CoworkingApprovalHost } from '../coworking/CoworkingApprovalHost';
 import type { MainPanelHandle, MainPanelProps } from './types';
 
 // PERFORMANCE: Wrap with React.memo to prevent re-renders when parent (App.tsx) re-renders
@@ -1092,6 +1093,7 @@ export const MainPanel = React.memo(
 						/>
 					</div>
 				</ErrorBoundary>
+				<CoworkingApprovalHost theme={theme} />
 			</>
 		);
 	})

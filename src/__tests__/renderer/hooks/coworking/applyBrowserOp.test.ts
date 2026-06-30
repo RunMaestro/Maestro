@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
 	applyBrowserOp,
 	resolveAndRun,
+	type BrowserApprovalRequester,
 } from '../../../../renderer/hooks/coworking/useCoworkingBrowserResponder';
 import type { BrowserTabViewHandle } from '../../../../renderer/components/MainPanel/BrowserTabView';
 import { selectActiveSession } from '../../../../renderer/stores/sessionStore';
@@ -125,13 +126,19 @@ describe('applyBrowserOp', () => {
 describe('resolveAndRun', () => {
 	beforeEach(() => vi.clearAllMocks());
 
+	const allow: BrowserApprovalRequester = async () => true;
+
 	it('returns ok:false when the requesting session is not the focused agent', async () => {
 		vi.mocked(selectActiveSession).mockReturnValue(fakeActive('other', null));
 		const selectBrowserTab = vi.fn();
-		const res = await resolveAndRun({ current: new Map() }, selectBrowserTab, 'u-1', 'sess-A', {
-			kind: 'read',
-			format: 'text',
-		});
+		const res = await resolveAndRun(
+			{ current: new Map() },
+			selectBrowserTab,
+			'u-1',
+			'sess-A',
+			{ kind: 'read', format: 'text' },
+			allow
+		);
 		expect(res.ok).toBe(false);
 		expect(String(res.content)).toMatch(/not live/i);
 		expect(selectBrowserTab).not.toHaveBeenCalled();
@@ -150,7 +157,8 @@ describe('resolveAndRun', () => {
 			selectBrowserTab,
 			'u-1',
 			'sess-A',
-			{ kind: 'read', format: 'text' }
+			{ kind: 'read', format: 'text' },
+			allow
 		);
 		expect(res).toEqual({ ok: true, content: 'TXT', url: 'https://x', title: 'X' });
 		expect(selectBrowserTab).not.toHaveBeenCalled();
@@ -165,9 +173,14 @@ describe('resolveAndRun', () => {
 		const selectBrowserTab = vi.fn((_sessionId: string, tabUuid: string) => {
 			if (tabUuid === 'u-2') map.set('u-2', handle);
 		});
-		const res = await resolveAndRun({ current: map }, selectBrowserTab, 'u-2', 'sess-A', {
-			kind: 'reload',
-		});
+		const res = await resolveAndRun(
+			{ current: map },
+			selectBrowserTab,
+			'u-2',
+			'sess-A',
+			{ kind: 'reload' },
+			allow
+		);
 		expect(res.ok).toBe(true);
 		expect(reload).toHaveBeenCalled();
 		expect(selectBrowserTab).toHaveBeenNthCalledWith(1, 'sess-A', 'u-2');
@@ -177,11 +190,49 @@ describe('resolveAndRun', () => {
 	it('returns ok:false when the tab cannot be mounted', async () => {
 		vi.mocked(selectActiveSession).mockReturnValue(fakeActive('sess-A', null));
 		const selectBrowserTab = vi.fn();
-		const res = await resolveAndRun({ current: new Map() }, selectBrowserTab, 'u-3', 'sess-A', {
-			kind: 'read',
-			format: 'text',
-		});
+		const res = await resolveAndRun(
+			{ current: new Map() },
+			selectBrowserTab,
+			'u-3',
+			'sess-A',
+			{ kind: 'read', format: 'text' },
+			allow
+		);
 		expect(res.ok).toBe(false);
 		expect(String(res.content)).toMatch(/could not be mounted/i);
+	});
+
+	it('declines an interaction op when approval is denied and never touches the handle', async () => {
+		vi.mocked(selectActiveSession).mockReturnValue(fakeActive('sess-A', 'u-9'));
+		const reload = vi.fn();
+		const handle = makeHandle({ getTabId: () => 'u-9', reload });
+		const selectBrowserTab = vi.fn();
+		const deny: BrowserApprovalRequester = async () => false;
+		const res = await resolveAndRun(
+			{ current: new Map([['u-9', handle]]) },
+			selectBrowserTab,
+			'u-9',
+			'sess-A',
+			{ kind: 'reload' },
+			deny
+		);
+		expect(res.ok).toBe(false);
+		expect(String(res.content)).toMatch(/declined/i);
+		expect(reload).not.toHaveBeenCalled();
+	});
+
+	it('does not request approval for read ops', async () => {
+		vi.mocked(selectActiveSession).mockReturnValue(fakeActive('sess-A', 'u-1'));
+		const handle = makeHandle({ getTabId: () => 'u-1', extract: vi.fn(async () => 'TXT') });
+		const requestApproval = vi.fn(async () => true);
+		await resolveAndRun(
+			{ current: new Map([['u-1', handle]]) },
+			vi.fn(),
+			'u-1',
+			'sess-A',
+			{ kind: 'read', format: 'text' },
+			requestApproval
+		);
+		expect(requestApproval).not.toHaveBeenCalled();
 	});
 });

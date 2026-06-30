@@ -66,3 +66,28 @@ export interface BrowserOpResult {
 	/** True when the op completed against a live webview. */
 	ok: boolean;
 }
+
+/** Per-agent policy for whether a state-changing browser op needs an explicit
+ *  per-call user approval, layered on top of the per-agent interaction permission.
+ *  - 'off'       : no per-call approval (the interaction permission alone gates).
+ *  - 'dangerous' : approve only the sharp-edge ops (navigate, eval). Default.
+ *  - 'all'       : approve every interaction op. */
+export type BrowserConfirmPolicy = 'off' | 'dangerous' | 'all';
+
+/** Policy used when an agent has no explicit confirm entry configured. */
+export const DEFAULT_BROWSER_CONFIRM_POLICY: BrowserConfirmPolicy = 'dangerous';
+
+/** Ops the 'dangerous' policy always routes through per-call approval. */
+export const ALWAYS_CONFIRM_KINDS: readonly BrowserInteractionKind[] = ['navigate', 'eval'];
+
+/** Whether a browser op requires per-call user approval under the given policy.
+ *  `read` never needs approval. */
+export function browserOpNeedsConfirm(
+	policy: BrowserConfirmPolicy,
+	kind: BrowserOp['kind']
+): boolean {
+	if (kind === 'read' || policy === 'off') return false;
+	if (policy === 'all') return true;
+	// 'dangerous': only the sharp-edge ops.
+	return ALWAYS_CONFIRM_KINDS.includes(kind);
+}

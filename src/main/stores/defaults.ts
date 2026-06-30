@@ -90,6 +90,8 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	globalShowHotkey: [],
 	// Coworking: agent ids allowed to use browser interaction tools (empty = all off)
 	coworkingBrowserInteraction: [],
+	// Coworking: per-agent browser-interaction per-call confirm policy (off|dangerous|all; default dangerous)
+	coworkingBrowserInteractionConfirm: {},
 	// Auto-resume agents that paused on a token/API/credit limit
 	autoResumeOnLimit: true,
 	autoResumeCheckIntervalHours: 2,

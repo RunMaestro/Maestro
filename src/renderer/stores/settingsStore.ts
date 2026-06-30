@@ -15,6 +15,7 @@
  */
 
 import { create } from 'zustand';
+import type { BrowserConfirmPolicy } from '../../shared/coworkingBrowser';
 import { isWindowsPlatform } from '../utils/platformUtils';
 import type {
 	LLMProvider,
@@ -409,6 +410,7 @@ export interface SettingsStoreState {
 	encoreFeatures: EncoreFeatureFlags;
 	symphonyRegistryUrls: string[];
 	coworkingBrowserInteraction: string[];
+	coworkingBrowserInteractionConfirm: Record<string, BrowserConfirmPolicy>;
 	directorNotesSettings: DirectorNotesSettings;
 	wakatimeApiKey: string;
 	wakatimeEnabled: boolean;
@@ -555,6 +557,7 @@ export interface SettingsStoreActions {
 	setEncoreFeatures: (value: EncoreFeatureFlags) => void;
 	setSymphonyRegistryUrls: (value: string[]) => void;
 	setCoworkingBrowserInteraction: (value: string[]) => void;
+	setCoworkingBrowserInteractionConfirm: (value: Record<string, BrowserConfirmPolicy>) => void;
 	setDirectorNotesSettings: (value: DirectorNotesSettings) => void;
 	setWakatimeApiKey: (value: string) => void;
 	setWakatimeEnabled: (value: boolean) => void;
@@ -780,6 +783,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		encoreFeatures: DEFAULT_ENCORE_FEATURES,
 		symphonyRegistryUrls: [],
 		coworkingBrowserInteraction: [],
+		coworkingBrowserInteractionConfirm: {},
 		directorNotesSettings: DEFAULT_DIRECTOR_NOTES_SETTINGS,
 		wakatimeApiKey: '',
 		wakatimeEnabled: false,
@@ -1419,6 +1423,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setCoworkingBrowserInteraction: (value) => {
 			set({ coworkingBrowserInteraction: value });
 			window.maestro.settings.set('coworkingBrowserInteraction', value);
+		},
+
+		setCoworkingBrowserInteractionConfirm: (value) => {
+			set({ coworkingBrowserInteractionConfirm: value });
+			window.maestro.settings.set('coworkingBrowserInteractionConfirm', value);
 		},
 
 		setDirectorNotesSettings: (value) => {
@@ -2781,6 +2790,18 @@ export async function loadAllSettings(): Promise<void> {
 			patch.coworkingBrowserInteraction = (allSettings['coworkingBrowserInteraction'] as unknown[])
 				.filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
 				.map((v) => v.trim());
+		}
+
+		// Coworking browser interaction per-call confirm policy (per agent id).
+		const rawConfirm = allSettings['coworkingBrowserInteractionConfirm'];
+		if (rawConfirm && typeof rawConfirm === 'object' && !Array.isArray(rawConfirm)) {
+			const out: Record<string, BrowserConfirmPolicy> = {};
+			for (const [agentId, policy] of Object.entries(rawConfirm)) {
+				if (policy === 'off' || policy === 'dangerous' || policy === 'all') {
+					out[agentId] = policy;
+				}
+			}
+			patch.coworkingBrowserInteractionConfirm = out;
 		}
 
 		// Director's Notes settings (merge with defaults to preserve new fields)

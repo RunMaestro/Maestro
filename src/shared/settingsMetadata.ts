@@ -1039,6 +1039,13 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: [],
 		category: 'advanced',
 	},
+	coworkingBrowserInteractionConfirm: {
+		description:
+			'Per-agent policy (off | dangerous | all) for requiring per-call user approval of Coworking browser interaction ops. Missing agents default to "dangerous" (confirm navigate and eval).',
+		type: 'object',
+		default: {},
+		category: 'advanced',
+	},
 
 	// --- System ---
 	installationId: {
