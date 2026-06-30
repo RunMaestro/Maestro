@@ -103,11 +103,12 @@ export interface HostHandlerDeps {
 		}
 	) => void;
 
-	/** Invoke a REGISTERED command-palette command. Returns false for an unknown
-	 * or non-invokable command. The runner must only ever resolve palette
-	 * actions; it must NEVER expose a privileged internal IPC/WS verb (a plugin
-	 * cannot fabricate a channel - it can only reach registered palette ids). */
-	runUiCommand: (commandId: string, args?: unknown) => boolean;
+	/** Invoke a REGISTERED command-palette/registry command via a main->renderer
+	 * round-trip. Resolves false for an unknown or non-invokable command (or if
+	 * the renderer is gone / times out). The runner only ever reaches commands
+	 * the renderer registered; it can NEVER expose a privileged internal IPC/WS
+	 * verb (a plugin cannot fabricate a channel - only registered ids resolve). */
+	runUiCommand: (commandId: string, args?: unknown) => Promise<boolean>;
 
 	/** Read-only agent listing (no secrets): id/name/cwd/toolType only. */
 	listAgents: () => Array<{ id: string; name: string; cwd?: string; toolType?: string }>;
@@ -468,7 +469,7 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 			if (typeof p.commandId !== 'string' || p.commandId.length === 0) {
 				throw new Error('commandId is required');
 			}
-			const ran = deps.runUiCommand(p.commandId, p.args);
+			const ran = await deps.runUiCommand(p.commandId, p.args);
 			if (!ran) throw new Error(`"${p.commandId}" is not a registered palette command`);
 			return { ok: true };
 		},

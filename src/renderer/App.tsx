@@ -172,6 +172,8 @@ import { ToastContainer } from './components/Toast';
 import { CenterFlash } from './components/CenterFlash';
 import { ThoughtStreamPanel } from './components/ThoughtStreamPanel';
 import { useQuitWhenIdle } from './hooks/useQuitWhenIdle';
+import { usePluginCommandBridge } from './hooks/usePluginCommandBridge';
+import { usePluginKeybindings } from './hooks/usePluginKeybindings';
 
 // Import services
 // gitService — now used in useModalHandlers (Tier 3C)
@@ -791,6 +793,7 @@ function MaestroConsoleInner() {
 		openWizard: () => openWizardModal(),
 		openSettings: () => setSettingsModalOpen(true),
 	};
+	usePluginCommandBridge();
 
 	// Note: Standing ovation and keyboard mastery startup checks are now in useModalHandlers
 
@@ -1890,6 +1893,7 @@ function MaestroConsoleInner() {
 	// --- MAIN KEYBOARD HANDLER ---
 	// Extracted hook for main keyboard event listener (empty deps, uses ref pattern)
 	const { keyboardHandlerRef, showSessionJumpNumbers } = useMainKeyboardHandler();
+	usePluginKeybindings();
 
 	// Cmd+Z / Cmd+Shift+Z fallback for text inputs (Edit menu omits the undo
 	// role so the image annotator can claim Cmd+Z; this restores native

@@ -3526,6 +3526,9 @@ interface MaestroAPI {
 		panelHtml: (panelId: string) => Promise<{ html: string | null }>;
 		getActivity: () => Promise<PluginActivityMap>;
 		onChanged: (callback: () => void) => () => void;
+		onRunUiCommand: (
+			callback: (commandId: string, args: unknown) => boolean | Promise<boolean>
+		) => () => void;
 	};
 
 	// WakaTime API (CLI check, API key validation)

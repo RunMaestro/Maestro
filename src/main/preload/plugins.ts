@@ -110,6 +110,38 @@ export function createPluginsApi() {
 				ipcRenderer.removeListener('plugins:changed', handler);
 			};
 		},
+
+		/**
+		 * Subscribe to the host's `ui.runCommand` round-trip. When a plugin
+		 * invokes the `ui:command` host method, the main process forwards the
+		 * requested command id (+ args) here on `plugins:run-ui-command` with a
+		 * unique responseChannel. The callback runs the command against the
+		 * renderer's shared command registry and returns whether it ran; we ack
+		 * that boolean on the responseChannel so the host resolves the plugin
+		 * call (true) or reports "unknown command" (false). The responseChannel
+		 * never leaves preload - the renderer callback only sees (commandId, args).
+		 */
+		onRunUiCommand: (
+			callback: (commandId: string, args: unknown) => boolean | Promise<boolean>
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				commandId: string,
+				args: unknown,
+				responseChannel: string
+			): void => {
+				try {
+					Promise.resolve(callback(commandId, args)).then(
+						(ok) => ipcRenderer.send(responseChannel, ok === true),
+						() => ipcRenderer.send(responseChannel, false)
+					);
+				} catch {
+					ipcRenderer.send(responseChannel, false);
+				}
+			};
+			ipcRenderer.on('plugins:run-ui-command', handler);
+			return () => ipcRenderer.removeListener('plugins:run-ui-command', handler);
+		},
 	};
 }
 

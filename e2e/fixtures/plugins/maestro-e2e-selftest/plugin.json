@@ -7,6 +7,7 @@
 	"description": "E2E fixture: declares the full plugin capability + contribution surface and runs a self-test that classifies every brokered capability PASS/DENY/INERT, so tests can validate the entire plugin interface end-to-end.",
 	"author": "maestro-e2e",
 	"license": "MIT",
+	"category": "devtools",
 	"entry": "entry.js",
 	"permissions": [
 		{ "capability": "fs:read", "scope": "__FS_SCOPE__", "reason": "e2e self-test read-back" },
@@ -57,7 +58,8 @@
 		],
 		"commands": [
 			{ "id": "selftest", "title": "E2E: Run self-test" },
-			{ "id": "resubscribe", "title": "E2E: Re-subscribe to events" }
+			{ "id": "resubscribe", "title": "E2E: Re-subscribe to events" },
+			{ "id": "keybind-probe", "title": "E2E: Keybinding probe" }
 		],
 		"panels": [
 			{ "id": "demo-panel", "title": "E2E Demo Panel", "entry": "panel.html", "placement": "modal" }
@@ -72,7 +74,10 @@
 			}
 		],
 		"tools": [{ "id": "demo-tool", "name": "e2e_tool", "description": "An e2e demo tool." }],
-		"keybindings": [{ "id": "demo-key", "key": "Ctrl+Shift+E", "command": "selftest" }],
+		"keybindings": [
+			{ "id": "demo-key", "key": "Ctrl+Shift+E", "command": "selftest" },
+			{ "id": "keybind-probe-key", "key": "Ctrl+Shift+F9", "command": "keybind-probe" }
+		],
 		"uiItems": [
 			{
 				"id": "selftest-item",
