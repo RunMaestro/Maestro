@@ -1,31 +1,34 @@
-# Plugin extensibility build — contract for parallel workstreams
+# Plugin extensibility build - historical contract for parallel workstreams
 
-Worktree: `.worktrees/autonomous-manager-agent`. We are building Phase 1 (declarative
-breadth) + Phase 2 (brokered read/act verbs) of the plugin extensibility plan, and documenting
-Phases 3-4. The shared-contract SPINE is already committed (do not modify it). Build against it.
+Worktree: `.worktrees/autonomous-manager-agent`. This file was the Wave 1 coordination contract for
+parallel plugin workstreams. It is retained as history, not binding implementation guidance. For current
+work, use `ISA.md` for completion status, `Plans/plugin-platform-and-encore-uplift.md` for the roadmap,
+and the source files listed below for contract truth.
 
-## Committed spine (read these; do NOT change them)
+## Current source files to cross-check
 
-- `src/shared/plugins/permissions.ts` — capability vocab now includes: `settings:write`,
-  `sessions:read`, `storage:read`, `storage:write`, `ui:command`, `events:subscribe` (plus the
-  originals). All new caps have ScopeKind `none` (structurally confined by their handler, not by a
-  user scope). `capabilityRisk`, `describeCapability`, `isPermitted` already handle them.
-- `src/shared/plugins/rpc-protocol.ts` — ONE data-driven `HOST_API` table: method -> {capability}.
-  `HostMethod`, `HOST_METHODS`, `HOST_METHOD_CAPABILITY` are DERIVED from it. New methods present
-  and INERT (no handler yet): `settings.set`, `sessions.list`, `sessions.get`, `storage.get`,
-  `storage.keys`, `storage.set`, `storage.delete`, `ui.runCommand`, `events.subscribe`,
-  `events.unsubscribe`. `HostControlMessage` has a new `{ kind:'event'; topic; at; payload }` push.
-- `src/shared/plugins/events.ts` — fixed `PLUGIN_EVENT_TOPICS` (metadata-only), `PluginEvent`,
+- `src/shared/plugins/permissions.ts` - capability vocab includes the original file/net/agent/notification/settings
+  capabilities plus the P0 additions for sessions, history, transcripts, storage KV/SQL, events, tabs,
+  shell/process, decisions, power, background services, and UI contribution/render surfaces. Scope and
+  risk metadata live there; do not copy a stale capability list from this file.
+- `src/shared/plugins/rpc-protocol.ts` - ONE data-driven `HOST_API` table: method -> {capability}.
+  `HostMethod`, `HOST_METHODS`, `HOST_METHOD_CAPABILITY` are DERIVED from it. The P0 host-method
+  surface now includes settings, sessions/tabs/history/transcripts, storage KV/SQL/fs-watch, events,
+  shell/open/process, decisions, power, background, and UI command/contribution methods. Some high-risk
+  methods are intentionally optional until their real dependencies are wired in `src/main/index.ts`.
+- `src/shared/plugins/events.ts` - fixed metadata-only `PLUGIN_EVENT_TOPICS`, `PluginEvent`,
   `PluginEventPayloads`, and the `PluginEventBus` interface the events handlers code against.
-- `src/shared/plugins/contribution-registry.ts` — `mergeContributions` / `mergedItems`: the ONE
+- `src/shared/plugins/contribution-registry.ts` - `mergeContributions` / `mergedItems`: the ONE
   merge contract (built-in-always-wins, earlier-plugin-wins, dropped-with-error, provenance).
-- `src/shared/plugins/contributions.ts` — `PanelContribution` now has a required `placement`
-  (`'modal'|'left'|'right'|'main'|'settings'`, default `modal`).
-- `src/main/plugins/action-guard.ts` — `ActionGuard.begin(pluginId, capability, target?)` →
+- `src/shared/plugins/contributions.ts` - host-rendered contribution shapes for UI items, panels,
+  settings, tools, keybindings, agents, commands, command macros, Cue triggers, themes, prompts, and
+  background services.
+- `src/main/plugins/action-guard.ts` - `ActionGuard.begin(pluginId, capability, target?)` returns
   `{ok,release}|{ok:false,reason}`: rate + concurrency + audit-before-action for high-risk verbs.
-- `src/shared/plugins/host-api.ts` — `HOST_API_VERSION = '1.3.0'`.
+- `src/shared/plugins/host-api.ts` - current source of truth for `HOST_API_VERSION` (1.7.0 at the
+  time this roadmap was reconciled).
 
-## NON-NEGOTIABLE security invariants (every workstream MUST honor)
+## Historical security constraints from Wave 1
 
 1. Default-deny stays the only path: every host effect goes through `PermissionBroker`; never hand
    a plugin a credential/handle/token/channel/socket. No generic eval/exec/invoke(channel).
@@ -50,21 +53,21 @@ Phases 3-4. The shared-contract SPINE is already committed (do not modify it). B
    CLI/WS token and the app's own loopback web-server port are NEVER reachable.
 5. Security-state files (grants, enable-state, `encoreFeatures.*`, trusted keys, supervisor targets,
    agent-config overrides) are NEVER writable by any plugin capability.
-6. Registration != execution. Do NOT wire `agents:dispatch` or `process:spawn` — they stay inert
-   (Phase 4, documented only).
-7. Plugin UI stays an opaque-origin iframe (srcDoc + sandbox="allow-scripts", NEVER
-   allow-same-origin, NEVER a URL src, NEVER dangerouslySetInnerHTML in trusted chrome), even when
-   docked inline; z-clamped strictly BELOW first-party modals/consent dialogs; mandatory,
-   non-suppressible provenance shown on every plugin-contributed surface; built-in-wins on every
-   registry.
+6. `agents:dispatch` and `process:spawn` are not generic execution escape hatches. They may only be
+   wired through injected deps that re-check broker authorization, trusted signature posture, Pianola
+   low/medium risk, sanitized cwd/env/options, and audit-before-action.
+7. Historical UI constraint: plugin UI was scoped to opaque-origin iframes and below first-party
+   modals/consent dialogs. Current render-host work may use a richer isolated Chromium surface, but it
+   must preserve no Node access, context isolation, broker-only preload, navigation/egress lockdown,
+   visible provenance, and built-in-wins registry behavior.
 8. Uninstall is complete: purge plugin dir, grants, enable-state, `plugins.<id>.*` settings, KV,
    scheduled triggers, supervisor targets, agent-config overrides.
 9. Wrap high-risk write verbs (`fs:write`, `settings:write`, `storage:write`) with `ActionGuard`.
 
-## Partition (no two workstreams touch the same file)
+## Historical partition
 
-- A — main-process plugin backend. B — renderer registries. D — docs. Main (me) wires `index.ts`.
-- NOBODY edits `src/main/index.ts` (the integrator wires deps there).
+- A - main-process plugin backend. B - renderer registries. D - docs. Main (me) wired `index.ts`.
+- Workstream agents originally avoided `src/main/index.ts`; later integration work did touch it to wire deps.
 - Handlers take INJECTED deps (define a deps interface); never call electron/stores directly in a
   way that blocks unit tests. The integrator implements the deps against real modules.
 
@@ -72,5 +75,5 @@ Phases 3-4. The shared-contract SPINE is already committed (do not modify it). B
 
 - TypeScript, tabs, no em/en dashes. Files < ~800 lines (split if needed).
 - Write focused unit tests for your own code (vitest). Do NOT run project-wide lint/typecheck/build
-  or formatters — the integrator runs all gates once at the end across the union of changes.
+  or formatters - the integrator runs all gates once at the end across the union of changes.
 - Report exactly which files you created/edited and the deps interface the integrator must wire.
