@@ -144,6 +144,7 @@ import {
 	registerMemoryHandlers,
 	registerPianolaHandlers,
 	registerPluginsHandlers,
+	registerAgentRunHandlers,
 	setupLoggerEventForwarding,
 	cleanupAllGroomingSessions,
 	getActiveGroomingSessionCount,
@@ -2396,6 +2397,9 @@ function setupIpcHandlers() {
 			authStore: pluginAuthStore,
 		});
 	}
+
+	// Register AgentRun ledger/campaign handlers (neutral run/campaign ledger).
+	registerAgentRunHandlers();
 
 	// Register Context Merge handlers for session context transfer and grooming
 	registerContextHandlers({

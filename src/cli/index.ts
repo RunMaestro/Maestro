@@ -88,6 +88,15 @@ import {
 	pianolaSuperviseSetEnabled,
 } from './commands/pianola-supervise';
 import { pluginInit, pluginValidate, pluginSign, pluginPack } from './commands/plugin';
+import {
+	agentRunAppendEvent,
+	agentRunList,
+	agentRunRecord,
+	agentRunShow,
+	campaignList,
+	campaignRecord,
+	campaignShow,
+} from './commands/agent-run';
 import { mcpServe } from './commands/mcp';
 
 // Injected at build time by scripts/build-cli.mjs via esbuild `define`.
@@ -100,6 +109,65 @@ const cliVersion: string =
 const program = new Command();
 
 program.name('maestro-cli').description('Command-line interface for Maestro').version(cliVersion);
+
+// AgentRun and campaign commands — neutral ledger/read-model spine for external
+// agent work. Pianola remains the authoritative orchestrator; these commands
+// record and inspect runs/campaigns without replacing `pianola plan`.
+const agentRun = program.command('agent-run').description('Record and inspect agent runs');
+
+agentRun
+	.command('record')
+	.description('Record or update an agent run from a JSON file')
+	.requiredOption('--file <json>', 'Agent run JSON file')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(agentRunRecord);
+
+agentRun
+	.command('append-event <run-id>')
+	.description('Append an event to an agent run')
+	.requiredOption('--type <type>', 'Event type')
+	.option('--status <status>', 'Update the run status with this event')
+	.option('--message <text>', 'Human-readable event message')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((runId, options) => agentRunAppendEvent(runId, options));
+
+agentRun
+	.command('list')
+	.description('List recent agent runs')
+	.option('--status <status>', 'Filter by run status')
+	.option('--campaign <id>', 'Filter by campaign id')
+	.option('--limit <n>', 'Maximum number of runs to show')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(agentRunList);
+
+agentRun
+	.command('show <run-id>')
+	.description('Show an agent run and its events')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((runId, options) => agentRunShow(runId, options));
+
+const campaign = program.command('campaign').description('Record and inspect agent campaigns');
+
+campaign
+	.command('record')
+	.description('Record or update a campaign from a JSON file')
+	.requiredOption('--file <json>', 'Campaign JSON file')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(campaignRecord);
+
+campaign
+	.command('list')
+	.description('List campaigns')
+	.option('--status <status>', 'Filter by campaign status')
+	.option('--limit <n>', 'Maximum number of campaigns to show')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(campaignList);
+
+campaign
+	.command('show <id>')
+	.description('Show a campaign')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((campaignId, options) => campaignShow(campaignId, options));
 
 // List commands
 const list = program.command('list').description('List resources');

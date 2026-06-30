@@ -458,6 +458,18 @@ const mockMaestro = {
 		onChanged: vi.fn().mockReturnValue(() => {}),
 		onRunUiCommand: vi.fn().mockReturnValue(() => {}),
 	},
+	agentRun: {
+		list: vi.fn().mockResolvedValue({ success: true, runs: [] }),
+		record: vi.fn().mockResolvedValue({ success: true, run: null }),
+		show: vi.fn().mockResolvedValue({ success: true, run: null }),
+		events: vi.fn().mockResolvedValue({ success: true, events: [] }),
+		appendEvent: vi.fn().mockResolvedValue({ success: true, event: null }),
+		campaigns: {
+			list: vi.fn().mockResolvedValue({ success: true, campaigns: [] }),
+			record: vi.fn().mockResolvedValue({ success: true, campaign: null }),
+			show: vi.fn().mockResolvedValue({ success: true, campaign: null }),
+		},
+	},
 	marketplace: {
 		getManifest: vi.fn().mockResolvedValue({
 			success: true,

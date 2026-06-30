@@ -178,6 +178,7 @@ import type {
 } from '../main/ipc/handlers/plugins';
 import type { InstallResult as PluginInstallResult } from '../main/plugins/plugin-manager';
 import type { AggregatedContributions as PluginContributions } from '../shared/plugins/contributions';
+import type { AgentRunApi } from '../main/preload/agentRun';
 
 interface MaestroAPI {
 	// Context merging API (for session context transfer and grooming)
@@ -3509,6 +3510,9 @@ interface MaestroAPI {
 			remove: (id: string) => Promise<PianolaSupervisorSnapshot>;
 		};
 	};
+
+	// AgentRun API (neutral run/campaign ledger)
+	agentRun: AgentRunApi;
 
 	// Plugins API (community plugin subsystem: list/toggle/install/uninstall)
 	plugins: {

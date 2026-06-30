@@ -70,6 +70,7 @@ import { registerFeedbackHandlers } from './feedback';
 import { registerMaestroCliHandlers } from './maestro-cli';
 import { registerPromptsHandlers } from './prompts';
 import { registerMemoryHandlers } from './memory';
+import { registerAgentRunHandlers } from './agent-run';
 import { AgentDetector } from '../../agents';
 import { ProcessManager } from '../../process-manager';
 import { WebServer } from '../../web-server';
@@ -136,6 +137,7 @@ export { registerFeedbackHandlers };
 export { registerMaestroCliHandlers };
 export { registerPromptsHandlers };
 export { registerMemoryHandlers };
+export { registerAgentRunHandlers };
 export type { AgentsHandlerDependencies };
 export type { ProcessHandlerDependencies };
 export type { PersistenceHandlerDependencies };
@@ -334,6 +336,8 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	registerPromptsHandlers();
 	// Register project Memory handlers (Claude Code per-project memory viewer)
 	registerMemoryHandlers();
+	// Register AgentRun ledger/campaign handlers (no dependencies needed)
+	registerAgentRunHandlers();
 	// Setup logger event forwarding to renderer
 	setupLoggerEventForwarding(deps.getMainWindow);
 }
