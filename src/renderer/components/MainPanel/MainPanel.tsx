@@ -25,6 +25,7 @@ import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { useTerminalMounting } from '../../hooks/terminal/useTerminalMounting';
 import { useCoworkingBufferResponder } from '../../hooks/coworking/useCoworkingBufferResponder';
 import { useCoworkingRegistrySync } from '../../hooks/coworking/useCoworkingRegistrySync';
+import { useCoworkingBrowserResponder } from '../../hooks/coworking/useCoworkingBrowserResponder';
 import { getTerminalTabDisplayName } from '../../utils/terminalTabHelpers';
 import { aiTabFocusFields } from '../../utils/tabHelpers';
 import { useSshRemoteName } from '../../hooks/mainPanel/useSshRemoteName';
@@ -161,6 +162,10 @@ export const MainPanel = React.memo(
 		// Imperative handle for the currently-mounted BrowserTabView. Only the active browser
 		// tab is rendered, so this points to that one (or null if no browser tab is active).
 		const browserViewRef = useRef<BrowserTabViewHandle | null>(null);
+		// Per-tab BrowserTabView handle map for the active agent's mounted browser
+		// tabs (visible + kept-alive hidden). Lifted here so the coworking browser
+		// responder can reach a mounted tab's handle without stealing focus.
+		const browserViewRefs = useRef<Map<string, BrowserTabViewHandle>>(new Map());
 		// Terminal session mounting lifecycle (refs, state, effects)
 		const {
 			terminalViewRefs,
@@ -217,6 +222,19 @@ export const MainPanel = React.memo(
 			onTerminalTabRename,
 			onTerminalTabConfigureStartupCommand,
 		} = props;
+
+		// Coworking browser responder — answers browser-op requests (read now,
+		// interaction in a later phase) by resolving the target tab's live webview
+		// handle. No-ops when the `coworking` Encore flag is off.
+		const selectBrowserTab = useCallback(
+			(_sessionId: string, tabUuid: string) => {
+				// The responder only activates within the focused agent, so the
+				// active-session-scoped onBrowserTabSelect is the correct target.
+				onBrowserTabSelect?.(tabUuid);
+			},
+			[onBrowserTabSelect]
+		);
+		useCoworkingBrowserResponder(browserViewRefs, selectBrowserTab);
 
 		// Get the active tab for header display
 		// The header should show the active tab's data (UUID, name, cost, context), not session-level data
@@ -935,6 +953,7 @@ export const MainPanel = React.memo(
 							handleFilePreviewReload={handleFilePreviewReload}
 							handleBrowserTabUpdate={onBrowserTabUpdate}
 							browserViewRef={browserViewRef}
+							browserViewRefs={browserViewRefs}
 							terminalViewRefs={terminalViewRefs}
 							mountedTerminalSessionIds={mountedTerminalSessionIds}
 							mountedTerminalSessionsRef={mountedTerminalSessionsRef}

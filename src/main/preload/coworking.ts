@@ -8,6 +8,11 @@
  */
 
 import { ipcRenderer } from 'electron';
+import type {
+	BrowserOp,
+	BrowserOpResult,
+	CoworkingBrowserInput,
+} from '../../shared/coworkingBrowser';
 
 export interface CoworkingTerminalEntry {
 	id: string;
@@ -55,6 +60,20 @@ export interface CoworkingApi {
 		callback: (tabUuid: string, sessionId: string, responseChannel: string) => void
 	): () => void;
 	sendBufferResponse(responseChannel: string, content: string): void;
+
+	// ---- Browser registry sync (renderer → main) ----
+	syncSessionBrowsers(sessionId: string, inputs: CoworkingBrowserInput[]): Promise<void>;
+
+	// ---- Browser op (main → renderer) ----
+	/**
+	 * Subscribe to browser-op requests from main (read / navigate / click / ... /
+	 * screenshot) for <tabUuid> in <sessionId>. The renderer resolves the live
+	 * webview and sends the BrowserOpResult back via the supplied responseChannel.
+	 */
+	onRequestBrowserOp(
+		callback: (tabUuid: string, sessionId: string, op: BrowserOp, responseChannel: string) => void
+	): () => void;
+	sendBrowserOpResponse(responseChannel: string, result: BrowserOpResult): void;
 }
 
 export function createCoworkingApi(): CoworkingApi {
@@ -78,6 +97,24 @@ export function createCoworkingApi(): CoworkingApi {
 		},
 		sendBufferResponse: (responseChannel, content) => {
 			ipcRenderer.send(responseChannel, content);
+		},
+
+		syncSessionBrowsers: (sessionId, inputs) =>
+			ipcRenderer.invoke('coworking:syncSessionBrowsers', sessionId, inputs),
+
+		onRequestBrowserOp: (callback) => {
+			const handler = (
+				_: unknown,
+				tabUuid: string,
+				sessionId: string,
+				op: BrowserOp,
+				responseChannel: string
+			) => callback(tabUuid, sessionId, op, responseChannel);
+			ipcRenderer.on('coworking:requestBrowserOp', handler);
+			return () => ipcRenderer.removeListener('coworking:requestBrowserOp', handler);
+		},
+		sendBrowserOpResponse: (responseChannel, result) => {
+			ipcRenderer.send(responseChannel, result);
 		},
 	};
 }

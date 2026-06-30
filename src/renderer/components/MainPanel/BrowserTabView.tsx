@@ -79,6 +79,53 @@ export interface BrowserTabViewHandle {
 	goForward(): void;
 	/** Move focus into the webview guest content (so arrow keys scroll the page). */
 	focusWebview(): void;
+	/** Extract the page's rendered text or HTML in the requested format. Like
+	 *  getContent but format-aware; waits briefly for dom-ready. */
+	extract(format: 'text' | 'innerText' | 'html'): Promise<string>;
+	/** Current url + title of the loaded page (best-effort: webview-fresh with a
+	 *  fallback to the last-known tab metadata). */
+	getMeta(): { url: string; title: string };
+}
+
+/** Promise-based delay (ES2024 Promise.withResolvers, ambient-typed for the
+ *  project's ES2020 lib). Used to poll for dom-ready without busy-waiting. */
+function delay(ms: number): Promise<void> {
+	const { promise, resolve } = Promise.withResolvers<void>();
+	setTimeout(resolve, ms);
+	return promise;
+}
+
+/** Wait up to 2s for the guest webview to reach dom-ready so extraction returns
+ *  a non-empty value immediately after a tab activation. */
+async function waitForDomReady(isDomReadyRef: React.MutableRefObject<boolean>): Promise<void> {
+	if (isDomReadyRef.current) return;
+	const deadline = Date.now() + 2000;
+	while (!isDomReadyRef.current && Date.now() < deadline) {
+		await delay(50);
+	}
+}
+
+/** Extract page text/HTML from the guest webview. Returns "" if unreachable or
+ *  the injected script throws. Electron's executeJavaScript queues until the
+ *  page is ready, so this is safe to call mid-navigation. */
+async function extractFromWebview(
+	webview: ElectronWebviewElement,
+	isDomReadyRef: React.MutableRefObject<boolean>,
+	format: 'text' | 'innerText' | 'html'
+): Promise<string> {
+	await waitForDomReady(isDomReadyRef);
+	const expr =
+		format === 'html'
+			? '(document.documentElement && document.documentElement.outerHTML) || ""'
+			: format === 'innerText'
+				? '(document.documentElement && document.documentElement.innerText) || ""'
+				: '(document.body && document.body.innerText) || ""';
+	try {
+		const result = await webview.executeJavaScript(expr);
+		return typeof result === 'string' ? result : '';
+	} catch {
+		return '';
+	}
 }
 
 function syncWebviewLayout(webview: ElectronWebviewElement | null) {
@@ -142,23 +189,20 @@ export const BrowserTabView = React.memo(
 				async getContent(): Promise<string> {
 					const webview = webviewRef.current;
 					if (!webview) return '';
-					// Wait up to 2s for dom-ready so extraction works immediately after a
-					// tab activation. If the guest is still navigating, we still attempt —
-					// Electron's executeJavaScript queues until the page is ready.
-					if (!isDomReadyRef.current) {
-						const deadline = Date.now() + 2000;
-						while (!isDomReadyRef.current && Date.now() < deadline) {
-							await new Promise((r) => setTimeout(r, 50));
-						}
-					}
-					try {
-						const result = await webview.executeJavaScript(
-							'(document.body && document.body.innerText) || ""'
-						);
-						return typeof result === 'string' ? result : '';
-					} catch {
-						return '';
-					}
+					return extractFromWebview(webview, isDomReadyRef, 'text');
+				},
+				async extract(format: 'text' | 'innerText' | 'html'): Promise<string> {
+					const webview = webviewRef.current;
+					if (!webview) return '';
+					return extractFromWebview(webview, isDomReadyRef, format);
+				},
+				getMeta(): { url: string; title: string } {
+					const tab = latestTabRef.current;
+					const webview = webviewRef.current;
+					return {
+						url: webview?.getURL?.() || tab.url || '',
+						title: webview?.getTitle?.() || tab.title || '',
+					};
 				},
 				getTabId(): string {
 					return latestTabRef.current.id;

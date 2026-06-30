@@ -40,7 +40,13 @@ import type {
 	CoworkingBridgeResponse,
 	CoworkingBridgeMethod,
 } from './coworking-types';
-import { listTerminals, readTerminal } from './coworking-tools';
+import {
+	getBrowserUrl,
+	listBrowsers,
+	listTerminals,
+	readBrowser,
+	readTerminal,
+} from './coworking-tools';
 
 const LOG_CTX = '[Coworking][Bridge]';
 
@@ -249,6 +255,57 @@ async function dispatch(
 				return { id: req.id, error: { code: -32602, message: '`id` is required' } };
 			}
 			const result = await readTerminal(sessionId, { id: params.id, lines: params.lines });
+			return { id: req.id, result };
+		}
+		if (method === 'listBrowsers') {
+			return { id: req.id, result: listBrowsers(sessionId) };
+		}
+		if (method === 'getBrowserUrl') {
+			const params = (req.params ?? {}) as { id?: string };
+			if (typeof params.id !== 'string') {
+				return { id: req.id, error: { code: -32602, message: '`id` is required' } };
+			}
+			return { id: req.id, result: getBrowserUrl(sessionId, { id: params.id }) };
+		}
+		if (method === 'readBrowser') {
+			const params = (req.params ?? {}) as {
+				id?: string;
+				format?: 'text' | 'innerText' | 'html';
+				maxChars?: number;
+			};
+			if (typeof params.id !== 'string') {
+				return { id: req.id, error: { code: -32602, message: '`id` is required' } };
+			}
+			if (
+				params.format !== undefined &&
+				params.format !== 'text' &&
+				params.format !== 'innerText' &&
+				params.format !== 'html'
+			) {
+				return {
+					id: req.id,
+					error: {
+						code: -32602,
+						message: "`format` must be one of 'text', 'innerText', 'html'",
+					},
+				};
+			}
+			if (
+				params.maxChars !== undefined &&
+				(typeof params.maxChars !== 'number' ||
+					!Number.isInteger(params.maxChars) ||
+					params.maxChars <= 0)
+			) {
+				return {
+					id: req.id,
+					error: { code: -32602, message: '`maxChars` must be a positive integer' },
+				};
+			}
+			const result = await readBrowser(sessionId, {
+				id: params.id,
+				format: params.format,
+				maxChars: params.maxChars,
+			});
 			return { id: req.id, result };
 		}
 		return { id: req.id, error: { code: -32601, message: `Unknown method: ${String(method)}` } };

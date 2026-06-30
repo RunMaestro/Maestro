@@ -10,7 +10,12 @@
  */
 
 import { coworkingRegistry, type CoworkingRegistry } from './coworking-registry';
-import type { CoworkingTerminalEntry } from './coworking-types';
+import type {
+	BrowserOp,
+	BrowserOpResult,
+	CoworkingBrowserEntry,
+	CoworkingTerminalEntry,
+} from './coworking-types';
 
 /** Fetcher for terminal scrollback. The default implementation rounds-trips to the renderer
  *  via webContents.send + a responseChannel; tests inject a stub. The sessionId is forwarded
@@ -72,4 +77,93 @@ export async function readTerminal(
 		return { id: args.id, content: full, truncated: false, totalLines: allLines.length };
 	}
 	return { id: args.id, content: full, truncated: false, totalLines: allLines.length };
+}
+
+// ─── Browser tools ───────────────────────────────────────────────────────────
+
+/** Resolves a browser op against the LIVE webview by round-tripping to the
+ *  renderer (which prefers an already-mounted hidden webview and only activates
+ *  the target tab as a fallback). Tests inject a stub. */
+export type BrowserResolver = (
+	sessionId: string,
+	tabUuid: string,
+	op: BrowserOp
+) => Promise<BrowserOpResult>;
+
+let browserResolver: BrowserResolver | null = null;
+
+/** Wire the renderer browser resolver. Called once during main-process bootstrap. */
+export function setBrowserResolver(resolver: BrowserResolver | null): void {
+	browserResolver = resolver;
+}
+
+/** List browser tabs visible to the agent in its own session (metadata only, no
+ *  live webview needed). */
+export function listBrowsers(
+	sessionId: string,
+	registry: CoworkingRegistry = coworkingRegistry
+): { browsers: CoworkingBrowserEntry[] } {
+	return { browsers: registry.listBrowsersForSession(sessionId) };
+}
+
+/** Get the current url + title of a single browser tab (metadata only). */
+export function getBrowserUrl(
+	sessionId: string,
+	args: { id: string },
+	registry: CoworkingRegistry = coworkingRegistry
+): { id: string; url: string; title: string } {
+	const entry = registry.listBrowsersForSession(sessionId).find((b) => b.id === args.id);
+	if (!entry) {
+		throw new Error(
+			`coworking tools: browser '${args.id}' not found in your session (it may have been closed)`
+		);
+	}
+	return { id: entry.id, url: entry.url, title: entry.title };
+}
+
+/** Read the rendered text (or HTML) of a browser tab in the caller's session,
+ *  optionally head-truncated to maxChars. Needs the live webview via the
+ *  resolver. */
+export async function readBrowser(
+	sessionId: string,
+	args: { id: string; format?: 'text' | 'innerText' | 'html'; maxChars?: number },
+	deps: { registry?: CoworkingRegistry; resolver?: BrowserResolver } = {}
+): Promise<{
+	id: string;
+	url: string;
+	title: string;
+	format: 'text' | 'innerText' | 'html';
+	content: string;
+	truncated: boolean;
+	totalChars: number;
+}> {
+	const registry = deps.registry ?? coworkingRegistry;
+	const resolver = deps.resolver ?? browserResolver;
+	if (!resolver) {
+		throw new Error('coworking tools: browser resolver not configured');
+	}
+	const tabUuid = registry.resolveBrowserTabUuidForSession(sessionId, args.id);
+	if (!tabUuid) {
+		throw new Error(
+			`coworking tools: browser '${args.id}' not found in your session (it may have been closed)`
+		);
+	}
+	const format = args.format ?? 'text';
+	const result = await resolver(sessionId, tabUuid, { kind: 'read', format });
+	const full = result.content ?? '';
+	const totalChars = full.length;
+	const cap =
+		typeof args.maxChars === 'number' && Number.isFinite(args.maxChars) && args.maxChars > 0
+			? args.maxChars
+			: null;
+	const truncated = cap !== null && full.length > cap;
+	return {
+		id: args.id,
+		url: result.url ?? '',
+		title: result.title ?? '',
+		format,
+		content: truncated ? full.slice(0, cap as number) : full,
+		truncated,
+		totalChars,
+	};
 }

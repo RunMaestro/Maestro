@@ -13,13 +13,27 @@
  */
 
 import { captureException } from '../utils/sentry';
-import type { CoworkingTerminalEntry, CoworkingTerminalRecord } from './coworking-types';
+import type {
+	CoworkingBrowserEntry,
+	CoworkingBrowserInput,
+	CoworkingBrowserRecord,
+	CoworkingTerminalEntry,
+	CoworkingTerminalRecord,
+} from './coworking-types';
+import { formatBrowserId, parseBrowserId } from './coworking-types';
 
 type ChangeListener = () => void;
 
 class CoworkingRegistry {
 	private records = new Map<string, CoworkingTerminalRecord>();
 	private listeners = new Set<ChangeListener>();
+	// Browser-tab mirror. Separate from terminal `records` (different id space and
+	// shape). Keyed by the renderer BrowserTab.id (UUID, globally unique). The
+	// registry assigns the stable public `browser:N` id per session so renderer
+	// code never has to mint/persist one.
+	private browserRecords = new Map<string, CoworkingBrowserRecord>();
+	private browserIdByTabUuid = new Map<string, Map<string, number>>();
+	private nextBrowserId = new Map<string, number>();
 
 	/** Replace the full set of terminals for a given session. Used on initial sync from renderer. */
 	syncSessionTerminals(sessionId: string, records: CoworkingTerminalRecord[]): void {
@@ -56,6 +70,14 @@ class CoworkingRegistry {
 				mutated = true;
 			}
 		}
+		for (const [key, rec] of this.browserRecords) {
+			if (rec.sessionId === sessionId) {
+				this.browserRecords.delete(key);
+				mutated = true;
+			}
+		}
+		this.browserIdByTabUuid.delete(sessionId);
+		this.nextBrowserId.delete(sessionId);
 		if (mutated) this.notify();
 	}
 
@@ -85,6 +107,69 @@ class CoworkingRegistry {
 		return null;
 	}
 
+	/** Replace the full set of browser tabs for a session, assigning stable
+	 *  `browser:N` ids to any tab not seen before. Ids are monotonic per session
+	 *  and never reused, so a closed tab's id is retired for the app's lifetime. */
+	syncSessionBrowsers(sessionId: string, inputs: CoworkingBrowserInput[]): void {
+		let idMap = this.browserIdByTabUuid.get(sessionId);
+		if (!idMap) {
+			idMap = new Map();
+			this.browserIdByTabUuid.set(sessionId, idMap);
+		}
+		let nextId = this.nextBrowserId.get(sessionId) ?? 1;
+		for (const input of inputs) {
+			if (!idMap.has(input.tabUuid)) idMap.set(input.tabUuid, nextId++);
+		}
+		this.nextBrowserId.set(sessionId, nextId);
+		// Drop existing records for this session that aren't in the incoming set.
+		for (const [key, rec] of this.browserRecords) {
+			if (rec.sessionId === sessionId) this.browserRecords.delete(key);
+		}
+		for (const input of inputs) {
+			const numericId = idMap.get(input.tabUuid);
+			if (numericId === undefined) continue;
+			this.browserRecords.set(input.tabUuid, {
+				id: formatBrowserId(numericId),
+				url: input.url,
+				title: input.title,
+				favicon: input.favicon,
+				canGoBack: input.canGoBack,
+				canGoForward: input.canGoForward,
+				isLoading: input.isLoading,
+				tabUuid: input.tabUuid,
+				sessionId,
+			});
+		}
+		this.notify();
+	}
+
+	/** List the public-facing browser entries for a session, sorted by id. */
+	listBrowsersForSession(sessionId: string): CoworkingBrowserEntry[] {
+		const out: CoworkingBrowserEntry[] = [];
+		for (const rec of this.browserRecords.values()) {
+			if (rec.sessionId !== sessionId) continue;
+			out.push({
+				id: rec.id,
+				url: rec.url,
+				title: rec.title,
+				favicon: rec.favicon,
+				canGoBack: rec.canGoBack,
+				canGoForward: rec.canGoForward,
+				isLoading: rec.isLoading,
+			});
+		}
+		out.sort((a, b) => (parseBrowserId(a.id) ?? 0) - (parseBrowserId(b.id) ?? 0));
+		return out;
+	}
+
+	/** Resolve a public id (e.g. "browser:2") to the renderer BrowserTab UUID, scoped to one session. */
+	resolveBrowserTabUuidForSession(sessionId: string, publicId: string): string | null {
+		for (const rec of this.browserRecords.values()) {
+			if (rec.sessionId === sessionId && rec.id === publicId) return rec.tabUuid;
+		}
+		return null;
+	}
+
 	/** Subscribe to any registry change. Returns an unsubscribe fn. */
 	onChange(listener: ChangeListener): () => void {
 		this.listeners.add(listener);
@@ -94,6 +179,9 @@ class CoworkingRegistry {
 	/** Test-only: clear all state. */
 	reset(): void {
 		this.records.clear();
+		this.browserRecords.clear();
+		this.browserIdByTabUuid.clear();
+		this.nextBrowserId.clear();
 		this.listeners.clear();
 	}
 

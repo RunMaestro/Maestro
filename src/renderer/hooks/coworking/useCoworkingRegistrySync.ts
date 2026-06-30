@@ -68,6 +68,21 @@ function buildRecords(session: Session) {
 		}));
 }
 
+/** Build the per-session browser-input list from a Session. The registry assigns
+ *  the stable `browser:N` id, so we only push raw tab metadata here. */
+function buildBrowserInputs(session: Session) {
+	const tabs = session.browserTabs ?? [];
+	return tabs.map((t) => ({
+		tabUuid: t.id,
+		url: t.url,
+		title: t.title,
+		favicon: t.favicon ?? undefined,
+		canGoBack: t.canGoBack,
+		canGoForward: t.canGoForward,
+		isLoading: t.isLoading,
+	}));
+}
+
 export function useCoworkingRegistrySync(): void {
 	// Subscribe to the full sessions array. The session store updates immutably,
 	// so this fires on add/remove/terminal-mutation for any session.
@@ -118,6 +133,10 @@ export function useCoworkingRegistrySync(): void {
 
 		// Build the cross-session payload.
 		const perSession = sessions.map((s) => ({ sessionId: s.id, records: buildRecords(s) }));
+		const perSessionBrowsers = sessions.map((s) => ({
+			sessionId: s.id,
+			inputs: buildBrowserInputs(s),
+		}));
 		const currentIds = new Set(perSession.map((p) => p.sessionId));
 
 		// Detect sessions that disappeared since the previous run so we can clear
@@ -128,7 +147,7 @@ export function useCoworkingRegistrySync(): void {
 		}
 
 		// Skip the IPC if nothing has changed since last sync (cheap stringify of small payload).
-		const payload = JSON.stringify({ perSession, removed });
+		const payload = JSON.stringify({ perSession, perSessionBrowsers, removed });
 		if (payload === lastPayloadRef.current) return;
 		lastPayloadRef.current = payload;
 		lastSessionIdsRef.current = currentIds;
@@ -140,6 +159,9 @@ export function useCoworkingRegistrySync(): void {
 				}
 				for (const { sessionId, records } of perSession) {
 					await bridge.syncSessionTerminals(sessionId, records);
+				}
+				for (const { sessionId, inputs } of perSessionBrowsers) {
+					await bridge.syncSessionBrowsers(sessionId, inputs);
 				}
 			} catch (err) {
 				// Roll back the optimistic payload-cache write FIRST so the next effect

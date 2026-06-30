@@ -7,6 +7,15 @@
  * via a private Unix-domain-socket / named-pipe IPC bridge.
  */
 
+import type { CoworkingBrowserEntry } from '../../shared/coworkingBrowser';
+export type {
+	BrowserInteractionKind,
+	BrowserOp,
+	BrowserOpResult,
+	CoworkingBrowserEntry,
+	CoworkingBrowserInput,
+} from '../../shared/coworkingBrowser';
+
 /** Public name of the MCP server entry written into each agent's user-level config. */
 export const COWORKING_MCP_SERVER_NAME = 'maestro-coworking';
 
@@ -69,7 +78,14 @@ export interface CoworkingInstallStatus {
 }
 
 /** Bridge RPC method names. Kept as string literals for backwards-compat. */
-export type CoworkingBridgeMethod = 'hello' | 'listTerminals' | 'readTerminal';
+export type CoworkingBridgeMethod =
+	| 'hello'
+	| 'listTerminals'
+	| 'readTerminal'
+	| 'listBrowsers'
+	| 'getBrowserUrl'
+	| 'readBrowser'
+	| 'browserInteract';
 
 export interface CoworkingBridgeRequest {
 	id: number;
@@ -92,6 +108,33 @@ export function formatCoworkingId(coworkingId: number): string {
 export function parseCoworkingId(id: string): number | null {
 	if (!id.startsWith('term:')) return null;
 	const n = Number(id.slice('term:'.length));
+	if (!Number.isInteger(n) || n <= 0) return null;
+	return n;
+}
+
+// ─── Browser coworking ───────────────────────────────────────────────────────
+//
+// The browser contract types (op / result / input / entry) live in
+// src/shared/coworkingBrowser so the renderer responder and preload bridge share
+// one source of truth; they are re-exported at the top of this file. Only the
+// main-process-internal record type and the id helpers live here.
+
+/** Internal registry record. `tabUuid` is the renderer BrowserTab.id used to
+ *  drive the live webview; `sessionId` is the owning Maestro session. */
+export interface CoworkingBrowserRecord extends CoworkingBrowserEntry {
+	tabUuid: string;
+	sessionId: string;
+}
+
+/** Format a numeric browser id into the public readable form. */
+export function formatBrowserId(browserId: number): string {
+	return `browser:${browserId}`;
+}
+
+/** Parse a public browser id back into the numeric id. Returns null on bad input. */
+export function parseBrowserId(id: string): number | null {
+	if (!id.startsWith('browser:')) return null;
+	const n = Number(id.slice('browser:'.length));
 	if (!Number.isInteger(n) || n <= 0) return null;
 	return n;
 }

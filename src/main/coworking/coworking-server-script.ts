@@ -83,6 +83,48 @@ const TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    name: 'list_browsers',
+    description:
+      'List the in-app browser tabs in your own Maestro session (the agent that spawned this MCP server). ' +
+      'Returns an array of { id, url, title, canGoBack, canGoForward, isLoading } where id is a stable handle like "browser:2". ' +
+      'You only ever see browser tabs in your own session, regardless of which tab the user has focused.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'get_browser_url',
+    description:
+      'Get the current URL and title of a browser tab by id, scoped to your own Maestro session.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Browser tab id, e.g. "browser:2" (from list_browsers).' },
+      },
+      required: ['id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'read_browser',
+    description:
+      'Read the rendered text (or HTML) of a browser tab by id, scoped to your own Maestro session. ' +
+      'Use format "text" or "innerText" for the visible page text, or "html" for the page markup. ' +
+      'Optionally cap the output with maxChars (head-truncated).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Browser tab id, e.g. "browser:2".' },
+        format: {
+          type: 'string',
+          enum: ['text', 'innerText', 'html'],
+          description: 'Output format (default "text").',
+        },
+        maxChars: { type: 'integer', minimum: 1, description: 'If set, return only the first N characters.' },
+      },
+      required: ['id'],
+      additionalProperties: false,
+    },
+  },
 ];
 
 // ---------- Bridge client (lazy, single shared connection) ----------
@@ -302,6 +344,31 @@ async function handleMessage(msg) {
           (result && result.totalLines) +
           (result && result.truncated ? ' (tail-truncated)' : '');
         const text = header + '\n----- BEGIN BUFFER -----\n' + (result && result.content) + '\n----- END BUFFER -----';
+        send(rpcResult(id, { content: [{ type: 'text', text }] }));
+        return;
+      }
+      if (name === 'list_browsers') {
+        const result = await bridgeCall('listBrowsers', {});
+        const text = JSON.stringify(result, null, 2);
+        send(rpcResult(id, { content: [{ type: 'text', text }] }));
+        return;
+      }
+      if (name === 'get_browser_url') {
+        const result = await bridgeCall('getBrowserUrl', args);
+        const text = JSON.stringify(result, null, 2);
+        send(rpcResult(id, { content: [{ type: 'text', text }] }));
+        return;
+      }
+      if (name === 'read_browser') {
+        const result = await bridgeCall('readBrowser', args);
+        const header =
+          'browser=' + (result && result.id) +
+          ' url=' + (result && result.url) +
+          ' format=' + (result && result.format) +
+          ' totalChars=' + (result && result.totalChars) +
+          (result && result.truncated ? ' (head-truncated)' : '');
+        const text =
+          header + '\n----- BEGIN PAGE -----\n' + (result && result.content) + '\n----- END PAGE -----';
         send(rpcResult(id, { content: [{ type: 'text', text }] }));
         return;
       }

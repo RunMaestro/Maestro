@@ -8,7 +8,7 @@
 import { BrowserWindow, ipcMain } from 'electron';
 import { withIpcErrorLogging, CreateHandlerOptions } from '../../utils/ipcHandler';
 import { coworkingRegistry } from '../../coworking/coworking-registry';
-import { setTerminalBufferResolver } from '../../coworking/coworking-tools';
+import { setBrowserResolver, setTerminalBufferResolver } from '../../coworking/coworking-tools';
 import {
 	getInstallStatus,
 	installFor,
@@ -16,6 +16,9 @@ import {
 	uninstallFor,
 } from '../../coworking/coworking-installer';
 import type {
+	BrowserOp,
+	BrowserOpResult,
+	CoworkingBrowserInput,
 	CoworkingInstallStatus,
 	CoworkingTerminalRecord,
 } from '../../coworking/coworking-types';
@@ -101,6 +104,16 @@ export function registerCoworkingHandlers(deps: CoworkingHandlerDependencies): v
 		})
 	);
 
+	ipcMain.handle(
+		'coworking:syncSessionBrowsers',
+		withIpcErrorLogging(
+			handlerOpts('syncSessionBrowsers'),
+			async (sessionId: string, inputs: CoworkingBrowserInput[]): Promise<void> => {
+				coworkingRegistry.syncSessionBrowsers(sessionId, inputs);
+			}
+		)
+	);
+
 	// ---- Buffer-request resolver (main → renderer → main) ----
 	//
 	// The MCP server bridge calls into `readTerminal(sessionId, ...)`, which calls this
@@ -110,6 +123,11 @@ export function registerCoworkingHandlers(deps: CoworkingHandlerDependencies): v
 	// answers via ipcRenderer.send(responseChannel, content).
 	let nextRequestId = 1;
 	const BUFFER_REQUEST_TIMEOUT_MS = 5000;
+	// Browser ops can involve a page-text extraction or a webview activation, so
+	// give them more headroom than terminal reads. Kept under the MCP server's
+	// 10s per-RPC timeout so the main side fails first with a clean message
+	// instead of leaking a listener past the agent-facing timeout.
+	const BROWSER_OP_TIMEOUT_MS = 8000;
 
 	setTerminalBufferResolver(async (sessionId: string, tabUuid: string): Promise<string> => {
 		const win = deps.getMainWindow();
@@ -118,30 +136,75 @@ export function registerCoworkingHandlers(deps: CoworkingHandlerDependencies): v
 		}
 		const responseChannel = `coworking:bufferResponse:${nextRequestId++}`;
 		const expectedSenderId = win.webContents.id;
-		return new Promise<string>((resolve, reject) => {
-			const handler = (_event: Electron.IpcMainEvent, content: string) => {
-				// Drop responses originating from any renderer other than our main window
-				// — defense-in-depth against a malicious or misconfigured renderer.
+		const { promise, resolve, reject } = Promise.withResolvers<string>();
+		const handler = (_event: Electron.IpcMainEvent, content: string) => {
+			// Drop responses originating from any renderer other than our main window
+			// — defense-in-depth against a malicious or misconfigured renderer.
+			if (_event.sender.id !== expectedSenderId) return;
+			clearTimeout(timer);
+			ipcMain.removeListener(responseChannel, handler);
+			resolve(typeof content === 'string' ? content : '');
+		};
+		const timer = setTimeout(() => {
+			ipcMain.removeListener(responseChannel, handler);
+			reject(new Error('Coworking: timed out waiting for terminal buffer from renderer'));
+		}, BUFFER_REQUEST_TIMEOUT_MS);
+		ipcMain.on(responseChannel, handler);
+		try {
+			win.webContents.send('coworking:requestBuffer', tabUuid, sessionId, responseChannel);
+		} catch (err) {
+			// If `send` throws (e.g. window destroyed between the guard and now),
+			// surface it immediately instead of waiting out the 5s timeout while
+			// the listener leaks.
+			clearTimeout(timer);
+			ipcMain.removeListener(responseChannel, handler);
+			reject(err instanceof Error ? err : new Error(String(err)));
+		}
+		return promise;
+	});
+
+	// ---- Browser-op resolver (main -> renderer -> main) ----
+	//
+	// Same shape as the terminal buffer resolver: the bridge calls into the
+	// browser tools with the bridge-bound sessionId + the renderer-side tabUuid
+	// and a BrowserOp; we forward it to the renderer (which prefers an already
+	// mounted hidden webview and only activates the tab as a fallback) and await
+	// the BrowserOpResult on a unique, sender-validated responseChannel.
+	setBrowserResolver(
+		async (sessionId: string, tabUuid: string, op: BrowserOp): Promise<BrowserOpResult> => {
+			const win = deps.getMainWindow();
+			if (!win || win.isDestroyed()) {
+				throw new Error('Coworking: main window is not available to drive browser tab');
+			}
+			const responseChannel = `coworking:browserOpResponse:${nextRequestId++}`;
+			const expectedSenderId = win.webContents.id;
+			const { promise, resolve, reject } = Promise.withResolvers<BrowserOpResult>();
+			const handler = (_event: Electron.IpcMainEvent, result: BrowserOpResult) => {
 				if (_event.sender.id !== expectedSenderId) return;
 				clearTimeout(timer);
 				ipcMain.removeListener(responseChannel, handler);
-				resolve(typeof content === 'string' ? content : '');
+				// The renderer reports op failures (tab not live, selector miss, eval
+				// throw) via ok:false + a message in content, so the agent gets a clean
+				// JSON-RPC error instead of a silent empty result.
+				if (result && result.ok === false) {
+					reject(new Error(result.content || 'Coworking: browser op failed'));
+					return;
+				}
+				resolve(result);
 			};
 			const timer = setTimeout(() => {
 				ipcMain.removeListener(responseChannel, handler);
-				reject(new Error('Coworking: timed out waiting for terminal buffer from renderer'));
-			}, BUFFER_REQUEST_TIMEOUT_MS);
+				reject(new Error('Coworking: timed out waiting for browser op from renderer'));
+			}, BROWSER_OP_TIMEOUT_MS);
 			ipcMain.on(responseChannel, handler);
 			try {
-				win.webContents.send('coworking:requestBuffer', tabUuid, sessionId, responseChannel);
+				win.webContents.send('coworking:requestBrowserOp', tabUuid, sessionId, op, responseChannel);
 			} catch (err) {
-				// If `send` throws (e.g. window destroyed between the guard and now),
-				// surface it immediately instead of waiting out the 5s timeout while
-				// the listener leaks.
 				clearTimeout(timer);
 				ipcMain.removeListener(responseChannel, handler);
 				reject(err instanceof Error ? err : new Error(String(err)));
 			}
-		});
-	});
+			return promise;
+		}
+	);
 }
