@@ -90,7 +90,9 @@
 		],
 		"asarUnpack": [
 			"node_modules/node-pty/**/*",
-			"node_modules/better-sqlite3/**/*"
+			"node_modules/better-sqlite3/**/*",
+			"node_modules/@napi-rs/keyring/**/*",
+			"node_modules/@napi-rs/keyring-*/*"
 		],
 		"mac": {
 			"category": "public.app-category.developer-tools",
@@ -281,6 +283,7 @@
 		"@codemirror/search": "^6.7.0",
 		"@codemirror/state": "^6.6.0",
 		"@codemirror/view": "^6.42.1",
+		"@napi-rs/keyring": "1.3.0",
 		"@dagrejs/dagre": "^1.1.8",
 		"@emoji-mart/data": "^1.2.1",
 		"@emoji-mart/react": "^1.1.1",

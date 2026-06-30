@@ -15,6 +15,7 @@ import * as path from 'path';
 
 import {
 	AuthorizationStore,
+	createKeyringAnchor,
 	type SealProvider,
 	type AnchorStore,
 	type Anchor,
@@ -54,6 +55,52 @@ function fakeAnchor(holder: { value: Anchor | null }, available = true): AnchorS
 		},
 	};
 }
+
+it('createKeyringAnchor degrades unavailable native keyring to session-only', () => {
+	const missing = createKeyringAnchor('com.maestro.test', 'freshness', () => null);
+	expect(missing.available()).toBe(false);
+	expect(missing.read()).toBeNull();
+	expect(() => missing.write({ installSecret: 's', epoch: 1 })).not.toThrow();
+
+	const throwing = createKeyringAnchor('com.maestro.test', 'freshness', () => {
+		throw new Error('native module unavailable');
+	});
+	expect(throwing.available()).toBe(false);
+	expect(() => throwing.clear()).not.toThrow();
+});
+
+it('createKeyringAnchor wraps a lazy keyring Entry module', () => {
+	const passwords = new Map<string, string>();
+	class FakeEntry {
+		private readonly key: string;
+
+		constructor(service: string, account: string) {
+			this.key = `${service}:${account}`;
+		}
+
+		getPassword(): string | null {
+			return passwords.get(this.key) ?? null;
+		}
+
+		setPassword(password: string): void {
+			passwords.set(this.key, password);
+		}
+
+		deletePassword(): boolean {
+			return passwords.delete(this.key);
+		}
+	}
+
+	const anchor = createKeyringAnchor('com.maestro.test', 'freshness', () => ({
+		Entry: FakeEntry,
+	}));
+
+	expect(anchor.available()).toBe(true);
+	anchor.write({ installSecret: 'secret', epoch: 7 });
+	expect(anchor.read()).toEqual({ installSecret: 'secret', epoch: 7 });
+	anchor.clear();
+	expect(anchor.read()).toBeNull();
+});
 
 const caps = (cap: PermissionGrant['capability'], scope?: string): PermissionGrant[] => [
 	{ capability: cap, scope, grantedAt: 1 },

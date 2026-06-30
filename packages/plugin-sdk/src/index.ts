@@ -903,6 +903,19 @@ export interface PluginEventPayloads {
 		costUsd?: number;
 		runId?: string;
 		parentRunId?: string;
+		providerSessionId?: string;
+		queueDepth?: number;
+		inputTokens?: number;
+		outputTokens?: number;
+		cacheReadInputTokens?: number;
+		cacheCreationInputTokens?: number;
+		reasoningTokens?: number;
+		totalTokens?: number;
+		chainRootId?: string;
+		parentEventId?: string;
+		pipelineId?: string;
+		pipelineName?: string;
+		lineageDepth?: number;
 	};
 }
 
@@ -919,7 +932,7 @@ export interface PluginEvent<T extends PluginEventTopic = PluginEventTopic> {
 /** The host API surface as ONE data-driven table: method -> { capability }. The
  * method union, the runtime list, and the method->capability map all DERIVE from
  * this. `satisfies` makes a typo'd capability a compile error. */
-const HOST_API = {
+export const HOST_API = {
 	'fs.read': { capability: 'fs:read' },
 	'fs.write': { capability: 'fs:write' },
 	'net.fetch': { capability: 'net:fetch' },
@@ -964,6 +977,11 @@ const HOST_API = {
 export type HostMethod = keyof typeof HOST_API;
 
 export const HOST_METHODS: readonly HostMethod[] = Object.keys(HOST_API) as HostMethod[];
+
+/** Which capability each host method requires (derived from HOST_API). */
+export const HOST_METHOD_CAPABILITY: Record<HostMethod, PluginCapability> = Object.fromEntries(
+	(Object.keys(HOST_API) as HostMethod[]).map((m) => [m, HOST_API[m].capability])
+) as Record<HostMethod, PluginCapability>;
 
 export function isHostMethod(value: unknown): value is HostMethod {
 	return typeof value === 'string' && (HOST_METHODS as readonly string[]).includes(value);

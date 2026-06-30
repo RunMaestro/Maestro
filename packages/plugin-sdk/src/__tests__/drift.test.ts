@@ -7,6 +7,8 @@ import {
 	PLUGIN_CATEGORIES,
 	PLUGIN_EVENT_TOPICS,
 	HOST_METHODS,
+	HOST_API,
+	HOST_METHOD_CAPABILITY,
 	HOST_API_VERSION,
 	PLUGIN_ID_PATTERN,
 	UI_SURFACES,
@@ -31,7 +33,11 @@ import {
 	validatePluginManifest as srcValidatePluginManifest,
 } from '../../../../src/shared/plugins/plugin-manifest';
 import { PLUGIN_EVENT_TOPICS as SRC_PLUGIN_EVENT_TOPICS } from '../../../../src/shared/plugins/events';
-import { HOST_METHODS as SRC_HOST_METHODS } from '../../../../src/shared/plugins/rpc-protocol';
+import {
+	HOST_API as SRC_HOST_API,
+	HOST_METHODS as SRC_HOST_METHODS,
+	HOST_METHOD_CAPABILITY as SRC_HOST_METHOD_CAPABILITY,
+} from '../../../../src/shared/plugins/rpc-protocol';
 import { HOST_API_VERSION as SRC_HOST_API_VERSION } from '../../../../src/shared/plugins/host-api';
 import { UI_SURFACES as SRC_UI_SURFACES } from '../../../../src/shared/plugins/contributions';
 
@@ -63,6 +69,11 @@ describe('@maestro/plugin-sdk vendored-contract drift guard', () => {
 
 	it('HOST_METHODS matches the source method set', () => {
 		expect(HOST_METHODS).toEqual(SRC_HOST_METHODS);
+	});
+
+	it('HOST_API and HOST_METHOD_CAPABILITY match the source capability table', () => {
+		expect(HOST_API).toEqual(SRC_HOST_API);
+		expect(HOST_METHOD_CAPABILITY).toEqual(SRC_HOST_METHOD_CAPABILITY);
 	});
 
 	it('HOST_API_VERSION matches the source and is pinned to 1.7.0', () => {

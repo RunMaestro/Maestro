@@ -487,6 +487,25 @@ test.describe('plugin system e2e', () => {
 				1
 			);
 
+			// Configure renders SettingContribution controls and persists writes under
+			// the plugin-owned settings namespace. Re-opening the details editor reads
+			// the persisted value back instead of the manifest default.
+			const readDemoSetting = async (): Promise<unknown> =>
+				page.evaluate((id) => window.maestro.settings.get(`plugins.${id}.demoFlag`), PLUGIN_ID);
+			await details.locator('[data-testid="extension-configure"]').click();
+			const settingInput = details.locator(
+				'[data-testid="extension-setting-input"][data-key="demoFlag"]'
+			);
+			await expect(settingInput).toBeVisible();
+			await expect(settingInput).toBeChecked();
+			await settingInput.uncheck();
+			await expect.poll(readDemoSetting, { timeout: 5_000 }).toBe(false);
+
+			await details.locator('[data-testid="extension-details-back"]').click();
+			await card.click();
+			await details.locator('[data-testid="extension-configure"]').click();
+			await expect(settingInput).not.toBeChecked();
+
 			// enable -> disable round-trips, observed via window.maestro.plugins.list().
 			const isEnabled = async (): Promise<boolean | undefined> => {
 				const snap = await page.evaluate(() => window.maestro.plugins.list());
@@ -500,6 +519,12 @@ test.describe('plugin system e2e', () => {
 			await expect
 				.poll(isEnabled, { timeout: 30_000, message: 'plugin never disabled' })
 				.toBe(false);
+
+			// Disabling removes the configure surface and any stale setting control, so
+			// a revoked plugin cannot keep mutating settings through an old editor.
+			await expect(details.locator('[data-testid="extension-configure"]')).toHaveCount(0);
+			await expect(settingInput).toHaveCount(0);
+			await expect.poll(readDemoSetting, { timeout: 5_000 }).toBe(false);
 
 			// Re-enabling a tier-1 plugin routes through the host-owned consent window.
 			const consentPromise = launched.app.waitForEvent('window', { timeout: 30_000 });

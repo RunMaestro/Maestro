@@ -93,6 +93,12 @@ export interface SealProvider {
 	unseal(blob: Buffer): string;
 }
 
+export interface SafeStorageLike {
+	isEncryptionAvailable(): boolean;
+	encryptString(s: string): Buffer;
+	decryptString(b: Buffer): string;
+}
+
 /** Named credential-store slot for the anchor, OUTSIDE the data-dir file tree. */
 export interface AnchorStore {
 	available(): boolean;
@@ -419,11 +425,7 @@ export class AuthorizationStore {
 }
 
 /** Production `SealProvider` over Electron `safeStorage`. */
-export function safeStorageSeal(safeStorage: {
-	isEncryptionAvailable(): boolean;
-	encryptString(s: string): Buffer;
-	decryptString(b: Buffer): string;
-}): SealProvider {
+export function safeStorageSeal(safeStorage: SafeStorageLike): SealProvider {
 	return {
 		available: () => {
 			try {
@@ -501,8 +503,7 @@ export function keyringAnchor(entryFactory: () => KeyringEntry | null): AnchorSt
 	};
 }
 
-/** A no-op anchor — `available() === false`, so the store runs session-only. The
- * default until the OS keyring (the named freshness anchor) is injected. */
+/** A no-op anchor — `available() === false`, so the store runs session-only. */
 export function noAnchor(): AnchorStore {
 	return {
 		available: () => false,
@@ -512,20 +513,29 @@ export function noAnchor(): AnchorStore {
 	};
 }
 
-/** Electron `safeStorage`-shaped surface the production seal needs. */
-export interface SafeStorageLike {
-	isEncryptionAvailable(): boolean;
-	encryptString(s: string): Buffer;
-	decryptString(b: Buffer): string;
+export interface KeyringModule {
+	Entry: new (service: string, account: string) => KeyringEntry;
 }
 
-/**
- * Build the production authorization store: a `safeStorage` seal plus a freshness
- * anchor. Inject a keyring-backed `anchor` (see `keyringAnchor`) to enable
- * persistence across restarts; the default `noAnchor()` runs session-only
- * (re-consent each launch) with zero native dependencies, so the gate is fully
- * functional before the keyring/packaging step lands.
- */
+/** Lazily adapt `@napi-rs/keyring` without making app startup depend on it. */
+export function createKeyringAnchor(
+	service: string,
+	account: string,
+	loadModule: () => KeyringModule | null = () => {
+		try {
+			const mod = require('@napi-rs/keyring') as Partial<KeyringModule>;
+			return typeof mod.Entry === 'function' ? (mod as KeyringModule) : null;
+		} catch {
+			return null;
+		}
+	}
+): AnchorStore {
+	return keyringAnchor(() => {
+		const mod = loadModule();
+		if (!mod) return null;
+		return new mod.Entry(service, account);
+	});
+}
 export function createAuthorizationStore(opts: {
 	safeStorage: SafeStorageLike;
 	ledgerPath: string;

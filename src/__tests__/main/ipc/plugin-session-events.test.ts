@@ -22,15 +22,27 @@ function mapOf(...sessions: SessionLifecycleSnapshot[]): Map<string, SessionLife
 
 /** Keys that would prove a payload carries free-form content. None may appear. */
 const FORBIDDEN_KEY = /prompt|transcript|message|body|content|output|secret|token|text|stdout/i;
+const ALLOWED_COUNTER_KEY = new Set([
+	'inputTokens',
+	'outputTokens',
+	'cacheReadInputTokens',
+	'cacheCreationInputTokens',
+	'reasoningTokens',
+	'totalTokens',
+]);
 
 function assertMetadataOnly(events: PluginEvent[]): void {
 	for (const event of events) {
 		expect(isPluginEventTopic(event.topic)).toBe(true);
 		for (const key of Object.keys(event.payload as Record<string, unknown>)) {
+			const value = (event.payload as Record<string, unknown>)[key];
+			if (ALLOWED_COUNTER_KEY.has(key)) {
+				expect(typeof value).toBe('number');
+				continue;
+			}
 			expect(key).not.toMatch(FORBIDDEN_KEY);
 			// Every surviving value is primitive metadata: ids/labels/statuses/counters,
 			// never nested free-form bodies.
-			const value = (event.payload as Record<string, unknown>)[key];
 			expect(['string', 'number', 'boolean']).toContain(typeof value);
 		}
 	}
@@ -185,8 +197,22 @@ describe('PluginEventPayloads metadata-only contract', () => {
 			startedAt: AT,
 			completedAt: AT,
 			costUsd: 0.01,
+			providerSessionId: 'provider-session-1',
+			queueDepth: 2,
+			inputTokens: 100,
+			outputTokens: 25,
+			cacheReadInputTokens: 10,
+			cacheCreationInputTokens: 5,
+			reasoningTokens: 3,
+			totalTokens: 143,
+			runId: 'run-1',
+			parentRunId: 'run-0',
+			chainRootId: 'root-1',
+			parentEventId: 'event-0',
+			pipelineId: 'pipe-1',
+			pipelineName: 'Review',
+			lineageDepth: 3,
 		};
-
 		const events: PluginEvent[] = [
 			{ topic: 'session.created', at: AT, payload: created },
 			{ topic: 'session.removed', at: AT, payload: removed },

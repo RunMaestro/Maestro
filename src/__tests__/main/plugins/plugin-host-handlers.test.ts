@@ -98,6 +98,28 @@ describe('settings.set', () => {
 		expect(settingsSet).toHaveBeenCalledWith('plugins.p.theme', 'dark');
 	});
 
+	it('denies stale settings.set host calls after live grants are revoked', async () => {
+		let grants = [grant('settings:write')];
+		const settingsSet = vi.fn();
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => grants),
+				settingsSet,
+			})
+		);
+
+		await expect(
+			h['settings.set']!('p', { key: 'plugins.p.theme', value: 'dark' })
+		).resolves.toEqual({ ok: true });
+		grants = [];
+
+		await expect(
+			h['settings.set']!('p', { key: 'plugins.p.theme', value: 'light' })
+		).rejects.toThrow(/permission denied/);
+		expect(settingsSet).toHaveBeenCalledTimes(1);
+		expect(settingsSet).toHaveBeenCalledWith('plugins.p.theme', 'dark');
+	});
+
 	it('rejects oversized and non-serializable values', async () => {
 		const h = buildHostCallHandlers(makeDeps());
 		await expect(
