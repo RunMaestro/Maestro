@@ -79,19 +79,39 @@ export function useAgentUsageListener(deps: UseAgentUsageListenerDeps): void {
 			// reuses the same per-turn stream every provider already feeds, so the
 			// timeline is provider-agnostic with no per-agent code. Keyed by the base
 			// (agent) session id so a session's parallel tabs share one timeline.
-			const contextTokens = calculateContextTokens(usageStats, agentToolType);
-			useContextTimelineStore.getState().appendPoint(baseSessionId, {
-				tabId,
-				inputTokens: usageStats.inputTokens,
-				outputTokens: usageStats.outputTokens,
-				cacheReadInputTokens: usageStats.cacheReadInputTokens || 0,
-				cacheCreationInputTokens: usageStats.cacheCreationInputTokens || 0,
-				reasoningTokens: usageStats.reasoningTokens || 0,
-				totalCostUsd: usageStats.totalCostUsd || 0,
-				contextTokens,
-				contextWindow: resolvedWindow,
-				percentage: contextPercentage,
-			});
+			//
+			// Two events are deliberately NOT recorded:
+			//  1. Synthetic runs (synopsis / Auto Run batch) map to the parent
+			//     baseSessionId but consume a SEPARATE process context - recording
+			//     them would pollute the visible agent's timeline with hidden work.
+			//     The visible usage gauge already ignores them (it keys off
+			//     actualSessionId), so the timeline matches it by only recording
+			//     interactive runs.
+			//  2. Output-only deltas (Copilot streams these between context
+			//     snapshots: outputTokens only, zero input/cache). Recording one
+			//     would dip the timeline to just the latest output tokens. Mirror
+			//     the snapshot-preserving guard in useBatchedSessionUpdates.
+			const isInteractiveRun =
+				parsed.type === 'ai-tab' || parsed.type === 'legacy-ai' || parsed.type === 'regular';
+			const isOutputOnlyDelta =
+				usageStats.inputTokens === 0 &&
+				(usageStats.cacheReadInputTokens || 0) === 0 &&
+				(usageStats.cacheCreationInputTokens || 0) === 0 &&
+				usageStats.outputTokens > 0;
+			if (isInteractiveRun && !isOutputOnlyDelta) {
+				useContextTimelineStore.getState().appendPoint(baseSessionId, {
+					tabId,
+					inputTokens: usageStats.inputTokens,
+					outputTokens: usageStats.outputTokens,
+					cacheReadInputTokens: usageStats.cacheReadInputTokens || 0,
+					cacheCreationInputTokens: usageStats.cacheCreationInputTokens || 0,
+					reasoningTokens: usageStats.reasoningTokens || 0,
+					totalCostUsd: usageStats.totalCostUsd || 0,
+					contextTokens: calculateContextTokens(usageStats, agentToolType),
+					contextWindow: resolvedWindow,
+					percentage: contextPercentage,
+				});
+			}
 
 			if (contextPercentage !== null) {
 				deps.batchedUpdater.updateContextUsage(actualSessionId, contextPercentage);
