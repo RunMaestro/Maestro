@@ -23,6 +23,9 @@ import { useTabStore } from '../../stores/tabStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { useTerminalMounting } from '../../hooks/terminal/useTerminalMounting';
+import { useCoworkingBufferResponder } from '../../hooks/coworking/useCoworkingBufferResponder';
+import { useCoworkingRegistrySync } from '../../hooks/coworking/useCoworkingRegistrySync';
+import { useCoworkingBrowserResponder } from '../../hooks/coworking/useCoworkingBrowserResponder';
 import { getTerminalTabDisplayName } from '../../utils/terminalTabHelpers';
 import { aiTabFocusFields } from '../../utils/tabHelpers';
 import { useSshRemoteName } from '../../hooks/mainPanel/useSshRemoteName';
@@ -33,6 +36,8 @@ import { useChatFileDropZone } from '../../hooks/ui/useChatFileDropZone';
 import { MainPanelHeader } from './MainPanelHeader';
 import { MainPanelContent } from './MainPanelContent';
 import { AgentErrorBanner } from './AgentErrorBanner';
+import { CoworkingApprovalHost } from '../coworking/CoworkingApprovalHost';
+import { CoworkingBackgroundBrowsers } from '../coworking/CoworkingBackgroundBrowsers';
 import type { MainPanelHandle, MainPanelProps } from './types';
 
 // PERFORMANCE: Wrap with React.memo to prevent re-renders when parent (App.tsx) re-renders
@@ -159,6 +164,10 @@ export const MainPanel = React.memo(
 		// Imperative handle for the currently-mounted BrowserTabView. Only the active browser
 		// tab is rendered, so this points to that one (or null if no browser tab is active).
 		const browserViewRef = useRef<BrowserTabViewHandle | null>(null);
+		// Per-tab BrowserTabView handle map for the active agent's mounted browser
+		// tabs (visible + kept-alive hidden). Lifted here so the coworking browser
+		// responder can reach a mounted tab's handle without stealing focus.
+		const browserViewRefs = useRef<Map<string, BrowserTabViewHandle>>(new Map());
 		// Terminal session mounting lifecycle (refs, state, effects)
 		const {
 			terminalViewRefs,
@@ -167,6 +176,13 @@ export const MainPanel = React.memo(
 			terminalSearchOpen,
 			setTerminalSearchOpen,
 		} = useTerminalMounting(activeSession);
+
+		// Coworking — mirror active session's terminal tabs into the main-process registry
+		// so the MCP `list_terminals` tool is accurate, and answer buffer-fetch requests
+		// from main via the per-session TerminalView ref map. Both hooks no-op when the
+		// `coworking` Encore flag is off.
+		useCoworkingRegistrySync();
+		useCoworkingBufferResponder(terminalViewRefs);
 
 		// Extract tab handlers from props
 		const {
@@ -208,6 +224,19 @@ export const MainPanel = React.memo(
 			onTerminalTabRename,
 			onTerminalTabConfigureStartupCommand,
 		} = props;
+
+		// Coworking browser responder — answers browser-op requests (read now,
+		// interaction in a later phase) by resolving the target tab's live webview
+		// handle. No-ops when the `coworking` Encore flag is off.
+		const selectBrowserTab = useCallback(
+			(_sessionId: string, tabUuid: string) => {
+				// The responder only activates within the focused agent, so the
+				// active-session-scoped onBrowserTabSelect is the correct target.
+				onBrowserTabSelect?.(tabUuid);
+			},
+			[onBrowserTabSelect]
+		);
+		useCoworkingBrowserResponder(browserViewRefs, selectBrowserTab);
 
 		// Get the active tab for header display
 		// The header should show the active tab's data (UUID, name, cost, context), not session-level data
@@ -926,6 +955,7 @@ export const MainPanel = React.memo(
 							handleFilePreviewReload={handleFilePreviewReload}
 							handleBrowserTabUpdate={onBrowserTabUpdate}
 							browserViewRef={browserViewRef}
+							browserViewRefs={browserViewRefs}
 							terminalViewRefs={terminalViewRefs}
 							mountedTerminalSessionIds={mountedTerminalSessionIds}
 							mountedTerminalSessionsRef={mountedTerminalSessionsRef}
@@ -1064,6 +1094,8 @@ export const MainPanel = React.memo(
 						/>
 					</div>
 				</ErrorBoundary>
+				<CoworkingApprovalHost theme={theme} />
+				<CoworkingBackgroundBrowsers theme={theme} />
 			</>
 		);
 	})

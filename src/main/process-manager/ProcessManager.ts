@@ -20,6 +20,8 @@ import { isWindows } from '../../shared/platformDetection';
 import type { SshRemoteConfig } from '../../shared/types';
 import { getDefaultShell } from '../stores/defaults';
 import { captureException } from '../utils/sentry';
+import { COWORKING_SESSION_ID_ENV_VAR } from '../coworking/coworking-types';
+import { resolveOwningMaestroSessionId } from '../coworking/coworking-session-id';
 
 /** Time (ms) to wait for a PTY process to exit after SIGTERM before sending SIGKILL. */
 const PTY_KILL_ESCALATION_MS = 2000;
@@ -69,12 +71,33 @@ export class ProcessManager extends EventEmitter {
 			this.kill(config.sessionId);
 		}
 
-		const usePty = this.shouldUsePty(config);
+		// Inject the *owning Maestro session id* into the agent CLI's env so the
+		// coworking MCP subprocess (spawned by the agent's MCP client, inheriting
+		// parent env) can announce the correct caller key to the bridge. We must
+		// strip the `-ai-{tabId}[-fp-{ts}]` composite suffix that ProcessManager
+		// uses for AI-tab spawns, because the registry pushes terminal records
+		// keyed by the bare Session.id from the renderer. Without this, the
+		// bridge handshake binds to a session id that never has records in the
+		// registry → `list_terminals` returns [] for the caller's own session.
+		// Terminals don't run MCP clients, so we skip them. Spawn-callers can
+		// override by passing the var explicitly in customEnvVars.
+		const configWithCoworkingSession =
+			config.toolType === 'terminal'
+				? config
+				: {
+						...config,
+						customEnvVars: {
+							[COWORKING_SESSION_ID_ENV_VAR]: resolveOwningMaestroSessionId(config.sessionId),
+							...(config.customEnvVars ?? {}),
+						},
+					};
+
+		const usePty = this.shouldUsePty(configWithCoworkingSession);
 
 		if (usePty) {
-			return this.ptySpawner.spawn(config);
+			return this.ptySpawner.spawn(configWithCoworkingSession);
 		} else {
-			return this.childProcessSpawner.spawn(config);
+			return this.childProcessSpawner.spawn(configWithCoworkingSession);
 		}
 	}
 
@@ -380,6 +403,28 @@ export class ProcessManager extends EventEmitter {
 	 */
 	get(sessionId: string): ManagedProcess | undefined {
 		return this.processes.get(sessionId);
+	}
+
+	/**
+	 * Look up the *owning Maestro session id* for a given OS PID, or null if
+	 * the PID does not match any tracked agent-CLI process. Used by the
+	 * coworking bridge to bind a connection when an agent CLI (e.g. Codex)
+	 * does not propagate `MAESTRO_COWORKING_SESSION_ID` into the MCP
+	 * subprocess it spawned — the subprocess instead sends `process.ppid`
+	 * during handshake and we walk the parent chain to find the owning agent.
+	 *
+	 * Terminals are excluded: they don't spawn MCP clients, and skipping them
+	 * preserves the property that only AI-tab processes can ever satisfy a
+	 * coworking handshake.
+	 */
+	getSessionIdByPid(pid: number): string | null {
+		if (!Number.isInteger(pid) || pid <= 0) return null;
+		for (const proc of this.processes.values()) {
+			if (proc.pid === pid && proc.toolType !== 'terminal') {
+				return resolveOwningMaestroSessionId(proc.sessionId);
+			}
+		}
+		return null;
 	}
 
 	/**

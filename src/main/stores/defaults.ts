@@ -88,6 +88,13 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	annotatorTextFont: 'sans-serif',
 	annotatorTextBgColor: '',
 	globalShowHotkey: [],
+	// Coworking: agent ids allowed to use browser interaction tools (empty = all off)
+	coworkingBrowserInteraction: [],
+	// Coworking: per-agent browser-interaction per-call confirm policy (off|dangerous|all; default dangerous)
+	coworkingBrowserInteractionConfirm: {},
+	// Coworking: opt-in background webview host for cross-session browser access + LRU cap
+	coworkingBackgroundBrowsers: false,
+	coworkingBackgroundBrowsersLimit: 2,
 	// Auto-resume agents that paused on a token/API/credit limit
 	autoResumeOnLimit: true,
 	autoResumeCheckIntervalHours: 2,

@@ -12,6 +12,8 @@ import {
 	ChevronDown,
 	ChevronUp,
 	ExternalLink,
+	Eye,
+	EyeOff,
 	Globe,
 	RotateCw,
 	X,
@@ -43,6 +45,7 @@ type ElectronWebviewElement = HTMLElement & {
 		options?: { forward?: boolean; findNext?: boolean; matchCase?: boolean }
 	) => number;
 	stopFindInPage: (action: 'clearSelection' | 'keepSelection' | 'activateSelection') => void;
+	capturePage?: () => Promise<{ toDataURL: () => string }>;
 };
 
 interface BrowserTabViewProps {
@@ -79,6 +82,66 @@ export interface BrowserTabViewHandle {
 	goForward(): void;
 	/** Move focus into the webview guest content (so arrow keys scroll the page). */
 	focusWebview(): void;
+	/** Extract the page's rendered text or HTML in the requested format. Like
+	 *  getContent but format-aware; waits briefly for dom-ready. */
+	extract(format: 'text' | 'innerText' | 'html'): Promise<string>;
+	/** Current url + title of the loaded page (best-effort: webview-fresh with a
+	 *  fallback to the last-known tab metadata). */
+	getMeta(): { url: string; title: string };
+	/** Navigate the tab to a url/search target. Returns the resolved url; throws
+	 *  on an invalid target. Used by the coworking browser_navigate tool. */
+	navigate(url: string): string;
+	/** Reload the current page. */
+	reload(): void;
+	/** Stop the in-flight load. */
+	stop(): void;
+	/** Run JavaScript in the guest page and resolve its result. Used by the
+	 *  coworking browser_click / browser_type / browser_eval tools. */
+	executeJavaScript(code: string): Promise<unknown>;
+	/** Capture a PNG screenshot of the tab as a data URL. Throws when capture is
+	 *  unavailable (e.g. webview not ready). */
+	capturePage(): Promise<string>;
+}
+
+/** Promise-based delay (ES2024 Promise.withResolvers, ambient-typed for the
+ *  project's ES2020 lib). Used to poll for dom-ready without busy-waiting. */
+function delay(ms: number): Promise<void> {
+	const { promise, resolve } = Promise.withResolvers<void>();
+	setTimeout(resolve, ms);
+	return promise;
+}
+
+/** Wait up to 2s for the guest webview to reach dom-ready so extraction returns
+ *  a non-empty value immediately after a tab activation. */
+async function waitForDomReady(isDomReadyRef: React.MutableRefObject<boolean>): Promise<void> {
+	if (isDomReadyRef.current) return;
+	const deadline = Date.now() + 2000;
+	while (!isDomReadyRef.current && Date.now() < deadline) {
+		await delay(50);
+	}
+}
+
+/** Extract page text/HTML from the guest webview. Returns "" if unreachable or
+ *  the injected script throws. Electron's executeJavaScript queues until the
+ *  page is ready, so this is safe to call mid-navigation. */
+async function extractFromWebview(
+	webview: ElectronWebviewElement,
+	isDomReadyRef: React.MutableRefObject<boolean>,
+	format: 'text' | 'innerText' | 'html'
+): Promise<string> {
+	await waitForDomReady(isDomReadyRef);
+	const expr =
+		format === 'html'
+			? '(document.documentElement && document.documentElement.outerHTML) || ""'
+			: format === 'innerText'
+				? '(document.documentElement && document.documentElement.innerText) || ""'
+				: '(document.body && document.body.innerText) || ""';
+	try {
+		const result = await webview.executeJavaScript(expr);
+		return typeof result === 'string' ? result : '';
+	} catch {
+		return '';
+	}
 }
 
 function syncWebviewLayout(webview: ElectronWebviewElement | null) {
@@ -142,23 +205,20 @@ export const BrowserTabView = React.memo(
 				async getContent(): Promise<string> {
 					const webview = webviewRef.current;
 					if (!webview) return '';
-					// Wait up to 2s for dom-ready so extraction works immediately after a
-					// tab activation. If the guest is still navigating, we still attempt —
-					// Electron's executeJavaScript queues until the page is ready.
-					if (!isDomReadyRef.current) {
-						const deadline = Date.now() + 2000;
-						while (!isDomReadyRef.current && Date.now() < deadline) {
-							await new Promise((r) => setTimeout(r, 50));
-						}
-					}
-					try {
-						const result = await webview.executeJavaScript(
-							'(document.body && document.body.innerText) || ""'
-						);
-						return typeof result === 'string' ? result : '';
-					} catch {
-						return '';
-					}
+					return extractFromWebview(webview, isDomReadyRef, 'text');
+				},
+				async extract(format: 'text' | 'innerText' | 'html'): Promise<string> {
+					const webview = webviewRef.current;
+					if (!webview) return '';
+					return extractFromWebview(webview, isDomReadyRef, format);
+				},
+				getMeta(): { url: string; title: string } {
+					const tab = latestTabRef.current;
+					const webview = webviewRef.current;
+					return {
+						url: webview?.getURL?.() || tab.url || '',
+						title: webview?.getTitle?.() || tab.title || '',
+					};
 				},
 				getTabId(): string {
 					return latestTabRef.current.id;
@@ -182,6 +242,33 @@ export const BrowserTabView = React.memo(
 					// guard does not immediately blur the webview back out.
 					userClickedRef.current = true;
 					webviewRef.current?.focus();
+				},
+				navigate(rawUrl: string): string {
+					const webview = webviewRef.current;
+					if (!webview) throw new Error('Browser webview is not available');
+					const result = resolveBrowserTabNavigationTarget(rawUrl);
+					if (result.kind === 'error') throw new Error(result.message);
+					if (webview.src !== result.url) webview.src = result.url;
+					return result.url;
+				},
+				reload(): void {
+					webviewRef.current?.reload();
+				},
+				stop(): void {
+					webviewRef.current?.stop();
+				},
+				async executeJavaScript(code: string): Promise<unknown> {
+					const webview = webviewRef.current;
+					if (!webview) throw new Error('Browser webview is not available');
+					return webview.executeJavaScript(code);
+				},
+				async capturePage(): Promise<string> {
+					const webview = webviewRef.current;
+					if (!webview || !webview.capturePage) {
+						throw new Error('Screenshot is not available for this tab');
+					}
+					const image = await webview.capturePage();
+					return image.toDataURL();
 				},
 			}),
 			[]
@@ -636,6 +723,10 @@ export const BrowserTabView = React.memo(
 			void window.maestro.shell.openExternal(tab.url);
 		}, [tab.url]);
 
+		const handleToggleHiddenFromAgent = useCallback(() => {
+			onUpdateTab(tab.id, { hiddenFromAgent: !tab.hiddenFromAgent });
+		}, [onUpdateTab, tab.id, tab.hiddenFromAgent]);
+
 		return (
 			<div className="flex-1 min-h-0 flex flex-col" data-testid="browser-tab-view">
 				<div
@@ -744,6 +835,22 @@ export const BrowserTabView = React.memo(
 							title="Open in External Browser"
 						>
 							<ExternalLink className="w-4 h-4" />
+						</button>
+						<button
+							type="button"
+							onClick={handleToggleHiddenFromAgent}
+							className="flex items-center justify-center w-8 h-8 rounded transition-colors"
+							style={{
+								color: tab.hiddenFromAgent ? theme.colors.warning : theme.colors.textDim,
+							}}
+							title={
+								tab.hiddenFromAgent
+									? 'Hidden from agents - click to expose this tab to coworking agents'
+									: 'Visible to agents - click to hide this tab from coworking agents'
+							}
+							aria-pressed={tab.hiddenFromAgent === true}
+						>
+							{tab.hiddenFromAgent ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
 						</button>
 					</div>
 				</div>

@@ -3743,6 +3743,81 @@ interface MaestroAPI {
 			agentId?: string
 		) => Promise<{ success: boolean; path?: string; error?: string }>;
 	};
+
+	// Coworking API (per-agent MCP installer + terminal registry sync)
+	coworking: {
+		getInstallStatus: () => Promise<
+			Array<{ agentId: string; configPath: string; installed: boolean }>
+		>;
+		install: (agentId: string) => Promise<void>;
+		uninstall: (agentId: string) => Promise<void>;
+		installAll: () => Promise<Array<{ agentId: string; ok: boolean; error?: string }>>;
+		syncSessionTerminals: (
+			sessionId: string,
+			records: Array<{
+				id: string;
+				cwd: string;
+				title: string;
+				tabUuid: string;
+				sessionId: string;
+			}>
+		) => Promise<void>;
+		upsertTerminal: (record: {
+			id: string;
+			cwd: string;
+			title: string;
+			tabUuid: string;
+			sessionId: string;
+		}) => Promise<void>;
+		removeTerminal: (tabUuid: string) => Promise<void>;
+		removeSession: (sessionId: string) => Promise<void>;
+		onRequestBuffer: (
+			callback: (tabUuid: string, sessionId: string, responseChannel: string) => void
+		) => () => void;
+		sendBufferResponse: (responseChannel: string, content: string) => void;
+		syncSessionBrowsers: (
+			sessionId: string,
+			inputs: Array<{
+				tabUuid: string;
+				url: string;
+				title: string;
+				favicon?: string;
+				canGoBack: boolean;
+				canGoForward: boolean;
+				isLoading: boolean;
+			}>,
+			interactionEnabled: boolean,
+			agentType?: string
+		) => Promise<void>;
+		onRequestBrowserOp: (
+			callback: (
+				tabUuid: string,
+				sessionId: string,
+				op:
+					| { kind: 'read'; format: 'text' | 'innerText' | 'html' }
+					| { kind: 'navigate'; url: string }
+					| { kind: 'back' }
+					| { kind: 'forward' }
+					| { kind: 'reload' }
+					| { kind: 'stop' }
+					| { kind: 'click'; selector: string }
+					| { kind: 'type'; selector: string; text: string }
+					| { kind: 'eval'; code: string }
+					| { kind: 'screenshot' },
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendBrowserOpResponse: (
+			responseChannel: string,
+			result: {
+				content?: string;
+				dataUrl?: string;
+				url?: string;
+				title?: string;
+				ok: boolean;
+			}
+		) => void;
+	};
 }
 
 declare global {

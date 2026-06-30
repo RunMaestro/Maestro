@@ -109,19 +109,42 @@ export function parseTerminalSessionId(
  * Appends the tab to terminalTabs, inserts it into unifiedTabOrder directly to
  * the right of the currently active tab, and makes it the active terminal tab.
  *
+ * Mints a stable, monotonic, never-reused `coworkingId` (used by the coworking
+ * MCP server to address terminals as "term:N") via the session-level counter
+ * `nextCoworkingId`. The counter increments on every add and never decrements,
+ * so closed-tab ids are never reused within the same session lifetime.
+ *
  * @param session - The Maestro session to add the tab to
  * @param tab - The TerminalTab to add (created via createTerminalTab)
  * @returns New session with the tab added and set as active
  */
 export function addTerminalTab(session: Session, tab: TerminalTab): Session {
+	// Compute the chosen id by clamping the persisted counter against the
+	// max id already in the session — this protects against two failure modes:
+	//   1. legacy / partially-migrated sessions where `nextCoworkingId` is missing;
+	//   2. sessions where the counter was persisted lower than an existing id
+	//      (e.g. a corrupted save or older buggy build), which would otherwise
+	//      hand out a duplicate `term:N`.
+	const maxExistingCoworkingId = (session.terminalTabs ?? []).reduce(
+		(max, t) => (typeof t.coworkingId === 'number' && t.coworkingId > max ? t.coworkingId : max),
+		0
+	);
+	const nextCoworkingId = Math.max(session.nextCoworkingId ?? 1, maxExistingCoworkingId + 1);
+	const tabWithCoworkingId: TerminalTab = {
+		...tab,
+		coworkingId: tab.coworkingId ?? nextCoworkingId,
+	};
 	const newTabRef: UnifiedTabRef = { type: 'terminal', id: tab.id };
 	return {
 		...session,
-		terminalTabs: [...(session.terminalTabs || []), tab],
+		terminalTabs: [...(session.terminalTabs || []), tabWithCoworkingId],
 		activeTerminalTabId: tab.id,
 		activeFileTabId: null,
 		activeBrowserTabId: null,
 		unifiedTabOrder: insertAfterActiveInUnifiedTabOrder(session, newTabRef),
+		// Bump strictly past the larger of the chosen id and the bumped counter so we
+		// never hand out the same id twice within a session.
+		nextCoworkingId: Math.max(nextCoworkingId + 1, (tabWithCoworkingId.coworkingId ?? 0) + 1),
 	};
 }
 

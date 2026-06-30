@@ -1,5 +1,6 @@
 import { useSettings } from '../../../../hooks';
 import {
+	CoworkingSection,
 	CueSettingsSection,
 	DirectorNotesSection,
 	EncoreHeader,
@@ -88,6 +89,17 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 					})
 				}
 				cueState={cueState}
+			/>
+
+			<CoworkingSection
+				theme={theme}
+				enabled={settings.encoreFeatures.coworking ?? false}
+				onToggle={() =>
+					settings.setEncoreFeatures({
+						...settings.encoreFeatures,
+						coworking: !settings.encoreFeatures.coworking,
+					})
+				}
 			/>
 
 			<DirectorNotesSection

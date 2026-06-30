@@ -89,10 +89,14 @@ import {
 	registerMaestroCliHandlers,
 	registerPromptsHandlers,
 	registerMemoryHandlers,
+	registerCoworkingHandlers,
 	setupLoggerEventForwarding,
 	cleanupAllGroomingSessions,
 	getActiveGroomingSessionCount,
 } from './ipc/handlers';
+import { startCoworkingBridge, stopCoworkingBridge } from './coworking/coworking-bridge';
+import { ensureCoworkingServerScript } from './coworking/coworking-server-paths';
+import { resolveSessionFromPidWalk } from './coworking/pid-resolution';
 import { initializeStatsDB, closeStatsDB, getStatsDB } from './stats';
 import { groupChatEmitters } from './ipc/handlers/groupChat';
 import {
@@ -1271,6 +1275,15 @@ quitHandler = createQuitHandler({
 		if (cueEngine?.isEnabled()) {
 			cueEngine.stop();
 		}
+		// Stop the coworking bridge socket so the file/pipe doesn't outlive the app.
+		// Best-effort on quit, but capture unexpected failures so a stale socket on the
+		// next launch is at least observable in Sentry.
+		void stopCoworkingBridge().catch((error) => {
+			void captureException(error instanceof Error ? error : new Error(String(error)), {
+				operation: 'shutdown:coworkingBridge',
+			});
+			logger.warn(`Failed to stop coworking bridge: ${String(error)}`, 'Shutdown');
+		});
 		// Tear down the background quota refresh timers.
 		usageRefreshScheduler?.stop();
 	},
@@ -1453,6 +1466,29 @@ function setupIpcHandlers() {
 
 	// Register project Memory handlers (Claude Code per-project memory viewer)
 	registerMemoryHandlers();
+
+	// Register Coworking handlers + start the IPC bridge socket and refresh the bundled
+	// MCP-server script. The bridge runs whenever Maestro is up; per-agent activation
+	// is opt-in via Settings → Encore Features → Coworking Setup. Bridge startup is
+	// non-fatal — feature degrades to "not available" until next launch.
+	registerCoworkingHandlers({ getMainWindow: () => mainWindow });
+	void (async () => {
+		try {
+			await ensureCoworkingServerScript();
+			await startCoworkingBridge({
+				resolveSessionFromPid: (pid) =>
+					resolveSessionFromPidWalk(
+						pid,
+						(candidate) => processManager?.getSessionIdByPid(candidate) ?? null
+					),
+			});
+		} catch (err) {
+			void captureException(err instanceof Error ? err : new Error(String(err)), {
+				operation: 'startup:coworkingBridge',
+			});
+			logger.warn(`Failed to start coworking bridge: ${String(err)}`, 'Startup');
+		}
+	})();
 
 	// Register Context Merge handlers for session context transfer and grooming
 	registerContextHandlers({
