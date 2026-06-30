@@ -37,7 +37,12 @@ vi.mock('crypto', () => ({
 	}),
 }));
 
-import { extractPendingTasks, createCueTaskScanner } from '../../../main/cue/cue-task-scanner';
+import {
+	extractPendingTasks,
+	createCueTaskScanner,
+	scanTaskFilesNow,
+	buildTaskPendingPayload,
+} from '../../../main/cue/cue-task-scanner';
 
 describe('cue-task-scanner', () => {
 	describe('extractPendingTasks', () => {
@@ -104,6 +109,86 @@ describe('cue-task-scanner', () => {
 			const tasks = extractPendingTasks(content);
 			expect(tasks).toHaveLength(1);
 			expect(tasks[0].text).toBe('Not done');
+		});
+	});
+
+	describe('buildTaskPendingPayload', () => {
+		it('maps a file and its tasks into the task.pending payload shape', () => {
+			const tasks = [
+				{ line: 2, text: 'First' },
+				{ line: 5, text: 'Second' },
+			];
+			const payload = buildTaskPendingPayload(
+				'/project/research.md',
+				'research.md',
+				'- [ ] First\n',
+				tasks
+			);
+			expect(payload).toMatchObject({
+				path: '/project/research.md',
+				filename: 'research.md',
+				directory: '/project',
+				extension: '.md',
+				taskCount: 2,
+				taskList: 'L2: First\nL5: Second',
+				tasks,
+			});
+		});
+
+		it('truncates content to 10K chars', () => {
+			const long = 'x'.repeat(20000);
+			const payload = buildTaskPendingPayload('/p/a.md', 'a.md', long, [{ line: 1, text: 't' }]);
+			expect((payload.content as string).length).toBe(10000);
+		});
+	});
+
+	describe('scanTaskFilesNow', () => {
+		beforeEach(() => {
+			vi.clearAllMocks();
+		});
+
+		it('returns files that currently have pending tasks, with no hash dedup', () => {
+			mockReaddirSync.mockImplementation((_dir: string, opts: { withFileTypes: boolean }) => {
+				if (opts?.withFileTypes) {
+					return [{ name: 'research.md', isDirectory: () => false, isFile: () => true }];
+				}
+				return [];
+			});
+			mockReadFileSync.mockReturnValue('- [ ] open task\n');
+
+			const result = scanTaskFilesNow('/project', '**/*.md');
+			expect(result).toHaveLength(1);
+			expect(result[0].relPath).toBe('research.md');
+			expect(result[0].tasks).toHaveLength(1);
+			expect(result[0].tasks[0].text).toBe('open task');
+
+			// Calling again returns the same result — unlike the polling scanner,
+			// there is no seeding or content-hash suppression.
+			expect(scanTaskFilesNow('/project', '**/*.md')).toHaveLength(1);
+		});
+
+		it('skips files with no pending tasks', () => {
+			mockReaddirSync.mockImplementation((_dir: string, opts: { withFileTypes: boolean }) => {
+				if (opts?.withFileTypes) {
+					return [{ name: 'done.md', isDirectory: () => false, isFile: () => true }];
+				}
+				return [];
+			});
+			mockReadFileSync.mockReturnValue('- [x] done\n');
+
+			expect(scanTaskFilesNow('/project', '**/*.md')).toHaveLength(0);
+		});
+
+		it('skips files that do not match the watch glob', () => {
+			mockReaddirSync.mockImplementation((_dir: string, opts: { withFileTypes: boolean }) => {
+				if (opts?.withFileTypes) {
+					return [{ name: 'notes.txt', isDirectory: () => false, isFile: () => true }];
+				}
+				return [];
+			});
+			mockReadFileSync.mockReturnValue('- [ ] open\n');
+
+			expect(scanTaskFilesNow('/project', '**/*.md')).toHaveLength(0);
 		});
 	});
 
