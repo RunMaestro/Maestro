@@ -101,6 +101,30 @@ module.exports = {
 			}
 		});
 
+		// Dedicated ui:command probe (WS-ui-command e2e): invoke a REAL registered
+		// global command via ui.runCommand and log a distinct, run-scoped marker so
+		// a test can assert PASS without disturbing the shared self-test SUMMARY.
+		maestro.commands.register('uicmdprobe', async () => {
+			let result;
+			try {
+				await maestro.ui.runCommand('maestro.commandPalette.open');
+				result = 'PASS';
+			} catch (err) {
+				result = classify(err);
+			}
+			console.log(TAG + ' UICMD ' + result);
+			return { ok: result === 'PASS', result };
+		});
+
+		// Keybinding dispatch probe (WS-keybindings e2e): a contributed keybinding
+		// (Ctrl+Shift+F9 -> this command) is bound by the renderer's
+		// usePluginKeybindings hook; firing the chord invokes this, which logs a
+		// distinct, run-scoped marker the keybinding test asserts on.
+		maestro.commands.register('keybind-probe', async () => {
+			console.log(TAG + ' KEYBIND-FIRED');
+			return { ok: true };
+		});
+
 		await runSelfTest(maestro);
 	},
 	deactivate() {},

@@ -285,4 +285,213 @@ test.describe('plugin system e2e', () => {
 			await teardown(b, trusted);
 		}
 	});
+
+	test('ui:command invokes a real palette command', async () => {
+		// WS-ui-command: the renderer command registry is the SINGLE source for
+		// both the command palette and the `ui:command` host verb. A plugin that
+		// invokes `ui.runCommand('maestro.commandPalette.open')` reaches the EXACT
+		// entry the palette lists (not a private allowlist), so the call PASSes
+		// (was INERT while the host stub returned false) and the same command is
+		// visible in the palette.
+		const seeded = createSeededEnv();
+		await seedAll(seeded, { enabled: true });
+		const launched = await launch(seeded.env);
+		try {
+			await waitListed(launched);
+			// Grant ui:command (withhold transcripts to dodge the untrusted egress
+			// mutual-exclusion conflict).
+			await approveConsent(launched, { withhold: ['transcripts:read'] });
+
+			// The dedicated probe logs one run-scoped marker per invocation:
+			//   [e2e-selftest:<runId>] UICMD <PASS|INERT|DENY|ERROR>
+			const marker = `[e2e-selftest:${seeded.runId}] UICMD `;
+			const lastUicmdResult = (): string | undefined =>
+				launched
+					.output()
+					.split('\n')
+					.filter((l) => l.includes(marker))
+					.map((l) => l.slice(l.indexOf(marker) + marker.length).trim())
+					.pop();
+
+			// Re-invoke until the probe reports a result (covers sandbox-start +
+			// grant-propagation timing), then assert PASS - NOT INERT.
+			await expect
+				.poll(
+					async () => {
+						await launched.window.evaluate(
+							(id) =>
+								window.maestro.plugins.invokeCommand(`${id}/uicmdprobe`).catch(() => undefined),
+							PLUGIN_ID
+						);
+						return lastUicmdResult() ?? null;
+					},
+					{
+						timeout: 90_000,
+						intervals: [1000, 2000, 3000, 5000],
+						message: 'ui:command probe never reported PASS (host registry bridge unwired?)',
+					}
+				)
+				.toBe('PASS');
+			expect(lastUicmdResult(), 'ui:command should PASS against a real registered command').toBe(
+				'PASS'
+			);
+
+			// The probe's command opens the command palette: assert the palette now
+			// lists the very command the plugin invoked (shared registry).
+			await launched.window.evaluate(
+				(id) => window.maestro.plugins.invokeCommand(`${id}/uicmdprobe`).catch(() => undefined),
+				PLUGIN_ID
+			);
+			await expect(
+				launched.window.getByText('Open Command Palette', { exact: true }).first()
+			).toBeVisible({ timeout: 15_000 });
+		} finally {
+			await teardown(launched, seeded);
+		}
+	});
+
+	test('plugin keybinding dispatches its command', async () => {
+		// WS-keybindings: a contributed KeybindingContribution (Ctrl+Shift+F9 -> the
+		// plugin's `keybind-probe` command) is parsed + aggregated by the host AND
+		// now actually BOUND by the renderer's usePluginKeybindings hook. Firing the
+		// real chord must route through the hook into the sandbox, which logs a
+		// run-scoped marker.
+		const seeded = createSeededEnv();
+		await seedAll(seeded, { enabled: true });
+		const launched = await launch(seeded.env);
+		try {
+			await waitListed(launched);
+			// Invoking a plugin's own command needs no grant, but the assignment's
+			// flow grants consent (withhold transcripts to dodge the untrusted egress
+			// mutual-exclusion conflict); it also confirms the sandbox is live.
+			await approveConsent(launched, { withhold: ['transcripts:read'] });
+
+			// The fixture binds Ctrl+Shift+F9 -> `keybind-probe`, which logs:
+			//   [e2e-selftest:<runId>] KEYBIND-FIRED
+			const marker = `[e2e-selftest:${seeded.runId}] KEYBIND-FIRED`;
+			// Re-press until the marker appears (covers sandbox-start + bind timing).
+			await expect
+				.poll(
+					async () => {
+						// Move focus off any text input so the hook does not skip the chord
+						// (it intentionally ignores keydowns while a field is focused).
+						await launched.window.evaluate(() => {
+							const el = document.activeElement;
+							if (el instanceof HTMLElement) el.blur();
+						});
+						await launched.window.keyboard.press('Control+Shift+F9');
+						return launched.output().includes(marker);
+					},
+					{
+						timeout: 90_000,
+						intervals: [1000, 2000, 3000, 5000],
+						message: 'plugin keybinding never dispatched its command into the sandbox',
+					}
+				)
+				.toBe(true);
+		} finally {
+			await teardown(launched, seeded);
+		}
+	});
+	test('extensions marketplace lists, filters, and manages plugins', async () => {
+		const seeded = createSeededEnv();
+		await seedAll(seeded, { enabled: true });
+		const launched = await launch(seeded.env);
+		const page = launched.window;
+		try {
+			await waitListed(launched);
+
+			// Open Settings by driving the real app shortcut handler (Ctrl/Cmd+,),
+			// then switch to the Encore tab, which now hosts the Extensions view.
+			await expect
+				.poll(
+					async () => {
+						await page.evaluate(() =>
+							window.dispatchEvent(
+								new KeyboardEvent('keydown', { key: ',', ctrlKey: true, bubbles: true })
+							)
+						);
+						return page.locator('[aria-label="Settings"]').count();
+					},
+					{ timeout: 30_000, intervals: [500, 1000, 1500], message: 'Settings modal never opened' }
+				)
+				.toBeGreaterThan(0);
+
+			await page.locator('button[title="Encore Features"]').click();
+			const view = page.locator('[data-testid="extensions-view"]');
+			await expect(view).toBeVisible();
+
+			// The seeded plugin renders as a tile with its category badge.
+			const card = view.locator(`[data-testid="extension-card"][data-extension-id="${PLUGIN_ID}"]`);
+			await expect(card).toHaveCount(1);
+			await expect(card.locator('[data-testid="extension-category"]')).toContainText('Dev Tools');
+
+			// The category filter narrows the grid: 'data' hides the devtools plugin,
+			// 'devtools' surfaces it again.
+			await view.locator('[data-testid="extensions-filter"][data-category="data"]').click();
+			await expect(card).toHaveCount(0);
+			await view.locator('[data-testid="extensions-filter"][data-category="devtools"]').click();
+			await expect(card).toHaveCount(1);
+			await view.locator('[data-testid="extensions-filter"][data-category="all"]').click();
+			await expect(card).toHaveCount(1);
+
+			// The "only installed" toggle hides not-installed built-ins (e.g. the
+			// disabled Director's Notes feature) but keeps the enabled plugin.
+			const offBuiltin = view.locator(
+				'[data-testid="extension-card"][data-extension-id="directorNotes"]'
+			);
+			await expect(offBuiltin).toHaveCount(1);
+			await expect(offBuiltin.locator('[data-testid="extension-state"]')).toContainText(
+				'Not installed'
+			);
+			await view.locator('[data-testid="extensions-only-installed"]').click();
+			await expect(offBuiltin).toHaveCount(0);
+			await expect(card).toHaveCount(1);
+			await view.locator('[data-testid="extensions-only-installed"]').click();
+			await expect(offBuiltin).toHaveCount(1);
+
+			// The details view lists the plugin's requested permissions.
+			await card.click();
+			const details = view.locator('[data-testid="extension-details"]');
+			await expect(details).toBeVisible();
+			await expect(
+				details.locator('[data-testid="extension-permission"][data-cap="fs:write"]')
+			).toHaveCount(1);
+			expect(await details.locator('[data-testid="extension-permission"]').count()).toBeGreaterThan(
+				1
+			);
+
+			// enable -> disable round-trips, observed via window.maestro.plugins.list().
+			const isEnabled = async (): Promise<boolean | undefined> => {
+				const snap = await page.evaluate(() => window.maestro.plugins.list());
+				return (snap?.plugins ?? []).find((p) => p.id === PLUGIN_ID)?.enabled;
+			};
+			expect(await isEnabled()).toBe(true);
+
+			const toggle = details.locator('[data-testid="extension-enable-toggle"]');
+			// Disabling is immediate.
+			await toggle.click();
+			await expect
+				.poll(isEnabled, { timeout: 30_000, message: 'plugin never disabled' })
+				.toBe(false);
+
+			// Re-enabling a tier-1 plugin routes through the host-owned consent window.
+			const consentPromise = launched.app.waitForEvent('window', { timeout: 30_000 });
+			await toggle.click();
+			const consent = await consentPromise;
+			await consent.waitForLoadState('domcontentloaded');
+			await consent.locator('button.btn-approve').waitFor({ state: 'visible', timeout: 15_000 });
+			// Untrusted fixture: withhold transcripts:read so the granted egress caps
+			// do not trip the mutual-exclusion rule and the mint succeeds.
+			await consent.locator('.cap-check[data-cap="transcripts:read"]').uncheck();
+			await consent.locator('button.btn-approve').click();
+			await consent.waitForEvent('close', { timeout: 15_000 }).catch(() => undefined);
+
+			await expect
+				.poll(isEnabled, { timeout: 30_000, message: 'plugin never re-enabled' })
+				.toBe(true);
+		} finally {
+			await teardown(launched, seeded);
+		}
+	});
 });

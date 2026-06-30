@@ -388,6 +388,18 @@ const createDefaultProps = (overrides = {}) => ({
 	...overrides,
 });
 
+const getEncoreSetting = (id: string) => {
+	const section = document.querySelector(`[data-setting-id="${id}"]`);
+	expect(section).toBeInTheDocument();
+	return within(section as HTMLElement);
+};
+
+const getEncoreSettingButton = (id: string): HTMLElement => {
+	const button = document.querySelector(`[data-setting-id="${id}"] button`);
+	expect(button).toBeInTheDocument();
+	return button as HTMLElement;
+};
+
 describe('SettingsModal', () => {
 	beforeEach(() => {
 		vi.useFakeTimers();
@@ -2243,8 +2255,10 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			// Director's Notes section is visible but DN settings are hidden
-			expect(screen.getByText("Director's Notes")).toBeInTheDocument();
+			// Director's Notes legacy settings section is visible but DN settings are hidden
+			expect(
+				getEncoreSetting('encore-director-notes').getByText("Director's Notes")
+			).toBeInTheDocument();
 			expect(screen.queryByText('Synopsis Provider')).not.toBeInTheDocument();
 		});
 
@@ -2263,10 +2277,9 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			// Click the Director's Notes feature section to toggle
-			const dnSection = screen.getByText("Director's Notes").closest('button');
-			expect(dnSection).toBeInTheDocument();
-			fireEvent.click(dnSection!);
+			// Click the Director's Notes legacy settings section to toggle
+			const dnSection = getEncoreSettingButton('encore-director-notes');
+			fireEvent.click(dnSection);
 
 			expect(mockSetEncoreFeatures).toHaveBeenCalledWith({
 				directorNotes: true,
@@ -2292,9 +2305,8 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			const dnSection = screen.getByText("Director's Notes").closest('button');
-			expect(dnSection).toBeInTheDocument();
-			fireEvent.click(dnSection!);
+			const dnSection = getEncoreSettingButton('encore-director-notes');
+			fireEvent.click(dnSection);
 
 			expect(mockSetEncoreFeatures).toHaveBeenCalledWith({
 				directorNotes: false,
@@ -2316,7 +2328,7 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			expect(screen.getByText('Usage & Stats')).toBeInTheDocument();
+			expect(getEncoreSetting('encore-usage-stats').getByText('Usage & Stats')).toBeInTheDocument();
 			// Settings should be visible when enabled (default on)
 			expect(screen.getByText('Default lookback window')).toBeInTheDocument();
 		});
@@ -2336,9 +2348,8 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			const usSection = screen.getByText('Usage & Stats').closest('button');
-			expect(usSection).toBeInTheDocument();
-			fireEvent.click(usSection!);
+			const usSection = getEncoreSettingButton('encore-usage-stats');
+			fireEvent.click(usSection);
 
 			expect(mockSetEncoreFeatures).toHaveBeenCalledWith({
 				directorNotes: false,
@@ -2360,7 +2371,7 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			expect(screen.getByText('Maestro Symphony')).toBeInTheDocument();
+			expect(getEncoreSetting('encore-symphony').getByText('Maestro Symphony')).toBeInTheDocument();
 			// Settings should be visible when enabled (default on)
 			expect(screen.getByText('Registry Sources')).toBeInTheDocument();
 		});
@@ -2380,9 +2391,8 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			const symphonySection = screen.getByText('Maestro Symphony').closest('button');
-			expect(symphonySection).toBeInTheDocument();
-			fireEvent.click(symphonySection!);
+			const symphonySection = getEncoreSettingButton('encore-symphony');
+			fireEvent.click(symphonySection);
 
 			expect(mockSetEncoreFeatures).toHaveBeenCalledWith({
 				directorNotes: false,
@@ -2409,9 +2419,8 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			const symphonySection = screen.getByText('Maestro Symphony').closest('button');
-			expect(symphonySection).toBeInTheDocument();
-			fireEvent.click(symphonySection!);
+			const symphonySection = getEncoreSettingButton('encore-symphony');
+			fireEvent.click(symphonySection);
 
 			expect(mockSetEncoreFeatures).toHaveBeenCalledWith({
 				directorNotes: false,
@@ -2437,7 +2446,7 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			expect(screen.getByText('Maestro Symphony')).toBeInTheDocument();
+			expect(getEncoreSetting('encore-symphony').getByText('Maestro Symphony')).toBeInTheDocument();
 			expect(screen.queryByText('Registry Sources')).not.toBeInTheDocument();
 		});
 
@@ -2527,7 +2536,9 @@ describe('SettingsModal', () => {
 				});
 
 				expect(
-					screen.getByText(/Unified history view and AI-generated synopsis across all sessions/)
+					getEncoreSetting('encore-director-notes').getByText(
+						/Unified history view and AI-generated synopsis across all sessions/
+					)
 				).toBeInTheDocument();
 				expect(
 					screen.getByText(/AI agent used to generate synopsis summaries/)

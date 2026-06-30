@@ -30,6 +30,25 @@ export type PluginTier = 0 | 1 | 2;
 
 export const PLUGIN_TIERS: readonly PluginTier[] = [0, 1, 2];
 
+/**
+ * Coarse marketplace category used to group and filter extensions in the
+ * Extensions view. Optional in a manifest; absent is treated as 'other'.
+ */
+export type PluginCategory = 'automation' | 'agents' | 'ui' | 'data' | 'devtools' | 'other';
+
+export const PLUGIN_CATEGORIES: readonly PluginCategory[] = [
+	'automation',
+	'agents',
+	'ui',
+	'data',
+	'devtools',
+	'other',
+];
+
+export function isPluginCategory(value: unknown): value is PluginCategory {
+	return typeof value === 'string' && (PLUGIN_CATEGORIES as readonly string[]).includes(value);
+}
+
 /** The `maestro` compatibility block of a manifest. */
 export interface PluginMaestroBlock {
 	/** Minimum host API version this plugin requires (semver). */
@@ -56,6 +75,8 @@ export interface PluginManifest {
 	author?: string;
 	license?: string;
 	homepage?: string;
+	/** Coarse marketplace category for grouping/filtering. Defaults to 'other'. */
+	category?: PluginCategory;
 	/** Declarative contributions. Structurally validated; semantics land later. */
 	contributes?: Record<string, unknown>;
 	/**
@@ -123,6 +144,7 @@ export function validatePluginManifest(input: unknown): ManifestValidationResult
 		author,
 		license,
 		homepage,
+		category,
 		contributes,
 		entry,
 		permissions,
@@ -178,6 +200,18 @@ export function validatePluginManifest(input: unknown): ManifestValidationResult
 	if (homepage !== undefined && typeof homepage !== 'string') {
 		errors.push('homepage, when present, must be a string');
 	}
+	let normalizedCategory: PluginCategory | undefined;
+	if (category !== undefined) {
+		if (typeof category !== 'string') {
+			errors.push('category, when present, must be a string');
+		} else if (!isPluginCategory(category)) {
+			errors.push(
+				`category "${category}" is invalid: must be one of ${PLUGIN_CATEGORIES.join(', ')}`
+			);
+		} else {
+			normalizedCategory = category;
+		}
+	}
 	if (contributes !== undefined && !isPlainObject(contributes)) {
 		errors.push('contributes, when present, must be an object');
 	}
@@ -226,6 +260,7 @@ export function validatePluginManifest(input: unknown): ManifestValidationResult
 		...(isNonEmptyString(author) ? { author: (author as string).trim() } : {}),
 		...(isNonEmptyString(license) ? { license: (license as string).trim() } : {}),
 		...(isNonEmptyString(homepage) ? { homepage: (homepage as string).trim() } : {}),
+		...(normalizedCategory ? { category: normalizedCategory } : {}),
 		...(isPlainObject(contributes) ? { contributes } : {}),
 		...(safeEntry ? { entry: safeEntry } : {}),
 		...(parsedPermissions.requests.length > 0 ? { permissions: parsedPermissions.requests } : {}),

@@ -51,6 +51,8 @@ import { ActionGuard } from './plugins/action-guard';
 import { PluginKvStore } from './plugins/plugin-kv-store';
 import { PluginEventBusImpl } from './plugins/plugin-event-bus';
 import { createEgressGuard } from './plugins/net-egress-guard';
+// [UiCommandeer] WS-ui-command host bridge (see runUiCommand wiring below).
+import { createRunUiCommand } from './plugins/run-ui-command';
 import {
 	isPermitted,
 	describeCapability,
@@ -1313,11 +1315,12 @@ app
 						'[PluginAudit]'
 					);
 				},
-				// ui.runCommand: invoking a registered palette command from a plugin
-				// needs a renderer command-registry bridge (a small follow-on). Until
-				// it lands the verb is present + gated but returns "unknown command"
-				// rather than shipping a half-built cross-process path.
-				runUiCommand: () => false,
+				// [UiCommandeer] TEMP self-verify wiring for WS-ui-command. Main to
+				// integrate canonically (index.ts also takes act-verbs). The dep type
+				// is now (commandId, args?) => Promise<boolean>, so the old `() => false`
+				// stub no longer type-checks; this round-trips to the renderer's shared
+				// command registry (the SAME registry the command palette is built from).
+				runUiCommand: createRunUiCommand(() => mainWindow),
 				listAgents: () => {
 					const sessions = sessionsStore.get('sessions', []) as Array<{
 						id?: string;

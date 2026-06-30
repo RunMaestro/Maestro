@@ -80,6 +80,19 @@ describe('validatePluginManifest', () => {
 		expect(manifest?.homepage).toBe('https://x');
 	});
 
+	it('accepts a known category, omits it when absent, and rejects an unknown one', () => {
+		const withCategory = validatePluginManifest(validManifest({ category: 'devtools' }));
+		expect(withCategory.errors).toEqual([]);
+		expect(withCategory.manifest?.category).toBe('devtools');
+
+		const withoutCategory = validatePluginManifest(validManifest());
+		expect(withoutCategory.manifest?.category).toBeUndefined();
+
+		const badCategory = validatePluginManifest(validManifest({ category: 'nope' }));
+		expect(badCategory.manifest).toBeNull();
+		expect(badCategory.errors.some((e) => e.includes('category'))).toBe(true);
+	});
+
 	it('does not treat host incompatibility as a validation error', () => {
 		const { manifest, errors } = validatePluginManifest(
 			validManifest({ maestro: { minHostApi: '2.0.0' } })
