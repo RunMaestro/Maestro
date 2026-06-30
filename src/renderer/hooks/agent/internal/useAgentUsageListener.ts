@@ -10,10 +10,15 @@
 import { useEffect } from 'react';
 import { useSessionStore } from '../../../stores/sessionStore';
 import { parseSessionId } from '../../../utils/sessionIdParser';
-import { estimateContextUsage, estimateAccumulatedGrowth } from '../../../utils/contextUsage';
+import {
+	estimateContextUsage,
+	estimateAccumulatedGrowth,
+	calculateContextTokens,
+} from '../../../utils/contextUsage';
 import { getContextWindowForAgent } from '../../../../shared/agentConstants';
 import { useAgentStore } from '../../../stores/agentStore';
 import { useOwnedSessionGate } from './useOwnedSessionGate';
+import { useContextTimelineStore } from '../../../stores/contextTimelineStore';
 import type { BatchedUpdater } from './types';
 
 /**
@@ -55,6 +60,32 @@ export function useAgentUsageListener(deps: UseAgentUsageListenerDeps): void {
 
 			deps.batchedUpdater.updateUsage(actualSessionId, tabId, usageStats);
 			deps.batchedUpdater.updateUsage(actualSessionId, null, usageStats);
+
+			// Record a turn-by-turn point for the Context Timeline inspector. This
+			// reuses the same per-turn stream every provider already feeds, so the
+			// timeline is provider-agnostic with no per-agent code. Keyed by the base
+			// (agent) session id so a session's parallel tabs share one timeline.
+			const resolvedWindow =
+				usageStats.contextWindow > 0
+					? usageStats.contextWindow
+					: agentToolType && agentToolType !== 'terminal'
+						? getContextWindowForAgent(
+								agentToolType,
+								useAgentStore.getState().getCapabilitySnapshot(agentToolType, sessionRemoteId)
+							)
+						: 0;
+			useContextTimelineStore.getState().appendPoint(baseSessionId, {
+				tabId,
+				inputTokens: usageStats.inputTokens,
+				outputTokens: usageStats.outputTokens,
+				cacheReadInputTokens: usageStats.cacheReadInputTokens || 0,
+				cacheCreationInputTokens: usageStats.cacheCreationInputTokens || 0,
+				reasoningTokens: usageStats.reasoningTokens || 0,
+				totalCostUsd: usageStats.totalCostUsd || 0,
+				contextTokens: calculateContextTokens(usageStats, agentToolType),
+				contextWindow: resolvedWindow,
+				percentage: contextPercentage,
+			});
 
 			if (contextPercentage !== null) {
 				deps.batchedUpdater.updateContextUsage(actualSessionId, contextPercentage);
