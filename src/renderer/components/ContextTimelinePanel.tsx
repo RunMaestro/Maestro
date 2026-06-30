@@ -198,10 +198,16 @@ export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 					<div className="flex flex-col gap-2.5">
 						{ordered.map((p) => {
 							const pct = p.percentage;
+							// Drive the bar width from the SAME value as the % label and color:
+							// the provider-reported percentage when available, else the raw
+							// tokens/window ratio. Otherwise a "50%" label could sit beside a
+							// 30%-filled bar when the two sources disagree.
 							const fillFraction =
-								p.contextWindow > 0
-									? Math.min(1, Math.max(0, p.contextTokens / p.contextWindow))
-									: 0;
+								pct !== null
+									? Math.min(1, Math.max(0, pct / 100))
+									: p.contextWindow > 0
+										? Math.min(1, Math.max(0, p.contextTokens / p.contextWindow))
+										: 0;
 							const barColor = getContextColor(pct ?? Math.round(fillFraction * 100), theme);
 							// When the percentage is indeterminate (an accumulated multi-tool
 							// turn whose raw tokens exceed the window), contextTokens can read
