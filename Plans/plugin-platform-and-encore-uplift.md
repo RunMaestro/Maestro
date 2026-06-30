@@ -7,18 +7,18 @@ worktrees and merged back.
 
 ## Security model (decided)
 
-Plugins run tier-1 code in a process-isolated Electron `utilityProcess` (crash isolation, empty env, an
-in-child `vm`). The trust boundary is **ed25519 signing + per-capability user consent** — the same model
-VS Code / Obsidian / JetBrains use (install = a trust decision; extensions get host privileges). The
-high-power verbs (`agents:dispatch`, `process:spawn`) are gated on **trusted-signed + consent + the
-Pianola risk gate**. This is the baseline for everything below.
+Current live model: **trusted-signed plugin + explicit per-capability consent + Pianola risk gate**.
+Tier-1 plugin code still runs in an Electron `utilityProcess` with an empty env and an in-child `vm`;
+that is crash isolation and defense-in-depth, not OS confinement. OS-level sandboxing remains future
+hardening, so high-power verbs must price code-tier plugins as trusted code and keep every host effect
+behind broker authorization, consent, risk gating, and audit-before-action.
 
 ## What blocks the Encore lifts today
 
-The lifts are **feasible** but blocked on concrete platform work: the
-high-power verbs are inert, `ui:command` is a stub, there's no persistent background service, storage is
-KV-only, the host-API is read/notify-heavy, several contribution buckets aren't consumed, and there's no
-registry or rich-UI host. Those become the workstreams below.
+The lifts are **feasible**. Wave 1 already landed the command bridge, keybindings, and Extensions
+marketplace baseline. Remaining blockers are the persistent grant ledger, settings contribution writes,
+hot reload, SDK distribution, rich render host, broader host APIs, intentionally gated high-power verbs,
+and the Pianola first-party plugin lift.
 
 ## Workstreams (layered; each WS = one worktree/branch + an acceptance test that extends the e2e harness)
 
@@ -28,32 +28,33 @@ Pure additive contract changes so feature worktrees build against stable types.
 
 - **WS-contracts**: capability vocab (`history:read`, `sessions:create`, `sessions:write`, `tabs:manage`,
   `transcripts:write`, `decisions:write`, `shell:openExternal`, `storage:sql`, `fs:watch`,
-  `power:preventSleep`, `background:service`) in `permissions.ts`; matching HOST*API methods in
+  `power:preventSleep`, `background:service`) in `permissions.ts`; matching HOST\*API methods in
   `rpc-protocol.ts`; event topics + richer payloads (`history.entryAdded`, `agent.completed` w/ output,
   chain lineage / token totals / provider session id / queue depth) in `events.ts`; optional manifest
   `category` field; bump `HOST_API_VERSION`; re-vendor `@maestro/plugin-sdk` + drift test.
-  \_Acceptance:* drift test green; contract unit tests; no behavior yet.
+  _Acceptance:_ drift test green; contract unit tests; no behavior yet.
 
 ### P1 — Foundations (parallel worktrees, buildable now, independent)
 
-- **WS-ui-command**: renderer command registry shared by the palette + plugin IPC; replace
-  `runUiCommand: () => false` (index.ts:1320). _Acceptance:_ harness `ui:command` probe flips INERT→PASS
-  invoking a real palette command; palette still works.
-- **WS-keybindings**: consumer that binds each `KeybindingContribution` chord→command.
-  _Acceptance:_ e2e chord dispatches the plugin command.
+- **WS-ui-command**: DONE. Renderer command registry + plugin `ui:command` bridge are integrated; the
+  harness covers command dispatch and the palette still works.
+- **WS-keybindings**: DONE. `KeybindingContribution` chords are consumed and dispatch plugin commands.
+- **WS-marketplace-ui**: DONE baseline. Extensions surface lists Encore features/plugins with category,
+  installed/enabled state, details, permissions, and lifecycle actions; keep extending its e2e probes as
+  new capabilities land.
 - **WS-settings-ui**: render `SettingContribution`s + bidirectional write bridge to `plugins.<id>.*`.
-  _Acceptance:_ e2e settings round-trip via the panel.
+  _Acceptance:_ e2e settings round-trip via the Extensions details surface, including disabled-plugin denial.
 - **WS-grant-ledger**: inject the OS-keyring freshness anchor into `createAuthorizationStore` → persistent
-  grants. _Acceptance:_ e2e relaunch — grants survive, no re-consent.
+  grants. _Acceptance:_ e2e relaunch - grants survive, revoke invalidates, corrupt anchor requires re-consent.
 - **WS-hot-reload**: plugins-dir watcher → reload the plugin child on change (dev mode).
-  _Acceptance:_ edit fixture → reload observed.
-- **WS-sdk-dist**: publish `@maestro/plugin-sdk` to npm; CLI `install`/`publish`/`update`.
-  _Acceptance:_ CLI installs a packed plugin; SDK importable standalone.
-- **WS-render-host**: `ui:render-unsafe` renderer host (broker-gated `WebContentsView`) + consume the
-  agent registry (render contributed agents in the Left Bar; spawn path lands with P2 act-verbs).
-  _Acceptance:_ a contributed agent appears; a render-unsafe panel renders gated.
-- **WS-marketplace-ui** (headline UI; see below). _Acceptance:_ e2e lists/filters/installs/uninstalls/
-  enables/configures.
+  _Acceptance:_ edit fixture → reload observed; manifest expansion cannot inherit new caps; removed plugins
+  tear down handlers/services.
+- **WS-sdk-dist**: package/publish/install/update support for `@maestro/plugin-sdk`.
+  _Acceptance:_ CLI installs a packed plugin; SDK imports standalone; package artifacts include runtime assets.
+- **WS-render-host**: current-scope rich UI host for trusted+consented plugins (isolated Chromium surface:
+  no Node, contextIsolation, per-plugin partition, broker-only preload, navigation/egress lockdown) + consume
+  the agent registry. _Acceptance:_ trusted+granted panel renders; untrusted/ungranted denied; contributed
+  agent appears in the appropriate UI.
 
 ### P2 — High-power act verbs (parallel after P0; trust+consent+risk-gated)
 
