@@ -2,7 +2,12 @@ import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { findAvailablePort } from './dev-port.mjs';
 
-const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+const packageRunner =
+	process.env.npm_execpath && /bun(?:\.exe)?$/i.test(process.env.npm_execpath)
+		? process.env.npm_execpath
+		: process.platform === 'win32'
+			? 'bun.exe'
+			: 'bun';
 const rendererScript = 'dev:renderer';
 const mainScript = process.env.USE_PROD_DATA ? 'dev:main:prod-data' : 'dev:main';
 const startupTimeoutMs = 20000;
@@ -52,7 +57,7 @@ const sharedEnv = { ...process.env, VITE_PORT: String(port) };
 
 console.log(`[dev] Using VITE_PORT=${port}`);
 
-const renderer = spawn(npmCommand, ['run', rendererScript], {
+const renderer = spawn(packageRunner, ['run', rendererScript], {
 	env: sharedEnv,
 	stdio: 'inherit',
 });
@@ -95,7 +100,7 @@ if (cdpPort) {
 	console.log(`[dev] Electron CDP enabled on port ${cdpPort}`);
 }
 
-main = spawn(npmCommand, mainArgs, {
+main = spawn(packageRunner, mainArgs, {
 	env: sharedEnv,
 	stdio: 'inherit',
 });

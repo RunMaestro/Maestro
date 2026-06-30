@@ -1,4 +1,5 @@
 import net from 'node:net';
+import { pathToFileURL } from 'node:url';
 
 // Deliberately NOT 5173: that is Vite's universal default port, so every web
 // project an agent scaffolds and runs with `npm run dev` competes for it. When
@@ -60,7 +61,7 @@ export async function findAvailablePort(
 	);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
 	const port = await findAvailablePort();
 	process.stdout.write(`${port}\n`);
 }
