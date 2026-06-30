@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { PluginSchedulerHost } from '../../../main/plugins/plugin-scheduler-host';
 import { schedulerNowFromDate } from '../../../shared/plugins/plugin-scheduler';
-import { evaluatePluginDispatch } from '../../../shared/plugins/plugin-dispatch-gate';
+import { evaluateScheduledDispatch } from '../../../shared/plugins/plugin-dispatch-gate';
 import type { CueTriggerContribution } from '../../../shared/plugins/contributions';
 
 // A daily-time trigger whose times include the current AND next clock minute, so
@@ -22,9 +22,15 @@ function dueTrigger(over: Partial<CueTriggerContribution> = {}): CueTriggerContr
 	};
 }
 
-// Risk-only gate (the production wiring additionally requires the agents:dispatch
-// grant; that boundary is exercised in the main-process integration, not here).
-const gate = (t: CueTriggerContribution) => evaluatePluginDispatch(t.payload);
+// Production-equivalent gate: low/medium risk is necessary but not sufficient;
+// dispatch also requires a live agents:dispatch grant and trusted signature.
+const gate = (
+	t: CueTriggerContribution,
+	ctx: { hasDispatchGrant: boolean; trusted: boolean } = {
+		hasDispatchGrant: true,
+		trusted: true,
+	}
+) => evaluateScheduledDispatch(t.payload, ctx);
 
 describe('PluginSchedulerHost dispatch gating', () => {
 	it('auto-dispatches an eligible (non-high-risk) trigger when a sink is wired', () => {
@@ -53,6 +59,36 @@ describe('PluginSchedulerHost dispatch gating', () => {
 			notify,
 			dispatch,
 			evaluateDispatch: gate,
+		});
+		h.tick();
+		expect(dispatch).not.toHaveBeenCalled();
+		expect(notify).toHaveBeenCalledTimes(1);
+	});
+
+	it('surfaces an otherwise eligible trigger when the plugin is untrusted', () => {
+		const notify = vi.fn();
+		const dispatch = vi.fn();
+		const h = new PluginSchedulerHost({
+			isEnabled: () => true,
+			getTriggers: () => [dueTrigger()],
+			notify,
+			dispatch,
+			evaluateDispatch: (trigger) => gate(trigger, { hasDispatchGrant: true, trusted: false }),
+		});
+		h.tick();
+		expect(dispatch).not.toHaveBeenCalled();
+		expect(notify).toHaveBeenCalledTimes(1);
+	});
+
+	it('surfaces an otherwise eligible trigger when the agents:dispatch grant is absent', () => {
+		const notify = vi.fn();
+		const dispatch = vi.fn();
+		const h = new PluginSchedulerHost({
+			isEnabled: () => true,
+			getTriggers: () => [dueTrigger()],
+			notify,
+			dispatch,
+			evaluateDispatch: (trigger) => gate(trigger, { hasDispatchGrant: false, trusted: true }),
 		});
 		h.tick();
 		expect(dispatch).not.toHaveBeenCalled();

@@ -29,6 +29,7 @@ import {
 	type ExtensionState,
 	type UnifiedExtension,
 } from './extensionModel';
+import { getModalActions } from '../../../stores/modalStore';
 
 interface ExtensionDetailsProps {
 	theme: Theme;
@@ -116,15 +117,21 @@ export function ExtensionDetails({
 	const pluginSettings: SettingContribution[] = contributions
 		? contributions.settings.filter((s) => s.pluginId === ext.id)
 		: [];
+	const canConfigurePlugin = isPlugin && ext.state === 'enabled' && pluginSettings.length > 0;
 
 	const openConfigure = useCallback(async () => {
-		setConfigureOpen(true);
+		if (!canConfigurePlugin) {
+			setConfigureOpen(false);
+			return;
+		}
 		// Requesting consent ensures the plugin holds the grants its settings back.
 		try {
 			await window.maestro.plugins.requestConsent(ext.id);
 		} catch {
-			/* consent is best-effort here; the editor still works for the user. */
+			setConfigureOpen(false);
+			return;
 		}
+		setConfigureOpen(true);
 		const next: Record<string, boolean | string | number> = {};
 		for (const s of pluginSettings) {
 			const raw = await window.maestro.settings.get(`plugins.${ext.id}.${s.key}`);
@@ -135,14 +142,15 @@ export function ExtensionDetails({
 			next[s.key] = value;
 		}
 		setSettingValues(next);
-	}, [ext.id, pluginSettings]);
+	}, [canConfigurePlugin, ext.id, pluginSettings]);
 
 	const writeSetting = useCallback(
 		(key: string, value: boolean | string | number) => {
+			if (!canConfigurePlugin) return;
 			setSettingValues((prev) => ({ ...prev, [key]: value }));
 			void window.maestro.settings.set(`plugins.${ext.id}.${key}`, value);
 		},
-		[ext.id]
+		[canConfigurePlugin, ext.id]
 	);
 
 	const stateColor = (state: ExtensionState): string =>
@@ -232,7 +240,7 @@ export function ExtensionDetails({
 					<Power className="w-4 h-4" /> {toggleLabel}
 				</button>
 
-				{isPlugin && isCodeTier && (
+				{canConfigurePlugin && (
 					<button
 						type="button"
 						data-testid="extension-configure"
@@ -241,6 +249,18 @@ export function ExtensionDetails({
 						style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 					>
 						<SettingsIcon className="w-4 h-4" /> Configure
+					</button>
+				)}
+
+				{!isPlugin && ext.flag === 'pianola' && ext.state === 'enabled' && (
+					<button
+						type="button"
+						data-testid="extension-open-pianola"
+						onClick={() => getModalActions().setPianolaModalOpen(true)}
+						className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm transition-colors hover:bg-white/5"
+						style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+					>
+						<SettingsIcon className="w-4 h-4" /> Open Pianola
 					</button>
 				)}
 
@@ -360,7 +380,7 @@ export function ExtensionDetails({
 			)}
 
 			{/* Configure: live editor for the plugin's contributed settings */}
-			{isPlugin && configureOpen && (
+			{isPlugin && canConfigurePlugin && configureOpen && (
 				<div className="mt-5">
 					<div
 						className="text-xs font-bold uppercase opacity-70 mb-2"

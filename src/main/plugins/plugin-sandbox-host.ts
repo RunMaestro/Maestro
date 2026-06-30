@@ -26,6 +26,12 @@ import {
 } from '../../shared/plugins/rpc-protocol';
 import type { PluginEvent } from '../../shared/plugins/events';
 
+export interface SandboxControlEvent {
+	topic: string;
+	at: string;
+	payload: unknown;
+}
+
 /** An injected implementation of one host method. Receives the calling plugin
  * id (for per-plugin scoping) and the validated params. */
 export type HostCallHandler = (pluginId: string, params: unknown) => Promise<unknown>;
@@ -339,7 +345,7 @@ export class PluginSandboxHost {
 	 * prune the subscription). No-op (returns false) when the plugin is not
 	 * running. Re-authorization happens in the bus BEFORE this is ever called.
 	 */
-	pushEvent(pluginId: string, event: PluginEvent): boolean {
+	pushEvent(pluginId: string, event: PluginEvent | SandboxControlEvent): boolean {
 		const record = this.running.get(pluginId);
 		if (!record) return false;
 		try {

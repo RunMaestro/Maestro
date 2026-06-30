@@ -5,7 +5,9 @@ import {
 	powerMonitor,
 	protocol,
 	safeStorage,
+	shell,
 	ipcMain,
+	type OpenExternalOptions,
 	type IpcMainInvokeEvent,
 } from 'electron';
 import { isMacOS } from '../shared/platformDetection';
@@ -46,6 +48,7 @@ import {
 	buildHostCallHandlers,
 	purgePluginData,
 	type PluginSessionMetadata,
+	type PluginTabMetadata,
 } from './plugins/plugin-host-handlers';
 import { ActionGuard } from './plugins/action-guard';
 import { PluginKvStore } from './plugins/plugin-kv-store';
@@ -1279,8 +1282,322 @@ app
 					...(typeof s.cwd === 'string' ? { projectPath: s.cwd } : {}),
 				}));
 		};
+
+		const pluginSessionsRaw = (): Array<Record<string, unknown>> =>
+			(sessionsStore.get('sessions', []) as Array<Record<string, unknown>>).filter(
+				(s) => typeof s?.id === 'string'
+			);
+		const setPluginSessionsRaw = (sessions: Array<Record<string, unknown>>): void => {
+			sessionsStore.set('sessions', sessions as never);
+		};
+		const pluginTabsList = (sessionId?: string): PluginTabMetadata[] => {
+			const out: PluginTabMetadata[] = [];
+			for (const session of pluginSessionsRaw()) {
+				if (sessionId && session.id !== sessionId) continue;
+				const projectPath =
+					typeof session.cwd === 'string'
+						? session.cwd
+						: typeof session.projectRoot === 'string'
+							? session.projectRoot
+							: undefined;
+				for (const tab of Array.isArray(session.aiTabs) ? session.aiTabs : []) {
+					if (!tab || typeof tab !== 'object') continue;
+					const rec = tab as Record<string, unknown>;
+					if (typeof rec.id !== 'string') continue;
+					out.push({
+						id: rec.id,
+						sessionId: session.id as string,
+						type: 'ai',
+						...(typeof rec.name === 'string' ? { title: rec.name } : {}),
+						...(typeof rec.state === 'string' ? { status: rec.state } : {}),
+						...(typeof rec.createdAt === 'number' ? { createdAt: rec.createdAt } : {}),
+						...(rec.agentSessionId === null || typeof rec.agentSessionId === 'string'
+							? { agentSessionId: rec.agentSessionId as string | null }
+							: {}),
+						...(projectPath ? { projectPath } : {}),
+					});
+				}
+				for (const tab of Array.isArray(session.terminalTabs) ? session.terminalTabs : []) {
+					if (!tab || typeof tab !== 'object') continue;
+					const rec = tab as Record<string, unknown>;
+					if (typeof rec.id !== 'string') continue;
+					out.push({
+						id: rec.id,
+						sessionId: session.id as string,
+						type: 'terminal',
+						...(typeof rec.name === 'string' ? { title: rec.name } : {}),
+						...(typeof rec.state === 'string' ? { status: rec.state } : {}),
+						...(typeof rec.createdAt === 'number' ? { createdAt: rec.createdAt } : {}),
+						...(projectPath ? { projectPath } : {}),
+					});
+				}
+			}
+			return out;
+		};
+		const pluginTabsCreate = async (
+			params: Record<string, unknown>
+		): Promise<PluginTabMetadata | null> => {
+			const sessions = pluginSessionsRaw();
+			const targetId =
+				typeof params.sessionId === 'string'
+					? params.sessionId
+					: typeof sessionsStore.get('activeSessionId', '') === 'string'
+						? (sessionsStore.get('activeSessionId', '') as string)
+						: '';
+			const session = sessions.find((s) => s.id === targetId);
+			if (!session) return null;
+			const now = Date.now();
+			const tabId = crypto.randomUUID();
+			const name = typeof params.title === 'string' ? params.title : null;
+			const tab = {
+				id: tabId,
+				agentSessionId: null,
+				name,
+				starred: false,
+				logs: [],
+				inputValue: '',
+				stagedImages: [],
+				createdAt: now,
+				state: 'idle',
+			};
+			const nextSession = {
+				...session,
+				aiTabs: [...(Array.isArray(session.aiTabs) ? session.aiTabs : []), tab],
+				activeTabId: tabId,
+				activeFileTabId: null,
+				activeBrowserTabId: null,
+				activeTerminalTabId: null,
+				inputMode: 'ai',
+				unifiedTabOrder: [
+					...(Array.isArray(session.unifiedTabOrder) ? session.unifiedTabOrder : []),
+					{ type: 'ai', id: tabId },
+				],
+				updatedAt: now,
+			};
+			setPluginSessionsRaw(sessions.map((s) => (s.id === session.id ? nextSession : s)));
+			return {
+				id: tabId,
+				sessionId: session.id as string,
+				type: 'ai',
+				...(name ? { title: name } : {}),
+				status: 'idle',
+				createdAt: now,
+				agentSessionId: null,
+				...(typeof session.cwd === 'string' ? { projectPath: session.cwd } : {}),
+			};
+		};
+		const pluginTabsFocus = async (tabId: string): Promise<boolean> => {
+			const sessions = pluginSessionsRaw();
+			let focused = false;
+			const next = sessions.map((session) => {
+				if ((Array.isArray(session.aiTabs) ? session.aiTabs : []).some((t) => t?.id === tabId)) {
+					focused = true;
+					sessionsStore.set('activeSessionId', session.id as string);
+					return {
+						...session,
+						activeTabId: tabId,
+						activeFileTabId: null,
+						activeBrowserTabId: null,
+						activeTerminalTabId: null,
+						inputMode: 'ai',
+					};
+				}
+				if (
+					(Array.isArray(session.terminalTabs) ? session.terminalTabs : []).some(
+						(t) => t?.id === tabId
+					)
+				) {
+					focused = true;
+					sessionsStore.set('activeSessionId', session.id as string);
+					return {
+						...session,
+						activeTerminalTabId: tabId,
+						activeFileTabId: null,
+						activeBrowserTabId: null,
+						inputMode: 'terminal',
+					};
+				}
+				return session;
+			});
+			if (focused) setPluginSessionsRaw(next);
+			return focused;
+		};
+		const pluginTabsClose = async (tabId: string): Promise<boolean> => {
+			const sessions = pluginSessionsRaw();
+			let closed = false;
+			const next = sessions.map((session) => {
+				const aiTabs = Array.isArray(session.aiTabs) ? session.aiTabs : [];
+				const terminalTabs = Array.isArray(session.terminalTabs) ? session.terminalTabs : [];
+				if (aiTabs.some((t) => t?.id === tabId)) {
+					closed = true;
+					const remaining = aiTabs.filter((t) => t?.id !== tabId);
+					return {
+						...session,
+						aiTabs: remaining,
+						activeTabId:
+							session.activeTabId === tabId
+								? ((remaining[0] as Record<string, unknown> | undefined)?.id ?? '')
+								: session.activeTabId,
+						unifiedTabOrder: Array.isArray(session.unifiedTabOrder)
+							? session.unifiedTabOrder.filter((t) => t?.id !== tabId)
+							: [],
+					};
+				}
+				if (terminalTabs.some((t) => t?.id === tabId)) {
+					closed = true;
+					const remaining = terminalTabs.filter((t) => t?.id !== tabId);
+					return {
+						...session,
+						terminalTabs: remaining,
+						activeTerminalTabId:
+							session.activeTerminalTabId === tabId ? null : session.activeTerminalTabId,
+						unifiedTabOrder: Array.isArray(session.unifiedTabOrder)
+							? session.unifiedTabOrder.filter((t) => t?.id !== tabId)
+							: [],
+					};
+				}
+				return session;
+			});
+			if (closed) setPluginSessionsRaw(next);
+			return closed;
+		};
 		const pluginSessionsGet = (sessionId: string): PluginSessionMetadata | null =>
 			pluginSessionsList().find((s) => s.id === sessionId) ?? null;
+		const pluginSessionsCreate = async (
+			params: Record<string, unknown>
+		): Promise<PluginSessionMetadata> => {
+			const now = Date.now();
+			const sessionId = typeof params.id === 'string' ? params.id : crypto.randomUUID();
+			const tabId = crypto.randomUUID();
+			const title =
+				typeof params.title === 'string'
+					? params.title
+					: typeof params.name === 'string'
+						? params.name
+						: 'Plugin Session';
+			const toolType =
+				typeof params.agentId === 'string'
+					? params.agentId
+					: typeof params.toolType === 'string'
+						? params.toolType
+						: 'claude-code';
+			const cwd =
+				typeof params.projectPath === 'string'
+					? params.projectPath
+					: typeof params.cwd === 'string'
+						? params.cwd
+						: os.homedir();
+			const session = {
+				id: sessionId,
+				name: title,
+				toolType,
+				state: 'idle',
+				cwd,
+				fullPath: cwd,
+				projectRoot: cwd,
+				createdAt: now,
+				updatedAt: now,
+				aiLogs: [],
+				shellLogs: [],
+				workLog: [],
+				contextUsage: 0,
+				inputMode: 'ai',
+				aiPid: 0,
+				terminalPid: 0,
+				port: 0,
+				isLive: false,
+				changedFiles: [],
+				isGitRepo: false,
+				fileTree: [],
+				fileExplorerExpanded: [],
+				fileExplorerScrollPos: 0,
+				executionQueue: [],
+				activeTimeMs: 0,
+				aiTabs: [
+					{
+						id: tabId,
+						agentSessionId: null,
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: now,
+						state: 'idle',
+					},
+				],
+				activeTabId: tabId,
+				closedTabHistory: [],
+				filePreviewTabs: [],
+				activeFileTabId: null,
+				browserTabs: [],
+				activeBrowserTabId: null,
+				terminalTabs: [],
+				activeTerminalTabId: null,
+				unifiedTabOrder: [{ type: 'ai', id: tabId }],
+				unifiedClosedTabHistory: [],
+			};
+			setPluginSessionsRaw([...pluginSessionsRaw(), session]);
+			sessionsStore.set('activeSessionId', sessionId);
+			return {
+				id: sessionId,
+				title,
+				agentId: toolType,
+				status: 'idle',
+				createdAt: now,
+				projectPath: cwd,
+			};
+		};
+		const pluginSessionsUpdate = async (
+			sessionId: string,
+			patch: Record<string, unknown>
+		): Promise<PluginSessionMetadata | null> => {
+			const sessions = pluginSessionsRaw();
+			let updated: Record<string, unknown> | null = null;
+			const next = sessions.map((session) => {
+				if (session.id !== sessionId) return session;
+				updated = {
+					...session,
+					...(typeof patch.title === 'string' ? { name: patch.title } : {}),
+					...(typeof patch.name === 'string' ? { name: patch.name } : {}),
+					...(typeof patch.status === 'string' ? { state: patch.status } : {}),
+					updatedAt: Date.now(),
+				};
+				return updated;
+			});
+			if (!updated) return null;
+			setPluginSessionsRaw(next);
+			return pluginSessionsGet(sessionId);
+		};
+		const pluginSessionsDelete = async (sessionId: string): Promise<boolean> => {
+			const sessions = pluginSessionsRaw();
+			if (!sessions.some((s) => s.id === sessionId)) return false;
+			setPluginSessionsRaw(sessions.filter((s) => s.id !== sessionId));
+			if (sessionsStore.get('activeSessionId', '') === sessionId) {
+				const nextActive = pluginSessionsRaw()[0]?.id;
+				sessionsStore.set('activeSessionId', typeof nextActive === 'string' ? nextActive : '');
+			}
+			return true;
+		};
+		const pluginListHistoryEntries = async () => {
+			const all = [];
+			for (const session of pluginSessionsList()) {
+				all.push(...(await getHistoryManager().getEntries(session.id)));
+			}
+			return all;
+		};
+		const pluginGetHistoryEntry = async (entryId: string) => {
+			for (const entry of await pluginListHistoryEntries()) {
+				if (entry.id === entryId) return entry;
+			}
+			return null;
+		};
+		const pluginRecordDecision = async (pluginId: string, decision: Record<string, unknown>) => {
+			const id = crypto.randomUUID();
+			const at = Date.now();
+			pluginSettingsSet(`plugins.${pluginId}.decisions.${id}`, { ...decision, id, at });
+			return { id, at };
+		};
 
 		const eventBus = new PluginEventBusImpl({
 			isPermitted: (pluginId) => isPermitted(grantsOf(pluginId), 'events:subscribe'),
@@ -1301,6 +1618,15 @@ app
 				settingsDeleteNamespace: pluginSettingsDeleteNamespace,
 				sessionsList: pluginSessionsList,
 				sessionsGet: pluginSessionsGet,
+				sessionsCreate: pluginSessionsCreate,
+				sessionsUpdate: pluginSessionsUpdate,
+				sessionsDelete: pluginSessionsDelete,
+				tabsList: pluginTabsList,
+				tabsCreate: pluginTabsCreate,
+				tabsFocus: pluginTabsFocus,
+				tabsClose: pluginTabsClose,
+				listHistoryEntries: pluginListHistoryEntries,
+				getHistoryEntry: pluginGetHistoryEntry,
 				readSessionTranscript: (sessionId) => getHistoryManager().getEntries(sessionId),
 				assertTranscriptReadAllowed: (pluginId) => {
 					const reg = pluginManager?.getRegistry();
@@ -1315,6 +1641,24 @@ app
 						'[PluginAudit]'
 					);
 				},
+				appendSessionTranscript: async (sessionId, projectPath, entries) => {
+					for (const entry of entries) {
+						await getHistoryManager().addEntry(sessionId, projectPath, entry);
+					}
+				},
+				auditTranscriptWrite: (pluginId, info) => {
+					logger.info(
+						`transcripts.append by "${pluginId}" session=${info.sessionId} project=${info.projectPath} rows=${info.count}`,
+						'[PluginAudit]'
+					);
+				},
+				recordDecision: pluginRecordDecision,
+				openExternal: (url, opts) => shell.openExternal(url, opts as OpenExternalOptions),
+				powerPreventSleep: (reason) => powerManager.addBlockReason(reason),
+				powerReleaseSleep: (reason) => powerManager.removeBlockReason(reason),
+				storageSqlBaseDir: path.join(app.getPath('userData'), 'plugin-data', 'sql'),
+				pushPluginEvent: (pluginId, event) =>
+					pluginSandboxHost?.pushEvent(pluginId, event) ?? false,
 				// [UiCommandeer] TEMP self-verify wiring for WS-ui-command. Main to
 				// integrate canonically (index.ts also takes act-verbs). The dep type
 				// is now (commandId, args?) => Promise<boolean>, so the old `() => false`
@@ -1620,14 +1964,17 @@ app
 		// relaunches stale supervised targets; it never overwrites live state.
 		pianolaRelearnScheduler?.start();
 
-		// Prime the plugin registry from disk. refresh() is a no-op (empty registry)
-		// when the plugins Encore flag is off, so this is safe to call unconditionally.
+		// Prime the plugin registry from disk, then watch the plugin directory so
+		// manual/plugin-fixture edits hot-reload through the same refresh() path.
+		// refresh() is a no-op (empty registry) when the plugins Encore flag is off,
+		// so this is safe to call unconditionally.
 		if (pluginManager) {
 			try {
 				pluginManager.refresh();
+				pluginManager.startWatching();
 			} catch (err) {
 				void captureException(err);
-				logger.error(`Plugin manager failed to refresh at boot: ${err}`, 'Startup');
+				logger.error(`Plugin manager failed to start at boot: ${err}`, 'Startup');
 			}
 		}
 		// Start the plugin scheduler unconditionally: it self-gates per tick on the
@@ -1837,7 +2184,8 @@ quitHandler = createQuitHandler({
 		pianolaSupervisor?.stopAll();
 		// Stop the Pianola re-learn cadence.
 		pianolaRelearnScheduler?.stop();
-		// Tear down any running plugin sandboxes (utilityProcess children).
+		// Tear down plugin hot-reload watching and running sandboxes.
+		pluginManager?.stopWatching();
 		pluginManager?.stopAllSandboxes();
 		// Stop the plugin scheduler poll loop.
 		pluginScheduler?.stop();

@@ -19,6 +19,8 @@ import {
 import { ActionGuard } from '../../../main/plugins/action-guard';
 import { PluginKvStore } from '../../../main/plugins/plugin-kv-store';
 import { PluginEventBusImpl } from '../../../main/plugins/plugin-event-bus';
+import { PermissionBroker } from '../../../main/plugins/permission-broker';
+import type { PermissionGrant } from '../../../shared/plugins/permissions';
 
 let kvBase: string;
 let kv: PluginKvStore;
@@ -43,13 +45,22 @@ function makeDeps(over: Partial<HostHandlerDeps> = {}): HostHandlerDeps {
 		settingsDeleteNamespace: vi.fn(),
 		sessionsList: () => [],
 		sessionsGet: () => null,
-		runUiCommand: () => true,
+		runUiCommand: async () => true,
 		listAgents: () => [],
+		isPluginTrusted: () => true,
 		readSessionTranscript: async () => [],
 		assertTranscriptReadAllowed: () => {},
 		auditTranscriptRead: () => {},
 	};
 	return { ...base, ...over };
+}
+
+function brokerFor(getGrants: () => PermissionGrant[]): PermissionBroker {
+	return new PermissionBroker({ getGrants });
+}
+
+function grant(capability: PermissionGrant['capability']): PermissionGrant {
+	return { capability, grantedAt: 1 };
 }
 
 describe('settings.set', () => {
@@ -393,16 +404,7 @@ describe('transcripts.read', () => {
 	});
 });
 
-describe('arbitrary-code-execution-grade verbs stay inert (E-InertCaps)', () => {
-	// SECURITY INVARIANT: `agents.dispatch` (send a prompt -> agent code runs) and
-	// `process.spawn` (run a shell command) are arbitrary-code-execution-grade.
-	// They are deliberately UNWIRED until the Phase-3 OS sandbox lands; a confined
-	// cwd + minimal-env child_process is NOT a sandbox. The single gate is that the
-	// integrator (src/main/index.ts) omits the optional `dispatch`/`spawn` deps, so
-	// `buildHostCallHandlers` never registers the handlers and any call is rejected
-	// upstream as an unimplemented host method. These tests pin the factory contract
-	// (the deps are the only gate); the production integration site is locked
-	// separately by the source guard in plugin-host-deps-wiring.test.ts.
+describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 	it('does NOT register agents.dispatch or process.spawn with default deps', () => {
 		const h = buildHostCallHandlers(makeDeps());
 		expect(h['agents.dispatch']).toBeUndefined();
@@ -414,20 +416,365 @@ describe('arbitrary-code-execution-grade verbs stay inert (E-InertCaps)', () => 
 		expect(typeof h['agents.get']).toBe('function');
 	});
 
-	it('the dispatch/spawn deps are the ONLY gate — present only when explicitly provided', async () => {
-		// This documents the wiring mechanism without endorsing it: the verbs become
-		// reachable IF AND ONLY IF the integrator passes the deps. Production code
-		// (index.ts) must keep omitting them until the sandbox exists.
+	it('allows trusted+granted low-risk agents.dispatch and audits before the brokered sink', async () => {
+		const events: string[] = [];
+		const dispatch = vi.fn(async () => {
+			events.push('sink');
+			return 'dispatched';
+		});
+		const actionGuard = new ActionGuard({
+			now: () => 5,
+			audit: () => events.push('audit'),
+		});
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [grant('agents:dispatch')]),
+				actionGuard,
+				isPluginTrusted: () => true,
+				dispatch,
+			})
+		);
+		await expect(
+			h['agents.dispatch']!('p', { agentId: 'a', prompt: 'write a friendly summary' })
+		).resolves.toBe('dispatched');
+		expect(events).toEqual(['audit', 'sink']);
+		expect(dispatch).toHaveBeenCalledWith('a', 'write a friendly summary', undefined);
+	});
+
+	it('allows trusted+granted low-risk process.spawn with sanitized cwd/env only', async () => {
+		const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'plugin-spawn-'));
+		const spawn = vi.fn(async () => 'spawned');
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [grant('process:spawn')]),
+				isPluginTrusted: () => true,
+				spawn,
+			})
+		);
+		try {
+			await expect(
+				h['process.spawn']!('p', {
+					command: 'echo',
+					opts: { cwd: tmp, env: { SAFE_FLAG: '1' }, args: ['hello'] },
+				})
+			).resolves.toBe('spawned');
+			expect(spawn).toHaveBeenCalledWith('p', 'echo', {
+				cwd: path.resolve(tmp),
+				env: { SAFE_FLAG: '1' },
+				args: ['hello'],
+			});
+		} finally {
+			fs.rmSync(tmp, { recursive: true, force: true });
+		}
+	});
+
+	it('denies untrusted plugins before dispatch side effects', async () => {
+		const dispatch = vi.fn(async () => 'dispatched');
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [grant('agents:dispatch')]),
+				isPluginTrusted: () => false,
+				dispatch,
+			})
+		);
+		await expect(
+			h['agents.dispatch']!('p', { agentId: 'a', prompt: 'write a friendly summary' })
+		).rejects.toThrow(/trusted signed plugin/);
+		expect(dispatch).not.toHaveBeenCalled();
+	});
+
+	it('denies ungranted and stale-grant process.spawn before side effects', async () => {
+		let grants: PermissionGrant[] = [];
+		const spawn = vi.fn(async () => 'spawned');
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => grants),
+				isPluginTrusted: () => true,
+				spawn,
+			})
+		);
+		await expect(h['process.spawn']!('p', { command: 'echo' })).rejects.toThrow(
+			/permission denied/
+		);
+		expect(spawn).not.toHaveBeenCalled();
+
+		grants = [grant('process:spawn')];
+		await expect(h['process.spawn']!('p', { command: 'echo' })).resolves.toBe('spawned');
+		expect(spawn).toHaveBeenCalledWith('p', 'echo', { env: {} });
+		grants = [];
+		await expect(h['process.spawn']!('p', { command: 'echo' })).rejects.toThrow(
+			/permission denied/
+		);
+		expect(spawn).toHaveBeenCalledTimes(1);
+	});
+
+	it('denies high-risk dispatch/spawn and secret-looking env before side effects', async () => {
 		const dispatch = vi.fn(async () => 'dispatched');
 		const spawn = vi.fn(async () => 'spawned');
-		const h = buildHostCallHandlers(makeDeps({ dispatch, spawn }));
-		expect(typeof h['agents.dispatch']).toBe('function');
-		expect(typeof h['process.spawn']).toBe('function');
-		await expect(h['agents.dispatch']!('p', { agentId: 'a', prompt: 'hi' })).resolves.toBe(
-			'dispatched'
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [grant('agents:dispatch'), grant('process:spawn')]),
+				isPluginTrusted: () => true,
+				dispatch,
+				spawn,
+			})
 		);
-		await expect(h['process.spawn']!('p', { command: 'ls' })).resolves.toBe('spawned');
-		expect(dispatch).toHaveBeenCalledWith('a', 'hi', undefined);
-		expect(spawn).toHaveBeenCalledWith('p', 'ls', undefined);
+		await expect(
+			h['agents.dispatch']!('p', { agentId: 'a', prompt: 'delete the production database' })
+		).rejects.toThrow(/high-risk prompt/);
+		await expect(h['process.spawn']!('p', { command: 'rm -rf /' })).rejects.toThrow(
+			/high-risk prompt/
+		);
+		await expect(
+			h['process.spawn']!('p', {
+				command: 'echo',
+				opts: { env: { API_TOKEN: 'secret' } },
+			})
+		).rejects.toThrow(/secret-looking env key/);
+		expect(dispatch).not.toHaveBeenCalled();
+		expect(spawn).not.toHaveBeenCalled();
+	});
+
+	it('denies when the ActionGuard refuses before act-verb side effects', async () => {
+		const spawn = vi.fn(async () => 'spawned');
+		const actionGuard = new ActionGuard({
+			limits: { high: { windowMs: 1000, maxPerWindow: 0, maxConcurrent: 1 } },
+		});
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [grant('process:spawn')]),
+				actionGuard,
+				isPluginTrusted: () => true,
+				spawn,
+			})
+		);
+		await expect(h['process.spawn']!('p', { command: 'echo' })).rejects.toThrow(/limit/);
+		expect(spawn).not.toHaveBeenCalled();
+	});
+});
+
+describe('brokered non-act host API breadth', () => {
+	it('re-authorizes read methods on every direct handler call so revokes take effect immediately', async () => {
+		let grants: PermissionGrant[] = [grant('sessions:read')];
+		const sessionsList = vi.fn(() => [{ id: 's1', title: 'One' }]);
+		const h = buildHostCallHandlers(makeDeps({ broker: brokerFor(() => grants), sessionsList }));
+
+		await expect(h['sessions.list']!('p', {})).resolves.toEqual([{ id: 's1', title: 'One' }]);
+		grants = [];
+		await expect(h['sessions.list']!('p', {})).rejects.toThrow(/permission denied/);
+		expect(sessionsList).toHaveBeenCalledTimes(1);
+	});
+
+	it('allows session create/update/delete and denies stale or disabled write paths cleanly', async () => {
+		let current: PluginSessionMetadata | null = null;
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [grant('sessions:create'), grant('sessions:write')]),
+				sessionsGet: (id) => (current?.id === id ? current : null),
+				sessionsCreate: async () => {
+					current = { id: 's1', title: 'Created', projectPath: '/repo' };
+					return current;
+				},
+				sessionsUpdate: async (id, patch) => {
+					if (current?.id !== id) return null;
+					current = {
+						...current,
+						...(typeof patch.title === 'string' ? { title: patch.title } : {}),
+					};
+					return current;
+				},
+				sessionsDelete: async (id) => {
+					if (current?.id !== id) return false;
+					current = null;
+					return true;
+				},
+			})
+		);
+
+		await expect(h['sessions.create']!('p', { title: 'Created' })).resolves.toEqual({
+			id: 's1',
+			title: 'Created',
+			projectPath: '/repo',
+		});
+		await expect(
+			h['sessions.update']!('p', { sessionId: 's1', patch: { title: 'Renamed' } })
+		).resolves.toEqual({ id: 's1', title: 'Renamed', projectPath: '/repo' });
+		await expect(h['sessions.update']!('p', { sessionId: 'missing', patch: {} })).rejects.toThrow(
+			/unknown sessionId/
+		);
+		await expect(h['sessions.delete']!('p', { sessionId: 's1' })).resolves.toEqual({ ok: true });
+
+		const disabled = buildHostCallHandlers(
+			makeDeps({ broker: brokerFor(() => [grant('sessions:create')]) })
+		);
+		await expect(disabled['sessions.create']!('p', {})).rejects.toThrow(/unavailable/);
+	});
+
+	it('manages tabs through injected tab deps and denies stale tab ids cleanly', async () => {
+		const tabs = new Map([
+			['t1', { id: 't1', sessionId: 's1', type: 'ai' as const, title: 'One' }],
+		]);
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [grant('tabs:manage')]),
+				tabsList: () => [...tabs.values()],
+				tabsCreate: async () => {
+					const tab = { id: 't2', sessionId: 's1', type: 'ai' as const, title: 'Two' };
+					tabs.set(tab.id, tab);
+					return tab;
+				},
+				tabsFocus: async (id) => tabs.has(id),
+				tabsClose: async (id) => tabs.delete(id),
+			})
+		);
+
+		await expect(h['tabs.list']!('p', {})).resolves.toHaveLength(1);
+		await expect(h['tabs.create']!('p', { sessionId: 's1' })).resolves.toEqual(
+			expect.objectContaining({ id: 't2' })
+		);
+		await expect(h['tabs.focus']!('p', { tabId: 't2' })).resolves.toEqual({ ok: true });
+		await expect(h['tabs.close']!('p', { tabId: 't2' })).resolves.toEqual({ ok: true });
+		await expect(h['tabs.close']!('p', { tabId: 'stale' })).rejects.toThrow(/unknown tabId/);
+	});
+
+	it('projects history as metadata-only and keeps transcript append audited/project-authorized', async () => {
+		const appended: unknown[] = [];
+		const auditWrite = vi.fn();
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [grant('history:read'), grant('transcripts:write')]),
+				sessionsGet: (id) => (id === 's1' ? { id: 's1', projectPath: '/repo' } : null),
+				listHistoryEntries: async () => [
+					{
+						id: 'h1',
+						type: 'USER',
+						timestamp: 1,
+						summary: 'SECRET SUMMARY',
+						fullResponse: 'SECRET FULL',
+						projectPath: '/repo',
+						sessionId: 's1',
+					},
+				],
+				getHistoryEntry: async () => ({
+					id: 'h1',
+					type: 'USER',
+					timestamp: 1,
+					summary: 'SECRET SUMMARY',
+					fullResponse: 'SECRET FULL',
+					projectPath: '/repo',
+					sessionId: 's1',
+				}),
+				appendSessionTranscript: async (_sessionId, _projectPath, entries) =>
+					appended.push(...entries),
+				auditTranscriptWrite: auditWrite,
+			})
+		);
+
+		const list = await h['history.list']!('p', {});
+		expect(JSON.stringify(list)).not.toContain('SECRET');
+		await expect(h['history.get']!('p', { entryId: 'h1' })).resolves.toEqual(
+			expect.objectContaining({ id: 'h1', sessionId: 's1', projectPath: '/repo' })
+		);
+		await expect(
+			h['transcripts.append']!('p', {
+				sessionId: 's1',
+				projectPath: '/caller-lie',
+				entries: [{ summary: 'new content', fullResponse: 'full content' }],
+			})
+		).resolves.toEqual({ ok: true, count: 1 });
+		expect(appended).toEqual([
+			expect.objectContaining({ sessionId: 's1', projectPath: '/repo', summary: 'new content' }),
+		]);
+		expect(auditWrite).toHaveBeenCalledWith(
+			'p',
+			expect.objectContaining({ sessionId: 's1', projectPath: '/repo', count: 1 })
+		);
+	});
+
+	it('runs storage.sql through the plugin-owned SQL broker and denies stale grants', async () => {
+		let grants: PermissionGrant[] = [grant('storage:sql')];
+		const rowsByPlugin = new Map<string, Array<Record<string, unknown>>>();
+		const runStorageSql = vi.fn((pluginId: string, query: string, params: unknown[]) => {
+			const normalized = query.trim().toUpperCase();
+			if (normalized.startsWith('ATTACH')) throw new Error('ATTACH is not permitted');
+			const rows = rowsByPlugin.get(pluginId) ?? [];
+			if (normalized.startsWith('CREATE TABLE')) {
+				rowsByPlugin.set(pluginId, rows);
+				return { columns: [], rows: [], rowCount: 0, truncated: false, changes: 0 };
+			}
+			if (normalized.startsWith('INSERT')) {
+				rows.push({ name: params[0] });
+				rowsByPlugin.set(pluginId, rows);
+				return { columns: [], rows: [], rowCount: 0, truncated: false, changes: 1 };
+			}
+			if (normalized.startsWith('SELECT')) {
+				if (!rowsByPlugin.has(pluginId)) throw new Error('no such table: items');
+				return { columns: ['name'], rows, rowCount: rows.length, truncated: false };
+			}
+			throw new Error('unsupported query');
+		});
+		const h = buildHostCallHandlers(makeDeps({ broker: brokerFor(() => grants), runStorageSql }));
+
+		await h['storage.sql']!('p', { query: 'CREATE TABLE items (name TEXT)' });
+		await h['storage.sql']!('p', {
+			query: 'INSERT INTO items (name) VALUES (?)',
+			params: ['alpha'],
+		});
+		await expect(h['storage.sql']!('p', { query: 'SELECT name FROM items' })).resolves.toEqual(
+			expect.objectContaining({ rows: [{ name: 'alpha' }], rowCount: 1 })
+		);
+		await expect(h['storage.sql']!('other', { query: 'SELECT name FROM items' })).rejects.toThrow(
+			/no such table/
+		);
+		await expect(
+			h['storage.sql']!('p', { query: "ATTACH DATABASE '/tmp/x' AS x" })
+		).rejects.toThrow(/not permitted/);
+		grants = [];
+		await expect(h['storage.sql']!('p', { query: 'SELECT 1' })).rejects.toThrow(
+			/permission denied/
+		);
+		expect(runStorageSql).toHaveBeenCalledTimes(5);
+	});
+
+	it('brokers fs.watch, power handles, and background service lifecycle with clean stale-id denial', async () => {
+		const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'plugin-watch-'));
+		const file = path.join(tmp, 'watched.txt');
+		fs.writeFileSync(file, 'start', 'utf-8');
+		const prevent = vi.fn();
+		const release = vi.fn();
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [
+					grant('fs:watch'),
+					grant('power:preventSleep'),
+					grant('background:service'),
+				]),
+				powerPreventSleep: prevent,
+				powerReleaseSleep: release,
+			})
+		);
+		try {
+			await expect(h['fs.watch']!('p', { path: file, opts: { once: true } })).resolves.toEqual(
+				expect.objectContaining({ path: fs.realpathSync(file), watchId: expect.any(String) })
+			);
+			const sleep = (await h['power.preventSleep']!('p', { reason: 'work' })) as {
+				handleId: string;
+			};
+			expect(prevent).toHaveBeenCalledWith(expect.stringContaining('plugin:p:work:'));
+			await expect(h['power.releaseSleep']!('p', sleep)).resolves.toEqual({ ok: true });
+			expect(release).toHaveBeenCalledTimes(1);
+			await expect(h['power.releaseSleep']!('p', sleep)).rejects.toThrow(/unknown sleep handle/);
+
+			const registered = (await h['background.register']!('p', { service: { id: 'svc' } })) as {
+				serviceId: string;
+			};
+			expect(registered).toEqual({ serviceId: 'svc' });
+			await expect(h['background.unregister']!('p', registered)).resolves.toEqual({ ok: true });
+			await expect(h['background.unregister']!('p', registered)).rejects.toThrow(
+				/unknown background service/
+			);
+		} finally {
+			fs.rmSync(tmp, { recursive: true, force: true });
+		}
 	});
 });

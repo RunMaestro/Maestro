@@ -63,6 +63,7 @@ const renderer = spawn(packageRunner, ['run', rendererScript], {
 });
 
 let shuttingDown = false;
+let rendererPortReady = false;
 let main = null;
 
 const shutdown = (code = 0) => {
@@ -78,9 +79,13 @@ const shutdown = (code = 0) => {
 process.on('SIGINT', () => shutdown(130));
 process.on('SIGTERM', () => shutdown(143));
 
-renderer.once('exit', (code) => {
+renderer.once('exit', (code, signal) => {
 	if (shuttingDown) return;
-	console.error(`[dev] Renderer exited before Electron started (code ${code ?? 0})`);
+	const message = rendererPortReady
+		? 'Renderer dev server exited after Electron launch'
+		: 'Renderer exited before Electron started';
+	const status = signal ? `signal ${signal}` : `code ${code ?? 0}`;
+	console.error(`[dev] ${message} (${status})`);
 	shutdown(code ?? 1);
 });
 
@@ -92,6 +97,7 @@ try {
 	);
 	shutdown(1);
 }
+rendererPortReady = true;
 
 const cdpPort = process.env.MAESTRO_CDP_PORT;
 const mainArgs = ['run', mainScript];
@@ -105,7 +111,10 @@ main = spawn(packageRunner, mainArgs, {
 	stdio: 'inherit',
 });
 
-main.once('exit', (code) => {
+main.once('exit', (code, signal) => {
 	if (shuttingDown) return;
-	shutdown(code ?? 0);
+	if (signal) {
+		console.error(`[dev] Electron exited (signal ${signal})`);
+	}
+	shutdown(signal ? 1 : (code ?? 0));
 });

@@ -14,6 +14,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import * as crypto from 'crypto';
 import semver from 'semver';
 import { HOST_API_VERSION } from '../../shared/plugins/host-api';
 import {
@@ -45,6 +46,8 @@ import {
 import { verifyPluginSignature } from './plugin-signature';
 
 const MANIFEST_FILENAME = 'plugin.json';
+
+const HOT_RELOAD_DEBOUNCE_MS = 150;
 
 /**
  * The sandbox lifecycle the manager drives. PluginSandboxHost implements this
@@ -92,6 +95,8 @@ export interface PluginManagerDeps {
 	 * consent govern). It only ever force-disables — never force-enables.
 	 */
 	verifyRecord?: (record: PluginRecord) => { disable: boolean };
+	/** Optional sink for plugin hot-reload watcher/refresh failures. */
+	onWatchError?: (error: unknown) => void;
 }
 
 export interface InstallResult {
@@ -107,6 +112,11 @@ export interface InstallResult {
  */
 export class PluginManager {
 	private registry: PluginRegistry = emptyRegistry();
+	private pluginFingerprints = new Map<string, string>();
+	private watchRoot: fs.FSWatcher | null = null;
+	private watchedPluginDirs = new Map<string, fs.FSWatcher>();
+	private watchRefreshTimer: NodeJS.Timeout | undefined;
+	private watchDebounceMs = HOT_RELOAD_DEBOUNCE_MS;
 
 	constructor(private readonly deps: PluginManagerDeps) {}
 
@@ -165,6 +175,9 @@ export class PluginManager {
 	refresh(): PluginRegistry {
 		if (!this.deps.isEnabled()) {
 			this.registry = emptyRegistry();
+			this.pluginFingerprints.clear();
+			this.reconcileSandboxes();
+			this.syncPluginWatchers();
 			return this.registry;
 		}
 
@@ -179,6 +192,9 @@ export class PluginManager {
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
 				this.registry = emptyRegistry();
+				this.pluginFingerprints.clear();
+				this.reconcileSandboxes();
+				this.syncPluginWatchers();
 				return this.registry;
 			}
 			throw error;
@@ -187,6 +203,8 @@ export class PluginManager {
 		const state = readPluginState();
 		const trustedKeys = this.deps.trustedKeys?.() ?? [];
 		let next = emptyRegistry();
+		const previousFingerprints = this.pluginFingerprints;
+		const nextFingerprints = new Map<string, string>();
 		for (const folder of folders) {
 			const source = path.join(dir, folder);
 			const rawManifest = this.readManifest(source);
@@ -240,10 +258,13 @@ export class PluginManager {
 				}
 			}
 			next = upsertRecord(next, gated);
+			nextFingerprints.set(gated.id, this.fingerprintPluginDir(source));
 		}
 
 		this.registry = next;
-		this.reconcileSandboxes();
+		this.reconcileSandboxes(previousFingerprints, nextFingerprints);
+		this.pluginFingerprints = nextFingerprints;
+		this.syncPluginWatchers();
 		this.deps.onChange?.(this.registry);
 		return this.registry;
 	}
@@ -254,7 +275,7 @@ export class PluginManager {
 		if (!this.deps.isEnabled()) return this.registry;
 		setPluginEnabled(id, enabled);
 		this.registry = setEnabled(this.registry, id, enabled);
-		this.reconcileSandboxes();
+		this.reconcileSandboxes(this.pluginFingerprints, this.pluginFingerprints);
 		this.deps.onChange?.(this.registry);
 		return this.registry;
 	}
@@ -277,15 +298,26 @@ export class PluginManager {
 
 	/**
 	 * Start sandboxes that should be running and stop those that should not. Safe
-	 * to call repeatedly; no-op when no sandbox controller is injected.
+	 * to call repeatedly; no-op when no sandbox controller is injected. A runnable
+	 * plugin whose on-disk fingerprint changed is deliberately stopped first so
+	 * the next start observes the edited manifest/code instead of leaving a stale
+	 * sandbox alive.
 	 */
-	private reconcileSandboxes(): void {
+	private reconcileSandboxes(
+		previousFingerprints = this.pluginFingerprints,
+		nextFingerprints = this.pluginFingerprints
+	): void {
 		const sandbox = this.deps.sandbox;
 		if (!sandbox) return;
 		const shouldRun = new Set<string>();
 		for (const record of this.registry.records) {
 			if (!this.isRunnable(record) || !record.manifest?.entry) continue;
 			shouldRun.add(record.id);
+			const fingerprintChanged =
+				previousFingerprints.get(record.id) !== nextFingerprints.get(record.id);
+			if (sandbox.isRunning(record.id) && fingerprintChanged) {
+				sandbox.stop(record.id);
+			}
 			if (!sandbox.isRunning(record.id)) {
 				try {
 					sandbox.start(record.id, record.source, record.manifest.entry);
@@ -299,6 +331,135 @@ export class PluginManager {
 		for (const id of sandbox.runningIds()) {
 			if (!shouldRun.has(id)) sandbox.stop(id);
 		}
+	}
+
+	/**
+	 * Watch the installed plugin tree and refresh on adds/removes/edits. The
+	 * watcher is intentionally thin: refresh() remains the single source of truth
+	 * for registry rebuilds and sandbox reconciliation.
+	 */
+	startWatching(debounceMs = HOT_RELOAD_DEBOUNCE_MS): void {
+		if (this.watchRoot) return;
+		this.watchDebounceMs = debounceMs;
+		try {
+			fs.mkdirSync(pluginsDir(), { recursive: true });
+			this.watchRoot = fs.watch(pluginsDir(), () => this.scheduleWatchedRefresh());
+			this.watchRoot.on('error', (error) => this.deps.onWatchError?.(error));
+			this.syncPluginWatchers();
+		} catch (error) {
+			this.deps.onWatchError?.(error);
+			this.stopWatching();
+		}
+	}
+
+	/** Stop the plugin hot-reload watcher and release all directory handles. */
+	stopWatching(): void {
+		if (this.watchRefreshTimer) {
+			clearTimeout(this.watchRefreshTimer);
+			this.watchRefreshTimer = undefined;
+		}
+		if (this.watchRoot) {
+			this.watchRoot.close();
+			this.watchRoot = null;
+		}
+		for (const watcher of this.watchedPluginDirs.values()) {
+			watcher.close();
+		}
+		this.watchedPluginDirs.clear();
+	}
+
+	private scheduleWatchedRefresh(): void {
+		clearTimeout(this.watchRefreshTimer);
+		this.watchRefreshTimer = setTimeout(() => {
+			this.watchRefreshTimer = undefined;
+			try {
+				this.refresh();
+			} catch (error) {
+				this.deps.onWatchError?.(error);
+			}
+		}, this.watchDebounceMs);
+	}
+
+	private syncPluginWatchers(): void {
+		if (!this.watchRoot) return;
+		const expected = new Set<string>();
+		for (const record of this.registry.records) {
+			for (const dir of this.collectWatchableDirs(record.source)) {
+				expected.add(dir);
+				if (this.watchedPluginDirs.has(dir)) continue;
+				try {
+					const watcher = fs.watch(dir, () => this.scheduleWatchedRefresh());
+					watcher.on('error', (error) => this.deps.onWatchError?.(error));
+					this.watchedPluginDirs.set(dir, watcher);
+				} catch (error) {
+					this.deps.onWatchError?.(error);
+				}
+			}
+		}
+		for (const [source, watcher] of this.watchedPluginDirs) {
+			if (expected.has(source)) continue;
+			watcher.close();
+			this.watchedPluginDirs.delete(source);
+		}
+	}
+
+	private collectWatchableDirs(source: string): string[] {
+		const dirs: string[] = [];
+		const visit = (dir: string): void => {
+			dirs.push(dir);
+			let entries: fs.Dirent[];
+			try {
+				entries = fs.readdirSync(dir, { withFileTypes: true });
+			} catch {
+				return;
+			}
+			for (const entry of entries) {
+				if (entry.isDirectory() && !entry.isSymbolicLink()) {
+					visit(path.join(dir, entry.name));
+				}
+			}
+		};
+		visit(source);
+		return dirs;
+	}
+
+	private fingerprintPluginDir(source: string): string {
+		const hash = crypto.createHash('sha256');
+		const visit = (dir: string, relDir: string): void => {
+			let entries: fs.Dirent[];
+			try {
+				entries = fs
+					.readdirSync(dir, { withFileTypes: true })
+					.sort((a, b) => a.name.localeCompare(b.name));
+			} catch {
+				return;
+			}
+			for (const entry of entries) {
+				const abs = path.join(dir, entry.name);
+				const rel = relDir ? path.join(relDir, entry.name) : entry.name;
+				hash.update(rel.split(path.sep).join('/'));
+				hash.update('\0');
+				try {
+					const stat = fs.lstatSync(abs);
+					hash.update(`${stat.mode}:${stat.size}:`);
+					if (entry.isDirectory() && !entry.isSymbolicLink()) {
+						hash.update('dir\n');
+						visit(abs, rel);
+					} else if (entry.isFile()) {
+						hash.update('file\n');
+						hash.update(fs.readFileSync(abs));
+					} else if (entry.isSymbolicLink()) {
+						hash.update(`link:${fs.readlinkSync(abs)}\n`);
+					} else {
+						hash.update('other\n');
+					}
+				} catch {
+					hash.update('unreadable\n');
+				}
+			}
+		};
+		visit(source, '');
+		return hash.digest('hex');
 	}
 
 	/**
@@ -447,7 +608,9 @@ export class PluginManager {
 		forgetPlugin(id);
 		forgetGrants(id);
 		this.deps.purgePluginData?.(id);
+		this.pluginFingerprints.delete(id);
 		this.registry = removeRecord(this.registry, id);
+		this.syncPluginWatchers();
 		this.deps.onChange?.(this.registry);
 		return { success: true };
 	}

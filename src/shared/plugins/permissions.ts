@@ -37,12 +37,23 @@ export type PluginCapability =
 	| 'settings:read' // read non-secret settings
 	| 'settings:write' // write the plugin's OWN namespaced (plugins.<id>.*) non-secret settings
 	| 'sessions:read' // list sessions + read their metadata (NEVER raw transcript content)
+	| 'sessions:create' // create a new Maestro session/tab shell (no implicit dispatch)
+	| 'sessions:write' // update/remove session metadata/state
+	| 'history:read' // read metadata-only history entries (never raw transcript content)
 	| 'transcripts:read' // read PROJECTED session content (consented, audited, egress-locked)
+	| 'transcripts:write' // append/update brokered transcript entries for a session
 	| 'storage:read' // read the plugin's OWN private key-value store
 	| 'storage:write' // write the plugin's OWN private key-value store
+	| 'storage:sql' // query the plugin's OWN private SQLite store
+	| 'fs:watch' // watch files under a path scope
 	| 'ui:command' // invoke a registered Maestro command (a palette action)
+	| 'tabs:manage' // create/focus/close Maestro tabs
 	| 'events:subscribe' // subscribe to host event topics (metadata-only payloads)
+	| 'shell:openExternal' // ask the OS to open a URL with its default handler
 	| 'process:spawn' // run a shell command (highest risk)
+	| 'decisions:write' // record brokered user/plugin decisions
+	| 'power:preventSleep' // request/release host wake locks while work is active
+	| 'background:service' // register supervised background service work
 	| 'ui:contribute' // add host-rendered items to Maestro's UI (menus, panels, theming, …)
 	| 'ui:panel' // show its own sandboxed interactive panels
 	| 'ui:render-unsafe'; // render arbitrary UI with full interface access (escape hatch)
@@ -57,12 +68,23 @@ export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
 	'settings:read',
 	'settings:write',
 	'sessions:read',
+	'sessions:create',
+	'sessions:write',
+	'history:read',
 	'transcripts:read',
+	'transcripts:write',
 	'storage:read',
 	'storage:write',
+	'storage:sql',
+	'fs:watch',
 	'ui:command',
+	'tabs:manage',
 	'events:subscribe',
+	'shell:openExternal',
 	'process:spawn',
+	'decisions:write',
+	'power:preventSleep',
+	'background:service',
 	'ui:contribute',
 	'ui:panel',
 	'ui:render-unsafe',
@@ -80,13 +102,24 @@ const CAPABILITY_RISK: Record<PluginCapability, CapabilityRisk> = {
 	'settings:write': 'low',
 	'ui:command': 'low',
 	'fs:read': 'medium',
+	'fs:watch': 'medium',
 	'net:fetch': 'medium',
 	'sessions:read': 'medium',
+	'history:read': 'medium',
 	'events:subscribe': 'medium',
+	'tabs:manage': 'medium',
+	'storage:sql': 'medium',
+	'power:preventSleep': 'medium',
 	'agents:dispatch': 'high',
 	'fs:write': 'high',
 	'process:spawn': 'high',
+	'shell:openExternal': 'high',
+	'sessions:create': 'high',
+	'sessions:write': 'high',
 	'transcripts:read': 'high',
+	'transcripts:write': 'high',
+	'decisions:write': 'high',
+	'background:service': 'high',
 	'ui:contribute': 'medium',
 	'ui:panel': 'medium',
 	'ui:render-unsafe': 'high',
@@ -98,22 +131,33 @@ type ScopeKind = 'path' | 'host' | 'none';
 const CAPABILITY_SCOPE_KIND: Record<PluginCapability, ScopeKind> = {
 	'fs:read': 'path',
 	'fs:write': 'path',
+	'fs:watch': 'path',
 	'net:fetch': 'host',
 	'agents:read': 'none',
 	'agents:dispatch': 'none',
+	'history:read': 'none',
 	'notifications:toast': 'none',
 	'settings:read': 'none',
 	// New caps are structurally namespaced/confined by their host handler (the
-	// plugin's own KV dir, its own plugins.<id>.* settings keys, the fixed safe
-	// event-topic catalog), so they take no user-facing scope.
+	// plugin's own KV/SQL dir, its own plugins.<id>.* settings keys, the fixed
+	// safe event-topic catalog), so they take no user-facing scope.
 	'settings:write': 'none',
 	'sessions:read': 'none',
+	'sessions:create': 'none',
+	'sessions:write': 'none',
 	'storage:read': 'none',
 	'storage:write': 'none',
+	'storage:sql': 'none',
 	'ui:command': 'none',
+	'tabs:manage': 'none',
 	'events:subscribe': 'none',
 	'process:spawn': 'none',
+	'shell:openExternal': 'host',
+	'decisions:write': 'none',
+	'power:preventSleep': 'none',
+	'background:service': 'none',
 	'transcripts:read': 'path', // scope is a project path; the handler enforces the session's projectPath against the grant
+	'transcripts:write': 'path', // scope is a project path; the handler enforces the session's projectPath against the grant
 	'ui:contribute': 'none',
 	'ui:panel': 'none',
 	'ui:render-unsafe': 'none',
@@ -309,18 +353,40 @@ export function describeCapability(capability: PluginCapability): string {
 			return "Save the plugin's own settings";
 		case 'sessions:read':
 			return 'See your sessions and their details (not the message contents)';
+		case 'sessions:create':
+			return 'Create Maestro sessions';
+		case 'sessions:write':
+			return 'Modify Maestro sessions';
+		case 'history:read':
+			return 'Read metadata-only history entries';
 		case 'storage:read':
 			return "Read the plugin's own saved data";
 		case 'storage:write':
 			return "Save the plugin's own data";
+		case 'storage:sql':
+			return "Query the plugin's own SQL data";
+		case 'fs:watch':
+			return 'Watch files for changes';
 		case 'ui:command':
 			return 'Run Maestro commands available in the command palette';
+		case 'tabs:manage':
+			return 'Create, focus, and close Maestro tabs';
 		case 'events:subscribe':
-			return 'Be notified when things happen in Maestro (session, agent, and cue events)';
+			return 'Be notified when things happen in Maestro (session, history, agent, and cue events)';
+		case 'shell:openExternal':
+			return 'Open URLs with the operating system';
 		case 'process:spawn':
 			return 'Run shell commands';
+		case 'decisions:write':
+			return 'Record decisions in Maestro';
+		case 'power:preventSleep':
+			return 'Keep the computer awake while work is active';
+		case 'background:service':
+			return 'Run supervised background service work';
 		case 'transcripts:read':
 			return 'Read the full conversation content of your sessions (messages, prompts, and agent output)';
+		case 'transcripts:write':
+			return 'Write brokered entries into session transcripts';
 		case 'ui:contribute':
 			return "Add items to Maestro's interface (menus, sidebar, status bar, settings, themes)";
 		case 'ui:panel':

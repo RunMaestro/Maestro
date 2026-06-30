@@ -2,7 +2,7 @@ import net from 'node:net';
 import { pathToFileURL } from 'node:url';
 
 // Deliberately NOT 5173: that is Vite's universal default port, so every web
-// project an agent scaffolds and runs with `npm run dev` competes for it. When
+// project an agent scaffolds and runs with its dev script competes for it. When
 // such a server wins the bind, Electron (pointed at the same localhost port)
 // loads the stranger's page and the whole app shell is replaced. A private base
 // port keeps Maestro's dev server out of that contention entirely.

@@ -13,17 +13,24 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { pathToFileURL } from 'url';
 
 vi.mock('electron', () => ({
 	app: { getPath: () => os.tmpdir() },
 }));
 
-import { PluginManager, type PluginManagerDeps } from '../../../main/plugins/plugin-manager';
+import {
+	PluginManager,
+	type PluginManagerDeps,
+	type PluginSandboxLifecycle,
+} from '../../../main/plugins/plugin-manager';
 import { pluginsDir } from '../../../main/plugins/plugin-store-main';
 import type { PluginRecord } from '../../../shared/plugins/plugin-registry';
+import type { PermissionGrant } from '../../../shared/plugins/permissions';
 
 /** Materialize a plugin folder directly under the plugins data dir. */
 function writePlugin(id: string, tier: 0 | 1, contributes?: Record<string, unknown>): void {
@@ -40,6 +47,26 @@ function writePlugin(id: string, tier: 0 | 1, contributes?: Record<string, unkno
 	};
 	fs.writeFileSync(path.join(dir, 'plugin.json'), JSON.stringify(manifest));
 	if (tier >= 1) fs.writeFileSync(path.join(dir, 'main.js'), 'module.exports = { activate() {} };');
+}
+
+function writePanelPlugin(id: string): void {
+	const dir = path.join(pluginsDir(), id);
+	fs.mkdirSync(dir, { recursive: true });
+	const manifest = {
+		id,
+		name: id,
+		version: '1.0.0',
+		tier: 1,
+		maestro: { minHostApi: '1.0.0' },
+		entry: 'main.js',
+		permissions: [{ capability: 'ui:panel', reason: 'Render a sandboxed panel.' }],
+		contributes: {
+			panels: [{ id: 'board', title: 'Board', entry: 'panel.html', placement: 'left' }],
+		},
+	};
+	fs.writeFileSync(path.join(dir, 'plugin.json'), JSON.stringify(manifest));
+	fs.writeFileSync(path.join(dir, 'main.js'), 'module.exports = { activate() {} };');
+	fs.writeFileSync(path.join(dir, 'panel.html'), '<p>panel-safe</p>');
 }
 
 function manager(deps: Partial<PluginManagerDeps> = {}): PluginManager {
@@ -158,5 +185,139 @@ describe('PluginManager refresh-time verifyRecord gate', () => {
 		m.setEnabled('demo', true); // try to re-activate the tampered plugin directly
 		expect(m.getActiveRecords().some((r) => r.id === 'demo')).toBe(false);
 		expect(m.getContributions().themes.some((t) => t.pluginId === 'demo')).toBe(false);
+	});
+
+	it('only reads panel HTML for enabled, untampered plugins with a ui:panel grant', () => {
+		const grants = new Map<string, PermissionGrant[]>();
+		const m = manager({ getGrants: (id) => grants.get(id) ?? [] });
+		writePanelPlugin('paneler');
+
+		m.refresh();
+		expect(recordOf(m, 'paneler')?.enabled).toBe(false);
+		expect(m.getPanelHtml('paneler/board')).toBeNull();
+
+		m.setEnabled('paneler', true);
+		expect(recordOf(m, 'paneler')?.enabled).toBe(true);
+		expect(m.getPanelHtml('paneler/board')).toBeNull();
+
+		grants.set('paneler', [{ capability: 'ui:panel', grantedAt: 1 }]);
+		m.refresh();
+		expect(m.getPanelHtml('paneler/board')).toBe('<p>panel-safe</p>');
+
+		tamperSignature('paneler');
+		m.refresh();
+		expect(recordOf(m, 'paneler')?.signature?.status).toBe('invalid');
+		expect(m.getPanelHtml('paneler/board')).toBeNull();
+	});
+
+	it('installs and starts a packed standalone plugin without SDK repo-internal imports', async () => {
+		const source = path.join(workDir, 'packed-plugin');
+		const sdkDir = path.join(source, 'node_modules', '@maestro', 'plugin-sdk');
+		fs.mkdirSync(sdkDir, { recursive: true });
+		const sdkPackage = {
+			name: '@maestro/plugin-sdk',
+			version: '0.2.0',
+			type: 'module',
+			main: 'dist/index.js',
+			module: 'dist/index.js',
+			types: 'dist/index.d.ts',
+			exports: { '.': { import: './dist/index.js', types: './dist/index.d.ts' } },
+			files: ['dist'],
+		};
+		fs.writeFileSync(path.join(sdkDir, 'package.json'), JSON.stringify(sdkPackage));
+		fs.mkdirSync(path.join(sdkDir, 'dist'), { recursive: true });
+		fs.writeFileSync(
+			path.join(sdkDir, 'dist', 'index.js'),
+			[
+				"export const HOST_API_VERSION = '1.7.0';",
+				'export function definePlugin(plugin) { return plugin; }',
+			].join('\n')
+		);
+		fs.writeFileSync(
+			path.join(sdkDir, 'dist', 'index.d.ts'),
+			[
+				"export declare const HOST_API_VERSION = '1.7.0';",
+				'export interface PluginModule { activate?: (maestro: unknown) => unknown; }',
+				'export declare function definePlugin(plugin: PluginModule): PluginModule;',
+			].join('\n')
+		);
+		const manifest = {
+			id: 'packed.sdk',
+			name: 'Packed SDK',
+			version: '1.0.0',
+			tier: 1,
+			maestro: { minHostApi: '1.7.0' },
+			entry: 'main.mjs',
+			permissions: [{ capability: 'notifications:toast' }],
+		};
+		fs.writeFileSync(path.join(source, 'plugin.json'), JSON.stringify(manifest));
+		fs.writeFileSync(
+			path.join(source, 'main.mjs'),
+			[
+				"import { definePlugin, HOST_API_VERSION } from '@maestro/plugin-sdk';",
+				'export const loadedHostApiVersion = HOST_API_VERSION;',
+				'export default definePlugin({ activate() { return loadedHostApiVersion; } });',
+			].join('\n')
+		);
+
+		const running = new Set<string>();
+		const starts: Array<{ id: string; pluginDir: string; entry: string }> = [];
+		const sandbox: PluginSandboxLifecycle = {
+			start: (id, pluginDir, entry) => {
+				running.add(id);
+				starts.push({ id, pluginDir, entry });
+			},
+			stop: (id) => {
+				running.delete(id);
+			},
+			stopAll: () => {
+				running.clear();
+			},
+			isRunning: (id) => running.has(id),
+			runningIds: () => [...running],
+			invokeCommand: () => false,
+			invokeTool: () => Promise.reject(new Error('not wired')),
+		};
+		const m = manager({ sandbox });
+
+		const installed = m.install(source);
+		expect(installed.success).toBe(true);
+		expect(recordOf(m, 'packed.sdk')?.enabled).toBe(false);
+		const installedRoot = path.join(pluginsDir(), 'packed.sdk');
+		const installedSdkJs = path.join(
+			installedRoot,
+			'node_modules',
+			'@maestro',
+			'plugin-sdk',
+			'dist',
+			'index.js'
+		);
+		const installedSdkDts = path.join(
+			installedRoot,
+			'node_modules',
+			'@maestro',
+			'plugin-sdk',
+			'dist',
+			'index.d.ts'
+		);
+		expect(fs.readFileSync(installedSdkJs, 'utf8')).not.toMatch(/\bfrom\s+['"][^'"]*src[\\/]/);
+		expect(fs.readFileSync(installedSdkDts, 'utf8')).not.toMatch(/\bfrom\s+['"][^'"]*src[\\/]/);
+		const loadCheck = path.join(workDir, 'load-packed-plugin.mjs');
+		fs.writeFileSync(
+			loadCheck,
+			[
+				`import plugin, { loadedHostApiVersion } from ${JSON.stringify(pathToFileURL(path.join(installedRoot, 'main.mjs')).href)};`,
+				'console.log(JSON.stringify({ loadedHostApiVersion, activated: plugin.activate() }));',
+			].join('\n')
+		);
+		const load = spawnSync('bun', [loadCheck], { encoding: 'utf8' });
+		expect(load.status, `${load.stdout}\n${load.stderr}`).toBe(0);
+		expect(JSON.parse(load.stdout.trim())).toEqual({
+			loadedHostApiVersion: '1.7.0',
+			activated: '1.7.0',
+		});
+
+		m.setEnabled('packed.sdk', true);
+		expect(starts).toEqual([{ id: 'packed.sdk', pluginDir: installedRoot, entry: 'main.mjs' }]);
 	});
 });

@@ -12,6 +12,10 @@
  */
 
 import type { PluginCategory } from '../../../../shared/plugins/plugin-manifest';
+import {
+	PIANOLA_FIRST_PARTY_PLUGIN_METADATA,
+	type PianolaFirstPartyPluginMetadata,
+} from '../../../../shared/pianola/first-party-plugin';
 import type { PluginRecord, PluginSignatureInfo } from '../../../../shared/plugins/plugin-registry';
 import { PLUGIN_CATEGORIES } from '../../../../shared/plugins/plugin-manifest';
 import type { EncoreFeatureFlags } from '../../../types';
@@ -37,6 +41,7 @@ export interface BuiltinFeatureDef {
 	description: string;
 	category: PluginCategory;
 	beta?: boolean;
+	pluginBacking?: PianolaFirstPartyPluginMetadata;
 }
 
 /** One tile in the grid, regardless of source. */
@@ -51,6 +56,12 @@ export interface UnifiedExtension {
 	category: PluginCategory;
 	state: ExtensionState;
 	beta?: boolean;
+	pluginBacked?: boolean;
+	firstParty?: boolean;
+	pluginId?: string;
+	permissions?: PianolaFirstPartyPluginMetadata['permissions'];
+	settingsNamespace?: string;
+	backgroundServiceId?: string;
 	// --- plugin-only ---
 	tier?: number;
 	trust?: ExtensionTrust;
@@ -95,9 +106,9 @@ export const BUILTIN_FEATURES: readonly BuiltinFeatureDef[] = [
 	{
 		flag: 'pianola',
 		name: 'Pianola',
-		description:
-			'Autonomous manager agent that watches your agents and auto-answers or escalates prompts.',
-		category: 'agents',
+		description: PIANOLA_FIRST_PARTY_PLUGIN_METADATA.description,
+		category: PIANOLA_FIRST_PARTY_PLUGIN_METADATA.category,
+		pluginBacking: PIANOLA_FIRST_PARTY_PLUGIN_METADATA,
 		beta: true,
 	},
 ];
@@ -138,6 +149,12 @@ export function builtinExtension(
 		category: def.category,
 		state: on ? 'enabled' : 'not-installed',
 		beta: def.beta,
+		pluginBacked: def.pluginBacking ? true : undefined,
+		firstParty: def.pluginBacking?.firstParty,
+		pluginId: def.pluginBacking?.id,
+		permissions: def.pluginBacking?.permissions,
+		settingsNamespace: def.pluginBacking?.settings.namespace,
+		backgroundServiceId: def.pluginBacking?.backgroundService.id,
 		flag: def.flag,
 	};
 }

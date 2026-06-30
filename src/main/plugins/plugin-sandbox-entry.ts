@@ -88,6 +88,7 @@ function buildSdk(pluginId: string) {
 			read: (path: string): Promise<string> => call('fs.read', { path }) as Promise<string>,
 			write: (path: string, contents: string): Promise<void> =>
 				call('fs.write', { path, contents }) as Promise<void>,
+			watch: (path: string, opts?: unknown): Promise<unknown> => call('fs.watch', { path, opts }),
 		}),
 		net: Object.freeze({
 			fetch: (url: string, init?: unknown): Promise<unknown> => call('net.fetch', { url, init }),
@@ -97,6 +98,10 @@ function buildSdk(pluginId: string) {
 			get: (agentId: string): Promise<unknown> => call('agents.get', { agentId }),
 			dispatch: (agentId: string, prompt: string, opts?: unknown): Promise<unknown> =>
 				call('agents.dispatch', { agentId, prompt, opts }),
+		}),
+		history: Object.freeze({
+			list: (params?: unknown): Promise<unknown> => call('history.list', params ?? {}),
+			get: (entryId: string): Promise<unknown> => call('history.get', { entryId }),
 		}),
 		notifications: Object.freeze({
 			toast: (message: string, opts?: unknown): Promise<void> =>
@@ -112,6 +117,11 @@ function buildSdk(pluginId: string) {
 			/** List session METADATA (never message content). */
 			list: (): Promise<unknown> => call('sessions.list', {}),
 			get: (sessionId: string): Promise<unknown> => call('sessions.get', { sessionId }),
+			create: (params?: unknown): Promise<unknown> => call('sessions.create', params ?? {}),
+			update: (sessionId: string, patch: unknown): Promise<unknown> =>
+				call('sessions.update', { sessionId, patch }),
+			delete: (sessionId: string): Promise<void> =>
+				call('sessions.delete', { sessionId }) as Promise<void>,
 		}),
 		transcripts: Object.freeze({
 			/** Read PROJECTED conversation content for a session visible via
@@ -127,6 +137,11 @@ function buildSdk(pluginId: string) {
 				limit?: number;
 				since?: number;
 			}): Promise<unknown> => call('transcripts.read', params),
+			append: (params: {
+				sessionId: string;
+				projectPath?: string;
+				entries: Array<Record<string, unknown>>;
+			}): Promise<unknown> => call('transcripts.append', params),
 		}),
 		storage: Object.freeze({
 			get: (key: string): Promise<unknown> => call('storage.get', { key }),
@@ -134,11 +149,19 @@ function buildSdk(pluginId: string) {
 				call('storage.set', { key, value }) as Promise<void>,
 			delete: (key: string): Promise<unknown> => call('storage.delete', { key }),
 			keys: (): Promise<unknown> => call('storage.keys', {}),
+			sql: (query: string, params?: readonly unknown[]): Promise<unknown> =>
+				call('storage.sql', { query, params }),
 		}),
 		ui: Object.freeze({
 			/** Invoke a registered command-palette command. */
 			runCommand: (commandId: string, args?: unknown): Promise<unknown> =>
 				call('ui.runCommand', { commandId, args }),
+		}),
+		tabs: Object.freeze({
+			list: (): Promise<unknown> => call('tabs.list', {}),
+			create: (params?: unknown): Promise<unknown> => call('tabs.create', params ?? {}),
+			focus: (tabId: string): Promise<void> => call('tabs.focus', { tabId }) as Promise<void>,
+			close: (tabId: string): Promise<void> => call('tabs.close', { tabId }) as Promise<void>,
 		}),
 		events: Object.freeze({
 			/** Register a local handler for a host event topic (call subscribe to
@@ -178,9 +201,27 @@ function buildSdk(pluginId: string) {
 				}
 			},
 		}),
+		shell: Object.freeze({
+			openExternal: (url: string, opts?: unknown): Promise<void> =>
+				call('shell.openExternal', { url, opts }) as Promise<void>,
+		}),
 		process: Object.freeze({
 			spawn: (command: string, opts?: unknown): Promise<unknown> =>
 				call('process.spawn', { command, opts }),
+		}),
+		decisions: Object.freeze({
+			record: (decision: unknown): Promise<unknown> => call('decisions.record', { decision }),
+		}),
+		power: Object.freeze({
+			preventSleep: (reason: string, opts?: unknown): Promise<unknown> =>
+				call('power.preventSleep', { reason, opts }),
+			releaseSleep: (handleId: string): Promise<void> =>
+				call('power.releaseSleep', { handleId }) as Promise<void>,
+		}),
+		background: Object.freeze({
+			register: (service: unknown): Promise<unknown> => call('background.register', { service }),
+			unregister: (serviceId: string): Promise<void> =>
+				call('background.unregister', { serviceId }) as Promise<void>,
 		}),
 	});
 }

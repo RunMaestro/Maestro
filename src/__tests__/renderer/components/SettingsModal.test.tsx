@@ -23,6 +23,8 @@ import {
 	__resetLastOpenSettingsTabForTests,
 } from '../../../renderer/components/Settings/SettingsModal';
 import { formatEnterToSend } from '../../../renderer/utils/shortcutFormatter';
+import { useModalStore } from '../../../renderer/stores/modalStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { mockTheme } from '../../helpers/mockTheme';
 import type {
 	Theme,
@@ -404,6 +406,17 @@ describe('SettingsModal', () => {
 	beforeEach(() => {
 		vi.useFakeTimers();
 		__resetLastOpenSettingsTabForTests();
+		useModalStore.getState().closeAll();
+		useSettingsStore.setState({
+			encoreFeatures: {
+				directorNotes: false,
+				usageStats: true,
+				symphony: true,
+				maestroCue: false,
+				pianola: false,
+				plugins: false,
+			},
+		});
 
 		// Reset window.maestro mocks
 		vi.mocked(window.maestro.agents.detect).mockResolvedValue([
@@ -2240,6 +2253,219 @@ describe('SettingsModal', () => {
 			expect(
 				screen.getByText(/Contributors building new features should consider gating them here/)
 			).toBeInTheDocument();
+		});
+
+		it('should open Pianola modal from enabled Pianola extension details', async () => {
+			useSettingsStore.setState({
+				encoreFeatures: {
+					directorNotes: false,
+					usageStats: true,
+					symphony: true,
+					maestroCue: false,
+					pianola: true,
+					plugins: false,
+				},
+			});
+
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			fireEvent.click(screen.getByTitle('Encore Features'));
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const pianolaCard = document.querySelector('[data-extension-id="pianola"]');
+			expect(pianolaCard).toBeInTheDocument();
+			fireEvent.click(pianolaCard as HTMLElement);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			fireEvent.click(screen.getByTestId('extension-open-pianola'));
+
+			expect(useModalStore.getState().isOpen('pianolaModal')).toBe(true);
+		});
+
+		it('should render enabled plugin settings and write only the plugin namespace', async () => {
+			const pluginId = 'com.example.settings';
+			useSettingsStore.setState({
+				encoreFeatures: {
+					directorNotes: false,
+					usageStats: true,
+					symphony: true,
+					maestroCue: false,
+					pianola: false,
+					plugins: true,
+				},
+			});
+			vi.mocked(window.maestro.plugins.list).mockResolvedValue({
+				plugins: [
+					{
+						id: pluginId,
+						manifest: {
+							id: pluginId,
+							name: 'Settings Plugin',
+							version: '0.1.0',
+							tier: 1,
+							maestro: { minHostApi: '1.7.0' },
+							entry: 'dist/entry.js',
+							permissions: [],
+						},
+						source: '/plugins/settings',
+						loadStatus: 'ok',
+						enabled: true,
+						errors: [],
+						signature: { status: 'trusted' },
+					},
+				],
+			});
+			vi.mocked(window.maestro.plugins.contributions).mockResolvedValue({
+				themes: [],
+				prompts: [],
+				settings: [
+					{
+						id: `${pluginId}:poll`,
+						localId: 'poll',
+						pluginId,
+						key: 'poll',
+						type: 'boolean',
+						default: false,
+						description: 'Poll automatically',
+					},
+				],
+				commandMacros: [],
+				cueTriggers: [],
+				commands: [],
+				panels: [],
+				agents: [],
+				tools: [],
+				keybindings: [],
+				uiItems: [],
+				errorsByPlugin: {},
+			});
+
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			fireEvent.click(screen.getByTitle('Encore Features'));
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const pluginCard = document.querySelector(`[data-extension-id="${pluginId}"]`);
+			expect(pluginCard).toBeInTheDocument();
+			fireEvent.click(pluginCard as HTMLElement);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			fireEvent.click(screen.getByTestId('extension-configure'));
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			expect(screen.getByText('Poll automatically')).toBeInTheDocument();
+
+			fireEvent.click(screen.getByTestId('extension-setting-input'));
+
+			expect(window.maestro.settings.set).toHaveBeenCalledWith(`plugins.${pluginId}.poll`, true);
+		});
+
+		it('should hide plugin settings for disabled plugins', async () => {
+			const pluginId = 'com.example.disabled-settings';
+			useSettingsStore.setState({
+				encoreFeatures: {
+					directorNotes: false,
+					usageStats: true,
+					symphony: true,
+					maestroCue: false,
+					pianola: false,
+					plugins: true,
+				},
+			});
+			vi.mocked(window.maestro.plugins.list).mockResolvedValue({
+				plugins: [
+					{
+						id: pluginId,
+						manifest: {
+							id: pluginId,
+							name: 'Disabled Settings Plugin',
+							version: '0.1.0',
+							tier: 1,
+							maestro: { minHostApi: '1.7.0' },
+							entry: 'dist/entry.js',
+							permissions: [],
+						},
+						source: '/plugins/disabled-settings',
+						loadStatus: 'ok',
+						enabled: false,
+						errors: [],
+						signature: { status: 'trusted' },
+					},
+				],
+			});
+			vi.mocked(window.maestro.plugins.contributions).mockResolvedValue({
+				themes: [],
+				prompts: [],
+				settings: [
+					{
+						id: `${pluginId}:poll`,
+						localId: 'poll',
+						pluginId,
+						key: 'poll',
+						type: 'boolean',
+						default: false,
+						description: 'Poll automatically',
+					},
+				],
+				commandMacros: [],
+				cueTriggers: [],
+				commands: [],
+				panels: [],
+				agents: [],
+				tools: [],
+				keybindings: [],
+				uiItems: [],
+				errorsByPlugin: {},
+			});
+
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			fireEvent.click(screen.getByTitle('Encore Features'));
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const pluginCard = document.querySelector(`[data-extension-id="${pluginId}"]`);
+			expect(pluginCard).toBeInTheDocument();
+			fireEvent.click(pluginCard as HTMLElement);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			expect(screen.queryByTestId('extension-configure')).not.toBeInTheDocument();
+			expect(window.maestro.settings.set).not.toHaveBeenCalledWith(
+				`plugins.${pluginId}.poll`,
+				expect.anything()
+			);
 		});
 
 		it("should show Director's Notes feature toggle defaulting to off", async () => {

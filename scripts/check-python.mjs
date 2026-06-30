@@ -1,7 +1,7 @@
 // Warn early if the Python that node-gyp will pick up is 3.12+ without
 // `setuptools` installed. node-gyp (pulled in transitively by better-sqlite3
 // and node-pty) still imports `distutils`, which was removed from the
-// standard library in Python 3.12 — so `npm install` dies with
+// standard library in Python 3.12 — so package installs die with
 // `ModuleNotFoundError: No module named 'distutils'` during the postinstall
 // electron-rebuild step. See https://github.com/RunMaestro/Maestro/issues/170.
 

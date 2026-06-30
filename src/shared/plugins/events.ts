@@ -22,6 +22,8 @@ export const PLUGIN_EVENT_TOPICS = [
 	'run.completed', // a batch query/auto-run completed (timing + source, no output)
 	'cue.runStarted', // a Cue automation run started (ids only)
 	'cue.runFinished', // a Cue automation run reached a terminal state (status only)
+	'history.entryAdded', // a history entry was added (ids/classification only)
+	'agent.completed', // an agent reached a terminal state (metadata only, no output)
 ] as const;
 
 export type PluginEventTopic = (typeof PLUGIN_EVENT_TOPICS)[number];
@@ -70,6 +72,31 @@ export interface PluginEventPayloads {
 		status: string;
 		pipelineName?: string;
 		durationMs?: number;
+	};
+	'history.entryAdded': {
+		entryId: string;
+		sessionId?: string;
+		agentId?: string;
+		tabId?: string;
+		projectPath?: string;
+		kind?: string;
+		source?: string;
+		createdAt?: string | number;
+	};
+	'agent.completed': {
+		sessionId: string;
+		agentId?: string;
+		tabId?: string;
+		status: 'completed' | 'failed' | 'cancelled' | 'interrupted' | string;
+		exitCode?: number;
+		durationMs?: number;
+		projectPath?: string;
+		source?: 'user' | 'auto' | 'cue' | 'background' | string;
+		startedAt?: string;
+		completedAt?: string;
+		costUsd?: number;
+		runId?: string;
+		parentRunId?: string;
 	};
 }
 

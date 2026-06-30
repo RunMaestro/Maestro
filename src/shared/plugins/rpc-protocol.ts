@@ -35,15 +35,33 @@ export const HOST_API = {
 	'settings.set': { capability: 'settings:write' },
 	'sessions.list': { capability: 'sessions:read' },
 	'sessions.get': { capability: 'sessions:read' },
+	'sessions.create': { capability: 'sessions:create' },
+	'sessions.update': { capability: 'sessions:write' },
+	'sessions.delete': { capability: 'sessions:write' },
+	'history.list': { capability: 'history:read' },
+	'history.get': { capability: 'history:read' },
 	'transcripts.read': { capability: 'transcripts:read' },
+	'transcripts.append': { capability: 'transcripts:write' },
 	'storage.get': { capability: 'storage:read' },
 	'storage.keys': { capability: 'storage:read' },
 	'storage.set': { capability: 'storage:write' },
 	'storage.delete': { capability: 'storage:write' },
+	'storage.sql': { capability: 'storage:sql' },
+	'fs.watch': { capability: 'fs:watch' },
 	'ui.runCommand': { capability: 'ui:command' },
+	'tabs.list': { capability: 'tabs:manage' },
+	'tabs.create': { capability: 'tabs:manage' },
+	'tabs.focus': { capability: 'tabs:manage' },
+	'tabs.close': { capability: 'tabs:manage' },
 	'events.subscribe': { capability: 'events:subscribe' },
 	'events.unsubscribe': { capability: 'events:subscribe' },
+	'shell.openExternal': { capability: 'shell:openExternal' },
 	'process.spawn': { capability: 'process:spawn' },
+	'decisions.record': { capability: 'decisions:write' },
+	'power.preventSleep': { capability: 'power:preventSleep' },
+	'power.releaseSleep': { capability: 'power:preventSleep' },
+	'background.register': { capability: 'background:service' },
+	'background.unregister': { capability: 'background:service' },
 } as const satisfies Record<string, { capability: PluginCapability }>;
 
 /** The fixed set of host methods a sandbox may call (derived from HOST_API). */
@@ -112,17 +130,24 @@ export function extractTarget(method: HostMethod, params: unknown): string | und
 	switch (method) {
 		case 'fs.read':
 		case 'fs.write':
+		case 'fs.watch':
 			return typeof p.path === 'string' ? p.path : undefined;
 		case 'net.fetch': {
 			const url = typeof p.url === 'string' ? p.url : undefined;
 			if (!url) return undefined;
 			return hostnameOf(url);
 		}
+		case 'shell.openExternal': {
+			const url = typeof p.url === 'string' ? p.url : undefined;
+			if (!url) return undefined;
+			return hostnameOf(url);
+		}
 		case 'transcripts.read':
+		case 'transcripts.append':
 			// Scope target is a PROJECT PATH the plugin claims (obtained from
 			// sessions.list metadata). This is only the broker's first-pass hint;
 			// the host handler re-authorizes against the session's RESOLVED real
-			// projectPath before reading any content (plugin-host-handlers.ts).
+			// projectPath before reading or writing any content.
 			return typeof p.projectPath === 'string' ? p.projectPath : undefined;
 		default:
 			return undefined;

@@ -35,12 +35,23 @@ export type PluginCapability =
 	| 'settings:read' // read non-secret settings
 	| 'settings:write' // write the plugin's OWN namespaced (plugins.<id>.*) non-secret settings
 	| 'sessions:read' // list sessions + read their metadata (NEVER raw transcript content)
+	| 'sessions:create' // create a new Maestro session/tab shell (no implicit dispatch)
+	| 'sessions:write' // update/remove session metadata/state
+	| 'history:read' // read metadata-only history entries (never raw transcript content)
 	| 'transcripts:read' // read PROJECTED session content (consented, audited, egress-locked)
+	| 'transcripts:write' // append/update brokered transcript entries for a session
 	| 'storage:read' // read the plugin's OWN private key-value store
 	| 'storage:write' // write the plugin's OWN private key-value store
+	| 'storage:sql' // query the plugin's OWN private SQLite store
+	| 'fs:watch' // watch files under a path scope
 	| 'ui:command' // invoke a registered Maestro command (a palette action)
+	| 'tabs:manage' // create/focus/close Maestro tabs
 	| 'events:subscribe' // subscribe to host event topics (metadata-only payloads)
+	| 'shell:openExternal' // ask the OS to open a URL with its default handler
 	| 'process:spawn' // run a shell command (highest risk)
+	| 'decisions:write' // record brokered user/plugin decisions
+	| 'power:preventSleep' // request/release host wake locks while work is active
+	| 'background:service' // register supervised background service work
 	| 'ui:contribute' // add host-rendered items to Maestro's UI (menus, panels, theming, …)
 	| 'ui:panel' // show its own sandboxed interactive panels
 	| 'ui:render-unsafe'; // render arbitrary UI with full interface access (escape hatch)
@@ -55,12 +66,23 @@ export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
 	'settings:read',
 	'settings:write',
 	'sessions:read',
+	'sessions:create',
+	'sessions:write',
+	'history:read',
 	'transcripts:read',
+	'transcripts:write',
 	'storage:read',
 	'storage:write',
+	'storage:sql',
+	'fs:watch',
 	'ui:command',
+	'tabs:manage',
 	'events:subscribe',
+	'shell:openExternal',
 	'process:spawn',
+	'decisions:write',
+	'power:preventSleep',
+	'background:service',
 	'ui:contribute',
 	'ui:panel',
 	'ui:render-unsafe',
@@ -78,13 +100,24 @@ const CAPABILITY_RISK: Record<PluginCapability, CapabilityRisk> = {
 	'settings:write': 'low',
 	'ui:command': 'low',
 	'fs:read': 'medium',
+	'fs:watch': 'medium',
 	'net:fetch': 'medium',
 	'sessions:read': 'medium',
+	'history:read': 'medium',
 	'events:subscribe': 'medium',
+	'tabs:manage': 'medium',
+	'storage:sql': 'medium',
+	'power:preventSleep': 'medium',
 	'agents:dispatch': 'high',
 	'fs:write': 'high',
 	'process:spawn': 'high',
+	'shell:openExternal': 'high',
+	'sessions:create': 'high',
+	'sessions:write': 'high',
 	'transcripts:read': 'high',
+	'transcripts:write': 'high',
+	'decisions:write': 'high',
+	'background:service': 'high',
 	'ui:contribute': 'medium',
 	'ui:panel': 'medium',
 	'ui:render-unsafe': 'high',
@@ -96,21 +129,32 @@ type ScopeKind = 'path' | 'host' | 'none';
 const CAPABILITY_SCOPE_KIND: Record<PluginCapability, ScopeKind> = {
 	'fs:read': 'path',
 	'fs:write': 'path',
+	'fs:watch': 'path',
 	'net:fetch': 'host',
 	'agents:read': 'none',
 	'agents:dispatch': 'none',
+	'history:read': 'none',
 	'notifications:toast': 'none',
 	'settings:read': 'none',
 	// New caps are structurally namespaced/confined by their host handler, so
 	// they take no user-facing scope.
 	'settings:write': 'none',
 	'sessions:read': 'none',
+	'sessions:create': 'none',
+	'sessions:write': 'none',
 	'storage:read': 'none',
 	'storage:write': 'none',
+	'storage:sql': 'none',
 	'ui:command': 'none',
+	'tabs:manage': 'none',
 	'events:subscribe': 'none',
 	'process:spawn': 'none',
+	'shell:openExternal': 'host',
+	'decisions:write': 'none',
+	'power:preventSleep': 'none',
+	'background:service': 'none',
 	'transcripts:read': 'path', // scope is a project path; the handler enforces the session's projectPath against the grant
+	'transcripts:write': 'path', // scope is a project path; the handler enforces the session's projectPath against the grant
 	'ui:contribute': 'none',
 	'ui:panel': 'none',
 	'ui:render-unsafe': 'none',
@@ -200,18 +244,40 @@ export function describeCapability(capability: PluginCapability): string {
 			return "Save the plugin's own settings";
 		case 'sessions:read':
 			return 'See your sessions and their details (not the message contents)';
+		case 'sessions:create':
+			return 'Create Maestro sessions';
+		case 'sessions:write':
+			return 'Modify Maestro sessions';
+		case 'history:read':
+			return 'Read metadata-only history entries';
 		case 'storage:read':
 			return "Read the plugin's own saved data";
 		case 'storage:write':
 			return "Save the plugin's own data";
+		case 'storage:sql':
+			return "Query the plugin's own SQL data";
+		case 'fs:watch':
+			return 'Watch files for changes';
 		case 'ui:command':
 			return 'Run Maestro commands available in the command palette';
+		case 'tabs:manage':
+			return 'Create, focus, and close Maestro tabs';
 		case 'events:subscribe':
-			return 'Be notified when things happen in Maestro (session, agent, and cue events)';
+			return 'Be notified when things happen in Maestro (session, history, agent, and cue events)';
+		case 'shell:openExternal':
+			return 'Open URLs with the operating system';
 		case 'process:spawn':
 			return 'Run shell commands';
+		case 'decisions:write':
+			return 'Record decisions in Maestro';
+		case 'power:preventSleep':
+			return 'Keep the computer awake while work is active';
+		case 'background:service':
+			return 'Run supervised background service work';
 		case 'transcripts:read':
 			return 'Read the full conversation content of your sessions (messages, prompts, and agent output)';
+		case 'transcripts:write':
+			return 'Write brokered entries into session transcripts';
 		case 'ui:contribute':
 			return "Add items to Maestro's interface (menus, sidebar, status bar, settings, themes)";
 		case 'ui:panel':
@@ -223,13 +289,16 @@ export function describeCapability(capability: PluginCapability): string {
 
 // --- Host API version (from shared/plugins/host-api.ts) ---------------------
 
-/** The host API version this Maestro build implements. Bumped to 1.6.0 for the
- * backward-compatible event topics `cue.runStarted` / `cue.runFinished` (metadata-only
- * automation-run lifecycle). (1.5.0 added `agent.exited` / `agent.error` / `usage.updated`
- * / `run.completed` + functional sidebar/activity-bar/toolbar uiItem surfaces; 1.4.0 added
- * `ui:contribute` / `ui:panel` / `ui:render-unsafe`; 1.3.0 added `tools` + `keybindings`;
- * 1.2.0 added `transcripts:read`.) */
-export const HOST_API_VERSION = '1.6.0';
+/** The host API version this Maestro build implements. Bumped to 1.7.0 for the
+ * backward-compatible P0 plugin contract additions: history/session/tab/transcript
+ * write/decision/shell/storage SQL/fs watch/power/background capabilities plus
+ * `history.entryAdded` and metadata-only `agent.completed` events. (1.6.0 added
+ * `cue.runStarted` / `cue.runFinished`; 1.5.0 added `agent.exited` /
+ * `agent.error` / `usage.updated` / `run.completed` + functional
+ * `sidebar`/`activity-bar`/`toolbar` uiItem surfaces; 1.4.0 added the
+ * `ui:contribute` / `ui:panel` / `ui:render-unsafe` UI capabilities; 1.3.0
+ * added `tools` + `keybindings`; 1.2.0 added `transcripts:read`.) */
+export const HOST_API_VERSION = '1.7.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {
@@ -722,6 +791,8 @@ export const PLUGIN_EVENT_TOPICS = [
 	'run.completed', // a batch query/auto-run completed (timing + source, no output)
 	'cue.runStarted', // a Cue automation run started (ids only)
 	'cue.runFinished', // a Cue automation run reached a terminal state (status only)
+	'history.entryAdded', // a history entry was added (ids/classification only)
+	'agent.completed', // an agent reached a terminal state (metadata only, no output)
 ] as const;
 
 export type PluginEventTopic = (typeof PLUGIN_EVENT_TOPICS)[number];
@@ -768,6 +839,31 @@ export interface PluginEventPayloads {
 		pipelineName?: string;
 		durationMs?: number;
 	};
+	'history.entryAdded': {
+		entryId: string;
+		sessionId?: string;
+		agentId?: string;
+		tabId?: string;
+		projectPath?: string;
+		kind?: string;
+		source?: string;
+		createdAt?: string | number;
+	};
+	'agent.completed': {
+		sessionId: string;
+		agentId?: string;
+		tabId?: string;
+		status: 'completed' | 'failed' | 'cancelled' | 'interrupted' | string;
+		exitCode?: number;
+		durationMs?: number;
+		projectPath?: string;
+		source?: 'user' | 'auto' | 'cue' | 'background' | string;
+		startedAt?: string;
+		completedAt?: string;
+		costUsd?: number;
+		runId?: string;
+		parentRunId?: string;
+	};
 }
 
 /** A typed host event. */
@@ -795,15 +891,33 @@ const HOST_API = {
 	'settings.set': { capability: 'settings:write' },
 	'sessions.list': { capability: 'sessions:read' },
 	'sessions.get': { capability: 'sessions:read' },
+	'sessions.create': { capability: 'sessions:create' },
+	'sessions.update': { capability: 'sessions:write' },
+	'sessions.delete': { capability: 'sessions:write' },
+	'history.list': { capability: 'history:read' },
+	'history.get': { capability: 'history:read' },
 	'transcripts.read': { capability: 'transcripts:read' },
+	'transcripts.append': { capability: 'transcripts:write' },
 	'storage.get': { capability: 'storage:read' },
 	'storage.keys': { capability: 'storage:read' },
 	'storage.set': { capability: 'storage:write' },
 	'storage.delete': { capability: 'storage:write' },
+	'storage.sql': { capability: 'storage:sql' },
+	'fs.watch': { capability: 'fs:watch' },
 	'ui.runCommand': { capability: 'ui:command' },
+	'tabs.list': { capability: 'tabs:manage' },
+	'tabs.create': { capability: 'tabs:manage' },
+	'tabs.focus': { capability: 'tabs:manage' },
+	'tabs.close': { capability: 'tabs:manage' },
 	'events.subscribe': { capability: 'events:subscribe' },
 	'events.unsubscribe': { capability: 'events:subscribe' },
+	'shell.openExternal': { capability: 'shell:openExternal' },
 	'process.spawn': { capability: 'process:spawn' },
+	'decisions.record': { capability: 'decisions:write' },
+	'power.preventSleep': { capability: 'power:preventSleep' },
+	'power.releaseSleep': { capability: 'power:preventSleep' },
+	'background.register': { capability: 'background:service' },
+	'background.unregister': { capability: 'background:service' },
 } as const satisfies Record<string, { capability: PluginCapability }>;
 
 /** The fixed set of host methods a sandbox may call (derived from HOST_API). */
@@ -819,10 +933,60 @@ export function isHostMethod(value: unknown): value is HostMethod {
 //     buildSdk) + identity helpers. Every method is a broker-gated RPC; return
 //     shapes the host keeps internal are typed structurally (`unknown`). -----
 
-/** Read/write files inside the plugin's granted `fs:read` / `fs:write` scopes. */
+/** Session metadata visible to plugins. Never includes transcript/message bodies. */
+export interface MaestroSessionMetadata {
+	id: string;
+	title?: string;
+	agentId?: string;
+	status?: string;
+	createdAt?: number;
+	updatedAt?: number;
+	projectPath?: string;
+	tabId?: string;
+}
+
+/** Metadata-only history entry visible to plugins. Never includes raw transcript content. */
+export interface MaestroHistoryEntry {
+	id: string;
+	sessionId?: string;
+	agentId?: string;
+	tabId?: string;
+	projectPath?: string;
+	kind?: string;
+	source?: string;
+	createdAt?: string | number;
+	metadata?: Record<string, unknown>;
+}
+
+export interface MaestroTab {
+	id: string;
+	title?: string;
+	sessionId?: string;
+	agentId?: string;
+	status?: string;
+	projectPath?: string;
+}
+
+export interface MaestroSqlResult<Row extends Record<string, unknown> = Record<string, unknown>> {
+	rows: Row[];
+	rowsAffected?: number;
+	lastInsertRowid?: number | string;
+}
+
+export interface MaestroSleepHandle {
+	id: string;
+}
+
+export interface MaestroBackgroundServiceRegistration {
+	id: string;
+	status?: string;
+}
+
+/** Read/write/watch files inside the plugin's granted path scopes. */
 export interface MaestroFsApi {
 	read(path: string): Promise<string>;
 	write(path: string, contents: string): Promise<void>;
+	watch(path: string, opts?: unknown): Promise<unknown>;
 }
 
 /** HTTP(S) fetch, gated by `net:fetch` host scopes. */
@@ -837,6 +1001,18 @@ export interface MaestroAgentsApi {
 	dispatch(agentId: string, prompt: string, opts?: unknown): Promise<unknown>;
 }
 
+/** Read metadata-only history entries (`history:read`). */
+export interface MaestroHistoryApi {
+	list(params?: {
+		sessionId?: string;
+		projectPath?: string;
+		kind?: string;
+		limit?: number;
+		before?: string | number;
+	}): Promise<MaestroHistoryEntry[]>;
+	get(entryId: string): Promise<MaestroHistoryEntry | null>;
+}
+
 /** Raise a toast notification (`notifications:toast`). */
 export interface MaestroNotificationsApi {
 	toast(message: string, opts?: unknown): Promise<void>;
@@ -849,15 +1025,33 @@ export interface MaestroSettingsApi {
 	set(key: string, value: unknown): Promise<void>;
 }
 
-/** List session metadata and read a session's metadata (`sessions:read`).
+/** List/read session metadata (`sessions:read`), create sessions
+ * (`sessions:create`), and update/remove session metadata (`sessions:write`).
  * NEVER raw transcript content - see MaestroTranscriptsApi for that. */
 export interface MaestroSessionsApi {
-	list(): Promise<unknown>;
-	get(sessionId: string): Promise<unknown>;
+	list(): Promise<MaestroSessionMetadata[]>;
+	get(sessionId: string): Promise<MaestroSessionMetadata | null>;
+	create(params?: {
+		title?: string;
+		agentId?: string;
+		projectPath?: string;
+		tabId?: string;
+		metadata?: Record<string, unknown>;
+	}): Promise<MaestroSessionMetadata>;
+	update(
+		sessionId: string,
+		patch: {
+			title?: string;
+			status?: string;
+			projectPath?: string;
+			metadata?: Record<string, unknown>;
+		}
+	): Promise<MaestroSessionMetadata>;
+	delete(sessionId: string): Promise<void>;
 }
 
-/** Read PROJECTED, consented, audited session content (`transcripts:read`).
- * Only the requested `fields` are returned, egress-locked. Pass `projectPath`
+/** Read PROJECTED, consented, audited session content (`transcripts:read`) or
+ * append brokered transcript entries (`transcripts:write`). Pass `projectPath`
  * (from session metadata) so a project-scoped grant authorizes; omit it only
  * with an unscoped grant. */
 export interface MaestroTranscriptsApi {
@@ -868,14 +1062,23 @@ export interface MaestroTranscriptsApi {
 		limit?: number;
 		since?: number;
 	}): Promise<Array<Record<string, unknown>>>;
+	append(params: {
+		sessionId: string;
+		projectPath?: string;
+		entries: Array<Record<string, unknown>>;
+	}): Promise<unknown>;
 }
 
-/** The plugin's OWN private key-value store (`storage:read` / `storage:write`). */
+/** The plugin's OWN private stores (`storage:read` / `storage:write` / `storage:sql`). */
 export interface MaestroStorageApi {
 	get(key: string): Promise<unknown>;
 	set(key: string, value: string): Promise<void>;
 	delete(key: string): Promise<unknown>;
 	keys(): Promise<unknown>;
+	sql<Row extends Record<string, unknown> = Record<string, unknown>>(
+		query: string,
+		params?: readonly unknown[]
+	): Promise<MaestroSqlResult<Row>>;
 }
 
 /** Invoke a registered command-palette command (`ui:command`). */
@@ -883,13 +1086,29 @@ export interface MaestroUiApi {
 	runCommand(commandId: string, args?: unknown): Promise<unknown>;
 }
 
+/** Manage Maestro tabs (`tabs:manage`). */
+export interface MaestroTabsApi {
+	list(): Promise<MaestroTab[]>;
+	create(params?: {
+		title?: string;
+		sessionId?: string;
+		agentId?: string;
+		projectPath?: string;
+	}): Promise<MaestroTab>;
+	focus(tabId: string): Promise<void>;
+	close(tabId: string): Promise<void>;
+}
+
 /** A plugin's local handler for a delivered host event (metadata-only payload). */
-export type MaestroEventHandler = (payload: unknown, meta: { topic: string; at: string }) => void;
+export type MaestroEventHandler<T extends PluginEventTopic = PluginEventTopic> = (
+	payload: PluginEventPayloads[T],
+	meta: { topic: T; at: string }
+) => void;
 
 /** Subscribe to host event topics (`events:subscribe`). Payloads are
  * metadata-only; topics are the fixed PluginEventTopic catalog. */
 export interface MaestroEventsApi {
-	on(topic: PluginEventTopic, handler: MaestroEventHandler): void;
+	on<T extends PluginEventTopic>(topic: T, handler: MaestroEventHandler<T>): void;
 	subscribe(topics: readonly PluginEventTopic[]): Promise<unknown>;
 	unsubscribe(topics?: readonly PluginEventTopic[]): Promise<unknown>;
 }
@@ -904,9 +1123,41 @@ export interface MaestroToolsApi {
 	register(localId: string, handler: (args: unknown) => unknown): void;
 }
 
+/** Ask the OS to open an external URL (`shell:openExternal`). */
+export interface MaestroShellApi {
+	openExternal(url: string, opts?: unknown): Promise<void>;
+}
+
 /** Run a shell command (`process:spawn`, highest risk). */
 export interface MaestroProcessApi {
 	spawn(command: string, opts?: unknown): Promise<unknown>;
+}
+
+/** Record brokered decisions (`decisions:write`). */
+export interface MaestroDecisionsApi {
+	record(decision: {
+		id?: string;
+		kind: string;
+		status: string;
+		sessionId?: string;
+		metadata?: Record<string, unknown>;
+	}): Promise<unknown>;
+}
+
+/** Request/release a host wake lock (`power:preventSleep`). */
+export interface MaestroPowerApi {
+	preventSleep(reason: string, opts?: unknown): Promise<MaestroSleepHandle>;
+	releaseSleep(handleId: string): Promise<void>;
+}
+
+/** Register supervised background work (`background:service`). */
+export interface MaestroBackgroundApi {
+	register(service: {
+		id: string;
+		description?: string;
+		triggers?: readonly string[];
+	}): Promise<MaestroBackgroundServiceRegistration>;
+	unregister(serviceId: string): Promise<void>;
 }
 
 /** The full `maestro` runtime surface handed to `activate(maestro)`. Frozen and
@@ -916,16 +1167,22 @@ export interface MaestroSdk {
 	readonly fs: MaestroFsApi;
 	readonly net: MaestroNetApi;
 	readonly agents: MaestroAgentsApi;
+	readonly history: MaestroHistoryApi;
 	readonly notifications: MaestroNotificationsApi;
 	readonly settings: MaestroSettingsApi;
 	readonly sessions: MaestroSessionsApi;
 	readonly transcripts: MaestroTranscriptsApi;
 	readonly storage: MaestroStorageApi;
 	readonly ui: MaestroUiApi;
+	readonly tabs: MaestroTabsApi;
 	readonly events: MaestroEventsApi;
 	readonly commands: MaestroCommandsApi;
 	readonly tools: MaestroToolsApi;
+	readonly shell: MaestroShellApi;
 	readonly process: MaestroProcessApi;
+	readonly decisions: MaestroDecisionsApi;
+	readonly power: MaestroPowerApi;
+	readonly background: MaestroBackgroundApi;
 }
 
 /** The default export shape a tier >= 1 plugin's entry module assigns. Both

@@ -21,14 +21,18 @@ cursor from the audit log and is wired in `pianola.ts`; (2) the watch loop re-re
 `encoreFeatures.pianola` each poll and self-stops; (3) `deps.notify` + `safeNotify` fire toasts;
 (4) `pendingHandoff` + `HANDOFF_TIMEOUT_POLLS` give handoff-failure fallback and timeout.
 
-Track status (2026-06-26): Track A Phase 1 is BUILT + tested (`pianola-tasks.ts`,
-`pianola-completion-detector.ts`, `pianola-orchestrator.ts` + `pianola orchestrate`,
-`pianola-supervisor.ts` + `supervise`). Track B is substantially BUILT (`main/plugins/`:
-PluginManager, PermissionBroker, PluginSandboxHost, PluginSchedulerHost; `shared/plugins/`:
-registry/manifest/contributions/host-api/signing; `PluginsPanel.tsx`; gated on
-`encoreFeatures.plugins`) - the verdict's "NOT plugin-ready" predates this work. Remaining:
-Track A Phase 2 (capability/load-aware selection, scheduled re-learn + relaunch, in-app
-learning suggestions) and the open forks below.
+Track status (2026-06-30): Track A Phase 1 and Track A Phase 2 are BUILT + tested.
+Phase 1 shipped `pianola-tasks.ts`, `pianola-completion-detector.ts`,
+`pianola-orchestrator.ts`, `pianola orchestrate`, `pianola-supervisor.ts`, and
+`supervise`. Phase 2 shipped capability/load-aware selection, scheduled re-learn
+
+- relaunch, and in-app learning suggestions; see `Plans/pianola-implementation-plan.md`
+  lines 183-193 for the exact modules and invariants. Track B is substantially BUILT
+  (`main/plugins/`: PluginManager, PermissionBroker, PluginSandboxHost,
+  PluginSchedulerHost; `shared/plugins/`: registry/manifest/contributions/host-api/signing;
+  `PluginsPanel.tsx`; gated on `encoreFeatures.plugins`) - the original verdict's
+  "NOT plugin-ready" predates this work. Remaining work is the open forks below plus the
+  current plugin/Pianola integration roadmap in `Plans/plugin-platform-and-encore-uplift.md`.
 
 1. **Durable watch-state rehydration across restart** (S). `WatchState` is fresh on every watch start (`src/cli/commands/pianola.ts`), so a restarted watcher re-answers the still-waiting prompt a SECOND time. Add pure `rehydrateWatchState(records, target)` that folds the audit log to seed `lastHandledMessageId` before the poll loop. Files: `src/shared/pianola/pianola-watcher.ts`, `src/cli/commands/pianola.ts`, `src/cli/services/pianola-store.ts`.
 2. **Watcher self-stop when the Encore flag is revoked** (S). `ensurePianolaEnabled()` is checked once at startup and never re-read in the loop, so toggling Pianola off does not halt in-flight autonomous answering. Re-read `encoreFeatures.pianola` at the top of each poll iteration and break cleanly. File: `src/cli/commands/pianola.ts`.

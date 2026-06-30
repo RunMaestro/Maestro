@@ -13,13 +13,20 @@
  */
 
 import { expectTypeOf } from 'vitest';
-import type { UiItemContribution, PluginContributions, AggregatedContributions } from '../index';
+import type {
+	UiItemContribution,
+	PluginContributions,
+	AggregatedContributions,
+	PluginEventPayloads,
+} from '../index';
 import type {
 	UiItemContribution as SrcUiItemContribution,
 	PluginContributions as SrcPluginContributions,
 	AggregatedContributions as SrcAggregatedContributions,
 } from '../../../../src/shared/plugins/contributions';
+import type { PluginEventPayloads as SrcPluginEventPayloads } from '../../../../src/shared/plugins/events';
 
 expectTypeOf<UiItemContribution>().toEqualTypeOf<SrcUiItemContribution>();
 expectTypeOf<PluginContributions>().toEqualTypeOf<SrcPluginContributions>();
 expectTypeOf<AggregatedContributions>().toEqualTypeOf<SrcAggregatedContributions>();
+expectTypeOf<PluginEventPayloads>().toEqualTypeOf<SrcPluginEventPayloads>();

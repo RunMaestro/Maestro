@@ -28,9 +28,10 @@ function assertMetadataOnly(events: PluginEvent[]): void {
 		expect(isPluginEventTopic(event.topic)).toBe(true);
 		for (const key of Object.keys(event.payload as Record<string, unknown>)) {
 			expect(key).not.toMatch(FORBIDDEN_KEY);
-			// Every surviving value is a primitive id/label/status string.
+			// Every surviving value is primitive metadata: ids/labels/statuses/counters,
+			// never nested free-form bodies.
 			const value = (event.payload as Record<string, unknown>)[key];
-			expect(typeof value).toBe('string');
+			expect(['string', 'number', 'boolean']).toContain(typeof value);
 		}
 	}
 }
@@ -164,6 +165,27 @@ describe('PluginEventPayloads metadata-only contract', () => {
 		};
 		const awaiting: PluginEventPayloads['agent.awaiting'] = { agentId: 'claude', tabId: 's1' };
 		const cue: PluginEventPayloads['cue.fired'] = { cueType: 'file.changed' };
+		const history: PluginEventPayloads['history.entryAdded'] = {
+			entryId: 'h1',
+			sessionId: 's1',
+			agentId: 'claude',
+			projectPath: '/p',
+			kind: 'agent',
+			source: 'auto',
+			createdAt: AT,
+		};
+		const completed: PluginEventPayloads['agent.completed'] = {
+			sessionId: 's1',
+			agentId: 'claude',
+			tabId: 's1',
+			status: 'completed',
+			durationMs: 1200,
+			projectPath: '/p',
+			source: 'auto',
+			startedAt: AT,
+			completedAt: AT,
+			costUsd: 0.01,
+		};
 
 		const events: PluginEvent[] = [
 			{ topic: 'session.created', at: AT, payload: created },
@@ -171,6 +193,8 @@ describe('PluginEventPayloads metadata-only contract', () => {
 			{ topic: 'agent.statusChanged', at: AT, payload: status },
 			{ topic: 'agent.awaiting', at: AT, payload: awaiting },
 			{ topic: 'cue.fired', at: AT, payload: cue },
+			{ topic: 'history.entryAdded', at: AT, payload: history },
+			{ topic: 'agent.completed', at: AT, payload: completed },
 		];
 		assertMetadataOnly(events);
 	});

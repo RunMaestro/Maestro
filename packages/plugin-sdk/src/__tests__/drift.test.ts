@@ -9,12 +9,18 @@ import {
 	HOST_API_VERSION,
 	PLUGIN_ID_PATTERN,
 	UI_SURFACES,
+	capabilityRisk,
+	describeCapability,
 	validatePluginManifest,
 } from '../index';
 
 // The real host contracts (single source of truth). The relative depth from
 // packages/plugin-sdk/src/__tests__/ to the worktree src/ is four levels up.
-import { PLUGIN_CAPABILITIES as SRC_PLUGIN_CAPABILITIES } from '../../../../src/shared/plugins/permissions';
+import {
+	PLUGIN_CAPABILITIES as SRC_PLUGIN_CAPABILITIES,
+	capabilityRisk as srcCapabilityRisk,
+	describeCapability as srcDescribeCapability,
+} from '../../../../src/shared/plugins/permissions';
 import {
 	PLUGIN_TIERS as SRC_PLUGIN_TIERS,
 	PLUGIN_ID_PATTERN as SRC_PLUGIN_ID_PATTERN,
@@ -47,9 +53,16 @@ describe('@maestro/plugin-sdk vendored-contract drift guard', () => {
 		expect(HOST_METHODS).toEqual(SRC_HOST_METHODS);
 	});
 
-	it('HOST_API_VERSION matches the source and is pinned to 1.6.0', () => {
+	it('HOST_API_VERSION matches the source and is pinned to 1.7.0', () => {
 		expect(HOST_API_VERSION).toBe(SRC_HOST_API_VERSION);
-		expect(HOST_API_VERSION).toBe('1.6.0');
+		expect(HOST_API_VERSION).toBe('1.7.0');
+	});
+
+	it('capability risk and descriptions match the source', () => {
+		for (const capability of PLUGIN_CAPABILITIES) {
+			expect(capabilityRisk(capability)).toBe(srcCapabilityRisk(capability));
+			expect(describeCapability(capability)).toBe(srcDescribeCapability(capability));
+		}
 	});
 
 	it('UI_SURFACES matches the source render-surface catalog', () => {

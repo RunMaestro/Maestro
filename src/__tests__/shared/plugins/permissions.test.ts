@@ -104,7 +104,55 @@ describe('grantsFromRequests + capabilityRisk', () => {
 	});
 	it('classifies risk', () => {
 		expect(capabilityRisk('process:spawn')).toBe('high');
+		expect(capabilityRisk('shell:openExternal')).toBe('high');
+		expect(capabilityRisk('sessions:create')).toBe('high');
+		expect(capabilityRisk('sessions:write')).toBe('high');
+		expect(capabilityRisk('transcripts:write')).toBe('high');
+		expect(capabilityRisk('decisions:write')).toBe('high');
+		expect(capabilityRisk('background:service')).toBe('high');
+		expect(capabilityRisk('power:preventSleep')).toBe('medium');
 		expect(capabilityRisk('notifications:toast')).toBe('low');
+	});
+});
+
+describe('P0 contract capabilities', () => {
+	const p0Caps = [
+		'history:read',
+		'sessions:create',
+		'sessions:write',
+		'tabs:manage',
+		'transcripts:write',
+		'decisions:write',
+		'shell:openExternal',
+		'storage:sql',
+		'fs:watch',
+		'power:preventSleep',
+		'background:service',
+	] as const;
+
+	it('recognizes and describes every P0 addition', () => {
+		for (const cap of p0Caps) {
+			expect(isPluginCapability(cap)).toBe(true);
+			expect(PLUGIN_CAPABILITIES).toContain(cap);
+			expect(describeCapability(cap)).toBeTruthy();
+		}
+	});
+
+	it('enforces scoped P0 targets for fs.watch and shell.openExternal', () => {
+		const grant = (capability: string, scope?: string): PermissionGrant =>
+			({ capability, ...(scope ? { scope } : {}), grantedAt: 1 }) as PermissionGrant;
+		expect(isPermitted([grant('fs:watch', '/repo')], 'fs:watch', '/repo/src/a.ts')).toBe(true);
+		expect(isPermitted([grant('fs:watch', '/repo')], 'fs:watch', '/other/a.ts')).toBe(false);
+		expect(
+			isPermitted(
+				[grant('shell:openExternal', 'example.com')],
+				'shell:openExternal',
+				'docs.example.com'
+			)
+		).toBe(true);
+		expect(
+			isPermitted([grant('shell:openExternal', 'example.com')], 'shell:openExternal', 'evil.com')
+		).toBe(false);
 	});
 });
 
