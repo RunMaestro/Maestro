@@ -5,11 +5,19 @@
  * typed while offline and automatically sends them when reconnected.
  *
  * Features:
- * - Persists queued commands to localStorage for survival across page reloads
+ * - Persists queued commands via injected storage adapter for survival across app reloads
  * - Automatically sends queued commands when connection is restored
  * - Tracks queue status and provides progress feedback
  * - Allows manual retry and clearing of queued commands
  * - Handles partial queue failures gracefully
+ *
+ * Storage contract:
+ * - storage.getItem(key): Promise<string | null>
+ * - storage.setItem(key, value): Promise<void>
+ * - storage.removeItem(key): Promise<void>
+ *
+ * When storage is null/undefined, persistence calls are no-ops (useful for testing
+ * or environments without persistent storage).
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
@@ -25,6 +33,16 @@ const MAX_QUEUE_SIZE = 50;
 const SEND_DELAY = 100;
 
 /**
+ * Storage adapter interface for queue persistence.
+ * Matches the async contract used by AsyncStorage, SecureStore, etc.
+ */
+export interface StorageAdapter {
+	getItem(key: string): Promise<string | null>;
+	setItem(key: string, value: string): Promise<void>;
+	removeItem(key: string): Promise<void>;
+}
+
+/**
  * Queued command entry
  */
 export interface QueuedCommand {
@@ -34,6 +52,12 @@ export interface QueuedCommand {
 	command: string;
 	/** Target session ID */
 	sessionId: string;
+	/**
+	 * Target AI tab ID at queue time. Persisted so that when the queue replays
+	 * after reconnect the command lands in the same tab the user was looking
+	 * at, even if the desktop's active tab changed in the meantime.
+	 */
+	tabId?: string;
 	/** Timestamp when command was queued */
 	timestamp: number;
 	/** Input mode (ai or terminal) */
@@ -57,10 +81,16 @@ export interface UseOfflineQueueOptions {
 	isOnline: boolean;
 	/** Whether connected to the WebSocket server */
 	isConnected: boolean;
-	/** Function to send a command to the server */
-	sendCommand: (sessionId: string, command: string) => boolean;
+	/**
+	 * Function to send a command to the server. `tabId` is supplied during
+	 * queue replay when the queued command carried a target tab, so the
+	 * replay lands in the same conversation the user originally targeted.
+	 */
+	sendCommand: (sessionId: string, command: string, tabId?: string) => boolean;
 	/** Maximum retry attempts per command (default: 3) */
 	maxRetries?: number;
+	/** Storage adapter for queue persistence. When null/undefined, persistence is disabled. */
+	storage?: StorageAdapter | null;
 	/** Callback when a queued command is successfully sent */
 	onCommandSent?: (command: QueuedCommand) => void;
 	/** Callback when a queued command fails after all retries */
@@ -85,7 +115,8 @@ export interface UseOfflineQueueReturn {
 	queueCommand: (
 		sessionId: string,
 		command: string,
-		inputMode: 'ai' | 'terminal'
+		inputMode: 'ai' | 'terminal',
+		tabId?: string
 	) => QueuedCommand | null;
 	/** Remove a specific command from the queue */
 	removeCommand: (commandId: string) => void;
@@ -109,32 +140,24 @@ function generateId(): string {
 }
 
 /**
- * Load queue from localStorage
+ * Create a thin Promise wrapper around localStorage for web environments.
+ * Returns null in environments where localStorage is not available.
  */
-function loadQueue(): QueuedCommand[] {
-	try {
-		const stored = localStorage.getItem(STORAGE_KEY);
-		if (stored) {
-			const parsed = JSON.parse(stored);
-			if (Array.isArray(parsed)) {
-				return parsed;
-			}
-		}
-	} catch (error) {
-		webLogger.warn('Failed to load queue from storage', 'OfflineQueue', error);
+export function createLocalStorageAdapter(): StorageAdapter | null {
+	if (typeof window === 'undefined' || typeof localStorage === 'undefined') {
+		return null;
 	}
-	return [];
-}
-
-/**
- * Save queue to localStorage
- */
-function saveQueue(queue: QueuedCommand[]): void {
-	try {
-		localStorage.setItem(STORAGE_KEY, JSON.stringify(queue));
-	} catch (error) {
-		webLogger.warn('Failed to save queue to storage', 'OfflineQueue', error);
-	}
+	return {
+		getItem: (key: string) => Promise.resolve(localStorage.getItem(key)),
+		setItem: (key: string, value: string) => {
+			localStorage.setItem(key, value);
+			return Promise.resolve();
+		},
+		removeItem: (key: string) => {
+			localStorage.removeItem(key);
+			return Promise.resolve();
+		},
+	};
 }
 
 /**
@@ -142,13 +165,16 @@ function saveQueue(queue: QueuedCommand[]): void {
  *
  * @example
  * ```tsx
- * function MobileApp() {
+ * // Web usage with localStorage adapter
+ * function WebApp() {
+ *   const storage = createLocalStorageAdapter();
  *   const { queue, queueLength, queueCommand, status } = useOfflineQueue({
  *     isOnline: navigator.onLine,
  *     isConnected: wsState === 'authenticated',
  *     sendCommand: (sessionId, command) => {
  *       return send({ type: 'send_command', sessionId, command });
  *     },
+ *     storage,
  *     onCommandSent: (cmd) => {
  *       console.log('Queued command sent:', cmd.command);
  *     },
@@ -172,6 +198,14 @@ function saveQueue(queue: QueuedCommand[]): void {
  *     </div>
  *   );
  * }
+ *
+ * // React Native usage with AsyncStorage adapter
+ * import AsyncStorage from '@react-native-async-storage/async-storage';
+ * const asyncStorageAdapter = {
+ *   getItem: AsyncStorage.getItem,
+ *   setItem: AsyncStorage.setItem,
+ *   removeItem: AsyncStorage.removeItem,
+ * };
  * ```
  */
 export function useOfflineQueue(options: UseOfflineQueueOptions): UseOfflineQueueReturn {
@@ -180,6 +214,7 @@ export function useOfflineQueue(options: UseOfflineQueueOptions): UseOfflineQueu
 		isConnected,
 		sendCommand,
 		maxRetries = 3,
+		storage,
 		onCommandSent,
 		onCommandFailed,
 		onProcessingStart,
@@ -187,31 +222,98 @@ export function useOfflineQueue(options: UseOfflineQueueOptions): UseOfflineQueu
 	} = options;
 
 	// State
-	const [queue, setQueue] = useState<QueuedCommand[]>(() => loadQueue());
+	const [queue, setQueue] = useState<QueuedCommand[]>([]);
 	const [status, setStatus] = useState<QueueStatus>('idle');
+	const [isInitialized, setIsInitialized] = useState(false);
 
 	// Refs for async processing
 	const isProcessingRef = useRef(false);
 	const isPausedRef = useRef(false);
 	const sendCommandRef = useRef(sendCommand);
+	const storageRef = useRef(storage);
 
-	// Keep sendCommand ref up to date
+	// Keep refs up to date
 	useEffect(() => {
 		sendCommandRef.current = sendCommand;
 	}, [sendCommand]);
 
+	useEffect(() => {
+		storageRef.current = storage;
+	}, [storage]);
+
 	/**
-	 * Save queue to localStorage whenever it changes
+	 * Load queue from storage on mount
 	 */
 	useEffect(() => {
-		saveQueue(queue);
-	}, [queue]);
+		let cancelled = false;
+
+		async function loadQueue() {
+			if (!storage) {
+				setIsInitialized(true);
+				return;
+			}
+
+			try {
+				const stored = await storage.getItem(STORAGE_KEY);
+				if (cancelled) return;
+
+				if (stored) {
+					const parsed = JSON.parse(stored);
+					if (Array.isArray(parsed)) {
+						// queueCommand is usable before this async read resolves (cold
+						// start, or replay adding state). Merge instead of overwriting so a
+						// command queued during the load window isn't clobbered by the
+						// persisted snapshot. Dedupe by id; stored entries come first.
+						setQueue((current) => {
+							if (current.length === 0) return parsed;
+							const storedIds = new Set(parsed.map((cmd: QueuedCommand) => cmd.id));
+							return [...parsed, ...current.filter((cmd) => !storedIds.has(cmd.id))];
+						});
+					}
+				}
+			} catch (error) {
+				webLogger.warn('Failed to load queue from storage', 'OfflineQueue', error);
+			}
+			setIsInitialized(true);
+		}
+
+		loadQueue();
+
+		return () => {
+			cancelled = true;
+		};
+	}, [storage]);
+
+	/**
+	 * Save queue to storage whenever it changes (after initialization)
+	 */
+	useEffect(() => {
+		if (!isInitialized) return;
+
+		async function saveQueue() {
+			const currentStorage = storageRef.current;
+			if (!currentStorage) return;
+
+			try {
+				await currentStorage.setItem(STORAGE_KEY, JSON.stringify(queue));
+			} catch (error) {
+				webLogger.warn('Failed to save queue to storage', 'OfflineQueue', error);
+			}
+		}
+
+		saveQueue();
+	}, [queue, isInitialized]);
 
 	/**
 	 * Queue a command for later sending
 	 */
 	const queueCommand = useCallback(
-		(sessionId: string, command: string, inputMode: 'ai' | 'terminal'): QueuedCommand | null => {
+		(
+			sessionId: string,
+			command: string,
+			inputMode: 'ai' | 'terminal',
+			tabId?: string
+		): QueuedCommand | null => {
 			// Check if we're at capacity
 			if (queue.length >= MAX_QUEUE_SIZE) {
 				webLogger.warn('Queue at maximum capacity, cannot add more commands', 'OfflineQueue');
@@ -222,6 +324,7 @@ export function useOfflineQueue(options: UseOfflineQueueOptions): UseOfflineQueu
 				id: generateId(),
 				command,
 				sessionId,
+				tabId,
 				timestamp: Date.now(),
 				inputMode,
 				attempts: 0,
@@ -301,7 +404,7 @@ export function useOfflineQueue(options: UseOfflineQueueOptions): UseOfflineQueu
 			const updatedCmd = { ...cmd, attempts: cmd.attempts + 1 };
 
 			try {
-				const success = sendCommandRef.current(cmd.sessionId, cmd.command);
+				const success = sendCommandRef.current(cmd.sessionId, cmd.command, cmd.tabId);
 
 				if (success) {
 					successCount++;

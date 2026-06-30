@@ -19,7 +19,7 @@ import {
 // Command history is no longer used in the mobile UI
 import { useNotifications } from '../hooks/useNotifications';
 import { useUnreadBadge } from '../hooks/useUnreadBadge';
-import { useOfflineQueue } from '../hooks/useOfflineQueue';
+import { useOfflineQueue, createLocalStorageAdapter } from '../hooks/useOfflineQueue';
 import { useMobileSessionManagement } from '../hooks/useMobileSessionManagement';
 import { useOfflineStatus, useDesktopTheme } from '../main';
 import { buildApiUrl } from '../utils/config';
@@ -1079,6 +1079,9 @@ function GroupChatListSheet({ chats, onSelectChat, onNewChat, onClose }: GroupCh
 	);
 }
 
+// Storage adapter for offline queue persistence (created once at module load)
+const offlineQueueStorage = createLocalStorageAdapter();
+
 /**
  * Main mobile app component with WebSocket connection management
  */
@@ -1823,6 +1826,7 @@ export default function MobileApp() {
 				triggerHaptic(HAPTIC_PATTERNS.success);
 			}
 		},
+		storage: offlineQueueStorage,
 	});
 
 	// Retry connection handler

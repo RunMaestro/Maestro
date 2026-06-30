@@ -252,6 +252,10 @@ export const MODAL_PRIORITIES = {
 	/** SSH Remote configuration modal (above settings) */
 	SSH_REMOTE: 458,
 
+	/** Mobile device pairing modal (above settings, Escape closes the pairing dialog
+	 * first and leaves Settings open). */
+	MOBILE_PAIRING: 459,
+
 	/** Custom theme base-theme picker dropdown (above settings so Escape closes
 	 * the dropdown first, leaving the Settings modal open for a second Esc). */
 	CUSTOM_THEME_BASE_SELECTOR: 451,

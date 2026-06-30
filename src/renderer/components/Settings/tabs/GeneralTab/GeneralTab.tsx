@@ -26,6 +26,7 @@ import {
 	useShellSettingsState,
 	useSyncStorageState,
 } from './hooks';
+import { MobileDevicesSection } from '../../MobileDevicesSection';
 import type { GeneralTabProps } from './types';
 
 export type { GeneralTabProps } from './types';
@@ -165,6 +166,10 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				browserTabKeepAliveLimit={settings.browserTabKeepAliveLimit}
 				setBrowserTabKeepAliveLimit={settings.setBrowserTabKeepAliveLimit}
 			/>
+			{/* Mobile Devices - QR pairing for mobile app */}
+			<div data-setting-id="general-mobile-devices">
+				<MobileDevicesSection theme={theme} />
+			</div>
 			<StorageLocationSection theme={theme} syncStorage={syncStorage} />
 		</div>
 	);

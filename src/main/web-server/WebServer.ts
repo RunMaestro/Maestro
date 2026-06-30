@@ -34,8 +34,9 @@ import { getLocalIpAddress } from '../utils/networkUtils';
 import { captureException } from '../utils/sentry';
 import { WebSocketMessageHandler } from './handlers';
 import { BroadcastService } from './services';
-import { ApiRoutes, StaticRoutes, WsRoute } from './routes';
+import { ApiRoutes, StaticRoutes, WsRoute, MobilePairingRoutes } from './routes';
 import { LiveSessionManager, CallbackRegistry } from './managers';
+import { redeemPairingCode } from '../mobile-pairing';
 
 // Import shared types from canonical location
 import type {
@@ -188,6 +189,7 @@ export class WebServer {
 	private apiRoutes: ApiRoutes;
 	private staticRoutes: StaticRoutes;
 	private wsRoute: WsRoute;
+	private mobilePairingRoutes: MobilePairingRoutes;
 
 	constructor(port: number = 0, securityToken?: string) {
 		// Use port 0 to let OS assign a random available port
@@ -243,6 +245,7 @@ export class WebServer {
 			this.webDesktopPath
 		);
 		this.wsRoute = new WsRoute(this.securityToken);
+		this.mobilePairingRoutes = new MobilePairingRoutes();
 
 		// Note: setupMiddleware and setupRoutes are called in start() to handle async properly
 	}
@@ -885,6 +888,14 @@ export class WebServer {
 			},
 		});
 		this.wsRoute.registerRoute(this.server);
+
+		// Setup mobile pairing routes (public, no token required)
+		this.mobilePairingRoutes.setCallbacks({
+			redeemPairingCode: async (code, deviceName) => {
+				return redeemPairingCode(code, deviceName);
+			},
+		});
+		this.mobilePairingRoutes.registerRoutes(this.server);
 	}
 
 	private handleWebClientMessage(clientId: string, message: WebClientMessage): void {
@@ -1217,6 +1228,42 @@ export class WebServer {
 
 	getWebClientCount(): number {
 		return this.webClients.size;
+	}
+
+	/**
+	 * Close any open WebSocket connections tied to a revoked mobile device id.
+	 * The pairing record is the only thing that lets the next reconnect succeed;
+	 * an already-open socket keeps working because it authenticated at handshake.
+	 * Callers that revoke a device must invoke this to drop the live sockets too.
+	 *
+	 * Returns the number of sockets that were closed.
+	 */
+	disconnectMobileDevice(deviceId: string, reason: string = 'Device revoked'): number {
+		if (!deviceId) return 0;
+		let closed = 0;
+		for (const [clientId, client] of this.webClients) {
+			if (!client.isMobileClient || client.mobileDeviceId !== deviceId) continue;
+			try {
+				client.socket.send(
+					JSON.stringify({
+						type: 'error',
+						message: reason,
+						code: 'AUTH_FAILED',
+					})
+				);
+				client.socket.close(4001, reason);
+			} catch (err) {
+				logger.warn(
+					`Failed to close socket for revoked client ${clientId}: ${String(err)}`,
+					LOG_CONTEXT
+				);
+			}
+			closed++;
+		}
+		if (closed > 0) {
+			logger.info(`Closed ${closed} mobile socket(s) for revoked device ${deviceId}`, LOG_CONTEXT);
+		}
+		return closed;
 	}
 
 	async start(): Promise<{ port: number; token: string; url: string }> {
