@@ -5,18 +5,17 @@ into a plugin**, and **surface plugins as "Encore Features"** in a tiled marketp
 details view with install/uninstall/configure · "only installed" toggle). Built across parallel
 worktrees and merged back.
 
-## Security model (decided — no OS sandbox)
+## Security model (decided)
 
 Plugins run tier-1 code in a process-isolated Electron `utilityProcess` (crash isolation, empty env, an
 in-child `vm`). The trust boundary is **ed25519 signing + per-capability user consent** — the same model
 VS Code / Obsidian / JetBrains use (install = a trust decision; extensions get host privileges). The
 high-power verbs (`agents:dispatch`, `process:spawn`) are gated on **trusted-signed + consent + the
-Pianola risk gate**, not on OS-level confinement. This is the baseline; nothing below depends on a
-kernel sandbox.
+Pianola risk gate**. This is the baseline for everything below.
 
 ## What blocks the Encore lifts today
 
-With the sandbox out of scope, the lifts are **feasible** but blocked on concrete platform work: the
+The lifts are **feasible** but blocked on concrete platform work: the
 high-power verbs are inert, `ui:command` is a stub, there's no persistent background service, storage is
 KV-only, the host-API is read/notify-heavy, several contribution buckets aren't consumed, and there's no
 registry or rich-UI host. Those become the workstreams below.
@@ -29,11 +28,11 @@ Pure additive contract changes so feature worktrees build against stable types.
 
 - **WS-contracts**: capability vocab (`history:read`, `sessions:create`, `sessions:write`, `tabs:manage`,
   `transcripts:write`, `decisions:write`, `shell:openExternal`, `storage:sql`, `fs:watch`,
-  `power:preventSleep`, `background:service`) in `permissions.ts`; matching HOST_API methods in
+  `power:preventSleep`, `background:service`) in `permissions.ts`; matching HOST*API methods in
   `rpc-protocol.ts`; event topics + richer payloads (`history.entryAdded`, `agent.completed` w/ output,
   chain lineage / token totals / provider session id / queue depth) in `events.ts`; optional manifest
   `category` field; bump `HOST_API_VERSION`; re-vendor `@maestro/plugin-sdk` + drift test.
-  _Acceptance:_ drift test green; contract unit tests; no behavior yet.
+  \_Acceptance:* drift test green; contract unit tests; no behavior yet.
 
 ### P1 — Foundations (parallel worktrees, buildable now, independent)
 
@@ -46,7 +45,7 @@ Pure additive contract changes so feature worktrees build against stable types.
   _Acceptance:_ e2e settings round-trip via the panel.
 - **WS-grant-ledger**: inject the OS-keyring freshness anchor into `createAuthorizationStore` → persistent
   grants. _Acceptance:_ e2e relaunch — grants survive, no re-consent.
-- **WS-hot-reload**: plugins-dir watcher → reload sandbox on change (dev mode).
+- **WS-hot-reload**: plugins-dir watcher → reload the plugin child on change (dev mode).
   _Acceptance:_ edit fixture → reload observed.
 - **WS-sdk-dist**: publish `@maestro/plugin-sdk` to npm; CLI `install`/`publish`/`update`.
   _Acceptance:_ CLI installs a packed plugin; SDK importable standalone.
@@ -56,7 +55,7 @@ Pure additive contract changes so feature worktrees build against stable types.
 - **WS-marketplace-ui** (headline UI; see below). _Acceptance:_ e2e lists/filters/installs/uninstalls/
   enables/configures.
 
-### P2 — High-power act verbs (parallel after P0; trust+consent+risk-gated, no sandbox)
+### P2 — High-power act verbs (parallel after P0; trust+consent+risk-gated)
 
 - **WS-act-verbs**: wire the `agents:dispatch` + `process:spawn` host handlers (inject `deps.dispatch` /
   `deps.spawn`) gated on trusted-signed + consent + the Pianola risk gate; `process:spawn` scoped to a
