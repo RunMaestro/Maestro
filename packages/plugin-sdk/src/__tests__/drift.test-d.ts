@@ -18,6 +18,9 @@ import type {
 	PluginContributions,
 	AggregatedContributions,
 	PluginEventPayloads,
+	PluginCategory,
+	PluginManifest,
+	ManifestValidationResult,
 } from '../index';
 import type {
 	UiItemContribution as SrcUiItemContribution,
@@ -25,8 +28,15 @@ import type {
 	AggregatedContributions as SrcAggregatedContributions,
 } from '../../../../src/shared/plugins/contributions';
 import type { PluginEventPayloads as SrcPluginEventPayloads } from '../../../../src/shared/plugins/events';
-
+import type {
+	PluginCategory as SrcPluginCategory,
+	PluginManifest as SrcPluginManifest,
+	ManifestValidationResult as SrcManifestValidationResult,
+} from '../../../../src/shared/plugins/plugin-manifest';
 expectTypeOf<UiItemContribution>().toEqualTypeOf<SrcUiItemContribution>();
 expectTypeOf<PluginContributions>().toEqualTypeOf<SrcPluginContributions>();
 expectTypeOf<AggregatedContributions>().toEqualTypeOf<SrcAggregatedContributions>();
 expectTypeOf<PluginEventPayloads>().toEqualTypeOf<SrcPluginEventPayloads>();
+expectTypeOf<PluginCategory>().toEqualTypeOf<SrcPluginCategory>();
+expectTypeOf<PluginManifest>().toEqualTypeOf<SrcPluginManifest>();
+expectTypeOf<ManifestValidationResult>().toEqualTypeOf<SrcManifestValidationResult>();

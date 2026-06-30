@@ -238,16 +238,42 @@ test.describe('plugin system e2e', () => {
 				)
 				.toBe(true);
 
-			// Revoke -> gated contributions disappear and the broker re-denies.
+			// Revoke drops the sealed grants AND disables the code plugin. That is stricter
+			// than "broker re-denies while still runnable": no commands or contributions
+			// from this plugin should remain live after revoke.
+			const grants = await launched.window.evaluate(
+				(id) => window.maestro.plugins.getGrants(id),
+				PLUGIN_ID
+			);
+			expect(grants.granted, 'grants start populated before revoke').not.toEqual([]);
 			await launched.window.evaluate((id) => window.maestro.plugins.revokeGrants(id), PLUGIN_ID);
 			await expect
-				.poll(async () => hasOurs(await readContrib(), 'uiItems'), {
-					timeout: 30_000,
-					message: 'uiItems never cleared after revoke',
-				})
-				.toBe(false);
-			const s = await selfTestUntil(launched, seeded.runId, (x) => x['fs:write'] === 'DENY');
-			expect(s['fs:write'], 'broker re-denies after revoke').toBe('DENY');
+				.poll(
+					async () => {
+						const [contrib, snap, afterGrants] = await launched.window.evaluate(async (id) => {
+							const [c, s, g] = await Promise.all([
+								window.maestro.plugins.contributions(),
+								window.maestro.plugins.list(),
+								window.maestro.plugins.getGrants(id),
+							]);
+							return [c, s, g] as const;
+						}, PLUGIN_ID);
+						const plugin = snap.plugins.find((p) => p.id === PLUGIN_ID);
+						const stillContributes = Object.values(contrib).some(
+							(items) =>
+								Array.isArray(items) &&
+								items.some((i: { pluginId?: string }) => i.pluginId === PLUGIN_ID)
+						);
+						return (
+							plugin?.enabled === false && afterGrants.granted.length === 0 && !stillContributes
+						);
+					},
+					{
+						timeout: 30_000,
+						message: 'revoke did not disable plugin and clear contributions/grants',
+					}
+				)
+				.toBe(true);
 		} finally {
 			await teardown(launched, seeded);
 		}
