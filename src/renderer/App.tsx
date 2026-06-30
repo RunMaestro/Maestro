@@ -171,6 +171,7 @@ import { InlineWizardProvider, useInlineWizardContext } from './contexts/InlineW
 import { ToastContainer } from './components/Toast';
 import { CenterFlash } from './components/CenterFlash';
 import { ThoughtStreamPanel } from './components/ThoughtStreamPanel';
+import { ContextTimelinePanel } from './components/ContextTimelinePanel';
 import { useQuitWhenIdle } from './hooks/useQuitWhenIdle';
 
 // Import services
@@ -3553,6 +3554,9 @@ function MaestroConsoleInner() {
 
 				{/* --- THOUGHT STREAM (single, app-wide; persists across tab switches) --- */}
 				<ThoughtStreamPanel theme={theme} />
+
+				{/* --- CONTEXT TIMELINE (single, app-wide; opened from the header gauge) --- */}
+				<ContextTimelinePanel theme={theme} />
 			</div>
 		</>
 	);

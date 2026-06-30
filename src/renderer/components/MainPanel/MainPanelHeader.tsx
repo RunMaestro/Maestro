@@ -24,6 +24,7 @@ import { GitStatusWidget } from '../GitStatusWidget';
 import { useHoverTooltip } from '../../hooks';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
+import { useContextTimelineStore } from '../../stores/contextTimelineStore';
 import type { Session, Theme, BatchRunState, AITab } from '../../types';
 import type { AgentCapabilities } from '../../hooks/agent/useAgentCapabilities';
 import { openUrl } from '../../utils/openUrl';
@@ -499,6 +500,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 							className="header-context-widget flex items-center mr-2 relative cursor-pointer"
 							data-testid="header-context-widget"
 							{...contextTooltip.triggerHandlers}
+							onClick={() => useContextTimelineStore.getState().openPanel(activeSession.id)}
 						>
 							{/* Plain-text readout: "X% context remaining" — clearer than a
 							    gauge bar at narrow widths and avoids redundant label+bar. */}
