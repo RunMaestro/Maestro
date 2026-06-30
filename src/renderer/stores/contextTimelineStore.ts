@@ -93,6 +93,8 @@ interface ContextTimelineState {
 	closePanel: () => void;
 	/** Clear a session's recorded history without hiding the panel. */
 	clearSession: (sessionId: string) => void;
+	/** Drop a session's buffer entirely (call when the agent is deleted). */
+	removeSession: (sessionId: string) => void;
 }
 
 export const useContextTimelineStore = create<ContextTimelineState>((set) => ({
@@ -138,6 +140,16 @@ export const useContextTimelineStore = create<ContextTimelineState>((set) => ({
 		set((state) => ({
 			buffers: { ...state.buffers, [sessionId]: { points: [], trimmed: false } },
 		})),
+
+	removeSession: (sessionId) =>
+		set((state) => {
+			if (!state.buffers[sessionId]) return state;
+			const buffers = { ...state.buffers };
+			delete buffers[sessionId];
+			// If the deleted session was focused in the panel, hide it.
+			const panelSessionId = state.panelSessionId === sessionId ? null : state.panelSessionId;
+			return { buffers, panelSessionId };
+		}),
 }));
 
 /** Selector: the recorded points for a session (stable empty array when none). */
