@@ -88,6 +88,8 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				theme={theme}
 				autoRunInactivityTimeoutMin={settings.autoRunInactivityTimeoutMin}
 				setAutoRunInactivityTimeoutMin={settings.setAutoRunInactivityTimeoutMin}
+				autoRunMaxTaskDurationMin={settings.autoRunMaxTaskDurationMin}
+				setAutoRunMaxTaskDurationMin={settings.setAutoRunMaxTaskDurationMin}
 			/>
 			<AutoResumeSection
 				theme={theme}
