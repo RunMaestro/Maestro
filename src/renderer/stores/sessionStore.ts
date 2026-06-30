@@ -24,6 +24,7 @@ import {
 	removeGroupAndPromoteChildren,
 	setGroupParent as updateGroupParent,
 } from '../../shared/groupHierarchy';
+import { useContextTimelineStore } from './contextTimelineStore';
 
 // ============================================================================
 // Store Types
@@ -195,6 +196,8 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 			const filtered = s.sessions.filter((session) => session.id !== id);
 			// Skip if nothing was removed
 			if (filtered.length === s.sessions.length) return s;
+			// Drop the deleted agent's context-timeline buffer so it doesn't leak.
+			useContextTimelineStore.getState().removeSession(id);
 			return { sessions: filtered };
 		}),
 

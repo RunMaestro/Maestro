@@ -203,6 +203,13 @@ export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 									? Math.min(1, Math.max(0, p.contextTokens / p.contextWindow))
 									: 0;
 							const barColor = getContextColor(pct ?? Math.round(fillFraction * 100), theme);
+							// When the percentage is indeterminate (an accumulated multi-tool
+							// turn whose raw tokens exceed the window), contextTokens can read
+							// higher than the window - "310k / 200k" would imply an impossible
+							// breach. Cap the shown figure to the window and flag it instead.
+							const overflow =
+								pct === null && p.contextWindow > 0 && p.contextTokens > p.contextWindow;
+							const displayTokens = overflow ? p.contextWindow : p.contextTokens;
 							return (
 								<div key={p.id} className="flex flex-col gap-1">
 									<div className="flex items-center justify-between gap-2">
@@ -216,9 +223,15 @@ export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 										<span
 											className="text-[10px] font-mono tabular-nums"
 											style={{ color: barColor }}
+											title={
+												overflow
+													? 'Accumulated across multiple internal calls in one turn'
+													: undefined
+											}
 										>
 											{pct !== null ? `${Math.round(pct)}%` : '~'} ·{' '}
-											{formatTokensCompact(p.contextTokens)}
+											{formatTokensCompact(displayTokens)}
+											{overflow ? '+' : ''}
 											{p.contextWindow > 0 ? ` / ${formatTokensCompact(p.contextWindow)}` : ''}
 										</span>
 									</div>

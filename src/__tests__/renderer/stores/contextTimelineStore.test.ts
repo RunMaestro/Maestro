@@ -142,5 +142,29 @@ describe('contextTimelineStore', () => {
 		const b = selectPoints(null)(useContextTimelineStore.getState());
 		expect(a).toEqual([]);
 		expect(b).toEqual([]);
+		// The empty array is a shared constant, not a fresh allocation each call.
+		expect(a).toBe(b);
+	});
+
+	it('removeSession drops the buffer entirely and hides the panel if focused', () => {
+		const store = useContextTimelineStore.getState();
+		store.appendPoint(SID, pt());
+		store.openPanel(SID);
+		store.removeSession(SID);
+		const s = useContextTimelineStore.getState();
+		// Key is gone (not just emptied), and the focused panel is hidden.
+		expect(s.buffers[SID]).toBeUndefined();
+		expect(s.panelSessionId).toBeNull();
+	});
+
+	it('removeSession leaves an unfocused panel untouched', () => {
+		const store = useContextTimelineStore.getState();
+		store.appendPoint(SID, pt());
+		store.appendPoint('other', pt());
+		store.openPanel('other');
+		store.removeSession(SID);
+		const s = useContextTimelineStore.getState();
+		expect(s.buffers[SID]).toBeUndefined();
+		expect(s.panelSessionId).toBe('other');
 	});
 });

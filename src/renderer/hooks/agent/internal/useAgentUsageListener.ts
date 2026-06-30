@@ -58,13 +58,10 @@ export function useAgentUsageListener(deps: UseAgentUsageListenerDeps): void {
 				: sessionForUsage.sshRemoteId;
 			const contextPercentage = estimateContextUsage(usageStats, agentToolType, sessionRemoteId);
 
-			deps.batchedUpdater.updateUsage(actualSessionId, tabId, usageStats);
-			deps.batchedUpdater.updateUsage(actualSessionId, null, usageStats);
-
-			// Record a turn-by-turn point for the Context Timeline inspector. This
-			// reuses the same per-turn stream every provider already feeds, so the
-			// timeline is provider-agnostic with no per-agent code. Keyed by the base
-			// (agent) session id so a session's parallel tabs share one timeline.
+			// Resolve the effective context window ONCE (live stats > capability
+			// snapshot > static table; terminal has no window). Shared by the
+			// Context Timeline point and the accumulated-growth fallback below, so
+			// the two can never disagree on the denominator.
 			const resolvedWindow =
 				usageStats.contextWindow > 0
 					? usageStats.contextWindow
@@ -74,6 +71,15 @@ export function useAgentUsageListener(deps: UseAgentUsageListenerDeps): void {
 								useAgentStore.getState().getCapabilitySnapshot(agentToolType, sessionRemoteId)
 							)
 						: 0;
+
+			deps.batchedUpdater.updateUsage(actualSessionId, tabId, usageStats);
+			deps.batchedUpdater.updateUsage(actualSessionId, null, usageStats);
+
+			// Record a turn-by-turn point for the Context Timeline inspector. This
+			// reuses the same per-turn stream every provider already feeds, so the
+			// timeline is provider-agnostic with no per-agent code. Keyed by the base
+			// (agent) session id so a session's parallel tabs share one timeline.
+			const contextTokens = calculateContextTokens(usageStats, agentToolType);
 			useContextTimelineStore.getState().appendPoint(baseSessionId, {
 				tabId,
 				inputTokens: usageStats.inputTokens,
@@ -82,7 +88,7 @@ export function useAgentUsageListener(deps: UseAgentUsageListenerDeps): void {
 				cacheCreationInputTokens: usageStats.cacheCreationInputTokens || 0,
 				reasoningTokens: usageStats.reasoningTokens || 0,
 				totalCostUsd: usageStats.totalCostUsd || 0,
-				contextTokens: calculateContextTokens(usageStats, agentToolType),
+				contextTokens,
 				contextWindow: resolvedWindow,
 				percentage: contextPercentage,
 			});
@@ -92,20 +98,11 @@ export function useAgentUsageListener(deps: UseAgentUsageListenerDeps): void {
 			} else {
 				const currentUsage = sessionForUsage.contextUsage ?? 0;
 				if (currentUsage > 0) {
-					const effectiveWindow =
-						usageStats.contextWindow > 0
-							? usageStats.contextWindow
-							: agentToolType
-								? getContextWindowForAgent(
-										agentToolType,
-										useAgentStore.getState().getCapabilitySnapshot(agentToolType, sessionRemoteId)
-									)
-								: 0;
 					const estimated = estimateAccumulatedGrowth(
 						currentUsage,
 						usageStats.outputTokens,
 						usageStats.cacheReadInputTokens || 0,
-						effectiveWindow
+						resolvedWindow
 					);
 					const yellowThreshold = deps.contextWarningYellowThreshold;
 					const maxEstimate = yellowThreshold - ESTIMATED_USAGE_YELLOW_GAP_PCT;
