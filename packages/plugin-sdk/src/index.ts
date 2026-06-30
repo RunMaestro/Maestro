@@ -306,13 +306,55 @@ export interface HostApiCompatibility {
 	reason: string;
 }
 
-/** Inline, dependency-free semver prefix parse (major/minor/patch only). The
- * host source uses the `semver` package; this stays dependency-free and
- * reproduces the rules isHostApiCompatible relies on. null when no `D.D.D`. */
-function parseSemver(value: string): { major: number; minor: number; patch: number } | null {
-	const m = /^(\d+)\.(\d+)\.(\d+)/.exec(value.trim());
+/** Inline, dependency-free semver parse. The host source uses the `semver`
+ * package; this accepts the same normal/prerelease/build shape we rely on here
+ * and rejects junk suffixes such as `1.7.0junk`. */
+function parseSemver(
+	value: string
+): { major: number; minor: number; patch: number; prerelease: readonly string[] } | null {
+	const identifier = '(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*)';
+	const re = new RegExp(
+		`^v?(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-(${identifier}(?:\\.${identifier})*))?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$`
+	);
+	const m = re.exec(value.trim());
 	if (!m) return null;
-	return { major: Number(m[1]), minor: Number(m[2]), patch: Number(m[3]) };
+	return {
+		major: Number(m[1]),
+		minor: Number(m[2]),
+		patch: Number(m[3]),
+		prerelease: m[4] ? m[4].split('.') : [],
+	};
+}
+
+function comparePrerelease(a: readonly string[], b: readonly string[]): number {
+	if (a.length === 0 && b.length === 0) return 0;
+	if (a.length === 0) return 1;
+	if (b.length === 0) return -1;
+	const length = Math.max(a.length, b.length);
+	for (let i = 0; i < length; i += 1) {
+		const left = a[i];
+		const right = b[i];
+		if (left === undefined) return -1;
+		if (right === undefined) return 1;
+		if (left === right) continue;
+		const leftNumeric = /^\d+$/.test(left);
+		const rightNumeric = /^\d+$/.test(right);
+		if (leftNumeric && rightNumeric) return Number(left) > Number(right) ? 1 : -1;
+		if (leftNumeric) return -1;
+		if (rightNumeric) return 1;
+		return left > right ? 1 : -1;
+	}
+	return 0;
+}
+
+function compareSemver(
+	a: { major: number; minor: number; patch: number; prerelease: readonly string[] },
+	b: { major: number; minor: number; patch: number; prerelease: readonly string[] }
+): number {
+	if (a.major !== b.major) return a.major > b.major ? 1 : -1;
+	if (a.minor !== b.minor) return a.minor > b.minor ? 1 : -1;
+	if (a.patch !== b.patch) return a.patch > b.patch ? 1 : -1;
+	return comparePrerelease(a.prerelease, b.prerelease);
 }
 
 /** Is a plugin requiring `minHostApi` loadable on a host running `hostVersion`?
@@ -344,9 +386,7 @@ export function isHostApiCompatible(
 			reason: `plugin needs host API major ${minParsed.major}, host provides ${hostParsed.major}`,
 		};
 	}
-	const hostGteMin =
-		hostParsed.minor > minParsed.minor ||
-		(hostParsed.minor === minParsed.minor && hostParsed.patch >= minParsed.patch);
+	const hostGteMin = compareSemver(hostParsed, minParsed) >= 0;
 	if (!hostGteMin) {
 		return {
 			compatible: false,

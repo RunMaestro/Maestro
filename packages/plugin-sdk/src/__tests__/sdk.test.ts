@@ -20,6 +20,7 @@ import {
 	PLUGIN_ID_PATTERN,
 	PLUGIN_TIERS,
 	HOST_API_VERSION,
+	isHostApiCompatible,
 	type MaestroSdk,
 	type PluginManifest,
 	type PluginModule,
@@ -224,5 +225,14 @@ describe('@maestro/plugin-sdk authoring surface', () => {
 		} finally {
 			if (!hadDist) rmSync(distDir, { recursive: true, force: true });
 		}
+	});
+
+	it('matches host API semver compatibility edge cases without dependencies', () => {
+		expect(isHostApiCompatible('1.7.0+build.1', '1.7.0+build.2').compatible).toBe(true);
+		expect(isHostApiCompatible('1.7.0-beta.1', '1.7.0').compatible).toBe(true);
+		expect(isHostApiCompatible('1.7.0', '1.7.0-beta.1').compatible).toBe(false);
+		expect(isHostApiCompatible('v1.7.0', '1.7.0').compatible).toBe(true);
+		expect(isHostApiCompatible('1.7.0', 'v1.7.0').compatible).toBe(true);
+		expect(isHostApiCompatible('1.7.0junk', '1.7.0').compatible).toBe(false);
 	});
 });

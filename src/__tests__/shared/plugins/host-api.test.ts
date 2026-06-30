@@ -14,10 +14,21 @@ describe('isHostApiCompatible', () => {
 		expect(r.reason).toMatch(/not a valid semver/);
 	});
 
+	it('rejects semver-looking versions with invalid suffixes', () => {
+		const r = isHostApiCompatible('1.7.0junk', '1.7.0');
+		expect(r.compatible).toBe(false);
+		expect(r.reason).toMatch(/not a valid semver/);
+	});
+
 	it('rejects when the plugin needs a higher minor than the host provides', () => {
 		const r = isHostApiCompatible('1.2.0', '1.1.0');
 		expect(r.compatible).toBe(false);
 		expect(r.reason).toMatch(/needs host API >= 1\.2\.0/);
+	});
+
+	it('accepts the node-semver v prefix', () => {
+		expect(isHostApiCompatible('v1.7.0', '1.7.0').compatible).toBe(true);
+		expect(isHostApiCompatible('1.7.0', 'v1.7.0').compatible).toBe(true);
 	});
 
 	it('accepts when host equals or exceeds the minimum within the same major', () => {
