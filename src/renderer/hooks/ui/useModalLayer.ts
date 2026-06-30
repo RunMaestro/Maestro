@@ -51,15 +51,6 @@ export interface UseModalLayerOptions {
 	 * unmounting the host component.
 	 */
 	enabled?: boolean;
-	/**
-	 * Layer type. Defaults to `'modal'`. Use `'overlay'` for passive,
-	 * non-blocking surfaces (floating inspectors, previews) that should still
-	 * take Escape but must NOT count toward `hasOpenModal()` - otherwise simply
-	 * opening them suppresses global shortcuts and file-tree navigation.
-	 */
-	layerType?: 'modal' | 'overlay';
-	/** Overlay-only: whether a click outside should close it. Defaults to false. */
-	allowClickOutside?: boolean;
 }
 
 /**
@@ -96,8 +87,6 @@ export function useModalLayer(
 		blocksLowerLayers = true,
 		capturesFocus = true,
 		enabled = true,
-		layerType = 'modal',
-		allowClickOutside = false,
 	} = options;
 
 	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
@@ -111,30 +100,17 @@ export function useModalLayer(
 			return;
 		}
 
-		const id = registerLayer(
-			layerType === 'overlay'
-				? {
-						type: 'overlay',
-						priority,
-						blocksLowerLayers,
-						capturesFocus,
-						focusTrap,
-						ariaLabel,
-						onEscape: () => onEscapeRef.current(),
-						allowClickOutside,
-					}
-				: {
-						type: 'modal',
-						priority,
-						blocksLowerLayers,
-						capturesFocus,
-						focusTrap,
-						ariaLabel,
-						isDirty,
-						onBeforeClose,
-						onEscape: () => onEscapeRef.current(),
-					}
-		);
+		const id = registerLayer({
+			type: 'modal',
+			priority,
+			blocksLowerLayers,
+			capturesFocus,
+			focusTrap,
+			ariaLabel,
+			isDirty,
+			onBeforeClose,
+			onEscape: () => onEscapeRef.current(),
+		});
 		layerIdRef.current = id;
 
 		return () => {
@@ -154,8 +130,6 @@ export function useModalLayer(
 		focusTrap,
 		isDirty,
 		onBeforeClose,
-		layerType,
-		allowClickOutside,
 	]);
 
 	// Update handler when onEscape changes (without re-registering)

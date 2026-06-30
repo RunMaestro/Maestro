@@ -538,10 +538,19 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 					hasCapability('supportsUsageStats') &&
 					activeTabContextWindow > 0 && (
 						<div
-							className="header-context-widget flex items-center mr-2 relative cursor-pointer"
+							className="header-context-widget flex items-center mr-2 relative cursor-pointer outline-none"
 							data-testid="header-context-widget"
+							role="button"
+							tabIndex={0}
+							aria-label="Open context timeline"
 							{...contextTooltip.triggerHandlers}
 							onClick={() => useContextTimelineStore.getState().openPanel(activeSession.id)}
+							onKeyDown={(e) => {
+								if (e.key === 'Enter' || e.key === ' ') {
+									e.preventDefault();
+									useContextTimelineStore.getState().openPanel(activeSession.id);
+								}
+							}}
 						>
 							{/* Plain-text readout: "X% context remaining" — clearer than a
 							    gauge bar at narrow widths and avoids redundant label+bar. */}
