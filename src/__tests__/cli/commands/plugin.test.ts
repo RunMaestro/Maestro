@@ -94,8 +94,10 @@ describe('plugin init', () => {
 		// The sandbox runs entry.js via `new vm.Script` (CommonJS, no module loader),
 		// so the scaffold must not use ESM `export` syntax or it fails to parse.
 		expect(entry).not.toContain('export ');
-		const pkg = fs.readFileSync(path.join(dir, 'package.json'), 'utf-8');
-		expect(pkg).toContain('@maestro/plugin-sdk');
+		const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf-8')) as {
+			devDependencies?: Record<string, string>;
+		};
+		expect(pkg.devDependencies?.['@maestro/plugin-sdk']).toBe('^0.2.0');
 		expect(fs.existsSync(path.join(dir, 'tsconfig.json'))).toBe(true);
 
 		expect(lastJson().success).toBe(true);

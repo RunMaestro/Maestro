@@ -58,7 +58,7 @@ declare global {
 }
 
 /** Version of @maestro/plugin-sdk the scaffold pins (kept in sync with the SDK). */
-const PLUGIN_SDK_VERSION = '0.1.0';
+const PLUGIN_SDK_VERSION = '0.2.0';
 
 export interface PluginInitOptions {
 	tier?: string;

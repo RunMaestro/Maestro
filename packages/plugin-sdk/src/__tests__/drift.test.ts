@@ -4,6 +4,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	PLUGIN_CAPABILITIES,
 	PLUGIN_TIERS,
+	PLUGIN_CATEGORIES,
 	PLUGIN_EVENT_TOPICS,
 	HOST_METHODS,
 	HOST_API_VERSION,
@@ -11,6 +12,7 @@ import {
 	UI_SURFACES,
 	capabilityRisk,
 	describeCapability,
+	isPluginCategory,
 	validatePluginManifest,
 } from '../index';
 
@@ -23,7 +25,9 @@ import {
 } from '../../../../src/shared/plugins/permissions';
 import {
 	PLUGIN_TIERS as SRC_PLUGIN_TIERS,
+	PLUGIN_CATEGORIES as SRC_PLUGIN_CATEGORIES,
 	PLUGIN_ID_PATTERN as SRC_PLUGIN_ID_PATTERN,
+	isPluginCategory as srcIsPluginCategory,
 	validatePluginManifest as srcValidatePluginManifest,
 } from '../../../../src/shared/plugins/plugin-manifest';
 import { PLUGIN_EVENT_TOPICS as SRC_PLUGIN_EVENT_TOPICS } from '../../../../src/shared/plugins/events';
@@ -43,6 +47,14 @@ describe('@maestro/plugin-sdk vendored-contract drift guard', () => {
 
 	it('PLUGIN_TIERS matches the source', () => {
 		expect(PLUGIN_TIERS).toEqual(SRC_PLUGIN_TIERS);
+	});
+
+	it('PLUGIN_CATEGORIES and category guard match the source', () => {
+		expect(PLUGIN_CATEGORIES).toEqual(SRC_PLUGIN_CATEGORIES);
+		for (const category of PLUGIN_CATEGORIES) {
+			expect(isPluginCategory(category)).toBe(srcIsPluginCategory(category));
+		}
+		expect(isPluginCategory('not-a-category')).toBe(srcIsPluginCategory('not-a-category'));
 	});
 
 	it('PLUGIN_EVENT_TOPICS matches the source catalog', () => {
@@ -78,7 +90,7 @@ describe('@maestro/plugin-sdk vendored-contract drift guard', () => {
 		expect(validatePluginManifest(malformed)).toEqual(srcValidatePluginManifest(malformed));
 	});
 
-	it('validatePluginManifest agrees with the source on a well-formed manifest', () => {
+	it('validatePluginManifest agrees with the source on a well-formed manifest with category', () => {
 		const wellFormed = {
 			id: 'com.example.transcript-reader',
 			name: 'Transcript Reader',
@@ -86,8 +98,28 @@ describe('@maestro/plugin-sdk vendored-contract drift guard', () => {
 			tier: 1,
 			maestro: { minHostApi: HOST_API_VERSION },
 			entry: 'dist/entry.js',
+			category: 'agents',
 			permissions: [{ capability: 'transcripts:read', reason: 'Summarize the active session.' }],
 		};
+
 		expect(validatePluginManifest(wellFormed)).toEqual(srcValidatePluginManifest(wellFormed));
+		expect(validatePluginManifest(wellFormed).manifest?.category).toBe('agents');
+	});
+
+	it('validatePluginManifest agrees with the source on an invalid category', () => {
+		const invalidCategory = {
+			id: 'com.example.transcript-reader',
+			name: 'Transcript Reader',
+			version: '0.1.0',
+			tier: 1,
+			maestro: { minHostApi: HOST_API_VERSION },
+			entry: 'dist/entry.js',
+			category: 'not-a-category',
+			permissions: [{ capability: 'transcripts:read', reason: 'Summarize the active session.' }],
+		};
+
+		expect(validatePluginManifest(invalidCategory)).toEqual(
+			srcValidatePluginManifest(invalidCategory)
+		);
 	});
 });
