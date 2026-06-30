@@ -30,7 +30,7 @@ function delay(ms: number): Promise<void> {
 	return promise;
 }
 
-async function applyBrowserOp(
+export async function applyBrowserOp(
 	handle: BrowserTabViewHandle,
 	op: BrowserOp
 ): Promise<BrowserOpResult> {
