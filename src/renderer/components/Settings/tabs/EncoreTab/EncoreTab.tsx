@@ -93,7 +93,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 
 			<CoworkingSection
 				theme={theme}
-				enabled={settings.encoreFeatures.coworking}
+				enabled={settings.encoreFeatures.coworking ?? false}
 				onToggle={() =>
 					settings.setEncoreFeatures({
 						...settings.encoreFeatures,
