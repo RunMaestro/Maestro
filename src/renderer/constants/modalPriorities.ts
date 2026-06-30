@@ -263,10 +263,6 @@ export const MODAL_PRIORITIES = {
 	 * real modals so they take Escape/focus first, above git overlays. */
 	THOUGHT_STREAM: 210,
 
-	/** Context Timeline inspector - floating, non-blocking; same tier as the
-	 * Thought Stream (sits just below it so they don't fight for Escape). */
-	CONTEXT_TIMELINE: 209,
-
 	/** Git diff preview overlay */
 	GIT_DIFF: 200,
 

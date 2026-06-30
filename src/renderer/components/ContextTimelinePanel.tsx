@@ -28,9 +28,9 @@ import {
 	type ContextTimelinePoint,
 } from '../stores/contextTimelineStore';
 import { useSessionStore } from '../stores/sessionStore';
-import { useModalLayer } from '../hooks/ui/useModalLayer';
-import { useLayerStack } from '../hooks/ui/useLayerStack';
-import { MODAL_PRIORITIES } from '../constants/modalPriorities';
+// IMPORTANT: the context-backed accessor, NOT hooks/ui/useLayerStack (which
+// creates a fresh private stack). This one reads the app's shared layer stack.
+import { useLayerStack } from '../contexts/LayerStackContext';
 import { getContextColor } from '../utils/theme';
 import { formatTokensCompact, formatCost } from '../../shared/formatters';
 
@@ -86,22 +86,12 @@ export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 	const latestWindow = latest?.contextWindow ?? 0;
 	const latestPercent = latest?.percentage ?? null;
 
-	// Register as an OVERLAY, not a modal: this is a passive inspector, so it
-	// must take Escape (to minimize) without counting toward hasOpenModal() -
-	// otherwise merely opening it would suppress global shortcuts and file-tree
-	// navigation. Escape minimizes (least destructive). Only while open.
-	useModalLayer(MODAL_PRIORITIES.CONTEXT_TIMELINE, 'Context Timeline', minimizePanel, {
-		enabled: !!panelSessionId && !minimized,
-		blocksLowerLayers: false,
-		capturesFocus: false,
-		focusTrap: 'none',
-		layerType: 'overlay',
-	});
-
-	// Hide while any real modal is open. The inspector floats at a high z-index,
-	// so without this it would sit above lower-z modals (Create PR, expanded Auto
-	// Run) that actually own the foreground. It stays registered (Escape still
-	// minimizes) but renders nothing until the modal closes.
+	// This is a PASSIVE inspector, so it deliberately does NOT register a layer:
+	// any layer (modal or overlay) trips hasOpenLayers()/hasOpenModal() and
+	// suppresses global shortcuts + file-tree keys while it is open. It is closed
+	// with its own X / minimize buttons instead. It does read the shared stack to
+	// hide itself while a real modal is open, so its high z-index can't float
+	// above lower-z dialogs (Create PR, expanded Auto Run) that own the foreground.
 	const { hasOpenModal } = useLayerStack();
 
 	// Auto-tail: when pinned to the top, follow new turns (newest is at the top).
