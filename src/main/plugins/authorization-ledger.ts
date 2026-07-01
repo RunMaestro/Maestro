@@ -161,6 +161,10 @@ export interface VerifyResult {
 	caps: PermissionGrant[];
 }
 
+export function shouldDisablePluginForVerifyResult(result: VerifyResult): boolean {
+	return !result.authorized;
+}
+
 /**
  * The authorization gate. Holds the verified in-memory view of the ledger plus,
  * in session-only mode, the ephemeral grants minted this run.
@@ -238,11 +242,17 @@ export class AuthorizationStore {
 
 		const anchor = this.anchor.read();
 		if (!anchor) {
-			// First run (or anchor wiped): start fresh, persist a new anchor. There
-			// is nothing to roll back to yet.
 			this.ledger = emptyLedger(this.newSecret());
 			this.storageMode = 'persistent';
-			this.persist(); // establishes anchor at epoch 0
+			if (fs.existsSync(this.ledgerPath)) {
+				// Existing sealed bytes without the keyring freshness anchor are
+				// untrustworthy. Do not persist here: persisting would clear
+				// droppedPriorState and silently bless a replacement anchor before the
+				// user re-consents. The next mint writes a fresh authoritative ledger.
+				this.droppedPriorState = true;
+				return;
+			}
+			this.persist(); // clean first run: establish anchor at epoch 0
 			return;
 		}
 

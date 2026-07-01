@@ -45,8 +45,12 @@ Pure additive contract changes are implemented so feature worktrees build agains
   new capabilities land.
 - **WS-settings-ui**: render `SettingContribution`s + bidirectional write bridge to `plugins.<id>.*`.
   _Acceptance:_ e2e settings round-trip via the Extensions details surface, including disabled-plugin denial.
-- **WS-grant-ledger**: inject the OS-keyring freshness anchor into `createAuthorizationStore` → persistent
-  grants. _Acceptance:_ e2e relaunch - grants survive, revoke invalidates, corrupt anchor requires re-consent.
+- **WS-grant-ledger**: security state-machine hardening DONE. Missing/corrupt keyring freshness
+  anchor with an existing sealed ledger now drops prior grants, reports `re-consent`, and does not
+  bless a new anchor until explicit re-consent; refresh-time verification now disables any
+  non-authorized result, including `not-authorized`. _Acceptance verified:_ `bun vitest run
+src/__tests__/main/plugins/authorization-ledger.test.ts src/__tests__/main/plugins/plugin-manager-verify.test.ts` (2 files, 31 tests passed). Remaining
+  acceptance: e2e relaunch - grants survive, revoke invalidates, corrupt anchor requires re-consent.
 - **WS-hot-reload**: plugins-dir watcher → reload the plugin child on change (dev mode).
   _Acceptance:_ edit fixture → reload observed; manifest expansion cannot inherit new caps; removed plugins
   tear down handlers/services.

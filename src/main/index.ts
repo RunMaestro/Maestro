@@ -65,6 +65,7 @@ import {
 import {
 	createAuthorizationStore,
 	createKeyringAnchor,
+	shouldDisablePluginForVerifyResult,
 	type AuthorizationStore,
 } from './plugins/authorization-ledger';
 import { pluginIdentity } from './plugins/plugin-identity';
@@ -1722,7 +1723,7 @@ app
 				const requested = (record.manifest?.permissions ?? []).map((p) => p.capability);
 				const result = authStore.verify(record.id, identity, requested);
 				return {
-					disable: result.reason === 'identity-changed' || result.reason === 'removed',
+					disable: shouldDisablePluginForVerifyResult(result),
 				};
 			},
 			// Complete uninstall (invariant #8): purge the plugin's KV store, its

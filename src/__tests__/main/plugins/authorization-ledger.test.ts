@@ -16,6 +16,7 @@ import * as path from 'path';
 import {
 	AuthorizationStore,
 	createKeyringAnchor,
+	shouldDisablePluginForVerifyResult,
 	type SealProvider,
 	type AnchorStore,
 	type Anchor,
@@ -216,6 +217,19 @@ describe('AuthorizationStore — anti-rollback (the contract)', () => {
 		expect(after.priorStateDropped()).toBe(true);
 	});
 
+	it('missing anchor with an existing sealed ledger drops grants and requires re-consent', () => {
+		const holder = { value: null as Anchor | null };
+		makeStore(fakeSeal(), fakeAnchor(holder)).mint('a', caps('agents:dispatch'), ident('hash-a'));
+		holder.value = null; // keyring entry missing/corrupt while the sealed ledger file still exists
+
+		const after = makeStore(fakeSeal(), fakeAnchor(holder));
+		expect(after.isEnabled('a')).toBe(false);
+		expect(after.readGrants('a')).toEqual([]);
+		expect(after.priorStateDropped()).toBe(true);
+		expect(after.trustState()).toBe('re-consent');
+		expect(after.isSessionOnly()).toBe(false);
+	});
+
 	it('re-consent after a drop persists again (storage mode stays persistent)', () => {
 		const holder = { value: null as Anchor | null };
 		makeStore(fakeSeal(), fakeAnchor(holder)).mint('a', caps('fs:read', '/d'), ident('hash-a'));
@@ -338,6 +352,16 @@ describe('AuthorizationStore — verify (refresh-time gate)', () => {
 			authorized: false,
 			reason: 'not-authorized',
 		});
+	});
+
+	it('refresh-time gate disables any non-authorized result, including not-authorized', () => {
+		expect(
+			shouldDisablePluginForVerifyResult({
+				authorized: false,
+				reason: 'not-authorized',
+				caps: [],
+			})
+		).toBe(true);
 	});
 
 	it('removed when tombstoned (post-uninstall)', () => {
