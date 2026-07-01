@@ -153,6 +153,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		onOpenDirectorNotes,
 		onOpenMaestroCue,
 		onOpenPianola,
+		setAgentRunDashboardOpen,
 		onConfigureCue,
 		onOpenQueueBrowser,
 		onNewTab,
@@ -255,7 +256,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		}
 	});
 
-	useFocusAfterRender(inputRef, true, 50);
+	useFocusAfterRender(inputRef, true, 0);
 
 	// Track scroll position to determine which items are visible.
 	// Items have variable height (subtext / runningInfo presence, plus LIVE/IDLE
@@ -480,6 +481,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			setMemoryViewerOpen,
 			setFuzzyFileSearchOpen,
 			setUsageDashboardOpen,
+			setAgentRunDashboardOpen,
 			onSummarizeAndContinue,
 			onOpenMergeSession,
 			onOpenSendToAgent,

@@ -225,6 +225,9 @@ export const MODAL_PRIORITIES = {
 	/** Usage Dashboard modal */
 	USAGE_DASHBOARD: 540,
 
+	/** AgentRun ledger dashboard modal */
+	AGENT_RUN_DASHBOARD: 542,
+
 	/** Per-agent detail sub-modal opened from the Usage Dashboard's Agents tab */
 	USAGE_DASHBOARD_AGENT_DETAIL: 541,
 

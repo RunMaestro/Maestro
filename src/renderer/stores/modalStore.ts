@@ -283,6 +283,7 @@ export type ModalId =
 	| 'logViewer'
 	| 'processMonitor'
 	| 'usageDashboard'
+	| 'agentRunDashboard'
 	// Confirmations
 	| 'confirm'
 	| 'quitConfirm'
@@ -672,6 +673,10 @@ export function getModalActions() {
 		setUsageDashboardOpen: (open: boolean) =>
 			open ? openModal('usageDashboard') : closeModal('usageDashboard'),
 
+		// AgentRun Dashboard
+		setAgentRunDashboardOpen: (open: boolean) =>
+			open ? openModal('agentRunDashboard') : closeModal('agentRunDashboard'),
+
 		// Keyboard Mastery Celebration
 		setPendingKeyboardMasteryLevel: (level: number | null) =>
 			level !== null ? openModal('keyboardMastery', { level }) : closeModal('keyboardMastery'),
@@ -967,6 +972,7 @@ export function useModalActions() {
 	const logViewerOpen = useModalStore(selectModalOpen('logViewer'));
 	const processMonitorOpen = useModalStore(selectModalOpen('processMonitor'));
 	const usageDashboardOpen = useModalStore(selectModalOpen('usageDashboard'));
+	const agentRunDashboardOpen = useModalStore(selectModalOpen('agentRunDashboard'));
 	const keyboardMasteryData = useModalStore(selectModalData('keyboardMastery'));
 	const playgroundOpen = useModalStore(selectModalOpen('playground'));
 	const debugWizardModalOpen = useModalStore(selectModalOpen('debugWizard'));
@@ -1082,6 +1088,9 @@ export function useModalActions() {
 
 		// Usage Dashboard
 		usageDashboardOpen,
+
+		// AgentRun Dashboard
+		agentRunDashboardOpen,
 
 		// Keyboard Mastery Celebration
 		pendingKeyboardMasteryLevel: keyboardMasteryData?.level ?? null,

@@ -89,10 +89,13 @@ src/__tests__/main/plugins/authorization-ledger.test.ts src/__tests__/main/plugi
 1. **E-directorNotes** ← P1(ui-command, settings-ui, render-host) + P3(history-transcripts) +
    a read-only batch-agent dispatch sink (P2). Lift AI Overview + Unified History.
 2. **E-pianola** ← P2(act-verbs) + P3(sessions-tabs, history-transcripts, background-service).
-   AgentRun-control-plane adaptation DONE for the CLI orchestrator path: Pianola campaigns now expose
-   deterministic per-task `runId`s, `pianola orchestrate` writes `AgentRun` records/events for dispatched /
-   completed / failed tasks, and legacy agent-bound tasks recover provider type from live `sessionId`
-   lookup before ledger writes. _Acceptance verified:_ `bun vitest run src/__tests__/shared/agent-run/pianola-adapter.test.ts src/__tests__/shared/pianola/pianola-orchestrator.test.ts src/__tests__/cli/commands/pianola-orchestrate.test.ts` (3 files, 26 tests passed).
+   AgentRun ledger/dashboard projection DONE for the CLI orchestrator path: Pianola remains the
+   orchestrator, while Pianola campaigns expose deterministic per-task `runId`s and `pianola orchestrate`
+   writes `AgentRun` records/events for dispatched / completed / failed tasks. Legacy agent-bound tasks
+   recover provider type from live `sessionId` lookup before ledger writes. The renderer now has a
+   first-party AgentRun Dashboard modal opened from Quick Actions; it lists runs/campaigns, renders run
+   detail and event timelines, and treats Pianola campaign/task projections as read-only visibility rather
+   than Pianola execution authority.
 3. **E-maestroCue** ← P2(act-verbs, scheduler-sink) + P3(storage-sql, fs-watch, power, events-rich,
    background-service).
 4. **E-symphony** ← P2(process:spawn) + P3(sessions-tabs, sessions:write, history) + render-host +

@@ -73,6 +73,7 @@ export interface AppModalsProps {
 	onNavigateToSession: (sessionId: string, tabId?: string, processType?: string) => void;
 	onNavigateToGroupChat: (groupChatId: string) => void;
 	onCloseUsageDashboard: () => void;
+	onCloseAgentRunDashboard: () => void;
 	/** Default time range for the Usage Dashboard from settings */
 	defaultStatsTimeRange?: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all';
 	/** Enable colorblind-friendly colors for dashboard charts */
@@ -202,6 +203,7 @@ export interface AppModalsProps {
 	setLogViewerOpen: (open: boolean) => void;
 	setProcessMonitorOpen: (open: boolean) => void;
 	setUsageDashboardOpen?: (open: boolean) => void;
+	setAgentRunDashboardOpen?: (open: boolean) => void;
 	setActiveRightTab: (tab: RightPanelTab) => void;
 	setAgentSessionsOpen: (open: boolean) => void;
 	setMemoryViewerOpen?: (open: boolean) => void;
@@ -470,6 +472,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		updateCheckModalOpen,
 		processMonitorOpen,
 		usageDashboardOpen,
+		agentRunDashboardOpen,
 		confirmModalOpen,
 		quitConfirmModalOpen,
 		activeTerminalTasks,
@@ -505,6 +508,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 			updateCheckModalOpen: s.modals.get('updateCheck')?.open ?? false,
 			processMonitorOpen: s.modals.get('processMonitor')?.open ?? false,
 			usageDashboardOpen: s.modals.get('usageDashboard')?.open ?? false,
+			agentRunDashboardOpen: s.modals.get('agentRunDashboard')?.open ?? false,
 			confirmModalOpen: s.modals.get('confirm')?.open ?? false,
 			quitConfirmModalOpen: s.modals.get('quitConfirm')?.open ?? false,
 			activeTerminalTasks: (
@@ -599,6 +603,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onNavigateToSession,
 		onNavigateToGroupChat,
 		onCloseUsageDashboard,
+		onCloseAgentRunDashboard,
 		defaultStatsTimeRange,
 		colorBlindMode,
 		// Confirm modals
@@ -679,6 +684,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		setLogViewerOpen,
 		setProcessMonitorOpen,
 		setUsageDashboardOpen,
+		setAgentRunDashboardOpen,
 		setActiveRightTab,
 		setAgentSessionsOpen,
 		setMemoryViewerOpen,
@@ -901,6 +907,8 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onCloseUsageDashboard={onCloseUsageDashboard}
 				defaultStatsTimeRange={defaultStatsTimeRange}
 				colorBlindMode={colorBlindMode}
+				agentRunDashboardOpen={agentRunDashboardOpen}
+				onCloseAgentRunDashboard={onCloseAgentRunDashboard}
 			/>
 
 			{/* Confirmation Modals */}
@@ -1036,6 +1044,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				setLogViewerOpen={setLogViewerOpen}
 				setProcessMonitorOpen={setProcessMonitorOpen}
 				setUsageDashboardOpen={setUsageDashboardOpen}
+				setAgentRunDashboardOpen={setAgentRunDashboardOpen}
 				setActiveRightTab={setActiveRightTab}
 				setAgentSessionsOpen={setAgentSessionsOpen}
 				setMemoryViewerOpen={setMemoryViewerOpen}
