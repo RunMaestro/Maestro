@@ -43,6 +43,8 @@ const baseRun: AgentRun = {
 	branch: 'agent-run-dashboard',
 	prompt: 'Implement parser dashboard',
 	status: 'completed',
+	sessionId: 'session-alpha',
+	tabId: 'tab-alpha',
 	artifacts: [{ name: 'summary.md', path: '/repo/maestro/summary.md', kind: 'markdown' }],
 	touchedFiles: ['src/parser.ts', 'src/parser.test.ts'],
 	checks: [{ name: 'focused vitest', status: 'passed', summary: '12 tests passed' }],
@@ -176,8 +178,16 @@ function agentRunApi(): AgentRunApiMock {
 	return window.maestro.agentRun as unknown as AgentRunApiMock;
 }
 
-function renderModal(): void {
-	render(<AgentRunDashboardModal isOpen={true} onClose={vi.fn()} theme={theme} />);
+function renderModal(onNavigateToSession = vi.fn()): Mock {
+	render(
+		<AgentRunDashboardModal
+			isOpen={true}
+			onClose={vi.fn()}
+			theme={theme}
+			onNavigateToSession={onNavigateToSession}
+		/>
+	);
+	return onNavigateToSession as Mock;
 }
 
 function mockDefaultAgentRunApi(): void {
@@ -254,6 +264,15 @@ describe('AgentRunDashboardModal', () => {
 		expect(screen.getByText('Focused vitest passed')).toBeInTheDocument();
 		expect(screen.getByText('Review parser error mapping')).toBeInTheDocument();
 		expect(screen.getByText('Run started')).toBeInTheDocument();
+	});
+
+	it('jumps to the linked Maestro session and tab when a selected run has IDs', async () => {
+		const onNavigateToSession = renderModal();
+		fireEvent.click(await screen.findByText('Implement parser dashboard'));
+
+		fireEvent.click(await screen.findByRole('button', { name: 'Jump to session/tab' }));
+
+		expect(onNavigateToSession).toHaveBeenCalledWith('session-alpha', 'tab-alpha');
 	});
 
 	it('selects a campaign, renders its task list, and opens a task run from that task', async () => {

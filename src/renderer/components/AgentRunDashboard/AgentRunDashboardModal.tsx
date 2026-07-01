@@ -14,6 +14,7 @@ interface AgentRunDashboardModalProps {
 	isOpen: boolean;
 	onClose: () => void;
 	theme: Theme;
+	onNavigateToSession?: (sessionId: string, tabId?: string) => void;
 }
 
 type ViewMode = 'runs' | 'campaigns';
@@ -240,11 +241,13 @@ function RunDetail({
 	run,
 	events,
 	onRefreshEvents,
+	onNavigateToSession,
 }: {
 	theme: Theme;
 	run: AgentRun | null;
 	events: AgentRunEvent[];
 	onRefreshEvents: () => void;
+	onNavigateToSession?: (sessionId: string, tabId?: string) => void;
 }) {
 	if (!run) {
 		return (
@@ -270,6 +273,16 @@ function RunDetail({
 					<Pill theme={theme} tone={statusTone(run.status, theme)}>
 						{run.status}
 					</Pill>
+					{run.sessionId && onNavigateToSession && (
+						<button
+							type="button"
+							onClick={() => onNavigateToSession(run.sessionId!, run.tabId)}
+							className="rounded-md border px-3 py-1.5 text-xs font-medium transition-colors hover:bg-white/5"
+							style={{ borderColor: theme.colors.border, color: theme.colors.accent }}
+						>
+							Jump to session{run.tabId ? '/tab' : ''}
+						</button>
+					)}
 				</div>
 				<div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-3">
 					<DetailLine label="run id" value={run.id} />
@@ -482,7 +495,11 @@ function CampaignDetail({
 	);
 }
 
-function AgentRunDashboardBody({ theme, onClose }: Omit<AgentRunDashboardModalProps, 'isOpen'>) {
+function AgentRunDashboardBody({
+	theme,
+	onClose,
+	onNavigateToSession,
+}: Omit<AgentRunDashboardModalProps, 'isOpen'>) {
 	useModalLayer(MODAL_PRIORITIES.AGENT_RUN_DASHBOARD, 'AgentRun Dashboard', onClose);
 	const [viewMode, setViewMode] = useState<ViewMode>('runs');
 	const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
@@ -820,6 +837,7 @@ function AgentRunDashboardBody({ theme, onClose }: Omit<AgentRunDashboardModalPr
 								run={selectedRun}
 								events={selectedRunEvents}
 								onRefreshEvents={() => selectedRun && void loadRunEvents(selectedRun.id)}
+								onNavigateToSession={onNavigateToSession}
 							/>
 						) : (
 							<CampaignDetail
@@ -837,9 +855,20 @@ function AgentRunDashboardBody({ theme, onClose }: Omit<AgentRunDashboardModalPr
 	);
 }
 
-export function AgentRunDashboardModal({ isOpen, onClose, theme }: AgentRunDashboardModalProps) {
+export function AgentRunDashboardModal({
+	isOpen,
+	onClose,
+	theme,
+	onNavigateToSession,
+}: AgentRunDashboardModalProps) {
 	if (!isOpen) return null;
-	return <AgentRunDashboardBody theme={theme} onClose={onClose} />;
+	return (
+		<AgentRunDashboardBody
+			theme={theme}
+			onClose={onClose}
+			onNavigateToSession={onNavigateToSession}
+		/>
+	);
 }
 
 export type { AgentRunDashboardModalProps };

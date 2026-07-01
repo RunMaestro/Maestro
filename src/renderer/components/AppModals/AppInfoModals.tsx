@@ -216,6 +216,7 @@ export const AppInfoModals = memo(function AppInfoModals({
 						isOpen={agentRunDashboardOpen}
 						onClose={onCloseAgentRunDashboard}
 						theme={theme}
+						onNavigateToSession={onNavigateToSession}
 					/>
 				</Suspense>
 			)}
