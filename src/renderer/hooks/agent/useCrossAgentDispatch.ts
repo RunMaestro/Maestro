@@ -79,6 +79,9 @@ export function buildCrossAgentLogEntry(
 				fromSessionId: chunk.targetSessionId,
 				fromAgentName: chunk.targetAgentName,
 				fromToolType: chunk.targetToolType,
+				// Streaming until the terminal (`done`) chunk lands. Phase 04's
+				// attribution pill shows a spinner + pulses the border while true.
+				streaming: !chunk.done,
 			},
 		},
 	};
@@ -181,7 +184,11 @@ export function useCrossAgentDispatch(): UseCrossAgentDispatchResult {
 				}
 			})
 			.catch((err) => {
-				logger.error('[useCrossAgentDispatch] Failed to dispatch cross-agent request', undefined, err);
+				logger.error(
+					'[useCrossAgentDispatch] Failed to dispatch cross-agent request',
+					undefined,
+					err
+				);
 			});
 	}, []);
 

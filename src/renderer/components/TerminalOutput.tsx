@@ -14,6 +14,7 @@ import {
 	Share2,
 	Hammer,
 	GitFork,
+	Loader2,
 } from 'lucide-react';
 import type { Session, Theme, LogEntry, FocusArea, AgentError, QueuedItem } from '../types';
 import type { FileNode } from '../types/fileTree';
@@ -44,6 +45,7 @@ import { useSessionStore } from '../stores/sessionStore';
 import { SessionRecoveryCard } from './SessionRecoveryCard';
 import { getTokenSourcePill } from '../../shared/claudeTokenModeLabel';
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
+import { getAgentDisplayName } from '../../shared/agentMetadata';
 
 // ============================================================================
 // Tool display helpers (pure functions, hoisted out of render path)
@@ -465,6 +467,20 @@ const LogItemComponent = memo(
 			? userMessageAlignment === 'left'
 			: userMessageAlignment === 'right';
 
+		// Cross-agent (@@mention) reply provenance. When set, this AI entry was
+		// produced by a DIFFERENT agent the user consulted; it gets a tinted
+		// bubble + attribution pill (Phase 04). Themes may override the tint via
+		// the crossAgentBubbleBg / crossAgentBubbleBorder tokens; otherwise we
+		// derive a subtle accent wash with the same color-mix idiom the user
+		// bubble uses below, so every theme reads correctly for free.
+		const crossAgent = log.metadata?.crossAgent;
+		const isCrossAgentStreaming = !!crossAgent?.streaming;
+		const crossAgentBubbleBg =
+			theme.colors.crossAgentBubbleBg ??
+			`color-mix(in srgb, ${theme.colors.accent} 14%, ${theme.colors.bgActivity})`;
+		const crossAgentBubbleBorder =
+			theme.colors.crossAgentBubbleBorder ?? theme.colors.accent + '55';
+
 		return (
 			<div
 				ref={logItemRef}
@@ -498,23 +514,30 @@ const LogItemComponent = memo(
 					})()}
 				</div>
 				<div
-					className={`flex-1 min-w-0 p-4 pb-10 rounded-xl border ${isReversed ? 'rounded-tr-none' : 'rounded-tl-none'} relative overflow-hidden`}
+					className={`flex-1 min-w-0 p-4 pb-10 rounded-xl border ${isReversed ? 'rounded-tr-none' : 'rounded-tl-none'} relative overflow-hidden ${isCrossAgentStreaming ? 'animate-status-glow' : ''}`}
 					style={{
-						backgroundColor: isUserMessage
-							? isAIMode
-								? `color-mix(in srgb, ${theme.colors.accent} 20%, ${theme.colors.bgSidebar})`
-								: `color-mix(in srgb, ${theme.colors.accent} 15%, ${theme.colors.bgActivity})`
-							: log.source === 'stderr' || log.source === 'error'
-								? `color-mix(in srgb, ${theme.colors.error} 8%, ${theme.colors.bgActivity})`
-								: isAIMode
-									? theme.colors.bgActivity
-									: 'transparent',
-						borderColor:
-							isUserMessage && isAIMode
+						backgroundColor: crossAgent
+							? crossAgentBubbleBg
+							: isUserMessage
+								? isAIMode
+									? `color-mix(in srgb, ${theme.colors.accent} 20%, ${theme.colors.bgSidebar})`
+									: `color-mix(in srgb, ${theme.colors.accent} 15%, ${theme.colors.bgActivity})`
+								: log.source === 'stderr' || log.source === 'error'
+									? `color-mix(in srgb, ${theme.colors.error} 8%, ${theme.colors.bgActivity})`
+									: isAIMode
+										? theme.colors.bgActivity
+										: 'transparent',
+						borderColor: crossAgent
+							? crossAgentBubbleBorder
+							: isUserMessage && isAIMode
 								? theme.colors.accent + '40'
 								: log.source === 'stderr' || log.source === 'error'
 									? theme.colors.error
 									: theme.colors.border,
+						// Drives the accent hue of the streaming pulse (.animate-status-glow).
+						...(isCrossAgentStreaming
+							? ({ '--status-glow-color': theme.colors.accent } as React.CSSProperties)
+							: {}),
 					}}
 				>
 					{/* Local filter icon for system output only */}
@@ -1027,10 +1050,37 @@ const LogItemComponent = memo(
 							onRecover={(opts) => onSessionRecover?.(opts)}
 						/>
 					)}
+					{/* Cross-agent attribution pill — this AI reply was routed back from a
+					    DIFFERENT agent the user consulted via @@mention. Bottom-center,
+					    mirroring the mode pill's placement. It REPLACES the delivery-method
+					    (API/TUI) pill below so only one pill ever shows. Streaming adds a
+					    spinner; hover reveals full provenance for debugging. */}
+					{crossAgent &&
+						(() => {
+							const providerName = getAgentDisplayName(crossAgent.fromToolType);
+							const label = `${providerName} · "${crossAgent.fromAgentName}"`;
+							return (
+								<span
+									className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1 max-w-[80%] text-[10px] px-2 py-0.5 rounded-full pointer-events-auto select-none"
+									style={{
+										backgroundColor: theme.colors.accent,
+										color: theme.colors.accentForeground,
+									}}
+									title={`Response from ${providerName} agent "${crossAgent.fromAgentName}" (request ${crossAgent.requestId})`}
+								>
+									{isCrossAgentStreaming && (
+										<Loader2 className="w-3 h-3 shrink-0 animate-spin" aria-hidden="true" />
+									)}
+									<span className="truncate">{label}</span>
+								</span>
+							);
+						})()}
 					{/* Mode pill — shows which CLI captured this Claude turn (TUI = maestro-p,
 					    API = claude --print). "Adaptive " prefix indicates the session has
-					    Adaptive Mode enabled (auto-switching between the two). */}
-					{isClaudeCode &&
+					    Adaptive Mode enabled (auto-switching between the two). Suppressed on
+					    cross-agent entries so the attribution pill above replaces it. */}
+					{!crossAgent &&
+						isClaudeCode &&
 						log.source !== 'user' &&
 						(() => {
 							const { label, title } = getTokenSourcePill({
@@ -1240,6 +1290,10 @@ const LogItemComponent = memo(
 			prevProps.log.renderStyle === nextProps.log.renderStyle &&
 			prevProps.log.metadata?.hiddenProgress === nextProps.log.metadata?.hiddenProgress &&
 			prevProps.log.metadata?.toolState?.status === nextProps.log.metadata?.toolState?.status &&
+			// Cross-agent streaming flips true->false on the final chunk (which may
+			// carry no new text), so the pill/glow needs this to settle.
+			prevProps.log.metadata?.crossAgent?.streaming ===
+				nextProps.log.metadata?.crossAgent?.streaming &&
 			prevProps.isExpanded === nextProps.isExpanded &&
 			prevProps.localFilterQuery === nextProps.localFilterQuery &&
 			prevProps.filterMode.mode === nextProps.filterMode.mode &&
