@@ -46,15 +46,18 @@ export function evaluatePluginDispatch(payload: string): PluginDispatchVerdict {
 /**
  * Scheduler-side eligibility for a plugin cue-trigger dispatch. The risk gate is
  * necessary but NOT sufficient: auto-dispatching a prompt to an agent is
- * high-trust, so it additionally requires a live `agents:dispatch` grant (the
- * high-risk capability the user consented to) AND a trusted (signed) plugin.
- * Untrusted/unsigned plugins can never become auto-dispatch-eligible, even
- * holding the grant — the trust posture while the OS sandbox is deferred. Pure so
- * the policy is unit-testable; the scheduler supplies the grant/trust booleans.
+ * high-trust, so it additionally requires a live `agents:dispatch` grant that
+ * NAMES the trigger's target agent (the allowlist scope), a trusted (signed)
+ * plugin, AND — because a scheduler tick is no-user-present execution — the
+ * separate, revocable UNATTENDED consent on that grant. A plugin the user lets
+ * dispatch interactively must not thereby dispatch on a timer at 3am
+ * (plugin-phase4-high-risk-verbs.md §8). Untrusted/unsigned plugins can never
+ * become auto-dispatch-eligible, even holding the grant. Pure so the policy is
+ * unit-testable; the scheduler supplies the grant/trust booleans.
  */
 export function evaluateScheduledDispatch(
 	payload: string,
-	ctx: { hasDispatchGrant: boolean; trusted: boolean }
+	ctx: { hasDispatchGrant: boolean; trusted: boolean; hasUnattendedConsent: boolean }
 ): PluginDispatchVerdict {
 	const verdict = evaluatePluginDispatch(payload);
 	if (!verdict.eligible) return verdict;
@@ -62,7 +65,7 @@ export function evaluateScheduledDispatch(
 		return {
 			eligible: false,
 			risk: verdict.risk,
-			reason: 'plugin lacks the agents:dispatch grant',
+			reason: 'plugin lacks an agents:dispatch grant naming this agent',
 		};
 	}
 	if (!ctx.trusted) {
@@ -70,6 +73,14 @@ export function evaluateScheduledDispatch(
 			eligible: false,
 			risk: verdict.risk,
 			reason: 'auto-dispatch requires a trusted (signed) plugin',
+		};
+	}
+	if (!ctx.hasUnattendedConsent) {
+		return {
+			eligible: false,
+			risk: verdict.risk,
+			reason:
+				'unattended (scheduler-driven) dispatch requires the separate unattended consent — notifying instead',
 		};
 	}
 	return verdict;

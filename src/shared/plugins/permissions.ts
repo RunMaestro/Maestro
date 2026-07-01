@@ -125,8 +125,15 @@ const CAPABILITY_RISK: Record<PluginCapability, CapabilityRisk> = {
 	'ui:render-unsafe': 'high',
 };
 
-/** Whether a capability's scope is a filesystem path, a network host, or none. */
-type ScopeKind = 'path' | 'host' | 'none';
+/**
+ * Whether a capability's scope is a filesystem path, a network host, a closed
+ * allowlist of exact names, or none. `allowlist` is the Phase-4 scope kind for
+ * the arbitrary-code-execution-grade act verbs: a grant names EXACTLY which
+ * agent ids / host-blessed binary names are permitted (set membership, never
+ * substring or wildcard), and an unscoped grant is a wildcard and therefore
+ * DENIED — the opposite of path/host, where unscoped means broadest.
+ */
+type ScopeKind = 'path' | 'host' | 'allowlist' | 'none';
 
 const CAPABILITY_SCOPE_KIND: Record<PluginCapability, ScopeKind> = {
 	'fs:read': 'path',
@@ -134,7 +141,11 @@ const CAPABILITY_SCOPE_KIND: Record<PluginCapability, ScopeKind> = {
 	'fs:watch': 'path',
 	'net:fetch': 'host',
 	'agents:read': 'none',
-	'agents:dispatch': 'none',
+	// Phase-4 promotion (plugin-phase4-high-risk-verbs.md): a dispatch grant
+	// names the exact agent ids it may target; a spawn grant names the exact
+	// host-blessed binary names. scope:'none' on these verbs would be a
+	// wildcard and is forbidden.
+	'agents:dispatch': 'allowlist',
 	'history:read': 'none',
 	'notifications:toast': 'none',
 	'settings:read': 'none',
@@ -151,7 +162,8 @@ const CAPABILITY_SCOPE_KIND: Record<PluginCapability, ScopeKind> = {
 	'ui:command': 'none',
 	'tabs:manage': 'none',
 	'events:subscribe': 'none',
-	'process:spawn': 'none',
+	// Phase-4 promotion: see agents:dispatch above.
+	'process:spawn': 'allowlist',
 	'shell:openExternal': 'host',
 	'decisions:write': 'none',
 	'power:preventSleep': 'none',
@@ -171,6 +183,24 @@ export function isPluginCapability(value: unknown): value is PluginCapability {
 	return typeof value === 'string' && (PLUGIN_CAPABILITIES as readonly string[]).includes(value);
 }
 
+/**
+ * The arbitrary-code-execution-grade act verbs (Phase 4). These NEVER ride the
+ * bundled "grant all requested permissions" consent click: each gets its own,
+ * separate consent step stating the true blast radius, and unattended
+ * (scheduler/trigger-driven) invocation requires its OWN additional, revocable
+ * consent on top of the interactive grant.
+ */
+export const HIGH_RISK_ACT_CAPABILITIES: readonly PluginCapability[] = [
+	'agents:dispatch',
+	'process:spawn',
+];
+
+export function isHighRiskActCapability(value: unknown): value is PluginCapability {
+	return (
+		typeof value === 'string' && (HIGH_RISK_ACT_CAPABILITIES as readonly string[]).includes(value)
+	);
+}
+
 /** A capability a plugin requests in its manifest. */
 export interface PermissionRequest {
 	capability: PluginCapability;
@@ -178,7 +208,9 @@ export interface PermissionRequest {
 	 * Optional narrowing scope. For path capabilities this is a directory the
 	 * plugin may touch; for net it is a host (or host suffix). Absent means the
 	 * plugin asks for the unscoped (broadest) form, which the consent UI must
-	 * present as such.
+	 * present as such. For allowlist capabilities the scope is a comma-separated
+	 * list of EXACT names (agent ids / host-blessed binary names) and is
+	 * REQUIRED — an unscoped act-verb request is a wildcard and is rejected.
 	 */
 	scope?: string;
 	/** Optional human-readable justification shown at the consent prompt. */
@@ -191,6 +223,13 @@ export interface PermissionGrant {
 	capability: PluginCapability;
 	scope?: string;
 	grantedAt: number;
+	/**
+	 * Phase 4, act verbs only: the user separately consented to UNATTENDED
+	 * (scheduler/trigger-driven, no-user-present) invocation of this capability.
+	 * Absent/false means interactive-only: a plugin that may dispatch when the
+	 * user clicks must not thereby dispatch on a timer. Revocable like any grant.
+	 */
+	unattended?: boolean;
 }
 
 export interface PermissionParseResult {
@@ -232,6 +271,13 @@ export function parsePermissions(input: unknown): PermissionParseResult {
 		if (scopeKind === 'none' && typeof scope === 'string' && scope.trim() !== '') {
 			out.errors.push(`capability "${capability}" does not take a scope`);
 			continue;
+		}
+		if (scopeKind === 'allowlist') {
+			const err = validateAllowlistScope(capability, scope);
+			if (err) {
+				out.errors.push(err);
+				continue;
+			}
 		}
 		if (reason !== undefined && typeof reason !== 'string') {
 			out.errors.push(`capability "${capability}" reason must be a string`);
@@ -306,6 +352,59 @@ function hostScopeCovers(scope: string, target: string): boolean {
 }
 
 /**
+ * Characters that could smuggle pattern semantics or confuse audit logs out of
+ * an allowlist member name. Allowlist members are opaque EXACT tokens (agent
+ * ids, host-blessed binary names) — never patterns, paths, or shell text.
+ */
+const ALLOWLIST_MEMBER_FORBIDDEN = /[*?[\]{}()|<>$`"'\\\/\s\0]/;
+
+/**
+ * Parse an allowlist scope string into its member set: comma-separated EXACT
+ * names, trimmed, empties dropped. Returns null when the scope is absent or
+ * yields no valid members (which callers must treat as deny — an act-verb
+ * grant without named members is a wildcard and is forbidden).
+ */
+export function parseAllowlistScope(scope: string | undefined): readonly string[] | null {
+	if (typeof scope !== 'string') return null;
+	const members = scope
+		.split(',')
+		.map((m) => m.trim())
+		.filter((m) => m !== '');
+	if (members.length === 0) return null;
+	return members;
+}
+
+/** Validate an allowlist request scope at parse time: required, non-empty, and
+ * every member a plain exact token (no wildcards/paths/whitespace/quotes). */
+function validateAllowlistScope(capability: PluginCapability, scope: unknown): string | null {
+	if (typeof scope !== 'string' || scope.trim() === '') {
+		return `capability "${capability}" requires an allowlist scope naming exact targets (never wildcard)`;
+	}
+	const members = parseAllowlistScope(scope);
+	if (!members) {
+		return `capability "${capability}" allowlist scope has no valid members`;
+	}
+	for (const member of members) {
+		if (ALLOWLIST_MEMBER_FORBIDDEN.test(member)) {
+			return `capability "${capability}" allowlist member "${member}" contains forbidden characters (exact names only)`;
+		}
+	}
+	return null;
+}
+
+/**
+ * Does an allowlist `scope` cover `target`? EXACT set membership only —
+ * case-sensitive string equality against the parsed member set. No substring,
+ * no prefix, no wildcard, no case folding. An absent/empty scope covers
+ * nothing (an act-verb grant must name its targets).
+ */
+function allowlistScopeCovers(scope: string | undefined, target: string): boolean {
+	const members = parseAllowlistScope(scope);
+	if (!members) return false;
+	return members.includes(target);
+}
+
+/**
  * The core enforcement predicate: is `capability` (optionally against `target`)
  * permitted by `grants`? Default deny - returns true only when some grant of
  * the same capability covers the target.
@@ -314,6 +413,9 @@ function hostScopeCovers(scope: string, target: string): boolean {
  * - For path/host capabilities, an unscoped grant permits anything; a scoped
  *   grant permits only matching targets. A request WITHOUT a target against a
  *   scoped grant is denied (the broker must always pass the concrete target).
+ * - For allowlist capabilities (the Phase-4 act verbs) an unscoped grant is
+ *   DENIED (never wildcard), a request without a concrete target is DENIED,
+ *   and a scoped grant permits only exact set-membership matches.
  */
 export function isPermitted(
 	grants: readonly PermissionGrant[],
@@ -324,12 +426,37 @@ export function isPermitted(
 	for (const grant of grants) {
 		if (grant.capability !== capability) continue;
 		if (scopeKind === 'none') return true;
+		if (scopeKind === 'allowlist') {
+			// Never wildcard: an unscoped act-verb grant and a target-less call
+			// are both denied; only an exact named member matches.
+			if (target !== undefined && allowlistScopeCovers(grant.scope, target)) return true;
+			continue;
+		}
 		if (!grant.scope) return true; // unscoped grant = broadest
 		if (target === undefined) continue; // scoped grant needs a concrete target
 		if (scopeKind === 'path' && pathScopeCovers(grant.scope, target)) return true;
 		if (scopeKind === 'host' && hostScopeCovers(grant.scope, target)) return true;
 	}
 	return false;
+}
+
+/**
+ * Is `capability` (against `target`) permitted for UNATTENDED
+ * (scheduler/trigger-driven, no-user-present) invocation? Same default-deny
+ * matching as `isPermitted`, but only grants carrying the separate
+ * `unattended` consent count. The interactive grant alone never authorizes a
+ * timer-driven call.
+ */
+export function isPermittedUnattended(
+	grants: readonly PermissionGrant[],
+	capability: PluginCapability,
+	target?: string
+): boolean {
+	return isPermitted(
+		grants.filter((g) => g.unattended === true),
+		capability,
+		target
+	);
 }
 
 /** Human-readable, stable description of a capability for the consent UI. */
@@ -344,7 +471,7 @@ export function describeCapability(capability: PluginCapability): string {
 		case 'agents:read':
 			return 'See your agents and their status';
 		case 'agents:dispatch':
-			return 'Send prompts to your agents (this can run code an agent is allowed to run)';
+			return 'Make the named agents run on its behalf — agents run with permissions skipped, so this is ARBITRARY CODE EXECUTION on your machine (not just "send a prompt")';
 		case 'notifications:toast':
 			return 'Show notifications';
 		case 'settings:read':
@@ -376,7 +503,7 @@ export function describeCapability(capability: PluginCapability): string {
 		case 'shell:openExternal':
 			return 'Open URLs with the operating system';
 		case 'process:spawn':
-			return 'Run shell commands';
+			return 'Run the named host-approved programs on your machine — this is ARBITRARY CODE EXECUTION (not just "run a command")';
 		case 'decisions:write':
 			return 'Record decisions in Maestro';
 		case 'power:preventSleep':
@@ -393,5 +520,21 @@ export function describeCapability(capability: PluginCapability): string {
 			return 'Show its own panels inside Maestro';
 		case 'ui:render-unsafe':
 			return "Render its own custom UI with full access to Maestro's interface (advanced — only enable for authors you fully trust)";
+	}
+}
+
+/**
+ * The additional, distinct consent line for UNATTENDED (scheduler/trigger-
+ * driven) invocation of an act verb. Shown as its own separately-approvable
+ * item, never folded into the interactive grant's wording.
+ */
+export function describeUnattendedConsent(capability: PluginCapability): string {
+	switch (capability) {
+		case 'agents:dispatch':
+			return 'ALSO run agents on a schedule or trigger, with nobody at the keyboard (revocable any time)';
+		case 'process:spawn':
+			return 'ALSO run these programs on a schedule or trigger, with nobody at the keyboard (revocable any time)';
+		default:
+			return 'ALSO invoke this capability unattended (scheduler/trigger-driven), with nobody at the keyboard (revocable any time)';
 	}
 }

@@ -62,6 +62,7 @@ export const HOST_API = {
 	'power.releaseSleep': { capability: 'power:preventSleep' },
 	'background.register': { capability: 'background:service' },
 	'background.unregister': { capability: 'background:service' },
+	'background.list': { capability: 'background:service' },
 } as const satisfies Record<string, { capability: PluginCapability }>;
 
 /** The fixed set of host methods a sandbox may call (derived from HOST_API). */
@@ -149,6 +150,16 @@ export function extractTarget(method: HostMethod, params: unknown): string | und
 			// the host handler re-authorizes against the session's RESOLVED real
 			// projectPath before reading or writing any content.
 			return typeof p.projectPath === 'string' ? p.projectPath : undefined;
+		case 'agents.dispatch':
+			// Allowlist scope target: the exact agent id the plugin wants to run.
+			// A missing/malformed id yields undefined, which an allowlist grant
+			// treats as deny (act verbs never match a target-less call).
+			return typeof p.agentId === 'string' ? p.agentId : undefined;
+		case 'process.spawn':
+			// Allowlist scope target: the host-blessed binary NAME the plugin
+			// selects (never a path or shell text — the handler's closed schema
+			// and the host-owned registry enforce that).
+			return typeof p.command === 'string' ? p.command : undefined;
 		default:
 			return undefined;
 	}

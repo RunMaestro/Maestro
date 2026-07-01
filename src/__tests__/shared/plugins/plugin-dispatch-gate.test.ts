@@ -31,32 +31,38 @@ describe('evaluatePluginDispatch', () => {
 	});
 });
 
-describe('evaluateScheduledDispatch (risk + grant + trusted)', () => {
+describe('evaluateScheduledDispatch (risk + grant + trusted + unattended)', () => {
 	const benign = 'post a friendly summary of today to the channel';
 	const dangerous = 'delete the production database and drop all tables';
-	const ok = { hasDispatchGrant: true, trusted: true };
+	const ok = { hasDispatchGrant: true, trusted: true, hasUnattendedConsent: true };
 
-	it('is eligible only when low/medium risk AND granted AND trusted', () => {
+	it('is eligible only when low/medium risk AND granted AND trusted AND unattended-consented', () => {
 		const v = evaluateScheduledDispatch(benign, ok);
 		expect(v.eligible).toBe(true);
 	});
 
-	it('blocks a high-risk prompt even when granted + trusted', () => {
+	it('blocks a high-risk prompt even when granted + trusted + unattended-consented', () => {
 		expect(rateRisk(dangerous)).toBe('high');
 		const v = evaluateScheduledDispatch(dangerous, ok);
 		expect(v.eligible).toBe(false);
 		expect(v.reason).toMatch(/high-risk/);
 	});
 
-	it('blocks when the plugin lacks the agents:dispatch grant', () => {
-		const v = evaluateScheduledDispatch(benign, { hasDispatchGrant: false, trusted: true });
+	it('blocks when the plugin lacks an agents:dispatch grant naming the agent', () => {
+		const v = evaluateScheduledDispatch(benign, { ...ok, hasDispatchGrant: false });
 		expect(v.eligible).toBe(false);
 		expect(v.reason).toMatch(/agents:dispatch grant/);
 	});
 
 	it('blocks an untrusted (unsigned) plugin even with the grant', () => {
-		const v = evaluateScheduledDispatch(benign, { hasDispatchGrant: true, trusted: false });
+		const v = evaluateScheduledDispatch(benign, { ...ok, trusted: false });
 		expect(v.eligible).toBe(false);
 		expect(v.reason).toMatch(/trusted \(signed\) plugin/);
+	});
+
+	it('blocks a scheduler-driven dispatch without the SEPARATE unattended consent (interactive grant alone is not enough)', () => {
+		const v = evaluateScheduledDispatch(benign, { ...ok, hasUnattendedConsent: false });
+		expect(v.eligible).toBe(false);
+		expect(v.reason).toMatch(/unattended/);
 	});
 });

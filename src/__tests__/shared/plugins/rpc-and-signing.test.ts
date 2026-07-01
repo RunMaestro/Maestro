@@ -32,9 +32,16 @@ describe('rpc-protocol', () => {
 		expect(extractTarget('net.fetch', {})).toBeUndefined();
 	});
 
+	it('extracts allowlist targets for the Phase-4 act verbs (exact id/name, no parsing)', () => {
+		expect(extractTarget('agents.dispatch', { agentId: 'x' })).toBe('x');
+		expect(extractTarget('process.spawn', { command: 'echo-tool' })).toBe('echo-tool');
+		expect(extractTarget('agents.dispatch', {})).toBeUndefined();
+		expect(extractTarget('process.spawn', { command: 42 })).toBeUndefined();
+	});
+
 	it('returns undefined target for none-scope methods', () => {
-		expect(extractTarget('agents.dispatch', { agentId: 'x' })).toBeUndefined();
-		expect(extractTarget('process.spawn', { command: 'ls' })).toBeUndefined();
+		expect(extractTarget('notifications.toast', { message: 'hi' })).toBeUndefined();
+		expect(extractTarget('agents.list', {})).toBeUndefined();
 	});
 
 	it('never throws on malformed params', () => {

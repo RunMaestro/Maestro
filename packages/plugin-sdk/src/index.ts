@@ -235,7 +235,7 @@ export function describeCapability(capability: PluginCapability): string {
 		case 'agents:read':
 			return 'See your agents and their status';
 		case 'agents:dispatch':
-			return 'Send prompts to your agents (this can run code an agent is allowed to run)';
+			return 'Make the named agents run on its behalf — agents run with permissions skipped, so this is ARBITRARY CODE EXECUTION on your machine (not just "send a prompt")';
 		case 'notifications:toast':
 			return 'Show notifications';
 		case 'settings:read':
@@ -267,7 +267,7 @@ export function describeCapability(capability: PluginCapability): string {
 		case 'shell:openExternal':
 			return 'Open URLs with the operating system';
 		case 'process:spawn':
-			return 'Run shell commands';
+			return 'Run the named host-approved programs on your machine — this is ARBITRARY CODE EXECUTION (not just "run a command")';
 		case 'decisions:write':
 			return 'Record decisions in Maestro';
 		case 'power:preventSleep':
@@ -289,16 +289,18 @@ export function describeCapability(capability: PluginCapability): string {
 
 // --- Host API version (from shared/plugins/host-api.ts) ---------------------
 
-/** The host API version this Maestro build implements. Bumped to 1.7.0 for the
- * backward-compatible P0 plugin contract additions: history/session/tab/transcript
+/** The host API version this Maestro build implements. Bumped to 1.8.0 for the
+ * backward-compatible `background.list` host method (supervised background-
+ * service health: state/restarts/services under the existing
+ * `background:service` capability). (1.7.0 added history/session/tab/transcript
  * write/decision/shell/storage SQL/fs watch/power/background capabilities plus
- * `history.entryAdded` and metadata-only `agent.completed` events. (1.6.0 added
+ * `history.entryAdded` and metadata-only `agent.completed` events; 1.6.0 added
  * `cue.runStarted` / `cue.runFinished`; 1.5.0 added `agent.exited` /
  * `agent.error` / `usage.updated` / `run.completed` + functional
  * `sidebar`/`activity-bar`/`toolbar` uiItem surfaces; 1.4.0 added the
  * `ui:contribute` / `ui:panel` / `ui:render-unsafe` UI capabilities; 1.3.0
  * added `tools` + `keybindings`; 1.2.0 added `transcripts:read`.) */
-export const HOST_API_VERSION = '1.7.0';
+export const HOST_API_VERSION = '1.8.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {
@@ -971,6 +973,7 @@ export const HOST_API = {
 	'power.releaseSleep': { capability: 'power:preventSleep' },
 	'background.register': { capability: 'background:service' },
 	'background.unregister': { capability: 'background:service' },
+	'background.list': { capability: 'background:service' },
 } as const satisfies Record<string, { capability: PluginCapability }>;
 
 /** The fixed set of host methods a sandbox may call (derived from HOST_API). */
@@ -1035,9 +1038,25 @@ export interface MaestroSleepHandle {
 	id: string;
 }
 
+/** Wire shape of a successful `background.register` call. (Fixed alongside
+ * 1.8.0: the host has always returned `serviceId`, not `id`.) */
 export interface MaestroBackgroundServiceRegistration {
-	id: string;
-	status?: string;
+	serviceId: string;
+}
+
+/** Supervision state of a plugin's background services. */
+export type MaestroBackgroundState = 'running' | 'restarting' | 'failed-permanent' | 'stopped';
+
+/** Health snapshot returned by `background.list` (the calling plugin's own
+ * services only). `restarts` counts consecutive crash-restart attempts in the
+ * current failure streak; `failed-permanent` means the host gave up restarting
+ * until the plugin is re-enabled. */
+export interface MaestroBackgroundHealth {
+	pluginId: string;
+	state: MaestroBackgroundState;
+	restarts: number;
+	services: Array<{ id: string; name?: string; registeredAt?: number }>;
+	lastError?: string;
 }
 
 /** Read/write/watch files inside the plugin's granted path scopes. */
@@ -1208,14 +1227,19 @@ export interface MaestroPowerApi {
 	releaseSleep(handleId: string): Promise<void>;
 }
 
-/** Register supervised background work (`background:service`). */
+/** Register supervised background work (`background:service`). Registration
+ * survives sandbox crashes: the host restarts the plugin with bounded backoff
+ * and the plugin's activate path re-registers. */
 export interface MaestroBackgroundApi {
 	register(service: {
 		id: string;
+		name?: string;
 		description?: string;
 		triggers?: readonly string[];
 	}): Promise<MaestroBackgroundServiceRegistration>;
 	unregister(serviceId: string): Promise<void>;
+	/** Supervised health of this plugin's own background services. */
+	list(): Promise<MaestroBackgroundHealth>;
 }
 
 /** The full `maestro` runtime surface handed to `activate(maestro)`. Frozen and

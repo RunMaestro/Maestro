@@ -44,6 +44,11 @@ export interface PluginSandboxHostDeps {
 	onLog?: (pluginId: string, level: string, message: string) => void;
 	/** Notified when a child exits unexpectedly (non-zero / crash). */
 	onCrash?: (pluginId: string, code: number) => void;
+	/** Notified when a plugin is stopped ON PURPOSE (disable/uninstall/reload/
+	 * quit), BEFORE the shutdown message is posted — so intentional stops can
+	 * be distinguished from crashes by exit-time observers (e.g. the background
+	 * supervisor clears registrations here and never restarts on the exit). */
+	onStop?: (pluginId: string) => void;
 }
 
 /** One bounded recent-log entry observed for a running plugin. */
@@ -365,6 +370,7 @@ export class PluginSandboxHost {
 	stop(pluginId: string): void {
 		const record = this.running.get(pluginId);
 		if (!record) return;
+		this.deps.onStop?.(pluginId);
 		try {
 			record.proc.postMessage({ kind: 'shutdown' });
 		} catch {

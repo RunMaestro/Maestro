@@ -8,8 +8,9 @@
  * a data-exfiltration hole. High-risk verbs additionally pass through the
  * ActionGuard (rate + concurrency + audit-before-action). The app-coupled,
  * arbitrary-code-execution-grade methods (agents.dispatch, process.spawn) remain
- * optional integrations, but when wired they re-check broker authorization,
- * trusted-signature posture, Pianola risk, and sanitized process options here.
+ * optional integrations, but when wired they re-check broker authorization
+ * (allowlist-scoped per Phase 4), trusted-signature posture, Pianola risk, the
+ * closed opts schema, and the host-owned spawn binary registry here.
  */
 
 import * as fs from 'fs';
@@ -22,6 +23,8 @@ import type { HostMethod } from '../../shared/plugins/rpc-protocol';
 import type { ActionGuard } from './action-guard';
 import type { PluginKvStore } from './plugin-kv-store';
 import type { EgressGuard } from './net-egress-guard';
+import type { PluginBackgroundHealth } from './plugin-background-supervisor';
+import type { SpawnBinaryEntry } from './spawn-binary-registry';
 import {
 	isPluginEventTopic,
 	type PluginEvent,
@@ -42,6 +45,11 @@ const MAX_TRANSCRIPT_APPEND_ENTRIES = 20;
 const MAX_SQL_ROWS = 1_000;
 const MAX_SQL_PARAMS = 100;
 const MAX_BACKGROUND_SERVICES_PER_PLUGIN = 16;
+/** Closed-schema caps for the Phase-4 act verbs (agents.dispatch / process.spawn). */
+const MAX_DISPATCH_AGENT_ID_CHARS = 256;
+const MAX_DISPATCH_PROMPT_CHARS = 64 * 1024;
+const MAX_SPAWN_ARGS = 32;
+const MAX_SPAWN_ARG_CHARS = 4 * 1024;
 
 export interface PluginTabMetadata {
 	id: string;
@@ -200,14 +208,41 @@ export interface HostHandlerDeps {
 		service: PluginBackgroundService
 	) => Promise<{ serviceId: string }>;
 	backgroundUnregister?: (pluginId: string, serviceId: string) => Promise<boolean>;
+	/** Supervised health for the plugin's own background services (state,
+	 * restart count, registered services). Absent => the in-memory fallback. */
+	backgroundList?: (pluginId: string) => PluginBackgroundHealth;
 	/** Whether the plugin currently has a trusted signature. Required for
 	 * high-power act verbs even when the user granted the capability. */
 	isPluginTrusted?: (pluginId: string) => boolean;
-	/** Optional: send a LOW/MEDIUM-risk prompt to an agent through the brokered
-	 * high-power path. The handler re-checks broker+trust+guard before calling. */
-	dispatch?: (agentId: string, prompt: string, opts: unknown) => Promise<unknown>;
-	/** Optional: run a LOW/MEDIUM-risk command with sanitized cwd/env only. */
-	spawn?: (pluginId: string, command: string, opts: PluginProcessSpawnOptions) => Promise<unknown>;
+	/** Optional Phase-4 act verb: send a prompt to an agent through the brokered
+	 * high-power path. The handler enforces the closed {agentId, prompt} schema
+	 * and re-checks broker (allowlist scope) + trust + risk + guard before
+	 * calling; the sink resolves the agent id to a live session at call time. */
+	dispatch?: (agentId: string, prompt: string) => Promise<unknown>;
+	/** Optional Phase-4 act verb: run a HOST-BLESSED binary. The handler resolves
+	 * `command` through `resolveSpawnBinary` (the host-owned registry) and hands
+	 * the sink a fully host-owned spec — binary path, env, cwd all come from the
+	 * registry entry, never from the plugin; only validated argv strings pass
+	 * through. The sink must spawn WITHOUT a shell. */
+	spawn?: (pluginId: string, spec: ResolvedSpawnSpec) => Promise<unknown>;
+	/** The host-owned binary allowlist for `process.spawn`. Absent (or resolving
+	 * null) = deny: a name outside the registry can never be spawned. */
+	resolveSpawnBinary?: (name: string) => SpawnBinaryEntry | null;
+}
+
+/** What the spawn sink actually executes: everything except `args` is
+ * host-owned (from the registry entry). Never executed through a shell. */
+export interface ResolvedSpawnSpec {
+	/** The blessed name the plugin selected (for audit/log lines). */
+	name: string;
+	/** Absolute path of the host-blessed binary. */
+	binaryPath: string;
+	/** Host baseArgs (registry) followed by the plugin's validated args. */
+	args: string[];
+	/** Closed host-chosen env. NEVER process.env, never plugin-supplied. */
+	env: Record<string, string>;
+	/** Host-confined cwd, when the registry entry pins one. */
+	cwd?: string;
 }
 
 function asObject(params: unknown): Record<string, unknown> {
@@ -417,15 +452,6 @@ function runPluginSql(
 	}
 }
 
-export interface PluginProcessSpawnOptions {
-	/** Explicit cwd only; no ambient process cwd is inherited by the broker layer. */
-	cwd?: string;
-	/** Explicit non-secret env only; never process.env. */
-	env: Record<string, string>;
-	/** Optional argv-style arguments for a sink that supports shell:false execution. */
-	args?: string[];
-}
-
 /**
  * Run a permitted high-risk verb under the ActionGuard. The guard rate/
  * concurrency-bounds the already-permitted verb and audits high-risk ones BEFORE
@@ -476,45 +502,45 @@ function assertLowOrMediumRisk(text: string): void {
 	}
 }
 
-function sanitizeEnv(input: unknown): Record<string, string> {
-	const raw = asObject(input);
-	const out: Record<string, string> = {};
-	for (const [key, value] of Object.entries(raw)) {
-		if (!SAFE_ENV_KEY_PATTERN.test(key)) {
-			throw new Error(`refusing unsafe env key "${key}"`);
+/**
+ * Enforce a CLOSED param schema for an act verb: every non-undefined key must
+ * be in `allowed`. Undefined-valued keys are tolerated (the SDK shim always
+ * sends an `opts` slot, and structured clone preserves it as undefined); any
+ * key carrying a VALUE outside the schema is rejected loudly — a plugin can
+ * never smuggle skip-permissions/force/concurrency/env/cwd/model flags through.
+ */
+function assertClosedSchema(
+	verb: string,
+	params: Record<string, unknown>,
+	allowed: Record<string, true>
+): void {
+	for (const [key, value] of Object.entries(params)) {
+		if (value === undefined) continue;
+		if (!allowed[key]) {
+			throw new Error(`${verb}: unexpected field "${key}" (closed schema)`);
 		}
-		if (SECRET_KEY_PATTERN.test(key)) {
-			throw new Error(`refusing secret-looking env key "${key}"`);
-		}
-		if (typeof value !== 'string') {
-			throw new Error(`env value for "${key}" must be a string`);
-		}
-		out[key] = value;
 	}
-	return out;
 }
 
-function sanitizeSpawnOptions(opts: unknown): PluginProcessSpawnOptions {
-	const raw = asObject(opts);
-	const env = sanitizeEnv(raw.env);
-	const out: PluginProcessSpawnOptions = { env };
-	if (raw.cwd !== undefined) {
-		if (typeof raw.cwd !== 'string' || raw.cwd.includes('\0') || raw.cwd.trim() === '') {
-			throw new Error('cwd must be a non-empty string');
+/** Validate the plugin-supplied argv strings for process.spawn: bounded count
+ * and size, no NUL smuggling. The binary, env, and cwd are host-owned; args
+ * are the ONLY plugin-influenced input to the child (passed as argv data to a
+ * shell-less spawn, never interpreted). */
+function validateSpawnArgs(raw: unknown): string[] {
+	if (raw === undefined) return [];
+	if (!Array.isArray(raw)) throw new Error('process.spawn: args must be an array of strings');
+	if (raw.length > MAX_SPAWN_ARGS) {
+		throw new Error(`process.spawn: too many args (max ${MAX_SPAWN_ARGS})`);
+	}
+	return raw.map((arg) => {
+		if (typeof arg !== 'string' || arg.includes('\0')) {
+			throw new Error('process.spawn: args must be strings without null bytes');
 		}
-		out.cwd = path.resolve(raw.cwd);
-	}
-	if (raw.args !== undefined) {
-		if (!Array.isArray(raw.args)) throw new Error('args must be an array of strings');
-		const args = raw.args.map((arg) => {
-			if (typeof arg !== 'string' || arg.includes('\0')) {
-				throw new Error('args must be strings without null bytes');
-			}
-			return arg;
-		});
-		out.args = args;
-	}
-	return out;
+		if (arg.length > MAX_SPAWN_ARG_CHARS) {
+			throw new Error(`process.spawn: arg too long (max ${MAX_SPAWN_ARG_CHARS} chars)`);
+		}
+		return arg;
+	});
 }
 
 /**
@@ -819,6 +845,10 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 		'transcripts.append': async (pluginId, params) => {
 			const p = asObject(params);
 			if (typeof p.sessionId !== 'string') throw new Error('sessionId is required');
+			// Deny-before-disclose: authorize on the plugin-CLAIMED projectPath
+			// BEFORE resolving the session, so an ungranted plugin probing session
+			// ids gets 'permission denied', never 'unknown sessionId'.
+			assertBrokerAllowed(deps, pluginId, 'transcripts.append', p);
 			const meta = requireSession(p.sessionId);
 			const projectPath =
 				typeof meta.projectPath === 'string'
@@ -827,6 +857,8 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 						? p.projectPath
 						: undefined;
 			if (!projectPath) throw new Error('projectPath is required');
+			// Re-authorize against the session's REAL projectPath — the claimed
+			// path above is only the broker's first-pass hint.
 			assertBrokerAllowed(deps, pluginId, 'transcripts.append', { projectPath });
 			if (!deps.appendSessionTranscript) throw new Error('transcripts.append is unavailable');
 			const rawEntries = Array.isArray(p.entries) ? p.entries : [];
@@ -1042,13 +1074,14 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 			const service = asObject(p.service) as PluginBackgroundService;
 			assertBrokerAllowed(deps, pluginId, 'background.register', p);
 			return underGuard(deps.actionGuard, pluginId, 'background:service', undefined, async () => {
+				// Delegated: the supervisor owns bookkeeping AND the per-plugin cap.
+				if (deps.backgroundRegister) {
+					return deps.backgroundRegister(pluginId, service);
+				}
 				const existing =
 					backgroundServices.get(pluginId) ?? new Map<string, PluginBackgroundService>();
 				if (existing.size >= MAX_BACKGROUND_SERVICES_PER_PLUGIN) {
 					throw new Error('background service limit reached');
-				}
-				if (deps.backgroundRegister) {
-					return deps.backgroundRegister(pluginId, service);
 				}
 				const serviceId =
 					typeof service.id === 'string' && service.id.length > 0
@@ -1078,25 +1111,58 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 				return { ok: true };
 			});
 		},
+
+		'background.list': async (pluginId, params) => {
+			assertBrokerAllowed(deps, pluginId, 'background.list', asObject(params));
+			if (deps.backgroundList) return deps.backgroundList(pluginId);
+			// In-memory fallback: the calling child is by definition alive, so any
+			// locally registered services are 'running'; nothing is supervised.
+			const services = [...(backgroundServices.get(pluginId)?.values() ?? [])];
+			return {
+				pluginId,
+				state: services.length > 0 ? 'running' : 'stopped',
+				restarts: 0,
+				services: services.map((s) => ({ id: s.id, ...(s.name ? { name: s.name } : {}) })),
+			};
+		},
 	};
 
 	// Arbitrary-code-execution-grade, app-coupled methods only exist when
-	// explicitly provided. Once provided, the factory still enforces the security
-	// posture locally: live broker grant, trusted signature, Pianola risk gate,
-	// ActionGuard audit/rate/concurrency, and sanitized process options.
+	// explicitly provided (Plans/plugin-phase4-high-risk-verbs.md). Once
+	// provided, the factory still enforces the whole security posture locally:
+	// closed opts schema, live broker grant (allowlist-scoped per target),
+	// trusted signature, Pianola risk gate, the host-owned binary registry, and
+	// ActionGuard audit/rate/concurrency BEFORE the effect.
 	if (deps.dispatch) {
 		const dispatch = deps.dispatch;
 		handlers['agents.dispatch'] = async (pluginId, params) => {
 			const p = asObject(params);
+			// Closed schema: {agentId, prompt} strings only. No model, permission
+			// mode, skip-permissions, cwd, or execution flag can ride along — the
+			// target agent's own configuration decides those.
+			assertClosedSchema('agents.dispatch', p, { agentId: true, prompt: true });
 			const agentId = p.agentId;
 			const prompt = p.prompt;
-			if (typeof agentId !== 'string') throw new Error('agentId is required');
-			if (typeof prompt !== 'string') throw new Error('prompt is required');
+			if (typeof agentId !== 'string' || agentId.trim() === '') {
+				throw new Error('agentId is required');
+			}
+			if (agentId.length > MAX_DISPATCH_AGENT_ID_CHARS) {
+				throw new Error('agents.dispatch: agentId too long');
+			}
+			if (typeof prompt !== 'string' || prompt.trim() === '') {
+				throw new Error('prompt is required');
+			}
+			if (prompt.length > MAX_DISPATCH_PROMPT_CHARS) {
+				throw new Error(
+					`agents.dispatch: prompt too long (max ${MAX_DISPATCH_PROMPT_CHARS} chars)`
+				);
+			}
+			// Broker: allowlist scope — the grant must name THIS exact agentId.
 			assertBrokerAllowed(deps, pluginId, 'agents.dispatch', p);
 			assertTrustedActVerb(deps, pluginId);
 			assertLowOrMediumRisk(prompt);
 			return underGuard(deps.actionGuard, pluginId, 'agents:dispatch', `agent:${agentId}`, () =>
-				dispatch(agentId, prompt, p.opts)
+				dispatch(agentId, prompt)
 			);
 		};
 	}
@@ -1104,17 +1170,39 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 		const spawn = deps.spawn;
 		handlers['process.spawn'] = async (pluginId, params) => {
 			const p = asObject(params);
+			// Closed schema: `command` is a host-blessed NAME; `opts.args` is the
+			// only other plugin input. env/cwd/shell/detached/force can never be
+			// supplied by the plugin — they are host-owned via the registry.
+			assertClosedSchema('process.spawn', p, { command: true, opts: true });
+			const opts = asObject(p.opts);
+			assertClosedSchema('process.spawn opts', opts, { args: true });
 			const command = p.command;
-			if (typeof command !== 'string') throw new Error('command is required');
-			if (command.trim() === '' || command.includes('\0') || command.includes('\n')) {
-				throw new Error('command must be a non-empty single-line string');
+			if (typeof command !== 'string' || command.trim() === '') {
+				throw new Error('command is required');
 			}
+			// Broker: allowlist scope — the grant must name THIS exact binary name.
 			assertBrokerAllowed(deps, pluginId, 'process.spawn', p);
 			assertTrustedActVerb(deps, pluginId);
-			const opts = sanitizeSpawnOptions(p.opts);
-			assertLowOrMediumRisk([command, ...(opts.args ?? [])].join(' '));
-			return underGuard(deps.actionGuard, pluginId, 'process:spawn', opts.cwd, () =>
-				spawn(pluginId, command, opts)
+			const args = validateSpawnArgs(opts.args);
+			// Host-owned registry: the name must resolve to a blessed entry; a
+			// path, shell, interpreter, or unregistered name is denied here even
+			// if a (mis-minted) grant names it.
+			const entry = deps.resolveSpawnBinary?.(command);
+			if (!entry) {
+				throw new Error(
+					`process.spawn: "${command}" is not a host-approved binary (nothing is approved by default)`
+				);
+			}
+			assertLowOrMediumRisk([entry.binaryPath, ...args].join(' '));
+			const spec: ResolvedSpawnSpec = {
+				name: entry.name,
+				binaryPath: entry.binaryPath,
+				args: [...(entry.baseArgs ?? []), ...args],
+				env: { ...(entry.env ?? {}) },
+				...(entry.cwd !== undefined ? { cwd: entry.cwd } : {}),
+			};
+			return underGuard(deps.actionGuard, pluginId, 'process:spawn', `binary:${command}`, () =>
+				spawn(pluginId, spec)
 			);
 		};
 	}

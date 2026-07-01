@@ -20,6 +20,7 @@ import { ActionGuard } from '../../../main/plugins/action-guard';
 import { PluginKvStore } from '../../../main/plugins/plugin-kv-store';
 import { PluginEventBusImpl } from '../../../main/plugins/plugin-event-bus';
 import { PermissionBroker } from '../../../main/plugins/permission-broker';
+import { PluginBackgroundSupervisor } from '../../../main/plugins/plugin-background-supervisor';
 import type { PermissionGrant } from '../../../shared/plugins/permissions';
 
 let kvBase: string;
@@ -427,6 +428,18 @@ describe('transcripts.read', () => {
 });
 
 describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
+	const scopedGrant = (
+		capability: PermissionGrant['capability'],
+		scope: string
+	): PermissionGrant => ({ capability, scope, grantedAt: 1 });
+	const echoEntry = {
+		name: 'echo-tool',
+		binaryPath: path.join(os.tmpdir(), 'echo-tool.exe'),
+		baseArgs: ['--safe'],
+		env: { SAFE_FLAG: '1' },
+	};
+	const resolveSpawnBinary = (name: string) => (name === 'echo-tool' ? echoEntry : null);
+
 	it('does NOT register agents.dispatch or process.spawn with default deps', () => {
 		const h = buildHostCallHandlers(makeDeps());
 		expect(h['agents.dispatch']).toBeUndefined();
@@ -438,7 +451,7 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 		expect(typeof h['agents.get']).toBe('function');
 	});
 
-	it('allows trusted+granted low-risk agents.dispatch and audits before the brokered sink', async () => {
+	it('allows trusted + allowlist-granted low-risk agents.dispatch and audits before the sink', async () => {
 		const events: string[] = [];
 		const dispatch = vi.fn(async () => {
 			events.push('sink');
@@ -450,7 +463,7 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 		});
 		const h = buildHostCallHandlers(
 			makeDeps({
-				broker: brokerFor(() => [grant('agents:dispatch')]),
+				broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a')]),
 				actionGuard,
 				isPluginTrusted: () => true,
 				dispatch,
@@ -460,41 +473,66 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 			h['agents.dispatch']!('p', { agentId: 'a', prompt: 'write a friendly summary' })
 		).resolves.toBe('dispatched');
 		expect(events).toEqual(['audit', 'sink']);
-		expect(dispatch).toHaveBeenCalledWith('a', 'write a friendly summary', undefined);
+		expect(dispatch).toHaveBeenCalledWith('a', 'write a friendly summary');
 	});
 
-	it('allows trusted+granted low-risk process.spawn with sanitized cwd/env only', async () => {
-		const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'plugin-spawn-'));
-		const spawn = vi.fn(async () => 'spawned');
+	it('denies dispatch to an agent the allowlist grant does not name (exact membership, no wildcard)', async () => {
+		const dispatch = vi.fn(async () => 'dispatched');
 		const h = buildHostCallHandlers(
 			makeDeps({
-				broker: brokerFor(() => [grant('process:spawn')]),
+				broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a,b')]),
 				isPluginTrusted: () => true,
-				spawn,
+				dispatch,
 			})
 		);
-		try {
+		await expect(
+			h['agents.dispatch']!('p', { agentId: 'c', prompt: 'write a friendly summary' })
+		).rejects.toThrow(/permission denied/);
+		// An UNSCOPED act-verb grant is a wildcard and must also deny.
+		const h2 = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [grant('agents:dispatch')]),
+				isPluginTrusted: () => true,
+				dispatch,
+			})
+		);
+		await expect(
+			h2['agents.dispatch']!('p', { agentId: 'a', prompt: 'write a friendly summary' })
+		).rejects.toThrow(/permission denied/);
+		expect(dispatch).not.toHaveBeenCalled();
+	});
+
+	it('rejects every out-of-schema dispatch field before any side effect (closed schema)', async () => {
+		const dispatch = vi.fn(async () => 'dispatched');
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a')]),
+				isPluginTrusted: () => true,
+				dispatch,
+			})
+		);
+		for (const extra of [
+			{ opts: { model: 'gpt' } },
+			{ skipPermissions: true },
+			{ force: true },
+			{ concurrency: 9 },
+			{ env: { PATH: '/tmp' } },
+			{ cwd: '/tmp' },
+			{ model: 'x' },
+			{ permissionMode: 'bypass' },
+		]) {
 			await expect(
-				h['process.spawn']!('p', {
-					command: 'echo',
-					opts: { cwd: tmp, env: { SAFE_FLAG: '1' }, args: ['hello'] },
-				})
-			).resolves.toBe('spawned');
-			expect(spawn).toHaveBeenCalledWith('p', 'echo', {
-				cwd: path.resolve(tmp),
-				env: { SAFE_FLAG: '1' },
-				args: ['hello'],
-			});
-		} finally {
-			fs.rmSync(tmp, { recursive: true, force: true });
+				h['agents.dispatch']!('p', { agentId: 'a', prompt: 'friendly summary', ...extra })
+			).rejects.toThrow(/closed schema/);
 		}
+		expect(dispatch).not.toHaveBeenCalled();
 	});
 
 	it('denies untrusted plugins before dispatch side effects', async () => {
 		const dispatch = vi.fn(async () => 'dispatched');
 		const h = buildHostCallHandlers(
 			makeDeps({
-				broker: brokerFor(() => [grant('agents:dispatch')]),
+				broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a')]),
 				isPluginTrusted: () => false,
 				dispatch,
 			})
@@ -505,7 +543,29 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 		expect(dispatch).not.toHaveBeenCalled();
 	});
 
-	it('denies ungranted and stale-grant process.spawn before side effects', async () => {
+	it('spawns only a host-blessed binary name, handing the sink a host-owned spec', async () => {
+		const spawn = vi.fn(async () => 'spawned');
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [scopedGrant('process:spawn', 'echo-tool')]),
+				isPluginTrusted: () => true,
+				spawn,
+				resolveSpawnBinary,
+			})
+		);
+		await expect(
+			h['process.spawn']!('p', { command: 'echo-tool', opts: { args: ['hello'] } })
+		).resolves.toBe('spawned');
+		// Everything except args is host-owned; plugin args come AFTER baseArgs.
+		expect(spawn).toHaveBeenCalledWith('p', {
+			name: 'echo-tool',
+			binaryPath: echoEntry.binaryPath,
+			args: ['--safe', 'hello'],
+			env: { SAFE_FLAG: '1' },
+		});
+	});
+
+	it('denies spawn without a grant naming the binary, and stale grants take effect immediately', async () => {
 		let grants: PermissionGrant[] = [];
 		const spawn = vi.fn(async () => 'spawned');
 		const h = buildHostCallHandlers(
@@ -513,46 +573,88 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 				broker: brokerFor(() => grants),
 				isPluginTrusted: () => true,
 				spawn,
+				resolveSpawnBinary,
 			})
 		);
-		await expect(h['process.spawn']!('p', { command: 'echo' })).rejects.toThrow(
+		await expect(h['process.spawn']!('p', { command: 'echo-tool' })).rejects.toThrow(
 			/permission denied/
 		);
-		expect(spawn).not.toHaveBeenCalled();
-
-		grants = [grant('process:spawn')];
-		await expect(h['process.spawn']!('p', { command: 'echo' })).resolves.toBe('spawned');
-		expect(spawn).toHaveBeenCalledWith('p', 'echo', { env: {} });
+		grants = [scopedGrant('process:spawn', 'echo-tool')];
+		await expect(h['process.spawn']!('p', { command: 'echo-tool' })).resolves.toBe('spawned');
 		grants = [];
-		await expect(h['process.spawn']!('p', { command: 'echo' })).rejects.toThrow(
+		await expect(h['process.spawn']!('p', { command: 'echo-tool' })).rejects.toThrow(
 			/permission denied/
 		);
 		expect(spawn).toHaveBeenCalledTimes(1);
 	});
 
-	it('denies high-risk dispatch/spawn and secret-looking env before side effects', async () => {
+	it('denies a granted-but-unregistered binary name (empty host registry = deny)', async () => {
+		const spawn = vi.fn(async () => 'spawned');
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [scopedGrant('process:spawn', 'ghost-tool')]),
+				isPluginTrusted: () => true,
+				spawn,
+				// No resolveSpawnBinary at all: the default is DENY.
+			})
+		);
+		await expect(h['process.spawn']!('p', { command: 'ghost-tool' })).rejects.toThrow(
+			/not a host-approved binary/
+		);
+		expect(spawn).not.toHaveBeenCalled();
+	});
+
+	it('rejects plugin-supplied env/cwd/shell/detached on spawn (closed schema)', async () => {
+		const spawn = vi.fn(async () => 'spawned');
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [scopedGrant('process:spawn', 'echo-tool')]),
+				isPluginTrusted: () => true,
+				spawn,
+				resolveSpawnBinary,
+			})
+		);
+		for (const opts of [
+			{ env: { API_TOKEN: 'secret' } },
+			{ cwd: '/tmp' },
+			{ shell: true },
+			{ detached: true },
+			{ force: true },
+		]) {
+			await expect(h['process.spawn']!('p', { command: 'echo-tool', opts })).rejects.toThrow(
+				/closed schema/
+			);
+		}
+		await expect(h['process.spawn']!('p', { command: 'echo-tool', shell: true })).rejects.toThrow(
+			/closed schema/
+		);
+		expect(spawn).not.toHaveBeenCalled();
+	});
+
+	it('denies high-risk dispatch/spawn text before side effects (risk tripwire)', async () => {
 		const dispatch = vi.fn(async () => 'dispatched');
 		const spawn = vi.fn(async () => 'spawned');
 		const h = buildHostCallHandlers(
 			makeDeps({
-				broker: brokerFor(() => [grant('agents:dispatch'), grant('process:spawn')]),
+				broker: brokerFor(() => [
+					scopedGrant('agents:dispatch', 'a'),
+					scopedGrant('process:spawn', 'echo-tool'),
+				]),
 				isPluginTrusted: () => true,
 				dispatch,
 				spawn,
+				resolveSpawnBinary,
 			})
 		);
 		await expect(
 			h['agents.dispatch']!('p', { agentId: 'a', prompt: 'delete the production database' })
 		).rejects.toThrow(/high-risk prompt/);
-		await expect(h['process.spawn']!('p', { command: 'rm -rf /' })).rejects.toThrow(
-			/high-risk prompt/
-		);
 		await expect(
 			h['process.spawn']!('p', {
-				command: 'echo',
-				opts: { env: { API_TOKEN: 'secret' } },
+				command: 'echo-tool',
+				opts: { args: ['&&', 'rm', '-rf', '/'] },
 			})
-		).rejects.toThrow(/secret-looking env key/);
+		).rejects.toThrow(/high-risk prompt/);
 		expect(dispatch).not.toHaveBeenCalled();
 		expect(spawn).not.toHaveBeenCalled();
 	});
@@ -564,13 +666,14 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 		});
 		const h = buildHostCallHandlers(
 			makeDeps({
-				broker: brokerFor(() => [grant('process:spawn')]),
+				broker: brokerFor(() => [scopedGrant('process:spawn', 'echo-tool')]),
 				actionGuard,
 				isPluginTrusted: () => true,
 				spawn,
+				resolveSpawnBinary,
 			})
 		);
-		await expect(h['process.spawn']!('p', { command: 'echo' })).rejects.toThrow(/limit/);
+		await expect(h['process.spawn']!('p', { command: 'echo-tool' })).rejects.toThrow(/limit/);
 		expect(spawn).not.toHaveBeenCalled();
 	});
 });
@@ -798,5 +901,95 @@ describe('brokered non-act host API breadth', () => {
 		} finally {
 			fs.rmSync(tmp, { recursive: true, force: true });
 		}
+	});
+});
+
+describe('background service supervision (delegated handlers)', () => {
+	it('delegates register/unregister/list to the injected supervisor and gates on the live grant', async () => {
+		let grants = [grant('background:service')];
+		const supervisor = new PluginBackgroundSupervisor({
+			restartPlugin: vi.fn(),
+			isPluginEnabled: () => true,
+		});
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => grants),
+				backgroundRegister: async (pluginId, service) => supervisor.register(pluginId, service),
+				backgroundUnregister: async (pluginId, serviceId) =>
+					supervisor.unregister(pluginId, serviceId),
+				backgroundList: (pluginId) => supervisor.health(pluginId),
+			})
+		);
+
+		await expect(
+			h['background.register']!('p', { service: { id: 'svc', name: 'poller' } })
+		).resolves.toEqual({ serviceId: 'svc' });
+		await expect(h['background.list']!('p', {})).resolves.toEqual(
+			expect.objectContaining({
+				pluginId: 'p',
+				state: 'running',
+				restarts: 0,
+				services: [expect.objectContaining({ id: 'svc', name: 'poller' })],
+			})
+		);
+		// The list is per-plugin: another plugin sees only its own (empty) view.
+		await expect(h['background.list']!('other', {})).resolves.toEqual(
+			expect.objectContaining({ pluginId: 'other', state: 'stopped', services: [] })
+		);
+
+		await expect(h['background.unregister']!('p', { serviceId: 'svc' })).resolves.toEqual({
+			ok: true,
+		});
+		await expect(h['background.unregister']!('p', { serviceId: 'svc' })).rejects.toThrow(
+			/unknown background service/
+		);
+
+		// Revoked live grant fails closed on every verb.
+		grants = [];
+		await expect(h['background.register']!('p', { service: { id: 'x' } })).rejects.toThrow(
+			/permission denied/
+		);
+		await expect(h['background.list']!('p', {})).rejects.toThrow(/permission denied/);
+	});
+
+	it('reports supervised restart state through background.list after a crash', async () => {
+		const supervisor = new PluginBackgroundSupervisor({
+			restartPlugin: vi.fn(),
+			isPluginEnabled: () => true,
+		});
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [grant('background:service')]),
+				backgroundRegister: async (pluginId, service) => supervisor.register(pluginId, service),
+				backgroundList: (pluginId) => supervisor.health(pluginId),
+			})
+		);
+
+		await h['background.register']!('p', { service: { id: 'svc' } });
+		supervisor.onPluginCrash('p', 1);
+		await expect(h['background.list']!('p', {})).resolves.toEqual(
+			expect.objectContaining({
+				state: 'restarting',
+				restarts: 1,
+				services: [],
+				lastError: expect.stringMatching(/code 1/),
+			})
+		);
+	});
+
+	it('falls back to the in-memory map for list when no supervisor is injected', async () => {
+		const h = buildHostCallHandlers(
+			makeDeps({ broker: brokerFor(() => [grant('background:service')]) })
+		);
+		await expect(h['background.list']!('p', {})).resolves.toEqual(
+			expect.objectContaining({ pluginId: 'p', state: 'stopped', services: [] })
+		);
+		await h['background.register']!('p', { service: { id: 'svc', name: 'poller' } });
+		await expect(h['background.list']!('p', {})).resolves.toEqual(
+			expect.objectContaining({
+				state: 'running',
+				services: [{ id: 'svc', name: 'poller' }],
+			})
+		);
 	});
 });

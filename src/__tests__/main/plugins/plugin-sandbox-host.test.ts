@@ -70,3 +70,37 @@ describe('PluginSandboxHost.invokeCommand payload cap', () => {
 		expect(postMessage).not.toHaveBeenCalled();
 	});
 });
+
+describe('PluginSandboxHost.stop onStop hook', () => {
+	let dir: string;
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-sbx-'));
+		fs.writeFileSync(path.join(dir, 'entry.js'), '// entry', 'utf-8');
+	});
+
+	afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+	it('notifies onStop BEFORE posting shutdown, and only for running plugins', () => {
+		const order: string[] = [];
+		const onStop = vi.fn(() => order.push('onStop'));
+		postMessage.mockImplementation((msg: { kind?: string }) => {
+			if (msg?.kind === 'shutdown') order.push('shutdown');
+		});
+		const host = new PluginSandboxHost({
+			broker: {} as unknown as PermissionBroker,
+			handlers: {},
+			onStop,
+		});
+		host.start('p', dir, 'entry.js');
+
+		host.stop('p');
+		expect(onStop).toHaveBeenCalledWith('p');
+		expect(order).toEqual(['onStop', 'shutdown']);
+
+		// Not running: no notification.
+		host.stop('ghost');
+		expect(onStop).toHaveBeenCalledTimes(1);
+	});
+});

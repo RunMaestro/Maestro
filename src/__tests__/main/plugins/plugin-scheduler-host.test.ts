@@ -23,12 +23,15 @@ function dueTrigger(over: Partial<CueTriggerContribution> = {}): CueTriggerContr
 }
 
 // Production-equivalent gate: low/medium risk is necessary but not sufficient;
-// dispatch also requires a live agents:dispatch grant and trusted signature.
+// dispatch also requires a live agents:dispatch grant naming the target agent,
+// a trusted signature, AND the separate unattended consent (scheduler ticks are
+// no-user-present execution).
 const gate = (
 	t: CueTriggerContribution,
-	ctx: { hasDispatchGrant: boolean; trusted: boolean } = {
+	ctx: { hasDispatchGrant: boolean; trusted: boolean; hasUnattendedConsent: boolean } = {
 		hasDispatchGrant: true,
 		trusted: true,
+		hasUnattendedConsent: true,
 	}
 ) => evaluateScheduledDispatch(t.payload, ctx);
 
@@ -93,6 +96,38 @@ describe('PluginSchedulerHost dispatch gating', () => {
 		h.tick();
 		expect(dispatch).not.toHaveBeenCalled();
 		expect(notify).toHaveBeenCalledTimes(1);
+	});
+
+	it('surfaces an otherwise eligible trigger without the separate UNATTENDED consent (notify-only fallback)', () => {
+		const notify = vi.fn();
+		const dispatch = vi.fn();
+		const h = new PluginSchedulerHost({
+			isEnabled: () => true,
+			getTriggers: () => [dueTrigger()],
+			notify,
+			dispatch,
+			evaluateDispatch: (trigger) =>
+				gate(trigger, { hasDispatchGrant: true, trusted: true, hasUnattendedConsent: false }),
+		});
+		h.tick();
+		expect(dispatch).not.toHaveBeenCalled();
+		expect(notify).toHaveBeenCalledTimes(1);
+	});
+
+	it('skips loudly (does not crash the tick) when the dispatch sink throws for a missing target', () => {
+		const notify = vi.fn();
+		const dispatch = vi.fn(() => {
+			throw new Error('target agent "agent-a" is not running');
+		});
+		const h = new PluginSchedulerHost({
+			isEnabled: () => true,
+			getTriggers: () => [dueTrigger({ agentId: 'agent-a' })],
+			notify,
+			dispatch,
+			evaluateDispatch: gate,
+		});
+		expect(() => h.tick()).not.toThrow();
+		expect(dispatch).toHaveBeenCalledTimes(1);
 	});
 
 	it('surfaces an eligible trigger when no dispatch sink is wired (auto-exec off)', () => {
