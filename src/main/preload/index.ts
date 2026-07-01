@@ -38,6 +38,7 @@ import { createSpeckitApi, createOpenspecApi, createBmadApi } from './commands';
 import { createAutorunApi, createPlaybooksApi, createMarketplaceApi } from './autorun';
 import { createDebugApi, createDocumentGraphApi } from './debug';
 import { createGroupChatApi } from './groupChat';
+import { createCrossAgentApi } from './crossAgent';
 import { createStatsApi } from './stats';
 import { createCueStatsApi } from './cueStats';
 import { createNotificationApi } from './notifications';
@@ -179,6 +180,9 @@ contextBridge.exposeInMainWorld('maestro', {
 	// Group Chat API
 	groupChat: createGroupChatApi(),
 
+	// Cross-Agent Dispatch API (@@mentions)
+	crossAgent: createCrossAgentApi(),
+
 	// App lifecycle API
 	app: createAppApi(),
 
@@ -268,6 +272,8 @@ export {
 	createDocumentGraphApi,
 	// Group Chat
 	createGroupChatApi,
+	// Cross-Agent Dispatch (@@mentions)
+	createCrossAgentApi,
 	// Stats
 	createStatsApi,
 	// Cue Stats (Phase 03 aggregation query)

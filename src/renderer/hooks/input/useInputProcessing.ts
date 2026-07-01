@@ -101,6 +101,13 @@ export interface UseInputProcessingDeps {
 	automaticTabNamingEnabled?: boolean;
 	/** Conductor profile (user's About Me from settings) */
 	conductorProfile?: string;
+	/**
+	 * Cross-agent `@@mention` dispatch (Phase 03). Called at user-submit time for
+	 * a regular AI message; resolves any `@@target` mentions and fires a
+	 * non-blocking consultation to each. No-op when the message has no mentions.
+	 * Only invoked for direct input-box submits (not queued replays / force-sends).
+	 */
+	onCrossAgentMentions?: (message: string, sourceSession: Session, sourceTabId: string) => void;
 }
 
 /**
@@ -167,6 +174,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 		onSkillsCommand,
 		automaticTabNamingEnabled,
 		conductorProfile,
+		onCrossAgentMentions,
 	} = deps;
 
 	// Ref for the processInput function so external code can access the latest version
@@ -449,6 +457,22 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					logger.error('[processInput] Wizard message failed:', undefined, error);
 				});
 				return;
+			}
+
+			// Cross-agent @@mention dispatch (Phase 03). Fire-and-forget: resolves any
+			// `@@target` mentions in this message and consults each target agent
+			// without blocking the source chat. The original message still posts to
+			// the source agent below (the `@@target` text stays in it, so the source
+			// agent sees the user pinged another agent). Gated on `overrideInputValue
+			// === undefined` so it fires exactly once, on a real input-box submit -
+			// not on queued replays / force-sends, which pass an override value.
+			if (currentMode === 'ai' && overrideInputValue === undefined && onCrossAgentMentions) {
+				const sourceTab = getActiveTab(activeSession);
+				onCrossAgentMentions(
+					effectiveInputValue,
+					activeSession,
+					sourceTab?.id || activeSession.activeTabId
+				);
 			}
 
 			// Queue messages when AI is busy (only in AI mode)

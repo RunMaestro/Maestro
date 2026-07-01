@@ -2376,6 +2376,17 @@ interface MaestroAPI {
 		>;
 		onActivityChange: (handler: () => void) => () => void;
 	};
+	// Cross-Agent Dispatch API (@@mentions)
+	crossAgent: {
+		/** Dispatch a cross-agent request; response streams back via onChunk. */
+		send: (
+			request: import('../shared/crossAgentTypes').CrossAgentSendRequest
+		) => Promise<{ requestId: string }>;
+		/** Subscribe to streamed cross-agent response chunks. Returns a cleanup fn. */
+		onChunk: (
+			handler: (chunk: import('../shared/crossAgentTypes').CrossAgentResponseChunk) => void
+		) => () => void;
+	};
 	// Group Chat API (multi-agent coordination)
 	groupChat: {
 		// Shared return shape for group chat methods (mirrors GroupChat from shared/group-chat-types.ts)

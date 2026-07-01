@@ -2,6 +2,7 @@ import { useCallback, useMemo } from 'react';
 import type { Session, Group, ToolType } from '../../types';
 import { normalizeMentionName, getMentionNameForContext } from '../../utils/participantColors';
 import { fuzzyMatchWithScore } from '../../utils/search';
+import { parseAgentMentions } from '../../../shared/crossAgentContext';
 
 /**
  * A single agent- or group-mention row for the unified `@` picker.
@@ -42,6 +43,114 @@ export interface UseAgentMentionCompletionReturn {
 const MAX_SUGGESTION_RESULTS = 15;
 
 /**
+ * Build the full set of mentionable agent/group rows for the `@` picker.
+ *
+ * Pure (no React) so both {@link useAgentMentionCompletion} and the cross-agent
+ * send-path resolver ({@link resolveMentionedTargetSessionIds}) share one source
+ * of truth for how a `@@name` token maps back to a session.
+ *
+ * @param sessions - All agents (sessions). Terminal-only agents are excluded.
+ * @param groups - Session groups. Groups with no non-terminal members are skipped.
+ * @param currentSessionId - The mentioning agent; excluded (can't mention itself).
+ */
+export function buildAgentMentionSuggestions(
+	sessions: Session[],
+	groups: Group[] | undefined,
+	currentSessionId: string | null | undefined
+): AgentMentionSuggestion[] {
+	const mentionable = sessions.filter((s) => s.toolType !== 'terminal' && s.id !== currentSessionId);
+	const peerNames = mentionable.map((s) => s.name);
+
+	const result: AgentMentionSuggestion[] = [];
+
+	// Groups first so that, on a score tie, groups sort above agents.
+	if (groups) {
+		for (const group of groups) {
+			const members = mentionable.filter((s) => s.groupId === group.id);
+			if (members.length === 0) continue;
+			result.push({
+				value: `@@${normalizeMentionName(group.name)} `,
+				displayText: group.name,
+				kind: 'group',
+				groupId: group.id,
+				memberSessionIds: members.map((m) => m.id),
+				score: 0,
+			});
+		}
+	}
+
+	for (const s of mentionable) {
+		result.push({
+			value: `@@${getMentionNameForContext(s.name, peerNames)} `,
+			displayText: s.name,
+			kind: 'agent',
+			targetSessionId: s.id,
+			toolType: s.toolType,
+			score: 0,
+		});
+	}
+
+	return result;
+}
+
+/**
+ * The normalized token (`@@name ` -> `name`, lowercased) a suggestion inserts.
+ * Matches how {@link parseAgentMentions} reports `mentionName`, folded to lower
+ * case so `@@Review-Bot` resolves the same as `@@review-bot`.
+ */
+function suggestionToken(suggestion: AgentMentionSuggestion): string {
+	return suggestion.value.replace(/^@@/, '').trimEnd().toLowerCase();
+}
+
+/**
+ * Resolve every `@@mention` in a message to the target session ids it should
+ * dispatch to. Agent mentions map to their `targetSessionId`; group mentions
+ * expand to each non-terminal `memberSessionIds` entry. The result is de-duped
+ * in first-seen order, so mentioning an agent and a group containing it yields
+ * that agent once.
+ *
+ * Used by the cross-agent send path (Phase 03) so a manually typed `@@name`
+ * resolves identically to one picked from the popover.
+ */
+export function resolveMentionedTargetSessionIds(
+	message: string,
+	sessions: Session[],
+	groups: Group[] | undefined,
+	currentSessionId: string | null | undefined
+): string[] {
+	const mentions = parseAgentMentions(message);
+	if (mentions.length === 0) return [];
+
+	const items = buildAgentMentionSuggestions(sessions, groups, currentSessionId);
+	const byToken = new Map<string, AgentMentionSuggestion>();
+	for (const item of items) {
+		const token = suggestionToken(item);
+		if (!byToken.has(token)) byToken.set(token, item);
+	}
+
+	const targetIds: string[] = [];
+	const seen = new Set<string>();
+	const add = (id: string | undefined): void => {
+		if (id && !seen.has(id)) {
+			seen.add(id);
+			targetIds.push(id);
+		}
+	};
+
+	for (const mention of mentions) {
+		const suggestion = byToken.get(mention.mentionName.toLowerCase());
+		if (!suggestion) continue;
+		if (suggestion.kind === 'group') {
+			for (const id of suggestion.memberSessionIds ?? []) add(id);
+		} else {
+			add(suggestion.targetSessionId);
+		}
+	}
+
+	return targetIds;
+}
+
+/**
  * Agents/Groups data source for the unified `@` mention picker.
  *
  * Mirrors the API surface of {@link useAtMentionCompletion} (a stable
@@ -59,44 +168,12 @@ export function useAgentMentionCompletion(
 	groups: Group[] | undefined,
 	currentSessionId: string | null | undefined
 ): UseAgentMentionCompletionReturn {
-	// Build the mentionable set once per sessions/groups change. Groups are added
-	// before individual agents so that, on a score tie, groups sort above agents.
-	const items = useMemo<AgentMentionSuggestion[]>(() => {
-		const mentionable = sessions.filter(
-			(s) => s.toolType !== 'terminal' && s.id !== currentSessionId
-		);
-		const peerNames = mentionable.map((s) => s.name);
-
-		const result: AgentMentionSuggestion[] = [];
-
-		if (groups) {
-			for (const group of groups) {
-				const members = mentionable.filter((s) => s.groupId === group.id);
-				if (members.length === 0) continue;
-				result.push({
-					value: `@@${normalizeMentionName(group.name)} `,
-					displayText: group.name,
-					kind: 'group',
-					groupId: group.id,
-					memberSessionIds: members.map((m) => m.id),
-					score: 0,
-				});
-			}
-		}
-
-		for (const s of mentionable) {
-			result.push({
-				value: `@@${getMentionNameForContext(s.name, peerNames)} `,
-				displayText: s.name,
-				kind: 'agent',
-				targetSessionId: s.id,
-				toolType: s.toolType,
-				score: 0,
-			});
-		}
-
-		return result;
-	}, [sessions, groups, currentSessionId]);
+	// Build the mentionable set once per sessions/groups change (see
+	// buildAgentMentionSuggestions for the ordering rationale).
+	const items = useMemo<AgentMentionSuggestion[]>(
+		() => buildAgentMentionSuggestions(sessions, groups, currentSessionId),
+		[sessions, groups, currentSessionId]
+	);
 
 	const getSuggestions = useCallback(
 		(filter: string): AgentMentionSuggestion[] => {

@@ -82,6 +82,7 @@ import {
 	registerTabNamingHandlers,
 	registerAgentErrorHandlers,
 	registerDirectorNotesHandlers,
+	registerCrossAgentHandlers,
 	registerCueHandlers,
 	registerCueBackupHandlers,
 	registerWakatimeHandlers,
@@ -1334,6 +1335,18 @@ function setupIpcHandlers() {
 		getProcessManager: () => processManager,
 		getAgentDetector: () => agentDetector,
 		agentConfigsStore,
+	});
+
+	// Cross-agent @@mention dispatch - streams a target agent's response back
+	// into the source agent's transcript (Phase 03).
+	registerCrossAgentHandlers({
+		getProcessManager: () => processManager,
+		getAgentDetector: () => agentDetector,
+		sessionsStore,
+		agentConfigsStore,
+		sshStore: createSshRemoteStoreAdapter(store),
+		getCustomEnvVars: getCustomEnvVarsForAgent,
+		safeSend,
 	});
 
 	// Cue - event-driven automation engine

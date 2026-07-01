@@ -61,6 +61,7 @@ import { registerSymphonyHandlers, SymphonyHandlerDependencies } from './symphon
 import { registerAgentErrorHandlers } from './agent-error';
 import { registerTabNamingHandlers, TabNamingHandlerDependencies } from './tabNaming';
 import { registerDirectorNotesHandlers, DirectorNotesHandlerDependencies } from './director-notes';
+import { registerCrossAgentHandlers } from './cross-agent';
 import { registerCueHandlers, CueHandlerDependencies } from './cue';
 import { registerCueBackupHandlers } from './cue-backup';
 import { registerWakatimeHandlers } from './wakatime';
@@ -91,6 +92,7 @@ export { registerSystemHandlers, setupLoggerEventForwarding };
 export { registerClaudeHandlers };
 export { registerAgentSessionsHandlers };
 export { registerGroupChatHandlers };
+export { registerCrossAgentHandlers };
 export { registerDebugHandlers };
 export { registerSpeckitHandlers };
 export { registerOpenSpecHandlers };

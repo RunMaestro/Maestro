@@ -31,6 +31,8 @@ import { useAtMentionCompletion } from './useAtMentionCompletion';
 import { useMentionPicker, type MentionPickerItem, type MentionCategory } from './useMentionPicker';
 import { useInputProcessing } from './useInputProcessing';
 import { useInputKeyDown } from './useInputKeyDown';
+import { useCrossAgentDispatch } from '../agent/useCrossAgentDispatch';
+import { resolveMentionedTargetSessionIds } from './useAgentMentionCompletion';
 import { IMAGE_EXTENSIONS } from '../../utils/fileExplorerIcons/shared';
 import {
 	FILE_TREE_SINGLE_MIME,
@@ -455,6 +457,37 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	// useInputProcessing (processes and sends input)
 	// ====================================================================
 
+	// Cross-agent @@mention dispatch (Phase 03). Mounted here (a singleton hook)
+	// so the response-chunk subscription is set up once. resolveMentionedTargetSessionIds
+	// reuses the same agent/group resolution the `@` picker uses, so a typed
+	// `@@name` dispatches identically to one chosen from the popover.
+	const { sendCrossAgentRequest } = useCrossAgentDispatch();
+	const handleCrossAgentMentions = useCallback(
+		(message: string, sourceSession: Session, sourceTabId: string) => {
+			const { sessions: allSessions, groups: allGroups } = useSessionStore.getState();
+			const targetSessionIds = resolveMentionedTargetSessionIds(
+				message,
+				allSessions,
+				allGroups,
+				sourceSession.id
+			);
+			if (targetSessionIds.length === 0) return;
+
+			const sourceTab = sourceSession.aiTabs.find((t) => t.id === sourceTabId);
+			const sourceLogs = sourceTab?.logs ?? [];
+			for (const targetSessionId of targetSessionIds) {
+				sendCrossAgentRequest({
+					sourceSessionId: sourceSession.id,
+					sourceTabId,
+					targetSessionId,
+					userPrompt: message,
+					sourceLogs,
+				});
+			}
+		},
+		[sendCrossAgentRequest]
+	);
+
 	const { processInput, processInputRef: _hookProcessInputRef } = useInputProcessing({
 		activeSession,
 		activeSessionId,
@@ -481,6 +514,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		onSkillsCommand: handleSkillsCommand,
 		automaticTabNamingEnabled,
 		conductorProfile,
+		onCrossAgentMentions: handleCrossAgentMentions,
 	});
 
 	// processInputRef — maintained for access in memoized callbacks without stale closures
