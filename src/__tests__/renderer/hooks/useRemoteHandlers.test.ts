@@ -1221,6 +1221,42 @@ describe('useRemoteHandlers', () => {
 			expect(spawnCall.args).not.toContain('--dangerously-bypass-approvals-and-sandbox');
 		});
 
+		it('sends permissionMode "readonly" when tab.readOnlyMode forces read-only despite tab.permissionMode "full"', async () => {
+			const session = createMockSession({
+				inputMode: 'ai',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						name: 'Tab 1',
+						inputValue: '',
+						data: [],
+						logs: [],
+						stagedImages: [],
+						readOnlyMode: true,
+						permissionMode: 'full',
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' } as any);
+			const deps = createMockDeps({ sessionsRef: { current: [session] } });
+
+			renderHook(() => useRemoteHandlers(deps));
+			const handler = getRemoteCommandHandler();
+
+			await act(async () => {
+				await handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: { sessionId: 'session-1', command: 'explain code', inputMode: 'ai' },
+					})
+				);
+			});
+
+			const spawnCall = (window.maestro.process.spawn as any).mock.calls[0][0];
+			expect(spawnCall.readOnlyMode).toBe(true);
+			expect(spawnCall.permissionMode).toBe('readonly');
+		});
+
 		it('sets session state to busy with busySource=ai for AI commands', async () => {
 			const session = createMockSession({ inputMode: 'ai' });
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' } as any);

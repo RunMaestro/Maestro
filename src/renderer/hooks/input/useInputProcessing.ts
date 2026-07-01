@@ -1059,6 +1059,9 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							isAutoRunReadOnly ||
 							freshActiveTab?.readOnlyMode === true ||
 							freshActiveTab?.permissionMode === 'readonly';
+						const effectivePermissionMode = isReadOnly
+							? 'readonly'
+							: freshActiveTab?.permissionMode;
 
 						// For read-only mode, filter out any YOLO/skip-permissions flags from base args
 						// (they would override the read-only mode we're requesting)
@@ -1149,7 +1152,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							// Generic spawn options - main process builds agent-specific args
 							agentSessionId: tabAgentSessionId ?? undefined,
 							readOnlyMode: isReadOnly,
-							permissionMode: freshActiveTab?.permissionMode,
+							permissionMode: effectivePermissionMode,
 							// Per-session config overrides (if set)
 							sessionCustomPath: freshSession.customPath,
 							sessionCustomArgs: freshSession.customArgs,
