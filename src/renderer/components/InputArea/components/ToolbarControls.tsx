@@ -17,7 +17,6 @@ interface ToolbarControlsProps {
 	session: Session;
 	theme: Theme;
 	isTerminalMode: boolean;
-	isReadOnlyMode?: boolean;
 	canAttachImages: boolean;
 	hasReadOnlyCapability: boolean;
 	enterToSend: boolean;
@@ -28,7 +27,6 @@ interface ToolbarControlsProps {
 	showFlashNotification?: (message: string) => void;
 	tabSaveToHistory: boolean;
 	onToggleTabSaveToHistory?: () => void;
-	onToggleTabReadOnlyMode?: () => void;
 	tabShowThinking: ThinkingMode;
 	onToggleTabShowThinking?: () => void;
 	supportsThinking: boolean;

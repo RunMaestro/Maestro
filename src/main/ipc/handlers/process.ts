@@ -468,7 +468,9 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					};
 				}
 				// In full-access mode, apply agent-specific env var overrides for full permissions
-				const isFullAccess = config.permissionMode === 'full' || config.yoloMode === true;
+				const isFullAccess =
+					config.permissionMode === 'full' ||
+					(config.permissionMode === undefined && config.yoloMode === true);
 				if (isFullAccess && (agent as any)?.fullAccessEnvOverrides) {
 					effectiveCustomEnvVars = {
 						...(effectiveCustomEnvVars || {}),

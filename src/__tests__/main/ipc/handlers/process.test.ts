@@ -561,6 +561,93 @@ describe('process IPC handlers', () => {
 			);
 		});
 
+		it('should apply fullAccessEnvOverrides when permissionMode is full', async () => {
+			const { applyAgentConfigOverrides } = await import('../../../../main/utils/agent-args');
+			const mockApply = vi.mocked(applyAgentConfigOverrides);
+
+			mockApply.mockReturnValueOnce({
+				args: [],
+				modelSource: 'default',
+				customArgsSource: 'none',
+				customEnvSource: 'none',
+				effectiveCustomEnvVars: {},
+			});
+
+			const mockAgent = {
+				id: 'opencode',
+				requiresPty: false,
+				fullAccessEnvOverrides: {
+					OPENCODE_CONFIG_CONTENT: '{"permission":{"*":"allow"}}',
+				},
+			};
+
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+			mockProcessManager.spawn.mockReturnValue({ pid: 2002, success: true });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-full-access',
+				toolType: 'opencode',
+				cwd: '/test',
+				command: 'opencode',
+				args: [],
+				permissionMode: 'full',
+			});
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					customEnvVars: expect.objectContaining({
+						OPENCODE_CONFIG_CONTENT: '{"permission":{"*":"allow"}}',
+					}),
+				})
+			);
+		});
+
+		it('should NOT apply fullAccessEnvOverrides when permissionMode is standard even if legacy yoloMode is true', async () => {
+			const { applyAgentConfigOverrides } = await import('../../../../main/utils/agent-args');
+			const mockApply = vi.mocked(applyAgentConfigOverrides);
+
+			mockApply.mockReturnValueOnce({
+				args: [],
+				modelSource: 'default',
+				customArgsSource: 'none',
+				customEnvSource: 'none',
+				effectiveCustomEnvVars: {},
+			});
+
+			const mockAgent = {
+				id: 'opencode',
+				requiresPty: false,
+				fullAccessEnvOverrides: {
+					OPENCODE_CONFIG_CONTENT: '{"permission":{"*":"allow"}}',
+				},
+			};
+
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+			mockProcessManager.spawn.mockReturnValue({ pid: 2003, success: true });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-standard-legacy-yolo',
+				toolType: 'opencode',
+				cwd: '/test',
+				command: 'opencode',
+				args: [],
+				// Explicit standard mode should win even though the legacy yoloMode
+				// flag is still set (e.g. a stale caller that hasn't migrated yet).
+				permissionMode: 'standard',
+				yoloMode: true,
+			});
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					customEnvVars: expect.not.objectContaining({
+						OPENCODE_CONFIG_CONTENT: '{"permission":{"*":"allow"}}',
+					}),
+				})
+			);
+		});
+
 		it('should use sessionCustomPath for local execution when provided', async () => {
 			// When user sets a custom path for a session, it should be used for the command
 			// This allows users to use a different binary (e.g., a wrapper script)
