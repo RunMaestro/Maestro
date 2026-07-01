@@ -372,13 +372,7 @@ describe('window-state-persistence', () => {
 		});
 
 		it('skips non-string ids defensively in a corrupt store', () => {
-			const store = makeSessionsStore([
-				{ id: 'a' },
-				{ id: 42 },
-				{},
-				null,
-				{ id: 'b' },
-			]);
+			const store = makeSessionsStore([{ id: 'a' }, { id: 42 }, {}, null, { id: 'b' }]);
 
 			expect(readExistingAgentIds(store)).toEqual(['a', 'b']);
 		});

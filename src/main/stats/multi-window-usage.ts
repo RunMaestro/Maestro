@@ -67,9 +67,7 @@ export function getMultiWindowUsage(
 ): MultiWindowUsage {
 	const startDate = rangeStartYmd(range);
 	const stmt = stmtCache.get(db, SELECT_AGGREGATE_SQL);
-	const row = stmt.get(startDate) as
-		| { windowsOpened: number; peakConcurrent: number }
-		| undefined;
+	const row = stmt.get(startDate) as { windowsOpened: number; peakConcurrent: number } | undefined;
 	return {
 		windowsOpened: row?.windowsOpened ?? 0,
 		peakConcurrent: row?.peakConcurrent ?? 0,

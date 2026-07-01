@@ -10,7 +10,10 @@
 
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
-import { AITabOverlayMenu, type AITabOverlayMenuProps } from '../../../renderer/components/TabBar/AITabOverlayMenu';
+import {
+	AITabOverlayMenu,
+	type AITabOverlayMenuProps,
+} from '../../../renderer/components/TabBar/AITabOverlayMenu';
 import type { AITab } from '../../../renderer/types';
 import { mockTheme } from '../../helpers/mockTheme';
 
@@ -74,9 +77,7 @@ describe('AITabOverlayMenu - Move to New Window', () => {
 	it('fires onMoveToNewWindowClick when the item is clicked', () => {
 		const onMoveToNewWindowClick = vi.fn();
 		render(
-			<AITabOverlayMenu
-				{...buildProps({ onMoveToNewWindow: vi.fn(), onMoveToNewWindowClick })}
-			/>
+			<AITabOverlayMenu {...buildProps({ onMoveToNewWindow: vi.fn(), onMoveToNewWindowClick })} />
 		);
 		fireEvent.click(screen.getByText('Move to New Window'));
 		expect(onMoveToNewWindowClick).toHaveBeenCalledTimes(1);
