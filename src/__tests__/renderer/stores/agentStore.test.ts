@@ -1748,6 +1748,64 @@ describe('agentStore', () => {
 
 			expect(tab1.logs).toHaveLength(1);
 			expect(tab1.logs[0].text).toContain('Failed to process queued');
+			expect(tab1.logs[0].source).toBe('error');
+			expect(tab2.logs).toHaveLength(0);
+
+			consoleSpy.mockRestore();
+		});
+
+		it('logs a diagnostic instead of silently dropping the error when the resolved tab no longer exists in aiTabs', async () => {
+			mockSpawn.mockRejectedValueOnce(new Error('Spawn failed'));
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+
+			// tab-1 was closed while it had queued work, so it now lives in
+			// orphanedThinkingTabs (not aiTabs) - it's still a valid spawn target,
+			// but the catch block's error log has nowhere in aiTabs to land.
+			const session = createMockSession({
+				id: 'session-1',
+				state: 'busy',
+				aiTabs: [
+					{
+						id: 'tab-2',
+						agentSessionId: null,
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+					},
+				],
+				orphanedThinkingTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: null,
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'busy',
+					},
+				],
+				activeTabId: 'tab-2',
+			});
+			useSessionStore.getState().setSessions([session]);
+
+			const item = createQueuedItem({ tabId: 'tab-1', text: 'Will fail' });
+
+			await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
+
+			expect(consoleSpy).toHaveBeenCalledWith(
+				'[processQueuedItem error] Target tab not found - error log dropped',
+				undefined,
+				{ sessionId: 'session-1', resolvedTabId: 'tab-1' }
+			);
+
+			const updated = useSessionStore.getState().sessions[0];
+			const tab2 = updated.aiTabs.find((t) => t.id === 'tab-2')!;
 			expect(tab2.logs).toHaveLength(0);
 
 			consoleSpy.mockRestore();

@@ -583,17 +583,17 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 			const errorLogEntry: LogEntry = {
 				id: generateId(),
 				timestamp: Date.now(),
-				source: 'system',
+				source: 'error',
 				text: `Error: Failed to process queued ${item.type} - ${error.message}`,
 			};
 			useSessionStore.getState().setSessions((prev) =>
 				prev.map((s) => {
 					if (s.id !== sessionId) return s;
-					const activeTab = getActiveTab(s);
+					const resolvedTabId = item.tabId ?? s.activeTabId;
 					const updatedAiTabs =
 						s.aiTabs?.length > 0
 							? s.aiTabs.map((tab) =>
-									tab.id === (item.tabId ?? s.activeTabId)
+									tab.id === resolvedTabId
 										? {
 												...tab,
 												state: 'idle' as const,
@@ -604,9 +604,15 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 								)
 							: s.aiTabs;
 
-					if (!activeTab) {
+					const targetTabExists = s.aiTabs?.some((tab) => tab.id === resolvedTabId);
+					if (!targetTabExists) {
 						logger.error(
-							'[processQueuedItem error] No active tab found - session has no aiTabs, this should not happen'
+							'[processQueuedItem error] Target tab not found - error log dropped',
+							undefined,
+							{
+								sessionId,
+								resolvedTabId,
+							}
 						);
 					}
 
