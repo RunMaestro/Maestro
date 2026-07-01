@@ -235,6 +235,19 @@ export interface LogEntry {
 			kind: 'thinking' | 'tool';
 			toolName?: string;
 		};
+		// Provenance for a cross-agent (@@mention) response entry: this AI entry
+		// was produced by a DIFFERENT agent that the user consulted via `@@target`.
+		// Phase 03 stamps it; Phase 04 renders the attribution pill from it.
+		crossAgent?: {
+			/** Correlates with the CrossAgentRequest that produced this entry. */
+			requestId: string;
+			/** The consulted agent's (target) session id. */
+			fromSessionId: string;
+			/** The consulted agent's display name. */
+			fromAgentName: string;
+			/** The consulted agent's tool type (for the provider icon). */
+			fromToolType: ToolType;
+		};
 	};
 	// How this turn was captured. 'structured' (default) is the normal JSON-stream
 	// pipeline from `claude --print`; 'text-stream' marks entries captured during
