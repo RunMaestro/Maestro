@@ -144,6 +144,19 @@ export interface ShortcutUsageDay {
 }
 
 /**
+ * Aggregate multi-window usage over a time range. `windowsOpened` is the number
+ * of secondary windows spawned (the multi-window action - the always-present
+ * primary window is not counted); `peakConcurrent` is the maximum number of
+ * windows open simultaneously (counting the primary), so a value below 2 means
+ * the user never ran more than one window. Aggregate counters only - no agent or
+ * window identifiers are stored.
+ */
+export interface MultiWindowUsage {
+	windowsOpened: number;
+	peakConcurrent: number;
+}
+
+/**
  * Database schema version for migrations
  */
-export const STATS_DB_VERSION = 7;
+export const STATS_DB_VERSION = 8;

@@ -996,6 +996,8 @@ describe('tabHelpers', () => {
 				activeTerminalTabId: null,
 				activeBrowserTabId: null,
 				inputMode: 'ai',
+				// Landing on an AI tab exits any active tiled group (tab tiling).
+				activeGroupId: null,
 			});
 		});
 
@@ -1007,6 +1009,8 @@ describe('tabHelpers', () => {
 				activeTerminalTabId: null,
 				activeBrowserTabId: null,
 				inputMode: 'ai',
+				// Landing on an AI tab exits any active tiled group (tab tiling).
+				activeGroupId: null,
 			});
 		});
 

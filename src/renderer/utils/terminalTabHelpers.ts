@@ -252,6 +252,8 @@ export function selectTerminalTab(session: Session, tabId: string): Session {
 		activeTerminalTabId: tabId,
 		activeFileTabId: null,
 		activeBrowserTabId: null,
+		// Selecting a standalone terminal tab leaves any active tiled group.
+		activeGroupId: null,
 	};
 }
 

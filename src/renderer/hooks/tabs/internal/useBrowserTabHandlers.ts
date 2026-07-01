@@ -81,6 +81,8 @@ export function useBrowserTabHandlers(): BrowserTabHandlersReturn {
 					activeTerminalTabId: null,
 					inputMode: 'ai',
 					unifiedTabOrder: ensureInUnifiedTabOrder(s.unifiedTabOrder || [], 'browser', tabId),
+					// Selecting a standalone browser tab leaves any active tiled group.
+					activeGroupId: null,
 				};
 			})
 		);

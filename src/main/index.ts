@@ -89,11 +89,13 @@ import {
 	registerMaestroCliHandlers,
 	registerPromptsHandlers,
 	registerMemoryHandlers,
+	registerWindowsHandlers,
+	wireWindowRegistryBroadcast,
 	setupLoggerEventForwarding,
 	cleanupAllGroomingSessions,
 	getActiveGroomingSessionCount,
 } from './ipc/handlers';
-import { initializeStatsDB, closeStatsDB, getStatsDB } from './stats';
+import { initializeStatsDB, closeStatsDB, getStatsDB, wireMultiWindowTelemetry } from './stats';
 import { groupChatEmitters } from './ipc/handlers/groupChat';
 import {
 	routeModeratorResponse,
@@ -155,6 +157,12 @@ import {
 	createQuitHandler,
 	type QuitHandler,
 } from './app-lifecycle';
+// Multi-window registry (single source of truth for window<->session ownership)
+import { WindowRegistry } from './window-registry';
+// Multi-window startup restore: turn the persisted MultiWindowState back into
+// window-creation specs (pruning agents that no longer exist).
+import { planWindowRestore } from './window-state-persistence';
+import type { WindowState as SharedWindowState } from '../shared/window-types';
 // Phase 3 refactoring - process listeners
 import { setupProcessListeners as setupProcessListenersModule } from './process-listeners';
 import { setupWakaTimeListener } from './process-listeners/wakatime-listener';
@@ -358,8 +366,11 @@ let cueEngine: CueEngine | null = null;
 let usageRefreshScheduler: UsageRefreshScheduler | null = null;
 let interactiveReplayController: InteractiveReplayController<ProcessSpawnConfig> | null = null;
 
-// Create safeSend with dependency injection (Phase 2 refactoring)
-const safeSend = createSafeSend(() => mainWindow);
+// Create safeSend with dependency injection (Phase 2 refactoring).
+// Broadcasts to EVERY open window, not just the primary one - see the
+// MULTI-WINDOW INVARIANT in safe-send.ts. Renderers filter agent-scoped
+// process:* events to the agents they own.
+const safeSend = createSafeSend(() => BrowserWindow.getAllWindows());
 
 // Hydrate capability snapshots from disk and wire IPC broadcaster so the
 // renderer status pills update live as detection / spawn-error events fire.
@@ -390,6 +401,13 @@ const devServerUrl = `http://localhost:${devServerPort}`;
 // installer is orphaned by before-quit preventDefault).
 let quitHandler: QuitHandler | null = null;
 
+// Registry that tracks every BrowserWindow and which agents (sessions) live in
+// each - the single source of truth for window<->session ownership. The object
+// is constructed here (it has no app-ready dependencies); it stays empty until
+// the primary window registers itself as `isMain` when createWindow() runs on
+// app-ready, and secondary windows register via createSecondaryWindow.
+const windowRegistry = new WindowRegistry();
+
 // Create window manager with dependency injection (Phase 4 refactoring)
 const windowManager = createWindowManager({
 	windowStateStore,
@@ -400,6 +418,14 @@ const windowManager = createWindowManager({
 	useNativeTitleBar,
 	autoHideMenuBar,
 	getConfirmQuit: () => quitHandler?.confirmQuit,
+	// Multi-window wiring: the manager registers the primary as `isMain` and every
+	// secondary window it builds. `getIsQuitting` lets a closing secondary skip
+	// registry churn once a quit is already in flight (the registry dies with the
+	// process anyway). `settingsStore` is threaded for the per-window panel/session
+	// persistence later phases consume.
+	windowRegistry,
+	settingsStore: store,
+	getIsQuitting: () => quitHandler?.isQuitConfirmed() ?? false,
 });
 
 // Create web server factory with dependency injection (Phase 2 refactoring)
@@ -432,11 +458,25 @@ const createWebServer = createWebServerFactory({
 // - Window state persistence (position, size, maximized/fullscreen)
 // - DevTools installation in development
 // - Auto-updater initialization in production
-function createWindow() {
-	mainWindow = windowManager.createWindow();
+function createWindow(options?: { sessionIds?: string[]; bounds?: Partial<SharedWindowState> }) {
+	mainWindow = windowManager.createWindow(options);
 	// Handle closed event to clear the reference
 	mainWindow.on('closed', () => {
 		mainWindow = null;
+
+		// The primary window is the app's anchor: it owns the auto-updater, the
+		// global hotkey, the deep-link target, and the quit-confirmation surface.
+		// When it closes while secondary windows are still open (multi-window),
+		// those windows are orphaned, so quit the whole app. app.quit() routes
+		// through the existing quit handler, preserving the updater/confirmation
+		// flow. When the primary is the LAST window, we defer to
+		// 'window-all-closed' instead (macOS stays alive for dock relaunch), and
+		// we skip if a quit is already in flight to avoid re-entrancy.
+		const otherWindowsOpen = BrowserWindow.getAllWindows().length > 0;
+		if (otherWindowsOpen && !quitHandler?.isQuitConfirmed()) {
+			logger.info('Primary window closed with secondary windows open, quitting app', 'Window');
+			app.quit();
+		}
 	});
 
 	// Kill all managed processes before the renderer reloads after a crash.
@@ -446,6 +486,45 @@ function createWindow() {
 	mainWindow.webContents.on('render-process-gone', () => {
 		processManager?.killAll();
 	});
+}
+
+/**
+ * Restore the saved multi-window layout on startup.
+ *
+ * Reads the persisted `MultiWindowState`, drops any owned agents that no longer
+ * exist, then recreates each saved window with its bounds and agent assignments
+ * through the window manager - the primary via {@link createWindow} (which
+ * anchors `mainWindow`) and the rest as secondary windows. Off-screen bounds are
+ * already guarded inside the window manager's `createBrowserWindow`.
+ *
+ * When there is no saved layout (a fresh install seeds an empty
+ * `MultiWindowState`, and a pre-migration store has none at all) it falls back
+ * to a single primary window using the legacy single-window bounds - identical
+ * to the previous startup behavior.
+ */
+function restoreWindows() {
+	// The set of agents that still exist, so a window never tries to restore a
+	// tab strip for an agent the user has since deleted.
+	const existingAgentIds = new Set<string>();
+	for (const session of sessionsStore.get('sessions', []) as Array<{ id?: unknown }>) {
+		if (typeof session?.id === 'string') existingAgentIds.add(session.id);
+	}
+
+	const specs = planWindowRestore(windowStateStore.get('multiWindow'), existingAgentIds);
+	if (specs.length === 0) {
+		// No saved multi-window layout - single primary window (backward compatible).
+		createWindow();
+		return;
+	}
+
+	logger.info(`Restoring ${specs.length} window(s) from saved layout`, 'Startup');
+	for (const spec of specs) {
+		if (spec.isPrimary) {
+			createWindow({ sessionIds: spec.sessionIds, bounds: spec.bounds });
+		} else {
+			windowManager.createSecondaryWindow(spec.sessionIds, spec.bounds);
+		}
+	}
 }
 
 // Set up global error handlers for uncaught exceptions (Phase 4 refactoring)
@@ -1158,9 +1237,10 @@ app
 			Menu.setApplicationMenu(null);
 		}
 
-		// Create main window
-		logger.info('Creating main window', 'Startup');
-		createWindow();
+		// Restore the saved multi-window layout (or a single primary window when
+		// there is nothing saved - backward compatible).
+		logger.info('Restoring window layout', 'Startup');
+		restoreWindows();
 
 		// Wire the global "summon Maestro" hotkey. Register the saved binding (if
 		// any) and re-register live when the setting changes from any source
@@ -1242,6 +1322,11 @@ app
 	});
 
 app.on('window-all-closed', () => {
+	// This fires only when every window (primary + any secondary windows) is
+	// closed, so the primary is necessarily gone by now. Closing a single
+	// secondary window while the primary stays open does NOT fire this event, so
+	// secondary windows never trigger a quit here (the primary's own `closed`
+	// handler covers the "primary gone, secondaries still open" case above).
 	if (!isMacOS()) {
 		app.quit();
 	} else {
@@ -1278,6 +1363,10 @@ quitHandler = createQuitHandler({
 	powerManager,
 	stopSessionCleanup,
 	getPersistedSessions: () => sessionsStore.get('sessions', []) as Array<Record<string, unknown>>,
+	// Multi-window persistence: snapshot every window's layout to the window-state
+	// store on quit so the next launch can restore it (see window-state-persistence).
+	windowStateStore,
+	getWindowRegistry: () => windowRegistry,
 });
 quitHandler.setup();
 
@@ -1454,6 +1543,26 @@ function setupIpcHandlers() {
 
 	// Register project Memory handlers (Claude Code per-project memory viewer)
 	registerMemoryHandlers();
+
+	// Register multi-window handlers (windows:* channel surface). Registered here
+	// because the running app wires handlers through setupIpcHandlers(), not
+	// registerAllHandlers(). The registry and window manager are module-scope
+	// instances; lazy getters resolve the live instance at call time.
+	registerWindowsHandlers({
+		getWindowRegistry: () => windowRegistry,
+		getWindowManager: () => windowManager,
+	});
+	// Push registry ownership moves out to every window so each renderer's
+	// WindowContext can refresh which agents it surfaces (and the Left Bar's
+	// cross-window badges). The registry is a module-scope instance, so pass it
+	// directly rather than through the handlers' lazy getter.
+	wireWindowRegistryBroadcast(windowRegistry);
+
+	// Record aggregate multi-window usage telemetry (secondary windows opened +
+	// peak concurrent windows) as windows open. Gated on the user's
+	// `statsCollectionEnabled` analytics setting; records nothing when off, and a
+	// stats failure can never break window creation (see wireMultiWindowTelemetry).
+	wireMultiWindowTelemetry(windowRegistry, { settingsStore: store });
 
 	// Register Context Merge handlers for session context transfer and grooming
 	registerContextHandlers({

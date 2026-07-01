@@ -1668,6 +1668,9 @@ export function aiTabFocusFields(tabId?: string): Partial<Session> {
 		activeTerminalTabId: null,
 		activeBrowserTabId: null,
 		inputMode: 'ai',
+		// Landing on a standalone AI tab always leaves any active tiled group so the
+		// group's layout stops taking over the panel. A no-op when no group is active.
+		activeGroupId: null,
 	};
 }
 
@@ -2625,6 +2628,8 @@ export function createMergedSession(
 			{ type: 'terminal' as const, id: initialMergeTerminalTab.id },
 		],
 		unifiedClosedTabHistory: [],
+		tabGroups: [],
+		activeGroupId: null,
 		// Default Auto Run folder path (user can change later)
 		autoRunFolderPath: getAutoRunFolderPath(projectRoot),
 		claudeInteractive: toolType === 'claude-code' ? { mode: 'api', modeReason: 'auto' } : undefined,

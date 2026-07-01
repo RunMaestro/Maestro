@@ -180,6 +180,8 @@ export function useSymphonyContribution(
 				activeTerminalTabId: null,
 				unifiedTabOrder: [{ type: 'ai' as const, id: initialTabId }],
 				unifiedClosedTabHistory: [],
+				tabGroups: [],
+				activeGroupId: null,
 				// Custom agent config
 				customPath: data.customPath,
 				customArgs: data.customArgs,

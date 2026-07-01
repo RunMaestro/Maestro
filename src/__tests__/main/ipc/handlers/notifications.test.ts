@@ -107,7 +107,32 @@ import {
 	clearNotificationQueue,
 	getNotificationMaxQueueSize,
 	parseNotificationCommand,
+	resolveNotificationClickWindow,
 } from '../../../../main/ipc/handlers/notifications';
+import type { WindowRegistry } from '../../../../main/window-registry';
+
+/**
+ * Build a minimal fake BrowserWindow whose only observable behaviour is
+ * `isDestroyed()`. resolveNotificationClickWindow returns the object as-is, and
+ * the real dispatchDeepLink (which would call show()/focus()) is mocked, so this
+ * is all the surface the routing logic touches.
+ */
+function makeFakeWindow(destroyed = false): Electron.BrowserWindow {
+	return { isDestroyed: () => destroyed } as unknown as Electron.BrowserWindow;
+}
+
+/** Build a fake WindowRegistry exposing just the two methods the resolver uses. */
+function makeFakeRegistry(
+	sessionToWindow: Record<string, string>,
+	windows: Record<string, Electron.BrowserWindow>
+): WindowRegistry {
+	return {
+		getWindowForSession: vi.fn((sessionId: string) => sessionToWindow[sessionId] ?? null),
+		get: vi.fn((windowId: string) =>
+			windows[windowId] ? { browserWindow: windows[windowId] } : undefined
+		),
+	} as unknown as WindowRegistry;
+}
 
 describe('Notification IPC Handlers', () => {
 	let handlers: Map<string, Function>;
@@ -261,6 +286,128 @@ describe('Notification IPC Handlers', () => {
 				(call: any[]) => call[0] === 'click'
 			);
 			expect(clickCalls).toHaveLength(0);
+		});
+	});
+
+	describe('resolveNotificationClickWindow (multi-window routing)', () => {
+		it('returns the window that owns the agent when the registry is wired', () => {
+			const ownerWindow = makeFakeWindow();
+			const mainWindow = makeFakeWindow();
+			const registry = makeFakeRegistry({ 'agent-7': 'win-owner' }, { 'win-owner': ownerWindow });
+
+			const resolved = resolveNotificationClickWindow('agent-7', {
+				getMainWindow: () => mainWindow,
+				getWindowRegistry: () => registry,
+			});
+
+			expect(resolved).toBe(ownerWindow);
+			expect(registry.getWindowForSession).toHaveBeenCalledWith('agent-7');
+		});
+
+		it('falls back to the main window when no sessionId is provided', () => {
+			const mainWindow = makeFakeWindow();
+			const registry = makeFakeRegistry({}, {});
+
+			const resolved = resolveNotificationClickWindow(undefined, {
+				getMainWindow: () => mainWindow,
+				getWindowRegistry: () => registry,
+			});
+
+			expect(resolved).toBe(mainWindow);
+			expect(registry.getWindowForSession).not.toHaveBeenCalled();
+		});
+
+		it('falls back to the main window when the registry is not wired', () => {
+			const mainWindow = makeFakeWindow();
+
+			const resolved = resolveNotificationClickWindow('agent-7', {
+				getMainWindow: () => mainWindow,
+			});
+
+			expect(resolved).toBe(mainWindow);
+		});
+
+		it('falls back to the main window when the agent is untracked', () => {
+			const mainWindow = makeFakeWindow();
+			const registry = makeFakeRegistry({}, {});
+
+			const resolved = resolveNotificationClickWindow('ghost', {
+				getMainWindow: () => mainWindow,
+				getWindowRegistry: () => registry,
+			});
+
+			expect(resolved).toBe(mainWindow);
+		});
+
+		it('falls back to the main window when the owning window was destroyed', () => {
+			const mainWindow = makeFakeWindow();
+			const destroyedOwner = makeFakeWindow(true);
+			const registry = makeFakeRegistry(
+				{ 'agent-7': 'win-owner' },
+				{ 'win-owner': destroyedOwner }
+			);
+
+			const resolved = resolveNotificationClickWindow('agent-7', {
+				getMainWindow: () => mainWindow,
+				getWindowRegistry: () => registry,
+			});
+
+			expect(resolved).toBe(mainWindow);
+		});
+
+		it('falls back to the main window when the resolved windowId is no longer registered', () => {
+			const mainWindow = makeFakeWindow();
+			// getWindowForSession resolves an id, but get() returns undefined (stale).
+			const registry = makeFakeRegistry({ 'agent-7': 'win-stale' }, {});
+
+			const resolved = resolveNotificationClickWindow('agent-7', {
+				getMainWindow: () => mainWindow,
+				getWindowRegistry: () => registry,
+			});
+
+			expect(resolved).toBe(mainWindow);
+		});
+
+		it('returns null when neither a registry match nor a main window is available', () => {
+			const registry = makeFakeRegistry({}, {});
+
+			const resolved = resolveNotificationClickWindow('agent-7', {
+				getMainWindow: () => null,
+				getWindowRegistry: () => registry,
+			});
+
+			expect(resolved).toBeNull();
+		});
+
+		it('routes the notification click handler through the owning window', async () => {
+			const { dispatchDeepLink } = await import('../../../../main/deep-links');
+			const ownerWindow = makeFakeWindow();
+			const mainWindow = makeFakeWindow();
+			const registry = makeFakeRegistry({ 'agent-7': 'win-owner' }, { 'win-owner': ownerWindow });
+
+			// Re-register the handlers with a registry-aware dependency set; this
+			// overwrites the channel entries captured in beforeEach.
+			registerNotificationsHandlers({
+				getMainWindow: () => mainWindow,
+				getWindowRegistry: () => registry,
+			});
+
+			const handler = handlers.get('notification:show')!;
+			await handler({}, 'Title', 'Body', 'agent-7');
+
+			const clickCall = mocks.mockNotificationOn.mock.calls.find(
+				(call: unknown[]) => call[0] === 'click'
+			);
+			expect(clickCall).toBeDefined();
+			// Invoke the click handler the way the OS would.
+			(clickCall![1] as () => void)();
+
+			expect(dispatchDeepLink).toHaveBeenCalledTimes(1);
+			// The second argument is the lazy window getter; it must resolve to the
+			// owning window, not the primary.
+			const windowGetter = vi.mocked(dispatchDeepLink).mock.calls[0][1];
+			expect(windowGetter()).toBe(ownerWindow);
+			expect(registry.getWindowForSession).toHaveBeenCalledWith('agent-7');
 		});
 	});
 

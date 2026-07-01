@@ -38,6 +38,7 @@ import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { sidebarSessionEquality } from '../../stores/sessionEquality';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useInlineWizardContext } from '../../contexts/InlineWizardContext';
+import { useWindowContextOptional } from '../../contexts/WindowContext';
 import { getModalActions, useModalStore } from '../../stores/modalStore';
 import { SessionContextMenu } from './SessionContextMenu';
 import { GroupContextMenu } from './GroupContextMenu';
@@ -193,6 +194,13 @@ function SessionListInner(props: SessionListProps) {
 	// render the wand glyph on agent rows AND on the group header / Bookmarks
 	// header for the group(s) those agents live in.
 	const { wizardActiveSessions } = useInlineWizardContext();
+
+	// Multi-window awareness. Optional so the Left Bar still renders standalone
+	// (e.g. in isolation tests) outside a WindowProvider - it degrades to no
+	// window badges and today's local-only click behaviour. The Left Bar always
+	// lists every agent; `getSessionWindow` tells us which rows live in another
+	// window so we can badge them and focus that window on click.
+	const windowCtx = useWindowContextOptional();
 
 	// Roll wizard activity up to the container level (group + bookmarks). For
 	// each session running the wizard, resolve to its parent if it's a worktree
@@ -652,10 +660,25 @@ function SessionListInner(props: SessionListProps) {
 	const sessionsRef = useRef(sessions);
 	sessionsRef.current = sessions;
 
+	// Read cross-window ownership through a ref so the cached select handlers stay
+	// stable (keyed only on the session-id set, to preserve SessionItem's memo
+	// bail-out) yet always consult the latest ownership when actually clicked.
+	const getSessionWindowRef = useRef(windowCtx?.getSessionWindow);
+	getSessionWindowRef.current = windowCtx?.getSessionWindow;
+
 	const selectHandlers = useMemo(() => {
 		const map = new Map<string, () => void>();
 		sessionsRef.current.forEach((s) => {
-			map.set(s.id, () => setActiveSessionId(s.id));
+			map.set(s.id, () => {
+				// Agent lives in another window: focus that window instead of stealing
+				// it (single-window-per-agent). Otherwise select it here as before.
+				const otherWindow = getSessionWindowRef.current?.(s.id);
+				if (otherWindow) {
+					void window.maestro.windows.focusWindow(otherWindow.windowId);
+					return;
+				}
+				setActiveSessionId(s.id);
+			});
 		});
 		return map;
 	}, [sessionIdsKey, setActiveSessionId]);
@@ -780,6 +803,7 @@ function SessionListInner(props: SessionListProps) {
 					wizardActive={wizardActiveSessions.has(session.id)}
 					wizardGeneratingDocs={!!wizardActiveSessions.get(session.id)?.isGeneratingDocs}
 					worktreeChildCount={worktreeChildren.length}
+					otherWindowNumber={windowCtx?.getSessionWindow(session.id)?.windowNumber}
 					dragDisabled={dragDisabled}
 					onSelect={selectHandlers.get(session.id)!}
 					onDragStart={dragStartHandlers.get(session.id)!}
@@ -840,6 +864,7 @@ function SessionListInner(props: SessionListProps) {
 										cueActiveRun={cueSessionMap.get(child.id)?.active}
 										wizardActive={wizardActiveSessions.has(child.id)}
 										wizardGeneratingDocs={!!wizardActiveSessions.get(child.id)?.isGeneratingDocs}
+										otherWindowNumber={windowCtx?.getSessionWindow(child.id)?.windowNumber}
 										dragDisabled={dragDisabled}
 										onSelect={selectHandlers.get(child.id)!}
 										onDragStart={dragStartHandlers.get(child.id)!}

@@ -14,6 +14,7 @@ import { WorktreePill } from './ui/WorktreePill';
 import { CueIndicator } from './SessionList/CueIndicator';
 import { StartupCommandIndicator } from './SessionList/StartupCommandIndicator';
 import { WizardIndicator } from './SessionList/WizardIndicator';
+import { WindowBadge } from './SessionList/WindowBadge';
 import { useSettingsStore } from '../stores/settingsStore';
 import { COLORBLIND_STATUS_COLORS } from '../constants/colorblindPalettes';
 import { abbreviateGroupName } from '../../shared/formatters';
@@ -120,6 +121,7 @@ export interface SessionItemProps {
 	wizardActive?: boolean; // Inline wizard active on at least one tab of this agent
 	wizardGeneratingDocs?: boolean; // Wizard is generating Auto Run documents (drives pulse)
 	worktreeChildCount?: number; // Number of worktree children (used for collapsed count badge)
+	otherWindowNumber?: number; // 1-based window number when this agent is open in a DIFFERENT window (multi-window)
 
 	/**
 	 * When true, the row can neither be dragged nor accept drops. Used for the
@@ -174,6 +176,7 @@ export const SessionItem = memo(function SessionItem({
 	wizardActive = false,
 	wizardGeneratingDocs = false,
 	worktreeChildCount,
+	otherWindowNumber,
 	dragDisabled = false,
 	onSelect,
 	onDragStart,
@@ -397,6 +400,9 @@ export const SessionItem = memo(function SessionItem({
 
 			{/* Right side: Indicators and actions */}
 			<div className="flex items-center gap-2 ml-2">
+				{/* Multi-window badge: this agent is open in a different window. Clicking
+				    the row focuses that window rather than stealing the agent. */}
+				<WindowBadge windowNumber={otherWindowNumber} />
 				{/* Group badge (only in bookmark variant when session belongs to a group).
 				    Hidden entirely when showGroupLabelInBookmarks is off. Abbreviated by
 				    default; the showFullGroupLabelInBookmarks setting swaps in the full group

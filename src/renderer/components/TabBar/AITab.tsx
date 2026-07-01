@@ -6,6 +6,7 @@ import type { CopyContextOptions } from '../../hooks/tabs/useTabExportHandlers';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { buildSessionDeepLink } from '../../../shared/deep-link-urls';
 import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
+import { setTabDragImage } from '../../utils/tabDragImage';
 import { getTabKindColor } from './tabBarUtils';
 import { AITabOverlayMenu } from './AITabOverlayMenu';
 import { WizardIndicator } from '../SessionList/WizardIndicator';
@@ -26,6 +27,13 @@ export interface AITabProps {
 	onClose: (tabId: string) => void;
 	/** Stable callback - receives tabId and event */
 	onDragStart: (tabId: string, e: React.DragEvent) => void;
+	/**
+	 * Stable callback - continuous drag sampling (HTML5 `onDrag`) used for
+	 * cross-window drag-out detection. No tabId: the dragged tab is already known
+	 * from onDragStart, and drag-out concerns the whole agent/window. Optional, so
+	 * tab types that can't be detached simply omit it.
+	 */
+	onDrag?: (e: React.DragEvent) => void;
 	/** Stable callback - receives tabId and event */
 	onDragOver: (tabId: string, e: React.DragEvent) => void;
 	onDragEnd: () => void;
@@ -55,6 +63,13 @@ export interface AITabProps {
 	onMoveToFirst?: (tabId: string) => void;
 	/** Stable callback - receives tabId */
 	onMoveToLast?: (tabId: string) => void;
+	/**
+	 * Stable callback - detach this agent into a brand-new window. Receives tabId
+	 * for signature parity with the other move actions, though the move operates on
+	 * the whole agent (session), not a single tab. Undefined hides the menu item
+	 * (no multi-window context).
+	 */
+	onMoveToNewWindow?: (tabId: string) => void;
 	/** Is this the first tab? */
 	isFirstTab?: boolean;
 	/** Is this the last tab? */
@@ -98,6 +113,7 @@ export const AITab = memo(function AITab({
 	onSelect,
 	onClose,
 	onDragStart,
+	onDrag,
 	onDragOver,
 	onDragEnd,
 	onDrop,
@@ -114,6 +130,7 @@ export const AITab = memo(function AITab({
 	onPublishGist,
 	onMoveToFirst,
 	onMoveToLast,
+	onMoveToNewWindow,
 	isFirstTab,
 	isLastTab,
 	shortcutHint,
@@ -154,7 +171,9 @@ export const AITab = memo(function AITab({
 			// Only show overlay if there's something meaningful to show:
 			// - Tabs with sessions or logs: always show (for session/context actions)
 			// - Tabs without sessions or logs: show if there are move actions available
-			if (!tab.agentSessionId && !tab.logs?.length && isFirstTab && isLastTab) return false;
+			//   (reorder to first/last, or detach the agent to a new window)
+			if (!tab.agentSessionId && !tab.logs?.length && isFirstTab && isLastTab && !onMoveToNewWindow)
+				return false;
 			return true;
 		},
 	});
@@ -278,6 +297,15 @@ export const AITab = memo(function AITab({
 		[onMoveToLast, tabId, setOverlayOpen]
 	);
 
+	const handleMoveToNewWindowClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			onMoveToNewWindow?.(tabId);
+			setOverlayOpen(false);
+		},
+		[onMoveToNewWindow, tabId, setOverlayOpen]
+	);
+
 	const handleCopyContextClick = useCallback(
 		(e: React.MouseEvent) => {
 			e.stopPropagation();
@@ -360,9 +388,21 @@ export const AITab = memo(function AITab({
 
 	const handleTabDragStart = useCallback(
 		(e: React.DragEvent) => {
+			// Floating themed preview that follows the cursor across windows / empty
+			// space during a drag-out (the OS renders it, unlike a clipped fixed div).
+			// getTabDisplayName is used inline rather than the memoized `displayName`
+			// below to avoid a temporal-dead-zone read in this earlier-declared callback.
+			setTabDragImage(e, { label: getTabDisplayName(tab, sessionAgentSessionId), theme });
 			onDragStart(tabId, e);
 		},
-		[onDragStart, tabId]
+		[onDragStart, tabId, tab, sessionAgentSessionId, theme]
+	);
+
+	const handleTabDrag = useCallback(
+		(e: React.DragEvent) => {
+			onDrag?.(e);
+		},
+		[onDrag]
 	);
 
 	const handleTabDragOver = useCallback(
@@ -456,6 +496,7 @@ export const AITab = memo(function AITab({
 			}}
 			draggable
 			onDragStart={handleTabDragStart}
+			onDrag={handleTabDrag}
 			onDragOver={handleTabDragOver}
 			onDragEnd={onDragEnd}
 			onDrop={handleTabDrop}
@@ -596,6 +637,7 @@ export const AITab = memo(function AITab({
 							onPublishGistClick={handlePublishGistClick}
 							onMoveToFirstClick={handleMoveToFirstClick}
 							onMoveToLastClick={handleMoveToLastClick}
+							onMoveToNewWindowClick={handleMoveToNewWindowClick}
 							onCloseTabClick={handleCloseTabClick}
 							onCloseOtherTabsClick={handleCloseOtherTabsClick}
 							onCloseTabsLeftClick={handleCloseTabsLeftClick}
@@ -608,6 +650,7 @@ export const AITab = memo(function AITab({
 							onPublishGist={onPublishGist}
 							onMoveToFirst={onMoveToFirst}
 							onMoveToLast={onMoveToLast}
+							onMoveToNewWindow={onMoveToNewWindow}
 							onCloseOtherTabs={onCloseOtherTabs}
 							onCloseTabsLeft={onCloseTabsLeft}
 							onCloseTabsRight={onCloseTabsRight}

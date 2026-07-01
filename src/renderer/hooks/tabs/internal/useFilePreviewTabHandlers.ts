@@ -318,6 +318,8 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 					activeBrowserTabId: null,
 					activeTerminalTabId: null,
 					inputMode: 'ai',
+					// Selecting a standalone file tab leaves any active tiled group.
+					activeGroupId: null,
 				};
 			})
 		);

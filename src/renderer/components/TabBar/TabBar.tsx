@@ -1,22 +1,40 @@
 import React, { useState, useRef, useCallback, useEffect, memo, useMemo } from 'react';
 import { Bell } from 'lucide-react';
-import type { AITab } from '../../types';
+import type { AITab, UnifiedTabRef } from '../../types';
 import { hasDraft } from '../../utils/tabHelpers';
+import { updateSessionWith } from '../../stores/sessionStore';
+import { promotePaneToStandalone } from '../../utils/panelLayout';
+import {
+	writeTabTilePayload,
+	readTabTilePayload,
+	dragHasTabTilePayload,
+} from '../../utils/tabDragPayload';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { AITab as AITabComponent } from './AITab';
 import { BrowserTabItem } from './BrowserTabItem';
 import { FileTab } from './FileTab';
 import { TerminalTabItem } from './TerminalTabItem';
+import { GroupTabChip } from './GroupTabChip';
 import { NewTabPopover } from './NewTabPopover';
 import { SearchPopover } from './SearchPopover';
 import { isUnifiedTabActive, getShortcutHint } from './tabBarUtils';
 import { buildFileTabDisplayNames } from '../../hooks/tabs/internal/filePreviewTabHelpers';
+import { useTabDragOut } from '../../hooks/tabs/useTabDragOut';
+import { useWindowOwnsSession, useWindowContextOptional } from '../../contexts/WindowContext';
 import type { TabBarProps } from './types';
 import { logger } from '../../utils/logger';
 
 /** Approximate width of the sticky right "+" button area (px) */
 const STICKY_RIGHT_WIDTH = 48;
+
+/**
+ * Offset (px) applied to the drop point when spawning a new window from a tab
+ * dragged onto empty space. Shifts the window's top-left up and left of the
+ * cursor so the released tab lands near where the pointer is, rather than the
+ * window's corner snapping under the cursor.
+ */
+const DRAG_OUT_NEW_WINDOW_OFFSET = { x: 100, y: 50 };
 
 /**
  * TabBar component for displaying the unified tab strip.
@@ -74,6 +92,11 @@ function TabBarInner({
 	onTerminalTabConfigureStartupCommand,
 	onCopyBrowserContent,
 	onSendBrowserContentToAgent,
+	tabGroups,
+	activeGroupId,
+	onGroupSelect,
+	onGroupRename,
+	onGroupBreakApart,
 	colorBlindMode,
 	sshRemote,
 }: TabBarProps) {
@@ -109,6 +132,39 @@ function TabBarInner({
 
 	const activeTab = tabs.find((t) => t.id === activeTabId);
 	const activeTabName = activeTab?.name ?? null;
+
+	// Multi-window scoping: a window only renders the tab strip of an agent it
+	// owns. The primary window is the catch-all owner; a secondary window owns
+	// only its scoped agents, so it shows an empty tab area for any agent it
+	// doesn't own. Outside a WindowProvider (isolation tests) or without a
+	// sessionId, this resolves to true - single-window behaviour is unchanged.
+	const ownsActiveAgent = useWindowOwnsSession(sessionId);
+
+	// The owning window's move action (null outside a WindowProvider, e.g. the
+	// single-window app / isolation tests). Used to dock a dragged-out agent into
+	// another Maestro window on drop.
+	const windowCtx = useWindowContextOptional();
+
+	// Drag-out detection (Phase 3 multi-window): tracks a tab drag in screen
+	// coordinates and flips `isDraggingOut` once the cursor leaves this window's
+	// bounds, resolving which other Maestro window (if any) sits under the cursor.
+	// In-bar reordering is unaffected - it runs on onDragOver/onDrop against
+	// sibling tabs and never consults this state.
+	const {
+		isDraggingOut,
+		beginDragOut,
+		trackDragOut,
+		getDragOutPoint,
+		isOutsideOwningWindow,
+		getTargetWindowId,
+		endDragOut,
+	} = useTabDragOut();
+
+	// Cross-window drop-zone highlight (Phase 3): true while a tab from ANOTHER
+	// window is being dragged over THIS one as a dock target. Driven by the
+	// `windows:highlightDropZone` push the WindowContext subscribes to. Outside a
+	// WindowProvider (single-window app / isolation tests) it is simply false.
+	const isDropTarget = windowCtx?.isDropTarget ?? false;
 
 	// Scroll active tab into view
 	useEffect(() => {
@@ -154,23 +210,25 @@ function TabBarInner({
 	// Filter tabs for display. Memoized so the filter only re-runs when the
 	// inputs actually change — without this, every TabBar render (e.g. on input
 	// keystrokes or unrelated session updates) re-walks the tabs array.
-	const displayedTabs = useMemo(
-		() =>
-			showUnreadOnly
-				? tabs.filter(
-						(t) =>
-							t.hasUnread ||
-							t.state === 'busy' ||
-							(inputMode === 'ai' && t.id === activeTabId) ||
-							hasDraft(t) ||
-							(showStarredInUnreadFilter && t.starred)
-					)
-				: tabs,
-		[tabs, showUnreadOnly, inputMode, activeTabId, showStarredInUnreadFilter]
-	);
+	const displayedTabs = useMemo(() => {
+		// Window doesn't own this agent: render an empty tab strip (scoped window).
+		if (!ownsActiveAgent) return [];
+		return showUnreadOnly
+			? tabs.filter(
+					(t) =>
+						t.hasUnread ||
+						t.state === 'busy' ||
+						(inputMode === 'ai' && t.id === activeTabId) ||
+						hasDraft(t) ||
+						(showStarredInUnreadFilter && t.starred)
+				)
+			: tabs;
+	}, [tabs, showUnreadOnly, inputMode, activeTabId, showStarredInUnreadFilter, ownsActiveAgent]);
 
 	const displayedUnifiedTabs = useMemo(() => {
 		if (!unifiedTabs) return null;
+		// Window doesn't own this agent: render an empty tab strip (scoped window).
+		if (!ownsActiveAgent) return [];
 		if (!showUnreadOnly) return unifiedTabs;
 		// In filter mode: AI tabs filtered by unread/busy/active/draft;
 		// file and terminal tabs always shown (they have no unread state,
@@ -203,14 +261,35 @@ function TabBarInner({
 		inputMode,
 		showStarredInUnreadFilter,
 		showFilePreviewsInUnreadFilter,
+		ownsActiveAgent,
 	]);
 
 	// Drag handlers
-	const handleDragStart = useCallback((tabId: string, e: React.DragEvent) => {
-		e.dataTransfer.effectAllowed = 'move';
-		e.dataTransfer.setData('text/plain', tabId);
-		setDraggingTabId(tabId);
-	}, []);
+	const handleDragStart = useCallback(
+		(tabId: string, e: React.DragEvent) => {
+			e.dataTransfer.effectAllowed = 'move';
+			// text/plain (the tab id) drives BOTH the in-bar reorder (onDrop against a
+			// sibling chip) and the multi-window drag-out/dock gesture. Untouched here.
+			e.dataTransfer.setData('text/plain', tabId);
+			// ADD (never replace) the tiling payload so a drop onto the tiled panel can
+			// identify this tab. Resolve the tab's type from the unified list (legacy
+			// mode is AI-only). Group chips aren't draggable, so this is a leaf tab.
+			const unifiedType = unifiedTabs?.find((ut) => ut.id === tabId)?.type;
+			const ref: UnifiedTabRef | null =
+				unifiedType && unifiedType !== 'group'
+					? { type: unifiedType, id: tabId }
+					: unifiedTabs
+						? null
+						: { type: 'ai', id: tabId };
+			if (ref) writeTabTilePayload(e.dataTransfer, { ref, source: 'tab-bar' });
+			setDraggingTabId(tabId);
+			// Snapshot this window's bounds so onDrag can detect when the cursor
+			// leaves it. Harmless for non-AI tabs (which don't wire onDrag): the
+			// snapshot is just never consulted.
+			beginDragOut();
+		},
+		[beginDragOut, unifiedTabs]
+	);
 
 	const handleDragOver = useCallback(
 		(tabId: string, e: React.DragEvent) => {
@@ -221,14 +300,77 @@ function TabBarInner({
 		[draggingTabId]
 	);
 
+	// Continuous drag sampling (HTML5 onDrag) - screenX/screenY are screen-relative,
+	// so they compare directly against the window bounds captured on drag start.
+	const handleDrag = useCallback(
+		(e: React.DragEvent) => {
+			trackDragOut(e.screenX, e.screenY);
+		},
+		[trackDragOut]
+	);
+
 	const handleDragEnd = useCallback(() => {
+		// Cross-window drop: a tab dragged out of this window and released over
+		// another Maestro window docks the agent there; released over empty space it
+		// detaches into a brand-new window at the drop point. The drag-out hook
+		// resolved the window under the cursor as samples arrived; read it now (it is
+		// null over empty space or inside this window).
+		const targetWindowId = getTargetWindowId();
+		if (sessionId && windowCtx) {
+			if (targetWindowId) {
+				// Dock into the existing window under the cursor.
+				void windowCtx.moveSessionToWindow(sessionId, targetWindowId);
+			} else if (isOutsideOwningWindow()) {
+				// Released outside this window with no window under the cursor: spawn a
+				// new window at the drop point. A null target while still inside the bar
+				// is an in-bar reorder (handled by onDrop), so isOutsideOwningWindow()
+				// gates out that case.
+				const point = getDragOutPoint();
+				if (point) {
+					void windowCtx.moveSessionToNewWindow(sessionId, {
+						x: point.x - DRAG_OUT_NEW_WINDOW_OFFSET.x,
+						y: point.y - DRAG_OUT_NEW_WINDOW_OFFSET.y,
+					});
+				}
+			}
+		}
 		setDraggingTabId(null);
 		setDragOverTabId(null);
-	}, []);
+		endDragOut();
+	}, [getTargetWindowId, isOutsideOwningWindow, getDragOutPoint, sessionId, windowCtx, endDragOut]);
+
+	// Promote a tiled pane back to a standalone tab when its title bar is dropped
+	// onto the tab bar. `insertIndex` is the target position in unifiedTabOrder
+	// (append when null). Reuses the pure promote helper (removes the leaf, re-adds
+	// the ref, auto-dissolves the group below two panes). No-op when the payload is
+	// not a pane drag or lacks the group/leaf ids.
+	const promotePaneFromDrag = useCallback(
+		(e: React.DragEvent, insertIndex: number | null): boolean => {
+			const payload = readTabTilePayload(e.dataTransfer);
+			if (!payload || payload.source !== 'pane' || !payload.groupId || !payload.leafId) {
+				return false;
+			}
+			if (!sessionId) return false;
+			const groupId = payload.groupId;
+			const leafId = payload.leafId;
+			updateSessionWith(sessionId, (s) =>
+				promotePaneToStandalone(s, groupId, leafId, insertIndex ?? s.unifiedTabOrder.length)
+			);
+			return true;
+		},
+		[sessionId]
+	);
 
 	const handleDrop = useCallback(
 		(targetTabId: string, e: React.DragEvent) => {
 			e.preventDefault();
+			// A tiled pane dropped onto a chip promotes out at that chip's position.
+			const targetIndex = (unifiedTabs ?? []).findIndex((ut) => ut.id === targetTabId);
+			if (promotePaneFromDrag(e, targetIndex === -1 ? null : targetIndex)) {
+				setDraggingTabId(null);
+				setDragOverTabId(null);
+				return;
+			}
 			const sourceTabId = e.dataTransfer.getData('text/plain');
 			if (sourceTabId && sourceTabId !== targetTabId) {
 				if (unifiedTabs && onUnifiedTabReorder) {
@@ -244,7 +386,31 @@ function TabBarInner({
 			setDraggingTabId(null);
 			setDragOverTabId(null);
 		},
-		[tabs, onTabReorder, unifiedTabs, onUnifiedTabReorder]
+		[tabs, onTabReorder, unifiedTabs, onUnifiedTabReorder, promotePaneFromDrag]
+	);
+
+	// Drop onto the empty area of the tab bar (not a chip): only reacts to a pane
+	// promote-out (appended to the end of the strip). A plain tab-chip reorder or a
+	// multi-window drag-out is unaffected - those never target the bar background.
+	const handleBarDragOver = useCallback((e: React.DragEvent) => {
+		if (dragHasTabTilePayload(e.dataTransfer)) {
+			e.preventDefault();
+			e.dataTransfer.dropEffect = 'move';
+		}
+	}, []);
+
+	const handleBarDrop = useCallback(
+		(e: React.DragEvent) => {
+			// Only handle drops that land on the bar background, not bubbling from a
+			// chip (chips call handleDrop and stop there).
+			if (e.defaultPrevented) return;
+			if (promotePaneFromDrag(e, null)) {
+				e.preventDefault();
+				setDraggingTabId(null);
+				setDragOverTabId(null);
+			}
+		},
+		[promotePaneFromDrag]
 	);
 
 	const handleRenameRequest = useCallback(
@@ -293,6 +459,15 @@ function TabBarInner({
 		},
 		[tabs, onTabReorder, unifiedTabs, onUnifiedTabReorder]
 	);
+
+	// "Move to New Window" (right-click action): detach this agent into a brand-new
+	// window via the WindowContext helper - the same path the tab drag-out-to-empty-
+	// space gesture uses, minus a drop point (the main process picks the position).
+	// Operates on the whole agent (sessionId), so the per-tab id is unused. Only
+	// wired when a WindowProvider is present (the AITab hides the item otherwise).
+	const handleMoveToNewWindow = useCallback(() => {
+		if (sessionId && windowCtx) void windowCtx.moveSessionToNewWindow(sessionId);
+	}, [sessionId, windowCtx]);
 
 	// Close wrappers — forward the clicked tab id as the pivot so the operation
 	// closes relative to the tab whose menu was used, not whatever happens to be
@@ -372,6 +547,7 @@ function TabBarInner({
 		onSelect: onTabSelect,
 		onClose: onTabClose,
 		onDragStart: handleDragStart,
+		onDrag: handleDrag,
 		onDragOver: handleDragOver,
 		onDragEnd: handleDragEnd,
 		onDrop: handleDrop,
@@ -396,6 +572,10 @@ function TabBarInner({
 			!isLastTab && (useUnifiedReorder ? onUnifiedTabReorder : onTabReorder)
 				? handleMoveToLast
 				: undefined,
+		// Detach-to-new-window is available whenever this window owns the agent (a
+		// WindowProvider is mounted and we have a session id). Hidden in the single-
+		// window app fallback / isolation tests where no provider exists.
+		onMoveToNewWindow: windowCtx && sessionId ? handleMoveToNewWindow : undefined,
 		isFirstTab,
 		isLastTab,
 		shortcutHint,
@@ -412,9 +592,25 @@ function TabBarInner({
 	return (
 		<div
 			ref={tabBarRef}
-			className="flex items-end gap-0.5 pt-2 border-b overflow-x-auto overflow-y-hidden no-scrollbar"
+			className="flex items-end gap-0.5 pt-2 border-b overflow-x-auto overflow-y-hidden no-scrollbar transition-shadow duration-150"
 			data-tour="tab-bar"
-			style={{ backgroundColor: theme.colors.bgSidebar, borderColor: theme.colors.border }}
+			// Accept a tiled pane's title-bar drag dropped onto the bar background to
+			// promote it back to a standalone tab. Chip reorder + multi-window drag-out
+			// are unaffected (they target chips / empty space outside the window).
+			onDragOver={handleBarDragOver}
+			onDrop={handleBarDrop}
+			// Surfaces drag-out detection: 'true' while a tab is being dragged beyond
+			// this window's bounds. Drives the cross-window move / detach feedback.
+			data-dragging-out={isDraggingOut ? 'true' : undefined}
+			// 'true' while a tab from another window is dragged over this one - lights
+			// up the drop zone (accent inset ring) to advertise "drop here to dock".
+			data-drop-target={isDropTarget ? 'true' : undefined}
+			style={{
+				backgroundColor: isDropTarget ? `${theme.colors.accent}14` : theme.colors.bgSidebar,
+				borderColor: theme.colors.border,
+				// Accent inset ring on hover-as-drop-target, themed to match the tab bar.
+				boxShadow: isDropTarget ? `inset 0 0 0 2px ${theme.colors.accent}` : undefined,
+			}}
 		>
 			{/* Sticky left: search + unread filter */}
 			<div
@@ -455,8 +651,10 @@ function TabBarInner({
 				</button>
 			</div>
 
-			{/* Empty state when filter is on but no unread tabs */}
+			{/* Empty state when filter is on but no unread tabs (only for an owned agent;
+				a scoped window with no owned agent renders a plain empty tab area) */}
 			{showUnreadOnly &&
+				ownsActiveAgent &&
 				(displayedUnifiedTabs ? displayedUnifiedTabs.length === 0 : displayedTabs.length === 0) && (
 					<div
 						className="flex items-center px-3 py-1.5 text-xs italic shrink-0 self-center mb-1"
@@ -595,7 +793,7 @@ function TabBarInner({
 									/>
 								</React.Fragment>
 							);
-						} else {
+						} else if (unifiedTab.type === 'browser') {
 							const browserTab = unifiedTab.data;
 							return (
 								<React.Fragment key={unifiedTab.id}>
@@ -633,6 +831,8 @@ function TabBarInner({
 								</React.Fragment>
 							);
 						}
+						// Group refs are rendered as separate chips below, not inline here.
+						return null;
 					})
 				: /* Legacy mode — AI tabs only */
 					displayedTabs.map((tab, index) => {
@@ -667,6 +867,23 @@ function TabBarInner({
 							</React.Fragment>
 						);
 					})}
+
+			{/* Tab group chips - each tiled group shows as a single entry with a
+			    split/grid glyph so it reads as a group. Clicking activates the group;
+			    double-click (or the overlay menu) renames it; the overlay's "Break
+			    apart" splits it back into standalone tabs (gated by a confirm dialog). */}
+			{ownsActiveAgent &&
+				(tabGroups ?? []).map((group) => (
+					<GroupTabChip
+						key={group.id}
+						group={group}
+						isActive={group.id === activeGroupId}
+						theme={theme}
+						onSelect={(groupId) => onGroupSelect?.(groupId)}
+						onRename={onGroupRename}
+						onBreakApart={onGroupBreakApart}
+					/>
+				))}
 
 			{/* New tab button + popover */}
 			<NewTabPopover

@@ -13,6 +13,7 @@ import { parseSessionId } from '../../../utils/sessionIdParser';
 import { estimateContextUsage, estimateAccumulatedGrowth } from '../../../utils/contextUsage';
 import { getContextWindowForAgent } from '../../../../shared/agentConstants';
 import { useAgentStore } from '../../../stores/agentStore';
+import { useOwnedSessionGate } from './useOwnedSessionGate';
 import type { BatchedUpdater } from './types';
 
 /**
@@ -30,10 +31,13 @@ export interface UseAgentUsageListenerDeps {
 }
 
 export function useAgentUsageListener(deps: UseAgentUsageListenerDeps): void {
+	const ownedGate = useOwnedSessionGate();
 	useEffect(() => {
 		const getSessions = () => useSessionStore.getState().sessions;
 
 		const unsubscribe = window.maestro.process.onUsage((sessionId: string, usageStats) => {
+			// Window scoping: ignore agents this window doesn't own (broadcast events).
+			if (!ownedGate.current?.(sessionId)) return;
 			const parsed = parseSessionId(sessionId);
 			const { actualSessionId, tabId, baseSessionId } = parsed;
 
@@ -83,5 +87,5 @@ export function useAgentUsageListener(deps: UseAgentUsageListenerDeps): void {
 		return () => {
 			unsubscribe();
 		};
-	}, [deps.batchedUpdater, deps.contextWarningYellowThreshold]);
+	}, [deps.batchedUpdater, deps.contextWarningYellowThreshold, ownedGate]);
 }

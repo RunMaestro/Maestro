@@ -154,6 +154,18 @@ export const CREATE_SHORTCUT_USAGE_DAILY_SQL = `
 `;
 
 // ============================================================================
+// Multi-Window Usage Daily (Migration v8)
+// ============================================================================
+
+export const CREATE_MULTI_WINDOW_USAGE_DAILY_SQL = `
+  CREATE TABLE IF NOT EXISTS multi_window_usage_daily (
+    date TEXT PRIMARY KEY,
+    windows_opened INTEGER NOT NULL DEFAULT 0,
+    peak_concurrent INTEGER NOT NULL DEFAULT 0
+  )
+`;
+
+// ============================================================================
 // Compound Indexes (Migration v4)
 // ============================================================================
 

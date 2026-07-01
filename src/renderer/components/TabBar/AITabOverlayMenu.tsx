@@ -13,6 +13,7 @@ import {
 	Share2,
 	ChevronsLeft,
 	ChevronsRight,
+	AppWindow,
 	X,
 } from 'lucide-react';
 import type { AITab, Theme } from '../../types';
@@ -45,6 +46,7 @@ export interface AITabOverlayMenuProps {
 	onPublishGistClick: (e: React.MouseEvent) => void;
 	onMoveToFirstClick: (e: React.MouseEvent) => void;
 	onMoveToLastClick: (e: React.MouseEvent) => void;
+	onMoveToNewWindowClick: (e: React.MouseEvent) => void;
 	onCloseTabClick: (e: React.MouseEvent) => void;
 	onCloseOtherTabsClick: (e: React.MouseEvent) => void;
 	onCloseTabsLeftClick: (e: React.MouseEvent) => void;
@@ -58,6 +60,8 @@ export interface AITabOverlayMenuProps {
 	onPublishGist?: (tabId: string) => void;
 	onMoveToFirst?: (tabId: string) => void;
 	onMoveToLast?: (tabId: string) => void;
+	/** Detach this agent into a brand-new window. Undefined = item hidden (no window context). */
+	onMoveToNewWindow?: (tabId: string) => void;
 	onCloseOtherTabs?: (tabId: string) => void;
 	onCloseTabsLeft?: (tabId: string) => void;
 	onCloseTabsRight?: (tabId: string) => void;
@@ -89,6 +93,7 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 	onPublishGistClick,
 	onMoveToFirstClick,
 	onMoveToLastClick,
+	onMoveToNewWindowClick,
 	onCloseTabClick,
 	onCloseOtherTabsClick,
 	onCloseTabsLeftClick,
@@ -101,6 +106,7 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 	onPublishGist,
 	onMoveToFirst,
 	onMoveToLast,
+	onMoveToNewWindow,
 	onCloseOtherTabs,
 	onCloseTabsLeft,
 	onCloseTabsRight,
@@ -312,7 +318,7 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 				)}
 
 				{/* Tab Move Actions Section - divider and move options */}
-				{(onMoveToFirst || onMoveToLast) && (
+				{(onMoveToFirst || onMoveToLast || onMoveToNewWindow) && (
 					<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
 				)}
 
@@ -337,6 +343,19 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 					>
 						<ChevronsRight className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 						Move to Last Position
+					</button>
+				)}
+
+				{/* Move to New Window - detach this agent into its own window. Only
+				    available in a multi-window context (handler omitted otherwise). */}
+				{onMoveToNewWindow && (
+					<button
+						onClick={onMoveToNewWindowClick}
+						className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs transition-colors hover:bg-white/10"
+						style={{ color: theme.colors.textMain }}
+					>
+						<AppWindow className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+						Move to New Window
 					</button>
 				)}
 

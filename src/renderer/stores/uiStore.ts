@@ -45,6 +45,11 @@ export interface UIStoreState {
 	activeFocus: FocusArea;
 	activeRightTab: RightPanelTab;
 
+	// Tab tiling: id of the pane currently maximized/zoomed to fill the whole
+	// panel (Ctrl+Cmd+Z). Transient and non-persisted, per the spec - toggling
+	// again clears it. null when no pane is zoomed.
+	zoomedPaneId: string | null;
+
 	// Sidebar collapse/expand
 	bookmarksCollapsed: boolean;
 
@@ -122,6 +127,9 @@ export interface UIStoreActions {
 	// Focus
 	setActiveFocus: (focus: FocusArea | ((prev: FocusArea) => FocusArea)) => void;
 	setActiveRightTab: (tab: RightPanelTab | ((prev: RightPanelTab) => RightPanelTab)) => void;
+
+	// Tab tiling: set/clear the zoomed (maximized) pane id.
+	setZoomedPaneId: (id: string | null) => void;
 
 	// Sidebar collapse/expand
 	setBookmarksCollapsed: (collapsed: boolean | ((prev: boolean) => boolean)) => void;
@@ -261,6 +269,7 @@ export const useUIStore = create<UIStore>()((set) => ({
 	rightPanelOpen: true,
 	activeFocus: 'main',
 	activeRightTab: 'files',
+	zoomedPaneId: null,
 	bookmarksCollapsed: false,
 	showUnreadOnly: false,
 	showUnreadAgentsOnly: false,
@@ -298,6 +307,8 @@ export const useUIStore = create<UIStore>()((set) => ({
 
 	setActiveFocus: (v) => set((s) => ({ activeFocus: resolve(v, s.activeFocus) })),
 	setActiveRightTab: (v) => set((s) => ({ activeRightTab: resolve(v, s.activeRightTab) })),
+
+	setZoomedPaneId: (id) => set({ zoomedPaneId: id }),
 
 	setBookmarksCollapsed: (v) =>
 		set((s) => {

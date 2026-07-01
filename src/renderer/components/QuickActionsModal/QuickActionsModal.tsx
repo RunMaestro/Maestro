@@ -13,6 +13,7 @@ import { useModalStore } from '../../stores/modalStore';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { gitService } from '../../services/git';
 import { useGitDetail } from '../../contexts/GitStatusContext';
+import { useWindowContextOptional } from '../../contexts/WindowContext';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { getOpenInLabel } from '../../utils/platformUtils';
 import { useListNavigation } from '../../hooks';
@@ -163,6 +164,13 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	// back empty despite the widget advertising changes (e.g. files were
 	// reverted or committed since the last poll).
 	const { refreshGitStatus } = useGitDetail();
+
+	// Multi-window: resolve an agent's owning window so palette agent-switching
+	// matches the Left Bar - picking an agent owned by another window focuses that
+	// window instead of yanking it over. Null outside a WindowProvider (single
+	// window / web / tests), where every jump switches locally as before.
+	const windowCtx = useWindowContextOptional();
+	const getSessionWindow = windowCtx?.getSessionWindow;
 
 	// UI store actions for search commands (avoid threading more props through 3-layer chain)
 	const setActiveFocus = useUIStore((s) => s.setActiveFocus);
@@ -397,6 +405,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		sessions,
 		setActiveSessionId,
 		revealJumpTarget,
+		getSessionWindow,
 	});
 
 	const groupChatActions = buildGroupChatJumpCommands({
@@ -716,6 +725,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		activeBatchSessionIds,
 		setActiveSessionId,
 		revealJumpTarget,
+		getSessionWindow,
 	});
 
 	const actions = mode === 'agents' ? agentActions : mode === 'main' ? mainActions : groupActions;

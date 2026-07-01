@@ -56,7 +56,8 @@ import {
 	setTerminalTabStartupCommand as setTerminalTabStartupCommandHelper,
 	getTerminalSessionId,
 } from '../utils/terminalTabHelpers';
-import { useSessionStore, selectActiveSession } from './sessionStore';
+import { useSessionStore, selectActiveSession, updateSessionWith } from './sessionStore';
+import { renameGroup as renameGroupHelper } from '../utils/panelLayout';
 import { logger } from '../utils/logger';
 
 /**
@@ -188,6 +189,14 @@ export interface TabStoreActions {
 	 * Update the name of an AI tab.
 	 */
 	updateTabName: (tabId: string, name: string | null) => void;
+
+	/**
+	 * Rename a tiled tab group (the group chip). Extends the tab-rename path to the
+	 * `'group'` ref: trims the input and falls back to `fallbackName` (the group's
+	 * auto-generated name) when the result is empty, so clearing the field never
+	 * leaves an unnamed chip. Persisted via updateSessionWith.
+	 */
+	renameGroup: (groupId: string, name: string, fallbackName: string) => void;
 
 	/**
 	 * Toggle read-only mode on an AI tab.
@@ -519,6 +528,12 @@ export const useTabStore = create<TabStore>()((set) => ({
 	markUnread: (tabId, unread = true) => updateAiTab(tabId, { hasUnread: unread }),
 
 	updateTabName: (tabId, name) => updateAiTab(tabId, { name }),
+
+	renameGroup: (groupId, name, fallbackName) => {
+		const session = getActiveSession();
+		if (!session) return;
+		updateSessionWith(session.id, (s) => renameGroupHelper(s, groupId, name, fallbackName));
+	},
 
 	toggleReadOnly: (tabId) => {
 		const session = getActiveSession();

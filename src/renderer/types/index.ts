@@ -613,8 +613,14 @@ export interface BrowserTab {
 /**
  * Reference to any tab in the unified tab system.
  * Used for unified tab ordering across different tab types.
+ *
+ * The `'group'` kind lets a tiled TabGroup appear as a single entry in the tab
+ * strip. Unlike the other kinds (which point at a tab in aiTabs/filePreviewTabs/
+ * terminalTabs/browserTabs), a group ref's `id` points at a TabGroup in
+ * `Session.tabGroups`; the group's own layout still references the underlying
+ * tabs by leaf. See PanelLayoutNode below.
  */
-export type UnifiedTabRef = { type: 'ai' | 'file' | 'terminal' | 'browser'; id: string };
+export type UnifiedTabRef = { type: 'ai' | 'file' | 'terminal' | 'browser' | 'group'; id: string };
 
 /**
  * Unified tab entry for rendering in TabBar.
@@ -625,7 +631,61 @@ export type UnifiedTab =
 	| { type: 'ai'; id: string; data: AITab }
 	| { type: 'file'; id: string; data: FilePreviewTab }
 	| { type: 'terminal'; id: string; data: TerminalTab }
-	| { type: 'browser'; id: string; data: BrowserTab };
+	| { type: 'browser'; id: string; data: BrowserTab }
+	| { type: 'group'; id: string; data: TabGroup };
+
+/**
+ * A node in a recursive split-pane layout tree (tmux-style tiling).
+ *
+ * A leaf does NOT own tab data - it references an existing tab by
+ * `{ type, id }` (a UnifiedTabRef). The actual tab lives in its current
+ * `aiTabs`/`filePreviewTabs`/`terminalTabs`/`browserTabs` array, so tiling a
+ * tab never copies or moves its state; the layout only describes where the
+ * tab renders. A split arranges its children horizontally (`row`) or
+ * vertically (`column`), with `sizes` holding one fractional weight per child
+ * (weights sum to 1).
+ */
+export type PanelLayoutNode =
+	| { kind: 'leaf'; id: string; tab: UnifiedTabRef }
+	| {
+			kind: 'split';
+			id: string;
+			direction: 'row' | 'column';
+			children: PanelLayoutNode[];
+			sizes: number[];
+	  };
+
+/**
+ * A tiled pane's content-box rectangle relative to the main-panel container,
+ * published by TiledLayout so keep-alive terminal/browser overlays can be
+ * repositioned onto each pane (they live at the panel level and can't render
+ * inline). See MainPanelContent / TiledLayout (Phase 04 tab tiling).
+ */
+export interface PaneRect {
+	top: number;
+	left: number;
+	width: number;
+	height: number;
+}
+
+/** Pane rects keyed by `tabRefKey` (e.g. `terminal:<id>` / `browser:<id>`). */
+export type PaneRects = Map<string, PaneRect>;
+
+/**
+ * A tiled group of tabs shown as one entry in the tab strip.
+ *
+ * `layout` is the recursive split tree whose leaves reference existing tabs
+ * (see PanelLayoutNode - leaves never own tab data). `focusedPaneId` is the id
+ * of the leaf node that currently has focus within the group (null when none).
+ * Groups live on `Session.tabGroups` and are strictly intra-session.
+ */
+export interface TabGroup {
+	id: string;
+	name: string;
+	layout: PanelLayoutNode;
+	focusedPaneId: string | null;
+	createdAt: number;
+}
 
 /**
  * Unified closed tab entry for undo functionality (Cmd+Shift+T).
@@ -791,6 +851,15 @@ export interface Session {
 	// Stack of recently closed tabs (AI, file, browser, and terminal) for undo (max 25, runtime-only, not persisted)
 	// Used by Cmd+Shift+T to restore any recently closed tab
 	unifiedClosedTabHistory: ClosedTabEntry[];
+
+	// Tab tiling (split panes) - each TabGroup renders several existing tabs side
+	// by side inside one tab-strip chip. Groups reference tabs by leaf, so the
+	// underlying tab data still lives in aiTabs/filePreviewTabs/etc.
+	tabGroups: TabGroup[];
+	// Currently active tab group id, or null when a standalone (non-tiled) tab is
+	// active. When set to an existing group, the main panel renders that group's
+	// tiled layout instead of the single-view content.
+	activeGroupId: string | null;
 
 	// Saved scroll position for terminal/shell output view
 	terminalScrollTop?: number;

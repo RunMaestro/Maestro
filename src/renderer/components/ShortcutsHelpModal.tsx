@@ -71,6 +71,15 @@ export function ShortcutsHelpModal({
 	}, [masteryPercentage]);
 	const usedShortcutIds = new Set(keyboardMasteryStats?.usedShortcuts ?? []);
 
+	// Shared "Window" badge styling, reused by the per-shortcut tag and the
+	// footer note so the two stay visually identical.
+	const windowBadgeClass =
+		'flex-shrink-0 inline-flex items-center text-[10px] leading-none px-1.5 py-0.5 rounded uppercase tracking-wide font-semibold';
+	const windowBadgeStyle = {
+		backgroundColor: theme.colors.bgActivity,
+		color: theme.colors.textDim,
+	};
+
 	const filteredShortcuts = Object.values(allShortcuts)
 		.filter((sc) => {
 			if (filterShortcutKeys.length > 0) {
@@ -229,6 +238,15 @@ export function ShortcutsHelpModal({
 								>
 									{sc.label}
 								</span>
+								{sc.windowScoped && (
+									<span
+										className={windowBadgeClass}
+										style={windowBadgeStyle}
+										title="Window-scoped: acts only on this window's agents"
+									>
+										Window
+									</span>
+								)}
 							</div>
 							<kbd
 								className="px-2 py-1 rounded border font-mono text-xs font-bold flex-shrink-0"
@@ -248,21 +266,37 @@ export function ShortcutsHelpModal({
 						No shortcuts found
 					</div>
 				)}
-				{/* Read more link */}
+				{/* Window scope + detach docs, then the read-more link */}
 				<div
-					className="mt-4 pt-3 border-t flex items-center gap-1.5"
+					className="mt-4 pt-3 border-t space-y-2.5"
 					style={{ borderColor: theme.colors.border }}
 				>
-					<ExternalLink className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
-					<button
-						onClick={() =>
-							openUrl(buildMaestroUrl('https://docs.runmaestro.ai/keyboard-shortcuts'))
-						}
-						className="text-xs hover:opacity-80 transition-colors"
-						style={{ color: theme.colors.accent }}
-					>
-						Read more at docs.runmaestro.ai/keyboard-shortcuts
-					</button>
+					<div className="space-y-1.5 text-xs" style={{ color: theme.colors.textDim }}>
+						<p>
+							Shortcuts tagged{' '}
+							<span className={windowBadgeClass} style={windowBadgeStyle}>
+								Window
+							</span>{' '}
+							act only on the current window's agents. Switching to an agent that is open in another
+							window focuses that window instead of moving the agent.
+						</p>
+						<p>
+							To open an agent in its own window, drag its tab out of the tab strip, or right-click
+							the tab and choose &ldquo;Move to New Window&rdquo;.
+						</p>
+					</div>
+					<div className="flex items-center gap-1.5">
+						<ExternalLink className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+						<button
+							onClick={() =>
+								openUrl(buildMaestroUrl('https://docs.runmaestro.ai/keyboard-shortcuts'))
+							}
+							className="text-xs hover:opacity-80 transition-colors"
+							style={{ color: theme.colors.accent }}
+						>
+							Read more at docs.runmaestro.ai/keyboard-shortcuts
+						</button>
+					</div>
 				</div>
 			</div>
 		</Modal>

@@ -17,6 +17,7 @@ import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
 import { withIpcErrorLogging, CreateHandlerOptions } from '../../utils/ipcHandler';
 import { getStatsDB } from '../../stats';
+import { isStatsCollectionEnabled } from '../../stats/utils';
 import { flushTelemetry } from '../../cue/cue-telemetry';
 import { enqueueQueryEvent, flushQueryEventsSync } from '../../stats/query-events-buffer';
 import {
@@ -44,16 +45,6 @@ export interface StatsHandlerDependencies {
 	settingsStore?: {
 		get: (key: string) => unknown;
 	};
-}
-
-/**
- * Check if stats collection is enabled
- */
-function isStatsCollectionEnabled(settingsStore?: { get: (key: string) => unknown }): boolean {
-	if (!settingsStore) return true; // Default to enabled if no settings store
-	const enabled = settingsStore.get('statsCollectionEnabled');
-	// Default to true if not explicitly set to false
-	return enabled !== false;
 }
 
 /**

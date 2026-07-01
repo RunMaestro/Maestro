@@ -22,6 +22,7 @@ import { gitService } from '../../services/git';
 import { generateId } from '../../utils/ids';
 import { rehydrateBrowserTab } from '../../utils/browserTabPersistence';
 import { getRepairedUnifiedTabOrder } from '../../utils/tabHelpers';
+import { normalizeTabGroups } from '../../utils/panelLayout';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { logger } from '../../utils/logger';
 
@@ -473,7 +474,12 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				correctedSession.agentErrorPaused === true &&
 				isLimitError(correctedSession.agentError);
 
-			return {
+			// Harden tab groups against dangling layout leaves before the session
+			// lands in the store: prune leaves whose tab no longer exists, collapse
+			// resulting single-child splits, dissolve sub-two-pane groups (promoting
+			// survivors), and clear a stale activeGroupId. A session with no groups
+			// round-trips untouched.
+			return normalizeTabGroups({
 				...restoredSession,
 				aiPid: 0,
 				terminalPid: 0,
@@ -501,7 +507,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				agentErrorPaused: isLimitPause ? true : false,
 				closedTabHistory: [],
 				unifiedTabOrder: repairedUnifiedTabOrder,
-			};
+			});
 		} catch (error) {
 			logger.error(`Error restoring session ${session.id}:`, undefined, error);
 			return {

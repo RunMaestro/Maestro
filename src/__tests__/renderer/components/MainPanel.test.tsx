@@ -14,10 +14,34 @@ import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { WindowProvider } from '../../../renderer/contexts/WindowContext';
+import type { WindowState } from '../../../shared/window-types';
 import {
 	clearCapabilitiesCache,
 	setCapabilitiesCache,
 } from '../../../renderer/hooks/agent/useAgentCapabilities';
+
+/** Set the renderer URL so WindowProvider reads the desired `?windowId=` param. */
+function setWindowUrl(search: string): void {
+	window.history.replaceState({}, '', search || '/');
+}
+
+/** Build a full WindowState, overriding only the fields a test cares about. */
+function makeWindowState(partial: Partial<WindowState> & Pick<WindowState, 'id'>): WindowState {
+	return {
+		x: 0,
+		y: 0,
+		width: 1200,
+		height: 800,
+		isMaximized: false,
+		isFullScreen: false,
+		sessionIds: [],
+		activeSessionId: null,
+		leftPanelCollapsed: false,
+		rightPanelCollapsed: false,
+		...partial,
+	};
+}
 
 // Mock child components to simplify testing - must be before MainPanel import
 
@@ -222,6 +246,9 @@ vi.mock('../../../renderer/services/git', () => ({
 vi.mock('../../../renderer/utils/tabHelpers', () => ({
 	getActiveTab: vi.fn((session: Session | null) => session?.aiTabs?.[0] || null),
 	getBusyTabs: vi.fn(() => []),
+	// resolveTabRefTitle (panelLayout) resolves AI-tab titles via this helper when
+	// MainPanelContent computes a single-view / group name; keep the mock complete.
+	getTabDisplayName: vi.fn((tab: { name?: string } | null) => tab?.name || 'AI'),
 }));
 
 // Mock shortcut formatter
@@ -593,6 +620,50 @@ describe('MainPanel', () => {
 
 			expect(screen.getByTestId('terminal-output')).toBeInTheDocument();
 			expect(screen.getByTestId('input-area')).toBeInTheDocument();
+		});
+	});
+
+	describe('Multi-window scoping', () => {
+		afterEach(() => {
+			setWindowUrl('/');
+		});
+
+		it('shows the empty state when the active agent is owned by another window', () => {
+			// Secondary window (?windowId set) that owns no agents - the active agent
+			// (session-1) lives in the primary, so this window must fall back to the
+			// clean empty state instead of rendering a stale view of that agent.
+			setWindowUrl('/?windowId=win-2');
+			vi.mocked(window.maestro.windows.getState).mockResolvedValue(
+				makeWindowState({ id: 'win-2', sessionIds: [], activeSessionId: null })
+			);
+
+			render(
+				<WindowProvider>
+					<MainPanel {...defaultProps} />
+				</WindowProvider>
+			);
+
+			expect(screen.getByText('No agents. Create one to get started.')).toBeInTheDocument();
+			expect(screen.queryByTestId('terminal-output')).not.toBeInTheDocument();
+		});
+
+		it('renders the agent normally in the primary window (catch-all owner)', () => {
+			// Primary window (no ?windowId) owns every agent no secondary has claimed,
+			// so it surfaces session-1 exactly as the single-window app does today.
+			setWindowUrl('/');
+			vi.mocked(window.maestro.windows.getState).mockResolvedValue(
+				makeWindowState({ id: 'primary-1', sessionIds: [], activeSessionId: null })
+			);
+			vi.mocked(window.maestro.windows.list).mockResolvedValue([]);
+
+			render(
+				<WindowProvider>
+					<MainPanel {...defaultProps} />
+				</WindowProvider>
+			);
+
+			expect(screen.getByTestId('terminal-output')).toBeInTheDocument();
+			expect(screen.queryByText('No agents. Create one to get started.')).not.toBeInTheDocument();
 		});
 	});
 

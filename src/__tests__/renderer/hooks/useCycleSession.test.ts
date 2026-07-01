@@ -2031,4 +2031,210 @@ describe('useCycleSession', () => {
 			expect(useSessionStore.getState().activeSessionId).toBe('b');
 		});
 	});
+
+	// =========================================================================
+	// Window scoping (multi-window) — ownsSession predicate restricts cycling
+	// to agents THIS window owns, never jumping to an agent another window
+	// surfaces. Group chats are not window-owned, so they stay in the cycle.
+	// =========================================================================
+	describe('window scoping (multi-window)', () => {
+		/** Predicate that owns only the listed agent ids (everything else lives elsewhere). */
+		const ownsOnly =
+			(...ids: string[]) =>
+			(id: string) =>
+				ids.includes(id);
+
+		it('includes every session when no ownsSession predicate is provided (single-window default)', () => {
+			const sessA = makeSession({ id: 'a', name: 'Alpha' });
+			const sessB = makeSession({ id: 'b', name: 'Beta' });
+
+			useSessionStore.setState({
+				sessions: [sessA, sessB],
+				activeSessionId: 'a',
+				cyclePosition: -1,
+			} as any);
+			useUIStore.setState({ leftSidebarOpen: true, bookmarksCollapsed: true } as any);
+			useSettingsStore.setState({ groupChatsExpanded: false } as any);
+
+			// No ownsSession in deps → unscoped, behaves exactly as before.
+			const deps = makeDeps();
+			const { result } = renderHook(() => useCycleSession(deps));
+
+			act(() => {
+				result.current.cycleSession('next');
+			});
+			expect(useSessionStore.getState().activeSessionId).toBe('b');
+		});
+
+		it('cycles only through agents this window owns, skipping agents owned by other windows', () => {
+			const sessA = makeSession({ id: 'a', name: 'Alpha' });
+			const sessB = makeSession({ id: 'b', name: 'Beta' }); // owned by ANOTHER window
+			const sessC = makeSession({ id: 'c', name: 'Gamma' });
+
+			useSessionStore.setState({
+				sessions: [sessA, sessB, sessC],
+				activeSessionId: 'a',
+				cyclePosition: -1,
+			} as any);
+			useUIStore.setState({ leftSidebarOpen: true, bookmarksCollapsed: true } as any);
+			useSettingsStore.setState({ groupChatsExpanded: false } as any);
+
+			// This window owns Alpha and Gamma, but NOT Beta.
+			const deps = makeDeps({ ownsSession: ownsOnly('a', 'c') });
+			const { result } = renderHook(() => useCycleSession(deps));
+
+			// Scoped visual order: [Alpha, Gamma] — Beta is dropped.
+			act(() => {
+				result.current.cycleSession('next');
+			});
+			expect(useSessionStore.getState().activeSessionId).toBe('c');
+
+			// prev from Gamma → Alpha (still skipping Beta).
+			act(() => {
+				result.current.cycleSession('prev');
+			});
+			expect(useSessionStore.getState().activeSessionId).toBe('a');
+		});
+
+		it('keeps group chats in the cycle even when the ownsSession predicate would exclude them', () => {
+			const sessA = makeSession({ id: 'a', name: 'Alpha' });
+			const gc1 = makeGroupChat('gc-1', 'Chat One');
+
+			useSessionStore.setState({
+				sessions: [sessA],
+				activeSessionId: 'a',
+				cyclePosition: -1,
+			} as any);
+			useGroupChatStore.setState({ groupChats: [gc1], activeGroupChatId: null } as any);
+			useUIStore.setState({ leftSidebarOpen: true, bookmarksCollapsed: true } as any);
+			useSettingsStore.setState({ groupChatsExpanded: true } as any);
+
+			const handleOpenGroupChat = vi.fn();
+			// Predicate owns only Alpha; it would return false for the group chat id, but
+			// group chats are not window-owned agents and must stay in the cycle.
+			const deps = makeDeps({ handleOpenGroupChat, ownsSession: ownsOnly('a') });
+			const { result } = renderHook(() => useCycleSession(deps));
+
+			// Visual order: [Alpha, Chat One]; next from Alpha → Chat One.
+			act(() => {
+				result.current.cycleSession('next');
+			});
+			expect(handleOpenGroupChat).toHaveBeenCalledWith('gc-1');
+		});
+
+		it('drops worktree children owned by another window', () => {
+			const parent = makeSession({ id: 'p', name: 'Parent', worktreesExpanded: true });
+			const child = makeSession({
+				id: 'c',
+				name: 'Child',
+				parentSessionId: 'p',
+				worktreeBranch: 'feature',
+			}); // child lives in ANOTHER window
+			const sessZ = makeSession({ id: 'z', name: 'Zed' });
+
+			useSessionStore.setState({
+				sessions: [parent, child, sessZ],
+				activeSessionId: 'p',
+				cyclePosition: -1,
+			} as any);
+			useUIStore.setState({ leftSidebarOpen: true, bookmarksCollapsed: true } as any);
+			useSettingsStore.setState({ groupChatsExpanded: false } as any);
+
+			// This window owns Parent and Zed, but not the worktree child.
+			const deps = makeDeps({ ownsSession: ownsOnly('p', 'z') });
+			const { result } = renderHook(() => useCycleSession(deps));
+
+			// Unscoped order: [Parent, Child, Zed]; scoped drops Child → [Parent, Zed].
+			// next from Parent → Zed (the child is skipped).
+			act(() => {
+				result.current.cycleSession('next');
+			});
+			expect(useSessionStore.getState().activeSessionId).toBe('z');
+		});
+
+		it('drops starred rows whose parent agent is owned by another window', () => {
+			const sessA = makeSession({ id: 'a', name: 'Alpha' });
+			const sessC = makeSession({ id: 'c', name: 'Gamma' });
+			// Starred row points at agent 'x', which lives in another window.
+			const starredItems = [makeOpenStarred('x', 't1', 'Star X')];
+
+			useSessionStore.setState({
+				sessions: [sessA, sessC],
+				activeSessionId: 'a',
+				cyclePosition: -1,
+			} as any);
+			useUIStore.setState({ leftSidebarOpen: true, bookmarksCollapsed: true } as any);
+			useSettingsStore.setState({
+				groupChatsExpanded: false,
+				starredSessionsCollapsed: false,
+			} as any);
+
+			const activateStarredItem = vi.fn();
+			// Owns Alpha and Gamma, but not the starred row's parent 'x'.
+			const deps = makeDeps({
+				starredItems,
+				activateStarredItem,
+				ownsSession: ownsOnly('a', 'c'),
+			});
+			const { result } = renderHook(() => useCycleSession(deps));
+
+			// Unscoped order: [Star X, Alpha, Gamma]; scoped drops the starred row →
+			// [Alpha, Gamma]. prev from Alpha wraps to Gamma; the starred row is never hit.
+			act(() => {
+				result.current.cycleSession('prev');
+			});
+			expect(activateStarredItem).not.toHaveBeenCalled();
+			expect(useSessionStore.getState().activeSessionId).toBe('c');
+		});
+
+		it('is a no-op when the window owns no agents and there are no group chats', () => {
+			const sessA = makeSession({ id: 'a', name: 'Alpha' });
+			const sessB = makeSession({ id: 'b', name: 'Beta' });
+
+			useSessionStore.setState({
+				sessions: [sessA, sessB],
+				activeSessionId: 'a',
+				cyclePosition: -1,
+			} as any);
+			useUIStore.setState({ leftSidebarOpen: true, bookmarksCollapsed: true } as any);
+			useSettingsStore.setState({ groupChatsExpanded: false } as any);
+
+			// Window owns nothing → scoped visual order is empty.
+			const deps = makeDeps({ ownsSession: ownsOnly() });
+			const { result } = renderHook(() => useCycleSession(deps));
+
+			act(() => {
+				result.current.cycleSession('next');
+			});
+			// Empty visual order → no-op; active session is untouched.
+			expect(useSessionStore.getState().activeSessionId).toBe('a');
+		});
+
+		it('selects the first owned agent when the active agent has left this window', () => {
+			// An agent moved to another window mid-session: the window no longer owns its
+			// previously-active agent. Cycling must land deterministically on an owned
+			// agent rather than no-op or jump to the departed one.
+			const sessA = makeSession({ id: 'a', name: 'Alpha' }); // moved to another window
+			const sessB = makeSession({ id: 'b', name: 'Beta' });
+			const sessC = makeSession({ id: 'c', name: 'Gamma' });
+
+			useSessionStore.setState({
+				sessions: [sessA, sessB, sessC],
+				activeSessionId: 'a', // stale: now owned elsewhere
+				cyclePosition: -1,
+			} as any);
+			useUIStore.setState({ leftSidebarOpen: true, bookmarksCollapsed: true } as any);
+			useSettingsStore.setState({ groupChatsExpanded: false } as any);
+
+			const deps = makeDeps({ ownsSession: ownsOnly('b', 'c') });
+			const { result } = renderHook(() => useCycleSession(deps));
+
+			// Scoped order: [Beta, Gamma]; 'a' not present → first owned item (Beta).
+			act(() => {
+				result.current.cycleSession('next');
+			});
+			expect(useSessionStore.getState().activeSessionId).toBe('b');
+			expect(useSessionStore.getState().cyclePosition).toBe(0);
+		});
+	});
 });
