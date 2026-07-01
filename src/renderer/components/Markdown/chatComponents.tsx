@@ -19,6 +19,8 @@ import { LocalImage } from './components/LocalImage';
 import { InlineCode } from './components/InlineCode';
 import { createMarkdownLink } from './components/MarkdownLink';
 import { createShikiCodeBlock } from './components/ShikiCodeBlock';
+import { AlertCallout } from './components/AlertCallout';
+import { alertTypeFromClassName } from './remarkAlert';
 
 export interface ChatMarkdownComponentsOptions {
 	theme: Theme;
@@ -101,10 +103,25 @@ export function createChatMarkdownComponents(
 		blockquote: ({
 			node: _node,
 			children,
+			className,
 			...props
-		}: JSX.IntrinsicElements['blockquote'] & ExtraProps) => (
-			<blockquote {...props}>{withReadableTransforms(children)}</blockquote>
-		),
+		}: JSX.IntrinsicElements['blockquote'] & ExtraProps) => {
+			// remarkAlert tags GitHub `[!NOTE]`-style blockquotes with a
+			// markdown-alert-<type> class; render those as styled callouts.
+			const alertType = alertTypeFromClassName(className);
+			if (alertType) {
+				return (
+					<AlertCallout type={alertType} theme={theme}>
+						{withReadableTransforms(children)}
+					</AlertCallout>
+				);
+			}
+			return (
+				<blockquote className={className} {...props}>
+					{withReadableTransforms(children)}
+				</blockquote>
+			);
+		},
 		h1: ({ node: _node, children, ...props }: JSX.IntrinsicElements['h1'] & ExtraProps) => (
 			<h1 {...props}>{withReadableTransforms(children)}</h1>
 		),

@@ -1031,9 +1031,9 @@ describe('MarkdownRenderer', () => {
 	});
 
 	// ========================================================================
-	// DOMPurify sanitization (allowRawHtml=true)
+	// Raw HTML sanitization (allowRawHtml=true, via rehype-sanitize at HAST level)
 	// ========================================================================
-	describe('DOMPurify sanitization with allowRawHtml', () => {
+	describe('raw HTML sanitization with allowRawHtml', () => {
 		it('strips script tags when allowRawHtml is true', () => {
 			const maliciousContent = 'Hello <script>alert("xss")</script> world';
 			const { container } = renderMd(maliciousContent, { allowRawHtml: true } as any);
@@ -1064,10 +1064,12 @@ describe('MarkdownRenderer', () => {
 			expect(container.querySelector('em')).toBeInTheDocument();
 		});
 
-		it('does not apply DOMPurify when allowRawHtml is false (default)', () => {
+		it('does not render raw HTML when allowRawHtml is explicitly false', () => {
 			const content = 'Hello <b>bold</b> world';
 			const { container } = renderMd(content, { allowRawHtml: false } as any);
 			expect(container.innerHTML).not.toContain('<script>');
+			// With raw HTML off, the <b> tag is not parsed into an element.
+			expect(container.querySelector('b')).toBeNull();
 		});
 
 		it('strips onload event handlers from body tags when allowRawHtml is true', () => {
@@ -1086,6 +1088,121 @@ describe('MarkdownRenderer', () => {
 			const maliciousContent = '<div style="background:url(javascript:alert(1))">styled</div>';
 			const { container } = renderMd(maliciousContent, { allowRawHtml: true } as any);
 			expect(container.innerHTML).not.toContain('javascript:');
+		});
+	});
+
+	// ========================================================================
+	// Inline SVG rendering (chat renders sanitized raw HTML by default)
+	// ========================================================================
+	describe('inline SVG', () => {
+		const showcaseSvg = [
+			'<svg width="360" height="80" viewBox="0 0 360 80" xmlns="http://www.w3.org/2000/svg">',
+			'  <defs>',
+			'    <linearGradient id="g" x1="0" y1="0" x2="1" y2="0">',
+			'      <stop offset="0%" stop-color="#7c3aed"/>',
+			'      <stop offset="100%" stop-color="#f59e0b"/>',
+			'    </linearGradient>',
+			'  </defs>',
+			'  <rect x="2" y="2" width="356" height="76" rx="16" fill="url(#g)"/>',
+			'  <circle cx="46" cy="40" r="22" fill="#fff"/>',
+			'  <text x="90" y="46" font-family="sans-serif" font-size="26" fill="#fff">Maestro</text>',
+			'</svg>',
+		].join('\n');
+
+		it('renders inline <svg> in chat without an explicit allowRawHtml prop', () => {
+			// Chat defaults allowRawHtml on, so agents can show diagrams/badges.
+			const { container } = renderMd(showcaseSvg);
+			const svg = container.querySelector('svg');
+			expect(svg).toBeInTheDocument();
+			expect(svg!.getAttribute('viewBox')).toBe('0 0 360 80');
+		});
+
+		it('preserves SVG geometry, gradient, and presentation attributes', () => {
+			const { container } = renderMd(showcaseSvg);
+			expect(container.querySelector('linearGradient#g')).toBeInTheDocument();
+			expect(container.querySelectorAll('stop').length).toBe(2);
+			const rect = container.querySelector('rect');
+			expect(rect!.getAttribute('fill')).toBe('url(#g)');
+			expect(rect!.getAttribute('rx')).toBe('16');
+			expect(container.querySelector('circle')!.getAttribute('cx')).toBe('46');
+			expect(container.querySelector('text')!.textContent).toBe('Maestro');
+		});
+
+		it('strips <script> and event handlers nested inside an SVG', () => {
+			const evil = '<svg onload="alert(1)"><script>alert(2)</script><rect fill="red"/></svg>';
+			const { container } = renderMd(evil);
+			expect(container.querySelector('svg')).toBeInTheDocument();
+			expect(container.querySelector('rect')).toBeInTheDocument();
+			expect(container.innerHTML).not.toContain('alert');
+			expect(container.innerHTML).not.toContain('onload');
+			expect(container.querySelector('script')).toBeNull();
+		});
+
+		it('does not corrupt inline code containing generics next to markdown', () => {
+			// Regression guard: the old raw-string DOMPurify pass turned `List<int>`
+			// into `List`. HAST-level sanitization must leave code text intact.
+			const { container } = renderMd('Use `List<int>` and `Map<string, Foo>` here.');
+			const codes = container.querySelectorAll('code');
+			expect(codes[0].textContent).toBe('List<int>');
+			expect(codes[1].textContent).toBe('Map<string, Foo>');
+		});
+	});
+
+	// ========================================================================
+	// GitHub-style alert callouts ([!NOTE] / [!TIP] / etc.)
+	// ========================================================================
+	describe('alert callouts', () => {
+		it('renders a [!NOTE] blockquote as a styled callout, not a plain blockquote', () => {
+			const { container } = renderMd('> [!NOTE]\n> Callouts render with real typography.');
+			const callout = container.querySelector('.markdown-alert[data-alert-type="note"]');
+			expect(callout).toBeInTheDocument();
+			// It is NOT a bare blockquote and the raw marker text is gone.
+			expect(container.querySelector('blockquote')).toBeNull();
+			expect(container.textContent).not.toContain('[!NOTE]');
+			expect(container.textContent).toContain('Callouts render with real typography.');
+			// The Note label + an inline SVG icon are present.
+			expect(callout!.querySelector('svg')).toBeInTheDocument();
+			expect(container.textContent).toContain('Note');
+		});
+
+		it('renders each of the five alert types with its icon and label', () => {
+			const cases: Array<[string, string, string]> = [
+				['NOTE', 'note', 'Note'],
+				['TIP', 'tip', 'Tip'],
+				['IMPORTANT', 'important', 'Important'],
+				['WARNING', 'warning', 'Warning'],
+				['CAUTION', 'caution', 'Caution'],
+			];
+			for (const [marker, type, label] of cases) {
+				const { container, unmount } = renderMd(`> [!${marker}]\n> body`);
+				const callout = container.querySelector(`.markdown-alert[data-alert-type="${type}"]`);
+				expect(callout).toBeInTheDocument();
+				expect(callout!.querySelector('svg')).toBeInTheDocument();
+				expect(callout!.textContent).toContain(label);
+				unmount();
+			}
+		});
+
+		it('leaves an ordinary blockquote as a plain blockquote', () => {
+			const { container } = renderMd('> Just a normal quote, nothing special.');
+			expect(container.querySelector('blockquote')).toBeInTheDocument();
+			expect(container.querySelector('.markdown-alert')).toBeNull();
+		});
+
+		it('does not convert a marker with a trailing inline title (GitHub-strict)', () => {
+			const { container } = renderMd('> [!WARNING] inline title\n> body');
+			expect(container.querySelector('.markdown-alert')).toBeNull();
+			expect(container.querySelector('blockquote')).toBeInTheDocument();
+			// Marker text is preserved verbatim since it was not treated as an alert.
+			expect(container.textContent).toContain('[!WARNING] inline title');
+		});
+
+		it('renders inline formatting inside a callout body', () => {
+			const { container } = renderMd('> [!TIP]\n> Use **bold** and `code` here.');
+			const callout = container.querySelector('.markdown-alert[data-alert-type="tip"]');
+			expect(callout).toBeInTheDocument();
+			expect(callout!.querySelector('strong')).toBeInTheDocument();
+			expect(callout!.querySelector('code')).toBeInTheDocument();
 		});
 	});
 
@@ -1423,6 +1540,64 @@ describe('MarkdownRenderer', () => {
 			);
 			expect(container.querySelector('.katex')).toBeNull();
 			expect(container.textContent).toContain('$$not math$$');
+		});
+	});
+
+	// ========================================================================
+	// Bracket-delimited LaTeX math (\(...\) inline, \[...\] display)
+	// ========================================================================
+	describe('bracket LaTeX math (chatMath)', () => {
+		it('renders \\(...\\) as inline math (not a display block)', () => {
+			const content = 'Plug in and you get \\(N \\approx 1000\\) civilizations.';
+			const { container } = render(
+				<MarkdownRenderer {...defaultProps} content={content} chatMath />
+			);
+			expect(container.querySelector('.katex')).not.toBeNull();
+			// Inline, so no display wrapper.
+			expect(container.querySelector('.katex-display')).toBeNull();
+			// The raw delimiters are gone.
+			expect(container.textContent).not.toContain('\\(');
+		});
+
+		it('renders \\[...\\] as display math', () => {
+			const content = 'The identity \\[E = mc^2\\] is famous.';
+			const { container } = render(
+				<MarkdownRenderer {...defaultProps} content={content} chatMath />
+			);
+			expect(container.querySelector('.katex-display')).not.toBeNull();
+		});
+
+		it('renders multiple inline \\(...\\) spans in one sentence', () => {
+			const content = 'Compare \\(a^2\\) with \\(b^2\\) directly.';
+			const { container } = render(
+				<MarkdownRenderer {...defaultProps} content={content} chatMath />
+			);
+			expect(container.querySelectorAll('.katex').length).toBeGreaterThanOrEqual(2);
+		});
+
+		it('keeps $5 and $HOME literal alongside \\(...\\) math', () => {
+			const content = 'It costs $5 but the ratio \\(r = 1/2\\) holds; path is $HOME/bin.';
+			const { container } = render(
+				<MarkdownRenderer {...defaultProps} content={content} chatMath />
+			);
+			expect(container.querySelector('.katex')).not.toBeNull();
+			expect(container.textContent).toContain('$5');
+			expect(container.textContent).toContain('$HOME/bin');
+		});
+
+		it('does not render \\(...\\) inside inline code as math', () => {
+			const content = 'The literal `\\(y\\)` stays as text.';
+			const { container } = render(
+				<MarkdownRenderer {...defaultProps} content={content} chatMath />
+			);
+			expect(container.querySelector('.katex')).toBeNull();
+			expect(container.textContent).toContain('\\(y\\)');
+		});
+
+		it('leaves \\(...\\) as literal text when chatMath is disabled', () => {
+			const content = 'Inline \\(x + y\\) here.';
+			const { container } = render(<MarkdownRenderer {...defaultProps} content={content} />);
+			expect(container.querySelector('.katex')).toBeNull();
 		});
 	});
 

@@ -5,14 +5,22 @@
  * Pipeline (order matters):
  *   1. fixMarkdownLinkSpaces - rewrite link destinations containing spaces so
  *      CommonMark can parse them (AI agents emit `[x](/path/with spaces/f.ts)`).
- *   2. normalizeChatDisplayMath - (chat only) put `$$...$$` delimiters on their
+ *   2. convertBracketMath - (chat only) rewrite LaTeX `\(...\)` / `\[...\]`
+ *      delimiters to `$$...$$` so inline/display math renders without enabling
+ *      single-dollar math (which would misparse `$5` / `$HOME`).
+ *   3. normalizeChatDisplayMath - (chat only) put `$$...$$` delimiters on their
  *      own lines so remark-math doesn't break the block fence (#622).
- *   3. DOMPurify.sanitize - (raw-HTML surfaces only) strip script tags, event
- *      handlers, and other XSS vectors before parsing.
+ *
+ * Raw-HTML sanitization is intentionally NOT done here. It happens at the HAST
+ * level via rehype-sanitize (see sanitizeSchema.ts), after remark has tokenized
+ * code fences and inline code into text nodes. Sanitizing the raw markdown
+ * string instead (the old DOMPurify pass) corrupted ordinary content -
+ * `List<int>` collapsed to `List`, generics in code fences were eaten, and
+ * `a < b` lost its operand.
  */
 
-import DOMPurify from 'dompurify';
 import { normalizeChatDisplayMath } from '../../../shared/normalizeChatDisplayMath';
+import { convertBracketMath } from '../../../shared/convertBracketMath';
 
 // ============================================================================
 // fixMarkdownLinkSpaces - pre-process markdown so CommonMark can parse links
@@ -79,8 +87,6 @@ export function fixMarkdownLinkSpaces(text: string): string {
 export interface PreprocessMarkdownOptions {
 	/** Chat surfaces normalize multi-line `$$...$$` before remark-math parses. */
 	chatMath?: boolean;
-	/** Sanitize raw HTML with DOMPurify (defense-in-depth before markdown parse). */
-	allowRawHtml?: boolean;
 }
 
 export function preprocessMarkdown(
@@ -89,13 +95,9 @@ export function preprocessMarkdown(
 ): string {
 	let processed = fixMarkdownLinkSpaces(content);
 	if (options.chatMath) {
+		// Bracket conversion first: it emits `$$...$$` that the normalizer tidies.
+		processed = convertBracketMath(processed);
 		processed = normalizeChatDisplayMath(processed);
-	}
-	// allowRawHtml means "accept raw HTML input, but sanitize it first": when a
-	// surface opts into raw HTML (rehype-raw), DOMPurify strips script tags,
-	// event handlers, and other XSS vectors before parsing (defense-in-depth).
-	if (options.allowRawHtml) {
-		processed = DOMPurify.sanitize(processed);
 	}
 	return processed;
 }

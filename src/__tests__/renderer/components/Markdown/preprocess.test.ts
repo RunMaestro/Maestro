@@ -61,14 +61,17 @@ describe('preprocessMarkdown', () => {
 		expect(out).toContain('a + b');
 	});
 
-	it('sanitizes raw HTML (strips <script>) when allowRawHtml is set', () => {
-		const out = preprocessMarkdown('<p>ok</p><script>alert(1)</script>', { allowRawHtml: true });
-		expect(out).toContain('<p>ok</p>');
-		expect(out).not.toContain('<script>');
-	});
-
-	it('leaves raw HTML untouched when allowRawHtml is not set', () => {
+	// Raw-HTML sanitization moved to the HAST level (rehype-sanitize). preprocess
+	// must NOT touch raw HTML - the old raw-string DOMPurify pass corrupted
+	// ordinary content, which is the bug this guards against.
+	it('leaves raw HTML untouched (sanitization happens downstream at HAST level)', () => {
 		const input = '<p>ok</p><script>alert(1)</script>';
 		expect(preprocessMarkdown(input)).toBe(input);
+	});
+
+	it('does not corrupt generics in inline code or code fences', () => {
+		const input = 'Use `List<int>` and:\n```ts\nconst x: Array<number> = []; if (a < b) {}\n```';
+		expect(preprocessMarkdown(input)).toBe(input);
+		expect(preprocessMarkdown(input, { chatMath: true })).toContain('Array<number>');
 	});
 });
