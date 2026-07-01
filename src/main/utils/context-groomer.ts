@@ -220,6 +220,7 @@ export async function groomContext(
 		readOnlyMode,
 		modelId: undefined,
 		yoloMode: false,
+		permissionMode: 'standard' as const,
 		agentSessionId,
 	});
 

@@ -1415,6 +1415,66 @@ describe('useInputProcessing', () => {
 			mockGetBatchState.mockReturnValue(defaultBatchState);
 		});
 
+		it('sends permissionMode "readonly" when Auto Run forces read-only despite tab permissionMode "full"', async () => {
+			const runningBatchState: BatchRunState = {
+				...defaultBatchState,
+				isRunning: true,
+				worktreeActive: false,
+			};
+			mockGetBatchState.mockReturnValue(runningBatchState);
+
+			// Tab explicitly opts into full permissions, but Auto Run without a
+			// worktree must still force the spawn config to readonly.
+			const fullPermissionTab = createMockTab({ readOnlyMode: true, permissionMode: 'full' });
+			const session = createMockSession({
+				aiTabs: [fullPermissionTab],
+				activeTabId: fullPermissionTab.id,
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'what does this function do',
+				activeBatchRunState: runningBatchState,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(window.maestro.process.spawn).toHaveBeenCalled();
+			const spawnCall = (window.maestro.process.spawn as ReturnType<typeof vi.fn>).mock.calls[0][0];
+			expect(spawnCall.readOnlyMode).toBe(true);
+			expect(spawnCall.permissionMode).toBe('readonly');
+		});
+
+		it('sends permissionMode "full" when tab permissionMode is "full" and Auto Run is not forcing read-only', async () => {
+			// Use a tab WITH agentSessionId so the message sends immediately (not queued)
+			const fullPermissionTab = createMockTab({
+				readOnlyMode: false,
+				permissionMode: 'full',
+				agentSessionId: 'existing-session-789',
+			});
+			const session = createMockSession({
+				aiTabs: [fullPermissionTab],
+				activeTabId: fullPermissionTab.id,
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'refactor this module',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(window.maestro.process.spawn).toHaveBeenCalled();
+			const spawnCall = (window.maestro.process.spawn as ReturnType<typeof vi.fn>).mock.calls[0][0];
+			expect(spawnCall.permissionMode).toBe('full');
+		});
+
 		it('does not append read-only suffix when in normal write mode', async () => {
 			// Use a tab WITH agentSessionId to skip system prompt prepending
 			const writeTab = createMockTab({

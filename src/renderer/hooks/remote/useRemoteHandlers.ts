@@ -412,7 +412,9 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				}
 
 				const tabAgentSessionId = targetTab?.agentSessionId;
-				const isReadOnly = targetTab?.readOnlyMode;
+				const isReadOnly =
+					targetTab?.readOnlyMode === true || targetTab?.permissionMode === 'readonly';
+				const effectivePermissionMode = isReadOnly ? 'readonly' : targetTab?.permissionMode;
 
 				// Filter out YOLO/skip-permissions flags when read-only mode is active
 				const agentArgs = agent.args ?? [];
@@ -516,6 +518,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					appendSystemPrompt,
 					agentSessionId: tabAgentSessionId ?? undefined,
 					readOnlyMode: isReadOnly,
+					permissionMode: effectivePermissionMode,
 					sessionCustomPath: session.customPath,
 					sessionCustomArgs: session.customArgs,
 					sessionCustomEnvVars: session.customEnvVars,

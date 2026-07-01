@@ -222,7 +222,7 @@ describe('cue-spawn-builder', () => {
 
 			expect(mockBuildAgentArgs).toHaveBeenCalledWith(
 				expect.objectContaining({ id: 'claude-code' }),
-				expect.objectContaining({ yoloMode: true })
+				expect.objectContaining({ yoloMode: true, permissionMode: 'full' })
 			);
 		});
 
@@ -244,6 +244,20 @@ describe('cue-spawn-builder', () => {
 					sessionCustomEnvVars: { API_KEY: 'test' },
 				})
 			);
+		});
+
+		it('merges agentDef.fullAccessEnvOverrides into the spec env for full-access Cue runs', async () => {
+			mockGetAgentDefinition.mockReturnValue({
+				...defaultAgentDef,
+				fullAccessEnvOverrides: { OPENCODE_PERMISSION: '{"*":"allow"}' },
+			});
+
+			const result = await buildSpawnSpec(createConfig(), 'prompt');
+
+			expect(result.ok).toBe(true);
+			if (result.ok) {
+				expect(result.spec.env.OPENCODE_PERMISSION).toBe('{"*":"allow"}');
+			}
 		});
 
 		it('includes process.env in the spec env', async () => {

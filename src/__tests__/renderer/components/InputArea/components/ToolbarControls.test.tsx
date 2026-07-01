@@ -3,9 +3,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ToolbarControls } from '../../../../../renderer/components/InputArea/components/ToolbarControls';
 import { createInputAreaSession, inputAreaTheme } from '../_fixtures';
 
+const mockUpdateSessionWith = vi.fn();
+vi.mock('../../../../../renderer/stores/sessionStore', () => ({
+	updateSessionWith: (...args: unknown[]) => mockUpdateSessionWith(...args),
+}));
+
 describe('ToolbarControls', () => {
 	afterEach(() => {
 		vi.restoreAllMocks();
+		mockUpdateSessionWith.mockClear();
 	});
 
 	function renderToolbar(overrides = {}) {
@@ -25,7 +31,6 @@ describe('ToolbarControls', () => {
 				showFlashNotification={vi.fn()}
 				tabSaveToHistory={false}
 				onToggleTabSaveToHistory={vi.fn()}
-				onToggleTabReadOnlyMode={vi.fn()}
 				tabShowThinking="off"
 				onToggleTabShowThinking={vi.fn()}
 				supportsThinking
@@ -68,27 +73,34 @@ describe('ToolbarControls', () => {
 		expect(click).toHaveBeenCalled();
 	});
 
-	it('toggles history, read-only, thinking, and enter-to-send controls', () => {
+	it('toggles history, permission mode, thinking, and enter-to-send controls', () => {
 		const onToggleTabSaveToHistory = vi.fn();
-		const onToggleTabReadOnlyMode = vi.fn();
 		const onToggleTabShowThinking = vi.fn();
 		const setEnterToSend = vi.fn();
+		const session = createInputAreaSession();
 		renderToolbar({
+			session,
 			onToggleTabSaveToHistory,
-			onToggleTabReadOnlyMode,
 			onToggleTabShowThinking,
 			setEnterToSend,
 		});
 
 		fireEvent.click(screen.getByTitle(/Save to History/));
-		fireEvent.click(screen.getByTitle(/Toggle plan mode/));
+		// Permission mode starts at 'full'; clicking cycles it to 'standard'.
+		fireEvent.click(screen.getByTitle(/^Full Access/));
 		fireEvent.click(screen.getByTitle(/Show Thinking/));
 		fireEvent.click(screen.getByTitle(/Switch to/));
 
 		expect(onToggleTabSaveToHistory).toHaveBeenCalled();
-		expect(onToggleTabReadOnlyMode).toHaveBeenCalled();
 		expect(onToggleTabShowThinking).toHaveBeenCalled();
 		expect(setEnterToSend).toHaveBeenCalledWith(false);
+
+		expect(mockUpdateSessionWith).toHaveBeenCalledWith(session.id, expect.any(Function));
+		const updater = mockUpdateSessionWith.mock.calls[0][1];
+		const updatedSession = updater(session);
+		const updatedTab = updatedSession.aiTabs.find((t: { id: string }) => t.id === 'tab-1');
+		expect(updatedTab.permissionMode).toBe('standard');
+		expect(updatedTab.readOnlyMode).toBe(false);
 	});
 
 	it('hides AI-only controls in terminal mode', () => {

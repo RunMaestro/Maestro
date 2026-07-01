@@ -101,6 +101,7 @@ export async function buildSpawnSpec(
 		prompt: substitutedPrompt,
 		cwd: projectRoot,
 		yoloMode: true, // Cue runs always use YOLO mode like Auto Run
+		permissionMode: 'full' as const,
 		// Cue spawns with `stdio: ['ignore', 'pipe', 'pipe']` and no TTY, so the
 		// agent must run in batch mode every time. Without this, a prompt that
 		// substituted to `""` (e.g. `{{CUE_SOURCE_OUTPUT}}` when the upstream
@@ -119,16 +120,23 @@ export async function buildSpawnSpec(
 		sessionCustomEnvVars: customEnvVars,
 	});
 	finalArgs = configResolution.args;
+
+	// Cue always runs in full-access mode (see yoloMode/permissionMode above), so
+	// merge the agent's env-driven full-access overrides (e.g. OpenCode's
+	// "*":"allow" YOLO config) the same way process:spawn does. Without this,
+	// env-only full-access agents silently run at standard permissions in Cue.
+	let envVarsForSpawn = configResolution.effectiveCustomEnvVars;
+	if (agentDef.fullAccessEnvOverrides) {
+		envVarsForSpawn = { ...(envVarsForSpawn || {}), ...agentDef.fullAccessEnvOverrides };
+	}
+
 	// Sanitize custom env vars BEFORE they reach the spawn environment. This
 	// drops blocklisted names (PATH, HOME, USER, SHELL, LD_PRELOAD,
 	// DYLD_INSERT_LIBRARIES, NODE_OPTIONS) and any name that does not match the
 	// POSIX identifier regex. Keeping this in the spawn-builder means SSH
 	// wrapping below inherits the sanitized map automatically via
 	// `sshWrapConfig.customEnvVars`.
-	const sanitizedResult = sanitizeCustomEnvVars(
-		configResolution.effectiveCustomEnvVars,
-		config.onLog
-	);
+	const sanitizedResult = sanitizeCustomEnvVars(envVarsForSpawn, config.onLog);
 	const effectiveEnvVars = sanitizedResult.sanitized;
 
 	// Determine command

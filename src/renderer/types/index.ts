@@ -469,6 +469,7 @@ export interface AITab {
 	createdAt: number; // Timestamp for ordering
 	state: 'idle' | 'busy'; // Tab-level state for write-mode tracking
 	readOnlyMode?: boolean; // When true, agent operates in plan/read-only mode
+	permissionMode?: 'full' | 'standard' | 'readonly'; // Controls agent permission handling: full (bypass all), standard (default permission model), readonly (plan mode)
 	saveToHistory?: boolean; // When true, synopsis is requested after each completion and saved to History
 	lastSynopsisTime?: number; // Timestamp of last synopsis generation (for time-window context in prompts)
 	showThinking?: ThinkingMode; // Controls thinking display: 'off' | 'on' (temporary) | 'sticky' (persistent)
@@ -898,6 +899,7 @@ export interface ProcessConfig {
 	readOnlyMode?: boolean; // For read-only/plan mode (uses agent's readOnlyArgs)
 	modelId?: string; // For model selection (uses agent's modelArgs builder)
 	yoloMode?: boolean; // For YOLO/full-access mode (uses agent's yoloModeArgs)
+	permissionMode?: 'full' | 'standard' | 'readonly'; // Preferred over readOnlyMode + yoloMode
 	// Per-session overrides (take precedence over agent-level config)
 	sessionCustomPath?: string;
 	sessionCustomArgs?: string;

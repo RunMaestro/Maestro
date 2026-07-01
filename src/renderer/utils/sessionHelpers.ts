@@ -64,6 +64,8 @@ export interface BuildSpawnConfigOptions {
 	modelId?: string;
 	/** Whether to use YOLO/full-access mode */
 	yoloMode?: boolean;
+	/** 3-way permission mode ('full' | 'standard' | 'readonly') */
+	permissionMode?: 'full' | 'standard' | 'readonly';
 	/** Per-session custom path override */
 	sessionCustomPath?: string;
 	/** Per-session custom args override */
@@ -121,6 +123,7 @@ export async function buildSpawnConfigForAgent(
 		readOnlyMode,
 		modelId,
 		yoloMode,
+		permissionMode,
 		sessionCustomPath,
 		sessionCustomArgs,
 		sessionCustomEnvVars,
@@ -176,6 +179,7 @@ export async function buildSpawnConfigForAgent(
 		readOnlyMode,
 		modelId,
 		yoloMode,
+		permissionMode,
 		// Per-session config overrides
 		sessionCustomPath,
 		sessionCustomArgs,

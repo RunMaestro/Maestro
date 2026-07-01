@@ -181,6 +181,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				readOnlyMode?: boolean; // For read-only/plan mode
 				modelId?: string; // For model selection
 				yoloMode?: boolean; // For YOLO/full-access mode (bypasses confirmations)
+				permissionMode?: 'full' | 'standard' | 'readonly'; // 3-way permission mode (overrides readOnlyMode/yoloMode)
 				// Per-session overrides (take precedence over agent-level config)
 				sessionCustomPath?: string; // Session-specific custom path
 				sessionCustomArgs?: string; // Session-specific custom args
@@ -425,6 +426,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					readOnlyMode: config.readOnlyMode,
 					modelId: config.modelId,
 					yoloMode: config.yoloMode,
+					permissionMode: config.permissionMode,
 					agentSessionId: config.agentSessionId,
 				});
 
@@ -456,10 +458,26 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					);
 				}
 
-				// In read-only mode, apply agent-specific env var overrides to strip
-				// blanket permission grants (e.g., OpenCode's "*":"allow" YOLO config)
+				// Derive effective permission mode, honoring legacy boolean flags only when
+				// permissionMode wasn't explicitly set (back-compat for pre-Phase-1 configs).
+				const hasExplicitPermissionMode = config.permissionMode !== undefined;
+				const isReadOnly =
+					config.permissionMode === 'readonly' ||
+					(!hasExplicitPermissionMode && config.readOnlyMode === true);
+				const isFullAccess =
+					config.permissionMode === 'full' ||
+					(!hasExplicitPermissionMode && config.yoloMode === true);
+
+				// In full-access mode, apply agent-specific env var overrides for full permissions.
+				// In read-only mode, apply agent-specific env var overrides to strip blanket
+				// permission grants (e.g., OpenCode's "*":"allow" YOLO config).
 				let effectiveCustomEnvVars = configResolution.effectiveCustomEnvVars;
-				if (config.readOnlyMode && agent?.readOnlyEnvOverrides) {
+				if (isFullAccess && agent?.fullAccessEnvOverrides) {
+					effectiveCustomEnvVars = {
+						...(effectiveCustomEnvVars || {}),
+						...agent.fullAccessEnvOverrides,
+					};
+				} else if (isReadOnly && agent?.readOnlyEnvOverrides) {
 					effectiveCustomEnvVars = {
 						...(effectiveCustomEnvVars || {}),
 						...agent.readOnlyEnvOverrides,
@@ -690,6 +708,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					...(agentSessionId && { agentSessionId }),
 					...(config.readOnlyMode && { readOnlyMode: true }),
 					...(config.yoloMode && { yoloMode: true }),
+					...(config.permissionMode && { permissionMode: config.permissionMode }),
 					...(config.modelId && { modelId: config.modelId }),
 					...(config.prompt && {
 						prompt:
@@ -1220,6 +1239,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 								readOnlyMode: originalConfig.readOnlyMode,
 								modelId: originalConfig.modelId,
 								yoloMode: originalConfig.yoloMode,
+								permissionMode: originalConfig.permissionMode,
 								agentSessionId: freshAgentSessionId,
 							});
 

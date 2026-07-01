@@ -438,6 +438,7 @@ export interface AgentConfig {
 	configOptions?: AgentConfigOption[];
 	capabilities?: AgentCapabilities;
 	yoloModeArgs?: string[];
+	fullAccessArgs?: string[]; // Same as yoloModeArgs - preferred name. Args added in 'full' permission mode.
 	readOnlyCliEnforced?: boolean;
 	/**
 	 * Latest persisted capability snapshot for this agent in the requested

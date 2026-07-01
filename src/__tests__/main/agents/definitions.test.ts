@@ -51,7 +51,10 @@ describe('agent-definitions', () => {
 			expect(claudeCode?.args).toContain('--verbose');
 			expect(claudeCode?.args).toContain('--output-format');
 			expect(claudeCode?.args).toContain('stream-json');
-			expect(claudeCode?.args).toContain('--dangerously-skip-permissions');
+			// Base args are the standard-permission default; --dangerously-skip-permissions
+			// only applies in full permission mode via fullAccessArgs.
+			expect(claudeCode?.args).not.toContain('--dangerously-skip-permissions');
+			expect(claudeCode?.fullAccessArgs).toContain('--dangerously-skip-permissions');
 		});
 
 		it('should have codex with batch mode configuration', () => {
@@ -84,7 +87,7 @@ describe('agent-definitions', () => {
 			expect(copilot?.readOnlyCliEnforced).toBe(true);
 		});
 
-		it('should have opencode with default env vars for YOLO mode and disabled question tool', () => {
+		it('should have opencode with disabled question tool by default and full permission env overrides for full access mode', () => {
 			const opencode = AGENT_DEFINITIONS.find((def) => def.id === 'opencode');
 			expect(opencode?.defaultEnvVars).toBeDefined();
 			const configContent = opencode?.defaultEnvVars?.OPENCODE_CONFIG_CONTENT;
@@ -93,15 +96,22 @@ describe('agent-definitions', () => {
 			// Verify it's valid JSON
 			const config = JSON.parse(configContent!);
 
-			// Should have permission settings for YOLO mode
+			// Standard-mode default should not grant blanket permissions.
 			expect(config.permission).toBeDefined();
-			expect(config.permission['*']).toBe('allow');
-			expect(config.permission.external_directory).toBe('allow');
+			expect(config.permission['*']).toBeUndefined();
 
 			// Should disable the question tool to prevent batch mode hangs
 			// The question tool waits for stdin input which causes hangs in batch mode
 			expect(config.tools).toBeDefined();
 			expect(config.tools.question).toBe(false);
+
+			// Full permission mode overrides should allow everything, including external_directory
+			const fullAccessConfigContent = opencode?.fullAccessEnvOverrides?.OPENCODE_CONFIG_CONTENT;
+			expect(fullAccessConfigContent).toBeDefined();
+			const fullAccessConfig = JSON.parse(fullAccessConfigContent!);
+			expect(fullAccessConfig.permission['*']).toBe('allow');
+			expect(fullAccessConfig.permission.external_directory).toBe('allow');
+			expect(fullAccessConfig.tools.question).toBe(false);
 		});
 
 		it('should have claude-code with defaultEnvVars disabling background tasks', () => {

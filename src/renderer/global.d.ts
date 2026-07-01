@@ -57,6 +57,7 @@ interface ProcessConfig {
 	readOnlyMode?: boolean;
 	modelId?: string;
 	yoloMode?: boolean;
+	permissionMode?: 'full' | 'standard' | 'readonly';
 	// Per-session overrides (take precedence over agent-level config)
 	sessionCustomPath?: string;
 	sessionCustomArgs?: string;

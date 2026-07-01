@@ -6,7 +6,8 @@ import {
 	formatEnterToSendTooltip,
 	formatShortcutKeys,
 } from '../../../utils/shortcutFormatter';
-import { getReadOnlyModeLabel, getReadOnlyModeTooltip } from '../../../../shared/agentMetadata';
+import { getPermissionModeLabel, getPermissionModeTooltip } from '../../../../shared/agentMetadata';
+import { updateSessionWith } from '../../../stores/sessionStore';
 import { captureException } from '../../../utils/sentry';
 import { addStagedImageIfUnique } from '../utils/stagedImages';
 import { formatTerminalCwd } from '../utils/terminalPath';
@@ -16,7 +17,6 @@ interface ToolbarControlsProps {
 	session: Session;
 	theme: Theme;
 	isTerminalMode: boolean;
-	isReadOnlyMode: boolean;
 	canAttachImages: boolean;
 	hasReadOnlyCapability: boolean;
 	enterToSend: boolean;
@@ -27,7 +27,6 @@ interface ToolbarControlsProps {
 	showFlashNotification?: (message: string) => void;
 	tabSaveToHistory: boolean;
 	onToggleTabSaveToHistory?: () => void;
-	onToggleTabReadOnlyMode?: () => void;
 	tabShowThinking: ThinkingMode;
 	onToggleTabShowThinking?: () => void;
 	supportsThinking: boolean;
@@ -49,7 +48,6 @@ export const ToolbarControls = memo(function ToolbarControls({
 	session,
 	theme,
 	isTerminalMode,
-	isReadOnlyMode,
 	canAttachImages,
 	hasReadOnlyCapability,
 	enterToSend,
@@ -60,7 +58,6 @@ export const ToolbarControls = memo(function ToolbarControls({
 	showFlashNotification,
 	tabSaveToHistory,
 	onToggleTabSaveToHistory,
-	onToggleTabReadOnlyMode,
 	tabShowThinking,
 	onToggleTabShowThinking,
 	supportsThinking,
@@ -78,6 +75,10 @@ export const ToolbarControls = memo(function ToolbarControls({
 	effortMenuRef,
 }: ToolbarControlsProps) {
 	const isAiMode = session.inputMode === 'ai';
+
+	const activeTab = session.aiTabs?.find((t) => t.id === session.activeTabId);
+	const currentPermissionMode: 'full' | 'standard' | 'readonly' =
+		activeTab?.permissionMode ?? (activeTab?.readOnlyMode ? 'readonly' : 'full');
 
 	return (
 		<div className="flex flex-wrap items-center gap-1 px-2 pb-2 pt-1">
@@ -194,23 +195,56 @@ export const ToolbarControls = memo(function ToolbarControls({
 						<span>History</span>
 					</button>
 				)}
-				{isAiMode && onToggleTabReadOnlyMode && hasReadOnlyCapability && (
+				{isAiMode && hasReadOnlyCapability && (
 					<button
-						onClick={onToggleTabReadOnlyMode}
+						onClick={() => {
+							if (!activeTab) return;
+							const nextMode =
+								currentPermissionMode === 'full'
+									? 'standard'
+									: currentPermissionMode === 'standard'
+										? 'readonly'
+										: 'full';
+							updateSessionWith(session.id, (s) => ({
+								...s,
+								aiTabs: s.aiTabs.map((t) =>
+									t.id === activeTab.id
+										? {
+												...t,
+												permissionMode: nextMode,
+												readOnlyMode: nextMode === 'readonly',
+											}
+										: t
+								),
+							}));
+						}}
 						className={`flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-full cursor-pointer transition-all ${
-							isReadOnlyMode ? '' : 'opacity-40 hover:opacity-70'
+							currentPermissionMode === 'standard' ? 'opacity-40 hover:opacity-70' : ''
 						}`}
 						style={{
-							backgroundColor: isReadOnlyMode ? `${theme.colors.warning}25` : 'transparent',
-							color: isReadOnlyMode ? theme.colors.warning : theme.colors.textDim,
-							border: isReadOnlyMode
-								? `1px solid ${theme.colors.warning}50`
-								: '1px solid transparent',
+							backgroundColor:
+								currentPermissionMode === 'readonly'
+									? `${theme.colors.warning}25`
+									: currentPermissionMode === 'full'
+										? `${theme.colors.accent}25`
+										: 'transparent',
+							color:
+								currentPermissionMode === 'readonly'
+									? theme.colors.warning
+									: currentPermissionMode === 'full'
+										? theme.colors.accent
+										: theme.colors.textDim,
+							border:
+								currentPermissionMode === 'readonly'
+									? `1px solid ${theme.colors.warning}50`
+									: currentPermissionMode === 'full'
+										? `1px solid ${theme.colors.accent}50`
+										: '1px solid transparent',
 						}}
-						title={getReadOnlyModeTooltip(session.toolType)}
+						title={getPermissionModeTooltip(currentPermissionMode, session.toolType)}
 					>
 						<Eye className="w-3 h-3" />
-						<span>{getReadOnlyModeLabel(session.toolType)}</span>
+						<span>{getPermissionModeLabel(currentPermissionMode, session.toolType)}</span>
 					</button>
 				)}
 				{isAiMode && supportsThinking && onToggleTabShowThinking && (
