@@ -369,7 +369,10 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 
 			// Get the TARGET TAB's agentSessionId for session continuity
 			const tabAgentSessionId = targetTab.agentSessionId;
-			const isReadOnly = item.readOnlyMode || targetTab.readOnlyMode;
+			const isReadOnly =
+				item.readOnlyMode === true ||
+				targetTab.readOnlyMode === true ||
+				targetTab.permissionMode === 'readonly';
 
 			// Filter out YOLO/skip-permissions flags when read-only mode is active
 			const spawnArgs = isReadOnly

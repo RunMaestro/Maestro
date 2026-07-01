@@ -101,6 +101,7 @@ export async function buildSpawnSpec(
 		prompt: substitutedPrompt,
 		cwd: projectRoot,
 		yoloMode: true, // Cue runs always use YOLO mode like Auto Run
+		permissionMode: 'full' as const,
 		// Cue spawns with `stdio: ['ignore', 'pipe', 'pipe']` and no TTY, so the
 		// agent must run in batch mode every time. Without this, a prompt that
 		// substituted to `""` (e.g. `{{CUE_SOURCE_OUTPUT}}` when the upstream

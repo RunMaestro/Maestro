@@ -755,7 +755,9 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 									autoRunState={currentSessionBatchState || undefined}
 									onStopAutoRun={() => onStopBatchRun?.(activeSession.id)}
 									onOpenQueueBrowser={onOpenQueueBrowser}
-									tabReadOnlyMode={activeTab?.readOnlyMode ?? false}
+									tabReadOnlyMode={
+										(activeTab?.readOnlyMode ?? false) || activeTab?.permissionMode === 'readonly'
+									}
 									onToggleTabReadOnlyMode={onToggleTabReadOnlyMode}
 									tabSaveToHistory={activeTab?.saveToHistory ?? false}
 									onToggleTabSaveToHistory={onToggleTabSaveToHistory}

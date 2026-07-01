@@ -181,6 +181,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				readOnlyMode?: boolean; // For read-only/plan mode
 				modelId?: string; // For model selection
 				yoloMode?: boolean; // For YOLO/full-access mode (bypasses confirmations)
+				permissionMode?: 'full' | 'standard' | 'readonly'; // 3-way permission mode (overrides readOnlyMode/yoloMode)
 				// Per-session overrides (take precedence over agent-level config)
 				sessionCustomPath?: string; // Session-specific custom path
 				sessionCustomArgs?: string; // Session-specific custom args
@@ -425,6 +426,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					readOnlyMode: config.readOnlyMode,
 					modelId: config.modelId,
 					yoloMode: config.yoloMode,
+					permissionMode: config.permissionMode,
 					agentSessionId: config.agentSessionId,
 				});
 
@@ -463,6 +465,14 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					effectiveCustomEnvVars = {
 						...(effectiveCustomEnvVars || {}),
 						...agent.readOnlyEnvOverrides,
+					};
+				}
+				// In full-access mode, apply agent-specific env var overrides for full permissions
+				const isFullAccess = config.permissionMode === 'full' || config.yoloMode === true;
+				if (isFullAccess && (agent as any)?.fullAccessEnvOverrides) {
+					effectiveCustomEnvVars = {
+						...(effectiveCustomEnvVars || {}),
+						...(agent as any).fullAccessEnvOverrides,
 					};
 				}
 				if (configResolution.customEnvSource !== 'none' && effectiveCustomEnvVars) {
@@ -690,6 +700,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					...(agentSessionId && { agentSessionId }),
 					...(config.readOnlyMode && { readOnlyMode: true }),
 					...(config.yoloMode && { yoloMode: true }),
+					...(config.permissionMode && { permissionMode: config.permissionMode }),
 					...(config.modelId && { modelId: config.modelId }),
 					...(config.prompt && {
 						prompt:
@@ -1220,6 +1231,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 								readOnlyMode: originalConfig.readOnlyMode,
 								modelId: originalConfig.modelId,
 								yoloMode: originalConfig.yoloMode,
+								permissionMode: originalConfig.permissionMode,
 								agentSessionId: freshAgentSessionId,
 							});
 

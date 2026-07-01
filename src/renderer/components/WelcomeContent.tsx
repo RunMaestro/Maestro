@@ -99,8 +99,8 @@ export function WelcomeContent({
 					they do when running the provider directly.
 				</p>
 				<p>
-					Agents run in auto-approve mode with tool calls accepted automatically. Toggle Read-Only
-					mode for guardrails.
+					Agents default to Full Access mode with tool calls accepted automatically. Switch to
+					Standard or Read Only mode via the toolbar for guardrails.
 				</p>
 			</div>
 

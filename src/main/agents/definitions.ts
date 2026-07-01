@@ -103,6 +103,7 @@ export interface AgentConfig extends BaseAgentConfig {
 	noPromptSeparator?: boolean; // If true, don't add '--' before the prompt in batch mode (OpenCode doesn't support it)
 	defaultEnvVars?: Record<string, string>; // Default environment variables for this agent (merged with user customEnvVars)
 	readOnlyEnvOverrides?: Record<string, string>; // Env var overrides applied in read-only mode (replaces keys from defaultEnvVars)
+	fullAccessEnvOverrides?: Record<string, string>; // Env var overrides applied in full permission mode (replaces keys from defaultEnvVars)
 	batchModeEnvVars?: Record<string, string>; // Env vars applied ONLY to CLI batch spawns (maestro-cli send). Not applied to desktop UI or --live path. Use for settings that only make sense in short-lived non-interactive sessions (e.g., disabling background tasks).
 
 	/**
@@ -166,25 +167,14 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		// desktop spawner (see `src/main/ipc/handlers/process.ts`) to pick a binary per turn
 		// based on per-tab Claude interactive mode state.
 		command: 'claude',
-		// YOLO mode (--dangerously-skip-permissions) is always enabled - Maestro requires it
-		args: [
-			'--print',
-			'--verbose',
-			'--output-format',
-			'stream-json',
-			'--dangerously-skip-permissions',
-		],
+		args: ['--print', '--verbose', '--output-format', 'stream-json'],
 		apiCommand: 'claude',
-		apiModeArgs: [
-			'--print',
-			'--verbose',
-			'--output-format',
-			'stream-json',
-			'--dangerously-skip-permissions',
-		],
+		apiModeArgs: ['--print', '--verbose', '--output-format', 'stream-json'],
 		interactiveCommand: 'maestro-p',
 		// maestro-p forwards these to the underlying claude TUI invocation.
-		interactiveModeArgs: ['--dangerously-skip-permissions'],
+		interactiveModeArgs: [],
+		// Full permission mode: bypass all Claude permission checks
+		fullAccessArgs: ['--dangerously-skip-permissions'],
 		resumeArgs: (sessionId: string) => ['--resume', sessionId], // Resume with session ID; works for both api and interactive (forwarded by maestro-p)
 		readOnlyArgs: ['--permission-mode', 'plan'], // Read-only/plan mode
 		readOnlyCliEnforced: true, // CLI enforces read-only via --permission-mode plan
@@ -258,7 +248,8 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 			'--skip-git-repo-check',
 		], // Read-only/plan mode — includes bypass flags for non-interactive execution (sandbox read-only overrides YOLO permissions)
 		readOnlyCliEnforced: true, // CLI enforces read-only via --sandbox read-only
-		yoloModeArgs: ['--dangerously-bypass-approvals-and-sandbox'], // Full access mode
+		yoloModeArgs: ['--dangerously-bypass-approvals-and-sandbox'], // Full access mode (legacy)
+		fullAccessArgs: ['--dangerously-bypass-approvals-and-sandbox'], // Full permission mode
 		workingDirArgs: (dir: string) => ['-C', dir], // Set working directory
 		imageArgs: (imagePath: string) => ['-i', imagePath], // Image attachment: codex exec -i /path/to/image.png
 		modelArgs: (modelId: string) => ['-m', modelId], // Model selection: codex exec -m gpt-5.3-codex
@@ -373,13 +364,18 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		imageArgs: (imagePath: string) => ['-f', imagePath], // Image/file attachment: opencode run -f /path/to/image.png -- "prompt"
 		// Use '--' separator before prompt to prevent yargs from misinterpreting
 		// leading '---' (YAML frontmatter in slash command prompts) as flags (#527)
-		// Default env vars: enable YOLO mode (allow all permissions including external_directory)
+		// Default env vars: standard permission mode - question tool disabled to prevent stdin hangs.
 		// Disable the question tool via both methods:
 		// - "question": "deny" in permission block (per OpenCode GitHub issue workaround)
 		// - "question": false in tools block (original approach)
-		// The question tool waits for stdin input which hangs batch mode
-		// Users can override by setting customEnvVars in agent config
+		// The question tool waits for stdin input which hangs batch mode.
+		// Users can override by setting customEnvVars in agent config.
 		defaultEnvVars: {
+			OPENCODE_CONFIG_CONTENT: '{"permission":{"question":"deny"},"tools":{"question":false}}',
+		},
+		// Full permission mode: allow all actions including external_directory.
+		// Overrides the standard-mode defaultEnvVars when permissionMode is 'full'.
+		fullAccessEnvOverrides: {
 			OPENCODE_CONFIG_CONTENT:
 				'{"permission":{"*":"allow","external_directory":"allow","question":"deny"},"tools":{"question":false}}',
 		},
@@ -442,7 +438,8 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		readOnlyCliEnforced: true, // exec is read-only by default (no flag needed)
 
 		// YOLO mode (same as batchModeArgs, kept for explicit yoloMode requests)
-		yoloModeArgs: ['--skip-permissions-unsafe'],
+		yoloModeArgs: ['--skip-permissions-unsafe'], // Legacy
+		fullAccessArgs: ['--skip-permissions-unsafe'], // Full permission mode
 
 		// Working directory
 		workingDirArgs: (dir: string) => ['--cwd', dir],
@@ -526,7 +523,8 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		], // Enforce read-only by denying write/shell/memory/github actions at the Copilot CLI layer
 		readOnlyCliEnforced: true, // CLI-enforced via explicit tool permission rules
 		modelArgs: (modelId: string) => ['--model', modelId], // Model selection
-		yoloModeArgs: ['--allow-all'], // Full permissions (same as batchModeArgs; Copilot treats --yolo as an alias)
+		yoloModeArgs: ['--allow-all'], // Full permissions - legacy name
+		fullAccessArgs: ['--allow-all'], // Full permission mode
 		imagePromptBuilder: (imagePaths: string[]) =>
 			imagePaths.length > 0
 				? `Use these attached images as context:\n${imagePaths.map((imagePath) => `@${imagePath}`).join('\n')}\n\n`

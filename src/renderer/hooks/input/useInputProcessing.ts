@@ -1055,7 +1055,10 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							currentSessionBatchState.isRunning &&
 							!currentSessionBatchState.worktreeActive &&
 							!isForceParallel;
-						const isReadOnly = isAutoRunReadOnly || freshActiveTab?.readOnlyMode;
+						const isReadOnly =
+							isAutoRunReadOnly ||
+							freshActiveTab?.readOnlyMode === true ||
+							freshActiveTab?.permissionMode === 'readonly';
 
 						// For read-only mode, filter out any YOLO/skip-permissions flags from base args
 						// (they would override the read-only mode we're requesting)

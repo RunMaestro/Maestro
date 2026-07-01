@@ -412,7 +412,8 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				}
 
 				const tabAgentSessionId = targetTab?.agentSessionId;
-				const isReadOnly = targetTab?.readOnlyMode;
+				const isReadOnly =
+					targetTab?.readOnlyMode === true || targetTab?.permissionMode === 'readonly';
 
 				// Filter out YOLO/skip-permissions flags when read-only mode is active
 				const agentArgs = agent.args ?? [];

@@ -411,7 +411,7 @@ describe('agent-detector', () => {
 			expect(claudeAgent?.command).toBe('claude');
 			expect(claudeAgent?.args).toContain('--print');
 			expect(claudeAgent?.args).toContain('--verbose');
-			expect(claudeAgent?.args).toContain('--dangerously-skip-permissions');
+			expect(claudeAgent?.fullAccessArgs).toContain('--dangerously-skip-permissions');
 		});
 
 		it('should include terminal as hidden agent', async () => {
