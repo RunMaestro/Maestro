@@ -11,6 +11,8 @@
  * can be unit-tested in isolation and reused from any process.
  */
 
+import { AGENT_MENTION_PATTERN_SOURCE } from './mentionPatterns';
+
 // ============================================================================
 // TYPES
 // ============================================================================
@@ -64,12 +66,15 @@ export const DEFAULT_RECENT_TURNS = 5;
 /**
  * A mention is exactly two `@` followed by one or more name characters.
  *
- * The class is case-insensitive to faithfully match `normalizeMentionName`
- * output (`src/shared/group-chat-types.ts`), which preserves case - e.g.
- * `@@Review-Bot`. Downstream matching folds to lowercase, so restricting the
- * scanner to `[a-z0-9-]` here would silently drop every capitalized agent name.
+ * Sourced from {@link AGENT_MENTION_PATTERN_SOURCE} (shared/mentionPatterns) so
+ * the dispatch scanner, the `@` picker, and the chip overlay all key off one
+ * definition. The class is case-insensitive to faithfully match
+ * `normalizeMentionName` output (`src/shared/group-chat-types.ts`), which
+ * preserves case - e.g. `@@Review-Bot`. Downstream matching folds to lowercase,
+ * so restricting the scanner to `[a-z0-9-]` here would silently drop every
+ * capitalized agent name.
  */
-const MENTION_PATTERN = /@@[A-Za-z0-9-]+/g;
+const MENTION_PATTERN = new RegExp(AGENT_MENTION_PATTERN_SOURCE, 'g');
 
 /** A `\w`-equivalent char immediately before `@@` marks a mid-word mention. */
 const WORD_CHAR = /[A-Za-z0-9_]/;

@@ -20,6 +20,7 @@ import React from 'react';
 import type { Theme } from '../../../types';
 import { openUrl } from '../../../utils/openUrl';
 import { openMaestroLink } from '../../../utils/openMaestroLink';
+import { RenderedMentionChip } from './RenderedMentionChip';
 
 export interface MarkdownLinkBehavior {
 	/** Chat: handle http/file/git destinations inline via openUrl/openPath. */
@@ -86,6 +87,22 @@ export function createMarkdownLink(config: MarkdownLinkConfig) {
 	const hasContextMenu = Boolean(onLinkContextMenu || onFileContextMenu);
 
 	return function MarkdownLink({ node: _node, href, children, ...props }: any) {
+		// Mention chips (remarkMentionChips) ride in as link nodes tagged with
+		// data-mention-kind. Detect them first and hand off to the chip renderer
+		// so they render as chips, not anchors. File chips still carry
+		// data-maestro-file, so this branch MUST run before the file-link check.
+		const mentionKind = props['data-mention-kind'] as 'file' | 'agent' | undefined;
+		if (mentionKind === 'file' || mentionKind === 'agent') {
+			return React.createElement(RenderedMentionChip, {
+				kind: mentionKind,
+				theme,
+				filePath: props['data-maestro-file'] as string | undefined,
+				extension: props['data-mention-ext'] as string | undefined,
+				agentName: props['data-mention-name'] as string | undefined,
+				onFileClick,
+			});
+		}
+
 		// Check for maestro-file:// protocol OR data-maestro-file attribute
 		// (data attribute is the fallback when rehype strips custom protocols).
 		const dataFilePath = props['data-maestro-file'] as string | undefined;

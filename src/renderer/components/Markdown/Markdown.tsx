@@ -29,6 +29,7 @@ import {
 } from '../../utils/markdownConfig';
 import { LinkContextMenu, type LinkContextMenuState } from '../LinkContextMenu';
 import { FileContextMenu, type FileContextMenuState } from '../FileContextMenu';
+import { useSettingsStore } from '../../stores/settingsStore';
 import { buildMarkdownPlugins } from './plugins';
 import { preprocessMarkdown } from './preprocess';
 import { createChatMarkdownComponents } from './chatComponents';
@@ -127,6 +128,13 @@ export const Markdown = memo(function Markdown({
 }: MarkdownProps) {
 	const isChat = preset === 'chat';
 
+	// Cross-agent mention chips are an Encore-gated chat enhancement. Read the
+	// flag here (once per Markdown instance) so the chat pipeline picks up
+	// remarkMentionChips without every call site threading the flag through.
+	const crossAgentMentionsEnabled = useSettingsStore(
+		(state) => state.encoreFeatures.crossAgentMentions
+	);
+
 	// Resolve homeDir for tilde path expansion (module-level cache, fetched once).
 	const [homeDir, setHomeDir] = useState<string | undefined>(getHomeDir);
 	useEffect(() => {
@@ -165,6 +173,7 @@ export const Markdown = memo(function Markdown({
 			chatMath: isChat ? chatMath : false,
 			allowRawHtml,
 			fileLinks: { indices: fileTreeIndices, cwd, projectRoot, homeDir },
+			mentionChips: isChat && crossAgentMentionsEnabled,
 			extraRemarkPlugins,
 			extraRehypePlugins,
 		});
@@ -179,6 +188,7 @@ export const Markdown = memo(function Markdown({
 		cwd,
 		projectRoot,
 		homeDir,
+		crossAgentMentionsEnabled,
 		extraRemarkPlugins,
 		extraRehypePlugins,
 	]);

@@ -81,6 +81,17 @@ export interface ThemeColors {
 	crossAgentBubbleBg?: string;
 	/** Border color for a cross-agent response bubble. Optional; derived from the accent when unset. */
 	crossAgentBubbleBorder?: string;
+	/**
+	 * `@file` / `@@agent` mention-chip tokens. Chips appear frequently in dense
+	 * input, so these are deliberately subtle: `Bg` a faint tint a touch off the
+	 * input background, `Border` a slightly higher-contrast edge, `Text`
+	 * contrast-safe against `Bg`. All optional - when unset the renderer derives
+	 * them from the accent/border/text tokens via `getMentionChipColors`, so
+	 * every theme (custom included) gets legible chips for free.
+	 */
+	mentionChipBg?: string;
+	mentionChipBorder?: string;
+	mentionChipText?: string;
 	/** Success state color (green tones) */
 	success: string;
 	/** Warning state color (yellow/orange tones) */

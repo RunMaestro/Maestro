@@ -7,6 +7,7 @@ import rehypeRaw from 'rehype-raw';
 import rehypeKatex from 'rehype-katex';
 import { remarkFrontmatterTable } from '../../../../renderer/utils/remarkFrontmatterTable';
 import { remarkFileLinks } from '../../../../renderer/utils/remarkFileLinks';
+import { remarkMentionChips } from '../../../../renderer/utils/remarkMentionChips';
 import { remarkPromoteDisplayMath } from '../../../../shared/remarkPromoteDisplayMath';
 import { buildMarkdownPlugins } from '../../../../renderer/components/Markdown/plugins';
 
@@ -106,6 +107,31 @@ describe('buildMarkdownPlugins', () => {
 			expect(pluginFns(buildMarkdownPlugins().remarkPlugins as unknown[])).not.toContain(
 				remarkFileLinks
 			);
+		});
+	});
+
+	describe('mention chips gating', () => {
+		it('is absent by default', () => {
+			expect(pluginFns(buildMarkdownPlugins().remarkPlugins as unknown[])).not.toContain(
+				remarkMentionChips
+			);
+		});
+
+		it('adds remarkMentionChips when mentionChips is set', () => {
+			expect(
+				pluginFns(buildMarkdownPlugins({ mentionChips: true }).remarkPlugins as unknown[])
+			).toContain(remarkMentionChips);
+		});
+
+		it('runs remarkMentionChips BEFORE remarkFileLinks (claims @paths first)', () => {
+			const fns = pluginFns(
+				buildMarkdownPlugins({
+					mentionChips: true,
+					fileLinks: { projectRoot: '/Users/me/proj' },
+				}).remarkPlugins as unknown[]
+			);
+			expect(fns.indexOf(remarkMentionChips)).toBeGreaterThanOrEqual(0);
+			expect(fns.indexOf(remarkMentionChips)).toBeLessThan(fns.indexOf(remarkFileLinks));
 		});
 	});
 
