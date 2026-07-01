@@ -26,6 +26,7 @@ import type {
 } from '../../types';
 import type { FileTreeChanges } from '../../utils/fileExplorer';
 import type { TabCompletionSuggestion, TabCompletionFilter } from '../input/useTabCompletion';
+import type { MentionPickerItem, MentionCategory } from '../input/useMentionPicker';
 import type {
 	SummarizeProgress,
 	SummarizeResult,
@@ -64,16 +65,13 @@ export interface UseMainPanelPropsDeps {
 	selectedTabCompletionIndex: number;
 	tabCompletionFilter: TabCompletionFilter;
 
-	// @ mention completion state
+	// @ mention completion state (unified picker: files + dirs + agents + groups)
 	atMentionOpen: boolean;
 	atMentionFilter: string;
 	atMentionStartIndex: number;
-	atMentionSuggestions: Array<{
-		value: string;
-		type: 'file' | 'folder';
-		displayText: string;
-		fullPath: string;
-	}>;
+	atMentionItems: MentionPickerItem[];
+	atMentionCounts: Record<MentionCategory, number>;
+	atMentionCategory: MentionCategory;
 	selectedAtMentionIndex: number;
 
 	// Batch run state (undefined matches component prop type)
@@ -134,6 +132,7 @@ export interface UseMainPanelPropsDeps {
 	setAtMentionFilter: (filter: string) => void;
 	setAtMentionStartIndex: (index: number) => void;
 	setSelectedAtMentionIndex: (index: number) => void;
+	setAtMentionCategory: (category: MentionCategory) => void;
 	setGitLogOpen: (open: boolean) => void;
 
 	// Refs
@@ -376,7 +375,10 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			setAtMentionFilter: deps.setAtMentionFilter,
 			atMentionStartIndex: deps.atMentionStartIndex,
 			setAtMentionStartIndex: deps.setAtMentionStartIndex,
-			atMentionSuggestions: deps.atMentionSuggestions,
+			atMentionItems: deps.atMentionItems,
+			atMentionCounts: deps.atMentionCounts,
+			atMentionCategory: deps.atMentionCategory,
+			setAtMentionCategory: deps.setAtMentionCategory,
 			selectedAtMentionIndex: deps.selectedAtMentionIndex,
 			setSelectedAtMentionIndex: deps.setSelectedAtMentionIndex,
 			setGitLogOpen: deps.setGitLogOpen,
@@ -591,7 +593,9 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.atMentionOpen,
 			deps.atMentionFilter,
 			deps.atMentionStartIndex,
-			deps.atMentionSuggestions,
+			deps.atMentionItems,
+			deps.atMentionCounts,
+			deps.atMentionCategory,
 			deps.selectedAtMentionIndex,
 			deps.currentSessionBatchState,
 			deps.fileTree,
@@ -636,6 +640,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.setAtMentionFilter,
 			deps.setAtMentionStartIndex,
 			deps.setSelectedAtMentionIndex,
+			deps.setAtMentionCategory,
 			deps.setGitLogOpen,
 			deps.toggleInputMode,
 			deps.processInput,

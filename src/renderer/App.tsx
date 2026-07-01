@@ -717,6 +717,8 @@ function MaestroConsoleInner() {
 		setAtMentionStartIndex,
 		selectedAtMentionIndex,
 		setSelectedAtMentionIndex,
+		atMentionCategory,
+		setAtMentionCategory,
 		commandHistoryOpen,
 		setCommandHistoryOpen,
 		commandHistoryFilter,
@@ -1650,7 +1652,8 @@ function MaestroConsoleInner() {
 		handlePaste,
 		handleDrop,
 		tabCompletionSuggestions,
-		atMentionSuggestions,
+		atMentionItems,
+		atMentionCounts,
 	} = useInputHandlers({
 		inputRef,
 		terminalOutputRef,
@@ -2540,11 +2543,13 @@ function MaestroConsoleInner() {
 		selectedTabCompletionIndex,
 		tabCompletionFilter,
 
-		// @ mention completion state
+		// @ mention completion state (unified picker: files + dirs + agents + groups)
 		atMentionOpen,
 		atMentionFilter,
 		atMentionStartIndex,
-		atMentionSuggestions,
+		atMentionItems,
+		atMentionCounts,
+		atMentionCategory,
 		selectedAtMentionIndex,
 
 		// Batch run state (convert null to undefined for component props)
@@ -2603,6 +2608,7 @@ function MaestroConsoleInner() {
 		setAtMentionFilter,
 		setAtMentionStartIndex,
 		setSelectedAtMentionIndex,
+		setAtMentionCategory,
 		setGitLogOpen,
 
 		// Refs

@@ -144,12 +144,12 @@ export interface MainPanelContentProps {
 	setAtMentionFilter?: (filter: string) => void;
 	atMentionStartIndex?: number;
 	setAtMentionStartIndex?: (index: number) => void;
-	atMentionSuggestions?: Array<{
-		value: string;
-		type: 'file' | 'folder';
-		displayText: string;
-		fullPath: string;
-	}>;
+	atMentionItems?: import('../../hooks/input/useMentionPicker').MentionPickerItem[];
+	atMentionCounts?: Record<import('../../hooks/input/useMentionPicker').MentionCategory, number>;
+	atMentionCategory?: import('../../hooks/input/useMentionPicker').MentionCategory;
+	setAtMentionCategory?: (
+		category: import('../../hooks/input/useMentionPicker').MentionCategory
+	) => void;
 	selectedAtMentionIndex?: number;
 	setSelectedAtMentionIndex?: (index: number) => void;
 	inputRef: React.RefObject<HTMLTextAreaElement>;
@@ -332,7 +332,10 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		setAtMentionFilter,
 		atMentionStartIndex,
 		setAtMentionStartIndex,
-		atMentionSuggestions,
+		atMentionItems,
+		atMentionCounts,
+		atMentionCategory,
+		setAtMentionCategory,
 		selectedAtMentionIndex,
 		setSelectedAtMentionIndex,
 		inputRef,
@@ -737,7 +740,10 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 									setAtMentionFilter={setAtMentionFilter}
 									atMentionStartIndex={atMentionStartIndex}
 									setAtMentionStartIndex={setAtMentionStartIndex}
-									atMentionSuggestions={atMentionSuggestions}
+									atMentionItems={atMentionItems}
+									atMentionCounts={atMentionCounts}
+									atMentionCategory={atMentionCategory}
+									setAtMentionCategory={setAtMentionCategory}
 									selectedAtMentionIndex={selectedAtMentionIndex}
 									setSelectedAtMentionIndex={setSelectedAtMentionIndex}
 									inputRef={inputRef}

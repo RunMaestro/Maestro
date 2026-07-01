@@ -27,7 +27,8 @@ import { useDebouncedValue } from '../utils';
 import { useInputSync } from './useInputSync';
 import { useTabCompletion } from './useTabCompletion';
 import type { TabCompletionSuggestion } from './useTabCompletion';
-import { useAtMentionCompletion, type AtMentionSuggestion } from './useAtMentionCompletion';
+import { useAtMentionCompletion } from './useAtMentionCompletion';
+import { useMentionPicker, type MentionPickerItem, type MentionCategory } from './useMentionPicker';
 import { useInputProcessing } from './useInputProcessing';
 import { useInputKeyDown } from './useInputKeyDown';
 import { IMAGE_EXTENSIONS } from '../../utils/fileExplorerIcons/shared';
@@ -145,8 +146,10 @@ export interface UseInputHandlersReturn {
 	handleDrop: (e: React.DragEvent) => void;
 	/** Tab completion suggestions for terminal mode */
 	tabCompletionSuggestions: TabCompletionSuggestion[];
-	/** @ mention suggestions for AI mode */
-	atMentionSuggestions: AtMentionSuggestion[];
+	/** Unified `@` picker rows for the active category (AI mode) */
+	atMentionItems: MentionPickerItem[];
+	/** Per-category totals for the picker's category bar */
+	atMentionCounts: Record<MentionCategory, number>;
 	/** Sync file tree highlight to match tab completion suggestion */
 	syncFileTreeToTabCompletion: (suggestion: TabCompletionSuggestion | undefined) => void;
 }
@@ -186,6 +189,9 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	// --- Store subscriptions (reactive) ---
 	const activeSession = useSessionStore(selectActiveSession);
 	const activeSessionId = useSessionStore((s) => s.activeSessionId);
+	// All agents + groups feed the Agents scope of the unified `@` picker.
+	const sessions = useSessionStore((s) => s.sessions);
+	const groups = useSessionStore((s) => s.groups);
 	const setSessions = useMemo(() => useSessionStore.getState().setSessions, []);
 	const activeGroupChatId = useGroupChatStore((s) => s.activeGroupChatId);
 	const setGroupChatStagedImages = useMemo(
@@ -212,6 +218,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		tabCompletionFilter,
 		atMentionOpen,
 		atMentionFilter,
+		atMentionCategory,
 		setSlashCommandOpen,
 	} = useInputContext();
 
@@ -398,7 +405,9 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	]);
 
 	const debouncedAtMentionFilter = useDebouncedValue(atMentionOpen ? atMentionFilter : '', 100);
-	const atMentionSuggestions = useMemo(() => {
+	// File/directory suggestions (raw) - only computed while the picker is open in
+	// AI mode. These feed the Files/Directories scopes of the unified picker.
+	const fileSuggestions = useMemo(() => {
 		if (!atMentionOpen || !activeSessionId || activeSessionInputMode !== 'ai') {
 			return [];
 		}
@@ -410,6 +419,17 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		debouncedAtMentionFilter,
 		getAtMentionSuggestions,
 	]);
+
+	// Unified picker: composes file/dir suggestions with agents/groups into one
+	// ranked, category-aware list. Single source of truth for the dropdown.
+	const { items: atMentionItems, counts: atMentionCounts } = useMentionPicker({
+		filter: debouncedAtMentionFilter,
+		category: atMentionCategory,
+		sessions,
+		groups,
+		currentSessionId: activeSessionId,
+		fileSuggestions,
+	});
 
 	// Sync file tree selection to match tab completion suggestion
 	const syncFileTreeToTabCompletion = useCallback(
@@ -479,7 +499,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		inputValue,
 		setInputValue,
 		tabCompletionSuggestions,
-		atMentionSuggestions,
+		atMentionItems,
 		allSlashCommands,
 		syncFileTreeToTabCompletion,
 		processInput,
@@ -792,7 +812,8 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		handlePaste,
 		handleDrop,
 		tabCompletionSuggestions,
-		atMentionSuggestions,
+		atMentionItems,
+		atMentionCounts,
 		syncFileTreeToTabCompletion,
 	};
 }

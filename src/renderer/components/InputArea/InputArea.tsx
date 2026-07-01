@@ -69,7 +69,10 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		setAtMentionFilter,
 		atMentionStartIndex = -1,
 		setAtMentionStartIndex,
-		atMentionSuggestions = [],
+		atMentionItems = [],
+		atMentionCounts,
+		atMentionCategory = 'all',
+		setAtMentionCategory,
 		selectedAtMentionIndex = 0,
 		setSelectedAtMentionIndex,
 		thinkingItems = [],
@@ -222,7 +225,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	const atMentionItemRefs = useScrollIntoView<HTMLButtonElement>(
 		atMentionOpen,
 		selectedAtMentionIndex,
-		atMentionSuggestions.length
+		atMentionItems.length
 	);
 
 	const filteredCommandHistory = useMemo(
@@ -239,6 +242,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	const handleTextChange = useInputAreaTextChange({
 		isTerminalMode,
 		slashCommandOpen,
+		atMentionOpen,
 		setInputValue,
 		setSlashCommandOpen,
 		setSelectedSlashCommandIndex,
@@ -246,6 +250,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		setAtMentionFilter,
 		setAtMentionStartIndex,
 		setSelectedAtMentionIndex,
+		setAtMentionCategory,
 	});
 
 	// Show summarization progress overlay when active for this tab
@@ -398,7 +403,10 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 			<AtMentionPopover
 				isOpen={atMentionOpen}
 				isTerminalMode={isTerminalMode}
-				suggestions={atMentionSuggestions}
+				items={atMentionItems}
+				counts={atMentionCounts}
+				category={atMentionCategory}
+				setCategory={setAtMentionCategory}
 				selectedIndex={selectedAtMentionIndex}
 				filter={atMentionFilter}
 				startIndex={atMentionStartIndex}
