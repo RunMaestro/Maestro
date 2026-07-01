@@ -80,6 +80,7 @@ export interface AppUtilityModalsProps {
 	setLogViewerOpen: (open: boolean) => void;
 	setProcessMonitorOpen: (open: boolean) => void;
 	setUsageDashboardOpen?: (open: boolean) => void;
+	setAgentRunDashboardOpen?: (open: boolean) => void;
 	setActiveRightTab: (tab: RightPanelTab) => void;
 	setAgentSessionsOpen: (open: boolean) => void;
 	setMemoryViewerOpen?: (open: boolean) => void;
@@ -335,6 +336,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	setLogViewerOpen,
 	setProcessMonitorOpen,
 	setUsageDashboardOpen,
+	setAgentRunDashboardOpen,
 	setActiveRightTab,
 	setAgentSessionsOpen,
 	setMemoryViewerOpen,
@@ -538,6 +540,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					setLogViewerOpen={setLogViewerOpen}
 					setProcessMonitorOpen={setProcessMonitorOpen}
 					setUsageDashboardOpen={setUsageDashboardOpen}
+					setAgentRunDashboardOpen={setAgentRunDashboardOpen}
 					setActiveRightTab={setActiveRightTab}
 					setAgentSessionsOpen={setAgentSessionsOpen}
 					setMemoryViewerOpen={setMemoryViewerOpen}

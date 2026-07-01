@@ -266,6 +266,7 @@ function MaestroConsoleInner() {
 		setProcessMonitorOpen,
 		// Usage Dashboard
 		setUsageDashboardOpen,
+		setAgentRunDashboardOpen,
 		// pendingKeyboardMasteryLevel — now self-sourced in AppOverlays (Tier 1A)
 		// Playground Panel — playgroundOpen now self-sourced in AppStandaloneModals
 		setPlaygroundOpen,
@@ -3014,6 +3015,7 @@ function MaestroConsoleInner() {
 					onNavigateToSession={handleProcessMonitorNavigateToSession}
 					onNavigateToGroupChat={handleProcessMonitorNavigateToGroupChat}
 					onCloseUsageDashboard={() => setUsageDashboardOpen(false)}
+					onCloseAgentRunDashboard={() => setAgentRunDashboardOpen(false)}
 					defaultStatsTimeRange={defaultStatsTimeRange}
 					colorBlindMode={colorBlindMode}
 					// AppConfirmModals props
@@ -3094,6 +3096,7 @@ function MaestroConsoleInner() {
 					setLogViewerOpen={setLogViewerOpen}
 					setProcessMonitorOpen={setProcessMonitorOpen}
 					setUsageDashboardOpen={encoreFeatures.usageStats ? setUsageDashboardOpen : undefined}
+					setAgentRunDashboardOpen={setAgentRunDashboardOpen}
 					setActiveRightTab={setActiveRightTab}
 					setAgentSessionsOpen={setAgentSessionsOpen}
 					setMemoryViewerOpen={setMemoryViewerOpen}

@@ -27,6 +27,7 @@ interface BuildFeatureCommandsArgs {
 	setMemoryViewerOpen?: (open: boolean) => void;
 	setFuzzyFileSearchOpen?: (open: boolean) => void;
 	setUsageDashboardOpen?: (open: boolean) => void;
+	setAgentRunDashboardOpen?: (open: boolean) => void;
 	onSummarizeAndContinue?: () => void;
 	onOpenMergeSession?: () => void;
 	onOpenSendToAgent?: () => void;
@@ -88,6 +89,7 @@ export function buildFeatureCommands({
 	setMemoryViewerOpen,
 	setFuzzyFileSearchOpen,
 	setUsageDashboardOpen,
+	setAgentRunDashboardOpen,
 	onSummarizeAndContinue,
 	onOpenMergeSession,
 	onOpenSendToAgent,
@@ -330,6 +332,18 @@ export function buildFeatureCommands({
 			subtext: 'Event-driven automation dashboard',
 			action: () => {
 				onOpenMaestroCue();
+				setQuickActionOpen(false);
+			},
+		});
+	}
+
+	if (setAgentRunDashboardOpen) {
+		commands.push({
+			id: 'agent-run-dashboard',
+			label: 'AgentRun Dashboard',
+			subtext: 'Inspect agent runs, campaigns, events, reviews, and Pianola-linked work',
+			action: () => {
+				setAgentRunDashboardOpen(true);
 				setQuickActionOpen(false);
 			},
 		});
