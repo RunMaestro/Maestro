@@ -17,6 +17,22 @@ import { buildSshCommand, buildSshCommandWithStdin } from './ssh-command-builder
 import { logger } from './logger';
 
 const LOG_CONTEXT = '[SshSpawnWrapper]';
+const WORKING_DIR_VALUE_FLAGS = new Set(['-C', '--cwd', '--working-directory', '--directory']);
+const WORKING_DIR_INLINE_PREFIXES = ['--cwd=', '--working-directory=', '--directory='];
+
+function normalizeSshWorkingDirArgs(args: string[], localCwd: string): string[] {
+	return args.map((arg, index) => {
+		if (index > 0 && WORKING_DIR_VALUE_FLAGS.has(args[index - 1]) && arg === localCwd) {
+			return '.';
+		}
+		for (const prefix of WORKING_DIR_INLINE_PREFIXES) {
+			if (arg.startsWith(prefix) && arg.slice(prefix.length) === localCwd) {
+				return `${prefix}.`;
+			}
+		}
+		return arg;
+	});
+}
 
 /**
  * Configuration for wrapping a spawn with SSH.
@@ -133,6 +149,8 @@ export async function wrapSpawnWithSsh(
 	// Use agentBinaryName if provided (e.g., 'codex', 'claude'), otherwise use the command
 	// This avoids using local paths like '/opt/homebrew/bin/codex' on the remote
 	const remoteCommand = config.agentBinaryName || config.command;
+	const remoteCwd = sshConfig.workingDirOverride?.trim() || config.cwd;
+	const remoteArgs = normalizeSshWorkingDirArgs(config.args, config.cwd);
 
 	// For SSH execution, we need to include the prompt in the args or send via stdin.
 	// Small prompts (<= 4000 chars) are embedded in the command line via buildSshCommand.
@@ -152,8 +170,8 @@ export async function wrapSpawnWithSsh(
 
 		const sshCommand = await buildSshCommandWithStdin(sshResult.config, {
 			command: remoteCommand,
-			args: [...config.args],
-			cwd: config.cwd,
+			args: remoteArgs,
+			cwd: remoteCwd,
 			env: config.customEnvVars,
 			stdinInput: config.prompt,
 		});
@@ -174,18 +192,20 @@ export async function wrapSpawnWithSsh(
 	let sshArgs = [...config.args];
 	if (config.prompt) {
 		if (config.promptArgs) {
-			sshArgs = [...config.args, ...config.promptArgs(config.prompt)];
+			sshArgs = [...remoteArgs, ...config.promptArgs(config.prompt)];
 		} else if (config.noPromptSeparator) {
-			sshArgs = [...config.args, config.prompt];
+			sshArgs = [...remoteArgs, config.prompt];
 		} else {
-			sshArgs = [...config.args, '--', config.prompt];
+			sshArgs = [...remoteArgs, '--', config.prompt];
 		}
+	} else {
+		sshArgs = remoteArgs;
 	}
 
 	const sshCommand = await buildSshCommand(sshResult.config, {
 		command: remoteCommand,
 		args: sshArgs,
-		cwd: config.cwd,
+		cwd: remoteCwd,
 		env: config.customEnvVars,
 	});
 
@@ -194,7 +214,7 @@ export async function wrapSpawnWithSsh(
 		sshArgsCount: sshCommand.args.length,
 		remoteCommand,
 		remoteArgs: sshArgs,
-		remoteCwd: config.cwd,
+		remoteCwd,
 	});
 
 	return {

@@ -2913,7 +2913,7 @@ describe('NewInstanceModal', () => {
 				target: { value: 'Remote Agent' },
 			});
 			fireEvent.change(screen.getByLabelText('Working Directory'), {
-				target: { value: '/home/devuser/my-project' },
+				target: { value: '~/git-projects' },
 			});
 
 			// Wait for remote path validation
@@ -2932,7 +2932,7 @@ describe('NewInstanceModal', () => {
 			// The critical assertion: workingDirOverride MUST match the remote path
 			expect(onCreate).toHaveBeenCalledWith(
 				'claude-code',
-				'/home/devuser/my-project',
+				'/home/testuser/git-projects',
 				'Remote Agent',
 				undefined,
 				undefined,
@@ -2945,11 +2945,11 @@ describe('NewInstanceModal', () => {
 				expect.objectContaining({
 					enabled: true,
 					remoteId: 'remote-1',
-					workingDirOverride: '/home/devuser/my-project',
+					workingDirOverride: '~/git-projects',
 				}),
 				undefined,
 				undefined,
-				undefined, // enableMaestroP unset: API is the default for Claude Code (Adaptive Mode off)
+				undefined, // enableMaestroP unset until the user opts into Adaptive Mode
 				undefined, // maestroPPath
 				undefined // maestroPMode unset until the user opts into TUI/Dynamic
 			);

@@ -507,6 +507,7 @@ export function NewInstanceModal({
 
 		// Get SSH remote configuration for this session (stored per-session, not per-agent)
 		const sshRemoteConfig = agentSshRemoteConfigs[selectedAgent];
+		const remoteWorkingDir = workingDir.trim();
 		// Convert to session-level format: ALWAYS pass explicitly to override any agent-level config
 		// For new sessions, this ensures consistent behavior with the UI selection.
 		// `shareHistoryToProjectDir` persists regardless of SSH enablement so it also
@@ -519,7 +520,7 @@ export function NewInstanceModal({
 						// When SSH is enabled, the Working Directory field contains a remote path.
 						// Use it as workingDirOverride so SSH terminals cd to the right place.
 						workingDirOverride:
-							sshRemoteConfig.workingDirOverride || expandedWorkingDir || undefined,
+							sshRemoteConfig.workingDirOverride?.trim() || remoteWorkingDir || undefined,
 						syncHistory: sshRemoteConfig.syncHistory,
 						shareHistoryToProjectDir: sshRemoteConfig.shareHistoryToProjectDir,
 					}
