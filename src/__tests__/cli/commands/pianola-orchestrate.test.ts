@@ -11,11 +11,22 @@ import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest'
 import type { OrchestratorState } from '../../../shared/pianola/pianola-orchestrator';
 import type { PianolaPlan, PianolaPlanProgress } from '../../../shared/pianola/pianola-tasks';
 
-const { connectMock, sendCommandMock, disconnectMock, runIterationMock } = vi.hoisted(() => ({
+const {
+	connectMock,
+	sendCommandMock,
+	disconnectMock,
+	runIterationMock,
+	upsertAgentRunMock,
+	appendAgentRunEventMock,
+	getAgentRunMock,
+} = vi.hoisted(() => ({
 	connectMock: vi.fn(),
 	sendCommandMock: vi.fn(),
 	disconnectMock: vi.fn(),
 	runIterationMock: vi.fn(),
+	upsertAgentRunMock: vi.fn(),
+	appendAgentRunEventMock: vi.fn(),
+	getAgentRunMock: vi.fn(),
 }));
 
 vi.mock('../../../cli/services/storage', () => ({ readSettingValue: vi.fn() }));
@@ -36,8 +47,16 @@ vi.mock('../../../shared/pianola/pianola-orchestrator', () => ({
 	runOrchestratorIteration: runIterationMock,
 	initialOrchestratorState: (plan: PianolaPlan): OrchestratorState => ({ plan, prevStates: {} }),
 }));
+vi.mock('../../../cli/services/agent-run-store', () => ({
+	upsertAgentRun: upsertAgentRunMock,
+	appendAgentRunEvent: appendAgentRunEventMock,
+	getAgentRun: getAgentRunMock,
+}));
 
-import { pianolaOrchestrate } from '../../../cli/commands/pianola-orchestrate';
+import {
+	pianolaOrchestrate,
+	resolveExistingPianolaAgentType,
+} from '../../../cli/commands/pianola-orchestrate';
 import { readSettingValue } from '../../../cli/services/storage';
 import { getPianolaPlan } from '../../../cli/services/pianola-store';
 
@@ -79,6 +98,9 @@ describe('pianolaOrchestrate - iteration error resilience', () => {
 		disconnectMock.mockReturnValue(undefined);
 		vi.mocked(readSettingValue).mockReturnValue({ pianola: true });
 		vi.mocked(getPianolaPlan).mockReturnValue(PLAN);
+		getAgentRunMock.mockReturnValue(undefined);
+		upsertAgentRunMock.mockImplementation((run) => run);
+		appendAgentRunEventMock.mockImplementation((event) => event);
 	});
 
 	it('logs a thrown iteration and keeps running until the plan completes', async () => {
@@ -105,5 +127,88 @@ describe('pianolaOrchestrate - iteration error resilience', () => {
 		expect(runIterationMock).toHaveBeenCalledTimes(1);
 		expect(errorSpy).not.toHaveBeenCalled();
 		expect(disconnectMock).toHaveBeenCalledTimes(1);
+	});
+
+	it('records dispatched Pianola tasks into the AgentRun ledger', async () => {
+		const plan: PianolaPlan = {
+			id: 'plan-2',
+			title: 'Ship',
+			createdAt: 100,
+			tasks: [
+				{ id: 'task-1', title: 'Build', prompt: 'build it', dependsOn: [], status: 'pending' },
+			],
+		};
+		const runningPlan: PianolaPlan = {
+			...plan,
+			tasks: [
+				{
+					...plan.tasks[0],
+					status: 'running',
+					agentId: 'agent-1',
+					agentType: 'claude-code',
+					tabId: 'tab-1',
+				},
+			],
+		};
+		vi.mocked(getPianolaPlan).mockReturnValue(plan);
+		runIterationMock.mockResolvedValue({
+			state: { plan: runningPlan, prevStates: { 'task-1': 'connecting' } },
+			progress: { ...DONE_PROGRESS, total: 1, pending: 0, running: 1, complete: false },
+			completedTaskIds: [],
+			failedTaskIds: [],
+			dispatchedTaskIds: ['task-1'],
+			done: false,
+		});
+
+		await pianolaOrchestrate('plan-2', { once: true });
+
+		expect(upsertAgentRunMock).toHaveBeenCalledWith(
+			expect.objectContaining({
+				id: 'pianola:plan-2:task-1',
+				provider: 'claude-code',
+				status: 'running',
+				agentId: 'agent-1',
+				tabId: 'tab-1',
+				prompt: 'build it',
+				source: 'pianola:plan-2',
+			})
+		);
+		expect(appendAgentRunEventMock).toHaveBeenCalledWith(
+			expect.objectContaining({
+				runId: 'pianola:plan-2:task-1',
+				type: 'pianola.dispatched',
+				status: 'running',
+			})
+		);
+	});
+});
+
+describe('resolveExistingPianolaAgentType', () => {
+	it('uses the live desktop session to backfill agentType for legacy agent-bound tasks', () => {
+		expect(
+			resolveExistingPianolaAgentType({ agentId: 'session-1' }, [
+				{
+					tabId: 'tab-1',
+					sessionId: 'session-1',
+					agentId: 'left-bar-owner',
+					toolType: 'claude-code',
+					state: 'idle',
+				},
+			])
+		).toBe('claude-code');
+	});
+
+	it('keeps the stored task agentType ahead of live-session inference', () => {
+		expect(
+			resolveExistingPianolaAgentType({ agentId: 'session-1', agentType: 'codex' }, [
+				{
+					tabId: 'tab-1',
+					sessionId: 'session-1',
+					agentId: 'left-bar-owner',
+					toolType: 'claude-code',
+					state: 'idle',
+				},
+			])
+		).toBe('codex');
 	});
 });

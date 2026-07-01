@@ -5,6 +5,7 @@ import {
 	mapPianolaRunStateToAgentRunStatus,
 	mapPianolaTaskStatusToCampaignTaskStatus,
 	pianolaPlansToCampaigns,
+	pianolaTaskAgentRunId,
 	validatePianolaPlanLike,
 } from '../../../shared/agent-run';
 
@@ -72,8 +73,13 @@ describe('Pianola AgentRun adapter', () => {
 			status: 'queued',
 			source: { adapter: 'pianola', planId: 'plan-1' },
 		});
+		expect(campaign.runIds).toEqual([
+			pianolaTaskAgentRunId('plan-1', 'setup'),
+			pianolaTaskAgentRunId('plan-1', 'build'),
+		]);
 		expect(campaign.tasks[0]).toMatchObject({
 			id: 'setup',
+			runId: pianolaTaskAgentRunId('plan-1', 'setup'),
 			status: 'passed',
 			prompt: 'prepare',
 			agentType: 'claude-code',

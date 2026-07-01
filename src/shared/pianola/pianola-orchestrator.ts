@@ -53,8 +53,10 @@ export interface OrchestratorDeps {
 	getRunState: (task: PianolaTask) => Promise<AgentRunState>;
 	/** Read the tail of a running task's transcript, chronological (oldest first). */
 	getRecentMessages: (task: PianolaTask) => Promise<readonly PianolaMessage[]>;
-	/** Reuse task.agentId or create an agent for the task. Returns the bound id or an error. */
-	ensureAgent: (task: PianolaTask) => Promise<{ agentId: string } | { error: string }>;
+	/** Reuse task.agentId or create an agent for the task. Returns the bound id/type or an error. */
+	ensureAgent: (
+		task: PianolaTask
+	) => Promise<{ agentId: string; agentType?: string } | { error: string }>;
 	/** Send the task's prompt to the bound agent, returning success and the tab it landed in. */
 	dispatch: (
 		task: PianolaTask,
@@ -161,7 +163,10 @@ export async function runOrchestratorIteration(
 			// ensureAgent's `task.agentId` short-circuit, instead of creating (and
 			// orphaning) a fresh session every iteration. The slot is not consumed,
 			// so another ready task can take it.
-			plan = markTaskStatus(plan, task.id, 'pending', { agentId: agentResult.agentId });
+			plan = markTaskStatus(plan, task.id, 'pending', {
+				agentId: agentResult.agentId,
+				agentType: agentResult.agentType,
+			});
 			deps.log(
 				`[orchestrator] task "${task.id}" pending (dispatch failed: ${res.error ?? 'unknown error'})`
 			);
@@ -170,6 +175,7 @@ export async function runOrchestratorIteration(
 
 		plan = markTaskStatus(plan, task.id, 'running', {
 			agentId: agentResult.agentId,
+			agentType: agentResult.agentType,
 			tabId: res.tabId,
 		});
 		// Seed the just-dispatched task as 'connecting' (its honest just-spun-up
