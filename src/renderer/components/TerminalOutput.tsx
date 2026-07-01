@@ -1665,8 +1665,8 @@ export const TerminalOutput = memo(
 					// Flush any accumulated response group before user message
 					flushResponseGroup();
 					result.push(log);
-				} else if (log.source === 'tool' || log.source === 'thinking') {
-					// Flush response group before tool/thinking, then add tool/thinking separately
+				} else if (log.source === 'tool' || log.source === 'thinking' || log.source === 'error') {
+					// Flush response group before tool/thinking/error, then add it separately
 					flushResponseGroup();
 					result.push(log);
 				} else {

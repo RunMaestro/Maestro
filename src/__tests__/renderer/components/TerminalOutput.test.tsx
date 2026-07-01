@@ -332,6 +332,32 @@ describe('TerminalOutput', () => {
 			const logItems = container.querySelectorAll('[data-log-index]');
 			expect(logItems.length).toBe(2);
 		});
+
+		it('keeps an error-source entry out of the surrounding response group', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'resp-1', text: 'Tail of an earlier response.', source: 'stdout' }),
+				createLogEntry({ id: 'err-1', text: 'Unknown command: /nonexistent', source: 'error' }),
+				createLogEntry({ id: 'resp-2', text: 'Start of a later response.', source: 'stdout' }),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({ session });
+			const { container } = render(<TerminalOutput {...props} />);
+
+			// The error entry must flush its own boundary rather than being
+			// stitched (via a no-separator join) between the two response groups.
+			const logItems = container.querySelectorAll('[data-log-index]');
+			expect(logItems.length).toBe(3);
+
+			const markdownBlocks = screen.getAllByTestId('react-markdown');
+			const combinedText = markdownBlocks.map((el) => el.textContent).join('|');
+			expect(combinedText).not.toContain('response.Unknown command');
+			expect(combinedText).not.toContain('/nonexistentStart of a later response.');
+		});
 	});
 
 	describe('search functionality', () => {
