@@ -236,9 +236,6 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	// correct tab, and the tab-switch effect can flush the OLD tab's text without
 	// re-triggering on tab-switch alone.
 	const activeTabIdRef = useRef<string | undefined>(activeTab?.id);
-	useEffect(() => {
-		activeTabIdRef.current = activeTab?.id;
-	}, [activeTab?.id]);
 
 	// Ref-mirror of the current mode so non-reactive readers (getInputValue) pick
 	// the right slice at call time without subscribing.
@@ -251,6 +248,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	// on screen for the active tab (tab.inputValue only updates on blur/submit).
 	// Subscribing outside React render keeps this off the re-render path.
 	useEffect(() => {
+		activeTabIdRef.current = activeTab?.id;
 		const mirror = (aiValue: string) => {
 			const currentTabId = activeTabIdRef.current;
 			if (currentTabId) setLiveDraft(currentTabId, aiValue);
@@ -259,7 +257,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		return useComposerInputStore.subscribe((state, prev) => {
 			if (state.aiValue !== prev.aiValue) mirror(state.aiValue);
 		});
-	}, []);
+	}, [activeTab?.id]);
 
 	// Read the live value non-reactively (at call time) for handlers and sub-hooks
 	// so they never need a reactive `inputValue` dependency.
@@ -334,6 +332,20 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 
 	const prevActiveTabIdRef = useRef<string | undefined>(activeTab?.id);
 	const prevActiveSessionIdRef = useRef<string | undefined>(activeSession?.id);
+	const didHydrateAiInputRef = useRef(false);
+	const didHydrateTerminalInputRef = useRef(false);
+
+	useEffect(() => {
+		if (!activeTab || didHydrateAiInputRef.current) return;
+		setAiValue(activeTab.inputValue ?? '');
+		didHydrateAiInputRef.current = true;
+	}, [activeTab?.id, setAiValue]);
+
+	useEffect(() => {
+		if (!activeSession || didHydrateTerminalInputRef.current) return;
+		setTerminalValue(activeSession.terminalDraftInput ?? '');
+		didHydrateTerminalInputRef.current = true;
+	}, [activeSession?.id, setTerminalValue]);
 
 	// Sync local AI input with tab's persisted value when switching tabs
 	useEffect(() => {

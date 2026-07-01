@@ -122,6 +122,8 @@ import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useFileExplorerStore } from '../../../renderer/stores/fileExplorerStore';
+import { clearLiveDraft, getLiveDraft, setLiveDraft } from '../../../renderer/utils/liveDraftStore';
+import { hasDraft } from '../../../renderer/utils/tabHelpers';
 
 // ============================================================================
 // Helpers
@@ -217,6 +219,8 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	vi.useFakeTimers();
 	useComposerInputStore.setState({ aiValue: '', terminalValue: '' });
+	clearLiveDraft('tab-1');
+	clearLiveDraft('tab-2');
 
 	// Reset InputContext mock
 	Object.assign(mockInputContext, {
@@ -299,6 +303,46 @@ describe('useInputHandlers', () => {
 		it('initializes with empty input value in AI mode', () => {
 			renderHook(() => useInputHandlers(createMockDeps()));
 			expect(inputVal()).toBe('');
+		});
+
+		it('hydrates AI input from the active tab on first mount', () => {
+			useSessionStore.setState({
+				sessions: [
+					createMockSession({
+						aiTabs: [
+							{
+								id: 'tab-1',
+								name: 'Tab 1',
+								inputValue: 'restored AI draft',
+								data: [],
+								stagedImages: [],
+							} as any,
+						],
+					}),
+				],
+				activeSessionId: 'session-1',
+			} as any);
+
+			renderHook(() => useInputHandlers(createMockDeps()));
+
+			expect(useComposerInputStore.getState().aiValue).toBe('restored AI draft');
+			expect(getLiveDraft('tab-1')).toBe('restored AI draft');
+		});
+
+		it('hydrates terminal input from the active session on first mount', () => {
+			useSessionStore.setState({
+				sessions: [
+					createMockSession({
+						inputMode: 'terminal',
+						terminalDraftInput: 'npm run test',
+					}),
+				],
+				activeSessionId: 'session-1',
+			} as any);
+
+			renderHook(() => useInputHandlers(createMockDeps()));
+
+			expect(useComposerInputStore.getState().terminalValue).toBe('npm run test');
 		});
 
 		it('initializes with empty staged images', () => {
@@ -533,8 +577,7 @@ describe('useInputHandlers', () => {
 
 			const { result, rerender } = renderHook(() => useInputHandlers(createMockDeps()));
 
-			// Initially empty (hook doesn't load on first mount, only on tab switch)
-			expect(inputVal()).toBe('');
+			expect(inputVal()).toBe('tab1 text');
 
 			// Switch to tab-2 — this triggers the effect
 			act(() => {
@@ -566,6 +609,73 @@ describe('useInputHandlers', () => {
 
 			rerender();
 			expect(inputVal()).toBe('tab2 text');
+		});
+
+		it('mirrors the active tab draft on tab switch when the text value is unchanged', () => {
+			const sharedDraft = 'same persisted draft';
+			setLiveDraft('tab-2', '');
+			useSessionStore.setState({
+				sessions: [
+					createMockSession({
+						aiTabs: [
+							{
+								id: 'tab-1',
+								name: 'Tab 1',
+								inputValue: sharedDraft,
+								data: [],
+								stagedImages: [],
+							} as any,
+							{
+								id: 'tab-2',
+								name: 'Tab 2',
+								inputValue: sharedDraft,
+								data: [],
+								stagedImages: [],
+							} as any,
+						],
+						activeTabId: 'tab-1',
+					}),
+				],
+				activeSessionId: 'session-1',
+			} as any);
+
+			const { rerender } = renderHook(() => useInputHandlers(createMockDeps()));
+			expect(useComposerInputStore.getState().aiValue).toBe(sharedDraft);
+
+			act(() => {
+				useSessionStore.setState({
+					sessions: [
+						createMockSession({
+							aiTabs: [
+								{
+									id: 'tab-1',
+									name: 'Tab 1',
+									inputValue: sharedDraft,
+									data: [],
+									stagedImages: [],
+								} as any,
+								{
+									id: 'tab-2',
+									name: 'Tab 2',
+									inputValue: sharedDraft,
+									data: [],
+									stagedImages: [],
+								} as any,
+							],
+							activeTabId: 'tab-2',
+						}),
+					],
+					activeSessionId: 'session-1',
+				} as any);
+			});
+
+			rerender();
+
+			const tab2 = useSessionStore
+				.getState()
+				.sessions[0].aiTabs.find((tab: any) => tab.id === 'tab-2');
+			expect(getLiveDraft('tab-2')).toBe(sharedDraft);
+			expect(hasDraft(tab2 as any)).toBe(true);
 		});
 
 		it('saves current input to previous tab on switch', () => {
@@ -644,6 +754,7 @@ describe('useInputHandlers', () => {
 
 			const deps = createMockDeps();
 			const { result, rerender } = renderHook(() => useInputHandlers(deps));
+			expect(inputVal()).toBe('session1 cmd');
 
 			// Switch to session-2
 			act(() => {
@@ -1437,9 +1548,12 @@ describe('useInputHandlers', () => {
 			} as any);
 
 			const deps = createMockDeps();
-			const { rerender } = renderHook(() => useInputHandlers(deps));
+			const { result, rerender } = renderHook(() => useInputHandlers(deps));
 
-			// Do NOT type anything (terminal input remains empty '')
+			expect(inputVal()).toBe('previously saved');
+			act(() => {
+				result.current.setInputValue('');
+			});
 
 			// Switch to session-2
 			act(() => {
