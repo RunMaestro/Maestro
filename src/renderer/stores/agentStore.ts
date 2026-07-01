@@ -452,11 +452,21 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 			} else if (item.type === 'command' && item.command) {
 				// Process a slash command - find matching command
 				// Check user-defined commands first, then agent-discovered commands with prompts
+				const matchingAgentCommand = session.agentCommands?.find(
+					(cmd) => cmd.command === item.command && cmd.prompt
+				);
 				const matchingCommand =
 					deps.customAICommands.find((cmd) => cmd.command === item.command) ||
 					deps.speckitCommands.find((cmd) => cmd.command === item.command) ||
 					deps.openspecCommands.find((cmd) => cmd.command === item.command) ||
-					deps.bmadCommands?.find((cmd) => cmd.command === item.command);
+					deps.bmadCommands?.find((cmd) => cmd.command === item.command) ||
+					(matchingAgentCommand
+						? {
+								command: matchingAgentCommand.command,
+								description: matchingAgentCommand.description,
+								prompt: matchingAgentCommand.prompt!,
+							}
+						: undefined);
 
 				if (matchingCommand) {
 					let gitBranch: string | undefined;
@@ -548,10 +558,14 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					});
 				} else {
 					// Unknown command - add error log and reset to idle
-					useSessionStore.getState().addLogToTab(sessionId, {
-						source: 'system',
-						text: `Unknown command: ${item.command}`,
-					});
+					useSessionStore.getState().addLogToTab(
+						sessionId,
+						{
+							source: 'error',
+							text: `Unknown command: ${item.command}`,
+						},
+						item.tabId
+					);
 					useSessionStore.getState().setSessions((prev) =>
 						prev.map((s) => {
 							if (s.id !== sessionId) return s;
@@ -590,7 +604,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					const updatedAiTabs =
 						s.aiTabs?.length > 0
 							? s.aiTabs.map((tab) =>
-									tab.id === s.activeTabId
+									tab.id === (item.tabId ?? s.activeTabId)
 										? {
 												...tab,
 												state: 'idle' as const,

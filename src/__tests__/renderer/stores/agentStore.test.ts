@@ -1562,8 +1562,108 @@ describe('agentStore', () => {
 			expect(updated.state).toBe('idle');
 			expect(updated.busySource).toBeUndefined();
 			expect(updated.aiTabs[0].logs).toHaveLength(1);
-			expect(updated.aiTabs[0].logs[0].source).toBe('system');
+			expect(updated.aiTabs[0].logs[0].source).toBe('error');
 			expect(updated.aiTabs[0].logs[0].text).toContain('Unknown command: /nonexistent');
+		});
+
+		it('targets the queued item tab, not whatever tab is currently active, for unknown command errors', async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				state: 'busy',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: null,
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'busy',
+					},
+					{
+						id: 'tab-2',
+						agentSessionId: null,
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'busy',
+					},
+				],
+				// Active tab is tab-2, but the queued item belongs to tab-1
+				activeTabId: 'tab-2',
+			});
+			useSessionStore.getState().setSessions([session]);
+
+			const item = createQueuedItem({
+				tabId: 'tab-1',
+				type: 'command',
+				command: '/nonexistent',
+				text: undefined,
+			});
+
+			await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
+
+			const updated = useSessionStore.getState().sessions[0];
+			const tab1 = updated.aiTabs.find((t) => t.id === 'tab-1')!;
+			const tab2 = updated.aiTabs.find((t) => t.id === 'tab-2')!;
+
+			expect(tab1.logs).toHaveLength(1);
+			expect(tab1.logs[0].text).toContain('Unknown command: /nonexistent');
+			expect(tab2.logs).toHaveLength(0);
+		});
+
+		it('resolves and dispatches a command matched via session.agentCommands', async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'conv-1',
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+					},
+				],
+				activeTabId: 'tab-1',
+				agentCommands: [
+					{
+						command: '/implement',
+						description: 'Implement the plan',
+						prompt: 'Implement the approved plan now.',
+					},
+				],
+			});
+			useSessionStore.getState().setSessions([session]);
+
+			const item = createQueuedItem({
+				tabId: 'tab-1',
+				type: 'command',
+				command: '/implement',
+				text: undefined,
+			});
+
+			await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
+
+			expect(mockSpawn).toHaveBeenCalledTimes(1);
+			expect(mockSpawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					prompt: expect.stringContaining('Implement the approved plan now.'),
+				})
+			);
+
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.aiTabs[0].logs).toHaveLength(1);
+			expect(updated.aiTabs[0].logs[0].source).toBe('user');
+			expect(updated.aiTabs[0].logs[0].aiCommand?.command).toBe('/implement');
 		});
 
 		it('handles spawn error gracefully', async () => {
@@ -1598,6 +1698,57 @@ describe('agentStore', () => {
 			const updated = useSessionStore.getState().sessions[0];
 			expect(updated.state).toBe('idle');
 			expect(updated.busySource).toBeUndefined();
+
+			consoleSpy.mockRestore();
+		});
+
+		it('targets the queued item tab, not whatever tab is currently active, when spawn throws', async () => {
+			mockSpawn.mockRejectedValueOnce(new Error('Spawn failed'));
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+
+			const session = createMockSession({
+				id: 'session-1',
+				state: 'busy',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: null,
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'busy',
+					},
+					{
+						id: 'tab-2',
+						agentSessionId: null,
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'busy',
+					},
+				],
+				// Active tab is tab-2, but the queued item belongs to tab-1
+				activeTabId: 'tab-2',
+			});
+			useSessionStore.getState().setSessions([session]);
+
+			const item = createQueuedItem({ tabId: 'tab-1', text: 'Will fail' });
+
+			await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
+
+			const updated = useSessionStore.getState().sessions[0];
+			const tab1 = updated.aiTabs.find((t) => t.id === 'tab-1')!;
+			const tab2 = updated.aiTabs.find((t) => t.id === 'tab-2')!;
+
+			expect(tab1.logs).toHaveLength(1);
+			expect(tab1.logs[0].text).toContain('Failed to process queued');
+			expect(tab2.logs).toHaveLength(0);
 
 			consoleSpy.mockRestore();
 		});

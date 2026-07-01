@@ -1694,10 +1694,16 @@ export const TerminalOutput = memo(
 					// Flush any accumulated response group before user message
 					flushResponseGroup();
 					result.push(log);
-				} else if (log.source === 'tool' || log.source === 'thinking' || log.retryOutageId) {
-					// Flush response group before tool/thinking and Agent Resilience
-					// outage markers, then add them standalone. The outage marker must
-					// not merge into a text group — it renders as a live status card.
+				} else if (
+					log.source === 'tool' ||
+					log.source === 'thinking' ||
+					log.source === 'error' ||
+					log.retryOutageId
+				) {
+					// Flush response group before tool/thinking/error and Agent
+					// Resilience outage markers, then add them standalone. The outage
+					// marker must not merge into a text group - it renders as a live
+					// status card.
 					flushResponseGroup();
 					result.push(log);
 				} else {
