@@ -13,11 +13,10 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { pathToFileURL } from 'url';
+import * as zlib from 'zlib';
 
 vi.mock('electron', () => ({
 	app: { getPath: () => os.tmpdir() },
@@ -31,6 +30,7 @@ import {
 import { pluginsDir } from '../../../main/plugins/plugin-store-main';
 import type { PluginRecord } from '../../../shared/plugins/plugin-registry';
 import type { PermissionGrant } from '../../../shared/plugins/permissions';
+import { packPluginArchive } from '../../../shared/plugins/plugin-archive';
 
 /** Materialize a plugin folder directly under the plugins data dir. */
 function writePlugin(id: string, tier: 0 | 1, contributes?: Record<string, unknown>): void {
@@ -67,6 +67,49 @@ function writePanelPlugin(id: string): void {
 	fs.writeFileSync(path.join(dir, 'plugin.json'), JSON.stringify(manifest));
 	fs.writeFileSync(path.join(dir, 'main.js'), 'module.exports = { activate() {} };');
 	fs.writeFileSync(path.join(dir, 'panel.html'), '<p>panel-safe</p>');
+}
+
+function tarOctal(value: number, length: number): string {
+	const octal = value.toString(8);
+	return `${octal.padStart(length - 1, '0')}\0`;
+}
+
+function writeTarHeader(name: string, size: number, typeFlag = '0', linkName = ''): Buffer {
+	const header = Buffer.alloc(512, 0);
+	header.write(name, 0, Math.min(Buffer.byteLength(name), 100), 'utf8');
+	header.write(tarOctal(0o644, 8), 100, 8, 'ascii');
+	header.write(tarOctal(0, 8), 108, 8, 'ascii');
+	header.write(tarOctal(0, 8), 116, 8, 'ascii');
+	header.write(tarOctal(size, 12), 124, 12, 'ascii');
+	header.write(tarOctal(0, 12), 136, 12, 'ascii');
+	header.fill(' ', 148, 156);
+	header.write(typeFlag, 156, 1, 'ascii');
+	if (linkName) header.write(linkName, 157, Math.min(Buffer.byteLength(linkName), 100), 'utf8');
+	header.write('ustar\0', 257, 6, 'ascii');
+	header.write('00', 263, 2, 'ascii');
+	let checksum = 0;
+	for (const byte of header) checksum += byte;
+	header.write(tarOctal(checksum, 8), 148, 8, 'ascii');
+	return header;
+}
+
+function writeTgzArchive(
+	outPath: string,
+	entries: Array<{ name: string; content?: string; typeFlag?: string; linkName?: string }>
+): void {
+	const chunks: Buffer[] = [];
+	for (const entry of entries) {
+		const bytes = Buffer.from(entry.content ?? '', 'utf8');
+		const size = entry.typeFlag === '1' || entry.typeFlag === '2' ? 0 : bytes.length;
+		chunks.push(writeTarHeader(entry.name, size, entry.typeFlag ?? '0', entry.linkName ?? ''));
+		if (size > 0) {
+			chunks.push(bytes);
+			const padding = (512 - (bytes.length % 512)) % 512;
+			if (padding > 0) chunks.push(Buffer.alloc(padding, 0));
+		}
+	}
+	chunks.push(Buffer.alloc(1024, 0));
+	fs.writeFileSync(outPath, zlib.gzipSync(Buffer.concat(chunks)));
 }
 
 function manager(deps: Partial<PluginManagerDeps> = {}): PluginManager {
@@ -210,55 +253,26 @@ describe('PluginManager refresh-time verifyRecord gate', () => {
 		expect(m.getPanelHtml('paneler/board')).toBeNull();
 	});
 
-	it('installs and starts a packed standalone plugin without SDK repo-internal imports', async () => {
+	it('installs and starts a CLI-packed plugin archive with nested runtime assets', async () => {
 		const source = path.join(workDir, 'packed-plugin');
-		const sdkDir = path.join(source, 'node_modules', '@maestro', 'plugin-sdk');
-		fs.mkdirSync(sdkDir, { recursive: true });
-		const sdkPackage = {
-			name: '@maestro/plugin-sdk',
-			version: '0.2.0',
-			type: 'module',
-			main: 'dist/index.js',
-			module: 'dist/index.js',
-			types: 'dist/index.d.ts',
-			exports: { '.': { import: './dist/index.js', types: './dist/index.d.ts' } },
-			files: ['dist'],
-		};
-		fs.writeFileSync(path.join(sdkDir, 'package.json'), JSON.stringify(sdkPackage));
-		fs.mkdirSync(path.join(sdkDir, 'dist'), { recursive: true });
-		fs.writeFileSync(
-			path.join(sdkDir, 'dist', 'index.js'),
-			[
-				"export const HOST_API_VERSION = '1.7.0';",
-				'export function definePlugin(plugin) { return plugin; }',
-			].join('\n')
-		);
-		fs.writeFileSync(
-			path.join(sdkDir, 'dist', 'index.d.ts'),
-			[
-				"export declare const HOST_API_VERSION = '1.7.0';",
-				'export interface PluginModule { activate?: (maestro: unknown) => unknown; }',
-				'export declare function definePlugin(plugin: PluginModule): PluginModule;',
-			].join('\n')
-		);
+		fs.mkdirSync(path.join(source, 'assets', 'nested'), { recursive: true });
 		const manifest = {
-			id: 'packed.sdk',
-			name: 'Packed SDK',
+			id: 'packed.archive',
+			name: 'Packed Archive',
 			version: '1.0.0',
 			tier: 1,
 			maestro: { minHostApi: '1.7.0' },
-			entry: 'main.mjs',
+			entry: 'main.js',
 			permissions: [{ capability: 'notifications:toast' }],
 		};
 		fs.writeFileSync(path.join(source, 'plugin.json'), JSON.stringify(manifest));
 		fs.writeFileSync(
-			path.join(source, 'main.mjs'),
-			[
-				"import { definePlugin, HOST_API_VERSION } from '@maestro/plugin-sdk';",
-				'export const loadedHostApiVersion = HOST_API_VERSION;',
-				'export default definePlugin({ activate() { return loadedHostApiVersion; } });',
-			].join('\n')
+			path.join(source, 'main.js'),
+			'module.exports = { activate() { return "ok"; } };\n'
 		);
+		fs.writeFileSync(path.join(source, 'assets', 'nested', 'runtime.txt'), 'runtime-asset');
+		fs.mkdirSync(path.join(source, 'node_modules', 'unsigned-dep'), { recursive: true });
+		fs.writeFileSync(path.join(source, 'node_modules', 'unsigned-dep', 'index.js'), 'leak');
 
 		const running = new Set<string>();
 		const starts: Array<{ id: string; pluginDir: string; entry: string }> = [];
@@ -280,44 +294,65 @@ describe('PluginManager refresh-time verifyRecord gate', () => {
 		};
 		const m = manager({ sandbox });
 
-		const installed = m.install(source);
+		const archivePath = path.join(workDir, 'packed-archive.tgz');
+		await packPluginArchive(source, archivePath);
+		const installed = m.install(archivePath);
 		expect(installed.success).toBe(true);
-		expect(recordOf(m, 'packed.sdk')?.enabled).toBe(false);
-		const installedRoot = path.join(pluginsDir(), 'packed.sdk');
-		const installedSdkJs = path.join(
-			installedRoot,
-			'node_modules',
-			'@maestro',
-			'plugin-sdk',
-			'dist',
-			'index.js'
-		);
-		const installedSdkDts = path.join(
-			installedRoot,
-			'node_modules',
-			'@maestro',
-			'plugin-sdk',
-			'dist',
-			'index.d.ts'
-		);
-		expect(fs.readFileSync(installedSdkJs, 'utf8')).not.toMatch(/\bfrom\s+['"][^'"]*src[\\/]/);
-		expect(fs.readFileSync(installedSdkDts, 'utf8')).not.toMatch(/\bfrom\s+['"][^'"]*src[\\/]/);
-		const loadCheck = path.join(workDir, 'load-packed-plugin.mjs');
-		fs.writeFileSync(
-			loadCheck,
-			[
-				`import plugin, { loadedHostApiVersion } from ${JSON.stringify(pathToFileURL(path.join(installedRoot, 'main.mjs')).href)};`,
-				'console.log(JSON.stringify({ loadedHostApiVersion, activated: plugin.activate() }));',
-			].join('\n')
-		);
-		const load = spawnSync('bun', [loadCheck], { encoding: 'utf8' });
-		expect(load.status, `${load.stdout}\n${load.stderr}`).toBe(0);
-		expect(JSON.parse(load.stdout.trim())).toEqual({
-			loadedHostApiVersion: '1.7.0',
-			activated: '1.7.0',
-		});
+		expect(recordOf(m, 'packed.archive')?.enabled).toBe(false);
+		const installedRoot = path.join(pluginsDir(), 'packed.archive');
+		expect(
+			fs.readFileSync(path.join(installedRoot, 'assets', 'nested', 'runtime.txt'), 'utf8')
+		).toBe('runtime-asset');
+		expect(fs.existsSync(path.join(installedRoot, 'node_modules'))).toBe(false);
 
-		m.setEnabled('packed.sdk', true);
-		expect(starts).toEqual([{ id: 'packed.sdk', pluginDir: installedRoot, entry: 'main.mjs' }]);
+		m.setEnabled('packed.archive', true);
+		expect(starts).toEqual([{ id: 'packed.archive', pluginDir: installedRoot, entry: 'main.js' }]);
+	});
+
+	it('rejects unsafe packed plugin archives and cleans extraction staging', () => {
+		const cases: Array<{
+			name: string;
+			entries: Array<{ name: string; content?: string; typeFlag?: string; linkName?: string }>;
+			error: RegExp;
+		}> = [
+			{
+				name: 'traversal',
+				entries: [{ name: '../evil.txt', content: 'x' }],
+				error: /unsafe archive path/,
+			},
+			{
+				name: 'absolute',
+				entries: [{ name: '/abs/plugin.json', content: '{}' }],
+				error: /unsafe archive path/,
+			},
+			{
+				name: 'windows-absolute',
+				entries: [{ name: 'C:/abs/plugin.json', content: '{}' }],
+				error: /unsafe archive path/,
+			},
+			{
+				name: 'symlink',
+				entries: [{ name: 'link', typeFlag: '2', linkName: 'plugin.json' }],
+				error: /link entries are not allowed/,
+			},
+			{
+				name: 'hardlink',
+				entries: [{ name: 'link', typeFlag: '1', linkName: 'plugin.json' }],
+				error: /link entries are not allowed/,
+			},
+		];
+		const m = manager();
+
+		for (const c of cases) {
+			const archivePath = path.join(workDir, `${c.name}.tgz`);
+			writeTgzArchive(archivePath, c.entries);
+			const result = m.install(archivePath);
+			expect(result.success, c.name).toBe(false);
+			expect(result.error, c.name).toMatch(c.error);
+			const stagingLeftovers = fs.existsSync(pluginsDir())
+				? fs.readdirSync(pluginsDir()).filter((entry) => entry.startsWith('__extract-'))
+				: [];
+			expect(stagingLeftovers, c.name).toEqual([]);
+		}
 	});
 });

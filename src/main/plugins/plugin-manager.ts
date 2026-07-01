@@ -44,6 +44,11 @@ import {
 	readGrants,
 } from './plugin-store-main';
 import { verifyPluginSignature } from './plugin-signature';
+import {
+	extractPluginArchive,
+	isPackedPluginArchivePath,
+	type ExtractedPluginArchive,
+} from '../../shared/plugins/plugin-archive';
 
 const MANIFEST_FILENAME = 'plugin.json';
 
@@ -463,12 +468,10 @@ export class PluginManager {
 	}
 
 	/**
-	 * Install a plugin by copying a source directory (which must contain a valid
-	 * plugin.json) into the plugins dir under the manifest id. Refuses an invalid
-	 * manifest or an id collision with an already-installed plugin.
+	 * Copy a validated plugin source directory into the plugins dir under the
+	 * manifest id. Refuses an invalid manifest, id collision, or symlinked tree.
 	 */
-	install(sourceDir: string): InstallResult {
-		if (!this.deps.isEnabled()) return { success: false, error: 'plugins feature is disabled' };
+	private installDirectory(sourceDir: string): InstallResult {
 		const rawManifest = this.readManifest(sourceDir);
 		const { manifest, errors } = validatePluginManifest(rawManifest);
 		if (!manifest) {
@@ -492,6 +495,29 @@ export class PluginManager {
 		this.refresh();
 		const record = this.registry.records.find((r) => r.id === manifest.id);
 		return { success: true, ...(record ? { record } : {}) };
+	}
+
+	/**
+	 * Install a plugin from a source directory or a packed .tgz/.tar.gz archive.
+	 * Archives are extracted into temporary staging outside installed plugins,
+	 * reject traversal/link entries before writing, then use the same directory
+	 * install path so manifest validation and symlink checks stay centralized.
+	 */
+	install(sourcePath: string): InstallResult {
+		if (!this.deps.isEnabled()) return { success: false, error: 'plugins feature is disabled' };
+		const resolvedSource = path.resolve(sourcePath);
+		if (!isPackedPluginArchivePath(resolvedSource)) {
+			return this.installDirectory(resolvedSource);
+		}
+		let extracted: ExtractedPluginArchive | null = null;
+		try {
+			extracted = extractPluginArchive(resolvedSource);
+			return this.installDirectory(extracted.root);
+		} catch (error) {
+			return { success: false, error: error instanceof Error ? error.message : String(error) };
+		} finally {
+			extracted?.cleanup();
+		}
 	}
 
 	/**
