@@ -546,6 +546,61 @@ describe('claude-usage-startup → runStartupUsageSampling', () => {
 			expect(getSnapshot('/Users/test/.claude')).toBeNull();
 		});
 
+		it('skips SSH-remote sessions even when they set CLAUDE_CONFIG_DIR', async () => {
+			// SSH agents run claude on the remote host, so their CLAUDE_CONFIG_DIR
+			// names a directory on THAT machine. Sampling it locally reads the wrong
+			// host and, if the local path is a tokenless ~/.claude-* dir, pops an
+			// OAuth browser the user never asked for.
+			sampleUsageMock.mockResolvedValue(
+				makeSnapshot({ configDirKey: '/Users/test/.claude-opswat' })
+			);
+
+			const deps = {
+				sessionsStore: makeStore({
+					sessions: [
+						recentClaudeSession({
+							customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/test/.claude-opswat' },
+							sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+						}),
+					],
+				}) as never,
+				agentConfigsStore: makeStore({ configs: {} }) as never,
+				settingsStore: makeStore({}) as never,
+				agentDetector: makeDetector(FAKE_AGENT) as never,
+			};
+
+			await runStartupUsageSampling(deps);
+
+			expect(sampleUsageMock).not.toHaveBeenCalled();
+			expect(getSnapshot('/Users/test/.claude-opswat')).toBeNull();
+		});
+
+		it('still samples local sessions when SSH config is present but disabled', async () => {
+			// A disabled SSH config (enabled: false) means the agent runs locally,
+			// so its CLAUDE_CONFIG_DIR is a real local account worth sampling.
+			sampleUsageMock.mockResolvedValue(
+				makeSnapshot({ configDirKey: '/Users/test/.claude-local' })
+			);
+
+			const deps = {
+				sessionsStore: makeStore({
+					sessions: [
+						recentClaudeSession({
+							customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/test/.claude-local' },
+							sessionSshRemoteConfig: { enabled: false, remoteId: null },
+						}),
+					],
+				}) as never,
+				agentConfigsStore: makeStore({ configs: {} }) as never,
+				settingsStore: makeStore({}) as never,
+				agentDetector: makeDetector(FAKE_AGENT) as never,
+			};
+
+			await runStartupUsageSampling(deps);
+
+			expect(sampleUsageMock).toHaveBeenCalledTimes(1);
+		});
+
 		it('preserves non-CLAUDE_CONFIG_DIR customEnvVars through to sampleUsage', async () => {
 			sampleUsageMock.mockResolvedValue(makeSnapshot());
 

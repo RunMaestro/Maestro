@@ -232,6 +232,9 @@ function getAgentLevelCustomPath(agentConfigsStore: Store<AgentConfigsData>): st
  * `sampleUsage()` expects.
  *
  * Returns null when:
+ *   - The session is SSH-remote (`sessionSshRemoteConfig.enabled`). Its
+ *     `CLAUDE_CONFIG_DIR` points at the remote host; sampling it locally is
+ *     meaningless and can pop an OAuth browser against a tokenless local dir.
  *   - The session has no `cwd` (malformed record).
  *   - Neither the session nor the agent explicitly sets `CLAUDE_CONFIG_DIR`
  *     in customEnvVars. We refuse to sample "default" accounts the user
@@ -250,6 +253,17 @@ function buildTarget(
 			? (session.customEnvVars as Record<string, string>)
 			: {};
 	const customEnvVars: Record<string, string> = { ...agentLevelEnvVars, ...sessionEnvVars };
+
+	// SSH-remote agents run claude on the remote host, so their CLAUDE_CONFIG_DIR
+	// names a directory on THAT machine. Sampling it locally reads the wrong
+	// host's account, and if the local path happens to exist but has no Keychain
+	// token (a pristine ~/.claude-* dir), `maestro-p --status` pops an OAuth
+	// browser the user never asked for. The remote agent's real turns authenticate
+	// remotely; there is nothing useful to sample locally. Skip.
+	const sshRemoteConfig = session.sessionSshRemoteConfig as { enabled?: boolean } | undefined;
+	if (sshRemoteConfig?.enabled) {
+		return null;
+	}
 
 	const cwd =
 		typeof session.cwd === 'string' && session.cwd.length > 0
