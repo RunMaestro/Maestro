@@ -85,6 +85,10 @@ Pure additive contract changes are implemented so feature worktrees build agains
 1. **E-directorNotes** ← P1(ui-command, settings-ui, render-host) + P3(history-transcripts) +
    a read-only batch-agent dispatch sink (P2). Lift AI Overview + Unified History.
 2. **E-pianola** ← P2(act-verbs) + P3(sessions-tabs, history-transcripts, background-service).
+   AgentRun-control-plane adaptation DONE for the CLI orchestrator path: Pianola campaigns now expose
+   deterministic per-task `runId`s, `pianola orchestrate` writes `AgentRun` records/events for dispatched /
+   completed / failed tasks, and legacy agent-bound tasks recover provider type from live `sessionId`
+   lookup before ledger writes. _Acceptance verified:_ `bun vitest run src/__tests__/shared/agent-run/pianola-adapter.test.ts src/__tests__/shared/pianola/pianola-orchestrator.test.ts src/__tests__/cli/commands/pianola-orchestrate.test.ts` (3 files, 26 tests passed).
 3. **E-maestroCue** ← P2(act-verbs, scheduler-sink) + P3(storage-sql, fs-watch, power, events-rich,
    background-service).
 4. **E-symphony** ← P2(process:spawn) + P3(sessions-tabs, sessions:write, history) + render-host +

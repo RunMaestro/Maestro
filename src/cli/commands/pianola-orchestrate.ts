@@ -20,6 +20,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { readSettingValue } from '../services/storage';
 import { readPianolaPlans, getPianolaPlan, upsertPianolaPlan } from '../services/pianola-store';
+import { appendAgentRunEvent, getAgentRun, upsertAgentRun } from '../services/agent-run-store';
 import { MaestroClient } from '../services/maestro-client';
 import { runDispatch } from './dispatch';
 import {
@@ -27,6 +28,7 @@ import {
 	initialOrchestratorState,
 	type OrchestratorState,
 	type OrchestratorDeps,
+	type OrchestratorIterationResult,
 } from '../../shared/pianola/pianola-orchestrator';
 import {
 	validatePlan,
@@ -39,6 +41,7 @@ import { selectAgentForTask, type AgentCandidate } from '../../shared/pianola/pi
 import { DEFAULT_CAPABILITIES } from '../../shared/types';
 import { enrichWithAwaitingInput } from '../../shared/pianola/pianola-awaiting-detector';
 import { classifyMessages } from '../../shared/pianola/pianola-classifier';
+import { pianolaTaskAgentRunId, type AgentRun, type AgentRunStatus } from '../../shared/agent-run';
 
 const DEFAULT_INTERVAL_SECONDS = 5;
 const DEFAULT_CONCURRENCY = 3;
@@ -53,8 +56,9 @@ interface CreateSessionResult {
 	error?: string;
 }
 
-interface DesktopSessionEntry {
+export interface DesktopSessionEntry {
 	tabId: string;
+	sessionId: string;
 	agentId: string;
 	toolType: string;
 	state: 'idle' | 'busy';
@@ -148,6 +152,97 @@ function buildTaskFailedToastCommand(task: PianolaTask): Record<string, unknown>
 		};
 	}
 	return payload;
+}
+
+export function resolveExistingPianolaAgentType(
+	task: Pick<PianolaTask, 'agentId' | 'agentType'>,
+	sessions: readonly DesktopSessionEntry[]
+): string | undefined {
+	if (task.agentType) return task.agentType;
+	if (!task.agentId) return undefined;
+	return sessions.find((session) => session.sessionId === task.agentId)?.toolType;
+}
+
+function campaignIdForPianolaPlan(planId: string): string {
+	return `pianola:${planId}`;
+}
+
+function taskRunStatus(task: PianolaTask, fallback: AgentRunStatus): AgentRunStatus {
+	if (task.status === 'done') return 'completed';
+	if (task.status === 'failed' || task.status === 'blocked') return 'failed';
+	if (task.status === 'running') return 'running';
+	return fallback;
+}
+
+function upsertPianolaTaskRun(
+	planId: string,
+	task: PianolaTask,
+	status: AgentRunStatus,
+	eventType: string
+): void {
+	const runId = pianolaTaskAgentRunId(planId, task.id);
+	const now = Date.now();
+	const existing = getAgentRun(runId);
+	const run: AgentRun = {
+		...(existing ?? {
+			id: runId,
+			createdAt: now,
+			provider: task.agentType ?? 'unknown',
+			status,
+			artifacts: [],
+			touchedFiles: [],
+			checks: [],
+			reviews: [],
+		}),
+		id: runId,
+		createdAt: existing?.createdAt ?? now,
+		updatedAt: now,
+		provider: existing?.provider ?? task.agentType ?? 'unknown',
+		status,
+		agentId: task.agentId,
+		agentName: task.title,
+		sessionId: task.agentId,
+		tabId: task.tabId,
+		cwd: task.cwd,
+		prompt: task.prompt,
+		source: campaignIdForPianolaPlan(planId),
+		metadata: {
+			...(existing?.metadata ?? {}),
+			pianola: {
+				planId,
+				taskId: task.id,
+				taskStatus: task.status,
+			},
+		},
+	};
+	upsertAgentRun(run);
+	appendAgentRunEvent({
+		id: `evt_${runId}_${eventType}_${now}`,
+		runId,
+		timestamp: now,
+		type: eventType,
+		status,
+		message: task.title,
+		data: { planId, taskId: task.id },
+	});
+}
+
+function recordPianolaAgentRunProgress(result: OrchestratorIterationResult): void {
+	const plan = result.state.plan;
+	const tasksById = new Map(plan.tasks.map((task) => [task.id, task]));
+	for (const taskId of result.dispatchedTaskIds) {
+		const task = tasksById.get(taskId);
+		if (task) upsertPianolaTaskRun(plan.id, task, 'running', 'pianola.dispatched');
+	}
+	for (const taskId of result.completedTaskIds) {
+		const task = tasksById.get(taskId);
+		if (task)
+			upsertPianolaTaskRun(plan.id, task, taskRunStatus(task, 'completed'), 'pianola.completed');
+	}
+	for (const taskId of result.failedTaskIds) {
+		const task = tasksById.get(taskId);
+		if (task) upsertPianolaTaskRun(plan.id, task, taskRunStatus(task, 'failed'), 'pianola.failed');
+	}
 }
 
 /** Read plan JSON from --file (resolved) or piped stdin. Mirrors pianolaSetProfile. */
@@ -387,8 +482,21 @@ export async function pianolaOrchestrate(
 			return getHistory(task.tabId);
 		},
 		ensureAgent: async (task) => {
-			if (task.agentId) return { agentId: task.agentId };
-
+			if (task.agentId) {
+				let agentType = task.agentType;
+				if (!agentType) {
+					try {
+						agentType = resolveExistingPianolaAgentType(task, await listDesktopSessions());
+					} catch {
+						// Preserve the pre-existing short-circuit behavior if the live session
+						// list is temporarily unavailable; the next tick can enrich it.
+					}
+				}
+				return {
+					agentId: task.agentId,
+					...(agentType ? { agentType } : {}),
+				};
+			}
 			// Capability/load-aware selection: pick a ready, least-loaded tool type
 			// from the live session pool instead of always spawning the default
 			// agent. One candidate per distinct live tool type (present in the pool
@@ -447,7 +555,7 @@ export async function pianolaOrchestrate(
 			if (!result.success || !result.sessionId) {
 				return { error: result.error ?? 'create_session did not return a sessionId' };
 			}
-			return { agentId: result.sessionId };
+			return { agentId: result.sessionId, agentType: toolType || 'claude-code' };
 		},
 		dispatch: async (task, agentId) => {
 			const res = await runDispatch(agentId, task.prompt, {});
@@ -483,7 +591,7 @@ export async function pianolaOrchestrate(
 				break;
 			}
 
-			let result: Awaited<ReturnType<typeof runOrchestratorIteration>>;
+			let result: OrchestratorIterationResult;
 			try {
 				result = await runOrchestratorIteration(state, deps, { concurrencyLimit });
 			} catch (error) {
@@ -496,6 +604,7 @@ export async function pianolaOrchestrate(
 				await sleep(intervalMs);
 				continue;
 			}
+			recordPianolaAgentRunProgress(result);
 			state = result.state;
 			console.log(`[orchestrator] ${progressLine(state.plan)}`);
 

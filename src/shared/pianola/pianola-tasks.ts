@@ -269,7 +269,7 @@ export function markTaskStatus(
 	plan: PianolaPlan,
 	taskId: string,
 	status: PianolaTaskStatus,
-	patch?: Partial<Pick<PianolaTask, 'tabId' | 'agentId' | 'error'>>
+	patch?: Partial<Pick<PianolaTask, 'tabId' | 'agentId' | 'agentType' | 'error'>>
 ): PianolaPlan {
 	const tasks = plan.tasks.map((task) => {
 		if (task.id !== taskId) return task;
@@ -277,6 +277,7 @@ export function markTaskStatus(
 		if (patch) {
 			if (patch.tabId !== undefined) next.tabId = patch.tabId;
 			if (patch.agentId !== undefined) next.agentId = patch.agentId;
+			if (patch.agentType !== undefined) next.agentType = patch.agentType;
 			if (patch.error !== undefined) next.error = patch.error;
 		}
 		return next;

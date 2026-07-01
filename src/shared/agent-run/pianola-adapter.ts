@@ -121,6 +121,10 @@ export function validatePianolaPlanLike(raw: unknown): PianolaPlanLike | null {
 	return validatePlan(raw).plan;
 }
 
+export function pianolaTaskAgentRunId(planId: string, taskId: string): string {
+	return `pianola:${planId}:${taskId}`;
+}
+
 function inferCampaignStatus(tasks: readonly PianolaTaskLike[]): CampaignStatus {
 	if (tasks.some((task) => task.status === 'failed' || task.status === 'blocked')) return 'blocked';
 	if (tasks.some((task) => task.status === 'running')) return 'running';
@@ -142,10 +146,12 @@ function toPianolaMetadata(task: PianolaTaskLike): Record<string, unknown> {
 }
 
 export function pianolaPlanToCampaign(plan: PianolaPlanLike): Campaign {
+	const runIds = plan.tasks.map((task) => pianolaTaskAgentRunId(plan.id, task.id));
 	const tasks: CampaignTask[] = plan.tasks.map((task) => ({
 		id: task.id,
 		title: task.title,
 		status: mapPianolaTaskStatusToCampaignTaskStatus(task.status),
+		runId: pianolaTaskAgentRunId(plan.id, task.id),
 		dependsOn: [...task.dependsOn],
 		prompt: task.prompt,
 		...(task.agentType !== undefined ? { agentType: task.agentType } : {}),
@@ -161,7 +167,7 @@ export function pianolaPlanToCampaign(plan: PianolaPlanLike): Campaign {
 		updatedAt: plan.createdAt,
 		status: inferCampaignStatus(plan.tasks),
 		objective: plan.title,
-		runIds: [],
+		runIds,
 		tasks,
 		source: {
 			adapter: 'pianola',

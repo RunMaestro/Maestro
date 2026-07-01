@@ -71,7 +71,10 @@ function makeDeps(
 		getRecentMessages: vi.fn(async (t: PianolaTask) => messages[t.id] ?? []),
 		ensureAgent:
 			config.ensureAgent ??
-			vi.fn(async (t: PianolaTask) => ({ agentId: t.agentId ?? `agent-${t.id}` })),
+			vi.fn(async (t: PianolaTask) => ({
+				agentId: t.agentId ?? `agent-${t.id}`,
+				agentType: t.agentType ?? 'claude-code',
+			})),
 		dispatch: config.dispatch ?? vi.fn(async () => ({ success: true, tabId: 'tab-1' })),
 		persist: vi.fn(),
 		log: vi.fn(),
@@ -256,6 +259,7 @@ describe('runOrchestratorIteration - agent and dispatch failures', () => {
 		r = await runOrchestratorIteration(state, makeDeps(), { concurrencyLimit: 5 });
 		expect(statusOf(r.state, 'A')).toBe('running');
 		expect(r.dispatchedTaskIds).toEqual(['A']);
+		expect(r.state.plan.tasks.find((t) => t.id === 'A')?.agentType).toBe('claude-code');
 	});
 
 	it('leaves a task pending when dispatch fails without permanently consuming a slot', async () => {
@@ -273,6 +277,7 @@ describe('runOrchestratorIteration - agent and dispatch failures', () => {
 		expect(statusOf(r.state, 'B')).toBe('running');
 		expect(r.dispatchedTaskIds).toEqual(['B']);
 		expect(r.progress.running).toBe(1);
+		expect(r.state.plan.tasks.find((t) => t.id === 'A')?.agentType).toBe('claude-code');
 	});
 
 	it('retries a dispatch failure on the next iteration', async () => {
