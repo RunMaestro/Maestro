@@ -6,6 +6,12 @@ export interface AgentRunListOptions {
 	status?: AgentRunStatus;
 	campaign?: string;
 	limit?: number;
+	// ISC-7.2: offset threads through the opaque pass-through (service -> preload
+	// -> IPC `...storeOptions` -> store `listAgentRuns`, which already accepts offset)
+	// without editing the hook/preload/IPC that the F3 live-push wave owns.
+	// TODO(F7): mirror `offset` on the preload/IPC AgentRunListOptions type annotations
+	// once F3 lands, so the boundary is typed end-to-end (functionally already works).
+	offset?: number;
 }
 
 export interface CampaignListOptions {
@@ -76,6 +82,54 @@ export const agentRunService = {
 		const recorded = requireSuccess(response, `Failed to append event ${event.id}`).event;
 		if (!recorded) throw new Error(`Failed to append event ${event.id}`);
 		return recorded;
+	},
+
+	async cancel(runId: string): Promise<AgentRun> {
+		const response = await createIpcMethod({
+			call: () => window.maestro.agentRun.cancel(runId),
+			errorContext: 'AgentRun cancel',
+			defaultValue: { success: false, error: `Failed to cancel run ${runId}` },
+		});
+		const run = requireSuccess(response, `Failed to cancel run ${runId}`).run;
+		if (!run) throw new Error(`Failed to cancel run ${runId}`);
+		return run;
+	},
+
+	async retry(runId: string): Promise<AgentRun> {
+		const response = await createIpcMethod({
+			call: () => window.maestro.agentRun.retry(runId),
+			errorContext: 'AgentRun retry',
+			defaultValue: { success: false, error: `Failed to retry run ${runId}` },
+		});
+		const run = requireSuccess(response, `Failed to retry run ${runId}`).run;
+		if (!run) throw new Error(`Failed to retry run ${runId}`);
+		return run;
+	},
+
+	async resolveFinding(
+		runId: string,
+		findingIndex: number,
+		status: 'fixed' | 'dismissed'
+	): Promise<AgentRun> {
+		const response = await createIpcMethod({
+			call: () => window.maestro.agentRun.resolveFinding(runId, findingIndex, status),
+			errorContext: 'AgentRun resolve finding',
+			defaultValue: { success: false, error: `Failed to resolve finding on run ${runId}` },
+		});
+		const run = requireSuccess(response, `Failed to resolve finding on run ${runId}`).run;
+		if (!run) throw new Error(`Failed to resolve finding on run ${runId}`);
+		return run;
+	},
+
+	async merge(runId: string): Promise<AgentRun> {
+		const response = await createIpcMethod({
+			call: () => window.maestro.agentRun.merge(runId),
+			errorContext: 'AgentRun merge',
+			defaultValue: { success: false, error: `Failed to merge run ${runId}` },
+		});
+		const run = requireSuccess(response, `Failed to merge run ${runId}`).run;
+		if (!run) throw new Error(`Failed to merge run ${runId}`);
+		return run;
 	},
 
 	campaigns: {

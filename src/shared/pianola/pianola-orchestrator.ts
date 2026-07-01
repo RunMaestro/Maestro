@@ -31,6 +31,9 @@ import type { PianolaMessage } from './types';
 
 export type { AgentRunState } from './pianola-completion-detector';
 
+/** Bounded auto-fix attempts before a needs_review task escalates (F8 / ISC-8.8). */
+const MAX_FIX_ATTEMPTS = 3;
+
 /**
  * The carried state of an orchestration run: the live plan plus the last observed
  * run state per task id. prevStates is what lets the completion detector see a
@@ -45,6 +48,20 @@ export interface OrchestratorState {
 /** Seed orchestration state from a plan, with no prior run states observed yet. */
 export function initialOrchestratorState(plan: PianolaPlan): OrchestratorState {
 	return { plan, prevStates: {} };
+}
+
+/**
+ * The ledger view of a task's captured run (F8 / ISC-8.3). Lets the engine
+ * settle a task on real checks/reviews/merge instead of busy-to-idle alone
+ * (ISC-8.4). All fields optional so a run with no producers still resolves.
+ */
+export interface PianolaTaskLedger {
+	runId?: string;
+	checksPassed?: boolean;
+	openCriticalOrHighFindings?: number;
+	openFindings?: number;
+	pullRequestUrl?: string;
+	merged?: boolean;
 }
 
 /** Injected side effects. Everything the engine touches that is not pure data. */
@@ -68,6 +85,33 @@ export interface OrchestratorDeps {
 	log: (line: string) => void;
 	/** Push a failure notification to the user's attention. Optional. */
 	notify?: (event: { kind: 'task_failed'; task: PianolaTask }) => void | Promise<void>;
+	/**
+	 * F8 reactive loop master gate (ISC-8.12/8.13). Read fresh each iteration by
+	 * the CLI (encore.pianola && encore.autopilot). When absent or false, the
+	 * engine runs NO auto-fix/auto-merge and behaves as the current supervisor.
+	 */
+	reactiveEnabled?: () => boolean;
+	/**
+	 * F8: read the captured AgentRun ledger for a task (checks/reviews/merge).
+	 * Optional: when absent the engine falls back to busy-to-idle detection.
+	 */
+	getRunLedger?: (task: PianolaTask) => Promise<PianolaTaskLedger | undefined>;
+	/**
+	 * F8 reactive loop (optional, gated by the CLI on encore/autopilot): dispatch
+	 * a bounded fix agent for a task whose run needs review. Returns success.
+	 */
+	dispatchFix?: (
+		task: PianolaTask,
+		ledger: PianolaTaskLedger
+	) => Promise<{ success: boolean; error?: string }>;
+	/**
+	 * F8 reactive loop (optional, gated + risk-rated + audited): request a merge
+	 * for a green task's run. Returns whether the merge was requested.
+	 */
+	requestMerge?: (
+		task: PianolaTask,
+		ledger: PianolaTaskLedger
+	) => Promise<{ merged: boolean; error?: string }>;
 }
 
 /** Structured outcome of a single orchestration tick. */
@@ -113,7 +157,12 @@ export async function runOrchestratorIteration(
 	// 1. Poll running tasks. Carry forward only the run states we actually observe
 	//    this tick, keyed by task id, so prevStates reflects reality next iteration.
 	const prevStates: Record<string, AgentRunState> = {};
-	const running = plan.tasks.filter((task) => task.status === 'running');
+	// Poll running AND fixing tasks: a fix agent is a live run whose completion is
+	// detected the same way (F8). When a fixing task finishes it settles via the
+	// same ledger gate below, re-entering needs_review or done.
+	const running = plan.tasks.filter(
+		(task) => task.status === 'running' || task.status === 'fixing'
+	);
 	for (const task of running) {
 		const currentState = await deps.getRunState(task);
 		const recentMessages = await deps.getRecentMessages(task);
@@ -124,9 +173,22 @@ export async function runOrchestratorIteration(
 			recentMessages,
 		});
 		if (outcome === 'done') {
-			plan = markTaskStatus(plan, task.id, 'done');
-			completedTaskIds.push(task.id);
-			deps.log(`[orchestrator] task "${task.id}" done (${reason})`);
+			// F8 (ISC-8.4): settle on the ledger, not busy-to-idle alone. Open
+			// critical/high findings route the task to needs_review instead of done.
+			const ledger = deps.getRunLedger ? await deps.getRunLedger(task) : undefined;
+			if (ledger && (ledger.openCriticalOrHighFindings ?? 0) > 0) {
+				plan = markTaskStatus(plan, task.id, 'needs_review', { runId: ledger.runId });
+				deps.log(
+					`[orchestrator] task "${task.id}" needs_review (${ledger.openCriticalOrHighFindings} open findings)`
+				);
+			} else if (ledger && ledger.checksPassed === false) {
+				plan = markTaskStatus(plan, task.id, 'needs_review', { runId: ledger.runId });
+				deps.log(`[orchestrator] task "${task.id}" needs_review (checks failing)`);
+			} else {
+				plan = markTaskStatus(plan, task.id, 'done', { runId: ledger?.runId });
+				completedTaskIds.push(task.id);
+				deps.log(`[orchestrator] task "${task.id}" done (${reason})`);
+			}
 		} else if (outcome === 'failed') {
 			plan = markTaskStatus(plan, task.id, 'failed', { error: reason });
 			failedTaskIds.push(task.id);
@@ -142,9 +204,68 @@ export async function runOrchestratorIteration(
 	//    blocked) becomes blocked, to a fixed point.
 	plan = propagateBlocked(plan);
 
+	// 2b. F8 reactive loop: drive needs_review tasks through a bounded fix cycle,
+	//     and settle green tasks. The whole pass is gated by reactiveEnabled
+	//     (ISC-8.12/8.13): with it off (or absent), Pianola behaves exactly as the
+	//     current supervisor - no auto-fix, no auto-merge. Risk-rating + audit live
+	//     in the dep implementations (ISC-8.9/8.10).
+	if (deps.reactiveEnabled?.() === true) {
+		for (const task of plan.tasks.filter((t) => t.status === 'needs_review')) {
+			const ledger = deps.getRunLedger ? await deps.getRunLedger(task) : undefined;
+			// Fully green (zero open findings of ANY severity AND checks passed): the
+			// review work succeeded. Attempt a merge ONCE, then settle to done
+			// regardless of the merge outcome (recorded on the run) so the task
+			// leaves needs_review and does not re-attempt every tick. Anything less
+			// than fully green falls through to the fix cycle below.
+			if (ledger && (ledger.openFindings ?? 0) === 0 && ledger.checksPassed === true) {
+				if (deps.requestMerge) {
+					const merge = await deps.requestMerge(task, ledger);
+					deps.log(
+						merge.merged
+							? `[orchestrator] task "${task.id}" merged + done`
+							: `[orchestrator] task "${task.id}" done (merge not performed: ${merge.error ?? 'n/a'})`
+					);
+				} else {
+					deps.log(`[orchestrator] task "${task.id}" done (review resolved, no merger wired)`);
+				}
+				plan = markTaskStatus(plan, task.id, 'done', { runId: ledger.runId });
+				completedTaskIds.push(task.id);
+				continue;
+			}
+			// Still needs work: dispatch a bounded fix, or escalate when capped.
+			const attempts = task.fixAttempts ?? 0;
+			if (attempts >= MAX_FIX_ATTEMPTS) {
+				plan = markTaskStatus(plan, task.id, 'failed', {
+					error: `fix loop exhausted after ${attempts} attempts; escalated to user`,
+				});
+				failedTaskIds.push(task.id);
+				await safeNotify(deps, plan.tasks.find((t) => t.id === task.id) ?? task);
+				deps.log(`[orchestrator] task "${task.id}" escalated (fix loop exhausted)`);
+				continue;
+			}
+			if (deps.dispatchFix && ledger) {
+				const fix = await deps.dispatchFix(task, ledger);
+				if (fix.success) {
+					plan = markTaskStatus(plan, task.id, 'fixing', {
+						runId: ledger.runId,
+						fixAttempts: attempts + 1,
+					});
+					deps.log(`[orchestrator] task "${task.id}" fixing (attempt ${attempts + 1})`);
+				} else {
+					deps.log(
+						`[orchestrator] task "${task.id}" fix dispatch failed (${fix.error ?? 'unknown'})`
+					);
+				}
+			}
+		}
+	}
+
 	// 3. Dispatch newly-ready work into free concurrency slots. Re-check the running
 	//    count as we go so we never exceed concurrencyLimit within one iteration.
-	let runningCount = plan.tasks.filter((task) => task.status === 'running').length;
+	// Both running and fixing tasks occupy a concurrency slot (each is a live agent).
+	let runningCount = plan.tasks.filter(
+		(task) => task.status === 'running' || task.status === 'fixing'
+	).length;
 	const ready = computeReadyTasks(plan);
 	for (const task of ready) {
 		if (runningCount >= options.concurrencyLimit) break;

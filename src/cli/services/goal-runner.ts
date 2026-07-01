@@ -29,6 +29,7 @@ import { hasCapability } from '../../main/agents/capabilities';
 import { substituteTemplateVariables, TemplateContext } from '../../shared/templateVariables';
 import { prependNewSessionMessage } from '../../shared/newSessionMessage';
 import { spawnAgent } from './agent-spawner';
+import { captureCliRun } from './agent-run-capture';
 import { addHistoryEntry, readGroups } from './storage';
 import { getCliPrompt } from './prompt-loader';
 import { PROMPT_IDS } from '../../shared/promptDefinitions';
@@ -85,19 +86,24 @@ async function requestHandoffBlurb(
 	appendSystemPrompt: string | undefined
 ): Promise<{ blurb: string; usageStats?: UsageStats }> {
 	try {
-		const result = await spawnAgent(
-			session.toolType,
-			session.cwd,
-			GOAL_SYNOPSIS_REQUEST_PROMPT,
-			agentSessionId,
+		const result = await captureCliRun(
 			{
-				customModel: session.customModel,
-				customEffort: session.customEffort,
-				customArgs: session.customArgs,
-				customEnvVars: session.customEnvVars,
-				sshRemoteConfig: session.sessionSshRemoteConfig,
-				appendSystemPrompt,
-			}
+				sessionId: agentSessionId ?? session.id,
+				toolType: session.toolType,
+				cwd: session.cwd,
+				prompt: GOAL_SYNOPSIS_REQUEST_PROMPT,
+				source: 'cli:goal-synopsis',
+			},
+			() =>
+				spawnAgent(session.toolType, session.cwd, GOAL_SYNOPSIS_REQUEST_PROMPT, agentSessionId, {
+					customModel: session.customModel,
+					customEffort: session.customEffort,
+					customArgs: session.customArgs,
+					customEnvVars: session.customEnvVars,
+					sshRemoteConfig: session.sessionSshRemoteConfig,
+					appendSystemPrompt,
+				}),
+			(r) => (r.success ? 0 : 1)
 		);
 		if (result.success) {
 			return { blurb: sanitizeHandoffBlurb(result.response), usageStats: result.usageStats };
@@ -220,14 +226,25 @@ export async function* runGoal(
 			yield { type: 'goal_iteration_start', timestamp: Date.now(), iteration };
 
 			const iterationStart = Date.now();
-			const result = await spawnAgent(session.toolType, session.cwd, prompt, undefined, {
-				customModel: session.customModel,
-				customEffort: session.customEffort,
-				customArgs: session.customArgs,
-				customEnvVars: session.customEnvVars,
-				sshRemoteConfig: session.sessionSshRemoteConfig,
-				appendSystemPrompt,
-			});
+			const result = await captureCliRun(
+				{
+					sessionId: session.id,
+					toolType: session.toolType,
+					cwd: session.cwd,
+					prompt,
+					source: 'cli:goal',
+				},
+				() =>
+					spawnAgent(session.toolType, session.cwd, prompt, undefined, {
+						customModel: session.customModel,
+						customEffort: session.customEffort,
+						customArgs: session.customArgs,
+						customEnvVars: session.customEnvVars,
+						sshRemoteConfig: session.sessionSshRemoteConfig,
+						appendSystemPrompt,
+					}),
+				(r) => (r.success ? 0 : 1)
+			);
 			const elapsedMs = Date.now() - iterationStart;
 
 			if (result.usageStats) {

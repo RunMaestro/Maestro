@@ -142,6 +142,8 @@ export interface AgentRunEvent {
 	runId: string;
 	timestamp: number;
 	type: string;
+	/** Monotonic per-run sequence stamped at append time for stable ordering/dedup. */
+	seq?: number;
 	message?: string;
 	status?: AgentRunStatus;
 	data?: AgentRunMetadata;

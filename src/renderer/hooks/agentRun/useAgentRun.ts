@@ -26,6 +26,14 @@ export interface UseAgentRunResult {
 	showRun: (runId: string) => Promise<AgentRun | null>;
 	loadRunEvents: (runId: string) => Promise<AgentRunEvent[]>;
 	showCampaign: (campaignId: string) => Promise<Campaign | null>;
+	cancelRun: (runId: string) => Promise<boolean>;
+	retryRun: (runId: string) => Promise<boolean>;
+	resolveFinding: (
+		runId: string,
+		findingIndex: number,
+		status: 'fixed' | 'dismissed'
+	) => Promise<boolean>;
+	mergeRun: (runId: string) => Promise<boolean>;
 	clearSelection: () => void;
 }
 
@@ -52,6 +60,8 @@ export function useAgentRun(options: UseAgentRunOptions = {}): UseAgentRunResult
 	const campaignRequestIdRef = useRef(0);
 	runsOptionsRef.current = options.runs;
 	campaignsOptionsRef.current = options.campaigns;
+	const selectedRunIdRef = useRef<string | null>(null);
+	selectedRunIdRef.current = selectedRun?.id ?? null;
 
 	const startRequest = useCallback(() => {
 		pendingCountRef.current += 1;
@@ -193,6 +203,50 @@ export function useAgentRun(options: UseAgentRunOptions = {}): UseAgentRunResult
 		[finishRequest, startRequest]
 	);
 
+	// Shared mutation runner for the F4 control actions. Runs the action, then
+	// refreshes the run list and re-shows the currently selected run so the UI
+	// reflects the new status/findings/merge outcome. On failure (including a
+	// gated destructive action) the error is surfaced and the call returns false.
+	const runAction = useCallback(
+		async (action: () => Promise<AgentRun>): Promise<boolean> => {
+			startRequest();
+			try {
+				await action();
+				return true;
+			} catch (err) {
+				if (mountedRef.current) setError(toErrorMessage(err));
+				return false;
+			} finally {
+				finishRequest();
+				await refreshRuns();
+				const selectedId = selectedRunIdRef.current;
+				if (selectedId) await showRun(selectedId);
+			}
+		},
+		[finishRequest, refreshRuns, showRun, startRequest]
+	);
+
+	const cancelRun = useCallback(
+		(runId: string) => runAction(() => agentRunService.cancel(runId)),
+		[runAction]
+	);
+
+	const retryRun = useCallback(
+		(runId: string) => runAction(() => agentRunService.retry(runId)),
+		[runAction]
+	);
+
+	const resolveFinding = useCallback(
+		(runId: string, findingIndex: number, status: 'fixed' | 'dismissed') =>
+			runAction(() => agentRunService.resolveFinding(runId, findingIndex, status)),
+		[runAction]
+	);
+
+	const mergeRun = useCallback(
+		(runId: string) => runAction(() => agentRunService.merge(runId)),
+		[runAction]
+	);
+
 	const clearSelection = useCallback(() => {
 		setSelectedRun(null);
 		setSelectedRunEvents([]);
@@ -204,6 +258,32 @@ export function useAgentRun(options: UseAgentRunOptions = {}): UseAgentRunResult
 
 		void Promise.all([refreshRuns(), refreshCampaigns()]);
 	}, [options.loadOnMount, refreshRuns, refreshCampaigns]);
+
+	// Live push (F3): coalesce rapid updates into a single refresh so a burst of
+	// events is one re-render, not one per event (ISC-3.7). Unsubscribe on unmount
+	// leaves no dangling IPC listener (ISC-3.6).
+	useEffect(() => {
+		const api = window.maestro?.agentRun;
+		if (!api?.onUpdated || !api?.onEventAppended) return;
+		let timer: ReturnType<typeof setTimeout> | null = null;
+		const scheduleRefresh = (): void => {
+			if (timer) return;
+			timer = setTimeout(() => {
+				timer = null;
+				void refreshRuns();
+			}, 120);
+		};
+		const unsubUpdated = api.onUpdated(scheduleRefresh);
+		const unsubEvent = api.onEventAppended((event) => {
+			if (event.runId === selectedRunIdRef.current) void loadRunEvents(event.runId);
+			scheduleRefresh();
+		});
+		return () => {
+			clearTimeout(timer ?? undefined);
+			unsubUpdated();
+			unsubEvent();
+		};
+	}, [refreshRuns, loadRunEvents]);
 
 	return {
 		runs,
@@ -218,6 +298,10 @@ export function useAgentRun(options: UseAgentRunOptions = {}): UseAgentRunResult
 		showRun,
 		loadRunEvents,
 		showCampaign,
+		cancelRun,
+		retryRun,
+		resolveFinding,
+		mergeRun,
 		clearSelection,
 	};
 }

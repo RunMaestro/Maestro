@@ -89,6 +89,10 @@ export function mapPianolaTaskStatusToCampaignTaskStatus(
 			return 'blocked';
 		case 'skipped':
 			return 'skipped';
+		case 'needs_review':
+			return 'needs_review';
+		case 'fixing':
+			return 'fixing';
 	}
 }
 
@@ -111,9 +115,11 @@ export function mapCampaignTaskStatusToPianolaTaskStatus(
 		case 'discarded':
 			return 'skipped';
 		case 'waiting':
-		case 'needs_review':
-		case 'fixing':
 			return null;
+		case 'needs_review':
+			return 'needs_review';
+		case 'fixing':
+			return 'fixing';
 	}
 }
 

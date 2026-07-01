@@ -13,8 +13,18 @@
  * Pianola storage layer drops bad data instead of crashing.
  */
 
-/** Lifecycle state of a single task in a plan. */
-export type PianolaTaskStatus = 'pending' | 'running' | 'done' | 'failed' | 'blocked' | 'skipped';
+/** Lifecycle state of a single task in a plan. `needs_review` and `fixing` (F8)
+ *  mirror the AgentRun/CampaignTask states so a task can reflect a ledger-driven
+ *  review/fix cycle, not just busy-to-idle completion. */
+export type PianolaTaskStatus =
+	| 'pending'
+	| 'running'
+	| 'needs_review'
+	| 'fixing'
+	| 'done'
+	| 'failed'
+	| 'blocked'
+	| 'skipped';
 
 /** One unit of work in a plan, with its dependency edges and runtime binding. */
 export interface PianolaTask {
@@ -34,6 +44,11 @@ export interface PianolaTask {
 	tabId?: string;
 	/** Failure detail, populated when status is 'failed'. */
 	error?: string;
+	/** The captured AgentRun id this task is bound to (F8 / ISC-8.1), so the task
+	 *  and its real run are one record, not a duplicate projection. */
+	runId?: string;
+	/** Count of bounded auto-fix attempts (F8 / ISC-8.8). Escalates when capped. */
+	fixAttempts?: number;
 }
 
 /** A full plan: an ordered set of tasks forming a DAG. */
@@ -48,6 +63,8 @@ export interface PianolaPlan {
 const TASK_STATUSES: readonly PianolaTaskStatus[] = [
 	'pending',
 	'running',
+	'needs_review',
+	'fixing',
 	'done',
 	'failed',
 	'blocked',
@@ -269,7 +286,9 @@ export function markTaskStatus(
 	plan: PianolaPlan,
 	taskId: string,
 	status: PianolaTaskStatus,
-	patch?: Partial<Pick<PianolaTask, 'tabId' | 'agentId' | 'agentType' | 'error'>>
+	patch?: Partial<
+		Pick<PianolaTask, 'tabId' | 'agentId' | 'agentType' | 'error' | 'runId' | 'fixAttempts'>
+	>
 ): PianolaPlan {
 	const tasks = plan.tasks.map((task) => {
 		if (task.id !== taskId) return task;
@@ -279,6 +298,8 @@ export function markTaskStatus(
 			if (patch.agentId !== undefined) next.agentId = patch.agentId;
 			if (patch.agentType !== undefined) next.agentType = patch.agentType;
 			if (patch.error !== undefined) next.error = patch.error;
+			if (patch.runId !== undefined) next.runId = patch.runId;
+			if (patch.fixAttempts !== undefined) next.fixAttempts = patch.fixAttempts;
 		}
 		return next;
 	});
@@ -323,6 +344,8 @@ export interface PianolaPlanProgress {
 	total: number;
 	pending: number;
 	running: number;
+	needs_review: number;
+	fixing: number;
 	done: number;
 	failed: number;
 	blocked: number;
@@ -339,6 +362,8 @@ export function planProgress(plan: PianolaPlan): PianolaPlanProgress {
 		total: plan.tasks.length,
 		pending: 0,
 		running: 0,
+		needs_review: 0,
+		fixing: 0,
 		done: 0,
 		failed: 0,
 		blocked: 0,

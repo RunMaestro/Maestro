@@ -1107,6 +1107,10 @@ export class WebServer {
 		this.broadcastService.broadcastToSession(sessionId, message);
 	}
 
+	broadcastToAll(message: object): void {
+		this.broadcastService.broadcastToAll(message);
+	}
+
 	broadcastSessionStateChange(
 		sessionId: string,
 		state: string,

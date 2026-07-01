@@ -27,7 +27,11 @@ describe('Pianola AgentRun adapter', () => {
 		expect(mapCampaignTaskStatusToPianolaTaskStatus('queued')).toBe('pending');
 		expect(mapCampaignTaskStatusToPianolaTaskStatus('passed')).toBe('done');
 		expect(mapCampaignTaskStatusToPianolaTaskStatus('skipped')).toBe('skipped');
-		expect(mapCampaignTaskStatusToPianolaTaskStatus('needs_review')).toBeNull();
+		expect(mapCampaignTaskStatusToPianolaTaskStatus('needs_review')).toBe('needs_review');
+		expect(mapCampaignTaskStatusToPianolaTaskStatus('fixing')).toBe('fixing');
+		expect(mapCampaignTaskStatusToPianolaTaskStatus('waiting')).toBeNull();
+		expect(mapPianolaTaskStatusToCampaignTaskStatus('needs_review')).toBe('needs_review');
+		expect(mapPianolaTaskStatusToCampaignTaskStatus('fixing')).toBe('fixing');
 	});
 
 	it('maps supported AgentRun statuses back to Pianola run states', () => {

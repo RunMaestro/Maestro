@@ -6,6 +6,7 @@ export interface AgentRunListOptions {
 	status?: AgentRunStatus;
 	campaign?: string;
 	limit?: number;
+	offset?: number;
 }
 
 export interface CampaignListOptions {
@@ -60,6 +61,12 @@ export interface CampaignRecordResponse {
 	error?: string;
 }
 
+export interface AgentRunActionResponse {
+	success: boolean;
+	run?: AgentRun;
+	error?: string;
+}
+
 export function createAgentRunApi() {
 	return {
 		list: (options?: AgentRunListOptions): Promise<AgentRunListResponse> =>
@@ -72,6 +79,28 @@ export function createAgentRunApi() {
 			ipcRenderer.invoke('agentRun:events', runId),
 		appendEvent: (event: AgentRunEvent): Promise<AgentRunEventRecordResponse> =>
 			ipcRenderer.invoke('agentRun:event', event),
+		cancel: (runId: string): Promise<AgentRunActionResponse> =>
+			ipcRenderer.invoke('agentRun:cancel', runId),
+		retry: (runId: string): Promise<AgentRunActionResponse> =>
+			ipcRenderer.invoke('agentRun:retry', runId),
+		resolveFinding: (
+			runId: string,
+			findingIndex: number,
+			status: 'fixed' | 'dismissed'
+		): Promise<AgentRunActionResponse> =>
+			ipcRenderer.invoke('agentRun:resolveFinding', runId, findingIndex, status),
+		merge: (runId: string): Promise<AgentRunActionResponse> =>
+			ipcRenderer.invoke('agentRun:merge', runId),
+		onUpdated: (listener: (run: AgentRun) => void): (() => void) => {
+			const handler = (_event: unknown, run: AgentRun): void => listener(run);
+			ipcRenderer.on('agentRun:updated', handler);
+			return () => ipcRenderer.removeListener('agentRun:updated', handler);
+		},
+		onEventAppended: (listener: (event: AgentRunEvent) => void): (() => void) => {
+			const handler = (_event: unknown, appended: AgentRunEvent): void => listener(appended);
+			ipcRenderer.on('agentRun:eventAppended', handler);
+			return () => ipcRenderer.removeListener('agentRun:eventAppended', handler);
+		},
 		campaigns: {
 			list: (options?: CampaignListOptions): Promise<CampaignListResponse> =>
 				ipcRenderer.invoke('campaign:list', options),

@@ -353,6 +353,8 @@ describe('planProgress', () => {
 			total: 6,
 			pending: 1,
 			running: 1,
+			needs_review: 0,
+			fixing: 0,
 			done: 1,
 			failed: 1,
 			blocked: 1,

@@ -420,6 +420,7 @@ function validateAgentRunEventWithOptions(
 		options.strictOptional &&
 		hasInvalidOptionalFields(raw, {
 			strings: ['message'],
+			numbers: ['seq'],
 			metadata: ['data', 'metadata'],
 		})
 	) {
@@ -433,10 +434,12 @@ function validateAgentRunEventWithOptions(
 		type: raw.type,
 	};
 	const message = readOptionalString(raw, 'message');
+	const seq = readOptionalFiniteNumber(raw, 'seq');
 	const data = readOptionalMetadata(raw, 'data');
 	const metadata = readOptionalMetadata(raw, 'metadata');
 
 	if (message !== undefined) event.message = message;
+	if (seq !== undefined) event.seq = seq;
 	if (raw.status !== undefined) event.status = raw.status;
 	if (data !== undefined) event.data = data;
 	if (metadata !== undefined) event.metadata = metadata;

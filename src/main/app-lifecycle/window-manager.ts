@@ -3,12 +3,24 @@
  * Handles window state persistence, DevTools, crash detection, and auto-updater initialization.
  */
 
+import path from 'path';
 import { BrowserWindow, Menu, ipcMain, screen } from 'electron';
 import type Store from 'electron-store';
 import type { WindowState } from '../stores/types';
 import { logger } from '../utils/logger';
 import { initAutoUpdater } from '../auto-updater';
 import { blocksSubframeNavigation } from '../../shared/plugins/panel-navigation';
+import {
+	isPluginPanelPartition,
+	isAllowedPluginPanelAttachment,
+} from '../../shared/plugins/panel-host';
+import {
+	hardenPluginPanelWebPreferences,
+	hardenPluginPanelSession,
+	attachPluginPanelGuestSecurity,
+	isPluginPanelSession,
+	type PluginPanelGuestContents,
+} from '../plugins/plugin-panel-host';
 
 const BROWSER_TAB_PARTITION_PREFIX = 'persist:maestro-browser-session-';
 // `file:` is allowed so users can open local HTML they just generated
@@ -320,11 +332,46 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 			// Navigation & Window Security Hardening
 			// ================================================================
 
-			// Restrict renderer-created webviews to the browser-tab surface only.
+			// The plugin-panel preload lives next to the main preload bundle
+			// (dist/main/plugin-panel-preload.js, built by scripts/build-preload.mjs).
+			const pluginPanelPreloadPath = path.join(
+				path.dirname(preloadPath),
+				'plugin-panel-preload.js'
+			);
+
+			// Restrict renderer-created webviews to the two sanctioned surfaces:
+			// browser tabs (persist:maestro-browser-session-*) and plugin panels
+			// (plugin:<id>, hardened by the plugin panel host). Anything else is
+			// blocked before the guest exists.
 			mainWindow.webContents.on('will-attach-webview', (event, webPreferences, params) => {
 				const src = typeof params.src === 'string' ? params.src : '';
 				const partition =
 					typeof webPreferences.partition === 'string' ? webPreferences.partition : '';
+
+				if (isPluginPanelPartition(partition)) {
+					// Per-plugin isolated surface: partition and document must belong
+					// to the SAME plugin, web prefs are forced (no Node, isolation,
+					// sandbox, broker-only preload), and the per-plugin session gets
+					// its protocol handler + egress/permission denial installed.
+					if (!isAllowedPluginPanelAttachment(partition, src)) {
+						event.preventDefault();
+						logger.warn(
+							`Blocked unsafe plugin panel attachment: ${src || '<empty src>'}`,
+							'Window',
+							{
+								src,
+								partition,
+							}
+						);
+						return;
+					}
+					hardenPluginPanelWebPreferences(
+						webPreferences as Record<string, unknown>,
+						pluginPanelPreloadPath
+					);
+					hardenPluginPanelSession(partition);
+					return;
+				}
 
 				hardenBrowserTabWebPreferences(webPreferences as BrowserTabWebPreferences);
 
@@ -338,6 +385,16 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 			});
 
 			mainWindow.webContents.on('did-attach-webview', (_event, guestContents) => {
+				// Plugin panel guests get the panel lockdown ONLY: no popups, no
+				// navigation — and none of the browser-tab conveniences (shortcut
+				// forwarding, JS injection, privileged paste) may ever run inside
+				// plugin-controlled content.
+				const panelGuest = guestContents as unknown as PluginPanelGuestContents;
+				if (isPluginPanelSession(panelGuest.session)) {
+					attachPluginPanelGuestSecurity(panelGuest);
+					return;
+				}
+
 				attachBrowserTabGuestSecurity(guestContents as BrowserTabGuestContents);
 
 				// Forward app shortcuts from the webview guest process to the renderer.

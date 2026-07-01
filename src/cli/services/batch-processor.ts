@@ -10,6 +10,7 @@ import {
 	uncheckAllTasks,
 	writeDoc,
 } from './agent-spawner';
+import { captureCliRun } from './agent-run-capture';
 import { addHistoryEntry, readGroups } from './storage';
 import { substituteTemplateVariables, TemplateContext } from '../../shared/templateVariables';
 import { prependNewSessionMessage } from '../../shared/newSessionMessage';
@@ -483,14 +484,25 @@ export async function* runPlaybook(
 					// Run task. Synopsis spawn below intentionally omits this
 					// — it's a resume into the same agent that already has the
 					// prompt and re-sending would waste tokens.
-					const result = await spawnAgent(session.toolType, session.cwd, finalPrompt, undefined, {
-						customModel: session.customModel,
-						customEffort: session.customEffort,
-						customArgs: session.customArgs,
-						customEnvVars: session.customEnvVars,
-						sshRemoteConfig: session.sessionSshRemoteConfig,
-						appendSystemPrompt: playbookSystemPrompt,
-					});
+					const result = await captureCliRun(
+						{
+							sessionId: session.id,
+							toolType: session.toolType,
+							cwd: session.cwd,
+							prompt: finalPrompt,
+							source: 'cli:autorun',
+						},
+						() =>
+							spawnAgent(session.toolType, session.cwd, finalPrompt, undefined, {
+								customModel: session.customModel,
+								customEffort: session.customEffort,
+								customArgs: session.customArgs,
+								customEnvVars: session.customEnvVars,
+								sshRemoteConfig: session.sessionSshRemoteConfig,
+								appendSystemPrompt: playbookSystemPrompt,
+							}),
+						(r) => (r.success ? 0 : 1)
+					);
 
 					const elapsedMs = Date.now() - taskStartTime;
 
@@ -524,18 +536,28 @@ export async function* runPlaybook(
 
 					if (result.success && result.agentSessionId && !skipSynopsis) {
 						// Request synopsis from the agent
-						const synopsisResult = await spawnAgent(
-							session.toolType,
-							session.cwd,
-							await getCliPrompt(PROMPT_IDS.AUTORUN_SYNOPSIS),
-							result.agentSessionId,
+						const synopsisResult = await captureCliRun(
 							{
-								customModel: session.customModel,
-								customEffort: session.customEffort,
-								customArgs: session.customArgs,
-								customEnvVars: session.customEnvVars,
-								sshRemoteConfig: session.sessionSshRemoteConfig,
-							}
+								sessionId: result.agentSessionId ?? session.id,
+								toolType: session.toolType,
+								cwd: session.cwd,
+								source: 'cli:autorun-synopsis',
+							},
+							async () =>
+								spawnAgent(
+									session.toolType,
+									session.cwd,
+									await getCliPrompt(PROMPT_IDS.AUTORUN_SYNOPSIS),
+									result.agentSessionId,
+									{
+										customModel: session.customModel,
+										customEffort: session.customEffort,
+										customArgs: session.customArgs,
+										customEnvVars: session.customEnvVars,
+										sshRemoteConfig: session.sessionSshRemoteConfig,
+									}
+								),
+							(r) => (r.success ? 0 : 1)
 						);
 
 						if (synopsisResult.success && synopsisResult.response) {
