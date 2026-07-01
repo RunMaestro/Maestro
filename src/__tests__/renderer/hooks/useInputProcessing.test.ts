@@ -1442,6 +1442,33 @@ describe('useInputProcessing', () => {
 			expect(spawnCall.permissionMode).toBe('readonly');
 		});
 
+		it('sends permissionMode "full" when tab permissionMode is "full" and Auto Run is not forcing read-only', async () => {
+			// Use a tab WITH agentSessionId so the message sends immediately (not queued)
+			const fullPermissionTab = createMockTab({
+				readOnlyMode: false,
+				permissionMode: 'full',
+				agentSessionId: 'existing-session-789',
+			});
+			const session = createMockSession({
+				aiTabs: [fullPermissionTab],
+				activeTabId: fullPermissionTab.id,
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'refactor this module',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(window.maestro.process.spawn).toHaveBeenCalled();
+			const spawnCall = (window.maestro.process.spawn as ReturnType<typeof vi.fn>).mock.calls[0][0];
+			expect(spawnCall.permissionMode).toBe('full');
+		});
+
 		it('does not append read-only suffix when in normal write mode', async () => {
 			// Use a tab WITH agentSessionId to skip system prompt prepending
 			const writeTab = createMockTab({
