@@ -27,7 +27,6 @@ import {
 	verify as cryptoVerify,
 } from 'crypto';
 import type { KeyObject } from 'crypto';
-import archiver from 'archiver';
 import { HOST_API_VERSION } from '../../shared/plugins/host-api';
 import { PLUGIN_ID_PATTERN, validatePluginManifest } from '../../shared/plugins/plugin-manifest';
 import type { PluginTier } from '../../shared/plugins/plugin-manifest';
@@ -42,20 +41,7 @@ import {
 	normalizeRelPath,
 } from '../../shared/plugins/signing';
 import type { SignatureManifest, SignatureStatus } from '../../shared/plugins/signing';
-
-// tsconfig.cli.json targets the ES2020 lib, whose typings predate
-// Promise.withResolvers (ES2024). The method exists at runtime on Node >= 22
-// (this repo's engine floor), so declare its type rather than fall back to the
-// new Promise(executor) form.
-declare global {
-	interface PromiseConstructor {
-		withResolvers<T>(): {
-			promise: Promise<T>;
-			resolve: (value: T | PromiseLike<T>) => void;
-			reject: (reason?: unknown) => void;
-		};
-	}
-}
+import { collectPluginArchiveFiles, packPluginArchive } from '../../shared/plugins/plugin-archive';
 
 /** Version of @maestro/plugin-sdk the scaffold pins (kept in sync with the SDK). */
 const PLUGIN_SDK_VERSION = '0.2.0';
@@ -622,50 +608,6 @@ export function pluginSign(dir: string, options: PluginSignOptions): void {
 }
 
 /**
- * Collect plugin-relative POSIX file paths to pack. Uses the SAME shared
- * exclusion policy as the signer and host verifier (node_modules/, .git/,
- * *.pem, *.key) so the packed archive's file set matches what was signed and
- * what the host re-hashes. `signature.json` is kept: the host needs it to
- * verify (the shared policy intentionally does not strip it).
- */
-function collectPackFiles(dir: string): string[] {
-	const out: string[] = [];
-	const walk = (current: string): void => {
-		for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
-			if (entry.isSymbolicLink()) continue;
-			const abs = path.join(current, entry.name);
-			if (entry.isDirectory()) {
-				if (SIGNATURE_EXCLUDED_DIRS.has(entry.name)) continue;
-				walk(abs);
-				continue;
-			}
-			if (!entry.isFile()) continue;
-			const rel = normalizeRelPath(path.relative(dir, abs));
-			if (isExcludedSignaturePath(rel)) continue;
-			out.push(rel);
-		}
-	};
-	walk(dir);
-	return out.sort();
-}
-
-/** Write the given plugin-relative files into a gzip tar archive at outPath. */
-function writeArchive(dir: string, files: readonly string[], outPath: string): Promise<void> {
-	const { promise, resolve, reject } = Promise.withResolvers<void>();
-	const output = fs.createWriteStream(outPath);
-	const archive = archiver('tar', { gzip: true });
-	output.on('close', () => resolve());
-	output.on('error', reject);
-	archive.on('error', reject);
-	archive.pipe(output);
-	for (const rel of files) {
-		archive.file(path.join(dir, rel), { name: rel });
-	}
-	void archive.finalize();
-	return promise;
-}
-
-/**
  * Pack <dir> into a distributable gzip tar archive, excluding node_modules, .git,
  * and signing-key files (*.pem/*.key). Defaults the output name to
  * <id>-<version>.tgz read from plugin.json.
@@ -690,11 +632,12 @@ export async function pluginPack(dir: string, options: PluginPackOptions): Promi
 			: '0.0.0';
 
 	const outPath = path.resolve(options.out ?? `${id}-${version}.tgz`);
-	const files = collectPackFiles(targetDir);
+
+	const files = collectPluginArchiveFiles(targetDir);
 	if (files.length === 0) return fail(`no packable files found in ${targetDir}`);
 
 	try {
-		await writeArchive(targetDir, files, outPath);
+		await packPluginArchive(targetDir, outPath, files);
 	} catch (error) {
 		return fail(
 			`failed to create archive: ${error instanceof Error ? error.message : String(error)}`

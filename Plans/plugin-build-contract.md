@@ -23,6 +23,9 @@ and the source files listed below for contract truth.
 - `src/shared/plugins/contributions.ts` - host-rendered contribution shapes for UI items, panels,
   settings, tools, keybindings, agents, commands, command macros, Cue triggers, themes, prompts, and
   background services.
+- `src/shared/plugins/plugin-archive.ts` - shared CLI/host archive contract: pack signed plugin files,
+  exclude unsigned/runtime dependency trees by policy, and safe-extract `.tgz`/`.tar.gz` installs with
+  traversal/link-entry rejection before `PluginManager.install()` copies into the installed plugins dir.
 - `src/main/plugins/action-guard.ts` - `ActionGuard.begin(pluginId, capability, target?)` returns
   `{ok,release}|{ok:false,reason}`: rate + concurrency + audit-before-action for high-risk verbs.
 - `src/shared/plugins/host-api.ts` - current source of truth for `HOST_API_VERSION` (1.7.0 at the

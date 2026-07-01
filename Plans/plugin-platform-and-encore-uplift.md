@@ -50,8 +50,11 @@ Pure additive contract changes are implemented so feature worktrees build agains
 - **WS-hot-reload**: plugins-dir watcher → reload the plugin child on change (dev mode).
   _Acceptance:_ edit fixture → reload observed; manifest expansion cannot inherit new caps; removed plugins
   tear down handlers/services.
-- **WS-sdk-dist**: package/publish/install/update support for `@maestro/plugin-sdk`.
-  _Acceptance:_ CLI installs a packed plugin; SDK imports standalone; package artifacts include runtime assets.
+- **WS-sdk-dist**: archive-install sub-scope DONE. CLI pack now uses the shared archive packer;
+  `PluginManager.install()` accepts `.tgz` / `.tar.gz`, safe-extracts to temp staging, rejects traversal
+  - link entries, excludes unsigned `node_modules`, and installs through the same validated directory path.
+    Publish/update support remains tracked by this broader workstream. _Acceptance verified:_
+    `bun vitest run src/__tests__/main/plugins/plugin-manager-verify.test.ts src/__tests__/cli/commands/plugin.test.ts src/__tests__/main/plugins/plugin-manager-update.test.ts` (3 files, 27 tests passed).
 - **WS-render-host**: current-scope rich UI host for trusted+consented plugins (isolated Chromium surface:
   no Node, contextIsolation, per-plugin partition, broker-only preload, navigation/egress lockdown) + consume
   the agent registry. _Acceptance:_ trusted+granted panel renders; untrusted/ungranted denied; contributed
