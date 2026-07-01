@@ -256,6 +256,27 @@ describe('InputArea', () => {
 			).toBeInTheDocument();
 		});
 
+		it('updates the textarea from the live AI store slice after render', () => {
+			const props = createDefaultProps({
+				session: createMockSession({ inputMode: 'ai' }),
+				inputValue: 'initial AI draft',
+			});
+			render(<InputArea {...props} />);
+			const textarea = screen.getByRole('textbox');
+
+			expect(textarea).toHaveValue('initial AI draft');
+
+			act(() => {
+				useComposerInputStore.getState().setTerminalValue('terminal draft ignored in AI mode');
+			});
+			expect(textarea).toHaveValue('initial AI draft');
+
+			act(() => {
+				useComposerInputStore.getState().setAiValue('updated AI draft');
+			});
+			expect(textarea).toHaveValue('updated AI draft');
+		});
+
 		it('shows attach image button in AI mode when agent supports image input', () => {
 			const props = createDefaultProps({
 				session: createMockSession({ inputMode: 'ai' }),
@@ -426,6 +447,27 @@ describe('InputArea', () => {
 			render(<InputArea {...props} />);
 
 			expect(screen.getByPlaceholderText('Run shell command...')).toBeInTheDocument();
+		});
+
+		it('updates the textarea from the live terminal store slice after render', () => {
+			const props = createDefaultProps({
+				session: createMockSession({ inputMode: 'terminal' }),
+				inputValue: 'initial terminal draft',
+			});
+			render(<InputArea {...props} />);
+			const textarea = screen.getByRole('textbox');
+
+			expect(textarea).toHaveValue('initial terminal draft');
+
+			act(() => {
+				useComposerInputStore.getState().setAiValue('AI draft ignored in terminal mode');
+			});
+			expect(textarea).toHaveValue('initial terminal draft');
+
+			act(() => {
+				useComposerInputStore.getState().setTerminalValue('updated terminal draft');
+			});
+			expect(textarea).toHaveValue('updated terminal draft');
 		});
 
 		it('shows $ prefix in terminal mode', () => {

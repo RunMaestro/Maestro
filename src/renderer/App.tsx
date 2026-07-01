@@ -159,7 +159,6 @@ import {
 	updateSessionWith,
 	updateAiTab,
 } from './stores/sessionStore';
-import { useComposerInputStore } from './stores/composerInputStore';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { sidebarSessionEquality } from './stores/sessionEquality';
 import { useActiveSession } from './hooks/session/useActiveSession';
@@ -3092,15 +3091,6 @@ function MaestroConsoleInner() {
 					onCloseFileSearch={handleCloseFileSearch}
 					onFileSearchSelect={handleFileSearchSelect}
 					onClosePromptComposer={handleClosePromptComposer}
-					promptComposerInitialValue={
-						activeGroupChatId
-							? groupChats.find((c) => c.id === activeGroupChatId)?.draftMessage || ''
-							: // Non-reactive read: PromptComposerModal seeds its value only when it
-								// opens (which re-renders App), so getState() is fresh at that moment.
-								useComposerInputStore.getState()[
-									activeSession?.inputMode === 'terminal' ? 'terminalValue' : 'aiValue'
-								]
-					}
 					onPromptComposerSubmit={handlePromptComposerSubmit}
 					onPromptComposerSend={handlePromptComposerSend}
 					promptComposerSessionName={

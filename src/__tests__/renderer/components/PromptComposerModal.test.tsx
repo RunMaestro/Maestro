@@ -211,7 +211,7 @@ describe('PromptComposerModal', () => {
 				/>
 			);
 
-			expect(screen.getByText('— Claude')).toBeInTheDocument();
+			expect(screen.getByText('- Claude')).toBeInTheDocument();
 		});
 
 		it('should render with custom session name', () => {
@@ -227,7 +227,7 @@ describe('PromptComposerModal', () => {
 				/>
 			);
 
-			expect(screen.getByText('— My Custom Session')).toBeInTheDocument();
+			expect(screen.getByText('- My Custom Session')).toBeInTheDocument();
 		});
 
 		it('should render keyboard shortcut hint when onToggleEnterToSend is provided', () => {
@@ -1115,7 +1115,7 @@ describe('PromptComposerModal', () => {
 				/>
 			);
 
-			expect(screen.getByText('—')).toBeInTheDocument();
+			expect(screen.getByText('-')).toBeInTheDocument();
 		});
 
 		it('should handle very long text', () => {
@@ -1168,7 +1168,7 @@ describe('PromptComposerModal', () => {
 			);
 
 			// React escapes these by default
-			expect(screen.getByText("— Test <script>alert('xss')</script>")).toBeInTheDocument();
+			expect(screen.getByText("- Test <script>alert('xss')</script>")).toBeInTheDocument();
 		});
 
 		it('should handle newlines in text', () => {

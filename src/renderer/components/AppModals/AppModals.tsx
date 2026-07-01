@@ -41,6 +41,7 @@ import { AppUtilityModals } from './AppUtilityModals';
 import { AppGroupChatModals } from './AppGroupChatModals';
 import { AppAgentModals } from './AppAgentModals';
 import type { GroupChatErrorInfo } from './AppAgentModals';
+import { getPromptComposerInitialValue } from '../../hooks/modal/usePromptComposerHandlers';
 
 /**
  * Combined props interface for the unified AppModals component.
@@ -327,7 +328,6 @@ export interface AppModalsProps {
 	onCloseFileSearch: () => void;
 	onFileSearchSelect: (file: FlatFileItem) => void;
 	onClosePromptComposer: () => void;
-	promptComposerInitialValue: string;
 	onPromptComposerSubmit: (value: string) => void;
 	onPromptComposerSend: (value: string) => void;
 	promptComposerSessionName?: string;
@@ -459,6 +459,11 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 			activeGroupChatId: s.activeGroupChatId,
 		}))
 	);
+	const promptComposerInitialValue = getPromptComposerInitialValue({
+		activeGroupChatId,
+		groupChats,
+		activeInputMode: activeSession?.inputMode,
+	});
 
 	// Self-source modal boolean states from modalStore (Tier 1B)
 	const {
@@ -783,7 +788,6 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onCloseFileSearch,
 		onFileSearchSelect,
 		onClosePromptComposer,
-		promptComposerInitialValue,
 		onPromptComposerSubmit,
 		onPromptComposerSend,
 		promptComposerSessionName,

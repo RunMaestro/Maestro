@@ -1,8 +1,12 @@
 export { useModalHandlers, type ModalHandlersReturn } from './useModalHandlers';
 
 // Prompt Composer modal handlers
-export { usePromptComposerHandlers } from './usePromptComposerHandlers';
+export {
+	getPromptComposerInitialValue,
+	usePromptComposerHandlers,
+} from './usePromptComposerHandlers';
 export type {
+	PromptComposerInitialValueDeps,
 	UsePromptComposerHandlersDeps,
 	UsePromptComposerHandlersReturn,
 } from './usePromptComposerHandlers';

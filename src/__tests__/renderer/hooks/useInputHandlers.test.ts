@@ -355,6 +355,69 @@ describe('useInputHandlers', () => {
 
 			expect(inputVal()).toBe('hello world');
 		});
+
+		it('updates AI composer store without re-rendering the hook when completion is closed', () => {
+			let renderCount = 0;
+			const { result } = renderHook(() => {
+				renderCount += 1;
+				return useInputHandlers(createMockDeps());
+			});
+			const initialRenderCount = renderCount;
+
+			act(() => {
+				result.current.setInputValue('live AI draft');
+			});
+
+			expect(useComposerInputStore.getState().aiValue).toBe('live AI draft');
+			expect(renderCount).toBe(initialRenderCount);
+		});
+
+		it('updates terminal composer store without re-rendering the hook when tab completion is closed', () => {
+			useSessionStore.setState({
+				sessions: [createMockSession({ inputMode: 'terminal' })],
+				activeSessionId: 'session-1',
+			} as any);
+
+			let renderCount = 0;
+			const { result } = renderHook(() => {
+				renderCount += 1;
+				return useInputHandlers(createMockDeps());
+			});
+			const initialRenderCount = renderCount;
+
+			act(() => {
+				result.current.setInputValue('git status');
+			});
+
+			expect(useComposerInputStore.getState().terminalValue).toBe('git status');
+			expect(renderCount).toBe(initialRenderCount);
+		});
+
+		it('re-renders the hook for live terminal suggestions while tab completion is open', () => {
+			mockInputContext.tabCompletionOpen = true;
+			useSessionStore.setState({
+				sessions: [createMockSession({ inputMode: 'terminal' })],
+				activeSessionId: 'session-1',
+			} as any);
+			mockGetTabCompletionSuggestions.mockReturnValue([
+				{ type: 'history', value: 'git status', display: 'git status' },
+			]);
+
+			let renderCount = 0;
+			const { result } = renderHook(() => {
+				renderCount += 1;
+				return useInputHandlers(createMockDeps());
+			});
+			const initialRenderCount = renderCount;
+			mockGetTabCompletionSuggestions.mockClear();
+
+			act(() => {
+				result.current.setInputValue('git status');
+			});
+
+			expect(renderCount).toBeGreaterThan(initialRenderCount);
+			expect(mockGetTabCompletionSuggestions).toHaveBeenCalledWith('git status', 'all');
+		});
 	});
 
 	// ========================================================================

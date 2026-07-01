@@ -133,9 +133,9 @@ export function PromptComposerModal({
 	const showMentionsRef = useRef(showMentions);
 	showMentionsRef.current = showMentions;
 
-	// Sync value only on mount — while open, the composer owns the value
-	// and syncs back to parent via onSubmit on each keystroke.
-	// Excluding initialValue prevents useDeferredValue lag from overwriting edits.
+	// Sync value when the modal opens. While open, the composer owns the
+	// value and syncs each edit back to the parent via onSubmit.
+	// Excluding initialValue prevents parent draft updates from overwriting edits.
 	useEffect(() => {
 		if (isOpen) {
 			setValue(initialValue);
@@ -276,7 +276,7 @@ export function PromptComposerModal({
 
 	const handleValueChange = useCallback((newValue: string) => {
 		setValue(newValue);
-		// Sync every keystroke to parent so the composer is transparent —
+		// Sync every keystroke to parent so the composer is transparent -
 		// typing here is equivalent to typing in the standard input box
 		onSubmitRef.current(newValue);
 
@@ -501,7 +501,7 @@ export function PromptComposerModal({
 							Prompt Composer
 						</span>
 						<span className="text-sm opacity-60" style={{ color: theme.colors.textDim }}>
-							— {sessionName}
+							- {sessionName}
 						</span>
 					</div>
 					<div className="flex items-center gap-1">
