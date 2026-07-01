@@ -119,9 +119,12 @@ export function useDragToMove({
 					try {
 						if (isCopy) {
 							// External import: copy from the OS source path into the tree.
-							// `deleteDestFirst` encodes the user's overwrite decision.
+							// `deleteDestFirst` encodes the user's overwrite decision. For a
+							// remote session the dest is on the remote host, so pass the
+							// sshRemoteId to upload the local source over SSH.
 							await window.maestro.fs.copyPath(m.sourceAbsolutePath, m.destAbsolutePath, {
 								overwrite: !!m.deleteDestFirst,
+								sshRemoteId,
 							});
 						} else {
 							if (m.deleteDestFirst) {
@@ -186,8 +189,9 @@ export function useDragToMove({
 	);
 
 	// Import OS files/folders (dragged in from Finder/Explorer) into a tree folder.
-	// `destFolderRelative` is '' for the tree root. Local sessions only - remotes
-	// have no local source to copy from, so the caller gates on `!sshRemoteId`.
+	// `destFolderRelative` is '' for the tree root. The dropped source is always a
+	// local OS path; for a remote session the import uploads it to the remote host
+	// over SSH (handled by `performMoves` -> `copyPath` with `sshRemoteId`).
 	const handleExternalImport = useCallback(
 		(osPaths: string[], destFolderRelative: string) => {
 			if (osPaths.length === 0) return;
@@ -263,8 +267,9 @@ export function useDragToMove({
 	const handleFolderDrop = useCallback(
 		(e: React.DragEvent, destFolderRelative: string) => {
 			// OS file import takes precedence: a Finder/Explorer drag carries the
-			// 'Files' type and none of the internal MIME types. Disabled on remotes.
-			if (!sshRemoteId && dragHasOsFiles(e.dataTransfer)) {
+			// 'Files' type and none of the internal MIME types. For remote sessions
+			// the source uploads to the remote host (handled downstream).
+			if (dragHasOsFiles(e.dataTransfer)) {
 				e.preventDefault();
 				e.stopPropagation();
 				setDragOverFolder(null);
@@ -374,8 +379,9 @@ export function useDragToMove({
 
 	const handleFolderDragOver = useCallback(
 		(e: React.DragEvent, destFolderRelative: string) => {
-			// OS file import (local only): accept the drop and show a copy cursor.
-			if (!sshRemoteId && dragHasOsFiles(e.dataTransfer)) {
+			// OS file import: accept the drop and show a copy cursor. For remote
+			// sessions the source uploads to the remote host over SSH.
+			if (dragHasOsFiles(e.dataTransfer)) {
 				e.preventDefault();
 				e.stopPropagation();
 				e.dataTransfer.dropEffect = 'copy';
@@ -404,7 +410,7 @@ export function useDragToMove({
 
 	const handleFolderDragEnter = useCallback(
 		(e: React.DragEvent, destFolderRelative: string) => {
-			if (!sshRemoteId && dragHasOsFiles(e.dataTransfer)) {
+			if (dragHasOsFiles(e.dataTransfer)) {
 				e.stopPropagation();
 				setDragOverFolder(destFolderRelative);
 				setIsExternalDrag(true);

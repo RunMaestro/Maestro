@@ -1113,10 +1113,13 @@ describe('FileExplorerPanel', () => {
 			expect(truncateSpans.length).toBeGreaterThan(0);
 		});
 
-		it('sets title attribute with full file name', () => {
+		it('renders the full file name as visible text', () => {
+			// The name is rendered as the HoverTooltip trigger's text content
+			// (the tooltip reveals it on hover only when truncated), so it replaces
+			// the old native title= attribute.
 			render(<FileExplorerPanel {...defaultProps} />);
-			expect(screen.getByTitle('src')).toBeInTheDocument();
-			expect(screen.getByTitle('package.json')).toBeInTheDocument();
+			expect(screen.getByText('src')).toBeInTheDocument();
+			expect(screen.getByText('package.json')).toBeInTheDocument();
 		});
 
 		it('deduplicates NFD/NFC sibling entries rendering only one row', () => {
@@ -1133,7 +1136,7 @@ describe('FileExplorerPanel', () => {
 			render(<FileExplorerPanel {...defaultProps} filteredFileTree={treeWithDupes} />);
 
 			// Should only render 2 rows (deduplicated café.txt + other.txt), not 3
-			const items = screen.getAllByTitle(nfcName);
+			const items = screen.getAllByText(nfcName);
 			expect(items).toHaveLength(1);
 			expect(screen.getByText('other.txt')).toBeInTheDocument();
 

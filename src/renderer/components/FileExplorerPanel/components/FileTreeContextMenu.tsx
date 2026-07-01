@@ -29,6 +29,7 @@ interface FileTreeContextMenuProps {
 	isMultiSelectionContext?: boolean;
 	selectedCount?: number;
 	onCopyPath: () => void;
+	onCopyFileName: () => void;
 	onDownloadFile: () => void;
 	onOpenInDefaultApp: () => void;
 	onOpenInMaestroBrowser: () => void;
@@ -56,6 +57,7 @@ export function FileTreeContextMenu({
 	isMultiSelectionContext = false,
 	selectedCount = 0,
 	onCopyPath,
+	onCopyFileName,
 	onDownloadFile,
 	onOpenInDefaultApp,
 	onOpenInMaestroBrowser,
@@ -273,6 +275,16 @@ export function FileTreeContextMenu({
 						>
 							<Copy className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 							<span>Copy Path</span>
+						</button>
+
+						{/* Copy File Name option - just the leaf name, no directory */}
+						<button
+							onClick={onCopyFileName}
+							className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+							style={{ color: theme.colors.textMain }}
+						>
+							<FileText className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+							<span>Copy File Name</span>
 						</button>
 
 						{/* Reveal in Finder / Explorer — local-only, hidden over SSH */}

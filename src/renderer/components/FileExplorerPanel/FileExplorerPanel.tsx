@@ -337,6 +337,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		openContextMenu,
 		openRootContextMenu,
 		handleCopyPath,
+		handleCopyFileName,
 		handleDownloadFile,
 		handleOpenInDefaultApp,
 		handleOpenInMaestroBrowser,
@@ -389,8 +390,9 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 	// Panel-root drop zone: OS files dropped on empty space or a file row (i.e.
 	// not on a folder row, which stops propagation) import into the tree root.
 	// Internal tree drags fall through to the existing bubble-suppression so we
-	// don't accidentally add a move-to-root path. Remotes have no local source.
-	const externalImportEnabled = !sshRemoteId;
+	// don't accidentally add a move-to-root path. For a remote session the import
+	// uploads the dropped local files to the remote host over SSH.
+	const externalImportEnabled = true;
 	const handleRootDragEnter = (e: React.DragEvent) => {
 		if (externalImportEnabled && dragHasOsFiles(e.dataTransfer)) {
 			handleFolderDragEnter(e, '');
@@ -908,6 +910,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					isMultiSelectionContext={selectedPaths.size > 1 && selectedPaths.has(contextMenu.path)}
 					selectedCount={selectedPaths.size}
 					onCopyPath={handleCopyPath}
+					onCopyFileName={handleCopyFileName}
 					onDownloadFile={handleDownloadFile}
 					onOpenInDefaultApp={handleOpenInDefaultApp}
 					onOpenInMaestroBrowser={handleOpenInMaestroBrowser}

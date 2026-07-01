@@ -51,6 +51,7 @@ interface UseFileContextMenuResult {
 	openRootContextMenu: (e: React.MouseEvent) => void;
 	closeContextMenu: () => void;
 	handleCopyPath: () => void;
+	handleCopyFileName: () => void;
 	handleDownloadFile: () => Promise<void>;
 	handleOpenInDefaultApp: () => void;
 	handleOpenInMaestroBrowser: () => void;
@@ -414,6 +415,16 @@ export function useFileContextMenu({
 		setContextMenu(null);
 	}, [contextMenu, session.fullPath]);
 
+	const handleCopyFileName = useCallback(() => {
+		if (contextMenu) {
+			// `node.name` is the leaf for both files and folders; fall back to the
+			// path's basename for the rare case node is absent.
+			const name = contextMenu.node?.name ?? contextMenu.path.split('/').pop() ?? '';
+			if (name) safeClipboardWrite(name);
+		}
+		setContextMenu(null);
+	}, [contextMenu]);
+
 	// Download a remote SSH file to a user-chosen local location. Only wired up
 	// for remote sessions (the menu item is hidden when sshRemoteId is undefined);
 	// local files are already on disk and use "Reveal in Finder" instead.
@@ -542,6 +553,7 @@ export function useFileContextMenu({
 		openRootContextMenu,
 		closeContextMenu,
 		handleCopyPath,
+		handleCopyFileName,
 		handleDownloadFile,
 		handleOpenInDefaultApp,
 		handleOpenInMaestroBrowser,

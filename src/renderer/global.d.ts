@@ -1148,7 +1148,7 @@ interface MaestroAPI {
 		copyPath: (
 			sourcePath: string,
 			destPath: string,
-			options?: { overwrite?: boolean }
+			options?: { overwrite?: boolean; sshRemoteId?: string }
 		) => Promise<{ success: boolean }>;
 		getPathForFile: (file: File) => string;
 	};

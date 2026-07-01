@@ -39,13 +39,91 @@ import {
 	directorySizeRemote,
 	renameRemote,
 	deleteRemote,
+	existsRemote,
 	countItemsRemote,
 	listTreeRemote,
 	type ListTreeOptions,
 } from '../../utils/remote-fs';
+import type { SshRemoteConfig } from '../../../shared/types';
 import { resolveDirentType } from '../../utils/dirent-utils';
 import { getSshRemoteById } from '../../stores';
 import { captureException } from '../../utils/sentry';
+
+/**
+ * Recursively upload a local directory to a remote host over SSH.
+ *
+ * Creates `remoteDir` (mkdir -p), then walks the local tree, streaming each file
+ * to the remote via {@link writeFileRemote} (base64 over the SSH stdin channel,
+ * binary-safe) and re-creating subdirectories as it descends. Remote paths are
+ * always joined with POSIX `/` - never `path.join`, which would emit `\` on a
+ * Windows host and break the remote shell.
+ */
+async function uploadDirToRemote(
+	localDir: string,
+	remoteDir: string,
+	sshConfig: SshRemoteConfig
+): Promise<void> {
+	const mk = await mkdirRemote(remoteDir, sshConfig, true);
+	if (!mk.success) {
+		throw new Error(mk.error || `Failed to create remote directory: ${remoteDir}`);
+	}
+	const entries = await fs.readdir(localDir, { withFileTypes: true });
+	for (const entry of entries) {
+		const localChild = path.join(localDir, entry.name);
+		const remoteChild = `${remoteDir}/${entry.name}`;
+		const resolved = await resolveDirentType(entry, localChild);
+		if (resolved.isDirectory) {
+			await uploadDirToRemote(localChild, remoteChild, sshConfig);
+		} else {
+			const bytes = await fs.readFile(localChild);
+			const res = await writeFileRemote(remoteChild, bytes, sshConfig);
+			if (!res.success) {
+				throw new Error(res.error || `Failed to upload file: ${localChild}`);
+			}
+		}
+	}
+}
+
+/**
+ * Upload a local file or directory to a remote host over SSH - the drag-and-drop
+ * import path when the file panel is showing a remote (SSH) session. The dropped
+ * source always lives on the local machine; the destination is on the remote.
+ *
+ * `overwrite` mirrors the local `fs.cp` semantics the renderer already decided
+ * via the move-conflict modal: when true any existing remote target is removed
+ * first (file or directory, wholesale); when false an existing target is a hard
+ * error so the caller surfaces the conflict instead of silently clobbering.
+ */
+async function uploadLocalPathToRemote(
+	localSource: string,
+	remoteDest: string,
+	sshConfig: SshRemoteConfig,
+	overwrite: boolean
+): Promise<void> {
+	const stat = await fs.stat(localSource);
+
+	if (overwrite) {
+		const del = await deleteRemote(remoteDest, sshConfig, true);
+		if (!del.success) {
+			throw new Error(del.error || `Failed to clear remote destination: ${remoteDest}`);
+		}
+	} else {
+		const exists = await existsRemote(remoteDest, sshConfig);
+		if (exists.success && exists.data) {
+			throw new Error(`Destination already exists: ${remoteDest}`);
+		}
+	}
+
+	if (stat.isDirectory()) {
+		await uploadDirToRemote(localSource, remoteDest, sshConfig);
+	} else {
+		const bytes = await fs.readFile(localSource);
+		const res = await writeFileRemote(remoteDest, bytes, sshConfig);
+		if (!res.success) {
+			throw new Error(res.error || `Failed to upload file: ${localSource}`);
+		}
+	}
+}
 
 /**
  * Supported image file extensions for base64 encoding
@@ -601,14 +679,32 @@ export function registerFilesystemHandlers(): void {
 	});
 
 	// Copy a file or folder from an arbitrary source path into a destination path.
-	// Local only: used by drag-and-drop import of OS files/folders into the file
-	// tree. SSH remotes are intentionally unsupported (the source lives on the
-	// local machine, so there is nothing sensible to copy on the remote host).
+	// Used by drag-and-drop import of OS files/folders into the file tree. The
+	// source is always a local OS path; the destination is local unless
+	// `sshRemoteId` is set, in which case the source is uploaded to the remote
+	// host over SSH (the file panel is showing a remote session).
 	ipcMain.handle(
 		'fs:copyPath',
-		async (_, sourcePath: string, destPath: string, options?: { overwrite?: boolean }) => {
+		async (
+			_,
+			sourcePath: string,
+			destPath: string,
+			options?: { overwrite?: boolean; sshRemoteId?: string }
+		) => {
 			try {
 				const overwrite = options?.overwrite ?? false;
+				const sshRemoteId = options?.sshRemoteId;
+
+				// SSH remote: dest lives on the remote host - upload the local source.
+				if (sshRemoteId) {
+					const sshConfig = getSshRemoteById(sshRemoteId);
+					if (!sshConfig) {
+						throw new Error(`SSH remote not found: ${sshRemoteId}`);
+					}
+					await uploadLocalPathToRemote(sourcePath, destPath, sshConfig, overwrite);
+					return { success: true };
+				}
+
 				// `recursive: true` copies folders wholesale; for plain files it is a no-op.
 				// `force`/`errorOnExist` encode the conflict decision the renderer already made.
 				await fs.cp(sourcePath, destPath, {

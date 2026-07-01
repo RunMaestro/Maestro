@@ -1,5 +1,6 @@
 import React, { memo } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
+import { HoverTooltip } from '../../ui/HoverTooltip';
 import { getExplorerFileIcon, getExplorerFolderIcon } from '../../../utils/theme';
 import { COLORBLIND_STATUS_COLORS } from '../../../constants/colorblindPalettes';
 import type { Session, Theme, FocusArea, FileChangeType } from '../../../types';
@@ -355,13 +356,20 @@ export const FileTreeRow = memo(function FileTreeRow({
 							colorBlindMode
 						)}
 			</span>
-			<span
-				className={`truncate min-w-0 flex-1 ${changeType ? 'font-medium' : ''}`}
-				title={node.name}
-				style={changeColor ? { color: changeColor } : undefined}
+			{/* Filename. The HoverTooltip reveals the full name on hover, but only
+			    when the label is actually clipped by the ellipsis - replaces the
+			    native `title=`, which is slow and clipped by the panel's overflow.
+			    The trigger span carries the truncation classes so it's the measured
+			    element. */}
+			<HoverTooltip
+				label={node.name}
+				theme={theme}
+				onlyWhenTruncated
+				triggerClassName={`truncate min-w-0 flex-1 ${changeType ? 'font-medium' : ''}`}
+				triggerStyle={changeColor ? { color: changeColor } : undefined}
 			>
 				{node.name}
-			</span>
+			</HoverTooltip>
 			{hasChange && (
 				<span
 					data-testid="git-change-indicator"

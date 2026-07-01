@@ -198,13 +198,15 @@ export function createFsApi() {
 
 		/**
 		 * Copy a file or folder from an arbitrary source path into a destination
-		 * path. Local only - used by drag-and-drop import of OS files into the
-		 * file tree. Pass `overwrite: true` to replace an existing destination.
+		 * path. Used by drag-and-drop import of OS files into the file tree. The
+		 * source is always a local OS path; pass `sshRemoteId` to upload it to a
+		 * remote host (the file panel is showing a remote session). Pass
+		 * `overwrite: true` to replace an existing destination.
 		 */
 		copyPath: (
 			sourcePath: string,
 			destPath: string,
-			options?: { overwrite?: boolean }
+			options?: { overwrite?: boolean; sshRemoteId?: string }
 		): Promise<{ success: boolean }> =>
 			ipcRenderer.invoke('fs:copyPath', sourcePath, destPath, options),
 

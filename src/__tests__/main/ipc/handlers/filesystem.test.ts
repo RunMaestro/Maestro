@@ -56,6 +56,7 @@ vi.mock('../../../../main/utils/remote-fs', () => ({
 	deleteRemote: vi.fn(),
 	countItemsRemote: vi.fn(),
 	writeFileRemote: vi.fn(),
+	existsRemote: vi.fn(),
 }));
 
 // Mock stores
@@ -76,6 +77,7 @@ import {
 	mkdirRemote,
 	deleteRemote,
 	writeFileRemote,
+	existsRemote,
 } from '../../../../main/utils/remote-fs';
 
 describe('filesystem handlers', () => {
@@ -614,6 +616,74 @@ describe('filesystem handlers', () => {
 			const handler = registeredHandlers.get('fs:copyPath');
 
 			await expect(handler!({}, '/external/x', '/project/x')).rejects.toThrow('Failed to copy');
+		});
+
+		it('should upload a local file to the remote host when sshRemoteId is set', async () => {
+			const mockSshConfig = { id: 'remote-1', host: 'server.com', username: 'user' };
+			vi.mocked(getSshRemoteById).mockReturnValue(mockSshConfig as any);
+			vi.mocked(fs.stat).mockResolvedValue({ isDirectory: () => false } as any);
+			vi.mocked(existsRemote).mockResolvedValue({ success: true, data: false });
+			vi.mocked(fs.readFile).mockResolvedValue(Buffer.from('hello') as any);
+			vi.mocked(writeFileRemote).mockResolvedValue({ success: true });
+
+			const handler = registeredHandlers.get('fs:copyPath');
+			const result = await handler!({}, '/external/photo.png', '/remote/project/photo.png', {
+				sshRemoteId: 'remote-1',
+			});
+
+			expect(fs.cp).not.toHaveBeenCalled();
+			expect(writeFileRemote).toHaveBeenCalledWith(
+				'/remote/project/photo.png',
+				Buffer.from('hello'),
+				mockSshConfig
+			);
+			expect(result).toEqual({ success: true });
+		});
+
+		it('should reject an SSH upload when the remote destination already exists (no overwrite)', async () => {
+			const mockSshConfig = { id: 'remote-1', host: 'server.com', username: 'user' };
+			vi.mocked(getSshRemoteById).mockReturnValue(mockSshConfig as any);
+			vi.mocked(fs.stat).mockResolvedValue({ isDirectory: () => false } as any);
+			vi.mocked(existsRemote).mockResolvedValue({ success: true, data: true });
+
+			const handler = registeredHandlers.get('fs:copyPath');
+
+			await expect(
+				handler!({}, '/external/photo.png', '/remote/project/photo.png', {
+					sshRemoteId: 'remote-1',
+				})
+			).rejects.toThrow('already exists');
+			expect(writeFileRemote).not.toHaveBeenCalled();
+		});
+
+		it('should clear the remote destination first when overwriting on SSH', async () => {
+			const mockSshConfig = { id: 'remote-1', host: 'server.com', username: 'user' };
+			vi.mocked(getSshRemoteById).mockReturnValue(mockSshConfig as any);
+			vi.mocked(fs.stat).mockResolvedValue({ isDirectory: () => false } as any);
+			vi.mocked(deleteRemote).mockResolvedValue({ success: true });
+			vi.mocked(fs.readFile).mockResolvedValue(Buffer.from('data') as any);
+			vi.mocked(writeFileRemote).mockResolvedValue({ success: true });
+
+			const handler = registeredHandlers.get('fs:copyPath');
+			const result = await handler!({}, '/external/x.ts', '/remote/project/x.ts', {
+				overwrite: true,
+				sshRemoteId: 'remote-1',
+			});
+
+			expect(deleteRemote).toHaveBeenCalledWith('/remote/project/x.ts', mockSshConfig, true);
+			expect(existsRemote).not.toHaveBeenCalled();
+			expect(writeFileRemote).toHaveBeenCalled();
+			expect(result).toEqual({ success: true });
+		});
+
+		it('should throw when the SSH remote is not found', async () => {
+			vi.mocked(getSshRemoteById).mockReturnValue(undefined);
+
+			const handler = registeredHandlers.get('fs:copyPath');
+
+			await expect(
+				handler!({}, '/external/x', '/remote/x', { sshRemoteId: 'missing' })
+			).rejects.toThrow('SSH remote not found');
 		});
 	});
 

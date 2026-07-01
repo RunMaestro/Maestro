@@ -575,7 +575,7 @@ function QueuedItemRow({
 				{/* Bottom footer: Force Send anchored bottom-left, control
 				    buttons anchored bottom-right (always visible). mt-auto
 				    pushes the row to the bottom of the flex column. */}
-				<div className="mt-auto pt-2 flex items-center gap-2">
+				<div className={`mt-auto pt-2 flex items-center gap-2 ${canDrag ? 'pl-4' : ''}`}>
 					{showForceSendButton && (
 						<button
 							onClick={onForceSend}

@@ -54,12 +54,12 @@ describe('SshRemoteManager', () => {
 			expect(result.errors).toHaveLength(0);
 		});
 
-		it('requires id field', () => {
+		it('allows empty id (assigned by save handler; enables test-before-save)', () => {
 			const config = { ...validConfig, id: '' };
 			const result = manager.validateConfig(config);
 
-			expect(result.valid).toBe(false);
-			expect(result.errors).toContain('Configuration ID is required');
+			expect(result.valid).toBe(true);
+			expect(result.errors).not.toContain('Configuration ID is required');
 		});
 
 		it('requires name field', () => {
@@ -141,7 +141,9 @@ describe('SshRemoteManager', () => {
 			const result = manager.validateConfig(config);
 
 			expect(result.valid).toBe(false);
-			expect(result.errors.length).toBeGreaterThan(4);
+			// id is no longer validated (assigned by the save handler), so an
+			// all-empty config now yields one fewer error - still clearly multiple.
+			expect(result.errors.length).toBeGreaterThan(3);
 		});
 
 		it('handles whitespace-only fields as empty', () => {
