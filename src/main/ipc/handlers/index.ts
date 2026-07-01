@@ -336,7 +336,7 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	registerPromptsHandlers();
 	// Register project Memory handlers (Claude Code per-project memory viewer)
 	registerMemoryHandlers();
-	// Register AgentRun ledger/campaign handlers (no dependencies needed)
+	// Register AgentRun control-plane handlers (neutral run/campaign ledger)
 	registerAgentRunHandlers();
 	// Setup logger event forwarding to renderer
 	setupLoggerEventForwarding(deps.getMainWindow);

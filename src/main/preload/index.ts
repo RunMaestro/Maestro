@@ -227,7 +227,7 @@ contextBridge.exposeInMainWorld('maestro', {
 	prompts: createPromptsApi(),
 	// Per-project Memory API (Claude Code memory viewer)
 	memory: createMemoryApi(),
-	// AgentRun API (neutral run/campaign ledger)
+	// AgentRun control-plane API (neutral run/campaign ledger)
 	agentRun: createAgentRunApi(),
 });
 
@@ -566,3 +566,18 @@ export type {
 	PromptsApi,
 	CorePromptData,
 } from './prompts';
+
+export type {
+	// From agentRun
+	AgentRunApi,
+	AgentRunListOptions,
+	AgentRunListResponse,
+	AgentRunRecordResponse,
+	AgentRunShowResponse,
+	AgentRunEventsResponse,
+	AgentRunEventRecordResponse,
+	CampaignListOptions,
+	CampaignListResponse,
+	CampaignRecordResponse,
+	CampaignShowResponse,
+} from './agentRun';

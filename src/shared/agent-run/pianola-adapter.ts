@@ -1,7 +1,7 @@
+import type { Campaign, CampaignStatus, CampaignTask, CampaignTaskStatus } from '../campaign';
 import type { AgentRunState as PianolaAgentRunState } from '../pianola/pianola-completion-detector';
 import { validatePlan, type PianolaPlan, type PianolaTaskStatus } from '../pianola/pianola-tasks';
 import { PIANOLA_PLANS_FILENAME } from '../pianola/storage';
-import type { Campaign, CampaignStatus, CampaignTask, CampaignTaskStatus } from '../campaign';
 import type { AgentRunStatus } from './types';
 
 export const PIANOLA_PLANS_FILE = PIANOLA_PLANS_FILENAME;
@@ -12,7 +12,7 @@ export const PIANOLA_AGENT_RUN_STATES: readonly PianolaAgentRunState[] = [
 	'waiting_input',
 	'connecting',
 	'error',
-] as const;
+];
 
 export const PIANOLA_TASK_STATUSES: readonly PianolaTaskStatus[] = [
 	'pending',
@@ -21,7 +21,7 @@ export const PIANOLA_TASK_STATUSES: readonly PianolaTaskStatus[] = [
 	'failed',
 	'blocked',
 	'skipped',
-] as const;
+];
 
 export type { PianolaAgentRunState, PianolaTaskStatus };
 export type PianolaTaskLike = PianolaPlan['tasks'][number];
