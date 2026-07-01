@@ -311,7 +311,7 @@
 		"dompurify": "^3.4.11",
 		"electron-store": "^8.2.0",
 		"electron-updater": "^6.8.3",
-		"fastify": "^4.25.2",
+		"fastify": "^5.8.5",
 		"highlight.js": "^11.11.1",
 		"js-tiktoken": "^1.0.21",
 		"js-yaml": "^4.2.0",
