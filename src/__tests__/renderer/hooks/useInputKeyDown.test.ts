@@ -63,7 +63,7 @@ function createMockDeps(overrides: Partial<InputKeyDownDeps> = {}): InputKeyDown
 		inputValue: '',
 		setInputValue: vi.fn(),
 		tabCompletionSuggestions: [],
-		atMentionSuggestions: [],
+		atMentionItems: [],
 		allSlashCommands: [],
 		syncFileTreeToTabCompletion: vi.fn(),
 		processInput: vi.fn(),
@@ -358,15 +358,15 @@ describe('Tab completion navigation', () => {
 describe('@ mention completion', () => {
 	const mentions = [
 		{
-			value: 'src/app.ts',
-			type: 'file' as const,
+			kind: 'file' as const,
+			value: '@src/app.ts ',
 			displayText: 'app.ts',
 			fullPath: 'src/app.ts',
 			score: 1,
 		},
 		{
-			value: 'src/index.ts',
-			type: 'file' as const,
+			kind: 'file' as const,
+			value: '@src/index.ts ',
 			displayText: 'index.ts',
 			fullPath: 'src/index.ts',
 			score: 0.9,
@@ -382,7 +382,7 @@ describe('@ mention completion', () => {
 	});
 
 	it('navigates down with ArrowDown', () => {
-		const deps = createMockDeps({ atMentionSuggestions: mentions });
+		const deps = createMockDeps({ atMentionItems: mentions });
 		const { result } = renderHook(() => useInputKeyDown(deps));
 		const e = createKeyEvent('ArrowDown');
 
@@ -395,7 +395,7 @@ describe('@ mention completion', () => {
 	});
 
 	it('navigates up with ArrowUp', () => {
-		const deps = createMockDeps({ atMentionSuggestions: mentions });
+		const deps = createMockDeps({ atMentionItems: mentions });
 		const { result } = renderHook(() => useInputKeyDown(deps));
 		const e = createKeyEvent('ArrowUp');
 
@@ -409,7 +409,7 @@ describe('@ mention completion', () => {
 	it('accepts selection on Enter and replaces @filter', () => {
 		const deps = createMockDeps({
 			inputValue: 'hello @app world',
-			atMentionSuggestions: mentions,
+			atMentionItems: mentions,
 		});
 		const { result } = renderHook(() => useInputKeyDown(deps));
 		const e = createKeyEvent('Enter');
@@ -427,7 +427,7 @@ describe('@ mention completion', () => {
 	it('accepts selection on Tab', () => {
 		const deps = createMockDeps({
 			inputValue: 'hello @app world',
-			atMentionSuggestions: mentions,
+			atMentionItems: mentions,
 		});
 		const { result } = renderHook(() => useInputKeyDown(deps));
 		const e = createKeyEvent('Tab');
@@ -441,7 +441,7 @@ describe('@ mention completion', () => {
 	});
 
 	it('closes on Escape and clears state', () => {
-		const deps = createMockDeps({ atMentionSuggestions: mentions });
+		const deps = createMockDeps({ atMentionItems: mentions });
 		const { result } = renderHook(() => useInputKeyDown(deps));
 		const e = createKeyEvent('Escape');
 
@@ -457,7 +457,7 @@ describe('@ mention completion', () => {
 
 	it('does not activate in terminal mode', () => {
 		setActiveSession({ inputMode: 'terminal' });
-		const deps = createMockDeps({ atMentionSuggestions: mentions });
+		const deps = createMockDeps({ atMentionItems: mentions });
 		const { result } = renderHook(() => useInputKeyDown(deps));
 		const e = createKeyEvent('ArrowDown');
 
@@ -1213,15 +1213,15 @@ describe('Tab completion navigation — additional', () => {
 describe('@ mention completion — additional', () => {
 	const mentions = [
 		{
-			value: 'src/app.ts',
-			type: 'file' as const,
+			kind: 'file' as const,
+			value: '@src/app.ts ',
 			displayText: 'app.ts',
 			fullPath: 'src/app.ts',
 			score: 1,
 		},
 		{
-			value: 'src/index.ts',
-			type: 'file' as const,
+			kind: 'file' as const,
+			value: '@src/index.ts ',
 			displayText: 'index.ts',
 			fullPath: 'src/index.ts',
 			score: 0.9,
@@ -1238,7 +1238,7 @@ describe('@ mention completion — additional', () => {
 		mockInputContext.selectedAtMentionIndex = 10; // out of bounds
 		mockInputContext.atMentionStartIndex = 5;
 		mockInputContext.atMentionFilter = 'xyz';
-		const deps = createMockDeps({ atMentionSuggestions: mentions, inputValue: 'test @xyz' });
+		const deps = createMockDeps({ atMentionItems: mentions, inputValue: 'test @xyz' });
 		const { result } = renderHook(() => useInputKeyDown(deps));
 		const e = createKeyEvent('Enter');
 
@@ -1257,7 +1257,7 @@ describe('@ mention completion — additional', () => {
 	it('accept with empty atMentionFilter (just "@" typed)', () => {
 		mockInputContext.atMentionFilter = '';
 		mockInputContext.atMentionStartIndex = 6;
-		const deps = createMockDeps({ atMentionSuggestions: mentions, inputValue: 'hello @ world' });
+		const deps = createMockDeps({ atMentionItems: mentions, inputValue: 'hello @ world' });
 		const { result } = renderHook(() => useInputKeyDown(deps));
 		const e = createKeyEvent('Enter');
 
@@ -1272,7 +1272,7 @@ describe('@ mention completion — additional', () => {
 	it('accept when atMentionStartIndex is at start of input (0)', () => {
 		mockInputContext.atMentionFilter = 'app';
 		mockInputContext.atMentionStartIndex = 0;
-		const deps = createMockDeps({ atMentionSuggestions: mentions, inputValue: '@app rest' });
+		const deps = createMockDeps({ atMentionItems: mentions, inputValue: '@app rest' });
 		const { result } = renderHook(() => useInputKeyDown(deps));
 		const e = createKeyEvent('Tab');
 

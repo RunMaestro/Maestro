@@ -1225,20 +1225,23 @@ describe('InputArea', () => {
 				session: createMockSession({ inputMode: 'ai' }),
 				atMentionOpen: true,
 				atMentionFilter: 'src',
-				atMentionSuggestions: [
+				atMentionItems: [
 					{
-						value: 'src/index.ts',
-						type: 'file' as const,
+						kind: 'file' as const,
+						value: '@src/index.ts ',
 						displayText: 'index.ts',
 						fullPath: 'src/index.ts',
+						score: 0,
 					},
 					{
-						value: 'src/utils',
-						type: 'folder' as const,
+						kind: 'directory' as const,
+						value: '@src/utils/',
 						displayText: 'utils',
 						fullPath: 'src/utils',
+						score: 0,
 					},
 				],
+				atMentionCounts: { all: 2, files: 1, directories: 1, agents: 0 },
 			});
 			render(<InputArea {...props} />);
 
@@ -1296,14 +1299,16 @@ describe('InputArea', () => {
 				atMentionOpen: true,
 				atMentionFilter: 'src/ind',
 				atMentionStartIndex: 6,
-				atMentionSuggestions: [
+				atMentionItems: [
 					{
-						value: 'src/index.ts',
-						type: 'file' as const,
+						kind: 'file' as const,
+						value: '@src/index.ts ',
 						displayText: 'index.ts',
 						fullPath: 'src/index.ts',
+						score: 0,
 					},
 				],
+				atMentionCounts: { all: 1, files: 1, directories: 0, agents: 0 },
 				setInputValue,
 				setAtMentionOpen,
 				setAtMentionFilter,
@@ -1814,12 +1819,15 @@ describe('InputArea', () => {
 			const props = createDefaultProps({
 				session: createMockSession({ inputMode: 'ai', fileTree: [] }),
 				atMentionOpen: true,
-				atMentionSuggestions: [],
+				atMentionItems: [],
+				atMentionCounts: { all: 0, files: 0, directories: 0, agents: 0 },
 			});
 			render(<InputArea {...props} />);
 
-			// Should not render @ mention dropdown if no suggestions
-			expect(screen.queryByText('Files')).not.toBeInTheDocument();
+			// The unified picker stays mounted while open even with zero rows: it
+			// shows the category bar + an empty-state row rather than collapsing.
+			expect(screen.getByText('Files')).toBeInTheDocument();
+			expect(screen.getByText('No matches')).toBeInTheDocument();
 		});
 
 		it('handles special characters in command history', () => {

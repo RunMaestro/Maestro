@@ -89,4 +89,19 @@ describe('buildCrossAgentLogEntry', () => {
 		const finalChunk = buildCrossAgentLogEntry('e1', 123, 'complete', chunk({ done: true }));
 		expect(finalChunk.metadata?.crossAgent?.streaming).toBe(false);
 	});
+
+	it('stamps the error on the metadata for a failed consult (Phase 05)', () => {
+		const errored = buildCrossAgentLogEntry(
+			'e1',
+			123,
+			'⚠️ could not respond',
+			chunk({ done: true, error: 'boom' })
+		);
+		expect(errored.metadata?.crossAgent?.error).toBe('boom');
+	});
+
+	it('omits the error field on a normal (non-error) entry', () => {
+		const ok = buildCrossAgentLogEntry('e1', 123, 'done', chunk({ done: true }));
+		expect(ok.metadata?.crossAgent?.error).toBeUndefined();
+	});
 });

@@ -449,6 +449,21 @@ export function truncateCommand(command: string, maxLength: number = 40): string
 }
 
 /**
+ * Truncate arbitrary display text to a maximum length with a trailing ellipsis.
+ * Unlike {@link truncateCommand} it does not collapse newlines - use it for
+ * short single-token labels (agent names, titles) where the caller surfaces the
+ * full value elsewhere (e.g. a tooltip).
+ *
+ * @param text - The text to truncate
+ * @param maxLength - Maximum length of the returned string (default: 24)
+ * @returns Truncated string (e.g., "a-very-long-agent-nam…")
+ */
+export function truncateText(text: string, maxLength: number = 24): string {
+	if (text.length <= maxLength) return text;
+	return text.slice(0, maxLength - 1) + '…';
+}
+
+/**
  * Format duration in milliseconds as human-readable string without millisecond precision.
  * Suitable for dashboard displays where sub-second precision is unnecessary.
  *

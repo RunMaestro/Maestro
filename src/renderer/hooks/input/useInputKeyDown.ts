@@ -12,7 +12,7 @@
 import { useCallback } from 'react';
 import type { TabCompletionSuggestion, TabCompletionFilter } from '../input/useTabCompletion';
 import {
-	MENTION_CATEGORY_CYCLE,
+	getMentionCategoryCycle,
 	buildMentionAccept,
 	type MentionPickerItem,
 } from '../input/useMentionPicker';
@@ -187,11 +187,15 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 				// Left/Right cycle the category filter and MUST NOT move the caret.
 				if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
 					e.preventDefault();
-					const currentIdx = MENTION_CATEGORY_CYCLE.indexOf(atMentionCategory);
+					// Respect the Cross-Agent Mentions flag: with it off, `agents`
+					// is dropped from the cycle so Left/Right never lands on it.
+					const cycle = getMentionCategoryCycle(
+						useSettingsStore.getState().encoreFeatures.crossAgentMentions
+					);
+					const currentIdx = cycle.indexOf(atMentionCategory);
 					const delta = e.key === 'ArrowRight' ? 1 : -1;
-					const nextIdx =
-						(currentIdx + delta + MENTION_CATEGORY_CYCLE.length) % MENTION_CATEGORY_CYCLE.length;
-					setAtMentionCategory(MENTION_CATEGORY_CYCLE[nextIdx]);
+					const nextIdx = (currentIdx + delta + cycle.length) % cycle.length;
+					setAtMentionCategory(cycle[nextIdx]);
 					setSelectedAtMentionIndex(0);
 					return;
 				} else if (e.key === 'ArrowDown') {

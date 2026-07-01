@@ -1,7 +1,9 @@
+import { AtSign } from 'lucide-react';
 import { useSettings } from '../../../../hooks';
 import {
 	CueSettingsSection,
 	DirectorNotesSection,
+	EncoreFeatureCard,
 	EncoreHeader,
 	SymphonyRegistrySection,
 	UsageStatsSection,
@@ -103,6 +105,22 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 				setDirectorNotesSettings={settings.setDirectorNotesSettings}
 				directorNotesAgentState={directorNotesAgentState}
 			/>
+
+			<div data-setting-id="encore-cross-agent-mentions">
+				<EncoreFeatureCard
+					theme={theme}
+					enabled={settings.encoreFeatures.crossAgentMentions}
+					onToggle={() =>
+						settings.setEncoreFeatures({
+							...settings.encoreFeatures,
+							crossAgentMentions: !settings.encoreFeatures.crossAgentMentions,
+						})
+					}
+					icon={AtSign}
+					title="Cross-Agent Mentions"
+					description="Pick another agent from the @ mention picker to consult it inside any chat."
+				/>
+			</div>
 		</div>
 	);
 }

@@ -213,6 +213,9 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	);
 	const conductorProfile = useSettingsStore((s) => s.conductorProfile);
 	const automaticTabNamingEnabled = useSettingsStore((s) => s.automaticTabNamingEnabled);
+	// Cross-Agent Mentions Encore flag. Gates the Agents category of the `@`
+	// picker AND the `@@`-token dispatch path; files/directories stay ungated.
+	const crossAgentMentionsEnabled = useSettingsStore((s) => s.encoreFeatures.crossAgentMentions);
 
 	// --- InputContext state (completion dropdowns) ---
 	const {
@@ -431,6 +434,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		groups,
 		currentSessionId: activeSessionId,
 		fileSuggestions,
+		crossAgentMentionsEnabled,
 	});
 
 	// Sync file tree selection to match tab completion suggestion
@@ -464,13 +468,16 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	const { sendCrossAgentRequest } = useCrossAgentDispatch();
 	const handleCrossAgentMentions = useCallback(
 		(message: string, sourceSession: Session, sourceTabId: string) => {
+			// Encore-gated: no `@@`-token dispatch fires when the feature is off.
+			if (!crossAgentMentionsEnabled) return;
+
 			const { sessions: allSessions, groups: allGroups } = useSessionStore.getState();
 			const targetSessionIds = resolveMentionedTargetSessionIds(
 				message,
 				allSessions,
 				allGroups,
 				sourceSession.id
-			);
+			).filter((id) => id !== sourceSession.id); // Self-mention guard (defend at dispatch).
 			if (targetSessionIds.length === 0) return;
 
 			const sourceTab = sourceSession.aiTabs.find((t) => t.id === sourceTabId);
@@ -485,7 +492,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 				});
 			}
 		},
-		[sendCrossAgentRequest]
+		[sendCrossAgentRequest, crossAgentMentionsEnabled]
 	);
 
 	const { processInput, processInputRef: _hookProcessInputRef } = useInputProcessing({

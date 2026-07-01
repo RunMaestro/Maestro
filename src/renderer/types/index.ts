@@ -253,6 +253,12 @@ export interface LogEntry {
 			 * spinner and pulses the bubble border while this is true.
 			 */
 			streaming?: boolean;
+			/**
+			 * Set on the terminal failure chunk (Phase 05). When present the
+			 * consulted agent could not respond; the bubble renders a red-tinted
+			 * error variant instead of the normal accent wash.
+			 */
+			error?: string;
 		};
 	};
 	// How this turn was captured. 'structured' (default) is the normal JSON-stream
@@ -1085,6 +1091,7 @@ export interface EncoreFeatureFlags {
 	usageStats: boolean;
 	symphony: boolean;
 	maestroCue: boolean;
+	crossAgentMentions: boolean;
 }
 
 // Director's Notes settings for synopsis generation

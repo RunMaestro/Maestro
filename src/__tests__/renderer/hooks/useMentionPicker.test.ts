@@ -3,6 +3,7 @@ import { renderHook } from '@testing-library/react';
 import {
 	useMentionPicker,
 	buildMentionAccept,
+	getMentionCategoryCycle,
 	MENTION_CATEGORY_CYCLE,
 	type MentionCategory,
 	type MentionPickerItem,
@@ -31,6 +32,7 @@ function pick(params: {
 	groups?: Group[];
 	currentSessionId?: string | null;
 	fileSuggestions?: AtMentionSuggestion[];
+	crossAgentMentionsEnabled?: boolean;
 }) {
 	const { result } = renderHook(() =>
 		useMentionPicker({
@@ -40,6 +42,9 @@ function pick(params: {
 			groups: params.groups,
 			currentSessionId: params.currentSessionId ?? 'current',
 			fileSuggestions: params.fileSuggestions ?? [],
+			// Default the Encore flag on so existing coverage exercises the full
+			// (ungated) picker; the gating case is covered explicitly below.
+			crossAgentMentionsEnabled: params.crossAgentMentionsEnabled ?? true,
 		})
 	);
 	return result.current;
@@ -112,6 +117,45 @@ describe('useMentionPicker', () => {
 		expect(kinds.has('file')).toBe(true);
 		expect(kinds.has('directory')).toBe(true);
 		expect(kinds.has('agent')).toBe(true);
+	});
+
+	it('suppresses agents/groups entirely when the Encore flag is off', () => {
+		const sessions = [agent('a', 'Alpha', { groupId: 'g1' })];
+		const groups: Group[] = [{ id: 'g1', name: 'Squad', emoji: '', collapsed: false }];
+
+		const gated = pick({
+			category: 'all',
+			crossAgentMentionsEnabled: false,
+			fileSuggestions: [fileSug('a.ts', 'file'), fileSug('dir', 'folder')],
+			sessions,
+			groups,
+		});
+
+		// No agent/group rows; files/directories still counted.
+		expect(gated.items.every((i) => i.kind === 'file' || i.kind === 'directory')).toBe(true);
+		expect(gated.counts.agents).toBe(0);
+		expect(gated.counts.all).toBe(2);
+	});
+
+	it("falls back an 'agents' scope to files/directories when gated off", () => {
+		const gated = pick({
+			category: 'agents',
+			crossAgentMentionsEnabled: false,
+			fileSuggestions: [fileSug('a.ts', 'file')],
+			sessions: [agent('a', 'Alpha')],
+		});
+		// The picker never collapses to empty just because the flag is off.
+		expect(gated.items.map((i) => i.kind)).toContain('file');
+	});
+});
+
+describe('getMentionCategoryCycle', () => {
+	it('includes agents when the Encore flag is on', () => {
+		expect(getMentionCategoryCycle(true)).toEqual(['all', 'files', 'directories', 'agents']);
+	});
+
+	it('drops agents when the Encore flag is off', () => {
+		expect(getMentionCategoryCycle(false)).toEqual(['all', 'files', 'directories']);
 	});
 });
 
