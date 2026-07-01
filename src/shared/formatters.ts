@@ -17,6 +17,7 @@
  * - formatDurationCompact: Compact duration without seconds in minute range (5m, 2h 30m)
  * - formatDurationVerbose: Verbose duration with full words (5 minutes 30 seconds)
  * - formatDurationParts: Multi-part duration with days support (2d 5h 30m)
+ * - formatDurationLong: Two-unit duration laddering seconds -> years (6d 7h, 3w 2d, 1y 7w)
  * - formatDurationDecimal: Decimal duration for CLI output (5.2m, 1.3h)
  * - formatCost: USD currency display ($1.23, <$0.01)
  * - estimateTokenCount: Estimate token count from text (~4 chars/token)
@@ -548,6 +549,48 @@ export function formatDurationParts(ms: number): string {
 	if (seconds > 0 && days === 0) parts.push(`${seconds}s`);
 
 	return parts.join(' ') || '0s';
+}
+
+/**
+ * Format a duration in milliseconds as a compact human-readable string that
+ * ladders through every unit from seconds up to years, showing the two largest
+ * non-zero units. Unlike formatDurationParts (caps at days) and formatDuration
+ * (caps at seconds), this keeps long spans readable instead of dumping a giant
+ * seconds count: "45s", "5m 30s", "2h 15m", "6d 7h", "3w 2d", "1y 7w".
+ *
+ * Week = 7 days, year = 365 days - coarse enough for summary/dashboard displays
+ * where exact calendar math is unnecessary. Months are intentionally skipped so
+ * the ladder stays: seconds, minutes, hours, days, weeks, years.
+ *
+ * @param ms - Duration in milliseconds
+ * @returns Human-readable duration (e.g., "6d 7h")
+ */
+export function formatDurationLong(ms: number): string {
+	if (!Number.isFinite(ms) || ms < 1000) return '0s';
+	const totalSeconds = Math.floor(ms / 1000);
+
+	const units: Array<[label: string, size: number]> = [
+		['y', 31_536_000],
+		['w', 604_800],
+		['d', 86_400],
+		['h', 3_600],
+		['m', 60],
+		['s', 1],
+	];
+
+	for (let i = 0; i < units.length; i++) {
+		const [label, size] = units[i];
+		const value = Math.floor(totalSeconds / size);
+		if (value <= 0) continue;
+		const parts = [`${value}${label}`];
+		const next = units[i + 1];
+		if (next) {
+			const nextValue = Math.floor((totalSeconds % size) / next[1]);
+			if (nextValue > 0) parts.push(`${nextValue}${next[0]}`);
+		}
+		return parts.join(' ');
+	}
+	return '0s';
 }
 
 /**
