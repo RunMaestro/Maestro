@@ -94,8 +94,13 @@ src/__tests__/main/plugins/authorization-ledger.test.ts src/__tests__/main/plugi
    writes `AgentRun` records/events for dispatched / completed / failed tasks. Legacy agent-bound tasks
    recover provider type from live `sessionId` lookup before ledger writes. The renderer now has a
    first-party AgentRun Dashboard modal opened from Quick Actions; it lists runs/campaigns, renders run
-   detail and event timelines, and treats Pianola campaign/task projections as read-only visibility rather
-   than Pianola execution authority.
+   detail and event timelines, can jump to a linked Maestro session/tab when `sessionId` data exists, and
+   treats Pianola campaign/task projections as read-only visibility rather than Pianola execution authority.
+   Manual smoke path: with `bun run dev`, create a run with `bun src/cli/index.ts agent-run record --file
+<json> --json`, append a timeline event with `agent-run append-event <run-id> --type status_change
+--status completed --message <msg> --json`, open Quick Actions → AgentRun Dashboard, refresh, select
+   the run, and confirm detail/timeline refresh. Deferred: universal non-Pianola lifecycle capture and
+   Interceptor-backed app smoke remain separate verification work when the Interceptor CLI is available.
 3. **E-maestroCue** ← P2(act-verbs, scheduler-sink) + P3(storage-sql, fs-watch, power, events-rich,
    background-service).
 4. **E-symphony** ← P2(process:spawn) + P3(sessions-tabs, sessions:write, history) + render-host +
