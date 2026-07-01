@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import type { PanelLayoutNode, UnifiedTabRef } from '../../types';
+import type { PanelLayoutNode, Session, TabGroup, UnifiedTabRef } from '../../types';
 import {
 	createLeaf,
 	createGroupFromTabRefs,
@@ -24,6 +24,12 @@ import {
 	countLeaves,
 	generateGroupName,
 	isGroupRef,
+	updateSplitSizes,
+	setFocusedPane,
+	findPaneInDirection,
+	rebalanceLayout,
+	dissolveGroup,
+	MIN_PANE_FRACTION,
 } from '../panelLayout';
 
 const aiRef = (id: string): UnifiedTabRef => ({ type: 'ai', id });
@@ -241,5 +247,265 @@ describe('generateGroupName / isGroupRef', () => {
 		expect(isGroupRef({ type: 'group', id: 'g1' })).toBe(true);
 		expect(isGroupRef(aiRef('a'))).toBe(false);
 		expect(isGroupRef(fileRef('f'))).toBe(false);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Phase 02 helpers: resize, focus, spatial navigation, rebalance, dissolve.
+// ---------------------------------------------------------------------------
+
+/** A leaf node with a fixed id so tests can address panes deterministically. */
+function leaf(id: string, tab: UnifiedTabRef): PanelLayoutNode {
+	return { kind: 'leaf', id, tab };
+}
+
+function rowSplit(id: string, children: PanelLayoutNode[]): PanelLayoutNode {
+	return {
+		kind: 'split',
+		id,
+		direction: 'row',
+		children,
+		sizes: children.map(() => 1 / children.length),
+	};
+}
+
+function colSplit(id: string, children: PanelLayoutNode[]): PanelLayoutNode {
+	return {
+		kind: 'split',
+		id,
+		direction: 'column',
+		children,
+		sizes: children.map(() => 1 / children.length),
+	};
+}
+
+function groupFrom(layout: PanelLayoutNode, focusedPaneId: string | null = null): TabGroup {
+	return { id: 'grp', name: 'g', layout, focusedPaneId, createdAt: 1 };
+}
+
+describe('updateSplitSizes', () => {
+	it('replaces a split node sizes and keeps them normalized to 1', () => {
+		const layout = rowSplit('root', [leaf('l1', aiRef('a')), leaf('l2', aiRef('b'))]);
+		const result = updateSplitSizes(layout, 'root', [0.7, 0.3]);
+		if (result.kind !== 'split') throw new Error('expected split');
+		expect(result.sizes[0]).toBeCloseTo(0.7, 5);
+		expect(result.sizes[1]).toBeCloseTo(0.3, 5);
+		expect(result.sizes.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 5);
+	});
+
+	it('renormalizes raw (non-summing) inputs', () => {
+		const layout = rowSplit('root', [leaf('l1', aiRef('a')), leaf('l2', aiRef('b'))]);
+		// Pixel-ish widths that do not sum to 1.
+		const result = updateSplitSizes(layout, 'root', [600, 200]);
+		if (result.kind !== 'split') throw new Error('expected split');
+		expect(result.sizes[0]).toBeCloseTo(0.75, 5);
+		expect(result.sizes[1]).toBeCloseTo(0.25, 5);
+	});
+
+	it('clamps a pane to the minimum fraction and still sums to 1', () => {
+		const layout = rowSplit('root', [leaf('l1', aiRef('a')), leaf('l2', aiRef('b'))]);
+		// Ask to shrink the second pane below the floor.
+		const result = updateSplitSizes(layout, 'root', [0.99, 0.01]);
+		if (result.kind !== 'split') throw new Error('expected split');
+		expect(result.sizes[1]).toBeGreaterThanOrEqual(MIN_PANE_FRACTION - 1e-9);
+		expect(result.sizes[0]).toBeLessThanOrEqual(1 - MIN_PANE_FRACTION + 1e-9);
+		expect(result.sizes.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 5);
+	});
+
+	it('only touches the addressed split, recursing into nested splits', () => {
+		const inner = colSplit('inner', [leaf('l1', aiRef('a')), leaf('l2', aiRef('b'))]);
+		const outer = rowSplit('outer', [inner, leaf('l3', aiRef('c'))]);
+		const result = updateSplitSizes(outer, 'inner', [0.8, 0.2]);
+		if (result.kind !== 'split') throw new Error('expected split');
+		// Outer split sizes untouched.
+		expect(result.sizes).toEqual([0.5, 0.5]);
+		const nested = result.children[0];
+		if (nested.kind !== 'split') throw new Error('expected nested split');
+		expect(nested.sizes[0]).toBeCloseTo(0.8, 5);
+		expect(nested.sizes[1]).toBeCloseTo(0.2, 5);
+	});
+
+	it('is a no-op when the length does not match the child count', () => {
+		const layout = rowSplit('root', [leaf('l1', aiRef('a')), leaf('l2', aiRef('b'))]);
+		const result = updateSplitSizes(layout, 'root', [0.5, 0.3, 0.2]);
+		if (result.kind !== 'split') throw new Error('expected split');
+		expect(result.sizes).toEqual([0.5, 0.5]);
+	});
+});
+
+describe('setFocusedPane', () => {
+	it('moves focus to an existing leaf', () => {
+		const group = groupFrom(
+			rowSplit('root', [leaf('l1', aiRef('a')), leaf('l2', aiRef('b'))]),
+			'l1'
+		);
+		const next = setFocusedPane(group, 'l2');
+		expect(next.focusedPaneId).toBe('l2');
+		// New object, original untouched.
+		expect(group.focusedPaneId).toBe('l1');
+	});
+
+	it('is a no-op (same ref) when the leaf does not exist', () => {
+		const group = groupFrom(
+			rowSplit('root', [leaf('l1', aiRef('a')), leaf('l2', aiRef('b'))]),
+			'l1'
+		);
+		expect(setFocusedPane(group, 'nope')).toBe(group);
+	});
+
+	it('is a no-op (same ref) when focus is already on that leaf', () => {
+		const group = groupFrom(
+			rowSplit('root', [leaf('l1', aiRef('a')), leaf('l2', aiRef('b'))]),
+			'l1'
+		);
+		expect(setFocusedPane(group, 'l1')).toBe(group);
+	});
+});
+
+describe('findPaneInDirection', () => {
+	// 2x2 grid: column[ row[a, b], row[c, d] ]
+	//   a b
+	//   c d
+	function build2x2(): TabGroup {
+		const top = rowSplit('top', [leaf('a', aiRef('a')), leaf('b', aiRef('b'))]);
+		const bottom = rowSplit('bottom', [leaf('c', aiRef('c')), leaf('d', aiRef('d'))]);
+		return groupFrom(colSplit('root', [top, bottom]), 'a');
+	}
+
+	it('navigates right/left/up/down on a 2x2 grid', () => {
+		const g = build2x2();
+		expect(findPaneInDirection(g, 'a', 'right')).toBe('b');
+		expect(findPaneInDirection(g, 'b', 'left')).toBe('a');
+		expect(findPaneInDirection(g, 'a', 'down')).toBe('c');
+		expect(findPaneInDirection(g, 'c', 'up')).toBe('a');
+		expect(findPaneInDirection(g, 'd', 'left')).toBe('c');
+		expect(findPaneInDirection(g, 'd', 'up')).toBe('b');
+		expect(findPaneInDirection(g, 'b', 'down')).toBe('d');
+	});
+
+	it('returns null at the edges of a 2x2 grid', () => {
+		const g = build2x2();
+		expect(findPaneInDirection(g, 'a', 'left')).toBeNull();
+		expect(findPaneInDirection(g, 'a', 'up')).toBeNull();
+		expect(findPaneInDirection(g, 'd', 'right')).toBeNull();
+		expect(findPaneInDirection(g, 'd', 'down')).toBeNull();
+	});
+
+	it('returns null when the source leaf is not in the layout', () => {
+		const g = build2x2();
+		expect(findPaneInDirection(g, 'ghost', 'right')).toBeNull();
+	});
+
+	it('navigates an L-shaped nested layout: row[ column[a, b], c ]', () => {
+		// Left column stacks a over b (each half height); c fills the right, full height.
+		//   a | c
+		//   b | c
+		const left = colSplit('left', [leaf('a', aiRef('a')), leaf('b', aiRef('b'))]);
+		const g = groupFrom(rowSplit('root', [left, leaf('c', aiRef('c'))]), 'a');
+
+		// Within the left column.
+		expect(findPaneInDirection(g, 'a', 'down')).toBe('b');
+		expect(findPaneInDirection(g, 'b', 'up')).toBe('a');
+		// Across into the full-height right pane.
+		expect(findPaneInDirection(g, 'a', 'right')).toBe('c');
+		expect(findPaneInDirection(g, 'b', 'right')).toBe('c');
+		// From the tall right pane back left: 'a' overlaps the top half, 'b' the
+		// bottom half; both are equidistant so the greater-overlap tiebreak is a
+		// wash - either is a valid left neighbor, so assert it lands in the column.
+		expect(['a', 'b']).toContain(findPaneInDirection(g, 'c', 'left'));
+		// No pane above/below the source in this layout's outer axis.
+		expect(findPaneInDirection(g, 'a', 'up')).toBeNull();
+		expect(findPaneInDirection(g, 'c', 'right')).toBeNull();
+	});
+});
+
+describe('rebalanceLayout', () => {
+	it('resets every split to equal fractions, preserving shape and refs', () => {
+		// Skew both splits away from equal to prove they are reset.
+		const innerSkewed: PanelLayoutNode = {
+			kind: 'split',
+			id: 'inner',
+			direction: 'column',
+			children: [leaf('l1', aiRef('a')), leaf('l2', aiRef('b'))],
+			sizes: [0.8, 0.2],
+		};
+		const outer: PanelLayoutNode = {
+			kind: 'split',
+			id: 'outer',
+			direction: 'row',
+			children: [innerSkewed, leaf('l3', aiRef('c'))],
+			sizes: [0.9, 0.1],
+		};
+		const result = rebalanceLayout(outer);
+		if (result.kind !== 'split') throw new Error('expected split');
+		expect(result.sizes).toEqual([0.5, 0.5]);
+		const nested = result.children[0];
+		if (nested.kind !== 'split') throw new Error('expected nested split');
+		expect(nested.sizes).toEqual([0.5, 0.5]);
+		// Leaf refs and order untouched.
+		expect(collectLeafTabRefs(result)).toEqual([aiRef('a'), aiRef('b'), aiRef('c')]);
+	});
+
+	it('returns a bare leaf unchanged', () => {
+		const solo = leaf('solo', aiRef('x'));
+		expect(rebalanceLayout(solo)).toEqual(solo);
+	});
+});
+
+describe('dissolveGroup', () => {
+	/** Minimal Session stub carrying only the fields dissolveGroup touches. */
+	function sessionWith(group: TabGroup, extra?: Partial<Session>): Session {
+		return {
+			unifiedTabOrder: [],
+			tabGroups: [group],
+			activeGroupId: group.id,
+			...extra,
+		} as unknown as Session;
+	}
+
+	it('promotes remaining tabs to unifiedTabOrder and removes the group', () => {
+		const group = groupFrom(
+			rowSplit('root', [leaf('l1', aiRef('a')), leaf('l2', fileRef('b'))]),
+			'l1'
+		);
+		const session = sessionWith(group);
+		const next = dissolveGroup(session, group.id);
+
+		expect(next.tabGroups).toHaveLength(0);
+		expect(next.activeGroupId).toBeNull();
+		expect(next.unifiedTabOrder).toEqual([aiRef('a'), fileRef('b')]);
+	});
+
+	it('does not duplicate tabs already present in unifiedTabOrder', () => {
+		const group = groupFrom(
+			rowSplit('root', [leaf('l1', aiRef('a')), leaf('l2', aiRef('b'))]),
+			'l1'
+		);
+		const session = sessionWith(group, { unifiedTabOrder: [aiRef('a')] });
+		const next = dissolveGroup(session, group.id);
+		// 'a' already ordered, only 'b' is appended.
+		expect(next.unifiedTabOrder).toEqual([aiRef('a'), aiRef('b')]);
+	});
+
+	it('leaves activeGroupId untouched when a different group is active', () => {
+		const group = groupFrom(
+			rowSplit('root', [leaf('l1', aiRef('a')), leaf('l2', aiRef('b'))]),
+			'l1'
+		);
+		const session = sessionWith(group, { activeGroupId: 'other-group' });
+		const next = dissolveGroup(session, group.id);
+		expect(next.activeGroupId).toBe('other-group');
+	});
+
+	it('is a no-op copy when the group id is unknown', () => {
+		const group = groupFrom(
+			rowSplit('root', [leaf('l1', aiRef('a')), leaf('l2', aiRef('b'))]),
+			'l1'
+		);
+		const session = sessionWith(group);
+		const next = dissolveGroup(session, 'missing');
+		expect(next.tabGroups).toHaveLength(1);
+		expect(next.activeGroupId).toBe(group.id);
+		expect(next.unifiedTabOrder).toEqual([]);
 	});
 });

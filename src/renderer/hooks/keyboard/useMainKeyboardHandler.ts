@@ -434,6 +434,55 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				return;
 			}
 
+			// Tab tiling (split panes): the Ctrl+Cmd pane family is matched with a
+			// dedicated matcher (isPaneShortcut requires BOTH Ctrl and Cmd) so it never
+			// collides with the plain-Cmd shortcuts below (Cmd+W, Cmd+=, Cmd+D pieces).
+			// Every handler is window-scoped and no-ops when there's no active group,
+			// so it's safe to only preventDefault when a group is actually present.
+			const hasActiveGroup =
+				!!ctx.activeSession?.activeGroupId &&
+				(ctx.activeSession.tabGroups ?? []).some(
+					(g: { id: string }) => g.id === ctx.activeSession.activeGroupId
+				);
+			if (hasActiveGroup && ctx.isPaneShortcut(e, 'paneFocusLeft')) {
+				e.preventDefault();
+				ctx.tilingShortcuts.focusPane('left');
+				return;
+			} else if (hasActiveGroup && ctx.isPaneShortcut(e, 'paneFocusRight')) {
+				e.preventDefault();
+				ctx.tilingShortcuts.focusPane('right');
+				return;
+			} else if (hasActiveGroup && ctx.isPaneShortcut(e, 'paneFocusUp')) {
+				e.preventDefault();
+				ctx.tilingShortcuts.focusPane('up');
+				return;
+			} else if (hasActiveGroup && ctx.isPaneShortcut(e, 'paneFocusDown')) {
+				e.preventDefault();
+				ctx.tilingShortcuts.focusPane('down');
+				return;
+			} else if (hasActiveGroup && ctx.isPaneShortcut(e, 'paneSplitColumn')) {
+				// Stacked split - checked before paneSplitRow because it carries Shift.
+				e.preventDefault();
+				ctx.tilingShortcuts.splitFocusedPane('column');
+				return;
+			} else if (hasActiveGroup && ctx.isPaneShortcut(e, 'paneSplitRow')) {
+				e.preventDefault();
+				ctx.tilingShortcuts.splitFocusedPane('row');
+				return;
+			} else if (hasActiveGroup && ctx.isPaneShortcut(e, 'paneClose')) {
+				e.preventDefault();
+				ctx.tilingShortcuts.closeFocusedPane();
+				return;
+			} else if (hasActiveGroup && ctx.isPaneShortcut(e, 'paneZoom')) {
+				e.preventDefault();
+				ctx.tilingShortcuts.toggleZoom();
+				return;
+			} else if (hasActiveGroup && ctx.isPaneShortcut(e, 'paneRebalance')) {
+				e.preventDefault();
+				ctx.tilingShortcuts.rebalance();
+				return;
+			}
+
 			// General shortcuts
 			// Only allow collapsing left sidebar when there are sessions (prevent collapse on empty state)
 			if (ctx.isShortcut(e, 'toggleSidebar')) {

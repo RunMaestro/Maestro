@@ -12,6 +12,7 @@ import type { FilePreviewHandle } from '../FilePreview';
 import { WizardConversationView, DocumentGenerationView } from '../InlineWizard';
 import { BrowserTabView, type BrowserTabViewHandle } from './BrowserTabView';
 import { TiledLayout } from './TiledLayout';
+import { findLeafById } from '../../utils/panelLayout';
 import { useBrowserTabMounting } from '../../hooks/browser/useBrowserTabMounting';
 import { useUIStore } from '../../stores/uiStore';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -468,6 +469,17 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		activeSession.activeGroupId != null
 			? activeSession.tabGroups?.find((g) => g.id === activeSession.activeGroupId)
 			: undefined;
+	// Transient maximize/zoom (Ctrl+Cmd+Z): id of the pane rendered full-panel.
+	const zoomedPaneId = useUIStore((s) => s.zoomedPaneId);
+	// When a group is active, input routes to the tab its focused pane references
+	// (the focus handlers keep activeTabId in sync). A non-AI focused pane hides
+	// the AI input, matching how single-view suppresses it for non-AI tabs.
+	const groupFocusedLeaf =
+		activeGroup && activeGroup.focusedPaneId
+			? findLeafById(activeGroup.layout, activeGroup.focusedPaneId)
+			: null;
+	const groupFocusedIsNonAi =
+		!!groupFocusedLeaf && groupFocusedLeaf.kind === 'leaf' && groupFocusedLeaf.tab.type !== 'ai';
 	// Number of open modal/overlay layers. When any layer is open over a browser
 	// tab (e.g. the Tab Switcher), the guest <webview> must release Chromium input
 	// focus so keyboard navigation lands in the modal instead of the page. Driving
@@ -501,7 +513,12 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 			    below still mount so their guests survive; they stay hidden while a group
 			    is active because no terminal/browser tab is the active single view. */}
 			{activeGroup ? (
-				<TiledLayout group={activeGroup} session={activeSession} theme={theme} />
+				<TiledLayout
+					group={activeGroup}
+					session={activeSession}
+					theme={theme}
+					zoomedPaneId={zoomedPaneId}
+				/>
 			) : /* Browser tabs render through the persistent keep-alive overlay block below (not
 			    inline) so their <webview> never remounts when switching tabs. Skip rendering
 			    inline content when loading a remote file - loading state takes over the area. */
@@ -706,10 +723,13 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 						)}
 					</div>
 
-					{/* Input Area (hidden in mobile landscape, during wizard doc generation, and in terminal mode — xterm.js handles its own input) */}
+					{/* Input Area (hidden in mobile landscape, during wizard doc generation, in
+					    terminal mode - xterm.js handles its own input - and when a tiled group's
+					    focused pane is a non-AI tab, mirroring single-view non-AI suppression) */}
 					{!isMobileLandscape &&
 						!activeTab?.wizardState?.isGeneratingDocs &&
 						!activeBrowserTabId &&
+						!groupFocusedIsNonAi &&
 						activeSession.inputMode !== 'terminal' && (
 							<div data-tour="input-area">
 								<InputArea

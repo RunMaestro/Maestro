@@ -63,6 +63,7 @@ import {
 	useKeyboardShortcutHelpers,
 	useKeyboardNavigation,
 	useMainKeyboardHandler,
+	useTilingShortcuts,
 	useTextEditorUndo,
 	// Agent
 	useAgentSessionManagement,
@@ -491,7 +492,7 @@ function MaestroConsoleInner() {
 	}, [encoreFeatures.maestroCue, setCueModalOpen, closeCueYamlEditor]);
 
 	// --- KEYBOARD SHORTCUT HELPERS ---
-	const { isShortcut, isTabShortcut } = useKeyboardShortcutHelpers({
+	const { isShortcut, isTabShortcut, isPaneShortcut } = useKeyboardShortcutHelpers({
 		shortcuts,
 		tabShortcuts,
 	});
@@ -1944,6 +1945,11 @@ function MaestroConsoleInner() {
 		ownsSession,
 	});
 
+	// Tab tiling (split panes): Ctrl+Cmd pane focus / split / close / zoom /
+	// rebalance handlers. All act only on the active window's active tab group and
+	// no-op when nothing is tiled. Dispatched by the main keyboard handler.
+	const tilingShortcuts = useTilingShortcuts(activeSession);
+
 	// --- KEYBOARD NAVIGATION ---
 	// Sidebar arrow-key navigation, panel focus, Enter-to-activate. Placed after
 	// useStarredItems so it can traverse the Starred Sessions (top) and Group
@@ -2404,6 +2410,8 @@ function MaestroConsoleInner() {
 		setFileTreeFilterOpen,
 		isShortcut,
 		isTabShortcut,
+		isPaneShortcut,
+		tilingShortcuts,
 		handleNavBack,
 		handleNavForward,
 		toggleUnreadFilter,
