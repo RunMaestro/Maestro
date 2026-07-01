@@ -1149,6 +1149,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							// Generic spawn options - main process builds agent-specific args
 							agentSessionId: tabAgentSessionId ?? undefined,
 							readOnlyMode: isReadOnly,
+							permissionMode: freshActiveTab?.permissionMode,
 							// Per-session config overrides (if set)
 							sessionCustomPath: freshSession.customPath,
 							sessionCustomArgs: freshSession.customArgs,

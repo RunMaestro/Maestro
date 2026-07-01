@@ -458,23 +458,29 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					);
 				}
 
-				// In read-only mode, apply agent-specific env var overrides to strip
-				// blanket permission grants (e.g., OpenCode's "*":"allow" YOLO config)
+				// Derive effective permission mode, honoring legacy boolean flags only when
+				// permissionMode wasn't explicitly set (back-compat for pre-Phase-1 configs).
+				const hasExplicitPermissionMode = config.permissionMode !== undefined;
+				const isReadOnly =
+					config.permissionMode === 'readonly' ||
+					(!hasExplicitPermissionMode && config.readOnlyMode === true);
+				const isFullAccess =
+					config.permissionMode === 'full' ||
+					(!hasExplicitPermissionMode && config.yoloMode === true);
+
+				// In full-access mode, apply agent-specific env var overrides for full permissions.
+				// In read-only mode, apply agent-specific env var overrides to strip blanket
+				// permission grants (e.g., OpenCode's "*":"allow" YOLO config).
 				let effectiveCustomEnvVars = configResolution.effectiveCustomEnvVars;
-				if (config.readOnlyMode && agent?.readOnlyEnvOverrides) {
+				if (isFullAccess && agent?.fullAccessEnvOverrides) {
+					effectiveCustomEnvVars = {
+						...(effectiveCustomEnvVars || {}),
+						...agent.fullAccessEnvOverrides,
+					};
+				} else if (isReadOnly && agent?.readOnlyEnvOverrides) {
 					effectiveCustomEnvVars = {
 						...(effectiveCustomEnvVars || {}),
 						...agent.readOnlyEnvOverrides,
-					};
-				}
-				// In full-access mode, apply agent-specific env var overrides for full permissions
-				const isFullAccess =
-					config.permissionMode === 'full' ||
-					(config.permissionMode === undefined && config.yoloMode === true);
-				if (isFullAccess && (agent as any)?.fullAccessEnvOverrides) {
-					effectiveCustomEnvVars = {
-						...(effectiveCustomEnvVars || {}),
-						...(agent as any).fullAccessEnvOverrides,
 					};
 				}
 				if (configResolution.customEnvSource !== 'none' && effectiveCustomEnvVars) {
