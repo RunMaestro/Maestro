@@ -78,6 +78,15 @@ describe('buildCrossAgentLogEntry', () => {
 			fromSessionId: 'tgt',
 			fromAgentName: 'Codex',
 			fromToolType: 'codex',
+			streaming: false,
 		});
+	});
+
+	it('marks the entry as streaming until the terminal chunk lands', () => {
+		const midStream = buildCrossAgentLogEntry('e1', 123, 'partial', chunk({ done: false }));
+		expect(midStream.metadata?.crossAgent?.streaming).toBe(true);
+
+		const finalChunk = buildCrossAgentLogEntry('e1', 123, 'complete', chunk({ done: true }));
+		expect(finalChunk.metadata?.crossAgent?.streaming).toBe(false);
 	});
 });

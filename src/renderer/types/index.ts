@@ -247,6 +247,12 @@ export interface LogEntry {
 			fromAgentName: string;
 			/** The consulted agent's tool type (for the provider icon). */
 			fromToolType: ToolType;
+			/**
+			 * True while chunks are still streaming in (Phase 03 sets `!done`);
+			 * flips to false on the terminal chunk. Phase 04's pill shows a
+			 * spinner and pulses the bubble border while this is true.
+			 */
+			streaming?: boolean;
 		};
 	};
 	// How this turn was captured. 'structured' (default) is the normal JSON-stream

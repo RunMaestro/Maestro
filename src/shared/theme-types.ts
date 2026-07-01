@@ -72,6 +72,15 @@ export interface ThemeColors {
 	accentText: string;
 	/** Text color for use ON accent backgrounds (contrasting color) */
 	accentForeground: string;
+	/**
+	 * Background tint for a cross-agent (@@mention) response bubble - a subtle
+	 * wash of the theme accent that flags "this reply came from another agent."
+	 * Optional: when unset the renderer derives a subtle accent tint via
+	 * color-mix, so every theme (custom included) gets a correct tint for free.
+	 */
+	crossAgentBubbleBg?: string;
+	/** Border color for a cross-agent response bubble. Optional; derived from the accent when unset. */
+	crossAgentBubbleBorder?: string;
 	/** Success state color (green tones) */
 	success: string;
 	/** Warning state color (yellow/orange tones) */
