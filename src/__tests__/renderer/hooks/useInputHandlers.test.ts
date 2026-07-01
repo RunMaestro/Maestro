@@ -46,6 +46,8 @@ const mockInputContext = {
 	setAtMentionStartIndex: vi.fn(),
 	selectedAtMentionIndex: 0,
 	setSelectedAtMentionIndex: vi.fn(),
+	atMentionCategory: 'all' as const,
+	setAtMentionCategory: vi.fn(),
 	commandHistoryOpen: false,
 	setCommandHistoryOpen: vi.fn(),
 	commandHistoryFilter: '',
@@ -231,6 +233,7 @@ beforeEach(() => {
 		atMentionOpen: false,
 		atMentionFilter: '',
 		selectedAtMentionIndex: 0,
+		atMentionCategory: 'all',
 		commandHistoryOpen: false,
 	});
 
@@ -296,7 +299,8 @@ describe('useInputHandlers', () => {
 			expect(result.current).toHaveProperty('handlePaste');
 			expect(result.current).toHaveProperty('handleDrop');
 			expect(result.current).toHaveProperty('tabCompletionSuggestions');
-			expect(result.current).toHaveProperty('atMentionSuggestions');
+			expect(result.current).toHaveProperty('atMentionItems');
+			expect(result.current).toHaveProperty('atMentionCounts');
 			expect(result.current).toHaveProperty('syncFileTreeToTabCompletion');
 		});
 
@@ -353,7 +357,7 @@ describe('useInputHandlers', () => {
 		it('initializes with empty completion suggestions', () => {
 			const { result } = renderHook(() => useInputHandlers(createMockDeps()));
 			expect(result.current.tabCompletionSuggestions).toEqual([]);
-			expect(result.current.atMentionSuggestions).toEqual([]);
+			expect(result.current.atMentionItems).toEqual([]);
 		});
 	});
 
@@ -806,24 +810,27 @@ describe('useInputHandlers', () => {
 		});
 	});
 
-	describe('@ mention suggestions', () => {
+	describe('@ mention picker items', () => {
 		it('returns empty when @ mention is not open', () => {
 			const { result } = renderHook(() => useInputHandlers(createMockDeps()));
-			expect(result.current.atMentionSuggestions).toEqual([]);
+			expect(result.current.atMentionItems).toEqual([]);
 		});
 
-		it('calls getSuggestions when @ mention is open in AI mode', () => {
+		it('tags file suggestions into unified picker items when open in AI mode', () => {
 			mockInputContext.atMentionOpen = true;
 			mockInputContext.atMentionFilter = 'test';
 
 			mockGetAtMentionSuggestions.mockReturnValue([
-				{ type: 'file', value: 'test.ts', display: 'test.ts' },
+				{ type: 'file', value: 'test.ts', displayText: 'test.ts', fullPath: 'test.ts', score: 10 },
 			]);
 
 			const { result } = renderHook(() => useInputHandlers(createMockDeps()));
 
-			expect(result.current.atMentionSuggestions).toHaveLength(1);
-			expect(result.current.atMentionSuggestions[0].value).toBe('test.ts');
+			// The picker wraps the raw file suggestion as a `@path ` token to insert.
+			expect(result.current.atMentionItems).toHaveLength(1);
+			expect(result.current.atMentionItems[0].kind).toBe('file');
+			expect(result.current.atMentionItems[0].value).toBe('@test.ts ');
+			expect(result.current.atMentionCounts.files).toBe(1);
 		});
 
 		it('returns empty in terminal mode even when @ mention is open', () => {
@@ -836,7 +843,7 @@ describe('useInputHandlers', () => {
 			} as any);
 
 			const { result } = renderHook(() => useInputHandlers(createMockDeps()));
-			expect(result.current.atMentionSuggestions).toEqual([]);
+			expect(result.current.atMentionItems).toEqual([]);
 		});
 	});
 
