@@ -19,6 +19,7 @@ import { generateId } from '../utils/ids';
 import { getActiveTab } from '../utils/tabHelpers';
 import { logger } from '../utils/logger';
 import { useUIStore } from './uiStore';
+import { useContextTimelineStore } from './contextTimelineStore';
 
 // ============================================================================
 // Store Types
@@ -177,6 +178,18 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 			const newSessions = resolve(v, s.sessions);
 			// Skip if same reference (no-op update)
 			if (newSessions === s.sessions) return s;
+			// Most delete flows (single-agent, group delete) filter the array and
+			// call setSessions directly rather than removeSession, so prune the
+			// context-timeline buffers of any agent that disappeared here. Guard on
+			// length so the common update path (same count) pays nothing.
+			if (newSessions.length < s.sessions.length) {
+				const liveIds = new Set(newSessions.map((sess) => sess.id));
+				for (const sess of s.sessions) {
+					if (!liveIds.has(sess.id)) {
+						useContextTimelineStore.getState().removeSession(sess.id);
+					}
+				}
+			}
 			return { sessions: newSessions };
 		}),
 
@@ -187,6 +200,8 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 			const filtered = s.sessions.filter((session) => session.id !== id);
 			// Skip if nothing was removed
 			if (filtered.length === s.sessions.length) return s;
+			// Drop the deleted agent's context-timeline buffer so it doesn't leak.
+			useContextTimelineStore.getState().removeSession(id);
 			return { sessions: filtered };
 		}),
 
