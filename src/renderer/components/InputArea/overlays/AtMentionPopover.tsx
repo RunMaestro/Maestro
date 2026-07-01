@@ -4,7 +4,7 @@ import { File, Folder, Users } from 'lucide-react';
 import type { Theme } from '../../../types';
 import {
 	buildMentionAccept,
-	MENTION_CATEGORY_CYCLE,
+	getMentionCategoryCycle,
 	type MentionCategory,
 	type MentionPickerItem,
 } from '../../../hooks/input/useMentionPicker';
@@ -21,6 +21,12 @@ interface AtMentionPopoverProps {
 	/** Active filter scope. */
 	category: MentionCategory;
 	setCategory?: (category: MentionCategory) => void;
+	/**
+	 * Cross-Agent Mentions Encore flag. When false the Agents category segment is
+	 * dropped from the bar (files/directories stay). Defaults to true so callers
+	 * that don't opt into gating keep the full picker.
+	 */
+	crossAgentMentionsEnabled?: boolean;
 	selectedIndex: number;
 	filter: string;
 	startIndex: number;
@@ -51,6 +57,13 @@ const EMPTY_LABELS: Record<MentionCategory, string> = {
 	agents: 'No agents available',
 };
 
+/**
+ * Guidance shown for the Agents category when there are genuinely no other
+ * agents to consult (empty filter + zero rows), rather than a filter miss.
+ */
+const NO_OTHER_AGENTS_LABEL =
+	'No other agents available - open another agent in the Left Bar to consult it.';
+
 const ZERO_COUNTS: Record<MentionCategory, number> = {
 	all: 0,
 	files: 0,
@@ -65,6 +78,7 @@ export const AtMentionPopover = memo(function AtMentionPopover({
 	counts,
 	category,
 	setCategory,
+	crossAgentMentionsEnabled = true,
 	selectedIndex,
 	filter,
 	startIndex,
@@ -107,6 +121,15 @@ export const AtMentionPopover = memo(function AtMentionPopover({
 		inputRef.current?.focus();
 	};
 
+	// The bar hides the Agents segment when the Encore flag is off (single source
+	// of truth shared with the keyboard cycle in useInputKeyDown).
+	const categoryCycle = getMentionCategoryCycle(crossAgentMentionsEnabled);
+
+	// Distinguish "no other agents exist" (empty filter + zero rows -> actionable
+	// guidance) from a plain filter miss.
+	const emptyLabel =
+		category === 'agents' && !filter ? NO_OTHER_AGENTS_LABEL : EMPTY_LABELS[category];
+
 	return (
 		<div
 			className="absolute bottom-full left-4 right-4 mb-1 rounded-lg border shadow-lg overflow-hidden z-50 select-none"
@@ -117,7 +140,7 @@ export const AtMentionPopover = memo(function AtMentionPopover({
 				className="flex items-stretch border-b text-xs"
 				style={{ borderColor: theme.colors.border }}
 			>
-				{MENTION_CATEGORY_CYCLE.map((cat) => {
+				{categoryCycle.map((cat) => {
 					const isActive = cat === category;
 					return (
 						<button
@@ -156,7 +179,7 @@ export const AtMentionPopover = memo(function AtMentionPopover({
 						className="px-3 py-3 text-sm italic text-center"
 						style={{ color: theme.colors.textDim }}
 					>
-						{EMPTY_LABELS[category]}
+						{emptyLabel}
 						{filter && <span className="opacity-70"> matching &quot;{filter}&quot;</span>}
 					</div>
 				) : (

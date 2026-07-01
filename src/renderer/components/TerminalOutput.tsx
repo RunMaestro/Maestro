@@ -46,6 +46,7 @@ import { SessionRecoveryCard } from './SessionRecoveryCard';
 import { getTokenSourcePill } from '../../shared/claudeTokenModeLabel';
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
+import { truncateText } from '../../shared/formatters';
 
 // ============================================================================
 // Tool display helpers (pure functions, hoisted out of render path)
@@ -475,11 +476,16 @@ const LogItemComponent = memo(
 		// bubble uses below, so every theme reads correctly for free.
 		const crossAgent = log.metadata?.crossAgent;
 		const isCrossAgentStreaming = !!crossAgent?.streaming;
-		const crossAgentBubbleBg =
-			theme.colors.crossAgentBubbleBg ??
-			`color-mix(in srgb, ${theme.colors.accent} 14%, ${theme.colors.bgActivity})`;
-		const crossAgentBubbleBorder =
-			theme.colors.crossAgentBubbleBorder ?? theme.colors.accent + '55';
+		// Phase 05: a failed consult surfaces inline as a red-tinted variant of the
+		// cross-agent bubble (never throws). Otherwise the normal accent wash.
+		const isCrossAgentError = !!crossAgent?.error;
+		const crossAgentBubbleBg = isCrossAgentError
+			? `color-mix(in srgb, ${theme.colors.error} 12%, ${theme.colors.bgActivity})`
+			: (theme.colors.crossAgentBubbleBg ??
+				`color-mix(in srgb, ${theme.colors.accent} 14%, ${theme.colors.bgActivity})`);
+		const crossAgentBubbleBorder = isCrossAgentError
+			? theme.colors.error + '66'
+			: (theme.colors.crossAgentBubbleBorder ?? theme.colors.accent + '55');
 
 		return (
 			<div
@@ -1058,15 +1064,21 @@ const LogItemComponent = memo(
 					{crossAgent &&
 						(() => {
 							const providerName = getAgentDisplayName(crossAgent.fromToolType);
-							const label = `${providerName} · "${crossAgent.fromAgentName}"`;
+							// Long agent names truncate in the pill (full name in the
+							// tooltip); the display name stays intact.
+							const agentLabel = truncateText(crossAgent.fromAgentName, 24);
+							const label = `${providerName} · "${agentLabel}"`;
+							const title = isCrossAgentError
+								? `${providerName} agent "${crossAgent.fromAgentName}" could not respond: ${crossAgent.error}`
+								: `Response from ${providerName} agent "${crossAgent.fromAgentName}" (request ${crossAgent.requestId})`;
 							return (
 								<span
 									className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1 max-w-[80%] text-[10px] px-2 py-0.5 rounded-full pointer-events-auto select-none"
 									style={{
-										backgroundColor: theme.colors.accent,
+										backgroundColor: isCrossAgentError ? theme.colors.error : theme.colors.accent,
 										color: theme.colors.accentForeground,
 									}}
-									title={`Response from ${providerName} agent "${crossAgent.fromAgentName}" (request ${crossAgent.requestId})`}
+									title={title}
 								>
 									{isCrossAgentStreaming && (
 										<Loader2 className="w-3 h-3 shrink-0 animate-spin" aria-hidden="true" />
@@ -1294,6 +1306,9 @@ const LogItemComponent = memo(
 			// carry no new text), so the pill/glow needs this to settle.
 			prevProps.log.metadata?.crossAgent?.streaming ===
 				nextProps.log.metadata?.crossAgent?.streaming &&
+			// A terminal error chunk may add `error` without changing text; the
+			// red-tinted bubble variant depends on it.
+			prevProps.log.metadata?.crossAgent?.error === nextProps.log.metadata?.crossAgent?.error &&
 			prevProps.isExpanded === nextProps.isExpanded &&
 			prevProps.localFilterQuery === nextProps.localFilterQuery &&
 			prevProps.filterMode.mode === nextProps.filterMode.mode &&

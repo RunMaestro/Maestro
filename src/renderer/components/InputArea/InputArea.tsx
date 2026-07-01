@@ -7,6 +7,8 @@ import {
 } from '../../stores/composerInputStore';
 import { ThinkingStatusPill } from '../ThinkingStatusPill';
 import { QuitWhenIdleIndicator } from '../QuitWhenIdleIndicator';
+import { CrossAgentResponseIndicator } from '../CrossAgentResponseIndicator';
+import { getActiveTab } from '../../utils/tabHelpers';
 import { MergeProgressOverlay } from '../MergeProgressOverlay';
 import { ExecutionQueueIndicator } from '../ExecutionQueueIndicator';
 import { ContextWarningSash } from '../ContextWarningSash';
@@ -130,6 +132,9 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	} = props;
 
 	const spellCheckEnabled = useSettingsStore((state) => state.spellCheck);
+	const crossAgentMentionsEnabled = useSettingsStore(
+		(state) => state.encoreFeatures.crossAgentMentions
+	);
 	const openAnnotator = useImageAnnotatorStore((state) => state.openAnnotator);
 	const {
 		modelMenuOpen,
@@ -334,6 +339,16 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 			{/* QuitWhenIdleIndicator - sits above the thinking pill while a deferred quit is armed */}
 			<QuitWhenIdleIndicator theme={theme} />
 
+			{/* CrossAgentResponseIndicator - "N agents responding…" while consulted
+			    agents stream replies into this tab. Only meaningful in AI mode. */}
+			{session.inputMode === 'ai' && crossAgentMentionsEnabled && (
+				<CrossAgentResponseIndicator
+					theme={theme}
+					sourceSessionId={session.id}
+					sourceTabId={getActiveTab(session)?.id}
+				/>
+			)}
+
 			{/* ThinkingStatusPill - only show in AI mode when there are thinking items or AutoRun */}
 			{session.inputMode === 'ai' && (thinkingItems.length > 0 || autoRunState?.isRunning) && (
 				<ThinkingStatusPill
@@ -418,6 +433,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 				counts={atMentionCounts}
 				category={atMentionCategory}
 				setCategory={setAtMentionCategory}
+				crossAgentMentionsEnabled={crossAgentMentionsEnabled}
 				selectedIndex={selectedAtMentionIndex}
 				filter={atMentionFilter}
 				startIndex={atMentionStartIndex}

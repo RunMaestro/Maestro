@@ -1230,6 +1230,26 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 			'markdown',
 		],
 	},
+	{
+		id: 'encore-cross-agent-mentions',
+		tab: 'encore',
+		tabLabel: 'Encore Features',
+		label: 'Cross-Agent Mentions',
+		description:
+			'Pick another agent from the @ mention picker to consult it inside any chat; responses stream back into the conversation',
+		keywords: [
+			'cross-agent',
+			'cross agent',
+			'mention',
+			'mentions',
+			'at mention',
+			'consult',
+			'agent picker',
+			'ask another agent',
+			'fan out',
+			'group',
+		],
+	},
 ];
 
 // ---------------------------------------------------------------------------

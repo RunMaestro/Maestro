@@ -18,7 +18,8 @@
 
 import { useCallback, useEffect, useRef } from 'react';
 import type { LogEntry } from '../../types';
-import { updateSessionWith } from '../../stores/sessionStore';
+import { updateSessionWith, useSessionStore } from '../../stores/sessionStore';
+import { useCrossAgentInFlightStore } from '../../stores/crossAgentInFlightStore';
 import { generateId } from '../../utils/ids';
 import { logger } from '../../utils/logger';
 import { inferContextStrategy, selectContextWindow } from '../../../shared/crossAgentContext';
@@ -82,6 +83,9 @@ export function buildCrossAgentLogEntry(
 				// Streaming until the terminal (`done`) chunk lands. Phase 04's
 				// attribution pill shows a spinner + pulses the border while true.
 				streaming: !chunk.done,
+				// Phase 05: surface the failure inline as a red-tinted bubble
+				// variant instead of throwing.
+				...(chunk.error ? { error: chunk.error } : {}),
 			},
 		},
 	};
@@ -145,7 +149,11 @@ export function useCrossAgentDispatch(): UseCrossAgentDispatchResult {
 			};
 		});
 
-		if (chunk.done) map.delete(chunk.requestId);
+		if (chunk.done) {
+			map.delete(chunk.requestId);
+			// Drop it from the live "N agents responding…" indicator.
+			useCrossAgentInFlightStore.getState().finish(chunk.requestId);
+		}
 	}, []);
 
 	useEffect(() => {
@@ -182,6 +190,21 @@ export function useCrossAgentDispatch(): UseCrossAgentDispatchResult {
 						accumulated: '',
 					});
 				}
+				// Register for the live "N agents responding…" indicator. Resolve
+				// the target's display name/tool type now (it came from the same
+				// sessions list) rather than waiting on the first response chunk.
+				const target = useSessionStore
+					.getState()
+					.sessions.find((s) => s.id === opts.targetSessionId);
+				useCrossAgentInFlightStore.getState().start({
+					requestId,
+					sourceSessionId: opts.sourceSessionId,
+					sourceTabId: opts.sourceTabId,
+					targetSessionId: opts.targetSessionId,
+					targetAgentName: target?.name ?? 'agent',
+					targetToolType: target?.toolType,
+					startedAt: Date.now(),
+				});
 			})
 			.catch((err) => {
 				logger.error(
