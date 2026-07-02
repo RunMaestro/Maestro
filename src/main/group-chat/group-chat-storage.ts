@@ -156,15 +156,18 @@ function getImagesDir(id: string): string {
 }
 
 /**
- * Sanitizes a chat name by removing invalid filesystem characters.
+ * Normalizes a chat display name. The on-disk directory is keyed by UUID, not
+ * the name (see getGroupChatDir), so filesystem-invalid characters like `/` are
+ * allowed here - the same as regular agent names. We only strip control
+ * characters, trim, cap the length, and fall back when empty.
  *
  * @param name - Raw chat name
- * @returns Sanitized chat name
+ * @returns Normalized chat name
  */
 function sanitizeChatName(name: string): string {
 	return (
 		name
-			.replace(/[<>:"/\\|?*\x00-\x1f]/g, '') // Remove filesystem-invalid chars
+			.replace(/[\x00-\x1f]/g, '') // Strip control chars only; keep printable special chars
 			.trim()
 			.slice(0, 255) || 'Untitled Chat'
 	); // Limit length, fallback if empty
@@ -334,6 +337,8 @@ export function updateGroupChat(id: string, updates: GroupChatUpdate): Promise<G
 		const updated: GroupChat = {
 			...chat,
 			...updates,
+			// Keep renames consistent with creation: normalize the display name.
+			...(updates.name !== undefined ? { name: sanitizeChatName(updates.name) } : {}),
 			updatedAt: Date.now(),
 		};
 

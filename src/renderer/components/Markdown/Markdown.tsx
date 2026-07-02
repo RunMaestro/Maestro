@@ -111,7 +111,7 @@ export const Markdown = memo(function Markdown({
 	bionifyIntensity,
 	bionifyAlgorithm,
 	onCopy,
-	allowRawHtml = false,
+	allowRawHtml,
 	chatLineBreaks = false,
 	chatMath = false,
 	frontmatter = true,
@@ -126,6 +126,12 @@ export const Markdown = memo(function Markdown({
 	extraRehypePlugins,
 }: MarkdownProps) {
 	const isChat = preset === 'chat';
+
+	// Chat surfaces render sanitized raw HTML (inline SVG, etc.) by default so
+	// agents can show diagrams and illustrations, not just a terminal's worth of
+	// text. Sanitization happens at the HAST level via rehype-sanitize. Other
+	// presets stay opt-in. An explicit prop always wins over the per-preset default.
+	const effectiveAllowRawHtml = allowRawHtml ?? isChat;
 
 	// Resolve homeDir for tilde path expansion (module-level cache, fetched once).
 	const [homeDir, setHomeDir] = useState<string | undefined>(getHomeDir);
@@ -163,7 +169,7 @@ export const Markdown = memo(function Markdown({
 			frontmatter,
 			chatLineBreaks: isChat ? chatLineBreaks : false,
 			chatMath: isChat ? chatMath : false,
-			allowRawHtml,
+			allowRawHtml: effectiveAllowRawHtml,
 			fileLinks: { indices: fileTreeIndices, cwd, projectRoot, homeDir },
 			extraRemarkPlugins,
 			extraRehypePlugins,
@@ -174,7 +180,7 @@ export const Markdown = memo(function Markdown({
 		isChat,
 		chatLineBreaks,
 		chatMath,
-		allowRawHtml,
+		effectiveAllowRawHtml,
 		fileTreeIndices,
 		cwd,
 		projectRoot,
@@ -183,10 +189,11 @@ export const Markdown = memo(function Markdown({
 		extraRehypePlugins,
 	]);
 
-	// Preprocess: link-space fix always; chat math normalization + sanitize for chat.
+	// Preprocess: link-space fix always; chat math normalization for chat.
+	// Raw-HTML sanitization happens downstream at the HAST level (rehype-sanitize).
 	const processedContent = useMemo(
-		() => preprocessMarkdown(content, { chatMath: isChat ? chatMath : false, allowRawHtml }),
-		[content, isChat, chatMath, allowRawHtml]
+		() => preprocessMarkdown(content, { chatMath: isChat ? chatMath : false }),
+		[content, isChat, chatMath]
 	);
 
 	// Build the component map per preset (all share the leaf modules).

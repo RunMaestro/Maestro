@@ -19,7 +19,10 @@ import remarkBreaks from 'remark-breaks';
 import remarkMath from 'remark-math';
 import remarkFrontmatter from 'remark-frontmatter';
 import rehypeRaw from 'rehype-raw';
+import rehypeSanitize from 'rehype-sanitize';
 import rehypeKatex from 'rehype-katex';
+import { svgSanitizeSchema } from './sanitizeSchema';
+import { remarkAlert } from './remarkAlert';
 import { REMARK_GFM_PLUGINS } from '../../../shared/markdownPlugins';
 import { remarkFrontmatterTable } from '../../utils/remarkFrontmatterTable';
 import { remarkFileLinks, type buildFileTreeIndices } from '../../utils/remarkFileLinks';
@@ -48,6 +51,8 @@ export interface BuildMarkdownPluginsOptions {
 	chatMath?: boolean;
 	/** Allow raw HTML passthrough via rehype-raw (sanitize upstream). */
 	allowRawHtml?: boolean;
+	/** Transform GitHub `[!NOTE]`-style blockquotes into styled callouts. Default true. */
+	alerts?: boolean;
 	/** When provided and active, adds the remarkFileLinks transform. */
 	fileLinks?: MarkdownFileLinkOptions;
 	/** Extra remark plugins appended after the standard stack (e.g. FilePreview's remarkHighlight). */
@@ -81,12 +86,20 @@ export function buildMarkdownPlugins(
 		chatLineBreaks = false,
 		chatMath = false,
 		allowRawHtml = false,
+		alerts = true,
 		fileLinks,
 		extraRemarkPlugins,
 		extraRehypePlugins,
 	} = options;
 
 	const remarkPlugins: PluggableList = [...REMARK_GFM_PLUGINS];
+
+	// GitHub alert callouts run right after GFM (before remark-breaks) so the
+	// `[!TYPE]` marker and its body are still in a single text node, which is the
+	// shape remarkAlert's matcher expects.
+	if (alerts) {
+		remarkPlugins.push(remarkAlert);
+	}
 
 	if (frontmatter) {
 		remarkPlugins.push(remarkFrontmatter, remarkFrontmatterTable);
@@ -123,9 +136,16 @@ export function buildMarkdownPlugins(
 		remarkPlugins.push(...extraRemarkPlugins);
 	}
 
-	// rehype-raw and rehype-katex are independent and can stack.
+	// rehype-raw parses raw HTML into HAST; rehype-sanitize then strips XSS
+	// vectors while permitting inline SVG (see svgSanitizeSchema). Order is
+	// load-bearing: raw must run first so sanitize inspects real elements, and
+	// sanitizing here (post-parse) avoids the raw-string DOMPurify pass that used
+	// to corrupt code fences and `<`/`>` operators in ordinary chat text.
 	const rehypePlugins: PluggableList = [];
-	if (allowRawHtml) rehypePlugins.push(rehypeRaw);
+	if (allowRawHtml) {
+		rehypePlugins.push(rehypeRaw);
+		rehypePlugins.push([rehypeSanitize, svgSanitizeSchema]);
+	}
 	if (chatMath) rehypePlugins.push(rehypeKatex);
 	if (extraRehypePlugins) rehypePlugins.push(...extraRehypePlugins);
 

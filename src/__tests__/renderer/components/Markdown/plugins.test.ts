@@ -4,6 +4,7 @@ import remarkBreaks from 'remark-breaks';
 import remarkMath from 'remark-math';
 import remarkFrontmatter from 'remark-frontmatter';
 import rehypeRaw from 'rehype-raw';
+import rehypeSanitize from 'rehype-sanitize';
 import rehypeKatex from 'rehype-katex';
 import { remarkFrontmatterTable } from '../../../../renderer/utils/remarkFrontmatterTable';
 import { remarkFileLinks } from '../../../../renderer/utils/remarkFileLinks';
@@ -67,10 +68,12 @@ describe('buildMarkdownPlugins', () => {
 		expect(pluginFns(rehypePlugins as unknown[])).toContain(rehypeKatex);
 	});
 
-	it('adds rehype-raw only when allowRawHtml is set', () => {
-		expect(
-			pluginFns(buildMarkdownPlugins({ allowRawHtml: true }).rehypePlugins as unknown[])
-		).toContain(rehypeRaw);
+	it('adds rehype-raw + rehype-sanitize (in that order) only when allowRawHtml is set', () => {
+		const fns = pluginFns(buildMarkdownPlugins({ allowRawHtml: true }).rehypePlugins as unknown[]);
+		expect(fns).toContain(rehypeRaw);
+		expect(fns).toContain(rehypeSanitize);
+		// sanitize must run AFTER raw so it inspects parsed elements, not raw strings
+		expect(fns.indexOf(rehypeSanitize)).toBeGreaterThan(fns.indexOf(rehypeRaw));
 		expect(buildMarkdownPlugins({ allowRawHtml: false }).rehypePlugins).toBeUndefined();
 	});
 

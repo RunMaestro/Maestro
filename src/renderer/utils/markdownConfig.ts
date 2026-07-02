@@ -23,6 +23,8 @@ import { REMARK_GFM_PLUGINS } from '../../shared/markdownPlugins';
 import { extractHexColor } from '../../shared/hexColor';
 import { openUrl } from './openUrl';
 import { BionifyText, getBionifyReadingModeStyles } from './bionifyReadingMode';
+import { AlertCallout } from '../components/Markdown/components/AlertCallout';
+import { alertTypeFromClassName } from '../components/Markdown/remarkAlert';
 import {
 	INLINE_CODE_CLICK_PROPS,
 	INLINE_CODE_CLICK_STYLE,
@@ -427,9 +429,23 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 		td: ({ children }: any) => React.createElement('td', null, withReadableTransforms(children)),
 		th: ({ children }: any) => React.createElement('th', null, withReadableTransforms(children)),
 
-		// Override blockquote to apply search highlighting
-		blockquote: ({ children }: any) =>
-			React.createElement('blockquote', null, withReadableTransforms(children)),
+		// Override blockquote to apply search highlighting; render GitHub
+		// `[!NOTE]`-style callouts (tagged by remarkAlert) as styled AlertCallouts.
+		blockquote: ({ children, className }: any) => {
+			const alertType = alertTypeFromClassName(className);
+			if (alertType) {
+				return React.createElement(AlertCallout, {
+					type: alertType,
+					theme,
+					children: withReadableTransforms(children),
+				});
+			}
+			return React.createElement(
+				'blockquote',
+				className ? { className } : null,
+				withReadableTransforms(children)
+			);
+		},
 
 		// Override strong/em to apply search highlighting
 		strong: ({ children }: any) =>
