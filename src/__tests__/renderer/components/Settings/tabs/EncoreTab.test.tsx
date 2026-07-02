@@ -1,22 +1,22 @@
 /**
- * Tests for EncoreTab component
+ * Tests for EncoreTab component (the Plugins tab)
  *
- * Tests the Encore Features settings tab including:
- * - Rendering header and description text
+ * Layout contract: the Extensions marketplace renders FIRST (mocked here);
+ * below it a "Feature settings" group holds the four per-feature config
+ * sections as collapsed-by-default accordion cards. Tests cover:
+ * - Marketplace-first layout + "Feature settings" heading
+ * - Collapsed-by-default accordions (header click expands; disabled hint)
+ * - Tile Configure -> onConfigureBuiltin expands + scrolls to the section
  * - Marketplace-managed state pill + Manage in Extensions affordance
  * - Provider dropdown with detected agents
  * - Agent detection on mount and refresh
  * - Customize button expanding config panel
  * - Custom path/args input fields
  * - Custom env vars editor integration
- * - Lookback period slider (1-90 range)
- * - Lookback scale markers
+ * - Lookback period slider (1-90 range) and scale markers
  * - Configuration persistence via window.maestro.agents.setConfig
- * - Agent config panel rendering for supported agents
  * - Models selection and refresh
  * - Agent detection error handling
- * - Config expansion/collapse toggle
- * - DN description text when enabled
  */
 
 import React from 'react';
@@ -31,7 +31,16 @@ import { mockTheme } from '../../../../helpers/mockTheme';
 // Stats), which would break getByText queries; the marketplace has its own
 // e2e + component coverage. This suite tests EncoreTab's config sections only.
 vi.mock('../../../../../renderer/components/Settings/Extensions/ExtensionsView', () => ({
-	ExtensionsView: () => <div data-testid="extensions-view-mock" />,
+	ExtensionsView: (props: { onConfigureBuiltin?: (flag: string) => void }) => (
+		<div data-testid="extensions-view-mock">
+			{/* Stand-in for a builtin tile's Configure action: EncoreTab passes
+			    configureFeature, which expands the section then scrolls to it. */}
+			<button
+				data-testid="trigger-configure-usage-stats"
+				onClick={() => props.onConfigureBuiltin?.('usageStats')}
+			/>
+		</div>
+	),
 }));
 // Mock AgentConfigPanel to avoid deep rendering
 vi.mock('../../../../../renderer/components/shared/AgentConfigPanel', () => ({
@@ -168,6 +177,21 @@ const mockAllAgents: AgentConfig[] = [
 	},
 ];
 
+/**
+ * Expand a collapsed config section by clicking its accordion header.
+ * Sections are collapsed by default; config children render only when open.
+ */
+function openSection(name: string | RegExp): void {
+	const headers = screen.getAllByTestId('encore-feature-header');
+	const header = headers.find((h) =>
+		typeof name === 'string' ? h.textContent?.includes(name) : name.test(h.textContent ?? '')
+	);
+	if (!header) {
+		throw new Error(`No encore-feature-header matching ${String(name)}`);
+	}
+	fireEvent.click(header);
+}
+
 describe('EncoreTab', () => {
 	beforeEach(() => {
 		vi.useFakeTimers();
@@ -192,14 +216,21 @@ describe('EncoreTab', () => {
 	// ── 1. Rendering ──────────────────────────────────────────────────────
 
 	describe('rendering', () => {
-		it('should render Encore Features header', async () => {
+		it('renders the marketplace first, then the Feature settings group', async () => {
 			render(<EncoreTab theme={mockTheme} isOpen={true} />);
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			expect(screen.getByText('Encore Features')).toBeInTheDocument();
+			const marketplace = screen.getByTestId('extensions-view-mock');
+			const heading = screen.getByText('Feature settings');
+			expect(heading.tagName).toBe('H3');
+			// Layout contract: the marketplace is the management surface and
+			// renders ABOVE the per-feature config sections.
+			expect(
+				marketplace.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING
+			).toBeTruthy();
 		});
 
 		it('should render description text', async () => {
@@ -209,10 +240,8 @@ describe('EncoreTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			expect(
-				screen.getByText(/Optional features that extend Maestro's capabilities/)
-			).toBeInTheDocument();
-			expect(screen.getByText(/Disabled features are completely hidden/)).toBeInTheDocument();
+			expect(screen.getByText(/Configuration for the built-in plugins above/)).toBeInTheDocument();
+			expect(screen.getByText(/Enable\/disable lives on the tiles/)).toBeInTheDocument();
 		});
 
 		it("should render Director's Notes feature section", async () => {
@@ -247,12 +276,30 @@ describe('EncoreTab', () => {
 				screen.getByText('Unified history view and AI-generated synopsis across all sessions')
 			).toBeInTheDocument();
 		});
+
+		it('renders all four config sections collapsed by default', async () => {
+			render(<EncoreTab theme={mockTheme} isOpen={true} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const headers = screen.getAllByTestId('encore-feature-header');
+			expect(headers).toHaveLength(4);
+			for (const header of headers) {
+				expect(header).toHaveAttribute('aria-expanded', 'false');
+			}
+			// No config content or disabled hints leak out while collapsed.
+			expect(screen.queryByTestId('encore-feature-disabled-hint')).not.toBeInTheDocument();
+			expect(screen.queryByText('Default lookback window')).not.toBeInTheDocument();
+			expect(screen.queryByText('Synopsis Provider')).not.toBeInTheDocument();
+		});
 	});
 
 	// ── 2. Director's Notes management (marketplace-owned) ───────────────
 
 	describe("Director's Notes management surface", () => {
-		it('should default to off (DN settings hidden)', async () => {
+		it('should default to off (DN settings hidden even when expanded)', async () => {
 			render(<EncoreTab theme={mockTheme} isOpen={true} />);
 
 			await act(async () => {
@@ -260,7 +307,14 @@ describe('EncoreTab', () => {
 			});
 
 			expect(screen.getByText("Director's Notes")).toBeInTheDocument();
+			openSection("Director's Notes");
+
+			// Open but disabled: the hint points at the marketplace instead of
+			// rendering the DN config controls.
 			expect(screen.queryByText('Synopsis Provider')).not.toBeInTheDocument();
+			expect(screen.getByTestId('encore-feature-disabled-hint')).toHaveTextContent(
+				'Enable this plugin in Extensions above to configure it.'
+			);
 		});
 
 		it('renders a state pill + Manage in Extensions instead of a toggle', async () => {
@@ -272,12 +326,14 @@ describe('EncoreTab', () => {
 
 			// All four config sections render the marketplace-managed header.
 			expect(screen.getAllByTestId('encore-feature-state')).toHaveLength(4);
-			// The section title is no longer wrapped in a toggle button.
-			expect(screen.getByText("Director's Notes").closest('button')).toBeNull();
 			// Manage never writes the Encore flags — enable/disable lives on the
-			// marketplace tile (routed through the first-party bridge).
+			// marketplace tile (routed through the first-party bridge). Header
+			// clicks only toggle the accordion, never the flag.
 			for (const btn of screen.getAllByTestId('encore-feature-manage')) {
 				fireEvent.click(btn);
+			}
+			for (const header of screen.getAllByTestId('encore-feature-header')) {
+				fireEvent.click(header);
 			}
 			expect(mockSetEncoreFeatures).not.toHaveBeenCalled();
 		});
@@ -296,6 +352,8 @@ describe('EncoreTab', () => {
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
+
+			openSection("Director's Notes");
 
 			const select = screen.getByLabelText('Select synopsis provider agent');
 			expect(select).toBeInTheDocument();
@@ -316,6 +374,8 @@ describe('EncoreTab', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
+			openSection("Director's Notes");
+
 			const select = screen.getByLabelText('Select synopsis provider agent');
 			fireEvent.change(select, { target: { value: 'codex' } });
 
@@ -335,6 +395,8 @@ describe('EncoreTab', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
+			openSection("Director's Notes");
+
 			expect(screen.getByText('Synopsis Provider')).toBeInTheDocument();
 		});
 
@@ -344,6 +406,8 @@ describe('EncoreTab', () => {
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
+
+			openSection("Director's Notes");
 
 			expect(
 				screen.getByText('The AI agent used to generate synopsis summaries')
@@ -396,6 +460,8 @@ describe('EncoreTab', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
+			openSection("Director's Notes");
+
 			const select = screen.getByLabelText('Select synopsis provider agent');
 			const options = select.querySelectorAll('option');
 
@@ -426,6 +492,8 @@ describe('EncoreTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
+			openSection("Director's Notes");
+
 			expect(screen.getByText('Detecting agents...')).toBeInTheDocument();
 
 			// Resolve detection
@@ -446,6 +514,8 @@ describe('EncoreTab', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
+			openSection("Director's Notes");
+
 			expect(screen.getByText(/No agents available/)).toBeInTheDocument();
 		});
 	});
@@ -463,6 +533,8 @@ describe('EncoreTab', () => {
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
+
+			openSection("Director's Notes");
 
 			// Expand the config panel
 			const customizeButton = screen.getByTitle('Customize provider settings');
@@ -500,6 +572,8 @@ describe('EncoreTab', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
+			openSection("Director's Notes");
+
 			const customizeButton = screen.getByTitle('Customize provider settings');
 			expect(customizeButton).toBeInTheDocument();
 			expect(customizeButton).toHaveTextContent('Customize');
@@ -511,6 +585,8 @@ describe('EncoreTab', () => {
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
+
+			openSection("Director's Notes");
 
 			expect(screen.queryByTestId('agent-config-panel')).not.toBeInTheDocument();
 
@@ -531,6 +607,8 @@ describe('EncoreTab', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
+			openSection("Director's Notes");
+
 			const customizeButton = screen.getByTitle('Customize provider settings');
 			fireEvent.click(customizeButton);
 
@@ -547,6 +625,8 @@ describe('EncoreTab', () => {
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
+
+			openSection("Director's Notes");
 
 			vi.mocked(window.maestro.agents.getConfig).mockClear();
 
@@ -575,6 +655,8 @@ describe('EncoreTab', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
+			openSection("Director's Notes");
+
 			// Expand config
 			fireEvent.click(screen.getByTitle('Customize provider settings'));
 
@@ -591,6 +673,8 @@ describe('EncoreTab', () => {
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
+
+			openSection("Director's Notes");
 
 			fireEvent.click(screen.getByTitle('Customize provider settings'));
 
@@ -613,6 +697,8 @@ describe('EncoreTab', () => {
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
+
+			openSection("Director's Notes");
 
 			fireEvent.click(screen.getByTitle('Customize provider settings'));
 
@@ -642,6 +728,8 @@ describe('EncoreTab', () => {
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
+
+			openSection("Director's Notes");
 
 			fireEvent.click(screen.getByTitle('Customize provider settings'));
 
@@ -673,6 +761,8 @@ describe('EncoreTab', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
+			openSection("Director's Notes");
+
 			fireEvent.click(screen.getByTitle('Customize provider settings'));
 
 			await act(async () => {
@@ -688,6 +778,8 @@ describe('EncoreTab', () => {
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
+
+			openSection("Director's Notes");
 
 			fireEvent.click(screen.getByTitle('Customize provider settings'));
 
@@ -712,6 +804,8 @@ describe('EncoreTab', () => {
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
+
+			openSection("Director's Notes");
 
 			fireEvent.click(screen.getByTitle('Customize provider settings'));
 
@@ -745,6 +839,8 @@ describe('EncoreTab', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
+			openSection("Director's Notes");
+
 			fireEvent.click(screen.getByTitle('Customize provider settings'));
 
 			await act(async () => {
@@ -769,6 +865,8 @@ describe('EncoreTab', () => {
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
+
+			openSection("Director's Notes");
 
 			fireEvent.click(screen.getByTitle('Customize provider settings'));
 
@@ -799,6 +897,8 @@ describe('EncoreTab', () => {
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
+
+			openSection("Director's Notes");
 
 			fireEvent.click(screen.getByTitle('Customize provider settings'));
 
@@ -836,6 +936,8 @@ describe('EncoreTab', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
+			openSection("Director's Notes");
+
 			const slider = screen.getByRole('slider');
 			expect(slider).toBeInTheDocument();
 			expect(slider).toHaveAttribute('min', '1');
@@ -849,6 +951,8 @@ describe('EncoreTab', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
+			openSection("Director's Notes");
+
 			expect(screen.getByText(/Default Lookback Period: 7 days/)).toBeInTheDocument();
 		});
 
@@ -858,6 +962,8 @@ describe('EncoreTab', () => {
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
+
+			openSection("Director's Notes");
 
 			const slider = screen.getByRole('slider');
 			expect(slider).toHaveValue('7');
@@ -869,6 +975,8 @@ describe('EncoreTab', () => {
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
+
+			openSection("Director's Notes");
 
 			const slider = screen.getByRole('slider');
 			fireEvent.change(slider, { target: { value: '30' } });
@@ -885,6 +993,8 @@ describe('EncoreTab', () => {
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
+
+			openSection("Director's Notes");
 
 			expect(screen.getByText(/How far back to look when generating notes/)).toBeInTheDocument();
 		});
@@ -903,6 +1013,8 @@ describe('EncoreTab', () => {
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
+
+			openSection("Director's Notes");
 
 			expect(screen.getByText('1 day')).toBeInTheDocument();
 			expect(screen.getByText('7')).toBeInTheDocument();
@@ -928,6 +1040,8 @@ describe('EncoreTab', () => {
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
+
+			openSection("Director's Notes");
 
 			// Expand config panel
 			fireEvent.click(screen.getByTitle('Customize provider settings'));
@@ -970,6 +1084,8 @@ describe('EncoreTab', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
+			openSection("Director's Notes");
+
 			fireEvent.click(screen.getByTitle('Customize provider settings'));
 
 			await act(async () => {
@@ -986,6 +1102,8 @@ describe('EncoreTab', () => {
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
+
+			openSection("Director's Notes");
 
 			fireEvent.click(screen.getByTitle('Customize provider settings'));
 
@@ -1011,6 +1129,8 @@ describe('EncoreTab', () => {
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
+
+			openSection("Director's Notes");
 
 			fireEvent.click(screen.getByTitle('Customize provider settings'));
 
@@ -1073,6 +1193,8 @@ describe('EncoreTab', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
+			openSection("Director's Notes");
+
 			fireEvent.click(screen.getByTitle('Customize provider settings'));
 
 			await act(async () => {
@@ -1091,6 +1213,8 @@ describe('EncoreTab', () => {
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
+
+			openSection("Director's Notes");
 
 			fireEvent.click(screen.getByTitle('Customize provider settings'));
 
@@ -1118,6 +1242,8 @@ describe('EncoreTab', () => {
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
+
+			openSection("Director's Notes");
 
 			fireEvent.click(screen.getByTitle('Customize provider settings'));
 
@@ -1157,6 +1283,8 @@ describe('EncoreTab', () => {
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
+
+			openSection("Director's Notes");
 
 			// Should not be stuck in detecting state
 			expect(screen.queryByText('Detecting agents...')).not.toBeInTheDocument();
@@ -1204,6 +1332,8 @@ describe('EncoreTab', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
+			openSection("Director's Notes");
+
 			fireEvent.click(screen.getByTitle('Customize provider settings'));
 
 			await act(async () => {
@@ -1228,6 +1358,8 @@ describe('EncoreTab', () => {
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
+
+			openSection("Director's Notes");
 
 			const customizeButton = screen.getByTitle('Customize provider settings');
 
@@ -1265,6 +1397,8 @@ describe('EncoreTab', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
+			openSection("Director's Notes");
+
 			// The customize button should have a colored dot indicating customization
 			const customizeButton = screen.getByTitle('Customize provider settings');
 			// The dot is a span inside the button with a rounded-full class
@@ -1287,6 +1421,8 @@ describe('EncoreTab', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
+			openSection("Director's Notes");
+
 			expect(
 				screen.getByText('Unified history view and AI-generated synopsis across all sessions')
 			).toBeInTheDocument();
@@ -1296,7 +1432,7 @@ describe('EncoreTab', () => {
 			expect(screen.getByText(/How far back to look when generating notes/)).toBeInTheDocument();
 		});
 
-		it('should hide DN settings section when DN is disabled', async () => {
+		it('should hide DN settings section when DN is disabled (even expanded)', async () => {
 			mockUseSettingsOverrides = { encoreFeatures: { directorNotes: false } };
 
 			render(<EncoreTab theme={mockTheme} isOpen={true} />);
@@ -1305,11 +1441,16 @@ describe('EncoreTab', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
+			// Expanding the section must not leak DN config while disabled —
+			// the hint renders in place of the controls.
+			openSection("Director's Notes");
+
 			expect(screen.queryByText('Synopsis Provider')).not.toBeInTheDocument();
 			expect(screen.queryByRole('slider')).not.toBeInTheDocument();
 			expect(
 				screen.queryByText('The AI agent used to generate synopsis summaries')
 			).not.toBeInTheDocument();
+			expect(screen.getByTestId('encore-feature-disabled-hint')).toBeInTheDocument();
 		});
 	});
 
@@ -1337,6 +1478,8 @@ describe('EncoreTab', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
+			openSection("Director's Notes");
+
 			const select = screen.getByLabelText('Select synopsis provider agent');
 			fireEvent.change(select, { target: { value: 'codex' } });
 
@@ -1355,6 +1498,8 @@ describe('EncoreTab', () => {
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
+
+			openSection("Director's Notes");
 
 			// Expand config
 			fireEvent.click(screen.getByTitle('Customize provider settings'));
@@ -1430,9 +1575,14 @@ describe('EncoreTab', () => {
 
 			render(<EncoreTab theme={mockTheme} isOpen={true} />);
 
-			expect(screen.getByText('Maestro Cue').closest('button')).toBeNull();
+			// The header only toggles the accordion; Manage only navigates.
+			// Neither ever writes the Encore flags — enable/disable lives on
+			// the marketplace tile.
 			for (const btn of screen.getAllByTestId('encore-feature-manage')) {
 				fireEvent.click(btn);
+			}
+			for (const header of screen.getAllByTestId('encore-feature-header')) {
+				fireEvent.click(header);
 			}
 			expect(mockSetEncoreFeatures).not.toHaveBeenCalled();
 		});
@@ -1452,7 +1602,10 @@ describe('EncoreTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
+			// Even expanded, a disabled feature shows the hint, not its config.
+			openSection('Usage & Stats');
 			expect(screen.queryByText('Default lookback window')).not.toBeInTheDocument();
+			expect(screen.getByTestId('encore-feature-disabled-hint')).toBeInTheDocument();
 		});
 
 		it('does not write encore flags or the stats gate from the section header', async () => {
@@ -1466,8 +1619,8 @@ describe('EncoreTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			expect(screen.getByText('Usage & Stats').closest('button')).toBeNull();
 			fireEvent.click(screen.getAllByTestId('encore-feature-manage')[0]);
+			openSection('Usage & Stats');
 			// The stats-collection gate is synced by the marketplace toggle
 			// (useExtensions.toggleBuiltin), not this config section.
 			expect(mockSetStatsCollectionEnabled).not.toHaveBeenCalled();
@@ -1485,6 +1638,8 @@ describe('EncoreTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
+			openSection('Usage & Stats');
+
 			expect(screen.getByText('Default lookback window')).toBeInTheDocument();
 			const dropdown = screen.getByLabelText('Select default lookback window');
 			expect(dropdown).toBeInTheDocument();
@@ -1500,6 +1655,8 @@ describe('EncoreTab', () => {
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
+
+			openSection('Usage & Stats');
 
 			const dropdown = screen.getByLabelText('Select default lookback window');
 			const options = dropdown.querySelectorAll('option');
@@ -1524,6 +1681,8 @@ describe('EncoreTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
+			openSection('Usage & Stats');
+
 			const dropdown = screen.getByLabelText('Select default lookback window');
 			fireEvent.change(dropdown, { target: { value: 'quarter' } });
 			expect(mockSetDefaultStatsTimeRange).toHaveBeenCalledWith('quarter');
@@ -1541,8 +1700,50 @@ describe('EncoreTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
+			openSection('Usage & Stats');
+
 			const dropdown = screen.getByLabelText('Select default lookback window') as HTMLSelectElement;
 			expect(dropdown.value).toBe('month');
+		});
+	});
+	// ── Tile Configure → config section wiring ────────────────────────────
+
+	describe('tile Configure → config section wiring', () => {
+		it('expands the target section and flashes the jump highlight', async () => {
+			mockUseSettingsOverrides = {
+				encoreFeatures: { usageStats: true },
+			};
+
+			render(<EncoreTab theme={mockTheme} isOpen={true} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			// Collapsed before the tile's Configure action fires.
+			const header = screen
+				.getAllByTestId('encore-feature-header')
+				.find((h) => h.textContent?.includes('Usage & Stats'));
+			expect(header).toHaveAttribute('aria-expanded', 'false');
+			expect(screen.queryByText('Default lookback window')).not.toBeInTheDocument();
+
+			// The marketplace tile's Configure action (mock forwards
+			// onConfigureBuiltin('usageStats')).
+			fireEvent.click(screen.getByTestId('trigger-configure-usage-stats'));
+
+			// The scroll happens a frame after the expansion has rendered.
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			expect(header).toHaveAttribute('aria-expanded', 'true');
+			expect(screen.getByText('Default lookback window')).toBeInTheDocument();
+
+			// scrollToEncoreConfigSection targets the section's anchor and
+			// flashes the settings-search highlight on it.
+			const anchor = document.querySelector('[data-setting-id="encore-usage-stats"]');
+			expect(anchor).not.toBeNull();
+			expect(anchor).toHaveClass('settings-search-highlight');
 		});
 	});
 });

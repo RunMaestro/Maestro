@@ -136,12 +136,15 @@ const directorNotesSettings: DirectorNotesSettings = {
 describe('EncoreTab section components', () => {
 	it('wires the Usage & Stats feature card and lookback selector', () => {
 		const onManage = vi.fn();
+		const onToggleOpen = vi.fn();
 		const setDefaultStatsTimeRange = vi.fn();
 
 		const { rerender } = render(
 			<UsageStatsSection
 				theme={mockTheme}
 				enabled={false}
+				open={false}
+				onToggleOpen={onToggleOpen}
 				onManage={onManage}
 				defaultStatsTimeRange="week"
 				setDefaultStatsTimeRange={setDefaultStatsTimeRange}
@@ -159,12 +162,20 @@ describe('EncoreTab section components', () => {
 		expect(screen.getByTestId('encore-feature-state')).toHaveTextContent('Disabled');
 		fireEvent.click(screen.getByTestId('encore-feature-manage'));
 		expect(onManage).toHaveBeenCalledTimes(1);
+		// Manage stopPropagations: it must NOT also toggle the accordion open.
+		expect(onToggleOpen).not.toHaveBeenCalled();
 		expect(screen.queryByText('Default lookback window')).not.toBeInTheDocument();
+
+		// The header is the accordion toggle — clicking it asks the parent to open.
+		fireEvent.click(screen.getByTestId('encore-feature-header'));
+		expect(onToggleOpen).toHaveBeenCalledTimes(1);
 
 		rerender(
 			<UsageStatsSection
 				theme={mockTheme}
 				enabled
+				open
+				onToggleOpen={onToggleOpen}
 				onManage={onManage}
 				defaultStatsTimeRange="month"
 				setDefaultStatsTimeRange={setDefaultStatsTimeRange}
@@ -233,6 +244,8 @@ describe('EncoreTab section components', () => {
 			<SymphonyRegistrySection
 				theme={mockTheme}
 				enabled
+				open
+				onToggleOpen={vi.fn()}
 				onManage={vi.fn()}
 				symphonyRegistryUrls={['https://custom.example/registry.json']}
 				registryState={state}
@@ -259,7 +272,14 @@ describe('EncoreTab section components', () => {
 		const state = cueState({ cueSettingsSaveState: 'no-targets' });
 
 		const { rerender } = render(
-			<CueSettingsSection theme={mockTheme} enabled onManage={vi.fn()} cueState={state} />
+			<CueSettingsSection
+				theme={mockTheme}
+				enabled
+				open
+				onToggleOpen={vi.fn()}
+				onManage={vi.fn()}
+				cueState={state}
+			/>
 		);
 
 		expect(screen.getByText('Global Cue Settings')).toBeInTheDocument();
@@ -283,6 +303,8 @@ describe('EncoreTab section components', () => {
 			<CueSettingsSection
 				theme={mockTheme}
 				enabled
+				open
+				onToggleOpen={vi.fn()}
 				onManage={vi.fn()}
 				cueState={cueState({ cueSettingsLoaded: false })}
 			/>
@@ -298,6 +320,8 @@ describe('EncoreTab section components', () => {
 			<DirectorNotesSection
 				theme={mockTheme}
 				enabled
+				open
+				onToggleOpen={vi.fn()}
 				onManage={vi.fn()}
 				directorNotesSettings={directorNotesSettings}
 				setDirectorNotesSettings={setDirectorNotesSettings}
@@ -326,6 +350,8 @@ describe('EncoreTab section components', () => {
 			<DirectorNotesSection
 				theme={mockTheme}
 				enabled
+				open
+				onToggleOpen={vi.fn()}
 				onManage={vi.fn()}
 				directorNotesSettings={directorNotesSettings}
 				setDirectorNotesSettings={vi.fn()}
@@ -344,6 +370,8 @@ describe('EncoreTab section components', () => {
 			<DirectorNotesSection
 				theme={mockTheme}
 				enabled
+				open
+				onToggleOpen={vi.fn()}
 				onManage={vi.fn()}
 				directorNotesSettings={directorNotesSettings}
 				setDirectorNotesSettings={vi.fn()}
@@ -359,6 +387,8 @@ describe('EncoreTab section components', () => {
 			<DirectorNotesSection
 				theme={mockTheme}
 				enabled
+				open
+				onToggleOpen={vi.fn()}
 				onManage={vi.fn()}
 				directorNotesSettings={directorNotesSettings}
 				setDirectorNotesSettings={vi.fn()}
@@ -369,5 +399,77 @@ describe('EncoreTab section components', () => {
 		expect(screen.getByText('Claude Code Configuration')).toBeInTheDocument();
 		expect(screen.getByText('Customized')).toBeInTheDocument();
 		expect(screen.getByTestId('agent-config-agent-id')).toHaveTextContent('claude-code');
+	});
+	// ── Collapsed-by-default accordion contract (EncoreFeatureCard) ────────
+
+	it('hides config content while collapsed even when the feature is enabled', () => {
+		render(
+			<SymphonyRegistrySection
+				theme={mockTheme}
+				enabled
+				open={false}
+				onToggleOpen={vi.fn()}
+				onManage={vi.fn()}
+				symphonyRegistryUrls={[]}
+				registryState={registryState()}
+			/>
+		);
+
+		expect(screen.getByTestId('encore-feature-header')).toHaveAttribute('aria-expanded', 'false');
+		expect(screen.queryByText('Registry Sources')).not.toBeInTheDocument();
+		expect(screen.queryByTestId('encore-feature-disabled-hint')).not.toBeInTheDocument();
+	});
+
+	it('shows the enable-in-Extensions hint when open but disabled', () => {
+		render(
+			<SymphonyRegistrySection
+				theme={mockTheme}
+				enabled={false}
+				open
+				onToggleOpen={vi.fn()}
+				onManage={vi.fn()}
+				symphonyRegistryUrls={[]}
+				registryState={registryState()}
+			/>
+		);
+
+		expect(screen.getByTestId('encore-feature-header')).toHaveAttribute('aria-expanded', 'true');
+		// Open but disabled: config controls stay hidden; the hint points at the
+		// marketplace, which owns enable/disable.
+		expect(screen.queryByText('Registry Sources')).not.toBeInTheDocument();
+		expect(screen.getByTestId('encore-feature-disabled-hint')).toHaveTextContent(
+			'Enable this plugin in Extensions above to configure it.'
+		);
+	});
+
+	it('exposes Manage as a role=button affordance that does not toggle the accordion', () => {
+		const onToggleOpen = vi.fn();
+		const onManage = vi.fn();
+
+		render(
+			<SymphonyRegistrySection
+				theme={mockTheme}
+				enabled
+				open={false}
+				onToggleOpen={onToggleOpen}
+				onManage={onManage}
+				symphonyRegistryUrls={[]}
+				registryState={registryState()}
+			/>
+		);
+
+		// The Manage affordance is a role=button span nested inside the header
+		// button (a real <button> cannot nest inside another button).
+		const manage = screen.getByRole('button', { name: 'Manage' });
+		expect(manage).toHaveAttribute('data-testid', 'encore-feature-manage');
+
+		fireEvent.click(manage);
+		expect(onManage).toHaveBeenCalledTimes(1);
+		expect(onToggleOpen).not.toHaveBeenCalled();
+
+		// Keyboard activation follows the same contract.
+		fireEvent.keyDown(manage, { key: 'Enter' });
+		expect(onManage).toHaveBeenCalledTimes(2);
+		expect(onToggleOpen).not.toHaveBeenCalled();
 	});
 });
