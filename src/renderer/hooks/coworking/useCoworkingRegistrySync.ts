@@ -156,6 +156,11 @@ export function useCoworkingRegistrySync(): void {
 		const payload = JSON.stringify({ perSession, perSessionBrowsers, removed });
 		if (payload === lastPayloadRef.current) return;
 		lastPayloadRef.current = payload;
+		// Snapshot the session-id set so we can restore it if the async sync batch
+		// below fails. Otherwise a failed removeSession drops the removed session
+		// from our cache, so the next run won't re-detect it as `removed` and the
+		// main registry keeps stale tabs forever.
+		const previousSessionIds = lastSessionIdsRef.current;
 		lastSessionIdsRef.current = currentIds;
 
 		(async () => {
@@ -175,6 +180,7 @@ export function useCoworkingRegistrySync(): void {
 				// leaving the main-process registry stale. Then surface the failure
 				// (teardown IPC errors stay quiet; anything else re-throws).
 				lastPayloadRef.current = '';
+				lastSessionIdsRef.current = previousSessionIds;
 				reportIfUnexpected(err, 'sync');
 			}
 		})();

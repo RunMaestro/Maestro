@@ -198,6 +198,18 @@ describe('coworking browser tools', () => {
 		expect(out.ok).toBe(true);
 	});
 
+	it('browserInteract rejects cross-session access', async () => {
+		// browser:1 belongs to s1; s2 must not be able to drive it. This exercises
+		// the real session-scoped tabUuid lookup, which the bridge suite mocks away.
+		await expect(
+			browserInteract(
+				's2',
+				{ id: 'browser:1', op: { kind: 'reload' } },
+				{ registry, resolver: async (): Promise<BrowserOpResult> => ({ ok: true }) }
+			)
+		).rejects.toThrow(/not found in your session/);
+	});
+
 	it('browserInteract throws on an unknown id', async () => {
 		await expect(
 			browserInteract(
