@@ -15,31 +15,19 @@ import { memo, useState, useEffect, useMemo, useCallback } from 'react';
 import type { Theme } from '../../types';
 import type { StatsTimeRange, AutoRunTask } from '../../../shared/stats-types';
 import { captureException } from '../../utils/sentry';
+import {
+	buildHourlyTaskData,
+	formatHourFull,
+	formatHourShort,
+	getMaxHourlyTaskCount,
+	getPeakHours,
+} from './tasksByHourUtils';
 
 interface TasksByHourChartProps {
 	/** Current time range for filtering */
 	timeRange: StatsTimeRange;
 	/** Current theme for styling */
 	theme: Theme;
-}
-
-/**
- * Format hour number (0-23) to short format
- */
-function formatHourShort(hour: number): string {
-	if (hour === 0) return '12a';
-	if (hour === 12) return '12p';
-	if (hour < 12) return `${hour}a`;
-	return `${hour - 12}p`;
-}
-
-/**
- * Format hour number (0-23) to full format
- */
-function formatHourFull(hour: number): string {
-	const suffix = hour >= 12 ? 'PM' : 'AM';
-	const displayHour = hour % 12 || 12;
-	return `${displayHour}:00 ${suffix}`;
 }
 
 export const TasksByHourChart = memo(function TasksByHourChart({
@@ -87,36 +75,17 @@ export const TasksByHourChart = memo(function TasksByHourChart({
 
 	// Group tasks by hour
 	const hourlyData = useMemo(() => {
-		const hours: Array<{ hour: number; count: number; successCount: number }> = [];
-
-		// Initialize all 24 hours
-		for (let i = 0; i < 24; i++) {
-			hours.push({ hour: i, count: 0, successCount: 0 });
-		}
-
-		// Count tasks per hour
-		tasks.forEach((task) => {
-			const hour = new Date(task.startTime).getHours();
-			hours[hour].count++;
-			if (task.success) {
-				hours[hour].successCount++;
-			}
-		});
-
-		return hours;
+		return buildHourlyTaskData(tasks);
 	}, [tasks]);
 
 	// Find max count for scaling
 	const maxCount = useMemo(() => {
-		return Math.max(...hourlyData.map((h) => h.count), 1);
+		return getMaxHourlyTaskCount(hourlyData);
 	}, [hourlyData]);
 
 	// Find peak hours (top 3)
 	const peakHours = useMemo(() => {
-		return [...hourlyData]
-			.sort((a, b) => b.count - a.count)
-			.slice(0, 3)
-			.map((h) => h.hour);
+		return getPeakHours(hourlyData);
 	}, [hourlyData]);
 
 	// Total tasks

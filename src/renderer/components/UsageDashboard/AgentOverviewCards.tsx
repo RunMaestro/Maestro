@@ -6,121 +6,30 @@
  * name, live status dot, query count, and a 7-day activity sparkline.
  *
  * Worktree children render with a dashed accent border, a "WT" badge,
- * and their checked-out branch — so a parent and its worktrees are
+ * and their checked-out branch, so a parent and its worktrees are
  * visually distinguishable at a glance.
  */
 
 import { memo, useMemo, useState } from 'react';
-import type { Session, SessionState, Theme } from '../../types';
+import type { Session, Theme } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
-import { compareNamesIgnoringEmojis } from '../../../shared/emojiUtils';
 import { formatAgeShort } from '../../../shared/formatters';
 import { Sparkline } from './Sparkline';
-
-const SPARKLINE_DAYS = 7;
-
-type ByDayEntry = StatsAggregation['byDay'][number];
-
-/**
- * Map a session state to its theme status color. Falls back to
- * `textDim` for transient states (waiting_input, connecting, etc.)
- * so they don't false-positive as healthy / errored.
- */
-function getStatusColor(state: SessionState, theme: Theme): string {
-	switch (state) {
-		case 'idle':
-			return theme.colors.success;
-		case 'busy':
-			return theme.colors.warning;
-		case 'error':
-			return theme.colors.error;
-		default:
-			return theme.colors.textDim;
-	}
-}
-
-/**
- * Pull the last `SPARKLINE_DAYS` entries' counts (oldest → newest),
- * left-padding with zeros so the sparkline geometry stays stable for
- * sessions with fewer than seven recorded days.
- */
-function buildSessionSparkline(sessionByDay: ByDayEntry[] | undefined): number[] {
-	if (!sessionByDay || sessionByDay.length === 0) {
-		return new Array(SPARKLINE_DAYS).fill(0);
-	}
-	const counts = sessionByDay.slice(-SPARKLINE_DAYS).map((d) => d.count);
-	if (counts.length >= SPARKLINE_DAYS) return counts;
-	return [...new Array(SPARKLINE_DAYS - counts.length).fill(0), ...counts];
-}
-
-/**
- * Resolve the query count shown on a session's card. Prefers the per-session
- * breakdown when available; otherwise falls back to the provider-level total
- * — but only when this is the sole visible session for that provider. With
- * multiple sessions sharing a provider, the provider total can't be safely
- * attributed to any single one, so we show 0 instead of overstating each card.
- * Shared between the parent (for sort order) and `AgentCard` (for display) so
- * both stay in sync.
- */
-function getSessionQueryCount(
-	session: Session,
-	data: StatsAggregation,
-	visibleSessions?: Session[]
-): number {
-	const sessionByDay = data.bySessionByDay?.[session.id];
-	if (sessionByDay && sessionByDay.length > 0) {
-		return sessionByDay.reduce((sum, d) => sum + d.count, 0);
-	}
-	if (visibleSessions) {
-		const sameProviderCount = visibleSessions.filter((s) => s.toolType === session.toolType).length;
-		if (sameProviderCount !== 1) return 0;
-	}
-	return data.byAgent?.[session.toolType]?.count ?? 0;
-}
-
-/**
- * Auto-sourced query share for a session, as a 0–100 integer. `null` means
- * the session has no recorded queries — sort and display fall back to a dim
- * em-dash rather than a misleading 0%.
- */
-function getSessionAutoPercent(session: Session, data: StatsAggregation): number | null {
-	const split = data.bySessionSource?.[session.id];
-	if (!split) return null;
-	const total = split.user + split.auto;
-	if (total <= 0) return null;
-	return Math.round((split.auto / total) * 100);
-}
-
-/**
- * Resolve whether a session card should be highlighted by the current
- * drill-down filter. The filter key originates from a few different surfaces:
- *
- *   - `AgentComparisonChart` emits provider keys like `claude-code` (parent)
- *     or `claude-code__worktree` (worktree variant).
- *   - `AgentUsageChart` emits per-session keys (e.g. `${provider}:${id}` or
- *     bare session ids).
- *
- * We highlight cards by matching against either the session id directly, or
- * — for provider-shaped keys — the session's `toolType`, separating worktree
- * and non-worktree variants so a "Worktrees" filter doesn't paint the parent
- * card and vice versa.
- */
-function isSessionHighlighted(session: Session, activeFilterKey: string | null): boolean {
-	if (!activeFilterKey) return false;
-	if (activeFilterKey === session.id) return true;
-
-	const WORKTREE_SUFFIX = '__worktree';
-	if (activeFilterKey.endsWith(WORKTREE_SUFFIX)) {
-		const provider = activeFilterKey.slice(0, -WORKTREE_SUFFIX.length);
-		return Boolean(session.parentSessionId) && session.toolType === provider;
-	}
-
-	return !session.parentSessionId && session.toolType === activeFilterKey;
-}
+import {
+	AGENT_OVERVIEW_SORT_OPTIONS,
+	buildSessionSparkline,
+	getSessionAutoPercent,
+	getSessionQueryCount,
+	getStatusColor,
+	isSessionHighlighted,
+	sortAgentOverviewSessions,
+	type SortMode,
+} from './agentOverviewUtils';
 
 /** Per-card stat we should visually emphasize. Mirrors `SortMode` minus `name`
  *  (the default sort has no per-card highlight). */
 type HighlightedStat = 'created' | 'queries' | 'tabs' | 'auto' | null;
+const EMPTY_AUTO_PERCENT_LABEL = String.fromCharCode(8212);
 
 interface AgentCardProps {
 	session: Session;
@@ -172,7 +81,7 @@ const AgentCard = memo(function AgentCard({
 
 	// When the dashboard filter selects this card's agent, the 1px default
 	// border is replaced with a 2px solid accent border. Worktree dashing is
-	// suppressed for the duration — the highlight outranks the worktree
+	// suppressed for the duration. The highlight outranks the worktree
 	// affordance, and the existing "WT" badge keeps the worktree distinction
 	// visible. While hovered (clickable cards only), we promote the border to
 	// the accent color so the tile reads as actionable.
@@ -354,7 +263,7 @@ const AgentCard = memo(function AgentCard({
 									: `${autoPercent}% of queries from Auto Run / Cue`
 							}
 						>
-							{autoPercent === null ? '—' : `${autoPercent}%`}
+							{autoPercent === null ? EMPTY_AUTO_PERCENT_LABEL : `${autoPercent}%`}
 						</span>
 					</div>
 				</div>
@@ -369,7 +278,7 @@ const AgentCard = memo(function AgentCard({
 interface AgentOverviewCardsProps {
 	/** All known sessions (terminal-only sessions are filtered out) */
 	sessions: Session[];
-	/** Aggregated stats — used for per-session query counts and sparklines */
+	/** Aggregated stats used for per-session query counts and sparklines */
 	data: StatsAggregation;
 	/** Current theme for color-aware styling */
 	theme: Theme;
@@ -379,20 +288,10 @@ interface AgentOverviewCardsProps {
 	 * the top of the dashboard. `null` means no filter is active.
 	 */
 	activeFilterKey?: string | null;
-	/** Click handler for the per-card "view stats" icon — opens the per-agent
+	/** Click handler for the per-card "view stats" icon, opens the per-agent
 	 *  stats sub-modal. When omitted, the icon is not rendered. */
 	onShowAgentDetails?: (session: Session) => void;
 }
-
-type SortMode = 'name' | 'created' | 'queries' | 'tabs' | 'auto';
-
-const SORT_OPTIONS: { value: SortMode; label: string }[] = [
-	{ value: 'name', label: 'Name' },
-	{ value: 'created', label: 'Created' },
-	{ value: 'queries', label: 'Queries' },
-	{ value: 'tabs', label: 'Tabs' },
-	{ value: 'auto', label: 'Auto %' },
-];
 
 export const AgentOverviewCards = memo(function AgentOverviewCards({
 	sessions,
@@ -403,56 +302,13 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 }: AgentOverviewCardsProps) {
 	const [sortMode, setSortMode] = useState<SortMode>('name');
 
-	// Terminal sessions aren't "agents" — exclude them so the card row
+	// Terminal sessions aren't "agents". Exclude them so the card row
 	// matches the agent count shown elsewhere in the dashboard. Default sort
 	// is alphabetical (ascending), ignoring any leading emoji prefix to match
 	// how the Left Bar's session list orders names; the user can switch to
 	// query or tab count (descending) via the sort control above the grid.
 	const activeSessions = useMemo(() => {
-		const filtered = sessions.filter((s) => s.toolType !== 'terminal');
-		const byName = (a: Session, b: Session) => compareNamesIgnoringEmojis(a.name, b.name);
-
-		if (sortMode === 'name') {
-			return filtered.slice().sort(byName);
-		}
-
-		// Pre-sort alphabetically so equal counts fall back to a stable, scannable order.
-		const alphabetical = filtered.slice().sort(byName);
-
-		if (sortMode === 'created') {
-			// Most-recent-first. Sessions missing `createdAt` (legacy data) sink
-			// to the bottom rather than masquerading as the newest agent.
-			return alphabetical.slice().sort((a, b) => {
-				const aTs = a.createdAt ?? 0;
-				const bTs = b.createdAt ?? 0;
-				return bTs - aTs;
-			});
-		}
-
-		if (sortMode === 'queries') {
-			return alphabetical
-				.slice()
-				.sort(
-					(a, b) =>
-						getSessionQueryCount(b, data, alphabetical) -
-						getSessionQueryCount(a, data, alphabetical)
-				);
-		}
-
-		if (sortMode === 'tabs') {
-			return alphabetical.slice().sort((a, b) => (b.aiTabs?.length ?? 0) - (a.aiTabs?.length ?? 0));
-		}
-
-		// 'auto' — descending by auto %, sessions with no recorded queries
-		// sink to the bottom so the leaderboard isn't polluted by null cards.
-		return alphabetical.slice().sort((a, b) => {
-			const aPct = getSessionAutoPercent(a, data);
-			const bPct = getSessionAutoPercent(b, data);
-			if (aPct === null && bPct === null) return 0;
-			if (aPct === null) return 1;
-			if (bPct === null) return -1;
-			return bPct - aPct;
-		});
+		return sortAgentOverviewSessions(sessions, data, sortMode);
 	}, [sessions, data, sortMode]);
 
 	if (activeSessions.length === 0) return null;
@@ -470,7 +326,7 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 					aria-label="Sort agents"
 					data-testid="agent-overview-sort"
 				>
-					{SORT_OPTIONS.map((opt, i) => {
+					{AGENT_OVERVIEW_SORT_OPTIONS.map((opt, i) => {
 						const isActive = sortMode === opt.value;
 						return (
 							<button
