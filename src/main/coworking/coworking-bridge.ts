@@ -1,5 +1,5 @@
 /**
- * Coworking bridge — main-process IPC server that the coworking-mcp-server
+ * Coworking bridge - main-process IPC server that the coworking-mcp-server
  * subprocess connects back to.
  *
  * Transport: Unix domain socket (Linux/macOS) or named pipe (Windows). Path
@@ -26,7 +26,7 @@
  *      it finds a known agent-CLI PID, then binds to that agent's session.
  *
  * Either source is sufficient. If both are absent, or `ppid` is sent but resolves
- * to no known agent, the bridge rejects the connection — fail closed.
+ * to no known agent, the bridge rejects the connection - fail closed.
  */
 
 import { app } from 'electron';
@@ -148,6 +148,18 @@ export async function startCoworkingBridge(options?: {
 		srv.listen(socketPath);
 	});
 
+	// Restrict the socket to the owner (POSIX). Node creates Unix sockets with the
+	// process umask, which can leave them group/other-connectable; the coworking
+	// bridge exposes terminal scrollback + live browser control, so lock it to the
+	// current user. (Windows named pipes are per-user via the userData-slug name.)
+	if (process.platform !== 'win32') {
+		try {
+			await fs.promises.chmod(socketPath, 0o600);
+		} catch (e) {
+			logger.warn(`${LOG_CTX} Could not chmod socket to 0600: ${String(e)}`, 'Coworking');
+		}
+	}
+
 	server = srv;
 	logger.info(`${LOG_CTX} listening on ${socketPath}`, 'Coworking');
 }
@@ -191,12 +203,28 @@ async function handleLine(conn: net.Socket, line: string): Promise<void> {
 	try {
 		req = JSON.parse(line) as CoworkingBridgeRequest;
 	} catch {
-		// Bad JSON — close the connection. The MCP subprocess will log and exit.
+		// Bad JSON - close the connection. The MCP subprocess will log and exit.
 		conn.end();
 		return;
 	}
 	const resp = await dispatch(conn, req);
 	conn.write(JSON.stringify(resp) + '\n');
+}
+
+/** Allowlist of URL schemes an agent may navigate a browser tab to. Only
+ *  http/https (plus about:blank) are permitted. Blocks file: (local-file
+ *  exfiltration via a follow-up read_browser), javascript: and data: (a second
+ *  eval path that would bypass the eval approval gate), and privileged schemes
+ *  like chrome:. */
+function isAllowedNavigateUrl(url: string): boolean {
+	const trimmed = url.trim();
+	if (trimmed.toLowerCase() === 'about:blank') return true;
+	try {
+		const scheme = new URL(trimmed).protocol.toLowerCase();
+		return scheme === 'http:' || scheme === 'https:';
+	} catch {
+		return false;
+	}
 }
 
 /** Validate an untyped interaction op from the MCP JSON into a BrowserOp. Returns
@@ -217,7 +245,7 @@ function validateInteractionOp(raw: unknown): BrowserOp | null {
 		case 'screenshot':
 			return { kind: 'screenshot' };
 		case 'navigate':
-			return 'url' in raw && typeof raw.url === 'string'
+			return 'url' in raw && typeof raw.url === 'string' && isAllowedNavigateUrl(raw.url)
 				? { kind: 'navigate', url: raw.url }
 				: null;
 		case 'click':
@@ -263,7 +291,7 @@ async function dispatch(
 			) {
 				// Fallback for agents that don't propagate env (e.g. Codex CLI):
 				// walk the process tree from the MCP subprocess up to a tracked
-				// agent-CLI PID. If nothing matches, fail closed — silent default
+				// agent-CLI PID. If nothing matches, fail closed - silent default
 				// would reintroduce the privacy hole PR #948 closed.
 				if (!resolveSessionFromPid) {
 					return {

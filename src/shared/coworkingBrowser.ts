@@ -69,24 +69,34 @@ export interface BrowserOpResult {
 
 /** Per-agent policy for whether a state-changing browser op needs an explicit
  *  per-call user approval, layered on top of the per-agent interaction permission.
- *  - 'off'       : no per-call approval (the interaction permission alone gates).
- *  - 'dangerous' : approve only the sharp-edge ops (navigate, eval). Default.
+ *  - 'off'       : no per-call approval (the interaction permission alone gates),
+ *                  EXCEPT `eval`, which always requires approval (see below).
+ *  - 'dangerous' : approve the sharp-edge ops (navigate, eval, type). Default.
  *  - 'all'       : approve every interaction op. */
 export type BrowserConfirmPolicy = 'off' | 'dangerous' | 'all';
 
 /** Policy used when an agent has no explicit confirm entry configured. */
 export const DEFAULT_BROWSER_CONFIRM_POLICY: BrowserConfirmPolicy = 'dangerous';
 
-/** Ops the 'dangerous' policy always routes through per-call approval. */
-export const ALWAYS_CONFIRM_KINDS: readonly BrowserInteractionKind[] = ['navigate', 'eval'];
+/** Ops the 'dangerous' policy routes through per-call approval. `type` is
+ *  included because a silent form-fill can populate login / cross-site fields. */
+export const ALWAYS_CONFIRM_KINDS: readonly BrowserInteractionKind[] = ['navigate', 'eval', 'type'];
+
+/** Ops that ALWAYS require per-call approval regardless of policy (even 'off').
+ *  `eval` runs arbitrary JavaScript in a privileged in-app webview, so a page
+ *  the agent just loaded must never be able to drive it unattended. */
+export const FORCE_CONFIRM_KINDS: readonly BrowserInteractionKind[] = ['eval'];
 
 /** Whether a browser op requires per-call user approval under the given policy.
- *  `read` never needs approval. */
+ *  `read` never needs approval; `eval` always does. */
 export function browserOpNeedsConfirm(
 	policy: BrowserConfirmPolicy,
 	kind: BrowserOp['kind']
 ): boolean {
-	if (kind === 'read' || policy === 'off') return false;
+	if (kind === 'read') return false;
+	// eval is force-confirmed even when the policy is 'off'.
+	if (FORCE_CONFIRM_KINDS.includes(kind as BrowserInteractionKind)) return true;
+	if (policy === 'off') return false;
 	if (policy === 'all') return true;
 	// 'dangerous': only the sharp-edge ops.
 	return ALWAYS_CONFIRM_KINDS.includes(kind);

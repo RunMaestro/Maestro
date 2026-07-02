@@ -13,6 +13,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { promisify } from 'util';
 import { logger } from '../utils/logger';
+import { getWhichCommand } from '../../shared/platformDetection';
 import { getCoworkingServerScript } from './coworking-server-script';
 
 const SCRIPT_FILENAME = 'coworking-mcp-server.js';
@@ -63,7 +64,7 @@ export async function ensureCoworkingServerScript(): Promise<string> {
 let resolvedNodeCommand: string | null = null;
 export async function resolveNodeCommand(): Promise<string> {
 	if (resolvedNodeCommand) return resolvedNodeCommand;
-	const cmd = process.platform === 'win32' ? 'where' : 'which';
+	const cmd = getWhichCommand();
 	try {
 		const { stdout } = await execFileAsync(cmd, ['node'], { timeout: 2000 });
 		const first = stdout

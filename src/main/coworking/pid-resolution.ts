@@ -2,7 +2,7 @@
  * PID-based session resolution for the coworking bridge.
  *
  * Some agent CLIs (notably Codex) do not propagate parent process env into the
- * MCP subprocesses they spawn — they only set the env declared in the user-level
+ * MCP subprocesses they spawn - they only set the env declared in the user-level
  * MCP config TOML. That breaks env-based session binding because we cannot bake
  * a per-Maestro-session id into a single global TOML block at install time.
  *

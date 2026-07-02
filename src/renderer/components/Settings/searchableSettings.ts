@@ -1214,6 +1214,25 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 		],
 	},
 	{
+		id: 'coworking-background-browsers',
+		tab: 'encore',
+		tabLabel: 'Encore Features',
+		label: 'Coworking background browsing',
+		description:
+			'Let agents read and drive their own browser tabs while you are focused on a different agent. Keeps hidden webviews alive off-screen, LRU-capped (1-10).',
+		keywords: [
+			'coworking',
+			'background',
+			'browser',
+			'browsing',
+			'webview',
+			'hidden',
+			'cross-session',
+			'lru',
+			'limit',
+		],
+	},
+	{
 		id: 'encore-director-notes',
 		tab: 'encore',
 		tabLabel: 'Encore Features',

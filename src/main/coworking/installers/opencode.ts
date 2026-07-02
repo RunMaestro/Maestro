@@ -1,5 +1,5 @@
 /**
- * OpenCode installer — writes the `maestro-coworking` MCP entry into
+ * OpenCode installer - writes the `maestro-coworking` MCP entry into
  * `~/.config/opencode/opencode.json` (XDG-style location). OpenCode's stdio
  * MCP shape uses `type: "local"` and a single combined `command` array.
  */
@@ -8,6 +8,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 const commentJson = require('comment-json');
+import { atomicWriteFile } from '../../utils/atomic-json-store';
 import { COWORKING_MCP_SERVER_NAME } from '../coworking-types';
 import type { CoworkingMcpServerSpec } from '../coworking-types';
 import type { AgentMcpInstaller } from './types';
@@ -37,7 +38,8 @@ async function readConfig(): Promise<unknown> {
 async function writeConfig(config: unknown): Promise<void> {
 	await fs.promises.mkdir(configDir(), { recursive: true });
 	const out = commentJson.stringify(config, null, 2) + '\n';
-	await fs.promises.writeFile(configPath(), out, 'utf8');
+	// Atomic write so a crash mid-write can't truncate the user's opencode.json.
+	await atomicWriteFile(configPath(), out);
 }
 
 export const opencodeInstaller: AgentMcpInstaller = {

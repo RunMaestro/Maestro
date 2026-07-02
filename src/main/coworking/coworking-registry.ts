@@ -1,5 +1,5 @@
 /**
- * Coworking registry — main-process mirror of every Maestro session's terminal-tab state,
+ * Coworking registry - main-process mirror of every Maestro session's terminal-tab state,
  * keyed by sessionId.
  *
  * The renderer pushes registry updates (open/close/rename/cwd-change) for every session
@@ -7,7 +7,7 @@
  * `list_terminals`, scoped to the agent's *own* session id (resolved at bridge-handshake
  * time from the `MAESTRO_COWORKING_SESSION_ID` env var the agent CLI was spawned with).
  *
- * Crucially, there is no "active session" concept here — that singleton was the source
+ * Crucially, there is no "active session" concept here - that singleton was the source
  * of the focus-bound privacy bug fixed in PR #948. Each MCP connection gets its own
  * session id and reads only that session's slice.
  */
@@ -228,7 +228,7 @@ class CoworkingRegistry {
 	}
 }
 
-/** Singleton — the main process holds exactly one registry. */
+/** Singleton - the main process holds exactly one registry. */
 export const coworkingRegistry = new CoworkingRegistry();
 
 /** Exported class for test harnesses that want their own instance. */

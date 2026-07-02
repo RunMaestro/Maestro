@@ -7,8 +7,10 @@
  * best-effort JSONL append under userData). `recordBrowserAudit` is a no-op until
  * a sink is set, so unit tests stay isolated and can inject a capturing sink.
  *
- * Redaction: page content is never recorded, and free-form `eval` code / typed
- * text are reduced to lengths (never logged verbatim).
+ * Redaction: page content is never recorded, free-form `eval` code / typed
+ * text are reduced to lengths (never logged verbatim), and navigated URLs are
+ * logged origin+path only (query strings and fragments, which routinely carry
+ * tokens, are stripped). The JSONL sink is written owner-only (0600).
  */
 
 import * as fs from 'fs';
@@ -48,11 +50,22 @@ export function recordBrowserAudit(entry: BrowserAuditEntry): void {
 	sink(entry);
 }
 
+/** Origin+path of a URL, with query string and fragment stripped so tokens
+ *  carried in those parts never reach the audit log. */
+function redactAuditUrl(url: string): string {
+	try {
+		const u = new URL(url);
+		return `${u.origin}${u.pathname}`;
+	} catch {
+		return '(unparseable url)';
+	}
+}
+
 /** Redacted one-line summary of an interaction op for the audit detail field. */
 export function redactBrowserOpDetail(op: BrowserOp): string {
 	switch (op.kind) {
 		case 'navigate':
-			return `url=${op.url.slice(0, 200)}`;
+			return `url=${redactAuditUrl(op.url)}`;
 		case 'click':
 			return `selector=${op.selector.slice(0, 120)}`;
 		case 'type':
@@ -76,7 +89,9 @@ export function createDefaultBrowserAuditSink(): BrowserAuditSink {
 		);
 		try {
 			const file = path.join(app.getPath('userData'), 'coworking-browser-audit.jsonl');
-			fs.appendFileSync(file, JSON.stringify(entry) + '\n');
+			// mode 0600 applies when the file is first created so the audit trail
+			// isn't world/group-readable.
+			fs.appendFileSync(file, JSON.stringify(entry) + '\n', { mode: 0o600 });
 		} catch (err) {
 			captureException(err instanceof Error ? err : new Error(String(err)), {
 				operation: 'coworking:browserAudit',

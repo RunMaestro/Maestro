@@ -29,6 +29,11 @@ interface CoworkingBackgroundBrowserState {
 	requestMount: (sessionId: string, tabUuid: string, limit: number) => void;
 	/** Mark a mount as recently used (keeps it from being evicted). */
 	touch: (key: string) => void;
+	/** Mark a tab as having a browser op in flight so it is never LRU-evicted
+	 *  mid-op (its webview would unmount and the op would spuriously fail). */
+	markOpStart: (key: string) => void;
+	/** Clear the in-flight guard once the op resolves. */
+	markOpEnd: (key: string) => void;
 	/** Host callback: register/unregister a mounted webview's handle. */
 	setHandle: (key: string, handle: BrowserTabViewHandle | null) => void;
 	/** Drop all background mounts + handles (e.g. when the feature is disabled). */
@@ -39,6 +44,10 @@ interface CoworkingBackgroundBrowserState {
 export function backgroundBrowserKey(sessionId: string, tabUuid: string): string {
 	return `${sessionId}::${tabUuid}`;
 }
+
+/** Keys with a browser op in flight. Module-level (not reactive) so op bookkeeping
+ *  never triggers a re-render of the background host. Consulted during eviction. */
+const inFlightKeys = new Set<string>();
 
 export const useCoworkingBackgroundBrowserStore = create<CoworkingBackgroundBrowserState>(
 	(set, get) => ({
@@ -54,7 +63,14 @@ export const useCoworkingBackgroundBrowserStore = create<CoworkingBackgroundBrow
 					: [...s.mounts, { key, sessionId, tabUuid, lastUsed: now }];
 				const cap = Math.min(10, Math.max(1, Math.floor(limit) || 1));
 				if (mounts.length > cap) {
-					mounts = [...mounts].sort((a, b) => b.lastUsed - a.lastUsed).slice(0, cap);
+					const sorted = [...mounts].sort((a, b) => b.lastUsed - a.lastUsed);
+					const kept = sorted.slice(0, cap);
+					// Never evict a tab with an op in flight, even if it falls outside the
+					// cap: unmounting its webview mid-op would make the op fail.
+					for (const m of sorted.slice(cap)) {
+						if (inFlightKeys.has(m.key)) kept.push(m);
+					}
+					mounts = kept;
 				}
 				return { mounts };
 			});
@@ -63,6 +79,12 @@ export const useCoworkingBackgroundBrowserStore = create<CoworkingBackgroundBrow
 			set((s) => ({
 				mounts: s.mounts.map((m) => (m.key === key ? { ...m, lastUsed: Date.now() } : m)),
 			})),
+		markOpStart: (key) => {
+			inFlightKeys.add(key);
+		},
+		markOpEnd: (key) => {
+			inFlightKeys.delete(key);
+		},
 		setHandle: (key, handle) => {
 			const handles = new Map(get().handles);
 			if (handle) {

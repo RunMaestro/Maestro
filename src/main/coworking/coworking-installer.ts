@@ -1,9 +1,9 @@
 /**
  * Coworking installer orchestrator. Public surface for the Settings UI:
- *   - `getInstallStatus()` — list per-agent install state for the panel
- *   - `installFor(agentId)` — write the user-level MCP config entry
- *   - `uninstallFor(agentId)` — remove it
- *   - `installForAll()` / `uninstallForAll()` — convenience for the
+ *   - `getInstallStatus()` - list per-agent install state for the panel
+ *   - `installFor(agentId)` - write the user-level MCP config entry
+ *   - `uninstallFor(agentId)` - remove it
+ *   - `installForAll()` / `uninstallForAll()` - convenience for the
  *     "Install for all detected agents" button
  *
  * Knows how to build the `CoworkingMcpServerSpec` from the bundled-script

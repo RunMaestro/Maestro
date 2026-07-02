@@ -45,8 +45,6 @@ export interface CoworkingApi {
 	// subprocess's bridge handshake (see coworking-bridge.ts) so an agent only
 	// ever sees its own session's terminals.
 	syncSessionTerminals(sessionId: string, records: CoworkingTerminalRecord[]): Promise<void>;
-	upsertTerminal(record: CoworkingTerminalRecord): Promise<void>;
-	removeTerminal(tabUuid: string): Promise<void>;
 	removeSession(sessionId: string): Promise<void>;
 
 	// ---- Buffer request (main → renderer) ----
@@ -90,8 +88,6 @@ export function createCoworkingApi(): CoworkingApi {
 
 		syncSessionTerminals: (sessionId, records) =>
 			ipcRenderer.invoke('coworking:syncSessionTerminals', sessionId, records),
-		upsertTerminal: (record) => ipcRenderer.invoke('coworking:upsertTerminal', record),
-		removeTerminal: (tabUuid) => ipcRenderer.invoke('coworking:removeTerminal', tabUuid),
 		removeSession: (sessionId) => ipcRenderer.invoke('coworking:removeSession', sessionId),
 
 		onRequestBuffer: (callback) => {

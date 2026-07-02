@@ -1,11 +1,11 @@
 /**
  * Mirrors *every* Maestro session's terminal-tab state to the main-process
- * coworking registry — not just the focused session.
+ * coworking registry - not just the focused session.
  *
  * This is what makes the coworking MCP server safe in the privacy sense: each
  * agent's MCP subprocess is bound at handshake to its caller's session id (see
  * coworking-bridge.ts), and tool calls scope to that session only. So the
- * registry needs every session's data resident at all times — otherwise an
+ * registry needs every session's data resident at all times - otherwise an
  * agent running in the background while the user is focused on a different
  * agent would see "no terminals" for its own session.
  *
@@ -15,7 +15,7 @@
  * removed from the store, we explicitly call `removeSession` so the registry
  * doesn't carry orphan records forever.
  *
- * Gated on the `coworking` Encore flag — when off we proactively clear every
+ * Gated on the `coworking` Encore flag - when off we proactively clear every
  * session out of the registry.
  */
 
@@ -26,9 +26,9 @@ import { getTerminalTabDisplayName } from '../../utils/terminalTabHelpers';
 import { captureException } from '../../utils/sentry';
 import type { Session } from '../../types';
 
-/** Errors we expect during teardown / pre-init — silently ignore. Anything else
+/** Errors we expect during teardown / pre-init - silently ignore. Anything else
  *  bubbles up to Sentry so we can see real bridge failures in production.
- *  Note: "cannot be cloned" is *not* in this list — that's a structured-clone
+ *  Note: "cannot be cloned" is *not* in this list - that's a structured-clone
  *  bug (caller put something non-serializable in the payload), and we want
  *  Sentry to see it so it gets fixed instead of swallowed. */
 function isExpectedTeardownIpcError(err: unknown): boolean {
@@ -60,7 +60,7 @@ function buildRecords(session: Session) {
 			// Prefer the tab's own cwd (kept up to date as the user `cd`s in the shell).
 			// Fall back to the session's cwd, then the project root, so agents always
 			// get *some* working directory hint instead of "" (which violates the schema
-			// description — see PR #948 review notes).
+			// description - see PR #948 review notes).
 			cwd: tab.cwd || session.cwd || session.projectRoot || '',
 			title: getTerminalTabDisplayName(tab, idx),
 			tabUuid: tab.id,
@@ -94,11 +94,16 @@ export function useCoworkingRegistrySync(): void {
 	const browserInteractionAgents = useSettingsStore((s) => s.coworkingBrowserInteraction);
 	const lastPayloadRef = useRef<string>('');
 	const lastSessionIdsRef = useRef<Set<string>>(new Set());
+	// Serializes the async sync/clear runs. Without this, two rapid store changes
+	// launch overlapping async pushes whose IPC writes can interleave, letting an
+	// older run's writes land AFTER a newer run's and leave the registry stale
+	// (lastPayloadRef already matches the newer payload, so it never self-heals).
+	const runQueueRef = useRef<Promise<void>>(Promise.resolve());
 
 	useEffect(() => {
 		// Bail out cleanly when the coworking bridge isn't exposed (e.g. in test
 		// harnesses that mock `window.maestro` without the namespace, or in older
-		// preload bundles before this PR shipped). The hook is best-effort —
+		// preload bundles before this PR shipped). The hook is best-effort -
 		// without the bridge there's nothing to sync to.
 		const bridge = window.maestro?.coworking;
 		if (!bridge) {
@@ -109,11 +114,11 @@ export function useCoworkingRegistrySync(): void {
 
 		if (!enabled) {
 			// Drop everything we previously pushed. We don't need to emit one big
-			// "clear" — calling removeSession per known session is what keeps the
+			// "clear" - calling removeSession per known session is what keeps the
 			// registry tidy without us having to add a new RPC.
 			const prev = lastSessionIdsRef.current;
 			if (prev.size > 0) {
-				(async () => {
+				runQueueRef.current = runQueueRef.current.then(async () => {
 					for (const sid of prev) {
 						try {
 							await bridge.removeSession(sid);
@@ -128,7 +133,7 @@ export function useCoworkingRegistrySync(): void {
 							}
 						}
 					}
-				})();
+				});
 			}
 			lastPayloadRef.current = '';
 			lastSessionIdsRef.current = new Set();
@@ -158,25 +163,30 @@ export function useCoworkingRegistrySync(): void {
 		lastPayloadRef.current = payload;
 		lastSessionIdsRef.current = currentIds;
 
-		(async () => {
-			try {
-				for (const sid of removed) {
-					await bridge.removeSession(sid);
+		runQueueRef.current = runQueueRef.current
+			.then(async () => {
+				try {
+					for (const sid of removed) {
+						await bridge.removeSession(sid);
+					}
+					for (const { sessionId, records } of perSession) {
+						await bridge.syncSessionTerminals(sessionId, records);
+					}
+					for (const { sessionId, inputs, interactionEnabled, agentType } of perSessionBrowsers) {
+						await bridge.syncSessionBrowsers(sessionId, inputs, interactionEnabled, agentType);
+					}
+				} catch (err) {
+					// Roll back the optimistic payload-cache write FIRST so the next effect
+					// run retries instead of treating the same payload as already-synced and
+					// leaving the main-process registry stale. Then surface the failure
+					// (teardown IPC errors stay quiet; anything else re-throws).
+					lastPayloadRef.current = '';
+					reportIfUnexpected(err, 'sync');
 				}
-				for (const { sessionId, records } of perSession) {
-					await bridge.syncSessionTerminals(sessionId, records);
-				}
-				for (const { sessionId, inputs, interactionEnabled, agentType } of perSessionBrowsers) {
-					await bridge.syncSessionBrowsers(sessionId, inputs, interactionEnabled, agentType);
-				}
-			} catch (err) {
-				// Roll back the optimistic payload-cache write FIRST so the next effect
-				// run retries instead of treating the same payload as already-synced and
-				// leaving the main-process registry stale. Then surface the failure
-				// (teardown IPC errors stay quiet; anything else re-throws).
-				lastPayloadRef.current = '';
-				reportIfUnexpected(err, 'sync');
-			}
-		})();
+				// reportIfUnexpected re-throws (after capturing to Sentry) to surface real
+				// failures; swallow it at the queue boundary so one failed run doesn't
+				// permanently break the chain for every subsequent sync.
+			})
+			.catch(() => {});
 	}, [enabled, sessions, browserInteractionAgents]);
 }

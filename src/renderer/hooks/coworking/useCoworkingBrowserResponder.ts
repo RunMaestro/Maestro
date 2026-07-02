@@ -249,7 +249,16 @@ export async function resolveAndRun(
 	if (resolveBackgroundHandle) {
 		const bgHandle = await resolveBackgroundHandle(sessionId, tabUuid);
 		if (bgHandle && bgHandle.getTabId() === tabUuid) {
-			return applyBrowserOp(bgHandle, op);
+			// Guard the tab against LRU eviction for the duration of the op so a
+			// concurrent cross-session mount can't unmount its webview mid-run.
+			const store = useCoworkingBackgroundBrowserStore.getState();
+			const key = backgroundBrowserKey(sessionId, tabUuid);
+			store.markOpStart(key);
+			try {
+				return await applyBrowserOp(bgHandle, op);
+			} finally {
+				store.markOpEnd(key);
+			}
 		}
 	}
 

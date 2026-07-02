@@ -1,5 +1,5 @@
 /**
- * Coworking Setup panel — shown inside the Coworking section of the Encore tab.
+ * Coworking Setup panel - shown inside the Coworking section of the Encore tab.
  *
  * Lists every supported agent with its current install status and per-agent
  * Install / Uninstall buttons, plus an "Install for all" convenience button.
@@ -7,7 +7,7 @@
  * Install writes the `maestro-coworking` MCP entry into the agent's user-level
  * config file (e.g. `~/.claude.json`, `~/.codex/config.toml`). After install,
  * the user must restart any open agent tabs of that type for the change to be
- * picked up — we surface that explicitly via toast.
+ * picked up - we surface that explicitly via toast.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -203,6 +203,7 @@ export function CoworkingSetup({ theme }: CoworkingSetupProps) {
 			</div>
 
 			<div
+				data-setting-id="coworking-background-browsers"
 				className="flex items-center justify-between px-3 py-2 rounded"
 				style={{
 					backgroundColor: theme.colors.bgActivity,

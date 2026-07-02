@@ -1,5 +1,5 @@
 /**
- * Codex installer — writes the `maestro-coworking` MCP entry into
+ * Codex installer - writes the `maestro-coworking` MCP entry into
  * `~/.codex/config.toml` using a sentinel-delimited block so we can
  * locate it on uninstall without parsing TOML (which would lose
  * user comments and key ordering).
@@ -8,11 +8,12 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { atomicWriteFile } from '../../utils/atomic-json-store';
 import { COWORKING_MCP_SERVER_NAME } from '../coworking-types';
 import type { CoworkingMcpServerSpec } from '../coworking-types';
 import type { AgentMcpInstaller } from './types';
 
-const SENTINEL_BEGIN = '# >>> maestro-coworking BEGIN — managed by Maestro, do not edit';
+const SENTINEL_BEGIN = '# >>> maestro-coworking BEGIN - managed by Maestro, do not edit';
 const SENTINEL_END = '# <<< maestro-coworking END';
 
 function configPath(): string {
@@ -30,7 +31,8 @@ async function readConfig(): Promise<string | null> {
 
 async function writeConfig(content: string): Promise<void> {
 	await fs.promises.mkdir(path.dirname(configPath()), { recursive: true });
-	await fs.promises.writeFile(configPath(), content, 'utf8');
+	// Atomic write so a crash mid-write can't truncate the user's config.toml.
+	await atomicWriteFile(configPath(), content);
 }
 
 function tomlString(value: string): string {

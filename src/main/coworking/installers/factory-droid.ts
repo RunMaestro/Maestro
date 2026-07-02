@@ -1,5 +1,5 @@
 /**
- * Factory Droid installer — writes the `maestro-coworking` MCP entry into
+ * Factory Droid installer - writes the `maestro-coworking` MCP entry into
  * `~/.factory/mcp.json`. Droid's stdio MCP shape uses `type: "stdio"` plus
  * the standard `command / args / env` triple.
  */
@@ -8,6 +8,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 const commentJson = require('comment-json');
+import { atomicWriteFile } from '../../utils/atomic-json-store';
 import { COWORKING_MCP_SERVER_NAME } from '../coworking-types';
 import type { CoworkingMcpServerSpec } from '../coworking-types';
 import type { AgentMcpInstaller } from './types';
@@ -31,7 +32,8 @@ async function readConfig(): Promise<unknown> {
 async function writeConfig(config: unknown): Promise<void> {
 	await fs.promises.mkdir(path.dirname(configPath()), { recursive: true });
 	const out = commentJson.stringify(config, null, 2) + '\n';
-	await fs.promises.writeFile(configPath(), out, 'utf8');
+	// Atomic write so a crash mid-write can't truncate the user's mcp.json.
+	await atomicWriteFile(configPath(), out);
 }
 
 export const factoryDroidInstaller: AgentMcpInstaller = {

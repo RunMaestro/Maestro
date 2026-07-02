@@ -3762,14 +3762,6 @@ interface MaestroAPI {
 				sessionId: string;
 			}>
 		) => Promise<void>;
-		upsertTerminal: (record: {
-			id: string;
-			cwd: string;
-			title: string;
-			tabUuid: string;
-			sessionId: string;
-		}) => Promise<void>;
-		removeTerminal: (tabUuid: string) => Promise<void>;
 		removeSession: (sessionId: string) => Promise<void>;
 		onRequestBuffer: (
 			callback: (tabUuid: string, sessionId: string, responseChannel: string) => void

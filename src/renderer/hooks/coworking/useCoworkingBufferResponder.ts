@@ -4,7 +4,7 @@
  * never assumes a particular ref shape; it just calls `getTerminalBuffer`
  * on the matching ref and ships back whatever it returns (or empty string).
  *
- * `sessionId` is always set — the bridge binds each MCP connection to its
+ * `sessionId` is always set - the bridge binds each MCP connection to its
  * caller's Maestro session at handshake, so reads are always scoped.
  */
 
@@ -27,7 +27,7 @@ export function useCoworkingBufferResponder(
 			try {
 				content = terminalViewRefs.current.get(sessionId)?.getTerminalBuffer(tabUuid) ?? '';
 			} catch (err) {
-				// `getTerminalBuffer` shouldn't throw under normal conditions — if it does,
+				// `getTerminalBuffer` shouldn't throw under normal conditions - if it does,
 				// degrading to empty content is acceptable for the agent UX, but capture
 				// the error so we can see it in production instead of silently swallowing.
 				void captureException(err instanceof Error ? err : new Error(String(err)), {

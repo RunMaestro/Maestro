@@ -88,23 +88,6 @@ export function registerCoworkingHandlers(deps: CoworkingHandlerDependencies): v
 	);
 
 	ipcMain.handle(
-		'coworking:upsertTerminal',
-		withIpcErrorLogging(
-			handlerOpts('upsertTerminal'),
-			async (record: CoworkingTerminalRecord): Promise<void> => {
-				coworkingRegistry.upsertTerminal(record);
-			}
-		)
-	);
-
-	ipcMain.handle(
-		'coworking:removeTerminal',
-		withIpcErrorLogging(handlerOpts('removeTerminal'), async (tabUuid: string): Promise<void> => {
-			coworkingRegistry.removeTerminal(tabUuid);
-		})
-	);
-
-	ipcMain.handle(
 		'coworking:removeSession',
 		withIpcErrorLogging(handlerOpts('removeSession'), async (sessionId: string): Promise<void> => {
 			coworkingRegistry.removeSession(sessionId);

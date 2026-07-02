@@ -1,11 +1,11 @@
 /**
- * Coworking tools — main-process implementations of the MCP tools advertised
+ * Coworking tools - main-process implementations of the MCP tools advertised
  * to agents. Pure-ish: state comes from the registry; buffer reads delegate
  * to a renderer-buffer-resolver injected at startup so this module stays
  * unit-testable without an Electron runtime.
  *
  * `sessionId` is always supplied by the caller (the bridge), resolved from
- * the MCP subprocess's handshake. There is no "active session" fallback —
+ * the MCP subprocess's handshake. There is no "active session" fallback -
  * that was the privacy bug PR #948 had to fix.
  */
 
@@ -23,6 +23,17 @@ import type {
 export type TerminalBufferResolver = (sessionId: string, tabUuid: string) => Promise<string>;
 
 let bufferResolver: TerminalBufferResolver | null = null;
+
+/** Hard ceiling on the number of scrollback lines a single readTerminal may
+ *  return, so a caller can't request an arbitrarily large slice. */
+export const MAX_TERMINAL_LINES = 10_000;
+
+/** readBrowser response caps. When the caller omits maxChars we apply a sane
+ *  default so a huge page (esp. format:'html') doesn't dump its entire DOM to
+ *  the agent; an explicit maxChars is honored up to a hard ceiling. The full
+ *  size is always reported via totalChars + truncated. */
+export const DEFAULT_BROWSER_MAX_CHARS = 200_000;
+export const MAX_BROWSER_MAX_CHARS = 2_000_000;
 
 /** Wire the renderer-buffer fetcher. Called once during main-process bootstrap. */
 export function setTerminalBufferResolver(resolver: TerminalBufferResolver | null): void {
@@ -66,10 +77,11 @@ export async function readTerminal(
 	};
 	const allLines = splitLines(full);
 	if (typeof args.lines === 'number' && Number.isFinite(args.lines) && args.lines > 0) {
-		if (allLines.length > args.lines) {
+		const lines = Math.min(Math.floor(args.lines), MAX_TERMINAL_LINES);
+		if (allLines.length > lines) {
 			return {
 				id: args.id,
-				content: allLines.slice(-args.lines).join('\n'),
+				content: allLines.slice(-lines).join('\n'),
 				truncated: true,
 				totalLines: allLines.length,
 			};
@@ -152,17 +164,19 @@ export async function readBrowser(
 	const result = await resolver(sessionId, tabUuid, { kind: 'read', format });
 	const full = result.content ?? '';
 	const totalChars = full.length;
+	// Honor an explicit maxChars up to a hard ceiling; when omitted, apply a sane
+	// default so a huge page (esp. format:'html') can't dump its whole DOM.
 	const cap =
 		typeof args.maxChars === 'number' && Number.isFinite(args.maxChars) && args.maxChars > 0
-			? args.maxChars
-			: null;
-	const truncated = cap !== null && full.length > cap;
+			? Math.min(Math.floor(args.maxChars), MAX_BROWSER_MAX_CHARS)
+			: DEFAULT_BROWSER_MAX_CHARS;
+	const truncated = full.length > cap;
 	return {
 		id: args.id,
 		url: result.url ?? '',
 		title: result.title ?? '',
 		format,
-		content: truncated ? full.slice(0, cap as number) : full,
+		content: truncated ? full.slice(0, cap) : full,
 		truncated,
 		totalChars,
 	};

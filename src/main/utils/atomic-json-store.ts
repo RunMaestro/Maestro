@@ -62,8 +62,27 @@ function assertSerializedJsonIsSafe(serialized: string | undefined, filePath: st
 export async function atomicWriteJson(filePath: string, data: unknown): Promise<void> {
 	const serialized = JSON.stringify(data, null, 2);
 	assertSerializedJsonIsSafe(serialized, filePath);
+	await atomicWriteFile(filePath, serialized);
+}
+
+/**
+ * Atomically write arbitrary string contents to `filePath` via a temp file +
+ * rename, with the same EPERM/EBUSY retry behavior as atomicWriteJson. Use for
+ * non-JSON payloads (TOML, comment-preserving JSON) where the caller has already
+ * produced the exact bytes to persist. A crash mid-write leaves the original
+ * file intact instead of truncating it.
+ */
+export async function atomicWriteFile(
+	filePath: string,
+	contents: string,
+	options?: { mode?: number }
+): Promise<void> {
 	const tmp = `${filePath}.tmp`;
-	await fs.writeFile(tmp, serialized, 'utf-8');
+	await fs.writeFile(
+		tmp,
+		contents,
+		options?.mode !== undefined ? { encoding: 'utf-8', mode: options.mode } : 'utf-8'
+	);
 	const maxRetries = 3;
 	for (let attempt = 0; attempt <= maxRetries; attempt++) {
 		try {
