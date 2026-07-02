@@ -1583,11 +1583,13 @@ function setupIpcHandlers() {
 	// secondary shell can surface nothing (every agent is owned by some window),
 	// so the agent-level move flow tidies it up automatically.
 	wireEmptySecondaryWindowAutoClose(windowRegistry);
-	// Persist a window rename as soon as it happens (rather than only on quit),
-	// so a custom name survives even an abrupt exit. saveWindowState snapshots the
-	// whole live registry, so passing the renamed window's id is enough.
+	// Persist a window rename or a panel-collapse toggle as soon as it happens
+	// (rather than only on quit), so both survive even an abrupt exit. A panel
+	// toggle fires no window move/resize, so without this its saved value would go
+	// stale. saveWindowState snapshots the whole live registry, so passing the
+	// affected window's id is enough.
 	windowRegistry.onChange((change) => {
-		if (change.type === 'name-changed' && change.windowId) {
+		if ((change.type === 'name-changed' || change.type === 'panel-changed') && change.windowId) {
 			saveWindowState(windowStateStore, windowRegistry, change.windowId);
 		}
 	});

@@ -44,6 +44,21 @@ describe('WindowRegistry', () => {
 			expect(entry?.browserWindow).toBe(bw);
 			expect(entry?.sessionIds).toEqual([]);
 			expect(entry?.isMain).toBe(false);
+			// Panels default to expanded for a fresh window.
+			expect(entry?.leftPanelCollapsed).toBe(false);
+			expect(entry?.rightPanelCollapsed).toBe(false);
+		});
+
+		it('carries the panel-collapse state supplied at create time (layout restore)', () => {
+			registry.create({
+				windowId: 'w1',
+				browserWindow: makeWindow(),
+				leftPanelCollapsed: true,
+				rightPanelCollapsed: false,
+			});
+			const entry = registry.get('w1');
+			expect(entry?.leftPanelCollapsed).toBe(true);
+			expect(entry?.rightPanelCollapsed).toBe(false);
 		});
 
 		it('generates a UUID when no windowId is supplied', () => {
@@ -167,6 +182,38 @@ describe('WindowRegistry', () => {
 		it('carries the name supplied at create time', () => {
 			registry.create({ windowId: 'w1', name: 'Preset', browserWindow: makeWindow() });
 			expect(registry.get('w1')?.name).toBe('Preset');
+		});
+	});
+
+	describe('setPanelState', () => {
+		it('applies provided fields (partial merge) and emits panel-changed', () => {
+			const listener = vi.fn();
+			registry.create({ windowId: 'w1', browserWindow: makeWindow() });
+			registry.onChange(listener);
+
+			registry.setPanelState('w1', { leftPanelCollapsed: true });
+			expect(registry.get('w1')?.leftPanelCollapsed).toBe(true);
+			// Omitted field left untouched (still the create default).
+			expect(registry.get('w1')?.rightPanelCollapsed).toBe(false);
+			expect(listener).toHaveBeenCalledWith(
+				expect.objectContaining({ type: 'panel-changed', windowId: 'w1' })
+			);
+		});
+
+		it('does not emit when the value is unchanged (no redundant persist)', () => {
+			registry.create({ windowId: 'w1', browserWindow: makeWindow() });
+			const listener = vi.fn();
+			registry.onChange(listener);
+			// leftPanelCollapsed already defaults to false.
+			registry.setPanelState('w1', { leftPanelCollapsed: false });
+			expect(listener).not.toHaveBeenCalled();
+		});
+
+		it('is a no-op for an unknown window', () => {
+			const listener = vi.fn();
+			registry.onChange(listener);
+			registry.setPanelState('nope', { leftPanelCollapsed: true });
+			expect(listener).not.toHaveBeenCalled();
 		});
 	});
 

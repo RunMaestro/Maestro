@@ -53,6 +53,7 @@ import {
 	// Session management
 	useActivityTracker,
 	useWindowScopedActiveSession,
+	useWindowState,
 	useHandsOnTimeTracker,
 	useNavigationHistory,
 	useSessionNavigation,
@@ -1780,6 +1781,11 @@ function MaestroConsoleInner() {
 	// Multi-window: keep this window's active agent to one it owns, so a restored
 	// window never shows the false "No agents" empty state while it holds agents.
 	useWindowScopedActiveSession();
+
+	// Multi-window: hydrate this window's left/right panel-collapse state from its
+	// persisted per-window record on mount, and persist changes back (debounced),
+	// so each window's collapsed panels survive an app restart.
+	useWindowState();
 
 	// Initialize global hands-on time tracker (persists to settings)
 	// Tracks total time user spends actively using Maestro (5-minute idle timeout)

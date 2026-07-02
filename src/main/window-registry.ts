@@ -33,7 +33,8 @@ export type WindowRegistryChangeType =
 	| 'removed'
 	| 'sessions-changed'
 	| 'session-moved'
-	| 'name-changed';
+	| 'name-changed'
+	| 'panel-changed';
 
 /**
  * Payload describing a registry mutation. Persistence (the window-state store)
@@ -92,6 +93,8 @@ export class WindowRegistry extends EventEmitter {
 		isMain?: boolean;
 		browserWindow: BrowserWindow;
 		name?: string;
+		leftPanelCollapsed?: boolean;
+		rightPanelCollapsed?: boolean;
 	}): string {
 		const id = options.windowId ?? generateUUID();
 		this.windows.set(id, {
@@ -99,8 +102,10 @@ export class WindowRegistry extends EventEmitter {
 			browserWindow: options.browserWindow,
 			sessionIds: [...(options.sessionIds ?? [])],
 			isMain: options.isMain ?? false,
-			leftPanelCollapsed: false,
-			rightPanelCollapsed: false,
+			// Default to expanded for a fresh window; a restore passes the saved
+			// per-window collapse state so panels come back as the user left them.
+			leftPanelCollapsed: options.leftPanelCollapsed ?? false,
+			rightPanelCollapsed: options.rightPanelCollapsed ?? false,
 			name: options.name,
 		});
 		this.emitChange({ type: 'created', windowId: id });
@@ -151,19 +156,33 @@ export class WindowRegistry extends EventEmitter {
 	/**
 	 * Update a window's per-window panel-collapse UI state. Only the provided
 	 * fields are changed (partial merge); a `false`/`true` value is applied, an
-	 * omitted field is left untouched. No-op if the window is unknown. This emits
-	 * no change signal - panel collapse is window-local UI that does not affect
-	 * session ownership, the cross-window badges, or any other window's view.
+	 * omitted field is left untouched. No-op if the window is unknown.
+	 *
+	 * Emits `panel-changed` when a value actually changed so the persistence layer
+	 * saves it to disk (a panel toggle triggers no window move/resize, so nothing
+	 * else would). `panel-changed` is deliberately NOT forwarded by
+	 * `wireWindowRegistryBroadcast` - panel collapse is window-local UI that other
+	 * windows' renderers must not react to (that would fight their own state).
 	 */
 	setPanelState(windowId: string, panel: Partial<WindowPanelState>): void {
 		const entry = this.windows.get(windowId);
 		if (!entry) return;
-		if (panel.leftPanelCollapsed !== undefined) {
+		let changed = false;
+		if (
+			panel.leftPanelCollapsed !== undefined &&
+			entry.leftPanelCollapsed !== panel.leftPanelCollapsed
+		) {
 			entry.leftPanelCollapsed = panel.leftPanelCollapsed;
+			changed = true;
 		}
-		if (panel.rightPanelCollapsed !== undefined) {
+		if (
+			panel.rightPanelCollapsed !== undefined &&
+			entry.rightPanelCollapsed !== panel.rightPanelCollapsed
+		) {
 			entry.rightPanelCollapsed = panel.rightPanelCollapsed;
+			changed = true;
 		}
+		if (changed) this.emitChange({ type: 'panel-changed', windowId });
 	}
 
 	/**

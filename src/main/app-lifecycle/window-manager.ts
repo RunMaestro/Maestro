@@ -892,6 +892,10 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 					sessionIds,
 					isMain: true,
 					name: options?.bounds?.name,
+					// Restore the saved per-window panel-collapse state (undefined on a
+					// fresh launch -> registry defaults to expanded).
+					leftPanelCollapsed: options?.bounds?.leftPanelCollapsed,
+					rightPanelCollapsed: options?.bounds?.rightPanelCollapsed,
 				});
 				// Keep the registry consistent if the primary closes. On macOS the
 				// app stays alive after all windows close and a later `activate`
@@ -924,6 +928,9 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 				sessionIds,
 				isMain: false,
 				name: bounds?.name,
+				// Restore the saved per-window panel-collapse state on layout restore.
+				leftPanelCollapsed: bounds?.leftPanelCollapsed,
+				rightPanelCollapsed: bounds?.rightPanelCollapsed,
 			});
 
 			browserWindow.on('closed', () => {

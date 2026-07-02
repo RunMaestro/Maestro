@@ -631,6 +631,18 @@ describe('Windows IPC Handlers', () => {
 			});
 		});
 
+		it('does NOT broadcast a panel-collapse change (window-local UI)', () => {
+			// panel-changed persists to disk but must never reach other renderers -
+			// each window owns its own collapse state and would fight a pushed value.
+			const win = makeFakeWindow();
+			const id = registry.create({ browserWindow: win, sessionIds: [], isMain: true });
+
+			wireWindowRegistryBroadcast(registry);
+			registry.setPanelState(id, { leftPanelCollapsed: true });
+
+			expect(sendOf(win)).not.toHaveBeenCalled();
+		});
+
 		it('skips destroyed windows and destroyed webContents', () => {
 			const live = makeFakeWindow();
 			const destroyedWin = makeFakeWindow({ isDestroyed: vi.fn(() => true) });
