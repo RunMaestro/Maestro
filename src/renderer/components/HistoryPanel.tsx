@@ -25,6 +25,9 @@ import {
 	ESTIMATED_ROW_HEIGHT,
 	estimateHistoryRowHeight,
 	LOOKBACK_OPTIONS,
+	HISTORY_PANEL_FILTERS_KEY,
+	resolveInitialHistoryFilters,
+	savePersistedHistoryFilters,
 } from './History';
 import type { GraphBucket } from './History/ActivityGraph';
 import { useUIStore } from '../stores/uiStore';
@@ -93,8 +96,8 @@ export const HistoryPanel = React.memo(
 			? ['USER', 'AUTO', 'CUE']
 			: ['USER', 'AUTO'];
 
-		const [activeFilters, setActiveFilters] = useState<Set<HistoryEntryType>>(
-			() => new Set(maestroCueEnabled ? ['USER', 'AUTO', 'CUE'] : ['USER', 'AUTO'])
+		const [activeFilters, setActiveFilters] = useState<Set<HistoryEntryType>>(() =>
+			resolveInitialHistoryFilters(HISTORY_PANEL_FILTERS_KEY, maestroCueEnabled)
 		);
 		const [detailModalEntry, setDetailModalEntry] = useState<HistoryEntry | null>(null);
 		const [searchFilter, setSearchFilter] = useState('');
@@ -289,20 +292,31 @@ export const HistoryPanel = React.memo(
 			[session.id]
 		);
 
-		// Sync activeFilters when cue feature is toggled
+		// Sync activeFilters when the Cue Encore feature is toggled. Only a
+		// genuine off->on transition auto-enables the CUE filter (the feature
+		// just became available). We must NOT force CUE on at mount, otherwise
+		// a persisted "CUE deselected" choice would be clobbered on every open.
+		const prevCueEnabledRef = useRef(maestroCueEnabled);
 		useEffect(() => {
+			const wasEnabled = prevCueEnabledRef.current;
+			prevCueEnabledRef.current = maestroCueEnabled;
 			setActiveFilters((prev) => {
-				if (maestroCueEnabled && !prev.has('CUE')) {
-					return new Set([...prev, 'CUE']);
-				}
 				if (!maestroCueEnabled && prev.has('CUE')) {
 					const next = new Set(prev);
 					next.delete('CUE');
 					return next;
 				}
+				if (maestroCueEnabled && !wasEnabled && !prev.has('CUE')) {
+					return new Set([...prev, 'CUE']);
+				}
 				return prev;
 			});
 		}, [maestroCueEnabled]);
+
+		// Persist the selection so it survives view switches and app restart.
+		useEffect(() => {
+			savePersistedHistoryFilters(HISTORY_PANEL_FILTERS_KEY, activeFilters);
+		}, [activeFilters]);
 
 		// Toggle a filter
 		const toggleFilter = (type: HistoryEntryType) => {
