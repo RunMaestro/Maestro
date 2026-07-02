@@ -158,7 +158,17 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 		var fn = timers.get(id);
 		timers.delete(id);
 		if (typeof fn !== 'function') return;
-		try { fn(); } catch (e) { safeLog('error', 'timer callback threw: ' + String(e)); }
+		// Log-and-RETHROW: a throwing timer callback must keep its pre-realm
+		// semantics — the throw escapes to the host setTimeout callback, becomes
+		// an uncaughtException, and CRASHES the child. That crash is load-bearing:
+		// the FC5 background supervisor's crash-restart path (and its e2e) detect
+		// exactly this. Swallowing it here would leave a wedged plugin running.
+		try {
+			fn();
+		} catch (e) {
+			safeLog('error', 'timer callback threw: ' + String(e));
+			throw e;
+		}
 	}
 
 	// ---- plugin registries ---------------------------------------------------

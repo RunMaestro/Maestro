@@ -127,16 +127,16 @@ test.describe('plugin system e2e', () => {
 	}
 
 	async function teardown(launched: LaunchedApp, seeded: SeededEnv): Promise<void> {
-		// A thrown assertion is not yet in test.info().errors inside `finally`;
-		// attach the captured main-process output whenever the test is not
-		// cleanly passing so failures always carry the sandbox log.
+		// A thrown assertion is not yet in test.info().errors inside `finally`
+		// (and status is unset until the test fn returns), so a conditional
+		// attach can never fire on the very failure it exists for. Write the
+		// captured main-process output to the test's output dir UNCONDITIONALLY —
+		// Playwright cleans outputDir per run, and a failure always carries the
+		// sandbox log at e2e-results/<test>/maestro-output.txt.
 		const info = test.info();
-		if (info.errors.length > 0 || info.status !== info.expectedStatus) {
-			await info.attach('maestro-output', {
-				body: launched.output(),
-				contentType: 'text/plain',
-			});
-		}
+		const outPath = info.outputPath('maestro-output.txt');
+		fs.writeFileSync(outPath, launched.output(), 'utf8');
+		await info.attach('maestro-output', { path: outPath, contentType: 'text/plain' });
 		await launched.app.close();
 		cleanup(seeded);
 	}
@@ -194,7 +194,7 @@ test.describe('plugin system e2e', () => {
 			const s = await selfTestUntil(
 				launched,
 				seeded.runId,
-				(x) => x['fs:write'] === 'PASS' && x['process:spawn'] === 'PASS'
+				(x) => PROBED_CAPS.every((c) => typeof x[c] === 'string') && x['process:spawn'] === 'PASS'
 			);
 
 			const shouldPass = [
@@ -246,7 +246,8 @@ test.describe('plugin system e2e', () => {
 			expect(out).toContain(`process.spawn by "${PLUGIN_ID}": e2e-selftest (`);
 
 			// Allowlist scope: with BOTH act verbs granted, an off-scope target is
-			// still DENY — the grant covers only its exact named members.
+			// still DENY — the grant covers only its exact named members (the
+			// broker's scope check runs BEFORE the act-verb trust gate).
 			expect(out).toContain(`[e2e-selftest:${seeded.runId}] ACT-OFFSCOPE agents:dispatch: DENY`);
 			expect(out).toContain(`[e2e-selftest:${seeded.runId}] ACT-OFFSCOPE process:spawn: DENY`);
 		} finally {
@@ -797,13 +798,16 @@ test.describe('plugin system e2e', () => {
 				.toEqual({ fetchBlocked: true, popupBlocked: true });
 
 			// Host-side navigation guard: the probe's location.href attempt is
-			// denied in the main process and audited.
+			// denied in the main process and audited. Electron may surface the
+			// guest top-frame attempt as will-navigate OR will-frame-navigate
+			// (observed: will-frame-navigate); the SAME denyNavigation guard
+			// handles both — the contract is "denied + audited", not the event name.
 			await expect
 				.poll(
 					() =>
-						launched
-							.output()
-							.includes('Blocked panel will-navigate: https://example.com/panel-nav'),
+						/Blocked panel will-(frame-)?navigate: https:\/\/example\.com\/panel-nav/.test(
+							launched.output()
+						),
 					{ timeout: 30_000, message: 'panel navigation was never blocked host-side' }
 				)
 				.toBe(true);

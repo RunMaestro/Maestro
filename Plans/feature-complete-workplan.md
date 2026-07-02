@@ -1,15 +1,27 @@
 # Feature-Complete Workplan — pianola · plugins · agent-run
 
-Status: EXECUTING (wave kicked off 2026-07-01). Baseline: completeness audit of
-`feat/autonomous-manager-agent` vs `origin/rc` (685f2462d), 2026-07-01.
+Status: WAVE LANDED except FC8 spec rewrite (in flight). Baseline: completeness
+audit of `feat/autonomous-manager-agent` vs `origin/rc` (685f2462d), 2026-07-01.
 
-## Where we stand
+## Where we stand (updated end of wave)
 
-| Domain    | Verdict                   | Remaining                                       |
-| --------- | ------------------------- | ----------------------------------------------- |
-| Pianola   | Complete per Track A plan | Nothing in-scope. Plugin lift = follow-on (P4). |
-| Agent-run | Complete                  | 2 orphan wires (FC7).                           |
-| Plugins   | NOT complete              | 5 feature gaps + 2 test gaps (FC1–FC6, FC8).    |
+| Workstream                                                | State     | Commit(s)                       |
+| --------------------------------------------------------- | --------- | ------------------------------- |
+| FC1 trusted-to-run + realm-escape + surfacing             | LANDED    | 693e2d47f                       |
+| FC2 act-verb spine (scopes/schemas/registry)              | LANDED    | a95ea4157                       |
+| FC2 consent UI (high-risk + unattended channels)          | LANDED    | 47000cec3                       |
+| FC2/FC3 final flip (dispatch/spawn/scheduler live)        | LANDED    | 459f0ecee                       |
+| FC4 event producers (history.entryAdded, agent.completed) | LANDED    | feae6c0bf                       |
+| FC5 background-service supervision + HOST_API 1.8.0       | LANDED    | a95ea4157, 606dae5f6            |
+| FC6 render host (per-plugin webview partition)            | LANDED    | 4cc1f8e87                       |
+| FC7 agent-run orphans (recovery + signals)                | LANDED    | 01d8a468a, 90fb5e2b1, d3da2893c |
+| FC8 harness/fixture groundwork                            | LANDED    | 00ebea868                       |
+| FC8 plugins.spec.ts rewrite (post-trust-gate world)       | IN FLIGHT | —                               |
+| Parked earlier agent-run wave (was uncommitted)           | LANDED    | 8ca458d72, 859d3038e            |
+
+Note for reviewers: the FC1 trust gate means DEV-LOOP UNSIGNED PLUGINS NO
+LONGER EXECUTE. Local plugin development now requires signing with a key listed
+in the `pluginTrustedKeys` store setting (see the e2e harness for the pattern).
 
 ## Governing decision (recorded)
 

@@ -180,6 +180,9 @@ function enablePluginsFlag(demoDir: string): void {
 	const encore = (settings.encoreFeatures as Record<string, unknown> | undefined) ?? {};
 	encore.plugins = true;
 	settings.encoreFeatures = encore;
+	// First-run Windows Support Notice is a focus-stealing modal that blocks
+	// keyboard-driven UI tests (Settings shortcut); suppress it for every run.
+	settings.suppressWindowsWarning = true;
 	writeSettings(demoDir, settings);
 }
 
