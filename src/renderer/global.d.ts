@@ -2201,6 +2201,17 @@ interface MaestroAPI {
 			durationMs: number;
 			error?: string;
 		}>;
+		onProfilingProgress: (
+			handler: (event: {
+				phase: 'stopping' | 'awaiting-save' | 'compressing' | 'done' | 'cancelled' | 'error';
+				percent?: number;
+				bytesProcessed?: number;
+				totalBytes?: number;
+				path?: string | null;
+				bundleSizeBytes?: number;
+				error?: string;
+			}) => void
+		) => () => void;
 	};
 	// Sync API (custom storage location)
 	sync: {

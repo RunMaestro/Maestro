@@ -886,6 +886,31 @@ svg.wand-profiling-active path:nth-child(8) {
 	}
 }
 
+/* Indeterminate progress bar for the profiling-capture modal: a segment slides
+   across the track while we wait on an unmeasurable phase (flushing the trace,
+   the native save dialog). Determinate compression progress uses a width %. */
+@keyframes profiling-progress-indeterminate {
+	0% {
+		transform: translateX(-100%);
+	}
+	100% {
+		transform: translateX(400%);
+	}
+}
+
+.profiling-progress-indeterminate {
+	width: 25%;
+	animation: profiling-progress-indeterminate 1.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.profiling-progress-indeterminate {
+		animation: none;
+		width: 100%;
+		opacity: 0.6;
+	}
+}
+
 /* React Flow - Document Graph edge hover styling */
 /* Subtle glow effect on edge hover */
 .react-flow__edge-path {

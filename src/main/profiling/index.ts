@@ -63,14 +63,20 @@ export async function finalizeCapture(
 	tracePath: string,
 	outputPath: string,
 	durationMs: number,
-	categories: string[]
+	categories: string[],
+	onProgress?: (percent: number, bytesProcessed: number, totalBytes: number) => void
 ): Promise<{
 	path: string;
 	bundleSizeBytes: number;
 	traceSizeBytes: number;
 }> {
 	const meta = buildMetadata(tracePath, durationMs, categories);
-	const { path: bundlePath, sizeBytes } = await writeProfileBundle(tracePath, meta, outputPath);
+	const { path: bundlePath, sizeBytes } = await writeProfileBundle(
+		tracePath,
+		meta,
+		outputPath,
+		onProgress
+	);
 
 	return {
 		path: bundlePath,

@@ -150,6 +150,30 @@ describe('Debug Preload API', () => {
 				expect(mockInvoke).toHaveBeenCalledWith('debug:stopProfiling');
 				expect(result).toEqual(stopResult);
 			});
+
+			it('should subscribe to debug:profilingProgress and forward events', () => {
+				const callback = vi.fn();
+				let registered: ((event: unknown, data: unknown) => void) | undefined;
+				mockOn.mockImplementation((_channel: string, handler: typeof registered) => {
+					registered = handler;
+				});
+
+				const cleanup = api.onProfilingProgress(callback);
+
+				expect(mockOn).toHaveBeenCalledWith('debug:profilingProgress', expect.any(Function));
+
+				// The wrapped handler should strip the IpcRendererEvent and pass data only.
+				const payload = { phase: 'compressing', percent: 42 };
+				registered?.({}, payload);
+				expect(callback).toHaveBeenCalledWith(payload);
+
+				// Cleanup removes the listener.
+				cleanup();
+				expect(mockRemoveListener).toHaveBeenCalledWith(
+					'debug:profilingProgress',
+					expect.any(Function)
+				);
+			});
 		});
 	});
 

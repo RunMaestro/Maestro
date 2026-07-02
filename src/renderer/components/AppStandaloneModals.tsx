@@ -11,6 +11,7 @@ import { THEMES } from '../constants/themes';
 import { DebugPackageModal } from './DebugPackageModal';
 import { DebugApplicationStatsModal } from './DebugApplicationStatsModal';
 import { DebugAgentProbeModal } from './DebugAgentProbeModal';
+import { ProfilingCaptureModal } from './ProfilingCaptureModal';
 import { WindowsWarningModal } from './WindowsWarningModal';
 import { AppOverlays } from './AppOverlays';
 import { PlaygroundPanel } from './PlaygroundPanel';
@@ -227,6 +228,8 @@ function AppStandaloneModalsInner({
 		setDebugApplicationStatsOpen,
 		debugAgentProbeOpen,
 		setDebugAgentProbeOpen,
+		profilingCaptureOpen,
+		setProfilingCaptureOpen,
 		playgroundOpen,
 		setPlaygroundOpen,
 		marketplaceModalOpen,
@@ -314,6 +317,11 @@ function AppStandaloneModalsInner({
 			{/* --- DEBUG: RE-PROBE AGENTS --- */}
 			{debugAgentProbeOpen && (
 				<DebugAgentProbeModal theme={theme} onClose={() => setDebugAgentProbeOpen(false)} />
+			)}
+
+			{/* --- PERFORMANCE PROFILING: STOP + BUNDLE PROGRESS --- */}
+			{profilingCaptureOpen && (
+				<ProfilingCaptureModal theme={theme} onClose={() => setProfilingCaptureOpen(false)} />
 			)}
 
 			{/* --- MARKETPLACE MODAL (lazy-loaded) --- */}
