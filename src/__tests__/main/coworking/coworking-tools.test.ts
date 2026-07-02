@@ -1,6 +1,10 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { CoworkingRegistry } from '../../../main/coworking/coworking-registry';
-import { listTerminals, readTerminal, MAX_TERMINAL_LINES } from '../../../main/coworking/coworking-tools';
+import {
+	listTerminals,
+	readTerminal,
+	MAX_TERMINAL_LINES,
+} from '../../../main/coworking/coworking-tools';
 
 describe('coworking-tools', () => {
 	let registry: CoworkingRegistry;
