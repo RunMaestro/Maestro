@@ -90,6 +90,7 @@ import {
 	registerPromptsHandlers,
 	registerMemoryHandlers,
 	registerCoworkingHandlers,
+	registerBrowserSessionHandlers,
 	setupLoggerEventForwarding,
 	cleanupAllGroomingSessions,
 	getActiveGroomingSessionCount,
@@ -1466,6 +1467,9 @@ function setupIpcHandlers() {
 
 	// Register project Memory handlers (Claude Code per-project memory viewer)
 	registerMemoryHandlers();
+
+	// Register Browser Session handlers (clear per-partition browsing data)
+	registerBrowserSessionHandlers();
 
 	// Register Coworking handlers + start the IPC bridge socket and refresh the bundled
 	// MCP-server script. The bridge runs whenever Maestro is up; per-agent activation

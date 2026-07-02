@@ -205,6 +205,122 @@ describe('coworking-bridge browser dispatch', () => {
 		});
 		expect(bad.error?.code).toBe(-32602);
 	});
+
+	it('browserInteract dispatches newTab without an id (session-scoped op)', async () => {
+		const conn = newConn();
+		__testing.connections.set(conn, { sessionId: null });
+		await helloAs(conn, 'sess-A');
+		coworkingRegistry.syncSessionBrowsers('sess-A', [], true);
+		const resp = await __testing.dispatch(conn, {
+			id: 2,
+			method: 'browserInteract',
+			params: { op: { kind: 'newTab', url: 'https://x.com', ephemeral: true } },
+		});
+		expect(resp.error).toBeUndefined();
+		expect(tools.browserInteract).toHaveBeenCalledWith('sess-A', {
+			id: undefined,
+			op: { kind: 'newTab', url: 'https://x.com', ephemeral: true },
+		});
+	});
+
+	it('browserInteract newTab rejects mistyped url/ephemeral params', async () => {
+		const conn = newConn();
+		__testing.connections.set(conn, { sessionId: null });
+		await helloAs(conn, 'sess-A');
+		coworkingRegistry.syncSessionBrowsers('sess-A', [], true);
+		const badUrl = await __testing.dispatch(conn, {
+			id: 2,
+			method: 'browserInteract',
+			params: { op: { kind: 'newTab', url: 42 } },
+		});
+		expect(badUrl.error?.code).toBe(-32602);
+		const badEphemeral = await __testing.dispatch(conn, {
+			id: 3,
+			method: 'browserInteract',
+			params: { op: { kind: 'newTab', ephemeral: 'yes' } },
+		});
+		expect(badEphemeral.error?.code).toBe(-32602);
+		expect(tools.browserInteract).not.toHaveBeenCalled();
+	});
+
+	it('browserInteract still requires an id for every non-newTab op', async () => {
+		const conn = newConn();
+		__testing.connections.set(conn, { sessionId: null });
+		await helloAs(conn, 'sess-A');
+		coworkingRegistry.syncSessionBrowsers('sess-A', [], true);
+		for (const op of [
+			{ kind: 'closeTab' },
+			{ kind: 'reload' },
+			{ kind: 'waitFor', selector: '#x' },
+		]) {
+			const resp = await __testing.dispatch(conn, {
+				id: 2,
+				method: 'browserInteract',
+				params: { op },
+			});
+			expect(resp.error?.code, `op ${op.kind} without id`).toBe(-32602);
+		}
+		expect(tools.browserInteract).not.toHaveBeenCalled();
+	});
+
+	it('browserInteract accepts closeTab with an id', async () => {
+		const conn = newConn();
+		__testing.connections.set(conn, { sessionId: null });
+		await helloAs(conn, 'sess-A');
+		coworkingRegistry.syncSessionBrowsers('sess-A', [], true);
+		const resp = await __testing.dispatch(conn, {
+			id: 2,
+			method: 'browserInteract',
+			params: { id: 'browser:1', op: { kind: 'closeTab' } },
+		});
+		expect(resp.error).toBeUndefined();
+		expect(tools.browserInteract).toHaveBeenCalledWith('sess-A', {
+			id: 'browser:1',
+			op: { kind: 'closeTab' },
+		});
+	});
+
+	it('waitFor validation enforces the selector and the 1..30000 integer timeout', async () => {
+		const conn = newConn();
+		__testing.connections.set(conn, { sessionId: null });
+		await helloAs(conn, 'sess-A');
+		coworkingRegistry.syncSessionBrowsers('sess-A', [], true);
+		const cases: Array<{ name: string; op: Record<string, unknown>; ok: boolean }> = [
+			{ name: 'no timeout', op: { kind: 'waitFor', selector: '#x' }, ok: true },
+			{ name: 'min timeout 1', op: { kind: 'waitFor', selector: '#x', timeoutMs: 1 }, ok: true },
+			{
+				name: 'max timeout 30000',
+				op: { kind: 'waitFor', selector: '#x', timeoutMs: 30000 },
+				ok: true,
+			},
+			{ name: 'zero timeout', op: { kind: 'waitFor', selector: '#x', timeoutMs: 0 }, ok: false },
+			{
+				name: 'over max timeout',
+				op: { kind: 'waitFor', selector: '#x', timeoutMs: 30001 },
+				ok: false,
+			},
+			{
+				name: 'non-integer timeout',
+				op: { kind: 'waitFor', selector: '#x', timeoutMs: 1.5 },
+				ok: false,
+			},
+			{ name: 'missing selector', op: { kind: 'waitFor', timeoutMs: 100 }, ok: false },
+			{ name: 'non-string selector', op: { kind: 'waitFor', selector: 7 }, ok: false },
+		];
+		let reqId = 10;
+		for (const c of cases) {
+			const resp = await __testing.dispatch(conn, {
+				id: reqId++,
+				method: 'browserInteract',
+				params: { id: 'browser:1', op: c.op },
+			});
+			if (c.ok) {
+				expect(resp.error, c.name).toBeUndefined();
+			} else {
+				expect(resp.error?.code, c.name).toBe(-32602);
+			}
+		}
+	});
 });
 
 describe('coworking-bridge browser audit', () => {
@@ -280,5 +396,64 @@ describe('coworking-bridge browser audit', () => {
 		await __testing.dispatch(conn, { id: 2, method: 'readBrowser', params: { id: 'browser:1' } });
 		expect(entries).toHaveLength(1);
 		expect(entries[0]).toMatchObject({ tool: 'read_browser', status: 'error' });
+	});
+
+	it('records list_terminals with the session agentType', async () => {
+		const conn = newConn();
+		__testing.connections.set(conn, { sessionId: null });
+		await helloAs(conn, 'sess-A');
+		coworkingRegistry.syncSessionBrowsers('sess-A', [], false, 'opencode');
+		await __testing.dispatch(conn, { id: 2, method: 'listTerminals' });
+		expect(entries).toHaveLength(1);
+		expect(entries[0]).toMatchObject({
+			sessionId: 'sess-A',
+			agentType: 'opencode',
+			tool: 'list_terminals',
+			status: 'ok',
+		});
+	});
+
+	it('records read_terminal with an id/lines detail (never terminal content)', async () => {
+		const conn = newConn();
+		__testing.connections.set(conn, { sessionId: null });
+		await helloAs(conn, 'sess-A');
+		coworkingRegistry.syncSessionBrowsers('sess-A', [], false, 'claude-code');
+		vi.mocked(tools.readTerminal).mockResolvedValueOnce({
+			id: 'term:1',
+			content: 'SECRET SCROLLBACK',
+			truncated: false,
+			totalLines: 1,
+		});
+		await __testing.dispatch(conn, {
+			id: 2,
+			method: 'readTerminal',
+			params: { id: 'term:1', lines: 5 },
+		});
+		expect(entries).toHaveLength(1);
+		expect(entries[0]).toMatchObject({
+			sessionId: 'sess-A',
+			agentType: 'claude-code',
+			tool: 'read_terminal',
+			status: 'ok',
+			detail: 'id=term:1 lines=5',
+		});
+		expect(JSON.stringify(entries[0])).not.toContain('SECRET SCROLLBACK');
+	});
+
+	it('newTab audit detail is redacted to origin+path and flags ephemeral', async () => {
+		const conn = newConn();
+		__testing.connections.set(conn, { sessionId: null });
+		await helloAs(conn, 'sess-A');
+		coworkingRegistry.syncSessionBrowsers('sess-A', [], true, 'codex');
+		await __testing.dispatch(conn, {
+			id: 2,
+			method: 'browserInteract',
+			params: { op: { kind: 'newTab', url: 'https://x.com/p?token=abc', ephemeral: true } },
+		});
+		expect(entries).toHaveLength(1);
+		expect(entries[0]).toMatchObject({ tool: 'browser_interact', opKind: 'newTab', status: 'ok' });
+		expect(entries[0].detail).toContain('url=https://x.com/p');
+		expect(entries[0].detail).toContain('ephemeral');
+		expect(entries[0].detail).not.toContain('token');
 	});
 });

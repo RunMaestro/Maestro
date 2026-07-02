@@ -8,7 +8,7 @@ function sessionWith(tabs: Array<Partial<BrowserTab>>): Session {
 }
 
 describe('buildBrowserInputs', () => {
-	it('excludes tabs hidden from agents', () => {
+	it('pushes hidden tabs with hiddenFromAgent:true so main can filter (ids stay stable)', () => {
 		const inputs = buildBrowserInputs(
 			sessionWith([
 				{
@@ -30,7 +30,12 @@ describe('buildBrowserInputs', () => {
 				},
 			])
 		);
-		expect(inputs.map((i) => i.tabUuid)).toEqual(['u-1']);
+		// Hidden tabs are NOT dropped here: the registry needs them to keep
+		// browser:N ids stable across hide/unhide. Filtering happens in main.
+		expect(inputs.map((i) => [i.tabUuid, i.hiddenFromAgent])).toEqual([
+			['u-1', undefined],
+			['u-2', true],
+		]);
 	});
 
 	it('maps favicon null to undefined', () => {

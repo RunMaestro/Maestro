@@ -38,6 +38,7 @@ type MockWebview = HTMLElement & {
 	executeJavaScript: ReturnType<typeof vi.fn>;
 	findInPage?: ReturnType<typeof vi.fn>;
 	stopFindInPage?: ReturnType<typeof vi.fn>;
+	reload?: ReturnType<typeof vi.fn>;
 };
 
 describe('BrowserTabView', () => {
@@ -740,6 +741,107 @@ describe('BrowserTabView', () => {
 				webview.dispatchEvent(fresh);
 			});
 			expect(bar.textContent).toContain('1/3');
+		});
+	});
+
+	describe('clear browsing data + incognito badge', () => {
+		interface BrowserSessionApi {
+			clearSessionData: (partition: string) => Promise<{ ok: boolean; error?: string }>;
+		}
+		// The global window.maestro test mock does not carry browserSession; these
+		// tests install/remove it per-case through a mutable view.
+		const maestroMutable = window.maestro as unknown as { browserSession?: BrowserSessionApi };
+
+		afterEach(() => {
+			delete maestroMutable.browserSession;
+		});
+
+		it('shows the incognito badge only for ephemeral tabs', () => {
+			const { rerender } = render(
+				<BrowserTabView
+					tab={{ ...mockTab, ephemeral: true }}
+					theme={mockTheme}
+					onUpdateTab={vi.fn()}
+				/>
+			);
+			expect(screen.getByTestId('browser-tab-incognito-badge')).toBeInTheDocument();
+			rerender(<BrowserTabView tab={mockTab} theme={mockTheme} onUpdateTab={vi.fn()} />);
+			expect(screen.queryByTestId('browser-tab-incognito-badge')).toBeNull();
+		});
+
+		it('clears browsing data only on the armed second click, then reloads', async () => {
+			const clearSessionData = vi.fn(async () => ({ ok: true }));
+			maestroMutable.browserSession = { clearSessionData };
+			render(<BrowserTabView tab={mockTab} theme={mockTheme} onUpdateTab={vi.fn()} />);
+			const webview = getWebview();
+			const reload = vi.fn();
+			webview.reload = reload;
+
+			const button = screen.getByTestId('browser-tab-clear-session-data');
+			// First click only arms: nothing destructive may happen yet.
+			fireEvent.click(button);
+			expect(clearSessionData).not.toHaveBeenCalled();
+			expect(button).toHaveAttribute('aria-pressed', 'true');
+
+			// Second click clears THIS tab's partition and reloads on success.
+			fireEvent.click(button);
+			await waitFor(() => {
+				expect(clearSessionData).toHaveBeenCalledWith('persist:maestro-browser-session-session-1');
+			});
+			await waitFor(() => expect(reload).toHaveBeenCalled());
+			expect(button).toHaveAttribute('aria-pressed', 'false');
+		});
+
+		it('disarms after 4s so a late second click re-arms instead of clearing', () => {
+			vi.useFakeTimers();
+			try {
+				const clearSessionData = vi.fn(async () => ({ ok: true }));
+				maestroMutable.browserSession = { clearSessionData };
+				render(<BrowserTabView tab={mockTab} theme={mockTheme} onUpdateTab={vi.fn()} />);
+				const button = screen.getByTestId('browser-tab-clear-session-data');
+
+				fireEvent.click(button);
+				expect(button).toHaveAttribute('aria-pressed', 'true');
+				act(() => {
+					vi.advanceTimersByTime(4001);
+				});
+				expect(button).toHaveAttribute('aria-pressed', 'false');
+
+				// The stale confirm click must arm again, not clear.
+				fireEvent.click(button);
+				expect(clearSessionData).not.toHaveBeenCalled();
+				expect(button).toHaveAttribute('aria-pressed', 'true');
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it('surfaces a clear failure inline and does not reload', async () => {
+			const clearSessionData = vi.fn(async () => ({ ok: false, error: 'nope' }));
+			maestroMutable.browserSession = { clearSessionData };
+			render(<BrowserTabView tab={mockTab} theme={mockTheme} onUpdateTab={vi.fn()} />);
+			const webview = getWebview();
+			const reload = vi.fn();
+			webview.reload = reload;
+
+			const button = screen.getByTestId('browser-tab-clear-session-data');
+			fireEvent.click(button);
+			fireEvent.click(button);
+
+			const alert = await screen.findByRole('alert');
+			expect(alert.textContent).toContain('Could not clear browsing data');
+			expect(alert.textContent).toContain('nope');
+			expect(reload).not.toHaveBeenCalled();
+		});
+
+		it('degrades to an inline error when the preload lacks browserSession', async () => {
+			render(<BrowserTabView tab={mockTab} theme={mockTheme} onUpdateTab={vi.fn()} />);
+			const button = screen.getByTestId('browser-tab-clear-session-data');
+			fireEvent.click(button);
+			fireEvent.click(button);
+
+			const alert = await screen.findByRole('alert');
+			expect(alert.textContent).toMatch(/not supported by this build/);
 		});
 	});
 });

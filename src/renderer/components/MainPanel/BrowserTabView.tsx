@@ -16,6 +16,8 @@ import {
 	EyeOff,
 	Globe,
 	RotateCw,
+	Trash2,
+	VenetianMask,
 	X,
 } from 'lucide-react';
 import { Spinner } from '../ui/Spinner';
@@ -183,6 +185,18 @@ export const BrowserTabView = React.memo(
 		const [findMatches, setFindMatches] = useState({ active: 0, total: 0 });
 		const findInputRef = useRef<HTMLInputElement | null>(null);
 		const findRequestIdRef = useRef(0);
+		// Two-step confirm for the destructive clear-browsing-data action: first
+		// click arms the button (auto-disarms after 4s), second click clears.
+		const [clearArmed, setClearArmed] = useState(false);
+		const clearDisarmTimerRef = useRef<number | null>(null);
+
+		useEffect(() => {
+			return () => {
+				if (clearDisarmTimerRef.current !== null) {
+					window.clearTimeout(clearDisarmTimerRef.current);
+				}
+			};
+		}, []);
 
 		useEffect(() => {
 			latestTabRef.current = tab;
@@ -727,6 +741,43 @@ export const BrowserTabView = React.memo(
 			onUpdateTab(tab.id, { hiddenFromAgent: !tab.hiddenFromAgent });
 		}, [onUpdateTab, tab.id, tab.hiddenFromAgent]);
 
+		const handleClearSessionData = useCallback(() => {
+			const partition = tab.partition;
+			if (!partition) return;
+			if (!clearArmed) {
+				setClearArmed(true);
+				if (clearDisarmTimerRef.current !== null) {
+					window.clearTimeout(clearDisarmTimerRef.current);
+				}
+				clearDisarmTimerRef.current = window.setTimeout(() => setClearArmed(false), 4000);
+				return;
+			}
+			if (clearDisarmTimerRef.current !== null) {
+				window.clearTimeout(clearDisarmTimerRef.current);
+				clearDisarmTimerRef.current = null;
+			}
+			setClearArmed(false);
+			void (async () => {
+				try {
+					// Optional-chain the namespace: older preload bundles / test mocks may
+					// not expose browserSession, and that must degrade to a visible error
+					// instead of an unhandled rejection.
+					const res = await window.maestro.browserSession?.clearSessionData(partition);
+					if (res?.ok) {
+						webviewRef.current?.reload();
+					} else {
+						setAddressError(
+							`Could not clear browsing data: ${res?.error ?? 'not supported by this build'}`
+						);
+					}
+				} catch (err) {
+					setAddressError(
+						`Could not clear browsing data: ${err instanceof Error ? err.message : String(err)}`
+					);
+				}
+			})();
+		}, [clearArmed, tab.partition]);
+
 		return (
 			<div className="flex-1 min-h-0 flex flex-col" data-testid="browser-tab-view">
 				<div
@@ -785,6 +836,16 @@ export const BrowserTabView = React.memo(
 										borderColor: theme.colors.border,
 									}}
 								>
+									{tab.ephemeral ? (
+										<VenetianMask
+											aria-label="Incognito tab"
+											className="w-4 h-4 shrink-0"
+											style={{ color: theme.colors.textDim }}
+											data-testid="browser-tab-incognito-badge"
+										>
+											<title>Incognito tab — browsing data is kept in memory only</title>
+										</VenetianMask>
+									) : null}
 									{tab.favicon ? (
 										<img alt="" className="w-4 h-4 shrink-0" src={tab.favicon} />
 									) : (
@@ -851,6 +912,24 @@ export const BrowserTabView = React.memo(
 							aria-pressed={tab.hiddenFromAgent === true}
 						>
 							{tab.hiddenFromAgent ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+						</button>
+						<button
+							type="button"
+							onClick={handleClearSessionData}
+							disabled={!tab.partition}
+							className="flex items-center justify-center w-8 h-8 rounded transition-colors disabled:opacity-40"
+							style={{
+								color: clearArmed ? theme.colors.error : theme.colors.textDim,
+							}}
+							title={
+								clearArmed
+									? 'Click again to clear ALL browsing data (cookies, storage, logins) for this agent\u2019s browser session'
+									: 'Clear browsing data for this agent\u2019s browser session (cookies, storage, logins \u2014 shared by all its tabs)'
+							}
+							aria-pressed={clearArmed}
+							data-testid="browser-tab-clear-session-data"
+						>
+							<Trash2 className="w-4 h-4" />
 						</button>
 					</div>
 				</div>

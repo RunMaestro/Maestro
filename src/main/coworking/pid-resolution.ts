@@ -23,6 +23,98 @@ import { isWindows, isMacOS, isLinux } from '../../shared/platformDetection';
 /** Maximum ancestors to inspect before giving up. Caps cost on pathological trees. */
 export const MAX_PID_WALK_HOPS = 5;
 
+/**
+ * Which Windows parent-pid backend is known to work in this process.
+ *
+ * `wmic` is fast (~30ms) but deprecated and absent on newer Windows 11 builds;
+ * PowerShell CIM always exists but pays ~200ms cold-start per invocation. The
+ * first backend that spawns successfully wins, so we pay the wmic-ENOENT +
+ * PowerShell probe cost at most once per process lifetime instead of on every
+ * hop of every handshake.
+ */
+let windowsPidBackend: 'wmic' | 'powershell' | null = null;
+
+/** Query the parent PID via wmic. Throws if wmic is missing or the spawn fails. */
+function queryParentPidWmic(pid: number): number | null {
+	const out = execFileSync(
+		'wmic',
+		['process', 'where', `ProcessId=${pid}`, 'get', 'ParentProcessId', '/value'],
+		{
+			encoding: 'utf8',
+			timeout: 2000,
+			stdio: ['ignore', 'pipe', 'ignore'],
+			windowsHide: true,
+		}
+	);
+	const m = out.match(/ParentProcessId=(\d+)/);
+	if (!m) return null;
+	const n = Number(m[1]);
+	return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+/** Query the parent PID via PowerShell CIM. Throws if the spawn fails. */
+function queryParentPidPowerShell(pid: number): number | null {
+	const out = execFileSync(
+		'powershell',
+		[
+			'-NoProfile',
+			'-NonInteractive',
+			'-Command',
+			`(Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}').ParentProcessId`,
+		],
+		{
+			encoding: 'utf8',
+			timeout: 3000,
+			stdio: ['ignore', 'pipe', 'ignore'],
+			windowsHide: true,
+		}
+	);
+	const m = out.trim().match(/^(\d+)$/);
+	if (!m) return null;
+	const n = Number(m[1]);
+	return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+/**
+ * Windows parent-pid lookup with backend fallback. Tries `wmic` first (fast
+ * path); on ENOENT or any other spawn failure falls back to PowerShell CIM.
+ * Never throws — any failure resolves to null (fail-closed).
+ */
+function getParentPidWindows(pid: number): number | null {
+	// Defense in depth: `pid` is interpolated into both backends' query strings,
+	// so re-validate here even though getParentPid already gates on it.
+	if (!Number.isInteger(pid) || pid <= 0) return null;
+	if (windowsPidBackend === 'wmic') {
+		try {
+			return queryParentPidWmic(pid);
+		} catch {
+			return null;
+		}
+	}
+	if (windowsPidBackend === 'powershell') {
+		try {
+			return queryParentPidPowerShell(pid);
+		} catch {
+			return null;
+		}
+	}
+	// Backend not yet determined: probe wmic first, then PowerShell.
+	try {
+		const result = queryParentPidWmic(pid);
+		windowsPidBackend = 'wmic';
+		return result;
+	} catch {
+		// wmic missing (deprecated, removed on newer Win11 builds) or broken.
+	}
+	try {
+		const result = queryParentPidPowerShell(pid);
+		windowsPidBackend = 'powershell';
+		return result;
+	} catch {
+		return null;
+	}
+}
+
 /** Resolve a single PID's parent. Returns null if unknown or the lookup failed. */
 export function getParentPid(pid: number): number | null {
 	if (!Number.isInteger(pid) || pid <= 1) return null;
@@ -45,23 +137,7 @@ export function getParentPid(pid: number): number | null {
 			return Number.isInteger(n) && n > 0 ? n : null;
 		}
 		if (isWindows()) {
-			// wmic is deprecated but still present on Windows 10/11. PowerShell would
-			// be more future-proof but costs ~200ms cold-start per invocation, which
-			// is far too slow for a handshake-critical path.
-			const out = execFileSync(
-				'wmic',
-				['process', 'where', `ProcessId=${pid}`, 'get', 'ParentProcessId', '/value'],
-				{
-					encoding: 'utf8',
-					timeout: 2000,
-					stdio: ['ignore', 'pipe', 'ignore'],
-					windowsHide: true,
-				}
-			);
-			const m = out.match(/ParentProcessId=(\d+)/);
-			if (!m) return null;
-			const n = Number(m[1]);
-			return Number.isInteger(n) && n > 0 ? n : null;
+			return getParentPidWindows(pid);
 		}
 	} catch {
 		return null;

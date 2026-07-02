@@ -10,6 +10,10 @@ import { logger } from '../utils/logger';
 import { initAutoUpdater } from '../auto-updater';
 
 const BROWSER_TAB_PARTITION_PREFIX = 'persist:maestro-browser-session-';
+// Ephemeral (incognito) browser tabs: no `persist:` prefix, so Electron keeps
+// the partition in memory only. Mirrors EPHEMERAL_BROWSER_TAB_PARTITION_PREFIX
+// in src/renderer/utils/browserTabPersistence.ts.
+const EPHEMERAL_BROWSER_TAB_PARTITION_PREFIX = 'maestro-ephemeral-';
 // `file:` is allowed so users can open local HTML they just generated
 // (Plotly dashboards, etc.) inside Maestro instead of bouncing to the system
 // browser. The webview is still hardened (sandbox, no node, webSecurity true)
@@ -70,7 +74,10 @@ function isAllowedBrowserTabUrl(rawUrl: string): boolean {
 }
 
 function isAllowedBrowserTabPartition(partition: string): boolean {
-	return partition.startsWith(BROWSER_TAB_PARTITION_PREFIX);
+	return (
+		partition.startsWith(BROWSER_TAB_PARTITION_PREFIX) ||
+		partition.startsWith(EPHEMERAL_BROWSER_TAB_PARTITION_PREFIX)
+	);
 }
 
 function hardenBrowserTabWebPreferences(webPreferences: BrowserTabWebPreferences): void {

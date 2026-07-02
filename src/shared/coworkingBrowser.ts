@@ -17,6 +17,10 @@ export interface CoworkingBrowserInput {
 	canGoBack: boolean;
 	canGoForward: boolean;
 	isLoading: boolean;
+	/** True when the user hid this tab from agents (eye toggle). Pushed to main
+	 *  so the registry can enforce exclusion server-side (defense in depth on
+	 *  top of the renderer-side behavior), with no sync-cycle race window. */
+	hiddenFromAgent?: boolean;
 }
 
 /** Browser tab as advertised to the agent via `list_browsers`, addressed by a
@@ -38,7 +42,7 @@ export interface CoworkingBrowserEntry {
  * is state-changing and gated behind the browser-interaction permission.
  */
 export type BrowserOp =
-	| { kind: 'read'; format: 'text' | 'innerText' | 'html' }
+	| { kind: 'read'; format: 'text' | 'innerText' | 'html'; selector?: string }
 	| { kind: 'navigate'; url: string }
 	| { kind: 'back' }
 	| { kind: 'forward' }
@@ -47,7 +51,10 @@ export type BrowserOp =
 	| { kind: 'click'; selector: string }
 	| { kind: 'type'; selector: string; text: string }
 	| { kind: 'eval'; code: string }
-	| { kind: 'screenshot' };
+	| { kind: 'screenshot' }
+	| { kind: 'waitFor'; selector: string; timeoutMs?: number }
+	| { kind: 'newTab'; url?: string; ephemeral?: boolean }
+	| { kind: 'closeTab' };
 
 /** Interaction (state-changing) op kinds, gated behind the interaction
  *  permission. `read` is intentionally excluded. */
@@ -77,8 +84,15 @@ export type BrowserConfirmPolicy = 'off' | 'dangerous' | 'all';
 /** Policy used when an agent has no explicit confirm entry configured. */
 export const DEFAULT_BROWSER_CONFIRM_POLICY: BrowserConfirmPolicy = 'dangerous';
 
-/** Ops the 'dangerous' policy always routes through per-call approval. */
-export const ALWAYS_CONFIRM_KINDS: readonly BrowserInteractionKind[] = ['navigate', 'eval'];
+/** Ops the 'dangerous' policy always routes through per-call approval.
+ *  `newTab` is navigation-equivalent (loads an arbitrary URL) and `closeTab`
+ *  is destructive, so both sit alongside navigate/eval. */
+export const ALWAYS_CONFIRM_KINDS: readonly BrowserInteractionKind[] = [
+	'navigate',
+	'eval',
+	'newTab',
+	'closeTab',
+];
 
 /** Whether a browser op requires per-call user approval under the given policy.
  *  `read` never needs approval. */

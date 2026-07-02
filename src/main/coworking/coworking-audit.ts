@@ -1,14 +1,17 @@
 /**
- * Audit trail for coworking browser tool calls.
+ * Audit trail for coworking tool calls (browser AND terminal).
  *
- * Every browser tool dispatched by the bridge is recorded (invoked or denied)
- * so users can see what agents did to their browser tabs. The sink is wired once
- * at main bootstrap (`createDefaultBrowserAuditSink`: a system-log line plus a
- * best-effort JSONL append under userData). `recordBrowserAudit` is a no-op until
- * a sink is set, so unit tests stay isolated and can inject a capturing sink.
+ * Every coworking tool dispatched by the bridge is recorded (invoked or denied)
+ * so users can see what agents did to their browser tabs and terminals. The sink
+ * is wired once at main bootstrap (`createDefaultBrowserAuditSink`: a system-log
+ * line plus a best-effort JSONL append under userData). `recordBrowserAudit` is
+ * a no-op until a sink is set, so unit tests stay isolated and can inject a
+ * capturing sink.
  *
- * Redaction: page content is never recorded, and free-form `eval` code / typed
- * text are reduced to lengths (never logged verbatim).
+ * Redaction: page/terminal content is never recorded; free-form `eval` code and
+ * typed text are reduced to lengths; navigate/newTab URLs are stripped to
+ * origin+path (query strings and fragments — where auth tokens live — are
+ * reduced to character counts).
  */
 
 import * as fs from 'fs';
@@ -23,7 +26,7 @@ export interface BrowserAuditEntry {
 	sessionId: string;
 	/** Agent type (ToolType) of the owning session, when known. */
 	agentType?: string;
-	/** Public tool name: list_browsers | get_browser_url | read_browser | browser_interact. */
+	/** Public tool name: list_terminals | read_terminal | list_browsers | get_browser_url | read_browser | browser_interact. */
 	tool: string;
 	/** Interaction op kind (navigate/click/type/eval/...) when tool is browser_interact. */
 	opKind?: string;
@@ -52,15 +55,34 @@ export function recordBrowserAudit(entry: BrowserAuditEntry): void {
 export function redactBrowserOpDetail(op: BrowserOp): string {
 	switch (op.kind) {
 		case 'navigate':
-			return `url=${op.url.slice(0, 200)}`;
+			return `url=${redactUrl(op.url)}`;
 		case 'click':
 			return `selector=${op.selector.slice(0, 120)}`;
 		case 'type':
 			return `selector=${op.selector.slice(0, 120)} textLen=${op.text.length}`;
 		case 'eval':
 			return `codeLen=${op.code.length}`;
+		case 'waitFor':
+			return `selector=${op.selector.slice(0, 120)}${op.timeoutMs !== undefined ? ` timeoutMs=${op.timeoutMs}` : ''}`;
+		case 'newTab':
+			return `${op.url !== undefined ? `url=${redactUrl(op.url)}` : 'url=<default>'}${op.ephemeral ? ' ephemeral' : ''}`;
 		default:
 			return '';
+	}
+}
+
+/** Strip query string and fragment from a URL before it hits the audit log —
+ *  that's where session tokens and magic-link secrets live. Non-URL navigate
+ *  targets (search text) are reduced to a character count: free-form search
+ *  queries can carry secrets just like query strings, so they never log verbatim. */
+function redactUrl(raw: string): string {
+	try {
+		const u = new URL(raw);
+		const query = u.search.length > 1 ? ` queryChars=${u.search.length - 1}` : '';
+		const hash = u.hash.length > 1 ? ` hashChars=${u.hash.length - 1}` : '';
+		return `${u.origin}${u.pathname}${query}${hash}`;
+	} catch {
+		return `<non-url textChars=${raw.length}>`;
 	}
 }
 

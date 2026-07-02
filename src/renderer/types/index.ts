@@ -613,6 +613,10 @@ export interface BrowserTab {
 	// When true, this tab is hidden from coworking agents: excluded from the
 	// registry so list_browsers / read_browser / interaction never see it. Persisted.
 	hiddenFromAgent?: boolean;
+	// When true, this is an incognito tab: it uses an in-memory (non-persist:)
+	// partition and is dropped from persisted session state, so it never
+	// survives an app restart.
+	ephemeral?: boolean;
 	// Runtime-only: populated by the embedded Electron browser surface, never persisted
 	webContentsId?: number;
 }

@@ -31,6 +31,13 @@ import {
 	useCoworkingBackgroundBrowserStore,
 	backgroundBrowserKey,
 } from '../../stores/coworkingBackgroundBrowserStore';
+import { createBrowserTab } from '../tabs/internal/browserTabHelpers';
+import { closeBrowserTab } from '../../utils/tabHelpers';
+import { insertAfterActiveInUnifiedTabOrder } from '../../utils/unifiedTabOrderUtils';
+import {
+	DEFAULT_BROWSER_TAB_URL,
+	resolveBrowserTabNavigationTarget,
+} from '../../utils/browserTabPersistence';
 
 /** Promise-based delay (ES2024 Promise.withResolvers, ambient-typed for the
  *  project's ES2020 lib). Used to poll for the activated tab's handle. */
@@ -44,7 +51,15 @@ function delay(ms: number): Promise<void> {
  *  user. Returns true to proceed, false to decline. */
 export type BrowserApprovalRequester = (
 	op: BrowserOp,
-	ctx: { agentId: string; sessionId: string }
+	ctx: {
+		agentId: string;
+		sessionId: string;
+		/** Main-process approval-requirement computation (from the policy mirrored
+		 *  into the registry). ORed with the local policy — either side saying
+		 *  "confirm" forces the dialog, so a stale renderer settings read can
+		 *  never weaken the gate. */
+		forceConfirm?: boolean;
+	}
 ) => Promise<boolean>;
 
 /** Human-readable phrase describing what a browser op will do (for the approval
@@ -71,6 +86,12 @@ function describeBrowserOp(op: BrowserOp): string {
 			return 'capture a screenshot of the page';
 		case 'read':
 			return 'read the page content';
+		case 'waitFor':
+			return `wait for the element ${op.selector}`;
+		case 'newTab':
+			return `open a new${op.ephemeral ? ' incognito' : ''} browser tab${op.url ? ` at ${op.url}` : ''}`;
+		case 'closeTab':
+			return 'close this browser tab';
 		default:
 			return 'perform a browser action';
 	}
@@ -80,12 +101,12 @@ function describeBrowserOp(op: BrowserOp): string {
  *  op needs approval, shows the confirm dialog and awaits the user's decision. */
 async function defaultRequestApproval(
 	op: BrowserOp,
-	ctx: { agentId: string; sessionId: string }
+	ctx: { agentId: string; sessionId: string; forceConfirm?: boolean }
 ): Promise<boolean> {
 	if (op.kind === 'read') return true;
 	const policyMap = useSettingsStore.getState().coworkingBrowserInteractionConfirm;
 	const policy = policyMap[ctx.agentId] ?? DEFAULT_BROWSER_CONFIRM_POLICY;
-	if (!browserOpNeedsConfirm(policy, op.kind)) return true;
+	if (!ctx.forceConfirm && !browserOpNeedsConfirm(policy, op.kind)) return true;
 	return requestCoworkingApproval({
 		agentId: ctx.agentId,
 		sessionId: ctx.sessionId,
@@ -94,12 +115,89 @@ async function defaultRequestApproval(
 	});
 }
 
+/** Create a browser tab in the requesting session (the `newTab` op). The tab is
+ *  appended to the session's tab strip and selected within that session; if the
+ *  session isn't focused, nothing changes on screen until the user switches to
+ *  it. The new tab gets its `browser:N` id on the next registry sync, so the
+ *  result tells the agent to call list_browsers. */
+function createTabForSession(
+	sessionId: string,
+	op: { url?: string; ephemeral?: boolean }
+): BrowserOpResult {
+	// Normalize like browser_navigate does: scheme-less hosts and search text go
+	// through the same resolver, so the agent never gets a "successful" tab whose
+	// webview src is raw unloadable text.
+	let targetUrl = DEFAULT_BROWSER_TAB_URL;
+	if (op.url) {
+		const resolved = resolveBrowserTabNavigationTarget(op.url);
+		if (resolved.kind === 'error') {
+			return { ok: false, content: resolved.message };
+		}
+		targetUrl = resolved.url;
+	}
+	const { setSessions } = useSessionStore.getState();
+	const created = createBrowserTab(sessionId, targetUrl, {
+		ephemeral: op.ephemeral === true,
+	});
+	setSessions((prev) =>
+		prev.map((s) => {
+			if (s.id !== sessionId) return s;
+			return {
+				...s,
+				browserTabs: [...(s.browserTabs || []), created],
+				activeBrowserTabId: created.id,
+				unifiedTabOrder: insertAfterActiveInUnifiedTabOrder(s, {
+					type: 'browser',
+					id: created.id,
+				}),
+			};
+		})
+	);
+	return {
+		ok: true,
+		url: created.url,
+		content: `Opened a new${op.ephemeral ? ' incognito' : ''} browser tab at ${created.url}. Call list_browsers to get its id.`,
+	};
+}
+
+/** Close a browser tab in the requesting session (the `closeTab` op). Pure
+ *  state update via the shared close helper (keeps closed-tab history and
+ *  unified-order repair consistent with a user-initiated close). */
+function closeTabForSession(sessionId: string, tabUuid: string): BrowserOpResult {
+	const { setSessions } = useSessionStore.getState();
+	let closed = false;
+	setSessions((prev) =>
+		prev.map((s) => {
+			if (s.id !== sessionId) return s;
+			const result = closeBrowserTab(s, tabUuid);
+			if (!result) return s;
+			closed = true;
+			return result.session;
+		})
+	);
+	return closed
+		? { ok: true, content: 'Closed the browser tab.' }
+		: { ok: false, content: 'Browser tab could not be closed (it may already be closed).' };
+}
+
 export async function applyBrowserOp(
 	handle: BrowserTabViewHandle,
 	op: BrowserOp
 ): Promise<BrowserOpResult> {
 	switch (op.kind) {
 		case 'read': {
+			if (op.selector) {
+				const res = await handle.executeJavaScript(
+					`(function(){var el=document.querySelector(${JSON.stringify(op.selector)});if(!el)return null;return ${
+						op.format === 'html' ? 'el.outerHTML' : "el.innerText||el.textContent||''"
+					};})()`
+				);
+				if (res === null || res === undefined) {
+					return { ok: false, content: `No element matches selector: ${op.selector}` };
+				}
+				const meta = handle.getMeta();
+				return { ok: true, content: String(res), url: meta.url, title: meta.title };
+			}
 			const content = await handle.extract(op.format);
 			const meta = handle.getMeta();
 			return { ok: true, content, url: meta.url, title: meta.title };
@@ -167,6 +265,27 @@ export async function applyBrowserOp(
 			}
 			return { ok: true, dataUrl, content: 'captured screenshot' };
 		}
+		case 'waitFor': {
+			// Poll from the host side (150ms cadence) so the injected probe stays a
+			// trivial synchronous expression. Timeout is validated <=30s in the
+			// bridge; re-clamp defensively here.
+			const timeoutMs = Math.min(op.timeoutMs ?? 10000, 30000);
+			const deadline = Date.now() + timeoutMs;
+			const probe = `!!document.querySelector(${JSON.stringify(op.selector)})`;
+			for (;;) {
+				const found = await handle.executeJavaScript(probe);
+				if (found === true) {
+					return { ok: true, content: `Element appeared: ${op.selector}` };
+				}
+				if (Date.now() >= deadline) {
+					return {
+						ok: false,
+						content: `Timed out after ${timeoutMs}ms waiting for selector: ${op.selector}`,
+					};
+				}
+				await delay(150);
+			}
+		}
 		default:
 			return { ok: false, content: 'Unsupported browser op' };
 	}
@@ -182,7 +301,8 @@ export async function resolveAndRun(
 	resolveBackgroundHandle?: (
 		sessionId: string,
 		tabUuid: string
-	) => Promise<BrowserTabViewHandle | null>
+	) => Promise<BrowserTabViewHandle | null>,
+	mainNeedsConfirm?: boolean
 ): Promise<BrowserOpResult> {
 	const state = useSessionStore.getState();
 	const active = selectActiveSession(state);
@@ -195,14 +315,42 @@ export async function resolveAndRun(
 		};
 	}
 
+	// Execution-boundary re-check for tab-targeted ops: main's registry filter is
+	// authoritative for addressing, but a tab can be closed or hidden-from-agents
+	// while an op is in flight (or before a registry sync lands). The freshest
+	// renderer state wins; hidden is deliberately indistinguishable from closed.
+	if (op.kind !== 'newTab') {
+		const target = (requesting.browserTabs ?? []).find((t) => t.id === tabUuid);
+		if (!target || target.hiddenFromAgent) {
+			return {
+				ok: false,
+				content: 'Browser tab not found in your session (it may have been closed).',
+			};
+		}
+	}
+
 	// Per-call approval for state-changing ops, BEFORE any focus change, mount,
 	// or side effect. read ops are never gated. Uses the REQUESTING agent's
-	// policy, not the focused one.
+	// policy, ORed with main's own computation from its mirrored policy — either
+	// side requiring approval forces the dialog.
 	if (op.kind !== 'read') {
-		const approved = await requestApproval(op, { agentId: requesting.toolType, sessionId });
+		const approved = await requestApproval(op, {
+			agentId: requesting.toolType,
+			sessionId,
+			forceConfirm: mainNeedsConfirm === true,
+		});
 		if (!approved) {
 			return { ok: false, content: 'Browser action declined by the user.' };
 		}
+	}
+
+	// Session-scoped ops: pure store updates, no live webview needed. Work for
+	// focused AND non-focused sessions alike (no mount, no focus change).
+	if (op.kind === 'newTab') {
+		return createTabForSession(sessionId, op);
+	}
+	if (op.kind === 'closeTab') {
+		return closeTabForSession(sessionId, tabUuid);
 	}
 
 	// Focused agent: operate on the live (visible or kept-alive hidden) webview.
@@ -293,30 +441,33 @@ export function useCoworkingBrowserResponder(
 	useEffect(() => {
 		const bridge = window.maestro?.coworking;
 		if (!bridge) return;
-		const off = bridge.onRequestBrowserOp((tabUuid, sessionId, op, responseChannel) => {
-			void (async () => {
-				let result: BrowserOpResult;
-				try {
-					result = await resolveAndRun(
-						browserViewRefs,
-						selectBrowserTab,
-						tabUuid,
-						sessionId,
-						op,
-						defaultRequestApproval,
-						defaultResolveBackgroundHandle
-					);
-				} catch (err) {
-					// Unexpected failures degrade to a clear ok:false for the agent, but
-					// are captured so they're visible in production instead of swallowed.
-					captureException(err instanceof Error ? err : new Error(String(err)), {
-						extra: { context: 'useCoworkingBrowserResponder', tabUuid, sessionId, kind: op.kind },
-					});
-					result = { ok: false, content: err instanceof Error ? err.message : String(err) };
-				}
-				bridge.sendBrowserOpResponse(responseChannel, result);
-			})();
-		});
+		const off = bridge.onRequestBrowserOp(
+			(tabUuid, sessionId, op, responseChannel, needsConfirm) => {
+				void (async () => {
+					let result: BrowserOpResult;
+					try {
+						result = await resolveAndRun(
+							browserViewRefs,
+							selectBrowserTab,
+							tabUuid,
+							sessionId,
+							op,
+							defaultRequestApproval,
+							defaultResolveBackgroundHandle,
+							needsConfirm
+						);
+					} catch (err) {
+						// Unexpected failures degrade to a clear ok:false for the agent, but
+						// are captured so they're visible in production instead of swallowed.
+						captureException(err instanceof Error ? err : new Error(String(err)), {
+							extra: { context: 'useCoworkingBrowserResponder', tabUuid, sessionId, kind: op.kind },
+						});
+						result = { ok: false, content: err instanceof Error ? err.message : String(err) };
+					}
+					bridge.sendBrowserOpResponse(responseChannel, result);
+				})();
+			}
+		);
 		return off;
 	}, [browserViewRefs, selectBrowserTab]);
 }

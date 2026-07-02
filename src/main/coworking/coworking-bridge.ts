@@ -235,6 +235,29 @@ function validateInteractionOp(raw: unknown): BrowserOp | null {
 			return 'code' in raw && typeof raw.code === 'string'
 				? { kind: 'eval', code: raw.code }
 				: null;
+		case 'waitFor': {
+			if (!('selector' in raw) || typeof raw.selector !== 'string') return null;
+			const timeoutMs = 'timeoutMs' in raw ? raw.timeoutMs : undefined;
+			if (
+				timeoutMs !== undefined &&
+				(typeof timeoutMs !== 'number' ||
+					!Number.isInteger(timeoutMs) ||
+					timeoutMs <= 0 ||
+					timeoutMs > 30000)
+			) {
+				return null;
+			}
+			return { kind: 'waitFor', selector: raw.selector, timeoutMs };
+		}
+		case 'newTab': {
+			const url = 'url' in raw ? raw.url : undefined;
+			if (url !== undefined && typeof url !== 'string') return null;
+			const ephemeral = 'ephemeral' in raw ? raw.ephemeral : undefined;
+			if (ephemeral !== undefined && typeof ephemeral !== 'boolean') return null;
+			return { kind: 'newTab', url, ephemeral };
+		}
+		case 'closeTab':
+			return { kind: 'closeTab' };
 		default:
 			return null;
 	}
@@ -312,6 +335,13 @@ async function dispatch(
 		}
 
 		if (method === 'listTerminals') {
+			recordBrowserAudit({
+				ts: Date.now(),
+				sessionId,
+				agentType: coworkingRegistry.getAgentType(sessionId),
+				tool: 'list_terminals',
+				status: 'ok',
+			});
 			return { id: req.id, result: listTerminals(sessionId) };
 		}
 		if (method === 'readTerminal') {
@@ -319,7 +349,15 @@ async function dispatch(
 			if (typeof params.id !== 'string') {
 				return { id: req.id, error: { code: -32602, message: '`id` is required' } };
 			}
-			const result = await readTerminal(sessionId, { id: params.id, lines: params.lines });
+			const result = await auditedBrowserCall(
+				{
+					sessionId,
+					agentType: coworkingRegistry.getAgentType(sessionId),
+					tool: 'read_terminal',
+					detail: `id=${params.id}${typeof params.lines === 'number' ? ` lines=${params.lines}` : ''}`,
+				},
+				() => readTerminal(sessionId, { id: params.id as string, lines: params.lines })
+			);
 			return { id: req.id, result };
 		}
 		if (method === 'listBrowsers') {
@@ -373,15 +411,22 @@ async function dispatch(
 					error: { code: -32602, message: '`maxChars` must be a positive integer' },
 				};
 			}
+			const selector = params.selector;
+			if (selector !== undefined && typeof selector !== 'string') {
+				return {
+					id: req.id,
+					error: { code: -32602, message: '`selector` must be a string' },
+				};
+			}
 			const agentType = coworkingRegistry.getAgentType(sessionId);
 			const result = await auditedBrowserCall(
 				{
 					sessionId,
 					agentType,
 					tool: 'read_browser',
-					detail: `id=${id} format=${format ?? 'text'}`,
+					detail: `id=${id} format=${format ?? 'text'}${typeof selector === 'string' ? ` selector=${selector.slice(0, 120)}` : ''}`,
 				},
-				() => readBrowser(sessionId, { id, format, maxChars })
+				() => readBrowser(sessionId, { id, format, maxChars, selector })
 			);
 			return { id: req.id, result };
 		}
@@ -405,13 +450,15 @@ async function dispatch(
 				};
 			}
 			const params: Record<string, unknown> = req.params ?? {};
-			const id = params.id;
-			if (typeof id !== 'string') {
-				return { id: req.id, error: { code: -32602, message: '`id` is required' } };
-			}
 			const op = validateInteractionOp(params.op);
 			if (!op) {
 				return { id: req.id, error: { code: -32602, message: 'invalid or missing `op`' } };
+			}
+			// `newTab` is session-scoped (creates a tab); every other op targets an
+			// existing tab and requires its public id.
+			const id = params.id;
+			if (op.kind !== 'newTab' && typeof id !== 'string') {
+				return { id: req.id, error: { code: -32602, message: '`id` is required' } };
 			}
 			const result = await auditedBrowserCall(
 				{
@@ -421,7 +468,7 @@ async function dispatch(
 					opKind: op.kind,
 					detail: redactBrowserOpDetail(op),
 				},
-				() => browserInteract(sessionId, { id, op })
+				() => browserInteract(sessionId, { id: typeof id === 'string' ? id : undefined, op })
 			);
 			return { id: req.id, result };
 		}

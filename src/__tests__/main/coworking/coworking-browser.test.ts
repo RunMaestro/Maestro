@@ -7,13 +7,19 @@ import {
 	browserInteract,
 } from '../../../main/coworking/coworking-tools';
 import type { CoworkingBrowserInput, BrowserOpResult } from '../../../shared/coworkingBrowser';
+import { DEFAULT_BROWSER_CONFIRM_POLICY } from '../../../shared/coworkingBrowser';
 
 function input(
 	tabUuid: string,
 	url = 'https://example.com',
-	title = 'Example'
+	title = 'Example',
+	extra: Partial<CoworkingBrowserInput> = {}
 ): CoworkingBrowserInput {
-	return { tabUuid, url, title, canGoBack: false, canGoForward: false, isLoading: false };
+	return { tabUuid, url, title, canGoBack: false, canGoForward: false, isLoading: false, ...extra };
+}
+
+function hidden(tabUuid: string, url?: string, title?: string): CoworkingBrowserInput {
+	return input(tabUuid, url, title, { hiddenFromAgent: true });
 }
 
 describe('CoworkingRegistry browser methods', () => {
@@ -67,6 +73,56 @@ describe('CoworkingRegistry browser methods', () => {
 		registry.syncSessionBrowsers('s1', [input('u-a')], true);
 		expect(registry.isBrowserInteractionEnabled('s1')).toBe(true);
 		expect(registry.isBrowserInteractionEnabled('unknown')).toBe(false);
+	});
+
+	it('excludes hidden tabs from listBrowsersForSession', () => {
+		registry.syncSessionBrowsers('s1', [input('u-a'), hidden('u-b')], false);
+		expect(registry.listBrowsersForSession('s1').map((b) => b.id)).toEqual(['browser:1']);
+	});
+
+	it('hidden tabs are unaddressable even with their correct browser:N id', () => {
+		registry.syncSessionBrowsers('s1', [input('u-a'), hidden('u-b')], false);
+		// u-b owns browser:2 internally, but hidden must be indistinguishable
+		// from "not found" so the tab's existence never leaks to the agent.
+		expect(registry.resolveBrowserTabUuidForSession('s1', 'browser:2')).toBeNull();
+		expect(registry.resolveBrowserTabUuidForSession('s1', 'browser:1')).toBe('u-a');
+	});
+
+	it('keeps browser:N ids stable across hide -> unhide -> sync cycles', () => {
+		registry.syncSessionBrowsers('s1', [input('u-a'), input('u-b')], false);
+		expect(registry.resolveBrowserTabUuidForSession('s1', 'browser:2')).toBe('u-b');
+		// Hide u-b: unaddressable, but the id must not be retired or reassigned.
+		registry.syncSessionBrowsers('s1', [input('u-a'), hidden('u-b')], false);
+		expect(registry.resolveBrowserTabUuidForSession('s1', 'browser:2')).toBeNull();
+		// A new tab while u-b is hidden takes the NEXT id, not u-b's.
+		registry.syncSessionBrowsers('s1', [input('u-a'), hidden('u-b'), input('u-c')], false);
+		expect(registry.resolveBrowserTabUuidForSession('s1', 'browser:3')).toBe('u-c');
+		// Unhide: u-b reappears under its original id.
+		registry.syncSessionBrowsers('s1', [input('u-a'), input('u-b'), input('u-c')], false);
+		expect(registry.resolveBrowserTabUuidForSession('s1', 'browser:2')).toBe('u-b');
+		expect(registry.listBrowsersForSession('s1').map((b) => b.id)).toEqual([
+			'browser:1',
+			'browser:2',
+			'browser:3',
+		]);
+	});
+
+	it('getBrowserConfirmPolicy mirrors the synced policy and fails closed otherwise', () => {
+		// Never configured -> the shared fail-closed default, not 'off'.
+		expect(registry.getBrowserConfirmPolicy('s1')).toBe(DEFAULT_BROWSER_CONFIRM_POLICY);
+		registry.syncSessionBrowsers('s1', [input('u-a')], true, 'claude-code', 'off');
+		expect(registry.getBrowserConfirmPolicy('s1')).toBe('off');
+		registry.syncSessionBrowsers('s1', [input('u-a')], true, 'claude-code', 'all');
+		expect(registry.getBrowserConfirmPolicy('s1')).toBe('all');
+	});
+
+	it('removeSession and reset clear the confirm policy back to the default', () => {
+		registry.syncSessionBrowsers('s1', [input('u-a')], true, 'claude-code', 'off');
+		registry.removeSession('s1');
+		expect(registry.getBrowserConfirmPolicy('s1')).toBe(DEFAULT_BROWSER_CONFIRM_POLICY);
+		registry.syncSessionBrowsers('s2', [input('u-b')], true, 'codex', 'off');
+		registry.reset();
+		expect(registry.getBrowserConfirmPolicy('s2')).toBe(DEFAULT_BROWSER_CONFIRM_POLICY);
 	});
 });
 
@@ -147,6 +203,50 @@ describe('coworking browser tools', () => {
 			}
 		);
 		expect(seenFormat).toBe('html');
+	});
+
+	it('readBrowser forwards the selector into the read op', async () => {
+		let seenOp: { kind: string; selector?: string } | null = null;
+		await readBrowser(
+			's1',
+			{ id: 'browser:1', selector: '#main' },
+			{
+				registry,
+				resolver: async (_s, _u, op): Promise<BrowserOpResult> => {
+					seenOp = op;
+					return { ok: true, content: 'scoped' };
+				},
+			}
+		);
+		expect(seenOp).toMatchObject({ kind: 'read', selector: '#main' });
+	});
+
+	it('browserInteract routes newTab past tab resolution with an empty tabUuid', async () => {
+		let seen: { sessionId: string; tabUuid: string; kind: string } | null = null;
+		// No id supplied and no matching tab needed: newTab is session-scoped.
+		const out = await browserInteract(
+			's-without-any-tabs',
+			{ op: { kind: 'newTab', url: 'https://x.com', ephemeral: true } },
+			{
+				registry,
+				resolver: async (sessionId, tabUuid, op): Promise<BrowserOpResult> => {
+					seen = { sessionId, tabUuid, kind: op.kind };
+					return { ok: true, content: 'opened' };
+				},
+			}
+		);
+		expect(seen).toEqual({ sessionId: 's-without-any-tabs', tabUuid: '', kind: 'newTab' });
+		expect(out.ok).toBe(true);
+	});
+
+	it('browserInteract still requires an id for tab-scoped ops', async () => {
+		await expect(
+			browserInteract(
+				's1',
+				{ op: { kind: 'closeTab' } },
+				{ registry, resolver: async (): Promise<BrowserOpResult> => ({ ok: true }) }
+			)
+		).rejects.toThrow(/`id` is required/);
 	});
 
 	it('readBrowser head-truncates to maxChars and reports the true totalChars', async () => {

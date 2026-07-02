@@ -58,6 +58,7 @@ import { createMaestroCliApi } from './maestroCli';
 import { createPromptsApi } from './prompts';
 import { createMemoryApi } from './memory';
 import { createCoworkingApi } from './coworking';
+import { createBrowserSessionApi } from './browserSession';
 
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
@@ -221,6 +222,8 @@ contextBridge.exposeInMainWorld('maestro', {
 	memory: createMemoryApi(),
 	// Coworking API (per-agent MCP installer + terminal registry sync)
 	coworking: createCoworkingApi(),
+	// Browser Session API (clear per-partition browsing data)
+	browserSession: createBrowserSessionApi(),
 });
 
 // Re-export factory functions for external consumers (e.g., tests)
@@ -311,6 +314,8 @@ export {
 	createMemoryApi,
 	// Coworking
 	createCoworkingApi,
+	// Browser Session
+	createBrowserSessionApi,
 };
 
 // Re-export types for TypeScript consumers
@@ -557,3 +562,7 @@ export type {
 	CoworkingTerminalRecord,
 	CoworkingInstallStatus,
 } from './coworking';
+export type {
+	// From browserSession
+	BrowserSessionApi,
+} from './browserSession';

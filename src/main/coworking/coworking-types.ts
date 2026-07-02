@@ -9,6 +9,7 @@
 
 import type { CoworkingBrowserEntry } from '../../shared/coworkingBrowser';
 export type {
+	BrowserConfirmPolicy,
 	BrowserInteractionKind,
 	BrowserOp,
 	BrowserOpResult,
@@ -120,9 +121,13 @@ export function parseCoworkingId(id: string): number | null {
 // main-process-internal record type and the id helpers live here.
 
 /** Internal registry record. `tabUuid` is the renderer BrowserTab.id used to
- *  drive the live webview; `sessionId` is the owning Maestro session. */
+ *  drive the live webview; `sessionId` is the owning Maestro session.
+ *  `hiddenFromAgent` mirrors the per-tab eye toggle: hidden records keep their
+ *  stable `browser:N` id (so unhiding never renumbers) but are excluded from
+ *  every agent-facing list/read/interact lookup in the registry. */
 export interface CoworkingBrowserRecord extends CoworkingBrowserEntry {
 	tabUuid: string;
+	hiddenFromAgent?: boolean;
 	sessionId: string;
 }
 

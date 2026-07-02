@@ -25,6 +25,7 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { getTerminalTabDisplayName } from '../../utils/terminalTabHelpers';
 import { captureException } from '../../utils/sentry';
 import type { Session } from '../../types';
+import { DEFAULT_BROWSER_CONFIRM_POLICY } from '../../../shared/coworkingBrowser';
 
 /** Errors we expect during teardown / pre-init — silently ignore. Anything else
  *  bubbles up to Sentry so we can see real bridge failures in production.
@@ -69,20 +70,24 @@ function buildRecords(session: Session) {
 }
 
 /** Build the per-session browser-input list from a Session. The registry assigns
- *  the stable `browser:N` id, so we only push raw tab metadata here. */
+ *  the stable `browser:N` id, so we only push raw tab metadata here. Hidden
+ *  tabs are pushed WITH their flag (not filtered out) so main can enforce the
+ *  exclusion itself — filtering here left a sync-cycle window where a
+ *  just-hidden tab was still addressable, and enforcement-by-absence meant
+ *  main could never re-check. Hidden tabs also keep their stable browser:N id
+ *  across hide/unhide this way. */
 export function buildBrowserInputs(session: Session) {
 	const tabs = session.browserTabs ?? [];
-	return tabs
-		.filter((t) => !t.hiddenFromAgent)
-		.map((t) => ({
-			tabUuid: t.id,
-			url: t.url,
-			title: t.title,
-			favicon: t.favicon ?? undefined,
-			canGoBack: t.canGoBack,
-			canGoForward: t.canGoForward,
-			isLoading: t.isLoading,
-		}));
+	return tabs.map((t) => ({
+		tabUuid: t.id,
+		url: t.url,
+		title: t.title,
+		favicon: t.favicon ?? undefined,
+		canGoBack: t.canGoBack,
+		canGoForward: t.canGoForward,
+		isLoading: t.isLoading,
+		hiddenFromAgent: t.hiddenFromAgent === true ? true : undefined,
+	}));
 }
 
 export function useCoworkingRegistrySync(): void {
@@ -92,6 +97,9 @@ export function useCoworkingRegistrySync(): void {
 	const enabled = useSettingsStore((s) => s.encoreFeatures?.coworking ?? false);
 	// Per-agent browser-interaction permission (list of allowed ToolType ids).
 	const browserInteractionAgents = useSettingsStore((s) => s.coworkingBrowserInteraction);
+	// Per-agent per-call confirm policy, mirrored to main so it can compute the
+	// approval requirement for each op itself.
+	const browserConfirmPolicies = useSettingsStore((s) => s.coworkingBrowserInteractionConfirm);
 	const lastPayloadRef = useRef<string>('');
 	const lastSessionIdsRef = useRef<Set<string>>(new Set());
 
@@ -142,6 +150,7 @@ export function useCoworkingRegistrySync(): void {
 			inputs: buildBrowserInputs(s),
 			interactionEnabled: browserInteractionAgents.includes(s.toolType),
 			agentType: s.toolType,
+			confirmPolicy: browserConfirmPolicies[s.toolType] ?? DEFAULT_BROWSER_CONFIRM_POLICY,
 		}));
 		const currentIds = new Set(perSession.map((p) => p.sessionId));
 
@@ -171,8 +180,20 @@ export function useCoworkingRegistrySync(): void {
 				for (const { sessionId, records } of perSession) {
 					await bridge.syncSessionTerminals(sessionId, records);
 				}
-				for (const { sessionId, inputs, interactionEnabled, agentType } of perSessionBrowsers) {
-					await bridge.syncSessionBrowsers(sessionId, inputs, interactionEnabled, agentType);
+				for (const {
+					sessionId,
+					inputs,
+					interactionEnabled,
+					agentType,
+					confirmPolicy,
+				} of perSessionBrowsers) {
+					await bridge.syncSessionBrowsers(
+						sessionId,
+						inputs,
+						interactionEnabled,
+						agentType,
+						confirmPolicy
+					);
 				}
 			} catch (err) {
 				// Roll back the optimistic payload-cache write FIRST so the next effect
@@ -184,5 +205,5 @@ export function useCoworkingRegistrySync(): void {
 				reportIfUnexpected(err, 'sync');
 			}
 		})();
-	}, [enabled, sessions, browserInteractionAgents]);
+	}, [enabled, sessions, browserInteractionAgents, browserConfirmPolicies]);
 }

@@ -12,9 +12,11 @@
  *   - no dependency on the Maestro app bundle being on disk at a known path
  *   - no bundler step in PR #1 (script is plain Node — only built-ins)
  *
- * The script implements just enough of the MCP stdio protocol to advertise our two
- * read-only tools (`list_terminals`, `read_terminal`). Anything richer (subscriptions,
- * resource templates, prompts) is a later PR.
+ * The script implements just enough of the MCP stdio protocol to advertise the
+ * coworking tool suite: terminal reads (`list_terminals`, `read_terminal`), browser
+ * reads (`list_browsers`, `get_browser_url`, `read_browser`) and the permission-gated
+ * browser interaction tools (`browser_navigate` ... `browser_close_tab`). Anything
+ * richer (subscriptions, resource templates, prompts) is a later PR.
  */
 
 const COWORKING_SCRIPT_SOURCE = String.raw`#!/usr/bin/env node
@@ -109,7 +111,7 @@ const TOOLS = [
     description:
       'Read the rendered text (or HTML) of a browser tab by id, scoped to your own Maestro session. ' +
       'Use format "text" or "innerText" for the visible page text, or "html" for the page markup. ' +
-      'Optionally cap the output with maxChars (head-truncated).',
+      'Optionally scope the read to the first element matching a CSS selector, and/or cap the output with maxChars (head-truncated).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -118,6 +120,10 @@ const TOOLS = [
           type: 'string',
           enum: ['text', 'innerText', 'html'],
           description: 'Output format (default "text").',
+        },
+        selector: {
+          type: 'string',
+          description: 'If set, read only the first element matching this CSS selector.',
         },
         maxChars: { type: 'integer', minimum: 1, description: 'If set, return only the first N characters.' },
       },
@@ -236,6 +242,57 @@ const TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    name: 'browser_wait_for',
+    description:
+      'Wait until an element matching a CSS selector appears in a browser tab (or the timeout elapses). ' +
+      'Useful after navigate/click to let dynamic pages settle. Requires browser interaction enabled.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Browser tab id, e.g. "browser:2".' },
+        selector: { type: 'string', description: 'CSS selector to wait for.' },
+        timeoutMs: {
+          type: 'integer',
+          minimum: 1,
+          maximum: 30000,
+          description: 'Max wait in milliseconds (default 10000, capped at 30000).',
+        },
+      },
+      required: ['id', 'selector'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'browser_new_tab',
+    description:
+      'Open a new in-app browser tab in your own Maestro session, optionally at a URL. ' +
+      'Set ephemeral=true for an incognito-style tab: its session is isolated and kept in memory only (no cookies/logins are ever written to disk). ' +
+      'The new tab does not have an id yet: call list_browsers afterwards to address it. ' +
+      'Requires browser interaction enabled.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'URL to load (defaults to the browser home page).' },
+        ephemeral: {
+          type: 'boolean',
+          description: 'If true, use an in-memory session (no persisted cookies/logins).',
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'browser_close_tab',
+    description:
+      'Close a browser tab by id, scoped to your own Maestro session. Requires browser interaction enabled.',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string', description: 'Browser tab id, e.g. "browser:2".' } },
+      required: ['id'],
+      additionalProperties: false,
+    },
+  },
 ];
 
 // Browser interaction tools all funnel through the bridge 'browserInteract'
@@ -251,6 +308,9 @@ const BROWSER_INTERACTION_OPS = {
   browser_type: (a) => ({ kind: 'type', selector: a.selector, text: a.text }),
   browser_eval: (a) => ({ kind: 'eval', code: a.code }),
   browser_screenshot: () => ({ kind: 'screenshot' }),
+  browser_wait_for: (a) => ({ kind: 'waitFor', selector: a.selector, timeoutMs: a.timeoutMs }),
+  browser_new_tab: (a) => ({ kind: 'newTab', url: a.url, ephemeral: a.ephemeral }),
+  browser_close_tab: () => ({ kind: 'closeTab' }),
 };
 
 // ---------- Bridge client (lazy, single shared connection) ----------

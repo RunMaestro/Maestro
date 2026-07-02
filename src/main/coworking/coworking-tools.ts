@@ -122,11 +122,16 @@ export function getBrowserUrl(
 }
 
 /** Read the rendered text (or HTML) of a browser tab in the caller's session,
- *  optionally head-truncated to maxChars. Needs the live webview via the
- *  resolver. */
+ *  optionally scoped to the first element matching a CSS selector and/or
+ *  head-truncated to maxChars. Needs the live webview via the resolver. */
 export async function readBrowser(
 	sessionId: string,
-	args: { id: string; format?: 'text' | 'innerText' | 'html'; maxChars?: number },
+	args: {
+		id: string;
+		format?: 'text' | 'innerText' | 'html';
+		maxChars?: number;
+		selector?: string;
+	},
 	deps: { registry?: CoworkingRegistry; resolver?: BrowserResolver } = {}
 ): Promise<{
 	id: string;
@@ -149,7 +154,11 @@ export async function readBrowser(
 		);
 	}
 	const format = args.format ?? 'text';
-	const result = await resolver(sessionId, tabUuid, { kind: 'read', format });
+	const result = await resolver(sessionId, tabUuid, {
+		kind: 'read',
+		format,
+		selector: args.selector,
+	});
 	const full = result.content ?? '';
 	const totalChars = full.length;
 	const cap =
@@ -170,16 +179,25 @@ export async function readBrowser(
 
 /** Run a state-changing browser op against a tab in the caller's session via the
  *  live webview. The per-agent interaction permission is enforced by the bridge
- *  before this is called; this fn only resolves the tab and delegates. */
+ *  before this is called; this fn only resolves the tab and delegates.
+ *  `newTab` is session-scoped rather than tab-scoped: it creates a tab in the
+ *  caller's session, so no target id is resolved (the resolver receives an
+ *  empty tabUuid and branches on the op kind). */
 export async function browserInteract(
 	sessionId: string,
-	args: { id: string; op: BrowserOp },
+	args: { id?: string; op: BrowserOp },
 	deps: { registry?: CoworkingRegistry; resolver?: BrowserResolver } = {}
 ): Promise<BrowserOpResult> {
 	const registry = deps.registry ?? coworkingRegistry;
 	const resolver = deps.resolver ?? browserResolver;
 	if (!resolver) {
 		throw new Error('coworking tools: browser resolver not configured');
+	}
+	if (args.op.kind === 'newTab') {
+		return resolver(sessionId, '', args.op);
+	}
+	if (typeof args.id !== 'string') {
+		throw new Error('coworking tools: browser tab `id` is required for this op');
 	}
 	const tabUuid = registry.resolveBrowserTabUuidForSession(sessionId, args.id);
 	if (!tabUuid) {

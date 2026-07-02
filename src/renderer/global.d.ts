@@ -3785,16 +3785,18 @@ interface MaestroAPI {
 				canGoBack: boolean;
 				canGoForward: boolean;
 				isLoading: boolean;
+				hiddenFromAgent?: boolean;
 			}>,
 			interactionEnabled: boolean,
-			agentType?: string
+			agentType?: string,
+			confirmPolicy?: 'off' | 'dangerous' | 'all'
 		) => Promise<void>;
 		onRequestBrowserOp: (
 			callback: (
 				tabUuid: string,
 				sessionId: string,
 				op:
-					| { kind: 'read'; format: 'text' | 'innerText' | 'html' }
+					| { kind: 'read'; format: 'text' | 'innerText' | 'html'; selector?: string }
 					| { kind: 'navigate'; url: string }
 					| { kind: 'back' }
 					| { kind: 'forward' }
@@ -3803,8 +3805,12 @@ interface MaestroAPI {
 					| { kind: 'click'; selector: string }
 					| { kind: 'type'; selector: string; text: string }
 					| { kind: 'eval'; code: string }
-					| { kind: 'screenshot' },
-				responseChannel: string
+					| { kind: 'screenshot' }
+					| { kind: 'waitFor'; selector: string; timeoutMs?: number }
+					| { kind: 'newTab'; url?: string; ephemeral?: boolean }
+					| { kind: 'closeTab' },
+				responseChannel: string,
+				needsConfirm?: boolean
 			) => void
 		) => () => void;
 		sendBrowserOpResponse: (
@@ -3817,6 +3823,11 @@ interface MaestroAPI {
 				ok: boolean;
 			}
 		) => void;
+	};
+
+	// Browser Session API (clear per-partition browsing data of embedded browser tabs)
+	browserSession: {
+		clearSessionData: (partition: string) => Promise<{ ok: boolean; error?: string }>;
 	};
 }
 

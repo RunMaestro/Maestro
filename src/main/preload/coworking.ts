@@ -9,6 +9,7 @@
 
 import { ipcRenderer } from 'electron';
 import type {
+	BrowserConfirmPolicy,
 	BrowserOp,
 	BrowserOpResult,
 	CoworkingBrowserInput,
@@ -66,7 +67,8 @@ export interface CoworkingApi {
 		sessionId: string,
 		inputs: CoworkingBrowserInput[],
 		interactionEnabled: boolean,
-		agentType?: string
+		agentType?: string,
+		confirmPolicy?: BrowserConfirmPolicy
 	): Promise<void>;
 
 	// ---- Browser op (main → renderer) ----
@@ -74,9 +76,17 @@ export interface CoworkingApi {
 	 * Subscribe to browser-op requests from main (read / navigate / click / ... /
 	 * screenshot) for <tabUuid> in <sessionId>. The renderer resolves the live
 	 * webview and sends the BrowserOpResult back via the supplied responseChannel.
+	 * `needsConfirm` is main's own approval-requirement computation (from the
+	 * mirrored per-agent policy); the renderer ORs it with its local policy.
 	 */
 	onRequestBrowserOp(
-		callback: (tabUuid: string, sessionId: string, op: BrowserOp, responseChannel: string) => void
+		callback: (
+			tabUuid: string,
+			sessionId: string,
+			op: BrowserOp,
+			responseChannel: string,
+			needsConfirm?: boolean
+		) => void
 	): () => void;
 	sendBrowserOpResponse(responseChannel: string, result: BrowserOpResult): void;
 }
@@ -104,13 +114,14 @@ export function createCoworkingApi(): CoworkingApi {
 			ipcRenderer.send(responseChannel, content);
 		},
 
-		syncSessionBrowsers: (sessionId, inputs, interactionEnabled, agentType) =>
+		syncSessionBrowsers: (sessionId, inputs, interactionEnabled, agentType, confirmPolicy) =>
 			ipcRenderer.invoke(
 				'coworking:syncSessionBrowsers',
 				sessionId,
 				inputs,
 				interactionEnabled,
-				agentType
+				agentType,
+				confirmPolicy
 			),
 
 		onRequestBrowserOp: (callback) => {
@@ -119,8 +130,9 @@ export function createCoworkingApi(): CoworkingApi {
 				tabUuid: string,
 				sessionId: string,
 				op: BrowserOp,
-				responseChannel: string
-			) => callback(tabUuid, sessionId, op, responseChannel);
+				responseChannel: string,
+				needsConfirm?: boolean
+			) => callback(tabUuid, sessionId, op, responseChannel, needsConfirm);
 			ipcRenderer.on('coworking:requestBrowserOp', handler);
 			return () => ipcRenderer.removeListener('coworking:requestBrowserOp', handler);
 		},

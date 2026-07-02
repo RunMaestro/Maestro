@@ -14,6 +14,7 @@
 
 import { captureException } from '../utils/sentry';
 import type {
+	BrowserConfirmPolicy,
 	CoworkingBrowserEntry,
 	CoworkingBrowserInput,
 	CoworkingBrowserRecord,
@@ -21,6 +22,7 @@ import type {
 	CoworkingTerminalRecord,
 } from './coworking-types';
 import { formatBrowserId, parseBrowserId } from './coworking-types';
+import { DEFAULT_BROWSER_CONFIRM_POLICY } from '../../shared/coworkingBrowser';
 
 type ChangeListener = () => void;
 
@@ -40,6 +42,11 @@ class CoworkingRegistry {
 	private browserInteraction = new Map<string, boolean>();
 	// Per-session agent type (ToolType), mirrored from the renderer for audit logging.
 	private sessionAgentType = new Map<string, string>();
+	// Per-session per-call confirm policy, mirrored from the per-agent
+	// `coworkingBrowserInteractionConfirm` setting. Main computes needsConfirm
+	// from this so the renderer's approval gate cannot be skipped by a stale or
+	// tampered renderer-local settings read.
+	private browserConfirmPolicy = new Map<string, BrowserConfirmPolicy>();
 
 	/** Replace the full set of terminals for a given session. Used on initial sync from renderer. */
 	syncSessionTerminals(sessionId: string, records: CoworkingTerminalRecord[]): void {
@@ -85,6 +92,7 @@ class CoworkingRegistry {
 		this.browserIdByTabUuid.delete(sessionId);
 		this.nextBrowserId.delete(sessionId);
 		this.browserInteraction.delete(sessionId);
+		this.browserConfirmPolicy.delete(sessionId);
 		this.sessionAgentType.delete(sessionId);
 		if (mutated) this.notify();
 	}
@@ -122,10 +130,12 @@ class CoworkingRegistry {
 		sessionId: string,
 		inputs: CoworkingBrowserInput[],
 		interactionEnabled: boolean,
-		agentType?: string
+		agentType?: string,
+		confirmPolicy?: BrowserConfirmPolicy
 	): void {
 		this.browserInteraction.set(sessionId, interactionEnabled);
 		if (agentType !== undefined) this.sessionAgentType.set(sessionId, agentType);
+		if (confirmPolicy !== undefined) this.browserConfirmPolicy.set(sessionId, confirmPolicy);
 		let idMap = this.browserIdByTabUuid.get(sessionId);
 		if (!idMap) {
 			idMap = new Map();
@@ -151,6 +161,7 @@ class CoworkingRegistry {
 				canGoBack: input.canGoBack,
 				canGoForward: input.canGoForward,
 				isLoading: input.isLoading,
+				hiddenFromAgent: input.hiddenFromAgent,
 				tabUuid: input.tabUuid,
 				sessionId,
 			});
@@ -167,7 +178,7 @@ class CoworkingRegistry {
 	listBrowsersForSession(sessionId: string): CoworkingBrowserEntry[] {
 		const out: CoworkingBrowserEntry[] = [];
 		for (const rec of this.browserRecords.values()) {
-			if (rec.sessionId !== sessionId) continue;
+			if (rec.sessionId !== sessionId || rec.hiddenFromAgent) continue;
 			out.push({
 				id: rec.id,
 				url: rec.url,
@@ -182,10 +193,14 @@ class CoworkingRegistry {
 		return out;
 	}
 
-	/** Resolve a public id (e.g. "browser:2") to the renderer BrowserTab UUID, scoped to one session. */
+	/** Resolve a public id (e.g. "browser:2") to the renderer BrowserTab UUID, scoped to one
+	 *  session. Hidden-from-agent tabs resolve to null (indistinguishable from "not found",
+	 *  so their existence never leaks to the agent). */
 	resolveBrowserTabUuidForSession(sessionId: string, publicId: string): string | null {
 		for (const rec of this.browserRecords.values()) {
-			if (rec.sessionId === sessionId && rec.id === publicId) return rec.tabUuid;
+			if (rec.sessionId === sessionId && rec.id === publicId && !rec.hiddenFromAgent) {
+				return rec.tabUuid;
+			}
 		}
 		return null;
 	}
@@ -202,6 +217,12 @@ class CoworkingRegistry {
 		return this.browserInteraction.get(sessionId) ?? false;
 	}
 
+	/** Per-call confirm policy for a session's agent, mirrored from the per-agent
+	 *  setting via syncSessionBrowsers. Defaults to the shared default policy. */
+	getBrowserConfirmPolicy(sessionId: string): BrowserConfirmPolicy {
+		return this.browserConfirmPolicy.get(sessionId) ?? DEFAULT_BROWSER_CONFIRM_POLICY;
+	}
+
 	/** Test-only: clear all state. */
 	reset(): void {
 		this.records.clear();
@@ -209,6 +230,7 @@ class CoworkingRegistry {
 		this.browserIdByTabUuid.clear();
 		this.nextBrowserId.clear();
 		this.browserInteraction.clear();
+		this.browserConfirmPolicy.clear();
 		this.sessionAgentType.clear();
 		this.listeners.clear();
 	}

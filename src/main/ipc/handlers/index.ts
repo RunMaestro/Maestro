@@ -65,6 +65,7 @@ import { registerCueHandlers, CueHandlerDependencies } from './cue';
 import { registerCueBackupHandlers } from './cue-backup';
 import { registerWakatimeHandlers } from './wakatime';
 import { registerCoworkingHandlers } from './coworking';
+import { registerBrowserSessionHandlers } from './browser-session';
 import { registerFeedbackHandlers } from './feedback';
 import { registerMaestroCliHandlers } from './maestro-cli';
 import { registerPromptsHandlers } from './prompts';
@@ -128,6 +129,7 @@ export type { CueHandlerDependencies };
 export { registerCueBackupHandlers };
 export { registerWakatimeHandlers };
 export { registerCoworkingHandlers };
+export { registerBrowserSessionHandlers };
 export { registerFeedbackHandlers };
 export { registerMaestroCliHandlers };
 export { registerPromptsHandlers };
@@ -332,6 +334,8 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	registerMemoryHandlers();
 	// Register Coworking handlers (per-agent MCP installer + terminal registry sync)
 	registerCoworkingHandlers({ getMainWindow: deps.getMainWindow });
+	// Register Browser Session handlers (clear per-partition browsing data)
+	registerBrowserSessionHandlers();
 	// Setup logger event forwarding to renderer
 	setupLoggerEventForwarding(deps.getMainWindow);
 }

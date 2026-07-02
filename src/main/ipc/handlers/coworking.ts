@@ -20,12 +20,14 @@ import {
 	setBrowserAuditSink,
 } from '../../coworking/coworking-audit';
 import type {
+	BrowserConfirmPolicy,
 	BrowserOp,
 	BrowserOpResult,
 	CoworkingBrowserInput,
 	CoworkingInstallStatus,
 	CoworkingTerminalRecord,
 } from '../../coworking/coworking-types';
+import { browserOpNeedsConfirm } from '../../../shared/coworkingBrowser';
 
 const LOG_CTX = '[Coworking][IPC]';
 
@@ -119,9 +121,16 @@ export function registerCoworkingHandlers(deps: CoworkingHandlerDependencies): v
 				sessionId: string,
 				inputs: CoworkingBrowserInput[],
 				interactionEnabled: boolean,
-				agentType?: string
+				agentType?: string,
+				confirmPolicy?: BrowserConfirmPolicy
 			): Promise<void> => {
-				coworkingRegistry.syncSessionBrowsers(sessionId, inputs, interactionEnabled, agentType);
+				coworkingRegistry.syncSessionBrowsers(
+					sessionId,
+					inputs,
+					interactionEnabled,
+					agentType,
+					confirmPolicy
+				);
 			}
 		)
 	);
@@ -216,8 +225,23 @@ export function registerCoworkingHandlers(deps: CoworkingHandlerDependencies): v
 				op.kind === 'read' ? BROWSER_OP_TIMEOUT_MS : BROWSER_INTERACT_TIMEOUT_MS
 			);
 			ipcMain.on(responseChannel, handler);
+			// Main computes the per-call approval requirement from its own mirrored
+			// policy and sends it with the request, so the renderer's approval gate
+			// holds even if the renderer's local settings read is stale. The renderer
+			// ORs this with its own computation (defense in depth, never weakening).
+			const needsConfirm = browserOpNeedsConfirm(
+				coworkingRegistry.getBrowserConfirmPolicy(sessionId),
+				op.kind
+			);
 			try {
-				win.webContents.send('coworking:requestBrowserOp', tabUuid, sessionId, op, responseChannel);
+				win.webContents.send(
+					'coworking:requestBrowserOp',
+					tabUuid,
+					sessionId,
+					op,
+					responseChannel,
+					needsConfirm
+				);
 			} catch (err) {
 				clearTimeout(timer);
 				ipcMain.removeListener(responseChannel, handler);
