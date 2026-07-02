@@ -36,7 +36,7 @@ vi.mock('../../../main/utils/ssh-spawn-wrapper', () => ({
 
 // Platform is mockable per-test; default is the POSIX kill path
 // (child.kill('SIGTERM')) so signal-based assertions hold regardless of host
-// OS — mirroring what CI exercises on Unix. The Windows test flips it to true
+// OS - mirroring what CI exercises on Unix. The Windows test flips it to true
 // to exercise the taskkill branch.
 const { mockIsWindows, mockExecFile } = vi.hoisted(() => ({
 	mockIsWindows: vi.fn(() => false),

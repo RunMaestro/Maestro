@@ -26,7 +26,7 @@ vi.mock('../../../main/utils/sentry', () => ({
 
 // Platform is mockable per-test. Default is the POSIX kill path
 // (child.kill('SIGTERM')) so the SIGTERM → SIGKILL assertions hold regardless
-// of host OS — mirroring what CI exercises on Unix. The Windows process-tree
+// of host OS - mirroring what CI exercises on Unix. The Windows process-tree
 // kill tests flip this to true to exercise the taskkill branch.
 const { mockIsWindows, mockExecFile, mockExecFileSync } = vi.hoisted(() => ({
 	mockIsWindows: vi.fn(() => false),

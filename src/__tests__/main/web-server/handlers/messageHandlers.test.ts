@@ -46,7 +46,7 @@ vi.mock('../../../../main/utils/logger', () => ({
  * Symlink creation requires elevation / Developer Mode on Windows and throws
  * EPERM otherwise. Probe once and cache so the symlink-confinement tests run on
  * Unix/CI (where they're meaningful) but skip gracefully where the OS forbids
- * creating symlinks. This is purely an environment capability check — the
+ * creating symlinks. This is purely an environment capability check - the
  * product's realpath-based confinement is platform-neutral.
  */
 let _canSymlink: boolean | undefined;

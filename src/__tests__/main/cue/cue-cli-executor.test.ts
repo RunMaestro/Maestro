@@ -67,7 +67,7 @@ vi.mock('../../../main/utils/sentry', () => ({
 
 // Platform is mockable per-test; default is the POSIX kill path
 // (child.kill('SIGTERM')) so signal-based assertions hold regardless of host
-// OS — mirroring what CI exercises on Unix. The Windows test flips it to true
+// OS - mirroring what CI exercises on Unix. The Windows test flips it to true
 // to exercise the taskkill branch. (Note: the module-level output-size cap is
 // evaluated at import time under the default, i.e. the POSIX cap.)
 vi.mock('../../../shared/platformDetection', async (importOriginal) => {
