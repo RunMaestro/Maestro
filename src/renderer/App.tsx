@@ -2229,6 +2229,7 @@ function MaestroConsoleInner() {
 		handleSwitchQueueSession,
 		handleReorderQueueItems,
 		handleTogglePauseQueueItem,
+		handleEditQueueItem,
 	} = useQueueHandlers();
 
 	// Symphony contribution handler — extracted to useSymphonyContribution hook
@@ -3161,6 +3162,7 @@ function MaestroConsoleInner() {
 					onSwitchQueueSession={handleSwitchQueueSession}
 					onReorderQueueItems={handleReorderQueueItems}
 					onTogglePauseQueueItem={handleTogglePauseQueueItem}
+					onEditQueueItem={handleEditQueueItem}
 					// AppGroupChatModals props
 					onCloseNewGroupChatModal={handleCloseNewGroupChatModal}
 					onCreateGroupChat={handleCreateGroupChat}

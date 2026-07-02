@@ -378,7 +378,6 @@ export const QueuedItemsList = memo(
 								theme={theme}
 								onClose={() => setEditItemId(null)}
 								onSave={(patch) => onEditQueuedItem(editItem.id, patch)}
-								onOpenLightbox={onOpenLightbox}
 							/>
 						);
 					})()}
