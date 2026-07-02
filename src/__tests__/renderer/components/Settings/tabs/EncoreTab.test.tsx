@@ -26,6 +26,13 @@ import { EncoreTab } from '../../../../../renderer/components/Settings/tabs/Enco
 import type { AgentConfig } from '../../../../../renderer/types';
 
 import { mockTheme } from '../../../../helpers/mockTheme';
+// Mock the Extensions marketplace: it renders tiles named identically to the
+// per-feature config sections above it (Director's Notes, Maestro Cue, Usage &
+// Stats), which would break getByText queries; the marketplace has its own
+// e2e + component coverage. This suite tests EncoreTab's config sections only.
+vi.mock('../../../../../renderer/components/Settings/Extensions/ExtensionsView', () => ({
+	ExtensionsView: () => <div data-testid="extensions-view-mock" />,
+}));
 // Mock AgentConfigPanel to avoid deep rendering
 vi.mock('../../../../../renderer/components/shared/AgentConfigPanel', () => ({
 	AgentConfigPanel: (props: any) => (

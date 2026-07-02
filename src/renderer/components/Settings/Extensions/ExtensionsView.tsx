@@ -52,7 +52,11 @@ export function ExtensionsView({ theme }: ExtensionsViewProps) {
 	const selected = selectedKey ? extensions.find((e) => e.key === selectedKey) : undefined;
 
 	return (
-		<div data-testid="extensions-view">
+		<div data-testid="extensions-view" data-setting-id="encore-plugins">
+			{/* Settings-search anchor: Pianola is managed as a marketplace tile in
+			    this view; the registry/DOM parity contract needs the literal
+			    attribute present where the search should scroll to. */}
+			<span data-setting-id="encore-pianola" aria-hidden="true" />
 			<div className="flex items-center justify-between gap-3 mb-1">
 				<h3 className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
 					Extensions

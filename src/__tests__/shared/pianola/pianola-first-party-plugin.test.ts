@@ -22,11 +22,15 @@ describe('Pianola first-party plugin metadata', () => {
 	it('requests only valid broker capabilities used by the supervised Pianola flow', () => {
 		const parsed = parsePermissions(PIANOLA_FIRST_PARTY_PLUGIN_PERMISSIONS);
 		expect(parsed.errors).toEqual([]);
+		// `agents:dispatch` is deliberately NOT declared: FC2 promoted it to an
+		// allowlist scope naming exact targets, which a static manifest cannot
+		// name for Pianola's dynamically-discovered sessions. Pianola dispatch
+		// stays host-owned until the plugin lift designs a runtime grant seam
+		// (see first-party-plugin.ts NOTE).
 		expect(parsed.requests.map((p) => p.capability)).toEqual([
 			'settings:read',
 			'agents:read',
 			'transcripts:read',
-			'agents:dispatch',
 			'decisions:write',
 			'notifications:toast',
 			'background:service',

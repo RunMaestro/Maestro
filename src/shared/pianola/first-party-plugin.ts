@@ -18,10 +18,13 @@ export const PIANOLA_FIRST_PARTY_PLUGIN_PERMISSIONS: readonly PermissionRequest[
 		capability: 'transcripts:read',
 		reason: 'Read projected agent transcript content to classify waiting prompts and risk.',
 	},
-	{
-		capability: 'agents:dispatch',
-		reason: 'Send an approved low-risk answer to the waiting agent after an audit record exists.',
-	},
+	// NOTE: `agents:dispatch` is deliberately ABSENT. FC2 promoted it to an
+	// allowlist scope naming exact agent targets; Pianola dispatches to
+	// dynamically-discovered waiting sessions, which a static manifest scope
+	// cannot name. Pianola's dispatch authority today is HOST-OWNED (supervised
+	// CLI path gated by the Encore consent flag + risk engine + audit), not a
+	// broker grant. The plugin lift must design a runtime per-agent grant seam
+	// (or host-mediated dispatch) before this can become a broker capability.
 	{
 		capability: 'decisions:write',
 		reason: 'Record Pianola decisions before any dispatch and record the dispatch outcome.',
