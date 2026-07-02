@@ -156,18 +156,23 @@ function SessionListInner(props: SessionListProps) {
 		(s) => s.sessions,
 		sidebarSessionEquality
 	);
-	// Multi-window: a secondary window's Left Bar is a FOCUSED view - it lists
-	// ONLY the agents that window owns, so moving an agent into its own window
-	// visually separates it out instead of cloning the whole fleet. The primary
-	// window (and any non-window context, e.g. isolation tests) stays the full
-	// catch-all fleet view. Worktree children ride along with an owned parent so a
-	// detached agent keeps its worktrees in the same window.
+	// Multi-window: EVERY window's Left Bar lists only the agents it owns
+	// (single-window-per-agent). Moving an agent into another window removes it
+	// from this window's list - the primary is the catch-all owner of every agent
+	// no secondary has claimed, and a secondary owns exactly its scoped set. In the
+	// common single-window case the primary owns everything, so this is a no-op;
+	// likewise outside a WindowProvider (isolation tests). Worktree children ride
+	// along with an owned parent so a detached agent keeps its worktrees together.
+	//
+	// Separately, a secondary window renders its owned agents as a FOCUSED flat
+	// list (no starred/bookmarks/group section headers - see the `isSecondaryWindow`
+	// gates below); the primary keeps its full sectioned layout, just scoped.
 	const windowCtx = useWindowContextOptional();
 	const isSecondaryWindow = !!windowCtx && !windowCtx.isMainWindow;
 	const scopeSessionsToWindow = useCallback(
 		(list: Session[]): Session[] =>
-			scopeSessionsToOwningWindow(list, windowCtx?.ownsSession ?? null, isSecondaryWindow),
-		[isSecondaryWindow, windowCtx]
+			scopeSessionsToOwningWindow(list, windowCtx?.ownsSession ?? null),
+		[windowCtx]
 	);
 	const sessions = useMemo(
 		() => scopeSessionsToWindow(allSessions),

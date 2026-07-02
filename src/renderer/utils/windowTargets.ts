@@ -7,21 +7,23 @@ interface ScopableSession {
 }
 
 /**
- * Filter a session list to the agents a SECONDARY window should surface in its
- * Left Bar: only the agents that window owns, plus any worktree child whose
+ * Filter a session list to the agents THIS window owns (single-window-per-agent):
+ * only the agents `ownsSession` returns true for, plus any worktree child whose
  * parent it owns (so a detached agent keeps its worktrees in the same window).
  *
- * A no-op that returns the list unchanged when `isSecondaryWindow` is false (the
- * primary window is the catch-all fleet view) or `ownsSession` is null (no
- * WindowProvider, e.g. isolation tests). Kept pure so it is unit-testable apart
- * from the heavy SessionList render.
+ * Applies in EVERY window, not just secondaries. `ownsSession` already encodes
+ * the right thing for each: the primary owns every agent no secondary has claimed
+ * (so an agent moved to another window disappears from the primary's Left Bar),
+ * and a secondary owns exactly its scoped set. In the common single-window case
+ * the primary owns everything, so this is a no-op; likewise when `ownsSession` is
+ * null (no WindowProvider, e.g. isolation tests / web). Kept pure so it is
+ * unit-testable apart from the heavy SessionList render.
  */
 export function scopeSessionsToOwningWindow<T extends ScopableSession>(
 	sessions: T[],
-	ownsSession: ((sessionId: string) => boolean) | null | undefined,
-	isSecondaryWindow: boolean
+	ownsSession: ((sessionId: string) => boolean) | null | undefined
 ): T[] {
-	if (!isSecondaryWindow || !ownsSession) return sessions;
+	if (!ownsSession) return sessions;
 	return sessions.filter(
 		(s) => ownsSession(s.id) || (s.parentSessionId != null && ownsSession(s.parentSessionId))
 	);

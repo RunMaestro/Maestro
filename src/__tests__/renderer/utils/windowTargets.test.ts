@@ -95,26 +95,34 @@ describe('scopeSessionsToOwningWindow', () => {
 		{ id: 'b-wt', parentSessionId: 'b' }, // worktree child of b
 	];
 
-	it('returns the list unchanged in the primary window (not secondary)', () => {
-		const owns = (id: string) => id === 'a';
-		expect(scopeSessionsToOwningWindow(list, owns, false)).toBe(list);
-	});
-
 	it('returns the list unchanged when there is no ownsSession (no WindowProvider)', () => {
-		expect(scopeSessionsToOwningWindow(list, null, true)).toBe(list);
+		expect(scopeSessionsToOwningWindow(list, null)).toBe(list);
 	});
 
-	it('keeps only owned agents in a secondary window', () => {
+	it('is a no-op when ownsSession owns everything (single-window primary)', () => {
+		const scoped = scopeSessionsToOwningWindow(list, () => true).map((s) => s.id);
+		expect(scoped).toEqual(['a', 'b', 'c', 'a-wt', 'b-wt']);
+	});
+
+	it('keeps only owned agents (applies to primary and secondary alike)', () => {
 		const owns = (id: string) => id === 'a';
-		const scoped = scopeSessionsToOwningWindow(list, owns, true).map((s) => s.id);
+		const scoped = scopeSessionsToOwningWindow(list, owns).map((s) => s.id);
 		// 'a' is owned; 'a-wt' rides along as its worktree child. b/c and b-wt drop.
 		expect(scoped).toEqual(['a', 'a-wt']);
+	});
+
+	it('drops an agent owned by another window from this window (primary loses a moved agent)', () => {
+		// Primary ownsSession = "not claimed by a secondary". Say 'b' moved to a
+		// secondary window, so the primary no longer owns it.
+		const owns = (id: string) => id !== 'b' && id !== 'b-wt';
+		const scoped = scopeSessionsToOwningWindow(list, owns).map((s) => s.id);
+		expect(scoped).toEqual(['a', 'c', 'a-wt']);
 	});
 
 	it('keeps a worktree child whose parent is owned, even if the child id is not', () => {
 		// Ownership is recorded per-agent; a moved parent should keep its worktrees.
 		const owns = (id: string) => id === 'b';
-		const scoped = scopeSessionsToOwningWindow(list, owns, true).map((s) => s.id);
+		const scoped = scopeSessionsToOwningWindow(list, owns).map((s) => s.id);
 		expect(scoped).toEqual(['b', 'b-wt']);
 	});
 });
