@@ -69,6 +69,47 @@ export interface PersistenceHandlerDependencies {
 export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies): void {
 	const { settingsStore, sessionsStore, groupsStore, getWebServer } = deps;
 
+	// PERF: coalesce activeSessionId disk writes.
+	//
+	// The renderer calls sessions:setActiveSessionId immediately on every session
+	// AND tab switch. Because activeSessionId lives in the same store file as the
+	// (potentially large) sessions array, each switch synchronously re-serializes
+	// and writeFileSync's the ENTIRE sessions store just to record which one is
+	// focused - a field trace flagged this store write path as hot. A trailing
+	// debounce collapses a burst of rapid navigation into a single write.
+	//
+	// Correctness: `pendingActiveSessionId` is a read-through shadow so
+	// sessions:getActiveSessionId always returns the latest value even before the
+	// flush lands. Losing at most ~400ms of "which session was focused" on a hard
+	// crash is harmless (it defaults to the first session on restart), and we
+	// flush synchronously on quit so a normal exit never loses it.
+	const ACTIVE_SESSION_ID_DEBOUNCE_MS = 400;
+	let pendingActiveSessionId: string | null = null;
+	let activeSessionIdTimer: NodeJS.Timeout | null = null;
+
+	const flushActiveSessionId = (): void => {
+		if (activeSessionIdTimer) {
+			clearTimeout(activeSessionIdTimer);
+			activeSessionIdTimer = null;
+		}
+		if (pendingActiveSessionId === null) return;
+		const id = pendingActiveSessionId;
+		pendingActiveSessionId = null;
+		try {
+			sessionsStore.set('activeSessionId', id);
+		} catch (err) {
+			const code = (err as NodeJS.ErrnoException).code;
+			logger.warn(
+				`Failed to persist activeSessionId: ${code || (err as Error).message}`,
+				'Sessions'
+			);
+		}
+	};
+
+	// Guarantee the last focus is persisted on a normal quit. before-quit fires
+	// before windows close; the write is synchronous so it completes in-line.
+	app.on('before-quit', flushActiveSessionId);
+
 	// Settings management
 	ipcMain.handle('settings:get', async (_, key: string) => {
 		const value = settingsStore.get(key);
@@ -144,11 +185,17 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 	});
 
 	ipcMain.handle('sessions:getActiveSessionId', async () => {
+		// Read-through the pending value so a debounced-but-not-yet-flushed write
+		// is still visible to readers.
+		if (pendingActiveSessionId !== null) return pendingActiveSessionId;
 		return sessionsStore.get('activeSessionId', '');
 	});
 
 	ipcMain.handle('sessions:setActiveSessionId', async (_, id: string) => {
-		sessionsStore.set('activeSessionId', id);
+		// Coalesce rapid navigation into one disk write (see flushActiveSessionId).
+		pendingActiveSessionId = id;
+		if (activeSessionIdTimer) clearTimeout(activeSessionIdTimer);
+		activeSessionIdTimer = setTimeout(flushActiveSessionId, ACTIVE_SESSION_ID_DEBOUNCE_MS);
 	});
 
 	/**

@@ -292,6 +292,15 @@ if (crashReportingEnabled && !isDevelopment) {
 				ipcMode: IPCMode.Classic,
 				// Only send errors, not performance data
 				tracesSampleRate: 0,
+				// PERF: drop console breadcrumbs. Sentry's default Breadcrumbs
+				// integration wraps every console.* to capture a breadcrumb, and a
+				// field trace showed that wrapper (addConsoleBreadcrumb) as the single
+				// largest JS CPU consumer. Our logger console.*s on every info+ entry,
+				// so this taxed every log line. Console output is still retained via the
+				// logger, file logs, and the LogViewer; crash reporting is unaffected.
+				beforeBreadcrumb(breadcrumb) {
+					return breadcrumb.category === 'console' ? null : breadcrumb;
+				},
 				// Filter out sensitive data + unfixable OS / Chromium / user-env noise.
 				// See src/shared/sentryFilters.ts for the full classification.
 				beforeSend(event) {

@@ -27,6 +27,7 @@ vi.mock('electron', () => ({
 	},
 	app: {
 		getPath: vi.fn().mockReturnValue('/mock/user/data'),
+		on: vi.fn(),
 	},
 }));
 
@@ -172,10 +173,58 @@ describe('persistence IPC handlers', () => {
 	});
 
 	describe('sessions:setActiveSessionId', () => {
-		it('should persist and retrieve an active session ID', async () => {
+		// The write is debounced (see registerPersistenceHandlers) to avoid a full
+		// sessions-store re-serialize on every session/tab switch.
+		beforeEach(() => vi.useFakeTimers());
+		afterEach(() => vi.useRealTimers());
+
+		it('debounces the disk write, then flushes after the interval', async () => {
 			const setHandler = handlers.get('sessions:setActiveSessionId');
 			await setHandler!({} as any, 'test-session-123');
+
+			// Not written synchronously.
+			expect(mockSessionsStore.set).not.toHaveBeenCalled();
+
+			// Flushes once the debounce elapses.
+			vi.advanceTimersByTime(400);
+			expect(mockSessionsStore.set).toHaveBeenCalledTimes(1);
 			expect(mockSessionsStore.set).toHaveBeenCalledWith('activeSessionId', 'test-session-123');
+		});
+
+		it('coalesces a burst of rapid switches into a single write (last wins)', async () => {
+			const setHandler = handlers.get('sessions:setActiveSessionId');
+			await setHandler!({} as any, 'a');
+			await setHandler!({} as any, 'b');
+			await setHandler!({} as any, 'c');
+
+			vi.advanceTimersByTime(400);
+			expect(mockSessionsStore.set).toHaveBeenCalledTimes(1);
+			expect(mockSessionsStore.set).toHaveBeenCalledWith('activeSessionId', 'c');
+		});
+
+		it('reads back the pending id before it is flushed (read-through)', async () => {
+			const setHandler = handlers.get('sessions:setActiveSessionId');
+			const getHandler = handlers.get('sessions:getActiveSessionId');
+			await setHandler!({} as any, 'pending-id');
+
+			// Store not yet written, but the getter returns the pending value.
+			expect(mockSessionsStore.set).not.toHaveBeenCalled();
+			expect(await getHandler!({} as any)).toBe('pending-id');
+			expect(mockSessionsStore.get).not.toHaveBeenCalledWith('activeSessionId', '');
+		});
+
+		it('flushes synchronously on before-quit', async () => {
+			const setHandler = handlers.get('sessions:setActiveSessionId');
+			await setHandler!({} as any, 'quit-id');
+			expect(mockSessionsStore.set).not.toHaveBeenCalled();
+
+			// Invoke the registered before-quit listener.
+			const onCalls = vi.mocked(app.on).mock.calls as unknown as Array<[string, () => void]>;
+			const beforeQuit = onCalls.find(([event]) => event === 'before-quit')?.[1];
+			expect(beforeQuit).toBeDefined();
+			beforeQuit!();
+
+			expect(mockSessionsStore.set).toHaveBeenCalledWith('activeSessionId', 'quit-id');
 		});
 	});
 
