@@ -1,5 +1,5 @@
 import net from 'node:net';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { findAvailablePort } from './dev-port.mjs';
 
 const isWindows = process.platform === 'win32';
@@ -56,7 +56,22 @@ function waitForPort(port, timeoutMs = startupTimeoutMs) {
 
 function killChild(child) {
 	if (child.exitCode === null && !child.killed) {
-		child.kill('SIGTERM');
+		if (isWindows && child.pid) {
+			// spawnNpm() children are cmd.exe wrappers on Windows; SIGTERM would kill
+			// only the wrapper and leak npm/Vite/Electron (holding the Vite port).
+			// taskkill /t kills the whole tree; sync so shutdown() finishes the job
+			// before process.exit(). Non-zero exit (already dead) is fine.
+			try {
+				execFileSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], {
+					timeout: 5000,
+					stdio: 'ignore',
+				});
+			} catch {
+				// process already exited
+			}
+		} else {
+			child.kill('SIGTERM');
+		}
 	}
 }
 
