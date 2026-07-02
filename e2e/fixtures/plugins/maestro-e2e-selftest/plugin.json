@@ -17,7 +17,7 @@
 		{ "capability": "agents:read", "reason": "e2e self-test agent listing" },
 		{
 			"capability": "agents:dispatch",
-			"scope": "maestro-e2e-agent",
+			"scope": "__SEEDED_SESSION__",
 			"reason": "e2e self-test dispatch"
 		},
 		{ "capability": "notifications:toast", "reason": "e2e self-test toast" },
@@ -77,15 +77,24 @@
 				"schedule": { "kind": "interval", "everyMinutes": 60 },
 				"action": "notify",
 				"payload": "e2e tick"
+			},
+			{
+				"id": "e2e-dispatch-trigger",
+				"title": "E2E Dispatch Trigger",
+				"schedule": { "kind": "interval", "everyMinutes": 1 },
+				"action": "dispatch",
+				"agentId": "__SEEDED_SESSION__",
+				"payload": "e2e scheduled status note"
 			}
 		],
 		"commands": [
 			{ "id": "selftest", "title": "E2E: Run self-test" },
 			{ "id": "resubscribe", "title": "E2E: Re-subscribe to events" },
-			{ "id": "keybind-probe", "title": "E2E: Keybinding probe" }
+			{ "id": "keybind-probe", "title": "E2E: Keybinding probe" },
+			{ "id": "panelprobe", "title": "E2E: Panel bridge probe" }
 		],
 		"panels": [
-			{ "id": "demo-panel", "title": "E2E Demo Panel", "entry": "panel.html", "placement": "modal" }
+			{ "id": "demo-panel", "title": "E2E Demo Panel", "entry": "panel.html", "placement": "left" }
 		],
 		"agents": [
 			{

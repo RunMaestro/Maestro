@@ -89,7 +89,7 @@ async function runSelfTest(maestro) {
 	});
 	await probe('net:fetch', () => maestro.net.fetch('https://example.com'));
 	await probe('agents:read', () => maestro.agents.list());
-	await probe('agents:dispatch', () => maestro.agents.dispatch('maestro-e2e-agent', 'hi'));
+	await probe('agents:dispatch', () => maestro.agents.dispatch(SEEDED_SESSION, 'hi'));
 	await probe('notifications:toast', () => maestro.notifications.toast('e2e self-test'));
 	await probe('settings:write', () => maestro.settings.set(settingsKey, 'v'));
 	await probe('settings:read', () => maestro.settings.get(settingsKey));
@@ -231,6 +231,16 @@ module.exports = {
 		// distinct, run-scoped marker the keybinding test asserts on.
 		maestro.commands.register('keybind-probe', async () => {
 			console.log(TAG + ' KEYBIND-FIRED');
+			return { ok: true };
+		});
+
+		// FC6 (panel render host) bridge probe: the sandboxed panel document
+		// posts its in-guest lockdown observations (fetch blocked by CSP,
+		// window.open() returning null) through the postMessage bridge into this
+		// command, which logs them as one run-scoped JSON marker the panel test
+		// parses. Invoking a plugin's OWN command needs no extra grant.
+		maestro.commands.register('panelprobe', async (args) => {
+			console.log(TAG + ' PANEL-BRIDGE ' + JSON.stringify(args || {}));
 			return { ok: true };
 		});
 

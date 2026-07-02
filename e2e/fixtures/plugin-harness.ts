@@ -18,6 +18,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { makeSigningKeys, signPluginDir, type SigningKeys } from './plugin-signing';
 
 export const PLUGIN_ID = 'maestro.e2e.selftest';
 
@@ -25,6 +26,15 @@ export const PLUGIN_ID = 'maestro.e2e.selftest';
  * probes (sessions:write, tabs:manage, transcripts:*) reach the BROKER check
  * (honest DENY) instead of erroring on an unknown session in ungranted runs. */
 export const SEEDED_SESSION_ID = 'maestro-e2e-session';
+
+/** Host binary the harness blesses for the `process:spawn` PASS row (via
+ * MAESTRO_E2E_SPAWN_BINARY + DEMO_MODE). hostname exists everywhere, exits
+ * immediately, and is not in the registry's FORBIDDEN_BASENAMES. */
+export const SPAWN_BINARY =
+	process.platform === 'win32' ? 'C:/Windows/System32/HOSTNAME.EXE' : '/bin/hostname';
+
+/** The high-risk act verbs: separate consent channel, default UNCHECKED. */
+export const ACT_CAPS = ['agents:dispatch', 'process:spawn'] as const;
 
 /** The brokered capabilities the fixture probes, in self-test order. */
 export const PROBED_CAPS = [
@@ -73,6 +83,9 @@ export interface SeededEnv {
 	scopeDir: string;
 	runId: string;
 	env: NodeJS.ProcessEnv;
+	/** Signing keys used for a signed install; re-sign fixture edits with the
+	 * SAME key (a new key = identity change = force-disable at next refresh). */
+	signingKeys: SigningKeys;
 }
 
 export interface LaunchedApp {
@@ -95,14 +108,16 @@ export function createSeededEnv(): SeededEnv {
 	const demoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-e2e-demo-'));
 	const scopeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-e2e-scope-'));
 	const runId = `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+	const signingKeys = makeSigningKeys();
 	const env: NodeJS.ProcessEnv = {
 		...process.env,
 		MAESTRO_DEMO_DIR: demoDir,
 		ELECTRON_DISABLE_GPU: '1',
 		NODE_ENV: 'test',
 		MAESTRO_E2E_TEST: 'true',
+		MAESTRO_E2E_SPAWN_BINARY: SPAWN_BINARY,
 	};
-	return { demoDir, scopeDir, runId, env };
+	return { demoDir, scopeDir, runId, env, signingKeys };
 }
 
 function attachOutput(app: ElectronApplication): () => string {
@@ -184,7 +199,10 @@ function seedSession(seeded: SeededEnv): void {
 	const session = {
 		id: SEEDED_SESSION_ID,
 		name: 'E2E Seeded Session',
-		toolType: 'claude-code',
+		// A non-resolvable agent id: the renderer's remote-command path can never
+		// spawn a REAL agent binary off a dispatched prompt on the dev box. The
+		// dispatch PASS row returns synchronously before renderer resolution.
+		toolType: 'e2e-null-agent',
 		state: 'idle',
 		cwd: fwd(seeded.scopeDir),
 		fullPath: fwd(seeded.scopeDir),
@@ -263,33 +281,20 @@ function installFixturePlugin(seeded: SeededEnv): void {
 }
 
 /**
- * Sign the installed plugin dir with a fresh ed25519 key, mirroring the host's
- * frozen signing contract (sorted `relpath:sha256hex` joined by newlines,
- * excluding signature.json + *.pem/*.key). Returns the base64 SPKI public key.
+ * Sign the installed plugin dir with this instance's ed25519 key, mirroring
+ * the host's frozen signing contract via the shared pure module (recursive
+ * walk, POSIX relpaths, shared exclusions). Returns the base64 SPKI key.
  */
-function signInstalledPlugin(destDir: string): string {
-	const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
-	const files: Record<string, string> = {};
-	for (const name of fs.readdirSync(destDir)) {
-		if (name === 'signature.json' || /\.(pem|key)$/i.test(name)) continue;
-		const buf = fs.readFileSync(path.join(destDir, name));
-		files[name] = crypto.createHash('sha256').update(buf).digest('hex');
-	}
-	const payload = Object.entries(files)
-		.map(([p, h]) => [fwd(p), h.toLowerCase()] as const)
-		.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
-		.map(([p, h]) => `${p}:${h}`)
-		.join('\n');
-	const signature = crypto.sign(null, Buffer.from(payload, 'utf8'), privateKey).toString('base64');
-	const publicKeyB64 = (publicKey.export({ type: 'spki', format: 'der' }) as Buffer).toString(
-		'base64'
-	);
-	fs.writeFileSync(
-		path.join(destDir, 'signature.json'),
-		JSON.stringify({ algorithm: 'ed25519', publicKey: publicKeyB64, signature, files }, null, '\t'),
-		'utf8'
-	);
-	return publicKeyB64;
+function signInstalledPlugin(destDir: string, keys: SigningKeys): string {
+	signPluginDir(destDir, keys);
+	return keys.publicKeyB64;
+}
+
+/** Re-sign the INSTALLED fixture with the SAME per-instance key after a
+ * mid-test edit — the exact-file-set check makes a stale signature `invalid`,
+ * and a NEW key would be an identity change (force-disable at next refresh). */
+export function resignFixture(seeded: SeededEnv): void {
+	signPluginDir(pluginDestDir(seeded.demoDir), seeded.signingKeys);
 }
 
 function seedTrustedKey(demoDir: string, publicKeyB64: string): void {
@@ -306,10 +311,15 @@ function seedTrustedKey(demoDir: string, publicKeyB64: string): void {
  * Probe to materialize defaults, enable the plugins Encore flag, seed the
  * plugin's enabled state + a real session, install the fixture, and (when
  * trusted) sign it and register its key in the trusted set.
+ *
+ * `untrusted: true` signs with a STRANGER key that is NOT seeded into
+ * pluginTrustedKeys — a signed-but-untrusted plugin, which the Option-B gate
+ * must treat exactly like an unsigned one (never runs code). Stronger than
+ * leaving it unsigned: proves untrusted ≠ unsigned both never run.
  */
 export async function seedAll(
 	seeded: SeededEnv,
-	opts: { enabled: boolean; trusted?: boolean }
+	opts: { enabled: boolean; trusted?: boolean; untrusted?: boolean }
 ): Promise<void> {
 	await materializeDefaults(seeded.env);
 	enablePluginsFlag(seeded.demoDir);
@@ -317,8 +327,10 @@ export async function seedAll(
 	seedSession(seeded);
 	installFixturePlugin(seeded);
 	if (opts.trusted) {
-		const pub = signInstalledPlugin(pluginDestDir(seeded.demoDir));
+		const pub = signInstalledPlugin(pluginDestDir(seeded.demoDir), seeded.signingKeys);
 		seedTrustedKey(seeded.demoDir, pub);
+	} else if (opts.untrusted) {
+		signInstalledPlugin(pluginDestDir(seeded.demoDir), makeSigningKeys());
 	}
 }
 
@@ -402,10 +414,20 @@ export function deleteAnchor(seeded: SeededEnv): boolean {
  * Drive the host-owned consent window: open it via requestConsent, uncheck the
  * `withhold` capabilities, and approve the rest. Resolves once the window has
  * closed (whether the mint succeeded or was rejected, e.g. on a conflict).
+ *
+ * Act verbs (agents:dispatch / process:spawn) render in the SEPARATE high-risk
+ * section, default UNCHECKED, on the `.cap-check-high-risk` channel — a plain
+ * approve leaves them ungranted. Pass `highRisk` to opt them in, and
+ * `unattended` (subset of `highRisk`) to also check the nested no-user-present
+ * consent, which is disabled until its parent act-verb row is checked.
  */
 export async function approveConsent(
 	launched: LaunchedApp,
-	opts: { withhold?: readonly string[] } = {}
+	opts: {
+		withhold?: readonly string[];
+		highRisk?: readonly string[];
+		unattended?: readonly string[];
+	} = {}
 ): Promise<void> {
 	const consentPromise = launched.app.waitForEvent('window', { timeout: 30_000 });
 	await launched.window.evaluate((id) => window.maestro.plugins.requestConsent(id), PLUGIN_ID);
@@ -414,6 +436,14 @@ export async function approveConsent(
 	await consent.locator('button.btn-approve').waitFor({ state: 'visible', timeout: 15_000 });
 	for (const cap of opts.withhold ?? []) {
 		await consent.locator(`.cap-check[data-cap="${cap}"]`).uncheck();
+	}
+	// Check the parent act-verb row BEFORE its nested unattended checkbox: the
+	// consent page keeps the child disabled while the parent is unchecked.
+	for (const cap of opts.highRisk ?? []) {
+		await consent.locator(`.cap-check-high-risk[data-cap="${cap}"]`).check();
+	}
+	for (const cap of opts.unattended ?? []) {
+		await consent.locator(`.unattended-check[data-cap="${cap}"]`).check();
 	}
 	await consent.locator('button.btn-approve').click();
 	await consent.waitForEvent('close', { timeout: 15_000 }).catch(() => undefined);

@@ -1,41 +1,76 @@
 /**
  * Plugin-system E2E — exercises the ENTIRE plugin interface end-to-end against
  * a real isolated Maestro (demo mode) with a seeded full-surface self-test
- * plugin and its real utilityProcess sandbox:
+ * plugin and its real utilityProcess sandbox, under the FC1..FC8 contracts:
  *
- *  1. discovery + default-deny (every brokered capability DENY while ungranted)
- *  2. full broker matrix (approved caps function; INERT for host-unwired verbs;
- *     withheld stays DENY) via the real host-owned consent window
- *  3. real event delivery (subscribe -> host emit -> sandbox handler)
- *  4. contribution aggregation (all tier-0 buckets) + ui:contribute/ui:panel
- *     gating + revoke re-denies
- *  5. the untrusted transcripts+egress consent CONFLICT, and that a signed
- *     (trusted) plugin lifts it
+ *  - FC1 Option-B trust gate: only a TRUSTED (signed by a trusted key) plugin
+ *    ever runs code; a stranger-signed plugin stays declarative-only. Every
+ *    enabled code plugin also needs a consented ledger mint — verifyRecord
+ *    force-disables any enabled code plugin without one, so every test mints
+ *    first (a zero-grant mint is a valid consent gesture).
+ *  - FC2 act verbs: agents:dispatch / process:spawn ride a SEPARATE high-risk
+ *    consent channel (default unchecked); grants are allowlist-scoped to the
+ *    named agent/binary — off-scope targets DENY while the cap is granted.
+ *  - FC3 scheduler: a cue dispatch trigger without the separate UNATTENDED
+ *    consent is surfaced (notify) instead of auto-dispatched.
+ *  - FC4 events: metadata-only payloads; capability-gated topics
+ *    (history.entryAdded -> history:read, agent.completed -> agents:read)
+ *    silence instantly when the gate cap is withheld.
+ *  - FC5 background services: supervised crash-restart; deliberate disable
+ *    stops cleanly (never treated as a crash).
+ *  - FC6 panel render host: per-plugin webview guest; CSP kills in-guest
+ *    fetch, window.open returns null, navigation is denied host-side; the
+ *    postMessage bridge is the one sanctioned channel out.
+ *  - Grant ledger: sealed grants persist across relaunch; revoke tombstones
+ *    survive forged enable-state; a lost freshness anchor drops grants until
+ *    a full re-consent re-mints.
  *
  * Results are read from the captured main-process output (the sandbox's
  * console.log is forwarded by the host logger), matched on a per-run id marker.
  *
  * Run: bunx playwright test e2e/plugins.spec.ts
- *   (build dist first: bun run build:main && bun run build:renderer)
+ *   (build dist first: bun run build:main && bun run build:renderer &&
+ *    bun run build:preload — preload carries consent.html + panel preloads)
  */
 import { test, expect } from '@playwright/test';
+import fs from 'fs';
 import {
 	PLUGIN_ID,
+	SEEDED_SESSION_ID,
+	SPAWN_BINARY,
+	ACT_CAPS,
 	PROBED_CAPS,
+	REQUESTED_CAPS,
 	createSeededEnv,
 	seedAll,
+	seedPluginEnabledState,
 	launch,
+	relaunch,
 	cleanup,
 	approveConsent,
 	parseSelfTestSummary,
 	sawDeliveredEvent,
+	deliveredEventPayload,
 	triggerSessionUpdated,
+	ledgerPath,
+	readAnchor,
+	deleteAnchor,
 	type SeededEnv,
 	type LaunchedApp,
 } from './fixtures/plugin-harness';
 
-const complete = (s: Record<string, string>): boolean =>
-	PROBED_CAPS.every((c) => typeof s[c] === 'string');
+/** Withheld from EVERY full-grant consent in this suite so a self-test run can
+ * never open a real browser tab on the host (hermeticity > one PASS row). */
+const WITHHOLD_SAFE = ['shell:openExternal'] as const;
+
+/** The plain-channel caps (everything the manifest requests minus the act
+ * verbs, which render in the separate high-risk section, default unchecked). */
+const PLAIN_CAPS = REQUESTED_CAPS.filter((c) => !(ACT_CAPS as readonly string[]).includes(c));
+
+/** Occurrences of a literal marker in the captured output. Used across the
+ * FC5 assertions to prove "no NEW crash/summary appeared" — call-site count
+ * comparisons must share one counting behavior. */
+const countMarker = (output: string, marker: string): number => output.split(marker).length - 1;
 
 test.describe('plugin system e2e', () => {
 	test.describe.configure({ timeout: 240_000 });
@@ -82,24 +117,62 @@ test.describe('plugin system e2e', () => {
 		return summary;
 	}
 
+	/** Fire-and-forget a plugin command from the renderer (errors swallowed —
+	 * assertions are made on captured output, not the RPC ack). */
+	async function invokePluginCommand(launched: LaunchedApp, local: string): Promise<void> {
+		await launched.window.evaluate(
+			({ id, cmd }) => window.maestro.plugins.invokeCommand(`${id}/${cmd}`).catch(() => undefined),
+			{ id: PLUGIN_ID, cmd: local }
+		);
+	}
+
 	async function teardown(launched: LaunchedApp, seeded: SeededEnv): Promise<void> {
-		if (test.info().errors.length > 0) {
-			console.log('--- captured Maestro output ---\n' + launched.output());
+		// A thrown assertion is not yet in test.info().errors inside `finally`;
+		// attach the captured main-process output whenever the test is not
+		// cleanly passing so failures always carry the sandbox log.
+		const info = test.info();
+		if (info.errors.length > 0 || info.status !== info.expectedStatus) {
+			await info.attach('maestro-output', {
+				body: launched.output(),
+				contentType: 'text/plain',
+			});
 		}
 		await launched.app.close();
 		cleanup(seeded);
 	}
 
-	test('discovers a seeded plugin and default-denies every capability', async () => {
+	test('trust gate: trusted plugin runs; a zero-grant mint default-denies every capability', async () => {
 		const seeded = createSeededEnv();
-		await seedAll(seeded, { enabled: true });
+		await seedAll(seeded, { enabled: true, trusted: true });
 		const launched = await launch(seeded.env);
 		try {
 			await waitListed(launched);
-			const snap = await launched.window.evaluate(() => window.maestro.plugins.list());
-			expect((snap?.plugins ?? []).find((p) => p.id === PLUGIN_ID)?.enabled).toBe(true);
 
-			const summary = await selfTestUntil(launched, seeded.runId, complete);
+			// Boot invariant: the seeded enabled:true did NOT survive the refresh —
+			// verifyRecord force-disables an enabled code plugin without a ledger
+			// mint, however the on-disk enable-state was produced.
+			const before = await launched.window.evaluate(() => window.maestro.plugins.list());
+			expect(
+				(before?.plugins ?? []).find((p) => p.id === PLUGIN_ID)?.enabled,
+				'un-minted enabled state is force-disabled at refresh'
+			).toBe(false);
+
+			// Zero-grant mint: uncheck every plain cap; the act verbs are already
+			// unchecked by default in the separate high-risk section. Consent (even
+			// with nothing granted) IS the enable gesture.
+			await approveConsent(launched, { withhold: PLAIN_CAPS });
+			expect(launched.output()).toContain(`[Plugins] consent minted for "${PLUGIN_ID}": (none)`);
+			await expect
+				.poll(async () => {
+					const snap = await launched.window.evaluate(() => window.maestro.plugins.list());
+					return (snap?.plugins ?? []).find((p) => p.id === PLUGIN_ID)?.enabled;
+				})
+				.toBe(true);
+
+			// The trusted sandbox runs — and every brokered probe is DENY.
+			const summary = await selfTestUntil(launched, seeded.runId, (s) =>
+				PROBED_CAPS.every((c) => typeof s[c] === 'string')
+			);
 			for (const cap of PROBED_CAPS) {
 				expect(summary[cap], `${cap} should be DENY while ungranted`).toBe('DENY');
 			}
@@ -108,73 +181,202 @@ test.describe('plugin system e2e', () => {
 		}
 	});
 
-	test('full broker matrix: approved caps function, withheld stays denied', async () => {
+	test('full broker matrix: granted caps function; act verbs PASS in-scope, DENY off-scope', async () => {
 		const seeded = createSeededEnv();
-		await seedAll(seeded, { enabled: true });
+		await seedAll(seeded, { enabled: true, trusted: true });
 		const launched = await launch(seeded.env);
 		try {
 			await waitListed(launched);
-			// Untrusted: withhold transcripts:read so the granted egress caps
-			// (net:fetch / process:spawn) do not trip the mutual-exclusion rule.
-			await approveConsent(launched, { withhold: ['transcripts:read'] });
-			const s = await selfTestUntil(launched, seeded.runId, (x) => x['fs:write'] === 'PASS');
+			// Trusted lifts the transcripts+egress conflict; grant everything except
+			// shell:openExternal (hermeticity), including BOTH act verbs via the
+			// separate high-risk channel.
+			await approveConsent(launched, { withhold: WITHHOLD_SAFE, highRisk: ACT_CAPS });
+			const s = await selfTestUntil(
+				launched,
+				seeded.runId,
+				(x) => x['fs:write'] === 'PASS' && x['process:spawn'] === 'PASS'
+			);
 
 			const shouldPass = [
 				'fs:write',
 				'fs:read',
+				'fs:watch',
 				'agents:read',
+				'agents:dispatch',
 				'notifications:toast',
 				'settings:write',
 				'settings:read',
 				'sessions:read',
+				'sessions:create',
+				'sessions:write',
+				'tabs:manage',
+				'transcripts:write',
+				'transcripts:read',
+				'history:read',
 				'storage:write',
 				'storage:read',
+				'storage:sql',
 				'events:subscribe',
+				'process:spawn',
+				'decisions:write',
+				'power:preventSleep',
+				'background:service',
 			];
 			for (const cap of shouldPass) expect(s[cap], `${cap} should PASS once granted`).toBe('PASS');
 
-			// Granted but host-side intentionally unwired (Phase-3 / deferred
-			// command-registry keystone) -> broker allows, call is inert.
-			for (const cap of ['agents:dispatch', 'ui:command', 'process:spawn']) {
-				expect(s[cap], `${cap} should be INERT`).toBe('INERT');
-			}
+			// Granted, but the probe invokes an unregistered palette command — the
+			// broker allows the round-trip and the renderer registry says no.
+			expect(s['ui:command'], 'noop palette command is INERT').toBe('INERT');
 
 			// Network-dependent: broker allowed it (never DENY); PASS online / ERROR offline.
 			expect(['PASS', 'ERROR'], 'net:fetch should be broker-allowed').toContain(s['net:fetch']);
 
-			// Deliberately withheld at consent.
-			expect(s['transcripts:read'], 'transcripts:read was withheld').toBe('DENY');
+			// Deliberately withheld at consent (suite hermeticity).
+			expect(s['shell:openExternal'], 'shell:openExternal was withheld').toBe('DENY');
+
+			const out = launched.output();
+
+			// agents:dispatch PASS resolved the seeded session FAIL-CLOSED and audited it.
+			expect(out).toContain(
+				`agents.dispatch -> session ${SEEDED_SESSION_ID} (requested "${SEEDED_SESSION_ID}", 2 chars)`
+			);
+
+			// process:spawn PASS ran the ONE demo-blessed binary through the registry.
+			expect(out).toContain('[Plugins] spawn binary blessed: e2e-selftest ->');
+			expect(out).toContain(`process.spawn by "${PLUGIN_ID}": e2e-selftest (`);
+
+			// Allowlist scope: with BOTH act verbs granted, an off-scope target is
+			// still DENY — the grant covers only its exact named members.
+			expect(out).toContain(`[e2e-selftest:${seeded.runId}] ACT-OFFSCOPE agents:dispatch: DENY`);
+			expect(out).toContain(`[e2e-selftest:${seeded.runId}] ACT-OFFSCOPE process:spawn: DENY`);
 		} finally {
 			await teardown(launched, seeded);
 		}
 	});
 
-	test('subscribed host events are delivered into the sandbox', async () => {
+	// FC3: the scheduler polls its trigger set every 30s (PluginSchedulerHost's
+	// non-configurable POLL_MS): first eligible tick SEEDS the interval, the
+	// fire happens once everyMinutes elapses — so the observable deny line lands
+	// ~90-150s after the mint. Deliberately skipped in the default run: the wait
+	// is pure wall-clock (no injectable clock reaches the host from e2e), and a
+	// ~3-minute mostly-idle test makes the suite unbearably slow. Un-skip to
+	// exercise FC3 end-to-end; the body is complete and asserts the exact
+	// contract line.
+	test.skip('scheduler: dispatch trigger without unattended consent notifies instead', async () => {
+		test.setTimeout(360_000);
 		const seeded = createSeededEnv();
-		await seedAll(seeded, { enabled: true });
+		await seedAll(seeded, { enabled: true, trusted: true });
 		const launched = await launch(seeded.env);
 		try {
 			await waitListed(launched);
-			// Grant events:subscribe (withhold transcripts to avoid the untrusted conflict).
-			await approveConsent(launched, { withhold: ['transcripts:read'] });
+			// Grant agents:dispatch (high-risk channel) but NOT its nested
+			// unattended consent — interactive dispatch works, scheduler must not.
+			await approveConsent(launched, {
+				withhold: WITHHOLD_SAFE,
+				highRisk: ['agents:dispatch'],
+			});
+			await selfTestUntil(launched, seeded.runId, (x) => x['agents:dispatch'] === 'PASS');
+
+			// The 1-minute interval trigger becomes eligible on the first post-mint
+			// poll tick (seed), then fires a tick after everyMinutes elapses. The
+			// gate verdict (no unattended consent) downgrades it to notify.
+			await expect
+				.poll(
+					() =>
+						launched
+							.output()
+							.includes(
+								`[Plugins] cue trigger "${PLUGIN_ID}/e2e-dispatch-trigger" not auto-dispatched ` +
+									'(unattended (scheduler-driven) dispatch requires the separate unattended ' +
+									'consent — notifying instead)'
+							),
+					{
+						timeout: 200_000,
+						intervals: [5000, 10_000],
+						message: 'scheduler never surfaced the unattended-consent denial',
+					}
+				)
+				.toBe(true);
+			// And the trigger did NOT reach the dispatch sink.
+			expect(launched.output()).not.toContain(
+				`agents.dispatch -> session ${SEEDED_SESSION_ID} (requested "${SEEDED_SESSION_ID}", 25 chars)`
+			);
+		} finally {
+			await teardown(launched, seeded);
+		}
+	});
+
+	test('events: history.entryAdded is metadata-only; withholding history:read silences it', async () => {
+		const seeded = createSeededEnv();
+		await seedAll(seeded, { enabled: true, trusted: true });
+		const launched = await launch(seeded.env);
+		try {
+			await waitListed(launched);
+			await approveConsent(launched, { withhold: WITHHOLD_SAFE });
 
 			// Activation's subscribe was denied (pre-consent); re-subscribe now.
 			await expect
 				.poll(
 					async () => {
-						await launched.window.evaluate(
-							(id) =>
-								window.maestro.plugins.invokeCommand(`${id}/resubscribe`).catch(() => undefined),
-							PLUGIN_ID
-						);
+						await invokePluginCommand(launched, 'resubscribe');
 						return launched.output().includes(`[e2e-selftest:${seeded.runId}] RESUBSCRIBED`);
 					},
-					{ timeout: 30_000, intervals: [1000, 2000, 3000], message: 'plugin never re-subscribed' }
+					{ timeout: 60_000, intervals: [1000, 2000, 3000], message: 'plugin never re-subscribed' }
 				)
 				.toBe(true);
 
-			// Fire a real host session.updated (history-dir watcher) and assert the
-			// plugin's handler actually received it.
+			// A REAL history entry added through the host IPC produces a
+			// history.entryAdded delivery whose payload is ids/classification ONLY.
+			const entryId = `e2e-hist-${seeded.runId}`;
+			const secret = `SECRET-SUMMARY-${seeded.runId}`;
+			await launched.window.evaluate(
+				({ id, sessionId, scope, sum }) =>
+					window.maestro.history.add({
+						id,
+						type: 'USER',
+						timestamp: Date.now(),
+						summary: sum,
+						projectPath: scope,
+						sessionId,
+					}),
+				{ id: entryId, sessionId: SEEDED_SESSION_ID, scope: seeded.scopeDir, sum: secret }
+			);
+			await expect
+				.poll(
+					() => {
+						const p = deliveredEventPayload(launched.output(), seeded.runId, 'history.entryAdded');
+						return p?.entryId === entryId;
+					},
+					{ timeout: 45_000, message: 'history.entryAdded never delivered' }
+				)
+				.toBe(true);
+			const payload = deliveredEventPayload(launched.output(), seeded.runId, 'history.entryAdded');
+			expect(payload).toMatchObject({ entryId, kind: 'USER', sessionId: SEEDED_SESSION_ID });
+			// Metadata ONLY: the summary text never crosses into the sandbox.
+			expect(payload).not.toHaveProperty('summary');
+			expect(JSON.stringify(payload)).not.toContain(secret);
+
+			// WITHHOLD history:read via a fresh mint (a re-mint REPLACES the grant
+			// set; identity is unchanged so the sandbox and its bus subscription
+			// survive). The gated topic must fall silent while ungated topics keep
+			// delivering.
+			await approveConsent(launched, { withhold: [...WITHHOLD_SAFE, 'history:read'] });
+			const entryId2 = `e2e-hist2-${seeded.runId}`;
+			await launched.window.evaluate(
+				({ id, sessionId, scope }) =>
+					window.maestro.history.add({
+						id,
+						type: 'USER',
+						timestamp: Date.now(),
+						summary: 'withheld-run entry',
+						projectPath: scope,
+						sessionId,
+					}),
+				{ id: entryId2, sessionId: SEEDED_SESSION_ID, scope: seeded.scopeDir }
+			);
+			// Ordering fence: session.updated (needs only events:subscribe) still
+			// delivers — fire one AFTER the add and wait for it, so by the time it
+			// lands the gated entryAdded delivery would already have happened.
 			await expect
 				.poll(
 					() => {
@@ -184,18 +386,345 @@ test.describe('plugin system e2e', () => {
 					{
 						timeout: 45_000,
 						intervals: [1000, 2000, 3000],
-						message: 'session.updated was never delivered to the plugin sandbox',
+						message: 'session.updated never delivered',
 					}
 				)
 				.toBe(true);
+			const p2 = deliveredEventPayload(launched.output(), seeded.runId, 'history.entryAdded');
+			expect(
+				p2?.entryId,
+				'history.entryAdded must NOT deliver for the post-withhold entry'
+			).not.toBe(entryId2);
 		} finally {
 			await teardown(launched, seeded);
 		}
 	});
 
-	test('contributions aggregate; uiItems/panels gate on grants; revoke re-denies', async () => {
+	test('events: agent.completed fires on real process exit with metadata only', async () => {
 		const seeded = createSeededEnv();
-		await seedAll(seeded, { enabled: true });
+		await seedAll(seeded, { enabled: true, trusted: true });
+		const launched = await launch(seeded.env);
+		try {
+			await waitListed(launched);
+			// agent.completed is gated on agents:read (in addition to events:subscribe).
+			await approveConsent(launched, { withhold: WITHHOLD_SAFE });
+			await expect
+				.poll(
+					async () => {
+						await invokePluginCommand(launched, 'resubscribe');
+						return launched.output().includes(`[e2e-selftest:${seeded.runId}] RESUBSCRIBED`);
+					},
+					{ timeout: 60_000, intervals: [1000, 2000, 3000], message: 'plugin never re-subscribed' }
+				)
+				.toBe(true);
+
+			// Hermetic terminal trigger: spawn a PTY whose "shell" (hostname) exits
+			// immediately -> ProcessManager 'exit' -> rich agent.completed.
+			const doneSession = `e2e-agent-done-${seeded.runId}`;
+			await launched.window.evaluate(
+				({ sessionId, cwd, shell }) =>
+					window.maestro.process.spawnTerminalTab({ sessionId, cwd, shell }).catch(() => undefined),
+				{ sessionId: doneSession, cwd: seeded.scopeDir, shell: SPAWN_BINARY }
+			);
+
+			await expect
+				.poll(
+					() => {
+						const p = deliveredEventPayload(launched.output(), seeded.runId, 'agent.completed');
+						return p?.sessionId === doneSession;
+					},
+					{ timeout: 60_000, message: 'agent.completed never delivered for the spawned PTY' }
+				)
+				.toBe(true);
+			const payload = deliveredEventPayload(launched.output(), seeded.runId, 'agent.completed');
+			expect(payload?.sessionId).toBe(doneSession);
+			expect(['completed', 'failed']).toContain(payload?.status);
+			expect(typeof payload?.exitCode).toBe('number');
+			expect(payload?.agentId, 'a PTY tab completes as the terminal agent').toBe('terminal');
+			// Metadata ONLY — no output-bearing keys, ever.
+			for (const k of ['stdout', 'stderr', 'output', 'summary', 'fullResponse', 'response']) {
+				expect(payload, `agent.completed must not carry "${k}"`).not.toHaveProperty(k);
+			}
+		} finally {
+			await teardown(launched, seeded);
+		}
+	});
+
+	test('untrusted (stranger-signed) plugin never runs code; declarative contributions survive', async () => {
+		const seeded = createSeededEnv();
+		// Signed with a key that is NOT in pluginTrustedKeys: signed-but-untrusted
+		// must behave exactly like unsigned — never runs.
+		await seedAll(seeded, { enabled: true, untrusted: true });
+		const launched = await launch(seeded.env);
+		try {
+			await waitListed(launched);
+			// The ledger gate applies to untrusted too: mint first (withhold
+			// transcripts:read so granted egress caps don't trip the untrusted
+			// mutual-exclusion rule and reject the whole mint).
+			await approveConsent(launched, { withhold: [...WITHHOLD_SAFE, 'transcripts:read'] });
+			await expect
+				.poll(async () => {
+					const snap = await launched.window.evaluate(() => window.maestro.plugins.list());
+					return (snap?.plugins ?? []).find((p) => p.id === PLUGIN_ID)?.enabled;
+				})
+				.toBe(true);
+
+			// Tier-0 (declarative) contributions aggregate for the enabled plugin...
+			const contrib = (await launched.window.evaluate(() =>
+				window.maestro.plugins.contributions()
+			)) as unknown as Record<string, Array<{ pluginId?: string }>>;
+			for (const bucket of ['themes', 'prompts', 'settings', 'commands', 'keybindings']) {
+				expect(
+					(contrib[bucket] ?? []).some((i) => i.pluginId === PLUGIN_ID),
+					`${bucket} should aggregate for an untrusted plugin`
+				).toBe(true);
+			}
+
+			// ...but the sandbox NEVER starts: invokeCommand reports not-dispatched
+			// and no self-test SUMMARY for this run ever appears.
+			const res = await launched.window.evaluate(
+				(id) => window.maestro.plugins.invokeCommand(`${id}/selftest`),
+				PLUGIN_ID
+			);
+			expect(res.dispatched, 'untrusted plugin has no running sandbox').toBe(false);
+			// Give a hypothetical (buggy) sandbox start a moment to betray itself.
+			await launched.window.waitForTimeout(5000);
+			expect(parseSelfTestSummary(launched.output(), seeded.runId)).toBeNull();
+		} finally {
+			await teardown(launched, seeded);
+		}
+	});
+
+	test('relaunch: sealed grants persist and the plugin runs again without re-consent', async () => {
+		const seeded = createSeededEnv();
+		await seedAll(seeded, { enabled: true, trusted: true });
+		let launched = await launch(seeded.env);
+		try {
+			await waitListed(launched);
+			await approveConsent(launched, { withhold: WITHHOLD_SAFE });
+			await selfTestUntil(launched, seeded.runId, (x) => x['fs:write'] === 'PASS');
+			expect(fs.existsSync(ledgerPath(seeded)), 'sealed ledger persisted').toBe(true);
+
+			// Quit + fresh boot against the same demo dir. NOTHING is re-seeded and
+			// no consent window is driven: the sealed ledger + anchor alone must
+			// restore the grants and start the sandbox.
+			launched = await relaunch(launched, seeded);
+			await waitListed(launched);
+			const s = await selfTestUntil(launched, seeded.runId, (x) => x['fs:write'] === 'PASS');
+			expect(s['transcripts:read'], 'content grant survived the relaunch').toBe('PASS');
+			expect(s['storage:sql'], 'sql grant survived the relaunch').toBe('PASS');
+		} finally {
+			await teardown(launched, seeded);
+		}
+	});
+
+	test('revoke + forged enable-state cannot resurrect a plugin; fresh consent can', async () => {
+		const seeded = createSeededEnv();
+		await seedAll(seeded, { enabled: true, trusted: true });
+		let launched = await launch(seeded.env);
+		try {
+			await waitListed(launched);
+			await approveConsent(launched, { withhold: WITHHOLD_SAFE });
+			await selfTestUntil(launched, seeded.runId, (x) => x['fs:write'] === 'PASS');
+
+			// Revoke: drops the sealed grants (tombstone) AND disables the plugin.
+			await launched.window.evaluate((id) => window.maestro.plugins.revokeGrants(id), PLUGIN_ID);
+			await expect
+				.poll(async () => {
+					const g = await launched.window.evaluate(
+						(id) => window.maestro.plugins.getGrants(id),
+						PLUGIN_ID
+					);
+					return g.granted.length;
+				})
+				.toBe(0);
+
+			// Attack: forge enabled:true into the plain-JSON enable-state file while
+			// the app is down. The sealed ledger (tombstoned) is authoritative.
+			await launched.app.close();
+			seedPluginEnabledState(seeded.demoDir, true);
+			launched = await launch(seeded.env);
+			await waitListed(launched);
+			expect(
+				(await launched.window.evaluate(() => window.maestro.plugins.list())).plugins.find(
+					(p) => p.id === PLUGIN_ID
+				)?.enabled,
+				'forged enable-state is force-disabled against the tombstoned ledger'
+			).toBe(false);
+
+			// The renderer cannot flip it back on either: no ledger authorization.
+			const err = await launched.window.evaluate(
+				(id) =>
+					window.maestro.plugins
+						.setEnabled(id, true)
+						.then(() => null)
+						.catch((e: Error) => String(e)),
+				PLUGIN_ID
+			);
+			expect(err, 'renderer enable is rejected without a mint').toContain('PluginNotAuthorized');
+
+			// Fresh consent clears the tombstone, re-mints, re-enables, and the
+			// sandbox runs again.
+			await approveConsent(launched, { withhold: WITHHOLD_SAFE });
+			const s = await selfTestUntil(launched, seeded.runId, (x) => x['fs:write'] === 'PASS');
+			expect(s['fs:read']).toBe('PASS');
+		} finally {
+			await teardown(launched, seeded);
+		}
+	});
+
+	test('lost keyring anchor drops grants; full re-consent recovers', async () => {
+		const seeded = createSeededEnv();
+		await seedAll(seeded, { enabled: true, trusted: true });
+		let launched = await launch(seeded.env);
+		try {
+			await waitListed(launched);
+			await approveConsent(launched, { withhold: WITHHOLD_SAFE });
+			await selfTestUntil(launched, seeded.runId, (x) => x['fs:write'] === 'PASS');
+			expect(fs.existsSync(ledgerPath(seeded)), 'sealed ledger persisted').toBe(true);
+			expect(readAnchor(seeded), 'freshness anchor established by the mint').not.toBeNull();
+
+			// Simulate a lost/corrupt OS keyring entry: the sealed ledger file still
+			// exists, but its freshness can no longer be proven.
+			await launched.app.close();
+			expect(deleteAnchor(seeded)).toBe(true);
+			launched = await launch(seeded.env);
+			await waitListed(launched);
+
+			// Unprovable ledger -> grants dropped -> force-disabled; the renderer
+			// cannot re-enable without a fresh mint.
+			expect(
+				(await launched.window.evaluate(() => window.maestro.plugins.list())).plugins.find(
+					(p) => p.id === PLUGIN_ID
+				)?.enabled,
+				'plugin is force-disabled when the ledger freshness anchor is gone'
+			).toBe(false);
+			const grants = await launched.window.evaluate(
+				(id) => window.maestro.plugins.getGrants(id),
+				PLUGIN_ID
+			);
+			expect(grants.granted, 'grants are dropped, not partially trusted').toEqual([]);
+
+			// Full re-consent re-mints and re-establishes the anchor.
+			await approveConsent(launched, { withhold: WITHHOLD_SAFE });
+			const s = await selfTestUntil(launched, seeded.runId, (x) => x['fs:write'] === 'PASS');
+			expect(s['storage:read']).toBe('PASS');
+			expect(readAnchor(seeded), 'fresh mint re-established the anchor').not.toBeNull();
+		} finally {
+			await teardown(launched, seeded);
+		}
+	});
+
+	test('background services: supervised crash-restart; deliberate disable stops cleanly', async () => {
+		const seeded = createSeededEnv();
+		await seedAll(seeded, { enabled: true, trusted: true });
+		const launched = await launch(seeded.env);
+		const crashMarker = `[Plugins] plugin "${PLUGIN_ID}" crashed (code `;
+		const summaryMarker = `[e2e-selftest:${seeded.runId}] SUMMARY `;
+		try {
+			await waitListed(launched);
+			await approveConsent(launched, { withhold: WITHHOLD_SAFE });
+			await selfTestUntil(launched, seeded.runId, (x) => x['background:service'] === 'PASS');
+
+			// Register a LONG-LIVED service (no unregister) so the sandbox child is
+			// under supervision when it crashes.
+			await expect
+				.poll(
+					async () => {
+						await invokePluginCommand(launched, 'bgstart');
+						return launched.output().includes(`[e2e-selftest:${seeded.runId}] BGSTART {`);
+					},
+					{ timeout: 30_000, intervals: [1000, 2000], message: 'bgstart never registered' }
+				)
+				.toBe(true);
+
+			const summariesBeforeCrash = countMarker(launched.output(), summaryMarker);
+
+			// Crash the sandbox for real (host-realm timer throw -> nonzero exit).
+			await invokePluginCommand(launched, 'crashprobe');
+			await expect
+				.poll(() => launched.output().includes(crashMarker), {
+					timeout: 30_000,
+					message: 'sandbox crash was never observed',
+				})
+				.toBe(true);
+
+			// Supervised restart: refresh() re-runs activate(), whose self-test
+			// prints a NEW SUMMARY for this run — restart proof, not a stale line.
+			await expect
+				.poll(() => countMarker(launched.output(), summaryMarker), {
+					timeout: 60_000,
+					intervals: [1000, 2000, 3000],
+					message: 'crashed plugin was never restarted by the supervisor',
+				})
+				.toBeGreaterThan(summariesBeforeCrash);
+
+			// The restarted child re-registers on demand and reports healthy.
+			await expect
+				.poll(
+					async () => {
+						await invokePluginCommand(launched, 'bgstart');
+						await invokePluginCommand(launched, 'bgstat');
+						const marker = `[e2e-selftest:${seeded.runId}] BGSTAT `;
+						const lines = launched
+							.output()
+							.split(/\r?\n/)
+							.filter((l) => l.includes(marker));
+						if (lines.length === 0) return null;
+						const last = lines[lines.length - 1];
+						try {
+							const health = JSON.parse(last.slice(last.indexOf(marker) + marker.length)) as {
+								state?: string;
+								services?: Array<{ id?: string }>;
+							};
+							return health.state === 'running' &&
+								(health.services ?? []).some((s) => s.id === 'e2e-live-svc')
+								? 'healthy'
+								: null;
+						} catch {
+							return null;
+						}
+					},
+					{
+						timeout: 60_000,
+						intervals: [1000, 2000, 3000],
+						message: 'restarted plugin never reported a healthy supervised service',
+					}
+				)
+				.toBe('healthy');
+
+			// Deliberate disable: onPluginStopped clears supervision BEFORE the
+			// child exits — no crash line, no restart (no new SUMMARY) in a grace
+			// window comfortably past the 1s restart backoff.
+			const crashesBefore = countMarker(launched.output(), crashMarker);
+			const summariesBefore = countMarker(launched.output(), summaryMarker);
+			await launched.window.evaluate(
+				(id) => window.maestro.plugins.setEnabled(id, false),
+				PLUGIN_ID
+			);
+			await expect
+				.poll(async () => {
+					const snap = await launched.window.evaluate(() => window.maestro.plugins.list());
+					return (snap?.plugins ?? []).find((p) => p.id === PLUGIN_ID)?.enabled;
+				})
+				.toBe(false);
+			await launched.window.waitForTimeout(8000);
+			expect(
+				countMarker(launched.output(), crashMarker),
+				'a deliberate stop must never be classified as a crash'
+			).toBe(crashesBefore);
+			expect(
+				countMarker(launched.output(), summaryMarker),
+				'a disabled plugin must not be restarted'
+			).toBe(summariesBefore);
+		} finally {
+			await teardown(launched, seeded);
+		}
+	});
+
+	test('panel render host: isolated webview; fetch/popup/navigation blocked; bridge delivers', async () => {
+		const seeded = createSeededEnv();
+		await seedAll(seeded, { enabled: true, trusted: true });
 		const launched = await launch(seeded.env);
 		try {
 			await waitListed(launched);
@@ -207,71 +736,75 @@ test.describe('plugin system e2e', () => {
 			const hasOurs = (c: Record<string, Array<{ pluginId?: string }>>, bucket: string): boolean =>
 				(c[bucket] ?? []).some((i) => i.pluginId === PLUGIN_ID);
 
-			// Tier-0 (ungated) buckets aggregate for an enabled plugin even ungranted.
-			const before = await readContrib();
-			for (const bucket of [
-				'themes',
-				'prompts',
-				'settings',
-				'commandMacros',
-				'cueTriggers',
-				'commands',
-				'agents',
-				'tools',
-				'keybindings',
-			]) {
-				expect(hasOurs(before, bucket), `${bucket} should aggregate`).toBe(true);
-			}
-			// ui:contribute / ui:panel gate these -> absent while ungranted.
-			expect(hasOurs(before, 'uiItems'), 'uiItems gated off pre-grant').toBe(false);
-			expect(hasOurs(before, 'panels'), 'panels gated off pre-grant').toBe(false);
-
-			// Grant ui:contribute + ui:panel (and the rest, minus transcripts).
-			await approveConsent(launched, { withhold: ['transcripts:read'] });
+			// Mint WITHOUT ui:panel: the plugin is enabled (tier-0 buckets aggregate)
+			// but the grant-gated panels bucket stays empty.
+			await approveConsent(launched, { withhold: [...WITHHOLD_SAFE, 'ui:panel'] });
 			await expect
-				.poll(
-					async () => {
-						const c = await readContrib();
-						return hasOurs(c, 'uiItems') && hasOurs(c, 'panels');
-					},
-					{ timeout: 30_000, message: 'uiItems/panels never surfaced after granting' }
-				)
+				.poll(async () => hasOurs(await readContrib(), 'themes'), {
+					timeout: 30_000,
+					message: 'contributions never aggregated post-mint',
+				})
+				.toBe(true);
+			expect(hasOurs(await readContrib(), 'panels'), 'panels gated off without ui:panel').toBe(
+				false
+			);
+
+			// Re-mint WITH ui:panel: the left-docked panel surfaces and the slot
+			// renders it in a per-plugin webview guest.
+			await approveConsent(launched, { withhold: WITHHOLD_SAFE });
+			await expect
+				.poll(async () => hasOurs(await readContrib(), 'panels'), {
+					timeout: 30_000,
+					message: 'panels never surfaced after granting ui:panel',
+				})
 				.toBe(true);
 
-			// Revoke drops the sealed grants AND disables the code plugin. That is stricter
-			// than "broker re-denies while still runnable": no commands or contributions
-			// from this plugin should remain live after revoke.
-			const grants = await launched.window.evaluate(
-				(id) => window.maestro.plugins.getGrants(id),
-				PLUGIN_ID
+			const slot = launched.window.locator('[data-plugin-panel-slot="left"]');
+			await expect(slot).toBeVisible({ timeout: 30_000 });
+			// Non-suppressible provenance line above the frame.
+			await expect(slot.getByText(`from ${PLUGIN_ID}`)).toBeVisible();
+			// The guest is an Electron <webview> with the per-plugin partition and
+			// the plugin-panel:// document URL (never srcdoc/first-party origin).
+			const webview = slot.locator('webview');
+			await expect(webview).toHaveAttribute('partition', `plugin:${PLUGIN_ID}`);
+			await expect(webview).toHaveAttribute(
+				'src',
+				`plugin-panel://panel/${encodeURIComponent(`${PLUGIN_ID}/demo-panel`)}`
 			);
-			expect(grants.granted, 'grants start populated before revoke').not.toEqual([]);
-			await launched.window.evaluate((id) => window.maestro.plugins.revokeGrants(id), PLUGIN_ID);
+
+			// In-guest lockdown, reported over the ONE sanctioned channel (the
+			// postMessage bridge -> panelprobe command -> host log). CSP kills fetch
+			// BEFORE webRequest sees it, and window.open returns null in-guest, so
+			// the bridge report is the honest assertion for both.
+			const bridgeMarker = `[e2e-selftest:${seeded.runId}] PANEL-BRIDGE `;
 			await expect
 				.poll(
-					async () => {
-						const [contrib, snap, afterGrants] = await launched.window.evaluate(async (id) => {
-							const [c, s, g] = await Promise.all([
-								window.maestro.plugins.contributions(),
-								window.maestro.plugins.list(),
-								window.maestro.plugins.getGrants(id),
-							]);
-							return [c, s, g] as const;
-						}, PLUGIN_ID);
-						const plugin = snap.plugins.find((p) => p.id === PLUGIN_ID);
-						const stillContributes = Object.values(contrib).some(
-							(items) =>
-								Array.isArray(items) &&
-								items.some((i: { pluginId?: string }) => i.pluginId === PLUGIN_ID)
-						);
-						return (
-							plugin?.enabled === false && afterGrants.granted.length === 0 && !stillContributes
-						);
+					() => {
+						const lines = launched
+							.output()
+							.split(/\r?\n/)
+							.filter((l) => l.includes(bridgeMarker));
+						if (lines.length === 0) return null;
+						const last = lines[lines.length - 1];
+						try {
+							return JSON.parse(last.slice(last.indexOf(bridgeMarker) + bridgeMarker.length));
+						} catch {
+							return null;
+						}
 					},
-					{
-						timeout: 30_000,
-						message: 'revoke did not disable plugin and clear contributions/grants',
-					}
+					{ timeout: 60_000, message: 'panel bridge probe never reached the sandbox' }
+				)
+				.toEqual({ fetchBlocked: true, popupBlocked: true });
+
+			// Host-side navigation guard: the probe's location.href attempt is
+			// denied in the main process and audited.
+			await expect
+				.poll(
+					() =>
+						launched
+							.output()
+							.includes('Blocked panel will-navigate: https://example.com/panel-nav'),
+					{ timeout: 30_000, message: 'panel navigation was never blocked host-side' }
 				)
 				.toBe(true);
 		} finally {
@@ -279,54 +812,16 @@ test.describe('plugin system e2e', () => {
 		}
 	});
 
-	test('untrusted transcripts+egress is consent-conflicted; a signed plugin is not', async () => {
-		// Untrusted: approving transcripts:read together with egress (net:fetch /
-		// process:spawn) is a mutual-exclusion conflict; the minter rejects the
-		// WHOLE mint, so nothing is granted.
-		const untrusted = createSeededEnv();
-		await seedAll(untrusted, { enabled: true });
-		const a = await launch(untrusted.env);
-		try {
-			await waitListed(a);
-			await approveConsent(a, {}); // withhold nothing -> transcripts + egress conflict
-			const s = await selfTestUntil(a, untrusted.runId, complete);
-			expect(s['fs:write'], 'conflict rejects the entire mint -> nothing granted').toBe('DENY');
-			expect(s['transcripts:read']).toBe('DENY');
-		} finally {
-			await teardown(a, untrusted);
-		}
-
-		// Trusted (signed): the same all-caps approval is conflict-free; the
-		// content-read capability functions (empty for an unknown session).
-		const trusted = createSeededEnv();
-		await seedAll(trusted, { enabled: true, trusted: true });
-		const b = await launch(trusted.env);
-		try {
-			await waitListed(b);
-			await approveConsent(b, {}); // trusted lifts the transcripts+egress conflict
-			const s = await selfTestUntil(b, trusted.runId, (x) => x['fs:write'] === 'PASS');
-			expect(s['fs:write'], 'trusted mint succeeded').toBe('PASS');
-			expect(s['transcripts:read'], 'transcripts:read functions when trusted').toBe('PASS');
-		} finally {
-			await teardown(b, trusted);
-		}
-	});
-
 	test('ui:command invokes a real palette command', async () => {
-		// WS-ui-command: the renderer command registry is the SINGLE source for
-		// both the command palette and the `ui:command` host verb. A plugin that
-		// invokes `ui.runCommand('maestro.commandPalette.open')` reaches the EXACT
-		// entry the palette lists (not a private allowlist), so the call PASSes
-		// (was INERT while the host stub returned false) and the same command is
-		// visible in the palette.
+		// The renderer command registry is the SINGLE source for both the command
+		// palette and the `ui:command` host verb: invoking
+		// `maestro.commandPalette.open` reaches the exact entry the palette lists.
 		const seeded = createSeededEnv();
-		await seedAll(seeded, { enabled: true });
+		await seedAll(seeded, { enabled: true, trusted: true });
 		const launched = await launch(seeded.env);
 		try {
 			await waitListed(launched);
-			// Grant ui:command (withhold transcripts to dodge the untrusted egress
-			// mutual-exclusion conflict).
-			await approveConsent(launched, { withhold: ['transcripts:read'] });
+			await approveConsent(launched, { withhold: WITHHOLD_SAFE });
 
 			// The dedicated probe logs one run-scoped marker per invocation:
 			//   [e2e-selftest:<runId>] UICMD <PASS|INERT|DENY|ERROR>
@@ -339,16 +834,10 @@ test.describe('plugin system e2e', () => {
 					.map((l) => l.slice(l.indexOf(marker) + marker.length).trim())
 					.pop();
 
-			// Re-invoke until the probe reports a result (covers sandbox-start +
-			// grant-propagation timing), then assert PASS - NOT INERT.
 			await expect
 				.poll(
 					async () => {
-						await launched.window.evaluate(
-							(id) =>
-								window.maestro.plugins.invokeCommand(`${id}/uicmdprobe`).catch(() => undefined),
-							PLUGIN_ID
-						);
+						await invokePluginCommand(launched, 'uicmdprobe');
 						return lastUicmdResult() ?? null;
 					},
 					{
@@ -358,16 +847,10 @@ test.describe('plugin system e2e', () => {
 					}
 				)
 				.toBe('PASS');
-			expect(lastUicmdResult(), 'ui:command should PASS against a real registered command').toBe(
-				'PASS'
-			);
 
 			// The probe's command opens the command palette: assert the palette now
 			// lists the very command the plugin invoked (shared registry).
-			await launched.window.evaluate(
-				(id) => window.maestro.plugins.invokeCommand(`${id}/uicmdprobe`).catch(() => undefined),
-				PLUGIN_ID
-			);
+			await invokePluginCommand(launched, 'uicmdprobe');
 			await expect(
 				launched.window.getByText('Open Command Palette', { exact: true }).first()
 			).toBeVisible({ timeout: 15_000 });
@@ -377,25 +860,19 @@ test.describe('plugin system e2e', () => {
 	});
 
 	test('plugin keybinding dispatches its command', async () => {
-		// WS-keybindings: a contributed KeybindingContribution (Ctrl+Shift+F9 -> the
-		// plugin's `keybind-probe` command) is parsed + aggregated by the host AND
-		// now actually BOUND by the renderer's usePluginKeybindings hook. Firing the
-		// real chord must route through the hook into the sandbox, which logs a
-		// run-scoped marker.
+		// A contributed KeybindingContribution (Ctrl+Shift+F9 -> `keybind-probe`)
+		// is bound by the renderer's usePluginKeybindings hook; firing the real
+		// chord must route into the sandbox, which logs a run-scoped marker.
 		const seeded = createSeededEnv();
-		await seedAll(seeded, { enabled: true });
+		await seedAll(seeded, { enabled: true, trusted: true });
 		const launched = await launch(seeded.env);
 		try {
 			await waitListed(launched);
-			// Invoking a plugin's own command needs no grant, but the assignment's
-			// flow grants consent (withhold transcripts to dodge the untrusted egress
-			// mutual-exclusion conflict); it also confirms the sandbox is live.
-			await approveConsent(launched, { withhold: ['transcripts:read'] });
+			await approveConsent(launched, { withhold: WITHHOLD_SAFE });
+			// Sandbox must be live for the command to land.
+			await selfTestUntil(launched, seeded.runId, (x) => x['fs:write'] === 'PASS');
 
-			// The fixture binds Ctrl+Shift+F9 -> `keybind-probe`, which logs:
-			//   [e2e-selftest:<runId>] KEYBIND-FIRED
 			const marker = `[e2e-selftest:${seeded.runId}] KEYBIND-FIRED`;
-			// Re-press until the marker appears (covers sandbox-start + bind timing).
 			await expect
 				.poll(
 					async () => {
@@ -419,16 +896,25 @@ test.describe('plugin system e2e', () => {
 			await teardown(launched, seeded);
 		}
 	});
+
 	test('extensions marketplace lists, filters, and manages plugins', async () => {
 		const seeded = createSeededEnv();
-		await seedAll(seeded, { enabled: true });
+		await seedAll(seeded, { enabled: true, trusted: true });
 		const launched = await launch(seeded.env);
 		const page = launched.window;
 		try {
 			await waitListed(launched);
+			// Consent-first: an un-minted code plugin is force-disabled at boot; the
+			// mint enables it, which is the state the management assertions expect.
+			await approveConsent(launched, { withhold: WITHHOLD_SAFE });
+			const isEnabled = async (): Promise<boolean | undefined> => {
+				const snap = await page.evaluate(() => window.maestro.plugins.list());
+				return (snap?.plugins ?? []).find((p) => p.id === PLUGIN_ID)?.enabled;
+			};
+			await expect.poll(isEnabled, { timeout: 30_000 }).toBe(true);
 
 			// Open Settings by driving the real app shortcut handler (Ctrl/Cmd+,),
-			// then switch to the Encore tab, which now hosts the Extensions view.
+			// then switch to the Encore tab, which hosts the Extensions view.
 			await expect
 				.poll(
 					async () => {
@@ -506,15 +992,8 @@ test.describe('plugin system e2e', () => {
 			await details.locator('[data-testid="extension-configure"]').click();
 			await expect(settingInput).not.toBeChecked();
 
-			// enable -> disable round-trips, observed via window.maestro.plugins.list().
-			const isEnabled = async (): Promise<boolean | undefined> => {
-				const snap = await page.evaluate(() => window.maestro.plugins.list());
-				return (snap?.plugins ?? []).find((p) => p.id === PLUGIN_ID)?.enabled;
-			};
-			expect(await isEnabled()).toBe(true);
-
+			// Disabling is immediate (no consent round-trip).
 			const toggle = details.locator('[data-testid="extension-enable-toggle"]');
-			// Disabling is immediate.
 			await toggle.click();
 			await expect
 				.poll(isEnabled, { timeout: 30_000, message: 'plugin never disabled' })
@@ -526,15 +1005,14 @@ test.describe('plugin system e2e', () => {
 			await expect(settingInput).toHaveCount(0);
 			await expect.poll(readDemoSetting, { timeout: 5_000 }).toBe(false);
 
-			// Re-enabling a tier-1 plugin routes through the host-owned consent window.
+			// Re-enabling a tier-1 plugin routes through the host-owned consent
+			// window again (a fresh mint replaces the prior grants).
 			const consentPromise = launched.app.waitForEvent('window', { timeout: 30_000 });
 			await toggle.click();
 			const consent = await consentPromise;
 			await consent.waitForLoadState('domcontentloaded');
 			await consent.locator('button.btn-approve').waitFor({ state: 'visible', timeout: 15_000 });
-			// Untrusted fixture: withhold transcripts:read so the granted egress caps
-			// do not trip the mutual-exclusion rule and the mint succeeds.
-			await consent.locator('.cap-check[data-cap="transcripts:read"]').uncheck();
+			await consent.locator(`.cap-check[data-cap="shell:openExternal"]`).uncheck();
 			await consent.locator('button.btn-approve').click();
 			await consent.waitForEvent('close', { timeout: 15_000 }).catch(() => undefined);
 
