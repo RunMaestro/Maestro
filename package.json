@@ -18,10 +18,10 @@
 	},
 	"scripts": {
 		"dev": "node scripts/dev.mjs",
-		"dev:prod-data": "USE_PROD_DATA=1 node scripts/dev.mjs",
+		"dev:prod-data": "cross-env USE_PROD_DATA=1 node scripts/dev.mjs",
 		"dev:demo": "MAESTRO_DEMO_DIR=/tmp/maestro-demo npm run dev",
-		"dev:main": "tsc -p tsconfig.main.json && npm run build:preload && NODE_ENV=development electron .",
-		"dev:main:prod-data": "tsc -p tsconfig.main.json && npm run build:preload && NODE_ENV=development USE_PROD_DATA=1 electron .",
+		"dev:main": "tsc -p tsconfig.main.json && npm run build:preload && cross-env NODE_ENV=development electron .",
+		"dev:main:prod-data": "tsc -p tsconfig.main.json && npm run build:preload && cross-env NODE_ENV=development USE_PROD_DATA=1 electron .",
 		"dev:renderer": "vite",
 		"dev:web": "vite --config vite.config.web.mts",
 		"dev:web-desktop": "vite --config vite.config.web-desktop.mts",
