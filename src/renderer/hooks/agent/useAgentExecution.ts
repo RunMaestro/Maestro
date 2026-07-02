@@ -535,7 +535,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					//   2. Max duration: force-kill once total wall-clock runtime exceeds a
 					//      cap, regardless of output. Catches a stuck-but-chatty agent that
 					//      keeps emitting (resetting lastOutputAt) yet never finishes the
-					//      task — which would otherwise defeat the inactivity watchdog and
+					//      task, which would otherwise defeat the inactivity watchdog and
 					//      hang the whole multi-document Auto Run loop forever, since the
 					//      per-document loop only advances once processTask resolves.
 					// Both resolve the task as a failure so the batch loop terminates this

@@ -175,7 +175,7 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 		tabLabel: 'General',
 		label: 'Auto Run Max Task Duration',
 		description:
-			'Absolute cap on how long a single Auto Run task may run regardless of output — catches a stuck-but-chatty agent that keeps emitting yet never finishes and would otherwise hang the whole run',
+			'Absolute cap on how long a single Auto Run task may run regardless of output. Catches a stuck-but-chatty agent that keeps emitting yet never finishes and would otherwise hang the whole run',
 		keywords: [
 			'autorun',
 			'auto run',

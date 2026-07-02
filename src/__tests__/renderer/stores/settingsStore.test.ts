@@ -3,6 +3,9 @@ import {
 	useSettingsStore,
 	loadAllSettings,
 	selectIsLeaderboardRegistered,
+	clampAutoRunMaxTaskDurationMin,
+	sanitizeLoadedAutoRunMaxTaskDurationMin,
+	DEFAULT_AUTORUN_MAX_TASK_DURATION_MIN,
 } from '../../../renderer/stores/settingsStore';
 import type { SettingsStoreState } from '../../../renderer/stores/settingsStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
@@ -1471,6 +1474,75 @@ describe('settingsStore', () => {
 			expect(useSettingsStore.getState().starredSessionsCollapsed).toBe(true);
 		});
 
+		it('sanitizes a corrupt persisted autoRunMaxTaskDurationMin to the default (never disables the cap)', async () => {
+			// A non-finite/negative stored value must NOT silently disable the
+			// absolute watchdog (which would let a chatty-but-stuck task hang the run).
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				autoRunMaxTaskDurationMin: -1 as any,
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().autoRunMaxTaskDurationMin).toBe(
+				DEFAULT_AUTORUN_MAX_TASK_DURATION_MIN
+			);
+		});
+
+		it('preserves an explicit persisted 0 (unlimited) for autoRunMaxTaskDurationMin', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				autoRunMaxTaskDurationMin: 0,
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().autoRunMaxTaskDurationMin).toBe(0);
+		});
+
+		it('clamps an out-of-range persisted autoRunMaxTaskDurationMin', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				autoRunMaxTaskDurationMin: 99999,
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().autoRunMaxTaskDurationMin).toBe(1440);
+		});
+
+		it('migrates existing "Unlimited" inactivity installs (0) to an unlimited absolute cap', async () => {
+			// The user explicitly disabled the Auto Run watchdog by choosing Unlimited
+			// inactivity and never persisted the new cap. Defaulting to 480 would
+			// silently start killing their long tasks, so migrate the cap to 0 too.
+			// Seed the fresh-install default so the assertion proves the migration ran.
+			useSettingsStore.setState({
+				autoRunMaxTaskDurationMin: DEFAULT_AUTORUN_MAX_TASK_DURATION_MIN,
+			});
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				autoRunInactivityTimeoutMin: 0,
+				// autoRunMaxTaskDurationMin intentionally absent (pre-feature install)
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().autoRunMaxTaskDurationMin).toBe(0);
+		});
+
+		it('does NOT migrate when inactivity is a normal value and the cap is unset (keeps the default)', async () => {
+			// loadAllSettings only patches keys that are present, so seed the
+			// fresh-install default to model a normal (non-migrating) startup.
+			useSettingsStore.setState({
+				autoRunMaxTaskDurationMin: DEFAULT_AUTORUN_MAX_TASK_DURATION_MIN,
+			});
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				autoRunInactivityTimeoutMin: 240,
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().autoRunMaxTaskDurationMin).toBe(
+				DEFAULT_AUTORUN_MAX_TASK_DURATION_MIN
+			);
+		});
+
 		it('hydrates persisted bookmarksCollapsed into the uiStore', async () => {
 			useUIStore.setState({ bookmarksCollapsed: false });
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
@@ -2031,6 +2103,39 @@ describe('settingsStore', () => {
 			useSettingsStore.getState().setFontSize(22);
 			expect(useSettingsStore.getState().fontSize).toBe(22);
 			expect(window.maestro.settings.set).toHaveBeenCalledWith('fontSize', 22);
+		});
+	});
+
+	describe('Auto Run max-task-duration helpers', () => {
+		it('clamps user input: 0 stays unlimited, positive values snap into [1, 1440]', () => {
+			expect(clampAutoRunMaxTaskDurationMin(0)).toBe(0);
+			expect(clampAutoRunMaxTaskDurationMin(-30)).toBe(0); // user cleared / typed negative => unlimited
+			expect(clampAutoRunMaxTaskDurationMin(0.4)).toBe(0); // rounds to 0
+			expect(clampAutoRunMaxTaskDurationMin(30)).toBe(30);
+			expect(clampAutoRunMaxTaskDurationMin(99999)).toBe(1440);
+			expect(clampAutoRunMaxTaskDurationMin(0.6)).toBe(1); // rounds up, then min 1
+		});
+
+		it('sanitizes persisted values: 0 stays unlimited, corrupt values fall back to the default', () => {
+			expect(sanitizeLoadedAutoRunMaxTaskDurationMin(0)).toBe(0);
+			expect(sanitizeLoadedAutoRunMaxTaskDurationMin(120)).toBe(120);
+			expect(sanitizeLoadedAutoRunMaxTaskDurationMin(99999)).toBe(1440);
+			// Corrupt/untrustworthy: must NOT disable the cap, so fall back to default.
+			expect(sanitizeLoadedAutoRunMaxTaskDurationMin(-1)).toBe(
+				DEFAULT_AUTORUN_MAX_TASK_DURATION_MIN
+			);
+			expect(sanitizeLoadedAutoRunMaxTaskDurationMin(NaN)).toBe(
+				DEFAULT_AUTORUN_MAX_TASK_DURATION_MIN
+			);
+			expect(sanitizeLoadedAutoRunMaxTaskDurationMin(Infinity)).toBe(
+				DEFAULT_AUTORUN_MAX_TASK_DURATION_MIN
+			);
+			expect(sanitizeLoadedAutoRunMaxTaskDurationMin('480' as any)).toBe(
+				DEFAULT_AUTORUN_MAX_TASK_DURATION_MIN
+			);
+			expect(sanitizeLoadedAutoRunMaxTaskDurationMin(undefined as any)).toBe(
+				DEFAULT_AUTORUN_MAX_TASK_DURATION_MIN
+			);
 		});
 	});
 });

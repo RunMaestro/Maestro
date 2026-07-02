@@ -1,5 +1,5 @@
 /**
- * Tests for spawnWorktreeAgentAndDispatch — focused on the dedup-mark robustness
+ * Tests for spawnWorktreeAgentAndDispatch, focused on the dedup-mark robustness
  * that keeps sibling watchers from adopting a Maestro-spawned worktree under the
  * wrong parent (PR #946).
  *
@@ -7,7 +7,7 @@
  * in useWorktreeHandlers skips it. The race window is the slow stretch between
  * `git worktree add` finishing and the owning session being committed to the
  * store (getBranches / buildWorktreeSession). These tests pin that the RESOLVED
- * path stays marked across that window — including the case where the branch was
+ * path stays marked across that window, including the case where the branch was
  * already attached elsewhere and the path is reassigned to `existingPath`.
  */
 
@@ -132,5 +132,73 @@ describe('spawnWorktreeAgentAndDispatch dedup-mark robustness', () => {
 
 		expect(result).toBeNull();
 		expect(isRecentlyCreatedWorktreePath('/shared/worktrees/feat-autorun')).toBe(false);
+	});
+});
+
+describe('spawnWorktreeAgentAndDispatch parent-scoped reuse', () => {
+	const resolvedPath = '/repos/other-checkout/feat-autorun';
+
+	function childAt(parentId: string, id: string) {
+		return {
+			id,
+			name: 'feat-autorun',
+			cwd: resolvedPath,
+			fullPath: resolvedPath,
+			projectRoot: resolvedPath,
+			parentSessionId: parentId,
+			worktreeBranch: 'feat-autorun',
+			state: 'idle',
+			toolType: 'claude-code' as const,
+			inputMode: 'ai' as const,
+			aiTabs: [],
+			aiLogs: [],
+			shellLogs: [],
+			workLog: [],
+			executionQueue: [],
+			closedTabHistory: [],
+			filePreviewTabs: [],
+			unifiedTabOrder: [],
+			unifiedClosedTabHistory: [],
+		} as any;
+	}
+
+	it('does NOT dispatch onto a same-repo sibling child at the resolved path; builds a fresh child for the launching parent', async () => {
+		// A sibling agent (parent-2) already owns a child at the resolved worktree
+		// path. Reusing it would attribute parent-1's Auto Run to parent-2, the
+		// exact wrong-parent bug this flow prevents.
+		useSessionStore.setState({
+			sessions: [parentSession, childAt('parent-2', 'sibling-child')],
+			activeSessionId: 'parent-1',
+			sessionsLoaded: true,
+		} as any);
+		mockGit.worktreeSetup.mockResolvedValue({
+			success: true,
+			alreadyExisted: true,
+			existingPath: resolvedPath,
+		});
+
+		const result = await spawnWorktreeAgentAndDispatch(parentSession, makeConfig());
+
+		expect(result).not.toBe('sibling-child');
+		const created = useSessionStore.getState().sessions.find((s) => s.id === result);
+		expect(created?.parentSessionId).toBe('parent-1');
+		expect(created?.cwd).toBe(resolvedPath);
+	});
+
+	it('DOES reuse an existing child owned by the launching parent', async () => {
+		useSessionStore.setState({
+			sessions: [parentSession, childAt('parent-1', 'own-child')],
+			activeSessionId: 'parent-1',
+			sessionsLoaded: true,
+		} as any);
+		mockGit.worktreeSetup.mockResolvedValue({
+			success: true,
+			alreadyExisted: true,
+			existingPath: resolvedPath,
+		});
+
+		const result = await spawnWorktreeAgentAndDispatch(parentSession, makeConfig());
+
+		expect(result).toBe('own-child');
 	});
 });

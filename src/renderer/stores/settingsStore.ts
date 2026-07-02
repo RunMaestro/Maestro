@@ -658,6 +658,36 @@ export interface SettingsStoreActions {
 export type SettingsStore = SettingsStoreState & SettingsStoreActions;
 
 // ============================================================================
+// Auto Run watchdog helpers
+// ============================================================================
+
+/** Default absolute cap (minutes) on a single Auto Run task before force-kill. */
+export const DEFAULT_AUTORUN_MAX_TASK_DURATION_MIN = 480;
+
+/**
+ * Clamp a user-entered max-task-duration to the persisted range. 0 is the
+ * explicit "unlimited" sentinel (no absolute cap); any positive value is rounded
+ * and clamped to [1, 1440] minutes.
+ */
+export function clampAutoRunMaxTaskDurationMin(value: number): number {
+	const rounded = Math.round(value);
+	return rounded <= 0 ? 0 : Math.max(1, Math.min(1440, rounded));
+}
+
+/**
+ * Sanitize a persisted max-task-duration read back from disk. Only a finite,
+ * non-negative number is trustworthy: 0 stays "unlimited", a positive value is
+ * clamped. Anything else (NaN, Infinity, negative, wrong type) is corrupt and
+ * falls back to the default so a bad stored value can never silently DISABLE the
+ * watchdog and let a chatty-but-stuck task hang the whole Auto Run.
+ */
+export function sanitizeLoadedAutoRunMaxTaskDurationMin(raw: unknown): number {
+	if (typeof raw !== 'number' || !Number.isFinite(raw) || raw < 0)
+		return DEFAULT_AUTORUN_MAX_TASK_DURATION_MIN;
+	return clampAutoRunMaxTaskDurationMin(raw);
+}
+
+// ============================================================================
 // Store Implementation
 // ============================================================================
 
@@ -803,7 +833,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		autoRunDisabled: false,
 		dotfilesToggleHidden: false,
 		autoRunInactivityTimeoutMin: 240,
-		autoRunMaxTaskDurationMin: 480,
+		autoRunMaxTaskDurationMin: DEFAULT_AUTORUN_MAX_TASK_DURATION_MIN,
 		speckitEnabled: true,
 		openspecEnabled: true,
 		bmadEnabled: true,
@@ -1570,8 +1600,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 
 		setAutoRunMaxTaskDurationMin: (value) => {
 			// 0 is a sentinel for "unlimited" (no absolute cap). Any positive value is clamped to a sane range.
-			const rounded = Math.round(value);
-			const clamped = rounded <= 0 ? 0 : Math.max(1, Math.min(1440, rounded));
+			const clamped = clampAutoRunMaxTaskDurationMin(value);
 			set({ autoRunMaxTaskDurationMin: clamped });
 			window.maestro.settings.set('autoRunMaxTaskDurationMin', clamped);
 		},
@@ -2868,8 +2897,20 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['autoRunInactivityTimeoutMin'] !== undefined)
 			patch.autoRunInactivityTimeoutMin = allSettings['autoRunInactivityTimeoutMin'] as number;
 
-		if (allSettings['autoRunMaxTaskDurationMin'] !== undefined)
-			patch.autoRunMaxTaskDurationMin = allSettings['autoRunMaxTaskDurationMin'] as number;
+		if (allSettings['autoRunMaxTaskDurationMin'] !== undefined) {
+			// Sanitize on load so a corrupt persisted value can't silently disable the
+			// absolute cap (which would let a chatty-but-stuck task hang the run).
+			patch.autoRunMaxTaskDurationMin = sanitizeLoadedAutoRunMaxTaskDurationMin(
+				allSettings['autoRunMaxTaskDurationMin']
+			);
+		} else if (allSettings['autoRunInactivityTimeoutMin'] === 0) {
+			// Migration for existing installs: users who previously chose "Unlimited"
+			// inactivity (0) had NO Auto Run watchdog at all. They never persisted the
+			// new absolute cap, so the 480-min default would silently start killing
+			// their long tasks. Preserve their unlimited intent by defaulting the new
+			// cap to 0 (also unlimited) instead of 480.
+			patch.autoRunMaxTaskDurationMin = 0;
+		}
 
 		if (allSettings['speckitEnabled'] !== undefined)
 			patch.speckitEnabled = allSettings['speckitEnabled'] as boolean;

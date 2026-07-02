@@ -541,7 +541,7 @@ describe('useAgentExecution', () => {
 	// Regression for the multi-document Auto Run hang: a stuck-but-chatty agent
 	// keeps emitting output (resetting the silence timer) but never finishes, so
 	// the silence-based inactivity watchdog never fires and the per-document loop
-	// — which only advances once processTask resolves — hangs forever. The
+	// (which only advances once processTask resolves) hangs forever. The
 	// absolute max-duration cap resolves the task regardless of output so the
 	// batch loop can terminate the document and move on.
 	describe('batch watchdog', () => {
@@ -563,7 +563,7 @@ describe('useAgentExecution', () => {
 			const mockKill = vi.fn().mockResolvedValue(true);
 			window.maestro.process.kill = mockKill;
 			// Inactivity is generous; cap is short. Output keeps flowing so the
-			// silence watchdog can NEVER fire — only the absolute cap can.
+			// silence watchdog can NEVER fire, only the absolute cap can.
 			useSettingsStore.setState({
 				autoRunInactivityTimeoutMin: 10,
 				autoRunMaxTaskDurationMin: 1,
@@ -589,7 +589,7 @@ describe('useAgentExecution', () => {
 			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
 			const targetSessionId = mockProcess.spawn.mock.calls[0][0].sessionId as string;
 
-			// Emit output at 30s — keeps the silence timer well under the 10-min
+			// Emit output at 30s, keeps the silence timer well under the 10-min
 			// inactivity threshold for the rest of the run.
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(30 * 1000);
@@ -614,7 +614,7 @@ describe('useAgentExecution', () => {
 			window.maestro.process.kill = mockKill;
 			useSettingsStore.setState({
 				autoRunInactivityTimeoutMin: 1,
-				autoRunMaxTaskDurationMin: 0, // unlimited — absolute cap disabled
+				autoRunMaxTaskDurationMin: 0, // unlimited (absolute cap disabled)
 			} as any);
 
 			const session = createMockSession({ state: 'busy' });
@@ -670,7 +670,7 @@ describe('useAgentExecution', () => {
 			});
 			const targetSessionId = mockProcess.spawn.mock.calls[0][0].sessionId as string;
 
-			// Advance well past any plausible cap — nothing should kill the task.
+			// Advance well past any plausible cap; nothing should kill the task.
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(13 * 60 * 60 * 1000);
 			});

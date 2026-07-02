@@ -2316,6 +2316,66 @@ describe('Effects', () => {
 			expect(childrenB.map((s) => s.worktreeBranch)).toEqual(['feat-b']);
 		});
 
+		it('two SAME-repo parents each get their own child for the same worktree (rescan matches per-parent chokidar fan-out)', async () => {
+			vi.useFakeTimers();
+
+			// Both parents live in the same repo and share a basePath. On a restart /
+			// visibility rescan the single shared worktree must fan out to BOTH parents,
+			// mirroring the per-parent chokidar discovery. A global cwd dedup would let
+			// whichever parent iterates first claim it and silently drop the other's
+			// child.
+			const parentA = {
+				...mockParentSession,
+				id: 'parent-a',
+				cwd: '/repos/repo-a',
+				worktreeConfig: { basePath: '/shared/worktrees', watchEnabled: false },
+			};
+			const parentB = {
+				...mockParentSession,
+				id: 'parent-b',
+				cwd: '/repos/repo-a',
+				worktreeConfig: { basePath: '/shared/worktrees', watchEnabled: false },
+			};
+
+			// Both parents resolve to the same repo root.
+			mockGit.worktreeInfo.mockResolvedValue({
+				success: true,
+				exists: true,
+				isWorktree: false,
+				repoRoot: '/repos/repo-a',
+			});
+
+			// One worktree, belonging to the shared repo.
+			mockGit.scanWorktreeDirectory.mockResolvedValue({
+				gitSubdirs: [
+					{
+						path: '/shared/worktrees/feat-shared',
+						branch: 'feat-shared',
+						name: 'feat-shared',
+						repoRoot: '/repos/repo-a',
+					},
+				],
+			});
+
+			useSessionStore.setState({
+				sessions: [parentA, parentB],
+				activeSessionId: 'parent-a',
+				sessionsLoaded: true,
+			} as any);
+
+			renderHook(() => useWorktreeHandlers());
+
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
+			const sessions = useSessionStore.getState().sessions;
+			const childrenA = sessions.filter((s) => s.parentSessionId === 'parent-a');
+			const childrenB = sessions.filter((s) => s.parentSessionId === 'parent-b');
+			expect(childrenA.map((s) => s.worktreeBranch)).toEqual(['feat-shared']);
+			expect(childrenB.map((s) => s.worktreeBranch)).toEqual(['feat-shared']);
+		});
+
 		it('falls back to legacy behavior when the parent repoRoot cannot be resolved', async () => {
 			vi.useFakeTimers();
 
@@ -2703,7 +2763,7 @@ describe('Worktree attribution across same-repo agents (PR #946)', () => {
 		branch: 'feat-autorun',
 	};
 
-	it('Maestro-spawned worktree (dedup mark active) is skipped by sibling watchers — the launcher already owns it', async () => {
+	it('Maestro-spawned worktree (dedup mark active) is skipped by sibling watchers; the launcher already owns it', async () => {
 		useSessionStore.setState({
 			sessions: [watcherAgent('sibling-B')],
 			activeSessionId: 'sibling-B',

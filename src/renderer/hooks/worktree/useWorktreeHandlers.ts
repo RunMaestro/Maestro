@@ -657,17 +657,28 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 					// the same path because the (about-to-be-removed) session still
 					// matches by cwd in the store.
 					const stalePending = new Set([...staleSessionIds, ...reassignedSessionIds]);
+					// Per-parent dedup (mirrors the chokidar watcher path): only THIS
+					// parent's own child at this path/branch blocks a re-add. A same-repo
+					// sibling's child at the same cwd must NOT stop this parent from
+					// getting its own child, otherwise a restart/visibility rescan would
+					// collapse the per-parent fan-out the live watcher produces.
 					const existingSession = latestSessions.find((s) => {
 						if (stalePending.has(s.id)) return false;
-						const normalizedCwd = normalizePath(s.cwd);
+						if (s.parentSessionId !== parentSession.id) return false;
 						return (
-							normalizedCwd === normalizedSubdirPath ||
-							(s.parentSessionId === parentSession.id && s.worktreeBranch === subdir.branch)
+							sessionMatchesWorktreeRoot(s, normalizedSubdirPath) ||
+							s.worktreeBranch === subdir.branch
 						);
 					});
 					if (existingSession) continue;
 
-					if (newWorktreeSessions.some((s) => normalizePath(s.cwd) === normalizedSubdirPath)) {
+					if (
+						newWorktreeSessions.some(
+							(s) =>
+								s.parentSessionId === parentSession.id &&
+								normalizePath(s.cwd) === normalizedSubdirPath
+						)
+					) {
 						continue;
 					}
 
@@ -783,8 +794,19 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 
 		if (newWorktreeSessions.length > 0) {
 			useSessionStore.getState().setSessions((prev) => {
-				const currentPaths = new Set(prev.map((s) => normalizePath(s.cwd)));
-				const trulyNew = newWorktreeSessions.filter((s) => !currentPaths.has(normalizePath(s.cwd)));
+				// Per-parent existing-path set: a worktree already owned by parent A must
+				// not block parent B's own child at the same cwd (matches the per-parent
+				// discovery model). Key on parentSessionId|cwd so only a true same-parent
+				// duplicate is dropped, guarding against a race between the check above
+				// and this commit.
+				const existingKeys = new Set(
+					prev
+						.filter((s) => s.parentSessionId)
+						.map((s) => `${s.parentSessionId}|${normalizePath(s.cwd)}`)
+				);
+				const trulyNew = newWorktreeSessions.filter(
+					(s) => !existingKeys.has(`${s.parentSessionId}|${normalizePath(s.cwd)}`)
+				);
 				if (trulyNew.length === 0) return prev;
 				return [...prev, ...trulyNew];
 			});
@@ -871,7 +893,7 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 			// for this worktree. Each agent in the repo runs its own watcher over the
 			// shared basePath and fires its own discovery event, so scoping the dedup
 			// to the firing parent lets every agent in the cwd pick up the new worktree
-			// as its own child — instead of the first watcher to fire claiming it
+			// as its own child, instead of the first watcher to fire claiming it
 			// globally and the others silently dropping it.
 			const existingForParent = latestSessions.find(
 				(s) =>

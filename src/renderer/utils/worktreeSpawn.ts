@@ -19,6 +19,7 @@ import {
 	clearRecentlyCreatedWorktreePath,
 	normalizePath,
 	sessionMatchesWorktreeRoot,
+	sessionOwnedByParent,
 } from './worktreeDedup';
 import { sanitizeGitBranchName } from '../../shared/gitUtils';
 
@@ -116,7 +117,7 @@ export async function spawnWorktreeAgentAndDispatch(
 		//   1. The original 10s TTL started BEFORE `git worktree add`, which can be
 		//      slow (large repo, cold disk, SSH remote). The chokidar discovery then
 		//      fires during the `getBranches`/`buildWorktreeSession` window below,
-		//      AFTER the mark has aged out — letting a sibling agent watching the
+		//      AFTER the mark has aged out, letting a sibling agent watching the
 		//      same basePath adopt this worktree under the wrong parent (PR #946).
 		//   2. When the branch was already attached elsewhere, `worktreePath` was
 		//      reassigned to `result.existingPath`, which the original mark (and the
@@ -134,14 +135,23 @@ export async function spawnWorktreeAgentAndDispatch(
 		branchName = worktreePath.split(/[\\/]/).pop() || 'worktree';
 	}
 
-	// If a session for this worktree path already exists (e.g., the resolved
-	// existing worktree is already open in Maestro), reuse it instead of
-	// building a duplicate. We still fall through to populate config.worktree
-	// below so PR creation continues to work.
+	// If a session OWNED BY THIS PARENT already exists for this worktree path
+	// (e.g., a prior Auto Run against the same existing worktree), reuse it
+	// instead of building a duplicate. The match is scoped to the launching
+	// parent on purpose: a same-repo sibling agent may own its own child at this
+	// cwd, and dispatching this parent's Auto Run onto the sibling's child would
+	// reproduce the wrong-parent attribution this flow exists to prevent. When no
+	// owned session matches we fall through and build a fresh child for the
+	// launching parent below. Either way we still populate config.worktree so PR
+	// creation continues to work.
 	const normalizedWorktreePath = normalizePath(worktreePath);
 	const existingSession = useSessionStore
 		.getState()
-		.sessions.find((s) => sessionMatchesWorktreeRoot(s, normalizedWorktreePath));
+		.sessions.find(
+			(s) =>
+				sessionOwnedByParent(s, parentSession) &&
+				sessionMatchesWorktreeRoot(s, normalizedWorktreePath)
+		);
 
 	// Step 3: Fetch git info for the worktree.
 	// gitService.getBranches uses createIpcMethod with defaultValue: [] and no
