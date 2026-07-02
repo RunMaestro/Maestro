@@ -47,14 +47,18 @@ export function EncoreFeatureCard({
 				backgroundColor: enabled ? `${theme.colors.accent}08` : 'transparent',
 			}}
 		>
-			<button
-				type="button"
-				data-testid="encore-feature-header"
-				aria-expanded={open}
-				onClick={onToggleOpen}
-				className="w-full flex items-center justify-between gap-3 p-4 text-left"
-			>
-				<div className="flex items-center gap-3 min-w-0">
+			{/* Header row: the expand toggle and the Manage action are SIBLING
+			    buttons (nested interactive controls are invalid ARIA — a button
+			    must not contain focusable descendants). The toggle button spans
+			    the title area; state pill + Manage sit beside it. */}
+			<div className="w-full flex items-center justify-between gap-3 p-4">
+				<button
+					type="button"
+					data-testid="encore-feature-header"
+					aria-expanded={open}
+					onClick={onToggleOpen}
+					className="flex items-center gap-3 min-w-0 flex-1 text-left"
+				>
 					<Chevron className="w-4 h-4 flex-shrink-0" style={{ color: theme.colors.textDim }} />
 					<Icon
 						className="w-5 h-5 flex-shrink-0"
@@ -68,7 +72,7 @@ export function EncoreFeatureCard({
 							{description}
 						</div>
 					</div>
-				</div>
+				</button>
 				<div className="flex items-center gap-2 flex-shrink-0">
 					<span
 						data-testid="encore-feature-state"
@@ -80,28 +84,21 @@ export function EncoreFeatureCard({
 					>
 						{enabled ? 'Enabled' : 'Disabled'}
 					</span>
-					<span
-						role="button"
-						tabIndex={0}
+					<button
+						type="button"
 						data-testid="encore-feature-manage"
 						onClick={(e) => {
 							e.stopPropagation();
 							onManage();
 						}}
-						onKeyDown={(e) => {
-							if (e.key === 'Enter' || e.key === ' ') {
-								e.stopPropagation();
-								onManage();
-							}
-						}}
 						title="Manage in Extensions"
-						className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs transition-colors hover:bg-white/5 cursor-pointer"
+						className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs transition-colors hover:bg-white/5"
 						style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 					>
 						<Puzzle className="w-3.5 h-3.5" /> Manage
-					</span>
+					</button>
 				</div>
-			</button>
+			</div>
 			{open &&
 				(enabled && children ? (
 					<div

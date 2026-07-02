@@ -458,18 +458,17 @@ describe('EncoreTab section components', () => {
 			/>
 		);
 
-		// The Manage affordance is a role=button span nested inside the header
-		// button (a real <button> cannot nest inside another button).
+		// Manage is a NATIVE <button> SIBLING of the header toggle (nested
+		// interactive controls are invalid ARIA; native buttons get keyboard
+		// activation from the platform, no manual keydown handler needed).
 		const manage = screen.getByRole('button', { name: 'Manage' });
 		expect(manage).toHaveAttribute('data-testid', 'encore-feature-manage');
+		expect(manage.tagName).toBe('BUTTON');
+		const header = screen.getByTestId('encore-feature-header');
+		expect(header.contains(manage)).toBe(false);
 
 		fireEvent.click(manage);
 		expect(onManage).toHaveBeenCalledTimes(1);
-		expect(onToggleOpen).not.toHaveBeenCalled();
-
-		// Keyboard activation follows the same contract.
-		fireEvent.keyDown(manage, { key: 'Enter' });
-		expect(onManage).toHaveBeenCalledTimes(2);
 		expect(onToggleOpen).not.toHaveBeenCalled();
 	});
 });
