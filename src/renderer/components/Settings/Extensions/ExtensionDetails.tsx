@@ -43,6 +43,9 @@ interface ExtensionDetailsProps {
 	onUninstall: (record: PluginRecord) => void;
 	onRevoke: (id: string) => void;
 	getGrants: (id: string) => Promise<PluginGrantsSnapshot>;
+	/** First-party tiles: expand + jump to the feature's config card in the
+	 * Plugins tab. Absent when the marketplace is mounted standalone. */
+	onConfigureBuiltin?: (flag: NonNullable<UnifiedExtension['flag']>) => void;
 }
 
 const RISK_COLOR: Record<CapabilityRisk, 'success' | 'warning' | 'error'> = {
@@ -80,6 +83,7 @@ export function ExtensionDetails({
 	onUninstall,
 	onRevoke,
 	getGrants,
+	onConfigureBuiltin,
 }: ExtensionDetailsProps) {
 	const [grants, setGrants] = useState<PluginGrantsSnapshot | null>(null);
 	const [configureOpen, setConfigureOpen] = useState(false);
@@ -281,6 +285,21 @@ export function ExtensionDetails({
 						type="button"
 						data-testid="extension-configure"
 						onClick={() => void openConfigure()}
+						className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm transition-colors hover:bg-white/5"
+						style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+					>
+						<SettingsIcon className="w-4 h-4" /> Configure
+					</button>
+				)}
+
+				{/* First-party features with an inline config card in the Plugins tab:
+				    Configure expands + jumps to it. Pianola's config lives in its own
+				    modal (button below), so it is excluded here. */}
+				{!isPlugin && ext.flag && ext.flag !== 'pianola' && onConfigureBuiltin && (
+					<button
+						type="button"
+						data-testid="extension-configure-builtin"
+						onClick={() => onConfigureBuiltin(ext.flag!)}
 						className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm transition-colors hover:bg-white/5"
 						style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 					>

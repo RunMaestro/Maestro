@@ -8,6 +8,8 @@ import { EncoreFeatureCard } from './EncoreFeatureCard';
 interface DirectorNotesSectionProps {
 	theme: Theme;
 	enabled: boolean;
+	open: boolean;
+	onToggleOpen: () => void;
 	onManage: () => void;
 	directorNotesSettings: DirectorNotesSettings;
 	setDirectorNotesSettings: (settings: DirectorNotesSettings) => void;
@@ -17,6 +19,8 @@ interface DirectorNotesSectionProps {
 export function DirectorNotesSection({
 	theme,
 	enabled,
+	open,
+	onToggleOpen,
 	onManage,
 	directorNotesSettings,
 	setDirectorNotesSettings,
@@ -29,6 +33,8 @@ export function DirectorNotesSection({
 			<EncoreFeatureCard
 				theme={theme}
 				enabled={enabled}
+				open={open}
+				onToggleOpen={onToggleOpen}
 				onManage={onManage}
 				icon={Clapperboard}
 				title={

@@ -6,6 +6,8 @@ import { EncoreFeatureCard } from './EncoreFeatureCard';
 interface CueSettingsSectionProps {
 	theme: Theme;
 	enabled: boolean;
+	open: boolean;
+	onToggleOpen: () => void;
 	onManage: () => void;
 	cueState: CueSettingsState;
 }
@@ -13,6 +15,8 @@ interface CueSettingsSectionProps {
 export function CueSettingsSection({
 	theme,
 	enabled,
+	open,
+	onToggleOpen,
 	onManage,
 	cueState,
 }: CueSettingsSectionProps) {
@@ -21,6 +25,8 @@ export function CueSettingsSection({
 			<EncoreFeatureCard
 				theme={theme}
 				enabled={enabled}
+				open={open}
+				onToggleOpen={onToggleOpen}
 				onManage={onManage}
 				icon={Zap}
 				title={

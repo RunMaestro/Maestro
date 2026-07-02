@@ -7,7 +7,7 @@
 
 import { useMemo, useState } from 'react';
 import { Search, FolderPlus, Puzzle } from 'lucide-react';
-import type { Theme } from '../../../types';
+import type { EncoreFeatureFlags, Theme } from '../../../types';
 import { useExtensions } from './useExtensions';
 import { ExtensionsGrid } from './ExtensionsGrid';
 import { ExtensionDetails } from './ExtensionDetails';
@@ -20,9 +20,12 @@ import {
 
 interface ExtensionsViewProps {
 	theme: Theme;
+	/** First-party tiles' Configure action: expand + jump to the feature's
+	 * config card below the marketplace (wired by the Plugins tab). */
+	onConfigureBuiltin?: (flag: keyof EncoreFeatureFlags) => void;
 }
 
-export function ExtensionsView({ theme }: ExtensionsViewProps) {
+export function ExtensionsView({ theme, onConfigureBuiltin }: ExtensionsViewProps) {
 	const {
 		extensions,
 		contributions,
@@ -59,7 +62,7 @@ export function ExtensionsView({ theme }: ExtensionsViewProps) {
 			<span data-setting-id="encore-pianola" aria-hidden="true" />
 			<div className="flex items-center justify-between gap-3 mb-1">
 				<h3 className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
-					Extensions
+					Plugins
 				</h3>
 				<button
 					type="button"
@@ -109,6 +112,7 @@ export function ExtensionsView({ theme }: ExtensionsViewProps) {
 					onUninstall={uninstallPlugin}
 					onRevoke={revokePlugin}
 					getGrants={getGrants}
+					onConfigureBuiltin={onConfigureBuiltin}
 				/>
 			) : (
 				<>
