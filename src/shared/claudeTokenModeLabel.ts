@@ -22,14 +22,14 @@ export interface TokenSourcePillInput {
 	 */
 	reason?: 'auto' | 'limit';
 	/**
-	 * When true, prefix the label with "Adaptive " and note Adaptive Mode in the
+	 * When true, prefix the label with "Dynamic " and note Dynamic Mode in the
 	 * tooltip - mirrors the live chat pill's existing behavior.
 	 */
 	adaptive?: boolean;
 }
 
 export interface TokenSourcePill {
-	/** Short pill text, e.g. `TUI`, `API`, `Adaptive TUI`. */
+	/** Short pill text, e.g. `TUI Wrapper`, `claude -p`, `Dynamic TUI Wrapper`. */
 	label: string;
 	/** Tooltip describing how the turn was captured (or why it fell back). */
 	title: string;
@@ -44,16 +44,16 @@ export interface TokenSourcePill {
 export function getTokenSourcePill(input: TokenSourcePillInput): TokenSourcePill {
 	const isTui = input.mode === 'interactive';
 	const adaptive = input.adaptive === true;
-	const label = `${adaptive ? 'Adaptive ' : ''}${isTui ? 'TUI' : 'API'}`;
+	const label = `${adaptive ? 'Dynamic ' : ''}${isTui ? 'TUI Wrapper' : 'claude -p'}`;
 
 	let title: string;
 	if (input.reason === 'limit') {
 		// Forced fallback wording mirrors the AgentConfigPanel pill.
 		title = 'Forced fallback: Max plan 5-hour or weekly quota is exhausted.';
 	} else if (isTui) {
-		title = `Captured via maestro-p driving the Claude TUI${adaptive ? ' (Adaptive Mode enabled)' : ''}`;
+		title = `Captured via maestro-p driving the Claude TUI${adaptive ? ' (Dynamic Mode enabled)' : ''}`;
 	} else {
-		title = `Captured via claude --print${adaptive ? ' (Adaptive Mode enabled - fell back to API)' : ''}`;
+		title = `Captured via claude --print${adaptive ? ' (Dynamic Mode enabled - fell back to API)' : ''}`;
 	}
 
 	return { label, title, isTui };

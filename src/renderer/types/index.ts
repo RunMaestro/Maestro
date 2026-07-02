@@ -890,6 +890,15 @@ export interface Session {
 	// in packaged builds, `dist/cli/maestro-p.js` in dev).
 	maestroPPath?: string;
 
+	// Agent Resilience (auto-retry). Both default ON — `undefined` reads as
+	// enabled via `resilienceEnabled` in shared/agentConstants, so existing
+	// agents get the behavior without a migration; only an explicit `false`
+	// opts out. `retryOnAvailabilityErrors` covers transient upstream failures
+	// (Overloaded/529/5xx) with 30s→30m backoff; `retryOnTokenExhaustion`
+	// covers plan-quota exhaustion (wait-until-reset, else hourly).
+	retryOnAvailabilityErrors?: boolean;
+	retryOnTokenExhaustion?: boolean;
+
 	// Last resolved Claude headless-mode state (only meaningful for Claude Code
 	// sessions with `enableMaestroP === true`). The spawner writes this after
 	// each `selectMode()` call so the context-window popover, sticky-limit

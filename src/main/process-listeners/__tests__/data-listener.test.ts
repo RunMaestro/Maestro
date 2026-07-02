@@ -79,6 +79,8 @@ describe('Data Listener', () => {
 			const handler = eventHandlers.get('data');
 
 			handler?.('regular-session-123', 'test output');
+			// process:data is coalesced (~16ms); flush via the exit boundary.
+			eventHandlers.get('exit')?.('regular-session-123');
 
 			expect(mockSafeSend).toHaveBeenCalledWith(
 				'process:data',
@@ -241,6 +243,7 @@ describe('Data Listener', () => {
 			const handler = eventHandlers.get('data');
 
 			handler?.('plain-session', 'plain data');
+			eventHandlers.get('exit')?.('plain-session');
 
 			expect(mockSafeSend).toHaveBeenCalledWith('process:data', 'plain-session', 'plain data');
 		});
@@ -252,6 +255,7 @@ describe('Data Listener', () => {
 			const handler = eventHandlers.get('data');
 
 			handler?.('session-123-terminal', 'terminal output');
+			eventHandlers.get('exit')?.('session-123-terminal');
 
 			// Should broadcast as terminal_data (for xterm.js in web client)
 			expect(mockWebServer.broadcastToSessionClients).toHaveBeenCalledWith(
@@ -310,6 +314,7 @@ describe('Data Listener', () => {
 			const handler = eventHandlers.get('data');
 
 			handler?.('session-123-ai-a1b2c3d4-e5f6-7890-abcd-ef1234567890', 'test output');
+			eventHandlers.get('exit')?.('session-123-ai-a1b2c3d4-e5f6-7890-abcd-ef1234567890');
 
 			// Should still forward to renderer
 			expect(mockSafeSend).toHaveBeenCalledWith(

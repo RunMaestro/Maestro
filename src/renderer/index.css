@@ -914,6 +914,31 @@ svg.wand-profiling-active path:nth-child(8) {
 	}
 }
 
+/* Indeterminate progress bar for the profiling-capture modal: a segment slides
+   across the track while we wait on an unmeasurable phase (flushing the trace,
+   the native save dialog). Determinate compression progress uses a width %. */
+@keyframes profiling-progress-indeterminate {
+	0% {
+		transform: translateX(-100%);
+	}
+	100% {
+		transform: translateX(400%);
+	}
+}
+
+.profiling-progress-indeterminate {
+	width: 25%;
+	animation: profiling-progress-indeterminate 1.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.profiling-progress-indeterminate {
+		animation: none;
+		width: 100%;
+		opacity: 0.6;
+	}
+}
+
 /* React Flow - Document Graph edge hover styling */
 /* Subtle glow effect on edge hover */
 .react-flow__edge-path {
@@ -1055,6 +1080,48 @@ svg.wand-profiling-active path:nth-child(8) {
 
 @container header (max-width: 300px) {
 	.header-session-name {
+		display: none;
+	}
+}
+
+/* ==========================================
+   Group Chats Header Container Queries
+   ==========================================
+   CSS-only progressive disclosure for the Group Chats section header in the
+   left sidebar. As the sidebar narrows, drop non-essential bits in order so the
+   header always stays on ONE line and never wraps:
+     1. group chat count badge (the active-chat count)
+     2. archived count number (keep the archive button/icon)
+     3. "New Chat" label (collapse the button to just "+")
+   Thresholds are sized so that at the minimum sidebar width (280px -> ~256px
+   container) all three have dropped and the row still fits without wrapping. */
+.gc-header-container {
+	container-type: inline-size;
+	container-name: gcheader;
+}
+
+/* Default: label + counts visible */
+.gc-newchat-label {
+	display: inline;
+}
+
+/* Below 340px: drop the group chat count badge */
+@container gcheader (max-width: 340px) {
+	.gc-count-badge {
+		display: none;
+	}
+}
+
+/* Below 305px: drop the archived count number (archive button stays) */
+@container gcheader (max-width: 305px) {
+	.gc-archived-count {
+		display: none;
+	}
+}
+
+/* Below 275px: collapse the New Chat button to just a plus sign */
+@container gcheader (max-width: 275px) {
+	.gc-newchat-label {
 		display: none;
 	}
 }

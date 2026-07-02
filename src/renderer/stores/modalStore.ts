@@ -279,6 +279,7 @@ export type ModalId =
 	| 'debugApplicationStats'
 	| 'debugAgentProbe'
 	| 'widgetGallery'
+	| 'profilingCapture'
 	| 'playground'
 	| 'logViewer'
 	| 'processMonitor'
@@ -690,6 +691,10 @@ export function getModalActions() {
 		setDebugAgentProbeOpen: (open: boolean) =>
 			open ? openModal('debugAgentProbe') : closeModal('debugAgentProbe'),
 
+		// Profiling Capture (stop + bundle progress) Modal
+		setProfilingCaptureOpen: (open: boolean) =>
+			open ? openModal('profilingCapture') : closeModal('profilingCapture'),
+
 		// Confirmation Modal
 		setConfirmModalOpen: (open: boolean) => (open ? openModal('confirm') : closeModal('confirm')),
 		setConfirmModalMessage: (message: string) => updateModalData('confirm', { message }),
@@ -962,6 +967,7 @@ export function useModalActions() {
 	const debugPackageModalOpen = useModalStore(selectModalOpen('debugPackage'));
 	const debugApplicationStatsOpen = useModalStore(selectModalOpen('debugApplicationStats'));
 	const debugAgentProbeOpen = useModalStore(selectModalOpen('debugAgentProbe'));
+	const profilingCaptureOpen = useModalStore(selectModalOpen('profilingCapture'));
 	const confirmModalOpen = useModalStore(selectModalOpen('confirm'));
 	const confirmData = useModalStore(selectModalData('confirm'));
 	const quitConfirmModalOpen = useModalStore(selectModalOpen('quitConfirm'));
@@ -1085,6 +1091,9 @@ export function useModalActions() {
 
 		// Debug Agent Probe Modal
 		debugAgentProbeOpen,
+
+		// Profiling Capture Modal
+		profilingCaptureOpen,
 
 		// Confirmation Modal
 		confirmModalOpen,

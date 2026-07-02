@@ -59,6 +59,7 @@ import {
 	buildUnifiedTabs,
 	ensureInUnifiedTabOrder,
 	getRepairedUnifiedTabOrder,
+	moveActiveUnifiedTabToEdge,
 	findNextUnreadSession,
 	resolveQueuedItemTarget,
 	markTabRunningQueuedItem,
@@ -4497,6 +4498,70 @@ describe('tabHelpers', () => {
 			const result = markTabRunningQueuedItem(tab, item);
 			expect(result.state).toBe('busy');
 			expect(result.logs).toHaveLength(0);
+		});
+	});
+
+	describe('moveActiveUnifiedTabToEdge', () => {
+		// Mixed-kind order: ai(a1) → terminal(t1) → file(f1) → browser(b1).
+		// The active tab is chosen via the terminal/file/browser/ai active-id fields.
+		function mixedSession(overrides: Record<string, unknown> = {}) {
+			return createMockSession({
+				aiTabs: [createMockTab({ id: 'a1' })],
+				terminalTabs: [
+					{ id: 't1', name: null, shellType: 'zsh', pid: 0, cwd: '', createdAt: 1, state: 'idle' },
+				],
+				filePreviewTabs: [createMockFileTab({ id: 'f1', path: '/tmp/f1' })],
+				browserTabs: [createMockBrowserTab({ id: 'b1' })],
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'a1' },
+					{ type: 'terminal', id: 't1' },
+					{ type: 'file', id: 'f1' },
+					{ type: 'browser', id: 'b1' },
+				],
+				activeTabId: 'a1',
+				activeTerminalTabId: null,
+				activeFileTabId: null,
+				activeBrowserTabId: null,
+				...overrides,
+			});
+		}
+
+		it('moves the active AI tab to the last position', () => {
+			const session = mixedSession(); // AI tab a1 is active
+			const result = moveActiveUnifiedTabToEdge(session, 'end');
+			expect(result.unifiedTabOrder.map((r) => r.id)).toEqual(['t1', 'f1', 'b1', 'a1']);
+		});
+
+		it('moves the active terminal tab to the first position', () => {
+			const session = mixedSession({ activeTerminalTabId: 't1', activeTabId: '' });
+			const result = moveActiveUnifiedTabToEdge(session, 'start');
+			expect(result.unifiedTabOrder.map((r) => r.id)).toEqual(['t1', 'a1', 'f1', 'b1']);
+		});
+
+		it('moves the active file tab to the last position', () => {
+			const session = mixedSession({ activeFileTabId: 'f1', activeTabId: '' });
+			const result = moveActiveUnifiedTabToEdge(session, 'end');
+			expect(result.unifiedTabOrder.map((r) => r.id)).toEqual(['a1', 't1', 'b1', 'f1']);
+		});
+
+		it('moves the active browser tab to the first position', () => {
+			const session = mixedSession({ activeBrowserTabId: 'b1', activeTabId: '' });
+			const result = moveActiveUnifiedTabToEdge(session, 'start');
+			expect(result.unifiedTabOrder.map((r) => r.id)).toEqual(['b1', 'a1', 't1', 'f1']);
+		});
+
+		it('is a no-op (returns same reference) when already at the target edge', () => {
+			const session = mixedSession(); // a1 already first
+			expect(moveActiveUnifiedTabToEdge(session, 'start')).toBe(session);
+		});
+
+		it('is a no-op when there are fewer than two tabs', () => {
+			const session = createMockSession({
+				aiTabs: [createMockTab({ id: 'a1' })],
+				unifiedTabOrder: [{ type: 'ai', id: 'a1' }],
+				activeTabId: 'a1',
+			});
+			expect(moveActiveUnifiedTabToEdge(session, 'end')).toBe(session);
 		});
 	});
 });

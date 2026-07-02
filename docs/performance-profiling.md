@@ -36,7 +36,7 @@ With recording on, do the things that feel slow:
 
 Open the command palette again (`Cmd+K`) and choose **Debug: End Performance Profiling**. This option only appears while a recording is active.
 
-Maestro opens a Save dialog with a default name like `maestro-profile-2026-06-28T14-30-00.zip` on your Desktop. Pick a location and save. Larger or longer captures take a moment to compress before the file appears.
+Maestro opens a Save dialog with a default name like `maestro-profile-2026-06-28T14-30-00.zip` on your Desktop. Pick a location and save. A progress window then shows the capture being stopped and compressed - a large trace can take tens of seconds to zip, so the bar keeps you posted until the file is written.
 
 ### Step 4: Send us the trace
 

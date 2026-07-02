@@ -4,8 +4,9 @@ import type { AgentConfig, Session, ToolType } from '../../types';
 import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../../shared/types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { validateNewSession } from '../../utils/sessionValidation';
-import { isAdaptiveModeDefaultOn } from '../../../shared/agentConstants';
+import { isAdaptiveModeDefaultOn, resilienceEnabled } from '../../../shared/agentConstants';
 import { FormInput } from '../ui/FormInput';
+import { AgentResilienceSection } from './AgentResilienceSection';
 import { Modal, ModalFooter } from '../ui/Modal';
 import { SshRemoteSelector } from '../shared/SshRemoteSelector';
 import { ThemedSelect } from '../shared/ThemedSelect';
@@ -51,6 +52,12 @@ export function NewInstanceModal({
 	>({});
 	const [maestroPPathByAgent, setMaestroPPathByAgent] = useState<Record<string, string>>({});
 	const [detectedMaestroPPath, setDetectedMaestroPPath] = useState<string | undefined>(undefined);
+	// Agent Resilience (auto-retry) per-agent toggles. Both default ON; a map
+	// only holds a value once the user flips a switch, so we read with `?? true`.
+	const [retryAvailabilityByAgent, setRetryAvailabilityByAgent] = useState<Record<string, boolean>>(
+		{}
+	);
+	const [retryTokenByAgent, setRetryTokenByAgent] = useState<Record<string, boolean>>({});
 	const [agentConfigs, setAgentConfigs] = useState<Record<string, Record<string, any>>>({});
 	const [availableModels, setAvailableModels] = useState<Record<string, string[]>>({});
 	const [loadingModels, setLoadingModels] = useState<Record<string, boolean>>({});
@@ -197,6 +204,8 @@ export function NewInstanceModal({
 				setEnableMaestroPByAgent({});
 				setMaestroPModeByAgent({});
 				setMaestroPPathByAgent({});
+				setRetryAvailabilityByAgent({});
+				setRetryTokenByAgent({});
 				setAgentSshRemoteConfigs({});
 			}
 
@@ -305,6 +314,15 @@ export function NewInstanceModal({
 				setMaestroPPathByAgent((prev) => ({
 					...prev,
 					[source.toolType]: source.maestroPPath || '',
+				}));
+				// Mirror the source agent's Agent Resilience toggles (default ON).
+				setRetryAvailabilityByAgent((prev) => ({
+					...prev,
+					[source.toolType]: resilienceEnabled(source.retryOnAvailabilityErrors),
+				}));
+				setRetryTokenByAgent((prev) => ({
+					...prev,
+					[source.toolType]: resilienceEnabled(source.retryOnTokenExhaustion),
 				}));
 
 				// Pre-fill SSH remote configuration if source session has it
@@ -571,7 +589,9 @@ export function NewInstanceModal({
 			targetGroupId ?? undefined,
 			agentEnableMaestroP,
 			agentMaestroPPath,
-			agentMaestroPMode
+			agentMaestroPMode,
+			retryAvailabilityByAgent[selectedAgent] ?? true,
+			retryTokenByAgent[selectedAgent] ?? true
 		);
 		onClose();
 
@@ -598,6 +618,17 @@ export function NewInstanceModal({
 			return next;
 		});
 		setMaestroPPathByAgent((prev) => ({ ...prev, [selectedAgent]: '' }));
+		// Clear the resilience overrides so the default (both ON) applies next open.
+		setRetryAvailabilityByAgent((prev) => {
+			const next = { ...prev };
+			delete next[selectedAgent];
+			return next;
+		});
+		setRetryTokenByAgent((prev) => {
+			const next = { ...prev };
+			delete next[selectedAgent];
+			return next;
+		});
 		setAgentSshRemoteConfigs((prev) => {
 			const newConfigs = { ...prev };
 			delete newConfigs[selectedAgent];
@@ -968,6 +999,22 @@ export function NewInstanceModal({
 					loadingDynamicOptions={loadingDynamicOptions}
 					onLoadDynamicOptionsForAgent={loadDynamicOptionsForAgent}
 				/>
+
+				{/* Agent Resilience: auto-retry toggles (default ON). Sits directly
+				    under the agent provider per design. */}
+				{selectedAgent && (
+					<AgentResilienceSection
+						theme={theme}
+						retryOnAvailabilityErrors={retryAvailabilityByAgent[selectedAgent] ?? true}
+						retryOnTokenExhaustion={retryTokenByAgent[selectedAgent] ?? true}
+						onChangeAvailability={(value) =>
+							setRetryAvailabilityByAgent((prev) => ({ ...prev, [selectedAgent]: value }))
+						}
+						onChangeTokenExhaustion={(value) =>
+							setRetryTokenByAgent((prev) => ({ ...prev, [selectedAgent]: value }))
+						}
+					/>
+				)}
 
 				{/* Working Directory */}
 				<FormInput

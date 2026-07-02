@@ -8,7 +8,6 @@ import { notifyToast } from '../../stores/notificationStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import { captureException } from '../../utils/sentry';
-import { formatSize } from '../../../shared/formatters';
 import { useModalStore } from '../../stores/modalStore';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { gitService } from '../../services/git';
@@ -254,38 +253,12 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			captureException(err);
 		}
 	}, [setProfilingActive]);
-	const handleStopProfiling = useCallback(async () => {
-		try {
-			const res = await window.maestro.debug.stopProfiling();
-			setProfilingActive(false);
-			if (!res?.success) {
-				notifyToast({
-					color: 'red',
-					title: 'Profiling',
-					message: res?.error || 'Failed to save profile',
-				});
-				return;
-			}
-			if (res.cancelled) {
-				notifyCenterFlash({ message: 'Profiling stopped (not saved)', color: 'yellow' });
-				return;
-			}
-			const durationLabel = `${(res.durationMs / 1000).toFixed(1)}s`;
-			const sizeLabel = res.bundleSizeBytes ? ` (${formatSize(res.bundleSizeBytes)})` : '';
-			notifyToast({
-				color: 'green',
-				title: 'Performance profile saved',
-				message: `Captured ${durationLabel} trace${sizeLabel}.${
-					res.path ? `\nSaved to ${res.path}` : ''
-				}`,
-				dismissible: true,
-			});
-		} catch (err) {
-			setProfilingActive(false);
-			notifyToast({ color: 'red', title: 'Profiling', message: 'Failed to save profile' });
-			captureException(err);
-		}
-	}, [setProfilingActive]);
+	// Stopping is slow (flush + zip compression can take tens of seconds), so we
+	// hand off to the ProfilingCaptureModal, which owns the whole stop-and-bundle
+	// flow, shows live progress, and clears the wand indicator when it finishes.
+	const handleStopProfiling = useCallback(() => {
+		openModal('profilingCapture');
+	}, [openModal]);
 
 	const inputRef = useRef<HTMLInputElement>(null);
 	const selectedItemRef = useRef<HTMLButtonElement>(null);
@@ -820,7 +793,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				aria-modal="true"
 				aria-label={mode === 'agents' ? 'Switch Agent' : 'Quick Actions'}
 				tabIndex={-1}
-				className="modal-w-md rounded-xl shadow-2xl border overflow-hidden flex flex-col max-h-[550px] outline-none"
+				className="modal-w-md rounded-xl shadow-2xl border overflow-hidden flex flex-col max-h-[min(680px,calc(100vh-10rem))] outline-none"
 				style={{ backgroundColor: theme.colors.bgActivity, borderColor: theme.colors.border }}
 			>
 				<QuickActionsSearchBar

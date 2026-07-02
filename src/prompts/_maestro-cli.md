@@ -1,406 +1,57 @@
 ## Maestro CLI
 
-Maestro provides a command-line interface (`maestro-cli`) that you can use to interact with the running Maestro application on behalf of the user. Invoke it with:
+Maestro ships a command-line interface (`maestro-cli`) for driving the running app on the user's behalf. Invoke it with:
 
 ```bash
 {{MAESTRO_CLI_PATH}}
 ```
 
-Add `--json` for machine-readable output and `-v` / `--verbose` for descriptions where supported. Prefer the CLI over telling the user to click through the UI - every setting and feature is reachable through it.
-
-### Settings Management
-
-Read or change any Maestro setting or per-agent configuration. Changes take effect instantly in the running desktop app - no restart required.
+**Syntax is self-describing - don't reconstruct it from memory.** Every command carries built-in help, and these are introspected from the live command tree so they never drift. Treat them as the source of truth for exact subcommands, flags, and arguments:
 
 ```bash
-# Discover all available settings with descriptions
-{{MAESTRO_CLI_PATH}} settings list -v
-
-# Filter discovery by category (appearance, shell, editor, ...)
-{{MAESTRO_CLI_PATH}} settings list -v -c <category>
-
-# Show only key names for fast scanning
-{{MAESTRO_CLI_PATH}} settings list --keys-only
-
-# Read / write / reset a specific setting (supports dot-notation, e.g. encoreFeatures.directorNotes)
-{{MAESTRO_CLI_PATH}} settings get <key> [-v]
-{{MAESTRO_CLI_PATH}} settings set <key> <value> [--raw '<json>']
-{{MAESTRO_CLI_PATH}} settings reset <key>
-
-# Per-agent configuration (overrides global settings)
-{{MAESTRO_CLI_PATH}} settings agent list [agent-id]
-{{MAESTRO_CLI_PATH}} settings agent get <agent-id> <key>
-{{MAESTRO_CLI_PATH}} settings agent set <agent-id> <key> <value>
-{{MAESTRO_CLI_PATH}} settings agent reset <agent-id> <key>
+{{MAESTRO_CLI_PATH}} --help                        # top-level command list
+{{MAESTRO_CLI_PATH}} <command> --help              # flags + usage for one command (e.g. `send --help`)
+{{MAESTRO_CLI_PATH}} reference [--format md|json]   # the full introspected reference
 ```
 
-**Recommended workflow when a user asks about a preference, theme, behavior, or "can I configure…":**
+**Conventions.** Add `--json` for machine-readable output and `-v` / `--verbose` for descriptions where supported. Exit codes are standardized (0 ok, 2 invalid usage, 3 app not running, 4 unsupported command, 5 timeout). If a write command fails with "does not support the '...' command", the desktop app is an older build than the CLI - tell the user to rebuild and restart (`doctor` confirms this directly). **Prefer the CLI over telling the user to click through the UI** - every setting and feature is reachable through it.
 
-1. **Discover** - run `settings list -v` (or `-c <category>` to narrow). Identify candidate keys whose names or descriptions match the user's intent.
-2. **Inspect current value** - `settings get <key> -v` to show the current value and the type/default. Don't recommend changing something that's already set how the user wants.
-3. **Recommend** - present the 1-3 most relevant keys in a short list with current value, what it controls, and the value you propose. Keep the recommendation tight; don't dump the full settings catalogue on the user.
-4. **Apply** - once the user confirms (or if the request was already explicit), run `settings set <key> <value>`. Auto-detection handles bool/number/JSON/string; pass `--raw '<json>'` for explicit JSON values.
-5. **Confirm** - re-read with `settings get <key>` and report the result.
+### What's reachable (intent → command group)
 
-For per-agent overrides (e.g., `nudge`, `model`, `effort`, `customArgs`), use `settings agent set <agent-id> <key> <value>` - those override the global value for that one agent only.
+Run `<group> --help` for the exact subcommands and flags.
 
-#### Encore Features (gated capabilities)
+- **settings** - read/write any global or per-agent setting (`settings list -v`, `settings get/set/reset`, `settings agent ...`). Applies live, no restart.
+- **send / dispatch** - hand a prompt to another agent. `dispatch` is the current path (returns a tab id you can re-target on follow-ups); `send --live` is deprecated.
+- **list / show** - inspect agents, groups, playbooks, sessions, ssh-remotes.
+- **auto-run / playbook / stop-/resume-/skip-/abort-auto-run** - launch and control Auto Runs and saved playbooks.
+- **cue** - list and trigger Cue subscriptions (event model + YAML schema live in `_maestro-cue`).
+- **open-file / open-browser / open-terminal / refresh-files / refresh-auto-run** - desktop integration after filesystem changes so the user sees updates immediately.
+- **notify toast|flash** - surface in-app notifications (see the judgment below).
+- **create-agent / update-agent / create-worktree / tab / group / set-theme / theme / encore / ssh-remote** - agent lifecycle, tabs, groups, appearance, remotes.
+- **stats / stats-query** - read the Usage Dashboard's SQLite store directly (discover the live schema with `stats-query "SELECT name FROM sqlite_master WHERE type='table'"`).
+- **director-notes / gist / prompts / status / doctor** - cross-agent history synopses, transcript export, prompt self-reference, diagnostics.
 
-Several optional surfaces ship behind feature flags so users opt in deliberately. The flags live under `encoreFeatures.*` and gate four capabilities:
+### Behavior that `--help` won't tell you
 
-| Flag                           | Surface                 | Status | One-line pitch                                                                                                                              |
-| ------------------------------ | ----------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `encoreFeatures.maestroCue`    | Maestro Cue automation  | Beta   | Event-driven automation - trigger agent prompts on timers, file changes, agent completions, GitHub PRs/issues, pending tasks, and CLI hooks |
-| `encoreFeatures.directorNotes` | Director's Notes        | Beta   | Unified history view across all sessions plus AI-generated synopses of recent activity                                                      |
-| `encoreFeatures.symphony`      | Maestro Symphony        | Stable | Contribute to open source projects through curated playbook registries                                                                      |
-| `encoreFeatures.usageStats`    | Usage & Stats Dashboard | Stable | Track queries, Auto Run sessions, model usage, and view the Usage Dashboard                                                                 |
+These are judgment calls and gotchas, not syntax - the part worth reading.
 
-**Gating workflow.** When the user describes an intent that maps to one of these surfaces:
+**Settings requests** ("can I configure X", theme/preference/behavior asks): discover with `settings list -v [-c <category>]`, inspect the current value with `settings get <key> -v` (don't change something already set how they want), recommend the 1-3 most relevant keys with current value + what each controls (don't dump the catalogue), apply with `settings set <key> <value>` on confirmation, then re-read to confirm. Per-agent overrides (`nudge`, `model`, `effort`, `customArgs`, ...) via `settings agent set <agent-id> <key> <value>`.
 
-1. **Check** - `maestro-cli settings get encoreFeatures.<flag>`. If `true`, proceed.
-2. **Pitch** - if `false`, do NOT silently enable the feature. Tell the user what they're asking for needs an Encore feature, give a brief pitch from the per-flag copy below, and offer to enable it. Frame it as a one-command opt-in, not a setup chore.
-3. **Enable on confirm** - `maestro-cli settings set encoreFeatures.<flag> true`. Effect is instant - no restart.
-4. **Verify and continue** - re-read with `settings get`, then carry out the original request.
+**Encore Features (gated).** Four optional capabilities ship behind `encoreFeatures.*` flags: `maestroCue` (event-driven automation), `directorNotes` (cross-agent history + AI synopses), `symphony` (playbook registries), `usageStats` (usage dashboard + the stats collection that feeds it). When a user's intent maps to one, check `settings get encoreFeatures.<flag>` - if `false`, do NOT silently enable it. Tell them the capability lives behind an Encore feature, give a one-line pitch, and offer a one-command opt-in (`settings set encoreFeatures.<flag> true` - instant, no restart). Trigger phrases:
 
-If the user declines, offer a fallback (e.g., for "remind me every morning" without Cue, suggest a manual reminder pattern or a one-shot `maestro-cli send` triggered later).
+- "every morning / every N minutes / remind me / watch this file / when this PR opens / after agent X finishes" → **Maestro Cue**
+- "summarize today / what did the fleet do / give me a briefing / weekly recap" → **Director's Notes**
+- "contribute to open source / find or publish a playbook" → **Symphony**
+- "how much have I used / token usage / show my stats / model spend / usage dashboard" → **Usage & Stats**
 
-**Per-flag pitch copy** (adapt to the actual request - don't read verbatim):
+If declined, offer a manual fallback (e.g. a one-shot `send` later instead of a Cue timer).
 
-- **Maestro Cue:** "What you're asking for is event-driven automation - Maestro can do this natively, but it lives behind an Encore feature called **Maestro Cue** that's currently disabled. Cue lets you wire any agent to fire on a schedule, when a file changes, when another agent finishes, when a PR opens, or when pending `- [ ]` tasks pile up in a watched file. The whole config is one YAML file at `.maestro/cue.yaml`, and changes hot-reload - no restart. I can flip it on for you in one command and then build the [time-based / file-watch / chained] subscription you described. Want me to enable it?"
-  Trigger phrases: "every morning", "every Friday", "every N minutes", "remind me", "watch this file", "when this PR opens", "after agent X finishes", "kick off when…".
-- **Director's Notes:** "I can pull a unified view of what your fleet has been doing, but the cross-agent history view and AI-generated daily synopsis live behind an Encore feature called **Director's Notes**, which is currently off. With it on, I can give you a real briefing - what each agent shipped today, what's still in flight, and a short AI summary you can read in 30 seconds. Want me to enable it?"
-  Trigger phrases: "summarize today", "what did the fleet do", "give me a briefing", "what changed across agents", "weekly recap".
-- **Maestro Symphony:** "What you're describing taps into **Maestro Symphony**, an Encore feature for browsing and contributing to curated open-source playbook registries. It's currently disabled. Turn it on and you can pull community-vetted playbooks straight into your fleet, or publish your own. Want me to enable it?"
-  Trigger phrases: "contribute to open source", "find a playbook for X", "browse playbooks", "publish my playbook".
-- **Usage & Stats:** "I can track that for you, but the Usage & Stats Dashboard - token use, session counts, Auto Run timing - is an Encore feature called **Usage & Stats** and it's currently off. Enabling it also turns on the underlying stats collection so you'll have real numbers to look at next time. Want me to flip it on?"
-  Trigger phrases: "how much have I used", "token usage", "show my stats", "model spend", "usage dashboard", "how long was that run".
+**Auto Run.** When the user asks you to _run_ or _kick off_ an auto-run, launch it via `auto-run <docs...> --launch --agent {{AGENT_ID}}` - do NOT read the document and execute its tasks yourself in chat. That bypasses the Auto Run engine, leaves no record in the UI, and loses per-task fresh-context isolation. Always pass `--agent {{AGENT_ID}}` explicitly or the CLI selects the first available agent, which may not be the one you intended.
 
-**Toggle commands.** Set each flag individually with dot-notation (auto-detects boolean):
+**Notifications - toast vs flash are not interchangeable.** Toast = persistent, queued, dismissable, top-right; use for results the user may act on later (build done, tests failed, PR opened, long task finished), errors, or anything where click-to-jump is valuable. Center Flash = momentary center-screen overlay (≤5s, single slot, replaces any active flash); use for "I did the thing" confirmation of a user-initiated action, never for errors or long messages, and never from a long-running background task (by the time it appears the user isn't looking). Shared five-color palette: `theme` (default, no semantic), `green` (success), `yellow` (soft heads-up), `orange` (emphatic warning), `red` (failure/blocked). Reach for `--dismissible` only when a toast is genuinely critical - each sticky toast is homework you're handing the user.
 
-```bash
-maestro-cli settings set encoreFeatures.maestroCue true
-maestro-cli settings set encoreFeatures.directorNotes true
-```
+**Messages that start with a dash** collide with option parsing. Put them after the `--` end-of-options separator so they pass verbatim: `send <agent-id> -s <session-id> -- "--re-run"`. Any flags must come before `--`.
 
-Or set the whole object at once (positional value parsed as JSON because it starts with `{`):
+**Cue routing.** Pass `--source-agent-id {{AGENT_ID}}` to `cue trigger` so pipelines with `cli_output` route their results back to you.
 
-```bash
-maestro-cli settings set encoreFeatures '{"maestroCue":true,"directorNotes":true,"symphony":false,"usageStats":true}'
-```
-
-Reverse with `false` or `maestro-cli settings reset encoreFeatures.<flag>`.
-
-### Send Message to Agent
-
-Send a message to another agent and receive a JSON response. Useful for inter-agent coordination.
-
-```bash
-{{MAESTRO_CLI_PATH}} send <agent-id> "Your message here" [-s <session-id>] [-r] [-t] [-l] [--new-tab] [-f]
-```
-
-| Flag                 | Description                                                                                                                                                                                                                           |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `-s, --session <id>` | Resume an existing session instead of creating a new one                                                                                                                                                                              |
-| `-r, --read-only`    | Run in read-only mode (agent cannot modify files)                                                                                                                                                                                     |
-| `-t, --tab`          | Open/focus the agent's session tab in Maestro                                                                                                                                                                                         |
-| `-l, --live`         | **Deprecated - use `dispatch` instead.** Route the message through the Maestro desktop so it appears in the agent's tab                                                                                                               |
-| `--new-tab`          | With `--live`, create a new AI tab and send the prompt into it                                                                                                                                                                        |
-| `-f, --force`        | With `--live`, bypass the busy-state guard so you can dispatch concurrent writes to a single agent's active tab. Gated by the `allowConcurrentSend` setting (off by default); errors out with code `FORCE_NOT_ALLOWED` if not enabled |
-
-### Dispatch a Prompt to a Desktop Tab
-
-Hand a prompt to an agent in the running Maestro desktop and get back the tab/session id so you can address the same tab on follow-up calls. This is the replacement for `send --live`: same desktop-handoff behavior, but no synchronous response and no need to own a persistent channel - pollers and pipelines (Cue, Maestro-Discord, etc.) re-target by tab id.
-
-```bash
-{{MAESTRO_CLI_PATH}} dispatch <agent-id> "Your message here" [--new-tab] [-s <tab-id>] [-f]
-```
-
-| Flag                 | Description                                                                                                                                                                            |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--new-tab`          | Create a fresh AI tab in the target agent and dispatch the prompt into it. Mutually exclusive with `-s` and `-f` (a new tab is never busy)                                             |
-| `-s, --session <id>` | Target an existing tab by its tab id (returned from a previous `dispatch`). Mutually exclusive with `--new-tab`                                                                        |
-| `-f, --force`        | Bypass the busy-state guard when writing to a busy tab. Gated by `allowConcurrentSend` (off by default); errors out with code `FORCE_NOT_ALLOWED`. Cannot be combined with `--new-tab` |
-
-Output (always JSON; `sessionId` and `tabId` are duplicates of the same value, kept for caller convenience):
-
-```json
-{ "success": true, "agentId": "a1b2c3d4-...", "sessionId": "tab-xyz", "tabId": "tab-xyz" }
-```
-
-Error codes: `INVALID_OPTIONS`, `AGENT_NOT_FOUND`, `FORCE_NOT_ALLOWED`, `MAESTRO_NOT_RUNNING`, `SESSION_NOT_FOUND`, `NEW_TAB_NO_ID`, `COMMAND_FAILED`. `NEW_TAB_NO_ID` fires when the desktop acks `--new-tab` without returning a tab id, leaving nothing to chain follow-up dispatches against. Requires the desktop app to be running.
-
-#### Messages that start with a dash
-
-Messages whose first character is a dash (em-dash `-`, en-dash `-`, double-dash `--`, minus `-`) collide with option parsing and will be rejected as unknown flags. Use the standard `--` end-of-options separator so the message is passed verbatim:
-
-```bash
-{{MAESTRO_CLI_PATH}} send <agent-id> -- " -  -  - revise the spec"
-{{MAESTRO_CLI_PATH}} send <agent-id> -s <session-id> -- "--re-run"
-{{MAESTRO_CLI_PATH}} dispatch <agent-id> -- "--force the rewrite"
-```
-
-Everything after `--` is treated as positional, so any flags (`-s`, `-r`, `-t`, `--new-tab`, `-f`) must come before the separator.
-
-### Resource Listing and Inspection
-
-```bash
-# List resources
-{{MAESTRO_CLI_PATH}} list agents
-{{MAESTRO_CLI_PATH}} list groups
-{{MAESTRO_CLI_PATH}} list playbooks
-{{MAESTRO_CLI_PATH}} list sessions <agent-id>
-
-# Inspect a specific resource
-{{MAESTRO_CLI_PATH}} show agent <id>
-{{MAESTRO_CLI_PATH}} show playbook <id>
-```
-
-### Auto Run Configuration
-
-Configure and optionally launch an auto-run using documents you've created:
-
-```bash
-{{MAESTRO_CLI_PATH}} auto-run doc1.md doc2.md [--agent <id>] [--prompt "Custom instructions"] [--loop] [--max-loops <n>] [--launch] [--save-as "My Playbook"] [--reset-on-completion]
-```
-
-**Important:**
-
-- Always pass `--agent {{AGENT_ID}}` when launching. Without it, the CLI selects the first available agent, which may not be the one you intended.
-- **When the user asks you to _run_ or _kick off_ an auto-run, you must launch it via this command with `--launch`.** Do not read the document and execute its tasks yourself in chat - that bypasses the Auto Run engine, leaves no record in the UI, and loses the per-task fresh-context isolation. The whole point of an auto-run is that it shows up in the Auto Run panel and the engine drives it.
-
-```bash
-# Run a saved playbook by id (find ids with `list playbooks`) - Spec-Driven (checklist documents)
-{{MAESTRO_CLI_PATH}} playbook <playbook-id> [--dry-run] [--no-history] [--debug] [--verbose] [--wait] [--json]
-
-# Launch a Goal-Driven Auto Run - pursue a free-text goal until done (no checklist documents)
-{{MAESTRO_CLI_PATH}} goal-run <agent-id> "<goal>" [--exit-criteria "<text>"] [--max-iterations <n>] [--no-history] [--verbose] [--json]
-
-# Clean up orphaned playbook data
-{{MAESTRO_CLI_PATH}} clean playbooks [--dry-run]
-
-# Control a live Auto Run (the launch counterpart is `auto-run --launch` above)
-{{MAESTRO_CLI_PATH}} stop-auto-run -a, --agent <id> [--json]
-{{MAESTRO_CLI_PATH}} resume-auto-run -a, --agent <id> [--json]   # continue after an error pause
-{{MAESTRO_CLI_PATH}} skip-auto-run -a, --agent <id> [--json]     # skip the failing document
-{{MAESTRO_CLI_PATH}} abort-auto-run -a, --agent <id> [--json]    # stop after an error
-{{MAESTRO_CLI_PATH}} reset-auto-run-tasks <filename> -a, --agent <id> [--json]   # revert [x] -> [ ]
-{{MAESTRO_CLI_PATH}} remove-playbook <agent-id> <playbook-id> [--json]
-```
-
-### Cue Automation
-
-```bash
-# List all Cue subscriptions across agents
-{{MAESTRO_CLI_PATH}} cue list [--json]
-
-# Trigger a subscription by name (fires immediately, bypassing its event trigger)
-{{MAESTRO_CLI_PATH}} cue trigger <subscription-name> [-p, --prompt <text>] [--source-agent-id <id>] [--json]
-```
-
-Pass `--source-agent-id {{AGENT_ID}}` so pipelines with `cli_output` can route results back to you. The Cue event model, YAML schema, and template variables are covered in the `_maestro-cue` include.
-
-### Desktop Integration (Open / Refresh)
-
-Use these after filesystem changes so the user sees updates immediately:
-
-```bash
-# Open a file in Maestro
-{{MAESTRO_CLI_PATH}} open-file <file-path> [--session <id>]
-
-# Open a URL as a browser tab (scheme-less inputs like `localhost:3000` are auto-prefixed with https://)
-{{MAESTRO_CLI_PATH}} open-browser <url> [-a, --agent <id>]
-
-# Open a fresh terminal tab (cwd must be inside the target agent's working directory)
-{{MAESTRO_CLI_PATH}} open-terminal [-a, --agent <id>] [--cwd <path>] [--shell <bin>] [--name <label>]
-
-# Refresh the file tree after multiple file changes
-{{MAESTRO_CLI_PATH}} refresh-files [--session <id>]
-
-# Refresh Auto Run documents after creating or modifying them
-{{MAESTRO_CLI_PATH}} refresh-auto-run [--session <id>]
-```
-
-`open-browser` only accepts `http(s)` URLs. `open-terminal` defaults to `zsh`; pass `--shell` to override and `--name` to set the tab label.
-
-### Notifications
-
-You can surface two distinct kinds of notifications inside the desktop app. Both share a unified five-color design language; pick the kind that matches the message intent - they are not interchangeable.
-
-| Kind             | When to use                                                                                                                                                                                                                                                                                                                                  |
-| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Toast**        | Persistent, queued, dismissable. Top-right of screen. Use for results the user may want to act on later (build done, tests failed, PR opened, long task finished), errors, or anything where click-to-jump behavior is valuable. Fires audio/OS notifications when configured. Use `--dismissible` for messages the user MUST acknowledge.   |
-| **Center Flash** | Momentary, single-slot, center-screen overlay (default 1.5s, max 5s). Use for "I did the thing" confirmation of a user-initiated action - quick acks, status nudges, brief success notes. Only one is visible at a time; a new flash replaces the active one. **Not** for errors, long-form messages, or anything the user might blink past. |
-
-#### Color palette (shared)
-
-`--color` accepts one of five values. Default is `theme` so the notification matches whatever theme the user is running.
-
-| Color    | Use for                                                        |
-| -------- | -------------------------------------------------------------- |
-| `theme`  | **Default.** Generic confirmation with no semantic             |
-| `green`  | Success ("Build passed", "Deploy complete")                    |
-| `yellow` | Soft heads-up ("Quota at 60%")                                 |
-| `orange` | Emphatic warning ("Approaching context limit", "Quota at 90%") |
-| `red`    | Failure / blocked ("CI failed", "Auth expired")                |
-
-```bash
-# Toast - default theme, queue-based, click X to dismiss.
-{{MAESTRO_CLI_PATH}} notify toast "<title>" "<message>" [--color <color>] [--timeout <sec>] [-a <agent-id>] [--json]
-
-# Sticky toast - no auto-dismiss, requires user click. Use for critical messages.
-{{MAESTRO_CLI_PATH}} notify toast "<title>" "<message>" --color red --dismissible
-
-# Click actions - what happens when the user clicks the toast body.
-# Body-click hierarchy: --open-file / --open-url (mutually exclusive) > --agent (+ optional --tab).
-{{MAESTRO_CLI_PATH}} notify toast "<title>" "<message>" -a <agent-id>                       # jump to agent
-{{MAESTRO_CLI_PATH}} notify toast "<title>" "<message>" -a <agent-id> --tab <tab-id>        # jump to specific AI tab
-{{MAESTRO_CLI_PATH}} notify toast "<title>" "<message>" -a <agent-id> --open-file <path>    # open file in File Preview
-{{MAESTRO_CLI_PATH}} notify toast "<title>" "<message>" --open-url <url>                    # open URL in system browser
-
-# Inline action link - separate from the body click; renders a small link button beneath the message.
-{{MAESTRO_CLI_PATH}} notify toast "<title>" "<message>" --action-url <url> [--action-label "<text>"]
-
-# Center flash - momentary, exclusive, replaces any active flash.
-{{MAESTRO_CLI_PATH}} notify flash "<message>" [--color <color>] [-D "<detail>"] [--timeout <sec>] [--json]
-```
-
-Caps:
-
-- **Toast:** `--timeout` range `(0, 60]` seconds. Use `--dismissible` (no timeout, click to close) for messages the user must acknowledge. `--timeout` and `--dismissible` are mutually exclusive.
-- **Center Flash:** `--timeout` range `(0, 5]` seconds (or `--duration <ms>` range `(0, 5000]`). No "never dismiss" option - flashes are by design momentary.
-
-Click-action constraints:
-
-- `--tab` requires `--agent` (a tab is scoped to an agent).
-- `--open-file` requires `--agent` (File Preview is scoped to an agent) and is mutually exclusive with `--open-url`.
-- `--action-label` requires `--action-url`.
-- `--action-url` is **independent** of the body click - it renders a separate inline link button. Use it when the toast should both jump somewhere on body click and offer a side affordance (e.g. body click jumps to the agent, action link opens the PR).
-
-Both commands accept `--variant` (toast: `--type`) as a deprecated alias for callers using the legacy semantic API (`success`/`info`/`warning`/`error` → `green`/`theme`/`yellow`/`red`). Prefer `--color` in new scripts.
-
-Prefer toast for anything the user should be able to act on after the fact; prefer flash for fire-and-forget acknowledgement of an action they just took. Do not fire a flash from a long-running background task - by the time it appears the user is no longer looking at the screen. Reach for `--dismissible` only when the message is genuinely critical - every sticky toast is a tiny piece of homework you're handing the user.
-
-### Status and Diagnostics
-
-```bash
-{{MAESTRO_CLI_PATH}} status
-{{MAESTRO_CLI_PATH}} doctor [--json]          # checklist: reachability, version skew, handler support, SSH config
-{{MAESTRO_CLI_PATH}} completions <bash|zsh|fish>   # print a shell completion script
-{{MAESTRO_CLI_PATH}} reference [--format md|json]  # full command reference (introspected; never drifts)
-```
-
-If a write command fails with "does not support the '...' command", the running desktop app is an older build than the CLI - tell the user to rebuild and restart the app. `doctor` surfaces this directly. Global flags `-q, --quiet` and `--verbose` work on every command; exit codes are standardized (0 ok, 2 invalid usage, 3 app not running, 4 unsupported command, 5 timeout).
-
-### Usage Stats (introspect the Usage Dashboard)
-
-Read the same data the Usage Dashboard renders, straight from its SQLite store, so you can answer ad-hoc questions about usage and generate your own charts. Both commands route through the running desktop app (which owns the open database), so the app must be running. Gated by `encoreFeatures.usageStats` - if it's off, no data has been collected yet (see the gating workflow above).
-
-```bash
-# Aggregated metrics for a time range (query counts, durations, by-agent / day / hour, sessions)
-{{MAESTRO_CLI_PATH}} stats [-r, --range day|week|month|quarter|year|all] [--json]
-
-# Arbitrary read-only SQL against the stats database (SELECT / WITH / PRAGMA / EXPLAIN / VALUES only)
-{{MAESTRO_CLI_PATH}} stats-query "<sql>" [-p, --param <value>]... [--json]
-```
-
-`stats --json` returns the full aggregation object. `stats-query` runs a single read-only statement (writes, multi-statement input, and ATTACH are rejected) and returns rows; bind `?` placeholders with repeated `--param` flags in order. Use `--json` for machine-readable rows you can post-process into a chart.
-
-Core tables: `query_events` (one row per AI message -> response: `agent_type`, `source` user|auto, `start_time` epoch-ms, `duration` ms, `project_path`, `is_remote`, `is_worktree`), `auto_run_sessions` / `auto_run_tasks`, `session_lifecycle` (`created_at`, `closed_at`, `duration`), `image_annotations`, `shortcut_usage_daily`. Discover the live schema with `stats-query "SELECT name FROM sqlite_master WHERE type='table'"` and `stats-query "PRAGMA table_info(query_events)"`.
-
-```bash
-# Example: busiest project this month
-{{MAESTRO_CLI_PATH}} stats-query "SELECT project_path, COUNT(*) n FROM query_events WHERE start_time > ? GROUP BY project_path ORDER BY n DESC LIMIT 10" --param 1746000000000 --json
-```
-
-### Agents and SSH Remotes
-
-Lifecycle management of Maestro agents and remote-execution targets.
-
-```bash
-# Agents
-{{MAESTRO_CLI_PATH}} create-agent <name> --cwd <path> [-t, --type <agent-type>] [-g, --group <id>] \
-    [--nudge <message>] [--new-session-message <message>] [--custom-path <path>] \
-    [--custom-args <args>] [--env KEY=VALUE]... [--model <model>] [--effort <level>] \
-    [--context-window <size>] [--ssh-remote <id>] [--ssh-cwd <path>] \
-    [--auto-run-folder <path>] [--json]
-{{MAESTRO_CLI_PATH}} create-worktree -a, --agent <parent-id> -b, --branch <name> \
-    [--base-branch <ref>] [-m, --message <text>] [--json]
-{{MAESTRO_CLI_PATH}} remove-agent <agent-id> [--json]
-{{MAESTRO_CLI_PATH}} rename-agent <agent-id> <new-name> [--json]
-{{MAESTRO_CLI_PATH}} focus-agent <agent-id> [--tab <tab-id>] [--json]   # select/focus the agent in the UI
-{{MAESTRO_CLI_PATH}} switch-mode <agent-id> <ai|terminal> [--json]
-
-# Update a live agent's settings (the Edit Agent modal). Reads back via "show agent --json".
-# Group/cwd/SSH are refused while the agent process is running; the rest apply on next spawn.
-# Pass an empty string ("") to clear a text field; --token-source is Claude Code only.
-{{MAESTRO_CLI_PATH}} update-agent <agent-id> [-g, --group <id|none>] [-d, --cwd <path>] \
-    [--ssh-remote <id|none>] [--ssh-cwd <path>] [--sync-history-to-remote <bool>] \
-    [--nudge <message>] [--new-session-message <message>] [--custom-path <path>] \
-    [--custom-args <args>] [--env KEY=VALUE]... [--clear-env] [--model <model>] \
-    [--effort <level>] [--context-window <size|none>] \
-    [--token-source <api|tui|dynamic>] [--maestro-p-path <path>] \
-    [--provider <type> --force] [--json]   # --provider switches provider (destructive: resets tabs/config; needs --force, used alone)
-
-# Groups (use the returned group ID with create-agent -g / update-agent --group)
-{{MAESTRO_CLI_PATH}} create-group <name> [-e, --emoji <emoji>] [--json]
-{{MAESTRO_CLI_PATH}} remove-group <group-id> [-f, --force] [--json]   # agents inside are ungrouped, not deleted; --force required if non-empty
-{{MAESTRO_CLI_PATH}} rename-group <group-id> <new-name> [--json]
-
-# Tabs (mutating verbs take a tab ID - exact or unique prefix - from "session list")
-{{MAESTRO_CLI_PATH}} tab new -a, --agent <id> [-p, --prompt <text>] [--json]
-{{MAESTRO_CLI_PATH}} tab close <tab-id> [--json]
-{{MAESTRO_CLI_PATH}} tab rename <tab-id> <new-name> [--json]
-{{MAESTRO_CLI_PATH}} tab star <tab-id> [--json]
-{{MAESTRO_CLI_PATH}} tab unstar <tab-id> [--json]
-
-# Appearance / experimental features (apply live to the running app)
-{{MAESTRO_CLI_PATH}} set-theme <name|id> [--json]      # or: set-theme --list
-{{MAESTRO_CLI_PATH}} encore list [--json]
-{{MAESTRO_CLI_PATH}} encore enable|disable <feature>   # directorNotes, usageStats, symphony, maestroCue
-
-# Custom theme palette (the in-app Custom Theme Builder). Activate with "set-theme custom".
-{{MAESTRO_CLI_PATH}} theme show [--json]                          # current palette + base (reads disk)
-{{MAESTRO_CLI_PATH}} theme export [-f, --file <path>] [--json]    # portable JSON (UI-compatible); stdout if no --file
-{{MAESTRO_CLI_PATH}} theme import <file> [--no-activate] [--json] # validate, apply live, activate
-{{MAESTRO_CLI_PATH}} theme set <key=value>... [-b, --base <id>] [-a, --activate] [--json]  # e.g. accent=#ff0000
-
-# SSH remotes (used by agents that execute on a remote host)
-{{MAESTRO_CLI_PATH}} list ssh-remotes [--json]
-{{MAESTRO_CLI_PATH}} create-ssh-remote <name> -H, --host <host> [-p, --port <port>] \
-    [-u, --username <user>] [-k, --key <path>] [--env KEY=VALUE]... [--ssh-config] \
-    [--disabled] [--set-default] [--json]
-{{MAESTRO_CLI_PATH}} remove-ssh-remote <remote-id> [--json]
-```
-
-### Director's Notes
-
-Unified history and AI-generated synopses across all agents.
-
-```bash
-{{MAESTRO_CLI_PATH}} director-notes history [-d, --days <n>] [-f, --format json|markdown|text] [--filter auto|user|cue] [-l, --limit <n>]
-{{MAESTRO_CLI_PATH}} director-notes synopsis [-d, --days <n>] [--json]
-```
-
-### Gists
-
-Publish an agent's session transcript to a GitHub gist. Routes through the running desktop app (which holds the live transcript) and uses the user's authenticated `gh` CLI under the hood.
-
-```bash
-{{MAESTRO_CLI_PATH}} gist create <agent-id> [-d, --description <text>] [-p, --public]
-```
-
-Defaults to a private gist; pass `-p` for public. Output is JSON with `gistUrl` on success. Requires the desktop app to be running and `gh` to be authenticated. Error codes: `AGENT_NOT_FOUND`, `MAESTRO_NOT_RUNNING`, `GIST_CREATE_FAILED`.
-
-### Prompts (Self-Reference)
-
-Read Maestro's own system prompts. `{{REF:_name}}` pointers in a parent prompt expand to nothing more than the bundled file's absolute on-disk path; the agent reads the file directly. Use the CLI here when you need the **customized** version (i.e., honors edits made in Settings → Maestro Prompts) rather than the bundled default.
-
-```bash
-# List every available prompt id with description
-{{MAESTRO_CLI_PATH}} prompts list [--json]
-
-# Fetch a single prompt's content (honors user customizations)
-{{MAESTRO_CLI_PATH}} prompts get <id> [--json]
-```
-
-`<id>` is the prompt id from `prompts list`. Includes use leading underscores (e.g., `_maestro-cue`, `_autorun-playbooks`).
+**Prompt self-reference.** A `{{REF:_name}}` pointer in a parent prompt expands to nothing but the bundled file's absolute on-disk path - read it directly with your file tools. Use `prompts get <id>` instead when you need the **customized** version (honors edits made in Settings → Maestro Prompts) rather than the bundled default.

@@ -1027,9 +1027,9 @@ const LogItemComponent = memo(
 							onRecover={(opts) => onSessionRecover?.(opts)}
 						/>
 					)}
-					{/* Mode pill — shows which CLI captured this Claude turn (TUI = maestro-p,
-					    API = claude --print). "Adaptive " prefix indicates the session has
-					    Adaptive Mode enabled (auto-switching between the two). */}
+					{/* Mode pill — shows which CLI captured this Claude turn (TUI Wrapper =
+					    maestro-p, claude -p = claude --print). "Dynamic " prefix indicates the
+					    session has Dynamic Mode enabled (auto-switching between the two). */}
 					{isClaudeCode &&
 						log.source !== 'user' &&
 						(() => {
@@ -1286,6 +1286,7 @@ interface TerminalOutputProps {
 	onDeleteLog?: (logId: string) => number | null; // Returns the index to scroll to after deletion
 	onRemoveQueuedItem?: (itemId: string) => void; // Callback to remove a queued item from execution queue
 	onTogglePauseQueuedItem?: (itemId: string) => void; // Callback to toggle held/paused state of a queued item
+	onEditQueuedItem?: (itemId: string, patch: { text: string; images: string[] }) => void; // Edit a queued message's text + images
 	onReorderQueuedItem?: (fromIndex: number, toIndex: number, tabId?: string) => void; // Reorder a queued item within the active tab's queue
 	onForceSendQueuedItem?: (itemId: string) => void; // Callback to Force Send a queued item (parallel execution)
 	forcedParallelEnabled?: boolean; // Whether forcedParallelExecution setting is on (gates Force Send button)
@@ -1352,6 +1353,7 @@ export const TerminalOutput = memo(
 			onDeleteLog,
 			onRemoveQueuedItem,
 			onTogglePauseQueuedItem,
+			onEditQueuedItem,
 			onReorderQueuedItem,
 			onForceSendQueuedItem,
 			forcedParallelEnabled,
@@ -2366,6 +2368,7 @@ export const TerminalOutput = memo(
 							theme={theme}
 							onRemoveQueuedItem={onRemoveQueuedItem}
 							onTogglePauseQueuedItem={onTogglePauseQueuedItem}
+							onEditQueuedItem={onEditQueuedItem}
 							onReorderItems={
 								onReorderQueuedItem
 									? (fromIndex, toIndex) =>

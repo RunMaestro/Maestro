@@ -592,10 +592,12 @@ function ThinkingStatusPillInner({
 
 	return (
 		// Thinking Pill - centered container with negative top margin to offset parent padding
-		<div className="relative flex justify-center pb-2 -mt-2">
-			{/* Thinking Pill - shrinks to fit content; `relative` anchors the expanded dropdown to the pill's full width. */}
+		<div className="relative flex justify-center pb-2 -mt-2 min-w-0 px-2">
+			{/* Thinking Pill - shrinks to fit content; `relative` anchors the expanded dropdown to the pill's full width.
+			    `max-w-full min-w-0` bounds the pill to the available width so an over-long tab name truncates
+			    (it's the only child without `shrink-0`) instead of wrapping the whole pill to a second line. */}
 			<div
-				className="relative flex items-center gap-2 px-4 py-1.5 rounded-full"
+				className="relative flex items-center gap-2 px-4 py-1.5 rounded-full max-w-full min-w-0"
 				style={{
 					backgroundColor: theme.colors.warning + '20',
 					border: `1px solid ${theme.colors.border}`,
@@ -665,7 +667,7 @@ function ThinkingStatusPillInner({
 						<div className="w-px h-4 shrink-0" style={{ backgroundColor: theme.colors.border }} />
 						<button
 							onClick={() => onSessionClick?.(primarySession.id, primaryTab?.id)}
-							className="text-xs font-mono hover:underline cursor-pointer"
+							className="text-xs font-mono hover:underline cursor-pointer truncate min-w-0"
 							style={{ color: theme.colors.accent }}
 							title={agentSessionId ? `Claude Session: ${agentSessionId}` : 'Claude Session'}
 						>

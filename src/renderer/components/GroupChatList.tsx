@@ -287,21 +287,29 @@ function GroupChatListInner({
 
 	return (
 		<div className="border-t mt-4" style={{ borderColor: theme.colors.border }}>
-			{/* Header - Collapsible with count badge and New button */}
+			{/* Header - Collapsible with count badge and New button.
+			    `gc-header-container` establishes a container-query context so the
+			    right-side controls progressively drop as the sidebar narrows,
+			    keeping everything on a single line instead of wrapping. See the
+			    `@container gcheader` rules in index.css. */}
 			<div
-				className="px-3 py-2 flex items-center justify-between cursor-pointer hover:bg-white/5 group"
+				className="gc-header-container px-3 py-2 flex items-center justify-between cursor-pointer hover:bg-white/5 group"
 				onClick={() => setIsExpanded(!isExpanded)}
 			>
 				<div
-					className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider"
+					className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider whitespace-nowrap min-w-0"
 					style={{ color: theme.colors.textDim }}
 				>
-					{isExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-					<MessageSquare className="w-3.5 h-3.5" />
-					<span>Group Chats</span>
+					{isExpanded ? (
+						<ChevronDown className="w-3 h-3 shrink-0" />
+					) : (
+						<ChevronRight className="w-3 h-3 shrink-0" />
+					)}
+					<MessageSquare className="w-3.5 h-3.5 shrink-0" />
+					<span className="truncate">Group Chats</span>
 					{activeCount > 0 && (
 						<span
-							className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
+							className="gc-count-badge text-[10px] px-1.5 py-0.5 rounded-full font-medium shrink-0"
 							style={{
 								backgroundColor: theme.colors.border,
 								color: theme.colors.textDim,
@@ -311,7 +319,7 @@ function GroupChatListInner({
 						</span>
 					)}
 				</div>
-				<div className="flex items-center gap-1.5">
+				<div className="flex items-center gap-1.5 shrink-0">
 					{onSortAlphabeticalChange && activeCount > 1 && (
 						<button
 							onClick={(e) => {
@@ -355,8 +363,8 @@ function GroupChatListInner({
 									: `Show ${archivedCount} archived chat${archivedCount !== 1 ? 's' : ''}`
 							}
 						>
-							<Archive className="w-3 h-3" />
-							<span>{archivedCount}</span>
+							<Archive className="w-3 h-3 shrink-0" />
+							<span className="gc-archived-count">{archivedCount}</span>
 						</button>
 					)}
 					<button
@@ -374,7 +382,8 @@ function GroupChatListInner({
 						}}
 						title="New Group Chat"
 					>
-						<span>+ New Chat</span>
+						<span aria-hidden="true">+</span>
+						<span className="gc-newchat-label">New Chat</span>
 					</button>
 				</div>
 			</div>

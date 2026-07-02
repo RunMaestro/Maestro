@@ -221,13 +221,15 @@ describe('Stats Listener', () => {
 
 		handler?.('session-retry', testQueryData);
 
-		// Wait for retry to complete
+		// Wait for retry to complete. The retry backoff (~100ms) plus the
+		// stats:updated coalescing window (500ms) means the broadcast lands at
+		// ~600ms, so allow headroom beyond the tight default.
 		await vi.waitFor(
 			() => {
 				expect(mockStatsDB.insertQueryEvent).toHaveBeenCalledTimes(2);
 				expect(mockSafeSend).toHaveBeenCalledWith('stats:updated');
 			},
-			{ timeout: 500 }
+			{ timeout: 1500 }
 		);
 		// Should have logged warning for first failure
 		expect(mockLogger.warn).toHaveBeenCalledWith(
