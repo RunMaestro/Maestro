@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { useSettingsStore } from '../../stores/settingsStore';
 import {
 	useComposerInputStore,
@@ -199,9 +199,16 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	// recalculating on every render - inputValue changes on every keystroke
 	const inputValueLower = useMemo(() => inputValue.toLowerCase(), [inputValue]);
 	const filteredSlashCommands = useMemo(() => {
+		// PERF: only scan the (potentially large) command list while the popover is
+		// actually open. Otherwise this ran filterSlashCommands over every built-in +
+		// custom + speckit/openspec + agent command on every single keystroke, even
+		// for normal typing that never opens the menu. The consumers of this array
+		// (index clamping and SlashCommandPopover, which renders null when closed)
+		// are all no-ops when the menu is shut, so returning [] is safe.
+		if (!slashCommandOpen) return [];
 		const query = inputValueLower.replace(/^\//, '');
 		return filterSlashCommands(slashCommands, query, isTerminalMode);
-	}, [slashCommands, isTerminalMode, inputValueLower]);
+	}, [slashCommands, isTerminalMode, inputValueLower, slashCommandOpen]);
 
 	// Reset the highlighted item to the top whenever the query changes or the
 	// menu opens. Without this, the index lingers from prior arrow navigation
@@ -241,15 +248,26 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		[currentCommandHistory, commandHistoryFilter]
 	);
 
+	// PERF: shared handoff flag so the keystroke path and the autosize effect don't
+	// both reflow the textarea on the same keystroke. onChange sets it and schedules
+	// a single deferred (rAF) resize; the effect, which fires synchronously in the
+	// commit phase, skips its own (blocking) resize when a keystroke resize is
+	// already pending, leaving one reflow per keystroke instead of two. The effect
+	// still owns resizing for tab switches and programmatic value changes (draft
+	// restore, slash/template insertion) that never fire onChange.
+	const keystrokeResizeScheduledRef = useRef(false);
+
 	useInputAreaAutosize({
 		inputRef,
 		inputValue,
 		activeTabId: session.activeTabId,
+		keystrokeResizeScheduledRef,
 	});
 
 	const handleTextChange = useInputAreaTextChange({
 		isTerminalMode,
 		slashCommandOpen,
+		keystrokeResizeScheduledRef,
 		setInputValue,
 		setSlashCommandOpen,
 		setSelectedSlashCommandIndex,

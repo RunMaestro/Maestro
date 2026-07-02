@@ -555,6 +555,15 @@ export function EditAgentModal({
 					)}
 				</div>
 
+				{/* Agent Resilience: auto-retry toggles (default ON), editable post-creation. */}
+				<AgentResilienceSection
+					theme={theme}
+					retryOnAvailabilityErrors={retryOnAvailabilityErrors}
+					retryOnTokenExhaustion={retryOnTokenExhaustion}
+					onChangeAvailability={setRetryOnAvailabilityErrors}
+					onChangeTokenExhaustion={setRetryOnTokenExhaustion}
+				/>
+
 				{/* Working Directory (read-only) */}
 				<div>
 					<div
@@ -600,15 +609,6 @@ export function EditAgentModal({
 
 				{/* Nudge Message */}
 				<NudgeMessageField theme={theme} value={nudgeMessage} onChange={setNudgeMessage} />
-
-				{/* Agent Resilience: auto-retry toggles (default ON), editable post-creation. */}
-				<AgentResilienceSection
-					theme={theme}
-					retryOnAvailabilityErrors={retryOnAvailabilityErrors}
-					retryOnTokenExhaustion={retryOnTokenExhaustion}
-					onChangeAvailability={setRetryOnAvailabilityErrors}
-					onChangeTokenExhaustion={setRetryOnTokenExhaustion}
-				/>
 
 				{/* Agent Configuration (custom path, args, env vars, agent-specific settings) */}
 				{/* Per-session config (path, args, env vars) saved on modal save, not on blur */}

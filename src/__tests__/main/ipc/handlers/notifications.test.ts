@@ -107,6 +107,7 @@ import {
 	clearNotificationQueue,
 	getNotificationMaxQueueSize,
 	parseNotificationCommand,
+	buildNotificationEnv,
 } from '../../../../main/ipc/handlers/notifications';
 
 describe('Notification IPC Handlers', () => {
@@ -394,6 +395,41 @@ describe('Notification IPC Handlers', () => {
 			expect(parseNotificationCommand('curl -X POST https://webhook.example.com')).toBe(
 				'curl -X POST https://webhook.example.com'
 			);
+		});
+	});
+
+	describe('buildNotificationEnv', () => {
+		it('inherits the parent environment so PATH etc. survive', () => {
+			const env = buildNotificationEnv();
+			expect(env.PATH).toBe(process.env.PATH);
+		});
+
+		it('adds no MAESTRO_NOTIFY_* vars when no context is provided', () => {
+			const env = buildNotificationEnv();
+			expect(env.MAESTRO_NOTIFY_AGENT).toBeUndefined();
+			expect(env.MAESTRO_NOTIFY_TAB).toBeUndefined();
+			expect(env.MAESTRO_NOTIFY_GROUP).toBeUndefined();
+			expect(env.MAESTRO_NOTIFY_TASK).toBeUndefined();
+		});
+
+		it('maps provided context onto MAESTRO_NOTIFY_* vars', () => {
+			const env = buildNotificationEnv({
+				agent: 'refactor-auth',
+				tab: 'main',
+				group: 'Backend',
+				task: 'Fix the login bug',
+			});
+			expect(env.MAESTRO_NOTIFY_AGENT).toBe('refactor-auth');
+			expect(env.MAESTRO_NOTIFY_TAB).toBe('main');
+			expect(env.MAESTRO_NOTIFY_GROUP).toBe('Backend');
+			expect(env.MAESTRO_NOTIFY_TASK).toBe('Fix the login bug');
+		});
+
+		it('omits empty-string fields so commands can test for presence', () => {
+			const env = buildNotificationEnv({ agent: 'solo', tab: '', group: undefined });
+			expect(env.MAESTRO_NOTIFY_AGENT).toBe('solo');
+			expect(env.MAESTRO_NOTIFY_TAB).toBeUndefined();
+			expect(env.MAESTRO_NOTIFY_GROUP).toBeUndefined();
 		});
 	});
 

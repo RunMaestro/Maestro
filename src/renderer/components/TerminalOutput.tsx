@@ -470,6 +470,14 @@ const LogItemComponent = memo(
 				ref={logItemRef}
 				className={`flex gap-4 group ${isReversed ? 'flex-row-reverse' : ''} px-6 py-2`}
 				data-log-index={index}
+				// PERF: the transcript is not virtualized, so every message stays in the
+				// DOM. content-visibility:auto lets the browser skip style/layout/paint for
+				// off-screen rows (the dominant scroll cost - a huge static layer tree the
+				// compositor re-walked every frame). contain-intrinsic-size: 'auto <fallback>'
+				// reserves height so the scrollbar stays stable; `auto` makes the browser
+				// remember each row's real rendered size after it's been shown once. No DOM,
+				// React, or behavior change - purely a rendering hint.
+				style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 120px' }}
 			>
 				<div
 					className={`w-20 shrink-0 text-[10px] pt-2 ${isReversed ? 'text-right' : 'text-left'}`}

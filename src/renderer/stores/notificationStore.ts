@@ -333,8 +333,16 @@ export function notifyToast(toast: NotifyToastInput): string {
 	// Custom notification command (audio/TTS). The actual enabled/command/content
 	// gate lives in triggerCustomNotification so it can be reused by callers that
 	// fire audio without a visual toast (e.g. completion while viewing the tab).
+	// Forward the agent/tab/group/task context so commands can reference it via
+	// MAESTRO_NOTIFY_* env vars (e.g. to name which agent finished). `project` is
+	// the Left Bar agent name.
 	if (!toast.skipCustomNotification) {
-		triggerCustomNotification(toast.message);
+		triggerCustomNotification(toast.message, {
+			agent: toast.project,
+			tab: toast.tabName,
+			group: toast.group,
+			task: toast.title,
+		});
 	}
 
 	// OS desktop notification
@@ -389,16 +397,28 @@ export function notifyToast(toast: NotifyToastInput): string {
  * both from notifyToast (visual + audio together) and from completion handlers
  * that need the audio cue even when no visual toast is shown.
  *
+ * `vars` (optional) carries Maestro context (agent/tab/group/task) that the
+ * command receives as MAESTRO_NOTIFY_* env vars.
+ *
  * @returns true if a command was dispatched, false if gated out.
  */
-export function triggerCustomNotification(message: string | undefined): boolean {
+export function triggerCustomNotification(
+	message: string | undefined,
+	vars?: { agent?: string; tab?: string; group?: string; task?: string }
+): boolean {
 	const { config } = useNotificationStore.getState();
 	const hasContent = !!message && message.trim().length > 0;
 	const shouldFire = config.audioFeedbackEnabled && !!config.audioFeedbackCommand && hasContent;
 	if (!shouldFire) return false;
 
 	if (typeof window !== 'undefined' && window.maestro?.notification?.speak) {
-		window.maestro.notification.speak(message!, config.audioFeedbackCommand).catch((err) => {
+		// Stay 2-arg when no context is provided so callers (and their tests) that
+		// don't pass vars are unaffected.
+		const dispatched =
+			vars === undefined
+				? window.maestro.notification.speak(message!, config.audioFeedbackCommand)
+				: window.maestro.notification.speak(message!, config.audioFeedbackCommand, vars);
+		dispatched.catch((err) => {
 			logger.error('[notificationStore] Custom notification failed:', undefined, err);
 		});
 		return true;

@@ -144,7 +144,7 @@ export function ProfilingCaptureModal({ theme, onClose }: ProfilingCaptureModalP
 			priority={MODAL_PRIORITIES.DEBUG_PROFILING_CAPTURE}
 			onClose={handleClose}
 			headerIcon={<Gauge size={18} style={{ color: theme.colors.accent }} />}
-			width={440}
+			width={620}
 			showCloseButton={isTerminal}
 			footer={
 				isTerminal ? (

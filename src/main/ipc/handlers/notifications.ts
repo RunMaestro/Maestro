@@ -68,11 +68,29 @@ export interface NotificationCommandResponse {
 }
 
 /**
+ * Optional Maestro context forwarded to the custom notification command as
+ * environment variables (MAESTRO_NOTIFY_*). Passing metadata via env instead of
+ * string interpolation keeps it safe from shell injection; unset fields are
+ * simply absent from the child's environment.
+ */
+export interface NotificationCommandVars {
+	/** Agent name (Left Bar entity / session name) -> MAESTRO_NOTIFY_AGENT */
+	agent?: string;
+	/** AI tab name within the agent -> MAESTRO_NOTIFY_TAB */
+	tab?: string;
+	/** Group the agent belongs to -> MAESTRO_NOTIFY_GROUP */
+	group?: string;
+	/** Originating task/prompt title -> MAESTRO_NOTIFY_TASK */
+	task?: string;
+}
+
+/**
  * Item in the notification command queue
  */
 interface NotificationQueueItem {
 	text: string;
 	command?: string;
+	vars?: NotificationCommandVars;
 	resolve: (result: NotificationCommandResponse) => void;
 }
 
@@ -133,6 +151,22 @@ export function parseNotificationCommand(command?: string): string {
 }
 
 /**
+ * Build the child-process environment for a notification command.
+ *
+ * Always inherits the parent environment (so PATH etc. stay intact) and layers
+ * on MAESTRO_NOTIFY_* variables for any context the caller provided. Empty or
+ * missing fields are omitted so commands can test for their presence.
+ */
+export function buildNotificationEnv(vars?: NotificationCommandVars): NodeJS.ProcessEnv {
+	const env: NodeJS.ProcessEnv = { ...process.env };
+	if (vars?.agent) env.MAESTRO_NOTIFY_AGENT = vars.agent;
+	if (vars?.tab) env.MAESTRO_NOTIFY_TAB = vars.tab;
+	if (vars?.group) env.MAESTRO_NOTIFY_GROUP = vars.group;
+	if (vars?.task) env.MAESTRO_NOTIFY_TASK = vars.task;
+	return env;
+}
+
+/**
  * Result from executeNotificationCommand.
  * `response` is returned to the renderer immediately (contains the notificationId).
  * `completed` resolves when the process exits (used by the queue for spacing).
@@ -148,7 +182,11 @@ interface ExecuteResult {
  * can show a Stop button. The `completed` promise resolves when the process
  * exits, allowing the queue to enforce spacing between notifications.
  */
-function executeNotificationCommand(text: string, command?: string): ExecuteResult {
+function executeNotificationCommand(
+	text: string,
+	command?: string,
+	vars?: NotificationCommandVars
+): ExecuteResult {
 	const fullCommand = parseNotificationCommand(command);
 	const textLength = text?.length || 0;
 	const textPreview = text
@@ -172,10 +210,13 @@ function executeNotificationCommand(text: string, command?: string): ExecuteResu
 		});
 
 		// Spawn the process with shell mode to support pipes and command chains
-		// The text is passed via stdin, not as command arguments
+		// The text is passed via stdin, not as command arguments. Maestro context
+		// (agent/tab/group/task) rides along as MAESTRO_NOTIFY_* env vars so the
+		// command can reference it without any shell-injection risk.
 		const child = spawn(fullCommand, [], {
 			stdio: ['pipe', 'ignore', 'pipe'], // stdin: pipe, stdout: ignore, stderr: pipe for errors
 			shell: true, // Enable shell mode to support pipes (e.g., "cmd1 | cmd2")
+			env: buildNotificationEnv(vars),
 		});
 
 		// Generate a unique ID for this notification process
@@ -341,7 +382,7 @@ async function processNextNotification(): Promise<void> {
 
 	// Execute the notification command — resolve the IPC call immediately
 	// with the notificationId, then await completion for queue spacing
-	const { response, completed } = executeNotificationCommand(item.text, item.command);
+	const { response, completed } = executeNotificationCommand(item.text, item.command, item.vars);
 	item.resolve(response);
 	await completed;
 
@@ -424,7 +465,12 @@ export function registerNotificationsHandlers(deps?: NotificationsHandlerDepende
 	// Custom notification command - queued to prevent overlap
 	ipcMain.handle(
 		'notification:speak',
-		async (_event, text: string, command?: string): Promise<NotificationCommandResponse> => {
+		async (
+			_event,
+			text: string,
+			command?: string,
+			vars?: NotificationCommandVars
+		): Promise<NotificationCommandResponse> => {
 			// Skip if there's no content to send
 			if (!text || text.trim().length === 0) {
 				logger.info('Notification skipped - empty or whitespace-only content', 'Notification', {
@@ -448,7 +494,7 @@ export function registerNotificationsHandlers(deps?: NotificationsHandlerDepende
 
 			// Add to queue and return a promise that resolves when this notification completes
 			return new Promise<NotificationCommandResponse>((resolve) => {
-				notificationQueue.push({ text, command, resolve });
+				notificationQueue.push({ text, command, vars, resolve });
 				logger.debug(
 					`Notification queued, queue length: ${notificationQueue.length}`,
 					'Notification'

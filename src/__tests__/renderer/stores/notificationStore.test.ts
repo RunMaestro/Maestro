@@ -384,10 +384,24 @@ describe('notificationStore', () => {
 		});
 
 		describe('audio feedback', () => {
-			it('calls speak when enabled with command and content', () => {
+			it('calls speak when enabled with command, content, and Maestro context vars', () => {
 				useNotificationStore.getState().setAudioFeedback(true, 'say');
-				notifyToast({ type: 'success', title: 'Test', message: 'Hello world' });
-				expect(mockSpeak).toHaveBeenCalledWith('Hello world', 'say');
+				notifyToast({
+					type: 'success',
+					title: 'Test',
+					message: 'Hello world',
+					project: 'refactor-auth',
+					tabName: 'main',
+					group: 'Backend',
+				});
+				// The agent/tab/group/task context rides along so custom commands can
+				// reference it via MAESTRO_NOTIFY_* env vars.
+				expect(mockSpeak).toHaveBeenCalledWith('Hello world', 'say', {
+					agent: 'refactor-auth',
+					tab: 'main',
+					group: 'Backend',
+					task: 'Test',
+				});
 			});
 
 			it('does not call speak when disabled', () => {

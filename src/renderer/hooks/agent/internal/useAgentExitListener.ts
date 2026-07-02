@@ -819,7 +819,12 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 						// silently dropped whenever you watch an agent finish - the synopsis
 						// toast that does appear sets skipCustomNotification, so without this
 						// the completion would make no sound at all.
-						triggerCustomNotification(toastData!.summary);
+						triggerCustomNotification(toastData!.summary, {
+							agent: toastData!.projectName,
+							tab: toastData!.tabName,
+							group: toastData!.groupName,
+							task: toastData!.title,
+						});
 					}
 				}, 0);
 			}

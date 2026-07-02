@@ -104,6 +104,24 @@ describe('Notification Preload API', () => {
 			expect(result.success).toBe(true);
 		});
 
+		it('should stay 3-arg when no context vars are passed', async () => {
+			mockInvoke.mockResolvedValue({ success: true, notificationId: 900 });
+
+			await api.speak('Hi', 'say');
+
+			// No trailing `undefined` vars arg — keeps back-compat with callers/tests.
+			expect(mockInvoke).toHaveBeenCalledWith('notification:speak', 'Hi', 'say');
+		});
+
+		it('should forward Maestro context vars as a 4th arg when provided', async () => {
+			mockInvoke.mockResolvedValue({ success: true, notificationId: 901 });
+
+			const vars = { agent: 'refactor-auth', tab: 'main', group: 'Backend', task: 'Fix login' };
+			await api.speak('Done', 'say', vars);
+
+			expect(mockInvoke).toHaveBeenCalledWith('notification:speak', 'Done', 'say', vars);
+		});
+
 		it('should accept non-TTS commands like curl, tee, cat, etc.', async () => {
 			mockInvoke.mockResolvedValue({ success: true, notificationId: 222 });
 

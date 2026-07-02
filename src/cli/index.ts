@@ -59,6 +59,7 @@ import { promptsGet, promptsList } from './commands/prompts-get';
 import { gistCreate } from './commands/gist';
 import { notifyToast } from './commands/notify-toast';
 import { notifyFlash } from './commands/notify-flash';
+import { profilingStart, profilingStop, profilingStatus } from './commands/profiling';
 import { stats, statsQuery } from './commands/stats';
 import { renameAgent } from './commands/rename-agent';
 import { renameGroup } from './commands/rename-group';
@@ -990,6 +991,32 @@ notify
 	.option('-t, --timeout <seconds>', 'Auto-dismiss after N seconds (range: (0, 5]; default 1.5)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(notifyFlash);
+
+const profiling = program
+	.command('profiling')
+	.description('Start/stop a Chromium performance capture in the desktop app (for perf iteration)');
+
+profiling
+	.command('start')
+	.description('Begin a performance capture (no-ops if one is already recording)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(profilingStart);
+
+profiling
+	.command('stop')
+	.description('Stop the capture and write the compressed .zip bundle to --output')
+	.requiredOption(
+		'-o, --output <path>',
+		'Destination .zip path (absolute or relative to cwd; ~ expanded). Parent dirs are created.'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(profilingStop);
+
+profiling
+	.command('status')
+	.description('Report whether a capture is currently recording')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(profilingStatus);
 
 // Stats commands - introspect the Usage Dashboard's SQLite store (requires the
 // running Maestro desktop app, which owns the open database).
