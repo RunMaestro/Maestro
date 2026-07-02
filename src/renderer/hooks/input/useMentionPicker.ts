@@ -190,7 +190,7 @@ export function useMentionPicker(params: UseMentionPickerParams): UseMentionPick
 		}
 
 		return { items, counts };
-	}, [filter, category, fileSuggestions, getAgentSuggestions]);
+	}, [filter, category, fileSuggestions, getAgentSuggestions, crossAgentMentionsEnabled]);
 }
 
 export interface MentionAcceptResult {

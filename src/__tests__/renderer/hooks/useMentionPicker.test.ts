@@ -147,6 +147,36 @@ describe('useMentionPicker', () => {
 		// The picker never collapses to empty just because the flag is off.
 		expect(gated.items.map((i) => i.kind)).toContain('file');
 	});
+
+	it('recomputes when only crossAgentMentionsEnabled flips (memo dep guard)', () => {
+		// Every other input keeps a STABLE reference across the rerender, so if the
+		// flag were missing from the useMemo deps the result would stay stale.
+		const sessions = [agent('a', 'Alpha')];
+		const groups: Group[] = [];
+		const fileSuggestions = [fileSug('a.ts', 'file')];
+
+		const { result, rerender } = renderHook(
+			({ enabled }: { enabled: boolean }) =>
+				useMentionPicker({
+					filter: '',
+					category: 'all',
+					sessions,
+					groups,
+					currentSessionId: 'current',
+					fileSuggestions,
+					crossAgentMentionsEnabled: enabled,
+				}),
+			{ initialProps: { enabled: false } }
+		);
+
+		expect(result.current.counts.agents).toBe(0);
+
+		rerender({ enabled: true });
+		// The agent now surfaces even though filter/category/fileSuggestions/sessions
+		// are referentially unchanged - proving the flag is a real memo dependency.
+		expect(result.current.counts.agents).toBe(1);
+		expect(result.current.items.some((i) => i.kind === 'agent')).toBe(true);
+	});
 });
 
 describe('getMentionCategoryCycle', () => {

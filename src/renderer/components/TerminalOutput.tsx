@@ -1056,8 +1056,8 @@ const LogItemComponent = memo(
 							onRecover={(opts) => onSessionRecover?.(opts)}
 						/>
 					)}
-					{/* Cross-agent attribution pill — this AI reply was routed back from a
-					    DIFFERENT agent the user consulted via @@mention. Bottom-center,
+					{/* Cross-agent attribution pill - this AI reply was routed back from a
+					    DIFFERENT agent the user consulted via @mention. Bottom-center,
 					    mirroring the mode pill's placement. It REPLACES the delivery-method
 					    (API/TUI) pill below so only one pill ever shows. Streaming adds a
 					    spinner; hover reveals full provenance for debugging. */}

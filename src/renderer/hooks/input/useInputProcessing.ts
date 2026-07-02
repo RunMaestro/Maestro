@@ -1357,6 +1357,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			flushBatchedUpdates,
 			onHistoryCommand,
 			onWizardCommand,
+			onCrossAgentMentions,
 		]
 	);
 

@@ -14,7 +14,7 @@
  */
 
 import { useCallback, useEffect, useRef, useMemo } from 'react';
-import type { Session, BatchRunState, QueuedItem, CustomAICommand } from '../../types';
+import type { Session, Group, BatchRunState, QueuedItem, CustomAICommand } from '../../types';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useGroupChatStore } from '../../stores/groupChatStore';
@@ -44,6 +44,11 @@ function isImagePath(path: string): boolean {
 	const ext = path.toLowerCase().split('.').pop();
 	return ext ? IMAGE_EXTENSIONS.has(ext) : false;
 }
+
+// Stable empty references so the gated sessions/groups selectors return the same
+// value on every render while the `@` picker is closed - no re-render churn.
+const EMPTY_SESSIONS: Session[] = [];
+const EMPTY_GROUPS: Group[] = [];
 
 /**
  * Convert an absolute filesystem path into the form used inside an `@` mention:
@@ -192,9 +197,6 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	// --- Store subscriptions (reactive) ---
 	const activeSession = useSessionStore(selectActiveSession);
 	const activeSessionId = useSessionStore((s) => s.activeSessionId);
-	// All agents + groups feed the Agents scope of the unified `@` picker.
-	const sessions = useSessionStore((s) => s.sessions);
-	const groups = useSessionStore((s) => s.groups);
 	const setSessions = useMemo(() => useSessionStore.getState().setSessions, []);
 	const activeGroupChatId = useGroupChatStore((s) => s.activeGroupChatId);
 	const setGroupChatStagedImages = useMemo(
@@ -227,6 +229,13 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		atMentionCategory,
 		setSlashCommandOpen,
 	} = useInputContext();
+
+	// All agents + groups feed the Agents scope of the unified `@` picker. Gate
+	// the subscription on atMentionOpen so streaming flushes from any agent don't
+	// recompute mention suggestions while the picker is closed (mirrors the
+	// fileSuggestions gate below). Stable empty refs avoid re-render churn.
+	const sessions = useSessionStore((s) => (atMentionOpen ? s.sessions : EMPTY_SESSIONS));
+	const groups = useSessionStore((s) => (atMentionOpen ? s.groups : EMPTY_GROUPS));
 
 	// --- Derived values ---
 	const activeTab = activeSession ? getActiveTab(activeSession) : null;

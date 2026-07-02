@@ -107,6 +107,11 @@ export function useCrossAgentDispatch(): UseCrossAgentDispatchResult {
 	// requestId -> tracking state. A ref (not state): chunk handling mutates it
 	// between renders and must not itself trigger a re-render.
 	const pendingRef = useRef<Map<string, TrackedRequest>>(new Map());
+	// requestIds whose terminal (`done`) chunk already landed. Guards the race
+	// where a fast failure/short response arrives BEFORE send() resolves: without
+	// it, the late .then() re-registers pendingRef and calls start() for an
+	// already-finished request, leaving the "N agents responding" pill stuck.
+	const completedRef = useRef<Set<string>>(new Set());
 
 	const applyChunk = useCallback((chunk: CrossAgentResponseChunk): void => {
 		const map = pendingRef.current;
@@ -151,6 +156,7 @@ export function useCrossAgentDispatch(): UseCrossAgentDispatchResult {
 
 		if (chunk.done) {
 			map.delete(chunk.requestId);
+			completedRef.current.add(chunk.requestId);
 			// Drop it from the live "N agents responding…" indicator.
 			useCrossAgentInFlightStore.getState().finish(chunk.requestId);
 		}
@@ -181,6 +187,9 @@ export function useCrossAgentDispatch(): UseCrossAgentDispatchResult {
 				strategy,
 			})
 			.then(({ requestId }) => {
+				// The terminal chunk already landed (fast failure/short response that
+				// beat this resolution) - don't resurrect a finished request.
+				if (completedRef.current.has(requestId)) return;
 				// Pre-register so streamed chunks reuse one stable LogEntry id.
 				if (!pendingRef.current.has(requestId)) {
 					pendingRef.current.set(requestId, {

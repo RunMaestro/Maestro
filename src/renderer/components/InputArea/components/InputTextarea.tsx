@@ -38,6 +38,11 @@ const SHARED_TYPOGRAPHY: React.CSSProperties = {
 	lineHeight: '1.25rem',
 	fontFamily: 'inherit',
 	letterSpacing: 'normal',
+	// Must be shared: Chrome does not auto-apply break-word to a <textarea>, so a
+	// long unbroken token (e.g. `@src/a/really/long/path.ts`) would wrap in the
+	// decorative overlay but overflow-scroll in the textarea, drifting the chips
+	// off the caret. Keeping it here syncs both layers.
+	wordBreak: 'break-word',
 };
 
 export const InputTextarea = memo(function InputTextarea({
@@ -71,9 +76,14 @@ export const InputTextarea = memo(function InputTextarea({
 	// words stay plain text. Excludes the current agent (can't @-mention itself).
 	const sessions = useSessionStore((state) => state.sessions);
 	const groups = useSessionStore((state) => state.groups);
+	// Only build the roster when the input actually contains an `@` candidate.
+	// `sessions` changes on every streaming flush from any agent; without this
+	// guard we'd rescan the whole roster per flush even for `@`-free input.
+	const hasMentionCandidate = overlayEnabled && inputValue.includes('@');
 	const knownMentionNames = useMemo(
-		() => (overlayEnabled ? buildKnownMentionNameSet(sessions, groups, session.id) : undefined),
-		[overlayEnabled, sessions, groups, session.id]
+		() =>
+			hasMentionCandidate ? buildKnownMentionNameSet(sessions, groups, session.id) : undefined,
+		[hasMentionCandidate, sessions, groups, session.id]
 	);
 
 	// Tokenize the raw input into text / file / agent segments. Same source of
@@ -109,10 +119,11 @@ export const InputTextarea = memo(function InputTextarea({
 					aria-hidden="true"
 					className="pointer-events-none absolute inset-0 overflow-hidden"
 					style={{
+						// wordBreak comes from SHARED_TYPOGRAPHY so it stays in sync with
+						// the textarea; only overlay-specific props are set here.
 						...SHARED_TYPOGRAPHY,
 						zIndex: 0,
 						whiteSpace: 'pre-wrap',
-						wordBreak: 'break-word',
 						padding: '0.75rem 0.75rem 0 0.75rem',
 						color: theme.colors.textMain,
 					}}

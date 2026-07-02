@@ -144,14 +144,14 @@ export function registerCrossAgentHandlers(deps: CrossAgentHandlerDependencies):
 						requestId,
 						error: err instanceof Error ? err.message : String(err),
 					});
+					const errorTarget = getTargetSession(payload.targetSessionId);
 					const errorChunk: CrossAgentResponseChunk = {
 						requestId,
 						sourceSessionId: payload.sourceSessionId,
 						sourceTabId: payload.sourceTabId,
 						targetSessionId: payload.targetSessionId,
-						targetAgentName: getTargetSession(payload.targetSessionId)?.name ?? payload.targetSessionId,
-						targetToolType: (getTargetSession(payload.targetSessionId)?.toolType ??
-							'claude-code') as ToolType,
+						targetAgentName: errorTarget?.name ?? payload.targetSessionId,
+						targetToolType: (errorTarget?.toolType ?? 'claude-code') as ToolType,
 						chunk: '',
 						done: true,
 						error: err instanceof Error ? err.message : String(err),
