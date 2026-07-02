@@ -16,6 +16,11 @@ const sharedExclude = [
 // (renderer/web UI, plus a handful that pull in a browser global transitively).
 // These stay on the jsdom project; everything else backend runs on the much
 // faster `node` environment (no jsdom setup cost).
+//
+// If a backend .ts test fails under the node project with something like
+// "ReferenceError: document/window is not defined", it needs a DOM: add its
+// path here (or move the DOM dependency behind a mock). Everything matched
+// here runs under jsdom and nowhere else - the node project excludes this list.
 const jsdomOnlyTs = [
 	'src/__tests__/renderer/**/*.{test,spec}.ts',
 	'src/__tests__/web/**/*.{test,spec}.ts',
