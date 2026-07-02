@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Session, AITab, ThinkingMode } from '../../types';
-import { getInitialRenameValue } from '../../utils/tabHelpers';
+import { getInitialRenameValue, moveActiveUnifiedTabToEdge } from '../../utils/tabHelpers';
 import { useModalStore } from '../../stores/modalStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { isActiveOutputSearchOpen } from '../../utils/outputSearch';
@@ -431,6 +431,71 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			) {
 				e.preventDefault();
 				document.querySelector<HTMLInputElement>('.terminal-output input')?.focus();
+				return;
+			}
+
+			// Tab tiling (split panes): the Ctrl+Cmd pane family is matched with a
+			// dedicated matcher (isPaneShortcut requires BOTH Ctrl and Cmd) so it never
+			// collides with the plain-Cmd shortcuts below (Cmd+W, Cmd+=, Cmd+D pieces).
+			// Every handler is window-scoped and no-ops when there's no active group,
+			// so it's safe to only preventDefault when a group is actually present.
+			const hasActiveGroup =
+				!!ctx.activeSession?.activeGroupId &&
+				(ctx.activeSession.tabGroups ?? []).some(
+					(g: { id: string }) => g.id === ctx.activeSession.activeGroupId
+				);
+			if (hasActiveGroup && ctx.isPaneShortcut(e, 'paneFocusLeft')) {
+				e.preventDefault();
+				ctx.tilingShortcuts.focusPane('left');
+				return;
+			} else if (hasActiveGroup && ctx.isPaneShortcut(e, 'paneFocusRight')) {
+				e.preventDefault();
+				ctx.tilingShortcuts.focusPane('right');
+				return;
+			} else if (hasActiveGroup && ctx.isPaneShortcut(e, 'paneFocusUp')) {
+				e.preventDefault();
+				ctx.tilingShortcuts.focusPane('up');
+				return;
+			} else if (hasActiveGroup && ctx.isPaneShortcut(e, 'paneFocusDown')) {
+				e.preventDefault();
+				ctx.tilingShortcuts.focusPane('down');
+				return;
+			} else if (hasActiveGroup && ctx.isPaneShortcut(e, 'paneSplitColumn')) {
+				// Stacked split - checked before paneSplitRow because it carries Shift.
+				e.preventDefault();
+				ctx.tilingShortcuts.splitFocusedPane('column');
+				return;
+			} else if (hasActiveGroup && ctx.isPaneShortcut(e, 'paneSplitRow')) {
+				e.preventDefault();
+				ctx.tilingShortcuts.splitFocusedPane('row');
+				return;
+			} else if (hasActiveGroup && ctx.isPaneShortcut(e, 'paneClose')) {
+				e.preventDefault();
+				ctx.tilingShortcuts.closeFocusedPane();
+				return;
+			} else if (hasActiveGroup && ctx.isPaneShortcut(e, 'paneZoom')) {
+				e.preventDefault();
+				ctx.tilingShortcuts.toggleZoom();
+				return;
+			} else if (hasActiveGroup && ctx.isPaneShortcut(e, 'paneRebalance')) {
+				e.preventDefault();
+				ctx.tilingShortcuts.rebalance();
+				return;
+			}
+
+			// Alt+[ / Alt+] cycle focus through the active group's panes (prev/next). These
+			// live on Alt (not the Ctrl+Cmd family) so they're matched by the general
+			// isShortcut. Skip when typing in an input so Opt+[ / Opt+] can still produce
+			// their macOS characters ("/') in the AI input; only act on a live group.
+			if (hasActiveGroup && !isEditableTarget && ctx.isShortcut(e, 'paneCyclePrev')) {
+				e.preventDefault();
+				ctx.tilingShortcuts.cyclePane('prev');
+				trackShortcut('paneCyclePrev');
+				return;
+			} else if (hasActiveGroup && !isEditableTarget && ctx.isShortcut(e, 'paneCycleNext')) {
+				e.preventDefault();
+				ctx.tilingShortcuts.cyclePane('next');
+				trackShortcut('paneCycleNext');
 				return;
 			}
 
@@ -1139,6 +1204,31 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						return prev.map((s: Session) => (s.id === current.id ? result.session : s));
 					});
 					trackShortcut('prevTab');
+				}
+				// Cmd+Shift+Left / Cmd+Shift+Right - Move the active tab to the first /
+				// last position. Works for ALL tab kinds (AI, file, browser, terminal)
+				// since it reorders unifiedTabOrder directly.
+				if (ctx.isTabShortcut(e, 'moveTabToStart')) {
+					e.preventDefault();
+					ctx.setSessions((prev: Session[]) => {
+						const current = prev.find((s: Session) => s.id === ctx.activeSessionId);
+						if (!current) return prev;
+						const updated = moveActiveUnifiedTabToEdge(current, 'start');
+						if (updated === current) return prev;
+						return prev.map((s: Session) => (s.id === current.id ? updated : s));
+					});
+					trackShortcut('moveTabToStart');
+				}
+				if (ctx.isTabShortcut(e, 'moveTabToEnd')) {
+					e.preventDefault();
+					ctx.setSessions((prev: Session[]) => {
+						const current = prev.find((s: Session) => s.id === ctx.activeSessionId);
+						if (!current) return prev;
+						const updated = moveActiveUnifiedTabToEdge(current, 'end');
+						if (updated === current) return prev;
+						return prev.map((s: Session) => (s.id === current.id ? updated : s));
+					});
+					trackShortcut('moveTabToEnd');
 				}
 				// Cmd+1-9, Cmd+0 — Jump to tab by index in unified order.
 				// In unread-only mode, index into the filtered/visible tabs so Cmd+N matches

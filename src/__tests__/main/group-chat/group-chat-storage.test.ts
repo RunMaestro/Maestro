@@ -122,6 +122,26 @@ describe('group-chat-storage', () => {
 			await deleteGroupChat(chat.id);
 		});
 
+		it('preserves special characters in the name (e.g. slashes)', async () => {
+			// The on-disk directory is keyed by UUID, not the name, so names may
+			// contain filesystem-invalid characters just like regular agent names.
+			const chat = await createGroupChat('feat/login <v2>', 'claude-code');
+
+			expect(chat.name).toBe('feat/login <v2>');
+
+			// Clean up
+			await deleteGroupChat(chat.id);
+		});
+
+		it('strips control characters and falls back when empty', async () => {
+			const chat = await createGroupChat('\x00\x07  \x1f', 'claude-code');
+
+			expect(chat.name).toBe('Untitled Chat');
+
+			// Clean up
+			await deleteGroupChat(chat.id);
+		});
+
 		it('creates chat with correct timestamps', async () => {
 			const beforeTime = Date.now();
 			const chat = await createGroupChat('Timestamp Test', 'claude-code');
@@ -356,6 +376,19 @@ describe('group-chat-storage', () => {
 			// Verify persisted
 			const loaded = await loadGroupChat(chat.id);
 			expect(loaded!.name).toBe('Renamed');
+
+			// Clean up
+			await deleteGroupChat(chat.id);
+		});
+
+		it('preserves special characters when renaming', async () => {
+			const chat = await createGroupChat('Original', 'claude-code');
+			const updated = await updateGroupChat(chat.id, { name: 'ops/deploy <hotfix>' });
+
+			expect(updated.name).toBe('ops/deploy <hotfix>');
+
+			const loaded = await loadGroupChat(chat.id);
+			expect(loaded!.name).toBe('ops/deploy <hotfix>');
 
 			// Clean up
 			await deleteGroupChat(chat.id);

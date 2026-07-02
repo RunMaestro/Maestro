@@ -27,6 +27,7 @@ vi.mock('../../../cli/services/maestro-client', () => ({
 import { autoRun } from '../../../cli/commands/auto-run';
 import { withMaestroClient, resolveTargetSessionId } from '../../../cli/services/maestro-client';
 import { existsSync } from 'fs';
+import path from 'path';
 
 describe('auto-run command', () => {
 	let consoleSpy: MockInstance;
@@ -313,7 +314,7 @@ describe('auto-run command', () => {
 		expect(sentMessage).toBeDefined();
 		expect(sentMessage!.worktree).toEqual({
 			enabled: true,
-			path: '/tmp/wt',
+			path: path.resolve('/tmp/wt'),
 			branchName: 'feature/auto',
 			baseBranch: '', // --base-branch not supplied in this test
 			createPROnCompletion: true,

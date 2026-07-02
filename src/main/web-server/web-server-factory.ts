@@ -16,6 +16,7 @@ import type { StoredSession, SettingsStoreInterface as SettingsStore } from '../
 import type { Group, SshRemoteConfig } from '../../shared/types';
 import { execGit } from '../utils/remote-git';
 import { getSshRemoteById } from '../stores';
+import { isImageRef, resolveToDataUrlSync } from '../storage/session-image-store';
 import { parseGitBranches } from '../../shared/gitUtils';
 import type { Shortcut } from '../../shared/shortcut-types';
 import type { WebPlaybook, CueSubscriptionInfo, CueActivityEntry } from './types';
@@ -375,8 +376,21 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					aiLogs = [];
 				} else {
 					const rawLogs = (targetTab || session.aiTabs[0])?.logs || [];
-					// Include thinking and tool logs for UX parity with desktop
-					aiLogs = rawLogs;
+					// Include thinking and tool logs for UX parity with desktop.
+					// Web/mobile clients run in a plain browser and can't load the
+					// maestro-image protocol, so resolve any relocated image refs back
+					// to inline data URLs for transport (desktop keeps the lean ref).
+					aiLogs = rawLogs.map((log: any) => {
+						if (!Array.isArray(log?.images) || log.images.length === 0) return log;
+						const hasRef = log.images.some((img: unknown) => isImageRef(img as string));
+						if (!hasRef) return log;
+						return {
+							...log,
+							images: log.images
+								.map((img: string) => resolveToDataUrlSync(img))
+								.filter((img: string | null): img is string => img !== null),
+						};
+					});
 				}
 			}
 

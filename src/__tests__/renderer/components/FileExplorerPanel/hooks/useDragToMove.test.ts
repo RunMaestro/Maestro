@@ -314,7 +314,7 @@ describe('useDragToMove', () => {
 			expect(mockMaestro.fs.copyPath).toHaveBeenCalledWith(
 				'/external/photo.png',
 				'/project/dest/photo.png',
-				{ overwrite: false }
+				{ overwrite: false, sshRemoteId: undefined }
 			);
 			expect(mockMaestro.fs.rename).not.toHaveBeenCalled();
 		});
@@ -329,7 +329,7 @@ describe('useDragToMove', () => {
 			expect(mockMaestro.fs.copyPath).toHaveBeenCalledWith(
 				'/external/notes.md',
 				'/project/notes.md',
-				{ overwrite: false }
+				{ overwrite: false, sshRemoteId: undefined }
 			);
 		});
 
@@ -366,7 +366,7 @@ describe('useDragToMove', () => {
 			expect(onShowFlash).toHaveBeenCalledWith('Imported "photo.png"');
 		});
 
-		it('ignores OS file drops on SSH remote sessions', () => {
+		it('uploads a dropped OS file to the remote host on SSH sessions', async () => {
 			const { result } = renderHook(() =>
 				useDragToMove({ ...defaultArgs, sshRemoteId: 'remote-1' })
 			);
@@ -374,7 +374,14 @@ describe('useDragToMove', () => {
 			act(() => {
 				result.current.handleFolderDrop(e, 'dest');
 			});
-			expect(mockMaestro.fs.copyPath).not.toHaveBeenCalled();
+			await act(async () => {});
+			// The dest lives on the remote host; copyPath carries the sshRemoteId so
+			// the main process uploads the local source over SSH.
+			expect(mockMaestro.fs.copyPath).toHaveBeenCalledWith(
+				'/external/photo.png',
+				'/project/dest/photo.png',
+				{ overwrite: false, sshRemoteId: 'remote-1' }
+			);
 		});
 	});
 });

@@ -14,7 +14,10 @@ import React from 'react';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { TerminalOutput } from '../../../renderer/components/TerminalOutput';
+import {
+	TerminalOutput,
+	collapseAiResponseLogs,
+} from '../../../renderer/components/TerminalOutput';
 import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
 import type { Session, Theme, LogEntry } from '../../../renderer/types';
 
@@ -2529,8 +2532,8 @@ describe('TerminalOutput', () => {
 
 			render(<TerminalOutput {...createDefaultProps({ session })} />);
 
-			expect(screen.getByText('API')).toBeInTheDocument();
-			expect(screen.getByText('TUI')).toBeInTheDocument();
+			expect(screen.getByText('claude -p')).toBeInTheDocument();
+			expect(screen.getByText('TUI Wrapper')).toBeInTheDocument();
 		});
 
 		it('labels an interactive turn as TUI even when a system banner leads its response group', () => {
@@ -2561,11 +2564,11 @@ describe('TerminalOutput', () => {
 
 			render(<TerminalOutput {...createDefaultProps({ session })} />);
 
-			expect(screen.getByText('TUI')).toBeInTheDocument();
-			expect(screen.queryByText('API')).not.toBeInTheDocument();
+			expect(screen.getByText('TUI Wrapper')).toBeInTheDocument();
+			expect(screen.queryByText('claude -p')).not.toBeInTheDocument();
 		});
 
-		it('uses the "Adaptive" prefix when the session has Adaptive Mode enabled', () => {
+		it('uses the "Dynamic" prefix when the session has Adaptive Mode enabled', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({ id: 'user-1', text: 'first prompt', source: 'user' }),
 				createLogEntry({
@@ -2591,13 +2594,13 @@ describe('TerminalOutput', () => {
 
 			render(<TerminalOutput {...createDefaultProps({ session })} />);
 
-			expect(screen.getByText('Adaptive TUI')).toBeInTheDocument();
-			expect(screen.getByText('Adaptive API')).toBeInTheDocument();
-			expect(screen.queryByText('TUI')).not.toBeInTheDocument();
-			expect(screen.queryByText('API')).not.toBeInTheDocument();
+			expect(screen.getByText('Dynamic TUI Wrapper')).toBeInTheDocument();
+			expect(screen.getByText('Dynamic claude -p')).toBeInTheDocument();
+			expect(screen.queryByText('TUI Wrapper')).not.toBeInTheDocument();
+			expect(screen.queryByText('claude -p')).not.toBeInTheDocument();
 		});
 
-		it('omits the "Adaptive" prefix when the session pins maestro-p mode (forced TUI / API)', () => {
+		it('omits the "Dynamic" prefix when the session pins maestro-p mode (forced TUI / API)', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({ id: 'user-1', text: 'first prompt', source: 'user' }),
 				createLogEntry({
@@ -2626,10 +2629,10 @@ describe('TerminalOutput', () => {
 
 			render(<TerminalOutput {...createDefaultProps({ session })} />);
 
-			expect(screen.getByText('TUI')).toBeInTheDocument();
-			expect(screen.getByText('API')).toBeInTheDocument();
-			expect(screen.queryByText('Adaptive TUI')).not.toBeInTheDocument();
-			expect(screen.queryByText('Adaptive API')).not.toBeInTheDocument();
+			expect(screen.getByText('TUI Wrapper')).toBeInTheDocument();
+			expect(screen.getByText('claude -p')).toBeInTheDocument();
+			expect(screen.queryByText('Dynamic TUI Wrapper')).not.toBeInTheDocument();
+			expect(screen.queryByText('Dynamic claude -p')).not.toBeInTheDocument();
 		});
 
 		it('does not render the pill on user messages even when tagged text-stream', () => {
@@ -2650,8 +2653,8 @@ describe('TerminalOutput', () => {
 			render(<TerminalOutput {...createDefaultProps({ session })} />);
 
 			expect(screen.getByText('a user prompt')).toBeInTheDocument();
-			expect(screen.queryByText('TUI')).not.toBeInTheDocument();
-			expect(screen.queryByText('API')).not.toBeInTheDocument();
+			expect(screen.queryByText('TUI Wrapper')).not.toBeInTheDocument();
+			expect(screen.queryByText('claude -p')).not.toBeInTheDocument();
 		});
 
 		it('does not render the pill on non-Claude agents', () => {
@@ -2668,10 +2671,10 @@ describe('TerminalOutput', () => {
 
 			render(<TerminalOutput {...createDefaultProps({ session })} />);
 
-			expect(screen.queryByText('TUI')).not.toBeInTheDocument();
-			expect(screen.queryByText('API')).not.toBeInTheDocument();
-			expect(screen.queryByText('Adaptive TUI')).not.toBeInTheDocument();
-			expect(screen.queryByText('Adaptive API')).not.toBeInTheDocument();
+			expect(screen.queryByText('TUI Wrapper')).not.toBeInTheDocument();
+			expect(screen.queryByText('claude -p')).not.toBeInTheDocument();
+			expect(screen.queryByText('Dynamic TUI Wrapper')).not.toBeInTheDocument();
+			expect(screen.queryByText('Dynamic claude -p')).not.toBeInTheDocument();
 		});
 	});
 });
@@ -2892,5 +2895,88 @@ describe('memoization behavior', () => {
 
 			expect(onPublishMessageGist).toHaveBeenCalledWith('AI response to share', '1');
 		});
+	});
+});
+
+describe('collapseAiResponseLogs', () => {
+	const mk = (over: Partial<LogEntry>): LogEntry =>
+		({ id: 'x', timestamp: 0, source: 'stdout', text: '', ...over }) as LogEntry;
+
+	const crossAgent = (fromAgentName: string, error?: string) => ({
+		requestId: `req-${fromAgentName}`,
+		fromSessionId: `sess-${fromAgentName}`,
+		fromAgentName,
+		fromToolType: 'claude-code' as const,
+		...(error ? { error } : {}),
+	});
+
+	it('collapses consecutive local response entries into one bubble', () => {
+		const out = collapseAiResponseLogs([
+			mk({ id: 'u', source: 'user', text: 'hi' }),
+			mk({ id: 'a', source: 'stdout', text: 'part 1 ' }),
+			mk({ id: 'b', source: 'stdout', text: 'part 2' }),
+		]);
+		expect(out.map((l) => l.id)).toEqual(['u', 'a']);
+		expect(out[1].text).toBe('part 1 part 2');
+	});
+
+	it('keeps each cross-agent reply as its own standalone bubble', () => {
+		const out = collapseAiResponseLogs([
+			mk({ id: 'u', source: 'user', text: 'what are we working on? @LH and @MM' }),
+			mk({
+				id: 'lh',
+				source: 'ai',
+				text: 'LH failed',
+				metadata: { crossAgent: crossAgent('Learned Hand', 'no output') },
+			}),
+			mk({ id: 'local', source: 'stdout', text: 'Scratch here, we did X' }),
+			mk({
+				id: 'mm',
+				source: 'ai',
+				text: 'MM here',
+				metadata: { crossAgent: crossAgent('Maestro Marketing') },
+			}),
+		]);
+		// Four separate bubbles, in order, none merged.
+		expect(out.map((l) => l.id)).toEqual(['u', 'lh', 'local', 'mm']);
+		// The local reply keeps its own text and NO cross-agent provenance.
+		const local = out.find((l) => l.id === 'local')!;
+		expect(local.text).toBe('Scratch here, we did X');
+		expect(local.metadata?.crossAgent).toBeUndefined();
+		// Each cross-agent bubble keeps its own attribution.
+		expect(out.find((l) => l.id === 'lh')!.metadata?.crossAgent?.fromAgentName).toBe(
+			'Learned Hand'
+		);
+		expect(out.find((l) => l.id === 'mm')!.metadata?.crossAgent?.fromAgentName).toBe(
+			'Maestro Marketing'
+		);
+	});
+
+	it('does not fold two consecutive cross-agent replies together', () => {
+		const out = collapseAiResponseLogs([
+			mk({ id: 'a', source: 'ai', text: 'A', metadata: { crossAgent: crossAgent('Alpha') } }),
+			mk({ id: 'b', source: 'ai', text: 'B', metadata: { crossAgent: crossAgent('Beta') } }),
+		]);
+		expect(out.map((l) => l.id)).toEqual(['a', 'b']);
+	});
+
+	it('preserves text-stream renderStyle when any grouped local entry carries it', () => {
+		const out = collapseAiResponseLogs([
+			mk({ id: 'a', source: 'system', text: 'banner ' }),
+			mk({ id: 'b', source: 'stdout', text: 'streamed', renderStyle: 'text-stream' }),
+		]);
+		expect(out).toHaveLength(1);
+		expect(out[0].renderStyle).toBe('text-stream');
+	});
+
+	it('keeps Agent Resilience outage markers standalone, not folded into a text group', () => {
+		const out = collapseAiResponseLogs([
+			mk({ id: 'a', source: 'stdout', text: 'before ' }),
+			mk({ id: 'outage', source: 'stdout', text: 'retrying...', retryOutageId: 'out-1' }),
+			mk({ id: 'b', source: 'stdout', text: 'after' }),
+		]);
+		// The outage marker breaks the run: the text on either side stays separate.
+		expect(out.map((l) => l.id)).toEqual(['a', 'outage', 'b']);
+		expect(out.find((l) => l.id === 'outage')!.retryOutageId).toBe('out-1');
 	});
 });

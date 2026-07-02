@@ -141,6 +141,7 @@ export function createUpdatesApi() {
 			releasesUrl: string;
 			error?: string;
 		}> => ipcRenderer.invoke('updates:check', includePrerelease),
+		checkin: (): Promise<void> => ipcRenderer.invoke('updates:checkin'),
 		download: (targetTag?: string): Promise<{ success: boolean; error?: string }> =>
 			ipcRenderer.invoke('updates:download', targetTag),
 		install: (): Promise<void> => ipcRenderer.invoke('updates:install'),

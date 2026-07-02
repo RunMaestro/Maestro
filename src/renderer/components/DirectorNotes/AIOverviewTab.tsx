@@ -19,6 +19,7 @@ import { SaveMarkdownModal } from '../SaveMarkdownModal';
 import { useSettings } from '../../hooks';
 import { generateTerminalProseStyles } from '../../utils/markdownConfig';
 import { safeClipboardWrite } from '../../utils/clipboard';
+import { formatNumber } from '../../../shared/formatters';
 import { notifyToast } from '../../stores/notificationStore';
 import { useModalStore } from '../../stores/modalStore';
 import {
@@ -464,7 +465,7 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 						<History className="w-3.5 h-3.5" />
 						<span className="text-xs">
 							<span style={{ color: theme.colors.textMain, fontWeight: 600 }}>
-								{stats.entryCount}
+								{formatNumber(stats.entryCount)}
 							</span>{' '}
 							{stats.entryCount === 1 ? 'history entry' : 'history entries'}
 						</span>
@@ -556,6 +557,7 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 							narrativeError={narrativeError}
 							lookbackDays={lookbackDays}
 							enableBionifyReadingMode={bionifyReadingMode}
+							chatMath
 						/>
 					) : (
 						// Content-driven AI output: opt back into text selection under
@@ -567,6 +569,7 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 								theme={theme}
 								onCopy={(text) => safeClipboardWrite(text)}
 								enableBionifyReadingMode={bionifyReadingMode}
+								chatMath
 							/>
 						</div>
 					)

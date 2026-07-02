@@ -4,9 +4,11 @@ import remarkBreaks from 'remark-breaks';
 import remarkMath from 'remark-math';
 import remarkFrontmatter from 'remark-frontmatter';
 import rehypeRaw from 'rehype-raw';
+import rehypeSanitize from 'rehype-sanitize';
 import rehypeKatex from 'rehype-katex';
 import { remarkFrontmatterTable } from '../../../../renderer/utils/remarkFrontmatterTable';
 import { remarkFileLinks } from '../../../../renderer/utils/remarkFileLinks';
+import { remarkMentionChips } from '../../../../renderer/utils/remarkMentionChips';
 import { remarkPromoteDisplayMath } from '../../../../shared/remarkPromoteDisplayMath';
 import { buildMarkdownPlugins } from '../../../../renderer/components/Markdown/plugins';
 
@@ -67,10 +69,12 @@ describe('buildMarkdownPlugins', () => {
 		expect(pluginFns(rehypePlugins as unknown[])).toContain(rehypeKatex);
 	});
 
-	it('adds rehype-raw only when allowRawHtml is set', () => {
-		expect(
-			pluginFns(buildMarkdownPlugins({ allowRawHtml: true }).rehypePlugins as unknown[])
-		).toContain(rehypeRaw);
+	it('adds rehype-raw + rehype-sanitize (in that order) only when allowRawHtml is set', () => {
+		const fns = pluginFns(buildMarkdownPlugins({ allowRawHtml: true }).rehypePlugins as unknown[]);
+		expect(fns).toContain(rehypeRaw);
+		expect(fns).toContain(rehypeSanitize);
+		// sanitize must run AFTER raw so it inspects parsed elements, not raw strings
+		expect(fns.indexOf(rehypeSanitize)).toBeGreaterThan(fns.indexOf(rehypeRaw));
 		expect(buildMarkdownPlugins({ allowRawHtml: false }).rehypePlugins).toBeUndefined();
 	});
 
@@ -106,6 +110,31 @@ describe('buildMarkdownPlugins', () => {
 			expect(pluginFns(buildMarkdownPlugins().remarkPlugins as unknown[])).not.toContain(
 				remarkFileLinks
 			);
+		});
+	});
+
+	describe('mention chips gating', () => {
+		it('is absent by default', () => {
+			expect(pluginFns(buildMarkdownPlugins().remarkPlugins as unknown[])).not.toContain(
+				remarkMentionChips
+			);
+		});
+
+		it('adds remarkMentionChips when mentionChips is set', () => {
+			expect(
+				pluginFns(buildMarkdownPlugins({ mentionChips: true }).remarkPlugins as unknown[])
+			).toContain(remarkMentionChips);
+		});
+
+		it('runs remarkMentionChips BEFORE remarkFileLinks (claims @paths first)', () => {
+			const fns = pluginFns(
+				buildMarkdownPlugins({
+					mentionChips: true,
+					fileLinks: { projectRoot: '/Users/me/proj' },
+				}).remarkPlugins as unknown[]
+			);
+			expect(fns.indexOf(remarkMentionChips)).toBeGreaterThanOrEqual(0);
+			expect(fns.indexOf(remarkMentionChips)).toBeLessThan(fns.indexOf(remarkFileLinks));
 		});
 	});
 

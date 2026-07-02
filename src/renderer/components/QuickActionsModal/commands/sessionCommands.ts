@@ -2,11 +2,15 @@ import type React from 'react';
 import type { Session } from '../../../types';
 import type { QuickAction } from '../types';
 import { alphabetizeKey } from '../utils/quickActionSorting';
+import { makeAgentJumpAction, type GetSessionWindow } from './agentJumpAction';
 
 interface BuildSessionCommandsArgs {
 	sessions: Session[];
 	setActiveSessionId: (id: string) => void;
 	revealJumpTarget: (session: Session) => void;
+	/** Multi-window: resolves an agent's owning window so cross-window picks focus
+	 * that window instead of stealing the agent. Omitted = single-window behavior. */
+	getSessionWindow?: GetSessionWindow;
 }
 
 interface BuildSessionManagementCommandsArgs {
@@ -29,6 +33,7 @@ export function buildSessionJumpCommands({
 	sessions,
 	setActiveSessionId,
 	revealJumpTarget,
+	getSessionWindow,
 }: BuildSessionCommandsArgs): QuickAction[] {
 	return sessions.map((session) => {
 		let label: string;
@@ -43,10 +48,12 @@ export function buildSessionJumpCommands({
 		return {
 			id: `jump-${session.id}`,
 			label,
-			action: () => {
-				setActiveSessionId(session.id);
-				revealJumpTarget(session);
-			},
+			action: makeAgentJumpAction({
+				session,
+				setActiveSessionId,
+				revealJumpTarget,
+				getSessionWindow,
+			}),
 			subtext: session.state.toUpperCase(),
 			bookmarked: !!session.bookmarked,
 			agentSortKey: alphabetizeKey(session.name),

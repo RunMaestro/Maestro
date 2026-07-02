@@ -222,7 +222,6 @@ export class FeedbackConversationManager {
 	private sessionId: string | null = null;
 	private agentType: ToolType | null = null;
 	private systemPrompt = '';
-	private outputBuffer = '';
 	private dataCleanup?: () => void;
 	private exitCleanup?: () => void;
 	private thinkingCleanup?: () => void;
@@ -259,7 +258,6 @@ export class FeedbackConversationManager {
 		const currentAgentType = this.agentType;
 		const currentSystemPrompt = this.systemPrompt;
 		const currentSshRemoteConfig = this.sshRemoteConfig;
-		this.outputBuffer = '';
 
 		const agent = await window.maestro.agents.get(currentAgentType);
 		if (!agent) {
@@ -284,7 +282,6 @@ export class FeedbackConversationManager {
 				if (settled) return;
 				settled = true;
 				if (this.sessionId === currentSessionId) {
-					this.outputBuffer = outputBuffer;
 					this.cleanupListeners();
 				}
 				// Surface the terminal response to the caller for *every* outcome
@@ -310,7 +307,6 @@ export class FeedbackConversationManager {
 			this.dataCleanup = window.maestro.process.onData((sid: string, data: string) => {
 				if (sid === currentSessionId) {
 					outputBuffer += data;
-					this.outputBuffer = outputBuffer;
 					resetTimeout();
 					callbacks?.onChunk?.(data);
 				}
@@ -510,7 +506,6 @@ export class FeedbackConversationManager {
 		this.sessionId = null;
 		this.agentType = null;
 		this.systemPrompt = '';
-		this.outputBuffer = '';
 	}
 
 	get isActive(): boolean {

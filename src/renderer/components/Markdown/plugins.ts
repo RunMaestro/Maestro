@@ -19,10 +19,14 @@ import remarkBreaks from 'remark-breaks';
 import remarkMath from 'remark-math';
 import remarkFrontmatter from 'remark-frontmatter';
 import rehypeRaw from 'rehype-raw';
+import rehypeSanitize from 'rehype-sanitize';
 import rehypeKatex from 'rehype-katex';
+import { svgSanitizeSchema } from './sanitizeSchema';
+import { remarkAlert } from './remarkAlert';
 import { REMARK_GFM_PLUGINS } from '../../../shared/markdownPlugins';
 import { remarkFrontmatterTable } from '../../utils/remarkFrontmatterTable';
 import { remarkFileLinks, type buildFileTreeIndices } from '../../utils/remarkFileLinks';
+import { remarkMentionChips } from '../../utils/remarkMentionChips';
 import { remarkPromoteDisplayMath } from '../../../shared/remarkPromoteDisplayMath';
 
 /** Prebuilt file-tree lookup indices (caller memoizes; we do not rebuild here). */
@@ -48,8 +52,15 @@ export interface BuildMarkdownPluginsOptions {
 	chatMath?: boolean;
 	/** Allow raw HTML passthrough via rehype-raw (sanitize upstream). */
 	allowRawHtml?: boolean;
+	/** Transform GitHub `[!NOTE]`-style blockquotes into styled callouts. Default true. */
+	alerts?: boolean;
 	/** When provided and active, adds the remarkFileLinks transform. */
 	fileLinks?: MarkdownFileLinkOptions;
+	/**
+	 * Chip-render `@file` / `@agent` mentions (chat surfaces, Encore-gated).
+	 * Runs BEFORE remarkFileLinks so it claims `@`-prefixed paths first.
+	 */
+	mentionChips?: boolean;
 	/** Extra remark plugins appended after the standard stack (e.g. FilePreview's remarkHighlight). */
 	extraRemarkPlugins?: PluggableList;
 	/** Extra rehype plugins appended after the standard stack (e.g. rehype-slug). */
@@ -81,12 +92,21 @@ export function buildMarkdownPlugins(
 		chatLineBreaks = false,
 		chatMath = false,
 		allowRawHtml = false,
+		alerts = true,
 		fileLinks,
+		mentionChips = false,
 		extraRemarkPlugins,
 		extraRehypePlugins,
 	} = options;
 
 	const remarkPlugins: PluggableList = [...REMARK_GFM_PLUGINS];
+
+	// GitHub alert callouts run right after GFM (before remark-breaks) so the
+	// `[!TYPE]` marker and its body are still in a single text node, which is the
+	// shape remarkAlert's matcher expects.
+	if (alerts) {
+		remarkPlugins.push(remarkAlert);
+	}
 
 	if (frontmatter) {
 		remarkPlugins.push(remarkFrontmatter, remarkFrontmatterTable);
@@ -107,6 +127,12 @@ export function buildMarkdownPlugins(
 		remarkPlugins.push(remarkPromoteDisplayMath);
 	}
 
+	// Mention chips run BEFORE file links so a `@src/main.ts` becomes a single
+	// file chip instead of `@` + a bare file link.
+	if (mentionChips) {
+		remarkPlugins.push(remarkMentionChips);
+	}
+
 	if (shouldAddFileLinks(fileLinks)) {
 		remarkPlugins.push([
 			remarkFileLinks,
@@ -123,9 +149,16 @@ export function buildMarkdownPlugins(
 		remarkPlugins.push(...extraRemarkPlugins);
 	}
 
-	// rehype-raw and rehype-katex are independent and can stack.
+	// rehype-raw parses raw HTML into HAST; rehype-sanitize then strips XSS
+	// vectors while permitting inline SVG (see svgSanitizeSchema). Order is
+	// load-bearing: raw must run first so sanitize inspects real elements, and
+	// sanitizing here (post-parse) avoids the raw-string DOMPurify pass that used
+	// to corrupt code fences and `<`/`>` operators in ordinary chat text.
 	const rehypePlugins: PluggableList = [];
-	if (allowRawHtml) rehypePlugins.push(rehypeRaw);
+	if (allowRawHtml) {
+		rehypePlugins.push(rehypeRaw);
+		rehypePlugins.push([rehypeSanitize, svgSanitizeSchema]);
+	}
 	if (chatMath) rehypePlugins.push(rehypeKatex);
 	if (extraRehypePlugins) rehypePlugins.push(...extraRehypePlugins);
 

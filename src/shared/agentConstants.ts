@@ -77,6 +77,18 @@ export function isAdaptiveModeDefaultOn(_agentId: string): boolean {
 }
 
 /**
+ * Agent Resilience (auto-retry on availability / token-exhaustion errors) is ON
+ * by default for every agent. The persisted flags (`retryOnAvailabilityErrors`,
+ * `retryOnTokenExhaustion`) are optional, so `undefined` — the state for every
+ * pre-existing agent and any newly created one that didn't touch the toggle —
+ * reads as enabled. Only an explicit `false` opts out. This read-time default
+ * means no storage migration is needed.
+ */
+export function resilienceEnabled(configured: boolean | undefined): boolean {
+	return configured !== false;
+}
+
+/**
  * Agents that use combined input+output context windows.
  * OpenAI models (Codex, o3, o4-mini) have a single context window that includes
  * both input and output tokens, unlike Claude which has separate limits.

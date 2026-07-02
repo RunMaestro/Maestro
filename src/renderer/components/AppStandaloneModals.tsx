@@ -12,6 +12,7 @@ import { DebugPackageModal } from './DebugPackageModal';
 import { DebugApplicationStatsModal } from './DebugApplicationStatsModal';
 import { DebugAgentProbeModal } from './DebugAgentProbeModal';
 import { WidgetGallery } from './widgets/WidgetGallery';
+import { ProfilingCaptureModal } from './ProfilingCaptureModal';
 import { WindowsWarningModal } from './WindowsWarningModal';
 import { AppOverlays } from './AppOverlays';
 import { PlaygroundPanel } from './PlaygroundPanel';
@@ -228,6 +229,8 @@ function AppStandaloneModalsInner({
 		setDebugApplicationStatsOpen,
 		debugAgentProbeOpen,
 		setDebugAgentProbeOpen,
+		profilingCaptureOpen,
+		setProfilingCaptureOpen,
 		playgroundOpen,
 		setPlaygroundOpen,
 		marketplaceModalOpen,
@@ -319,6 +322,11 @@ function AppStandaloneModalsInner({
 
 			{/* --- DEBUG: WIDGET GALLERY (self-subscribes to the widgetGallery modal) --- */}
 			<WidgetGallery theme={theme} />
+
+			{/* --- PERFORMANCE PROFILING: STOP + BUNDLE PROGRESS --- */}
+			{profilingCaptureOpen && (
+				<ProfilingCaptureModal theme={theme} onClose={() => setProfilingCaptureOpen(false)} />
+			)}
 
 			{/* --- MARKETPLACE MODAL (lazy-loaded) --- */}
 			{activeSession && activeSession.autoRunFolderPath && marketplaceModalOpen && (

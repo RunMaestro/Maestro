@@ -30,6 +30,15 @@ const initSentry = async () => {
 				release: __APP_VERSION__,
 				// Only send errors, not performance data
 				tracesSampleRate: 0,
+				// PERF: drop console breadcrumbs. Sentry's default Breadcrumbs
+				// integration wraps every console.* to capture a breadcrumb, and a
+				// field trace showed that wrapper (addConsoleBreadcrumb) as the single
+				// largest JS CPU consumer. We already retain console output via our own
+				// logger, file logs, and the LogViewer, so nothing diagnostic is lost;
+				// exception/crash reporting is unaffected.
+				beforeBreadcrumb(breadcrumb) {
+					return breadcrumb.category === 'console' ? null : breadcrumb;
+				},
 				// Filter out sensitive data + unfixable OS / Chromium / user-env noise.
 				// See src/shared/sentryFilters.ts for the full classification.
 				beforeSend(event) {

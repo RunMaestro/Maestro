@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import type { BrowserTab, Theme } from '../../types';
 import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
+import { isCoarsePointer } from '../../utils/touch';
 import { getBrowserTabLabel } from '../../utils/browserTabPersistence';
 import { getTabKindColor } from './tabBarUtils';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -101,6 +102,7 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 		setOverlayRef,
 		positionReady,
 		setTabRef,
+		openOverlay,
 		handleMouseEnter,
 		handleMouseLeave,
 		overlayMouseEnter,
@@ -163,7 +165,15 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 		[onClose, tab.id]
 	);
 
-	const handleTabSelect = useCallback(() => onSelect(tab.id), [onSelect, tab.id]);
+	const handleTabSelect = useCallback(() => {
+		// Touch has no hover: tapping the already-active tab opens the action
+		// overlay; tapping an inactive tab selects it. Mouse/keyboard unchanged.
+		if (isActive && isCoarsePointer()) {
+			openOverlay();
+			return;
+		}
+		onSelect(tab.id);
+	}, [isActive, openOverlay, onSelect, tab.id]);
 	const handleDoubleClick = useCallback(() => onRename?.(tab.id), [onRename, tab.id]);
 	const handleRenameClick = useCallback(
 		(e: React.MouseEvent) => {
@@ -489,6 +499,9 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 													style={{ color: theme.colors.textDim }}
 												/>
 												Move to First Position
+												{tabShortcuts.moveTabToStart && (
+													<ShortcutHint keys={tabShortcuts.moveTabToStart.keys} />
+												)}
 											</button>
 										)}
 										{onMoveToLast && !isLastTab && (
@@ -502,6 +515,9 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 													style={{ color: theme.colors.textDim }}
 												/>
 												Move to Last Position
+												{tabShortcuts.moveTabToEnd && (
+													<ShortcutHint keys={tabShortcuts.moveTabToEnd.keys} />
+												)}
 											</button>
 										)}
 										<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />

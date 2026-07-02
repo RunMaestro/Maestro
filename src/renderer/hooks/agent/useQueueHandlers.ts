@@ -26,6 +26,12 @@ export interface UseQueueHandlersReturn {
 	handleReorderQueueItems: (sessionId: string, fromIndex: number, toIndex: number) => void;
 	/** Toggle the held/paused state of a queued item (held items are skipped by dispatch) */
 	handleTogglePauseQueueItem: (sessionId: string, itemId: string) => void;
+	/** Edit a queued message's prompt text and attached images within a session */
+	handleEditQueueItem: (
+		sessionId: string,
+		itemId: string,
+		patch: { text: string; images: string[] }
+	) => void;
 }
 
 // ============================================================================
@@ -100,10 +106,28 @@ export function useQueueHandlers(): UseQueueHandlersReturn {
 		);
 	}, []);
 
+	const handleEditQueueItem = useCallback(
+		(sessionId: string, itemId: string, patch: { text: string; images: string[] }) => {
+			setSessions((prev) =>
+				prev.map((s) => {
+					if (s.id !== sessionId) return s;
+					return {
+						...s,
+						executionQueue: s.executionQueue.map((item) =>
+							item.id === itemId ? { ...item, text: patch.text, images: patch.images } : item
+						),
+					};
+				})
+			);
+		},
+		[]
+	);
+
 	return {
 		handleRemoveQueueItem,
 		handleSwitchQueueSession,
 		handleReorderQueueItems,
 		handleTogglePauseQueueItem,
+		handleEditQueueItem,
 	};
 }

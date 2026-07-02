@@ -1,5 +1,6 @@
 import type React from 'react';
 import type { TabCompletionFilter, TabCompletionSuggestion } from '../../hooks';
+import type { MentionPickerItem, MentionCategory } from '../../hooks/input/useMentionPicker';
 import type {
 	BatchRunState,
 	Shortcut,
@@ -33,7 +34,6 @@ export interface AtMentionSuggestion {
 export interface InputAreaProps {
 	session: Session;
 	theme: Theme;
-	inputValue: string;
 	setInputValue: (value: string) => void;
 	enterToSend: boolean;
 	setEnterToSend: (value: boolean) => void;
@@ -78,7 +78,11 @@ export interface InputAreaProps {
 	setAtMentionFilter?: (filter: string) => void;
 	atMentionStartIndex?: number;
 	setAtMentionStartIndex?: (index: number) => void;
-	atMentionSuggestions?: AtMentionSuggestion[];
+	// Unified `@` picker: files + directories + agents + groups in one dropdown
+	atMentionItems?: MentionPickerItem[];
+	atMentionCounts?: Record<MentionCategory, number>;
+	atMentionCategory?: MentionCategory;
+	setAtMentionCategory?: (category: MentionCategory) => void;
 	selectedAtMentionIndex?: number;
 	setSelectedAtMentionIndex?: (index: number) => void;
 	thinkingItems?: ThinkingItem[];

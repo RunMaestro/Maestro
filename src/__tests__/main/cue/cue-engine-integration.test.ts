@@ -19,6 +19,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { CueConfig } from '../../../main/cue/cue-types';
+import type { CueEngineDeps } from '../../../main/cue/cue-engine';
 import {
 	createInMemoryCueDb,
 	buildCueDbModuleMock,
@@ -179,6 +180,161 @@ describe('Phase 15B — CueEngine integration', () => {
 
 			await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
 			expect(deps.onCueRun).toHaveBeenCalledTimes(2);
+
+			engine.stop();
+		});
+	});
+
+	// ─── Conductor level time credit ───────────────────────────────────────
+
+	describe('conductor time credit on run completion', () => {
+		/** Pull the creditMs from any conductorTimeCredit payload passed to onLog. */
+		function creditsFromOnLog(onLog: CueEngineDeps['onLog']): number[] {
+			return (onLog as ReturnType<typeof vi.fn>).mock.calls
+				.map((c) => c[2])
+				.filter(
+					(d): d is { type: 'conductorTimeCredit'; creditMs: number } =>
+						!!d && typeof d === 'object' && (d as { type?: unknown }).type === 'conductorTimeCredit'
+				)
+				.map((d) => d.creditMs);
+		}
+
+		function heartbeatConfig() {
+			return createMockConfig({
+				subscriptions: [
+					{
+						name: 'hb',
+						event: 'time.heartbeat',
+						enabled: true,
+						prompt: 'tick',
+						interval_minutes: 5,
+					},
+				],
+			});
+		}
+
+		it('credits floored whole-minute time for an agent run over a minute', async () => {
+			configsByProject.set('/projects/test', heartbeatConfig());
+			// The run manager derives durationMs from wall-clock (endedAt -
+			// startedAt), so advance the fake clock 90s during the run. 90s
+			// floors to 60s of credit.
+			const deps = createMockDeps({
+				onCueRun: vi.fn(async (request: Parameters<CueEngineDeps['onCueRun']>[0]) => {
+					vi.advanceTimersByTime(90000);
+					return {
+						runId: 'run-1',
+						sessionId: 'session-1',
+						sessionName: 'Test Session',
+						subscriptionName: request.subscriptionName,
+						event: request.event,
+						status: 'completed' as const,
+						stdout: 'output',
+						stderr: '',
+						exitCode: 0,
+						durationMs: 90000,
+						startedAt: new Date().toISOString(),
+						endedAt: new Date().toISOString(),
+					};
+				}),
+			});
+			const engine = new CueEngine(deps);
+			engine.start();
+			await vi.advanceTimersByTimeAsync(0);
+
+			expect(creditsFromOnLog(deps.onLog)).toEqual([60000]);
+
+			engine.stop();
+		});
+
+		it('does not credit a sub-minute agent run', async () => {
+			configsByProject.set('/projects/test', heartbeatConfig());
+			// Default helper duration is 100ms → floors to 0 → no credit.
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			engine.start();
+			await vi.advanceTimersByTimeAsync(0);
+
+			expect(creditsFromOnLog(deps.onLog)).toEqual([]);
+
+			engine.stop();
+		});
+
+		it('does not credit a non-completed (failed) run', async () => {
+			configsByProject.set('/projects/test', heartbeatConfig());
+			const deps = createMockDeps({
+				onCueRun: vi.fn(async (request: Parameters<CueEngineDeps['onCueRun']>[0]) => {
+					// Over a minute of wall-clock, but failed → status gate blocks credit.
+					vi.advanceTimersByTime(120000);
+					return {
+						runId: 'run-1',
+						sessionId: 'session-1',
+						sessionName: 'Test Session',
+						subscriptionName: request.subscriptionName,
+						event: request.event,
+						status: 'failed' as const,
+						stdout: '',
+						stderr: 'boom',
+						exitCode: 1,
+						durationMs: 120000,
+						startedAt: new Date().toISOString(),
+						endedAt: new Date().toISOString(),
+					};
+				}),
+			});
+			const engine = new CueEngine(deps);
+			engine.start();
+			await vi.advanceTimersByTimeAsync(0);
+
+			expect(creditsFromOnLog(deps.onLog)).toEqual([]);
+
+			engine.stop();
+		});
+
+		it('does not credit a command-node run even when it runs over a minute', async () => {
+			configsByProject.set(
+				'/projects/test',
+				createMockConfig({
+					subscriptions: [
+						{
+							name: 'cmd',
+							event: 'time.heartbeat',
+							enabled: true,
+							interval_minutes: 5,
+							action: 'command',
+							command: { run: 'npm test' },
+						} as never,
+					],
+				})
+			);
+			const deps = createMockDeps({
+				onCueRun: vi.fn(async (request: Parameters<CueEngineDeps['onCueRun']>[0]) => {
+					// Over a minute of wall-clock, but a command node → taskKind gate blocks credit.
+					vi.advanceTimersByTime(120000);
+					return {
+						runId: 'run-1',
+						sessionId: 'session-1',
+						sessionName: 'Test Session',
+						subscriptionName: request.subscriptionName,
+						// actionKind: 'command' on the event payload marks this a command node.
+						event: {
+							...request.event,
+							payload: { ...request.event.payload, actionKind: 'command' },
+						},
+						status: 'completed' as const,
+						stdout: 'ok',
+						stderr: '',
+						exitCode: 0,
+						durationMs: 120000,
+						startedAt: new Date().toISOString(),
+						endedAt: new Date().toISOString(),
+					};
+				}),
+			});
+			const engine = new CueEngine(deps);
+			engine.start();
+			await vi.advanceTimersByTimeAsync(0);
+
+			expect(creditsFromOnLog(deps.onLog)).toEqual([]);
 
 			engine.stop();
 		});

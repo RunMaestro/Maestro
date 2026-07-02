@@ -11,12 +11,14 @@ import {
 	Check,
 	Pause,
 	Play,
+	Pencil,
 } from 'lucide-react';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { useEventListener } from '../hooks/utils/useEventListener';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import type { Session, Theme, QueuedItem } from '../types';
 import { safeClipboardWrite } from '../utils/clipboard';
+import { QueuedItemEditModal } from './QueuedItemEditModal';
 import {
 	useQueueReorder,
 	useQueueRowDrag,
@@ -36,6 +38,11 @@ interface ExecutionQueueBrowserProps {
 	onSwitchSession: (sessionId: string, tabId?: string) => void;
 	onReorderItems?: (sessionId: string, fromIndex: number, toIndex: number) => void;
 	onToggleItemPause?: (sessionId: string, itemId: string) => void;
+	onEditItem?: (
+		sessionId: string,
+		itemId: string,
+		patch: { text: string; images: string[] }
+	) => void;
 }
 
 /**
@@ -52,8 +59,14 @@ export function ExecutionQueueBrowser({
 	onSwitchSession,
 	onReorderItems,
 	onToggleItemPause,
+	onEditItem,
 }: ExecutionQueueBrowserProps) {
 	const [viewMode, setViewMode] = useState<'current' | 'global'>('current');
+	// The queued item currently being edited (with its owning session), or null.
+	// While set, this browser suspends its own Escape layer so the edit modal's
+	// layer stack (edit < lightbox < annotator) resolves Escape correctly — the
+	// browser sits at a much higher priority (670) than the edit modal (145).
+	const [editing, setEditing] = useState<{ sessionId: string; item: QueuedItem } | null>(null);
 	// Drag-to-reorder orchestration shared with the inline queued-items list.
 	// The group key is the sessionId so each session's queue reorders independently.
 	const { dragState, dropIndicator, isAnyDragging, startDrag, overDrag, endDrag, cancelDrag } =
@@ -65,7 +78,7 @@ export function ExecutionQueueBrowser({
 		MODAL_PRIORITIES.EXECUTION_QUEUE_BROWSER || 50,
 		undefined,
 		() => onCloseRef.current(),
-		{ enabled: isOpen }
+		{ enabled: isOpen && !editing }
 	);
 
 	// Cmd/Ctrl+Shift+[ / ] cycles between the Current Agent / All Agents tabs
@@ -80,7 +93,7 @@ export function ExecutionQueueBrowser({
 			ke.preventDefault();
 			setViewMode((prev) => (prev === 'current' ? 'global' : 'current'));
 		},
-		{ enabled: isOpen }
+		{ enabled: isOpen && !editing }
 	);
 
 	if (!isOpen) return null;
@@ -238,6 +251,11 @@ export function ExecutionQueueBrowser({
 														? () => onToggleItemPause(session.id, item.id)
 														: undefined
 												}
+												onEdit={
+													onEditItem && item.type !== 'command'
+														? () => setEditing({ sessionId: session.id, item })
+														: undefined
+												}
 												onSwitchToSession={() => {
 													onSwitchSession(session.id, item.tabId);
 													onClose();
@@ -276,6 +294,20 @@ export function ExecutionQueueBrowser({
 					conflicts.
 				</div>
 			</div>
+
+			{/* Edit modal — rendered outside the card so a click inside it doesn't
+			    bubble to the backdrop's onClick (which would close the browser).
+			    Stops propagation so backdrop clicks behind it are also contained. */}
+			{editing && onEditItem && (
+				<div onClick={(e) => e.stopPropagation()}>
+					<QueuedItemEditModal
+						item={editing.item}
+						theme={theme}
+						onClose={() => setEditing(null)}
+						onSave={(patch) => onEditItem(editing.sessionId, editing.item.id, patch)}
+					/>
+				</div>
+			)}
 		</div>
 	);
 }
@@ -287,6 +319,7 @@ interface QueueItemRowProps {
 	onRemove: () => void;
 	isPaused?: boolean;
 	onTogglePause?: () => void;
+	onEdit?: () => void;
 	onSwitchToSession: () => void;
 	isDragging?: boolean;
 	canDrag?: boolean;
@@ -304,6 +337,7 @@ function QueueItemRow({
 	onRemove,
 	isPaused,
 	onTogglePause,
+	onEdit,
 	onSwitchToSession,
 	isDragging = false,
 	canDrag = false,
@@ -463,6 +497,19 @@ function QueueItemRow({
 
 				{/* Action buttons */}
 				<div className="flex flex-col items-center gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-all">
+					{onEdit && (
+						<button
+							onClick={(e) => {
+								e.stopPropagation();
+								onEdit();
+							}}
+							className="p-1.5 rounded hover:bg-black/20 transition-all"
+							style={{ color: theme.colors.textDim }}
+							title="Edit message and images"
+						>
+							<Pencil className="w-4 h-4" />
+						</button>
+					)}
 					{onTogglePause && (
 						<button
 							onClick={(e) => {

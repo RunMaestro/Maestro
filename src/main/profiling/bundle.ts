@@ -45,12 +45,18 @@ function readme(meta: ProfileMetadata): string {
 }
 
 /**
+ * Compression is the slow part of a capture (a large trace can take tens of
+ * seconds at zlib level 9), so `onProgress` reports 0-100 as bytes are read off
+ * disk into the archive. The trace dominates the byte count, so its read
+ * progress is a faithful proxy for the whole bundle.
+ *
  * @returns absolute path + compressed size of the written .zip.
  */
 export function writeProfileBundle(
 	tracePath: string,
 	meta: ProfileMetadata,
-	outputPath: string
+	outputPath: string,
+	onProgress?: (percent: number, bytesProcessed: number, totalBytes: number) => void
 ): Promise<{ path: string; sizeBytes: number }> {
 	return new Promise((resolve, reject) => {
 		const output = fs.createWriteStream(outputPath);
@@ -61,6 +67,18 @@ export function writeProfileBundle(
 			resolve({ path: outputPath, sizeBytes: archive.pointer() });
 		});
 		archive.on('error', (err) => reject(err));
+
+		if (onProgress) {
+			// archiver reports cumulative bytes read from the source files. The
+			// trace is the overwhelming majority, so use the known trace size as the
+			// denominator and cap at 99 - the final 1% is the flush/close.
+			const total = meta.traceSizeBytes || 0;
+			archive.on('progress', (data) => {
+				const processed = data?.fs?.processedBytes ?? 0;
+				const percent = total > 0 ? Math.min(99, Math.round((processed / total) * 100)) : 0;
+				onProgress(percent, processed, total);
+			});
+		}
 
 		archive.pipe(output);
 		archive.append(JSON.stringify(meta, null, 2), { name: 'metadata.json' });

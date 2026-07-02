@@ -1,14 +1,21 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useSettingsStore } from '../../stores/settingsStore';
+import {
+	useComposerInputStore,
+	selectAiComposerValue,
+	selectTerminalComposerValue,
+} from '../../stores/composerInputStore';
 import { ThinkingStatusPill } from '../ThinkingStatusPill';
 import { QuitWhenIdleIndicator } from '../QuitWhenIdleIndicator';
+import { CrossAgentResponseIndicator } from '../CrossAgentResponseIndicator';
+import { getActiveTab } from '../../utils/tabHelpers';
 import { MergeProgressOverlay } from '../MergeProgressOverlay';
 import { ExecutionQueueIndicator } from '../ExecutionQueueIndicator';
 import { ContextWarningSash } from '../ContextWarningSash';
 import { SummarizeProgressOverlay } from '../SummarizeProgressOverlay';
 import { WizardInputPanel } from '../InlineWizard';
 import { useImageAnnotatorStore } from '../ImageAnnotator/imageAnnotatorStore';
-import { useAgentCapabilities, useScrollIntoView } from '../../hooks';
+import { useAgentCapabilities, useScrollIntoView, useVoiceInput } from '../../hooks';
 import { filterSlashCommands } from '../../utils/search';
 import { InputTextarea } from './components/InputTextarea';
 import { NotificationSendControls } from './components/NotificationSendControls';
@@ -28,7 +35,6 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	const {
 		session,
 		theme,
-		inputValue,
 		setInputValue,
 		enterToSend,
 		setEnterToSend,
@@ -69,7 +75,10 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		setAtMentionFilter,
 		atMentionStartIndex = -1,
 		setAtMentionStartIndex,
-		atMentionSuggestions = [],
+		atMentionItems = [],
+		atMentionCounts,
+		atMentionCategory = 'all',
+		setAtMentionCategory,
 		selectedAtMentionIndex = 0,
 		setSelectedAtMentionIndex,
 		thinkingItems = [],
@@ -176,6 +185,13 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	// Filter slash commands based on input and current mode
 	const isTerminalMode = session.inputMode === 'terminal';
 
+	// Live composer text. This is the SOLE subscriber to the draft store: a
+	// keystroke re-renders only this (memoized) leaf, not App. See
+	// useComposerInputStore / CLAUDE-PERFORMANCE.md.
+	const inputValue = useComposerInputStore(
+		isTerminalMode ? selectTerminalComposerValue : selectAiComposerValue
+	);
+
 	// thinkingItems is now passed directly from App.tsx (pre-filtered) for better performance
 
 	const currentCommandHistory = useMemo(
@@ -188,9 +204,16 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	// recalculating on every render - inputValue changes on every keystroke
 	const inputValueLower = useMemo(() => inputValue.toLowerCase(), [inputValue]);
 	const filteredSlashCommands = useMemo(() => {
+		// PERF: only scan the (potentially large) command list while the popover is
+		// actually open. Otherwise this ran filterSlashCommands over every built-in +
+		// custom + speckit/openspec + agent command on every single keystroke, even
+		// for normal typing that never opens the menu. The consumers of this array
+		// (index clamping and SlashCommandPopover, which renders null when closed)
+		// are all no-ops when the menu is shut, so returning [] is safe.
+		if (!slashCommandOpen) return [];
 		const query = inputValueLower.replace(/^\//, '');
 		return filterSlashCommands(slashCommands, query, isTerminalMode);
-	}, [slashCommands, isTerminalMode, inputValueLower]);
+	}, [slashCommands, isTerminalMode, inputValueLower, slashCommandOpen]);
 
 	// Reset the highlighted item to the top whenever the query changes or the
 	// menu opens. Without this, the index lingers from prior arrow navigation
@@ -222,7 +245,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	const atMentionItemRefs = useScrollIntoView<HTMLButtonElement>(
 		atMentionOpen,
 		selectedAtMentionIndex,
-		atMentionSuggestions.length
+		atMentionItems.length
 	);
 
 	const filteredCommandHistory = useMemo(
@@ -230,15 +253,27 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		[currentCommandHistory, commandHistoryFilter]
 	);
 
+	// PERF: shared handoff flag so the keystroke path and the autosize effect don't
+	// both reflow the textarea on the same keystroke. onChange sets it and schedules
+	// a single deferred (rAF) resize; the effect, which fires synchronously in the
+	// commit phase, skips its own (blocking) resize when a keystroke resize is
+	// already pending, leaving one reflow per keystroke instead of two. The effect
+	// still owns resizing for tab switches and programmatic value changes (draft
+	// restore, slash/template insertion) that never fire onChange.
+	const keystrokeResizeScheduledRef = useRef(false);
+
 	useInputAreaAutosize({
 		inputRef,
 		inputValue,
 		activeTabId: session.activeTabId,
+		keystrokeResizeScheduledRef,
 	});
 
 	const handleTextChange = useInputAreaTextChange({
 		isTerminalMode,
 		slashCommandOpen,
+		atMentionOpen,
+		keystrokeResizeScheduledRef,
 		setInputValue,
 		setSlashCommandOpen,
 		setSelectedSlashCommandIndex,
@@ -246,7 +281,26 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		setAtMentionFilter,
 		setAtMentionStartIndex,
 		setSelectedAtMentionIndex,
+		setAtMentionCategory,
 	});
+
+	// Voice dictation (Web Speech API). Interim results live-update the draft via
+	// setInputValue; the final transcript is appended to the value captured when
+	// listening began. Disabled in terminal mode (the button only renders in AI
+	// mode anyway). The hook is a no-op where the Web Speech API is unavailable.
+	const voice = useVoiceInput({
+		currentValue: inputValue,
+		onTranscriptionChange: setInputValue,
+		focusRef: inputRef,
+		disabled: isTerminalMode,
+	});
+	// toggleVoiceInput's identity changes on every keystroke (it closes over the
+	// live draft value), so wrap it in a stable callback. This keeps the memoized
+	// ToolbarControls from re-rendering on each keystroke - it only re-renders
+	// when isListening actually flips.
+	const voiceToggleRef = useRef(voice.toggleVoiceInput);
+	voiceToggleRef.current = voice.toggleVoiceInput;
+	const handleToggleVoiceInput = useCallback(() => voiceToggleRef.current(), []);
 
 	// Show summarization progress overlay when active for this tab
 	if (isSummarizing && session.inputMode === 'ai' && onCancelSummarize) {
@@ -317,6 +371,16 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		>
 			{/* QuitWhenIdleIndicator - sits above the thinking pill while a deferred quit is armed */}
 			<QuitWhenIdleIndicator theme={theme} />
+
+			{/* CrossAgentResponseIndicator - "N agents responding…" while consulted
+			    agents stream replies into this tab. Only meaningful in AI mode. */}
+			{session.inputMode === 'ai' && (
+				<CrossAgentResponseIndicator
+					theme={theme}
+					sourceSessionId={session.id}
+					sourceTabId={getActiveTab(session)?.id}
+				/>
+			)}
 
 			{/* ThinkingStatusPill - only show in AI mode when there are thinking items or AutoRun */}
 			{session.inputMode === 'ai' && (thinkingItems.length > 0 || autoRunState?.isRunning) && (
@@ -398,7 +462,10 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 			<AtMentionPopover
 				isOpen={atMentionOpen}
 				isTerminalMode={isTerminalMode}
-				suggestions={atMentionSuggestions}
+				items={atMentionItems}
+				counts={atMentionCounts}
+				category={atMentionCategory}
+				setCategory={setAtMentionCategory}
 				selectedIndex={selectedAtMentionIndex}
 				filter={atMentionFilter}
 				startIndex={atMentionStartIndex}
@@ -449,6 +516,9 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 							enterToSend={enterToSend}
 							setEnterToSend={setEnterToSend}
 							setStagedImages={setStagedImages}
+							voiceSupported={voice.voiceSupported}
+							isVoiceListening={voice.isListening}
+							onToggleVoiceInput={handleToggleVoiceInput}
 							onOpenPromptComposer={onOpenPromptComposer}
 							shortcuts={shortcuts}
 							showFlashNotification={showFlashNotification}

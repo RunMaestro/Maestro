@@ -26,6 +26,7 @@ import {
 export type { MaestroSettings, SessionsData, GroupsData } from '../../stores/types';
 import type { MaestroSettings, SessionsData, GroupsData, StoredSession } from '../../stores/types';
 import type { Group, SessionCliActivity } from '../../../shared/types';
+import { relocateSessionImages, resolveToDataUrl } from '../../storage/session-image-store';
 
 /**
  * Shallow-compare cliActivity for the diff broadcast.
@@ -61,13 +62,62 @@ export interface PersistenceHandlerDependencies {
 	sessionsStore: Store<SessionsData>;
 	groupsStore: Store<GroupsData>;
 	getWebServer: () => WebServer | null;
+	/**
+	 * Broadcast an IPC message to EVERY open window. Used so a settings change
+	 * cascades to all windows in unison: settings are global, so a UI-driven
+	 * edit in one window must reload settings in every other window immediately.
+	 * (The file watcher covers external/CLI edits; this covers in-app edits
+	 * deterministically instead of relying on fs.watch + debounce.)
+	 */
+	safeSend: (channel: string, ...args: unknown[]) => void;
 }
 
 /**
  * Register all persistence-related IPC handlers.
  */
 export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies): void {
-	const { settingsStore, sessionsStore, groupsStore, getWebServer } = deps;
+	const { settingsStore, sessionsStore, groupsStore, getWebServer, safeSend } = deps;
+
+	// PERF: coalesce activeSessionId disk writes.
+	//
+	// The renderer calls sessions:setActiveSessionId immediately on every session
+	// AND tab switch. Because activeSessionId lives in the same store file as the
+	// (potentially large) sessions array, each switch synchronously re-serializes
+	// and writeFileSync's the ENTIRE sessions store just to record which one is
+	// focused - a field trace flagged this store write path as hot. A trailing
+	// debounce collapses a burst of rapid navigation into a single write.
+	//
+	// Correctness: `pendingActiveSessionId` is a read-through shadow so
+	// sessions:getActiveSessionId always returns the latest value even before the
+	// flush lands. Losing at most ~400ms of "which session was focused" on a hard
+	// crash is harmless (it defaults to the first session on restart), and we
+	// flush synchronously on quit so a normal exit never loses it.
+	const ACTIVE_SESSION_ID_DEBOUNCE_MS = 400;
+	let pendingActiveSessionId: string | null = null;
+	let activeSessionIdTimer: NodeJS.Timeout | null = null;
+
+	const flushActiveSessionId = (): void => {
+		if (activeSessionIdTimer) {
+			clearTimeout(activeSessionIdTimer);
+			activeSessionIdTimer = null;
+		}
+		if (pendingActiveSessionId === null) return;
+		const id = pendingActiveSessionId;
+		pendingActiveSessionId = null;
+		try {
+			sessionsStore.set('activeSessionId', id);
+		} catch (err) {
+			const code = (err as NodeJS.ErrnoException).code;
+			logger.warn(
+				`Failed to persist activeSessionId: ${code || (err as Error).message}`,
+				'Sessions'
+			);
+		}
+	};
+
+	// Guarantee the last focus is persisted on a normal quit. before-quit fires
+	// before windows close; the write is synchronous so it completes in-line.
+	app.on('before-quit', flushActiveSessionId);
 
 	// Settings management
 	ipcMain.handle('settings:get', async (_, key: string) => {
@@ -90,6 +140,15 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 			return false;
 		}
 		logger.info(`Settings updated: ${key}`, 'Settings', { key, value });
+
+		// Settings are global: cascade this change to every OTHER window so all
+		// windows stay in unison (e.g. a theme switch applies everywhere at once).
+		// The originating renderer already updated its own store optimistically, so
+		// a reload there is a harmless no-op (shallow compare); broadcasting to all
+		// is simpler and matches the app-wide safeSend pattern. This is the
+		// deterministic in-app path; the settings file watcher handles external
+		// (maestro-cli) edits.
+		safeSend('settings:externalChange');
 
 		const webServer = getWebServer();
 		// Broadcast theme changes to connected web clients
@@ -139,16 +198,57 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 	// Sessions persistence
 	ipcMain.handle('sessions:getAll', async () => {
 		const sessions = sessionsStore.get('sessions', []);
+		// Heal legacy sessions files: relocate any images still stored inline as
+		// base64 data URLs into the content-addressed image store, returning
+		// lightweight refs. Before this existed, pasted screenshots ballooned
+		// maestro-sessions.json to hundreds of MB (264MB in one field trace),
+		// freezing the main thread on every read/write. The scan is cheap and a
+		// no-op once healed (already-relocated sessions carry only refs). We
+		// rewrite the store once so the next launch reads the small file.
+		try {
+			const { sessions: relocated, relocated: count } = await relocateSessionImages(sessions);
+			if (count > 0) {
+				sessionsStore.set('sessions', relocated);
+				logger.info(
+					`Relocated ${count} inline session image(s) out of maestro-sessions.json`,
+					'Sessions'
+				);
+				logger.debug(`Loaded ${relocated.length} sessions from store`, 'Sessions');
+				return relocated;
+			}
+		} catch (err) {
+			// Never let image relocation block loading sessions - fall through and
+			// return the sessions as-is; the write-boundary relocation will retry.
+			logger.warn(
+				`Session image relocation on load failed: ${(err as Error).message}`,
+				'Sessions',
+				err
+			);
+		}
 		logger.debug(`Loaded ${sessions.length} sessions from store`, 'Sessions');
 		return sessions;
 	});
 
+	// Resolve a `maestro-image://` reference (or passthrough data URL) back to a
+	// data URL. Used by surfaces that cannot load the maestro-image protocol
+	// directly (HTML export, clipboard copy, and any renderer code that needs the
+	// raw bytes rather than an <img src>).
+	ipcMain.handle('images:resolve', async (_, ref: string): Promise<string | null> => {
+		return resolveToDataUrl(ref);
+	});
+
 	ipcMain.handle('sessions:getActiveSessionId', async () => {
+		// Read-through the pending value so a debounced-but-not-yet-flushed write
+		// is still visible to readers.
+		if (pendingActiveSessionId !== null) return pendingActiveSessionId;
 		return sessionsStore.get('activeSessionId', '');
 	});
 
 	ipcMain.handle('sessions:setActiveSessionId', async (_, id: string) => {
-		sessionsStore.set('activeSessionId', id);
+		// Coalesce rapid navigation into one disk write (see flushActiveSessionId).
+		pendingActiveSessionId = id;
+		if (activeSessionIdTimer) clearTimeout(activeSessionIdTimer);
+		activeSessionIdTimer = setTimeout(flushActiveSessionId, ACTIVE_SESSION_ID_DEBOUNCE_MS);
 	});
 
 	/**
@@ -172,7 +272,11 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 	 */
 	ipcMain.handle(
 		'sessions:setMany',
-		async (_, updates: StoredSession[] = [], removeIds: string[] = []) => {
+		async (_, rawUpdates: StoredSession[] = [], removeIds: string[] = []) => {
+			// Relocate any freshly-pasted inline images (data URLs) in the dirty
+			// sessions to the image store before they hit disk, so the sessions
+			// JSON only ever grows by lightweight refs.
+			const { sessions: updates } = await relocateSessionImages(rawUpdates);
 			const previousSessions = sessionsStore.get('sessions', []);
 			const previousMap = new Map(previousSessions.map((s) => [s.id, s]));
 			const removeSet = new Set(removeIds);
@@ -289,7 +393,11 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 		}
 	);
 
-	ipcMain.handle('sessions:setAll', async (_, sessions: StoredSession[]) => {
+	ipcMain.handle('sessions:setAll', async (_, rawSessions: StoredSession[]) => {
+		// Relocate inline images (data URLs) out of the sessions before they hit
+		// disk. setAll is the bootstrap/first-flush path, so this also migrates a
+		// legacy in-memory sessions tree the first time it is persisted.
+		const { sessions } = await relocateSessionImages(rawSessions);
 		// Get previous sessions to detect changes
 		const previousSessions = sessionsStore.get('sessions', []);
 		const previousSessionMap = new Map(previousSessions.map((s) => [s.id, s]));

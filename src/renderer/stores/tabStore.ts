@@ -56,7 +56,8 @@ import {
 	setTerminalTabStartupCommand as setTerminalTabStartupCommandHelper,
 	getTerminalSessionId,
 } from '../utils/terminalTabHelpers';
-import { useSessionStore, selectActiveSession } from './sessionStore';
+import { useSessionStore, selectActiveSession, updateSessionWith } from './sessionStore';
+import { renameGroup as renameGroupHelper } from '../utils/panelLayout';
 import { logger } from '../utils/logger';
 
 /**
@@ -190,6 +191,14 @@ export interface TabStoreActions {
 	updateTabName: (tabId: string, name: string | null) => void;
 
 	/**
+	 * Rename a tiled tab group (the group chip). Extends the tab-rename path to the
+	 * `'group'` ref: trims the input and falls back to `fallbackName` (the group's
+	 * auto-generated name) when the result is empty, so clearing the field never
+	 * leaves an unnamed chip. Persisted via updateSessionWith.
+	 */
+	renameGroup: (groupId: string, name: string, fallbackName: string) => void;
+
+	/**
 	 * Toggle read-only mode on an AI tab.
 	 */
 	toggleReadOnly: (tabId: string) => void;
@@ -298,6 +307,14 @@ export interface TabStoreActions {
 	 * Toggle edit mode on a file preview tab.
 	 */
 	toggleFileTabEditMode: (tabId: string) => void;
+
+	/**
+	 * Set edit mode on a file preview tab to an explicit value. FilePreview's
+	 * setMarkdownEditMode expects a boolean setter (not a toggle), so tiled panes -
+	 * which drive the store directly rather than through the active-tab handlers -
+	 * use this to enter/leave edit mode.
+	 */
+	setFileTabEditMode: (tabId: string, editMode: boolean) => void;
 
 	/**
 	 * Set or clear the preview tier override on a file preview tab.
@@ -520,6 +537,12 @@ export const useTabStore = create<TabStore>()((set) => ({
 
 	updateTabName: (tabId, name) => updateAiTab(tabId, { name }),
 
+	renameGroup: (groupId, name, fallbackName) => {
+		const session = getActiveSession();
+		if (!session) return;
+		updateSessionWith(session.id, (s) => renameGroupHelper(s, groupId, name, fallbackName));
+	},
+
 	toggleReadOnly: (tabId) => {
 		const session = getActiveSession();
 		if (!session) return;
@@ -660,6 +683,8 @@ export const useTabStore = create<TabStore>()((set) => ({
 		if (!tab) return;
 		updateFileTab(tabId, { editMode: !tab.editMode });
 	},
+
+	setFileTabEditMode: (tabId, editMode) => updateFileTab(tabId, { editMode }),
 
 	setFileTabPreviewTier: (tabId, tier) => updateFileTab(tabId, { previewTierOverride: tier }),
 

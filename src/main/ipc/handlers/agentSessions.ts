@@ -21,7 +21,7 @@ import os from 'os';
 import fs from 'fs/promises';
 import { logger } from '../../utils/logger';
 import { withIpcErrorLogging } from '../../utils/ipcHandler';
-import { isWebContentsAvailable } from '../../utils/safe-send';
+import { createSafeSend } from '../../utils/safe-send';
 import { getSessionStorage, hasSessionStorage, getAllSessionStorages } from '../../agents';
 import { getSshRemoteById as getSshRemoteByIdFromStore } from '../../stores';
 import { calculateModelCost, computeClaudeUsageCost } from '../../utils/pricing';
@@ -43,6 +43,12 @@ import type {
 } from '../../agents';
 import type { GlobalAgentStats, ProviderStats, SshRemoteConfig } from '../../../shared/types';
 import { captureException } from '../../utils/sentry';
+import {
+	snapshotStarredTranscript,
+	deleteStarredMirror,
+	restoreStarredTranscript,
+	listMirroredStarredSessions,
+} from '../../storage/starred-transcript-mirror';
 import { getHistoryManager } from '../../history-manager';
 
 // Re-export for backwards compatibility
@@ -362,6 +368,7 @@ function aggregateProviderStats(
  */
 export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDependencies): void {
 	const getMainWindow = deps?.getMainWindow;
+	const safeSend = createSafeSend(getMainWindow ?? (() => null));
 
 	// ============ List Sessions ============
 
@@ -445,6 +452,14 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 
 				// Get SSH config if provided
 				const sshConfig = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
+
+				// Rehydrate an aged-out starred session: on the initial load of a LOCAL
+				// session, if the provider transcript is gone but we hold a mirror, copy
+				// it back to the provider's path so the read below (and a later native
+				// --resume) finds it. No-op/cheap when the provider file still exists.
+				if (!sshConfig && !options?.offset) {
+					await restoreStarredTranscript({ agentId, projectPath, sessionId });
+				}
 
 				const result = await storage.readSessionMessages(
 					projectPath,
@@ -706,6 +721,33 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 					logger.warn(`Failed to merge history-derived named sessions: ${error}`, LOG_CONTEXT);
 				}
 
+				// Merge in starred sessions whose provider transcript has aged out but
+				// which we still hold a mirror for. Without this they'd be dropped by the
+				// fs.stat gates above and vanish from the Starred list; the mirror lets
+				// the row survive (and rehydrate on click). Keyed by projectPath:sessionId
+				// to match the dedupe used above.
+				try {
+					const seenFinal = new Set(
+						allNamedSessions.map((s) => `${s.projectPath}:${s.agentSessionId}`)
+					);
+					for (const entry of await listMirroredStarredSessions()) {
+						const key = `${entry.projectPath}:${entry.sessionId}`;
+						if (seenFinal.has(key)) continue;
+						seenFinal.add(key);
+						allNamedSessions.push({
+							agentId: entry.agentId,
+							agentSessionId: entry.sessionId,
+							projectPath: entry.projectPath,
+							sessionName: entry.sessionName ?? entry.sessionId,
+							starred: true,
+							lastActivityAt: entry.mirroredAtMs,
+						});
+					}
+				} catch (error) {
+					void captureException(error);
+					logger.warn(`Failed to merge mirrored starred sessions: ${error}`, LOG_CONTEXT);
+				}
+
 				logger.info(
 					`Found ${allNamedSessions.length} named sessions across all providers`,
 					LOG_CONTEXT
@@ -822,6 +864,34 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 				}
 				originsStore.set('origins', allOrigins);
 				logger.info(`Set session starred for ${agentId}/${sessionId}: ${starred}`, LOG_CONTEXT);
+
+				// Keep Maestro's own transcript mirror in sync with the star: snapshot
+				// on star so the conversation survives provider-side deletion, drop the
+				// mirror on unstar so it ages out naturally again. Fire-and-forget - the
+				// star toggle must not block on disk I/O.
+				if (starred) {
+					const sessionName = allOrigins[agentId]?.[projectPath]?.[sessionId]?.sessionName;
+					void snapshotStarredTranscript({ agentId, projectPath, sessionId, sessionName });
+				} else {
+					void deleteStarredMirror({ agentId, sessionId });
+				}
+			}
+		)
+	);
+
+	// ============ Snapshot Starred Transcript (mirror on tab close) ============
+
+	ipcMain.handle(
+		'agentSessions:snapshotStarredTranscript',
+		withIpcErrorLogging(
+			handlerOpts('snapshotStarredTranscript'),
+			async (
+				agentId: string,
+				projectPath: string,
+				sessionId: string,
+				sessionName?: string
+			): Promise<void> => {
+				await snapshotStarredTranscript({ agentId, projectPath, sessionId, sessionName });
 			}
 		)
 	);
@@ -831,8 +901,6 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 	ipcMain.handle(
 		'agentSessions:getGlobalStats',
 		withIpcErrorLogging(handlerOpts('getGlobalStats'), async (): Promise<GlobalAgentStats> => {
-			const mainWindow = getMainWindow?.();
-
 			// Helper to build result from cache
 			const buildResultFromCache = (
 				cache: GlobalStatsCache,
@@ -900,10 +968,8 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 
 			// Helper to send progressive updates
 			const sendUpdate = (cache: GlobalStatsCache, isComplete: boolean) => {
-				if (isWebContentsAvailable(mainWindow)) {
-					const stats = buildResultFromCache(cache, isComplete);
-					mainWindow.webContents.send('agentSessions:globalStatsUpdate', stats);
-				}
+				const stats = buildResultFromCache(cache, isComplete);
+				safeSend('agentSessions:globalStatsUpdate', stats);
 			};
 
 			// Load existing cache or create new one
@@ -999,8 +1065,19 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 						sendUpdate(cache, false);
 					}
 				} catch (error) {
-					void captureException(error);
-					logger.warn(`Failed to parse Claude session: ${file.sessionKey}`, LOG_CONTEXT, { error });
+					// A session file too large to read into a single V8 string throws
+					// `RangeError: Invalid string length` (MAESTRO-M9). That's an expected
+					// boundary for huge sessions, not a bug - skip it and keep aggregating
+					// the rest. Mirrors the storage-layer carve-out in
+					// claude-/codex-session-storage.ts.
+					if (error instanceof RangeError) {
+						logger.warn(`Claude session file too large to parse: ${file.sessionKey}`, LOG_CONTEXT);
+					} else {
+						void captureException(error);
+						logger.warn(`Failed to parse Claude session: ${file.sessionKey}`, LOG_CONTEXT, {
+							error,
+						});
+					}
 				}
 			}
 
@@ -1024,8 +1101,17 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 						sendUpdate(cache, false);
 					}
 				} catch (error) {
-					void captureException(error);
-					logger.warn(`Failed to parse Codex session: ${file.sessionKey}`, LOG_CONTEXT, { error });
+					// See the Claude loop above: oversized session files throw
+					// `RangeError: Invalid string length` (MAESTRO-M9), an expected
+					// boundary we skip rather than report.
+					if (error instanceof RangeError) {
+						logger.warn(`Codex session file too large to parse: ${file.sessionKey}`, LOG_CONTEXT);
+					} else {
+						void captureException(error);
+						logger.warn(`Failed to parse Codex session: ${file.sessionKey}`, LOG_CONTEXT, {
+							error,
+						});
+					}
 				}
 			}
 

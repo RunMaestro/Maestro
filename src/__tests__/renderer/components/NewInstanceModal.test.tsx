@@ -738,7 +738,9 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined, // enableMaestroP unset: API is the default for Claude Code (Adaptive Mode off)
 				undefined, // maestroPPath
-				undefined // maestroPMode unset until the user opts into TUI/Dynamic
+				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
+				true, // retryOnAvailabilityErrors
+				true // retryOnTokenExhaustion
 			);
 		});
 
@@ -790,7 +792,9 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined, // enableMaestroP unset: API is the default for Claude Code (Adaptive Mode off)
 				undefined, // maestroPPath
-				undefined // maestroPMode unset until the user opts into TUI/Dynamic
+				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
+				true, // retryOnAvailabilityErrors
+				true // retryOnTokenExhaustion
 			);
 		});
 
@@ -842,7 +846,9 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined, // enableMaestroP unset: API is the default for Claude Code (Adaptive Mode off)
 				undefined, // maestroPPath
-				undefined // maestroPMode unset until the user opts into TUI/Dynamic
+				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
+				true, // retryOnAvailabilityErrors
+				true // retryOnTokenExhaustion
 			);
 		});
 	});
@@ -895,7 +901,9 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined, // enableMaestroP unset: API is the default for Claude Code (Adaptive Mode off)
 				undefined, // maestroPPath
-				undefined // maestroPMode unset until the user opts into TUI/Dynamic
+				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
+				true, // retryOnAvailabilityErrors
+				true // retryOnTokenExhaustion
 			);
 			expect(onClose).toHaveBeenCalled();
 		});
@@ -1411,7 +1419,9 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined, // enableMaestroP unset: API is the default for Claude Code (Adaptive Mode off)
 				undefined, // maestroPPath
-				undefined // maestroPMode unset until the user opts into TUI/Dynamic
+				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
+				true, // retryOnAvailabilityErrors
+				true // retryOnTokenExhaustion
 			);
 		});
 
@@ -1563,7 +1573,9 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined, // enableMaestroP unset: API is the default for Claude Code (Adaptive Mode off)
 				undefined, // maestroPPath
-				undefined // maestroPMode unset until the user opts into TUI/Dynamic
+				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
+				true, // retryOnAvailabilityErrors
+				true // retryOnTokenExhaustion
 			);
 		});
 	});
@@ -2722,7 +2734,9 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined, // enableMaestroP
 				undefined, // maestroPPath
-				undefined // maestroPMode
+				undefined, // maestroPMode
+				true, // retryOnAvailabilityErrors
+				true // retryOnTokenExhaustion
 			);
 		});
 
@@ -2951,7 +2965,9 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined, // enableMaestroP unset: API is the default for Claude Code (Adaptive Mode off)
 				undefined, // maestroPPath
-				undefined // maestroPMode unset until the user opts into TUI/Dynamic
+				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
+				true, // retryOnAvailabilityErrors
+				true // retryOnTokenExhaustion
 			);
 		});
 
@@ -3071,7 +3087,9 @@ describe('NewInstanceModal', () => {
 				// SSH case above.
 				undefined, // enableMaestroP unset: API is the default for Claude Code (Adaptive Mode off)
 				undefined, // maestroPPath
-				undefined // maestroPMode unset until the user opts into TUI/Dynamic
+				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
+				true, // retryOnAvailabilityErrors
+				true // retryOnTokenExhaustion
 			);
 		});
 

@@ -141,6 +141,11 @@ export function addTerminalTab(session: Session, tab: TerminalTab): Session {
 		activeTerminalTabId: tab.id,
 		activeFileTabId: null,
 		activeBrowserTabId: null,
+		// A newly-created standalone terminal takes over the panel, so it must leave
+		// any active tiled group (mirrors selectTerminalTab). Without this the group
+		// stays active, TiledLayout keeps publishing pane rects, and a tiled browser
+		// overlay bleeds over the terminal view (its webview sits above at z-index 2).
+		activeGroupId: null,
 		unifiedTabOrder: insertAfterActiveInUnifiedTabOrder(session, newTabRef),
 		// Bump strictly past the larger of the chosen id and the bumped counter so we
 		// never hand out the same id twice within a session.
@@ -275,6 +280,8 @@ export function selectTerminalTab(session: Session, tabId: string): Session {
 		activeTerminalTabId: tabId,
 		activeFileTabId: null,
 		activeBrowserTabId: null,
+		// Selecting a standalone terminal tab leaves any active tiled group.
+		activeGroupId: null,
 	};
 }
 

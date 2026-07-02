@@ -38,6 +38,29 @@ function setPolicy(keepAlive: 'off' | 'recent' | 'all', limit = 10) {
 	useSettingsStore.setState({ browserTabKeepAlive: keepAlive, browserTabKeepAliveLimit: limit });
 }
 
+/** Build an active group whose layout tiles the given browser tab ids as leaves. */
+function withBrowserGroup(overrides: Partial<Session>, browserLeafIds: string[]): Session {
+	const children = browserLeafIds.map((id, i) => ({
+		kind: 'leaf' as const,
+		id: `leaf-${i}`,
+		tab: { type: 'browser' as const, id },
+	}));
+	const group = {
+		id: 'g1',
+		name: 'Group',
+		createdAt: 0,
+		focusedPaneId: 'leaf-0',
+		layout: {
+			kind: 'split' as const,
+			id: 'split-1',
+			direction: 'row' as const,
+			sizes: children.map(() => 1 / children.length),
+			children,
+		},
+	};
+	return makeSession({ ...overrides, tabGroups: [group], activeGroupId: 'g1' } as Partial<Session>);
+}
+
 describe('useBrowserTabMounting', () => {
 	beforeEach(() => {
 		setPolicy('off', 10);
@@ -112,6 +135,56 @@ describe('useBrowserTabMounting', () => {
 		expect(result.current).toEqual(['a', 'b']);
 		rerender({ s: makeSession({ browserTabs: [makeBrowserTab('a')], activeBrowserTabId: 'a' }) });
 		expect(result.current).toEqual(['a']);
+	});
+
+	it("'off' still mounts a browser tab tiled into the active group (no active standalone tab)", () => {
+		// Regression: while a group is active, activeBrowserTabId is null, so 'off'
+		// used to mount nothing - a tiled browser pane rendered blank.
+		const session = withBrowserGroup(
+			{
+				browserTabs: [makeBrowserTab('a'), makeBrowserTab('b'), makeBrowserTab('c')],
+				activeBrowserTabId: null,
+			},
+			['b']
+		);
+		const { result } = renderHook(() => useBrowserTabMounting(session));
+		expect(result.current).toEqual(['b']);
+	});
+
+	it("'off' mounts both the active standalone tab and a tiled group browser pane", () => {
+		const session = withBrowserGroup(
+			{
+				browserTabs: [makeBrowserTab('a'), makeBrowserTab('b'), makeBrowserTab('c')],
+				activeBrowserTabId: 'a',
+			},
+			['c']
+		);
+		const { result } = renderHook(() => useBrowserTabMounting(session));
+		// Emitted in live order: a (active) and c (tiled).
+		expect(result.current).toEqual(['a', 'c']);
+	});
+
+	it("'recent' mounts tiled group browser panes beyond the LRU cap", () => {
+		setPolicy('recent', 1);
+		// Two browser panes tiled; even with cap 1 both must mount.
+		const session = withBrowserGroup(
+			{
+				browserTabs: [makeBrowserTab('a'), makeBrowserTab('b'), makeBrowserTab('c')],
+				activeBrowserTabId: null,
+			},
+			['a', 'c']
+		);
+		const { result } = renderHook(() => useBrowserTabMounting(session));
+		expect(result.current).toEqual(['a', 'c']);
+	});
+
+	it('does not mount a group browser leaf whose tab no longer exists', () => {
+		const session = withBrowserGroup(
+			{ browserTabs: [makeBrowserTab('a')], activeBrowserTabId: null },
+			['gone']
+		);
+		const { result } = renderHook(() => useBrowserTabMounting(session));
+		expect(result.current).toEqual([]);
 	});
 
 	it("does not keep a previous agent's tabs alive after switching agents", () => {

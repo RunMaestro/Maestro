@@ -18,6 +18,7 @@ import { useBatchStore } from '../../../stores/batchStore';
 import { useSessionStore, selectSessionById } from '../../../stores/sessionStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { countUnfinishedTasks, findPendingHitlGate, uncheckAllTasks } from '../batchUtils';
+import { detectHaltMarker } from '../../../../shared/autorun/haltMarker';
 import { DEFAULT_BATCH_STATE, type BatchAction } from '../batchReducer';
 import { createLoopSummaryEntry } from './batchLoopSummary';
 import {
@@ -465,6 +466,13 @@ export function useBatchRunner({
 
 			// Track stalled documents (document filename -> stall reason)
 			const stalledDocuments: Map<string, string> = new Map();
+
+			// Set when an agent writes a `<!-- maestro:halt: reason -->` marker into a
+			// document mid-run. A halt aborts the whole playbook immediately: no more
+			// tasks in the current document, no remaining documents, no further loop
+			// iterations. Mirrors the CLI batch processor so desktop Auto Run honors
+			// the same agent-driven early-exit contract. (#231)
+			let haltRequest: { document: string; reason: string } | null = null;
 
 			// Track the line of the currently-active HITL gate (null when none).
 			// Used to (a) dedupe the sticky toast on Resume-without-tick —
@@ -1106,6 +1114,26 @@ export function useBatchRunner({
 							docCheckedCount = newCheckedCount;
 							remainingTasks = newRemainingTasks;
 							docContent = taskResult.contentAfterTask;
+
+							// Halt marker: the agent can write `<!-- maestro:halt: reason -->`
+							// into the document to stop the whole run now. Checked on the
+							// post-task content (after the synopsis/history for this task was
+							// already recorded above) so the work that led to the halt is still
+							// captured. Breaks the task loop; the document and outer loops below
+							// pick up `haltRequest` and finalize. (#231)
+							const haltMarker = detectHaltMarker(taskResult.contentAfterTask);
+							if (haltMarker.halted) {
+								haltRequest = {
+									document: docEntry.filename,
+									reason: haltMarker.reason || 'Halted by agent',
+								};
+								window.maestro.logger.autorun('Auto Run halted by agent', session.name, {
+									document: docEntry.filename,
+									reason: haltRequest.reason,
+									loopNumber: loopIteration + 1,
+								});
+								break;
+							}
 						} catch (error) {
 							progressPoll.stop();
 							logger.error(
@@ -1151,6 +1179,12 @@ export function useBatchRunner({
 
 					// Check for stop request before moving to next document
 					if (stopRequestedRefs.current[sessionId]) {
+						break;
+					}
+
+					// An agent halted the run from inside this document - skip any remaining
+					// documents and let the outer loop finalize. (#231)
+					if (haltRequest) {
 						break;
 					}
 
@@ -1211,6 +1245,21 @@ export function useBatchRunner({
 						// Working copy still serves as record of the attempt
 						workingCopies.delete(docEntry.filename);
 					}
+				}
+
+				// An agent halted the run from inside a document - stop looping entirely,
+				// record the terminal reason in run history, and surface a toast so the
+				// user sees why Auto Run ended without opening the History panel. (#231)
+				if (haltRequest) {
+					addFinalLoopSummary(`Halted by agent: ${haltRequest.reason}`);
+					notifyToast({
+						color: 'theme',
+						title: 'Auto Run halted by agent',
+						message: haltRequest.reason,
+						project: session.name,
+						sessionId,
+					});
+					break;
 				}
 
 				// Note: We no longer break immediately when a document stalls.

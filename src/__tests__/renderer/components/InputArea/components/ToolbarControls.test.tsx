@@ -4,8 +4,35 @@ import { ToolbarControls } from '../../../../../renderer/components/InputArea/co
 import { createInputAreaSession, inputAreaTheme } from '../_fixtures';
 
 describe('ToolbarControls', () => {
+	const originalMatchMedia = window.matchMedia;
+
+	// isCoarsePointer() reads window.matchMedia('(pointer: coarse)'); drive it so
+	// the touch-only mic button can be tested. jsdom has no matchMedia, so the
+	// default (undefined) already yields a fine (non-coarse) pointer.
+	function setCoarsePointer(coarse: boolean) {
+		Object.defineProperty(window, 'matchMedia', {
+			writable: true,
+			configurable: true,
+			value: (query: string) => ({
+				matches: coarse,
+				media: query,
+				onchange: null,
+				addEventListener: vi.fn(),
+				removeEventListener: vi.fn(),
+				addListener: vi.fn(),
+				removeListener: vi.fn(),
+				dispatchEvent: vi.fn(),
+			}),
+		});
+	}
+
 	afterEach(() => {
 		vi.restoreAllMocks();
+		Object.defineProperty(window, 'matchMedia', {
+			writable: true,
+			configurable: true,
+			value: originalMatchMedia,
+		});
 	});
 
 	function renderToolbar(overrides = {}) {
@@ -100,5 +127,54 @@ describe('ToolbarControls', () => {
 		expect(screen.queryByTitle(/Open Prompt Composer/)).not.toBeInTheDocument();
 		expect(screen.queryByTitle('Attach Image')).not.toBeInTheDocument();
 		expect(screen.queryByTitle(/Save to History/)).not.toBeInTheDocument();
+	});
+
+	describe('voice input mic button', () => {
+		it('shows the mic on coarse pointers when speech is supported and toggles it', () => {
+			setCoarsePointer(true);
+			const onToggleVoiceInput = vi.fn();
+			renderToolbar({ voiceSupported: true, onToggleVoiceInput });
+
+			const mic = screen.getByRole('button', { name: 'Start voice input' });
+			expect(mic).toBeInTheDocument();
+			expect(mic).toHaveAttribute('aria-pressed', 'false');
+
+			fireEvent.click(mic);
+			expect(onToggleVoiceInput).toHaveBeenCalled();
+		});
+
+		it('reflects the listening state via aria-pressed and title', () => {
+			setCoarsePointer(true);
+			renderToolbar({ voiceSupported: true, onToggleVoiceInput: vi.fn(), isVoiceListening: true });
+
+			const mic = screen.getByRole('button', { name: 'Stop voice input' });
+			expect(mic).toHaveAttribute('aria-pressed', 'true');
+		});
+
+		it('hides the mic on fine (mouse) pointers even when supported', () => {
+			setCoarsePointer(false);
+			renderToolbar({ voiceSupported: true, onToggleVoiceInput: vi.fn() });
+
+			expect(screen.queryByRole('button', { name: /voice input/ })).not.toBeInTheDocument();
+		});
+
+		it('hides the mic when speech recognition is unsupported', () => {
+			setCoarsePointer(true);
+			renderToolbar({ voiceSupported: false, onToggleVoiceInput: vi.fn() });
+
+			expect(screen.queryByRole('button', { name: /voice input/ })).not.toBeInTheDocument();
+		});
+
+		it('hides the mic in terminal mode', () => {
+			setCoarsePointer(true);
+			renderToolbar({
+				session: createInputAreaSession({ inputMode: 'terminal' }),
+				isTerminalMode: true,
+				voiceSupported: true,
+				onToggleVoiceInput: vi.fn(),
+			});
+
+			expect(screen.queryByRole('button', { name: /voice input/ })).not.toBeInTheDocument();
+		});
 	});
 });

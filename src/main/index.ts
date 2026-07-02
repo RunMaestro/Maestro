@@ -82,6 +82,7 @@ import {
 	registerTabNamingHandlers,
 	registerAgentErrorHandlers,
 	registerDirectorNotesHandlers,
+	registerCrossAgentHandlers,
 	registerCueHandlers,
 	registerCueBackupHandlers,
 	registerWakatimeHandlers,
@@ -91,6 +92,9 @@ import {
 	registerMemoryHandlers,
 	registerCoworkingHandlers,
 	registerBrowserSessionHandlers,
+	registerWindowsHandlers,
+	wireWindowRegistryBroadcast,
+	wireEmptySecondaryWindowAutoClose,
 	setupLoggerEventForwarding,
 	cleanupAllGroomingSessions,
 	getActiveGroomingSessionCount,
@@ -98,7 +102,7 @@ import {
 import { startCoworkingBridge, stopCoworkingBridge } from './coworking/coworking-bridge';
 import { ensureCoworkingServerScript } from './coworking/coworking-server-paths';
 import { resolveSessionFromPidWalk } from './coworking/pid-resolution';
-import { initializeStatsDB, closeStatsDB, getStatsDB } from './stats';
+import { initializeStatsDB, closeStatsDB, getStatsDB, wireMultiWindowTelemetry } from './stats';
 import { groupChatEmitters } from './ipc/handlers/groupChat';
 import {
 	routeModeratorResponse,
@@ -123,6 +127,7 @@ import { needsSessionRecovery, initiateSessionRecovery } from './group-chat/sess
 import { initializePrompts, getPrompt, savePrompt } from './prompt-manager';
 import { captureException } from './utils/sentry';
 import { initializeSessionStorages } from './storage';
+import { resolveToFilePath, configureImageStore } from './storage/session-image-store';
 import { initializeOutputParsers } from './parsers';
 import { calculateContextTokens } from './parsers/usage-aggregator';
 import {
@@ -160,6 +165,16 @@ import {
 	createQuitHandler,
 	type QuitHandler,
 } from './app-lifecycle';
+// Multi-window registry (single source of truth for window<->session ownership)
+import { WindowRegistry } from './window-registry';
+// Multi-window startup restore: turn the persisted MultiWindowState back into
+// window-creation specs (pruning agents that no longer exist).
+import {
+	planWindowRestore,
+	pickFocusWindowSpec,
+	saveWindowState,
+} from './window-state-persistence';
+import type { WindowState as SharedWindowState } from '../shared/window-types';
 // Phase 3 refactoring - process listeners
 import { setupProcessListeners as setupProcessListenersModule } from './process-listeners';
 import { setupWakaTimeListener } from './process-listeners/wakatime-listener';
@@ -189,9 +204,21 @@ const isDevelopment = process.env.NODE_ENV === 'development';
 // scheme so static and dynamic ES module imports succeed under a normal
 // http(s)-style origin.
 const RENDERER_SCHEME = 'app';
-if (!isDevelopment) {
-	protocol.registerSchemesAsPrivileged([
+// Serves pasted conversation images relocated out of maestro-sessions.json by
+// the session image store (see src/main/storage/session-image-store.ts). Refs
+// look like `maestro-image://store/<sha256>.<ext>` and are loaded directly by
+// `<img src>` in the transcript, so the image bytes never re-enter the JSON
+// blob or the IPC payload. Registered in dev AND prod so images render in both.
+const IMAGE_SCHEME = 'maestro-image';
+{
+	const privilegedSchemes: Electron.CustomScheme[] = [
 		{
+			scheme: IMAGE_SCHEME,
+			privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
+		},
+	];
+	if (!isDevelopment) {
+		privilegedSchemes.push({
 			scheme: RENDERER_SCHEME,
 			privileges: {
 				standard: true,
@@ -200,8 +227,9 @@ if (!isDevelopment) {
 				corsEnabled: true,
 				stream: true,
 			},
-		},
-	]);
+		});
+	}
+	protocol.registerSchemesAsPrivileged(privilegedSchemes);
 }
 
 // Capture the production data path before any modification
@@ -237,6 +265,11 @@ process.env.MAESTRO_USER_DATA = app.getPath('userData');
 // All stores are initialized via initializeStores() from ./stores module
 
 const { syncPath, bootstrapStore } = initializeStores({ productionDataPath });
+
+// Point the session image store at the sync path so pasted conversation images
+// live alongside the sessions file (in <syncPath>/session-images/) rather than
+// inline as base64 inside maestro-sessions.json.
+configureImageStore(syncPath);
 
 // Get early settings before Sentry init (for crash reporting and GPU acceleration)
 const { crashReportingEnabled, disableGpuAcceleration, useNativeTitleBar, autoHideMenuBar } =
@@ -297,6 +330,15 @@ if (crashReportingEnabled && !isDevelopment) {
 				ipcMode: IPCMode.Classic,
 				// Only send errors, not performance data
 				tracesSampleRate: 0,
+				// PERF: drop console breadcrumbs. Sentry's default Breadcrumbs
+				// integration wraps every console.* to capture a breadcrumb, and a
+				// field trace showed that wrapper (addConsoleBreadcrumb) as the single
+				// largest JS CPU consumer. Our logger console.*s on every info+ entry,
+				// so this taxed every log line. Console output is still retained via the
+				// logger, file logs, and the LogViewer; crash reporting is unaffected.
+				beforeBreadcrumb(breadcrumb) {
+					return breadcrumb.category === 'console' ? null : breadcrumb;
+				},
 				// Filter out sensitive data + unfixable OS / Chromium / user-env noise.
 				// See src/shared/sentryFilters.ts for the full classification.
 				beforeSend(event) {
@@ -363,8 +405,11 @@ let cueEngine: CueEngine | null = null;
 let usageRefreshScheduler: UsageRefreshScheduler | null = null;
 let interactiveReplayController: InteractiveReplayController<ProcessSpawnConfig> | null = null;
 
-// Create safeSend with dependency injection (Phase 2 refactoring)
-const safeSend = createSafeSend(() => mainWindow);
+// Create safeSend with dependency injection (Phase 2 refactoring).
+// Broadcasts to EVERY open window, not just the primary one - see the
+// MULTI-WINDOW INVARIANT in safe-send.ts. Renderers filter agent-scoped
+// process:* events to the agents they own.
+const safeSend = createSafeSend(() => BrowserWindow.getAllWindows());
 
 // Hydrate capability snapshots from disk and wire IPC broadcaster so the
 // renderer status pills update live as detection / spawn-error events fire.
@@ -378,7 +423,9 @@ const cliWatcher = createCliWatcher({
 
 // Create settings file watcher for external changes (e.g., from maestro-cli)
 const settingsWatcher = createSettingsWatcher({
-	getMainWindow: () => mainWindow,
+	// Broadcast to EVERY open window so a settings change (from maestro-cli or
+	// another Maestro window) reloads in all of them - not just the main window.
+	getBroadcastWindows: () => BrowserWindow.getAllWindows(),
 	getSettingsPath: () => syncPath,
 	getAgentConfigsPath: () => productionDataPath,
 });
@@ -395,6 +442,13 @@ const devServerUrl = `http://localhost:${devServerPort}`;
 // installer is orphaned by before-quit preventDefault).
 let quitHandler: QuitHandler | null = null;
 
+// Registry that tracks every BrowserWindow and which agents (sessions) live in
+// each - the single source of truth for window<->session ownership. The object
+// is constructed here (it has no app-ready dependencies); it stays empty until
+// the primary window registers itself as `isMain` when createWindow() runs on
+// app-ready, and secondary windows register via createSecondaryWindow.
+const windowRegistry = new WindowRegistry();
+
 // Create window manager with dependency injection (Phase 4 refactoring)
 const windowManager = createWindowManager({
 	windowStateStore,
@@ -405,6 +459,14 @@ const windowManager = createWindowManager({
 	useNativeTitleBar,
 	autoHideMenuBar,
 	getConfirmQuit: () => quitHandler?.confirmQuit,
+	// Multi-window wiring: the manager registers the primary as `isMain` and every
+	// secondary window it builds. `getIsQuitting` lets a closing secondary skip
+	// registry churn once a quit is already in flight (the registry dies with the
+	// process anyway). `settingsStore` is threaded for the per-window panel/session
+	// persistence later phases consume.
+	windowRegistry,
+	settingsStore: store,
+	getIsQuitting: () => quitHandler?.isQuitConfirmed() ?? false,
 });
 
 // Create web server factory with dependency injection (Phase 2 refactoring)
@@ -437,11 +499,25 @@ const createWebServer = createWebServerFactory({
 // - Window state persistence (position, size, maximized/fullscreen)
 // - DevTools installation in development
 // - Auto-updater initialization in production
-function createWindow() {
-	mainWindow = windowManager.createWindow();
+function createWindow(options?: { sessionIds?: string[]; bounds?: Partial<SharedWindowState> }) {
+	mainWindow = windowManager.createWindow(options);
 	// Handle closed event to clear the reference
 	mainWindow.on('closed', () => {
 		mainWindow = null;
+
+		// The primary window is the app's anchor: it owns the auto-updater, the
+		// global hotkey, the deep-link target, and the quit-confirmation surface.
+		// When it closes while secondary windows are still open (multi-window),
+		// those windows are orphaned, so quit the whole app. app.quit() routes
+		// through the existing quit handler, preserving the updater/confirmation
+		// flow. When the primary is the LAST window, we defer to
+		// 'window-all-closed' instead (macOS stays alive for dock relaunch), and
+		// we skip if a quit is already in flight to avoid re-entrancy.
+		const otherWindowsOpen = BrowserWindow.getAllWindows().length > 0;
+		if (otherWindowsOpen && !quitHandler?.isQuitConfirmed()) {
+			logger.info('Primary window closed with secondary windows open, quitting app', 'Window');
+			app.quit();
+		}
 	});
 
 	// Kill all managed processes before the renderer reloads after a crash.
@@ -451,6 +527,62 @@ function createWindow() {
 	mainWindow.webContents.on('render-process-gone', () => {
 		processManager?.killAll();
 	});
+}
+
+/**
+ * Restore the saved multi-window layout on startup.
+ *
+ * Reads the persisted `MultiWindowState`, drops any owned agents that no longer
+ * exist, then recreates each saved window with its bounds and agent assignments
+ * through the window manager - the primary via {@link createWindow} (which
+ * anchors `mainWindow`) and the rest as secondary windows. Off-screen bounds are
+ * already guarded inside the window manager's `createBrowserWindow`.
+ *
+ * When there is no saved layout (a fresh install seeds an empty
+ * `MultiWindowState`, and a pre-migration store has none at all) it falls back
+ * to a single primary window using the legacy single-window bounds - identical
+ * to the previous startup behavior.
+ */
+function restoreWindows() {
+	// The set of agents that still exist, so a window never tries to restore a
+	// tab strip for an agent the user has since deleted.
+	const existingAgentIds = new Set<string>();
+	for (const session of sessionsStore.get('sessions', []) as Array<{ id?: unknown }>) {
+		if (typeof session?.id === 'string') existingAgentIds.add(session.id);
+	}
+
+	const specs = planWindowRestore(windowStateStore.get('multiWindow'), existingAgentIds);
+	if (specs.length === 0) {
+		// No saved multi-window layout - single primary window (backward compatible).
+		createWindow();
+		return;
+	}
+
+	logger.info(`Restoring ${specs.length} window(s) from saved layout`, 'Startup');
+
+	// The globally-active agent (Left Bar highlight) should be the window the user
+	// lands on. Windows are created primary-first, so without this the last-created
+	// secondary keeps OS focus and startup opens onto a window that isn't showing
+	// the active agent. Focus the window that owns the active agent (default the
+	// primary) once all windows exist, in creation order so `created[i]` maps to
+	// `specs[i]`.
+	const activeSessionId = sessionsStore.get('activeSessionId') as string | undefined;
+	const focusSpec = pickFocusWindowSpec(specs, activeSessionId);
+	const created: BrowserWindow[] = [];
+	for (const spec of specs) {
+		if (spec.isPrimary) {
+			createWindow({ sessionIds: spec.sessionIds, bounds: spec.bounds });
+			// createWindow anchors the primary on the module-level mainWindow.
+			if (mainWindow) created.push(mainWindow);
+		} else {
+			created.push(windowManager.createSecondaryWindow(spec.sessionIds, spec.bounds));
+		}
+	}
+
+	const focusWindow = focusSpec ? created[specs.indexOf(focusSpec)] : undefined;
+	if (focusWindow && !focusWindow.isDestroyed()) {
+		focusWindow.focus();
+	}
 }
 
 // Set up global error handlers for uncaught exceptions (Phase 4 refactoring)
@@ -466,6 +598,35 @@ if (!gotSingleInstanceLock) {
 app
 	.whenReady()
 	.then(async () => {
+		// Serve pasted conversation images relocated out of the sessions JSON by
+		// the session image store. `<img src="maestro-image://store/<sha>.<ext>">`
+		// resolves here to a file on disk - the bytes never live in the JSON blob
+		// or the IPC payload. Registered in dev AND prod. Traversal is guarded by
+		// resolveToFilePath (only lowercase-hex sha256 + known image ext resolve).
+		protocol.handle(IMAGE_SCHEME, async (request) => {
+			const filePath = resolveToFilePath(request.url);
+			if (!filePath) return new Response('bad request', { status: 400 });
+			try {
+				const data = await readFile(filePath);
+				const ext = path.extname(filePath).toLowerCase();
+				const contentType =
+					ext === '.svg'
+						? 'image/svg+xml'
+						: ext === '.jpg' || ext === '.jpeg'
+							? 'image/jpeg'
+							: `image/${ext.slice(1)}`;
+				return new Response(new Uint8Array(data), {
+					status: 200,
+					headers: { 'content-type': contentType, 'cache-control': 'max-age=31536000, immutable' },
+				});
+			} catch (err) {
+				if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') {
+					return new Response('not found', { status: 404 });
+				}
+				throw err;
+			}
+		});
+
 		// Serve the production renderer over `app://` so static and dynamic ES
 		// module imports succeed on Electron 41 (Chromium 138 blocks both under
 		// file://). `net.fetch` cannot read file:// URLs in Electron 41 either, so
@@ -607,9 +768,7 @@ app
 				}
 			},
 			emitModeResolved: (sessionId, resolution) => {
-				if (isWebContentsAvailable(mainWindow)) {
-					mainWindow!.webContents.send('process:claude-mode-resolved', sessionId, resolution);
-				}
+				safeSend('process:claude-mode-resolved', sessionId, resolution);
 			},
 			spawnReplay: (_sessionId, replayConfig) => {
 				processManager?.spawn(replayConfig);
@@ -986,9 +1145,9 @@ app
 			onStopCueRun: (runId) => stopCueRun(runId) || stopCueShellRun(runId) || stopCueCliRun(runId),
 			onLog: (_level, message, data) => {
 				logger.cue(message, 'Cue', data);
-				// Push activity updates to renderer
-				if (mainWindow && isWebContentsAvailable(mainWindow) && data) {
-					mainWindow.webContents.send('cue:activityUpdate', data);
+				// Push activity updates to renderer (and web-desktop bridge clients)
+				if (data) {
+					safeSend('cue:activityUpdate', data);
 				}
 			},
 			onPreventSleep: (reason) => powerManager.addBlockReason(reason),
@@ -1030,9 +1189,7 @@ app
 					`History file changed for session ${sessionId}, notifying renderer`,
 					'HistoryWatcher'
 				);
-				if (isWebContentsAvailable(mainWindow)) {
-					mainWindow.webContents.send('history:externalChange', sessionId);
-				}
+				safeSend('history:externalChange', sessionId);
 			});
 		} catch (error) {
 			void captureException(error);
@@ -1163,9 +1320,10 @@ app
 			Menu.setApplicationMenu(null);
 		}
 
-		// Create main window
-		logger.info('Creating main window', 'Startup');
-		createWindow();
+		// Restore the saved multi-window layout (or a single primary window when
+		// there is nothing saved - backward compatible).
+		logger.info('Restoring window layout', 'Startup');
+		restoreWindows();
 
 		// Wire the global "summon Maestro" hotkey. Register the saved binding (if
 		// any) and re-register live when the setting changes from any source
@@ -1174,6 +1332,7 @@ app
 		const initialHotkey = store.get('globalShowHotkey', []) as string[];
 		if (Array.isArray(initialHotkey) && initialHotkey.length > 0) {
 			const ok = setGlobalShowHotkey(initialHotkey);
+			// intentionally not bridged: window-specific
 			if (!ok && mainWindow && isWebContentsAvailable(mainWindow)) {
 				mainWindow.webContents.send('globalHotkey:registrationFailed', initialHotkey);
 			}
@@ -1181,6 +1340,7 @@ app
 		store.onDidChange('globalShowHotkey', (value) => {
 			const keys = Array.isArray(value) ? (value as string[]) : [];
 			const ok = setGlobalShowHotkey(keys);
+			// intentionally not bridged: window-specific
 			if (!ok && mainWindow && isWebContentsAvailable(mainWindow)) {
 				mainWindow.webContents.send('globalHotkey:registrationFailed', keys);
 			}
@@ -1218,6 +1378,7 @@ app
 		// This allows the renderer to refresh settings that may have been reset
 		powerMonitor.on('resume', () => {
 			logger.info('System resumed from sleep/suspend', 'PowerMonitor');
+			// intentionally not bridged: window-specific
 			if (isWebContentsAvailable(mainWindow)) {
 				mainWindow.webContents.send('app:systemResume');
 			}
@@ -1247,6 +1408,11 @@ app
 	});
 
 app.on('window-all-closed', () => {
+	// This fires only when every window (primary + any secondary windows) is
+	// closed, so the primary is necessarily gone by now. Closing a single
+	// secondary window while the primary stays open does NOT fire this event, so
+	// secondary windows never trigger a quit here (the primary's own `closed`
+	// handler covers the "primary gone, secondaries still open" case above).
 	if (!isMacOS()) {
 		app.quit();
 	} else {
@@ -1291,6 +1457,11 @@ quitHandler = createQuitHandler({
 	stopSettingsWatcher: () => settingsWatcher.stop(),
 	powerManager,
 	stopSessionCleanup,
+	getPersistedSessions: () => sessionsStore.get('sessions', []) as Array<Record<string, unknown>>,
+	// Multi-window persistence: snapshot every window's layout to the window-state
+	// store on quit so the next launch can restore it (see window-state-persistence).
+	windowStateStore,
+	getWindowRegistry: () => windowRegistry,
 });
 quitHandler.setup();
 
@@ -1312,6 +1483,7 @@ function setupIpcHandlers() {
 	// Git operations - extracted to src/main/ipc/handlers/git.ts
 	registerGitHandlers({
 		settingsStore: store,
+		getMainWindow: () => mainWindow,
 	});
 
 	// Auto Run operations - extracted to src/main/ipc/handlers/autorun.ts
@@ -1348,6 +1520,19 @@ function setupIpcHandlers() {
 		getProcessManager: () => processManager,
 		getAgentDetector: () => agentDetector,
 		agentConfigsStore,
+		getMainWindow: () => mainWindow,
+	});
+
+	// Cross-agent @mention dispatch - streams a target agent's response back
+	// into the source agent's transcript (Phase 03).
+	registerCrossAgentHandlers({
+		getProcessManager: () => processManager,
+		getAgentDetector: () => agentDetector,
+		sessionsStore,
+		agentConfigsStore,
+		sshStore: createSshRemoteStoreAdapter(store),
+		getCustomEnvVars: getCustomEnvVarsForAgent,
+		safeSend,
 	});
 
 	// Cue - event-driven automation engine
@@ -1404,6 +1589,7 @@ function setupIpcHandlers() {
 		sessionsStore,
 		groupsStore,
 		getWebServer: () => webServer,
+		safeSend,
 	});
 
 	// System operations - extracted to src/main/ipc/handlers/system.ts
@@ -1493,6 +1679,39 @@ function setupIpcHandlers() {
 			logger.warn(`Failed to start coworking bridge: ${String(err)}`, 'Startup');
 		}
 	})();
+	// Register multi-window handlers (windows:* channel surface). Registered here
+	// because the running app wires handlers through setupIpcHandlers(), not
+	// registerAllHandlers(). The registry and window manager are module-scope
+	// instances; lazy getters resolve the live instance at call time.
+	registerWindowsHandlers({
+		getWindowRegistry: () => windowRegistry,
+		getWindowManager: () => windowManager,
+	});
+	// Push registry ownership moves out to every window so each renderer's
+	// WindowContext can refresh which agents it surfaces (and the Left Bar's
+	// cross-window badges). The registry is a module-scope instance, so pass it
+	// directly rather than through the handlers' lazy getter.
+	wireWindowRegistryBroadcast(windowRegistry);
+	// Close a secondary window as soon as its last agent moves out - an empty
+	// secondary shell can surface nothing (every agent is owned by some window),
+	// so the agent-level move flow tidies it up automatically.
+	wireEmptySecondaryWindowAutoClose(windowRegistry);
+	// Persist a window rename or a panel-collapse toggle as soon as it happens
+	// (rather than only on quit), so both survive even an abrupt exit. A panel
+	// toggle fires no window move/resize, so without this its saved value would go
+	// stale. saveWindowState snapshots the whole live registry, so passing the
+	// affected window's id is enough.
+	windowRegistry.onChange((change) => {
+		if ((change.type === 'name-changed' || change.type === 'panel-changed') && change.windowId) {
+			saveWindowState(windowStateStore, windowRegistry, change.windowId);
+		}
+	});
+
+	// Record aggregate multi-window usage telemetry (secondary windows opened +
+	// peak concurrent windows) as windows open. Gated on the user's
+	// `statsCollectionEnabled` analytics setting; records nothing when off, and a
+	// stats failure can never break window creation (see wireMultiWindowTelemetry).
+	wireMultiWindowTelemetry(windowRegistry, { settingsStore: store });
 
 	// Register Context Merge handlers for session context transfer and grooming
 	registerContextHandlers({
@@ -1506,6 +1725,7 @@ function setupIpcHandlers() {
 	registerMarketplaceHandlers({
 		app,
 		settingsStore: store,
+		getMainWindow: () => mainWindow,
 	});
 
 	// Register Stats handlers for usage tracking

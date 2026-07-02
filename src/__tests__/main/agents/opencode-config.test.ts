@@ -6,6 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import path from 'path';
 import {
 	getOpenCodeConfigPaths,
 	getOpenCodeCommandDirs,
@@ -135,11 +136,14 @@ describe('opencode-config', () => {
 		it('should return POSIX paths in correct order', () => {
 			vi.mocked(isWindows).mockReturnValue(false);
 			const paths = getOpenCodeConfigPaths('/project', {});
+			// The product assembles these with `path.join`, so route the expected
+			// values through the same primitive to stay platform-symmetric (`\`
+			// separators on Windows, `/` on POSIX).
 			expect(paths).toEqual([
-				'/project/opencode.json',
-				expect.stringContaining('.opencode/opencode.json'),
+				path.join('/project', 'opencode.json'),
+				expect.stringContaining(path.join('.opencode', 'opencode.json')),
 				expect.stringContaining('.opencode.json'),
-				expect.stringContaining('.config/opencode/opencode.json'),
+				expect.stringContaining(path.join('.config', 'opencode', 'opencode.json')),
 			]);
 		});
 
@@ -165,9 +169,9 @@ describe('opencode-config', () => {
 			vi.mocked(isWindows).mockReturnValue(false);
 			const dirs = getOpenCodeCommandDirs('/project');
 			expect(dirs).toEqual([
-				'/project/.opencode/commands',
-				expect.stringContaining('.opencode/commands'),
-				expect.stringContaining('.config/opencode/commands'),
+				path.join('/project', '.opencode', 'commands'),
+				expect.stringContaining(path.join('.opencode', 'commands')),
+				expect.stringContaining(path.join('.config', 'opencode', 'commands')),
 			]);
 		});
 
@@ -182,7 +186,9 @@ describe('opencode-config', () => {
 		it('should merge models from multiple config files', async () => {
 			// Simulate two config files found
 			vi.mocked(fs.promises.readFile).mockImplementation(async (filePath: any) => {
-				const p = String(filePath);
+				// Normalize separators: the product builds these paths with
+				// `path.join`, which emits `\` on Windows. On POSIX this is a no-op.
+				const p = String(filePath).replace(/\\/g, '/');
 				if (p.includes('.opencode/opencode.json')) {
 					return JSON.stringify({
 						provider: {
@@ -217,7 +223,7 @@ describe('opencode-config', () => {
 
 		it('should deduplicate models across config files', async () => {
 			vi.mocked(fs.promises.readFile).mockImplementation(async (filePath: any) => {
-				const p = String(filePath);
+				const p = String(filePath).replace(/\\/g, '/');
 				if (p.includes('.opencode/opencode.json') || p.includes('.config/opencode/opencode.json')) {
 					return JSON.stringify({
 						provider: {

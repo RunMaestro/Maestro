@@ -55,6 +55,7 @@ const defaultProps = {
 	onFocusFileInGraph: vi.fn(),
 	onOpenBrowserTabAt: vi.fn(),
 	onCopyPath: vi.fn(),
+	onCopyFileName: vi.fn(),
 	onDownloadFile: vi.fn(),
 	onOpenInDefaultApp: vi.fn(),
 	onOpenInMaestroBrowser: vi.fn(),
@@ -166,6 +167,19 @@ describe('FileTreeContextMenu', () => {
 		);
 		fireEvent.click(screen.getByText('Copy Path'));
 		expect(onCopyPath).toHaveBeenCalledTimes(1);
+	});
+
+	it('calls onCopyFileName when Copy File Name is clicked', () => {
+		const onCopyFileName = vi.fn();
+		render(
+			<FileTreeContextMenu
+				{...defaultProps}
+				contextMenu={makeContextMenu(fileNode)}
+				onCopyFileName={onCopyFileName}
+			/>
+		);
+		fireEvent.click(screen.getByText('Copy File Name'));
+		expect(onCopyFileName).toHaveBeenCalledTimes(1);
 	});
 
 	it('calls onOpenDelete when Delete is clicked', () => {

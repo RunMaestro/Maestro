@@ -6,9 +6,12 @@ import type { CopyContextOptions } from '../../hooks/tabs/useTabExportHandlers';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { buildSessionDeepLink } from '../../../shared/deep-link-urls';
 import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
+import { setTabDragImage } from '../../utils/tabDragImage';
+import { isCoarsePointer } from '../../utils/touch';
 import { getTabKindColor } from './tabBarUtils';
 import { AITabOverlayMenu } from './AITabOverlayMenu';
 import { WizardIndicator } from '../SessionList/WizardIndicator';
+import { useTabHasActiveOutage } from '../../stores/retryStore';
 
 export interface AITabProps {
 	tab: AITabType;
@@ -26,6 +29,13 @@ export interface AITabProps {
 	onClose: (tabId: string) => void;
 	/** Stable callback - receives tabId and event */
 	onDragStart: (tabId: string, e: React.DragEvent) => void;
+	/**
+	 * Stable callback - continuous drag sampling (HTML5 `onDrag`) used for
+	 * cross-window drag-out detection. No tabId: the dragged tab is already known
+	 * from onDragStart, and drag-out concerns the whole agent/window. Optional, so
+	 * tab types that can't be detached simply omit it.
+	 */
+	onDrag?: (e: React.DragEvent) => void;
 	/** Stable callback - receives tabId and event */
 	onDragOver: (tabId: string, e: React.DragEvent) => void;
 	onDragEnd: () => void;
@@ -98,6 +108,7 @@ export const AITab = memo(function AITab({
 	onSelect,
 	onClose,
 	onDragStart,
+	onDrag,
 	onDragOver,
 	onDragEnd,
 	onDrop,
@@ -128,6 +139,8 @@ export const AITab = memo(function AITab({
 }: AITabProps) {
 	const [showCopied, setShowCopied] = useState<'sessionId' | 'deepLink' | false>(false);
 	const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	// Agent Resilience: pulsing orange dot when this tab is stuck auto-retrying.
+	const hasActiveOutage = useTabHasActiveOutage(sessionId ?? '', tabId);
 
 	// Clear copy feedback timeout on unmount
 	useEffect(() => {
@@ -144,6 +157,7 @@ export const AITab = memo(function AITab({
 		setOverlayRef,
 		positionReady,
 		setTabRef,
+		openOverlay,
 		handleMouseEnter,
 		handleMouseLeave,
 		overlayMouseEnter,
@@ -153,7 +167,8 @@ export const AITab = memo(function AITab({
 		shouldOpen: () => {
 			// Only show overlay if there's something meaningful to show:
 			// - Tabs with sessions or logs: always show (for session/context actions)
-			// - Tabs without sessions or logs: show if there are move actions available
+			// - Tabs without sessions or logs: show only when a reorder action is
+			//   available (not the sole tab)
 			if (!tab.agentSessionId && !tab.logs?.length && isFirstTab && isLastTab) return false;
 			return true;
 		},
@@ -355,14 +370,33 @@ export const AITab = memo(function AITab({
 
 	// Handlers for drag events using stable tabId
 	const handleTabSelect = useCallback(() => {
+		// Touch has no hover, so tapping the already-active tab opens the action
+		// overlay (close, rename, etc.) instead of re-selecting a no-op. Tapping
+		// an inactive tab still just selects it. Mouse/keyboard are unaffected.
+		if (isActive && isCoarsePointer()) {
+			openOverlay();
+			return;
+		}
 		onSelect(tabId);
-	}, [onSelect, tabId]);
+	}, [isActive, openOverlay, onSelect, tabId]);
 
 	const handleTabDragStart = useCallback(
 		(e: React.DragEvent) => {
+			// Floating themed preview that follows the cursor across windows / empty
+			// space during a drag-out (the OS renders it, unlike a clipped fixed div).
+			// getTabDisplayName is used inline rather than the memoized `displayName`
+			// below to avoid a temporal-dead-zone read in this earlier-declared callback.
+			setTabDragImage(e, { label: getTabDisplayName(tab, sessionAgentSessionId), theme });
 			onDragStart(tabId, e);
 		},
-		[onDragStart, tabId]
+		[onDragStart, tabId, tab, sessionAgentSessionId, theme]
+	);
+
+	const handleTabDrag = useCallback(
+		(e: React.DragEvent) => {
+			onDrag?.(e);
+		},
+		[onDrag]
 	);
 
 	const handleTabDragOver = useCallback(
@@ -456,6 +490,7 @@ export const AITab = memo(function AITab({
 			}}
 			draggable
 			onDragStart={handleTabDragStart}
+			onDrag={handleTabDrag}
 			onDragOver={handleTabDragOver}
 			onDragEnd={onDragEnd}
 			onDrop={handleTabDrop}
@@ -472,8 +507,17 @@ export const AITab = memo(function AITab({
 				</div>
 			)}
 
+			{/* Agent Resilience outage - pulsing orange dot for tabs stuck auto-retrying */}
+			{hasActiveOutage && (
+				<div
+					className="w-2 h-2 rounded-full shrink-0 animate-pulse"
+					style={{ backgroundColor: '#ff8800' }}
+					title="Stuck - auto-retrying after an outage"
+				/>
+			)}
+
 			{/* Busy indicator - pulsing dot for tabs in write mode */}
-			{tab.state === 'busy' && (
+			{!hasActiveOutage && tab.state === 'busy' && (
 				<div
 					className="w-2 h-2 rounded-full shrink-0 animate-pulse"
 					style={{ backgroundColor: theme.colors.warning }}

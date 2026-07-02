@@ -777,4 +777,67 @@ describe('useSessionCategories', () => {
 			expect(result.current.getWorktreeChildren).toBe(firstRun.getWorktreeChildren);
 		});
 	});
+
+	// -----------------------------------------------------------------------
+	// Multi-window: scopeSessions narrows the categorized universe. The hook
+	// reads sessions from the store itself, so a secondary window's Left Bar can
+	// only be scoped by applying the predicate HERE (not via the sortedSessions
+	// param) - this is the regression the desktop verify caught.
+	// -----------------------------------------------------------------------
+	describe('scopeSessions (per-window Left Bar scoping)', () => {
+		it('categorizes the full store list when scopeSessions is omitted', () => {
+			const a = makeSession({ name: 'Alpha' });
+			const b = makeSession({ name: 'Bravo' });
+			const c = makeSession({ name: 'Charlie' });
+			resetStore([a, b, c]);
+
+			const { result } = renderHook(() => useSessionCategories('', [a, b, c]));
+
+			expect(result.current.sortedFilteredSessions.map((s) => s.name)).toEqual([
+				'Alpha',
+				'Bravo',
+				'Charlie',
+			]);
+		});
+
+		it('categorizes ONLY the scoped agents when scopeSessions filters the store list', () => {
+			const a = makeSession({ name: 'Alpha' });
+			const b = makeSession({ name: 'Bravo' });
+			const c = makeSession({ name: 'Charlie' });
+			resetStore([a, b, c]);
+
+			// Secondary window owns only Bravo.
+			const scope = (list: Session[]) => list.filter((s) => s.id === b.id);
+			const { result } = renderHook(() =>
+				useSessionCategories('', [a, b, c], false, null, [], scope)
+			);
+
+			expect(result.current.sortedFilteredSessions.map((s) => s.name)).toEqual(['Bravo']);
+			expect(result.current.ungroupedSessions.map((s) => s.name)).toEqual(['Bravo']);
+		});
+
+		it('keeps a scoped agent AND its worktree child when both pass the predicate', () => {
+			const parent = makeSession({ name: 'Owner' });
+			const child = makeSession({ name: 'Owner Worktree', parentSessionId: parent.id });
+			const other = makeSession({ name: 'Unowned' });
+			resetStore([parent, child, other]);
+
+			// Scope keeps the owned parent + any child whose parent is owned.
+			const owned = new Set([parent.id]);
+			const scope = (list: Session[]) =>
+				list.filter(
+					(s) => owned.has(s.id) || (s.parentSessionId != null && owned.has(s.parentSessionId))
+				);
+			const { result } = renderHook(() =>
+				useSessionCategories('', [parent, child, other], false, null, [], scope)
+			);
+
+			// Parent shows as the categorized row; the child rides along in the
+			// worktree map (children are excluded from the flat categorized list).
+			expect(result.current.sortedFilteredSessions.map((s) => s.name)).toEqual(['Owner']);
+			expect(result.current.getWorktreeChildren(parent.id).map((s) => s.name)).toEqual([
+				'Owner Worktree',
+			]);
+		});
+	});
 });

@@ -22,29 +22,12 @@ import { PROMPT_IDS } from '../../shared/promptDefinitions';
 import { getCliPrompt } from './prompt-loader';
 import { getGitBranch, isGitRepo } from './git-utils';
 import { prepareMaestroSystemPromptCli } from './system-prompt';
+import { detectHaltMarker } from '../../shared/autorun/haltMarker';
 
-/**
- * Detect the `<!-- maestro:halt -->` early-exit marker in a document.
- *
- * Agents write this marker into the current Auto Run document to abort the
- * entire playbook (skipping all remaining tasks in the current document and
- * all subsequent documents). The optional reason after the colon is surfaced
- * in the History panel and JSONL `halt` event.
- *
- * Accepts:
- *   <!-- maestro:halt -->
- *   <!-- maestro:halt: brief reason here -->
- *
- * Match is case-insensitive on the keyword to tolerate agent variations,
- * but the literal token `maestro:halt` is required to keep false positives
- * effectively zero.
- */
-export function detectHaltMarker(content: string): { halted: boolean; reason?: string } {
-	const match = content.match(/<!--\s*maestro:halt\s*(?::\s*([^>]*?))?\s*-->/i);
-	if (!match) return { halted: false };
-	const reason = match[1]?.trim();
-	return { halted: true, reason: reason || undefined };
-}
+// `detectHaltMarker` is re-exported so existing CLI consumers and tests that
+// reference it via this module keep resolving. The canonical implementation now
+// lives in `shared/autorun/haltMarker` so the desktop renderer can share it.
+export { detectHaltMarker };
 
 /**
  * Process a playbook and yield JSONL events
@@ -490,6 +473,10 @@ export async function* runPlaybook(
 						customEnvVars: session.customEnvVars,
 						sshRemoteConfig: session.sessionSshRemoteConfig,
 						appendSystemPrompt: playbookSystemPrompt,
+						// Honor the agent's Claude token source for Auto Run task turns.
+						enableMaestroP: session.enableMaestroP,
+						maestroPMode: session.maestroPMode,
+						maestroPPath: session.maestroPPath,
 					});
 
 					const elapsedMs = Date.now() - taskStartTime;
@@ -535,6 +522,10 @@ export async function* runPlaybook(
 								customArgs: session.customArgs,
 								customEnvVars: session.customEnvVars,
 								sshRemoteConfig: session.sessionSshRemoteConfig,
+								// Honor the token source for the Auto Run synopsis turn too.
+								enableMaestroP: session.enableMaestroP,
+								maestroPMode: session.maestroPMode,
+								maestroPPath: session.maestroPPath,
 							}
 						);
 

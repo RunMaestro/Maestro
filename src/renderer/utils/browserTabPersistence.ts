@@ -124,6 +124,23 @@ export function normalizeBrowserTabUrl(value: string): string {
 	return result.kind === 'url' ? result.url : DEFAULT_BROWSER_TAB_URL;
 }
 
+/**
+ * True only when the URL is safe to expose as an outbound `<a href>` link - i.e.
+ * an http(s) scheme. Guards against `javascript:` / `data:` hrefs that would run
+ * script in the app origin when clicked (XSS), which could otherwise reach a tab
+ * via persisted or imported browser-tab state. `about:blank` and `file:` return
+ * false because they are not meaningful outbound links from a browser context.
+ */
+export function isHttpBrowserTabUrl(url: string | null | undefined): boolean {
+	if (!url) return false;
+	try {
+		const { protocol } = new URL(url);
+		return protocol === 'http:' || protocol === 'https:';
+	} catch {
+		return false;
+	}
+}
+
 export function getBrowserTabTitle(url: string, title?: string | null): string {
 	const normalizedTitle = typeof title === 'string' ? title.trim() : '';
 	if (normalizedTitle) return normalizedTitle;

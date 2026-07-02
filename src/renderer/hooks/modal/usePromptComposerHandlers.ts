@@ -9,10 +9,11 @@
  */
 
 import { useCallback } from 'react';
-import type { ThinkingMode } from '../../types';
+import type { GroupChat, ThinkingMode } from '../../types';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { useComposerInputStore } from '../../stores/composerInputStore';
 import { getActiveTab } from '../../utils/tabHelpers';
 
 // ============================================================================
@@ -50,6 +51,25 @@ export interface UsePromptComposerHandlersReturn {
 // ============================================================================
 // Hook implementation
 // ============================================================================
+
+export interface PromptComposerInitialValueDeps {
+	activeGroupChatId: string | null;
+	groupChats: Pick<GroupChat, 'id' | 'draftMessage'>[];
+	activeInputMode?: 'ai' | 'terminal';
+}
+
+export function getPromptComposerInitialValue({
+	activeGroupChatId,
+	groupChats,
+	activeInputMode,
+}: PromptComposerInitialValueDeps): string {
+	if (activeGroupChatId) {
+		return groupChats.find((c) => c.id === activeGroupChatId)?.draftMessage || '';
+	}
+
+	const composer = useComposerInputStore.getState();
+	return activeInputMode === 'terminal' ? composer.terminalValue : composer.aiValue;
+}
 
 export function usePromptComposerHandlers(
 	deps: UsePromptComposerHandlersDeps

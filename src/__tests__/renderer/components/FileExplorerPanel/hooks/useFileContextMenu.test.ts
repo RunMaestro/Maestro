@@ -191,6 +191,25 @@ describe('useFileContextMenu', () => {
 		expect(result.current.contextMenu).toBeNull();
 	});
 
+	it('handleCopyFileName calls safeClipboardWrite with just the leaf name', async () => {
+		const { safeClipboardWrite } = await import('../../../../../renderer/utils/clipboard');
+		const { result } = renderHook(() => useFileContextMenu(defaultArgs));
+		const e = {
+			clientX: 10,
+			clientY: 10,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as React.MouseEvent;
+		act(() => {
+			result.current.openContextMenu(e, fileNode, 'src/App.tsx', 0);
+		});
+		act(() => {
+			result.current.handleCopyFileName();
+		});
+		expect(safeClipboardWrite).toHaveBeenCalledWith('App.tsx');
+		expect(result.current.contextMenu).toBeNull();
+	});
+
 	it('handleOpenInDefaultApp calls shell.openPath', () => {
 		const { result } = renderHook(() => useFileContextMenu(defaultArgs));
 		const e = {

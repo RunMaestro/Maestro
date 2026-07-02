@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MainPanelHeader } from '../../../../renderer/components/MainPanel/MainPanelHeader';
+import { useModalStore } from '../../../../renderer/stores/modalStore';
 import type { Session, Theme, AITab } from '../../../../renderer/types';
 
 import { mockTheme } from '../../../helpers/mockTheme';
@@ -12,6 +13,7 @@ vi.mock('../../../../renderer/stores/settingsStore', () => ({
 			shortcuts: {
 				agentSessions: { keys: ['Meta', 'Shift', 'l'] },
 				toggleRightPanel: { keys: ['Meta', 'b'] },
+				quickAction: { keys: ['Meta', 'k'] },
 			},
 			showAgentName: true,
 			showSessionIdPill: true,
@@ -20,11 +22,37 @@ vi.mock('../../../../renderer/stores/settingsStore', () => ({
 	),
 }));
 
+// Mutable UI state + stable setters so tests can drive the sidebar opener.
+// vi.hoisted keeps these visible inside the hoisted vi.mock factories below.
+const uiMocks = vi.hoisted(() => ({
+	state: { rightPanelOpen: false, leftSidebarHidden: false, leftSidebarOpen: true } as Record<
+		string,
+		unknown
+	>,
+	setRightPanelOpen: vi.fn(),
+	setLeftSidebarHidden: vi.fn(),
+	setLeftSidebarOpen: vi.fn(),
+}));
+
 vi.mock('../../../../renderer/stores/uiStore', () => ({
 	useUIStore: Object.assign(
-		vi.fn((selector) => selector({ rightPanelOpen: false })),
-		{ getState: () => ({ setRightPanelOpen: vi.fn() }) }
+		vi.fn((selector: (s: Record<string, unknown>) => unknown) => selector(uiMocks.state)),
+		{
+			getState: () => ({
+				setRightPanelOpen: uiMocks.setRightPanelOpen,
+				setLeftSidebarHidden: uiMocks.setLeftSidebarHidden,
+				setLeftSidebarOpen: uiMocks.setLeftSidebarOpen,
+			}),
+		}
 	),
+}));
+
+// isWebDesktop() distinguishes the browser build from the Electron desktop app.
+// Default false (desktop); individual tests flip it to true for phone cases.
+const runtimeMocks = vi.hoisted(() => ({ isWebDesktop: vi.fn(() => false) }));
+vi.mock('../../../../renderer/utils/runtimeContext', () => ({
+	isWebDesktop: runtimeMocks.isWebDesktop,
+	isElectronDesktop: () => !runtimeMocks.isWebDesktop(),
 }));
 
 vi.mock('../../../../renderer/hooks', () => ({
@@ -108,9 +136,24 @@ const defaultProps = {
 	hasCapability: vi.fn(() => true) as any,
 };
 
+function setViewportWidth(width: number): void {
+	Object.defineProperty(window, 'innerWidth', {
+		writable: true,
+		configurable: true,
+		value: width,
+	});
+}
+
 describe('MainPanelHeader', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		uiMocks.state.rightPanelOpen = false;
+		uiMocks.state.leftSidebarHidden = false;
+		uiMocks.state.leftSidebarOpen = true;
+		runtimeMocks.isWebDesktop.mockReturnValue(false);
+		// Default to a desktop-width viewport so useViewportBreakpoint reports a
+		// non-xs breakpoint unless a test opts into a phone width.
+		setViewportWidth(1280);
 	});
 
 	it('renders session name', () => {
@@ -157,6 +200,48 @@ describe('MainPanelHeader', () => {
 		expect(screen.getByText('prod-server')).toBeInTheDocument();
 	});
 
+	it('shows the branch name alongside the SSH pill for remote/container git agents', () => {
+		// Regression for #1124: the SSH host pill replaced the branch badge, so
+		// agents running in a container over SSH lost the branch name that local
+		// agents show. Both the remote name and the branch must be visible.
+		render(
+			<MainPanelHeader
+				{...defaultProps}
+				activeSession={makeSession({
+					isGitRepo: true,
+					sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+				} as any)}
+				sshRemoteName="harness-sandbox"
+				gitInfo={{
+					branch: 'feature/login',
+					remote: '',
+					ahead: 0,
+					behind: 0,
+					uncommittedChanges: 0,
+				}}
+			/>
+		);
+		expect(screen.getByText('harness-sandbox')).toBeInTheDocument();
+		expect(screen.getByText('feature/login')).toBeInTheDocument();
+	});
+
+	it('does not render a branch badge for a non-git SSH agent', () => {
+		render(
+			<MainPanelHeader
+				{...defaultProps}
+				activeSession={makeSession({
+					isGitRepo: false,
+					sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+				} as any)}
+				sshRemoteName="prod-server"
+				gitInfo={null}
+			/>
+		);
+		expect(screen.getByText('prod-server')).toBeInTheDocument();
+		// No GIT fallback badge when the remote dir isn't a repo.
+		expect(screen.queryByText('GIT')).not.toBeInTheDocument();
+	});
+
 	it('renders AUTO mode indicator when batch is running', () => {
 		render(
 			<MainPanelHeader
@@ -199,6 +284,84 @@ describe('MainPanelHeader', () => {
 		);
 		fireEvent.click(screen.getByText('Auto'));
 		expect(onStop).toHaveBeenCalledWith('session-1');
+	});
+
+	describe('sidebar opener (hamburger)', () => {
+		it('shows the opener when the left sidebar is fully hidden', () => {
+			uiMocks.state.leftSidebarHidden = true;
+			uiMocks.state.leftSidebarOpen = false;
+			render(<MainPanelHeader {...defaultProps} />);
+			expect(screen.getByLabelText('Show agents sidebar')).toBeInTheDocument();
+		});
+
+		it('does not show the opener when the sidebar is merely collapsed on desktop', () => {
+			// Electron desktop keeps its 64px collapsed strip, so no header opener.
+			runtimeMocks.isWebDesktop.mockReturnValue(false);
+			setViewportWidth(390);
+			uiMocks.state.leftSidebarHidden = false;
+			uiMocks.state.leftSidebarOpen = false;
+			render(<MainPanelHeader {...defaultProps} />);
+			expect(screen.queryByLabelText('Show agents sidebar')).not.toBeInTheDocument();
+		});
+
+		it('shows the opener on a web-desktop phone when the sidebar is collapsed', () => {
+			// The collapsed strip is hidden at xs in web-desktop, so the header
+			// opener is the only way back to the sidebar.
+			runtimeMocks.isWebDesktop.mockReturnValue(true);
+			setViewportWidth(390);
+			uiMocks.state.leftSidebarHidden = false;
+			uiMocks.state.leftSidebarOpen = false;
+			render(<MainPanelHeader {...defaultProps} />);
+			expect(screen.getByLabelText('Show agents sidebar')).toBeInTheDocument();
+		});
+
+		it('does not show the opener on a web-desktop phone while the drawer is open', () => {
+			runtimeMocks.isWebDesktop.mockReturnValue(true);
+			setViewportWidth(390);
+			uiMocks.state.leftSidebarHidden = false;
+			uiMocks.state.leftSidebarOpen = true;
+			render(<MainPanelHeader {...defaultProps} />);
+			expect(screen.queryByLabelText('Show agents sidebar')).not.toBeInTheDocument();
+		});
+
+		it('opens the sidebar drawer when the opener is clicked', () => {
+			runtimeMocks.isWebDesktop.mockReturnValue(true);
+			setViewportWidth(390);
+			uiMocks.state.leftSidebarHidden = false;
+			uiMocks.state.leftSidebarOpen = false;
+			render(<MainPanelHeader {...defaultProps} />);
+			fireEvent.click(screen.getByLabelText('Show agents sidebar'));
+			expect(uiMocks.setLeftSidebarHidden).toHaveBeenCalledWith(false);
+			expect(uiMocks.setLeftSidebarOpen).toHaveBeenCalledWith(true);
+		});
+	});
+
+	describe('Quick Actions opener', () => {
+		it('shows the Quick Actions button on a narrow viewport', () => {
+			setViewportWidth(390);
+			render(<MainPanelHeader {...defaultProps} />);
+			expect(screen.getByLabelText('Quick Actions')).toBeInTheDocument();
+		});
+
+		it('hides the Quick Actions button on a wide viewport (Cmd+K suffices)', () => {
+			setViewportWidth(1280);
+			render(<MainPanelHeader {...defaultProps} />);
+			expect(screen.queryByLabelText('Quick Actions')).not.toBeInTheDocument();
+		});
+
+		it('opens the command palette when the Quick Actions button is clicked', () => {
+			setViewportWidth(390);
+			const openModalSpy = vi
+				.spyOn(useModalStore.getState(), 'openModal')
+				.mockImplementation(() => {});
+			render(<MainPanelHeader {...defaultProps} />);
+			fireEvent.click(screen.getByLabelText('Quick Actions'));
+			expect(openModalSpy).toHaveBeenCalledWith(
+				'quickAction',
+				expect.objectContaining({ initialMode: 'main' })
+			);
+			openModalSpy.mockRestore();
+		});
 	});
 
 	it('renders session UUID pill', () => {

@@ -10,7 +10,7 @@
  * and clipped by ancestors with `overflow:hidden`.
  */
 
-import { useState, useRef, useLayoutEffect, type ReactNode } from 'react';
+import { useState, useRef, useLayoutEffect, type ReactNode, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import type { Theme } from '../../types';
 
@@ -31,6 +31,23 @@ export interface HoverTooltipProps {
 	 * toolbar where below/above would overlap neighboring buttons.
 	 */
 	placement?: 'vertical' | 'left';
+	/**
+	 * Only show the tooltip when the trigger's content is actually clipped
+	 * (`scrollWidth > clientWidth`), measured live on hover. Lets a truncating
+	 * label (e.g. an ellipsised filename) reveal its full text on hover without
+	 * showing a redundant tooltip when the text already fits. Pair with a
+	 * `triggerClassName` that carries the truncation (`truncate`), so the trigger
+	 * span is the element being measured.
+	 */
+	onlyWhenTruncated?: boolean;
+	/**
+	 * Classes for the trigger wrapper span. Defaults to `inline-flex`. Override to
+	 * make the wrapper participate in a flex layout (e.g. `truncate min-w-0 flex-1`)
+	 * when the trigger itself is the truncating element.
+	 */
+	triggerClassName?: string;
+	/** Inline style for the trigger wrapper span (e.g. dynamic text color). */
+	triggerStyle?: CSSProperties;
 }
 
 const VIEWPORT_MARGIN = 8;
@@ -43,11 +60,25 @@ export function HoverTooltip({
 	theme,
 	disabled,
 	placement = 'vertical',
+	onlyWhenTruncated = false,
+	triggerClassName = 'inline-flex',
+	triggerStyle,
 }: HoverTooltipProps) {
 	const triggerRef = useRef<HTMLSpanElement>(null);
 	const tooltipRef = useRef<HTMLDivElement>(null);
 	const [open, setOpen] = useState(false);
 	const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+
+	const handleEnter = () => {
+		// When gated on truncation, measure the trigger live on hover and skip
+		// opening if its content already fits. >1px guards against sub-pixel
+		// rounding falsely reading as overflow.
+		if (onlyWhenTruncated) {
+			const el = triggerRef.current;
+			if (el && el.scrollWidth - el.clientWidth <= 1) return;
+		}
+		setOpen(true);
+	};
 
 	useLayoutEffect(() => {
 		if (!open || !triggerRef.current || !tooltipRef.current) {
@@ -102,8 +133,9 @@ export function HoverTooltip({
 		<>
 			<span
 				ref={triggerRef}
-				className="inline-flex"
-				onMouseEnter={() => setOpen(true)}
+				className={triggerClassName}
+				style={triggerStyle}
+				onMouseEnter={handleEnter}
 				onMouseLeave={() => setOpen(false)}
 			>
 				{children}

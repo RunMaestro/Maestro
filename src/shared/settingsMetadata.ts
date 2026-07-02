@@ -621,7 +621,8 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		category: 'notifications',
 	},
 	audioFeedbackCommand: {
-		description: 'Shell command used for audio feedback (e.g., say on macOS, espeak on Linux).',
+		description:
+			'Shell command run when a task completes; the summary is piped to stdin. Runs in a shell (pipes/chains work). Maestro context is exposed via env vars: MAESTRO_NOTIFY_AGENT, MAESTRO_NOTIFY_TAB, MAESTRO_NOTIFY_GROUP, MAESTRO_NOTIFY_TASK. Examples: say on macOS, espeak on Linux.',
 		type: 'string',
 		default: 'say',
 		category: 'notifications',

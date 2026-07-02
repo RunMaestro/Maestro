@@ -359,6 +359,62 @@ describe('useGroupChatHandlers', () => {
 			const modal = useModalStore.getState().modals.get('deleteGroupChat');
 			expect(modal?.open ?? false).toBe(false);
 		});
+
+		it('focuses the next group chat below when deleting the active one', async () => {
+			// Most-recent order (default sort): gc-1 (t=3), gc-2 (t=2), gc-3 (t=1).
+			// Deleting the active gc-1 should shift focus to gc-2 (the next below).
+			mockGroupChat.load.mockResolvedValue({ id: 'gc-2', name: 'Chat 2' });
+			useGroupChatStore.setState({
+				groupChats: [
+					{ id: 'gc-1', name: 'Chat 1', updatedAt: 3 } as any,
+					{ id: 'gc-2', name: 'Chat 2', updatedAt: 2 } as any,
+					{ id: 'gc-3', name: 'Chat 3', updatedAt: 1 } as any,
+				],
+				activeGroupChatId: 'gc-1',
+			});
+
+			const { result } = renderHook(() => useGroupChatHandlers());
+			await act(async () => {
+				await result.current.handleDeleteGroupChat('gc-1');
+			});
+
+			expect(useGroupChatStore.getState().activeGroupChatId).toBe('gc-2');
+		});
+
+		it('falls back to the new last chat when deleting the bottom-most active one', async () => {
+			// Deleting the last chat (gc-3) has nothing below it, so focus the new
+			// last chat, gc-2, rather than dropping back to an agent.
+			mockGroupChat.load.mockResolvedValue({ id: 'gc-2', name: 'Chat 2' });
+			useGroupChatStore.setState({
+				groupChats: [
+					{ id: 'gc-1', name: 'Chat 1', updatedAt: 3 } as any,
+					{ id: 'gc-2', name: 'Chat 2', updatedAt: 2 } as any,
+					{ id: 'gc-3', name: 'Chat 3', updatedAt: 1 } as any,
+				],
+				activeGroupChatId: 'gc-3',
+			});
+
+			const { result } = renderHook(() => useGroupChatHandlers());
+			await act(async () => {
+				await result.current.handleDeleteGroupChat('gc-3');
+			});
+
+			expect(useGroupChatStore.getState().activeGroupChatId).toBe('gc-2');
+		});
+
+		it('falls back to an agent when deleting the only group chat', async () => {
+			useGroupChatStore.setState({
+				groupChats: [{ id: 'gc-1', name: 'Chat 1', updatedAt: 1 } as any],
+				activeGroupChatId: 'gc-1',
+			});
+
+			const { result } = renderHook(() => useGroupChatHandlers());
+			await act(async () => {
+				await result.current.handleDeleteGroupChat('gc-1');
+			});
+
+			expect(useGroupChatStore.getState().activeGroupChatId).toBeNull();
+		});
 	});
 
 	// -----------------------------------------------------------------------

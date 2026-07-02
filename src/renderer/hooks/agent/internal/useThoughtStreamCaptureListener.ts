@@ -16,16 +16,20 @@
 import { useEffect, useRef } from 'react';
 import { useThoughtStreamStore } from '../../../stores/thoughtStreamStore';
 import { parseSessionId } from '../../../utils/sessionIdParser';
+import { useOwnedSessionGate } from './useOwnedSessionGate';
 
 export function useThoughtStreamCaptureListener(): void {
 	const bufferRef = useRef<Map<string, string>>(new Map());
 	const rafIdRef = useRef<number | null>(null);
+	const ownedGate = useOwnedSessionGate();
 
 	useEffect(() => {
 		const buffer = bufferRef.current;
 
 		const unsubscribe = window.maestro.process.onThinkingChunk?.(
 			(sessionId: string, content: string) => {
+				// Window scoping: ignore agents this window doesn't own (broadcast events).
+				if (!ownedGate.current?.(sessionId)) return;
 				// Auto Run spawns its agent with a `{sessionId}-batch-{timestamp}`
 				// streaming id (see spawnAgentForSession), NOT the `{sessionId}-ai-{tabId}`
 				// shape interactive tabs use. parseSessionId resolves BOTH (and synopsis/
@@ -69,5 +73,5 @@ export function useThoughtStreamCaptureListener(): void {
 			}
 			buffer.clear();
 		};
-	}, []);
+	}, [ownedGate]);
 }

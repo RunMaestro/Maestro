@@ -281,9 +281,11 @@ const AutoRunPill = memo(
 		}, []);
 
 		return (
-			<div className="relative flex justify-center pb-2 -mt-2">
+			// `status-pill-container` enables the container queries in index.css that drop
+			// non-essential segments on narrow widths so the Stop button never bleeds off-screen.
+			<div className="status-pill-container relative flex justify-center pb-2 -mt-2 min-w-0 px-2">
 				<div
-					className="relative flex items-center gap-2 px-4 py-1.5 rounded-full"
+					className="relative flex items-center gap-2 px-4 py-1.5 rounded-full max-w-full min-w-0"
 					style={{
 						backgroundColor: theme.colors.accent + '20',
 						border: `1px solid ${theme.colors.accent}50`,
@@ -310,46 +312,52 @@ const AutoRunPill = memo(
 						</span>
 					)}
 
-					{/* Divider */}
-					<div className="w-px h-4 shrink-0" style={{ backgroundColor: theme.colors.border }} />
-
-					{/* Progress — goal percent for goal runs, task count otherwise */}
+					{/* Progress — goal percent for goal runs, task count otherwise. Each branch
+					    carries its own divider; the label words drop on very narrow widths (pill-label). */}
 					{autoRunState.goalMode ? (
 						<div
-							className="flex items-center gap-1 shrink-0 text-xs"
+							className="flex items-center gap-2 shrink-0 text-xs"
 							style={{ color: theme.colors.textDim }}
 							title={autoRunState.goalRationale || undefined}
 						>
-							<span>Goal:</span>
-							<span className="font-medium" style={{ color: theme.colors.textMain }}>
-								{autoRunState.goalProgress ?? 0}%
-							</span>
-							{autoRunState.goalIteration ? (
-								<span className="opacity-70">· iteration {autoRunState.goalIteration}</span>
-							) : null}
+							<div className="w-px h-4" style={{ backgroundColor: theme.colors.border }} />
+							<div className="flex items-center gap-1">
+								<span className="pill-label">Goal:</span>
+								<span className="font-medium" style={{ color: theme.colors.textMain }}>
+									{autoRunState.goalProgress ?? 0}%
+								</span>
+								{autoRunState.goalIteration ? (
+									<span className="opacity-70 pill-label">
+										· iteration {autoRunState.goalIteration}
+									</span>
+								) : null}
+							</div>
 						</div>
 					) : (
 						<div
-							className="flex items-center gap-1 shrink-0 text-xs"
+							className="flex items-center gap-2 shrink-0 text-xs"
 							style={{ color: theme.colors.textDim }}
 						>
-							<span>Tasks:</span>
-							<span className="font-medium" style={{ color: theme.colors.textMain }}>
-								{completedTasks}/{totalTasks}
-							</span>
+							<div className="w-px h-4" style={{ backgroundColor: theme.colors.border }} />
+							<div className="flex items-center gap-1">
+								<span className="pill-label">Tasks:</span>
+								<span className="font-medium" style={{ color: theme.colors.textMain }}>
+									{completedTasks}/{totalTasks}
+								</span>
+							</div>
 						</div>
 					)}
 
-					{/* Divider */}
-					<div className="w-px h-4 shrink-0" style={{ backgroundColor: theme.colors.border }} />
-
 					{/* Total elapsed time */}
 					<div
-						className="flex items-center gap-1 shrink-0 text-xs"
+						className="flex items-center gap-2 shrink-0 text-xs"
 						style={{ color: theme.colors.textDim }}
 					>
-						<span>Elapsed:</span>
-						<ElapsedTimeDisplay startTime={startTime} textColor={theme.colors.textMain} />
+						<div className="w-px h-4" style={{ backgroundColor: theme.colors.border }} />
+						<div className="flex items-center gap-1">
+							<span className="pill-label">Elapsed:</span>
+							<ElapsedTimeDisplay startTime={startTime} textColor={theme.colors.textMain} />
+						</div>
 					</div>
 
 					{/* Stop button - only show when callback provided and not already stopping */}
@@ -591,11 +599,15 @@ function ThinkingStatusPillInner({
 	const fullTooltip = tooltipParts.join(' | ');
 
 	return (
-		// Thinking Pill - centered container with negative top margin to offset parent padding
-		<div className="relative flex justify-center pb-2 -mt-2">
-			{/* Thinking Pill - shrinks to fit content; `relative` anchors the expanded dropdown to the pill's full width. */}
+		// Thinking Pill - centered container with negative top margin to offset parent padding.
+		// `status-pill-container` enables the container queries in index.css that drop
+		// non-essential segments on narrow widths so the Stop button never bleeds off-screen.
+		<div className="status-pill-container relative flex justify-center pb-2 -mt-2 min-w-0 px-2">
+			{/* Thinking Pill - shrinks to fit content; `relative` anchors the expanded dropdown to the pill's full width.
+			    `max-w-full min-w-0` bounds the pill to the available width so the session name and an
+			    over-long tab name truncate instead of wrapping the whole pill to a second line. */}
 			<div
-				className="relative flex items-center gap-2 px-4 py-1.5 rounded-full"
+				className="relative flex items-center gap-2 px-4 py-1.5 rounded-full max-w-full min-w-0"
 				style={{
 					backgroundColor: theme.colors.warning + '20',
 					border: `1px solid ${theme.colors.border}`,
@@ -607,71 +619,66 @@ function ThinkingStatusPillInner({
 					style={{ backgroundColor: theme.colors.warning }}
 				/>
 
-				{/* Maestro session name - always visible, not clickable */}
+				{/* Maestro session name - always visible, not clickable, truncates on narrow widths */}
 				<span
-					className="text-xs font-medium shrink-0"
+					className="text-xs font-medium truncate min-w-0"
 					style={{ color: theme.colors.textMain }}
 					title={fullTooltip}
 				>
 					{maestroSessionName}
 				</span>
 
-				{/* Divider */}
-				<div className="w-px h-4 shrink-0" style={{ backgroundColor: theme.colors.border }} />
-
-				{/* Token info for this thought cycle - only show when available */}
-				{primaryTokens > 0 && (
-					<div
-						className="flex items-center gap-1 shrink-0 text-xs"
-						style={{ color: theme.colors.textDim }}
-					>
-						<span>Tokens:</span>
-						<span className="font-medium" style={{ color: theme.colors.textMain }}>
-							{formatTokensCompact(primaryTokens)}
-						</span>
-					</div>
-				)}
-
-				{/* Placeholder when no tokens yet */}
-				{primaryTokens === 0 && (
-					<div
-						className="flex items-center gap-1 shrink-0 text-xs"
-						style={{ color: theme.colors.textDim }}
-					>
+				{/* Token info / Thinking placeholder - carries its own divider so hiding the
+				    segment on narrow widths (pill-seg-tokens) takes the divider with it */}
+				<div
+					className="pill-seg-tokens flex items-center gap-2 shrink-0 text-xs"
+					style={{ color: theme.colors.textDim }}
+				>
+					<div className="w-px h-4" style={{ backgroundColor: theme.colors.border }} />
+					{primaryTokens > 0 ? (
+						<div className="flex items-center gap-1">
+							<span>Tokens:</span>
+							<span className="font-medium" style={{ color: theme.colors.textMain }}>
+								{formatTokensCompact(primaryTokens)}
+							</span>
+						</div>
+					) : (
 						<span>Thinking...</span>
-					</div>
-				)}
+					)}
+				</div>
 
-				{/* Elapsed time - prefer tab's time for accurate parallel tracking */}
+				{/* Elapsed time - prefer tab's time for accurate parallel tracking.
+				    The "Elapsed:" label word drops on very narrow widths (pill-label). */}
 				{(primaryTab?.thinkingStartTime || primarySession.thinkingStartTime) && (
-					<>
-						<div className="w-px h-4 shrink-0" style={{ backgroundColor: theme.colors.border }} />
-						<div
-							className="flex items-center gap-1 shrink-0 text-xs"
-							style={{ color: theme.colors.textDim }}
-						>
-							<span>Elapsed:</span>
+					<div
+						className="flex items-center gap-2 shrink-0 text-xs"
+						style={{ color: theme.colors.textDim }}
+					>
+						<div className="w-px h-4" style={{ backgroundColor: theme.colors.border }} />
+						<div className="flex items-center gap-1">
+							<span className="pill-label">Elapsed:</span>
 							<ElapsedTimeDisplay
 								startTime={primaryTab?.thinkingStartTime || primarySession.thinkingStartTime!}
 								textColor={theme.colors.textMain}
 							/>
 						</div>
-					</>
+					</div>
 				)}
 
-				{/* Thinking Pill - Claude session ID / tab name */}
+				{/* Thinking Pill - Claude session ID / tab name.
+				    First segment to drop on narrow widths (pill-seg-claude-id); still in the tooltip. */}
 				{displayClaudeId && (
-					<>
+					<div className="pill-seg-claude-id flex items-center gap-2 min-w-0">
 						<div className="w-px h-4 shrink-0" style={{ backgroundColor: theme.colors.border }} />
 						<button
 							onClick={() => onSessionClick?.(primarySession.id, primaryTab?.id)}
-							className="text-xs font-mono hover:underline cursor-pointer"
+							className="text-xs font-mono hover:underline cursor-pointer truncate min-w-0"
 							style={{ color: theme.colors.accent }}
 							title={agentSessionId ? `Claude Session: ${agentSessionId}` : 'Claude Session'}
 						>
 							{displayClaudeId}
 						</button>
-					</>
+					</div>
 				)}
 
 				{/* Additional thinking items indicator */}

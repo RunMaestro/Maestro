@@ -154,6 +154,7 @@ const mockSettingsGet = vi.fn();
 const mockSettingsSet = vi.fn();
 const mockSetAllowPrerelease = vi.fn();
 const mockUpdatesCheck = vi.fn();
+const mockUpdatesCheckin = vi.fn();
 const mockLeaderboardSync = vi.fn();
 const mockGetSshConfigs = vi.fn();
 const mockGetInitializationResult = vi.fn();
@@ -164,7 +165,11 @@ beforeAll(() => {
 		git: { checkGhCli: mockCheckGhCli },
 		power: { getStatus: mockGetStatus },
 		settings: { get: mockSettingsGet, set: mockSettingsSet },
-		updates: { setAllowPrerelease: mockSetAllowPrerelease, check: mockUpdatesCheck },
+		updates: {
+			setAllowPrerelease: mockSetAllowPrerelease,
+			check: mockUpdatesCheck,
+			checkin: mockUpdatesCheckin,
+		},
 		leaderboard: { sync: mockLeaderboardSync },
 		sshRemote: { getConfigs: mockGetSshConfigs },
 		stats: {

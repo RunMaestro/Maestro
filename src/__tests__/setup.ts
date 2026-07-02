@@ -554,6 +554,13 @@ const mockMaestro = {
 			configPath: '~/.ssh/config',
 		}),
 	},
+	crossAgent: {
+		// Cross-agent @mention dispatch bridge. `onChunk` returns an unsubscribe fn,
+		// mirroring the preload contract so useCrossAgentDispatch's mount effect
+		// (window.maestro.crossAgent.onChunk) doesn't throw under test.
+		send: vi.fn().mockResolvedValue({ requestId: 'test-cross-agent-request' }),
+		onChunk: vi.fn().mockReturnValue(() => {}),
+	},
 	leaderboard: {
 		submit: vi.fn().mockResolvedValue({ success: true, rank: 1 }),
 		pollAuthStatus: vi.fn().mockResolvedValue({ status: 'confirmed', authToken: 'test-token' }),
@@ -632,6 +639,26 @@ const mockMaestro = {
 		reset: vi.fn().mockResolvedValue({ success: true, content: '' }),
 		getPath: vi.fn().mockResolvedValue({ success: true, path: '/mock/prompts/core' }),
 		listFiles: vi.fn().mockResolvedValue({ success: true, files: [] }),
+	},
+	// Multi-window API (window<->session ownership). Defaults model a single
+	// primary window that owns no agents; window tests override per-case.
+	windows: {
+		create: vi.fn().mockResolvedValue(null),
+		close: vi.fn().mockResolvedValue({ closed: true }),
+		list: vi.fn().mockResolvedValue([]),
+		getForSession: vi.fn().mockResolvedValue(null),
+		moveSession: vi.fn().mockResolvedValue({ moved: true }),
+		focusWindow: vi.fn().mockResolvedValue({ focused: true }),
+		getState: vi.fn().mockResolvedValue(null),
+		registerSession: vi.fn().mockResolvedValue({ registered: true }),
+		setPanelState: vi.fn().mockResolvedValue(undefined),
+		getBounds: vi.fn().mockResolvedValue(null),
+		findWindowAtPoint: vi.fn().mockResolvedValue(null),
+		highlightDropZone: vi.fn().mockResolvedValue(undefined),
+		// Returns an unsubscribe fn (default no-op) so WindowProvider's effect can
+		// clean up. Window tests capture the registered callback to fire broadcasts.
+		onSessionMoved: vi.fn(() => () => {}),
+		onHighlightDropZone: vi.fn(() => () => {}),
 	},
 	// Synchronous platform string (replaces async os.getPlatform IPC)
 	platform: 'darwin',

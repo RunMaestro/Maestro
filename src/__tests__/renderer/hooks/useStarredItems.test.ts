@@ -259,4 +259,44 @@ describe('useStarredItems', () => {
 			expect.any(Function)
 		);
 	});
+
+	// Multi-window: the Starred section is scoped to the agents THIS window owns,
+	// keyed on each row's parentSessionId, so a window only lists starred tabs of
+	// agents visible in it.
+	describe('ownsSession scoping (multi-window)', () => {
+		beforeEach(() => {
+			useSessionStore.setState({
+				sessions: [
+					makeSession({
+						id: 's1',
+						name: 'Owned',
+						aiTabs: [{ id: 't1', starred: true, agentSessionId: 'a1', name: 'Owned Tab' }] as never,
+					}),
+					makeSession({
+						id: 's2',
+						name: 'Elsewhere',
+						aiTabs: [{ id: 't2', starred: true, agentSessionId: 'a2', name: 'Other Tab' }] as never,
+					}),
+				],
+			} as never);
+		});
+
+		it('lists every starred row when ownsSession is omitted (single-window / no provider)', () => {
+			const { result } = renderHook(() => useStarredItems({}));
+			expect(result.current.starredItems.map((i) => i.displayName)).toEqual([
+				'Other Tab',
+				'Owned Tab',
+			]);
+		});
+
+		it('keeps only rows whose owning agent (parentSessionId) this window owns', () => {
+			const ownsSession = (id: string) => id === 's1';
+			const { result } = renderHook(() => useStarredItems({ ownsSession }));
+			expect(result.current.starredItems).toHaveLength(1);
+			expect(result.current.starredItems[0]).toMatchObject({
+				parentSessionId: 's1',
+				displayName: 'Owned Tab',
+			});
+		});
+	});
 });

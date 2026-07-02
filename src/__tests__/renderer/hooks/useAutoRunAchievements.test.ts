@@ -56,6 +56,21 @@ vi.mock('../../../renderer/stores/modalStore', () => ({
 	}),
 }));
 
+// Mock cueService — capture the onActivityUpdate callback so tests can push
+// conductorTimeCredit payloads through the real subscription path.
+let capturedCueActivityCallback: ((payload: any) => void) | null = null;
+const mockCueUnsubscribe = vi.fn();
+const mockCueOnActivityUpdate = vi.fn((cb: (payload: any) => void) => {
+	capturedCueActivityCallback = cb;
+	return mockCueUnsubscribe;
+});
+
+vi.mock('../../../renderer/services/cue', () => ({
+	cueService: {
+		onActivityUpdate: (cb: (payload: any) => void) => mockCueOnActivityUpdate(cb),
+	},
+}));
+
 // Mock conductorBadges — provide just enough badges for tests (inlined to avoid TDZ in hoisted vi.mock)
 vi.mock('../../../renderer/constants/conductorBadges', () => ({
 	CONDUCTOR_BADGES: [
@@ -117,6 +132,9 @@ describe('useAutoRunAchievements', () => {
 
 		// Default: no badge unlocked
 		mockUpdateAutoRunProgress.mockReturnValue({ newBadgeLevel: null, isNewRecord: false });
+
+		// Reset captured Cue subscription callback
+		capturedCueActivityCallback = null;
 
 		// Re-wire store mocks to current mockSessions reference
 		(useSessionStore as any).mockImplementation((selector: (s: any) => any) =>
@@ -742,6 +760,76 @@ describe('useAutoRunAchievements', () => {
 			expect(mockSetStandingOvationData).toHaveBeenCalledTimes(1);
 			const callArg = mockSetStandingOvationData.mock.calls[0][0];
 			expect(callArg.recordTimeMs).toBe(5000);
+		});
+	});
+
+	// ==========================================================================
+	// Cue conductor time credit (autonomous AI time from the Cue engine)
+	// ==========================================================================
+
+	describe('Cue conductor time credit', () => {
+		it('subscribes to Cue activity updates even with no active batch runs', () => {
+			renderHook(() => useAutoRunAchievements({ activeBatchSessionIds: [] }));
+
+			expect(mockCueOnActivityUpdate).toHaveBeenCalledTimes(1);
+			expect(capturedCueActivityCallback).toBeTypeOf('function');
+		});
+
+		it('credits creditMs through updateAutoRunProgress on a conductorTimeCredit payload', () => {
+			renderHook(() => useAutoRunAchievements({ activeBatchSessionIds: [] }));
+
+			act(() => {
+				capturedCueActivityCallback?.({ type: 'conductorTimeCredit', creditMs: 120000 });
+			});
+
+			expect(mockUpdateAutoRunProgress).toHaveBeenCalledTimes(1);
+			expect(mockUpdateAutoRunProgress).toHaveBeenCalledWith(120000);
+		});
+
+		it('ignores unrelated Cue activity payloads', () => {
+			renderHook(() => useAutoRunAchievements({ activeBatchSessionIds: [] }));
+
+			act(() => {
+				capturedCueActivityCallback?.({ type: 'runFinished', status: 'completed' });
+				capturedCueActivityCallback?.({ type: 'queueRestored', sessionId: 's1', count: 2 });
+			});
+
+			expect(mockUpdateAutoRunProgress).not.toHaveBeenCalled();
+		});
+
+		it('does not credit a zero creditMs (guarded by the shared helper)', () => {
+			renderHook(() => useAutoRunAchievements({ activeBatchSessionIds: [] }));
+
+			act(() => {
+				capturedCueActivityCallback?.({ type: 'conductorTimeCredit', creditMs: 0 });
+			});
+
+			expect(mockUpdateAutoRunProgress).not.toHaveBeenCalled();
+		});
+
+		it('raises the standing ovation when Cue credit unlocks a badge', () => {
+			mockAutoRunStats.longestRunMs = 7000;
+			mockUpdateAutoRunProgress.mockReturnValue({ newBadgeLevel: 1, isNewRecord: false });
+
+			renderHook(() => useAutoRunAchievements({ activeBatchSessionIds: [] }));
+
+			act(() => {
+				capturedCueActivityCallback?.({ type: 'conductorTimeCredit', creditMs: 900000 });
+			});
+
+			expect(mockSetStandingOvationData).toHaveBeenCalledTimes(1);
+			const callArg = mockSetStandingOvationData.mock.calls[0][0];
+			expect(callArg.badge).toEqual(MOCK_CONDUCTOR_BADGES[0]);
+			expect(callArg.recordTimeMs).toBe(7000);
+			expect(callArg.isNewRecord).toBe(false);
+		});
+
+		it('unsubscribes from Cue activity updates on unmount', () => {
+			const { unmount } = renderHook(() => useAutoRunAchievements({ activeBatchSessionIds: [] }));
+
+			unmount();
+
+			expect(mockCueUnsubscribe).toHaveBeenCalledTimes(1);
 		});
 	});
 });

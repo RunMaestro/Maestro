@@ -39,6 +39,7 @@ import {
 	type CueSubscription,
 } from './cue-types';
 import { getCueRunLiveOutput } from './cue-executor';
+import { scanTaskFilesNow, buildTaskPendingPayload } from './cue-task-scanner';
 import { createCueActivityLog } from './cue-activity-log';
 import type { CueActivityLog } from './cue-activity-log';
 import { createCueHeartbeat } from './cue-heartbeat';
@@ -247,6 +248,22 @@ export class CueEngine {
 					durationMs: result.durationMs,
 					status: result.status,
 				});
+				// Conductor level credit: only autonomous AI time advances the
+				// podium (badge progression + leaderboard, which read the same
+				// cumulativeTimeMs, so there is no drift). Command nodes are
+				// deterministic shell steps, not agent reasoning, so they never
+				// credit. Each run is floored to whole minutes: a sub-minute agent
+				// run yields 0, matching Auto Run's minute-granularity accrual and
+				// keeping trivial/quick automations off the podium.
+				if (taskKind !== 'command_node' && result.status === 'completed') {
+					const creditMs = Math.floor(result.durationMs / 60000) * 60000;
+					if (creditMs > 0) {
+						this.meteredOnLog('debug', '[CUE] Conductor time credit', {
+							type: 'conductorTimeCredit',
+							creditMs,
+						});
+					}
+				}
 				// Carry forwarded outputs from the triggering event through to the
 				// completion notification so downstream agents can access them via
 				// per-source template variables ({{CUE_FORWARDED_<NAME>}}).
@@ -1152,8 +1169,20 @@ export class CueEngine {
 
 		let totalDispatched = 0;
 		for (const { ownerSessionId, state, sub } of toDispatch) {
+			// task.pending template variables ({{CUE_TASK_LIST}}, {{CUE_TASK_COUNT}},
+			// ...) are populated purely from the event payload. The polling scanner
+			// fills it in; a manual trigger does not, so without this enrichment the
+			// agent receives an empty task list and reports "nothing to do" even when
+			// the watched file has open tasks (issue #1151). Scan the watched file(s)
+			// now so Run Now / `maestro-cli cue trigger` behaves like the auto scan.
+			const taskPayload =
+				sub.event === 'task.pending' && sub.watch
+					? this.buildManualTaskPendingPayload(ownerSessionId, sub.watch)
+					: {};
+
 			const event = createCueEvent(sub.event, sub.name, {
 				manual: true,
+				...taskPayload,
 				...(sourceAgentId ? { sourceAgentId } : {}),
 				...(promptOverride ? { cliPrompt: promptOverride } : {}),
 			});
@@ -1174,6 +1203,35 @@ export class CueEngine {
 			if (dispatched > 0) totalDispatched++;
 		}
 		return totalDispatched > 0;
+	}
+
+	/**
+	 * Scan a task.pending subscription's watched files at manual-trigger time and
+	 * return the task payload for the first file that has pending tasks.
+	 *
+	 * Returns an empty object when nothing is watched, the project root is
+	 * unknown, or no file currently has open tasks (the agent then legitimately
+	 * reports "nothing to do"). Anchors on the first matching file, which covers
+	 * the dominant single-file `watch` case; the polling scanner fires one event
+	 * per file, whereas a manual trigger is a single dispatch.
+	 */
+	private buildManualTaskPendingPayload(
+		sessionId: string,
+		watchGlob: string
+	): Record<string, unknown> {
+		const projectRoot = this.deps.getSessions().find((s) => s.id === sessionId)?.projectRoot;
+		if (!projectRoot) return {};
+
+		try {
+			const scanned = scanTaskFilesNow(projectRoot, watchGlob);
+			if (scanned.length === 0) return {};
+			const first = scanned[0];
+			return buildTaskPendingPayload(first.absPath, first.relPath, first.content, first.tasks);
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			this.deps.onLog('error', `[CUE] Manual task scan failed for "${watchGlob}": ${message}`);
+			return {};
+		}
 	}
 
 	/** Clears queued events for a session */

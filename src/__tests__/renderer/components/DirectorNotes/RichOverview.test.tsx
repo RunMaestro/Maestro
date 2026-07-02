@@ -50,7 +50,7 @@ const RICH_STATS = {
 	successCount: 80,
 	failureCount: 20,
 	successRate: 0.8,
-	totalElapsedMs: 12000, // formatDuration -> "12.00s"
+	totalElapsedMs: 12000, // formatDurationLong -> "12s"
 	avgElapsedMs: 1200,
 	timelineBuckets: [
 		{ startTime: 1, auto: 2, user: 1, cue: 0 },
@@ -98,11 +98,11 @@ describe('RichOverview', () => {
 		expect(screen.getByText('Time Spent')).toBeInTheDocument();
 		// Success rate as a percentage (also appears in the success/failure widget).
 		expect(screen.getAllByText('80%').length).toBeGreaterThanOrEqual(1);
-		// Total time spent, formatted from totalElapsedMs.
-		expect(screen.getByText('12.00s')).toBeInTheDocument();
+		// Total time spent, formatted from totalElapsedMs via formatDurationLong.
+		expect(screen.getByText('12s')).toBeInTheDocument();
 		// Generation-time card from the synopsis stats prop.
 		expect(screen.getByText('Generation Time')).toBeInTheDocument();
-		expect(screen.getByText('5.00s')).toBeInTheDocument();
+		expect(screen.getByText('5s')).toBeInTheDocument();
 	});
 
 	it('renders the success/failure widget from successCount vs failureCount', async () => {

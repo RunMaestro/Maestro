@@ -16,6 +16,9 @@ import { useModalStore } from '../../stores/modalStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useBatchStore } from '../../stores/batchStore';
 import { useUIStore } from '../../stores/uiStore';
+import { useSettingsStore } from '../../stores/settingsStore';
+import type { GroupChat } from '../../../shared/group-chat-types';
+import { pickNextGroupChatIdAfterDelete } from '../../utils/groupChatOrdering';
 import { useAgentErrorRecovery } from '../agent/useAgentErrorRecovery';
 import type { ToolType } from '../../../shared/types';
 import { notifyToast } from '../../stores/notificationStore';
@@ -487,6 +490,30 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 		resetGroupChatUI();
 	}, []);
 
+	/**
+	 * After the active group chat is deleted, keep focus in the group-chat area
+	 * by opening the next chat below it (or the new last chat if it was at the
+	 * bottom). Only when no chats remain do we fall back to an agent. `priorChats`
+	 * is the chat list captured before removal, so the deleted chat's position is
+	 * still known.
+	 */
+	const focusNextGroupChatAfterDelete = useCallback(
+		async (deletedId: string, priorChats: GroupChat[]) => {
+			const { groupChatSortAlphabetical } = useSettingsStore.getState();
+			const nextId = pickNextGroupChatIdAfterDelete(
+				deletedId,
+				priorChats,
+				groupChatSortAlphabetical
+			);
+			if (nextId) {
+				await handleOpenGroupChat(nextId);
+			} else {
+				handleCloseGroupChat();
+			}
+		},
+		[handleOpenGroupChat, handleCloseGroupChat]
+	);
+
 	const handleGroupChatRightTabChange = useCallback((tab: GroupChatRightTab) => {
 		const { setGroupChatRightTab, activeGroupChatId } = useGroupChatStore.getState();
 		setGroupChatRightTab(tab);
@@ -564,16 +591,17 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 
 	const handleDeleteGroupChat = useCallback(
 		async (id: string) => {
-			const { activeGroupChatId, setGroupChats } = useGroupChatStore.getState();
+			const { activeGroupChatId, groupChats, setGroupChats } = useGroupChatStore.getState();
 			const { closeModal } = useModalStore.getState();
+			const priorChats = groupChats;
 			await window.maestro.groupChat.delete(id);
 			setGroupChats((prev) => prev.filter((c) => c.id !== id));
 			if (activeGroupChatId === id) {
-				handleCloseGroupChat();
+				await focusNextGroupChatAfterDelete(id, priorChats);
 			}
 			closeModal('deleteGroupChat');
 		},
-		[handleCloseGroupChat]
+		[focusNextGroupChatAfterDelete]
 	);
 
 	const handleArchiveGroupChat = useCallback(
@@ -660,16 +688,16 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 			useModalStore.getState().openModal('confirm', {
 				message: `Are you sure you want to delete the group chat "${chat.name}"? This action cannot be undone.`,
 				onConfirm: async () => {
-					const { setGroupChats } = useGroupChatStore.getState();
+					const { groupChats: priorChats, setGroupChats } = useGroupChatStore.getState();
 					await window.maestro.groupChat.delete(id);
 					setGroupChats((prev) => prev.filter((c) => c.id !== id));
 					if (activeGroupChatId === id) {
-						handleCloseGroupChat();
+						await focusNextGroupChatAfterDelete(id, priorChats);
 					}
 				},
 			});
 		},
-		[handleCloseGroupChat]
+		[focusNextGroupChatAfterDelete]
 	);
 
 	// =======================================================================

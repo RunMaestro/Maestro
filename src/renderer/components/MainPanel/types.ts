@@ -67,7 +67,6 @@ export interface MainPanelProps {
 	thinkingItems: ThinkingItem[];
 	theme: Theme;
 	isMobileLandscape?: boolean;
-	inputValue: string;
 	stagedImages: string[];
 	commandHistoryOpen: boolean;
 	commandHistoryFilter: string;
@@ -80,16 +79,13 @@ export interface MainPanelProps {
 	tabCompletionSuggestions?: import('../../hooks').TabCompletionSuggestion[];
 	selectedTabCompletionIndex?: number;
 	tabCompletionFilter?: import('../../hooks').TabCompletionFilter;
-	// @ mention completion props (AI mode)
+	// @ mention completion props (AI mode) - unified picker (files/dirs/agents/groups)
 	atMentionOpen?: boolean;
 	atMentionFilter?: string;
 	atMentionStartIndex?: number;
-	atMentionSuggestions?: Array<{
-		value: string;
-		type: 'file' | 'folder';
-		displayText: string;
-		fullPath: string;
-	}>;
+	atMentionItems?: import('../../hooks/input/useMentionPicker').MentionPickerItem[];
+	atMentionCounts?: Record<import('../../hooks/input/useMentionPicker').MentionCategory, number>;
+	atMentionCategory?: import('../../hooks/input/useMentionPicker').MentionCategory;
 	selectedAtMentionIndex?: number;
 
 	// Setters
@@ -127,6 +123,9 @@ export interface MainPanelProps {
 	setAtMentionFilter?: (filter: string) => void;
 	setAtMentionStartIndex?: (index: number) => void;
 	setSelectedAtMentionIndex?: (index: number) => void;
+	setAtMentionCategory?: (
+		category: import('../../hooks/input/useMentionPicker').MentionCategory
+	) => void;
 	setGitLogOpen: (open: boolean) => void;
 
 	// Refs
@@ -146,6 +145,7 @@ export interface MainPanelProps {
 	onDeleteLog?: (logId: string) => number | null;
 	onRemoveQueuedItem?: (itemId: string) => void;
 	onTogglePauseQueuedItem?: (itemId: string) => void;
+	onEditQueuedItem?: (itemId: string, patch: { text: string; images: string[] }) => void;
 	onReorderQueuedItem?: (fromIndex: number, toIndex: number, tabId?: string) => void;
 	onForceSendQueuedItem?: (itemId: string) => void;
 	forcedParallelEnabled?: boolean;

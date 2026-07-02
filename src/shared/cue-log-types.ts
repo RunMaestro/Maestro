@@ -63,6 +63,17 @@ export type CueLogPayload =
 			subscriptionName: string;
 			sourceCount: number;
 	  }
+	| {
+			/**
+			 * Autonomous AI time to credit toward the Conductor level (badge
+			 * progression + leaderboard). Emitted once per naturally-completed
+			 * Cue run that represents agent work. `creditMs` is already floored
+			 * to whole minutes by the engine; command nodes and sub-minute runs
+			 * never emit this event. See cue-engine's onRunCompleted.
+			 */
+			type: 'conductorTimeCredit';
+			creditMs: number;
+	  }
 	| { type: 'rateLimitBackoff'; triggerName: string; backoffMs: number }
 	| { type: 'githubPollError'; triggerName: string }
 	| { type: 'heartbeatFailure'; consecutiveFailures: number }

@@ -151,7 +151,6 @@ function makeDefaultProps() {
 		isCurrentSessionAutoMode: false,
 		currentSessionBatchState: undefined,
 		hasCapability: vi.fn(() => true) as any,
-		inputValue: '',
 		setInputValue: vi.fn(),
 		stagedImages: [] as string[],
 		setStagedImages: vi.fn(),

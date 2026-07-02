@@ -19,6 +19,9 @@ import {
 	HistoryStatsBar,
 	ESTIMATED_ROW_HEIGHT,
 	estimateHistoryRowHeight,
+	UNIFIED_HISTORY_FILTERS_KEY,
+	resolveInitialHistoryFilters,
+	savePersistedHistoryFilters,
 } from '../History';
 import type { GraphBucket } from '../History/ActivityGraph';
 import type { HistoryStats } from '../History';
@@ -66,8 +69,8 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 			[maestroCueEnabled]
 		);
 
-		const [activeFilters, setActiveFilters] = useState<Set<HistoryEntryType>>(
-			() => new Set(maestroCueEnabled ? ['USER', 'AUTO', 'CUE'] : ['USER', 'AUTO'])
+		const [activeFilters, setActiveFilters] = useState<Set<HistoryEntryType>>(() =>
+			resolveInitialHistoryFilters(UNIFIED_HISTORY_FILTERS_KEY, maestroCueEnabled)
 		);
 
 		// Stable, ordered array of the active types. Pushed to the server so
@@ -344,20 +347,31 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 			});
 		}, [entries, activeFilters, searchQuery]);
 
-		// Sync activeFilters when cue feature is toggled
+		// Sync activeFilters when the Cue Encore feature is toggled. Only a
+		// genuine off->on transition auto-enables the CUE filter (new feature
+		// just became available). We must NOT force CUE on at mount, otherwise
+		// a persisted "CUE deselected" choice would be clobbered on every open.
+		const prevCueEnabledRef = useRef(maestroCueEnabled);
 		useEffect(() => {
+			const wasEnabled = prevCueEnabledRef.current;
+			prevCueEnabledRef.current = maestroCueEnabled;
 			setActiveFilters((prev) => {
-				if (maestroCueEnabled && !prev.has('CUE')) {
-					return new Set([...prev, 'CUE']);
-				}
 				if (!maestroCueEnabled && prev.has('CUE')) {
 					const next = new Set(prev);
 					next.delete('CUE');
 					return next;
 				}
+				if (maestroCueEnabled && !wasEnabled && !prev.has('CUE')) {
+					return new Set([...prev, 'CUE']);
+				}
 				return prev;
 			});
 		}, [maestroCueEnabled]);
+
+		// Persist the selection so it survives modal close and app restart.
+		useEffect(() => {
+			savePersistedHistoryFilters(UNIFIED_HISTORY_FILTERS_KEY, activeFilters);
+		}, [activeFilters]);
 
 		// Toggle filter
 		const toggleFilter = useCallback((type: HistoryEntryType) => {

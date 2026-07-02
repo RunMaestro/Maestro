@@ -29,6 +29,7 @@ import {
 } from '../../utils/markdownConfig';
 import { LinkContextMenu, type LinkContextMenuState } from '../LinkContextMenu';
 import { FileContextMenu, type FileContextMenuState } from '../FileContextMenu';
+import { SvgContextMenu, type SvgContextMenuState } from '../SvgContextMenu';
 import { buildMarkdownPlugins } from './plugins';
 import { preprocessMarkdown } from './preprocess';
 import { createChatMarkdownComponents } from './chatComponents';
@@ -111,7 +112,7 @@ export const Markdown = memo(function Markdown({
 	bionifyIntensity,
 	bionifyAlgorithm,
 	onCopy,
-	allowRawHtml = false,
+	allowRawHtml,
 	chatLineBreaks = false,
 	chatMath = false,
 	frontmatter = true,
@@ -126,6 +127,12 @@ export const Markdown = memo(function Markdown({
 	extraRehypePlugins,
 }: MarkdownProps) {
 	const isChat = preset === 'chat';
+
+	// Chat surfaces render sanitized raw HTML (inline SVG, etc.) by default so
+	// agents can show diagrams and illustrations, not just a terminal's worth of
+	// text. Sanitization happens at the HAST level via rehype-sanitize. Other
+	// presets stay opt-in. An explicit prop always wins over the per-preset default.
+	const effectiveAllowRawHtml = allowRawHtml ?? isChat;
 
 	// Resolve homeDir for tilde path expansion (module-level cache, fetched once).
 	const [homeDir, setHomeDir] = useState<string | undefined>(getHomeDir);
@@ -148,6 +155,8 @@ export const Markdown = memo(function Markdown({
 	const dismissLinkMenu = useCallback(() => setLinkMenu(null), []);
 	const [fileMenu, setFileMenu] = useState<FileContextMenuState | null>(null);
 	const dismissFileMenu = useCallback(() => setFileMenu(null), []);
+	const [svgMenu, setSvgMenu] = useState<SvgContextMenuState | null>(null);
+	const dismissSvgMenu = useCallback(() => setSvgMenu(null), []);
 
 	// Build the remark/rehype plugin stack per preset.
 	const { remarkPlugins, rehypePlugins } = useMemo(() => {
@@ -163,8 +172,9 @@ export const Markdown = memo(function Markdown({
 			frontmatter,
 			chatLineBreaks: isChat ? chatLineBreaks : false,
 			chatMath: isChat ? chatMath : false,
-			allowRawHtml,
+			allowRawHtml: effectiveAllowRawHtml,
 			fileLinks: { indices: fileTreeIndices, cwd, projectRoot, homeDir },
+			mentionChips: isChat,
 			extraRemarkPlugins,
 			extraRehypePlugins,
 		});
@@ -174,7 +184,7 @@ export const Markdown = memo(function Markdown({
 		isChat,
 		chatLineBreaks,
 		chatMath,
-		allowRawHtml,
+		effectiveAllowRawHtml,
 		fileTreeIndices,
 		cwd,
 		projectRoot,
@@ -183,10 +193,11 @@ export const Markdown = memo(function Markdown({
 		extraRehypePlugins,
 	]);
 
-	// Preprocess: link-space fix always; chat math normalization + sanitize for chat.
+	// Preprocess: link-space fix always; chat math normalization for chat.
+	// Raw-HTML sanitization happens downstream at the HAST level (rehype-sanitize).
 	const processedContent = useMemo(
-		() => preprocessMarkdown(content, { chatMath: isChat ? chatMath : false, allowRawHtml }),
-		[content, isChat, chatMath, allowRawHtml]
+		() => preprocessMarkdown(content, { chatMath: isChat ? chatMath : false }),
+		[content, isChat, chatMath]
 	);
 
 	// Build the component map per preset (all share the leaf modules).
@@ -205,6 +216,7 @@ export const Markdown = memo(function Markdown({
 					onLinkContextMenu: (e, url) => setLinkMenu({ x: e.clientX, y: e.clientY, url }),
 					onFileContextMenu: (e, absPath, fileName) =>
 						setFileMenu({ x: e.clientX, y: e.clientY, filePath: absPath, fileName }),
+					onSvgContextMenu: (e) => setSvgMenu({ x: e.clientX, y: e.clientY, svg: e.currentTarget }),
 				});
 			case 'wizard-bubble':
 				return createWizardBubbleMarkdownComponents(theme);
@@ -283,6 +295,7 @@ export const Markdown = memo(function Markdown({
 					sshRemote={!!sshRemoteId}
 				/>
 			)}
+			{svgMenu && <SvgContextMenu menu={svgMenu} theme={theme} onDismiss={dismissSvgMenu} />}
 		</div>
 	);
 });

@@ -15,7 +15,7 @@ import * as fs from 'fs/promises';
 import { ipcMain, BrowserWindow } from 'electron';
 import { withIpcErrorLogging, CreateHandlerOptions } from '../../utils/ipcHandler';
 import { logger } from '../../utils/logger';
-import { isWebContentsAvailable } from '../../utils/safe-send';
+import { createSafeSend } from '../../utils/safe-send';
 
 // Group chat storage imports
 import {
@@ -179,6 +179,7 @@ export interface GroupChatHandlerDependencies {
 export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): void {
 	const { getMainWindow, getProcessManager, getAgentDetector, getCustomEnvVars, getAgentConfig } =
 		deps;
+	const safeSend = createSafeSend(getMainWindow);
 
 	// ========== Storage Handlers ==========
 
@@ -778,7 +779,15 @@ Respond with ONLY the summary text, no additional commentary.`;
 						durationMs: result.durationMs,
 					});
 				} catch (error) {
-					void captureException(error);
+					// A summary that fails because the participant's session was already
+					// deleted ("Session not found ...") is an expected, fully-recovered
+					// condition - we fall back to a fresh session just below. Don't
+					// report that to Sentry (MAESTRO-JB); only surface unexpected
+					// grooming failures.
+					const message = error instanceof Error ? error.message : String(error);
+					if (!/Session not found/i.test(message)) {
+						void captureException(error);
+					}
 					logger.warn(`Summary generation failed for ${participantName}: ${error}`, LOG_CONTEXT);
 					summaryResponse = 'No summary available - starting fresh session.';
 				}
@@ -934,10 +943,7 @@ Respond with ONLY the summary text, no additional commentary.`;
 	 * Called when a new message is added to any group chat.
 	 */
 	groupChatEmitters.emitMessage = (groupChatId: string, message: GroupChatMessage): void => {
-		const mainWindow = getMainWindow();
-		if (isWebContentsAvailable(mainWindow)) {
-			mainWindow.webContents.send('groupChat:message', groupChatId, message);
-		}
+		safeSend('groupChat:message', groupChatId, message);
 	};
 
 	/**
@@ -945,10 +951,7 @@ Respond with ONLY the summary text, no additional commentary.`;
 	 * Called when the group chat state changes (idle, moderator-thinking, agent-working).
 	 */
 	groupChatEmitters.emitStateChange = (groupChatId: string, state: GroupChatState): void => {
-		const mainWindow = getMainWindow();
-		if (isWebContentsAvailable(mainWindow)) {
-			mainWindow.webContents.send('groupChat:stateChange', groupChatId, state);
-		}
+		safeSend('groupChat:stateChange', groupChatId, state);
 	};
 
 	/**
@@ -959,10 +962,7 @@ Respond with ONLY the summary text, no additional commentary.`;
 		groupChatId: string,
 		participants: GroupChatParticipant[]
 	): void => {
-		const mainWindow = getMainWindow();
-		if (isWebContentsAvailable(mainWindow)) {
-			mainWindow.webContents.send('groupChat:participantsChanged', groupChatId, participants);
-		}
+		safeSend('groupChat:participantsChanged', groupChatId, participants);
 	};
 
 	/**
@@ -970,10 +970,7 @@ Respond with ONLY the summary text, no additional commentary.`;
 	 * Called when the moderator process reports usage statistics.
 	 */
 	groupChatEmitters.emitModeratorUsage = (groupChatId: string, usage: ModeratorUsage): void => {
-		const mainWindow = getMainWindow();
-		if (isWebContentsAvailable(mainWindow)) {
-			mainWindow.webContents.send('groupChat:moderatorUsage', groupChatId, usage);
-		}
+		safeSend('groupChat:moderatorUsage', groupChatId, usage);
 	};
 
 	/**
@@ -984,10 +981,7 @@ Respond with ONLY the summary text, no additional commentary.`;
 		groupChatId: string,
 		entry: GroupChatHistoryEntry
 	): void => {
-		const mainWindow = getMainWindow();
-		if (isWebContentsAvailable(mainWindow)) {
-			mainWindow.webContents.send('groupChat:historyEntry', groupChatId, entry);
-		}
+		safeSend('groupChat:historyEntry', groupChatId, entry);
 	};
 
 	/**
@@ -1002,20 +996,8 @@ Respond with ONLY the summary text, no additional commentary.`;
 		logger.info(
 			`[GroupChat:IPC] emitParticipantState: chatId=${groupChatId}, participant=${participantName}, state=${state}`
 		);
-		const mainWindow = getMainWindow();
-		if (isWebContentsAvailable(mainWindow)) {
-			mainWindow.webContents.send(
-				'groupChat:participantState',
-				groupChatId,
-				participantName,
-				state
-			);
-			logger.info(`[GroupChat:IPC] Sent 'groupChat:participantState' event`);
-		} else {
-			logger.warn(
-				`[GroupChat:IPC] WARNING: mainWindow not available, cannot send participant state`
-			);
-		}
+		safeSend('groupChat:participantState', groupChatId, participantName, state);
+		logger.info(`[GroupChat:IPC] Sent 'groupChat:participantState' event`);
 	};
 
 	/**
@@ -1026,10 +1008,7 @@ Respond with ONLY the summary text, no additional commentary.`;
 		groupChatId: string,
 		sessionId: string
 	): void => {
-		const mainWindow = getMainWindow();
-		if (isWebContentsAvailable(mainWindow)) {
-			mainWindow.webContents.send('groupChat:moderatorSessionIdChanged', groupChatId, sessionId);
-		}
+		safeSend('groupChat:moderatorSessionIdChanged', groupChatId, sessionId);
 	};
 
 	/**
@@ -1042,15 +1021,7 @@ Respond with ONLY the summary text, no additional commentary.`;
 		participantName: string,
 		filename?: string
 	): void => {
-		const mainWindow = getMainWindow();
-		if (isWebContentsAvailable(mainWindow)) {
-			mainWindow.webContents.send(
-				'groupChat:autoRunTriggered',
-				groupChatId,
-				participantName,
-				filename
-			);
-		}
+		safeSend('groupChat:autoRunTriggered', groupChatId, participantName, filename);
 	};
 
 	/**
@@ -1063,10 +1034,7 @@ Respond with ONLY the summary text, no additional commentary.`;
 		groupChatId: string,
 		participantName: string
 	): void => {
-		const mainWindow = getMainWindow();
-		if (isWebContentsAvailable(mainWindow)) {
-			mainWindow.webContents.send('groupChat:autoRunBatchComplete', groupChatId, participantName);
-		}
+		safeSend('groupChat:autoRunBatchComplete', groupChatId, participantName);
 	};
 
 	/**
@@ -1078,15 +1046,7 @@ Respond with ONLY the summary text, no additional commentary.`;
 		participantName: string,
 		chunk: string
 	): void => {
-		const mainWindow = getMainWindow();
-		if (isWebContentsAvailable(mainWindow)) {
-			mainWindow.webContents.send(
-				'groupChat:participantLiveOutput',
-				groupChatId,
-				participantName,
-				chunk
-			);
-		}
+		safeSend('groupChat:participantLiveOutput', groupChatId, participantName, chunk);
 	};
 
 	logger.info('Registered Group Chat IPC handlers', LOG_CONTEXT);

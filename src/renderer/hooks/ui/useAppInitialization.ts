@@ -183,6 +183,12 @@ export function useAppInitialization(): AppInitializationReturn {
 		if (!settingsLoaded || !checkForUpdatesOnStartup) return;
 
 		const runCheck = async () => {
+			// Fire the anonymous DAU/MAU check-in ping alongside the update check.
+			// Gated by the same checkForUpdatesOnStartup preference as this effect,
+			// so opting out of update checks also opts out of the ping. Fire-and-
+			// forget: it never blocks the update check and swallows its own errors.
+			void window.maestro.updates.checkin();
+
 			try {
 				const result = await window.maestro.updates.check(enableBetaUpdates);
 				if (result.updateAvailable && !result.error) {

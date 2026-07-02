@@ -87,6 +87,24 @@ export interface StopProfilingResponse {
 }
 
 /**
+ * Live phase updates emitted while a capture is being stopped and bundled
+ * (debug:profilingProgress). Drives the progress modal so a slow zip compression
+ * doesn't look like a frozen UI.
+ */
+export interface ProfilingProgressEvent {
+	phase: 'stopping' | 'awaiting-save' | 'compressing' | 'done' | 'cancelled' | 'error';
+	/** 0-100, present during 'compressing' and 'done'. */
+	percent?: number;
+	bytesProcessed?: number;
+	totalBytes?: number;
+	/** Saved bundle path, present on 'done'. */
+	path?: string | null;
+	bundleSizeBytes?: number;
+	/** Present on 'error'. */
+	error?: string;
+}
+
+/**
  * Creates the Debug API object for preload exposure
  */
 export function createDebugApi() {
@@ -107,6 +125,15 @@ export function createDebugApi() {
 			ipcRenderer.invoke('debug:startProfiling'),
 
 		stopProfiling: (): Promise<StopProfilingResponse> => ipcRenderer.invoke('debug:stopProfiling'),
+
+		// Subscribe to capture progress (stopping -> compressing -> done). Returns
+		// an unsubscribe function. Mirrors the documentGraph:filesChanged pattern.
+		onProfilingProgress: (handler: (event: ProfilingProgressEvent) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, data: ProfilingProgressEvent) =>
+				handler(data);
+			ipcRenderer.on('debug:profilingProgress', wrapped);
+			return () => ipcRenderer.removeListener('debug:profilingProgress', wrapped);
+		},
 	};
 }
 

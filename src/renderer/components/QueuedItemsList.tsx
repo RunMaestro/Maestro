@@ -8,11 +8,13 @@ import {
 	Hammer,
 	Pause,
 	Play,
+	Pencil,
 	ImageIcon,
 } from 'lucide-react';
 import type { Theme, QueuedItem } from '../types';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { Modal, ModalFooter } from './ui/Modal';
+import { QueuedItemEditModal } from './QueuedItemEditModal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useEventListener } from '../hooks/utils/useEventListener';
 import {
@@ -42,6 +44,9 @@ interface QueuedItemsListProps {
 	theme: Theme;
 	onRemoveQueuedItem?: (itemId: string) => void;
 	onTogglePauseQueuedItem?: (itemId: string) => void;
+	// Edit a queued message's prompt text and attached images. Only wired for
+	// message items (commands have no image attachments).
+	onEditQueuedItem?: (itemId: string, patch: { text: string; images: string[] }) => void;
 	onReorderItems?: (fromIndex: number, toIndex: number) => void;
 	activeTabId?: string; // If provided, only show queued items for this tab
 	// Force Send support: when forcedParallelExecution is enabled, allow the user
@@ -77,6 +82,7 @@ export const QueuedItemsList = memo(
 		theme,
 		onRemoveQueuedItem,
 		onTogglePauseQueuedItem,
+		onEditQueuedItem,
 		onReorderItems,
 		activeTabId,
 		forcedParallelEnabled = false,
@@ -93,6 +99,9 @@ export const QueuedItemsList = memo(
 
 		// Force Send confirmation state
 		const [forceSendConfirmId, setForceSendConfirmId] = useState<string | null>(null);
+
+		// Edit-message modal state (holds the id of the item being edited)
+		const [editItemId, setEditItemId] = useState<string | null>(null);
 
 		// Track which queued messages are expanded (for viewing full content)
 		const [expandedQueuedMessages, setExpandedQueuedMessages] = useState<Set<string>>(new Set());
@@ -252,6 +261,11 @@ export const QueuedItemsList = memo(
 									onToggleExpand={() => toggleExpanded(item.id)}
 									isCopied={copiedItemId === item.id}
 									onCopy={() => handleCopy(item)}
+									onEdit={
+										onEditQueuedItem && item.type !== 'command'
+											? () => setEditItemId(item.id)
+											: undefined
+									}
 									showForceSendButton={showForceSendButton}
 									onForceSend={() => setForceSendConfirmId(item.id)}
 									onOpenLightbox={onOpenLightbox}
@@ -351,6 +365,22 @@ export const QueuedItemsList = memo(
 						)}
 					</Modal>
 				)}
+
+				{/* Edit queued message modal */}
+				{editItemId &&
+					onEditQueuedItem &&
+					(() => {
+						const editItem = filteredQueue.find((item) => item.id === editItemId);
+						if (!editItem) return null;
+						return (
+							<QueuedItemEditModal
+								item={editItem}
+								theme={theme}
+								onClose={() => setEditItemId(null)}
+								onSave={(patch) => onEditQueuedItem(editItem.id, patch)}
+							/>
+						);
+					})()}
 			</>
 		);
 	}
@@ -379,6 +409,7 @@ interface QueuedItemRowProps {
 	onToggleExpand: () => void;
 	isCopied: boolean;
 	onCopy: () => void;
+	onEdit?: () => void;
 	showForceSendButton: boolean;
 	onForceSend: () => void;
 	onTogglePause?: () => void;
@@ -401,6 +432,7 @@ function QueuedItemRow({
 	onToggleExpand,
 	isCopied,
 	onCopy,
+	onEdit,
 	showForceSendButton,
 	onForceSend,
 	onTogglePause,
@@ -575,7 +607,7 @@ function QueuedItemRow({
 				{/* Bottom footer: Force Send anchored bottom-left, control
 				    buttons anchored bottom-right (always visible). mt-auto
 				    pushes the row to the bottom of the flex column. */}
-				<div className="mt-auto pt-2 flex items-center gap-2">
+				<div className={`mt-auto pt-2 flex items-center gap-2 ${canDrag ? 'pl-4' : ''}`}>
 					{showForceSendButton && (
 						<button
 							onClick={onForceSend}
@@ -592,6 +624,18 @@ function QueuedItemRow({
 					)}
 
 					<div className="ml-auto flex items-center gap-1">
+						{/* Edit button */}
+						{onEdit && (
+							<button
+								onClick={onEdit}
+								className="p-1 rounded hover:bg-black/20 transition-colors"
+								style={{ color: theme.colors.textDim }}
+								title="Edit message and images"
+							>
+								<Pencil className="w-3.5 h-3.5" />
+							</button>
+						)}
+
 						{/* Copy button */}
 						<button
 							onClick={onCopy}

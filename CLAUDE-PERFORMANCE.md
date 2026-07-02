@@ -388,7 +388,10 @@ when a user reports lag.
    file, etc.).
 3. `Cmd+K` -> **Debug: End Performance Profiling** (this entry only appears while
    recording). A native Save dialog writes a compressed `.zip` (default to the
-   Desktop, `maestro-profile-<timestamp>.zip`).
+   Desktop, `maestro-profile-<timestamp>.zip`). A progress modal
+   (`ProfilingCaptureModal`) owns the stop-and-bundle flow and shows live
+   compression progress, driven by `debug:profilingProgress` events from the main
+   process, since zipping a large trace can take tens of seconds.
 
 The capture uses Electron `contentTracing` (Chromium's built-in trace engine).
 When profiling is off the trace points compile to a disabled-flag check, so

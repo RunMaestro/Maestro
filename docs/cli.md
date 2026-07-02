@@ -106,9 +106,9 @@ On failure, `success` is `false` and an `error` field is included:
 
 For desktop-handoff workflows (route the message through a desktop tab, return an addressable tab id, etc.) use [`maestro-cli dispatch`](#dispatching-to-a-desktop-tab) instead.
 
-Error codes: `AGENT_NOT_FOUND`, `AGENT_UNSUPPORTED`, `CLAUDE_NOT_FOUND`, `CODEX_NOT_FOUND`, `MAESTRO_NOT_RUNNING`, `COMMAND_FAILED`.
+Error codes: `AGENT_NOT_FOUND`, `AGENT_UNSUPPORTED`, `<AGENT>_NOT_FOUND` (e.g. `CLAUDE_CODE_NOT_FOUND`, `CODEX_NOT_FOUND`), `MAESTRO_NOT_RUNNING`, `COMMAND_FAILED`.
 
-Supported agent types: `claude-code`, `codex`.
+Supported agent types: any installed provider - `claude-code`, `codex`, `opencode`, `factory-droid`, `copilot-cli`, `hermes`, `pi`, `qwen3-coder`, `omp`.
 
 #### Messages that start with a dash
 
@@ -396,7 +396,7 @@ maestro-cli update-agent <agent-id> --sync-history-to-remote true
 
 The group update reuses the same write path as drag-and-drop in the Left Bar. The cwd update only moves the UI-facing working directory (`cwd`/`fullPath`) - `projectRoot` is preserved so historical provider sessions stay addressable, which keeps prior conversation history attached when you relocate an archived project folder. Stop the agent before changing its cwd or SSH config; the underlying PTY's working directory and spawn target are fixed at launch time, so the renderer refuses those updates while the process is alive and surfaces the reason on stderr. The remaining settings (nudge, messages, model, effort, env, token source, etc.) are spawn-time values and apply on the next launch, so they are accepted even while the agent is running.
 
-For text fields, passing an empty string (for example `--nudge ""`) clears the field. `--env` replaces the environment map with the provided pairs; `--clear-env` empties it. `--context-window 0` (or `none`) clears the context-window override. `--token-source` only carries meaning for Claude Code agents: `api` uses `claude --print` (per-token API credit), `tui` drives the maestro-p TUI (Max-plan quota), and `dynamic` starts on the TUI and falls back to API when a usage window hits its limit.
+For text fields, passing an empty string (for example `--nudge ""`) clears the field. `--env` replaces the environment map with the provided pairs; `--clear-env` empties it. `--context-window 0` (or `none`) clears the context-window override. `--token-source` only carries meaning for Claude Code agents: `api` uses `claude --print` (per-token API credit), `tui` drives the maestro-p TUI (Max-plan quota), and `dynamic` starts on the TUI and falls back to API when a usage window hits its limit. The `tui` and `dynamic` modes need the [maestro-p helper](https://runmaestro.ai/maestro-p/) on PATH; it is bundled locally, but for SSH remotes it must be installed on the remote host. See [Provider Notes](/provider-notes#token-source-max-plan-vs-api).
 
 | Flag                              | Description                                                                                                                                        | Default |
 | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |

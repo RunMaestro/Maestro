@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { AlertTriangle, Copy, Check, X } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
+import { AgentResilienceSection } from './AgentResilienceSection';
+import { resilienceEnabled } from '../../../shared/agentConstants';
 import type { AgentConfig, ToolType } from '../../types';
 import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../../shared/types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
@@ -57,6 +59,9 @@ export function EditAgentModal({
 	const [maestroPMode, setMaestroPMode] = useState<'interactive' | 'dynamic'>('dynamic');
 	const [maestroPPath, setMaestroPPath] = useState('');
 	const [detectedMaestroPPath, setDetectedMaestroPPath] = useState<string | undefined>(undefined);
+	// Agent Resilience (auto-retry) toggles. Both default ON; read with `?? true`.
+	const [retryOnAvailabilityErrors, setRetryOnAvailabilityErrors] = useState(true);
+	const [retryOnTokenExhaustion, setRetryOnTokenExhaustion] = useState(true);
 	const [editDynamicOptions, setEditDynamicOptions] = useState<Record<string, string[]>>({});
 	const [editLoadingDynamicOptions, setEditLoadingDynamicOptions] = useState(false);
 	const [refreshingAgent, setRefreshingAgent] = useState(false);
@@ -245,6 +250,8 @@ export function EditAgentModal({
 			setEnableMaestroP(undefined);
 			setMaestroPMode('dynamic');
 			setMaestroPPath('');
+			setRetryOnAvailabilityErrors(true);
+			setRetryOnTokenExhaustion(true);
 		} else {
 			setCustomPath(session.customPath ?? '');
 			setCustomArgs(session.customArgs ?? '');
@@ -254,6 +261,9 @@ export function EditAgentModal({
 			setEnableMaestroP(session.enableMaestroP);
 			setMaestroPMode(session.maestroPMode ?? 'dynamic');
 			setMaestroPPath(session.maestroPPath ?? '');
+			// Both default ON; `undefined` (never configured) reads as enabled.
+			setRetryOnAvailabilityErrors(resilienceEnabled(session.retryOnAvailabilityErrors));
+			setRetryOnTokenExhaustion(resilienceEnabled(session.retryOnTokenExhaustion));
 		}
 
 		return () => {
@@ -359,7 +369,9 @@ export function EditAgentModal({
 			// collapse to `undefined`, or over SSH it reverts to the TUI default.
 			enableMaestroP,
 			enableMaestroP && maestroPPath.trim() ? maestroPPath.trim() : undefined,
-			enableMaestroP ? maestroPMode : undefined
+			enableMaestroP ? maestroPMode : undefined,
+			retryOnAvailabilityErrors,
+			retryOnTokenExhaustion
 		);
 		onClose();
 	}, [
@@ -373,6 +385,8 @@ export function EditAgentModal({
 		enableMaestroP,
 		maestroPMode,
 		maestroPPath,
+		retryOnAvailabilityErrors,
+		retryOnTokenExhaustion,
 		agentConfig,
 		sshRemoteConfig,
 		selectedToolType,
@@ -540,6 +554,15 @@ export function EditAgentModal({
 						</div>
 					)}
 				</div>
+
+				{/* Agent Resilience: auto-retry toggles (default ON), editable post-creation. */}
+				<AgentResilienceSection
+					theme={theme}
+					retryOnAvailabilityErrors={retryOnAvailabilityErrors}
+					retryOnTokenExhaustion={retryOnTokenExhaustion}
+					onChangeAvailability={setRetryOnAvailabilityErrors}
+					onChangeTokenExhaustion={setRetryOnTokenExhaustion}
+				/>
 
 				{/* Working Directory (read-only) */}
 				<div>

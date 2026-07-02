@@ -26,6 +26,7 @@ import { GhostIconButton } from '../ui/GhostIconButton';
 import type { Session, Group, Theme } from '../../types';
 import { getBadgeForTime } from '../../constants/conductorBadges';
 import { SessionItem } from '../SessionItem';
+import { LongPressable, longPressMouseEvent } from '../shared/LongPressable';
 import { GroupChatList } from '../GroupChatList';
 import { useLiveOverlay, useResizablePanel } from '../../hooks';
 import { useGitFileStatus } from '../../contexts/GitStatusContext';
@@ -33,13 +34,16 @@ import { useUIStore } from '../../stores/uiStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useBatchStore, selectActiveBatchSessionIds } from '../../stores/batchStore';
+import { useActiveOutageSessionSignature } from '../../stores/retryStore';
 import { useShallow } from 'zustand/react/shallow';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { sidebarSessionEquality } from '../../stores/sessionEquality';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useInlineWizardContext } from '../../contexts/InlineWizardContext';
+import { useWindowContextOptional } from '../../contexts/WindowContext';
 import { getModalActions, useModalStore } from '../../stores/modalStore';
 import { SessionContextMenu } from './SessionContextMenu';
+import { buildWindowMoveTargets, scopeSessionsToOwningWindow } from '../../utils/windowTargets';
 import { GroupContextMenu } from './GroupContextMenu';
 import { WizardIndicator } from './WizardIndicator';
 import { HamburgerMenuContent } from './HamburgerMenuContent';
@@ -149,10 +153,32 @@ function SessionListInner(props: SessionListProps) {
 	// updates. The sidebar only reads name/state/bookmarked/groupId/aiTabs.hasUnread,
 	// so the 200ms batched flush no longer cascades a sidebar re-render unless a
 	// sidebar-relevant field actually changed. See sessionEquality.ts.
-	const sessions = useStoreWithEqualityFn(
+	const allSessions = useStoreWithEqualityFn(
 		useSessionStore,
 		(s) => s.sessions,
 		sidebarSessionEquality
+	);
+	// Multi-window: EVERY window's Left Bar lists only the agents it owns
+	// (single-window-per-agent). Moving an agent into another window removes it
+	// from this window's list - the primary is the catch-all owner of every agent
+	// no secondary has claimed, and a secondary owns exactly its scoped set. In the
+	// common single-window case the primary owns everything, so this is a no-op;
+	// likewise outside a WindowProvider (isolation tests). Worktree children ride
+	// along with an owned parent so a detached agent keeps its worktrees together.
+	//
+	// Separately, a secondary window renders its owned agents as a FOCUSED flat
+	// list (no starred/bookmarks/group section headers - see the `isSecondaryWindow`
+	// gates below); the primary keeps its full sectioned layout, just scoped.
+	const windowCtx = useWindowContextOptional();
+	const isSecondaryWindow = !!windowCtx && !windowCtx.isMainWindow;
+	const scopeSessionsToWindow = useCallback(
+		(list: Session[]): Session[] =>
+			scopeSessionsToOwningWindow(list, windowCtx?.ownsSession ?? null),
+		[windowCtx]
+	);
+	const sessions = useMemo(
+		() => scopeSessionsToWindow(allSessions),
+		[scopeSessionsToWindow, allSessions]
 	);
 	const groups = useSessionStore((s) => s.groups);
 	const activeSessionId = useSessionStore((s) => s.activeSessionId);
@@ -193,6 +219,14 @@ function SessionListInner(props: SessionListProps) {
 	// render the wand glyph on agent rows AND on the group header / Bookmarks
 	// header for the group(s) those agents live in.
 	const { wizardActiveSessions } = useInlineWizardContext();
+
+	// Multi-window awareness. `windowCtx` is declared above (next to the scoped
+	// session list it drives). It is optional so the Left Bar still renders
+	// standalone (e.g. in isolation tests) outside a WindowProvider, degrading to
+	// no window badges, no per-window scoping, and local-only click behaviour. In
+	// the primary window it lists every agent; `getSessionWindow` tells us which
+	// rows live in another window so we can badge them and focus that window on
+	// click.
 
 	// Roll wizard activity up to the container level (group + bookmarks). For
 	// each session running the wizard, resolve to its parent if it's a worktree
@@ -352,7 +386,7 @@ function SessionListInner(props: SessionListProps) {
 
 	const {
 		theme,
-		sortedSessions,
+		sortedSessions: sortedSessionsAll,
 		navIndexMap,
 		isLiveMode,
 		webInterfaceUrl,
@@ -395,6 +429,14 @@ function SessionListInner(props: SessionListProps) {
 		onDeleteAllArchivedGroupChats,
 	} = props;
 
+	// Scope the sorted agent list the same way as the store list (see
+	// scopeSessionsToWindow above): a secondary window only categorizes/renders the
+	// agents it owns, the primary window sees them all.
+	const sortedSessions = useMemo(
+		() => scopeSessionsToWindow(sortedSessionsAll),
+		[scopeSessionsToWindow, sortedSessionsAll]
+	);
+
 	// Derive whether any session is busy or in auto-run (for wand sparkle animation)
 	const isAnyBusy = useMemo(
 		() => sessions.some((s) => s.state === 'busy') || activeBatchSessionIds.length > 0,
@@ -420,9 +462,14 @@ function SessionListInner(props: SessionListProps) {
 	const setSessionFilterOpen = useUIStore((s) => s.setSessionFilterOpen);
 	const showUnreadAgentsOnly = useUIStore((s) => s.showUnreadAgentsOnly);
 	const toggleShowUnreadAgentsOnly = useUIStore((s) => s.toggleShowUnreadAgentsOnly);
+	// Agent Resilience: agents stuck auto-retrying an outage count as "needs
+	// attention" and surface in the unread filter (see useSessionCategories).
+	const stuckOutageSignature = useActiveOutageSessionSignature();
 	const hasUnreadAgents = useMemo(
-		() => sessions.some((s) => s.aiTabs?.some((tab) => tab.hasUnread) || s.state === 'busy'),
-		[sessions]
+		() =>
+			sessions.some((s) => s.aiTabs?.some((tab) => tab.hasUnread) || s.state === 'busy') ||
+			stuckOutageSignature !== '',
+		[sessions, stuckOutageSignature]
 	);
 	const [menuOpen, setMenuOpen] = useState(false);
 
@@ -635,7 +682,12 @@ function SessionListInner(props: SessionListProps) {
 		sortedSessions,
 		showUnreadAgentsOnly,
 		activeSessionId,
-		activeBatchSessionIds
+		activeBatchSessionIds,
+		// Scope categorization to this window's agents (no-op in the primary window).
+		// useSessionCategories reads sessions from the store itself, so the scope must
+		// be applied here, not just via the scoped sortedSessions param above.
+		scopeSessionsToWindow,
+		stuckOutageSignature
 	);
 
 	// PERF: Cached callback maps to prevent SessionItem re-renders.
@@ -652,10 +704,25 @@ function SessionListInner(props: SessionListProps) {
 	const sessionsRef = useRef(sessions);
 	sessionsRef.current = sessions;
 
+	// Read cross-window ownership through a ref so the cached select handlers stay
+	// stable (keyed only on the session-id set, to preserve SessionItem's memo
+	// bail-out) yet always consult the latest ownership when actually clicked.
+	const getSessionWindowRef = useRef(windowCtx?.getSessionWindow);
+	getSessionWindowRef.current = windowCtx?.getSessionWindow;
+
 	const selectHandlers = useMemo(() => {
 		const map = new Map<string, () => void>();
 		sessionsRef.current.forEach((s) => {
-			map.set(s.id, () => setActiveSessionId(s.id));
+			map.set(s.id, () => {
+				// Agent lives in another window: focus that window instead of stealing
+				// it (single-window-per-agent). Otherwise select it here as before.
+				const otherWindow = getSessionWindowRef.current?.(s.id);
+				if (otherWindow) {
+					void window.maestro.windows.focusWindow(otherWindow.windowId);
+					return;
+				}
+				setActiveSessionId(s.id);
+			});
 		});
 		return map;
 	}, [sessionIdsKey, setActiveSessionId]);
@@ -718,13 +785,15 @@ function SessionListInner(props: SessionListProps) {
 		}
 	) => {
 		const allWorktreeChildren = getWorktreeChildren(session.id);
-		// When filtering unread, only show worktree children that are unread or busy
+		// When filtering unread, only show worktree children that are unread, busy,
+		// or stuck auto-retrying an outage (all "needs attention").
 		const worktreeChildren = showUnreadAgentsOnly
 			? allWorktreeChildren.filter(
 					(child) =>
 						child.id === activeSessionId ||
 						child.aiTabs?.some((tab) => tab.hasUnread) ||
-						child.state === 'busy'
+						child.state === 'busy' ||
+						stuckOutageSignature.split(',').includes(child.id)
 				)
 			: allWorktreeChildren;
 		const hasWorktrees = worktreeChildren.length > 0;
@@ -780,6 +849,7 @@ function SessionListInner(props: SessionListProps) {
 					wizardActive={wizardActiveSessions.has(session.id)}
 					wizardGeneratingDocs={!!wizardActiveSessions.get(session.id)?.isGeneratingDocs}
 					worktreeChildCount={worktreeChildren.length}
+					otherWindowNumber={windowCtx?.getSessionWindow(session.id)?.windowNumber}
 					dragDisabled={dragDisabled}
 					onSelect={selectHandlers.get(session.id)!}
 					onDragStart={dragStartHandlers.get(session.id)!}
@@ -840,6 +910,7 @@ function SessionListInner(props: SessionListProps) {
 										cueActiveRun={cueSessionMap.get(child.id)?.active}
 										wizardActive={wizardActiveSessions.has(child.id)}
 										wizardGeneratingDocs={!!wizardActiveSessions.get(child.id)?.isGeneratingDocs}
+										otherWindowNumber={windowCtx?.getSessionWindow(child.id)?.windowNumber}
 										dragDisabled={dragDisabled}
 										onSelect={selectHandlers.get(child.id)!}
 										onDragStart={dragStartHandlers.get(child.id)!}
@@ -937,8 +1008,8 @@ function SessionListInner(props: SessionListProps) {
 			{/* Resize Handle */}
 			{leftSidebarOpen && (
 				<div
-					className="absolute top-0 right-0 w-3 h-full cursor-col-resize border-r-4 border-transparent hover:border-blue-500 transition-colors z-20"
-					onMouseDown={onSidebarResizeStart}
+					className="resize-handle absolute top-0 right-0 w-3 h-full cursor-col-resize border-r-4 border-transparent hover:border-blue-500 transition-colors z-20"
+					onPointerDown={onSidebarResizeStart}
 				/>
 			)}
 
@@ -1063,7 +1134,7 @@ function SessionListInner(props: SessionListProps) {
 								{/* Menu Overlay */}
 								{menuOpen && (
 									<div
-										className="absolute top-full left-0 -mt-px w-72 rounded-lg shadow-2xl z-[100] overflow-y-auto scrollbar-thin"
+										className="absolute top-full left-0 -mt-px w-[22rem] rounded-lg shadow-2xl z-[100] overflow-y-auto scrollbar-thin"
 										data-tour="hamburger-menu-contents"
 										style={{
 											backgroundColor: theme.colors.bgSidebar,
@@ -1096,7 +1167,7 @@ function SessionListInner(props: SessionListProps) {
 						{/* Menu Overlay for Collapsed Sidebar */}
 						{menuOpen && (
 							<div
-								className="absolute top-full left-0 -mt-px w-72 rounded-lg shadow-2xl z-[100] overflow-y-auto scrollbar-thin"
+								className="absolute top-full left-0 -mt-px w-[22rem] rounded-lg shadow-2xl z-[100] overflow-y-auto scrollbar-thin"
 								style={{
 									backgroundColor: theme.colors.bgSidebar,
 									border: `1px solid ${theme.colors.border}`,
@@ -1170,87 +1241,90 @@ function SessionListInner(props: SessionListProps) {
 					    aggregated from agentSessions.getAllNamedSessions, across all agents.
 					    Click switches to the owning agent and either jumps to the open tab
 					    or resumes the closed session. */}
-					{showStarredSessionsSection && !showUnreadAgentsOnly && starredItems.length > 0 && (
-						<div className="mb-1">
-							<button
-								type="button"
-								className="w-full px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-opacity-50 group"
-								onClick={() => setStarredSectionCollapsed(!starredSectionCollapsed)}
-								aria-expanded={!starredSectionCollapsed}
-							>
-								<div
-									className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider flex-1"
-									style={{ color: theme.colors.accent }}
+					{showStarredSessionsSection &&
+						!showUnreadAgentsOnly &&
+						!isSecondaryWindow &&
+						starredItems.length > 0 && (
+							<div className="mb-1">
+								<button
+									type="button"
+									className="w-full px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-opacity-50 group"
+									onClick={() => setStarredSectionCollapsed(!starredSectionCollapsed)}
+									aria-expanded={!starredSectionCollapsed}
 								>
-									{starredSectionCollapsed ? (
-										<ChevronRight className="w-3 h-3" />
-									) : (
-										<ChevronDown className="w-3 h-3" />
-									)}
-									<Star className="w-3.5 h-3.5" fill={theme.colors.accent} />
-									<span>
-										Starred Sessions
-										{showLeftPanelGroupMemberCount && (
-											<span className="ml-1 opacity-60">({starredItems.length})</span>
+									<div
+										className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider flex-1"
+										style={{ color: theme.colors.accent }}
+									>
+										{starredSectionCollapsed ? (
+											<ChevronRight className="w-3 h-3" />
+										) : (
+											<ChevronDown className="w-3 h-3" />
 										)}
-									</span>
-								</div>
-							</button>
+										<Star className="w-3.5 h-3.5" fill={theme.colors.accent} />
+										<span>
+											Starred Sessions
+											{showLeftPanelGroupMemberCount && (
+												<span className="ml-1 opacity-60">({starredItems.length})</span>
+											)}
+										</span>
+									</div>
+								</button>
 
-							{!starredSectionCollapsed && (
-								<div
-									className="flex flex-col border-l ml-4"
-									style={{ borderColor: theme.colors.accent }}
-								>
-									{starredItems.map((item) => {
-										// Not focus-gated: a starred row has no separate "active" highlight,
-										// so this doubles as the indicator when Cmd+[ / Cmd+] (a global
-										// shortcut, fired with focus on the main panel) lands here.
-										const isStarredKeyboardSelected =
-											sidebarExtraSelection?.kind === 'starred' &&
-											sidebarExtraSelection.key === item.key;
-										return (
-											<button
-												key={item.key}
-												type="button"
-												data-nav-key={`starred:${item.key}`}
-												onClick={() => void activateStarredItem(item)}
-												className="px-3 py-1.5 flex flex-col text-left hover:bg-white/5 transition-colors"
-												style={{
-													color: theme.colors.textMain,
-													backgroundColor: isStarredKeyboardSelected
-														? theme.colors.bgActivity + '40'
-														: undefined,
-													boxShadow: isStarredKeyboardSelected
-														? `inset 2px 0 0 0 ${theme.colors.accent}`
-														: undefined,
-												}}
-												title={`${item.displayName} - ${item.agentName}`}
-											>
-												<span className="flex items-center gap-1.5 text-sm truncate">
-													<Star
-														className="w-3 h-3 flex-shrink-0"
-														fill={theme.colors.accent}
-														stroke={theme.colors.accent}
-													/>
-													<span className="truncate">{item.displayName}</span>
-												</span>
-												<span
-													className="text-xs opacity-60 truncate ml-[1.125rem]"
-													style={{ color: theme.colors.textDim }}
+								{!starredSectionCollapsed && (
+									<div
+										className="flex flex-col border-l ml-4"
+										style={{ borderColor: theme.colors.accent }}
+									>
+										{starredItems.map((item) => {
+											// Not focus-gated: a starred row has no separate "active" highlight,
+											// so this doubles as the indicator when Cmd+[ / Cmd+] (a global
+											// shortcut, fired with focus on the main panel) lands here.
+											const isStarredKeyboardSelected =
+												sidebarExtraSelection?.kind === 'starred' &&
+												sidebarExtraSelection.key === item.key;
+											return (
+												<button
+													key={item.key}
+													type="button"
+													data-nav-key={`starred:${item.key}`}
+													onClick={() => void activateStarredItem(item)}
+													className="px-3 py-1.5 flex flex-col text-left hover:bg-white/5 transition-colors"
+													style={{
+														color: theme.colors.textMain,
+														backgroundColor: isStarredKeyboardSelected
+															? theme.colors.bgActivity + '40'
+															: undefined,
+														boxShadow: isStarredKeyboardSelected
+															? `inset 2px 0 0 0 ${theme.colors.accent}`
+															: undefined,
+													}}
+													title={`${item.displayName} - ${item.agentName}`}
 												>
-													{item.agentName}
-												</span>
-											</button>
-										);
-									})}
-								</div>
-							)}
-						</div>
-					)}
+													<span className="flex items-center gap-1.5 text-sm truncate">
+														<Star
+															className="w-3 h-3 flex-shrink-0"
+															fill={theme.colors.accent}
+															stroke={theme.colors.accent}
+														/>
+														<span className="truncate">{item.displayName}</span>
+													</span>
+													<span
+														className="text-xs opacity-60 truncate ml-[1.125rem]"
+														style={{ color: theme.colors.textDim }}
+													>
+														{item.agentName}
+													</span>
+												</button>
+											);
+										})}
+									</div>
+								)}
+							</div>
+						)}
 
 					{/* BOOKMARKS SECTION - hidden when filtering by unread agents */}
-					{bookmarkedSessions.length > 0 && !showUnreadAgentsOnly && (
+					{bookmarkedSessions.length > 0 && !showUnreadAgentsOnly && !isSecondaryWindow && (
 						<div className="mb-1">
 							<button
 								type="button"
@@ -1316,8 +1390,9 @@ function SessionListInner(props: SessionListProps) {
 						</div>
 					)}
 
-					{/* GROUPS */}
-					{sortedGroups.map((group) => {
+					{/* GROUPS - hidden in a secondary window, which renders its owned agents
+					    as a flat focused list (see the flat-list branch below). */}
+					{(isSecondaryWindow ? [] : sortedGroups).map((group) => {
 						const groupSessions = sortedGroupSessionsById.get(group.id) || [];
 						// Hide empty groups when filtering by unread agents
 						if (showUnreadAgentsOnly && groupSessions.length === 0) return null;
@@ -1338,7 +1413,7 @@ function SessionListInner(props: SessionListProps) {
 								onDragEnter={() => handleDropTargetEnter(group.id)}
 								onDragLeave={handleDropTargetLeave}
 							>
-								<div
+								<LongPressable
 									role="button"
 									tabIndex={0}
 									aria-expanded={!group.collapsed}
@@ -1356,6 +1431,10 @@ function SessionListInner(props: SessionListProps) {
 									}
 									onClick={() => toggleGroup(group.id)}
 									onContextMenu={(e) => handleGroupContextMenu(e, group.id)}
+									// Touch: a long-press opens the same group context menu right-click opens.
+									onLongPress={(rect) =>
+										handleGroupContextMenu(longPressMouseEvent(rect), group.id)
+									}
 									onDragOver={handleDragOver}
 									onDrop={() => {
 										setDragOverTarget(null);
@@ -1439,7 +1518,7 @@ function SessionListInner(props: SessionListProps) {
 											<Trash2 className="w-3 h-3" />
 										</button>
 									)}
-								</div>
+								</LongPressable>
 
 								{!group.collapsed || showUnreadAgentsOnly ? (
 									<div
@@ -1475,8 +1554,10 @@ function SessionListInner(props: SessionListProps) {
 						);
 					})}
 
-					{/* SESSIONS - Flat list when no groups exist, otherwise show Ungrouped folder */}
-					{sessions.length > 0 && groups.length === 0 ? (
+					{/* SESSIONS - Flat list when no groups exist (or in a secondary window, which
+					    always shows its owned agents as a flat focused list), otherwise the
+					    Ungrouped folder. */}
+					{sessions.length > 0 && (groups.length === 0 || isSecondaryWindow) ? (
 						/* FLAT LIST - No groups exist yet, show sessions directly with New Group button */
 						<>
 							<div className="flex flex-col">
@@ -1484,7 +1565,7 @@ function SessionListInner(props: SessionListProps) {
 									renderSessionWithWorktrees(session, 'flat', { keyPrefix: 'flat' })
 								)}
 							</div>
-							{!showUnreadAgentsOnly && (
+							{!showUnreadAgentsOnly && !isSecondaryWindow && (
 								<div className="mt-4 px-3">
 									<button
 										onClick={createNewGroup}
@@ -1502,7 +1583,7 @@ function SessionListInner(props: SessionListProps) {
 								</div>
 							)}
 						</>
-					) : groups.length > 0 && ungroupedSessions.length > 0 ? (
+					) : !isSecondaryWindow && groups.length > 0 && ungroupedSessions.length > 0 ? (
 						/* UNGROUPED FOLDER - Groups exist and there are ungrouped agents */
 						<div
 							className="mb-1 mt-4 rounded"
@@ -1602,7 +1683,7 @@ function SessionListInner(props: SessionListProps) {
 								/>
 							)}
 						</div>
-					) : groups.length > 0 && !showUnreadAgentsOnly ? (
+					) : !isSecondaryWindow && groups.length > 0 && !showUnreadAgentsOnly ? (
 						/* NO UNGROUPED AGENTS - Show drop zone for ungrouping + New Group button */
 						<div
 							className="mt-4 px-3"
@@ -1770,6 +1851,25 @@ function SessionListInner(props: SessionListProps) {
 							: createNewGroup
 					}
 					onConfigureCue={onConfigureCue ? () => onConfigureCue(contextMenuSession) : undefined}
+					windowTargets={
+						windowCtx ? buildWindowMoveTargets(windowCtx.windows, contextMenuSession.id) : undefined
+					}
+					onMoveToNewWindow={
+						windowCtx
+							? () => void windowCtx.moveSessionToNewWindow(contextMenuSession.id)
+							: undefined
+					}
+					onMoveToWindow={
+						windowCtx
+							? (targetWindowId) =>
+									void windowCtx.moveSessionToWindow(contextMenuSession.id, targetWindowId)
+							: undefined
+					}
+					onRenameWindow={
+						windowCtx
+							? (targetWindowId, name) => void windowCtx.renameWindow(targetWindowId, name)
+							: undefined
+					}
 				/>
 			)}
 

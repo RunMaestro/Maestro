@@ -54,6 +54,12 @@ vi.mock('fs', async () => {
 		readFileSync: vi.fn(),
 		writeFileSync: vi.fn(),
 		existsSync: vi.fn(() => false),
+		// Default to "maestro-p not found" so Claude spawns resolve to API unless a
+		// test opts into the TUI by making this succeed. Mirrors production, where
+		// getCliMaestroPBinPath()/fileExists gate the interactive path.
+		accessSync: vi.fn(() => {
+			throw new Error('ENOENT');
+		}),
 		readdirSync: vi.fn(() => []),
 		mkdirSync: vi.fn(),
 		createWriteStream: vi.fn(
@@ -843,6 +849,64 @@ Some text with [x] in it that's not a checkbox
 
 			const result = await resultPromise;
 			expect(result.success).toBe(true);
+		});
+
+		it('runs the local maestro-p TUI when the agent selected the interactive token source', async () => {
+			// Honoring the token source across the board: a local Claude agent set to
+			// interactive (TUI) wraps the spawn with maestro-p via process.execPath
+			// (node), injecting MAESTRO_CLAUDE_BIN, instead of running `claude --print`.
+			// Make maestro-p "present": getCliMaestroPBinPath() (accessSync) resolves
+			// and the resolver's fileExists (existsSync) confirms the candidate.
+			vi.mocked(fs.accessSync).mockReturnValue(undefined);
+			vi.mocked(fs.existsSync).mockReturnValue(true);
+
+			const resultPromise = spawnAgent('claude-code', '/project/path', 'Test prompt', undefined, {
+				enableMaestroP: true,
+				maestroPMode: 'interactive',
+			});
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			expect(mockSpawn).toHaveBeenCalled();
+			const [cmd, args, options] = mockSpawn.mock.calls[0];
+
+			// Command is the node/electron execPath (maestro-p is a Node script), not claude.
+			expect(cmd).toBe(process.execPath);
+			// maestro-p.js script is the first arg, followed by its interactive flag,
+			// then the original headless batch args ending with the prompt positional.
+			expect(String(args[0])).toMatch(/maestro-p\.js$/);
+			expect(args).toContain('--dangerously-skip-permissions');
+			expect(args).toContain('--');
+			expect(args).toContain('Test prompt');
+			// MAESTRO_CLAUDE_BIN points maestro-p at the real claude binary to drive.
+			expect(options.env.MAESTRO_CLAUDE_BIN).toBeTruthy();
+
+			mockStdout.emit('data', Buffer.from('{"type":"result","result":"ok"}\n'));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+			const result = await resultPromise;
+			expect(result.success).toBe(true);
+		});
+
+		it('stays on claude --print for the API token source (no maestro-p wrap)', async () => {
+			// The inverse guard: even with maestro-p present on disk, an agent set to
+			// API must NOT route through maestro-p.
+			vi.mocked(fs.accessSync).mockReturnValue(undefined);
+			vi.mocked(fs.existsSync).mockReturnValue(true);
+
+			const resultPromise = spawnAgent('claude-code', '/project/path', 'Test prompt', undefined, {
+				enableMaestroP: false,
+			});
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			const [cmd, args] = mockSpawn.mock.calls[0];
+			expect(cmd).not.toBe(process.execPath);
+			expect(String(args[0])).not.toMatch(/maestro-p\.js$/);
+			expect(args).toContain('--print');
+
+			mockStdout.emit('data', Buffer.from('{"type":"result","result":"ok"}\n'));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+			await resultPromise;
 		});
 
 		it('should use --resume for existing session', async () => {
@@ -2041,8 +2105,10 @@ Some text with [x] in it that's not a checkbox
 			mockGetAgentCustomPath.mockReturnValue('/opt/local/claude');
 			mockWrapSpawnWithSsh.mockResolvedValue(sshWrapResult({ args: ['remotehost'] }));
 
+			// Explicit API token source so the remote command stays `claude`.
 			const p = spawnAgent('claude-code', '/p', 'hi', undefined, {
 				sshRemoteConfig: { enabled: true, remoteId: 'r1' },
+				enableMaestroP: false,
 			});
 			await driveSpawnToCompletion(p, 0, CLAUDE_OK());
 
@@ -2052,6 +2118,47 @@ Some text with [x] in it that's not a checkbox
 			expect(wrapConfig.agentBinaryName).toBe('claude');
 			// local `command` may be a resolved path, but agentBinaryName is what
 			// the wrapper actually uses for the remote invocation.
+		});
+
+		it('defaults an UNCONFIGURED SSH agent to claude --print, NOT the remote TUI', async () => {
+			// The CLI cannot probe the remote for maestro-p and it may not be
+			// installed there, so an agent that never chose a token source must
+			// default to API (claude) over SSH - never optimistically exec maestro-p.
+			mockWrapSpawnWithSsh.mockResolvedValue(sshWrapResult({ args: ['remotehost'] }));
+
+			const p = spawnAgent('claude-code', '/p', 'hi', undefined, {
+				sshRemoteConfig: { enabled: true, remoteId: 'r1' },
+				// enableMaestroP intentionally omitted (unconfigured).
+			});
+			await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+
+			const [wrapConfig] = mockWrapSpawnWithSsh.mock.calls[0] as [
+				{ agentBinaryName?: string; args: string[] },
+			];
+			expect(wrapConfig.agentBinaryName).toBe('claude');
+			expect(wrapConfig.agentBinaryName).not.toBe('maestro-p');
+		});
+
+		it('runs maestro-p on the remote host when the agent selected the TUI token source', async () => {
+			// Honoring the token source across the board: an SSH agent set to
+			// interactive (TUI) drives the remote maestro-p on the Max plan instead
+			// of `claude --print`, mirroring the desktop SSH remote-interactive path.
+			mockWrapSpawnWithSsh.mockResolvedValue(sshWrapResult({ args: ['remotehost'] }));
+
+			const p = spawnAgent('claude-code', '/p', 'hi', undefined, {
+				sshRemoteConfig: { enabled: true, remoteId: 'r1' },
+				enableMaestroP: true,
+				maestroPMode: 'interactive',
+			});
+			await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+
+			const [wrapConfig] = mockWrapSpawnWithSsh.mock.calls[0] as [
+				{ agentBinaryName?: string; args: string[] },
+			];
+			// Remote command is maestro-p (not claude), with the interactive flag
+			// prepended ahead of the headless batch args.
+			expect(wrapConfig.agentBinaryName).toBe('maestro-p');
+			expect(wrapConfig.args).toContain('--dangerously-skip-permissions');
 		});
 
 		it('passes session customArgs through to the SSH wrapper (baseline args include them)', async () => {
@@ -2306,17 +2413,32 @@ Some text with [x] in it that's not a checkbox
 		});
 
 		it('still injects the Maestro system prompt on resume (Claude reads it every turn)', async () => {
-			const p = spawnAgent('claude-code', '/p', 'follow-up', 'session-abc', {
-				appendSystemPrompt: 'maestro context',
-			});
-			await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+			// Pin the platform to a POSIX value so this exercises the inline
+			// `--append-system-prompt` path deterministically. On Windows local
+			// spawns the product instead writes the prompt to a temp file and
+			// passes `--append-system-prompt-file` (see buildAppendSystemPromptArgs),
+			// which is correct but a different arg shape. On Unix this override is
+			// a no-op.
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+			try {
+				const p = spawnAgent('claude-code', '/p', 'follow-up', 'session-abc', {
+					appendSystemPrompt: 'maestro context',
+				});
+				await driveSpawnToCompletion(p, 0, CLAUDE_OK());
 
-			const { args } = spawnCall();
-			expect(args).toContain('--resume');
-			expect(args).toContain('session-abc');
-			const flagIdx = args.indexOf('--append-system-prompt');
-			expect(flagIdx).toBeGreaterThanOrEqual(0);
-			expect(args[flagIdx + 1]).toBe('maestro context');
+				const { args } = spawnCall();
+				expect(args).toContain('--resume');
+				expect(args).toContain('session-abc');
+				const flagIdx = args.indexOf('--append-system-prompt');
+				expect(flagIdx).toBeGreaterThanOrEqual(0);
+				expect(args[flagIdx + 1]).toBe('maestro context');
+			} finally {
+				Object.defineProperty(process, 'platform', {
+					value: originalPlatform,
+					configurable: true,
+				});
+			}
 		});
 
 		it('Codex (no native --append-system-prompt support) embeds the system prompt in the first user turn', async () => {

@@ -349,6 +349,20 @@ export function createAgentSessionsApi() {
 				sessionId,
 				starred
 			),
+
+		snapshotStarredTranscript: (
+			agentId: string,
+			projectPath: string,
+			sessionId: string,
+			sessionName?: string
+		): Promise<void> =>
+			ipcRenderer.invoke(
+				'agentSessions:snapshotStarredTranscript',
+				agentId,
+				projectPath,
+				sessionId,
+				sessionName
+			),
 	};
 }
 

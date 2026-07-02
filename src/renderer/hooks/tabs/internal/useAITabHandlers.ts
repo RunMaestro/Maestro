@@ -14,6 +14,7 @@ import {
 	createTab,
 	getActiveTab,
 	getInitialRenameValue,
+	getTabDisplayName,
 	hasActiveWizard,
 	hasDraft,
 	hasWizardInteraction,
@@ -69,6 +70,32 @@ export function useAITabHandlers(): AITabHandlersReturn {
 				.sessions.find((s) => s.id === activeSessionId);
 			const tabBeforeClose = sessionBeforeClose?.aiTabs.find((t) => t.id === tabId);
 			const wasWizardTab = !!tabBeforeClose && hasActiveWizard(tabBeforeClose);
+
+			// Closing a starred tab is a context-loss boundary: capture the provider
+			// transcript into Maestro's own mirror now, so it survives even if the
+			// provider later deletes its copy. Fire-and-forget; no-op for unstarred
+			// tabs or tabs that never got a provider session id.
+			if (
+				sessionBeforeClose &&
+				tabBeforeClose?.starred &&
+				tabBeforeClose.agentSessionId &&
+				sessionBeforeClose.projectRoot
+			) {
+				window.maestro.agentSessions
+					.snapshotStarredTranscript(
+						sessionBeforeClose.toolType || 'claude-code',
+						sessionBeforeClose.projectRoot,
+						tabBeforeClose.agentSessionId,
+						getTabDisplayName(tabBeforeClose)
+					)
+					.catch((error) =>
+						logger.warn(
+							'[useTabHandlers] Failed to mirror starred transcript on close',
+							undefined,
+							error
+						)
+					);
+			}
 
 			clearLiveDraft(tabId);
 			setSessions((prev: Session[]) =>

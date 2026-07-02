@@ -227,6 +227,7 @@ describe('system IPC handlers', () => {
 				'devtools:toggle',
 				// Update handlers
 				'updates:check',
+				'updates:checkin',
 				'updates:setAllowPrerelease',
 				// Logger handlers
 				'logger:log',

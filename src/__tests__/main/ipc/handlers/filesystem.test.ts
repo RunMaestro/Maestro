@@ -3,6 +3,8 @@ import { ipcMain } from 'electron';
 
 // Track registered handlers
 const registeredHandlers = new Map<string, Function>();
+// Track fire-and-forget `ipcMain.on` listeners (e.g. fs:startDragOut)
+const registeredListeners = new Map<string, Function>();
 
 // Mock ipcMain
 vi.mock('electron', () => ({
@@ -10,8 +12,22 @@ vi.mock('electron', () => ({
 		handle: vi.fn((channel: string, handler: Function) => {
 			registeredHandlers.set(channel, handler);
 		}),
+		on: vi.fn((channel: string, handler: Function) => {
+			registeredListeners.set(channel, handler);
+		}),
 	},
 }));
+
+// Mock the drag-out icon so the handler doesn't reach into Electron's nativeImage.
+vi.mock('../../../../main/utils/drag-out-icon', () => ({
+	getDragOutIcon: vi.fn(() => ({ __icon: true })),
+}));
+
+// Mock synchronous fs (existsSync) used by the drag-out handler's path filter.
+vi.mock('fs', () => {
+	const existsSync = vi.fn(() => true);
+	return { existsSync, default: { existsSync } };
+});
 
 // Mock os module
 vi.mock('os', () => ({
@@ -56,6 +72,7 @@ vi.mock('../../../../main/utils/remote-fs', () => ({
 	deleteRemote: vi.fn(),
 	countItemsRemote: vi.fn(),
 	writeFileRemote: vi.fn(),
+	existsRemote: vi.fn(),
 }));
 
 // Mock stores
@@ -76,12 +93,15 @@ import {
 	mkdirRemote,
 	deleteRemote,
 	writeFileRemote,
+	existsRemote,
 } from '../../../../main/utils/remote-fs';
+import { existsSync } from 'fs';
 
 describe('filesystem handlers', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		registeredHandlers.clear();
+		registeredListeners.clear();
 		registerFilesystemHandlers();
 	});
 
@@ -390,7 +410,7 @@ describe('filesystem handlers', () => {
 				success: true,
 				data: {
 					size: 2048,
-					mtime: '2024-06-15T12:00:00.000Z',
+					mtime: Date.parse('2024-06-15T12:00:00.000Z'),
 					isDirectory: false,
 				},
 			});
@@ -615,6 +635,123 @@ describe('filesystem handlers', () => {
 
 			await expect(handler!({}, '/external/x', '/project/x')).rejects.toThrow('Failed to copy');
 		});
+
+		it('should upload a local file to the remote host when sshRemoteId is set', async () => {
+			const mockSshConfig = { id: 'remote-1', host: 'server.com', username: 'user' };
+			vi.mocked(getSshRemoteById).mockReturnValue(mockSshConfig as any);
+			vi.mocked(fs.stat).mockResolvedValue({ isDirectory: () => false } as any);
+			vi.mocked(existsRemote).mockResolvedValue({ success: true, data: false });
+			vi.mocked(fs.readFile).mockResolvedValue(Buffer.from('hello') as any);
+			vi.mocked(writeFileRemote).mockResolvedValue({ success: true });
+
+			const handler = registeredHandlers.get('fs:copyPath');
+			const result = await handler!({}, '/external/photo.png', '/remote/project/photo.png', {
+				sshRemoteId: 'remote-1',
+			});
+
+			expect(fs.cp).not.toHaveBeenCalled();
+			expect(writeFileRemote).toHaveBeenCalledWith(
+				'/remote/project/photo.png',
+				Buffer.from('hello'),
+				mockSshConfig
+			);
+			expect(result).toEqual({ success: true });
+		});
+
+		it('should reject an SSH upload when the remote destination already exists (no overwrite)', async () => {
+			const mockSshConfig = { id: 'remote-1', host: 'server.com', username: 'user' };
+			vi.mocked(getSshRemoteById).mockReturnValue(mockSshConfig as any);
+			vi.mocked(fs.stat).mockResolvedValue({ isDirectory: () => false } as any);
+			vi.mocked(existsRemote).mockResolvedValue({ success: true, data: true });
+
+			const handler = registeredHandlers.get('fs:copyPath');
+
+			await expect(
+				handler!({}, '/external/photo.png', '/remote/project/photo.png', {
+					sshRemoteId: 'remote-1',
+				})
+			).rejects.toThrow('already exists');
+			expect(writeFileRemote).not.toHaveBeenCalled();
+		});
+
+		it('should clear the remote destination first when overwriting on SSH', async () => {
+			const mockSshConfig = { id: 'remote-1', host: 'server.com', username: 'user' };
+			vi.mocked(getSshRemoteById).mockReturnValue(mockSshConfig as any);
+			vi.mocked(fs.stat).mockResolvedValue({ isDirectory: () => false } as any);
+			vi.mocked(deleteRemote).mockResolvedValue({ success: true });
+			vi.mocked(fs.readFile).mockResolvedValue(Buffer.from('data') as any);
+			vi.mocked(writeFileRemote).mockResolvedValue({ success: true });
+
+			const handler = registeredHandlers.get('fs:copyPath');
+			const result = await handler!({}, '/external/x.ts', '/remote/project/x.ts', {
+				overwrite: true,
+				sshRemoteId: 'remote-1',
+			});
+
+			expect(deleteRemote).toHaveBeenCalledWith('/remote/project/x.ts', mockSshConfig, true);
+			expect(existsRemote).not.toHaveBeenCalled();
+			expect(writeFileRemote).toHaveBeenCalled();
+			expect(result).toEqual({ success: true });
+		});
+
+		it('should throw when the SSH remote is not found', async () => {
+			vi.mocked(getSshRemoteById).mockReturnValue(undefined);
+
+			const handler = registeredHandlers.get('fs:copyPath');
+
+			await expect(
+				handler!({}, '/external/x', '/remote/x', { sshRemoteId: 'missing' })
+			).rejects.toThrow('SSH remote not found');
+		});
+	});
+
+	describe('fs:startDragOut', () => {
+		it('registers a fire-and-forget listener', () => {
+			expect(registeredListeners.get('fs:startDragOut')).toBeDefined();
+		});
+
+		it('starts a single-file drag with file + icon', () => {
+			vi.mocked(existsSync).mockReturnValue(true);
+			const startDrag = vi.fn();
+			const listener = registeredListeners.get('fs:startDragOut');
+
+			listener!({ sender: { startDrag } }, ['/tmp/report.pdf']);
+
+			expect(startDrag).toHaveBeenCalledTimes(1);
+			expect(startDrag).toHaveBeenCalledWith(
+				expect.objectContaining({ file: '/tmp/report.pdf', icon: expect.anything() })
+			);
+		});
+
+		it('starts a multi-file drag with a files array', () => {
+			vi.mocked(existsSync).mockReturnValue(true);
+			const startDrag = vi.fn();
+			const listener = registeredListeners.get('fs:startDragOut');
+
+			listener!({ sender: { startDrag } }, ['/tmp/a.txt', '/tmp/b.txt']);
+
+			expect(startDrag).toHaveBeenCalledWith(
+				expect.objectContaining({ files: ['/tmp/a.txt', '/tmp/b.txt'] })
+			);
+		});
+
+		it('filters out paths that do not exist and skips startDrag when none remain', () => {
+			vi.mocked(existsSync).mockReturnValue(false);
+			const startDrag = vi.fn();
+			const listener = registeredListeners.get('fs:startDragOut');
+
+			listener!({ sender: { startDrag } }, ['/tmp/missing.txt']);
+
+			expect(startDrag).not.toHaveBeenCalled();
+		});
+
+		it('ignores a non-array payload without throwing', () => {
+			const startDrag = vi.fn();
+			const listener = registeredListeners.get('fs:startDragOut');
+
+			expect(() => listener!({ sender: { startDrag } }, undefined)).not.toThrow();
+			expect(startDrag).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('fs:mkdir', () => {
@@ -805,14 +942,15 @@ describe('filesystem handlers', () => {
 
 			// Root has: src/ (dir), .git/ (dir), file.txt (file)
 			vi.mocked(mockFs.readdir).mockImplementation(async (dirPath: any) => {
-				if (dirPath === '/project') {
+				const p = String(dirPath).replace(/\\/g, '/');
+				if (p === '/project') {
 					return [
 						{ name: 'src', isDirectory: () => true, isFile: () => false },
 						{ name: '.git', isDirectory: () => true, isFile: () => false },
 						{ name: 'file.txt', isDirectory: () => false, isFile: () => true },
 					] as any;
 				}
-				if (dirPath.includes('/src')) {
+				if (p.includes('/src')) {
 					return [{ name: 'index.ts', isDirectory: () => false, isFile: () => true }] as any;
 				}
 				return [];
@@ -829,14 +967,15 @@ describe('filesystem handlers', () => {
 
 			// With .git in ignore patterns — .git is excluded
 			vi.mocked(mockFs.readdir).mockImplementation(async (dirPath: any) => {
-				if (dirPath === '/project') {
+				const p = String(dirPath).replace(/\\/g, '/');
+				if (p === '/project') {
 					return [
 						{ name: 'src', isDirectory: () => true, isFile: () => false },
 						{ name: '.git', isDirectory: () => true, isFile: () => false },
 						{ name: 'file.txt', isDirectory: () => false, isFile: () => true },
 					] as any;
 				}
-				if (dirPath.includes('/src')) {
+				if (p.includes('/src')) {
 					return [{ name: 'index.ts', isDirectory: () => false, isFile: () => true }] as any;
 				}
 				return [];
@@ -865,7 +1004,8 @@ describe('filesystem handlers', () => {
 			});
 
 			vi.mocked(mockFs.readdir).mockImplementation(async (dirPath: any) => {
-				if (dirPath === '/project') {
+				const p = String(dirPath).replace(/\\/g, '/');
+				if (p === '/project') {
 					return [
 						{ name: 'src', isDirectory: () => true, isFile: () => false },
 						{ name: 'dist', isDirectory: () => true, isFile: () => false },
@@ -873,7 +1013,7 @@ describe('filesystem handlers', () => {
 						{ name: 'debug.log', isDirectory: () => false, isFile: () => true },
 					] as any;
 				}
-				if (dirPath.includes('/src')) {
+				if (p.includes('/src')) {
 					return [{ name: 'index.ts', isDirectory: () => false, isFile: () => true }] as any;
 				}
 				return [];

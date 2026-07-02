@@ -165,6 +165,11 @@ vi.mock('lucide-react', () => ({
 			🗂️
 		</span>
 	),
+	HardDrive: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<span data-testid="hard-drive-icon" className={className} style={style}>
+			💾
+		</span>
+	),
 }));
 
 // Mock @tanstack/react-virtual for virtualization
@@ -1113,10 +1118,13 @@ describe('FileExplorerPanel', () => {
 			expect(truncateSpans.length).toBeGreaterThan(0);
 		});
 
-		it('sets title attribute with full file name', () => {
+		it('renders the full file name as visible text', () => {
+			// The name is rendered as the HoverTooltip trigger's text content
+			// (the tooltip reveals it on hover only when truncated), so it replaces
+			// the old native title= attribute.
 			render(<FileExplorerPanel {...defaultProps} />);
-			expect(screen.getByTitle('src')).toBeInTheDocument();
-			expect(screen.getByTitle('package.json')).toBeInTheDocument();
+			expect(screen.getByText('src')).toBeInTheDocument();
+			expect(screen.getByText('package.json')).toBeInTheDocument();
 		});
 
 		it('deduplicates NFD/NFC sibling entries rendering only one row', () => {
@@ -1133,7 +1141,7 @@ describe('FileExplorerPanel', () => {
 			render(<FileExplorerPanel {...defaultProps} filteredFileTree={treeWithDupes} />);
 
 			// Should only render 2 rows (deduplicated café.txt + other.txt), not 3
-			const items = screen.getAllByTitle(nfcName);
+			const items = screen.getAllByText(nfcName);
 			expect(items).toHaveLength(1);
 			expect(screen.getByText('other.txt')).toBeInTheDocument();
 
@@ -3614,6 +3622,42 @@ describe('FileExplorerPanel', () => {
 			unmount();
 			expectAllListenersRemoved(spies.addSpy, spies.removeSpy);
 			spies.restore();
+		});
+	});
+
+	describe('Stats bar (files/folders/size footer)', () => {
+		const statsSession = () =>
+			createMockSession({
+				fileTreeStats: { fileCount: 3356, folderCount: 398, totalSize: 111 * 1024 * 1024 },
+			});
+
+		it('renders counts, labels, and the responsive class hooks', () => {
+			const { container } = render(
+				<FileExplorerPanel {...defaultProps} session={statsSession()} />
+			);
+			// The container-query wrapper drives the narrow-width icon swap in index.css
+			const bar = container.querySelector('.file-stats-container');
+			expect(bar).not.toBeNull();
+			expect(bar!.textContent).toContain('3,356');
+			expect(bar!.textContent).toContain('398');
+			// Label words carry the drop class; icons carry the show class
+			expect(bar!.querySelectorAll('.file-stats-label').length).toBe(3);
+			expect(bar!.querySelectorAll('.file-stats-icon').length).toBe(3);
+		});
+
+		it('gives each stats segment a tooltip so icon-only mode stays legible', () => {
+			const { container } = render(
+				<FileExplorerPanel {...defaultProps} session={statsSession()} />
+			);
+			const bar = container.querySelector('.file-stats-container')!;
+			expect(bar.querySelector('[title="3,356 files"]')).not.toBeNull();
+			expect(bar.querySelector('[title="398 folders"]')).not.toBeNull();
+			expect(bar.querySelector('[title^="Total size:"]')).not.toBeNull();
+		});
+
+		it('does not render the stats bar without fileTreeStats', () => {
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
+			expect(container.querySelector('.file-stats-container')).toBeNull();
 		});
 	});
 });

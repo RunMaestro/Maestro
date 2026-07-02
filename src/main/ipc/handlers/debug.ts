@@ -13,6 +13,7 @@ import path from 'path';
 import Store from 'electron-store';
 import { logger } from '../../utils/logger';
 import { createIpcHandler, CreateHandlerOptions } from '../../utils/ipcHandler';
+import { createSafeSend } from '../../utils/safe-send';
 import {
 	generateDebugPackage,
 	previewDebugPackage,
@@ -72,6 +73,7 @@ export function registerDebugHandlers(deps: DebugHandlerDependencies): void {
 		groupsStore,
 		bootstrapStore,
 	} = deps;
+	const safeSend = createSafeSend(getMainWindow);
 
 	// Generate debug package with user-selected save location
 	ipcMain.handle(
@@ -254,6 +256,11 @@ export function registerDebugHandlers(deps: DebugHandlerDependencies): void {
 	// Stop the recording, then prompt for a save location and write the bundle
 	// (raw trace + capture metadata) as a compressed .zip. Analysis is a
 	// development-time activity - see scripts/analyze-perf-trace.mjs.
+	//
+	// Flushing the trace and (especially) zip compression can take tens of
+	// seconds for a large capture. We emit `debug:profilingProgress` phase events
+	// throughout so the renderer can show a live progress modal instead of the UI
+	// looking frozen after the user hits "End Performance Profiling".
 	ipcMain.handle(
 		'debug:stopProfiling',
 		createIpcHandler(handlerOpts('stopProfiling'), async () => {
@@ -262,12 +269,20 @@ export function registerDebugHandlers(deps: DebugHandlerDependencies): void {
 				throw new Error('No main window available');
 			}
 
+			// Best-effort progress ping; safeSend swallows closed/destroyed
+			// windows and also fans out to web-desktop bridge clients.
+			const sendProgress = (payload: Record<string, unknown>) => {
+				safeSend('debug:profilingProgress', payload);
+			};
+
 			const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
 			// Flush the trace to a temp file first so recording (and its overhead)
 			// ends immediately, before the user fiddles with the save dialog.
 			const tracePath = path.join(app.getPath('temp'), `maestro-trace-${timestamp}.json`);
+			sendProgress({ phase: 'stopping' });
 			const { durationMs, categories } = await stopProfiling(tracePath);
 
+			sendProgress({ phase: 'awaiting-save' });
 			const result = await dialog.showSaveDialog(mainWindow, {
 				title: 'Save Performance Profile',
 				defaultPath: path.join(app.getPath('desktop'), `maestro-profile-${timestamp}.zip`),
@@ -276,6 +291,7 @@ export function registerDebugHandlers(deps: DebugHandlerDependencies): void {
 
 			if (result.canceled || !result.filePath) {
 				await fs.promises.unlink(tracePath).catch(() => {});
+				sendProgress({ phase: 'cancelled' });
 				return {
 					path: null,
 					cancelled: true,
@@ -286,8 +302,22 @@ export function registerDebugHandlers(deps: DebugHandlerDependencies): void {
 			}
 
 			try {
-				const finalized = await finalizeCapture(tracePath, result.filePath, durationMs, categories);
+				sendProgress({ phase: 'compressing', percent: 0 });
+				const finalized = await finalizeCapture(
+					tracePath,
+					result.filePath,
+					durationMs,
+					categories,
+					(percent, bytesProcessed, totalBytes) =>
+						sendProgress({ phase: 'compressing', percent, bytesProcessed, totalBytes })
+				);
 				logger.info(`${LOG_CONTEXT} Performance profile saved: ${finalized.path}`);
+				sendProgress({
+					phase: 'done',
+					percent: 100,
+					path: finalized.path,
+					bundleSizeBytes: finalized.bundleSizeBytes,
+				});
 				return {
 					path: finalized.path,
 					cancelled: false,
@@ -295,6 +325,12 @@ export function registerDebugHandlers(deps: DebugHandlerDependencies): void {
 					traceSizeBytes: finalized.traceSizeBytes,
 					durationMs,
 				};
+			} catch (err) {
+				sendProgress({
+					phase: 'error',
+					error: err instanceof Error ? err.message : 'Failed to save profile',
+				});
+				throw err;
 			} finally {
 				await fs.promises.unlink(tracePath).catch(() => {});
 			}

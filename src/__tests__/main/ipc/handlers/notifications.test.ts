@@ -12,6 +12,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ipcMain } from 'electron';
+import { spawn } from 'child_process';
 
 // Create hoisted mocks for more reliable mocking
 const mocks = vi.hoisted(() => ({
@@ -68,6 +69,14 @@ vi.mock('../../../../main/deep-links', () => ({
 	dispatchDeepLink: vi.fn(),
 }));
 
+// Mock the web-desktop bridge fan-out leaf so we can assert completion events
+// reach web/mobile clients. safeSend (real) calls this before touching the
+// desktop renderer, so the bridge fires even when there is no desktop window.
+const broadcastBridgeEventMock = vi.fn();
+vi.mock('../../../../main/web-server/handlers/bridgeHandlers', () => ({
+	broadcastBridgeEvent: (...args: unknown[]) => broadcastBridgeEventMock(...args),
+}));
+
 // Mock child_process - must include default export
 vi.mock('child_process', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('child_process')>();
@@ -107,7 +116,33 @@ import {
 	clearNotificationQueue,
 	getNotificationMaxQueueSize,
 	parseNotificationCommand,
+	resolveNotificationClickWindow,
+	buildNotificationEnv,
 } from '../../../../main/ipc/handlers/notifications';
+import type { WindowRegistry } from '../../../../main/window-registry';
+
+/**
+ * Build a minimal fake BrowserWindow whose only observable behaviour is
+ * `isDestroyed()`. resolveNotificationClickWindow returns the object as-is, and
+ * the real dispatchDeepLink (which would call show()/focus()) is mocked, so this
+ * is all the surface the routing logic touches.
+ */
+function makeFakeWindow(destroyed = false): Electron.BrowserWindow {
+	return { isDestroyed: () => destroyed } as unknown as Electron.BrowserWindow;
+}
+
+/** Build a fake WindowRegistry exposing just the two methods the resolver uses. */
+function makeFakeRegistry(
+	sessionToWindow: Record<string, string>,
+	windows: Record<string, Electron.BrowserWindow>
+): WindowRegistry {
+	return {
+		getWindowForSession: vi.fn((sessionId: string) => sessionToWindow[sessionId] ?? null),
+		get: vi.fn((windowId: string) =>
+			windows[windowId] ? { browserWindow: windows[windowId] } : undefined
+		),
+	} as unknown as WindowRegistry;
+}
 
 describe('Notification IPC Handlers', () => {
 	let handlers: Map<string, Function>;
@@ -264,6 +299,128 @@ describe('Notification IPC Handlers', () => {
 		});
 	});
 
+	describe('resolveNotificationClickWindow (multi-window routing)', () => {
+		it('returns the window that owns the agent when the registry is wired', () => {
+			const ownerWindow = makeFakeWindow();
+			const mainWindow = makeFakeWindow();
+			const registry = makeFakeRegistry({ 'agent-7': 'win-owner' }, { 'win-owner': ownerWindow });
+
+			const resolved = resolveNotificationClickWindow('agent-7', {
+				getMainWindow: () => mainWindow,
+				getWindowRegistry: () => registry,
+			});
+
+			expect(resolved).toBe(ownerWindow);
+			expect(registry.getWindowForSession).toHaveBeenCalledWith('agent-7');
+		});
+
+		it('falls back to the main window when no sessionId is provided', () => {
+			const mainWindow = makeFakeWindow();
+			const registry = makeFakeRegistry({}, {});
+
+			const resolved = resolveNotificationClickWindow(undefined, {
+				getMainWindow: () => mainWindow,
+				getWindowRegistry: () => registry,
+			});
+
+			expect(resolved).toBe(mainWindow);
+			expect(registry.getWindowForSession).not.toHaveBeenCalled();
+		});
+
+		it('falls back to the main window when the registry is not wired', () => {
+			const mainWindow = makeFakeWindow();
+
+			const resolved = resolveNotificationClickWindow('agent-7', {
+				getMainWindow: () => mainWindow,
+			});
+
+			expect(resolved).toBe(mainWindow);
+		});
+
+		it('falls back to the main window when the agent is untracked', () => {
+			const mainWindow = makeFakeWindow();
+			const registry = makeFakeRegistry({}, {});
+
+			const resolved = resolveNotificationClickWindow('ghost', {
+				getMainWindow: () => mainWindow,
+				getWindowRegistry: () => registry,
+			});
+
+			expect(resolved).toBe(mainWindow);
+		});
+
+		it('falls back to the main window when the owning window was destroyed', () => {
+			const mainWindow = makeFakeWindow();
+			const destroyedOwner = makeFakeWindow(true);
+			const registry = makeFakeRegistry(
+				{ 'agent-7': 'win-owner' },
+				{ 'win-owner': destroyedOwner }
+			);
+
+			const resolved = resolveNotificationClickWindow('agent-7', {
+				getMainWindow: () => mainWindow,
+				getWindowRegistry: () => registry,
+			});
+
+			expect(resolved).toBe(mainWindow);
+		});
+
+		it('falls back to the main window when the resolved windowId is no longer registered', () => {
+			const mainWindow = makeFakeWindow();
+			// getWindowForSession resolves an id, but get() returns undefined (stale).
+			const registry = makeFakeRegistry({ 'agent-7': 'win-stale' }, {});
+
+			const resolved = resolveNotificationClickWindow('agent-7', {
+				getMainWindow: () => mainWindow,
+				getWindowRegistry: () => registry,
+			});
+
+			expect(resolved).toBe(mainWindow);
+		});
+
+		it('returns null when neither a registry match nor a main window is available', () => {
+			const registry = makeFakeRegistry({}, {});
+
+			const resolved = resolveNotificationClickWindow('agent-7', {
+				getMainWindow: () => null,
+				getWindowRegistry: () => registry,
+			});
+
+			expect(resolved).toBeNull();
+		});
+
+		it('routes the notification click handler through the owning window', async () => {
+			const { dispatchDeepLink } = await import('../../../../main/deep-links');
+			const ownerWindow = makeFakeWindow();
+			const mainWindow = makeFakeWindow();
+			const registry = makeFakeRegistry({ 'agent-7': 'win-owner' }, { 'win-owner': ownerWindow });
+
+			// Re-register the handlers with a registry-aware dependency set; this
+			// overwrites the channel entries captured in beforeEach.
+			registerNotificationsHandlers({
+				getMainWindow: () => mainWindow,
+				getWindowRegistry: () => registry,
+			});
+
+			const handler = handlers.get('notification:show')!;
+			await handler({}, 'Title', 'Body', 'agent-7');
+
+			const clickCall = mocks.mockNotificationOn.mock.calls.find(
+				(call: unknown[]) => call[0] === 'click'
+			);
+			expect(clickCall).toBeDefined();
+			// Invoke the click handler the way the OS would.
+			(clickCall![1] as () => void)();
+
+			expect(dispatchDeepLink).toHaveBeenCalledTimes(1);
+			// The second argument is the lazy window getter; it must resolve to the
+			// owning window, not the primary.
+			const windowGetter = vi.mocked(dispatchDeepLink).mock.calls[0][1];
+			expect(windowGetter()).toBe(ownerWindow);
+			expect(registry.getWindowForSession).toHaveBeenCalledWith('agent-7');
+		});
+	});
+
 	describe('notification:stopSpeak', () => {
 		it('should return error when no active notification process', async () => {
 			const handler = handlers.get('notification:stopSpeak')!;
@@ -397,6 +554,41 @@ describe('Notification IPC Handlers', () => {
 		});
 	});
 
+	describe('buildNotificationEnv', () => {
+		it('inherits the parent environment so PATH etc. survive', () => {
+			const env = buildNotificationEnv();
+			expect(env.PATH).toBe(process.env.PATH);
+		});
+
+		it('adds no MAESTRO_NOTIFY_* vars when no context is provided', () => {
+			const env = buildNotificationEnv();
+			expect(env.MAESTRO_NOTIFY_AGENT).toBeUndefined();
+			expect(env.MAESTRO_NOTIFY_TAB).toBeUndefined();
+			expect(env.MAESTRO_NOTIFY_GROUP).toBeUndefined();
+			expect(env.MAESTRO_NOTIFY_TASK).toBeUndefined();
+		});
+
+		it('maps provided context onto MAESTRO_NOTIFY_* vars', () => {
+			const env = buildNotificationEnv({
+				agent: 'refactor-auth',
+				tab: 'main',
+				group: 'Backend',
+				task: 'Fix the login bug',
+			});
+			expect(env.MAESTRO_NOTIFY_AGENT).toBe('refactor-auth');
+			expect(env.MAESTRO_NOTIFY_TAB).toBe('main');
+			expect(env.MAESTRO_NOTIFY_GROUP).toBe('Backend');
+			expect(env.MAESTRO_NOTIFY_TASK).toBe('Fix the login bug');
+		});
+
+		it('omits empty-string fields so commands can test for presence', () => {
+			const env = buildNotificationEnv({ agent: 'solo', tab: '', group: undefined });
+			expect(env.MAESTRO_NOTIFY_AGENT).toBe('solo');
+			expect(env.MAESTRO_NOTIFY_TAB).toBeUndefined();
+			expect(env.MAESTRO_NOTIFY_GROUP).toBeUndefined();
+		});
+	});
+
 	describe('notification:speak empty content handling', () => {
 		it('should skip notification when text is empty', async () => {
 			const handler = handlers.get('notification:speak')!;
@@ -468,6 +660,33 @@ describe('Notification IPC Handlers', () => {
 			expect(result.error).toContain(`max ${maxSize}`);
 
 			// Clean up - reset all notification state including clearing the queue
+			resetNotificationState();
+		});
+	});
+
+	describe('notification:commandCompleted web-desktop bridge fanout', () => {
+		it('routes completion through safeSend so web clients see it with no desktop window', async () => {
+			// mockGetMainWindow returns null, so there is no desktop renderer to
+			// reach. Before the safeSend migration this used BrowserWindow.getAllWindows()
+			// (empty in tests), so web/mobile clients silently missed the event. Now
+			// the completion must still fan out to the bridge.
+			const handler = handlers.get('notification:speak')!;
+			const speakResult = await handler({}, 'hello world');
+			expect(speakResult.success).toBe(true);
+			const notificationId = speakResult.notificationId as number;
+
+			// Grab the spawned child and fire its 'close' handler to drive completion.
+			const child = vi.mocked(spawn).mock.results[0].value as unknown as {
+				on: ReturnType<typeof vi.fn>;
+			};
+			const closeCall = child.on.mock.calls.find((c: unknown[]) => c[0] === 'close');
+			expect(closeCall).toBeDefined();
+			(closeCall![1] as (code: number, signal: string | null) => void)(0, null);
+
+			expect(broadcastBridgeEventMock).toHaveBeenCalledWith('notification:commandCompleted', [
+				notificationId,
+			]);
+
 			resetNotificationState();
 		});
 	});

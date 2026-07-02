@@ -13,14 +13,18 @@ import { useEffect } from 'react';
 import { useSessionStore } from '../../../stores/sessionStore';
 import { parseSessionId } from '../../../utils/sessionIdParser';
 import { getSlashCommandDescription } from '../../../constants/app';
+import { useOwnedSessionGate } from './useOwnedSessionGate';
 
 export function useAgentSlashCommandsListener(): void {
+	const ownedGate = useOwnedSessionGate();
 	useEffect(() => {
 		const setSessions = useSessionStore.getState().setSessions;
 		const getSessions = () => useSessionStore.getState().sessions;
 
 		const unsubscribe = window.maestro.process.onSlashCommands(
 			(sessionId: string, slashCommands: string[]) => {
+				// Window scoping: ignore agents this window doesn't own (broadcast events).
+				if (!ownedGate.current?.(sessionId)) return;
 				const actualSessionId = parseSessionId(sessionId).baseSessionId;
 
 				// Perf: orphan event — skip the no-op map.
@@ -42,5 +46,5 @@ export function useAgentSlashCommandsListener(): void {
 		return () => {
 			unsubscribe();
 		};
-	}, []);
+	}, [ownedGate]);
 }

@@ -178,6 +178,32 @@ vi.mock('../../../../renderer/components/History', () => ({
 		{ label: '1 year', hours: 8760, bucketCount: 24 },
 		{ label: 'All time', hours: null, bucketCount: 24 },
 	],
+	UNIFIED_HISTORY_FILTERS_KEY: 'directorNotes.historyFilters',
+	HISTORY_PANEL_FILTERS_KEY: 'historyPanel.filters',
+	resolveInitialHistoryFilters: (key: string, maestroCueEnabled: boolean) => {
+		try {
+			const raw = localStorage.getItem(key);
+			if (raw !== null) {
+				const parsed = JSON.parse(raw);
+				if (Array.isArray(parsed)) {
+					const valid = parsed.filter((t) => ['USER', 'AUTO', 'CUE'].includes(t));
+					const set = new Set<string>(valid);
+					if (!maestroCueEnabled) set.delete('CUE');
+					return set;
+				}
+			}
+		} catch {
+			// fall through to default
+		}
+		return new Set(maestroCueEnabled ? ['USER', 'AUTO', 'CUE'] : ['USER', 'AUTO']);
+	},
+	savePersistedHistoryFilters: (key: string, filters: Set<string>) => {
+		try {
+			localStorage.setItem(key, JSON.stringify([...filters]));
+		} catch {
+			// best-effort
+		}
+	},
 }));
 
 const mockGetUnifiedHistory = vi.fn();

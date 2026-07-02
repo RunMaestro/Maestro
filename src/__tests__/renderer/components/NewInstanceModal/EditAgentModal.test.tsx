@@ -299,7 +299,9 @@ describe('EditAgentModal', () => {
 			expect.objectContaining({ enabled: false }), // SSH disabled
 			undefined, // enableMaestroP
 			undefined, // maestroPPath
-			undefined // maestroPMode
+			undefined, // maestroPMode
+			true, // retryOnAvailabilityErrors
+			true // retryOnTokenExhaustion
 		);
 		expect(onClose).toHaveBeenCalled();
 	});
@@ -527,7 +529,9 @@ describe('EditAgentModal', () => {
 			}),
 			undefined, // enableMaestroP
 			undefined, // maestroPPath
-			undefined // maestroPMode
+			undefined, // maestroPMode
+			true, // retryOnAvailabilityErrors
+			true // retryOnTokenExhaustion
 		);
 	});
 
@@ -595,7 +599,9 @@ describe('EditAgentModal', () => {
 			}),
 			undefined, // enableMaestroP
 			undefined, // maestroPPath
-			undefined // maestroPMode
+			undefined, // maestroPMode
+			true, // retryOnAvailabilityErrors
+			true // retryOnTokenExhaustion
 		);
 	});
 
@@ -669,7 +675,9 @@ describe('EditAgentModal', () => {
 			}),
 			undefined, // enableMaestroP
 			undefined, // maestroPPath
-			undefined // maestroPMode
+			undefined, // maestroPMode
+			true, // retryOnAvailabilityErrors
+			true // retryOnTokenExhaustion
 		);
 	});
 

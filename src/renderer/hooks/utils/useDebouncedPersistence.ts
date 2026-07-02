@@ -424,9 +424,18 @@ export function useDebouncedPersistence(
 				undefined,
 				err
 			);
-			captureException(err instanceof Error ? err : new Error(String(err)), {
-				extra: { operation: 'useDebouncedPersistence.persistSessions' },
-			});
+			// persistInternal throws a "recoverable disk error" only when the main
+			// process deliberately returned false from setAll/setMany (e.g. a
+			// transient ENOSPC) - it throws purely to preserve `isPending` for the
+			// retry below. That's an expected, user-environment condition, not a
+			// Maestro bug, so keep it out of Sentry. Genuine flush failures (real
+			// exceptions) still report. (MAESTRO-QF)
+			const message = err instanceof Error ? err.message : String(err);
+			if (!message.includes('recoverable disk error')) {
+				captureException(err instanceof Error ? err : new Error(String(err)), {
+					extra: { operation: 'useDebouncedPersistence.persistSessions' },
+				});
+			}
 			// Deliberately do NOT setIsPending(false) — the failed write is
 			// still pending. Next mutation OR beforeunload will retry.
 		} finally {

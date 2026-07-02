@@ -7,7 +7,7 @@ import fsSync from 'fs';
 import path from 'path';
 import type { BrowserWindow } from 'electron';
 import { logger } from '../utils/logger';
-import { isWebContentsAvailable } from '../utils/safe-send';
+import { createSafeSend } from '../utils/safe-send';
 
 /** Dependencies for CLI activity watcher */
 export interface CliWatcherDependencies {
@@ -36,6 +36,7 @@ export interface CliWatcher {
  */
 export function createCliWatcher(deps: CliWatcherDependencies): CliWatcher {
 	const { getMainWindow, getUserDataPath } = deps;
+	const safeSend = createSafeSend(getMainWindow);
 	let watcher: fsSync.FSWatcher | null = null;
 
 	return {
@@ -54,10 +55,7 @@ export function createCliWatcher(deps: CliWatcherDependencies): CliWatcher {
 				watcher = fsSync.watch(cliActivityDir, (_eventType, filename) => {
 					if (filename === 'cli-activity.json') {
 						logger.debug('CLI activity file changed, notifying renderer', 'CliActivityWatcher');
-						const mainWindow = getMainWindow();
-						if (isWebContentsAvailable(mainWindow)) {
-							mainWindow.webContents.send('cli:activityChange');
-						}
+						safeSend('cli:activityChange');
 					}
 				});
 

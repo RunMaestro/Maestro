@@ -32,6 +32,9 @@ export function useBrowserTabHandlers(): BrowserTabHandlersReturn {
 					activeBrowserTabId: newBrowserTab.id,
 					activeTerminalTabId: null,
 					inputMode: 'ai',
+					// A newly-created standalone browser tab takes over the panel, so it
+					// must leave any active tiled group (mirrors handleSelectBrowserTab).
+					activeGroupId: null,
 					unifiedTabOrder: insertAfterActiveInUnifiedTabOrder(s, {
 						type: 'browser',
 						id: newBrowserTab.id,
@@ -60,6 +63,9 @@ export function useBrowserTabHandlers(): BrowserTabHandlersReturn {
 					activeBrowserTabId: newBrowserTab.id,
 					activeTerminalTabId: null,
 					inputMode: 'ai',
+					// A programmatically-opened standalone browser tab takes over the
+					// panel, so it must leave any active tiled group.
+					activeGroupId: null,
 					unifiedTabOrder: insertAfterActiveInUnifiedTabOrder(s, {
 						type: 'browser',
 						id: newBrowserTab.id,
@@ -82,6 +88,8 @@ export function useBrowserTabHandlers(): BrowserTabHandlersReturn {
 					activeTerminalTabId: null,
 					inputMode: 'ai',
 					unifiedTabOrder: ensureInUnifiedTabOrder(s.unifiedTabOrder || [], 'browser', tabId),
+					// Selecting a standalone browser tab leaves any active tiled group.
+					activeGroupId: null,
 				};
 			})
 		);

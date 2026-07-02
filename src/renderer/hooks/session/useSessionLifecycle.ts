@@ -18,6 +18,7 @@
 import { useCallback, useEffect } from 'react';
 import type { Session, AITab } from '../../types';
 import type { ToolType } from '../../../shared/types';
+import { getClaudeTokenSourceFields } from '../../../shared/claudeTokenMode';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { generateId } from '../../utils/ids';
 import { useGroupChatStore } from '../../stores/groupChatStore';
@@ -93,7 +94,9 @@ export interface SessionLifecycleReturn {
 		},
 		enableMaestroP?: boolean,
 		maestroPPath?: string,
-		maestroPMode?: 'interactive' | 'dynamic'
+		maestroPMode?: 'interactive' | 'dynamic',
+		retryOnAvailabilityErrors?: boolean,
+		retryOnTokenExhaustion?: boolean
 	) => void;
 	/** Rename the currently-selected tab (persists to agent session storage + history) */
 	handleRenameTab: (newName: string) => void;
@@ -161,7 +164,9 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			},
 			enableMaestroP?: boolean,
 			maestroPPath?: string,
-			maestroPMode?: 'interactive' | 'dynamic'
+			maestroPMode?: 'interactive' | 'dynamic',
+			retryOnAvailabilityErrors?: boolean,
+			retryOnTokenExhaustion?: boolean
 		) => {
 			useSessionStore.getState().setSessions((prev) =>
 				prev.map((s) => {
@@ -180,6 +185,10 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 						enableMaestroP,
 						maestroPPath,
 						maestroPMode,
+						// Agent Resilience: resilience is provider-agnostic, so it is NOT
+						// cleared on a provider switch below (unlike maestroP fields).
+						retryOnAvailabilityErrors,
+						retryOnTokenExhaustion,
 					};
 
 					// If provider changed, reset tabs and provider-specific config
@@ -421,9 +430,9 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 				// Forward session env so naming uses the same provider auth as the chat.
 				sessionCustomEnvVars: activeSession.customEnvVars,
 				// Honor the agent's Claude token source for the naming spawn.
-				enableMaestroP: activeSession.enableMaestroP,
-				maestroPMode: activeSession.maestroPMode,
-				maestroPPath: activeSession.maestroPPath,
+				// Shared extractor guarantees the SAME complete triple the chat
+				// spawn forwards - no partial/drifting forward possible.
+				...getClaudeTokenSourceFields(activeSession),
 			})
 			.then((generatedName) => {
 				useSessionStore.getState().setSessions((prev) =>

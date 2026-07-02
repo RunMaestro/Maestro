@@ -280,6 +280,19 @@ export function buildChildProcessEnv(
 	// of the detected agent binary, so its shebang's interpreter resolves).
 	env.PATH = buildSpawnPath(extraPathDirs);
 
+	// Never let a Maestro-spawned agent hijack the user's browser. When an
+	// interactive claude (the maestro-p TUI) finds its OAuth token needs a
+	// refresh, its URL opener execs `$BROWSER <authorize-url>` - and if BROWSER
+	// is unset it falls back to the OS default opener - popping a real browser
+	// tab mid-turn even though the turn itself still succeeds on the current
+	// access token. Force BROWSER to a no-op so that self-heal can never open a
+	// tab; a genuinely dead token then surfaces as Maestro's normal auth-expired
+	// error instead. Set BEFORE the global/session loops so a user who *wants*
+	// an explicit BROWSER (Settings → Shell Configuration or a per-session
+	// override) still wins. Mirrors the guard in claude-usage-sampler.ts; a
+	// value that can't be exec'd (e.g. on Windows) still fails closed = no tab.
+	env.BROWSER = '/usr/bin/true';
+
 	if (isResuming) {
 		env.MAESTRO_SESSION_RESUMED = '1';
 	} else {

@@ -36,4 +36,18 @@ export const AGENT_TILES: AgentTile[] = [
 		description: "GitHub's AI coding assistant",
 		brandColor: '#24292F',
 	},
+	{
+		id: 'hermes',
+		name: 'Hermes',
+		supported: true,
+		description: "Nous Research's AI coding assistant",
+		brandColor: '#2323FF',
+	},
+	{
+		id: 'pi',
+		name: 'Pi',
+		supported: true,
+		description: 'Your own agent harness',
+		brandColor: '#E4E4E7',
+	},
 ];

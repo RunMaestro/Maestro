@@ -2782,6 +2782,55 @@ describe('process IPC handlers', () => {
 			// The stdin script should contain the command
 			expect(spawnCall.sshStdinScript).toContain('custom-agent');
 		});
+
+		it('routes process:ssh-remote through the injected safeSend dep (web-desktop bridge)', async () => {
+			// Migration guard: when a safeSend dep is present it must fan the event
+			// out to the web-desktop bridge instead of the desktop-only webContents.send.
+			const mockAgent = {
+				id: 'claude-code',
+				name: 'Claude Code',
+				requiresPty: false,
+			};
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+			mockProcessManager.spawn.mockReturnValue({ pid: 4321, success: true });
+
+			const safeSendSpy = vi.fn();
+			const windowSendSpy = vi.fn();
+			deps = {
+				...deps,
+				safeSend: safeSendSpy,
+				getMainWindow: () =>
+					({
+						isDestroyed: vi.fn().mockReturnValue(false),
+						webContents: {
+							send: windowSendSpy,
+							isDestroyed: vi.fn().mockReturnValue(false),
+						},
+					}) as any,
+			};
+			handlers.clear();
+			vi.mocked(ipcMain.handle).mockImplementation((channel, h) => {
+				handlers.set(channel, h);
+			});
+			registerProcessHandlers(deps);
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-1',
+				toolType: 'claude-code',
+				cwd: '/local/project',
+				command: 'claude',
+				args: ['--print'],
+				// No sessionSshRemoteConfig = local execution, sshRemote payload is null
+			});
+
+			const sshCalls = safeSendSpy.mock.calls.filter((c) => c[0] === 'process:ssh-remote');
+			expect(sshCalls.length).toBe(1);
+			expect(sshCalls[0][1]).toBe('session-1');
+			expect(sshCalls[0][2]).toBeNull();
+			// With safeSend wired, the desktop-only path must not double-emit the event.
+			expect(windowSendSpy.mock.calls.filter((c) => c[0] === 'process:ssh-remote')).toHaveLength(0);
+		});
 	});
 
 	describe('appendSystemPrompt delivery', () => {

@@ -95,10 +95,10 @@ export class SshRemoteManager {
 	validateConfig(config: SshRemoteConfig): SshRemoteValidation {
 		const errors: string[] = [];
 
-		// Required field checks (always required)
-		if (!config.id || config.id.trim() === '') {
-			errors.push('Configuration ID is required');
-		}
+		// Note: id is intentionally NOT validated here. It is a storage concern,
+		// not a connection concern, and the save handler always assigns one
+		// (crypto.randomUUID) before persisting. Requiring it here would break
+		// "Test Connection" before saving a brand-new remote, which has no id yet.
 
 		if (!config.name || config.name.trim() === '') {
 			errors.push('Name is required');

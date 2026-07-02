@@ -45,6 +45,25 @@ export interface UIStoreState {
 	activeFocus: FocusArea;
 	activeRightTab: RightPanelTab;
 
+	// Tab tiling: id of the pane currently maximized/zoomed to fill the whole
+	// panel (Ctrl+Cmd+Z). Transient and non-persisted, per the spec - toggling
+	// again clears it. null when no pane is zoomed.
+	zoomedPaneId: string | null;
+
+	// Tab tiling: transient state for a pane REARRANGE drag driven by pointer
+	// events (not native HTML5 DnD, which does not reliably start a macOS drag
+	// session inside child Electron windows). Set while a tile header is being
+	// dragged; the drop-zone overlay reads `hover` to paint the target region and
+	// the swap/move badge. null when no pane drag is in flight. See usePaneDrag.
+	paneDrag: {
+		groupId: string;
+		leafId: string;
+		/** Live pointer position in client (viewport) px, for the drag ghost. */
+		pointer: { x: number; y: number };
+		/** The pane + zone under the pointer, or null when over no droppable pane. */
+		hover: { leafId: string; zone: import('../utils/panelLayout').DropZone } | null;
+	} | null;
+
 	// Sidebar collapse/expand
 	bookmarksCollapsed: boolean;
 
@@ -122,6 +141,12 @@ export interface UIStoreActions {
 	// Focus
 	setActiveFocus: (focus: FocusArea | ((prev: FocusArea) => FocusArea)) => void;
 	setActiveRightTab: (tab: RightPanelTab | ((prev: RightPanelTab) => RightPanelTab)) => void;
+
+	// Tab tiling: set/clear the zoomed (maximized) pane id.
+	setZoomedPaneId: (id: string | null) => void;
+
+	// Tab tiling: set/clear the transient pane-rearrange drag state.
+	setPaneDrag: (drag: UIStore['paneDrag']) => void;
 
 	// Sidebar collapse/expand
 	setBookmarksCollapsed: (collapsed: boolean | ((prev: boolean) => boolean)) => void;
@@ -261,6 +286,8 @@ export const useUIStore = create<UIStore>()((set) => ({
 	rightPanelOpen: true,
 	activeFocus: 'main',
 	activeRightTab: 'files',
+	zoomedPaneId: null,
+	paneDrag: null,
 	bookmarksCollapsed: false,
 	showUnreadOnly: false,
 	showUnreadAgentsOnly: false,
@@ -298,6 +325,9 @@ export const useUIStore = create<UIStore>()((set) => ({
 
 	setActiveFocus: (v) => set((s) => ({ activeFocus: resolve(v, s.activeFocus) })),
 	setActiveRightTab: (v) => set((s) => ({ activeRightTab: resolve(v, s.activeRightTab) })),
+
+	setZoomedPaneId: (id) => set({ zoomedPaneId: id }),
+	setPaneDrag: (drag) => set({ paneDrag: drag }),
 
 	setBookmarksCollapsed: (v) =>
 		set((s) => {

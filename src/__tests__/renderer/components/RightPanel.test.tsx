@@ -8,7 +8,31 @@ import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useFileExplorerStore } from '../../../renderer/stores/fileExplorerStore';
 import { useBatchStore } from '../../../renderer/stores/batchStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { WindowProvider } from '../../../renderer/contexts/WindowContext';
+import type { WindowState } from '../../../shared/window-types';
 import { mockTheme } from '../../helpers/mockTheme';
+
+/** Set the renderer URL so WindowProvider reads the desired `?windowId=` param. */
+function setWindowUrl(search: string): void {
+	window.history.replaceState({}, '', search || '/');
+}
+
+/** Build a full WindowState, overriding only the fields a test cares about. */
+function makeWindowState(partial: Partial<WindowState> & Pick<WindowState, 'id'>): WindowState {
+	return {
+		x: 0,
+		y: 0,
+		width: 1200,
+		height: 800,
+		isMaximized: false,
+		isFullScreen: false,
+		sessionIds: [],
+		activeSessionId: null,
+		leftPanelCollapsed: false,
+		rightPanelCollapsed: false,
+		...partial,
+	};
+}
 
 // Mock child components
 vi.mock('../../../renderer/components/FileExplorerPanel', () => ({
@@ -443,17 +467,17 @@ describe('RightPanel', () => {
 
 			const resizeHandle = container.querySelector('.cursor-col-resize') as HTMLElement;
 
-			// Start resize
-			fireEvent.mouseDown(resizeHandle, { clientX: 500 });
+			// Start resize (pointer captured on the handle; move / up route to it)
+			fireEvent.pointerDown(resizeHandle, { clientX: 500, pointerId: 1 });
 
-			// Simulate mouse move (direct DOM update for performance, no state call yet)
-			fireEvent.mouseMove(document, { clientX: 450 }); // 50px to the left (makes panel wider since reversed)
+			// Simulate pointer move (direct DOM update for performance, no state call yet)
+			fireEvent.pointerMove(resizeHandle, { clientX: 450 }); // 50px to the left (makes panel wider since reversed)
 
-			// State is only updated on mouseUp for performance (avoids ~60 re-renders/sec)
+			// State is only updated on pointer up for performance (avoids ~60 re-renders/sec)
 			expect(spy).not.toHaveBeenCalled();
 
 			// End resize - state is updated
-			fireEvent.mouseUp(document);
+			fireEvent.pointerUp(resizeHandle);
 			expect(spy).toHaveBeenCalled();
 		});
 
@@ -466,13 +490,13 @@ describe('RightPanel', () => {
 			const resizeHandle = container.querySelector('.cursor-col-resize') as HTMLElement;
 
 			// Start resize
-			fireEvent.mouseDown(resizeHandle, { clientX: 500 });
+			fireEvent.pointerDown(resizeHandle, { clientX: 500, pointerId: 1 });
 
 			// Try to make it very wide (delta = 500 - (-500) = 1000)
-			fireEvent.mouseMove(document, { clientX: -500 });
+			fireEvent.pointerMove(resizeHandle, { clientX: -500 });
 
-			// End resize - state is updated on mouseUp
-			fireEvent.mouseUp(document);
+			// End resize - state is updated on pointer up
+			fireEvent.pointerUp(resizeHandle);
 
 			// Should be clamped to max 800
 			const calls = spy.mock.calls;
@@ -488,13 +512,13 @@ describe('RightPanel', () => {
 			const resizeHandle = container.querySelector('.cursor-col-resize') as HTMLElement;
 
 			// Start resize
-			fireEvent.mouseDown(resizeHandle, { clientX: 500 });
+			fireEvent.pointerDown(resizeHandle, { clientX: 500, pointerId: 1 });
 
 			// Move
-			fireEvent.mouseMove(document, { clientX: 450 });
+			fireEvent.pointerMove(resizeHandle, { clientX: 450 });
 
 			// End resize
-			fireEvent.mouseUp(document);
+			fireEvent.pointerUp(resizeHandle);
 
 			expect(window.maestro.settings.set).toHaveBeenCalledWith(
 				'rightPanelWidth',
@@ -1783,6 +1807,47 @@ describe('RightPanel', () => {
 			fireEvent.scroll(scrollContainer);
 
 			expect(setSessions).toHaveBeenCalled();
+		});
+	});
+
+	describe('Multi-window scoping', () => {
+		afterEach(() => {
+			setWindowUrl('/');
+		});
+
+		const renderInWindow = (props: ReturnType<typeof createDefaultProps>) =>
+			render(
+				<WindowProvider>
+					<RightPanel {...props} />
+				</WindowProvider>
+			);
+
+		it('renders null when the active agent is owned by another window', () => {
+			// Secondary window (?windowId set) that owns no agents - the store's active
+			// agent (session-1) lives in the primary, so this window must show nothing
+			// rather than a stale Files/History/Auto Run view.
+			setWindowUrl('/?windowId=win-2');
+			vi.mocked(window.maestro.windows.getState).mockResolvedValue(
+				makeWindowState({ id: 'win-2', sessionIds: [], activeSessionId: null })
+			);
+
+			const { container } = renderInWindow(createDefaultProps());
+
+			expect(container.firstChild).toBeNull();
+		});
+
+		it('renders normally in the primary window (catch-all owner)', () => {
+			// Primary window (no ?windowId) is the catch-all owner of every agent no
+			// secondary has claimed, so it surfaces session-1 exactly as today.
+			setWindowUrl('/');
+			vi.mocked(window.maestro.windows.getState).mockResolvedValue(
+				makeWindowState({ id: 'primary-1', sessionIds: [], activeSessionId: null })
+			);
+			vi.mocked(window.maestro.windows.list).mockResolvedValue([]);
+
+			renderInWindow(createDefaultProps());
+
+			expect(screen.getByTitle(/collapse right panel/i)).toBeInTheDocument();
 		});
 	});
 });

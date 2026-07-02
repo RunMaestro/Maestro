@@ -216,6 +216,20 @@ export interface SessionInfo {
 	maestroPMode?: 'interactive' | 'dynamic';
 	/** Per-session override of the maestro-p binary path. */
 	maestroPPath?: string;
+	/**
+	 * Agent Resilience: auto-resend the failed prompt on transient upstream
+	 * availability errors (Overloaded / 529 / 5xx / throttling) using exponential
+	 * backoff (30s→30m). Defaults ON — treat `undefined` as enabled via
+	 * {@link resilienceEnabled}. Set explicitly `false` to opt out.
+	 */
+	retryOnAvailabilityErrors?: boolean;
+	/**
+	 * Agent Resilience: auto-resend the failed prompt when the plan quota is
+	 * exhausted (usage/quota limit). Waits until the parsed reset time, or 1h if
+	 * unknown, then retries hourly. Defaults ON — treat `undefined` as enabled
+	 * via {@link resilienceEnabled}. Set explicitly `false` to opt out.
+	 */
+	retryOnTokenExhaustion?: boolean;
 	/** Per-session SSH remote config — when enabled, CLI spawns via SSH. */
 	sessionSshRemoteConfig?: AgentSshRemoteConfig;
 }
@@ -258,6 +272,12 @@ export interface HistoryEntry {
 	cueTriggerName?: string;
 	cueEventType?: string;
 	cueSourceSession?: string;
+	/**
+	 * Cross-agent attribution: the display name of the agent that consulted this
+	 * one via an `@mention`. Set on the history entry the TARGET agent keeps so it
+	 * "remembers who consulted it" (mirrors GroupChatHistoryEntry.participantName).
+	 */
+	sourceAgentName?: string;
 	/** Hostname of the machine that created this entry (for shared history) */
 	hostname?: string;
 	/**

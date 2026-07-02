@@ -8,6 +8,7 @@ import {
 	getEphemeralBrowserTabPartition,
 	getSafeBrowserTabPartition,
 	isEphemeralBrowserTab,
+	isHttpBrowserTabUrl,
 	normalizeBrowserTabUrl,
 	sanitizeBrowserTabForPersistence,
 	resolveBrowserTabNavigationTarget,
@@ -63,6 +64,28 @@ describe('browserTabPersistence', () => {
 
 		it('uses the default new-tab title for about:blank without a page title', () => {
 			expect(getBrowserTabTitle(DEFAULT_BROWSER_TAB_URL, '')).toBe(DEFAULT_BROWSER_TAB_TITLE);
+		});
+
+		describe('isHttpBrowserTabUrl', () => {
+			it('accepts http and https URLs', () => {
+				expect(isHttpBrowserTabUrl('http://example.com')).toBe(true);
+				expect(isHttpBrowserTabUrl('https://example.com/docs?q=1')).toBe(true);
+			});
+
+			it('rejects dangerous and non-http schemes', () => {
+				// eslint-disable-next-line no-script-url
+				expect(isHttpBrowserTabUrl('javascript:alert(1)')).toBe(false);
+				expect(isHttpBrowserTabUrl('data:text/html,<script>1</script>')).toBe(false);
+				expect(isHttpBrowserTabUrl('file:///etc/passwd')).toBe(false);
+				expect(isHttpBrowserTabUrl(DEFAULT_BROWSER_TAB_URL)).toBe(false);
+			});
+
+			it('rejects empty and unparseable values', () => {
+				expect(isHttpBrowserTabUrl('')).toBe(false);
+				expect(isHttpBrowserTabUrl(null)).toBe(false);
+				expect(isHttpBrowserTabUrl(undefined)).toBe(false);
+				expect(isHttpBrowserTabUrl('not a url')).toBe(false);
+			});
 		});
 
 		describe('getBrowserTabLabel', () => {

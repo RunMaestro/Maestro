@@ -3,9 +3,17 @@ import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { TabBar } from '../../../renderer/components/TabBar';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
+import { isWebDesktop } from '../../../renderer/utils/runtimeContext';
 import type { AITab, Theme, FilePreviewTab } from '../../../renderer/types';
 
 import { mockTheme } from '../../helpers/mockTheme';
+
+// Default to desktop (Electron) behavior; individual tests flip this to true to
+// exercise the web-desktop branch where the new-browser-tab affordance is hidden.
+vi.mock('../../../renderer/utils/runtimeContext', () => ({
+	isWebDesktop: vi.fn(() => false),
+	isElectronDesktop: vi.fn(() => true),
+}));
 // Mock lucide-react icons
 vi.mock('lucide-react', () => ({
 	X: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
@@ -185,6 +193,7 @@ describe('TabBar', () => {
 	beforeEach(() => {
 		vi.useFakeTimers();
 		vi.clearAllMocks();
+		vi.mocked(isWebDesktop).mockReturnValue(false);
 		// Mock scrollTo and scrollIntoView
 		Element.prototype.scrollTo = vi.fn();
 		Element.prototype.scrollIntoView = vi.fn();
@@ -396,6 +405,31 @@ describe('TabBar', () => {
 
 			fireEvent.click(screen.getByText('New Browser'));
 			expect(mockOnNewBrowserTab).toHaveBeenCalled();
+		});
+
+		it('hides the browser entry in the new-tab popover in web-desktop', () => {
+			vi.mocked(isWebDesktop).mockReturnValue(true);
+
+			render(
+				<TabBar
+					tabs={[createTab()]}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+					onNewBrowserTab={mockOnNewBrowserTab}
+					onNewTerminalTab={vi.fn()}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle('New tab…'));
+
+			// Browser tab creation is gated off in the browser bundle...
+			expect(screen.queryByText('New Browser')).not.toBeInTheDocument();
+			// ...but the other creation entries still render.
+			expect(screen.getByText('New AI Chat')).toBeInTheDocument();
+			expect(screen.getByText('New Terminal')).toBeInTheDocument();
 		});
 
 		it('renders search popover button when onOpenTabSearch provided', () => {
@@ -1239,6 +1273,65 @@ describe('TabBar', () => {
 
 			// Tab should no longer have opacity-50 class (dragging state)
 			expect(tab).not.toHaveClass('opacity-50');
+		});
+
+		it('clears a stuck drag highlight when the dragged tab leaves the strip without a dragend', () => {
+			// Repro for the "dimmed tab after break-apart" bug: dragging a chip into a
+			// tiled group unmounts it before the browser fires `dragend`, so
+			// draggingTabId stays pinned. When the tab returns (break-apart) it must not
+			// render at opacity-50.
+			const tabs = [
+				createTab({ id: 'tab-1', name: 'Tab 1' }),
+				createTab({ id: 'tab-2', name: 'Tab 2' }),
+			];
+
+			const { rerender } = render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-2"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+					onTabReorder={mockOnTabReorder}
+				/>
+			);
+
+			// Start dragging tab-1 (sets draggingTabId) but never fire dragEnd - the
+			// chip's DOM node vanishes when it joins the group.
+			const draggedTab = screen.getByText('Tab 1').closest('[data-tab-id]')!;
+			fireEvent.dragStart(draggedTab, {
+				dataTransfer: { effectAllowed: '', setData: vi.fn() },
+			});
+
+			// Tab-1 leaves the strip (joined a tiled group).
+			rerender(
+				<TabBar
+					tabs={[createTab({ id: 'tab-2', name: 'Tab 2' })]}
+					activeTabId="tab-2"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+					onTabReorder={mockOnTabReorder}
+				/>
+			);
+
+			// Tab-1 comes back (group broken apart).
+			rerender(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-2"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+					onTabReorder={mockOnTabReorder}
+				/>
+			);
+
+			const restoredTab = screen.getByText('Tab 1').closest('[data-tab-id]')!;
+			expect(restoredTab).not.toHaveClass('opacity-50');
 		});
 	});
 

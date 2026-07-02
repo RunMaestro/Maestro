@@ -42,6 +42,9 @@ export function useTabDerivedState(): TabDerivedState {
 		activeSession?.terminalTabs,
 		activeSession?.browserTabs,
 		activeSession?.unifiedTabOrder,
+		// tabGroups gates which tabs are hidden (tiled members fold into the group chip),
+		// so a group create/dissolve must recompute the strip.
+		activeSession?.tabGroups,
 	]);
 
 	const activeFileTab = useMemo((): FilePreviewTab | null => {

@@ -27,6 +27,7 @@ vi.mock('electron', () => ({
 	},
 	app: {
 		getPath: vi.fn().mockReturnValue('/mock/user/data'),
+		on: vi.fn(),
 	},
 }));
 
@@ -83,6 +84,7 @@ describe('persistence IPC handlers', () => {
 		broadcastSessionRemoved: ReturnType<typeof vi.fn>;
 	};
 	let getWebServerFn: () => WebServer | null;
+	let mockSafeSend: PersistenceHandlerDependencies['safeSend'];
 
 	beforeEach(() => {
 		// Clear mocks
@@ -117,6 +119,7 @@ describe('persistence IPC handlers', () => {
 		};
 
 		getWebServerFn = () => mockWebServer as unknown as WebServer;
+		mockSafeSend = vi.fn<PersistenceHandlerDependencies['safeSend']>();
 
 		// Capture all registered handlers
 		handlers = new Map();
@@ -130,6 +133,7 @@ describe('persistence IPC handlers', () => {
 			sessionsStore: mockSessionsStore as unknown as Store<SessionsData>,
 			groupsStore: mockGroupsStore as unknown as Store<GroupsData>,
 			getWebServer: getWebServerFn,
+			safeSend: mockSafeSend,
 		};
 		registerPersistenceHandlers(deps);
 	});
@@ -145,6 +149,7 @@ describe('persistence IPC handlers', () => {
 				'settings:set',
 				'settings:getAll',
 				'sessions:getAll',
+				'images:resolve',
 				'sessions:getActiveSessionId',
 				'sessions:setActiveSessionId',
 				'sessions:setAll',
@@ -172,10 +177,58 @@ describe('persistence IPC handlers', () => {
 	});
 
 	describe('sessions:setActiveSessionId', () => {
-		it('should persist and retrieve an active session ID', async () => {
+		// The write is debounced (see registerPersistenceHandlers) to avoid a full
+		// sessions-store re-serialize on every session/tab switch.
+		beforeEach(() => vi.useFakeTimers());
+		afterEach(() => vi.useRealTimers());
+
+		it('debounces the disk write, then flushes after the interval', async () => {
 			const setHandler = handlers.get('sessions:setActiveSessionId');
 			await setHandler!({} as any, 'test-session-123');
+
+			// Not written synchronously.
+			expect(mockSessionsStore.set).not.toHaveBeenCalled();
+
+			// Flushes once the debounce elapses.
+			vi.advanceTimersByTime(400);
+			expect(mockSessionsStore.set).toHaveBeenCalledTimes(1);
 			expect(mockSessionsStore.set).toHaveBeenCalledWith('activeSessionId', 'test-session-123');
+		});
+
+		it('coalesces a burst of rapid switches into a single write (last wins)', async () => {
+			const setHandler = handlers.get('sessions:setActiveSessionId');
+			await setHandler!({} as any, 'a');
+			await setHandler!({} as any, 'b');
+			await setHandler!({} as any, 'c');
+
+			vi.advanceTimersByTime(400);
+			expect(mockSessionsStore.set).toHaveBeenCalledTimes(1);
+			expect(mockSessionsStore.set).toHaveBeenCalledWith('activeSessionId', 'c');
+		});
+
+		it('reads back the pending id before it is flushed (read-through)', async () => {
+			const setHandler = handlers.get('sessions:setActiveSessionId');
+			const getHandler = handlers.get('sessions:getActiveSessionId');
+			await setHandler!({} as any, 'pending-id');
+
+			// Store not yet written, but the getter returns the pending value.
+			expect(mockSessionsStore.set).not.toHaveBeenCalled();
+			expect(await getHandler!({} as any)).toBe('pending-id');
+			expect(mockSessionsStore.get).not.toHaveBeenCalledWith('activeSessionId', '');
+		});
+
+		it('flushes synchronously on before-quit', async () => {
+			const setHandler = handlers.get('sessions:setActiveSessionId');
+			await setHandler!({} as any, 'quit-id');
+			expect(mockSessionsStore.set).not.toHaveBeenCalled();
+
+			// Invoke the registered before-quit listener.
+			const onCalls = vi.mocked(app.on).mock.calls as unknown as Array<[string, () => void]>;
+			const beforeQuit = onCalls.find(([event]) => event === 'before-quit')?.[1];
+			expect(beforeQuit).toBeDefined();
+			beforeQuit!();
+
+			expect(mockSessionsStore.set).toHaveBeenCalledWith('activeSessionId', 'quit-id');
 		});
 	});
 
@@ -260,6 +313,33 @@ describe('persistence IPC handlers', () => {
 			expect(mockWebServer.broadcastThemeChange).not.toHaveBeenCalled();
 		});
 
+		it('should cascade every settings change to all windows (settings are global)', async () => {
+			const handler = handlers.get('settings:set');
+
+			// A UI-driven theme switch must reach every window, not just the sender.
+			await handler!({} as any, 'activeThemeId', 'light');
+			expect(mockSafeSend).toHaveBeenCalledWith('settings:externalChange');
+
+			// Not theme-specific: any setting cascades so all windows stay in unison.
+			vi.mocked(mockSafeSend).mockClear();
+			await handler!({} as any, 'fontSize', 16);
+			expect(mockSafeSend).toHaveBeenCalledWith('settings:externalChange');
+		});
+
+		it('should not cascade when the settings write fails', async () => {
+			mockSettingsStore.set.mockImplementationOnce(() => {
+				const err = new Error('disk full') as NodeJS.ErrnoException;
+				err.code = 'ENOSPC';
+				throw err;
+			});
+
+			const handler = handlers.get('settings:set');
+			const result = await handler!({} as any, 'activeThemeId', 'light');
+
+			expect(result).toBe(false);
+			expect(mockSafeSend).not.toHaveBeenCalled();
+		});
+
 		it('should broadcast bionify reading mode changes to connected web clients', async () => {
 			mockWebServer.getWebClientCount.mockReturnValue(2);
 
@@ -341,6 +421,7 @@ describe('persistence IPC handlers', () => {
 				sessionsStore: mockSessionsStore as unknown as Store<SessionsData>,
 				groupsStore: mockGroupsStore as unknown as Store<GroupsData>,
 				getWebServer: () => null,
+				safeSend: mockSafeSend,
 			};
 			registerPersistenceHandlers(deps);
 

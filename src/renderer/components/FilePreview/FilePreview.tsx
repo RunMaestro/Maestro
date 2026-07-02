@@ -51,6 +51,7 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { buildFileDeepLink } from '../../../shared/deep-link-urls';
 import { useUIStore } from '../../stores/uiStore';
 import { openUrl } from '../../utils/openUrl';
+import { isWebDesktop } from '../../utils/runtimeContext';
 import { isImageFile } from '../../../shared/gitUtils';
 import type { FilePreviewProps, FilePreviewHandle, FileStats } from './types';
 import {
@@ -609,6 +610,30 @@ export const FilePreview = React.memo(
 		// before rehypeRaw re-parses raw HTML (which discards position info).
 		const rehypePlugins = useMemo(() => [rehypeSourceLine, rehypeRaw, rehypeSlug], []);
 
+		// Shared handler for external links clicked inside rendered markdown, used
+		// by both the ReactMarkdown and fast-preview render paths. In the desktop
+		// app a file:// link opens on the host via the shell bridge. In the
+		// web-desktop build that bridge targets the HOST machine, not the browser
+		// user's device, so opening a local path there is meaningless - surface a
+		// toast instead. http/mailto links open the same way in both builds.
+		const handleExternalLinkClick = useCallback((href: string, opts?: { ctrlKey?: boolean }) => {
+			if (/^file:\/\//.test(href)) {
+				if (isWebDesktop()) {
+					notifyToast({
+						color: 'theme',
+						title: 'Open file',
+						message: 'Available in the desktop app',
+					});
+					return;
+				}
+				void window.maestro.shell.openPath(href.replace(/^file:\/\//, ''));
+				return;
+			}
+			if (/^https?:\/\/|^mailto:/.test(href)) {
+				openUrl(href, opts);
+			}
+		}, []);
+
 		// Memoize ReactMarkdown components to prevent infinite render loops
 		// The img component was causing loops because MarkdownImage useEffect sets state,
 		// which triggers parent re-render, creating new components object, remounting MarkdownImage
@@ -619,15 +644,7 @@ export const FilePreview = React.memo(
 					mermaid: ({ code, theme: t }) => <MermaidRenderer chart={code} theme={t} />,
 				},
 				onFileClick: (filePath, options) => onFileClick?.(filePath, options),
-				onExternalLinkClick: (href, opts) => {
-					if (/^file:\/\//.test(href)) {
-						void window.maestro.shell.openPath(href.replace(/^file:\/\//, ''));
-						return;
-					}
-					if (/^https?:\/\/|^mailto:/.test(href)) {
-						openUrl(href, opts);
-					}
-				},
+				onExternalLinkClick: handleExternalLinkClick,
 				containerRef: markdownContainerRef,
 				enableBionifyReadingMode: effectiveBionifyReadingMode,
 				bionifyIntensity,
@@ -674,6 +691,7 @@ export const FilePreview = React.memo(
 			};
 		}, [
 			onFileClick,
+			handleExternalLinkClick,
 			theme,
 			cwd,
 			file,
@@ -1874,8 +1892,16 @@ export const FilePreview = React.memo(
 								<p className="text-sm mt-1" style={{ color: theme.colors.textDim }}>
 									This file cannot be displayed as text.
 								</p>
+								{/* "Open in default app" hands the file to the HOST machine's OS
+								    opener via the shell bridge. In the web-desktop build the host
+								    is not the browser user's device, so the button is disabled with
+								    an explaining tooltip instead of silently acting on the wrong
+								    machine. */}
 								<button
+									disabled={isWebDesktop()}
+									title={isWebDesktop() ? 'Available in the desktop app' : undefined}
 									onClick={async () => {
+										if (isWebDesktop()) return;
 										// Local files open in place. Remote files don't exist on this
 										// machine, so download a binary-safe copy to a temp dir over SSH
 										// first, then hand the local path to the OS opener.
@@ -1901,7 +1927,7 @@ export const FilePreview = React.memo(
 											});
 										}
 									}}
-									className="mt-4 px-4 py-2 rounded text-sm hover:opacity-80 transition-opacity"
+									className="mt-4 px-4 py-2 rounded text-sm hover:opacity-80 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:opacity-50"
 									style={{
 										backgroundColor: theme.colors.accent,
 										color: theme.colors.accentForeground,
@@ -2057,15 +2083,7 @@ export const FilePreview = React.memo(
 								homeDir={homeDir}
 								filePath={file.path}
 								onFileClick={onFileClick}
-								onExternalLinkClick={(href, opts) => {
-									if (/^file:\/\//.test(href)) {
-										void window.maestro.shell.openPath(href.replace(/^file:\/\//, ''));
-										return;
-									}
-									if (/^https?:\/\/|^mailto:/.test(href)) {
-										openUrl(href, opts);
-									}
-								}}
+								onExternalLinkClick={handleExternalLinkClick}
 							/>
 						</Suspense>
 					) : isMarkdown ? (

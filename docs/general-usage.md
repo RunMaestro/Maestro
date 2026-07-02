@@ -117,13 +117,15 @@ The confirmation modal focuses "Publish Secret" by default, so you can press `En
 The share button only appears when viewing files (not in edit mode) and when GitHub CLI is available and authenticated.
 </Note>
 
-### @ File Mentions
+### @ Mentions
 
 Reference files in your AI prompts using `@` mentions:
 
 1. Type `@` followed by a filename
 2. Select from the autocomplete dropdown
 3. The file path is inserted, giving the AI context about that file
+
+The same `@` picker can also reference **other agents**. Alongside files, it has an **Agents** section - pick one to [consult it inline](./cross-agent-mentions) and stream its reply back into your chat. Maestro tells files and agents apart by shape: a path-like `@src/app.ts` is a file, while a bare `@codex` is an agent.
 
 ## Prompt Composer
 
@@ -146,6 +148,30 @@ The Prompt Composer provides:
 ![Prompt Composer](./screenshots/prompt-composer.png)
 
 When you're done editing, click **Send** or press the displayed shortcut to send your message. The composer closes automatically and your prompt is sent to the AI.
+
+## Message Queue
+
+You never have to wait for an agent to finish before lining up your next thought. Any message (or slash command) you send while an agent is busy is added to that tab's **queue** instead of being dropped, and dispatched automatically, in order, the moment the agent becomes ready. A **QUEUED (n)** separator appears in the transcript listing everything waiting to go.
+
+Each queued item has a row of controls (hover reveals them, and they stay visible while you work):
+
+| Control           | Icon  | What it does                                                                                            |
+| ----------------- | ----- | ------------------------------------------------------------------------------------------------------- |
+| **Edit**          | ✏️    | Reopen the message to change its text or add, annotate, and remove image attachments before it's sent   |
+| **Copy**          | ⧉     | Copy the message text (or the command) to the clipboard                                                 |
+| **Hold / Resume** | ⏸ / ▶ | Hold a message so the queue skips over it, then resume it later. Held items show a **HELD** badge       |
+| **Reorder**       | ⠿     | Drag any item by its handle to change the order they'll be sent (available once two or more are queued) |
+| **Remove**        | ✕     | Delete a message from the queue so it's never sent (asks for confirmation)                              |
+
+**Editing** is only offered for messages, not slash commands. Long messages are truncated with a **Show all** toggle so the queue stays compact, and attached images collapse behind a click-to-expand thumbnail strip (click a thumbnail to open it full-size in the carousel).
+
+### Force Send
+
+When [Forced Parallel Execution](./features) is enabled and another tab in the same agent is already working, a queued item gains a **Force Send** button. This dispatches that message immediately, running it in parallel instead of waiting its turn in the cross-tab queue. A confirmation lists which other tabs are currently busy before it sends.
+
+### Execution Queue view
+
+Press `Cmd+Shift+X` / `Ctrl+Shift+X` (or click the queue indicator) to open the **Execution Queue** - a single view of everything queued across all of your agents. It offers the same per-item controls (edit, copy, hold/resume, reorder, remove) plus a jump-to-agent shortcut, so you can manage a busy fleet from one place. Items are processed sequentially per agent to keep concurrent file edits from colliding.
 
 ## Input Toggles
 

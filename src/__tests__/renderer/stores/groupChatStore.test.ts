@@ -7,7 +7,10 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
+import {
+	useGroupChatStore,
+	isGroupChatVisibleInWindow,
+} from '../../../renderer/stores/groupChatStore';
 import type {
 	GroupChatRightTab,
 	GroupChatErrorState,
@@ -75,6 +78,7 @@ function resetStore() {
 		groupChatParticipantColors: {},
 		groupChatStagedImages: [],
 		groupChatError: null,
+		initiatorWindowId: null,
 	});
 }
 
@@ -108,6 +112,7 @@ describe('groupChatStore', () => {
 			expect(state.groupChatParticipantColors).toEqual({});
 			expect(state.groupChatStagedImages).toEqual([]);
 			expect(state.groupChatError).toBeNull();
+			expect(state.initiatorWindowId).toBeNull();
 		});
 	});
 
@@ -405,6 +410,53 @@ describe('groupChatStore', () => {
 	});
 
 	// ==========================================================================
+	// Multi-window: initiatorWindowId + isGroupChatVisibleInWindow
+	// ==========================================================================
+
+	describe('multi-window scoping', () => {
+		it('sets initiatorWindowId with a direct value', () => {
+			useGroupChatStore.getState().setInitiatorWindowId('window-1');
+			expect(useGroupChatStore.getState().initiatorWindowId).toBe('window-1');
+		});
+
+		it('clears initiatorWindowId by setting null', () => {
+			useGroupChatStore.getState().setInitiatorWindowId('window-1');
+			useGroupChatStore.getState().setInitiatorWindowId(null);
+			expect(useGroupChatStore.getState().initiatorWindowId).toBeNull();
+		});
+
+		it('sets initiatorWindowId with a functional updater', () => {
+			useGroupChatStore.getState().setInitiatorWindowId('window-1');
+			useGroupChatStore
+				.getState()
+				.setInitiatorWindowId((prev) => (prev === 'window-1' ? 'window-2' : prev));
+			expect(useGroupChatStore.getState().initiatorWindowId).toBe('window-2');
+		});
+
+		describe('isGroupChatVisibleInWindow', () => {
+			it('shows in the window that initiated the chat', () => {
+				expect(isGroupChatVisibleInWindow('window-1', 'window-1')).toBe(true);
+			});
+
+			it('hides in a window that did not initiate the chat', () => {
+				expect(isGroupChatVisibleInWindow('window-1', 'window-2')).toBe(false);
+			});
+
+			it('shows when there is no initiator (single-window / web / pre-hydrate)', () => {
+				expect(isGroupChatVisibleInWindow(null, 'window-1')).toBe(true);
+			});
+
+			it('shows when there is no window context (no WindowProvider)', () => {
+				expect(isGroupChatVisibleInWindow('window-1', null)).toBe(true);
+			});
+
+			it('shows when both ids are null', () => {
+				expect(isGroupChatVisibleInWindow(null, null)).toBe(true);
+			});
+		});
+	});
+
+	// ==========================================================================
 	// Convenience methods
 	// ==========================================================================
 
@@ -416,6 +468,7 @@ describe('groupChatStore', () => {
 			useGroupChatStore.getState().setGroupChatState('moderator-thinking');
 			useGroupChatStore.getState().setParticipantStates(new Map([['Alice', 'working']]));
 			useGroupChatStore.getState().setGroupChatError(createMockError());
+			useGroupChatStore.getState().setInitiatorWindowId('window-2');
 
 			// Also set some state that should NOT be cleared
 			useGroupChatStore.getState().setGroupChats([createMockGroupChat()]);
@@ -431,6 +484,7 @@ describe('groupChatStore', () => {
 			expect(useGroupChatStore.getState().groupChatState).toBe('idle');
 			expect(useGroupChatStore.getState().participantStates).toEqual(new Map());
 			expect(useGroupChatStore.getState().groupChatError).toBeNull();
+			expect(useGroupChatStore.getState().initiatorWindowId).toBeNull();
 
 			// Non-active fields should be preserved
 			expect(useGroupChatStore.getState().groupChats).toHaveLength(1);
@@ -498,6 +552,7 @@ describe('groupChatStore', () => {
 			expect(typeof state.setGroupChatParticipantColors).toBe('function');
 			expect(typeof state.setGroupChatStagedImages).toBe('function');
 			expect(typeof state.setGroupChatError).toBe('function');
+			expect(typeof state.setInitiatorWindowId).toBe('function');
 			expect(typeof state.clearGroupChatError).toBe('function');
 			expect(typeof state.resetGroupChatState).toBe('function');
 		});
@@ -529,6 +584,7 @@ describe('groupChatStore', () => {
 			useGroupChatStore.getState().setGroupChatState('agent-working');
 			useGroupChatStore.getState().setGroupChatError(createMockError());
 			useGroupChatStore.getState().setGroupChatRightTab('history');
+			useGroupChatStore.getState().setInitiatorWindowId('window-1');
 
 			// Reset
 			resetStore();
@@ -549,6 +605,7 @@ describe('groupChatStore', () => {
 			expect(state.groupChatParticipantColors).toEqual({});
 			expect(state.groupChatStagedImages).toEqual([]);
 			expect(state.groupChatError).toBeNull();
+			expect(state.initiatorWindowId).toBeNull();
 		});
 	});
 });

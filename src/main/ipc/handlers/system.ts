@@ -24,11 +24,13 @@ import { detectShells } from '../../utils/shellDetector';
 import { isCloudflaredInstalled } from '../../utils/cliDetection';
 import { tunnelManager as tunnelManagerInstance } from '../../tunnel-manager';
 import { checkForUpdates } from '../../update-checker';
+import { sendCheckin } from '../../checkin';
 import { setAllowPrerelease } from '../../auto-updater';
 import { WebServer } from '../../web-server';
 import { powerManager } from '../../power-manager';
 import { MaestroSettings } from './persistence';
 import { captureException } from '../../utils/sentry';
+import { createSafeSend } from '../../utils/safe-send';
 import type { BootstrapSettings } from '../../stores/types';
 
 // Type for tunnel manager instance
@@ -426,6 +428,24 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 		return checkForUpdates(currentVersion, includePrerelease);
 	});
 
+	// Anonymous DAU/MAU check-in ping. Fired by the renderer alongside the update
+	// check, gated by the same "check for updates" preference. Fire-and-forget:
+	// we kick it off and return immediately so it never blocks the update check,
+	// and sendCheckin swallows all failures internally.
+	ipcMain.handle('updates:checkin', async () => {
+		// Resolve the active theme id best-effort so we can measure theme
+		// popularity. The store is seeded with the default ('dracula'), so this
+		// returns a value for every user. Never let it block or throw the ping.
+		let theme: string | undefined;
+		try {
+			const value = settingsStore.get('activeThemeId' as keyof MaestroSettings);
+			if (typeof value === 'string') theme = value;
+		} catch {
+			theme = undefined;
+		}
+		void sendCheckin(app, theme);
+	});
+
 	// Set whether to allow prerelease updates (for electron-updater)
 	ipcMain.handle('updates:setAllowPrerelease', async (_event, allow: boolean) => {
 		setAllowPrerelease(allow);
@@ -717,6 +737,7 @@ const LOGGER_FORWARD_FLUSH_SIZE = 100;
  * out to per-entry consumers so the public API stays single-entry.
  */
 export function setupLoggerEventForwarding(getMainWindow: () => BrowserWindow | null): void {
+	const safeSend = createSafeSend(getMainWindow);
 	let buffer: unknown[] = [];
 	let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -730,19 +751,9 @@ export function setupLoggerEventForwarding(getMainWindow: () => BrowserWindow | 
 		const batch = buffer;
 		buffer = [];
 
-		const mainWindow = getMainWindow();
-		try {
-			if (
-				mainWindow &&
-				!mainWindow.isDestroyed() &&
-				mainWindow.webContents &&
-				!mainWindow.webContents.isDestroyed()
-			) {
-				mainWindow.webContents.send('logger:newLogBatch', batch);
-			}
-		} catch {
-			// Silently ignore - renderer not available
-		}
+		// safeSend handles null/destroyed windows and fans the batch out to
+		// web-desktop bridge clients so remote log viewers stay in sync.
+		safeSend('logger:newLogBatch', batch);
 	};
 
 	logger.on('newLog', (entry) => {

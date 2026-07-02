@@ -31,12 +31,14 @@ vi.mock('../../../renderer/utils/tabHelpers', async () => {
 // ============================================================================
 
 import {
+	getPromptComposerInitialValue,
 	usePromptComposerHandlers,
 	type UsePromptComposerHandlersDeps,
 } from '../../../renderer/hooks/modal/usePromptComposerHandlers';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { useComposerInputStore } from '../../../renderer/stores/composerInputStore';
 
 // ============================================================================
 // Helpers
@@ -161,6 +163,8 @@ beforeEach(() => {
 		enterToSendAI: true,
 		enterToSendAIExpanded: false,
 	} as any);
+
+	useComposerInputStore.setState({ aiValue: '', terminalValue: '' });
 });
 
 afterEach(() => {
@@ -172,6 +176,53 @@ afterEach(() => {
 // ============================================================================
 
 describe('usePromptComposerHandlers', () => {
+	describe('getPromptComposerInitialValue', () => {
+		it('seeds AI composer from the live store instead of a stale persisted tab draft', () => {
+			const session = createSession({
+				aiTabs: [createTab({ inputValue: 'stale persisted draft' })],
+				inputMode: 'ai',
+			});
+			useComposerInputStore.setState({ aiValue: 'live AI draft', terminalValue: 'ls -la' });
+
+			expect(
+				getPromptComposerInitialValue({
+					activeGroupChatId: null,
+					groupChats: [],
+					activeInputMode: session.inputMode,
+				})
+			).toBe('live AI draft');
+		});
+
+		it('seeds terminal composer from the live terminal store slice', () => {
+			useComposerInputStore.setState({ aiValue: 'AI draft', terminalValue: 'git status' });
+
+			expect(
+				getPromptComposerInitialValue({
+					activeGroupChatId: null,
+					groupChats: [],
+					activeInputMode: 'terminal',
+				})
+			).toBe('git status');
+		});
+
+		it('uses the active group chat draft when group chat is active', () => {
+			useComposerInputStore.setState({ aiValue: 'AI draft', terminalValue: 'terminal draft' });
+
+			expect(
+				getPromptComposerInitialValue({
+					activeGroupChatId: 'group-chat-1',
+					groupChats: [
+						{
+							id: 'group-chat-1',
+							draftMessage: 'group chat draft',
+						},
+					],
+					activeInputMode: 'ai',
+				})
+			).toBe('group chat draft');
+		});
+	});
+
 	// ========================================================================
 	// Return shape
 	// ========================================================================

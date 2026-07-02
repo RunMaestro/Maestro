@@ -10,11 +10,14 @@ import {
 	ChevronRight,
 } from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
+import { LongPressable, longPressMouseEvent } from './shared/LongPressable';
 import { WorktreePill } from './ui/WorktreePill';
 import { CueIndicator } from './SessionList/CueIndicator';
 import { StartupCommandIndicator } from './SessionList/StartupCommandIndicator';
 import { WizardIndicator } from './SessionList/WizardIndicator';
+import { WindowBadge } from './SessionList/WindowBadge';
 import { useSettingsStore } from '../stores/settingsStore';
+import { useSessionHasActiveOutage } from '../stores/retryStore';
 import { COLORBLIND_STATUS_COLORS } from '../constants/colorblindPalettes';
 import { abbreviateGroupName } from '../../shared/formatters';
 import type { Session, Group, Theme } from '../types';
@@ -49,12 +52,20 @@ export function getEnhancedStatusColor(
 	session: Session,
 	theme: Theme,
 	isInBatch: boolean,
-	colorBlindMode: boolean = false
+	colorBlindMode: boolean = false,
+	hasActiveOutage: boolean = false
 ): { color: string; animate: boolean; label: string } {
 	const success = colorBlindMode ? COLORBLIND_STATUS_COLORS.success : theme.colors.success;
 	const warning = colorBlindMode ? COLORBLIND_STATUS_COLORS.warning : theme.colors.warning;
 	const error = colorBlindMode ? COLORBLIND_STATUS_COLORS.error : theme.colors.error;
 	const connecting = colorBlindMode ? COLORBLIND_STATUS_COLORS.connecting : '#ff8800';
+
+	// Agent Resilience: an active outage (auto-retry backing off) is a "stuck,
+	// needs attention" state. Pulsing orange, ranked above batch/agent state so a
+	// stalled agent is unmistakable in the Left Bar.
+	if (hasActiveOutage) {
+		return { color: connecting, animate: true, label: 'Auto-retrying (stuck)' };
+	}
 
 	if (isInBatch) {
 		return { color: warning, animate: true, label: 'Auto Run active' };
@@ -120,6 +131,7 @@ export interface SessionItemProps {
 	wizardActive?: boolean; // Inline wizard active on at least one tab of this agent
 	wizardGeneratingDocs?: boolean; // Wizard is generating Auto Run documents (drives pulse)
 	worktreeChildCount?: number; // Number of worktree children (used for collapsed count badge)
+	otherWindowNumber?: number; // 1-based window number when this agent is open in a DIFFERENT window (multi-window)
 
 	/**
 	 * When true, the row can neither be dragged nor accept drops. Used for the
@@ -174,6 +186,7 @@ export const SessionItem = memo(function SessionItem({
 	wizardActive = false,
 	wizardGeneratingDocs = false,
 	worktreeChildCount,
+	otherWindowNumber,
 	dragDisabled = false,
 	onSelect,
 	onDragStart,
@@ -220,8 +233,16 @@ export const SessionItem = memo(function SessionItem({
 	const showGitLocalBadge = showLocationPills && variant !== 'bookmark';
 
 	// Status indicator: enhanced color/animation/label, plus hollow signal for
-	// Claude Code agents that haven't bound to a provider session yet.
-	const statusInfo = getEnhancedStatusColor(session, theme, isInBatch, colorBlindMode);
+	// Claude Code agents that haven't bound to a provider session yet. A stuck
+	// Agent Resilience outage overrides to pulsing orange (needs attention).
+	const hasActiveOutage = useSessionHasActiveOutage(session.id);
+	const statusInfo = getEnhancedStatusColor(
+		session,
+		theme,
+		isInBatch,
+		colorBlindMode,
+		hasActiveOutage
+	);
 	const isDisconnected = !isInBatch && hasNoClaudeProviderSession(session);
 
 	// Determine container styling based on variant
@@ -243,7 +264,7 @@ export const SessionItem = memo(function SessionItem({
 	};
 
 	return (
-		<div
+		<LongPressable
 			key={`${variant}-${groupId || ''}-${session.id}`}
 			data-nav-key={navDomKey}
 			draggable={!dragDisabled}
@@ -252,6 +273,8 @@ export const SessionItem = memo(function SessionItem({
 			onDrop={dragDisabled ? undefined : onDrop}
 			onClick={onSelect}
 			onContextMenu={onContextMenu}
+			// Touch: a long-press opens the same context menu right-click opens.
+			onLongPress={(rect) => onContextMenu(longPressMouseEvent(rect))}
 			className={getContainerClassName()}
 			style={{
 				borderColor: isActive || isKeyboardSelected ? theme.colors.accent : 'transparent',
@@ -397,6 +420,9 @@ export const SessionItem = memo(function SessionItem({
 
 			{/* Right side: Indicators and actions */}
 			<div className="flex items-center gap-2 ml-2">
+				{/* Multi-window badge: this agent is open in a different window. Clicking
+				    the row focuses that window rather than stealing the agent. */}
+				<WindowBadge windowNumber={otherWindowNumber} />
 				{/* Group badge (only in bookmark variant when session belongs to a group).
 				    Hidden entirely when showGroupLabelInBookmarks is off. Abbreviated by
 				    default; the showFullGroupLabelInBookmarks setting swaps in the full group
@@ -587,7 +613,7 @@ export const SessionItem = memo(function SessionItem({
 					)}
 				</div>
 			</div>
-		</div>
+		</LongPressable>
 	);
 });
 

@@ -15,6 +15,7 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { getModalActions } from '../../stores/modalStore';
 import { CONDUCTOR_BADGES } from '../../constants/conductorBadges';
+import { cueService } from '../../services/cue';
 
 // ============================================================================
 // Dependencies interface
@@ -44,6 +45,27 @@ export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 		lastUpdateTime: 0,
 	});
 
+	// Credit a block of achievement time and raise the standing ovation if it
+	// crosses a badge threshold. Shared by the Auto Run timer below and the Cue
+	// credit subscription so both paths accrue through the identical
+	// updateAutoRunProgress flow. The local badge and the leaderboard both read
+	// cumulativeTimeMs, so there is a single source of truth and no drift.
+	const creditAchievementTime = (deltaMs: number): void => {
+		if (deltaMs <= 0) return;
+		const autoRunStats = useSettingsStore.getState().autoRunStats;
+		const { newBadgeLevel } = updateAutoRunProgress(deltaMs);
+		if (newBadgeLevel !== null) {
+			const badge = CONDUCTOR_BADGES.find((b) => b.level === newBadgeLevel);
+			if (badge) {
+				setStandingOvationData({
+					badge,
+					isNewRecord: false, // Record is determined at completion
+					recordTimeMs: autoRunStats.longestRunMs,
+				});
+			}
+		}
+	};
+
 	// Track elapsed time for active auto-runs and update achievement stats every minute
 	// This allows badges to be unlocked during an auto-run, not just when it completes
 	useEffect(() => {
@@ -68,27 +90,28 @@ export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 			// e.g., 2 sessions running for 1 minute = 2 minutes toward cumulative achievement time
 			const deltaMs = elapsedMs * activeBatchSessionIds.length;
 
-			// Update achievement stats with the delta
-			const autoRunStats = useSettingsStore.getState().autoRunStats;
-			const { newBadgeLevel } = updateAutoRunProgress(deltaMs);
-
-			// If a new badge was unlocked during the run, show standing ovation
-			if (newBadgeLevel !== null) {
-				const badge = CONDUCTOR_BADGES.find((b) => b.level === newBadgeLevel);
-				if (badge) {
-					setStandingOvationData({
-						badge,
-						isNewRecord: false, // Record is determined at completion
-						recordTimeMs: autoRunStats.longestRunMs,
-					});
-				}
-			}
+			// Update achievement stats with the delta (raises ovation on badge unlock)
+			creditAchievementTime(deltaMs);
 		}, 60000); // Every 60 seconds
 
 		return () => {
 			clearInterval(intervalId);
 		};
 	}, [activeBatchSessionIds.length]);
+
+	// Credit autonomous Cue AI time toward the Conductor level. The main-process
+	// Cue engine emits `conductorTimeCredit` once per naturally-completed agent
+	// run, already gated (no command nodes) and floored to whole minutes, so the
+	// renderer simply accrues it through the same path as Auto Run. This effect
+	// is always mounted; Cue runs regardless of whether any Auto Run is active.
+	useEffect(() => {
+		const unsubscribe = cueService.onActivityUpdate((payload) => {
+			if (payload?.type === 'conductorTimeCredit') {
+				creditAchievementTime(payload.creditMs);
+			}
+		});
+		return unsubscribe;
+	}, []);
 
 	// Track peak usage stats for achievements image
 	useEffect(() => {

@@ -56,6 +56,8 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 							activeTerminalTabId: null,
 							inputMode: 'ai' as const,
 							activeTabId: s.activeTabId,
+							// Opening a file takes over the panel, so leave any active tiled group.
+							activeGroupId: null,
 							unifiedTabOrder: ensureInUnifiedTabOrder(s.unifiedTabOrder, 'file', existingTab.id),
 						};
 					}
@@ -100,6 +102,8 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 							activeBrowserTabId: null,
 							activeTerminalTabId: null,
 							inputMode: 'ai' as const,
+							// Opening a file takes over the panel, so leave any active tiled group.
+							activeGroupId: null,
 						};
 					}
 
@@ -136,6 +140,9 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 						activeBrowserTabId: null,
 						activeTerminalTabId: null,
 						inputMode: 'ai' as const,
+						// A newly-opened standalone file tab takes over the panel, so it
+						// must leave any active tiled group (mirrors handleSelectFileTab).
+						activeGroupId: null,
 					};
 				})
 			);
@@ -318,6 +325,8 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 					activeBrowserTabId: null,
 					activeTerminalTabId: null,
 					inputMode: 'ai',
+					// Selecting a standalone file tab leaves any active tiled group.
+					activeGroupId: null,
 				};
 			})
 		);
@@ -386,6 +395,9 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 					activeBrowserTabId: null,
 					activeTerminalTabId: null,
 					inputMode: 'ai' as const,
+					// A newly-created untitled file tab takes over the panel, so it must
+					// leave any active tiled group (mirrors handleSelectFileTab).
+					activeGroupId: null,
 				};
 			})
 		);

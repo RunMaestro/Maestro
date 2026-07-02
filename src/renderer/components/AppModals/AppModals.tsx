@@ -41,6 +41,7 @@ import { AppUtilityModals } from './AppUtilityModals';
 import { AppGroupChatModals } from './AppGroupChatModals';
 import { AppAgentModals } from './AppAgentModals';
 import type { GroupChatErrorInfo } from './AppAgentModals';
+import { getPromptComposerInitialValue } from '../../hooks/modal/usePromptComposerHandlers';
 
 /**
  * Combined props interface for the unified AppModals component.
@@ -327,7 +328,6 @@ export interface AppModalsProps {
 	onCloseFileSearch: () => void;
 	onFileSearchSelect: (file: FlatFileItem) => void;
 	onClosePromptComposer: () => void;
-	promptComposerInitialValue: string;
 	onPromptComposerSubmit: (value: string) => void;
 	onPromptComposerSend: (value: string) => void;
 	promptComposerSessionName?: string;
@@ -355,6 +355,11 @@ export interface AppModalsProps {
 	onSwitchQueueSession: (sessionId: string, tabId?: string) => void;
 	onReorderQueueItems: (sessionId: string, fromIndex: number, toIndex: number) => void;
 	onTogglePauseQueueItem: (sessionId: string, itemId: string) => void;
+	onEditQueueItem: (
+		sessionId: string,
+		itemId: string,
+		patch: { text: string; images: string[] }
+	) => void;
 	// New tab creation (for QuickActionsModal)
 	onQuickActionsNewTab?: () => void;
 	onQuickActionsNewFileTab?: () => void;
@@ -459,6 +464,11 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 			activeGroupChatId: s.activeGroupChatId,
 		}))
 	);
+	const promptComposerInitialValue = getPromptComposerInitialValue({
+		activeGroupChatId,
+		groupChats,
+		activeInputMode: activeSession?.inputMode,
+	});
 
 	// Self-source modal boolean states from modalStore (Tier 1B)
 	const {
@@ -783,7 +793,6 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onCloseFileSearch,
 		onFileSearchSelect,
 		onClosePromptComposer,
-		promptComposerInitialValue,
 		onPromptComposerSubmit,
 		onPromptComposerSend,
 		promptComposerSessionName,
@@ -807,6 +816,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onSwitchQueueSession,
 		onReorderQueueItems,
 		onTogglePauseQueueItem,
+		onEditQueueItem,
 		onQuickActionsNewTab,
 		onQuickActionsNewFileTab,
 		onQuickActionsNewBrowserTab,
@@ -1170,6 +1180,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onSwitchQueueSession={onSwitchQueueSession}
 				onReorderQueueItems={onReorderQueueItems}
 				onTogglePauseQueueItem={onTogglePauseQueueItem}
+				onEditQueueItem={onEditQueueItem}
 			/>
 
 			{/* Group Chat Modals */}

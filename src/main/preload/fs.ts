@@ -198,15 +198,28 @@ export function createFsApi() {
 
 		/**
 		 * Copy a file or folder from an arbitrary source path into a destination
-		 * path. Local only - used by drag-and-drop import of OS files into the
-		 * file tree. Pass `overwrite: true` to replace an existing destination.
+		 * path. Used by drag-and-drop import of OS files into the file tree. The
+		 * source is always a local OS path; pass `sshRemoteId` to upload it to a
+		 * remote host (the file panel is showing a remote session). Pass
+		 * `overwrite: true` to replace an existing destination.
 		 */
 		copyPath: (
 			sourcePath: string,
 			destPath: string,
-			options?: { overwrite?: boolean }
+			options?: { overwrite?: boolean; sshRemoteId?: string }
 		): Promise<{ success: boolean }> =>
 			ipcRenderer.invoke('fs:copyPath', sourcePath, destPath, options),
+
+		/**
+		 * Start an OS-level file drag-out (drag a file from the file panel to
+		 * Finder/Explorer). `paths` are absolute LOCAL paths that must exist on
+		 * disk - for remote files the caller downloads to a temp file first and
+		 * passes that. Fire-and-forget: it hooks into the live drag gesture via
+		 * Electron's `startDrag`, so it must be invoked from the row's `dragstart`.
+		 */
+		startDragOut: (paths: string[]): void => {
+			ipcRenderer.send('fs:startDragOut', paths);
+		},
 
 		/**
 		 * Resolve the absolute filesystem path of a dropped/selected `File`.

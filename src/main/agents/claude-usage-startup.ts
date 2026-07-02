@@ -44,6 +44,7 @@ import type { AgentDetector } from './detector';
 import type { AgentConfigsData, SessionsData } from '../stores/types';
 import type { MaestroSettings } from '../ipc/handlers/persistence';
 import { logger } from '../utils/logger';
+import { isMaestroPBinaryPath } from './claudeSpawnCore';
 import { sampleUsage } from './claude-usage-sampler';
 import { resolveConfigDirKey, setSnapshot } from '../stores/claudeUsageStore';
 
@@ -179,25 +180,11 @@ export function getMaestroPBinPath(): string | null {
 	return null;
 }
 
-/**
- * Return true when `binaryPath` looks like a maestro-p binary (by basename).
- *
- * Recognises the bundled `maestro-p.js` script, a packaged `maestro-p`
- * executable, and the Windows `.exe` variant. Used by the spawner to detect
- * power-user setups where the user wired the Claude Code agent's `Path` field
- * directly at maestro-p (bypassing the Adaptive Mode toggle) — the resolved
- * mode should still surface as `interactive` so the TUI/API pill reflects
- * reality.
- */
-export function isMaestroPBinaryPath(binaryPath: string | undefined | null): boolean {
-	if (!binaryPath) return false;
-	// Split on both `/` and `\` so a Windows-style path resolves correctly
-	// when this code runs on POSIX (path.basename on POSIX doesn't treat `\`
-	// as a separator, which would otherwise leave the whole `C:\…` string as
-	// the "basename" and miss the match).
-	const base = (binaryPath.split(/[\\/]/).pop() ?? '').toLowerCase();
-	return base === 'maestro-p' || base === 'maestro-p.js' || base === 'maestro-p.exe';
-}
+// Canonical `isMaestroPBinaryPath` now lives in the bundle-safe spawn core so
+// the desktop and the CLI share one basename check. Re-exported here (it is
+// imported at the top) so this module's existing importers keep resolving it
+// from the same place.
+export { isMaestroPBinaryPath };
 
 /**
  * Read the agent-level customEnvVars for `claude-code` from the agent configs
@@ -232,6 +219,9 @@ function getAgentLevelCustomPath(agentConfigsStore: Store<AgentConfigsData>): st
  * `sampleUsage()` expects.
  *
  * Returns null when:
+ *   - The session is SSH-remote (`sessionSshRemoteConfig.enabled`). Its
+ *     `CLAUDE_CONFIG_DIR` points at the remote host; sampling it locally is
+ *     meaningless and can pop an OAuth browser against a tokenless local dir.
  *   - The session has no `cwd` (malformed record).
  *   - Neither the session nor the agent explicitly sets `CLAUDE_CONFIG_DIR`
  *     in customEnvVars. We refuse to sample "default" accounts the user
@@ -250,6 +240,17 @@ function buildTarget(
 			? (session.customEnvVars as Record<string, string>)
 			: {};
 	const customEnvVars: Record<string, string> = { ...agentLevelEnvVars, ...sessionEnvVars };
+
+	// SSH-remote agents run claude on the remote host, so their CLAUDE_CONFIG_DIR
+	// names a directory on THAT machine. Sampling it locally reads the wrong
+	// host's account, and if the local path happens to exist but has no Keychain
+	// token (a pristine ~/.claude-* dir), `maestro-p --status` pops an OAuth
+	// browser the user never asked for. The remote agent's real turns authenticate
+	// remotely; there is nothing useful to sample locally. Skip.
+	const sshRemoteConfig = session.sessionSshRemoteConfig as { enabled?: boolean } | undefined;
+	if (sshRemoteConfig?.enabled) {
+		return null;
+	}
 
 	const cwd =
 		typeof session.cwd === 'string' && session.cwd.length > 0

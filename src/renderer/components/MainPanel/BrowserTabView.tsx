@@ -26,8 +26,10 @@ import {
 	DEFAULT_BROWSER_TAB_TITLE,
 	DEFAULT_BROWSER_TAB_URL,
 	getBrowserTabTitle,
+	isHttpBrowserTabUrl,
 	resolveBrowserTabNavigationTarget,
 } from '../../utils/browserTabPersistence';
+import { isWebDesktop } from '../../utils/runtimeContext';
 
 type ElectronWebviewElement = HTMLElement & {
 	src: string;
@@ -197,6 +199,13 @@ export const BrowserTabView = React.memo(
 				}
 			};
 		}, []);
+
+		// In the web-desktop browser bundle the Electron <webview> element is inert
+		// (no goBack/executeJavaScript host APIs), so it would render a dead pane.
+		// Render a placeholder that links out to the page in a real browser tab
+		// instead. All the webview-driven effects below no-op because webviewRef
+		// stays null when the guest element is never mounted.
+		const webDesktop = isWebDesktop();
 
 		useEffect(() => {
 			latestTabRef.current = tab;
@@ -414,7 +423,12 @@ export const BrowserTabView = React.memo(
 				setAddressError(null);
 				updateTabState({
 					url: nextUrl,
-					title: getBrowserTabTitle(nextUrl),
+					// Keep the last known page title while the navigation loads (mirrors
+					// handleNavigate). Without the fallback, a cold reload - e.g. when a
+					// grouped browser pane remounts after switching away and back - would
+					// clobber the real page title with the bare URL host, so the tab label
+					// appears to vanish until the page re-fires page-title-updated.
+					title: getBrowserTabTitle(nextUrl, latestTabRef.current.title),
 					isLoading: true,
 					favicon: null,
 				});
@@ -939,14 +953,40 @@ export const BrowserTabView = React.memo(
 					className="relative flex-1 min-h-0 overflow-hidden"
 					data-testid="browser-tab-host"
 				>
-					<webview
-						ref={(element) => {
-							webviewRef.current = element as unknown as ElectronWebviewElement | null;
-						}}
-						className="w-full h-full border-0 bg-white"
-						partition={tab.partition}
-						src={tab.url || DEFAULT_BROWSER_TAB_URL}
-					/>
+					{webDesktop ? (
+						<div
+							className="flex h-full w-full flex-col items-center justify-center gap-3 px-6 text-center"
+							data-testid="browser-tab-web-placeholder"
+						>
+							<Globe className="w-8 h-8" style={{ color: theme.colors.textDim }} />
+							{/* Only linkify http(s) URLs. Skipping other schemes keeps a
+							    `javascript:`/`data:` href (XSS on click) from ever rendering,
+							    and noreferrer avoids leaking the token-bearing app URL. */}
+							{isHttpBrowserTabUrl(tab.url) ? (
+								<a
+									href={tab.url}
+									target="_blank"
+									rel="noopener noreferrer"
+									className="text-sm underline break-all"
+									style={{ color: theme.colors.accent }}
+								>
+									{tab.url}
+								</a>
+							) : null}
+							<p className="text-sm" style={{ color: theme.colors.textDim }}>
+								Browser tabs are available in the desktop app
+							</p>
+						</div>
+					) : (
+						<webview
+							ref={(element) => {
+								webviewRef.current = element as unknown as ElectronWebviewElement | null;
+							}}
+							className="w-full h-full border-0 bg-white"
+							partition={tab.partition}
+							src={tab.url || DEFAULT_BROWSER_TAB_URL}
+						/>
+					)}
 					{findOpen ? (
 						<div
 							className="absolute top-2 right-3 z-10 flex items-center gap-1 rounded-md border px-2 py-1 shadow-md"

@@ -80,6 +80,7 @@ const defaultProps = {
 	handleFolderDrop: vi.fn(),
 	onInternalDragStart: vi.fn(),
 	onInternalDragEnd: vi.fn(),
+	onOsDragOut: vi.fn().mockReturnValue(false),
 	toggleFolder: vi.fn(),
 	toggleFolderRecursive: vi.fn(),
 	setSessions: vi.fn(),

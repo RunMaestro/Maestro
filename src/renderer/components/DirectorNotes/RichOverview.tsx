@@ -28,8 +28,7 @@ import type { Theme } from '../../types';
 import { MarkdownRenderer } from '../MarkdownRenderer';
 import { Spinner } from '../ui/Spinner';
 import { CUE_COLOR } from '../../../shared/cue-pipeline-types';
-import { formatNumber } from '../../../shared/formatters';
-import { formatDuration } from '../../../shared/performance-metrics';
+import { formatNumber, formatDurationLong } from '../../../shared/formatters';
 import { generateTerminalProseStyles } from '../../utils/markdownConfig';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -72,6 +71,8 @@ interface RichOverviewProps {
 	lookbackDays: number;
 	/** Forwarded to the narrative MarkdownRenderer (matches Plain-mode behavior). */
 	enableBionifyReadingMode?: boolean;
+	/** Enables KaTeX math in the narrative MarkdownRenderer (matches Plain-mode behavior). */
+	chatMath?: boolean;
 }
 
 export function RichOverview({
@@ -82,6 +83,7 @@ export function RichOverview({
 	narrativeError,
 	lookbackDays,
 	enableBionifyReadingMode = false,
+	chatMath = false,
 }: RichOverviewProps) {
 	const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
 	const [richStats, setRichStats] = useState<RichStats | null>(null);
@@ -155,7 +157,7 @@ export function RichOverview({
 		{
 			label: 'Time Spent',
 			value: totalElapsedMs,
-			displayValue: formatDuration(totalElapsedMs),
+			displayValue: formatDurationLong(totalElapsedMs),
 			icon: Timer,
 			color: theme.colors.accent,
 		},
@@ -166,7 +168,7 @@ export function RichOverview({
 		cards.push({
 			label: 'Generation Time',
 			value: stats.durationMs,
-			displayValue: formatDuration(stats.durationMs),
+			displayValue: formatDurationLong(stats.durationMs),
 			icon: Hourglass,
 			color: theme.colors.success,
 		});
@@ -256,6 +258,7 @@ export function RichOverview({
 								theme={theme}
 								onCopy={(text) => safeClipboardWrite(text)}
 								enableBionifyReadingMode={enableBionifyReadingMode}
+								chatMath={chatMath}
 							/>
 						</div>
 					</SectionCard>

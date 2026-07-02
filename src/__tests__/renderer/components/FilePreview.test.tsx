@@ -5,6 +5,7 @@ import { FilePreview } from '../../../renderer/components/FilePreview';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useImageAnnotatorStore } from '../../../renderer/components/ImageAnnotator/imageAnnotatorStore';
+import { isWebDesktop } from '../../../renderer/utils/runtimeContext';
 
 import { mockTheme } from '../../helpers/mockTheme';
 // Mock lucide-react icons
@@ -182,6 +183,17 @@ vi.mock('../../../shared/gitUtils', () => ({
 	isImageFile: (filename: string) => /\.(png|jpg|jpeg|gif|webp|svg)$/i.test(filename),
 }));
 
+// Mock runtimeContext so tests can flip the web-desktop build on per-test.
+// Defaults to the Electron desktop (isWebDesktop === false), matching the
+// pre-existing behavior every other test assumes.
+vi.mock('../../../renderer/utils/runtimeContext', () => {
+	const isWebDesktop = vi.fn(() => false);
+	return {
+		isWebDesktop,
+		isElectronDesktop: () => !isWebDesktop(),
+	};
+});
+
 // Mock MarkdownEditor. The real editor wraps CodeMirror, which jsdom can't
 // satisfy `getByRole('textbox')` against. A bare `<textarea>` lets us keep
 // the FilePreview wiring tests (controlled vs. internal editContent, onChange
@@ -206,6 +218,10 @@ const defaultProps = {
 describe('FilePreview', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		// Default every test to the Electron desktop build; the web-desktop tests
+		// opt in explicitly. (clearAllMocks resets call history, not the return
+		// value, so pin it back to false here.)
+		vi.mocked(isWebDesktop).mockReturnValue(false);
 		useSettingsStore.setState({ bionifyReadingMode: false });
 		// Reset useClickOutside call counter so each test starts fresh
 		useClickOutsideCallCount = 0;
@@ -318,6 +334,45 @@ describe('FilePreview', () => {
 			render(<FilePreview {...defaultProps} sshRemoteId="remote-host-1" />);
 
 			expect(screen.queryByTestId('external-link-icon')).not.toBeInTheDocument();
+		});
+
+		it('hides the header Open in Default App button in the web-desktop build', () => {
+			// openPath hands the file to the HOST OS opener, which is not the browser
+			// user's device, so the affordance must be gone in web-desktop.
+			vi.mocked(isWebDesktop).mockReturnValue(true);
+			render(<FilePreview {...defaultProps} />);
+
+			expect(screen.queryByTestId('external-link-icon')).not.toBeInTheDocument();
+		});
+
+		it('disables the binary-file Open in Default App button in the web-desktop build', () => {
+			vi.mocked(isWebDesktop).mockReturnValue(true);
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'lib.dll', content: 'MZ binary', path: '/test/lib.dll' }}
+				/>
+			);
+
+			const button = screen.getByRole('button', { name: 'Open in Default App' });
+			expect(button).toBeDisabled();
+			expect(button).toHaveAttribute('title', 'Available in the desktop app');
+			fireEvent.click(button);
+			expect(window.maestro?.shell?.openPath).not.toHaveBeenCalled();
+		});
+
+		it('keeps the binary-file Open in Default App button active on the desktop', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'lib.dll', content: 'MZ binary', path: '/test/lib.dll' }}
+				/>
+			);
+
+			const button = screen.getByRole('button', { name: 'Open in Default App' });
+			expect(button).toBeEnabled();
+			fireEvent.click(button);
+			expect(window.maestro?.shell?.openPath).toHaveBeenCalledWith('/test/lib.dll');
 		});
 	});
 

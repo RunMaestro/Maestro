@@ -207,6 +207,9 @@ export const MODAL_PRIORITIES = {
 	/** Debug: Widget Gallery (shared widget-library preview) */
 	DEBUG_WIDGET_GALLERY: 602,
 
+	/** Debug: Performance-profiling capture progress modal */
+	DEBUG_PROFILING_CAPTURE: 606,
+
 	/** Windows warning modal - shown on startup for Windows users */
 	WINDOWS_WARNING: 615,
 
@@ -281,6 +284,10 @@ export const MODAL_PRIORITIES = {
 
 	/** Image lightbox overlay */
 	LIGHTBOX: 150,
+
+	/** Edit-queued-item modal (below lightbox/annotator so those open on top of it
+	 * and Escape closes them first while editing a queued message's images). */
+	QUEUED_ITEM_EDIT: 145,
 
 	/** File preview overlay */
 	FILE_PREVIEW: 100,

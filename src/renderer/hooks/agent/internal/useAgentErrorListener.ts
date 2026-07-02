@@ -33,6 +33,8 @@ import { logger } from '../../../utils/logger';
 import { removeHiddenProgressLog } from './helpers/exitTabCleanup';
 import { getErrorTitleForType } from './helpers/errorTitles';
 import { isLimitError } from '../../../../shared/types';
+import { useOwnedSessionGate } from './useOwnedSessionGate';
+import { scheduleRetryForError, getRetryEntry } from '../../../stores/retryStore';
 import type { AgentError, GroupChatMessage, LogEntry, SessionState } from '../../../types';
 import type { UseAgentListenersDeps, ToolProgressState } from './types';
 
@@ -46,12 +48,16 @@ export interface UseAgentErrorListenerDeps {
 }
 
 export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
+	const ownedGate = useOwnedSessionGate();
 	useEffect(() => {
 		const setSessions = useSessionStore.getState().setSessions;
 		const getSessions = () => useSessionStore.getState().sessions;
 		const { openModal } = useModalStore.getState();
 
 		const unsubscribe = window.maestro.process.onAgentError((sessionId: string, error) => {
+			// Window scoping: only the owning window handles the error (and pauses
+			// its batch). Events are broadcast to all windows.
+			if (!ownedGate.current?.(sessionId)) return;
 			const agentError: AgentError = {
 				type: error.type as AgentError['type'],
 				message: error.message,
@@ -148,6 +154,40 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 
 			const isSessionNotFound = agentError.type === 'session_not_found';
 
+			// Agent Resilience: for transient upstream / quota errors, auto-retry
+			// instead of surfacing the blocking error modal. Two paths, both gated
+			// on the per-agent toggles inside scheduleRetryForError:
+			//   - interactive turn → resend the snapshotted prompt.
+			//   - Auto Run batch (goal-based or spec-driven) → resume the parked
+			//     batch loop after the backoff (via the registered resumer). The
+			//     loop is parked by pauseBatchOnError further below in this handler.
+			// Skipped for session_not_found (recovered below). Requires a concrete
+			// tab so the retry targets the right turn / countdown.
+			const batchState = deps.getBatchStateRef.current?.(actualSessionId);
+			const batchOwnsError = !!(batchState?.isRunning && !batchState.errorPaused);
+			const canAutoRetry = !isSessionNotFound && !!tabIdFromSession;
+			const willAutoRetryInteractive =
+				canAutoRetry &&
+				!batchOwnsError &&
+				scheduleRetryForError(actualSessionId, tabIdFromSession!, agentError);
+			const willAutoRetryBatch =
+				canAutoRetry &&
+				batchOwnsError &&
+				scheduleRetryForError(actualSessionId, tabIdFromSession!, agentError, { batch: true });
+			const willAutoRetry = willAutoRetryInteractive || willAutoRetryBatch;
+
+			// Agent Resilience transcript card: the auto-retry path collapses all
+			// attempts into ONE live status bubble (RetryStatusCard) instead of a
+			// wall of error frames. Append the anchor marker only on the FIRST
+			// failure of an outage (attempt 0); continuations update the store-backed
+			// card in place and add nothing to the transcript.
+			const activeRetry =
+				willAutoRetry && tabIdFromSession
+					? getRetryEntry(actualSessionId, tabIdFromSession)
+					: undefined;
+			const isFirstOutageFailure = activeRetry?.attempt === 0;
+			const retryOutageId = activeRetry?.outageId;
+
 			if (tabIdFromSession) {
 				deps.activeHiddenToolRef.current?.delete(`${actualSessionId}:${tabIdFromSession}`);
 			}
@@ -205,26 +245,40 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 					// also carry the captured prompt so the auto-resume coordinator can
 					// re-fire a direct send. The `canOfferRecovery` session_not_found flow
 					// owns the special "recover raw or compressed" copy; this only adds data.
+					// When auto-retry takes over (willAutoRetry) we instead log a
+					// non-blocking outage marker; the marker renders as a live
+					// RetryStatusCard (driven by retryStore) showing attempt count,
+					// elapsed time, next-retry countdown, and Try now / Stop controls, and
+					// the early return below keeps the session out of the paused/error
+					// state so this stash stays dormant.
 					const stashLimitPrompt = isLimit && !!lastUserPrompt && !!targetTab;
 					const errorLogEntry: LogEntry = {
 						id: generateId(),
 						timestamp: agentError.timestamp,
-						source: isSessionNotFound ? 'system' : 'error',
+						source: isSessionNotFound || willAutoRetry ? 'system' : 'error',
 						text: canOfferRecovery
 							? 'Session not found, however we can recover it raw or compressed.'
 							: agentError.message,
-						agentError: isSessionNotFound ? undefined : agentError,
-						...(isInteractive && !isSessionNotFound ? { renderStyle: 'text-stream' as const } : {}),
+						agentError: isSessionNotFound || willAutoRetry ? undefined : agentError,
+						...(willAutoRetry && retryOutageId ? { retryOutageId } : {}),
+						...(isInteractive && !isSessionNotFound && !willAutoRetry
+							? { renderStyle: 'text-stream' as const }
+							: {}),
 						...(canOfferRecovery || stashLimitPrompt
 							? { recoveryAction: { lastUserPrompt: lastUserPrompt!, tabId: targetTab!.id } }
 							: {}),
 					};
+					// On a continued outage (attempt > 0) the card already lives in the
+					// transcript — just strip the transient progress log, append nothing.
+					const isRetryContinuation = willAutoRetry && !isFirstOutageFailure;
 					const updatedAiTabs = targetTab
 						? s.aiTabs.map((tab) =>
 								tab.id === targetTab.id
 									? {
 											...tab,
-											logs: [...removeHiddenProgressLog(tab.logs, tab.id), errorLogEntry],
+											logs: isRetryContinuation
+												? removeHiddenProgressLog(tab.logs, tab.id)
+												: [...removeHiddenProgressLog(tab.logs, tab.id), errorLogEntry],
 											agentError: isSessionNotFound ? undefined : agentError,
 											...(isSessionNotFound ? { agentSessionId: null } : {}),
 										}
@@ -232,7 +286,10 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 							)
 						: s.aiTabs;
 
-					if (isSessionNotFound) {
+					// session_not_found recovers below; auto-retry keeps the session
+					// out of the blocking `error` state (the countdown chip owns the
+					// UI, and the exit listener idles the tab).
+					if (isSessionNotFound || willAutoRetry) {
 						return { ...s, aiTabs: updatedAiTabs };
 					}
 
@@ -319,24 +376,28 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 							`- Error: ${agentError.message}`,
 							'',
 							'**What to do:**',
-							agentError.type === 'auth_expired'
-								? '- Re-authenticate with the provider (e.g., run `claude login` in terminal)'
-								: agentError.type === 'token_exhaustion'
-									? '- Start a new session to reset the context window'
-									: agentError.type === 'rate_limited'
-										? '- Wait a few minutes before retrying'
-										: agentError.type === 'network_error'
-											? '- Check your internet connection and try again'
-											: '- Review the error message and take appropriate action',
+							willAutoRetryBatch
+								? '- Agent Resilience is retrying this automatically; the run will continue on its own once the provider recovers.'
+								: agentError.type === 'auth_expired'
+									? '- Re-authenticate with the provider (e.g., run `claude login` in terminal)'
+									: agentError.type === 'token_exhaustion'
+										? '- Start a new session to reset the context window'
+										: agentError.type === 'rate_limited'
+											? '- Wait a few minutes before retrying'
+											: agentError.type === 'network_error'
+												? '- Check your internet connection and try again'
+												: '- Review the error message and take appropriate action',
 							'',
-							'After resolving the issue, you can resume, skip, or abort the Auto Run.',
+							willAutoRetryBatch
+								? 'You can also cancel the auto-retry to resume, skip, or abort manually.'
+								: 'After resolving the issue, you can resume, skip, or abort the Auto Run.',
 						]
 							.filter(Boolean)
 							.join('\n');
 
 						deps.addHistoryEntryRef.current({
 							type: 'AUTO',
-							summary: `Auto Run error: ${errorTitle}${currentDoc ? ` (${currentDoc})` : ''}`,
+							summary: `Auto Run ${willAutoRetryBatch ? 'auto-retry' : 'error'}: ${errorTitle}${currentDoc ? ` (${currentDoc})` : ''}`,
 							fullResponse: errorExplanation,
 							projectPath: session.cwd,
 							sessionId: actualSessionId,
@@ -346,15 +407,19 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 
 					const errorTitle = getErrorTitleForType(agentError.type);
 					notifyToast({
-						type: 'error',
-						title: `Auto Run: ${errorTitle}`,
-						message: agentError.message,
+						type: willAutoRetryBatch ? 'warning' : 'error',
+						title: willAutoRetryBatch
+							? `Auto Run: retrying (${errorTitle})`
+							: `Auto Run: ${errorTitle}`,
+						message: willAutoRetryBatch
+							? `${agentError.message} Auto Run will continue automatically.`
+							: agentError.message,
 						sessionId: actualSessionId,
 					});
 				}
 			}
 
-			if (!isSessionNotFound) {
+			if (!isSessionNotFound && !willAutoRetry) {
 				openModal('agentError', { sessionId: actualSessionId });
 			}
 		});
@@ -367,5 +432,6 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 		deps.addHistoryEntryRef,
 		deps.getBatchStateRef,
 		deps.pauseBatchOnErrorRef,
+		ownedGate,
 	]);
 }

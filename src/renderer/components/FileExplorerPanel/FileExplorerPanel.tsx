@@ -13,6 +13,8 @@ import {
 	Copy,
 	FolderInput,
 	FolderUp,
+	FileText,
+	HardDrive,
 } from 'lucide-react';
 import { getBasename } from '../../../shared/formatters';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -48,6 +50,7 @@ import { useFileTreeFilter } from './hooks/useFileTreeFilter';
 import { useAutoRefresh } from './hooks/useAutoRefresh';
 import { useFileOperations } from './hooks/useFileOperations';
 import { useDragToMove } from './hooks/useDragToMove';
+import { useOsFileDragOut } from './hooks/useOsFileDragOut';
 import { useFileContextMenu } from './hooks/useFileContextMenu';
 
 // Utils
@@ -325,6 +328,10 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		setSelectedPaths,
 	});
 
+	// Option/Alt-drag a row out to Finder/Explorer to retrieve the real file
+	// (downloads first over SSH). Separate from the in-app move/@mention drag.
+	const { handleOsDragStart } = useOsFileDragOut({ session, sshRemoteId, onShowFlash });
+
 	// ── Context menu ──────────────────────────────────────────────────────────
 
 	const {
@@ -337,6 +344,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		openContextMenu,
 		openRootContextMenu,
 		handleCopyPath,
+		handleCopyFileName,
 		handleDownloadFile,
 		handleOpenInDefaultApp,
 		handleOpenInMaestroBrowser,
@@ -389,8 +397,9 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 	// Panel-root drop zone: OS files dropped on empty space or a file row (i.e.
 	// not on a folder row, which stops propagation) import into the tree root.
 	// Internal tree drags fall through to the existing bubble-suppression so we
-	// don't accidentally add a move-to-root path. Remotes have no local source.
-	const externalImportEnabled = !sshRemoteId;
+	// don't accidentally add a move-to-root path. For a remote session the import
+	// uploads the dropped local files to the remote host over SSH.
+	const externalImportEnabled = true;
 	const handleRootDragEnter = (e: React.DragEvent) => {
 		if (externalImportEnabled && dragHasOsFiles(e.dataTransfer)) {
 			handleFolderDragEnter(e, '');
@@ -802,6 +811,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 											handleFolderDrop={handleFolderDrop}
 											onInternalDragStart={handleInternalDragStart}
 											onInternalDragEnd={handleInternalDragEnd}
+											onOsDragOut={handleOsDragStart}
 											toggleFolder={toggleFolder}
 											toggleFolderRecursive={toggleFolderRecursive}
 											setSessions={setSessions}
@@ -860,34 +870,47 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 				</div>
 			)}
 
-			{/* Status bar */}
+			{/* Status bar. `file-stats-container` enables the container query in index.css
+			    that swaps the label words for icons on narrow widths so the bar never wraps. */}
 			{session.fileTreeStats && (
 				<div
-					className="flex-shrink-0 flex items-center justify-center gap-3 px-3 py-1.5 text-xs rounded mt-3 mb-[7px]"
+					className="file-stats-container flex-shrink-0 flex items-center justify-center gap-3 px-3 py-1.5 text-xs rounded mt-3 mb-[7px] whitespace-nowrap"
 					style={{
 						backgroundColor: theme.colors.bgActivity,
 						border: `1px solid ${theme.colors.border}`,
 						color: theme.colors.textDim,
 					}}
 				>
-					<span>
+					<span
+						className="flex items-center gap-1"
+						title={`${session.fileTreeStats.fileCount.toLocaleString()} file${session.fileTreeStats.fileCount !== 1 ? 's' : ''}`}
+					>
+						<FileText className="file-stats-icon w-3 h-3 shrink-0 opacity-60" />
 						<span style={{ color: theme.colors.accent }}>
 							{session.fileTreeStats.fileCount.toLocaleString()}
 						</span>
-						<span className="opacity-60">
-							{' '}
-							file{session.fileTreeStats.fileCount !== 1 ? 's' : ''},{' '}
+						<span className="file-stats-label opacity-60">
+							file{session.fileTreeStats.fileCount !== 1 ? 's' : ''},
 						</span>
+					</span>
+					<span
+						className="flex items-center gap-1"
+						title={`${session.fileTreeStats.folderCount.toLocaleString()} folder${session.fileTreeStats.folderCount !== 1 ? 's' : ''}`}
+					>
+						<Folder className="file-stats-icon w-3 h-3 shrink-0 opacity-60" />
 						<span style={{ color: theme.colors.accent }}>
 							{session.fileTreeStats.folderCount.toLocaleString()}
 						</span>
-						<span className="opacity-60">
-							{' '}
+						<span className="file-stats-label opacity-60">
 							folder{session.fileTreeStats.folderCount !== 1 ? 's' : ''}
 						</span>
 					</span>
-					<span>
-						<span className="opacity-60">Size:</span>{' '}
+					<span
+						className="flex items-center gap-1"
+						title={`Total size: ${formatBytes(session.fileTreeStats.totalSize)}`}
+					>
+						<HardDrive className="file-stats-icon w-3 h-3 shrink-0 opacity-60" />
+						<span className="file-stats-label opacity-60">Size:</span>
 						<span style={{ color: theme.colors.accent }}>
 							{formatBytes(session.fileTreeStats.totalSize)}
 						</span>
@@ -908,6 +931,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					isMultiSelectionContext={selectedPaths.size > 1 && selectedPaths.has(contextMenu.path)}
 					selectedCount={selectedPaths.size}
 					onCopyPath={handleCopyPath}
+					onCopyFileName={handleCopyFileName}
 					onDownloadFile={handleDownloadFile}
 					onOpenInDefaultApp={handleOpenInDefaultApp}
 					onOpenInMaestroBrowser={handleOpenInMaestroBrowser}

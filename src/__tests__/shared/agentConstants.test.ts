@@ -7,6 +7,7 @@ import {
 	DEFAULT_CONTEXT_WINDOWS,
 	FALLBACK_CONTEXT_WINDOW,
 	COMBINED_CONTEXT_AGENTS,
+	resilienceEnabled,
 } from '../../shared/agentConstants';
 import { AGENT_IDS } from '../../shared/agentIds';
 
@@ -71,6 +72,20 @@ describe('agentConstants', () => {
 			for (const id of COMBINED_CONTEXT_AGENTS) {
 				expect(AGENT_IDS).toContain(id);
 			}
+		});
+	});
+
+	describe('resilienceEnabled', () => {
+		it('treats undefined as ON (read-time default, no migration for existing agents)', () => {
+			expect(resilienceEnabled(undefined)).toBe(true);
+		});
+
+		it('treats an explicit true as ON', () => {
+			expect(resilienceEnabled(true)).toBe(true);
+		});
+
+		it('only an explicit false opts out', () => {
+			expect(resilienceEnabled(false)).toBe(false);
 		});
 	});
 });

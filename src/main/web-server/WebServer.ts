@@ -28,7 +28,7 @@ import fastifyStatic from '@fastify/static';
 import { FastifyInstance, FastifyRequest } from 'fastify';
 import { randomUUID } from 'crypto';
 import path from 'path';
-import { existsSync, readFileSync } from 'fs';
+import { existsSync } from 'fs';
 import { logger } from '../utils/logger';
 import { getLocalIpAddress } from '../utils/networkUtils';
 import { captureException } from '../utils/sentry';
@@ -157,6 +157,9 @@ export class WebServer {
 	private isRunning: boolean = false;
 	private webClients: Map<string, WebClient> = new Map();
 	private rateLimitConfig: RateLimitConfig = { ...DEFAULT_RATE_LIMIT_CONFIG };
+	// Directory that ships the PWA assets (manifest.json, service worker, icons/).
+	// These are copied into the web-desktop bundle by its vite `publicDir`, so
+	// they live alongside the bundle's index.html. Null until the bundle is built.
 	private webAssetsPath: string | null = null;
 	// Cached on first hit so we don't existsSync 3 candidate paths on every
 	// desktop page load. The HTML itself is intentionally NOT cached: Vite
@@ -248,67 +251,34 @@ export class WebServer {
 	}
 
 	/**
-	 * Resolve the path to web assets
-	 * In production: dist/web relative to app root
-	 * In development: same location but might not exist until built
+	 * Resolve the directory that ships the PWA assets (manifest.json, service
+	 * worker, icons/). The web-desktop bundle's vite `publicDir` copies
+	 * `src/web/public/*` into the bundle output, so the assets live alongside the
+	 * bundle's index.html. `manifest.json` is the marker file we probe for.
+	 * Returns null when the bundle has not been built.
 	 */
 	private resolveWebAssetsPath(): string | null {
-		// Try multiple locations for the web assets
 		const possiblePaths = [
 			// Development: from project root
-			path.join(process.cwd(), 'dist', 'web'),
+			path.join(process.cwd(), 'dist', 'web-desktop'),
 			// Production: relative to the compiled main process
-			path.join(__dirname, '..', '..', 'web'),
+			path.join(__dirname, '..', '..', 'web-desktop'),
 			// Alternative: relative to __dirname going up to dist
-			path.join(__dirname, '..', 'web'),
+			path.join(__dirname, '..', 'web-desktop'),
 		];
 
 		for (const p of possiblePaths) {
-			if (this.isServableWebAssetsPath(p)) {
-				logger.debug(`Web assets found at: ${p}`, LOG_CONTEXT);
+			if (existsSync(path.join(p, 'manifest.json'))) {
+				logger.debug(`Web PWA assets found at: ${p}`, LOG_CONTEXT);
 				return p;
 			}
 		}
 
 		logger.warn(
-			'Web assets not found. Web interface will not be served. Run "npm run build:web" to build web assets.',
+			'Web PWA assets not found. Manifest/service worker/icons will not be served. Run "npm run build:web-desktop" to build the web interface.',
 			LOG_CONTEXT
 		);
 		return null;
-	}
-
-	/**
-	 * Only serve built web assets. Source `src/web/index.html` references `/main.tsx`,
-	 * which the embedded Fastify server cannot compile or serve.
-	 */
-	private isServableWebAssetsPath(candidatePath: string): boolean {
-		const indexPath = path.join(candidatePath, 'index.html');
-		if (!existsSync(indexPath)) {
-			return false;
-		}
-
-		const assetsPath = path.join(candidatePath, 'assets');
-
-		try {
-			const html = readFileSync(indexPath, 'utf-8');
-			const referencesDevEntrypoint =
-				html.includes('src="/main.tsx"') || html.includes("src='/main.tsx'");
-			return !referencesDevEntrypoint && existsSync(assetsPath);
-		} catch (error) {
-			const err = error as NodeJS.ErrnoException;
-			if (err.code === 'ENOENT') {
-				logger.warn(`Web assets disappeared while inspecting ${candidatePath}`, LOG_CONTEXT);
-				return false;
-			}
-
-			logger.error(`Failed to inspect web assets at ${candidatePath}`, LOG_CONTEXT, error);
-			captureException(error, {
-				operation: 'webServer:isServableWebAssetsPath',
-				candidatePath,
-				indexPath,
-			});
-			throw error;
-		}
 	}
 
 	// ============ Live Session Management (Delegated to LiveSessionManager) ============
@@ -771,18 +741,11 @@ export class WebServer {
 			},
 		});
 
-		// Register static file serving for web assets
+		// Register the PWA icons directory. The icons ship inside the web-desktop
+		// bundle (copied there by its vite publicDir), so webAssetsPath points at
+		// that bundle root. The bundle's own JS/CSS assets are served separately
+		// at /<token>/desktop/assets/ (see below).
 		if (this.webAssetsPath) {
-			const assetsPath = path.join(this.webAssetsPath, 'assets');
-			if (existsSync(assetsPath)) {
-				await this.server.register(fastifyStatic, {
-					root: assetsPath,
-					prefix: `/${this.securityToken}/assets/`,
-					decorateReply: false,
-				});
-			}
-
-			// Register icons directory
 			const iconsPath = path.join(this.webAssetsPath, 'icons');
 			if (existsSync(iconsPath)) {
 				await this.server.register(fastifyStatic, {

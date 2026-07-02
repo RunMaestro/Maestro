@@ -313,6 +313,7 @@ export function buildTabCommands({
 		commands.push({
 			id: 'moveTabToFirst',
 			label: 'Move to First Position',
+			shortcut: tabShortcuts?.moveTabToStart,
 			action: () => {
 				onMoveTabToFirst();
 				setQuickActionOpen(false);
@@ -329,6 +330,7 @@ export function buildTabCommands({
 		commands.push({
 			id: 'moveTabToLast',
 			label: 'Move to Last Position',
+			shortcut: tabShortcuts?.moveTabToEnd,
 			action: () => {
 				onMoveTabToLast();
 				setQuickActionOpen(false);

@@ -22,7 +22,7 @@ import fs from 'fs/promises';
 import Store from 'electron-store';
 import { logger } from '../../utils/logger';
 import { withIpcErrorLogging } from '../../utils/ipcHandler';
-import { isWebContentsAvailable } from '../../utils/safe-send';
+import { createSafeSend } from '../../utils/safe-send';
 import { CLAUDE_SESSION_PARSE_LIMITS } from '../../constants';
 import { calculateModelCost, computeClaudeUsageCost } from '../../utils/pricing';
 import {
@@ -34,6 +34,10 @@ import {
 } from '../../utils/statsCache';
 import { app } from 'electron';
 import { captureException } from '../../utils/sentry';
+import {
+	snapshotStarredTranscript,
+	deleteStarredMirror,
+} from '../../storage/starred-transcript-mirror';
 
 /**
  * Legacy global stats cache structure for deprecated claude:getGlobalStats handler.
@@ -144,6 +148,7 @@ function extractTextFromContent(content: unknown): string {
  */
 export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 	const { claudeSessionOriginsStore, getMainWindow } = deps;
+	const safeSend = createSafeSend(getMainWindow);
 
 	// ============ List Sessions ============
 
@@ -517,8 +522,6 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 	ipcMain.handle(
 		'claude:getProjectStats',
 		withIpcErrorLogging(handlerOpts('getProjectStats'), async (projectPath: string) => {
-			const mainWindow = getMainWindow();
-
 			// Helper to send progressive updates to renderer
 			const sendUpdate = (stats: {
 				totalSessions: number;
@@ -530,9 +533,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 				processedCount?: number;
 				isComplete: boolean;
 			}) => {
-				if (isWebContentsAvailable(mainWindow)) {
-					mainWindow.webContents.send('claude:projectStatsUpdate', { projectPath, ...stats });
-				}
+				safeSend('claude:projectStatsUpdate', { projectPath, ...stats });
 			};
 
 			// Helper to parse a single session file
@@ -784,8 +785,6 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 	ipcMain.handle(
 		'claude:getGlobalStats',
 		withIpcErrorLogging(handlerOpts('getGlobalStats'), async () => {
-			const mainWindow = getMainWindow();
-
 			// Helper to send progressive updates
 			const sendUpdate = (stats: {
 				totalSessions: number;
@@ -798,9 +797,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 				totalSizeBytes: number;
 				isComplete: boolean;
 			}) => {
-				if (isWebContentsAvailable(mainWindow)) {
-					mainWindow.webContents.send('claude:globalStatsUpdate', stats);
-				}
+				safeSend('claude:globalStatsUpdate', stats);
 			};
 
 			const homeDir = os.homedir();
@@ -1726,6 +1723,22 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 					ORIGINS_LOG_CONTEXT,
 					{ projectPath }
 				);
+
+				// Mirror the transcript on star / drop it on unstar so the conversation
+				// survives provider-side deletion. Fire-and-forget - see the generic
+				// agentSessions:setSessionStarred handler for the rationale.
+				const starEntry = origins[projectPath][agentSessionId];
+				const starSessionName = typeof starEntry === 'object' ? starEntry.sessionName : undefined;
+				if (starred) {
+					void snapshotStarredTranscript({
+						agentId: 'claude-code',
+						projectPath,
+						sessionId: agentSessionId,
+						sessionName: starSessionName,
+					});
+				} else {
+					void deleteStarredMirror({ agentId: 'claude-code', sessionId: agentSessionId });
+				}
 				return true;
 			}
 		)

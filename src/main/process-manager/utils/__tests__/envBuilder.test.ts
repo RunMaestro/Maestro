@@ -304,6 +304,40 @@ describe('envBuilder - Global Environment Variables', () => {
 		});
 	});
 
+	describe('Test 2.5b-browser: BROWSER neutering (no browser-tab hijack)', () => {
+		it('forces BROWSER to a no-op so a self-healing claude cannot open a tab', () => {
+			const env = buildChildProcessEnv();
+
+			expect(env.BROWSER).toBe('/usr/bin/true');
+		});
+
+		it('neuters an inherited BROWSER from the parent process', () => {
+			const prev = process.env.BROWSER;
+			process.env.BROWSER = '/Applications/Google Chrome.app';
+			try {
+				const env = buildChildProcessEnv();
+				expect(env.BROWSER).toBe('/usr/bin/true');
+			} finally {
+				if (prev === undefined) delete process.env.BROWSER;
+				else process.env.BROWSER = prev;
+			}
+		});
+
+		it('lets an explicit global BROWSER override win', () => {
+			const env = buildChildProcessEnv(undefined, false, { BROWSER: '/usr/bin/open' });
+
+			expect(env.BROWSER).toBe('/usr/bin/open');
+		});
+
+		it('lets an explicit session-level BROWSER override win over global', () => {
+			const env = buildChildProcessEnv({ BROWSER: '/usr/bin/firefox' }, false, {
+				BROWSER: '/usr/bin/open',
+			});
+
+			expect(env.BROWSER).toBe('/usr/bin/firefox');
+		});
+	});
+
 	describe('Test 2.5c: PATH Handling', () => {
 		it('should set PATH to expanded path', () => {
 			const env = buildChildProcessEnv();

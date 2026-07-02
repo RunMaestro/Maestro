@@ -122,6 +122,7 @@ describe('director-notes IPC handlers', () => {
 			getProcessManager: () => mockProcessManager,
 			getAgentDetector: () => mockAgentDetector,
 			agentConfigsStore: { get: vi.fn(() => ({})) } as any,
+			getMainWindow: () => null,
 		});
 	});
 

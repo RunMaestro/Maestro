@@ -10,8 +10,9 @@
  * drill into fullResponse details as needed.
  */
 
-import { ipcMain, BrowserWindow } from 'electron';
+import { ipcMain, type BrowserWindow } from 'electron';
 import { logger } from '../../utils/logger';
+import { createSafeSend } from '../../utils/safe-send';
 import { HistoryEntry, ToolType } from '../../../shared/types';
 import { paginateEntries } from '../../../shared/history';
 import type { PaginatedResult } from '../../../shared/history';
@@ -111,6 +112,12 @@ export interface DirectorNotesHandlerDependencies {
 	getProcessManager: () => ProcessManager | null;
 	getAgentDetector: () => AgentDetector | null;
 	agentConfigsStore: Store<AgentConfigsData>;
+	/**
+	 * Returns the current main window (or null). Used to route synopsis
+	 * progress events through safeSend so web-desktop bridge clients receive
+	 * them alongside the desktop renderer.
+	 */
+	getMainWindow: () => BrowserWindow | null;
 }
 
 export interface UnifiedHistoryOptions {
@@ -240,7 +247,8 @@ export interface SynopsisResult {
  * - AI synopsis generation via batch-mode agent
  */
 export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependencies): void {
-	const { getProcessManager, getAgentDetector, agentConfigsStore } = deps;
+	const { getProcessManager, getAgentDetector, agentConfigsStore, getMainWindow } = deps;
+	const safeSend = createSafeSend(getMainWindow);
 	const historyManager = getHistoryManager();
 
 	// Aggregate history from all sessions with pagination support
@@ -718,17 +726,13 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 					const allConfigs = agentConfigsStore.get('configs', {});
 					const dnAgentConfigValues = allConfigs[options.provider] || {};
 
-					// Send progress updates to all renderer windows
+					// Send progress updates to the renderer and web-desktop bridge clients
 					const sendProgress = (update: {
 						chunkCount: number;
 						bytesReceived: number;
 						elapsedMs: number;
 					}) => {
-						for (const win of BrowserWindow.getAllWindows()) {
-							if (!win.isDestroyed()) {
-								win.webContents.send('director-notes:synopsisProgress', update);
-							}
-						}
+						safeSend('director-notes:synopsisProgress', update);
 					};
 
 					const result = await groomContext(

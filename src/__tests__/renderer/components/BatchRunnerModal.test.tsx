@@ -14,7 +14,10 @@ vi.mock('../../../renderer/hooks/batch/batchUtils', async () => {
 	);
 	return {
 		...actual,
-		DEFAULT_BATCH_PROMPT: content,
+		// Normalize CRLF -> LF: a Windows git checkout may give the fixture CRLF
+		// terminators, but the DOM `<textarea>` reflects its value with LF-only
+		// endings, so the comparison would otherwise mismatch. No-op on LF.
+		DEFAULT_BATCH_PROMPT: content.replace(/\r\n/g, '\n'),
 	};
 });
 

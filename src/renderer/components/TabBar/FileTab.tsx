@@ -16,6 +16,7 @@ import { getExtensionColor } from '../../utils/extensionColors';
 import { getRevealLabel } from '../../utils/platformUtils';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
+import { isCoarsePointer } from '../../utils/touch';
 import { getTabKindColor } from './tabBarUtils';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
@@ -128,6 +129,7 @@ export const FileTab = memo(function FileTab({
 		setOverlayRef,
 		positionReady,
 		setTabRef,
+		openOverlay,
 		handleMouseEnter,
 		handleMouseLeave,
 		overlayMouseEnter,
@@ -267,8 +269,14 @@ export const FileTab = memo(function FileTab({
 
 	// Handlers for drag events using stable tabId
 	const handleTabSelect = useCallback(() => {
+		// Touch has no hover: tapping the already-active tab opens the action
+		// overlay; tapping an inactive tab selects it. Mouse/keyboard unchanged.
+		if (isActive && isCoarsePointer()) {
+			openOverlay();
+			return;
+		}
 		onSelect(tab.id);
-	}, [onSelect, tab.id]);
+	}, [isActive, openOverlay, onSelect, tab.id]);
 
 	const handleTabDragStart = useCallback(
 		(e: React.DragEvent) => {
@@ -513,6 +521,9 @@ export const FileTab = memo(function FileTab({
 									>
 										<ChevronsLeft className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 										Move to First Position
+										{tabShortcuts.moveTabToStart && (
+											<ShortcutHint keys={tabShortcuts.moveTabToStart.keys} />
+										)}
 									</button>
 								)}
 
@@ -528,6 +539,9 @@ export const FileTab = memo(function FileTab({
 											style={{ color: theme.colors.textDim }}
 										/>
 										Move to Last Position
+										{tabShortcuts.moveTabToEnd && (
+											<ShortcutHint keys={tabShortcuts.moveTabToEnd.keys} />
+										)}
 									</button>
 								)}
 

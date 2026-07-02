@@ -142,7 +142,7 @@ describe('GroupChatList', () => {
 			onExpandedChange,
 			onNewGroupChat,
 		});
-		fireEvent.click(getByText('+ New Chat'));
+		fireEvent.click(getByText('New Chat'));
 		expect(onExpandedChange).toHaveBeenCalledWith(true);
 		expect(onNewGroupChat).toHaveBeenCalledTimes(1);
 	});

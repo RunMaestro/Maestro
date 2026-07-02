@@ -17,6 +17,15 @@ import { useSettingsStore } from '../stores/settingsStore';
  */
 export function findActiveUnifiedTabIndex(session: Session, order: UnifiedTabRef[]): number {
 	if (order.length === 0) return -1;
+	// A tiled group takes over the whole panel, so when one is active it IS the
+	// current tab - highest priority, ahead of any stale standalone selection. This
+	// lets next/prev navigation start from the group and land on it as one unit.
+	if (session.activeGroupId) {
+		const groupIdx = order.findIndex(
+			(ref) => ref.type === 'group' && ref.id === session.activeGroupId
+		);
+		if (groupIdx !== -1) return groupIdx;
+	}
 	if (session.activeTerminalTabId) {
 		return order.findIndex(
 			(ref) => ref.type === 'terminal' && ref.id === session.activeTerminalTabId

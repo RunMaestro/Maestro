@@ -46,8 +46,16 @@ export function isUnifiedTabActive(
 	activeFileTabId: string | null | undefined,
 	activeBrowserTabId: string | null | undefined,
 	activeTerminalTabId: string | null | undefined,
-	inputMode: 'ai' | 'terminal' | undefined
+	inputMode: 'ai' | 'terminal' | undefined,
+	activeGroupId?: string | null
 ): boolean {
+	// A tiled group is the active tab when it takes over the panel; it outranks the
+	// standalone selections (which navigation clears when a group activates).
+	if (tab.type === 'group') {
+		return tab.id === activeGroupId;
+	}
+	// While a group is active, no standalone chip should read as active.
+	if (activeGroupId) return false;
 	if (tab.type === 'ai') {
 		return (
 			tab.id === activeTabId && !activeFileTabId && !activeBrowserTabId && inputMode !== 'terminal'

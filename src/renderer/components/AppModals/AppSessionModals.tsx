@@ -46,7 +46,9 @@ export interface AppSessionModalsProps {
 		groupId?: string,
 		enableMaestroP?: boolean,
 		maestroPPath?: string,
-		maestroPMode?: 'interactive' | 'dynamic'
+		maestroPMode?: 'interactive' | 'dynamic',
+		retryOnAvailabilityErrors?: boolean,
+		retryOnTokenExhaustion?: boolean
 	) => void;
 	existingSessions: Session[];
 	sourceSession?: Session; // For agent duplication
@@ -73,7 +75,9 @@ export interface AppSessionModalsProps {
 		},
 		enableMaestroP?: boolean,
 		maestroPPath?: string,
-		maestroPMode?: 'interactive' | 'dynamic'
+		maestroPMode?: 'interactive' | 'dynamic',
+		retryOnAvailabilityErrors?: boolean,
+		retryOnTokenExhaustion?: boolean
 	) => void;
 	editAgentSession: Session | null;
 

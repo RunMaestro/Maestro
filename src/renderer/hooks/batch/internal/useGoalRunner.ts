@@ -19,6 +19,12 @@ import { isLimitError } from '../../../../shared/types';
 import { parseGoalMarkers, stripMaestroMarkers } from '../../../../shared/goalDriven/goalMarkers';
 import { evaluateGoalExit } from '../../../../shared/goalDriven/goalExitEvaluator';
 import { formatGoalRunDocumentPath } from '../../../../shared/goalDriven/goalRunLabel';
+import {
+	GOAL_SYNOPSIS_REQUEST_PROMPT,
+	formatPredecessorHandoff,
+	sanitizeHandoffBlurb,
+} from '../../../../shared/goalDriven/goalHandoff';
+import { hasCapabilityCached } from '../../agent/useAgentCapabilities';
 import { formatElapsedTime, truncateCommand } from '../../../../shared/formatters';
 import {
 	substituteTemplateVariables,
@@ -56,6 +62,41 @@ type SpawnAgentFn = (
 	errorKind?: AgentSpawnErrorKind;
 }>;
 
+/**
+ * Resume an existing provider session and run a prompt against it (used to ask a
+ * finished iteration for a handoff note). Matches `spawnBackgroundSynopsis` from
+ * `useAgentExecution` - the same primitive the document runner uses for its
+ * exit-synopsis - so SSH and per-session config are honored on the resume.
+ */
+type SpawnBackgroundSynopsisFn = (
+	sessionId: string,
+	cwd: string,
+	resumeAgentSessionId: string,
+	prompt: string,
+	toolType?: Session['toolType'],
+	sessionConfig?: {
+		customPath?: string;
+		customArgs?: string;
+		customEnvVars?: Record<string, string>;
+		customModel?: string;
+		customContextWindow?: number;
+		enableMaestroP?: boolean;
+		maestroPMode?: 'interactive' | 'dynamic';
+		maestroPPath?: string;
+		sessionSshRemoteConfig?: {
+			enabled: boolean;
+			remoteId: string | null;
+			workingDirOverride?: string;
+		};
+	}
+) => Promise<{
+	success: boolean;
+	response?: string;
+	agentSessionId?: string;
+	usageStats?: UsageStats;
+	contextUsage?: number;
+}>;
+
 export interface UseGoalRunnerDeps {
 	// Refs (shared with useBatchRunner so lifecycle behavior stays consistent)
 	sessionsRef: MutableRefObject<Session[]>;
@@ -77,6 +118,12 @@ export interface UseGoalRunnerDeps {
 	// Coordinator props
 	groups: Group[];
 	onSpawnAgent: SpawnAgentFn;
+	/**
+	 * Resume a finished iteration's session to capture a handoff note for the next
+	 * (fresh-context) iteration. Same primitive the document runner uses for its
+	 * exit synopsis; SSH + agent-config overrides are honored on the resume.
+	 */
+	spawnBackgroundSynopsis: SpawnBackgroundSynopsisFn;
 	onAddHistoryEntry: (entry: Omit<HistoryEntry, 'id'>) => void | Promise<void>;
 	onComplete?: (info: BatchCompleteInfo) => void;
 	onProcessQueueAfterCompletion?: (sessionId: string) => void;
@@ -161,6 +208,7 @@ export function useGoalRunner({
 	timeTracking,
 	groups,
 	onSpawnAgent,
+	spawnBackgroundSynopsis,
 	onAddHistoryEntry,
 	onComplete,
 	onProcessQueueAfterCompletion,
@@ -351,6 +399,9 @@ export function useGoalRunner({
 			let totalCost = 0;
 			let finalProgress = 0;
 			let iteration = 0;
+			// Handoff note carried from the previous iteration's session into the next
+			// (fresh-context) iteration's prompt. Empty for the first iteration.
+			let predecessorBlurb = '';
 
 			// Start stats tracking. Record the goal as the document path behind a
 			// `Goal: ` prefix (trimmed to a readable length) so the run is
@@ -422,6 +473,7 @@ export function useGoalRunner({
 					loopNumber: iteration,
 					goal: goalConfig.goal,
 					goalExitCriteria: goalConfig.exitCriteria,
+					predecessorHandoff: formatPredecessorHandoff(predecessorBlurb),
 				};
 				// Each goal iteration spawns a fresh provider session, so prefix the
 				// agent's New Session Message onto every spawn (matches interactive behavior).
@@ -652,6 +704,51 @@ export function useGoalRunner({
 					exitDetail = decision.detail;
 					break;
 				}
+
+				// Continuing: resume this iteration's session to capture a handoff note
+				// for the next (fresh-context) iteration. Gated on the agent supporting
+				// resume - without it the resumed "session" has no context and the note
+				// would be worthless, so we'd rather carry nothing forward. Mirrors the
+				// CLI runner (src/cli/services/goal-runner.ts) exactly.
+				if (
+					result.success &&
+					result.agentSessionId &&
+					hasCapabilityCached(session.toolType, 'supportsResume')
+				) {
+					try {
+						const handoff = await spawnBackgroundSynopsis(
+							sessionId,
+							effectiveCwd,
+							result.agentSessionId,
+							GOAL_SYNOPSIS_REQUEST_PROMPT,
+							session.toolType,
+							{
+								customPath: session.customPath,
+								customArgs: session.customArgs,
+								customEnvVars: session.customEnvVars,
+								customModel: session.customModel,
+								customContextWindow: session.customContextWindow,
+								enableMaestroP: session.enableMaestroP,
+								maestroPMode: session.maestroPMode,
+								maestroPPath: session.maestroPPath,
+								sessionSshRemoteConfig: session.sessionSshRemoteConfig,
+							}
+						);
+						if (handoff.usageStats) {
+							totalInputTokens += handoff.usageStats.inputTokens || 0;
+							totalOutputTokens += handoff.usageStats.outputTokens || 0;
+							totalCost += handoff.usageStats.totalCostUsd || 0;
+						}
+						// Only overwrite when we got something usable; otherwise keep the
+						// previous note rather than blanking the next iteration's handoff.
+						const blurb = handoff.success ? sanitizeHandoffBlurb(handoff.response) : '';
+						if (blurb) {
+							predecessorBlurb = blurb;
+						}
+					} catch (err) {
+						logger.warn('[GoalRunner] Handoff synopsis request failed', undefined, err);
+					}
+				}
 			}
 
 			// Record the exit reason in state (broadcast to web before the COMPLETE_BATCH reset).
@@ -779,6 +876,7 @@ export function useGoalRunner({
 			onComplete,
 			onProcessQueueAfterCompletion,
 			onSpawnAgent,
+			spawnBackgroundSynopsis,
 			sessionsRef,
 			stopRequestedRefs,
 			timeTracking,

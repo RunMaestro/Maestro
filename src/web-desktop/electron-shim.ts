@@ -249,11 +249,29 @@ export const shell = {
 	},
 };
 
+// Browser zoom. In Electron, webFrame scales the WebFrame's contents; here we
+// emulate it by scaling the whole document via the CSS `zoom` property, which
+// Chromium (the web-desktop target) honors. The factor <-> level relation
+// mirrors Electron's: each level step is 20% larger/smaller, so
+// factor = 1.2 ** level and level = log(factor) / log(1.2).
+let zoomFactor = 1;
+
+function applyZoomFactor(factor: number): void {
+	zoomFactor = factor;
+	if (typeof document !== 'undefined') {
+		document.documentElement.style.zoom = String(factor);
+	}
+}
+
 export const webFrame = {
-	setZoomFactor: () => {},
-	getZoomFactor: () => 1,
-	setZoomLevel: () => {},
-	getZoomLevel: () => 0,
+	setZoomFactor: (factor: number): void => {
+		applyZoomFactor(factor);
+	},
+	getZoomFactor: (): number => zoomFactor,
+	setZoomLevel: (level: number): void => {
+		applyZoomFactor(1.2 ** level);
+	},
+	getZoomLevel: (): number => Math.log(zoomFactor) / Math.log(1.2),
 };
 
 export const webUtils = {

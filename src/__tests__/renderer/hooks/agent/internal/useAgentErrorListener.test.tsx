@@ -5,6 +5,12 @@ import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
 import { useModalStore } from '../../../../../renderer/stores/modalStore';
 import { createMockSession } from '../../../../helpers/mockSession';
 import { createMockAITab } from '../../../../helpers/mockTab';
+import {
+	useRetryStore,
+	noteDispatch,
+	cancelRetry,
+	registerBatchResumer,
+} from '../../../../../renderer/stores/retryStore';
 
 let handler: ((sessionId: string, error: any) => void) | undefined;
 const mockUnsubscribe = vi.fn();
@@ -41,8 +47,25 @@ beforeEach(() => {
 		removedWorktreePaths: new Set(),
 	});
 	useModalStore.getState().closeAll();
+	useRetryStore.setState({ retries: {}, outages: {} });
 	(window as any).maestro = { ...((window as any).maestro || {}), process: mockProcess };
 });
+
+const overloadError = {
+	type: 'rate_limited',
+	message: 'API Error: 529 Overloaded',
+	timestamp: 1700000000000,
+	agentId: 'claude-code',
+	recoverable: true,
+};
+
+function seedSnapshot(sessionId: string, tabId: string) {
+	noteDispatch(
+		sessionId,
+		{ id: 'item-1', timestamp: 1, tabId, type: 'message', text: 'hi' },
+		{ conductorProfile: '', customAICommands: [], speckitCommands: [], openspecCommands: [] }
+	);
+}
 
 function makeDeps() {
 	return {
@@ -252,6 +275,114 @@ describe('useAgentErrorListener', () => {
 		expect(paused.agentErrorPaused).toBe(true);
 		expect(getLimitResetAt).not.toHaveBeenCalled();
 		expect(paused.agentError?.limitResetAt).toBeUndefined();
+	});
+
+	it('auto-retries a recoverable overload error and suppresses the modal', () => {
+		const tab = createMockAITab({ id: 'tab-1' });
+		const session = createMockSession({ id: 'sess-1', aiTabs: [tab], activeTabId: 'tab-1' });
+		useSessionStore.setState({ sessions: [session] } as any);
+		// A prompt must have been dispatched so there's something to resend.
+		seedSnapshot('sess-1', 'tab-1');
+
+		renderHook(() => useAgentErrorListener(makeDeps()));
+		handler!('sess-1-ai-tab-1', overloadError);
+
+		// No blocking error state / modal — the retry engine owns it.
+		const updated = useSessionStore.getState().sessions[0];
+		expect(updated.state).not.toBe('error');
+		expect(updated.agentError).toBeUndefined();
+		expect(useModalStore.getState().modals.get('agentError')?.open ?? false).toBe(false);
+
+		// A retry was scheduled with the availability strategy.
+		const entry = useRetryStore.getState().retries['sess-1:tab-1'];
+		expect(entry?.strategy).toBe('availability');
+		expect(entry?.attempt).toBe(0);
+
+		// The transcript gets ONE outage-marker entry (a live status card anchor):
+		// a non-blocking system entry carrying the outage id, not a red error frame.
+		const markers = updated.aiTabs[0].logs.filter((l) => l.retryOutageId);
+		expect(markers).toHaveLength(1);
+		expect(markers[0].source).toBe('system');
+		expect(markers[0].retryOutageId).toBe(entry?.outageId);
+		expect(updated.aiTabs[0].logs.some((l) => l.source === 'error')).toBe(false);
+
+		cancelRetry('sess-1', 'tab-1'); // clear the pending timer
+	});
+
+	it('collapses a continued outage into the single existing marker (no new entries)', () => {
+		const tab = createMockAITab({ id: 'tab-1' });
+		const session = createMockSession({ id: 'sess-1', aiTabs: [tab], activeTabId: 'tab-1' });
+		useSessionStore.setState({ sessions: [session] } as any);
+		seedSnapshot('sess-1', 'tab-1');
+
+		renderHook(() => useAgentErrorListener(makeDeps()));
+		// First failure → one marker appended.
+		handler!('sess-1-ai-tab-1', overloadError);
+		const outageId = useRetryStore.getState().retries['sess-1:tab-1']?.outageId;
+
+		// A second failure for the same outage (the resend failed again) must NOT
+		// append another transcript entry — the live card already covers it.
+		handler!('sess-1-ai-tab-1', overloadError);
+
+		const logs = useSessionStore.getState().sessions[0].aiTabs[0].logs;
+		const markers = logs.filter((l) => l.retryOutageId);
+		expect(markers).toHaveLength(1);
+		expect(markers[0].retryOutageId).toBe(outageId);
+
+		cancelRetry('sess-1', 'tab-1');
+	});
+
+	it('auto-continues an Auto Run batch (resumes instead of pausing for the user)', () => {
+		const tab = createMockAITab({ id: 'tab-1' });
+		const session = createMockSession({ id: 'sess-1', aiTabs: [tab], activeTabId: 'tab-1' });
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		// A running batch owns the turn; register the resume hook App normally wires.
+		const resumer = vi.fn();
+		registerBatchResumer(resumer);
+		const pauseBatchOnError = vi.fn();
+		const deps = {
+			...makeDeps(),
+			getBatchStateRef: {
+				current: () => ({
+					isRunning: true,
+					errorPaused: false,
+					documents: ['plan.md'],
+					currentDocumentIndex: 0,
+				}),
+			},
+			pauseBatchOnErrorRef: { current: pauseBatchOnError },
+		} as any;
+
+		renderHook(() => useAgentErrorListener(deps));
+		handler!('sess-1-ai-tab-1', overloadError);
+
+		// The batch was parked (so the loop can be resumed) but the modal stays shut.
+		expect(pauseBatchOnError).toHaveBeenCalled();
+		expect(useModalStore.getState().modals.get('agentError')?.open ?? false).toBe(false);
+
+		// A batch-resume retry was scheduled (no prompt snapshot needed).
+		const entry = useRetryStore.getState().retries['sess-1:tab-1'];
+		expect(entry?.mode).toBe('batch-resume');
+		expect(entry?.strategy).toBe('availability');
+
+		cancelRetry('sess-1', 'tab-1');
+		registerBatchResumer(null);
+	});
+
+	it('falls back to the error modal when there is no prompt to resend', () => {
+		const tab = createMockAITab({ id: 'tab-2' });
+		const session = createMockSession({ id: 'sess-2', aiTabs: [tab], activeTabId: 'tab-2' });
+		useSessionStore.setState({ sessions: [session] } as any);
+		// No seedSnapshot → nothing captured → cannot auto-retry.
+
+		renderHook(() => useAgentErrorListener(makeDeps()));
+		handler!('sess-2-ai-tab-2', overloadError);
+
+		const updated = useSessionStore.getState().sessions[0];
+		expect(updated.state).toBe('error');
+		expect(useModalStore.getState().modals.get('agentError')?.open ?? false).toBe(true);
+		expect(useRetryStore.getState().retries['sess-2:tab-2']).toBeUndefined();
 	});
 
 	it('skips synopsis-process errors', () => {

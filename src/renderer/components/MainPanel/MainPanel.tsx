@@ -18,8 +18,14 @@ import type { BrowserTabViewHandle } from './BrowserTabView';
 import { gitService } from '../../services/git';
 import { useAgentCapabilities } from '../../hooks';
 import { useUIStore } from '../../stores/uiStore';
-import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
+import { useSessionStore, selectActiveSession, updateSessionWith } from '../../stores/sessionStore';
 import { useTabStore } from '../../stores/tabStore';
+import {
+	breakApartGroup,
+	collectLeafTabRefs,
+	generateGroupName,
+	resolveTabRefTitle,
+} from '../../utils/panelLayout';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { useTerminalMounting } from '../../hooks/terminal/useTerminalMounting';
@@ -27,7 +33,7 @@ import { useCoworkingBufferResponder } from '../../hooks/coworking/useCoworkingB
 import { useCoworkingRegistrySync } from '../../hooks/coworking/useCoworkingRegistrySync';
 import { useCoworkingBrowserResponder } from '../../hooks/coworking/useCoworkingBrowserResponder';
 import { getTerminalTabDisplayName } from '../../utils/terminalTabHelpers';
-import { aiTabFocusFields } from '../../utils/tabHelpers';
+import { aiTabFocusFields, computeUnreadGroupIds } from '../../utils/tabHelpers';
 import { useSshRemoteName } from '../../hooks/mainPanel/useSshRemoteName';
 import { useContextWindow } from '../../hooks/mainPanel/useContextWindow';
 import { useFilePreviewHandlers } from '../../hooks/mainPanel/useFilePreviewHandlers';
@@ -38,7 +44,30 @@ import { MainPanelContent } from './MainPanelContent';
 import { AgentErrorBanner } from './AgentErrorBanner';
 import { CoworkingApprovalHost } from '../coworking/CoworkingApprovalHost';
 import { CoworkingBackgroundBrowsers } from '../coworking/CoworkingBackgroundBrowsers';
+import { useWindowOwnsSession } from '../../contexts/WindowContext';
+import type { PaneTabActions } from './TiledLayout';
+import type { Theme, UnifiedTabRef } from '../../types';
 import type { MainPanelHandle, MainPanelProps } from './types';
+
+/**
+ * Empty placeholder shown when this window has no agent to display - either no
+ * agent is active, or the active agent now lives in another window (multi-window
+ * scoping). Kept module-scope so both the "no active session" and "active agent
+ * owned elsewhere" branches render the identical clean state.
+ */
+function EmptyMainPanel({ theme }: { theme: Theme }) {
+	return (
+		<div
+			className="flex-1 flex flex-col items-center justify-center min-w-0 relative opacity-30"
+			style={{ backgroundColor: theme.colors.bgMain }}
+		>
+			<Wand2 className="w-16 h-16 mb-4" style={{ color: theme.colors.textDim }} />
+			<p className="text-sm" style={{ color: theme.colors.textDim }}>
+				No agents. Create one to get started.
+			</p>
+		</div>
+	);
+}
 
 // PERFORMANCE: Wrap with React.memo to prevent re-renders when parent (App.tsx) re-renders
 // due to input value changes. The component will only re-render when its props actually change.
@@ -52,7 +81,6 @@ export const MainPanel = React.memo(
 			activeSession,
 			thinkingItems,
 			theme,
-			inputValue,
 			stagedImages,
 			commandHistoryOpen,
 			commandHistoryFilter,
@@ -70,12 +98,15 @@ export const MainPanel = React.memo(
 			atMentionOpen,
 			atMentionFilter,
 			atMentionStartIndex,
-			atMentionSuggestions,
+			atMentionItems,
+			atMentionCounts,
+			atMentionCategory,
 			selectedAtMentionIndex,
 			setAtMentionOpen,
 			setAtMentionFilter,
 			setAtMentionStartIndex,
 			setSelectedAtMentionIndex,
+			setAtMentionCategory,
 			setGitDiffPreview,
 			setLogViewerOpen,
 			setAgentSessionsOpen,
@@ -107,6 +138,7 @@ export const MainPanel = React.memo(
 			onStopBatchRun,
 			onRemoveQueuedItem,
 			onTogglePauseQueuedItem,
+			onEditQueuedItem,
 			onReorderQueuedItem,
 			onForceSendQueuedItem,
 			forcedParallelEnabled,
@@ -288,6 +320,58 @@ export const MainPanel = React.memo(
 				);
 			},
 			[setLogViewerOpen, setActiveSessionId, setSessions]
+		);
+
+		// Activate a tiled tab group: set activeGroupId (so MainPanelContent renders
+		// the group's layout) and clear the standalone active-tab ids/inputMode so no
+		// single-view content competes with the group for the panel.
+		const handleGroupSelect = useCallback(
+			(groupId: string) => {
+				if (!activeSession) return;
+				setSessions((prev) =>
+					prev.map((s) =>
+						s.id === activeSession.id
+							? {
+									...s,
+									activeGroupId: groupId,
+									activeFileTabId: null,
+									activeBrowserTabId: null,
+									activeTerminalTabId: null,
+									inputMode: 'ai',
+								}
+							: s
+					)
+				);
+			},
+			[activeSession, setSessions]
+		);
+
+		// Rename a group chip. Delegates to the tab-store rename action, resolving the
+		// auto-name fallback (used when the user clears the field) from the group's
+		// first pane title via the shared resolver so it matches the drop-time name.
+		const renameGroupAction = useTabStore((s) => s.renameGroup);
+		const handleGroupRename = useCallback(
+			(groupId: string, name: string) => {
+				if (!activeSession) return;
+				const group = activeSession.tabGroups?.find((g) => g.id === groupId);
+				const firstRef = group ? collectLeafTabRefs(group.layout)[0] : undefined;
+				const fallback = firstRef
+					? generateGroupName(resolveTabRefTitle(activeSession, firstRef))
+					: (group?.name ?? 'Group');
+				renameGroupAction(groupId, name, fallback);
+			},
+			[activeSession, renameGroupAction]
+		);
+
+		// Break a group apart into standalone tabs (the confirm dialog lives in the
+		// group chip). Promotes every pane back to the tab bar in left-to-right order,
+		// drops the group, and lands focus on the first promoted tab.
+		const handleGroupBreakApart = useCallback(
+			(groupId: string) => {
+				if (!activeSession) return;
+				updateSessionWith(activeSession.id, (s) => breakApartGroup(s, groupId));
+			},
+			[activeSession]
 		);
 
 		// Fetch available models, effort levels, and agent defaults when agent type changes.
@@ -651,6 +735,72 @@ export const MainPanel = React.memo(
 			sendBrowserContentToAgent: handleSendBrowserContentToAgent,
 		};
 
+		// Bundle the per-kind pane dropdown actions once so a single stable object
+		// threads down to TiledLayout (instead of ~15 separate props). Mirrors the exact
+		// handlers + availability gates the TabBar chips use, so a tiled tab's chevron
+		// menu offers the same actions its strip chip would. Close dispatches per kind.
+		const paneTabActions = useMemo<PaneTabActions>(
+			() => ({
+				onStar: onTabStar,
+				onMarkUnread: onTabMarkUnread,
+				onCopyContext,
+				onExportHtml,
+				onPublishGist: props.onPublishTabGist,
+				onMergeWith,
+				onSendToAgent,
+				onSummarizeAndContinue,
+				onCopyTerminalBuffer: props.onCopyText ? handleCopyTerminalBuffer : undefined,
+				onSendTerminalBufferToAgent: props.onSendTextToAgent
+					? handleSendTerminalBufferToAgent
+					: undefined,
+				onPublishTerminalBufferGist: props.onPublishTextAsGist
+					? handlePublishTerminalBufferGist
+					: undefined,
+				onConfigureTerminalStartup: onTerminalTabConfigureStartupCommand,
+				onCopyBrowserContent: props.onCopyText ? handleCopyBrowserContent : undefined,
+				onSendBrowserContentToAgent: props.onSendTextToAgent
+					? handleSendBrowserContentToAgent
+					: undefined,
+				onCloseTab: (ref: UnifiedTabRef) => {
+					if (ref.type === 'ai') onTabClose?.(ref.id);
+					else if (ref.type === 'file') onFileTabClose?.(ref.id);
+					else if (ref.type === 'terminal') onTerminalTabClose?.(ref.id);
+					else if (ref.type === 'browser') onBrowserTabClose?.(ref.id);
+				},
+			}),
+			[
+				onTabStar,
+				onTabMarkUnread,
+				onCopyContext,
+				onExportHtml,
+				props.onPublishTabGist,
+				onMergeWith,
+				onSendToAgent,
+				onSummarizeAndContinue,
+				props.onCopyText,
+				props.onSendTextToAgent,
+				props.onPublishTextAsGist,
+				handleCopyTerminalBuffer,
+				handleSendTerminalBufferToAgent,
+				handlePublishTerminalBufferGist,
+				onTerminalTabConfigureStartupCommand,
+				handleCopyBrowserContent,
+				handleSendBrowserContentToAgent,
+				onTabClose,
+				onFileTabClose,
+				onTerminalTabClose,
+				onBrowserTabClose,
+			]
+		);
+
+		// Group ids that survive the unread filter (any collapsed member is unread), so
+		// the TabBar can gate group chips the same way it gates AI tabs. Only computed
+		// while the filter is active (undefined otherwise -> all groups shown).
+		const unreadGroupIds = useMemo(
+			() => (showUnreadOnly && activeSession ? computeUnreadGroupIds(activeSession) : undefined),
+			[showUnreadOnly, activeSession]
+		);
+
 		// Handler for input focus - select session in sidebar
 		// Memoized to avoid recreating on every render
 		const handleInputFocus = useCallback(() => {
@@ -731,6 +881,16 @@ export const MainPanel = React.memo(
 		// don't mount this zone.
 		const chatDropZone = useChatFileDropZone(theme, handleDrop);
 
+		// Multi-window scoping: this window only renders an agent it owns. If the
+		// store's active agent lives in (or has moved to) another window, fall back
+		// to the clean empty state instead of showing a stale view (or that agent's
+		// own session/memory overlays). Outside a WindowProvider (single-window /
+		// isolation tests) this is always true, so behaviour is unchanged.
+		const ownsActiveSession = useWindowOwnsSession(activeSession?.id);
+		if (activeSession && !ownsActiveSession) {
+			return <EmptyMainPanel theme={theme} />;
+		}
+
 		// Show log viewer
 		if (logViewerOpen) {
 			return (
@@ -789,17 +949,7 @@ export const MainPanel = React.memo(
 
 		// Show empty state when no active session
 		if (!activeSession) {
-			return (
-				<div
-					className="flex-1 flex flex-col items-center justify-center min-w-0 relative opacity-30"
-					style={{ backgroundColor: theme.colors.bgMain }}
-				>
-					<Wand2 className="w-16 h-16 mb-4" style={{ color: theme.colors.textDim }} />
-					<p className="text-sm" style={{ color: theme.colors.textDim }}>
-						No agents. Create one to get started.
-					</p>
-				</div>
-			);
+			return <EmptyMainPanel theme={theme} />;
 		}
 
 		// File preview eligibility checked inline below
@@ -914,6 +1064,13 @@ export const MainPanel = React.memo(
 									onSendBrowserContentToAgent={
 										props.onSendTextToAgent ? handleSendBrowserContentToAgent : undefined
 									}
+									// Tab tiling (split panes)
+									tabGroups={activeSession.tabGroups}
+									unreadGroupIds={unreadGroupIds}
+									activeGroupId={activeSession.activeGroupId}
+									onGroupSelect={handleGroupSelect}
+									onGroupRename={handleGroupRename}
+									onGroupBreakApart={handleGroupBreakApart}
 									// Accessibility
 									colorBlindMode={colorBlindMode}
 									// Hide local-only OS actions (Reveal in Finder) when the agent runs over SSH
@@ -975,7 +1132,6 @@ export const MainPanel = React.memo(
 							isCurrentSessionAutoMode={isCurrentSessionAutoMode}
 							currentSessionBatchState={currentSessionBatchState}
 							hasCapability={hasCapability}
-							inputValue={inputValue}
 							setInputValue={setInputValue}
 							stagedImages={stagedImages}
 							setStagedImages={setStagedImages}
@@ -1004,7 +1160,10 @@ export const MainPanel = React.memo(
 							setAtMentionFilter={setAtMentionFilter}
 							atMentionStartIndex={atMentionStartIndex}
 							setAtMentionStartIndex={setAtMentionStartIndex}
-							atMentionSuggestions={atMentionSuggestions}
+							atMentionItems={atMentionItems}
+							atMentionCounts={atMentionCounts}
+							atMentionCategory={atMentionCategory}
+							setAtMentionCategory={setAtMentionCategory}
 							selectedAtMentionIndex={selectedAtMentionIndex}
 							setSelectedAtMentionIndex={setSelectedAtMentionIndex}
 							inputRef={inputRef}
@@ -1020,6 +1179,7 @@ export const MainPanel = React.memo(
 							onStopBatchRun={onStopBatchRun}
 							onRemoveQueuedItem={onRemoveQueuedItem}
 							onTogglePauseQueuedItem={onTogglePauseQueuedItem}
+							onEditQueuedItem={onEditQueuedItem}
 							onReorderQueuedItem={onReorderQueuedItem}
 							onForceSendQueuedItem={onForceSendQueuedItem}
 							forcedParallelEnabled={forcedParallelEnabled}
@@ -1040,6 +1200,7 @@ export const MainPanel = React.memo(
 							mergeTargetName={mergeTargetName}
 							onCancelMerge={onCancelMerge}
 							onExitWizard={onExitWizard}
+							paneTabActions={paneTabActions}
 							onDeleteLog={props.onDeleteLog}
 							onScrollPositionChange={props.onScrollPositionChange}
 							onAtBottomChange={props.onAtBottomChange}
