@@ -67,10 +67,14 @@ describe('buildCrossAgentPrompt', () => {
 		expect(prompt).toMatch(/^You are being consulted by another agent in Maestro\./);
 		expect(prompt).toContain('**User:** Hi');
 		expect(prompt).toContain('**Assistant:** Yo');
-		expect(prompt).toContain('**Question from the user (relayed via the source agent):**\nThoughts?');
+		expect(prompt).toContain(
+			'**Question from the user (relayed via the source agent):**\nThoughts?'
+		);
 		// The header comes before the transcript, which comes before the question.
 		expect(prompt.indexOf('consulted')).toBeLessThan(prompt.indexOf('**User:** Hi'));
-		expect(prompt.indexOf('**Assistant:** Yo')).toBeLessThan(prompt.indexOf('Question from the user'));
+		expect(prompt.indexOf('**Assistant:** Yo')).toBeLessThan(
+			prompt.indexOf('Question from the user')
+		);
 	});
 
 	it('omits the transcript block entirely when there is nothing to forward', () => {

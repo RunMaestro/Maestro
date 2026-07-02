@@ -8,10 +8,7 @@
  */
 
 import { ipcRenderer } from 'electron';
-import type {
-	CrossAgentSendRequest,
-	CrossAgentResponseChunk,
-} from '../../shared/crossAgentTypes';
+import type { CrossAgentSendRequest, CrossAgentResponseChunk } from '../../shared/crossAgentTypes';
 
 /**
  * Creates the cross-agent API object for preload exposure.

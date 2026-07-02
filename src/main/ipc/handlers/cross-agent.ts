@@ -14,7 +14,11 @@
 import { ipcMain } from 'electron';
 import * as os from 'os';
 import type Store from 'electron-store';
-import { withIpcErrorLogging, requireDependency, CreateHandlerOptions } from '../../utils/ipcHandler';
+import {
+	withIpcErrorLogging,
+	requireDependency,
+	CreateHandlerOptions,
+} from '../../utils/ipcHandler';
 import type { ProcessManager } from '../../process-manager';
 import type { AgentDetector } from '../../agents';
 import type { SessionsData, AgentConfigsData } from '../../stores/types';

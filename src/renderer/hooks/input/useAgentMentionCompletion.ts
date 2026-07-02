@@ -59,7 +59,9 @@ export function buildAgentMentionSuggestions(
 	groups: Group[] | undefined,
 	currentSessionId: string | null | undefined
 ): AgentMentionSuggestion[] {
-	const mentionable = sessions.filter((s) => s.toolType !== 'terminal' && s.id !== currentSessionId);
+	const mentionable = sessions.filter(
+		(s) => s.toolType !== 'terminal' && s.id !== currentSessionId
+	);
 	const peerNames = mentionable.map((s) => s.name);
 
 	const result: AgentMentionSuggestion[] = [];

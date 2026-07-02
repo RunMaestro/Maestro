@@ -78,7 +78,9 @@ describe('tokenizeMentions', () => {
 	});
 
 	it('leaves a bare @word as plain text', () => {
-		expect(tokenizeMentions('@todo later', KNOWN)).toEqual([{ kind: 'text', value: '@todo later' }]);
+		expect(tokenizeMentions('@todo later', KNOWN)).toEqual([
+			{ kind: 'text', value: '@todo later' },
+		]);
 	});
 
 	it('skips mid-word mentions (foo@bar, email@host)', () => {

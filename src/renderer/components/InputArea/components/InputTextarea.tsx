@@ -86,7 +86,9 @@ export const InputTextarea = memo(function InputTextarea({
 	// the SELECTORS (not just the derived memo) keeps an `@`-free composer from
 	// re-rendering on unrelated output - the stable empty refs compare equal.
 	const hasMentionCandidate = overlayEnabled && inputValue.includes('@');
-	const sessions = useSessionStore((state) => (hasMentionCandidate ? state.sessions : EMPTY_SESSIONS));
+	const sessions = useSessionStore((state) =>
+		hasMentionCandidate ? state.sessions : EMPTY_SESSIONS
+	);
 	const groups = useSessionStore((state) => (hasMentionCandidate ? state.groups : EMPTY_GROUPS));
 	const knownMentionNames = useMemo(
 		() =>

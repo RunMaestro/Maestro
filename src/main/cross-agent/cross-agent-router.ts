@@ -165,9 +165,7 @@ export async function startCrossAgentRequest(
 
 	// Base fields shared by every chunk we emit for this request. targetToolType
 	// / name fall back to the raw id when the session can't be resolved.
-	const baseChunk = (
-		overrides: Partial<CrossAgentResponseChunk>
-	): CrossAgentResponseChunk => ({
+	const baseChunk = (overrides: Partial<CrossAgentResponseChunk>): CrossAgentResponseChunk => ({
 		requestId: request.requestId,
 		sourceSessionId: request.sourceSessionId,
 		sourceTabId: request.sourceTabId,
@@ -318,9 +316,7 @@ export async function startCrossAgentRequest(
 		} catch {
 			// Process may already be gone - nothing to kill.
 		}
-		emitError(
-			`${target.name} did not respond within ${CROSS_AGENT_TIMEOUT_MS / 60000} minutes.`
-		);
+		emitError(`${target.name} did not respond within ${CROSS_AGENT_TIMEOUT_MS / 60000} minutes.`);
 	}, CROSS_AGENT_TIMEOUT_MS);
 
 	try {

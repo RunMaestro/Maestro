@@ -37,9 +37,7 @@ describe('useAgentMentionCompletion', () => {
 
 		expect(suggestions).toHaveLength(2);
 		expect(suggestions.every((s) => s.kind === 'agent')).toBe(true);
-		expect(suggestions.map((s) => s.value)).toEqual(
-			expect.arrayContaining(['@Alpha ', '@Beta '])
-		);
+		expect(suggestions.map((s) => s.value)).toEqual(expect.arrayContaining(['@Alpha ', '@Beta ']));
 		// Token carries a single-at prefix, a single trailing space, and no `@@`.
 		for (const s of suggestions) {
 			expect(s.value.startsWith('@')).toBe(true);

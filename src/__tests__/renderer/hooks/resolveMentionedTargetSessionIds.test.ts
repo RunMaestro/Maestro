@@ -17,9 +17,9 @@ const group = (id: string, name: string): Group => ({ id, name, emoji: '', colla
 
 describe('resolveMentionedTargetSessionIds', () => {
 	it('returns [] when the message has no mentions', () => {
-		expect(resolveMentionedTargetSessionIds('hello world', [agent('a', 'Alpha')], [], 'cur')).toEqual(
-			[]
-		);
+		expect(
+			resolveMentionedTargetSessionIds('hello world', [agent('a', 'Alpha')], [], 'cur')
+		).toEqual([]);
 	});
 
 	it('resolves a single @agent mention to its session id', () => {
@@ -29,9 +29,9 @@ describe('resolveMentionedTargetSessionIds', () => {
 
 	it('is case-insensitive and matches normalized (hyphenated) names', () => {
 		const sessions = [agent('r', 'Review Bot')];
-		expect(resolveMentionedTargetSessionIds('@review-bot take a look', sessions, [], 'cur')).toEqual(
-			['r']
-		);
+		expect(
+			resolveMentionedTargetSessionIds('@review-bot take a look', sessions, [], 'cur')
+		).toEqual(['r']);
 	});
 
 	it('excludes the source session (an agent cannot mention itself)', () => {
