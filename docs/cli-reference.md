@@ -848,6 +848,35 @@ Show a center-screen flash (momentary, exclusive — replaces any active flash)
 | `-t, --timeout <seconds>` | Auto-dismiss after N seconds (range: (0, 5]; default 1.5)  | -       |
 | `--json`                  | Output as JSON (for scripting)                             | -       |
 
+## `maestro-cli profiling`
+
+Start/stop a Chromium performance capture in the desktop app (for perf iteration)
+
+## `maestro-cli profiling start`
+
+Begin a performance capture (no-ops if one is already recording)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli profiling stop`
+
+Stop the capture and write the compressed .zip bundle to --output
+
+| Option                | Description                                                                               | Default |
+| --------------------- | ----------------------------------------------------------------------------------------- | ------- |
+| `-o, --output <path>` | Destination .zip path (absolute or relative to cwd; ~ expanded). Parent dirs are created. | -       |
+| `--json`              | Output as JSON (for scripting)                                                            | -       |
+
+## `maestro-cli profiling status`
+
+Report whether a capture is currently recording
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
 ## `maestro-cli stats`
 
 Show aggregated Usage Dashboard metrics for a time range
