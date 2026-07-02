@@ -167,6 +167,12 @@ vi.mock('../../../web/hooks/useOfflineQueue', () => ({
 		clearQueue: mockClearQueue,
 		processQueue: mockProcessQueue,
 	}),
+	// Mock the localStorage adapter factory that's imported by the App component
+	createLocalStorageAdapter: () => ({
+		getItem: vi.fn(() => Promise.resolve(null)),
+		setItem: vi.fn(() => Promise.resolve()),
+		removeItem: vi.fn(() => Promise.resolve()),
+	}),
 }));
 
 // Mock config

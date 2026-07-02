@@ -1,0 +1,15 @@
+{
+	"extends": "expo/tsconfig.base",
+	"compilerOptions": {
+		"strict": true,
+		"ignoreDeprecations": "6.0",
+		"baseUrl": ".",
+		"paths": {
+			"@/*": ["./src/*"],
+			"@maestro/shared/*": ["../../src/shared/*"],
+			"@maestro/web-hooks/*": ["../../src/web/hooks/*"]
+		}
+	},
+	"include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"],
+	"exclude": ["**/*.test.ts", "**/*.test.tsx", "**/__tests__/**", "jest.setup.ts"]
+}

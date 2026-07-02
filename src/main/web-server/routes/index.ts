@@ -27,3 +27,9 @@ export {
 	LiveSessionInfo as WsLiveSessionInfo,
 	CustomAICommand as WsCustomAICommand,
 } from './wsRoute';
+
+export {
+	MobilePairingRoutes,
+	MobilePairingRouteCallbacks,
+	RedeemCodeResult,
+} from './mobilePairingRoutes';

@@ -4,9 +4,15 @@
  * This module contains the WebSocket route setup extracted from web-server.ts.
  * Handles WebSocket connections, initial state sync, and message delegation.
  *
- * Route: /$TOKEN/ws
+ * Route: /:token/ws
  *
- * Connection Flow:
+ * Authentication:
+ * 1. If URL token matches securityToken, connection proceeds (browser auth)
+ * 2. If URL token doesn't match, validate as mobile token via mobile-pairing module
+ * 3. If mobile token is valid, update lastUsedAt and proceed
+ * 4. If neither matches, reject with auth failure
+ *
+ * Connection Flow (after auth):
  * 1. Client connects with optional ?sessionId= query param
  * 2. Server sends 'connected' message with client ID
  * 3. Server sends 'sessions_list' with all sessions (enriched with live info)
@@ -17,6 +23,7 @@
 
 import { FastifyInstance } from 'fastify';
 import { logger } from '../../utils/logger';
+import { validateMobileToken, updateDeviceLastUsed } from '../../mobile-pairing';
 import type {
 	Theme,
 	WebClient,
@@ -79,13 +86,48 @@ export class WsRoute {
 	}
 
 	/**
-	 * Register the WebSocket route on the Fastify server
+	 * Register the WebSocket route on the Fastify server.
+	 * Uses wildcard route to validate both browser security tokens and mobile tokens.
 	 */
 	registerRoute(server: FastifyInstance): void {
-		const token = this.securityToken;
+		// Use wildcard route to capture any token for validation
+		server.get('/:token/ws', { websocket: true }, async (connection, request) => {
+			// Extract token from URL path
+			const urlPath = request.url || '';
+			const tokenMatch = urlPath.match(/^\/([^/]+)\/ws/);
+			const urlToken = tokenMatch ? tokenMatch[1] : '';
 
-		server.get(`/${token}/ws`, { websocket: true }, (connection, request) => {
-			const clientId = `web-client-${++this.clientIdCounter}`;
+			// Validate token: first check browser security token, then mobile token
+			let isMobileClient = false;
+			let mobileDeviceId: string | undefined;
+
+			if (urlToken !== this.securityToken) {
+				// Not the browser token - try mobile token validation
+				const device = await validateMobileToken(urlToken);
+				if (!device) {
+					// Neither browser nor mobile token - reject
+					logger.warn(`Auth failed: invalid token from ${request.ip}`, LOG_CONTEXT);
+					connection.socket.send(
+						JSON.stringify({
+							type: 'error',
+							message: 'Authentication failed: invalid token',
+							code: 'AUTH_FAILED',
+						})
+					);
+					connection.socket.close(4001, 'Authentication failed');
+					return;
+				}
+				// Valid mobile token
+				isMobileClient = true;
+				mobileDeviceId = device.id;
+				// Update lastUsedAt in background (don't await)
+				updateDeviceLastUsed(device.id).catch((err) => {
+					logger.warn(`Failed to update device lastUsedAt: ${err}`, LOG_CONTEXT);
+				});
+				logger.info(`Mobile client authenticated: ${device.deviceName}`, LOG_CONTEXT);
+			}
+
+			const clientId = `${isMobileClient ? 'mobile' : 'web'}-client-${++this.clientIdCounter}`;
 
 			// Extract sessionId from query string if provided (for session-specific subscriptions)
 			const url = new URL(request.url || '', `http://${request.headers.host || 'localhost'}`);
@@ -96,6 +138,8 @@ export class WsRoute {
 				id: clientId,
 				connectedAt: Date.now(),
 				subscribedSessionId: sessionId,
+				isMobileClient,
+				mobileDeviceId,
 			};
 
 			// Notify parent about connection

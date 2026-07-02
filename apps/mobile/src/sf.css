@@ -1,0 +1,162 @@
+:root {
+	/* Accent colors */
+	--sf-blue: rgb(0 122 255);
+	--sf-brown: rgb(162 132 94);
+	--sf-cyan: rgb(50 173 230);
+	--sf-green: rgb(52 199 89);
+	--sf-indigo: rgb(88 86 214);
+	--sf-mint: rgb(0 199 190);
+	--sf-orange: rgb(255 149 0);
+	--sf-pink: rgb(255 45 85);
+	--sf-purple: rgb(175 82 222);
+	--sf-red: rgb(255 59 48);
+	--sf-teal: rgb(48 176 199);
+	--sf-yellow: rgb(255 204 0);
+
+	/* Gray scales */
+	--sf-gray: rgb(142 142 147);
+	--sf-gray-2: rgb(174 174 178);
+	--sf-gray-3: rgb(199 199 204);
+	--sf-gray-4: rgb(209 209 214);
+	--sf-gray-5: rgb(229 229 234);
+	--sf-gray-6: rgb(242 242 247);
+
+	/* Text and label colors */
+	--sf-text: rgb(0 0 0);
+	--sf-text-2: rgb(60 60 67 / 0.6);
+	--sf-text-3: rgb(60 60 67 / 0.3);
+	--sf-text-4: rgb(60 60 67 / 0.18);
+	--sf-text-placeholder: rgb(60 60 67 / 0.3);
+	--sf-text-dark: rgb(0 0 0);
+	--sf-text-light: rgb(255 255 255 / 0.6);
+
+	/* Fill colors */
+	--sf-fill: rgb(120 120 128 / 0.2);
+	--sf-fill-2: rgb(120 120 128 / 0.16);
+	--sf-fill-3: rgb(118 118 128 / 0.12);
+	--sf-fill-4: rgb(116 116 128 / 0.08);
+
+	/* Background colors */
+	--sf-bg: rgb(255 255 255);
+	--sf-bg-2: rgb(242 242 247);
+	--sf-bg-3: rgb(255 255 255);
+	--sf-grouped-bg: rgb(242 242 247);
+	--sf-grouped-bg-2: rgb(255 255 255);
+	--sf-grouped-bg-3: rgb(242 242 247);
+
+	/* Border and link colors */
+	--sf-border: rgb(60 60 67 / 0.29);
+	--sf-border-opaque: rgb(198 198 198);
+	--sf-link: rgb(0 122 255);
+}
+
+@media (prefers-color-scheme: dark) {
+	:root {
+		/* Accent colors */
+		--sf-blue: rgb(10 132 255);
+		--sf-brown: rgb(172 142 104);
+		--sf-cyan: rgb(100 210 255);
+		--sf-green: rgb(48 209 89);
+		--sf-indigo: rgb(94 92 230);
+		--sf-mint: rgb(99 230 226);
+		--sf-orange: rgb(255 159 10);
+		--sf-pink: rgb(255 55 95);
+		--sf-purple: rgb(191 90 242);
+		--sf-red: rgb(255 69 58);
+		--sf-teal: rgb(64 200 224);
+		--sf-yellow: rgb(255 214 10);
+
+		/* Gray scales */
+		--sf-gray: rgb(142 142 147);
+		--sf-gray-2: rgb(99 99 102);
+		--sf-gray-3: rgb(72 72 74);
+		--sf-gray-4: rgb(58 58 60);
+		--sf-gray-5: rgb(44 44 46);
+		--sf-gray-6: rgb(28 28 30);
+
+		/* Text and label colors */
+		--sf-text: rgb(255 255 255);
+		--sf-text-2: rgb(235 235 245 / 0.6);
+		--sf-text-3: rgb(235 235 245 / 0.3);
+		--sf-text-4: rgb(235 235 245 / 0.16);
+		--sf-text-placeholder: rgb(235 235 245 / 0.3);
+		--sf-text-dark: rgb(0 0 0);
+		--sf-text-light: rgb(255 255 255 / 0.6);
+
+		/* Fill colors */
+		--sf-fill: rgb(120 120 128 / 0.36);
+		--sf-fill-2: rgb(120 120 128 / 0.32);
+		--sf-fill-3: rgb(118 118 128 / 0.24);
+		--sf-fill-4: rgb(118 118 128 / 0.18);
+
+		/* Background colors */
+		--sf-bg: rgb(0 0 0);
+		--sf-bg-2: rgb(28 28 30);
+		--sf-bg-3: rgb(44 44 46);
+		--sf-grouped-bg: rgb(0 0 0);
+		--sf-grouped-bg-2: rgb(28 28 30);
+		--sf-grouped-bg-3: rgb(44 44 46);
+
+		/* Border and link colors */
+		--sf-border: rgb(84 84 89 / 0.6);
+		--sf-border-opaque: rgb(56 56 58);
+		--sf-link: rgb(10 133 255);
+	}
+}
+
+@layer theme {
+	@theme {
+		/* Fonts */
+		--font-rounded: 'SF Pro Rounded', 'Hiragino Maru Gothic ProN', Meiryo, 'MS PGothic', sans-serif;
+
+		/* Accent colors */
+		--color-sf-blue: var(--sf-blue) /* rgba(0, 122, 255, 1) */;
+		--color-sf-brown: var(--sf-brown) /* rgba(162, 132, 94, 1) */;
+		--color-sf-cyan: var(--sf-cyan) /* rgba(50, 173, 230, 1) */;
+		--color-sf-green: var(--sf-green) /* rgba(52, 199, 89, 1) */;
+		--color-sf-indigo: var(--sf-indigo) /* rgba(88, 86, 214, 1) */;
+		--color-sf-mint: var(--sf-mint) /* rgba(0, 199, 190, 1) */;
+		--color-sf-orange: var(--sf-orange) /* rgba(255, 149, 0, 1) */;
+		--color-sf-pink: var(--sf-pink) /* rgba(255, 45, 85, 1) */;
+		--color-sf-purple: var(--sf-purple) /* rgba(175, 82, 222, 1) */;
+		--color-sf-red: var(--sf-red) /* rgba(255, 59, 48, 1) */;
+		--color-sf-teal: var(--sf-teal) /* rgba(48, 176, 199, 1) */;
+		--color-sf-yellow: var(--sf-yellow) /* rgba(255, 204, 0, 1) */;
+
+		/* Gray scales */
+		--color-sf-gray: var(--sf-gray) /* rgba(142, 142, 147, 1) */;
+		--color-sf-gray-2: var(--sf-gray-2) /* rgba(174, 174, 178, 1) */;
+		--color-sf-gray-3: var(--sf-gray-3) /* rgba(199, 199, 204, 1) */;
+		--color-sf-gray-4: var(--sf-gray-4) /* rgba(209, 209, 214, 1) */;
+		--color-sf-gray-5: var(--sf-gray-5) /* rgba(229, 229, 234, 1) */;
+		--color-sf-gray-6: var(--sf-gray-6) /* rgba(242, 242, 247, 1) */;
+
+		/* Text and label colors */
+		--color-sf-text: var(--sf-text) /* rgba(0, 0, 0, 1) */;
+		--color-sf-text-2: var(--sf-text-2) /* rgba(61.2, 61.2, 66, 0.6) */;
+		--color-sf-text-3: var(--sf-text-3) /* rgba(61.2, 61.2, 66, 0.3) */;
+		--color-sf-text-4: var(--sf-text-4) /* rgba(61.2, 61.2, 66, 0.18) */;
+		--color-sf-text-placeholder: var(--sf-text-placeholder) /* rgba(61.2, 61.2, 66, 0.3) */;
+		--color-sf-text-dark: var(--sf-text-dark) /* rgba(0, 0, 0, 1) */;
+		--color-sf-text-light: var(--sf-text-light) /* rgba(255, 255, 255, 0.6) */;
+
+		/* Fill colors */
+		--color-sf-fill: var(--sf-fill) /* rgba(119.85, 119.85, 127.5, 0.2) */;
+		--color-sf-fill-2: var(--sf-fill-2) /* rgba(119.85, 119.85, 127.5, 0.16) */;
+		--color-sf-fill-3: var(--sf-fill-3) /* rgba(117.3, 117.3, 127.5, 0.12) */;
+		--color-sf-fill-4: var(--sf-fill-4) /* rgba(114.75, 114.75, 127.5, 0.08) */;
+
+		/* Background colors */
+		--color-sf-bg: var(--sf-bg) /* rgba(255, 255, 255, 1) */;
+		--color-sf-bg-2: var(--sf-bg-2) /* rgba(242.25, 242.25, 247.35, 1) */;
+		--color-sf-bg-3: var(--sf-bg-3) /* rgba(255, 255, 255, 1) */;
+		--color-sf-grouped-bg: var(--sf-grouped-bg) /* rgba(242.25, 242.25, 247.35, 1) */;
+		--color-sf-grouped-bg-2: var(--sf-grouped-bg-2) /* rgba(255, 255, 255, 1) */;
+		--color-sf-grouped-bg-3: var(--sf-grouped-bg-3) /* rgba(242.25, 242.25, 247.35, 1) */;
+
+		/* Border and link colors */
+		--color-sf-border: var(--sf-border) /* rgba(61.2, 61.2, 66, 0.29) */;
+		--color-sf-border-opaque: var(--sf-border-opaque) /* rgba(198.9, 198.9, 198.9, 1) */;
+		--color-sf-link: var(--sf-link) /* rgba(0, 122.4, 255, 1) */;
+	}
+}

@@ -28,6 +28,12 @@ vi.mock('../../../../main/utils/logger', () => ({
 	},
 }));
 
+// Mock mobile-pairing module
+vi.mock('../../../../main/mobile-pairing', () => ({
+	validateMobileToken: vi.fn().mockResolvedValue(null),
+	updateDeviceLastUsed: vi.fn().mockResolvedValue(undefined),
+}));
+
 /**
  * Create mock callbacks with all methods as vi.fn()
  */
@@ -95,6 +101,7 @@ function createMockSocket() {
 	return {
 		readyState: WebSocket.OPEN,
 		send: vi.fn(),
+		close: vi.fn(),
 		on: vi.fn((event: string, handler: Function) => {
 			if (!eventHandlers.has(event)) {
 				eventHandlers.set(event, []);
@@ -121,13 +128,14 @@ function createMockConnection() {
 /**
  * Create mock Fastify request
  */
-function createMockRequest(sessionId?: string) {
+function createMockRequest(sessionId?: string, token = 'test-token-123') {
 	const queryString = sessionId ? `?sessionId=${sessionId}` : '';
 	return {
-		url: `/test-token/ws${queryString}`,
+		url: `/${token}/ws${queryString}`,
 		headers: {
 			host: 'localhost:3000',
 		},
+		ip: '127.0.0.1',
 	};
 }
 
@@ -166,18 +174,18 @@ describe('WsRoute', () => {
 	describe('Route Registration', () => {
 		it('should register WebSocket route with correct path', () => {
 			expect(mockFastify.get).toHaveBeenCalledTimes(1);
-			expect(mockFastify.routes.has(`GET:/${securityToken}/ws`)).toBe(true);
+			expect(mockFastify.routes.has('GET:/:token/ws')).toBe(true);
 		});
 
 		it('should register route with websocket option', () => {
-			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
+			const route = mockFastify.getRoute('GET', '/:token/ws');
 			expect(route?.options?.websocket).toBe(true);
 		});
 	});
 
 	describe('Connection Handling', () => {
 		it('should generate unique client IDs', () => {
-			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
+			const route = mockFastify.getRoute('GET', '/:token/ws');
 
 			// Connect first client
 			const conn1 = createMockConnection();
@@ -197,7 +205,7 @@ describe('WsRoute', () => {
 		});
 
 		it('should notify parent on client connect', () => {
-			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
+			const route = mockFastify.getRoute('GET', '/:token/ws');
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest());
 
@@ -211,7 +219,7 @@ describe('WsRoute', () => {
 		});
 
 		it('should extract sessionId from query string', () => {
-			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
+			const route = mockFastify.getRoute('GET', '/:token/ws');
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest('session-123'));
 
@@ -223,7 +231,7 @@ describe('WsRoute', () => {
 		});
 
 		it('should set subscribedSessionId to undefined when not in query', () => {
-			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
+			const route = mockFastify.getRoute('GET', '/:token/ws');
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest());
 
@@ -237,7 +245,7 @@ describe('WsRoute', () => {
 
 	describe('Initial Sync Messages', () => {
 		it('should send connected message', () => {
-			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
+			const route = mockFastify.getRoute('GET', '/:token/ws');
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest('session-123'));
 
@@ -253,7 +261,7 @@ describe('WsRoute', () => {
 		});
 
 		it('should send sessions_list with enriched live info', () => {
-			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
+			const route = mockFastify.getRoute('GET', '/:token/ws');
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest());
 
@@ -270,7 +278,7 @@ describe('WsRoute', () => {
 		});
 
 		it('should send theme', () => {
-			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
+			const route = mockFastify.getRoute('GET', '/:token/ws');
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest());
 
@@ -286,7 +294,7 @@ describe('WsRoute', () => {
 		it('should not send theme when null', () => {
 			(callbacks.getTheme as any).mockReturnValue(null);
 
-			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
+			const route = mockFastify.getRoute('GET', '/:token/ws');
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest());
 
@@ -299,7 +307,7 @@ describe('WsRoute', () => {
 		});
 
 		it('should send custom_commands', () => {
-			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
+			const route = mockFastify.getRoute('GET', '/:token/ws');
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest());
 
@@ -314,7 +322,7 @@ describe('WsRoute', () => {
 		});
 
 		it('should send autorun_state for running sessions', () => {
-			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
+			const route = mockFastify.getRoute('GET', '/:token/ws');
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest());
 
@@ -344,7 +352,7 @@ describe('WsRoute', () => {
 				])
 			);
 
-			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
+			const route = mockFastify.getRoute('GET', '/:token/ws');
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest());
 
@@ -359,7 +367,7 @@ describe('WsRoute', () => {
 
 	describe('Message Handling', () => {
 		it('should delegate messages to handleMessage callback', () => {
-			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
+			const route = mockFastify.getRoute('GET', '/:token/ws');
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest());
 
@@ -373,7 +381,7 @@ describe('WsRoute', () => {
 		});
 
 		it('should send error for invalid JSON messages', () => {
-			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
+			const route = mockFastify.getRoute('GET', '/:token/ws');
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest());
 
@@ -392,7 +400,7 @@ describe('WsRoute', () => {
 
 	describe('Disconnection Handling', () => {
 		it('should notify parent on client disconnect', () => {
-			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
+			const route = mockFastify.getRoute('GET', '/:token/ws');
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest());
 
@@ -407,7 +415,7 @@ describe('WsRoute', () => {
 
 	describe('Error Handling', () => {
 		it('should notify parent on client error', () => {
-			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
+			const route = mockFastify.getRoute('GET', '/:token/ws');
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest());
 
@@ -428,7 +436,7 @@ describe('WsRoute', () => {
 			const emptyFastify = createMockFastify();
 			emptyWsRoute.registerRoute(emptyFastify as any);
 
-			const route = emptyFastify.getRoute('GET', `/${securityToken}/ws`);
+			const route = emptyFastify.getRoute('GET', '/:token/ws');
 			const connection = createMockConnection();
 
 			// Should not throw
@@ -461,7 +469,7 @@ describe('WsRoute', () => {
 			const partialFastify = createMockFastify();
 			partialWsRoute.registerRoute(partialFastify as any);
 
-			const route = partialFastify.getRoute('GET', `/${securityToken}/ws`);
+			const route = partialFastify.getRoute('GET', '/:token/ws');
 			const connection = createMockConnection();
 
 			// Should not throw
@@ -481,7 +489,7 @@ describe('WsRoute', () => {
 				])
 			);
 
-			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
+			const route = mockFastify.getRoute('GET', '/:token/ws');
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest());
 
@@ -492,6 +500,98 @@ describe('WsRoute', () => {
 			const autoRunMsgs = sentMessages.filter((m: any) => m.type === 'autorun_state');
 			expect(autoRunMsgs).toHaveLength(2); // Only running sessions
 			expect(autoRunMsgs.map((m: any) => m.sessionId)).toEqual(['session-1', 'session-2']);
+		});
+	});
+
+	describe('Mobile Token Authentication', () => {
+		beforeEach(async () => {
+			const { validateMobileToken, updateDeviceLastUsed } =
+				await import('../../../../main/mobile-pairing');
+			(validateMobileToken as any).mockClear();
+			(updateDeviceLastUsed as any).mockClear();
+		});
+
+		it('should accept valid mobile token', async () => {
+			const { validateMobileToken, updateDeviceLastUsed } =
+				await import('../../../../main/mobile-pairing');
+			const mockDevice = { id: 'device-123', deviceName: 'iPhone' };
+			(validateMobileToken as any).mockResolvedValueOnce(mockDevice);
+
+			const route = mockFastify.getRoute('GET', '/:token/ws');
+			const connection = createMockConnection();
+			// Use a different token than the security token
+			await route!.handler(connection, createMockRequest(undefined, 'mobile-token-abc'));
+
+			expect(validateMobileToken).toHaveBeenCalledWith('mobile-token-abc');
+			expect(updateDeviceLastUsed).toHaveBeenCalledWith('device-123');
+			expect(callbacks.onClientConnect).toHaveBeenCalledWith(
+				expect.objectContaining({
+					isMobileClient: true,
+					mobileDeviceId: 'device-123',
+				})
+			);
+		});
+
+		it('should reject invalid mobile token', async () => {
+			const { validateMobileToken } = await import('../../../../main/mobile-pairing');
+			(validateMobileToken as any).mockResolvedValueOnce(null);
+
+			const route = mockFastify.getRoute('GET', '/:token/ws');
+			const connection = createMockConnection();
+			await route!.handler(connection, createMockRequest(undefined, 'invalid-token'));
+
+			expect(validateMobileToken).toHaveBeenCalledWith('invalid-token');
+			expect(callbacks.onClientConnect).not.toHaveBeenCalled();
+
+			const sentMessages = (connection.socket.send as any).mock.calls.map((call: any[]) =>
+				JSON.parse(call[0])
+			);
+			const errorMsg = sentMessages.find((m: any) => m.type === 'error');
+			expect(errorMsg).toBeDefined();
+			expect(errorMsg.code).toBe('AUTH_FAILED');
+			expect(connection.socket.close).toHaveBeenCalledWith(4001, 'Authentication failed');
+		});
+
+		it('should not call validateMobileToken for valid security token', async () => {
+			const { validateMobileToken } = await import('../../../../main/mobile-pairing');
+
+			const route = mockFastify.getRoute('GET', '/:token/ws');
+			const connection = createMockConnection();
+			// Use the correct security token
+			await route!.handler(connection, createMockRequest());
+
+			expect(validateMobileToken).not.toHaveBeenCalled();
+			// Browser clients don't have mobile-specific fields
+			const clientArg = (callbacks.onClientConnect as any).mock.calls[0][0];
+			expect(clientArg.isMobileClient).toBeFalsy();
+			expect(clientArg.mobileDeviceId).toBeFalsy();
+		});
+
+		it('should use web-client prefix for browser connections', async () => {
+			const route = mockFastify.getRoute('GET', '/:token/ws');
+			const connection = createMockConnection();
+			await route!.handler(connection, createMockRequest());
+
+			expect(callbacks.onClientConnect).toHaveBeenCalledWith(
+				expect.objectContaining({
+					id: expect.stringMatching(/^web-client-/),
+				})
+			);
+		});
+
+		it('should use mobile-client prefix for mobile connections', async () => {
+			const { validateMobileToken } = await import('../../../../main/mobile-pairing');
+			(validateMobileToken as any).mockResolvedValueOnce({ id: 'device-1', deviceName: 'Phone' });
+
+			const route = mockFastify.getRoute('GET', '/:token/ws');
+			const connection = createMockConnection();
+			await route!.handler(connection, createMockRequest(undefined, 'mobile-token'));
+
+			expect(callbacks.onClientConnect).toHaveBeenCalledWith(
+				expect.objectContaining({
+					id: expect.stringMatching(/^mobile-client-/),
+				})
+			);
 		});
 	});
 });

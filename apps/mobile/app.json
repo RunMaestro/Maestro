@@ -1,0 +1,59 @@
+{
+	"expo": {
+		"name": "Maestro",
+		"slug": "maestro-mobile",
+		"version": "1.0.0",
+		"orientation": "portrait",
+		"scheme": "maestro",
+		"userInterfaceStyle": "automatic",
+		"ios": {
+			"infoPlist": {
+				"UIViewControllerBasedStatusBarAppearance": true,
+				"ITSAppUsesNonExemptEncryption": false,
+				"NSLocalNetworkUsageDescription": "Maestro connects to your desktop over your local network to pair and stream chat sessions.",
+				"NSAppTransportSecurity": {
+					"NSAllowsLocalNetworking": true
+				}
+			},
+			"bundleIdentifier": "com.ashraf-ali-aa.maestro"
+		},
+		"android": {
+			"predictiveBackGestureEnabled": false
+		},
+		"web": {
+			"output": "server"
+		},
+		"plugins": [
+			"./plugins/with-android-cleartext",
+			"expo-router",
+			[
+				"expo-splash-screen",
+				{
+					"image": "./assets/images/splash-icon.png",
+					"imageWidth": 200,
+					"resizeMode": "contain",
+					"backgroundColor": "#ffffff",
+					"dark": {
+						"backgroundColor": "#000000"
+					}
+				}
+			],
+			[
+				"expo-camera",
+				{
+					"cameraPermission": "Maestro needs camera access to scan QR codes for pairing with your desktop."
+				}
+			],
+			"expo-asset",
+			"expo-font",
+			"expo-image",
+			"expo-web-browser",
+			"expo-system-ui",
+			"expo-status-bar"
+		],
+		"experiments": {
+			"typedRoutes": true,
+			"reactCompiler": true
+		}
+	}
+}

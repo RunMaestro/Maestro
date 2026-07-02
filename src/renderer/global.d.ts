@@ -3751,6 +3751,34 @@ interface MaestroAPI {
 			agentId?: string
 		) => Promise<{ success: boolean; path?: string; error?: string }>;
 	};
+
+	// Mobile Pairing API (QR-based device pairing)
+	mobilePairing: {
+		generateCode: () => Promise<{
+			success: boolean;
+			code?: string;
+			host?: string;
+			port?: number;
+			expiresAt?: number;
+			error?: string;
+		}>;
+		listDevices: () => Promise<{
+			success: boolean;
+			devices?: Array<{
+				id: string;
+				deviceName: string;
+				createdAt: number;
+				lastUsedAt: number;
+				expiresAt: number;
+			}>;
+			error?: string;
+		}>;
+		revokeDevice: (id: string) => Promise<{
+			success: boolean;
+			revoked?: boolean;
+			error?: string;
+		}>;
+	};
 }
 
 declare global {

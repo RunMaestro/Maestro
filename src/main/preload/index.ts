@@ -57,6 +57,7 @@ import { createWakatimeApi } from './wakatime';
 import { createMaestroCliApi } from './maestroCli';
 import { createPromptsApi } from './prompts';
 import { createMemoryApi } from './memory';
+import { createMobilePairingApi } from './mobilePairing';
 
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
@@ -218,6 +219,8 @@ contextBridge.exposeInMainWorld('maestro', {
 	prompts: createPromptsApi(),
 	// Per-project Memory API (Claude Code memory viewer)
 	memory: createMemoryApi(),
+	// Mobile Pairing API (QR-based device pairing)
+	mobilePairing: createMobilePairingApi(),
 });
 
 // Re-export factory functions for external consumers (e.g., tests)
@@ -306,6 +309,8 @@ export {
 	createPromptsApi,
 	// Memory Viewer
 	createMemoryApi,
+	// Mobile Pairing
+	createMobilePairingApi,
 };
 
 // Re-export types for TypeScript consumers
@@ -545,3 +550,11 @@ export type {
 	PromptsApi,
 	CorePromptData,
 } from './prompts';
+export type {
+	// From mobilePairing
+	MobilePairingApi,
+	PairedDevice,
+	PairingCodeResponse,
+	DeviceListResponse,
+	RevokeDeviceResponse,
+} from './mobilePairing';
