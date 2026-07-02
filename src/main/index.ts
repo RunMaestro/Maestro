@@ -36,8 +36,9 @@ import { runRelearnJob } from './pianola/pianola-relearn';
 import { readRules, writeSuggestions, getProfile } from './pianola/pianola-store-main';
 import type { DecisionPair } from '../shared/pianola/transcript-mining';
 import type { PianolaRule } from '../shared/pianola/types';
-import { spawn, type ChildProcess } from 'child_process';
+import { spawn, execFile, type ChildProcess } from 'child_process';
 import { PluginManager } from './plugins/plugin-manager';
+import { SpawnBinaryRegistry } from './plugins/spawn-binary-registry';
 import { transcriptReadEgressConflict } from '../shared/plugins/capability-policy';
 import { evaluateScheduledDispatch } from '../shared/plugins/plugin-dispatch-gate';
 import { PermissionBroker } from './plugins/permission-broker';
@@ -1643,6 +1644,66 @@ app
 		});
 		pluginBackgroundSupervisor = backgroundSupervisor;
 
+		// Shared FC2/FC3 dispatch sink: resolve a runtime session FAIL-CLOSED
+		// (exact session id, else exact UNIQUE name — ambiguity is an error, never
+		// a guess), audit the resolved id, then hand the prompt to the renderer —
+		// the same single source of truth the web remote path uses. SYNCHRONOUS by
+		// design: resolution/renderer failures throw INTO the caller (the scheduler
+		// tick's try/catch, the handler's promise chain), never after a false
+		// "dispatched" success.
+		const dispatchPromptToSession = (
+			agentId: string,
+			prompt: string
+		): { dispatched: true; sessionId: string } => {
+			const sessions = sessionsStore.get('sessions', []) as Array<{
+				id?: string;
+				name?: string;
+			}>;
+			const byId = sessions.find((s) => s.id === agentId);
+			const byName = sessions.filter((s) => s.name === agentId);
+			const target = byId ?? (byName.length === 1 ? byName[0] : undefined);
+			if (!target?.id) {
+				throw new Error(
+					byName.length > 1
+						? `agents.dispatch: "${agentId}" matches ${byName.length} sessions — use the session id`
+						: `agents.dispatch: no session "${agentId}"`
+				);
+			}
+			logger.info(
+				`agents.dispatch -> session ${target.id} (requested "${agentId}", ${prompt.length} chars)`,
+				'[PluginAudit]'
+			);
+			const win = mainWindow;
+			if (!win || win.isDestroyed() || !isWebContentsAvailable(win)) {
+				throw new Error('agents.dispatch: no renderer available to run the agent');
+			}
+			win.webContents.send('remote:executeCommand', target.id, prompt, 'ai');
+			return { dispatched: true, sessionId: target.id };
+		};
+
+		// Host-owned spawn binary allowlist (FC2 / phase-4 §2). Ships EMPTY —
+		// Maestro blesses no helper binaries by default. DEMO_MODE lets the e2e
+		// harness bless ONE binary ('e2e-selftest') via an env-supplied absolute
+		// path; the registry still enforces every invariant (absolute path, no
+		// shells/interpreters, closed env), so the harness cannot bless bash.
+		const spawnBinaryRegistry = new SpawnBinaryRegistry({
+			onRegister: (entry) =>
+				logger.info(
+					`[Plugins] spawn binary blessed: ${entry.name} -> ${entry.binaryPath}`,
+					'[PluginAudit]'
+				),
+		});
+		if (DEMO_MODE && process.env.MAESTRO_E2E_SPAWN_BINARY) {
+			try {
+				spawnBinaryRegistry.register({
+					name: 'e2e-selftest',
+					binaryPath: process.env.MAESTRO_E2E_SPAWN_BINARY,
+				});
+			} catch (err) {
+				logger.warn(`[Plugins] demo spawn blessing rejected: ${String(err)}`, '[Plugins]');
+			}
+		}
+
 		const sandboxHost = new PluginSandboxHost({
 			broker: pluginBroker,
 			handlers: buildHostCallHandlers({
@@ -1733,11 +1794,48 @@ app
 						}));
 				},
 				// agents.dispatch + process.spawn (FC2, Plans/feature-complete-workplan.md):
-				// the security decision EXISTS (Option B — trusted-signed + consent is the
-				// boundary). Wiring deps.dispatch/deps.spawn + resolveSpawnBinary flips
-				// live only when the whole phase-4 gate holds (allowlist scopes, separate
-				// + unattended consent, host-owned binary registry, FC1 trusted-to-run
-				// gate) — see Plans/plugin-phase4-high-risk-verbs.md §Wiring acceptance.
+				// LIVE as of the FC1 trusted-to-run gate landing. Every call still
+				// traverses the full phase-4 pipeline in plugin-host-handlers:
+				// trusted-signed plugin + allowlist-scoped grant naming the exact
+				// target + separate high-risk consent (+ unattended for scheduler
+				// paths) + ActionGuard high caps + audit-before-effect. These sinks
+				// are the LAST hop, not a gate.
+				dispatch: async (agentId, prompt) => dispatchPromptToSession(agentId, prompt),
+				spawn: async (pluginId, spec) => {
+					logger.info(
+						`process.spawn by "${pluginId}": ${spec.name} (${spec.binaryPath}) argv=${JSON.stringify(spec.args)}`,
+						'[PluginAudit]'
+					);
+					// Shell-less by construction: execFile(binary, argv). Env/cwd are
+					// host-owned registry values; output is bounded; never shell:true.
+					return await new Promise((resolve, reject) => {
+						execFile(
+							spec.binaryPath,
+							spec.args,
+							{
+								env: spec.env,
+								...(spec.cwd ? { cwd: spec.cwd } : {}),
+								timeout: 30_000,
+								maxBuffer: 1024 * 1024,
+								windowsHide: true,
+								shell: false,
+							},
+							(error, stdout, stderr) => {
+								if (error && error.code === undefined) {
+									// Spawn-level failure (missing binary, timeout kill).
+									reject(new Error(`process.spawn: ${error.message}`));
+									return;
+								}
+								resolve({
+									exitCode: typeof error?.code === 'number' ? error.code : 0,
+									stdout: String(stdout).slice(0, 64 * 1024),
+									stderr: String(stderr).slice(0, 64 * 1024),
+								});
+							}
+						);
+					});
+				},
+				resolveSpawnBinary: (name) => spawnBinaryRegistry.resolve(name),
 			}),
 			onLog: (pluginId, level, message) => {
 				logger.info(`[Plugin:${pluginId}] ${level}: ${message}`, '[Plugins]');
@@ -1963,6 +2061,20 @@ app
 			},
 			getTriggers: () => schedulerManager.getContributions().cueTriggers,
 			notify: (trigger) => logger.toast(trigger.payload, `Plugin: ${trigger.pluginId}`),
+			// FC3: the auto-dispatch sink. Only reached when evaluateDispatch judged
+			// the trigger eligible (allowlist grant naming trigger.agentId + trusted
+			// signature + separate unattended consent). Session addressing resolves
+			// AT FIRE TIME through the same fail-closed helper as agents.dispatch;
+			// a vanished/ambiguous target throws, the scheduler catches + logs, and
+			// the trigger is skipped loudly rather than silently dropped.
+			dispatch: (trigger) => {
+				if (!trigger.agentId) {
+					throw new Error(`cue trigger "${trigger.id}" has no agentId to dispatch to`);
+				}
+				// Synchronous: a vanished/ambiguous session or missing renderer throws
+				// HERE, into the scheduler tick's try/catch — never a false success.
+				dispatchPromptToSession(trigger.agentId, trigger.payload);
+			},
 			evaluateDispatch: (trigger) => {
 				const rec = pluginManager?.getRegistry().records.find((r) => r.id === trigger.pluginId);
 				const grants = grantsOf(trigger.pluginId);
