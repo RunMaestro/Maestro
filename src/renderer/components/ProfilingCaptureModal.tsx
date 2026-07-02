@@ -13,12 +13,14 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Loader2, CheckCircle2, XCircle, AlertTriangle, Gauge } from 'lucide-react';
+import { Loader2, CheckCircle2, XCircle, AlertTriangle, Gauge, Copy } from 'lucide-react';
 import type { Theme } from '../types';
 import { Modal } from './ui/Modal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useUIStore } from '../stores/uiStore';
 import { captureException } from '../utils/sentry';
+import { safeClipboardWrite } from '../utils/clipboard';
+import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
 import { formatSize } from '../../shared/formatters';
 
 interface ProfilingCaptureModalProps {
@@ -109,6 +111,12 @@ export function ProfilingCaptureModal({ theme, onClose }: ProfilingCaptureModalP
 	const handleClose = useCallback(() => {
 		if (isTerminal) onClose();
 	}, [isTerminal, onClose]);
+
+	const handleCopyPath = useCallback(async () => {
+		if (!savedPath) return;
+		const ok = await safeClipboardWrite(savedPath);
+		if (ok) flashCopiedToClipboard(savedPath);
+	}, [savedPath]);
 
 	const barColor =
 		phase === 'error'
@@ -207,9 +215,21 @@ export function ProfilingCaptureModal({ theme, onClose }: ProfilingCaptureModalP
 				{phase === 'done' && (
 					<div className="text-xs flex flex-col gap-1" style={{ color: theme.colors.textDim }}>
 						{savedPath && (
-							<span>
-								Saved to <span style={{ color: theme.colors.textMain }}>{savedPath}</span>
-							</span>
+							<div className="flex items-start gap-2">
+								<span className="min-w-0 break-all">
+									Saved to <span style={{ color: theme.colors.textMain }}>{savedPath}</span>
+								</span>
+								<button
+									type="button"
+									onClick={handleCopyPath}
+									title="Copy full path to clipboard"
+									aria-label="Copy full path to clipboard"
+									className="shrink-0 p-1 rounded hover:bg-white/10 transition-colors outline-none focus:ring-2 focus:ring-accent"
+									style={{ color: theme.colors.textDim }}
+								>
+									<Copy size={14} />
+								</button>
+							</div>
 						)}
 						{bundleSize > 0 && <span>Bundle size: {formatSize(bundleSize)}</span>}
 					</div>
