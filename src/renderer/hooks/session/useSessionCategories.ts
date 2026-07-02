@@ -27,7 +27,11 @@ export function useSessionCategories(
 	sortedSessions: Session[],
 	showUnreadAgentsOnly = false,
 	activeSessionId?: string | null,
-	activeBatchSessionIds: string[] = []
+	activeBatchSessionIds: string[] = [],
+	// Comma-joined signature of agents with an active Agent Resilience outage.
+	// Stuck agents are treated as "needs attention" and surface in the unread
+	// filter alongside genuinely unread ones (see stuckOutageSessionIds below).
+	stuckOutageSignature = ''
 ): SessionCategories {
 	// PERF: Match SessionList's sidebar-only equality so categorization doesn't
 	// recompute on every streaming flush — only when a sidebar-relevant field
@@ -90,6 +94,13 @@ export function useSessionCategories(
 	// Consolidated session categorization and sorting - computed in a single pass
 	const groupIds = useMemo(() => new Set(groups.map((g) => g.id)), [groups]);
 
+	// Stable Set of stuck (outage) agent ids, recomputed only when the signature
+	// changes so the categorization memo isn't invalidated on unrelated renders.
+	const stuckOutageSessionIds = useMemo(
+		() => new Set(stuckOutageSignature ? stuckOutageSignature.split(',') : []),
+		[stuckOutageSignature]
+	);
+
 	const sessionCategories = useMemo(() => {
 		// Step 1: Filter sessions based on search query and unread filter
 		const query = sessionFilter?.toLowerCase() ?? '';
@@ -113,15 +124,20 @@ export function useSessionCategories(
 				const hasUnread = s.aiTabs?.some((tab) => tab.hasUnread);
 				const isBusy = s.state === 'busy';
 				const isAutoRunning = batchSessionIds.has(s.id);
-				// Also check if any worktree children have unread, are busy, or are auto-running
+				// A stuck (auto-retrying) agent needs attention just like an unread
+				// one, so keep it visible under the unread filter.
+				const isStuck = stuckOutageSessionIds.has(s.id);
+				// Also check if any worktree children have unread, are busy, are
+				// auto-running, or are stuck in an outage.
 				const children = worktreeChildrenByParentId.get(s.id);
 				const hasActiveChildren = children?.some(
 					(child) =>
 						child.aiTabs?.some((tab) => tab.hasUnread) ||
 						child.state === 'busy' ||
-						batchSessionIds.has(child.id)
+						batchSessionIds.has(child.id) ||
+						stuckOutageSessionIds.has(child.id)
 				);
-				if (!hasUnread && !isBusy && !isAutoRunning && !hasActiveChildren) continue;
+				if (!hasUnread && !isBusy && !isAutoRunning && !isStuck && !hasActiveChildren) continue;
 			}
 
 			if (!query) {
@@ -207,6 +223,7 @@ export function useSessionCategories(
 		sessions,
 		worktreeChildrenByParentId,
 		groupIds,
+		stuckOutageSessionIds,
 	]);
 
 	const sortedGroups = useMemo(

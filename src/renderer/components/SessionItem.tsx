@@ -15,6 +15,7 @@ import { CueIndicator } from './SessionList/CueIndicator';
 import { StartupCommandIndicator } from './SessionList/StartupCommandIndicator';
 import { WizardIndicator } from './SessionList/WizardIndicator';
 import { useSettingsStore } from '../stores/settingsStore';
+import { useSessionHasActiveOutage } from '../stores/retryStore';
 import { COLORBLIND_STATUS_COLORS } from '../constants/colorblindPalettes';
 import { abbreviateGroupName } from '../../shared/formatters';
 import type { Session, Group, Theme } from '../types';
@@ -49,12 +50,20 @@ export function getEnhancedStatusColor(
 	session: Session,
 	theme: Theme,
 	isInBatch: boolean,
-	colorBlindMode: boolean = false
+	colorBlindMode: boolean = false,
+	hasActiveOutage: boolean = false
 ): { color: string; animate: boolean; label: string } {
 	const success = colorBlindMode ? COLORBLIND_STATUS_COLORS.success : theme.colors.success;
 	const warning = colorBlindMode ? COLORBLIND_STATUS_COLORS.warning : theme.colors.warning;
 	const error = colorBlindMode ? COLORBLIND_STATUS_COLORS.error : theme.colors.error;
 	const connecting = colorBlindMode ? COLORBLIND_STATUS_COLORS.connecting : '#ff8800';
+
+	// Agent Resilience: an active outage (auto-retry backing off) is a "stuck,
+	// needs attention" state. Pulsing orange, ranked above batch/agent state so a
+	// stalled agent is unmistakable in the Left Bar.
+	if (hasActiveOutage) {
+		return { color: connecting, animate: true, label: 'Auto-retrying (stuck)' };
+	}
 
 	if (isInBatch) {
 		return { color: warning, animate: true, label: 'Auto Run active' };
@@ -220,8 +229,16 @@ export const SessionItem = memo(function SessionItem({
 	const showGitLocalBadge = showLocationPills && variant !== 'bookmark';
 
 	// Status indicator: enhanced color/animation/label, plus hollow signal for
-	// Claude Code agents that haven't bound to a provider session yet.
-	const statusInfo = getEnhancedStatusColor(session, theme, isInBatch, colorBlindMode);
+	// Claude Code agents that haven't bound to a provider session yet. A stuck
+	// Agent Resilience outage overrides to pulsing orange (needs attention).
+	const hasActiveOutage = useSessionHasActiveOutage(session.id);
+	const statusInfo = getEnhancedStatusColor(
+		session,
+		theme,
+		isInBatch,
+		colorBlindMode,
+		hasActiveOutage
+	);
 	const isDisconnected = !isInBatch && hasNoClaudeProviderSession(session);
 
 	// Determine container styling based on variant

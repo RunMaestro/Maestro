@@ -32,7 +32,7 @@ import { generateId } from '../../../utils/ids';
 import { logger } from '../../../utils/logger';
 import { removeHiddenProgressLog } from './helpers/exitTabCleanup';
 import { getErrorTitleForType } from './helpers/errorTitles';
-import { scheduleRetryForError } from '../../../stores/retryStore';
+import { scheduleRetryForError, getRetryEntry } from '../../../stores/retryStore';
 import type { AgentError, GroupChatMessage, LogEntry, SessionState } from '../../../types';
 import type { UseAgentListenersDeps, ToolProgressState } from './types';
 
@@ -162,6 +162,18 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 				scheduleRetryForError(actualSessionId, tabIdFromSession!, agentError, { batch: true });
 			const willAutoRetry = willAutoRetryInteractive || willAutoRetryBatch;
 
+			// Agent Resilience transcript card: the auto-retry path collapses all
+			// attempts into ONE live status bubble (RetryStatusCard) instead of a
+			// wall of error frames. Append the anchor marker only on the FIRST
+			// failure of an outage (attempt 0); continuations update the store-backed
+			// card in place and add nothing to the transcript.
+			const activeRetry =
+				willAutoRetry && tabIdFromSession
+					? getRetryEntry(actualSessionId, tabIdFromSession)
+					: undefined;
+			const isFirstOutageFailure = activeRetry?.attempt === 0;
+			const retryOutageId = activeRetry?.outageId;
+
 			if (tabIdFromSession) {
 				deps.activeHiddenToolRef.current?.delete(`${actualSessionId}:${tabIdFromSession}`);
 			}
@@ -212,19 +224,19 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 					// recovery) stay untagged — they aren't real Claude turns.
 					const isInteractive = s.claudeInteractive?.mode === 'interactive';
 					const canOfferRecovery = isSessionNotFound && !!lastUserPrompt && !!targetTab;
-					// When auto-retry takes over we log a non-blocking system note
-					// instead of an error frame; the live countdown chip (driven by
-					// retryStore) shows the timing and Cancel / Retry Now controls.
+					// When auto-retry takes over we log a non-blocking outage marker
+					// instead of an error frame; the marker renders as a live
+					// RetryStatusCard (driven by retryStore) showing attempt count,
+					// elapsed time, next-retry countdown, and Try now / Stop controls.
 					const errorLogEntry: LogEntry = {
 						id: generateId(),
 						timestamp: agentError.timestamp,
 						source: isSessionNotFound || willAutoRetry ? 'system' : 'error',
 						text: canOfferRecovery
 							? 'Session not found, however we can recover it raw or compressed.'
-							: willAutoRetry
-								? `⏳ ${agentError.message} Auto-retrying…`
-								: agentError.message,
+							: agentError.message,
 						agentError: isSessionNotFound || willAutoRetry ? undefined : agentError,
+						...(willAutoRetry && retryOutageId ? { retryOutageId } : {}),
 						...(isInteractive && !isSessionNotFound && !willAutoRetry
 							? { renderStyle: 'text-stream' as const }
 							: {}),
@@ -232,12 +244,17 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 							? { recoveryAction: { lastUserPrompt: lastUserPrompt!, tabId: targetTab!.id } }
 							: {}),
 					};
+					// On a continued outage (attempt > 0) the card already lives in the
+					// transcript — just strip the transient progress log, append nothing.
+					const isRetryContinuation = willAutoRetry && !isFirstOutageFailure;
 					const updatedAiTabs = targetTab
 						? s.aiTabs.map((tab) =>
 								tab.id === targetTab.id
 									? {
 											...tab,
-											logs: [...removeHiddenProgressLog(tab.logs, tab.id), errorLogEntry],
+											logs: isRetryContinuation
+												? removeHiddenProgressLog(tab.logs, tab.id)
+												: [...removeHiddenProgressLog(tab.logs, tab.id), errorLogEntry],
 											agentError: isSessionNotFound ? undefined : agentError,
 											...(isSessionNotFound ? { agentSessionId: null } : {}),
 										}

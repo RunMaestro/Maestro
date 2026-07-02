@@ -42,6 +42,7 @@ import { useSettingsStore } from '../stores/settingsStore';
 import { useMessageGistStore } from '../stores/messageGistStore';
 import { useSessionStore } from '../stores/sessionStore';
 import { SessionRecoveryCard } from './SessionRecoveryCard';
+import { RetryStatusCard } from './RetryStatusCard';
 import { getTokenSourcePill } from '../../shared/claudeTokenModeLabel';
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
 
@@ -464,6 +465,24 @@ const LogItemComponent = memo(
 		const isReversed = isUserMessage
 			? userMessageAlignment === 'left'
 			: userMessageAlignment === 'right';
+
+		// Agent Resilience: an outage marker renders as a live status card in a
+		// clean row (no error-tinted bubble chrome), left gutter kept for alignment.
+		if (log.retryOutageId) {
+			return (
+				<div
+					ref={logItemRef}
+					className="flex gap-4 px-6 py-2"
+					data-log-index={index}
+					style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 120px' }}
+				>
+					<div className="w-20 shrink-0" />
+					<div className="flex-1 min-w-0">
+						<RetryStatusCard outageId={log.retryOutageId} theme={theme} fallbackText={log.text} />
+					</div>
+				</div>
+			);
+		}
 
 		return (
 			<div
@@ -1675,8 +1694,10 @@ export const TerminalOutput = memo(
 					// Flush any accumulated response group before user message
 					flushResponseGroup();
 					result.push(log);
-				} else if (log.source === 'tool' || log.source === 'thinking') {
-					// Flush response group before tool/thinking, then add tool/thinking separately
+				} else if (log.source === 'tool' || log.source === 'thinking' || log.retryOutageId) {
+					// Flush response group before tool/thinking and Agent Resilience
+					// outage markers, then add them standalone. The outage marker must
+					// not merge into a text group — it renders as a live status card.
 					flushResponseGroup();
 					result.push(log);
 				} else {
