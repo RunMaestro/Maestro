@@ -343,6 +343,61 @@ export const SYMPHONY_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	backgroundServices: [],
 };
 
+/**
+ * Broker capabilities the Cue engine's trigger/notify surface actually
+ * touches (grepped from src/main/cue): chokidar file watchers + cue.yaml
+ * config watchers, GitHub PR/issue polling, renderer toasts, wake locks for
+ * time-based subscriptions, the engine's own SQLite store, and the
+ * supervised engine itself.
+ */
+export const MAESTRO_CUE_FIRST_PARTY_PLUGIN_PERMISSIONS: readonly PermissionRequest[] = [
+	{
+		capability: 'settings:read',
+		reason: 'Re-read the Maestro Cue Encore flag and global Cue settings.',
+	},
+	{
+		// Unscoped by necessity: watch globs live in per-project cue.yaml files,
+		// so the watched roots are whatever project roots the user's sessions
+		// use — a static path scope cannot name them.
+		capability: 'fs:watch',
+		reason:
+			'Watch file.changed subscription globs and cue.yaml/prompt files under session project roots.',
+	},
+	{
+		capability: 'net:fetch',
+		scope: 'github.com',
+		reason:
+			'Poll GitHub (via the gh CLI) for new pull requests and issues on github.* subscriptions.',
+	},
+	{
+		capability: 'notifications:toast',
+		reason:
+			'Surface action:notify subscription toasts, queue-overflow warnings, and heartbeat failures.',
+	},
+	{
+		capability: 'power:preventSleep',
+		reason:
+			'Hold a wake lock while time-based subscriptions are armed so scheduled triggers fire on time.',
+	},
+	{
+		capability: 'storage:sql',
+		reason: "Persist run history, queued events, and GitHub seen-state in Cue's own SQLite store.",
+	},
+	// NOTE: `agents:dispatch` and `process:spawn` are deliberately ABSENT.
+	// Both are FC2 allowlist scopes naming exact static targets; Cue dispatches
+	// prompts to dynamically-discovered sessions and runs arbitrary
+	// user-authored `action: command` lines, neither of which a static
+	// manifest scope can name. That authority stays HOST-OWNED (the engine's
+	// supervised run manager, gated by the Encore flag) until a runtime grant
+	// seam is designed — same constraint as Pianola's dispatch (see the NOTE
+	// on PIANOLA_FIRST_PARTY_PLUGIN_PERMISSIONS).
+	{
+		capability: 'background:service',
+		reason:
+			'Run the supervised Cue engine (watchers, pollers, heartbeat) with host lifecycle control.',
+	},
+] as const;
+
 export const MAESTRO_CUE_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	id: 'com.maestro.cue',
 	name: 'Maestro Cue',
@@ -350,15 +405,17 @@ export const MAESTRO_CUE_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 		'Event-driven automation — trigger agent prompts on timers, file changes, and completions.',
 	firstParty: true,
 	category: 'automation',
-	permissions: [
-		{
-			capability: 'settings:read',
-			reason: 'Re-read the Maestro Cue Encore flag and global Cue settings.',
-		},
-	],
+	permissions: MAESTRO_CUE_FIRST_PARTY_PLUGIN_PERMISSIONS,
 	settingsNamespace: 'maestroCue',
 	encoreFlag: 'maestroCue',
-	backgroundServices: [],
+	backgroundServices: [
+		{
+			id: 'cue.engine',
+			kind: 'supervised',
+			description:
+				'Cue engine runtime: file watchers, GitHub pollers, schedule timers, and the recovery heartbeat. Stops fully on disable.',
+		},
+	],
 };
 
 /**
