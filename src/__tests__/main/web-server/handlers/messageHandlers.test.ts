@@ -1155,7 +1155,10 @@ describe('WebSocketMessageHandler', () => {
 					expect(callbacks.openTerminalTab).toHaveBeenCalledWith(
 						'session-real',
 						expect.objectContaining({
-							cwd: fs.realpathSync(path.join(sessionRoot, 'sub')),
+							// realpathSync.native, not realpathSync: the product resolves via
+							// fs.promises.realpath (native), which expands Windows 8.3 short
+							// names (RUNNER~1 -> runneradmin); the JS realpathSync does not.
+							cwd: fs.realpathSync.native(path.join(sessionRoot, 'sub')),
 						})
 					);
 				});
