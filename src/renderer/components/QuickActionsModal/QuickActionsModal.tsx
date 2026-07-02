@@ -210,6 +210,27 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const [mode, setMode] = useState<'main' | 'move-to-group' | 'agents'>(initialMode);
 	const [renamingSession, setRenamingSession] = useState(false);
 	const [renameValue, setRenameValue] = useState('');
+	// Inline "rename this window" flow (secondary windows only). Independent of the
+	// session-rename state above; when active, the search bar becomes a rename input
+	// and the command list is hidden, mirroring the session-rename affordance.
+	const [renamingWindow, setRenamingWindow] = useState(false);
+	const [windowRenameValue, setWindowRenameValue] = useState('');
+
+	// This window's identity for the rename-this-window command. Only a SECONDARY
+	// window (Cmd+K outside the main window) can rename itself; the primary keeps
+	// its stable "Main Window" label. `currentWindowName` seeds the rename input.
+	const currentWindowId = windowCtx?.windowId ?? null;
+	const isSecondaryWindow = !!windowCtx && !windowCtx.isMainWindow;
+	const currentWindowName = windowCtx?.windows.find((w) => w.id === currentWindowId)?.name;
+	const beginRenameCurrentWindow = useCallback(() => {
+		setWindowRenameValue(currentWindowName ?? '');
+		setRenamingWindow(true);
+	}, [currentWindowName]);
+	const commitRenameCurrentWindow = useCallback(() => {
+		if (currentWindowId) void windowCtx?.renameWindow(currentWindowId, windowRenameValue.trim());
+		setRenamingWindow(false);
+		setQuickActionOpen(false);
+	}, [currentWindowId, windowCtx, windowRenameValue, setQuickActionOpen]);
 	const [firstVisibleIndex, setFirstVisibleIndex] = useState(0);
 	// Re-render once a second while the agent jumper has running agents so the
 	// elapsed-time labels tick in place. We only run the interval when needed.
@@ -499,6 +520,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			moveToNewWindow: (id) => windowCtx?.moveSessionToNewWindow(id),
 			moveToWindow: (id, targetWindowId) => windowCtx?.moveSessionToWindow(id, targetWindowId),
 			setQuickActionOpen,
+			canRenameCurrentWindow: isSecondaryWindow,
+			beginRenameCurrentWindow,
 		}),
 		...buildAgentPanelCommands({
 			activeSession,
@@ -762,8 +785,12 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			const selectedAction = filteredRef.current[index];
 			if (!selectedAction) return;
 
-			// Don't close modal if action switches modes
-			const switchesModes = selectedAction.id === 'moveToGroup' || selectedAction.id === 'back';
+			// Don't close modal if action switches modes or opens the inline window
+			// rename (which keeps the palette open with a rename input).
+			const switchesModes =
+				selectedAction.id === 'moveToGroup' ||
+				selectedAction.id === 'back' ||
+				selectedAction.id === 'rename-current-window';
 			selectedAction.action();
 			if (!renamingSession && (mode === 'main' || mode === 'agents') && !switchesModes) {
 				setQuickActionOpen(false);
@@ -783,7 +810,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		onSelect: handleSelectByIndex,
 		enableNumberHotkeys: true,
 		firstVisibleIndex,
-		enabled: !renamingSession, // Disable navigation when renaming
+		enabled: !renamingSession && !renamingWindow, // Disable navigation while renaming
 	});
 	resetSelectionToFirstRef.current = () => setSelectedIndex(0);
 
@@ -821,6 +848,20 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			return;
 		}
 
+		// Inline window rename: Enter commits (persists + closes), Escape returns to
+		// the command list. Handled here so neither the list nav nor the modal's
+		// Escape-to-close fires while the input is focused.
+		if (renamingWindow) {
+			if (e.key === 'Enter') {
+				e.preventDefault();
+				commitRenameCurrentWindow();
+			} else if (e.key === 'Escape') {
+				e.preventDefault();
+				setRenamingWindow(false);
+			}
+			return;
+		}
+
 		// Delegate to list navigation hook
 		listHandleKeyDown(e);
 
@@ -835,7 +876,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			className="fixed inset-0 modal-overlay flex items-start justify-center pt-32 z-[9999] animate-in fade-in duration-100"
 			onMouseDown={(e) => {
 				// Dismiss when clicking outside the modal content (backdrop only).
-				if (e.target === e.currentTarget && !renamingSession) {
+				if (e.target === e.currentTarget && !renamingSession && !renamingWindow) {
 					setQuickActionOpen(false);
 				}
 			}}
@@ -853,15 +894,15 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 					theme={theme}
 					mode={mode}
 					activeSession={activeSession}
-					renamingSession={renamingSession}
+					renaming={renamingSession || renamingWindow}
 					search={search}
 					setSearch={setSearch}
-					renameValue={renameValue}
-					setRenameValue={setRenameValue}
+					renameValue={renamingWindow ? windowRenameValue : renameValue}
+					setRenameValue={renamingWindow ? setWindowRenameValue : setRenameValue}
 					inputRef={inputRef}
 					onKeyDown={handleKeyDown}
 				/>
-				{!renamingSession && (
+				{!renamingSession && !renamingWindow && (
 					<QuickActionsList
 						filtered={filtered}
 						selectedIndex={selectedIndex}
@@ -873,7 +914,10 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 						selectedItemRef={selectedItemRef}
 						onScroll={handleScroll}
 						onActionClick={(action) => {
-							const switchesModes = action.id === 'moveToGroup' || action.id === 'back';
+							const switchesModes =
+								action.id === 'moveToGroup' ||
+								action.id === 'back' ||
+								action.id === 'rename-current-window';
 							action.action();
 							if ((mode === 'main' || mode === 'agents') && !switchesModes)
 								setQuickActionOpen(false);

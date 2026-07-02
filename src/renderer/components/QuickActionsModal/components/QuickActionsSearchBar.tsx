@@ -7,7 +7,8 @@ interface QuickActionsSearchBarProps {
 	theme: Theme;
 	mode: QuickActionMode;
 	activeSession: Session | undefined;
-	renamingSession: boolean;
+	/** True while an inline rename (session or window) is active - shows the rename input. */
+	renaming: boolean;
 	search: string;
 	setSearch: (value: string) => void;
 	renameValue: string;
@@ -20,7 +21,7 @@ export function QuickActionsSearchBar({
 	theme,
 	mode,
 	activeSession,
-	renamingSession,
+	renaming,
 	search,
 	setSearch,
 	renameValue,
@@ -34,7 +35,7 @@ export function QuickActionsSearchBar({
 			style={{ borderColor: theme.colors.border }}
 		>
 			<Search className="w-5 h-5" style={{ color: theme.colors.textDim }} />
-			{renamingSession ? (
+			{renaming ? (
 				<input
 					ref={inputRef}
 					className="flex-1 bg-transparent outline-none text-lg"

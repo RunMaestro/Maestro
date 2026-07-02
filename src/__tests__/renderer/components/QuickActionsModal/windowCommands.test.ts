@@ -94,4 +94,60 @@ describe('buildWindowCommands', () => {
 		commands.find((c) => c.id === 'move-to-window-win-2')!.action();
 		expect(moveToWindow).toHaveBeenCalledWith('a', 'win-2');
 	});
+
+	describe('rename this window command', () => {
+		it('offers "Rename This Window" only when canRenameCurrentWindow is set', () => {
+			const withRename = buildWindowCommands({
+				activeSession: makeSession({ id: 'a', name: 'Alpha' }),
+				windowTargets: [makeTarget({ windowId: 'win-2', label: 'Bravo' })],
+				moveToNewWindow: vi.fn(),
+				moveToWindow: vi.fn(),
+				setQuickActionOpen: noop,
+				canRenameCurrentWindow: true,
+				beginRenameCurrentWindow: vi.fn(),
+			});
+			expect(withRename.map((c) => c.label)).toContain('Rename This Window');
+
+			const withoutRename = buildWindowCommands({
+				activeSession: makeSession({ id: 'a', name: 'Alpha' }),
+				windowTargets: [makeTarget({ windowId: 'win-2', label: 'Bravo' })],
+				moveToNewWindow: vi.fn(),
+				moveToWindow: vi.fn(),
+				setQuickActionOpen: noop,
+			});
+			expect(withoutRename.map((c) => c.label)).not.toContain('Rename This Window');
+		});
+
+		it('rename action begins the inline rename WITHOUT closing the palette', () => {
+			const beginRenameCurrentWindow = vi.fn();
+			const setQuickActionOpen = vi.fn();
+			const commands = buildWindowCommands({
+				activeSession: makeSession({ id: 'a', name: 'Alpha' }),
+				windowTargets: [makeTarget({ windowId: 'win-2', label: 'Bravo' })],
+				moveToNewWindow: vi.fn(),
+				moveToWindow: vi.fn(),
+				setQuickActionOpen,
+				canRenameCurrentWindow: true,
+				beginRenameCurrentWindow,
+			});
+
+			commands.find((c) => c.id === 'rename-current-window')!.action();
+			expect(beginRenameCurrentWindow).toHaveBeenCalledTimes(1);
+			// The palette stays open so the rename input can take over.
+			expect(setQuickActionOpen).not.toHaveBeenCalled();
+		});
+
+		it('offers the rename command even with no move targets (secondary owning nothing movable)', () => {
+			const commands = buildWindowCommands({
+				activeSession: undefined,
+				windowTargets: [],
+				moveToNewWindow: vi.fn(),
+				moveToWindow: vi.fn(),
+				setQuickActionOpen: noop,
+				canRenameCurrentWindow: true,
+				beginRenameCurrentWindow: vi.fn(),
+			});
+			expect(commands.map((c) => c.id)).toEqual(['rename-current-window']);
+		});
+	});
 });
