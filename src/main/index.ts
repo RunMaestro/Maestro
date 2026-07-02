@@ -1338,7 +1338,7 @@ function setupIpcHandlers() {
 		agentConfigsStore,
 	});
 
-	// Cross-agent @@mention dispatch - streams a target agent's response back
+	// Cross-agent @mention dispatch - streams a target agent's response back
 	// into the source agent's transcript (Phase 03).
 	registerCrossAgentHandlers({
 		getProcessManager: () => processManager,

@@ -73,7 +73,7 @@ export interface ThemeColors {
 	/** Text color for use ON accent backgrounds (contrasting color) */
 	accentForeground: string;
 	/**
-	 * Background tint for a cross-agent (@@mention) response bubble - a subtle
+	 * Background tint for a cross-agent (@mention) response bubble - a subtle
 	 * wash of the theme accent that flags "this reply came from another agent."
 	 * Optional: when unset the renderer derives a subtle accent tint via
 	 * color-mix, so every theme (custom included) gets a correct tint for free.
@@ -82,7 +82,7 @@ export interface ThemeColors {
 	/** Border color for a cross-agent response bubble. Optional; derived from the accent when unset. */
 	crossAgentBubbleBorder?: string;
 	/**
-	 * `@file` / `@@agent` mention-chip tokens. Chips appear frequently in dense
+	 * `@file` / `@agent` mention-chip tokens. Chips appear frequently in dense
 	 * input, so these are deliberately subtle: `Bg` a faint tint a touch off the
 	 * input background, `Border` a slightly higher-contrast edge, `Text`
 	 * contrast-safe against `Bg`. All optional - when unset the renderer derives

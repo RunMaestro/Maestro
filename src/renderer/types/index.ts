@@ -235,8 +235,8 @@ export interface LogEntry {
 			kind: 'thinking' | 'tool';
 			toolName?: string;
 		};
-		// Provenance for a cross-agent (@@mention) response entry: this AI entry
-		// was produced by a DIFFERENT agent that the user consulted via `@@target`.
+		// Provenance for a cross-agent (@mention) response entry: this AI entry
+		// was produced by a DIFFERENT agent that the user consulted via `@target`.
 		// Phase 03 stamps it; Phase 04 renders the attribution pill from it.
 		crossAgent?: {
 			/** Correlates with the CrossAgentRequest that produced this entry. */

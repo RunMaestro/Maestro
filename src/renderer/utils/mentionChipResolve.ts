@@ -23,7 +23,7 @@ export interface ResolvedAgentMention {
 }
 
 /**
- * Resolve a `@@name` mention to the agent it points at. Matches on the same
+ * Resolve a `@name` mention to the agent it points at. Matches on the same
  * normalized mention name the picker/dispatch use, so a chip and its dispatch
  * target always agree. Unknown names render with the theme accent and no jump.
  */

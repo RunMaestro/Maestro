@@ -11,10 +11,13 @@ function reconstruct(segments: MentionSegment[]): string {
 	return segments.map((s) => s.value).join('');
 }
 
+/** Roster used by the agent-mention cases below (lowercased, as callers pass). */
+const KNOWN = new Set(['review-bot', 'codex', 'squad']);
+
 describe('AGENT_MENTION_PATTERN_SOURCE', () => {
-	it('matches @@name (case-insensitive, hyphens allowed)', () => {
+	it('matches @name (single at, case-insensitive, hyphens allowed)', () => {
 		const re = new RegExp(AGENT_MENTION_PATTERN_SOURCE, 'g');
-		expect('@@review-bot @@Codex'.match(re)).toEqual(['@@review-bot', '@@Codex']);
+		expect('@review-bot @Codex'.match(re)).toEqual(['@review-bot', '@Codex']);
 	});
 });
 
@@ -41,16 +44,28 @@ describe('tokenizeMentions', () => {
 		]);
 	});
 
-	it('tokenizes an agent mention', () => {
-		expect(tokenizeMentions('hey @@review-bot look')).toEqual([
+	it('tokenizes a known agent mention (single @)', () => {
+		expect(tokenizeMentions('hey @review-bot look', KNOWN)).toEqual([
 			{ kind: 'text', value: 'hey ' },
-			{ kind: 'agent', value: '@@review-bot', name: 'review-bot' },
+			{ kind: 'agent', value: '@review-bot', name: 'review-bot' },
 			{ kind: 'text', value: ' look' },
 		]);
 	});
 
+	it('leaves a bare @word that is NOT a known agent as plain text', () => {
+		expect(tokenizeMentions('hey @nobody look', KNOWN)).toEqual([
+			{ kind: 'text', value: 'hey @nobody look' },
+		]);
+	});
+
+	it('never treats a bare @word as an agent without a roster', () => {
+		expect(tokenizeMentions('hey @review-bot look')).toEqual([
+			{ kind: 'text', value: 'hey @review-bot look' },
+		]);
+	});
+
 	it('tokenizes a file mention and captures the extension', () => {
-		expect(tokenizeMentions('see @src/main/index.ts here')).toEqual([
+		expect(tokenizeMentions('see @src/main/index.ts here', KNOWN)).toEqual([
 			{ kind: 'text', value: 'see ' },
 			{ kind: 'file', value: '@src/main/index.ts', path: 'src/main/index.ts', extension: 'ts' },
 			{ kind: 'text', value: ' here' },
@@ -63,25 +78,35 @@ describe('tokenizeMentions', () => {
 	});
 
 	it('leaves a bare @word as plain text', () => {
-		expect(tokenizeMentions('@todo later')).toEqual([{ kind: 'text', value: '@todo later' }]);
+		expect(tokenizeMentions('@todo later', KNOWN)).toEqual([{ kind: 'text', value: '@todo later' }]);
 	});
 
-	it('skips mid-word mentions (foo@@bar, email@host)', () => {
-		expect(tokenizeMentions('foo@@bar')).toEqual([{ kind: 'text', value: 'foo@@bar' }]);
-		expect(tokenizeMentions('me@example.com')).toEqual([{ kind: 'text', value: 'me@example.com' }]);
+	it('skips mid-word mentions (foo@bar, email@host)', () => {
+		expect(tokenizeMentions('foo@bar', KNOWN)).toEqual([{ kind: 'text', value: 'foo@bar' }]);
+		expect(tokenizeMentions('me@example.com', KNOWN)).toEqual([
+			{ kind: 'text', value: 'me@example.com' },
+		]);
 	});
 
 	it('trims trailing sentence punctuation off a file mention', () => {
-		expect(tokenizeMentions('open @docs/releases.md.')).toEqual([
+		expect(tokenizeMentions('open @docs/releases.md.', KNOWN)).toEqual([
 			{ kind: 'text', value: 'open ' },
 			{ kind: 'file', value: '@docs/releases.md', path: 'docs/releases.md', extension: 'md' },
 			{ kind: 'text', value: '.' },
 		]);
 	});
 
+	it('chips a known agent even with trailing sentence punctuation', () => {
+		expect(tokenizeMentions('ask @codex.', KNOWN)).toEqual([
+			{ kind: 'text', value: 'ask ' },
+			{ kind: 'agent', value: '@codex', name: 'codex' },
+			{ kind: 'text', value: '.' },
+		]);
+	});
+
 	it('handles a sentence mixing agent + two file mentions', () => {
-		const input = 'ask @@codex about @src/main/cue/cue-engine.ts and @docs/releases.md';
-		const segs = tokenizeMentions(input);
+		const input = 'ask @codex about @src/main/cue/cue-engine.ts and @docs/releases.md';
+		const segs = tokenizeMentions(input, KNOWN);
 		expect(segs.filter((s) => s.kind === 'agent')).toHaveLength(1);
 		expect(segs.filter((s) => s.kind === 'file')).toHaveLength(2);
 		// Full round-trip: segments concatenate back to the exact input.
@@ -92,11 +117,11 @@ describe('tokenizeMentions', () => {
 		for (const input of [
 			'',
 			'plain',
-			'@@a @b/c.ts @nope end.',
-			'edge @@@triple and me@x.com',
-			'@src/x.ts,@@codex',
+			'@codex @b/c.ts @nope end.',
+			'edge @@triple and me@x.com',
+			'@src/x.ts,@codex',
 		]) {
-			expect(reconstruct(tokenizeMentions(input))).toBe(input);
+			expect(reconstruct(tokenizeMentions(input, KNOWN))).toBe(input);
 		}
 	});
 });

@@ -1,6 +1,6 @@
 /**
  * crossAgentInFlightStore - Zustand store tracking in-flight cross-agent
- * (`@@mention`) requests so the input area can surface a live
+ * (`@mention`) requests so the input area can surface a live
  * "N agents responding…" indicator (Phase 05).
  *
  * This is purely informational, decoupled from the response-accumulation state

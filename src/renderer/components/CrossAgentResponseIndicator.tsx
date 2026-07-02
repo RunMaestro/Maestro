@@ -1,7 +1,7 @@
 /**
  * CrossAgentResponseIndicator.tsx
  *
- * Compact pill shown while one or more cross-agent (`@@mention`) responses are
+ * Compact pill shown while one or more cross-agent (`@mention`) responses are
  * streaming back into the currently-viewed AI tab (Phase 05). Purely
  * informational: the user keeps typing while consulted agents answer.
  *

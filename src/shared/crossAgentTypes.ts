@@ -1,6 +1,6 @@
 /**
  * @file crossAgentTypes.ts
- * @description Types shared by main + renderer for the cross-agent `@@mention`
+ * @description Types shared by main + renderer for the cross-agent `@mention`
  * dispatch pipeline (Phase 03).
  *
  * Lives in `src/shared` with NO renderer imports so both the main process
@@ -32,7 +32,7 @@ export interface CrossAgentTranscriptEntry {
 }
 
 /**
- * A single cross-agent dispatch: the user pinged `@@target` from a source
+ * A single cross-agent dispatch: the user pinged `@target` from a source
  * agent's chat. Carries the windowed source transcript plus the user's prompt
  * so the target agent can answer with context.
  */
@@ -45,7 +45,7 @@ export interface CrossAgentRequest {
 	sourceTabId: string;
 	/** The agent (session) being consulted. */
 	targetSessionId: string;
-	/** The user's message (still contains the `@@target` token verbatim). */
+	/** The user's message (still contains the `@target` token verbatim). */
 	userPrompt: string;
 	/** The (already windowed by Phase 02) source transcript to forward. */
 	transcript: CrossAgentTranscriptEntry[];

@@ -95,7 +95,7 @@ const KIND_RANK: Record<MentionPickerItem['kind'], number> = {
 /**
  * Compose the file hook's output and the agent hook into one ranked,
  * category-aware list. This is the single source of truth for what the unified
- * `@` dropdown shows - there is no parallel `@@` dropdown.
+ * `@` dropdown shows - files and agents/groups share one `@` trigger.
  *
  * `fileSuggestions` are already filtered by the file hook; agents/groups are
  * filtered here via {@link useAgentMentionCompletion}. `counts` always reflect

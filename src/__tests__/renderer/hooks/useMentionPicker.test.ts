@@ -167,7 +167,7 @@ describe('buildMentionAccept', () => {
 		return { kind: 'directory', value: `@${path}/`, displayText: path, fullPath: path, score: 0 };
 	}
 	function agentItem(name: string): MentionPickerItem {
-		return { kind: 'agent', value: `@@${name} `, displayText: name, score: 0 };
+		return { kind: 'agent', value: `@${name} `, displayText: name, score: 0 };
 	}
 
 	it('splices a file token and closes the picker', () => {
@@ -177,9 +177,9 @@ describe('buildMentionAccept', () => {
 		expect(res.keepOpen).toBe(false);
 	});
 
-	it('splices an agent token (double-at) and closes', () => {
+	it('splices an agent token (single-at) and closes', () => {
 		const res = buildMentionAccept('ping @al', 5, 'al', agentItem('Alpha'));
-		expect(res.value).toBe('ping @@Alpha ');
+		expect(res.value).toBe('ping @Alpha ');
 		expect(res.keepOpen).toBe(false);
 	});
 

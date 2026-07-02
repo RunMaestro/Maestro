@@ -1,5 +1,5 @@
 /**
- * Preload API for cross-agent `@@mention` dispatch (Phase 03).
+ * Preload API for cross-agent `@mention` dispatch (Phase 03).
  *
  * Exposes `window.maestro.crossAgent`:
  * - `send(request)`  -> invoke `cross-agent:send`, returns `{ requestId }`.

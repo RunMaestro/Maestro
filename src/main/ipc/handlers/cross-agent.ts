@@ -1,7 +1,7 @@
 /**
  * Cross-Agent Dispatch IPC Handlers (Phase 03).
  *
- * Exposes `cross-agent:send` to the renderer: the user typed `@@target ...` in
+ * Exposes `cross-agent:send` to the renderer: the user typed `@target ...` in
  * a source agent, and the renderer forwards the (already windowed) source
  * transcript + the user's prompt here. We stamp a `requestId`, kick off
  * {@link startCrossAgentRequest} (non-blocking), and forward every response

@@ -8,6 +8,8 @@ import {
 	resolveAgentMention,
 	resolveFileMentionIconColor,
 } from '../../../utils/mentionChipResolve';
+import { useSessionStore } from '../../../stores/sessionStore';
+import { buildKnownMentionNameSet } from '../../../hooks/input/useAgentMentionCompletion';
 
 interface InputTextareaProps {
 	session: Session;
@@ -64,12 +66,22 @@ export const InputTextarea = memo(function InputTextarea({
 
 	const overlayRef = useRef<HTMLDivElement>(null);
 
+	// The mentionable agent/group roster (from this agent's vantage point).
+	// A bare `@word` only lights up when it names a known agent/group; unknown
+	// words stay plain text. Excludes the current agent (can't @-mention itself).
+	const sessions = useSessionStore((state) => state.sessions);
+	const groups = useSessionStore((state) => state.groups);
+	const knownMentionNames = useMemo(
+		() => (overlayEnabled ? buildKnownMentionNameSet(sessions, groups, session.id) : undefined),
+		[overlayEnabled, sessions, groups, session.id]
+	);
+
 	// Tokenize the raw input into text / file / agent segments. Same source of
 	// truth as the picker + dispatch scanner, so the overlay can never disagree
 	// about what counts as a mention.
 	const segments = useMemo(
-		() => (overlayEnabled ? tokenizeMentions(inputValue) : []),
-		[overlayEnabled, inputValue]
+		() => (overlayEnabled ? tokenizeMentions(inputValue, knownMentionNames) : []),
+		[overlayEnabled, inputValue, knownMentionNames]
 	);
 
 	// Keep the decorative overlay pinned to the textarea's scroll position so the

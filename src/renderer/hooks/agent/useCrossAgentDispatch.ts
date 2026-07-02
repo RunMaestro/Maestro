@@ -1,7 +1,7 @@
 /**
  * useCrossAgentDispatch
  *
- * Owns the renderer side of the cross-agent `@@mention` pipeline (Phase 03):
+ * Owns the renderer side of the cross-agent `@mention` pipeline (Phase 03):
  *
  * 1. `sendCrossAgentRequest` windows the source transcript with the Phase-02
  *    heuristics and fires `window.maestro.crossAgent.send(...)`. It's
@@ -36,7 +36,7 @@ export interface SendCrossAgentRequestOptions {
 	sourceTabId: string;
 	/** The resolved target agent (session) to consult. */
 	targetSessionId: string;
-	/** The user's message (still contains the `@@target` token). */
+	/** The user's message (still contains the `@target` token). */
 	userPrompt: string;
 	/** The source tab's logs (windowed before sending). */
 	sourceLogs: LogEntry[];

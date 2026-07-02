@@ -57,7 +57,7 @@ export interface BuildMarkdownPluginsOptions {
 	/** When provided and active, adds the remarkFileLinks transform. */
 	fileLinks?: MarkdownFileLinkOptions;
 	/**
-	 * Chip-render `@file` / `@@agent` mentions (chat surfaces, Encore-gated).
+	 * Chip-render `@file` / `@agent` mentions (chat surfaces, Encore-gated).
 	 * Runs BEFORE remarkFileLinks so it claims `@`-prefixed paths first.
 	 */
 	mentionChips?: boolean;

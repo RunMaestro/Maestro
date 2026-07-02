@@ -28,7 +28,7 @@ export interface RenderedMentionChipProps {
 	/** File chips: relative path + extension. */
 	filePath?: string;
 	extension?: string;
-	/** Agent chips: raw `@@name` name (without the `@@`). */
+	/** Agent chips: raw `@name` name (without the `@`). */
 	agentName?: string;
 	/** File-open handler from the surrounding markdown surface. */
 	onFileClick?: (path: string) => void;

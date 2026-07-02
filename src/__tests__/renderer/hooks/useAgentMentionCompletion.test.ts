@@ -32,24 +32,25 @@ function getSuggestions(
 // =============================================================================
 
 describe('useAgentMentionCompletion', () => {
-	it('produces a `@@name ` token for each mentionable agent', () => {
+	it('produces a `@name ` token for each mentionable agent', () => {
 		const suggestions = getSuggestions([agent('a', 'Alpha'), agent('b', 'Beta')], [], 'current');
 
 		expect(suggestions).toHaveLength(2);
 		expect(suggestions.every((s) => s.kind === 'agent')).toBe(true);
 		expect(suggestions.map((s) => s.value)).toEqual(
-			expect.arrayContaining(['@@Alpha ', '@@Beta '])
+			expect.arrayContaining(['@Alpha ', '@Beta '])
 		);
-		// Token carries the double-at prefix and a single trailing space.
+		// Token carries a single-at prefix, a single trailing space, and no `@@`.
 		for (const s of suggestions) {
-			expect(s.value.startsWith('@@')).toBe(true);
+			expect(s.value.startsWith('@')).toBe(true);
+			expect(s.value.startsWith('@@')).toBe(false);
 			expect(s.value.endsWith(' ')).toBe(true);
 		}
 	});
 
 	it('normalizes spaces in agent names to hyphens in the token', () => {
 		const suggestions = getSuggestions([agent('a', 'Review Bot')], [], 'current');
-		expect(suggestions[0].value).toBe('@@Review-Bot ');
+		expect(suggestions[0].value).toBe('@Review-Bot ');
 		expect(suggestions[0].displayText).toBe('Review Bot');
 	});
 
@@ -89,7 +90,7 @@ describe('useAgentMentionCompletion', () => {
 
 		const group = suggestions.find((s) => s.kind === 'group');
 		expect(group).toBeDefined();
-		expect(group?.value).toBe('@@Squad ');
+		expect(group?.value).toBe('@Squad ');
 		expect(group?.groupId).toBe('g1');
 		expect(group?.memberSessionIds).toEqual(['a', 'b']);
 	});

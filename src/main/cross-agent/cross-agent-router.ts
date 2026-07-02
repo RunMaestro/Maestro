@@ -1,9 +1,9 @@
 /**
  * @file cross-agent-router.ts
- * @description Main-process dispatch for cross-agent `@@mention` requests
+ * @description Main-process dispatch for cross-agent `@mention` requests
  * (Phase 03).
  *
- * When the user sends `@@target ...` from a source agent, the renderer forwards
+ * When the user sends `@target ...` from a source agent, the renderer forwards
  * the (Phase-02-windowed) source transcript plus the user's prompt here. We
  * serialize that into a single consultation prompt, spawn an ephemeral batch
  * process for the target agent, buffer its stream-json output, and - once it
@@ -18,7 +18,7 @@
  * - We spawn a FRESH ephemeral process (session id `cross-agent-<requestId>`)
  *   rather than injecting into the target agent's live tab. That keeps the
  *   consultation isolated (it can't pollute the user's own conversation with
- *   the target) and lets multiple `@@` requests run concurrently. The forwarded
+ *   the target) and lets multiple `@` requests run concurrently. The forwarded
  *   transcript IS the target's context for this turn.
  * - Non-blocking by contract: `startCrossAgentRequest` returns once the spawn is
  *   initiated; the response arrives later via `onChunk`.

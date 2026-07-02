@@ -2384,7 +2384,7 @@ interface MaestroAPI {
 		>;
 		onActivityChange: (handler: () => void) => () => void;
 	};
-	// Cross-Agent Dispatch API (@@mentions)
+	// Cross-Agent Dispatch API (@mentions)
 	crossAgent: {
 		/** Dispatch a cross-agent request; response streams back via onChunk. */
 		send: (

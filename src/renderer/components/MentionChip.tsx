@@ -1,5 +1,5 @@
 /**
- * MentionChip - the shared visual primitive for `@file` and `@@agent` mentions.
+ * MentionChip - the shared visual primitive for `@file` and `@agent` mentions.
  *
  * Used by BOTH the live AI-input highlight overlay (InputArea) and the rendered
  * transcript (remarkMentionChips -> MarkdownLink), so a chip looks pixel-identical

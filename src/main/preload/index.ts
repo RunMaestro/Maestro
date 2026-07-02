@@ -180,7 +180,7 @@ contextBridge.exposeInMainWorld('maestro', {
 	// Group Chat API
 	groupChat: createGroupChatApi(),
 
-	// Cross-Agent Dispatch API (@@mentions)
+	// Cross-Agent Dispatch API (@mentions)
 	crossAgent: createCrossAgentApi(),
 
 	// App lifecycle API
@@ -272,7 +272,7 @@ export {
 	createDocumentGraphApi,
 	// Group Chat
 	createGroupChatApi,
-	// Cross-Agent Dispatch (@@mentions)
+	// Cross-Agent Dispatch (@mentions)
 	createCrossAgentApi,
 	// Stats
 	createStatsApi,

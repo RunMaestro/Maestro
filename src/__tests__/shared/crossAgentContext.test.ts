@@ -1,5 +1,5 @@
 /**
- * Tests for cross-agent @@mention parsing and context-window heuristics.
+ * Tests for cross-agent @mention parsing and context-window heuristics.
  *
  * @file src/shared/crossAgentContext.ts
  */
@@ -27,19 +27,19 @@ describe('parseAgentMentions', () => {
 		expect(parseAgentMentions('')).toEqual([]);
 	});
 
-	it('parses a single mention', () => {
-		expect(parseAgentMentions('hey @@review-bot look at this')).toEqual([
-			{ token: '@@review-bot', mentionName: 'review-bot', startIndex: 4, endIndex: 16 },
+	it('parses a single mention (single @)', () => {
+		expect(parseAgentMentions('hey @review-bot look at this')).toEqual([
+			{ token: '@review-bot', mentionName: 'review-bot', startIndex: 4, endIndex: 15 },
 		]);
 	});
 
 	it('parses multiple mentions in one message', () => {
-		const result = parseAgentMentions('cc @@alice and @@bob');
+		const result = parseAgentMentions('cc @alice and @bob');
 		expect(result.map((m) => m.mentionName)).toEqual(['alice', 'bob']);
 	});
 
-	it('parses "@@a @@b @@c-d-e" as three mentions', () => {
-		const result = parseAgentMentions('@@a @@b @@c-d-e');
+	it('parses "@a @b @c-d-e" as three mentions', () => {
+		const result = parseAgentMentions('@a @b @c-d-e');
 		expect(result.map((m) => m.mentionName)).toEqual(['a', 'b', 'c-d-e']);
 	});
 
@@ -47,25 +47,30 @@ describe('parseAgentMentions', () => {
 		expect(parseAgentMentions('email me @ noon')).toEqual([]);
 	});
 
-	it('skips mid-word mentions like "foo@@bar"', () => {
-		expect(parseAgentMentions('foo@@bar')).toEqual([]);
+	it('skips a file-shaped body (path or dotted extension), not an agent', () => {
+		expect(parseAgentMentions('see @src/main/index.ts')).toEqual([]);
+		expect(parseAgentMentions('open @notes.md now')).toEqual([]);
 	});
 
-	it('skips malformed "@@@" and "@@@@" runs rather than crashing', () => {
+	it('skips mid-word mentions like "foo@bar"', () => {
+		expect(parseAgentMentions('foo@bar')).toEqual([]);
+	});
+
+	it('skips malformed "@@" and "@@@" runs rather than crashing', () => {
+		expect(parseAgentMentions('@@double')).toEqual([]);
 		expect(parseAgentMentions('@@@triple')).toEqual([]);
-		expect(parseAgentMentions('@@@@quad')).toEqual([]);
 	});
 
 	it('captures capitalized names (matches normalizeMentionName output)', () => {
-		const result = parseAgentMentions('ping @@Review-Bot now');
+		const result = parseAgentMentions('ping @Review-Bot now');
 		expect(result.map((m) => m.mentionName)).toEqual(['Review-Bot']);
 	});
 
 	it('produces index ranges that slice back to the token', () => {
-		const input = 'hi @@bob bye';
+		const input = 'hi @bob bye';
 		const [mention] = parseAgentMentions(input);
 		expect(input.slice(mention.startIndex, mention.endIndex)).toBe(mention.token);
-		expect(mention.token).toBe('@@bob');
+		expect(mention.token).toBe('@bob');
 	});
 });
 
@@ -79,18 +84,18 @@ describe('inferContextStrategy', () => {
 	});
 
 	it('returns "full" for a message that only contains a mention', () => {
-		expect(inferContextStrategy('@@bob can you help')).toEqual({ kind: 'full' });
+		expect(inferContextStrategy('@bob can you help')).toEqual({ kind: 'full' });
 	});
 
-	it('recognizes "share the last 10 messages with @@b" as recent-messages: 10', () => {
-		expect(inferContextStrategy('share the last 10 messages with @@b')).toEqual({
+	it('recognizes "share the last 10 messages with @b" as recent-messages: 10', () => {
+		expect(inferContextStrategy('share the last 10 messages with @b')).toEqual({
 			kind: 'recent-messages',
 			messages: 10,
 		});
 	});
 
 	it('recognizes "last 3 turns" as recent-turns: 3', () => {
-		expect(inferContextStrategy('send the last 3 turns to @@b')).toEqual({
+		expect(inferContextStrategy('send the last 3 turns to @b')).toEqual({
 			kind: 'recent-turns',
 			turns: 3,
 		});
@@ -104,7 +109,7 @@ describe('inferContextStrategy', () => {
 	});
 
 	it('treats a unit-less "share the last 4" as recent-messages: 4', () => {
-		expect(inferContextStrategy('share the last 4 with @@b')).toEqual({
+		expect(inferContextStrategy('share the last 4 with @b')).toEqual({
 			kind: 'recent-messages',
 			messages: 4,
 		});
@@ -117,22 +122,22 @@ describe('inferContextStrategy', () => {
 		});
 	});
 
-	it('recognizes "pull @@b in on this recent matter" as recent-turns: 5', () => {
-		expect(inferContextStrategy('pull @@b in on this recent matter')).toEqual({
+	it('recognizes "pull @b in on this recent matter" as recent-turns: 5', () => {
+		expect(inferContextStrategy('pull @b in on this recent matter')).toEqual({
 			kind: 'recent-turns',
 			turns: DEFAULT_RECENT_TURNS,
 		});
 	});
 
 	it('recognizes "most recent" as a soft recent-turns hint', () => {
-		expect(inferContextStrategy('@@b the most recent stuff is relevant')).toEqual({
+		expect(inferContextStrategy('@b the most recent stuff is relevant')).toEqual({
 			kind: 'recent-turns',
 			turns: DEFAULT_RECENT_TURNS,
 		});
 	});
 
 	it('lets an explicit number override a soft hint when both are present', () => {
-		expect(inferContextStrategy('@@b share the last 3 messages about this thread')).toEqual({
+		expect(inferContextStrategy('@b share the last 3 messages about this thread')).toEqual({
 			kind: 'recent-messages',
 			messages: 3,
 		});

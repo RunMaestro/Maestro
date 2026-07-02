@@ -7,14 +7,15 @@ import { parseAgentMentions } from '../../../shared/crossAgentContext';
 /**
  * A single agent- or group-mention row for the unified `@` picker.
  *
- * The picker uses one `@` trigger for everything, but the *inserted token still
- * disambiguates*: agents and groups produce a double-at token (`@@name `) so the
- * later cross-agent-dispatch phases (parse/route/render) can tell an agent
- * mention apart from a plain `@file` mention. Keep `value` exactly `@@name `
- * (double-at, single trailing space).
+ * The picker uses one `@` trigger for everything, and the inserted token is a
+ * single-`@` bare name (`@name `). Files and agents are told apart by SHAPE, not
+ * a double-at prefix: a file body has a slash or dotted extension (`@src/x`,
+ * `@a.md`) while an agent/group name is a bare word (`@codex`) that must resolve
+ * against the live roster. Keep `value` exactly `@name ` (single-at, single
+ * trailing space).
  */
 export interface AgentMentionSuggestion {
-	/** The `@@name ` token to insert (double-at prefix, trailing space). */
+	/** The `@name ` token to insert (single-at prefix, trailing space). */
 	value: string;
 	/** Visible name for the row. */
 	displayText: string;
@@ -47,7 +48,7 @@ const MAX_SUGGESTION_RESULTS = 15;
  *
  * Pure (no React) so both {@link useAgentMentionCompletion} and the cross-agent
  * send-path resolver ({@link resolveMentionedTargetSessionIds}) share one source
- * of truth for how a `@@name` token maps back to a session.
+ * of truth for how a `@name` token maps back to a session.
  *
  * @param sessions - All agents (sessions). Terminal-only agents are excluded.
  * @param groups - Session groups. Groups with no non-terminal members are skipped.
@@ -69,7 +70,7 @@ export function buildAgentMentionSuggestions(
 			const members = mentionable.filter((s) => s.groupId === group.id);
 			if (members.length === 0) continue;
 			result.push({
-				value: `@@${normalizeMentionName(group.name)} `,
+				value: `@${normalizeMentionName(group.name)} `,
 				displayText: group.name,
 				kind: 'group',
 				groupId: group.id,
@@ -81,7 +82,7 @@ export function buildAgentMentionSuggestions(
 
 	for (const s of mentionable) {
 		result.push({
-			value: `@@${getMentionNameForContext(s.name, peerNames)} `,
+			value: `@${getMentionNameForContext(s.name, peerNames)} `,
 			displayText: s.name,
 			kind: 'agent',
 			targetSessionId: s.id,
@@ -94,22 +95,39 @@ export function buildAgentMentionSuggestions(
 }
 
 /**
- * The normalized token (`@@name ` -> `name`, lowercased) a suggestion inserts.
+ * The normalized token (`@name ` -> `name`, lowercased) a suggestion inserts.
  * Matches how {@link parseAgentMentions} reports `mentionName`, folded to lower
- * case so `@@Review-Bot` resolves the same as `@@review-bot`.
+ * case so `@Review-Bot` resolves the same as `@review-bot`.
  */
 function suggestionToken(suggestion: AgentMentionSuggestion): string {
-	return suggestion.value.replace(/^@@/, '').trimEnd().toLowerCase();
+	return suggestion.value.replace(/^@/, '').trimEnd().toLowerCase();
 }
 
 /**
- * Resolve every `@@mention` in a message to the target session ids it should
+ * The lowercased set of mention tokens (agent + group names) currently
+ * mentionable from `currentSessionId`. The chip overlay and the rendered
+ * transcript plugin pass this to `tokenizeMentions` so a bare `@word` only
+ * lights up when it names a real agent/group; a `@word` that matches nothing
+ * stays plain text.
+ */
+export function buildKnownMentionNameSet(
+	sessions: Session[],
+	groups: Group[] | undefined,
+	currentSessionId: string | null | undefined
+): Set<string> {
+	return new Set(
+		buildAgentMentionSuggestions(sessions, groups, currentSessionId).map(suggestionToken)
+	);
+}
+
+/**
+ * Resolve every `@mention` in a message to the target session ids it should
  * dispatch to. Agent mentions map to their `targetSessionId`; group mentions
  * expand to each non-terminal `memberSessionIds` entry. The result is de-duped
  * in first-seen order, so mentioning an agent and a group containing it yields
  * that agent once.
  *
- * Used by the cross-agent send path (Phase 03) so a manually typed `@@name`
+ * Used by the cross-agent send path (Phase 03) so a manually typed `@name`
  * resolves identically to one picked from the popover.
  */
 export function resolveMentionedTargetSessionIds(
@@ -187,8 +205,8 @@ export function useAgentMentionCompletion(
 				scored = [];
 				for (const item of items) {
 					// Match against both the visible name and the normalized token
-					// (minus the `@@` prefix / trailing space) so hyphenated aliases hit.
-					const token = item.value.replace(/^@@/, '').trimEnd();
+					// (minus the `@` prefix / trailing space) so hyphenated aliases hit.
+					const token = item.value.replace(/^@/, '').trimEnd();
 					const nameMatch = fuzzyMatchWithScore(item.displayText, filter);
 					const tokenMatch = fuzzyMatchWithScore(token, filter);
 					const best = nameMatch.score > tokenMatch.score ? nameMatch : tokenMatch;

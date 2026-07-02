@@ -1,6 +1,6 @@
 /**
  * @file crossAgentContext.ts
- * @description Pure heuristics for cross-agent @@mentions (Phase 02).
+ * @description Pure heuristics for cross-agent @mentions (Phase 02).
  *
  * Decides *how much* of a source agent's transcript to forward to a target
  * agent. The default is the entire transcript; natural-language hints in the
@@ -11,7 +11,7 @@
  * can be unit-tested in isolation and reused from any process.
  */
 
-import { AGENT_MENTION_PATTERN_SOURCE } from './mentionPatterns';
+import { scanMentionSpans } from './mentionPatterns';
 
 // ============================================================================
 // TYPES
@@ -29,17 +29,17 @@ export type ContextWindowStrategy =
 	| { kind: 'recent-messages'; messages: number };
 
 /**
- * One `@@name` occurrence inside a raw message.
+ * One `@name` occurrence inside a raw message.
  *
  * `startIndex`/`endIndex` are slice bounds against the original input:
  * `input.slice(startIndex, endIndex) === token` (endIndex is exclusive).
  */
 export interface CrossAgentMention {
-	/** The full matched text, including the leading `@@` (e.g. `@@review-bot`). */
+	/** The full matched text, including the leading `@` (e.g. `@review-bot`). */
 	token: string;
-	/** The name portion without the `@@` prefix (e.g. `review-bot`). */
+	/** The name portion without the `@` prefix (e.g. `review-bot`). */
 	mentionName: string;
-	/** Index of the first `@` in the input. */
+	/** Index of the `@` in the input. */
 	startIndex: number;
 	/** Exclusive end index (one past the last name character). */
 	endIndex: number;
@@ -63,61 +63,39 @@ export interface TranscriptEntryLike {
 /** Default window for soft "recent" hints that don't name an explicit count. */
 export const DEFAULT_RECENT_TURNS = 5;
 
-/**
- * A mention is exactly two `@` followed by one or more name characters.
- *
- * Sourced from {@link AGENT_MENTION_PATTERN_SOURCE} (shared/mentionPatterns) so
- * the dispatch scanner, the `@` picker, and the chip overlay all key off one
- * definition. The class is case-insensitive to faithfully match
- * `normalizeMentionName` output (`src/shared/group-chat-types.ts`), which
- * preserves case - e.g. `@@Review-Bot`. Downstream matching folds to lowercase,
- * so restricting the scanner to `[a-z0-9-]` here would silently drop every
- * capitalized agent name.
- */
-const MENTION_PATTERN = new RegExp(AGENT_MENTION_PATTERN_SOURCE, 'g');
-
-/** A `\w`-equivalent char immediately before `@@` marks a mid-word mention. */
-const WORD_CHAR = /[A-Za-z0-9_]/;
-
 // ============================================================================
 // MENTION PARSING
 // ============================================================================
 
 /**
- * Scan a raw message for `@@name` mentions.
+ * Scan a raw message for `@name` agent/group mentions.
  *
- * Rules:
- * - Matches `@@[A-Za-z0-9-]+`, returned in input order with slice bounds.
- * - Mid-word mentions (`foo@@bar`) are skipped to match completion-UI behavior.
- * - Adjacent `@@@` / `@@@@` runs are treated as a single `@@` plus literal
- *   `@`s and skipped as malformed (a mention preceded by `@`). We stay
- *   conservative and drop these rather than emit a garbage token.
+ * Delegates the actual scanning + classification to {@link scanMentionSpans}
+ * (shared/mentionPatterns), so the dispatch scanner, the `@` picker, and the
+ * chip overlay all key off one definition.
+ *
+ * Rules (all enforced by the shared scanner):
+ * - A bare-word body (`@review-bot`, `@Codex`) is an agent candidate, returned
+ *   in input order with slice bounds. Case is preserved to match
+ *   `normalizeMentionName` output; downstream matching folds to lowercase.
+ * - Path-like bodies (`@src/x`, `@notes.md`) are files, not agents, and skipped.
+ * - Mid-word (`foo@bar`) and `@`-run (`@@x`) candidates are skipped.
+ *
+ * Whether a candidate resolves to a real agent is decided later by the send-path
+ * resolver, so an unknown `@word` here simply resolves to no target.
  */
 export function parseAgentMentions(input: string): CrossAgentMention[] {
 	if (!input) return [];
 
 	const mentions: CrossAgentMention[] = [];
-	// Fresh RegExp so the shared `lastIndex` state never leaks between calls.
-	const scanner = new RegExp(MENTION_PATTERN.source, 'g');
-	let match: RegExpExecArray | null;
-
-	while ((match = scanner.exec(input)) !== null) {
-		const startIndex = match.index;
-		const prevChar = startIndex > 0 ? input[startIndex - 1] : '';
-
-		// Reject mid-word mentions and `@@@`-style runs: a preceding word char
-		// means we're glued to another token, and a preceding `@` means this is
-		// the tail of an over-long `@` run.
-		if (prevChar && (prevChar === '@' || WORD_CHAR.test(prevChar))) {
-			continue;
-		}
-
-		const token = match[0];
+	for (const span of scanMentionSpans(input)) {
+		// Files and non-bare-word bodies are not agent mentions.
+		if (span.isFile || !span.isName) continue;
 		mentions.push({
-			token,
-			mentionName: token.slice(2),
-			startIndex,
-			endIndex: startIndex + token.length,
+			token: span.value,
+			mentionName: span.body,
+			startIndex: span.start,
+			endIndex: span.end,
 		});
 	}
 
@@ -125,7 +103,7 @@ export function parseAgentMentions(input: string): CrossAgentMention[] {
 }
 
 /**
- * Remove every `@@mention` token from a message, leaving the surrounding text
+ * Remove every `@mention` token from a message, leaving the surrounding text
  * (and any incidental whitespace) intact. Used so context-hint matching runs
  * against the user's prose, not the mention tokens.
  */
@@ -158,7 +136,7 @@ const SOFT_HINT =
 /**
  * Infer a context-window strategy from the user's message.
  *
- * Matching is case-insensitive and runs against the message with its `@@`
+ * Matching is case-insensitive and runs against the message with its `@`
  * mentions stripped out. Priority order (first hit wins):
  *   1. An explicit count with a unit -> recent-messages / recent-turns.
  *   1b. A unit-less "share the last N" -> recent-messages.

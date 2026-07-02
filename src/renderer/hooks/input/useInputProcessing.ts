@@ -102,8 +102,8 @@ export interface UseInputProcessingDeps {
 	/** Conductor profile (user's About Me from settings) */
 	conductorProfile?: string;
 	/**
-	 * Cross-agent `@@mention` dispatch (Phase 03). Called at user-submit time for
-	 * a regular AI message; resolves any `@@target` mentions and fires a
+	 * Cross-agent `@mention` dispatch (Phase 03). Called at user-submit time for
+	 * a regular AI message; resolves any `@target` mentions and fires a
 	 * non-blocking consultation to each. No-op when the message has no mentions.
 	 * Only invoked for direct input-box submits (not queued replays / force-sends).
 	 */
@@ -459,10 +459,10 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				return;
 			}
 
-			// Cross-agent @@mention dispatch (Phase 03). Fire-and-forget: resolves any
-			// `@@target` mentions in this message and consults each target agent
+			// Cross-agent @mention dispatch (Phase 03). Fire-and-forget: resolves any
+			// `@target` mentions in this message and consults each target agent
 			// without blocking the source chat. The original message still posts to
-			// the source agent below (the `@@target` text stays in it, so the source
+			// the source agent below (the `@target` text stays in it, so the source
 			// agent sees the user pinged another agent). Gated on `overrideInputValue
 			// === undefined` so it fires exactly once, on a real input-box submit -
 			// not on queued replays / force-sends, which pass an override value.

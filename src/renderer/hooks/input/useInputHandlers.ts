@@ -215,7 +215,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	const conductorProfile = useSettingsStore((s) => s.conductorProfile);
 	const automaticTabNamingEnabled = useSettingsStore((s) => s.automaticTabNamingEnabled);
 	// Cross-Agent Mentions Encore flag. Gates the Agents category of the `@`
-	// picker AND the `@@`-token dispatch path; files/directories stay ungated.
+	// picker AND the `@`-token dispatch path; files/directories stay ungated.
 	const crossAgentMentionsEnabled = useSettingsStore((s) => s.encoreFeatures.crossAgentMentions);
 
 	// --- InputContext state (completion dropdowns) ---
@@ -496,14 +496,14 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	// useInputProcessing (processes and sends input)
 	// ====================================================================
 
-	// Cross-agent @@mention dispatch (Phase 03). Mounted here (a singleton hook)
+	// Cross-agent @mention dispatch (Phase 03). Mounted here (a singleton hook)
 	// so the response-chunk subscription is set up once. resolveMentionedTargetSessionIds
 	// reuses the same agent/group resolution the `@` picker uses, so a typed
-	// `@@name` dispatches identically to one chosen from the popover.
+	// `@name` dispatches identically to one chosen from the popover.
 	const { sendCrossAgentRequest } = useCrossAgentDispatch();
 	const handleCrossAgentMentions = useCallback(
 		(message: string, sourceSession: Session, sourceTabId: string) => {
-			// Encore-gated: no `@@`-token dispatch fires when the feature is off.
+			// Encore-gated: no `@`-token dispatch fires when the feature is off.
 			if (!crossAgentMentionsEnabled) return;
 
 			const { sessions: allSessions, groups: allGroups } = useSessionStore.getState();
