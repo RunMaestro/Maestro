@@ -8,7 +8,7 @@ import { EncoreFeatureCard } from './EncoreFeatureCard';
 interface DirectorNotesSectionProps {
 	theme: Theme;
 	enabled: boolean;
-	onToggle: () => void;
+	onManage: () => void;
 	directorNotesSettings: DirectorNotesSettings;
 	setDirectorNotesSettings: (settings: DirectorNotesSettings) => void;
 	directorNotesAgentState: DirectorNotesAgentState;
@@ -17,7 +17,7 @@ interface DirectorNotesSectionProps {
 export function DirectorNotesSection({
 	theme,
 	enabled,
-	onToggle,
+	onManage,
 	directorNotesSettings,
 	setDirectorNotesSettings,
 	directorNotesAgentState,
@@ -29,7 +29,7 @@ export function DirectorNotesSection({
 			<EncoreFeatureCard
 				theme={theme}
 				enabled={enabled}
-				onToggle={onToggle}
+				onManage={onManage}
 				icon={Clapperboard}
 				title={
 					<span className="flex items-center gap-2">
@@ -46,7 +46,6 @@ export function DirectorNotesSection({
 					</span>
 				}
 				description="Unified history view and AI-generated synopsis across all sessions"
-				toggleClassName="shrink-0"
 				contentClassName="space-y-6"
 			>
 				<div className="pt-4">

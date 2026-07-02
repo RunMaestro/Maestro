@@ -7,7 +7,7 @@ import { EncoreFeatureCard } from './EncoreFeatureCard';
 interface SymphonyRegistrySectionProps {
 	theme: Theme;
 	enabled: boolean;
-	onToggle: () => void;
+	onManage: () => void;
 	symphonyRegistryUrls: string[];
 	registryState: SymphonyRegistryState;
 }
@@ -15,7 +15,7 @@ interface SymphonyRegistrySectionProps {
 export function SymphonyRegistrySection({
 	theme,
 	enabled,
-	onToggle,
+	onManage,
 	symphonyRegistryUrls,
 	registryState,
 }: SymphonyRegistrySectionProps) {
@@ -24,7 +24,7 @@ export function SymphonyRegistrySection({
 			<EncoreFeatureCard
 				theme={theme}
 				enabled={enabled}
-				onToggle={onToggle}
+				onManage={onManage}
 				icon={Music}
 				title="Maestro Symphony"
 				description="Contribute to open source projects through curated repositories"

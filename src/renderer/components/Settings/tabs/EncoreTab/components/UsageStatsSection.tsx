@@ -7,7 +7,7 @@ import { WakatimeSettings } from './WakatimeSettings';
 interface UsageStatsSectionProps {
 	theme: Theme;
 	enabled: boolean;
-	onToggle: () => void;
+	onManage: () => void;
 	defaultStatsTimeRange: StatsTimeRange;
 	setDefaultStatsTimeRange: (range: StatsTimeRange) => void;
 	wakatimeEnabled: boolean;
@@ -21,7 +21,7 @@ interface UsageStatsSectionProps {
 export function UsageStatsSection({
 	theme,
 	enabled,
-	onToggle,
+	onManage,
 	defaultStatsTimeRange,
 	setDefaultStatsTimeRange,
 	wakatimeEnabled,
@@ -36,7 +36,7 @@ export function UsageStatsSection({
 			<EncoreFeatureCard
 				theme={theme}
 				enabled={enabled}
-				onToggle={onToggle}
+				onManage={onManage}
 				icon={Database}
 				title="Usage & Stats"
 				description="Track queries, Auto Run sessions, and view the Usage Dashboard"

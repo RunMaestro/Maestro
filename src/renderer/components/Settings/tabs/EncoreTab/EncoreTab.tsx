@@ -13,6 +13,7 @@ import {
 	useSymphonyRegistryState,
 	useWakatimeSettingsState,
 } from './hooks';
+import { scrollToExtensionTile } from './utils';
 import type { EncoreTabProps, StatsTimeRange } from './types';
 
 export type { EncoreTabProps } from './types';
@@ -48,14 +49,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 			<UsageStatsSection
 				theme={theme}
 				enabled={settings.encoreFeatures.usageStats}
-				onToggle={() => {
-					const newValue = !settings.encoreFeatures.usageStats;
-					settings.setEncoreFeatures({
-						...settings.encoreFeatures,
-						usageStats: newValue,
-					});
-					settings.setStatsCollectionEnabled(newValue);
-				}}
+				onManage={() => scrollToExtensionTile('usageStats', theme.colors.accent)}
 				defaultStatsTimeRange={settings.defaultStatsTimeRange as StatsTimeRange}
 				setDefaultStatsTimeRange={settings.setDefaultStatsTimeRange}
 				wakatimeEnabled={settings.wakatimeEnabled}
@@ -69,12 +63,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 			<SymphonyRegistrySection
 				theme={theme}
 				enabled={settings.encoreFeatures.symphony}
-				onToggle={() =>
-					settings.setEncoreFeatures({
-						...settings.encoreFeatures,
-						symphony: !settings.encoreFeatures.symphony,
-					})
-				}
+				onManage={() => scrollToExtensionTile('symphony', theme.colors.accent)}
 				symphonyRegistryUrls={settings.symphonyRegistryUrls}
 				registryState={symphonyRegistryState}
 			/>
@@ -82,33 +71,23 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 			<CueSettingsSection
 				theme={theme}
 				enabled={settings.encoreFeatures.maestroCue}
-				onToggle={() =>
-					settings.setEncoreFeatures({
-						...settings.encoreFeatures,
-						maestroCue: !settings.encoreFeatures.maestroCue,
-					})
-				}
+				onManage={() => scrollToExtensionTile('maestroCue', theme.colors.accent)}
 				cueState={cueState}
 			/>
 
 			<DirectorNotesSection
 				theme={theme}
 				enabled={settings.encoreFeatures.directorNotes}
-				onToggle={() =>
-					settings.setEncoreFeatures({
-						...settings.encoreFeatures,
-						directorNotes: !settings.encoreFeatures.directorNotes,
-					})
-				}
+				onManage={() => scrollToExtensionTile('directorNotes', theme.colors.accent)}
 				directorNotesSettings={settings.directorNotesSettings}
 				setDirectorNotesSettings={settings.setDirectorNotesSettings}
 				directorNotesAgentState={directorNotesAgentState}
 			/>
 
 			{/* Extensions marketplace: built-in Encore features (incl. Pianola) +
-			    community plugins as unified tiles. This is the management surface
-			    for every Encore feature — the sections above are per-feature
-			    config, not the on/off switches. */}
+			    community plugins as unified tiles. This is THE management surface
+			    (enable/disable, permissions, background services) for every Encore
+			    feature — the sections above are per-feature config only. */}
 			<ExtensionsView theme={theme} />
 		</div>
 	);

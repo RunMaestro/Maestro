@@ -90,7 +90,8 @@ export function ExtensionDetails({
 	const isCodeTier = (ext.tier ?? 0) >= 1;
 
 	// Load the plugin's requested/granted permissions whenever the selection
-	// changes. Built-in features have no permission surface.
+	// changes. First-party features disclose statically from their definition
+	// (grants are minted host-side on enable), so no ledger round-trip.
 	useEffect(() => {
 		if (!isPlugin) {
 			setGrants(null);
@@ -413,6 +414,68 @@ export function ExtensionDetails({
 										style={{ color: granted ? theme.colors.success : theme.colors.textDim }}
 									>
 										{granted ? 'Granted' : 'Not granted'}
+									</span>
+								</div>
+							);
+						})}
+					</div>
+				</div>
+			)}
+
+			{/* First-party permission disclosure: the capabilities the feature's
+			    definition declares. Grants are minted host-side by the lifecycle
+			    bridge when the tile is enabled (trusted by construction), so this
+			    is static disclosure — no ledger round-trip. */}
+			{!isPlugin && (ext.permissions?.length ?? 0) > 0 && (
+				<div className="mt-5">
+					<div
+						className="text-xs font-bold uppercase opacity-70 mb-2"
+						style={{ color: theme.colors.textMain }}
+					>
+						Permissions
+					</div>
+					<div className="space-y-1.5">
+						{(ext.permissions ?? []).map((req) => {
+							const risk = capabilityRisk(req.capability);
+							const color = theme.colors[RISK_COLOR[risk]];
+							return (
+								<div
+									key={req.capability + (req.scope ?? '')}
+									data-testid="extension-permission"
+									data-cap={req.capability}
+									className="flex items-start gap-2 rounded-lg border p-2"
+									style={{ borderColor: theme.colors.border }}
+								>
+									<span
+										className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase flex-shrink-0 mt-0.5"
+										style={{ backgroundColor: color + '22', color }}
+									>
+										{risk}
+									</span>
+									<div className="min-w-0 flex-1">
+										<div className="text-xs" style={{ color: theme.colors.textMain }}>
+											{describeCapability(req.capability)}
+										</div>
+										{req.scope && (
+											<div
+												className="text-[10px] font-mono mt-0.5"
+												style={{ color: theme.colors.textDim }}
+											>
+												{req.scope}
+											</div>
+										)}
+										{req.reason && (
+											<div className="text-[10px] mt-0.5" style={{ color: theme.colors.textDim }}>
+												{req.reason}
+											</div>
+										)}
+									</div>
+									<span
+										data-testid="extension-permission-status"
+										className="text-[10px] font-medium flex-shrink-0 mt-0.5"
+										style={{ color: theme.colors.textDim }}
+									>
+										Granted on enable
 									</span>
 								</div>
 							);

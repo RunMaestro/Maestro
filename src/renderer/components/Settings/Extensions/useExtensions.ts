@@ -50,6 +50,7 @@ export interface UseExtensionsResult {
 export function useExtensions(): UseExtensionsResult {
 	const encoreFeatures = useSettingsStore((s) => s.encoreFeatures);
 	const setEncoreFeatures = useSettingsStore((s) => s.setEncoreFeatures);
+	const setStatsCollectionEnabled = useSettingsStore((s) => s.setStatsCollectionEnabled);
 
 	const [plugins, setPlugins] = useState<PluginRecord[]>([]);
 	const [contributions, setContributions] = useState<AggregatedContributions | null>(null);
@@ -105,8 +106,16 @@ export function useExtensions(): UseExtensionsResult {
 	const toggleBuiltin = useCallback(
 		(flag: keyof EncoreFeatureFlags) => {
 			const next = !encoreFeatures[flag];
+			// The main-process stats recording gate (`statsCollectionEnabled`) is a
+			// separate setting the old EncoreTab toggle kept in lockstep with the
+			// usageStats flag; the marketplace toggle is now the only management
+			// surface, so it owns that sync (else disable leaves recording on).
+			const applyFlag = (value: boolean) => {
+				setEncoreFeatures({ ...encoreFeatures, [flag]: value });
+				if (flag === 'usageStats') setStatsCollectionEnabled(value);
+			};
 			if (!isFirstPartyFlag(flag)) {
-				setEncoreFeatures({ ...encoreFeatures, [flag]: next });
+				applyFlag(next);
 				return;
 			}
 			// First-party features route through the host-owned lifecycle bridge:
@@ -116,7 +125,7 @@ export function useExtensions(): UseExtensionsResult {
 			void window.maestro.plugins
 				.setFirstPartyEnabled(flag, next)
 				.then((state) => {
-					setEncoreFeatures({ ...encoreFeatures, [flag]: state.enabled });
+					applyFlag(state.enabled);
 				})
 				.catch((err) => {
 					// Fail LOUD, then fall back to the direct settings write so the
@@ -127,10 +136,10 @@ export function useExtensions(): UseExtensionsResult {
 							`falling back to direct settings write:`,
 						err
 					);
-					setEncoreFeatures({ ...encoreFeatures, [flag]: next });
+					applyFlag(next);
 				});
 		},
-		[encoreFeatures, setEncoreFeatures]
+		[encoreFeatures, setEncoreFeatures, setStatsCollectionEnabled]
 	);
 
 	const enablePluginsSubsystem = useCallback(() => {

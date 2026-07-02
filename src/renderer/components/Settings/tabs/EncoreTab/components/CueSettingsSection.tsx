@@ -6,14 +6,14 @@ import { EncoreFeatureCard } from './EncoreFeatureCard';
 interface CueSettingsSectionProps {
 	theme: Theme;
 	enabled: boolean;
-	onToggle: () => void;
+	onManage: () => void;
 	cueState: CueSettingsState;
 }
 
 export function CueSettingsSection({
 	theme,
 	enabled,
-	onToggle,
+	onManage,
 	cueState,
 }: CueSettingsSectionProps) {
 	return (
@@ -21,7 +21,7 @@ export function CueSettingsSection({
 			<EncoreFeatureCard
 				theme={theme}
 				enabled={enabled}
-				onToggle={onToggle}
+				onManage={onManage}
 				icon={Zap}
 				title={
 					<span className="flex items-center gap-2">

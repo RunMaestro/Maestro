@@ -1,3 +1,4 @@
+import { Puzzle } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { ReactNode } from 'react';
 import type { Theme } from '../../../../../types';
@@ -5,24 +6,29 @@ import type { Theme } from '../../../../../types';
 interface EncoreFeatureCardProps {
 	theme: Theme;
 	enabled: boolean;
-	onToggle: () => void;
+	/** Jump to the feature's tile in the Extensions marketplace below — the
+	 * marketplace is the management surface; this card only shows state. */
+	onManage: () => void;
 	icon: LucideIcon;
 	title: ReactNode;
 	description: ReactNode;
 	children?: ReactNode;
-	toggleClassName?: string;
 	contentClassName?: string;
 }
 
+/**
+ * Per-feature CONFIG section header. Enable/disable is managed in the
+ * Extensions marketplace (the tiles at the bottom of this tab) — the header
+ * shows the current state and links there instead of toggling anything.
+ */
 export function EncoreFeatureCard({
 	theme,
 	enabled,
-	onToggle,
+	onManage,
 	icon: Icon,
 	title,
 	description,
 	children,
-	toggleClassName = '',
 	contentClassName = 'space-y-3',
 }: EncoreFeatureCardProps) {
 	return (
@@ -33,17 +39,13 @@ export function EncoreFeatureCard({
 				backgroundColor: enabled ? `${theme.colors.accent}08` : 'transparent',
 			}}
 		>
-			<button
-				className="w-full flex items-center justify-between p-4 text-left"
-				onClick={onToggle}
-				aria-pressed={enabled}
-			>
-				<div className="flex items-center gap-3">
+			<div className="w-full flex items-center justify-between gap-3 p-4 text-left">
+				<div className="flex items-center gap-3 min-w-0">
 					<Icon
-						className="w-5 h-5"
+						className="w-5 h-5 flex-shrink-0"
 						style={{ color: enabled ? theme.colors.accent : theme.colors.textDim }}
 					/>
-					<div>
+					<div className="min-w-0">
 						<div className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
 							{title}
 						</div>
@@ -52,23 +54,29 @@ export function EncoreFeatureCard({
 						</div>
 					</div>
 				</div>
-				<div
-					aria-hidden="true"
-					className={`relative w-10 h-5 rounded-full transition-colors ${
-						enabled ? '' : 'opacity-50'
-					} ${toggleClassName}`}
-					style={{
-						backgroundColor: enabled ? theme.colors.accent : theme.colors.border,
-					}}
-				>
-					<div
-						className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform"
+				<div className="flex items-center gap-2 flex-shrink-0">
+					<span
+						data-testid="encore-feature-state"
+						className="px-1.5 py-0.5 rounded text-[10px] font-bold"
 						style={{
-							transform: enabled ? 'translateX(22px)' : 'translateX(2px)',
+							backgroundColor: (enabled ? theme.colors.success : theme.colors.textDim) + '22',
+							color: enabled ? theme.colors.success : theme.colors.textDim,
 						}}
-					/>
+					>
+						{enabled ? 'Enabled' : 'Disabled'}
+					</span>
+					<button
+						type="button"
+						data-testid="encore-feature-manage"
+						onClick={onManage}
+						title="Manage in Extensions"
+						className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs transition-colors hover:bg-white/5"
+						style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+					>
+						<Puzzle className="w-3.5 h-3.5" /> Manage in Extensions
+					</button>
 				</div>
-			</button>
+			</div>
 			{enabled && children && (
 				<div
 					className={`px-4 pb-4 border-t ${contentClassName}`}
