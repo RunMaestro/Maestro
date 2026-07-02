@@ -29,15 +29,29 @@ export function asarNodePath(resources: string): string {
 
 /**
  * Run `fn` with `process.platform` overridden, restoring it afterward.
- * `platformDetection.getPlatform()` reads `process.platform` first (before
- * `window.maestro.platform`) under Node, so Unix-branch tests must force it.
+ * Supports async callbacks: when `fn` returns a promise, restoration waits for
+ * it to settle. `platformDetection.getPlatform()` reads `process.platform`
+ * first (before `window.maestro.platform`) under Node, so Unix-branch tests
+ * must force it.
  */
-export function withPlatform(value: NodeJS.Platform, fn: () => void): void {
+export function withPlatform(value: NodeJS.Platform, fn: () => void): void;
+export function withPlatform(value: NodeJS.Platform, fn: () => Promise<void>): Promise<void>;
+export function withPlatform(
+	value: NodeJS.Platform,
+	fn: () => void | Promise<void>
+): void | Promise<void> {
 	const original = process.platform;
+	const restore = () =>
+		Object.defineProperty(process, 'platform', { value: original, configurable: true });
 	Object.defineProperty(process, 'platform', { value, configurable: true });
 	try {
-		fn();
-	} finally {
-		Object.defineProperty(process, 'platform', { value: original, configurable: true });
+		const result = fn();
+		if (result instanceof Promise) {
+			return result.finally(restore);
+		}
+		restore();
+	} catch (error) {
+		restore();
+		throw error;
 	}
 }

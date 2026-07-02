@@ -58,8 +58,9 @@ export default defineConfig({
 				test: {
 					name: 'node',
 					environment: 'node',
+					// include matches .ts only, so .tsx files can never land here.
 					include: ['src/**/*.{test,spec}.ts'],
-					exclude: [...sharedExclude, ...jsdomOnlyTs, 'src/**/*.{test,spec}.tsx'],
+					exclude: [...sharedExclude, ...jsdomOnlyTs],
 				},
 			},
 		],
