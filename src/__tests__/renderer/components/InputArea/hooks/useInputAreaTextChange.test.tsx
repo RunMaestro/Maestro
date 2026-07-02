@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react';
+import { useRef } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { useInputAreaTextChange } from '../../../../../renderer/components/InputArea/hooks/useInputAreaTextChange';
 
@@ -11,9 +12,11 @@ function Harness({
 	slashCommandOpen?: boolean;
 	handlers: Record<string, ReturnType<typeof vi.fn>>;
 }) {
+	const keystrokeResizeScheduledRef = useRef(false);
 	const onChange = useInputAreaTextChange({
 		isTerminalMode,
 		slashCommandOpen,
+		keystrokeResizeScheduledRef,
 		setInputValue: handlers.setInputValue,
 		setSlashCommandOpen: handlers.setSlashCommandOpen,
 		setSelectedSlashCommandIndex: handlers.setSelectedSlashCommandIndex,
