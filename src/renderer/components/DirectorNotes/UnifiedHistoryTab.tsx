@@ -41,6 +41,43 @@ const PAGE_SIZE = 100;
 const SCROLL_LOAD_THRESHOLD = 500;
 
 /**
+ * Source-type filter selection is persisted to localStorage so a user's
+ * choice (e.g. deselecting CUE to hide heartbeat noise) survives closing the
+ * modal and restarting the app. Mirrors the `directorNotes.fontScale` idiom
+ * in AIOverviewTab.
+ */
+const HISTORY_FILTERS_STORAGE_KEY = 'directorNotes.historyFilters';
+const ALL_FILTER_TYPES: readonly HistoryEntryType[] = ['USER', 'AUTO', 'CUE'];
+
+/**
+ * Load the persisted filter selection. Returns null when nothing was ever
+ * stored (caller falls back to the all-on default). An empty set is a valid
+ * persisted choice and is distinct from null.
+ */
+function loadPersistedFilters(): Set<HistoryEntryType> | null {
+	try {
+		const raw = localStorage.getItem(HISTORY_FILTERS_STORAGE_KEY);
+		if (raw === null) return null;
+		const parsed: unknown = JSON.parse(raw);
+		if (!Array.isArray(parsed)) return null;
+		const valid = parsed.filter((t): t is HistoryEntryType =>
+			ALL_FILTER_TYPES.includes(t as HistoryEntryType)
+		);
+		return new Set(valid);
+	} catch {
+		return null;
+	}
+}
+
+function savePersistedFilters(filters: Set<HistoryEntryType>): void {
+	try {
+		localStorage.setItem(HISTORY_FILTERS_STORAGE_KEY, JSON.stringify([...filters]));
+	} catch {
+		// Ignore write failures (quota, private mode) — persistence is best-effort.
+	}
+}
+
+/**
  * Resolve the bucket count for a given lookback selection. Each lookback
  * option carries its own preferred resolution (24 for short windows, 28
  * for "1 week", 30 for "1 month", etc.).
@@ -77,9 +114,15 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 			[maestroCueEnabled]
 		);
 
-		const [activeFilters, setActiveFilters] = useState<Set<HistoryEntryType>>(
-			() => new Set(maestroCueEnabled ? ['USER', 'AUTO', 'CUE'] : ['USER', 'AUTO'])
-		);
+		const [activeFilters, setActiveFilters] = useState<Set<HistoryEntryType>>(() => {
+			const stored = loadPersistedFilters();
+			const base =
+				stored ??
+				new Set<HistoryEntryType>(maestroCueEnabled ? ['USER', 'AUTO', 'CUE'] : ['USER', 'AUTO']);
+			// CUE can never be active while the feature is off — it's not a visible type.
+			if (!maestroCueEnabled) base.delete('CUE');
+			return base;
+		});
 
 		// Stable, ordered array of the active types. Pushed to the server so
 		// pagination operates over the *filtered* dataset — otherwise the
@@ -355,20 +398,31 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 			});
 		}, [entries, activeFilters, searchQuery]);
 
-		// Sync activeFilters when cue feature is toggled
+		// Sync activeFilters when the Cue Encore feature is toggled. Only a
+		// genuine off->on transition auto-enables the CUE filter (new feature
+		// just became available). We must NOT force CUE on at mount, otherwise
+		// a persisted "CUE deselected" choice would be clobbered on every open.
+		const prevCueEnabledRef = useRef(maestroCueEnabled);
 		useEffect(() => {
+			const wasEnabled = prevCueEnabledRef.current;
+			prevCueEnabledRef.current = maestroCueEnabled;
 			setActiveFilters((prev) => {
-				if (maestroCueEnabled && !prev.has('CUE')) {
-					return new Set([...prev, 'CUE']);
-				}
 				if (!maestroCueEnabled && prev.has('CUE')) {
 					const next = new Set(prev);
 					next.delete('CUE');
 					return next;
 				}
+				if (maestroCueEnabled && !wasEnabled && !prev.has('CUE')) {
+					return new Set([...prev, 'CUE']);
+				}
 				return prev;
 			});
 		}, [maestroCueEnabled]);
+
+		// Persist the selection so it survives modal close and app restart.
+		useEffect(() => {
+			savePersistedFilters(activeFilters);
+		}, [activeFilters]);
 
 		// Toggle filter
 		const toggleFilter = useCallback((type: HistoryEntryType) => {

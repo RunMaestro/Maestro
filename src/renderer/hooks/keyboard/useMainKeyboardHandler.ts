@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Session, AITab, ThinkingMode } from '../../types';
-import { getInitialRenameValue } from '../../utils/tabHelpers';
+import { getInitialRenameValue, moveActiveUnifiedTabToEdge } from '../../utils/tabHelpers';
 import { useModalStore } from '../../stores/modalStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { isActiveOutputSearchOpen } from '../../utils/outputSearch';
@@ -1139,6 +1139,31 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						return prev.map((s: Session) => (s.id === current.id ? result.session : s));
 					});
 					trackShortcut('prevTab');
+				}
+				// Cmd+Shift+Left / Cmd+Shift+Right - Move the active tab to the first /
+				// last position. Works for ALL tab kinds (AI, file, browser, terminal)
+				// since it reorders unifiedTabOrder directly.
+				if (ctx.isTabShortcut(e, 'moveTabToStart')) {
+					e.preventDefault();
+					ctx.setSessions((prev: Session[]) => {
+						const current = prev.find((s: Session) => s.id === ctx.activeSessionId);
+						if (!current) return prev;
+						const updated = moveActiveUnifiedTabToEdge(current, 'start');
+						if (updated === current) return prev;
+						return prev.map((s: Session) => (s.id === current.id ? updated : s));
+					});
+					trackShortcut('moveTabToStart');
+				}
+				if (ctx.isTabShortcut(e, 'moveTabToEnd')) {
+					e.preventDefault();
+					ctx.setSessions((prev: Session[]) => {
+						const current = prev.find((s: Session) => s.id === ctx.activeSessionId);
+						if (!current) return prev;
+						const updated = moveActiveUnifiedTabToEdge(current, 'end');
+						if (updated === current) return prev;
+						return prev.map((s: Session) => (s.id === current.id ? updated : s));
+					});
+					trackShortcut('moveTabToEnd');
 				}
 				// Cmd+1-9, Cmd+0 — Jump to tab by index in unified order.
 				// In unread-only mode, index into the filtered/visible tabs so Cmd+N matches

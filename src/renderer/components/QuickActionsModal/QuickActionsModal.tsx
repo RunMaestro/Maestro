@@ -793,7 +793,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				aria-modal="true"
 				aria-label={mode === 'agents' ? 'Switch Agent' : 'Quick Actions'}
 				tabIndex={-1}
-				className="modal-w-md rounded-xl shadow-2xl border overflow-hidden flex flex-col max-h-[550px] outline-none"
+				className="modal-w-md rounded-xl shadow-2xl border overflow-hidden flex flex-col max-h-[min(680px,calc(100vh-10rem))] outline-none"
 				style={{ backgroundColor: theme.colors.bgActivity, borderColor: theme.colors.border }}
 			>
 				<QuickActionsSearchBar

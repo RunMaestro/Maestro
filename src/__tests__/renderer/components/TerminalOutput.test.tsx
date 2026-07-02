@@ -2529,8 +2529,8 @@ describe('TerminalOutput', () => {
 
 			render(<TerminalOutput {...createDefaultProps({ session })} />);
 
-			expect(screen.getByText('API')).toBeInTheDocument();
-			expect(screen.getByText('TUI')).toBeInTheDocument();
+			expect(screen.getByText('claude -p')).toBeInTheDocument();
+			expect(screen.getByText('TUI Wrapper')).toBeInTheDocument();
 		});
 
 		it('labels an interactive turn as TUI even when a system banner leads its response group', () => {
@@ -2561,11 +2561,11 @@ describe('TerminalOutput', () => {
 
 			render(<TerminalOutput {...createDefaultProps({ session })} />);
 
-			expect(screen.getByText('TUI')).toBeInTheDocument();
-			expect(screen.queryByText('API')).not.toBeInTheDocument();
+			expect(screen.getByText('TUI Wrapper')).toBeInTheDocument();
+			expect(screen.queryByText('claude -p')).not.toBeInTheDocument();
 		});
 
-		it('uses the "Adaptive" prefix when the session has Adaptive Mode enabled', () => {
+		it('uses the "Dynamic" prefix when the session has Adaptive Mode enabled', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({ id: 'user-1', text: 'first prompt', source: 'user' }),
 				createLogEntry({
@@ -2591,13 +2591,13 @@ describe('TerminalOutput', () => {
 
 			render(<TerminalOutput {...createDefaultProps({ session })} />);
 
-			expect(screen.getByText('Adaptive TUI')).toBeInTheDocument();
-			expect(screen.getByText('Adaptive API')).toBeInTheDocument();
-			expect(screen.queryByText('TUI')).not.toBeInTheDocument();
-			expect(screen.queryByText('API')).not.toBeInTheDocument();
+			expect(screen.getByText('Dynamic TUI Wrapper')).toBeInTheDocument();
+			expect(screen.getByText('Dynamic claude -p')).toBeInTheDocument();
+			expect(screen.queryByText('TUI Wrapper')).not.toBeInTheDocument();
+			expect(screen.queryByText('claude -p')).not.toBeInTheDocument();
 		});
 
-		it('omits the "Adaptive" prefix when the session pins maestro-p mode (forced TUI / API)', () => {
+		it('omits the "Dynamic" prefix when the session pins maestro-p mode (forced TUI / API)', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({ id: 'user-1', text: 'first prompt', source: 'user' }),
 				createLogEntry({
@@ -2626,10 +2626,10 @@ describe('TerminalOutput', () => {
 
 			render(<TerminalOutput {...createDefaultProps({ session })} />);
 
-			expect(screen.getByText('TUI')).toBeInTheDocument();
-			expect(screen.getByText('API')).toBeInTheDocument();
-			expect(screen.queryByText('Adaptive TUI')).not.toBeInTheDocument();
-			expect(screen.queryByText('Adaptive API')).not.toBeInTheDocument();
+			expect(screen.getByText('TUI Wrapper')).toBeInTheDocument();
+			expect(screen.getByText('claude -p')).toBeInTheDocument();
+			expect(screen.queryByText('Dynamic TUI Wrapper')).not.toBeInTheDocument();
+			expect(screen.queryByText('Dynamic claude -p')).not.toBeInTheDocument();
 		});
 
 		it('does not render the pill on user messages even when tagged text-stream', () => {
@@ -2650,8 +2650,8 @@ describe('TerminalOutput', () => {
 			render(<TerminalOutput {...createDefaultProps({ session })} />);
 
 			expect(screen.getByText('a user prompt')).toBeInTheDocument();
-			expect(screen.queryByText('TUI')).not.toBeInTheDocument();
-			expect(screen.queryByText('API')).not.toBeInTheDocument();
+			expect(screen.queryByText('TUI Wrapper')).not.toBeInTheDocument();
+			expect(screen.queryByText('claude -p')).not.toBeInTheDocument();
 		});
 
 		it('does not render the pill on non-Claude agents', () => {
@@ -2668,10 +2668,10 @@ describe('TerminalOutput', () => {
 
 			render(<TerminalOutput {...createDefaultProps({ session })} />);
 
-			expect(screen.queryByText('TUI')).not.toBeInTheDocument();
-			expect(screen.queryByText('API')).not.toBeInTheDocument();
-			expect(screen.queryByText('Adaptive TUI')).not.toBeInTheDocument();
-			expect(screen.queryByText('Adaptive API')).not.toBeInTheDocument();
+			expect(screen.queryByText('TUI Wrapper')).not.toBeInTheDocument();
+			expect(screen.queryByText('claude -p')).not.toBeInTheDocument();
+			expect(screen.queryByText('Dynamic TUI Wrapper')).not.toBeInTheDocument();
+			expect(screen.queryByText('Dynamic claude -p')).not.toBeInTheDocument();
 		});
 	});
 });

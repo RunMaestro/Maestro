@@ -183,6 +183,44 @@ export function getRepairedUnifiedTabOrder(session: Session): UnifiedTabRef[] {
 }
 
 /**
+ * Move the currently active tab to the first or last position in the unified tab
+ * order. Works across ALL tab kinds (AI, file, browser, terminal) since it operates
+ * on unifiedTabOrder, the single source of truth for visual tab position.
+ *
+ * Uses the repaired order so the move aligns with what TabBar renders and stale /
+ * duplicate refs are pruned as a side effect. The active tab stays active - only its
+ * position changes, so no active-tab-id fields are touched.
+ *
+ * Returns the original session unchanged (no allocation) when there are fewer than
+ * two tabs, no active tab is present in the order, or the active tab already sits at
+ * the target edge.
+ *
+ * @param session - The Maestro session
+ * @param edge - 'start' moves the active tab to the first slot, 'end' to the last
+ * @returns New session with the reordered unifiedTabOrder, or the original if it's a no-op
+ */
+export function moveActiveUnifiedTabToEdge(session: Session, edge: 'start' | 'end'): Session {
+	const order = getRepairedUnifiedTabOrder(session);
+	if (order.length < 2) return session;
+
+	const activeIndex = findActiveUnifiedTabIndex(session, order);
+	if (activeIndex === -1) return session;
+
+	const targetIndex = edge === 'start' ? 0 : order.length - 1;
+	if (activeIndex === targetIndex) return session;
+
+	const newOrder = [...order];
+	const [moved] = newOrder.splice(activeIndex, 1);
+	if (edge === 'start') {
+		newOrder.unshift(moved);
+	} else {
+		newOrder.push(moved);
+	}
+
+	return { ...session, unifiedTabOrder: newOrder };
+}
+
+/**
  * Get the initial name to show in the rename modal.
  * Returns empty string if no custom name is set (name is null),
  * or the custom name if user has set one.

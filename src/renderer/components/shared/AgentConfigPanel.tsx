@@ -32,8 +32,8 @@ let envVarIdCounter = 0;
 // Claude token-source selector (claude-code only). Maps the tri-state
 // ClaudeTokenMode onto the segmented control labels plus a one-line hint each.
 const CLAUDE_TOKEN_MODE_OPTIONS: { value: ClaudeTokenMode; label: string }[] = [
-	{ value: 'api', label: 'API' },
-	{ value: 'interactive', label: 'TUI' },
+	{ value: 'api', label: 'claude -p' },
+	{ value: 'interactive', label: 'TUI Wrapper' },
 	{ value: 'dynamic', label: 'Dynamic' },
 ];
 

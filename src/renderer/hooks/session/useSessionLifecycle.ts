@@ -93,7 +93,9 @@ export interface SessionLifecycleReturn {
 		},
 		enableMaestroP?: boolean,
 		maestroPPath?: string,
-		maestroPMode?: 'interactive' | 'dynamic'
+		maestroPMode?: 'interactive' | 'dynamic',
+		retryOnAvailabilityErrors?: boolean,
+		retryOnTokenExhaustion?: boolean
 	) => void;
 	/** Rename the currently-selected tab (persists to agent session storage + history) */
 	handleRenameTab: (newName: string) => void;
@@ -161,7 +163,9 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			},
 			enableMaestroP?: boolean,
 			maestroPPath?: string,
-			maestroPMode?: 'interactive' | 'dynamic'
+			maestroPMode?: 'interactive' | 'dynamic',
+			retryOnAvailabilityErrors?: boolean,
+			retryOnTokenExhaustion?: boolean
 		) => {
 			useSessionStore.getState().setSessions((prev) =>
 				prev.map((s) => {
@@ -180,6 +184,10 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 						enableMaestroP,
 						maestroPPath,
 						maestroPMode,
+						// Agent Resilience: resilience is provider-agnostic, so it is NOT
+						// cleared on a provider switch below (unlike maestroP fields).
+						retryOnAvailabilityErrors,
+						retryOnTokenExhaustion,
 					};
 
 					// If provider changed, reset tabs and provider-specific config

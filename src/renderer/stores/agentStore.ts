@@ -35,6 +35,10 @@ import { createTab, getActiveTab } from '../utils/tabHelpers';
 import { getStdinFlags, prepareMaestroSystemPrompt } from '../utils/spawnHelpers';
 import { generateId } from '../utils/ids';
 import { useSessionStore, selectSessionById } from './sessionStore';
+// Agent Resilience: snapshot dispatched prompts for auto-retry. Import cycle
+// with retryStore is safe — both sides only touch each other inside runtime
+// callbacks, never at module-eval time.
+import { noteDispatch } from './retryStore';
 import { DEFAULT_IMAGE_ONLY_PROMPT } from '../hooks/input/useInputProcessing';
 import { substituteTemplateVariables } from '../utils/templateVariables';
 import { gitService } from '../services/git';
@@ -361,6 +365,13 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		}
 
 		const targetSessionId = `${sessionId}-ai-${targetTab.id}`;
+
+		// Agent Resilience: snapshot the exact prompt (keyed on the RESOLVED target
+		// tab so it matches the error listener's tab) so it can be auto-resent if
+		// this turn fails with a transient upstream error. We record the item with
+		// its tabId pinned to the resolved target — `item.tabId` may be undefined
+		// when the item fell back to the active tab.
+		noteDispatch(sessionId, { ...item, tabId: targetTab.id }, deps);
 
 		try {
 			// Get agent configuration for this session's tool type

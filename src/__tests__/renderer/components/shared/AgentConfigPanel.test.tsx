@@ -305,8 +305,8 @@ describe('AgentConfigPanel', () => {
 			render(<AgentConfigPanel {...createDefaultProps({ onEnableMaestroPChange: vi.fn() })} />);
 
 			expect(screen.getByText('Claude Token Source')).toBeInTheDocument();
-			expect(screen.getByText('API')).toBeInTheDocument();
-			expect(screen.getByText('TUI')).toBeInTheDocument();
+			expect(screen.getByText('claude -p')).toBeInTheDocument();
+			expect(screen.getByText('TUI Wrapper')).toBeInTheDocument();
 			expect(screen.getByText('Dynamic')).toBeInTheDocument();
 		});
 
@@ -319,8 +319,8 @@ describe('AgentConfigPanel', () => {
 				/>
 			);
 
-			const tuiButton = screen.getByText('TUI').closest('button');
-			const apiButton = screen.getByText('API').closest('button');
+			const tuiButton = screen.getByText('TUI Wrapper').closest('button');
+			const apiButton = screen.getByText('claude -p').closest('button');
 			expect(tuiButton?.className).toContain('ring-2');
 			expect(apiButton?.className).not.toContain('ring-2');
 			expect(screen.getByText(/Runs maestro-p on the remote host/)).toBeInTheDocument();
@@ -337,8 +337,8 @@ describe('AgentConfigPanel', () => {
 				/>
 			);
 
-			const apiButton = screen.getByText('API').closest('button');
-			const tuiButton = screen.getByText('TUI').closest('button');
+			const apiButton = screen.getByText('claude -p').closest('button');
+			const tuiButton = screen.getByText('TUI Wrapper').closest('button');
 			expect(apiButton?.className).toContain('ring-2');
 			expect(tuiButton?.className).not.toContain('ring-2');
 		});
@@ -365,8 +365,8 @@ describe('AgentConfigPanel', () => {
 			await waitFor(() =>
 				expect(screen.getByText(/maestro-p was not found on the remote/)).toBeInTheDocument()
 			);
-			expect(screen.queryByText('TUI')).not.toBeInTheDocument();
-			const apiButton = screen.getByText('API').closest('button');
+			expect(screen.queryByText('TUI Wrapper')).not.toBeInTheDocument();
+			const apiButton = screen.getByText('claude -p').closest('button');
 			expect(apiButton?.className).toContain('ring-2');
 			(
 				window as unknown as {
@@ -411,7 +411,7 @@ describe('AgentConfigPanel', () => {
 			await waitFor(() =>
 				expect(screen.queryByText(/maestro-p was not found on the remote/)).not.toBeInTheDocument()
 			);
-			expect(screen.getByText('TUI')).toBeInTheDocument();
+			expect(screen.getByText('TUI Wrapper')).toBeInTheDocument();
 
 			probeFn.mockResolvedValue(null);
 		});
@@ -424,8 +424,8 @@ describe('AgentConfigPanel', () => {
 			);
 
 			expect(screen.getByText('Claude Token Source')).toBeInTheDocument();
-			expect(screen.getByText('API')).toBeInTheDocument();
-			expect(screen.getByText('TUI')).toBeInTheDocument();
+			expect(screen.getByText('claude -p')).toBeInTheDocument();
+			expect(screen.getByText('TUI Wrapper')).toBeInTheDocument();
 			expect(screen.queryByText('Dynamic')).not.toBeInTheDocument();
 		});
 

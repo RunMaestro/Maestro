@@ -161,6 +161,7 @@ export interface UseMainPanelPropsDeps {
 	handleDeleteLog: (logId: string) => number | null;
 	handleRemoveQueuedItem: (itemId: string) => void;
 	handleToggleQueuedItemPause: (itemId: string) => void;
+	handleEditQueuedItem: (itemId: string, patch: { text: string; images: string[] }) => void;
 	handleReorderQueuedItem: (fromIndex: number, toIndex: number, tabId?: string) => void;
 	handleForceSendQueuedItem: (itemId: string) => void;
 	forcedParallelEnabled: boolean;
@@ -394,6 +395,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			onDeleteLog: deps.handleDeleteLog,
 			onRemoveQueuedItem: deps.handleRemoveQueuedItem,
 			onTogglePauseQueuedItem: deps.handleToggleQueuedItemPause,
+			onEditQueuedItem: deps.handleEditQueuedItem,
 			onReorderQueuedItem: deps.handleReorderQueuedItem,
 			onForceSendQueuedItem: deps.handleForceSendQueuedItem,
 			forcedParallelEnabled: deps.forcedParallelEnabled,
@@ -646,6 +648,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.handleDeleteLog,
 			deps.handleRemoveQueuedItem,
 			deps.handleToggleQueuedItemPause,
+			deps.handleEditQueuedItem,
 			deps.handleReorderQueuedItem,
 			deps.handleForceSendQueuedItem,
 			deps.forcedParallelEnabled,

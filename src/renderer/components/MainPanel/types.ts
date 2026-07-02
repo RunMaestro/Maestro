@@ -145,6 +145,7 @@ export interface MainPanelProps {
 	onDeleteLog?: (logId: string) => number | null;
 	onRemoveQueuedItem?: (itemId: string) => void;
 	onTogglePauseQueuedItem?: (itemId: string) => void;
+	onEditQueuedItem?: (itemId: string, patch: { text: string; images: string[] }) => void;
 	onReorderQueuedItem?: (fromIndex: number, toIndex: number, tabId?: string) => void;
 	onForceSendQueuedItem?: (itemId: string) => void;
 	forcedParallelEnabled?: boolean;

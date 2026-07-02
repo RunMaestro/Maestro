@@ -54,7 +54,9 @@ export interface NewInstanceModalProps {
 		groupId?: string,
 		enableMaestroP?: boolean,
 		maestroPPath?: string,
-		maestroPMode?: 'interactive' | 'dynamic'
+		maestroPMode?: 'interactive' | 'dynamic',
+		retryOnAvailabilityErrors?: boolean,
+		retryOnTokenExhaustion?: boolean
 	) => void;
 	theme: Theme;
 	existingSessions: Session[];
@@ -79,7 +81,9 @@ export interface EditAgentModalProps {
 		sessionSshRemoteConfig?: SessionSshRemoteConfig,
 		enableMaestroP?: boolean,
 		maestroPPath?: string,
-		maestroPMode?: 'interactive' | 'dynamic'
+		maestroPMode?: 'interactive' | 'dynamic',
+		retryOnAvailabilityErrors?: boolean,
+		retryOnTokenExhaustion?: boolean
 	) => void;
 	theme: Theme;
 	session: Session | null;
