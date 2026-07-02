@@ -139,9 +139,13 @@ function simulateSaveAndPrune(pipelines: CuePipeline[]): {
 		walk(promptsDir);
 	}
 
+	// `path.relative` yields OS-native separators (`\` on Windows). Normalize to
+	// forward slashes so the assertions below can use POSIX-style literals on
+	// every platform (a no-op transform on POSIX).
+	const toPosix = (p: string) => p.replace(/\\/g, '/');
 	return {
-		keptOnDisk: keptOnDisk.sort(),
-		removed: removed.map((r) => path.relative(projectRoot, r)).sort(),
+		keptOnDisk: keptOnDisk.map(toPosix).sort(),
+		removed: removed.map((r) => toPosix(path.relative(projectRoot, r))).sort(),
 	};
 }
 

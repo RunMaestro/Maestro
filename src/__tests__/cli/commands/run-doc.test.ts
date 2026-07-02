@@ -61,6 +61,7 @@ vi.mock('../../../shared/cli-activity', () => ({
 
 import * as fs from 'fs';
 import * as os from 'os';
+import path from 'path';
 import { runDoc } from '../../../cli/commands/run-doc';
 import { getSessionById, resolveAgentId } from '../../../cli/services/storage';
 import { runPlaybook as executePlaybook } from '../../../cli/services/batch-processor';
@@ -126,7 +127,7 @@ describe('run-doc command', () => {
 		expect(executePlaybook).toHaveBeenCalledWith(
 			mockSession(),
 			expect.objectContaining({
-				documents: [{ filename: 'plans/frontend-plan', resetOnCompletion: false }],
+				documents: [{ filename: path.join('plans', 'frontend-plan'), resetOnCompletion: false }],
 				prompt: '',
 				loopEnabled: false,
 			}),

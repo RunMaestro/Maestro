@@ -43,6 +43,35 @@ vi.mock('../../../../main/utils/logger', () => ({
 }));
 
 /**
+ * Symlink creation requires elevation / Developer Mode on Windows and throws
+ * EPERM otherwise. Probe once and cache so the symlink-confinement tests run on
+ * Unix/CI (where they're meaningful) but skip gracefully where the OS forbids
+ * creating symlinks. This is purely an environment capability check — the
+ * product's realpath-based confinement is platform-neutral.
+ */
+let _canSymlink: boolean | undefined;
+function canSymlink(): boolean {
+	if (_canSymlink !== undefined) return _canSymlink;
+	let probeDir: string | undefined;
+	try {
+		probeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-symlink-probe-'));
+		fs.symlinkSync(probeDir, path.join(probeDir, 'self-link'));
+		_canSymlink = true;
+	} catch {
+		_canSymlink = false;
+	} finally {
+		if (probeDir) {
+			try {
+				fs.rmSync(probeDir, { recursive: true, force: true });
+			} catch {
+				// best-effort cleanup
+			}
+		}
+	}
+	return _canSymlink;
+}
+
+/**
  * Create a mock WebSocket client
  */
 function createMockClient(id: string = 'test-client'): WebClient {
@@ -817,9 +846,12 @@ describe('WebSocketMessageHandler', () => {
 			});
 
 			await vi.waitFor(() => {
+				// The handler forwards `path.resolve(sessionRoot, filePath)`, which on
+				// Windows carries the CWD drive letter. Route the expectation through
+				// the same primitive so it stays platform-symmetric (no-op on POSIX).
 				expect(callbacks.openFileTab).toHaveBeenCalledWith(
 					'session-1',
-					'/home/user/project/src/index.ts',
+					path.resolve(path.resolve('/home/user/project'), '/home/user/project/src/index.ts'),
 					true
 				);
 			});
@@ -842,7 +874,7 @@ describe('WebSocketMessageHandler', () => {
 			await vi.waitFor(() => {
 				expect(callbacks.openFileTab).toHaveBeenCalledWith(
 					'session-1',
-					'/home/user/project/src/index.ts',
+					path.resolve(path.resolve('/home/user/project'), '/home/user/project/src/index.ts'),
 					false
 				);
 			});
@@ -903,7 +935,11 @@ describe('WebSocketMessageHandler', () => {
 			});
 
 			await vi.waitFor(() => {
-				expect(callbacks.openFileTab).toHaveBeenCalledWith('session-1', '/home/etc/passwd', true);
+				expect(callbacks.openFileTab).toHaveBeenCalledWith(
+					'session-1',
+					path.resolve(path.resolve('/home/user/project'), '/home/user/project/../../etc/passwd'),
+					true
+				);
 			});
 
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
@@ -1071,7 +1107,9 @@ describe('WebSocketMessageHandler', () => {
 			expect(callbacks.openTerminalTab).not.toHaveBeenCalled();
 		});
 
-		describe('symlink-safe cwd confinement', () => {
+		// Skipped where the OS forbids symlink creation (e.g. Windows without
+		// Developer Mode), since the `beforeEach` below calls `fs.symlinkSync`.
+		describe.skipIf(!canSymlink())('symlink-safe cwd confinement', () => {
 			let sessionRoot: string;
 			let outside: string;
 			const createdPaths: string[] = [];

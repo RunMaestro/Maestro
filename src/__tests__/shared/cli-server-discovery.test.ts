@@ -209,7 +209,13 @@ describe('cli-server-discovery', () => {
 				readCliServerInfo();
 
 				expect(mockFs.readFileSync).toHaveBeenCalledWith(
-					path.join('/Users/testuser/Library/Application Support/maestro-dev', 'cli-server.json'),
+					// Product resolves MAESTRO_USER_DATA with path.resolve, which prepends the
+					// current drive letter on Windows; mirror that here so the expectation matches
+					// on Windows while remaining a no-op on POSIX.
+					path.join(
+						path.resolve('/Users/testuser/Library/Application Support/maestro-dev'),
+						'cli-server.json'
+					),
 					'utf-8'
 				);
 			} finally {

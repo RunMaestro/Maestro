@@ -1261,14 +1261,14 @@ describe('agents IPC handlers', () => {
 
 			// Project-level skill directory lists Research; user-level has nothing.
 			vi.mocked(fs.promises.readdir).mockImplementation(async (dir: any) => {
-				if (String(dir) === '/test/project/.claude/skills') {
+				if (String(dir).replace(/\\/g, '/') === '/test/project/.claude/skills') {
 					return [{ name: 'Research', isDirectory: () => true }] as any;
 				}
 				const enoent = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
 				throw enoent;
 			});
 			vi.mocked(fs.promises.readFile).mockImplementation(async (filePath: any) => {
-				const p = String(filePath);
+				const p = String(filePath).replace(/\\/g, '/');
 				// Canonical uppercase SKILL.md is what Claude Code actually writes.
 				if (p === '/test/project/.claude/skills/Research/SKILL.md') {
 					return '---\nname: Research\ndescription: Deep literature review\n---\n\nBody';
@@ -1440,7 +1440,7 @@ describe('agents IPC handlers', () => {
 			const enoent = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
 			// Project commands dir has custom .md files
 			vi.mocked(fs.promises.readdir).mockImplementation(async (dir) => {
-				if (String(dir).includes('/test/.opencode/commands')) {
+				if (String(dir).replace(/\\/g, '/').includes('/test/.opencode/commands')) {
 					return ['deploy.md', 'lint.md', 'README.txt'] as any;
 				}
 				throw enoent;
@@ -1477,7 +1477,10 @@ describe('agents IPC handlers', () => {
 			const enoent = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
 			const homeDir = require('os').homedir();
 			vi.mocked(fs.promises.readdir).mockImplementation(async (dir) => {
-				if (String(dir) === `${homeDir}/.opencode/commands`) {
+				if (
+					String(dir).replace(/\\/g, '/') ===
+					`${String(homeDir).replace(/\\/g, '/')}/.opencode/commands`
+				) {
 					return ['octest.md'] as any;
 				}
 				throw enoent;
@@ -1508,7 +1511,7 @@ describe('agents IPC handlers', () => {
 
 			const enoent = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
 			vi.mocked(fs.promises.readdir).mockImplementation(async (dir) => {
-				if (String(dir).includes('/test/.opencode/commands')) {
+				if (String(dir).replace(/\\/g, '/').includes('/test/.opencode/commands')) {
 					return ['deploy.md'] as any;
 				}
 				throw enoent;
@@ -1539,7 +1542,7 @@ describe('agents IPC handlers', () => {
 			const enoent = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
 			vi.mocked(fs.promises.readdir).mockRejectedValue(enoent);
 			vi.mocked(fs.promises.readFile).mockImplementation(async (filePath) => {
-				if (String(filePath).includes('/test/opencode.json')) {
+				if (String(filePath).replace(/\\/g, '/').includes('/test/opencode.json')) {
 					return JSON.stringify({ command: { 'my-cmd': { prompt: 'Do the thing' } } });
 				}
 				throw enoent;

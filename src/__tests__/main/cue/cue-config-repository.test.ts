@@ -56,7 +56,11 @@ const PROJECT_ROOT = '/projects/test';
 const CANONICAL = path.join(PROJECT_ROOT, '.maestro/cue.yaml');
 const LEGACY = path.join(PROJECT_ROOT, 'maestro-cue.yaml');
 const MAESTRO_DIR = path.join(PROJECT_ROOT, '.maestro');
-const PROMPTS_DIR = path.join(PROJECT_ROOT, '.maestro/prompts');
+// Prompt-file operations in the product canonicalize via `path.resolve(...)`
+// for their containment guard, so on Windows these carry the CWD drive letter.
+// Route the expected value through the same primitive so the assertion stays
+// platform-symmetric (a no-op transform on POSIX).
+const PROMPTS_DIR = path.resolve(path.join(PROJECT_ROOT, '.maestro/prompts'));
 
 describe('cue-config-repository', () => {
 	beforeEach(() => {
@@ -186,7 +190,7 @@ describe('cue-config-repository', () => {
 
 			const result = writeCuePromptFile(PROJECT_ROOT, '.maestro/prompts/sub-1.md', 'prompt body 1');
 
-			const expectedAbs = path.join(PROJECT_ROOT, '.maestro/prompts/sub-1.md');
+			const expectedAbs = path.resolve(path.join(PROJECT_ROOT, '.maestro/prompts/sub-1.md'));
 			expect(result).toBe(expectedAbs);
 			expect(mockWriteFileSync).toHaveBeenCalledWith(expectedAbs, 'prompt body 1', 'utf-8');
 		});
@@ -201,7 +205,7 @@ describe('cue-config-repository', () => {
 
 		it('creates parent directories for nested prompt paths', () => {
 			const nested = '.maestro/prompts/nested/dir/sub.md';
-			const expectedParent = path.join(PROJECT_ROOT, '.maestro/prompts/nested/dir');
+			const expectedParent = path.resolve(path.join(PROJECT_ROOT, '.maestro/prompts/nested/dir'));
 			mockExistsSync.mockImplementation((p: string) => p !== expectedParent);
 
 			writeCuePromptFile(PROJECT_ROOT, nested, 'nested body');
@@ -210,7 +214,7 @@ describe('cue-config-repository', () => {
 			// intermediate directories (including .maestro/prompts) in one call.
 			expect(mockMkdirSync).toHaveBeenCalledWith(expectedParent, { recursive: true });
 			expect(mockWriteFileSync).toHaveBeenCalledWith(
-				path.join(PROJECT_ROOT, nested),
+				path.resolve(path.join(PROJECT_ROOT, nested)),
 				'nested body',
 				'utf-8'
 			);
@@ -254,7 +258,7 @@ describe('cue-config-repository', () => {
 
 			expect(result).toBe('body on disk');
 			expect(mockReadFileSync).toHaveBeenCalledWith(
-				path.join(PROJECT_ROOT, '.maestro/prompts/sub-1.md'),
+				path.resolve(path.join(PROJECT_ROOT, '.maestro/prompts/sub-1.md')),
 				'utf-8'
 			);
 		});

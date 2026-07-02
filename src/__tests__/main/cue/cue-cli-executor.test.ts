@@ -39,14 +39,23 @@ const mockSpawn = vi.fn((..._args: unknown[]) => {
 	return mockChild as unknown as ChildProcess;
 });
 
+const { mockIsWindows, mockExecFile } = vi.hoisted(() => ({
+	mockIsWindows: vi.fn(() => false),
+	mockExecFile: vi.fn((_cmd: unknown, _args: unknown, cb?: unknown) => {
+		if (typeof cb === 'function') (cb as (e: Error | null) => void)(null);
+	}),
+}));
+
 vi.mock('child_process', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('child_process')>();
 	return {
 		...actual,
 		spawn: (...args: unknown[]) => mockSpawn(...args),
+		execFile: (...args: unknown[]) => mockExecFile(...(args as [unknown, unknown, unknown?])),
 		default: {
 			...actual,
 			spawn: (...args: unknown[]) => mockSpawn(...args),
+			execFile: (...args: unknown[]) => mockExecFile(...(args as [unknown, unknown, unknown?])),
 		},
 	};
 });
@@ -55,6 +64,19 @@ const mockCaptureException = vi.fn();
 vi.mock('../../../main/utils/sentry', () => ({
 	captureException: (...args: unknown[]) => mockCaptureException(...args),
 }));
+
+// Platform is mockable per-test; default is the POSIX kill path
+// (child.kill('SIGTERM')) so signal-based assertions hold regardless of host
+// OS — mirroring what CI exercises on Unix. The Windows test flips it to true
+// to exercise the taskkill branch. (Note: the module-level output-size cap is
+// evaluated at import time under the default, i.e. the POSIX cap.)
+vi.mock('../../../shared/platformDetection', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../shared/platformDetection')>();
+	return {
+		...actual,
+		isWindows: () => mockIsWindows(),
+	};
+});
 
 import { executeCueCli, stopCueCliRun } from '../../../main/cue/cue-cli-executor';
 
@@ -120,6 +142,8 @@ function createConfig(overrides: Record<string, unknown> = {}) {
 describe('cue-cli-executor', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		// Default to the POSIX branch; the Windows test opts in via mockReturnValue(true).
+		mockIsWindows.mockReturnValue(false);
 	});
 
 	it('substitutes {{CUE_FROM_AGENT}} in target before invoking maestro-cli dispatch', async () => {
@@ -292,6 +316,26 @@ describe('cue-cli-executor', () => {
 		const stopped = stopCueCliRun('run-1');
 		expect(stopped).toBe(true);
 		expect(mockChild.killed).toBe(true);
+
+		mockChild.emit('close', null);
+		await promise;
+	});
+
+	it('stopCueCliRun uses taskkill /t /f on Windows instead of POSIX signals', async () => {
+		mockIsWindows.mockReturnValue(true);
+		const config = createConfig();
+		const promise = executeCueCli(config as any);
+		await Promise.resolve();
+
+		const stopped = stopCueCliRun('run-1');
+		expect(stopped).toBe(true);
+		expect(mockExecFile).toHaveBeenCalledWith(
+			'taskkill',
+			['/pid', String(mockChild.pid), '/t', '/f'],
+			expect.any(Function)
+		);
+		// POSIX signals are a no-op for shell-spawned trees on Windows.
+		expect(mockChild.killed).toBe(false);
 
 		mockChild.emit('close', null);
 		await promise;

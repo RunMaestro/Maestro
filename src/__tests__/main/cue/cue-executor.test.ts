@@ -113,6 +113,18 @@ vi.mock('../../../main/parsers', () => ({
 	getOutputParser: (...args: unknown[]) => mockGetOutputParser(...args),
 }));
 
+// Force the POSIX kill path (child.kill('SIGTERM')) in the underlying
+// cue-process-lifecycle so these SIGTERM → SIGKILL assertions hold regardless of
+// host OS. On Windows the product correctly uses taskkill /t /f instead, which
+// these tests don't assert. This mirrors what CI exercises on Unix.
+vi.mock('../../../shared/platformDetection', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../shared/platformDetection')>();
+	return {
+		...actual,
+		isWindows: () => false,
+	};
+});
+
 // Mock child_process.spawn
 class MockChildProcess extends EventEmitter {
 	pid = 12345;

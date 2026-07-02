@@ -34,6 +34,24 @@ vi.mock('../../../main/utils/ssh-spawn-wrapper', () => ({
 	wrapSpawnWithSsh: vi.fn(),
 }));
 
+// Platform is mockable per-test; default is the POSIX kill path
+// (child.kill('SIGTERM')) so signal-based assertions hold regardless of host
+// OS — mirroring what CI exercises on Unix. The Windows test flips it to true
+// to exercise the taskkill branch.
+const { mockIsWindows, mockExecFile } = vi.hoisted(() => ({
+	mockIsWindows: vi.fn(() => false),
+	mockExecFile: vi.fn((_cmd: unknown, _args: unknown, cb?: unknown) => {
+		if (typeof cb === 'function') (cb as (e: Error | null) => void)(null);
+	}),
+}));
+vi.mock('../../../shared/platformDetection', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../shared/platformDetection')>();
+	return {
+		...actual,
+		isWindows: () => mockIsWindows(),
+	};
+});
+
 class MockChildProcess extends EventEmitter {
 	pid = 54321;
 	exitCode: number | null = null;
@@ -65,9 +83,11 @@ vi.mock('child_process', async (importOriginal) => {
 	return {
 		...actual,
 		spawn: (...args: unknown[]) => mockSpawn(...args),
+		execFile: (...args: unknown[]) => mockExecFile(...(args as [unknown, unknown, unknown?])),
 		default: {
 			...actual,
 			spawn: (...args: unknown[]) => mockSpawn(...args),
+			execFile: (...args: unknown[]) => mockExecFile(...(args as [unknown, unknown, unknown?])),
 		},
 	};
 });
@@ -133,6 +153,8 @@ function createConfig(overrides: Record<string, unknown> = {}) {
 describe('cue-shell-executor', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		// Default to the POSIX branch; the Windows test opts in via mockReturnValue(true).
+		mockIsWindows.mockReturnValue(false);
 		vi.useFakeTimers();
 	});
 
@@ -241,6 +263,26 @@ describe('cue-shell-executor', () => {
 		const stopped = stopCueShellRun('run-1');
 		expect(stopped).toBe(true);
 		expect(mockChild.killed).toBe(true);
+
+		mockChild.emit('close', null);
+		await promise;
+	});
+
+	it('stopCueShellRun uses taskkill /t /f on Windows instead of POSIX signals', async () => {
+		mockIsWindows.mockReturnValue(true);
+		const config = createConfig();
+		const promise = executeCueShell(config as any);
+		await vi.advanceTimersByTimeAsync(0);
+
+		const stopped = stopCueShellRun('run-1');
+		expect(stopped).toBe(true);
+		expect(mockExecFile).toHaveBeenCalledWith(
+			'taskkill',
+			['/pid', String(mockChild.pid), '/t', '/f'],
+			expect.any(Function)
+		);
+		// POSIX signals are a no-op for shell-spawned trees on Windows.
+		expect(mockChild.killed).toBe(false);
 
 		mockChild.emit('close', null);
 		await promise;

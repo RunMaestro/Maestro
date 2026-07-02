@@ -442,7 +442,15 @@ describe('process-manager.ts', () => {
 		});
 
 		describe('kill() PTY signal handling', () => {
+			afterEach(() => {
+				// Restore default platform delegation so a forced value doesn't leak.
+				mockIsWindows.mockImplementation(() => process.platform === 'win32');
+			});
+
 			it('should send SIGTERM (not default SIGHUP) to PTY processes', () => {
+				// Force the POSIX branch so this signal assertion holds on any host
+				// (Windows correctly uses taskkill, which CI on Unix never exercises).
+				mockIsWindows.mockReturnValue(false);
 				const mockPtyKill = vi.fn();
 				const mockOnExit = vi.fn();
 				const processes = (processManager as any).processes as Map<string, any>;
@@ -469,6 +477,7 @@ describe('process-manager.ts', () => {
 			});
 
 			it('should schedule SIGKILL escalation for PTY processes', () => {
+				mockIsWindows.mockReturnValue(false);
 				vi.useFakeTimers();
 				const mockPtyKill = vi.fn();
 				const mockOnExit = vi.fn();
@@ -507,6 +516,7 @@ describe('process-manager.ts', () => {
 			});
 
 			it('should cancel SIGKILL escalation if PTY exits on its own', () => {
+				mockIsWindows.mockReturnValue(false);
 				vi.useFakeTimers();
 				const mockPtyKill = vi.fn();
 				let exitCallback: (() => void) | undefined;
@@ -650,7 +660,13 @@ describe('process-manager.ts', () => {
 		});
 
 		describe('spawn() kill-before-spawn guard', () => {
+			afterEach(() => {
+				mockIsWindows.mockImplementation(() => process.platform === 'win32');
+			});
+
 			it('should kill existing process before spawning with same sessionId', () => {
+				// Force the POSIX branch so the SIGTERM assertion holds on any host.
+				mockIsWindows.mockReturnValue(false);
 				const mockPtyKill = vi.fn();
 				const mockOnExit = vi.fn();
 				const processes = (processManager as any).processes as Map<string, any>;
@@ -689,6 +705,10 @@ describe('process-manager.ts', () => {
 		});
 
 		describe('killAll() map safety', () => {
+			afterEach(() => {
+				mockIsWindows.mockImplementation(() => process.platform === 'win32');
+			});
+
 			it('should kill all processes even when kill() deletes from the map', () => {
 				const kills: string[] = [];
 				const originalKill = processManager.kill.bind(processManager);
@@ -751,6 +771,10 @@ describe('process-manager.ts', () => {
 			});
 
 			it('should SIGKILL ptys directly when shutdown:true to avoid TSFN teardown race', () => {
+				// Force the POSIX branch: on Windows the taskkill path is taken first
+				// (correct behavior), so the shutdown-SIGKILL branch is only reachable
+				// off-Windows. This mirrors what CI exercises on Unix.
+				mockIsWindows.mockReturnValue(false);
 				const mockPtyKill = vi.fn();
 				const mockOnExit = vi.fn();
 
