@@ -966,6 +966,99 @@ test.describe('plugin system e2e', () => {
 			await view.locator('[data-testid="extensions-only-installed"]').click();
 			await expect(offBuiltin).toHaveCount(1);
 
+			// ── First-party Encore tiles (L6 management-surface contract) ─────
+			// All five first-party features render as tiles with a category badge
+			// and a state pill driven by the Encore flags (demo defaults:
+			// usageStats + symphony ON, the rest OFF).
+			const FIRST_PARTY_TILES: ReadonlyArray<{
+				flag: string;
+				category: string;
+				state: string;
+			}> = [
+				{ flag: 'usageStats', category: 'Insights', state: 'Enabled' },
+				{ flag: 'symphony', category: 'Agents', state: 'Enabled' },
+				{ flag: 'maestroCue', category: 'Automation', state: 'Not installed' },
+				{ flag: 'directorNotes', category: 'Insights', state: 'Not installed' },
+				{ flag: 'pianola', category: 'Agents', state: 'Not installed' },
+			];
+			for (const tile of FIRST_PARTY_TILES) {
+				const t = view.locator(`[data-testid="extension-card"][data-extension-id="${tile.flag}"]`);
+				await expect(t).toHaveCount(1);
+				await expect(t).toHaveAttribute('data-extension-kind', 'builtin');
+				await expect(t.locator('[data-testid="extension-category"]')).toContainText(tile.category);
+				await expect(t.locator('[data-testid="extension-state"]')).toContainText(tile.state);
+			}
+
+			// First-party details: static permission disclosure rows (declared
+			// capabilities, "Granted on enable") + the supervised background
+			// service row for a feature that has one (cue.engine), Stopped while
+			// the feature is off.
+			const cueCard = view.locator(
+				'[data-testid="extension-card"][data-extension-id="maestroCue"]'
+			);
+			await cueCard.click();
+			const fpDetails = view.locator('[data-testid="extension-details"]');
+			await expect(fpDetails).toBeVisible();
+			await expect(
+				fpDetails.locator('[data-testid="extension-permission"][data-cap="fs:watch"]')
+			).toHaveCount(1);
+			expect(
+				await fpDetails.locator('[data-testid="extension-permission"]').count()
+			).toBeGreaterThan(1);
+			await expect(
+				fpDetails.locator('[data-testid="extension-permission-status"]').first()
+			).toHaveText('Granted on enable');
+			const serviceRow = fpDetails.locator(
+				'[data-testid="extension-background-service"][data-service="cue.engine"]'
+			);
+			await expect(serviceRow).toHaveCount(1);
+			await expect(
+				serviceRow.locator('[data-testid="extension-background-service-status"]')
+			).toHaveText('Stopped');
+
+			// Toggling the tile routes through the first-party lifecycle bridge:
+			// the flag flips in the MAIN-process settings store AND the declared
+			// grants are minted into the sealed ledger (a bare settings write
+			// could flip the flag but never mint).
+			const readCueState = async (): Promise<{ flag: unknown; grants: number }> =>
+				page.evaluate(async () => {
+					const encore = (await window.maestro.settings.get('encoreFeatures')) as Record<
+						string,
+						unknown
+					> | null;
+					const grants = await window.maestro.plugins.getGrants('com.maestro.cue');
+					return { flag: encore?.maestroCue, grants: grants.granted.length };
+				});
+			const before = await readCueState();
+			expect(before.flag === false || before.flag === undefined).toBe(true);
+
+			await fpDetails.locator('[data-testid="extension-enable-toggle"]').click();
+			await expect
+				.poll(async () => (await readCueState()).flag, {
+					timeout: 15_000,
+					message: 'maestroCue flag never flipped on through the bridge',
+				})
+				.toBe(true);
+			expect((await readCueState()).grants).toBeGreaterThan(0);
+			// The supervised service row reflects the enabled state.
+			await expect(
+				serviceRow.locator('[data-testid="extension-background-service-status"]')
+			).toHaveText('Running (supervised)');
+
+			// Disable stops the supervised work and clears the flag (grants are
+			// kept — disable is not revoke).
+			await fpDetails.locator('[data-testid="extension-enable-toggle"]').click();
+			await expect
+				.poll(async () => (await readCueState()).flag, {
+					timeout: 15_000,
+					message: 'maestroCue flag never flipped back off',
+				})
+				.toBe(false);
+			await expect(
+				serviceRow.locator('[data-testid="extension-background-service-status"]')
+			).toHaveText('Stopped');
+			await fpDetails.locator('[data-testid="extension-details-back"]').click();
+
 			// The details view lists the plugin's requested permissions.
 			await card.click();
 			const details = view.locator('[data-testid="extension-details"]');

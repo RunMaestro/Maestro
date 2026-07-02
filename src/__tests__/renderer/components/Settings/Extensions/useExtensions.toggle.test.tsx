@@ -11,6 +11,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { EncoreFeatureFlags } from '../../../../../renderer/types';
 
 const setEncoreFeatures = vi.fn();
+const setStatsCollectionEnabled = vi.fn();
 const encoreFeatures: EncoreFeatureFlags = {
 	directorNotes: false,
 	usageStats: false,
@@ -22,7 +23,7 @@ const encoreFeatures: EncoreFeatureFlags = {
 
 vi.mock('../../../../../renderer/stores/settingsStore', () => ({
 	useSettingsStore: (selector: (s: Record<string, unknown>) => unknown) =>
-		selector({ encoreFeatures, setEncoreFeatures }),
+		selector({ encoreFeatures, setEncoreFeatures, setStatsCollectionEnabled }),
 }));
 
 vi.mock('../../../../../renderer/stores/notificationStore', () => ({
@@ -98,6 +99,32 @@ describe('useExtensions.toggleBuiltin routes first-party flags through the bridg
 		await waitFor(() => {
 			expect(setEncoreFeatures).toHaveBeenCalledWith({ ...encoreFeatures, pianola: false });
 		});
+	});
+
+	it('keeps the main-process stats recording gate in lockstep with usageStats', async () => {
+		const { result } = renderHook(() => useExtensions());
+
+		act(() => {
+			result.current.toggleBuiltin('usageStats');
+		});
+
+		await waitFor(() => {
+			expect(setEncoreFeatures).toHaveBeenCalledWith({ ...encoreFeatures, usageStats: true });
+		});
+		expect(setStatsCollectionEnabled).toHaveBeenCalledWith(true);
+	});
+
+	it('does not touch the stats gate for other first-party flags', async () => {
+		const { result } = renderHook(() => useExtensions());
+
+		act(() => {
+			result.current.toggleBuiltin('symphony');
+		});
+
+		await waitFor(() => {
+			expect(setEncoreFeatures).toHaveBeenCalledWith({ ...encoreFeatures, symphony: true });
+		});
+		expect(setStatsCollectionEnabled).not.toHaveBeenCalled();
 	});
 
 	it('falls back to the direct settings write (loudly) when the bridge call rejects', async () => {

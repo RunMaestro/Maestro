@@ -135,14 +135,14 @@ const directorNotesSettings: DirectorNotesSettings = {
 
 describe('EncoreTab section components', () => {
 	it('wires the Usage & Stats feature card and lookback selector', () => {
-		const onToggle = vi.fn();
+		const onManage = vi.fn();
 		const setDefaultStatsTimeRange = vi.fn();
 
 		const { rerender } = render(
 			<UsageStatsSection
 				theme={mockTheme}
 				enabled={false}
-				onToggle={onToggle}
+				onManage={onManage}
 				defaultStatsTimeRange="week"
 				setDefaultStatsTimeRange={setDefaultStatsTimeRange}
 				wakatimeEnabled={false}
@@ -154,17 +154,18 @@ describe('EncoreTab section components', () => {
 			/>
 		);
 
-		const featureButton = screen.getByText('Usage & Stats').closest('button')!;
-		expect(featureButton).toHaveAttribute('aria-pressed', 'false');
-		fireEvent.click(featureButton);
-		expect(onToggle).toHaveBeenCalledTimes(1);
+		// Management moved to the marketplace: the header shows a state pill and
+		// a "Manage in Extensions" affordance instead of a toggle switch.
+		expect(screen.getByTestId('encore-feature-state')).toHaveTextContent('Disabled');
+		fireEvent.click(screen.getByTestId('encore-feature-manage'));
+		expect(onManage).toHaveBeenCalledTimes(1);
 		expect(screen.queryByText('Default lookback window')).not.toBeInTheDocument();
 
 		rerender(
 			<UsageStatsSection
 				theme={mockTheme}
 				enabled
-				onToggle={onToggle}
+				onManage={onManage}
 				defaultStatsTimeRange="month"
 				setDefaultStatsTimeRange={setDefaultStatsTimeRange}
 				wakatimeEnabled={false}
@@ -176,8 +177,7 @@ describe('EncoreTab section components', () => {
 			/>
 		);
 
-		const enabledFeatureButton = screen.getByText('Usage & Stats').closest('button')!;
-		expect(enabledFeatureButton).toHaveAttribute('aria-pressed', 'true');
+		expect(screen.getByTestId('encore-feature-state')).toHaveTextContent('Enabled');
 
 		const select = screen.getByLabelText('Select default lookback window') as HTMLSelectElement;
 		expect(select.value).toBe('month');
@@ -233,7 +233,7 @@ describe('EncoreTab section components', () => {
 			<SymphonyRegistrySection
 				theme={mockTheme}
 				enabled
-				onToggle={vi.fn()}
+				onManage={vi.fn()}
 				symphonyRegistryUrls={['https://custom.example/registry.json']}
 				registryState={state}
 			/>
@@ -259,7 +259,7 @@ describe('EncoreTab section components', () => {
 		const state = cueState({ cueSettingsSaveState: 'no-targets' });
 
 		const { rerender } = render(
-			<CueSettingsSection theme={mockTheme} enabled onToggle={vi.fn()} cueState={state} />
+			<CueSettingsSection theme={mockTheme} enabled onManage={vi.fn()} cueState={state} />
 		);
 
 		expect(screen.getByText('Global Cue Settings')).toBeInTheDocument();
@@ -283,7 +283,7 @@ describe('EncoreTab section components', () => {
 			<CueSettingsSection
 				theme={mockTheme}
 				enabled
-				onToggle={vi.fn()}
+				onManage={vi.fn()}
 				cueState={cueState({ cueSettingsLoaded: false })}
 			/>
 		);
@@ -298,7 +298,7 @@ describe('EncoreTab section components', () => {
 			<DirectorNotesSection
 				theme={mockTheme}
 				enabled
-				onToggle={vi.fn()}
+				onManage={vi.fn()}
 				directorNotesSettings={directorNotesSettings}
 				setDirectorNotesSettings={setDirectorNotesSettings}
 				directorNotesAgentState={state}
@@ -326,7 +326,7 @@ describe('EncoreTab section components', () => {
 			<DirectorNotesSection
 				theme={mockTheme}
 				enabled
-				onToggle={vi.fn()}
+				onManage={vi.fn()}
 				directorNotesSettings={directorNotesSettings}
 				setDirectorNotesSettings={vi.fn()}
 				directorNotesAgentState={directorState({
@@ -344,7 +344,7 @@ describe('EncoreTab section components', () => {
 			<DirectorNotesSection
 				theme={mockTheme}
 				enabled
-				onToggle={vi.fn()}
+				onManage={vi.fn()}
 				directorNotesSettings={directorNotesSettings}
 				setDirectorNotesSettings={vi.fn()}
 				directorNotesAgentState={directorState({ availableTiles: [] })}
@@ -359,7 +359,7 @@ describe('EncoreTab section components', () => {
 			<DirectorNotesSection
 				theme={mockTheme}
 				enabled
-				onToggle={vi.fn()}
+				onManage={vi.fn()}
 				directorNotesSettings={directorNotesSettings}
 				setDirectorNotesSettings={vi.fn()}
 				directorNotesAgentState={expanded}

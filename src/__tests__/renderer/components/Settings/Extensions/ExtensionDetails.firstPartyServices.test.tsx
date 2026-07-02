@@ -1,8 +1,10 @@
 /**
- * ExtensionDetails surfaces a first-party feature's supervised background
- * services (from the shared first-party registry) with a simple status line
- * derived from the tile's enabled state — no live process polling. Pianola's
- * tile shows `pianola.supervisor`; features with no services show nothing.
+ * ExtensionDetails first-party disclosure surfaces:
+ * - Supervised background services (from the shared first-party registry)
+ *   with a status line derived from the tile's enabled state — no polling.
+ * - The declared permission list (capability risk + description + reason)
+ *   rendered statically as "Granted on enable" — grants are minted host-side
+ *   by the lifecycle bridge, so no getGrants IPC round-trip for builtins.
  */
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -78,5 +80,45 @@ describe('ExtensionDetails first-party background services', () => {
 		// Symphony's definition declares no background services.
 		renderBuiltin('symphony', true);
 		expect(screen.queryByTestId('extension-background-service')).toBeNull();
+	});
+});
+
+describe('ExtensionDetails first-party permission disclosure', () => {
+	it('renders one row per declared permission, labeled "Granted on enable"', () => {
+		renderBuiltin('directorNotes', false);
+		const def = BUILTIN_FEATURES.find((f) => f.flag === 'directorNotes')!;
+		const rows = screen.getAllByTestId('extension-permission');
+		expect(rows).toHaveLength(def.pluginBacking.permissions.length);
+		const caps = rows.map((r) => r.getAttribute('data-cap'));
+		expect(caps).toEqual(def.pluginBacking.permissions.map((p) => p.capability));
+		for (const status of screen.getAllByTestId('extension-permission-status')) {
+			expect(status.textContent).toBe('Granted on enable');
+		}
+	});
+
+	it('shows the declared reason text so disclosure is meaningful', () => {
+		renderBuiltin('pianola', true);
+		expect(screen.getByText(/Record Pianola decisions before any dispatch/i)).toBeInTheDocument();
+	});
+
+	it('never calls the grants IPC for a first-party tile (static disclosure)', () => {
+		const def = BUILTIN_FEATURES.find((f) => f.flag === 'maestroCue')!;
+		const getGrants = vi.fn(async () => ({ requested: [], granted: [] }));
+		render(
+			<ExtensionDetails
+				theme={theme}
+				ext={builtinExtension(def, flags({ maestroCue: true }))}
+				contributions={null}
+				busy={false}
+				onBack={vi.fn()}
+				onTogglePlugin={vi.fn()}
+				onToggleBuiltin={vi.fn()}
+				onUninstall={vi.fn()}
+				onRevoke={vi.fn()}
+				getGrants={getGrants}
+			/>
+		);
+		expect(screen.getAllByTestId('extension-permission').length).toBeGreaterThan(0);
+		expect(getGrants).not.toHaveBeenCalled();
 	});
 });

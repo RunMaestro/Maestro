@@ -3,7 +3,7 @@
  *
  * Tests the Encore Features settings tab including:
  * - Rendering header and description text
- * - Director's Notes toggle (on/off)
+ * - Marketplace-managed state pill + Manage in Extensions affordance
  * - Provider dropdown with detected agents
  * - Agent detection on mount and refresh
  * - Customize button expanding config panel
@@ -249,9 +249,9 @@ describe('EncoreTab', () => {
 		});
 	});
 
-	// ── 2. Director's Notes Toggle ────────────────────────────────────────
+	// ── 2. Director's Notes management (marketplace-owned) ───────────────
 
-	describe("Director's Notes toggle", () => {
+	describe("Director's Notes management surface", () => {
 		it('should default to off (DN settings hidden)', async () => {
 			render(<EncoreTab theme={mockTheme} isOpen={true} />);
 
@@ -263,36 +263,23 @@ describe('EncoreTab', () => {
 			expect(screen.queryByText('Synopsis Provider')).not.toBeInTheDocument();
 		});
 
-		it('should call setEncoreFeatures with directorNotes true when toggled on', async () => {
+		it('renders a state pill + Manage in Extensions instead of a toggle', async () => {
 			render(<EncoreTab theme={mockTheme} isOpen={true} />);
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			const dnToggle = screen.getByText("Director's Notes").closest('button');
-			expect(dnToggle).toBeInTheDocument();
-			fireEvent.click(dnToggle!);
-
-			expect(mockSetEncoreFeatures).toHaveBeenCalledWith({
-				directorNotes: true,
-			});
-		});
-
-		it('should call setEncoreFeatures with directorNotes false when toggled off', async () => {
-			mockUseSettingsOverrides = { encoreFeatures: { directorNotes: true } };
-			render(<EncoreTab theme={mockTheme} isOpen={true} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			const dnToggle = screen.getByText("Director's Notes").closest('button');
-			fireEvent.click(dnToggle!);
-
-			expect(mockSetEncoreFeatures).toHaveBeenCalledWith({
-				directorNotes: false,
-			});
+			// All four config sections render the marketplace-managed header.
+			expect(screen.getAllByTestId('encore-feature-state')).toHaveLength(4);
+			// The section title is no longer wrapped in a toggle button.
+			expect(screen.getByText("Director's Notes").closest('button')).toBeNull();
+			// Manage never writes the Encore flags — enable/disable lives on the
+			// marketplace tile (routed through the first-party bridge).
+			for (const btn of screen.getAllByTestId('encore-feature-manage')) {
+				fireEvent.click(btn);
+			}
+			expect(mockSetEncoreFeatures).not.toHaveBeenCalled();
 		});
 	});
 
@@ -1391,7 +1378,7 @@ describe('EncoreTab', () => {
 	});
 
 	describe('Maestro Cue feature section', () => {
-		it('should render Maestro Cue section with toggle', async () => {
+		it('should render Maestro Cue section', async () => {
 			render(<EncoreTab theme={mockTheme} isOpen={true} />);
 
 			expect(screen.getByText('Maestro Cue')).toBeInTheDocument();
@@ -1423,35 +1410,31 @@ describe('EncoreTab', () => {
 			expect(cueSection).toHaveStyle({ borderColor: mockTheme.colors.border });
 		});
 
-		it('should use theme accent for toggle when Maestro Cue is enabled', async () => {
+		it('should show an Enabled state pill when Maestro Cue is enabled', async () => {
 			mockUseSettingsOverrides = {
 				encoreFeatures: { directorNotes: false, maestroCue: true },
 			};
 
 			const { container } = render(<EncoreTab theme={mockTheme} isOpen={true} />);
 
-			// The toggle is a rounded-full div inside the Maestro Cue button
 			const sections = container.querySelectorAll('.rounded-lg.border');
 			const cueSection = Array.from(sections).find((el) => el.textContent?.includes('Maestro Cue'));
-			const toggle = cueSection?.querySelector('.rounded-full');
-			expect(toggle).toHaveStyle({ backgroundColor: mockTheme.colors.accent });
+			const pill = cueSection?.querySelector('[data-testid="encore-feature-state"]');
+			expect(pill).toHaveTextContent('Enabled');
 		});
 
-		it('should call setEncoreFeatures with maestroCue toggled when clicked', async () => {
+		it('does not toggle the flag from the section header (marketplace-managed)', async () => {
 			mockUseSettingsOverrides = {
 				encoreFeatures: { directorNotes: false, maestroCue: false },
 			};
 
 			render(<EncoreTab theme={mockTheme} isOpen={true} />);
 
-			// Click the Maestro Cue section button
-			const cueButton = screen.getByText('Maestro Cue').closest('button');
-			expect(cueButton).toBeTruthy();
-			fireEvent.click(cueButton!);
-
-			expect(mockSetEncoreFeatures).toHaveBeenCalledWith(
-				expect.objectContaining({ maestroCue: true })
-			);
+			expect(screen.getByText('Maestro Cue').closest('button')).toBeNull();
+			for (const btn of screen.getAllByTestId('encore-feature-manage')) {
+				fireEvent.click(btn);
+			}
+			expect(mockSetEncoreFeatures).not.toHaveBeenCalled();
 		});
 	});
 
@@ -1472,24 +1455,7 @@ describe('EncoreTab', () => {
 			expect(screen.queryByText('Default lookback window')).not.toBeInTheDocument();
 		});
 
-		it('should enable stats collection when feature is toggled on', async () => {
-			mockUseSettingsOverrides = {
-				encoreFeatures: { usageStats: false },
-			};
-
-			render(<EncoreTab theme={mockTheme} isOpen={true} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
-			});
-
-			// Click the Usage & Stats feature toggle
-			const toggleButton = screen.getByText('Usage & Stats').closest('button')!;
-			fireEvent.click(toggleButton);
-			expect(mockSetStatsCollectionEnabled).toHaveBeenCalledWith(true);
-		});
-
-		it('should disable stats collection when feature is toggled off', async () => {
+		it('does not write encore flags or the stats gate from the section header', async () => {
 			mockUseSettingsOverrides = {
 				encoreFeatures: { usageStats: true },
 			};
@@ -1500,10 +1466,12 @@ describe('EncoreTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			// Click the Usage & Stats feature toggle
-			const toggleButton = screen.getByText('Usage & Stats').closest('button')!;
-			fireEvent.click(toggleButton);
-			expect(mockSetStatsCollectionEnabled).toHaveBeenCalledWith(false);
+			expect(screen.getByText('Usage & Stats').closest('button')).toBeNull();
+			fireEvent.click(screen.getAllByTestId('encore-feature-manage')[0]);
+			// The stats-collection gate is synced by the marketplace toggle
+			// (useExtensions.toggleBuiltin), not this config section.
+			expect(mockSetStatsCollectionEnabled).not.toHaveBeenCalled();
+			expect(mockSetEncoreFeatures).not.toHaveBeenCalled();
 		});
 
 		it('should render default lookback window dropdown when usageStats is enabled', async () => {
