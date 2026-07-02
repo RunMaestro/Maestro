@@ -44,7 +44,7 @@ function normalizeUsageToDelta(
 		contextWindow: number;
 		reasoningTokens?: number;
 	}
-): typeof usageStats {
+): typeof usageStats & { absoluteUsage?: UsageStats['absoluteUsage'] } {
 	const totals: UsageTotals = {
 		inputTokens: usageStats.inputTokens,
 		outputTokens: usageStats.outputTokens,
@@ -96,6 +96,19 @@ function normalizeUsageToDelta(
 		cacheReadInputTokens: delta.cacheReadInputTokens,
 		cacheCreationInputTokens: delta.cacheCreationInputTokens,
 		reasoningTokens: delta.reasoningTokens,
+		// Preserve the pre-normalization cumulative totals. The fields above are
+		// now per-turn deltas (correct for token accumulation), but for a
+		// cumulative provider the running total is what actually occupies the
+		// context window - so context-fill consumers (the Context Timeline) plot
+		// from `absoluteUsage`. The first event of a session returns raw above
+		// (no `last` yet) and is already absolute, so it needs no snapshot.
+		absoluteUsage: {
+			inputTokens: totals.inputTokens,
+			outputTokens: totals.outputTokens,
+			cacheReadInputTokens: totals.cacheReadInputTokens,
+			cacheCreationInputTokens: totals.cacheCreationInputTokens,
+			reasoningTokens: totals.reasoningTokens,
+		},
 	};
 }
 

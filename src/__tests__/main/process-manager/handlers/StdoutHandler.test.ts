@@ -1089,6 +1089,19 @@ describe('StdoutHandler', () => {
 			expect(delta.totalCostUsd).toBe(0.09);
 			expect(delta.contextWindow).toBe(200000);
 
+			// The pre-normalization cumulative totals ride along on the delta event so
+			// context-fill consumers (Context Timeline) can plot true window occupancy
+			// instead of the small per-turn delta.
+			expect(delta.absoluteUsage).toEqual({
+				inputTokens: 1800,
+				outputTokens: 900,
+				cacheReadInputTokens: 350,
+				cacheCreationInputTokens: 180,
+				reasoningTokens: 0,
+			});
+			// The first event is returned raw (already absolute), so it carries no snapshot.
+			expect(usageSpy.mock.calls[0][1].absoluteUsage).toBeUndefined();
+
 			// usageIsCumulative should be set to true
 			expect(proc.usageIsCumulative).toBe(true);
 		});

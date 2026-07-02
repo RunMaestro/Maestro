@@ -113,7 +113,17 @@ export function useAgentUsageListener(deps: UseAgentUsageListenerDeps): void {
 				(usageStats.cacheCreationInputTokens || 0) === 0 &&
 				usageStats.outputTokens > 0;
 			if (isInteractiveRun && !isOutputOnlyDelta) {
-				const contextTokens = calculateContextTokens(usageStats, agentToolType);
+				// For providers whose usage arrives as per-turn deltas of a cumulative
+				// session total (Codex), the delta undercounts the context that is
+				// actually occupying the window - plotting it makes a long run look
+				// low and flat. `absoluteUsage` carries the pre-normalization running
+				// total for exactly this case; fall back to the per-turn stats for
+				// per-call providers (Claude/Copilot/OpenCode), whose values are
+				// already absolute for the turn. The per-turn token fields recorded on
+				// the point below are intentionally left as the deltas (this turn's
+				// activity); only the context-fill figures use the absolute source.
+				const contextSource = usageStats.absoluteUsage ?? usageStats;
+				const contextTokens = calculateContextTokens(contextSource, agentToolType);
 				// Percentage against the SAME (configured-aware) window the point
 				// stores, so the row is internally consistent and matches the header.
 				// null when tokens exceed the window (accumulated multi-tool turn) -
