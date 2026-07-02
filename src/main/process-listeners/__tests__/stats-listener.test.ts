@@ -117,46 +117,53 @@ describe('Stats Listener', () => {
 	});
 
 	it('should log error when recording fails after retries', async () => {
-		vi.mocked(mockStatsDB.insertQueryEvent).mockImplementation(() => {
-			throw new Error('Database error');
-		});
+		// Use fake timers so the exponential-backoff retry delays (100ms + 200ms)
+		// are advanced deterministically. Relying on real timers + vi.waitFor is
+		// brittle: the fire-and-forget retry loop can exceed the poll budget on
+		// slower/high-granularity-timer hosts (e.g. Windows), causing flakes.
+		vi.useFakeTimers();
+		try {
+			vi.mocked(mockStatsDB.insertQueryEvent).mockImplementation(() => {
+				throw new Error('Database error');
+			});
 
-		setupStatsListener(mockProcessManager, {
-			safeSend: mockSafeSend,
-			getStatsDB: () => mockStatsDB,
-			logger: mockLogger,
-		});
+			setupStatsListener(mockProcessManager, {
+				safeSend: mockSafeSend,
+				getStatsDB: () => mockStatsDB,
+				logger: mockLogger,
+			});
 
-		const handler = eventHandlers.get('query-complete');
-		const testQueryData: QueryCompleteData = {
-			sessionId: 'session-789',
-			agentType: 'opencode',
-			source: 'user',
-			startTime: Date.now(),
-			duration: 2000,
-			projectPath: '/test/project',
-			tabId: 'tab-789',
-		};
+			const handler = eventHandlers.get('query-complete');
+			const testQueryData: QueryCompleteData = {
+				sessionId: 'session-789',
+				agentType: 'opencode',
+				source: 'user',
+				startTime: Date.now(),
+				duration: 2000,
+				projectPath: '/test/project',
+				tabId: 'tab-789',
+			};
 
-		handler?.('session-789', testQueryData);
+			handler?.('session-789', testQueryData);
 
-		// Wait for all retries to complete (100ms + 200ms + final attempt)
-		await vi.waitFor(
-			() => {
-				expect(mockLogger.error).toHaveBeenCalledWith(
-					expect.stringContaining('Failed to record query event after 3 attempts'),
-					'[Stats]',
-					expect.objectContaining({
-						sessionId: 'session-789',
-					})
-				);
-			},
-			{ timeout: 1000 }
-		);
-		// Should have tried 3 times
-		expect(mockStatsDB.insertQueryEvent).toHaveBeenCalledTimes(3);
-		// Should not have broadcasted update on failure
-		expect(mockSafeSend).not.toHaveBeenCalled();
+			// Advance through both backoff delays (100ms then 200ms). The async
+			// variant flushes the microtasks the retry loop awaits between timers.
+			await vi.advanceTimersByTimeAsync(300);
+
+			expect(mockLogger.error).toHaveBeenCalledWith(
+				expect.stringContaining('Failed to record query event after 3 attempts'),
+				'[Stats]',
+				expect.objectContaining({
+					sessionId: 'session-789',
+				})
+			);
+			// Should have tried 3 times
+			expect(mockStatsDB.insertQueryEvent).toHaveBeenCalledTimes(3);
+			// Should not have broadcasted update on failure
+			expect(mockSafeSend).not.toHaveBeenCalled();
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it('should log debug info when recording succeeds', async () => {

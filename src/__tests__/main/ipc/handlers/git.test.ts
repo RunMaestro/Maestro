@@ -55,7 +55,10 @@ vi.mock('fs/promises', () => ({
 		// and the chokidar discovery validator behave like a no-op in tests. Individual
 		// tests can override this via vi.mocked(fs.realpath).mockResolvedValue(...) to
 		// exercise the symlink-resolution behavior.
-		realpath: vi.fn().mockImplementation(async (p: string) => p),
+		// Separators are normalized to '/' so that on Windows, product paths built with
+		// path.join (backslashes) compare equal to the POSIX paths returned by the mocked
+		// `git rev-parse --show-toplevel`. On POSIX this is a no-op.
+		realpath: vi.fn().mockImplementation(async (p: string) => String(p).replace(/\\/g, '/')),
 	},
 }));
 
@@ -4134,7 +4137,7 @@ branch refs/heads/bugfix-123
 			] as any);
 
 			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (cmd, args, cwd) => {
-				const cwdStr = String(cwd);
+				const cwdStr = String(cwd).replace(/\\/g, '/');
 
 				if (cwdStr.endsWith('actual-worktree')) {
 					if (args?.includes('--is-inside-work-tree')) {
@@ -4186,7 +4189,7 @@ branch refs/heads/bugfix-123
 			] as any);
 
 			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (cmd, args, cwd) => {
-				const cwdStr = String(cwd);
+				const cwdStr = String(cwd).replace(/\\/g, '/');
 
 				if (cwdStr.endsWith('good-worktree')) {
 					if (args?.includes('--is-inside-work-tree')) {
@@ -4238,7 +4241,9 @@ branch refs/heads/bugfix-123
 			] as any);
 
 			vi.mocked(mockFs.realpath).mockImplementation(async (p: any) => {
-				const s = String(p);
+				// Normalize separators so the Windows product path (path.join → backslashes)
+				// matches these POSIX keys; on POSIX this is a no-op.
+				const s = String(p).replace(/\\/g, '/');
 				if (s === '/home/user/worktrees/feature-branch') {
 					return '/data/worktrees/feature-branch';
 				}

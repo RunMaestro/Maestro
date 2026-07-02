@@ -73,8 +73,10 @@ vi.mock('../../../main/utils/sentry', () => ({
 	captureMessage: captureMessageMock,
 }));
 
+import os from 'os';
 import path from 'path';
 import { sampleUsage } from '../../../main/agents/claude-usage-sampler';
+import { asarNodePath, canonKey } from '../../helpers/pathExpect';
 
 const FROZEN_NOW = new Date('2026-05-15T12:00:00.000Z').getTime();
 const ORIGINAL_ENV = { ...process.env };
@@ -158,7 +160,7 @@ describe('claude-usage-sampler', () => {
 			});
 			expect(snap).toEqual({
 				sampledAt: new Date(FROZEN_NOW).toISOString(),
-				configDirKey: '/Users/test/.claude',
+				configDirKey: canonKey(path.join(os.homedir(), '.claude')),
 				authState: 'authenticated',
 				session: { percent: 42, resetsAt: '2026-05-15T17:00:00.000Z' },
 				weekAllModels: { percent: 73, resetsAt: '2026-05-22T12:00:00.000Z' },
@@ -265,7 +267,7 @@ describe('claude-usage-sampler', () => {
 				const inspect = primeSuccess(wireEnvelope());
 				await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
 				const env = inspect()?.options.env as NodeJS.ProcessEnv;
-				const asar = '/Apps/Maestro.app/Contents/Resources/app.asar/node_modules';
+				const asar = asarNodePath('/Apps/Maestro.app/Contents/Resources');
 				expect(env.NODE_PATH).toBe(`${asar}${path.delimiter}/pre/existing`);
 			} finally {
 				Object.defineProperty(process, 'resourcesPath', {
@@ -317,7 +319,7 @@ describe('claude-usage-sampler', () => {
 				cwd: '/tmp',
 				configDir: '/Users/test/.claude-gmail',
 			});
-			expect(snap?.configDirKey).toBe('/Users/test/.claude-gmail');
+			expect(snap?.configDirKey).toBe(canonKey('/Users/test/.claude-gmail'));
 		});
 
 		it('canonicalizes a configDir with redundant separators in the key', async () => {
@@ -327,14 +329,14 @@ describe('claude-usage-sampler', () => {
 				cwd: '/tmp',
 				configDir: '/Users/test/./.claude-smash/',
 			});
-			expect(snap?.configDirKey).toBe('/Users/test/.claude-smash');
+			expect(snap?.configDirKey).toBe(canonKey('/Users/test/.claude-smash'));
 		});
 
 		it('falls back to ~/.claude when no configDir and no env var', async () => {
 			delete process.env.CLAUDE_CONFIG_DIR;
 			primeSuccess(wireEnvelope());
 			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
-			expect(snap?.configDirKey).toBe('/Users/test/.claude');
+			expect(snap?.configDirKey).toBe(canonKey(path.join(os.homedir(), '.claude')));
 		});
 
 		it('lets customEnvVars.CLAUDE_CONFIG_DIR drive the key when configDir is omitted', async () => {
@@ -344,7 +346,7 @@ describe('claude-usage-sampler', () => {
 				cwd: '/tmp',
 				customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/test/.claude-via-env' },
 			});
-			expect(snap?.configDirKey).toBe('/Users/test/.claude-via-env');
+			expect(snap?.configDirKey).toBe(canonKey('/Users/test/.claude-via-env'));
 		});
 	});
 
@@ -521,7 +523,7 @@ describe('claude-usage-sampler', () => {
 			primeSuccess('garbage\n');
 			await sampleUsage({ binPath: '/bin/maestro-p.js', cwd: '/tmp' });
 			const extras = captureMessageMock.mock.calls[0][2] as Record<string, unknown>;
-			expect(extras.configDir).toBe('/Users/test/.claude');
+			expect(extras.configDir).toBe(path.join(os.homedir(), '.claude'));
 		});
 	});
 });

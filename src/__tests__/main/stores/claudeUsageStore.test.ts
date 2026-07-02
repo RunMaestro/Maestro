@@ -56,6 +56,8 @@ vi.mock('os', async () => {
 	};
 });
 
+import * as os from 'os';
+import * as path from 'path';
 import {
 	setSnapshot,
 	getSnapshot,
@@ -66,6 +68,7 @@ import {
 	__resetForTests,
 	type UsageSnapshot,
 } from '../../../main/stores/claudeUsageStore';
+import { canonKey } from '../../helpers/pathExpect';
 
 const FROZEN_NOW = new Date('2026-05-15T12:00:00.000Z').getTime();
 
@@ -283,28 +286,30 @@ describe('claudeUsageStore', () => {
 	describe('resolveConfigDirKey', () => {
 		it('returns the canonical resolved path when CLAUDE_CONFIG_DIR is set', () => {
 			expect(resolveConfigDirKey({ CLAUDE_CONFIG_DIR: '/Users/test/.claude-gmail' })).toBe(
-				'/Users/test/.claude-gmail'
+				canonKey('/Users/test/.claude-gmail')
 			);
 		});
 
 		it('falls back to ~/.claude when CLAUDE_CONFIG_DIR is unset', () => {
-			expect(resolveConfigDirKey({})).toBe('/Users/test/.claude');
+			expect(resolveConfigDirKey({})).toBe(canonKey(path.join(os.homedir(), '.claude')));
 		});
 
 		it('canonicalizes redundant separators and trailing slashes', () => {
 			expect(resolveConfigDirKey({ CLAUDE_CONFIG_DIR: '/Users/test/./.claude-gmail/' })).toBe(
-				'/Users/test/.claude-gmail'
+				canonKey('/Users/test/.claude-gmail')
 			);
 		});
 
 		it('canonicalizes ".." segments', () => {
 			expect(resolveConfigDirKey({ CLAUDE_CONFIG_DIR: '/Users/test/foo/../.claude-smash' })).toBe(
-				'/Users/test/.claude-smash'
+				canonKey('/Users/test/.claude-smash')
 			);
 		});
 
 		it('treats CLAUDE_CONFIG_DIR=undefined identically to unset', () => {
-			expect(resolveConfigDirKey({ CLAUDE_CONFIG_DIR: undefined })).toBe('/Users/test/.claude');
+			expect(resolveConfigDirKey({ CLAUDE_CONFIG_DIR: undefined })).toBe(
+				canonKey(path.join(os.homedir(), '.claude'))
+			);
 		});
 	});
 });

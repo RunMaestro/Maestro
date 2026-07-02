@@ -434,7 +434,9 @@ describe('CopilotSessionStorage — paginated listing', () => {
 		});
 
 		vi.mocked(fs.stat).mockImplementation(async (filePath) => {
-			const p = String(filePath);
+			// Local paths are built with `path.join`, so normalize separators to
+			// `/` before matching (no-op on POSIX, converts `\` on Windows).
+			const p = String(filePath).replace(/\\/g, '/');
 			if (p.endsWith('/events.jsonl')) {
 				const id = p.split('/').slice(-2, -1)[0];
 				const idx = ids.indexOf(id);
@@ -444,7 +446,7 @@ describe('CopilotSessionStorage — paginated listing', () => {
 		});
 
 		vi.mocked(fs.readFile).mockImplementation(async (filePath) => {
-			const p = String(filePath);
+			const p = String(filePath).replace(/\\/g, '/');
 			const id = p.split('/').slice(-2, -1)[0];
 			if (p.endsWith('/workspace.yaml')) return workspaceYaml(id, projectPath);
 			return eventsJsonl();

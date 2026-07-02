@@ -1,12 +1,25 @@
 import net from 'node:net';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { findAvailablePort } from './dev-port.mjs';
 
-const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+const isWindows = process.platform === 'win32';
+const npmCommand = isWindows ? 'npm.cmd' : 'npm';
 const rendererScript = 'dev:renderer';
 const mainScript = process.env.USE_PROD_DATA ? 'dev:main:prod-data' : 'dev:main';
 const startupTimeoutMs = 20000;
 const pollIntervalMs = 200;
+
+// Spawn an `npm run <script>` child. On Windows npm resolves to npm.cmd, which
+// Node >=22.12 refuses to spawn without a shell (post CVE-2024-27980, throwing
+// EINVAL). We pass a single shell command string there rather than an args
+// array, which both satisfies the shell requirement and avoids the DEP0190
+// "args with shell" warning. Args are static and trusted (no user input).
+function spawnNpm(args, options) {
+	if (isWindows) {
+		return spawn([npmCommand, ...args].join(' '), { ...options, shell: true });
+	}
+	return spawn(npmCommand, args, options);
+}
 
 function waitForPort(port, timeoutMs = startupTimeoutMs) {
 	return new Promise((resolve, reject) => {
@@ -43,7 +56,22 @@ function waitForPort(port, timeoutMs = startupTimeoutMs) {
 
 function killChild(child) {
 	if (child.exitCode === null && !child.killed) {
-		child.kill('SIGTERM');
+		if (isWindows && child.pid) {
+			// spawnNpm() children are cmd.exe wrappers on Windows; SIGTERM would kill
+			// only the wrapper and leak npm/Vite/Electron (holding the Vite port).
+			// taskkill /t kills the whole tree; sync so shutdown() finishes the job
+			// before process.exit(). Non-zero exit (already dead) is fine.
+			try {
+				execFileSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], {
+					timeout: 5000,
+					stdio: 'ignore',
+				});
+			} catch {
+				// process already exited
+			}
+		} else {
+			child.kill('SIGTERM');
+		}
 	}
 }
 
@@ -52,7 +80,7 @@ const sharedEnv = { ...process.env, VITE_PORT: String(port) };
 
 console.log(`[dev] Using VITE_PORT=${port}`);
 
-const renderer = spawn(npmCommand, ['run', rendererScript], {
+const renderer = spawnNpm(['run', rendererScript], {
 	env: sharedEnv,
 	stdio: 'inherit',
 });
@@ -95,7 +123,7 @@ if (cdpPort) {
 	console.log(`[dev] Electron CDP enabled on port ${cdpPort}`);
 }
 
-main = spawn(npmCommand, mainArgs, {
+main = spawnNpm(mainArgs, {
 	env: sharedEnv,
 	stdio: 'inherit',
 });

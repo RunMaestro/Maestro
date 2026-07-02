@@ -95,6 +95,7 @@ import {
 	__resetForTests as resetUsageStore,
 	type UsageSnapshot,
 } from '../../../main/stores/claudeUsageStore';
+import { canonKey } from '../../helpers/pathExpect';
 
 const FROZEN_NOW = new Date('2026-05-15T12:00:00.000Z').getTime();
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
@@ -669,7 +670,7 @@ describe('claude-usage-startup → runStartupUsageSampling', () => {
 			expect(loggerWarnMock).toHaveBeenCalledWith(
 				expect.stringContaining('maestro-p --status sample failed'),
 				expect.any(String),
-				expect.objectContaining({ configDirKey: '/Users/test/.claude-broken' })
+				expect.objectContaining({ configDirKey: canonKey('/Users/test/.claude-broken') })
 			);
 		});
 	});

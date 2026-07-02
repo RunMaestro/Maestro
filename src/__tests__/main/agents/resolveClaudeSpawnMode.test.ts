@@ -6,6 +6,7 @@ import {
 	REMOTE_MAESTRO_P_COMMAND,
 	type ResolveClaudeSpawnModeDeps,
 } from '../../../main/agents/resolveClaudeSpawnMode';
+import { asarNodePath } from '../../helpers/pathExpect';
 import type { UsageSnapshot } from '../../../main/agents/claude-mode-selector';
 
 const claudeAgent = {
@@ -461,7 +462,7 @@ describe('applyClaudeSpawnDecision (batch surfaces)', () => {
 			// spawn-helper, so handing it the unpacked path double-applies and the
 			// helper exec fails (posix_spawn ENOENT).
 			expect(result.customEnvVars?.NODE_PATH).toBe(
-				'/Applications/Maestro.app/Contents/Resources/app.asar/node_modules'
+				asarNodePath('/Applications/Maestro.app/Contents/Resources')
 			);
 		} finally {
 			Object.defineProperty(process, 'resourcesPath', {

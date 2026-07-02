@@ -2306,17 +2306,32 @@ Some text with [x] in it that's not a checkbox
 		});
 
 		it('still injects the Maestro system prompt on resume (Claude reads it every turn)', async () => {
-			const p = spawnAgent('claude-code', '/p', 'follow-up', 'session-abc', {
-				appendSystemPrompt: 'maestro context',
-			});
-			await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+			// Pin the platform to a POSIX value so this exercises the inline
+			// `--append-system-prompt` path deterministically. On Windows local
+			// spawns the product instead writes the prompt to a temp file and
+			// passes `--append-system-prompt-file` (see buildAppendSystemPromptArgs),
+			// which is correct but a different arg shape. On Unix this override is
+			// a no-op.
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+			try {
+				const p = spawnAgent('claude-code', '/p', 'follow-up', 'session-abc', {
+					appendSystemPrompt: 'maestro context',
+				});
+				await driveSpawnToCompletion(p, 0, CLAUDE_OK());
 
-			const { args } = spawnCall();
-			expect(args).toContain('--resume');
-			expect(args).toContain('session-abc');
-			const flagIdx = args.indexOf('--append-system-prompt');
-			expect(flagIdx).toBeGreaterThanOrEqual(0);
-			expect(args[flagIdx + 1]).toBe('maestro context');
+				const { args } = spawnCall();
+				expect(args).toContain('--resume');
+				expect(args).toContain('session-abc');
+				const flagIdx = args.indexOf('--append-system-prompt');
+				expect(flagIdx).toBeGreaterThanOrEqual(0);
+				expect(args[flagIdx + 1]).toBe('maestro context');
+			} finally {
+				Object.defineProperty(process, 'platform', {
+					value: originalPlatform,
+					configurable: true,
+				});
+			}
 		});
 
 		it('Codex (no native --append-system-prompt support) embeds the system prompt in the first user turn', async () => {

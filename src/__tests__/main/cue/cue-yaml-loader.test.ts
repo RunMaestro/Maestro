@@ -10,6 +10,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import path from 'path';
 
 // Mock chokidar
 const mockChokidarOn = vi.fn().mockReturnThis();
@@ -68,7 +69,9 @@ describe('cue-yaml-loader', () => {
 
 		it('loads from canonical .maestro/cue.yaml path first', () => {
 			// Canonical path exists
-			mockExistsSync.mockImplementation((p: string) => String(p).includes('.maestro/cue.yaml'));
+			mockExistsSync.mockImplementation((p: string) =>
+				String(p).replace(/\\/g, '/').includes('.maestro/cue.yaml')
+			);
 			mockReadFileSync.mockReturnValue(`
 subscriptions:
   - name: canonical-sub
@@ -139,9 +142,10 @@ subscriptions:
 
 		it('falls back to legacy maestro-cue.yaml when canonical does not exist', () => {
 			// Only legacy path exists
-			mockExistsSync.mockImplementation(
-				(p: string) => String(p).includes('maestro-cue.yaml') && !String(p).includes('.maestro/')
-			);
+			mockExistsSync.mockImplementation((p: string) => {
+				const norm = String(p).replace(/\\/g, '/');
+				return norm.includes('maestro-cue.yaml') && !norm.includes('.maestro/');
+			});
 			mockReadFileSync.mockReturnValue(`
 subscriptions:
   - name: legacy-sub
@@ -252,7 +256,7 @@ subscriptions:
 			mockExistsSync.mockReturnValue(true);
 			mockReadFileSync.mockImplementation((p: string) => {
 				readCallCount++;
-				if (String(p).endsWith('.maestro/prompts/worker-pipeline.md')) {
+				if (String(p).replace(/\\/g, '/').endsWith('.maestro/prompts/worker-pipeline.md')) {
 					return 'Prompt from external file';
 				}
 				return `
@@ -290,7 +294,7 @@ subscriptions:
 		it('resolves output_prompt_file to output_prompt content', () => {
 			mockExistsSync.mockReturnValue(true);
 			mockReadFileSync.mockImplementation((p: string) => {
-				if (String(p).endsWith('.maestro/prompts/format-output.md')) {
+				if (String(p).replace(/\\/g, '/').endsWith('.maestro/prompts/format-output.md')) {
 					return 'Format the output as markdown';
 				}
 				return `
@@ -329,7 +333,7 @@ subscriptions:
 		it('sets output_prompt to undefined when output_prompt_file is missing', () => {
 			mockExistsSync.mockReturnValue(true);
 			mockReadFileSync.mockImplementation((p: string) => {
-				if (String(p).endsWith('.maestro/prompts/missing.md')) {
+				if (String(p).replace(/\\/g, '/').endsWith('.maestro/prompts/missing.md')) {
 					throw new Error('ENOENT: no such file or directory');
 				}
 				return `
@@ -545,7 +549,7 @@ subscriptions:
 			mockExistsSync.mockReturnValue(true);
 			mockReadFileSync.mockImplementation((p: string) => {
 				readCount++;
-				if (String(p).endsWith('.maestro/prompts/missing.md')) {
+				if (String(p).replace(/\\/g, '/').endsWith('.maestro/prompts/missing.md')) {
 					throw new Error('ENOENT: no such file');
 				}
 				return `
@@ -571,7 +575,7 @@ subscriptions:
 		it('surfaces a warning when output_prompt_file references a missing file', () => {
 			mockExistsSync.mockReturnValue(true);
 			mockReadFileSync.mockImplementation((p: string) => {
-				if (String(p).endsWith('.maestro/prompts/missing-output.md')) {
+				if (String(p).replace(/\\/g, '/').endsWith('.maestro/prompts/missing-output.md')) {
 					throw new Error('ENOENT: no such file');
 				}
 				return `
@@ -597,7 +601,7 @@ subscriptions:
 		it('returns no warnings when prompt_file resolves successfully', () => {
 			mockExistsSync.mockReturnValue(true);
 			mockReadFileSync.mockImplementation((p: string) => {
-				if (String(p).endsWith('.maestro/prompts/exists.md')) {
+				if (String(p).replace(/\\/g, '/').endsWith('.maestro/prompts/exists.md')) {
 					return 'Resolved prompt body';
 				}
 				return `
@@ -625,7 +629,7 @@ subscriptions:
 			// Should watch both .maestro/cue.yaml (canonical) and maestro-cue.yaml (legacy)
 			expect(chokidar.watch).toHaveBeenCalledWith(
 				expect.arrayContaining([
-					expect.stringContaining('.maestro/cue.yaml'),
+					expect.stringContaining(path.join('.maestro', 'cue.yaml')),
 					expect.stringContaining('maestro-cue.yaml'),
 				]),
 				expect.objectContaining({ persistent: true, ignoreInitial: true })
@@ -638,7 +642,7 @@ subscriptions:
 			// strands the engine with empty cached prompts because the YAML
 			// watcher never fires again.
 			expect(chokidar.watch).toHaveBeenCalledWith(
-				expect.arrayContaining([expect.stringContaining('.maestro/prompts/*.md')]),
+				expect.arrayContaining([expect.stringContaining(path.join('.maestro', 'prompts', '*.md'))]),
 				expect.anything()
 			);
 		});

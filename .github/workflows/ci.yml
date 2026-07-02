@@ -21,7 +21,12 @@ jobs:
       - run: npm run lint # TypeScript type checking
 
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      # Run the suite on both platforms; don't cancel one when the other fails.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6

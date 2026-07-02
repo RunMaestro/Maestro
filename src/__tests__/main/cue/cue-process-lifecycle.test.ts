@@ -24,6 +24,25 @@ vi.mock('../../../main/utils/sentry', () => ({
 	captureException: (...args: unknown[]) => mockCaptureException(...args),
 }));
 
+// Platform is mockable per-test. Default is the POSIX kill path
+// (child.kill('SIGTERM')) so the SIGTERM → SIGKILL assertions hold regardless
+// of host OS - mirroring what CI exercises on Unix. The Windows process-tree
+// kill tests flip this to true to exercise the taskkill branch.
+const { mockIsWindows, mockExecFile, mockExecFileSync } = vi.hoisted(() => ({
+	mockIsWindows: vi.fn(() => false),
+	mockExecFile: vi.fn((_cmd: unknown, _args: unknown, cb?: unknown) => {
+		if (typeof cb === 'function') (cb as (e: Error | null) => void)(null);
+	}),
+	mockExecFileSync: vi.fn(),
+}));
+vi.mock('../../../shared/platformDetection', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../shared/platformDetection')>();
+	return {
+		...actual,
+		isWindows: () => mockIsWindows(),
+	};
+});
+
 // Mock child_process.spawn
 class MockChildProcess extends EventEmitter {
 	pid = 12345;
@@ -60,9 +79,13 @@ vi.mock('child_process', async (importOriginal) => {
 	return {
 		...actual,
 		spawn: (...args: unknown[]) => mockSpawn(...args),
+		execFile: (...args: unknown[]) => mockExecFile(...(args as [unknown, unknown, unknown?])),
+		execFileSync: (...args: unknown[]) => mockExecFileSync(...args),
 		default: {
 			...actual,
 			spawn: (...args: unknown[]) => mockSpawn(...args),
+			execFile: (...args: unknown[]) => mockExecFile(...(args as [unknown, unknown, unknown?])),
+			execFileSync: (...args: unknown[]) => mockExecFileSync(...args),
 		},
 	};
 });
@@ -101,6 +124,8 @@ function createOptions(overrides = {}) {
 describe('cue-process-lifecycle', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		// Default to the POSIX branch; Windows tests opt in via mockReturnValue(true).
+		mockIsWindows.mockReturnValue(false);
 		vi.useFakeTimers();
 		getActiveProcessMap().clear();
 	});
@@ -519,6 +544,49 @@ describe('cue-process-lifecycle', () => {
 			// Process hasn't exited — SIGKILL should fire after delay
 			await vi.advanceTimersByTimeAsync(5000);
 			expect(childKill).toHaveBeenCalledWith('SIGKILL');
+
+			mockChild.emit('close', null);
+			await resultPromise;
+		});
+	});
+
+	describe('Windows process-tree kill (taskkill)', () => {
+		it('kills via taskkill /pid <pid> /t /f instead of POSIX signals', async () => {
+			mockIsWindows.mockReturnValue(true);
+
+			const resultPromise = runProcess('win-stop', createSpec(), createOptions());
+			await vi.advanceTimersByTimeAsync(0);
+
+			const childKill = vi.spyOn(mockChild, 'kill');
+
+			const stopped = stopProcess('win-stop');
+			expect(stopped).toBe(true);
+			expect(mockExecFile).toHaveBeenCalledWith(
+				'taskkill',
+				['/pid', String(mockChild.pid), '/t', '/f'],
+				expect.any(Function)
+			);
+			// POSIX signals must not be used on Windows (no-op for shell-spawned trees).
+			expect(childKill).not.toHaveBeenCalled();
+
+			mockChild.emit('close', null);
+			await resultPromise;
+		});
+
+		it('tolerates taskkill failing because the process is already dead', async () => {
+			mockIsWindows.mockReturnValue(true);
+			mockExecFile.mockImplementationOnce((_cmd: unknown, _args: unknown, cb?: unknown) => {
+				if (typeof cb === 'function') {
+					(cb as (e: Error | null) => void)(new Error('ERROR: The process "12345" not found.'));
+				}
+			});
+
+			const resultPromise = runProcess('win-dead', createSpec(), createOptions());
+			await vi.advanceTimersByTimeAsync(0);
+
+			stopProcess('win-dead');
+			// Already-dead is expected on Windows and must not be reported to Sentry.
+			expect(mockCaptureException).not.toHaveBeenCalled();
 
 			mockChild.emit('close', null);
 			await resultPromise;

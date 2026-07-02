@@ -4,6 +4,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
+import path from 'path';
 
 vi.mock('../../../cli/services/maestro-client', () => ({
 	withMaestroClient: vi.fn(),
@@ -106,7 +107,7 @@ describe('update-agent command', () => {
 			expect.objectContaining({
 				type: 'update_session_cwd',
 				sessionId: 'full-session-id',
-				newCwd: '/tmp/some/path',
+				newCwd: path.resolve('/tmp/some/path'),
 			}),
 			'update_session_cwd_result'
 		);
@@ -396,7 +397,7 @@ describe('update-agent command', () => {
 			success: true,
 			agentId: 'full-session-id',
 			group: 'full-group-id',
-			cwd: '/tmp/foo',
+			cwd: path.resolve('/tmp/foo'),
 		});
 	});
 
