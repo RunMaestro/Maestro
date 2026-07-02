@@ -441,6 +441,7 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 							theme={theme}
 							onCopy={(text) => safeClipboardWrite(text)}
 							enableBionifyReadingMode={bionifyReadingMode}
+							chatMath
 						/>
 					</div>
 				) : isGenerating ? (
