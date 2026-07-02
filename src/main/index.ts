@@ -30,6 +30,7 @@ import {
 	disposeGlobalHotkey,
 } from './global-hotkey-manager';
 import { CueEngine } from './cue/cue-engine';
+import { createCueSupervisorHooks } from './cue/cue-first-party';
 import { PianolaSupervisor } from './pianola/pianola-supervisor';
 import { PianolaRelearnScheduler } from './pianola/pianola-relearn-scheduler';
 import { runRelearnJob } from './pianola/pianola-relearn';
@@ -890,7 +891,14 @@ app
 			settingsStore: store,
 			agentDetector,
 		});
-		usageRefreshScheduler.start();
+		// L5 usage-stats lift: the sampling loop is the feature's supervised
+		// `stats.sampler` background service — don't arm it when the user has
+		// explicitly disabled the Usage & Stats tile. `!== false` (not `=== true`)
+		// mirrors the renderer default (usageStats defaults ON and the merged
+		// flag map may never have been persisted main-side).
+		if ((store.get('encoreFeatures', {}) as Record<string, boolean>).usageStats !== false) {
+			usageRefreshScheduler.start();
+		}
 
 		// Initialize Cue Engine for event-driven automation
 		cueEngine = new CueEngine({
@@ -1265,6 +1273,18 @@ app
 				pianola: {
 					reconcile: () => pianolaSupervisor?.reconcile(),
 					stopAll: () => pianolaSupervisor?.stopAll(),
+				},
+				// [L3MaestroCue] cue engine lifecycle: reconcile (re)starts when the
+				// flag+grants hold; stopAll halts every watcher/poller/heartbeat.
+				maestroCue: createCueSupervisorHooks(() => cueEngine),
+				// L5 usage-stats: `stats.sampler` — the background provider-quota
+				// sampling loop (UsageRefreshScheduler). Marketplace disable/revoke
+				// stops the timers; enable re-arms from the persisted intervals
+				// (start() is idempotent; it arms nothing until the user picks an
+				// auto-refresh interval in the dashboard).
+				usageStats: {
+					reconcile: () => usageRefreshScheduler?.start(),
+					stopAll: () => usageRefreshScheduler?.stop(),
 				},
 			};
 		const firstPartyBridges: Partial<Record<FirstPartyEncoreFlag, FirstPartyPluginBridge>> = {};
