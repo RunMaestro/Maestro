@@ -531,35 +531,40 @@ describe('dissolveGroup', () => {
 describe('computeDropZone', () => {
 	// A 200x100 pane whose top-left is at (10, 20) - non-zero origin so the tests
 	// exercise the pointer-to-rect normalization, not just an origin-anchored box.
+	// Center is at (110, 70). The pane is split into four diagonal triangles.
 	const rect: DropRect = { left: 10, top: 20, width: 200, height: 100 };
-	// Zone bands are the outer 25%: left < 60, right > 160, top < 45, bottom > 95.
 
-	it('returns center for a pointer in the inner core', () => {
-		expect(computeDropZone(rect, 110, 70)).toBe('center'); // dead center
+	it('resolves the inner core to an edge, never center', () => {
+		// A point just right of dead-center: horizontal offset (tiny +) dominates the
+		// zero vertical offset, so it lands on the nearest edge rather than a center zone.
+		expect(computeDropZone(rect, 111, 70)).toBe('right');
+		expect(computeDropZone(rect, 109, 70)).toBe('left');
+		// Exact center: |dx| >= |dy| tie resolves to the horizontal axis (right side of 0).
+		expect(computeDropZone(rect, 110, 70)).toBe('right');
 	});
 
-	it('classifies each edge band', () => {
-		expect(computeDropZone(rect, 15, 70)).toBe('left'); // far left column, vertically centered
-		expect(computeDropZone(rect, 205, 70)).toBe('right'); // far right column
-		expect(computeDropZone(rect, 110, 25)).toBe('top'); // top band, horizontally centered
-		expect(computeDropZone(rect, 110, 115)).toBe('bottom'); // bottom band
+	it('classifies each edge from the dominant offset axis', () => {
+		expect(computeDropZone(rect, 15, 70)).toBe('left'); // far left, vertically centered
+		expect(computeDropZone(rect, 205, 70)).toBe('right'); // far right
+		expect(computeDropZone(rect, 110, 25)).toBe('top'); // near top, horizontally centered
+		expect(computeDropZone(rect, 110, 115)).toBe('bottom'); // near bottom
 	});
 
-	it('breaks a corner toward the more deeply penetrated band', () => {
-		// Top-left corner: nx≈0.025 (depth 0.225 into left) vs ny≈0.05 (depth 0.20
-		// into top). Left is deeper, so left wins.
+	it('assigns a corner to the axis with the larger offset from center', () => {
+		// Top-left corner: dx ≈ -0.475 (horizontal) vs dy ≈ -0.45 (vertical); horizontal
+		// dominates, so left wins.
 		expect(computeDropZone(rect, 15, 25)).toBe('left');
-		// Nudge toward the top edge so the top band is penetrated more deeply.
-		expect(computeDropZone(rect, 55, 21)).toBe('top');
+		// Near the top edge but close to horizontal center: vertical offset dominates -> top.
+		expect(computeDropZone(rect, 95, 21)).toBe('top');
 	});
 
-	it('clamps a pointer just outside the rect to the nearest edge band', () => {
+	it('clamps a pointer just outside the rect to the nearest edge', () => {
 		expect(computeDropZone(rect, -100, 70)).toBe('left');
 		expect(computeDropZone(rect, 9999, 70)).toBe('right');
 	});
 
-	it('returns center for a degenerate (zero-area) rect', () => {
-		expect(computeDropZone({ left: 0, top: 0, width: 0, height: 100 }, 0, 50)).toBe('center');
+	it('defaults a degenerate (zero-area) rect to a valid edge', () => {
+		expect(computeDropZone({ left: 0, top: 0, width: 0, height: 100 }, 0, 50)).toBe('left');
 	});
 });
 
@@ -740,6 +745,17 @@ describe('createGroupFromDrop', () => {
 		if (layout.kind !== 'split') throw new Error('expected split');
 		expect(layout.direction).toBe('row');
 		expect(collectLeafTabRefs(layout)).toEqual([aiRef('a'), fileRef('b')]);
+	});
+
+	it('does not throw when a legacy session has no tabGroups/unifiedTabOrder fields', () => {
+		// Sessions persisted before tiling shipped have neither field. The first drop
+		// must create the group instead of crashing on a spread of `undefined` (the
+		// real-world "drop does nothing" bug: the TypeError was swallowed by React).
+		const legacy = { id: 'sess', activeGroupId: null } as unknown as Session;
+		const next = createGroupFromDrop(legacy, aiRef('a'), fileRef('b'), 'right', 'g');
+		expect(next.tabGroups).toHaveLength(1);
+		expect(next.activeGroupId).toBe(next.tabGroups[0].id);
+		expect(collectLeafTabRefs(next.tabGroups[0].layout)).toEqual([aiRef('a'), fileRef('b')]);
 	});
 });
 
@@ -1053,6 +1069,14 @@ describe('normalizeTabGroups', () => {
 	it('returns the same session untouched when there are no groups', () => {
 		const s = sessionWith([]);
 		expect(normalizeTabGroups(s)).toBe(s);
+	});
+
+	it('backfills tabGroups to [] for a legacy session missing the field', () => {
+		// A pre-tiling persisted session has no `tabGroups` at all. Normalization must
+		// guarantee the array so a later drop does not spread `undefined` and crash.
+		const legacy = { id: 'sess', unifiedTabOrder: [] } as unknown as Session;
+		const next = normalizeTabGroups(legacy);
+		expect(next.tabGroups).toEqual([]);
 	});
 
 	it('prunes a dangling leaf and keeps a still-valid group (renormalized, focus repointed)', () => {

@@ -15,12 +15,14 @@ import type { WindowState as WindowStateStoreData } from '../stores/types';
 import { WindowRegistry } from '../window-registry';
 import {
 	buildMultiWindowState,
+	pickFocusWindowSpec,
 	planWindowRestore,
 	readExistingAgentIds,
 	registeredWindowToWindowState,
 	saveAllWindowStates,
 	saveWindowState,
 } from '../window-state-persistence';
+import type { WindowRestoreSpec } from '../window-state-persistence';
 import type { SessionsData } from '../stores/types';
 import type {
 	MultiWindowState,
@@ -348,6 +350,37 @@ describe('window-state-persistence', () => {
 
 			expect(specs[0]).toMatchObject({ isPrimary: true, bounds: { id: 'first' } });
 			expect(specs[1]).toMatchObject({ isPrimary: false, bounds: { id: 'second' } });
+		});
+	});
+
+	describe('pickFocusWindowSpec', () => {
+		const spec = (isPrimary: boolean, sessionIds: string[]): WindowRestoreSpec => ({
+			isPrimary,
+			sessionIds,
+			bounds: makePersistedWindow({ id: isPrimary ? 'primary' : sessionIds.join('-'), sessionIds }),
+		});
+
+		it('returns undefined for an empty spec list', () => {
+			expect(pickFocusWindowSpec([], 'a')).toBeUndefined();
+		});
+
+		it('focuses the primary when there is no active agent', () => {
+			const specs = [spec(true, ['p']), spec(false, ['a'])];
+			expect(pickFocusWindowSpec(specs, undefined)).toBe(specs[0]);
+			expect(pickFocusWindowSpec(specs, null)).toBe(specs[0]);
+		});
+
+		it('focuses the secondary window that owns the active agent', () => {
+			const specs = [spec(true, ['p']), spec(false, ['a']), spec(false, ['b'])];
+			expect(pickFocusWindowSpec(specs, 'b')).toBe(specs[2]);
+		});
+
+		it('focuses the primary (catch-all owner) when no secondary owns the active agent', () => {
+			// The active agent is not in any secondary's owned set, so it lives in the
+			// primary's catch-all - focus the primary. This is the stacked-restore case
+			// that made startup open onto an empty secondary window.
+			const specs = [spec(true, []), spec(false, ['other'])];
+			expect(pickFocusWindowSpec(specs, 'active')).toBe(specs[0]);
 		});
 	});
 

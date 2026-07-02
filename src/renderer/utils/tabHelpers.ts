@@ -10,6 +10,7 @@ import {
 	FilePreviewTab,
 	UnifiedTab,
 	UnifiedTabRef,
+	PanelLayoutNode,
 	LogEntry,
 	UsageStats,
 	ToolType,
@@ -89,7 +90,35 @@ export function buildUnifiedTabs(session: Session): UnifiedTab[] {
 		result.push({ type: 'terminal', id, data: tab });
 	}
 
-	return result;
+	// Hide tabs that are tiled into a group: the group's chip stands in for them in
+	// the strip, so a tiled tab must not also appear as its own chip. Tiling removes
+	// the ref from unifiedTabOrder, but the tab still lives in aiTabs/filePreviewTabs/
+	// etc., so the orphan fallback above would otherwise re-surface it. One filter at
+	// the end covers both entry paths. No groups -> no allocation, no filtering.
+	const memberKeys = collectGroupMemberTabKeys(session);
+	if (memberKeys.size === 0) return result;
+	return result.filter((t) => !memberKeys.has(`${t.type}:${t.id}`));
+}
+
+/**
+ * Collect the `type:id` keys of every tab that is a leaf in one of the session's
+ * tiled groups. Walks each group's layout tree directly (kept local to avoid a
+ * circular import with panelLayout, which imports from this module). Used by
+ * buildUnifiedTabs to keep tiled tabs out of the standalone strip.
+ */
+function collectGroupMemberTabKeys(session: Session): Set<string> {
+	const keys = new Set<string>();
+	const groups = session.tabGroups;
+	if (!groups || groups.length === 0) return keys;
+	const walk = (node: PanelLayoutNode): void => {
+		if (node.kind === 'leaf') {
+			keys.add(`${node.tab.type}:${node.tab.id}`);
+			return;
+		}
+		node.children.forEach(walk);
+	};
+	for (const group of groups) walk(group.layout);
+	return keys;
 }
 
 /**

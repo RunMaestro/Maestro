@@ -199,3 +199,26 @@ export function planWindowRestore(
 	}
 	return specs;
 }
+
+/**
+ * Pick which restored window should receive focus on startup: the one that owns
+ * the globally-active agent (the Left Bar highlight), so the user lands on the
+ * agent they were last using instead of whichever window happened to be created
+ * last (a secondary stacked on the primary would otherwise steal focus and open
+ * onto the wrong - or empty - view).
+ *
+ * A secondary window that explicitly owns the active agent wins; otherwise the
+ * primary window is the catch-all owner. Falls back to the primary when there is
+ * no active agent, or it no longer lives in any restored window. Returns
+ * `undefined` only for an empty spec list (nothing to focus).
+ */
+export function pickFocusWindowSpec(
+	specs: WindowRestoreSpec[],
+	activeSessionId: string | null | undefined
+): WindowRestoreSpec | undefined {
+	if (specs.length === 0) return undefined;
+	const primary = specs.find((spec) => spec.isPrimary) ?? specs[0];
+	if (!activeSessionId) return primary;
+	const owner = specs.find((spec) => !spec.isPrimary && spec.sessionIds.includes(activeSessionId));
+	return owner ?? primary;
+}

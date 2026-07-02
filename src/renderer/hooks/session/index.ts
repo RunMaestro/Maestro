@@ -60,6 +60,9 @@ export type { UseCycleSessionDeps, UseCycleSessionReturn } from './useCycleSessi
 export { useStarredItems } from './useStarredItems';
 export type { StarredItem, UseStarredItemsDeps, UseStarredItemsReturn } from './useStarredItems';
 
+// Multi-window: keep a window's active agent to one it owns (no false empty state)
+export { useWindowScopedActiveSession } from './useWindowScopedActiveSession';
+
 // Session switching callbacks (navigate to session/tab from various UI surfaces)
 export { useSessionSwitchCallbacks } from './useSessionSwitchCallbacks';
 export type {

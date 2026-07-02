@@ -570,6 +570,21 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		mountedBrowserTabIds,
 	]);
 
+	// The shared AI input renders exactly once, below whichever content the panel is
+	// showing - the single-view routing OR a tiled group. It targets
+	// activeSession.activeTabId, which focusPaneInSession keeps synced to a tiled
+	// group's focused AI pane, so inside a group it drives that pane's conversation.
+	// Hidden: mobile landscape, wizard doc generation, terminal mode (xterm owns
+	// input), and when a group's focused pane is a non-AI tab. In single view it also
+	// hides while a browser or file tab owns the panel (those have no AI input); a
+	// group ignores those stale single-view ids.
+	const shouldShowInputArea =
+		!isMobileLandscape &&
+		!activeTab?.wizardState?.isGeneratingDocs &&
+		!groupFocusedIsNonAi &&
+		activeSession.inputMode !== 'terminal' &&
+		(!!activeGroup || (!activeBrowserTabId && !activeFileTabId));
+
 	return (
 		/* Content area: Show FilePreview when file tab is active, otherwise show terminal output */
 		/* Content wrapper: always-rendered relative container so terminal overlay covers
@@ -802,120 +817,115 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 							/>
 						)}
 					</div>
-
-					{/* Input Area (hidden in mobile landscape, during wizard doc generation, in
-					    terminal mode - xterm.js handles its own input - and when a tiled group's
-					    focused pane is a non-AI tab, mirroring single-view non-AI suppression) */}
-					{!isMobileLandscape &&
-						!activeTab?.wizardState?.isGeneratingDocs &&
-						!activeBrowserTabId &&
-						!groupFocusedIsNonAi &&
-						activeSession.inputMode !== 'terminal' && (
-							<div data-tour="input-area">
-								<InputArea
-									session={activeSession}
-									theme={theme}
-									setInputValue={setInputValue}
-									enterToSend={activeTab?.enterToSend ?? enterToSendAI}
-									setEnterToSend={
-										onToggleTabEnterToSend
-											? () => onToggleTabEnterToSend()
-											: useSettingsStore.getState().setEnterToSendAI
-									}
-									stagedImages={stagedImages}
-									setStagedImages={setStagedImages}
-									setLightboxImage={setLightboxImage}
-									commandHistoryOpen={commandHistoryOpen}
-									setCommandHistoryOpen={setCommandHistoryOpen}
-									commandHistoryFilter={commandHistoryFilter}
-									setCommandHistoryFilter={setCommandHistoryFilter}
-									commandHistorySelectedIndex={commandHistorySelectedIndex}
-									setCommandHistorySelectedIndex={setCommandHistorySelectedIndex}
-									slashCommandOpen={slashCommandOpen}
-									setSlashCommandOpen={setSlashCommandOpen}
-									slashCommands={slashCommands}
-									selectedSlashCommandIndex={selectedSlashCommandIndex}
-									setSelectedSlashCommandIndex={setSelectedSlashCommandIndex}
-									tabCompletionOpen={tabCompletionOpen}
-									setTabCompletionOpen={setTabCompletionOpen}
-									tabCompletionSuggestions={tabCompletionSuggestions}
-									selectedTabCompletionIndex={selectedTabCompletionIndex}
-									setSelectedTabCompletionIndex={setSelectedTabCompletionIndex}
-									tabCompletionFilter={tabCompletionFilter}
-									setTabCompletionFilter={setTabCompletionFilter}
-									atMentionOpen={atMentionOpen}
-									setAtMentionOpen={setAtMentionOpen}
-									atMentionFilter={atMentionFilter}
-									setAtMentionFilter={setAtMentionFilter}
-									atMentionStartIndex={atMentionStartIndex}
-									setAtMentionStartIndex={setAtMentionStartIndex}
-									atMentionSuggestions={atMentionSuggestions}
-									selectedAtMentionIndex={selectedAtMentionIndex}
-									setSelectedAtMentionIndex={setSelectedAtMentionIndex}
-									inputRef={inputRef}
-									handleInputKeyDown={handleInputKeyDown}
-									handlePaste={handlePaste}
-									handleDrop={handleDrop}
-									toggleInputMode={toggleInputMode}
-									processInput={processInput}
-									handleInterrupt={handleInterrupt}
-									onInputFocus={handleInputFocus}
-									onInputBlur={onInputBlur}
-									isAutoModeActive={isCurrentSessionAutoMode}
-									thinkingItems={thinkingItems}
-									onSessionClick={handleSessionClick}
-									autoRunState={currentSessionBatchState || undefined}
-									onStopAutoRun={() => onStopBatchRun?.(activeSession.id)}
-									onOpenQueueBrowser={onOpenQueueBrowser}
-									tabReadOnlyMode={activeTab?.readOnlyMode ?? false}
-									onToggleTabReadOnlyMode={onToggleTabReadOnlyMode}
-									tabSaveToHistory={activeTab?.saveToHistory ?? false}
-									onToggleTabSaveToHistory={onToggleTabSaveToHistory}
-									tabShowThinking={activeTab?.showThinking ?? 'off'}
-									onToggleTabShowThinking={onToggleTabShowThinking}
-									supportsThinking={hasCapability('supportsThinkingDisplay')}
-									onOpenPromptComposer={onOpenPromptComposer}
-									shortcuts={shortcuts}
-									showFlashNotification={showFlashNotification}
-									// Context warning sash props (Phase 6) - use tab-level context usage
-									contextUsage={activeTabContextUsage}
-									contextWarningsEnabled={contextWarningsEnabled}
-									contextWarningYellowThreshold={contextWarningYellowThreshold}
-									contextWarningRedThreshold={contextWarningRedThreshold}
-									onSummarizeAndContinue={
-										onSummarizeAndContinue
-											? () => onSummarizeAndContinue(activeSession.activeTabId)
-											: undefined
-									}
-									// Summarization progress props
-									summarizeProgress={summarizeProgress}
-									summarizeResult={summarizeResult}
-									summarizeStartTime={summarizeStartTime}
-									isSummarizing={isSummarizing}
-									onCancelSummarize={onCancelSummarize}
-									// Merge progress props
-									mergeProgress={mergeProgress}
-									mergeResult={mergeResult}
-									mergeStartTime={mergeStartTime}
-									isMerging={isMerging}
-									mergeSourceName={mergeSourceName}
-									mergeTargetName={mergeTargetName}
-									onCancelMerge={onCancelMerge}
-									// Inline wizard mode
-									onExitWizard={onExitWizard}
-									wizardShowThinking={activeTab?.wizardState?.showWizardThinking ?? false}
-									onToggleWizardShowThinking={onToggleWizardShowThinking}
-									// Model/Effort quick-change pills
-									currentModel={currentModel}
-									currentEffort={currentEffort}
-									availableModels={availableModels}
-									availableEfforts={availableEfforts}
-									onModelChange={onModelChange}
-									onEffortChange={onEffortChange}
-								/>
-							</div>
-						)}
 				</>
+			)}
+			{/* Shared AI input: one bar below whichever content the panel shows - the
+			    single-view routing above OR a tiled group - targeting the focused AI
+			    tab. See shouldShowInputArea for the visibility rules. */}
+			{shouldShowInputArea && (
+				<div data-tour="input-area">
+					<InputArea
+						session={activeSession}
+						theme={theme}
+						setInputValue={setInputValue}
+						enterToSend={activeTab?.enterToSend ?? enterToSendAI}
+						setEnterToSend={
+							onToggleTabEnterToSend
+								? () => onToggleTabEnterToSend()
+								: useSettingsStore.getState().setEnterToSendAI
+						}
+						stagedImages={stagedImages}
+						setStagedImages={setStagedImages}
+						setLightboxImage={setLightboxImage}
+						commandHistoryOpen={commandHistoryOpen}
+						setCommandHistoryOpen={setCommandHistoryOpen}
+						commandHistoryFilter={commandHistoryFilter}
+						setCommandHistoryFilter={setCommandHistoryFilter}
+						commandHistorySelectedIndex={commandHistorySelectedIndex}
+						setCommandHistorySelectedIndex={setCommandHistorySelectedIndex}
+						slashCommandOpen={slashCommandOpen}
+						setSlashCommandOpen={setSlashCommandOpen}
+						slashCommands={slashCommands}
+						selectedSlashCommandIndex={selectedSlashCommandIndex}
+						setSelectedSlashCommandIndex={setSelectedSlashCommandIndex}
+						tabCompletionOpen={tabCompletionOpen}
+						setTabCompletionOpen={setTabCompletionOpen}
+						tabCompletionSuggestions={tabCompletionSuggestions}
+						selectedTabCompletionIndex={selectedTabCompletionIndex}
+						setSelectedTabCompletionIndex={setSelectedTabCompletionIndex}
+						tabCompletionFilter={tabCompletionFilter}
+						setTabCompletionFilter={setTabCompletionFilter}
+						atMentionOpen={atMentionOpen}
+						setAtMentionOpen={setAtMentionOpen}
+						atMentionFilter={atMentionFilter}
+						setAtMentionFilter={setAtMentionFilter}
+						atMentionStartIndex={atMentionStartIndex}
+						setAtMentionStartIndex={setAtMentionStartIndex}
+						atMentionSuggestions={atMentionSuggestions}
+						selectedAtMentionIndex={selectedAtMentionIndex}
+						setSelectedAtMentionIndex={setSelectedAtMentionIndex}
+						inputRef={inputRef}
+						handleInputKeyDown={handleInputKeyDown}
+						handlePaste={handlePaste}
+						handleDrop={handleDrop}
+						toggleInputMode={toggleInputMode}
+						processInput={processInput}
+						handleInterrupt={handleInterrupt}
+						onInputFocus={handleInputFocus}
+						onInputBlur={onInputBlur}
+						isAutoModeActive={isCurrentSessionAutoMode}
+						thinkingItems={thinkingItems}
+						onSessionClick={handleSessionClick}
+						autoRunState={currentSessionBatchState || undefined}
+						onStopAutoRun={() => onStopBatchRun?.(activeSession.id)}
+						onOpenQueueBrowser={onOpenQueueBrowser}
+						tabReadOnlyMode={activeTab?.readOnlyMode ?? false}
+						onToggleTabReadOnlyMode={onToggleTabReadOnlyMode}
+						tabSaveToHistory={activeTab?.saveToHistory ?? false}
+						onToggleTabSaveToHistory={onToggleTabSaveToHistory}
+						tabShowThinking={activeTab?.showThinking ?? 'off'}
+						onToggleTabShowThinking={onToggleTabShowThinking}
+						supportsThinking={hasCapability('supportsThinkingDisplay')}
+						onOpenPromptComposer={onOpenPromptComposer}
+						shortcuts={shortcuts}
+						showFlashNotification={showFlashNotification}
+						// Context warning sash props (Phase 6) - use tab-level context usage
+						contextUsage={activeTabContextUsage}
+						contextWarningsEnabled={contextWarningsEnabled}
+						contextWarningYellowThreshold={contextWarningYellowThreshold}
+						contextWarningRedThreshold={contextWarningRedThreshold}
+						onSummarizeAndContinue={
+							onSummarizeAndContinue
+								? () => onSummarizeAndContinue(activeSession.activeTabId)
+								: undefined
+						}
+						// Summarization progress props
+						summarizeProgress={summarizeProgress}
+						summarizeResult={summarizeResult}
+						summarizeStartTime={summarizeStartTime}
+						isSummarizing={isSummarizing}
+						onCancelSummarize={onCancelSummarize}
+						// Merge progress props
+						mergeProgress={mergeProgress}
+						mergeResult={mergeResult}
+						mergeStartTime={mergeStartTime}
+						isMerging={isMerging}
+						mergeSourceName={mergeSourceName}
+						mergeTargetName={mergeTargetName}
+						onCancelMerge={onCancelMerge}
+						// Inline wizard mode
+						onExitWizard={onExitWizard}
+						wizardShowThinking={activeTab?.wizardState?.showWizardThinking ?? false}
+						onToggleWizardShowThinking={onToggleWizardShowThinking}
+						// Model/Effort quick-change pills
+						currentModel={currentModel}
+						currentEffort={currentEffort}
+						availableModels={availableModels}
+						availableEfforts={availableEfforts}
+						onModelChange={onModelChange}
+						onEffortChange={onEffortChange}
+					/>
+				</div>
 			)}
 			{/* TerminalView is kept alive for every session that has terminal tabs so that
 		     switching between sessions (or to AI mode) does not destroy the xterm.js

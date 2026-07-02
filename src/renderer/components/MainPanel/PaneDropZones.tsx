@@ -1,6 +1,7 @@
 import React from 'react';
 
 import { updateSessionWith } from '../../stores/sessionStore';
+import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import {
 	computeDropZone,
 	createGroupFromDrop,
@@ -197,19 +198,34 @@ export function PaneDropZones({
 			const dragged = payload.ref;
 
 			if (activeGroup) {
-				if (!target.leafId) return;
+				if (!target.leafId) {
+					notifyCenterFlash({ color: 'yellow', message: 'Drop onto a pane to tile it' });
+					return;
+				}
 				const groupId = activeGroup.id;
 				const leafId = target.leafId;
 				updateSessionWith(session.id, (s) =>
 					tileTabIntoGroup(s, groupId, leafId, target.zone, dragged)
 				);
+				notifyCenterFlash({ color: 'green', message: 'Tiled' });
 				return;
 			}
 
 			// No group yet: create one from the current single view + the dragged tab.
-			if (!activeStandaloneRef) return;
-			// Dropping a tab onto its own single view is a no-op (nothing to pair with).
+			if (!activeStandaloneRef) {
+				notifyCenterFlash({ color: 'yellow', message: 'Nothing here to tile with' });
+				return;
+			}
+			// Dropping a tab onto its own single view is a no-op: a tab can't be tiled
+			// beside itself. This is the trap that reads as "release does nothing" - the
+			// drop zones light up for any tiling drag, but pairing the on-screen tab with
+			// itself has no result. Tell the user to drag a *different* tab instead.
 			if (activeStandaloneRef.type === dragged.type && activeStandaloneRef.id === dragged.id) {
+				notifyCenterFlash({
+					color: 'yellow',
+					message: 'Drag a different tab to split the view',
+					detail: 'A tab tiles beside another tab, not itself.',
+				});
 				return;
 			}
 			const targetRef = activeStandaloneRef;
@@ -226,6 +242,7 @@ export function PaneDropZones({
 				return next;
 			});
 			if (newGroupId) onGroupActivated?.(newGroupId);
+			notifyCenterFlash({ color: 'green', message: 'Tiled' });
 		},
 		[activeGroup, activeStandaloneRef, activeStandaloneTitle, session.id, onGroupActivated]
 	);

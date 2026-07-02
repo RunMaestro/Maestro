@@ -29,14 +29,6 @@ import { getTerminalTabDisplayName } from './terminalTabHelpers';
  */
 export const MIN_PANE_FRACTION = 0.05;
 
-/**
- * Fraction of a pane's width/height that each outer edge band occupies when
- * hit-testing a drop. The four edge bands (top/bottom/left/right) are the outer
- * ~25% of the pane; anything inside all four is the center zone. Kept modest so
- * the center target stays comfortably large for the common "add as sibling" drop.
- */
-export const DROP_EDGE_BAND = 0.25;
-
 /** A drop target region within a pane's bounding rect. */
 export type DropZone = 'top' | 'bottom' | 'left' | 'right' | 'center';
 
@@ -49,37 +41,32 @@ export interface DropRect {
 }
 
 /**
- * Classify a pointer position within a pane's rect into one of five drop zones.
- * The outer `DROP_EDGE_BAND` of each side is that edge's band; the inner core is
- * `center`. When a pointer sits in a corner (inside two edge bands at once), the
- * band it has penetrated more deeply wins (smaller normalized distance to its
- * edge), so a drag along a border resolves to the nearer edge rather than
- * flip-flopping. A degenerate (zero-area) rect resolves to `center`.
+ * Classify a pointer position within a pane's rect into one of the four edge
+ * zones (top/bottom/left/right) by splitting the pane along its two diagonals
+ * into four triangular quadrants - the standard tmux / VS Code drop model. Every
+ * point in the pane belongs to exactly one edge, so a drop always tiles; there is
+ * deliberately no `center` zone (a center target that highlights the whole pane
+ * reads as "replace everything" and confused users). The dominant offset from the
+ * pane center picks the axis: a larger horizontal offset means left/right, a
+ * larger vertical offset means top/bottom. A degenerate (zero-area) rect defaults
+ * to `left` so callers still get a valid split direction.
  */
 export function computeDropZone(rect: DropRect, pointerX: number, pointerY: number): DropZone {
-	if (rect.width <= 0 || rect.height <= 0) return 'center';
+	if (rect.width <= 0 || rect.height <= 0) return 'left';
 	// Normalize the pointer into [0,1] within the rect (clamped, so samples just
-	// outside the box during a fast drag still classify to the nearest edge band).
+	// outside the box during a fast drag still classify to the nearest edge).
 	const nx = Math.min(1, Math.max(0, (pointerX - rect.left) / rect.width));
 	const ny = Math.min(1, Math.max(0, (pointerY - rect.top) / rect.height));
 
-	const inLeft = nx < DROP_EDGE_BAND;
-	const inRight = nx > 1 - DROP_EDGE_BAND;
-	const inTop = ny < DROP_EDGE_BAND;
-	const inBottom = ny > 1 - DROP_EDGE_BAND;
-
-	// No edge band: the pointer sits in the inner core.
-	if (!inLeft && !inRight && !inTop && !inBottom) return 'center';
-
-	// Depth into each band the pointer is in (0 at the band's inner boundary, up to
-	// DROP_EDGE_BAND at the pane's outer edge). The deepest band wins on corners.
-	const depths: Array<{ zone: DropZone; depth: number }> = [];
-	if (inLeft) depths.push({ zone: 'left', depth: DROP_EDGE_BAND - nx });
-	if (inRight) depths.push({ zone: 'right', depth: nx - (1 - DROP_EDGE_BAND) });
-	if (inTop) depths.push({ zone: 'top', depth: DROP_EDGE_BAND - ny });
-	if (inBottom) depths.push({ zone: 'bottom', depth: ny - (1 - DROP_EDGE_BAND) });
-
-	return depths.reduce((best, cur) => (cur.depth > best.depth ? cur : best)).zone;
+	// Offset from the pane center, in [-0.5, 0.5] on each axis. The axis with the
+	// larger magnitude wins, and its sign picks the edge. This carves the pane into
+	// four diagonal triangles meeting at the center - no dead/center region.
+	const dx = nx - 0.5;
+	const dy = ny - 0.5;
+	if (Math.abs(dx) >= Math.abs(dy)) {
+		return dx < 0 ? 'left' : 'right';
+	}
+	return dy < 0 ? 'top' : 'bottom';
 }
 
 /**
@@ -684,7 +671,10 @@ export function tileTabIntoGroup(
 	zone: DropZone,
 	draggedTab: UnifiedTabRef
 ): Session {
-	const group = session.tabGroups.find((g) => g.id === groupId);
+	// Legacy sessions may lack these fields entirely; default so nothing throws.
+	const tabGroups = session.tabGroups ?? [];
+	const unifiedTabOrder = session.unifiedTabOrder ?? [];
+	const group = tabGroups.find((g) => g.id === groupId);
 	if (!group) return session;
 	const targetLeaf = findLeafById(group.layout, targetLeafId);
 	if (!targetLeaf || targetLeaf.kind !== 'leaf') return session;
@@ -698,7 +688,7 @@ export function tileTabIntoGroup(
 	const newLeafId = findNewLeafId(group.layout, nextLayout, draggedTab);
 
 	const withGroup = updateGroupInSession(
-		{ ...session, unifiedTabOrder: removeRefFromOrder(session.unifiedTabOrder, draggedTab) },
+		{ ...session, tabGroups, unifiedTabOrder: removeRefFromOrder(unifiedTabOrder, draggedTab) },
 		groupId,
 		(g) => ({ ...g, layout: nextLayout })
 	);
@@ -742,11 +732,15 @@ export function createGroupFromDrop(
 		focusedPaneId: draggedLeaf?.id ?? group.focusedPaneId,
 	};
 
+	// Legacy sessions persisted before tiling may have neither field defined; default
+	// both to arrays so the spread/filter below can't throw on a first-ever drop.
 	const removeKeys = new Set([tabRefKey(targetRef), tabRefKey(draggedRef)]);
 	const withGroup: Session = {
 		...session,
-		unifiedTabOrder: session.unifiedTabOrder.filter((ref) => !removeKeys.has(tabRefKey(ref))),
-		tabGroups: [...session.tabGroups, finalGroup],
+		unifiedTabOrder: (session.unifiedTabOrder ?? []).filter(
+			(ref) => !removeKeys.has(tabRefKey(ref))
+		),
+		tabGroups: [...(session.tabGroups ?? []), finalGroup],
 		activeGroupId: finalGroup.id,
 	};
 	return finalGroup.focusedPaneId
@@ -924,7 +918,13 @@ function pruneLayoutToLiveTabs(
  */
 export function normalizeTabGroups(session: Session): Session {
 	const groups = session.tabGroups ?? [];
-	if (groups.length === 0) return session;
+	if (groups.length === 0) {
+		// Legacy sessions persisted before tiling existed have no `tabGroups` field at
+		// all. Guarantee it is always an array so the tiling mutators (createGroupFromDrop
+		// / tileTabIntoGroup) can spread and iterate it without throwing on a first drop.
+		// A session that already has the (empty) array round-trips as the same reference.
+		return session.tabGroups ? session : { ...session, tabGroups: [] };
+	}
 
 	const liveKeys = liveTabRefKeys(session);
 	const alreadyOrdered = new Set((session.unifiedTabOrder ?? []).map(tabRefKey));

@@ -1,11 +1,16 @@
 import React from 'react';
+import { createPortal } from 'react-dom';
+import { ChevronDown, Pencil, PanelsTopLeft, Ungroup } from 'lucide-react';
 
 import { TerminalOutput } from '../TerminalOutput';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { useModalStore } from '../../stores/modalStore';
 import { updateSessionWith } from '../../stores/sessionStore';
 import {
+	breakApartGroup,
 	findLeafById,
 	focusPaneInSession,
+	promotePaneToStandalone,
 	resolveTabRefTitle,
 	tabRefKey,
 	updateGroupInSession,
@@ -191,6 +196,162 @@ function PaneOverlaySlot({ tab }: { tab: UnifiedTabRef }) {
 	return <div className="flex-1 min-w-0 min-h-0" ref={(el) => registry?.register(key, el)} />;
 }
 
+/**
+ * Per-pane actions menu, opened by the chevron in a pane's title bar. Because a
+ * tiled tab is hidden from the tab strip (its group chip stands in for it), its
+ * usual hover menu is unreachable - this restores access to the key actions:
+ *
+ *   - Rename        - opens the shared rename modal for this pane's tab (ai /
+ *                     terminal / browser; file tabs are named by their filename so
+ *                     the item is omitted for them).
+ *   - Move to own tab - promotes the pane back out to a standalone tab, where its
+ *                     full hover menu (star, copy context, export, close, ...) is
+ *                     available again.
+ *   - Break apart group - dissolves the whole group back into standalone tabs,
+ *                     gated by the same confirm dialog the group chip uses.
+ *
+ * All actions are local (panelLayout helpers + the modal store), so no handler
+ * plumbing threads through TiledLayout. The menu renders through a portal (the
+ * pane clips overflow) with fixed positioning under the chevron, mirroring the
+ * AITab / GroupTabChip overlay pattern.
+ */
+function PaneActionsMenu({
+	node,
+	group,
+	session,
+	theme,
+}: {
+	node: Extract<PanelLayoutNode, { kind: 'leaf' }>;
+	group: TabGroup;
+	session: Session;
+	theme: Theme;
+}) {
+	const [open, setOpen] = React.useState(false);
+	const [pos, setPos] = React.useState<{ top: number; left: number } | null>(null);
+	const buttonRef = React.useRef<HTMLButtonElement>(null);
+
+	const toggle = React.useCallback((e: React.MouseEvent) => {
+		e.stopPropagation();
+		e.preventDefault();
+		const rect = buttonRef.current?.getBoundingClientRect();
+		if (rect) setPos({ top: rect.bottom + 2, left: rect.left });
+		setOpen((v) => !v);
+	}, []);
+
+	const close = React.useCallback(() => setOpen(false), []);
+
+	const handleRename = React.useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			close();
+			useModalStore.getState().openModal('renameTab', {
+				tabId: node.tab.id,
+				initialName: resolveTabRefTitle(session, node.tab),
+			});
+		},
+		[close, node.tab, session]
+	);
+
+	const handleMoveToOwnTab = React.useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			close();
+			const groupId = group.id;
+			const leafId = node.id;
+			updateSessionWith(session.id, (s) =>
+				promotePaneToStandalone(s, groupId, leafId, (s.unifiedTabOrder ?? []).length)
+			);
+		},
+		[close, group.id, node.id, session.id]
+	);
+
+	const handleBreakApart = React.useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			close();
+			const groupId = group.id;
+			useModalStore.getState().openModal('confirm', {
+				title: 'Break apart group?',
+				message: `Break apart "${group.name}"? Its panes return to the tab bar as individual tabs. The tabs are not closed, and you can tile them again later.`,
+				destructive: false,
+				onConfirm: () => updateSessionWith(session.id, (s) => breakApartGroup(s, groupId)),
+			});
+		},
+		[close, group.id, group.name, session.id]
+	);
+
+	// File tabs are named by their filename; the rename modal only commits ai /
+	// terminal / browser tabs, so omit Rename for a file pane.
+	const canRename = node.tab.type !== 'file';
+
+	return (
+		<>
+			<button
+				ref={buttonRef}
+				onClick={toggle}
+				onMouseDown={(e) => e.stopPropagation()}
+				draggable={false}
+				onDragStart={(e) => e.preventDefault()}
+				className="shrink-0 rounded hover:bg-white/10 transition-colors -ml-0.5 mr-0.5 p-0.5 cursor-pointer"
+				title="Pane actions"
+				aria-label="Pane actions"
+			>
+				<ChevronDown className="w-3 h-3" style={{ color: 'currentColor' }} />
+			</button>
+			{open &&
+				pos &&
+				createPortal(
+					<>
+						{/* Click-away backdrop: any click outside the menu closes it. */}
+						<div className="fixed inset-0 z-[99]" onClick={close} onContextMenu={close} />
+						<div
+							className="fixed z-[100] shadow-xl overflow-hidden whitespace-nowrap"
+							style={{
+								top: pos.top,
+								left: pos.left,
+								backgroundColor: theme.colors.bgSidebar,
+								border: `1px solid ${theme.colors.border}`,
+								borderRadius: '8px',
+								minWidth: '12.5rem',
+							}}
+							onClick={(e) => e.stopPropagation()}
+						>
+							<div className="p-1">
+								{canRename && (
+									<button
+										onClick={handleRename}
+										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+										style={{ color: theme.colors.textMain }}
+									>
+										<Pencil className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+										Rename
+									</button>
+								)}
+								<button
+									onClick={handleMoveToOwnTab}
+									className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+									style={{ color: theme.colors.textMain }}
+								>
+									<PanelsTopLeft className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+									Move to own tab
+								</button>
+								<button
+									onClick={handleBreakApart}
+									className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+									style={{ color: theme.colors.textMain }}
+								>
+									<Ungroup className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+									Break apart group
+								</button>
+							</div>
+						</div>
+					</>,
+					document.body
+				)}
+		</>
+	);
+}
+
 /** A single leaf pane: a title bar (doubles as a drag handle) atop the content. */
 function PaneFrame({
 	node,
@@ -247,9 +408,11 @@ function PaneFrame({
 			}}
 		>
 			{/* Title bar - brighter (accent text) when this pane holds focus. Also a
-			    drag handle: drag it to the tab bar to promote this pane out. */}
+			    drag handle: drag it to the tab bar to promote this pane out. The
+			    chevron opens the pane actions menu (rename / move to own tab / break
+			    apart) since a tiled tab has no strip chip of its own. */}
 			<div
-				className="shrink-0 px-2 py-1 text-xs font-medium truncate select-none cursor-grab active:cursor-grabbing"
+				className="shrink-0 flex items-center gap-1 px-2 py-1 text-xs font-medium select-none cursor-grab active:cursor-grabbing"
 				style={{
 					backgroundColor: isFocused ? theme.colors.bgActivity : theme.colors.bgSidebar,
 					color: isFocused ? theme.colors.accent : theme.colors.textMain,
@@ -259,7 +422,8 @@ function PaneFrame({
 				draggable
 				onDragStart={handleTitleDragStart}
 			>
-				{title}
+				<PaneActionsMenu node={node} group={group} session={session} theme={theme} />
+				<span className="truncate">{title}</span>
 			</div>
 			<PaneContent tab={node.tab} session={session} theme={theme} />
 		</div>

@@ -3596,6 +3596,46 @@ describe('tabHelpers', () => {
 
 			expect(buildUnifiedTabs(session)).toHaveLength(0);
 		});
+
+		it('hides tabs that are tiled into a group (the group chip represents them)', () => {
+			const aiTab1 = createMockTab({ id: 'ai-1' });
+			const aiTab2 = createMockTab({ id: 'ai-tiled' });
+			const fileTab = createMockFileTab({ id: 'file-tiled' });
+			const session = createMockSession({
+				aiTabs: [aiTab1, aiTab2],
+				filePreviewTabs: [fileTab],
+				// ai-1 is a standalone strip tab; the other two are tiled and were pulled
+				// from unifiedTabOrder, so they'd otherwise resurface via the orphan fallback.
+				unifiedTabOrder: [{ type: 'ai', id: 'ai-1' }],
+				tabGroups: [
+					{
+						id: 'g1',
+						name: 'Group',
+						createdAt: 0,
+						focusedPaneId: 'leaf-a',
+						layout: {
+							kind: 'split',
+							id: 'split-1',
+							direction: 'row',
+							sizes: [0.5, 0.5],
+							children: [
+								{ kind: 'leaf', id: 'leaf-a', tab: { type: 'ai', id: 'ai-tiled' } },
+								{ kind: 'leaf', id: 'leaf-b', tab: { type: 'file', id: 'file-tiled' } },
+							],
+						},
+					},
+				] as never,
+				activeGroupId: 'g1',
+			});
+
+			const result = buildUnifiedTabs(session);
+
+			// Only the standalone tab remains; the two tiled members are folded away.
+			expect(result).toHaveLength(1);
+			expect(result[0].id).toBe('ai-1');
+			expect(result.some((t) => t.id === 'ai-tiled')).toBe(false);
+			expect(result.some((t) => t.id === 'file-tiled')).toBe(false);
+		});
 	});
 
 	describe('ensureInUnifiedTabOrder', () => {

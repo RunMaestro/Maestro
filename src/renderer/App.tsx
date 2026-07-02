@@ -52,6 +52,7 @@ import {
 	useDebouncedPersistence,
 	// Session management
 	useActivityTracker,
+	useWindowScopedActiveSession,
 	useHandsOnTimeTracker,
 	useNavigationHistory,
 	useSessionNavigation,
@@ -1775,6 +1776,10 @@ function MaestroConsoleInner() {
 
 	// Initialize activity tracker for per-session time tracking
 	useActivityTracker(activeSessionId, setSessions);
+
+	// Multi-window: keep this window's active agent to one it owns, so a restored
+	// window never shows the false "No agents" empty state while it holds agents.
+	useWindowScopedActiveSession();
 
 	// Initialize global hands-on time tracker (persists to settings)
 	// Tracks total time user spends actively using Maestro (5-minute idle timeout)
