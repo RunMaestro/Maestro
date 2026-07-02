@@ -1,4 +1,5 @@
 import { useSettings } from '../../../../hooks';
+import { ExtensionsView } from '../../Extensions/ExtensionsView';
 import {
 	CueSettingsSection,
 	DirectorNotesSection,
@@ -103,6 +104,12 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 				setDirectorNotesSettings={settings.setDirectorNotesSettings}
 				directorNotesAgentState={directorNotesAgentState}
 			/>
+
+			{/* Extensions marketplace: built-in Encore features (incl. Pianola) +
+			    community plugins as unified tiles. This is the management surface
+			    for every Encore feature — the sections above are per-feature
+			    config, not the on/off switches. */}
+			<ExtensionsView theme={theme} />
 		</div>
 	);
 }
