@@ -599,6 +599,119 @@ describe('EditAgentModal', () => {
 		);
 	});
 
+	it('should allow editing workingDirOverride for SSH sessions', async () => {
+		const sshSession = createSession({
+			projectRoot: '/Users/jta',
+			cwd: '/Users/jta',
+			sessionSshRemoteConfig: {
+				enabled: true,
+				remoteId: 'remote-1',
+				workingDirOverride: '/Users/jta',
+			},
+		});
+
+		vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+			success: true,
+			configs: [
+				{
+					id: 'remote-1',
+					name: 'Dev Server',
+					host: 'dev.example.com',
+					port: 22,
+					username: 'devuser',
+					privateKeyPath: '/path/to/key',
+					enabled: true,
+				},
+			],
+		});
+
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={sshSession}
+				existingSessions={[]}
+			/>
+		);
+
+		const remoteDirInput = (await screen.findByDisplayValue('/Users/jta')) as HTMLInputElement;
+		fireEvent.change(remoteDirInput, { target: { value: '~/git-projects' } });
+		fireEvent.click(screen.getByText('Save Changes'));
+
+		expect(onSave).toHaveBeenCalledWith(
+			expect.any(String),
+			expect.any(String),
+			undefined,
+			'Be concise',
+			undefined,
+			'/custom/claude',
+			'--verbose',
+			{ API_KEY: 'test-key' },
+			'claude-sonnet',
+			100000,
+			expect.objectContaining({
+				enabled: true,
+				remoteId: 'remote-1',
+				workingDirOverride: '~/git-projects',
+			}),
+			undefined,
+			undefined,
+			undefined
+		);
+	});
+
+	it('should require a non-empty remote working directory for SSH sessions', async () => {
+		const sshSession = createSession({
+			projectRoot: '/Users/jta/git-projects/agents/rai',
+			cwd: '/Users/jta/git-projects/agents/rai',
+			sessionSshRemoteConfig: {
+				enabled: true,
+				remoteId: 'remote-1',
+				workingDirOverride: '~/git-projects/agents/rai',
+			},
+		});
+
+		vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+			success: true,
+			configs: [
+				{
+					id: 'remote-1',
+					name: 'Dev Server',
+					host: 'dev.example.com',
+					port: 22,
+					username: 'devuser',
+					privateKeyPath: '/path/to/key',
+					enabled: true,
+				},
+			],
+		});
+
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={sshSession}
+				existingSessions={[]}
+			/>
+		);
+
+		const remoteDirInput = (await screen.findByDisplayValue(
+			'~/git-projects/agents/rai'
+		)) as HTMLInputElement;
+		fireEvent.change(remoteDirInput, { target: { value: '' } });
+
+		const saveButton = screen.getByRole('button', { name: 'Save Changes' });
+		expect(saveButton).toBeDisabled();
+		fireEvent.click(saveButton);
+
+		expect(onSave).not.toHaveBeenCalled();
+		expect(screen.getByText('Remote working directory is required')).toBeInTheDocument();
+	});
+
 	it('should preserve shareHistoryToProjectDir when toggling the SSH dropdown (regression: remote-controlled flag was silently dropped)', async () => {
 		// Regression test: the SSH dropdown's onChange used to rebuild the config
 		// with only enabled/remoteId/syncHistory, silently dropping

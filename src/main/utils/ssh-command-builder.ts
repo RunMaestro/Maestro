@@ -185,6 +185,16 @@ const DEFAULT_SSH_OPTIONS: Record<string, string> = {
 	LogLevel: 'ERROR', // Suppress SSH warnings like "Pseudo-terminal will not be allocated..."
 };
 
+function shellEscapeRemotePath(remotePath: string): string {
+	if (remotePath === '~') {
+		return '"$HOME"';
+	}
+	if (remotePath.startsWith('~/')) {
+		return `"$HOME"/${shellEscape(remotePath.slice(2))}`;
+	}
+	return shellEscape(remotePath);
+}
+
 /**
  * Build the remote shell command string from command, args, cwd, and env.
  *
@@ -215,7 +225,7 @@ export function buildRemoteCommand(options: RemoteCommandOptions): string {
 
 	// Add cd command if working directory is specified
 	if (cwd) {
-		parts.push(`cd ${shellEscape(cwd)}`);
+		parts.push(`cd ${shellEscapeRemotePath(cwd)}`);
 	}
 
 	// Build environment variable exports
@@ -362,7 +372,7 @@ export async function buildSshCommandWithStdin(
 	// Change directory if specified
 	if (remoteOptions.cwd) {
 		// In the script context, we can use simple quoting
-		scriptLines.push(`cd ${shellEscape(remoteOptions.cwd)} || exit 1`);
+		scriptLines.push(`cd ${shellEscapeRemotePath(remoteOptions.cwd)} || exit 1`);
 	}
 
 	// Merge environment variables

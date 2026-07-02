@@ -181,6 +181,44 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 						maestroPPath,
 						maestroPMode,
 					};
+					const nextRemoteCwd =
+						sessionSshRemoteConfig?.enabled && sessionSshRemoteConfig.remoteId
+							? sessionSshRemoteConfig.workingDirOverride?.trim()
+							: undefined;
+					const currentSavedRemoteCwd =
+						s.sessionSshRemoteConfig?.enabled && s.sessionSshRemoteConfig.remoteId
+							? s.sessionSshRemoteConfig.workingDirOverride?.trim() || s.cwd
+							: undefined;
+					const sshProjectContextChanged =
+						!!nextRemoteCwd &&
+						(nextRemoteCwd !== currentSavedRemoteCwd ||
+							nextRemoteCwd !== s.cwd ||
+							sessionSshRemoteConfig?.remoteId !== s.sessionSshRemoteConfig?.remoteId);
+
+					if (sshProjectContextChanged) {
+						Object.assign(updatedFields, {
+							cwd: nextRemoteCwd,
+							fullPath: nextRemoteCwd,
+							remoteCwd: nextRemoteCwd,
+							sshRemote: undefined,
+							sshRemoteId: undefined,
+							fileTree: [],
+							fileExplorerExpanded: [],
+							fileExplorerScrollPos: 0,
+							fileTreeStats: undefined,
+							fileTreeTruncated: undefined,
+							fileTreeLoadedCap: undefined,
+							fileTreeLoading: undefined,
+							fileTreeLoadingProgress: undefined,
+							fileTreeLastScanTime: undefined,
+							fileTreeError: undefined,
+							fileTreeRetryAt: undefined,
+							isGitRepo: false,
+							gitBranches: undefined,
+							gitTags: undefined,
+							gitRefsCacheTime: undefined,
+						});
+					}
 
 					// If provider changed, reset tabs and provider-specific config
 					if (toolType && toolType !== s.toolType) {

@@ -87,6 +87,17 @@ function getSshContext(session: Session, options?: SshContextOptions): SshContex
 	return context;
 }
 
+function getTreeRoot(session: Session, sshContext?: SshContext): string {
+	return sshContext?.remoteCwd || session.projectRoot || session.cwd;
+}
+
+function getGitRoot(session: Session, sshContext?: SshContext): string {
+	if (sshContext?.remoteCwd) {
+		return sshContext.remoteCwd;
+	}
+	return session.inputMode === 'terminal' ? session.shellCwd || session.cwd : session.cwd;
+}
+
 export type { RightPanelHandle } from '../../components/RightPanel';
 export type { SshContext } from '../../utils/fileExplorer';
 
@@ -382,9 +393,7 @@ export function useFileTreeManagement(
 			// Extract SSH context for remote file operations (with ignore patterns)
 			const sshContext = getSshContext(session, sshContextOptions);
 
-			// Use projectRoot for file tree (consistent with Files tab header)
-			// This ensures the file tree always shows the agent's working directory, not wherever cd'd to
-			const treeRoot = session.projectRoot || session.cwd;
+			const treeRoot = getTreeRoot(session, sshContext);
 
 			// An explicit override (e.g. "Load all") bypasses SSH scaling — the user
 			// has opted into a larger scan and we shouldn't second-guess them.
@@ -495,14 +504,10 @@ export function useFileTreeManagement(
 			const session = sessions.find((s) => s.id === sessionId);
 			if (!session) return;
 
-			// Use projectRoot for file tree (consistent with Files tab header)
-			// Git operations use the appropriate directory based on terminal mode
-			const treeRoot = session.projectRoot || session.cwd;
-			const gitRoot =
-				session.inputMode === 'terminal' ? session.shellCwd || session.cwd : session.cwd;
-
 			// Extract SSH context for remote file/git operations (with ignore patterns)
 			const sshContext = getSshContext(session, sshContextOptions);
+			const treeRoot = getTreeRoot(session, sshContext);
+			const gitRoot = getGitRoot(session, sshContext);
 
 			try {
 				// Fire stats independently — update asynchronously without blocking tree/git refresh.
@@ -654,8 +659,7 @@ export function useFileTreeManagement(
 			// Extract SSH context for remote file operations (with ignore patterns)
 			const sshContext = getSshContext(session, sshContextOptions);
 
-			// Use projectRoot for file tree (consistent with Files tab header)
-			const treeRoot = session.projectRoot || session.cwd;
+			const treeRoot = getTreeRoot(session, sshContext);
 
 			// Capture session.id for use in async callbacks to avoid stale closure.
 			// activeSessionId may change if the user switches sessions while loading,
@@ -949,7 +953,7 @@ export function useFileTreeManagement(
 		const sessionId = session.id;
 
 		const sshContext = getSshContext(session);
-		const treeRoot = session.projectRoot || session.cwd;
+		const treeRoot = getTreeRoot(session, sshContext);
 
 		// Fetch stats only (don't re-fetch tree)
 		window.maestro.fs

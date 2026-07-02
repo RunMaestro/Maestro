@@ -64,6 +64,15 @@ describe('ssh-command-builder', () => {
 			expect(result).toBe("cd '/home/user/project' && claude '--print'");
 		});
 
+		it('expands remote tilde cwd with HOME', async () => {
+			const result = buildRemoteCommand({
+				command: 'claude',
+				args: ['--print'],
+				cwd: '~/git-projects',
+			});
+			expect(result).toBe("cd \"$HOME\"/'git-projects' && claude '--print'");
+		});
+
 		it('builds a command with environment variables', async () => {
 			const result = buildRemoteCommand({
 				command: 'claude',
@@ -771,6 +780,16 @@ describe('ssh-command-builder', () => {
 			});
 
 			expect(result.stdinScript).toContain("cd '/home/user/project'");
+		});
+
+		it('expands remote tilde cwd in stdin script', async () => {
+			const result = await buildSshCommandWithStdin(baseConfig, {
+				command: 'opencode',
+				args: ['run'],
+				cwd: '~/git-projects',
+			});
+
+			expect(result.stdinScript).toContain('cd "$HOME"/\'git-projects\' || exit 1');
 		});
 
 		it('includes environment variables in stdin script', async () => {

@@ -226,6 +226,43 @@ describe('useFileTreeManagement', () => {
 		expect(updated.gitRefsCacheTime).toEqual(expect.any(Number));
 	});
 
+	it('refreshGitFileState uses remote cwd for SSH file tree and git probes', async () => {
+		const nextTree: FileNode[] = [{ name: 'remote-src', type: 'folder', children: [] }];
+
+		vi.mocked(loadFileTreeRemoteBatched).mockResolvedValue(asResult(nextTree));
+		vi.mocked(gitService.isRepo).mockResolvedValue(true);
+		vi.mocked(gitService.getBranches).mockResolvedValue(['main']);
+		vi.mocked(gitService.getTags).mockResolvedValue([]);
+
+		const sshSession = createMockSession({
+			fileTree: [],
+			sshRemoteId: 'my-ssh-remote',
+			remoteCwd: '/remote/project',
+			projectRoot: '/Users/jta/git-projects/agents/rai',
+			cwd: '/Users/jta/git-projects/agents/rai',
+		});
+		const state = createSessionsState([sshSession]);
+		const deps = createDeps(state);
+		const { result } = renderHook(() => useFileTreeManagement(deps));
+
+		vi.mocked(loadFileTree).mockClear();
+		vi.mocked(loadFileTreeRemoteBatched).mockClear();
+
+		await act(async () => {
+			await result.current.refreshGitFileState(sshSession.id);
+		});
+
+		expect(loadFileTreeRemoteBatched).toHaveBeenCalledWith(
+			'/remote/project',
+			expect.objectContaining({
+				sshRemoteId: 'my-ssh-remote',
+			})
+		);
+		expect(gitService.isRepo).toHaveBeenCalledWith('/remote/project', 'my-ssh-remote');
+		expect(gitService.getBranches).toHaveBeenCalledWith('/remote/project', 'my-ssh-remote');
+		expect(gitService.getTags).toHaveBeenCalledWith('/remote/project', 'my-ssh-remote');
+	});
+
 	it('filters file tree by fuzzy match and keeps matching folders', () => {
 		const fileTree: FileNode[] = [
 			{
@@ -319,7 +356,7 @@ describe('useFileTreeManagement', () => {
 
 		// Verify SSH refresh dispatches to the batched loader (not recursive readDir)
 		expect(loadFileTreeRemoteBatched).toHaveBeenCalledWith(
-			'/test/project',
+			'/remote/project',
 			expect.objectContaining({
 				maxDepth: 5,
 				maxEntries: 100_000,
@@ -378,7 +415,7 @@ describe('useFileTreeManagement', () => {
 		await waitFor(() => {
 			// Shallow load: depth=1, no entry cap, recursive readDir path.
 			expect(loadFileTree).toHaveBeenCalledWith(
-				'/test/project',
+				'/remote/project',
 				1,
 				0,
 				expect.objectContaining({ sshRemoteId: 'my-ssh-remote' }),
@@ -389,7 +426,7 @@ describe('useFileTreeManagement', () => {
 			);
 			// Full load: dispatched to batched find-based loader.
 			expect(loadFileTreeRemoteBatched).toHaveBeenCalledWith(
-				'/test/project',
+				'/remote/project',
 				expect.objectContaining({
 					maxDepth: 5,
 					maxEntries: 100_000,
