@@ -39,6 +39,7 @@ import { sidebarSessionEquality } from '../../stores/sessionEquality';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useInlineWizardContext } from '../../contexts/InlineWizardContext';
 import { getModalActions, useModalStore } from '../../stores/modalStore';
+import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { SessionContextMenu } from './SessionContextMenu';
 import { GroupContextMenu } from './GroupContextMenu';
 import { WizardIndicator } from './WizardIndicator';
@@ -561,6 +562,48 @@ function SessionListInner(props: SessionListProps) {
 					}
 					return remaining;
 				});
+			}
+		);
+	};
+
+	/** Pianola only: reset the pinned manager chat to a fresh conversation.
+	 * Clears every AI tab's log and nulls agentSessionId so the next message
+	 * starts a NEW Claude conversation instead of resuming the old one. The
+	 * on-disk provider transcript is untouched (nothing to corrupt). Busy is
+	 * checked twice: the menu item is disabled while busy, and the state is
+	 * re-read inside the confirmation callback — a run started between opening
+	 * the menu and confirming must not stream into the freshly cleared chat. */
+	const handleClearPianolaChat = (sessionId: string) => {
+		showConfirmation(
+			'Clear the Pianola chat and start fresh? The old conversation is discarded.',
+			() => {
+				const live = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+				if (!live?.isPianola) return;
+				if (live.state === 'busy' || live.aiTabs.some((t) => t.state === 'busy')) {
+					notifyCenterFlash({
+						message: 'Pianola is busy — interrupt it first, then clear the chat.',
+						color: 'yellow',
+						duration: 3000,
+					});
+					return;
+				}
+				setSessions((prev) =>
+					prev.map((s) =>
+						s.id === sessionId && s.isPianola
+							? {
+									...s,
+									agentSessionId: undefined,
+									aiTabs: s.aiTabs.map((t) => ({
+										...t,
+										logs: [],
+										agentSessionId: null,
+										inputValue: '',
+										stagedImages: [],
+									})),
+								}
+							: s
+					)
+				);
 			}
 		);
 	};
@@ -1761,6 +1804,11 @@ function SessionListInner(props: SessionListProps) {
 					onMoveToGroup={(groupId) => handleMoveToGroup(contextMenuSession.id, groupId)}
 					onDelete={() => handleDeleteSession(contextMenuSession.id)}
 					onDismiss={() => setContextMenu(null)}
+					onClearChat={
+						contextMenuSession.isPianola
+							? () => handleClearPianolaChat(contextMenuSession.id)
+							: undefined
+					}
 					onCreatePR={
 						onOpenCreatePR && contextMenuSession.parentSessionId
 							? () => onOpenCreatePR(contextMenuSession)
