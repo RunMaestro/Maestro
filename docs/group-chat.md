@@ -12,6 +12,10 @@ Group Chat lets you coordinate multiple AI agents in a single conversation. A mo
 
 ![Group chat](./screenshots/group-chat.png)
 
+<Tip>
+  Just need a quick one-off answer from another agent? [Cross-Agent Mentions](./cross-agent-mentions) let you `@mention` an agent inline from any chat - no moderator, no shared room. Reach for Group Chat when agents need to deliberate together over multiple rounds.
+</Tip>
+
 ## When to Use Group Chat
 
 - **Cross-project questions**: "How does the frontend authentication relate to the backend API?"

@@ -76,6 +76,7 @@
 				"icon": "flask",
 				"pages": [
 					"encore-features",
+					"cross-agent-mentions",
 					"director-notes",
 					"usage-dashboard",
 					"symphony",
