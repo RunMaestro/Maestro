@@ -1449,10 +1449,13 @@ describe('handleStartBatchRun — worktree dispatch integration', () => {
 			// First mark guards against an immediate addDir; the second restarts the
 			// TTL from after the (potentially slow) `git worktree add` so the mark is
 			// still live when chokidar's debounced discovery fires during the
-			// getBranches/buildWorktreeSession window below. See PR #946.
+			// getBranches/buildWorktreeSession window below. Both use the long setup
+			// TTL (60s) so a slow worktree add / getBranches on SSH or a large repo
+			// can't let the mark lapse mid-flight. See PR #946.
 			expect(callOrder).toEqual(['mark', 'worktreeSetup', 'mark']);
 			expect(markWorktreePathAsRecentlyCreated).toHaveBeenCalledWith(
-				'/projects/worktrees/dedup-test'
+				'/projects/worktrees/dedup-test',
+				60000
 			);
 		});
 
