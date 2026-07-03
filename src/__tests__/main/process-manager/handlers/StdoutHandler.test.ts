@@ -1089,9 +1089,59 @@ describe('StdoutHandler', () => {
 			expect(delta.totalCostUsd).toBe(0.09);
 			expect(delta.contextWindow).toBe(200000);
 
-			// The pre-normalization cumulative totals ride along on the delta event so
-			// context-fill consumers (Context Timeline) can plot true window occupancy
-			// instead of the small per-turn delta.
+			// Claude Code is NOT a combined-context provider: its per-call values are
+			// already the current context, so no absolute snapshot is attached even
+			// during a monotonic stretch (attaching one would let the timeline plot
+			// cumulative token spend as context fill).
+			expect(delta.absoluteUsage).toBeUndefined();
+
+			// usageIsCumulative should be set to true
+			expect(proc.usageIsCumulative).toBe(true);
+		});
+
+		it('attaches absoluteUsage on the delta event for Codex (combined-context cumulative provider)', () => {
+			let callCount = 0;
+			const usageSequence = [
+				{
+					inputTokens: 1000,
+					outputTokens: 500,
+					cacheReadTokens: 200,
+					cacheCreationTokens: 100,
+					costUsd: 0.05,
+					contextWindow: 200000,
+				},
+				{
+					inputTokens: 1800,
+					outputTokens: 900,
+					cacheReadTokens: 350,
+					cacheCreationTokens: 180,
+					costUsd: 0.09,
+					contextWindow: 200000,
+				},
+			];
+
+			const parser = createOutputParserMock(null);
+			parser.extractUsage.mockImplementation(() => usageSequence[callCount++] || null);
+
+			const { handler, emitter, sessionId } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'codex',
+				outputParser: parser as any,
+			});
+
+			const usageSpy = vi.fn();
+			emitter.on('usage', usageSpy);
+
+			sendJsonLine(handler, sessionId, { type: 'message', text: 'turn 1' });
+			// First event is raw (already absolute), so no snapshot rides along.
+			expect(usageSpy.mock.calls[0][1].absoluteUsage).toBeUndefined();
+
+			sendJsonLine(handler, sessionId, { type: 'message', text: 'turn 2' });
+			const delta = usageSpy.mock.calls[1][1];
+			// Top-level fields are the per-turn delta...
+			expect(delta.inputTokens).toBe(800);
+			// ...while absoluteUsage carries the pre-normalization cumulative totals so
+			// the Context Timeline can plot true window occupancy.
 			expect(delta.absoluteUsage).toEqual({
 				inputTokens: 1800,
 				outputTokens: 900,
@@ -1099,11 +1149,6 @@ describe('StdoutHandler', () => {
 				cacheCreationInputTokens: 180,
 				reasoningTokens: 0,
 			});
-			// The first event is returned raw (already absolute), so it carries no snapshot.
-			expect(usageSpy.mock.calls[0][1].absoluteUsage).toBeUndefined();
-
-			// usageIsCumulative should be set to true
-			expect(proc.usageIsCumulative).toBe(true);
 		});
 
 		it('should detect non-monotonic decrease and switch to raw mode', () => {

@@ -538,7 +538,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 					hasCapability('supportsUsageStats') &&
 					activeTabContextWindow > 0 && (
 						<div
-							className="header-context-widget flex items-center mr-2 relative cursor-pointer outline-none"
+							className="header-context-widget flex items-center mr-2 relative cursor-pointer rounded outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1"
 							data-testid="header-context-widget"
 							role="button"
 							tabIndex={0}

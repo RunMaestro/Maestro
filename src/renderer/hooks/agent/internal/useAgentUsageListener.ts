@@ -94,7 +94,7 @@ export function useAgentUsageListener(deps: UseAgentUsageListenerDeps): void {
 			// timeline is provider-agnostic with no per-agent code. Keyed by the base
 			// (agent) session id so a session's parallel tabs share one timeline.
 			//
-			// Two events are deliberately NOT recorded:
+			// Three kinds of events are deliberately NOT recorded (see the guards below):
 			//  1. Synthetic runs (synopsis / Auto Run batch) map to the parent
 			//     baseSessionId but consume a SEPARATE process context - recording
 			//     them would pollute the visible agent's timeline with hidden work.
@@ -107,12 +107,27 @@ export function useAgentUsageListener(deps: UseAgentUsageListenerDeps): void {
 			//     the snapshot-preserving guard in useBatchedSessionUpdates.
 			const isInteractiveRun =
 				parsed.type === 'ai-tab' || parsed.type === 'legacy-ai' || parsed.type === 'regular';
+			// Output-only deltas are skipped ONLY when there is no absolute snapshot:
+			// a Codex output-only turn still carries an `absoluteUsage` reflecting
+			// real context growth, so it must be recorded.
 			const isOutputOnlyDelta =
+				!usageStats.absoluteUsage &&
 				usageStats.inputTokens === 0 &&
 				(usageStats.cacheReadInputTokens || 0) === 0 &&
 				(usageStats.cacheCreationInputTokens || 0) === 0 &&
 				usageStats.outputTokens > 0;
-			if (isInteractiveRun && !isOutputOnlyDelta) {
+			// No-activity repeats: Codex emits a usage update for BOTH the token_count
+			// event and the turn.completed message; the second carries identical
+			// cumulative totals, so normalizeUsageToDelta yields an all-zero delta
+			// (with an absoluteUsage snapshot). Recording it would add a duplicate row
+			// with no token activity and a repeated context point.
+			const hasNoTurnActivity =
+				usageStats.inputTokens === 0 &&
+				(usageStats.cacheReadInputTokens || 0) === 0 &&
+				(usageStats.cacheCreationInputTokens || 0) === 0 &&
+				usageStats.outputTokens === 0 &&
+				(usageStats.reasoningTokens || 0) === 0;
+			if (isInteractiveRun && !isOutputOnlyDelta && !hasNoTurnActivity) {
 				// For providers whose usage arrives as per-turn deltas of a cumulative
 				// session total (Codex), the delta undercounts the context that is
 				// actually occupying the window - plotting it makes a long run look

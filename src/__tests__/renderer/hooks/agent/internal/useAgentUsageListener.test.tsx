@@ -143,6 +143,68 @@ describe('useAgentUsageListener', () => {
 		expect(point.outputTokens).toBe(400);
 	});
 
+	it('still records a Codex output-only turn when an absoluteUsage snapshot is present', () => {
+		const session = createMockSession({ id: 'sess-1', toolType: 'codex' });
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		const batched = makeBatched();
+		renderHook(() =>
+			useAgentUsageListener({ batchedUpdater: batched, contextWarningYellowThreshold: 80 })
+		);
+
+		// input/cache deltas are 0 and output grew: the generic output-only guard
+		// would drop this, but the absolute snapshot reflects real context growth.
+		handler!('sess-1', {
+			inputTokens: 0,
+			outputTokens: 300,
+			cacheReadInputTokens: 0,
+			cacheCreationInputTokens: 0,
+			contextWindow: 200000,
+			absoluteUsage: {
+				inputTokens: 60000,
+				outputTokens: 3000,
+				cacheReadInputTokens: 40000,
+				cacheCreationInputTokens: 0,
+				reasoningTokens: 0,
+			},
+		});
+
+		const points = useContextTimelineStore.getState().buffers['sess-1']?.points ?? [];
+		expect(points).toHaveLength(1);
+		expect(points[0].contextTokens).toBe(63000); // 60000 + 0 + 3000
+	});
+
+	it('skips a zero-delta Codex repeat (token_count + turn.completed for the same totals)', () => {
+		const session = createMockSession({ id: 'sess-1', toolType: 'codex' });
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		const batched = makeBatched();
+		renderHook(() =>
+			useAgentUsageListener({ batchedUpdater: batched, contextWarningYellowThreshold: 80 })
+		);
+
+		// All per-turn deltas are 0 (duplicate cumulative totals): no new activity,
+		// so it must not add a duplicate row even though absoluteUsage is present.
+		handler!('sess-1', {
+			inputTokens: 0,
+			outputTokens: 0,
+			cacheReadInputTokens: 0,
+			cacheCreationInputTokens: 0,
+			reasoningTokens: 0,
+			contextWindow: 200000,
+			absoluteUsage: {
+				inputTokens: 60000,
+				outputTokens: 3000,
+				cacheReadInputTokens: 40000,
+				cacheCreationInputTokens: 0,
+				reasoningTokens: 0,
+			},
+		});
+
+		const points = useContextTimelineStore.getState().buffers['sess-1']?.points ?? [];
+		expect(points).toHaveLength(0);
+	});
+
 	it('falls back to accumulated growth estimate when contextPercentage is null', () => {
 		const session = createMockSession({
 			id: 'sess-1',
