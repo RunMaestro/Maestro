@@ -36,6 +36,13 @@ if (!(globalThis as Record<string, unknown>).global) {
 	(globalThis as Record<string, unknown>).global = globalThis;
 }
 
+// Mark this as the browser (web-desktop) build so CSS can target phone-only
+// rules via html[data-runtime='web-desktop']. The native Electron desktop app
+// loads the same renderer stylesheet but never sets this attribute, so those
+// rules stay inert there. Set before the renderer boots so the very first paint
+// already matches.
+document.documentElement.dataset.runtime = 'web-desktop';
+
 async function boot(): Promise<void> {
 	// Run preload first so window.maestro is populated.
 	await import('../main/preload/index');
