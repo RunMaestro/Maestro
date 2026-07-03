@@ -388,6 +388,16 @@ const createDefaultProps = (overrides = {}) => ({
 	...overrides,
 });
 
+// useViewportBreakpoint reads window.innerWidth synchronously during render, so
+// setting it before render is enough to drive the xs (< 640px) layout branch.
+function setViewportWidth(width: number): void {
+	Object.defineProperty(window, 'innerWidth', {
+		writable: true,
+		configurable: true,
+		value: width,
+	});
+}
+
 describe('SettingsModal', () => {
 	beforeEach(() => {
 		vi.useFakeTimers();
@@ -2747,6 +2757,91 @@ describe('SettingsModal', () => {
 			const headerTexts = groupHeaders.map((h) => h.textContent);
 			expect(headerTexts).toContain('Display');
 			expect(headerTexts).toContain('SSH Hosts');
+		});
+	});
+
+	describe('small-viewport layout', () => {
+		afterEach(() => {
+			// Restore the jsdom default so leaked phone widths don't affect other suites.
+			setViewportWidth(1024);
+		});
+
+		it('clamps the modal height so it fits small viewports', async () => {
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			// The modal container is the first child div under the dialog overlay.
+			const container = screen.getByRole('dialog').querySelector('div');
+			expect(container?.className).toContain('h-[min(900px,90dvh)]');
+			expect(container?.className).not.toContain('h-[900px]');
+		});
+
+		it('renders the vertical 248px sidebar at desktop widths', async () => {
+			setViewportWidth(1280);
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const nav = screen.getByLabelText('Settings tabs');
+			expect(nav.className).toContain('w-[248px]');
+			expect(nav.className).not.toContain('overflow-x-auto');
+		});
+
+		it('collapses the sidebar into a horizontal tab strip on xs phones', async () => {
+			setViewportWidth(390);
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			// Same nav landmark, but now a horizontally scrollable strip above content.
+			const nav = screen.getByLabelText('Settings tabs');
+			expect(nav.className).toContain('overflow-x-auto');
+			expect(nav.className).not.toContain('w-[248px]');
+
+			// The body wrapper stacks (flex-col) so the strip sits above the content.
+			expect(nav.closest('div.flex')?.className).toContain('flex-col');
+		});
+
+		it('keeps tab switching working from the horizontal strip', async () => {
+			setViewportWidth(390);
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			// Every section is still reachable from the strip.
+			expect(screen.getByTitle('Shortcuts')).toBeInTheDocument();
+			fireEvent.click(screen.getByTitle('Shortcuts'));
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(screen.getByPlaceholderText('Filter shortcuts...')).toBeInTheDocument();
+		});
+
+		it('keeps settings search working on xs phones', async () => {
+			setViewportWidth(390);
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			const searchInput = screen.getByPlaceholderText('Search settings...');
+			fireEvent.change(searchInput, { target: { value: 'shell' } });
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			// Search hides the strip+content wrapper just like the sidebar layout.
+			const nav = screen.getByLabelText('Settings tabs');
+			expect(nav.closest('div.flex')?.className).toContain('hidden');
 		});
 	});
 });
