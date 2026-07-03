@@ -1403,9 +1403,14 @@ describe('SettingsModal', () => {
 			});
 
 			fireEvent.click(screen.getByRole('button', { name: 'Test Notification' }));
+			// The Test button routes through showOsNotification(), which on the
+			// Electron desktop path forwards to the notification bridge with the
+			// (title, body, sessionId, tabId) signature.
 			expect(window.maestro.notification.show).toHaveBeenCalledWith(
 				'Maestro',
-				'Test notification - notifications are working!'
+				'Test notification - notifications are working!',
+				undefined,
+				undefined
 			);
 		});
 

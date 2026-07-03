@@ -14,6 +14,7 @@
 
 import { create } from 'zustand';
 import { logger } from '../utils/logger';
+import { isWebDesktop } from '../utils/runtimeContext';
 
 // ============================================================================
 // Types
@@ -95,6 +96,10 @@ export interface Toast {
 	actionLabel?: string; // Label for the action link (defaults to URL)
 	// Skip custom notification command for this toast (used for synopsis messages)
 	skipCustomNotification?: boolean;
+	// Skip the OS/device notification for this toast. Set when the toast is
+	// itself the fallback for a failed web-desktop notification, so it does not
+	// re-enter showOsNotification() and loop.
+	skipOsNotification?: boolean;
 	// Generic click handler — if set, clicking the toast invokes this callback.
 	// Renderer-only — not serializable across the CLI/web bridge.
 	onClick?: () => void;
@@ -345,37 +350,37 @@ export function notifyToast(toast: NotifyToastInput): string {
 		});
 	}
 
-	// OS desktop notification
-	if (config.osNotificationsEnabled) {
-		if (typeof window !== 'undefined' && window.maestro?.notification?.show) {
-			const notifTitle = toast.project || toast.title;
+	// OS/device notification. `skipOsNotification` guards against the fallback
+	// toast (fired by showOsNotification when a web-desktop notification can't be
+	// delivered) re-entering this path.
+	if (config.osNotificationsEnabled && !toast.skipOsNotification) {
+		const notifTitle = toast.project || toast.title;
 
-			const tabLabel =
-				toast.tabName || (toast.agentSessionId ? toast.agentSessionId.slice(0, 8) : null);
+		const tabLabel =
+			toast.tabName || (toast.agentSessionId ? toast.agentSessionId.slice(0, 8) : null);
 
-			// Extract first sentence from message
-			const firstSentenceMatch = toast.message.match(/^[^.!?]*[.!?]?/);
-			const firstSentence = firstSentenceMatch
-				? firstSentenceMatch[0].trim()
-				: toast.message.slice(0, 80);
+		// Extract first sentence from message
+		const firstSentenceMatch = toast.message.match(/^[^.!?]*[.!?]?/);
+		const firstSentence = firstSentenceMatch
+			? firstSentenceMatch[0].trim()
+			: toast.message.slice(0, 80);
 
-			const bodyParts: string[] = [];
-			if (toast.group) {
-				bodyParts.push(toast.group);
-			}
-			if (tabLabel) {
-				bodyParts.push(tabLabel);
-			}
-
-			const prefix = bodyParts.length > 0 ? `${bodyParts.join(' > ')}: ` : '';
-			const notifBody = prefix + firstSentence;
-
-			window.maestro.notification
-				.show(notifTitle, notifBody, toast.sessionId, toast.tabId)
-				.catch((err) => {
-					logger.error('[notificationStore] Failed to show OS notification:', undefined, err);
-				});
+		const bodyParts: string[] = [];
+		if (toast.group) {
+			bodyParts.push(toast.group);
 		}
+		if (tabLabel) {
+			bodyParts.push(tabLabel);
+		}
+
+		const prefix = bodyParts.length > 0 ? `${bodyParts.join(' > ')}: ` : '';
+		const notifBody = prefix + firstSentence;
+
+		// The visible toast is already on screen, so no fallback toast is needed
+		// if a web-desktop notification can't be delivered.
+		showOsNotification(notifTitle, notifBody, toast.sessionId, toast.tabId, {
+			fallbackToast: false,
+		});
 	}
 
 	// Auto-dismiss timer (tracked so manual removal can cancel it)
@@ -424,4 +429,103 @@ export function triggerCustomNotification(
 		return true;
 	}
 	return false;
+}
+
+/** Options for {@link showOsNotification}. */
+export interface ShowOsNotificationOptions {
+	/**
+	 * When a web-desktop notification cannot be delivered (API unavailable or
+	 * permission denied), show an in-app toast instead so the user still sees
+	 * something. Defaults to true. Pass false from callers that have already
+	 * shown a toast (e.g. notifyToast itself) to avoid a duplicate.
+	 */
+	fallbackToast?: boolean;
+}
+
+/**
+ * Raise an OS/device notification.
+ *
+ * Desktop (Electron): forwards to the main process via
+ * `window.maestro.notification.show`, which raises a native notification on the
+ * host machine. Behavior is unchanged from before this helper existed.
+ *
+ * Web-desktop (browser build): the same bridge call would raise the
+ * notification on the HOST running the web server, not on the browser user's
+ * device. So we use the browser-native Web Notifications API instead,
+ * requesting permission lazily on first use. If the API is unavailable or the
+ * user denied permission, we fall back to an in-app toast (when
+ * `fallbackToast` is true) so the user still sees something.
+ */
+export function showOsNotification(
+	title: string,
+	body: string,
+	sessionId?: string,
+	tabId?: string,
+	options: ShowOsNotificationOptions = {}
+): void {
+	if (!isWebDesktop()) {
+		// Desktop: unchanged host-notification bridge.
+		if (typeof window !== 'undefined' && window.maestro?.notification?.show) {
+			window.maestro.notification.show(title, body, sessionId, tabId).catch((err) => {
+				logger.error('[notificationStore] Failed to show OS notification:', undefined, err);
+			});
+		}
+		return;
+	}
+
+	// Web-desktop: notify the browser's device, not the web server's host.
+	// Fire-and-forget; permission requests and delivery happen asynchronously.
+	void deliverWebNotification(title, body, sessionId, tabId, options.fallbackToast !== false);
+}
+
+/** True when the browser exposes the Web Notifications API. */
+function hasWebNotificationApi(): boolean {
+	return typeof window !== 'undefined' && 'Notification' in window;
+}
+
+/**
+ * Deliver a notification via the browser-native Web Notifications API (used in
+ * the web-desktop build). Requests permission lazily on first use. When
+ * delivery isn't possible, optionally falls back to an in-app toast.
+ */
+async function deliverWebNotification(
+	title: string,
+	body: string,
+	sessionId: string | undefined,
+	tabId: string | undefined,
+	fallbackToast: boolean
+): Promise<void> {
+	const fallback = () => {
+		if (fallbackToast) {
+			// skipOsNotification stops the fallback toast from re-entering this path.
+			notifyToast({ title, message: body, sessionId, tabId, skipOsNotification: true });
+		}
+	};
+
+	if (!hasWebNotificationApi()) {
+		fallback();
+		return;
+	}
+
+	try {
+		let permission = Notification.permission;
+		if (permission === 'default') {
+			permission = await Notification.requestPermission();
+		}
+		if (permission !== 'granted') {
+			fallback();
+			return;
+		}
+
+		const notification = new Notification(title, { body });
+		// Focus the browser tab when the notification is clicked.
+		notification.onclick = () => {
+			if (typeof window !== 'undefined') {
+				window.focus();
+			}
+		};
+	} catch (err) {
+		logger.error('[notificationStore] Failed to show web notification:', undefined, err);
+		fallback();
+	}
 }

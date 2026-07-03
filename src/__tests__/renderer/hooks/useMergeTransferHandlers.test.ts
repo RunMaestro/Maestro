@@ -99,8 +99,10 @@ vi.mock('../../../renderer/stores/modalStore', () => ({
 
 // Mock notificationStore
 const mockNotifyToast = vi.fn();
+const mockShowOsNotification = vi.fn();
 vi.mock('../../../renderer/stores/notificationStore', () => ({
 	notifyToast: (...args: unknown[]) => mockNotifyToast(...args),
+	showOsNotification: (...args: unknown[]) => mockShowOsNotification(...args),
 }));
 
 // Mock other dependencies
@@ -808,9 +810,12 @@ describe('useMergeTransferHandlers', () => {
 					title: 'Session Merged',
 				})
 			);
-			expect((window as any).maestro.notification.show).toHaveBeenCalledWith(
+			expect(mockShowOsNotification).toHaveBeenCalledWith(
 				'Session Merged',
-				expect.stringContaining('Merged Session')
+				expect.stringContaining('Merged Session'),
+				undefined,
+				undefined,
+				{ fallbackToast: false }
 			);
 		});
 
@@ -1342,9 +1347,12 @@ describe('useMergeTransferHandlers', () => {
 				});
 			});
 
-			expect((window as any).maestro.notification.show).toHaveBeenCalledWith(
+			expect(mockShowOsNotification).toHaveBeenCalledWith(
 				'Session Merged',
-				'Created "My Merged Session" with merged context'
+				'Created "My Merged Session" with merged context',
+				undefined,
+				undefined,
+				{ fallbackToast: false }
 			);
 		});
 	});
