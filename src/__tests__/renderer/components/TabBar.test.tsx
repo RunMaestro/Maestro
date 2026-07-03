@@ -3,9 +3,17 @@ import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { TabBar } from '../../../renderer/components/TabBar';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
+import { isWebDesktop } from '../../../renderer/utils/runtimeContext';
 import type { AITab, Theme, FilePreviewTab } from '../../../renderer/types';
 
 import { mockTheme } from '../../helpers/mockTheme';
+
+// Default to desktop (Electron) behavior; individual tests flip this to true to
+// exercise the web-desktop branch where the new-browser-tab affordance is hidden.
+vi.mock('../../../renderer/utils/runtimeContext', () => ({
+	isWebDesktop: vi.fn(() => false),
+	isElectronDesktop: vi.fn(() => true),
+}));
 // Mock lucide-react icons
 vi.mock('lucide-react', () => ({
 	X: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
@@ -180,6 +188,7 @@ describe('TabBar', () => {
 	beforeEach(() => {
 		vi.useFakeTimers();
 		vi.clearAllMocks();
+		vi.mocked(isWebDesktop).mockReturnValue(false);
 		// Mock scrollTo and scrollIntoView
 		Element.prototype.scrollTo = vi.fn();
 		Element.prototype.scrollIntoView = vi.fn();
@@ -391,6 +400,31 @@ describe('TabBar', () => {
 
 			fireEvent.click(screen.getByText('New Browser'));
 			expect(mockOnNewBrowserTab).toHaveBeenCalled();
+		});
+
+		it('hides the browser entry in the new-tab popover in web-desktop', () => {
+			vi.mocked(isWebDesktop).mockReturnValue(true);
+
+			render(
+				<TabBar
+					tabs={[createTab()]}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+					onNewBrowserTab={mockOnNewBrowserTab}
+					onNewTerminalTab={vi.fn()}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle('New tab…'));
+
+			// Browser tab creation is gated off in the browser bundle...
+			expect(screen.queryByText('New Browser')).not.toBeInTheDocument();
+			// ...but the other creation entries still render.
+			expect(screen.getByText('New AI Chat')).toBeInTheDocument();
+			expect(screen.getByText('New Terminal')).toBeInTheDocument();
 		});
 
 		it('renders search popover button when onOpenTabSearch provided', () => {

@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { FileText, Globe, MessageSquare, Plus, Terminal } from 'lucide-react';
 import type { Theme } from '../../types';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { isWebDesktop } from '../../utils/runtimeContext';
 import { getTabKindColor } from './tabBarUtils';
 
 // Single source of truth for the popover width. Used both for the overflow
@@ -189,7 +190,9 @@ export const NewTabPopover = memo(function NewTabPopover({
 								</span>
 							</button>
 						)}
-						{onNewBrowserTab && (
+						{/* Browser tabs rely on the Electron <webview>, which is inert in the
+						    web-desktop browser bundle - hide the create affordance there. */}
+						{onNewBrowserTab && !isWebDesktop() && (
 							<button
 								className="flex items-center gap-2 w-full px-3 py-2 text-sm text-left hover:bg-white/10 transition-colors"
 								style={{ color: theme.colors.textMain }}
