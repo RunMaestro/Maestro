@@ -24,6 +24,8 @@ import { GitStatusWidget } from '../GitStatusWidget';
 import { useHoverTooltip } from '../../hooks';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
+import { useViewportBreakpoint } from '../../hooks/ui/useViewportBreakpoint';
+import { isWebDesktop } from '../../utils/runtimeContext';
 import type { Session, Theme, BatchRunState, AITab } from '../../types';
 import type { AgentCapabilities } from '../../hooks/agent/useAgentCapabilities';
 import { openUrl } from '../../utils/openUrl';
@@ -101,6 +103,14 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 	const showSessionCostPill = useSettingsStore((s) => s.showSessionCostPill);
 	const rightPanelOpen = useUIStore((s) => s.rightPanelOpen);
 	const leftSidebarHidden = useUIStore((s) => s.leftSidebarHidden);
+	const leftSidebarOpen = useUIStore((s) => s.leftSidebarOpen);
+	const { isXs } = useViewportBreakpoint();
+	// On web-desktop phones the collapsed 64px strip is hidden entirely (see
+	// index.css), so the collapsed sidebar has no visible affordance to reopen
+	// it. Surface the inline hamburger in that case too - not just when the
+	// sidebar is fully hidden. On the Electron desktop app isWebDesktop() is
+	// false, so this reduces to the original leftSidebarHidden-only behavior.
+	const showSidebarOpener = leftSidebarHidden || (isWebDesktop() && isXs && !leftSidebarOpen);
 
 	// Claude Max plan usage (5-hour / weekly windows). Shown for any Claude
 	// Code session — the source account is always derivable from session env
@@ -129,10 +139,12 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 			data-tour="header-controls"
 		>
 			<div className="flex items-center gap-4 min-w-0 overflow-hidden">
-				{/* Inline hamburger — appears only when the left sidebar is fully
-				    hidden. Renders INSIDE the header row so it shifts content
-				    rightward instead of floating over the session name. */}
-				{leftSidebarHidden && (
+				{/* Inline hamburger - appears when the left sidebar is fully hidden,
+				    or (on web-desktop phones) when it is collapsed, since the 64px
+				    collapsed strip is hidden there. Renders INSIDE the header row
+				    so it shifts content rightward instead of floating over the
+				    session name. */}
+				{showSidebarOpener && (
 					<button
 						type="button"
 						onClick={() => {

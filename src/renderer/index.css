@@ -1387,6 +1387,19 @@ svg.wand-profiling-active path:nth-child(8) {
 	box-shadow: 4px 0 20px rgba(0, 0, 0, 0.4);
 }
 
+/*
+ * Left sidebar collapsed strip on phones (web-desktop only): the 64px
+ * status-dot strip would permanently eat a sixth of a 390px viewport, so hide
+ * it entirely at xs. The hamburger in MainPanelHeader still reopens the sidebar
+ * (it flips data-collapsed to 'false', which floats the drawer via the rule
+ * above). Scoped to web-desktop so a narrow Electron desktop window keeps its
+ * strip; scoped to xs so the sm breakpoint keeps the inline strip too.
+ */
+html[data-runtime='web-desktop'][data-bp='xs']
+	[data-panel='left'][data-collapsed='true'][data-hidden='false'] {
+	display: none !important;
+}
+
 :root[data-bp='xs'] [data-panel='right'],
 :root[data-bp='sm'] [data-panel='right'] {
 	position: fixed !important;

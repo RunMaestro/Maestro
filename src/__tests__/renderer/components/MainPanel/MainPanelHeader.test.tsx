@@ -20,11 +20,37 @@ vi.mock('../../../../renderer/stores/settingsStore', () => ({
 	),
 }));
 
+// Mutable UI state + stable setters so tests can drive the sidebar opener.
+// vi.hoisted keeps these visible inside the hoisted vi.mock factories below.
+const uiMocks = vi.hoisted(() => ({
+	state: { rightPanelOpen: false, leftSidebarHidden: false, leftSidebarOpen: true } as Record<
+		string,
+		unknown
+	>,
+	setRightPanelOpen: vi.fn(),
+	setLeftSidebarHidden: vi.fn(),
+	setLeftSidebarOpen: vi.fn(),
+}));
+
 vi.mock('../../../../renderer/stores/uiStore', () => ({
 	useUIStore: Object.assign(
-		vi.fn((selector) => selector({ rightPanelOpen: false })),
-		{ getState: () => ({ setRightPanelOpen: vi.fn() }) }
+		vi.fn((selector: (s: Record<string, unknown>) => unknown) => selector(uiMocks.state)),
+		{
+			getState: () => ({
+				setRightPanelOpen: uiMocks.setRightPanelOpen,
+				setLeftSidebarHidden: uiMocks.setLeftSidebarHidden,
+				setLeftSidebarOpen: uiMocks.setLeftSidebarOpen,
+			}),
+		}
 	),
+}));
+
+// isWebDesktop() distinguishes the browser build from the Electron desktop app.
+// Default false (desktop); individual tests flip it to true for phone cases.
+const runtimeMocks = vi.hoisted(() => ({ isWebDesktop: vi.fn(() => false) }));
+vi.mock('../../../../renderer/utils/runtimeContext', () => ({
+	isWebDesktop: runtimeMocks.isWebDesktop,
+	isElectronDesktop: () => !runtimeMocks.isWebDesktop(),
 }));
 
 vi.mock('../../../../renderer/hooks', () => ({
@@ -108,9 +134,24 @@ const defaultProps = {
 	hasCapability: vi.fn(() => true) as any,
 };
 
+function setViewportWidth(width: number): void {
+	Object.defineProperty(window, 'innerWidth', {
+		writable: true,
+		configurable: true,
+		value: width,
+	});
+}
+
 describe('MainPanelHeader', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		uiMocks.state.rightPanelOpen = false;
+		uiMocks.state.leftSidebarHidden = false;
+		uiMocks.state.leftSidebarOpen = true;
+		runtimeMocks.isWebDesktop.mockReturnValue(false);
+		// Default to a desktop-width viewport so useViewportBreakpoint reports a
+		// non-xs breakpoint unless a test opts into a phone width.
+		setViewportWidth(1280);
 	});
 
 	it('renders session name', () => {
@@ -199,6 +240,56 @@ describe('MainPanelHeader', () => {
 		);
 		fireEvent.click(screen.getByText('Auto'));
 		expect(onStop).toHaveBeenCalledWith('session-1');
+	});
+
+	describe('sidebar opener (hamburger)', () => {
+		it('shows the opener when the left sidebar is fully hidden', () => {
+			uiMocks.state.leftSidebarHidden = true;
+			uiMocks.state.leftSidebarOpen = false;
+			render(<MainPanelHeader {...defaultProps} />);
+			expect(screen.getByLabelText('Show agents sidebar')).toBeInTheDocument();
+		});
+
+		it('does not show the opener when the sidebar is merely collapsed on desktop', () => {
+			// Electron desktop keeps its 64px collapsed strip, so no header opener.
+			runtimeMocks.isWebDesktop.mockReturnValue(false);
+			setViewportWidth(390);
+			uiMocks.state.leftSidebarHidden = false;
+			uiMocks.state.leftSidebarOpen = false;
+			render(<MainPanelHeader {...defaultProps} />);
+			expect(screen.queryByLabelText('Show agents sidebar')).not.toBeInTheDocument();
+		});
+
+		it('shows the opener on a web-desktop phone when the sidebar is collapsed', () => {
+			// The collapsed strip is hidden at xs in web-desktop, so the header
+			// opener is the only way back to the sidebar.
+			runtimeMocks.isWebDesktop.mockReturnValue(true);
+			setViewportWidth(390);
+			uiMocks.state.leftSidebarHidden = false;
+			uiMocks.state.leftSidebarOpen = false;
+			render(<MainPanelHeader {...defaultProps} />);
+			expect(screen.getByLabelText('Show agents sidebar')).toBeInTheDocument();
+		});
+
+		it('does not show the opener on a web-desktop phone while the drawer is open', () => {
+			runtimeMocks.isWebDesktop.mockReturnValue(true);
+			setViewportWidth(390);
+			uiMocks.state.leftSidebarHidden = false;
+			uiMocks.state.leftSidebarOpen = true;
+			render(<MainPanelHeader {...defaultProps} />);
+			expect(screen.queryByLabelText('Show agents sidebar')).not.toBeInTheDocument();
+		});
+
+		it('opens the sidebar drawer when the opener is clicked', () => {
+			runtimeMocks.isWebDesktop.mockReturnValue(true);
+			setViewportWidth(390);
+			uiMocks.state.leftSidebarHidden = false;
+			uiMocks.state.leftSidebarOpen = false;
+			render(<MainPanelHeader {...defaultProps} />);
+			fireEvent.click(screen.getByLabelText('Show agents sidebar'));
+			expect(uiMocks.setLeftSidebarHidden).toHaveBeenCalledWith(false);
+			expect(uiMocks.setLeftSidebarOpen).toHaveBeenCalledWith(true);
+		});
 	});
 
 	it('renders session UUID pill', () => {
