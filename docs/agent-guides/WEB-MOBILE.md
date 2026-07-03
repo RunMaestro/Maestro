@@ -539,3 +539,13 @@ triggerHaptic(HAPTIC_PATTERNS.ERROR); // Error pattern
 | Shared components | `src/web/components/`                                                |
 | Mobile components | `src/web/mobile/`                                                    |
 | Development       | `npm run dev:web`                                                    |
+
+---
+
+## Deferred: web-server-factory.ts
+
+Main-to-renderer push events only reach browser clients when they go through `safeSend` (`src/main/utils/safe-send.ts`), which fans each event out to the desktop `webContents` AND to the web-desktop bridge via `broadcastBridgeEvent`. The Phase 01 migration routed the session/app data sends across the IPC handlers through `safeSend` so web clients stop silently missing group chat, stats, Cue, and Auto Run events.
+
+`src/main/web-server/web-server-factory.ts` was deliberately left out of that migration. Its ~58 direct `webContents.send(...)` calls are not new events originating in the main process: they mirror actions that a web client already performed (over the WebSocket bridge) back onto the desktop renderer so the two surfaces stay in sync. Bridging those sends through `safeSend` would echo each web-originated action straight back to the web client that initiated it, causing duplicate state updates and feedback loops.
+
+Wiring the factory into the bridge therefore requires an echo-suppression design (for example, tagging each mirrored event with its originating client id and having the bridge skip re-delivering it to that origin) before the sends can safely fan out. That work is out of scope for the safeSend parity pass and is tracked as a separate effort. Until then, leave the `web-server-factory.ts` sends as direct `webContents.send(...)` calls.
