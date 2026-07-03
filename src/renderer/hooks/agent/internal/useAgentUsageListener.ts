@@ -19,6 +19,10 @@ import {
 	getContextWindowForAgent,
 	getModelContextWindowOverride,
 } from '../../../../shared/agentConstants';
+import {
+	ensureConfiguredContextWindowCached,
+	getCachedConfiguredContextWindow,
+} from '../../../utils/contextWindowResolver';
 import { useAgentStore } from '../../../stores/agentStore';
 import { useOwnedSessionGate } from './useOwnedSessionGate';
 import { useContextTimelineStore } from '../../../stores/contextTimelineStore';
@@ -62,18 +66,29 @@ export function useAgentUsageListener(deps: UseAgentUsageListenerDeps): void {
 			const contextPercentage = estimateContextUsage(usageStats, agentToolType, sessionRemoteId);
 
 			// Resolve the effective context window ONCE, matching the header gauge's
-			// precedence (resolveConfiguredContextWindow): a per-agent custom window
-			// or a `[1m]` model marker wins over the reported/static window, so a
-			// session configured for e.g. 1M isn't sized against a 200k denominator.
-			// The async agent-config step is intentionally skipped on this hot
-			// per-turn path; the two synchronous sources cover the configured cases
-			// that would otherwise mis-size. Shared by the timeline point and the
+			// precedence (resolveConfiguredContextWindow): a per-agent custom window,
+			// a `[1m]` model marker, or the provider's configured window wins over the
+			// reported/static window, so a session configured for e.g. 1M isn't sized
+			// against a 200k denominator. Shared by the timeline point and the
 			// accumulated-growth fallback so they can never disagree.
-			const configuredWindow =
+			//
+			// The provider-config source lives behind an async `getConfig` call that
+			// must NOT run on this hot per-turn path, so we read it from a synchronous
+			// cache and prime that cache off-path for the next turn. The two sync
+			// sources (per-session window, model marker) take precedence and cover the
+			// common cases immediately; the cached provider window closes the gap for
+			// agents (e.g. OpenCode) whose window is configured at the provider level
+			// only and would otherwise plot against the static table.
+			ensureConfiguredContextWindowCached(sessionForUsage);
+			const syncConfiguredWindow =
 				typeof sessionForUsage.customContextWindow === 'number' &&
 				sessionForUsage.customContextWindow > 0
 					? sessionForUsage.customContextWindow
 					: getModelContextWindowOverride(sessionForUsage.customModel) || 0;
+			const configuredWindow =
+				syncConfiguredWindow > 0
+					? syncConfiguredWindow
+					: getCachedConfiguredContextWindow(sessionForUsage);
 			const resolvedWindow =
 				configuredWindow > 0
 					? configuredWindow

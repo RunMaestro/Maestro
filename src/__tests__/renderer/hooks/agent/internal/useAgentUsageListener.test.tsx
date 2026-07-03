@@ -3,6 +3,10 @@ import { renderHook } from '@testing-library/react';
 import { useAgentUsageListener } from '../../../../../renderer/hooks/agent/internal/useAgentUsageListener';
 import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
 import { useContextTimelineStore } from '../../../../../renderer/stores/contextTimelineStore';
+import {
+	getCachedConfiguredContextWindow,
+	__resetConfiguredContextWindowCacheForTests,
+} from '../../../../../renderer/utils/contextWindowResolver';
 import { createMockSession } from '../../../../helpers/mockSession';
 import type { BatchedUpdater } from '../../../../../renderer/hooks/agent/internal/types';
 
@@ -40,6 +44,7 @@ beforeEach(() => {
 	});
 	(window as any).maestro = { ...((window as any).maestro || {}), process: mockProcess };
 	useContextTimelineStore.setState({ buffers: {} });
+	__resetConfiguredContextWindowCacheForTests();
 });
 
 describe('useAgentUsageListener', () => {
@@ -203,6 +208,39 @@ describe('useAgentUsageListener', () => {
 
 		const points = useContextTimelineStore.getState().buffers['sess-1']?.points ?? [];
 		expect(points).toHaveLength(0);
+	});
+
+	it('sizes the timeline against a provider-configured window (no per-session override, not reported)', async () => {
+		// OpenCode's window is configured at the provider level only: no per-session
+		// customContextWindow, and it does not report contextWindow live.
+		(window as any).maestro.agents = {
+			getConfig: vi.fn().mockResolvedValue({ contextWindow: 300000 }),
+		};
+		const session = createMockSession({ id: 'sess-1', toolType: 'opencode' });
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		const batched = makeBatched();
+		renderHook(() =>
+			useAgentUsageListener({ batchedUpdater: batched, contextWarningYellowThreshold: 80 })
+		);
+
+		// First event primes the cache (fire-and-forget); let it resolve.
+		handler!('sess-1', { inputTokens: 100, outputTokens: 10, contextWindow: 0 });
+		await vi.waitFor(() => expect(getCachedConfiguredContextWindow(session)).toBe(300000));
+
+		// Next event should size against the cached 300k provider window.
+		handler!('sess-1', {
+			inputTokens: 30000,
+			outputTokens: 100,
+			cacheReadInputTokens: 0,
+			cacheCreationInputTokens: 0,
+			contextWindow: 0,
+		});
+
+		const points = useContextTimelineStore.getState().buffers['sess-1']?.points ?? [];
+		const last = points[points.length - 1];
+		expect(last.contextWindow).toBe(300000);
+		expect(last.percentage).toBe(10); // round(30000 / 300000 * 100)
 	});
 
 	it('falls back to accumulated growth estimate when contextPercentage is null', () => {
