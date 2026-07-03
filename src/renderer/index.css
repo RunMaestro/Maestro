@@ -1180,6 +1180,47 @@ svg.wand-profiling-active path:nth-child(8) {
    ========================================== */
 
 /* ==========================================
+   Status Pill Container Queries
+   ==========================================
+   Progressive disclosure for the status pills docked above the input area
+   (ThinkingStatusPill, AutoRunPill). On narrow widths (phone viewports in the
+   web-desktop build, or a very narrow desktop window) the pill's fixed
+   segments can exceed the row and push the Stop button off-screen. Drop
+   non-essential segments in order so the pill stays on ONE line and Stop is
+   always reachable:
+     1. Claude session ID / tab name link (still in the tooltip)
+     2. Tokens / "Thinking..." segment (the pulsing dot already conveys busy)
+     3. label words ("Elapsed:", "Tasks:", "Goal:", iteration counter)
+   Each segment carries its own leading divider, so hiding one never leaves a
+   double divider behind. */
+.status-pill-container {
+	container-type: inline-size;
+	container-name: statuspill;
+}
+
+@container statuspill (max-width: 480px) {
+	.pill-seg-claude-id {
+		display: none;
+	}
+}
+
+@container statuspill (max-width: 400px) {
+	.pill-seg-tokens {
+		display: none;
+	}
+}
+
+@container statuspill (max-width: 340px) {
+	.pill-label {
+		display: none;
+	}
+}
+
+/* ==========================================
+   End Status Pill Container Queries
+   ========================================== */
+
+/* ==========================================
    Sidebar Parent-Child Tree Connectors
    ==========================================
    Visually links a parent agent in the sidebar to its expanded worktree
