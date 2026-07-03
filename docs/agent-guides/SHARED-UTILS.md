@@ -408,7 +408,7 @@ Per-model token pricing is the single source of truth in `src/shared/modelPricin
 
 ### Touch Primitives (`src/renderer/utils/touch.ts`)
 
-The desktop renderer also runs on phones (web-desktop build). These are the canonical touch helpers - do NOT re-derive `navigator.vibrate` calls or pointer-media queries. Hoisted from the legacy `src/web/mobile/constants.ts`; the touch gesture hook `useLongPress` (see [UI-PATTERNS.md](UI-PATTERNS.md)) is built on `triggerHaptic`/`HAPTIC_PATTERNS`.
+The desktop renderer also runs on phones (web-desktop build). These are the canonical touch helpers - do NOT re-derive `navigator.vibrate` calls or pointer-media queries. Hoisted out of the legacy mobile bundle (retired in Phase 06); the touch gesture hook `useLongPress` (see [UI-PATTERNS.md](UI-PATTERNS.md)) is built on `triggerHaptic`/`HAPTIC_PATTERNS`.
 
 | Export               | Signature                                         | Purpose                                                                                                                                   |
 | -------------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
