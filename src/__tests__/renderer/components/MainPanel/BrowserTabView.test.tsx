@@ -149,11 +149,15 @@ describe('BrowserTabView', () => {
 		});
 
 		await waitFor(() => {
+			// While a navigation is in flight the URL and loading flag update, but the
+			// last known page title is intentionally preserved (mockTab.title === 'Example')
+			// rather than clobbered with the bare URL host. Without this, a cold reload of a
+			// grouped browser pane would blank the tab label until page-title-updated re-fires.
 			expect(onUpdateTab).toHaveBeenCalledWith(
 				'browser-1',
 				expect.objectContaining({
 					url: 'https://example.com/start',
-					title: 'example.com',
+					title: 'Example',
 					isLoading: true,
 					favicon: null,
 				})
@@ -162,7 +166,7 @@ describe('BrowserTabView', () => {
 				'browser-1',
 				expect.objectContaining({
 					url: 'https://redirected.example.com/docs',
-					title: 'redirected.example.com',
+					title: 'Example',
 					isLoading: true,
 					favicon: null,
 				})
