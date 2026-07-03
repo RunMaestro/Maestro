@@ -30,7 +30,7 @@ import { CONDUCTOR_BADGES, getBadgeForTime } from '../../constants/conductorBadg
 import { resolveQueuedItemTarget } from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
 import { takeNextRunnableQueueItem } from '../../utils/executionQueue';
-import { useBatchProcessor } from './useBatchProcessor';
+import { useBatchProcessor, type UseBatchProcessorProps } from './useBatchProcessor';
 import { useBatchStore } from '../../stores/batchStore';
 import { consumeGroupChatAutoRun } from '../../utils/groupChatAutoRunRegistry';
 import type { RightPanelHandle } from '../../components/RightPanel';
@@ -86,6 +86,11 @@ export interface UseBatchHandlersDeps {
 			isAutoRun?: boolean;
 		}
 	) => Promise<AgentSpawnResult>;
+	/**
+	 * Resume an existing provider session and run a prompt (threaded to the goal
+	 * runner for between-iteration handoff notes). From useAgentExecution.
+	 */
+	spawnBackgroundSynopsis: UseBatchProcessorProps['spawnBackgroundSynopsis'];
 	/** Ref to RightPanel for refreshing history after batch tasks */
 	rightPanelRef: React.RefObject<RightPanelHandle | null>;
 	/** Ref to processQueuedItem for processing queued messages after batch ends */
@@ -168,7 +173,13 @@ const selectAutoRunStats = (s: ReturnType<typeof useSettingsStore.getState>) => 
 // ============================================================================
 
 export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersReturn {
-	const { spawnAgentForSession, rightPanelRef, processQueuedItemRef, handleClearAgentError } = deps;
+	const {
+		spawnAgentForSession,
+		spawnBackgroundSynopsis,
+		rightPanelRef,
+		processQueuedItemRef,
+		handleClearAgentError,
+	} = deps;
 
 	// --- Store subscriptions (reactive) ---
 	const sessions = useSessionStore(selectSessions);
@@ -216,6 +227,7 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 		},
 		onSpawnAgent: (sessionId, prompt, cwdOverride) =>
 			spawnAgentForSession(sessionId, prompt, cwdOverride, { isAutoRun: true }),
+		spawnBackgroundSynopsis,
 		onAddHistoryEntry: async (entry) => {
 			await window.maestro.history.add({
 				...entry,
