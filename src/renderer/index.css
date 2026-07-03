@@ -1472,6 +1472,21 @@ html[data-runtime='web-desktop'] .maestro-app-shell {
 }
 
 /*
+ * Lift the app shell above the on-screen keyboard. App.tsx sets
+ * `--keyboard-offset` (from useKeyboardVisibility, Visual Viewport API) to the
+ * pixel height the virtual keyboard eats. Because the shell is box-sizing:
+ * border-box with height:100dvh, adding that to the bottom padding shrinks the
+ * content box so the flex column re-lays with the AI input and send controls
+ * sitting just above the keyboard. Defaults to 0px (no keyboard visible, or the
+ * Visual Viewport API is unavailable), so this is inert until a keyboard
+ * appears. Scoped to web-desktop so the native Electron app keeps its plain
+ * safe-area padding.
+ */
+html[data-runtime='web-desktop'] .maestro-app-shell {
+	padding-bottom: calc(env(safe-area-inset-bottom) + var(--keyboard-offset, 0px));
+}
+
+/*
  * Smooth momentum scrolling on scrollable containers (Tailwind overflow
  * utilities). `-webkit-overflow-scrolling` is an iOS-only property and is
  * silently ignored everywhere else.

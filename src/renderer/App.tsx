@@ -82,6 +82,7 @@ import {
 	useMobileLandscape,
 	useAppRemoteEventListeners,
 	useViewportBreakpoint,
+	useKeyboardVisibility,
 	// UI
 	useThemeStyles,
 	useAppHandlers,
@@ -361,6 +362,13 @@ function MaestroConsoleInner() {
 	const { isNarrow: isNarrowViewport, isMdDown: isMdDownViewport } = useViewportBreakpoint();
 	// Auto-collapse / mutual-exclusion effects live further down, after
 	// leftSidebarOpen / rightPanelOpen are pulled from the UI store.
+
+	// --- VIRTUAL KEYBOARD (lift the bottom input above the on-screen keyboard) ---
+	// Only the web-desktop bundle runs on phones/tablets with a virtual keyboard;
+	// the Electron desktop app never sees a keyboard offset (Visual Viewport stays
+	// full height), so `--keyboard-offset` resolves to 0px there and is a no-op.
+	const { keyboardOffset, isKeyboardVisible } = useKeyboardVisibility();
+	const keyboardShellOffset = isWebDesktop() && isKeyboardVisible ? keyboardOffset : 0;
 
 	// --- NAVIGATION HISTORY (back/forward through sessions and tabs) ---
 	const { pushNavigation, navigateBack, navigateForward } = useNavigationHistory();
@@ -2902,12 +2910,18 @@ function MaestroConsoleInner() {
 						? 'pt-0'
 						: 'pt-10'
 				}`}
-				style={{
-					backgroundColor: theme.colors.bgMain,
-					color: theme.colors.textMain,
-					fontFamily: fontFamily,
-					fontSize: `${fontSize}px`,
-				}}
+				style={
+					{
+						backgroundColor: theme.colors.bgMain,
+						color: theme.colors.textMain,
+						fontFamily: fontFamily,
+						fontSize: `${fontSize}px`,
+						// Consumed by the web-desktop `.maestro-app-shell` bottom-padding
+						// rule to lift the AI input above the virtual keyboard. 0px on
+						// desktop / when the Visual Viewport API is unavailable.
+						'--keyboard-offset': `${keyboardShellOffset}px`,
+					} as React.CSSProperties
+				}
 			>
 				{/* External file drops are handled per-region, not globally: the main
 				    panel and group chat attach to the chat (see useChatFileDropZone),

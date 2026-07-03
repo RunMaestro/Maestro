@@ -15,3 +15,7 @@ export type { UseDebouncedPersistenceReturn } from './useDebouncedPersistence';
 // Long-press gesture detection (touch context menus / tab action overlays)
 export { useLongPress } from './useLongPress';
 export type { UseLongPressOptions, UseLongPressReturn } from './useLongPress';
+
+// Virtual-keyboard visibility (Visual Viewport API) for lifting bottom controls
+export { useKeyboardVisibility } from './useKeyboardVisibility';
+export type { UseKeyboardVisibilityReturn } from './useKeyboardVisibility';
