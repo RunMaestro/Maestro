@@ -1490,3 +1490,25 @@ html[data-runtime='web-desktop'] .overflow-y-scroll {
 		-webkit-overflow-scrolling: touch;
 	}
 }
+
+/*
+ * Prevent iOS Safari auto-zoom on input focus at phone breakpoints. iOS zooms
+ * the page whenever a focused form control has font-size < 16px; the renderer's
+ * inputs are text-sm (14px). Force 16px only at xs/sm inside web-desktop so the
+ * zoom never triggers, without touching the components' Tailwind classes or the
+ * native desktop app. `!important` guarantees the 16px floor regardless of
+ * utility-class specificity; line-height keeps the taller text readable.
+ */
+html[data-runtime='web-desktop'][data-bp='xs'] textarea,
+html[data-runtime='web-desktop'][data-bp='xs'] input[type='text'],
+html[data-runtime='web-desktop'][data-bp='xs'] input[type='search'],
+html[data-runtime='web-desktop'][data-bp='xs'] input:not([type]),
+html[data-runtime='web-desktop'][data-bp='xs'] select,
+html[data-runtime='web-desktop'][data-bp='sm'] textarea,
+html[data-runtime='web-desktop'][data-bp='sm'] input[type='text'],
+html[data-runtime='web-desktop'][data-bp='sm'] input[type='search'],
+html[data-runtime='web-desktop'][data-bp='sm'] input:not([type]),
+html[data-runtime='web-desktop'][data-bp='sm'] select {
+	font-size: 16px !important;
+	line-height: 1.4;
+}
