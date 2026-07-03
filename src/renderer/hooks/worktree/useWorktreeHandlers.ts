@@ -634,6 +634,15 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 				for (const subdir of gitSubdirs) {
 					if (isSkippableBranch(subdir.branch)) continue;
 
+					// Skip a path that spawnWorktreeAgentAndDispatch just created and is
+					// still building the owning child for (mirrors the chokidar listener's
+					// guard). Without this, a startup/visibility rescan that lands inside
+					// that window would fan the Maestro-launched worktree out under every
+					// same-repo parent, re-creating the wrong-parent attribution - and it
+					// matters most on SSH, where chokidar is unavailable and the rescan is
+					// the only discovery path.
+					if (isRecentlyCreatedWorktreePath(subdir.path)) continue;
+
 					// Repo-identity check: if we know both the parent's repo root and the
 					// subdir's repo root, skip subdirs that don't match. If either is
 					// missing (parent isn't a git repo, or git couldn't resolve the

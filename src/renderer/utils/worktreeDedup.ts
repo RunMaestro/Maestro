@@ -32,23 +32,25 @@ export function sessionMatchesWorktreeRoot(session: Session, normalizedRoot: str
 }
 
 /**
- * Whether `session` is a worktree child owned by `parentSession`. Covers both
- * the new model (`parentSessionId`) and the legacy model (`worktreeParentPath`).
+ * Whether `session` is a worktree child owned by `parentSession`, matched by the
+ * new-model `parentSessionId` link.
  *
  * Worktree reuse/dedup must be scoped to the launching parent: with the
- * per-parent discovery model, a same-repo sibling agent can own its own child
- * at the same cwd, so a global cwd match would let one parent's Auto Run adopt a
+ * per-parent discovery model, a same-repo sibling agent can own its own child at
+ * the same cwd, so a global cwd match would let one parent's Auto Run adopt a
  * sibling's child and reproduce the wrong-parent attribution these guards exist
  * to prevent.
+ *
+ * Legacy sessions (which link via `worktreeParentPath`, the scanned worktree
+ * BASE directory rather than the parent's cwd) are intentionally NOT matched
+ * here: that path can be shared by several same-repo parents, so a cwd/base
+ * comparison would ambiguously match the wrong owner. Ownership requires an
+ * unambiguous `parentSessionId`; a legacy child simply falls through to having a
+ * fresh new-model child created for the launcher, which is safe (no
+ * misattribution) even if it means the legacy child is not reused.
  */
 export function sessionOwnedByParent(session: Session, parentSession: Session): boolean {
-	if (session.parentSessionId && session.parentSessionId === parentSession.id) return true;
-	if (
-		session.worktreeParentPath &&
-		normalizePath(session.worktreeParentPath) === normalizePath(parentSession.cwd)
-	)
-		return true;
-	return false;
+	return !!session.parentSessionId && session.parentSessionId === parentSession.id;
 }
 
 const recentlyCreatedPaths = new Set<string>();

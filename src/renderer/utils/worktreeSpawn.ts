@@ -24,6 +24,16 @@ import {
 import { sanitizeGitBranchName } from '../../shared/gitUtils';
 
 /**
+ * TTL for the pre-`git worktree add` dedup mark. Sized to comfortably outlast a
+ * slow worktree creation (large repo, cold disk, SSH remote) so the mark can't
+ * expire mid-setup and let a watcher adopt the worktree under the wrong parent.
+ * The success path re-marks with the default (short) TTL once setup completes,
+ * and the error/already-existed branches clear the path, so this window never
+ * outlives the operation it guards.
+ */
+const WORKTREE_SETUP_MARK_TTL_MS = 60000;
+
+/**
  * Get the SSH remote ID for a session, checking both runtime and config values.
  *
  * Note: sshRemoteId is only set after AI agent spawns. For terminal-only SSH
@@ -70,8 +80,15 @@ export async function spawnWorktreeAgentAndDispatch(
 		worktreePath = basePath + '/' + branchName;
 
 		// Mark path BEFORE creating on disk so the file watcher in useWorktreeHandlers
-		// skips this path and doesn't create a duplicate session.
-		markWorktreePathAsRecentlyCreated(worktreePath);
+		// skips this path and doesn't create a duplicate session. Use a generous TTL:
+		// `git worktree add` below can outrun the default 10s window on a large repo,
+		// cold disk, or SSH remote, and if this mark expired mid-`await` the
+		// main-process chokidar debounce could emit `worktree:discovered` before the
+		// re-mark on the resolved path runs - letting a sibling watcher adopt the
+		// worktree under the wrong parent. The error and already-existed branches
+		// clear this path explicitly, and the success path re-marks with the default
+		// TTL, so the long window never outlives the setup it guards.
+		markWorktreePathAsRecentlyCreated(worktreePath, WORKTREE_SETUP_MARK_TTL_MS);
 
 		// Step 2: Create worktree on disk. Pass baseBranch so the new branch is
 		// rooted at the user-selected base (e.g. "rc") instead of the main repo's

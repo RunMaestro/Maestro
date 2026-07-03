@@ -2376,6 +2376,55 @@ describe('Effects', () => {
 			expect(childrenB.map((s) => s.worktreeBranch)).toEqual(['feat-shared']);
 		});
 
+		it('rescan skips a path still marked recently-created by spawnWorktreeAgentAndDispatch', async () => {
+			vi.useFakeTimers();
+
+			const parent = {
+				...mockParentSession,
+				id: 'parent-a',
+				cwd: '/repos/repo-a',
+				worktreeConfig: { basePath: '/shared/worktrees', watchEnabled: false },
+			};
+			mockGit.worktreeInfo.mockResolvedValue({
+				success: true,
+				exists: true,
+				isWorktree: false,
+				repoRoot: '/repos/repo-a',
+			});
+			mockGit.scanWorktreeDirectory.mockResolvedValue({
+				gitSubdirs: [
+					{
+						path: '/shared/worktrees/feat-live',
+						branch: 'feat-live',
+						name: 'feat-live',
+						repoRoot: '/repos/repo-a',
+					},
+				],
+			});
+
+			useSessionStore.setState({
+				sessions: [parent],
+				activeSessionId: 'parent-a',
+				sessionsLoaded: true,
+			} as any);
+
+			// The launcher marked this path while it builds the owning child. A rescan
+			// landing in that window must NOT create a (sibling) child for it.
+			markWorktreePathAsRecentlyCreated('/shared/worktrees/feat-live');
+
+			renderHook(() => useWorktreeHandlers());
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
+			const children = useSessionStore
+				.getState()
+				.sessions.filter((s) => s.parentSessionId === 'parent-a');
+			expect(children).toHaveLength(0);
+
+			clearRecentlyCreatedWorktreePath('/shared/worktrees/feat-live');
+		});
+
 		it('falls back to legacy behavior when the parent repoRoot cannot be resolved', async () => {
 			vi.useFakeTimers();
 
