@@ -77,7 +77,6 @@ function TabBarInner({
 	colorBlindMode,
 	sshRemote,
 	leadingSlot,
-	trailingSlot,
 }: TabBarProps) {
 	// Dev-time warnings for missing handlers when unified tabs are provided
 	if (process.env.NODE_ENV !== 'production' && unifiedTabs) {
@@ -455,7 +454,7 @@ function TabBarInner({
 						/>
 					)}
 				</button>
-				{(leadingSlot || trailingSlot) && (
+				{leadingSlot && (
 					<span
 						aria-hidden="true"
 						className="mx-0.5 h-4 w-px shrink-0"
@@ -463,7 +462,6 @@ function TabBarInner({
 					/>
 				)}
 				{leadingSlot}
-				{trailingSlot}
 			</div>
 
 			{/* Empty state when filter is on but no unread tabs */}

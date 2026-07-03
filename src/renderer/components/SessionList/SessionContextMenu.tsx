@@ -13,7 +13,6 @@ import {
 	Edit3,
 	Zap,
 	Fingerprint,
-	Eraser,
 } from 'lucide-react';
 import type { Group, Session, Theme } from '../../types';
 import { useClickOutside, useContextMenuPosition } from '../../hooks';
@@ -40,8 +39,6 @@ interface SessionContextMenuProps {
 	onDeleteWorktree?: () => void;
 	onCreateGroup?: () => void;
 	onConfigureCue?: () => void;
-	/** Pianola only: reset the pinned manager chat to a fresh conversation. */
-	onClearChat?: () => void;
 }
 
 export function SessionContextMenu({
@@ -64,7 +61,6 @@ export function SessionContextMenu({
 	onDeleteWorktree,
 	onCreateGroup,
 	onConfigureCue,
-	onClearChat,
 }: SessionContextMenuProps) {
 	const menuRef = useRef<HTMLDivElement>(null);
 	const moveToGroupRef = useRef<HTMLDivElement>(null);
@@ -168,27 +164,6 @@ export function SessionContextMenu({
 				>
 					<Edit3 className="w-3.5 h-3.5" />
 					Rename
-				</button>
-			)}
-
-			{session.isPianola && onClearChat && (
-				<button
-					type="button"
-					disabled={session.state === 'busy'}
-					title={
-						session.state === 'busy'
-							? 'Pianola is busy — interrupt it before clearing'
-							: 'Discard every Pianola chat and start fresh'
-					}
-					onClick={() => {
-						onClearChat();
-						onDismiss();
-					}}
-					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
-					style={{ color: theme.colors.textMain }}
-				>
-					<Eraser className="w-3.5 h-3.5" />
-					Clear all chats
 				</button>
 			)}
 

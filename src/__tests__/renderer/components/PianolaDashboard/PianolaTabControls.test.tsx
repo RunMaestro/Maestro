@@ -1,20 +1,15 @@
 /**
  * @file PianolaTabControls.test.tsx
- * @description Behavior tests for Pianola's two pinned TabBar controls:
- * `PianolaDashboardTab` and `PianolaClearChatButton`. These defend the
- * externally observable contracts the surrounding MainPanel wiring relies on:
- * the Dashboard button's pressed state tracks `active`, its needs-input badge
- * appears only for a positive count, and the Clear-chat button refuses clicks
- * while disabled. lucide-react is auto-mocked in `src/__tests__/setup.ts`.
+ * @description Behavior tests for Pianola's pinned Dashboard TabBar control
+ * `PianolaDashboardTab`: its pressed state tracks `active`, and its
+ * needs-input badge appears only for a positive count. lucide-react is
+ * auto-mocked in `src/__tests__/setup.ts`.
  */
 
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import type { Theme } from '../../../../renderer/types';
-import {
-	PianolaDashboardTab,
-	PianolaClearChatButton,
-} from '../../../../renderer/components/PianolaDashboard/PianolaTabControls';
+import { PianolaDashboardTab } from '../../../../renderer/components/PianolaDashboard/PianolaTabControls';
 
 // Minimal stub — only the color keys the two controls read. Cast like other
 // renderer tests (see PianolaDashboard.test.tsx) rather than spelling out the
@@ -75,36 +70,5 @@ describe('PianolaDashboardTab', () => {
 
 		fireEvent.click(screen.getByTestId('pianola-tab-dashboard'));
 		expect(onClick).toHaveBeenCalledTimes(1);
-	});
-});
-
-describe('PianolaClearChatButton', () => {
-	it('renders the Clear chat label under its testid', () => {
-		render(<PianolaClearChatButton theme={theme} disabled={false} onClick={vi.fn()} />);
-
-		expect(screen.getByTestId('pianola-clear-chat')).toBeInTheDocument();
-		expect(screen.getByText('Clear chat')).toBeInTheDocument();
-	});
-
-	it('fires onClick when enabled and clicked', () => {
-		const onClick = vi.fn();
-		render(<PianolaClearChatButton theme={theme} disabled={false} onClick={onClick} />);
-
-		const button = screen.getByTestId('pianola-clear-chat');
-		expect(button).not.toBeDisabled();
-
-		fireEvent.click(button);
-		expect(onClick).toHaveBeenCalledTimes(1);
-	});
-
-	it('is disabled and swallows clicks when disabled', () => {
-		const onClick = vi.fn();
-		render(<PianolaClearChatButton theme={theme} disabled onClick={onClick} />);
-
-		const button = screen.getByTestId('pianola-clear-chat');
-		expect(button).toBeDisabled();
-
-		fireEvent.click(button);
-		expect(onClick).not.toHaveBeenCalled();
 	});
 });

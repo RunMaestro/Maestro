@@ -2710,22 +2710,3 @@ export function findNextUnreadSession(
 		clearedCurrent: false,
 	};
 }
-
-/**
- * Reset a single AI tab's conversation in place: clears its transcript and
- * nulls its agent session so the next message starts a FRESH conversation,
- * and clears the draft input + staged images. Every OTHER tab, and all
- * session-level state, is left untouched. Returns the updated session (or the
- * original reference when the tab id is not found). Pure — no store access.
- */
-export function clearAiTabConversation(session: Session, tabId: string): Session {
-	if (!session?.aiTabs?.some((t) => t.id === tabId)) return session;
-	return {
-		...session,
-		aiTabs: session.aiTabs.map((t) =>
-			t.id === tabId
-				? { ...t, logs: [], agentSessionId: null, inputValue: '', stagedImages: [] }
-				: t
-		),
-	};
-}

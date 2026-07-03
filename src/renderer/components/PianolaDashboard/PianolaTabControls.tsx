@@ -1,15 +1,14 @@
 /**
- * Pinned controls for Pianola's tab bar. Pianola uses the standard multi-type
+ * Pinned control for Pianola's tab bar. Pianola uses the standard multi-type
  * TabBar (chat / file / terminal / browser tabs, same "+" menu as every other
- * agent); these two buttons are slotted into its sticky-left group so they stay
- * visible while tabs overflow:
+ * agent); this button is slotted into its sticky-left group so it stays visible
+ * while tabs overflow:
  *
  * - PianolaDashboardTab: switches to the pinned manager Dashboard view.
- * - PianolaClearChatButton: resets the active chat conversation.
  */
 
 import React from 'react';
-import { LayoutDashboard, Eraser } from 'lucide-react';
+import { LayoutDashboard } from 'lucide-react';
 import type { Theme } from '../../types';
 
 export function PianolaDashboardTab({
@@ -48,35 +47,6 @@ export function PianolaDashboardTab({
 					{needsInputCount}
 				</span>
 			)}
-		</button>
-	);
-}
-
-export function PianolaClearChatButton({
-	theme,
-	disabled,
-	onClick,
-}: {
-	theme: Theme;
-	disabled: boolean;
-	onClick: () => void;
-}): React.ReactElement {
-	return (
-		<button
-			type="button"
-			data-testid="pianola-clear-chat"
-			disabled={disabled}
-			onClick={onClick}
-			title={
-				disabled
-					? 'Pianola is busy — interrupt it before clearing'
-					: 'Clear this chat and start a fresh conversation'
-			}
-			className="flex items-center gap-1.5 px-2 py-1 rounded text-sm shrink-0 transition-colors hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed"
-			style={{ color: theme.colors.textDim }}
-		>
-			<Eraser className="w-4 h-4" />
-			<span>Clear chat</span>
 		</button>
 	);
 }
