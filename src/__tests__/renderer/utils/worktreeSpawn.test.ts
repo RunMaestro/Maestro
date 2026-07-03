@@ -185,6 +185,32 @@ describe('spawnWorktreeAgentAndDispatch parent-scoped reuse', () => {
 		expect(created?.cwd).toBe(resolvedPath);
 	});
 
+	it('refuses to duplicate into a worktree a BUSY sibling is already running in', async () => {
+		// A sibling (parent-2) owns a BUSY child at the resolved path. Reuse is
+		// parent-scoped so parent-1 won't adopt it, but building a second child and
+		// dispatching there would put two agents in the same checkout - bail instead.
+		const busySibling = { ...childAt('parent-2', 'busy-sibling'), state: 'busy' };
+		useSessionStore.setState({
+			sessions: [parentSession, busySibling],
+			activeSessionId: 'parent-1',
+			sessionsLoaded: true,
+		} as any);
+		mockGit.worktreeSetup.mockResolvedValue({
+			success: true,
+			alreadyExisted: true,
+			existingPath: resolvedPath,
+		});
+
+		const result = await spawnWorktreeAgentAndDispatch(parentSession, makeConfig());
+
+		expect(result).toBeNull();
+		// No new child was created for parent-1.
+		const created = useSessionStore
+			.getState()
+			.sessions.filter((s) => s.parentSessionId === 'parent-1');
+		expect(created).toHaveLength(0);
+	});
+
 	it('DOES reuse an existing child owned by the launching parent', async () => {
 		useSessionStore.setState({
 			sessions: [parentSession, childAt('parent-1', 'own-child')],

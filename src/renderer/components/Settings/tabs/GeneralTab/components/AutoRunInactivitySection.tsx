@@ -39,7 +39,8 @@ export function AutoRunInactivitySection({
 				<p className="text-xs opacity-50 mt-2">
 					Auto Run force-kills a task if the agent produces no output for this long. Increase for
 					long refactors, heavy test runs, or web-research tasks driving a browser. Choose Unlimited
-					to disable the watchdog entirely.
+					to disable the inactivity watchdog; the Max Task Duration cap below still applies unless
+					it is also set to Unlimited.
 				</p>
 			</div>
 			<div data-setting-id="general-autorun-max-task-duration">

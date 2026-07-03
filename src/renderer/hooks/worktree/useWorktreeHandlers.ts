@@ -242,17 +242,28 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 							continue;
 						}
 
-						// Check if session already exists (read latest state each iteration)
+						// Skip a path spawnWorktreeAgentAndDispatch is still building the
+						// owning child for (mirrors the chokidar + rescan paths).
+						if (isRecentlyCreatedWorktreePath(subdir.path)) continue;
+
+						// Check if session already exists (read latest state each iteration).
+						// Both checks are scoped to THIS parent: with per-parent ownership a
+						// same-repo sibling can hold its own child at the same cwd/branch, so
+						// a global match would wrongly skip this parent and leave it without a
+						// child until a later rescan (no chokidar add fires for an existing
+						// directory). Mirrors the per-parent dedup in scanWorktreeConfigs.
 						const latestSessions = useSessionStore.getState().sessions;
 						const existingByBranch = latestSessions.find(
 							(s) => s.parentSessionId === activeSession.id && s.worktreeBranch === subdir.branch
 						);
 						if (existingByBranch) continue;
 
-						// Also check by path (normalize for comparison)
+						// Also check by path (normalize for comparison), scoped to this parent.
 						const normalizedSubdirPath = normalizePath(subdir.path);
 						const existingByPath = latestSessions.find(
-							(s) => normalizePath(s.cwd) === normalizedSubdirPath
+							(s) =>
+								s.parentSessionId === activeSession.id &&
+								normalizePath(s.cwd) === normalizedSubdirPath
 						);
 						if (existingByPath) continue;
 

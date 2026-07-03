@@ -1524,6 +1524,9 @@ describe('settingsStore', () => {
 			await loadAllSettings();
 
 			expect(useSettingsStore.getState().autoRunMaxTaskDurationMin).toBe(0);
+			// One-shot: the migrated value is persisted so this branch doesn't re-run
+			// on the next load (which would silently reset a cap the user set later).
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('autoRunMaxTaskDurationMin', 0);
 		});
 
 		it('does NOT migrate when inactivity is a normal value and the cap is unset (keeps the default)', async () => {

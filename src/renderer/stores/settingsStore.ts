@@ -2904,12 +2904,18 @@ export async function loadAllSettings(): Promise<void> {
 				allSettings['autoRunMaxTaskDurationMin']
 			);
 		} else if (allSettings['autoRunInactivityTimeoutMin'] === 0) {
-			// Migration for existing installs: users who previously chose "Unlimited"
-			// inactivity (0) had NO Auto Run watchdog at all. They never persisted the
-			// new absolute cap, so the 480-min default would silently start killing
-			// their long tasks. Preserve their unlimited intent by defaulting the new
-			// cap to 0 (also unlimited) instead of 480.
+			// Migration for installs that chose "Unlimited" inactivity (0) and never
+			// touched the new absolute cap: they had NO Auto Run watchdog, so the
+			// 480-min default would silently start killing their long tasks. Preserve
+			// their unlimited intent by defaulting the new cap to 0 (also unlimited).
+			//
+			// PERSIST it immediately so the migration is one-shot: without writing the
+			// key back, this branch would re-run on every load (the key stays absent),
+			// and a user who set the cap to a real value only in-memory this session
+			// would have it silently reset to 0 on the next restart. Writing the key
+			// makes the sanitize branch above own it from here on.
 			patch.autoRunMaxTaskDurationMin = 0;
+			window.maestro.settings.set('autoRunMaxTaskDurationMin', 0);
 		}
 
 		if (allSettings['speckitEnabled'] !== undefined)

@@ -131,7 +131,7 @@ export async function spawnWorktreeAgentAndDispatch(
 
 		// Refresh the dedup mark on the RESOLVED path. Two reasons this is not
 		// redundant with the mark above:
-		//   1. The original 10s TTL started BEFORE `git worktree add`, which can be
+		//   1. The initial mark's TTL started BEFORE `git worktree add`, which can be
 		//      slow (large repo, cold disk, SSH remote). The chokidar discovery then
 		//      fires during the `getBranches`/`buildWorktreeSession` window below,
 		//      AFTER the mark has aged out, letting a sibling agent watching the
@@ -139,11 +139,13 @@ export async function spawnWorktreeAgentAndDispatch(
 		//   2. When the branch was already attached elsewhere, `worktreePath` was
 		//      reassigned to `result.existingPath`, which the original mark (and the
 		//      clear just above) never covered.
-		// Re-marking restarts the TTL from after the slow disk operation, so the
-		// mark stays live until the owning session is committed to the store below.
+		// Re-mark with the SAME long setup TTL, not the default: the owning session
+		// is not committed until after the awaited `getBranches` below, which is
+		// itself slow on SSH / large repos. A default 10s window could lapse before
+		// `setSessions` runs, so keep the mark alive across that window too.
 		// Only for create-new: existing-closed worktrees are already on disk and
 		// fire no addDir event, so there is nothing to race with.
-		markWorktreePathAsRecentlyCreated(worktreePath);
+		markWorktreePathAsRecentlyCreated(worktreePath, WORKTREE_SETUP_MARK_TTL_MS);
 	} else {
 		// existing-closed: worktree already on disk
 		worktreePath = target.worktreePath!;
@@ -199,6 +201,30 @@ export async function spawnWorktreeAgentAndDispatch(
 		}
 		dispatchSessionId = existingSession.id;
 	} else {
+		// Refuse to duplicate a child into a worktree another agent is actively
+		// using. `worktreeSetup` can resolve to a branch already attached under a
+		// SIBLING agent (reuse above is parent-scoped, so that sibling's child is
+		// intentionally not reused). Building a second child here and dispatching an
+		// Auto Run into it would let two agents write the same checkout
+		// concurrently, so bail if any same-root session is in-flight. (A busy
+		// session OWNED by this parent is already handled by the existingSession
+		// guard above; here existingSession is null, so this only catches siblings.)
+		const busySameRootSibling = useSessionStore
+			.getState()
+			.sessions.find(
+				(s) =>
+					sessionMatchesWorktreeRoot(s, normalizedWorktreePath) &&
+					(s.state === 'busy' || s.state === 'connecting')
+			);
+		if (busySameRootSibling) {
+			notifyToast({
+				type: 'warning',
+				title: 'Worktree Busy',
+				message: 'Another agent is already running in this worktree. Please try again.',
+			});
+			return null;
+		}
+
 		// Step 4: Build the session
 		const { defaultSaveToHistory, defaultShowThinking } = useSettingsStore.getState();
 		const newSession = buildWorktreeSession({
