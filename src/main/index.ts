@@ -1308,6 +1308,7 @@ function setupIpcHandlers() {
 	// Git operations - extracted to src/main/ipc/handlers/git.ts
 	registerGitHandlers({
 		settingsStore: store,
+		getMainWindow: () => mainWindow,
 	});
 
 	// Auto Run operations - extracted to src/main/ipc/handlers/autorun.ts
@@ -1344,6 +1345,7 @@ function setupIpcHandlers() {
 		getProcessManager: () => processManager,
 		getAgentDetector: () => agentDetector,
 		agentConfigsStore,
+		getMainWindow: () => mainWindow,
 	});
 
 	// Cue - event-driven automation engine

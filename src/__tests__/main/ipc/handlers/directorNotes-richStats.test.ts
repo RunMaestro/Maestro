@@ -120,6 +120,7 @@ describe('director-notes:getRichOverviewStats', () => {
 			getProcessManager: () => null,
 			getAgentDetector: () => null,
 			agentConfigsStore: { get: vi.fn(() => ({})) } as any,
+			getMainWindow: () => null,
 		});
 	});
 

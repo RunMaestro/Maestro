@@ -38,6 +38,15 @@ vi.mock('../../../../main/utils/logger', () => ({
 	},
 }));
 
+// Mock the web-desktop bridge fanout so we can assert that worktree watcher
+// events reach browser clients even when no desktop window is available.
+const { mockBroadcastBridgeEvent } = vi.hoisted(() => ({
+	mockBroadcastBridgeEvent: vi.fn(),
+}));
+vi.mock('../../../../main/web-server/handlers/bridgeHandlers', () => ({
+	broadcastBridgeEvent: mockBroadcastBridgeEvent,
+}));
+
 // Mock the cliDetection module
 vi.mock('../../../../main/utils/cliDetection', () => ({
 	resolveGhPath: vi.fn().mockResolvedValue('gh'),
@@ -131,10 +140,15 @@ vi.mock('child_process', () => {
 
 describe('Git IPC handlers', () => {
 	let handlers: Map<string, Function>;
+	// Worktree watcher events now route through safeSend(getMainWindow); each
+	// test that exercises a watcher assigns its mock window here so the send
+	// path has a live window to target.
+	let currentMockWindow: any = null;
 
 	beforeEach(async () => {
 		// Clear mocks
 		vi.clearAllMocks();
+		currentMockWindow = null;
 
 		// Reset hoisted settings store mock to a clean state for each test
 		mockSettingsStore.get.mockReturnValue([]);
@@ -148,6 +162,7 @@ describe('Git IPC handlers', () => {
 		// Register handlers with mock settings store
 		registerGitHandlers({
 			settingsStore: mockSettingsStore,
+			getMainWindow: () => currentMockWindow,
 		});
 
 		// Set up execGit mock to dispatch to local or remote
@@ -4595,8 +4610,7 @@ branch refs/heads/bugfix-123
 					isDestroyed: vi.fn().mockReturnValue(false),
 				},
 			};
-			const { BrowserWindow } = await import('electron');
-			vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([mockWindow] as any);
+			currentMockWindow = mockWindow;
 
 			// Mock git commands for the discovered directory
 			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (cmd, args, cwd) => {
@@ -4637,6 +4651,60 @@ branch refs/heads/bugfix-123
 			vi.useRealTimers();
 		});
 
+		it('fans worktree:discovered out to the web-desktop bridge even when no desktop window exists', async () => {
+			vi.useFakeTimers();
+
+			vi.mocked(mockFs.access).mockResolvedValue(undefined);
+
+			let addDirCallback: Function | undefined;
+			const mockWatcher = {
+				on: vi.fn((event: string, cb: Function) => {
+					if (event === 'addDir') {
+						addDirCallback = cb;
+					}
+					return mockWatcher;
+				}),
+				close: vi.fn().mockResolvedValue(undefined),
+			};
+			vi.mocked(mockChokidar.watch).mockReturnValue(mockWatcher as any);
+
+			// Desktop window is down; safeSend must still fan the event out to
+			// connected web-desktop bridge clients.
+			currentMockWindow = null;
+
+			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (_cmd, args) => {
+				if (args?.includes('--is-inside-work-tree')) {
+					return { stdout: 'true\n', stderr: '', exitCode: 0 };
+				}
+				if (args?.includes('--show-toplevel')) {
+					return { stdout: '/parent/worktrees/new-worktree', stderr: '', exitCode: 0 };
+				}
+				if (args?.includes('--abbrev-ref')) {
+					return { stdout: 'feature-branch\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: '', exitCode: 0 };
+			});
+
+			const handler = handlers.get('git:watchWorktreeDirectory');
+			await handler!({} as any, 'session-bridge', '/parent/worktrees');
+
+			await addDirCallback!('/parent/worktrees/new-worktree');
+			await vi.advanceTimersByTimeAsync(600);
+
+			expect(mockBroadcastBridgeEvent).toHaveBeenCalledWith('worktree:discovered', [
+				{
+					sessionId: 'session-bridge',
+					worktree: {
+						path: '/parent/worktrees/new-worktree',
+						name: 'new-worktree',
+						branch: 'feature-branch',
+					},
+				},
+			]);
+
+			vi.useRealTimers();
+		});
+
 		it('should skip emitting event when directory is the watched path itself', async () => {
 			vi.useFakeTimers();
 
@@ -4661,8 +4729,7 @@ branch refs/heads/bugfix-123
 					isDestroyed: vi.fn().mockReturnValue(false),
 				},
 			};
-			const { BrowserWindow } = await import('electron');
-			vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([mockWindow] as any);
+			currentMockWindow = mockWindow;
 
 			const handler = handlers.get('git:watchWorktreeDirectory');
 			await handler!({} as any, 'session-skip', '/parent/worktrees');
@@ -4702,8 +4769,7 @@ branch refs/heads/bugfix-123
 					isDestroyed: vi.fn().mockReturnValue(false),
 				},
 			};
-			const { BrowserWindow } = await import('electron');
-			vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([mockWindow] as any);
+			currentMockWindow = mockWindow;
 
 			// Mock git commands - return main branch
 			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (cmd, args, cwd) => {
@@ -4757,8 +4823,7 @@ branch refs/heads/bugfix-123
 					isDestroyed: vi.fn().mockReturnValue(false),
 				},
 			};
-			const { BrowserWindow } = await import('electron');
-			vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([mockWindow] as any);
+			currentMockWindow = mockWindow;
 
 			// Mock git commands - not a git repo
 			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (cmd, args) => {
@@ -4806,8 +4871,7 @@ branch refs/heads/bugfix-123
 					isDestroyed: vi.fn().mockReturnValue(false),
 				},
 			};
-			const { BrowserWindow } = await import('electron');
-			vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([mockWindow] as any);
+			currentMockWindow = mockWindow;
 
 			// Track which paths were checked
 			const checkedPaths: string[] = [];
@@ -4871,8 +4935,7 @@ branch refs/heads/bugfix-123
 					isDestroyed: vi.fn().mockReturnValue(false),
 				},
 			};
-			const { BrowserWindow } = await import('electron');
-			vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([mockWindow] as any);
+			currentMockWindow = mockWindow;
 
 			const checkedPaths: string[] = [];
 			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (cmd, args, cwd) => {
@@ -4969,8 +5032,7 @@ branch refs/heads/bugfix-123
 					isDestroyed: vi.fn().mockReturnValue(false),
 				},
 			};
-			const { BrowserWindow } = await import('electron');
-			vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([mockWindow] as any);
+			currentMockWindow = mockWindow;
 
 			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (cmd, args, cwd) => {
 				if (args?.includes('--is-inside-work-tree')) {

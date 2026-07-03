@@ -7,7 +7,7 @@
 import fsSync from 'fs';
 import type { BrowserWindow } from 'electron';
 import { logger } from '../utils/logger';
-import { isWebContentsAvailable } from '../utils/safe-send';
+import { createSafeSend } from '../utils/safe-send';
 
 /** Dependencies for settings watcher */
 export interface SettingsWatcherDependencies {
@@ -36,19 +36,13 @@ export interface SettingsWatcher {
  */
 export function createSettingsWatcher(deps: SettingsWatcherDependencies): SettingsWatcher {
 	const { getMainWindow, getSettingsPath, getAgentConfigsPath } = deps;
+	const safeSend = createSafeSend(getMainWindow);
 	const watchers: fsSync.FSWatcher[] = [];
 
 	// Debounce: ignore changes within 500ms of an IPC-driven write
 	// This prevents the watcher from firing when the app itself writes settings
 	let settingsDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 	let agentConfigsDebounceTimer: ReturnType<typeof setTimeout> | null = null;
-
-	function notifyRenderer(channel: string) {
-		const mainWindow = getMainWindow();
-		if (isWebContentsAvailable(mainWindow)) {
-			mainWindow.webContents.send(channel);
-		}
-	}
 
 	function watchFile(
 		dirPath: string,
@@ -74,7 +68,7 @@ export function createSettingsWatcher(deps: SettingsWatcherDependencies): Settin
 								`External change detected in ${filename}, notifying renderer`,
 								'SettingsWatcher'
 							);
-							notifyRenderer(channel);
+							safeSend(channel);
 						}, 300)
 					);
 				}

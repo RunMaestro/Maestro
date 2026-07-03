@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow } from 'electron';
+import { ipcMain, type BrowserWindow } from 'electron';
 import fs from 'fs/promises';
 import path from 'path';
 import chokidar, { FSWatcher } from 'chokidar';
@@ -6,7 +6,7 @@ import { execFileNoThrow, execFileBufferNoThrow } from '../../utils/execFile';
 import { execGit } from '../../utils/remote-git';
 import { logger } from '../../utils/logger';
 import { getSshRemoteById } from '../../stores';
-import { isWebContentsAvailable } from '../../utils/safe-send';
+import { createSafeSend } from '../../utils/safe-send';
 import {
 	withIpcErrorLogging,
 	createIpcHandler,
@@ -46,6 +46,12 @@ export interface GitHandlerDependencies {
 	settingsStore: {
 		get: (key: string, defaultValue?: unknown) => unknown;
 	};
+	/**
+	 * Returns the current main window (or null). Used to route worktree
+	 * watcher events through safeSend so web-desktop bridge clients receive
+	 * them alongside the desktop renderer.
+	 */
+	getMainWindow: () => BrowserWindow | null;
 }
 
 // Worktree directory watchers keyed by session ID
@@ -104,7 +110,9 @@ async function findLocalWorktreeForBranch(
  *
  * @param deps Dependencies including settingsStore for SSH remote configuration lookup
  */
-export function registerGitHandlers(_deps: GitHandlerDependencies): void {
+export function registerGitHandlers(deps: GitHandlerDependencies): void {
+	const safeSend = createSafeSend(deps.getMainWindow);
+
 	// Basic Git operations
 	// All handlers accept optional sshRemoteId and remoteCwd for remote execution
 
@@ -1532,20 +1540,15 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 								`[WT-DEBUG] ACCEPTED ${dirPath}: branch=${branch}, emitting worktree:discovered`
 							);
 
-							// Emit event to renderer
-							const windows = BrowserWindow.getAllWindows();
-							for (const win of windows) {
-								if (isWebContentsAvailable(win)) {
-									win.webContents.send('worktree:discovered', {
-										sessionId,
-										worktree: {
-											path: dirPath,
-											name: path.basename(dirPath),
-											branch,
-										},
-									});
-								}
-							}
+							// Emit event to the renderer and web-desktop bridge clients
+							safeSend('worktree:discovered', {
+								sessionId,
+								worktree: {
+									path: dirPath,
+									name: path.basename(dirPath),
+									branch,
+								},
+							});
 
 							logger.info(`${LOG_CONTEXT} New worktree discovered: ${dirPath} (branch: ${branch})`);
 						}, 500); // 500ms debounce
@@ -1568,15 +1571,10 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 						logger.warn(`[WT-DEBUG] unlinkDir event: ${dirPath}`);
 						logger.info(`${LOG_CONTEXT} Worktree directory removed: ${dirPath}`);
 
-						const windows = BrowserWindow.getAllWindows();
-						for (const win of windows) {
-							if (isWebContentsAvailable(win)) {
-								win.webContents.send('worktree:removed', {
-									sessionId,
-									worktreePath: dirPath,
-								});
-							}
-						}
+						safeSend('worktree:removed', {
+							sessionId,
+							worktreePath: dirPath,
+						});
 					});
 
 					watcher.on('error', (error) => {
