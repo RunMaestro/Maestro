@@ -3823,7 +3823,7 @@ interface MaestroAPI {
 		// Subscribe to session-ownership move broadcasts; returns an unsubscribe fn.
 		onSessionMoved: (
 			callback: (payload: {
-				type: 'session-moved' | 'sessions-changed' | 'name-changed';
+				type: 'session-moved' | 'sessions-changed' | 'name-changed' | 'removed';
 				windowId?: string;
 				sessionId?: string;
 				fromWindowId?: string;

@@ -87,13 +87,16 @@ function resolveCallingWindow(
  * ownership moves to every open window on {@link WINDOW_SESSION_MOVED_CHANNEL}.
  *
  * Forwarded mutations: `moveSession` (emits `session-moved`),
- * `setSessionsForWindow` (emits `sessions-changed`), and `setName` (emits
- * `name-changed`, so every window's Left Bar / palette labels refresh). Window
- * open/close (`created`/`removed`) is intentionally NOT broadcast - an empty new
- * window changes no badges, and any session move into/out of a window already
- * emits `session-moved`. The broadcast goes to ALL windows (not just the ones
- * named in the change) because cross-window badges depend on the full ownership
- * map; each renderer re-reads the registry and decides what changed for it.
+ * `setSessionsForWindow` (emits `sessions-changed`), `setName` (emits
+ * `name-changed`, so every window's Left Bar / palette labels refresh), and
+ * `remove` (emits `removed`, so a closed window vanishes from every renderer's
+ * window list - the "Move to Window" menu must not offer a window that no longer
+ * exists). Window OPEN (`created`) is not broadcast - a new window always arrives
+ * with the agent it owns via a following `session-moved`, which re-hydrates
+ * everyone. `panel-changed` is window-local UI and deliberately not forwarded.
+ * The broadcast goes to ALL windows (not just the ones named in the change)
+ * because cross-window badges + the window list depend on the full registry;
+ * each renderer re-reads it and decides what changed for it.
  *
  * Returns an unsubscribe function so callers (and tests) can tear the
  * subscription down.
@@ -103,7 +106,8 @@ export function wireWindowRegistryBroadcast(registry: WindowRegistry): () => voi
 		if (
 			change.type !== 'session-moved' &&
 			change.type !== 'sessions-changed' &&
-			change.type !== 'name-changed'
+			change.type !== 'name-changed' &&
+			change.type !== 'removed'
 		) {
 			return;
 		}

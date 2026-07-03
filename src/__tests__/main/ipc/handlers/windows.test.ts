@@ -603,16 +603,39 @@ describe('Windows IPC Handlers', () => {
 			});
 		});
 
-		it('does not broadcast on window create or remove', () => {
+		it('does not broadcast on window create (a new empty window changes nothing)', () => {
 			const win = makeFakeWindow();
-			const id = registry.create({ browserWindow: win, sessionIds: [], isMain: true });
+			registry.create({ browserWindow: win, sessionIds: [], isMain: true });
 
 			wireWindowRegistryBroadcast(registry);
-			// A second create + a remove: neither is a session-ownership change.
+			// A second create is not a change any renderer needs to react to (the
+			// agent it will own arrives via a following session-moved).
 			registry.create({ browserWindow: makeFakeWindow(), sessionIds: [], isMain: false });
-			registry.remove(id);
 
 			expect(sendOf(win)).not.toHaveBeenCalled();
+		});
+
+		it('broadcasts a window removal so the closed window vanishes from every list', () => {
+			// A closed window must disappear from the "Move to Window" menu, so its
+			// removal is broadcast to the remaining (primary) window.
+			const primaryWin = makeFakeWindow();
+			registry.create({ browserWindow: primaryWin, sessionIds: ['a'], isMain: true });
+			const secondaryId = registry.create({
+				browserWindow: makeFakeWindow(),
+				sessionIds: [],
+				isMain: false,
+			});
+
+			wireWindowRegistryBroadcast(registry);
+			registry.remove(secondaryId);
+
+			expect(sendOf(primaryWin)).toHaveBeenCalledWith('windows:sessionMoved', {
+				type: 'removed',
+				windowId: secondaryId,
+				sessionId: undefined,
+				fromWindowId: undefined,
+				toWindowId: undefined,
+			});
 		});
 
 		it('broadcasts a window rename so every renderer refreshes its labels', () => {

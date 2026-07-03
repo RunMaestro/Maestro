@@ -76,13 +76,23 @@ function truncateLabel(name: string): string {
  * it. Ownership is still catch-all aware for `isCurrentOwner`: an agent is owned
  * by the secondary window that explicitly claimed it, else the primary.
  *
+ * Only lists windows that actually hold at least one agent: an empty SECONDARY
+ * window is auto-closing (see `wireEmptySecondaryWindowAutoClose`), so it must
+ * never appear as a move destination - not even during the brief window between
+ * "last agent moved out" and the OS `closed` event. The primary is always kept
+ * (it is the catch-all owner and never closes). `windowNumber` stays the 1-based
+ * registry-order index so it keeps matching the WindowBadge / OS-title numbering
+ * even when an empty window in the middle is skipped.
+ *
  * Returns `[]` before the registry has hydrated (the single-window common case),
  * so callers can simply skip rendering the "move to window" affordance.
  */
 export function buildWindowMoveTargets(windows: WindowInfo[], agentId: string): WindowMoveTarget[] {
 	if (windows.length === 0) return [];
 	const claimedBySecondary = windows.some((win) => !win.isMain && win.sessionIds.includes(agentId));
-	return windows.map((win, idx) => {
+	return windows.flatMap((win, idx) => {
+		// Skip an empty secondary - it is closing and is not a valid destination.
+		if (!win.isMain && win.sessionIds.length === 0) return [];
 		const isCurrentOwner = claimedBySecondary
 			? !win.isMain && win.sessionIds.includes(agentId)
 			: win.isMain;
@@ -95,13 +105,15 @@ export function buildWindowMoveTargets(windows: WindowInfo[], agentId: string): 
 		} else {
 			label = `Window ${idx + 1}`;
 		}
-		return {
-			windowId: win.id,
-			isMain: win.isMain,
-			windowNumber: idx + 1,
-			label,
-			customName,
-			isCurrentOwner,
-		};
+		return [
+			{
+				windowId: win.id,
+				isMain: win.isMain,
+				windowNumber: idx + 1,
+				label,
+				customName,
+				isCurrentOwner,
+			},
+		];
 	});
 }

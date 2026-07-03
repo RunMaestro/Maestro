@@ -91,6 +91,30 @@ describe('buildWindowMoveTargets', () => {
 		expect(label.length).toBeLessThan(longName.length);
 		expect(label.endsWith('…')).toBe(true);
 	});
+
+	it('omits an empty secondary window (it is auto-closing, not a destination)', () => {
+		const windows = [
+			makeInfo({ id: 'primary', isMain: true, sessionIds: ['a'] }),
+			makeInfo({ id: 'win-2', sessionIds: [] }), // just lost its last agent
+			makeInfo({ id: 'win-3', sessionIds: ['b'] }),
+		];
+		const targets = buildWindowMoveTargets(windows, 'a');
+		expect(targets.map((t) => t.windowId)).toEqual(['primary', 'win-3']);
+		// windowNumber stays the registry-order index, so win-3 is still "Window 3"
+		// (matching its OS title) even though the empty win-2 was skipped.
+		expect(targets.find((t) => t.windowId === 'win-3')?.windowNumber).toBe(3);
+		expect(targets.find((t) => t.windowId === 'win-3')?.label).toBe('Window 3');
+	});
+
+	it('keeps the primary even when it is the catch-all owner of zero explicit agents', () => {
+		// The primary never auto-closes, so it is always a valid destination.
+		const windows = [
+			makeInfo({ id: 'primary', isMain: true, sessionIds: [] }),
+			makeInfo({ id: 'win-2', sessionIds: ['a'] }),
+		];
+		const targets = buildWindowMoveTargets(windows, 'a');
+		expect(targets.some((t) => t.isMain)).toBe(true);
+	});
 });
 
 describe('scopeSessionsToOwningWindow', () => {

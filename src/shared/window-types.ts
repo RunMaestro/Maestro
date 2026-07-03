@@ -144,7 +144,7 @@ export interface WindowInfo {
  * the fields are advisory context rather than a strict diff to apply.
  */
 export interface WindowSessionMovedPayload {
-	type: 'session-moved' | 'sessions-changed' | 'name-changed';
+	type: 'session-moved' | 'sessions-changed' | 'name-changed' | 'removed';
 	windowId?: string;
 	sessionId?: string;
 	fromWindowId?: string;
