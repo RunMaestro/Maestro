@@ -19,3 +19,7 @@ export type { UseLongPressOptions, UseLongPressReturn } from './useLongPress';
 // Virtual-keyboard visibility (Visual Viewport API) for lifting bottom controls
 export { useKeyboardVisibility } from './useKeyboardVisibility';
 export type { UseKeyboardVisibilityReturn } from './useKeyboardVisibility';
+
+// Voice-to-text via the Web Speech API (touch AI input dictation)
+export { useVoiceInput, isSpeechRecognitionSupported, getSpeechRecognition } from './useVoiceInput';
+export type { UseVoiceInputOptions, UseVoiceInputReturn } from './useVoiceInput';

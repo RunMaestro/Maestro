@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useSettingsStore } from '../../stores/settingsStore';
 import {
 	useComposerInputStore,
@@ -13,7 +13,7 @@ import { ContextWarningSash } from '../ContextWarningSash';
 import { SummarizeProgressOverlay } from '../SummarizeProgressOverlay';
 import { WizardInputPanel } from '../InlineWizard';
 import { useImageAnnotatorStore } from '../ImageAnnotator/imageAnnotatorStore';
-import { useAgentCapabilities, useScrollIntoView } from '../../hooks';
+import { useAgentCapabilities, useScrollIntoView, useVoiceInput } from '../../hooks';
 import { filterSlashCommands } from '../../utils/search';
 import { InputTextarea } from './components/InputTextarea';
 import { NotificationSendControls } from './components/NotificationSendControls';
@@ -277,6 +277,24 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		setSelectedAtMentionIndex,
 	});
 
+	// Voice dictation (Web Speech API). Interim results live-update the draft via
+	// setInputValue; the final transcript is appended to the value captured when
+	// listening began. Disabled in terminal mode (the button only renders in AI
+	// mode anyway). The hook is a no-op where the Web Speech API is unavailable.
+	const voice = useVoiceInput({
+		currentValue: inputValue,
+		onTranscriptionChange: setInputValue,
+		focusRef: inputRef,
+		disabled: isTerminalMode,
+	});
+	// toggleVoiceInput's identity changes on every keystroke (it closes over the
+	// live draft value), so wrap it in a stable callback. This keeps the memoized
+	// ToolbarControls from re-rendering on each keystroke - it only re-renders
+	// when isListening actually flips.
+	const voiceToggleRef = useRef(voice.toggleVoiceInput);
+	voiceToggleRef.current = voice.toggleVoiceInput;
+	const handleToggleVoiceInput = useCallback(() => voiceToggleRef.current(), []);
+
 	// Show summarization progress overlay when active for this tab
 	if (isSummarizing && session.inputMode === 'ai' && onCancelSummarize) {
 		return (
@@ -478,6 +496,9 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 							enterToSend={enterToSend}
 							setEnterToSend={setEnterToSend}
 							setStagedImages={setStagedImages}
+							voiceSupported={voice.voiceSupported}
+							isVoiceListening={voice.isListening}
+							onToggleVoiceInput={handleToggleVoiceInput}
 							onOpenPromptComposer={onOpenPromptComposer}
 							shortcuts={shortcuts}
 							showFlashNotification={showFlashNotification}

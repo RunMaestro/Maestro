@@ -850,6 +850,29 @@ Because the shell is `box-sizing: border-box` at `height: 100dvh`, the added bot
 
 ---
 
+## Voice Input (`useVoiceInput`)
+
+`useVoiceInput` (`src/renderer/hooks/utils/useVoiceInput.ts`) is the canonical speech-to-text hook for the AI input on touch devices. Do NOT re-instantiate `SpeechRecognition` or hand-roll vendor-prefix detection - it wraps the Web Speech API (with the `webkitSpeechRecognition` fallback), carries its own typings, and reuses `triggerHaptic`/`HAPTIC_PATTERNS` from `src/renderer/utils/touch.ts`.
+
+- Call it where the live draft lives (`InputArea`), passing `currentValue` (the draft), `onTranscriptionChange` (the draft setter), and an optional `focusRef` (the textarea, refocused when dictation ends). Streaming interim results call `onTranscriptionChange` so the draft updates live; the final transcript is appended to the value captured when listening began.
+- `voiceSupported` (support detection), `isListening`, and `toggleVoiceInput` drive the UI. `toggleVoiceInput`'s identity changes with the draft, so wrap it in a ref-backed stable callback before handing it to a memoized child (e.g. `ToolbarControls`) - otherwise the child re-renders on every keystroke.
+
+The mic toggle lives in `ToolbarControls` and renders only when `voiceSupported && isCoarsePointer()` (touch), so desktop mouse/keyboard users never see it. It sits in the always-visible left action group (not the collapsing overflow toggle group), because a voice affordance buried behind the `...` menu on the phones it targets defeats the purpose.
+
+```tsx
+const voice = useVoiceInput({
+	currentValue: inputValue,
+	onTranscriptionChange: setInputValue,
+	focusRef: inputRef,
+	disabled: isTerminalMode,
+});
+const voiceToggleRef = useRef(voice.toggleVoiceInput);
+voiceToggleRef.current = voice.toggleVoiceInput;
+const handleToggleVoiceInput = useCallback(() => voiceToggleRef.current(), []);
+```
+
+---
+
 ## Tab System
 
 Each agent supports multiple AI tabs within its workspace. Tab management hooks live in `src/renderer/hooks/tabs/`.
