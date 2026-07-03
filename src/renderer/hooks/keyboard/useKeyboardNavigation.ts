@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import type { Session, Group, FocusArea } from '../../types';
 import type { SidebarExtraSelection } from '../../stores/uiStore';
 import type { StarredItem } from '../session/useStarredItems';
+import { orderGroupChatsForDisplay } from '../../utils/groupChatOrdering';
 
 /**
  * Minimal group-chat shape the sidebar navigation needs. Mirrors the fields
@@ -119,12 +120,7 @@ type VirtualEntry =
  * most-recent per the toggle.
  */
 function sortNavGroupChats(groupChats: NavGroupChat[], alphabetical: boolean): NavGroupChat[] {
-	return groupChats
-		.filter((c) => !c.archived)
-		.sort((a, b) => {
-			if (alphabetical) return a.name.localeCompare(b.name);
-			return (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0);
-		});
+	return orderGroupChatsForDisplay(groupChats, alphabetical);
 }
 
 /**

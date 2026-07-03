@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { ImagePlus, PenLine, X } from 'lucide-react';
 import type { Theme, QueuedItem } from '../types';
 import { Modal, ModalFooter } from './ui/Modal';
@@ -121,7 +122,14 @@ export function QueuedItemEditModal({ item, theme, onClose, onSave }: QueuedItem
 		}
 	};
 
-	return (
+	// Portal to document.body so the Modal's `fixed inset-0` backdrop resolves
+	// against the viewport, not the transformed/`contain`-ing main-panel ancestor
+	// this modal is mounted under (the transcript row uses content-visibility and
+	// the panel chain applies filters, both of which create a containing block for
+	// fixed descendants). Without the portal the backdrop is clipped to the center
+	// column - the left/right bars stay bright and the card is cut off at the
+	// right-panel edge. Same pattern as CueHelpModal and other portaled modals.
+	return createPortal(
 		<>
 			<Modal
 				theme={theme}
@@ -254,6 +262,7 @@ export function QueuedItemEditModal({ item, theme, onClose, onSave }: QueuedItem
 					/>
 				</div>
 			)}
-		</>
+		</>,
+		document.body
 	);
 }

@@ -38,6 +38,20 @@ describe('session-image-store', () => {
 		fs.rmSync(tmpDir, { recursive: true, force: true });
 	});
 
+	// Regression guard: relocated images render as `<img src="maestro-image://...">`,
+	// which the renderer's Content-Security-Policy must explicitly allow in
+	// img-src. Omitting it silently blocks every historical image (they show as
+	// broken placeholders) even though the bytes are safe on disk - the exact bug
+	// that shipped when the CSP wasn't updated alongside the store. `data:` alone
+	// is NOT enough once images are refs.
+	describe('renderer CSP allows the image scheme', () => {
+		it('has maestro-image: in img-src', () => {
+			const html = fs.readFileSync(path.resolve('src/renderer/index.html'), 'utf-8');
+			const imgSrc = html.match(/img-src([^;"]*)/)?.[1] ?? '';
+			expect(imgSrc).toContain('maestro-image:');
+		});
+	});
+
 	describe('predicates', () => {
 		it('recognizes data URLs and refs', () => {
 			expect(isInlineImageDataUrl(IMG_A)).toBe(true);
