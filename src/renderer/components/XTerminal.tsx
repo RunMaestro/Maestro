@@ -15,6 +15,7 @@ import {
 } from './TerminalSelectionContextMenu';
 import { openUrl } from '../utils/openUrl';
 import { safeClipboardWrite } from '../utils/clipboard';
+import { toControlChar } from '../utils/terminalKeys';
 import { logger } from '../utils/logger';
 
 // ============================================================================
@@ -229,6 +230,14 @@ export interface XTerminalProps {
 	onCopySelection?: (text: string) => void;
 	/** Called when the user chooses "Send to Agent" on the selection right-click menu. */
 	onSendSelectionToAgent?: (text: string) => void;
+	/** Sticky-Ctrl bridge for the touch key bar. When `isActive()` returns true,
+	 *  the next single character typed into the terminal is converted to its
+	 *  control code (Ctrl-C, etc.) and `onConsume()` clears the armed state. Inert
+	 *  (pure pass-through) when omitted, so the desktop app is unaffected. */
+	stickyCtrl?: {
+		isActive: () => boolean;
+		onConsume: () => void;
+	};
 }
 
 // ============================================================================
@@ -247,6 +256,7 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 		isActive = true,
 		onCopySelection,
 		onSendSelectionToAgent,
+		stickyCtrl,
 	},
 	ref
 ) {
@@ -293,6 +303,10 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 	onCopySelectionRef.current = onCopySelection;
 	const onSendSelectionToAgentRef = useRef(onSendSelectionToAgent);
 	onSendSelectionToAgentRef.current = onSendSelectionToAgent;
+	// Sticky-Ctrl bridge read through a ref so the onData subscription (registered
+	// once per sessionId) always sees the latest armed state without re-subscribing.
+	const stickyCtrlRef = useRef(stickyCtrl);
+	stickyCtrlRef.current = stickyCtrl;
 
 	// Expose handle to parent
 	useImperativeHandle(
@@ -714,10 +728,19 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 		if (!term) return;
 
 		const disposable = term.onData((data: string) => {
-			window.maestro.process.write(sessionId, data).catch(() => {
+			// Sticky-Ctrl (touch key bar): when armed, fold the next single typed
+			// character into its control code, then disarm. Multi-byte input (paste,
+			// IME) is left untouched by toControlChar and does not consume the arm.
+			let out = data;
+			const sticky = stickyCtrlRef.current;
+			if (sticky?.isActive() && data.length === 1) {
+				out = toControlChar(data);
+				sticky.onConsume();
+			}
+			window.maestro.process.write(sessionId, out).catch(() => {
 				// Write failures are surfaced by the process exit handler
 			});
-			onData?.(data);
+			onData?.(out);
 		});
 
 		return () => disposable.dispose();

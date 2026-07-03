@@ -9,8 +9,8 @@
  */
 
 import React from 'react';
-import { render, act } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, act, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { TerminalView } from '../../../renderer/components/TerminalView';
 import type { Session, TerminalTab } from '../../../renderer/types';
 import type { Theme } from '../../../renderer/types';
@@ -704,5 +704,91 @@ describe('TerminalView — no refresh when no tabs', () => {
 		render(<TerminalView {...defaultProps} session={session} isVisible={true} />);
 		// With no tabs there are no XTerminal instances to refresh
 		expect(mockRefresh).not.toHaveBeenCalled();
+	});
+});
+
+describe('TerminalView — touch key bar (coarse pointer)', () => {
+	const originalMatchMedia = window.matchMedia;
+
+	// isCoarsePointer() reads window.matchMedia('(pointer: coarse)'); drive it so
+	// the touch-only key bar renders. jsdom's default mock returns matches:false.
+	function setCoarsePointer(coarse: boolean) {
+		Object.defineProperty(window, 'matchMedia', {
+			writable: true,
+			configurable: true,
+			value: (query: string) => ({
+				matches: coarse,
+				media: query,
+				onchange: null,
+				addEventListener: vi.fn(),
+				removeEventListener: vi.fn(),
+				addListener: vi.fn(),
+				removeListener: vi.fn(),
+				dispatchEvent: vi.fn(),
+			}),
+		});
+	}
+
+	afterEach(() => {
+		Object.defineProperty(window, 'matchMedia', {
+			writable: true,
+			configurable: true,
+			value: originalMatchMedia,
+		});
+	});
+
+	it('does not render the key bar on a fine (mouse) pointer', () => {
+		setCoarsePointer(false);
+		const session = makeSession([makeTab()]);
+		render(<TerminalView {...defaultProps} session={session} isVisible={true} />);
+		expect(screen.queryByLabelText('Escape')).toBeNull();
+	});
+
+	it('renders the key bar on a coarse pointer and writes Esc to the active tab PTY', () => {
+		setCoarsePointer(true);
+		maestro().process.write = vi.fn().mockResolvedValue(undefined);
+		const session = makeSession([makeTab({ id: 'tab-1' })]);
+		render(<TerminalView {...defaultProps} session={session} isVisible={true} />);
+
+		const escBtn = screen.getByLabelText('Escape');
+		fireEvent.pointerDown(escBtn);
+
+		expect(maestro().process.write).toHaveBeenCalledWith('session-1-terminal-tab-1', '\x1b');
+	});
+
+	it('routes arrow keys to the active tab PTY as CSI cursor sequences', () => {
+		setCoarsePointer(true);
+		maestro().process.write = vi.fn().mockResolvedValue(undefined);
+		const session = makeSession([makeTab({ id: 'tab-1' })]);
+		render(<TerminalView {...defaultProps} session={session} isVisible={true} />);
+
+		fireEvent.pointerDown(screen.getByLabelText('Up'));
+		expect(maestro().process.write).toHaveBeenCalledWith('session-1-terminal-tab-1', '\x1b[A');
+	});
+
+	it('passes a sticky-Ctrl bridge to the active terminal that arms and disarms', () => {
+		setCoarsePointer(true);
+		const session = makeSession([makeTab({ id: 'tab-1' })]);
+		render(<TerminalView {...defaultProps} session={session} isVisible={true} />);
+
+		// The bridge object is stable across renders; isActive() reads the latest
+		// armed state, so a reference captured now stays valid after re-renders.
+		const bridge = xtermPropsBySessionId.get('session-1-terminal-tab-1')?.stickyCtrl as
+			| { isActive: () => boolean; onConsume: () => void }
+			| undefined;
+		expect(bridge).toBeDefined();
+		expect(bridge?.isActive()).toBe(false);
+
+		// Tap Ctrl to arm.
+		act(() => {
+			fireEvent.pointerDown(screen.getByLabelText('Control'));
+		});
+		expect(bridge?.isActive()).toBe(true);
+
+		// Consuming (as XTerminal does after the next keystroke) disarms.
+		act(() => {
+			bridge?.onConsume();
+		});
+		expect(bridge?.isActive()).toBe(false);
 	});
 });
