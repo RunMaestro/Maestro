@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MainPanelHeader } from '../../../../renderer/components/MainPanel/MainPanelHeader';
+import { useModalStore } from '../../../../renderer/stores/modalStore';
 import type { Session, Theme, AITab } from '../../../../renderer/types';
 
 import { mockTheme } from '../../../helpers/mockTheme';
@@ -12,6 +13,7 @@ vi.mock('../../../../renderer/stores/settingsStore', () => ({
 			shortcuts: {
 				agentSessions: { keys: ['Meta', 'Shift', 'l'] },
 				toggleRightPanel: { keys: ['Meta', 'b'] },
+				quickAction: { keys: ['Meta', 'k'] },
 			},
 			showAgentName: true,
 			showSessionIdPill: true,
@@ -289,6 +291,34 @@ describe('MainPanelHeader', () => {
 			fireEvent.click(screen.getByLabelText('Show agents sidebar'));
 			expect(uiMocks.setLeftSidebarHidden).toHaveBeenCalledWith(false);
 			expect(uiMocks.setLeftSidebarOpen).toHaveBeenCalledWith(true);
+		});
+	});
+
+	describe('Quick Actions opener', () => {
+		it('shows the Quick Actions button on a narrow viewport', () => {
+			setViewportWidth(390);
+			render(<MainPanelHeader {...defaultProps} />);
+			expect(screen.getByLabelText('Quick Actions')).toBeInTheDocument();
+		});
+
+		it('hides the Quick Actions button on a wide viewport (Cmd+K suffices)', () => {
+			setViewportWidth(1280);
+			render(<MainPanelHeader {...defaultProps} />);
+			expect(screen.queryByLabelText('Quick Actions')).not.toBeInTheDocument();
+		});
+
+		it('opens the command palette when the Quick Actions button is clicked', () => {
+			setViewportWidth(390);
+			const openModalSpy = vi
+				.spyOn(useModalStore.getState(), 'openModal')
+				.mockImplementation(() => {});
+			render(<MainPanelHeader {...defaultProps} />);
+			fireEvent.click(screen.getByLabelText('Quick Actions'));
+			expect(openModalSpy).toHaveBeenCalledWith(
+				'quickAction',
+				expect.objectContaining({ initialMode: 'main' })
+			);
+			openModalSpy.mockRestore();
 		});
 	});
 

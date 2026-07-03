@@ -15,6 +15,7 @@ import {
 	Bookmark,
 	Brain,
 	Menu,
+	Command,
 } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { Spinner } from '../ui/Spinner';
@@ -24,6 +25,7 @@ import { GitStatusWidget } from '../GitStatusWidget';
 import { useHoverTooltip } from '../../hooks';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
+import { getModalActions } from '../../stores/modalStore';
 import { useViewportBreakpoint } from '../../hooks/ui/useViewportBreakpoint';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import type { Session, Theme, BatchRunState, AITab } from '../../types';
@@ -104,7 +106,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 	const rightPanelOpen = useUIStore((s) => s.rightPanelOpen);
 	const leftSidebarHidden = useUIStore((s) => s.leftSidebarHidden);
 	const leftSidebarOpen = useUIStore((s) => s.leftSidebarOpen);
-	const { isXs } = useViewportBreakpoint();
+	const { isXs, isNarrow } = useViewportBreakpoint();
 	// On web-desktop phones the collapsed 64px strip is hidden entirely (see
 	// index.css), so the collapsed sidebar has no visible affordance to reopen
 	// it. Surface the inline hamburger in that case too - not just when the
@@ -814,6 +816,20 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 						data-tour="agent-sessions-button"
 					>
 						<List className="w-4 h-4" style={{ color: theme.colors.textDim }} />
+					</button>
+				)}
+
+				{/* Quick Actions / command palette opener. Cmd+K is keyboard-only, so
+				    surface a tap target on narrow (phone / small tablet) viewports where
+				    there is no keyboard. Hidden on wide layouts, where Cmd+K suffices. */}
+				{isNarrow && (
+					<button
+						onClick={() => getModalActions().setQuickActionOpen(true)}
+						className="p-2 rounded hover:bg-white/5"
+						aria-label="Quick Actions"
+						title={`Quick Actions (${formatShortcutKeys(shortcuts.quickAction.keys)})`}
+					>
+						<Command className="w-4 h-4" style={{ color: theme.colors.textDim }} />
 					</button>
 				)}
 
