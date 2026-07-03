@@ -7,7 +7,10 @@
  * 3. Imports the real preload index, which calls contextBridge.exposeInMainWorld
  *    — our electron-shim contextBridge writes that to window.maestro.
  * 4. Dynamically imports the real renderer main entry.
+ * 5. Registers the PWA service worker (reusing src/web/utils/serviceWorker.ts).
  */
+
+import { registerServiceWorker } from '../web/utils/serviceWorker';
 
 declare global {
 	interface Window {
@@ -50,23 +53,32 @@ async function boot(): Promise<void> {
 	await import('../renderer/main');
 }
 
-void boot().catch((err) => {
-	const detail = (err && (err.stack || err.message)) || String(err);
-	// Prefer the shared error surface from index.html (HTML-escaped, styled, and
-	// includes the same-network hint). Fall back to a minimal inline render if
-	// the inline script somehow didn't run.
-	const showBootError = (
-		window as unknown as {
-			__maestroShowBootError?: (title: string, detail: string) => void;
+void boot()
+	.then(() => {
+		// Register the PWA service worker once the app is mounted. The server
+		// injects window.__MAESTRO_CONFIG__ inline before any module runs, so the
+		// security token is already available; registerServiceWorker() reads it to
+		// register /<token>/sw.js at scope /<token>/. It swallows its own failures
+		// (unsupported browser, registration error), so this never affects boot.
+		void registerServiceWorker();
+	})
+	.catch((err) => {
+		const detail = (err && (err.stack || err.message)) || String(err);
+		// Prefer the shared error surface from index.html (HTML-escaped, styled, and
+		// includes the same-network hint). Fall back to a minimal inline render if
+		// the inline script somehow didn't run.
+		const showBootError = (
+			window as unknown as {
+				__maestroShowBootError?: (title: string, detail: string) => void;
+			}
+		).__maestroShowBootError;
+		if (showBootError) {
+			showBootError('Maestro web-desktop failed to load', detail);
+		} else {
+			const root = document.getElementById('root');
+			if (root) {
+				root.textContent = `Maestro web-desktop failed to load: ${detail}`;
+			}
 		}
-	).__maestroShowBootError;
-	if (showBootError) {
-		showBootError('Maestro web-desktop failed to load', detail);
-	} else {
-		const root = document.getElementById('root');
-		if (root) {
-			root.textContent = `Maestro web-desktop failed to load: ${detail}`;
-		}
-	}
-	console.error('[bootstrap] boot failed', err);
-});
+		console.error('[bootstrap] boot failed', err);
+	});
