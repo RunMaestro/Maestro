@@ -9,6 +9,7 @@
  */
 
 import { useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { Copy, Download } from 'lucide-react';
 import type { Theme } from '../types';
 import { useContextMenuPosition } from '../hooks/ui/useContextMenuPosition';
@@ -34,9 +35,14 @@ export function SvgContextMenu({ menu, theme, onDismiss }: SvgContextMenuProps) 
 
 	const { left, top, ready } = useContextMenuPosition(menuRef, menu.x, menu.y);
 
-	// Dismiss on click outside or Escape.
+	// Dismiss on click outside or Escape. The menu is portaled to document.body,
+	// so a click inside it doesn't reach this listener via the React tree - guard
+	// with an explicit contains() check instead of relying on stopPropagation.
 	useEffect(() => {
-		const handleMouseDown = () => onDismissRef.current();
+		const handleMouseDown = (e: MouseEvent) => {
+			if (menuRef.current?.contains(e.target as Node)) return;
+			onDismissRef.current();
+		};
 		const handleKey = (e: KeyboardEvent) => {
 			if (e.key === 'Escape') onDismissRef.current();
 		};
@@ -59,7 +65,7 @@ export function SvgContextMenu({ menu, theme, onDismiss }: SvgContextMenuProps) 
 		onDismiss();
 	}, [menu.svg, onDismiss]);
 
-	return (
+	return createPortal(
 		<div
 			ref={menuRef}
 			className="fixed z-[10000] py-1 rounded-md shadow-xl border whitespace-nowrap"
@@ -89,6 +95,7 @@ export function SvgContextMenu({ menu, theme, onDismiss }: SvgContextMenuProps) 
 				<Download className="w-3.5 h-3.5" />
 				Save Image (SVG)
 			</button>
-		</div>
+		</div>,
+		document.body
 	);
 }
