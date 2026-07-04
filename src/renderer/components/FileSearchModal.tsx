@@ -447,7 +447,7 @@ export function FileSearchModal({
 				aria-modal="true"
 				aria-label="Fuzzy File Search"
 				tabIndex={-1}
-				className="relative rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none"
+				className="relative rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none select-none"
 				style={{
 					...resizableModal.style,
 					backgroundColor: theme.colors.bgActivity,

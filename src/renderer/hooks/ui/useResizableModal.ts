@@ -119,10 +119,11 @@ export function useResizableModal({
 		viewportPadding,
 	]);
 
-	const { debouncedCallback: persistResizedSize } = useDebouncedCallback((...args: unknown[]) => {
-		const [key, next] = args as [ModalResizeKey, ModalSize];
-		setModalSize(key, next);
-	}, RESIZE_PERSIST_DEBOUNCE_MS);
+	const { debouncedCallback: persistResizedSize, cancel: cancelPersistResizedSize } =
+		useDebouncedCallback((...args: unknown[]) => {
+			const [key, next] = args as [ModalResizeKey, ModalSize];
+			setModalSize(key, next);
+		}, RESIZE_PERSIST_DEBOUNCE_MS);
 
 	useEventListener(
 		'resize',
@@ -167,6 +168,10 @@ export function useResizableModal({
 			const commit = () => {
 				setIsResizing(false);
 				setSize(currentSize);
+				// Cancel any pending debounced write from the viewport-resize listener
+				// first, so a stale size it captured earlier can't land after this
+				// manual commit and silently overwrite it.
+				cancelPersistResizedSize();
 				setModalSize(resizeKey, currentSize);
 				document.removeEventListener('mousemove', handleMouseMove);
 				document.removeEventListener('mouseup', handleMouseUp);
@@ -208,7 +213,7 @@ export function useResizableModal({
 			document.addEventListener('mouseup', handleMouseUp);
 			window.addEventListener('blur', handleWindowBlur);
 		},
-		[applySize, clamp, enabled, resizeKey, setModalSize, size]
+		[applySize, cancelPersistResizedSize, clamp, enabled, resizeKey, setModalSize, size]
 	);
 
 	return {

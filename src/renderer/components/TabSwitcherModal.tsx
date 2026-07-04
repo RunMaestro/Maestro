@@ -609,7 +609,7 @@ export function TabSwitcherModal({
 				aria-modal="true"
 				aria-label="Tab Switcher"
 				tabIndex={-1}
-				className="relative rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none"
+				className="relative rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none select-none"
 				style={{
 					...resizableModal.style,
 					backgroundColor: theme.colors.bgActivity,

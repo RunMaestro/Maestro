@@ -346,7 +346,7 @@ export function AgentCreationDialog({
 				aria-modal="true"
 				aria-labelledby="agent-creation-dialog-title"
 				tabIndex={-1}
-				className="relative rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none"
+				className="relative rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none select-none"
 				style={{
 					...resizableModal.style,
 					backgroundColor: theme.colors.bgActivity,
@@ -380,9 +380,12 @@ export function AgentCreationDialog({
 				</div>
 
 				{/* Content - scrollable */}
-				<div className="p-4 space-y-4 overflow-y-auto flex-1">
+				<div className="p-4 space-y-4 overflow-y-auto flex-1 min-h-0">
 					{/* Issue info */}
-					<div className="p-3 rounded-lg" style={{ backgroundColor: theme.colors.bgMain }}>
+					<div
+						className="p-3 rounded-lg select-text"
+						style={{ backgroundColor: theme.colors.bgMain }}
+					>
 						<p className="text-xs mb-1" style={{ color: theme.colors.textDim }}>
 							Contributing to
 						</p>

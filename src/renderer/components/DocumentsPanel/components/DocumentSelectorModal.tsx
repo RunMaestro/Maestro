@@ -76,6 +76,7 @@ export function DocumentSelectorModal({
 				ref={resizableModal.modalRef}
 				role="dialog"
 				aria-modal="true"
+				aria-labelledby="document-selector-title"
 				className="relative z-10 border rounded-lg shadow-2xl overflow-hidden flex flex-col select-none"
 				style={{
 					...resizableModal.style,
@@ -95,7 +96,11 @@ export function DocumentSelectorModal({
 					style={{ borderColor: theme.colors.border }}
 				>
 					<div className="flex items-center gap-2">
-						<h3 className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
+						<h3
+							id="document-selector-title"
+							className="text-sm font-bold"
+							style={{ color: theme.colors.textMain }}
+						>
 							Select Documents
 						</h3>
 						<span

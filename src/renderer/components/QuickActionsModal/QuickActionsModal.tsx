@@ -802,7 +802,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				aria-modal="true"
 				aria-label={mode === 'agents' ? 'Switch Agent' : 'Quick Actions'}
 				tabIndex={-1}
-				className="relative rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none"
+				className="relative rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none select-none"
 				style={{
 					...resizableModal.style,
 					backgroundColor: theme.colors.bgActivity,

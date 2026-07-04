@@ -20,6 +20,19 @@ const HANDLE_STYLES: Record<ModalResizeDirection, string> = {
 
 const DIRECTIONS: ModalResizeDirection[] = ['n', 'ne', 'e', 'se', 's', 'sw', 'w', 'nw'];
 
+// Appending an alpha suffix (e.g. "33") only produces a valid color for a
+// 6-digit hex string. Custom themes can supply accent colors as rgb()/hsl()
+// or other formats (see CustomThemeBuilder's free-text color field), where
+// that suffix would just make the value invalid and get silently dropped.
+const HEX_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
+
+function resolveHandleBackground(accentColor?: string): string {
+	if (accentColor && HEX_COLOR_PATTERN.test(accentColor)) {
+		return `${accentColor}33`;
+	}
+	return 'rgba(255,255,255,0.18)';
+}
+
 export function ResizeHandles({
 	onResizeStart,
 	disabled = false,
@@ -36,7 +49,7 @@ export function ResizeHandles({
 					data-modal-resize-handle={direction}
 					data-testid={`modal-resize-handle-${direction}`}
 					className={`absolute z-20 border-0 bg-transparent p-0 opacity-0 transition-opacity hover:opacity-100 focus:opacity-100 ${HANDLE_STYLES[direction]}`}
-					style={{ backgroundColor: accentColor ? `${accentColor}33` : 'rgba(255,255,255,0.18)' }}
+					style={{ backgroundColor: resolveHandleBackground(accentColor) }}
 					onMouseDown={(event) => onResizeStart(direction, event)}
 				/>
 			))}

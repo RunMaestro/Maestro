@@ -459,7 +459,7 @@ export function AgentSessionsModal({
 				aria-modal="true"
 				aria-label="Agent Sessions"
 				tabIndex={-1}
-				className="relative rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none"
+				className="relative rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none select-none"
 				style={{
 					...resizableModal.style,
 					backgroundColor: theme.colors.bgActivity,
@@ -538,7 +538,7 @@ export function AgentSessionsModal({
 				{viewingSession ? (
 					<div
 						ref={messagesContainerRef}
-						className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin"
+						className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin select-text"
 						onScroll={handleMessagesScroll}
 					>
 						{/* Load more indicator */}

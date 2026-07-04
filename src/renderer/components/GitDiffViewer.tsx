@@ -250,8 +250,7 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 				style={{
 					...resizableModal.style,
 					backgroundColor: theme.colors.bgMain,
-					borderColor: theme.colors.border,
-					border: '1px solid',
+					border: `1px solid ${theme.colors.border}`,
 				}}
 				data-modal-resize-key="git-diff"
 				onClick={(e) => e.stopPropagation()}

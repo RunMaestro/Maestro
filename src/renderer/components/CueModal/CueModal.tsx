@@ -344,7 +344,7 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 								/>
 							</div>
 						) : activeTab === 'activity' ? (
-							<div className="flex-1 min-h-0 px-5 py-4">
+							<div className="flex-1 min-h-0 px-5 py-4 select-text">
 								<ActivityLog
 									log={activityLog}
 									theme={theme}

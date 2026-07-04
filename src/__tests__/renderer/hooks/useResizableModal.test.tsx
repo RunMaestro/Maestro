@@ -158,6 +158,44 @@ describe('useResizableModal', () => {
 		expect(window.maestro.settings.set).toHaveBeenCalledTimes(1);
 	});
 
+	it('a manual drag commit is not later overwritten by a stale pending debounced resize write', async () => {
+		render(<Harness defaultSize={{ width: 700, height: 600 }} />);
+
+		// Schedule a debounced persist from a viewport shrink...
+		setViewport(500, 400);
+		act(() => {
+			window.dispatchEvent(new Event('resize'));
+		});
+
+		// ...then, before that debounce fires, the user manually drags to a
+		// different size and releases - this should commit and persist immediately.
+		// (The viewport-resize handler already clamped the size to the 500x400
+		// viewport's exact max, so shrinking from the "nw" corner is used here to
+		// land on a value distinct from that stale ceiling.)
+		fireEvent.mouseDown(screen.getByTestId('modal-resize-handle-nw'), {
+			clientX: 0,
+			clientY: 0,
+		});
+		fireEvent.mouseMove(document, { clientX: 30, clientY: 20 });
+		fireEvent.mouseUp(document);
+
+		expect(useSettingsStore.getState().modalSizes['test-modal']).toEqual({
+			width: 376,
+			height: 296,
+		});
+
+		// Let the stale debounced viewport-resize write's timer elapse - it must
+		// not land and clobber the manual commit above.
+		await act(async () => {
+			await new Promise((resolve) => setTimeout(resolve, 350));
+		});
+
+		expect(useSettingsStore.getState().modalSizes['test-modal']).toEqual({
+			width: 376,
+			height: 296,
+		});
+	});
+
 	it('cleans up a previous drag before starting a new one if the first never received mouseup', () => {
 		render(<Harness />);
 

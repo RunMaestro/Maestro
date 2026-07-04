@@ -731,7 +731,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 		>
 			<div
 				ref={resizableModal.modalRef}
-				className="relative border rounded-lg shadow-2xl overflow-hidden flex flex-col"
+				className="relative border rounded-lg shadow-2xl overflow-hidden flex flex-col select-none"
 				style={{
 					...resizableModal.style,
 					backgroundColor: theme.colors.bgSidebar,
@@ -1183,7 +1183,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 								</button>
 								{variablesExpanded && (
 									<div
-										className="px-3 pb-3 pt-1 border-t"
+										className="px-3 pb-3 pt-1 border-t select-text"
 										style={{ borderColor: theme.colors.border }}
 									>
 										<p className="text-[10px] mb-2" style={{ color: theme.colors.textDim }}>

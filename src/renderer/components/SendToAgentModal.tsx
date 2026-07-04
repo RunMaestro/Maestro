@@ -417,7 +417,7 @@ export function SendToAgentModal({
 
 			<div
 				ref={resizableModal.modalRef}
-				className="relative rounded-xl shadow-2xl border outline-none flex flex-col animate-slide-up"
+				className="relative rounded-xl shadow-2xl border outline-none flex flex-col animate-slide-up select-none"
 				style={{
 					...resizableModal.style,
 					backgroundColor: theme.colors.bgSidebar,

@@ -300,8 +300,7 @@ export const GitLogViewer = memo(function GitLogViewer({
 				style={{
 					...resizableModal.style,
 					backgroundColor: theme.colors.bgMain,
-					borderColor: theme.colors.border,
-					border: '1px solid',
+					border: `1px solid ${theme.colors.border}`,
 				}}
 				data-modal-resize-key="git-log"
 				onClick={(e) => e.stopPropagation()}

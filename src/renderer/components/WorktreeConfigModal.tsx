@@ -201,7 +201,7 @@ export function WorktreeConfigModal({
 				role="dialog"
 				aria-modal="true"
 				aria-label="Worktree Configuration"
-				className="relative rounded-lg shadow-2xl border flex flex-col overflow-hidden"
+				className="relative rounded-lg shadow-2xl border flex flex-col overflow-hidden select-none"
 				style={{
 					...resizableModal.style,
 					backgroundColor: theme.colors.bgSidebar,

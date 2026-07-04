@@ -143,7 +143,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 				role="dialog"
 				aria-modal="true"
 				aria-label={detailView ? 'Process Details' : 'System Processes'}
-				className="relative rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none"
+				className="relative rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none select-none"
 				style={{
 					...resizableModal.style,
 					backgroundColor: theme.colors.bgActivity,
