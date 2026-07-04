@@ -123,14 +123,14 @@ export function getBrowserUrl(
 	sessionId: string,
 	args: { id: string },
 	registry: CoworkingRegistry = coworkingRegistry
-): { id: string; url: string; title: string } {
+): { id: string; url: string; title: string; isLoading: boolean } {
 	const entry = registry.listBrowsersForSession(sessionId).find((b) => b.id === args.id);
 	if (!entry) {
 		throw new Error(
 			`coworking tools: browser '${args.id}' not found in your session (it may have been closed)`
 		);
 	}
-	return { id: entry.id, url: entry.url, title: entry.title };
+	return { id: entry.id, url: entry.url, title: entry.title, isLoading: entry.isLoading };
 }
 
 /** Read the rendered text (or HTML) of a browser tab in the caller's session,

@@ -146,6 +146,15 @@ class CoworkingRegistry {
 			if (!idMap.has(input.tabUuid)) idMap.set(input.tabUuid, nextId++);
 		}
 		this.nextBrowserId.set(sessionId, nextId);
+		// Retire id mappings for tabs that have since closed (present in idMap but
+		// not in the incoming live set) so browserIdByTabUuid can't grow unbounded
+		// over a long session of open/close churn. nextBrowserId is deliberately
+		// NOT rewound, so a retired id is never reused - an agent's `browser:N`
+		// reference can never silently resolve to a different tab.
+		const liveUuids = new Set(inputs.map((i) => i.tabUuid));
+		for (const uuid of idMap.keys()) {
+			if (!liveUuids.has(uuid)) idMap.delete(uuid);
+		}
 		// Drop existing records for this session that aren't in the incoming set.
 		for (const [key, rec] of this.browserRecords) {
 			if (rec.sessionId === sessionId) this.browserRecords.delete(key);

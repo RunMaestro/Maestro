@@ -257,18 +257,11 @@ export const MainPanel = React.memo(
 			onTerminalTabConfigureStartupCommand,
 		} = props;
 
-		// Coworking browser responder - answers browser-op requests (read now,
-		// interaction in a later phase) by resolving the target tab's live webview
-		// handle. No-ops when the `coworking` Encore flag is off.
-		const selectBrowserTab = useCallback(
-			(_sessionId: string, tabUuid: string) => {
-				// The responder only activates within the focused agent, so the
-				// active-session-scoped onBrowserTabSelect is the correct target.
-				onBrowserTabSelect?.(tabUuid);
-			},
-			[onBrowserTabSelect]
-		);
-		useCoworkingBrowserResponder(browserViewRefs, selectBrowserTab);
+		// Coworking browser responder - answers browser-op requests by resolving
+		// the target tab's live (or kept-alive hidden) webview handle. It never
+		// switches the user's visible tab. No-ops when the `coworking` Encore flag
+		// is off.
+		useCoworkingBrowserResponder(browserViewRefs);
 
 		// Get the active tab for header display
 		// The header should show the active tab's data (UUID, name, cost, context), not session-level data

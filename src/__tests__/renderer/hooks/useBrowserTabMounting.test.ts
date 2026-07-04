@@ -1,7 +1,11 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { renderHook } from '@testing-library/react';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { renderHook, act } from '@testing-library/react';
 import { useBrowserTabMounting } from '../../../renderer/hooks/browser/useBrowserTabMounting';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import {
+	useCoworkingBrowserKeepAliveStore,
+	BROWSER_KEEPALIVE_TTL_MS,
+} from '../../../renderer/stores/coworkingBrowserKeepAliveStore';
 import type { BrowserTab, Session } from '../../../renderer/types';
 
 function makeBrowserTab(id: string): BrowserTab {
@@ -206,5 +210,90 @@ describe('useBrowserTabMounting', () => {
 		});
 		rerender({ s: agent2 });
 		expect(result.current).toEqual(['a2']);
+	});
+});
+
+describe('useBrowserTabMounting keep-alive pins (agent-driven tabs)', () => {
+	const keepAlive = () => useCoworkingBrowserKeepAliveStore.getState();
+
+	beforeEach(() => {
+		// Default policy: only the active tab mounts unless a pin says otherwise.
+		setPolicy('off', 10);
+		// Module-level singleton store: start every case with no pins/timers.
+		keepAlive().clear();
+	});
+
+	afterEach(() => {
+		keepAlive().clear();
+	});
+
+	it("'off' keeps a pinned, backgrounded, live tab mounted and unions it in live-tab order", () => {
+		const session = makeSession({
+			browserTabs: [makeBrowserTab('a'), makeBrowserTab('b')],
+			activeBrowserTabId: 'a',
+		});
+		const { result, rerender } = renderHook(() => useBrowserTabMounting(session));
+		// Under 'off' with no agent pins, only the active browser tab is mounted.
+		expect(result.current).toEqual(['a']);
+
+		// A focused agent pins the backgrounded tab 'b'. It must now stay mounted
+		// alongside the active tab so the agent can keep driving it after the user
+		// clicks away - and it is emitted in live-tab order, not pin order.
+		act(() => {
+			keepAlive().pin('b');
+		});
+		rerender();
+		expect(result.current).toEqual(['a', 'b']);
+
+		// Dropping the pin unmounts 'b' again, back to just the active tab.
+		act(() => {
+			keepAlive().clear();
+		});
+		rerender();
+		expect(result.current).toEqual(['a']);
+	});
+
+	it('unions pins in live-tab order even when the pinned tab precedes the active tab', () => {
+		// active = 'b' (second), pinned = 'a' (first). Result must follow live-tab
+		// order [a, b], never active-first or pin-first ordering.
+		const session = makeSession({
+			browserTabs: [makeBrowserTab('a'), makeBrowserTab('b')],
+			activeBrowserTabId: 'b',
+		});
+		const { result, rerender } = renderHook(() => useBrowserTabMounting(session));
+		expect(result.current).toEqual(['b']);
+		act(() => {
+			keepAlive().pin('a');
+		});
+		rerender();
+		expect(result.current).toEqual(['a', 'b']);
+	});
+
+	it('drops a pinned tab from the mounted set once its keep-alive TTL lapses', () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(0);
+		try {
+			const session = makeSession({
+				browserTabs: [makeBrowserTab('a'), makeBrowserTab('b')],
+				activeBrowserTabId: 'a',
+			});
+			const { result } = renderHook(() => useBrowserTabMounting(session));
+			expect(result.current).toEqual(['a']);
+
+			act(() => {
+				keepAlive().pin('b');
+			});
+			expect(result.current).toEqual(['a', 'b']);
+
+			// Idle past the TTL: the store's prune timer fires, drops the pin, and
+			// the subscribing hook re-renders with 'b' unmounted (no manual clear).
+			act(() => {
+				vi.advanceTimersByTime(BROWSER_KEEPALIVE_TTL_MS + 100);
+			});
+			expect(result.current).toEqual(['a']);
+		} finally {
+			keepAlive().clear();
+			vi.useRealTimers();
+		}
 	});
 });

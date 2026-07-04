@@ -74,3 +74,49 @@ describe('coworkingBackgroundBrowserStore', () => {
 		expect(store().handles.size).toBe(0);
 	});
 });
+
+describe('coworkingBackgroundBrowserStore pruneMounts (closed-tab cleanup)', () => {
+	// Singleton: clear() also drops the module-level in-flight guard so a
+	// markOpStart from one test can't leak into the next or a later file.
+	beforeEach(() => {
+		store().clear();
+	});
+	afterEach(() => {
+		store().clear();
+	});
+
+	it('drops mounts + handles for closed tabs while keeping live ones', () => {
+		store().requestMount('s1', 'A', 5);
+		store().requestMount('s1', 'B', 5);
+		store().setHandle(key('s1', 'A'), fakeHandle('A'));
+		store().setHandle(key('s1', 'B'), fakeHandle('B'));
+		expect([...store().mounts.map((m) => m.key)].sort()).toEqual(
+			[key('s1', 'A'), key('s1', 'B')].sort()
+		);
+
+		// Only A is still a live tab; B was closed.
+		store().pruneMounts((_sid, uuid) => uuid === 'A');
+
+		expect(store().mounts.map((m) => m.key)).toEqual([key('s1', 'A')]);
+		expect(store().handles.has(key('s1', 'A'))).toBe(true);
+		expect(store().handles.has(key('s1', 'B'))).toBe(false);
+	});
+
+	it('never prunes a mount with an op in flight, then reclaims it once it ends', () => {
+		store().requestMount('s1', 'B', 5);
+		store().setHandle(key('s1', 'B'), fakeHandle('B'));
+		store().markOpStart(key('s1', 'B'));
+
+		// Nothing is live, but B has an op in flight: it MUST be kept, otherwise
+		// unmounting its webview mid-op would make the op spuriously fail.
+		store().pruneMounts(() => false);
+		expect(store().mounts.map((m) => m.key)).toEqual([key('s1', 'B')]);
+		expect(store().handles.has(key('s1', 'B'))).toBe(true);
+
+		// Once the op ends, the same prune reclaims the now-dead mount + handle.
+		store().markOpEnd(key('s1', 'B'));
+		store().pruneMounts(() => false);
+		expect(store().mounts).toHaveLength(0);
+		expect(store().handles.has(key('s1', 'B'))).toBe(false);
+	});
+});

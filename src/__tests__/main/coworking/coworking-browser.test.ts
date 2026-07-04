@@ -24,6 +24,21 @@ function hidden(tabUuid: string, url?: string, title?: string): CoworkingBrowser
 	return input(tabUuid, url, title, { hiddenFromAgent: true });
 }
 
+/** Reads the registry's PRIVATE `browserIdByTabUuid` map. The tab-close prune
+ *  has NO public-API-observable effect (ids stay monotonic whether or not a
+ *  retired uuid is deleted), so the memory-leak fix can only be guarded by
+ *  inspecting this private field directly. */
+type RegistryInternals = { browserIdByTabUuid: Map<string, Map<string, number>> };
+function browserIdMap(
+	registry: CoworkingRegistry,
+	sessionId: string
+): Map<string, number> | undefined {
+	// Unchecked cast to reach a private field: intentional white-box access for a
+	// leak guard with no public surface. Named, not inlined into the member access.
+	const internals = registry as unknown as RegistryInternals;
+	return internals.browserIdByTabUuid.get(sessionId);
+}
+
 describe('CoworkingRegistry browser methods', () => {
 	let registry: CoworkingRegistry;
 	beforeEach(() => {
@@ -162,11 +177,43 @@ describe('coworking browser tools', () => {
 		expect(listBrowsers('s2', registry).browsers).toEqual([]);
 	});
 
-	it('getBrowserUrl returns id/url/title for a known tab and throws for unknown', () => {
+	it('getBrowserUrl returns id/url/title/isLoading and throws for unknown', () => {
+		// isLoading reflects the registry entry's value: false here (from beforeEach).
 		expect(getBrowserUrl('s1', { id: 'browser:1' }, registry)).toEqual({
 			id: 'browser:1',
 			url: 'https://example.com',
 			title: 'Example',
+			isLoading: false,
+		});
+		// ...and true for a tab the registry reports as still loading. Re-sync s1
+		// with a second, mid-load tab (u-a keeps browser:1; u-loading is browser:2).
+		registry.syncSessionBrowsers(
+			's1',
+			[
+				{
+					tabUuid: 'u-a',
+					url: 'https://example.com',
+					title: 'Example',
+					canGoBack: true,
+					canGoForward: false,
+					isLoading: false,
+				},
+				{
+					tabUuid: 'u-loading',
+					url: 'https://loading.example',
+					title: 'Loading',
+					canGoBack: false,
+					canGoForward: false,
+					isLoading: true,
+				},
+			],
+			false
+		);
+		expect(getBrowserUrl('s1', { id: 'browser:2' }, registry)).toEqual({
+			id: 'browser:2',
+			url: 'https://loading.example',
+			title: 'Loading',
+			isLoading: true,
 		});
 		expect(() => getBrowserUrl('s1', { id: 'browser:9' }, registry)).toThrow();
 	});
@@ -349,5 +396,55 @@ describe('coworking browser tools', () => {
 				{ registry, resolver: async (): Promise<BrowserOpResult> => ({ ok: true }) }
 			)
 		).rejects.toThrow();
+	});
+});
+
+describe('CoworkingRegistry browser id-map retirement (leak regression)', () => {
+	let registry: CoworkingRegistry;
+	beforeEach(() => {
+		registry = new CoworkingRegistry();
+	});
+
+	it('tracks every live tab uuid in the private id map on first sync', () => {
+		registry.syncSessionBrowsers('s', [input('tab-A'), input('tab-B')], true);
+		expect(registry.listBrowsersForSession('s').map((b) => b.id)).toEqual([
+			'browser:1',
+			'browser:2',
+		]);
+		const map = browserIdMap(registry, 's');
+		expect(map?.get('tab-A')).toBe(1);
+		expect(map?.get('tab-B')).toBe(2);
+	});
+
+	it("retires a closed tab's id-map entry so the map cannot grow unbounded", () => {
+		registry.syncSessionBrowsers('s', [input('tab-A'), input('tab-B')], true);
+		// tab-B closed: absent from the next sync.
+		registry.syncSessionBrowsers('s', [input('tab-A')], true);
+
+		expect(registry.listBrowsersForSession('s').map((b) => b.id)).toEqual(['browser:1']);
+		expect(registry.resolveBrowserTabUuidForSession('s', 'browser:2')).toBeNull();
+		// The leak guard proper: the private id-map no longer holds tab-B's uuid.
+		// Public id resolution stays monotonic with or without the prune, so only
+		// this assertion reddens if the prune loop regresses.
+		const map = browserIdMap(registry, 's');
+		expect(map?.has('tab-B')).toBe(false);
+		expect(map?.has('tab-A')).toBe(true);
+	});
+
+	it('never reuses a retired id and keeps live ids stable when a new tab opens', () => {
+		registry.syncSessionBrowsers('s', [input('tab-A'), input('tab-B')], true);
+		registry.syncSessionBrowsers('s', [input('tab-A')], true); // tab-B closed
+		// tab-C opens after tab-B's id was retired.
+		registry.syncSessionBrowsers('s', [input('tab-A'), input('tab-C')], true);
+
+		// tab-C gets a FRESH id (browser:3); browser:2 is never handed out again.
+		expect(registry.resolveBrowserTabUuidForSession('s', 'browser:3')).toBe('tab-C');
+		expect(registry.resolveBrowserTabUuidForSession('s', 'browser:2')).toBeNull();
+		// tab-A's id is stable across all three syncs.
+		expect(registry.resolveBrowserTabUuidForSession('s', 'browser:1')).toBe('tab-A');
+		expect(registry.listBrowsersForSession('s').map((b) => b.id)).toEqual([
+			'browser:1',
+			'browser:3',
+		]);
 	});
 });

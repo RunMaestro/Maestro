@@ -32,6 +32,7 @@ import {
 	useCoworkingBackgroundBrowserStore,
 	backgroundBrowserKey,
 } from '../../stores/coworkingBackgroundBrowserStore';
+import { useCoworkingBrowserKeepAliveStore } from '../../stores/coworkingBrowserKeepAliveStore';
 import { createBrowserTab } from '../tabs/internal/browserTabHelpers';
 import { closeBrowserTab } from '../../utils/tabHelpers';
 import { insertAfterActiveInUnifiedTabOrder } from '../../utils/unifiedTabOrderUtils';
@@ -46,6 +47,20 @@ function delay(ms: number): Promise<void> {
 	const { promise, resolve } = Promise.withResolvers<void>();
 	setTimeout(resolve, ms);
 	return promise;
+}
+
+/** Poll `browserViewRefs` for a mounted tab's live handle (up to ~2s). Returns
+ *  the handle once its BrowserTabView has mounted and registered, else undefined. */
+async function pollForHandle(
+	browserViewRefs: MutableRefObject<Map<string, BrowserTabViewHandle>>,
+	tabUuid: string
+): Promise<BrowserTabViewHandle | undefined> {
+	for (let i = 0; i < 40; i++) {
+		await delay(50);
+		const candidate = browserViewRefs.current.get(tabUuid);
+		if (candidate && candidate.getTabId() === tabUuid) return candidate;
+	}
+	return undefined;
 }
 
 /** Decides whether a browser op needs per-call approval and, if so, prompts the
@@ -153,21 +168,26 @@ function createTabForSession(
 		prev.map((s) => {
 			if (s.id !== sessionId) return s;
 			sessionFound = true;
-			// Match the normal new-browser-tab path (openInMaestroBrowser): clear the
-			// competing active-tab fields and switch to AI input mode so the tab strip
-			// never shows two active tabs or hides the new browser tab under terminal
-			// mode.
-			return {
+			const base = {
 				...s,
 				browserTabs: [...(s.browserTabs || []), created],
-				activeFileTabId: null,
-				activeBrowserTabId: created.id,
-				activeTerminalTabId: null,
-				inputMode: 'ai' as const,
 				unifiedTabOrder: insertAfterActiveInUnifiedTabOrder(s, {
 					type: 'browser',
 					id: created.id,
 				}),
+			};
+			// Only bring the new tab into view if the user is ALREADY on a browser
+			// tab in this session (opening another browser tab is then a natural
+			// continuation). Otherwise leave their surface untouched so an agent
+			// opening a tab never hijacks their chat/terminal/file view - it still
+			// appears in the tab strip and the agent drives it hidden via the pin.
+			if (!(s.inputMode === 'ai' && s.activeBrowserTabId)) return base;
+			return {
+				...base,
+				activeFileTabId: null,
+				activeBrowserTabId: created.id,
+				activeTerminalTabId: null,
+				inputMode: 'ai' as const,
 			};
 		})
 	);
@@ -177,6 +197,10 @@ function createTabForSession(
 			content: 'Session no longer exists; the tab could not be created.',
 		};
 	}
+	// Pin the freshly-opened tab so it stays mounted from creation - the agent
+	// usually navigates/reads it next, and it must not unmount the instant the
+	// user clicks away before that first follow-up op.
+	useCoworkingBrowserKeepAliveStore.getState().pin(created.id);
 	return {
 		ok: true,
 		url: created.url,
@@ -276,15 +300,15 @@ export async function applyBrowserOp(
 		}
 		case 'screenshot': {
 			const dataUrl = await handle.capturePage();
-			// capturePage on a hidden/off-screen webview returns nothing (Electron
-			// captures the visible compositor surface). Surface that clearly rather
-			// than handing the agent an empty image.
+			// handle.capturePage() force-paints a backgrounded (visibility:hidden) tab
+			// behind an opaque cover so a hidden tab still captures. A short/empty
+			// result means even that failed (the guest never produced a frame) -
+			// surface it clearly rather than handing the agent an empty image.
 			if (!dataUrl || dataUrl.length < 64) {
 				return {
 					ok: false,
 					content:
-						'Screenshot unavailable: this browser tab is not visible (background tabs capture nothing). ' +
-						'Focus this agent to screenshot its browser tab.',
+						'Screenshot failed: the page did not produce a frame in time. Try again in a moment.',
 				};
 			}
 			return { ok: true, dataUrl, content: 'captured screenshot' };
@@ -327,7 +351,6 @@ export async function applyBrowserOp(
 
 export async function resolveAndRun(
 	browserViewRefs: MutableRefObject<Map<string, BrowserTabViewHandle>>,
-	selectBrowserTab: (sessionId: string, tabUuid: string) => void,
 	tabUuid: string,
 	sessionId: string,
 	op: BrowserOp,
@@ -387,66 +410,25 @@ export async function resolveAndRun(
 		return closeTabForSession(sessionId, tabUuid);
 	}
 
-	// Focused agent: operate on the live (visible or kept-alive hidden) webview.
+	// Focused agent: operate on the live (visible or kept-alive hidden) webview
+	// WITHOUT ever switching the user's visible tab - forcing the view to the
+	// agent's tab is jarring. The keep-alive pin mounts the tab hidden on demand,
+	// so we can always reach a handle without changing what the user sees.
 	if (isFocused) {
-		// Fast path: the tab is already mounted - use its handle directly so we
-		// never steal focus.
-		const mounted = browserViewRefs.current.get(tabUuid);
-		if (mounted && mounted.getTabId() === tabUuid) {
-			return applyBrowserOp(mounted, op);
+		useCoworkingBrowserKeepAliveStore.getState().pin(tabUuid);
+		let handle = browserViewRefs.current.get(tabUuid);
+		if (!handle || handle.getTabId() !== tabUuid) {
+			// The pin above adds the tab to the mounted set; wait for it to mount
+			// (hidden) and register its handle. We never activate it.
+			handle = await pollForHandle(browserViewRefs, tabUuid);
 		}
-
-		// Fallback: activate the tab so it mounts, run the op, then restore the
-		// full prior focus surface. The focus guard guarantees the tab belongs to
-		// the focused agent, so activating within that agent is correct.
-		//
-		// Capture ALL competing active fields, not just the browser id: when the
-		// user was on an AI/file/terminal tab, activeBrowserTabId is null, so
-		// restoring only that would strand them on the browser tab we mounted for
-		// the read. selectBrowserTab clears activeFileTabId/activeTerminalTabId and
-		// flips inputMode to 'ai', so we snapshot and restore every one of them.
-		const prevSurface = {
-			activeFileTabId: active.activeFileTabId,
-			activeTerminalTabId: active.activeTerminalTabId,
-			activeBrowserTabId: active.activeBrowserTabId,
-			inputMode: active.inputMode,
+		if (handle) {
+			return applyBrowserOp(handle, op);
+		}
+		return {
+			ok: false,
+			content: 'Browser tab could not be reached (it may have been closed).',
 		};
-		selectBrowserTab(sessionId, tabUuid);
-		let handle: BrowserTabViewHandle | undefined;
-		for (let i = 0; i < 40; i++) {
-			await delay(50);
-			const candidate = browserViewRefs.current.get(tabUuid);
-			if (candidate && candidate.getTabId() === tabUuid) {
-				handle = candidate;
-				break;
-			}
-		}
-		try {
-			if (!handle) {
-				return {
-					ok: false,
-					content: 'Browser tab could not be mounted (it may have been closed).',
-				};
-			}
-			return await applyBrowserOp(handle, op);
-		} finally {
-			// Restore the full prior surface (not just the browser id) so a read
-			// that mounted this tab never leaves the user switched away from their
-			// AI/file/terminal tab.
-			const { setSessions } = useSessionStore.getState();
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== sessionId) return s;
-					return {
-						...s,
-						activeFileTabId: prevSurface.activeFileTabId,
-						activeTerminalTabId: prevSurface.activeTerminalTabId,
-						activeBrowserTabId: prevSurface.activeBrowserTabId,
-						inputMode: prevSurface.inputMode,
-					};
-				})
-			);
-		}
 	}
 
 	// Cross-session: the requesting agent is not focused, so there is no live
@@ -502,8 +484,7 @@ async function defaultResolveBackgroundHandle(
 }
 
 export function useCoworkingBrowserResponder(
-	browserViewRefs: MutableRefObject<Map<string, BrowserTabViewHandle>>,
-	selectBrowserTab: (sessionId: string, tabUuid: string) => void
+	browserViewRefs: MutableRefObject<Map<string, BrowserTabViewHandle>>
 ): void {
 	useEffect(() => {
 		const bridge = window.maestro?.coworking;
@@ -515,7 +496,6 @@ export function useCoworkingBrowserResponder(
 					try {
 						result = await resolveAndRun(
 							browserViewRefs,
-							selectBrowserTab,
 							tabUuid,
 							sessionId,
 							op,
@@ -536,5 +516,5 @@ export function useCoworkingBrowserResponder(
 			}
 		);
 		return off;
-	}, [browserViewRefs, selectBrowserTab]);
+	}, [browserViewRefs]);
 }

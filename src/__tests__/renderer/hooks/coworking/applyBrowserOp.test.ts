@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
 	applyBrowserOp,
 	resolveAndRun,
@@ -8,6 +8,10 @@ import type { BrowserTabViewHandle } from '../../../../renderer/components/MainP
 import { selectActiveSession, useSessionStore } from '../../../../renderer/stores/sessionStore';
 import type { SessionStore } from '../../../../renderer/stores/sessionStore';
 import type { BrowserTab, Session } from '../../../../renderer/types';
+import {
+	useCoworkingBrowserKeepAliveStore,
+	activePinnedTabIds,
+} from '../../../../renderer/stores/coworkingBrowserKeepAliveStore';
 
 vi.mock('../../../../renderer/stores/sessionStore', () => ({
 	useSessionStore: { getState: vi.fn(() => ({})) },
@@ -144,11 +148,14 @@ describe('applyBrowserOp', () => {
 		expect(res.dataUrl).toBe(pngUrl);
 	});
 
-	it('screenshot returns ok:false when the capture is blank (hidden webview)', async () => {
+	it('screenshot returns ok:false when the capture produced no frame', async () => {
+		// capturePage() now force-paints even a hidden/backgrounded tab, so a
+		// blank/too-short result means the guest genuinely produced no frame - not
+		// that the tab was hidden. The host still refuses to hand back an empty image.
 		const capturePage = vi.fn(async () => '');
 		const res = await applyBrowserOp(makeHandle({ capturePage }), { kind: 'screenshot' });
 		expect(res.ok).toBe(false);
-		expect(String(res.content)).toMatch(/not visible|unavailable/i);
+		expect(String(res.content)).toMatch(/did not produce a frame/i);
 	});
 
 	it('waitFor returns ok when the selector appears on the first probe', async () => {
@@ -226,16 +233,23 @@ describe('applyBrowserOp', () => {
 });
 
 describe('resolveAndRun', () => {
-	beforeEach(() => vi.clearAllMocks());
-
 	const allow: BrowserApprovalRequester = async () => true;
 
-	it('returns ok:false when the requesting session is not the focused agent', async () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		// Focused ops now pin into the module-singleton keep-alive store; start
+		// clean and cancel the real 120s prune timer between tests.
+		useCoworkingBrowserKeepAliveStore.getState().clear();
+	});
+
+	afterEach(() => {
+		useCoworkingBrowserKeepAliveStore.getState().clear();
+	});
+
+	it('returns ok:false when a non-focused agent has no background host', async () => {
 		vi.mocked(selectActiveSession).mockReturnValue(fakeActive('other', null));
-		const selectBrowserTab = vi.fn();
 		const res = await resolveAndRun(
 			{ current: new Map() },
-			selectBrowserTab,
 			'u-1',
 			'sess-A',
 			{ kind: 'read', format: 'text' },
@@ -243,56 +257,39 @@ describe('resolveAndRun', () => {
 		);
 		expect(res.ok).toBe(false);
 		expect(String(res.content)).toMatch(/not live/i);
-		expect(selectBrowserTab).not.toHaveBeenCalled();
 	});
 
-	it('uses an already-mounted handle without stealing focus (fast path)', async () => {
+	it('uses an already-mounted handle for a focused op', async () => {
 		vi.mocked(selectActiveSession).mockReturnValue(fakeActive('sess-A', 'u-1'));
 		const handle = makeHandle({
 			getTabId: () => 'u-1',
 			extract: vi.fn(async () => 'TXT'),
 			getMeta: () => ({ url: 'https://x', title: 'X' }),
 		});
-		const selectBrowserTab = vi.fn();
 		const res = await resolveAndRun(
 			{ current: new Map([['u-1', handle]]) },
-			selectBrowserTab,
 			'u-1',
 			'sess-A',
 			{ kind: 'read', format: 'text' },
 			allow
 		);
 		expect(res).toEqual({ ok: true, content: 'TXT', url: 'https://x', title: 'X' });
-		expect(selectBrowserTab).not.toHaveBeenCalled();
 	});
 
-	it('activates an unmounted tab, runs the op, then restores the full prior surface', async () => {
-		// The user was on a TERMINAL tab (activeBrowserTabId null). Mounting the
-		// browser tab for the op flips inputMode to 'ai' and clears the terminal
-		// selection; the finally block must replay the FULL captured surface, not
-		// just re-select a browser tab.
-		const prior = {
-			id: 'sess-A',
-			toolType: 'claude-code',
-			activeBrowserTabId: null,
-			activeFileTabId: null,
-			activeTerminalTabId: 'term-9',
-			inputMode: 'terminal',
-			browserTabs: [{ id: 'u-2' }],
-		} as unknown as Session;
-		vi.mocked(selectActiveSession).mockReturnValue(prior);
+	it('runs on the pin-driven hidden mount without switching the user surface', async () => {
+		// The user is on a terminal tab (activeBrowserTabId null). The op must drive
+		// the browser tab through the keep-alive pin's hidden mount and NEVER switch
+		// the visible surface: the activate/prevSurface-restore path is gone, so
+		// setSessions must not be touched at all.
+		vi.mocked(selectActiveSession).mockReturnValue(fakeActive('sess-A', null, [{ id: 'u-2' }]));
 		const setSessions = vi.fn();
-		vi.mocked(useSessionStore.getState).mockReturnValue({ setSessions } as unknown as SessionStore);
+		vi.mocked(useSessionStore.getState).mockReturnValue({
+			setSessions,
+		} as unknown as SessionStore);
 		const reload = vi.fn();
 		const handle = makeHandle({ getTabId: () => 'u-2', reload });
-		const map = new Map<string, BrowserTabViewHandle>();
-		// Activating the tab simulates it mounting by populating the ref map.
-		const selectBrowserTab = vi.fn((_sessionId: string, tabUuid: string) => {
-			if (tabUuid === 'u-2') map.set('u-2', handle);
-		});
 		const res = await resolveAndRun(
-			{ current: map },
-			selectBrowserTab,
+			{ current: new Map([['u-2', handle]]) },
 			'u-2',
 			'sess-A',
 			{ kind: 'reload' },
@@ -300,67 +297,52 @@ describe('resolveAndRun', () => {
 		);
 		expect(res.ok).toBe(true);
 		expect(reload).toHaveBeenCalled();
-		// The tab is mounted exactly once; restore no longer goes through a second
-		// selectBrowserTab call (that would only restore the browser id).
-		expect(selectBrowserTab).toHaveBeenCalledTimes(1);
-		expect(selectBrowserTab).toHaveBeenCalledWith('sess-A', 'u-2');
-		// Restore replays every competing active field through setSessions.
-		expect(setSessions).toHaveBeenCalledTimes(1);
-		const restore = setSessions.mock.calls[0][0] as (prev: Session[]) => Session[];
-		// Feed it the "mounted" surface selectBrowserTab produced and confirm the
-		// requesting session is returned to its terminal surface while other
-		// sessions are left byte-identical.
-		const otherSession = { id: 'other', activeBrowserTabId: 'keep' } as unknown as Session;
-		const mounted = [
-			{
-				id: 'sess-A',
-				activeBrowserTabId: 'u-2',
-				activeFileTabId: null,
-				activeTerminalTabId: null,
-				inputMode: 'ai',
-			} as unknown as Session,
-			otherSession,
-		];
-		const restored = restore(mounted);
-		expect(restored[0]).toMatchObject({
-			id: 'sess-A',
-			activeBrowserTabId: null,
-			activeFileTabId: null,
-			activeTerminalTabId: 'term-9',
-			inputMode: 'terminal',
-		});
-		expect(restored[1]).toBe(otherSession);
+		// The tab was pinned for keep-alive so it stays mounted (hidden)...
+		expect(activePinnedTabIds(useCoworkingBrowserKeepAliveStore.getState().pins)).toContain('u-2');
+		// ...and the user's visible surface was never switched.
+		expect(setSessions).not.toHaveBeenCalled();
 	});
 
-	it('returns ok:false when the tab cannot be mounted', async () => {
-		vi.mocked(selectActiveSession).mockReturnValue(fakeActive('sess-A', null));
+	it('returns ok:false when the pinned tab never mounts a handle', async () => {
+		vi.mocked(selectActiveSession).mockReturnValue(fakeActive('sess-A', null, [{ id: 'u-3' }]));
 		const setSessions = vi.fn();
-		vi.mocked(useSessionStore.getState).mockReturnValue({ setSessions } as unknown as SessionStore);
-		const selectBrowserTab = vi.fn();
+		vi.mocked(useSessionStore.getState).mockReturnValue({
+			setSessions,
+		} as unknown as SessionStore);
 		const res = await resolveAndRun(
 			{ current: new Map() },
-			selectBrowserTab,
 			'u-3',
 			'sess-A',
 			{ kind: 'read', format: 'text' },
 			allow
 		);
 		expect(res.ok).toBe(false);
-		expect(String(res.content)).toMatch(/could not be mounted/i);
-		// The finally block restores the prior surface even when the mount failed,
-		// so a failed read never strands the user on a half-mounted browser tab.
-		expect(setSessions).toHaveBeenCalledTimes(1);
+		expect(String(res.content)).toMatch(/could not be reached/i);
+		// No activate/restore surface-switch on the unreachable path.
+		expect(setSessions).not.toHaveBeenCalled();
+	});
+
+	it('does not request approval for read ops', async () => {
+		vi.mocked(selectActiveSession).mockReturnValue(fakeActive('sess-A', 'u-1'));
+		const handle = makeHandle({ getTabId: () => 'u-1', extract: vi.fn(async () => 'TXT') });
+		const requestApproval = vi.fn(async () => true);
+		await resolveAndRun(
+			{ current: new Map([['u-1', handle]]) },
+			'u-1',
+			'sess-A',
+			{ kind: 'read', format: 'text' },
+			requestApproval
+		);
+		expect(requestApproval).not.toHaveBeenCalled();
 	});
 
 	it('declines an interaction op when approval is denied and never touches the handle', async () => {
 		vi.mocked(selectActiveSession).mockReturnValue(fakeActive('sess-A', 'u-9'));
 		const reload = vi.fn();
 		const handle = makeHandle({ getTabId: () => 'u-9', reload });
-		const selectBrowserTab = vi.fn();
 		const deny: BrowserApprovalRequester = async () => false;
 		const res = await resolveAndRun(
 			{ current: new Map([['u-9', handle]]) },
-			selectBrowserTab,
 			'u-9',
 			'sess-A',
 			{ kind: 'reload' },
@@ -371,29 +353,12 @@ describe('resolveAndRun', () => {
 		expect(reload).not.toHaveBeenCalled();
 	});
 
-	it('does not request approval for read ops', async () => {
-		vi.mocked(selectActiveSession).mockReturnValue(fakeActive('sess-A', 'u-1'));
-		const handle = makeHandle({ getTabId: () => 'u-1', extract: vi.fn(async () => 'TXT') });
-		const requestApproval = vi.fn(async () => true);
-		await resolveAndRun(
-			{ current: new Map([['u-1', handle]]) },
-			vi.fn(),
-			'u-1',
-			'sess-A',
-			{ kind: 'read', format: 'text' },
-			requestApproval
-		);
-		expect(requestApproval).not.toHaveBeenCalled();
-	});
-
 	it('reads a non-focused tab via the background host when provided', async () => {
 		vi.mocked(selectActiveSession).mockReturnValue(fakeActive('other', null));
 		const handle = makeHandle({ getTabId: () => 'u-1', extract: vi.fn(async () => 'BG') });
 		const resolveBackground = vi.fn(async () => handle);
-		const selectBrowserTab = vi.fn();
 		const res = await resolveAndRun(
 			{ current: new Map() },
-			selectBrowserTab,
 			'u-1',
 			'sess-A',
 			{ kind: 'read', format: 'text' },
@@ -402,7 +367,6 @@ describe('resolveAndRun', () => {
 		);
 		expect(res).toEqual({ ok: true, content: 'BG', url: 'https://e', title: 'E' });
 		expect(resolveBackground).toHaveBeenCalledWith('sess-A', 'u-1');
-		expect(selectBrowserTab).not.toHaveBeenCalled();
 	});
 
 	it('drives a non-focused tab via the background host (interaction)', async () => {
@@ -412,7 +376,6 @@ describe('resolveAndRun', () => {
 		const resolveBackground = vi.fn(async () => handle);
 		const res = await resolveAndRun(
 			{ current: new Map() },
-			vi.fn(),
 			'u-1',
 			'sess-A',
 			{ kind: 'reload' },
@@ -428,7 +391,6 @@ describe('resolveAndRun', () => {
 		const resolveBackground = vi.fn(async () => null);
 		const res = await resolveAndRun(
 			{ current: new Map() },
-			vi.fn(),
 			'u-1',
 			'sess-A',
 			{ kind: 'read', format: 'text' },
@@ -449,7 +411,6 @@ describe('resolveAndRun', () => {
 		const requestApproval = vi.fn(async () => true);
 		const res = await resolveAndRun(
 			{ current: new Map([['u-1', handle]]) },
-			vi.fn(),
 			'u-1',
 			'sess-A',
 			{ kind: 'reload' },
@@ -465,7 +426,6 @@ describe('resolveAndRun', () => {
 		vi.mocked(selectActiveSession).mockReturnValue(fakeActive('sess-A', null, [{ id: 'u-1' }]));
 		const res = await resolveAndRun(
 			{ current: new Map() },
-			vi.fn(),
 			'u-gone',
 			'sess-A',
 			{ kind: 'read', format: 'text' },
@@ -482,7 +442,6 @@ describe('resolveAndRun', () => {
 		const requestApproval = vi.fn(async () => true);
 		const res = await resolveAndRun(
 			{ current: new Map([['u-1', handle]]) },
-			vi.fn(),
 			'u-1',
 			'sess-A',
 			{ kind: 'reload' },
@@ -503,7 +462,6 @@ describe('resolveAndRun', () => {
 		const requestApproval = vi.fn(async () => true);
 		await resolveAndRun(
 			{ current: new Map([['u-1', handle]]) },
-			vi.fn(),
 			'u-1',
 			'sess-A',
 			{ kind: 'reload' },
@@ -517,9 +475,18 @@ describe('resolveAndRun', () => {
 });
 
 describe('resolveAndRun session-scoped ops (newTab / closeTab)', () => {
-	beforeEach(() => vi.clearAllMocks());
-
 	const allow: BrowserApprovalRequester = async () => true;
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		// createTabForSession pins the new tab; keep the singleton clean + cancel
+		// its 120s prune timer between tests.
+		useCoworkingBrowserKeepAliveStore.getState().clear();
+	});
+
+	afterEach(() => {
+		useCoworkingBrowserKeepAliveStore.getState().clear();
+	});
 
 	/** Minimal structural stand-in for the Session slices these ops touch. */
 	interface StoreSession {
@@ -527,6 +494,7 @@ describe('resolveAndRun session-scoped ops (newTab / closeTab)', () => {
 		browserTabs: Array<Partial<BrowserTab>>;
 		unifiedTabOrder: Array<{ type: string; id: string }>;
 		activeBrowserTabId?: string | null;
+		inputMode?: string;
 		aiTabs?: unknown[];
 		filePreviewTabs?: unknown[];
 		terminalTabs?: unknown[];
@@ -536,20 +504,18 @@ describe('resolveAndRun session-scoped ops (newTab / closeTab)', () => {
 	 *  tests can observe what the op actually did to the requesting session. */
 	function wireStore(sessions: StoreSession[]) {
 		const setSessions = vi.fn((updater: (prev: Session[]) => Session[]) => {
-			// StoreSession is a structural stand-in for Session; the updaters under
-			// test only touch the fields it carries.
 			const prev = sessions as unknown as Session[];
 			const next = updater(prev) as unknown as StoreSession[];
 			sessions.length = 0;
 			sessions.push(...next);
 		});
-		// Only setSessions is consumed from getState() on these paths.
-		const storeState = { setSessions } as unknown as SessionStore;
-		vi.mocked(useSessionStore.getState).mockReturnValue(storeState);
+		vi.mocked(useSessionStore.getState).mockReturnValue({
+			setSessions,
+		} as unknown as SessionStore);
 		return setSessions;
 	}
 
-	it('newTab creates a tab in the requesting (non-focused) session without any webview', async () => {
+	it('newTab creates a tab in the requesting session without any webview or surface hijack', async () => {
 		vi.mocked(selectActiveSession).mockReturnValue(fakeActive('other', null));
 		const sessions: StoreSession[] = [
 			{ id: 'other', browserTabs: [], unifiedTabOrder: [] },
@@ -558,10 +524,8 @@ describe('resolveAndRun session-scoped ops (newTab / closeTab)', () => {
 		const setSessions = wireStore(sessions);
 		const requestApproval = vi.fn(async () => true);
 		const resolveBackground = vi.fn(async () => null);
-		const selectBrowserTab = vi.fn();
 		const res = await resolveAndRun(
 			{ current: new Map() },
-			selectBrowserTab,
 			'',
 			'sess-A',
 			{ kind: 'newTab', url: 'example.com', ephemeral: true },
@@ -579,16 +543,69 @@ describe('resolveAndRun session-scoped ops (newTab / closeTab)', () => {
 		expect(created?.url).toBe('https://example.com/');
 		expect(created?.ephemeral).toBe(true);
 		expect(created?.partition).toMatch(/^maestro-ephemeral-/);
-		expect(target?.activeBrowserTabId).toBe(created?.id);
 		expect(target?.unifiedTabOrder).toContainEqual({ type: 'browser', id: created?.id });
-		// The focused session is untouched.
+		// No-hijack: the session was NOT already on a browser tab, so its active
+		// surface is left untouched (activeBrowserTabId stays null).
+		expect(target?.activeBrowserTabId).toBeNull();
+		// The focused ('other') session is untouched.
 		expect(sessions.find((s) => s.id === 'other')?.browserTabs).toHaveLength(0);
-		// No webview handle was needed: neither mount path was exercised.
-		expect(selectBrowserTab).not.toHaveBeenCalled();
+		// No webview handle was needed: the background host was never consulted.
 		expect(resolveBackground).not.toHaveBeenCalled();
 		// newTab is an interaction op: the approval gate still ran.
 		expect(requestApproval).toHaveBeenCalled();
 		expect(setSessions).toHaveBeenCalledTimes(1);
+	});
+
+	it('newTab brings the tab into view only when the session is already on a browser tab', async () => {
+		vi.mocked(selectActiveSession).mockReturnValue(fakeActive('sess-A', 'u-existing'));
+		const sessions: StoreSession[] = [
+			{
+				id: 'sess-A',
+				browserTabs: [{ id: 'u-existing' }],
+				unifiedTabOrder: [{ type: 'browser', id: 'u-existing' }],
+				activeBrowserTabId: 'u-existing',
+				inputMode: 'ai',
+			},
+		];
+		wireStore(sessions);
+		const res = await resolveAndRun(
+			{ current: new Map() },
+			'',
+			'sess-A',
+			{ kind: 'newTab', url: 'example.com' },
+			allow
+		);
+		expect(res.ok).toBe(true);
+		const created = sessions[0].browserTabs.at(-1);
+		expect(created?.id).not.toBe('u-existing');
+		// Already viewing a browser tab -> opening another is a natural continuation,
+		// so the new tab becomes the active surface.
+		expect(sessions[0].activeBrowserTabId).toBe(created?.id);
+		expect(sessions[0].inputMode).toBe('ai');
+	});
+
+	it('newTab pins the freshly created tab so it stays mounted from creation', async () => {
+		// Test 2 (assigned): createTabForSession must pin the new tab's uuid the
+		// instant it is created, so a user clicking away before the agent's next op
+		// cannot unmount it. Teeth: dropping pin(created.id) empties the pin set.
+		vi.mocked(selectActiveSession).mockReturnValue(fakeActive('sess-A', null));
+		const sessions: StoreSession[] = [
+			{ id: 'sess-A', browserTabs: [], unifiedTabOrder: [], activeBrowserTabId: null },
+		];
+		wireStore(sessions);
+		const res = await resolveAndRun(
+			{ current: new Map() },
+			'',
+			'sess-A',
+			{ kind: 'newTab', url: 'example.com' },
+			allow
+		);
+		expect(res.ok).toBe(true);
+		const created = sessions.find((s) => s.id === 'sess-A')?.browserTabs.at(-1);
+		expect(created?.id).toBeTruthy();
+		expect(activePinnedTabIds(useCoworkingBrowserKeepAliveStore.getState().pins)).toContain(
+			created?.id
+		);
 	});
 
 	it('newTab without ephemeral mints a persistent per-session partition', async () => {
@@ -597,7 +614,6 @@ describe('resolveAndRun session-scoped ops (newTab / closeTab)', () => {
 		wireStore(sessions);
 		const res = await resolveAndRun(
 			{ current: new Map() },
-			vi.fn(),
 			'',
 			'sess-A',
 			{ kind: 'newTab' },
@@ -616,7 +632,6 @@ describe('resolveAndRun session-scoped ops (newTab / closeTab)', () => {
 		const setSessions = wireStore(sessions);
 		const res = await resolveAndRun(
 			{ current: new Map() },
-			vi.fn(),
 			'',
 			'sess-A',
 			{ kind: 'newTab', url: 'javascript:alert(1)' },
@@ -642,7 +657,6 @@ describe('resolveAndRun session-scoped ops (newTab / closeTab)', () => {
 		wireStore(sessions);
 		const res = await resolveAndRun(
 			{ current: new Map() },
-			vi.fn(),
 			'u-1',
 			'sess-A',
 			{ kind: 'closeTab' },
@@ -661,7 +675,6 @@ describe('resolveAndRun session-scoped ops (newTab / closeTab)', () => {
 		const setSessions = wireStore(sessions);
 		const res = await resolveAndRun(
 			{ current: new Map() },
-			vi.fn(),
 			'u-9',
 			'sess-A',
 			{ kind: 'closeTab' },
@@ -671,5 +684,57 @@ describe('resolveAndRun session-scoped ops (newTab / closeTab)', () => {
 		expect(String(res.content)).toMatch(/not found in your session/i);
 		expect(sessions[0].browserTabs).toHaveLength(1);
 		expect(setSessions).not.toHaveBeenCalled();
+	});
+});
+
+describe('resolveAndRun keep-alive pin', () => {
+	const allow: BrowserApprovalRequester = async () => true;
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		// Every focused op pins into this module-level singleton; start clean so a
+		// prior test's pin can't produce a false positive here.
+		useCoworkingBrowserKeepAliveStore.getState().clear();
+	});
+
+	afterEach(() => {
+		// Cancel the real 120s prune timer the pin scheduled.
+		useCoworkingBrowserKeepAliveStore.getState().clear();
+	});
+
+	it('pins the driven tab for keep-alive on a focused-session op', async () => {
+		vi.mocked(selectActiveSession).mockReturnValue(fakeActive('sess-A', 'u-1'));
+		const handle = makeHandle({ getTabId: () => 'u-1', extract: vi.fn(async () => 'TXT') });
+		// A read needs no approval and hits the already-mounted fast path, so it
+		// returns without any focus change - isolating the pin() side effect.
+		const res = await resolveAndRun(
+			{ current: new Map([['u-1', handle]]) },
+			'u-1',
+			'sess-A',
+			{ kind: 'read', format: 'text' },
+			allow
+		);
+		expect(res.ok).toBe(true);
+		expect(activePinnedTabIds(useCoworkingBrowserKeepAliveStore.getState().pins)).toContain('u-1');
+	});
+
+	it('does not pin the focused keep-alive store for a non-focused (background) op', async () => {
+		// The requesting agent is not the focused session; it resolves via the
+		// background host and must NOT touch the focused-agent keep-alive store
+		// (that store scopes the active agent only).
+		vi.mocked(selectActiveSession).mockReturnValue(fakeActive('other', null));
+		const handle = makeHandle({ getTabId: () => 'u-1', extract: vi.fn(async () => 'BG') });
+		const res = await resolveAndRun(
+			{ current: new Map() },
+			'u-1',
+			'sess-A',
+			{ kind: 'read', format: 'text' },
+			allow,
+			async () => handle
+		);
+		expect(res.ok).toBe(true);
+		expect(activePinnedTabIds(useCoworkingBrowserKeepAliveStore.getState().pins)).not.toContain(
+			'u-1'
+		);
 	});
 });

@@ -29,6 +29,11 @@ interface CoworkingBackgroundBrowserState {
 	requestMount: (sessionId: string, tabUuid: string, limit: number) => void;
 	/** Mark a mount as recently used (keeps it from being evicted). */
 	touch: (key: string) => void;
+	/** Remove mounts whose (sessionId, tabUuid) tab no longer exists (e.g. was
+	 *  closed), dropping the entry + its handle so a closed tab's hidden webview
+	 *  is released instead of lingering until the next LRU eviction (which may
+	 *  never come). Skips tabs with an op in flight. */
+	pruneMounts: (isLive: (sessionId: string, tabUuid: string) => boolean) => void;
 	/** Mark a tab as having a browser op in flight so it is never LRU-evicted
 	 *  mid-op (its webview would unmount and the op would spuriously fail). */
 	markOpStart: (key: string) => void;
@@ -79,6 +84,18 @@ export const useCoworkingBackgroundBrowserStore = create<CoworkingBackgroundBrow
 			set((s) => ({
 				mounts: s.mounts.map((m) => (m.key === key ? { ...m, lastUsed: Date.now() } : m)),
 			})),
+		pruneMounts: (isLive) =>
+			set((s) => {
+				const staleKeys = new Set(
+					s.mounts
+						.filter((m) => !inFlightKeys.has(m.key) && !isLive(m.sessionId, m.tabUuid))
+						.map((m) => m.key)
+				);
+				if (staleKeys.size === 0) return s;
+				const handles = new Map(s.handles);
+				for (const k of staleKeys) handles.delete(k);
+				return { mounts: s.mounts.filter((m) => !staleKeys.has(m.key)), handles };
+			}),
 		markOpStart: (key) => {
 			inFlightKeys.add(key);
 		},

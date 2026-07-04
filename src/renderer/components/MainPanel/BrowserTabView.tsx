@@ -115,14 +115,41 @@ function delay(ms: number): Promise<void> {
 	return promise;
 }
 
-/** Wait up to 2s for the guest webview to reach dom-ready so extraction returns
- *  a non-empty value immediately after a tab activation. */
-async function waitForDomReady(isDomReadyRef: React.MutableRefObject<boolean>): Promise<void> {
-	if (isDomReadyRef.current) return;
-	const deadline = Date.now() + 2000;
+/** Poll until the guest webview reports it has stopped loading, or the deadline
+ *  passes. An unreachable isLoading() is treated as "not loading" so a read is
+ *  best-effort rather than hanging. */
+async function waitNotLoading(webview: ElectronWebviewElement, deadline: number): Promise<void> {
+	while (Date.now() < deadline) {
+		let loading = false;
+		try {
+			loading = webview.isLoading();
+		} catch {
+			loading = false;
+		}
+		if (!loading) return;
+		await delay(50);
+	}
+}
+
+/** Wait for the guest to be dom-ready AND to have finished loading before an
+ *  extract, so a read right after a navigation returns the loaded page rather
+ *  than a mid-load or pre-navigation snapshot. A short lead delay lets a just
+ *  issued navigation flip isLoading before we sample it, and a post-load settle
+ *  lets content that renders right after stop-loading (SPAs) appear. Bounded so
+ *  a page that never goes network-idle still resolves. */
+async function waitForReadyToRead(
+	webview: ElectronWebviewElement,
+	isDomReadyRef: React.MutableRefObject<boolean>,
+	maxMs = 10000
+): Promise<void> {
+	const deadline = Date.now() + maxMs;
+	await delay(150);
 	while (!isDomReadyRef.current && Date.now() < deadline) {
 		await delay(50);
 	}
+	await waitNotLoading(webview, deadline);
+	await delay(300);
+	await waitNotLoading(webview, deadline);
 }
 
 /** Extract page text/HTML from the guest webview. Returns "" if unreachable or
@@ -133,7 +160,7 @@ async function extractFromWebview(
 	isDomReadyRef: React.MutableRefObject<boolean>,
 	format: 'text' | 'innerText' | 'html'
 ): Promise<string> {
-	await waitForDomReady(isDomReadyRef);
+	await waitForReadyToRead(webview, isDomReadyRef);
 	const expr =
 		format === 'html'
 			? '(document.documentElement && document.documentElement.outerHTML) || ""'
@@ -174,6 +201,16 @@ export const BrowserTabView = React.memo(
 		const hostRef = useRef<HTMLDivElement | null>(null);
 		const isDomReadyRef = useRef(false);
 		const latestTabRef = useRef(tab);
+		// The <webview> src is set ONCE at mount and never re-driven from React
+		// afterward. Both navigation paths (address-bar `navigateToAddress` and the
+		// coworking `navigate()` handle) assign `webview.src` imperatively with a
+		// `!==` guard, while `did-navigate` writes the live URL into `tab.url` only
+		// for the address bar / persistence. Binding `<webview src={tab.url}>` to
+		// that mutated value made React re-assign the src attribute on every
+		// navigation event, and re-assigning a <webview>'s src reloads it, so a
+		// redirecting/canonicalizing site (e.g. google.com to www.google.com/)
+		// refreshed forever. Capturing the initial url in a ref breaks the loop.
+		const initialSrcRef = useRef(tab.url || DEFAULT_BROWSER_TAB_URL);
 		const isAddressFocusedRef = useRef(false);
 		// Track whether the user explicitly clicked into the webview host area.
 		// Used to distinguish intentional focus (user click) from programmatic
@@ -295,8 +332,40 @@ export const BrowserTabView = React.memo(
 					if (!webview || !webview.capturePage) {
 						throw new Error('Screenshot is not available for this tab');
 					}
-					const image = await webview.capturePage();
-					return image.toDataURL();
+					// Electron can only capture a PAINTING webview; a kept-alive-but-hidden
+					// tab (host visibility:hidden) throws UnknownVizError. If this tab is not
+					// on the visible compositor, momentarily force it to paint behind an
+					// opaque cover so the capture succeeds without the user ever seeing it -
+					// capturePage returns the guest's own frame, not the cover. We trigger
+					// only on visibility:hidden (the active-agent kept-alive mount); the
+					// off-screen background host paints already and needs no cover.
+					const host = hostRef.current;
+					const hidden = !!host && getComputedStyle(host).visibility === 'hidden';
+					const priorVisibility = host ? host.style.visibility : '';
+					let cover: HTMLDivElement | null = null;
+					if (host && hidden) {
+						cover = document.createElement('div');
+						cover.style.cssText = `position:absolute;inset:0;z-index:2147483647;background:${
+							theme.colors.bgMain || '#000'
+						};`;
+						host.appendChild(cover);
+						host.style.visibility = 'visible';
+						// Give the compositor a beat to produce a frame for the now-visible guest.
+						await delay(180);
+					}
+					try {
+						let dataUrl = (await webview.capturePage()).toDataURL();
+						if (dataUrl.length < 64 && hidden) {
+							await delay(160);
+							dataUrl = (await webview.capturePage()).toDataURL();
+						}
+						return dataUrl;
+					} finally {
+						if (host && hidden) {
+							host.style.visibility = priorVisibility;
+							cover?.remove();
+						}
+					}
 				},
 			}),
 			[]
@@ -408,6 +477,12 @@ export const BrowserTabView = React.memo(
 
 			const handleStartLoading = () => updateTabState({ isLoading: true });
 			const handleStopLoading = () => {
+				// did-stop-loading is a strictly later signal than dom-ready: the guest
+				// has finished loading, so the page is committed and readable. Re-affirm
+				// readiness here because handleNavigationStart clears isDomReadyRef on
+				// every main-frame nav; if dom-ready does not fire again before
+				// stop-loading, readWebviewState would bail and leave the spinner stuck.
+				isDomReadyRef.current = true;
 				syncWebviewLayout(webview);
 				updateNavigationState();
 			};
@@ -429,6 +504,12 @@ export const BrowserTabView = React.memo(
 			};
 			const handleNavigationStart = (event: Event) => {
 				if ((event as Event & { isMainFrame?: boolean }).isMainFrame === false) return;
+				// Any main-frame navigation (link click, redirect, or imperative
+				// navigate) invalidates the loaded page, so mark not-ready; a coworking
+				// read then waits for the NEW document instead of sampling the old one.
+				// handleStopLoading re-affirms readiness on stop-loading so the spinner
+				// never sticks even when dom-ready does not fire again.
+				isDomReadyRef.current = false;
 				const nextUrl =
 					(event as Event & { url?: string }).url ||
 					webview.getURL?.() ||
@@ -1001,7 +1082,7 @@ export const BrowserTabView = React.memo(
 							}}
 							className="w-full h-full border-0 bg-white"
 							partition={tab.partition}
-							src={tab.url || DEFAULT_BROWSER_TAB_URL}
+							src={initialSrcRef.current}
 						/>
 					)}
 					{findOpen ? (

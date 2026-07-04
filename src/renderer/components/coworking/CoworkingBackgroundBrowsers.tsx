@@ -22,6 +22,7 @@ export function CoworkingBackgroundBrowsers({ theme }: { theme: Theme }) {
 	const mounts = useCoworkingBackgroundBrowserStore((s) => s.mounts);
 	const setHandle = useCoworkingBackgroundBrowserStore((s) => s.setHandle);
 	const clear = useCoworkingBackgroundBrowserStore((s) => s.clear);
+	const pruneMounts = useCoworkingBackgroundBrowserStore((s) => s.pruneMounts);
 	// Gate on BOTH the background-browsing toggle and the coworking Encore flag:
 	// if coworking is turned off, these off-screen webviews must not keep running.
 	const backgroundEnabled = useSettingsStore((s) => s.coworkingBackgroundBrowsers);
@@ -48,6 +49,19 @@ export function CoworkingBackgroundBrowsers({ theme }: { theme: Theme }) {
 	useEffect(() => {
 		if (!enabled) clear();
 	}, [enabled, clear]);
+
+	// Release mounts whose tab has closed (its (sessionId, tabUuid) no longer
+	// exists), so a closed tab's hidden webview is dropped promptly instead of
+	// lingering until the next LRU eviction - which may never come if no further
+	// background mounts are requested. Runs whenever sessions change.
+	useEffect(() => {
+		if (!enabled) return;
+		pruneMounts((sessionId, tabUuid) =>
+			sessions.some(
+				(s) => s.id === sessionId && (s.browserTabs ?? []).some((t) => t.id === tabUuid)
+			)
+		);
+	}, [enabled, sessions, pruneMounts]);
 
 	const visibleMounts = mounts.filter((m) => m.sessionId !== activeSessionId);
 	if (!enabled || visibleMounts.length === 0) return null;

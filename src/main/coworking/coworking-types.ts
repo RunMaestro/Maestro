@@ -24,6 +24,18 @@ export const COWORKING_MCP_SERVER_NAME = 'maestro-coworking';
 export const COWORKING_SOCKET_ENV_VAR = 'MAESTRO_COWORKING_SOCKET';
 
 /**
+ * Env var name carrying the OWNING Maestro window's bridge socket path, injected
+ * per-spawn by ProcessManager into the agent CLI env. Takes precedence over
+ * COWORKING_SOCKET_ENV_VAR, which lives in the shared user-level MCP config as a
+ * single global value (last install wins). Agent CLIs that propagate parent env
+ * to their MCP subprocess (Claude Code, OpenCode) therefore bind to the bridge of
+ * the window that spawned them, even with multiple windows open or a stale global
+ * config. CLIs that do NOT propagate env (Codex) fall back to
+ * COWORKING_SOCKET_ENV_VAR and are single-window only.
+ */
+export const COWORKING_SOCKET_OVERRIDE_ENV_VAR = 'MAESTRO_COWORKING_SOCKET_OVERRIDE';
+
+/**
  * Env var name carrying the Maestro session id of the agent process that owns
  * this MCP subprocess. Set by the main process at agent-CLI spawn time; relied
  * on at handshake to bind the bridge connection to one Maestro session, so an

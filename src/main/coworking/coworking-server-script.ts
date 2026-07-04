@@ -32,7 +32,13 @@ const COWORKING_SCRIPT_SOURCE = String.raw`#!/usr/bin/env node
  */
 const net = require('net');
 
-const SOCKET_PATH = process.env.MAESTRO_COWORKING_SOCKET;
+// Prefer the per-spawn override (MAESTRO_COWORKING_SOCKET_OVERRIDE), injected by
+// ProcessManager into the owning window's agent process so this subprocess binds
+// to the bridge of the window that spawned it. Fall back to the shared user-level
+// MCP config socket (a single global value, last install wins) for agent CLIs
+// that do not propagate env to their MCP subprocess (e.g. Codex).
+const SOCKET_PATH =
+  process.env.MAESTRO_COWORKING_SOCKET_OVERRIDE || process.env.MAESTRO_COWORKING_SOCKET;
 if (!SOCKET_PATH) {
   process.stderr.write('[maestro-coworking] MAESTRO_COWORKING_SOCKET env var is required\n');
   process.exit(1);
@@ -96,7 +102,8 @@ const TOOLS = [
   {
     name: 'get_browser_url',
     description:
-      'Get the current URL and title of a browser tab by id, scoped to your own Maestro session.',
+      'Get the current URL, title, and loading state of a browser tab by id, scoped to your own Maestro session. ' +
+      'Returns { id, url, title, isLoading }; poll isLoading (or list_browsers) to confirm a page finished loading before reading it.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -110,6 +117,7 @@ const TOOLS = [
     name: 'read_browser',
     description:
       'Read the rendered text (or HTML) of a browser tab by id, scoped to your own Maestro session. ' +
+      'Waits for the page to finish loading before reading, so a read right after browser_navigate returns the loaded page (bounded; a still-loading page is read best-effort). ' +
       'Use format "text" or "innerText" for the visible page text, or "html" for the page markup. ' +
       'Optionally scope the read to the first element matching a CSS selector, and/or cap the output with maxChars (head-truncated).',
     inputSchema: {

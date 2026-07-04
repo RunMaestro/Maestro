@@ -29,13 +29,11 @@
  * to no known agent, the bridge rejects the connection - fail closed.
  */
 
-import { app } from 'electron';
 import * as fs from 'fs';
 import * as net from 'net';
-import * as path from 'path';
-import * as crypto from 'crypto';
 import { logger } from '../utils/logger';
 import { COWORKING_SOCKET_ENV_VAR } from './coworking-types';
+import { getBridgeSocketPath } from './coworking-socket-path';
 import type {
 	BrowserOp,
 	CoworkingBridgeRequest,
@@ -91,19 +89,6 @@ let resolveSessionFromPid: CoworkingSessionFromPidResolver | null = null;
 /** Per-connection state keyed by socket. The sessionId is set on `hello` and
  *  stays put for the lifetime of the connection. */
 const connections = new WeakMap<net.Socket, { sessionId: string | null }>();
-
-/** Compute the platform-appropriate IPC bridge socket path. */
-export function getBridgeSocketPath(): string {
-	if (process.platform === 'win32') {
-		// Per-user named pipe. Derive the slug from a hash of the FULL userData
-		// path so the pipe name is unique per OS user; path.basename would be the
-		// same app-folder name for every account and collide across users.
-		const userData = app.getPath('userData');
-		const slug = crypto.createHash('sha1').update(userData).digest('hex').slice(0, 16);
-		return `\\\\.\\pipe\\maestro-coworking-${slug}`;
-	}
-	return path.join(app.getPath('userData'), 'coworking.sock');
-}
 
 /** Env-var pair to embed in each agent's MCP-server config entry. */
 export function getBridgeEnvVar(): { name: string; value: string } {

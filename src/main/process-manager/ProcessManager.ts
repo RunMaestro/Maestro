@@ -20,8 +20,12 @@ import { isWindows } from '../../shared/platformDetection';
 import type { SshRemoteConfig } from '../../shared/types';
 import { getDefaultShell } from '../stores/defaults';
 import { captureException } from '../utils/sentry';
-import { COWORKING_SESSION_ID_ENV_VAR } from '../coworking/coworking-types';
+import {
+	COWORKING_SESSION_ID_ENV_VAR,
+	COWORKING_SOCKET_OVERRIDE_ENV_VAR,
+} from '../coworking/coworking-types';
 import { resolveOwningMaestroSessionId } from '../coworking/coworking-session-id';
+import { getBridgeSocketPath } from '../coworking/coworking-socket-path';
 
 /** Time (ms) to wait for a PTY process to exit after SIGTERM before sending SIGKILL. */
 const PTY_KILL_ESCALATION_MS = 2000;
@@ -81,6 +85,16 @@ export class ProcessManager extends EventEmitter {
 		// registry → `list_terminals` returns [] for the caller's own session.
 		// Terminals don't run MCP clients, so we skip them. Spawn-callers can
 		// override by passing the var explicitly in customEnvVars.
+		//
+		// We ALSO inject the owning window's bridge socket path
+		// (MAESTRO_COWORKING_SOCKET_OVERRIDE). The socket baked into the shared
+		// user-level MCP config is a single global value (last install wins), so
+		// with multiple windows open an agent could dial the wrong window's bridge.
+		// This override is recomputed per spawn from THIS window's userData and the
+		// MCP server script prefers it, so env-propagating CLIs (Claude Code,
+		// OpenCode) bind to the window that spawned them and self-heal when the
+		// config socket is stale. Codex does not propagate env and falls back to the
+		// config socket (single-window).
 		const configWithCoworkingSession =
 			config.toolType === 'terminal'
 				? config
@@ -88,6 +102,7 @@ export class ProcessManager extends EventEmitter {
 						...config,
 						customEnvVars: {
 							[COWORKING_SESSION_ID_ENV_VAR]: resolveOwningMaestroSessionId(config.sessionId),
+							[COWORKING_SOCKET_OVERRIDE_ENV_VAR]: getBridgeSocketPath(),
 							...(config.customEnvVars ?? {}),
 						},
 					};
