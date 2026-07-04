@@ -21,7 +21,7 @@ import os from 'os';
 import fs from 'fs/promises';
 import { logger } from '../../utils/logger';
 import { withIpcErrorLogging } from '../../utils/ipcHandler';
-import { isWebContentsAvailable } from '../../utils/safe-send';
+import { createSafeSend } from '../../utils/safe-send';
 import { getSessionStorage, hasSessionStorage, getAllSessionStorages } from '../../agents';
 import { getSshRemoteById as getSshRemoteByIdFromStore } from '../../stores';
 import { calculateModelCost, computeClaudeUsageCost } from '../../utils/pricing';
@@ -368,6 +368,7 @@ function aggregateProviderStats(
  */
 export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDependencies): void {
 	const getMainWindow = deps?.getMainWindow;
+	const safeSend = createSafeSend(getMainWindow ?? (() => null));
 
 	// ============ List Sessions ============
 
@@ -900,8 +901,6 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 	ipcMain.handle(
 		'agentSessions:getGlobalStats',
 		withIpcErrorLogging(handlerOpts('getGlobalStats'), async (): Promise<GlobalAgentStats> => {
-			const mainWindow = getMainWindow?.();
-
 			// Helper to build result from cache
 			const buildResultFromCache = (
 				cache: GlobalStatsCache,
@@ -969,10 +968,8 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 
 			// Helper to send progressive updates
 			const sendUpdate = (cache: GlobalStatsCache, isComplete: boolean) => {
-				if (isWebContentsAvailable(mainWindow)) {
-					const stats = buildResultFromCache(cache, isComplete);
-					mainWindow.webContents.send('agentSessions:globalStatsUpdate', stats);
-				}
+				const stats = buildResultFromCache(cache, isComplete);
+				safeSend('agentSessions:globalStatsUpdate', stats);
 			};
 
 			// Load existing cache or create new one

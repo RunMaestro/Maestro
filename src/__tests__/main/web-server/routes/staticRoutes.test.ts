@@ -207,6 +207,16 @@ describe('StaticRoutes', () => {
 				);
 				// Config is injected so the electron-shim can open the WS bridge.
 				expect(firstReply.send).toHaveBeenCalledWith(expect.stringContaining('__MAESTRO_CONFIG__'));
+				// PWA manifest and iOS home-screen icon are wired into the page,
+				// token-prefixed to match their HTTP-served routes.
+				expect(firstReply.send).toHaveBeenCalledWith(
+					expect.stringContaining(`<link rel="manifest" href="/${securityToken}/manifest.json" />`)
+				);
+				expect(firstReply.send).toHaveBeenCalledWith(
+					expect.stringContaining(
+						`<link rel="apple-touch-icon" href="/${securityToken}/icons/icon-192x192.png" />`
+					)
+				);
 
 				// Read fresh from disk so rebuilt asset hashes are reflected immediately.
 				writeFileSync(

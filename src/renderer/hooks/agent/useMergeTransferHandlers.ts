@@ -21,7 +21,7 @@ import type { TransferState } from '../../stores/operationStore';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useTabStore } from '../../stores/tabStore';
 import { getModalActions } from '../../stores/modalStore';
-import { notifyToast } from '../../stores/notificationStore';
+import { notifyToast, showOsNotification } from '../../stores/notificationStore';
 import { useMergeSessionWithSessions } from './useMergeSession';
 import { useSendToAgentWithSessions } from './useSendToAgent';
 import { captureException } from '../../utils/sentry';
@@ -142,10 +142,16 @@ export function useMergeTransferHandlers(
 				sessionId: info.sessionId,
 			});
 
-			// Show desktop notification for visibility when app is not focused
-			window.maestro.notification.show(
+			// Show desktop notification for visibility when app is not focused. The
+			// toast above is already visible, so skip the web-desktop fallback toast.
+			showOsNotification(
 				'Session Merged',
-				`Created "${info.sessionName}" with merged context`
+				`Created "${info.sessionName}" with merged context`,
+				undefined,
+				undefined,
+				{
+					fallbackToast: false,
+				}
 			);
 
 			// Clear the merge state for the source tab after a short delay
@@ -224,10 +230,14 @@ export function useMergeTransferHandlers(
 				sessionId,
 			});
 
-			// Show desktop notification for visibility when app is not focused
-			window.maestro.notification.show(
+			// Show desktop notification for visibility when app is not focused. The
+			// toast above is already visible, so skip the web-desktop fallback toast.
+			showOsNotification(
 				'Context Transferred',
-				`Created "${sessionName}" with transferred context`
+				`Created "${sessionName}" with transferred context`,
+				undefined,
+				undefined,
+				{ fallbackToast: false }
 			);
 
 			// Reset the transfer state after a short delay to allow progress modal to show "Complete"

@@ -9,7 +9,7 @@ import { resolveDirentType } from '../../utils/dirent-utils';
 import { WINDOWS_LOCKED_SYSTEM_FILES } from '../../utils/watcher-ignore';
 import { SshRemoteConfig } from '../../../shared/types';
 import { MaestroSettings } from './persistence';
-import { isWebContentsAvailable } from '../../utils/safe-send';
+import { createSafeSend } from '../../utils/safe-send';
 import {
 	readDirRemote,
 	readFileRemote,
@@ -384,6 +384,7 @@ export function registerAutorunHandlers(
 	} & AutorunHandlerDependencies
 ): void {
 	const { getMainWindow, app, settingsStore } = deps;
+	const safeSend = createSafeSend(getMainWindow);
 
 	// List markdown files in a directory for Auto Run (with recursive subfolder support)
 	// Supports SSH remote execution via optional sshRemoteId parameter
@@ -1044,11 +1045,9 @@ export function registerAutorunHandlers(
 
 					const timer = setTimeout(() => {
 						autoRunWatchPending.delete(folderPath);
-						const mainWindow = getMainWindow();
-						if (!isWebContentsAvailable(mainWindow)) return;
 						for (const [name, evt] of changes) {
 							const filenameWithoutExt = name.replace(/\.md$/i, '');
-							mainWindow.webContents.send('autorun:fileChanged', {
+							safeSend('autorun:fileChanged', {
 								folderPath,
 								filename: filenameWithoutExt,
 								eventType: evt,

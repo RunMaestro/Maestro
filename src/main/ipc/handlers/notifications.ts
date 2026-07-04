@@ -13,7 +13,7 @@
 import { ipcMain, Notification, BrowserWindow } from 'electron';
 import { spawn, type ChildProcess } from 'child_process';
 import { logger } from '../../utils/logger';
-import { isWebContentsAvailable } from '../../utils/safe-send';
+import { createSafeSend, type SafeSendFn } from '../../utils/safe-send';
 import { parseDeepLink, dispatchDeepLink } from '../../deep-links';
 import { buildSessionDeepLink } from '../../../shared/deep-link-urls';
 import { captureException } from '../../utils/sentry';
@@ -128,6 +128,18 @@ const notificationQueue: NotificationQueueItem[] = [];
 
 /** Flag indicating if notification command is currently being processed */
 let isNotificationProcessing = false;
+
+/**
+ * safeSend used to push `notification:commandCompleted` to the renderer.
+ *
+ * The command-completion sends fire from the module-level queue helpers, which
+ * run outside `registerNotificationsHandlers`' closure, so the window getter is
+ * captured here and reassigned during registration. safeSend always fans out to
+ * web-desktop bridge clients (and to the desktop renderer when it is alive), so
+ * web/mobile users see the Stop button clear even with no desktop window. The
+ * default is a bridge-only sender for the pre-registration window.
+ */
+let commandCompletedSafeSend: SafeSendFn = createSafeSend(() => null);
 
 // ==========================================================================
 // Helper Functions
@@ -275,11 +287,7 @@ function executeNotificationCommand(
 				});
 				activeNotificationProcesses.delete(notificationId);
 				// Notify renderer of completion even on error
-				BrowserWindow.getAllWindows().forEach((win) => {
-					if (isWebContentsAvailable(win)) {
-						win.webContents.send('notification:commandCompleted', notificationId);
-					}
-				});
+				commandCompletedSafeSend('notification:commandCompleted', notificationId);
 				resolveCompleted();
 			});
 
@@ -311,11 +319,7 @@ function executeNotificationCommand(
 				activeNotificationProcesses.delete(notificationId);
 
 				// Notify renderer that notification command has completed
-				BrowserWindow.getAllWindows().forEach((win) => {
-					if (isWebContentsAvailable(win)) {
-						win.webContents.send('notification:commandCompleted', notificationId);
-					}
-				});
+				commandCompletedSafeSend('notification:commandCompleted', notificationId);
 
 				resolveCompleted();
 			});
@@ -449,6 +453,10 @@ export function resolveNotificationClickWindow(
  * Register all notification-related IPC handlers
  */
 export function registerNotificationsHandlers(deps?: NotificationsHandlerDependencies): void {
+	// Capture the window getter for the module-level queue helpers so completion
+	// events reach both the desktop renderer and web-desktop bridge clients.
+	commandCompletedSafeSend = createSafeSend(deps?.getMainWindow ?? (() => null));
+
 	// Show OS notification (with optional click-to-navigate support)
 	ipcMain.handle(
 		'notification:show',

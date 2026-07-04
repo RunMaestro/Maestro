@@ -1202,6 +1202,53 @@ describe('ThinkingStatusPill', () => {
 		});
 	});
 
+	describe('narrow-width responsive classes (container queries in index.css)', () => {
+		// The pill relies on these class hooks to progressively drop segments on
+		// narrow viewports so the Stop button never bleeds off-screen. Guard them
+		// against accidental removal during refactors.
+		it('thinking pill wrapper is a status-pill container', () => {
+			const item = createThinkingItem();
+			const { container } = render(<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} />);
+			expect(container.querySelector('.status-pill-container')).not.toBeNull();
+		});
+
+		it('tokens segment and Claude ID segment carry their drop classes', () => {
+			const item = createThinkingItem({
+				currentCycleTokens: 100,
+				agentSessionId: 'test-id-1234',
+			});
+			const { container } = render(<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} />);
+			expect(container.querySelector('.pill-seg-tokens')).not.toBeNull();
+			expect(container.querySelector('.pill-seg-claude-id')).not.toBeNull();
+		});
+
+		it('Elapsed label word carries the pill-label drop class', () => {
+			const item = createThinkingItem({ thinkingStartTime: Date.now() - 5000 });
+			render(<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} />);
+			expect(screen.getByText('Elapsed:')).toHaveClass('pill-label');
+		});
+
+		it('AutoRun pill wrapper is a status-pill container and its labels carry pill-label', () => {
+			const autoRunState: BatchRunState = {
+				isRunning: true,
+				isPaused: false,
+				isStopping: false,
+				currentTaskIndex: 0,
+				totalTasks: 5,
+				completedTasks: 2,
+				startTime: Date.now(),
+				tasks: [],
+				batchName: 'Batch',
+			};
+			const { container } = render(
+				<ThinkingStatusPill thinkingItems={[]} theme={mockTheme} autoRunState={autoRunState} />
+			);
+			expect(container.querySelector('.status-pill-container')).not.toBeNull();
+			expect(screen.getByText('Tasks:')).toHaveClass('pill-label');
+			expect(screen.getByText('Elapsed:')).toHaveClass('pill-label');
+		});
+	});
+
 	describe('memoization (arePropsEqual)', () => {
 		it('re-renders when autoRunState.isRunning changes', () => {
 			const { rerender } = render(

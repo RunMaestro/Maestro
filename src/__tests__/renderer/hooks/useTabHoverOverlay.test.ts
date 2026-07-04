@@ -437,6 +437,91 @@ describe('useTabHoverOverlay', () => {
 		expect(result.current.overlayOpen).toBe(false);
 	});
 
+	it('openOverlay opens immediately (no hover delay), anchored to the tab', () => {
+		const { result } = renderHook(() => useTabHoverOverlay());
+
+		const mockElement = { getBoundingClientRect: () => ({ bottom: 100, left: 50, width: 120 }) };
+		(result.current.tabRef as React.MutableRefObject<HTMLDivElement | null>).current =
+			mockElement as unknown as HTMLDivElement;
+
+		act(() => {
+			result.current.openOverlay();
+		});
+
+		// No 400ms wait - open right away for the touch tap path.
+		expect(result.current.overlayOpen).toBe(true);
+		expect(result.current.overlayPosition).toEqual({ top: 100, left: 50, tabWidth: 120 });
+	});
+
+	it('openOverlay respects the shouldOpen guard', () => {
+		const { result } = renderHook(() => useTabHoverOverlay({ shouldOpen: () => false }));
+
+		const mockElement = { getBoundingClientRect: () => ({ bottom: 100, left: 50, width: 120 }) };
+		(result.current.tabRef as React.MutableRefObject<HTMLDivElement | null>).current =
+			mockElement as unknown as HTMLDivElement;
+
+		act(() => {
+			result.current.openOverlay();
+		});
+
+		expect(result.current.overlayOpen).toBe(false);
+	});
+
+	it('closes the overlay on a tap/click outside the tab and overlay', () => {
+		const { result } = renderHook(() => useTabHoverOverlay());
+
+		// Real DOM nodes so useClickOutside's contains() checks resolve.
+		const tabEl = document.createElement('div');
+		document.body.appendChild(tabEl);
+		(result.current.tabRef as React.MutableRefObject<HTMLDivElement | null>).current = tabEl;
+
+		act(() => {
+			result.current.openOverlay();
+		});
+		expect(result.current.overlayOpen).toBe(true);
+
+		// useClickOutside attaches its listener via setTimeout(0) (delay option).
+		act(() => {
+			vi.advanceTimersByTime(1);
+		});
+
+		const outside = document.createElement('div');
+		document.body.appendChild(outside);
+		act(() => {
+			outside.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+		});
+
+		expect(result.current.overlayOpen).toBe(false);
+
+		tabEl.remove();
+		outside.remove();
+	});
+
+	it('does NOT close the overlay when the tap is inside the tab', () => {
+		const { result } = renderHook(() => useTabHoverOverlay());
+
+		const tabEl = document.createElement('div');
+		const inner = document.createElement('span');
+		tabEl.appendChild(inner);
+		document.body.appendChild(tabEl);
+		(result.current.tabRef as React.MutableRefObject<HTMLDivElement | null>).current = tabEl;
+
+		act(() => {
+			result.current.openOverlay();
+		});
+		act(() => {
+			vi.advanceTimersByTime(1);
+		});
+
+		act(() => {
+			inner.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+		});
+
+		expect(result.current.overlayOpen).toBe(true);
+
+		tabEl.remove();
+	});
+
 	it('overlayMouseEnter clears pending close timeout', () => {
 		const { result } = renderHook(() => useTabHoverOverlay());
 

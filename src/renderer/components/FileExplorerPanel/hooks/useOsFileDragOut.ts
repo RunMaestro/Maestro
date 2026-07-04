@@ -1,6 +1,7 @@
 import { useCallback, useRef } from 'react';
 import type { Session } from '../../../types';
 import { captureException } from '../../../utils/sentry';
+import { isWebDesktop } from '../../../utils/runtimeContext';
 import { basenameOf, findNodeAtPath } from '../utils/pathHelpers';
 
 interface UseOsFileDragOutArgs {
@@ -44,6 +45,13 @@ export function useOsFileDragOut({
 
 	const handleOsDragStart = useCallback(
 		(e: React.DragEvent, relSources: string[]): boolean => {
+			// OS drag-out fires `fs:startDragOut`, an ipcMain.on channel the
+			// web-server bridge cannot dispatch (it only handles invoke-style
+			// handlers). In the web-desktop build there is also no host desktop to
+			// drop onto, so never take over the gesture: fall through to the normal
+			// in-app drag so the interaction fails silently instead of erroring.
+			if (isWebDesktop()) return false;
+
 			// Only Option/Alt initiates an OS drag-out; anything else is a normal
 			// in-app drag and must fall through untouched.
 			if (!e.altKey) return false;

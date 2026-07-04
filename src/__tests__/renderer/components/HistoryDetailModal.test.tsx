@@ -1670,4 +1670,35 @@ describe('HistoryDetailModal', () => {
 			expect(closeButton).toHaveStyle({ backgroundColor: mockTheme.colors.accent });
 		});
 	});
+
+	describe('phone layout class hooks (xs full-screen rules in index.css)', () => {
+		// index.css expands `.history-detail-modal` to full-screen at data-bp='xs',
+		// tightens `.hdm-footer`, and hides `.hdm-btn-label`. Guard the hooks so a
+		// markup refactor cannot silently detach the phone layout.
+		it('modal root carries history-detail-modal and the footer carries hdm-footer', () => {
+			const { container } = render(
+				<HistoryDetailModal theme={mockTheme} entry={createMockEntry()} onClose={mockOnClose} />
+			);
+			expect(container.querySelector('.history-detail-modal')).not.toBeNull();
+			expect(container.querySelector('.hdm-footer')).not.toBeNull();
+		});
+
+		it('Delete, Prev, and Next button labels carry hdm-btn-label', () => {
+			const entries = [createMockEntry({ id: 'a' }), createMockEntry({ id: 'b' })];
+			render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={entries[0]}
+					onClose={mockOnClose}
+					onDelete={mockOnDelete}
+					filteredEntries={entries}
+					currentIndex={0}
+					onNavigate={mockOnNavigate}
+				/>
+			);
+			expect(screen.getByText('Delete')).toHaveClass('hdm-btn-label');
+			expect(screen.getByText('Prev')).toHaveClass('hdm-btn-label');
+			expect(screen.getByText('Next')).toHaveClass('hdm-btn-label');
+		});
+	});
 });

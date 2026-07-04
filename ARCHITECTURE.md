@@ -1481,54 +1481,29 @@ groupChatEmitters.emitModeratorUsage(chatId, usage); // Token usage stats
 
 ## Web/Mobile Interface
 
-Progressive Web App (PWA) for remote control of Maestro from mobile devices.
+Maestro's mobile and remote-control experience is the **web-desktop build**: the same React renderer (`src/renderer/`) compiled for the browser and served over a WebSocket IPC bridge. There is no longer a separate mobile React app - the legacy `src/web/mobile/` bundle was retired in Phase 06 and its portable touch hooks were hoisted into `src/renderer`. See [WEB-MOBILE.md](docs/agent-guides/WEB-MOBILE.md) for the full guide.
 
 ### Architecture
 
 ```
-src/web/
-├── index.ts              # Entry point
-├── main.tsx              # React entry
-├── index.html            # HTML template
-├── index.css             # Global styles
-├── components/           # Shared components (Button, Card, Input, Badge)
-├── hooks/                # Web-specific hooks
-├── mobile/               # Mobile-optimized components
-├── utils/                # Web utilities
-└── public/               # PWA assets (manifest, icons, service worker)
+src/web-desktop/          # Browser entry point for the renderer
+├── index.html            # HTML template (mobile viewport + PWA tags)
+├── bootstrap.ts          # Boots the renderer against the WebSocket bridge
+├── electron-shim.ts      # Browser stand-in for the Electron/preload API
+└── sentry-shim.ts        # No-op Sentry shim for the browser build
+
+src/web/public/           # PWA assets served into dist/web-desktop
+├── manifest.json         # Web app manifest
+└── sw.js                 # Service worker (PWA install + caching)
 ```
 
-### Mobile Components (`src/web/mobile/`)
+Touch and mobile affordances live in the shared renderer, gated on `isCoarsePointer()`:
 
-| Component                       | Purpose                          |
-| ------------------------------- | -------------------------------- |
-| `App.tsx`                       | Main mobile app shell            |
-| `TabBar.tsx`                    | Bottom navigation bar            |
-| `SessionPillBar.tsx`            | Horizontal session selector      |
-| `CommandInputBar.tsx`           | Message input with voice support |
-| `MessageHistory.tsx`            | Conversation display             |
-| `ResponseViewer.tsx`            | AI response viewer               |
-| `AutoRunIndicator.tsx`          | Auto Run status display          |
-| `MobileHistoryPanel.tsx`        | Command history browser          |
-| `QuickActionsMenu.tsx`          | Quick action shortcuts           |
-| `SlashCommandAutocomplete.tsx`  | Command autocomplete             |
-| `ConnectionStatusIndicator.tsx` | WebSocket connection status      |
-| `OfflineQueueBanner.tsx`        | Offline message queue indicator  |
+- `src/renderer/utils/touch.ts` - touch primitives (haptics, pointer detection, gesture thresholds)
+- `src/renderer/hooks/utils/` - `useSwipeGestures`, `useLongPress`, `useVoiceInput`, `useKeyboardVisibility`
+- `src/renderer/components/TerminalTouchBar.tsx`, `shared/LongPressable.tsx` - touch-facing UI
 
-### Web Hooks (`src/web/hooks/`)
-
-| Hook                      | Purpose                         |
-| ------------------------- | ------------------------------- |
-| `useWebSocket.ts`         | WebSocket connection management |
-| `useSessions.ts`          | Session state synchronization   |
-| `useCommandHistory.ts`    | Command history management      |
-| `useSwipeGestures.ts`     | Touch gesture handling          |
-| `usePullToRefresh.ts`     | Pull-to-refresh functionality   |
-| `useOfflineQueue.ts`      | Offline message queuing         |
-| `useNotifications.ts`     | Push notification handling      |
-| `useDeviceColorScheme.ts` | System theme detection          |
-| `useUnreadBadge.ts`       | Unread message badge            |
-| `useSwipeUp.ts`           | Swipe-up gesture detection      |
+> The remaining `src/web/{components,hooks,utils,constants}` files are orphaned dead code from the retired mobile app; only `src/web/public/` is still built.
 
 ### Communication
 

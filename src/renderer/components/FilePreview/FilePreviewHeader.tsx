@@ -20,6 +20,7 @@ import type { FilePreviewToolbarVisibility } from '../../stores/settingsStore';
 import { Spinner } from '../ui/Spinner';
 import { HoverTooltip } from '../ui/HoverTooltip';
 import { captureException } from '../../utils/sentry';
+import { isWebDesktop } from '../../utils/runtimeContext';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { formatFileSize, formatDateTime, countLines } from './filePreviewUtils';
 import { formatNumber } from '../../../shared/formatters';
@@ -368,7 +369,11 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 								</button>
 							</HoverTooltip>
 						)}
-						{toolbarVisibility.openInDefault && !sshRemoteId && (
+						{/* "Open in Default App" hands the file to the HOST machine's OS
+						    opener via the shell bridge. In the web-desktop build the host is
+						    not the browser user's device, so hide it there (as we already do
+						    over SSH, where file:// can't reach the remote host). */}
+						{toolbarVisibility.openInDefault && !sshRemoteId && !isWebDesktop() && (
 							<HoverTooltip theme={theme} label="Open in Default App">
 								<button
 									onClick={() => window.maestro?.shell?.openPath(file.path)}

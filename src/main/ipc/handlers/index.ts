@@ -202,6 +202,7 @@ export interface HandlerDependencies {
 export function registerAllHandlers(deps: HandlerDependencies): void {
 	registerGitHandlers({
 		settingsStore: deps.settingsStore,
+		getMainWindow: deps.getMainWindow,
 	});
 	registerAutorunHandlers(deps);
 	registerPlaybooksHandlers(deps);
@@ -337,6 +338,7 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		getProcessManager: deps.getProcessManager,
 		getAgentDetector: deps.getAgentDetector,
 		agentConfigsStore: deps.agentConfigsStore,
+		getMainWindow: deps.getMainWindow,
 	});
 	// Register Feedback handlers (gh auth + feedback submission)
 	registerFeedbackHandlers({

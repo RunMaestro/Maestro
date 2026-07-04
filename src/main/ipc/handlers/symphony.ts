@@ -15,7 +15,7 @@ import type Store from 'electron-store';
 import fs from 'fs/promises';
 import path from 'path';
 import { logger } from '../../utils/logger';
-import { isWebContentsAvailable } from '../../utils/safe-send';
+import { createSafeSend, SafeSendFn } from '../../utils/safe-send';
 import type { SessionsData, StoredSession, MaestroSettings } from '../../stores/types';
 import { createIpcHandler, CreateHandlerOptions } from '../../utils/ipcHandler';
 import { execFileNoThrow } from '../../utils/execFile';
@@ -1027,11 +1027,8 @@ This pull request was created using [Maestro Symphony](https://runmaestro.ai/sym
 /**
  * Broadcast symphony state updates to renderer.
  */
-function broadcastSymphonyUpdate(getMainWindow: () => BrowserWindow | null): void {
-	const mainWindow = getMainWindow?.();
-	if (isWebContentsAvailable(mainWindow)) {
-		mainWindow.webContents.send('symphony:updated');
-	}
+function broadcastSymphonyUpdate(safeSend: SafeSendFn): void {
+	safeSend('symphony:updated');
 }
 
 /**
@@ -1087,6 +1084,8 @@ export function registerSymphonyHandlers({
 	sessionsStore,
 	settingsStore,
 }: SymphonyHandlerDependencies): void {
+	const safeSend = createSafeSend(getMainWindow);
+
 	// ─────────────────────────────────────────────────────────────────────────
 	// Registry Operations
 	// ─────────────────────────────────────────────────────────────────────────
@@ -1680,7 +1679,7 @@ This PR will be updated automatically when the Auto Run completes.`;
 					prNumber: prResult.prNumber,
 				});
 
-				broadcastSymphonyUpdate(getMainWindow);
+				broadcastSymphonyUpdate(safeSend);
 
 				return {
 					contributionId,
@@ -1776,7 +1775,7 @@ This PR will be updated automatically when the Auto Run completes.`;
 					issueNumber,
 				});
 
-				broadcastSymphonyUpdate(getMainWindow);
+				broadcastSymphonyUpdate(safeSend);
 				return { success: true };
 			}
 		)
@@ -1825,7 +1824,7 @@ This PR will be updated automatically when the Auto Run completes.`;
 				if (error) contribution.error = error;
 
 				await writeState(app, state);
-				broadcastSymphonyUpdate(getMainWindow);
+				broadcastSymphonyUpdate(safeSend);
 				return { updated: true };
 			}
 		)
@@ -2001,7 +2000,7 @@ This PR will be updated automatically when the Auto Run completes.`;
 					prUrl: completed.prUrl,
 				});
 
-				broadcastSymphonyUpdate(getMainWindow);
+				broadcastSymphonyUpdate(safeSend);
 
 				return {
 					prUrl: completed.prUrl,
@@ -2044,7 +2043,7 @@ This PR will be updated automatically when the Auto Run completes.`;
 
 				logger.info('Contribution cancelled', LOG_CONTEXT, { contributionId });
 
-				broadcastSymphonyUpdate(getMainWindow);
+				broadcastSymphonyUpdate(safeSend);
 
 				return { cancelled: true };
 			}
@@ -2291,7 +2290,7 @@ This PR will be updated automatically when the Auto Run completes.`;
 				await writeState(app, state);
 
 				if (results.merged > 0 || results.closed > 0 || prInfoSynced) {
-					broadcastSymphonyUpdate(getMainWindow);
+					broadcastSymphonyUpdate(safeSend);
 				}
 
 				logger.info('PR status check complete', LOG_CONTEXT, { ...results, prInfoSynced });
@@ -2525,7 +2524,7 @@ This PR will be updated automatically when the Auto Run completes.`;
 
 					// Save updated state
 					await writeState(app, state);
-					broadcastSymphonyUpdate(getMainWindow);
+					broadcastSymphonyUpdate(safeSend);
 
 					return {
 						success: true,
@@ -2891,17 +2890,14 @@ This PR will be updated automatically when the Auto Run completes.`;
 					}
 
 					// 6. Broadcast status update
-					const mainWindow = getMainWindow?.();
-					if (isWebContentsAvailable(mainWindow)) {
-						mainWindow.webContents.send('symphony:contributionStarted', {
-							contributionId,
-							sessionId,
-							branchName,
-							autoRunPath,
-							draftPrNumber,
-							draftPrUrl,
-						});
-					}
+					safeSend('symphony:contributionStarted', {
+						contributionId,
+						sessionId,
+						branchName,
+						autoRunPath,
+						draftPrNumber,
+						draftPrUrl,
+					});
 
 					logger.info('Symphony contribution started', LOG_CONTEXT, {
 						contributionId,
@@ -3087,15 +3083,12 @@ This PR will be updated automatically when the Auto Run completes.`;
 				}
 
 				// Broadcast PR creation event
-				const mainWindow = getMainWindow?.();
-				if (isWebContentsAvailable(mainWindow)) {
-					mainWindow.webContents.send('symphony:prCreated', {
-						contributionId,
-						sessionId,
-						draftPrNumber: prResult.prNumber,
-						draftPrUrl: prResult.prUrl,
-					});
-				}
+				safeSend('symphony:prCreated', {
+					contributionId,
+					sessionId,
+					draftPrNumber: prResult.prNumber,
+					draftPrUrl: prResult.prUrl,
+				});
 
 				logger.info('Draft PR created for Symphony contribution', LOG_CONTEXT, {
 					contributionId,
@@ -3311,7 +3304,7 @@ This PR will be updated automatically when the Auto Run completes.`;
 					prUrl,
 				});
 
-				broadcastSymphonyUpdate(getMainWindow);
+				broadcastSymphonyUpdate(safeSend);
 
 				return { contributionId };
 			}

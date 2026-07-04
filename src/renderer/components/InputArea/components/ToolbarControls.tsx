@@ -5,6 +5,7 @@ import {
 	History,
 	ImageIcon,
 	Keyboard,
+	Mic,
 	MoreHorizontal,
 	PenLine,
 	Pin,
@@ -18,6 +19,7 @@ import {
 } from '../../../utils/shortcutFormatter';
 import { getReadOnlyModeLabel, getReadOnlyModeTooltip } from '../../../../shared/agentMetadata';
 import { captureException } from '../../../utils/sentry';
+import { isCoarsePointer } from '../../../utils/touch';
 import { useViewportBreakpoint } from '../../../hooks/ui';
 import { addStagedImageIfUnique } from '../utils/stagedImages';
 import { formatTerminalCwd } from '../utils/terminalPath';
@@ -33,6 +35,12 @@ interface ToolbarControlsProps {
 	enterToSend: boolean;
 	setEnterToSend: (value: boolean) => void;
 	setStagedImages: React.Dispatch<React.SetStateAction<string[]>>;
+	/** Whether the browser supports the Web Speech API (from useVoiceInput). */
+	voiceSupported?: boolean;
+	/** Whether voice dictation is currently listening. */
+	isVoiceListening?: boolean;
+	/** Toggle voice dictation on/off. Stable identity (see InputArea). */
+	onToggleVoiceInput?: () => void;
 	onOpenPromptComposer?: () => void;
 	shortcuts?: Record<string, Shortcut>;
 	showFlashNotification?: (message: string) => void;
@@ -66,6 +74,9 @@ export const ToolbarControls = memo(function ToolbarControls({
 	enterToSend,
 	setEnterToSend,
 	setStagedImages,
+	voiceSupported,
+	isVoiceListening,
+	onToggleVoiceInput,
 	onOpenPromptComposer,
 	shortcuts,
 	showFlashNotification,
@@ -92,6 +103,14 @@ export const ToolbarControls = memo(function ToolbarControls({
 	const { isNarrow: isNarrowViewport } = useViewportBreakpoint();
 	const [toolbarExpanded, setToolbarExpanded] = useState(false);
 	const showToggleGroup = !isNarrowViewport || toolbarExpanded;
+
+	// Voice dictation is a primary touch affordance, so it stays in the always-
+	// visible left action group (next to attach-image) rather than the collapsing
+	// toggle group - burying it behind the "..." overflow on the exact phones it
+	// targets would defeat the point. Shown only when the Web Speech API is
+	// supported AND the primary pointer is coarse (touch), so mouse/keyboard
+	// desktop users never see it.
+	const showVoiceButton = isAiMode && !!voiceSupported && !!onToggleVoiceInput && isCoarsePointer();
 
 	return (
 		<div className="flex min-w-0 flex-wrap items-center gap-1 px-2 pb-2 pt-1">
@@ -120,6 +139,25 @@ export const ToolbarControls = memo(function ToolbarControls({
 						title="Attach Image"
 					>
 						<ImageIcon className="w-4 h-4" />
+					</button>
+				)}
+				{showVoiceButton && (
+					<button
+						type="button"
+						onClick={onToggleVoiceInput}
+						className={`p-1 rounded transition-colors ${
+							isVoiceListening ? 'animate-pulse' : 'hover:bg-white/10 opacity-50 hover:opacity-100'
+						}`}
+						style={
+							isVoiceListening
+								? { color: theme.colors.accent, backgroundColor: `${theme.colors.accent}20` }
+								: undefined
+						}
+						title={isVoiceListening ? 'Stop voice input' : 'Voice input'}
+						aria-label={isVoiceListening ? 'Stop voice input' : 'Start voice input'}
+						aria-pressed={!!isVoiceListening}
+					>
+						<Mic className="w-4 h-4" />
 					</button>
 				)}
 				<input

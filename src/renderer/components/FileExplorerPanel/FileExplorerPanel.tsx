@@ -13,6 +13,8 @@ import {
 	Copy,
 	FolderInput,
 	FolderUp,
+	FileText,
+	HardDrive,
 } from 'lucide-react';
 import { getBasename } from '../../../shared/formatters';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -868,34 +870,47 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 				</div>
 			)}
 
-			{/* Status bar */}
+			{/* Status bar. `file-stats-container` enables the container query in index.css
+			    that swaps the label words for icons on narrow widths so the bar never wraps. */}
 			{session.fileTreeStats && (
 				<div
-					className="flex-shrink-0 flex items-center justify-center gap-3 px-3 py-1.5 text-xs rounded mt-3 mb-[7px]"
+					className="file-stats-container flex-shrink-0 flex items-center justify-center gap-3 px-3 py-1.5 text-xs rounded mt-3 mb-[7px] whitespace-nowrap"
 					style={{
 						backgroundColor: theme.colors.bgActivity,
 						border: `1px solid ${theme.colors.border}`,
 						color: theme.colors.textDim,
 					}}
 				>
-					<span>
+					<span
+						className="flex items-center gap-1"
+						title={`${session.fileTreeStats.fileCount.toLocaleString()} file${session.fileTreeStats.fileCount !== 1 ? 's' : ''}`}
+					>
+						<FileText className="file-stats-icon w-3 h-3 shrink-0 opacity-60" />
 						<span style={{ color: theme.colors.accent }}>
 							{session.fileTreeStats.fileCount.toLocaleString()}
 						</span>
-						<span className="opacity-60">
-							{' '}
-							file{session.fileTreeStats.fileCount !== 1 ? 's' : ''},{' '}
+						<span className="file-stats-label opacity-60">
+							file{session.fileTreeStats.fileCount !== 1 ? 's' : ''},
 						</span>
+					</span>
+					<span
+						className="flex items-center gap-1"
+						title={`${session.fileTreeStats.folderCount.toLocaleString()} folder${session.fileTreeStats.folderCount !== 1 ? 's' : ''}`}
+					>
+						<Folder className="file-stats-icon w-3 h-3 shrink-0 opacity-60" />
 						<span style={{ color: theme.colors.accent }}>
 							{session.fileTreeStats.folderCount.toLocaleString()}
 						</span>
-						<span className="opacity-60">
-							{' '}
+						<span className="file-stats-label opacity-60">
 							folder{session.fileTreeStats.folderCount !== 1 ? 's' : ''}
 						</span>
 					</span>
-					<span>
-						<span className="opacity-60">Size:</span>{' '}
+					<span
+						className="flex items-center gap-1"
+						title={`Total size: ${formatBytes(session.fileTreeStats.totalSize)}`}
+					>
+						<HardDrive className="file-stats-icon w-3 h-3 shrink-0 opacity-60" />
+						<span className="file-stats-label opacity-60">Size:</span>
 						<span style={{ color: theme.colors.accent }}>
 							{formatBytes(session.fileTreeStats.totalSize)}
 						</span>

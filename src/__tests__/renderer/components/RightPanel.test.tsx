@@ -467,17 +467,17 @@ describe('RightPanel', () => {
 
 			const resizeHandle = container.querySelector('.cursor-col-resize') as HTMLElement;
 
-			// Start resize
-			fireEvent.mouseDown(resizeHandle, { clientX: 500 });
+			// Start resize (pointer captured on the handle; move / up route to it)
+			fireEvent.pointerDown(resizeHandle, { clientX: 500, pointerId: 1 });
 
-			// Simulate mouse move (direct DOM update for performance, no state call yet)
-			fireEvent.mouseMove(document, { clientX: 450 }); // 50px to the left (makes panel wider since reversed)
+			// Simulate pointer move (direct DOM update for performance, no state call yet)
+			fireEvent.pointerMove(resizeHandle, { clientX: 450 }); // 50px to the left (makes panel wider since reversed)
 
-			// State is only updated on mouseUp for performance (avoids ~60 re-renders/sec)
+			// State is only updated on pointer up for performance (avoids ~60 re-renders/sec)
 			expect(spy).not.toHaveBeenCalled();
 
 			// End resize - state is updated
-			fireEvent.mouseUp(document);
+			fireEvent.pointerUp(resizeHandle);
 			expect(spy).toHaveBeenCalled();
 		});
 
@@ -490,13 +490,13 @@ describe('RightPanel', () => {
 			const resizeHandle = container.querySelector('.cursor-col-resize') as HTMLElement;
 
 			// Start resize
-			fireEvent.mouseDown(resizeHandle, { clientX: 500 });
+			fireEvent.pointerDown(resizeHandle, { clientX: 500, pointerId: 1 });
 
 			// Try to make it very wide (delta = 500 - (-500) = 1000)
-			fireEvent.mouseMove(document, { clientX: -500 });
+			fireEvent.pointerMove(resizeHandle, { clientX: -500 });
 
-			// End resize - state is updated on mouseUp
-			fireEvent.mouseUp(document);
+			// End resize - state is updated on pointer up
+			fireEvent.pointerUp(resizeHandle);
 
 			// Should be clamped to max 800
 			const calls = spy.mock.calls;
@@ -512,13 +512,13 @@ describe('RightPanel', () => {
 			const resizeHandle = container.querySelector('.cursor-col-resize') as HTMLElement;
 
 			// Start resize
-			fireEvent.mouseDown(resizeHandle, { clientX: 500 });
+			fireEvent.pointerDown(resizeHandle, { clientX: 500, pointerId: 1 });
 
 			// Move
-			fireEvent.mouseMove(document, { clientX: 450 });
+			fireEvent.pointerMove(resizeHandle, { clientX: 450 });
 
 			// End resize
-			fireEvent.mouseUp(document);
+			fireEvent.pointerUp(resizeHandle);
 
 			expect(window.maestro.settings.set).toHaveBeenCalledWith(
 				'rightPanelWidth',

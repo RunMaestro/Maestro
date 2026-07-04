@@ -16,6 +16,7 @@ import { ipcMain, BrowserWindow, app } from 'electron';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
 import { withIpcErrorLogging, CreateHandlerOptions } from '../../utils/ipcHandler';
+import { createSafeSend, SafeSendFn } from '../../utils/safe-send';
 import { getStatsDB } from '../../stats';
 import { isStatsCollectionEnabled } from '../../stats/utils';
 import { flushTelemetry } from '../../cue/cue-telemetry';
@@ -48,13 +49,10 @@ export interface StatsHandlerDependencies {
 }
 
 /**
- * Broadcast stats update to renderer
+ * Broadcast stats update to renderer and web-desktop bridge clients.
  */
-function broadcastStatsUpdate(getMainWindow: () => BrowserWindow | null): void {
-	const mainWindow = getMainWindow();
-	if (mainWindow && !mainWindow.isDestroyed()) {
-		mainWindow.webContents.send('stats:updated');
-	}
+function broadcastStatsUpdate(safeSend: SafeSendFn): void {
+	safeSend('stats:updated');
 }
 
 /**
@@ -70,6 +68,7 @@ function broadcastStatsUpdate(getMainWindow: () => BrowserWindow | null): void {
  */
 export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 	const { getMainWindow, settingsStore } = deps;
+	const safeSend = createSafeSend(getMainWindow);
 
 	// PR-B 1.5: flush any buffered query events synchronously before the app
 	// exits so we don't drop them. The handler is fire-and-forget — if it
@@ -115,7 +114,7 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 			// Notify renderer that stats may have changed soon. The actual
 			// write happens asynchronously; the dashboard is best-effort
 			// realtime, so a small lag (≤500ms) is acceptable.
-			broadcastStatsUpdate(getMainWindow);
+			broadcastStatsUpdate(safeSend);
 			return id;
 		})
 	);
@@ -142,7 +141,7 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 					sessionId: session.sessionId,
 					documentPath: session.documentPath,
 				});
-				broadcastStatsUpdate(getMainWindow);
+				broadcastStatsUpdate(safeSend);
 				return id;
 			}
 		)
@@ -164,7 +163,7 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 				} else {
 					logger.warn(`Auto Run session not found: ${id}`, LOG_CONTEXT);
 				}
-				broadcastStatsUpdate(getMainWindow);
+				broadcastStatsUpdate(safeSend);
 
 				// Cue telemetry — autorun completion is the user's natural quiet
 				// window, so we flush the outbox here. Fire-and-forget: a failed
@@ -199,7 +198,7 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 				taskIndex: task.taskIndex,
 				success: task.success,
 			});
-			broadcastStatsUpdate(getMainWindow);
+			broadcastStatsUpdate(safeSend);
 			return id;
 		})
 	);
@@ -260,7 +259,7 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 			const result = db.clearOldData(olderThanDays);
 			if (result.success) {
 				// Broadcast update so any open dashboards refresh
-				broadcastStatsUpdate(getMainWindow);
+				broadcastStatsUpdate(safeSend);
 			}
 			return result;
 		})
@@ -293,7 +292,7 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 					agentType: event.agentType,
 					projectPath: event.projectPath,
 				});
-				broadcastStatsUpdate(getMainWindow);
+				broadcastStatsUpdate(safeSend);
 				return id;
 			}
 		)
@@ -310,7 +309,7 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 				if (updated) {
 					logger.debug(`Recorded session closed: ${sessionId}`, LOG_CONTEXT);
 				}
-				broadcastStatsUpdate(getMainWindow);
+				broadcastStatsUpdate(safeSend);
 				return updated;
 			}
 		)
@@ -337,7 +336,7 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 
 			const db = getStatsDB();
 			const date = db.incrementShortcutUsage(firedAt);
-			broadcastStatsUpdate(getMainWindow);
+			broadcastStatsUpdate(safeSend);
 			return date;
 		})
 	);
@@ -372,7 +371,7 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 			const db = getStatsDB();
 			const id = db.insertImageAnnotation(createdAt);
 			logger.debug(`Recorded image annotation: ${id}`, LOG_CONTEXT);
-			broadcastStatsUpdate(getMainWindow);
+			broadcastStatsUpdate(safeSend);
 			return id;
 		})
 	);

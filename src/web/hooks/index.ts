@@ -77,14 +77,6 @@ export {
 
 export type { UseUnreadBadgeOptions, UseUnreadBadgeReturn } from './useUnreadBadge';
 
-export { useSwipeGestures, default as useSwipeGesturesDefault } from './useSwipeGestures';
-
-export type {
-	SwipeDirection,
-	UseSwipeGesturesOptions,
-	UseSwipeGesturesReturn,
-} from './useSwipeGestures';
-
 export { useOfflineQueue, default as useOfflineQueueDefault } from './useOfflineQueue';
 
 export type {
@@ -100,32 +92,6 @@ export {
 } from './useDeviceColorScheme';
 
 export type { ColorSchemePreference, UseDeviceColorSchemeReturn } from './useDeviceColorScheme';
-
-export {
-	useVoiceInput,
-	default as useVoiceInputDefault,
-	isSpeechRecognitionSupported,
-	getSpeechRecognition,
-} from './useVoiceInput';
-
-export type {
-	SpeechRecognitionEvent,
-	SpeechRecognitionResultList,
-	SpeechRecognitionResult,
-	SpeechRecognitionAlternative,
-	SpeechRecognitionErrorEvent,
-	SpeechRecognition,
-	SpeechRecognitionConstructor,
-	UseVoiceInputOptions,
-	UseVoiceInputReturn,
-} from './useVoiceInput';
-
-export {
-	useKeyboardVisibility,
-	default as useKeyboardVisibilityDefault,
-} from './useKeyboardVisibility';
-
-export type { UseKeyboardVisibilityReturn } from './useKeyboardVisibility';
 
 export {
 	useSlashCommandAutocomplete,

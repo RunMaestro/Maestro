@@ -760,9 +760,7 @@ app
 				}
 			},
 			emitModeResolved: (sessionId, resolution) => {
-				if (isWebContentsAvailable(mainWindow)) {
-					mainWindow!.webContents.send('process:claude-mode-resolved', sessionId, resolution);
-				}
+				safeSend('process:claude-mode-resolved', sessionId, resolution);
 			},
 			spawnReplay: (_sessionId, replayConfig) => {
 				processManager?.spawn(replayConfig);
@@ -1139,9 +1137,9 @@ app
 			onStopCueRun: (runId) => stopCueRun(runId) || stopCueShellRun(runId) || stopCueCliRun(runId),
 			onLog: (_level, message, data) => {
 				logger.cue(message, 'Cue', data);
-				// Push activity updates to renderer
-				if (mainWindow && isWebContentsAvailable(mainWindow) && data) {
-					mainWindow.webContents.send('cue:activityUpdate', data);
+				// Push activity updates to renderer (and web-desktop bridge clients)
+				if (data) {
+					safeSend('cue:activityUpdate', data);
 				}
 			},
 			onPreventSleep: (reason) => powerManager.addBlockReason(reason),
@@ -1183,9 +1181,7 @@ app
 					`History file changed for session ${sessionId}, notifying renderer`,
 					'HistoryWatcher'
 				);
-				if (isWebContentsAvailable(mainWindow)) {
-					mainWindow.webContents.send('history:externalChange', sessionId);
-				}
+				safeSend('history:externalChange', sessionId);
 			});
 		} catch (error) {
 			void captureException(error);
@@ -1328,6 +1324,7 @@ app
 		const initialHotkey = store.get('globalShowHotkey', []) as string[];
 		if (Array.isArray(initialHotkey) && initialHotkey.length > 0) {
 			const ok = setGlobalShowHotkey(initialHotkey);
+			// intentionally not bridged: window-specific
 			if (!ok && mainWindow && isWebContentsAvailable(mainWindow)) {
 				mainWindow.webContents.send('globalHotkey:registrationFailed', initialHotkey);
 			}
@@ -1335,6 +1332,7 @@ app
 		store.onDidChange('globalShowHotkey', (value) => {
 			const keys = Array.isArray(value) ? (value as string[]) : [];
 			const ok = setGlobalShowHotkey(keys);
+			// intentionally not bridged: window-specific
 			if (!ok && mainWindow && isWebContentsAvailable(mainWindow)) {
 				mainWindow.webContents.send('globalHotkey:registrationFailed', keys);
 			}
@@ -1372,6 +1370,7 @@ app
 		// This allows the renderer to refresh settings that may have been reset
 		powerMonitor.on('resume', () => {
 			logger.info('System resumed from sleep/suspend', 'PowerMonitor');
+			// intentionally not bridged: window-specific
 			if (isWebContentsAvailable(mainWindow)) {
 				mainWindow.webContents.send('app:systemResume');
 			}
@@ -1467,6 +1466,7 @@ function setupIpcHandlers() {
 	// Git operations - extracted to src/main/ipc/handlers/git.ts
 	registerGitHandlers({
 		settingsStore: store,
+		getMainWindow: () => mainWindow,
 	});
 
 	// Auto Run operations - extracted to src/main/ipc/handlers/autorun.ts
@@ -1503,6 +1503,7 @@ function setupIpcHandlers() {
 		getProcessManager: () => processManager,
 		getAgentDetector: () => agentDetector,
 		agentConfigsStore,
+		getMainWindow: () => mainWindow,
 	});
 
 	// Cue - event-driven automation engine
@@ -1669,6 +1670,7 @@ function setupIpcHandlers() {
 	registerMarketplaceHandlers({
 		app,
 		settingsStore: store,
+		getMainWindow: () => mainWindow,
 	});
 
 	// Register Stats handlers for usage tracking

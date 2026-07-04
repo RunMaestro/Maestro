@@ -12,6 +12,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ipcMain } from 'electron';
+import { spawn } from 'child_process';
 
 // Create hoisted mocks for more reliable mocking
 const mocks = vi.hoisted(() => ({
@@ -66,6 +67,14 @@ vi.mock('../../../../main/deep-links', () => ({
 		return { action: 'focus' };
 	}),
 	dispatchDeepLink: vi.fn(),
+}));
+
+// Mock the web-desktop bridge fan-out leaf so we can assert completion events
+// reach web/mobile clients. safeSend (real) calls this before touching the
+// desktop renderer, so the bridge fires even when there is no desktop window.
+const broadcastBridgeEventMock = vi.fn();
+vi.mock('../../../../main/web-server/handlers/bridgeHandlers', () => ({
+	broadcastBridgeEvent: (...args: unknown[]) => broadcastBridgeEventMock(...args),
 }));
 
 // Mock child_process - must include default export
@@ -651,6 +660,33 @@ describe('Notification IPC Handlers', () => {
 			expect(result.error).toContain(`max ${maxSize}`);
 
 			// Clean up - reset all notification state including clearing the queue
+			resetNotificationState();
+		});
+	});
+
+	describe('notification:commandCompleted web-desktop bridge fanout', () => {
+		it('routes completion through safeSend so web clients see it with no desktop window', async () => {
+			// mockGetMainWindow returns null, so there is no desktop renderer to
+			// reach. Before the safeSend migration this used BrowserWindow.getAllWindows()
+			// (empty in tests), so web/mobile clients silently missed the event. Now
+			// the completion must still fan out to the bridge.
+			const handler = handlers.get('notification:speak')!;
+			const speakResult = await handler({}, 'hello world');
+			expect(speakResult.success).toBe(true);
+			const notificationId = speakResult.notificationId as number;
+
+			// Grab the spawned child and fire its 'close' handler to drive completion.
+			const child = vi.mocked(spawn).mock.results[0].value as unknown as {
+				on: ReturnType<typeof vi.fn>;
+			};
+			const closeCall = child.on.mock.calls.find((c: unknown[]) => c[0] === 'close');
+			expect(closeCall).toBeDefined();
+			(closeCall![1] as (code: number, signal: string | null) => void)(0, null);
+
+			expect(broadcastBridgeEventMock).toHaveBeenCalledWith('notification:commandCompleted', [
+				notificationId,
+			]);
+
 			resetNotificationState();
 		});
 	});

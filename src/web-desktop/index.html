@@ -2,7 +2,15 @@
 <html lang="en">
 	<head>
 		<meta charset="UTF-8" />
-		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+		<!-- Theme color for browser chrome (address bar, status bar). -->
+		<meta name="theme-color" content="#1a1a2e" />
+		<!-- iOS Safari: run full-screen when launched from the Home Screen and use a
+		     translucent status bar so content extends under the notch. -->
+		<meta name="apple-mobile-web-app-capable" content="yes" />
+		<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+		<!-- Cross-browser standalone PWA hint. -->
+		<meta name="mobile-web-app-capable" content="yes" />
 		<title>Maestro (Web Desktop)</title>
 		<!-- Load JetBrains Mono so this bundle matches the desktop app. Without it the
 		     renderer's `font-family: 'JetBrains Mono'` falls back to Courier New.

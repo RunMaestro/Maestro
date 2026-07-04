@@ -1,6 +1,16 @@
-import { memo, forwardRef, useImperativeHandle, useRef, useEffect, useCallback } from 'react';
+import {
+	memo,
+	forwardRef,
+	useImperativeHandle,
+	useRef,
+	useEffect,
+	useCallback,
+	useState,
+	useMemo,
+} from 'react';
 import { XTerminal, XTerminalHandle } from './XTerminal';
 import { TerminalSearchBar } from './TerminalSearchBar';
+import { TerminalTouchBar } from './TerminalTouchBar';
 import {
 	getActiveTerminalTab,
 	getTerminalSessionId,
@@ -12,6 +22,7 @@ import { useSessionStore } from '../stores/sessionStore';
 import { useTabStore } from '../stores/tabStore';
 import { captureException } from '../utils/sentry';
 import { notifyToast } from '../stores/notificationStore';
+import { isCoarsePointer } from '../utils/touch';
 import type { PaneRect, Session, TerminalTab } from '../types';
 import type { Theme } from '../../shared/theme-types';
 import { logger } from '../utils/logger';
@@ -111,6 +122,22 @@ export const TerminalView = memo(
 		const onTabStateChangeRef = useRef(onTabStateChange);
 		onTabStateChangeRef.current = onTabStateChange;
 
+		// Touch key bar (coarse-pointer devices only). Evaluated once per render;
+		// the pointer type does not change during a session.
+		const coarsePointer = isCoarsePointer();
+		// Sticky-Ctrl armed state for the touch key bar. A ref mirror lets the
+		// XTerminal bridge read the latest value without re-creating the bridge.
+		const [ctrlArmed, setCtrlArmed] = useState(false);
+		const ctrlArmedRef = useRef(ctrlArmed);
+		ctrlArmedRef.current = ctrlArmed;
+		const stickyCtrl = useMemo(
+			() => ({
+				isActive: () => ctrlArmedRef.current,
+				onConsume: () => setCtrlArmed(false),
+			}),
+			[]
+		);
+
 		const closeTerminalTab = useTabStore((s) => s.closeTerminalTab);
 
 		// Batch spawn-failure toasts: coalesce rapid failures (e.g. session restore
@@ -172,6 +199,24 @@ export const TerminalView = memo(
 		);
 
 		const activeTab = getActiveTerminalTab(session);
+
+		// Touch key bar → PTY. Writes the raw escape sequence through the SAME path
+		// keyboard input uses (window.maestro.process.write), targeting the active
+		// terminal tab. Focus is preserved by the buttons themselves (pointer-down is
+		// prevented), so the virtual keyboard stays up.
+		const handleTouchKey = useCallback(
+			(sequence: string) => {
+				const tab = getActiveTerminalTab(session);
+				if (!tab) return;
+				const terminalSessionId = getTerminalSessionId(session.id, tab.id);
+				window.maestro.process.write(terminalSessionId, sequence).catch(() => {
+					// Write failures are surfaced by the process exit handler
+				});
+			},
+			[session]
+		);
+
+		const toggleCtrlArmed = useCallback(() => setCtrlArmed((v) => !v), []);
 
 		// Expose imperative handle to parent
 		useImperativeHandle(
@@ -500,104 +545,115 @@ export const TerminalView = memo(
 		};
 
 		return (
-			<div className="flex-1 relative overflow-hidden">
-				<TerminalSearchBar
-					theme={theme}
-					isOpen={!!searchOpen}
-					onClose={handleSearchClose}
-					onSearch={(q) => {
-						if (!activeTab) return false;
-						return terminalRefs.current.get(activeTab.id)?.search(q) ?? false;
-					}}
-					onSearchNext={() => {
-						if (!activeTab) return false;
-						return terminalRefs.current.get(activeTab.id)?.searchNext() ?? false;
-					}}
-					onSearchPrevious={() => {
-						if (!activeTab) return false;
-						return terminalRefs.current.get(activeTab.id)?.searchPrevious() ?? false;
-					}}
-				/>
-				{terminalTabs.map((tab) => {
-					const terminalSessionId = getTerminalSessionId(session.id, tab.id);
-					// Tiling: this tab is a leaf in the active group. Position its layer onto
-					// the published pane rect and show it (multiple terminals visible at once).
-					// XTerminal's own ResizeObserver reflows cols/rows when the rect changes.
-					const paneRect = paneRects?.get(tab.id);
-					// Standalone (no paneRects): only the session's active tab layer is shown,
-					// filling the panel - original keep-alive behavior.
-					const isActive = paneRects ? paneRect != null : tab.id === session.activeTerminalTabId;
-					const positioned = paneRect != null;
+			<div className="flex-1 flex flex-col overflow-hidden">
+				{coarsePointer && (
+					<TerminalTouchBar
+						theme={theme}
+						ctrlArmed={ctrlArmed}
+						onToggleCtrl={toggleCtrlArmed}
+						onKey={handleTouchKey}
+					/>
+				)}
+				<div className="flex-1 relative overflow-hidden">
+					<TerminalSearchBar
+						theme={theme}
+						isOpen={!!searchOpen}
+						onClose={handleSearchClose}
+						onSearch={(q) => {
+							if (!activeTab) return false;
+							return terminalRefs.current.get(activeTab.id)?.search(q) ?? false;
+						}}
+						onSearchNext={() => {
+							if (!activeTab) return false;
+							return terminalRefs.current.get(activeTab.id)?.searchNext() ?? false;
+						}}
+						onSearchPrevious={() => {
+							if (!activeTab) return false;
+							return terminalRefs.current.get(activeTab.id)?.searchPrevious() ?? false;
+						}}
+					/>
+					{terminalTabs.map((tab) => {
+						const terminalSessionId = getTerminalSessionId(session.id, tab.id);
+						// Tiling: this tab is a leaf in the active group. Position its layer onto
+						// the published pane rect and show it (multiple terminals visible at once).
+						// XTerminal's own ResizeObserver reflows cols/rows when the rect changes.
+						const paneRect = paneRects?.get(tab.id);
+						// Standalone (no paneRects): only the session's active tab layer is shown,
+						// filling the panel - original keep-alive behavior.
+						const isActive = paneRects ? paneRect != null : tab.id === session.activeTerminalTabId;
+						const positioned = paneRect != null;
 
-					return (
-						<div
-							key={tab.id}
-							// overflow-hidden clips the xterm canvas to this layer's box. Critical for
-							// a tiled (positioned) pane: the layer is height-clamped to its pane rect,
-							// but xterm sizes its canvas from its own delayed ResizeObserver reflow. In
-							// the window between the pane shrinking (e.g. the AI input appearing when
-							// focus moves to an AI pane) and xterm reflowing, an over-tall canvas would
-							// otherwise spill past the pane's bottom - down to the panel's clip - and
-							// bleed over the input area. Harmless for the standalone `inset-0` case,
-							// which the panel container already clips.
-							className={`absolute overflow-hidden ${positioned ? '' : 'inset-0 '}${isActive ? '' : 'invisible'}`}
-							// Tiling: pressing a pane focuses it (the overlay sits over the
-							// transparent PaneFrame slot, so the frame's own click-to-focus never
-							// sees this press). Fires on mousedown-capture so focus lands before
-							// xterm begins a selection drag.
-							onMouseDownCapture={positioned ? () => onPaneMouseDown?.(tab.id) : undefined}
-							style={
-								positioned
-									? {
-											top: paneRect.top,
-											left: paneRect.left,
-											width: paneRect.width,
-											height: paneRect.height,
-											pointerEvents: 'auto',
-										}
-									: { pointerEvents: isActive ? 'auto' : 'none' }
-							}
-						>
-							<XTerminal
-								onCopySelection={onCopySelection}
-								onSendSelectionToAgent={
-									onSendSelectionToAgent
-										? (text: string) => onSendSelectionToAgent(tab.id, text)
-										: undefined
+						return (
+							<div
+								key={tab.id}
+								// overflow-hidden clips the xterm canvas to this layer's box. Critical for
+								// a tiled (positioned) pane: the layer is height-clamped to its pane rect,
+								// but xterm sizes its canvas from its own delayed ResizeObserver reflow. In
+								// the window between the pane shrinking (e.g. the AI input appearing when
+								// focus moves to an AI pane) and xterm reflowing, an over-tall canvas would
+								// otherwise spill past the pane's bottom - down to the panel's clip - and
+								// bleed over the input area. Harmless for the standalone `inset-0` case,
+								// which the panel container already clips.
+								className={`absolute overflow-hidden ${positioned ? '' : 'inset-0 '}${isActive ? '' : 'invisible'}`}
+								// Tiling: pressing a pane focuses it (the overlay sits over the
+								// transparent PaneFrame slot, so the frame's own click-to-focus never
+								// sees this press). Fires on mousedown-capture so focus lands before
+								// xterm begins a selection drag.
+								onMouseDownCapture={positioned ? () => onPaneMouseDown?.(tab.id) : undefined}
+								style={
+									positioned
+										? {
+												top: paneRect.top,
+												left: paneRect.left,
+												width: paneRect.width,
+												height: paneRect.height,
+												pointerEvents: 'auto',
+											}
+										: { pointerEvents: isActive ? 'auto' : 'none' }
 								}
-								ref={(handle) => {
-									if (handle) {
-										terminalRefs.current.set(tab.id, handle);
-										// Write loading indicator once per idle cycle — guard prevents duplicate writes on re-renders
-										if (
-											tab.pid === 0 &&
-											tab.state === 'idle' &&
-											!loadingWrittenRef.current.has(tab.id)
-										) {
-											loadingWrittenRef.current.add(tab.id);
-											setTimeout(() => {
-												handle.write('\x1b[2mStarting terminal...\x1b[0m');
-											}, 0);
-										}
-									} else {
-										terminalRefs.current.delete(tab.id);
-										// Do NOT clear loadingWrittenRef here — React calls inline ref callbacks with
-										// null then the new handle on re-renders; clearing it would cause repeated writes.
+							>
+								<XTerminal
+									onCopySelection={onCopySelection}
+									onSendSelectionToAgent={
+										onSendSelectionToAgent
+											? (text: string) => onSendSelectionToAgent(tab.id, text)
+											: undefined
 									}
-								}}
-								sessionId={terminalSessionId}
-								theme={theme}
-								fontFamily={fontFamily}
-								fontSize={fontSize}
-								// Treat the tab as inactive when the whole TerminalView is hidden
-								// (a different session is active) so XTerminal disposes its WebGL
-								// renderer and frees the GPU context. Re-init happens automatically
-								// when isVisible flips back to true.
-								isActive={isActive && isVisible !== false}
-							/>
-						</div>
-					);
-				})}
+									stickyCtrl={coarsePointer && isActive ? stickyCtrl : undefined}
+									ref={(handle) => {
+										if (handle) {
+											terminalRefs.current.set(tab.id, handle);
+											// Write loading indicator once per idle cycle — guard prevents duplicate writes on re-renders
+											if (
+												tab.pid === 0 &&
+												tab.state === 'idle' &&
+												!loadingWrittenRef.current.has(tab.id)
+											) {
+												loadingWrittenRef.current.add(tab.id);
+												setTimeout(() => {
+													handle.write('\x1b[2mStarting terminal...\x1b[0m');
+												}, 0);
+											}
+										} else {
+											terminalRefs.current.delete(tab.id);
+											// Do NOT clear loadingWrittenRef here — React calls inline ref callbacks with
+											// null then the new handle on re-renders; clearing it would cause repeated writes.
+										}
+									}}
+									sessionId={terminalSessionId}
+									theme={theme}
+									fontFamily={fontFamily}
+									fontSize={fontSize}
+									// Treat the tab as inactive when the whole TerminalView is hidden
+									// (a different session is active) so XTerminal disposes its WebGL
+									// renderer and frees the GPU context. Re-init happens automatically
+									// when isVisible flips back to true.
+									isActive={isActive && isVisible !== false}
+								/>
+							</div>
+						);
+					})}
+				</div>
 			</div>
 		);
 	})

@@ -15,6 +15,7 @@ import {
 import type { TerminalTab, Theme } from '../../types';
 import { getTerminalTabDisplayName } from '../../utils/terminalTabHelpers';
 import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
+import { isCoarsePointer } from '../../utils/touch';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useTabStore } from '../../stores/tabStore';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
@@ -102,6 +103,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 		setOverlayRef,
 		positionReady,
 		setTabRef,
+		openOverlay,
 		handleMouseEnter,
 		handleMouseLeave,
 		overlayMouseEnter,
@@ -151,7 +153,15 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 		[onClose, tab.id]
 	);
 
-	const handleTabSelect = useCallback(() => onSelect(tab.id), [onSelect, tab.id]);
+	const handleTabSelect = useCallback(() => {
+		// Touch has no hover: tapping the already-active tab opens the action
+		// overlay; tapping an inactive tab selects it. Mouse/keyboard unchanged.
+		if (isActive && isCoarsePointer()) {
+			openOverlay();
+			return;
+		}
+		onSelect(tab.id);
+	}, [isActive, openOverlay, onSelect, tab.id]);
 
 	const handleTabDragStart = useCallback(
 		(e: React.DragEvent) => onDragStart(tab.id, e),

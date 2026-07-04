@@ -26,6 +26,7 @@ import { GhostIconButton } from '../ui/GhostIconButton';
 import type { Session, Group, Theme } from '../../types';
 import { getBadgeForTime } from '../../constants/conductorBadges';
 import { SessionItem } from '../SessionItem';
+import { LongPressable, longPressMouseEvent } from '../shared/LongPressable';
 import { GroupChatList } from '../GroupChatList';
 import { useLiveOverlay, useResizablePanel } from '../../hooks';
 import { useGitFileStatus } from '../../contexts/GitStatusContext';
@@ -1007,8 +1008,8 @@ function SessionListInner(props: SessionListProps) {
 			{/* Resize Handle */}
 			{leftSidebarOpen && (
 				<div
-					className="absolute top-0 right-0 w-3 h-full cursor-col-resize border-r-4 border-transparent hover:border-blue-500 transition-colors z-20"
-					onMouseDown={onSidebarResizeStart}
+					className="resize-handle absolute top-0 right-0 w-3 h-full cursor-col-resize border-r-4 border-transparent hover:border-blue-500 transition-colors z-20"
+					onPointerDown={onSidebarResizeStart}
 				/>
 			)}
 
@@ -1412,7 +1413,7 @@ function SessionListInner(props: SessionListProps) {
 								onDragEnter={() => handleDropTargetEnter(group.id)}
 								onDragLeave={handleDropTargetLeave}
 							>
-								<div
+								<LongPressable
 									role="button"
 									tabIndex={0}
 									aria-expanded={!group.collapsed}
@@ -1430,6 +1431,10 @@ function SessionListInner(props: SessionListProps) {
 									}
 									onClick={() => toggleGroup(group.id)}
 									onContextMenu={(e) => handleGroupContextMenu(e, group.id)}
+									// Touch: a long-press opens the same group context menu right-click opens.
+									onLongPress={(rect) =>
+										handleGroupContextMenu(longPressMouseEvent(rect), group.id)
+									}
 									onDragOver={handleDragOver}
 									onDrop={() => {
 										setDragOverTarget(null);
@@ -1513,7 +1518,7 @@ function SessionListInner(props: SessionListProps) {
 											<Trash2 className="w-3 h-3" />
 										</button>
 									)}
-								</div>
+								</LongPressable>
 
 								{!group.collapsed || showUnreadAgentsOnly ? (
 									<div

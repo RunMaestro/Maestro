@@ -8,14 +8,21 @@ import { logger } from './logger';
 import { broadcastBridgeEvent } from '../web-server/handlers/bridgeHandlers';
 
 /**
- * Function type for enumerating every window a broadcast should reach.
+ * Function type for enumerating the window(s) a broadcast should reach.
  *
- * In single-window mode this resolves to just the primary window; in
- * multi-window mode it resolves to every open app window (typically
- * `BrowserWindow.getAllWindows()`). Injected so the helper stays free of any
- * direct `electron` value usage and remains trivially unit-testable.
+ * Prefer returning EVERY open app window (`BrowserWindow.getAllWindows()`) so the
+ * broadcast is multi-window correct - each renderer filters agent-scoped events to
+ * the agents it owns. A single `BrowserWindow | null | undefined` is also accepted
+ * for the handful of channels that intentionally target just one window (or supply
+ * a `() => null` placeholder before a real window exists); it is normalized to a
+ * one-element list internally. Injected so the helper stays free of any direct
+ * `electron` value usage and remains trivially unit-testable.
  */
-export type GetBroadcastWindows = () => ReadonlyArray<BrowserWindow | null | undefined>;
+export type GetBroadcastWindows = () =>
+	| BrowserWindow
+	| null
+	| undefined
+	| ReadonlyArray<BrowserWindow | null | undefined>;
 
 /**
  * Creates a safeSend function with the provided window enumerator.
@@ -51,7 +58,14 @@ export function createSafeSend(getWindows: GetBroadcastWindows) {
 	return function safeSend(channel: string, ...args: unknown[]): void {
 		broadcastBridgeEvent(channel, args);
 
-		for (const win of getWindows()) {
+		// Accept either a single window (or null/undefined) or a list of them,
+		// normalizing to a list so the send loop is uniform.
+		const target = getWindows();
+		const windows: ReadonlyArray<BrowserWindow | null | undefined> = Array.isArray(target)
+			? target
+			: [target];
+
+		for (const win of windows) {
 			try {
 				if (isWebContentsAvailable(win)) {
 					win.webContents.send(channel, ...args);

@@ -467,8 +467,8 @@ export const RightPanel = memo(
 				{/* Resize Handle */}
 				{rightPanelOpen && (
 					<div
-						className="absolute top-0 left-0 w-3 h-full cursor-col-resize border-l-4 border-transparent hover:border-blue-500 transition-colors z-20"
-						onMouseDown={onRightPanelResizeStart}
+						className="resize-handle absolute top-0 left-0 w-3 h-full cursor-col-resize border-l-4 border-transparent hover:border-blue-500 transition-colors z-20"
+						onPointerDown={onRightPanelResizeStart}
 					/>
 				)}
 
