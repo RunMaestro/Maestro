@@ -7,6 +7,7 @@ import {
 	createGroupFromDrop,
 	generateGroupName,
 	movePaneInGroup,
+	swapPanesInGroup,
 	tileTabIntoGroup,
 	type DropZone,
 } from '../../utils/panelLayout';
@@ -109,10 +110,21 @@ export function PaneDropZones({
 	// receives no dragenter of its own to arm on.
 	const [dragActive, setDragActive] = React.useState(false);
 	const [hover, setHover] = React.useState<HoverTarget | null>(null);
+	// The `source` of the in-flight tiling drag ('pane' when a tile header is being
+	// dragged, 'tab-bar' when a strip tab is). Only a pane-rearrange drag unlocks the
+	// central swap zone; a tab-bar drag stays edges-only. Captured on dragstart (the one
+	// phase where reading dataTransfer is allowed) since dragover can't read the payload.
+	const dragSourceRef = React.useRef<TabTilePayload['source'] | null>(null);
 
 	React.useEffect(() => {
-		const onDragStart = () => setDragActive(true);
+		const onDragStart = (e: DragEvent) => {
+			dragSourceRef.current = e.dataTransfer
+				? (readTabTilePayload(e.dataTransfer)?.source ?? null)
+				: null;
+			setDragActive(true);
+		};
 		const onDragEnd = () => {
+			dragSourceRef.current = null;
 			setDragActive(false);
 			setHover(null);
 		};
@@ -146,6 +158,9 @@ export function PaneDropZones({
 			if (activeGroup) {
 				const paneEls = overlay.parentElement?.querySelectorAll<HTMLElement>('[data-pane-leaf-id]');
 				if (!paneEls || paneEls.length === 0) return null;
+				// A pane-rearrange drag (a tile header) unlocks the central swap zone; a
+				// tab-bar drag tiling a new tab stays edges-only (no swap target exists).
+				const allowCenter = dragSourceRef.current === 'pane';
 				for (const el of Array.from(paneEls)) {
 					const r = el.getBoundingClientRect();
 					if (clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom) {
@@ -153,7 +168,8 @@ export function PaneDropZones({
 						const zone = computeDropZone(
 							local,
 							clientX - overlayRect.left,
-							clientY - overlayRect.top
+							clientY - overlayRect.top,
+							allowCenter
 						);
 						return {
 							leafId: el.dataset.paneLeafId ?? null,
@@ -206,6 +222,16 @@ export function PaneDropZones({
 				const draggedLeafId = payload.leafId;
 				const targetLeafId = target.leafId;
 				const zone = target.zone;
+				// Center drop = swap the two tiles in place (keeps the grid shape); an edge
+				// drop = reslice, moving the pane to that side of the target (changes the
+				// split, e.g. vertical -> horizontal).
+				if (zone === 'center') {
+					updateSessionWith(session.id, (s) =>
+						swapPanesInGroup(s, groupId, draggedLeafId, targetLeafId)
+					);
+					notifyCenterFlash({ color: 'green', message: 'Swapped' });
+					return;
+				}
 				updateSessionWith(session.id, (s) =>
 					movePaneInGroup(s, groupId, draggedLeafId, targetLeafId, zone)
 				);
@@ -291,7 +317,7 @@ export function PaneDropZones({
 		>
 			{dragActive && hover && (
 				<div
-					className="absolute rounded-sm transition-all duration-75 pointer-events-none"
+					className="absolute rounded-sm transition-all duration-75 pointer-events-none flex items-center justify-center"
 					style={{
 						left: hover.highlight.left,
 						top: hover.highlight.top,
@@ -300,7 +326,17 @@ export function PaneDropZones({
 						backgroundColor: `${theme.colors.accent}26`,
 						border: `2px solid ${theme.colors.accent}`,
 					}}
-				/>
+				>
+					{/* Center drop swaps the two tiles; label it so the gesture is discoverable. */}
+					{hover.zone === 'center' && (
+						<span
+							className="px-2 py-0.5 rounded text-xs font-semibold select-none"
+							style={{ backgroundColor: theme.colors.accent, color: theme.colors.bgMain }}
+						>
+							⇄ Swap
+						</span>
+					)}
+				</div>
 			)}
 		</div>
 	);

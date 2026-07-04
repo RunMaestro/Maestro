@@ -42,17 +42,31 @@ export interface DropRect {
 }
 
 /**
- * Classify a pointer position within a pane's rect into one of the four edge
- * zones (top/bottom/left/right) by splitting the pane along its two diagonals
- * into four triangular quadrants - the standard tmux / VS Code drop model. Every
- * point in the pane belongs to exactly one edge, so a drop always tiles; there is
- * deliberately no `center` zone (a center target that highlights the whole pane
- * reads as "replace everything" and confused users). The dominant offset from the
- * pane center picks the axis: a larger horizontal offset means left/right, a
- * larger vertical offset means top/bottom. A degenerate (zero-area) rect defaults
- * to `left` so callers still get a valid split direction.
+ * Half-width of the central swap box on each axis (only when `allowCenter`): a
+ * pointer within `[0.5 - CENTER_HALF, 0.5 + CENTER_HALF]` on BOTH axes lands in the
+ * `center` zone. 0.2 gives a comfortable inner 40% target while keeping the edge
+ * zones wide enough to hit reliably.
  */
-export function computeDropZone(rect: DropRect, pointerX: number, pointerY: number): DropZone {
+const CENTER_HALF = 0.2;
+
+/**
+ * Classify a pointer position within a pane's rect into a drop zone. By default the
+ * pane is carved along its two diagonals into four triangular edge quadrants
+ * (top/bottom/left/right) - the standard tmux / VS Code split model - so every point
+ * tiles. When `allowCenter` is set (pane-rearrange drags only), a central box yields
+ * the `center` zone, which the caller treats as a SWAP rather than a reslice; a center
+ * target reads as "replace/swap here", which is confusing for tiling a brand-new tab
+ * but exactly right for exchanging two existing panes. The dominant offset from the
+ * pane center picks the edge axis: a larger horizontal offset means left/right, a
+ * larger vertical offset means top/bottom. A degenerate (zero-area) rect defaults to
+ * `left` so callers still get a valid split direction.
+ */
+export function computeDropZone(
+	rect: DropRect,
+	pointerX: number,
+	pointerY: number,
+	allowCenter = false
+): DropZone {
 	if (rect.width <= 0 || rect.height <= 0) return 'left';
 	// Normalize the pointer into [0,1] within the rect (clamped, so samples just
 	// outside the box during a fast drag still classify to the nearest edge).
@@ -64,6 +78,10 @@ export function computeDropZone(rect: DropRect, pointerX: number, pointerY: numb
 	// four diagonal triangles meeting at the center - no dead/center region.
 	const dx = nx - 0.5;
 	const dy = ny - 0.5;
+	// A pointer near the middle (both axes within the central box) means swap.
+	if (allowCenter && Math.abs(dx) < CENTER_HALF && Math.abs(dy) < CENTER_HALF) {
+		return 'center';
+	}
 	if (Math.abs(dx) >= Math.abs(dy)) {
 		return dx < 0 ? 'left' : 'right';
 	}
@@ -757,6 +775,50 @@ export function movePaneInGroup(
 
 	const withGroup = updateGroupInSession(session, groupId, (g) => ({ ...g, layout: nextLayout }));
 	return newLeafId ? focusPaneInSession(withGroup, groupId, newLeafId) : withGroup;
+}
+
+/**
+ * Swap the contents of two panes WITHIN a group, exchanging their tab refs in place
+ * while leaving the split structure, node ids, and sizes untouched. This is the
+ * "rearrange the grid" primitive: dropping one pane onto the CENTER of another trades
+ * their positions (swap top/bottom, left/right, or any two tiles) without reslicing -
+ * so a 2x2 grid stays a 2x2 grid. Contrast {@link movePaneInGroup}, which removes and
+ * re-inserts by splitting the target (used for the edge zones that change orientation).
+ * Focus follows the dragged pane to its new home (`targetLeafId`, where its content now
+ * lives). No-op (same-reference) copy when the group or either leaf can't be found, or
+ * the two leaves are the same pane.
+ */
+export function swapPanesInGroup(
+	session: Session,
+	groupId: string,
+	draggedLeafId: string,
+	targetLeafId: string
+): Session {
+	if (draggedLeafId === targetLeafId) return session;
+	const group = (session.tabGroups ?? []).find((g) => g.id === groupId);
+	if (!group) return session;
+	const draggedLeaf = findLeafById(group.layout, draggedLeafId);
+	const targetLeaf = findLeafById(group.layout, targetLeafId);
+	if (!draggedLeaf || draggedLeaf.kind !== 'leaf') return session;
+	if (!targetLeaf || targetLeaf.kind !== 'leaf') return session;
+	const draggedTab = draggedLeaf.tab;
+	const targetTab = targetLeaf.tab;
+
+	const swap = (node: PanelLayoutNode): PanelLayoutNode => {
+		if (node.kind === 'leaf') {
+			if (node.id === draggedLeafId) return { ...node, tab: targetTab };
+			if (node.id === targetLeafId) return { ...node, tab: draggedTab };
+			return node;
+		}
+		return { ...node, children: node.children.map(swap) };
+	};
+
+	const withGroup = updateGroupInSession(session, groupId, (g) => ({
+		...g,
+		layout: swap(g.layout),
+	}));
+	// The dragged pane's content now lives at the target leaf; focus follows it there.
+	return focusPaneInSession(withGroup, groupId, targetLeafId);
 }
 
 /**

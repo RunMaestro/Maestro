@@ -18,6 +18,7 @@ import {
 	Play,
 	X,
 	Maximize2,
+	GripHorizontal,
 	AlertCircle,
 	Loader2,
 } from 'lucide-react';
@@ -39,7 +40,7 @@ import {
 	updateGroupInSession,
 	updateSplitSizes,
 } from '../../utils/panelLayout';
-import { writeTabTilePayload } from '../../utils/tabDragPayload';
+import { usePaneDrag } from '../../hooks/tabs/usePaneDrag';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import { buildSessionDeepLink } from '../../../shared/deep-link-urls';
@@ -816,23 +817,13 @@ function PaneFrame({
 		[group.focusedPaneId, group.id, node.id, session.id]
 	);
 
-	// Dragging the title bar carries a `source: 'pane'` tiling payload so a drop
-	// onto the tab bar promotes this pane back to a standalone tab (and text/plain
-	// so the drag has a native fallback). The group + leaf ids let the tab bar's
-	// drop handler target the right group and auto-dissolve it below two panes.
-	const handleTitleDragStart = React.useCallback(
-		(e: React.DragEvent) => {
-			e.dataTransfer.effectAllowed = 'move';
-			e.dataTransfer.setData('text/plain', node.tab.id);
-			writeTabTilePayload(e.dataTransfer, {
-				ref: node.tab,
-				source: 'pane',
-				groupId: group.id,
-				leafId: node.id,
-			});
-		},
-		[group.id, node.id, node.tab]
-	);
+	// Rearrange this pane by dragging its title bar. Uses pointer events, NOT native
+	// HTML5 DnD: inside a child Electron window on a scaled display the native macOS
+	// drag session fires `dragstart` then dies before any `drag`/`dragover`/`drop`, so
+	// a native pane drag silently no-ops. See usePaneDrag for the full rationale. Drop
+	// on another tile's edge to move/re-split, its center to swap, or the tab strip to
+	// pop the pane out.
+	const onPaneDragPointerDown = usePaneDrag(session.id, group.id, node.id);
 
 	return (
 		<div
@@ -853,16 +844,28 @@ function PaneFrame({
 			    chevron opens the pane actions menu (rename / move to own tab / break
 			    apart) since a tiled tab has no strip chip of its own. */}
 			<div
-				className="shrink-0 flex items-center gap-1 px-2 py-1 text-xs font-medium select-none cursor-grab active:cursor-grabbing"
+				className="relative shrink-0 flex items-center gap-1 px-2 py-1 text-xs font-medium select-none cursor-grab active:cursor-grabbing"
 				style={{
 					backgroundColor: isFocused ? theme.colors.bgActivity : theme.colors.bgSidebar,
 					color: isFocused ? theme.colors.accent : theme.colors.textMain,
 					borderBottom: `1px solid ${isFocused ? theme.colors.accent : theme.colors.border}`,
 				}}
-				title={title}
-				draggable
-				onDragStart={handleTitleDragStart}
+				title="Drag to rearrange - drop on a tile's edge to move, its center to swap, or the tab bar to pop out"
+				// Pointer-driven rearrange (not native draggable - see usePaneDrag). Press
+				// starts drag tracking; a plain click without movement focuses the pane. The
+				// parent's mousedown-focus is stopped so a grab stays a pure drag.
+				onPointerDown={onPaneDragPointerDown}
+				onMouseDown={(e) => e.stopPropagation()}
+				onClick={focusThisPane}
 			>
+				{/* Grip texture centered in the header, marking the whole bar as the drag
+				    handle for rearranging tiles. Decorative only (pointer-events-none): the
+				    bar handles the pointer drag, so the grip just signals "grab here". */}
+				<GripHorizontal
+					className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none opacity-40"
+					style={{ color: 'currentColor' }}
+					aria-hidden
+				/>
 				<PaneActionsMenu
 					node={node}
 					group={group}

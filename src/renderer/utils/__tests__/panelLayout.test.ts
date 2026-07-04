@@ -35,6 +35,7 @@ import {
 	insertRefIntoOrder,
 	tileTabIntoGroup,
 	movePaneInGroup,
+	swapPanesInGroup,
 	createGroupFromDrop,
 	promotePaneToStandalone,
 	tabRefKey,
@@ -582,6 +583,17 @@ describe('computeDropZone', () => {
 	it('defaults a degenerate (zero-area) rect to a valid edge', () => {
 		expect(computeDropZone({ left: 0, top: 0, width: 0, height: 100 }, 0, 50)).toBe('left');
 	});
+
+	it('returns center for a middle pointer only when allowCenter is set', () => {
+		// Dead center: edges-only (default) picks the tie-break edge; allowCenter -> center.
+		expect(computeDropZone(rect, 110, 70)).toBe('right');
+		expect(computeDropZone(rect, 110, 70, true)).toBe('center');
+		// Inside the inner 40% box (|dx|,|dy| < 0.2) still swaps.
+		expect(computeDropZone(rect, 130, 78, true)).toBe('center');
+		// Outside the central box resolves to the dominant edge even with allowCenter.
+		expect(computeDropZone(rect, 205, 70, true)).toBe('right');
+		expect(computeDropZone(rect, 110, 25, true)).toBe('top');
+	});
 });
 
 describe('dropZoneToSplit', () => {
@@ -779,6 +791,55 @@ describe('movePaneInGroup', () => {
 		expect(movePaneInGroup(session, 'nope', 'l1', 'l2', 'left')).toBe(session);
 		expect(movePaneInGroup(session, 'grp', 'missing', 'l2', 'left')).toBe(session);
 		expect(movePaneInGroup(session, 'grp', 'l1', 'missing', 'left')).toBe(session);
+	});
+});
+
+describe('swapPanesInGroup', () => {
+	function sessionWith(group: TabGroup): Session {
+		return {
+			id: 'sess',
+			unifiedTabOrder: [{ type: 'group', id: group.id }],
+			tabGroups: [group],
+			activeGroupId: group.id,
+		} as unknown as Session;
+	}
+
+	it('exchanges two tiles in place, keeping node ids, structure, and sizes', () => {
+		// 2x2 grid: column[ row[a,b], row[c,d] ]. Swap top-left (a) with bottom-right (d).
+		const top = rowSplit('top', [leaf('l1', aiRef('a')), leaf('l2', aiRef('b'))]);
+		const bottom = rowSplit('bottom', [leaf('l3', aiRef('c')), leaf('l4', aiRef('d'))]);
+		const group = groupFrom(colSplit('root', [top, bottom]), 'l1');
+		const next = swapPanesInGroup(sessionWith(group), 'grp', 'l1', 'l4');
+		const layout = next.tabGroups[0].layout;
+		// Grid shape is untouched (still column[ row[..], row[..] ]); only a and d traded spots.
+		expect(collectLeafTabRefs(layout)).toEqual([aiRef('d'), aiRef('b'), aiRef('c'), aiRef('a')]);
+		if (layout.kind !== 'split') throw new Error('expected split');
+		expect(layout.id).toBe('root');
+		expect(layout.direction).toBe('column');
+		expect((layout.children[0] as { id: string }).id).toBe('top');
+	});
+
+	it('focuses the target pane (where the dragged content lands)', () => {
+		const group = groupFrom(
+			rowSplit('root', [leaf('l1', aiRef('a')), leaf('l2', aiRef('b'))]),
+			'l1'
+		);
+		// Drag l1 onto l2's center -> a now lives at l2, so l2 holds focus.
+		const next = swapPanesInGroup(sessionWith(group), 'grp', 'l1', 'l2');
+		expect(next.tabGroups[0].focusedPaneId).toBe('l2');
+		expect(collectLeafTabRefs(next.tabGroups[0].layout)).toEqual([aiRef('b'), aiRef('a')]);
+	});
+
+	it('is a no-op copy on self, unknown group, or missing leaf', () => {
+		const group = groupFrom(
+			rowSplit('root', [leaf('l1', aiRef('a')), leaf('l2', aiRef('b'))]),
+			'l1'
+		);
+		const session = sessionWith(group);
+		expect(swapPanesInGroup(session, 'grp', 'l1', 'l1')).toBe(session);
+		expect(swapPanesInGroup(session, 'nope', 'l1', 'l2')).toBe(session);
+		expect(swapPanesInGroup(session, 'grp', 'missing', 'l2')).toBe(session);
+		expect(swapPanesInGroup(session, 'grp', 'l1', 'missing')).toBe(session);
 	});
 });
 

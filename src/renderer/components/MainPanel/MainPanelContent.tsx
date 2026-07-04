@@ -13,6 +13,7 @@ import { WizardConversationView, DocumentGenerationView } from '../InlineWizard'
 import { BrowserTabView, type BrowserTabViewHandle } from './BrowserTabView';
 import { TiledLayout, type PaneTabActions } from './TiledLayout';
 import { PaneDropZones } from './PaneDropZones';
+import { PaneDragOverlay } from './PaneDragOverlay';
 import {
 	findLeafById,
 	findLeafByTabRef,
@@ -638,6 +639,9 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 				activeStandaloneTitle={singleViewTitle}
 				theme={theme}
 			/>
+			{/* Pointer-driven pane REARRANGE highlight (swap/move/pop-out). Separate from
+			    PaneDropZones, which handles the native-DnD tab-bar -> panel tiling. */}
+			<PaneDragOverlay theme={theme} />
 			{/* Tab tiling: an active tab group takes over the panel (ahead of the
 			    file/terminal/browser routing). The keep-alive terminal/browser overlays
 			    below still mount so their guests survive; they stay hidden while a group
