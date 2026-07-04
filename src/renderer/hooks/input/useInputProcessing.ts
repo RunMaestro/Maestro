@@ -1,4 +1,5 @@
 import { useCallback, useRef } from 'react';
+import { getClaudeTokenSourceFields } from '../../../shared/claudeTokenMode';
 import type {
 	Session,
 	SessionState,
@@ -863,9 +864,9 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							// Forward session env so naming uses the same provider auth as the chat.
 							sessionCustomEnvVars: activeSession.customEnvVars,
 							// Honor the agent's Claude token source for the naming spawn.
-							enableMaestroP: activeSession.enableMaestroP,
-							maestroPMode: activeSession.maestroPMode,
-							maestroPPath: activeSession.maestroPPath,
+							// Shared extractor guarantees the SAME complete triple the chat
+							// spawn forwards - no partial/drifting forward possible.
+							...getClaudeTokenSourceFields(activeSession),
 						})
 						.then((generatedName) => {
 							// Clear the generating indicator

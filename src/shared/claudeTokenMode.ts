@@ -26,6 +26,45 @@ export interface ClaudeTokenModeSource {
 	maestroPMode?: 'interactive' | 'dynamic';
 }
 
+/**
+ * The COMPLETE persisted Claude token-source set as stored on a Session (or
+ * moderator config): the {@link ClaudeTokenModeSource} pair plus the optional
+ * `maestroPPath` override (the "Path" field pointed directly at a maestro-p
+ * binary). This is every field a spawn surface must forward for a Claude turn
+ * to resolve the SAME token source the agent's own chat turn would.
+ */
+export interface ClaudeTokenSourceFields {
+	/** Legacy Adaptive Mode opt-in. Off (or absent) means pure API. */
+	enableMaestroP?: boolean;
+	/** Refinement of the opt-in. Absent defaults to `dynamic` (legacy behavior). */
+	maestroPMode?: 'interactive' | 'dynamic';
+	/** Power-user override: a Path field pointed straight at a maestro-p binary. */
+	maestroPPath?: string;
+}
+
+/**
+ * Extract the canonical Claude token-source triple from a session (or any
+ * object carrying the persisted fields).
+ *
+ * This is the single source of truth for "which token-source fields travel with
+ * a spawn." Every surface that CANNOT hydrate the token mode from the persisted
+ * session by id - tab naming and background synopsis both run under synthetic
+ * session ids the `process:spawn` handler can't look up - MUST forward exactly
+ * this set, or it can silently resolve a different provider than the chat
+ * (e.g. carrying `enableMaestroP: true` but dropping `maestroPMode` downgrades
+ * Dynamic to TUI). Centralizing the field selection makes a partial forward
+ * structurally impossible: add a field here once and every caller inherits it.
+ */
+export function getClaudeTokenSourceFields(
+	src: ClaudeTokenSourceFields | null | undefined
+): ClaudeTokenSourceFields {
+	return {
+		enableMaestroP: src?.enableMaestroP,
+		maestroPMode: src?.maestroPMode,
+		maestroPPath: src?.maestroPPath,
+	};
+}
+
 /** Options refining how an unconfigured source collapses. */
 export interface GetClaudeTokenModeOptions {
 	/**

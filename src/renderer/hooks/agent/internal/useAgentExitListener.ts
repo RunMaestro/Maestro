@@ -19,6 +19,7 @@
  */
 
 import { useEffect, useRef } from 'react';
+import { getClaudeTokenSourceFields } from '../../../../shared/claudeTokenMode';
 import { useSessionStore } from '../../../stores/sessionStore';
 import { clearRetryIfSettled } from '../../../stores/retryStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
@@ -338,9 +339,9 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 								customContextWindow: currentSession.customContextWindow,
 								// Carry the agent's Claude token source into the synopsis spawn so
 								// it resolves the same TUI/Dynamic/API mode as a normal turn.
-								enableMaestroP: currentSession.enableMaestroP,
-								maestroPMode: currentSession.maestroPMode,
-								maestroPPath: currentSession.maestroPPath,
+								// Shared extractor guarantees the SAME complete triple - no
+								// partial/drifting forward possible.
+								...getClaudeTokenSourceFields(currentSession),
 							},
 						};
 					}
