@@ -1068,8 +1068,19 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 						sendUpdate(cache, false);
 					}
 				} catch (error) {
-					void captureException(error);
-					logger.warn(`Failed to parse Claude session: ${file.sessionKey}`, LOG_CONTEXT, { error });
+					// A session file too large to read into a single V8 string throws
+					// `RangeError: Invalid string length` (MAESTRO-M9). That's an expected
+					// boundary for huge sessions, not a bug - skip it and keep aggregating
+					// the rest. Mirrors the storage-layer carve-out in
+					// claude-/codex-session-storage.ts.
+					if (error instanceof RangeError) {
+						logger.warn(`Claude session file too large to parse: ${file.sessionKey}`, LOG_CONTEXT);
+					} else {
+						void captureException(error);
+						logger.warn(`Failed to parse Claude session: ${file.sessionKey}`, LOG_CONTEXT, {
+							error,
+						});
+					}
 				}
 			}
 
@@ -1093,8 +1104,17 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 						sendUpdate(cache, false);
 					}
 				} catch (error) {
-					void captureException(error);
-					logger.warn(`Failed to parse Codex session: ${file.sessionKey}`, LOG_CONTEXT, { error });
+					// See the Claude loop above: oversized session files throw
+					// `RangeError: Invalid string length` (MAESTRO-M9), an expected
+					// boundary we skip rather than report.
+					if (error instanceof RangeError) {
+						logger.warn(`Codex session file too large to parse: ${file.sessionKey}`, LOG_CONTEXT);
+					} else {
+						void captureException(error);
+						logger.warn(`Failed to parse Codex session: ${file.sessionKey}`, LOG_CONTEXT, {
+							error,
+						});
+					}
 				}
 			}
 
