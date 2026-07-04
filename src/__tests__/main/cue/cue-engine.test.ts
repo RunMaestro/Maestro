@@ -44,11 +44,27 @@ vi.mock('../../../main/cue/cue-github-poller', () => ({
 	createCueGitHubPoller: (...args: unknown[]) => mockCreateCueGitHubPoller(args[0]),
 }));
 
-// Mock the task scanner
+// Mock the task scanner. `scanTaskFilesNow` is mocked so manual task.pending
+// triggers can be exercised without touching the filesystem; the real
+// `buildTaskPendingPayload` is reused so the asserted payload shape is genuine.
 const mockCreateCueTaskScanner = vi.fn<(config: unknown) => () => void>();
-vi.mock('../../../main/cue/cue-task-scanner', () => ({
-	createCueTaskScanner: (...args: unknown[]) => mockCreateCueTaskScanner(args[0]),
-}));
+const mockScanTaskFilesNow = vi.fn<
+	(
+		projectRoot: string,
+		watchGlob: string
+	) => import('../../../main/cue/cue-task-scanner').ScannedTaskFile[]
+>(() => []);
+vi.mock('../../../main/cue/cue-task-scanner', async () => {
+	const actual = await vi.importActual<typeof import('../../../main/cue/cue-task-scanner')>(
+		'../../../main/cue/cue-task-scanner'
+	);
+	return {
+		createCueTaskScanner: (...args: unknown[]) => mockCreateCueTaskScanner(args[0]),
+		scanTaskFilesNow: (projectRoot: string, watchGlob: string) =>
+			mockScanTaskFilesNow(projectRoot, watchGlob),
+		buildTaskPendingPayload: actual.buildTaskPendingPayload,
+	};
+});
 
 // Mock the database
 const mockInitCueDb = vi.fn();
@@ -3404,6 +3420,88 @@ describe('CueEngine', () => {
 			const result = engine.triggerSubscription('nonexistent', undefined, 'agent-xyz');
 			expect(result).toBe(false);
 			expect(deps.onCueRun).not.toHaveBeenCalled();
+
+			engine.stop();
+		});
+	});
+
+	describe('triggerSubscription enriches task.pending payload (issue #1151)', () => {
+		it('scans the watched file and populates task variables on manual trigger', () => {
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'research queue',
+						event: 'task.pending',
+						watch: 'research.md',
+						enabled: true,
+						prompt: 'Process {{CUE_TASK_LIST}}',
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(config);
+
+			mockScanTaskFilesNow.mockReturnValue([
+				{
+					relPath: 'research.md',
+					absPath: '/projects/test/research.md',
+					content: '- [ ] write the report\n',
+					tasks: [{ line: 1, text: 'write the report' }],
+				},
+			]);
+
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			engine.start();
+
+			const result = engine.triggerSubscription('research queue');
+			expect(result).toBe(true);
+
+			// Scanned against the owning session's project root + the sub's glob.
+			expect(mockScanTaskFilesNow).toHaveBeenCalledWith('/projects/test', 'research.md');
+
+			// The dispatched event now carries the real task payload, so the
+			// {{CUE_TASK_*}} variables resolve instead of rendering empty.
+			expect(deps.onCueRun).toHaveBeenCalledWith(
+				expect.objectContaining({
+					event: expect.objectContaining({
+						payload: expect.objectContaining({
+							manual: true,
+							taskCount: 1,
+							taskList: 'L1: write the report',
+							filename: 'research.md',
+							path: '/projects/test/research.md',
+						}),
+					}),
+				})
+			);
+
+			engine.stop();
+		});
+
+		it('leaves the payload unenriched when no watched file has pending tasks', () => {
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'research queue',
+						event: 'task.pending',
+						watch: 'research.md',
+						enabled: true,
+						prompt: 'Process tasks',
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(config);
+			mockScanTaskFilesNow.mockReturnValue([]);
+
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			engine.start();
+
+			engine.triggerSubscription('research queue');
+
+			const callArgs = (deps.onCueRun as ReturnType<typeof vi.fn>).mock.calls[0][0];
+			expect(callArgs.event.payload).toMatchObject({ manual: true });
+			expect(callArgs.event.payload).not.toHaveProperty('taskCount');
 
 			engine.stop();
 		});
