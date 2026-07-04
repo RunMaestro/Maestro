@@ -225,12 +225,12 @@ export const TAB_SHORTCUTS: Record<string, Shortcut> = {
 	moveTabToStart: {
 		id: 'moveTabToStart',
 		label: 'Move Tab to First',
-		keys: ['Meta', 'Shift', 'ArrowLeft'],
+		keys: ['Meta', 'Alt', '['],
 	},
 	moveTabToEnd: {
 		id: 'moveTabToEnd',
 		label: 'Move Tab to Last',
-		keys: ['Meta', 'Shift', 'ArrowRight'],
+		keys: ['Meta', 'Alt', ']'],
 	},
 	toggleReadOnlyMode: {
 		id: 'toggleReadOnlyMode',

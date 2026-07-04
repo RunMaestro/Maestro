@@ -283,6 +283,13 @@ export interface LogEntry {
 		lastUserPrompt: string;
 		tabId: string;
 	};
+	// Agent Resilience: anchors a live "outage status" card in the transcript.
+	// When set, this (source:'system') entry renders as a RetryStatusCard driven
+	// by the persistent outage record `retryStore.outages[retryOutageId]` instead
+	// of plain text. One marker is appended per outage (the first failure); the
+	// card collapses all subsequent auto-retry attempts into a single live stat
+	// readout (attempt count, elapsed, next-retry countdown, Retry now / Stop).
+	retryOutageId?: string;
 }
 
 // Queued item for the session-level execution queue

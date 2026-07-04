@@ -479,6 +479,9 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 									>
 										<ChevronsLeft className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 										Move to First Position
+										{tabShortcuts.moveTabToStart && (
+											<ShortcutHint keys={tabShortcuts.moveTabToStart.keys} />
+										)}
 									</button>
 								)}
 								{onMoveToLast && !isLastTab && (
@@ -492,6 +495,9 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 											style={{ color: theme.colors.textDim }}
 										/>
 										Move to Last Position
+										{tabShortcuts.moveTabToEnd && (
+											<ShortcutHint keys={tabShortcuts.moveTabToEnd.keys} />
+										)}
 									</button>
 								)}
 

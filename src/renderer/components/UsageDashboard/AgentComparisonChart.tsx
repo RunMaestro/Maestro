@@ -12,27 +12,12 @@
  * - Tooltip on hover with exact values
  */
 
-import React, { memo, useMemo, useCallback, useState } from 'react';
+import { memo, useMemo, useCallback, useState, type MouseEvent } from 'react';
 import type { Theme, Session } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
-import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
 import { formatDurationHuman as formatDuration, formatNumber } from '../../../shared/formatters';
-import { findSessionByStatId, isWorktreeAgent, buildNameMap } from './chartUtils';
 import { ChartTooltip } from './ChartTooltip';
-
-interface AgentData {
-	/** Stable React key — `${agent}` for regular, `${agent}__worktree` for worktree variant. */
-	key: string;
-	/** Provider name shown in the bar label, optionally suffixed with "(Worktree)". */
-	label: string;
-	/** Underlying provider/agent type used for color assignment. */
-	agent: string;
-	count: number;
-	duration: number;
-	durationPercentage: number;
-	color: string;
-	isWorktree: boolean;
-}
+import { buildAgentComparisonData, buildAgentSplitAggregation } from './agentComparisonUtils';
 
 interface AgentComparisonChartProps {
 	/** Aggregated stats data from the API */
@@ -41,9 +26,9 @@ interface AgentComparisonChartProps {
 	theme: Theme;
 	/** Enable colorblind-friendly colors */
 	colorBlindMode?: boolean;
-	/** Current sessions list — when provided, worktree agents are split into separate bars. */
+	/** Current sessions list. When provided, worktree agents are split into separate bars. */
 	sessions?: Session[];
-	/** Drill-down click handler — fires with the bar's `key`/`label` on click. */
+	/** Drill-down click handler, fires with the bar's `key`/`label` on click. */
 	onAgentClick?: (key: string, displayName: string) => void;
 	/**
 	 * Active drill-down filter key. When set, the matching bar gets an accent
@@ -51,41 +36,6 @@ interface AgentComparisonChartProps {
 	 * no filter is active and bars render normally.
 	 */
 	activeFilterKey?: string | null;
-}
-
-/**
- * Generate a color for an agent
- * Uses the theme's accent color as primary, with additional colors for multiple agents
- */
-function getAgentColor(
-	_agentName: string,
-	index: number,
-	theme: Theme,
-	colorBlindMode?: boolean
-): string {
-	// Use colorblind-safe palette when colorblind mode is enabled
-	if (colorBlindMode) {
-		return COLORBLIND_AGENT_PALETTE[index % COLORBLIND_AGENT_PALETTE.length];
-	}
-
-	// For the first (primary) agent, use the theme's accent color
-	if (index === 0) {
-		return theme.colors.accent;
-	}
-
-	// For additional agents, use a palette that complements the accent
-	const additionalColors = [
-		'#10b981', // emerald
-		'#8b5cf6', // violet
-		'#ef4444', // red
-		'#06b6d4', // cyan
-		'#ec4899', // pink
-		'#f59e0b', // amber
-		'#84cc16', // lime
-		'#6366f1', // indigo
-	];
-
-	return additionalColors[(index - 1) % additionalColors.length];
 }
 
 export const AgentComparisonChart = memo(function AgentComparisonChart({
@@ -99,160 +49,19 @@ export const AgentComparisonChart = memo(function AgentComparisonChart({
 	const [hoveredAgent, setHoveredAgent] = useState<string | null>(null);
 	const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
 
-	// Compute per-(provider, worktree-status) aggregation when sessions are
-	// available and the underlying per-session breakdown identifies any
-	// worktree agents. Returns null if differentiation isn't possible — the
-	// caller falls back to the legacy by-provider aggregation.
-	const splitAggregation = useMemo((): Record<
-		string,
-		{ regular: { count: number; duration: number }; worktree: { count: number; duration: number } }
-	> | null => {
-		const bySessionByDay = data.bySessionByDay;
-		if (!sessions || sessions.length === 0) return null;
-		if (!bySessionByDay || Object.keys(bySessionByDay).length === 0) return null;
-
-		const result: Record<
-			string,
-			{
-				regular: { count: number; duration: number };
-				worktree: { count: number; duration: number };
-			}
-		> = {};
-		let foundWorktree = false;
-
-		for (const [statSessionId, days] of Object.entries(bySessionByDay)) {
-			const session = findSessionByStatId(statSessionId, sessions);
-			if (!session) continue; // Historical session no longer present — skip.
-			const provider = session.toolType;
-			const isWt = isWorktreeAgent(session);
-			if (isWt) foundWorktree = true;
-
-			if (!result[provider]) {
-				result[provider] = {
-					regular: { count: 0, duration: 0 },
-					worktree: { count: 0, duration: 0 },
-				};
-			}
-			const bucket = isWt ? result[provider].worktree : result[provider].regular;
-			for (const day of days) {
-				bucket.count += day.count;
-				bucket.duration += day.duration;
-			}
-		}
-
-		// If no worktree agents were found, splitting adds no signal — let the
-		// chart render the simpler byAgent view to avoid losing historical data
-		// from sessions that aren't currently in the sessions list.
-		if (!foundWorktree) return null;
-
-		// Reconcile against data.byAgent so providers whose stat-session IDs
-		// no longer resolve (deleted/historical agents) keep their full
-		// historical totals. The unmatched remainder lands in the regular
-		// bucket — we can't infer worktree status without the live session.
-		for (const [provider, agentTotals] of Object.entries(data.byAgent)) {
-			if (!result[provider]) {
-				result[provider] = {
-					regular: { count: 0, duration: 0 },
-					worktree: { count: 0, duration: 0 },
-				};
-			}
-			const reconstructedCount = result[provider].regular.count + result[provider].worktree.count;
-			const reconstructedDuration =
-				result[provider].regular.duration + result[provider].worktree.duration;
-			const missingCount = Math.max(0, agentTotals.count - reconstructedCount);
-			const missingDuration = Math.max(0, agentTotals.duration - reconstructedDuration);
-			if (missingCount > 0 || missingDuration > 0) {
-				result[provider].regular.count += missingCount;
-				result[provider].regular.duration += missingDuration;
-			}
-		}
-
-		return result;
+	const splitAggregation = useMemo(() => {
+		return buildAgentSplitAggregation(data, sessions);
 	}, [data.bySessionByDay, data.byAgent, sessions]);
 
 	// Process and sort agent data
-	const agentData = useMemo((): AgentData[] => {
-		const totalDuration =
-			(splitAggregation
-				? Object.values(splitAggregation).reduce(
-						(sum, p) => sum + p.regular.duration + p.worktree.duration,
-						0
-					)
-				: Object.values(data.byAgent).reduce((sum, stats) => sum + stats.duration, 0)) || 0;
-
-		const items: AgentData[] = [];
-
-		// Resolve raw provider keys (e.g. "claude-code") to user-facing names
-		// (e.g. the user's "Backend API" session name, or the prettified
-		// "Claude Code" fallback). Built from the union of byAgent and the split
-		// aggregation so both rendering paths get coherent labels.
-		const providerKeys = Array.from(
-			new Set([
-				...Object.keys(data.byAgent),
-				...(splitAggregation ? Object.keys(splitAggregation) : []),
-			])
-		);
-		const nameMap = buildNameMap(providerKeys, sessions);
-		const resolveLabel = (provider: string) => nameMap.get(provider)?.name ?? provider;
-
-		// Track unique providers in deterministic order to assign colors stably.
-		const providerColorIdx: Record<string, number> = {};
-		const assignColor = (provider: string): string => {
-			if (!(provider in providerColorIdx)) {
-				providerColorIdx[provider] = Object.keys(providerColorIdx).length;
-			}
-			return getAgentColor(provider, providerColorIdx[provider], theme, colorBlindMode);
-		};
-
-		if (splitAggregation) {
-			for (const [provider, buckets] of Object.entries(splitAggregation)) {
-				const color = assignColor(provider);
-				const baseLabel = resolveLabel(provider);
-				if (buckets.regular.count > 0 || buckets.regular.duration > 0) {
-					items.push({
-						key: provider,
-						label: baseLabel,
-						agent: provider,
-						count: buckets.regular.count,
-						duration: buckets.regular.duration,
-						durationPercentage:
-							totalDuration > 0 ? (buckets.regular.duration / totalDuration) * 100 : 0,
-						color,
-						isWorktree: false,
-					});
-				}
-				if (buckets.worktree.count > 0 || buckets.worktree.duration > 0) {
-					items.push({
-						key: `${provider}__worktree`,
-						label: `${baseLabel} (Worktree)`,
-						agent: provider,
-						count: buckets.worktree.count,
-						duration: buckets.worktree.duration,
-						durationPercentage:
-							totalDuration > 0 ? (buckets.worktree.duration / totalDuration) * 100 : 0,
-						color,
-						isWorktree: true,
-					});
-				}
-			}
-		} else {
-			for (const [provider, stats] of Object.entries(data.byAgent)) {
-				const color = assignColor(provider);
-				const resolved = nameMap.get(provider);
-				items.push({
-					key: provider,
-					label: resolved?.name ?? provider,
-					agent: provider,
-					count: stats.count,
-					duration: stats.duration,
-					durationPercentage: totalDuration > 0 ? (stats.duration / totalDuration) * 100 : 0,
-					color,
-					isWorktree: resolved?.isWorktree ?? false,
-				});
-			}
-		}
-
-		return items.sort((a, b) => b.duration - a.duration);
+	const agentData = useMemo(() => {
+		return buildAgentComparisonData({
+			data,
+			splitAggregation,
+			theme,
+			colorBlindMode,
+			sessions,
+		});
 	}, [data.byAgent, splitAggregation, theme, colorBlindMode, sessions]);
 
 	const hasWorktreeBars = useMemo(() => agentData.some((d) => d.isWorktree), [agentData]);
@@ -265,11 +74,11 @@ export const AgentComparisonChart = memo(function AgentComparisonChart({
 
 	// Anchor the tooltip to the cursor (not the bar's bounding rect) so it
 	// stays close to the user's pointer regardless of which bar they hover.
-	const handleMouseEnter = useCallback((agent: string, event: React.MouseEvent<HTMLDivElement>) => {
+	const handleMouseEnter = useCallback((agent: string, event: MouseEvent<HTMLDivElement>) => {
 		setHoveredAgent(agent);
 		setTooltipPos({ x: event.clientX, y: event.clientY });
 	}, []);
-	const handleMouseMove = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+	const handleMouseMove = useCallback((event: MouseEvent<HTMLDivElement>) => {
 		setTooltipPos({ x: event.clientX, y: event.clientY });
 	}, []);
 
@@ -290,7 +99,7 @@ export const AgentComparisonChart = memo(function AgentComparisonChart({
 	);
 
 	// Get hovered agent data for tooltip (matched by row key, since the same
-	// provider can appear twice — once as regular and once as worktree).
+	// provider can appear twice, once as regular and once as worktree).
 	const hoveredAgentData = useMemo(() => {
 		if (!hoveredAgent) return null;
 		return agentData.find((d) => d.key === hoveredAgent) || null;

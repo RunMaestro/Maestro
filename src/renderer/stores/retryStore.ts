@@ -34,6 +34,7 @@ import {
 	type ClassifiableError,
 } from '../../shared/retryClassification';
 import { resilienceEnabled } from '../../shared/agentConstants';
+import { generateId } from '../utils/ids';
 import { logger } from '../utils/logger';
 import { useSessionStore, selectSessionById } from './sessionStore';
 import { useAgentStore, type ProcessQueuedItemDeps } from './agentStore';
@@ -60,14 +61,47 @@ export interface RetryEntry {
 	tabId: string;
 	/** `${sessionId}:${tabId}` */
 	key: string;
+	/** Links this active retry to its persistent `OutageRecord` (transcript card). */
+	outageId: string;
 	strategy: RetryStrategy;
 	mode: RetryMode;
 	status: RetryStatus;
 	/** 0-indexed count of the NEXT resend (0 = first retry). */
 	attempt: number;
+	/** Epoch ms of the FIRST failure in this outage (preserved across reschedules). */
+	startedAt: number;
 	/** Epoch ms when the resend fires (drives the live countdown). */
 	nextRetryAt: number;
 	/** The failing message, for the countdown UI. */
+	lastMessage: string;
+}
+
+/** Lifecycle of an outage as shown on its transcript status card. */
+export type OutageStatus = 'active' | 'recovered' | 'stopped';
+
+/**
+ * Persistent record of a single Agent Resilience outage, powering the collapsed
+ * status card in the transcript. Unlike `RetryEntry` (which exists only while a
+ * retry is pending and is keyed per tab), an `OutageRecord` is keyed by a stable
+ * `outageId` and survives resolution — so the card can show a final "recovered"
+ * or "stopped" summary, and multiple historical outages on the same tab each
+ * keep their own card. Kept in the reactive store so the card ticks live.
+ */
+export interface OutageRecord {
+	outageId: string;
+	sessionId: string;
+	tabId: string;
+	strategy: RetryStrategy;
+	/** Epoch ms of the first failure. */
+	startedAt: number;
+	/** Number of auto-retries dispatched so far (0 while the first is pending). */
+	attempts: number;
+	/** Epoch ms the next resend fires (meaningful only while `status==='active'`). */
+	nextRetryAt: number;
+	status: OutageStatus;
+	/** Epoch ms the outage resolved (set when status leaves 'active'). */
+	resolvedAt?: number;
+	/** Latest failing message, for the card subtitle. */
 	lastMessage: string;
 }
 
@@ -79,11 +113,15 @@ interface DispatchSnapshot {
 interface RetryStoreState {
 	/** Active retries keyed by `${sessionId}:${tabId}`. */
 	retries: Record<string, RetryEntry>;
+	/** Persistent per-outage records keyed by `outageId` (drives transcript cards). */
+	outages: Record<string, OutageRecord>;
 }
 
 interface RetryStoreActions {
 	/** Internal setter — callers use the exported functions below. */
 	setEntry: (key: string, entry: RetryEntry | null) => void;
+	/** Internal upsert/patch for an outage record — callers use exported helpers. */
+	patchOutage: (outageId: string, patch: Partial<OutageRecord> | null) => void;
 }
 
 export type RetryStore = RetryStoreState & RetryStoreActions;
@@ -94,12 +132,20 @@ export type RetryStore = RetryStoreState & RetryStoreActions;
 
 export const useRetryStore = create<RetryStore>()((set) => ({
 	retries: {},
+	outages: {},
 	setEntry: (key, entry) =>
 		set((state) => {
 			const next = { ...state.retries };
 			if (entry) next[key] = entry;
 			else delete next[key];
 			return { retries: next };
+		}),
+	patchOutage: (outageId, patch) =>
+		set((state) => {
+			const next = { ...state.outages };
+			if (patch === null) delete next[outageId];
+			else next[outageId] = { ...next[outageId], ...patch } as OutageRecord;
+			return { outages: next };
 		}),
 }));
 
@@ -222,6 +268,10 @@ export function scheduleRetryForError(
 	const attempt = existing ? existing.attempt + 1 : 0;
 
 	const now = Date.now();
+	// Preserve the outage identity + first-failure time across reschedules so the
+	// transcript card counts one continuous outage instead of restarting.
+	const outageId = existing?.outageId ?? generateId();
+	const startedAt = existing?.startedAt ?? now;
 	const nextRetryAt =
 		strategy === 'availability'
 			? now + availabilityDelayMs(attempt)
@@ -232,18 +282,35 @@ export function scheduleRetryForError(
 		sessionId,
 		tabId,
 		key,
+		outageId,
 		strategy,
 		mode,
 		status: 'scheduled',
 		attempt,
+		startedAt,
 		nextRetryAt,
 		lastMessage: error.message,
 	};
 	useRetryStore.getState().setEntry(key, entry);
 
+	// Mirror the live state into the persistent outage record the card reads.
+	useRetryStore.getState().patchOutage(outageId, {
+		outageId,
+		sessionId,
+		tabId,
+		strategy,
+		startedAt,
+		attempts: attempt,
+		nextRetryAt,
+		status: 'active',
+		resolvedAt: undefined,
+		lastMessage: error.message,
+	});
+
 	const delay = Math.max(0, nextRetryAt - now);
 	logger.info('[retry] Scheduled auto-retry', undefined, {
 		key,
+		outageId,
 		strategy,
 		attempt,
 		delayMs: delay,
@@ -317,7 +384,18 @@ export function cancelRetry(sessionId: string, tabId: string): void {
 	const entry = useRetryStore.getState().retries[key];
 	if (!entry) return;
 	logger.info('[retry] User cancelled auto-retry', undefined, { key });
+	resolveOutage(entry.outageId, 'stopped');
 	removeEntry(key);
+}
+
+/**
+ * Stamp an outage record as resolved so its transcript card freezes into a final
+ * "recovered" / "stopped" summary. No-op if the record is already gone.
+ */
+function resolveOutage(outageId: string, status: Exclude<OutageStatus, 'active'>): void {
+	const record = useRetryStore.getState().outages[outageId];
+	if (!record || record.status !== 'active') return;
+	useRetryStore.getState().patchOutage(outageId, { status, resolvedAt: Date.now() });
 }
 
 /**
@@ -331,6 +409,7 @@ export function clearRetryIfSettled(sessionId: string, tabId: string): void {
 	const entry = useRetryStore.getState().retries[key];
 	if (entry && entry.status === 'in-flight') {
 		logger.info('[retry] Resend settled; clearing retry', undefined, { key });
+		resolveOutage(entry.outageId, 'recovered');
 		removeEntry(key);
 	}
 }
@@ -338,4 +417,73 @@ export function clearRetryIfSettled(sessionId: string, tabId: string): void {
 /** Read the active retry for a session+tab (for the countdown UI). */
 export function getRetryEntry(sessionId: string, tabId: string): RetryEntry | undefined {
 	return useRetryStore.getState().retries[keyFor(sessionId, tabId)];
+}
+
+/** Read an outage record by id (for the transcript status card). */
+export function getOutage(outageId: string): OutageRecord | undefined {
+	return useRetryStore.getState().outages[outageId];
+}
+
+/** Whether a session has any active outage across its tabs (for filters/lights). */
+export function sessionHasActiveOutage(sessionId: string): boolean {
+	const { outages } = useRetryStore.getState();
+	for (const id in outages) {
+		const o = outages[id];
+		if (o.sessionId === sessionId && o.status === 'active') return true;
+	}
+	return false;
+}
+
+/** Reactive: whether a specific agent currently has an active outage (Left Bar light). */
+export function useSessionHasActiveOutage(sessionId: string): boolean {
+	return useRetryStore((s) => {
+		for (const id in s.outages) {
+			const o = s.outages[id];
+			if (o.sessionId === sessionId && o.status === 'active') return true;
+		}
+		return false;
+	});
+}
+
+/** Reactive: whether a specific tab currently has an active outage (tab light). */
+export function useTabHasActiveOutage(sessionId: string, tabId: string): boolean {
+	return useRetryStore((s) => {
+		for (const id in s.outages) {
+			const o = s.outages[id];
+			if (o.sessionId === sessionId && o.tabId === tabId && o.status === 'active') return true;
+		}
+		return false;
+	});
+}
+
+/**
+ * Reactive: a stable, comma-joined signature of all agent ids that currently
+ * have an active outage. Primitive return → referential stability, so the Left
+ * Bar filter memo only recomputes when the set of stuck agents actually changes.
+ */
+export function useActiveOutageSessionSignature(): string {
+	return useRetryStore((s) => {
+		const ids = new Set<string>();
+		for (const id in s.outages) {
+			const o = s.outages[id];
+			if (o.status === 'active') ids.add(o.sessionId);
+		}
+		return Array.from(ids).sort().join(',');
+	});
+}
+
+/**
+ * Reactive: comma-joined signature of the TAB ids that currently have an active
+ * outage within a given agent. Drives the tab-level unread filter (stuck tabs
+ * surface alongside unread ones). Primitive return for referential stability.
+ */
+export function useStuckTabSignature(sessionId: string): string {
+	return useRetryStore((s) => {
+		const ids: string[] = [];
+		for (const id in s.outages) {
+			const o = s.outages[id];
+			if (o.sessionId === sessionId && o.status === 'active') ids.push(o.tabId);
+		}
+		return ids.sort().join(',');
+	});
 }

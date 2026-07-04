@@ -1502,6 +1502,7 @@ function MaestroConsoleInner() {
 		handleSyncAutoRunStats,
 	} = useBatchHandlers({
 		spawnAgentForSession,
+		spawnBackgroundSynopsis,
 		rightPanelRef,
 		processQueuedItemRef,
 		handleClearAgentError,

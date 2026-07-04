@@ -119,6 +119,7 @@ import { needsSessionRecovery, initiateSessionRecovery } from './group-chat/sess
 import { initializePrompts, getPrompt, savePrompt } from './prompt-manager';
 import { captureException } from './utils/sentry';
 import { initializeSessionStorages } from './storage';
+import { resolveToFilePath, configureImageStore } from './storage/session-image-store';
 import { initializeOutputParsers } from './parsers';
 import { calculateContextTokens } from './parsers/usage-aggregator';
 import {
@@ -185,9 +186,21 @@ const isDevelopment = process.env.NODE_ENV === 'development';
 // scheme so static and dynamic ES module imports succeed under a normal
 // http(s)-style origin.
 const RENDERER_SCHEME = 'app';
-if (!isDevelopment) {
-	protocol.registerSchemesAsPrivileged([
+// Serves pasted conversation images relocated out of maestro-sessions.json by
+// the session image store (see src/main/storage/session-image-store.ts). Refs
+// look like `maestro-image://store/<sha256>.<ext>` and are loaded directly by
+// `<img src>` in the transcript, so the image bytes never re-enter the JSON
+// blob or the IPC payload. Registered in dev AND prod so images render in both.
+const IMAGE_SCHEME = 'maestro-image';
+{
+	const privilegedSchemes: Electron.CustomScheme[] = [
 		{
+			scheme: IMAGE_SCHEME,
+			privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
+		},
+	];
+	if (!isDevelopment) {
+		privilegedSchemes.push({
 			scheme: RENDERER_SCHEME,
 			privileges: {
 				standard: true,
@@ -196,8 +209,9 @@ if (!isDevelopment) {
 				corsEnabled: true,
 				stream: true,
 			},
-		},
-	]);
+		});
+	}
+	protocol.registerSchemesAsPrivileged(privilegedSchemes);
 }
 
 // Capture the production data path before any modification
@@ -233,6 +247,11 @@ process.env.MAESTRO_USER_DATA = app.getPath('userData');
 // All stores are initialized via initializeStores() from ./stores module
 
 const { syncPath, bootstrapStore } = initializeStores({ productionDataPath });
+
+// Point the session image store at the sync path so pasted conversation images
+// live alongside the sessions file (in <syncPath>/session-images/) rather than
+// inline as base64 inside maestro-sessions.json.
+configureImageStore(syncPath);
 
 // Get early settings before Sentry init (for crash reporting and GPU acceleration)
 const { crashReportingEnabled, disableGpuAcceleration, useNativeTitleBar, autoHideMenuBar } =
@@ -471,6 +490,35 @@ if (!gotSingleInstanceLock) {
 app
 	.whenReady()
 	.then(async () => {
+		// Serve pasted conversation images relocated out of the sessions JSON by
+		// the session image store. `<img src="maestro-image://store/<sha>.<ext>">`
+		// resolves here to a file on disk - the bytes never live in the JSON blob
+		// or the IPC payload. Registered in dev AND prod. Traversal is guarded by
+		// resolveToFilePath (only lowercase-hex sha256 + known image ext resolve).
+		protocol.handle(IMAGE_SCHEME, async (request) => {
+			const filePath = resolveToFilePath(request.url);
+			if (!filePath) return new Response('bad request', { status: 400 });
+			try {
+				const data = await readFile(filePath);
+				const ext = path.extname(filePath).toLowerCase();
+				const contentType =
+					ext === '.svg'
+						? 'image/svg+xml'
+						: ext === '.jpg' || ext === '.jpeg'
+							? 'image/jpeg'
+							: `image/${ext.slice(1)}`;
+				return new Response(new Uint8Array(data), {
+					status: 200,
+					headers: { 'content-type': contentType, 'cache-control': 'max-age=31536000, immutable' },
+				});
+			} catch (err) {
+				if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') {
+					return new Response('not found', { status: 404 });
+				}
+				throw err;
+			}
+		});
+
 		// Serve the production renderer over `app://` so static and dynamic ES
 		// module imports succeed on Electron 41 (Chromium 138 blocks both under
 		// file://). `net.fetch` cannot read file:// URLs in Electron 41 either, so

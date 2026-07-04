@@ -54,10 +54,8 @@ function getTerminalNavSequence(e: KeyboardEvent): string | null {
 		if (e.key === 'Backspace') return '\x1b\x7f'; // ESC DEL — backward kill word
 	}
 
-	// Cmd (Meta) + Arrow → line navigation. Skip when Shift is held so
-	// Cmd+Shift+Left/Right stays free as the "move tab to first/last" app shortcut
-	// (falls through to the Meta passthrough below and reaches the window handler).
-	if (e.metaKey && !e.altKey && !e.ctrlKey && !e.shiftKey) {
+	// Cmd (Meta) + Arrow → line navigation
+	if (e.metaKey && !e.altKey && !e.ctrlKey) {
 		if (e.key === 'ArrowLeft') return '\x01'; // Ctrl-A - beginning of line
 		if (e.key === 'ArrowRight') return '\x05'; // Ctrl-E - end of line
 	}

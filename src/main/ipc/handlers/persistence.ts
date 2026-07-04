@@ -26,6 +26,7 @@ import {
 export type { MaestroSettings, SessionsData, GroupsData } from '../../stores/types';
 import type { MaestroSettings, SessionsData, GroupsData, StoredSession } from '../../stores/types';
 import type { Group, SessionCliActivity } from '../../../shared/types';
+import { relocateSessionImages, resolveToDataUrl } from '../../storage/session-image-store';
 
 /**
  * Shallow-compare cliActivity for the diff broadcast.
@@ -180,8 +181,43 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 	// Sessions persistence
 	ipcMain.handle('sessions:getAll', async () => {
 		const sessions = sessionsStore.get('sessions', []);
+		// Heal legacy sessions files: relocate any images still stored inline as
+		// base64 data URLs into the content-addressed image store, returning
+		// lightweight refs. Before this existed, pasted screenshots ballooned
+		// maestro-sessions.json to hundreds of MB (264MB in one field trace),
+		// freezing the main thread on every read/write. The scan is cheap and a
+		// no-op once healed (already-relocated sessions carry only refs). We
+		// rewrite the store once so the next launch reads the small file.
+		try {
+			const { sessions: relocated, relocated: count } = await relocateSessionImages(sessions);
+			if (count > 0) {
+				sessionsStore.set('sessions', relocated);
+				logger.info(
+					`Relocated ${count} inline session image(s) out of maestro-sessions.json`,
+					'Sessions'
+				);
+				logger.debug(`Loaded ${relocated.length} sessions from store`, 'Sessions');
+				return relocated;
+			}
+		} catch (err) {
+			// Never let image relocation block loading sessions - fall through and
+			// return the sessions as-is; the write-boundary relocation will retry.
+			logger.warn(
+				`Session image relocation on load failed: ${(err as Error).message}`,
+				'Sessions',
+				err
+			);
+		}
 		logger.debug(`Loaded ${sessions.length} sessions from store`, 'Sessions');
 		return sessions;
+	});
+
+	// Resolve a `maestro-image://` reference (or passthrough data URL) back to a
+	// data URL. Used by surfaces that cannot load the maestro-image protocol
+	// directly (HTML export, clipboard copy, and any renderer code that needs the
+	// raw bytes rather than an <img src>).
+	ipcMain.handle('images:resolve', async (_, ref: string): Promise<string | null> => {
+		return resolveToDataUrl(ref);
 	});
 
 	ipcMain.handle('sessions:getActiveSessionId', async () => {
@@ -219,7 +255,11 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 	 */
 	ipcMain.handle(
 		'sessions:setMany',
-		async (_, updates: StoredSession[] = [], removeIds: string[] = []) => {
+		async (_, rawUpdates: StoredSession[] = [], removeIds: string[] = []) => {
+			// Relocate any freshly-pasted inline images (data URLs) in the dirty
+			// sessions to the image store before they hit disk, so the sessions
+			// JSON only ever grows by lightweight refs.
+			const { sessions: updates } = await relocateSessionImages(rawUpdates);
 			const previousSessions = sessionsStore.get('sessions', []);
 			const previousMap = new Map(previousSessions.map((s) => [s.id, s]));
 			const removeSet = new Set(removeIds);
@@ -336,7 +376,11 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 		}
 	);
 
-	ipcMain.handle('sessions:setAll', async (_, sessions: StoredSession[]) => {
+	ipcMain.handle('sessions:setAll', async (_, rawSessions: StoredSession[]) => {
+		// Relocate inline images (data URLs) out of the sessions before they hit
+		// disk. setAll is the bootstrap/first-flush path, so this also migrates a
+		// legacy in-memory sessions tree the first time it is persisted.
+		const { sessions } = await relocateSessionImages(rawSessions);
 		// Get previous sessions to detect changes
 		const previousSessions = sessionsStore.get('sessions', []);
 		const previousSessionMap = new Map(previousSessions.map((s) => [s.id, s]));

@@ -42,6 +42,7 @@ import { useSettingsStore } from '../stores/settingsStore';
 import { useMessageGistStore } from '../stores/messageGistStore';
 import { useSessionStore } from '../stores/sessionStore';
 import { SessionRecoveryCard } from './SessionRecoveryCard';
+import { RetryStatusCard } from './RetryStatusCard';
 import { getTokenSourcePill } from '../../shared/claudeTokenModeLabel';
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
 import { CrossAgentResponseHeader } from './CrossAgentResponseHeader';
@@ -55,9 +56,11 @@ import { CrossAgentResponseHeader } from './CrossAgentResponseHeader';
  *
  * Consecutive LOCAL response entries (the active agent's own stdout/ai/system
  * output for one turn) fold into ONE bubble per user message, so a turn made of
- * several streamed entries reads as a single reply. Three kinds stay standalone:
+ * several streamed entries reads as a single reply. These kinds stay standalone:
  *   - `user` messages,
  *   - `tool` / `thinking` entries,
+ *   - Agent Resilience outage markers (`retryOutageId`), which render as a live
+ *     status card and must not fold into a text group,
  *   - cross-agent (`@mention`) replies. Each cross-agent reply already streams
  *     into its own single entry and carries its own attribution header, so it
  *     must never fold into the local response group OR into a sibling
@@ -97,8 +100,10 @@ export function collapseAiResponseLogs(logs: LogEntry[]): LogEntry[] {
 		if (log.source === 'user') {
 			flushResponseGroup();
 			result.push(log);
-		} else if (log.source === 'tool' || log.source === 'thinking') {
-			// Flush the response group, then keep tool/thinking as their own entries.
+		} else if (log.source === 'tool' || log.source === 'thinking' || log.retryOutageId) {
+			// Flush the response group, then keep tool/thinking and Agent Resilience
+			// outage markers as their own entries. The outage marker must not merge
+			// into a text group — it renders as a live status card.
 			flushResponseGroup();
 			result.push(log);
 		} else if (log.metadata?.crossAgent) {
@@ -530,6 +535,24 @@ const LogItemComponent = memo(
 		const isReversed = isUserMessage
 			? userMessageAlignment === 'left'
 			: userMessageAlignment === 'right';
+
+		// Agent Resilience: an outage marker renders as a live status card in a
+		// clean row (no error-tinted bubble chrome), left gutter kept for alignment.
+		if (log.retryOutageId) {
+			return (
+				<div
+					ref={logItemRef}
+					className="flex gap-4 px-6 py-2"
+					data-log-index={index}
+					style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 120px' }}
+				>
+					<div className="w-20 shrink-0" />
+					<div className="flex-1 min-w-0">
+						<RetryStatusCard outageId={log.retryOutageId} theme={theme} fallbackText={log.text} />
+					</div>
+				</div>
+			);
+		}
 
 		// Cross-agent (@@mention) reply provenance. When set, this AI entry was
 		// produced by a DIFFERENT agent the user consulted; it gets a tinted
@@ -1753,8 +1776,9 @@ export const TerminalOutput = memo(
 		const activeLogs = useMemo((): LogEntry[] => activeTab?.logs ?? [], [activeTab?.logs]);
 
 		// In AI mode, collapse consecutive local response entries into single blocks
-		// so each user message gets one bubble. Tool/thinking entries and cross-agent
-		// (@mention) replies stay standalone (see collapseAiResponseLogs).
+		// so each user message gets one bubble. Tool/thinking entries, Agent
+		// Resilience outage markers, and cross-agent (@mention) replies stay
+		// standalone (see collapseAiResponseLogs).
 		const collapsedLogs = useMemo(() => collapseAiResponseLogs(activeLogs), [activeLogs]);
 
 		// PERF: Debounce search query so the highlight pass doesn't run on every keystroke

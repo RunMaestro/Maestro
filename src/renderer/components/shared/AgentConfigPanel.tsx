@@ -24,7 +24,10 @@ import {
 	type ClaudeTokenMode,
 } from '../../../shared/claudeTokenMode';
 import { useRemoteMaestroPAvailable } from '../../hooks/agent/useRemoteMaestroPAvailable';
+import { openUrl } from '../../utils/openUrl';
 import { logger } from '../../utils/logger';
+
+const MAESTRO_P_INSTALL_URL = 'https://runmaestro.ai/maestro-p/';
 
 // Counter for generating stable IDs for env vars
 let envVarIdCounter = 0;
@@ -618,8 +621,19 @@ export function AgentConfigPanel({
 							className="text-xs mt-2"
 							style={{ color: theme.colors.warning ?? theme.colors.accent }}
 						>
-							TUI (Max plan) is unavailable: maestro-p was not found on the remote host&apos;s PATH.
-							Install maestro-p there to drive the Claude TUI, or use API.
+							TUI (Max plan) is unavailable: maestro-p was not found on the remote host&apos;s PATH.{' '}
+							<button
+								type="button"
+								onClick={(e) => {
+									e.stopPropagation();
+									openUrl(MAESTRO_P_INSTALL_URL, { ctrlKey: e.ctrlKey || e.metaKey });
+								}}
+								className="underline hover:no-underline"
+								style={{ color: 'inherit' }}
+							>
+								Install maestro-p
+							</button>{' '}
+							there to drive the Claude TUI, or use API.
 						</p>
 					)}
 					{/* Local Maestro-P Path override is local-only: over SSH maestro-p

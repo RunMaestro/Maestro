@@ -18,8 +18,18 @@ import { Trophy } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { StatsTimeRange, AutoRunSession } from '../../../shared/stats-types';
 import { captureException } from '../../utils/sentry';
-import { formatDurationHuman as formatDuration, formatTimestamp } from '../../../shared/formatters';
+import { formatDurationHuman as formatDuration } from '../../../shared/formatters';
 import { isGoalRunDocument, goalRunLabel } from '../../../shared/goalDriven/goalRunLabel';
+import {
+	extractFileName,
+	extractProjectName,
+	formatAgentName,
+	formatAutoRunDate,
+	formatAutoRunTasksLabel,
+	formatAutoRunTime,
+	getTopAutoRunSessions,
+	MAX_LONGEST_AUTORUN_ROWS,
+} from './autoRunTableUtils';
 
 interface LongestAutoRunsTableProps {
 	/** Current time range for filtering */
@@ -27,57 +37,6 @@ interface LongestAutoRunsTableProps {
 	/** Current theme for styling */
 	theme: Theme;
 }
-
-const MAX_ROWS = 25;
-
-/**
- * Format agent type to display name
- */
-function formatAgentName(agentType: string): string {
-	const names: Record<string, string> = {
-		'claude-code': 'Claude Code',
-		opencode: 'OpenCode',
-		'openai-codex': 'OpenAI Codex',
-		codex: 'Codex',
-		'gemini-cli': 'Gemini CLI',
-		'qwen3-coder': 'Qwen3 Coder',
-		'factory-droid': 'Factory Droid',
-		copilot: 'GitHub Copilot',
-		terminal: 'Terminal',
-	};
-	return names[agentType] || agentType;
-}
-
-/**
- * Extract file name from a document path
- */
-function extractFileName(path?: string): string {
-	if (!path) return '—';
-	const segments = path.replace(/\\/g, '/').split('/');
-	return segments[segments.length - 1] || '—';
-}
-
-/**
- * Extract last path segment from project path
- */
-function extractProjectName(path?: string): string {
-	if (!path) return '—';
-	const segments = path.replace(/\\/g, '/').split('/').filter(Boolean);
-	return segments[segments.length - 1] || '—';
-}
-
-/**
- * Format date for table display
- */
-function formatDate(timestamp: number): string {
-	return new Date(timestamp).toLocaleDateString('en-US', {
-		month: 'short',
-		day: 'numeric',
-		year: 'numeric',
-	});
-}
-
-const formatTime = (timestamp: number) => formatTimestamp(timestamp, 'time');
 
 export const LongestAutoRunsTable = memo(function LongestAutoRunsTable({
 	timeRange,
@@ -110,7 +69,7 @@ export const LongestAutoRunsTable = memo(function LongestAutoRunsTable({
 
 	// Sort by duration (longest first) and take top 25
 	const topSessions = useMemo(() => {
-		return [...sessions].sort((a, b) => b.duration - a.duration).slice(0, MAX_ROWS);
+		return getTopAutoRunSessions(sessions);
 	}, [sessions]);
 
 	if (loading) {
@@ -131,7 +90,7 @@ export const LongestAutoRunsTable = memo(function LongestAutoRunsTable({
 	}
 
 	if (topSessions.length === 0) {
-		return null; // Don't show table if no data — AutoRunStats already shows empty state
+		return null; // Don't show table if no data. AutoRunStats already shows empty state.
 	}
 
 	return (
@@ -148,7 +107,7 @@ export const LongestAutoRunsTable = memo(function LongestAutoRunsTable({
 					className="text-sm font-medium"
 					style={{ color: theme.colors.textMain, animation: 'card-enter 0.4s ease both' }}
 				>
-					Top {Math.min(topSessions.length, MAX_ROWS)} Longest Auto Runs
+					Top {Math.min(topSessions.length, MAX_LONGEST_AUTORUN_ROWS)} Longest Auto Runs
 				</h3>
 				<span className="text-xs" style={{ color: theme.colors.textDim }}>
 					({sessions.length} total)
@@ -177,17 +136,13 @@ export const LongestAutoRunsTable = memo(function LongestAutoRunsTable({
 					</thead>
 					<tbody>
 						{topSessions.map((session, index) => {
-							// Goal runs have no document and no real task count — they record the
+							// Goal runs have no document and no real task count. They record the
 							// goal text (behind a `Goal: ` prefix) as the document path and their
-							// 0–100 progress as tasksCompleted/tasksTotal. Render them with the goal
+							// 0-100 progress as tasksCompleted/tasksTotal. Render them with the goal
 							// text + a "Goal" tag and a single percent so they aren't mistaken for
 							// a "100-task" document run.
 							const isGoal = isGoalRunDocument(session.documentPath);
-							const tasksLabel = isGoal
-								? `${session.tasksCompleted ?? 0}%`
-								: session.tasksTotal != null
-									? `${session.tasksCompleted ?? 0} / ${session.tasksTotal}`
-									: '—';
+							const tasksLabel = formatAutoRunTasksLabel(session);
 
 							return (
 								<tr
@@ -220,13 +175,13 @@ export const LongestAutoRunsTable = memo(function LongestAutoRunsTable({
 										className="px-3 py-2 whitespace-nowrap"
 										style={{ color: theme.colors.textDim }}
 									>
-										{formatDate(session.startTime)}
+										{formatAutoRunDate(session.startTime)}
 									</td>
 									<td
 										className="px-3 py-2 whitespace-nowrap"
 										style={{ color: theme.colors.textDim }}
 									>
-										{formatTime(session.startTime)}
+										{formatAutoRunTime(session.startTime)}
 									</td>
 									<td
 										className="px-3 py-2 whitespace-nowrap"

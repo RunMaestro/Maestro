@@ -9,6 +9,7 @@ import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
 import { getTabKindColor } from './tabBarUtils';
 import { AITabOverlayMenu } from './AITabOverlayMenu';
 import { WizardIndicator } from '../SessionList/WizardIndicator';
+import { useTabHasActiveOutage } from '../../stores/retryStore';
 
 export interface AITabProps {
 	tab: AITabType;
@@ -128,6 +129,8 @@ export const AITab = memo(function AITab({
 }: AITabProps) {
 	const [showCopied, setShowCopied] = useState<'sessionId' | 'deepLink' | false>(false);
 	const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	// Agent Resilience: pulsing orange dot when this tab is stuck auto-retrying.
+	const hasActiveOutage = useTabHasActiveOutage(sessionId ?? '', tabId);
 
 	// Clear copy feedback timeout on unmount
 	useEffect(() => {
@@ -472,8 +475,17 @@ export const AITab = memo(function AITab({
 				</div>
 			)}
 
+			{/* Agent Resilience outage - pulsing orange dot for tabs stuck auto-retrying */}
+			{hasActiveOutage && (
+				<div
+					className="w-2 h-2 rounded-full shrink-0 animate-pulse"
+					style={{ backgroundColor: '#ff8800' }}
+					title="Stuck - auto-retrying after an outage"
+				/>
+			)}
+
 			{/* Busy indicator - pulsing dot for tabs in write mode */}
-			{tab.state === 'busy' && (
+			{!hasActiveOutage && tab.state === 'busy' && (
 				<div
 					className="w-2 h-2 rounded-full shrink-0 animate-pulse"
 					style={{ backgroundColor: theme.colors.warning }}

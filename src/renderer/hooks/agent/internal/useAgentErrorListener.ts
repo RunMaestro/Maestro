@@ -33,7 +33,7 @@ import { logger } from '../../../utils/logger';
 import { removeHiddenProgressLog } from './helpers/exitTabCleanup';
 import { getErrorTitleForType } from './helpers/errorTitles';
 import { isLimitError } from '../../../../shared/types';
-import { scheduleRetryForError } from '../../../stores/retryStore';
+import { scheduleRetryForError, getRetryEntry } from '../../../stores/retryStore';
 import type { AgentError, GroupChatMessage, LogEntry, SessionState } from '../../../types';
 import type { UseAgentListenersDeps, ToolProgressState } from './types';
 
@@ -171,6 +171,18 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 				scheduleRetryForError(actualSessionId, tabIdFromSession!, agentError, { batch: true });
 			const willAutoRetry = willAutoRetryInteractive || willAutoRetryBatch;
 
+			// Agent Resilience transcript card: the auto-retry path collapses all
+			// attempts into ONE live status bubble (RetryStatusCard) instead of a
+			// wall of error frames. Append the anchor marker only on the FIRST
+			// failure of an outage (attempt 0); continuations update the store-backed
+			// card in place and add nothing to the transcript.
+			const activeRetry =
+				willAutoRetry && tabIdFromSession
+					? getRetryEntry(actualSessionId, tabIdFromSession)
+					: undefined;
+			const isFirstOutageFailure = activeRetry?.attempt === 0;
+			const retryOutageId = activeRetry?.outageId;
+
 			if (tabIdFromSession) {
 				deps.activeHiddenToolRef.current?.delete(`${actualSessionId}:${tabIdFromSession}`);
 			}
@@ -229,8 +241,9 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 					// re-fire a direct send. The `canOfferRecovery` session_not_found flow
 					// owns the special "recover raw or compressed" copy; this only adds data.
 					// When auto-retry takes over (willAutoRetry) we instead log a
-					// non-blocking system note; the live countdown chip (driven by
-					// retryStore) shows the timing and Cancel / Retry Now controls, and
+					// non-blocking outage marker; the marker renders as a live
+					// RetryStatusCard (driven by retryStore) showing attempt count,
+					// elapsed time, next-retry countdown, and Try now / Stop controls, and
 					// the early return below keeps the session out of the paused/error
 					// state so this stash stays dormant.
 					const stashLimitPrompt = isLimit && !!lastUserPrompt && !!targetTab;
@@ -240,10 +253,9 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 						source: isSessionNotFound || willAutoRetry ? 'system' : 'error',
 						text: canOfferRecovery
 							? 'Session not found, however we can recover it raw or compressed.'
-							: willAutoRetry
-								? `⏳ ${agentError.message} Auto-retrying…`
-								: agentError.message,
+							: agentError.message,
 						agentError: isSessionNotFound || willAutoRetry ? undefined : agentError,
+						...(willAutoRetry && retryOutageId ? { retryOutageId } : {}),
 						...(isInteractive && !isSessionNotFound && !willAutoRetry
 							? { renderStyle: 'text-stream' as const }
 							: {}),
@@ -251,12 +263,17 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 							? { recoveryAction: { lastUserPrompt: lastUserPrompt!, tabId: targetTab!.id } }
 							: {}),
 					};
+					// On a continued outage (attempt > 0) the card already lives in the
+					// transcript — just strip the transient progress log, append nothing.
+					const isRetryContinuation = willAutoRetry && !isFirstOutageFailure;
 					const updatedAiTabs = targetTab
 						? s.aiTabs.map((tab) =>
 								tab.id === targetTab.id
 									? {
 											...tab,
-											logs: [...removeHiddenProgressLog(tab.logs, tab.id), errorLogEntry],
+											logs: isRetryContinuation
+												? removeHiddenProgressLog(tab.logs, tab.id)
+												: [...removeHiddenProgressLog(tab.logs, tab.id), errorLogEntry],
 											agentError: isSessionNotFound ? undefined : agentError,
 											...(isSessionNotFound ? { agentSessionId: null } : {}),
 										}

@@ -4,6 +4,7 @@ import type { AITab } from '../../types';
 import { hasDraft } from '../../utils/tabHelpers';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { useStuckTabSignature } from '../../stores/retryStore';
 import { AITab as AITabComponent } from './AITab';
 import { BrowserTabItem } from './BrowserTabItem';
 import { FileTab } from './FileTab';
@@ -93,6 +94,13 @@ function TabBarInner({
 	const [dragOverTabId, setDragOverTabId] = useState<string | null>(null);
 	const [showUnreadOnlyLocal, setShowUnreadOnlyLocal] = useState(false);
 	const showUnreadOnly = showUnreadOnlyProp ?? showUnreadOnlyLocal;
+	// Agent Resilience: tabs stuck auto-retrying an outage surface in the unread
+	// filter (needs attention). Stable Set keyed on a primitive store signature.
+	const stuckTabSignature = useStuckTabSignature(sessionId ?? '');
+	const stuckTabIds = useMemo(
+		() => new Set(stuckTabSignature ? stuckTabSignature.split(',') : []),
+		[stuckTabSignature]
+	);
 	const toggleUnreadFilter =
 		onToggleUnreadFilter ?? (() => setShowUnreadOnlyLocal((prev) => !prev));
 
@@ -161,12 +169,13 @@ function TabBarInner({
 						(t) =>
 							t.hasUnread ||
 							t.state === 'busy' ||
+							stuckTabIds.has(t.id) ||
 							(inputMode === 'ai' && t.id === activeTabId) ||
 							hasDraft(t) ||
 							(showStarredInUnreadFilter && t.starred)
 					)
 				: tabs,
-		[tabs, showUnreadOnly, inputMode, activeTabId, showStarredInUnreadFilter]
+		[tabs, showUnreadOnly, inputMode, activeTabId, showStarredInUnreadFilter, stuckTabIds]
 	);
 
 	const displayedUnifiedTabs = useMemo(() => {
@@ -180,6 +189,7 @@ function TabBarInner({
 				return (
 					ut.data.hasUnread ||
 					ut.data.state === 'busy' ||
+					stuckTabIds.has(ut.id) ||
 					(inputMode === 'ai' && ut.id === activeTabId) ||
 					hasDraft(ut.data) ||
 					(showStarredInUnreadFilter && ut.data.starred)
@@ -203,6 +213,7 @@ function TabBarInner({
 		inputMode,
 		showStarredInUnreadFilter,
 		showFilePreviewsInUnreadFilter,
+		stuckTabIds,
 	]);
 
 	// Drag handlers

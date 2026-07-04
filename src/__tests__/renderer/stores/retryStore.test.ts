@@ -19,6 +19,8 @@ import {
 	cancelRetry,
 	clearRetryIfSettled,
 	getRetryEntry,
+	getOutage,
+	sessionHasActiveOutage,
 	registerBatchResumer,
 	useRetryStore,
 } from '../../../renderer/stores/retryStore';
@@ -74,7 +76,7 @@ function seedSnapshot(id: string, tabId: string) {
 beforeEach(() => {
 	vi.useFakeTimers();
 	vi.setSystemTime(NOW);
-	useRetryStore.setState({ retries: {} });
+	useRetryStore.setState({ retries: {}, outages: {} });
 	useSessionStore.setState({ sessions: [] } as any);
 	processQueuedItem = vi.fn().mockResolvedValue(undefined);
 	useAgentStore.setState({ processQueuedItem } as any);
@@ -280,5 +282,77 @@ describe('batch-resume mode', () => {
 	it('returns false when batch mode is requested but no resumer is registered', () => {
 		setupSession('s16', 't1');
 		expect(scheduleRetryForError('s16', 't1', overload(), { batch: true })).toBe(false);
+	});
+});
+
+describe('outage records (transcript status card)', () => {
+	it('scheduling creates an active outage keyed to the retry entry', () => {
+		setupSession('o1', 't1');
+		seedSnapshot('o1', 't1');
+		scheduleRetryForError('o1', 't1', overload());
+
+		const entry = getRetryEntry('o1', 't1');
+		expect(entry?.outageId).toBeTruthy();
+		const outage = getOutage(entry!.outageId);
+		expect(outage).toMatchObject({
+			sessionId: 'o1',
+			tabId: 't1',
+			strategy: 'availability',
+			status: 'active',
+			attempts: 0,
+			startedAt: NOW,
+		});
+		expect(sessionHasActiveOutage('o1')).toBe(true);
+	});
+
+	it('preserves outageId and startedAt across backoff continuations, bumping attempts', () => {
+		setupSession('o2', 't1');
+		seedSnapshot('o2', 't1');
+		scheduleRetryForError('o2', 't1', overload());
+		const first = getRetryEntry('o2', 't1')!.outageId;
+
+		// Advance time, then a failed resend re-schedules for the same key.
+		vi.setSystemTime(NOW + 60_000);
+		scheduleRetryForError('o2', 't1', overload());
+
+		const entry = getRetryEntry('o2', 't1')!;
+		expect(entry.outageId).toBe(first); // same outage
+		expect(entry.startedAt).toBe(NOW); // first-failure time preserved
+		const outage = getOutage(first)!;
+		expect(outage.attempts).toBe(1);
+		expect(outage.startedAt).toBe(NOW);
+		expect(outage.status).toBe('active');
+	});
+
+	it('clearRetryIfSettled marks the outage recovered with a resolve time', () => {
+		setupSession('o3', 't1');
+		seedSnapshot('o3', 't1');
+		scheduleRetryForError('o3', 't1', overload());
+		const outageId = getRetryEntry('o3', 't1')!.outageId;
+		retryNow('o3', 't1'); // → in-flight
+
+		vi.setSystemTime(NOW + 5_000);
+		clearRetryIfSettled('o3', 't1');
+
+		const outage = getOutage(outageId)!;
+		expect(outage.status).toBe('recovered');
+		expect(outage.resolvedAt).toBe(NOW + 5_000);
+		// Active retry entry is gone, but the outage record persists for the card.
+		expect(getRetryEntry('o3', 't1')).toBeUndefined();
+		expect(sessionHasActiveOutage('o3')).toBe(false);
+	});
+
+	it('cancelRetry marks the outage stopped', () => {
+		setupSession('o4', 't1');
+		seedSnapshot('o4', 't1');
+		scheduleRetryForError('o4', 't1', overload());
+		const outageId = getRetryEntry('o4', 't1')!.outageId;
+
+		cancelRetry('o4', 't1');
+
+		const outage = getOutage(outageId)!;
+		expect(outage.status).toBe('stopped');
+		expect(outage.resolvedAt).toBe(NOW);
+		expect(sessionHasActiveOutage('o4')).toBe(false);
 	});
 });

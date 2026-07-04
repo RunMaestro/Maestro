@@ -41,6 +41,12 @@ vi.mock('lucide-react', () => ({
 	),
 }));
 
+// Mock the URL opener so we can assert the install link routes through it
+const openUrlMock = vi.fn();
+vi.mock('../../../../renderer/utils/openUrl', () => ({
+	openUrl: (...args: unknown[]) => openUrlMock(...args),
+}));
+
 // =============================================================================
 // TEST HELPERS
 // =============================================================================
@@ -368,6 +374,37 @@ describe('AgentConfigPanel', () => {
 			expect(screen.queryByText('TUI Wrapper')).not.toBeInTheDocument();
 			const apiButton = screen.getByText('claude -p').closest('button');
 			expect(apiButton?.className).toContain('ring-2');
+			(
+				window as unknown as {
+					maestro: { agents: { getRemoteMaestroPAvailable: ReturnType<typeof vi.fn> } };
+				}
+			).maestro.agents.getRemoteMaestroPAvailable.mockResolvedValue(null);
+		});
+
+		it('links to the maestro-p install page from the missing-remote warning', async () => {
+			openUrlMock.mockClear();
+			(
+				window as unknown as {
+					maestro: { agents: { getRemoteMaestroPAvailable: ReturnType<typeof vi.fn> } };
+				}
+			).maestro.agents.getRemoteMaestroPAvailable.mockResolvedValue(false);
+			render(
+				<AgentConfigPanel
+					{...createDefaultProps({
+						onEnableMaestroPChange: vi.fn(),
+						isSshEnabled: true,
+						sshRemoteId: 'remote-without-maestro-p',
+					})}
+				/>
+			);
+
+			const installLink = await screen.findByText('Install maestro-p');
+			fireEvent.click(installLink);
+			expect(openUrlMock).toHaveBeenCalledWith(
+				'https://runmaestro.ai/maestro-p/',
+				expect.objectContaining({ ctrlKey: false })
+			);
+
 			(
 				window as unknown as {
 					maestro: { agents: { getRemoteMaestroPAvailable: ReturnType<typeof vi.fn> } };

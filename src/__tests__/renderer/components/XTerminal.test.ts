@@ -196,18 +196,6 @@ describe('evaluateCustomKeyEvent', () => {
 		expect(evaluateCustomKeyEvent(e)).toEqual({ action: 'write', data: '\x05' });
 	});
 
-	// Cmd+Shift+Arrow is reserved for the "move tab to first/last" app shortcut and
-	// must pass through to the window handler, not send Ctrl-A/Ctrl-E to the PTY.
-	it('returns passthrough for Cmd+Shift+Left (move tab to first)', () => {
-		const e = makeKeyEvent({ key: 'ArrowLeft', metaKey: true, shiftKey: true, type: 'keydown' });
-		expect(evaluateCustomKeyEvent(e)).toBe('passthrough');
-	});
-
-	it('returns passthrough for Cmd+Shift+Right (move tab to last)', () => {
-		const e = makeKeyEvent({ key: 'ArrowRight', metaKey: true, shiftKey: true, type: 'keydown' });
-		expect(evaluateCustomKeyEvent(e)).toBe('passthrough');
-	});
-
 	// Navigation keys on keyup should not fire (only keydown)
 	it('returns passthrough for Option+Arrow on keyup', () => {
 		const e = makeKeyEvent({ key: 'ArrowLeft', altKey: true, type: 'keyup' });

@@ -27,7 +27,7 @@ import {
 } from './internal/useBatchControlActions';
 import { useBatchKillAction } from './internal/useBatchKillAction';
 import { useBatchRunner } from './internal/useBatchRunner';
-import { useGoalRunner } from './internal/useGoalRunner';
+import { useGoalRunner, type UseGoalRunnerDeps } from './internal/useGoalRunner';
 
 export interface BatchCompleteInfo {
 	sessionId: string;
@@ -54,7 +54,7 @@ export interface PRResultInfo {
 	error?: string;
 }
 
-interface UseBatchProcessorProps {
+export interface UseBatchProcessorProps {
 	sessions: Session[];
 	groups: Group[];
 	onUpdateSession: (sessionId: string, updates: Partial<Session>) => void;
@@ -71,6 +71,12 @@ interface UseBatchProcessorProps {
 		error?: string;
 		errorKind?: AgentSpawnErrorKind;
 	}>;
+	/**
+	 * Resume an existing provider session and run a prompt (used by the goal
+	 * runner to fetch a handoff note between iterations). Same primitive the
+	 * document runner uses for its exit synopsis.
+	 */
+	spawnBackgroundSynopsis: UseGoalRunnerDeps['spawnBackgroundSynopsis'];
 	onAddHistoryEntry: (entry: Omit<HistoryEntry, 'id'>) => void | Promise<void>;
 	onComplete?: (info: BatchCompleteInfo) => void;
 	// Callback for PR creation results (success or failure)
@@ -135,6 +141,7 @@ export function useBatchProcessor({
 	groups,
 	onUpdateSession,
 	onSpawnAgent,
+	spawnBackgroundSynopsis,
 	onAddHistoryEntry,
 	onComplete,
 	onPRResult,
@@ -326,6 +333,7 @@ export function useBatchProcessor({
 		timeTracking,
 		groups,
 		onSpawnAgent,
+		spawnBackgroundSynopsis,
 		onAddHistoryEntry,
 		onComplete,
 		onProcessQueueAfterCompletion,

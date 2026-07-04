@@ -8,7 +8,6 @@ import {
 	createTabPidChangeHandler,
 } from '../TerminalView';
 import { InputArea } from '../InputArea';
-import { RetryCountdownBanner } from '../RetryCountdownBanner';
 import type { FilePreviewHandle } from '../FilePreview';
 import { WizardConversationView, DocumentGenerationView } from '../InlineWizard';
 import { BrowserTabView, type BrowserTabViewHandle } from './BrowserTabView';
@@ -698,14 +697,9 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 						)}
 					</div>
 
-					{/* Agent Resilience: live auto-retry countdown for the active AI tab. */}
-					{activeSession.inputMode === 'ai' && (
-						<RetryCountdownBanner
-							sessionId={activeSession.id}
-							tabId={activeTab?.id}
-							theme={theme}
-						/>
-					)}
+					{/* Agent Resilience: the live auto-retry status now renders inline in
+					    the transcript as a collapsed RetryStatusCard (see TerminalOutput),
+					    so no separate countdown banner sits above the composer. */}
 
 					{/* Input Area (hidden in mobile landscape, during wizard doc generation, and in terminal mode — xterm.js handles its own input) */}
 					{!isMobileLandscape &&

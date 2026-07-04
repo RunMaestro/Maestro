@@ -33,6 +33,7 @@ import { useUIStore } from '../../stores/uiStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useBatchStore, selectActiveBatchSessionIds } from '../../stores/batchStore';
+import { useActiveOutageSessionSignature } from '../../stores/retryStore';
 import { useShallow } from 'zustand/react/shallow';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { sidebarSessionEquality } from '../../stores/sessionEquality';
@@ -420,9 +421,14 @@ function SessionListInner(props: SessionListProps) {
 	const setSessionFilterOpen = useUIStore((s) => s.setSessionFilterOpen);
 	const showUnreadAgentsOnly = useUIStore((s) => s.showUnreadAgentsOnly);
 	const toggleShowUnreadAgentsOnly = useUIStore((s) => s.toggleShowUnreadAgentsOnly);
+	// Agent Resilience: agents stuck auto-retrying an outage count as "needs
+	// attention" and surface in the unread filter (see useSessionCategories).
+	const stuckOutageSignature = useActiveOutageSessionSignature();
 	const hasUnreadAgents = useMemo(
-		() => sessions.some((s) => s.aiTabs?.some((tab) => tab.hasUnread) || s.state === 'busy'),
-		[sessions]
+		() =>
+			sessions.some((s) => s.aiTabs?.some((tab) => tab.hasUnread) || s.state === 'busy') ||
+			stuckOutageSignature !== '',
+		[sessions, stuckOutageSignature]
 	);
 	const [menuOpen, setMenuOpen] = useState(false);
 
@@ -635,7 +641,8 @@ function SessionListInner(props: SessionListProps) {
 		sortedSessions,
 		showUnreadAgentsOnly,
 		activeSessionId,
-		activeBatchSessionIds
+		activeBatchSessionIds,
+		stuckOutageSignature
 	);
 
 	// PERF: Cached callback maps to prevent SessionItem re-renders.
@@ -718,13 +725,15 @@ function SessionListInner(props: SessionListProps) {
 		}
 	) => {
 		const allWorktreeChildren = getWorktreeChildren(session.id);
-		// When filtering unread, only show worktree children that are unread or busy
+		// When filtering unread, only show worktree children that are unread, busy,
+		// or stuck auto-retrying an outage (all "needs attention").
 		const worktreeChildren = showUnreadAgentsOnly
 			? allWorktreeChildren.filter(
 					(child) =>
 						child.id === activeSessionId ||
 						child.aiTabs?.some((tab) => tab.hasUnread) ||
-						child.state === 'busy'
+						child.state === 'busy' ||
+						stuckOutageSignature.split(',').includes(child.id)
 				)
 			: allWorktreeChildren;
 		const hasWorktrees = worktreeChildren.length > 0;

@@ -575,6 +575,12 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							sessionCustomArgs: session.customArgs,
 							sessionCustomEnvVars: session.customEnvVars,
 							sessionCustomModel: session.customModel,
+							// Auto Run is session-level (no active tab), so the session's effort
+							// is the source. Interactive spawns pass this too; omitting it here
+							// dropped the user's configured reasoning effort in Auto Run, which for
+							// Codex meant no reasoning summary was streamed (Thought Stream stayed
+							// stuck on "Waiting for the agent to start thinking...") - see #1147.
+							sessionCustomEffort: session.customEffort,
 							sessionCustomContextWindow: session.customContextWindow,
 							// Per-session SSH remote config (takes precedence over agent-level SSH config)
 							sessionSshRemoteConfig: session.sessionSshRemoteConfig,

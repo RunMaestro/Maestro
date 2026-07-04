@@ -479,6 +479,9 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 													style={{ color: theme.colors.textDim }}
 												/>
 												Move to First Position
+												{tabShortcuts.moveTabToStart && (
+													<ShortcutHint keys={tabShortcuts.moveTabToStart.keys} />
+												)}
 											</button>
 										)}
 										{onMoveToLast && !isLastTab && (
@@ -492,6 +495,9 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 													style={{ color: theme.colors.textDim }}
 												/>
 												Move to Last Position
+												{tabShortcuts.moveTabToEnd && (
+													<ShortcutHint keys={tabShortcuts.moveTabToEnd.keys} />
+												)}
 											</button>
 										)}
 										<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />

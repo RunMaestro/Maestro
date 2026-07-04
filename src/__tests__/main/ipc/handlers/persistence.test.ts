@@ -146,6 +146,7 @@ describe('persistence IPC handlers', () => {
 				'settings:set',
 				'settings:getAll',
 				'sessions:getAll',
+				'images:resolve',
 				'sessions:getActiveSessionId',
 				'sessions:setActiveSessionId',
 				'sessions:setAll',

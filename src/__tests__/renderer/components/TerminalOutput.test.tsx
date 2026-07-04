@@ -2968,4 +2968,15 @@ describe('collapseAiResponseLogs', () => {
 		expect(out).toHaveLength(1);
 		expect(out[0].renderStyle).toBe('text-stream');
 	});
+
+	it('keeps Agent Resilience outage markers standalone, not folded into a text group', () => {
+		const out = collapseAiResponseLogs([
+			mk({ id: 'a', source: 'stdout', text: 'before ' }),
+			mk({ id: 'outage', source: 'stdout', text: 'retrying...', retryOutageId: 'out-1' }),
+			mk({ id: 'b', source: 'stdout', text: 'after' }),
+		]);
+		// The outage marker breaks the run: the text on either side stays separate.
+		expect(out.map((l) => l.id)).toEqual(['a', 'outage', 'b']);
+		expect(out.find((l) => l.id === 'outage')!.retryOutageId).toBe('out-1');
+	});
 });

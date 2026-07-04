@@ -15,6 +15,12 @@ import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import { createMockSession as baseCreateMockSession } from '../../../helpers/mockSession';
 import { GOAL_RUN_HARD_ITERATION_CAP } from '../../../../shared/goalDriven/types';
+import { GOAL_SYNOPSIS_REQUEST_PROMPT } from '../../../../shared/goalDriven/goalHandoff';
+import {
+	setCapabilitiesCache,
+	clearCapabilitiesCache,
+	DEFAULT_CAPABILITIES,
+} from '../../../../renderer/hooks/agent/useAgentCapabilities';
 
 // Mock notifyToast so toasts don't blow up and can be inspected if needed.
 const { mockNotifyToast } = vi.hoisted(() => ({ mockNotifyToast: vi.fn() }));
@@ -53,6 +59,7 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 
 	let mockOnUpdateSession: ReturnType<typeof vi.fn>;
 	let mockOnSpawnAgent: ReturnType<typeof vi.fn>;
+	let mockSpawnBackgroundSynopsis: ReturnType<typeof vi.fn>;
 	let mockOnAddHistoryEntry: ReturnType<typeof vi.fn>;
 	let mockOnComplete: ReturnType<typeof vi.fn>;
 	let mockPowerAddReason: ReturnType<typeof vi.fn>;
@@ -77,6 +84,7 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 				groups,
 				onUpdateSession: mockOnUpdateSession,
 				onSpawnAgent: mockOnSpawnAgent,
+				spawnBackgroundSynopsis: mockSpawnBackgroundSynopsis,
 				onAddHistoryEntry: mockOnAddHistoryEntry,
 				onComplete: mockOnComplete,
 			})
@@ -101,6 +109,11 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 	beforeEach(() => {
 		useSettingsStore.setState({ autoRunDisabled: false });
 
+		// Warm the capability cache so the between-iteration handoff path (gated on
+		// supportsResume) is exercised, matching production where agent detection
+		// populates this at startup.
+		setCapabilitiesCache('claude-code', { ...DEFAULT_CAPABILITIES, supportsResume: true });
+
 		mockOnUpdateSession = vi.fn();
 		mockOnAddHistoryEntry = vi.fn();
 		mockOnComplete = vi.fn();
@@ -108,6 +121,11 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 			success: true,
 			agentSessionId: 'goal-agent-session',
 			response: progressResponse(100, 'done'),
+		});
+		mockSpawnBackgroundSynopsis = vi.fn().mockResolvedValue({
+			success: true,
+			agentSessionId: 'goal-agent-session',
+			response: 'Handoff: data layer migrated; wire up the UI next.',
 		});
 		mockPowerAddReason = vi.fn();
 		mockPowerRemoveReason = vi.fn();
@@ -118,7 +136,8 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 				...window.maestro.prompts,
 				get: vi.fn().mockResolvedValue({
 					success: true,
-					content: 'Goal: {{GOAL}}\nExit: {{GOAL_EXIT_CRITERIA}}\nIteration: {{LOOP_NUMBER}}',
+					content:
+						'Goal: {{GOAL}}\nExit: {{GOAL_EXIT_CRITERIA}}\nIteration: {{LOOP_NUMBER}}\n{{PREDECESSOR_HANDOFF}}',
 				}),
 			},
 			web: {
@@ -143,6 +162,7 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 
 	afterEach(() => {
 		vi.clearAllMocks();
+		clearCapabilitiesCache();
 	});
 
 	it('writes an immediate start marker recording the goal and exit criteria', async () => {
@@ -258,6 +278,74 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 
 		// COMPLETE_BATCH reset the state.
 		expect(result.current.getBatchState(SESSION_ID).isRunning).toBe(false);
+	});
+
+	it('captures a predecessor handoff and threads it into the next iteration prompt', async () => {
+		const responses = [progressResponse(40, 'phase 1'), progressResponse(100, 'done')];
+		let call = 0;
+		mockOnSpawnAgent.mockImplementation(async () => ({
+			success: true,
+			agentSessionId: `goal-agent-${call}`,
+			response: responses[call++],
+		}));
+		mockSpawnBackgroundSynopsis.mockResolvedValue({
+			success: true,
+			agentSessionId: 'goal-agent-0',
+			// Include a marker to prove it gets stripped from the injected blurb.
+			response: 'Migrated the data layer; UI still pending.\n\n<!-- maestro:progress 40 -->',
+		});
+
+		const { result } = renderProcessor([createMockSession()], [createMockGroup()]);
+
+		await act(async () => {
+			await result.current.startBatchRun(
+				SESSION_ID,
+				goalConfig('Ship the feature', 'All tests pass', null),
+				'/test/folder'
+			);
+		});
+
+		// Two iterations; the handoff resume fires once (after the first, continuing).
+		expect(mockOnSpawnAgent).toHaveBeenCalledTimes(2);
+		expect(mockSpawnBackgroundSynopsis).toHaveBeenCalledTimes(1);
+
+		// The handoff request resumes the first iteration's session with the synopsis prompt.
+		const [sid, , resumeAgentSessionId, handoffPrompt] = mockSpawnBackgroundSynopsis.mock.calls[0];
+		expect(sid).toBe(SESSION_ID);
+		expect(resumeAgentSessionId).toBe('goal-agent-0');
+		expect(handoffPrompt).toBe(GOAL_SYNOPSIS_REQUEST_PROMPT);
+
+		// First iteration prompt has no predecessor block; the second carries the note
+		// (with the maestro marker stripped).
+		const firstPrompt = mockOnSpawnAgent.mock.calls[0][1] as string;
+		const secondPrompt = mockOnSpawnAgent.mock.calls[1][1] as string;
+		expect(firstPrompt).not.toContain('Handoff From Your Predecessor');
+		expect(secondPrompt).toContain('Handoff From Your Predecessor');
+		expect(secondPrompt).toContain('Migrated the data layer; UI still pending.');
+		expect(secondPrompt).not.toContain('<!-- maestro:');
+	});
+
+	it('does not request a handoff when the agent cannot resume', async () => {
+		setCapabilitiesCache('claude-code', { ...DEFAULT_CAPABILITIES, supportsResume: false });
+		const responses = [progressResponse(40, 'phase 1'), progressResponse(100, 'done')];
+		let call = 0;
+		mockOnSpawnAgent.mockImplementation(async () => ({
+			success: true,
+			agentSessionId: `goal-agent-${call}`,
+			response: responses[call++],
+		}));
+
+		const { result } = renderProcessor([createMockSession()], [createMockGroup()]);
+
+		await act(async () => {
+			await result.current.startBatchRun(
+				SESSION_ID,
+				goalConfig('Ship the feature', 'All tests pass', null),
+				'/test/folder'
+			);
+		});
+
+		expect(mockSpawnBackgroundSynopsis).not.toHaveBeenCalled();
 	});
 
 	it('never lets the displayed percent regress when the agent self-report dips', async () => {

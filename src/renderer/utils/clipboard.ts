@@ -43,11 +43,21 @@ export async function safeClipboardWriteBlob(items: ClipboardItem[]): Promise<bo
 
 /**
  * Copy an image to the clipboard using Electron's native clipboard API.
- * Accepts a data URL (e.g. from a canvas or pasted image).
- * Falls back to the browser Clipboard API if the Electron IPC is unavailable.
+ * Accepts a data URL (e.g. from a canvas or pasted image) OR a
+ * `maestro-image://` reference from a persisted transcript image - refs are
+ * resolved to a data URL first so copy works regardless of where the image
+ * lives. Falls back to the browser Clipboard API if the Electron IPC is
+ * unavailable.
  */
 export async function safeClipboardWriteImage(dataUrl: string): Promise<boolean> {
 	try {
+		// Persisted transcript images are stored as refs, not data URLs; resolve
+		// to bytes before handing off to the clipboard.
+		if (dataUrl.startsWith('maestro-image://') && window.maestro?.images?.resolve) {
+			const resolved = await window.maestro.images.resolve(dataUrl);
+			if (!resolved) return false;
+			dataUrl = resolved;
+		}
 		if (window.maestro?.shell?.copyImageToClipboard) {
 			await window.maestro.shell.copyImageToClipboard(dataUrl);
 			return true;

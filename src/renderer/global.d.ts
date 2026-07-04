@@ -3780,6 +3780,16 @@ interface MaestroAPI {
 			agentId?: string
 		) => Promise<{ success: boolean; path?: string; error?: string }>;
 	};
+	/**
+	 * Session Images API. Pasted transcript images are stored content-addressed
+	 * on disk and referenced as `maestro-image://store/<sha>.<ext>` (loaded
+	 * directly by `<img src>` via the maestro-image protocol). `resolve` turns a
+	 * ref back into a data URL for consumers that need the raw bytes (export,
+	 * clipboard, replay).
+	 */
+	images: {
+		resolve: (ref: string) => Promise<string | null>;
+	};
 }
 
 declare global {

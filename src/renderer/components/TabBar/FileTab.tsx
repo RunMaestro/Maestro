@@ -513,6 +513,9 @@ export const FileTab = memo(function FileTab({
 									>
 										<ChevronsLeft className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 										Move to First Position
+										{tabShortcuts.moveTabToStart && (
+											<ShortcutHint keys={tabShortcuts.moveTabToStart.keys} />
+										)}
 									</button>
 								)}
 
@@ -528,6 +531,9 @@ export const FileTab = memo(function FileTab({
 											style={{ color: theme.colors.textDim }}
 										/>
 										Move to Last Position
+										{tabShortcuts.moveTabToEnd && (
+											<ShortcutHint keys={tabShortcuts.moveTabToEnd.keys} />
+										)}
 									</button>
 								)}
 
