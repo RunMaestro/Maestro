@@ -65,6 +65,15 @@ vi.mock('../../../../main/utils/ssh-command-builder', () => ({
 	buildSshCommand: vi.fn(),
 }));
 
+// Mock the remote maestro-p probe so the SSH token-mode resolution mirrors the
+// chat spawn WITHOUT doing a real SSH round-trip. Returns `true` (remote has
+// maestro-p) and deliberately does NOT write to remoteMaestroPCache, so the
+// resolver's getRemoteMaestroPAvailable() stays undefined (optimistic) rather
+// than caching a probe failure that would downgrade interactive SSH to API.
+vi.mock('../../../../main/agents/probeRemoteMaestroP', () => ({
+	ensureRemoteMaestroPProbed: vi.fn().mockResolvedValue(true),
+}));
+
 // Mock platform detection so we can toggle isWindows() per test
 vi.mock('../../../../shared/platformDetection', () => ({
 	isWindows: vi.fn(() => false),
@@ -416,6 +425,67 @@ describe('Tab Naming IPC Handlers', () => {
 
 			const result = await resultPromise;
 			expect(result).toBe('Dark Mode Toggle');
+		});
+
+		it('returns null when output is leaked tool-call markup (maestro-p TUI transcript)', async () => {
+			// Regression: when the naming spawn drives the maestro-p TUI, `--tools ""`
+			// is stripped, the model runs a real agentic turn, and its raw terminal
+			// transcript leaks function-call scaffolding + an empty-turn placeholder.
+			// That garbage used to sail past the length/keyword filters and become the
+			// tab name (observed: "</parameter> </invoke> (no content)").
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string) => void) | undefined;
+
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'for generated SVG, add a right click option to save',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			onDataCallback?.('tab-naming-mock-uuid-1234', '</parameter> </invoke> (no content)');
+			onExitCallback?.('tab-naming-mock-uuid-1234');
+
+			const result = await resultPromise;
+			expect(result).toBeNull();
+		});
+
+		it('returns null for a bare TUI empty-turn placeholder', async () => {
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string) => void) | undefined;
+
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Something',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			onDataCallback?.('tab-naming-mock-uuid-1234', '(no output)');
+			onExitCallback?.('tab-naming-mock-uuid-1234');
+
+			const result = await resultPromise;
+			expect(result).toBeNull();
 		});
 
 		it('extracts the tab name from Claude stream-json output (the real-world path)', async () => {

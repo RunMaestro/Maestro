@@ -39,6 +39,8 @@ export interface ChatMarkdownComponentsOptions {
 	/** Right-click handlers (owned by the shell so it can render the menus). */
 	onLinkContextMenu: (e: React.MouseEvent, url: string) => void;
 	onFileContextMenu: (e: React.MouseEvent, absPath: string, fileName: string) => void;
+	/** Right-click handler for inline <svg> diagrams (copy/save image). */
+	onSvgContextMenu: (e: React.MouseEvent<SVGSVGElement>) => void;
 }
 
 export function createChatMarkdownComponents(
@@ -55,6 +57,7 @@ export function createChatMarkdownComponents(
 		bionifyAlgorithm,
 		onLinkContextMenu,
 		onFileContextMenu,
+		onSvgContextMenu,
 	} = options;
 
 	const withReadableTransforms = (children: React.ReactNode) =>
@@ -193,6 +196,21 @@ export function createChatMarkdownComponents(
 			>
 				{withReadableTransforms(children)}
 			</td>
+		),
+		// Inline SVG diagrams (rehype-raw + sanitize let agents draw). Attach a
+		// right-click menu so the rendered image can be copied or saved. With
+		// nested <svg> the handler bubbles, so the outermost element wins (its
+		// currentTarget is captured last).
+		svg: ({ node: _node, children, ...props }: JSX.IntrinsicElements['svg'] & ExtraProps) => (
+			<svg
+				{...props}
+				onContextMenu={(e) => {
+					e.preventDefault();
+					onSvgContextMenu(e);
+				}}
+			>
+				{children}
+			</svg>
 		),
 		// Strip event handler attributes (e.g. onToggle) that rehype-raw may
 		// pass through as strings from AI-generated HTML, which React rejects.

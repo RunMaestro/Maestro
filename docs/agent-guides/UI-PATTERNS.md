@@ -697,9 +697,11 @@ Presets:
 
 - **`chat`** - richest surface (AI Terminal, Group Chat, History, Feedback,
   Director's Notes, Document Graph). Shiki code fences with copy button + language
-  picker, file links via `remarkFileLinks`, right-click link/file context menus,
-  IPC-loaded local images, chat line breaks + KaTeX math, Bionify, raw-HTML +
-  DOMPurify. `MarkdownRenderer` is a thin wrapper around `<Markdown preset="chat">`.
+  picker, file links via `remarkFileLinks`, right-click link/file/SVG context
+  menus (inline `<svg>` diagrams get a Copy Image / Save Image menu via
+  `SvgContextMenu` + `utils/svgExport.ts`), IPC-loaded local images, chat line
+  breaks + KaTeX math, Bionify, raw-HTML + DOMPurify. `MarkdownRenderer` is a thin
+  wrapper around `<Markdown preset="chat">`.
 - **`document`** - file/doc preview. Prism highlighting, search highlight, anchor
   (`#`) links, pluggable `imageRenderer`, `customLanguageRenderers` (mermaid),
   `extraRemark/RehypePlugins`. Renders bare so callers keep their own scoped prose
