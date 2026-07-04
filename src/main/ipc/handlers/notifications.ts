@@ -17,6 +17,7 @@ import { createSafeSend, type SafeSendFn } from '../../utils/safe-send';
 import { parseDeepLink, dispatchDeepLink } from '../../deep-links';
 import { buildSessionDeepLink } from '../../../shared/deep-link-urls';
 import { captureException } from '../../utils/sentry';
+import type { WindowRegistry } from '../../window-registry';
 
 // ==========================================================================
 // Constants
@@ -407,6 +408,45 @@ async function processNextNotification(): Promise<void> {
  */
 export interface NotificationsHandlerDependencies {
 	getMainWindow: () => BrowserWindow | null;
+	/**
+	 * Multi-window registry getter. When wired, a notification's click handler
+	 * resolves the window that currently owns the agent (via
+	 * {@link WindowRegistry.getWindowForSession}) and focuses THAT window instead
+	 * of always the primary. Optional: single-window builds, the web interface,
+	 * and tests omit it and fall back to {@link getMainWindow}.
+	 */
+	getWindowRegistry?: () => WindowRegistry | null;
+}
+
+/**
+ * Resolve the window a notification click should focus.
+ *
+ * When a session (agent) id is present and the multi-window registry is wired,
+ * look up the window that currently owns that agent and return its
+ * `BrowserWindow`, so clicking the notification focuses the right window in a
+ * multi-window layout instead of always the primary. Resolution happens at
+ * click-time (not when the notification is shown) so an agent that was moved to
+ * another window after the notification fired still lands in the correct place.
+ *
+ * Falls back to the primary/main window when there is no session context, the
+ * registry is not wired (single-window build, web), the agent is untracked, or
+ * the owning window was destroyed.
+ */
+export function resolveNotificationClickWindow(
+	sessionId: string | undefined,
+	deps?: NotificationsHandlerDependencies
+): BrowserWindow | null {
+	const registry = deps?.getWindowRegistry?.();
+	if (sessionId && registry) {
+		const windowId = registry.getWindowForSession(sessionId);
+		if (windowId) {
+			const entry = registry.get(windowId);
+			if (entry && !entry.browserWindow.isDestroyed()) {
+				return entry.browserWindow;
+			}
+		}
+	}
+	return deps?.getMainWindow?.() ?? null;
 }
 
 /**
@@ -442,14 +482,19 @@ export function registerNotificationsHandlers(deps?: NotificationsHandlerDepende
 					};
 					notification.on('close', releaseNotification);
 
-					// Wire click handler for navigation if session context is provided
+					// Wire click handler for navigation if session context is provided.
+					// Route the click to the window that currently owns the agent
+					// (resolved via the window registry) so a multi-window layout
+					// focuses the correct window instead of always the primary;
+					// resolveNotificationClickWindow falls back to the main window when
+					// there is no registry / owning window.
 					if (sessionId && deps?.getMainWindow) {
 						const deepLinkUrl = buildSessionDeepLink(sessionId, tabId);
 
 						notification.on('click', () => {
 							const parsed = parseDeepLink(deepLinkUrl);
 							if (parsed) {
-								dispatchDeepLink(parsed, deps.getMainWindow);
+								dispatchDeepLink(parsed, () => resolveNotificationClickWindow(sessionId, deps));
 							}
 							releaseNotification();
 						});

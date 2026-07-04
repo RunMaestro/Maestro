@@ -386,6 +386,57 @@ describe('useTabHoverOverlay', () => {
 		expect(result.current.positionReady).toBe(false);
 	});
 
+	it('dismisses an open overlay when a native drag begins', () => {
+		const { result } = renderHook(() => useTabHoverOverlay());
+
+		const mockElement = { getBoundingClientRect: () => ({ bottom: 100, left: 50, width: 120 }) };
+		(result.current.tabRef as React.MutableRefObject<HTMLDivElement | null>).current =
+			mockElement as unknown as HTMLDivElement;
+
+		// Open the overlay, then mark the pointer as over it (as a real hover would).
+		act(() => {
+			result.current.handleMouseEnter();
+		});
+		act(() => {
+			vi.advanceTimersByTime(400);
+		});
+		act(() => {
+			result.current.overlayMouseEnter();
+		});
+		expect(result.current.overlayOpen).toBe(true);
+
+		// A drag starting anywhere in the window must close the menu so it can't sit
+		// over the panel's tiling drop zones and swallow the drop.
+		act(() => {
+			window.dispatchEvent(new Event('dragstart'));
+		});
+		expect(result.current.overlayOpen).toBe(false);
+		expect(result.current.isHovered).toBe(false);
+		expect(result.current.isOverOverlayRef.current).toBe(false);
+	});
+
+	it('cancels a pending open timer when a native drag begins', () => {
+		const { result } = renderHook(() => useTabHoverOverlay());
+
+		const mockElement = { getBoundingClientRect: () => ({ bottom: 100, left: 50, width: 120 }) };
+		(result.current.tabRef as React.MutableRefObject<HTMLDivElement | null>).current =
+			mockElement as unknown as HTMLDivElement;
+
+		// Start the 400ms open timer, then begin a drag before it fires.
+		act(() => {
+			result.current.handleMouseEnter();
+		});
+		act(() => {
+			window.dispatchEvent(new Event('dragstart'));
+		});
+
+		// The pending timer must not reopen the overlay after the drag started.
+		act(() => {
+			vi.advanceTimersByTime(400);
+		});
+		expect(result.current.overlayOpen).toBe(false);
+	});
+
 	it('openOverlay opens immediately (no hover delay), anchored to the tab', () => {
 		const { result } = renderHook(() => useTabHoverOverlay());
 

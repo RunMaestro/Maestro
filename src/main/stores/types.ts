@@ -7,6 +7,7 @@
 
 import type { SshRemoteConfig, Group } from '../../shared/types';
 import type { AgentCapabilitiesSnapshotMap } from '../../shared/agentCapabilities';
+import type { MultiWindowState } from '../../shared/window-types';
 
 // ============================================================================
 // Stored Session Type (minimal interface for main process storage)
@@ -140,6 +141,15 @@ export interface WindowState {
 	height: number;
 	isMaximized: boolean;
 	isFullScreen: boolean;
+	/**
+	 * Multi-window persistence (see `MultiWindowState` in
+	 * `src/shared/window-types.ts`). Backfilled once by the migration in
+	 * `instances.ts` from the legacy flat fields above. During this phase the
+	 * flat `x/y/width/height/isMaximized/isFullScreen` fields remain the
+	 * single-window source of truth read by `window-manager.ts`; this field
+	 * becomes the source of truth once windows are created through the registry.
+	 */
+	multiWindow?: MultiWindowState;
 }
 
 // ============================================================================

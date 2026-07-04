@@ -322,7 +322,12 @@ export const BrowserTabView = React.memo(
 				setAddressError(null);
 				updateTabState({
 					url: nextUrl,
-					title: getBrowserTabTitle(nextUrl),
+					// Keep the last known page title while the navigation loads (mirrors
+					// handleNavigate). Without the fallback, a cold reload - e.g. when a
+					// grouped browser pane remounts after switching away and back - would
+					// clobber the real page title with the bare URL host, so the tab label
+					// appears to vanish until the page re-fires page-title-updated.
+					title: getBrowserTabTitle(nextUrl, latestTabRef.current.title),
 					isLoading: true,
 					favicon: null,
 				});

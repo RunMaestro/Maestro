@@ -23,7 +23,7 @@ import { useTabStore } from '../stores/tabStore';
 import { captureException } from '../utils/sentry';
 import { notifyToast } from '../stores/notificationStore';
 import { isCoarsePointer } from '../utils/touch';
-import type { Session, TerminalTab } from '../types';
+import type { PaneRect, Session, TerminalTab } from '../types';
 import type { Theme } from '../../shared/theme-types';
 import { logger } from '../utils/logger';
 
@@ -55,6 +55,21 @@ interface TerminalViewProps {
 	onSearchClose?: () => void;
 	/** Whether the terminal panel is currently visible (inputMode === 'terminal'). Used to trigger repaint when returning from AI mode. */
 	isVisible?: boolean;
+	/**
+	 * Tiling geometry: terminal-tab-id -> content-box rect (relative to this
+	 * view's positioned container) for each terminal that is a leaf in the active
+	 * tab group. When present, each matching tab's layer is positioned onto its
+	 * pane rect and shown simultaneously (instead of only the active tab filling
+	 * the panel). Omit for standalone (non-group) rendering - original behavior.
+	 * Its own ResizeObserver reflows xterm cols/rows when a rect changes.
+	 */
+	paneRects?: Map<string, PaneRect>;
+	/**
+	 * Tiling: called with a terminal tab id when its positioned pane layer is
+	 * pressed, so the caller can focus that pane (the live overlay sits over the
+	 * transparent PaneFrame slot, intercepting the frame's own click-to-focus).
+	 */
+	onPaneMouseDown?: (tabId: string) => void;
 	/** Copy the highlighted terminal selection to the clipboard. */
 	onCopySelection?: (text: string) => void;
 	/** Send the highlighted terminal selection to another agent. Tab ID is supplied so the
@@ -83,6 +98,8 @@ export const TerminalView = memo(
 			isVisible,
 			onCopySelection,
 			onSendSelectionToAgent,
+			paneRects,
+			onPaneMouseDown,
 		},
 		ref
 	) {
@@ -556,14 +573,44 @@ export const TerminalView = memo(
 						}}
 					/>
 					{terminalTabs.map((tab) => {
-						const isActive = tab.id === session.activeTerminalTabId;
 						const terminalSessionId = getTerminalSessionId(session.id, tab.id);
+						// Tiling: this tab is a leaf in the active group. Position its layer onto
+						// the published pane rect and show it (multiple terminals visible at once).
+						// XTerminal's own ResizeObserver reflows cols/rows when the rect changes.
+						const paneRect = paneRects?.get(tab.id);
+						// Standalone (no paneRects): only the session's active tab layer is shown,
+						// filling the panel - original keep-alive behavior.
+						const isActive = paneRects ? paneRect != null : tab.id === session.activeTerminalTabId;
+						const positioned = paneRect != null;
 
 						return (
 							<div
 								key={tab.id}
-								className={`absolute inset-0 ${isActive ? '' : 'invisible'}`}
-								style={{ pointerEvents: isActive ? 'auto' : 'none' }}
+								// overflow-hidden clips the xterm canvas to this layer's box. Critical for
+								// a tiled (positioned) pane: the layer is height-clamped to its pane rect,
+								// but xterm sizes its canvas from its own delayed ResizeObserver reflow. In
+								// the window between the pane shrinking (e.g. the AI input appearing when
+								// focus moves to an AI pane) and xterm reflowing, an over-tall canvas would
+								// otherwise spill past the pane's bottom - down to the panel's clip - and
+								// bleed over the input area. Harmless for the standalone `inset-0` case,
+								// which the panel container already clips.
+								className={`absolute overflow-hidden ${positioned ? '' : 'inset-0 '}${isActive ? '' : 'invisible'}`}
+								// Tiling: pressing a pane focuses it (the overlay sits over the
+								// transparent PaneFrame slot, so the frame's own click-to-focus never
+								// sees this press). Fires on mousedown-capture so focus lands before
+								// xterm begins a selection drag.
+								onMouseDownCapture={positioned ? () => onPaneMouseDown?.(tab.id) : undefined}
+								style={
+									positioned
+										? {
+												top: paneRect.top,
+												left: paneRect.left,
+												width: paneRect.width,
+												height: paneRect.height,
+												pointerEvents: 'auto',
+											}
+										: { pointerEvents: isActive ? 'auto' : 'none' }
+								}
 							>
 								<XTerminal
 									onCopySelection={onCopySelection}

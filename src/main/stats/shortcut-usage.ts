@@ -8,7 +8,7 @@
 
 import type Database from 'better-sqlite3';
 import type { ShortcutUsageDay, StatsTimeRange } from '../../shared/stats-types';
-import { getTimeRangeStart, LOG_CONTEXT, StatementCache } from './utils';
+import { LOG_CONTEXT, StatementCache, rangeStartYmd, toLocalYmd } from './utils';
 import { logger } from '../utils/logger';
 
 const stmtCache = new StatementCache();
@@ -31,29 +31,6 @@ const SELECT_TOTAL_SQL = `
   FROM shortcut_usage_daily
   WHERE date >= ?
 `;
-
-/**
- * Convert a Unix timestamp (ms) to a YYYY-MM-DD bucket using the local
- * timezone — matches the convention used by other byDay aggregations.
- */
-function toLocalYmd(timestamp: number): string {
-	const d = new Date(timestamp);
-	const yyyy = d.getFullYear();
-	const mm = String(d.getMonth() + 1).padStart(2, '0');
-	const dd = String(d.getDate()).padStart(2, '0');
-	return `${yyyy}-${mm}-${dd}`;
-}
-
-/**
- * Convert a StatsTimeRange to its YYYY-MM-DD lower bound. The all-time range
- * resolves to '0000-01-01' so the SELECT picks up every row.
- */
-function rangeStartYmd(range: StatsTimeRange): string {
-	if (range === 'all') {
-		return '0000-01-01';
-	}
-	return toLocalYmd(getTimeRangeStart(range));
-}
 
 /**
  * Increment the daily counter for the date containing `firedAt`.

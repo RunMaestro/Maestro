@@ -151,6 +151,31 @@ describe('addTerminalTab', () => {
 		expect(updated.activeTerminalTabId).toBe('new-tab');
 	});
 
+	it('leaves any active tiled group (clears activeGroupId)', () => {
+		// Regression: a new standalone terminal must exit the group, otherwise the
+		// group stays active and a tiled browser overlay bleeds over the terminal view.
+		const session = createMockSession({
+			activeGroupId: 'g1',
+			tabGroups: [
+				{
+					id: 'g1',
+					name: 'Group',
+					createdAt: 0,
+					focusedPaneId: 'l1',
+					layout: {
+						kind: 'split',
+						id: 's1',
+						direction: 'row',
+						sizes: [1],
+						children: [{ kind: 'leaf', id: 'l1', tab: { type: 'browser', id: 'b1' } }],
+					},
+				},
+			] as never,
+		});
+		const updated = addTerminalTab(session, createMockTerminalTab({ id: 'new-tab' }));
+		expect(updated.activeGroupId).toBeNull();
+	});
+
 	it('adds a terminal ref to unifiedTabOrder', () => {
 		const session = createMockSession();
 		const tab = createMockTerminalTab({ id: 'new-tab' });

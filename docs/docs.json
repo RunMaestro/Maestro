@@ -43,6 +43,7 @@
 				"group": "General Usage",
 				"pages": [
 					"general-usage",
+					"multi-window",
 					"keyboard-shortcuts",
 					"slash-commands",
 					"prompt-customization",

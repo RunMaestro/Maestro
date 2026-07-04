@@ -44,6 +44,7 @@ import {
 } from './helpers/exitSynopsis';
 import { thinkingLogsRecorded } from './helpers/thinkingLogs';
 import { getAutorunSynopsisPrompt } from './helpers/autorunSynopsisPrompt';
+import { useOwnedSessionGate } from './useOwnedSessionGate';
 import type { LogEntry, QueuedItem, Session, SessionState, UsageStats } from '../../../types';
 import type { UseAgentListenersDeps, ToolProgressState } from './types';
 
@@ -67,6 +68,7 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 	const debounceTimersRef = useRef<
 		Map<string, { timer: ReturnType<typeof setTimeout>; data: SynopsisData; anyWork: boolean }>
 	>(new Map());
+	const ownedGate = useOwnedSessionGate();
 
 	useEffect(() => {
 		const setSessions = useSessionStore.getState().setSessions;
@@ -134,6 +136,11 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 		};
 
 		const unsubscribe = window.maestro.process.onExit(async (sessionId: string, code: number) => {
+			// Window scoping: only the window that owns the agent runs exit side
+			// effects (synopsis spawn, git refresh, history entry, queue dequeue).
+			// Events are broadcast to every window, so a non-owning window must bail
+			// here or those one-shot effects would fire once per open window.
+			if (!ownedGate.current?.(sessionId)) return;
 			if (sessionId.includes('-terminal-')) return;
 
 			logger.info('[onExit] Process exit event received:', undefined, {
@@ -852,5 +859,6 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 		deps.processQueuedItemRef,
 		deps.rightPanelRef,
 		deps.spawnBackgroundSynopsisRef,
+		ownedGate,
 	]);
 }

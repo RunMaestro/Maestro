@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMockSession } from '../../../../helpers/mockSession';
 import { buildAgentPanelCommands } from '../../../../../renderer/components/QuickActionsModal/commands/agentPanelCommands';
 import { buildAgentSwitcherCommands } from '../../../../../renderer/components/QuickActionsModal/commands/agentSwitcherCommands';
@@ -486,5 +486,103 @@ describe('QuickActions command builders', () => {
 		}).map((a) => a.id);
 		expect(debugCommandIds).toContain('debugReleaseQueued');
 		expect(debugCommandIds).toContain('debugAgentProbe');
+	});
+});
+
+// Command-K agent-switching must respect window ownership (Phase 5, task 7):
+// picking an agent owned by another window focuses that window instead of
+// yanking the agent into this one. Both the main-mode "Jump to: X" list and the
+// dedicated agents-mode switcher route through the shared makeAgentJumpAction.
+describe('agent-switch window scoping', () => {
+	const focusWindow = vi.mocked(window.maestro.windows.focusWindow);
+
+	beforeEach(() => {
+		focusWindow.mockClear();
+	});
+
+	it('jumps locally when no window context is provided (single-window default)', () => {
+		const session = createMockSession({ id: 's1', name: 'Atlas' });
+		const setActiveSessionId = vi.fn();
+		const revealJumpTarget = vi.fn();
+
+		buildSessionJumpCommands({
+			sessions: [session],
+			setActiveSessionId,
+			revealJumpTarget,
+		})[0].action();
+
+		expect(setActiveSessionId).toHaveBeenCalledWith('s1');
+		expect(revealJumpTarget).toHaveBeenCalledWith(session);
+		expect(focusWindow).not.toHaveBeenCalled();
+	});
+
+	it('jumps locally when this window owns the agent (getSessionWindow returns null)', () => {
+		const session = createMockSession({ id: 's1', name: 'Atlas' });
+		const setActiveSessionId = vi.fn();
+		const revealJumpTarget = vi.fn();
+
+		buildSessionJumpCommands({
+			sessions: [session],
+			setActiveSessionId,
+			revealJumpTarget,
+			getSessionWindow: () => null,
+		})[0].action();
+
+		expect(setActiveSessionId).toHaveBeenCalledWith('s1');
+		expect(revealJumpTarget).toHaveBeenCalledWith(session);
+		expect(focusWindow).not.toHaveBeenCalled();
+	});
+
+	it('focuses the owning window (no local switch) when another window owns the agent', () => {
+		const session = createMockSession({ id: 's1', name: 'Atlas' });
+		const setActiveSessionId = vi.fn();
+		const revealJumpTarget = vi.fn();
+
+		buildSessionJumpCommands({
+			sessions: [session],
+			setActiveSessionId,
+			revealJumpTarget,
+			getSessionWindow: (id) => (id === 's1' ? { windowId: 'win-2', windowNumber: 2 } : null),
+		})[0].action();
+
+		expect(focusWindow).toHaveBeenCalledWith('win-2');
+		expect(setActiveSessionId).not.toHaveBeenCalled();
+		expect(revealJumpTarget).not.toHaveBeenCalled();
+	});
+
+	it('agents-mode switcher: switches locally for an owned agent', () => {
+		const session = createMockSession({ id: 's1', name: 'Atlas' });
+		const setActiveSessionId = vi.fn();
+		const revealJumpTarget = vi.fn();
+
+		buildAgentSwitcherCommands({
+			sessions: [session],
+			activeBatchSessionIds: [],
+			setActiveSessionId,
+			revealJumpTarget,
+			getSessionWindow: () => null,
+		})[0].action();
+
+		expect(setActiveSessionId).toHaveBeenCalledWith('s1');
+		expect(revealJumpTarget).toHaveBeenCalledWith(session);
+		expect(focusWindow).not.toHaveBeenCalled();
+	});
+
+	it('agents-mode switcher: focuses the owning window for a remote agent', () => {
+		const session = createMockSession({ id: 's1', name: 'Atlas' });
+		const setActiveSessionId = vi.fn();
+		const revealJumpTarget = vi.fn();
+
+		buildAgentSwitcherCommands({
+			sessions: [session],
+			activeBatchSessionIds: [],
+			setActiveSessionId,
+			revealJumpTarget,
+			getSessionWindow: () => ({ windowId: 'win-3', windowNumber: 3 }),
+		})[0].action();
+
+		expect(focusWindow).toHaveBeenCalledWith('win-3');
+		expect(setActiveSessionId).not.toHaveBeenCalled();
+		expect(revealJumpTarget).not.toHaveBeenCalled();
 	});
 });

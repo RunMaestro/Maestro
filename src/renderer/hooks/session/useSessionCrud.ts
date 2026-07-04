@@ -20,6 +20,7 @@ import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
 import { getModalActions, useModalStore } from '../../stores/modalStore';
+import { useWindowContextOptional } from '../../contexts/WindowContext';
 import { notifyToast } from '../../stores/notificationStore';
 import { generateId } from '../../utils/ids';
 import { validateNewSession } from '../../utils/sessionValidation';
@@ -117,6 +118,14 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 	const { setSessions, setActiveSessionId, setGroups } = useSessionStore.getState();
 	const { setEditingSessionId, setDraggingSessionId, setActiveFocus } = useUIStore.getState();
 	const { setDeleteAgentSession } = getModalActions();
+
+	// Multi-window: claim a newly-created agent for the window that created it so
+	// it never momentarily surfaces in the primary's catch-all (spawn flicker).
+	// Optional - undefined outside a WindowProvider (web build / isolation tests),
+	// where creation is unscoped and this is a no-op. Pulled out as a stable ref
+	// (memoized on isMainWindow inside the context) so it can sit in createNewSession's
+	// deps without re-creating the callback on every window-scope change.
+	const registerNewSession = useWindowContextOptional()?.registerNewSession;
 
 	// --- Local state ---
 	const [pendingMoveToGroupSessionId, setPendingMoveToGroupSessionId] = useState<string | null>(
@@ -271,6 +280,8 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					activeTerminalTabId: null,
 					unifiedTabOrder: [{ type: 'ai' as const, id: initialTabId }],
 					unifiedClosedTabHistory: [],
+					tabGroups: [],
+					activeGroupId: null,
 					nudgeMessage,
 					newSessionMessage,
 					customPath,
@@ -297,6 +308,10 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 
 				setSessions((prev) => [...prev, newSession]);
 				setActiveSessionId(newId);
+				// Claim the agent for THIS window before any process spawns, so a
+				// secondary window surfaces it immediately and the primary's catch-all
+				// never flashes it. No-op in the primary window / outside a WindowProvider.
+				void registerNewSession?.(newId);
 				(window as any).maestro.stats.recordSessionCreated({
 					sessionId: newId,
 					agentType: agentId,
@@ -312,7 +327,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 				logger.error('Failed to create session:', undefined, error);
 			}
 		},
-		[setSessions, setActiveSessionId, setActiveFocus, inputRef]
+		[setSessions, setActiveSessionId, setActiveFocus, inputRef, registerNewSession]
 	);
 
 	// ========================================================================

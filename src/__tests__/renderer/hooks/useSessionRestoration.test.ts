@@ -417,6 +417,91 @@ describe('restoreSession — Migration logic', () => {
 		]);
 	});
 
+	it('keeps a terminal tab tiled into a group across restart (no startup command)', async () => {
+		// A grouped terminal is part of a layout the user built, so it must survive a
+		// restart even without a startup command; the group then stays intact.
+		const session = createMockSession({
+			terminalTabs: [
+				{
+					id: 'term-1',
+					name: null,
+					shellType: 'zsh',
+					pid: 999,
+					cwd: '/x',
+					createdAt: 1,
+					state: 'running',
+				},
+			] as any,
+			tabGroups: [
+				{
+					id: 'g1',
+					name: 'G',
+					createdAt: 0,
+					focusedPaneId: 'l1',
+					layout: {
+						kind: 'split',
+						id: 's1',
+						direction: 'row',
+						sizes: [0.5, 0.5],
+						children: [
+							{ kind: 'leaf', id: 'l1', tab: { type: 'ai', id: 'tab-1' } },
+							{ kind: 'leaf', id: 'l2', tab: { type: 'terminal', id: 'term-1' } },
+						],
+					},
+				},
+			] as any,
+			activeGroupId: 'g1',
+			unifiedTabOrder: [
+				{ type: 'ai', id: 'tab-1' },
+				{ type: 'terminal', id: 'term-1' },
+			],
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		// Terminal tab retained (and PTY runtime reset), so the group survives with it.
+		const kept = restored!.terminalTabs.find((t) => t.id === 'term-1');
+		expect(kept).toBeDefined();
+		expect(kept!.pid).toBe(0);
+		expect(restored!.tabGroups).toHaveLength(1);
+	});
+
+	it('drops an ungrouped terminal tab that has no startup command', async () => {
+		// Regression: the normal (non-tiled) behavior is unchanged - a plain terminal
+		// with no startup command still does not persist across restart.
+		const session = createMockSession({
+			terminalTabs: [
+				{
+					id: 'term-x',
+					name: null,
+					shellType: 'zsh',
+					pid: 1,
+					cwd: '/x',
+					createdAt: 1,
+					state: 'running',
+				},
+			] as any,
+			tabGroups: [],
+			activeGroupId: null,
+			unifiedTabOrder: [
+				{ type: 'ai', id: 'tab-1' },
+				{ type: 'terminal', id: 'term-x' },
+			],
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.terminalTabs.some((t) => t.id === 'term-x')).toBe(false);
+	});
+
 	it('migrates toolType terminal to claude-code', async () => {
 		const session = createMockSession({ toolType: 'terminal' as any });
 		const { result } = renderHook(() => useSessionRestoration());

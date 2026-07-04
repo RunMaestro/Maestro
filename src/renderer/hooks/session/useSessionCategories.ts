@@ -28,6 +28,13 @@ export function useSessionCategories(
 	showUnreadAgentsOnly = false,
 	activeSessionId?: string | null,
 	activeBatchSessionIds: string[] = [],
+	// Multi-window: optionally narrow the session universe BEFORE categorization so
+	// a secondary window's Left Bar categorizes only the agents it owns. This hook
+	// reads `sessions` straight from the store (below) rather than from the
+	// `sortedSessions` param, so scoping the param alone would NOT scope the
+	// rendered category lists - the scope has to be applied here. No-op (identity)
+	// when omitted, so the primary window and every existing caller are unchanged.
+	scopeSessions?: (list: Session[]) => Session[],
 	// Comma-joined signature of agents with an active Agent Resilience outage.
 	// Stuck agents are treated as "needs attention" and surface in the unread
 	// filter alongside genuinely unread ones (see stuckOutageSessionIds below).
@@ -36,10 +43,14 @@ export function useSessionCategories(
 	// PERF: Match SessionList's sidebar-only equality so categorization doesn't
 	// recompute on every streaming flush — only when a sidebar-relevant field
 	// (state, name, group/bookmark/parent membership, AI tab unread/state) shifts.
-	const sessions = useStoreWithEqualityFn(
+	const allSessions = useStoreWithEqualityFn(
 		useSessionStore,
 		(s) => s.sessions,
 		sidebarSessionEquality
+	);
+	const sessions = useMemo(
+		() => (scopeSessions ? scopeSessions(allSessions) : allSessions),
+		[allSessions, scopeSessions]
 	);
 	const groups = useSessionStore((s) => s.groups);
 

@@ -3780,6 +3780,92 @@ interface MaestroAPI {
 			agentId?: string
 		) => Promise<{ success: boolean; path?: string; error?: string }>;
 	};
+	// Multi-window API — enumerate/create/focus/close windows and inspect or
+	// move the agents (sessions) each window owns. `sessionIds` are agent IDs.
+	windows: {
+		create: (
+			sessionIds?: string[],
+			bounds?: Partial<{
+				x: number;
+				y: number;
+				width: number;
+				height: number;
+				isMaximized: boolean;
+				isFullScreen: boolean;
+				sessionIds: string[];
+				activeSessionId: string | null;
+				leftPanelCollapsed: boolean;
+				rightPanelCollapsed: boolean;
+			}>
+		) => Promise<{
+			id: string;
+			isMain: boolean;
+			sessionIds: string[];
+			activeSessionId: string | null;
+			name?: string;
+		} | null>;
+		close: (windowId: string) => Promise<{ closed: boolean; error?: string }>;
+		list: () => Promise<
+			Array<{
+				id: string;
+				isMain: boolean;
+				sessionIds: string[];
+				activeSessionId: string | null;
+				name?: string;
+			}>
+		>;
+		getForSession: (sessionId: string) => Promise<string | null>;
+		moveSession: (
+			sessionId: string,
+			fromWindowId: string,
+			toWindowId: string
+		) => Promise<{ moved: boolean; error?: string }>;
+		focusWindow: (windowId: string) => Promise<{ focused: boolean; error?: string }>;
+		getState: () => Promise<{
+			id: string;
+			x: number;
+			y: number;
+			width: number;
+			height: number;
+			isMaximized: boolean;
+			isFullScreen: boolean;
+			sessionIds: string[];
+			activeSessionId: string | null;
+			leftPanelCollapsed: boolean;
+			rightPanelCollapsed: boolean;
+			name?: string;
+		} | null>;
+		// Claim a freshly-created agent for THIS window before its process starts,
+		// so it never momentarily surfaces in the primary's catch-all (spawn flicker).
+		registerSession: (sessionId: string) => Promise<{ registered: boolean }>;
+		// Persist the calling window's panel-collapse UI state (per-window).
+		setPanelState: (panel: {
+			leftPanelCollapsed?: boolean;
+			rightPanelCollapsed?: boolean;
+		}) => Promise<void>;
+		// Set (or clear, via empty string) a window's user-assigned name; persists.
+		setName: (windowId: string, name: string) => Promise<{ renamed: boolean }>;
+		getBounds: (
+			windowId?: string
+		) => Promise<{ x: number; y: number; width: number; height: number } | null>;
+		findWindowAtPoint: (screenX: number, screenY: number) => Promise<string | null>;
+		// Subscribe to session-ownership move broadcasts; returns an unsubscribe fn.
+		onSessionMoved: (
+			callback: (payload: {
+				type: 'session-moved' | 'sessions-changed' | 'name-changed' | 'removed';
+				windowId?: string;
+				sessionId?: string;
+				fromWindowId?: string;
+				toWindowId?: string;
+			}) => void
+		) => () => void;
+		// Toggle a target window's tab-bar drop-zone highlight during tab drag-out.
+		highlightDropZone: (windowId: string, active: boolean) => Promise<void>;
+		// Subscribe to drop-zone highlight pushes for THIS window; returns unsubscribe.
+		onHighlightDropZone: (
+			callback: (payload: { windowId: string; active: boolean }) => void
+		) => () => void;
+	};
 	/**
 	 * Session Images API. Pasted transcript images are stored content-addressed
 	 * on disk and referenced as `maestro-image://store/<sha>.<ext>` (loaded

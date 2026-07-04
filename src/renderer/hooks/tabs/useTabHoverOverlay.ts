@@ -79,6 +79,27 @@ export function useTabHoverOverlay(options?: UseTabHoverOverlayOptions): UseTabH
 		};
 	}, []);
 
+	// Dismiss the hover overlay the instant any native drag begins. A tab drag
+	// (to tile or detach) never emits a mouseleave while it's in flight, so the
+	// 400ms-delayed overlay would otherwise stay open for the whole gesture. Worse,
+	// its z-[100] portal sits above the panel's z-30 tiling drop zones: releasing
+	// over the still-open menu lands the drop on a target that never preventDefaults
+	// dragover, so the browser cancels it and no tile commits. Closing on dragstart
+	// clears the menu and its pending open timer for every tab type at once.
+	useEffect(() => {
+		const dismissOnDragStart = () => {
+			if (hoverTimeoutRef.current) {
+				clearTimeout(hoverTimeoutRef.current);
+				hoverTimeoutRef.current = null;
+			}
+			isOverOverlayRef.current = false;
+			setOverlayOpen(false);
+			setIsHovered(false);
+		};
+		window.addEventListener('dragstart', dismissOnDragStart);
+		return () => window.removeEventListener('dragstart', dismissOnDragStart);
+	}, []);
+
 	// Position the overlay against the tab and open it now. Shared by the hover
 	// timeout (below) and the touch tap path (openOverlay).
 	const positionAndOpen = useCallback(() => {

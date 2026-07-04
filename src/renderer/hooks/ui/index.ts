@@ -66,3 +66,7 @@ export { useRestartWhenIdle } from './useRestartWhenIdle';
 // Responsive viewport breakpoint (drives drawer-mode sidebars on narrow widths)
 export { useViewportBreakpoint } from './useViewportBreakpoint';
 export type { Breakpoint } from './useViewportBreakpoint';
+
+// Per-window panel-collapse state (reads/persists left/right panel collapse
+// through window.maestro.windows.*, keyed per-window not as a global setting)
+export { useWindowState } from './useWindowState';

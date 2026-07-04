@@ -640,6 +640,26 @@ const mockMaestro = {
 		getPath: vi.fn().mockResolvedValue({ success: true, path: '/mock/prompts/core' }),
 		listFiles: vi.fn().mockResolvedValue({ success: true, files: [] }),
 	},
+	// Multi-window API (window<->session ownership). Defaults model a single
+	// primary window that owns no agents; window tests override per-case.
+	windows: {
+		create: vi.fn().mockResolvedValue(null),
+		close: vi.fn().mockResolvedValue({ closed: true }),
+		list: vi.fn().mockResolvedValue([]),
+		getForSession: vi.fn().mockResolvedValue(null),
+		moveSession: vi.fn().mockResolvedValue({ moved: true }),
+		focusWindow: vi.fn().mockResolvedValue({ focused: true }),
+		getState: vi.fn().mockResolvedValue(null),
+		registerSession: vi.fn().mockResolvedValue({ registered: true }),
+		setPanelState: vi.fn().mockResolvedValue(undefined),
+		getBounds: vi.fn().mockResolvedValue(null),
+		findWindowAtPoint: vi.fn().mockResolvedValue(null),
+		highlightDropZone: vi.fn().mockResolvedValue(undefined),
+		// Returns an unsubscribe fn (default no-op) so WindowProvider's effect can
+		// clean up. Window tests capture the registered callback to fire broadcasts.
+		onSessionMoved: vi.fn(() => () => {}),
+		onHighlightDropZone: vi.fn(() => () => {}),
+	},
 	// Synchronous platform string (replaces async os.getPlatform IPC)
 	platform: 'darwin',
 };

@@ -411,6 +411,89 @@ describe('ShortcutsHelpModal', () => {
 		});
 	});
 
+	describe('Window Scope (multi-window)', () => {
+		const windowScopedShortcuts: Record<string, Shortcut> = {
+			cycleNext: {
+				id: 'cycleNext',
+				label: 'Next Agent',
+				keys: ['Meta', ']'],
+				windowScoped: true,
+			},
+			settings: {
+				id: 'settings',
+				label: 'Open Settings',
+				keys: ['Meta', ','],
+			},
+		};
+
+		it('renders a "Window" badge for window-scoped shortcuts', () => {
+			render(
+				<TestWrapper>
+					<ShortcutsHelpModal
+						theme={mockTheme}
+						shortcuts={windowScopedShortcuts}
+						tabShortcuts={{}}
+						onClose={mockOnClose}
+					/>
+				</TestWrapper>
+			);
+
+			// The window-scoped row carries a badge; the inline footer reference
+			// uses the same label, so there should be at least one (badge + note).
+			expect(screen.getAllByText('Window').length).toBeGreaterThan(0);
+		});
+
+		it('does not render a badge in the row for a non-window-scoped shortcut', () => {
+			render(
+				<TestWrapper>
+					<ShortcutsHelpModal
+						theme={mockTheme}
+						shortcuts={{ settings: windowScopedShortcuts.settings }}
+						tabShortcuts={{}}
+						onClose={mockOnClose}
+					/>
+				</TestWrapper>
+			);
+
+			// "Open Settings" is not window-scoped. The only "Window" text present is
+			// the footer explanation badge - i.e. exactly one, never two.
+			expect(screen.getAllByText('Window')).toHaveLength(1);
+		});
+
+		it('documents the agent-level Move to Window action', () => {
+			render(
+				<TestWrapper>
+					<ShortcutsHelpModal
+						theme={mockTheme}
+						shortcuts={windowScopedShortcuts}
+						tabShortcuts={{}}
+						onClose={mockOnClose}
+					/>
+				</TestWrapper>
+			);
+
+			expect(screen.getByText(/right-click it in the sidebar/)).toBeInTheDocument();
+			expect(screen.getByText(/Move to Window/)).toBeInTheDocument();
+		});
+
+		it('explains that window-scoped shortcuts focus the owning window', () => {
+			render(
+				<TestWrapper>
+					<ShortcutsHelpModal
+						theme={mockTheme}
+						shortcuts={windowScopedShortcuts}
+						tabShortcuts={{}}
+						onClose={mockOnClose}
+					/>
+				</TestWrapper>
+			);
+
+			expect(
+				screen.getByText(/focuses that window instead of moving the agent/)
+			).toBeInTheDocument();
+		});
+	});
+
 	describe('Keyboard Mastery', () => {
 		const createMockMasteryStats = (usedShortcuts: string[]): KeyboardMasteryStats => ({
 			usedShortcuts,

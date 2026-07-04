@@ -59,6 +59,12 @@ export interface GroupChatStoreState {
 
 	// Error
 	groupChatError: GroupChatErrorState | null;
+
+	// Multi-window: the window that opened the active group chat. The Group Chat
+	// panel renders only in this window so a chat shows once even when its
+	// participant agents are spread across windows. null = no window scoping
+	// (single-window app, web, or pre-hydrate); stamped on open, cleared on close.
+	initiatorWindowId: string | null;
 }
 
 export interface GroupChatStoreActions {
@@ -124,6 +130,9 @@ export interface GroupChatStoreActions {
 			| ((prev: GroupChatErrorState | null) => GroupChatErrorState | null)
 	) => void;
 
+	// Multi-window
+	setInitiatorWindowId: (v: string | null | ((prev: string | null) => string | null)) => void;
+
 	// Convenience methods
 	/** Clear the current error. Focus side-effect (ref.focus) must be handled by caller. */
 	clearGroupChatError: () => void;
@@ -142,6 +151,21 @@ export type GroupChatStore = GroupChatStoreState & GroupChatStoreActions;
  */
 function resolve<T>(valOrFn: T | ((prev: T) => T), prev: T): T {
 	return typeof valOrFn === 'function' ? (valOrFn as (prev: T) => T)(prev) : valOrFn;
+}
+
+/**
+ * Whether the Group Chat panel should render in the window identified by
+ * `windowId`. Multi-window: a chat is shown only in the window that initiated it
+ * (`initiatorWindowId`, stamped on open). A null `initiatorWindowId` (single-
+ * window app, web, or pre-hydrate) or a null `windowId` (no `WindowProvider`,
+ * e.g. isolation tests) means "show here", preserving single-window behaviour.
+ */
+export function isGroupChatVisibleInWindow(
+	initiatorWindowId: string | null,
+	windowId: string | null
+): boolean {
+	if (initiatorWindowId == null || windowId == null) return true;
+	return initiatorWindowId === windowId;
 }
 
 // ============================================================================
@@ -165,6 +189,7 @@ export const useGroupChatStore = create<GroupChatStore>()((set) => ({
 	groupChatStagedImages: [],
 	participantLiveOutput: new Map(),
 	groupChatError: null,
+	initiatorWindowId: null,
 
 	// --- Actions ---
 	setGroupChats: (v) => set((s) => ({ groupChats: resolve(v, s.groupChats) })),
@@ -188,6 +213,7 @@ export const useGroupChatStore = create<GroupChatStore>()((set) => ({
 	setGroupChatStagedImages: (v) =>
 		set((s) => ({ groupChatStagedImages: resolve(v, s.groupChatStagedImages) })),
 	setGroupChatError: (v) => set((s) => ({ groupChatError: resolve(v, s.groupChatError) })),
+	setInitiatorWindowId: (v) => set((s) => ({ initiatorWindowId: resolve(v, s.initiatorWindowId) })),
 
 	appendParticipantLiveOutput: (participantName, chunk) =>
 		set((s) => {
@@ -219,5 +245,6 @@ export const useGroupChatStore = create<GroupChatStore>()((set) => ({
 			participantStates: new Map(),
 			participantLiveOutput: new Map(),
 			groupChatError: null,
+			initiatorWindowId: null,
 		}),
 }));

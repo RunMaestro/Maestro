@@ -6,6 +6,7 @@ import type { CopyContextOptions } from '../../hooks/tabs/useTabExportHandlers';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { buildSessionDeepLink } from '../../../shared/deep-link-urls';
 import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
+import { setTabDragImage } from '../../utils/tabDragImage';
 import { isCoarsePointer } from '../../utils/touch';
 import { getTabKindColor } from './tabBarUtils';
 import { AITabOverlayMenu } from './AITabOverlayMenu';
@@ -28,6 +29,13 @@ export interface AITabProps {
 	onClose: (tabId: string) => void;
 	/** Stable callback - receives tabId and event */
 	onDragStart: (tabId: string, e: React.DragEvent) => void;
+	/**
+	 * Stable callback - continuous drag sampling (HTML5 `onDrag`) used for
+	 * cross-window drag-out detection. No tabId: the dragged tab is already known
+	 * from onDragStart, and drag-out concerns the whole agent/window. Optional, so
+	 * tab types that can't be detached simply omit it.
+	 */
+	onDrag?: (e: React.DragEvent) => void;
 	/** Stable callback - receives tabId and event */
 	onDragOver: (tabId: string, e: React.DragEvent) => void;
 	onDragEnd: () => void;
@@ -100,6 +108,7 @@ export const AITab = memo(function AITab({
 	onSelect,
 	onClose,
 	onDragStart,
+	onDrag,
 	onDragOver,
 	onDragEnd,
 	onDrop,
@@ -158,7 +167,8 @@ export const AITab = memo(function AITab({
 		shouldOpen: () => {
 			// Only show overlay if there's something meaningful to show:
 			// - Tabs with sessions or logs: always show (for session/context actions)
-			// - Tabs without sessions or logs: show if there are move actions available
+			// - Tabs without sessions or logs: show only when a reorder action is
+			//   available (not the sole tab)
 			if (!tab.agentSessionId && !tab.logs?.length && isFirstTab && isLastTab) return false;
 			return true;
 		},
@@ -372,9 +382,21 @@ export const AITab = memo(function AITab({
 
 	const handleTabDragStart = useCallback(
 		(e: React.DragEvent) => {
+			// Floating themed preview that follows the cursor across windows / empty
+			// space during a drag-out (the OS renders it, unlike a clipped fixed div).
+			// getTabDisplayName is used inline rather than the memoized `displayName`
+			// below to avoid a temporal-dead-zone read in this earlier-declared callback.
+			setTabDragImage(e, { label: getTabDisplayName(tab, sessionAgentSessionId), theme });
 			onDragStart(tabId, e);
 		},
-		[onDragStart, tabId]
+		[onDragStart, tabId, tab, sessionAgentSessionId, theme]
+	);
+
+	const handleTabDrag = useCallback(
+		(e: React.DragEvent) => {
+			onDrag?.(e);
+		},
+		[onDrag]
 	);
 
 	const handleTabDragOver = useCallback(
@@ -468,6 +490,7 @@ export const AITab = memo(function AITab({
 			}}
 			draggable
 			onDragStart={handleTabDragStart}
+			onDrag={handleTabDrag}
 			onDragOver={handleTabDragOver}
 			onDragEnd={onDragEnd}
 			onDrop={handleTabDrop}

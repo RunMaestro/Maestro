@@ -11,6 +11,17 @@ import { InputArea } from '../InputArea';
 import type { FilePreviewHandle } from '../FilePreview';
 import { WizardConversationView, DocumentGenerationView } from '../InlineWizard';
 import { BrowserTabView, type BrowserTabViewHandle } from './BrowserTabView';
+import { TiledLayout, type PaneTabActions } from './TiledLayout';
+import { PaneDropZones } from './PaneDropZones';
+import {
+	findLeafById,
+	findLeafByTabRef,
+	focusPaneInSession,
+	normalizeTabGroups,
+	resolveTabRefTitle,
+	splitPaneRectsByKind,
+} from '../../utils/panelLayout';
+import { updateSessionWith } from '../../stores/sessionStore';
 import { useBrowserTabMounting } from '../../hooks/browser/useBrowserTabMounting';
 import { useUIStore } from '../../stores/uiStore';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -26,6 +37,8 @@ import type {
 	FilePreviewTab,
 	ThinkingItem,
 	QueuedItem,
+	UnifiedTabRef,
+	PaneRects,
 } from '../../types';
 import type { SlashCommand } from './types';
 import type { TabCompletionSuggestion, TabCompletionFilter } from '../../hooks';
@@ -193,6 +206,11 @@ export interface MainPanelContentProps {
 
 	// Inline wizard exit handler
 	onExitWizard?: () => void;
+
+	// Per-kind action handlers for a tiled pane's chevron dropdown (bundled in
+	// MainPanel where the same handlers already feed the TabBar). Forwarded to
+	// TiledLayout so a hidden tiled tab still exposes its full menu.
+	paneTabActions?: PaneTabActions;
 
 	// Props forwarded to child components (from MainPanelProps)
 	onDeleteLog?: (logId: string) => number | null;
@@ -371,6 +389,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		mergeTargetName,
 		onCancelMerge,
 		onExitWizard,
+		paneTabActions,
 		onDeleteLog,
 		onScrollPositionChange,
 		onAtBottomChange,
@@ -464,6 +483,107 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 	// page state survives switching away. All mounted tabs render through the persistent
 	// overlay block below (mirroring the terminal keep-alive overlay).
 	const mountedBrowserTabIds = useBrowserTabMounting(activeSession);
+
+	// Self-heal tiled groups when a member tab is closed. Closing a tab removes it
+	// from aiTabs/filePreviewTabs/etc. but the per-kind close paths don't touch group
+	// layouts, so the pane's leaf is left referencing a now-dead tab (rendering the
+	// "no longer available" fallback or an empty webview). normalizeTabGroups prunes
+	// the dangling leaf, collapses the split, and dissolves the group if it drops
+	// below two panes - the same cleanup it does on restore. It is idempotent by
+	// reference (returns the same session when nothing dangles), so this only commits
+	// when a group actually needs healing, and never loops. Covers EVERY close path
+	// (single, close-all, bulk, pane-menu) in one place instead of patching each.
+	// useLayoutEffect (not useEffect) so the prune commits before paint - otherwise
+	// the dead pane flashes "no longer available" for one frame before healing.
+	React.useLayoutEffect(() => {
+		if (!activeSession.tabGroups?.length) return;
+		if (normalizeTabGroups(activeSession) === activeSession) return;
+		updateSessionWith(activeSession.id, (s) => normalizeTabGroups(s));
+	}, [
+		activeSession.id,
+		activeSession.tabGroups,
+		activeSession.aiTabs,
+		activeSession.filePreviewTabs,
+		activeSession.terminalTabs,
+		activeSession.browserTabs,
+	]);
+
+	// Tab tiling (split panes): when a tab group is active, it takes over the
+	// panel and renders its tiled layout instead of the single-view content. This
+	// branch is ahead of the file/terminal/browser routing below so the group wins.
+	const activeGroup =
+		activeSession.activeGroupId != null
+			? activeSession.tabGroups?.find((g) => g.id === activeSession.activeGroupId)
+			: undefined;
+	// Current single-view tab ref (used only when no group is active): a tab drop
+	// onto the panel then pairs this tab with the dragged one into a new group. The
+	// precedence mirrors the single-view routing below (terminal mode -> terminal;
+	// else file, else browser, else the AI tab). Null when nothing tileable is
+	// showing (an empty agent) so a drop is a no-op.
+	const singleViewRef: UnifiedTabRef | null = React.useMemo(() => {
+		if (activeSession.inputMode === 'terminal' && activeSession.activeTerminalTabId) {
+			return { type: 'terminal', id: activeSession.activeTerminalTabId };
+		}
+		if (activeFileTabId) return { type: 'file', id: activeFileTabId };
+		if (activeBrowserTabId) return { type: 'browser', id: activeBrowserTabId };
+		if (activeTab) return { type: 'ai', id: activeTab.id };
+		return null;
+	}, [
+		activeSession.inputMode,
+		activeSession.activeTerminalTabId,
+		activeFileTabId,
+		activeBrowserTabId,
+		activeTab,
+	]);
+	// Title of the single-view tab (the first tab placed into a new group), resolved
+	// across all four kinds via the shared resolver so auto-naming a group off a
+	// terminal/browser view uses its real title, not a generic "Tabs".
+	const singleViewTitle = singleViewRef ? resolveTabRefTitle(activeSession, singleViewRef) : 'Tabs';
+	// Transient maximize/zoom (Ctrl+Cmd+Z): id of the pane rendered full-panel.
+	const zoomedPaneId = useUIStore((s) => s.zoomedPaneId);
+	// When a group is active, input routes to the tab its focused pane references
+	// (the focus handlers keep activeTabId in sync). A non-AI focused pane hides
+	// the AI input, matching how single-view suppresses it for non-AI tabs.
+	const groupFocusedLeaf =
+		activeGroup && activeGroup.focusedPaneId
+			? findLeafById(activeGroup.layout, activeGroup.focusedPaneId)
+			: null;
+	const groupFocusedIsNonAi =
+		!!groupFocusedLeaf && groupFocusedLeaf.kind === 'leaf' && groupFocusedLeaf.tab.type !== 'ai';
+	// The browser tab id of the group's focused pane (if the focused pane is a
+	// browser), so only that tiled webview holds Chromium keyboard input.
+	const groupFocusedBrowserTabId =
+		groupFocusedLeaf && groupFocusedLeaf.kind === 'leaf' && groupFocusedLeaf.tab.type === 'browser'
+			? groupFocusedLeaf.tab.id
+			: null;
+	// Tiling geometry published by TiledLayout: pane content-box rects keyed by
+	// `tabRefKey` (e.g. `terminal:<id>` / `browser:<id>`) relative to this panel.
+	// The keep-alive terminal/browser overlays below reposition onto these rects
+	// so those guests tile without unmount/remount. Empty when no group / no such
+	// leaves; TiledLayout clears it on unmount so no stale geometry lingers.
+	const [paneRects, setPaneRects] = React.useState<PaneRects>(() => new Map());
+	// Split the published rects by kind (bare tab id keys) so each overlay can look
+	// its tab up directly. Recomputed only when the map changes.
+	const { terminals: terminalPaneRects, browsers: browserPaneRects } = React.useMemo(
+		() => splitPaneRectsByKind(paneRects),
+		[paneRects]
+	);
+	// Click-to-focus for tiled terminal/browser panes: their live overlay sits on
+	// top of the transparent PaneFrame slot, so a click lands on the overlay (not
+	// the frame's own onMouseDown). This routes the click back to the owning leaf
+	// so focusedPaneId updates and the focus ring / AI-input suppression follow.
+	const focusTiledPaneByTab = React.useCallback(
+		(ref: UnifiedTabRef) => {
+			if (!activeGroup) return;
+			const leaf = findLeafByTabRef(activeGroup.layout, ref);
+			if (!leaf || leaf.kind !== 'leaf') return;
+			if (activeGroup.focusedPaneId === leaf.id) return;
+			const groupId = activeGroup.id;
+			const leafId = leaf.id;
+			updateSessionWith(activeSession.id, (s) => focusPaneInSession(s, groupId, leafId));
+		},
+		[activeGroup, activeSession.id]
+	);
 	// Number of open modal/overlay layers. When any layer is open over a browser
 	// tab (e.g. the Tab Switcher), the guest <webview> must release Chromium input
 	// focus so keyboard navigation lands in the modal instead of the page. Driving
@@ -486,16 +606,55 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		mountedBrowserTabIds,
 	]);
 
+	// The shared AI input renders exactly once, below whichever content the panel is
+	// showing - the single-view routing OR a tiled group. It targets
+	// activeSession.activeTabId, which focusPaneInSession keeps synced to a tiled
+	// group's focused AI pane, so inside a group it drives that pane's conversation.
+	// Hidden: mobile landscape, wizard doc generation, terminal mode (xterm owns
+	// input), and when a group's focused pane is a non-AI tab. In single view it also
+	// hides while a browser or file tab owns the panel (those have no AI input); a
+	// group ignores those stale single-view ids.
+	const shouldShowInputArea =
+		!isMobileLandscape &&
+		!activeTab?.wizardState?.isGeneratingDocs &&
+		!groupFocusedIsNonAi &&
+		activeSession.inputMode !== 'terminal' &&
+		(!!activeGroup || (!activeBrowserTabId && !activeFileTabId));
+
 	return (
 		/* Content area: Show FilePreview when file tab is active, otherwise show terminal output */
 		/* Content wrapper: always-rendered relative container so terminal overlay covers
 		     only the content area. Terminal sessions are mounted here regardless of whether
 		     file preview, AI output, or terminal is active. */
 		<div className="flex-1 min-h-0 overflow-hidden relative flex flex-col">
-			{/* Browser tabs render through the persistent keep-alive overlay block below (not
+			{/* Tiling drop-zone overlay: inert (click-through) until a tab drag begins,
+			    then hit-tests the panel to tile the dropped tab. Sits above the content
+			    (z-30) and below modal layers. Reads/writes only the tiling dataTransfer
+			    channel, so it never disturbs tab-bar reorder or multi-window drag-out. */}
+			<PaneDropZones
+				session={activeSession}
+				activeGroup={activeGroup ?? null}
+				activeStandaloneRef={singleViewRef}
+				activeStandaloneTitle={singleViewTitle}
+				theme={theme}
+			/>
+			{/* Tab tiling: an active tab group takes over the panel (ahead of the
+			    file/terminal/browser routing). The keep-alive terminal/browser overlays
+			    below still mount so their guests survive; they stay hidden while a group
+			    is active because no terminal/browser tab is the active single view. */}
+			{activeGroup ? (
+				<TiledLayout
+					group={activeGroup}
+					session={activeSession}
+					theme={theme}
+					zoomedPaneId={zoomedPaneId}
+					onPaneRectsChange={setPaneRects}
+					paneTabActions={paneTabActions}
+				/>
+			) : /* Browser tabs render through the persistent keep-alive overlay block below (not
 			    inline) so their <webview> never remounts when switching tabs. Skip rendering
-			    inline content when loading a remote file - loading state takes over the area. */}
-			{activeSession.inputMode === 'ai' && activeFileTab?.isLoading ? (
+			    inline content when loading a remote file - loading state takes over the area. */
+			activeSession.inputMode === 'ai' && activeFileTab?.isLoading ? (
 				<div
 					className="flex-1 flex items-center justify-center"
 					style={{ backgroundColor: theme.colors.bgMain }}
@@ -696,124 +855,127 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 							/>
 						)}
 					</div>
-
-					{/* Agent Resilience: the live auto-retry status now renders inline in
-					    the transcript as a collapsed RetryStatusCard (see TerminalOutput),
-					    so no separate countdown banner sits above the composer. */}
-
-					{/* Input Area (hidden in mobile landscape, during wizard doc generation, and in terminal mode — xterm.js handles its own input) */}
-					{!isMobileLandscape &&
-						!activeTab?.wizardState?.isGeneratingDocs &&
-						!activeBrowserTabId &&
-						activeSession.inputMode !== 'terminal' && (
-							<div data-tour="input-area">
-								<InputArea
-									session={activeSession}
-									theme={theme}
-									setInputValue={setInputValue}
-									enterToSend={activeTab?.enterToSend ?? enterToSendAI}
-									setEnterToSend={
-										onToggleTabEnterToSend
-											? () => onToggleTabEnterToSend()
-											: useSettingsStore.getState().setEnterToSendAI
-									}
-									stagedImages={stagedImages}
-									setStagedImages={setStagedImages}
-									setLightboxImage={setLightboxImage}
-									commandHistoryOpen={commandHistoryOpen}
-									setCommandHistoryOpen={setCommandHistoryOpen}
-									commandHistoryFilter={commandHistoryFilter}
-									setCommandHistoryFilter={setCommandHistoryFilter}
-									commandHistorySelectedIndex={commandHistorySelectedIndex}
-									setCommandHistorySelectedIndex={setCommandHistorySelectedIndex}
-									slashCommandOpen={slashCommandOpen}
-									setSlashCommandOpen={setSlashCommandOpen}
-									slashCommands={slashCommands}
-									selectedSlashCommandIndex={selectedSlashCommandIndex}
-									setSelectedSlashCommandIndex={setSelectedSlashCommandIndex}
-									tabCompletionOpen={tabCompletionOpen}
-									setTabCompletionOpen={setTabCompletionOpen}
-									tabCompletionSuggestions={tabCompletionSuggestions}
-									selectedTabCompletionIndex={selectedTabCompletionIndex}
-									setSelectedTabCompletionIndex={setSelectedTabCompletionIndex}
-									tabCompletionFilter={tabCompletionFilter}
-									setTabCompletionFilter={setTabCompletionFilter}
-									atMentionOpen={atMentionOpen}
-									setAtMentionOpen={setAtMentionOpen}
-									atMentionFilter={atMentionFilter}
-									setAtMentionFilter={setAtMentionFilter}
-									atMentionStartIndex={atMentionStartIndex}
-									setAtMentionStartIndex={setAtMentionStartIndex}
-									atMentionItems={atMentionItems}
-									atMentionCounts={atMentionCounts}
-									atMentionCategory={atMentionCategory}
-									setAtMentionCategory={setAtMentionCategory}
-									selectedAtMentionIndex={selectedAtMentionIndex}
-									setSelectedAtMentionIndex={setSelectedAtMentionIndex}
-									inputRef={inputRef}
-									handleInputKeyDown={handleInputKeyDown}
-									handlePaste={handlePaste}
-									handleDrop={handleDrop}
-									toggleInputMode={toggleInputMode}
-									processInput={processInput}
-									handleInterrupt={handleInterrupt}
-									onInputFocus={handleInputFocus}
-									onInputBlur={onInputBlur}
-									isAutoModeActive={isCurrentSessionAutoMode}
-									thinkingItems={thinkingItems}
-									onSessionClick={handleSessionClick}
-									autoRunState={currentSessionBatchState || undefined}
-									onStopAutoRun={() => onStopBatchRun?.(activeSession.id)}
-									onOpenQueueBrowser={onOpenQueueBrowser}
-									tabReadOnlyMode={activeTab?.readOnlyMode ?? false}
-									onToggleTabReadOnlyMode={onToggleTabReadOnlyMode}
-									tabSaveToHistory={activeTab?.saveToHistory ?? false}
-									onToggleTabSaveToHistory={onToggleTabSaveToHistory}
-									tabShowThinking={activeTab?.showThinking ?? 'off'}
-									onToggleTabShowThinking={onToggleTabShowThinking}
-									supportsThinking={hasCapability('supportsThinkingDisplay')}
-									onOpenPromptComposer={onOpenPromptComposer}
-									shortcuts={shortcuts}
-									showFlashNotification={showFlashNotification}
-									// Context warning sash props (Phase 6) - use tab-level context usage
-									contextUsage={activeTabContextUsage}
-									contextWarningsEnabled={contextWarningsEnabled}
-									contextWarningYellowThreshold={contextWarningYellowThreshold}
-									contextWarningRedThreshold={contextWarningRedThreshold}
-									onSummarizeAndContinue={
-										onSummarizeAndContinue
-											? () => onSummarizeAndContinue(activeSession.activeTabId)
-											: undefined
-									}
-									// Summarization progress props
-									summarizeProgress={summarizeProgress}
-									summarizeResult={summarizeResult}
-									summarizeStartTime={summarizeStartTime}
-									isSummarizing={isSummarizing}
-									onCancelSummarize={onCancelSummarize}
-									// Merge progress props
-									mergeProgress={mergeProgress}
-									mergeResult={mergeResult}
-									mergeStartTime={mergeStartTime}
-									isMerging={isMerging}
-									mergeSourceName={mergeSourceName}
-									mergeTargetName={mergeTargetName}
-									onCancelMerge={onCancelMerge}
-									// Inline wizard mode
-									onExitWizard={onExitWizard}
-									wizardShowThinking={activeTab?.wizardState?.showWizardThinking ?? false}
-									onToggleWizardShowThinking={onToggleWizardShowThinking}
-									// Model/Effort quick-change pills
-									currentModel={currentModel}
-									currentEffort={currentEffort}
-									availableModels={availableModels}
-									availableEfforts={availableEfforts}
-									onModelChange={onModelChange}
-									onEffortChange={onEffortChange}
-								/>
-							</div>
-						)}
 				</>
+			)}
+			{/* Shared AI input: one bar below whichever content the panel shows - the
+			    single-view routing above OR a tiled group - targeting the focused AI
+			    tab. See shouldShowInputArea for the visibility rules.
+
+			    `relative z-[3]` lifts the input above the terminal (z-1) and browser
+			    (z-2) keep-alive overlays. Those overlays are `absolute inset-0` on this
+			    panel, so they span over the input's area; during the reflow after focus
+			    moves to an AI pane in a tiled group (the input appears, the tiled region
+			    shrinks, but a positioned terminal/browser layer still holds its pre-shrink
+			    rect for a frame), the layer would otherwise paint over the input. The
+			    input's own opaque chrome, stacked above, hides that transient bleed. Stays
+			    below the z-30 tiling drop overlay so drags still hit-test on top. */}
+			{shouldShowInputArea && (
+				<div data-tour="input-area" className="relative z-[3]">
+					<InputArea
+						session={activeSession}
+						theme={theme}
+						setInputValue={setInputValue}
+						enterToSend={activeTab?.enterToSend ?? enterToSendAI}
+						setEnterToSend={
+							onToggleTabEnterToSend
+								? () => onToggleTabEnterToSend()
+								: useSettingsStore.getState().setEnterToSendAI
+						}
+						stagedImages={stagedImages}
+						setStagedImages={setStagedImages}
+						setLightboxImage={setLightboxImage}
+						commandHistoryOpen={commandHistoryOpen}
+						setCommandHistoryOpen={setCommandHistoryOpen}
+						commandHistoryFilter={commandHistoryFilter}
+						setCommandHistoryFilter={setCommandHistoryFilter}
+						commandHistorySelectedIndex={commandHistorySelectedIndex}
+						setCommandHistorySelectedIndex={setCommandHistorySelectedIndex}
+						slashCommandOpen={slashCommandOpen}
+						setSlashCommandOpen={setSlashCommandOpen}
+						slashCommands={slashCommands}
+						selectedSlashCommandIndex={selectedSlashCommandIndex}
+						setSelectedSlashCommandIndex={setSelectedSlashCommandIndex}
+						tabCompletionOpen={tabCompletionOpen}
+						setTabCompletionOpen={setTabCompletionOpen}
+						tabCompletionSuggestions={tabCompletionSuggestions}
+						selectedTabCompletionIndex={selectedTabCompletionIndex}
+						setSelectedTabCompletionIndex={setSelectedTabCompletionIndex}
+						tabCompletionFilter={tabCompletionFilter}
+						setTabCompletionFilter={setTabCompletionFilter}
+						atMentionOpen={atMentionOpen}
+						setAtMentionOpen={setAtMentionOpen}
+						atMentionFilter={atMentionFilter}
+						setAtMentionFilter={setAtMentionFilter}
+						atMentionStartIndex={atMentionStartIndex}
+						setAtMentionStartIndex={setAtMentionStartIndex}
+						atMentionItems={atMentionItems}
+						atMentionCounts={atMentionCounts}
+						atMentionCategory={atMentionCategory}
+						setAtMentionCategory={setAtMentionCategory}
+						selectedAtMentionIndex={selectedAtMentionIndex}
+						setSelectedAtMentionIndex={setSelectedAtMentionIndex}
+						inputRef={inputRef}
+						handleInputKeyDown={handleInputKeyDown}
+						handlePaste={handlePaste}
+						handleDrop={handleDrop}
+						toggleInputMode={toggleInputMode}
+						processInput={processInput}
+						handleInterrupt={handleInterrupt}
+						onInputFocus={handleInputFocus}
+						onInputBlur={onInputBlur}
+						isAutoModeActive={isCurrentSessionAutoMode}
+						thinkingItems={thinkingItems}
+						onSessionClick={handleSessionClick}
+						autoRunState={currentSessionBatchState || undefined}
+						onStopAutoRun={() => onStopBatchRun?.(activeSession.id)}
+						onOpenQueueBrowser={onOpenQueueBrowser}
+						tabReadOnlyMode={activeTab?.readOnlyMode ?? false}
+						onToggleTabReadOnlyMode={onToggleTabReadOnlyMode}
+						tabSaveToHistory={activeTab?.saveToHistory ?? false}
+						onToggleTabSaveToHistory={onToggleTabSaveToHistory}
+						tabShowThinking={activeTab?.showThinking ?? 'off'}
+						onToggleTabShowThinking={onToggleTabShowThinking}
+						supportsThinking={hasCapability('supportsThinkingDisplay')}
+						onOpenPromptComposer={onOpenPromptComposer}
+						shortcuts={shortcuts}
+						showFlashNotification={showFlashNotification}
+						// Context warning sash props (Phase 6) - use tab-level context usage
+						contextUsage={activeTabContextUsage}
+						contextWarningsEnabled={contextWarningsEnabled}
+						contextWarningYellowThreshold={contextWarningYellowThreshold}
+						contextWarningRedThreshold={contextWarningRedThreshold}
+						onSummarizeAndContinue={
+							onSummarizeAndContinue
+								? () => onSummarizeAndContinue(activeSession.activeTabId)
+								: undefined
+						}
+						// Summarization progress props
+						summarizeProgress={summarizeProgress}
+						summarizeResult={summarizeResult}
+						summarizeStartTime={summarizeStartTime}
+						isSummarizing={isSummarizing}
+						onCancelSummarize={onCancelSummarize}
+						// Merge progress props
+						mergeProgress={mergeProgress}
+						mergeResult={mergeResult}
+						mergeStartTime={mergeStartTime}
+						isMerging={isMerging}
+						mergeSourceName={mergeSourceName}
+						mergeTargetName={mergeTargetName}
+						onCancelMerge={onCancelMerge}
+						// Inline wizard mode
+						onExitWizard={onExitWizard}
+						wizardShowThinking={activeTab?.wizardState?.showWizardThinking ?? false}
+						onToggleWizardShowThinking={onToggleWizardShowThinking}
+						// Model/Effort quick-change pills
+						currentModel={currentModel}
+						currentEffort={currentEffort}
+						availableModels={availableModels}
+						availableEfforts={availableEfforts}
+						onModelChange={onModelChange}
+						onEffortChange={onEffortChange}
+					/>
+				</div>
 			)}
 			{/* TerminalView is kept alive for every session that has terminal tabs so that
 		     switching between sessions (or to AI mode) does not destroy the xterm.js
@@ -825,15 +987,28 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 					? activeSession
 					: mountedTerminalSessionsRef.current.get(sessionId);
 				if (!session) return null;
+				// Tiling: this session has terminal tabs that are leaves in the active
+				// group. Each such tab's layer is positioned onto its pane rect (below,
+				// inside TerminalView), so the overlay must be shown even though inputMode
+				// isn't 'terminal'. Only the current session can own the active group.
+				const hasTerminalPanes = isCurrentSession && terminalPaneRects.size > 0;
 				const isTerminalVisible = isCurrentSession && session.inputMode === 'terminal';
+				// Overlay shows for standalone terminal mode OR when tiling terminal panes.
+				// It always spans the full panel (inset-0) so the pane rects - which are
+				// panel-relative - map straight onto the absolutely-positioned tab layers.
+				const overlayShown = isTerminalVisible || hasTerminalPanes;
 				return (
 					<div
 						key={sessionId}
-						className={`absolute inset-0 flex flex-col${isTerminalVisible ? '' : ' terminal-hidden'}`}
+						className={`absolute inset-0 flex flex-col${overlayShown ? '' : ' terminal-hidden'}`}
 						style={{
-							visibility: isTerminalVisible ? 'visible' : 'hidden',
+							visibility: overlayShown ? 'visible' : 'hidden',
+							// Standalone terminal captures input across the whole panel. The tiled
+							// overlay wrapper is click-through (none) so clicks on other panes and
+							// dividers land; its positioned pane layers re-enable pointerEvents:auto
+							// over their own rects (set inside TerminalView).
 							pointerEvents: isTerminalVisible ? 'auto' : 'none',
-							zIndex: isTerminalVisible ? 1 : -1,
+							zIndex: overlayShown ? 1 : -1,
 						}}
 					>
 						<TerminalView
@@ -850,7 +1025,15 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 							onTabPidChange={createTabPidChangeHandler(sessionId)}
 							searchOpen={isCurrentSession ? terminalSearchOpen : false}
 							onSearchClose={isCurrentSession ? () => setTerminalSearchOpen(false) : undefined}
-							isVisible={isTerminalVisible}
+							paneRects={hasTerminalPanes ? terminalPaneRects : undefined}
+							onPaneMouseDown={
+								hasTerminalPanes
+									? (tid) => focusTiledPaneByTab({ type: 'terminal', id: tid })
+									: undefined
+							}
+							// Visible in standalone terminal mode OR when tiling terminal panes,
+							// so XTerminal keeps its WebGL renderer alive and repaints on show.
+							isVisible={isTerminalVisible || hasTerminalPanes}
 							onCopySelection={onTerminalCopySelection}
 							onSendSelectionToAgent={onTerminalSendSelectionToAgent}
 						/>
@@ -865,22 +1048,56 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 			{mountedBrowserTabIds.map((tabId) => {
 				const browserTab = activeSession.browserTabs?.find((t) => t.id === tabId);
 				if (!browserTab) return null;
-				const isBrowserVisible =
-					activeSession.inputMode === 'ai' && activeSession.activeBrowserTabId === tabId;
+				// Tiling: this browser tab is a leaf in the active group. Position its
+				// overlay onto the published pane rect (multiple browsers visible at
+				// once); BrowserTabView is untouched so the per-agent <webview> partition
+				// isolation stays intact. Falls back to standalone when no rect.
+				const browserPaneRect = browserPaneRects.get(tabId);
+				const isBrowserTiled = browserPaneRect != null;
+				// A tiled browser pane is only visible while the group is the active view
+				// (inputMode 'ai'). Gating on inputMode is defensive: if a standalone
+				// terminal is showing but pane rects haven't cleared yet, the tiled webview
+				// (z-index 2) would otherwise bleed over the terminal overlay (z-index 1).
+				const isBrowserVisible = isBrowserTiled
+					? activeSession.inputMode === 'ai'
+					: activeSession.inputMode === 'ai' && activeSession.activeBrowserTabId === tabId;
 				// Hold keyboard focus only when no modal/overlay is layered above the
 				// page. The tab stays visually rendered (visibility/zIndex below are
 				// driven by isBrowserVisible), but the webview yields input focus to an
 				// open layer so its keyboard navigation works (e.g. the Tab Switcher).
-				const isBrowserFocusActive = isBrowserVisible && layerCount === 0;
+				// When tiled, only the group's focused browser pane holds webview input.
+				const isBrowserFocusActive = isBrowserTiled
+					? groupFocusedBrowserTabId === tabId && layerCount === 0
+					: isBrowserVisible && layerCount === 0;
 				return (
 					<div
 						key={tabId}
-						className="absolute inset-0 flex flex-col"
-						style={{
-							visibility: isBrowserVisible ? 'visible' : 'hidden',
-							pointerEvents: isBrowserVisible ? 'auto' : 'none',
-							zIndex: isBrowserVisible ? 2 : -1,
-						}}
+						className={`absolute flex flex-col${isBrowserTiled ? '' : ' inset-0'}`}
+						// Tiling: pressing this browser pane focuses it (its overlay sits over
+						// the transparent PaneFrame slot). Capture phase so focus lands before
+						// the toolbar/webview handles the press.
+						onMouseDownCapture={
+							isBrowserTiled ? () => focusTiledPaneByTab({ type: 'browser', id: tabId }) : undefined
+						}
+						style={
+							isBrowserTiled
+								? {
+										top: browserPaneRect.top,
+										left: browserPaneRect.left,
+										width: browserPaneRect.width,
+										height: browserPaneRect.height,
+										// Hidden (and click-through, sent behind) when the group isn't the
+										// active view, so a stale pane rect can't bleed over a terminal.
+										visibility: isBrowserVisible ? 'visible' : 'hidden',
+										pointerEvents: isBrowserVisible ? 'auto' : 'none',
+										zIndex: isBrowserVisible ? 2 : -1,
+									}
+								: {
+										visibility: isBrowserVisible ? 'visible' : 'hidden',
+										pointerEvents: isBrowserVisible ? 'auto' : 'none',
+										zIndex: isBrowserVisible ? 2 : -1,
+									}
+						}
 					>
 						<BrowserTabView
 							ref={(handle) => {

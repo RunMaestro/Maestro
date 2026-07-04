@@ -28,6 +28,7 @@ import {
 	CREATE_IMAGE_ANNOTATIONS_SQL,
 	CREATE_IMAGE_ANNOTATIONS_INDEXES_SQL,
 	CREATE_SHORTCUT_USAGE_DAILY_SQL,
+	CREATE_MULTI_WINDOW_USAGE_DAILY_SQL,
 	runStatements,
 } from './schema';
 import { LOG_CONTEXT } from './utils';
@@ -78,6 +79,12 @@ function getMigrations(): Migration[] {
 			version: 7,
 			description: 'Add shortcut_usage_daily table for tracking keyboard shortcut firings per day',
 			up: (db) => migrateV7(db),
+		},
+		{
+			version: 8,
+			description:
+				'Add multi_window_usage_daily table for tracking windows opened and peak concurrent windows per day',
+			up: (db) => migrateV8(db),
 		},
 	];
 }
@@ -311,6 +318,20 @@ function migrateV7(db: Database.Database): void {
 	db.prepare(CREATE_SHORTCUT_USAGE_DAILY_SQL).run();
 
 	logger.debug('Created shortcut_usage_daily table', LOG_CONTEXT);
+}
+
+/**
+ * Migration v8: Add multi_window_usage_daily table.
+ *
+ * Per-day rolled-up counters for multi-window usage telemetry - one row per
+ * local-date with the number of secondary windows opened and the peak number of
+ * windows open concurrently that day. The main process UPSERTs on each window
+ * open so the table stays bounded (one row per day). Aggregate counters only.
+ */
+function migrateV8(db: Database.Database): void {
+	db.prepare(CREATE_MULTI_WINDOW_USAGE_DAILY_SQL).run();
+
+	logger.debug('Created multi_window_usage_daily table', LOG_CONTEXT);
 }
 
 /**

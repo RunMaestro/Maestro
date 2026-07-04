@@ -53,6 +53,8 @@ import {
 	useDebouncedPersistence,
 	// Session management
 	useActivityTracker,
+	useWindowScopedActiveSession,
+	useWindowState,
 	useHandsOnTimeTracker,
 	useNavigationHistory,
 	useSessionNavigation,
@@ -64,6 +66,7 @@ import {
 	useKeyboardShortcutHelpers,
 	useKeyboardNavigation,
 	useMainKeyboardHandler,
+	useTilingShortcuts,
 	useTextEditorUndo,
 	// Agent
 	useAgentSessionManagement,
@@ -156,8 +159,9 @@ import { useLayerStack } from './contexts/LayerStackContext';
 import { notifyToast } from './stores/notificationStore';
 import { useModalActions, useModalStore } from './stores/modalStore';
 import { GitStatusProvider } from './contexts/GitStatusContext';
+import { WindowProvider, useWindowContextOptional } from './contexts/WindowContext';
 import { InputProvider, useInputContext } from './contexts/InputContext';
-import { useGroupChatStore } from './stores/groupChatStore';
+import { useGroupChatStore, isGroupChatVisibleInWindow } from './stores/groupChatStore';
 import { useBatchStore } from './stores/batchStore';
 import { registerBatchResumer } from './stores/retryStore';
 // All session state is read directly from useSessionStore in MaestroConsoleInner.
@@ -208,6 +212,7 @@ import {
 	getTabDisplayName,
 	isSoleAiTabReplacement,
 } from './utils/tabHelpers';
+import { buildThinkingItems } from './utils/thinkingItems';
 // validateNewSession moved to useSymphonyContribution, useSessionCrud hooks
 // formatLogsForClipboard moved to useTabExportHandlers hook
 // getSlashCommandDescription moved to useWizardHandlers
@@ -500,7 +505,7 @@ function MaestroConsoleInner() {
 	}, [encoreFeatures.maestroCue, setCueModalOpen, closeCueYamlEditor]);
 
 	// --- KEYBOARD SHORTCUT HELPERS ---
-	const { isShortcut, isTabShortcut } = useKeyboardShortcutHelpers({
+	const { isShortcut, isTabShortcut, isPaneShortcut } = useKeyboardShortcutHelpers({
 		shortcuts,
 		tabShortcuts,
 	});
@@ -705,6 +710,13 @@ function MaestroConsoleInner() {
 	const moderatorUsage = useGroupChatStore((s) => s.moderatorUsage);
 	const participantStates = useGroupChatStore((s) => s.participantStates);
 	const groupChatError = useGroupChatStore((s) => s.groupChatError);
+	const groupChatInitiatorWindowId = useGroupChatStore((s) => s.initiatorWindowId);
+
+	// Multi-window: which window initiated the active group chat. The panel renders
+	// only there (gated below via isGroupChatVisibleInWindow). Optional context, so
+	// the single-window app / web / isolation tests fall back to "show here".
+	const windowCtx = useWindowContextOptional();
+	const currentWindowId = windowCtx?.windowId ?? null;
 
 	// Stable actions from groupChatStore (non-reactive)
 	const {
@@ -713,7 +725,26 @@ function MaestroConsoleInner() {
 		setGroupChatReadOnlyMode,
 		setGroupChatRightTab,
 		setGroupChatParticipantColors,
+		setInitiatorWindowId,
 	} = useGroupChatStore.getState();
+
+	// Multi-window: stamp the initiating window on this window's group-chat store
+	// when a chat opens, and clear it on close. Because each window has its own
+	// store, the only window that sets activeGroupChatId is the one the user
+	// opened the chat in, so initiatorWindowId records that window. The render
+	// gate below then shows the panel only there, even though every window holds
+	// the same groupChats list and a participant agent may live in another window.
+	useEffect(() => {
+		if (!activeGroupChatId) {
+			if (groupChatInitiatorWindowId !== null) setInitiatorWindowId(null);
+			return;
+		}
+		// Wait for window identity to hydrate (null windowId on the primary window
+		// pre-hydrate); the gate treats a null initiatorWindowId as "show here".
+		if (currentWindowId && groupChatInitiatorWindowId === null) {
+			setInitiatorWindowId(currentWindowId);
+		}
+	}, [activeGroupChatId, currentWindowId, groupChatInitiatorWindowId, setInitiatorWindowId]);
 
 	// --- APP INITIALIZATION (extracted hook, Phase 2G) ---
 	const {
@@ -1436,32 +1467,18 @@ function MaestroConsoleInner() {
 
 	// PERF: Memoize thinkingItems at App level to avoid passing full sessions array to children.
 	// This prevents InputArea from re-rendering on unrelated session updates (e.g., terminal output).
-	// Flat list of (session, tab) pairs — one entry per busy tab across all sessions.
+	// Flat list of (session, tab) pairs — one entry per busy tab across the agents this window owns.
 	// This allows the ThinkingStatusPill to show all active work, even when multiple tabs
 	// within the same agent are busy in parallel.
-	const thinkingItems: ThinkingItem[] = useMemo(() => {
-		const items: ThinkingItem[] = [];
-		for (const session of sessions) {
-			if (session.state === 'busy' && session.busySource === 'ai') {
-				const busyTabs = session.aiTabs?.filter((t) => t.state === 'busy');
-				if (busyTabs && busyTabs.length > 0) {
-					for (const tab of busyTabs) {
-						items.push({ session, tab });
-					}
-				} else if (!session.orphanedThinkingTabs?.length) {
-					// Legacy: session is busy but no individual tab-level tracking
-					items.push({ session, tab: null });
-				}
-			}
-			// Closed-but-still-thinking tabs: keep showing them on the pill until
-			// the agent process actually exits. The exit/error listeners remove
-			// entries from orphanedThinkingTabs when the underlying process is gone.
-			for (const orphan of session.orphanedThinkingTabs ?? []) {
-				items.push({ session, tab: orphan });
-			}
-		}
-		return items;
-	}, [sessions]);
+	// Multi-window: gate on WindowContext.ownsSession so a window's pill never surfaces an agent
+	// (or its AutoRun) owned by another window - every renderer holds ALL agents because the main
+	// process broadcasts every agent's state to every window. Outside a WindowProvider (web /
+	// isolation tests) ownsSession is undefined, so buildThinkingItems includes every session.
+	const ownsSession = windowCtx?.ownsSession;
+	const thinkingItems: ThinkingItem[] = useMemo(
+		() => buildThinkingItems(sessions, ownsSession),
+		[sessions, ownsSession]
+	);
 
 	// addLogToTab/addLogToActiveTab now used directly via store in useWizardHandlers
 
@@ -1822,6 +1839,15 @@ function MaestroConsoleInner() {
 	// Initialize activity tracker for per-session time tracking
 	useActivityTracker(activeSessionId, setSessions);
 
+	// Multi-window: keep this window's active agent to one it owns, so a restored
+	// window never shows the false "No agents" empty state while it holds agents.
+	useWindowScopedActiveSession();
+
+	// Multi-window: hydrate this window's left/right panel-collapse state from its
+	// persisted per-window record on mount, and persist changes back (debounced),
+	// so each window's collapsed panels survive an app restart.
+	useWindowState();
+
 	// Initialize global hands-on time tracker (persists to settings)
 	// Tracks total time user spends actively using Maestro (5-minute idle timeout)
 	useHandsOnTimeTracker(addTotalActiveTimeMs);
@@ -1976,6 +2002,10 @@ function MaestroConsoleInner() {
 	const { starredItems, activateStarredItem } = useStarredItems({
 		onJumpToStarredSession: handleJumpToStarredSession,
 		showConfirmation,
+		// Multi-window: scope the Starred section to agents this window owns (same
+		// ownsSession the thinking pill / cycling use). Undefined outside a
+		// WindowProvider, so single-window/web behaviour is unchanged.
+		ownsSession,
 	});
 
 	// cycleSession — provided by useCycleSession hook
@@ -1985,7 +2015,16 @@ function MaestroConsoleInner() {
 		starredItems,
 		activateStarredItem,
 		navIndexMap,
+		// Multi-window: scope Cmd+[/] cycling to agents THIS window owns. Reuses the
+		// same ownsSession predicate the thinking pill uses (line ~1422); undefined
+		// outside a WindowProvider, so single-window/web cycling is unchanged.
+		ownsSession,
 	});
+
+	// Tab tiling (split panes): Ctrl+Cmd pane focus / split / close / zoom /
+	// rebalance handlers. All act only on the active window's active tab group and
+	// no-op when nothing is tiled. Dispatched by the main keyboard handler.
+	const tilingShortcuts = useTilingShortcuts(activeSession);
 
 	// --- KEYBOARD NAVIGATION ---
 	// Sidebar arrow-key navigation, panel focus, Enter-to-activate. Placed after
@@ -2448,6 +2487,8 @@ function MaestroConsoleInner() {
 		setFileTreeFilterOpen,
 		isShortcut,
 		isTabShortcut,
+		isPaneShortcut,
+		tilingShortcuts,
 		handleNavBack,
 		handleNavForward,
 		toggleUnreadFilter,
@@ -3491,8 +3532,10 @@ function MaestroConsoleInner() {
 				)}
 
 				{/* --- GROUP CHAT VIEW (shown when a group chat is active, hidden when log viewer open) --- */}
+				{/* Multi-window: render only in the window that initiated the chat. */}
 				{!logViewerOpen &&
 					activeGroupChatId &&
+					isGroupChatVisibleInWindow(groupChatInitiatorWindowId, currentWindowId) &&
 					groupChats.find((c) => c.id === activeGroupChatId) && (
 						<>
 							<div
@@ -3665,6 +3708,10 @@ function GitStatusProviderFromStore({ children }: { children: ReactNode }) {
  * MaestroConsole - Main application component with context providers
  *
  * Wraps MaestroConsoleInner with context providers for centralized state management.
+ * WindowProvider - per-window identity (windowId/isMainWindow) and the agents
+ *   scoped to this window. Outermost so every descendant can read its window
+ *   identity; additive, so the primary window behaves exactly as before when
+ *   only one window exists.
  * InputProvider - centralized input state management
  * InlineWizardProvider - inline /wizard command state management
  */
@@ -3687,12 +3734,14 @@ export default function MaestroConsole() {
 	}
 
 	return (
-		<InlineWizardProvider>
-			<InputProvider>
-				<GitStatusProviderFromStore>
-					<MaestroConsoleInner />
-				</GitStatusProviderFromStore>
-			</InputProvider>
-		</InlineWizardProvider>
+		<WindowProvider>
+			<InlineWizardProvider>
+				<InputProvider>
+					<GitStatusProviderFromStore>
+						<MaestroConsoleInner />
+					</GitStatusProviderFromStore>
+				</InputProvider>
+			</InlineWizardProvider>
+		</WindowProvider>
 	);
 }

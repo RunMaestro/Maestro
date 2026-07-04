@@ -35,6 +35,29 @@ export function useBrowserTabMounting(activeSession: Session | null): string[] {
 	// doesn't churn when the session object is recreated without tab changes.
 	const liveIdsKey = activeSession?.browserTabs?.map((t) => t.id).join(',') ?? '';
 
+	// Browser tabs tiled into the active group MUST stay mounted regardless of the
+	// keep-alive policy: while a group is active, `activeBrowserTabId` points at no
+	// standalone tab, so the 'off'/'recent' policies would otherwise never mount a
+	// tiled browser pane - its <webview> would be absent, leaving the pane blank.
+	// Comma-joined key (memo-friendly, mirrors liveIdsKey).
+	const groupBrowserLeafKey = useMemo(() => {
+		const activeGroup =
+			activeSession?.activeGroupId != null
+				? activeSession.tabGroups?.find((g) => g.id === activeSession.activeGroupId)
+				: undefined;
+		if (!activeGroup) return '';
+		const ids: string[] = [];
+		const walk = (node: (typeof activeGroup)['layout']): void => {
+			if (node.kind === 'leaf') {
+				if (node.tab.type === 'browser') ids.push(node.tab.id);
+				return;
+			}
+			node.children.forEach(walk);
+		};
+		walk(activeGroup.layout);
+		return ids.join(',');
+	}, [activeSession?.activeGroupId, activeSession?.tabGroups]);
+
 	// Recency-ordered browser tab ids (most-recent first) for the CURRENT agent
 	// only. Reset whenever the active agent changes so we never keep another
 	// agent's tabs alive.
@@ -62,6 +85,11 @@ export function useBrowserTabMounting(activeSession: Session | null): string[] {
 		const liveIds = liveIdsKey ? liveIdsKey.split(',') : [];
 		if (liveIds.length === 0) return [];
 		const liveSet = new Set(liveIds);
+		// Group browser leaves are always kept (see groupBrowserLeafKey), intersected
+		// with live ids so a stale ref never mounts a nonexistent tab.
+		const groupLeaves = new Set(
+			(groupBrowserLeafKey ? groupBrowserLeafKey.split(',') : []).filter((id) => liveSet.has(id))
+		);
 
 		if (keepAlive === 'all') {
 			return liveIds;
@@ -78,11 +106,17 @@ export function useBrowserTabMounting(activeSession: Session | null): string[] {
 					? [activeBrowserTabId, ...ordered]
 					: ordered;
 			const kept = new Set(withActive.slice(0, cap));
+			// Tiled group browser panes are mounted in ADDITION to the LRU cap so a
+			// group with more browser panes than the limit still renders every pane.
+			groupLeaves.forEach((id) => kept.add(id));
 			// Emit in live-tab order so the rendered webview nodes never reorder.
 			return liveIds.filter((id) => kept.has(id));
 		}
 
-		// 'off' — only the active browser tab is mounted (original behavior).
-		return activeBrowserTabId && liveSet.has(activeBrowserTabId) ? [activeBrowserTabId] : [];
-	}, [liveIdsKey, keepAlive, keepAliveLimit, activeBrowserTabId, recency]);
+		// 'off' — the active browser tab plus any tiled group browser panes.
+		const kept = new Set(groupLeaves);
+		if (activeBrowserTabId && liveSet.has(activeBrowserTabId)) kept.add(activeBrowserTabId);
+		if (kept.size === 0) return [];
+		return liveIds.filter((id) => kept.has(id));
+	}, [liveIdsKey, keepAlive, keepAliveLimit, activeBrowserTabId, recency, groupBrowserLeafKey]);
 }

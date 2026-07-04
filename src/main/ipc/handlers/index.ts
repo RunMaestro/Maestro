@@ -69,9 +69,17 @@ import { registerFeedbackHandlers } from './feedback';
 import { registerMaestroCliHandlers } from './maestro-cli';
 import { registerPromptsHandlers } from './prompts';
 import { registerMemoryHandlers } from './memory';
+import {
+	registerWindowsHandlers,
+	wireWindowRegistryBroadcast,
+	wireEmptySecondaryWindowAutoClose,
+	WindowsHandlerDependencies,
+} from './windows';
 import { AgentDetector } from '../../agents';
 import { ProcessManager } from '../../process-manager';
 import { WebServer } from '../../web-server';
+import type { WindowRegistry } from '../../window-registry';
+import type { WindowManager } from '../../app-lifecycle/window-manager';
 import { tunnelManager as tunnelManagerInstance } from '../../tunnel-manager';
 import { createSafeSend } from '../../utils/safe-send';
 import { getSshRemoteById } from '../../stores/getters';
@@ -132,6 +140,10 @@ export { registerFeedbackHandlers };
 export { registerMaestroCliHandlers };
 export { registerPromptsHandlers };
 export { registerMemoryHandlers };
+export { registerWindowsHandlers };
+export { wireWindowRegistryBroadcast };
+export { wireEmptySecondaryWindowAutoClose };
+export type { WindowsHandlerDependencies };
 export type { AgentsHandlerDependencies };
 export type { ProcessHandlerDependencies };
 export type { PersistenceHandlerDependencies };
@@ -173,6 +185,11 @@ export interface HandlerDependencies {
 	tunnelManager: TunnelManagerType;
 	// Claude-specific dependencies
 	claudeSessionOriginsStore: Store<ClaudeSessionOriginsData>;
+	// Multi-window dependencies. Optional during the phased rollout - the
+	// registry and window manager are wired in main/index.ts at app-ready (a
+	// later phase). Until then the windows:* handlers report "not initialized".
+	getWindowRegistry?: () => WindowRegistry | null;
+	getWindowManager?: () => WindowManager | null;
 }
 
 /**
@@ -192,7 +209,7 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	registerAutorunHandlers(deps);
 	registerPlaybooksHandlers(deps);
 	registerHistoryHandlers({
-		safeSend: createSafeSend(deps.getMainWindow),
+		safeSend: createSafeSend(() => BrowserWindow.getAllWindows()),
 		getMaxEntries: () => deps.settingsStore.get('maxLogBuffer', 5000) as number,
 		getSshRemoteById,
 		getSessionById: (id: string) => {
@@ -213,7 +230,7 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		agentConfigsStore: deps.agentConfigsStore,
 		settingsStore: deps.settingsStore,
 		getMainWindow: deps.getMainWindow,
-		safeSend: createSafeSend(deps.getMainWindow),
+		safeSend: createSafeSend(() => BrowserWindow.getAllWindows()),
 		sessionsStore: deps.sessionsStore,
 	});
 	registerPersistenceHandlers({
@@ -295,8 +312,13 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		app: deps.app,
 		settingsStore: deps.settingsStore,
 	});
-	// Register notification handlers (OS notifications and TTS)
-	registerNotificationsHandlers({ getMainWindow: deps.getMainWindow });
+	// Register notification handlers (OS notifications and TTS). The window
+	// registry getter lets a notification click focus the window that owns the
+	// completing agent rather than always the primary window (multi-window).
+	registerNotificationsHandlers({
+		getMainWindow: deps.getMainWindow,
+		getWindowRegistry: deps.getWindowRegistry,
+	});
 	// Register Symphony handlers for token donation / open source contributions
 	registerSymphonyHandlers({
 		app: deps.app,
@@ -332,6 +354,14 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	registerPromptsHandlers();
 	// Register project Memory handlers (Claude Code per-project memory viewer)
 	registerMemoryHandlers();
+	// Register multi-window handlers (windows:* channel surface). The registry
+	// and window manager are injected in main/index.ts at app-ready; default to
+	// null getters so the handlers compile and report "not initialized" until
+	// that wiring lands.
+	registerWindowsHandlers({
+		getWindowRegistry: deps.getWindowRegistry ?? (() => null),
+		getWindowManager: deps.getWindowManager ?? (() => null),
+	});
 	// Setup logger event forwarding to renderer
 	setupLoggerEventForwarding(deps.getMainWindow);
 }

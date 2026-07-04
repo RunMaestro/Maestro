@@ -43,6 +43,18 @@ export interface UseCycleSessionDeps {
 	 * agent's group row) instead of the first navSessions occurrence.
 	 */
 	navIndexMap: Map<string, number>;
+	/**
+	 * Multi-window: optional window-ownership predicate. When provided, cycling
+	 * includes only agent rows THIS window owns, so `Cmd+[` / `Cmd+]` never jumps
+	 * to an agent surfaced by another window. Group chats are not window-owned
+	 * agents (every renderer holds all of them), so they always stay in the cycle.
+	 * Null-safe: omitted outside a `WindowProvider` (single-window app / web /
+	 * isolation tests), where every agent is included and behaviour is unchanged.
+	 * Reuses {@link WindowContextValue.ownsSession} - the single ownership
+	 * authority that task 1's IPC gate and task 3's thinking pill also use - rather
+	 * than re-deriving ownership.
+	 */
+	ownsSession?: (sessionId: string) => boolean;
 }
 
 // ============================================================================
@@ -59,8 +71,14 @@ export interface UseCycleSessionReturn {
 // ============================================================================
 
 export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionReturn {
-	const { sortedSessions, handleOpenGroupChat, starredItems, activateStarredItem, navIndexMap } =
-		deps;
+	const {
+		sortedSessions,
+		handleOpenGroupChat,
+		starredItems,
+		activateStarredItem,
+		navIndexMap,
+		ownsSession,
+	} = deps;
 
 	// --- Reactive subscriptions ---
 	const sessions = useSessionStore((s) => s.sessions);
@@ -254,6 +272,21 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 				visualOrder.push(...filteredOrder);
 			}
 
+			// Multi-window: drop agent rows this window does not own so Cmd+[/] cycles
+			// only within the window's own tab strip, never jumping to an agent another
+			// window surfaces. Group chats are not window-owned agents (each renderer
+			// holds all of them), so they stay in the cycle. Null-safe: outside a
+			// WindowProvider `ownsSession` is undefined and every row is kept, preserving
+			// single-window/web/test behaviour. Pure synchronous array work composed with
+			// the unread filter above - cycling stays deterministic (keyboard reliability).
+			if (ownsSession) {
+				const scopedOrder = visualOrder.filter(
+					(item) => item.type === 'groupChat' || ownsSession(item.id)
+				);
+				visualOrder.length = 0;
+				visualOrder.push(...scopedOrder);
+			}
+
 			if (visualOrder.length === 0) return;
 
 			// Determine what is currently active (session or group chat)
@@ -360,6 +393,7 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 			starredItems,
 			activateStarredItem,
 			navIndexMap,
+			ownsSession,
 		]
 	);
 
