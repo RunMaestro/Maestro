@@ -210,6 +210,20 @@ export function AgentLogo({
 				</svg>
 			);
 
+		case 'omp':
+			// Official Oh My Pi mark (omp.sh favicon glyph, viewBox 0 0 64 64).
+			return (
+				<svg
+					className="w-12 h-12"
+					viewBox="0 0 64 64"
+					fill="none"
+					xmlns="http://www.w3.org/2000/svg"
+					style={{ opacity }}
+				>
+					<path d="M14 16h36v8H40v32h-8V24h-6v22h-8V24h-4z" fill={color} />
+				</svg>
+			);
+
 		default:
 			return (
 				<div className="w-12 h-12 rounded-full border-2" style={{ borderColor: color, opacity }} />

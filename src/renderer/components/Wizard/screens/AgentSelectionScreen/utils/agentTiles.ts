@@ -50,4 +50,11 @@ export const AGENT_TILES: AgentTile[] = [
 		description: 'Your own agent harness',
 		brandColor: '#E4E4E7',
 	},
+	{
+		id: 'omp',
+		name: 'Oh My Pi',
+		supported: true,
+		description: 'Multi-model coding agent',
+		brandColor: '#9B4DFF',
+	},
 ];
